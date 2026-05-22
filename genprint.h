@@ -12,9 +12,9 @@ public:
 	//{{AFX_DATA(CPrintingDialog)
 	enum { IDD = AFX_IDD_PRINTDLG };
 	//}}AFX_DATA
-	CMyPrintingDialog::CMyPrintingDialog(CWnd* pParent)
+	CMyPrintingDialog(CWnd* pParent)
 		{
-			Create(CMyPrintingDialog::IDD, pParent);      // modeless !
+			Create(IDD, pParent);      // modeless !
       bAborted = FALSE;
     }
 	virtual ~CMyPrintingDialog() { }

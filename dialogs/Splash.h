@@ -28,7 +28,7 @@ public:
 	static void EnableSplashScreen(BOOL bEnable = TRUE);
 	static void ShowSplashScreen(CWnd* pParentWnd, const int iResourceID);
 	static BOOL PreTranslateAppMessage(MSG* pMsg);
-  static bool CSplashWnd::HaveSplashScreen (void);
+  static bool HaveSplashScreen (void);
 
 // Overrides
 	// ClassWizard generated virtual function overrides

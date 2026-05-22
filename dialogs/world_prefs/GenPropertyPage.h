@@ -91,7 +91,7 @@ public:
 
   // set up variables for use later on
 
-  void CGenPropertyPage::SetUpPage (CString strObjectType,
+  void SetUpPage (CString strObjectType,
                                     CObjectMap * ObjectMap,
                                     CListCtrl * ctlList,
                                     CStatic * ctlSummary,

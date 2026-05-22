@@ -5,7 +5,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
-#include "mxp\mxp.h"
+#include "mxp/mxp.h"
 #include "sendvw.h"
 #include "Color.h"
 #include "childfrm.h"
@@ -53,7 +53,7 @@ static char * sMxpModes [] =
 
 
 // compare-less for colours
-struct colour_less : binary_function<COLORREF, COLORREF, bool>
+struct colour_less
   {
 
   bool operator() (const COLORREF & c1, const COLORREF & c2) const
@@ -970,7 +970,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     Note ("");
     ColourNote  (SCRIPTERRORCONTEXTFORECOLOUR, "", "-------------- MUSHclient summary --------------");
     Note ("");
-	  Note (TFormat ("MUSHclient version: %s", MUSHCLIENT_VERSION));
+	  Note (TFormat ("MUSHclient version: %s", (LPCTSTR) MUSHCLIENT_VERSION));
     // show compilation date
     Note (TFormat ("Compiled: %s.", __DATE__));
     Note (CTime::GetCurrentTime().Format (TranslateTime ("Time now: %A, %B %d, %Y, %#I:%M %p")));
@@ -1626,9 +1626,11 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
 
     nTotal = 0;
 
+#ifdef _WIN32
     for (i = 0; i < MAX_SOUND_BUFFERS; i++)
       if (m_pDirectSoundSecondaryBuffer [i])
         nTotal++;
+#endif
 
     Note (TFormat ("Sound buffers in use: %ld", nTotal));
 

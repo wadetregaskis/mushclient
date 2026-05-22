@@ -171,8 +171,10 @@ void COutputPane::AppendLine(SOutputLine&& line)
 
     m_lines.push_back(std::move(line));
 
+    int trimCount = 0;
     while ((int)m_lines.size() > m_maxLines) {
         m_lines.pop_front();
+        ++trimCount;
         // Adjust selection indices downward; clear if the anchor line was removed.
         if (m_selAnchor.valid()) {
             if (m_selAnchor.line == 0) m_selAnchor = SelPoint{};
@@ -183,6 +185,7 @@ void COutputPane::AppendLine(SOutputLine&& line)
             else --m_selFocus.line;
         }
     }
+    m_trimmedCount += trimCount;
 
     if (m_batchDepth == 0) {
         UpdateScrollbars(m_autoScroll);
@@ -243,6 +246,7 @@ void COutputPane::ClearOutput()
     m_selAnchor    = SelPoint{};
     m_selFocus     = SelPoint{};
     m_maxLineChars = 80;
+    m_trimmedCount = 0;
     UpdateScrollbars(true);
     Refresh();
 }
@@ -527,6 +531,19 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
             int scrollRange = GetScrollRange(wxVERTICAL);
             Scroll(scrollX, scrollRange);
         }
+        m_trimmedCount = 0;
+    } else if (m_trimmedCount > 0 && !m_autoScroll) {
+        // The buffer trimmed lines from the front while the user was scrolled up.
+        // Compensate by shifting the view upward by the same number of line-heights
+        // so the visible content stays stable.
+        int scrollX, scrollY, unitH;
+        GetViewStart(&scrollX, &scrollY);
+        GetScrollPixelsPerUnit(nullptr, &unitH);
+        if (unitH > 0) {
+            int shift = (m_trimmedCount * m_lineH + unitH - 1) / unitH;
+            Scroll(scrollX, std::max(0, scrollY - shift));
+        }
+        m_trimmedCount = 0;
     }
 }
 

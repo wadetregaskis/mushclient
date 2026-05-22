@@ -223,6 +223,11 @@ private:
 
     bool m_autoScroll = true;
 
+    // Number of lines trimmed from the front of m_lines since the last
+    // UpdateScrollbars call.  Used to compensate the scroll position when the
+    // buffer wraps and the user has scrolled up (so the view doesn't jump).
+    int m_trimmedCount = 0;
+
     wxDECLARE_EVENT_TABLE();
 };
 

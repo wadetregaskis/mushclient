@@ -995,33 +995,49 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
         m_selFocus = MouseToSelPoint(evt);
         Refresh(false);
 
-        // Auto-scroll when dragging past edges.
+        // Auto-scroll when dragging past the top or bottom edges.
+        // When the hint bar is visible, treat its upper edge as the bottom
+        // boundary so the drag doesn't fight with the hint-bar click region.
         int clientW, clientH;
         GetClientSize(&clientW, &clientH);
-        if (evt.GetY() > clientH - 10)
+        int bottomEdge = (!m_autoScroll && !m_lines.empty())
+                       ? clientH - kHintBarH - 10
+                       : clientH - 10;
+        if (evt.GetY() > bottomEdge)
             ScrollLines(1);
         else if (evt.GetY() < 10)
             ScrollLines(-1);
     } else {
-        // Update cursor: hand when over a link run, I-beam otherwise.
-        SelPoint pt = MouseToSelPoint(evt);
-        bool overLink = false;
-        if (pt.valid() && pt.line < (int)m_lines.size()) {
-            const SOutputLine& ln = m_lines[pt.line];
-            int col = 0;
-            for (const auto& run : ln) {
-                int runLen = (int)run.text.size();
-                if (!run.action.empty() &&
-                    pt.col >= col && pt.col < col + runLen)
-                {
-                    overLink = true;
-                    break;
+        // Update cursor.  Priority order:
+        //   1. Hint bar area → pointing hand (clicking snaps to bottom).
+        //   2. Over an MXP / URL link run → pointing hand.
+        //   3. Anywhere else → I-beam text cursor.
+        int clientH;
+        GetClientSize(nullptr, &clientH);
+        if (!m_autoScroll && !m_lines.empty() &&
+            evt.GetY() >= clientH - kHintBarH)
+        {
+            SetCursor(wxCursor(wxCURSOR_HAND));
+        } else {
+            SelPoint pt = MouseToSelPoint(evt);
+            bool overLink = false;
+            if (pt.valid() && pt.line < (int)m_lines.size()) {
+                const SOutputLine& ln = m_lines[pt.line];
+                int col = 0;
+                for (const auto& run : ln) {
+                    int runLen = (int)run.text.size();
+                    if (!run.action.empty() &&
+                        pt.col >= col && pt.col < col + runLen)
+                    {
+                        overLink = true;
+                        break;
+                    }
+                    col += runLen;
                 }
-                col += runLen;
             }
+            SetCursor(overLink ? wxCursor(wxCURSOR_HAND)
+                               : wxCursor(wxCURSOR_IBEAM));
         }
-        SetCursor(overLink ? wxCursor(wxCURSOR_HAND)
-                           : wxCursor(wxCURSOR_IBEAM));
     }
     evt.Skip();
 }

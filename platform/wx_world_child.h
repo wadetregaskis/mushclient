@@ -53,6 +53,10 @@ public:
     // Give external code read-only access to the associated world document.
     CMUSHclientDoc* GetDoc() const { return m_doc; }
 
+    // Public access to the active input bar so scripting callbacks in
+    // wx_mfc_impl.cpp can read/write it for world.GetCommand/SetCommand.
+    wxTextCtrl* ActiveInputPublic() const { return ActiveInput(); }
+
     // Re-send NAWS with the current pane dimensions.  Call after a font change
     // so the MUD learns the new character-grid size.
     void TriggerNAWS();

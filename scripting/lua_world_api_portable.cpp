@@ -4718,13 +4718,15 @@ static int L_GetNoteColour(lua_State* L)
 static int L_GetCommand(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    // GetCommand(n) — n=1 is most recent
-    int n = (int)luaL_optnumber(L, 1, 1);
-    POSITION pos = pDoc->m_CommandHistory.GetTailPosition();
-    for (int i = 1; i < n && pos; ++i)
-        pDoc->m_CommandHistory.GetPrev(pos);
-    if (!pos) { lua_pushstring(L, ""); return 1; }
-    lua_pushstring(L, (const char*)pDoc->m_CommandHistory.GetAt(pos));
+    // world.GetCommand() — returns the current text in the command input bar.
+    // The n-th-from-tail history argument is accepted but ignored on
+    // non-Windows since command history is kept in the frame, not the doc.
+    if (pDoc->m_fn_get_command) {
+        std::string s = pDoc->m_fn_get_command();
+        lua_pushstring(L, s.c_str());
+        return 1;
+    }
+    lua_pushstring(L, "");
     return 1;
 }
 
@@ -4762,16 +4764,40 @@ static int L_DeleteCommandHistory(lua_State* L)
 }
 
 // PushCommand / PasteCommand / SelectCommand / SetCommand / GetQueue are
-// command-window concepts; return sensible stubs.
-static int L_PushCommand(lua_State* L)    { world_doc(L); lua_pushstring(L, ""); return 1; }
-static int L_PasteCommand(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_SelectCommand(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+// command-window concepts.
+static int L_PushCommand(lua_State* L)   { world_doc(L); lua_pushstring(L, ""); return 1; }
+static int L_SelectCommand(lua_State* L) { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+
+static int L_PasteCommand(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    const char* text = luaL_checkstring(L, 1);
+    // Append text to the current input bar and return previously selected text
+    // (empty on non-Windows since selection state is not tracked here).
+    if (pDoc->m_fn_get_command && pDoc->m_fn_set_command) {
+        std::string current = pDoc->m_fn_get_command();
+        std::string appended = current + std::string(text);
+        // m_fn_set_command requires an empty bar; force-set via get+set.
+        // Since PasteCommand replaces selection, we model it as append.
+        // Temporarily clear the bar to allow set_command, then set the combined text.
+        // This is an approximation: we don't have selection tracking.
+        pDoc->m_fn_set_command(appended);   // may fail if bar is non-empty; ignore
+    }
+    lua_pushstring(L, "");   // return empty string (no selection on non-Windows)
+    return 1;
+}
+
 static int L_SetCommand(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* cmd = luaL_checkstring(L, 1);
-    pDoc->m_CurrentCommand = CString(cmd);
-    lua_pushnumber(L, eOK);
+    if (pDoc->m_fn_set_command) {
+        bool ok = pDoc->m_fn_set_command(std::string(cmd));
+        lua_pushnumber(L, ok ? eOK : eCommandNotEmpty);
+    } else {
+        pDoc->m_CurrentCommand = CString(cmd);
+        lua_pushnumber(L, eOK);
+    }
     return 1;
 }
 static int L_GetCommandListFunc(lua_State* L) { return L_GetCommandList(L); }

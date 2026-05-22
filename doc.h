@@ -1480,6 +1480,18 @@ public:
   // Current output pane height in character rows; updated by CWorldChildFrame
   // via SendNAWS() so that SendWindowSizes() can send a valid NAWS row count.
   int                                     m_gui_rows = 24;
+
+  // ── Non-Windows GUI input/view callbacks ──────────────────────────────────
+  // world.GetCommand(): return the current text in the command input bar.
+  std::function<std::string()>                       m_fn_get_command;
+  // world.SetCommand(text): set the command input text.
+  // Return true on success; false if the bar is non-empty (matches Windows
+  // eCommandNotEmpty semantics).
+  std::function<bool(const std::string&)>            m_fn_set_command;
+  // world.SetOutputFont(): change the output font family / size / style.
+  // Args: face name (empty = keep current), point size (0 = keep current),
+  //       bold flag, italic flag.
+  std::function<void(const std::string&, int, bool, bool)> m_fn_set_output_font;
 #endif
 
   protected:

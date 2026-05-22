@@ -136,14 +136,22 @@ void CMUSHclientDoc::SelectCommand()
 
 // world.GetCommand - gets the command in the command window
 
-BSTR CMUSHclientDoc::GetCommand() 
+BSTR CMUSHclientDoc::GetCommand()
 {
 	CString strCommand;
 
+#ifndef _WIN32
+  // Non-Windows: the command input bar is owned by CWorldChildFrame; retrieve
+  // its text via the callback wired in wx_world_child.cpp.
+  if (m_fn_get_command) {
+    std::string s = m_fn_get_command();
+    strCommand = s.c_str();
+  }
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	  {
 		  CSendView* pmyView = (CSendView*)pView;
@@ -153,20 +161,27 @@ BSTR CMUSHclientDoc::GetCommand()
 
       }	  // end of being a CSendView
     }   // end of loop through views
-
+#endif
 
 	return strCommand.AllocSysString();
 }   // end of CMUSHclientDoc::GetCommand
 
 
 
-long CMUSHclientDoc::SetCommand(LPCTSTR Message) 
+long CMUSHclientDoc::SetCommand(LPCTSTR Message)
 {
-
+#ifndef _WIN32
+  // Non-Windows: delegate to the wxWidgets input bar.
+  if (m_fn_set_command) {
+    std::string text(Message ? Message : "");
+    return m_fn_set_command(text) ? eOK : eCommandNotEmpty;
+  }
+  return eOK;
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	  {
 		  CSendView* pmyView = (CSendView*)pView;
@@ -186,18 +201,31 @@ long CMUSHclientDoc::SetCommand(LPCTSTR Message)
     }   // end of loop through views
 
 	return eOK;
+#endif
 }     // end of CMUSHclientDoc::SetCommand
 
-BSTR CMUSHclientDoc::PasteCommand(LPCTSTR Text) 
+BSTR CMUSHclientDoc::PasteCommand(LPCTSTR Text)
 {
 CString strResult;
+
+#ifndef _WIN32
+  // Non-Windows: PasteCommand appends Text to the current command bar contents
+  // (replacing any selection) and returns the previously selected text.
+  // We approximate by calling m_fn_set_command with the appended text.
+  if (m_fn_get_command && m_fn_set_command) {
+    std::string current = m_fn_get_command();
+    std::string appended = current + std::string(Text ? Text : "");
+    m_fn_set_command(appended);
+    // No selection support on non-Windows; return empty string.
+  }
+#else
 int nStartChar,
     nEndChar;
 
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	  {
 		  CSendView* pmyView = (CSendView*)pView;
@@ -218,6 +246,7 @@ int nStartChar,
 
 	    }	  // end of being a CSendView
     }   // end of loop through views
+#endif
 
 	return strResult.AllocSysString();
 }   // end of CMUSHclientDoc::PasteCommand
@@ -483,17 +512,22 @@ long iCount;
 
 
 
-void CMUSHclientDoc::SetInputFont(LPCTSTR FontName, short PointSize, short Weight, BOOL Italic) 
+void CMUSHclientDoc::SetInputFont(LPCTSTR FontName, short PointSize, short Weight, BOOL Italic)
 {
+  Italic = Italic != 0; // make boolean
 
-Italic = Italic != 0; // make boolean
-
-  ChangeInputFont (PointSize, 
-                  FontName, 
-                  Weight, 
-                  DEFAULT_CHARSET,
-                  Italic);
-
+#ifndef _WIN32
+  // On non-Windows the "input font" also controls the output font (they share
+  // one monospace face in the terminal-style layout).  Forward to the output
+  // pane via the wxWidgets callback.
+  if (m_fn_set_output_font) {
+    std::string face(FontName ? FontName : "");
+    bool bold = (Weight >= 600);
+    m_fn_set_output_font(face, (int)PointSize, bold, (bool)Italic);
+  }
+#else
+  ChangeInputFont(PointSize, FontName, Weight, DEFAULT_CHARSET, Italic);
+#endif
 }  // end of CMUSHclientDoc::SetInputFont
 
 

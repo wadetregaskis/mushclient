@@ -85,8 +85,12 @@ public:
                   int* outTotalMatches = nullptr);
     void HighlightSearch(const wxString& term);
 
-    // Change the display font (e.g. from preferences).
+    // Change the display font (e.g. from preferences or scripting API).
     void SetOutputFont(const wxFont& font);
+
+    // Read-only access to the current display font (used by scripting callbacks
+    // to build a modified font to pass back into SetOutputFont).
+    const wxFont& GetCurrentFont() const { return m_font; }
 
     // Update the scrollback buffer cap.
     void SetMaxLines(int n);

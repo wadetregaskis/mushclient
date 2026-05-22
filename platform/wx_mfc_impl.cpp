@@ -645,6 +645,29 @@ static void* hook_open_world_file(const char* path)
     doc->m_fn_begin_batch = [pane]() { pane->BeginBatch(); };
     doc->m_fn_flush       = [pane]() { pane->EndBatch(); };
 
+    // Wire input-bar / font callbacks for scripting APIs.
+    doc->m_fn_get_command = [child]() -> std::string {
+        wxTextCtrl* inp = child->OutputPane() ? child->ActiveInputPublic() : nullptr;
+        return inp ? std::string(inp->GetValue().ToUTF8()) : std::string();
+    };
+    doc->m_fn_set_command = [child](const std::string& text) -> bool {
+        wxTextCtrl* inp = child->ActiveInputPublic();
+        if (!inp) return false;
+        if (!inp->GetValue().IsEmpty()) return false;   // eCommandNotEmpty
+        inp->SetValue(wxString::FromUTF8(text.c_str()));
+        inp->SetInsertionPointEnd();
+        return true;
+    };
+    doc->m_fn_set_output_font = [pane](const std::string& face, int pts, bool bold, bool italic) {
+        wxFont f = pane->GetCurrentFont();
+        if (!face.empty())
+            f.SetFaceName(wxString::FromUTF8(face.c_str()));
+        if (pts > 0) f.SetPointSize(pts);
+        f.SetWeight(bold ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL);
+        f.SetStyle(italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL);
+        pane->SetOutputFont(f);
+    };
+
     // Apply display settings loaded from the world file.
     ApplyWorldFont(pane, doc);
     if (doc->m_maxlines > 0)
@@ -1266,6 +1289,29 @@ static void* hook_new_world()
     };
     doc->m_fn_begin_batch = [pane]() { pane->BeginBatch(); };
     doc->m_fn_flush       = [pane]() { pane->EndBatch(); };
+
+    // Wire input-bar / font callbacks for scripting APIs.
+    doc->m_fn_get_command = [child]() -> std::string {
+        wxTextCtrl* inp = child->ActiveInputPublic();
+        return inp ? std::string(inp->GetValue().ToUTF8()) : std::string();
+    };
+    doc->m_fn_set_command = [child](const std::string& text) -> bool {
+        wxTextCtrl* inp = child->ActiveInputPublic();
+        if (!inp) return false;
+        if (!inp->GetValue().IsEmpty()) return false;
+        inp->SetValue(wxString::FromUTF8(text.c_str()));
+        inp->SetInsertionPointEnd();
+        return true;
+    };
+    doc->m_fn_set_output_font = [pane](const std::string& face, int pts, bool bold, bool italic) {
+        wxFont f = pane->GetCurrentFont();
+        if (!face.empty())
+            f.SetFaceName(wxString::FromUTF8(face.c_str()));
+        if (pts > 0) f.SetPointSize(pts);
+        f.SetWeight(bold ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL);
+        f.SetStyle(italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL);
+        pane->SetOutputFont(f);
+    };
 
     // Apply background colour (Quick Connect worlds use default black unless
     // a world-file background has been specified — m_iBackgroundColour starts

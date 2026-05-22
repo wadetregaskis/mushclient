@@ -1762,10 +1762,13 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
 
         // Clear all callbacks BEFORE deleting the doc so that any final output
         // flushed by the destructor doesn't call AppendLine on the dying pane.
-        m_doc->m_fn_line_ready  = nullptr;
-        m_doc->m_fn_note        = nullptr;
-        m_doc->m_fn_begin_batch = nullptr;
-        m_doc->m_fn_flush       = nullptr;
+        m_doc->m_fn_line_ready      = nullptr;
+        m_doc->m_fn_note            = nullptr;
+        m_doc->m_fn_begin_batch     = nullptr;
+        m_doc->m_fn_flush           = nullptr;
+        m_doc->m_fn_get_command     = nullptr;
+        m_doc->m_fn_set_command     = nullptr;
+        m_doc->m_fn_set_output_font = nullptr;
 
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.

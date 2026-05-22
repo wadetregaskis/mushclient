@@ -31,6 +31,10 @@ public:
 	protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
 	//}}AFX_VIRTUAL
+#ifndef _WIN32
+public:
+	virtual INT_PTR DoModal() override;  // wxWidgets dialog on non-Windows
+#endif
 
 // Implementation
 protected:

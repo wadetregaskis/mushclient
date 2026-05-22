@@ -14,11 +14,11 @@
 
 #include "ActivityDoc.h"
 #include "genprint.h"
-#include "dialogs\TextAttributesDlg.h"
-#include "dialogs\GoToLineDlg.h"
-#include "dialogs\HighlightPhraseDlg.h"
-#include "dialogs\MultiLineTriggerDlg.h"
-#include "scripting\errors.h"
+#include "dialogs/TextAttributesDlg.h"
+#include "dialogs/GoToLineDlg.h"
+#include "dialogs/HighlightPhraseDlg.h"
+#include "dialogs/MultiLineTriggerDlg.h"
+#include "scripting/errors.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -6205,7 +6205,7 @@ char * p = NULL;
     defaultbackcolour = colour2;
 
     ar.WriteString (CFormat ("<!-- Produced by MUSHclient v %s - www.mushclient.com -->",
-                             MUSHCLIENT_VERSION));
+                             (LPCTSTR) MUSHCLIENT_VERSION));
     ar.WriteString (ENDLINE);
     ar.WriteString (CFormat ("<table border=0 cellpadding=5 bgcolor=\"#%02X%02X%02X\">",
                         GetRValue (colour2),

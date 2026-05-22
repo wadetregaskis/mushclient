@@ -7,7 +7,7 @@
 // HighlightPhraseDlg.h : header file
 //
 
-#include "world_prefs\ButtonColour.h"
+#include "world_prefs/ButtonColour.h"
 #include "ColourComboBox.h"
 
 /////////////////////////////////////////////////////////////////////////////

@@ -2,10 +2,10 @@
 //
 
 #include "stdafx.h"
-#include "..\..\mushclient.h"
-#include "..\..\doc.h"
+#include "../../mushclient.h"
+#include "../../doc.h"
 #include "EditVariable.h"
-#include "..\EditMultiLine.h"
+#include "../EditMultiLine.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

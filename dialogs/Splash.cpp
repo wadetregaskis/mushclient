@@ -3,9 +3,9 @@
 //
 
 #include "stdafx.h"  // e. g. stdafx.h
-#include "..\MUSHclient.h"
-#include "..\mainfrm.h"
-#include "..\doc.h"
+#include "../MUSHclient.h"
+#include "../mainfrm.h"
+#include "../doc.h"
 
 #include "Splash.h"  // e.g. splash.h
 

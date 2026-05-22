@@ -19,7 +19,7 @@
 #include "TextDocument.h"
 #include "TextView.h"
 #include "doc.h"
-#include "dialogs\AsciiArtDlg.h"
+#include "dialogs/AsciiArtDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

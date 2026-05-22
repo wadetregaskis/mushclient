@@ -18,18 +18,18 @@
 #include "sendvw.h"
 #include "mainfrm.h"
 #include "childfrm.h"
-#include "dialogs\GlobalChangeDlg.h"
-#include "dialogs\GeneratedNameDlg.h"
+#include "dialogs/GlobalChangeDlg.h"
+#include "dialogs/GeneratedNameDlg.h"
 #include "ActivityView.h"
 
-#include "dialogs\cmdhist.h"
-#include "dialogs\CompleteWordDlg.h"
+#include "dialogs/cmdhist.h"
+#include "dialogs/CompleteWordDlg.h"
 
 #include "ActivityDoc.h"
 
 #include "winplace.h"
 
-#include "scripting\errors.h"
+#include "scripting/errors.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

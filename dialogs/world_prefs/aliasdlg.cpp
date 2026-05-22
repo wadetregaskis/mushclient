@@ -2,12 +2,12 @@
 //
 
 #include "stdafx.h"
-#include "..\..\mushclient.h"
-#include "..\..\doc.h"
+#include "../../mushclient.h"
+#include "../../doc.h"
 #include "aliasdlg.h"
-#include "..\EditDlg.h"
-#include "..\EditMultiLine.h"
-#include "..\CreditsDlg.h"
+#include "../EditDlg.h"
+#include "../EditMultiLine.h"
+#include "../CreditsDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

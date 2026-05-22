@@ -2,15 +2,15 @@
 //
 
 #include "stdafx.h"
-#include "..\..\mushclient.h"
-#include "..\..\doc.h"
-#include "..\..\mainfrm.h"
-#include "..\EditDlg.h"
-#include "..\EditMultiLine.h"
-#include "..\CreditsDlg.h"
+#include "../../mushclient.h"
+#include "../../doc.h"
+#include "../../mainfrm.h"
+#include "../EditDlg.h"
+#include "../EditMultiLine.h"
+#include "../CreditsDlg.h"
 
 #include "triggdlg.h"
-#include "..\ColourPickerDlg.h"
+#include "../ColourPickerDlg.h"
 
 #include "mmsystem.h"   // for sound playing
 

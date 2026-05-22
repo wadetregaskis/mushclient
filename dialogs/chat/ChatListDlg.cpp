@@ -2,8 +2,8 @@
 //
 
 #include "stdafx.h"
-#include "..\..\mushclient.h"
-#include "..\..\doc.h"
+#include "../../mushclient.h"
+#include "../../doc.h"
 #include "ChatListDlg.h"
 
 #include "ChatCallDlg.h"
@@ -170,7 +170,7 @@ int iColOrder [eColumnChatCount] = {0, 1, 2, 3, 4, 5},
                                                        
 // recover column sequence
 
-  m_ctlChatList.SendMessage (LVM_SETCOLUMNORDERARRAY, eColumnChatCount, (DWORD) iColOrder);
+  m_ctlChatList.SendMessage (LVM_SETCOLUMNORDERARRAY, eColumnChatCount, (DWORD)(DWORD_PTR) iColOrder);
 	
   // the update handler will auto-refresh the list ;)
 
@@ -395,10 +395,10 @@ int iResult;
       break;
 
     case eColumnFromIP:
-      if (item1->m_ServerAddr.sin_addr.S_un.S_addr <  item2->m_ServerAddr.sin_addr.S_un.S_addr)
+      if (item1->m_ServerAddr.sin_addr.s_addr <  item2->m_ServerAddr.sin_addr.s_addr)
         iResult = -1;
       else 
-      if (item1->m_ServerAddr.sin_addr.S_un.S_addr > item2->m_ServerAddr.sin_addr.S_un.S_addr)
+      if (item1->m_ServerAddr.sin_addr.s_addr > item2->m_ServerAddr.sin_addr.s_addr)
         iResult = 1;
       else 
         iResult = 0;

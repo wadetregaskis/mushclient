@@ -2,10 +2,10 @@
 //
 
 #include "stdafx.h"
-#include "..\mushclient.h"
-#include "..\doc.h"
+#include "../mushclient.h"
+#include "../doc.h"
 #include "MapDlg.h"
-#include "world_prefs\aliasdlg.h"
+#include "world_prefs/aliasdlg.h"
 #include "EditDlg.h"
 #include "CreditsDlg.h"
 

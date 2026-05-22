@@ -1,6 +1,9 @@
 // triggdlg.h : header file
 //
 
+#include "../ColourComboBox.h"
+#include "ButtonColour.h"
+
 /////////////////////////////////////////////////////////////////////////////
 // CTriggerDlg dialog
 

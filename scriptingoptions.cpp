@@ -5,7 +5,7 @@
 
 #include "doc.h"
 #include "MUSHview.h"
-#include "scripting\errors.h"
+#include "scripting/errors.h"
 
 #define NL "\r\n"
 
@@ -61,7 +61,7 @@ tConfigurationNumericOption OptionsTable [] = {
 {"chat_foreground_colour",              RGB (255, 0, 0), O(m_cChatForegroundColour), 0, 0xFFFFFF, OPT_RGB_COLOUR }, 
 {"chat_background_colour",              RGB (0, 0, 0),   O(m_cChatBackgroundColour), 0, 0xFFFFFF, OPT_RGB_COLOUR }, 
 {"chat_max_lines_per_message",          0,     O(m_iMaxChatLinesPerMessage), 0, 10000 },
-{"chat_max_bytes_per_message",          0,     O(m_iMaxChatBytesPerMessage), 0, LONG_MAX },
+{"chat_max_bytes_per_message",          0,     O(m_iMaxChatBytesPerMessage), 0, (double)LONG_MAX },
 {"chat_port",                           DEFAULT_CHAT_PORT,  O(m_IncomingChatPort), 0, USHRT_MAX},            
 //{"chat_sumchecks_to_sender",            false, O(m_bChatSumchecksToSender)},                       
 {"confirm_before_replacing_typing",     true,  O(m_bConfirmBeforeReplacingTyping)},     

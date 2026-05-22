@@ -2,9 +2,9 @@
 #include "MUSHclient.h"
 
 #include "doc.h"
-#include "dialogs\MapDlg.h"
-#include "dialogs\MapMoveDlg.h"
-#include "dialogs\MapCommentDlg.h"
+#include "dialogs/MapDlg.h"
+#include "dialogs/MapMoveDlg.h"
+#include "dialogs/MapCommentDlg.h"
 #include "mainfrm.h"
 
 #ifdef _DEBUG

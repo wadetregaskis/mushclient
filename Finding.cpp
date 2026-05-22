@@ -5,8 +5,8 @@
 #include "MUSHclient.h"
 #include "mainfrm.h"
 
-#include "dialogs\FindDlg.h"
-#include "dialogs\ProgDlg.h"
+#include "dialogs/FindDlg.h"
+#include "dialogs/ProgDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

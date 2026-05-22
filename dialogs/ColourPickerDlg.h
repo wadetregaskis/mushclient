@@ -7,6 +7,8 @@
 // ColourPickerDlg.h : header file
 //
 
+#include "world_prefs/ButtonColour.h"
+
 /////////////////////////////////////////////////////////////////////////////
 // CColourPickerDlg dialog
 

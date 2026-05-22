@@ -2,12 +2,15 @@
 
 // timer checking / resetting
 
-
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
 #include "mainfrm.h"
 #include "sendvw.h"
+#else
+#include "platform/doc_stub.h"
+#endif
 
 unsigned long CTimer::nNextCreateSequence = 0;
 
@@ -69,6 +72,7 @@ CString strTimerName;
 CmcDateTime tNow = CmcDateTime::GetTimeNow();
 CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
 
+#ifdef _WIN32
 // check for deleted chat sessions
 
   for (POSITION chatpos = m_ChatList.GetHeadPosition (); chatpos; )
@@ -82,6 +86,7 @@ CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
       break;    // list is no longer valid
       }
     }
+#endif // _WIN32
 
   set <string> firedTimersList;
   POSITION pos;
@@ -221,17 +226,18 @@ CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
                                        timer_item->nInvocationCount);
         timer_item->bExecutingScript = false;     // can be deleted now
         }   // end of Lua
+#ifdef _WIN32
       else
         {
         // prepare for the arguments (so far, 1 which is the timer name)
-  
+
         // WARNING - arguments should appear in REVERSE order to what the sub expects them!
 
         enum
           {
           eTimerName,
           eArgCount,     // this MUST be last
-          };    
+          };
 
         COleVariant args [eArgCount];
         DISPPARAMS params = { args, NULL, eArgCount, 0 };
@@ -239,16 +245,17 @@ CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
   //      args [eTimerName] = strTimerName;
         args [eTimerName] = pLabel;
         timer_item->bExecutingScript = true;     // cannot be deleted now
-        ExecuteScript (timer_item->dispid,  
+        ExecuteScript (timer_item->dispid,
                        timer_item->strProcedure,
                        eTimerFired,
-                       strType, 
+                       strType,
                        strReason,
-                       params, 
+                       params,
                        timer_item->nInvocationCount);
         timer_item->bExecutingScript = false;     // can be deleted now
 
         } // not Lua
+#endif // _WIN32
       }     // end of having a dispatch ID
 
 
@@ -277,6 +284,7 @@ CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
 void CMUSHclientDoc::CheckTimers ()
   {
 
+#ifdef _WIN32
   // make sure status line is showing the right thing (after 5 seconds)
   if (m_pActiveCommandView || m_pActiveOutputView)
     {
@@ -295,14 +303,15 @@ void CMUSHclientDoc::CheckTimers ()
       {
       m_LastFlushTime = CTime::GetCurrentTime();
 //      fflush (m_logfile);
-      
+
       fclose (m_logfile);
       m_logfile = fopen (m_logfile_name, "a+");
 
       }
 
     }   // end of log file open
-  
+#endif // _WIN32
+
 // if reconnection wanted, attempt it now ...
 
 // if they want automatic reconnection, do it
@@ -336,6 +345,8 @@ void CMUSHclientDoc::CheckTimers ()
     }
   } // end of CMUSHclientDoc::CheckTimers
 
+#ifdef _WIN32
+
 void CMUSHclientDoc::CheckTickTimers ()
   {
 
@@ -344,7 +355,7 @@ void CMUSHclientDoc::CheckTickTimers ()
     return;
 
   // check for selection change in command window
-  // I know, this is a crappy way of doing it, but the CEditView does 
+  // I know, this is a crappy way of doing it, but the CEditView does
   // not notify of selection changes.
 
   for(POSITION commandpos=GetFirstViewPosition();commandpos!=NULL;)
@@ -370,12 +381,12 @@ void CMUSHclientDoc::CheckTickTimers ()
   } // end of CMUSHclientDoc::CheckTickTimers
 
 
-void CMUSHclientDoc::OnGameResetalltimers() 
+void CMUSHclientDoc::OnGameResetalltimers()
 {
   ResetAllTimers (GetTimerMap ());
   // do plugins
- for (PluginListIterator pit = m_PluginList.begin (); 
-       pit != m_PluginList.end (); 
+ for (PluginListIterator pit = m_PluginList.begin ();
+       pit != m_PluginList.end ();
        ++pit)
     {
     m_CurrentPlugin = *pit;
@@ -385,30 +396,12 @@ void CMUSHclientDoc::OnGameResetalltimers()
   m_CurrentPlugin = NULL;
 }
 
-void CMUSHclientDoc::OnUpdateGameResetalltimers(CCmdUI* pCmdUI) 
+void CMUSHclientDoc::OnUpdateGameResetalltimers(CCmdUI* pCmdUI)
 {
   DoFixMenus (pCmdUI);  // remove accelerators from menus
   pCmdUI->Enable (!m_TimerMap.IsEmpty ());
 }
 
-
-void  CMUSHclientDoc::SortTimers (void)
-  {
-
-int i;
-CString strTimerName;
-CTimer * pTimer;
-POSITION pos;
-
-  GetTimerRevMap ().clear ();
-
-  // extract pointers into a simple array
-  for (i = 0, pos = GetTimerMap ().GetStartPosition(); pos; i++)
-    {
-     GetTimerMap ().GetNextAssoc (pos, strTimerName, pTimer);
-     GetTimerRevMap () [pTimer] = strTimerName;
-    }
-
-  } // end of CMUSHclientDoc::SortTimers
+#endif // _WIN32
 
 

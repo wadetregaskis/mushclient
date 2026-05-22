@@ -1,6 +1,10 @@
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#else
+#include "platform/doc_stub.h"
+#endif
 
 // command evaluation
 
@@ -327,6 +331,36 @@ int iCount = GetTriggerArray ().GetSize ();    // how many there are
 
     m_iTriggersEvaluatedCount++;  // count evaluations
 
+    // On non-Windows, SortTriggers() is a no-op so trigger_item->regexp is
+    // never pre-compiled.  Compile lazily here on first use.
+#ifndef _WIN32
+    if (!trigger_item->regexp)
+      {
+      CString strLazy;
+      if (trigger_item->bRegexp)
+        strLazy = trigger_item->trigger;
+      else
+        strLazy = ConvertToRegularExpression (trigger_item->trigger,
+                                              false,  // bWholeLine
+                                              true);  // bMakeAsterisksWildcards
+      try
+        {
+        trigger_item->regexp = regcomp (strLazy,
+                                        (trigger_item->ignore_case ? PCRE_CASELESS : 0) |
+                                        (trigger_item->bMultiLine  ? PCRE_MULTILINE : 0) |
+                                        (m_bUTF_8 ? PCRE_UTF8 : 0));
+        }
+      catch (CException* e)
+        {
+        e->ReportError ();
+        e->Delete ();
+        continue;
+        }
+      if (!trigger_item->regexp)
+        continue;
+      }
+#endif
+
     // do regular expression, if available
     if (trigger_item->regexp)
       {
@@ -500,7 +534,8 @@ int iCount = GetTriggerArray ().GetSize ();    // how many there are
   } // end of CMUSHclientDoc::EvaluateTrigger 
 
 
-BOOL Set_Up_Set_Strings (const int set_type, 
+#ifdef _WIN32
+BOOL Set_Up_Set_Strings (const int set_type,
                          CString & suggested_name,
                          CString & filter,
                          CString & title,
@@ -808,7 +843,7 @@ CString filename;
 
   } // end of CMUSHclientDoc::save_set
 
-
+#endif // _WIN32
 
 bool CMUSHclientDoc::ProcessOneAliasSequence (const CString strCurrentLine,
                             const bool bCountThem,

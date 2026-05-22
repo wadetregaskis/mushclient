@@ -6,16 +6,22 @@
 
 
 #include "stdafx.h"
-#include "MUSHclient.h"
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
+  #include "MUSHclient.h"
+  #include "mainfrm.h"
+  #include "doc.h"
+  #include <openssl/ssl.h>
+  #include <openssl/err.h>
+#else
+  #include "platform/doc_stub.h"
+  #ifdef OPENSSL_FOUND
+    #include <openssl/ssl.h>
+    #include <openssl/err.h>
+  #endif
+#endif
 
-#include "mainfrm.h"
-
-#include "doc.h"
-
+#include "worldsock.h"
 #include <stddef.h>
-
-#include <openssl/ssl.h>
-#include <openssl/err.h>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -53,6 +59,11 @@ void CWorldSocket::OnReceive(int nErrorCode)
         return;
       }
     }
+
+  // On non-Windows, the MFC view/invalidation mechanism is absent; push any
+  // new lines from m_LineList to the GUI output pane explicitly.
+  // On Windows this is a no-op extra UpdateAllViews call (harmless).
+  pDoc->UpdateAllViews (NULL);
 
   CAsyncSocket::OnReceive(nErrorCode);
 }

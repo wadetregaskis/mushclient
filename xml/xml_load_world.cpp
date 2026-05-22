@@ -2,12 +2,12 @@
 //
 
 #include "stdafx.h"
-#include "..\MUSHclient.h"
-#include "..\doc.h"
-#include "..\MUSHview.h"
-#include "..\genprint.h"
-#include "..\mainfrm.h"
-#include "..\dialogs\ProgDlg.h"
+#include "../MUSHclient.h"
+#include "../doc.h"
+#include "../MUSHview.h"
+#include "../genprint.h"
+#include "../mainfrm.h"
+#include "../dialogs/ProgDlg.h"
 
 /*
 
@@ -745,9 +745,14 @@ POSITION lpos;
       {
       Get_XML_string (*pIncludeElement, "name", strFileName, false, true);
 
-      int iSlash = strFileName.ReverseFind ('\\');
+      {
+      // Find last path separator — accept both '/' and '\' for cross-platform world files.
+      int iSlashF = strFileName.ReverseFind ('/');
+      int iSlashB = strFileName.ReverseFind ('\\');
+      int iSlash  = (iSlashF > iSlashB) ? iSlashF : iSlashB;
       if (iSlash != -1)
         strFileName = strFileName.Mid (iSlash + 1);
+      }
 
       pDlg->SetStatus (TFormat ("Loading plugin: %s", (LPCTSTR) strFileName));
       pDlg->StepIt ();

@@ -8,17 +8,22 @@
 #include "doc.h"
 #include "TextView.h"
 #include "TextDocument.h"
+#ifdef _WIN32
 #include <process.h>
+#else
+#include <unistd.h>
+#define _getpid getpid
+#endif
 #include "mainfrm.h"
 #include "color.h"
 
-#include "scripting\errors.h"
+#include "scripting/errors.h"
 
-#include "pcre\config.h"
-#include "pcre\pcre_internal.h"
+#include "pcre/config.h"
+#include "pcre/pcre_internal.h"
 
 #define PNG_NO_CONSOLE_IO
-#include "png\png.h"
+#include "png/png.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -1769,21 +1774,33 @@ bool FindLuaFunction (lua_State * L, const char * sName)
 // get a pathname and extract the directory from it
 CString ExtractDirectory (CString str)
   {
+#ifdef _WIN32
   int iSlash = str.ReverseFind ('\\');
   if (iSlash == -1)
      str = ".\\";
   else
     str = str.Left (iSlash + 1);
+#else
+  // On POSIX paths use '/' but also accept '\' in case of cross-platform world files.
+  int iSlashF = str.ReverseFind ('/');
+  int iSlashB = str.ReverseFind ('\\');
+  int iSlash  = (iSlashF > iSlashB) ? iSlashF : iSlashB;
+  if (iSlash == -1)
+     str = "./";
+  else
+    str = str.Left (iSlash + 1);
+#endif
   return str;
   } // end of ExtractDirectory
 
-// if string ends in backslash, get rid of it
+// if string ends in a path separator, get rid of it
 CString RemoveFinalSlash (CString str)
   {
 
   if (!str.IsEmpty ())
     {
-    if (str.Right (1) == '\\')
+    char last = str [str.GetLength () - 1];
+    if (last == '\\' || last == '/')
       str = str.Left (str.GetLength () - 1);
     }
 
@@ -2662,16 +2679,16 @@ CString TFormat (const char * sFormat, ...)
       // skip special flags (
       while (strchr(FORMATFLAGS, *sFormatItem))
         sFormatItem++;  /* skip flags */
-      if (isdigit(unsigned char (*sFormatItem)))
+      if (isdigit((unsigned char)(*sFormatItem)))
         sFormatItem++;  /* skip width */
-      if (isdigit(unsigned char (*sFormatItem)))
+      if (isdigit((unsigned char)(*sFormatItem)))
         sFormatItem++;  /* (2 digits at most) */
       if (*sFormatItem == '.')
         {
         sFormatItem++;
-        if (isdigit(unsigned char (*sFormatItem)))
+        if (isdigit((unsigned char)(*sFormatItem)))
           sFormatItem++;  /* skip precision */
-        if (isdigit(unsigned char (*sFormatItem)))
+        if (isdigit((unsigned char)(*sFormatItem)))
           sFormatItem++;  /* (2 digits at most) */
         }
 
@@ -2817,6 +2834,7 @@ CString TFormat (const char * sFormat, ...)
   }    // end of TFormat
 
 // display message box - using UTF-8
+#ifdef _WIN32
 int UMessageBox (const char * sText, UINT nType, const char * sTitle)
   {
 
@@ -2901,14 +2919,18 @@ int UMessageBox (const char * sText, UINT nType, const char * sTitle)
 	return nResult;
 
   }   // end of UMessageBox
+#endif // _WIN32
 
 // display message box - translated
+#ifdef _WIN32
 int TMessageBox (const char * sText, UINT nType)
   {
   return UMessageBox (Translate (sText), nType);
   }
+#endif // _WIN32
 
 
+#ifdef _WIN32
 bool SendToFrontFound;
 
 /* callback function for EnumWindows */
@@ -2954,6 +2976,7 @@ bool SendToFront (const char * name)
   EnumWindows (&EnumWindowsProc, (int) name);
   return SendToFrontFound;
   } /* end of SendToFront */
+#endif // _WIN32
 
 
 static void user_error_fn(png_structp png_ptr,
@@ -3336,7 +3359,9 @@ int myAtoF(const char *z, double *pResult)
 }  // end of myAtoF
 
 
+#ifdef _WIN32
 #include <direct.h>
+#endif
 
 // change to the current file browsing directory, browse for a file, put it back
 
@@ -3360,8 +3385,13 @@ void ChangeToStartupDirectory ()
 
   file_browsing_dir [sizeof (file_browsing_dir) - 2] = 0;
 
+#ifdef _WIN32
   if (file_browsing_dir [strlen (file_browsing_dir) - 1] != '\\')
     strcat (file_browsing_dir, "\\");
+#else
+  if (file_browsing_dir [strlen (file_browsing_dir) - 1] != '/')
+    strcat (file_browsing_dir, "/");
+#endif
 
 
   // now change back to startup directory

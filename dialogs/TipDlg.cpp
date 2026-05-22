@@ -1,10 +1,12 @@
 #include "stdafx.h"
-#include "..\MUSHclient.h"
+#include "../MUSHclient.h"
 // CG: This file added by 'Tip of the Day' component.
 
+#ifdef _WIN32
 #include <winreg.h>
-#include <sys\stat.h>
-#include <sys\types.h>
+#endif
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "TipDlg.h"
 
@@ -38,11 +40,19 @@ char * p;
 
     strcpy (filename, fullfilename);
 
+#ifdef _WIN32
     p = strrchr (filename, '\\');
+#else
+    p = strrchr (filename, '/');
+#endif
     if (p)
       *p = 0;
 
+#ifdef _WIN32
     strcat (filename, "\\tips.txt");
+#else
+    strcat (filename, "/tips.txt");
+#endif
     }
   else
     strcpy (filename, "tips.txt");

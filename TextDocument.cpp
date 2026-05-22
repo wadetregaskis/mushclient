@@ -12,7 +12,9 @@ Copyright (c) 2000 Nick Gammon.
 #include "TextDocument.h"
 #include "TextView.h"
 #include "MainFrm.h"
-#include <process.h>    
+#ifdef _WIN32
+#include <process.h>
+#endif
 #include "doc.h"
 
 #ifdef _DEBUG
@@ -116,7 +118,11 @@ void CTextDocument::Dump(CDumpContext& dc) const
 void CTextDocument::Serialize(CArchive& ar)
 {
 	// CEditView contains an edit control which handles all serialization
-	((CTextView*)m_viewList.GetHead())->SerializeRaw(ar);
+#ifdef _WIN32
+	((CTextView*)(m_viewList.empty() ? nullptr : m_viewList.front()))->SerializeRaw(ar);
+#else
+	if (!m_viewList.empty()) ((CTextView*)m_viewList.front())->SerializeRaw(ar);
+#endif
 
   if (ar.IsLoading ())
     CreateMonitoringThread (ar.GetFile ()->GetFilePath ());
@@ -146,6 +152,7 @@ void CTextDocument::OnCloseDocument()
 
 // ------------------- file change monitoring thread -------------------------
 
+#ifdef _WIN32
 void ThreadFunc(LPVOID pParam)
 {
   CThreadData*	pData = (CThreadData*) pParam;
@@ -239,6 +246,7 @@ HANDLE CreateMonitoringThread(const char * sName, DWORD pDoc, CEvent & eventFile
 
 	// Thread will delete data object
 }
+#endif // _WIN32
 
 
 // ------------------- handle change to file -------------------------
@@ -318,7 +326,7 @@ void CTextDocument::CreateMonitoringThread(const char * sName)
   m_timeFileMod = status.m_mtime;
 
   // create the thread
-  m_pThread = ::CreateMonitoringThread (sName, (DWORD) this, m_eventFileChanged);
+  m_pThread = ::CreateMonitoringThread (sName, (DWORD)(DWORD_PTR) this, m_eventFileChanged);
 
   UpdateAllViews  (NULL);     // force window title to be redrawn
 }
@@ -465,7 +473,7 @@ CMUSHclientDoc * pDoc = FindWorld ();
 BOOL CTextDocument::SaveModified() 
 {
 // don't bother asking if they want to save an empty document
-CTextView* pView = (CTextView*) m_viewList.GetHead();
+CTextView* pView = (CTextView*) (m_viewList.empty() ? nullptr : m_viewList.front());
   
 	if (GetText (pView->GetEditCtrl ()).IsEmpty ())
     return TRUE;
@@ -519,7 +527,7 @@ CString strContents;
 
 void CTextDocument::SetReadOnly (BOOL bReadOnly)
   {
-CTextView* pView = (CTextView*) m_viewList.GetHead();
+CTextView* pView = (CTextView*) (m_viewList.empty() ? nullptr : m_viewList.front());
   
   if (pView)
     pView->GetEditCtrl ().SetReadOnly (bReadOnly);

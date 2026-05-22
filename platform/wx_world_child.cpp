@@ -1002,6 +1002,24 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 {
     int code = evt.GetKeyCode();
 
+    // Escape: snap the output pane back to the bottom (re-engage auto-scroll).
+    // Useful when the user has scrolled up and wants to return to live output.
+    if (code == WXK_ESCAPE) {
+        if (m_output) m_output->ScrollToBottom();
+        return;   // consume — don't close dialogs or deselect in the input bar
+    }
+
+    // Page Up / Page Down: scroll the output pane one page without leaving the
+    // input bar.  This lets the user page through output while still typing.
+    if (code == WXK_PAGEUP) {
+        if (m_output) m_output->ScrollPage(-1);
+        return;
+    }
+    if (code == WXK_PAGEDOWN) {
+        if (m_output) m_output->ScrollPage(+1);
+        return;
+    }
+
     // Tab: complete the current partial command from history.
     // Searches backward through m_history for the most-recently-used command
     // that starts with the current input text.  A second Tab cycles further back.

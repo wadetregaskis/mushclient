@@ -240,6 +240,44 @@ void COutputPane::SetPaneBackground(unsigned long col)
     Refresh(false);
 }
 
+void COutputPane::ScrollToBottom()
+{
+    bool wasAuto = m_autoScroll;
+    m_autoScroll = true;
+    UpdateScrollbars(true);
+    if (!wasAuto && m_fn_autoscroll_changed)
+        m_fn_autoscroll_changed(true);
+}
+
+void COutputPane::ScrollPage(int direction)
+{
+    int clientH;
+    GetClientSize(nullptr, &clientH);
+    int unitH;
+    GetScrollPixelsPerUnit(nullptr, &unitH);
+    if (unitH <= 0) return;
+
+    int scrollX, scrollY;
+    GetViewStart(&scrollX, &scrollY);
+    int pageUnits = std::max(1, clientH / unitH - 1);
+
+    int newY;
+    if (direction < 0)
+        newY = std::max(0, scrollY - pageUnits);
+    else
+        newY = scrollY + pageUnits;   // Scroll() clamps to valid range
+
+    Scroll(scrollX, newY);
+
+    // Re-evaluate whether we're now at the bottom.
+    GetViewStart(nullptr, &newY);   // read back clamped position
+    int totalH = (int)m_lines.size() * m_lineH;
+    bool wasAuto = m_autoScroll;
+    m_autoScroll = (unitH > 0) && (newY * unitH + clientH >= totalH - m_lineH);
+    if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
+        m_fn_autoscroll_changed(m_autoScroll);
+}
+
 void COutputPane::ClearOutput()
 {
     m_lines.clear();
@@ -647,38 +685,40 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
         return;
     }
 
-    // Check for MXP link click.
-    if (m_fn_link_clicked && m_lineH > 0 && !m_lines.empty()) {
+    m_linkAtDown.clear();
+
+    // Shift+click: extend the existing selection (keep anchor, move focus).
+    if (evt.ShiftDown() && m_selAnchor.valid()) {
+        m_selFocus = MouseToSelPoint(evt);
+        Refresh(false);
+        evt.Skip();
+        return;
+    }
+
+    // Check whether the click landed on a link run.  We store the action now
+    // but don't fire it yet — we fire on mouse-up only if no drag occurred so
+    // that the user can still select/copy link text by dragging over it.
+    if (m_lineH > 0 && !m_lines.empty()) {
         int lineIdx = YToLine(evt.GetY());
         if (lineIdx >= 0 && lineIdx < (int)m_lines.size()) {
-            const SOutputLine& line = m_lines[lineIdx];
-            bool hasLink = false;
-            for (const auto& run : line)
-                if (!run.action.empty()) { hasLink = true; break; }
+            int scrollX, scrollY;
+            GetViewStart(&scrollX, &scrollY);
+            int unitW, unitH;
+            GetScrollPixelsPerUnit(&unitW, &unitH);
+            int clickVirtualX = evt.GetX() + scrollX * unitW;
 
-            if (hasLink) {
-                int scrollX, scrollY;
-                GetViewStart(&scrollX, &scrollY);
-                int unitW, unitH;
-                GetScrollPixelsPerUnit(&unitW, &unitH);
-                int clickVirtualX = evt.GetX() + scrollX * unitW;
-
-                // Use m_charW (the same monospace step used by DrawLine) so
-                // hit-test coordinates match the rendered glyph positions.
-                int runX = 0;
-                for (const auto& run : line) {
-                    if (run.text.empty()) continue;
-                    int runW = (int)run.text.size() * m_charW;
-                    if (!run.action.empty() &&
-                        clickVirtualX >= runX &&
-                        clickVirtualX <  runX + runW)
-                    {
-                        m_fn_link_clicked(run.action);
-                        evt.Skip();
-                        return;
-                    }
-                    runX += runW;
+            int runX = 0;
+            for (const auto& run : m_lines[lineIdx]) {
+                if (run.text.empty()) continue;
+                int runW = (int)run.text.size() * m_charW;
+                if (!run.action.empty() &&
+                    clickVirtualX >= runX &&
+                    clickVirtualX <  runX + runW)
+                {
+                    m_linkAtDown = run.action;
+                    break;
                 }
+                runX += runW;
             }
         }
     }
@@ -703,6 +743,14 @@ void COutputPane::OnLeftUp(wxMouseEvent& evt)
         m_selFocus  = MouseToSelPoint(evt);
         if (HasCapture()) ReleaseMouse();
         Refresh(false);
+
+        // Fire a link click only when the mouse didn't move (no drag).
+        // This lets the user drag over link text to select/copy it.
+        if (!m_linkAtDown.empty() && m_selAnchor == m_selFocus) {
+            if (m_fn_link_clicked)
+                m_fn_link_clicked(m_linkAtDown);
+        }
+        m_linkAtDown.clear();
 
         // Auto-copy non-empty selection to clipboard (terminal-style).
         SelPoint s, e;
@@ -942,6 +990,22 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
         AdjustFontSize(-1); return;
     }
     if (evt.ControlDown() && code == '0') { ResetFontSize(); return; }
+
+    if (evt.ControlDown() && code == WXK_HOME) {
+        // Ctrl+Home: scroll to the very top of the buffer.
+        int scrollX;
+        GetViewStart(&scrollX, nullptr);
+        Scroll(scrollX, 0);
+        bool wasAuto = m_autoScroll;
+        m_autoScroll = false;
+        if (wasAuto && m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
+        return;
+    }
+    if (evt.ControlDown() && code == WXK_END) {
+        // Ctrl+End: scroll to the bottom and re-engage auto-scroll.
+        ScrollToBottom();
+        return;
+    }
 
     bool isScrollKey = (code == WXK_PAGEUP   || code == WXK_PAGEDOWN ||
                         code == WXK_HOME      || code == WXK_END      ||

@@ -98,6 +98,14 @@ public:
     // Select all text in the buffer.
     void SelectAll();
 
+    // Scroll to the very bottom of the buffer and re-engage auto-scroll.
+    // Safe to call at any time; no-op if already at the bottom.
+    void ScrollToBottom();
+
+    // Scroll one page up (direction=-1) or down (+1).
+    // Updates the auto-scroll state accordingly.
+    void ScrollPage(int direction);
+
     // Line height / char width in pixels (updated on font change).
     int LineHeight() const { return m_lineH; }
     int CharWidth()  const { return m_charW; }
@@ -218,8 +226,12 @@ private:
     unsigned long m_bgColor  = 0;   // COLORREF
     int           m_batchDepth = 0;
 
-    bool m_dragging   = false;
-    int  m_dragStartY = 0;
+    bool        m_dragging   = false;
+    int         m_dragStartY = 0;
+
+    // Stored at mouse-down time when the cursor is over a link run.
+    // Fired as a link click on mouse-up only if no drag occurred.
+    std::string m_linkAtDown;
 
     bool m_autoScroll = true;
 

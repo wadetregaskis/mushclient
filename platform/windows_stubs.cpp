@@ -1,0 +1,184 @@
+// platform/windows_stubs.cpp — non-Windows stub implementations for Windows-
+// only classes that are referenced from cross-platform files compiled into
+// mushcore (ProcessPreviousLine.cpp, timers.cpp, serialize.cpp, evaluate.cpp).
+//
+// Build: compiled only on non-Windows (guarded by #ifndef _WIN32).
+// Every definition here corresponds to a method or static data member that
+// lives in a Windows-only .cpp file (MUSHview.cpp, sendvw.cpp, TimerWnd.cpp,
+// chatsock.cpp, paneline.cpp, mainfrm.cpp) and would otherwise produce
+// "undefined reference" linker errors.
+
+#ifndef _WIN32
+
+// Pull in the full MFC stub types (CMainFrame, CView, CMDIChildWnd, etc.)
+// in the same order that ProcessPreviousLine.cpp uses, so that CMUSHView and
+// CSendView are fully defined (including their DECLARE_DYNCREATE static members).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "MUSHview.h"
+#include "sendvw.h"
+#include "mainfrm.h"
+#include "paneline.h"
+
+// ── CMainFrame global (extern-declared in mainfrm_stub.h) ─────────────────
+// timers.cpp and serialize.cpp reference Frame directly; doc_portable.cpp
+// redirects its own Frame uses to g_stub_frame via a macro.
+CMainFrame Frame;
+
+// ── CMUSHView static CRuntimeClass ────────────────────────────────────────
+// Normally defined by IMPLEMENT_DYNCREATE(CMUSHView, CView) in MUSHview.cpp.
+// ProcessPreviousLine.cpp uses RUNTIME_CLASS(CMUSHView) for IsKindOf checks
+// (which always return FALSE on non-Windows, so the value doesn't matter).
+CRuntimeClass CMUSHView::classCMUSHView = { "CMUSHView" };
+
+// ── CSendView static CRuntimeClass + method ───────────────────────────────
+// Normally defined in sendvw.cpp.
+CRuntimeClass CSendView::classCSendView = { "CSendView" };
+
+// ── CAlias / CTrigger / CTimer static CRuntimeClass members ──────────────
+// Normally defined by IMPLEMENT_DYNAMIC in doc.cpp (mushapp only).
+// xml_load_world_portable.cpp calls GetRuntimeClass() on these types to do
+// IsKindOf checks; the static members must exist in mushcore too.
+CRuntimeClass CAlias::classCAlias           = { "CAlias" };
+CRuntimeClass CTrigger::classCTrigger       = { "CTrigger" };
+CRuntimeClass CTimer::classCTimer           = { "CTimer" };
+
+// ── CMDIClientWnd / CMainFrame static CRuntimeClass members ──────────────
+// Normally defined by IMPLEMENT_DYNAMIC in Windows-only MFC source files.
+// mainfrm_stub.h / MDIClientWnd.h use DECLARE_DYNAMIC which generates
+// GetRuntimeClass() returning &classCXxx, so the statics must be defined.
+CRuntimeClass CMDIClientWnd::classCMDIClientWnd = { "CMDIClientWnd" };
+CRuntimeClass CMainFrame::classCMainFrame       = { "CMainFrame" };
+
+void CSendView::CheckForSelectionChange()
+{
+    // no-op: timers.cpp calls this to update the send-view selection state,
+    // which has no meaning on non-Windows.
+}
+
+// ── CMainFrame ctor / dtor ────────────────────────────────────────────────
+// mainfrm_stub.h declares CMainFrame() and ~CMainFrame() but provides no
+// inline bodies.  Provide trivial out-of-line definitions here so the Frame
+// global (defined above) can be constructed/destructed.
+CMainFrame::CMainFrame()  {}
+CMainFrame::~CMainFrame() {}
+
+// ── CMainFrame method stubs needed by mushcore ────────────────────────────
+// timers.cpp calls Frame.SetStatusMessage(); serialize.cpp calls SetStatusMessageNow().
+// On non-Windows, forward to the wxStatusBar via the hook pointer.
+#include "platform/wx_mfc_hooks.h"
+void CMainFrame::SetStatusMessage    (const CString& msg) {
+    if (g_wxhook_set_status)
+        g_wxhook_set_status(static_cast<const char*>(msg));
+}
+void CMainFrame::SetStatusMessageNow (const CString& msg) {
+    if (g_wxhook_set_status)
+        g_wxhook_set_status(static_cast<const char*>(msg));
+}
+
+// ── CTimerWnd::ChangeTimerRate ────────────────────────────────────────────
+// serialize.cpp calls m_pTimerWnd->ChangeTimerRate().
+// TimerWnd.h (included via doc.h) declares the real CTimerWnd but
+// TimerWnd.cpp is Windows-only; stub here.
+void CTimerWnd::ChangeTimerRate(int) {}
+
+// ── CChatSocket method stubs ──────────────────────────────────────────────
+// ProcessPreviousLine.cpp calls these.  The real implementations are in
+// chatsock.cpp (Windows-only).
+void CChatSocket::Process_Snoop   (CString) {}
+void CChatSocket::SendChatMessage (int, CString, long) {}
+
+// ── CMUSHclientDoc method stubs (compiled against doc.h) ──────────────────
+// All methods listed below are declared in doc.h (the full Windows class)
+// but only implemented in doc.cpp / other Windows-only files.  Compiled
+// against doc.h their signatures differ from the inline stubs in doc_stub.h,
+// which are only visible to TUs that include doc_stub.h.
+// Providing out-of-line no-op definitions here satisfies the linker for
+// the TUs that include doc.h (evaluate.cpp, ProcessPreviousLine.cpp,
+// timers.cpp, serialize.cpp).
+
+BOOL CMUSHclientDoc::ConnectSocket() { return TRUE; /* not connected */ }
+
+bool CMUSHclientDoc::FindStyle(const CLine* /*pLine*/,
+                               int /*iWantedCol*/,
+                               int& /*iCol*/,
+                               CStyle*& /*pStyle*/,
+                               POSITION& /*foundpos*/) const { return false; }
+
+const bool CMUSHclientDoc::CheckScriptingAvailable(const char* /*sWhat*/,
+                                                   const DISPID /*dispid*/,
+                                                   const char* /*sScript*/)
+{ return false; }
+
+void CMUSHclientDoc::SortTriggers() {}
+void CMUSHclientDoc::SortAliases()  {}
+void CMUSHclientDoc::Redraw()       {}
+
+void CMUSHclientDoc::DoFixMenus(CCmdUI* /*pCmdUI*/) {}
+void CMUSHclientDoc::ShowStatusLine(bool) {}
+
+// ColourNote(LPCTSTR, LPCTSTR, LPCTSTR) is now implemented in doc_portable.cpp
+// with real terminal ANSI colour output (replaces the old no-op stub here).
+
+void CMUSHclientDoc::OnFileReloaddefaults() {}
+
+CString CMUSHclientDoc::GetAlphaOptionItem(int) { return CString(""); }
+
+// doc.h: bool SendToAllPluginCallbacks(const string&, const char*, const bool = false)
+bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& /*sName*/,
+                                              const char*   /*sText*/,
+                                              const bool    bStopOnFalse)
+{ return bStopOnFalse; }
+
+// doc.h: UINT Load_World_XML(CArchive&, unsigned long, unsigned long, UINT*×8)
+UINT CMUSHclientDoc::Load_World_XML(CArchive& /*ar*/,
+                                    const unsigned long /*iMask*/,
+                                    const unsigned long /*iFlags*/,
+                                    UINT* /*piTriggers*/,
+                                    UINT* /*piAliases*/,
+                                    UINT* /*piTimers*/,
+                                    UINT* /*piMacros*/,
+                                    UINT* /*piVariables*/,
+                                    UINT* /*piColours*/,
+                                    UINT* /*piKeypad*/,
+                                    UINT* /*piPrinting*/) { return 0; }
+
+// doc.h: void Save_World_XML(CArchive&, unsigned long, CString = "")
+void CMUSHclientDoc::Save_World_XML(CArchive& /*ar*/,
+                                    const unsigned long /*iMask*/,
+                                    CString /*strComment*/) {}
+
+void CMUSHclientDoc::Serialize_World_XML(CArchive& /*ar*/) {}
+
+// ── CMainFrame virtual-override stubs ─────────────────────────────────────
+// mainfrm_stub.h declares these as overrides of CMDIFrameWnd virtuals but
+// provides no inline bodies.  Without out-of-line definitions the vtable for
+// CMainFrame has dangling entries, causing link errors when windows_stubs.cpp.o
+// is pulled into a link that constructs Frame (the global CMainFrame instance).
+int  CMainFrame::OnCreate        (CREATESTRUCT*)    { return 0;     }
+void CMainFrame::OnDestroy       ()                  {}
+void CMainFrame::OnClose         ()                  {}
+void CMainFrame::OnSize          (UINT, int, int)    {}
+void CMainFrame::OnActivate      (UINT, CWnd*, BOOL) {}
+void CMainFrame::OnTimer         (UINT)              {}
+void CMainFrame::OnSysCommand    (UINT, LPARAM)      {}
+BOOL CMainFrame::PreTranslateMessage (MSG*)          { return FALSE; }
+BOOL CMainFrame::PreCreateWindow     (CREATESTRUCT&) { return TRUE;  }
+LRESULT CMainFrame::WindowProc   (UINT, WPARAM, LPARAM) { return 0; }
+void CMainFrame::OnUpdateFrameMenu  (HMENU)          {}
+void CMainFrame::OnUpdateFrameTitle (BOOL)           {}
+
+// ── CMDIClientWnd ctor / dtor ─────────────────────────────────────────────
+// MDIClientWnd.h declares explicit (non-inline) ctor/dtor.  The real
+// CMDIClientWnd.cpp is not compiled on non-Windows; stub here.
+CMDIClientWnd::CMDIClientWnd()  {}
+CMDIClientWnd::~CMDIClientWnd() {}
+BOOL CMDIClientWnd::OnEraseBkgnd(CDC*) { return FALSE; }
+
+// ── CMyToolBar::DoPaint ───────────────────────────────────────────────────
+// mainfrm_stub.h declares DoPaint() virtual with no body; the vtable entry
+// must be satisfied even though no window is ever painted on non-Windows.
+void CMyToolBar::DoPaint(CDC*) {}
+
+#endif // !_WIN32

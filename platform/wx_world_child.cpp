@@ -1766,9 +1766,12 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_note            = nullptr;
         m_doc->m_fn_begin_batch     = nullptr;
         m_doc->m_fn_flush           = nullptr;
-        m_doc->m_fn_get_command     = nullptr;
-        m_doc->m_fn_set_command     = nullptr;
-        m_doc->m_fn_set_output_font = nullptr;
+        m_doc->m_fn_get_command          = nullptr;
+        m_doc->m_fn_set_command          = nullptr;
+        m_doc->m_fn_set_output_font      = nullptr;
+        m_doc->m_fn_set_scroll           = nullptr;
+        m_doc->m_fn_set_selection        = nullptr;
+        m_doc->m_fn_set_command_selection = nullptr;
 
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.

@@ -5831,14 +5831,53 @@ static const luaL_Reg worldlib[] = {
     { "GetFrame",               L_GuiNilStub },
     { "PlaySoundMemory",        L_GuiOkStub  },
     { "ReadNamesFile",          L_GuiOkStub  },
-    { "SetCommandSelection",    L_GuiOkStub  },
+    { "SetCommandSelection",    [](lua_State* L) -> int {
+        CMUSHclientDoc* pDoc = world_doc(L);
+        long first = (long)luaL_checknumber(L, 1);
+        long last  = (long)luaL_optnumber(L, 2, -1);
+        if (pDoc->m_fn_set_command_selection)
+            pDoc->m_fn_set_command_selection(first, last);
+        lua_pushnumber(L, eOK); return 1;
+    }},
     { "SetCommandWindowHeight", L_GuiOkStub  },
     { "SetForegroundImage",     L_GuiOkStub  },
     { "SetFrameBackgroundColour",L_GuiOkStub },
-    { "SetInputFont",           L_GuiOkStub  },
-    { "SetOutputFont",          L_GuiOkStub  },
-    { "SetScroll",              L_GuiOkStub  },
-    { "SetSelection",           L_GuiOkStub  },
+    { "SetInputFont",           [](lua_State* L) -> int {
+        CMUSHclientDoc* pDoc = world_doc(L);
+        const char* face = luaL_optstring(L, 1, "");
+        int pts    = (int)luaL_optnumber(L, 2, 0);
+        bool bold  = lua_toboolean(L, 3) != 0;
+        bool italic= lua_toboolean(L, 4) != 0;
+        if (pDoc->m_fn_set_output_font)
+            pDoc->m_fn_set_output_font(std::string(face), pts, bold, italic);
+        lua_pushnumber(L, eOK); return 1;
+    }},
+    { "SetOutputFont",          [](lua_State* L) -> int {
+        CMUSHclientDoc* pDoc = world_doc(L);
+        const char* face = luaL_optstring(L, 1, "");
+        int pts    = (int)luaL_optnumber(L, 2, 0);
+        if (pDoc->m_fn_set_output_font)
+            pDoc->m_fn_set_output_font(std::string(face), pts, false, false);
+        lua_pushnumber(L, eOK); return 1;
+    }},
+    { "SetScroll",              [](lua_State* L) -> int {
+        CMUSHclientDoc* pDoc = world_doc(L);
+        long pos = (long)luaL_checknumber(L, 1);
+        // Visible (arg 2) is ignored on non-Windows.
+        if (pDoc->m_fn_set_scroll && pos != -2)
+            pDoc->m_fn_set_scroll(pos);
+        lua_pushnumber(L, eOK); return 1;
+    }},
+    { "SetSelection",           [](lua_State* L) -> int {
+        CMUSHclientDoc* pDoc = world_doc(L);
+        int sl = (int)luaL_checknumber(L, 1);
+        int el = (int)luaL_checknumber(L, 2);
+        int sc = (int)luaL_optnumber(L, 3, 0);
+        int ec = (int)luaL_optnumber(L, 4, 0);
+        if (pDoc->m_fn_set_selection)
+            pDoc->m_fn_set_selection(sl, el, sc, ec);
+        lua_pushnumber(L, eOK); return 1;
+    }},
     { "SetToolBarPosition",     L_GuiOkStub  },
     { "ShiftTabCompleteItem",   L_GuiNilStub },
     { "ShowInfoBar",            L_GuiOkStub  },

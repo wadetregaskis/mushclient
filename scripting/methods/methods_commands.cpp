@@ -603,12 +603,17 @@ long CMUSHclientDoc::ShiftTabCompleteItem(LPCTSTR Item)
 
 
 
-long CMUSHclientDoc::SetCommandSelection(long First, long Last) 
+long CMUSHclientDoc::SetCommandSelection(long First, long Last)
 {
+#ifndef _WIN32
+  if (m_fn_set_command_selection)
+    m_fn_set_command_selection(First, Last);
+  return eOK;
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	  {
 		  CSendView* pmyView = (CSendView*)pView;
@@ -618,6 +623,6 @@ long CMUSHclientDoc::SetCommandSelection(long First, long Last)
     }   // end of loop through views
 
 	return eOK;
-
+#endif
 }  // end of CMUSHclientDoc::SetCommandSelection
 

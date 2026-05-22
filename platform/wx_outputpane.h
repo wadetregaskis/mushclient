@@ -107,12 +107,21 @@ public:
     // Copy the selected text to the clipboard.
     void CopySelection();
 
+    // Programmatically select a range of text.  Arguments are 1-based line and
+    // column numbers, matching the MUSHclient SetSelection() Lua API.
+    // Pass all-zero arguments to clear the selection.
+    void SetSelectionRange(int startLine, int endLine, int startCol, int endCol);
+
     // Select all text in the buffer.
     void SelectAll();
 
     // Scroll to the very bottom of the buffer and re-engage auto-scroll.
     // Safe to call at any time; no-op if already at the bottom.
     void ScrollToBottom();
+
+    // Scroll to a specific 0-based line index.  Clamps to [0, lineCount-1].
+    // Disengages auto-scroll (same as the user manually scrolling up).
+    void ScrollToLine(int lineIdx);
 
     // Scroll to the very top of the buffer (disengages auto-scroll).
     // Safe to call at any time; no-op if already at the top.

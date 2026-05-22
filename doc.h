@@ -1492,6 +1492,19 @@ public:
   // Args: face name (empty = keep current), point size (0 = keep current),
   //       bold flag, italic flag.
   std::function<void(const std::string&, int, bool, bool)> m_fn_set_output_font;
+
+  // world.SetScroll(Position, Visible): scroll the output pane.
+  // Position: -1 = bottom, -2 = no change, >= 0 = line index (0-based).
+  // Visible is ignored (scrollbar always shown on non-Windows).
+  std::function<void(long position)>  m_fn_set_scroll;
+
+  // world.SetSelection(StartLine, EndLine, StartColumn, EndColumn): select a
+  // text range in the output pane.  Arguments are 1-based; 0 = no selection.
+  std::function<void(int, int, int, int)>  m_fn_set_selection;
+
+  // world.SetCommandSelection(First, Last): select text in the input bar.
+  // Arguments are 1-based character positions; Last=-1 means end of text.
+  std::function<void(long, long)>  m_fn_set_command_selection;
 #endif
 
   protected:

@@ -317,6 +317,52 @@ void COutputPane::ScrollToTop()
     Refresh(false);
 }
 
+void COutputPane::ScrollToLine(int lineIdx)
+{
+    if (m_lines.empty()) return;
+    lineIdx = std::max(0, std::min((int)m_lines.size() - 1, lineIdx));
+    int unitH;
+    GetScrollPixelsPerUnit(nullptr, &unitH);
+    if (unitH > 0)
+        Scroll(0, lineIdx * m_lineH / unitH);
+    bool wasAuto = m_autoScroll;
+    m_autoScroll = false;
+    if (wasAuto && m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
+    Refresh(false);
+}
+
+void COutputPane::SetSelectionRange(int startLine, int endLine,
+                                     int startCol, int endCol)
+{
+    if (startLine == 0 && endLine == 0 && startCol == 0 && endCol == 0) {
+        // Clear selection.
+        m_selAnchor = SelPoint{};
+        m_selFocus  = SelPoint{};
+        Refresh(false);
+        return;
+    }
+
+    int n = (int)m_lines.size();
+    // Convert 1-based → 0-based; clamp to buffer.
+    int sl = std::max(0, std::min(n - 1, startLine - 1));
+    int el = std::max(0, std::min(n - 1, endLine   - 1));
+
+    // Column 0 in the API means "start / end of line".
+    int lineLen = [&](int li) {
+        int len = 0;
+        for (const auto& run : m_lines[li]) len += (int)run.text.size();
+        return len;
+    };
+    int sc = (startCol <= 0) ? 0
+           : std::min(lineLen(sl), startCol - 1);
+    int ec = (endCol   <= 0) ? lineLen(el)
+           : std::min(lineLen(el), endCol - 1);
+
+    m_selAnchor = SelPoint{sl, sc};
+    m_selFocus  = SelPoint{el, ec};
+    Refresh(false);
+}
+
 void COutputPane::ScrollPage(int direction)
 {
     int clientH;

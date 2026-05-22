@@ -713,9 +713,15 @@ BSTR CMUSHclientDoc::Menu(LPCTSTR Items, LPCTSTR Default)
 
 // Sets the selection in the first output window found
 
-void CMUSHclientDoc::SetSelection(long StartLine, long EndLine, long StartColumn, long EndColumn) 
+void CMUSHclientDoc::SetSelection(long StartLine, long EndLine, long StartColumn, long EndColumn)
 {
-
+#ifndef _WIN32
+  // Forward to the wxWidgets output pane selection.  Arguments are 1-based;
+  // convert to 0-based SelPoint coords expected by COutputPane.
+  if (m_fn_set_selection)
+    m_fn_set_selection((int)StartLine, (int)EndLine,
+                       (int)StartColumn, (int)EndColumn);
+#else
   CMUSHView * pmyView = GetFirstOutputWindow ();
 
   // return if unable
@@ -741,7 +747,7 @@ void CMUSHclientDoc::SetSelection(long StartLine, long EndLine, long StartColumn
 
   // Invalidate new stuff
   UpdateAllViews (NULL);
-
+#endif
 }   // end of CMUSHclientDoc::SetSelection
 
 

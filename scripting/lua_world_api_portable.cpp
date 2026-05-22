@@ -1022,43 +1022,90 @@ static int L_GetLineCount(lua_State* L)
     return 1;
 }
 
-// ── GetInfo (partial) ─────────────────────────────────────────────────────────
-// Returns common world info fields by numeric type.
-// Full list: see scripting/methods/methods_info.cpp.
-// We implement the most portable subset.
-//   1  = world name
-//   2  = world address (host)
-//   3  = world port
-//   4  = connected (bool)
-//   5  = total lines received
-//   6  = total lines sent
-//   7  = lines in buffer
-//   16 = MUSHclient version string
+// ── GetInfo ───────────────────────────────────────────────────────────────────
+// Returns world / session info fields by numeric type.
+// Type numbers match the Windows COM API (see scripting/methods/methods_info.cpp).
+//
+// Strings (configuration — cases 1-89):
+//   1   = server address (m_server)
+//   2   = world name (m_mush_name)
+//   3   = character name (m_name)
+//   51  = current log file name
+//   52  = last immediate script expression (always "")
+//   72  = MUSHclient version string
+//   87  = last command sent
+//   88  = window title (set by SetTitle)
+//   89  = main window title (set by SetMainTitle)
+// Booleans (cases 101-125):
+//   101 = no echo (TELNET ECHO suppressed)
+//   104 = MXP active
+//   106 = world close flag (not connected)
+//   107 = currently connecting
+//   109 = trace mode on
+//   113 = world is active (has a GUI view)
+//   114 = output window paused (user scrolled up)
+// Numbers (cases 201-289):
+//   201 = total lines received
+//   203 = total lines sent
+//   212 = output font height in pixels
+//   213 = output font width (average) in pixels
+//   214 = input font height in pixels
+//   215 = input font width in pixels
+//   216 = total bytes received
+//   217 = total bytes sent
+//   218 = number of variables
+//   219 = number of triggers
+//   220 = number of timers
+//   221 = number of aliases
+//   224 = lines currently in output buffer
+//   227 = connect phase (eConnect* enum value)
+//   289 = last line with IAC GA
 
 static int L_GetInfo(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
     int iType = (int)luaL_checknumber(L, 1);
     switch (iType) {
-        case 1:  lua_pushstring(L, (const char*)pDoc->m_mush_name); return 1;
-        case 2:  lua_pushstring(L, (const char*)pDoc->m_server);    return 1;
-        case 3:  lua_pushnumber(L, pDoc->m_port);                   return 1;
-        case 4:  lua_pushboolean(L, pDoc->m_iConnectPhase == eConnectConnectedToMud); return 1;
-        case 5:  lua_pushnumber(L, pDoc->m_nTotalLinesReceived);    return 1;
-        case 6:  lua_pushnumber(L, pDoc->m_nTotalLinesSent);        return 1;
-        case 7:  lua_pushnumber(L, (double)pDoc->m_LineList.GetCount()); return 1;
-        case 9:  lua_pushnumber(L, pDoc->m_nBytesIn);               return 1;
-        case 10: lua_pushnumber(L, pDoc->m_nBytesOut);              return 1;
-        case 11: lua_pushboolean(L, pDoc->m_logfile != nullptr);    return 1;
-        case 12: lua_pushstring(L, (const char*)pDoc->m_logfile_name); return 1;
-        case 16: lua_pushstring(L, MUSHCLIENT_VERSION);             return 1;
-        case 51: lua_pushstring(L, (const char*)pDoc->m_logfile_name); return 1;
-        case 52: lua_pushstring(L, "");                             return 1; // m_strLastImmediateExpression
-        case 88: lua_pushstring(L, (const char*)pDoc->m_strWindowTitle);     return 1;
-        case 89: lua_pushstring(L, (const char*)pDoc->m_strMainWindowTitle); return 1;
-        case 141: lua_pushnumber(L, pDoc->m_total_lines);           return 1;
-        case 289: lua_pushnumber(L, pDoc->m_last_line_with_IAC_GA); return 1;
-        default: lua_pushnil(L); return 1;
+        // ── Strings ──────────────────────────────────────────────────────────
+        case 1:   lua_pushstring(L, (const char*)pDoc->m_server);             return 1;
+        case 2:   lua_pushstring(L, (const char*)pDoc->m_mush_name);          return 1;
+        case 3:   lua_pushstring(L, (const char*)pDoc->m_name);               return 1;
+        case 51:  lua_pushstring(L, (const char*)pDoc->m_logfile_name);       return 1;
+        case 52:  lua_pushstring(L, "");                                       return 1;
+        case 72:  lua_pushstring(L, MUSHCLIENT_VERSION);                       return 1;
+        case 87:  lua_pushstring(L, (const char*)pDoc->m_strLastCommandSent); return 1;
+        case 88:  lua_pushstring(L, (const char*)pDoc->m_strWindowTitle);     return 1;
+        case 89:  lua_pushstring(L, (const char*)pDoc->m_strMainWindowTitle); return 1;
+        // ── Booleans ─────────────────────────────────────────────────────────
+        case 101: lua_pushboolean(L, pDoc->m_bNoEcho);                        return 1;
+        case 104: lua_pushboolean(L, pDoc->m_bMXP);                           return 1;
+        case 106: lua_pushboolean(L,
+                      pDoc->m_iConnectPhase != eConnectConnectedToMud);        return 1;
+        case 107: lua_pushboolean(L,
+                      pDoc->m_iConnectPhase != eConnectNotConnected &&
+                      pDoc->m_iConnectPhase != eConnectConnectedToMud);        return 1;
+        case 109: lua_pushboolean(L, pDoc->m_bTrace);                         return 1;
+        case 113: lua_pushboolean(L,
+                      pDoc->m_iConnectPhase == eConnectConnectedToMud);        return 1;
+        case 114: lua_pushboolean(L, false); return 1; // output window paused — stub
+        // ── Numbers ──────────────────────────────────────────────────────────
+        case 141: // fall through — same field, both type numbers used in the wild
+        case 201: lua_pushnumber(L, pDoc->m_total_lines);                     return 1;
+        case 203: lua_pushnumber(L, pDoc->m_nTotalLinesSent);                 return 1;
+        case 212: lua_pushnumber(L, pDoc->m_gui_font_height);                 return 1;
+        case 213: lua_pushnumber(L, pDoc->m_gui_font_width);                  return 1;
+        case 214: lua_pushnumber(L, pDoc->m_gui_font_height); return 1; // input same as output
+        case 215: lua_pushnumber(L, pDoc->m_gui_font_width);                  return 1;
+        case 216: lua_pushnumber(L, pDoc->m_nBytesIn);                        return 1;
+        case 217: lua_pushnumber(L, pDoc->m_nBytesOut);                       return 1;
+        case 218: lua_pushnumber(L, (double)pDoc->GetVariableMap().GetCount()); return 1;
+        case 219: lua_pushnumber(L, (double)pDoc->GetTriggerMap().GetCount()); return 1;
+        case 220: lua_pushnumber(L, (double)pDoc->GetTimerMap().GetCount());  return 1;
+        case 221: lua_pushnumber(L, (double)pDoc->GetAliasMap().GetCount());  return 1;
+        case 224: lua_pushnumber(L, (double)pDoc->m_LineList.GetCount());     return 1;
+        case 227: lua_pushnumber(L, pDoc->m_iConnectPhase);                   return 1;
+        case 289: lua_pushnumber(L, pDoc->m_last_line_with_IAC_GA);           return 1;
+        default:  lua_pushnil(L);                                              return 1;
     }
 }
 

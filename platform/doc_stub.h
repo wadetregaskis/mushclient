@@ -1907,6 +1907,13 @@ public:
     // Flushed (via m_fn_line_ready) on each '\n'.
     SOutputLine m_gui_line_buf;
 
+    // ── Output pane metrics (updated by CWorldChildFrame on font/size change) ─
+    // Exposed to Lua via GetInfo(212), GetInfo(213), etc.
+    int m_gui_font_height = 18;   // pixel height of one line (GetInfo 212)
+    int m_gui_font_width  = 10;   // average pixel width of one char (GetInfo 213)
+    int m_gui_rows        = 24;   // visible rows in the output pane
+    int m_gui_cols        = 80;   // visible columns in the output pane
+
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference
     // m_pCurrentLine->styleList.GetTail() to read the current style.

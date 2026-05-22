@@ -294,8 +294,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             m_output->GetClientSize(&paneW, &paneH);
             if (paneW <= 0 || paneH <= 0) return;
             int cols = paneW / charW;
-            m_doc->m_nWrapColumn = (unsigned short)std::max(1, std::min(cols, 65535));
-            m_doc->SendNAWS(cols, paneH / lineH);
+            int rows = paneH / lineH;
+            m_doc->m_nWrapColumn    = (unsigned short)std::max(1, std::min(cols, 65535));
+            m_doc->m_gui_cols       = cols;
+            m_doc->m_gui_rows       = rows;
+            m_doc->m_gui_font_height = lineH;
+            m_doc->m_gui_font_width  = charW;
+            m_doc->SendNAWS(cols, rows);
         });
     };
 

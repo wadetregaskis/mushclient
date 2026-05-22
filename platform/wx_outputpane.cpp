@@ -1296,6 +1296,13 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
 {
     int code = evt.GetKeyCode();
 
+    // Escape: scroll to bottom (if paused) then return focus to the input bar.
+    if (code == WXK_ESCAPE) {
+        if (!m_autoScroll && !m_lines.empty()) ScrollToBottom();
+        if (m_fn_return_focus) m_fn_return_focus();
+        return;
+    }
+
     if (code == 'C' && evt.ControlDown()) { CopySelection(); return; }
     if (code == 'A' && evt.ControlDown()) { SelectAll();     return; }
     if (code == 'L' && evt.ControlDown()) { ClearOutput();   return; }

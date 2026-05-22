@@ -2,17 +2,19 @@
 //
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
+#include "../../MUSHclient.h"
 #include "GlobalPrefsSheet.h"
 #include "GlobalPrefs.h"
-#include "..\..\mainfrm.h"
-#include "..\..\childfrm.h"
-#include "..\..\doc.h"
-#include "..\ColourPickerDlg.h"
-#include "..\EditMultiLine.h"
+#include "../../mainfrm.h"
+#include "../../childfrm.h"
+#include "../../doc.h"
+#include "../ColourPickerDlg.h"
+#include "../EditMultiLine.h"
 
+#ifdef _WIN32
 #include <shlobj.h>
 #include <cderr.h>
+#endif
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -28,13 +30,14 @@ extern int ActivityToolBarResourceNames [6];
 CString strStartingDirectory;
 
 // function prototypes needed for folder browsing
-
+#ifdef _WIN32
 int __stdcall BrowseCallbackProc(
-    HWND hwnd, 	
-    UINT uMsg, 	
-    LPARAM lParam, 	
-    LPARAM lpData	
+    HWND hwnd,
+    UINT uMsg,
+    LPARAM lParam,
+    LPARAM lpData
    );
+#endif
 
 void RemoveTrailingBackslash (CString& str);
 
@@ -141,9 +144,11 @@ void CGlobalPrefsP1::OnNewStartupWorld()
 
 		SetDlgItemText(IDC_WORLD_COUNT, strWorldCount);
 	}
+#ifdef _WIN32
 	else if (CommDlgExtendedError() == FNERR_BUFFERTOOSMALL)
 		// To many files - buffer not large enough
 		TMessageBox("You have selected too many worlds to add.  Please try again with fewer worlds.");
+#endif
 
 	UpdateDialogControls(this, TRUE);
 }
@@ -307,8 +312,9 @@ void CGlobalPrefsP1::OnMoveDown()
   
 }
 
-void CGlobalPrefsP1::OnDefaultDirectory() 
+void CGlobalPrefsP1::OnDefaultDirectory()
 {
+#ifdef _WIN32
 	// Gets the Shell's default allocator
 	LPMALLOC pMalloc;
 	if (::SHGetMalloc(&pMalloc) == NOERROR)
@@ -324,7 +330,7 @@ void CGlobalPrefsP1::OnDefaultDirectory()
 		bi.lpszTitle = "World files folder";
 		bi.ulFlags = BIF_RETURNFSANCESTORS | BIF_RETURNONLYFSDIRS;
     // if possible, let them create one
-    if (!bWine)  
+    if (!bWine)
 	  	bi.ulFlags |= BIF_NEWDIALOGSTYLE | BIF_EDITBOX;     // requires CoInitialize
 		bi.lpfn = BrowseCallbackProc;
 		bi.lParam = 0;
@@ -342,7 +348,7 @@ void CGlobalPrefsP1::OnDefaultDirectory()
 		// Release the shell's allocator.
 		pMalloc->Release();
     }
-	
+#endif // _WIN32
 }
 
 
@@ -608,8 +614,9 @@ BEGIN_MESSAGE_MAP(CGlobalPrefsP5, CPropertyPage)
 	//}}AFX_MSG_MAP
 END_MESSAGE_MAP()
 
-void CGlobalPrefsP5::OnDefaultDirectory() 
+void CGlobalPrefsP5::OnDefaultDirectory()
 {
+#ifdef _WIN32
 	// Gets the Shell's default allocator
 	LPMALLOC pMalloc;
 	if (::SHGetMalloc(&pMalloc) == NOERROR)
@@ -625,7 +632,7 @@ void CGlobalPrefsP5::OnDefaultDirectory()
 		bi.lpszTitle = "Log files folder";
 		bi.ulFlags = BIF_RETURNFSANCESTORS | BIF_RETURNONLYFSDIRS;
     // if possible, let them create one
-    if (!bWine)  
+    if (!bWine)
 	  	bi.ulFlags |= BIF_NEWDIALOGSTYLE | BIF_EDITBOX;     // requires CoInitialize
 		bi.lpfn = BrowseCallbackProc;
 		bi.lParam = 0;
@@ -643,7 +650,7 @@ void CGlobalPrefsP5::OnDefaultDirectory()
 		// Release the shell's allocator.
 		pMalloc->Release();
     }
-	
+#endif // _WIN32
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -687,15 +694,16 @@ BOOL CGlobalPrefsP6::OnInitDialog()
 }
 
 
+#ifdef _WIN32
 //*****************************************************************************
 
 // Callback for function BrowseFolder
 
 int __stdcall BrowseCallbackProc(
-    HWND hwnd, 	
-    UINT uMsg, 	
-    LPARAM lParam, 	
-    LPARAM lpData	
+    HWND hwnd,
+    UINT uMsg,
+    LPARAM lParam,
+    LPARAM lpData
    )
   {
 
@@ -711,7 +719,7 @@ int __stdcall BrowseCallbackProc(
     CString tempstr = strStartingDirectory;
 
 // no backslash? Prepend our startup directory to it
-    
+
     if (strStartingDirectory.Find ('\\') == -1)
       {
       strStartingDirectory = working_dir;
@@ -720,7 +728,7 @@ int __stdcall BrowseCallbackProc(
     else
 
 // see if they said ".\". If so, replace with working directory
-      
+
       if (strStartingDirectory.Left (2) == ".\\")
         {
         strStartingDirectory = working_dir;
@@ -732,7 +740,7 @@ int __stdcall BrowseCallbackProc(
     RemoveTrailingBackslash (strStartingDirectory);
 
     if (strStartingDirectory.GetLength () > 2 &&
-          (strStartingDirectory [1] == ':'  || 
+          (strStartingDirectory [1] == ':'  ||
           strStartingDirectory.Left (2) == "\\\\")
          )
       SendMessage (hwnd, BFFM_SETSELECTION, TRUE, (LPARAM) (const char *) strStartingDirectory);
@@ -740,7 +748,7 @@ int __stdcall BrowseCallbackProc(
   return 0;
   } // end of browse callback
 
- 
+
 void RemoveTrailingBackslash (CString& str)
   {
 
@@ -764,6 +772,7 @@ void RemoveTrailingBackslash (CString& str)
   str = str.Left (str.GetLength () - 1);
 
   }
+#endif // _WIN32
 
 /////////////////////////////////////////////////////////////////////////////
 // CGlobalPrefsP7 property page
@@ -1547,8 +1556,9 @@ END_MESSAGE_MAP()
 /////////////////////////////////////////////////////////////////////////////
 // CGlobalPrefsP12 message handlers
 
-void CGlobalPrefsP12::OnPluginsDirectory() 
+void CGlobalPrefsP12::OnPluginsDirectory()
 {
+#ifdef _WIN32
 	// Gets the Shell's default allocator
 	LPMALLOC pMalloc;
 	if (::SHGetMalloc(&pMalloc) == NOERROR)
@@ -1564,7 +1574,7 @@ void CGlobalPrefsP12::OnPluginsDirectory()
 		bi.lpszTitle = "Plugins folder";
 		bi.ulFlags = BIF_RETURNFSANCESTORS | BIF_RETURNONLYFSDIRS;
     // if possible, let them create one
-    if (!bWine)  
+    if (!bWine)
 	  	bi.ulFlags |= BIF_NEWDIALOGSTYLE | BIF_EDITBOX;     // requires CoInitialize
 		bi.lpfn = BrowseCallbackProc;
 		bi.lParam = 0;
@@ -1582,7 +1592,7 @@ void CGlobalPrefsP12::OnPluginsDirectory()
 		// Release the shell's allocator.
 		pMalloc->Release();
     }
-		
+#endif // _WIN32
 }
 
 void CGlobalPrefsP12::OnNewPlugin() 
@@ -1628,9 +1638,11 @@ void CGlobalPrefsP12::OnNewPlugin()
 
 		SetDlgItemText(IDC_PLUGIN_COUNT, strPluginCount);
 	}
+#ifdef _WIN32
 	else if (CommDlgExtendedError() == FNERR_BUFFERTOOSMALL)
 		// To many files - buffer not large enough
 		TMessageBox("You have selected too many plugins to add.  Please try again with fewer Plugins.");
+#endif
 
 	UpdateDialogControls(this, TRUE);
 	

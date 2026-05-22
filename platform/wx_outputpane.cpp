@@ -80,10 +80,91 @@ COutputPane::COutputPane(wxWindow* parent, int maxLines)
     }
 }
 
+// ── URL detection ─────────────────────────────────────────────────────────────
+// Scans plain-text runs for http:// or https:// URLs and splits them into
+// separate link runs.  Each URL run gets action = URL text so OnLeftDown fires
+// m_fn_link_clicked, which detects the http prefix and calls
+// wxLaunchDefaultBrowser().  Only runs with no existing action and no
+// horiz_rule flag are scanned (MXP links are already labelled).
+
+static SOutputLine DetectURLs(SOutputLine line)
+{
+    // Quick scan: skip the whole line if it has no "http" substring at all.
+    bool hasHttp = false;
+    for (const auto& r : line)
+        if (r.action.empty() && !r.horiz_rule &&
+            r.text.find("http") != std::string::npos)
+            { hasHttp = true; break; }
+    if (!hasHttp) return line;
+
+    SOutputLine result;
+    result.reserve(line.size() * 2);
+
+    for (SOutputRun run : line) {
+        // Pass through runs that already have a label or are decorative.
+        if (!run.action.empty() || run.text.empty() || run.horiz_rule) {
+            result.push_back(std::move(run));
+            continue;
+        }
+
+        const std::string text = run.text;
+        size_t pos = 0;
+        bool splitOccurred = false;
+
+        while (pos < text.size()) {
+            size_t h1 = text.find("http://",  pos);
+            size_t h2 = text.find("https://", pos);
+            size_t urlStart = std::min(h1, h2);
+
+            if (urlStart == std::string::npos) {
+                // No more URLs.
+                if (splitOccurred || pos > 0) {
+                    SOutputRun tail = run;
+                    tail.text = text.substr(pos);
+                    result.push_back(std::move(tail));
+                } else {
+                    // No URL anywhere in this run — pass it through unmodified.
+                    result.push_back(std::move(run));
+                }
+                break;
+            }
+
+            splitOccurred = true;
+
+            // Text before the URL.
+            if (urlStart > pos) {
+                SOutputRun before = run;
+                before.text = text.substr(pos, urlStart - pos);
+                result.push_back(std::move(before));
+            }
+
+            // URL extends to the next whitespace (or end of run).
+            size_t urlEnd = urlStart;
+            while (urlEnd < text.size() &&
+                   !std::isspace((unsigned char)text[urlEnd]))
+                ++urlEnd;
+
+            // Emit the URL as a link run.  action = URL so m_fn_link_clicked
+            // can distinguish it from MXP commands via the "http" prefix.
+            SOutputRun urlRun  = run;
+            urlRun.text        = text.substr(urlStart, urlEnd - urlStart);
+            urlRun.action      = urlRun.text;
+            result.push_back(std::move(urlRun));
+
+            pos = urlEnd;
+        }
+        // If the loop ran out of text normally all segments were already pushed.
+    }
+    return result;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void COutputPane::AppendLine(SOutputLine&& line)
 {
+    // Auto-detect plain http:// / https:// URLs and split them into link runs.
+    line = DetectURLs(std::move(line));
+
     int lineChars = 0;
     for (const auto& run : line) lineChars += (int)run.text.size();
     if (lineChars > m_maxLineChars) m_maxLineChars = lineChars;
@@ -710,6 +791,26 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
             ScrollLines(1);
         else if (evt.GetY() < 10)
             ScrollLines(-1);
+    } else {
+        // Update cursor: hand when over a link run, I-beam otherwise.
+        SelPoint pt = MouseToSelPoint(evt);
+        bool overLink = false;
+        if (pt.valid() && pt.line < (int)m_lines.size()) {
+            const SOutputLine& ln = m_lines[pt.line];
+            int col = 0;
+            for (const auto& run : ln) {
+                int runLen = (int)run.text.size();
+                if (!run.action.empty() &&
+                    pt.col >= col && pt.col < col + runLen)
+                {
+                    overLink = true;
+                    break;
+                }
+                col += runLen;
+            }
+        }
+        SetCursor(overLink ? wxCursor(wxCURSOR_HAND)
+                           : wxCursor(wxCURSOR_IBEAM));
     }
     evt.Skip();
 }

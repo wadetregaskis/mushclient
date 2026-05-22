@@ -35,6 +35,8 @@
 #include "platform/wx_mfc_hooks.h"    // g_wxhook_set_status
 
 #include <list>
+#include <cstdio>
+#include <sys/stat.h>
 
 // App singleton — defined in platform/mushapp_globals.cpp for the mushapp build.
 extern CMUSHclientApp App;
@@ -48,6 +50,18 @@ static const int ID_FIND_PREV    = wxID_HIGHEST + 204;
 
 // Maximum commands kept in history (matches MUSHclient Windows default)
 static const int kMaxHistory = 200;
+
+// ── History file path ─────────────────────────────────────────────────────────
+// Returns the path to the persistent command-history file, creating the
+// ~/.mushclient/ directory if needed.  Returns an empty string on failure.
+static std::string GetHistoryFilePath()
+{
+    const char* home = getenv("HOME");
+    if (!home || !*home) return {};
+    std::string dir = std::string(home) + "/.mushclient";
+    ::mkdir(dir.c_str(), 0700);   // safe no-op if already exists
+    return dir + "/history.txt";
+}
 
 // ── Event table ───────────────────────────────────────────────────────────
 wxBEGIN_EVENT_TABLE(CWorldChildFrame, wxMDIChildFrame)
@@ -686,12 +700,24 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         return {};
     };
 
-    // ── MXP hyperlink / send-link callback ────────────────────────────────
-    // action is the pipe-delimited command string from the MXP anchor href.
-    // Single action: sent immediately.  Multiple alternatives: a popup menu
-    // lets the user choose; the chosen command is then sent to the MUD.
+    // ── MXP hyperlink / send-link / plain-URL callback ───────────────────────
+    // action is either:
+    //   • An http:// or https:// URL auto-detected from plain text
+    //     → open in the system default browser via wxLaunchDefaultBrowser().
+    //   • A pipe-delimited MXP command string from an <A href="..."> element
+    //     → sent to the MUD via EvaluateCommand() (popup for multi-choice).
     m_output->m_fn_link_clicked = [this](const std::string& action) {
-        if (!m_doc || action.empty()) return;
+        if (action.empty()) return;
+
+        // Plain URL from auto-detection.
+        if ((action.size() >= 7 && action.compare(0, 7, "http://")  == 0) ||
+            (action.size() >= 8 && action.compare(0, 8, "https://") == 0))
+        {
+            wxLaunchDefaultBrowser(wxString::FromUTF8(action.c_str()));
+            return;
+        }
+
+        if (!m_doc) return;
 
         // Split the pipe-delimited alternatives, skipping empty segments.
         std::vector<std::string> choices;
@@ -747,6 +773,31 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
 
     SetSizer(sizer);
     m_input->SetFocus();
+
+    // ── Load persistent command history ───────────────────────────────────
+    // Reads ~/.mushclient/history.txt (one command per line) so the history
+    // survives across sessions.  We cap it at kMaxHistory after loading.
+    {
+        std::string histPath = GetHistoryFilePath();
+        if (!histPath.empty()) {
+            if (FILE* f = fopen(histPath.c_str(), "r")) {
+                char buf[8192];
+                while (fgets(buf, (int)sizeof(buf), f)) {
+                    std::string line = buf;
+                    // Strip trailing newline / carriage-return.
+                    while (!line.empty() &&
+                           (line.back() == '\n' || line.back() == '\r'))
+                        line.pop_back();
+                    if (!line.empty())
+                        m_history.push_back(wxString::FromUTF8(line.c_str()));
+                }
+                fclose(f);
+                // Trim to the maximum if the file was longer.
+                while ((int)m_history.size() > kMaxHistory)
+                    m_history.erase(m_history.begin());
+            }
+        }
+    }
 
     // ── Input bar: key handler for history navigation ─────────────────────
     // Bind directly to m_input so we only see input-bar key events.
@@ -1174,6 +1225,20 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         if (answer != wxYES) {
             evt.Veto();
             return;
+        }
+    }
+
+    // ── Save persistent command history ───────────────────────────────────
+    // Write each command on its own line.  We write even a small history so
+    // that new sessions don't start completely empty.
+    if (!m_history.empty()) {
+        std::string histPath = GetHistoryFilePath();
+        if (!histPath.empty()) {
+            if (FILE* f = fopen(histPath.c_str(), "w")) {
+                for (const wxString& cmd : m_history)
+                    fprintf(f, "%s\n", cmd.ToUTF8().data());
+                fclose(f);
+            }
         }
     }
 

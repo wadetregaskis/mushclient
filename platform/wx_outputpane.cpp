@@ -10,6 +10,13 @@
 // compat.h provides RGB(), GetRValue(), GetGValue(), GetBValue().
 #include "platform/compat.h"
 
+// Forward declarations for font variant helpers defined after the constructor.
+static wxFont MakeFontVariant(const wxFont& base, bool bold, bool underline);
+static void RebuildFontVariants(const wxFont& base,
+                                wxFont& outBold,
+                                wxFont& outUnderline,
+                                wxFont& outBoldUnderline);
+
 // ── Context-menu IDs ─────────────────────────────────────────────────────────
 static const int ID_COPY       = wxID_COPY;
 static const int ID_SELECTALL  = wxID_SELECTALL;
@@ -521,21 +528,77 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
         }
     }
 
-    // Yellow left-margin search marker.
+    // ── Search term: left-margin marker + in-line text highlight ─────────────
     if (!m_searchTerm.IsEmpty()) {
+        // Build plain text for the whole line (same as FindNext does).
         wxString plain;
         for (const auto& run : line)
             if (!run.horiz_rule)
                 plain += wxString::FromUTF8(run.text.c_str(), run.text.size());
-        if (plain.Lower().Contains(m_searchTerm.Lower())) {
-            int scrollX, scrollY;
-            GetViewStart(&scrollX, &scrollY);
-            int unitW, unitH;
-            GetScrollPixelsPerUnit(&unitW, &unitH);
-            int xLeft = scrollX * unitW;
-            dc.SetBrush(wxBrush(wxColour(255, 220, 0)));
-            dc.SetPen(*wxTRANSPARENT_PEN);
-            dc.DrawRectangle(xLeft, yOff, 3, m_lineH);
+
+        wxString lowerPlain = plain.Lower();
+        wxString lowerTerm  = m_searchTerm.Lower();
+        int termLen = (int)lowerTerm.size();
+
+        // Find all match positions as [start_col, end_col) character ranges.
+        struct HitRange { int start, end; };
+        std::vector<HitRange> hits;
+        if (termLen > 0) {
+            std::wstring pw = lowerPlain.ToStdWstring();
+            std::wstring tw = lowerTerm.ToStdWstring();
+            size_t pos = 0;
+            while ((pos = pw.find(tw, pos)) != std::wstring::npos) {
+                hits.push_back({(int)pos, (int)(pos + (int)tw.size())});
+                ++pos;
+            }
+        }
+
+        if (!hits.empty()) {
+            // Left-margin bar: 3-pixel yellow stripe at the scroll origin.
+            {
+                int scrollX, scrollY;
+                GetViewStart(&scrollX, &scrollY);
+                int unitW, unitH;
+                GetScrollPixelsPerUnit(&unitW, &unitH);
+                int xLeft = scrollX * unitW;
+                dc.SetBrush(wxBrush(wxColour(255, 220, 0)));
+                dc.SetPen(*wxTRANSPARENT_PEN);
+                dc.DrawRectangle(xLeft, yOff, 3, m_lineH);
+            }
+
+            // In-line highlight: re-render each matching character span on top of
+            // the already-drawn text with a yellow background and black text.
+            // wxSOLID background mode ensures the background rect is filled.
+            dc.SetBackgroundMode(wxSOLID);
+            dc.SetTextForeground(wxColour(0, 0, 0));
+            dc.SetTextBackground(wxColour(255, 220, 0));
+
+            int cx = 0;   // character column in the plain-text space
+            int px = 0;   // pixel x from line origin
+
+            for (const auto& run : line) {
+                if (run.text.empty() || run.horiz_rule) continue;
+                wxString wxText = wxString::FromUTF8(run.text.c_str(), run.text.size());
+                int runLen = (int)wxText.size();
+
+                for (const auto& hit : hits) {
+                    int lo = std::max(cx, hit.start);
+                    int hi = std::min(cx + runLen, hit.end);
+                    if (lo >= hi) continue;
+
+                    bool drawUnderline = run.underline || !run.action.empty();
+                    if (run.bold && drawUnderline)  dc.SetFont(m_fontBoldUnderline);
+                    else if (run.bold)              dc.SetFont(m_fontBold);
+                    else if (drawUnderline)         dc.SetFont(m_fontUnderline);
+                    else                            dc.SetFont(m_font);
+
+                    wxString chunk = wxText.substr(lo - cx, hi - lo);
+                    dc.DrawText(chunk, px + (lo - cx) * m_charW, yOff);
+                }
+
+                cx += runLen;
+                px += runLen * m_charW;
+            }
         }
     }
 }

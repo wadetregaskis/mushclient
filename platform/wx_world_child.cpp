@@ -1135,6 +1135,40 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
+    // Ctrl+W: delete the word immediately before the cursor (Unix terminal).
+    // Skips trailing spaces then deletes back to the next space boundary.
+    if (code == 'W' && evt.ControlDown()) {
+        if (inp) {
+            long pos = inp->GetInsertionPoint();
+            if (pos > 0) {
+                wxString text = inp->GetValue();
+                long newPos = pos;
+                // Skip over any trailing whitespace.
+                while (newPos > 0 && text[newPos - 1] == ' ')
+                    --newPos;
+                // Skip over the word itself.
+                while (newPos > 0 && text[newPos - 1] != ' ')
+                    --newPos;
+                inp->Remove(newPos, pos);
+                m_histIdx = -1;
+            }
+        }
+        return;
+    }
+
+    // Ctrl+K: kill from the cursor to the end of the input line.
+    if (code == 'K' && evt.ControlDown()) {
+        if (inp) {
+            long pos = inp->GetInsertionPoint();
+            long len = (long)inp->GetValue().size();
+            if (pos < len) {
+                inp->Remove(pos, len);
+                m_histIdx = -1;
+            }
+        }
+        return;
+    }
+
     // Tab: complete the current partial command from history.
     // Searches backward through m_history for the most-recently-used command
     // that starts with the current input text.  A second Tab cycles further back.

@@ -1,0 +1,116 @@
+// platform/wx_world_child.h — wxMDIChildFrame for one MUSHclient world window.
+//
+// CWorldChildFrame wraps a COutputPane (scrolled styled-text output widget)
+// and a wxTextCtrl command-input bar into one MDI child window.  It holds a
+// weak (non-owning) pointer to the CMUSHclientDoc that owns the connection;
+// when the user closes the frame the doc is deleted.
+//
+// Include order requirement (same as wx_mfc_impl.cpp):
+//   1. wx headers first
+//   2. MUSHclient / MFC-compat headers after
+
+#pragma once
+#ifndef _WIN32
+
+// Forward declarations for the doc↔frame registry defined in wx_mfc_impl.cpp.
+// Call wx_register_world_frame when a CWorldChildFrame is created, and
+// wx_unregister_world_frame in its OnClose before the doc is deleted.
+class CMUSHclientDoc;
+class CWorldChildFrame;
+void wx_register_world_frame(CMUSHclientDoc* doc, CWorldChildFrame* frame);
+void wx_unregister_world_frame(CMUSHclientDoc* doc);
+
+#include <wx/wx.h>
+#include <wx/mdi.h>
+#include <wx/timer.h>
+#include <string>
+#include <vector>
+#include "platform/wx_outputpane.h"   // COutputPane → output_types.h
+
+// ── CWorldChildFrame ──────────────────────────────────────────────────────────
+class CWorldChildFrame : public wxMDIChildFrame
+{
+public:
+    // parent  — the top-level MDI parent frame
+    // doc     — the world document (non-owning pointer; do not delete here)
+    // title   — initial window title (updated to world name after connect)
+    CWorldChildFrame(wxMDIParentFrame* parent,
+                     CMUSHclientDoc*   doc,
+                     const wxString&   title = wxT("New World"));
+
+    // Called by hook_new_world after OnNewDocument() returns to update the
+    // window title from the world name stored in the doc.
+    void UpdateTitle();
+
+    // Give external code access to the output pane (e.g. to set the font).
+    COutputPane* OutputPane() const { return m_output; }
+
+    // Give external code read-only access to the associated world document.
+    CMUSHclientDoc* GetDoc() const { return m_doc; }
+
+    // Re-send NAWS with the current pane dimensions.  Call after a font change
+    // so the MUD learns the new character-grid size.
+    void TriggerNAWS();
+
+    // Apply the world's background colour to the output pane and style the input
+    // bar to complement it.  col is a COLORREF; 0xFF000000 (NO_COLOUR) = default
+    // black.  Called by hook_open_world_file / hook_new_world after the doc is
+    // loaded so custom world backgrounds take effect on first display.
+    void ApplyPaneBackground(unsigned long col);
+
+    // Show/hide the inline find bar (Ctrl+F to show, Escape in find bar to hide).
+    void ShowFindBar(bool show);
+
+    // Execute the current find-bar search term, forward or backward.
+    void DoFind(bool forward);
+
+private:
+    COutputPane*         m_output;       // scrolled styled-text widget
+    wxTextCtrl*          m_input;        // command input bar at the bottom
+    CMUSHclientDoc*      m_doc;          // non-owning reference to the world doc
+    wxTimer*             m_worldTimer;   // drives CheckTimers() / ON_PLUGIN_TICK
+
+    // ── Find bar ──────────────────────────────────────────────────────────
+    wxPanel*    m_findBar      = nullptr;   // collapsible panel shown by Ctrl+F
+    wxTextCtrl* m_findInput    = nullptr;   // search term text box
+
+    // ── Command history ────────────────────────────────────────────────────
+    std::vector<wxString> m_history;     // sent commands, oldest first
+    int                   m_histIdx = -1; // -1 = not browsing; ≥0 = index into m_history
+    wxString              m_histSaved;   // text in input when user started browsing
+
+    // ── Connection status tracking ─────────────────────────────────────────
+    int m_lastConnectPhase    = -1;  // tracks phase changes to update title/status
+    int m_reconnectCountdown  = 0;   // ticks until auto-reconnect (0 = idle)
+
+    // ── Miniwindow mouse-tracking state ───────────────────────────────────
+    // These mirror m_sPreviousMiniWindow / GetCapture() tracking from CMUSHView.
+    std::string m_mw_prevWindow;      // name of miniwindow mouse was last over
+    bool        m_mw_mouseDown = false; // true while LH button is held in miniwindow
+
+    // ── Event handlers ────────────────────────────────────────────────────
+    // User pressed Enter in the input bar — send text to the MUD.
+    void OnInputEnter(wxCommandEvent& evt);
+    // Up/Down keys in the input bar for history navigation.
+    void OnInputKeyDown(wxKeyEvent& evt);
+    // Frame is about to close — delete the doc (disconnects + frees memory).
+    void OnClose(wxCloseEvent& evt);
+    // 100 ms world timer: process MUSHclient timers and flush output.
+    void OnWorldTimer(wxTimerEvent& evt);
+    // Frame resized — send updated NAWS window size to the MUD.
+    void OnSize(wxSizeEvent& evt);
+    // Frame activated/deactivated — refresh the status bar.
+    void OnActivate(wxActivateEvent& evt);
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+    // Write the current connection status to the MDI parent's status bar.
+    // Called from OnActivate and OnWorldTimer (only when this frame is active).
+    void UpdateStatusBar();
+
+    // Returns true when this frame is the active MDI child.
+    bool IsActiveWorld() const;
+
+    wxDECLARE_EVENT_TABLE();
+};
+
+#endif // !_WIN32

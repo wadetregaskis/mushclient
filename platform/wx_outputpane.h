@@ -110,6 +110,10 @@ public:
     // Safe to call at any time; no-op if already at the bottom.
     void ScrollToBottom();
 
+    // Scroll to the very top of the buffer (disengages auto-scroll).
+    // Safe to call at any time; no-op if already at the top.
+    void ScrollToTop();
+
     // Scroll one page up (direction=-1) or down (+1).
     // Updates the auto-scroll state accordingly.
     void ScrollPage(int direction);
@@ -171,6 +175,16 @@ public:
     // Receives the currently selected text; the frame wires this to call
     // EvaluateCommand() so the text is sent via the normal command pipeline.
     std::function<void(const wxString& text)> m_fn_send_to_mud;
+
+    // Called once per appended line (after trimming/batching).
+    // Wired by CWorldChildFrame to write to the session log file.
+    std::function<void(const SOutputLine&)> m_fn_on_line_appended;
+
+    // Returns true if a log file is currently open (used by context menu label).
+    std::function<bool()> m_fn_is_logging;
+
+    // Toggles logging on/off: shows a file-save dialog when starting.
+    std::function<void()> m_fn_toggle_log;
 
     // Called when F3 (forward) or Shift+F3 (backward) is pressed while the
     // output pane has focus.  Wired by CWorldChildFrame to DoFind().

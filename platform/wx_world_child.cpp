@@ -36,6 +36,7 @@
 
 #include <list>
 #include <cstdio>
+#include <ctime>
 #include <sys/stat.h>
 
 // App singleton — defined in platform/mushapp_globals.cpp for the mushapp build.
@@ -187,6 +188,66 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         bool bOmit = false;
         m_doc->EvaluateCommand(cmd, /*countThem=*/true, bOmit);
         m_doc->UpdateAllViews(nullptr);
+    };
+
+    // ── Session logging callbacks ──────────────────────────────────────────
+    // Each line appended to the output pane is forwarded to LogLine() so that
+    // the log file always reflects exactly what the user sees on screen.
+    m_output->m_fn_on_line_appended = [this](const SOutputLine& line) {
+        LogLine(line);
+    };
+
+    // Tells the context menu whether a log is currently open.
+    m_output->m_fn_is_logging = [this]() -> bool {
+        return IsLogging();
+    };
+
+    // Toggle logging on/off: shows a save dialog when starting.
+    m_output->m_fn_toggle_log = [this]() {
+        if (IsLogging()) {
+            StopLogging();
+            if (m_output)
+                m_output->AppendNote("** Logging stopped **", RGB(200, 200, 0));
+        } else {
+            // Default filename: WORLDNAME_YYYYMMDD_HHMMSS.log
+            std::string worldName = m_doc
+                ? static_cast<const char*>(m_doc->m_mush_name) : "world";
+            time_t now = time(nullptr);
+            char ts[32];
+            strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", localtime(&now));
+
+            // Sanitise worldName for use in filename (same rules as history).
+            std::string safe;
+            for (unsigned char c : worldName) {
+                if (std::isalnum(c) || c == '-' || c == '_' || c == '.') safe += (char)c;
+                else if (!safe.empty() && safe.back() != '_') safe += '_';
+            }
+            while (!safe.empty() && safe.back() == '_') safe.pop_back();
+            if (safe.empty()) safe = "world";
+
+            std::string defName = safe + "_" + ts + ".log";
+            const char* home = getenv("HOME");
+            std::string defDir = home ? std::string(home) + "/Documents" : ".";
+
+            wxFileDialog dlg(this,
+                             wxT("Save Session Log"),
+                             wxString::FromUTF8(defDir.c_str()),
+                             wxString::FromUTF8(defName.c_str()),
+                             wxT("Log files (*.log;*.txt)|*.log;*.txt|All files (*.*)|*.*"),
+                             wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+            if (dlg.ShowModal() != wxID_OK) return;
+
+            std::string path = dlg.GetPath().ToUTF8().data();
+            if (StartLogging(path)) {
+                if (m_output)
+                    m_output->AppendNote(
+                        "** Logging to " + path + " **", RGB(200, 200, 0));
+            } else {
+                wxMessageBox(
+                    wxString::FromUTF8(("Could not open log file:\n" + path).c_str()),
+                    wxT("Logging Error"), wxOK | wxICON_ERROR, this);
+            }
+        }
     };
 
     // F3 / Shift+F3 from the output pane fires the find bar.
@@ -1089,6 +1150,70 @@ bool CWorldChildFrame::IsActiveWorld() const
     return parent && (parent->GetActiveChild() == this);
 }
 
+// ── Session logging ───────────────────────────────────────────────────────
+//
+// Logging captures the plain-text content of each incoming output line to a
+// UTF-8 text file.  Horizontal rules are written as a dash line.  Style
+// attributes (colour, bold, underline) are not preserved — the log is plain
+// text, suitable for reading or grepping later.
+
+bool CWorldChildFrame::StartLogging(const std::string& path)
+{
+    if (m_logFile) return false;   // already logging
+
+    m_logFile = fopen(path.c_str(), "a");
+    if (!m_logFile) return false;
+
+    m_logFilePath = path;
+
+    // Write a timestamped header.
+    time_t now = time(nullptr);
+    char ts[64];
+    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    std::string worldName = m_doc
+        ? static_cast<const char*>(m_doc->m_mush_name) : "Unknown";
+    fprintf(m_logFile,
+            "===== Log started %s — World: %s =====\n",
+            ts, worldName.c_str());
+    fflush(m_logFile);
+    return true;
+}
+
+void CWorldChildFrame::StopLogging()
+{
+    if (!m_logFile) return;
+
+    time_t now = time(nullptr);
+    char ts[64];
+    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    fprintf(m_logFile, "===== Log stopped %s =====\n", ts);
+    fclose(m_logFile);
+    m_logFile = nullptr;
+    m_logFilePath.clear();
+}
+
+void CWorldChildFrame::LogLine(const SOutputLine& line)
+{
+    if (!m_logFile) return;
+
+    // Horizontal rules become a dashed separator.
+    if (line.size() == 1 && line[0].horiz_rule) {
+        fputs("----------------------------------------\n", m_logFile);
+        fflush(m_logFile);
+        return;
+    }
+
+    // Concatenate run texts; skip empty and horiz_rule runs.
+    std::string text;
+    for (const auto& run : line) {
+        if (!run.text.empty() && !run.horiz_rule)
+            text += run.text;
+    }
+    text += '\n';
+    fputs(text.c_str(), m_logFile);
+    fflush(m_logFile);
+}
+
 // ── UpdateStatusBar ───────────────────────────────────────────────────────
 // Writes the current connection state to the MDI parent's status bar.
 // Only meaningful when this frame is the active MDI child; callers should
@@ -1162,6 +1287,18 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
     if (code == WXK_PAGEDOWN) {
         if (m_output) m_output->ScrollPage(+1);
+        return;
+    }
+
+    // Ctrl+Home / Ctrl+End: jump to the very top or bottom of the output buffer
+    // without leaving the input bar.  Mirrors the Ctrl+Home/End shortcuts that
+    // work when the output pane itself has focus (COutputPane::OnKeyDown).
+    if (code == WXK_HOME && evt.ControlDown()) {
+        if (m_output) m_output->ScrollToTop();
+        return;
+    }
+    if (code == WXK_END && evt.ControlDown()) {
+        if (m_output) m_output->ScrollToBottom();
         return;
     }
 
@@ -1575,6 +1712,9 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
             }
         }
     }
+
+    // Close any open log file before the doc is destroyed.
+    if (IsLogging()) StopLogging();
 
     // Stop the world timer before we touch the doc — prevents a timer callback
     // from firing between m_fn_line_ready=nullptr and delete doc.

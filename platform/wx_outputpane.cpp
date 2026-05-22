@@ -234,6 +234,10 @@ void COutputPane::AppendLine(SOutputLine&& line)
     }
     m_trimmedCount += trimCount;
 
+    // Notify the logging hook (if any) immediately after the line is accepted.
+    // Done before the batch-depth check so every line is logged even in batches.
+    if (m_fn_on_line_appended) m_fn_on_line_appended(m_lines.back());
+
     if (m_batchDepth == 0) {
         UpdateScrollbars(m_autoScroll);
         // Always repaint: when not auto-scrolling the hint bar needs to be
@@ -296,6 +300,17 @@ void COutputPane::ScrollToBottom()
     UpdateScrollbars(true);
     if (!wasAuto && m_fn_autoscroll_changed)
         m_fn_autoscroll_changed(true);
+}
+
+void COutputPane::ScrollToTop()
+{
+    int scrollX;
+    GetViewStart(&scrollX, nullptr);
+    Scroll(scrollX, 0);
+    bool wasAuto = m_autoScroll;
+    m_autoScroll = false;
+    if (wasAuto && m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
+    Refresh(false);
 }
 
 void COutputPane::ScrollPage(int direction)
@@ -1133,6 +1148,17 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
         menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { AdjustFontSize(-1); }, zo->GetId());
         wxMenuItem* zr = menu.Append(wxID_ANY, "Reset Zoom\tCtrl+0");
         menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { ResetFontSize(); }, zr->GetId());
+    }
+
+    // Session log toggle.
+    if (m_fn_toggle_log) {
+        menu.AppendSeparator();
+        bool logging = m_fn_is_logging && m_fn_is_logging();
+        wxMenuItem* itemLog = menu.Append(wxID_ANY,
+            logging ? wxT("Stop Logging") : wxT("Start Logging…"));
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+            if (m_fn_toggle_log) m_fn_toggle_log();
+        }, itemLog->GetId());
     }
 
     // If a URL link was right-clicked, add browser/clipboard options.

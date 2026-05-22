@@ -27,6 +27,7 @@ void wx_world_remove_from_list(const char* path);
 #include <wx/wx.h>
 #include <wx/mdi.h>
 #include <wx/timer.h>
+#include <cstdio>
 #include <string>
 #include <vector>
 #include "platform/wx_outputpane.h"   // COutputPane → output_types.h
@@ -91,6 +92,27 @@ private:
     int  m_reconnectCountdown  = 0;    // ticks until auto-reconnect (0 = idle)
     bool m_lastNoEcho          = false; // last known m_doc->m_bNoEcho state
     int  m_pluginTickAccum     = 0;    // ms accumulated toward next ON_PLUGIN_TICK (~40 ms)
+
+    // ── Session log ────────────────────────────────────────────────────────
+    // Log is written as plain UTF-8 text to a user-chosen file.  Logging starts
+    // when the user chooses "Start Logging…" from the context menu and stops on
+    // "Stop Logging", window close, or disconnect.
+    FILE*       m_logFile     = nullptr;  // open file handle; nullptr = not logging
+    std::string m_logFilePath;            // path to the current log file
+
+    // Start a new log session: opens path for appending, writes a header.
+    // Returns true on success.  No-op if already logging.
+    bool StartLogging(const std::string& path);
+
+    // Stop the current log session: writes a footer and closes the file.
+    // No-op if not logging.
+    void StopLogging();
+
+    // Returns true if a log file is currently open.
+    bool IsLogging() const { return m_logFile != nullptr; }
+
+    // Write a single output line to the log file as plain text.
+    void LogLine(const SOutputLine& line);
 
     // ── Miniwindow mouse-tracking state ───────────────────────────────────
     // These mirror m_sPreviousMiniWindow / GetCapture() tracking from CMUSHView.

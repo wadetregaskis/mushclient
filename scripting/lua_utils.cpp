@@ -238,7 +238,7 @@ static int generic_msgbox (lua_State *L, const bool bUnicode)
   else
     result = ::MessageBox (Frame, boxmsg, boxtitle, msgboxtype);
 
-  char * p;
+  const char * p;
 
   switch (result)
     {
@@ -643,7 +643,7 @@ static int multilistbox (lua_State *L)
       lua_pushvalue (L, -2);   // copy key to top of stack
       lua_gettable (L, 4);  // see if this key is in defaults table
       if (!(lua_isnil (L, -1) ||
-            lua_isboolean (L, -1) &&  !lua_toboolean (L, -1))) 
+            (lua_isboolean (L, -1) &&  !lua_toboolean (L, -1))))
         msg.m_iDefaults.insert (msg.m_data.size ());
       lua_pop (L, 1); // remove result of table-lookup
       }  // end of having a defaults table
@@ -867,8 +867,8 @@ static int directorypicker (lua_State *L)
 		bi.lpszTitle = sTitle;
 		bi.ulFlags = BIF_RETURNFSANCESTORS | BIF_RETURNONLYFSDIRS;
     // if possible, let them create one
-    if (!bWine)  
-	  	bi.ulFlags |= BIF_NEWDIALOGSTYLE | BIF_EDITBOX;     // requires CoInitialize
+    if (!bWine)
+      bi.ulFlags |= BIF_NEWDIALOGSTYLE | BIF_EDITBOX;     // requires CoInitialize
 		bi.lpfn = BrowseCallbackProc;
 		bi.lParam = 0;
     strStartingDirectory = sDefaultName;
@@ -1927,7 +1927,9 @@ static int reload_global_prefs (lua_State *L)
   return 0;   // no results
   } // end of reload_global_prefs
 
+#ifndef GGI_MARK_NONEXISTING_GLYPHS
 #define GGI_MARK_NONEXISTING_GLYPHS  0X0001
+#endif
 
 /*
 typedef struct tagWCRANGE

@@ -696,7 +696,9 @@ struct TVSORTCB { HTREEITEM hParent; PFNTVCOMPARE lpfnCompare; LPARAM lParam; };
 #  define LVNI_SELECTED_FLAG 0x0002
 // RichEdit char format
 #  define CFE_STRIKEOUT      0x0008
+#  ifndef CFM_STRIKEOUT
 #  define CFM_STRIKEOUT      0x0008
+#  endif
 // Misc window messages / IDs
 #  define WM_KICKIDLE        0x036A
 #  define ID_APPLY_NOW       0x3021
@@ -1212,12 +1214,12 @@ struct LOGPALETTE    { WORD palVersion = 0x300; WORD palNumEntries = 0; PALETTEE
 #ifndef BITMAPINFOHEADER_DEFINED
 #define BITMAPINFOHEADER_DEFINED
 struct BITMAPINFOHEADER {
-    DWORD biSize = sizeof(BITMAPINFOHEADER);
-    LONG  biWidth = 0; LONG biHeight = 0;
-    WORD  biPlanes = 1; WORD biBitCount = 24;
-    DWORD biCompression = 0; DWORD biSizeImage = 0;
-    LONG  biXPelsPerMeter = 0; LONG biYPelsPerMeter = 0;
-    DWORD biClrUsed = 0; DWORD biClrImportant = 0;
+    DWORD biSize;
+    LONG  biWidth; LONG biHeight;
+    WORD  biPlanes; WORD biBitCount;
+    DWORD biCompression; DWORD biSizeImage;
+    LONG  biXPelsPerMeter; LONG biYPelsPerMeter;
+    DWORD biClrUsed; DWORD biClrImportant;
 };
 #endif
 struct DIBSECTION {
@@ -1503,8 +1505,7 @@ public:
     // Pointer conversion — lets CRect pass directly where RECT*/LPCRECT expected
     operator RECT*()             { return static_cast<RECT*>(this); }
     operator const RECT*() const { return static_cast<const RECT*>(this); }
-    operator RECT&()             { return *this; }
-    operator const RECT&() const { return *this; }
+    // Note: RECT& conversions are handled implicitly by public inheritance from RECT.
 };
 
 // ── Runtime-class infrastructure ───────────────────────────────────────────
@@ -4225,7 +4226,9 @@ struct BITMAPFILEHEADER {
 #define CFM_BOLD       0x00000001
 #define CFM_ITALIC     0x00000002
 #define CFM_UNDERLINE  0x00000004
+#ifndef CFM_STRIKEOUT
 #define CFM_STRIKEOUT  0x00000008
+#endif
 #define CFM_PROTECTED  0x00000010
 #define CFM_LINK       0x00000020
 #define CFM_SIZE       0x80000000
@@ -4330,10 +4333,12 @@ inline int MulDiv(int n, int m, int d) {
     return d ? (int)((long long)n * m / d) : 0;
 }
 inline BOOL QueryPerformanceCounter(LARGE_INTEGER* li) {
-    if (li) li->QuadPart = 0; return FALSE;
+    if (li) { li->QuadPart = 0; }
+    return FALSE;
 }
 inline BOOL QueryPerformanceFrequency(LARGE_INTEGER* li) {
-    if (li) li->QuadPart = 1; return FALSE;
+    if (li) { li->QuadPart = 1; }
+    return FALSE;
 }
 
 // ── WM_SETFONT / more window messages ─────────────────────────────────────

@@ -25,7 +25,9 @@ typedef struct
 
 // include the define below if running on a little-endian machine, such as Intel
 
+#ifndef LITTLE_ENDIAN
 #define LITTLE_ENDIAN
+#endif
 
 #ifdef __cplusplus
 extern "C" {

@@ -6,7 +6,11 @@
 #define LUACOM_AUTHORS   "V. Almendra & R. Cerqueira & F. Mascarenhas"
 
 #ifndef LUACOM_API
-#define LUACOM_API __declspec(dllexport)
+#  ifdef _WIN32
+#    define LUACOM_API __declspec(dllexport)
+#  else
+#    define LUACOM_API   /* nothing — no DLL decoration on macOS/Linux */
+#  endif
 #endif
 
 enum

@@ -6,6 +6,43 @@
 
 #include "stdafx.h"
 
+#ifndef _WIN32
+// OLE Automation Date (DATE) is a double: days since Dec 30, 1899.
+// On POSIX we define it as double and provide helpers to convert it.
+typedef double DATE;
+
+#include <time.h>
+#include <ctime>
+#include <cmath>
+
+// Offset in days between OLE epoch (Dec 30, 1899) and Unix epoch (Jan 1, 1970)
+static const double OLE_UNIX_EPOCH_DIFF = 25569.0;
+
+// Convert an OLE date (double) to a struct tm holding the same date/time
+// components that were originally stored.
+//
+// OLE DATE (as used by Windows COleDateTime and mcDateFromTm) stores local
+// time with no timezone offset — the raw hour/minute/day values are encoded
+// directly into the fractional-days representation.  To round-trip correctly
+// on POSIX we must NOT apply a timezone conversion: we compute a pseudo Unix
+// timestamp whose UTC interpretation (gmtime_r) gives back those same
+// components.  Using localtime_r instead would shift the hour by the UTC
+// offset a second time and produce wrong results on any non-UTC system.
+static bool ole_to_localtime(double ole_date, struct tm& tm_out, int* ms_out = nullptr)
+{
+    // Round to nearest second to avoid floating-point truncation errors.
+    time_t t = (time_t)llround((ole_date - OLE_UNIX_EPOCH_DIFF) * 86400.0);
+    if (ms_out) {
+        double frac = (ole_date - OLE_UNIX_EPOCH_DIFF) * 86400.0 - t;
+        *ms_out = (int)(frac * 1000.0);
+    }
+    // gmtime_r: no timezone shift — preserves the local-time components stored
+    // by mcDateFromTm / SetDateTime.
+    return gmtime_r(&t, &tm_out) != nullptr;
+}
+#endif // !_WIN32
+
+
 #define MIN_DATE                0  // year 1800
 #define MAX_DATE                2958465L    // about year 9999
 
@@ -92,6 +129,7 @@ void CmcDateTime::CheckRange()
 // DateTimeSpan math
 CmcDateTimeSpan CmcDateTime::operator-(const CmcDateTime& date) const
   {
+#ifdef _WIN32
 	COleDateTimeSpan spanResult;
 
 	// If either operand NULL, result NULL
@@ -110,10 +148,24 @@ CmcDateTimeSpan CmcDateTime::operator-(const CmcDateTime& date) const
 
 	// Return result (span can't be invalid, so don't check range)
 	return m_dt - date.m_dt;
-
+#else // !_WIN32
+    CmcDateTimeSpan spanResult;
+    if (GetStatus() == null || date.GetStatus() == null)
+    {
+        spanResult.SetStatus(CmcDateTimeSpan::null);
+        return spanResult;
+    }
+    if (GetStatus() == invalid || date.GetStatus() == invalid)
+    {
+        spanResult.SetStatus(CmcDateTimeSpan::invalid);
+        return spanResult;
+    }
+    return CmcDateTimeSpan(m_dt - date.m_dt);
+#endif // _WIN32
   }
 
 
+#ifdef _WIN32
 int CmcDateTime::GetYear() const
   {
   COleDateTime t (m_dt);
@@ -161,6 +213,32 @@ int CmcDateTime::GetDayOfYear() const   // days since start of year, Jan 1 = 1
   COleDateTime t (m_dt);
   return t.GetDayOfYear ();
   }
+#else // !_WIN32
+// POSIX implementations: convert OLE date to local time via time_t
+int CmcDateTime::GetYear() const
+  { struct tm t; ole_to_localtime(m_dt, t); return t.tm_year + 1900; }
+
+int CmcDateTime::GetMonth() const
+  { struct tm t; ole_to_localtime(m_dt, t); return t.tm_mon + 1; }
+
+int CmcDateTime::GetDay() const
+  { struct tm t; ole_to_localtime(m_dt, t); return t.tm_mday; }
+
+int CmcDateTime::GetHour() const
+  { struct tm t; ole_to_localtime(m_dt, t); return t.tm_hour; }
+
+int CmcDateTime::GetMinute() const
+  { struct tm t; ole_to_localtime(m_dt, t); return t.tm_min; }
+
+int CmcDateTime::GetSecond() const
+  { struct tm t; ole_to_localtime(m_dt, t); return t.tm_sec; }
+
+int CmcDateTime::GetDayOfWeek() const   // 1=Sun, 2=Mon, ..., 7=Sat
+  { struct tm t; ole_to_localtime(m_dt, t); return t.tm_wday + 1; }
+
+int CmcDateTime::GetDayOfYear() const   // days since start of year, Jan 1 = 1
+  { struct tm t; ole_to_localtime(m_dt, t); return t.tm_yday + 1; }
+#endif // _WIN32
 
 // One-based array of days in year at month start
 static int MonthDays[13] =
@@ -243,6 +321,7 @@ int CmcDateTime::SetDateTime(int nYear, int nMonth, int nDay,
 
 CmcDateTime CmcDateTime::GetTimeNow ()
   {
+#ifdef _WIN32
 static bool bFirstTime = true;
 
 static CmcDateTime last_date;
@@ -296,24 +375,23 @@ static LONGLONG iCounterFrequency = 0;
 
   this_date.m_dt += secs / SECS_IN_DAY;
 
-  // ---- debugging
-#if 0
-    {
-    SYSTEMTIME systime;
-    GetSystemTime (&systime);
- 	  CmcDateTime test = CmcDateTime(systime.wYear, systime.wMonth,
-		                  systime.wDay, systime.wHour, systime.wMinute,
-		                  (double) systime.wSecond + ( (double) systime.wMilliseconds / 1000.0) );
-    double diff = test.m_dt - this_date.m_dt;
+  return this_date;
 
-    TRACE1 ("Time difference = %10.8f\n", diff);
-    }
-
-#endif
-  // --- end debugging
-
-  return this_date; 
-
+#else // !_WIN32
+  // POSIX: clock_gettime gives nanosecond precision directly — no need for
+  // the performance-counter resync trick used on Windows.
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  struct tm local_tm;
+  localtime_r(&ts.tv_sec, &local_tm);
+  double frac_sec = (double)(local_tm.tm_sec) + (double)ts.tv_nsec / 1.0e9;
+  return CmcDateTime(local_tm.tm_year + 1900,
+                     local_tm.tm_mon  + 1,
+                     local_tm.tm_mday,
+                     local_tm.tm_hour,
+                     local_tm.tm_min,
+                     frac_sec);
+#endif // _WIN32
   }
 
 void CmcDateTimeSpan::SetDateTimeSpan(

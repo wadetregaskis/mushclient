@@ -1,8 +1,9 @@
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
+#include "../../MUSHclient.h"
 #include "TreePropertySheet.h"
+#include "prefspropertypages.h"
 #include "MissingEntryPoints.h"
-#include "..\..\mainfrm.h"
+#include "../../mainfrm.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -42,11 +43,11 @@ static char BASED_CODE THIS_FILE[] = __FILE__;
   */
 
 
-#include "..\..\doc.h"
+#include "../../doc.h"
 
 #include "PrefsPropertySheet.h"
 
-#include "..\..\genprint.h"
+#include "../../genprint.h"
 
 // for debug messages
 static const char * sConfigPhase [] = {
@@ -94,6 +95,8 @@ CString CMUSHclientDoc::AppendMUDName (const CString strName)
     return strName + " - " + m_mush_name;
 
   } // end of CMUSHclientDoc::AppendMUDName
+
+#ifdef _WIN32   // prefs-dialog methods are Windows GUI only
 
 /* *******************************************************************
    load from document into property page
@@ -2404,6 +2407,8 @@ void CMUSHclientDoc::OnGamePreferences()
   {
   GamePreferences (-1);  // use last page, whatever it was
   }  // end of CMUSHclientDoc::OnGamePreferences
+
+#endif // _WIN32
 
 int CMUSHclientDoc::RecompileRegularExpressions ()
   {

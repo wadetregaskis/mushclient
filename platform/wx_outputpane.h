@@ -220,9 +220,24 @@ private:
     void OnPaint(wxPaintEvent& evt);
     void OnSize(wxSizeEvent& evt);
 
-    // Render one line.  lineIdx is the index in m_lines; yOff is the
-    // y-pixel of the line's top edge in virtual (unscrolled) coordinates.
+    // Render one logical line (all its visual rows).
+    // lineIdx is the index in m_lines; yOff is the y-pixel of the FIRST
+    // visual row of this line in virtual (unscrolled) coordinates.
     void DrawLine(wxDC& dc, int lineIdx, int yOff);
+
+    // ── Wrap cache ────────────────────────────────────────────────────────────
+    // m_visualRowStart[i] = index of the first visual row for logical line i.
+    // m_totalVisualRows   = total visual rows across all logical lines.
+    // m_wrapCols          = column count for wrapping (updated on resize/font change).
+    //
+    // Rebuild the wrap cache from scratch (called on resize and font change).
+    void RebuildWrapCache();
+
+    // Number of visual rows occupied by logical line lineIdx at m_wrapCols.
+    int WrapCount(int lineIdx) const;
+
+    // Convert a visual row index to its logical line index (binary search).
+    int VisualRowToLogical(int vr) const;
 
     // Draw a single text chunk from a run with the given selection inversion.
     void DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
@@ -252,9 +267,11 @@ private:
     // Convert client-coordinates y to a line index.
     int YToLine(int clientY) const;
 
-    // Convert a line index + client-coordinates x to a character column.
+    // Convert a line index + client-coordinates (x, y) to a character column.
+    // clientY is required to resolve which visual row within a wrapped line was
+    // clicked so that the column offset is computed correctly.
     // Column is a cursor position: 0 = before first char, n = after nth char.
-    int XToChar(int lineIdx, int clientX) const;
+    int XToChar(int lineIdx, int clientX, int clientY) const;
 
     // Build a SelPoint from a mouse event position.
     SelPoint MouseToSelPoint(const wxMouseEvent& evt) const;
@@ -281,7 +298,12 @@ private:
     int    m_lineH    = 18;   // line height pixels (set from font metrics)
     int    m_charW    = 10;   // avg char width pixels
 
-    int    m_maxLineChars = 80;   // widest line seen, in characters
+    int    m_maxLineChars = 80;   // widest line seen, in characters (stats only)
+
+    // ── Wrap cache ────────────────────────────────────────────────────────────
+    std::vector<int> m_visualRowStart;   // m_visualRowStart[i] = visual row of logical line i
+    int              m_totalVisualRows = 0;
+    int              m_wrapCols        = 80;
 
     // Selection: anchor is where the mouse went down; focus tracks the drag.
     // When anchor == focus, there is no selection (just a cursor position).
@@ -307,10 +329,11 @@ private:
     wxLongLong m_lastDClickTimeMs = 0;
     int        m_lastDClickLine   = -1;
 
-    // Number of lines trimmed from the front of m_lines since the last
-    // UpdateScrollbars call.  Used to compensate the scroll position when the
-    // buffer wraps and the user has scrolled up (so the view doesn't jump).
-    int m_trimmedCount = 0;
+    // Lines trimmed from the front since the last UpdateScrollbars call.
+    // Used to compensate the scroll position when the buffer wraps while the
+    // user is scrolled up (prevents the view jumping to different content).
+    int m_trimmedCount       = 0;
+    int m_trimmedRowsRemoved = 0;  // visual rows lost due to trimming
 
     wxDECLARE_EVENT_TABLE();
 };

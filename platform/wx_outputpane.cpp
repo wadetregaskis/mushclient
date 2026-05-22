@@ -220,10 +220,27 @@ void COutputPane::AppendLine(SOutputLine&& line)
     for (const auto& run : line) lineChars += (int)run.text.size();
     if (lineChars > m_maxLineChars) m_maxLineChars = lineChars;
 
+    // Append to wrap cache before the line is in m_lines so WrapCount() works.
+    {
+        int wc = (m_wrapCols > 0)
+                 ? std::max(1, (lineChars > 0 ? (lineChars + m_wrapCols - 1) / m_wrapCols : 1))
+                 : 1;
+        m_visualRowStart.push_back(m_totalVisualRows);
+        m_totalVisualRows += wc;
+    }
+
     m_lines.push_back(std::move(line));
 
     int trimCount = 0;
     while ((int)m_lines.size() > m_maxLines) {
+        // Accumulate visual rows being removed so UpdateScrollbars can compensate
+        // the scroll position (prevents the viewport jumping to different content).
+        if (!m_visualRowStart.empty()) {
+            int firstStart = m_visualRowStart[0];
+            int nextStart  = (m_visualRowStart.size() >= 2)
+                             ? m_visualRowStart[1] : m_totalVisualRows;
+            m_trimmedRowsRemoved += (nextStart - firstStart);
+        }
         m_lines.pop_front();
         ++trimCount;
         // Adjust selection indices downward; clear if the anchor line was removed.
@@ -236,6 +253,9 @@ void COutputPane::AppendLine(SOutputLine&& line)
             else --m_selFocus.line;
         }
     }
+    // Rebuild wrap cache after trimming so all row indices are correct.
+    if (trimCount > 0)
+        RebuildWrapCache();
     m_trimmedCount += trimCount;
 
     // Notify the logging hook (if any) immediately after the line is accepted.
@@ -271,6 +291,7 @@ void COutputPane::SetMaxLines(int n)
     if (trimmed) {
         m_selAnchor = SelPoint{};
         m_selFocus  = SelPoint{};
+        RebuildWrapCache();
         UpdateScrollbars(m_autoScroll);
         Refresh(false);
     }
@@ -337,8 +358,10 @@ void COutputPane::ScrollToLine(int lineIdx)
     lineIdx = std::max(0, std::min((int)m_lines.size() - 1, lineIdx));
     int unitH;
     GetScrollPixelsPerUnit(nullptr, &unitH);
-    if (unitH > 0)
-        Scroll(0, lineIdx * m_lineH / unitH);
+    if (unitH > 0) {
+        int vr = (lineIdx < (int)m_visualRowStart.size()) ? m_visualRowStart[lineIdx] : 0;
+        Scroll(0, vr * m_lineH / unitH);
+    }
     bool wasAuto = m_autoScroll;
     m_autoScroll = false;
     if (wasAuto && m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
@@ -399,7 +422,7 @@ void COutputPane::ScrollPage(int direction)
 
     // Re-evaluate whether we're now at the bottom.
     GetViewStart(nullptr, &newY);   // read back clamped position
-    int totalH = (int)m_lines.size() * m_lineH;
+    int totalH = m_totalVisualRows * m_lineH;
     bool wasAuto = m_autoScroll;
     m_autoScroll = (unitH > 0) && (newY * unitH + clientH >= totalH - m_lineH);
     if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
@@ -409,10 +432,13 @@ void COutputPane::ScrollPage(int direction)
 void COutputPane::ClearOutput()
 {
     m_lines.clear();
-    m_selAnchor    = SelPoint{};
-    m_selFocus     = SelPoint{};
-    m_maxLineChars = 80;
-    m_trimmedCount = 0;
+    m_selAnchor          = SelPoint{};
+    m_selFocus           = SelPoint{};
+    m_maxLineChars       = 80;
+    m_trimmedCount       = 0;
+    m_trimmedRowsRemoved = 0;
+    m_visualRowStart.clear();
+    m_totalVisualRows    = 0;
     UpdateScrollbars(true);
     Refresh();
 }
@@ -436,6 +462,7 @@ void COutputPane::SetOutputFont(const wxFont& font)
     m_maxLineChars = 80;
     // Keep horizontal scrolling disabled (same as constructor).
     SetScrollRate(0, m_lineH);
+    RebuildWrapCache();
     UpdateScrollbars(m_autoScroll);
     Refresh();
 
@@ -493,19 +520,26 @@ void COutputPane::OnPaint(wxPaintEvent&)
         dc.SetDeviceOrigin(-scrollX * unitW, -scrollY * unitH);
     }
 
-    if (!m_lines.empty()) {
+    if (!m_lines.empty() && m_lineH > 0) {
         // When the hint bar is visible, don't render lines that fall behind it
         // — saves work and avoids paint artifacts on the boundary.
         int usableH = m_autoScroll ? clientH : clientH - kHintBarH;
-        int firstLine = yPixOffset / m_lineH;
-        int lastLine  = (yPixOffset + usableH + m_lineH - 1) / m_lineH;
+
+        // Map visible pixel range → visible logical lines using the wrap cache.
+        int firstVR = yPixOffset / m_lineH;
+        int lastVR  = (yPixOffset + usableH + m_lineH - 1) / m_lineH;
+        int firstLine = VisualRowToLogical(firstVR);
+        int lastLine  = VisualRowToLogical(lastVR);
         firstLine = std::max(0, firstLine);
         lastLine  = std::min((int)m_lines.size() - 1, lastLine);
 
         dc.SetFont(m_font);
 
-        for (int i = firstLine; i <= lastLine; ++i)
-            DrawLine(dc, i, i * m_lineH);
+        for (int i = firstLine; i <= lastLine; ++i) {
+            // yOff of the first visual row of logical line i.
+            int lineVR = (i < (int)m_visualRowStart.size()) ? m_visualRowStart[i] : 0;
+            DrawLine(dc, i, lineVR * m_lineH);
+        }
     }
 
     // ── Miniwindows: draw-on-top pass ──────────────────────────────────────
@@ -573,6 +607,15 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
         return;
     }
 
+    // ── Shared geometry ───────────────────────────────────────────────────────
+    int clientW;
+    GetClientSize(&clientW, nullptr);
+    // Horizontal scrolling is disabled, so the right edge is always clientW.
+    // (PrepareDC has already set up the virtual coordinate system.)
+    const int rightEdge = clientW;
+    wxColour bgC(GetRValue(m_bgColor), GetGValue(m_bgColor), GetBValue(m_bgColor));
+    const int wrapCols = std::max(1, m_wrapCols);
+
     // ── Compute selection range for this line ─────────────────────────────────
     SelPoint selStart, selEnd;
     bool hasSel = GetNormalizedSel(selStart, selEnd);
@@ -580,8 +623,8 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                      lineIdx >= selStart.line &&
                      lineIdx <= selEnd.line;
 
-    // Character columns of selection start/end within this line.
-    // selColEnd == INT_MAX means "to end of line" (selection continues on next line).
+    // Selection boundaries as absolute char offsets within this logical line.
+    // selColEnd == INT_MAX means "selection continues past end of line".
     int selColStart = 0;
     int selColEnd   = INT_MAX;
     if (lineInSel) {
@@ -589,70 +632,88 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
         selColEnd   = (lineIdx == selEnd.line)   ? selEnd.col   : INT_MAX;
     }
 
-    // ── Render runs ───────────────────────────────────────────────────────────
+    // ── Render runs with visual wrapping ─────────────────────────────────────
+    // x:          pixel x within current visual row (horizontal scroll = 0 always)
+    // currentCol: character column within current visual row [0, wrapCols)
+    // currentY:   y-pixel top of current visual row
+    // globalChar: absolute char offset in this logical line (for selection)
     int x          = 0;
     int currentCol = 0;
+    int currentY   = yOff;
+    int globalChar = 0;
 
     for (const auto& run : line) {
         if (run.text.empty()) continue;
 
         wxString wxText = wxString::FromUTF8(run.text.c_str(), run.text.size());
         int runLen = (int)wxText.size();
+        int pos    = 0;
 
-        if (!lineInSel) {
-            // Fast path: no selection on this line — draw the whole run at once.
-            DrawRunChunk(dc, wxText, x, yOff, run, false);
-            x += runLen * m_charW;
-        } else {
-            // Split the run into up to three segments:
-            //   Part 1  [0,       splitA)  — before selection
-            //   Part 2  [splitA,  splitB)  — within selection
-            //   Part 3  [splitB,  runLen)  — after selection
-            int splitA = std::max(0, std::min(runLen, selColStart - currentCol));
-            int splitB = std::max(0, std::min(runLen,
-                                  (selColEnd == INT_MAX) ? runLen
-                                                         : selColEnd - currentCol));
+        while (pos < runLen) {
+            // How many chars fit on the current visual row.
+            int avail = wrapCols - currentCol;
+            int chunk = std::min(avail, runLen - pos);
 
-            if (splitA > 0) {
-                wxString before = wxText.substr(0, splitA);
-                DrawRunChunk(dc, before, x, yOff, run, false);
-                x += splitA * m_charW;
+            // Selection for this sub-chunk (absolute char range).
+            int chunkAbs0 = globalChar + pos;
+            int chunkAbs1 = chunkAbs0 + chunk;
+            bool inSel    = lineInSel
+                            && chunkAbs1 > selColStart
+                            && chunkAbs0 < (selColEnd == INT_MAX ? INT_MAX : selColEnd);
+
+            if (!inSel) {
+                // Whole sub-chunk: no selection overlap.
+                DrawRunChunk(dc, wxText.Mid(pos, chunk), x, currentY, run, false);
+                x += chunk * m_charW;
+            } else {
+                // Split into up to three sub-segments: before / inside / after selection.
+                int lo = std::max(0, selColStart - chunkAbs0);
+                int hi = std::min(chunk, (selColEnd == INT_MAX ? chunk
+                                                               : selColEnd - chunkAbs0));
+                if (lo > 0) {
+                    DrawRunChunk(dc, wxText.Mid(pos, lo), x, currentY, run, false);
+                    x += lo * m_charW;
+                }
+                if (hi > lo) {
+                    DrawRunChunk(dc, wxText.Mid(pos + lo, hi - lo), x, currentY, run, true);
+                    x += (hi - lo) * m_charW;
+                }
+                if (hi < chunk) {
+                    DrawRunChunk(dc, wxText.Mid(pos + hi, chunk - hi), x, currentY, run, false);
+                    x += (chunk - hi) * m_charW;
+                }
             }
-            if (splitB > splitA) {
-                wxString sel = wxText.substr(splitA, splitB - splitA);
-                DrawRunChunk(dc, sel, x, yOff, run, /*selected=*/true);
-                x += (splitB - splitA) * m_charW;
-            }
-            if (splitB < runLen) {
-                wxString after = wxText.substr(splitB);
-                DrawRunChunk(dc, after, x, yOff, run, false);
-                x += (runLen - splitB) * m_charW;
+
+            currentCol += chunk;
+            pos        += chunk;
+
+            // Wrap to next visual row when this row is full and more text follows.
+            if (currentCol >= wrapCols && pos < runLen) {
+                // Fill remainder of this row with background.
+                if (x < rightEdge) {
+                    dc.SetBrush(wxBrush(bgC));
+                    dc.SetPen(*wxTRANSPARENT_PEN);
+                    dc.DrawRectangle(x, currentY, rightEdge - x, m_lineH);
+                }
+                currentCol = 0;
+                x          = 0;
+                currentY  += m_lineH;
             }
         }
 
-        currentCol += runLen;
+        globalChar += runLen;
     }
 
-    // Fill the remainder of the line with the pane background.
-    {
-        int clientW, clientH;
-        GetClientSize(&clientW, &clientH);
-        int scrollX, scrollY;
-        GetViewStart(&scrollX, &scrollY);
-        int unitW, unitH;
-        GetScrollPixelsPerUnit(&unitW, &unitH);
-        int rightEdge = scrollX * unitW + clientW;
-        if (x < rightEdge) {
-            wxColour bgC(GetRValue(m_bgColor), GetGValue(m_bgColor), GetBValue(m_bgColor));
-            dc.SetBrush(wxBrush(bgC));
-            dc.SetPen(*wxTRANSPARENT_PEN);
-            dc.DrawRectangle(x, yOff, rightEdge - x, m_lineH);
-        }
+    // Fill the remainder of the last visual row with the pane background.
+    if (x < rightEdge) {
+        dc.SetBrush(wxBrush(bgC));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.DrawRectangle(x, currentY, rightEdge - x, m_lineH);
     }
 
     // ── Search term: left-margin marker + in-line text highlight ─────────────
     if (!m_searchTerm.IsEmpty()) {
-        // Build plain text for the whole line (same as FindNext does).
+        // Build plain text for the whole line.
         wxString plain;
         for (const auto& run : line)
             if (!run.horiz_rule)
@@ -662,64 +723,66 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
         wxString lowerTerm  = m_searchTerm.Lower();
         int termLen = (int)lowerTerm.size();
 
-        // Find all match positions as [start_col, end_col) character ranges.
         struct HitRange { int start, end; };
         std::vector<HitRange> hits;
         if (termLen > 0) {
             std::wstring pw = lowerPlain.ToStdWstring();
             std::wstring tw = lowerTerm.ToStdWstring();
-            size_t pos = 0;
-            while ((pos = pw.find(tw, pos)) != std::wstring::npos) {
-                hits.push_back({(int)pos, (int)(pos + (int)tw.size())});
-                ++pos;
+            size_t p = 0;
+            while ((p = pw.find(tw, p)) != std::wstring::npos) {
+                hits.push_back({(int)p, (int)(p + tw.size())});
+                ++p;
             }
         }
 
         if (!hits.empty()) {
-            // Left-margin bar: 3-pixel yellow stripe at the scroll origin.
-            {
-                int scrollX, scrollY;
-                GetViewStart(&scrollX, &scrollY);
-                int unitW, unitH;
-                GetScrollPixelsPerUnit(&unitW, &unitH);
-                int xLeft = scrollX * unitW;
-                dc.SetBrush(wxBrush(wxColour(255, 220, 0)));
-                dc.SetPen(*wxTRANSPARENT_PEN);
-                dc.DrawRectangle(xLeft, yOff, 3, m_lineH);
-            }
+            // Left-margin bar: 3-pixel yellow stripe on each visual row of this line.
+            dc.SetBrush(wxBrush(wxColour(255, 220, 0)));
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            int wc = WrapCount(lineIdx);
+            for (int vr = 0; vr < wc; ++vr)
+                dc.DrawRectangle(0, yOff + vr * m_lineH, 3, m_lineH);
 
-            // In-line highlight: re-render each matching character span on top of
-            // the already-drawn text with a yellow background and black text.
-            // wxSOLID background mode ensures the background rect is filled.
+            // In-line highlight: re-render each matching span with yellow bg + black text.
             dc.SetBackgroundMode(wxSOLID);
             dc.SetTextForeground(wxColour(0, 0, 0));
             dc.SetTextBackground(wxColour(255, 220, 0));
 
-            int cx = 0;   // character column in the plain-text space
-            int px = 0;   // pixel x from line origin
-
+            int cx = 0;  // absolute char index in the logical line
             for (const auto& run : line) {
                 if (run.text.empty() || run.horiz_rule) continue;
                 wxString wxText = wxString::FromUTF8(run.text.c_str(), run.text.size());
                 int runLen = (int)wxText.size();
+
+                bool drawUnderline = run.underline || !run.action.empty();
+                if (run.bold && drawUnderline)  dc.SetFont(m_fontBoldUnderline);
+                else if (run.bold)              dc.SetFont(m_fontBold);
+                else if (drawUnderline)         dc.SetFont(m_fontUnderline);
+                else                            dc.SetFont(m_font);
 
                 for (const auto& hit : hits) {
                     int lo = std::max(cx, hit.start);
                     int hi = std::min(cx + runLen, hit.end);
                     if (lo >= hi) continue;
 
-                    bool drawUnderline = run.underline || !run.action.empty();
-                    if (run.bold && drawUnderline)  dc.SetFont(m_fontBoldUnderline);
-                    else if (run.bold)              dc.SetFont(m_fontBold);
-                    else if (drawUnderline)         dc.SetFont(m_fontUnderline);
-                    else                            dc.SetFont(m_font);
-
-                    wxString chunk = wxText.substr(lo - cx, hi - lo);
-                    dc.DrawText(chunk, px + (lo - cx) * m_charW, yOff);
+                    // Render matching chars at their wrapped visual position,
+                    // batching contiguous characters on the same visual row.
+                    int c = lo;
+                    while (c < hi) {
+                        int vr       = c / wrapCols;   // visual row index within this line
+                        int vcol     = c % wrapCols;   // column within that visual row
+                        int py       = yOff + vr * m_lineH;
+                        int px       = vcol * m_charW;
+                        // Batch to end-of-match or end-of-visual-row, whichever comes first.
+                        int batchEnd = std::min(hi, (vr + 1) * wrapCols);
+                        // c - cx = offset of c within wxText (since cx is the
+                        // absolute char index of the start of this run).
+                        dc.DrawText(wxText.substr(c - cx, batchEnd - c), px, py);
+                        c = batchEnd;
+                    }
                 }
 
                 cx += runLen;
-                px += runLen * m_charW;
             }
         }
     }
@@ -762,6 +825,52 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
     dc.DrawText(text, x, yOff);
 }
 
+// ── Wrap cache helpers ────────────────────────────────────────────────────────
+
+int COutputPane::WrapCount(int lineIdx) const
+{
+    if (lineIdx < 0 || lineIdx >= (int)m_lines.size()) return 0;
+    const SOutputLine& line = m_lines[lineIdx];
+    if (line.size() == 1 && line[0].horiz_rule) return 1;
+    int chars = 0;
+    for (const auto& run : line)
+        chars += (int)run.text.size();
+    if (chars == 0 || m_wrapCols <= 0) return 1;
+    return (chars + m_wrapCols - 1) / m_wrapCols;
+}
+
+void COutputPane::RebuildWrapCache()
+{
+    int clientW;
+    GetClientSize(&clientW, nullptr);
+    int newCols = (m_charW > 0 && clientW > 0)
+                  ? std::max(1, clientW / m_charW)
+                  : 80;
+    m_wrapCols = newCols;
+
+    int n = (int)m_lines.size();
+    m_visualRowStart.resize(n);
+    m_totalVisualRows = 0;
+    for (int i = 0; i < n; ++i) {
+        m_visualRowStart[i] = m_totalVisualRows;
+        m_totalVisualRows  += WrapCount(i);
+    }
+}
+
+int COutputPane::VisualRowToLogical(int vr) const
+{
+    if (m_visualRowStart.empty()) return 0;
+    vr = std::max(0, vr);
+    // Binary search: largest i such that m_visualRowStart[i] <= vr.
+    int lo = 0, hi = (int)m_visualRowStart.size() - 1;
+    while (lo < hi) {
+        int mid = (lo + hi + 1) / 2;
+        if (m_visualRowStart[mid] <= vr) lo = mid;
+        else hi = mid - 1;
+    }
+    return lo;
+}
+
 // ── Scroll helpers ────────────────────────────────────────────────────────────
 
 void COutputPane::UpdateScrollbars(bool scrollToBottom)
@@ -769,10 +878,10 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
     int clientW, clientH;
     GetClientSize(&clientW, &clientH);
 
-    int totalH = (int)m_lines.size() * m_lineH;
+    int totalH = m_totalVisualRows * m_lineH;
 
-    // Virtual width = client width: horizontal scrolling is disabled so long
-    // lines are clipped at the pane edge rather than requiring H-scroll.
+    // Virtual width = client width: horizontal scrolling is disabled; long
+    // lines are visually wrapped rather than requiring H-scroll.
     SetVirtualSize(clientW, totalH);
 
     if (scrollToBottom && !m_lines.empty()) {
@@ -787,16 +896,17 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
         m_trimmedCount = 0;
     } else if (m_trimmedCount > 0 && !m_autoScroll) {
         // The buffer trimmed lines from the front while the user was scrolled up.
-        // Compensate by shifting the view upward by the same number of line-heights
-        // so the visible content stays stable (no jump when old lines scroll off).
+        // Compensate: shift the view up by the number of visual rows removed so
+        // the visible content stays stable (no jump when old lines scroll off).
         int scrollY, unitH;
         GetViewStart(nullptr, &scrollY);
         GetScrollPixelsPerUnit(nullptr, &unitH);
         if (unitH > 0) {
-            int shift = (m_trimmedCount * m_lineH + unitH - 1) / unitH;
+            int shift = (m_trimmedRowsRemoved * m_lineH + unitH - 1) / unitH;
             Scroll(0, std::max(0, scrollY - shift));
         }
-        m_trimmedCount = 0;
+        m_trimmedCount      = 0;
+        m_trimmedRowsRemoved = 0;
     }
 }
 
@@ -810,7 +920,7 @@ void COutputPane::OnScrollWinUpdate(wxScrollWinEvent& evt)
         GetScrollPixelsPerUnit(nullptr, &unitH);
         int clientH;
         GetClientSize(nullptr, &clientH);
-        int totalH = (int)m_lines.size() * m_lineH;
+        int totalH = m_totalVisualRows * m_lineH;
         bool wasAuto = m_autoScroll;
         m_autoScroll = (unitH > 0) &&
                        (scrollY * unitH + clientH >= totalH - m_lineH);
@@ -821,6 +931,7 @@ void COutputPane::OnScrollWinUpdate(wxScrollWinEvent& evt)
 
 void COutputPane::OnSize(wxSizeEvent& evt)
 {
+    RebuildWrapCache();
     UpdateScrollbars(m_autoScroll);
     evt.Skip();
 }
@@ -835,40 +946,53 @@ int COutputPane::YToLine(int clientY) const
     const_cast<COutputPane*>(this)->GetViewStart(nullptr, &scrollY);
     int unitH;
     const_cast<COutputPane*>(this)->GetScrollPixelsPerUnit(nullptr, &unitH);
-    int yPix = scrollY * unitH + clientY;
-    int line  = (m_lineH > 0) ? yPix / m_lineH : 0;
-    return std::max(0, std::min((int)m_lines.size() - 1, line));
+    int yPix   = scrollY * unitH + clientY;
+    int visRow = (m_lineH > 0) ? yPix / m_lineH : 0;
+    // Map visual row → logical line via the wrap cache.
+    return std::max(0, std::min((int)m_lines.size() - 1,
+                                const_cast<COutputPane*>(this)->VisualRowToLogical(visRow)));
 }
 
-int COutputPane::XToChar(int lineIdx, int clientX) const
+int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
 {
     if (lineIdx < 0 || lineIdx >= (int)m_lines.size() || m_charW <= 0)
         return 0;
-
-    // Convert client x to virtual (unscrolled) x.
-    int scrollX;
-    const_cast<COutputPane*>(this)->GetViewStart(&scrollX, nullptr);
-    int unitW;
-    const_cast<COutputPane*>(this)->GetScrollPixelsPerUnit(&unitW, nullptr);
-    int virtualX = clientX + scrollX * unitW;
-
-    if (virtualX <= 0) return 0;
 
     // Count total characters on the line.
     int totalChars = 0;
     for (const auto& run : m_lines[lineIdx])
         totalChars += (int)run.text.size();
 
-    // For a monospace font every character is m_charW pixels wide.
-    // Round to nearest character boundary.
-    int col = (virtualX + m_charW / 2) / m_charW;
+    // Convert client x to virtual (unscrolled) x.
+    // Horizontal scroll is always 0 (H-scrolling is disabled), but keep the
+    // arithmetic correct in case that ever changes.
+    int scrollX, scrollY;
+    const_cast<COutputPane*>(this)->GetViewStart(&scrollX, &scrollY);
+    int unitW, unitH;
+    const_cast<COutputPane*>(this)->GetScrollPixelsPerUnit(&unitW, &unitH);
+    int virtualX = clientX + scrollX * unitW;
+
+    // For wrapped lines we need to know which visual row within the logical
+    // line was clicked, so we can add (vrOffset * m_wrapCols) to the column.
+    int vrOffset = 0;
+    if (m_wrapCols > 0 && m_lineH > 0) {
+        int yPix       = scrollY * unitH + clientY;
+        int clickVR    = yPix / m_lineH;
+        int lineStartVR = (lineIdx < (int)m_visualRowStart.size())
+                          ? m_visualRowStart[lineIdx] : 0;
+        vrOffset = std::max(0, clickVR - lineStartVR);
+    }
+
+    // Column within the visual row, then offset by wrapped rows.
+    int colInRow = (virtualX + m_charW / 2) / m_charW;
+    int col      = vrOffset * m_wrapCols + std::max(0, colInRow);
     return std::max(0, std::min(totalChars, col));
 }
 
 SelPoint COutputPane::MouseToSelPoint(const wxMouseEvent& evt) const
 {
     int line = YToLine(evt.GetY());
-    int col  = XToChar(line, evt.GetX());
+    int col  = XToChar(line, evt.GetX(), evt.GetY());
     return SelPoint{line, col};
 }
 
@@ -948,27 +1072,22 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
     // Check whether the click landed on a link run.  We store the action now
     // but don't fire it yet — we fire on mouse-up only if no drag occurred so
     // that the user can still select/copy link text by dragging over it.
+    // XToChar returns the absolute character column within the logical line,
+    // correctly accounting for visual-row wrapping.
     if (m_lineH > 0 && !m_lines.empty()) {
         int lineIdx = YToLine(evt.GetY());
         if (lineIdx >= 0 && lineIdx < (int)m_lines.size()) {
-            int scrollX, scrollY;
-            GetViewStart(&scrollX, &scrollY);
-            int unitW, unitH;
-            GetScrollPixelsPerUnit(&unitW, &unitH);
-            int clickVirtualX = evt.GetX() + scrollX * unitW;
-
-            int runX = 0;
+            int clickCol = XToChar(lineIdx, evt.GetX(), evt.GetY());
+            int c = 0;
             for (const auto& run : m_lines[lineIdx]) {
-                if (run.text.empty()) continue;
-                int runW = (int)run.text.size() * m_charW;
+                int runLen = (int)run.text.size();
                 if (!run.action.empty() &&
-                    clickVirtualX >= runX &&
-                    clickVirtualX <  runX + runW)
+                    clickCol >= c && clickCol < c + runLen)
                 {
                     m_linkAtDown = run.action;
                     break;
                 }
-                runX += runW;
+                c += runLen;
             }
         }
     }
@@ -1052,7 +1171,7 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
                     lineText += wxString::FromUTF8(run.text.c_str(),
                                                    run.text.size());
 
-            int col = XToChar(lineIdx, evt.GetX());
+            int col = XToChar(lineIdx, evt.GetX(), evt.GetY());
             col = std::max(0, std::min((int)lineText.size(), col));
 
             // Expand left to word start.
@@ -1140,17 +1259,18 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
             SelPoint pt = MouseToSelPoint(evt);
             bool overLink = false;
             if (pt.valid() && pt.line < (int)m_lines.size()) {
-                const SOutputLine& ln = m_lines[pt.line];
-                int col = 0;
-                for (const auto& run : ln) {
+                // pt.col is the absolute char column in the logical line
+                // (already wrap-aware via XToChar in MouseToSelPoint).
+                int c = 0;
+                for (const auto& run : m_lines[pt.line]) {
                     int runLen = (int)run.text.size();
                     if (!run.action.empty() &&
-                        pt.col >= col && pt.col < col + runLen)
+                        pt.col >= c && pt.col < c + runLen)
                     {
                         overLink = true;
                         break;
                     }
-                    col += runLen;
+                    c += runLen;
                 }
             }
             SetCursor(overLink ? wxCursor(wxCURSOR_HAND)
@@ -1172,12 +1292,13 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     bool hasSel = GetNormalizedSel(s, e);
 
     // Detect whether the click landed on a link run.
-    // Use the same character-column approximation as OnMotion.
+    // XToChar returns the absolute char column in the logical line,
+    // correctly accounting for visual-row wrapping.
     std::string linkAtClick;
     {
         int lineIdx = YToLine(evt.GetY());
-        int col     = XToChar(lineIdx, evt.GetX());
         if (lineIdx >= 0 && lineIdx < (int)m_lines.size()) {
+            int col = XToChar(lineIdx, evt.GetX(), evt.GetY());
             int c = 0;
             for (const auto& run : m_lines[lineIdx]) {
                 int runLen = (int)run.text.size();
@@ -1297,7 +1418,7 @@ void COutputPane::OnMouseWheel(wxMouseEvent& evt)
         GetScrollPixelsPerUnit(nullptr, &unitH);
         int clientH;
         GetClientSize(nullptr, &clientH);
-        int totalH = (int)m_lines.size() * m_lineH;
+        int totalH = m_totalVisualRows * m_lineH;
         bool wasAuto = m_autoScroll;
         m_autoScroll = (unitH > 0) &&
                        (scrollY * unitH + clientH >= totalH - m_lineH);
@@ -1390,7 +1511,7 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
             GetScrollPixelsPerUnit(nullptr, &unitH);
             int clientH;
             GetClientSize(nullptr, &clientH);
-            int totalH = (int)m_lines.size() * m_lineH;
+            int totalH = m_totalVisualRows * m_lineH;
             bool wasAuto = m_autoScroll;
             m_autoScroll = (unitH > 0) &&
                            (scrollY * unitH + clientH >= totalH - m_lineH);
@@ -1521,8 +1642,9 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
     int unitH;
     GetScrollPixelsPerUnit(nullptr, &unitH);
     if (unitH > 0) {
-        int scrollX;
-        Scroll(0, foundIdx * m_lineH / unitH);
+        int vr = (foundIdx < (int)m_visualRowStart.size())
+                 ? m_visualRowStart[foundIdx] : foundIdx;
+        Scroll(0, vr * m_lineH / unitH);
         m_autoScroll = false;
         if (m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
     }

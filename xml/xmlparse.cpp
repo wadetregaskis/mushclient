@@ -5,8 +5,13 @@
 //  <![CDATA[ ... ]]> 
 
 #include "stdafx.h"
-#include "..\MUSHclient.h"
-#include "..\doc.h"
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
+#  include "../MUSHclient.h"
+#  include "../doc.h"
+#else
+#  include "../platform/doc_stub.h"
+#endif
+#include "xmlparse.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -1157,7 +1162,10 @@ bool bNegative = false;
     iResult *= 10;
     iResult += *p - '0';
 
-    if (iResult > ((__int64) LONG_MAX + 1))   // to allow for LONG_MIN which will be one more
+    // Allow one extra (LONG_MIN's absolute value = LONG_MAX + 1); use unsigned
+    // comparison so that LONG_MAX + 1 doesn't overflow on 64-bit platforms
+    // where __int64 and long have the same width.
+    if ((unsigned long long)iResult > (unsigned long long)LONG_MAX + 1)
       ThrowErrorException ("Value '%s' too large in numeric attribute named '%s'" ,
                           (LPCTSTR) strValue,
                           sName);

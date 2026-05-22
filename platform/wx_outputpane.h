@@ -75,10 +75,14 @@ public:
 
     // ── Find / search ─────────────────────────────────────────────────────────
     // FindNext: jumps to the next/previous match and returns true if found.
-    // *outMatchLine receives the 0-based line index of the match (or -1).
-    // *outTotalMatches receives a count of all matching lines (lazily counted).
+    // *outMatchLine    receives the 0-based line index of the match (or -1).
+    // *outOrdinal      receives the 1-based ordinal of the match among all hits.
+    // *outTotalMatches receives a count of all matching lines (capped at 9999).
+    // All three are computed in one linear scan to avoid redundant work.
     bool FindNext(const wxString& term, bool forward = true,
-                  int* outMatchLine = nullptr, int* outTotalMatches = nullptr);
+                  int* outMatchLine    = nullptr,
+                  int* outOrdinal      = nullptr,
+                  int* outTotalMatches = nullptr);
     void HighlightSearch(const wxString& term);
 
     // Change the display font (e.g. from preferences).

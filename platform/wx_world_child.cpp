@@ -955,8 +955,9 @@ void CWorldChildFrame::DoFind(bool forward)
         return;
     }
 
-    int matchLine = -1, totalMatches = 0;
-    bool found = m_output->FindNext(term, forward, &matchLine, &totalMatches);
+    int matchLine = -1, ordinal = 0, totalMatches = 0;
+    bool found = m_output->FindNext(term, forward,
+                                    &matchLine, &ordinal, &totalMatches);
 
     if (found) {
         // Reset background in case a previous search had left it red.
@@ -964,21 +965,6 @@ void CWorldChildFrame::DoFind(bool forward)
         m_findInput->Refresh();
 
         if (m_findLabel) {
-            // Show "N of M" where N is 1-based ordinal of the found line among
-            // all matching lines, and M is the total count.
-            // Re-count to find ordinal (cheap relative to total count pass).
-            int ordinal = 1;
-            wxString lowerTerm = term.Lower();
-            for (int i = 0; i < matchLine; ++i) {
-                const SOutputLine* ln = m_output->GetLine(i);
-                if (!ln) continue;
-                wxString s;
-                for (const auto& run : *ln)
-                    if (!run.horiz_rule)
-                        s += wxString::FromUTF8(run.text.c_str(), run.text.size());
-                if (s.Lower().Contains(lowerTerm))
-                    ++ordinal;
-            }
             wxString countStr;
             if (totalMatches >= 9999)
                 countStr = wxString::Format(wxT("%d of 9999+"), ordinal);

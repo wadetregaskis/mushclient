@@ -685,7 +685,6 @@ void COutputPane::OnScrollWinUpdate(wxScrollWinEvent& evt)
 {
     evt.Skip();
     CallAfter([this]() {
-        if (!this) return;
         int scrollY;
         GetViewStart(nullptr, &scrollY);
         int unitH;
@@ -1192,7 +1191,7 @@ wxString COutputPane::SelectedText() const
         endCol   = std::max(startCol, std::min((int)lineText.size(), endCol));
 
         result += lineText.substr(startCol, endCol - startCol);
-        result += "\n";
+        if (i < hi) result += "\n";   // newline between lines, not after the last
     }
     return result;
 }
@@ -1200,9 +1199,10 @@ wxString COutputPane::SelectedText() const
 // ── Find / Search ─────────────────────────────────────────────────────────────
 
 bool COutputPane::FindNext(const wxString& term, bool forward,
-                            int* outMatchLine, int* outTotalMatches)
+                            int* outMatchLine, int* outOrdinal, int* outTotalMatches)
 {
     if (outMatchLine)    *outMatchLine    = -1;
+    if (outOrdinal)      *outOrdinal      = 0;
     if (outTotalMatches) *outTotalMatches = 0;
 
     if (term.IsEmpty() || m_lines.empty()) return false;
@@ -1260,15 +1260,21 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
     }
     Refresh(false);
 
-    if (outMatchLine)    *outMatchLine = foundIdx;
+    if (outMatchLine) *outMatchLine = foundIdx;
 
-    // Count total matching lines (capped at 9999 to avoid stalling on huge buffers).
-    if (outTotalMatches) {
-        int total = 0;
-        for (int i = 0; i < n && total < 9999; ++i)
-            if (lineText(i).Contains(lowerTerm))
+    // Count total matching lines and the 1-based ordinal of the match in one
+    // linear scan.  Capped at 9999 to avoid stalling on huge buffers.
+    if (outOrdinal || outTotalMatches) {
+        int total   = 0;
+        int ordinal = 0;
+        for (int i = 0; i < n && total < 9999; ++i) {
+            if (lineText(i).Contains(lowerTerm)) {
                 ++total;
-        *outTotalMatches = total;
+                if (i <= foundIdx) ++ordinal;
+            }
+        }
+        if (outOrdinal)      *outOrdinal      = ordinal;
+        if (outTotalMatches) *outTotalMatches = total;
     }
 
     return true;

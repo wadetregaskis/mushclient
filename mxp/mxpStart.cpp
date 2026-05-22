@@ -2,12 +2,15 @@
 
 // eg. <send ...>
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
-#include "..\MUSHclient.h"
-
-#include "..\doc.h"
-#include "..\MUSHview.h"
-#include "..\mainfrm.h"
+#include "../MUSHclient.h"
+#include "../doc.h"
+#include "../MUSHview.h"
+#include "../mainfrm.h"
+#else
+#include "platform/doc_stub.h"
+#endif
 #include "mxp.h"
 
 #ifdef _DEBUG
@@ -221,6 +224,23 @@ CString strVariable;
 
 
     } // end of not command tag
+
+#ifndef _WIN32
+  // On macOS/Linux the scratch-line style list must never be left empty, or
+  // the next GetTail() call (from InterpretANSIcode, MXP_StartTag, etc.)
+  // will invoke undefined behaviour on an empty std::list.
+  // Command tags take the RemoveTail() path above without AddStyle re-adding
+  // a style, so we ensure at least one zero-length style is always present.
+  if (m_pCurrentLine->styleList.IsEmpty())
+    {
+    CStyle * p = new CStyle;
+    p->iFlags      = (unsigned short)iFlags;
+    p->iForeColour = iForeColour;
+    p->iBackColour = iBackColour;
+    p->iLength     = 0;
+    m_pCurrentLine->styleList.AddTail (p);
+    }
+#endif
 
 //if (strName == "ex")
   /*

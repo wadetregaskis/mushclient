@@ -1,14 +1,17 @@
 // mxpOpenAtomic.cpp - open one atomic tag
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
-#include "..\MUSHclient.h"
-
-#include "..\doc.h"
-#include "..\MUSHview.h"
-#include "..\mainfrm.h"
+#include "../MUSHclient.h"
+#include "../doc.h"
+#include "../MUSHview.h"
+#include "../mainfrm.h"
+#else
+#include "platform/doc_stub.h"
+#endif
+#include "../Color.h"   // CColor (HLS colour operations) — not in stdafx.h on macOS
 #include "mxp.h"
-#include "..\scripting\errors.h"
-#include "..\color.h"
+#include "scripting/errors.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -291,7 +294,7 @@ COLORREF       iBackColour = pStyle->iBackColour;
             CString strVersion = CFormat ("\x1B[1z<VERSION MXP=\"%s\" CLIENT=MUSHclient "
                       "VERSION=\"%s\" REGISTERED=YES>%s",
                      MXP_VERSION,
-                     MUSHCLIENT_VERSION,
+                     (LPCTSTR) MUSHCLIENT_VERSION,
                      ENDLINE
                      );
 

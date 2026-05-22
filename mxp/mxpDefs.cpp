@@ -4,14 +4,17 @@
 // <!ATTLIST ...>
 // <!ENTITY ...>
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
-#include "..\MUSHclient.h"
-
-#include "..\doc.h"
-#include "..\MUSHview.h"
-#include "..\mainfrm.h"
+#include "../MUSHclient.h"
+#include "../doc.h"
+#include "../MUSHview.h"
+#include "../mainfrm.h"
+#else
+#include "platform/doc_stub.h"
+#endif
 #include "mxp.h"
-#include "..\scripting\errors.h"
+#include "scripting/errors.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

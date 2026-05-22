@@ -2,6 +2,7 @@
 //  or project specific include files that are used frequently, but
 //      are changed infrequently
 //
+#pragma once
 
 // disable some warnings (especially at warning level 4)
 
@@ -23,9 +24,30 @@
 #pragma warning (disable : 4786)  // identifier was truncated to 'number' characters in the debug information
 #pragma warning (disable : 4996)  // MBCS support in MFC is deprecated and may be removed in a future version of MFC
 
+#define HAVE_CONFIG_H   // for PCRE
+
+// ── Standard C++ library (needed on all platforms) ─────────────────────────
+#include <string>
+#include <vector>
+#include <deque>
+#include <stack>
+#include <map>
+#include <set>
+#include <list>
+#include <algorithm>
+#include <functional>
+#include <iostream>
+#include <iterator>
+#include <sstream>
+
+// Sentinel so doc_stub.h knows stdafx.h's UMessageBox/TMessageBox are available.
+#define _STDAFX_INCLUDED_
+
+#ifdef _WIN32
+// ── Windows / MFC ─────────────────────────────��────────────────────────────
+
 #define _AFX_NO_MFC_CONTROLS_IN_DIALOGS
 #define VC_EXTRALEAN		// Exclude rarely-used stuff from Windows headers
-#define HAVE_CONFIG_H   // for PCRE
 
 #pragma warning( push, 3)
 #include <afx.h>
@@ -76,29 +98,53 @@
 #include <afxmt.h>
 #include <afxpriv.h>
 
-#include "format.h"
+#include "format.h"    // declares CFormat (inherits CString)
 #include "exceptions.h"
+// Guard format.h from re-inclusion on non-Windows (compat.h defines CFormat inline)
+#define FORMAT_H_INCLUDED
 
-#include <string>
-#include <vector>
-#include <deque>
-#include <stack>
-#include <map>
-#include <set>
-#include <list>
-#include <algorithm>
-#include <functional>
-#include <iostream>
-#include <iterator>
-#include <sstream>
 #pragma warning (pop)
+
+#else // !_WIN32
+// ── macOS / non-Windows ────────────────────────────────────────────────────
+
+//#define PANE  // use pane windows
+//#define USE_EXTRA_PANE     // 3rd pane for messages and stuff
+
+#ifdef USE_EXTRA_PANE
+  #define EXTRA_PANE 0
+  #define OUTPUT_PANE 1
+  #define COMMAND_PANE 2
+#else
+  #define OUTPUT_PANE 0
+  #define COMMAND_PANE 1
+#endif
+
+#include "platform/compat.h"
+#include "exceptions.h"
+#include "format.h"    // CFormat : CString — declared here, defined in format.cpp
+
+// ── Colour constants — same values as Windows build ──────────────────────
+// Use #define (not enum) so doc_stub.h's #ifndef BLACK guard works.
+#ifndef BLACK
+#  define BLACK   0
+#  define RED     1
+#  define GREEN   2
+#  define YELLOW  3
+#  define BLUE    4
+#  define MAGENTA 5
+#  define CYAN    6
+#  define WHITE   7
+#endif
+
+#endif // _WIN32
 
 #ifdef LUA_52
   extern "C"
     {
-    #include "..\lua52\src\lua.h"
-    #include "..\lua52\src\lualib.h"
-    #include "..\lua52\src\lauxlib.h"
+    #include "../lua52/src/lua.h"
+    #include "../lua52/src/lualib.h"
+    #include "../lua52/src/lauxlib.h"
     }
 
 #else
@@ -117,7 +163,7 @@ bool IsStringNumber (const string & s, const bool bSigned = false);
 #include "regexp.h"
 #include "mcdatetime.h" // MUSHclient date/time class
 
-#include "sqlite3\sqlite3.h"  // SQLite3 database
+#include "sqlite3/sqlite3.h"  // SQLite3 database
 
 #define PREFERENCES_DATABASE_FILE "mushclient_prefs.sqlite"
 
@@ -125,7 +171,14 @@ bool IsStringNumber (const string & s, const bool bSigned = false);
 // first checks if the array key is an number, and if so returns
 // a numeric less otherwise, a string less
 // a number is assumed < a string
+// std::binary_function was removed in C++17; provide a compatible base only on older standards.
+#ifndef ARRAY_LESS_DEFINED
+#define ARRAY_LESS_DEFINED
+#if __cplusplus >= 201703L
+struct array_less
+#else
 struct array_less : binary_function <string, string, bool>
+#endif
   {
 
   bool operator() (const string & s1, const string & s2) const
@@ -136,7 +189,11 @@ struct array_less : binary_function <string, string, bool>
     // if both numbers, compare them as numbers
 
     if (bS1number && bS2number)
+#ifdef _WIN32
       return _atoi64 (s1.c_str ()) < _atoi64 (s2.c_str ());
+#else
+      return atoll (s1.c_str ()) < atoll (s2.c_str ());
+#endif
 
     // if both strings, compare them as strings
 
@@ -157,6 +214,7 @@ struct array_less : binary_function <string, string, bool>
 // keys compare numericly if possible
 typedef map<string, string, array_less> tStringToStringMap;
 typedef map<string, tStringToStringMap *, array_less> tStringMapOfMaps;
+#endif // ARRAY_LESS_DEFINED
 
 //
 // Note - to compile you will also need the zlib library at the
@@ -165,11 +223,11 @@ typedef map<string, tStringToStringMap *, array_less> tStringMapOfMaps;
 //  eg.   cvs get mushclient
 //        cvs get zlib
 //
-#include "zlib\zlib.h"
+#include "zlib/zlib.h"
 
 extern "C"
   {
-#include "scripting\shs.h"
+#include "scripting/shs.h"
   }
 
 class CActivityDlg;
@@ -179,16 +237,19 @@ class CMUSHclientDoc;
 //#define USE_REALLOC   // use malloc/realloc/free for line text
 
 // The define below gets the current app and casts it to the correct type
-
+// (on macOS, App and Frame are declared as extern globals in doc_stub.h)
+#ifdef _WIN32
 #define App (*((CMUSHclientApp*)AfxGetApp()))
 
 // The define below gets the current frame and casts it to the correct type
 
 #define Frame (*((CMainFrame*)App.m_pMainWnd))
+#endif // _WIN32
 
-// colours
-
+// colours (on macOS these are defined in platform/doc_stub.h)
+#ifdef _WIN32
 enum { BLACK = 0, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE };
+#endif // _WIN32
 
 #define SAMECOLOUR 65535
 
@@ -210,16 +271,18 @@ enum { BLACK = 0, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE };
 #define DEFAULT_CHAT_NAME "Name-not-set"
 
 // function prototypes for minimum string validation in dialog boxes
-
+#ifdef _WIN32
 void AFXAPI DDV_MinMaxString(CDataExchange* pDX, CString& value, int nMinChars, int nMaxChars);
 void AFXAPI DDX_MinMaxString(CDataExchange* pDX, int nIDC, CString& value);
 void AFXAPI DDV_MinMaxCBString(CDataExchange* pDX, CString& value, int nMinChars, int nMaxChars);
 void AFXAPI DDX_MinMaxCBString(CDataExchange* pDX, int nIDC, CString& value);
+#endif // _WIN32
 
 // clipboard helper function
-
+#ifdef _WIN32
 BOOL putontoclipboard (const CString & data, const bool bUnicode = false);
 BOOL GetClipboardContents (CString & strClipboard, const bool bUnicode, const bool bWarning = true);
+#endif // _WIN32
 
 // label checking
 
@@ -332,12 +395,13 @@ CString GenerateName (void);
 CString GetText (const CWnd & theWindow);
 
 // which OS do we have here?
-
+#ifdef _WIN32
 extern bool bWinNT;
 extern bool bWin95;
 extern bool bWin98;
 extern bool bWine;
 extern OSVERSIONINFO os_version;
+#endif // _WIN32
 
 BOOL Set_Up_Set_Strings (const int set_type,
                          CString & suggested_name,
@@ -352,7 +416,7 @@ CString ConvertToRegularExpression (const CString & strMatchString,
 
 // Helper routine for setting the font in certain description windows to a
 // fixed-pitch courier, to make editing easier.
-
+#ifdef _WIN32
 typedef CFont * ptrCFont;     // for changing fonts in edit windows
 
 void FixFont (ptrCFont & pFont,
@@ -361,6 +425,7 @@ void FixFont (ptrCFont & pFont,
               const int iSize,
               const int iWeight,
               const DWORD iCharset);
+#endif // _WIN32
 
 // for escaping out things like \r in a trigger
 CString FixupEscapeSequences (const CString & strSource);
@@ -385,6 +450,7 @@ CString FixHTMLMultilineString (const CString strToFix);
 
 
 // for tooltips
+#ifdef _WIN32
 BOOL OnNeedText(UINT id, NMHDR* pNMHDR, LRESULT* pResult);
 bool CreateTextWindow (const char * sText,
                        const char * sTitle,
@@ -405,6 +471,7 @@ bool CreateTextWindow (const char * sText,
                        const bool bNotes,
                        const int iLines,
                        const int iNotepadType);
+#endif // _WIN32
 
 CString ConvertSetTypeToString (const int set_type);
 unsigned long MakeActionHash (const CString & strAction,
@@ -417,7 +484,7 @@ bool GetSelection (CEdit * pEdit, CString & strSelection);
 
 CString QuoteForumCodes(const CString & strText) ;
 
-// different ways of saving things
+// different ways of saving things — implementations in xml/xml_save_world.cpp
 void Save_XML_number  (CArchive& ar,
                        const char * sName,
                        const long iNumber,
@@ -445,7 +512,6 @@ void Save_XML_double    (CArchive& ar,
                        const char * sName,
                        const double & fNumber,
                        const bool sameline = false);
-
 bool IsArchiveXML (CArchive& ar); // returns true if archive turns out to be XML
 bool IsClipboardXML (void); // returns true if clipboard turns out to be XML
 void SeeIfBase64 (CString & strText);
@@ -464,7 +530,7 @@ CString RemoveFinalSlash (CString str);
 
 /////////////////////////////////////////////////////////////////////////////
 //  Stuff for the file-change monitoring code
-
+#ifdef _WIN32
 struct CThreadData
 {
 	char *	m_strFilename;    // which file to monitor
@@ -476,6 +542,10 @@ struct CThreadData
 void ThreadFunc(LPVOID pParam);
 void KillThread (HANDLE & pThread, CEvent & eventFileChanged);
 HANDLE CreateMonitoringThread(const char * sName, DWORD pDoc, CEvent & eventFileChanged);
+#else  // non-Windows: no-op stubs so call sites compile unchanged
+inline void   KillThread(HANDLE&, CEvent&) {}
+inline HANDLE CreateMonitoringThread(const char*, DWORD, CEvent&) { return nullptr; }
+#endif // _WIN32
 
 #define WM_USER_FILE_CONTENTS_CHANGED (WM_USER + 1001)
 
@@ -783,8 +853,10 @@ F safe_for_each (ITER first, ITER last, F func)
   return func;
   }
 
+#ifdef _WIN32
 #define MUSHCLIENT_FONT_CHARSET DEFAULT_CHARSET
 #define MUSHCLIENT_FONT_FAMILY FIXED_PITCH
+#endif // _WIN32
 
 #define WINDOW_TABS_NONE 0
 #define WINDOW_TABS_TOP 1
@@ -812,9 +884,16 @@ extern "C" const unsigned char _pcre_utf8_table4[];
 // i18n stuff
 
 // display a message box, using UTF-8 (not straight ASCII)
+#ifdef _WIN32
 int UMessageBox (const char * sText, UINT nType = MB_OK, const char * = "MUSHclient");
 // translate lpszText and then call UMessageBox
 int TMessageBox (const char * sText, UINT nType = MB_OK);
+#else
+inline int UMessageBox (const char * sText, UINT = 0, const char * = "MUSHclient")
+  { fprintf(stderr, "MUSHclient: %s\n", sText); return 0; }
+inline int TMessageBox (const char * sText, UINT = 0)
+  { fprintf(stderr, "MUSHclient: %s\n", sText); return 0; }
+#endif // _WIN32
 // translate text
 CString TranslateGeneric (const char * sText, const char * sSection);
 // translate formatted text
@@ -838,8 +917,13 @@ long ValidateBrushStyle (const long BrushStyle,
 
 #define ALIASES_USE_UTF8 0
 
+#ifdef _WIN32
 #define IsCTRLpressed()  ( (GetKeyState(VK_CONTROL) & (1 << (sizeof(SHORT)*8-1))) != 0 )
 #define IsSHIFTpressed() ( (GetKeyState(VK_SHIFT) & (1 << (sizeof(SHORT)*8-1))) != 0   )
+#else
+#define IsCTRLpressed()  false
+#define IsSHIFTpressed() false
+#endif // _WIN32
 
 // ascii to double
 int myAtoF(const char *z, double *pResult);
@@ -854,7 +938,12 @@ void ChangeToStartupDirectory ();
 
 CString AnsiCode (short Code);
 CString StripAnsi (const CString strMessage);
+#ifdef _WIN32
 void windowPositionHelper (CString & str, const RECT & r);
+#else
+// RECT is already defined in platform/windows_types.h; just declare the function.
+void windowPositionHelper (CString & str, const RECT & r);
+#endif // _WIN32
 
 #define SCRIPTERRORFORECOLOUR "orangered"  // "darkorange"
 #define SCRIPTERRORBACKCOLOUR "black"
@@ -889,3 +978,49 @@ typedef struct
     LUALIB_API int (luaL_typerror) (lua_State *L, int narg, const char *tname);
     }
 #endif // LUA_52
+
+#ifndef _WIN32
+// ── MFC debug macros — no-ops on non-Windows ───────────────────────────────
+// Note: windows_types.h may already have defined ASSERT/VERIFY; define the
+// remaining MFC-specific macros unconditionally (they aren't in any stub header).
+#ifndef ASSERT
+#  define ASSERT(x)         ((void)0)
+#endif
+#ifndef ASSERT_VALID
+#  define ASSERT_VALID(x)   ((void)0)
+#endif
+#ifndef VERIFY
+#  define VERIFY(x)         ((void)(x))
+#endif
+#ifndef DEBUG_NEW
+#  define DEBUG_NEW         new
+#endif
+#ifndef TRACE
+#  define TRACE(...)        ((void)0)
+#endif
+
+// ── OS-version booleans ────────────────────────────────────────────────────
+// On non-Windows, bWinNT/bWin95/bWin98/bWine are ordinary globals defined
+// in MUSHclient.cpp (same as Windows).  We just need extern declarations.
+#ifndef bWinNT
+extern bool bWinNT;
+extern bool bWin95;
+extern bool bWin98;
+extern bool bWine;
+#endif
+
+// ── CStaticLink — pull in the real declaration (HyprLink.h compiles fine
+//    on non-Windows since it only uses stubbed MFC types).
+#ifndef _STATLINK_H
+#  include "StatLink.h"
+#endif
+
+// ── App / Frame global externs — declared in platform/doc_stub.h ───────────
+// mushview.cpp and other view files use App.m_xxx and Frame.xxx directly.
+// doc_stub.h is already included by ansi.cpp / doc_portable.cpp per-TU;
+// here we just expose the externs that every TU needs.
+class CMUSHclientApp;  // fully defined in MUSHclient.h (included before stdafx.h finishes)
+class CMainFrame;      // fully defined in mainfrm.h
+extern CMUSHclientApp App;
+extern CMainFrame Frame;
+#endif // !_WIN32

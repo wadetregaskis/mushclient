@@ -93,6 +93,8 @@ private:
     void OnInputEnter(wxCommandEvent& evt);
     // Up/Down keys in the input bar for history navigation.
     void OnInputKeyDown(wxKeyEvent& evt);
+    // Multi-line paste: split at newlines, send all but the last fragment.
+    void OnInputPaste(wxClipboardTextEvent& evt);
     // Frame is about to close — delete the doc (disconnects + frees memory).
     void OnClose(wxCloseEvent& evt);
     // 100 ms world timer: process MUSHclient timers and flush output.

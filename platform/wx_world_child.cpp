@@ -803,6 +803,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // Bind directly to m_input so we only see input-bar key events.
     m_input->Bind(wxEVT_KEY_DOWN, &CWorldChildFrame::OnInputKeyDown, this);
 
+    // ── Multi-line paste splitter ──────────────────────────────────────────
+    // If the clipboard contains newlines, send each complete line as a MUD
+    // command and leave the trailing fragment in the input bar for review.
+    m_input->Bind(wxEVT_TEXT_PASTE, &CWorldChildFrame::OnInputPaste, this);
+
     // ── Output pane: redirect printable keys to the input bar ─────────────
     // When the user clicks in the output pane and then types, we want the
     // text to end up in the input bar rather than being silently discarded.
@@ -1059,6 +1064,75 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         m_histIdx = -1;
 
     evt.Skip();
+}
+
+// ── OnInputPaste ──────────────────────────────────────────────────────────
+// Multi-line paste splitter.
+//
+// When the user pastes text that contains newlines, split it at each '\n'.
+// Every line except the last is sent as a MUD command (exactly as if the user
+// had typed it and pressed Enter); the last fragment is left in the input bar
+// so the user can review and edit it before sending.  Single-line pastes fall
+// through to the normal wxTextCtrl paste behaviour.
+//
+// Any text already in the input bar is prepended to the first pasted line:
+//   typed "say " + paste "hello\nworld"
+//   → sends "say hello", leaves "world" in the input bar.
+void CWorldChildFrame::OnInputPaste(wxClipboardTextEvent& evt)
+{
+    wxString clipText;
+    if (wxTheClipboard->Open()) {
+        if (wxTheClipboard->IsSupported(wxDF_UNICODETEXT) ||
+            wxTheClipboard->IsSupported(wxDF_TEXT)) {
+            wxTextDataObject data;
+            wxTheClipboard->GetData(data);
+            clipText = data.GetText();
+        }
+        wxTheClipboard->Close();
+    }
+
+    // Normalise CRLF / CR → LF.
+    clipText.Replace(wxT("\r\n"), wxT("\n"));
+    clipText.Replace(wxT("\r"),   wxT("\n"));
+
+    if (!clipText.Contains('\n')) {
+        evt.Skip();   // single-line: let wxWidgets insert it normally
+        return;
+    }
+
+    // Suppress the default paste — we handle the text ourselves.
+    // (Not calling evt.Skip() suppresses the default paste on wxTextCtrl.)
+
+    wxArrayString lines = wxSplit(clipText, '\n');
+
+    // Prepend whatever the user had already typed to the first pasted line.
+    wxString prefix = m_input->GetValue();
+    m_input->Clear();
+    m_histIdx = -1;  // exit history browsing
+
+    for (size_t i = 0; i + 1 < lines.size(); ++i) {
+        wxString cmd = (i == 0) ? prefix + lines[i] : lines[i];
+
+        // Track in history (dedup consecutive identical entries).
+        if (!cmd.IsEmpty()) {
+            if (m_history.empty() || m_history.back() != cmd)
+                m_history.push_back(cmd);
+            if ((int)m_history.size() > kMaxHistory)
+                m_history.erase(m_history.begin());
+        }
+
+        if (!m_doc) continue;
+        CString cCmd(cmd.ToUTF8().data());
+        bool bOmit = false;
+        m_doc->EvaluateCommand(cCmd, /*countThem=*/true, bOmit);
+    }
+
+    // Flush output from alias callbacks / triggers before leaving.
+    if (m_doc) m_doc->UpdateAllViews(nullptr);
+
+    // Leave the trailing fragment in the input bar.
+    m_input->SetValue(lines.back());
+    m_input->SetInsertionPointEnd();
 }
 
 // ── OnInputEnter ──────────────────────────────────────────────────────────

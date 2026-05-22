@@ -344,6 +344,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             m_doc->m_gui_rows       = rows;
             m_doc->m_gui_font_height = lineH;
             m_doc->m_gui_font_width  = charW;
+            // Also update the Windows-API font metric fields so GetInfo(212/213)
+            // returns real values in the mushapp (mushgui) build.
+            m_doc->m_FontHeight      = lineH;
+            m_doc->m_FontWidth       = charW;
+            m_doc->m_InputFontHeight = lineH;
+            m_doc->m_InputFontWidth  = charW;
             m_doc->SendNAWS(cols, rows);
         });
     };

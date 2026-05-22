@@ -760,6 +760,8 @@ class CMUSHView : public CView {
 public:
     DECLARE_DYNCREATE(CMUSHView)
     void Invalidate() {}
+    RECT GetTextRectangle() const { RECT r = {0,0,0,0}; return r; }
+    CPoint GetScrollPosition() const { return CPoint(0, 0); }
 };
 
 class CSendView : public CView {

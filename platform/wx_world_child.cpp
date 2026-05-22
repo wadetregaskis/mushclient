@@ -186,6 +186,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             ApplyPaneBackground(col);
         };
 
+        // SetOption("max_output_lines", n): resize the scrollback buffer.
+        m_doc->m_fn_set_max_lines = [this](int n) {
+            if (m_output) m_output->SetMaxLines(n);
+        };
+
         // world.GetClipboard() / world.SetClipboard(): system clipboard access.
         m_doc->m_fn_get_clipboard = []() -> std::string {
             std::string result;
@@ -1825,6 +1830,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_paused           = nullptr;
         m_doc->m_fn_repaint                  = nullptr;
         m_doc->m_fn_set_background_colour    = nullptr;
+        m_doc->m_fn_set_max_lines            = nullptr;
         m_doc->m_fn_get_clipboard            = nullptr;
         m_doc->m_fn_set_clipboard            = nullptr;
 

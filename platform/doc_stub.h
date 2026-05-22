@@ -1929,6 +1929,10 @@ public:
     // Receives a COLORREF; 0xFFFFFFFF means "default" (black).
     std::function<void(unsigned long)> m_fn_set_background_colour;
 
+    // Called when SetOption("max_output_lines", n) changes the scrollback cap.
+    // Wired by CWorldChildFrame to COutputPane::SetMaxLines().
+    std::function<void(int)> m_fn_set_max_lines;
+
     // Called by world.GetClipboard() / world.SetClipboard().
     std::function<std::string()>              m_fn_get_clipboard;
     std::function<void(const std::string&)>   m_fn_set_clipboard;

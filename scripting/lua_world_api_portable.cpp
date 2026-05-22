@@ -1152,15 +1152,17 @@ static int L_GetOption(lua_State* L)
     const char* opt = luaL_checkstring(L, 1);
 
     // 1. Known live members (read from the real field).
-    if      (!strcmp(opt, "enable_triggers"))  OPT_GET_MEMBER(pDoc->m_enable_triggers  ? 1 : 0);
-    else if (!strcmp(opt, "enable_aliases"))   OPT_GET_MEMBER(pDoc->m_enable_aliases   ? 1 : 0);
-    else if (!strcmp(opt, "enable_timers"))    OPT_GET_MEMBER(pDoc->m_bEnableTimers    ? 1 : 0);
-    else if (!strcmp(opt, "display_my_input")) OPT_GET_MEMBER(pDoc->m_display_my_input ? 1 : 0);
-    else if (!strcmp(opt, "log_output"))       OPT_GET_MEMBER(pDoc->m_bLogOutput);
-    else if (!strcmp(opt, "log_notes"))        OPT_GET_MEMBER(pDoc->m_bLogNotes);
-    else if (!strcmp(opt, "log_input"))        OPT_GET_MEMBER(pDoc->m_log_input);
-    else if (!strcmp(opt, "port"))             OPT_GET_MEMBER(pDoc->m_port);
-    else if (!strcmp(opt, "trace"))            OPT_GET_MEMBER(pDoc->m_bTrace ? 1 : 0);
+    if      (!strcmp(opt, "enable_triggers"))   OPT_GET_MEMBER(pDoc->m_enable_triggers  ? 1 : 0);
+    else if (!strcmp(opt, "enable_aliases"))    OPT_GET_MEMBER(pDoc->m_enable_aliases   ? 1 : 0);
+    else if (!strcmp(opt, "enable_timers"))     OPT_GET_MEMBER(pDoc->m_bEnableTimers    ? 1 : 0);
+    else if (!strcmp(opt, "display_my_input"))  OPT_GET_MEMBER(pDoc->m_display_my_input ? 1 : 0);
+    else if (!strcmp(opt, "log_output"))        OPT_GET_MEMBER(pDoc->m_bLogOutput);
+    else if (!strcmp(opt, "log_notes"))         OPT_GET_MEMBER(pDoc->m_bLogNotes);
+    else if (!strcmp(opt, "log_input"))         OPT_GET_MEMBER(pDoc->m_log_input);
+    else if (!strcmp(opt, "port"))              OPT_GET_MEMBER(pDoc->m_port);
+    else if (!strcmp(opt, "trace"))             OPT_GET_MEMBER(pDoc->m_bTrace ? 1 : 0);
+    else if (!strcmp(opt, "wrap_column"))       OPT_GET_MEMBER(pDoc->m_nWrapColumn);
+    else if (!strcmp(opt, "max_output_lines"))  OPT_GET_MEMBER(pDoc->m_maxlines);
 
     // 2. Cache — value previously written by SetOption.
     {
@@ -1195,6 +1197,17 @@ static int L_SetOption(lua_State* L)
     else if (!strcmp(opt, "log_notes"))        pDoc->m_bLogNotes        = (short)val;
     else if (!strcmp(opt, "log_input"))        pDoc->m_log_input        = (short)val;
     else if (!strcmp(opt, "trace"))            pDoc->m_bTrace           = (val != 0);
+    else if (!strcmp(opt, "wrap_column")) {
+        if (val >= 20 && val <= MAX_LINE_WIDTH) {
+            pDoc->m_nWrapColumn = (unsigned short)val;
+        }
+    }
+    else if (!strcmp(opt, "max_output_lines")) {
+        if (val >= 200 && val <= 500000) {
+            pDoc->m_maxlines = val;
+            if (pDoc->m_fn_set_max_lines) pDoc->m_fn_set_max_lines((int)val);
+        }
+    }
     else                                       is_member = false;
 
     // 2. Validate: reject completely unknown option names.
@@ -2021,6 +2034,11 @@ static int L_SetAlphaOption(lua_State* L)
     else if (!strcmp(opt, "terminal_identification"))
                                                pDoc->m_strTerminalIdentification = CString(val);
     else if (!strcmp(opt, "mapping_failure"))  pDoc->m_strMappingFailure    = CString(val);
+    else if (!strcmp(opt, "output_font_name")) {
+        // Immediately apply the face name to the output pane.
+        if (pDoc->m_fn_set_output_font && val && *val)
+            pDoc->m_fn_set_output_font(std::string(val), 0, false, false);
+    }
     else                                       is_member = false;
 
     // 2. Validate: reject completely unknown option names.

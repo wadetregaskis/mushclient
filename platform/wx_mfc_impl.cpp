@@ -644,6 +644,9 @@ static void* hook_open_world_file(const char* path)
     };
     doc->m_fn_begin_batch = [pane]() { pane->BeginBatch(); };
     doc->m_fn_flush       = [pane]() { pane->EndBatch(); };
+    doc->m_fn_status = [child](const std::string& /*text*/) {
+        if (child->IsActiveWorld()) child->UpdateStatusBar();
+    };
 
     // Wire input-bar / font callbacks for scripting APIs.
     doc->m_fn_get_command = [child]() -> std::string {
@@ -1306,6 +1309,9 @@ static void* hook_new_world()
     };
     doc->m_fn_begin_batch = [pane]() { pane->BeginBatch(); };
     doc->m_fn_flush       = [pane]() { pane->EndBatch(); };
+    doc->m_fn_status = [child](const std::string& /*text*/) {
+        if (child->IsActiveWorld()) child->UpdateStatusBar();
+    };
 
     // Wire input-bar / font callbacks for scripting APIs.
     doc->m_fn_get_command = [child]() -> std::string {

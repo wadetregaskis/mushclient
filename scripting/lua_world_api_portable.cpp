@@ -1072,6 +1072,7 @@ static int L_GetInfo(lua_State* L)
         case 3:   lua_pushstring(L, (const char*)pDoc->m_name);               return 1;
         case 51:  lua_pushstring(L, (const char*)pDoc->m_logfile_name);       return 1;
         case 52:  lua_pushstring(L, "");                                       return 1;
+        case 53:  lua_pushstring(L, (const char*)pDoc->m_strStatusMessage);   return 1;
         case 72:  lua_pushstring(L, MUSHCLIENT_VERSION);                       return 1;
         case 87:  lua_pushstring(L, (const char*)pDoc->m_strLastCommandSent); return 1;
         case 88:  lua_pushstring(L, (const char*)pDoc->m_strWindowTitle);     return 1;
@@ -4857,7 +4858,15 @@ static int L_SetCommand(lua_State* L)
 static int L_GetCommandListFunc(lua_State* L) { return L_GetCommandList(L); }
 
 // ── InfoBar stubs ─────────────────────────────────────────────────────────────
-static int L_Info(lua_State* L)             { world_doc(L); luaL_checkstring(L, 1); lua_pushnumber(L, eOK); return 1; }
+static int L_Info(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    const char* msg = luaL_checkstring(L, 1);
+    pDoc->m_strStatusMessage = CString(msg);
+    if (pDoc->m_fn_status) pDoc->m_fn_status(msg);
+    lua_pushnumber(L, eOK);
+    return 1;
+}
 static int L_InfoBackground(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_InfoClear(lua_State* L)        { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_InfoColour(lua_State* L)       { world_doc(L); lua_pushnumber(L, eOK); return 1; }

@@ -1300,6 +1300,12 @@ void CWorldChildFrame::UpdateStatusBar()
 
     int phase = m_doc->m_iConnectPhase;
 
+    // Script-provided status message takes priority over connection state.
+    if (!m_doc->m_strStatusMessage.IsEmpty()) {
+        g_wxhook_set_status(static_cast<const char*>(m_doc->m_strStatusMessage));
+        return;
+    }
+
     if (phase == eConnectConnectedToMud) {
         std::string msg = "Connected to ";
         msg += static_cast<const char*>(m_doc->m_server);

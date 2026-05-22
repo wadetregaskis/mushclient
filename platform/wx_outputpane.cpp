@@ -22,6 +22,12 @@ static const int ID_COPY       = wxID_COPY;
 static const int ID_SELECTALL  = wxID_SELECTALL;
 static const int ID_CLEAR      = wxID_HIGHEST + 100;
 
+// ── Hint bar ──────────────────────────────────────────────────────────────────
+// Height (px) of the "↓ new output below" banner painted at the bottom of the
+// client area when the user has scrolled up and new lines are arriving.
+// Kept as a file-scope constant so OnPaint and OnLeftDown stay in sync.
+static constexpr int kHintBarH = 22;
+
 // ── Event table ───────────────────────────────────────────────────────────────
 wxBEGIN_EVENT_TABLE(COutputPane, wxScrolledWindow)
     EVT_PAINT(                      COutputPane::OnPaint)
@@ -230,6 +236,8 @@ void COutputPane::AppendLine(SOutputLine&& line)
 
     if (m_batchDepth == 0) {
         UpdateScrollbars(m_autoScroll);
+        // Always repaint: when not auto-scrolling the hint bar needs to be
+        // drawn (or kept visible) as new content arrives.
         Refresh(false);
     }
 }
@@ -421,6 +429,33 @@ void COutputPane::OnPaint(wxPaintEvent&)
     if (m_fn_composite_miniwindows) {
         dc.SetDeviceOrigin(0, 0);
         m_fn_composite_miniwindows(dc, clientW, clientH, /*bUnder=*/false);
+    }
+
+    // ── "Scroll to bottom" hint bar ────────────────────────────────────────
+    // When the user has scrolled up and new lines are arriving, paint a
+    // yellow banner at the bottom of the visible client area.  Clicking it
+    // (handled in OnLeftDown) or pressing Escape in the input bar snaps the
+    // view back to the live bottom.  Drawn after miniwindows so it's always
+    // on top.  Uses client coordinates (device origin reset to 0,0).
+    if (!m_autoScroll && !m_lines.empty()) {
+        dc.SetDeviceOrigin(0, 0);
+
+        // Background bar.
+        dc.SetBrush(wxBrush(wxColour(255, 200, 0)));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.DrawRectangle(0, clientH - kHintBarH, clientW, kHintBarH);
+
+        // Centred label.
+        dc.SetFont(m_font);
+        dc.SetTextForeground(wxColour(30, 30, 30));
+        dc.SetBackgroundMode(wxTRANSPARENT);
+        wxString msg =
+            wxT("↓  New output below — click here or press Escape to scroll down");
+        wxCoord tw, th;
+        dc.GetTextExtent(msg, &tw, &th);
+        dc.DrawText(msg,
+                    (clientW - tw) / 2,
+                    clientH - kHintBarH + (kHintBarH - th) / 2);
     }
 }
 
@@ -776,6 +811,20 @@ bool COutputPane::GetNormalizedSel(SelPoint& start, SelPoint& end) const
 
 void COutputPane::OnLeftDown(wxMouseEvent& evt)
 {
+    // ── Hint bar: click snaps to the live bottom ───────────────────────────
+    // The hint bar is painted on top of everything (miniwindows included), so
+    // its click region takes priority.  We check it before the miniwindow hit
+    // test so the visual layering is respected.
+    if (!m_autoScroll && !m_lines.empty()) {
+        int clientH;
+        GetClientSize(nullptr, &clientH);
+        if (evt.GetY() >= clientH - kHintBarH) {
+            ScrollToBottom();
+            if (m_fn_return_focus) m_fn_return_focus();
+            return;  // consume — don't start a selection
+        }
+    }
+
     // Give miniwindows first chance.
     if (m_fn_miniwindow_mouse_down &&
         m_fn_miniwindow_mouse_down(evt.GetX(), evt.GetY(), 0x10 /*MW_MOUSE_LH*/))

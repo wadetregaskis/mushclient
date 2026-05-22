@@ -74,7 +74,11 @@ public:
     void ClearOutput();
 
     // ── Find / search ─────────────────────────────────────────────────────────
-    bool FindNext(const wxString& term, bool forward = true);
+    // FindNext: jumps to the next/previous match and returns true if found.
+    // *outMatchLine receives the 0-based line index of the match (or -1).
+    // *outTotalMatches receives a count of all matching lines (lazily counted).
+    bool FindNext(const wxString& term, bool forward = true,
+                  int* outMatchLine = nullptr, int* outTotalMatches = nullptr);
     void HighlightSearch(const wxString& term);
 
     // Change the display font (e.g. from preferences).

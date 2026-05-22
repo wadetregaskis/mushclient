@@ -144,6 +144,19 @@ static SOutputLine DetectURLs(SOutputLine line)
                    !std::isspace((unsigned char)text[urlEnd]))
                 ++urlEnd;
 
+            // Strip trailing punctuation that is almost certainly not part of
+            // the URL itself: sentence-ending or bracketing characters.
+            // e.g. "See http://example.com." or "link (http://x.com)"
+            while (urlEnd > urlStart) {
+                char last = text[urlEnd - 1];
+                if (last == '.' || last == ',' || last == '!' || last == '?' ||
+                    last == ')' || last == ']' || last == '}' || last == '\'' ||
+                    last == '"' || last == ':' || last == ';')
+                    --urlEnd;
+                else
+                    break;
+            }
+
             // Emit the URL as a link run.  action = URL so m_fn_link_clicked
             // can distinguish it from MXP commands via the "http" prefix.
             SOutputRun urlRun  = run;
@@ -980,6 +993,7 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
 
     if (code == 'C' && evt.ControlDown()) { CopySelection(); return; }
     if (code == 'A' && evt.ControlDown()) { SelectAll();     return; }
+    if (code == 'L' && evt.ControlDown()) { ClearOutput();   return; }
 
     if (evt.ControlDown() &&
         (code == '=' || code == '+' || code == WXK_NUMPAD_ADD)) {
@@ -1097,8 +1111,12 @@ wxString COutputPane::SelectedText() const
 
 // ── Find / Search ─────────────────────────────────────────────────────────────
 
-bool COutputPane::FindNext(const wxString& term, bool forward)
+bool COutputPane::FindNext(const wxString& term, bool forward,
+                            int* outMatchLine, int* outTotalMatches)
 {
+    if (outMatchLine)    *outMatchLine    = -1;
+    if (outTotalMatches) *outTotalMatches = 0;
+
     if (term.IsEmpty() || m_lines.empty()) return false;
 
     wxString lowerTerm = term.Lower();
@@ -1124,31 +1142,48 @@ bool COutputPane::FindNext(const wxString& term, bool forward)
         return s.Lower();
     };
 
+    int foundIdx = -1;
     int idx = startIdx;
     for (int pass = 0; pass < n; ++pass) {
         if (lineText(idx).Contains(lowerTerm)) {
-            // Select the whole matching line.
-            wxString lt = lineText(idx);
-            int lineLen = (int)lt.size();
-            m_selAnchor = SelPoint{idx, 0};
-            m_selFocus  = SelPoint{idx, lineLen};
-
-            int unitH;
-            GetScrollPixelsPerUnit(nullptr, &unitH);
-            if (unitH > 0) {
-                int scrollX;
-                GetViewStart(&scrollX, nullptr);
-                Scroll(scrollX, idx * m_lineH / unitH);
-                m_autoScroll = false;
-                if (m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
-            }
-            Refresh(false);
-            return true;
+            foundIdx = idx;
+            break;
         }
         if (forward) { if (++idx >= n) idx = 0; }
         else         { if (--idx < 0) idx = n - 1; }
     }
-    return false;
+
+    if (foundIdx < 0) return false;
+
+    // Select and scroll to the matching line.
+    wxString lt = lineText(foundIdx);
+    int lineLen = (int)lt.size();
+    m_selAnchor = SelPoint{foundIdx, 0};
+    m_selFocus  = SelPoint{foundIdx, lineLen};
+
+    int unitH;
+    GetScrollPixelsPerUnit(nullptr, &unitH);
+    if (unitH > 0) {
+        int scrollX;
+        GetViewStart(&scrollX, nullptr);
+        Scroll(scrollX, foundIdx * m_lineH / unitH);
+        m_autoScroll = false;
+        if (m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
+    }
+    Refresh(false);
+
+    if (outMatchLine)    *outMatchLine = foundIdx;
+
+    // Count total matching lines (capped at 9999 to avoid stalling on huge buffers).
+    if (outTotalMatches) {
+        int total = 0;
+        for (int i = 0; i < n && total < 9999; ++i)
+            if (lineText(i).Contains(lowerTerm))
+                ++total;
+        *outTotalMatches = total;
+    }
+
+    return true;
 }
 
 void COutputPane::HighlightSearch(const wxString& term)

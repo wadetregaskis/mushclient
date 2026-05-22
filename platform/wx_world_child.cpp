@@ -103,6 +103,10 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                                          wxDefaultPosition, wxSize(28, -1));
         fs->Add(btnNext, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 4);
         fs->Add(btnPrev, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 2);
+        // Match-count label ("3 of 47" or "Not found").
+        m_findLabel = new wxStaticText(m_findBar, wxID_ANY, wxEmptyString,
+                                       wxDefaultPosition, wxSize(90, -1));
+        fs->Add(m_findLabel, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 8);
         int idFindClose = wxID_HIGHEST + 205;
         wxButton* btnClose = new wxButton(m_findBar, idFindClose, wxT("✕"),
                                           wxDefaultPosition, wxSize(28, -1));
@@ -114,8 +118,9 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             DoFind(true);
         });
         m_findInput->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
-            // Live search: highlight as the user types.
+            // Live search: highlight as the user types; clear stale count.
             m_output->HighlightSearch(m_findInput->GetValue());
+            if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
         });
         m_findInput->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& e) {
             if (e.GetKeyCode() == WXK_ESCAPE) {
@@ -920,11 +925,14 @@ void CWorldChildFrame::ShowFindBar(bool show)
     if (!m_findBar) return;
     if (show) {
         m_findBar->Show();
-        m_findInput->SetFocus();
-        m_findInput->SelectAll();
+        if (m_findInput) {
+            m_findInput->SetFocus();
+            m_findInput->SelectAll();
+        }
     } else {
         m_findBar->Hide();
-        m_output->HighlightSearch(wxEmptyString);  // clear search highlights
+        if (m_output) m_output->HighlightSearch(wxEmptyString);
+        if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
         if (wxTextCtrl* inp = ActiveInput()) inp->SetFocus();
     }
     Layout();
@@ -935,15 +943,53 @@ void CWorldChildFrame::DoFind(bool forward)
 {
     if (!m_findInput || !m_output) return;
     wxString term = m_findInput->GetValue();
-    if (term.IsEmpty()) return;
-    if (!m_output->FindNext(term, forward)) {
+
+    if (term.IsEmpty()) {
+        if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
+        return;
+    }
+
+    int matchLine = -1, totalMatches = 0;
+    bool found = m_output->FindNext(term, forward, &matchLine, &totalMatches);
+
+    if (found) {
+        // Reset background in case a previous search had left it red.
+        m_findInput->SetBackgroundColour(wxNullColour);
+        m_findInput->Refresh();
+
+        if (m_findLabel) {
+            // Show "N of M" where N is 1-based ordinal of the found line among
+            // all matching lines, and M is the total count.
+            // Re-count to find ordinal (cheap relative to total count pass).
+            int ordinal = 1;
+            wxString lowerTerm = term.Lower();
+            for (int i = 0; i < matchLine; ++i) {
+                const SOutputLine* ln = m_output->GetLine(i);
+                if (!ln) continue;
+                wxString s;
+                for (const auto& run : *ln)
+                    if (!run.horiz_rule)
+                        s += wxString::FromUTF8(run.text.c_str(), run.text.size());
+                if (s.Lower().Contains(lowerTerm))
+                    ++ordinal;
+            }
+            wxString countStr;
+            if (totalMatches >= 9999)
+                countStr = wxString::Format(wxT("%d of 9999+"), ordinal);
+            else
+                countStr = wxString::Format(wxT("%d of %d"), ordinal, totalMatches);
+            m_findLabel->SetLabel(countStr);
+        }
+    } else {
         // Flash the find input red briefly to signal "not found".
         m_findInput->SetBackgroundColour(wxColour(255, 100, 100));
         m_findInput->Refresh();
+        if (m_findLabel) m_findLabel->SetLabel(wxT("Not found"));
         CallAfter([this]() {
-            if (m_findInput)
+            if (m_findInput) {
                 m_findInput->SetBackgroundColour(wxNullColour);
-            if (m_findInput) m_findInput->Refresh();
+                m_findInput->Refresh();
+            }
         });
     }
 }
@@ -1138,6 +1184,13 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     if (code == 'F' && evt.ControlDown()) {
         ShowFindBar(true);
         return;   // consume — don't forward to the doc
+    }
+
+    // Ctrl+L → clear the output pane (same as the menu item and Ctrl+L in the
+    // output pane itself; terminal convention: clear screen without disconnect).
+    if (code == 'L' && evt.ControlDown()) {
+        if (m_output) m_output->ClearOutput();
+        return;
     }
 
     // Any non-arrow key cancels history browsing.

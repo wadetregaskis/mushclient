@@ -72,8 +72,9 @@ private:
     wxTimer*             m_worldTimer;     // drives CheckTimers() / ON_PLUGIN_TICK
 
     // ── Find bar ──────────────────────────────────────────────────────────
-    wxPanel*    m_findBar      = nullptr;   // collapsible panel shown by Ctrl+F
-    wxTextCtrl* m_findInput    = nullptr;   // search term text box
+    wxPanel*      m_findBar      = nullptr;   // collapsible panel shown by Ctrl+F
+    wxTextCtrl*   m_findInput    = nullptr;   // search term text box
+    wxStaticText* m_findLabel    = nullptr;   // "N of M" match count label
 
     // ── Command history ────────────────────────────────────────────────────
     std::vector<wxString> m_history;     // sent commands, oldest first

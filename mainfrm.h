@@ -4,6 +4,8 @@
 
 #pragma once
 
+#ifdef _WIN32
+
 #include "MDIClientWnd.h"
 #include "MyStatusBar.h"
 #include "MDITabs.h"
@@ -214,3 +216,6 @@ protected:
 
 CMUSHclientDoc * FindWorld (const UINT nIDC);
 
+#else // !_WIN32
+#include "platform/mainfrm_stub.h"
+#endif // _WIN32

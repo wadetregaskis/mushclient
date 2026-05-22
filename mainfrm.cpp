@@ -15,13 +15,13 @@
 
 #include "winplace.h"
 
-#include "dialogs\Splash.h"
+#include "dialogs/Splash.h"
 
 
-#include "dialogs\TipDlg.h"
-#include "dialogs\SendToAllDlg.h"
-#include "dialogs\UniqueIDDlg.h"
-#include "dialogs\WinsockInfoDlg.h"
+#include "dialogs/TipDlg.h"
+#include "dialogs/SendToAllDlg.h"
+#include "dialogs/UniqueIDDlg.h"
+#include "dialogs/WinsockInfoDlg.h"
 
 #include "MakeWindowTransparent.h"
 
@@ -271,6 +271,14 @@ CMainFrame::~CMainFrame()
 
 int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 {
+#ifndef _WIN32
+  // On non-Windows the wxMDIParentFrame is already created by
+  // hook_load_mdi_frame() in wx_mfc_impl.cpp before OnCreate is called.
+  // All MFC toolbar/status-bar/MDI-client-subclassing machinery is skipped;
+  // the wx layer provides its own toolbar and status bar.
+  (void)lpCreateStruct;
+  return 0;
+#endif // !_WIN32
 
   int iToolbarFlags = 0;
 
@@ -468,16 +476,29 @@ BOOL CMainFrame::PreCreateWindow(CREATESTRUCT& cs)
 void CMainFrame::SetStatusMessage(const CString& msg)
 {
   if (App.m_pMainWnd)
+    {
+#ifndef _WIN32
+    // On non-Windows (macOS/Linux GUI build), forward to the wx status bar.
+    if (g_wxhook_set_status)
+      g_wxhook_set_status(static_cast<const char*>(msg));
+#else
     m_wndStatusBar.SetWindowText(msg);
+#endif
+    }
 }   // end of CWinFormsFrame::SetStatusMessage
 
 void CMainFrame::SetStatusMessageNow(const CString& msg)
 {
   if (App.m_pMainWnd)
     {
+#ifndef _WIN32
+    // On non-Windows (macOS/Linux GUI build), forward to the wx status bar.
+    if (g_wxhook_set_status)
+      g_wxhook_set_status(static_cast<const char*>(msg));
+#else
     m_wndStatusBar.SetWindowText(msg);
     m_wndStatusBar.UpdateWindow ();   // draw now
-
+#endif
     }
 }   // end of CWinFormsFrame::SetStatusMessageNow
 
@@ -1399,7 +1420,7 @@ CString strType = strSound.Right (4);
   if (dwReturn = mciSendCommand(NULL, 
                                 MCI_OPEN,
                                 MCI_OPEN_ELEMENT,        
-                                (DWORD)(LPVOID) &mciOpenParms))
+                                (DWORD)(DWORD_PTR)(LPVOID) &mciOpenParms))
     {
      ShowMCIError (dwReturn, strSound);
      return false;   // couldn't play it
@@ -1410,11 +1431,11 @@ CString strType = strSound.Right (4);
     Frame.m_wDeviceID = mciOpenParms.wDeviceID;
 
     // Use our frame's window for messages
-    mciPlayParms.dwCallback = (DWORD) Frame.m_hWnd;
+    mciPlayParms.dwCallback = (DWORD)(DWORD_PTR) Frame.m_hWnd;
 
     // play the file - our frame window will close it when finished
     if (dwReturn = mciSendCommand(Frame.m_wDeviceID, MCI_PLAY, MCI_NOTIFY, 
-                      (DWORD)(LPSTR)&mciPlayParms))
+                      (DWORD)(DWORD_PTR)(LPSTR)&mciPlayParms))
       {
       mciSendCommand(Frame.m_wDeviceID, MCI_CLOSE, 0, NULL);  // close on error
       Frame.m_wDeviceID = 0;

@@ -146,17 +146,16 @@ class CPlugin :public CObject
 typedef list<CPlugin*> CPluginList;
 typedef CPluginList::iterator PluginListIterator;
 
-// Unary predicate for use in find_if to find a plugin by name
-//  ... not case-sensitive
-struct compare_plugin_name : binary_function <CPlugin *, CString, bool>
+// Binary predicates for use in find_if to find a plugin by name or ID.
+// Call sites now use lambdas instead of bind2nd (removed in C++17).
+// These structs are retained in case any Windows-only code still uses them directly.
+struct compare_plugin_name
   {
   bool operator() (const CPlugin * p, const CString name) const
     { return p->m_strName.CompareNoCase (name) == 0; };
   };  // end of struct compare_plugin_name
 
-// Unary predicate for use in find_if to find a plugin by plugin ID
-//  ... not case-sensitive
-struct compare_plugin_id : binary_function <CPlugin *, CString, bool>
+struct compare_plugin_id
   {
   bool operator() (const CPlugin * p, const CString id) const
     { return p->m_strID.CompareNoCase (id) == 0; };

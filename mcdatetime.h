@@ -1,3 +1,4 @@
+#pragma once
 /////////////////////////////////////////////////////////////////////////////
 // CmcDateTime class    - MUSHclient date/time
 //    like COleDateTime but with double support for seconds

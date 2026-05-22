@@ -1,3 +1,4 @@
+#pragma once
 // for miniwindows
 
 // fonts

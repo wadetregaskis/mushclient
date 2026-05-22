@@ -1,5 +1,6 @@
+#pragma once   // unconditional — clang doesn't define _MSC_VER
 #if _MSC_VER > 1000
-#pragma once
+// (legacy MSVC guard — kept for compatibility)
 #endif // _MSC_VER > 1000
 
 #include <float.h>

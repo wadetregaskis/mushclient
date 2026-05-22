@@ -3,8 +3,8 @@
 // XML load/save stuff
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
 
 // Implements:
 

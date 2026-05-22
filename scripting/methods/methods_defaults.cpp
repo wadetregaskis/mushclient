@@ -3,10 +3,10 @@
 // Defaults (fonts, triggers, etc.)
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
-#include "..\..\mainfrm.h"
-#include "..\errors.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
+#include "../../mainfrm.h"
+#include "../errors.h"
 
 // Implements:
 

@@ -3,9 +3,9 @@
 // Plugins management
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
-#include "..\errors.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
+#include "../errors.h"
 
 // Implements:
 
@@ -219,7 +219,7 @@ CPlugin * pPlugin = GetPlugin (PluginID);
     {
     PluginListIterator pit = find_if (m_PluginList.begin (),
                                      m_PluginList.end (),
-                                     bind2nd (compare_plugin_name (), PluginID));
+                                     [&PluginID](const CPlugin * p) { return p->m_strName.CompareNoCase (PluginID) == 0; });
     if (pit != m_PluginList.end ())
        pPlugin = *pit;
        
@@ -291,7 +291,7 @@ CPlugin * CMUSHclientDoc::GetPlugin (LPCTSTR PluginID)
 
   PluginListIterator pit = find_if (m_PluginList.begin (),
                                     m_PluginList.end (),
-                                    bind2nd (compare_plugin_id (), PluginID));
+                                    [&PluginID](const CPlugin * p) { return p->m_strID.CompareNoCase (PluginID) == 0; });
   if (pit != m_PluginList.end ())
      return *pit;
 
@@ -628,7 +628,7 @@ CPlugin * pPlugin = GetPlugin (PluginID);
     {
     PluginListIterator pit = find_if (m_PluginList.begin (),
                                      m_PluginList.end (),
-                                     bind2nd (compare_plugin_name (), PluginID));
+                                     [&PluginID](const CPlugin * p) { return p->m_strName.CompareNoCase (PluginID) == 0; });
     if (pit != m_PluginList.end ())
        pPlugin = *pit;
        

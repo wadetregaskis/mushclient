@@ -3,9 +3,9 @@
 // Relating to playing sounds
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
-#include "..\errors.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
+#include "../errors.h"
 
 // Implements:
 
@@ -13,6 +13,8 @@
 //    PlaySound
 //    Sound
 //    StopSound
+
+#ifndef _NOSOUND
 
 // world.Sound - plays a sound
 
@@ -439,3 +441,14 @@ long CMUSHclientDoc::GetSoundStatus(short Buffer)
 
 	return 0;  // not playing
 }  // end of CMUSHclientDoc::GetSoundStatus
+
+#else // _NOSOUND — provide no-op stubs so the class is complete
+#include "../errors.h"
+
+long CMUSHclientDoc::Sound(LPCTSTR)            { return eCannotPlaySound; }
+long CMUSHclientDoc::PlaySoundHelper(short, LPCTSTR, BOOL, double, double, LPCTSTR, size_t) { return eCannotPlaySound; }
+long CMUSHclientDoc::PlaySound(short, LPCTSTR, BOOL, double, double)  { return eCannotPlaySound; }
+long CMUSHclientDoc::StopSound(short)          { return eCannotPlaySound; }
+long CMUSHclientDoc::GetSoundStatus(short)     { return 0; }
+
+#endif // _NOSOUND

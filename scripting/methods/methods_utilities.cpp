@@ -3,15 +3,17 @@
 // Various utility functions
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
-#include "..\..\mainfrm.h"
-#include "..\errors.h"
-#include "..\..\childfrm.h"
-#include "..\..\sendvw.h"
-#include "..\..\dialogs\CompleteWordDlg.h"
-#include "..\..\MUSHview.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
+#include "../../mainfrm.h"
+#include "../errors.h"
+#include "../../childfrm.h"
+#include "../../sendvw.h"
+#include "../../dialogs/CompleteWordDlg.h"
+#include "../../MUSHview.h"
+#ifdef _WIN32
 #include <direct.h>
+#endif
 
 // Implements:
 
@@ -321,7 +323,7 @@ BSTR CMUSHclientDoc::MakeRegularExpression(LPCTSTR Text)
 
 
 
-void CMUSHclientDoc::MtSrand(long Seed) 
+void CMUSHclientDoc::MtSrand(long Seed)
 {
 	init_genrand (Seed);
 }   // end of CMUSHclientDoc::MtSrand
@@ -361,8 +363,13 @@ long CMUSHclientDoc::ChangeDir(LPCTSTR Path)
 
     working_dir [sizeof (working_dir) - 2] = 0;
 
+#ifdef _WIN32
     if (working_dir [strlen (working_dir) - 1] != '\\')
       strcat (working_dir, "\\");
+#else
+    if (working_dir [strlen (working_dir) - 1] != '/')
+      strcat (working_dir, "/");
+#endif
     
     return true;  // did it OK
     }
@@ -597,7 +604,7 @@ CString m_strFilter = Name;
 
   CString strFunction;
 
-  string sFirst5 = m_strFilter.Left (5);
+  string sFirst5 = static_cast<const char*>(m_strFilter.Left (5));
 
   map<string, string>::const_iterator it = lua_specials.find (sFirst5);
 

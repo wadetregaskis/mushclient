@@ -3,11 +3,11 @@
 // Stuff for the chat system
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
-#include "..\..\MUSHview.h"
-#include "..\..\mainfrm.h"
-#include "..\errors.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
+#include "../../MUSHview.h"
+#include "../../mainfrm.h"
+#include "../errors.h"
 
 // Implements:
 
@@ -54,7 +54,7 @@ tConfigurationNumericOption ChatOptionsTable [] = {
 
 // numbers 
                
-{"user",                 0, CHATO(m_iUserOption), LONG_MIN, LONG_MAX},               
+{"user",                 0, CHATO(m_iUserOption), LONG_MIN, (double)LONG_MAX},               
 
 {NULL}   // end of table marker            
 
@@ -531,10 +531,10 @@ long CMUSHclientDoc::ChatAcceptCalls(short Port)
     m_pChatListenSocket = NULL;
     ChatNote (eChatConnection,
               TFormat (
-              "Cannot accept calls on port %i, code = %i (%s)", 
-                    m_IncomingChatPort, 
+              "Cannot accept calls on port %i, code = %i (%s)",
+                    m_IncomingChatPort,
                     nError,
-                    GetSocketError (nError)));
+                    (LPCTSTR) GetSocketError (nError)));
 		return eCannotCreateChatSocket;
 	  }     // end of can't create socket
 

@@ -3,12 +3,12 @@
 // Related to triggers
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
-#include "..\..\MUSHview.h"
-#include "..\..\mainfrm.h"
-#include "..\..\flags.h"
-#include "..\errors.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
+#include "../../MUSHview.h"
+#include "../../mainfrm.h"
+#include "../../flags.h"
+#include "../errors.h"
 
 // Implements:
 
@@ -47,7 +47,7 @@ tConfigurationNumericOption TriggerOptionsTable [] = {
 {"other_back_colour",    0,             TO(iOtherBackground), 0, 0xFFFFFF, OPT_RGB_COLOUR },               
 {"send_to",              eSendToWorld,  TO(iSendTo), 0, eSendToLast - 1},               
 {"sequence",             0,             TO(iSequence), 0, 10000},               
-{"user",                 0,             TO(iUserOption), LONG_MIN, LONG_MAX},               
+{"user",                 0,             TO(iUserOption), LONG_MIN, (double)LONG_MAX},               
 
 // boolean
 

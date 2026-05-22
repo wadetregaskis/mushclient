@@ -3,12 +3,12 @@
 // Aliases processing
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
-#include "..\..\MUSHview.h"
-#include "..\..\mainfrm.h"
-#include "..\..\flags.h"
-#include "..\errors.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
+#include "../../MUSHview.h"
+#include "../../mainfrm.h"
+#include "../../flags.h"
+#include "../errors.h"
 
 
 // Implements:
@@ -37,7 +37,7 @@ tConfigurationNumericOption AliasOptionsTable [] = {
 
 {"send_to",              eSendToWorld, AO(iSendTo), 0, eSendToLast - 1},               
 {"sequence",             0,            AO(iSequence), 0, 10000},               
-{"user",                 0,            AO(iUserOption), LONG_MIN, LONG_MAX},               
+{"user",                 0,            AO(iUserOption), LONG_MIN, (double)LONG_MAX},               
 
 // boolean
 

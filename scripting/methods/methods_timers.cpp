@@ -3,10 +3,10 @@
 // Related to timers (and DoAfter, stuff like that)
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
-#include "..\..\flags.h"
-#include "..\errors.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
+#include "../../flags.h"
+#include "../errors.h"
 
 // Implements:
 
@@ -45,7 +45,7 @@ tConfigurationNumericOption TimerOptionsTable [] = {
 {"offset_minute",  0, TMRO(iOffsetMinute),  0, 59},               
 {"offset_second",  0, TMRO(fOffsetSecond),  0, 59.9999, OPT_DOUBLE},               
 {"send_to",        eSendToWorld,  TMRO(iSendTo), 0, eSendToLast - 1},               
-{"user",           0, TMRO(iUserOption), LONG_MIN, LONG_MAX},               
+{"user",           0, TMRO(iUserOption), LONG_MIN, (double)LONG_MAX},               
 
 // boolean
 

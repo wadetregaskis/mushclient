@@ -3,16 +3,18 @@
 // General "information" methods
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
-#include "..\..\MUSHview.h"
-#include "..\..\mainfrm.h"
-#include "..\..\childfrm.h"
-#include "..\..\sendvw.h"
-#include "..\..\winplace.h"
-#include "..\..\png\png.h"
-#include "..\errors.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
+#include "../../MUSHview.h"
+#include "../../mainfrm.h"
+#include "../../childfrm.h"
+#include "../../sendvw.h"
+#include "../../winplace.h"
+#include "../../png/png.h"
+#include "../errors.h"
+#ifdef _WIN32
 #include <direct.h>
+#endif
 
 // Implements:
 
@@ -476,11 +478,15 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
               char fullfilename[MAX_PATH];
               char * p;
               GetModuleFileName (NULL, fullfilename, sizeof (fullfilename));
+#ifdef _WIN32
               p = strrchr (fullfilename, '\\');
+#else
+              p = strrchr (fullfilename, '/');
+#endif
               if (p)
                 *p = 0;
 
-              SetUpVariantString (vaResult, fullfilename); 
+              SetUpVariantString (vaResult, fullfilename);
               break;
               }
 
@@ -504,8 +510,13 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
                  {
                  CString strPath (p);
                  free (p);
+#ifdef _WIN32
                  if (strPath.Right (1) != "\\")
                    strPath += "\\"; // append trailing backslash
+#else
+                 if (strPath.Right (1) != "/")
+                   strPath += "/"; // append trailing slash
+#endif
                  SetUpVariantString (vaResult, strPath);
                  }
 
@@ -521,7 +532,12 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
     case   71: SetUpVariantString (vaResult, App.m_strFixedPitchFont); break;
     case   72: SetUpVariantString (vaResult, MUSHCLIENT_VERSION); break;
     case   73: SetUpVariantString (vaResult, __DATE__ " " __TIME__); break;
-    case   74: SetUpVariantString (vaResult, ExtractDirectory (App.m_strMUSHclientFileName) + "sounds\\"); break;
+    case   74: SetUpVariantString (vaResult, ExtractDirectory (App.m_strMUSHclientFileName) +
+#ifdef _WIN32
+              "sounds\\"); break;
+#else
+              "sounds/"); break;
+#endif
     case   75: SetUpVariantString (vaResult, m_IAC_subnegotiation_data.c_str ()); break;
     case   76: 
         {
@@ -620,9 +636,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
          SetUpVariantLong (vaResult, 0);  // no log file
       else
         {
-        fpos_t pos;
-        fgetpos (m_logfile, &pos);
-        SetUpVariantLong (vaResult, pos);  // log file size
+        SetUpVariantLong (vaResult, (long) ftell (m_logfile));  // log file size
         } // end of log file
 
       }

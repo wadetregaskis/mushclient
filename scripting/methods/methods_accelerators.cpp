@@ -1,14 +1,14 @@
 // methods_accelerators.cpp - stuff for the Accelerator command and variants
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
-#include "..\..\MUSHview.h"
-#include "..\..\mainfrm.h"
-#include "..\..\flags.h"
-#include "..\errors.h"
-#include "..\..\childfrm.h"
-#include "..\..\sendvw.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
+#include "../../MUSHview.h"
+#include "../../mainfrm.h"
+#include "../../flags.h"
+#include "../errors.h"
+#include "../../childfrm.h"
+#include "../../sendvw.h"
 
 // Implements:
 
@@ -19,10 +19,10 @@
 
 // accelerator finding functor
 
-struct fFindAccelerator : binary_function<ACCEL, ACCEL, bool>
+struct fFindAccelerator
   {
   bool operator() (const ACCEL & a1, const ACCEL & a2) const
-    { 
+    {
     return (a1.fVirt | FNOINVERT) == (a2.fVirt | FNOINVERT) &&
            a1.key == a2.key;
     };
@@ -92,8 +92,9 @@ WORD key;
   aWanted.cmd = 0;
   
   // if accelerator already exists, remove it
-  vAccel.erase (remove_if (vAccel.begin (), vAccel.end (), bind2nd (fFindAccelerator (), aWanted)),
-         vAccel.end ());
+  vAccel.erase (remove_if (vAccel.begin (), vAccel.end (),
+                           [&aWanted](const ACCEL & a) { return fFindAccelerator()(a, aWanted); }),
+                vAccel.end ());
 
   // new in version 3.75 - if no Send string, simply delete accelerator
   if (Send [0]) 

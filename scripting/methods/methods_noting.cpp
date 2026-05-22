@@ -3,10 +3,10 @@
 // Stuff for writing to the output window (notes, colour notes etc.)
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\doc.h"
-#include "..\..\MUSHview.h"
-#include "..\errors.h"
+#include "../../MUSHclient.h"
+#include "../../doc.h"
+#include "../../MUSHview.h"
+#include "../errors.h"
 
 // Implements:
 
@@ -628,6 +628,11 @@ void CMUSHclientDoc::ColourNote(LPCTSTR TextColour,
   ColourTell (TextColour, BackgroundColour, strMsg);
   SetNewLineColour(0);
 }  // end of CMUSHclientDoc::ColourNote
+
+void CMUSHclientDoc::ColourNote(LPCTSTR TextColour, LPCTSTR BackgroundColour, const CString & Text)
+{
+  ColourNote(TextColour, BackgroundColour, (LPCTSTR) Text);
+}  // end of CMUSHclientDoc::ColourNote (CString overload)
 
 void CMUSHclientDoc::ColourTell(LPCTSTR TextColour, LPCTSTR BackgroundColour, LPCTSTR Text) 
 {

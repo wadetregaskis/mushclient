@@ -171,7 +171,7 @@ void CChildFrame::FixUpSplitterBar (void)
      // otherwise, allow for a 2-line command area
     cyCurBottom = iDefaultHeight;
 
-//  TRACE1 ("Bottom height (loaded) = %i\n", cyCurBottom);
+//  TRACE1 ("Bottom height (loaded) = %i/n", cyCurBottom);
 
    // if height from registry is smaller, make the input font height
    // REMOVED in version 3.83

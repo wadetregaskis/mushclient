@@ -1,12 +1,14 @@
 // PCRE or regexp
 
 #include "stdafx.h"
+#ifdef _WIN32
 #include "MUSHclient.h"
 #include "doc.h"
-#include "dialogs\RegexpProblemDlg.h"
-#include "pcre\config.h"
-#include "pcre\pcre.h"
-#include "pcre\pcre_internal.h"
+#include "dialogs/RegexpProblemDlg.h"
+#endif // _WIN32
+#include "pcre/config.h"
+#include "pcre/pcre.h"
+#include "pcre/pcre_internal.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -26,7 +28,14 @@ pcre_extra * extra;
   program = pcre_compile(exp, options, &error, &erroroffset, NULL);
 
   if (!program)
+    {
+#ifdef _WIN32
     ThrowErrorException("Failed: %s at offset %d", Translate (error), erroroffset);
+#else
+    fprintf(stderr, "Regexp compile failed: %s at offset %d\n", error, erroroffset);
+    return nullptr;
+#endif // _WIN32
+    }
 
   // study it for speed purposes
   extra =  pcre_study(program, 0, &error);        
@@ -34,7 +43,12 @@ pcre_extra * extra;
   if (error)
     {
     pcre_free (program);
+#ifdef _WIN32
     ThrowErrorException("Regexp study failed: %s", error);
+#else
+    fprintf(stderr, "Regexp study failed: %s\n", error);
+    return nullptr;
+#endif // _WIN32
     }
 
   // we need to allocate memory for the substring offsets
@@ -49,11 +63,15 @@ pcre_extra * extra;
   return re;
   }
 
-int regexec(register t_regexp *prog, 
-            register const char *string,
+int regexec(t_regexp *prog,
+            const char *string,
             const int start_offset)
   {
+#ifdef _WIN32
 int options = App.m_bRegexpMatchEmpty ? 0 : PCRE_NOTEMPTY;    // don't match on an empty string
+#else
+int options = PCRE_NOTEMPTY;    // don't match on an empty string
+#endif // _WIN32
 int count;
 
   // exit if no regexp program to process (possibly because of previous error)
@@ -69,11 +87,11 @@ int count;
 
   LARGE_INTEGER start, 
                 finish;
-
-
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     QueryPerformanceCounter (&start);
   else
+#endif // _WIN32
     {
     start.QuadPart = 0;
     finish.QuadPart = 0;
@@ -83,11 +101,13 @@ int count;
   count = pcre_exec(prog->m_program, prog->m_extra, string, strlen (string),
                     start_offset, options, &offsets [0], offsets.size ());
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     {
     QueryPerformanceCounter (&finish);
     prog->iTimeTaken += finish.QuadPart - start.QuadPart;
     }
+#endif // _WIN32
 
   prog->m_iMatchAttempts++;  // how many times did we try to match?
 
@@ -102,8 +122,13 @@ int count;
     pcre_free (prog->m_extra);
     prog->m_extra = NULL;
     prog->m_iExecutionError = count; // remember reason
+#ifdef _WIN32
     ThrowErrorException (TFormat ("Error executing regular expression: %s",
                          (LPCTSTR) Convert_PCRE_Runtime_Error (count)));
+#else
+    // On macOS/Linux: log to stderr and clear the program so we stop trying
+    fprintf(stderr, "Error executing regular expression (PCRE error %d)\n", count);
+#endif // _WIN32
     }
 
 
@@ -133,6 +158,7 @@ pcre * program;
     return true;     // good
     }
 
+#ifdef _WIN32
   CRegexpProblemDlg dlg;
   dlg.m_strErrorMessage = Translate (error);
 
@@ -148,6 +174,9 @@ pcre * program;
   dlg.m_strText += '^';
   dlg.m_iColumn = erroroffset + 1;
   dlg.DoModal ();
+#else
+  fprintf(stderr, "Regexp error: %s at column %d\n", error, erroroffset + 1);
+#endif // _WIN32
   return false;   // bad
   }
 

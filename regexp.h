@@ -18,7 +18,16 @@
 
 #define PCRE_EXP_DECL extern
 
-#include "pcre\pcre.h"
+#ifndef _WIN32
+// On Windows these come via the precompiled header (stdafx.h).
+// On macOS/Linux regexp.h may be included without stdafx.h, so pull them in directly.
+#include <string>
+#include <vector>
+using std::string;
+using std::vector;
+#endif
+
+#include "pcre/pcre.h"
                  
 // compiled regular expression type
 
@@ -76,8 +85,8 @@ class t_regexp
   };
 
 t_regexp * regcomp(const char *exp, const int options = 0);
-int regexec(register t_regexp *prog,
-            register const char *string,
+int regexec(t_regexp *prog,
+            const char *string,
             const int start_offset = 0);
 
 bool CheckRegularExpression (const CString strRegexp, const int iOptions);

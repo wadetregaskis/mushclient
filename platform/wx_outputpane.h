@@ -162,6 +162,16 @@ public:
     // Called when the user clicks an MXP hyperlink run.
     std::function<void(const std::string& action)> m_fn_link_clicked;
 
+    // Called from the right-click context menu "Put in Input Bar" action.
+    // Receives the currently selected text; the frame wires this to set the
+    // input bar's value and move focus there for review before sending.
+    std::function<void(const wxString& text)> m_fn_put_in_input;
+
+    // Called from the right-click context menu "Send to MUD" action.
+    // Receives the currently selected text; the frame wires this to call
+    // EvaluateCommand() so the text is sent via the normal command pipeline.
+    std::function<void(const wxString& text)> m_fn_send_to_mud;
+
     // Called when F3 (forward) or Shift+F3 (backward) is pressed while the
     // output pane has focus.  Wired by CWorldChildFrame to DoFind().
     std::function<void(bool forward)> m_fn_find_next_key;

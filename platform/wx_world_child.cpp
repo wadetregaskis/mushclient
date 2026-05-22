@@ -168,6 +168,27 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         if (inp) inp->SetFocus();
     };
 
+    // "Put in Input Bar" context-menu action: paste selected output text into
+    // the command input for review/editing before the user presses Enter.
+    m_output->m_fn_put_in_input = [this](const wxString& text) {
+        wxTextCtrl* inp = ActiveInput();
+        if (inp) {
+            inp->SetValue(text);
+            inp->SetInsertionPointEnd();
+            inp->SetFocus();
+        }
+    };
+
+    // "Send to MUD" context-menu action: evaluate the selected text as a command
+    // through the normal alias/trigger pipeline, exactly as if typed and Enter pressed.
+    m_output->m_fn_send_to_mud = [this](const wxString& text) {
+        if (!m_doc || text.IsEmpty()) return;
+        CString cmd(text.ToUTF8().data());
+        bool bOmit = false;
+        m_doc->EvaluateCommand(cmd, /*countThem=*/true, bOmit);
+        m_doc->UpdateAllViews(nullptr);
+    };
+
     // F3 / Shift+F3 from the output pane fires the find bar.
     m_output->m_fn_find_next_key = [this](bool fwd) {
         ShowFindBar(true);

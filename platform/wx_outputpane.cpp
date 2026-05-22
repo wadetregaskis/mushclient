@@ -1092,9 +1092,48 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     wxMenu menu;
     menu.Append(ID_COPY,      "Copy\tCtrl+C");
     menu.Append(ID_SELECTALL, "Select All\tCtrl+A");
-    menu.AppendSeparator();
-    menu.Append(ID_CLEAR,     "Clear Output");
     menu.Enable(ID_COPY, hasSel);
+
+    // When text is selected, offer quick-send shortcuts.
+    if (hasSel) {
+        menu.AppendSeparator();
+
+        // "Put in Input Bar": copy selection into the command input for editing.
+        // Ctrl+G is also wired in OnKeyDown for keyboard-only use.
+        wxMenuItem* itemInput = menu.Append(wxID_ANY,
+            wxT("Put in Input Bar\tCtrl+G"));
+        menu.Enable(itemInput->GetId(), m_fn_put_in_input != nullptr);
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+            if (m_fn_put_in_input) m_fn_put_in_input(SelectedText());
+        }, itemInput->GetId());
+
+        // "Send to MUD": evaluate the selection as a command immediately.
+        wxMenuItem* itemSend = menu.Append(wxID_ANY,
+            wxT("Send to MUD"));
+        menu.Enable(itemSend->GetId(), m_fn_send_to_mud != nullptr);
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+            if (m_fn_send_to_mud) m_fn_send_to_mud(SelectedText());
+        }, itemSend->GetId());
+    }
+
+    menu.AppendSeparator();
+    menu.Append(ID_CLEAR, "Clear Output\tCtrl+L");
+
+    // Zoom and find — for discoverability (same as keyboard shortcuts).
+    menu.AppendSeparator();
+    {
+        wxMenuItem* fi = menu.Append(wxID_ANY, "Find…\tCtrl+F");
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+            if (m_fn_find_next_key) m_fn_find_next_key(true);
+        }, fi->GetId());
+
+        wxMenuItem* zi = menu.Append(wxID_ANY, "Zoom In\tCtrl++");
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { AdjustFontSize(1); }, zi->GetId());
+        wxMenuItem* zo = menu.Append(wxID_ANY, "Zoom Out\tCtrl+-");
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { AdjustFontSize(-1); }, zo->GetId());
+        wxMenuItem* zr = menu.Append(wxID_ANY, "Reset Zoom\tCtrl+0");
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { ResetFontSize(); }, zr->GetId());
+    }
 
     // If a URL link was right-clicked, add browser/clipboard options.
     bool isURL = !linkAtClick.empty() &&
@@ -1160,6 +1199,15 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
     if (code == 'C' && evt.ControlDown()) { CopySelection(); return; }
     if (code == 'A' && evt.ControlDown()) { SelectAll();     return; }
     if (code == 'L' && evt.ControlDown()) { ClearOutput();   return; }
+
+    // Ctrl+G: put selected text into the input bar (output→input shortcut).
+    if (code == 'G' && evt.ControlDown()) {
+        if (m_fn_put_in_input) {
+            wxString sel = SelectedText();
+            if (!sel.IsEmpty()) m_fn_put_in_input(sel);
+        }
+        return;
+    }
 
     if (code == WXK_F3) {
         if (m_fn_find_next_key) m_fn_find_next_key(!evt.ShiftDown());

@@ -9,6 +9,7 @@
 // ── wxWidgets ─────────────────────────────────────────────────────────────
 #include <wx/wx.h>
 #include <wx/mdi.h>
+#include <wx/config.h>
 #include <string>
 
 // ── MUSHclient headers ────────────────────────────────────────────────────
@@ -256,6 +257,16 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         DoFind(fwd);
     };
 
+    // Forward printable characters typed in the output pane to the input bar
+    // so the user can type without clicking back into it after scrolling.
+    m_output->m_fn_key_to_input = [this](wxChar ch) {
+        wxTextCtrl* inp = ActiveInput();
+        if (!inp) return;
+        inp->AppendText(wxString(ch));
+        inp->SetFocus();
+        inp->SetInsertionPointEnd();
+    };
+
     // When the auto-scroll state changes, update the status bar.
     // "↑ Scrolled back" reminds the user that new output is not visible yet.
     // Restoring auto-scroll shows the connection status again.
@@ -267,7 +278,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // When the font zoom changes, the character grid changes without a resize
     // event.  Use CallAfter so the new metrics are already committed before we
     // read CharWidth()/LineHeight() and send NAWS.
+    // We also persist the new font size so it survives across restarts.
     m_output->m_fn_grid_changed = [this]() {
+        // Persist font size immediately (synchronous — size is already committed).
+        {
+            wxConfig cfg(wxT("mushclient"));
+            cfg.Write(wxT("/display/font_size"), (long)m_output->FontSize());
+        }
         CallAfter([this]() {
             if (!m_doc || !m_output) return;
             int charW = m_output->CharWidth();
@@ -967,6 +984,21 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         if (wxTextCtrl* inp = ActiveInput()) inp->SetFocus();
         evt.Skip();   // let wxTextCtrl receive the event after getting focus
     });
+
+    // ── Restore persistent font size ──────────────────────────────────────────
+    // Apply the user's last font size preference.  We do this after all
+    // callbacks are wired so m_fn_grid_changed fires and updates NAWS/wrapping.
+    {
+        wxConfig cfg(wxT("mushclient"));
+        long savedSize = 0;
+        cfg.Read(wxT("/display/font_size"), &savedSize, 0L);
+        if (savedSize >= COutputPane::kMinFontSize &&
+            savedSize <= COutputPane::kMaxFontSize &&
+            savedSize != m_output->FontSize())
+        {
+            m_output->AdjustFontSize((int)savedSize - m_output->FontSize());
+        }
+    }
 
     // ── Per-world timer ────────────────────────────────────────────────────
     // Fires every 100 ms to drive CheckTimers() (world/plugin timers) and

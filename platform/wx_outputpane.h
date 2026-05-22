@@ -190,6 +190,12 @@ public:
     // output pane has focus.  Wired by CWorldChildFrame to DoFind().
     std::function<void(bool forward)> m_fn_find_next_key;
 
+    // Called when the user types a printable character while the output pane
+    // has focus (and no modifier key is held).  Wired by CWorldChildFrame to
+    // append the character to the command input bar and focus it so the user
+    // can keep typing without having to click back into the input bar.
+    std::function<void(wxChar ch)> m_fn_key_to_input;
+
 private:
     // ── Paint ────────────────────────────────────────────────────────────────
     void OnPaint(wxPaintEvent& evt);
@@ -276,6 +282,11 @@ private:
     std::string m_linkAtDown;
 
     bool m_autoScroll = true;
+
+    // Triple-click detection: record the timestamp and line of the last
+    // double-click so OnLeftDown can promote the third click to a line select.
+    wxLongLong m_lastDClickTimeMs = 0;
+    int        m_lastDClickLine   = -1;
 
     // Number of lines trimmed from the front of m_lines since the last
     // UpdateScrollbars call.  Used to compensate the scroll position when the

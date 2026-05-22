@@ -374,7 +374,8 @@ void COutputPane::SetOutputFont(const wxFont& font)
     if (w > 0) m_charW = w;
 
     m_maxLineChars = 80;
-    SetScrollRate(m_charW, m_lineH);
+    // Keep horizontal scrolling disabled (same as constructor).
+    SetScrollRate(0, m_lineH);
     UpdateScrollbars(m_autoScroll);
     Refresh();
 
@@ -844,6 +845,28 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
         }
     }
 
+    // ── Triple-click: select the entire line ──────────────────────────────────
+    // wxWidgets has no EVT_LEFT_TCLICK.  Detect triple-click as a left-down
+    // that arrives within 500 ms of the last double-click on the same line.
+    if (!m_lines.empty() && m_lastDClickLine >= 0) {
+        wxLongLong elapsed = wxGetLocalTimeMillis() - m_lastDClickTimeMs;
+        int clickLine = YToLine(evt.GetY());
+        if (elapsed < 500 && clickLine == m_lastDClickLine) {
+            // Build the full line length and select it end-to-end.
+            int lineLen = 0;
+            for (const auto& run : m_lines[clickLine])
+                if (!run.horiz_rule) lineLen += (int)run.text.size();
+            m_selAnchor      = SelPoint{clickLine, 0};
+            m_selFocus       = SelPoint{clickLine, lineLen};
+            m_lastDClickLine = -1;   // consume so a 4th click starts fresh
+            Refresh(false);
+            evt.Skip();
+            return;
+        }
+        // Stale or wrong line — reset.
+        if (elapsed >= 500) m_lastDClickLine = -1;
+    }
+
     // Give miniwindows first chance.
     if (m_fn_miniwindow_mouse_down &&
         m_fn_miniwindow_mouse_down(evt.GetX(), evt.GetY(), 0x10 /*MW_MOUSE_LH*/))
@@ -991,6 +1014,10 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
                 m_selFocus  = SelPoint{lineIdx, wordEnd};
                 Refresh(false);
             }
+
+            // Record for triple-click line selection.
+            m_lastDClickTimeMs = wxGetLocalTimeMillis();
+            m_lastDClickLine   = lineIdx;
         }
     }
 
@@ -1241,6 +1268,12 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
         return;
     }
 
+    // Ctrl+F: show the find bar and search forward.
+    if (code == 'F' && evt.ControlDown()) {
+        if (m_fn_find_next_key) m_fn_find_next_key(true);
+        return;
+    }
+
     if (evt.ControlDown() &&
         (code == '=' || code == '+' || code == WXK_NUMPAD_ADD)) {
         AdjustFontSize(1); return;
@@ -1265,6 +1298,16 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
         // Ctrl+End: scroll to the bottom and re-engage auto-scroll.
         ScrollToBottom();
         return;
+    }
+
+    // Forward printable characters to the command input bar so the user can
+    // type without having to click back into it after scrolling through output.
+    // Only forward when no modifier is held (Ctrl/Alt combos are shortcuts).
+    if (!evt.ControlDown() && !evt.AltDown() && !evt.MetaDown()) {
+        wxChar ch = (wxChar)evt.GetUnicodeKey();
+        if (ch != WXK_NONE && wxIsPrint(ch)) {
+            if (m_fn_key_to_input) { m_fn_key_to_input(ch); return; }
+        }
     }
 
     bool isScrollKey = (code == WXK_PAGEUP   || code == WXK_PAGEDOWN ||
@@ -1412,8 +1455,7 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
     GetScrollPixelsPerUnit(nullptr, &unitH);
     if (unitH > 0) {
         int scrollX;
-        GetViewStart(&scrollX, nullptr);
-        Scroll(scrollX, foundIdx * m_lineH / unitH);
+        Scroll(0, foundIdx * m_lineH / unitH);
         m_autoScroll = false;
         if (m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
     }

@@ -3,6 +3,13 @@
 
 #include "stdafx.h"
 
+// On non-MSVC platforms, format.h already provides inline implementations
+// of the CFormat constructors.  Compiling the bodies below would cause
+// redefinition errors, so we skip the rest of this file.
+#ifndef _MSC_VER
+// (nothing to define — inline versions in format.h are sufficient)
+#else
+
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #undef THIS_FILE
@@ -49,3 +56,5 @@ CFormat::CFormat (UINT nFormatID, va_list argList)
 	FormatV(strFormat, argList);
   }
 
+
+#endif // _MSC_VER

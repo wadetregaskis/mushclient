@@ -4,6 +4,14 @@
 
 #pragma once
 
+#ifndef _WIN32
+// Non-Windows: pull in everything OtherTypes.h needs before its class bodies.
+#include "platform/compat.h"    // CString, COLORREF, CObject, MFC collections
+#include "mcdatetime.h"         // CmcDateTime, CmcDateTimeSpan
+#include "regexp.h"             // t_regexp, MAX_WILDCARDS
+using std::vector; using std::map; using std::string; using std::list;
+#endif // !_WIN32
+
 #define DEFAULT_TRIGGER_SEQUENCE 100
 #define DEFAULT_ALIAS_SEQUENCE 100
 
@@ -306,13 +314,14 @@ typedef CTypedPtrList <CPtrList, CStyle*> CStyleList;
 
 // bit settings for "flags" below
 
-const int COMMENT = 0x01;        // this is a comment from a script
-const int USER_INPUT = 0x02;     // this is echoed user input
-const int LOG_LINE = 0x04;       // this line is to be logged
-const int BOOKMARK = 0x08;       // line is bookmarked
-const int HORIZ_RULE = 0x10;     // line is a horizontal rule
-
-const int NOTE_OR_COMMAND = 0x03;         // for testing if line is an output line or not
+#ifndef COMMENT
+const int COMMENT     = 0x01;  // this is a comment from a script
+const int USER_INPUT  = 0x02;  // this is echoed user input
+const int LOG_LINE    = 0x04;  // this line is to be logged
+const int BOOKMARK    = 0x08;  // line is bookmarked
+const int HORIZ_RULE  = 0x10;  // line is a horizontal rule
+const int NOTE_OR_COMMAND = 0x03; // for testing if line is an output line or not
+#endif
 
 class CLine : public CObject
   {
@@ -331,13 +340,19 @@ class CLine : public CObject
   long m_nLineNumber;
   short m_iPreambleOffset;  // how far in the preamble took us
 
-  CLine (const long nLineNumber, 
+  CLine (const long nLineNumber,
          const unsigned int nWrapColumn,
-         const unsigned short iFlags,      
+         const unsigned short iFlags,
          const COLORREF       iForeColour,
          const COLORREF       iBackColour,
-         const bool bUnicode 
+         const bool bUnicode
          );   // constructor
+#ifndef _WIN32
+  // Default constructor for non-Windows scratch/stub lines (doc_portable.cpp).
+  CLine() : hard_return(false), flags(0), len(0), text(nullptr),
+            iMemoryAllocated(0), m_nLineNumber(0), m_iPreambleOffset(0)
+  { m_lineHighPerformanceTime.QuadPart = 0; }
+#endif
   ~CLine ();    // destructor
 
   };

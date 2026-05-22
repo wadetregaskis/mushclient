@@ -2,10 +2,10 @@
 //
 
 #include "stdafx.h"
-#include "..\MUSHclient.h"
-#include "..\doc.h"
-#include "..\MUSHview.h"
-#include "..\genprint.h"
+#include "../MUSHclient.h"
+#include "../doc.h"
+#include "../MUSHview.h"
+#include "../genprint.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -53,8 +53,8 @@ void CMUSHclientDoc::Save_World_XML (CArchive& ar,
     }
 
   // which version was it?
-  ar.WriteString (CFormat 
-        ("<!-- MuClient version %s -->" NL, MUSHCLIENT_VERSION));
+  ar.WriteString (CFormat
+        ("<!-- MuClient version %s -->" NL, (LPCTSTR) MUSHCLIENT_VERSION));
 
   ar.WriteString ("<!-- Written by Nick Gammon -->" NL);
   ar.WriteString ("<!-- Home Page: http://www.mushclient.com/ -->" NL);

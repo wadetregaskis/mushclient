@@ -81,3 +81,18 @@ TinyGL*
 #
 git_diff_output.txt
 git_log_output.txt
+
+#
+# macOS/Linux port build artefacts
+#
+build*/
+*.o
+commit-phase1.sh
+scripting/methods/methods_sounds_patch.py
+
+#
+# Port working notes (not part of project history)
+#
+LOGBOOK.md
+PLAN.md
+CLAUDE.md

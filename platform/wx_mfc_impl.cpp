@@ -1305,6 +1305,10 @@ void wx_mfc_install_hooks()
     g_wxhook_quick_connect_dlg  = hook_quick_connect_dlg;
     g_wxhook_set_status         = hook_set_status;
     g_wxhook_game_preferences   = hook_game_preferences;
+
+    // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce
+    // an audible alert on macOS/Linux via wxWidgets.
+    g_fn_system_beep = []() { wxBell(); };
 }
 
 #endif // !_WIN32

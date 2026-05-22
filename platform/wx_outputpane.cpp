@@ -995,6 +995,11 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
     if (code == 'A' && evt.ControlDown()) { SelectAll();     return; }
     if (code == 'L' && evt.ControlDown()) { ClearOutput();   return; }
 
+    if (code == WXK_F3) {
+        if (m_fn_find_next_key) m_fn_find_next_key(!evt.ShiftDown());
+        return;
+    }
+
     if (evt.ControlDown() &&
         (code == '=' || code == '+' || code == WXK_NUMPAD_ADD)) {
         AdjustFontSize(1); return;

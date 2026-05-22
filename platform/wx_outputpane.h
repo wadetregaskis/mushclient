@@ -158,6 +158,10 @@ public:
     // Called when the user clicks an MXP hyperlink run.
     std::function<void(const std::string& action)> m_fn_link_clicked;
 
+    // Called when F3 (forward) or Shift+F3 (backward) is pressed while the
+    // output pane has focus.  Wired by CWorldChildFrame to DoFind().
+    std::function<void(bool forward)> m_fn_find_next_key;
+
 private:
     // ── Paint ────────────────────────────────────────────────────────────────
     void OnPaint(wxPaintEvent& evt);

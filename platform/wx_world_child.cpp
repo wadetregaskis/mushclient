@@ -145,6 +145,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         if (inp) inp->SetFocus();
     };
 
+    // F3 / Shift+F3 from the output pane fires the find bar.
+    m_output->m_fn_find_next_key = [this](bool fwd) {
+        ShowFindBar(true);
+        DoFind(fwd);
+    };
+
     // When the auto-scroll state changes, update the status bar.
     // "↑ Scrolled back" reminds the user that new output is not visible yet.
     // Restoring auto-scroll shows the connection status again.
@@ -1184,6 +1190,13 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     if (code == 'F' && evt.ControlDown()) {
         ShowFindBar(true);
         return;   // consume — don't forward to the doc
+    }
+
+    // F3 / Shift+F3 → find next / previous (opens the bar if not already shown).
+    if (code == WXK_F3) {
+        ShowFindBar(true);
+        DoFind(!evt.ShiftDown());
+        return;
     }
 
     // Ctrl+L → clear the output pane (same as the menu item and Ctrl+L in the

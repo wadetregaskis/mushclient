@@ -82,6 +82,12 @@ inline CWinApp* AfxGetApp() { return g_pWinApp; }
 inline CWnd* AfxGetMainWnd();
 // AfxGetInstanceHandle is defined in mfc_ui.h (returns HINSTANCE)
 
+// ── System beep hook ─────────────────────────────────────────────────────
+// Called by the MessageBeep() stub below.  The wxWidgets GUI layer sets this
+// to wxBell() in wx_mfc_impl.cpp; other builds leave it nullptr (silent).
+// Declared as a C++17 inline variable so every TU shares exactly one copy.
+inline void (*g_fn_system_beep)() = nullptr;
+
 // ── wx MFC hook function pointers (declared before CWnd uses them) ────────
 #include "wx_mfc_hooks.h"
 

@@ -4685,8 +4685,8 @@ public:
 #endif
 
 // ── Additional Windows API stubs ───────────────────────────────────────────
-inline BOOL MessageBeep(UINT)          { return FALSE; }
-inline BOOL Beep(DWORD, DWORD)         { return FALSE; }
+inline BOOL MessageBeep(UINT)          { if (g_fn_system_beep) g_fn_system_beep(); return TRUE; }
+inline BOOL Beep(DWORD, DWORD)         { if (g_fn_system_beep) g_fn_system_beep(); return TRUE; }
 inline BOOL GetCurrentDirectory(DWORD, LPTSTR) { return FALSE; }
 inline BOOL SetCurrentDirectory(LPCTSTR)       { return FALSE; }
 inline DWORD GetTempPath(DWORD, LPTSTR)        { return 0; }

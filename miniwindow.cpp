@@ -6,13 +6,13 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "MUSHview.h"
-#include "scripting\errors.h"
+#include "scripting/errors.h"
 #include "color.h"
 #include "mainfrm.h"
 #include "blending.h"
 
 #define PNG_NO_CONSOLE_IO
-#include "png\png.h"
+#include "png/png.h"
 
 // constructor
 CMiniWindow::CMiniWindow ()  :
@@ -792,12 +792,12 @@ static long CalculateUTF8length (LPCTSTR Text, size_t length)
 
   // this algorithm assumes the UTF-8 is OK, based on the earlier check
 
-  for (register const unsigned char *p = (const unsigned char *) Text ;
+  for (const unsigned char *p = (const unsigned char *) Text ;
        length-- > 0;
        i++)
     {
-    register int ab;    // additional bytes
-    register int c = *p++;  // this byte
+    int ab;    // additional bytes
+    int c = *p++;  // this byte
 
     if (c < 128)
       continue;     // zero additional bytes

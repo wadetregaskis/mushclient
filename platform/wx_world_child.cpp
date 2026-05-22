@@ -170,6 +170,39 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         if (inp) inp->SetFocus();
     };
 
+    // world.Pause(bPause): Lua scripts can scroll-lock or unlock the pane.
+    if (m_doc) {
+        m_doc->m_fn_set_paused = [this](bool bPause) {
+            if (m_output) m_output->SetPaused(bPause);
+        };
+
+        // world.Repaint(): force a repaint of the output pane.
+        m_doc->m_fn_repaint = [this]() {
+            if (m_output) m_output->Refresh(false);
+        };
+
+        // world.GetClipboard() / world.SetClipboard(): system clipboard access.
+        m_doc->m_fn_get_clipboard = []() -> std::string {
+            std::string result;
+            if (wxTheClipboard->Open()) {
+                if (wxTheClipboard->IsSupported(wxDF_TEXT)) {
+                    wxTextDataObject data;
+                    wxTheClipboard->GetData(data);
+                    result = std::string(data.GetText().ToUTF8());
+                }
+                wxTheClipboard->Close();
+            }
+            return result;
+        };
+        m_doc->m_fn_set_clipboard = [](const std::string& text) {
+            if (wxTheClipboard->Open()) {
+                wxTheClipboard->SetData(new wxTextDataObject(
+                    wxString::FromUTF8(text.c_str())));
+                wxTheClipboard->Close();
+            }
+        };
+    }
+
     // "Put in Input Bar" context-menu action: paste selected output text into
     // the command input for review/editing before the user presses Enter.
     m_output->m_fn_put_in_input = [this](const wxString& text) {
@@ -270,7 +303,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // When the auto-scroll state changes, update the status bar.
     // "↑ Scrolled back" reminds the user that new output is not visible yet.
     // Restoring auto-scroll shows the connection status again.
-    m_output->m_fn_autoscroll_changed = [this](bool /*autoNow*/) {
+    m_output->m_fn_autoscroll_changed = [this](bool autoNow) {
+        if (m_doc) m_doc->m_gui_paused = !autoNow;
         if (IsActiveWorld())
             UpdateStatusBar();
     };
@@ -1777,6 +1811,10 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_scroll           = nullptr;
         m_doc->m_fn_set_selection        = nullptr;
         m_doc->m_fn_set_command_selection = nullptr;
+        m_doc->m_fn_set_paused           = nullptr;
+        m_doc->m_fn_repaint              = nullptr;
+        m_doc->m_fn_get_clipboard        = nullptr;
+        m_doc->m_fn_set_clipboard        = nullptr;
 
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.

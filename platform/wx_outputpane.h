@@ -119,6 +119,12 @@ public:
     // Safe to call at any time; no-op if already at the bottom.
     void ScrollToBottom();
 
+    // Programmatically pause (disengage auto-scroll) or unpause (re-engage).
+    // Mirrors world.Pause() scripting API.  When pausing, the scroll position
+    // is not changed so the user sees the same content; new lines are still
+    // appended to the buffer but will not scroll into view.
+    void SetPaused(bool paused);
+
     // Scroll to a specific 0-based line index.  Clamps to [0, lineCount-1].
     // Disengages auto-scroll (same as the user manually scrolling up).
     void ScrollToLine(int lineIdx);

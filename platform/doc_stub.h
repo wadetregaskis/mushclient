@@ -1909,10 +1909,25 @@ public:
 
     // ── Output pane metrics (updated by CWorldChildFrame on font/size change) ─
     // Exposed to Lua via GetInfo(212), GetInfo(213), etc.
-    int m_gui_font_height = 18;   // pixel height of one line (GetInfo 212)
-    int m_gui_font_width  = 10;   // average pixel width of one char (GetInfo 213)
-    int m_gui_rows        = 24;   // visible rows in the output pane
-    int m_gui_cols        = 80;   // visible columns in the output pane
+    int  m_gui_font_height = 18;   // pixel height of one line (GetInfo 212)
+    int  m_gui_font_width  = 10;   // average pixel width of one char (GetInfo 213)
+    int  m_gui_rows        = 24;   // visible rows in the output pane
+    int  m_gui_cols        = 80;   // visible columns in the output pane
+    // True while the output pane is "paused" (user scrolled up, auto-scroll
+    // disengaged).  Updated by CWorldChildFrame via m_fn_autoscroll_changed.
+    // Exposed via GetInfo(114) and toggled by world.Pause().
+    bool m_gui_paused      = false;
+
+    // Called by world.Pause(bPause) to toggle scroll-lock from Lua.
+    // Wired by CWorldChildFrame to COutputPane::SetPaused().
+    std::function<void(bool)> m_fn_set_paused;
+
+    // Called by world.Repaint() to force a repaint of the output pane.
+    std::function<void()> m_fn_repaint;
+
+    // Called by world.GetClipboard() / world.SetClipboard().
+    std::function<std::string()>              m_fn_get_clipboard;
+    std::function<void(const std::string&)>   m_fn_set_clipboard;
 
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference

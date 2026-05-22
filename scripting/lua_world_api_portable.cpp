@@ -1087,7 +1087,7 @@ static int L_GetInfo(lua_State* L)
         case 109: lua_pushboolean(L, pDoc->m_bTrace);                         return 1;
         case 113: lua_pushboolean(L,
                       pDoc->m_iConnectPhase == eConnectConnectedToMud);        return 1;
-        case 114: lua_pushboolean(L, false); return 1; // output window paused — stub
+        case 114: lua_pushboolean(L, pDoc->m_gui_paused);                     return 1;
         // ── Numbers ──────────────────────────────────────────────────────────
         case 141: // fall through — same field, both type numbers used in the wild
         case 201: lua_pushnumber(L, pDoc->m_total_lines);                     return 1;
@@ -3637,12 +3637,19 @@ static int L_SetUnseenLines(lua_State* L)
 }
 
 // ── Pause / Unpause ───────────────────────────────────────────────────────────
-// On Windows these pause/resume output. Portable stub records state.
+// Pause(bPause): scroll-lock (true) or release (false) the output pane.
+// On Windows this freeze/unfreezes the CMUSHView.  On non-Windows we
+// toggle auto-scroll via m_fn_set_paused (wired to COutputPane by
+// CWorldChildFrame) and record the state in m_gui_paused.
 
 static int L_Pause(lua_State* L)
 {
-    // On non-Windows there is no scrollback view to pause; accept silently.
-    world_doc(L);
+    CMUSHclientDoc* pDoc = world_doc(L);
+    bool bPause = lua_toboolean(L, 1) != 0;
+    if (pDoc->m_fn_set_paused) pDoc->m_fn_set_paused(bPause);
+    // m_gui_paused is kept up to date by m_fn_autoscroll_changed;
+    // set it here too in case the pane callback fires asynchronously.
+    pDoc->m_gui_paused = bPause;
     return 0;
 }
 
@@ -4860,12 +4867,31 @@ static int L_InfoFont(lua_State* L)         { world_doc(L); lua_pushnumber(L, eO
 static int L_Activate(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_ActivateClient(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_Redraw(lua_State* L)           { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_Repaint(lua_State* L)          { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_Repaint(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    if (pDoc->m_fn_repaint) pDoc->m_fn_repaint();
+    lua_pushnumber(L, eOK);
+    return 1;
+}
 static int L_GetSysColor(lua_State* L)      { world_doc(L); lua_pushnumber(L, 0); return 1; }
 static int L_GetSystemMetrics(lua_State* L) { world_doc(L); lua_pushnumber(L, 0); return 1; }
 static int L_GetDeviceCaps(lua_State* L)    { world_doc(L); lua_pushnumber(L, 0); return 1; }
-static int L_GetClipboard(lua_State* L)     { world_doc(L); lua_pushstring(L, ""); return 1; }
-static int L_SetClipboard(lua_State* L)     { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_GetClipboard(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    std::string text = pDoc->m_fn_get_clipboard ? pDoc->m_fn_get_clipboard() : std::string();
+    lua_pushstring(L, text.c_str());
+    return 1;
+}
+static int L_SetClipboard(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    const char* text = luaL_optstring(L, 1, "");
+    if (pDoc->m_fn_set_clipboard) pDoc->m_fn_set_clipboard(text);
+    lua_pushnumber(L, eOK);
+    return 1;
+}
 static int L_SetBackgroundColour(lua_State* L){ world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetBackgroundImage(lua_State* L) { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetCursor(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }

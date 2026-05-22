@@ -306,6 +306,20 @@ void COutputPane::ScrollToBottom()
         m_fn_autoscroll_changed(true);
 }
 
+void COutputPane::SetPaused(bool paused)
+{
+    if (paused) {
+        // Disengage auto-scroll without moving the viewport: new lines will
+        // continue to be appended to the buffer but won't scroll into view.
+        bool wasAuto = m_autoScroll;
+        m_autoScroll = false;
+        if (wasAuto && m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
+        Refresh(false);
+    } else {
+        ScrollToBottom();
+    }
+}
+
 void COutputPane::ScrollToTop()
 {
     int scrollX;

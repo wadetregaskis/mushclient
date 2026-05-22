@@ -115,7 +115,7 @@ int iColOrder [eColumnCount] = {0, 1, 2, 3, 4, 5, 6},
                                                        
 // recover column sequence
 
-  GetListCtrl ().SendMessage (LVM_SETCOLUMNORDERARRAY, eColumnCount, (DWORD) iColOrder);
+  GetListCtrl ().SendMessage (LVM_SETCOLUMNORDERARRAY, eColumnCount, (DWORD)(DWORD_PTR) iColOrder);
 
 	CListView::OnInitialUpdate();
 	
@@ -180,7 +180,7 @@ CListCtrl & pList = GetListCtrl ();
          bInserting = true;
          break;
          }
-       if ((DWORD) pDoc != pList.GetItemData (nItem))
+       if ((DWORD)(DWORD_PTR) pDoc != pList.GetItemData (nItem))
          {
          bInserting = true;
          break;
@@ -259,7 +259,7 @@ CListCtrl & pList = GetListCtrl ();
 		pList.SetItemText(nItem, eColumnDuration, strDuration);
 
     if (bInserting)
-      pList.SetItemData(nItem, (DWORD) pDoc);
+      pList.SetItemData(nItem, (DWORD)(DWORD_PTR) pDoc);
 
     LVITEM lvitem;
 

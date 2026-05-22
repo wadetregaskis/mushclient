@@ -1,6 +1,10 @@
 // ActivityView.h : header file
 //
-#include <afxcview.h>
+#ifdef _WIN32
+#  include <afxcview.h>
+#else
+#  include "platform/afxcview.h"
+#endif
 
 /////////////////////////////////////////////////////////////////////////////
 // CActivityView view

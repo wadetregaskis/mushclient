@@ -1,9 +1,9 @@
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\mainfrm.h"
-#include "..\..\doc.h"
+#include "../../MUSHclient.h"
+#include "../../mainfrm.h"
+#include "../../doc.h"
 #include "genpropertypage.h"
-#include "..\EditMultiLine.h"
+#include "../EditMultiLine.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -503,9 +503,9 @@ CString strMsg;
 
     // record item's new name as the list object data
     if (hdlItem)
-      m_cTreeCtrl.SetItemData (hdlItem, (DWORD) pstrObjectName);
+      m_cTreeCtrl.SetItemData (hdlItem, (DWORD)(DWORD_PTR) pstrObjectName);
     else
-      m_ctlList->SetItemData (nItem, (DWORD) pstrObjectName);
+      m_ctlList->SetItemData (nItem, (DWORD)(DWORD_PTR) pstrObjectName);
     }   // end of label changing
 
   SetInternalName (pItem, strObjectName);  // set internal name
@@ -834,7 +834,7 @@ int CGenPropertyPage::add_list_item (CObject * pItem,
   int nNewItem = AddItem (pItem, nItem, bInsert);
 
   // record item's name as the list object data
-  m_ctlList->SetItemData(nNewItem, (DWORD) pstrObjectName);
+  m_ctlList->SetItemData(nNewItem, (DWORD)(DWORD_PTR) pstrObjectName);
 
   // stamp with a number so we know if it was updated without our knowledge
   SetModificationNumber (pItem, m_nUpdateNumber);
@@ -887,7 +887,7 @@ HTREEITEM CGenPropertyPage::add_tree_item (CObject * pItem,
   HTREEITEM hNewItem = m_cTreeCtrl.InsertItem (strDescription, hParent);
 
   // record item's name as the list object data
-  m_cTreeCtrl.SetItemData (hNewItem, (DWORD) pstrObjectName);
+  m_cTreeCtrl.SetItemData (hNewItem, (DWORD)(DWORD_PTR) pstrObjectName);
 
   // stamp with a number so we know if it was updated without our knowledge
   SetModificationNumber (pItem, m_nUpdateNumber);
@@ -1361,7 +1361,7 @@ void CGenPropertyPage::InitiateSearch (const CObject * pObject,
     if (FindInfo.m_bForwards)
       FindInfo.m_pFindPosition = 0;
     else
-      FindInfo.m_pFindPosition = (POSITION) FindInfo.m_nTotalLines - 1;
+      FindInfo.m_pFindPosition = (POSITION)(FindInfo.m_nTotalLines - 1);
     }
 
   } // end of CGenPropertyPage::InitiateSearch
@@ -1377,12 +1377,12 @@ CGenPropertyPage * pPropPage = (CGenPropertyPage *) pObject;
 
 CListCtrl* pList = pPropPage->m_ctlList;
 
-  if ((long) FindInfo.m_pFindPosition < 0 ||
-      (long) FindInfo.m_pFindPosition >= FindInfo.m_nTotalLines)
+  if ((intptr_t) FindInfo.m_pFindPosition < 0 ||
+      (intptr_t) FindInfo.m_pFindPosition >= FindInfo.m_nTotalLines)
     return true;
 
 
-  CString * pstrObjectName = (CString *) pList->GetItemData ((long) FindInfo.m_pFindPosition);
+  CString * pstrObjectName = (CString *) pList->GetItemData ((intptr_t) FindInfo.m_pFindPosition);
   
   ASSERT (pstrObjectName != NULL);
 
@@ -1397,9 +1397,9 @@ CListCtrl* pList = pPropPage->m_ctlList;
   strLine = pPropPage->GetFindText (pItem);
   
   if (FindInfo.m_bForwards)
-    FindInfo.m_pFindPosition++;
+    FindInfo.m_pFindPosition = (POSITION)((intptr_t)FindInfo.m_pFindPosition + 1);
   else
-    FindInfo.m_pFindPosition--;
+    FindInfo.m_pFindPosition = (POSITION)((intptr_t)FindInfo.m_pFindPosition - 1);
 
   return false;
   } // end of CGenPropertyPage::GetNextListLine
@@ -1415,12 +1415,12 @@ CGenPropertyPage * pPropPage = (CGenPropertyPage *) pObject;
 
 CTreeCtrl* pTree = &pPropPage->m_cTreeCtrl;
 
-  if ((long) FindInfo.m_pFindPosition < 0 ||
-      (long) FindInfo.m_pFindPosition >= FindInfo.m_nTotalLines)
+  if ((intptr_t) FindInfo.m_pFindPosition < 0 ||
+      (intptr_t) FindInfo.m_pFindPosition >= FindInfo.m_nTotalLines)
     return true;
 
 
-  HTREEITEM hItem = get_tree_item (pTree, (int) FindInfo.m_pFindPosition);
+  HTREEITEM hItem = get_tree_item (pTree, (int)(intptr_t) FindInfo.m_pFindPosition);
 
   if (!hItem)
     return true;
@@ -1442,9 +1442,9 @@ CTreeCtrl* pTree = &pPropPage->m_cTreeCtrl;
   strLine = pPropPage->GetFindText (pItem);
 
   if (FindInfo.m_bForwards)
-    FindInfo.m_pFindPosition++;
+    FindInfo.m_pFindPosition = (POSITION)((intptr_t)FindInfo.m_pFindPosition + 1);
   else
-    FindInfo.m_pFindPosition--;
+    FindInfo.m_pFindPosition = (POSITION)((intptr_t)FindInfo.m_pFindPosition - 1);
 
   return false;
   } // end of CGenPropertyPage::GetNextTreeLine
@@ -1535,7 +1535,7 @@ BOOL CGenPropertyPage::OnInitDialog()
 
 // recover column sequence
 
-  m_ctlList->SendMessage (LVM_SETCOLUMNORDERARRAY, m_iColumnCount, (DWORD) iColOrder);
+  m_ctlList->SendMessage (LVM_SETCOLUMNORDERARRAY, m_iColumnCount, (DWORD)(DWORD_PTR) iColOrder);
  
   delete [] iColOrder;
 

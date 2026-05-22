@@ -2,31 +2,33 @@
 //
 
 #include "stdafx.h"
-#include "..\..\MUSHclient.h"
-#include "..\..\mainfrm.h"
-#include "..\..\doc.h"
-#include "..\..\TextDocument.h"
-#include "..\..\MUSHview.h"
-#include "..\..\sendvw.h"
-#include "..\..\scripting\errors.h"
-#include "..\..\childfrm.h"
+#include "../../MUSHclient.h"
+#include "../../mainfrm.h"
+#include "../../doc.h"
+#include "../../Color.h"   // CColor (HLS colour operations)
+#include "../../TextDocument.h"
+#include "../../MUSHview.h"
+#include "../../sendvw.h"
+#include "../../scripting/errors.h"
+#include "../../childfrm.h"
 
 #include "editmac.h"
 #include "aliasdlg.h"
 #include "triggdlg.h"
 #include "TimerDlg.h"
 #include "EditVariable.h"
-#include "..\FindDlg.h"
+#include "../FindDlg.h"
 #include "TabDefaultsDlg.h"
 #include "TreePropertySheet.h"
-#include "..\Splash.h"
+#include "prefspropertypages.h"
+#include "../Splash.h"
 #include "CommandOptionsDlg.h"
-#include "..\MXPscriptRoutinesDlg.h"
-#include "..\ColourPickerDlg.h"
-#include "..\EditMultiLine.h"
-#include "..\CreditsDlg.h"
-#include "..\ProxyServerPasswordDlg.h"
-#include "..\ProgDlg.h"
+#include "../MXPscriptRoutinesDlg.h"
+#include "../ColourPickerDlg.h"
+#include "../EditMultiLine.h"
+#include "../CreditsDlg.h"
+#include "../ProxyServerPasswordDlg.h"
+#include "../ProgDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -2398,7 +2400,7 @@ int iColOrder [eColumnCount] = {0, 1, 2},
 
 // recover column sequence
 
-  m_ctlMacroList.SendMessage (LVM_SETCOLUMNORDERARRAY, eColumnCount, (DWORD) iColOrder);
+  m_ctlMacroList.SendMessage (LVM_SETCOLUMNORDERARRAY, eColumnCount, (DWORD)(DWORD_PTR) iColOrder);
 
   load_list ();
   
@@ -2497,7 +2499,7 @@ CListCtrl* pList = (CListCtrl*) pObject;
     if (FindInfo.m_bForwards)
       FindInfo.m_pFindPosition = 0;
     else
-      FindInfo.m_pFindPosition = (POSITION) pList->GetItemCount () - 1;
+      FindInfo.m_pFindPosition = (POSITION)(pList->GetItemCount () - 1);
 
   } // end of CPrefsP6::InitiateSearch
 
@@ -2519,9 +2521,9 @@ CListCtrl* pList = (CListCtrl*) pObject;
   strLine += pList->GetItemText((long) FindInfo.m_pFindPosition, eColumnAction);
 
   if (FindInfo.m_bForwards)
-    FindInfo.m_pFindPosition++;
+    FindInfo.m_pFindPosition = (POSITION)((intptr_t)FindInfo.m_pFindPosition + 1);
   else
-    FindInfo.m_pFindPosition--;
+    FindInfo.m_pFindPosition = (POSITION)((intptr_t)FindInfo.m_pFindPosition - 1);
 
   return false;
   } // end of CPrefsP6::GetNextLine
@@ -7357,7 +7359,7 @@ int nItem = m_ctlLanguage.GetCurSel ();
  	CPropertyPage::OnOK();
 }
 
-// register our VBSCRIPT or JSCRIPT dll - see REGSVR code
+// our VBSCRIPT or JSCRIPT dll - see REGSVR code
 
 void CPrefsP17::OnRegister() 
 {
@@ -9093,14 +9095,14 @@ void CPrefsP15::CalculateMemoryUsage ()
       }
 
     CLine * pLine = m_doc->m_LineList.GetNext (pos);
-    nMemory += sizeof CLine;          // add the class itself
+    nMemory += sizeof(CLine);          // add the class itself
     nMemory += pLine->iMemoryAllocated;  // and the text
 
     // count styles and work out how much memory they take too
     for (POSITION pos2 = pLine->styleList.GetHeadPosition(); pos2; iStyles++)
       {
       pLine->styleList.GetNext (pos2);
-      nMemory += sizeof CStyle;   // length of style class
+      nMemory += sizeof(CStyle);   // length of style class
       nMemory += sizeof (void *) * 3;   // and the list item
       }
 

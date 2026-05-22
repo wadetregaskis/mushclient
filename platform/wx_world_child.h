@@ -90,6 +90,7 @@ private:
     int  m_lastConnectPhase    = -1;   // tracks phase changes to update title/status
     int  m_reconnectCountdown  = 0;    // ticks until auto-reconnect (0 = idle)
     bool m_lastNoEcho          = false; // last known m_doc->m_bNoEcho state
+    int  m_pluginTickAccum     = 0;    // ms accumulated toward next ON_PLUGIN_TICK (~40 ms)
 
     // ── Miniwindow mouse-tracking state ───────────────────────────────────
     // These mirror m_sPreviousMiniWindow / GetCapture() tracking from CMUSHView.
@@ -106,6 +107,7 @@ private:
     // Frame is about to close — delete the doc (disconnects + frees memory).
     void OnClose(wxCloseEvent& evt);
     // 100 ms world timer: process MUSHclient timers and flush output.
+    // ON_PLUGIN_TICK is fired at ~40 ms via m_pluginTickAccum.
     void OnWorldTimer(wxTimerEvent& evt);
     // Frame resized — send updated NAWS window size to the MUD.
     void OnSize(wxSizeEvent& evt);

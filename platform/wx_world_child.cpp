@@ -1187,6 +1187,21 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
+    // Ctrl+A: move cursor to the beginning of the input line (Unix terminal).
+    // Note: Ctrl+A is already bound to SelectAll on macOS for text controls,
+    // so we only intercept it explicitly here; the result is the same on all
+    // platforms — cursor moves to position 0.
+    if (code == 'A' && evt.ControlDown()) {
+        if (inp) inp->SetInsertionPoint(0);
+        return;
+    }
+
+    // Ctrl+E: move cursor to the end of the input line (Unix terminal).
+    if (code == 'E' && evt.ControlDown()) {
+        if (inp) inp->SetInsertionPointEnd();
+        return;
+    }
+
     // Tab: complete the current partial command from history.
     // Searches backward through m_history for the most-recently-used command
     // that starts with the current input text.  A second Tab cycles further back.
@@ -1194,14 +1209,20 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     if (code == WXK_TAB && inp == m_input) {
         wxString partial = m_input->GetValue();
         if (!partial.IsEmpty()) {
-            // Start from just before the current history index (if browsing),
+            // Case-insensitive prefix search backward through history.
+            // Start from just before the current index (if already cycling),
             // otherwise from the most recent entry.
+            wxString lowerPartial = partial.Lower();
             int searchFrom = (m_histIdx >= 0) ? m_histIdx - 1
                                                : (int)m_history.size() - 1;
             for (int i = searchFrom; i >= 0; --i) {
-                if (m_history[i].StartsWith(partial) && m_history[i] != partial) {
+                const wxString& hist = m_history[i];
+                // Match: history entry starts with partial (case-insensitive)
+                // and is strictly longer (to avoid completing to identical text).
+                if (hist.Lower().StartsWith(lowerPartial) &&
+                    hist.Len() > partial.Len()) {
                     m_histIdx = i;
-                    m_input->SetValue(m_history[i]);
+                    m_input->SetValue(hist);
                     m_input->SetInsertionPointEnd();
                     return;  // consume Tab — no tab character inserted
                 }
@@ -1377,9 +1398,15 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     // ── World timers (triggers based on elapsed time, speed-walk queues, etc.)
     m_doc->CheckTimers();
 
-    // ── ON_PLUGIN_TICK (Windows fires this every ~40 ms; we fire every 100 ms
-    //    since that's our timer interval — close enough for plugin compatibility)
-    m_doc->SendToAllPluginCallbacks(ON_PLUGIN_TICK);
+    // ── ON_PLUGIN_TICK: Windows fires this every ~40 ms.  We drive it via an
+    //    accumulator so that the average rate matches even though our timer
+    //    only fires every 100 ms.  Each 100 ms tick we fire it 2–3 times,
+    //    keeping the long-run rate at 1 call per 40 ms.
+    m_pluginTickAccum += 100;
+    while (m_pluginTickAccum >= 40) {
+        m_pluginTickAccum -= 40;
+        m_doc->SendToAllPluginCallbacks(ON_PLUGIN_TICK);
+    }
 
     // Flush any output produced by the timer callbacks.
     m_doc->UpdateAllViews(nullptr);

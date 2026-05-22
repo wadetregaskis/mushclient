@@ -414,8 +414,11 @@ void COutputPane::OnPaint(wxPaintEvent&)
     }
 
     if (!m_lines.empty()) {
+        // When the hint bar is visible, don't render lines that fall behind it
+        // — saves work and avoids paint artifacts on the boundary.
+        int usableH = m_autoScroll ? clientH : clientH - kHintBarH;
         int firstLine = yPixOffset / m_lineH;
-        int lastLine  = (yPixOffset + clientH) / m_lineH + 1;
+        int lastLine  = (yPixOffset + usableH + m_lineH - 1) / m_lineH;
         firstLine = std::max(0, firstLine);
         lastLine  = std::min((int)m_lines.size() - 1, lastLine);
 
@@ -904,9 +907,21 @@ void COutputPane::OnLeftUp(wxMouseEvent& evt)
         SelPoint s, e;
         if (GetNormalizedSel(s, e)) {
             wxString text = SelectedText();
-            if (!text.IsEmpty() && wxTheClipboard->Open()) {
-                wxTheClipboard->SetData(new wxTextDataObject(text));
-                wxTheClipboard->Close();
+            if (!text.IsEmpty()) {
+                if (wxTheClipboard->Open()) {
+                    wxTheClipboard->SetData(new wxTextDataObject(text));
+                    wxTheClipboard->Close();
+                }
+#ifdef __WXGTK__
+                // X11 primary selection: also write to the PRIMARY clipboard
+                // so the user can paste with middle-click in other GTK windows.
+                if (wxTheClipboard->Open()) {
+                    wxTheClipboard->UsePrimarySelection(true);
+                    wxTheClipboard->SetData(new wxTextDataObject(text));
+                    wxTheClipboard->UsePrimarySelection(false);
+                    wxTheClipboard->Close();
+                }
+#endif
             }
         }
     }

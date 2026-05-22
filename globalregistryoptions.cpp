@@ -185,8 +185,23 @@ void CMUSHclientApp::LoadGlobalsFromDatabase (void)
     if (strcmp (AlphaGlobalOptionsTable [i].pName, "StateFilesDirectory") == 0)
       {
       strDefault =  App.m_strPluginsDirectory;
+#ifdef _WIN32
       strDefault += "state\\";
+#else
+      strDefault += "state/";
+#endif
       }
+#ifndef _WIN32
+    // On POSIX the static table defaults use Windows backslashes; replace them.
+    else if (strcmp (AlphaGlobalOptionsTable [i].pName, "DefaultLogFileDirectory") == 0)
+      strDefault = "./logs/";
+    else if (strcmp (AlphaGlobalOptionsTable [i].pName, "DefaultWorldFileDirectory") == 0)
+      strDefault = "./worlds/";
+    else if (strcmp (AlphaGlobalOptionsTable [i].pName, "PluginsDirectory") == 0)
+      strDefault = "./worlds/plugins/";
+    else if (strcmp (AlphaGlobalOptionsTable [i].pName, "AsciiArtFont") == 0)
+      strDefault = "fonts/standard.flf";
+#endif
 
     db_simple_query ((LPCTSTR) CFormat (
           "SELECT value FROM prefs WHERE name = '%s'", (LPCTSTR)  AlphaGlobalOptionsTable [i].pName), 

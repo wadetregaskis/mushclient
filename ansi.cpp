@@ -1,10 +1,13 @@
 //  ansi.cpp - ANSI colour handling
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
-
 #include "Color.h"
 #include "doc.h"
+#else
+#include "platform/doc_stub.h"
+#endif
 
 /*
 
@@ -139,6 +142,26 @@ CAction *      pAction      = pOldStyle->pAction;
         }   // end of not inverse
 
       } // end of background colour change
+    else
+    if (iCode >= 90 && iCode <= 97)
+      {
+      // Bright/high-intensity foreground in RGB mode: use bold palette entry.
+      int i = iCode - 90;
+      if (iFlags & INVERSE)
+        iBackColour = m_boldcolour [i];
+      else
+        iForeColour = m_boldcolour [i];
+      }
+    else
+    if (iCode >= 100 && iCode <= 107)
+      {
+      // Bright background in RGB mode: use bold palette entry.
+      int i = iCode - 100;
+      if (iFlags & INVERSE)
+        iForeColour = m_boldcolour [i];
+      else
+        iBackColour = m_boldcolour [i];
+      }
 
     }   // end style in RGB
   else    // not RGB - just pop in the appropriate colour code
@@ -187,6 +210,27 @@ CAction *      pAction      = pOldStyle->pAction;
                iBackColour = BLACK;
                }
              break;
+
+      // Bright/high-intensity foreground (90–97): map to xterm palette indices 8–15.
+      // GetStyleRGB treats indices >= 8 as xterm_256_colours[i] (bright entries).
+      case 90: iForeColour =  8; break;  // bright black  (dark grey)
+      case 91: iForeColour =  9; break;  // bright red
+      case 92: iForeColour = 10; break;  // bright green
+      case 93: iForeColour = 11; break;  // bright yellow
+      case 94: iForeColour = 12; break;  // bright blue
+      case 95: iForeColour = 13; break;  // bright magenta
+      case 96: iForeColour = 14; break;  // bright cyan
+      case 97: iForeColour = 15; break;  // bright white
+
+      // Bright background (100–107): same mapping for background.
+      case 100: iBackColour =  8; break;
+      case 101: iBackColour =  9; break;
+      case 102: iBackColour = 10; break;
+      case 103: iBackColour = 11; break;
+      case 104: iBackColour = 12; break;
+      case 105: iBackColour = 13; break;
+      case 106: iBackColour = 14; break;
+      case 107: iBackColour = 15; break;
 
       } // end of switch
 

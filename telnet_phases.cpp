@@ -1,9 +1,17 @@
 // telnet_phases.cpp - handle telnet phases in incoming text stream
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
+// Full build (Windows native or mushapp on macOS/Linux): use the real headers.
 #include "stdafx.h"
 #include "MUSHclient.h"
-
 #include "doc.h"
+// No-op stubs for the debug helpers used below — not needed in the full build.
+#define dbg(...)          ((void)0)
+#define telopt_name(opt)  ""
+#else
+// mushcore portable build: use the minimal stub header.
+#include "platform/doc_stub.h"
+#endif
 
 /* Phases for processing input stream ...
 
@@ -41,12 +49,42 @@ void CMUSHclientDoc::Phase_ESC (const unsigned char c)
     m_phase = DOING_CODE;
     m_code = 0;
     }
+  else if (c == ']')
+    {
+    // OSC (Operating System Command): ESC ] <text> BEL/ST
+    // MUDs use this for window titles (ESC]0;title BEL) and colour palette
+    // (ESC]4;...).  In CLI mode we have no window title to set, so we simply
+    // swallow the entire sequence.
+#ifndef _WIN32
+    dbg("OSC sequence started — will discard until BEL/ST");
+#endif
+    m_phase = HAVE_OSC;
+    }
   else
+    {
+    // Other ESC sequences (ESC c = reset, ESC ( = charset, etc.) — ignore.
     m_phase = NONE;
+    }
 
   } // end of Phase_ESC
 
-// ANSI - We have ESC [ x
+// OSC - we have ESC ] and are swallowing until BEL or ST (ESC \)
+// This is only needed on non-Windows (the CLI); the Windows build never
+// enters HAVE_OSC because the full GUI handles OSC differently.
+#ifndef _WIN32
+void CMUSHclientDoc::Phase_OSC (const unsigned char c)
+  {
+  if (c == '\007')          // BEL terminates OSC
+    m_phase = NONE;
+  else if (c == 0x9C)       // ST as a single C1 byte (rare)
+    m_phase = NONE;
+  else if (c == '\033')     // ESC starts a possible String Terminator (ESC \)
+    m_phase = HAVE_ESC;     // if next char is '\', Phase_ESC→NONE; harmless either way
+  // else: still inside the OSC payload — stay in HAVE_OSC and keep discarding
+  }
+#endif // !_WIN32
+
+// ANSI - we have ESC [ x
 
 void CMUSHclientDoc::Phase_ANSI (const unsigned char c)
   {
@@ -166,6 +204,7 @@ void CMUSHclientDoc::Send_IAC_DO (const unsigned char c)
   unsigned char do_do_it [3]   = { IAC, DO, c };
 
   TRACE1 ("\nSending IAC DO <%d>\n", c);
+  dbg("send IAC DO %s", telopt_name(c));
   SendPacket (do_do_it, sizeof do_do_it);
   m_bClient_sent_IAC_DO [c]   = true;
   m_bClient_sent_IAC_DONT [c] = false;
@@ -182,6 +221,7 @@ void CMUSHclientDoc::Send_IAC_DONT (const unsigned char c)
   unsigned char dont_do_it [3] = { IAC, DONT, c };
 
   TRACE1 ("\nSending IAC DONT <%d>\n", c);
+  dbg("send IAC DONT %s", telopt_name(c));
   SendPacket (dont_do_it, sizeof dont_do_it);
   m_bClient_sent_IAC_DONT [c] = true;
   m_bClient_sent_IAC_DO [c]   = false;
@@ -198,6 +238,7 @@ void CMUSHclientDoc::Send_IAC_WILL (const unsigned char c)
   unsigned char will_do_it [3]   = { IAC, WILL, c };
 
   TRACE1 ("\nSending IAC WILL <%d>\n", c);
+  dbg("send IAC WILL %s", telopt_name(c));
   SendPacket (will_do_it, sizeof will_do_it);
   m_bClient_sent_IAC_WILL [c] = true;
   m_bClient_sent_IAC_WONT [c] = false;
@@ -214,6 +255,7 @@ void CMUSHclientDoc::Send_IAC_WONT (const unsigned char c)
   unsigned char wont_do_it [3] = { IAC, WONT, c };
 
   TRACE1 ("\nSending IAC WONT <%d>\n", c);
+  dbg("send IAC WONT %s", telopt_name(c));
   SendPacket (wont_do_it, sizeof wont_do_it);
   m_bClient_sent_IAC_WONT [c] = true;
   m_bClient_sent_IAC_WILL [c] = false;
@@ -233,6 +275,7 @@ void CMUSHclientDoc::Phase_WILL (const unsigned char c)
 // (except for compression, MXP, TERMINAL_TYPE and SGA), we *will* handle that)
 
   TRACE1 ("<%d>", c);
+  dbg("recv IAC WILL %s", telopt_name(c));
   m_phase = NONE;  // back to normal text after this character
 
   m_nCount_IAC_WILL++;
@@ -263,7 +306,12 @@ void CMUSHclientDoc::Phase_WILL (const unsigned char c)
           {
           Send_IAC_DO (c);
           if (c == TELOPT_COMPRESS2)
+            {
             m_bSupports_MCCP_2 = true;
+            dbg("MCCP2 compression negotiated — stream will compress after SB");
+            }
+          else
+            dbg("MCCP1 compression negotiated — stream will compress after SB");
           }
         else
           {   // not enough memory or already agreed to MCCP 2 - no compression
@@ -306,10 +354,13 @@ void CMUSHclientDoc::Phase_WILL (const unsigned char c)
             {
             Send_IAC_DO (c);
             if (m_iUseMXP == eQueryMXP)     // turn MXP on now
+              {
+              dbg("MXP enabled (server WILL MXP)");
               MXP_On ();
+              }
             } // end of MXP wanted
           break;  // end of MXP
-          
+
     // here for EOR (End of record)
     case WILL_END_OF_RECORD:
           if (m_bConvertGAtoNewline)
@@ -347,6 +398,7 @@ void CMUSHclientDoc::Phase_WONT (const unsigned char c)
 // telnet negotiation : in response to WONT, we say DONT
 
   TRACE1 ("<%d>", c);
+  dbg("recv IAC WONT %s", telopt_name(c));
   m_phase = NONE;
 
   m_nCount_IAC_WONT++;
@@ -377,11 +429,12 @@ void CMUSHclientDoc::Phase_WONT (const unsigned char c)
 
 void CMUSHclientDoc::Phase_DO (const unsigned char c)
   {
-// telnet negotiation : in response to DO, we say WILL for:  
+// telnet negotiation : in response to DO, we say WILL for:
 //  <102> (Aardwolf), SGA, echo, NAWS, CHARSET, MXP and Terminal type
 // for others we query plugins to see if they want to handle it or not
 
   TRACE1 ("<%d>", c);
+  dbg("recv IAC DO %s", telopt_name(c));
   m_phase = NONE;
 
   m_nCount_IAC_DO++;
@@ -421,7 +474,10 @@ void CMUSHclientDoc::Phase_DO (const unsigned char c)
             {
             Send_IAC_WILL (c);
             if (m_iUseMXP == eQueryMXP)     // turn MXP on now
+              {
+              dbg("MXP enabled (server DO MXP)");
               MXP_On ();
+              }
             } // end of MXP wanted
           break;  // end of MXP
 
@@ -445,6 +501,7 @@ void CMUSHclientDoc::Phase_DONT (const unsigned char c)
 // telnet negotiation : in response to DONT, we say WONT
 
   TRACE1 ("<%d>", c);
+  dbg("recv IAC DONT %s", telopt_name(c));
   m_phase = NONE;
   Send_IAC_WONT (c);
 
@@ -536,6 +593,27 @@ void CMUSHclientDoc::Phase_SUBNEGOTIATION_IAC (const unsigned char c)
 
   // subnegotiation is complete ...
   // we have IAC SB <m_subnegotiation_type> <m_IAC_subnegotiation_data> IAC SE
+
+  // Log every subnegotiation when debug is on.
+  // For text-safe protocols (GMCP/ATCP) show the data directly; for binary
+  // ones (COMPRESS2) just show the option number and byte count.
+  if (g_debug)
+    {
+    bool bTextSafe = true;
+    for (unsigned char b : m_IAC_subnegotiation_data)
+      if (b < 0x20 && b != '\t' && b != '\n') { bTextSafe = false; break; }
+
+    if (bTextSafe)
+      {
+      // Show up to 200 chars of the payload
+      string preview = m_IAC_subnegotiation_data.substr(0, 200);
+      if (m_IAC_subnegotiation_data.size() > 200) preview += "…";
+      dbg("SB %s  %s", telopt_name(m_subnegotiation_type), preview.c_str());
+      }
+    else
+      dbg("SB %s  (%zu bytes, binary)", telopt_name(m_subnegotiation_type),
+          m_IAC_subnegotiation_data.size());
+    }
 
   switch (m_subnegotiation_type)
     {
@@ -792,19 +870,27 @@ void CMUSHclientDoc::Handle_TELOPT_TERMINAL_TYPE ()
 
   switch (m_ttype_sequence)
     {
-    case 0:  
+    case 0:
         strTemp = m_strTerminalIdentification.Left (20);
         m_ttype_sequence++;
         break;
 
     case 1:
+#ifdef _WIN32
         strTemp = "ANSI";
+#else
+        strTemp = "XTERM-256COLOR";  // CLI: 256-colour xterm-compatible
+#endif
         m_ttype_sequence++;
         break;
 
     case 2:
         {
-        int iMTTS = 265;  // ANSI=1, 256=8, TRUECOLOR=256 = 256+8+1
+#ifdef _WIN32
+        int iMTTS = 265;  // ANSI=1, 256=8, TRUECOLOR=256
+#else
+        int iMTTS = 9;    // CLI: ANSI=1, 256 COLORS=8 (no truecolor claim)
+#endif
         if (m_bUTF_8)
           iMTTS |= 4;     // UTF-8
         if (m_bSSL_Connected)
@@ -814,6 +900,8 @@ void CMUSHclientDoc::Handle_TELOPT_TERMINAL_TYPE ()
         break;
 
     } // end of switch
+
+  dbg("TERMINAL-TYPE reply #%d: %s", m_ttype_sequence - 1, (LPCTSTR)strTemp);
 
   memcpy (&sResponse [iLength], (LPCTSTR) strTemp, strTemp.GetLength ());
   iLength += strTemp.GetLength ();
@@ -901,14 +989,19 @@ void CMUSHclientDoc::OutputBadUTF8characters (void)
   {
   for (int i = 0; m_UTF8Sequence [i]; i++)
     {
-    // convert ANSI to Unicode:
+#ifdef _WIN32
+    // convert ANSI to Unicode, then back to UTF-8
     WCHAR sUnicode [1];
-    MultiByteToWideChar (CP_THREAD_ACP, MB_PRECOMPOSED, (const char *) &m_UTF8Sequence [i], 1, sUnicode, 1); 
-    // now convert Unicode to UTF8
+    MultiByteToWideChar (CP_THREAD_ACP, MB_PRECOMPOSED, (const char *) &m_UTF8Sequence [i], 1, sUnicode, 1);
     char sOutput [5];
     memset (sOutput, 0, sizeof sOutput);  // ensure trailing null
     WideCharToMultiByte (CP_UTF8, 0, sUnicode, 1, sOutput, sizeof sOutput, NULL, NULL);
-    AddToLine (sOutput, 0); 
+    AddToLine (sOutput, 0);
+#else
+    // On non-Windows, pass the raw byte through as-is.
+    char sOutput [2] = { (char) m_UTF8Sequence [i], '\0' };
+    AddToLine (sOutput, 0);
+#endif
     m_cLastChar = m_UTF8Sequence [i];
     }
 

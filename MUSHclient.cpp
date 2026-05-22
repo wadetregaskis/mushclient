@@ -39,17 +39,19 @@ extern "C"
 COLORREF xterm_256_colours [256];
 
 // Lua 5.1
-#ifdef LUA_52
-  #pragma comment( lib, "lua52.lib" )
-#else
-  #pragma comment( lib, "lua5.1.lib" )
-#endif
+#ifdef _MSC_VER
+#  ifdef LUA_52
+#    pragma comment( lib, "lua52.lib" )
+#  else
+#    pragma comment( lib, "lua5.1.lib" )
+#  endif
 
 // library needed for timers
 #pragma comment( lib, "winmm.lib")
 
 // Winsock library
 #pragma comment( lib, "ws2_32.lib ")
+#endif // _MSC_VER
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -607,7 +609,7 @@ BOOL CMUSHclientApp::InitInstance()
     VERIFY(extraWnd->CreateEx 
         ( 0, AfxRegisterWndClass(CS_CLASSDC | CS_GLOBALCLASS, 0, 0, hIcon), 
         _T("MUSHclient"), WS_OVERLAPPEDWINDOW | WS_EX_TOOLWINDOW,
-        0, 0, 0, 0, NULL, NULL ));
+        0, 0, 0, 0, NULL, (HMENU)0 ));
 
     }   // end of tray wanted
 

@@ -622,7 +622,9 @@ const char* telopt_name(unsigned char opt);
 #ifndef MB_OK
 #define MB_OK              0x00000000L
 #endif
+#ifndef MB_ICONEXCLAMATION
 #define MB_ICONEXCLAMATION 0x00000030L
+#endif
 CString TFormat(const char* sFormat, ...);
 CString TranslateGeneric(const char* sText, const char* sSection);
 // Don't define Translate as a macro when building with wxWidgets — wx/textbuf.h

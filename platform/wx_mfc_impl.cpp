@@ -45,6 +45,9 @@ static wxStatusBar* s_statusBar = nullptr;
 // the MDI child hierarchy (which is platform-dependent and unreliable).
 static std::unordered_map<CMUSHclientDoc*, CWorldChildFrame*> s_docFrameMap;
 
+// Forward declaration — defined in the World-list persistence section below.
+static void world_list_remove(const std::string& path);
+
 void wx_register_world_frame(CMUSHclientDoc* doc, CWorldChildFrame* frame)
 {
     if (doc) s_docFrameMap[doc] = frame;
@@ -53,6 +56,11 @@ void wx_register_world_frame(CMUSHclientDoc* doc, CWorldChildFrame* frame)
 void wx_unregister_world_frame(CMUSHclientDoc* doc)
 {
     if (doc) s_docFrameMap.erase(doc);
+}
+
+void wx_world_remove_from_list(const char* path)
+{
+    if (path && *path) world_list_remove(path);
 }
 
 // ── Helper: cast void* → wxWindow* ───────────────────────────────────────

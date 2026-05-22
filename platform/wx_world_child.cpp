@@ -920,9 +920,12 @@ void CWorldChildFrame::ApplyPaneBackground(unsigned long col)
 
     wxColour inputFg = (luma < 128) ? wxColour(220, 220, 220) : wxColour(20, 20, 20);
     wxColour inputBg = wxColour(r, g, b);
-    m_input->SetForegroundColour(inputFg);
-    m_input->SetBackgroundColour(inputBg);
-    m_input->Refresh();
+    for (wxTextCtrl* inp : {m_input, m_inputPassword}) {
+        if (!inp) continue;
+        inp->SetForegroundColour(inputFg);
+        inp->SetBackgroundColour(inputBg);
+        inp->Refresh();
+    }
 }
 
 // ── ShowFindBar ───────────────────────────────────────────────────────────
@@ -1503,6 +1506,10 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
     }
 
     if (m_doc) {
+        // Capture the world file path before clearing the doc, so we can
+        // remove it from the startup-reopen list below.
+        std::string worldPath = static_cast<const char*>(m_doc->GetPathName());
+
         // Clear all callbacks BEFORE deleting the doc so that any final output
         // flushed by the destructor doesn't call AppendLine on the dying pane.
         m_doc->m_fn_line_ready  = nullptr;
@@ -1513,6 +1520,11 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.
         wx_unregister_world_frame(m_doc);
+
+        // Remove from the startup world list so the world isn't automatically
+        // reopened next time — the user explicitly closed it.
+        if (!worldPath.empty())
+            wx_world_remove_from_list(worldPath.c_str());
 
         // Disconnect and release the doc.  Deletes socket, triggers, timers, etc.
         CMUSHclientDoc* doc = m_doc;

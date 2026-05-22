@@ -1925,6 +1925,10 @@ public:
     // Called by world.Repaint() to force a repaint of the output pane.
     std::function<void()> m_fn_repaint;
 
+    // Called by world.SetBackgroundColour(rgb) to update the pane background.
+    // Receives a COLORREF; 0xFFFFFFFF means "default" (black).
+    std::function<void(unsigned long)> m_fn_set_background_colour;
+
     // Called by world.GetClipboard() / world.SetClipboard().
     std::function<std::string()>              m_fn_get_clipboard;
     std::function<void(const std::string&)>   m_fn_set_clipboard;

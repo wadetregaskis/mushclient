@@ -181,6 +181,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (m_output) m_output->Refresh(false);
         };
 
+        // world.SetBackgroundColour(rgb): update output pane background.
+        m_doc->m_fn_set_background_colour = [this](unsigned long col) {
+            ApplyPaneBackground(col);
+        };
+
         // world.GetClipboard() / world.SetClipboard(): system clipboard access.
         m_doc->m_fn_get_clipboard = []() -> std::string {
             std::string result;
@@ -1812,9 +1817,10 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_selection        = nullptr;
         m_doc->m_fn_set_command_selection = nullptr;
         m_doc->m_fn_set_paused           = nullptr;
-        m_doc->m_fn_repaint              = nullptr;
-        m_doc->m_fn_get_clipboard        = nullptr;
-        m_doc->m_fn_set_clipboard        = nullptr;
+        m_doc->m_fn_repaint                  = nullptr;
+        m_doc->m_fn_set_background_colour    = nullptr;
+        m_doc->m_fn_get_clipboard            = nullptr;
+        m_doc->m_fn_set_clipboard            = nullptr;
 
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.

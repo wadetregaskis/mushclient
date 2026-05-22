@@ -4892,7 +4892,15 @@ static int L_SetClipboard(lua_State* L)
     lua_pushnumber(L, eOK);
     return 1;
 }
-static int L_SetBackgroundColour(lua_State* L){ world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_SetBackgroundColour(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    unsigned long col = (unsigned long)(long)luaL_optnumber(L, 1, 0xFFFFFFFF);
+    if (pDoc->m_fn_set_background_colour)
+        pDoc->m_fn_set_background_colour(col);
+    lua_pushnumber(L, eOK);
+    return 1;
+}
 static int L_SetBackgroundImage(lua_State* L) { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetCursor(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetChanged(lua_State* L)        { world_doc(L); lua_pushnumber(L, eOK); return 1; }

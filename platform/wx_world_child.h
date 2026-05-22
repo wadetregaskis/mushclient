@@ -65,10 +65,11 @@ public:
     void DoFind(bool forward);
 
 private:
-    COutputPane*         m_output;       // scrolled styled-text widget
-    wxTextCtrl*          m_input;        // command input bar at the bottom
-    CMUSHclientDoc*      m_doc;          // non-owning reference to the world doc
-    wxTimer*             m_worldTimer;   // drives CheckTimers() / ON_PLUGIN_TICK
+    COutputPane*         m_output;         // scrolled styled-text widget
+    wxTextCtrl*          m_input;          // normal command input bar
+    wxTextCtrl*          m_inputPassword;  // masked input — shown when telnet suppresses echo
+    CMUSHclientDoc*      m_doc;            // non-owning reference to the world doc
+    wxTimer*             m_worldTimer;     // drives CheckTimers() / ON_PLUGIN_TICK
 
     // ── Find bar ──────────────────────────────────────────────────────────
     wxPanel*    m_findBar      = nullptr;   // collapsible panel shown by Ctrl+F
@@ -80,8 +81,9 @@ private:
     wxString              m_histSaved;   // text in input when user started browsing
 
     // ── Connection status tracking ─────────────────────────────────────────
-    int m_lastConnectPhase    = -1;  // tracks phase changes to update title/status
-    int m_reconnectCountdown  = 0;   // ticks until auto-reconnect (0 = idle)
+    int  m_lastConnectPhase    = -1;   // tracks phase changes to update title/status
+    int  m_reconnectCountdown  = 0;    // ticks until auto-reconnect (0 = idle)
+    bool m_lastNoEcho          = false; // last known m_doc->m_bNoEcho state
 
     // ── Miniwindow mouse-tracking state ───────────────────────────────────
     // These mirror m_sPreviousMiniWindow / GetCapture() tracking from CMUSHView.
@@ -108,6 +110,13 @@ private:
     // Write the current connection status to the MDI parent's status bar.
     // Called from OnActivate and OnWorldTimer (only when this frame is active).
     void UpdateStatusBar();
+
+    // Returns the currently-visible input control (m_input or m_inputPassword).
+    wxTextCtrl* ActiveInput() const;
+
+    // Switch the input bar between normal and password (masked) mode.
+    // Called whenever m_doc->m_bNoEcho changes.
+    void ApplyNoEcho(bool noEcho);
 
     // Returns true when this frame is the active MDI child.
     bool IsActiveWorld() const;

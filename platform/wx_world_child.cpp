@@ -136,7 +136,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // Return keyboard focus to the input bar after a mouse selection so the
     // user can keep typing without clicking back in the input bar.
     m_output->m_fn_return_focus = [this]() {
-        if (m_input) m_input->SetFocus();
+        wxTextCtrl* inp = ActiveInput();
+        if (inp) inp->SetFocus();
     };
 
     // When the auto-scroll state changes, update the status bar.
@@ -770,6 +771,20 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                              wxTE_PROCESS_ENTER);
     sizer->Add(m_input, 0, wxEXPAND);
 
+    // Password-mode input bar: shown in place of m_input when the MUD sends
+    // IAC WILL ECHO (telnet echo suppression) to signal a password prompt.
+    // Uses wxTE_PASSWORD so characters are masked.  Hidden by default.
+    m_inputPassword = new wxTextCtrl(this, wxID_ANY, wxEmptyString,
+                                     wxDefaultPosition, wxDefaultSize,
+                                     wxTE_PASSWORD | wxTE_PROCESS_ENTER);
+    sizer->Add(m_inputPassword, 0, wxEXPAND);
+    m_inputPassword->Hide();
+    // Wire the same send/key handlers directly to m_inputPassword.
+    m_inputPassword->Bind(wxEVT_TEXT_ENTER,
+        [this](wxCommandEvent& e) { OnInputEnter(e); });
+    m_inputPassword->Bind(wxEVT_KEY_DOWN,
+        &CWorldChildFrame::OnInputKeyDown, this);
+
     SetSizer(sizer);
     m_input->SetFocus();
 
@@ -827,7 +842,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         if (paneOwns) { evt.Skip(); return; }
         // Anything else (printable characters, Escape, backspace…) →
         // redirect focus to the input bar.
-        m_input->SetFocus();
+        if (wxTextCtrl* inp = ActiveInput()) inp->SetFocus();
         evt.Skip();   // let wxTextCtrl receive the event after getting focus
     });
 
@@ -910,7 +925,7 @@ void CWorldChildFrame::ShowFindBar(bool show)
     } else {
         m_findBar->Hide();
         m_output->HighlightSearch(wxEmptyString);  // clear search highlights
-        m_input->SetFocus();
+        if (wxTextCtrl* inp = ActiveInput()) inp->SetFocus();
     }
     Layout();
 }
@@ -931,6 +946,45 @@ void CWorldChildFrame::DoFind(bool forward)
             if (m_findInput) m_findInput->Refresh();
         });
     }
+}
+
+// ── ActiveInput ───────────────────────────────────────────────────────────
+// Returns the currently visible input control: the password bar when telnet
+// echo suppression is active, the normal bar otherwise.
+wxTextCtrl* CWorldChildFrame::ActiveInput() const
+{
+    if (m_inputPassword && m_inputPassword->IsShown())
+        return m_inputPassword;
+    return m_input;
+}
+
+// ── ApplyNoEcho ───────────────────────────────────────────────────────────
+// Switches the input bar between normal and password (masked) mode.
+// Called from OnWorldTimer whenever m_doc->m_bNoEcho changes.
+void CWorldChildFrame::ApplyNoEcho(bool noEcho)
+{
+    if (noEcho) {
+        // Switch to the password bar.  Clear any partial command first so it
+        // isn't accidentally sent as a password.
+        if (m_input) m_input->Hide();
+        if (m_inputPassword) {
+            m_inputPassword->Clear();
+            m_inputPassword->Show();
+            m_inputPassword->SetFocus();
+        }
+    } else {
+        // Switch back to the normal bar.  Wipe the password field for security.
+        if (m_inputPassword) {
+            m_inputPassword->Clear();
+            m_inputPassword->Hide();
+        }
+        if (m_input) {
+            m_input->Show();
+            m_input->SetFocus();
+        }
+    }
+    Layout();
+    m_lastNoEcho = noEcho;
 }
 
 // ── IsActiveWorld ─────────────────────────────────────────────────────────
@@ -1020,10 +1074,20 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
+    wxTextCtrl* inp = ActiveInput();
+
+    // Ctrl+U: clear the input line (standard Unix terminal shortcut).
+    if (code == 'U' && evt.ControlDown()) {
+        if (inp) inp->Clear();
+        m_histIdx = -1;
+        return;
+    }
+
     // Tab: complete the current partial command from history.
     // Searches backward through m_history for the most-recently-used command
     // that starts with the current input text.  A second Tab cycles further back.
-    if (code == WXK_TAB) {
+    // Not available in password mode (history is suppressed there).
+    if (code == WXK_TAB && inp == m_input) {
         wxString partial = m_input->GetValue();
         if (!partial.IsEmpty()) {
             // Start from just before the current history index (if browsing),
@@ -1042,7 +1106,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;  // consume Tab even if no match (don't insert literal tab)
     }
 
-    if (code == WXK_UP) {
+    if (code == WXK_UP && inp == m_input) {
         if (m_history.empty()) return;
         if (m_histIdx < 0) {
             // Start browsing: save current partial input.
@@ -1056,7 +1120,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;  // consume — don't scroll the output pane
     }
 
-    if (code == WXK_DOWN) {
+    if (code == WXK_DOWN && inp == m_input) {
         if (m_histIdx < 0) { evt.Skip(); return; }
         if (m_histIdx < (int)m_history.size() - 1) {
             ++m_histIdx;
@@ -1156,11 +1220,17 @@ void CWorldChildFrame::OnInputPaste(wxClipboardTextEvent& evt)
 void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
 {
     if (!m_doc) return;
-    wxString text = m_input->GetValue();
-    m_input->Clear();
+
+    wxTextCtrl* inp = ActiveInput();
+    if (!inp) return;
+
+    wxString text = inp->GetValue();
+    inp->Clear();
     m_histIdx = -1;   // exit history browsing on send
 
-    if (!text.empty()) {
+    // Don't record passwords in history — m_bNoEcho signals a masked prompt.
+    bool isPassword = m_doc->m_bNoEcho;
+    if (!isPassword && !text.empty()) {
         // Add to history (no duplicates at the tail; trim if over limit).
         if (m_history.empty() || m_history.back() != text)
             m_history.push_back(text);
@@ -1172,7 +1242,7 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     // before sending the text to the MUD — the same path Windows uses for
     // keyboard input from CMUSHclientView::OnChar / ProcessCommand.
     CString cmd(text.ToUTF8().data());
-    bool bOmitFromLog = false;
+    bool bOmitFromLog = isPassword;   // don't log passwords either
     m_doc->EvaluateCommand(cmd, true /*countThem*/, bOmitFromLog);
 
     // Flush any output produced by alias scripts / triggers to the pane.
@@ -1277,6 +1347,12 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         if (IsActiveWorld())
             UpdateStatusBar();
     }
+
+    // ── Telnet echo suppression (password mode) ───────────────────────────
+    // The MUD sends IAC WILL ECHO to suppress echo (password prompts) and
+    // IAC WONT ECHO to restore it.  We swap the input bar for a masked one.
+    if (m_doc->m_bNoEcho != m_lastNoEcho)
+        ApplyNoEcho(m_doc->m_bNoEcho);
 
     // ── Auto-reconnect countdown ──────────────────────────────────────────
     if (m_reconnectCountdown > 0) {

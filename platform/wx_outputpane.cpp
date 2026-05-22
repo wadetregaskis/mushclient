@@ -377,7 +377,11 @@ void COutputPane::ResetFontSize()
 
 void COutputPane::OnPaint(wxPaintEvent&)
 {
-    wxBufferedPaintDC dc(this);
+    // wxAutoBufferedPaintDC uses native double-buffering when the platform
+    // already provides it (macOS Cocoa, GTK3) and a manual backbuffer only when
+    // needed.  wxBufferedPaintDC always allocates a bitmap, which on Retina
+    // displays produces a blurry 1× bitmap blown up to 2× physical pixels.
+    wxAutoBufferedPaintDC dc(this);
     PrepareDC(dc);
 
     wxColour bgCol(GetRValue(m_bgColor), GetGValue(m_bgColor), GetBValue(m_bgColor));

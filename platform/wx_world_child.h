@@ -81,9 +81,10 @@ private:
     wxStaticText* m_findLabel    = nullptr;   // "N of M" match count label
 
     // ── Command history ────────────────────────────────────────────────────
-    std::vector<wxString> m_history;     // sent commands, oldest first
-    int                   m_histIdx = -1; // -1 = not browsing; ≥0 = index into m_history
-    wxString              m_histSaved;   // text in input when user started browsing
+    std::vector<wxString> m_history;           // sent commands, oldest first
+    int                   m_histIdx = -1;       // -1 = not browsing; ≥0 = index into m_history
+    wxString              m_histSaved;          // text in input when user started browsing
+    std::string           m_historyFilePath;    // per-world history file, fixed at construction
 
     // ── Connection status tracking ─────────────────────────────────────────
     int  m_lastConnectPhase    = -1;   // tracks phase changes to update title/status

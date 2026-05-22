@@ -52,15 +52,38 @@ static const int ID_FIND_PREV    = wxID_HIGHEST + 204;
 static const int kMaxHistory = 200;
 
 // ── History file path ─────────────────────────────────────────────────────────
-// Returns the path to the persistent command-history file, creating the
-// ~/.mushclient/ directory if needed.  Returns an empty string on failure.
-static std::string GetHistoryFilePath()
+// Returns the path to the per-world persistent command-history file, creating
+// ~/.mushclient/ if needed.  Uses the world name to distinguish files so that
+// different worlds maintain separate histories.  Returns "" on failure.
+//
+// The world name is sanitised: only [A-Za-z0-9._-] are kept; runs of other
+// characters are collapsed to a single underscore.  E.g. "Broken Lands"
+// → "history_Broken_Lands.txt".  Falls back to "history.txt" if empty.
+static std::string GetHistoryFilePath(const std::string& worldName)
 {
     const char* home = getenv("HOME");
     if (!home || !*home) return {};
     std::string dir = std::string(home) + "/.mushclient";
     ::mkdir(dir.c_str(), 0700);   // safe no-op if already exists
-    return dir + "/history.txt";
+
+    if (worldName.empty()) return dir + "/history.txt";
+
+    // Sanitise: keep alphanumeric + a handful of safe punctuation chars;
+    // collapse anything else to a single underscore.
+    std::string safe;
+    for (unsigned char c : worldName) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.') {
+            safe += (char)c;
+        } else {
+            if (!safe.empty() && safe.back() != '_')
+                safe += '_';
+        }
+    }
+    // Trim trailing underscores left by a name ending in punctuation.
+    while (!safe.empty() && safe.back() == '_') safe.pop_back();
+    if (safe.empty()) safe = "default";
+
+    return dir + "/history_" + safe + ".txt";
 }
 
 // ── Event table ───────────────────────────────────────────────────────────
@@ -800,10 +823,16 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     m_input->SetFocus();
 
     // ── Load persistent command history ───────────────────────────────────
-    // Reads ~/.mushclient/history.txt (one command per line) so the history
-    // survives across sessions.  We cap it at kMaxHistory after loading.
+    // Each world keeps its own history file keyed by world name, so different
+    // MUDs don't pollute each other's command history.  The path is fixed once
+    // at construction time (m_historyFilePath) so a mid-session name change in
+    // World Properties doesn't cause a load/save mismatch.
     {
-        std::string histPath = GetHistoryFilePath();
+        std::string worldName = m_doc
+            ? static_cast<const char*>(m_doc->m_mush_name) : "";
+        m_historyFilePath = GetHistoryFilePath(worldName);
+
+        std::string histPath = m_historyFilePath;
         if (!histPath.empty()) {
             if (FILE* f = fopen(histPath.c_str(), "r")) {
                 char buf[8192];
@@ -1485,10 +1514,11 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
     }
 
     // ── Save persistent command history ───────────────────────────────────
-    // Write each command on its own line.  We write even a small history so
-    // that new sessions don't start completely empty.
+    // Write each command on its own line to the same per-world file determined
+    // at construction time, so the path is consistent regardless of later
+    // World Properties renames.
     if (!m_history.empty()) {
-        std::string histPath = GetHistoryFilePath();
+        std::string histPath = m_historyFilePath;
         if (!histPath.empty()) {
             if (FILE* f = fopen(histPath.c_str(), "w")) {
                 for (const wxString& cmd : m_history)

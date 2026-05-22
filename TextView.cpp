@@ -15,12 +15,12 @@ Copyright (C) 2000 Nick Gammon.
 #include "mainfrm.h"
 #include "doc.h"
 
-#if _MSC_VER < 1400    // doesn't work with Visual Studio 6
+#if defined(_MSC_VER) && _MSC_VER < 1400    // doesn't work with Visual Studio 6
   #include <../src/afximpl.h>
 #endif
 
-#include "dialogs\GoToLineDlg.h"
-#include "dialogs\LuaGsubDlg.h"
+#include "dialogs/GoToLineDlg.h"
+#include "dialogs/LuaGsubDlg.h"
 
 #pragma warning( disable : 4100)  // unreferenced formal parameter
 
@@ -734,7 +734,7 @@ bool CTextView::SetText(const char * sText)
 	    HLOCAL hOldText = GetEditCtrl().GetHandle();
 	    ASSERT(hOldText != NULL);
 	    LocalFree(hOldText);
-	    GetEditCtrl().SetHandle((HLOCAL)(UINT)(DWORD)hText);
+	    GetEditCtrl().SetHandle((HLOCAL)(DWORD_PTR)hText);
 	    Invalidate();
 	    ASSERT_VALID(this);
       }   // end of not Win95

@@ -12,9 +12,12 @@
 #ifdef LUA_52
     #include "..\..\..\lua52\src\lua.h"
     #include "..\..\..\lua52\src\lauxlib.h"
-#else
+#elif defined(_WIN32)
     #include "..\..\lua.h"
     #include "..\..\lauxlib.h"
+#else
+    #include "lua.h"
+    #include "lauxlib.h"
 #endif
 
 #include "lptypes.h"

@@ -1,7 +1,16 @@
 /* -------------- SHS.H --------------------------- */
+#ifndef SCRIPTING_SHS_H_INCLUDED
+#define SCRIPTING_SHS_H_INCLUDED
 
+/* BYTE may already be defined by platform/windows_types.h on non-Windows.
+ * Guard against the redefinition. */
+#ifndef BYTE
 typedef unsigned char BYTE;
-typedef unsigned long SHSLONG;
+#endif
+
+/* Use 'unsigned int' (always 32-bit) rather than 'unsigned long'
+ * which is 64-bit on LP64 platforms (Linux/macOS 64-bit). */
+typedef unsigned int SHSLONG;
 
 #define SHS_BLOCKSIZE 64
 
@@ -18,6 +27,16 @@ typedef struct
 
 #define LITTLE_ENDIAN
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
   void shsInit (SHS_INFO * shsInfo);
   void shsUpdate (SHS_INFO * shsInfo, BYTE * buffer, int count);
   void shsFinal (SHS_INFO * shsInfo);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* SCRIPTING_SHS_H_INCLUDED */

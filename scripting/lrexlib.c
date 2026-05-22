@@ -20,9 +20,12 @@
 #ifdef LUA_52
     #include "..\..\lua52\src\lua.h"
     #include "..\..\lua52\src\lauxlib.h"
-#else
+#elif defined(_WIN32)
     #include "..\lua.h"
     #include "..\lauxlib.h"
+#else
+    #include "lua.h"
+    #include "lauxlib.h"
 #endif
 
 #define LREXLIB_PCRE      // NJG
@@ -366,7 +369,11 @@ static const luaL_Reg posixmeta[] = {
 
 #define PCRE_EXP_DECL extern
 
-#include "..\pcre\pcre.h"
+#ifdef _WIN32
+    #include "..\pcre\pcre.h"
+#else
+    #include "pcre.h"
+#endif
 
 const char pcre_handle[] = "pcre_regex_handle";
 const char pcre_typename[] = "pcre_regex";

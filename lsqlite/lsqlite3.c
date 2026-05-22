@@ -40,13 +40,19 @@
     #include "..\..\lua52\src\lauxlib.h"
     #define lua_strlen(L,i)		lua_rawlen(L, (i))
     LUALIB_API int (luaL_typerror) (lua_State *L, int narg, const char *tname);
-
-#else
+#elif defined(_WIN32)
     #include "..\lua.h"
     #include "..\lauxlib.h"
+#else
+    #include "lua.h"
+    #include "lauxlib.h"
 #endif
 
-#include "..\sqlite3\sqlite3.h"
+#ifdef _WIN32
+    #include "..\sqlite3\sqlite3.h"
+#else
+    #include "sqlite3/sqlite3.h"
+#endif
 
 /* compile time features */
 #if !defined(SQLITE_OMIT_PROGRESS_CALLBACK)

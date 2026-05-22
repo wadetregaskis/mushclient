@@ -18,9 +18,12 @@
 #ifdef LUA_52
     #include "..\..\lua52\src\lua.h"
     #include "..\..\lua52\src\lauxlib.h"
-#else
+#elif defined(_WIN32)
     #include "..\lua.h"
     #include "..\lauxlib.h"
+#else
+    #include "lua.h"
+    #include "lauxlib.h"
 #endif
 
 #include <ctype.h>
@@ -31,13 +34,19 @@
 /* Bitwise operations library */
 /* Reuben Thomas   nov00-09jan04 */
 
-
+#ifdef _WIN32
 #pragma warning( disable: 4057)  // 'const unsigned char *' differs in indirection to slightly different base types from 'const char *'
 #pragma warning( disable: 4244)  // conversion from '__int64 ' to 'double ', possible loss of data
 #pragma warning( disable: 4706)  // assignment within conditional expression
-
-typedef __int64 Integer;
+typedef __int64          Integer;
 typedef unsigned __int64 UInteger;
+#else
+#include <stdint.h>
+#include <inttypes.h>
+#include <stdio.h>
+typedef int64_t  Integer;
+typedef uint64_t UInteger;
+#endif
 
 #define luaL_checkbit(L, n)  ((Integer)luaL_checknumber(L, n))
 #define luaL_checkubit(L, n) ((UInteger)luaL_checkbit(L, n))
@@ -167,7 +176,25 @@ static int bit_tostring (lua_State *L)
   if (un >= 4503599627370496)    // 2^52
     luaL_error (L, "Number too big");
 
+#ifdef _WIN32
   _ui64toa (un, p, base);
+#else
+  // portable base conversion: write digits into p (already points past sign)
+  if (base == 10) {
+    sprintf (p, "%" PRIu64, (uint64_t) un);
+  } else {
+    static const char digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    char tmp[70]; int ti = 0;
+    if (un == 0) { tmp[ti++] = '0'; }
+    else {
+      UInteger v = un;
+      while (v > 0) { tmp[ti++] = digits[v % (unsigned)base]; v /= (unsigned)base; }
+    }
+    int i;
+    for (i = 0; i < ti; i++) p[i] = tmp[ti - 1 - i];
+    p[ti] = '\0';
+  }
+#endif
 
   // make upper case to be consistent with utils.tohex
   for (p = s; *p; p++) 

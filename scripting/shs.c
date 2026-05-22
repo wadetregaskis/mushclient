@@ -15,11 +15,15 @@ by Nick Gammon.
 
 */
 
-#include "..\forcelib.h"   // see ID: Q148652 
+#ifdef _WIN32
+#include "..\\forcelib.h"   // see ID: Q148652
+#endif
 
 #include <string.h>
 
-typedef unsigned long ULONG;
+/* Use 'unsigned int' (always 32-bit) rather than 'unsigned long'
+ * which is 64-bit on LP64 platforms (Linux/macOS 64-bit). */
+typedef unsigned int ULONG;
 
 #include "shs.h"
 

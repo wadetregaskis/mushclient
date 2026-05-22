@@ -19,16 +19,28 @@
 #ifdef LUA_52
     #include "..\..\lua52\src\lua.h"
     #include "..\..\lua52\src\lauxlib.h"
-#else
+#elif defined(_WIN32)
     #include "..\lua.h"
     #include "..\lauxlib.h"
+#else
+    #include "lua.h"
+    #include "lauxlib.h"
 #endif
 
-#include "..\zlib\zlib.h"
+#ifdef _WIN32
+    #include "..\zlib\zlib.h"
+#else
+    #include <zlib.h>
+#endif
 #include "shs.h"
 #include "sha256.h"
 #include "md5.h"
-#include <io.h>
+#ifdef _WIN32
+    #include <io.h>
+#else
+    #include <dirent.h>
+    #include <sys/stat.h>
+#endif
 #include <errno.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -153,7 +165,7 @@ static int mydecompress (lua_State *L)
     if (err != Z_OK && err != Z_STREAM_END)
       luaL_error (L, "error on decompression");
 
-    luaL_addlstring(&buffer, buf, d_stream.next_out - buf);
+    luaL_addlstring(&buffer, buf, d_stream.next_out - (Bytef *)buf);
     
     } while (err != Z_STREAM_END);
 
@@ -477,10 +489,12 @@ static void MakeBoolTableItem (lua_State *L, const char * name, const int b)
 
 static int getdirectory (lua_State *L)
   {
-  // get directory name (eg. C:\mushclient\*.doc)
-  size_t dirLength;
-  const char * dirname = luaL_checklstring (L, 1, &dirLength);
+  // get directory name (eg. C:\mushclient\*.doc  or  /home/user/docs)
+  const char * dirname = luaL_checkstring (L, 1);
 
+#ifdef _WIN32
+
+  size_t dirLength = strlen (dirname);
   struct _finddatai64_t fdata;
 
   int h = _findfirsti64 (dirname, &fdata); // get handle
@@ -498,7 +512,7 @@ static int getdirectory (lua_State *L)
     }
 
   lua_newtable(L);    // table of entries
-  
+
   do
     {
 
@@ -527,6 +541,55 @@ static int getdirectory (lua_State *L)
   _findclose  (h);
 
   return 1;  // one table of entries
+
+#else // POSIX implementation
+
+  DIR * d = opendir (dirname);
+
+  if (!d)
+    {
+    lua_pushnil (L);
+    lua_pushstring (L, strerror (errno));
+    return 2;
+    }
+
+  lua_newtable (L);   // table of entries
+
+  struct dirent * entry;
+  while ((entry = readdir (d)) != NULL)
+    {
+    // skip "." and ".."
+    if (entry->d_name[0] == '.' &&
+        (entry->d_name[1] == '\0' ||
+         (entry->d_name[1] == '.' && entry->d_name[2] == '\0')))
+      continue;
+
+    lua_pushstring (L, entry->d_name);  // file name (key)
+    lua_newtable (L);                   // attribute table
+
+    // build full path for stat
+    char fullpath[4096];
+    snprintf (fullpath, sizeof fullpath, "%s/%s", dirname, entry->d_name);
+
+    struct stat st;
+    if (stat (fullpath, &st) == 0)
+      {
+      MakeNumberTableItem (L, "size",        (double) st.st_size);
+      MakeNumberTableItem (L, "create_time", (double) st.st_ctime);
+      MakeNumberTableItem (L, "access_time", (double) st.st_atime);
+      MakeNumberTableItem (L, "write_time",  (double) st.st_mtime);
+      MakeBoolTableItem   (L, "directory",   S_ISDIR (st.st_mode));
+      MakeBoolTableItem   (L, "readonly",    !(st.st_mode & S_IWUSR));
+      }
+
+    lua_rawset (L, -3);   // set key of table item
+    }
+
+  closedir (d);
+
+  return 1;  // one table of entries
+
+#endif // POSIX
   } // end of getdirectory
 
 // split routine suggested by Ked from the forum

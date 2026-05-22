@@ -38,8 +38,13 @@
 #include "bcconfig.h"
 #include "number.h"
 
-#include "..\lua.h"
-#include "..\lauxlib.h"
+#ifdef _WIN32
+    #include "..\lua.h"
+    #include "..\lauxlib.h"
+#else
+    #include "lua.h"
+    #include "lauxlib.h"
+#endif
 
 #define lua_boxpointer(L,u) \
 	(*(void **)(lua_newuserdata(L, sizeof(void *))) = (u))

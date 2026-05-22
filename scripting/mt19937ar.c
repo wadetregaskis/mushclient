@@ -42,6 +42,10 @@
 */
 
 //#include <stdio.h>
+#ifndef _WIN32
+#include <stdint.h>
+#define __int64 int64_t
+#endif
 
 /* Period parameters */  
 #define N 624

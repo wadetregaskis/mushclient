@@ -6,7 +6,9 @@
 #endif
 
 #ifndef uint32
-#define uint32 unsigned long int
+/* Use 'unsigned int' (always 32-bit) rather than 'unsigned long'
+ * which is 64-bit on LP64 platforms (Linux/macOS 64-bit). */
+#define uint32 unsigned int
 #endif
 
 typedef struct

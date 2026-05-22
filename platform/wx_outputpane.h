@@ -218,6 +218,12 @@ private:
     int                     m_maxLines;
 
     wxFont m_font;
+    // Cached font variants — rebuilt whenever m_font changes so DrawRunChunk
+    // never constructs wxFont objects on the hot rendering path.
+    wxFont m_fontBold;           // bold only
+    wxFont m_fontUnderline;      // underline only
+    wxFont m_fontBoldUnderline;  // bold + underline
+
     int    m_fontSize = kDefaultFontSize;
     int    m_lineH    = 18;   // line height pixels (set from font metrics)
     int    m_charW    = 10;   // avg char width pixels

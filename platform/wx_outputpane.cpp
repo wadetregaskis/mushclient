@@ -45,6 +45,7 @@ COutputPane::COutputPane(wxWindow* parent, int maxLines)
     m_font = wxFont(kDefaultFontSize, wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL,
                     wxFONTWEIGHT_NORMAL);
     SetFont(m_font);
+    RebuildFontVariants(m_font, m_fontBold, m_fontUnderline, m_fontBoldUnderline);
 
     // Use wxMemoryDC for reliable font measurement before the window is shown.
     // wxClientDC in the constructor may return zero metrics on macOS/GTK because
@@ -78,6 +79,26 @@ COutputPane::COutputPane(wxWindow* parent, int maxLines)
     {
         Bind(evtType, &COutputPane::OnScrollWinUpdate, this);
     }
+}
+
+// ── Font variant cache ────────────────────────────────────────────────────────
+// Rebuilds m_fontBold, m_fontUnderline, m_fontBoldUnderline from m_font.
+// Call whenever m_font changes so DrawRunChunk uses pre-built variants.
+static wxFont MakeFontVariant(const wxFont& base, bool bold, bool underline)
+{
+    return wxFont(base.GetPointSize(), base.GetFamily(), base.GetStyle(),
+                  bold ? wxFONTWEIGHT_BOLD : base.GetWeight(),
+                  underline, base.GetFaceName());
+}
+
+static void RebuildFontVariants(const wxFont& base,
+                                wxFont& outBold,
+                                wxFont& outUnderline,
+                                wxFont& outBoldUnderline)
+{
+    outBold          = MakeFontVariant(base, /*bold=*/true,  /*underline=*/false);
+    outUnderline     = MakeFontVariant(base, /*bold=*/false, /*underline=*/true);
+    outBoldUnderline = MakeFontVariant(base, /*bold=*/true,  /*underline=*/true);
 }
 
 // ── URL detection ─────────────────────────────────────────────────────────────
@@ -307,6 +328,7 @@ void COutputPane::SetOutputFont(const wxFont& font)
     m_font     = font;
     m_fontSize = font.GetPointSize();
     SetFont(m_font);
+    RebuildFontVariants(m_font, m_fontBold, m_fontUnderline, m_fontBoldUnderline);
 
     // wxMemoryDC for reliable measurement (same reason as constructor).
     wxBitmap bmp(1, 1, 24);
@@ -541,16 +563,14 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
     }
     dc.SetBackgroundMode(wxSOLID);
 
+    // Use the pre-built variant to avoid per-run wxFont allocation.
     bool drawUnderline = run.underline || isLink;
     if (run.bold && drawUnderline)
-        dc.SetFont(wxFont(m_font.GetPointSize(), m_font.GetFamily(),
-                          m_font.GetStyle(), wxFONTWEIGHT_BOLD, true));
+        dc.SetFont(m_fontBoldUnderline);
     else if (run.bold)
-        dc.SetFont(wxFont(m_font.GetPointSize(), m_font.GetFamily(),
-                          m_font.GetStyle(), wxFONTWEIGHT_BOLD, false));
+        dc.SetFont(m_fontBold);
     else if (drawUnderline)
-        dc.SetFont(wxFont(m_font.GetPointSize(), m_font.GetFamily(),
-                          m_font.GetStyle(), m_font.GetWeight(), true));
+        dc.SetFont(m_fontUnderline);
     else
         dc.SetFont(m_font);
 

@@ -344,17 +344,17 @@ private:
 // for global numeric options
 typedef struct
   {
-  int     iOffset;    // offset in CMUSHclientApp
-  char *  pName;      // name, eg. "ActivityButtonBarStyle"
-  int     iDefault;   // original (default) value
+  int         iOffset;    // offset in CMUSHclientApp
+  const char* pName;      // name, eg. "ActivityButtonBarStyle"
+  int         iDefault;   // original (default) value
   }  tGlobalConfigurationNumericOption;
 
 // for global alpha options
 typedef struct
   {
-  int    iOffset;    // offset in CMUSHclientApp
-  char * pName;      // name, eg. "AsciiArtFont"
-  const char * sDefault;   // original (default) value
+  int         iOffset;    // offset in CMUSHclientApp
+  const char* pName;      // name, eg. "AsciiArtFont"
+  const char* sDefault;   // original (default) value
   }  tGlobalConfigurationAlphaOption;
 
 

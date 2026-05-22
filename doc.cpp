@@ -2049,7 +2049,7 @@ CString strLine (lpszText, size);
       //  newline, carriage-return, escape, IAC
       if (!(flags & NOTE_OR_COMMAND) && strchr ("\n\r\x1B\xFF", c))
         {
-        char * pReason = "unknown";
+        const char * pReason = "unknown";
 
         // we may need to get our MXP processing to deal with it
         switch (m_phase)
@@ -2353,10 +2353,12 @@ CString strLine (lpszText, size);
             
       case '\a':      // beep
             if (m_enable_beeps)
+               {
                if (m_strBeepSound.IsEmpty ())
                  ::MessageBeep (MB_ICONEXCLAMATION);
                else
                  PlaySoundFile (m_strBeepSound);
+               }
             break;    // end of beep
 
       case ' ':     // space
@@ -7327,11 +7329,13 @@ int CMUSHclientDoc::ProcessProxyResponse2 (char * buff, const int count)
     {
     OnConnectionDisconnect ();    // close the world
     if (App.m_bNotifyIfCannotConnect)
+      {
       if (App.m_bErrorNotificationToOutputWindow)
         Note (Translate ("Proxy server refused authentication"));
       else
         TMessageBox ("Proxy server refused authentication",
                          MB_ICONEXCLAMATION);
+      }
     return -1;
 
     } // end of error result

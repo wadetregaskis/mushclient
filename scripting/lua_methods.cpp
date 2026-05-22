@@ -7447,7 +7447,7 @@ int_flags_pair error_descriptions[] =
   {  30073,  Translate_NoOp ("Requested miniwindow does not exist") }, 
   {  30074,  Translate_NoOp ("Invalid settings for brush parameter") },
            
-  { NULL, 0 }
+  { 0, nullptr }
 };
 
 static flags_pair send_to_destinations [] =

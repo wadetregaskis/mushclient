@@ -31,7 +31,7 @@ extern tInfoTypeMapping InfoTypes [];
 #define SHOW_TRUE(x) ((x) ? "yes" : "NO")
 #define SHOW_TRUE_LC(x) ((x) ? "yes" : "no")
 
-static char * sColourNames [8] = 
+static const char * sColourNames [8] =
   {
   "Black",
   "Red",
@@ -43,7 +43,7 @@ static char * sColourNames [8] =
   "White"
    };
 
-static char * sMxpModes [] = 
+static const char * sMxpModes [] =
   {
   "On command",
   "On query",
@@ -1139,7 +1139,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     nEnabled = 0;
     nRegexp = 0;
     iTimeTaken = 0;
-    elapsed_time;
+    elapsed_time = 0;
 
     // count number of aliases matched
     for (pos = m_AliasMap.GetStartPosition(); pos; )

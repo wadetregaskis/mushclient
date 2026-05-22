@@ -48,4 +48,4 @@ protected:
 	afx_msg BOOL	OnSetCursor(CWnd* pWnd, UINT nHitTest, UINT message);
 };
 
-#endif _STATLINK_H
+#endif // _STATLINK_H

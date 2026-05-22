@@ -2,6 +2,13 @@
 #include "MUSHclient.h"
 #include "doc.h"
 
+// CMUSHclientApp has virtual functions so is technically non-standard-layout,
+// but offsetof() works correctly with our compiler for plain data members.
+// Suppress the pedantic warning; the behaviour is well-defined in practice.
+#ifndef _MSC_VER
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+#endif
+
 #define GLB_OPT(arg) offsetof (CMUSHclientApp, arg)
 
 // ints - WARNING - we assume these are ints, the type-casting will defeat
@@ -63,7 +70,7 @@ static tGlobalConfigurationNumericOption GlobalOptionsTable [] = {
 { GLB_OPT (m_iFixedPitchFontSize            ), "FixedPitchFontSize",            9 },
 { GLB_OPT (m_bTabInsertsTab                 ), "TabInsertsTabInMultiLineDialogs", 0 },
 
-{NULL}   // end of table marker            
+{0}   // end of table marker
 
   };    // end of table
 
@@ -100,7 +107,7 @@ static tGlobalConfigurationAlphaOption AlphaGlobalOptionsTable  [] = {
 { GLB_ALPHA_OPT (m_strLocale                   ), "Locale",                  "EN" },
 { GLB_ALPHA_OPT (m_strFixedPitchFont           ), "FixedPitchFont",          "FixedSys" },
 
-{NULL}   // end of table marker            
+{0}   // end of table marker
 
 };    // end of table
 

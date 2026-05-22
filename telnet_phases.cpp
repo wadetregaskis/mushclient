@@ -133,7 +133,7 @@ void CMUSHclientDoc::Handle_IAC_GA ()
 
 void CMUSHclientDoc::Phase_IAC (unsigned char & c)
   {
-  char * p;
+  const char * p;
   unsigned char new_c = 0;    // returning zero stops further processing of c
 
   switch (c)

@@ -7,15 +7,16 @@
 	#error include 'stdafx.h' before including this file for PCH
 #endif
 
-#include "resource.h"       // main symbols
-#include "hostsite.h"
-#include "scripting\scripting.h"
 #include "othertypes.h"
+#include "resource.h"       // resource IDs (pure #defines, platform-independent)
 
-#define DIRECTSOUND_VERSION 5
-
-#include <mmsystem.h>
-#include <dsound.h>
+#ifdef _WIN32
+#  include "hostsite.h"
+#  define DIRECTSOUND_VERSION 5
+#  include <mmsystem.h>
+#  include <dsound.h>
+#endif // _WIN32
+#include "scripting/scripting.h"  // CScriptEngine — needed on all platforms
 
 /////////////////////////////////////////////////////////////////////////////
 // CMUSHclientApp:
@@ -84,7 +85,7 @@ public:
 
   int m_TypeOfNewDocument;
 
-	COleTemplateServer m_server;		// Server object for document creation
+  COleTemplateServer m_server;		// Server object for document creation (stub on non-Windows)
 
   enum {
         eRefreshOnActivity,
@@ -105,8 +106,10 @@ public:
 
   HINSTANCE m_hInstDLL;  // resources file - all dialogs etc., loaded in application startup
 
+#ifdef _WIN32
   LPDIRECTSOUND m_pDirectSoundObject;   // for DirectSound output
   LPDIRECTSOUNDBUFFER m_pDirectSoundPrimaryBuffer;
+#endif
 
   // SQLite database handle for global preferences
 
@@ -199,7 +202,7 @@ public:
 // other things
 
   LONGLONG m_iCounterFrequency;
-  WSADATA m_wsadata;
+  WSADATA m_wsadata;  // Winsock info; stubbed on non-Windows
 
 	CString	m_strAsciiArtText;
   CString m_strMUSHclientFileName;

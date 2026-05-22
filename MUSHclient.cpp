@@ -21,18 +21,18 @@
 #include "winplace.h"
 #include "StatLink.h"
 
-#include "dialogs\welcome.h"
-#include "dialogs\welcome1.h"
+#include "dialogs/welcome.h"
+#include "dialogs/welcome1.h"
 
-#include "dialogs\TipDlg.h"
-#include "dialogs\CreditsDlg.h"
-#include "dialogs\ColourPickerDlg.h"
+#include "dialogs/TipDlg.h"
+#include "dialogs/CreditsDlg.h"
+#include "dialogs/ColourPickerDlg.h"
 
-#include "dialogs\Splash.h"
+#include "dialogs/Splash.h"
 #include "direct.h"
 extern "C" 
   {
-  #include "scripting\number.h"
+  #include "scripting/number.h"
   void bc_free_numbers ();
   }
 
@@ -211,7 +211,9 @@ CMUSHclientApp::~CMUSHclientApp()
 /////////////////////////////////////////////////////////////////////////////
 // The one and only CMUSHclientApp object
 
-CMUSHclientApp theApp;
+#ifdef _WIN32
+CMUSHclientApp theApp;  // MFC singleton — on macOS/Linux, App (from mushapp_globals.cpp) is the sole instance
+#endif
 
 // This identifier was generated to be statistically unique for your app.
 // You may change it if you prefer to choose a specific identifier.
@@ -242,7 +244,11 @@ BOOL CMUSHclientApp::InitInstance()
   if (GetModuleFileName (NULL, fullfilename, sizeof (fullfilename)))
     m_strMUSHclientFileName = ExtractDirectory (CString (fullfilename));
   else
+#ifdef _WIN32
     m_strMUSHclientFileName = ".\\MUSHclient.exe";
+#else
+    m_strMUSHclientFileName = "./mushgui";
+#endif
 
   // stupid cursor disappears under Parallels
   g_hCursorIbeam = CopyCursor(AfxGetApp()->LoadCursor (IDC_MY_IBEAM));  
@@ -255,13 +261,20 @@ BOOL CMUSHclientApp::InitInstance()
 
   working_dir [sizeof (working_dir) - 2] = 0;
 
+#ifdef _WIN32
   if (working_dir [strlen (working_dir) - 1] != '\\')
-    strcat (working_dir, "\\");  
+    strcat (working_dir, "\\");
+#else
+  if (working_dir [strlen (working_dir) - 1] != '/')
+    strcat (working_dir, "/");
+#endif
 
   // where we do file browsing from
   strcpy (file_browsing_dir, working_dir);
 
+#ifdef MUSHCLIENT_LUA_SCRIPTING
   bc_init_numbers();
+#endif
 
 
   // First free the string that was allocated by MFC in the startup
@@ -436,8 +449,10 @@ BOOL CMUSHclientApp::InitInstance()
   m_bEscapeSequences = false;      
   m_bCallFunction = false;         
 
+#ifdef _WIN32
   m_pDirectSoundObject = NULL;
   m_pDirectSoundPrimaryBuffer = NULL;
+#endif
 
 	// Initialize OLE libraries
   if (!bWine)
@@ -552,7 +567,7 @@ BOOL CMUSHclientApp::InitInstance()
 	  // Register all OLE server factories as running.  This enables the
 	  //  OLE libraries to create objects from other applications.
 	  COleTemplateServer::RegisterAll();
-		  // Note: MDI applications register all server objects without regard
+		  // Note: MDI applications all server objects without regard
 		  //  to the /Embedding or /Automation on the command line.
     }
 
@@ -599,7 +614,7 @@ BOOL CMUSHclientApp::InitInstance()
 	// create main MDI Frame window
 	CMainFrame* pMainFrame = new CMainFrame;
 	if (!pMainFrame->LoadFrame(IDR_MAINFRAME,
-    WS_OVERLAPPEDWINDOW | FWS_ADDTOTITLE  , 
+    WS_OVERLAPPEDWINDOW | FWS_ADDTOTITLE  ,
       extraWnd)) // owner is hidden window
     {
     TMessageBox ("Unable to load main frame window", MB_ICONSTOP);
@@ -621,6 +636,7 @@ BOOL CMUSHclientApp::InitInstance()
 
 // initialise COM
 
+#ifdef _WIN32
   if (!bWine)
     CoInitialize (NULL);
 
@@ -636,7 +652,7 @@ BOOL CMUSHclientApp::InitInstance()
     if (pDirectSoundCreate)
       {
       // try to set up for DirectSound
-      if (FAILED (DirectSoundCreate (NULL, &m_pDirectSoundObject, NULL))) 
+      if (FAILED (DirectSoundCreate (NULL, &m_pDirectSoundObject, NULL)))
         m_pDirectSoundObject = NULL;
 
       // set sound cooperation level
@@ -667,10 +683,11 @@ BOOL CMUSHclientApp::InitInstance()
   os_version.dwOSVersionInfoSize = sizeof(os_version);
   VERIFY(::GetVersionEx(&os_version));
   bWinNT = (os_version.dwPlatformId == VER_PLATFORM_WIN32_NT);
-  bWin95 = (os_version.dwPlatformId == 
+  bWin95 = (os_version.dwPlatformId ==
      VER_PLATFORM_WIN32_WINDOWS) && (os_version.dwMinorVersion == 0);
-  bWin98 = (os_version.dwPlatformId == 
+  bWin98 = (os_version.dwPlatformId ==
      VER_PLATFORM_WIN32_WINDOWS) && (os_version.dwMinorVersion > 0);
+#endif // _WIN32
 
   // MXP initialisation
 
@@ -845,9 +862,9 @@ BOOL CMUSHclientApp::InitInstance()
 
       CWelcome1Dlg dlg;         // Welcome to this version dialog
 
-      dlg.m_strMessage1 = TFormat ("Welcome to MUSHclient, version %s", MUSHCLIENT_VERSION);
+      dlg.m_strMessage1 = TFormat ("Welcome to MUSHclient, version %s", (LPCTSTR) MUSHCLIENT_VERSION);
       dlg.m_strMessage2 = TFormat ("Thank you for upgrading MUSHclient to version %s",
-                                MUSHCLIENT_VERSION);
+                                (LPCTSTR) MUSHCLIENT_VERSION);
   
       dlg.DoModal ();
 
@@ -863,6 +880,7 @@ BOOL CMUSHclientApp::InitInstance()
 
 // Find which version of Windows we are using.
 
+#ifdef _WIN32
 OSVERSIONINFO VersionInformation;
 
   VersionInformation.dwOSVersionInfoSize = sizeof (VersionInformation);
@@ -870,6 +888,7 @@ OSVERSIONINFO VersionInformation;
   GetVersionEx(&VersionInformation);
 
   platform = VersionInformation.dwPlatformId;
+#endif // _WIN32
 
 // open activity window if wanted
 
@@ -1125,7 +1144,7 @@ int * iColOrder;
 
 // find column sequence
 
-  ctlList.SendMessage (LVM_GETCOLUMNORDERARRAY, iColCount, (DWORD) iColOrder);
+  ctlList.SendMessage (LVM_GETCOLUMNORDERARRAY, iColCount, (DWORD)(DWORD_PTR) iColOrder);
 
 // save column sequence and column width
 
@@ -1232,8 +1251,10 @@ int CMUSHclientApp::ExitInstance()
   m_Translator_Lua = NULL;
 
   // release sound buffer if allocated
+#ifdef _WIN32
   if (m_pDirectSoundPrimaryBuffer)
     m_pDirectSoundPrimaryBuffer->Release ();
+#endif
 
   // close SQLite database
   if (db)
@@ -1631,6 +1652,15 @@ void Generate256colours (void)
 
 BOOL CMUSHclientApp::I18N_Setup (void)  // internationalization
   {
+#ifndef _WIN32
+  // macOS/Linux: no resource DLLs.  Skip all Windows locale/DLL loading.
+  // English strings are compiled directly into the executable.
+  // Lua translator file loading could be added here if needed in future.
+  m_Translator_Lua = nullptr;
+  m_hInstDLL = nullptr;
+  return TRUE;
+#endif // !_WIN32
+
 long iScreenX = GetSystemMetrics (SM_CXSCREEN);
 long iScreenY = GetSystemMetrics (SM_CYSCREEN);
 bool bSmallScreen = (iScreenX < 1024) || (iScreenY < 768);
@@ -1652,7 +1682,11 @@ bool bSmallScreen = (iScreenX < 1024) || (iScreenY < 768);
   m_strTranslatorFile = ExtractDirectory (App.m_strMUSHclientFileName);
 
   // locale subdirectory
+#ifdef _WIN32
   m_strTranslatorFile += "locale\\";
+#else
+  m_strTranslatorFile += "locale/";
+#endif
 
   // english resource file
   CString m_strEnglishResourceFile = m_strTranslatorFile + "EN.dll";

@@ -1,7 +1,12 @@
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
-
 #include "doc.h"
+#else
+#include "platform/doc_stub.h"
+#include <new>
+#include <cstdlib>
+#endif
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -35,8 +40,12 @@ CLine::CLine (const long nLineNumber,
   hard_return = false;
   len = 0;
   m_iPreambleOffset = 0;
-  m_theTime = CTime::GetCurrentTime(); 
+  m_theTime = CTime::GetCurrentTime();
+#ifdef _WIN32
   QueryPerformanceCounter (&m_lineHighPerformanceTime);
+#else
+  m_lineHighPerformanceTime.QuadPart = 0;
+#endif
   m_nLineNumber = nLineNumber;
 
   if (bUnicode)
@@ -53,7 +62,7 @@ CLine::CLine (const long nLineNumber,
 #endif
   ASSERT (text);
   if (!text)
-    AfxThrowMemoryException ();
+    throw std::bad_alloc();
   flags = 0;      // no special flags yet (ie. normal output line)
 
   CStyle * pStyle; 

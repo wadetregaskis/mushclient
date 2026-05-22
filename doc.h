@@ -7,10 +7,12 @@
 #include "worldsock.h"
 #include "chatsock.h"
 #include "chatlistensock.h"
-#include "dialogs\ColourComboBox.h"
-#include "dialogs\world_prefs\prefspropertypages.h"
+#ifdef _WIN32   // ColourComboBox and prefspropertypages pull in Windows-only
+#include "dialogs/ColourComboBox.h"          // dialog headers (ButtonColour.h,
+#include "dialogs/world_prefs/prefspropertypages.h"  // StatLink.h) not on macOS
+#endif // _WIN32
 #include "TimerWnd.h"
-#include "xml\xmlparse.h"
+#include "xml/xmlparse.h"
 #include "paneline.h"
 #include "miniwindow.h"
 #include "plugins.h"
@@ -18,6 +20,20 @@
 
 #define COMPRESS_BUFFER_LENGTH 10000   // size of decompression buffer
 extern CString MUSHCLIENT_VERSION;
+
+#ifndef _WIN32
+// Verbose protocol tracing flag — defined in mushapp_globals.cpp / doc_portable.cpp.
+extern bool g_debug;
+// doc.h uses MACRO_COUNT, CAliasMap, CTriggerMap, CTimerMap etc. which are
+// defined in OtherTypes.h.  On Windows they arrive via the PCH / MUSHclient.h;
+// on non-Windows we must include OtherTypes.h explicitly here so that
+// doc.h is self-sufficient regardless of what the including TU has pulled in.
+// (The #pragma once in OtherTypes.h makes this a no-op when already included.)
+#include "OtherTypes.h"
+// Shared styled-line types and GUI output callbacks.
+#include "platform/output_types.h"
+#include <functional>
+#endif
 
 // ============================================================================
 
@@ -84,6 +100,7 @@ enum { NONE,          // normal text
        HAVE_SUBNEGOTIATION_IAC,  // received TELNET IAC SB c  <data> IAC  (awaiting IAC or SE)
        HAVE_COMPRESS,  // received TELNET IAC COMPRESS
        HAVE_COMPRESS_WILL, // received TELNET IAC COMPRESS WILL
+       HAVE_OSC,           // ESC ] ... BEL/ST — discard on non-Windows
 
        // see: https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit
        HAVE_FOREGROUND_256_START,   // received ESC[38;
@@ -458,11 +475,11 @@ typedef tDatabaseMap::iterator tDatabaseMapIterator;
 
 // case-independent (ci) string less_than
 // returns true if s1 < s2
-struct ci_less : binary_function<string, string, bool>
+struct ci_less
   {
 
   // case-independent (ci) compare_less binary function
-  struct nocase_compare : public binary_function<unsigned char,unsigned char,bool> 
+  struct nocase_compare
     {
     bool operator() (const unsigned char& c1, const unsigned char& c2) const 
       { return tolower (c1) < tolower (c2); }
@@ -601,7 +618,13 @@ class CMUSHclientDoc : public CDocument
   friend class CScriptEngine;
   
   protected: // create from serialization only
+#ifndef _WIN32
+  // On non-Windows there is no MFC doc/view factory; the wx layer creates
+  // CMUSHclientDoc directly with `new`.  Make the constructor public for it.
+  public:
+#endif
 	CMUSHclientDoc();
+  protected:
 	DECLARE_DYNCREATE(CMUSHclientDoc)
 
 // Attributes
@@ -1379,7 +1402,9 @@ public:
 
 
   // for DirectSound
+#ifdef _WIN32
   LPDIRECTSOUNDBUFFER m_pDirectSoundSecondaryBuffer [MAX_SOUND_BUFFERS];
+#endif
   long PlaySoundHelper(short Buffer, LPCTSTR FileName, BOOL Loop, double Volume, double Pan, LPCTSTR MemoryBuffer, size_t MemLen);
 
 
@@ -1425,6 +1450,36 @@ public:
   CPaneMap m_PaneMap;
 #endif // PANE
 
+#ifndef _WIN32
+  // ── Non-Windows public helpers ────────────────────────────────────────────
+  // OnConnectionDisconnect is afx_msg (protected) in the Windows build.  On
+  // non-Windows there is no MFC message pump to route WM_COMMAND through, so
+  // we expose a thin public wrapper that the wxWidgets layer can call directly.
+  void DisconnectWorld()
+  {
+      m_bDisconnectOK = true;
+      OnConnectionDisconnect();
+  }
+
+  // ── Non-Windows GUI output callbacks ─────────────────────────────────────
+  // Set by the wxWidgets layer (wx_world_child.cpp) when a world window opens.
+  // DisplayMsg/StartNewLine call UpdateAllViews → emits completed lines here.
+  std::function<void(SOutputLine)>        m_fn_line_ready;
+  std::function<void(const std::string&)> m_fn_note;
+  // Called before emitting a batch of lines via m_fn_line_ready; defers
+  // per-line repaint until m_fn_flush (EndBatch).
+  std::function<void()>                   m_fn_begin_batch;
+  // Called once after a batch of lines has been forwarded via m_fn_line_ready,
+  // to trigger a single scrollbar update + repaint.
+  std::function<void()>                   m_fn_flush;
+  // Count of lines already forwarded to m_fn_line_ready; decremented by
+  // JUMP_SIZE when RemoveChunk() evicts the oldest lines.
+  long                                    m_gui_lines_emitted = 0;
+  // Current output pane height in character rows; updated by CWorldChildFrame
+  // via SendNAWS() so that SendWindowSizes() can send a valid NAWS row count.
+  int                                     m_gui_rows = 24;
+#endif
+
   protected:
 
 // Operations
@@ -1441,10 +1496,13 @@ public:
 	void DisplayMsg(LPCTSTR lpszText, int size, const int flags, const bool fake = false);
   void AddToLine (LPCTSTR lpszText, const int flags);
   void StartNewLine_KeepPreviousStyle (const int flags);
-  void Phase_ESC (const unsigned char c);  
-  void Phase_UTF8 (const unsigned char c);  
-  void Phase_ANSI (const unsigned char c);           
-  void Phase_IAC (unsigned char & c);            
+  void Phase_ESC (const unsigned char c);
+  void Phase_UTF8 (const unsigned char c);
+  void Phase_ANSI (const unsigned char c);
+  void Phase_IAC (unsigned char & c);
+#ifndef _WIN32
+  void Phase_OSC (const unsigned char c);  // OSC discard — non-Windows only
+#endif            
   void Phase_WILL (const unsigned char c);           
   void Phase_WONT (const unsigned char c);           
   void Phase_DO (const unsigned char c);             
@@ -1574,7 +1632,11 @@ public:
                      CAction *            pAction = NULL,
                      CLine *              pLine = NULL);
 
-  void RememberStyle (const CStyle * pStyle); 
+  void RememberStyle (const CStyle * pStyle);
+
+  // Non-MFC view/zlib helpers used by portable .cpp files via doc_stub.h
+  void UpdateAllViews (void * hint = nullptr);
+  bool InitZlib (z_stream & zs);
 
   void StartNewLine (const bool hard_break, const int flags);
   bool ProcessPreviousLine (void);
@@ -1904,6 +1966,11 @@ public:
   virtual HACCEL GetDefaultAccelerator();
 
   void SendWindowSizes (const int iNewWidth);
+#ifndef _WIN32
+  // Non-Windows: send a NAWS packet directly with explicit col/row counts
+  // (bypasses the Windows view-iteration loop in SendWindowSizes).
+  void SendNAWS (int cols, int rows);
+#endif
 //  void ShowHyperlink (const CString strLink);
   CString DelayedSend(const CString strMessage, const bool bEchoIt);
   void SendTo (const unsigned short iWhere, 
@@ -2001,9 +2068,19 @@ public:
                                    const char * sText);   // one argument
 
   // sends sText to all plugins, returns false if one returned false
-  bool SendToAllPluginCallbacks (const string & sName, 
+  bool SendToAllPluginCallbacks (const string & sName,
                                  const char * sText,   // one argument
                                  const bool bStopOnFalse = false);
+  // CString overloads — delegate to the const char* version
+  bool SendToAllPluginCallbacks (const string & sName,
+                                 const CString & sText);   // 2-arg form (doc_stub.h compat)
+  bool SendToAllPluginCallbacks (const string & sName,
+                                 const CString & sText,
+                                 const bool bStopOnFalse);
+  bool SendToAllPluginCallbacks (const string & sName,
+                                 const CString & sText,
+                                 const bool bStopOnTrue,
+                                 const bool bStopOnFalse);
 
   // send strResult to all plugins, allow them to modify it
   void SendToAllPluginCallbacksRtn (const string & sName, 
@@ -2024,8 +2101,8 @@ public:
                                  const bool bStopOnTrue,
                                  const bool bStopOnFalse);
 
-  // load from document into property page
-
+  // load from document into property page (Windows GUI only)
+#ifdef _WIN32
   void LoadPrefsP1  (CPrefsP1  &page1);
   void LoadPrefsP2  (CPrefsP2  &page2);
   void LoadPrefsP3  (CPrefsP3  &page3);
@@ -2101,10 +2178,11 @@ public:
   void SavePrefsP21 (CPrefsP21 &page21);
   void SavePrefsP22 (CPrefsP22 &page22);
   void SavePrefsP23 (CPrefsP23 &page23);
+#endif // _WIN32 || WIN32
 
   CString AppendMUDName (const CString strName);
 
-  bool GamePreferences (const int iPage); 
+  bool GamePreferences (const int iPage);
 
   bool LoggingInput (void) { return m_log_input; };
 
@@ -2458,6 +2536,7 @@ public:
 	afx_msg BOOL IsConnected();
 	afx_msg BSTR WorldName();
 	afx_msg void Note(LPCTSTR Message);
+	void Note(const CString & s);
 	afx_msg long Send(LPCTSTR Message);
 	afx_msg long Sound(LPCTSTR SoundFileName);
 	afx_msg long DeleteTrigger(LPCTSTR TriggerName);
@@ -2571,6 +2650,7 @@ public:
 	afx_msg VARIANT GetDefaultValue(LPCTSTR OptionName);
 	afx_msg VARIANT GetCurrentValue(LPCTSTR OptionName);
 	afx_msg void ColourNote(LPCTSTR TextColour, LPCTSTR BackgroundColour, LPCTSTR Text);
+	void ColourNote(LPCTSTR TextColour, LPCTSTR BackgroundColour, const CString & Text);
 	afx_msg void ColourTell(LPCTSTR TextColour, LPCTSTR BackgroundColour, LPCTSTR Text);
 	afx_msg BSTR CreateGUID();
 	afx_msg BSTR Hash(LPCTSTR Text);

@@ -3,7 +3,9 @@
 
 #include "stdafx.h"
 #include "MUSHclient.h"
+#ifdef _WIN32
 #include <process.h>
+#endif
 
 // #define SHOW_ALL_COMMS // for debugging connecting and other obscure problems
 
@@ -14,38 +16,58 @@
 #include "sendvw.h"
 #include "TextView.h"
 #include "TextDocument.h"
-#include "dialogs\ChooseNotepadDlg.h"
-#include "dialogs\DebugWorldInputDlg.h"
-#include "dialogs\ImportXMLdlg.h"
-#include "dialogs\plugins\PluginsDlg.h"
-#include "dialogs\KeyNameDlg.h"
+#include "dialogs/ChooseNotepadDlg.h"
+#include "dialogs/DebugWorldInputDlg.h"
+#include "dialogs/ImportXMLdlg.h"
+#include "dialogs/plugins/PluginsDlg.h"
+#include "dialogs/KeyNameDlg.h"
 
-#include "dialogs\logdlg.h"   // for logging session
-#include "dialogs\RecallSearchDlg.h"
-#include "dialogs\chat\ChatListDlg.h"
+#include "dialogs/logdlg.h"   // for logging session
+#include "dialogs/RecallSearchDlg.h"
+#include "dialogs/chat/ChatListDlg.h"
 
-#include "dialogs\world_prefs\PrefsPropertySheet.h"
+#include "dialogs/world_prefs/PrefsPropertySheet.h"
 
-#include "dialogs\password.h"
+#include "dialogs/password.h"
 
 #include "ActivityDoc.h"
-#include "dialogs\ConfirmPreamble.h"
+#include "dialogs/ConfirmPreamble.h"
 
-#include "dialogs\ProgDlg.h"
+#include "dialogs/ProgDlg.h"
+#ifdef _WIN32
 #include "genprint.h"
-#include "scripting\errors.h"
+#endif
+#include "scripting/errors.h"
 #include "flags.h"
 
 #include "png/png.h"  // for version
 
-#include <malloc.h>
+#ifdef _WIN32
+#include <malloc.h>   // _msize etc.
+#else
+#include <stdlib.h>   // malloc/free/realloc on POSIX
+#endif
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509.h>
+#ifdef _WIN32
 #include <wincrypt.h>
+#endif
 
+// AfxGetFileTitle is provided by mfc_ui.h on non-Windows; on Windows it's in
+// the MFC library and just needs this forward declaration.
+#ifdef _WIN32
 UINT AFXAPI AfxGetFileTitle(LPCTSTR lpszPathName, LPTSTR lpszTitle, UINT nMax);
+#else
+// On non-Windows, App/Frame globals are defined in platform/app_globals.cpp
+// (for the actual GUI build) or remain as link-time stubs during compilation.
+extern CMUSHclientApp App;
+extern CMainFrame     Frame;
+// CScriptEngine is fully defined in scripting/scripting.h; include it here so
+// that call sites in this file can invoke methods on CScriptEngine*.
+#include "scripting/scripting.h"
+#endif
 
 #ifdef _WIN32
 #ifndef _UNICODE
@@ -81,15 +103,18 @@ int gdoccount = 0;
 // From: mstcpip.h
 /* Argument structure for SIO_KEEPALIVE_VALS */
 
+#ifdef _WIN32
 struct tcp_keepalive {
     ULONG onoff;
     ULONG keepalivetime;
     ULONG keepaliveinterval;
 };
+#endif // _WIN32
 
 //
 // New WSAIoctl Options
 // 
+#ifdef _WIN32
 #define SIO_RCVALL            _WSAIOW(IOC_VENDOR,1)
 #define SIO_RCVALL_MCAST      _WSAIOW(IOC_VENDOR,2)
 #define SIO_RCVALL_IGMPMCAST  _WSAIOW(IOC_VENDOR,3)
@@ -104,6 +129,7 @@ struct tcp_keepalive {
 //      SIO_UDP_CONNRESET     _WSAIOW(IOC_VENDOR,12)
 #define SIO_RCVALL_MCAST_IF   _WSAIOW(IOC_VENDOR,13)
 #define SIO_RCVALL_IF         _WSAIOW(IOC_VENDOR,14)
+#endif // _WIN32
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -206,6 +232,7 @@ BEGIN_MESSAGE_MAP(CMUSHclientDoc, CDocument)
 END_MESSAGE_MAP()
 
 
+#ifdef _WIN32
 BEGIN_DISPATCH_MAP(CMUSHclientDoc, CDocument)
 	//{{AFX_DISPATCH_MAP(CMUSHclientDoc)
 	DISP_PROPERTY_NOTIFY(CMUSHclientDoc, "LogNotes", m_bLogNotes, OnLogNotesChanged, VT_I2)
@@ -628,6 +655,7 @@ BEGIN_DISPATCH_MAP(CMUSHclientDoc, CDocument)
 	DISP_PROPERTY_PARAM(CMUSHclientDoc, "CustomColourBackground", GetCustomColourBackground, SetCustomColourBackground, VT_I4, VTS_I2)
 	//}}AFX_DISPATCH_MAP
 END_DISPATCH_MAP()
+#endif // _WIN32
 
 /*
 
@@ -648,9 +676,11 @@ END_DISPATCH_MAP()
 static const IID IID_IMUSHclient =
 { 0x11dfc5e8, 0xad6f, 0x11d0, { 0x8e, 0xae, 0x0, 0xa0, 0x24, 0x7b, 0x3b, 0xfd } };
 
+#ifdef _WIN32
 BEGIN_INTERFACE_MAP(CMUSHclientDoc, CDocument)
 	INTERFACE_PART(CMUSHclientDoc, IID_IMUSHclient, Dispatch)
 END_INTERFACE_MAP()
+#endif // _WIN32
 
 
 // zlib helpers for memory allocation
@@ -735,20 +765,22 @@ void CMUSHclientDoc::SetUpOutputWindow (void)
 
 // document details will be loaded now, so set screen font
 
-  ChangeFont (m_font_height, 
-              m_font_name, 
-              m_font_weight, 
+#ifdef _WIN32
+  ChangeFont (m_font_height,
+              m_font_name,
+              m_font_weight,
               m_font_charset,
               m_bShowBold,
               m_bShowItalic,
               m_bShowUnderline,
               m_iLineSpacing);
 
-  ChangeInputFont (m_input_font_height, 
-                  m_input_font_name, 
-                  m_input_font_weight, 
+  ChangeInputFont (m_input_font_height,
+                  m_input_font_name,
+                  m_input_font_weight,
                   m_input_font_charset,
                   m_input_font_italic);
+#endif // _WIN32
 
 
 // we defer allocating positions array to now, because m_maxlines is read from the
@@ -780,7 +812,7 @@ void CMUSHclientDoc::SetUpOutputWindow (void)
     }
 
   Note ("");
-  Note (TFormat ("Welcome to MUSHclient version %s!", MUSHCLIENT_VERSION));
+  Note (TFormat ("Welcome to MUSHclient version %s!", (LPCTSTR) MUSHCLIENT_VERSION));
   Note (Translate ("Written by Nick Gammon."));
   Note ("");
   // show compilation date
@@ -1073,10 +1105,10 @@ CString str;
 
     // tell them socket create failed
 
-    UMessageBox (TFormat ("Unable to create TCP/IP socket for \"%s\", code = %i (%s)", 
-                    (const char *) m_mush_name, 
+    UMessageBox (TFormat ("Unable to create TCP/IP socket for \"%s\", code = %i (%s)",
+                    (const char *) m_mush_name,
                     iStatus,
-                    GetSocketError (iStatus)));
+                    (LPCTSTR) GetSocketError (iStatus)));
 
 		  delete m_pSocket;
 		  m_pSocket = NULL;
@@ -1091,12 +1123,26 @@ CString str;
 
 
   // see: http://www.gammon.com.au/forum/?id=9848
+#ifdef _WIN32
   if (m_bSendKeepAlives)
     {
     DWORD dwBytesReturned;
     tcp_keepalive keepaliveData = {1, 60 * 1000 * 2, 6000};     // every 2 minutes
     WSAIoctl (m_pSocket->m_hSocket, SIO_KEEPALIVE_VALS, &keepaliveData, sizeof (keepaliveData), NULL, 0, &dwBytesReturned, NULL, NULL);
     }
+#else
+  if (m_bSendKeepAlives)
+    {
+    int optval = 1;
+    setsockopt (m_pSocket->m_hSocket, SOL_SOCKET,  SO_KEEPALIVE,  &optval, sizeof (optval));
+    // TCP_KEEPIDLE / TCP_KEEPINTVL are POSIX extensions; guard defensively.
+#if defined(TCP_KEEPIDLE)
+    int keepidle = 120, keepintvl = 6;
+    setsockopt (m_pSocket->m_hSocket, IPPROTO_TCP, TCP_KEEPIDLE,  &keepidle,  sizeof (keepidle));
+    setsockopt (m_pSocket->m_hSocket, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof (keepintvl));
+#endif
+    }
+#endif
 
   BOOL bStatus = m_pSocket->AsyncSelect ();
   int iStatus = 0;
@@ -3970,7 +4016,7 @@ BOOL putontoclipboard (const CString & data, const bool bUnicode)
 
      int iLength = MultiByteToWideChar (CP_UTF8, 0, data, -1, NULL, 0);
 
-     HGLOBAL hData = GlobalAlloc (GMEM_MOVEABLE, iLength * sizeof WCHAR);
+     HGLOBAL hData = GlobalAlloc (GMEM_MOVEABLE, iLength * sizeof(WCHAR));
 
      if (!hData)
         {
@@ -4095,10 +4141,10 @@ BOOL connected = nErrorCode == 0;
       CString strMsg;
 
       strMsg = TFormat ("Unable to connect to \"%s\", code = %i (%s)\n\n"
-                      "Error occurred during phase: %s", 
-                      (const char *) m_mush_name, 
+                      "Error occurred during phase: %s",
+                      (const char *) m_mush_name,
                       nErrorCode,
-                      GetSocketError (nErrorCode),
+                      (LPCTSTR) GetSocketError (nErrorCode),
                       (const char *) GetConnectionStatus (iOldPhase));
 
       // i18n TODO - fix this up
@@ -4254,10 +4300,10 @@ void CMUSHclientDoc::HostNameResolved (WPARAM wParam, LPARAM lParam)
     if (App.m_bNotifyIfCannotConnect)
       {
       CString strMsg;
-      strMsg = TFormat ("Unable to resolve host name for \"%s\", code = %i (%s)", 
+      strMsg = TFormat ("Unable to resolve host name for \"%s\", code = %i (%s)",
                       (const char *) strWhich,
                       WSAGETASYNCERROR (lParam),
-                      GetSocketError (WSAGETASYNCERROR (lParam)));
+                      (LPCTSTR) GetSocketError (WSAGETASYNCERROR (lParam)));
       if (App.m_bErrorNotificationToOutputWindow)
         Note (strMsg);
       else
@@ -4537,6 +4583,11 @@ long CMUSHclientDoc::GetLastLine (void)
     m_LineList.RemoveHead ();
     }
 
+#ifndef _WIN32
+  // Keep the GUI emission counter in sync with lines removed from the head.
+  m_gui_lines_emitted = std::max (0L, m_gui_lines_emitted - JUMP_SIZE);
+#endif
+
 // shuffle positions backwards
 
   for (i = 0; i < (m_maxlines / JUMP_SIZE); i++)
@@ -4570,6 +4621,12 @@ void CMUSHclientDoc::ShowStatusLine (const bool bNow)
       Frame.SetStatusMessageNow (m_strStatusMessage);
     else
       Frame.SetStatusMessage (m_strStatusMessage);
+#ifndef _WIN32
+  // On non-Windows there are no CMUSHView / CSendView instances; forward to
+  // the wxWidgets status bar so world.SetStatus() still updates the UI.
+  else if (g_wxhook_set_status)
+    g_wxhook_set_status (static_cast<const char*>(m_strStatusMessage));
+#endif
   m_tStatusDisplayed = CTime::GetCurrentTime ();
   }
 
@@ -4742,6 +4799,7 @@ pCmdUI->SetCheck (m_bEnableAutoSay);
 CString CMUSHclientDoc::GetSocketError (int nError)
   {
 
+#ifdef _WIN32
   switch (nError)
     {
     case WSAEACCES:             return Translate ("Permission denied"); break;
@@ -4796,12 +4854,17 @@ CString CMUSHclientDoc::GetSocketError (int nError)
     case WSAVERNOTSUPPORTED:    return Translate ("WINSOCK.DLL version out of range"); break;
     case WSAEDISCON:            return Translate ("Graceful shutdown in progress"); break;
     case WSA_OPERATION_ABORTED: return Translate ("Overlapped operation aborted"); break;
-
     } // end of switch
+#else
+  // On non-Windows, error codes are POSIX errno values; strerror handles them.
+  const char * msg = strerror (nError);
+  if (msg)
+    return Translate (msg);
+#endif
 
    return Translate ("Unknown error code");
 
-  }   // end of CMUSHclientDoc::GetSocketError 
+  }   // end of CMUSHclientDoc::GetSocketError
 
 void CMUSHclientDoc::SetUpVariantString (VARIANT & tVariant, const CString & strContents)
   {
@@ -5803,20 +5866,40 @@ void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
 
   // connection closed - can't do it
 
-  if (m_iConnectPhase != eConnectConnectedToMud || 
-      !m_pSocket || 
-      !m_FontHeight ||
+  if (m_iConnectPhase != eConnectConnectedToMud ||
+      !m_pSocket ||
       !m_bNAWS_wanted)
     return;
 
   // see RFC 1073
+
+#ifndef _WIN32
+  // Non-Windows: the MFC view list is empty, so use the col/row dimensions
+  // maintained by the wxWidgets frame (m_gui_rows updated by OnSize/SendNAWS).
+  // m_nWrapColumn holds the current column count (updated by scriptingoptions).
+  {
+    int cols = std::max(1, (int)m_nWrapColumn);
+    int rows = std::max(1, m_gui_rows);
+    unsigned char p[] = {
+        (unsigned char)IAC, (unsigned char)SB, (unsigned char)TELOPT_NAWS,
+        (unsigned char)HIBYTE(cols), (unsigned char)LOBYTE(cols),
+        (unsigned char)HIBYTE(rows), (unsigned char)LOBYTE(rows),
+        (unsigned char)IAC, (unsigned char)SE
+    };
+    SendPacket(p, sizeof p);
+  }
+#else
+  // Windows: derive dimensions from the MFC view geometry.
+
+  if (!m_FontHeight)
+    return;
 
   // send size of first view we find
 
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
   	  {
 		  CMUSHView* pmyView = (CMUSHView*)pView;
@@ -5828,15 +5911,16 @@ void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
       WORD height = (r.bottom - r.top - m_iPixelOffset) / m_FontHeight;
 
       // now tell them our size
-      unsigned char p [] = { IAC, SB, TELOPT_NAWS, 
+      unsigned char p [] = { IAC, SB, TELOPT_NAWS,
                               HIBYTE (iNewWidth), LOBYTE (iNewWidth),
                               HIBYTE (height), LOBYTE (height),
                               IAC, SE };
       SendPacket (p, sizeof p);
 
       break;    // found one
-      }	
+      }
     } // end of looping through views
+#endif
 
 
   }  // end of CMUSHclientDoc::SendWindowSizes 
@@ -6714,6 +6798,7 @@ bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
     return true;
     }
 
+#ifdef _WIN32
   if (Frame.GetSafeHwnd ())   // forget it if we don't have a window yet
     m_hNameLookup = WSAAsyncGetHostByName (Frame.GetSafeHwnd (),
                                            WM_USER_HOST_NAME_RESOLVED,
@@ -6721,11 +6806,11 @@ bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
                                            m_pGetHostStruct,
                                            MAXGETHOSTSTRUCT);
 
- if (!m_hNameLookup)
-   {
+  if (!m_hNameLookup)
+    {
     CString strMsg;
 
-    strMsg = TFormat ("Unable to initiate host name lookup for \"%s\"", 
+    strMsg = TFormat ("Unable to initiate host name lookup for \"%s\"",
                    sName);
     UMessageBox (strMsg);
     delete [] m_pGetHostStruct;
@@ -6734,9 +6819,79 @@ bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
 
     App.m_bUpdateActivity = TRUE;   // new activity!
 
-   }
+    }
 
- return false;    // we are waiting for host name lookup to finish
+  return false;    // we are waiting for host name lookup to finish
+
+#else  // !_WIN32
+
+  // Non-Windows: synchronous DNS resolution using getaddrinfo.
+  // WSAAsyncGetHostByName is Windows-only; on POSIX we resolve immediately
+  // (blocking briefly) then call InitiateConnection directly.
+  {
+    delete [] m_pGetHostStruct;
+    m_pGetHostStruct = NULL;
+
+    struct addrinfo hints{}, *res = nullptr;
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (::getaddrinfo (sName, nullptr, &hints, &res) != 0 || !res)
+      {
+      m_bDisconnectOK = true;
+      m_iConnectPhase = eConnectNotConnected;
+      App.m_bUpdateActivity = TRUE;
+
+      if (App.m_bNotifyIfCannotConnect)
+        {
+        CString strMsg = TFormat ("Unable to resolve host name for \"%s\"",
+                                  sName);
+        if (App.m_bErrorNotificationToOutputWindow)
+          Note (strMsg);
+        else
+          UMessageBox (strMsg);
+        }
+
+      return true;   // error — caller should abort
+      }
+
+    struct in_addr resolved = ((struct sockaddr_in *) res->ai_addr)->sin_addr;
+    ::freeaddrinfo (res);
+
+    if (m_iConnectPhase == eConnectMudNameLookup)
+      m_sockAddr.sin_addr = resolved;
+    else if (m_iConnectPhase == eConnectProxyNameLookup)
+      m_ProxyAddr.sin_addr = resolved;
+    else
+      {
+      TMessageBox ("Unexpected phase in LookupHostName");
+      return true;
+      }
+
+    // If we resolved the MUD address and a proxy is configured,
+    // check whether the proxy address also needs resolving.
+    if (m_iConnectPhase == eConnectMudNameLookup &&
+        m_iSocksProcessing != eProxyServerNone)
+      {
+      if (m_ProxyAddr.sin_family != AF_INET ||
+          m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
+        {
+        m_ProxyAddr.sin_family         = AF_INET;
+        m_ProxyAddr.sin_addr.s_addr    = inet_addr (m_strProxyServerName);
+        if (m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
+          {
+          m_iConnectPhase = eConnectProxyNameLookup;
+          LookupHostName (m_strProxyServerName);
+          return false;
+          }
+        }
+      }
+
+    InitiateConnection ();
+    return false;   // connection attempt started
+  }
+
+#endif  // _WIN32
 
 
   } // end of CMUSHclientDoc::LookupHostName  
@@ -6785,10 +6940,10 @@ void CMUSHclientDoc::InitiateConnection (void)
     CString strMsg;
 
     strMsg = TFormat ("Unable to connect to \"%s\", code = %i (%s)\n\n"
-                    "Error occurred during phase: %s", 
-                    (const char *) m_mush_name, 
+                    "Error occurred during phase: %s",
+                    (const char *) m_mush_name,
                     iStatus,
-                    GetSocketError (iStatus),
+                    (LPCTSTR) GetSocketError (iStatus),
                     (const char *) GetConnectionStatus (m_iConnectPhase));
 
     // i18n TODO - fix this:
@@ -7314,8 +7469,10 @@ void CMUSHclientDoc::StartSSLHandshake (void)
   SSL_CTX_set_min_proto_version (m_pSSL_CTX, TLS1_2_VERSION);
 
   // enable certificate verification (warn-only, won't block connection)
-  SSL_CTX_set_verify (m_pSSL_CTX, SSL_VERIFY_PEER, ssl_verify_callback);
+  SSL_CTX_set_verify (m_pSSL_CTX, SSL_VERIFY_PEER,
+                      (SSL_verify_cb) ssl_verify_callback);
 
+#ifdef _WIN32
   // load Windows root certificate store into OpenSSL
   HCERTSTORE hStore = CertOpenSystemStore (0, "ROOT");
   if (hStore)
@@ -7334,6 +7491,11 @@ void CMUSHclientDoc::StartSSLHandshake (void)
       }
     CertCloseStore (hStore, 0);
     }
+#else
+  // On non-Windows, OpenSSL uses the system default certificate store
+  // (configured via SSL_CTX_set_default_verify_paths or equivalent).
+  SSL_CTX_set_default_verify_paths (m_pSSL_CTX);
+#endif
 
   // create SSL object
   m_pSSL = SSL_new (m_pSSL_CTX);

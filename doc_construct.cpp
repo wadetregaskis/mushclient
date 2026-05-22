@@ -7,7 +7,8 @@
 
 #include "doc.h"
 #include "genprint.h"
-#include "dialogs\QuickConnectDlg.h"
+#include "dialogs/QuickConnectDlg.h"
+#include "dialogs/world_prefs/prefspropertypages.h"
 #include "UDPsocket.h"
 
 extern int gdoccount;
@@ -161,8 +162,10 @@ int i;
   m_code = 0;
 
   // sound buffers
+#ifdef _WIN32
   for (i = 0; i < MAX_SOUND_BUFFERS; i++)
     m_pDirectSoundSecondaryBuffer [i] = NULL;
+#endif
 
   /*---------------------------------------------------------
   I want to be able to time speed walking delays (for pulling things
@@ -179,6 +182,7 @@ int i;
 
 
   // create window that we can use for firing timers
+#ifdef _WIN32
   m_pTimerWnd = new CTimerWnd (this);
 
 	m_pTimerWnd->m_hWnd = NULL;
@@ -191,6 +195,11 @@ int i;
   	}
 	ASSERT(m_pTimerWnd->m_hWnd != NULL);
 	ASSERT(CWnd::FromHandlePermanent(m_pTimerWnd->m_hWnd) == m_pTimerWnd);
+#else
+  // On non-Windows, WM_TIMER-based speed-walk timing is not used.
+  // All m_pTimerWnd call sites already null-check, so nullptr is safe.
+  m_pTimerWnd = nullptr;
+#endif
 
 
   for (i = 0; i < NUMITEMS (m_font); i++)  
@@ -486,6 +495,7 @@ CMUSHclientDoc::~CMUSHclientDoc()
 int i;
 
   // stop sounds playing, release sound buffers
+#ifdef _WIN32
   for (i = 0; i < MAX_SOUND_BUFFERS; i++)
     if (m_pDirectSoundSecondaryBuffer [i])
       {
@@ -496,6 +506,7 @@ int i;
 
       m_pDirectSoundSecondaryBuffer [i]->Release ();
       }
+#endif
 
   if (m_pTimerWnd)
     {

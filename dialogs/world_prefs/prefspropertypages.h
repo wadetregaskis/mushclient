@@ -3,6 +3,7 @@
 #include "ButtonColour.h"
 #include "genpropertypage.h"
 #include "StatLink.h"
+#include "../ColourComboBox.h"
 
 class CPrefsP3;
 class CPrefsP5;

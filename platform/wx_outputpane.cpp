@@ -646,23 +646,21 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
                 GetScrollPixelsPerUnit(&unitW, &unitH);
                 int clickVirtualX = evt.GetX() + scrollX * unitW;
 
-                wxClientDC cdc(this);
-                cdc.SetFont(m_font);
+                // Use m_charW (the same monospace step used by DrawLine) so
+                // hit-test coordinates match the rendered glyph positions.
                 int runX = 0;
                 for (const auto& run : line) {
                     if (run.text.empty()) continue;
-                    wxString wxText = wxString::FromUTF8(run.text.c_str(),
-                                                         run.text.size());
-                    wxCoord tw, th;
-                    cdc.GetTextExtent(wxText, &tw, &th);
+                    int runW = (int)run.text.size() * m_charW;
                     if (!run.action.empty() &&
-                        clickVirtualX >= runX && clickVirtualX < runX + tw)
+                        clickVirtualX >= runX &&
+                        clickVirtualX <  runX + runW)
                     {
                         m_fn_link_clicked(run.action);
                         evt.Skip();
                         return;
                     }
-                    runX += tw;
+                    runX += runW;
                 }
             }
         }
@@ -826,12 +824,58 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     SelPoint s, e;
     bool hasSel = GetNormalizedSel(s, e);
 
+    // Detect whether the click landed on a link run.
+    // Use the same character-column approximation as OnMotion.
+    std::string linkAtClick;
+    {
+        int lineIdx = YToLine(evt.GetY());
+        int col     = XToChar(lineIdx, evt.GetX());
+        if (lineIdx >= 0 && lineIdx < (int)m_lines.size()) {
+            int c = 0;
+            for (const auto& run : m_lines[lineIdx]) {
+                int runLen = (int)run.text.size();
+                if (!run.action.empty() &&
+                    col >= c && col < c + runLen)
+                {
+                    linkAtClick = run.action;
+                    break;
+                }
+                c += runLen;
+            }
+        }
+    }
+
     wxMenu menu;
     menu.Append(ID_COPY,      "Copy\tCtrl+C");
     menu.Append(ID_SELECTALL, "Select All\tCtrl+A");
     menu.AppendSeparator();
     menu.Append(ID_CLEAR,     "Clear Output");
     menu.Enable(ID_COPY, hasSel);
+
+    // If a URL link was right-clicked, add browser/clipboard options.
+    bool isURL = !linkAtClick.empty() &&
+                 (linkAtClick.compare(0, 7, "http://")  == 0 ||
+                  linkAtClick.compare(0, 8, "https://") == 0);
+    if (isURL) {
+        menu.AppendSeparator();
+
+        wxMenuItem* itemOpen = menu.Append(wxID_ANY, "Open URL in Browser");
+        menu.Bind(wxEVT_MENU,
+            [this, linkAtClick](wxCommandEvent&) {
+                if (m_fn_link_clicked) m_fn_link_clicked(linkAtClick);
+            }, itemOpen->GetId());
+
+        wxMenuItem* itemCopyURL = menu.Append(wxID_ANY, "Copy URL");
+        menu.Bind(wxEVT_MENU,
+            [linkAtClick](wxCommandEvent&) {
+                if (wxTheClipboard->Open()) {
+                    wxTheClipboard->SetData(new wxTextDataObject(
+                        wxString::FromUTF8(linkAtClick.c_str())));
+                    wxTheClipboard->Close();
+                }
+            }, itemCopyURL->GetId());
+    }
+
     PopupMenu(&menu, evt.GetPosition());
 }
 

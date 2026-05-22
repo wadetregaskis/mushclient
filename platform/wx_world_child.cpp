@@ -683,19 +683,18 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         const SOutputLine* line = m_output->GetLine(lineIdx);
         if (!line) return {};
 
-        // Walk runs measuring pixel widths to find which one is under x.
+        // Walk runs using the same monospace m_charW step used by DrawLine,
+        // so tooltip hit areas match the rendered glyph positions.
         int clickVirtualX = x + scrollX * unitW;
-        wxClientDC cdc(m_output);
-        cdc.SetFont(m_output->GetFont());
+        int charW = m_output->CharWidth();
+        if (charW <= 0) return {};
         int runX = 0;
         for (const auto& run : *line) {
             if (run.text.empty()) continue;
-            wxString wxText = wxString::FromUTF8(run.text.c_str(), run.text.size());
-            wxCoord tw, th;
-            cdc.GetTextExtent(wxText, &tw, &th);
-            if (clickVirtualX >= runX && clickVirtualX < runX + tw)
+            int runW = (int)run.text.size() * charW;
+            if (clickVirtualX >= runX && clickVirtualX < runX + runW)
                 return run.hint;   // may be empty — that's fine
-            runX += tw;
+            runX += runW;
         }
         return {};
     };

@@ -73,7 +73,11 @@ COutputPane::COutputPane(wxWindow* parent, int maxLines)
         if (w > 0) m_charW = w;
     }
 
-    SetScrollRate(m_charW, m_lineH);
+    // Horizontal scrolling is disabled: MUD output is pre-wrapped at the server
+    // side (typically 80 columns) so a horizontal scrollbar is never useful and
+    // breaks the feel of a terminal.  Set the horizontal scroll rate to 0 so
+    // wxScrolledWindow never shows or reacts to an H-scrollbar.
+    SetScrollRate(0, m_lineH);
     UpdateScrollbars(false);
 
     // Show an I-beam cursor so the pane feels like a text view.
@@ -705,34 +709,31 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
     GetClientSize(&clientW, &clientH);
 
     int totalH = (int)m_lines.size() * m_lineH;
-    int totalW = std::max(clientW, m_maxLineChars * m_charW + m_charW);
 
-    SetVirtualSize(totalW, totalH);
+    // Virtual width = client width: horizontal scrolling is disabled so long
+    // lines are clipped at the pane edge rather than requiring H-scroll.
+    SetVirtualSize(clientW, totalH);
 
     if (scrollToBottom && !m_lines.empty()) {
         int unitH;
         GetScrollPixelsPerUnit(nullptr, &unitH);
         if (unitH > 0) {
-            int scrollX;
-            GetViewStart(&scrollX, nullptr);
-
-            // GetScrollRange returns the total number of scroll units.
-            // Scroll() clamps to (scrollRange - pageSize) = (totalH - clientH)/unitH,
-            // which is exactly the position that shows the last line at the bottom.
-            int scrollRange = GetScrollRange(wxVERTICAL);
-            Scroll(scrollX, scrollRange);
+            // Scroll() clamps to (scrollRange - pageSize), which is the position
+            // that shows the last line at the bottom.  Passing scrollRange directly
+            // is equivalent to Scroll(-1, -1) but without the ambiguity.
+            Scroll(0, GetScrollRange(wxVERTICAL));
         }
         m_trimmedCount = 0;
     } else if (m_trimmedCount > 0 && !m_autoScroll) {
         // The buffer trimmed lines from the front while the user was scrolled up.
         // Compensate by shifting the view upward by the same number of line-heights
-        // so the visible content stays stable.
-        int scrollX, scrollY, unitH;
-        GetViewStart(&scrollX, &scrollY);
+        // so the visible content stays stable (no jump when old lines scroll off).
+        int scrollY, unitH;
+        GetViewStart(nullptr, &scrollY);
         GetScrollPixelsPerUnit(nullptr, &unitH);
         if (unitH > 0) {
             int shift = (m_trimmedCount * m_lineH + unitH - 1) / unitH;
-            Scroll(scrollX, std::max(0, scrollY - shift));
+            Scroll(0, std::max(0, scrollY - shift));
         }
         m_trimmedCount = 0;
     }

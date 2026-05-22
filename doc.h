@@ -51,7 +51,9 @@ extern bool g_debug;
 #define MAX_LINE_WIDTH 500    // max line we will wrap to
 #define MAX_RECENT_LINES 200  // maximum recent lines we can use for multi-line triggers
 
+#ifdef _MSC_VER
 #pragma warning(disable: 4800) // disable warning about bool being forced to BOOL
+#endif
 
 // program constants
 
@@ -451,7 +453,7 @@ typedef struct
 
 // for Lua tables mainly
 typedef struct { const char* key; int val; } flags_pair;
-typedef struct { int key; char * val; } int_flags_pair;
+typedef struct { int key; const char * val; } int_flags_pair;
 
 typedef struct 
   {

@@ -5,7 +5,7 @@
 #pragma once
 
 // disable some warnings (especially at warning level 4)
-
+#ifdef _MSC_VER
 #pragma warning (disable : 4018)  // '<' : signed/unsigned mismatch
 #pragma warning (disable : 4100)  // unreferenced formal parameter
 #pragma warning (disable : 4127)  // conditional expression is constant
@@ -23,8 +23,11 @@
 #pragma warning (disable : 4710)  // function 'x' not inlined
 #pragma warning (disable : 4786)  // identifier was truncated to 'number' characters in the debug information
 #pragma warning (disable : 4996)  // MBCS support in MFC is deprecated and may be removed in a future version of MFC
+#endif // _MSC_VER
 
+#ifndef HAVE_CONFIG_H
 #define HAVE_CONFIG_H   // for PCRE
+#endif
 
 // ── Standard C++ library (needed on all platforms) ─────────────────────────
 #include <string>

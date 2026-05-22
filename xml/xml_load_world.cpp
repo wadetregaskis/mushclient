@@ -1,6 +1,11 @@
 // xml_load_world.cpp : XML world serialization (loading)
 //
 
+// Suppress style-only warnings for the complex if/else XML-loading macros.
+#ifndef _MSC_VER
+#pragma GCC diagnostic ignored "-Wdangling-else"
+#endif
+
 #include "stdafx.h"
 #include "../MUSHclient.h"
 #include "../doc.h"
@@ -935,6 +940,7 @@ bool bPlugin;
 
   } // end of  CMUSHclientDoc::Load_One_Include_XML
 
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4189)     // warning C4189: 'iVersion' : local variable is initialized but not referenced
 void CMUSHclientDoc::Load_General_XML (CXMLelement & parent, 
@@ -980,6 +986,7 @@ void CMUSHclientDoc::Load_General_XML (CXMLelement & parent,
 
   } // end of CMUSHclientDoc::Load_General_XML
 #pragma warning(pop)
+#endif
 
 void CMUSHclientDoc::Load_World_Numeric_Options_XML (CXMLelement & parent,
                                                     bool bUseDefault,
@@ -2346,6 +2353,7 @@ long iSequence;
   } // end of CMUSHclientDoc::Load_One_Print_Colour_XML
 
 
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4189)     // warning C4189: 'iVersion' : local variable is initialized but not referenced
 void CMUSHclientDoc::Load_Comments_XML (CXMLelement & parent)
@@ -2381,6 +2389,7 @@ int iFlags = 0; // for use by GET_VERSION_AND_DEFAULTS macro
 
   } // end of CMUSHclientDoc::Load_Comments_XML
 #pragma warning(pop)
+#endif
 
 void CMUSHclientDoc::Load_Plugin_XML (CXMLelement & parent)
   {

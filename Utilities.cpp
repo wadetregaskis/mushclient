@@ -1343,8 +1343,8 @@ char cNestArray [MAX_NEST];   // so we know when nested group ends
            break;   // found it!
          iLevel--;  // dropped back a level
          }
-       else if ((iFlags & PAREN_NEST_BRACES) && (strchr (START_DELIMS, c)) ||
-                !(iFlags & PAREN_NEST_BRACES) && (c == cStartDelim))
+       else if (((iFlags & PAREN_NEST_BRACES) && (strchr (START_DELIMS, c))) ||
+                (!(iFlags & PAREN_NEST_BRACES) && (c == cStartDelim)))
          {
          iLevel++;   // up a level, need another closing delimiter
          if (iLevel >= MAX_NEST)
@@ -1460,8 +1460,8 @@ char cNestArray [MAX_NEST];   // so we know when nested group ends
 // ----- End Talek suggestion
 
 
-         if ((iFlags & PAREN_NEST_BRACES) && (strchr (END_DELIMS, c)) ||
-                !(iFlags & PAREN_NEST_BRACES) && (c == cStartDelim))
+         if (((iFlags & PAREN_NEST_BRACES) && (strchr (END_DELIMS, c))) ||
+                (!(iFlags & PAREN_NEST_BRACES) && (c == cStartDelim)))
          {
          iLevel++;   // up a level, need another closing delimiter
          if (iLevel >= MAX_NEST)
@@ -2064,15 +2064,23 @@ CString RemoveFinalSlash (CString str)
 
 #define NULLCHAR (char *) 0
 
-static char *VOWELS="AEIOU",
-            *FRONTV="EIY",   /* special cases for letters in FRONT of these */
-            *VARSON="CSPTG", /* variable sound--those modified by adding an "h"    */
-            *ALLOW_DOUBLE=".";     /* let these double letters through */
+static const char *VOWELS="AEIOU",
+                  *FRONTV="EIY",   /* special cases for letters in FRONT of these */
+                  *VARSON="CSPTG", /* variable sound--those modified by adding an "h"    */
+                  *ALLOW_DOUBLE=".";     /* let these double letters through */
 
-static char *excpPAIR="AGKPW", /* exceptions "ae-", "gn-", "kn-", "pn-", "wr-" */
-            *nextLTR ="ENNNR";
-static char *chrptr, *chrptr1;
+static const char *excpPAIR="AGKPW", /* exceptions "ae-", "gn-", "kn-", "pn-", "wr-" */
+                  *nextLTR ="ENNNR";
+static const char *chrptr, *chrptr1;
 
+#ifndef _MSC_VER
+// The metaphone() implementation uses a complex switch/if structure that
+// triggers misleading-indentation and dangling-else diagnostics in GCC/Clang.
+// The logic is correct as-is; suppress these stylistic warnings for this block.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmisleading-indentation"
+#pragma GCC diagnostic ignored "-Wdangling-else"
+#endif
 void metaphone (const char *name, char * metaph, int metalen)
   {
 
@@ -2311,6 +2319,9 @@ void metaphone (const char *name, char * metaph, int metalen)
 
   return;
 }
+#ifndef _MSC_VER
+#pragma GCC diagnostic pop
+#endif
 
 
 // for forum posts, where I am quoting code, I want to fix up
@@ -2672,7 +2683,7 @@ CString TFormat (const char * sFormat, ...)
     // scan format string looking for % symbols
     const char * sFormatItem = sFormat;
 
-    while (sFormatItem = strchr (sFormatItem, '%'))
+    while ((sFormatItem = strchr (sFormatItem, '%')))
       {
       sFormatItem++;    // skip the %
 
@@ -3051,8 +3062,10 @@ unsigned char header [8];
     return eUnableToLoadImage;
     }
 
+#ifdef _MSC_VER
 #pragma warning (push)
 #pragma warning (disable : 4611)  // interaction between '_setjmp' and C++ object destruction is non-portable
+#endif
 
   // if png fails it will longjmp back to here, so we destroy the structure,
   // close the file, and wrap up
@@ -3064,7 +3077,9 @@ unsigned char header [8];
     return eUnableToLoadImage;
     }
 
+#ifdef _MSC_VER
 #pragma warning (pop)
+#endif
 
   // initialize IO
   png_init_io (png_ptr, fp);
@@ -3200,8 +3215,10 @@ long LoadPngMemory (unsigned char * Buffer, const size_t Length, HBITMAP & hbmp,
     return eUnableToLoadImage;
     }
 
+#ifdef _MSC_VER
 #pragma warning (push)
 #pragma warning (disable : 4611)  // interaction between '_setjmp' and C++ object destruction is non-portable
+#endif
 
   // if png fails it will longjmp back to here, so we destroy the structure,
   // and wrap up
@@ -3212,7 +3229,9 @@ long LoadPngMemory (unsigned char * Buffer, const size_t Length, HBITMAP & hbmp,
     return eUnableToLoadImage;
     }
 
+#ifdef _MSC_VER
 #pragma warning (pop)
+#endif
 
   tPngBufferInfo PngBufferInfo;
   PngBufferInfo.BufferPos = Buffer;

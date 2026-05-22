@@ -1290,8 +1290,10 @@ long CMiniWindow::WritePng (LPCTSTR FileName, const BITMAPINFO * bmi, unsigned c
     }
 
 
+#ifdef _MSC_VER
 #pragma warning (push)
 #pragma warning (disable : 4611)  // interaction between '_setjmp' and C++ object destruction is non-portable
+#endif
 
   // if png fails it will longjmp back to here, so we destroy the structure,
   // close the file, and wrap up
@@ -1302,7 +1304,9 @@ long CMiniWindow::WritePng (LPCTSTR FileName, const BITMAPINFO * bmi, unsigned c
     return eLogFileBadWrite;
     }
 
+#ifdef _MSC_VER
 #pragma warning (pop)
+#endif
 
   // initialize IO
   png_init_io (png_ptr, fp);
@@ -2939,8 +2943,8 @@ static void Contrast (unsigned char * inbuf, long iWidth, long iHeight, long iPe
     }  // end of for loop
 
   // now convert image using lookup table
-  for (i = 0; i < count; i++)
-    *pi++ = lookup [*pi];
+  for (i = 0; i < count; i++, pi++)
+    *pi = lookup [*pi];
 
   } // end of Contrast
 
@@ -2965,8 +2969,8 @@ static void Gamma (unsigned char * inbuf, long iWidth, long iHeight, long iPerLi
     }  // end of for loop
 
   // now convert image using lookup table
-  for (i = 0; i < count; i++)
-    *pi++ = lookup [*pi];
+  for (i = 0; i < count; i++, pi++)
+    *pi = lookup [*pi];
 
   } // end of Gamma
 

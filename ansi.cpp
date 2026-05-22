@@ -406,7 +406,7 @@ bool iForegroundMode = m_phase == HAVE_FOREGROUND_24B_FINISH ||
     } // end of switching to RGB mode
 
   CColor p;
-  if (iForegroundMode && (iFlags & INVERSE) || (!iForegroundMode && !(iFlags & INVERSE)))
+  if ((iForegroundMode && (iFlags & INVERSE)) || (!iForegroundMode && !(iFlags & INVERSE)))
     p = CColor(iBackColour);
   else
     p = CColor(iForeColour);
@@ -450,7 +450,7 @@ bool iForegroundMode = m_phase == HAVE_FOREGROUND_24B_FINISH ||
     break;
   }
 
-  if (iForegroundMode && (iFlags & INVERSE) || (!iForegroundMode && !(iFlags & INVERSE)))
+  if ((iForegroundMode && (iFlags & INVERSE)) || (!iForegroundMode && !(iFlags & INVERSE)))
       iBackColour = p;
   else
       iForeColour = p;

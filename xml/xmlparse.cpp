@@ -2,7 +2,14 @@
 //
 // BTW - CDATA sections look like this:
 
-//  <![CDATA[ ... ]]> 
+//  <![CDATA[ ... ]]>
+
+// This file uses deeply-nested if/else constructs that trigger style-only
+// warnings in GCC/Clang. Suppress them for the entire translation unit.
+#ifndef _MSC_VER
+#pragma GCC diagnostic ignored "-Wmisleading-indentation"
+#pragma GCC diagnostic ignored "-Wdangling-else"
+#endif
 
 #include "stdafx.h"
 #if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)

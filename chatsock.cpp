@@ -1067,7 +1067,8 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
     }
 
   if (bWanted)
-    if (m_pDoc->m_strChatSaveDirectory.IsEmpty () || 
+    {
+    if (m_pDoc->m_strChatSaveDirectory.IsEmpty () ||
          !m_pDoc->m_bAutoAllowFiles)  // no auto-save
       {
       CFileDialog filedlg (FALSE,   // saving the file
@@ -1111,6 +1112,7 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
   
       m_strOurFileName = m_pDoc->m_strChatSaveDirectory + m_strSenderFileName;
       }
+    }   // end of if (bWanted)
 
   if (!bWanted)
     {

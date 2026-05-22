@@ -136,6 +136,11 @@ CWorldFrame::CWorldFrame(const std::string& host, int port)
         // Field 1 = MUD-supplied status line (updated here)
         m_status->SetStatusText(wxString::FromUTF8(text.c_str()), 1);
     };
+    // Return keyboard focus to the input bar after the user finishes a
+    // mouse-drag selection in the output pane (so they can keep typing).
+    m_pane->m_fn_return_focus = [this]() {
+        if (m_input) m_input->SetFocus();
+    };
 
     // ── Initialise doc settings ───────────────────────────────────────────────
     App.MXP_LoadElements();

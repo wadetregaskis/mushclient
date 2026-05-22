@@ -119,6 +119,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     sizer->Add(m_findBar, 0, wxEXPAND);
     m_findBar->Hide();
 
+    // Return keyboard focus to the input bar after a mouse selection so the
+    // user can keep typing without clicking back in the input bar.
+    m_output->m_fn_return_focus = [this]() {
+        if (m_input) m_input->SetFocus();
+    };
+
     // When the auto-scroll state changes, update the status bar.
     // "↑ Scrolled back" reminds the user that new output is not visible yet.
     // Restoring auto-scroll shows the connection status again.

@@ -6,11 +6,13 @@
 //
 // Features:
 //   • Per-run fg/bg colour, bold, underline using wxDC primitives
-//   • Monospace font, configurable size
+//   • Monospace font, configurable size (Ctrl+scroll to zoom)
 //   • Capped scrollback buffer (m_maxLines, default 5000)
 //   • Auto-scroll to bottom on new output; pauses when user scrolls up
+//   • Character-precise click/drag text selection with clipboard copy
 //   • Right-click context menu: Copy Selection, Select All, Clear
 //   • Double-buffered paint via wxBufferedPaintDC
+//   • I-beam cursor over text; focus returned to input bar after selection
 
 #pragma once
 
@@ -23,6 +25,27 @@
 #include <string>
 #include <vector>
 #include "platform/output_types.h"   // SOutputLine, SOutputRun
+
+// ── SelPoint — cursor position within the text buffer ────────────────────────
+// Represents a position between characters: col=0 is before the first
+// character on a line, col=N is after the Nth character.
+// line=-1 means "invalid / no selection".
+struct SelPoint {
+    int line = -1;
+    int col  = 0;
+
+    bool valid() const { return line >= 0; }
+
+    bool operator==(const SelPoint& o) const {
+        return line == o.line && col == o.col;
+    }
+    bool operator!=(const SelPoint& o) const { return !(*this == o); }
+    bool operator<(const SelPoint& o) const {
+        if (line != o.line) return line < o.line;
+        return col < o.col;
+    }
+    bool operator<=(const SelPoint& o) const { return !(o < *this); }
+};
 
 // ── COutputPane ───────────────────────────────────────────────────────────────
 
@@ -41,132 +64,86 @@ public:
 
     // Append a plain note/status line.
     // fg is a COLORREF for the text colour; defaults to dim grey (0x808080).
-    // Use a distinct colour for connection events:
-    //   connected    → 0x44CC44 (green)
-    //   disconnected → 0xFF8800 (amber)
-    //   failed       → 0xFF4444 (red)
-    //   reconnecting → 0xFFCC00 (yellow)
-    //   connecting   → 0x00CCCC (cyan)
     void AppendNote(const std::string& text, unsigned long fg = 0x808080);
 
     // Batch update: accumulate lines without repainting.
-    // Call BeginBatch() before a group of AppendLine() calls, then EndBatch()
-    // to trigger a single scrollbar update + repaint.
     void BeginBatch() { m_batchDepth++; }
-    void EndBatch();   // triggers UpdateScrollbars + Refresh if batch depth drops to 0
+    void EndBatch();
 
     // Remove all lines from the buffer and repaint.
     void ClearOutput();
 
     // ── Find / search ─────────────────────────────────────────────────────────
-    // Search the buffer for the next/previous line whose plain text contains
-    // 'term' (case-insensitive).  On a match, selects that line and scrolls to
-    // it; returns true.  Returns false if no match is found.
-    // 'forward' == true searches downward from the current selection (or the
-    // bottom of the buffer); false searches upward.
     bool FindNext(const wxString& term, bool forward = true);
-
-    // Highlight all lines that contain 'term'.  Pass an empty string to clear.
     void HighlightSearch(const wxString& term);
 
     // Change the display font (e.g. from preferences).
     void SetOutputFont(const wxFont& font);
 
-    // Update the scrollback buffer cap.  Lines already over the new limit are
-    // trimmed from the top immediately.  Mirrors the doc's m_maxlines setting.
+    // Update the scrollback buffer cap.
     void SetMaxLines(int n);
 
-    // Adjust the font size by delta points (positive = larger, negative = smaller).
-    // Clamped to [kMinFontSize, kMaxFontSize].  Returns the new size.
+    // Adjust font size by delta points.  Returns new size.
     int AdjustFontSize(int delta);
-
-    // Reset font size to the default (kDefaultFontSize).
     void ResetFontSize();
-
-    // Current font point size.
     int FontSize() const { return m_fontSize; }
 
     static constexpr int kDefaultFontSize = 12;
     static constexpr int kMinFontSize     = 6;
     static constexpr int kMaxFontSize     = 32;
 
-    // Copy the visible selected text to the clipboard.
+    // Copy the selected text to the clipboard.
     void CopySelection();
 
     // Select all text in the buffer.
     void SelectAll();
 
-    // Line height in pixels (updated whenever the font changes).
+    // Line height / char width in pixels (updated on font change).
     int LineHeight() const { return m_lineH; }
-
-    // Average character width in pixels (used for NAWS column calculation).
     int CharWidth()  const { return m_charW; }
 
     // Number of lines currently in the buffer.
     int LineCount() const { return (int)m_lines.size(); }
 
-    // Read-only access to a single buffered line by index.
-    // Returns nullptr if idx is out of range.
+    // Read-only access to a single buffered line.
     const SOutputLine* GetLine(int idx) const {
         if (idx < 0 || idx >= (int)m_lines.size()) return nullptr;
         return &m_lines[idx];
     }
 
-    // True when the pane is locked to the bottom (auto-scroll active).
+    // True while the pane is pinned to the bottom.
     bool IsAutoScrolling() const { return m_autoScroll; }
 
-    // Set the pane's default background colour (the colour painted behind text
-    // and in empty space).  col is a COLORREF; pass 0xFF000000 (or omit) for
-    // the default black.  Also colours the wxWindow background so that areas
-    // outside the virtual canvas don't flash.  Called by the frame when the
-    // world file specifies a custom background (doc->m_iBackgroundColour).
+    // Set the pane's default background colour (COLORREF, 0 = black).
     void SetPaneBackground(unsigned long col);
-
-    // Current pane background as COLORREF.
     unsigned long PaneBackground() const { return m_bgColor; }
 
-    // Optional callback fired whenever font metrics (m_lineH, m_charW) change.
-    // Set by CWorldChildFrame to forward NAWS updates on font-size changes.
+    // ── Callbacks ─────────────────────────────────────────────────────────────
+
+    // Called whenever font metrics (m_lineH, m_charW) change.
     std::function<void()> m_fn_grid_changed;
 
-    // Optional callback: returns the tooltip text for a client-space point.
-    // Called from OnMotion; the pane uses the result to update wxToolTip.
-    // Return an empty string to clear any active tooltip.
+    // Returns the tooltip text for a client-space point; "" = clear tooltip.
     std::function<std::string(int x, int y)> m_fn_get_tooltip;
 
-    // Optional callback fired when the auto-scroll state changes.
-    // Called with true when the view locks to the bottom (auto-scroll on),
-    // and false when the user scrolls up (auto-scroll paused).
-    // Use this to show/hide a "scrolled back" indicator in the status bar.
+    // Called when auto-scroll state changes (true = pinned to bottom).
     std::function<void(bool)> m_fn_autoscroll_changed;
 
-    // Optional callback for compositing miniwindows onto the output DC.
-    // Called twice per paint: once before text (bUnder=true, for windows with
-    // MINIWINDOW_DRAW_UNDERNEATH) and once after text (bUnder=false).
-    // dc is positioned at client origin (scroll offset is removed before the
-    // call and restored after).  clientW / clientH are the pane's client size.
+    // Called after the user finishes a mouse selection (or clicks without
+    // selecting).  Typically wired to re-focus the command input bar.
+    std::function<void()> m_fn_return_focus;
+
+    // Composite miniwindows onto the output DC.
     std::function<void(wxDC& dc, int clientW, int clientH, bool bUnder)>
         m_fn_composite_miniwindows;
 
-    // Optional mouse-event callbacks for miniwindow hotspot routing.
-    // Coordinates are client-space (same system as mw->m_rect).
-    // flags carries the button identity: 0x10=LH, 0x20=RH; add 0x40 for dbl.
-    // Return true if the event was consumed by a miniwindow (caller should
-    // then skip the normal text-selection handling for that event).
+    // Miniwindow mouse routing.  Return true if the event was consumed.
     std::function<bool(int x, int y, long flags)> m_fn_miniwindow_mouse_down;
     std::function<bool(int x, int y, long flags)> m_fn_miniwindow_mouse_up;
+    std::function<void(int x, int y)>              m_fn_miniwindow_mouse_move;
+    std::function<bool(int x, int y, int delta)>   m_fn_miniwindow_mouse_wheel;
 
-    // Mouse-move callback: always called (no return value; fires hover scripts).
-    std::function<void(int x, int y)> m_fn_miniwindow_mouse_move;
-
-    // Mouse-wheel callback for miniwindow hotspots.
-    // delta > 0 = scroll up (forward), delta < 0 = scroll down (backward).
-    // Return true if the event was consumed by a miniwindow hotspot.
-    std::function<bool(int x, int y, int delta)> m_fn_miniwindow_mouse_wheel;
-
-    // Optional callback invoked when the user clicks an MXP hyperlink run.
-    // action is the pipe-delimited command string from the MXP anchor.
-    // The frame should pass this to EvaluateCommand() on the active doc.
+    // Called when the user clicks an MXP hyperlink run.
     std::function<void(const std::string& action)> m_fn_link_clicked;
 
 private:
@@ -174,11 +151,17 @@ private:
     void OnPaint(wxPaintEvent& evt);
     void OnSize(wxSizeEvent& evt);
 
+    // Render one line.  lineIdx is the index in m_lines; yOff is the
+    // y-pixel of the line's top edge in virtual (unscrolled) coordinates.
+    void DrawLine(wxDC& dc, int lineIdx, int yOff);
+
+    // Draw a single text chunk from a run with the given selection inversion.
+    void DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
+                      const SOutputRun& run, bool selected);
+
     // ── Scroll ────────────────────────────────────────────────────────────────
-    // Handles scrollbar thumb drag and button clicks so m_autoScroll is updated
-    // whenever the user scrolls via the scrollbar (not just wheel/keyboard).
-    // Bound in the constructor via Bind() for each wxEVT_SCROLLWIN_* type.
     void OnScrollWinUpdate(wxScrollWinEvent& evt);
+    void UpdateScrollbars(bool scrollToBottom);
 
     // ── Mouse / keyboard ─────────────────────────────────────────────────────
     void OnLeftDown(wxMouseEvent& evt);
@@ -195,53 +178,49 @@ private:
     void OnMenuSelectAll(wxCommandEvent& evt);
     void OnMenuClear(wxCommandEvent& evt);
 
-    // ── Scroll helpers ───────────────────────────────────────────────────────
-    // Recalculate virtual size and (optionally) scroll to the bottom.
-    void UpdateScrollbars(bool scrollToBottom);
+    // ── Selection helpers ────────────────────────────────────────────────────
 
-    // Convert a client-coordinates y pixel to a line index in m_lines.
-    int  YToLine(int y) const;
+    // Convert client-coordinates y to a line index.
+    int YToLine(int clientY) const;
 
-    // Render one line onto dc at y-pixel offset yOff.
-    void DrawLine(wxDC& dc, const SOutputLine& line, int yOff);
+    // Convert a line index + client-coordinates x to a character column.
+    // Column is a cursor position: 0 = before first char, n = after nth char.
+    int XToChar(int lineIdx, int clientX) const;
 
-    // Rebuild the plain-text representation of selected lines for the clipboard.
+    // Build a SelPoint from a mouse event position.
+    SelPoint MouseToSelPoint(const wxMouseEvent& evt) const;
+
+    // Fills start/end with the normalised (start <= end) selection.
+    // Returns false if there is no selection (both points invalid or equal).
+    bool GetNormalizedSel(SelPoint& start, SelPoint& end) const;
+
+    // Rebuild selected text for the clipboard.
     wxString SelectedText() const;
 
     // ── State ────────────────────────────────────────────────────────────────
-    std::deque<SOutputLine> m_lines;     // scrollback buffer
-    int                     m_maxLines;  // buffer cap
+    std::deque<SOutputLine> m_lines;
+    int                     m_maxLines;
 
-    wxFont m_font;                    // current display font
-    int    m_fontSize = kDefaultFontSize;  // current point size (drives font zoom)
-    int    m_lineH    = 16;          // line height in pixels (updated from font metrics)
-    int    m_charW    = 8;           // average char width (for column estimates)
+    wxFont m_font;
+    int    m_fontSize = kDefaultFontSize;
+    int    m_lineH    = 18;   // line height pixels (set from font metrics)
+    int    m_charW    = 10;   // avg char width pixels
 
-    // Estimated character count for the widest line seen; used to size the
-    // horizontal virtual extent.  Tracked cheaply (per-line char count only;
-    // pixel-exact measurement would require a DC).  Cleared on ClearOutput
-    // and font change (where charW changes).
-    int    m_maxLineChars = 80;       // tracks widest line in char units
+    int    m_maxLineChars = 80;   // widest line seen, in characters
 
-    // Selection: line indices (inclusive), -1 = no selection
-    int  m_selStartLine = -1;
-    int  m_selEndLine   = -1;
+    // Selection: anchor is where the mouse went down; focus tracks the drag.
+    // When anchor == focus, there is no selection (just a cursor position).
+    SelPoint m_selAnchor;
+    SelPoint m_selFocus;
 
-    // Current search term (empty = no active search).
-    // Lines containing this term are highlighted with a dim underline tint.
     wxString m_searchTerm;
 
-    // Pane default background colour as COLORREF (RGB packed, 0 = black).
-    unsigned long m_bgColor = 0;
+    unsigned long m_bgColor  = 0;   // COLORREF
+    int           m_batchDepth = 0;
 
-    // Batch-update depth counter: when > 0, AppendLine defers refresh.
-    int  m_batchDepth = 0;
-
-    // Mouse tracking for click-drag selection
     bool m_dragging   = false;
     int  m_dragStartY = 0;
 
-    // Auto-scroll: true while the view is pinned to the bottom
     bool m_autoScroll = true;
 
     wxDECLARE_EVENT_TABLE();

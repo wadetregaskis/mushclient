@@ -1,9 +1,9 @@
 #include "stdafx.h"
-#include "..\mainfrm.h"
-#include "..\MUSHclient.h"
-#include "..\doc.h"
-#include "..\dialogs\FunctionListDlg.h"
-#include "..\dialogs\CompleteWordDlg.h"
+#include "../mainfrm.h"
+#include "../MUSHclient.h"
+#include "../doc.h"
+#include "../dialogs/FunctionListDlg.h"
+#include "../dialogs/CompleteWordDlg.h"
 
 #define FUNCTIONS_FIRST_MENU 10000
 #define FUNCTIONS_MENU_COUNT 30   // number of functions menu items we support
@@ -605,6 +605,7 @@ void CMainFrame::OnGameFunctionslist()
   ShowFunctionslist (s, true);
   }
 
+#ifdef _WIN32
 void ShowHelp (const CString strPrefix, const CString strTopic)
   {
 CWinApp* pApp = AfxGetApp();
@@ -628,6 +629,9 @@ CString strCommand;
     ::WinHelp (Frame, pApp->m_pszHelpFilePath, HELP_COMMAND, (DWORD) (LPCTSTR) strCommand);
 
   } // end of ShowHelp 
+#else
+void ShowHelp(const CString, const CString) {}
+#endif // _WIN32
 
 
 void FunctionMenu (CEdit & editctrl, const bool bLua, set<string> * extraItems, const bool bFunctions)

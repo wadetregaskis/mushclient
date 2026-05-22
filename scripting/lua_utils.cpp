@@ -40,19 +40,21 @@
 // Also see: lua_compress.c  for some more utils.xxx functions
 
 #include "stdafx.h"
-#include "..\mainfrm.h"
-#include "..\MUSHclient.h"
-#include "..\doc.h"
-#include "..\dialogs\LuaInputBox.h"
-#include "..\dialogs\LuaInputEditDlg.h"
-#include "..\dialogs\SpellCheckDlg.h"
-#include "..\dialogs\LuaChooseBox.h"
-#include "..\dialogs\LuaChooseList.h"
-#include "..\dialogs\LuaChooseListMulti.h"
-#include "..\dialogs\FunctionListDlg.h"
-#include "..\dmetaph.h"
+#include "../mainfrm.h"
+#include "../MUSHclient.h"
+#include "../doc.h"
+#include "../dialogs/LuaInputBox.h"
+#include "../dialogs/LuaInputEditDlg.h"
+#include "../dialogs/SpellCheckDlg.h"
+#include "../dialogs/LuaChooseBox.h"
+#include "../dialogs/LuaChooseList.h"
+#include "../dialogs/LuaChooseListMulti.h"
+#include "../dialogs/FunctionListDlg.h"
+#include "../dmetaph.h"
+#ifdef _WIN32
 #include <direct.h>
 #include <wingdi.h>
+#endif
 
 extern char working_dir [_MAX_PATH];
 extern tInfoTypeMapping InfoTypes [];
@@ -956,8 +958,13 @@ static int info (lua_State *L)
     {
     CString strPath (p);
     free (p);
+#ifdef _WIN32
     if (strPath.Right (1) != "\\")
       strPath += "\\"; // append trailing backslash
+#else
+    if (strPath.Right (1) != "/")
+      strPath += "/"; // append trailing slash
+#endif
     MakeTableItem (L, "current_directory", strPath);
     }
 
@@ -1108,7 +1115,7 @@ unsigned char utf8 [10];    // UTF-8 should be max 6 characters
 
 // convert the supplied string into UTF-8
 
-// / print (utils.utf8convert ("^You put (.*?) (.*?) FaetorAde ® into a Bag of Aardwolf\.$"))
+// / print (utils.utf8convert ("^You put (.*?) (.*?) FaetorAde ï¿½ into a Bag of Aardwolf\.$"))
 
 static int utf8convert (lua_State *L) {
   const unsigned char * s = (const unsigned char *) luaL_checkstring (L, 1);
@@ -1191,7 +1198,7 @@ const char * data = luaL_checkstring (L, 1);
 
   lua_newtable (L);    // table of wide characters
 
-  register const unsigned char *p = (const unsigned char *) data;
+  const unsigned char *p = (const unsigned char *) data;
 
   int i = 1;   // table item number
 
@@ -1201,13 +1208,13 @@ const char * data = luaL_checkstring (L, 1);
 
   for (p = (const unsigned char *) data; *p; i++)
     {
-    register int c = *p++;
+    int c = *p++;
     unsigned long num = 0;
     if (c < 128)
       num = c;  // normal character, 0 to 0x7F - just a single byte
     else if ((c & 0xc0) == 0xc0)
       {         // start of UTF8 sequence
-      register int ab = _pcre_utf8_table4[c & 0x3f];  // Number of additional bytes
+      int ab = _pcre_utf8_table4[c & 0x3f];  // Number of additional bytes
 
       // first extract the remaining bits from the first byte
       switch (ab)
@@ -1283,14 +1290,14 @@ const char * data = luaL_checklstring (L, 1, &length);
   lua_newtable (L);    // table of wide characters
 
   // cast to unsigned so we don't have problems with negative numbers
-  register const unsigned char *p = (const unsigned char *) data;
+  const unsigned char *p = (const unsigned char *) data;
 
   int item;   // table item number
 
   for (item = 1; length-- > 0; item++)
     {
-    register int ab;
-    register int c = *p++;
+    int ab;
+    int c = *p++;
     unsigned long num = 0;
 
     if (c < 128) 
@@ -1391,12 +1398,12 @@ const char * data = luaL_checklstring (L, 1, &length);
 
   // this algorithm assumes the UTF-8 is OK, based on the earlier check
 
-  for (register const unsigned char *p = (const unsigned char *) data ; 
+  for (const unsigned char *p = (const unsigned char *) data ; 
        length-- > 0; 
        i++)
     {          
-    register int ab;    // additional bytes
-    register int c = *p++;  // this byte
+    int ab;    // additional bytes
+    int c = *p++;  // this byte
 
     if (c < 128)
       continue;     // zero additional bytes
@@ -1433,14 +1440,14 @@ static int utf8sub (lua_State *L) {
 
   int iUtf8Length = 0;   // length in code points
 
-  register const unsigned char *p;
+  const unsigned char *p;
 
   // this algorithm assumes the UTF-8 is OK, based on the earlier check
 
   for (p = (const unsigned char *) s ; length-- > 0; iUtf8Length++)
     {          
-    register int ab;    // additional bytes
-    register int c = *p++;  // this byte
+    int ab;    // additional bytes
+    int c = *p++;  // this byte
 
     if (c < 128)
       continue;     // zero additional bytes
@@ -1490,8 +1497,8 @@ static int utf8sub (lua_State *L) {
         break;
         }
 
-      register int ab;    // additional bytes
-      register int c = *p++;  // this byte
+      int ab;    // additional bytes
+      int c = *p++;  // this byte
 
       if (c < 128)
         continue;     // zero additional bytes
@@ -1545,14 +1552,14 @@ static int showdebugstatus (lua_State *L)
   } 
 
 
+#ifdef _WIN32
 static int __stdcall EnumFontFamExProc (CONST LOGFONTA * lpelfe,   // pointer to logical-font data
                                  CONST TEXTMETRICA * lpntme,// pointer to physical-font data
                                  DWORD FontType,            // type of font
                                  LPARAM L_state)            // application-defined data
-                                                            
+
   {
   lua_State *L = (lua_State *) L_state;
-
 
   lua_pushstring (L, lpelfe->lfFaceName);
   lua_pushboolean (L, true);
@@ -1560,12 +1567,14 @@ static int __stdcall EnumFontFamExProc (CONST LOGFONTA * lpelfe,   // pointer to
 
   return 1;   // keep enumerating
   } // end of EnumFontFamExProc
+#endif // _WIN32
 
 
 static int getfontfamilies (lua_State *L)
   {
   lua_newtable(L);    // table of entries
 
+#ifdef _WIN32
   CDC dc;
 
   dc.CreateCompatibleDC (NULL);
@@ -1583,9 +1592,9 @@ static int getfontfamilies (lua_State *L)
                       EnumFontFamExProc,  // pointer to callback function
                       (long) L,           // application-supplied data
                       0);                 // reserved; must be zero
+#endif // _WIN32
 
-
-  return 1;  // one table of entries
+  return 1;  // one table of entries (empty on non-Windows)
 
   }
 
@@ -1687,7 +1696,7 @@ static int shell_execute (lua_State *L)
   const char * err = NULL;
   char buf [50];  // for unknown error codes
 
-  int result = (int) ShellExecute (NULL, 
+  int result = (int)(intptr_t) ShellExecute (NULL, 
                                   operation, 
                                   filename, 
                                   params [0] ? params : NULL ,
@@ -1714,7 +1723,7 @@ static int shell_execute (lua_State *L)
       err = "The specified path was not found."; 
       break;
     case ERROR_BAD_FORMAT : 
-      err = "The .exe file is invalid (non-Win32® .exe or error in .exe image)."; 
+      err = "The .exe file is invalid (non-Win32ï¿½ .exe or error in .exe image)."; 
       break;
     case SE_ERR_ACCESSDENIED : 
       err = "The operating system denied access to the specified file."; 
@@ -1939,8 +1948,9 @@ typedef struct tagGLYPHSET
 */
 
 // sees if a glyph is available in the current font
-static int glyph_available (lua_State *L) 
+static int glyph_available (lua_State *L)
   {
+#ifdef _WIN32
   // which glyph?
   const char * fontName   = luaL_checkstring (L, 1);
 
@@ -1948,11 +1958,11 @@ static int glyph_available (lua_State *L)
 	HMODULE hDLL = LoadLibrary ("gdi32");
   if (!hDLL)
     {
-    lua_pushnil (L); 
+    lua_pushnil (L);
     return 1;
     }
 
-  // make a device contect
+  // make a device context
   CDC dc;
   dc.CreateCompatibleDC (NULL);
 
@@ -1960,19 +1970,19 @@ static int glyph_available (lua_State *L)
   CFont font;
 
   // select requested font into it
-  font.CreateFont(lfHeight, // int nHeight, 
-        0,                  // int nWidth, 
-        0,                  // int nEscapement, 
-        0,                  // int nOrientation, 
-        FW_DONTCARE,        // int nWeight, 
-        0,                  // BYTE bItalic, 
-        0,                  // BYTE bUnderline, 
-        0,                  // BYTE cStrikeOut, 
-        DEFAULT_CHARSET,    // BYTE nCharSet, 
-        OUT_DEVICE_PRECIS,  // BYTE nOutPrecision, 
-        CLIP_DEFAULT_PRECIS,// BYTE nClipPrecision, 
-        DEFAULT_QUALITY,    // BYTE nQuality, 
-        FF_DONTCARE,        // BYTE nPitchAndFamily,  
+  font.CreateFont(lfHeight, // int nHeight,
+        0,                  // int nWidth,
+        0,                  // int nEscapement,
+        0,                  // int nOrientation,
+        FW_DONTCARE,        // int nWeight,
+        0,                  // BYTE bItalic,
+        0,                  // BYTE bUnderline,
+        0,                  // BYTE cStrikeOut,
+        DEFAULT_CHARSET,    // BYTE nCharSet,
+        OUT_DEVICE_PRECIS,  // BYTE nOutPrecision,
+        CLIP_DEFAULT_PRECIS,// BYTE nClipPrecision,
+        DEFAULT_QUALITY,    // BYTE nQuality,
+        FF_DONTCARE,        // BYTE nPitchAndFamily,
         fontName);          // LPCTSTR lpszFacename
 
   dc.SelectObject(font);
@@ -1994,13 +2004,18 @@ static int glyph_available (lua_State *L)
 	  if ((*pGetGlyphIndicesW)((HDC) dc.m_hDC, (LPCWSTR) &glyph, 1,
 	                            &indice, GGI_MARK_NONEXISTING_GLYPHS ) != GDI_ERROR &&
 	          indice != 0xffff)
-      lua_pushnumber (L, indice);  
+      lua_pushnumber (L, indice);
     else
-      lua_pushnumber (L, 0); 
+      lua_pushnumber (L, 0);
     }
   else
-    lua_pushnumber (L, 0); 
-  
+    lua_pushnumber (L, 0);
+
+#else // !_WIN32
+  // glyph availability queries are not supported on non-Windows
+  lua_pushnumber (L, 0);
+#endif // _WIN32
+
   return 1;   // one result
 
   /*

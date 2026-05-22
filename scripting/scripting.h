@@ -3,11 +3,14 @@
 extern "C"
   {
 #ifdef LUA_52
-    #include "..\..\lua52\src\lua.h"
-    #include "..\..\lua52\src\lauxlib.h"
+    #include "../../lua52/src/lua.h"
+    #include "../../lua52/src/lauxlib.h"
+#elif defined(_WIN32)
+    #include "../lua.h"
+    #include "../lauxlib.h"
 #else
-    #include "..\lua.h"
-    #include "..\lauxlib.h"
+    #include "lua.h"
+    #include "lauxlib.h"
 #endif
   }
 
@@ -32,10 +35,12 @@ class CScriptEngine : public CObject
       {
       m_pDoc = pDoc;
       m_strLanguage = strLanguage;
+#ifdef _WIN32
       m_IActiveScript = NULL;
       m_IActiveScriptParse = NULL;
       m_site = NULL;
       m_pDispatch = NULL;
+#endif
       L = NULL;
       };  // end of constructor
 
@@ -101,10 +106,12 @@ class CScriptEngine : public CObject
 
   private:
 
+#ifdef _WIN32
   IActiveScript       * m_IActiveScript;          // VBscript interface
   IActiveScriptParse  * m_IActiveScriptParse;     // parser
   CActiveScriptSite   * m_site;                   // our local site (world object)
   IDispatch           * m_pDispatch;              // script engine dispatch pointer
+#endif
 
   CMUSHclientDoc      * m_pDoc;                   // related MUSHclient document
 

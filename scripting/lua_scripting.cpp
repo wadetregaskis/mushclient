@@ -1,15 +1,23 @@
 // General Lua scripting support
 
 #include "stdafx.h"
-#include "..\mainfrm.h"
-#include "..\MUSHclient.h"
-#include "..\doc.h"
-#include "..\dialogs\ScriptErrorDlg.h"
-#include <io.h>  // for popen
-#include <fcntl.h>  // for popen
-#include "..\pcre\config.h"
-#include "..\pcre\pcre_internal.h"
-#include "..\luacom\luacom.h"
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
+  #include "../mainfrm.h"
+  #include "../MUSHclient.h"
+  #include "../doc.h"
+  #include "../dialogs/ScriptErrorDlg.h"
+#ifdef _WIN32
+  #include <io.h>     // Windows low-level I/O (_open, _read, …)
+#endif
+  #include <fcntl.h>
+  #include "../pcre/config.h"
+  #include "../pcre/pcre_internal.h"
+  #include "../luacom/luacom.h"
+#else
+  #include "platform/doc_stub.h"
+  #include "pcre/pcre.h"
+  #include <time.h>
+#endif
 
 set<string> LuaFunctionsSet;
 set<string> LuaTablesSet;
@@ -26,7 +34,9 @@ extern "C"
 
 //LUALIB_API int luaopen_trie(lua_State *L);
 
+#ifdef _WIN32
 LUALIB_API int luaopen_progress_dialog(lua_State *L);
+#endif
 
 static void BuildOneLuaFunction (lua_State * L, const char * sTableName)
   {
@@ -163,12 +173,14 @@ static void BuildLuaTables (lua_State * L)
 
   } // end of BuildLuaTables
 
+#ifdef _WIN32
 // sigh - luacom_open returns void
 int luacom_open_glue (lua_State *L)
   {
   luacom_open (L);
   return 0;
   }
+#endif
 
 // I need this extra function to avoid:
 // Compiler Error C2712
@@ -185,12 +197,14 @@ void CScriptEngine::OpenLuaDelayed ()
   lua_pushlightuserdata(L, (void *)m_pDoc);    /* push value */
   lua_setfield (L, LUA_REGISTRYINDEX, DOCUMENT_STATE);  // document pointer into registry
 
-  CallLuaCFunction (L, RegisterLuaRoutines);    // register our stuff
+  CallLuaCFunction (L, RegisterLuaRoutines);    // our stuff
   CallLuaCFunction (L, luaopen_rex);            // regular expression library
   CallLuaCFunction (L, luaopen_bits);           // bit manipulation library
   CallLuaCFunction (L, luaopen_compress);       // compression (utils) library
-  CallLuaCFunction (L, luaopen_progress_dialog);// progress dialog
-  CallLuaCFunction (L, luaopen_bc);             // open bc library   
+#ifdef _WIN32
+  CallLuaCFunction (L, luaopen_progress_dialog);// progress dialog (Windows GUI only)
+#endif
+  CallLuaCFunction (L, luaopen_bc);             // open bc library
   CallLuaCFunction (L, luaopen_lsqlite3);       // open sqlite library
   CallLuaCFunction (L, luaopen_lpeg);           // open lpeg library
 
@@ -206,7 +220,8 @@ void CScriptEngine::OpenLuaDelayed ()
   // unless they explicitly enable it, remove ability to load DLLs
   DisableDLLs (L);
 
-  // add luacom to package.preload
+#ifdef _WIN32
+  // add luacom to package.preload (Windows COM automation, not available on macOS)
   lua_getglobal (L, LUA_LOADLIBNAME);  // package table
 
   if (lua_istable (L, -1))    // if it exists and is a table
@@ -216,13 +231,14 @@ void CScriptEngine::OpenLuaDelayed ()
     if (lua_istable (L, -1))   // preload table exists
       {
       lua_pushcfunction(L, luacom_open_glue);   // luacom open
-      lua_setfield(L, -2, "luacom");          
+      lua_setfield(L, -2, "luacom");
       } // have package.preload table
 
     lua_pop (L, 1);   // get rid of preload table from stack
     } // have package table
 
   lua_pop (L, 1);   // get rid of package table from stack
+#endif
 
   // this is so useful I am adding it in (see check.lua)
   ParseLua ( \
@@ -269,6 +285,7 @@ bool CScriptEngine::ParseLua (const CString & strCode, const CString & strWhat)
   LARGE_INTEGER start, 
                 finish;
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     QueryPerformanceCounter (&start);
   else
@@ -276,6 +293,9 @@ bool CScriptEngine::ParseLua (const CString & strCode, const CString & strWhat)
     start.QuadPart = 0;
     finish.QuadPart = 0;
     }
+#else
+  start.QuadPart = 0; finish.QuadPart = 0;
+#endif
 
 
   // note - an error here is a *compile* error
@@ -298,6 +318,7 @@ bool CScriptEngine::ParseLua (const CString & strCode, const CString & strWhat)
 
 // -----------------
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     {
     QueryPerformanceCounter (&finish);
@@ -305,6 +326,7 @@ bool CScriptEngine::ParseLua (const CString & strCode, const CString & strWhat)
     if (m_pDoc->m_CurrentPlugin)
       m_pDoc->m_CurrentPlugin->m_iScriptTimeTaken += finish.QuadPart - start.QuadPart;
     }
+#endif
 
   return false;
 
@@ -325,132 +347,130 @@ DISPID CScriptEngine::GetLuaDispid (const CString & strName)
   }
 
 
-void LuaError (lua_State *L, 
+void LuaError (lua_State *L,
                 LPCTSTR strEvent,
                 LPCTSTR strProcedure,
                 LPCTSTR strType,
                 LPCTSTR strReason,
                 CMUSHclientDoc * pDoc)
-  {    
-  CScriptErrorDlg dlg;
-
+  {
+  // Collect the description and caller info into plain CStrings so both
+  // the Windows dialog path and the portable path can share them.
+  CString strCalledBy;
   if (!strlen (strProcedure) == 0)
     {
-    dlg.m_strCalledBy = "Function/Sub: ";
-    dlg.m_strCalledBy += strProcedure;
-    dlg.m_strCalledBy += " called by ";
-    dlg.m_strCalledBy += strType;
-    dlg.m_strCalledBy += ENDLINE;
-    dlg.m_strCalledBy += "Reason: ";
-    dlg.m_strCalledBy += strReason;
+    strCalledBy = "Function/Sub: ";
+    strCalledBy += strProcedure;
+    strCalledBy += " called by ";
+    strCalledBy += strType;
+    strCalledBy += ENDLINE;
+    strCalledBy += "Reason: ";
+    strCalledBy += strReason;
     }
   else
-    {
-    dlg.m_strCalledBy = "Immediate execution";
+    strCalledBy = "Immediate execution";
 
-/*    dlg.m_strDescription += ENDLINE;
-    dlg.m_strDescription += "Line in error: ";
-    dlg.m_strDescription += ENDLINE;
-    dlg.m_strDescription += bstr;
-*/
-    }
-
-  dlg.m_strEvent = strEvent;
-  dlg.m_strDescription = lua_tostring(L, -1);
+  CString strDescription = lua_tostring(L, -1);
   lua_settop(L, 0);   // clear stack
 
-  dlg.m_strRaisedBy = "No active world";
-
+  CString strRaisedBy = "No active world";
   if (pDoc)
     {
     if (pDoc->m_CurrentPlugin)
       {
-      dlg.m_strRaisedBy = "Plugin: " +  pDoc->m_CurrentPlugin->m_strName;
-      dlg.m_strRaisedBy += " (called from world: " + pDoc->m_mush_name + ")";
+      strRaisedBy = "Plugin: " + pDoc->m_CurrentPlugin->m_strName;
+      strRaisedBy += " (called from world: " + pDoc->m_mush_name + ")";
       }
-    else 
-      dlg.m_strRaisedBy = "World: " + pDoc->m_mush_name;
+    else
+      strRaisedBy = "World: " + pDoc->m_mush_name;
     }
 
   // work out the line number where the error is
   bool bImmediate = true;
   int nLine = 0;
 
-  if (dlg.m_strDescription.Left (18) == "[string \"Plugin\"]:")
+  if (strDescription.Left (18) == "[string \"Plugin\"]:")
     {
     bImmediate = false;
-    nLine = atoi (dlg.m_strDescription.Mid (18));
+    nLine = atoi (strDescription.Mid (18));
     }
-  else if (dlg.m_strDescription.Left (23) == "[string \"Script file\"]:")
+  else if (strDescription.Left (23) == "[string \"Script file\"]:")
     {
     bImmediate = false;
-    nLine = atoi (dlg.m_strDescription.Mid (23));
+    nLine = atoi (strDescription.Mid (23));
     }
 
-  // if no document, or errors to the output window are not wanted, display the dialog box
+#ifdef _WIN32
+  // Windows: show the GUI dialog or route to the output window
+  CScriptErrorDlg dlg;
+  dlg.m_strCalledBy   = strCalledBy;
+  dlg.m_strEvent       = strEvent;
+  dlg.m_strDescription = strDescription;
+  dlg.m_strRaisedBy    = strRaisedBy;
+
   if (!pDoc || !pDoc->m_bScriptErrorsToOutputWindow)
     {
     if (pDoc)
       dlg.m_bHaveDoc = true;
     dlg.DoModal ();
 
-    // do they want to change from the dialog box to the output window?
     if (pDoc && dlg.m_bUseOutputWindow)
       {
       pDoc->m_bScriptErrorsToOutputWindow = true;
       pDoc->SetModifiedFlag (TRUE);
-      }  // end of future errors wanted in output window
-
-    }   // end of dialog box wanted
+      }
+    }
   else
     {
     pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, strEvent);
-    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, dlg.m_strRaisedBy);
-    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, dlg.m_strCalledBy);
-    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, dlg.m_strDescription);
-
-    // show bad lines?
+    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, strRaisedBy);
+    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, strCalledBy);
+    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, strDescription);
     if (!bImmediate)
       pDoc->ShowErrorLines (nLine);
-    
-    }  // end of showing in output window
+    }
 
+#else
+  // macOS / non-Windows: print to stderr
+  fprintf (stderr, "[LuaError] %s\n", strEvent);
+  fprintf (stderr, "  %s\n", (const char *) strRaisedBy);
+  fprintf (stderr, "  %s\n", (const char *) strCalledBy);
+  fprintf (stderr, "  %s\n", (const char *) strDescription);
+  (void) bImmediate; (void) nLine;
+#endif
 
   // if option "log_script_errors" is active, append to the error log file
   if (pDoc && pDoc->m_bLogScriptErrors)
     {
-    string fileName = App.m_strDefaultLogFileDirectory;
+    string fileName = App.m_strDefaultLogFileDirectory.c_str();
     fileName += "script_error_log.txt";
 
     FILE * errorLogFile = fopen (fileName.c_str(), "a+");
     if (!errorLogFile)
       {
-      pDoc->ColourTell (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, "Cannot open error log file: ");
-      pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, fileName.c_str());
+      fprintf (stderr, "Cannot open error log file: %s\n", fileName.c_str());
       }
     else
       {
       CTime timeNow = CTime::GetCurrentTime();
-
       CString strConnected = timeNow.Format (
           TranslateTime ("\n\n--- Scripting error on %A, %B %d, %Y, %#I:%M %p ---\n\n"));
-      fputs ((LPCTSTR) strConnected, errorLogFile); 
-      fputs (strEvent, errorLogFile); 
+      fputs ((LPCTSTR) strConnected, errorLogFile);
+      fputs (strEvent, errorLogFile);
       fputs ("\n", errorLogFile);
-      fputs (dlg.m_strRaisedBy, errorLogFile); 
+      fputs (strRaisedBy, errorLogFile);
       fputs ("\n", errorLogFile);
-      fputs (dlg.m_strCalledBy, errorLogFile); 
+      fputs (strCalledBy, errorLogFile);
       fputs ("\n", errorLogFile);
-      fputs (dlg.m_strDescription, errorLogFile); 
+      fputs (strDescription, errorLogFile);
       fputs ("\n", errorLogFile);
-      // show bad lines?
+#ifdef _WIN32
       if (!bImmediate)
         pDoc->WriteErrorLines (nLine, errorLogFile);
+#endif
       fclose (errorLogFile);
-      }   // end of file opened OK
-      
-
-    } // end of have a document, and the error file is wanted
+      }
+    }
 
   }   // end of LuaError
 
@@ -489,6 +509,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
       ON_PLUGIN_TICK != szProcedure)
     m_pDoc->Trace (TFormat ("Executing %s script \"%s\"", szType, szProcedure));
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     QueryPerformanceCounter (&start);
   else
@@ -496,6 +517,9 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
     start.QuadPart = 0;
     finish.QuadPart = 0;
     }
+#else
+  start.QuadPart = 0; finish.QuadPart = 0;
+#endif
              
   unsigned short iOldStyle = m_pDoc->m_iNoteStyle;
   m_pDoc->m_iNoteStyle = NORMAL;    // back to default style
@@ -652,6 +676,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
 
   nInvocationCount++;   // count number of times used
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     {
     QueryPerformanceCounter (&finish);
@@ -659,6 +684,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
     if (m_pDoc->m_CurrentPlugin)
       m_pDoc->m_CurrentPlugin->m_iScriptTimeTaken += finish.QuadPart - start.QuadPart;
     }
+#endif
 
   if (result)
     {
@@ -710,6 +736,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
       ON_PLUGIN_TICK != szProcedure)
     m_pDoc->Trace (TFormat ("Executing %s script \"%s\"", szType, szProcedure));
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     QueryPerformanceCounter (&start);
   else
@@ -717,6 +744,9 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
     start.QuadPart = 0;
     finish.QuadPart = 0;
     }
+#else
+  start.QuadPart = 0; finish.QuadPart = 0;
+#endif
              
   unsigned short iOldStyle = m_pDoc->m_iNoteStyle;
   m_pDoc->m_iNoteStyle = NORMAL;    // back to default style
@@ -748,6 +778,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
 
   nInvocationCount++;   // count number of times used
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     {
     QueryPerformanceCounter (&finish);
@@ -755,6 +786,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
     if (m_pDoc->m_CurrentPlugin)
       m_pDoc->m_CurrentPlugin->m_iScriptTimeTaken += finish.QuadPart - start.QuadPart;
     }
+#endif
 
   if (lua_gettop (L) > 0 && lua_isstring (L, 1))
     {

@@ -1,13 +1,13 @@
 #include "stdafx.h"
-#include "..\mainfrm.h"
-#include "..\MUSHclient.h"
-#include "..\doc.h"
-#include "..\scripting\errors.h"
-#include "..\winplace.h"
-#include "..\TextDocument.h"
-#include "..\TextView.h"
-#include "..\sendvw.h"
-#include "..\dialogs\DebugLuaDlg.h"
+#include "../mainfrm.h"
+#include "../MUSHclient.h"
+#include "../doc.h"
+#include "../scripting/errors.h"
+#include "../winplace.h"
+#include "../TextDocument.h"
+#include "../TextView.h"
+#include "../sendvw.h"
+#include "../dialogs/DebugLuaDlg.h"
 
 const char mushclient_typename[] = "mushclient.world";
 
@@ -7799,7 +7799,7 @@ int RegisterLuaRoutines (lua_State *L)
   // add the __index metamethod to the world library
   lua_newtable (L);                     // make a new table (the metatable)
 
-  // register the "world" library - leaves world library on stack
+  // the "world" library - leaves world library on stack
   luaL_register (L, WORLD_LIBRARY, worldlib);
 
   // make our new metatable.__index entry point to the world table

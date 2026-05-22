@@ -3,13 +3,15 @@
 //  See lua_scripting.cpp for Lua-related scripting
 
 #include "stdafx.h"
-#include "..\mainfrm.h"
-#include "..\MUSHclient.h"
-#include <process.h>    
+#include "../mainfrm.h"
+#include "../MUSHclient.h"
+#ifdef _WIN32
+#include <process.h>
+#endif
 
-#include "..\doc.h"
-#include "..\dialogs\ImmediateDlg.h"
-#include "..\dialogs\world_prefs\MissingEntryPoints.h"
+#include "../doc.h"
+#include "../dialogs/ImmediateDlg.h"
+#include "../dialogs/world_prefs/MissingEntryPoints.h"
 
 #ifdef _DEBUG
 #undef THIS_FILE
@@ -261,6 +263,7 @@ pCmdUI->Enable (m_ScriptEngine != NULL);
 }
 
 
+#ifdef _WIN32
 // helper function to load a type description from the typelib that
 // is bound as a custom resource in this executable
 HRESULT LoadTypeInfoFromThisModule(REFIID riid, ITypeInfo **ppti) {
@@ -277,6 +280,7 @@ HRESULT LoadTypeInfoFromThisModule(REFIID riid, ITypeInfo **ppti) {
     }
     return hr;
 }
+#endif // _WIN32
 
 // ------------------- disable scripting -------------------------
 
@@ -293,6 +297,7 @@ void CMUSHclientDoc::DisableScripting (void)
   }   // end of CMUSHclientDoc::DisableScripting
 
 // ------------------- script file change monitoring thread -------------------------
+#ifdef _WIN32
 
 void CMUSHclientDoc::ThreadFunc(LPVOID pParam)
 {
@@ -366,6 +371,7 @@ void CMUSHclientDoc::CreateMonitoringThread()
 
 	// Thread will delete data object
 }
+#endif // _WIN32
 
 
 // ------------------- handle change to script file -------------------------

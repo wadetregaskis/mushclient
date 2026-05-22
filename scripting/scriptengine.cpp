@@ -1,8 +1,14 @@
 #include "stdafx.h"
-#include "..\mainfrm.h"
-#include "..\MUSHclient.h"
-#include "..\doc.h"
-#include "..\dialogs\ScriptErrorDlg.h"
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
+  #include "../mainfrm.h"
+  #include "../MUSHclient.h"
+  #include "../doc.h"
+  #include "../dialogs/ScriptErrorDlg.h"
+#else
+  #include "platform/doc_stub.h"
+#endif
+
+#ifdef _WIN32
 
 static CString strProcedure;
 static CString strType;
@@ -625,5 +631,78 @@ void CScriptEngine::DisableScripting (void)
     m_site = NULL;
     }
 
-  } // end of CScriptEngine::DisableScripting 
+  } // end of CScriptEngine::DisableScripting
+
+#else // !_WIN32  ── macOS / POSIX stubs for COM-based methods ────────────────
+
+// COM scripting (VBScript/JScript) is not supported on macOS.
+// All calls are no-ops or return "not available"; Lua scripting is handled
+// entirely by lua_scripting.cpp.
+
+bool CScriptEngine::Execute (DISPID& dispid,
+                              LPCTSTR, const unsigned short,
+                              LPCTSTR, LPCTSTR,
+                              DISPPARAMS&, long&, COleVariant*)
+  {
+  // Delegate to Lua if active; otherwise signal "not found".
+  if (L)
+    {
+    list<double> nparams;
+    list<string> sparams;
+    bool r = false;
+    long dummy = 0;
+    return ExecuteLua (dispid, "", 0, "", "", nparams, sparams, dummy,
+                       nullptr, nullptr, nullptr, &r);
+    }
+  if (dispid == DISPID_UNKNOWN) return false;
+  dispid = DISPID_UNKNOWN;
+  return true;
+  }
+
+bool CScriptEngine::CreateScriptEngine (void) { return false; }
+
+bool CScriptEngine::Parse (const CString& strCode, const CString& strWhat)
+  {
+  if (L) return ParseLua (strCode, strWhat);
+  return true; // error: no engine
+  }
+
+DISPID CScriptEngine::GetDispid (const CString& strName)
+  {
+  if (L) return GetLuaDispid (strName);
+  return DISPID_UNKNOWN;
+  }
+
+bool CScriptEngine::ShowError (const HRESULT, const CString) { return false; }
+
+void CScriptEngine::DisableScripting (void)
+  {
+  if (L) CloseLua ();
+  }
+
+#ifndef MUSHCLIENT_LUA_SCRIPTING  // lua_scripting.cpp not compiled — provide link-time stubs
+// These are defined in lua_scripting.cpp when Lua is found; provide no-op
+// stubs here so the library links without Lua installed.
+void  CScriptEngine::OpenLua ()         {}
+void  CScriptEngine::OpenLuaDelayed ()  {}
+void  CScriptEngine::CloseLua ()        { L = nullptr; }
+bool  CScriptEngine::ParseLua (const CString&, const CString&) { return true; }
+DISPID CScriptEngine::GetLuaDispid (const CString&) { return DISPID_UNKNOWN; }
+
+bool CScriptEngine::ExecuteLua (DISPID& dispid,
+                                 LPCTSTR, const unsigned short,
+                                 LPCTSTR, LPCTSTR,
+                                 list<double>&, list<string>&, long&,
+                                 const t_regexp*, map<string,string>*,
+                                 CPaneLine*, bool*)
+  { dispid = DISPID_UNKNOWN; return false; }
+
+bool CScriptEngine::ExecuteLua (DISPID& dispid,
+                                 LPCTSTR, const unsigned short,
+                                 LPCTSTR, LPCTSTR,
+                                 CString, long&, CString&)
+  { dispid = DISPID_UNKNOWN; return false; }
+#endif // !MUSHCLIENT_LUA_SCRIPTING
+
+#endif // _WIN32
 

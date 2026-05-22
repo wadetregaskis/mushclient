@@ -1,5 +1,7 @@
 // errors.h
 
+#pragma once
+
 // MUSHclient error codes - returned through OLE automation interfaces
 
 enum

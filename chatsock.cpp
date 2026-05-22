@@ -503,10 +503,10 @@ int count;
     if (count == SOCKET_ERROR && nError != WSAEWOULDBLOCK)
       {
       m_pDoc->ChatNote (eChatConnection,
-                  TFormat ("Unable to send to \"%s\", code = %i (%s)", 
-                      (LPCTSTR) m_strServerName, 
+                  TFormat ("Unable to send to \"%s\", code = %i (%s)",
+                      (LPCTSTR) m_strServerName,
                       nError,
-                      m_pDoc->GetSocketError (nError)));
+                      (LPCTSTR) m_pDoc->GetSocketError (nError)));
       ShutDownSocket (*this);
       m_outstanding_output.Empty ();
       OnClose (nError);      // ????
@@ -534,10 +534,10 @@ void CChatSocket::OnConnect(int nErrorCode)
   if (nErrorCode != 0)
     {
     m_pDoc->ChatNote (eChatConnection,
-                TFormat ("Unable to connect to \"%s\", code = %i (%s)", 
-                    (LPCTSTR) m_strServerName, 
+                TFormat ("Unable to connect to \"%s\", code = %i (%s)",
+                    (LPCTSTR) m_strServerName,
                     nErrorCode,
-                    m_pDoc->GetSocketError (nErrorCode)));
+                    (LPCTSTR) m_pDoc->GetSocketError (nErrorCode)));
     OnClose (nErrorCode);
     return;
     }
@@ -1095,11 +1095,19 @@ void CChatSocket::Process_File_start				  (const CString strMessage)
       }
     else
       {
+#ifdef _WIN32
       // want backslashes not forwards slashes
       m_pDoc->m_strChatSaveDirectory.Replace (_T("/"), _T("\\"));
-      // ensure trailing slash
+      // ensure trailing backslash
       if (m_pDoc->m_strChatSaveDirectory.Right (1) != TEXT ('\\'))
         m_pDoc->m_strChatSaveDirectory += "\\";
+#else
+      // normalize to forward slashes on POSIX
+      m_pDoc->m_strChatSaveDirectory.Replace (_T("\\"), _T("/"));
+      // ensure trailing slash
+      if (m_pDoc->m_strChatSaveDirectory.Right (1) != TEXT ('/'))
+        m_pDoc->m_strChatSaveDirectory += "/";
+#endif
   
       m_strOurFileName = m_pDoc->m_strChatSaveDirectory + m_strSenderFileName;
       }

@@ -31,13 +31,15 @@
 // hint:   flyover tooltip text from the MXP href hint attribute.
 struct SOutputRun {
     std::string text;
-    uint32_t    fg        = 0x00C0C0C0u;  // default: light grey  (RGB 192,192,192)
-    uint32_t    bg        = 0x00000000u;  // default: black        (RGB   0,  0,  0)
-    bool        bold      = false;
-    bool        underline = false;
-    bool        horiz_rule = false;       // true → render as a horizontal separator
-    std::string action;                   // MXP link action (empty = not a link)
-    std::string hint;                     // MXP link tooltip hint
+    uint32_t    fg            = 0x00C0C0C0u;  // default: light grey  (RGB 192,192,192)
+    uint32_t    bg            = 0x00000000u;  // default: black        (RGB   0,  0,  0)
+    bool        bold          = false;
+    bool        underline     = false;
+    bool        italic        = false;        // ANSI italic / MUSHclient BLINK mapped to italic
+    bool        strikethrough = false;        // ANSI strikethrough (STRIKEOUT flag)
+    bool        horiz_rule    = false;        // true → render as a horizontal separator
+    std::string action;                       // MXP link action (empty = not a link)
+    std::string hint;                         // MXP link tooltip hint
 };
 
 // ── SOutputLine ───────────────────────────────────────────────────────────────

@@ -892,11 +892,10 @@ int UMessageBox (const char * sText, UINT nType = MB_OK, const char * = "MUSHcli
 // translate lpszText and then call UMessageBox
 int TMessageBox (const char * sText, UINT nType = MB_OK);
 #else
-// Non-Windows: implemented in platform/windows_stubs.cpp (mushcore) and
-// platform/mushapp_stubs.cpp (mushapp/mushgui).  Both route through
-// g_wxhook_message_box when set (wxWidgets GUI); fall back to stderr otherwise.
-int UMessageBox (const char * sText, UINT nType = MB_OK, const char * caption = "MUSHclient");
-int TMessageBox (const char * sText, UINT nType = MB_OK);
+inline int UMessageBox (const char * sText, UINT = 0, const char * = "MUSHclient")
+  { fprintf(stderr, "MUSHclient: %s\n", sText); return 0; }
+inline int TMessageBox (const char * sText, UINT = 0)
+  { fprintf(stderr, "MUSHclient: %s\n", sText); return 0; }
 #endif // _WIN32
 // translate text
 CString TranslateGeneric (const char * sText, const char * sSection);

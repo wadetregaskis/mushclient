@@ -802,17 +802,28 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
                     tmp.iBackColour = m_iBackColour;
                     COLORREF fg, bg;
                     GetStyleRGB(&tmp, fg, bg);
-                    bool bold      = (m_iFlags & HILITE)    != 0;
-                    bool underline = (m_iFlags & UNDERLINE) != 0;
+                    bool bold          = (m_iFlags & HILITE)    != 0;
+                    bool underline     = (m_iFlags & UNDERLINE) != 0;
+                    bool italic        = (m_iFlags & BLINK)     != 0;  // MUSHclient maps BLINK → italic
+                    bool strikethrough = (m_iFlags & STRIKEOUT) != 0;
                     // Append to current run if style unchanged, else start new run.
-                    if (m_gui_line_buf.empty()                       ||
-                        m_gui_line_buf.back().fg        != fg        ||
-                        m_gui_line_buf.back().bg        != bg        ||
-                        m_gui_line_buf.back().bold      != bold      ||
-                        m_gui_line_buf.back().underline != underline)
+                    if (m_gui_line_buf.empty()                               ||
+                        m_gui_line_buf.back().fg            != fg            ||
+                        m_gui_line_buf.back().bg            != bg            ||
+                        m_gui_line_buf.back().bold          != bold          ||
+                        m_gui_line_buf.back().underline     != underline     ||
+                        m_gui_line_buf.back().italic        != italic        ||
+                        m_gui_line_buf.back().strikethrough != strikethrough)
                     {
-                        m_gui_line_buf.push_back(
-                            SOutputRun{std::string(1, (char)c), fg, bg, bold, underline});
+                        SOutputRun run;
+                        run.text          = std::string(1, (char)c);
+                        run.fg            = fg;
+                        run.bg            = bg;
+                        run.bold          = bold;
+                        run.underline     = underline;
+                        run.italic        = italic;
+                        run.strikethrough = strikethrough;
+                        m_gui_line_buf.push_back(std::move(run));
                     } else {
                         m_gui_line_buf.back().text += (char)c;
                     }

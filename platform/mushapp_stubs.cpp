@@ -175,8 +175,10 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
             if (pStyle->iLength > 0) {
                 SOutputRun run;
                 GetStyleRGB(pStyle, run.fg, run.bg);
-                run.bold      = (pStyle->iFlags & HILITE)    != 0;
-                run.underline = (pStyle->iFlags & UNDERLINE) != 0;
+                run.bold          = (pStyle->iFlags & HILITE)    != 0;
+                run.underline     = (pStyle->iFlags & UNDERLINE) != 0;
+                run.italic        = (pStyle->iFlags & BLINK)     != 0;  // MUSHclient maps BLINK → italic
+                run.strikethrough = (pStyle->iFlags & STRIKEOUT) != 0;
                 run.text = std::string(pLine->text + charOff, pStyle->iLength);
                 // MXP hyperlink / send-link: copy action and hint strings.
                 if (pStyle->pAction) {

@@ -89,6 +89,7 @@ private:
     std::vector<wxString> m_history;           // sent commands, oldest first
     int                   m_histIdx = -1;       // -1 = not browsing; ≥0 = index into m_history
     wxString              m_histSaved;          // text in input when user started browsing
+    bool                  m_histRSearch = false; // true = Ctrl+R substring mode (vs prefix)
     std::string           m_historyFilePath;    // per-world history file, fixed at construction
 
     // ── Tab completion ─────────────────────────────────────────────────────

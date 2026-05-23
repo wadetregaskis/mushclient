@@ -1627,9 +1627,10 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
 
     if (code == WXK_UP && inp == m_input) {
-        // Pressing Up exits any ongoing output-word tab cycle.
-        m_tabWordIdx = -1;
+        // Pressing Up exits any ongoing output-word tab cycle and Ctrl+R mode.
+        m_tabWordIdx  = -1;
         m_tabWords.clear();
+        m_histRSearch = false;  // ↑ always uses prefix (startsWith) match
         if (m_history.empty()) return;
         if (m_histIdx < 0) {
             // Start browsing: save the current partial input as the prefix filter.
@@ -1666,9 +1667,10 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
 
     if (code == WXK_DOWN && inp == m_input) {
-        // Pressing Down exits any ongoing output-word tab cycle.
-        m_tabWordIdx = -1;
+        // Pressing Down exits any ongoing output-word tab cycle and Ctrl+R mode.
+        m_tabWordIdx  = -1;
         m_tabWords.clear();
+        m_histRSearch = false;  // ↓ always uses prefix (startsWith) match
         if (m_histIdx < 0) { evt.Skip(); return; }
         wxString lpfx = m_histSaved.Lower();
         // Search forward for the next newer match.
@@ -1688,6 +1690,50 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
             m_input->SetValue(m_history[m_histIdx]);
         }
         m_input->SetInsertionPointEnd();
+        return;
+    }
+
+    // Ctrl+R: reverse incremental history search (substring match, newest first).
+    // Mirrors Ctrl+R in bash/zsh: each press cycles to the next older entry
+    // whose text contains the current input as a substring (case-insensitive).
+    // Not available in password mode.
+    if (code == 'R' && evt.ControlDown() && inp == m_input) {
+        m_tabWordIdx = -1;
+        m_tabWords.clear();
+        m_histRSearch = true;
+
+        // Use the current input as the query on first press; on subsequent
+        // presses keep m_histSaved (so editing history entries mid-cycle
+        // doesn't confuse the search).
+        wxString query = (m_histIdx < 0) ? m_input->GetValue() : m_histSaved;
+        wxString lq    = query.Lower();
+
+        int startFrom;
+        if (m_histIdx < 0) {
+            // Enter Ctrl+R mode: save the current text as the query.
+            m_histSaved = m_input->GetValue();
+            startFrom   = (int)m_history.size() - 1;
+        } else {
+            // Continue backward from one before the current position.
+            startFrom   = m_histIdx - 1;
+        }
+
+        int found = -1;
+        for (int i = startFrom; i >= 0; --i) {
+            bool match = lq.IsEmpty()
+                ? true
+                : m_history[i].Lower().Contains(lq);
+            if (match) { found = i; break; }
+        }
+
+        if (found >= 0) {
+            m_histIdx = found;
+            m_input->SetValue(m_history[m_histIdx]);
+            m_input->SetInsertionPointEnd();
+        } else if (m_histIdx < 0) {
+            // No match at all on first press — stay put (don't change input).
+        }
+        // If already cycling and there are no more older matches, stay put.
         return;
     }
 
@@ -1711,10 +1757,11 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
-    // Any non-navigation key cancels history browsing and output-word tab cycling.
+    // Any non-navigation key cancels history browsing, Ctrl+R mode, and tab cycling.
     if (code != WXK_UP && code != WXK_DOWN) {
-        m_histIdx    = -1;
-        m_tabWordIdx = -1;
+        m_histIdx     = -1;
+        m_histRSearch = false;
+        m_tabWordIdx  = -1;
         m_tabWords.clear();
     }
 
@@ -1763,7 +1810,7 @@ void CWorldChildFrame::OnInputPaste(wxClipboardTextEvent& evt)
     // Prepend whatever the user had already typed to the first pasted line.
     wxString prefix = m_input->GetValue();
     m_input->Clear();
-    m_histIdx = -1;  // exit history browsing
+    m_histIdx = -1; m_histRSearch = false;  // exit history browsing
 
     for (size_t i = 0; i + 1 < lines.size(); ++i) {
         wxString cmd = (i == 0) ? prefix + lines[i] : lines[i];
@@ -1800,7 +1847,7 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
 
     wxString text = inp->GetValue();
     inp->Clear();
-    m_histIdx = -1;   // exit history browsing on send
+    m_histIdx = -1; m_histRSearch = false;   // exit history browsing on send
 
     // Don't record passwords in history — m_bNoEcho signals a masked prompt.
     bool isPassword = m_doc->m_bNoEcho;

@@ -2221,9 +2221,43 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
 // ── OnClose ───────────────────────────────────────────────────────────────
 void CWorldChildFrame::OnClose(wxCloseEvent& evt)
 {
-    // Confirm before closing — only when the event can be vetoed (i.e. not a
-    // forced shutdown) and the global preference is set.
-    if (evt.CanVeto() && App.m_bConfirmBeforeClosingWorld && m_doc) {
+    // ── Unsaved-changes prompt ────────────────────────────────────────────
+    // If the document has been modified (triggers, aliases, properties changed)
+    // since it was last saved, offer to save before closing.
+    // Only when the close event can be vetoed (not a forced app shutdown).
+    if (evt.CanVeto() && m_doc && m_doc->IsModified()) {
+        wxString name = wxString::FromUTF8(
+            static_cast<const char*>(m_doc->m_mush_name));
+        if (name.IsEmpty()) name = wxT("this world");
+
+        int answer = wxMessageBox(
+            wxT("Save changes to ") + name + wxT(" before closing?"),
+            wxT("Unsaved Changes"),
+            wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_QUESTION, this);
+
+        if (answer == wxCANCEL) {
+            evt.Veto();
+            return;
+        }
+        if (answer == wxYES) {
+            // Attempt to save.  If the user cancels the save-as dialog (no path
+            // yet) or the save fails, veto the close so no work is lost.
+            if (g_wxhook_save_world) {
+                bool saved = g_wxhook_save_world(m_doc, /*saveAs=*/false, this);
+                if (!saved) {
+                    evt.Veto();
+                    return;
+                }
+            }
+        }
+        // answer == wxNO → discard changes and fall through to close.
+    }
+
+    // ── Close confirmation ────────────────────────────────────────────────
+    // General "are you sure?" prompt (separate from the save prompt above).
+    // Skipped when we already asked about saving — no need to ask twice.
+    else if (evt.CanVeto() && App.m_bConfirmBeforeClosingWorld && m_doc &&
+             !m_doc->IsModified()) {
         wxString name = wxString::FromUTF8(
             static_cast<const char*>(m_doc->m_mush_name));
         if (name.IsEmpty()) name = wxT("this world");

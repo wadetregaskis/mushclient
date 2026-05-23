@@ -1459,11 +1459,13 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
         CString newFile(dlg.m_scriptFile->GetValue().ToUTF8().data());
         if (newFile != doc->m_strScriptFilename) {
             doc->m_strScriptFilename = newFile;
-            // Language is always Lua on non-Windows.
-            if (newFile.IsEmpty())
+            if (newFile.IsEmpty()) {
+                doc->m_bEnableScripts = 0;
                 doc->DisableScripting();
-            else {
-                doc->m_strLanguage = CString("Lua");
+            } else {
+                // Language is always Lua on non-Windows.
+                doc->m_strLanguage    = CString("Lua");
+                doc->m_bEnableScripts = 1;
                 doc->DisableScripting();
                 doc->CreateScriptEngine();
             }
@@ -1484,6 +1486,55 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
             wxOK | wxICON_INFORMATION, parent);
     }
 
+    return true;
+}
+
+// ── hook_save_world ───────────────────────────────────────────────────────────
+// Saves the world file for the given doc.  If saveAs is true or the doc has no
+// path, opens a save-file dialog.  parent is a wxWindow* used as dialog parent.
+// Returns true if the file was saved, false if cancelled or on error.
+static bool hook_save_world(void* vdoc, bool saveAs, void* vparent)
+{
+    auto* doc    = static_cast<CMUSHclientDoc*>(vdoc);
+    auto* parent = static_cast<wxWindow*>(vparent);
+
+    CString  pathCStr = doc->GetPathName();
+    wxString path     = wxString::FromUTF8(static_cast<const char*>(pathCStr));
+
+    if (saveAs || path.IsEmpty()) {
+        wxString saveDir = path.IsEmpty()
+            ? wxString::FromUTF8(
+                  static_cast<const char*>(App.m_strDefaultWorldFileDirectory))
+            : wxFileName(path).GetPath();
+        wxFileDialog dlg(parent,
+                         wxT("Save World File"),
+                         saveDir,
+                         path.IsEmpty() ? wxT("world.mcl")
+                                        : wxFileName(path).GetFullName(),
+                         wxT("MUSHclient world files (*.mcl)|*.mcl"
+                             "|All files (*.*)|*.*"),
+                         wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+        if (dlg.ShowModal() != wxID_OK) return false;
+        path = dlg.GetPath();
+    }
+
+    if (path.IsEmpty()) return false;
+
+    std::string savePath = path.ToUTF8().data();
+    if (!doc->OnSaveDocument(savePath.c_str())) {
+        wxMessageBox(wxT("Failed to save world file."),
+                     wxT("Save Error"), wxICON_ERROR | wxOK, parent);
+        return false;
+    }
+
+    // Update path, clear modified flag, maintain world lists.
+    std::string oldPath = static_cast<const char*>(doc->GetPathName());
+    if (!oldPath.empty() && oldPath != savePath)
+        world_list_remove(oldPath);
+    doc->SetPathName(savePath.c_str());
+    doc->SetModifiedFlag(FALSE);
+    world_list_add(savePath);
+    recent_worlds_add(savePath);
     return true;
 }
 
@@ -1721,6 +1772,7 @@ void wx_mfc_install_hooks()
     g_wxhook_quick_connect_dlg  = hook_quick_connect_dlg;
     g_wxhook_set_status         = hook_set_status;
     g_wxhook_game_preferences   = hook_game_preferences;
+    g_wxhook_save_world         = hook_save_world;
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce
     // an audible alert on macOS/Linux via wxWidgets.

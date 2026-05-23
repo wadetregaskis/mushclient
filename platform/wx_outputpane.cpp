@@ -828,25 +828,26 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
     bool isLink = !run.action.empty();
 
     // ── Background fill ───────────────────────────────────────────────────────
-    // Selected text inverts fg/bg; links use a fixed highlight blue.
+    // For selected text, use the OS system selection colours (wxSYS_COLOUR_HIGHLIGHT
+    // / wxSYS_COLOUR_HIGHLIGHTTEXT) rather than inverting the run's own fg/bg.
+    // Inverting can produce invisible results when fg == bg (e.g. white-on-white
+    // runs in some MUD colour schemes); the system colours are always legible.
     wxColour bgFill;
-    if (selected)
-        bgFill = isLink ? wxColour(0x44, 0xAA, 0xFF) : fg;
-    else
-        bgFill = bg;
+    wxColour textFg;
+    if (selected) {
+        bgFill  = wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHT);
+        textFg  = wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHTTEXT);
+    } else if (isLink) {
+        bgFill  = bg;
+        textFg  = wxColour(0x44, 0xAA, 0xFF);  // link blue
+    } else {
+        bgFill  = bg;
+        textFg  = fg;
+    }
 
     dc.SetBrush(wxBrush(bgFill));
     dc.SetPen(*wxTRANSPARENT_PEN);
     dc.DrawRectangle(x, yOff, (int)text.size() * m_charW, m_lineH);
-
-    // ── Text draw ─────────────────────────────────────────────────────────────
-    wxColour textFg;
-    if (selected)
-        textFg = bg;                             // inverted
-    else if (isLink)
-        textFg = wxColour(0x44, 0xAA, 0xFF);    // link blue
-    else
-        textFg = fg;
 
     dc.SetTextForeground(textFg);
     dc.SetBackgroundMode(wxTRANSPARENT);

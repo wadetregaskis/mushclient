@@ -145,34 +145,6 @@ static inline wxWindow* toWx(void* h) { return static_cast<wxWindow*>(h); }
 static inline const wxWindow* toWxC(const void* h) { return static_cast<const wxWindow*>(h); }
 
 // ── Helper: apply world font settings to an output pane ──────────────────
-// Converts LOGFONT-style height (negative = pixels at 96 DPI) to wx point size
-// and applies the face name from the doc to the pane.  Falls through to the
-// pane's default font if m_font_name is empty or m_font_height is zero.
-static void ApplyWorldFont(COutputPane* pane, CMUSHclientDoc* doc)
-{
-    if (!pane || !doc) return;
-
-    // m_font_name: face name (e.g. "Courier New"); empty → keep default.
-    // m_font_height: LOGFONT lfHeight (negative of pixel height at screen DPI).
-    // Assume 96 DPI (standard Windows setting); convert to points.
-    const char* face = static_cast<const char*>(doc->m_font_name);
-    int         lfH  = (int)doc->m_font_height;
-
-    if (face && *face && lfH != 0) {
-        int pixH    = (lfH < 0) ? -lfH : lfH;
-        int points  = (pixH * 72 + 48) / 96;  // round to nearest pt; 48 = 96/2
-        points      = std::max(COutputPane::kMinFontSize,
-                               std::min(COutputPane::kMaxFontSize, points));
-        // Bold if m_font_weight >= FW_BOLD (700).
-        wxFontWeight weight = (doc->m_font_weight >= 700) ? wxFONTWEIGHT_BOLD
-                                                          : wxFONTWEIGHT_NORMAL;
-        wxFont font(points, wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL, weight,
-                    false, wxString::FromUTF8(face));
-        if (font.IsOk())
-            pane->SetOutputFont(font);
-    }
-}
-
 // ── World-list persistence ────────────────────────────────────────────────
 // App.m_strWorldList is a '*'-delimited list of world file paths that are
 // opened automatically on startup.  These helpers keep it up-to-date and
@@ -494,18 +466,34 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     fileMenu->Append(wxID_EXIT,   wxT("Quit MUSHclient\tCtrl+Q"));
     mb->Append(fileMenu, wxT("&File"));
 
+    // ── Edit menu ─────────────────────────────────────────────────────────
+    // Standard IDs (wxID_COPY etc.) are routed automatically by wxWidgets to
+    // the focused window; no explicit handler is needed in our menu dispatcher.
+    wxMenu* editMenu = new wxMenu();
+    editMenu->Append(wxID_COPY,      wxT("Copy\tCtrl+C"));
+    editMenu->Append(wxID_CUT,       wxT("Cut\tCtrl+X"));
+    editMenu->Append(wxID_PASTE,     wxT("Paste\tCtrl+V"));
+    editMenu->AppendSeparator();
+    editMenu->Append(wxID_SELECTALL, wxT("Select All\tCtrl+A"));
+    editMenu->AppendSeparator();
+    editMenu->Append(wxID_FIND,      wxT("Find…\tCtrl+F"));
+    mb->Append(editMenu, wxT("&Edit"));
+
     wxMenu* connMenu = new wxMenu();
     // Note: Ctrl+K, Ctrl+D, and Ctrl+R are standard Unix input-bar shortcuts
     // (kill-to-end, delete-forward, and reverse history search respectively) so
     // those keys are not used as menu accelerators here.
-    connMenu->Append(32289,       wxT("Quick Connect…\tCtrl+Shift+K"));
+    connMenu->Append(32289,                     wxT("Quick Connect…\tCtrl+Shift+K"));
     connMenu->AppendSeparator();
-    connMenu->Append(0xE200,      wxT("Disconnect"));
-    connMenu->Append(0xE201,      wxT("Reconnect\tCtrl+Shift+R"));
+    connMenu->Append(32239 /*ID_CONNECTION_CONNECT*/,    wxT("Connect"));
+    connMenu->Append(0xE200,                    wxT("Disconnect"));
+    connMenu->Append(0xE201,                    wxT("Reconnect\tCtrl+Shift+R"));
     mb->Append(connMenu, wxT("&Connection"));
 
     wxMenu* gameMenu = new wxMenu();
-    gameMenu->Append(32158 /*ID_GAME_PREFERENCES*/, wxT("World Properties…\tCtrl+,"));
+    gameMenu->Append(32158 /*ID_GAME_PREFERENCES*/,     wxT("World Properties…\tCtrl+,"));
+    gameMenu->AppendSeparator();
+    gameMenu->Append(32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/, wxT("Reload Script"));
     mb->Append(gameMenu, wxT("&Game"));
 
     // ── Window menu ───────────────────────────────────────────────────────
@@ -625,6 +613,32 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return child ? child->GetDoc() : nullptr;
         };
 
+        // ── Edit menu: Copy / Cut / Paste / Select All ─────────────────────
+        // The frame's Bind intercepts menu events before wxMDI can route them
+        // to the focused child control, so we dispatch explicitly here.
+        // For a wxTextCtrl (input bar), post a standard wxCommandEvent so the
+        // built-in edit handling fires.  For the output pane, call directly.
+        if (id == wxID_COPY || id == wxID_CUT ||
+            id == wxID_PASTE || id == wxID_SELECTALL)
+        {
+            wxWindow* focused = wxWindow::FindFocus();
+            if (focused) {
+                // Is it the output pane?
+                if (auto* pane = dynamic_cast<COutputPane*>(focused)) {
+                    if      (id == wxID_COPY)      pane->CopySelection();
+                    else if (id == wxID_SELECTALL) pane->SelectAll();
+                    // Cut and Paste are no-ops on a read-only output pane.
+                } else {
+                    // Forward to focused window (wxTextCtrl, etc.) via its
+                    // own event handler so the built-in editing works.
+                    wxCommandEvent fwd(wxEVT_MENU, id);
+                    fwd.SetEventObject(focused);
+                    focused->GetEventHandler()->ProcessEvent(fwd);
+                }
+            }
+            return;   // consumed — do not call evt.Skip()
+        }
+
         if (id == wxID_EXIT || id == 0xE141 /*ID_APP_EXIT*/) {
             frame->Close(false);  // false = veto-able so EVT_CLOSE handler can confirm
         } else if (id == wxID_NEW || id == 0xE100 /*ID_FILE_NEW*/
@@ -650,7 +664,21 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             hook_save_active_world(frame, /*saveAs=*/false);
         } else if (id == wxID_SAVEAS || id == 0xE104 /*ID_FILE_SAVE_AS*/) {
             hook_save_active_world(frame, /*saveAs=*/true);
-        } else if (id == 0xE200 /*Disconnect*/) {
+        } else if (id == wxID_FIND) {
+            // Edit → Find…: show find bar in the active child frame.
+            if (wxMDIChildFrame* active = frame->GetActiveChild()) {
+                if (auto* child = dynamic_cast<CWorldChildFrame*>(active))
+                    child->ShowFindBar(true);
+            }
+        } else if (id == 32239 /*ID_CONNECTION_CONNECT*/) {
+            if (CMUSHclientDoc* doc = activeDoc()) {
+                if (doc->m_iConnectPhase == eConnectNotConnected) {
+                    doc->m_bDisconnectOK = false;
+                    doc->ConnectSocket();
+                }
+            }
+        } else if (id == 0xE200 /*Disconnect*/ ||
+                   id == 32240 /*ID_CONNECTION_DISCONNECT*/) {
             if (CMUSHclientDoc* doc = activeDoc()) {
                 doc->DisconnectWorld();
                 if (s_statusBar)
@@ -670,6 +698,18 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         } else if (id == 32158 /*ID_GAME_PREFERENCES*/) {
             if (CMUSHclientDoc* doc = activeDoc())
                 doc->GamePreferences(-1);
+        } else if (id == 32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/) {
+            if (CMUSHclientDoc* doc = activeDoc()) {
+                if (doc->m_bEnableScripts || !doc->m_strScriptFilename.IsEmpty()) {
+                    doc->OnGameReloadScriptFile();
+                    if (s_statusBar)
+                        s_statusBar->SetStatusText(wxT("Script reloaded."));
+                } else {
+                    wxMessageBox(wxT("No script file is configured for this world.\n"
+                                     "Set one in Game → World Properties → Scripting."),
+                                 wxT("Reload Script"), wxOK | wxICON_INFORMATION, frame);
+                }
+            }
         } else if (id == wxID_ABOUT) {
             wxString ver = wxString::FromUTF8(
                 static_cast<const char*>(MUSHCLIENT_VERSION));
@@ -768,29 +808,9 @@ static void* hook_open_world_file(const char* path)
     child->UpdateTitle();
     child->Show();
 
-    // Wire the output callbacks.
-    COutputPane* pane = child->OutputPane();
-    doc->m_fn_line_ready = [pane](SOutputLine line) {
-        pane->AppendLine(std::move(line));
-    };
-    doc->m_fn_note = [pane](const std::string& text) {
-        pane->AppendNote(text);
-    };
-    doc->m_fn_begin_batch = [pane]() { pane->BeginBatch(); };
-    doc->m_fn_flush       = [pane]() { pane->EndBatch(); };
-    doc->m_fn_status = [child](const std::string& /*text*/) {
-        if (child->IsActiveWorld()) child->UpdateStatusBar();
-    };
-
-    // Note: m_fn_get_command, m_fn_set_command, m_fn_set_output_font,
-    // m_fn_set_scroll, m_fn_set_selection, m_fn_set_command_selection
-    // are all wired in CWorldChildFrame's constructor.  No need to repeat them here.
-
-    // Apply display settings loaded from the world file.
-    ApplyWorldFont(pane, doc);
-    if (doc->m_maxlines > 0)
-        pane->SetMaxLines(doc->m_maxlines);
-    child->ApplyPaneBackground(doc->m_iBackgroundColour);
+    // All output callbacks (m_fn_line_ready, m_fn_note, m_fn_begin_batch,
+    // m_fn_flush, m_fn_status) and initial pane state (font, scrollback,
+    // background) are applied inside CWorldChildFrame's constructor.
 
     // Flush any notes produced during OnOpenDocument.
     doc->UpdateAllViews(nullptr);
@@ -1613,7 +1633,8 @@ static void* hook_new_world()
 
     // OnNewDocument: shows dialog, calls SetUpOutputWindow, OpenSession.
     // Lines produced by Note() accumulate in doc->m_LineList but are not
-    // forwarded anywhere yet (m_fn_line_ready is still null).
+    // forwarded to the pane yet (m_fn_line_ready is wired after this by the
+    // CWorldChildFrame constructor; UpdateAllViews below drains the buffer).
     if (!doc->OnNewDocument()) {
         delete doc;   // user cancelled — destructor cleans up
         return nullptr;
@@ -1636,29 +1657,9 @@ static void* hook_new_world()
     child->UpdateTitle();   // set title from m_mush_name
     child->Show();
 
-    // Wire the callbacks now that the window is visible.
-    COutputPane* pane = child->OutputPane();
-    doc->m_fn_line_ready = [pane](SOutputLine line) {
-        pane->AppendLine(std::move(line));
-    };
-    doc->m_fn_note = [pane](const std::string& text) {
-        pane->AppendNote(text);
-    };
-    doc->m_fn_begin_batch = [pane]() { pane->BeginBatch(); };
-    doc->m_fn_flush       = [pane]() { pane->EndBatch(); };
-    doc->m_fn_status = [child](const std::string& /*text*/) {
-        if (child->IsActiveWorld()) child->UpdateStatusBar();
-    };
-
-    // Note: m_fn_get_command, m_fn_set_command, m_fn_set_output_font,
-    // m_fn_set_scroll, m_fn_set_selection, m_fn_set_command_selection
-    // are all wired in CWorldChildFrame's constructor.  No need to repeat them here.
-
-    // Apply background colour (Quick Connect worlds use default black unless
-    // a world-file background has been specified — m_iBackgroundColour starts
-    // as NO_COLOUR from doc_construct.cpp so ApplyPaneBackground will just use
-    // black, which is the correct default for new quick-connect worlds).
-    child->ApplyPaneBackground(doc->m_iBackgroundColour);
+    // All output callbacks (m_fn_line_ready, m_fn_note, m_fn_begin_batch,
+    // m_fn_flush, m_fn_status) and initial pane state (font, scrollback,
+    // background) are applied inside CWorldChildFrame's constructor.
 
     // Flush welcome banner + any output buffered during OnNewDocument.
     doc->UpdateAllViews(nullptr);

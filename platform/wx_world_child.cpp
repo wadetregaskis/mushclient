@@ -310,7 +310,14 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                      /*underline=*/false, faceName);
             if (!f.IsOk()) f = cur;  // fall back to current font on failure
             m_output->SetOutputFont(f);
-            // Persist face name and size so they survive restart.
+            // Update doc font fields so Ctrl+S saves the new font to the world file.
+            {
+                std::string faceStr = f.GetFaceName().ToUTF8().data();
+                m_doc->m_font_name   = CString(faceStr.c_str());
+                m_doc->m_font_height = -(f.GetPointSize() * 96 / 72);
+                m_doc->m_font_weight = (f.GetWeight() >= wxFONTWEIGHT_BOLD) ? 700 : 400;
+            }
+            // Persist face name and size so they survive restart even without saving.
             wxConfig cfg(wxT("mushclient"));
             cfg.Write(wxT("/display/font_name"), faceName);
             cfg.Write(wxT("/display/font_size"), (long)f.GetPointSize());
@@ -339,6 +346,49 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         m_doc->m_fn_set_selection = [this](int sl, int el, int sc, int ec) {
             if (m_output) m_output->SetSelectionRange(sl, el, sc, ec);
         };
+
+        // ── Output display callbacks ──────────────────────────────────────
+        // Route the engine's text output to the pane.  Wired here so they are
+        // never accidentally overwritten after construction.
+        m_doc->m_fn_line_ready = [this](SOutputLine line) {
+            if (m_output) m_output->AppendLine(std::move(line));
+        };
+        m_doc->m_fn_note = [this](const std::string& text) {
+            if (m_output) m_output->AppendNote(text);
+        };
+        m_doc->m_fn_begin_batch = [this]() {
+            if (m_output) m_output->BeginBatch();
+        };
+        m_doc->m_fn_flush = [this]() {
+            if (m_output) m_output->EndBatch();
+        };
+
+        // ── Apply initial pane state from the doc ─────────────────────────
+        // For quick-connect worlds the doc fields are at defaults (no face,
+        // black background, 5000-line scrollback).  For world-file worlds the
+        // doc has already been loaded via OnOpenDocument before the constructor
+        // runs, so these reflect the saved world settings.
+        if (m_output) {
+            // Font: m_font_name is face name; m_font_height is LOGFONT lfHeight
+            // (negative pixels at 96 DPI).  Skip if not configured.
+            const char* face = static_cast<const char*>(m_doc->m_font_name);
+            int         lfH  = (int)m_doc->m_font_height;
+            if (face && *face && lfH != 0) {
+                int pixH   = (lfH < 0) ? -lfH : lfH;
+                int points = (pixH * 72 + 48) / 96;   // round to nearest pt
+                points = std::max(COutputPane::kMinFontSize,
+                                  std::min(COutputPane::kMaxFontSize, points));
+                wxFontWeight weight = (m_doc->m_font_weight >= 700)
+                                      ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL;
+                wxFont font(points, wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL,
+                            weight, false, wxString::FromUTF8(face));
+                if (font.IsOk()) m_output->SetOutputFont(font);
+            }
+            // Scrollback limit.
+            if (m_doc->m_maxlines > 0) m_output->SetMaxLines(m_doc->m_maxlines);
+            // Background colour (NO_COLOUR = 0xFFFFFFFF → black).
+            ApplyPaneBackground(m_doc->m_iBackgroundColour);
+        }
     }
 
     // "Put in Input Bar" context-menu action: paste selected output text into
@@ -487,6 +537,14 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             m_doc->m_InputFontHeight = lineH;
             m_doc->m_InputFontWidth  = charW;
             m_doc->SendNAWS(cols, rows);
+            // Persist face name + LOGFONT height so font zoom survives save/reload.
+            const wxFont& zf = m_output->GetCurrentFont();
+            if (zf.IsOk()) {
+                std::string faceStr = zf.GetFaceName().ToUTF8().data();
+                m_doc->m_font_name   = CString(faceStr.c_str());
+                m_doc->m_font_height = -(zf.GetPointSize() * 96 / 72);
+                m_doc->m_font_weight = (zf.GetWeight() >= wxFONTWEIGHT_BOLD) ? 700 : 400;
+            }
         });
     };
 

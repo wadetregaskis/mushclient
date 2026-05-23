@@ -35,6 +35,7 @@ wxBEGIN_EVENT_TABLE(COutputPane, wxScrolledWindow)
     EVT_LEFT_DOWN(                  COutputPane::OnLeftDown)
     EVT_LEFT_UP(                    COutputPane::OnLeftUp)
     EVT_LEFT_DCLICK(                COutputPane::OnLeftDClick)
+    EVT_MIDDLE_UP(                  COutputPane::OnMiddleUp)
     EVT_RIGHT_DOWN(                 COutputPane::OnRightDown)
     EVT_RIGHT_UP(                   COutputPane::OnRightUp)
     EVT_MOTION(                     COutputPane::OnMotion)
@@ -1243,6 +1244,51 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
             m_lastDClickLine   = lineIdx;
         }
     }
+
+    evt.Skip();
+}
+
+// ── OnMiddleUp ────────────────────────────────────────────────────────────────
+// Middle-click: paste the primary selection (X11/Linux) or system clipboard
+// (macOS) into the command input bar — mirrors standard terminal behaviour.
+// The text is inserted verbatim without sending it to the MUD; the user can
+// review and edit it before pressing Enter.
+void COutputPane::OnMiddleUp(wxMouseEvent& evt)
+{
+    wxString text;
+
+#ifdef __WXGTK__
+    // On GTK (Linux/X11), primary selection = last text highlighted anywhere.
+    // wxWidgets exposes it by temporarily switching the clipboard into
+    // primary-selection mode.
+    if (wxTheClipboard->Open()) {
+        wxTheClipboard->UsePrimarySelection(true);
+        if (wxTheClipboard->IsSupported(wxDF_TEXT) ||
+            wxTheClipboard->IsSupported(wxDF_UNICODETEXT))
+        {
+            wxTextDataObject data;
+            wxTheClipboard->GetData(data);
+            text = data.GetText();
+        }
+        wxTheClipboard->UsePrimarySelection(false);
+        wxTheClipboard->Close();
+    }
+#else
+    // On macOS (and Windows, if ever reached) fall back to the system clipboard.
+    if (wxTheClipboard->Open()) {
+        if (wxTheClipboard->IsSupported(wxDF_UNICODETEXT) ||
+            wxTheClipboard->IsSupported(wxDF_TEXT))
+        {
+            wxTextDataObject data;
+            wxTheClipboard->GetData(data);
+            text = data.GetText();
+        }
+        wxTheClipboard->Close();
+    }
+#endif
+
+    if (!text.IsEmpty() && m_fn_put_in_input)
+        m_fn_put_in_input(text);
 
     evt.Skip();
 }

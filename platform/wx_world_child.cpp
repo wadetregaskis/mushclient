@@ -1504,9 +1504,14 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // move the insertion point one word backward or forward.
     // Word boundary: alphanumeric characters and underscores.  The cursor skips
     // any leading non-word characters and then jumps over the next word token.
+    //
+    // When Shift is also held, let the native wxTextCtrl handler run instead
+    // (it already produces the correct word-selection behaviour on all platforms)
+    // so we don't have to reimplement extend-selection logic.
     if ((code == WXK_LEFT || code == WXK_RIGHT) &&
         (evt.ControlDown() || evt.AltDown()))
     {
+        if (evt.ShiftDown()) { evt.Skip(); return; }   // native handles Shift+word-nav
         if (inp) {
             long     pos  = inp->GetInsertionPoint();
             wxString text = inp->GetValue();

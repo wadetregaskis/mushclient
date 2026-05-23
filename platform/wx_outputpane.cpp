@@ -752,9 +752,9 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                 dc.DrawRectangle(0, yOff + vr * m_lineH, 3, m_lineH);
 
             // In-line highlight: re-render each matching span with yellow bg + black text.
-            dc.SetBackgroundMode(wxSOLID);
+            // Pre-fill background rectangles (consistent with DrawRunChunk strategy).
             dc.SetTextForeground(wxColour(0, 0, 0));
-            dc.SetTextBackground(wxColour(255, 220, 0));
+            dc.SetBackgroundMode(wxTRANSPARENT);
 
             int cx = 0;  // absolute char index in the logical line
             for (const auto& run : line) {
@@ -783,9 +783,13 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                         int px       = vcol * m_charW;
                         // Batch to end-of-match or end-of-visual-row, whichever comes first.
                         int batchEnd = std::min(hi, (vr + 1) * wrapCols);
-                        // c - cx = offset of c within wxText (since cx is the
-                        // absolute char index of the start of this run).
-                        dc.DrawText(wxText.substr(c - cx, batchEnd - c), px, py);
+                        int nChars   = batchEnd - c;
+                        // Pre-fill the highlight background rectangle.
+                        dc.SetBrush(wxBrush(wxColour(255, 220, 0)));
+                        dc.SetPen(*wxTRANSPARENT_PEN);
+                        dc.DrawRectangle(px, py, nChars * m_charW, m_lineH);
+                        // c - cx = offset of c within wxText.
+                        dc.DrawText(wxText.substr(c - cx, nChars), px, py);
                         c = batchEnd;
                     }
                 }
@@ -793,15 +797,24 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                 cx += runLen;
             }
 
-            // Restore DC text state so subsequent DrawLine calls start clean.
-            dc.SetBackgroundMode(wxSOLID);
-            dc.SetTextForeground(*wxWHITE);
+            // Restore DC state so subsequent DrawLine calls start clean.
             dc.SetFont(m_font);
         }
     }
 }
 
 // ── DrawRunChunk ──────────────────────────────────────────────────────────────
+// Renders one sub-chunk of a run at pixel position (x, yOff).
+//
+// Rendering strategy: pre-fill the background rectangle first, then draw text
+// with wxTRANSPARENT background mode.  This is superior to wxSOLID mode for
+// two reasons:
+//   1. The fill width is exactly text.size() * m_charW — our integer grid —
+//      which prevents sub-pixel gaps between chunks on HiDPI / Retina displays
+//      where the font's ink bounding box may differ from the character cell by
+//      a fraction of a pixel.
+//   2. Transparent text drawing lets Core Text / Pango anti-alias the glyphs
+//      against the already-correct background rather than against a blank DC.
 
 void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
                                 const SOutputRun& run, bool selected)
@@ -812,19 +825,32 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
     wxColour bg(GetRValue(run.bg), GetGValue(run.bg), GetBValue(run.bg));
 
     bool isLink = !run.action.empty();
-    wxColour drawFg = (isLink && !selected) ? wxColour(0x44, 0xAA, 0xFF) : fg;
 
-    if (selected) {
-        // Invert: text in background colour on foreground-colour background.
-        dc.SetTextForeground(bg);
-        dc.SetTextBackground(isLink ? wxColour(0x44, 0xAA, 0xFF) : fg);
-    } else {
-        dc.SetTextForeground(drawFg);
-        dc.SetTextBackground(bg);
-    }
-    dc.SetBackgroundMode(wxSOLID);
+    // ── Background fill ───────────────────────────────────────────────────────
+    // Selected text inverts fg/bg; links use a fixed highlight blue.
+    wxColour bgFill;
+    if (selected)
+        bgFill = isLink ? wxColour(0x44, 0xAA, 0xFF) : fg;
+    else
+        bgFill = bg;
 
-    // Use the pre-built variant to avoid per-run wxFont allocation.
+    dc.SetBrush(wxBrush(bgFill));
+    dc.SetPen(*wxTRANSPARENT_PEN);
+    dc.DrawRectangle(x, yOff, (int)text.size() * m_charW, m_lineH);
+
+    // ── Text draw ─────────────────────────────────────────────────────────────
+    wxColour textFg;
+    if (selected)
+        textFg = bg;                             // inverted
+    else if (isLink)
+        textFg = wxColour(0x44, 0xAA, 0xFF);    // link blue
+    else
+        textFg = fg;
+
+    dc.SetTextForeground(textFg);
+    dc.SetBackgroundMode(wxTRANSPARENT);
+
+    // Use the pre-built font variant to avoid per-run wxFont allocation.
     bool drawUnderline = run.underline || isLink;
     if (run.bold && drawUnderline)
         dc.SetFont(m_fontBoldUnderline);
@@ -1663,14 +1689,23 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
         m_selFocus   = SelPoint{foundIdx, selEnd};
     }
 
-    int unitH;
-    GetScrollPixelsPerUnit(nullptr, &unitH);
-    if (unitH > 0) {
-        int vr = (foundIdx < (int)m_visualRowStart.size())
-                 ? m_visualRowStart[foundIdx] : foundIdx;
-        Scroll(0, vr * m_lineH / unitH);
-        m_autoScroll = false;
-        if (m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
+    {
+        int unitH;
+        GetScrollPixelsPerUnit(nullptr, &unitH);
+        if (unitH > 0) {
+            int clientH;
+            GetClientSize(nullptr, &clientH);
+            int vr = (foundIdx < (int)m_visualRowStart.size())
+                     ? m_visualRowStart[foundIdx] : foundIdx;
+            // Center the matched line in the viewport rather than placing it at
+            // the top: subtract half the client height so the match lands near
+            // the middle of the screen.  std::max(0,…) clamps near the buffer top.
+            int yPixel    = vr * m_lineH;
+            int scrollPix = std::max(0, yPixel - (clientH - m_lineH) / 2);
+            Scroll(0, scrollPix / unitH);
+            m_autoScroll = false;
+            if (m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
+        }
     }
     Refresh(false);
 

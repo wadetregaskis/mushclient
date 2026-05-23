@@ -792,6 +792,11 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
 
                 cx += runLen;
             }
+
+            // Restore DC text state so subsequent DrawLine calls start clean.
+            dc.SetBackgroundMode(wxSOLID);
+            dc.SetTextForeground(*wxWHITE);
+            dc.SetFont(m_font);
         }
     }
 }
@@ -1646,11 +1651,17 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
 
     if (foundIdx < 0) return false;
 
-    // Select and scroll to the matching line.
-    wxString lt = lineText(foundIdx);
-    int lineLen = (int)lt.size();
-    m_selAnchor = SelPoint{foundIdx, 0};
-    m_selFocus  = SelPoint{foundIdx, lineLen};
+    // Select the precise matched substring (not the whole line) so the user
+    // can see exactly which occurrence was found.  Both lt and lowerTerm are
+    // in lowercase, so find() gives the correct byte offset into the line.
+    {
+        wxString lt      = lineText(foundIdx);   // already lowercased
+        size_t   matchOff = lt.find(lowerTerm);
+        int selStart = (matchOff != wxString::npos) ? (int)matchOff : 0;
+        int selEnd   = selStart + (int)lowerTerm.size();
+        m_selAnchor  = SelPoint{foundIdx, selStart};
+        m_selFocus   = SelPoint{foundIdx, selEnd};
+    }
 
     int unitH;
     GetScrollPixelsPerUnit(nullptr, &unitH);

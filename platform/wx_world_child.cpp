@@ -1411,9 +1411,13 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
-    // Ctrl+W: delete the word immediately before the cursor (Unix terminal).
-    // Skips trailing spaces then deletes back to the next space boundary.
-    if (code == 'W' && evt.ControlDown()) {
+    // Ctrl+W / Ctrl+Backspace: delete the word immediately before the cursor.
+    // Ctrl+W is the Unix terminal convention; Ctrl+Backspace matches most GUI
+    // apps on Windows and macOS.  Both skip trailing spaces then delete back
+    // to the next word boundary.
+    bool deleteWordBack = (code == 'W' && evt.ControlDown()) ||
+                         (code == WXK_BACK && evt.ControlDown());
+    if (deleteWordBack) {
         if (inp) {
             long pos = inp->GetInsertionPoint();
             if (pos > 0) {
@@ -1422,10 +1426,45 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
                 // Skip over any trailing whitespace.
                 while (newPos > 0 && text[newPos - 1] == ' ')
                     --newPos;
-                // Skip over the word itself.
+                // Skip over the word itself (stop at any whitespace).
                 while (newPos > 0 && text[newPos - 1] != ' ')
                     --newPos;
                 inp->Remove(newPos, pos);
+                m_histIdx = -1;
+            }
+        }
+        return;
+    }
+
+    // Ctrl+D: delete character forward (emacs/Unix convention).
+    if (code == 'D' && evt.ControlDown()) {
+        if (inp) {
+            long pos = inp->GetInsertionPoint();
+            long len = (long)inp->GetValue().size();
+            if (pos < len) {
+                inp->Remove(pos, pos + 1);
+                m_histIdx = -1;
+            }
+        }
+        return;
+    }
+
+    // Ctrl+Delete: delete the word immediately after the cursor.
+    // Skips leading spaces then deletes forward to the next space boundary.
+    if (code == WXK_DELETE && evt.ControlDown()) {
+        if (inp) {
+            long pos = inp->GetInsertionPoint();
+            wxString text = inp->GetValue();
+            long len = (long)text.size();
+            if (pos < len) {
+                long newPos = pos;
+                // Skip over leading whitespace.
+                while (newPos < len && text[newPos] == ' ')
+                    ++newPos;
+                // Skip over the word.
+                while (newPos < len && text[newPos] != ' ')
+                    ++newPos;
+                inp->Remove(pos, newPos);
                 m_histIdx = -1;
             }
         }

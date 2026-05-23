@@ -301,6 +301,14 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             selEnd   = to;
         };
 
+        // world.GetSelectionStartLine / GetSelectionEndLine / …Column:
+        // let Lua scripts query what text is currently selected in the output pane.
+        m_doc->m_fn_get_output_selection = [this](long& sl, long& sc,
+                                                   long& el, long& ec) -> bool {
+            if (!m_output) return false;
+            return m_output->GetSelectionInfo(sl, sc, el, ec);
+        };
+
         // world.GetClipboard() / world.SetClipboard(): system clipboard access.
         m_doc->m_fn_get_clipboard = []() -> std::string {
             std::string result;
@@ -2569,6 +2577,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_push_command             = nullptr;
         m_doc->m_fn_get_command_list         = nullptr;
         m_doc->m_fn_get_command_selection    = nullptr;
+        m_doc->m_fn_get_output_selection     = nullptr;
 
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.

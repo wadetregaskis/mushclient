@@ -1997,6 +1997,11 @@ public:
     // If nothing is selected, both are set to the caret position.
     std::function<void(long&, long&)> m_fn_get_command_selection;
 
+    // GetSelectionStartLine / GetSelectionEndLine / …Column:
+    // query the output-pane text selection.
+    // Fills four 1-based (line, col) values; returns false if no selection.
+    std::function<bool(long&, long&, long&, long&)> m_fn_get_output_selection;
+
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference
     // m_pCurrentLine->styleList.GetTail() to read the current style.

@@ -443,6 +443,21 @@ void COutputPane::SetSelectionRange(int startLine, int endLine,
     Refresh(false);
 }
 
+bool COutputPane::GetSelectionInfo(long& startLine, long& startCol,
+                                    long& endLine,   long& endCol) const
+{
+    SelPoint s, e;
+    if (!GetNormalizedSel(s, e)) return false;
+    if (s == e) return false;  // empty / collapsed selection
+
+    // Convert 0-based internal coords to 1-based Windows-compatible values.
+    startLine = (long)s.line + 1;
+    startCol  = (long)s.col  + 1;
+    endLine   = (long)e.line + 1;
+    endCol    = (long)e.col  + 1;
+    return true;
+}
+
 void COutputPane::ScrollPage(int direction)
 {
     int clientH;

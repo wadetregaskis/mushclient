@@ -1571,6 +1571,11 @@ public:
   // GetInfo(236/237): query the command input selection range.
   // Sets selStart and selEnd (both 0-based, in characters).
   std::function<void(long&, long&)> m_fn_get_command_selection;
+
+  // GetSelectionStartLine / GetSelectionEndLine / …Column:
+  // query the output-pane text selection.
+  // Fills four 1-based (line, col) values; returns false if no selection.
+  std::function<bool(long&, long&, long&, long&)> m_fn_get_output_selection;
 #endif
 
   protected:

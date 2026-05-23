@@ -162,6 +162,14 @@ public:
         return &m_lines[idx];
     }
 
+    // Query the current output-pane text selection.
+    // Returns true if there is a non-empty selection and fills the four
+    // out-parameters with 1-based (line, col) values matching the Windows
+    // GetSelectionStartLine / GetSelectionEndLine / …Column API.
+    // Returns false (and leaves parameters unchanged) if nothing is selected.
+    bool GetSelectionInfo(long& startLine, long& startCol,
+                          long& endLine,   long& endCol) const;
+
     // True while the pane is pinned to the bottom.
     bool IsAutoScrolling() const { return m_autoScroll; }
 

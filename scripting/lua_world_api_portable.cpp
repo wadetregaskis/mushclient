@@ -5420,11 +5420,75 @@ static int L_Open(lua_State* L)
 }
 
 // ── GetSelectionStart/EndLine/Column ─────────────────────────────────────────
-// Require a GUI view object.  In portable builds there is no selection; return 0.
-static int L_GetSelectionStartLine(lua_State* L)   { world_doc(L); lua_pushnumber(L, 0); return 1; }
-static int L_GetSelectionEndLine(lua_State* L)     { world_doc(L); lua_pushnumber(L, 0); return 1; }
-static int L_GetSelectionStartColumn(lua_State* L) { world_doc(L); lua_pushnumber(L, 0); return 1; }
-static int L_GetSelectionEndColumn(lua_State* L)   { world_doc(L); lua_pushnumber(L, 0); return 1; }
+// Query the current output-pane text selection via m_fn_get_output_selection.
+// Returns 0 (no selection) in mushcli; in mushgui the callback is wired to the
+// real COutputPane::GetSelectionInfo() which returns 1-based line/col values.
+static void GetOutputSelection(CMUSHclientDoc* pDoc,
+                                long& sl, long& sc, long& el, long& ec)
+{
+    sl = sc = el = ec = 0;
+    if (pDoc->m_fn_get_output_selection)
+        pDoc->m_fn_get_output_selection(sl, sc, el, ec);
+}
+
+static int L_GetSelectionStartLine(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    long sl, sc, el, ec;
+    GetOutputSelection(pDoc, sl, sc, el, ec);
+    lua_pushnumber(L, sl);
+    return 1;
+}
+static int L_GetSelectionEndLine(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    long sl, sc, el, ec;
+    GetOutputSelection(pDoc, sl, sc, el, ec);
+    lua_pushnumber(L, el);
+    return 1;
+}
+static int L_GetSelectionStartColumn(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    long sl, sc, el, ec;
+    GetOutputSelection(pDoc, sl, sc, el, ec);
+    lua_pushnumber(L, sc);
+    return 1;
+}
+static int L_GetSelectionEndColumn(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    long sl, sc, el, ec;
+    GetOutputSelection(pDoc, sl, sc, el, ec);
+    lua_pushnumber(L, ec);
+    return 1;
+}
+
+// ── Bookmark ──────────────────────────────────────────────────────────────────
+// world.Bookmark(lineNumber [, set=true])
+// Sets or clears the BOOKMARK flag on a line in the output buffer.
+// lineNumber is 1-based.  If set is false the bookmark is removed.
+// Visual bookmark indicators require a GUI view; here we just update the flag.
+static int L_Bookmark(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    long lineNum = (long)luaL_checknumber(L, 1);
+    bool set = (lua_gettop(L) < 2) || lua_toboolean(L, 2);
+
+    long count = pDoc->m_LineList.GetCount();
+    if (lineNum <= 0 || lineNum > count)
+        return 0;
+
+    CLine* pLine = GetLineAt(pDoc, lineNum - 1);
+    if (!pLine) return 0;
+
+    if (set)
+        pLine->flags |= BOOKMARK;
+    else
+        pLine->flags &= ~BOOKMARK;
+
+    return 0;
+}
 
 // ── Miniwindow Lua API (mushcore/mushcli stubs) ───────────────────────────────
 // lua_world_api_portable.cpp is compiled into mushcore only.  The mushgui build
@@ -5583,6 +5647,7 @@ static const luaL_Reg worldlib[] = {
     // Line buffer
     { "GetLinesInBufferCount", L_GetLinesInBufferCount },
     { "GetLineInfo",        L_GetLineInfo       },
+    { "Bookmark",           L_Bookmark          },
     { "GetCurrentValue",    L_GetCurrentValue   },
     // Speedwalk
     { "EvaluateSpeedwalk",  L_EvaluateSpeedwalk },

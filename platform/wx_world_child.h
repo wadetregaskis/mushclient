@@ -93,6 +93,11 @@ private:
     bool                  m_histRSearch = false; // true = Ctrl+R substring mode (vs prefix)
     std::string           m_historyFilePath;    // per-world history file, fixed at construction
 
+    // ── Kill ring (emacs-style) ────────────────────────────────────────────
+    // Ctrl+K and Ctrl+W save the killed text here; Ctrl+Y pastes it back.
+    // Only the most-recent kill is stored (single-slot, not a true ring).
+    wxString m_killBuf;
+
     // ── Tab completion ─────────────────────────────────────────────────────
     // When history prefix search exhausts all matches, Tab falls back to
     // scanning recent output for words that start with the current input.

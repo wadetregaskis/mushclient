@@ -262,6 +262,83 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 x = 0; y = 0; w = 1024; h = 768;
             }
         };
+
+        // world.GetCommand(): return the text currently in the command input bar.
+        m_doc->m_fn_get_command = [this]() -> std::string {
+            wxTextCtrl* inp = ActiveInput();
+            if (!inp) return {};
+            return std::string(inp->GetValue().ToUTF8());
+        };
+
+        // world.SetCommand(text): replace the command bar contents.
+        // Returns true if the bar was empty (set unconditionally per Windows behaviour);
+        // false if it was non-empty (caller may inspect and decide to overwrite anyway).
+        m_doc->m_fn_set_command = [this](const std::string& text) -> bool {
+            wxTextCtrl* inp = ActiveInput();
+            if (!inp) return false;
+            bool wasEmpty = inp->GetValue().IsEmpty();
+            inp->SetValue(wxString::FromUTF8(text.c_str()));
+            inp->SetInsertionPointEnd();
+            m_histIdx = -1; ApplyHistRSearch(false);
+            return wasEmpty;
+        };
+
+        // world.SetCommandSelection(first, last): select a range in the command bar.
+        // Indices are 1-based character positions (0 = end of bar).
+        m_doc->m_fn_set_command_selection = [this](long first, long last) {
+            wxTextCtrl* inp = ActiveInput();
+            if (!inp) return;
+            long len = (long)inp->GetValue().size();
+            long f = (first  <= 0) ? len : first  - 1;
+            long l = (last   <= 0) ? len : last   - 1;
+            inp->SetSelection(f, l);
+        };
+
+        // world.SetOutputFont(face, pts, bold, italic): change the output pane font.
+        // pts == 0 means "keep current size".
+        m_doc->m_fn_set_output_font = [this](const std::string& face, int pts,
+                                              bool bold, bool italic) {
+            if (!m_output) return;
+            wxFont cur = m_output->GetCurrentFont();
+            wxString faceName = face.empty()
+                ? cur.GetFaceName()
+                : wxString::FromUTF8(face.c_str());
+            int size = (pts > 0) ? pts : cur.GetPointSize();
+            wxFontStyle  style  = italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL;
+            wxFontWeight weight = bold   ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL;
+            wxFont f(size, wxFONTFAMILY_TELETYPE, style, weight,
+                     /*underline=*/false, faceName);
+            if (!f.IsOk()) f = cur;  // fall back to current font on failure
+            m_output->SetOutputFont(f);
+            // Persist face name and size so they survive restart.
+            wxConfig cfg(wxT("mushclient"));
+            cfg.Write(wxT("/display/font_name"), faceName);
+            cfg.Write(wxT("/display/font_size"), (long)f.GetPointSize());
+            // Keep input bars in sync.
+            if (m_input)         { m_input->SetFont(f);         m_input->Refresh(); }
+            if (m_inputPassword) { m_inputPassword->SetFont(f); m_inputPassword->Refresh(); }
+            Layout();
+        };
+
+        // world.SetScroll(line): scroll the output pane to a specific line number.
+        // Line is 1-based; negative values scroll relative to the end.
+        // pos == -1 → bottom (auto-scroll); pos == 0 → top.
+        m_doc->m_fn_set_scroll = [this](long pos) {
+            if (!m_output) return;
+            if (pos <= 0) {
+                m_output->ScrollToTop();
+            } else {
+                // Convert 1-based → 0-based.
+                m_output->ScrollToLine((int)(pos - 1));
+            }
+        };
+
+        // world.SetSelection(sl, el, sc, ec): set text selection in the output pane.
+        // Lines and columns are 1-based; 0 means start/end of line.
+        // All-zeros clears the selection.
+        m_doc->m_fn_set_selection = [this](int sl, int el, int sc, int ec) {
+            if (m_output) m_output->SetSelectionRange(sl, el, sc, ec);
+        };
     }
 
     // "Put in Input Bar" context-menu action: paste selected output text into
@@ -1516,17 +1593,21 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 
     wxTextCtrl* inp = ActiveInput();
 
-    // Ctrl+U: clear the input line (standard Unix terminal shortcut).
+    // Ctrl+U: kill the entire input line (standard Unix terminal shortcut).
+    // Saves to the kill ring so Ctrl+Y can restore it.
     if (code == 'U' && evt.ControlDown()) {
-        if (inp) inp->Clear();
-        m_histIdx = -1; ApplyHistRSearch(false);
+        if (inp) {
+            m_killBuf = inp->GetValue();
+            inp->Clear();
+            m_histIdx = -1; ApplyHistRSearch(false);
+        }
         return;
     }
 
-    // Ctrl+W / Ctrl+Backspace: delete the word immediately before the cursor.
+    // Ctrl+W / Ctrl+Backspace: kill the word immediately before the cursor.
     // Ctrl+W is the Unix terminal convention; Ctrl+Backspace matches most GUI
     // apps on Windows and macOS.  Both skip trailing spaces then delete back
-    // to the next word boundary.
+    // to the next word boundary.  Saves to the kill ring.
     bool deleteWordBack = (code == 'W' && evt.ControlDown()) ||
                          (code == WXK_BACK && evt.ControlDown());
     if (deleteWordBack) {
@@ -1541,6 +1622,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
                 // Skip over the word itself (stop at any whitespace).
                 while (newPos > 0 && text[newPos - 1] != ' ')
                     --newPos;
+                m_killBuf = text.Mid(newPos, pos - newPos);
                 inp->Remove(newPos, pos);
                 m_histIdx = -1; ApplyHistRSearch(false);
             }
@@ -1584,14 +1666,29 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
 
     // Ctrl+K: kill from the cursor to the end of the input line.
+    // Saves the killed text to the kill ring so Ctrl+Y can restore it.
     if (code == 'K' && evt.ControlDown()) {
         if (inp) {
             long pos = inp->GetInsertionPoint();
-            long len = (long)inp->GetValue().size();
+            wxString text = inp->GetValue();
+            long len = (long)text.size();
             if (pos < len) {
+                m_killBuf = text.Mid(pos);
                 inp->Remove(pos, len);
                 m_histIdx = -1; ApplyHistRSearch(false);
             }
+        }
+        return;
+    }
+
+    // Ctrl+Y: yank (paste) the most recently killed text at the cursor.
+    // Complements Ctrl+K / Ctrl+W / Ctrl+U.  No-op if the kill ring is empty.
+    if (code == 'Y' && evt.ControlDown()) {
+        if (inp && !m_killBuf.IsEmpty()) {
+            long pos = inp->GetInsertionPoint();
+            inp->SetInsertionPoint(pos);
+            inp->WriteText(m_killBuf);
+            m_histIdx = -1; ApplyHistRSearch(false);
         }
         return;
     }

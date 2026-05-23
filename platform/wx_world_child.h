@@ -91,6 +91,16 @@ private:
     wxString              m_histSaved;          // text in input when user started browsing
     std::string           m_historyFilePath;    // per-world history file, fixed at construction
 
+    // ── Tab completion ─────────────────────────────────────────────────────
+    // When history prefix search exhausts all matches, Tab falls back to
+    // scanning recent output for words that start with the current input.
+    // m_tabWords holds the candidates (unique, most-recent-first); m_tabWordIdx
+    // is the position in that list (-1 = not in output-tab cycle).
+    // Both are reset whenever a non-Tab key is pressed.
+    std::vector<wxString> m_tabWords;           // output-word completion candidates
+    int                   m_tabWordIdx = -1;    // current position; -1 = off
+    wxString              m_tabPartial;         // partial input when cycling started
+
     // ── Connection status tracking ─────────────────────────────────────────
     int  m_lastConnectPhase    = -1;   // tracks phase changes to update title/status
     int  m_reconnectCountdown  = 0;    // ticks until auto-reconnect (0 = idle)

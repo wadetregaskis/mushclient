@@ -36,6 +36,7 @@
 #include "platform/wx_mfc_hooks.h"    // g_wxhook_set_status
 
 #include <list>
+#include <set>
 #include <cstdio>
 #include <ctime>
 #include <sys/stat.h>
@@ -1499,17 +1500,64 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
-    // Tab: complete the current partial command from history.
-    // Searches backward through m_history for the most-recently-used command
-    // that starts with the current input text.  A second Tab cycles further back.
-    // Not available in password mode (history is suppressed there).
+    // Ctrl+Left / Ctrl+Right (Windows / Linux) or Alt+Left / Alt+Right (macOS):
+    // move the insertion point one word backward or forward.
+    // Word boundary: alphanumeric characters and underscores.  The cursor skips
+    // any leading non-word characters and then jumps over the next word token.
+    if ((code == WXK_LEFT || code == WXK_RIGHT) &&
+        (evt.ControlDown() || evt.AltDown()))
+    {
+        if (inp) {
+            long     pos  = inp->GetInsertionPoint();
+            wxString text = inp->GetValue();
+            long     len  = (long)text.size();
+            if (code == WXK_LEFT) {
+                // Skip non-word chars backward, then skip the preceding word.
+                while (pos > 0 && !wxIsalnum(text[pos-1]) && text[pos-1] != '_') --pos;
+                while (pos > 0 &&  (wxIsalnum(text[pos-1]) || text[pos-1] == '_')) --pos;
+            } else {
+                // Skip non-word chars forward, then skip the next word.
+                while (pos < len && !wxIsalnum(text[pos]) && text[pos] != '_') ++pos;
+                while (pos < len &&  (wxIsalnum(text[pos]) || text[pos] == '_')) ++pos;
+            }
+            inp->SetInsertionPoint(pos);
+        }
+        return;
+    }
+
+    // Tab: complete the current partial command.
+    //
+    // Phase 1 — history prefix search: scan backward through m_history for
+    // the most recent command that starts with the current input.  A second Tab
+    // cycles further back.  Not available in password mode.
+    //
+    // Phase 2 — output-word fallback: if history is exhausted (or there are no
+    // history matches at all), scan the last ~300 output lines for words that
+    // start with the partial input and cycle through them.  An extra Tab at the
+    // end of the output-word list restores the original partial input.
     if (code == WXK_TAB && inp == m_input) {
         wxString partial = m_input->GetValue();
-        if (!partial.IsEmpty()) {
-            // Case-insensitive prefix search backward through history.
-            // Start from just before the current index (if already cycling),
-            // otherwise from the most recent entry.
-            wxString lowerPartial = partial.Lower();
+        if (partial.IsEmpty()) return;  // consume Tab without action
+
+        // ── If we're already in an output-word cycle, just advance ───────────
+        if (m_tabWordIdx >= 0) {
+            ++m_tabWordIdx;
+            if (m_tabWordIdx >= (int)m_tabWords.size()) {
+                // Wrapped past the last candidate: restore the original partial.
+                m_tabWordIdx = -1;
+                m_tabWords.clear();
+                m_input->SetValue(m_tabPartial);
+                m_input->SetInsertionPointEnd();
+            } else {
+                m_input->SetValue(m_tabWords[m_tabWordIdx]);
+                m_input->SetInsertionPointEnd();
+            }
+            return;
+        }
+
+        // ── Phase 1: history prefix search ───────────────────────────────────
+        wxString lowerPartial = partial.Lower();
+        {
             int searchFrom = (m_histIdx >= 0) ? m_histIdx - 1
                                                : (int)m_history.size() - 1;
             for (int i = searchFrom; i >= 0; --i) {
@@ -1521,14 +1569,62 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
                     m_histIdx = i;
                     m_input->SetValue(hist);
                     m_input->SetInsertionPointEnd();
-                    return;  // consume Tab — no tab character inserted
+                    return;
                 }
             }
         }
-        return;  // consume Tab even if no match (don't insert literal tab)
+
+        // ── Phase 2: output-word completion fallback ──────────────────────────
+        // History exhausted.  Build a unique, most-recent-first list of words
+        // from the last ~300 output lines that start with the partial input.
+        // Tokens: runs of [A-Za-z0-9_-] characters.
+        m_tabPartial  = partial;
+        m_tabWords.clear();
+        m_tabWordIdx  = -1;
+
+        if (m_output) {
+            std::set<wxString> seen;
+            int startLine = std::max(0, m_output->LineCount() - 300);
+            for (int li = m_output->LineCount() - 1; li >= startLine; --li) {
+                const SOutputLine* line = m_output->GetLine(li);
+                if (!line) continue;
+                for (const auto& run : *line) {
+                    wxString text = wxString::FromUTF8(run.text.c_str());
+                    wxString word;
+                    for (size_t ci = 0; ci <= text.size(); ++ci) {
+                        wxChar ch = (ci < text.size()) ? text[ci] : wxChar('\0');
+                        bool wordChar = ci < text.size() &&
+                                        (wxIsalnum(ch) || ch == '_' || ch == '-');
+                        if (wordChar) {
+                            word += ch;
+                        } else if (!word.IsEmpty()) {
+                            wxString wl = word.Lower();
+                            if (wl.StartsWith(lowerPartial) &&
+                                word.Len() > partial.Len() &&
+                                seen.find(wl) == seen.end())
+                            {
+                                seen.insert(wl);
+                                m_tabWords.push_back(word);
+                            }
+                            word.clear();
+                        }
+                    }
+                }
+            }
+        }
+
+        if (m_tabWords.empty()) return;  // no candidates — consume Tab silently
+
+        m_tabWordIdx = 0;
+        m_input->SetValue(m_tabWords[0]);
+        m_input->SetInsertionPointEnd();
+        return;
     }
 
     if (code == WXK_UP && inp == m_input) {
+        // Pressing Up exits any ongoing output-word tab cycle.
+        m_tabWordIdx = -1;
+        m_tabWords.clear();
         if (m_history.empty()) return;
         if (m_histIdx < 0) {
             // Start browsing: save the current partial input as the prefix filter.
@@ -1565,6 +1661,9 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
 
     if (code == WXK_DOWN && inp == m_input) {
+        // Pressing Down exits any ongoing output-word tab cycle.
+        m_tabWordIdx = -1;
+        m_tabWords.clear();
         if (m_histIdx < 0) { evt.Skip(); return; }
         wxString lpfx = m_histSaved.Lower();
         // Search forward for the next newer match.
@@ -1607,9 +1706,12 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
-    // Any non-arrow key cancels history browsing.
-    if (code != WXK_UP && code != WXK_DOWN)
-        m_histIdx = -1;
+    // Any non-navigation key cancels history browsing and output-word tab cycling.
+    if (code != WXK_UP && code != WXK_DOWN) {
+        m_histIdx    = -1;
+        m_tabWordIdx = -1;
+        m_tabWords.clear();
+    }
 
     evt.Skip();
 }

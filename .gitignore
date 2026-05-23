@@ -1,6 +1,7 @@
 .*
 !.gitignore
 !.gitattributes
+!.github
 
 #
 #  Help file is generated from database
@@ -86,6 +87,8 @@ git_log_output.txt
 # macOS/Linux port build artefacts
 #
 build*/
+clean/
+build-mac/
 *.o
 commit-phase1.sh
 scripting/methods/methods_sounds_patch.py

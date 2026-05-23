@@ -1241,8 +1241,34 @@ static int hook_quick_connect_dlg(char** outName, char** outAddr, int* outPort)
                      : nullptr;
 
     QuickConnectDlg dlg(parent);
+
+    // Pre-fill with the last-used values so repeat connections need fewer clicks.
+    {
+        wxConfig cfg(wxT("mushclient"));
+        wxString lastAddr;
+        long     lastPort = 0;
+        wxString lastName;
+        if (cfg.Read(wxT("/quickconnect/addr"), &lastAddr) && !lastAddr.IsEmpty()) {
+            dlg.m_addr->SetValue(lastAddr);
+            if (wxButton* ok = dynamic_cast<wxButton*>(dlg.FindWindowById(wxID_OK)))
+                ok->Enable(true);
+        }
+        if (cfg.Read(wxT("/quickconnect/port"), &lastPort) && lastPort > 0)
+            dlg.m_port->SetValue((int)lastPort);
+        if (cfg.Read(wxT("/quickconnect/name"), &lastName) && !lastName.IsEmpty())
+            dlg.m_name->SetValue(lastName);
+    }
+
     if (dlg.ShowModal() != wxID_OK)
         return IDCANCEL;
+
+    // Persist for next time.
+    {
+        wxConfig cfg(wxT("mushclient"));
+        cfg.Write(wxT("/quickconnect/addr"), dlg.m_addr->GetValue());
+        cfg.Write(wxT("/quickconnect/port"), (long)dlg.m_port->GetValue());
+        cfg.Write(wxT("/quickconnect/name"), dlg.m_name->GetValue());
+    }
 
     *outName = strdup(dlg.m_name->GetValue().ToUTF8().data());
     *outAddr = strdup(dlg.m_addr->GetValue().ToUTF8().data());

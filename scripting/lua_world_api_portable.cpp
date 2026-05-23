@@ -6075,7 +6075,12 @@ static const luaL_Reg worldlib[] = {
         lua_pushnumber(L, eOK); return 1;
     }},
     { "SetToolBarPosition",     L_GuiOkStub  },
-    { "ShiftTabCompleteItem",   L_GuiNilStub },
+    { "ShiftTabCompleteItem",   [](lua_State* L) -> int {
+        CMUSHclientDoc* pDoc = world_doc(L);
+        const char* item = luaL_checkstring(L, 1);
+        lua_pushnumber(L, pDoc->ShiftTabCompleteItem(item));
+        return 1;
+    }},
     { "ShowInfoBar",            L_GuiOkStub  },
     { "TextRectangle",          L_GuiOkStub  },
     { "Transparency",           L_GuiOkStub  },

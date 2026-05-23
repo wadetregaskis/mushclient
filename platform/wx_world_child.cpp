@@ -19,6 +19,7 @@
 #include "MUSHclient.h"               // CMUSHclientApp + OtherTypes.h + all prerequisites
 #include "doc.h"                      // CMUSHclientDoc, SendMsg, etc.
 #include "miniwindow.h"               // CMiniWindow, MiniWindowVector, MINIWINDOW_* flags
+#include "scripting/scripting.h"      // CScriptEngine, lua_State* — for Shift+Tab globals
 #include "platform/wx_world_child.h"  // our own header (CWorldChildFrame, COutputPane)
 
 // MW_MOUSE_* flag constants (from mushview.h — copied here to avoid pulling in
@@ -1894,6 +1895,81 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Tab and Up/Down blocks so the re-mapped value is seen by them.
     if (evt.ControlDown() && code == 'P') code = WXK_UP;
     else if (evt.ControlDown() && code == 'N') code = WXK_DOWN;
+
+    // Shift+Tab: show a popup list of script-defined completion items and/or
+    // Lua global function names (mirroring Windows FunctionMenu behaviour).
+    // Scripts populate the list with world.ShiftTabCompleteItem(); the list
+    // is filtered to items that start with whatever is currently in the input.
+    if (code == WXK_TAB && inp == m_input && evt.ShiftDown() && m_doc) {
+        std::vector<std::string> candidates;
+
+        // ── Lua global functions ──────────────────────────────────────────
+        if (m_doc->m_bTabCompleteFunctions) {
+            CScriptEngine* eng = m_doc->GetScriptEngine();
+            if (eng && eng->L) {
+                lua_State* LS = eng->L;
+                lua_pushvalue(LS, LUA_GLOBALSINDEX);
+                lua_pushnil(LS);
+                while (lua_next(LS, -2)) {
+                    if (lua_type(LS, -1) == LUA_TFUNCTION &&
+                        lua_type(LS, -2) == LUA_TSTRING) {
+                        const char* fname = lua_tostring(LS, -2);
+                        if (fname && fname[0] != '_')
+                            candidates.push_back(fname);
+                    }
+                    lua_pop(LS, 1);
+                }
+                lua_pop(LS, 1);
+            }
+        }
+
+        // ── Script-registered completion items ───────────────────────────
+        for (const auto& item : m_doc->m_ExtraShiftTabCompleteItems)
+            candidates.push_back(item);
+
+        if (candidates.empty()) return;  // nothing to show — consume Shift+Tab
+
+        // Sort and deduplicate (case-insensitive).
+        std::sort(candidates.begin(), candidates.end(),
+            [](const std::string& a, const std::string& b) {
+                return strcasecmp(a.c_str(), b.c_str()) < 0;
+            });
+        candidates.erase(std::unique(candidates.begin(), candidates.end()),
+                         candidates.end());
+
+        // Filter to items that start with the current (partial) input.
+        wxString partial = inp->GetValue().Lower();
+        if (!partial.IsEmpty()) {
+            std::vector<std::string> filtered;
+            for (const auto& c : candidates) {
+                wxString lc = wxString::FromUTF8(c.c_str()).Lower();
+                if (lc.StartsWith(partial))
+                    filtered.push_back(c);
+            }
+            if (!filtered.empty())
+                candidates = std::move(filtered);
+        }
+
+        // Build wxArrayString for the dialog.
+        wxArrayString wxCands;
+        wxCands.Alloc(candidates.size());
+        for (const auto& c : candidates)
+            wxCands.Add(wxString::FromUTF8(c.c_str()));
+
+        wxSingleChoiceDialog dlg(this,
+            "Choose a function or command:",
+            "Shift+Tab Completion",
+            wxCands);
+
+        // Pre-select the first entry.
+        dlg.SetSelection(0);
+
+        if (dlg.ShowModal() == wxID_OK) {
+            inp->SetValue(wxCands[dlg.GetSelection()]);
+            inp->SetInsertionPointEnd();
+        }
+        return;
+    }
 
     // Tab: complete the current partial command.
     //

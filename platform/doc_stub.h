@@ -1869,6 +1869,7 @@ public:
                                const int iNotepadType = eNotepadNormal);
     bool    SeeIfHandlerCanExecute(const CString& strName);
     CScriptEngine* GetScriptEngine();
+    long    ShiftTabCompleteItem(LPCTSTR Item);
     bool    ExecuteScript(DISPID& dispid, const char* szProcedure,
                           const unsigned short iReason,
                           const char* szType, const char* szReason,

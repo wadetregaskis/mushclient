@@ -1977,6 +1977,20 @@ public:
     // Called by DeleteLines() after it trims m_LineList.
     std::function<void(long)> m_fn_delete_lines;
 
+    // world.SelectCommand(): select all text in the command input bar.
+    std::function<void()> m_fn_select_command;
+
+    // world.DeleteCommandHistory(): clear the command history.
+    std::function<void()> m_fn_delete_command_history;
+
+    // world.PushCommand(): push the current command bar text onto the history
+    // stack and clear the bar; returns the pushed command text.
+    std::function<std::string()> m_fn_push_command;
+
+    // world.GetCommandList(count): return up to `count` most-recent history
+    // entries, newest first.  Returns empty vector if history is empty.
+    std::function<std::vector<std::string>(long)> m_fn_get_command_list;
+
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference
     // m_pCurrentLine->styleList.GetTail() to read the current style.

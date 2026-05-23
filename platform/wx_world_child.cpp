@@ -241,6 +241,55 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (m_output) m_output->DeleteTailLines(n);
         };
 
+        // world.SelectCommand(): select all text in the command input bar.
+        m_doc->m_fn_select_command = [this]() {
+            wxTextCtrl* inp = ActiveInput();
+            if (inp) inp->SetSelection(-1, -1);  // wxWidgets: -1,-1 = select all
+        };
+
+        // world.DeleteCommandHistory(): clear the input history.
+        m_doc->m_fn_delete_command_history = [this]() {
+            m_history.clear();
+            m_histIdx = -1;
+            m_histSaved.Clear();
+            // Rewrite (empty) history file so the cleared history persists.
+            if (!m_historyFilePath.empty()) {
+                FILE* f = fopen(m_historyFilePath.c_str(), "w");
+                if (f) fclose(f);
+            }
+        };
+
+        // world.PushCommand(): save current bar text to history, clear bar.
+        m_doc->m_fn_push_command = [this]() -> std::string {
+            wxTextCtrl* inp = ActiveInput();
+            if (!inp) return {};
+            std::string text(inp->GetValue().ToUTF8());
+            if (!text.empty()) {
+                wxString wxText = wxString::FromUTF8(text.c_str());
+                if (m_history.empty() || m_history.back() != wxText)
+                    m_history.push_back(wxText);
+                if ((int)m_history.size() > kMaxHistory)
+                    m_history.erase(m_history.begin());
+            }
+            inp->Clear();
+            m_histIdx = -1;
+            ApplyHistRSearch(false);
+            return text;
+        };
+
+        // world.GetCommandList(count): return up to count most-recent history
+        // entries, newest first.  count <= 0 means all.
+        m_doc->m_fn_get_command_list = [this](long count) -> std::vector<std::string> {
+            std::vector<std::string> result;
+            if (m_history.empty()) return result;
+            long total = (long)m_history.size();
+            long n = (count <= 0) ? total : std::min(count, total);
+            result.reserve((size_t)n);
+            for (long i = total - 1; i >= total - n; --i)
+                result.push_back(std::string(m_history[(size_t)i].ToUTF8()));
+            return result;
+        };
+
         // world.GetClipboard() / world.SetClipboard(): system clipboard access.
         m_doc->m_fn_get_clipboard = []() -> std::string {
             std::string result;
@@ -2429,6 +2478,10 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_get_main_rect            = nullptr;
         m_doc->m_fn_activate_client          = nullptr;
         m_doc->m_fn_delete_lines             = nullptr;
+        m_doc->m_fn_select_command           = nullptr;
+        m_doc->m_fn_delete_command_history   = nullptr;
+        m_doc->m_fn_push_command             = nullptr;
+        m_doc->m_fn_get_command_list         = nullptr;
 
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.

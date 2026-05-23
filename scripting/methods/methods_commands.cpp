@@ -32,21 +32,34 @@ extern tCommandIDMapping CommandIDs [];
 
 // world.GetCommandList - returns a variant array which is a list of "count" recent commands
 
-VARIANT CMUSHclientDoc::GetCommandList(long Count) 
+VARIANT CMUSHclientDoc::GetCommandList(long Count)
 {
   COleSafeArray sa;   // for command list
 
+#ifndef _WIN32
+  if (m_fn_get_command_list) {
+    std::vector<std::string> hist = m_fn_get_command_list(Count);
+    if (!hist.empty()) {
+      long n = (long)hist.size();
+      sa.CreateOneDim(VT_VARIANT, n);
+      for (long i = 0; i < n; ++i) {
+        COleVariant v(CString(hist[i].c_str()));
+        sa.PutElement(&i, &v);
+      }
+    }
+  }
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	  {
 		  CSendView* pmyView = (CSendView*)pView;
 
       POSITION pos;
       long iCount;
-  
+
       // put the commands into the array
       if (!pmyView->m_msgList.IsEmpty ())    // cannot create empty dimension
         {
@@ -57,8 +70,8 @@ VARIANT CMUSHclientDoc::GetCommandList(long Count)
 
         sa.CreateOneDim (VT_VARIANT, Count);
 
-        for (iCount = 0, pos = pmyView->m_msgList.GetTailPosition(); 
-            pos && iCount < Count; 
+        for (iCount = 0, pos = pmyView->m_msgList.GetTailPosition();
+            pos && iCount < Count;
             )
           {
           CString strLine = pmyView->m_msgList.GetPrev (pos);
@@ -72,6 +85,7 @@ VARIANT CMUSHclientDoc::GetCommandList(long Count)
 
 	    }	  // end of being a CSendView
     }   // end of loop through views
+#endif
 
 	return sa.Detach ();
 }    // end of CMUSHclientDoc::GetCommandList
@@ -80,14 +94,20 @@ VARIANT CMUSHclientDoc::GetCommandList(long Count)
 //                     stack and then blanks it out
 //  returns command that was pushed
 
-BSTR CMUSHclientDoc::PushCommand() 
+BSTR CMUSHclientDoc::PushCommand()
 {
 	CString strCommand;
 
+#ifndef _WIN32
+  if (m_fn_push_command) {
+    std::string s = m_fn_push_command();
+    strCommand = s.c_str();
+  }
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	  {
 		  CSendView* pmyView = (CSendView*)pView;
@@ -111,18 +131,23 @@ BSTR CMUSHclientDoc::PushCommand()
 
       }	  // end of being a CSendView
     }   // end of loop through views
+#endif
 
 	return strCommand.AllocSysString();
 }   // end of CMUSHclientDoc::PushCommand
 
 // world.SelectCommand - selects the command in the command window
 
-void CMUSHclientDoc::SelectCommand() 
+void CMUSHclientDoc::SelectCommand()
 {
+#ifndef _WIN32
+  if (m_fn_select_command)
+    m_fn_select_command();
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	  {
 		  CSendView* pmyView = (CSendView*)pView;
@@ -131,7 +156,7 @@ void CMUSHclientDoc::SelectCommand()
 
       }	  // end of being a CSendView
     }   // end of loop through views
-
+#endif
 }    // end of CMUSHclientDoc::SelectCommand
 
 // world.GetCommand - gets the command in the command window
@@ -252,13 +277,16 @@ int nStartChar,
 }   // end of CMUSHclientDoc::PasteCommand
 
 
-void CMUSHclientDoc::DeleteCommandHistory() 
+void CMUSHclientDoc::DeleteCommandHistory()
 {
-
+#ifndef _WIN32
+  if (m_fn_delete_command_history)
+    m_fn_delete_command_history();
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	  {
 		  CSendView* pmyView = (CSendView*)pView;
@@ -269,13 +297,13 @@ void CMUSHclientDoc::DeleteCommandHistory()
       pmyView->m_inputcount = 0;
       pmyView->m_HistoryFindInfo.m_pFindPosition = NULL;
       pmyView->m_HistoryFindInfo.m_nCurrentLine = 0;
-      pmyView->m_HistoryFindInfo.m_bAgain = FALSE;  
+      pmyView->m_HistoryFindInfo.m_bAgain = FALSE;
       pmyView->m_strPartialCommand.Empty ();
       pmyView->m_last_command.Empty ();
 
       }	  // end of being a CSendView
     }   // end of loop through views
-
+#endif
 }   // end of CMUSHclientDoc::DeleteCommandHistory
 
 

@@ -387,10 +387,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     mb->Append(fileMenu, wxT("&File"));
 
     wxMenu* connMenu = new wxMenu();
-    connMenu->Append(32289,       wxT("Quick Connect…\tCtrl+K"));
+    // Note: Ctrl+K, Ctrl+D, and Ctrl+R are standard Unix input-bar shortcuts
+    // (kill-to-end, delete-forward, and reverse history search respectively) so
+    // those keys are not used as menu accelerators here.
+    connMenu->Append(32289,       wxT("Quick Connect…\tCtrl+Shift+K"));
     connMenu->AppendSeparator();
-    connMenu->Append(0xE200,      wxT("Disconnect\tCtrl+D"));
-    connMenu->Append(0xE201,      wxT("Reconnect\tCtrl+R"));
+    connMenu->Append(0xE200,      wxT("Disconnect"));
+    connMenu->Append(0xE201,      wxT("Reconnect\tCtrl+Shift+R"));
     mb->Append(connMenu, wxT("&Connection"));
 
     wxMenu* gameMenu = new wxMenu();
@@ -1129,8 +1132,10 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     bool     autoConnect = (doc->m_connect_now != 0);
 
     // Seed the font picker with the pane's current font (if available).
+    // Use GetCurrentFont() rather than GetFont() so we pick up the exact
+    // wxFont object (including the live point size after Ctrl+scroll zoom).
     wxFont currentFont;
-    if (pane) currentFont = pane->GetFont();
+    if (pane) currentFont = pane->GetCurrentFont();
 
     int scrollbackLines = doc->m_maxlines > 0 ? (int)doc->m_maxlines : 5000;
     WorldPreferencesDlg dlg(parent, name, server, port, autoConnect,

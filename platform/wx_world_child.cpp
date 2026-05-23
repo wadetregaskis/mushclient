@@ -290,6 +290,16 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             return result;
         };
 
+        // GetInfo(236/237): query command input selection range.
+        m_doc->m_fn_get_command_selection = [this](long& selStart, long& selEnd) {
+            wxTextCtrl* inp = ActiveInput();
+            if (!inp) { selStart = selEnd = 0; return; }
+            long from = 0, to = 0;
+            inp->GetSelection(&from, &to);
+            selStart = from;
+            selEnd   = to;
+        };
+
         // world.GetClipboard() / world.SetClipboard(): system clipboard access.
         m_doc->m_fn_get_clipboard = []() -> std::string {
             std::string result;
@@ -2482,6 +2492,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_delete_command_history   = nullptr;
         m_doc->m_fn_push_command             = nullptr;
         m_doc->m_fn_get_command_list         = nullptr;
+        m_doc->m_fn_get_command_selection    = nullptr;
 
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.

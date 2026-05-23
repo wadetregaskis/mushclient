@@ -1046,19 +1046,37 @@ static int L_GetLineCount(lua_State* L)
 //   114 = output window paused (user scrolled up)
 // Numbers (cases 201-289):
 //   201 = total lines received
+//   202 = new (unseen) lines
 //   203 = total lines sent
 //   212 = output font height in pixels
 //   213 = output font width (average) in pixels
-//   214 = input font height in pixels
-//   215 = input font width in pixels
+//   214 = input font height (same as output)
+//   215 = input font width (same as output)
 //   216 = total bytes received
 //   217 = total bytes sent
 //   218 = number of variables
 //   219 = number of triggers
 //   220 = number of timers
 //   221 = number of aliases
+//   222 = queued commands (speed-walk queue)
+//   223 = number of map waypoints
 //   224 = lines currently in output buffer
+//   225 = custom MXP elements
+//   226 = custom MXP entities
 //   227 = connect phase (eConnect* enum value)
+//   230 = script execution depth
+//   231 = log file size in bytes
+//   235 = number of command windows (always 1)
+//   236 = command selection start column
+//   237 = command selection end column
+//   239 = current action source (eUnknownActionSource etc.)
+//   240 = output font width (duplicate of 213)
+//   241 = output font height (duplicate of 212)
+//   244 = triggers evaluated count
+//   245 = triggers matched count
+//   246 = aliases evaluated count
+//   247 = aliases matched count
+//   248 = timers fired count
 //   289 = last line with IAC GA
 
 static int L_GetInfo(lua_State* L)
@@ -1103,8 +1121,35 @@ static int L_GetInfo(lua_State* L)
         case 219: lua_pushnumber(L, (double)pDoc->GetTriggerMap().GetCount()); return 1;
         case 220: lua_pushnumber(L, (double)pDoc->GetTimerMap().GetCount());  return 1;
         case 221: lua_pushnumber(L, (double)pDoc->GetAliasMap().GetCount());  return 1;
+        case 202: lua_pushnumber(L, pDoc->m_new_lines);                       return 1;
+        case 222: lua_pushnumber(L, (double)pDoc->m_QueuedCommandsList.GetCount()); return 1;
+        case 223: lua_pushnumber(L, (double)pDoc->m_strMapList.GetCount());   return 1;
         case 224: lua_pushnumber(L, (double)pDoc->m_LineList.GetCount());     return 1;
+        case 225: lua_pushnumber(L, (double)pDoc->m_CustomElementMap.GetCount()); return 1;
+        case 226: lua_pushnumber(L, (double)pDoc->m_CustomEntityMap.GetCount()); return 1;
         case 227: lua_pushnumber(L, pDoc->m_iConnectPhase);                   return 1;
+        case 230: lua_pushnumber(L, pDoc->m_iExecutionDepth);                 return 1;
+        case 231: // log file size
+            lua_pushnumber(L, pDoc->m_logfile ? (double)ftell(pDoc->m_logfile) : 0.0);
+            return 1;
+        case 235: lua_pushnumber(L, 1);                                       return 1; // always 1 command window
+        case 236: // command selection start column
+        case 237: // command selection end column
+            {
+                long selStart = 0, selEnd = 0;
+                if (pDoc->m_fn_get_command_selection)
+                    pDoc->m_fn_get_command_selection(selStart, selEnd);
+                lua_pushnumber(L, iType == 236 ? (double)selStart : (double)selEnd);
+            }
+            return 1;
+        case 239: lua_pushnumber(L, pDoc->m_iCurrentActionSource);            return 1;
+        case 240: lua_pushnumber(L, pDoc->m_gui_font_width);                  return 1;
+        case 241: lua_pushnumber(L, pDoc->m_gui_font_height);                 return 1;
+        case 244: lua_pushnumber(L, pDoc->m_iTriggersEvaluatedCount);         return 1;
+        case 245: lua_pushnumber(L, pDoc->m_iTriggersMatchedCount);           return 1;
+        case 246: lua_pushnumber(L, pDoc->m_iAliasesEvaluatedCount);          return 1;
+        case 247: lua_pushnumber(L, pDoc->m_iAliasesMatchedCount);            return 1;
+        case 248: lua_pushnumber(L, pDoc->m_iTimersFiredCount);               return 1;
         case 289: lua_pushnumber(L, pDoc->m_last_line_with_IAC_GA);           return 1;
         default:  lua_pushnil(L);                                              return 1;
     }

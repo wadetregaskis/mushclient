@@ -1567,6 +1567,10 @@ public:
   // world.GetCommandList(count): return up to count most-recent history entries,
   // newest first.  Returns empty vector if history is empty.
   std::function<std::vector<std::string>(long)> m_fn_get_command_list;
+
+  // GetInfo(236/237): query the command input selection range.
+  // Sets selStart and selEnd (both 0-based, in characters).
+  std::function<void(long&, long&)> m_fn_get_command_selection;
 #endif
 
   protected:

@@ -1991,6 +1991,11 @@ public:
     // entries, newest first.  Returns empty vector if history is empty.
     std::function<std::vector<std::string>(long)> m_fn_get_command_list;
 
+    // GetInfo(236/237): query the command input selection range.
+    // Sets selStart and selEnd (both 0-based, in characters).
+    // If nothing is selected, both are set to the caret position.
+    std::function<void(long&, long&)> m_fn_get_command_selection;
+
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference
     // m_pCurrentLine->styleList.GetTail() to read the current style.

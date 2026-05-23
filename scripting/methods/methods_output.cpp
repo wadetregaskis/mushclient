@@ -53,17 +53,17 @@ void CMUSHclientDoc::Redraw()
 }
 
 
-void CMUSHclientDoc::SetOutputFont(LPCTSTR FontName, short PointSize) 
+void CMUSHclientDoc::SetOutputFont(LPCTSTR FontName, short PointSize)
 {
-  ChangeFont (PointSize, 
-              FontName, 
-              FW_NORMAL, 
-              m_font_charset,
-              m_bShowBold,
-              m_bShowItalic,
-              m_bShowUnderline,
-              m_iLineSpacing);
-
+#ifndef _WIN32
+  if (m_fn_set_output_font) {
+    std::string face(FontName ? FontName : "");
+    m_fn_set_output_font(face, (int)PointSize, false, false);
+  }
+#else
+  ChangeFont(PointSize, FontName, FW_NORMAL, m_font_charset,
+             m_bShowBold, m_bShowItalic, m_bShowUnderline, m_iLineSpacing);
+#endif
 }  // end of CMUSHclientDoc::SetOutputFont
 
 
@@ -735,8 +735,15 @@ Frame.FlashWindow (TRUE);
 }    // end of CMUSHclientDoc::FlashIcon
 
 
-long CMUSHclientDoc::SetScroll(long Position, BOOL Visible) 
+long CMUSHclientDoc::SetScroll(long Position, BOOL Visible)
 {
+#ifndef _WIN32
+  // Position: -1 = scroll to bottom, -2 = no change, >= 0 = target line index.
+  // Visible (show/hide scrollbar) is ignored — scrollbar is always visible.
+  if (m_fn_set_scroll && Position != -2)
+    m_fn_set_scroll(Position);
+  return eOK;
+#else
 
 CPoint pt (0, 0);
 int lastline = GetLastLine ();
@@ -781,8 +788,8 @@ bool will_change_visibility = (Visible != m_bScrollBarWanted);
 	    }	  // end of being a CMUSHView
     }   // end of loop through views
 
-
 	return eOK;
+#endif
 }   // end of CMUSHclientDoc::SetScroll
 
 
@@ -832,29 +839,40 @@ CLine * pLine = m_LineList.GetAt (GetLinePosition (LineNumber));
 }  // end of CMUSHclientDoc::Bookmark
 
 
-void CMUSHclientDoc::SetTitle(LPCTSTR Title) 
+void CMUSHclientDoc::SetTitle(LPCTSTR Title)
 {
 	m_strWindowTitle = Title;
 
+#ifdef _WIN32
   // now update all views
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
   	  {
 		  CMUSHView* pmyView = (CMUSHView*)pView;
       pmyView->FixupTitle ();
 	    }	  // end of being a CMUSHView
     }   // end of loop through views
+#else
+  // Non-Windows: propagate via callback to the wxWidgets MDI child frame.
+  if (m_fn_set_title)
+      m_fn_set_title(std::string(static_cast<const char*>(m_strWindowTitle)));
+#endif
 
 }   // end of CMUSHclientDoc::SetTitle
 
 
-void CMUSHclientDoc::SetMainTitle(LPCTSTR Title) 
+void CMUSHclientDoc::SetMainTitle(LPCTSTR Title)
 {
 	m_strMainWindowTitle = Title;
+#ifdef _WIN32
   Frame.FixUpTitleBar ();
+#else
+  if (m_fn_set_main_title)
+      m_fn_set_main_title(std::string(static_cast<const char*>(m_strMainWindowTitle)));
+#endif
 } // end of CMUSHclientDoc::SetMainTitle
 
 void CMUSHclientDoc::SetUnseenLines(long Counter)

@@ -760,6 +760,8 @@ class CMUSHView : public CView {
 public:
     DECLARE_DYNCREATE(CMUSHView)
     void Invalidate() {}
+    RECT GetTextRectangle() const { RECT r = {0,0,0,0}; return r; }
+    CPoint GetScrollPosition() const { return CPoint(0, 0); }
 };
 
 class CSendView : public CView {
@@ -1901,11 +1903,72 @@ public:
     // Note() fires m_fn_note (or falls back to puts()).
     std::function<void(SOutputLine&&)>      m_fn_line_ready;
     std::function<void(const std::string&)> m_fn_note;
-    std::function<void(const std::string&)> m_fn_status;  // status bar update
+    std::function<void(const std::string&)> m_fn_status;     // status bar update
+    std::function<void(const std::string&)> m_fn_set_title;  // child frame title bar
+    std::function<void(const std::string&)> m_fn_set_main_title; // main window title bar
 
     // Pending styled spans for the line currently being assembled.
     // Flushed (via m_fn_line_ready) on each '\n'.
     SOutputLine m_gui_line_buf;
+
+    // ── Output pane metrics (updated by CWorldChildFrame on font/size change) ─
+    // Exposed to Lua via GetInfo(212), GetInfo(213), etc.
+    int  m_gui_font_height = 18;   // pixel height of one line (GetInfo 212)
+    int  m_gui_font_width  = 10;   // average pixel width of one char (GetInfo 213)
+    int  m_gui_rows        = 24;   // visible rows in the output pane
+    int  m_gui_cols        = 80;   // visible columns in the output pane
+    // True while the output pane is "paused" (user scrolled up, auto-scroll
+    // disengaged).  Updated by CWorldChildFrame via m_fn_autoscroll_changed.
+    // Exposed via GetInfo(114) and toggled by world.Pause().
+    bool m_gui_paused      = false;
+
+    // Called by world.Pause(bPause) to toggle scroll-lock from Lua.
+    // Wired by CWorldChildFrame to COutputPane::SetPaused().
+    std::function<void(bool)> m_fn_set_paused;
+
+    // Called by world.Repaint() to force a repaint of the output pane.
+    std::function<void()> m_fn_repaint;
+
+    // Called by world.SetBackgroundColour(rgb) to update the pane background.
+    // Receives a COLORREF; 0xFFFFFFFF means "default" (black).
+    std::function<void(unsigned long)> m_fn_set_background_colour;
+
+    // Called when SetOption("max_output_lines", n) changes the scrollback cap.
+    // Wired by CWorldChildFrame to COutputPane::SetMaxLines().
+    std::function<void(int)> m_fn_set_max_lines;
+
+    // Called by world.GetClipboard() / world.SetClipboard().
+    std::function<std::string()>              m_fn_get_clipboard;
+    std::function<void(const std::string&)>   m_fn_set_clipboard;
+
+    // ── Output-pane batch-update callbacks ────────────────────────────────
+    // BeginBatch / EndBatch suppress per-line repaints; fired by UpdateAllViews.
+    std::function<void()> m_fn_begin_batch;
+    std::function<void()> m_fn_flush;
+
+    // ── Command-input callbacks ───────────────────────────────────────────
+    // world.GetCommand() / world.SetCommand(): read/write the input bar text.
+    std::function<std::string()>              m_fn_get_command;
+    std::function<bool(const std::string&)>   m_fn_set_command;
+
+    // world.SetCommandSelection(first, last): set selection in the input bar.
+    std::function<void(long, long)>           m_fn_set_command_selection;
+
+    // ── Output-font callback ──────────────────────────────────────────────
+    // world.SetFont(face, size, bold, italic): change the output pane font.
+    std::function<void(const std::string&, int, bool, bool)> m_fn_set_output_font;
+
+    // ── Scroll / selection callbacks ──────────────────────────────────────
+    // world.SetScroll(pos): scroll the output pane to a line index.
+    std::function<void(long)>                 m_fn_set_scroll;
+    // world.SetSelection(sl, el, sc, ec): set the text selection in the pane.
+    std::function<void(int, int, int, int)>   m_fn_set_selection;
+
+    // ── Window-geometry callbacks ─────────────────────────────────────────
+    // world.GetWorldWindowPosition(): screen rect of the output pane (x,y,w,h).
+    std::function<void(int&, int&, int&, int&)> m_fn_get_output_rect;
+    // world.GetMainWindowPosition(): screen rect of the MDI parent frame.
+    std::function<void(int&, int&, int&, int&)> m_fn_get_main_rect;
 
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference

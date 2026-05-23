@@ -75,24 +75,14 @@ public:
 
     // ── Find / search ─────────────────────────────────────────────────────────
     // FindNext: jumps to the next/previous match and returns true if found.
-    // *outMatchLine    receives the 0-based line index of the match (or -1).
-    // *outOrdinal      receives the 1-based ordinal of the match among all hits.
-    // *outTotalMatches receives a count of all matching lines (capped at 9999).
-    // All three are computed in one linear scan to avoid redundant work.
-    // caseSensitive: when true, the search is case-sensitive (default: false).
+    // *outMatchLine receives the 0-based line index of the match (or -1).
+    // *outTotalMatches receives a count of all matching lines (lazily counted).
     bool FindNext(const wxString& term, bool forward = true,
-                  int* outMatchLine    = nullptr,
-                  int* outOrdinal      = nullptr,
-                  int* outTotalMatches = nullptr,
-                  bool caseSensitive   = false);
-    void HighlightSearch(const wxString& term, bool caseSensitive = false);
+                  int* outMatchLine = nullptr, int* outTotalMatches = nullptr);
+    void HighlightSearch(const wxString& term);
 
-    // Change the display font (e.g. from preferences or scripting API).
+    // Change the display font (e.g. from preferences).
     void SetOutputFont(const wxFont& font);
-
-    // Read-only access to the current display font (used by scripting callbacks
-    // to build a modified font to pass back into SetOutputFont).
-    const wxFont& GetCurrentFont() const { return m_font; }
 
     // Update the scrollback buffer cap.
     void SetMaxLines(int n);
@@ -109,31 +99,12 @@ public:
     // Copy the selected text to the clipboard.
     void CopySelection();
 
-    // Programmatically select a range of text.  Arguments are 1-based line and
-    // column numbers, matching the MUSHclient SetSelection() Lua API.
-    // Pass all-zero arguments to clear the selection.
-    void SetSelectionRange(int startLine, int endLine, int startCol, int endCol);
-
     // Select all text in the buffer.
     void SelectAll();
 
     // Scroll to the very bottom of the buffer and re-engage auto-scroll.
     // Safe to call at any time; no-op if already at the bottom.
     void ScrollToBottom();
-
-    // Programmatically pause (disengage auto-scroll) or unpause (re-engage).
-    // Mirrors world.Pause() scripting API.  When pausing, the scroll position
-    // is not changed so the user sees the same content; new lines are still
-    // appended to the buffer but will not scroll into view.
-    void SetPaused(bool paused);
-
-    // Scroll to a specific 0-based line index.  Clamps to [0, lineCount-1].
-    // Disengages auto-scroll (same as the user manually scrolling up).
-    void ScrollToLine(int lineIdx);
-
-    // Scroll to the very top of the buffer (disengages auto-scroll).
-    // Safe to call at any time; no-op if already at the top.
-    void ScrollToTop();
 
     // Scroll one page up (direction=-1) or down (+1).
     // Updates the auto-scroll state accordingly.
@@ -142,13 +113,6 @@ public:
     // Line height / char width in pixels (updated on font change).
     int LineHeight() const { return m_lineH; }
     int CharWidth()  const { return m_charW; }
-
-    // Convert a client-space point to a buffer position (logical line + char
-    // column).  Wrap-aware: correctly resolves which visual row within a
-    // wrapped logical line was hit.  Returns an invalid SelPoint if the buffer
-    // is empty.  Exposed for callers (e.g. CWorldChildFrame tooltip handler)
-    // that need to map pixel coordinates to text without owning a wxMouseEvent.
-    SelPoint PointToChar(int clientX, int clientY) const;
 
     // Number of lines currently in the buffer.
     int LineCount() const { return (int)m_lines.size(); }
@@ -194,59 +158,18 @@ public:
     // Called when the user clicks an MXP hyperlink run.
     std::function<void(const std::string& action)> m_fn_link_clicked;
 
-    // Called from the right-click context menu "Put in Input Bar" action.
-    // Receives the currently selected text; the frame wires this to set the
-    // input bar's value and move focus there for review before sending.
-    std::function<void(const wxString& text)> m_fn_put_in_input;
-
-    // Called from the right-click context menu "Send to MUD" action.
-    // Receives the currently selected text; the frame wires this to call
-    // EvaluateCommand() so the text is sent via the normal command pipeline.
-    std::function<void(const wxString& text)> m_fn_send_to_mud;
-
-    // Called once per appended line (after trimming/batching).
-    // Wired by CWorldChildFrame to write to the session log file.
-    std::function<void(const SOutputLine&)> m_fn_on_line_appended;
-
-    // Returns true if a log file is currently open (used by context menu label).
-    std::function<bool()> m_fn_is_logging;
-
-    // Toggles logging on/off: shows a file-save dialog when starting.
-    std::function<void()> m_fn_toggle_log;
-
     // Called when F3 (forward) or Shift+F3 (backward) is pressed while the
     // output pane has focus.  Wired by CWorldChildFrame to DoFind().
     std::function<void(bool forward)> m_fn_find_next_key;
-
-    // Called when the user types a printable character while the output pane
-    // has focus (and no modifier key is held).  Wired by CWorldChildFrame to
-    // append the character to the command input bar and focus it so the user
-    // can keep typing without having to click back into the input bar.
-    std::function<void(wxChar ch)> m_fn_key_to_input;
 
 private:
     // ── Paint ────────────────────────────────────────────────────────────────
     void OnPaint(wxPaintEvent& evt);
     void OnSize(wxSizeEvent& evt);
 
-    // Render one logical line (all its visual rows).
-    // lineIdx is the index in m_lines; yOff is the y-pixel of the FIRST
-    // visual row of this line in virtual (unscrolled) coordinates.
+    // Render one line.  lineIdx is the index in m_lines; yOff is the
+    // y-pixel of the line's top edge in virtual (unscrolled) coordinates.
     void DrawLine(wxDC& dc, int lineIdx, int yOff);
-
-    // ── Wrap cache ────────────────────────────────────────────────────────────
-    // m_visualRowStart[i] = index of the first visual row for logical line i.
-    // m_totalVisualRows   = total visual rows across all logical lines.
-    // m_wrapCols          = column count for wrapping (updated on resize/font change).
-    //
-    // Rebuild the wrap cache from scratch (called on resize and font change).
-    void RebuildWrapCache();
-
-    // Number of visual rows occupied by logical line lineIdx at m_wrapCols.
-    int WrapCount(int lineIdx) const;
-
-    // Convert a visual row index to its logical line index (binary search).
-    int VisualRowToLogical(int vr) const;
 
     // Draw a single text chunk from a run with the given selection inversion.
     void DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
@@ -260,7 +183,6 @@ private:
     void OnLeftDown(wxMouseEvent& evt);
     void OnLeftUp(wxMouseEvent& evt);
     void OnLeftDClick(wxMouseEvent& evt);
-    void OnMiddleUp(wxMouseEvent& evt);
     void OnRightDown(wxMouseEvent& evt);
     void OnRightUp(wxMouseEvent& evt);
     void OnMotion(wxMouseEvent& evt);
@@ -277,11 +199,9 @@ private:
     // Convert client-coordinates y to a line index.
     int YToLine(int clientY) const;
 
-    // Convert a line index + client-coordinates (x, y) to a character column.
-    // clientY is required to resolve which visual row within a wrapped line was
-    // clicked so that the column offset is computed correctly.
+    // Convert a line index + client-coordinates x to a character column.
     // Column is a cursor position: 0 = before first char, n = after nth char.
-    int XToChar(int lineIdx, int clientX, int clientY) const;
+    int XToChar(int lineIdx, int clientX) const;
 
     // Build a SelPoint from a mouse event position.
     SelPoint MouseToSelPoint(const wxMouseEvent& evt) const;
@@ -298,22 +218,11 @@ private:
     int                     m_maxLines;
 
     wxFont m_font;
-    // Cached font variants — rebuilt whenever m_font changes so DrawRunChunk
-    // never constructs wxFont objects on the hot rendering path.
-    wxFont m_fontBold;           // bold only
-    wxFont m_fontUnderline;      // underline only
-    wxFont m_fontBoldUnderline;  // bold + underline
-
     int    m_fontSize = kDefaultFontSize;
     int    m_lineH    = 18;   // line height pixels (set from font metrics)
     int    m_charW    = 10;   // avg char width pixels
 
-    int    m_maxLineChars = 80;   // widest line seen, in characters (stats only)
-
-    // ── Wrap cache ────────────────────────────────────────────────────────────
-    std::vector<int> m_visualRowStart;   // m_visualRowStart[i] = visual row of logical line i
-    int              m_totalVisualRows = 0;
-    int              m_wrapCols        = 80;
+    int    m_maxLineChars = 80;   // widest line seen, in characters
 
     // Selection: anchor is where the mouse went down; focus tracks the drag.
     // When anchor == focus, there is no selection (just a cursor position).
@@ -321,7 +230,6 @@ private:
     SelPoint m_selFocus;
 
     wxString m_searchTerm;
-    bool     m_searchCaseSensitive = false;
 
     unsigned long m_bgColor  = 0;   // COLORREF
     int           m_batchDepth = 0;
@@ -335,16 +243,10 @@ private:
 
     bool m_autoScroll = true;
 
-    // Triple-click detection: record the timestamp and line of the last
-    // double-click so OnLeftDown can promote the third click to a line select.
-    wxLongLong m_lastDClickTimeMs = 0;
-    int        m_lastDClickLine   = -1;
-
-    // Lines trimmed from the front since the last UpdateScrollbars call.
-    // Used to compensate the scroll position when the buffer wraps while the
-    // user is scrolled up (prevents the view jumping to different content).
-    int m_trimmedCount       = 0;
-    int m_trimmedRowsRemoved = 0;  // visual rows lost due to trimming
+    // Number of lines trimmed from the front of m_lines since the last
+    // UpdateScrollbars call.  Used to compensate the scroll position when the
+    // buffer wraps and the user has scrolled up (so the view doesn't jump).
+    int m_trimmedCount = 0;
 
     wxDECLARE_EVENT_TABLE();
 };

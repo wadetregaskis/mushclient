@@ -20,14 +20,9 @@ class CWorldChildFrame;
 void wx_register_world_frame(CMUSHclientDoc* doc, CWorldChildFrame* frame);
 void wx_unregister_world_frame(CMUSHclientDoc* doc);
 
-// Remove a world file path from the startup world list so it isn't reopened
-// on next launch.  Call from OnClose when the user explicitly closes a world.
-void wx_world_remove_from_list(const char* path);
-
 #include <wx/wx.h>
 #include <wx/mdi.h>
 #include <wx/timer.h>
-#include <cstdio>
 #include <string>
 #include <vector>
 #include "platform/wx_outputpane.h"   // COutputPane → output_types.h
@@ -52,10 +47,6 @@ public:
 
     // Give external code read-only access to the associated world document.
     CMUSHclientDoc* GetDoc() const { return m_doc; }
-
-    // Public access to the active input bar so scripting callbacks in
-    // wx_mfc_impl.cpp can read/write it for world.GetCommand/SetCommand.
-    wxTextCtrl* ActiveInputPublic() const { return ActiveInput(); }
 
     // Re-send NAWS with the current pane dimensions.  Call after a font change
     // so the MUD learns the new character-grid size.
@@ -84,66 +75,16 @@ private:
     wxPanel*      m_findBar      = nullptr;   // collapsible panel shown by Ctrl+F
     wxTextCtrl*   m_findInput    = nullptr;   // search term text box
     wxStaticText* m_findLabel    = nullptr;   // "N of M" match count label
-    wxCheckBox*   m_findCaseBox  = nullptr;   // "Aa" case-sensitive toggle
 
     // ── Command history ────────────────────────────────────────────────────
-    std::vector<wxString> m_history;           // sent commands, oldest first
-    int                   m_histIdx = -1;       // -1 = not browsing; ≥0 = index into m_history
-    wxString              m_histSaved;          // text in input when user started browsing
-    bool                  m_histRSearch = false; // true = Ctrl+R substring mode (vs prefix)
-    std::string           m_historyFilePath;    // per-world history file, fixed at construction
-
-    // ── Kill ring (emacs-style) ────────────────────────────────────────────
-    // Ctrl+K and Ctrl+W save the killed text here; Ctrl+Y pastes it back.
-    // Only the most-recent kill is stored (single-slot, not a true ring).
-    wxString m_killBuf;
-
-    // ── Tab completion ─────────────────────────────────────────────────────
-    // When history prefix search exhausts all matches, Tab falls back to
-    // scanning recent output for words that start with the current input.
-    // m_tabWords holds the candidates (unique, most-recent-first); m_tabWordIdx
-    // is the position in that list (-1 = not in output-tab cycle).
-    // Both are reset whenever a non-Tab key is pressed.
-    std::vector<wxString> m_tabWords;           // output-word completion candidates
-    int                   m_tabWordIdx = -1;    // current position; -1 = off
-    wxString              m_tabPartial;         // partial input when cycling started
+    std::vector<wxString> m_history;     // sent commands, oldest first
+    int                   m_histIdx = -1; // -1 = not browsing; ≥0 = index into m_history
+    wxString              m_histSaved;   // text in input when user started browsing
 
     // ── Connection status tracking ─────────────────────────────────────────
     int  m_lastConnectPhase    = -1;   // tracks phase changes to update title/status
     int  m_reconnectCountdown  = 0;    // ticks until auto-reconnect (0 = idle)
     bool m_lastNoEcho          = false; // last known m_doc->m_bNoEcho state
-    int  m_pluginTickAccum     = 0;    // ms accumulated toward next ON_PLUGIN_TICK (~40 ms)
-
-    // ── Session log ────────────────────────────────────────────────────────
-    // Log is written as plain UTF-8 text to a user-chosen file.  Logging starts
-    // when the user chooses "Start Logging…" from the context menu and stops on
-    // "Stop Logging", window close, or disconnect.
-    FILE*       m_logFile     = nullptr;  // open file handle; nullptr = not logging
-    std::string m_logFilePath;            // path to the current log file
-
-    // Start a new log session: opens path for appending, writes a header.
-    // Returns true on success.  No-op if already logging.
-    bool StartLogging(const std::string& path);
-
-    // Stop the current log session: writes a footer and closes the file.
-    // No-op if not logging.
-    void StopLogging();
-
-    // Returns true if a log file is currently open.
-    bool IsLogging() const { return m_logFile != nullptr; }
-
-    // Apply the correct foreground/background colors to both input bars based on
-    // the output pane's background.  Factors out the luma logic so it can be
-    // called from both ApplyPaneBackground and from the Ctrl+R mode exit path.
-    void UpdateInputBarColors();
-
-    // Enter or leave Ctrl+R reverse-history-search mode.  Sets m_histRSearch and
-    // tints the input bar blue (on) or restores its normal colors (off).
-    // No-op when the state is already correct (safe to call redundantly).
-    void ApplyHistRSearch(bool on);
-
-    // Write a single output line to the log file as plain text.
-    void LogLine(const SOutputLine& line);
 
     // ── Miniwindow mouse-tracking state ───────────────────────────────────
     // These mirror m_sPreviousMiniWindow / GetCapture() tracking from CMUSHView.
@@ -160,7 +101,6 @@ private:
     // Frame is about to close — delete the doc (disconnects + frees memory).
     void OnClose(wxCloseEvent& evt);
     // 100 ms world timer: process MUSHclient timers and flush output.
-    // ON_PLUGIN_TICK is fired at ~40 ms via m_pluginTickAccum.
     void OnWorldTimer(wxTimerEvent& evt);
     // Frame resized — send updated NAWS window size to the MUD.
     void OnSize(wxSizeEvent& evt);

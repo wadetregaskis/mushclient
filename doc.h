@@ -1477,73 +1477,9 @@ public:
   // Count of lines already forwarded to m_fn_line_ready; decremented by
   // JUMP_SIZE when RemoveChunk() evicts the oldest lines.
   long                                    m_gui_lines_emitted = 0;
-
-  // Output pane character-grid dimensions (updated by CWorldChildFrame on
-  // resize / font change via SendNAWS and m_fn_grid_changed).
-  int  m_gui_rows        = 24;   // visible rows in the output pane
-  int  m_gui_cols        = 80;   // visible columns in the output pane
-  int  m_gui_font_height = 18;   // pixel height of one line  (GetInfo 212)
-  int  m_gui_font_width  = 10;   // avg pixel width of one char (GetInfo 213)
-
-  // True while the output pane is pinned (not auto-scrolling to the bottom).
-  // world.Pause(bPause) sets this; read by GetInfo(eScrolledBack).
-  bool m_gui_paused = false;
-
-  // ── Non-Windows status callback ──────────────────────────────────────────
-  // Called when the connection status changes so the active frame can refresh
-  // the status bar text.  Argument is ignored (the frame re-reads m_doc state).
-  std::function<void(const std::string&)> m_fn_status;
-
-  // ── Non-Windows GUI input/view callbacks ──────────────────────────────────
-  // world.GetCommand(): return the current text in the command input bar.
-  std::function<std::string()>                       m_fn_get_command;
-  // world.SetCommand(text): set the command input text.
-  // Return true on success; false if the bar is non-empty (matches Windows
-  // eCommandNotEmpty semantics).
-  std::function<bool(const std::string&)>            m_fn_set_command;
-  // world.SetOutputFont(): change the output font family / size / style.
-  // Args: face name (empty = keep current), point size (0 = keep current),
-  //       bold flag, italic flag.
-  std::function<void(const std::string&, int, bool, bool)> m_fn_set_output_font;
-
-  // world.SetScroll(Position, Visible): scroll the output pane.
-  // Position: -1 = bottom, -2 = no change, >= 0 = line index (0-based).
-  // Visible is ignored (scrollbar always shown on non-Windows).
-  std::function<void(long position)>  m_fn_set_scroll;
-
-  // world.SetSelection(StartLine, EndLine, StartColumn, EndColumn): select a
-  // text range in the output pane.  Arguments are 1-based; 0 = no selection.
-  std::function<void(int, int, int, int)>  m_fn_set_selection;
-
-  // world.SetCommandSelection(First, Last): select text in the input bar.
-  // Arguments are 1-based character positions; Last=-1 means end of text.
-  std::function<void(long, long)>  m_fn_set_command_selection;
-
-  // world.Pause(bPause): lock/unlock auto-scrolling of the output pane.
-  std::function<void(bool)>  m_fn_set_paused;
-
-  // world.Repaint(): force a repaint of the output pane.
-  std::function<void()>  m_fn_repaint;
-
-  // world.SetBackgroundColour(rgb): change the output pane background colour.
-  // Argument is a COLORREF; 0xFFFFFFFF (NO_COLOUR) means default black.
-  std::function<void(unsigned long)>  m_fn_set_background_colour;
-
-  // SetOption("max_output_lines", n): resize the scrollback buffer.
-  std::function<void(int)>  m_fn_set_max_lines;
-
-  // world.GetClipboard() / world.SetClipboard(): system clipboard access.
-  std::function<std::string()>              m_fn_get_clipboard;
-  std::function<void(const std::string&)>   m_fn_set_clipboard;
-
-  // Returns the screen-relative position and size of the output pane (x,y,w,h).
-  // Used by world.GetWorldWindowPosition() so Lua scripts can position
-  // miniwindows relative to the actual pane geometry.
-  std::function<void(int&, int&, int&, int&)> m_fn_get_output_rect;
-
-  // Returns the screen-relative position and size of the MDI parent frame.
-  // Used by world.GetMainWindowPosition() so scripts know the main window rect.
-  std::function<void(int&, int&, int&, int&)> m_fn_get_main_rect;
+  // Current output pane height in character rows; updated by CWorldChildFrame
+  // via SendNAWS() so that SendWindowSizes() can send a valid NAWS row count.
+  int                                     m_gui_rows = 24;
 #endif
 
   protected:

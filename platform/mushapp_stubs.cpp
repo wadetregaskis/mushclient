@@ -335,4 +335,17 @@ BOOL CMDIFrameWnd::LoadFrame(UINT id, DWORD style, CWnd* pParent, void* /*pConte
     return FALSE;
 }
 
+// ── UMessageBox / TMessageBox ─────────────────────────────────────────────
+// Route through g_wxhook_message_box when it is set (mushgui at runtime);
+// fall back to stderr for headless builds.
+int UMessageBox(const char* sText, UINT nType, const char* caption) {
+    if (g_wxhook_message_box)
+        return g_wxhook_message_box(sText ? sText : "", caption ? caption : "MUSHclient", nType);
+    fprintf(stderr, "MUSHclient [%s]: %s\n", caption ? caption : "MUSHclient", sText ? sText : "");
+    return (nType & MB_YESNO) ? IDNO : IDOK;
+}
+int TMessageBox(const char* sText, UINT nType) {
+    return UMessageBox(sText, nType, "MUSHclient");
+}
+
 #endif // !_WIN32

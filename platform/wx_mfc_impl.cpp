@@ -18,13 +18,10 @@
 #include <wx/spinctrl.h>
 #include <wx/filename.h>
 #include <wx/fontpicker.h>
-#include <wx/clrpicker.h>  // wxColourPickerCtrl
 #include <wx/dnd.h>        // wxFileDropTarget
 #include <wx/dirdlg.h>     // wxDirDialog
-#include <algorithm>
 #include <unordered_map>
 #include <string>
-#include <vector>
 
 // ── MUSHclient headers (MFC compat layer) ────────────────────────────────
 // Must come AFTER wx so our stubs don't shadow wx internals inside this TU.
@@ -48,83 +45,6 @@ static wxStatusBar* s_statusBar = nullptr;
 // the MDI child hierarchy (which is platform-dependent and unreliable).
 static std::unordered_map<CMUSHclientDoc*, CWorldChildFrame*> s_docFrameMap;
 
-// Forward declaration — defined in the World-list persistence section below.
-static void world_list_remove(const std::string& path);
-
-// ── Recent Worlds list ────────────────────────────────────────────────────────
-// Tracks up to kMaxRecentWorlds file paths most recently opened or saved,
-// persisted to wxConfig at /recent/0 … /recent/N-1.  Shown in File → Open
-// Recent so the user can quickly reopen worlds without browsing.
-//
-// This is distinct from App.m_strWorldList (auto-reopen on launch): that list
-// controls what opens automatically; the Recent menu is a manual affordance.
-
-static const int  kMaxRecentWorlds = 10;
-static const int  kRecentMenuBase  = wxID_HIGHEST + 300;
-static wxMenu*    s_recentMenu     = nullptr;
-static std::vector<std::string> s_recentWorlds;
-
-// Load the recent list from config into s_recentWorlds.
-static void recent_worlds_load()
-{
-    s_recentWorlds.clear();
-    wxConfig cfg(wxT("mushclient"));
-    for (int i = 0; i < kMaxRecentWorlds; ++i) {
-        wxString key = wxString::Format(wxT("/recent/%d"), i);
-        wxString val;
-        if (!cfg.Read(key, &val) || val.IsEmpty()) break;
-        s_recentWorlds.push_back(std::string(val.ToUTF8()));
-    }
-}
-
-// Persist the current s_recentWorlds to config.
-static void recent_worlds_save()
-{
-    wxConfig cfg(wxT("mushclient"));
-    for (int i = 0; i < kMaxRecentWorlds; ++i) {
-        wxString key = wxString::Format(wxT("/recent/%d"), i);
-        if (i < (int)s_recentWorlds.size())
-            cfg.Write(key, wxString::FromUTF8(s_recentWorlds[i].c_str()));
-        else
-            cfg.DeleteEntry(key);
-    }
-}
-
-// Rebuild s_recentMenu from s_recentWorlds.
-static void recent_worlds_update_menu()
-{
-    if (!s_recentMenu) return;
-    while (s_recentMenu->GetMenuItemCount() > 0)
-        s_recentMenu->Delete(s_recentMenu->FindItemByPosition(0));
-    if (s_recentWorlds.empty()) {
-        wxMenuItem* dummy = s_recentMenu->Append(kRecentMenuBase,
-                                                  wxT("(no recent worlds)"));
-        dummy->Enable(false);
-        return;
-    }
-    for (int i = 0; i < (int)s_recentWorlds.size(); ++i) {
-        wxString path  = wxString::FromUTF8(s_recentWorlds[i].c_str());
-        wxString label = wxString::Format(wxT("&%d  %s"),
-                                          (i + 1) % 10,
-                                          wxFileName(path).GetFullName());
-        s_recentMenu->Append(kRecentMenuBase + i, label);
-    }
-}
-
-// Prepend path to s_recentWorlds (deduplicated), persist, and update the menu.
-static void recent_worlds_add(const std::string& path)
-{
-    if (path.empty()) return;
-    s_recentWorlds.erase(
-        std::remove(s_recentWorlds.begin(), s_recentWorlds.end(), path),
-        s_recentWorlds.end());
-    s_recentWorlds.insert(s_recentWorlds.begin(), path);
-    if ((int)s_recentWorlds.size() > kMaxRecentWorlds)
-        s_recentWorlds.resize(kMaxRecentWorlds);
-    recent_worlds_save();
-    recent_worlds_update_menu();
-}
-
 void wx_register_world_frame(CMUSHclientDoc* doc, CWorldChildFrame* frame)
 {
     if (doc) s_docFrameMap[doc] = frame;
@@ -135,16 +55,39 @@ void wx_unregister_world_frame(CMUSHclientDoc* doc)
     if (doc) s_docFrameMap.erase(doc);
 }
 
-void wx_world_remove_from_list(const char* path)
-{
-    if (path && *path) world_list_remove(path);
-}
-
 // ── Helper: cast void* → wxWindow* ───────────────────────────────────────
 static inline wxWindow* toWx(void* h) { return static_cast<wxWindow*>(h); }
 static inline const wxWindow* toWxC(const void* h) { return static_cast<const wxWindow*>(h); }
 
 // ── Helper: apply world font settings to an output pane ──────────────────
+// Converts LOGFONT-style height (negative = pixels at 96 DPI) to wx point size
+// and applies the face name from the doc to the pane.  Falls through to the
+// pane's default font if m_font_name is empty or m_font_height is zero.
+static void ApplyWorldFont(COutputPane* pane, CMUSHclientDoc* doc)
+{
+    if (!pane || !doc) return;
+
+    // m_font_name: face name (e.g. "Courier New"); empty → keep default.
+    // m_font_height: LOGFONT lfHeight (negative of pixel height at screen DPI).
+    // Assume 96 DPI (standard Windows setting); convert to points.
+    const char* face = static_cast<const char*>(doc->m_font_name);
+    int         lfH  = (int)doc->m_font_height;
+
+    if (face && *face && lfH != 0) {
+        int pixH    = (lfH < 0) ? -lfH : lfH;
+        int points  = (pixH * 72 + 48) / 96;  // round to nearest pt; 48 = 96/2
+        points      = std::max(COutputPane::kMinFontSize,
+                               std::min(COutputPane::kMaxFontSize, points));
+        // Bold if m_font_weight >= FW_BOLD (700).
+        wxFontWeight weight = (doc->m_font_weight >= 700) ? wxFONTWEIGHT_BOLD
+                                                          : wxFONTWEIGHT_NORMAL;
+        wxFont font(points, wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL, weight,
+                    false, wxString::FromUTF8(face));
+        if (font.IsOk())
+            pane->SetOutputFont(font);
+    }
+}
+
 // ── World-list persistence ────────────────────────────────────────────────
 // App.m_strWorldList is a '*'-delimited list of world file paths that are
 // opened automatically on startup.  These helpers keep it up-to-date and
@@ -418,82 +361,32 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         return FALSE;
     }
 
-    // ── Restore main window geometry ──────────────────────────────────────
-    // Saved geometry survives app restarts via wxConfig.  We default to
-    // 1024×768 centred on first run; subsequent runs restore the last size
-    // and (on platforms that honour it) position.  Maximized state is also
-    // preserved.  Iconized state is not (would be confusing on relaunch).
-    {
-        wxConfig cfg(wxT("mushclient"));
-        long w = 1024, h = 768;
-        long x = -1, y = -1;    // -1 = not saved; keep platform default
-        bool maximized = false;
-        cfg.Read(wxT("/geometry/main_w"), &w, 1024L);
-        cfg.Read(wxT("/geometry/main_h"), &h,  768L);
-        cfg.Read(wxT("/geometry/main_x"), &x, -1L);
-        cfg.Read(wxT("/geometry/main_y"), &y, -1L);
-        cfg.Read(wxT("/geometry/main_maximized"), &maximized, false);
-        // Clamp to sanity: don't restore a 1×1 or off-screen window.
-        if (w < 400) w = 1024;
-        if (h < 300) h =  768;
-        if (x >= 0 && y >= 0)
-            frame->SetSize((int)x, (int)y, (int)w, (int)h);
-        else
-            frame->SetSize((int)w, (int)h);
-        if (maximized)
-            frame->Maximize(true);
-    }
-
     // ── Menu bar ─────────────────────────────────────────────────────────
     wxMenuBar* mb = new wxMenuBar();
 
     wxMenu* fileMenu = new wxMenu();
     fileMenu->Append(0xE100,      wxT("New World\tCtrl+N"));
     fileMenu->Append(wxID_OPEN,   wxT("Open World File…\tCtrl+O"));
-    // ── Open Recent submenu ───────────────────────────────────────────────
-    // Populated immediately from config; updated each time a world is opened.
-    s_recentMenu = new wxMenu();
-    fileMenu->AppendSubMenu(s_recentMenu, wxT("Open Recent"));
     fileMenu->AppendSeparator();
     fileMenu->Append(wxID_SAVE,   wxT("Save World\tCtrl+S"));
     fileMenu->Append(wxID_SAVEAS, wxT("Save World As…"));
     fileMenu->AppendSeparator();
-    fileMenu->Append(wxID_CLOSE,  wxT("Close World\tCtrl+Shift+W"));
-    // Note: plain Ctrl+W is reserved for word-delete-backward in the input bar.
+    fileMenu->Append(wxID_CLOSE,  wxT("Close World\tCtrl+W"));
     fileMenu->AppendSeparator();
     fileMenu->Append(32246 /*ID_FILE_PREFERENCES*/, wxT("Preferences…"));
     fileMenu->AppendSeparator();
     fileMenu->Append(wxID_EXIT,   wxT("Quit MUSHclient\tCtrl+Q"));
     mb->Append(fileMenu, wxT("&File"));
 
-    // ── Edit menu ─────────────────────────────────────────────────────────
-    // Standard IDs (wxID_COPY etc.) are routed automatically by wxWidgets to
-    // the focused window; no explicit handler is needed in our menu dispatcher.
-    wxMenu* editMenu = new wxMenu();
-    editMenu->Append(wxID_COPY,      wxT("Copy\tCtrl+C"));
-    editMenu->Append(wxID_CUT,       wxT("Cut\tCtrl+X"));
-    editMenu->Append(wxID_PASTE,     wxT("Paste\tCtrl+V"));
-    editMenu->AppendSeparator();
-    editMenu->Append(wxID_SELECTALL, wxT("Select All\tCtrl+A"));
-    editMenu->AppendSeparator();
-    editMenu->Append(wxID_FIND,      wxT("Find…\tCtrl+F"));
-    mb->Append(editMenu, wxT("&Edit"));
-
     wxMenu* connMenu = new wxMenu();
-    // Note: Ctrl+K, Ctrl+D, and Ctrl+R are standard Unix input-bar shortcuts
-    // (kill-to-end, delete-forward, and reverse history search respectively) so
-    // those keys are not used as menu accelerators here.
-    connMenu->Append(32289,                     wxT("Quick Connect…\tCtrl+Shift+K"));
+    connMenu->Append(32289,       wxT("Quick Connect…\tCtrl+K"));
     connMenu->AppendSeparator();
-    connMenu->Append(32239 /*ID_CONNECTION_CONNECT*/,    wxT("Connect"));
-    connMenu->Append(0xE200,                    wxT("Disconnect"));
-    connMenu->Append(0xE201,                    wxT("Reconnect\tCtrl+Shift+R"));
+    connMenu->Append(0xE200,      wxT("Disconnect\tCtrl+D"));
+    connMenu->Append(0xE201,      wxT("Reconnect\tCtrl+R"));
     mb->Append(connMenu, wxT("&Connection"));
 
     wxMenu* gameMenu = new wxMenu();
-    gameMenu->Append(32158 /*ID_GAME_PREFERENCES*/,     wxT("World Properties…\tCtrl+,"));
-    gameMenu->AppendSeparator();
-    gameMenu->Append(32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/, wxT("Reload Script"));
+    gameMenu->Append(32158 /*ID_GAME_PREFERENCES*/, wxT("World Properties…\tCtrl+,"));
     mb->Append(gameMenu, wxT("&Game"));
 
     // ── Window menu ───────────────────────────────────────────────────────
@@ -512,10 +405,6 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     mb->Append(helpMenu, wxT("&Help"));
 
     frame->SetMenuBar(mb);
-
-    // ── Populate "Open Recent" submenu from persisted config ──────────────
-    recent_worlds_load();
-    recent_worlds_update_menu();
 
     // ── Status bar ────────────────────────────────────────────────────────
     s_statusBar = frame->CreateStatusBar(1);
@@ -550,19 +439,6 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             if (answer != wxYES) {
                 evt.Veto();
                 return;
-            }
-        }
-        // Save main window geometry so the next session opens at the same size.
-        if (!frame->IsIconized()) {
-            wxConfig cfg(wxT("mushclient"));
-            bool maximized = frame->IsMaximized();
-            cfg.Write(wxT("/geometry/main_maximized"), maximized);
-            if (!maximized) {
-                wxRect r = frame->GetRect();
-                cfg.Write(wxT("/geometry/main_x"), (long)r.x);
-                cfg.Write(wxT("/geometry/main_y"), (long)r.y);
-                cfg.Write(wxT("/geometry/main_w"), (long)r.width);
-                cfg.Write(wxT("/geometry/main_h"), (long)r.height);
             }
         }
         // Stop the socket-poll timer before child frames are destroyed.
@@ -613,32 +489,6 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return child ? child->GetDoc() : nullptr;
         };
 
-        // ── Edit menu: Copy / Cut / Paste / Select All ─────────────────────
-        // The frame's Bind intercepts menu events before wxMDI can route them
-        // to the focused child control, so we dispatch explicitly here.
-        // For a wxTextCtrl (input bar), post a standard wxCommandEvent so the
-        // built-in edit handling fires.  For the output pane, call directly.
-        if (id == wxID_COPY || id == wxID_CUT ||
-            id == wxID_PASTE || id == wxID_SELECTALL)
-        {
-            wxWindow* focused = wxWindow::FindFocus();
-            if (focused) {
-                // Is it the output pane?
-                if (auto* pane = dynamic_cast<COutputPane*>(focused)) {
-                    if      (id == wxID_COPY)      pane->CopySelection();
-                    else if (id == wxID_SELECTALL) pane->SelectAll();
-                    // Cut and Paste are no-ops on a read-only output pane.
-                } else {
-                    // Forward to focused window (wxTextCtrl, etc.) via its
-                    // own event handler so the built-in editing works.
-                    wxCommandEvent fwd(wxEVT_MENU, id);
-                    fwd.SetEventObject(focused);
-                    focused->GetEventHandler()->ProcessEvent(fwd);
-                }
-            }
-            return;   // consumed — do not call evt.Skip()
-        }
-
         if (id == wxID_EXIT || id == 0xE141 /*ID_APP_EXIT*/) {
             frame->Close(false);  // false = veto-able so EVT_CLOSE handler can confirm
         } else if (id == wxID_NEW || id == 0xE100 /*ID_FILE_NEW*/
@@ -664,21 +514,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             hook_save_active_world(frame, /*saveAs=*/false);
         } else if (id == wxID_SAVEAS || id == 0xE104 /*ID_FILE_SAVE_AS*/) {
             hook_save_active_world(frame, /*saveAs=*/true);
-        } else if (id == wxID_FIND) {
-            // Edit → Find…: show find bar in the active child frame.
-            if (wxMDIChildFrame* active = frame->GetActiveChild()) {
-                if (auto* child = dynamic_cast<CWorldChildFrame*>(active))
-                    child->ShowFindBar(true);
-            }
-        } else if (id == 32239 /*ID_CONNECTION_CONNECT*/) {
-            if (CMUSHclientDoc* doc = activeDoc()) {
-                if (doc->m_iConnectPhase == eConnectNotConnected) {
-                    doc->m_bDisconnectOK = false;
-                    doc->ConnectSocket();
-                }
-            }
-        } else if (id == 0xE200 /*Disconnect*/ ||
-                   id == 32240 /*ID_CONNECTION_DISCONNECT*/) {
+        } else if (id == 0xE200 /*Disconnect*/) {
             if (CMUSHclientDoc* doc = activeDoc()) {
                 doc->DisconnectWorld();
                 if (s_statusBar)
@@ -698,18 +534,6 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         } else if (id == 32158 /*ID_GAME_PREFERENCES*/) {
             if (CMUSHclientDoc* doc = activeDoc())
                 doc->GamePreferences(-1);
-        } else if (id == 32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/) {
-            if (CMUSHclientDoc* doc = activeDoc()) {
-                if (doc->m_bEnableScripts || !doc->m_strScriptFilename.IsEmpty()) {
-                    doc->OnGameReloadScriptFile();
-                    if (s_statusBar)
-                        s_statusBar->SetStatusText(wxT("Script reloaded."));
-                } else {
-                    wxMessageBox(wxT("No script file is configured for this world.\n"
-                                     "Set one in Game → World Properties → Scripting."),
-                                 wxT("Reload Script"), wxOK | wxICON_INFORMATION, frame);
-                }
-            }
         } else if (id == wxID_ABOUT) {
             wxString ver = wxString::FromUTF8(
                 static_cast<const char*>(MUSHCLIENT_VERSION));
@@ -720,12 +544,6 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 wxT("http://www.gammon.com.au/mushclient"),
                 wxT("About MUSHclient"),
                 wxOK | wxICON_INFORMATION, frame);
-        } else if (id >= kRecentMenuBase &&
-                   id <  kRecentMenuBase + kMaxRecentWorlds) {
-            // File → Open Recent → pick a specific entry.
-            int idx = id - kRecentMenuBase;
-            if (idx < (int)s_recentWorlds.size())
-                hook_open_world_file(s_recentWorlds[idx].c_str());
         } else {
             evt.Skip();
         }
@@ -808,17 +626,28 @@ static void* hook_open_world_file(const char* path)
     child->UpdateTitle();
     child->Show();
 
-    // All output callbacks (m_fn_line_ready, m_fn_note, m_fn_begin_batch,
-    // m_fn_flush, m_fn_status) and initial pane state (font, scrollback,
-    // background) are applied inside CWorldChildFrame's constructor.
+    // Wire the output callbacks.
+    COutputPane* pane = child->OutputPane();
+    doc->m_fn_line_ready = [pane](SOutputLine line) {
+        pane->AppendLine(std::move(line));
+    };
+    doc->m_fn_note = [pane](const std::string& text) {
+        pane->AppendNote(text);
+    };
+    doc->m_fn_begin_batch = [pane]() { pane->BeginBatch(); };
+    doc->m_fn_flush       = [pane]() { pane->EndBatch(); };
+
+    // Apply display settings loaded from the world file.
+    ApplyWorldFont(pane, doc);
+    if (doc->m_maxlines > 0)
+        pane->SetMaxLines(doc->m_maxlines);
+    child->ApplyPaneBackground(doc->m_iBackgroundColour);
 
     // Flush any notes produced during OnOpenDocument.
     doc->UpdateAllViews(nullptr);
 
     // Remember this world file path so it reopens on next launch.
     world_list_add(path);
-    // Also add to the File → Open Recent list.
-    recent_worlds_add(path);
 
     // Auto-connect if the world file says to (m_connect_now != 0).
     // Mirrors what Windows does: after opening the file the connection phase is
@@ -888,8 +717,6 @@ static void hook_save_active_world(wxMDIParentFrame* frame, bool saveAs)
 
     // Add to the startup world list so this world reopens on next launch.
     world_list_add(savePath);
-    // Also add to the File → Open Recent list.
-    recent_worlds_add(savePath);
 }
 
 // ── Quick Connect dialog ──────────────────────────────────────────────────
@@ -1094,204 +921,116 @@ static void hook_file_preferences(wxWindow* parent)
 }
 
 // ── WorldPreferencesDlg ───────────────────────────────────────────────────
-// Dialog for editing world properties: connection, display, scripting, options.
-// Covers the settings needed to connect and run Lua scripts without the full
-// Windows property-sheet UI.
+// Simple dialog for editing the world's name, server, port, and connect flag.
+// Intentionally minimal: the full property sheet is Windows-only; this covers
+// the essential settings needed to connect.
 
 namespace {
 class WorldPreferencesDlg : public wxDialog
 {
 public:
-    // Connection
-    wxTextCtrl*          m_name;
-    wxTextCtrl*          m_server;
-    wxSpinCtrl*          m_port;
-    wxCheckBox*          m_autoConnect;
-    // Display
-    wxFontPickerCtrl*    m_fontPicker;
-    wxColourPickerCtrl*  m_bgColorPicker;
-    // Scripting
-    wxTextCtrl*          m_scriptFile;
-    wxButton*            m_scriptBrowse;
-    wxTextCtrl*          m_scriptPrefix;
-    // Options
-    wxSpinCtrl*          m_scrollback;
-    wxSpinCtrl*          m_wrapColumn;
-    wxCheckBox*          m_enableBeeps;
+    wxTextCtrl*       m_name;
+    wxTextCtrl*       m_server;
+    wxSpinCtrl*       m_port;
+    wxCheckBox*       m_autoConnect;
+    wxSpinCtrl*       m_scrollback;  // scrollback buffer line count
+    wxFontPickerCtrl* m_fontPicker;  // output font
 
-    struct Params {
-        // Connection
-        wxString name, server;
-        int      port;
-        bool     autoConnect;
-        // Display
-        wxFont   currentFont;
-        int      scrollbackLines;
-        wxColour bgColor;
-        // Scripting
-        wxString scriptFile;
-        wxString scriptPrefix;
-        // Options
-        int  wrapColumn;
-        bool enableBeeps;
-    };
-
-    explicit WorldPreferencesDlg(wxWindow* parent, const Params& p)
+    WorldPreferencesDlg(wxWindow*       parent,
+                        const wxString& name,
+                        const wxString& server,
+                        int             port,
+                        bool            autoConnect,
+                        const wxFont&   currentFont,
+                        int             scrollbackLines)
         : wxDialog(parent, wxID_ANY, wxT("World Properties"),
                    wxDefaultPosition, wxDefaultSize,
                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
-        , m_scriptBrowse(nullptr)
         , m_scrollback(nullptr)
-        , m_wrapColumn(nullptr)
-        , m_bgColorPicker(nullptr)
-        , m_enableBeeps(nullptr)
     {
         wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
 
-        // Helper: add a label+control pair to a flex grid
-        // (captured below per group, so we use a lambda that closes over grid)
-
-        // ── Connection settings ──────────────────────────────────────────
+        // ── Connection settings group ─────────────────────────────────────
         {
-            wxStaticBoxSizer* box =
+            wxStaticBoxSizer* connBox =
                 new wxStaticBoxSizer(wxVERTICAL, this, wxT("Connection"));
-            wxFlexGridSizer* g = new wxFlexGridSizer(3, 2, 6, 8);
-            g->AddGrowableCol(1, 1);
+            wxFlexGridSizer* grid = new wxFlexGridSizer(3, 2, 6, 8);
+            grid->AddGrowableCol(1, 1);
 
-            auto row = [&](const wxString& lbl, wxWindow* ctrl) {
-                g->Add(new wxStaticText(this, wxID_ANY, lbl),
-                       0, wxALIGN_CENTER_VERTICAL);
-                g->Add(ctrl, 1, wxEXPAND);
+            auto addRow = [&](const wxString& label, wxWindow* ctrl) {
+                grid->Add(new wxStaticText(this, wxID_ANY, label),
+                          0, wxALIGN_CENTER_VERTICAL);
+                grid->Add(ctrl, 1, wxEXPAND);
             };
 
-            m_name   = new wxTextCtrl(this, wxID_ANY, p.name,
-                                      wxDefaultPosition, wxSize(340, -1));
-            m_server = new wxTextCtrl(this, wxID_ANY, p.server);
+            m_name   = new wxTextCtrl(this, wxID_ANY, name,
+                                      wxDefaultPosition, wxSize(300, -1));
+            m_server = new wxTextCtrl(this, wxID_ANY, server,
+                                      wxDefaultPosition, wxSize(300, -1));
             m_port   = new wxSpinCtrl(this, wxID_ANY, wxEmptyString,
-                                      wxDefaultPosition, wxSize(90, -1),
+                                      wxDefaultPosition, wxDefaultSize,
                                       wxSP_ARROW_KEYS, 1, 65535,
-                                      p.port > 0 ? p.port : 23);
-            row(wxT("World name:"),     m_name);
-            row(wxT("Server address:"), m_server);
-            row(wxT("Port:"),           m_port);
+                                      port > 0 ? port : 23);
 
-            box->Add(g, 1, wxEXPAND | wxALL, 8);
-            vs->Add(box, 0, wxEXPAND | wxALL, 12);
+            addRow(wxT("World name:"),     m_name);
+            addRow(wxT("Server address:"), m_server);
+            addRow(wxT("Port:"),           m_port);
+
+            connBox->Add(grid, 1, wxEXPAND | wxALL, 8);
+            vs->Add(connBox, 0, wxEXPAND | wxALL, 12);
         }
 
-        // ── Display ──────────────────────────────────────────────────────
+        // ── Display group ─────────────────────────────────────────────────
         {
-            wxStaticBoxSizer* box =
+            wxStaticBoxSizer* dispBox =
                 new wxStaticBoxSizer(wxVERTICAL, this, wxT("Display"));
-            wxFlexGridSizer* g = new wxFlexGridSizer(2, 2, 6, 8);
-            g->AddGrowableCol(1, 1);
+            wxFlexGridSizer* dgrid = new wxFlexGridSizer(1, 2, 6, 8);
+            dgrid->AddGrowableCol(1, 1);
 
-            auto row = [&](const wxString& lbl, wxWindow* ctrl) {
-                g->Add(new wxStaticText(this, wxID_ANY, lbl),
+            dgrid->Add(new wxStaticText(this, wxID_ANY, wxT("Output font:")),
                        0, wxALIGN_CENTER_VERTICAL);
-                g->Add(ctrl, 1, wxEXPAND);
-            };
 
-            wxFont initFont = p.currentFont.IsOk()
-                ? p.currentFont
-                : wxFont(12, wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL,
-                         wxFONTWEIGHT_NORMAL);
+            // Use the current pane font as the initial selection; fall back to
+            // a generic monospace font if none was provided.
+            wxFont initFont = currentFont.IsOk()
+                            ? currentFont
+                            : wxFont(12, wxFONTFAMILY_TELETYPE,
+                                     wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL);
             m_fontPicker = new wxFontPickerCtrl(this, wxID_ANY, initFont,
                                                 wxDefaultPosition, wxDefaultSize,
                                                 wxFNTP_DEFAULT_STYLE);
-            row(wxT("Output font:"), m_fontPicker);
+            dgrid->Add(m_fontPicker, 1, wxEXPAND);
 
-            wxColour initBg = p.bgColor.IsOk() ? p.bgColor : wxColour(0, 0, 0);
-            m_bgColorPicker = new wxColourPickerCtrl(this, wxID_ANY, initBg,
-                                                     wxDefaultPosition, wxDefaultSize,
-                                                     wxCLRP_DEFAULT_STYLE);
-            // Place colour picker left-aligned (don't expand)
-            g->Add(new wxStaticText(this, wxID_ANY, wxT("Background:")),
-                   0, wxALIGN_CENTER_VERTICAL);
-            g->Add(m_bgColorPicker, 0, wxALIGN_CENTER_VERTICAL);
-
-            box->Add(g, 1, wxEXPAND | wxALL, 8);
-            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+            dispBox->Add(dgrid, 1, wxEXPAND | wxALL, 8);
+            vs->Add(dispBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
         }
 
-        // ── Scripting ────────────────────────────────────────────────────
+        // ── Options group ─────────────────────────────────────────────────
         {
-            wxStaticBoxSizer* box =
-                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Scripting (Lua)"));
-            wxFlexGridSizer* g = new wxFlexGridSizer(2, 3, 6, 8);
-            g->AddGrowableCol(1, 1);
-
-            // Script file row: label | text field | Browse button
-            g->Add(new wxStaticText(this, wxID_ANY, wxT("Script file:")),
-                   0, wxALIGN_CENTER_VERTICAL);
-            m_scriptFile = new wxTextCtrl(this, wxID_ANY, p.scriptFile);
-            g->Add(m_scriptFile, 1, wxEXPAND);
-            m_scriptBrowse = new wxButton(this, wxID_ANY, wxT("Browse\xe2\x80\xa6"),
-                                          wxDefaultPosition, wxDefaultSize,
-                                          wxBU_EXACTFIT);
-            g->Add(m_scriptBrowse, 0, wxALIGN_CENTER_VERTICAL);
-
-            // Script prefix row: label | text field | empty spacer
-            g->Add(new wxStaticText(this, wxID_ANY, wxT("Script prefix:")),
-                   0, wxALIGN_CENTER_VERTICAL);
-            m_scriptPrefix = new wxTextCtrl(this, wxID_ANY, p.scriptPrefix,
-                                            wxDefaultPosition, wxSize(60, -1));
-            g->Add(m_scriptPrefix, 0);   // don't expand — prefix is short
-            g->AddSpacer(0);             // spacer in third column
-
-            box->Add(g, 1, wxEXPAND | wxALL, 8);
-
-            // Hint label below the grid.
-            wxStaticText* hint = new wxStaticText(this, wxID_ANY,
-                wxT("Leave script file empty for no scripting. ")
-                wxT("The prefix (e.g. \">\") lets you run Lua\n")
-                wxT("from the command bar by typing prefix+code."));
-            wxFont small = hint->GetFont();
-            small.SetPointSize(std::max(8, small.GetPointSize() - 1));
-            hint->SetFont(small);
-            box->Add(hint, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
-
-            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
-        }
-
-        // ── Options ──────────────────────────────────────────────────────
-        {
-            wxStaticBoxSizer* box =
+            wxStaticBoxSizer* optBox =
                 new wxStaticBoxSizer(wxVERTICAL, this, wxT("Options"));
 
             m_autoConnect = new wxCheckBox(this, wxID_ANY,
                                            wxT("Connect automatically when world opens"));
-            m_autoConnect->SetValue(p.autoConnect);
-            box->Add(m_autoConnect, 0, wxALL, 8);
+            m_autoConnect->SetValue(autoConnect);
+            optBox->Add(m_autoConnect, 0, wxALL, 8);
 
-            m_enableBeeps = new wxCheckBox(this, wxID_ANY,
-                                           wxT("Enable beeps (BEL character)"));
-            m_enableBeeps->SetValue(p.enableBeeps);
-            box->Add(m_enableBeeps, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
-
-            // Two spinners on one row: scrollback + wrap column.
-            wxBoxSizer* spRow = new wxBoxSizer(wxHORIZONTAL);
-
-            spRow->Add(new wxStaticText(this, wxID_ANY, wxT("Scrollback:")),
+            // Scrollback buffer size
+            wxBoxSizer* sbRow = new wxBoxSizer(wxHORIZONTAL);
+            sbRow->Add(new wxStaticText(this, wxID_ANY, wxT("Scrollback buffer:")),
                        0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
             m_scrollback = new wxSpinCtrl(this, wxID_ANY, wxEmptyString,
-                                          wxDefaultPosition, wxSize(80, -1),
-                                          wxSP_ARROW_KEYS, 100, 50000,
-                                          p.scrollbackLines > 0 ? p.scrollbackLines : 5000);
-            spRow->Add(m_scrollback, 0, wxALIGN_CENTER_VERTICAL);
-            spRow->Add(new wxStaticText(this, wxID_ANY, wxT("lines")),
-                       0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, 6);
+                                          wxDefaultPosition, wxSize(90, -1),
+                                          wxSP_ARROW_KEYS,
+                                          100,     // minimum lines
+                                          50000,   // maximum lines
+                                          scrollbackLines > 0 ? scrollbackLines : 5000);
+            sbRow->Add(m_scrollback, 0, wxALIGN_CENTER_VERTICAL);
+            sbRow->Add(new wxStaticText(this, wxID_ANY, wxT("lines")),
+                       0, wxALIGN_CENTER_VERTICAL | wxLEFT, 6);
+            optBox->Add(sbRow, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
 
-            spRow->Add(new wxStaticText(this, wxID_ANY, wxT("Wrap at column:")),
-                       0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
-            m_wrapColumn = new wxSpinCtrl(this, wxID_ANY, wxEmptyString,
-                                          wxDefaultPosition, wxSize(70, -1),
-                                          wxSP_ARROW_KEYS, 20, 500,
-                                          p.wrapColumn > 0 ? p.wrapColumn : 80);
-            spRow->Add(m_wrapColumn, 0, wxALIGN_CENTER_VERTICAL);
-
-            box->Add(spRow, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
-            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+            vs->Add(optBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
         }
 
         vs->Add(CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
@@ -1308,24 +1047,7 @@ public:
         };
         m_server->Bind(wxEVT_TEXT, updateOk);
         if (wxButton* ok = dynamic_cast<wxButton*>(FindWindowById(wxID_OK)))
-            ok->Enable(!p.server.IsEmpty());
-
-        // Browse button: open a file chooser for the Lua script.
-        m_scriptBrowse->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-            wxString cur = m_scriptFile->GetValue();
-            wxString dir, file;
-            if (!cur.IsEmpty()) {
-                dir  = wxFileName(cur).GetPath();
-                file = wxFileName(cur).GetFullName();
-            }
-            wxFileDialog dlg(this,
-                             wxT("Choose Lua Script File"),
-                             dir, file,
-                             wxT("Lua files (*.lua)|*.lua|All files (*.*)|*.*"),
-                             wxFD_OPEN | wxFD_FILE_MUST_EXIST);
-            if (dlg.ShowModal() == wxID_OK)
-                m_scriptFile->SetValue(dlg.GetPath());
-        });
+            ok->Enable(!server.IsEmpty());
     }
 };
 } // anonymous namespace
@@ -1349,30 +1071,19 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
         }
     }
 
-    // Populate dialog parameters from the doc.
-    WorldPreferencesDlg::Params p;
-    p.name        = wxString::FromUTF8(static_cast<const char*>(doc->m_mush_name));
-    p.server      = wxString::FromUTF8(static_cast<const char*>(doc->m_server));
-    p.port        = doc->m_port;
-    p.autoConnect = (doc->m_connect_now != 0);
-    p.enableBeeps = (doc->m_enable_beeps != 0);
+    // Read current values from the doc.
+    wxString name        = wxString::FromUTF8(static_cast<const char*>(doc->m_mush_name));
+    wxString server      = wxString::FromUTF8(static_cast<const char*>(doc->m_server));
+    int      port        = doc->m_port;
+    bool     autoConnect = (doc->m_connect_now != 0);
 
-    // Font: use pane's live font (post Ctrl+scroll zoom) or fall back.
-    if (pane) p.currentFont = pane->GetCurrentFont();
+    // Seed the font picker with the pane's current font (if available).
+    wxFont currentFont;
+    if (pane) currentFont = pane->GetFont();
 
-    // Background colour: clamp NO_COLOUR (0xFFFFFFFF) → black.
-    unsigned long bgRef = doc->m_iBackgroundColour;
-    if (bgRef == 0xFFFFFFFFUL) bgRef = 0;
-    p.bgColor = wxColour(GetRValue(bgRef), GetGValue(bgRef), GetBValue(bgRef));
-
-    p.scrollbackLines = doc->m_maxlines > 0 ? (int)doc->m_maxlines : 5000;
-    p.wrapColumn      = doc->m_nWrapColumn  > 0 ? (int)doc->m_nWrapColumn : 80;
-
-    // Scripting
-    p.scriptFile   = wxString::FromUTF8(static_cast<const char*>(doc->m_strScriptFilename));
-    p.scriptPrefix = wxString::FromUTF8(static_cast<const char*>(doc->m_strScriptPrefix));
-
-    WorldPreferencesDlg dlg(parent, p);
+    int scrollbackLines = doc->m_maxlines > 0 ? (int)doc->m_maxlines : 5000;
+    WorldPreferencesDlg dlg(parent, name, server, port, autoConnect,
+                            currentFont, scrollbackLines);
     if (dlg.ShowModal() != wxID_OK)
         return false;
 
@@ -1381,78 +1092,34 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     doc->m_server      = CString(dlg.m_server->GetValue().ToUTF8().data());
     doc->m_port        = static_cast<unsigned short>(dlg.m_port->GetValue());
     doc->m_connect_now = dlg.m_autoConnect->GetValue() ? 1 : 0;
-    doc->m_enable_beeps = dlg.m_enableBeeps->GetValue() ? 1 : 0;
 
     // ── Apply font ────────────────────────────────────────────────────────
+    // Write back to the pane immediately so the change is visible at once.
+    // Also persist into the doc's LOGFONT fields so world-file save captures it.
     if (pane && dlg.m_fontPicker) {
         wxFont chosen = dlg.m_fontPicker->GetSelectedFont();
         if (chosen.IsOk()) {
             pane->SetOutputFont(chosen);
 
+            // Persist into the doc so Ctrl+S saves the new font.
             std::string face = chosen.GetFaceName().ToUTF8().data();
             doc->m_font_name   = CString(face.c_str());
             // Convert wx points → LOGFONT negative-pixel convention at 96 DPI.
             doc->m_font_height = -(chosen.GetPointSize() * 96 / 72);
             doc->m_font_weight = (chosen.GetWeight() >= wxFONTWEIGHT_BOLD)
                                  ? 700 : 400;
+
+            // Notify the doc that grid metrics may have changed so NAWS is resent.
             if (childFrame) childFrame->TriggerNAWS();
         }
     }
 
-    // ── Apply scrollback buffer size ─────────────────────────────────────
+    // ── Apply scrollback buffer size ─────────────────────────────────────────
     if (dlg.m_scrollback) {
         int newMax = dlg.m_scrollback->GetValue();
         if (newMax != (int)doc->m_maxlines) {
             doc->m_maxlines = newMax;
             if (pane) pane->SetMaxLines(newMax);
-        }
-    }
-
-    // ── Apply wrap column ─────────────────────────────────────────────────
-    // m_nWrapColumn governs where the engine word-wraps incoming text.
-    // Also update m_gui_cols so the value reported to NAWS stays consistent.
-    if (dlg.m_wrapColumn) {
-        int newWrap = dlg.m_wrapColumn->GetValue();
-        if (newWrap != (int)doc->m_nWrapColumn) {
-            doc->m_nWrapColumn = (unsigned short)newWrap;
-            doc->m_gui_cols    = newWrap;
-            if (childFrame) childFrame->TriggerNAWS();
-        }
-    }
-
-    // ── Apply background colour ───────────────────────────────────────────
-    if (dlg.m_bgColorPicker) {
-        wxColour chosen = dlg.m_bgColorPicker->GetColour();
-        unsigned long newBg = RGB(chosen.Red(), chosen.Green(), chosen.Blue());
-        unsigned long curBg = doc->m_iBackgroundColour;
-        if (curBg == 0xFFFFFFFFUL) curBg = 0;
-        if (newBg != curBg) {
-            doc->m_iBackgroundColour = newBg;
-            if (childFrame) childFrame->ApplyPaneBackground(newBg);
-        }
-    }
-
-    // ── Apply scripting settings ──────────────────────────────────────────
-    // Script prefix is always safe to set in place.
-    doc->m_strScriptPrefix = CString(dlg.m_scriptPrefix->GetValue().ToUTF8().data());
-
-    // Script file: if changed, reload the script engine.
-    // Use the same DisableScripting/CreateScriptEngine path as
-    // CMUSHclientDoc::OnGameReloadScriptFile so all cleanup runs correctly.
-    {
-        CString newFile(dlg.m_scriptFile->GetValue().ToUTF8().data());
-        if (newFile != doc->m_strScriptFilename) {
-            doc->m_strScriptFilename = newFile;
-            if (newFile.IsEmpty()) {
-                doc->m_bEnableScripts = 0;
-                doc->DisableScripting();
-            } else {
-                // Language is always Lua on non-Windows.
-                doc->m_strLanguage    = CString("Lua");
-                doc->m_bEnableScripts = 1;
-                doc->DisableScripting();
-                doc->CreateScriptEngine();
-            }
         }
     }
 
@@ -1463,62 +1130,13 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     if (doc->m_iConnectPhase == eConnectConnectedToMud) {
         wxMessageBox(
             wxT("World properties updated.\n\n")
-            wxT("Font and scripting changes take effect immediately.\n")
+            wxT("Font changes take effect immediately.\n")
             wxT("Changes to server address and port will take effect\n")
             wxT("the next time you reconnect."),
             wxT("World Properties"),
             wxOK | wxICON_INFORMATION, parent);
     }
 
-    return true;
-}
-
-// ── hook_save_world ───────────────────────────────────────────────────────────
-// Saves the world file for the given doc.  If saveAs is true or the doc has no
-// path, opens a save-file dialog.  parent is a wxWindow* used as dialog parent.
-// Returns true if the file was saved, false if cancelled or on error.
-static bool hook_save_world(void* vdoc, bool saveAs, void* vparent)
-{
-    auto* doc    = static_cast<CMUSHclientDoc*>(vdoc);
-    auto* parent = static_cast<wxWindow*>(vparent);
-
-    CString  pathCStr = doc->GetPathName();
-    wxString path     = wxString::FromUTF8(static_cast<const char*>(pathCStr));
-
-    if (saveAs || path.IsEmpty()) {
-        wxString saveDir = path.IsEmpty()
-            ? wxString::FromUTF8(
-                  static_cast<const char*>(App.m_strDefaultWorldFileDirectory))
-            : wxFileName(path).GetPath();
-        wxFileDialog dlg(parent,
-                         wxT("Save World File"),
-                         saveDir,
-                         path.IsEmpty() ? wxT("world.mcl")
-                                        : wxFileName(path).GetFullName(),
-                         wxT("MUSHclient world files (*.mcl)|*.mcl"
-                             "|All files (*.*)|*.*"),
-                         wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-        if (dlg.ShowModal() != wxID_OK) return false;
-        path = dlg.GetPath();
-    }
-
-    if (path.IsEmpty()) return false;
-
-    std::string savePath = path.ToUTF8().data();
-    if (!doc->OnSaveDocument(savePath.c_str())) {
-        wxMessageBox(wxT("Failed to save world file."),
-                     wxT("Save Error"), wxICON_ERROR | wxOK, parent);
-        return false;
-    }
-
-    // Update path, clear modified flag, maintain world lists.
-    std::string oldPath = static_cast<const char*>(doc->GetPathName());
-    if (!oldPath.empty() && oldPath != savePath)
-        world_list_remove(oldPath);
-    doc->SetPathName(savePath.c_str());
-    doc->SetModifiedFlag(FALSE);
-    world_list_add(savePath);
-    recent_worlds_add(savePath);
     return true;
 }
 
@@ -1532,34 +1150,8 @@ static int hook_quick_connect_dlg(char** outName, char** outAddr, int* outPort)
                      : nullptr;
 
     QuickConnectDlg dlg(parent);
-
-    // Pre-fill with the last-used values so repeat connections need fewer clicks.
-    {
-        wxConfig cfg(wxT("mushclient"));
-        wxString lastAddr;
-        long     lastPort = 0;
-        wxString lastName;
-        if (cfg.Read(wxT("/quickconnect/addr"), &lastAddr) && !lastAddr.IsEmpty()) {
-            dlg.m_addr->SetValue(lastAddr);
-            if (wxButton* ok = dynamic_cast<wxButton*>(dlg.FindWindowById(wxID_OK)))
-                ok->Enable(true);
-        }
-        if (cfg.Read(wxT("/quickconnect/port"), &lastPort) && lastPort > 0)
-            dlg.m_port->SetValue((int)lastPort);
-        if (cfg.Read(wxT("/quickconnect/name"), &lastName) && !lastName.IsEmpty())
-            dlg.m_name->SetValue(lastName);
-    }
-
     if (dlg.ShowModal() != wxID_OK)
         return IDCANCEL;
-
-    // Persist for next time.
-    {
-        wxConfig cfg(wxT("mushclient"));
-        cfg.Write(wxT("/quickconnect/addr"), dlg.m_addr->GetValue());
-        cfg.Write(wxT("/quickconnect/port"), (long)dlg.m_port->GetValue());
-        cfg.Write(wxT("/quickconnect/name"), dlg.m_name->GetValue());
-    }
 
     *outName = strdup(dlg.m_name->GetValue().ToUTF8().data());
     *outAddr = strdup(dlg.m_addr->GetValue().ToUTF8().data());
@@ -1633,8 +1225,7 @@ static void* hook_new_world()
 
     // OnNewDocument: shows dialog, calls SetUpOutputWindow, OpenSession.
     // Lines produced by Note() accumulate in doc->m_LineList but are not
-    // forwarded to the pane yet (m_fn_line_ready is wired after this by the
-    // CWorldChildFrame constructor; UpdateAllViews below drains the buffer).
+    // forwarded anywhere yet (m_fn_line_ready is still null).
     if (!doc->OnNewDocument()) {
         delete doc;   // user cancelled — destructor cleans up
         return nullptr;
@@ -1657,9 +1248,22 @@ static void* hook_new_world()
     child->UpdateTitle();   // set title from m_mush_name
     child->Show();
 
-    // All output callbacks (m_fn_line_ready, m_fn_note, m_fn_begin_batch,
-    // m_fn_flush, m_fn_status) and initial pane state (font, scrollback,
-    // background) are applied inside CWorldChildFrame's constructor.
+    // Wire the callbacks now that the window is visible.
+    COutputPane* pane = child->OutputPane();
+    doc->m_fn_line_ready = [pane](SOutputLine line) {
+        pane->AppendLine(std::move(line));
+    };
+    doc->m_fn_note = [pane](const std::string& text) {
+        pane->AppendNote(text);
+    };
+    doc->m_fn_begin_batch = [pane]() { pane->BeginBatch(); };
+    doc->m_fn_flush       = [pane]() { pane->EndBatch(); };
+
+    // Apply background colour (Quick Connect worlds use default black unless
+    // a world-file background has been specified — m_iBackgroundColour starts
+    // as NO_COLOUR from doc_construct.cpp so ApplyPaneBackground will just use
+    // black, which is the correct default for new quick-connect worlds).
+    child->ApplyPaneBackground(doc->m_iBackgroundColour);
 
     // Flush welcome banner + any output buffered during OnNewDocument.
     doc->UpdateAllViews(nullptr);
@@ -1701,7 +1305,6 @@ void wx_mfc_install_hooks()
     g_wxhook_quick_connect_dlg  = hook_quick_connect_dlg;
     g_wxhook_set_status         = hook_set_status;
     g_wxhook_game_preferences   = hook_game_preferences;
-    g_wxhook_save_world         = hook_save_world;
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce
     // an audible alert on macOS/Linux via wxWidgets.

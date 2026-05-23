@@ -1022,91 +1022,43 @@ static int L_GetLineCount(lua_State* L)
     return 1;
 }
 
-// ── GetInfo ───────────────────────────────────────────────────────────────────
-// Returns world / session info fields by numeric type.
-// Type numbers match the Windows COM API (see scripting/methods/methods_info.cpp).
-//
-// Strings (configuration — cases 1-89):
-//   1   = server address (m_server)
-//   2   = world name (m_mush_name)
-//   3   = character name (m_name)
-//   51  = current log file name
-//   52  = last immediate script expression (always "")
-//   72  = MUSHclient version string
-//   87  = last command sent
-//   88  = window title (set by SetTitle)
-//   89  = main window title (set by SetMainTitle)
-// Booleans (cases 101-125):
-//   101 = no echo (TELNET ECHO suppressed)
-//   104 = MXP active
-//   106 = world close flag (not connected)
-//   107 = currently connecting
-//   109 = trace mode on
-//   113 = world is active (has a GUI view)
-//   114 = output window paused (user scrolled up)
-// Numbers (cases 201-289):
-//   201 = total lines received
-//   203 = total lines sent
-//   212 = output font height in pixels
-//   213 = output font width (average) in pixels
-//   214 = input font height in pixels
-//   215 = input font width in pixels
-//   216 = total bytes received
-//   217 = total bytes sent
-//   218 = number of variables
-//   219 = number of triggers
-//   220 = number of timers
-//   221 = number of aliases
-//   224 = lines currently in output buffer
-//   227 = connect phase (eConnect* enum value)
-//   289 = last line with IAC GA
+// ── GetInfo (partial) ─────────────────────────────────────────────────────────
+// Returns common world info fields by numeric type.
+// Full list: see scripting/methods/methods_info.cpp.
+// We implement the most portable subset.
+//   1  = world name
+//   2  = world address (host)
+//   3  = world port
+//   4  = connected (bool)
+//   5  = total lines received
+//   6  = total lines sent
+//   7  = lines in buffer
+//   16 = MUSHclient version string
 
 static int L_GetInfo(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
     int iType = (int)luaL_checknumber(L, 1);
     switch (iType) {
-        // ── Strings ──────────────────────────────────────────────────────────
-        case 1:   lua_pushstring(L, (const char*)pDoc->m_server);             return 1;
-        case 2:   lua_pushstring(L, (const char*)pDoc->m_mush_name);          return 1;
-        case 3:   lua_pushstring(L, (const char*)pDoc->m_name);               return 1;
-        case 51:  lua_pushstring(L, (const char*)pDoc->m_logfile_name);       return 1;
-        case 52:  lua_pushstring(L, "");                                       return 1;
-        case 53:  lua_pushstring(L, (const char*)pDoc->m_strStatusMessage);   return 1;
-        case 72:  lua_pushstring(L, MUSHCLIENT_VERSION);                       return 1;
-        case 87:  lua_pushstring(L, (const char*)pDoc->m_strLastCommandSent); return 1;
-        case 88:  lua_pushstring(L, (const char*)pDoc->m_strWindowTitle);     return 1;
-        case 89:  lua_pushstring(L, (const char*)pDoc->m_strMainWindowTitle); return 1;
-        // ── Booleans ─────────────────────────────────────────────────────────
-        case 101: lua_pushboolean(L, pDoc->m_bNoEcho);                        return 1;
-        case 104: lua_pushboolean(L, pDoc->m_bMXP);                           return 1;
-        case 106: lua_pushboolean(L,
-                      pDoc->m_iConnectPhase != eConnectConnectedToMud);        return 1;
-        case 107: lua_pushboolean(L,
-                      pDoc->m_iConnectPhase != eConnectNotConnected &&
-                      pDoc->m_iConnectPhase != eConnectConnectedToMud);        return 1;
-        case 109: lua_pushboolean(L, pDoc->m_bTrace);                         return 1;
-        case 113: lua_pushboolean(L,
-                      pDoc->m_iConnectPhase == eConnectConnectedToMud);        return 1;
-        case 114: lua_pushboolean(L, pDoc->m_gui_paused);                     return 1;
-        // ── Numbers ──────────────────────────────────────────────────────────
-        case 141: // fall through — same field, both type numbers used in the wild
-        case 201: lua_pushnumber(L, pDoc->m_total_lines);                     return 1;
-        case 203: lua_pushnumber(L, pDoc->m_nTotalLinesSent);                 return 1;
-        case 212: lua_pushnumber(L, pDoc->m_gui_font_height);                 return 1;
-        case 213: lua_pushnumber(L, pDoc->m_gui_font_width);                  return 1;
-        case 214: lua_pushnumber(L, pDoc->m_gui_font_height); return 1; // input same as output
-        case 215: lua_pushnumber(L, pDoc->m_gui_font_width);                  return 1;
-        case 216: lua_pushnumber(L, pDoc->m_nBytesIn);                        return 1;
-        case 217: lua_pushnumber(L, pDoc->m_nBytesOut);                       return 1;
-        case 218: lua_pushnumber(L, (double)pDoc->GetVariableMap().GetCount()); return 1;
-        case 219: lua_pushnumber(L, (double)pDoc->GetTriggerMap().GetCount()); return 1;
-        case 220: lua_pushnumber(L, (double)pDoc->GetTimerMap().GetCount());  return 1;
-        case 221: lua_pushnumber(L, (double)pDoc->GetAliasMap().GetCount());  return 1;
-        case 224: lua_pushnumber(L, (double)pDoc->m_LineList.GetCount());     return 1;
-        case 227: lua_pushnumber(L, pDoc->m_iConnectPhase);                   return 1;
-        case 289: lua_pushnumber(L, pDoc->m_last_line_with_IAC_GA);           return 1;
-        default:  lua_pushnil(L);                                              return 1;
+        case 1:  lua_pushstring(L, (const char*)pDoc->m_mush_name); return 1;
+        case 2:  lua_pushstring(L, (const char*)pDoc->m_server);    return 1;
+        case 3:  lua_pushnumber(L, pDoc->m_port);                   return 1;
+        case 4:  lua_pushboolean(L, pDoc->m_iConnectPhase == eConnectConnectedToMud); return 1;
+        case 5:  lua_pushnumber(L, pDoc->m_nTotalLinesReceived);    return 1;
+        case 6:  lua_pushnumber(L, pDoc->m_nTotalLinesSent);        return 1;
+        case 7:  lua_pushnumber(L, (double)pDoc->m_LineList.GetCount()); return 1;
+        case 9:  lua_pushnumber(L, pDoc->m_nBytesIn);               return 1;
+        case 10: lua_pushnumber(L, pDoc->m_nBytesOut);              return 1;
+        case 11: lua_pushboolean(L, pDoc->m_logfile != nullptr);    return 1;
+        case 12: lua_pushstring(L, (const char*)pDoc->m_logfile_name); return 1;
+        case 16: lua_pushstring(L, MUSHCLIENT_VERSION);             return 1;
+        case 51: lua_pushstring(L, (const char*)pDoc->m_logfile_name); return 1;
+        case 52: lua_pushstring(L, "");                             return 1; // m_strLastImmediateExpression
+        case 88: lua_pushstring(L, (const char*)pDoc->m_strWindowTitle);     return 1;
+        case 89: lua_pushstring(L, (const char*)pDoc->m_strMainWindowTitle); return 1;
+        case 141: lua_pushnumber(L, pDoc->m_total_lines);           return 1;
+        case 289: lua_pushnumber(L, pDoc->m_last_line_with_IAC_GA); return 1;
+        default: lua_pushnil(L); return 1;
     }
 }
 
@@ -1152,17 +1104,15 @@ static int L_GetOption(lua_State* L)
     const char* opt = luaL_checkstring(L, 1);
 
     // 1. Known live members (read from the real field).
-    if      (!strcmp(opt, "enable_triggers"))   OPT_GET_MEMBER(pDoc->m_enable_triggers  ? 1 : 0);
-    else if (!strcmp(opt, "enable_aliases"))    OPT_GET_MEMBER(pDoc->m_enable_aliases   ? 1 : 0);
-    else if (!strcmp(opt, "enable_timers"))     OPT_GET_MEMBER(pDoc->m_bEnableTimers    ? 1 : 0);
-    else if (!strcmp(opt, "display_my_input"))  OPT_GET_MEMBER(pDoc->m_display_my_input ? 1 : 0);
-    else if (!strcmp(opt, "log_output"))        OPT_GET_MEMBER(pDoc->m_bLogOutput);
-    else if (!strcmp(opt, "log_notes"))         OPT_GET_MEMBER(pDoc->m_bLogNotes);
-    else if (!strcmp(opt, "log_input"))         OPT_GET_MEMBER(pDoc->m_log_input);
-    else if (!strcmp(opt, "port"))              OPT_GET_MEMBER(pDoc->m_port);
-    else if (!strcmp(opt, "trace"))             OPT_GET_MEMBER(pDoc->m_bTrace ? 1 : 0);
-    else if (!strcmp(opt, "wrap_column"))       OPT_GET_MEMBER(pDoc->m_nWrapColumn);
-    else if (!strcmp(opt, "max_output_lines"))  OPT_GET_MEMBER(pDoc->m_maxlines);
+    if      (!strcmp(opt, "enable_triggers"))  OPT_GET_MEMBER(pDoc->m_enable_triggers  ? 1 : 0);
+    else if (!strcmp(opt, "enable_aliases"))   OPT_GET_MEMBER(pDoc->m_enable_aliases   ? 1 : 0);
+    else if (!strcmp(opt, "enable_timers"))    OPT_GET_MEMBER(pDoc->m_bEnableTimers    ? 1 : 0);
+    else if (!strcmp(opt, "display_my_input")) OPT_GET_MEMBER(pDoc->m_display_my_input ? 1 : 0);
+    else if (!strcmp(opt, "log_output"))       OPT_GET_MEMBER(pDoc->m_bLogOutput);
+    else if (!strcmp(opt, "log_notes"))        OPT_GET_MEMBER(pDoc->m_bLogNotes);
+    else if (!strcmp(opt, "log_input"))        OPT_GET_MEMBER(pDoc->m_log_input);
+    else if (!strcmp(opt, "port"))             OPT_GET_MEMBER(pDoc->m_port);
+    else if (!strcmp(opt, "trace"))            OPT_GET_MEMBER(pDoc->m_bTrace ? 1 : 0);
 
     // 2. Cache — value previously written by SetOption.
     {
@@ -1197,17 +1147,6 @@ static int L_SetOption(lua_State* L)
     else if (!strcmp(opt, "log_notes"))        pDoc->m_bLogNotes        = (short)val;
     else if (!strcmp(opt, "log_input"))        pDoc->m_log_input        = (short)val;
     else if (!strcmp(opt, "trace"))            pDoc->m_bTrace           = (val != 0);
-    else if (!strcmp(opt, "wrap_column")) {
-        if (val >= 20 && val <= MAX_LINE_WIDTH) {
-            pDoc->m_nWrapColumn = (unsigned short)val;
-        }
-    }
-    else if (!strcmp(opt, "max_output_lines")) {
-        if (val >= 200 && val <= 500000) {
-            pDoc->m_maxlines = val;
-            if (pDoc->m_fn_set_max_lines) pDoc->m_fn_set_max_lines((int)val);
-        }
-    }
     else                                       is_member = false;
 
     // 2. Validate: reject completely unknown option names.
@@ -2034,11 +1973,6 @@ static int L_SetAlphaOption(lua_State* L)
     else if (!strcmp(opt, "terminal_identification"))
                                                pDoc->m_strTerminalIdentification = CString(val);
     else if (!strcmp(opt, "mapping_failure"))  pDoc->m_strMappingFailure    = CString(val);
-    else if (!strcmp(opt, "output_font_name")) {
-        // Immediately apply the face name to the output pane.
-        if (pDoc->m_fn_set_output_font && val && *val)
-            pDoc->m_fn_set_output_font(std::string(val), 0, false, false);
-    }
     else                                       is_member = false;
 
     // 2. Validate: reject completely unknown option names.
@@ -3656,19 +3590,12 @@ static int L_SetUnseenLines(lua_State* L)
 }
 
 // ── Pause / Unpause ───────────────────────────────────────────────────────────
-// Pause(bPause): scroll-lock (true) or release (false) the output pane.
-// On Windows this freeze/unfreezes the CMUSHView.  On non-Windows we
-// toggle auto-scroll via m_fn_set_paused (wired to COutputPane by
-// CWorldChildFrame) and record the state in m_gui_paused.
+// On Windows these pause/resume output. Portable stub records state.
 
 static int L_Pause(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    bool bPause = lua_toboolean(L, 1) != 0;
-    if (pDoc->m_fn_set_paused) pDoc->m_fn_set_paused(bPause);
-    // m_gui_paused is kept up to date by m_fn_autoscroll_changed;
-    // set it here too in case the pane callback fires asynchronously.
-    pDoc->m_gui_paused = bPause;
+    // On non-Windows there is no scrollback view to pause; accept silently.
+    world_doc(L);
     return 0;
 }
 
@@ -4791,15 +4718,13 @@ static int L_GetNoteColour(lua_State* L)
 static int L_GetCommand(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    // world.GetCommand() — returns the current text in the command input bar.
-    // The n-th-from-tail history argument is accepted but ignored on
-    // non-Windows since command history is kept in the frame, not the doc.
-    if (pDoc->m_fn_get_command) {
-        std::string s = pDoc->m_fn_get_command();
-        lua_pushstring(L, s.c_str());
-        return 1;
-    }
-    lua_pushstring(L, "");
+    // GetCommand(n) — n=1 is most recent
+    int n = (int)luaL_optnumber(L, 1, 1);
+    POSITION pos = pDoc->m_CommandHistory.GetTailPosition();
+    for (int i = 1; i < n && pos; ++i)
+        pDoc->m_CommandHistory.GetPrev(pos);
+    if (!pos) { lua_pushstring(L, ""); return 1; }
+    lua_pushstring(L, (const char*)pDoc->m_CommandHistory.GetAt(pos));
     return 1;
 }
 
@@ -4837,54 +4762,22 @@ static int L_DeleteCommandHistory(lua_State* L)
 }
 
 // PushCommand / PasteCommand / SelectCommand / SetCommand / GetQueue are
-// command-window concepts.
-static int L_PushCommand(lua_State* L)   { world_doc(L); lua_pushstring(L, ""); return 1; }
-static int L_SelectCommand(lua_State* L) { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-
-static int L_PasteCommand(lua_State* L)
-{
-    CMUSHclientDoc* pDoc = world_doc(L);
-    const char* text = luaL_checkstring(L, 1);
-    // Append text to the current input bar and return previously selected text
-    // (empty on non-Windows since selection state is not tracked here).
-    if (pDoc->m_fn_get_command && pDoc->m_fn_set_command) {
-        std::string current = pDoc->m_fn_get_command();
-        std::string appended = current + std::string(text);
-        // m_fn_set_command requires an empty bar; force-set via get+set.
-        // Since PasteCommand replaces selection, we model it as append.
-        // Temporarily clear the bar to allow set_command, then set the combined text.
-        // This is an approximation: we don't have selection tracking.
-        pDoc->m_fn_set_command(appended);   // may fail if bar is non-empty; ignore
-    }
-    lua_pushstring(L, "");   // return empty string (no selection on non-Windows)
-    return 1;
-}
-
+// command-window concepts; return sensible stubs.
+static int L_PushCommand(lua_State* L)    { world_doc(L); lua_pushstring(L, ""); return 1; }
+static int L_PasteCommand(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_SelectCommand(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetCommand(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* cmd = luaL_checkstring(L, 1);
-    if (pDoc->m_fn_set_command) {
-        bool ok = pDoc->m_fn_set_command(std::string(cmd));
-        lua_pushnumber(L, ok ? eOK : eCommandNotEmpty);
-    } else {
-        pDoc->m_CurrentCommand = CString(cmd);
-        lua_pushnumber(L, eOK);
-    }
+    pDoc->m_CurrentCommand = CString(cmd);
+    lua_pushnumber(L, eOK);
     return 1;
 }
 static int L_GetCommandListFunc(lua_State* L) { return L_GetCommandList(L); }
 
 // ── InfoBar stubs ─────────────────────────────────────────────────────────────
-static int L_Info(lua_State* L)
-{
-    CMUSHclientDoc* pDoc = world_doc(L);
-    const char* msg = luaL_checkstring(L, 1);
-    pDoc->m_strStatusMessage = CString(msg);
-    if (pDoc->m_fn_status) pDoc->m_fn_status(msg);
-    lua_pushnumber(L, eOK);
-    return 1;
-}
+static int L_Info(lua_State* L)             { world_doc(L); luaL_checkstring(L, 1); lua_pushnumber(L, eOK); return 1; }
 static int L_InfoBackground(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_InfoClear(lua_State* L)        { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_InfoColour(lua_State* L)       { world_doc(L); lua_pushnumber(L, eOK); return 1; }
@@ -4894,72 +4787,19 @@ static int L_InfoFont(lua_State* L)         { world_doc(L); lua_pushnumber(L, eO
 static int L_Activate(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_ActivateClient(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_Redraw(lua_State* L)           { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_Repaint(lua_State* L)
-{
-    CMUSHclientDoc* pDoc = world_doc(L);
-    if (pDoc->m_fn_repaint) pDoc->m_fn_repaint();
-    lua_pushnumber(L, eOK);
-    return 1;
-}
+static int L_Repaint(lua_State* L)          { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_GetSysColor(lua_State* L)      { world_doc(L); lua_pushnumber(L, 0); return 1; }
 static int L_GetSystemMetrics(lua_State* L) { world_doc(L); lua_pushnumber(L, 0); return 1; }
 static int L_GetDeviceCaps(lua_State* L)    { world_doc(L); lua_pushnumber(L, 0); return 1; }
-static int L_GetClipboard(lua_State* L)
-{
-    CMUSHclientDoc* pDoc = world_doc(L);
-    std::string text = pDoc->m_fn_get_clipboard ? pDoc->m_fn_get_clipboard() : std::string();
-    lua_pushstring(L, text.c_str());
-    return 1;
-}
-static int L_SetClipboard(lua_State* L)
-{
-    CMUSHclientDoc* pDoc = world_doc(L);
-    const char* text = luaL_optstring(L, 1, "");
-    if (pDoc->m_fn_set_clipboard) pDoc->m_fn_set_clipboard(text);
-    lua_pushnumber(L, eOK);
-    return 1;
-}
-static int L_SetBackgroundColour(lua_State* L)
-{
-    CMUSHclientDoc* pDoc = world_doc(L);
-    unsigned long col = (unsigned long)(long)luaL_optnumber(L, 1, 0xFFFFFFFF);
-    if (pDoc->m_fn_set_background_colour)
-        pDoc->m_fn_set_background_colour(col);
-    lua_pushnumber(L, eOK);
-    return 1;
-}
+static int L_GetClipboard(lua_State* L)     { world_doc(L); lua_pushstring(L, ""); return 1; }
+static int L_SetClipboard(lua_State* L)     { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_SetBackgroundColour(lua_State* L){ world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetBackgroundImage(lua_State* L) { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetCursor(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetChanged(lua_State* L)        { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_GetMainWindowPosition(lua_State* L) {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    int x = 0, y = 0, w = 1024, h = 768;
-    if (pDoc->m_fn_get_main_rect)
-        pDoc->m_fn_get_main_rect(x, y, w, h);
-    lua_pushnumber(L, x); lua_pushnumber(L, y);
-    lua_pushnumber(L, w); lua_pushnumber(L, h);
-    return 4;
-}
-static int L_GetWorldWindowPosition(lua_State* L) {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    int x = 0, y = 0, w = 800, h = 600;
-    if (pDoc->m_fn_get_output_rect)
-        pDoc->m_fn_get_output_rect(x, y, w, h);
-    lua_pushnumber(L, x); lua_pushnumber(L, y);
-    lua_pushnumber(L, w); lua_pushnumber(L, h);
-    return 4;
-}
-// GetWorldWindowPositionX(which): 0=x, 1=y, 2=width, 3=height of output pane.
-static int L_GetWorldWindowPositionX(lua_State* L) {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    int which = (int)luaL_optinteger(L, 1, 2);   // default = width
-    int x = 0, y = 0, w = 800, h = 600;
-    if (pDoc->m_fn_get_output_rect)
-        pDoc->m_fn_get_output_rect(x, y, w, h);
-    int vals[4] = { x, y, w, h };
-    lua_pushnumber(L, (which >= 0 && which < 4) ? vals[which] : 0);
-    return 1;
-}
+static int L_GetMainWindowPosition(lua_State* L) { world_doc(L); lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 800); lua_pushnumber(L, 600); return 4; }
+static int L_GetWorldWindowPosition(lua_State* L){ world_doc(L); lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 800); lua_pushnumber(L, 600); return 4; }
+static int L_GetWorldWindowPositionX(lua_State* L){ world_doc(L); lua_pushnumber(L, 0); return 1; }
 static int L_MoveMainWindow(lua_State* L)    { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_MoveWorldWindow(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_MoveWorldWindowX(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }
@@ -5379,23 +5219,11 @@ static int L_GetSelectionEndLine(lua_State* L)     { world_doc(L); lua_pushnumbe
 static int L_GetSelectionStartColumn(lua_State* L) { world_doc(L); lua_pushnumber(L, 0); return 1; }
 static int L_GetSelectionEndColumn(lua_State* L)   { world_doc(L); lua_pushnumber(L, 0); return 1; }
 
-// ── Miniwindow Lua API (mushcore/mushcli stubs) ───────────────────────────────
-// lua_world_api_portable.cpp is compiled into mushcore only.  The mushgui build
-// uses mushapp which compiles lua_methods.cpp instead — that file already has
-// the full real Window* implementations backed by wx_gdi_compat CDC/CBitmap.
-//
-// The stubs below keep mushcli functional: scripts that call Window* get a
-// graceful eNoSuchWindow error rather than a crash.
-//
-// NOTE: The pushVariant helper below is unused by mushcore (no Window* methods),
-// but is kept here as documentation for how the full-build variants work.
-
 // ── Not-available stubs (GUI / Chat / Notepad subsystems) ────────────────────
 // These functions exist in the Windows build but require GUI objects that are
 // absent in the portable build.  Rather than letting scripts crash with
 // "attempt to call a nil value (field 'WindowCreate')", we return a meaningful
 // error code so the caller can handle the failure gracefully.
-
 
 // miniwindow operations → eNoSuchWindow
 static int L_WindowStub(lua_State* L)
@@ -5412,7 +5240,6 @@ static int L_WindowListStub(lua_State* L)
     lua_newtable(L);
     return 1;
 }
-
 
 // Chat subsystem → eNoChatConnections
 static int L_ChatStub(lua_State* L)
@@ -5861,10 +5688,7 @@ static const luaL_Reg worldlib[] = {
     { "ResetStatusTime",    L_ResetStatusTime   },
     { "SaveState",          L_SaveState         },
 
-    // ── miniwindow (Window*) stubs ────────────────────────────────────────────
-    // lua_world_api_portable.cpp is only compiled into mushcore (mushcli).
-    // mushgui uses mushapp which compiles lua_methods.cpp with real Window* impls.
-    // These stubs keep mushcli functional: scripts get eNoSuchWindow gracefully.
+    // ── miniwindow (Window*) stubs — return eNoSuchWindow ────────────────────
     { "WindowCreate",           L_WindowStub },
     { "WindowDelete",           L_WindowStub },
     { "WindowAddHotspot",       L_WindowStub },
@@ -5903,6 +5727,7 @@ static const luaL_Reg worldlib[] = {
     { "WindowTextWidth",        L_WindowStub },
     { "WindowTransformImage",   L_WindowStub },
     { "WindowWrite",            L_WindowStub },
+    // Window data queries → empty table or nil
     { "WindowList",             L_WindowListStub },
     { "WindowFontInfo",         L_GuiNilStub     },
     { "WindowFontList",         L_WindowListStub },
@@ -5980,53 +5805,14 @@ static const luaL_Reg worldlib[] = {
     { "GetFrame",               L_GuiNilStub },
     { "PlaySoundMemory",        L_GuiOkStub  },
     { "ReadNamesFile",          L_GuiOkStub  },
-    { "SetCommandSelection",    [](lua_State* L) -> int {
-        CMUSHclientDoc* pDoc = world_doc(L);
-        long first = (long)luaL_checknumber(L, 1);
-        long last  = (long)luaL_optnumber(L, 2, -1);
-        if (pDoc->m_fn_set_command_selection)
-            pDoc->m_fn_set_command_selection(first, last);
-        lua_pushnumber(L, eOK); return 1;
-    }},
+    { "SetCommandSelection",    L_GuiOkStub  },
     { "SetCommandWindowHeight", L_GuiOkStub  },
     { "SetForegroundImage",     L_GuiOkStub  },
     { "SetFrameBackgroundColour",L_GuiOkStub },
-    { "SetInputFont",           [](lua_State* L) -> int {
-        CMUSHclientDoc* pDoc = world_doc(L);
-        const char* face = luaL_optstring(L, 1, "");
-        int pts    = (int)luaL_optnumber(L, 2, 0);
-        bool bold  = lua_toboolean(L, 3) != 0;
-        bool italic= lua_toboolean(L, 4) != 0;
-        if (pDoc->m_fn_set_output_font)
-            pDoc->m_fn_set_output_font(std::string(face), pts, bold, italic);
-        lua_pushnumber(L, eOK); return 1;
-    }},
-    { "SetOutputFont",          [](lua_State* L) -> int {
-        CMUSHclientDoc* pDoc = world_doc(L);
-        const char* face = luaL_optstring(L, 1, "");
-        int pts    = (int)luaL_optnumber(L, 2, 0);
-        if (pDoc->m_fn_set_output_font)
-            pDoc->m_fn_set_output_font(std::string(face), pts, false, false);
-        lua_pushnumber(L, eOK); return 1;
-    }},
-    { "SetScroll",              [](lua_State* L) -> int {
-        CMUSHclientDoc* pDoc = world_doc(L);
-        long pos = (long)luaL_checknumber(L, 1);
-        // Visible (arg 2) is ignored on non-Windows.
-        if (pDoc->m_fn_set_scroll && pos != -2)
-            pDoc->m_fn_set_scroll(pos);
-        lua_pushnumber(L, eOK); return 1;
-    }},
-    { "SetSelection",           [](lua_State* L) -> int {
-        CMUSHclientDoc* pDoc = world_doc(L);
-        int sl = (int)luaL_checknumber(L, 1);
-        int el = (int)luaL_checknumber(L, 2);
-        int sc = (int)luaL_optnumber(L, 3, 0);
-        int ec = (int)luaL_optnumber(L, 4, 0);
-        if (pDoc->m_fn_set_selection)
-            pDoc->m_fn_set_selection(sl, el, sc, ec);
-        lua_pushnumber(L, eOK); return 1;
-    }},
+    { "SetInputFont",           L_GuiOkStub  },
+    { "SetOutputFont",          L_GuiOkStub  },
+    { "SetScroll",              L_GuiOkStub  },
+    { "SetSelection",           L_GuiOkStub  },
     { "SetToolBarPosition",     L_GuiOkStub  },
     { "ShiftTabCompleteItem",   L_GuiNilStub },
     { "ShowInfoBar",            L_GuiOkStub  },

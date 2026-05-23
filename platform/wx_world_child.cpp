@@ -9,7 +9,6 @@
 // ── wxWidgets ─────────────────────────────────────────────────────────────
 #include <wx/wx.h>
 #include <wx/mdi.h>
-#include <wx/config.h>
 #include <string>
 
 // ── MUSHclient headers ────────────────────────────────────────────────────
@@ -36,9 +35,7 @@
 #include "platform/wx_mfc_hooks.h"    // g_wxhook_set_status
 
 #include <list>
-#include <set>
 #include <cstdio>
-#include <ctime>
 #include <sys/stat.h>
 
 // App singleton — defined in platform/mushapp_globals.cpp for the mushapp build.
@@ -55,38 +52,15 @@ static const int ID_FIND_PREV    = wxID_HIGHEST + 204;
 static const int kMaxHistory = 200;
 
 // ── History file path ─────────────────────────────────────────────────────────
-// Returns the path to the per-world persistent command-history file, creating
-// ~/.mushclient/ if needed.  Uses the world name to distinguish files so that
-// different worlds maintain separate histories.  Returns "" on failure.
-//
-// The world name is sanitised: only [A-Za-z0-9._-] are kept; runs of other
-// characters are collapsed to a single underscore.  E.g. "Broken Lands"
-// → "history_Broken_Lands.txt".  Falls back to "history.txt" if empty.
-static std::string GetHistoryFilePath(const std::string& worldName)
+// Returns the path to the persistent command-history file, creating the
+// ~/.mushclient/ directory if needed.  Returns an empty string on failure.
+static std::string GetHistoryFilePath()
 {
     const char* home = getenv("HOME");
     if (!home || !*home) return {};
     std::string dir = std::string(home) + "/.mushclient";
     ::mkdir(dir.c_str(), 0700);   // safe no-op if already exists
-
-    if (worldName.empty()) return dir + "/history.txt";
-
-    // Sanitise: keep alphanumeric + a handful of safe punctuation chars;
-    // collapse anything else to a single underscore.
-    std::string safe;
-    for (unsigned char c : worldName) {
-        if (std::isalnum(c) || c == '-' || c == '_' || c == '.') {
-            safe += (char)c;
-        } else {
-            if (!safe.empty() && safe.back() != '_')
-                safe += '_';
-        }
-    }
-    // Trim trailing underscores left by a name ending in punctuation.
-    while (!safe.empty() && safe.back() == '_') safe.pop_back();
-    if (safe.empty()) safe = "default";
-
-    return dir + "/history_" + safe + ".txt";
+    return dir + "/history.txt";
 }
 
 // ── Event table ───────────────────────────────────────────────────────────
@@ -129,16 +103,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                                          wxDefaultPosition, wxSize(28, -1));
         fs->Add(btnNext, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 4);
         fs->Add(btnPrev, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 2);
-        // Case-sensitive toggle ("Aa").  Restore the last user preference.
-        m_findCaseBox = new wxCheckBox(m_findBar, wxID_ANY, wxT("Aa"));
-        m_findCaseBox->SetToolTip(wxT("Case-sensitive search"));
-        {
-            wxConfig cfg(wxT("mushclient"));
-            bool savedCase = false;
-            cfg.Read(wxT("/find/case_sensitive"), &savedCase, false);
-            m_findCaseBox->SetValue(savedCase);
-        }
-        fs->Add(m_findCaseBox, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 8);
         // Match-count label ("3 of 47" or "Not found").
         m_findLabel = new wxStaticText(m_findBar, wxID_ANY, wxEmptyString,
                                        wxDefaultPosition, wxSize(90, -1));
@@ -155,17 +119,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         });
         m_findInput->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
             // Live search: highlight as the user types; clear stale count.
-            bool cs = m_findCaseBox && m_findCaseBox->IsChecked();
-            m_output->HighlightSearch(m_findInput->GetValue(), cs);
+            m_output->HighlightSearch(m_findInput->GetValue());
             if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
-        });
-        // Case toggle: re-highlight immediately, reset stale count, and persist.
-        m_findCaseBox->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) {
-            bool cs = m_findCaseBox->IsChecked();
-            m_output->HighlightSearch(m_findInput ? m_findInput->GetValue() : wxString(), cs);
-            if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
-            wxConfig cfg(wxT("mushclient"));
-            cfg.Write(wxT("/find/case_sensitive"), cs);
         });
         m_findInput->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& e) {
             if (e.GetKeyCode() == WXK_ESCAPE) {
@@ -190,309 +145,16 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         if (inp) inp->SetFocus();
     };
 
-    // world.Pause(bPause): Lua scripts can scroll-lock or unlock the pane.
-    if (m_doc) {
-        m_doc->m_fn_set_paused = [this](bool bPause) {
-            if (m_output) m_output->SetPaused(bPause);
-        };
-
-        // world.Repaint(): force a repaint of the output pane.
-        m_doc->m_fn_repaint = [this]() {
-            if (m_output) m_output->Refresh(false);
-        };
-
-        // world.SetStatus(msg): show a message in the MDI parent's status bar.
-        // This overrides the connection-state message until the next timer tick
-        // refreshes it, or until a new world.SetStatus() call replaces it.
-        m_doc->m_fn_status = [this](const std::string& msg) {
-            if (g_wxhook_set_status && IsActiveWorld())
-                g_wxhook_set_status(msg.c_str());
-        };
-
-        // world.SetBackgroundColour(rgb): update output pane background.
-        m_doc->m_fn_set_background_colour = [this](unsigned long col) {
-            ApplyPaneBackground(col);
-        };
-
-        // SetOption("max_output_lines", n): resize the scrollback buffer.
-        m_doc->m_fn_set_max_lines = [this](int n) {
-            if (m_output) m_output->SetMaxLines(n);
-        };
-
-        // world.GetClipboard() / world.SetClipboard(): system clipboard access.
-        m_doc->m_fn_get_clipboard = []() -> std::string {
-            std::string result;
-            if (wxTheClipboard->Open()) {
-                if (wxTheClipboard->IsSupported(wxDF_TEXT)) {
-                    wxTextDataObject data;
-                    wxTheClipboard->GetData(data);
-                    result = std::string(data.GetText().ToUTF8());
-                }
-                wxTheClipboard->Close();
-            }
-            return result;
-        };
-        m_doc->m_fn_set_clipboard = [](const std::string& text) {
-            if (wxTheClipboard->Open()) {
-                wxTheClipboard->SetData(new wxTextDataObject(
-                    wxString::FromUTF8(text.c_str())));
-                wxTheClipboard->Close();
-            }
-        };
-
-        // world.GetWorldWindowPosition(): return screen rect of the output pane.
-        // Scripts use this to position miniwindows relative to the output area.
-        m_doc->m_fn_get_output_rect = [this](int& x, int& y, int& w, int& h) {
-            if (m_output) {
-                wxPoint pos = m_output->ClientToScreen(wxPoint(0, 0));
-                wxSize  sz  = m_output->GetClientSize();
-                x = pos.x; y = pos.y; w = sz.x; h = sz.y;
-            } else {
-                x = 0; y = 0; w = 800; h = 600;
-            }
-        };
-
-        // world.GetMainWindowPosition(): return screen rect of the MDI parent frame.
-        m_doc->m_fn_get_main_rect = [this](int& x, int& y, int& w, int& h) {
-            wxMDIParentFrame* parent = wxDynamicCast(GetParent(), wxMDIParentFrame);
-            if (parent) {
-                wxRect r = parent->GetScreenRect();
-                x = r.x; y = r.y; w = r.width; h = r.height;
-            } else {
-                x = 0; y = 0; w = 1024; h = 768;
-            }
-        };
-
-        // world.GetCommand(): return the text currently in the command input bar.
-        m_doc->m_fn_get_command = [this]() -> std::string {
-            wxTextCtrl* inp = ActiveInput();
-            if (!inp) return {};
-            return std::string(inp->GetValue().ToUTF8());
-        };
-
-        // world.SetCommand(text): set the command bar contents.
-        // Per the Windows API contract, returns false (eCommandNotEmpty) and does
-        // NOT overwrite if the bar is already non-empty.  Returns true on success.
-        m_doc->m_fn_set_command = [this](const std::string& text) -> bool {
-            wxTextCtrl* inp = ActiveInput();
-            if (!inp) return false;
-            if (!inp->GetValue().IsEmpty()) return false;  // eCommandNotEmpty
-            inp->SetValue(wxString::FromUTF8(text.c_str()));
-            inp->SetInsertionPointEnd();
-            m_histIdx = -1; ApplyHistRSearch(false);
-            return true;
-        };
-
-        // world.SetCommandSelection(first, last): select a range in the command bar.
-        // Indices are 1-based character positions (0 = end of bar).
-        m_doc->m_fn_set_command_selection = [this](long first, long last) {
-            wxTextCtrl* inp = ActiveInput();
-            if (!inp) return;
-            long len = (long)inp->GetValue().size();
-            long f = (first  <= 0) ? len : first  - 1;
-            long l = (last   <= 0) ? len : last   - 1;
-            inp->SetSelection(f, l);
-        };
-
-        // world.SetOutputFont(face, pts, bold, italic): change the output pane font.
-        // pts == 0 means "keep current size".
-        m_doc->m_fn_set_output_font = [this](const std::string& face, int pts,
-                                              bool bold, bool italic) {
-            if (!m_output) return;
-            wxFont cur = m_output->GetCurrentFont();
-            wxString faceName = face.empty()
-                ? cur.GetFaceName()
-                : wxString::FromUTF8(face.c_str());
-            int size = (pts > 0) ? pts : cur.GetPointSize();
-            wxFontStyle  style  = italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL;
-            wxFontWeight weight = bold   ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL;
-            wxFont f(size, wxFONTFAMILY_TELETYPE, style, weight,
-                     /*underline=*/false, faceName);
-            if (!f.IsOk()) f = cur;  // fall back to current font on failure
-            m_output->SetOutputFont(f);
-            // Update doc font fields so Ctrl+S saves the new font to the world file.
-            {
-                std::string faceStr = f.GetFaceName().ToUTF8().data();
-                m_doc->m_font_name   = CString(faceStr.c_str());
-                m_doc->m_font_height = -(f.GetPointSize() * 96 / 72);
-                m_doc->m_font_weight = (f.GetWeight() >= wxFONTWEIGHT_BOLD) ? 700 : 400;
-            }
-            // Persist face name and size so they survive restart even without saving.
-            wxConfig cfg(wxT("mushclient"));
-            cfg.Write(wxT("/display/font_name"), faceName);
-            cfg.Write(wxT("/display/font_size"), (long)f.GetPointSize());
-            // Keep input bars in sync.
-            if (m_input)         { m_input->SetFont(f);         m_input->Refresh(); }
-            if (m_inputPassword) { m_inputPassword->SetFont(f); m_inputPassword->Refresh(); }
-            Layout();
-        };
-
-        // world.SetScroll(line): scroll the output pane to a specific line number.
-        // Line is 1-based; negative values scroll relative to the end.
-        // pos == -1 → bottom (auto-scroll); pos == 0 → top.
-        m_doc->m_fn_set_scroll = [this](long pos) {
-            if (!m_output) return;
-            if (pos <= 0) {
-                m_output->ScrollToTop();
-            } else {
-                // Convert 1-based → 0-based.
-                m_output->ScrollToLine((int)(pos - 1));
-            }
-        };
-
-        // world.SetSelection(sl, el, sc, ec): set text selection in the output pane.
-        // Lines and columns are 1-based; 0 means start/end of line.
-        // All-zeros clears the selection.
-        m_doc->m_fn_set_selection = [this](int sl, int el, int sc, int ec) {
-            if (m_output) m_output->SetSelectionRange(sl, el, sc, ec);
-        };
-
-        // ── Output display callbacks ──────────────────────────────────────
-        // Route the engine's text output to the pane.  Wired here so they are
-        // never accidentally overwritten after construction.
-        m_doc->m_fn_line_ready = [this](SOutputLine line) {
-            if (m_output) m_output->AppendLine(std::move(line));
-        };
-        m_doc->m_fn_note = [this](const std::string& text) {
-            if (m_output) m_output->AppendNote(text);
-        };
-        m_doc->m_fn_begin_batch = [this]() {
-            if (m_output) m_output->BeginBatch();
-        };
-        m_doc->m_fn_flush = [this]() {
-            if (m_output) m_output->EndBatch();
-        };
-
-        // ── Apply initial pane state from the doc ─────────────────────────
-        // For quick-connect worlds the doc fields are at defaults (no face,
-        // black background, 5000-line scrollback).  For world-file worlds the
-        // doc has already been loaded via OnOpenDocument before the constructor
-        // runs, so these reflect the saved world settings.
-        if (m_output) {
-            // Font: m_font_name is face name; m_font_height is LOGFONT lfHeight
-            // (negative pixels at 96 DPI).  Skip if not configured.
-            const char* face = static_cast<const char*>(m_doc->m_font_name);
-            int         lfH  = (int)m_doc->m_font_height;
-            if (face && *face && lfH != 0) {
-                int pixH   = (lfH < 0) ? -lfH : lfH;
-                int points = (pixH * 72 + 48) / 96;   // round to nearest pt
-                points = std::max(COutputPane::kMinFontSize,
-                                  std::min(COutputPane::kMaxFontSize, points));
-                wxFontWeight weight = (m_doc->m_font_weight >= 700)
-                                      ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL;
-                wxFont font(points, wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL,
-                            weight, false, wxString::FromUTF8(face));
-                if (font.IsOk()) m_output->SetOutputFont(font);
-            }
-            // Scrollback limit.
-            if (m_doc->m_maxlines > 0) m_output->SetMaxLines(m_doc->m_maxlines);
-            // Background colour (NO_COLOUR = 0xFFFFFFFF → black).
-            ApplyPaneBackground(m_doc->m_iBackgroundColour);
-        }
-    }
-
-    // "Put in Input Bar" context-menu action: paste selected output text into
-    // the command input for review/editing before the user presses Enter.
-    m_output->m_fn_put_in_input = [this](const wxString& text) {
-        wxTextCtrl* inp = ActiveInput();
-        if (inp) {
-            inp->SetValue(text);
-            inp->SetInsertionPointEnd();
-            inp->SetFocus();
-        }
-    };
-
-    // "Send to MUD" context-menu action: evaluate the selected text as a command
-    // through the normal alias/trigger pipeline, exactly as if typed and Enter pressed.
-    m_output->m_fn_send_to_mud = [this](const wxString& text) {
-        if (!m_doc || text.IsEmpty()) return;
-        CString cmd(text.ToUTF8().data());
-        bool bOmit = false;
-        m_doc->EvaluateCommand(cmd, /*countThem=*/true, bOmit);
-        m_doc->UpdateAllViews(nullptr);
-    };
-
-    // ── Session logging callbacks ──────────────────────────────────────────
-    // Each line appended to the output pane is forwarded to LogLine() so that
-    // the log file always reflects exactly what the user sees on screen.
-    m_output->m_fn_on_line_appended = [this](const SOutputLine& line) {
-        LogLine(line);
-    };
-
-    // Tells the context menu whether a log is currently open.
-    m_output->m_fn_is_logging = [this]() -> bool {
-        return IsLogging();
-    };
-
-    // Toggle logging on/off: shows a save dialog when starting.
-    m_output->m_fn_toggle_log = [this]() {
-        if (IsLogging()) {
-            StopLogging();
-            if (m_output)
-                m_output->AppendNote("** Logging stopped **", RGB(200, 200, 0));
-        } else {
-            // Default filename: WORLDNAME_YYYYMMDD_HHMMSS.log
-            std::string worldName = m_doc
-                ? static_cast<const char*>(m_doc->m_mush_name) : "world";
-            time_t now = time(nullptr);
-            char ts[32];
-            strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", localtime(&now));
-
-            // Sanitise worldName for use in filename (same rules as history).
-            std::string safe;
-            for (unsigned char c : worldName) {
-                if (std::isalnum(c) || c == '-' || c == '_' || c == '.') safe += (char)c;
-                else if (!safe.empty() && safe.back() != '_') safe += '_';
-            }
-            while (!safe.empty() && safe.back() == '_') safe.pop_back();
-            if (safe.empty()) safe = "world";
-
-            std::string defName = safe + "_" + ts + ".log";
-            const char* home = getenv("HOME");
-            std::string defDir = home ? std::string(home) + "/Documents" : ".";
-
-            wxFileDialog dlg(this,
-                             wxT("Save Session Log"),
-                             wxString::FromUTF8(defDir.c_str()),
-                             wxString::FromUTF8(defName.c_str()),
-                             wxT("Log files (*.log;*.txt)|*.log;*.txt|All files (*.*)|*.*"),
-                             wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-            if (dlg.ShowModal() != wxID_OK) return;
-
-            std::string path = dlg.GetPath().ToUTF8().data();
-            if (StartLogging(path)) {
-                if (m_output)
-                    m_output->AppendNote(
-                        "** Logging to " + path + " **", RGB(200, 200, 0));
-            } else {
-                wxMessageBox(
-                    wxString::FromUTF8(("Could not open log file:\n" + path).c_str()),
-                    wxT("Logging Error"), wxOK | wxICON_ERROR, this);
-            }
-        }
-    };
-
     // F3 / Shift+F3 from the output pane fires the find bar.
     m_output->m_fn_find_next_key = [this](bool fwd) {
         ShowFindBar(true);
         DoFind(fwd);
     };
 
-    // Forward printable characters typed in the output pane to the input bar
-    // so the user can type without clicking back into it after scrolling.
-    m_output->m_fn_key_to_input = [this](wxChar ch) {
-        wxTextCtrl* inp = ActiveInput();
-        if (!inp) return;
-        inp->AppendText(wxString(ch));
-        inp->SetFocus();
-        inp->SetInsertionPointEnd();
-    };
-
     // When the auto-scroll state changes, update the status bar.
     // "↑ Scrolled back" reminds the user that new output is not visible yet.
     // Restoring auto-scroll shows the connection status again.
-    m_output->m_fn_autoscroll_changed = [this](bool autoNow) {
-        if (m_doc) m_doc->m_gui_paused = !autoNow;
+    m_output->m_fn_autoscroll_changed = [this](bool /*autoNow*/) {
         if (IsActiveWorld())
             UpdateStatusBar();
     };
@@ -500,21 +162,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // When the font zoom changes, the character grid changes without a resize
     // event.  Use CallAfter so the new metrics are already committed before we
     // read CharWidth()/LineHeight() and send NAWS.
-    // We also persist the new font size so it survives across restarts.
     m_output->m_fn_grid_changed = [this]() {
-        // Persist font size immediately (synchronous — size is already committed).
-        {
-            wxConfig cfg(wxT("mushclient"));
-            cfg.Write(wxT("/display/font_size"), (long)m_output->FontSize());
-        }
-        // Keep the input bars in sync with the output pane font so Ctrl+scroll
-        // zoom also updates the input bar typeface.
-        {
-            const wxFont& outFont = m_output->GetCurrentFont();
-            if (m_input)         { m_input->SetFont(outFont);         m_input->Refresh(); }
-            if (m_inputPassword) { m_inputPassword->SetFont(outFont); m_inputPassword->Refresh(); }
-            Layout();  // re-measure input bar height for the new font size
-        }
         CallAfter([this]() {
             if (!m_doc || !m_output) return;
             int charW = m_output->CharWidth();
@@ -524,27 +172,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             m_output->GetClientSize(&paneW, &paneH);
             if (paneW <= 0 || paneH <= 0) return;
             int cols = paneW / charW;
-            int rows = paneH / lineH;
-            m_doc->m_nWrapColumn    = (unsigned short)std::max(1, std::min(cols, 65535));
-            m_doc->m_gui_cols       = cols;
-            m_doc->m_gui_rows       = rows;
-            m_doc->m_gui_font_height = lineH;
-            m_doc->m_gui_font_width  = charW;
-            // Also update the Windows-API font metric fields so GetInfo(212/213)
-            // returns real values in the mushapp (mushgui) build.
-            m_doc->m_FontHeight      = lineH;
-            m_doc->m_FontWidth       = charW;
-            m_doc->m_InputFontHeight = lineH;
-            m_doc->m_InputFontWidth  = charW;
-            m_doc->SendNAWS(cols, rows);
-            // Persist face name + LOGFONT height so font zoom survives save/reload.
-            const wxFont& zf = m_output->GetCurrentFont();
-            if (zf.IsOk()) {
-                std::string faceStr = zf.GetFaceName().ToUTF8().data();
-                m_doc->m_font_name   = CString(faceStr.c_str());
-                m_doc->m_font_height = -(zf.GetPointSize() * 96 / 72);
-                m_doc->m_font_weight = (zf.GetWeight() >= wxFONTWEIGHT_BOLD) ? 700 : 400;
-            }
+            m_doc->m_nWrapColumn = (unsigned short)std::max(1, std::min(cols, 65535));
+            m_doc->SendNAWS(cols, paneH / lineH);
         });
     };
 
@@ -1055,19 +684,29 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             return pHotspot->m_sTooltipText;
 
         // 2. Check MXP hint text on the output line under the cursor.
-        // Use PointToChar for wrap-aware hit-testing: it returns the absolute
-        // character column within the logical line, which we then walk to find
-        // which run the cursor is over (same approach as link detection).
-        SelPoint pt = m_output->PointToChar(x, y);
-        const SOutputLine* line = m_output->GetLine(pt.line);
+        int scrollX, scrollY, unitW, unitH;
+        m_output->GetViewStart(&scrollX, &scrollY);
+        m_output->GetScrollPixelsPerUnit(&unitW, &unitH);
+        int lineH = m_output->LineHeight();
+        if (lineH <= 0) return {};
+
+        int virtualY     = y + scrollY * unitH;
+        int lineIdx      = virtualY / lineH;
+        const SOutputLine* line = m_output->GetLine(lineIdx);
         if (!line) return {};
 
-        int c = 0;
+        // Walk runs using the same monospace m_charW step used by DrawLine,
+        // so tooltip hit areas match the rendered glyph positions.
+        int clickVirtualX = x + scrollX * unitW;
+        int charW = m_output->CharWidth();
+        if (charW <= 0) return {};
+        int runX = 0;
         for (const auto& run : *line) {
-            int runLen = (int)run.text.size();
-            if (pt.col >= c && pt.col < c + runLen)
+            if (run.text.empty()) continue;
+            int runW = (int)run.text.size() * charW;
+            if (clickVirtualX >= runX && clickVirtualX < runX + runW)
                 return run.hint;   // may be empty — that's fine
-            c += runLen;
+            runX += runW;
         }
         return {};
     };
@@ -1151,15 +790,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                                      wxTE_PASSWORD | wxTE_PROCESS_ENTER);
     sizer->Add(m_inputPassword, 0, wxEXPAND);
     m_inputPassword->Hide();
-
-    // Apply the output pane's monospace font to both input bars so that the
-    // input line uses the same typeface as the output — consistent look and
-    // feel, and correct column-count alignment for users who type long lines.
-    {
-        const wxFont& outFont = m_output->GetCurrentFont();
-        m_input->SetFont(outFont);
-        m_inputPassword->SetFont(outFont);
-    }
     // Wire the same send/key handlers directly to m_inputPassword.
     m_inputPassword->Bind(wxEVT_TEXT_ENTER,
         [this](wxCommandEvent& e) { OnInputEnter(e); });
@@ -1167,33 +797,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         &CWorldChildFrame::OnInputKeyDown, this);
 
     SetSizer(sizer);
-
-    // ── Restore child frame size from config ──────────────────────────────
-    // We persist a single "last used" child frame size (not per-world, since
-    // all worlds share the same MDI client area).  This prevents the window
-    // from always defaulting to 800×600 after the user resizes it once.
-    {
-        wxConfig cfg(wxT("mushclient"));
-        long w = 800, h = 600;
-        cfg.Read(wxT("/geometry/child_w"), &w, 800L);
-        cfg.Read(wxT("/geometry/child_h"), &h, 600L);
-        if (w >= 200 && h >= 100)
-            SetSize((int)w, (int)h);
-    }
-
     m_input->SetFocus();
 
     // ── Load persistent command history ───────────────────────────────────
-    // Each world keeps its own history file keyed by world name, so different
-    // MUDs don't pollute each other's command history.  The path is fixed once
-    // at construction time (m_historyFilePath) so a mid-session name change in
-    // World Properties doesn't cause a load/save mismatch.
+    // Reads ~/.mushclient/history.txt (one command per line) so the history
+    // survives across sessions.  We cap it at kMaxHistory after loading.
     {
-        std::string worldName = m_doc
-            ? static_cast<const char*>(m_doc->m_mush_name) : "";
-        m_historyFilePath = GetHistoryFilePath(worldName);
-
-        std::string histPath = m_historyFilePath;
+        std::string histPath = GetHistoryFilePath();
         if (!histPath.empty()) {
             if (FILE* f = fopen(histPath.c_str(), "r")) {
                 char buf[8192];
@@ -1247,21 +857,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         evt.Skip();   // let wxTextCtrl receive the event after getting focus
     });
 
-    // ── Restore persistent font size ──────────────────────────────────────────
-    // Apply the user's last font size preference.  We do this after all
-    // callbacks are wired so m_fn_grid_changed fires and updates NAWS/wrapping.
-    {
-        wxConfig cfg(wxT("mushclient"));
-        long savedSize = 0;
-        cfg.Read(wxT("/display/font_size"), &savedSize, 0L);
-        if (savedSize >= COutputPane::kMinFontSize &&
-            savedSize <= COutputPane::kMaxFontSize &&
-            savedSize != m_output->FontSize())
-        {
-            m_output->AdjustFontSize((int)savedSize - m_output->FontSize());
-        }
-    }
-
     // ── Per-world timer ────────────────────────────────────────────────────
     // Fires every 100 ms to drive CheckTimers() (world/plugin timers) and
     // SendToAllPluginCallbacks(ON_PLUGIN_TICK) (every ~40 ms via accumulator).
@@ -1302,28 +897,6 @@ void CWorldChildFrame::TriggerNAWS()
     });
 }
 
-// ── UpdateInputBarColors ──────────────────────────────────────────────────
-// Derives input bar fg/bg from the output pane's current background colour
-// and applies them to both the normal and password input bars.
-// ITU-R BT.601 luma: white text on dark backgrounds, dark text on light.
-void CWorldChildFrame::UpdateInputBarColors()
-{
-    unsigned long col = m_output ? m_output->PaneBackground() : 0UL;
-    int r = static_cast<int>(GetRValue(col));
-    int g = static_cast<int>(GetGValue(col));
-    int b = static_cast<int>(GetBValue(col));
-    int luma = (r * 299 + g * 587 + b * 114) / 1000;
-
-    wxColour inputFg = (luma < 128) ? wxColour(220, 220, 220) : wxColour(20, 20, 20);
-    wxColour inputBg = wxColour(r, g, b);
-    for (wxTextCtrl* inp : {m_input, m_inputPassword}) {
-        if (!inp) continue;
-        inp->SetForegroundColour(inputFg);
-        inp->SetBackgroundColour(inputBg);
-        inp->Refresh();
-    }
-}
-
 // ── ApplyPaneBackground ───────────────────────────────────────────────────
 // Applies col as the output pane background and styles the input bar to match.
 // When col == 0xFFFFFFFF (NO_COLOUR) the default black background is kept.
@@ -1336,30 +909,19 @@ void CWorldChildFrame::ApplyPaneBackground(unsigned long col)
         col = 0;  // default black
 
     m_output->SetPaneBackground(col);
-    UpdateInputBarColors();
-}
 
-// ── ApplyHistRSearch ──────────────────────────────────────────────────────
-// Sets m_histRSearch and tints the input bar to signal Ctrl+R mode.
-// Tints the background deep blue when entering; restores world colors on exit.
-// The no-op guard (m_histRSearch == on) prevents redundant repaints on every
-// key press in the common case where we're not in Ctrl+R mode.
-void CWorldChildFrame::ApplyHistRSearch(bool on)
-{
-    if (m_histRSearch == on) return;
-    m_histRSearch = on;
-    if (!m_input) return;
+    // Style the input bar so it's legible against the pane background.
+    // Choose white text on dark backgrounds, black text on light ones.
+    // Brightness: ITU-R BT.601 luma approximation on 8-bit components.
+    int r = static_cast<int>(GetRValue(col));
+    int g = static_cast<int>(GetGValue(col));
+    int b = static_cast<int>(GetBValue(col));
+    int luma = (r * 299 + g * 587 + b * 114) / 1000;  // 0–255
 
-    if (on) {
-        // Deep-blue tint: clearly distinguishable from the normal input bar but
-        // not so aggressive that it's distracting.  Text is pale blue so it's
-        // legible against the tinted background regardless of the world theme.
-        m_input->SetBackgroundColour(wxColour(20, 45, 95));
-        m_input->SetForegroundColour(wxColour(160, 210, 255));
-    } else {
-        // Restore to match the output pane's background.
-        UpdateInputBarColors();
-    }
+    wxColour inputFg = (luma < 128) ? wxColour(220, 220, 220) : wxColour(20, 20, 20);
+    wxColour inputBg = wxColour(r, g, b);
+    m_input->SetForegroundColour(inputFg);
+    m_input->SetBackgroundColour(inputBg);
     m_input->Refresh();
 }
 
@@ -1375,7 +937,7 @@ void CWorldChildFrame::ShowFindBar(bool show)
         }
     } else {
         m_findBar->Hide();
-        if (m_output) m_output->HighlightSearch(wxEmptyString, false);
+        if (m_output) m_output->HighlightSearch(wxEmptyString);
         if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
         if (wxTextCtrl* inp = ActiveInput()) inp->SetFocus();
     }
@@ -1393,11 +955,8 @@ void CWorldChildFrame::DoFind(bool forward)
         return;
     }
 
-    bool caseSensitive = m_findCaseBox && m_findCaseBox->IsChecked();
-    int matchLine = -1, ordinal = 0, totalMatches = 0;
-    bool found = m_output->FindNext(term, forward,
-                                    &matchLine, &ordinal, &totalMatches,
-                                    caseSensitive);
+    int matchLine = -1, totalMatches = 0;
+    bool found = m_output->FindNext(term, forward, &matchLine, &totalMatches);
 
     if (found) {
         // Reset background in case a previous search had left it red.
@@ -1405,6 +964,21 @@ void CWorldChildFrame::DoFind(bool forward)
         m_findInput->Refresh();
 
         if (m_findLabel) {
+            // Show "N of M" where N is 1-based ordinal of the found line among
+            // all matching lines, and M is the total count.
+            // Re-count to find ordinal (cheap relative to total count pass).
+            int ordinal = 1;
+            wxString lowerTerm = term.Lower();
+            for (int i = 0; i < matchLine; ++i) {
+                const SOutputLine* ln = m_output->GetLine(i);
+                if (!ln) continue;
+                wxString s;
+                for (const auto& run : *ln)
+                    if (!run.horiz_rule)
+                        s += wxString::FromUTF8(run.text.c_str(), run.text.size());
+                if (s.Lower().Contains(lowerTerm))
+                    ++ordinal;
+            }
             wxString countStr;
             if (totalMatches >= 9999)
                 countStr = wxString::Format(wxT("%d of 9999+"), ordinal);
@@ -1476,70 +1050,6 @@ bool CWorldChildFrame::IsActiveWorld() const
     return parent && (parent->GetActiveChild() == this);
 }
 
-// ── Session logging ───────────────────────────────────────────────────────
-//
-// Logging captures the plain-text content of each incoming output line to a
-// UTF-8 text file.  Horizontal rules are written as a dash line.  Style
-// attributes (colour, bold, underline) are not preserved — the log is plain
-// text, suitable for reading or grepping later.
-
-bool CWorldChildFrame::StartLogging(const std::string& path)
-{
-    if (m_logFile) return false;   // already logging
-
-    m_logFile = fopen(path.c_str(), "a");
-    if (!m_logFile) return false;
-
-    m_logFilePath = path;
-
-    // Write a timestamped header.
-    time_t now = time(nullptr);
-    char ts[64];
-    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
-    std::string worldName = m_doc
-        ? static_cast<const char*>(m_doc->m_mush_name) : "Unknown";
-    fprintf(m_logFile,
-            "===== Log started %s — World: %s =====\n",
-            ts, worldName.c_str());
-    fflush(m_logFile);
-    return true;
-}
-
-void CWorldChildFrame::StopLogging()
-{
-    if (!m_logFile) return;
-
-    time_t now = time(nullptr);
-    char ts[64];
-    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&now));
-    fprintf(m_logFile, "===== Log stopped %s =====\n", ts);
-    fclose(m_logFile);
-    m_logFile = nullptr;
-    m_logFilePath.clear();
-}
-
-void CWorldChildFrame::LogLine(const SOutputLine& line)
-{
-    if (!m_logFile) return;
-
-    // Horizontal rules become a dashed separator.
-    if (line.size() == 1 && line[0].horiz_rule) {
-        fputs("----------------------------------------\n", m_logFile);
-        fflush(m_logFile);
-        return;
-    }
-
-    // Concatenate run texts; skip empty and horiz_rule runs.
-    std::string text;
-    for (const auto& run : line) {
-        if (!run.text.empty() && !run.horiz_rule)
-            text += run.text;
-    }
-    text += '\n';
-    fputs(text.c_str(), m_logFile);
-    fflush(m_logFile);
-}
-
 // ── UpdateStatusBar ───────────────────────────────────────────────────────
 // Writes the current connection state to the MDI parent's status bar.
 // Only meaningful when this frame is the active MDI child; callers should
@@ -1550,55 +1060,34 @@ void CWorldChildFrame::UpdateStatusBar()
 
     int phase = m_doc->m_iConnectPhase;
 
-    // Build a world-name prefix ("WorldName — ") for every message so the user
-    // always knows which world is active in the MDI parent's status bar.
-    std::string worldName = static_cast<const char*>(m_doc->m_mush_name);
-    std::string prefix;
-    if (!worldName.empty()) {
-        prefix = worldName;
-        prefix += " \xe2\x80\x94 ";   // " — " (em dash)
-    }
-
-    // Script-provided status message takes priority over connection state.
-    if (!m_doc->m_strStatusMessage.IsEmpty()) {
-        std::string msg = prefix + static_cast<const char*>(m_doc->m_strStatusMessage);
-        g_wxhook_set_status(msg.c_str());
-        return;
-    }
-
     if (phase == eConnectConnectedToMud) {
-        std::string msg = prefix + "Connected to ";
+        std::string msg = "Connected to ";
         msg += static_cast<const char*>(m_doc->m_server);
         msg += ":";
         msg += std::to_string(m_doc->m_port);
-        // If logging, append the log indicator.
-        if (IsLogging())
-            msg += "  \xf0\x9f\x94\xb4 Logging";   // 🔴
         g_wxhook_set_status(msg.c_str());
     } else if (m_reconnectCountdown > 0) {
-        int secs = (m_reconnectCountdown + 9) / 10;   // round up
-        std::string msg = prefix + "Reconnecting in " + std::to_string(secs) + "s\xe2\x80\xa6";
+        int secs = m_reconnectCountdown / 10;
+        std::string msg = "Reconnecting in " + std::to_string(secs) + "s\xe2\x80\xa6";
         g_wxhook_set_status(msg.c_str());
-    } else if (m_output && !m_output->IsAutoScrolling()) {
-        // Scrolled-back indicator: no world prefix so the arrow stands out.
+    } else if (!m_output->IsAutoScrolling()) {
         g_wxhook_set_status(
-            "\xe2\x86\x91 Scrolled back \xe2\x80\x94 press Escape or scroll to bottom to resume");
+            "\xe2\x86\x91 Scrolled back \xe2\x80\x94 scroll down to resume auto-scroll");
     } else {
-        const char* stateStr = "Not connected.";
+        const char* statusStr = "Not connected.";
         switch (phase) {
         case eConnectMudNameLookup:
-        case eConnectProxyNameLookup:        stateStr = "Resolving\xe2\x80\xa6";     break;
+        case eConnectProxyNameLookup:        statusStr = "Resolving\xe2\x80\xa6";     break;
         case eConnectConnectingToMud:
-        case eConnectConnectingToProxy:      stateStr = "Connecting\xe2\x80\xa6";    break;
+        case eConnectConnectingToProxy:      statusStr = "Connecting\xe2\x80\xa6";    break;
         case eConnectAwaitingProxyResponse1:
         case eConnectAwaitingProxyResponse2:
-        case eConnectAwaitingProxyResponse3: stateStr = "Connecting via proxy\xe2\x80\xa6"; break;
-        case eConnectAwaitingSSLHandshake:   stateStr = "TLS handshake\xe2\x80\xa6"; break;
-        case eConnectDisconnecting:          stateStr = "Disconnecting\xe2\x80\xa6"; break;
-        default:                             stateStr = "Not connected.";             break;
+        case eConnectAwaitingProxyResponse3: statusStr = "Proxy\xe2\x80\xa6";         break;
+        case eConnectAwaitingSSLHandshake:   statusStr = "TLS\xe2\x80\xa6";           break;
+        case eConnectDisconnecting:          statusStr = "Disconnecting\xe2\x80\xa6"; break;
+        default:                             statusStr = "Not connected.";            break;
         }
-        std::string msg = prefix + stateStr;
-        g_wxhook_set_status(msg.c_str());
+        g_wxhook_set_status(statusStr);
     }
 }
 
@@ -1637,302 +1126,46 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
-    // Ctrl+Home / Ctrl+End: jump to the very top or bottom of the output buffer
-    // without leaving the input bar.  Mirrors the Ctrl+Home/End shortcuts that
-    // work when the output pane itself has focus (COutputPane::OnKeyDown).
-    if (code == WXK_HOME && evt.ControlDown()) {
-        if (m_output) m_output->ScrollToTop();
-        return;
-    }
-    if (code == WXK_END && evt.ControlDown()) {
-        if (m_output) m_output->ScrollToBottom();
-        return;
-    }
-
     wxTextCtrl* inp = ActiveInput();
 
-    // Ctrl+U: kill the entire input line (standard Unix terminal shortcut).
-    // Saves to the kill ring so Ctrl+Y can restore it.
+    // Ctrl+U: clear the input line (standard Unix terminal shortcut).
     if (code == 'U' && evt.ControlDown()) {
-        if (inp) {
-            m_killBuf = inp->GetValue();
-            inp->Clear();
-            m_histIdx = -1; ApplyHistRSearch(false);
-        }
+        if (inp) inp->Clear();
+        m_histIdx = -1;
         return;
     }
 
-    // Ctrl+W / Ctrl+Backspace: kill the word immediately before the cursor.
-    // Ctrl+W is the Unix terminal convention; Ctrl+Backspace matches most GUI
-    // apps on Windows and macOS.  Both skip trailing spaces then delete back
-    // to the next word boundary.  Saves to the kill ring.
-    bool deleteWordBack = (code == 'W' && evt.ControlDown()) ||
-                         (code == WXK_BACK && evt.ControlDown());
-    if (deleteWordBack) {
-        if (inp) {
-            long pos = inp->GetInsertionPoint();
-            if (pos > 0) {
-                wxString text = inp->GetValue();
-                long newPos = pos;
-                // Skip over any trailing whitespace.
-                while (newPos > 0 && text[newPos - 1] == ' ')
-                    --newPos;
-                // Skip over the word itself (stop at any whitespace).
-                while (newPos > 0 && text[newPos - 1] != ' ')
-                    --newPos;
-                m_killBuf = text.Mid(newPos, pos - newPos);
-                inp->Remove(newPos, pos);
-                m_histIdx = -1; ApplyHistRSearch(false);
-            }
-        }
-        return;
-    }
-
-    // Ctrl+D: delete character forward (emacs/Unix convention).
-    if (code == 'D' && evt.ControlDown()) {
-        if (inp) {
-            long pos = inp->GetInsertionPoint();
-            long len = (long)inp->GetValue().size();
-            if (pos < len) {
-                inp->Remove(pos, pos + 1);
-                m_histIdx = -1; ApplyHistRSearch(false);
-            }
-        }
-        return;
-    }
-
-    // Ctrl+Delete: delete the word immediately after the cursor.
-    // Skips leading spaces then deletes forward to the next space boundary.
-    if (code == WXK_DELETE && evt.ControlDown()) {
-        if (inp) {
-            long pos = inp->GetInsertionPoint();
-            wxString text = inp->GetValue();
-            long len = (long)text.size();
-            if (pos < len) {
-                long newPos = pos;
-                // Skip over leading whitespace.
-                while (newPos < len && text[newPos] == ' ')
-                    ++newPos;
-                // Skip over the word.
-                while (newPos < len && text[newPos] != ' ')
-                    ++newPos;
-                inp->Remove(pos, newPos);
-                m_histIdx = -1; ApplyHistRSearch(false);
-            }
-        }
-        return;
-    }
-
-    // Ctrl+K: kill from the cursor to the end of the input line.
-    // Saves the killed text to the kill ring so Ctrl+Y can restore it.
-    if (code == 'K' && evt.ControlDown()) {
-        if (inp) {
-            long pos = inp->GetInsertionPoint();
-            wxString text = inp->GetValue();
-            long len = (long)text.size();
-            if (pos < len) {
-                m_killBuf = text.Mid(pos);
-                inp->Remove(pos, len);
-                m_histIdx = -1; ApplyHistRSearch(false);
-            }
-        }
-        return;
-    }
-
-    // Ctrl+Y: yank (paste) the most recently killed text at the cursor.
-    // Complements Ctrl+K / Ctrl+W / Ctrl+U.  No-op if the kill ring is empty.
-    if (code == 'Y' && evt.ControlDown()) {
-        if (inp && !m_killBuf.IsEmpty()) {
-            long pos = inp->GetInsertionPoint();
-            inp->SetInsertionPoint(pos);
-            inp->WriteText(m_killBuf);
-            m_histIdx = -1; ApplyHistRSearch(false);
-        }
-        return;
-    }
-
-    // Ctrl+A: move cursor to the beginning of the input line (Unix terminal).
-    // Note: Ctrl+A is already bound to SelectAll on macOS for text controls,
-    // so we only intercept it explicitly here; the result is the same on all
-    // platforms — cursor moves to position 0.
-    if (code == 'A' && evt.ControlDown()) {
-        if (inp) inp->SetInsertionPoint(0);
-        return;
-    }
-
-    // Ctrl+E: move cursor to the end of the input line (Unix terminal).
-    if (code == 'E' && evt.ControlDown()) {
-        if (inp) inp->SetInsertionPointEnd();
-        return;
-    }
-
-    // Ctrl+Left / Ctrl+Right (Windows / Linux) or Alt+Left / Alt+Right (macOS):
-    // move the insertion point one word backward or forward.
-    // Word boundary: alphanumeric characters and underscores.  The cursor skips
-    // any leading non-word characters and then jumps over the next word token.
-    //
-    // When Shift is also held, let the native wxTextCtrl handler run instead
-    // (it already produces the correct word-selection behaviour on all platforms)
-    // so we don't have to reimplement extend-selection logic.
-    if ((code == WXK_LEFT || code == WXK_RIGHT) &&
-        (evt.ControlDown() || evt.AltDown()))
-    {
-        if (evt.ShiftDown()) { evt.Skip(); return; }   // native handles Shift+word-nav
-        if (inp) {
-            long     pos  = inp->GetInsertionPoint();
-            wxString text = inp->GetValue();
-            long     len  = (long)text.size();
-            if (code == WXK_LEFT) {
-                // Skip non-word chars backward, then skip the preceding word.
-                while (pos > 0 && !wxIsalnum(text[pos-1]) && text[pos-1] != '_') --pos;
-                while (pos > 0 &&  (wxIsalnum(text[pos-1]) || text[pos-1] == '_')) --pos;
-            } else {
-                // Skip non-word chars forward, then skip the next word.
-                while (pos < len && !wxIsalnum(text[pos]) && text[pos] != '_') ++pos;
-                while (pos < len &&  (wxIsalnum(text[pos]) || text[pos] == '_')) ++pos;
-            }
-            inp->SetInsertionPoint(pos);
-        }
-        return;
-    }
-
-    // Ctrl+P / Ctrl+N: emacs-style aliases for history Up/Down.
-    // Re-map the key code so the existing Up/Down handlers below take over
-    // without duplicating any logic.  These must be checked before the
-    // Tab and Up/Down blocks so the re-mapped value is seen by them.
-    if (evt.ControlDown() && code == 'P') code = WXK_UP;
-    else if (evt.ControlDown() && code == 'N') code = WXK_DOWN;
-
-    // Tab: complete the current partial command.
-    //
-    // Phase 1 — history prefix search: scan backward through m_history for
-    // the most recent command that starts with the current input.  A second Tab
-    // cycles further back.  Not available in password mode.
-    //
-    // Phase 2 — output-word fallback: if history is exhausted (or there are no
-    // history matches at all), scan the last ~300 output lines for words that
-    // start with the partial input and cycle through them.  An extra Tab at the
-    // end of the output-word list restores the original partial input.
+    // Tab: complete the current partial command from history.
+    // Searches backward through m_history for the most-recently-used command
+    // that starts with the current input text.  A second Tab cycles further back.
+    // Not available in password mode (history is suppressed there).
     if (code == WXK_TAB && inp == m_input) {
         wxString partial = m_input->GetValue();
-        if (partial.IsEmpty()) return;  // consume Tab without action
-
-        // ── If we're already in an output-word cycle, just advance ───────────
-        if (m_tabWordIdx >= 0) {
-            ++m_tabWordIdx;
-            if (m_tabWordIdx >= (int)m_tabWords.size()) {
-                // Wrapped past the last candidate: restore the original partial.
-                m_tabWordIdx = -1;
-                m_tabWords.clear();
-                m_input->SetValue(m_tabPartial);
-                m_input->SetInsertionPointEnd();
-            } else {
-                m_input->SetValue(m_tabWords[m_tabWordIdx]);
-                m_input->SetInsertionPointEnd();
-            }
-            return;
-        }
-
-        // ── Phase 1: history prefix search ───────────────────────────────────
-        wxString lowerPartial = partial.Lower();
-        {
+        if (!partial.IsEmpty()) {
+            // Start from just before the current history index (if browsing),
+            // otherwise from the most recent entry.
             int searchFrom = (m_histIdx >= 0) ? m_histIdx - 1
                                                : (int)m_history.size() - 1;
             for (int i = searchFrom; i >= 0; --i) {
-                const wxString& hist = m_history[i];
-                // Match: history entry starts with partial (case-insensitive)
-                // and is strictly longer (to avoid completing to identical text).
-                if (hist.Lower().StartsWith(lowerPartial) &&
-                    hist.Len() > partial.Len()) {
+                if (m_history[i].StartsWith(partial) && m_history[i] != partial) {
                     m_histIdx = i;
-                    m_input->SetValue(hist);
+                    m_input->SetValue(m_history[i]);
                     m_input->SetInsertionPointEnd();
-                    return;
+                    return;  // consume Tab — no tab character inserted
                 }
             }
         }
-
-        // ── Phase 2: output-word completion fallback ──────────────────────────
-        // History exhausted.  Build a unique, most-recent-first list of words
-        // from the last ~300 output lines that start with the partial input.
-        // Tokens: runs of [A-Za-z0-9_-] characters.
-        m_tabPartial  = partial;
-        m_tabWords.clear();
-        m_tabWordIdx  = -1;
-
-        if (m_output) {
-            std::set<wxString> seen;
-            int startLine = std::max(0, m_output->LineCount() - 300);
-            for (int li = m_output->LineCount() - 1; li >= startLine; --li) {
-                const SOutputLine* line = m_output->GetLine(li);
-                if (!line) continue;
-                for (const auto& run : *line) {
-                    wxString text = wxString::FromUTF8(run.text.c_str());
-                    wxString word;
-                    for (size_t ci = 0; ci <= text.size(); ++ci) {
-                        wxChar ch = (ci < text.size()) ? text[ci] : wxChar('\0');
-                        bool wordChar = ci < text.size() &&
-                                        (wxIsalnum(ch) || ch == '_' || ch == '-');
-                        if (wordChar) {
-                            word += ch;
-                        } else if (!word.IsEmpty()) {
-                            wxString wl = word.Lower();
-                            if (wl.StartsWith(lowerPartial) &&
-                                word.Len() > partial.Len() &&
-                                seen.find(wl) == seen.end())
-                            {
-                                seen.insert(wl);
-                                m_tabWords.push_back(word);
-                            }
-                            word.clear();
-                        }
-                    }
-                }
-            }
-        }
-
-        if (m_tabWords.empty()) return;  // no candidates — consume Tab silently
-
-        m_tabWordIdx = 0;
-        m_input->SetValue(m_tabWords[0]);
-        m_input->SetInsertionPointEnd();
-        return;
+        return;  // consume Tab even if no match (don't insert literal tab)
     }
 
     if (code == WXK_UP && inp == m_input) {
-        // Pressing Up exits any ongoing output-word tab cycle and Ctrl+R mode.
-        m_tabWordIdx  = -1;
-        m_tabWords.clear();
-        ApplyHistRSearch(false);  // ↑ always uses prefix (startsWith) match
         if (m_history.empty()) return;
         if (m_histIdx < 0) {
-            // Start browsing: save the current partial input as the prefix filter.
-            // If the user has typed "say ", ↑ will only cycle through "say …"
-            // entries — like zsh's up-line-or-beginning-search.  An empty input
-            // browses all entries from newest to oldest.
-            m_histSaved   = m_input->GetValue();
-            wxString lpfx = m_histSaved.Lower();
-            // Find the most recent entry that starts with the current input.
-            m_histIdx = -1;
-            for (int i = (int)m_history.size() - 1; i >= 0; --i) {
-                if (lpfx.IsEmpty() || m_history[i].Lower().StartsWith(lpfx)) {
-                    m_histIdx = i;
-                    break;
-                }
-            }
-            if (m_histIdx < 0) return;  // no match — consume but don't change input
-        } else {
-            // Continue searching backward for the next older match.
-            wxString lpfx = m_histSaved.Lower();
-            int found = -1;
-            for (int i = m_histIdx - 1; i >= 0; --i) {
-                if (lpfx.IsEmpty() || m_history[i].Lower().StartsWith(lpfx)) {
-                    found = i;
-                    break;
-                }
-            }
-            if (found < 0) return;  // at oldest match — stay put
-            m_histIdx = found;
+            // Start browsing: save current partial input.
+            m_histSaved = m_input->GetValue();
+            m_histIdx   = (int)m_history.size() - 1;
+        } else if (m_histIdx > 0) {
+            --m_histIdx;
         }
         m_input->SetValue(m_history[m_histIdx]);
         m_input->SetInsertionPointEnd();
@@ -1940,73 +1173,16 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
 
     if (code == WXK_DOWN && inp == m_input) {
-        // Pressing Down exits any ongoing output-word tab cycle and Ctrl+R mode.
-        m_tabWordIdx  = -1;
-        m_tabWords.clear();
-        ApplyHistRSearch(false);  // ↓ always uses prefix (startsWith) match
         if (m_histIdx < 0) { evt.Skip(); return; }
-        wxString lpfx = m_histSaved.Lower();
-        // Search forward for the next newer match.
-        int found = -1;
-        for (int i = m_histIdx + 1; i < (int)m_history.size(); ++i) {
-            if (lpfx.IsEmpty() || m_history[i].Lower().StartsWith(lpfx)) {
-                found = i;
-                break;
-            }
-        }
-        if (found < 0) {
-            // Past the newest match: restore the partial input the user was typing.
+        if (m_histIdx < (int)m_history.size() - 1) {
+            ++m_histIdx;
+            m_input->SetValue(m_history[m_histIdx]);
+        } else {
+            // Reached the end: restore the partial command the user was typing.
             m_histIdx = -1;
             m_input->SetValue(m_histSaved);
-        } else {
-            m_histIdx = found;
-            m_input->SetValue(m_history[m_histIdx]);
         }
         m_input->SetInsertionPointEnd();
-        return;
-    }
-
-    // Ctrl+R: reverse incremental history search (substring match, newest first).
-    // Mirrors Ctrl+R in bash/zsh: each press cycles to the next older entry
-    // whose text contains the current input as a substring (case-insensitive).
-    // Not available in password mode.
-    if (code == 'R' && evt.ControlDown() && inp == m_input) {
-        m_tabWordIdx = -1;
-        m_tabWords.clear();
-        ApplyHistRSearch(true);
-
-        // Use the current input as the query on first press; on subsequent
-        // presses keep m_histSaved (so editing history entries mid-cycle
-        // doesn't confuse the search).
-        wxString query = (m_histIdx < 0) ? m_input->GetValue() : m_histSaved;
-        wxString lq    = query.Lower();
-
-        int startFrom;
-        if (m_histIdx < 0) {
-            // Enter Ctrl+R mode: save the current text as the query.
-            m_histSaved = m_input->GetValue();
-            startFrom   = (int)m_history.size() - 1;
-        } else {
-            // Continue backward from one before the current position.
-            startFrom   = m_histIdx - 1;
-        }
-
-        int found = -1;
-        for (int i = startFrom; i >= 0; --i) {
-            bool match = lq.IsEmpty()
-                ? true
-                : m_history[i].Lower().Contains(lq);
-            if (match) { found = i; break; }
-        }
-
-        if (found >= 0) {
-            m_histIdx = found;
-            m_input->SetValue(m_history[m_histIdx]);
-            m_input->SetInsertionPointEnd();
-        } else if (m_histIdx < 0) {
-            // No match at all on first press — stay put (don't change input).
-        }
-        // If already cycling and there are no more older matches, stay put.
         return;
     }
 
@@ -2030,13 +1206,9 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
-    // Any non-navigation key cancels history browsing, Ctrl+R mode, and tab cycling.
-    if (code != WXK_UP && code != WXK_DOWN) {
-        m_histIdx    = -1;
-        ApplyHistRSearch(false);
-        m_tabWordIdx = -1;
-        m_tabWords.clear();
-    }
+    // Any non-arrow key cancels history browsing.
+    if (code != WXK_UP && code != WXK_DOWN)
+        m_histIdx = -1;
 
     evt.Skip();
 }
@@ -2083,7 +1255,7 @@ void CWorldChildFrame::OnInputPaste(wxClipboardTextEvent& evt)
     // Prepend whatever the user had already typed to the first pasted line.
     wxString prefix = m_input->GetValue();
     m_input->Clear();
-    m_histIdx = -1; ApplyHistRSearch(false);  // exit history browsing
+    m_histIdx = -1;  // exit history browsing
 
     for (size_t i = 0; i + 1 < lines.size(); ++i) {
         wxString cmd = (i == 0) ? prefix + lines[i] : lines[i];
@@ -2120,7 +1292,7 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
 
     wxString text = inp->GetValue();
     inp->Clear();
-    m_histIdx = -1; ApplyHistRSearch(false);   // exit history browsing on send
+    m_histIdx = -1;   // exit history browsing on send
 
     // Don't record passwords in history — m_bNoEcho signals a masked prompt.
     bool isPassword = m_doc->m_bNoEcho;
@@ -2153,15 +1325,9 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     // ── World timers (triggers based on elapsed time, speed-walk queues, etc.)
     m_doc->CheckTimers();
 
-    // ── ON_PLUGIN_TICK: Windows fires this every ~40 ms.  We drive it via an
-    //    accumulator so that the average rate matches even though our timer
-    //    only fires every 100 ms.  Each 100 ms tick we fire it 2–3 times,
-    //    keeping the long-run rate at 1 call per 40 ms.
-    m_pluginTickAccum += 100;
-    while (m_pluginTickAccum >= 40) {
-        m_pluginTickAccum -= 40;
-        m_doc->SendToAllPluginCallbacks(ON_PLUGIN_TICK);
-    }
+    // ── ON_PLUGIN_TICK (Windows fires this every ~40 ms; we fire every 100 ms
+    //    since that's our timer interval — close enough for plugin compatibility)
+    m_doc->SendToAllPluginCallbacks(ON_PLUGIN_TICK);
 
     // Flush any output produced by the timer callbacks.
     m_doc->UpdateAllViews(nullptr);
@@ -2279,43 +1445,9 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
 // ── OnClose ───────────────────────────────────────────────────────────────
 void CWorldChildFrame::OnClose(wxCloseEvent& evt)
 {
-    // ── Unsaved-changes prompt ────────────────────────────────────────────
-    // If the document has been modified (triggers, aliases, properties changed)
-    // since it was last saved, offer to save before closing.
-    // Only when the close event can be vetoed (not a forced app shutdown).
-    if (evt.CanVeto() && m_doc && m_doc->IsModified()) {
-        wxString name = wxString::FromUTF8(
-            static_cast<const char*>(m_doc->m_mush_name));
-        if (name.IsEmpty()) name = wxT("this world");
-
-        int answer = wxMessageBox(
-            wxT("Save changes to ") + name + wxT(" before closing?"),
-            wxT("Unsaved Changes"),
-            wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_QUESTION, this);
-
-        if (answer == wxCANCEL) {
-            evt.Veto();
-            return;
-        }
-        if (answer == wxYES) {
-            // Attempt to save.  If the user cancels the save-as dialog (no path
-            // yet) or the save fails, veto the close so no work is lost.
-            if (g_wxhook_save_world) {
-                bool saved = g_wxhook_save_world(m_doc, /*saveAs=*/false, this);
-                if (!saved) {
-                    evt.Veto();
-                    return;
-                }
-            }
-        }
-        // answer == wxNO → discard changes and fall through to close.
-    }
-
-    // ── Close confirmation ────────────────────────────────────────────────
-    // General "are you sure?" prompt (separate from the save prompt above).
-    // Skipped when we already asked about saving — no need to ask twice.
-    else if (evt.CanVeto() && App.m_bConfirmBeforeClosingWorld && m_doc &&
-             !m_doc->IsModified()) {
+    // Confirm before closing — only when the event can be vetoed (i.e. not a
+    // forced shutdown) and the global preference is set.
+    if (evt.CanVeto() && App.m_bConfirmBeforeClosingWorld && m_doc) {
         wxString name = wxString::FromUTF8(
             static_cast<const char*>(m_doc->m_mush_name));
         if (name.IsEmpty()) name = wxT("this world");
@@ -2329,24 +1461,11 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         }
     }
 
-    // ── Save child frame size for next session ────────────────────────────
-    // Persist the current window dimensions so the next world that opens uses
-    // the same size instead of reverting to the 800×600 default.
-    {
-        wxSize sz = GetSize();
-        if (sz.x >= 200 && sz.y >= 100) {
-            wxConfig cfg(wxT("mushclient"));
-            cfg.Write(wxT("/geometry/child_w"), (long)sz.x);
-            cfg.Write(wxT("/geometry/child_h"), (long)sz.y);
-        }
-    }
-
     // ── Save persistent command history ───────────────────────────────────
-    // Write each command on its own line to the same per-world file determined
-    // at construction time, so the path is consistent regardless of later
-    // World Properties renames.
+    // Write each command on its own line.  We write even a small history so
+    // that new sessions don't start completely empty.
     if (!m_history.empty()) {
-        std::string histPath = m_historyFilePath;
+        std::string histPath = GetHistoryFilePath();
         if (!histPath.empty()) {
             if (FILE* f = fopen(histPath.c_str(), "w")) {
                 for (const wxString& cmd : m_history)
@@ -2356,9 +1475,6 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         }
     }
 
-    // Close any open log file before the doc is destroyed.
-    if (IsLogging()) StopLogging();
-
     // Stop the world timer before we touch the doc — prevents a timer callback
     // from firing between m_fn_line_ready=nullptr and delete doc.
     if (m_worldTimer) {
@@ -2367,40 +1483,16 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
     }
 
     if (m_doc) {
-        // Capture the world file path before clearing the doc, so we can
-        // remove it from the startup-reopen list below.
-        std::string worldPath = static_cast<const char*>(m_doc->GetPathName());
-
         // Clear all callbacks BEFORE deleting the doc so that any final output
         // flushed by the destructor doesn't call AppendLine on the dying pane.
-        m_doc->m_fn_line_ready      = nullptr;
-        m_doc->m_fn_note            = nullptr;
-        m_doc->m_fn_begin_batch     = nullptr;
-        m_doc->m_fn_flush           = nullptr;
-        m_doc->m_fn_get_command          = nullptr;
-        m_doc->m_fn_set_command          = nullptr;
-        m_doc->m_fn_set_output_font      = nullptr;
-        m_doc->m_fn_set_scroll           = nullptr;
-        m_doc->m_fn_set_selection        = nullptr;
-        m_doc->m_fn_set_command_selection = nullptr;
-        m_doc->m_fn_set_paused           = nullptr;
-        m_doc->m_fn_repaint                  = nullptr;
-        m_doc->m_fn_status                   = nullptr;
-        m_doc->m_fn_set_background_colour    = nullptr;
-        m_doc->m_fn_set_max_lines            = nullptr;
-        m_doc->m_fn_get_clipboard            = nullptr;
-        m_doc->m_fn_set_clipboard            = nullptr;
-        m_doc->m_fn_get_output_rect          = nullptr;
-        m_doc->m_fn_get_main_rect            = nullptr;
+        m_doc->m_fn_line_ready  = nullptr;
+        m_doc->m_fn_note        = nullptr;
+        m_doc->m_fn_begin_batch = nullptr;
+        m_doc->m_fn_flush       = nullptr;
 
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.
         wx_unregister_world_frame(m_doc);
-
-        // Remove from the startup world list so the world isn't automatically
-        // reopened next time — the user explicitly closed it.
-        if (!worldPath.empty())
-            wx_world_remove_from_list(worldPath.c_str());
 
         // Disconnect and release the doc.  Deletes socket, triggers, timers, etc.
         CMUSHclientDoc* doc = m_doc;

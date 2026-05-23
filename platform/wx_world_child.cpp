@@ -1001,6 +1001,20 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         &CWorldChildFrame::OnInputKeyDown, this);
 
     SetSizer(sizer);
+
+    // ── Restore child frame size from config ──────────────────────────────
+    // We persist a single "last used" child frame size (not per-world, since
+    // all worlds share the same MDI client area).  This prevents the window
+    // from always defaulting to 800×600 after the user resizes it once.
+    {
+        wxConfig cfg(wxT("mushclient"));
+        long w = 800, h = 600;
+        cfg.Read(wxT("/geometry/child_w"), &w, 800L);
+        cfg.Read(wxT("/geometry/child_h"), &h, 600L);
+        if (w >= 200 && h >= 100)
+            SetSize((int)w, (int)h);
+    }
+
     m_input->SetFocus();
 
     // ── Load persistent command history ───────────────────────────────────
@@ -2070,6 +2084,18 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         if (answer != wxYES) {
             evt.Veto();
             return;
+        }
+    }
+
+    // ── Save child frame size for next session ────────────────────────────
+    // Persist the current window dimensions so the next world that opens uses
+    // the same size instead of reverting to the 800×600 default.
+    {
+        wxSize sz = GetSize();
+        if (sz.x >= 200 && sz.y >= 100) {
+            wxConfig cfg(wxT("mushclient"));
+            cfg.Write(wxT("/geometry/child_w"), (long)sz.x);
+            cfg.Write(wxT("/geometry/child_h"), (long)sz.y);
         }
     }
 

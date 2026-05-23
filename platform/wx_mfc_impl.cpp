@@ -21,8 +21,10 @@
 #include <wx/clrpicker.h>  // wxColourPickerCtrl
 #include <wx/dnd.h>        // wxFileDropTarget
 #include <wx/dirdlg.h>     // wxDirDialog
+#include <algorithm>
 #include <unordered_map>
 #include <string>
+#include <vector>
 
 // ── MUSHclient headers (MFC compat layer) ────────────────────────────────
 // Must come AFTER wx so our stubs don't shadow wx internals inside this TU.
@@ -48,6 +50,80 @@ static std::unordered_map<CMUSHclientDoc*, CWorldChildFrame*> s_docFrameMap;
 
 // Forward declaration — defined in the World-list persistence section below.
 static void world_list_remove(const std::string& path);
+
+// ── Recent Worlds list ────────────────────────────────────────────────────────
+// Tracks up to kMaxRecentWorlds file paths most recently opened or saved,
+// persisted to wxConfig at /recent/0 … /recent/N-1.  Shown in File → Open
+// Recent so the user can quickly reopen worlds without browsing.
+//
+// This is distinct from App.m_strWorldList (auto-reopen on launch): that list
+// controls what opens automatically; the Recent menu is a manual affordance.
+
+static const int  kMaxRecentWorlds = 10;
+static const int  kRecentMenuBase  = wxID_HIGHEST + 300;
+static wxMenu*    s_recentMenu     = nullptr;
+static std::vector<std::string> s_recentWorlds;
+
+// Load the recent list from config into s_recentWorlds.
+static void recent_worlds_load()
+{
+    s_recentWorlds.clear();
+    wxConfig cfg(wxT("mushclient"));
+    for (int i = 0; i < kMaxRecentWorlds; ++i) {
+        wxString key = wxString::Format(wxT("/recent/%d"), i);
+        wxString val;
+        if (!cfg.Read(key, &val) || val.IsEmpty()) break;
+        s_recentWorlds.push_back(std::string(val.ToUTF8()));
+    }
+}
+
+// Persist the current s_recentWorlds to config.
+static void recent_worlds_save()
+{
+    wxConfig cfg(wxT("mushclient"));
+    for (int i = 0; i < kMaxRecentWorlds; ++i) {
+        wxString key = wxString::Format(wxT("/recent/%d"), i);
+        if (i < (int)s_recentWorlds.size())
+            cfg.Write(key, wxString::FromUTF8(s_recentWorlds[i].c_str()));
+        else
+            cfg.DeleteEntry(key);
+    }
+}
+
+// Rebuild s_recentMenu from s_recentWorlds.
+static void recent_worlds_update_menu()
+{
+    if (!s_recentMenu) return;
+    while (s_recentMenu->GetMenuItemCount() > 0)
+        s_recentMenu->Delete(s_recentMenu->FindItemByPosition(0));
+    if (s_recentWorlds.empty()) {
+        wxMenuItem* dummy = s_recentMenu->Append(kRecentMenuBase,
+                                                  wxT("(no recent worlds)"));
+        dummy->Enable(false);
+        return;
+    }
+    for (int i = 0; i < (int)s_recentWorlds.size(); ++i) {
+        wxString path  = wxString::FromUTF8(s_recentWorlds[i].c_str());
+        wxString label = wxString::Format(wxT("&%d  %s"),
+                                          (i + 1) % 10,
+                                          wxFileName(path).GetFullName());
+        s_recentMenu->Append(kRecentMenuBase + i, label);
+    }
+}
+
+// Prepend path to s_recentWorlds (deduplicated), persist, and update the menu.
+static void recent_worlds_add(const std::string& path)
+{
+    if (path.empty()) return;
+    s_recentWorlds.erase(
+        std::remove(s_recentWorlds.begin(), s_recentWorlds.end(), path),
+        s_recentWorlds.end());
+    s_recentWorlds.insert(s_recentWorlds.begin(), path);
+    if ((int)s_recentWorlds.size() > kMaxRecentWorlds)
+        s_recentWorlds.resize(kMaxRecentWorlds);
+    recent_worlds_save();
+    recent_worlds_update_menu();
+}
 
 void wx_register_world_frame(CMUSHclientDoc* doc, CWorldChildFrame* frame)
 {
@@ -370,12 +446,42 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         return FALSE;
     }
 
+    // ── Restore main window geometry ──────────────────────────────────────
+    // Saved geometry survives app restarts via wxConfig.  We default to
+    // 1024×768 centred on first run; subsequent runs restore the last size
+    // and (on platforms that honour it) position.  Maximized state is also
+    // preserved.  Iconized state is not (would be confusing on relaunch).
+    {
+        wxConfig cfg(wxT("mushclient"));
+        long w = 1024, h = 768;
+        long x = -1, y = -1;    // -1 = not saved; keep platform default
+        bool maximized = false;
+        cfg.Read(wxT("/geometry/main_w"), &w, 1024L);
+        cfg.Read(wxT("/geometry/main_h"), &h,  768L);
+        cfg.Read(wxT("/geometry/main_x"), &x, -1L);
+        cfg.Read(wxT("/geometry/main_y"), &y, -1L);
+        cfg.Read(wxT("/geometry/main_maximized"), &maximized, false);
+        // Clamp to sanity: don't restore a 1×1 or off-screen window.
+        if (w < 400) w = 1024;
+        if (h < 300) h =  768;
+        if (x >= 0 && y >= 0)
+            frame->SetSize((int)x, (int)y, (int)w, (int)h);
+        else
+            frame->SetSize((int)w, (int)h);
+        if (maximized)
+            frame->Maximize(true);
+    }
+
     // ── Menu bar ─────────────────────────────────────────────────────────
     wxMenuBar* mb = new wxMenuBar();
 
     wxMenu* fileMenu = new wxMenu();
     fileMenu->Append(0xE100,      wxT("New World\tCtrl+N"));
     fileMenu->Append(wxID_OPEN,   wxT("Open World File…\tCtrl+O"));
+    // ── Open Recent submenu ───────────────────────────────────────────────
+    // Populated immediately from config; updated each time a world is opened.
+    s_recentMenu = new wxMenu();
+    fileMenu->AppendSubMenu(s_recentMenu, wxT("Open Recent"));
     fileMenu->AppendSeparator();
     fileMenu->Append(wxID_SAVE,   wxT("Save World\tCtrl+S"));
     fileMenu->Append(wxID_SAVEAS, wxT("Save World As…"));
@@ -419,6 +525,10 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
 
     frame->SetMenuBar(mb);
 
+    // ── Populate "Open Recent" submenu from persisted config ──────────────
+    recent_worlds_load();
+    recent_worlds_update_menu();
+
     // ── Status bar ────────────────────────────────────────────────────────
     s_statusBar = frame->CreateStatusBar(1);
     if (s_statusBar)
@@ -452,6 +562,19 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             if (answer != wxYES) {
                 evt.Veto();
                 return;
+            }
+        }
+        // Save main window geometry so the next session opens at the same size.
+        if (!frame->IsIconized()) {
+            wxConfig cfg(wxT("mushclient"));
+            bool maximized = frame->IsMaximized();
+            cfg.Write(wxT("/geometry/main_maximized"), maximized);
+            if (!maximized) {
+                wxRect r = frame->GetRect();
+                cfg.Write(wxT("/geometry/main_x"), (long)r.x);
+                cfg.Write(wxT("/geometry/main_y"), (long)r.y);
+                cfg.Write(wxT("/geometry/main_w"), (long)r.width);
+                cfg.Write(wxT("/geometry/main_h"), (long)r.height);
             }
         }
         // Stop the socket-poll timer before child frames are destroyed.
@@ -557,6 +680,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 wxT("http://www.gammon.com.au/mushclient"),
                 wxT("About MUSHclient"),
                 wxOK | wxICON_INFORMATION, frame);
+        } else if (id >= kRecentMenuBase &&
+                   id <  kRecentMenuBase + kMaxRecentWorlds) {
+            // File → Open Recent → pick a specific entry.
+            int idx = id - kRecentMenuBase;
+            if (idx < (int)s_recentWorlds.size())
+                hook_open_world_file(s_recentWorlds[idx].c_str());
         } else {
             evt.Skip();
         }
@@ -704,6 +833,8 @@ static void* hook_open_world_file(const char* path)
 
     // Remember this world file path so it reopens on next launch.
     world_list_add(path);
+    // Also add to the File → Open Recent list.
+    recent_worlds_add(path);
 
     // Auto-connect if the world file says to (m_connect_now != 0).
     // Mirrors what Windows does: after opening the file the connection phase is
@@ -773,6 +904,8 @@ static void hook_save_active_world(wxMDIParentFrame* frame, bool saveAs)
 
     // Add to the startup world list so this world reopens on next launch.
     world_list_add(savePath);
+    // Also add to the File → Open Recent list.
+    recent_worlds_add(savePath);
 }
 
 // ── Quick Connect dialog ──────────────────────────────────────────────────

@@ -326,6 +326,20 @@ void COutputPane::SetMaxLines(int n)
     }
 }
 
+void COutputPane::DeleteTailLines(long count)
+{
+    if (count <= 0 || m_lines.empty()) return;
+    long toRemove = std::min(count, (long)m_lines.size());
+    for (long i = 0; i < toRemove; ++i)
+        m_lines.pop_back();
+    // Clear any selection that may have referenced deleted lines.
+    m_selAnchor = SelPoint{};
+    m_selFocus  = SelPoint{};
+    RebuildWrapCache();
+    UpdateScrollbars(m_autoScroll);
+    Refresh(false);
+}
+
 void COutputPane::AppendNote(const std::string& text, unsigned long fg)
 {
     SOutputLine noteLine;

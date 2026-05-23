@@ -577,16 +577,27 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
     case  110: SetUpVariantBool (vaResult, m_bInScriptFileChanged); break;
     case  111: SetUpVariantBool (vaResult, IsModified ()); break;
     case  112: SetUpVariantBool (vaResult, m_bMapping); break;
-    case  113: SetUpVariantBool (vaResult, m_pActiveCommandView || m_pActiveOutputView); 
+    case  113:
+#ifdef _WIN32
+               SetUpVariantBool (vaResult, m_pActiveCommandView || m_pActiveOutputView);
+#else
+               // Non-Windows: "active" means connected.
+               SetUpVariantBool (vaResult, m_iConnectPhase == eConnectConnectedToMud);
+#endif
                break;
-      
-    case  114:   // current view frozen
-               if (!(m_pActiveOutputView || m_pActiveCommandView)) 
+
+    case  114:   // current view frozen / output paused
+#ifdef _WIN32
+               if (!(m_pActiveOutputView || m_pActiveCommandView))
                  SetUpVariantBool (vaResult, FALSE);
                else if (m_pActiveOutputView)
                  SetUpVariantBool (vaResult, m_pActiveOutputView->m_freeze);
-               else 
+               else
                  SetUpVariantBool (vaResult, m_pActiveCommandView->m_topview->m_freeze);
+#else
+               // Non-Windows: true when user has scrolled up (auto-scroll off).
+               SetUpVariantBool (vaResult, m_gui_paused);
+#endif
                break;
 
     case  115: SetUpVariantBool (vaResult, App.m_Translator_Lua != NULL); break;
@@ -597,7 +608,13 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
     case  122: SetUpVariantBool (vaResult, sqlite3_threadsafe() != 0); break;
     case  123: SetUpVariantBool (vaResult, m_bDoingSimulate); break;
     case  124: SetUpVariantBool (vaResult, m_bLineOmittedFromOutput); break;
-    case  125: SetUpVariantBool (vaResult, Frame.IsFullScreen ()); break;
+    case  125:
+#ifdef _WIN32
+               SetUpVariantBool (vaResult, Frame.IsFullScreen ());
+#else
+               SetUpVariantBool (vaResult, FALSE);  // fullscreen not supported
+#endif
+               break;
 
     case  201: SetUpVariantLong (vaResult, m_total_lines); break;
     case  202: SetUpVariantLong (vaResult, m_new_lines); break;
@@ -709,8 +726,9 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
         }
       break;
 
-    case 235:
+    case 235:   // number of command windows open
       {
+#ifdef _WIN32
       long count = 0;
 
       for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
@@ -721,17 +739,20 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
           count++;
         }   // end of loop
 
-      SetUpVariantLong (vaResult, count);  // number of world windows open
-
+      SetUpVariantLong (vaResult, count);
+#else
+      SetUpVariantLong (vaResult, 1L);  // non-Windows: one command input per world
+#endif
       }   // end of 235
       break;
 
     case 236:   // command selection start column
       {
+#ifdef _WIN32
         for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	        {
 	        CView* pView = GetNextView(pos);
-	        
+
 	        if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	        {
 		        CSendView* pmyView = (CSendView*)pView;
@@ -739,22 +760,26 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
             int nEndChar;
 
               // find where cursor is
-  
-            pmyView->GetEditCtrl().GetSel(nStartChar, nEndChar);	
+
+            pmyView->GetEditCtrl().GetSel(nStartChar, nEndChar);
             SetUpVariantLong (vaResult, nStartChar + 1);  // start column
             break;
-  
+
 	          }	  // end of being a CSendView
           }   // end of loop through views
+#else
+        SetUpVariantLong (vaResult, 0L);  // non-Windows: stub
+#endif
       }
       break;
 
     case 237:   // command selection end column
       {
+#ifdef _WIN32
         for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	        {
 	        CView* pView = GetNextView(pos);
-	        
+
 	        if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	        {
 		        CSendView* pmyView = (CSendView*)pView;
@@ -762,20 +787,24 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
             int nEndChar;
 
               // find where cursor is
-  
+
             pmyView->GetEditCtrl().GetSel(nStartChar, nEndChar);
             if (nEndChar <= nStartChar)
               nEndChar = 0;  // zero indicates no text selected
             SetUpVariantLong (vaResult, nEndChar);  // end column
             break;
-  
+
 	          }	  // end of being a CSendView
           }   // end of loop through views
+#else
+        SetUpVariantLong (vaResult, 0L);  // non-Windows: stub
+#endif
       }
       break;
 
-    case 238:
+    case 238:   // window placement flags for command window
       {
+#ifdef _WIN32
       WINDOWPLACEMENT wp;
 
       for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
@@ -786,14 +815,15 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
           {
           CSendView* pmyView = (CSendView*)pView;
 
-          pmyView->GetParentFrame ()->GetWindowPlacement(&wp); 
+          pmyView->GetParentFrame ()->GetWindowPlacement(&wp);
           SetUpVariantLong (vaResult, wp.showCmd);  // window placement flags
           break;
 
-          }	
+          }
         }
-
-
+#else
+      SetUpVariantLong (vaResult, 0L);  // non-Windows: stub
+#endif
       }
       break;
 
@@ -840,20 +870,30 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 
     case 249:
       {
+#ifdef _WIN32
       RECT rect;
       Frame.GetClientRect(&rect);
-      SetUpVariantLong (vaResult, rect.bottom);  
+      SetUpVariantLong (vaResult, rect.bottom);
+#else
+      // Non-Windows: approximate from output pane metrics.
+      SetUpVariantLong (vaResult, (m_gui_rows + 2) * m_gui_font_height);
+#endif
       }
       break;
 
     case 250:
       {
+#ifdef _WIN32
       RECT rect;
       Frame.GetClientRect(&rect);
-      SetUpVariantLong (vaResult, rect.right);  
+      SetUpVariantLong (vaResult, rect.right);
+#else
+      SetUpVariantLong (vaResult, m_gui_cols * m_gui_font_width);
+#endif
       }
       break;
 
+#ifdef _WIN32
     case 251: GetWindowHeight (&Frame.m_wndToolBar, vaResult); break;
     case 252: GetWindowWidth  (&Frame.m_wndToolBar, vaResult); break;
     case 253: GetWindowHeight (&Frame.m_wndGameToolBar, vaResult); break;
@@ -888,13 +928,14 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
             break;
             }
 
-    case 264: 
+    case 264:
             {
             CChildFrame * pFrame = GetChildFrame ();
             if (pFrame)
               GetWindowWidth  (pFrame, vaResult, true);   // client width
             break;
             }
+#endif // _WIN32 — cases 251-264 use Windows GUI objects
 
     case 265: SetUpVariantLong (vaResult, os_version.dwMajorVersion); break;
     case 266: SetUpVariantLong (vaResult, os_version.dwMinorVersion); break;
@@ -916,27 +957,37 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 
     case 280:
       {
+#ifdef _WIN32
       CMUSHView* pmyView = GetFirstOutputWindow ();
-      if (pmyView) 
+      if (pmyView)
         {
         RECT rect;
         pmyView->GetClientRect(&rect);
         SetUpVariantLong (vaResult, rect.bottom);
         break;
         }
+#else
+      // Non-Windows: derive pixel height from font/rows metrics.
+      SetUpVariantLong (vaResult, m_gui_rows * m_gui_font_height);
+#endif
       }
       break;
 
     case 281:
       {
+#ifdef _WIN32
       CMUSHView* pmyView = GetFirstOutputWindow ();
-      if (pmyView) 
+      if (pmyView)
         {
         RECT rect;
         pmyView->GetClientRect(&rect);
         SetUpVariantLong (vaResult, rect.right);
         break;
         }
+#else
+      // Non-Windows: derive pixel width from font/cols metrics.
+      SetUpVariantLong (vaResult, m_gui_cols * m_gui_font_width);
+#endif
       }
       break;
 

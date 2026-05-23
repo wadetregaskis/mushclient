@@ -1970,6 +1970,13 @@ public:
     // world.GetMainWindowPosition(): screen rect of the MDI parent frame.
     std::function<void(int&, int&, int&, int&)> m_fn_get_main_rect;
 
+    // world.ActivateClient(): raise the world window / main frame to the front.
+    std::function<void()> m_fn_activate_client;
+
+    // world.DeleteLines(n): remove the last n lines from the output pane buffer.
+    // Called by DeleteLines() after it trims m_LineList.
+    std::function<void(long)> m_fn_delete_lines;
+
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference
     // m_pCurrentLine->styleList.GetTail() to read the current style.

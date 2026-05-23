@@ -236,6 +236,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (m_output) m_output->SetMaxLines(n);
         };
 
+        // world.DeleteLines(n): remove the last n lines from the visual buffer.
+        m_doc->m_fn_delete_lines = [this](long n) {
+            if (m_output) m_output->DeleteTailLines(n);
+        };
+
         // world.GetClipboard() / world.SetClipboard(): system clipboard access.
         m_doc->m_fn_get_clipboard = []() -> std::string {
             std::string result;
@@ -278,6 +283,17 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             } else {
                 x = 0; y = 0; w = 1024; h = 768;
             }
+        };
+
+        // world.ActivateClient(): restore the main frame if iconized and raise it.
+        m_doc->m_fn_activate_client = [this]() {
+            wxMDIParentFrame* parent = wxDynamicCast(GetParent(), wxMDIParentFrame);
+            if (parent) {
+                if (parent->IsIconized()) parent->Restore();
+                parent->Raise();
+            }
+            // Also bring this child frame to the front within the MDI.
+            Activate();
         };
 
         // world.GetCommand(): return the text currently in the command input bar.
@@ -2411,6 +2427,8 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_clipboard            = nullptr;
         m_doc->m_fn_get_output_rect          = nullptr;
         m_doc->m_fn_get_main_rect            = nullptr;
+        m_doc->m_fn_activate_client          = nullptr;
+        m_doc->m_fn_delete_lines             = nullptr;
 
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.

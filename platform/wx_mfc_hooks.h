@@ -108,6 +108,13 @@ extern void (*g_wxhook_set_status)(const char* msg);
 // Returns true if the user clicked OK (settings were applied), false on cancel.
 extern bool (*g_wxhook_game_preferences)(void* doc, int iPage);
 
+// ── Save world file ────────────────────────────────────────────────────────
+// Saves the world file for a specific doc (CMUSHclientDoc*).
+// If saveAs is true or the doc has no path, shows a save-file dialog.
+// Returns true if the file was saved, false if the user cancelled.
+// The parent window (wxWindow*) is used as the dialog parent.
+extern bool (*g_wxhook_save_world)(void* doc, bool saveAs, void* parent);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

@@ -96,6 +96,9 @@ public:
 
     // Update the scrollback buffer cap.
     void SetMaxLines(int n);
+    // Remove up to `count` lines from the tail of m_lines (most-recent output).
+    // Called when Lua scripts call world.DeleteLines(n).
+    void DeleteTailLines(long count);
 
     // Adjust font size by delta points.  Returns new size.
     int AdjustFontSize(int delta);

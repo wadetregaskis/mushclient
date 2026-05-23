@@ -75,20 +75,24 @@ void CMUSHclientDoc::DeleteOutput()
 
 
 // set pause to true or false for all views
-void CMUSHclientDoc::Pause(BOOL Flag) 
+void CMUSHclientDoc::Pause(BOOL Flag)
 {
+#ifndef _WIN32
+  if (m_fn_set_paused)
+    m_fn_set_paused(Flag != 0);
+  m_gui_paused = (Flag != 0);
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
   	  {
 		  CMUSHView* pmyView = (CMUSHView*)pView;
       pmyView->m_freeze = Flag != 0;
 	    }	  // end of being a CMUSHView
     }   // end of loop through views
-
-
+#endif
 }   // end of CMUSHclientDoc::Pause
 
 
@@ -106,13 +110,18 @@ void CMUSHclientDoc::ResetStatusTime()
 
 
 // restores the main frame and brings it to the front
-void CMUSHclientDoc::ActivateClient() 
+void CMUSHclientDoc::ActivateClient()
 {
+#ifndef _WIN32
+  if (m_fn_activate_client)
+    m_fn_activate_client();
+#else
   if (Frame.IsIconic ())
     Frame.ShowWindow(SW_RESTORE);
 
   Frame.SetForegroundWindow();
   Frame.SetFocus();
+#endif
 }  // end of CMUSHclientDoc::ActivateClient
 
 
@@ -219,7 +228,7 @@ int i = 0;
 }   // end of CMUSHclientDoc::GetWorldWindowPositionX
 
 
-void CMUSHclientDoc::DeleteLines(long Count) 
+void CMUSHclientDoc::DeleteLines(long Count)
 {
 
 POSITION pos;
@@ -229,7 +238,7 @@ POSITION pos;
   I can't delete lines when in send-to-script, please don't try to make me. ;)
 
   The problem is that in ProcessPreviousLine we have established the start and end line
-  of the paragraph we are processing, if that is deleted by a trigger in the middle, all 
+  of the paragraph we are processing, if that is deleted by a trigger in the middle, all
   hell breaks loose.
 
   */
@@ -237,12 +246,18 @@ POSITION pos;
   if (m_bInSendToScript)
     return;   // can't do it
 
-  if (Count <= 0) 
+  if (Count <= 0)
      return;        // nothing to do
 
   // if we have the empty line at the end of the buffer, delete that too
   if (m_pCurrentLine && m_pCurrentLine->len == 0)
     Count++;
+
+#ifndef _WIN32
+  // Snapshot how many lines the output pane currently has so we can tell it
+  // how many to remove after we've trimmed m_LineList.
+  long guiEmittedBefore = m_gui_lines_emitted;
+#endif
 
 // delete all lines in this set
   for (pos = m_LineList.GetTailPosition (); Count > 0 && pos; Count--)
@@ -291,10 +306,24 @@ POSITION pos;
 // this is so that scroll bar positions are recalculated, and the
 // view now scrolls to the bottom, making the previous lines now end at the end of the window.
 
+#ifndef _WIN32
+  {
+    // Clamp m_gui_lines_emitted to the current list size minus the
+    // in-progress tail line (which UpdateAllViews never emits until done).
+    long newListSize = (long)m_LineList.GetCount();
+    long newEmitted  = std::min(guiEmittedBefore, std::max(0L, newListSize - 1));
+    m_gui_lines_emitted = newEmitted;
+
+    // Remove the corresponding number of lines from the output pane's buffer.
+    long paneRemove = guiEmittedBefore - newEmitted;
+    if (paneRemove > 0 && m_fn_delete_lines)
+      m_fn_delete_lines(paneRemove);
+  }
+#else
   for(pos = GetFirstViewPosition(); pos != NULL; )
     {
   	CView* pView = GetNextView(pos);
-	
+
   	if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
   	  {
   		CMUSHView* pmyView = (CMUSHView*)pView;
@@ -303,6 +332,7 @@ POSITION pos;
 
   		}	  // end of being an output view
   	}   // end of doing each view
+#endif
 
 }  // end of DeleteLines
 
@@ -624,11 +654,16 @@ long CMUSHclientDoc::SetForegroundImage(LPCTSTR FileName, short Mode)
 }   // end of CMUSHclientDoc::SetForegroundImage
 
 // set main window background colour
-long CMUSHclientDoc::SetBackgroundColour(long Colour) 
+long CMUSHclientDoc::SetBackgroundColour(long Colour)
 {
   long oldColour = m_iBackgroundColour;
 
   m_iBackgroundColour = Colour;
+
+#ifndef _WIN32
+  if (m_fn_set_background_colour)
+    m_fn_set_background_colour((unsigned long)Colour);
+#endif
 
   UpdateAllViews (NULL);
 

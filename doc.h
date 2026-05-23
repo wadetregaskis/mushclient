@@ -1546,6 +1546,13 @@ public:
   // Returns the screen-relative position and size of the MDI parent frame.
   // Used by world.GetMainWindowPosition() so scripts know the main window rect.
   std::function<void(int&, int&, int&, int&)> m_fn_get_main_rect;
+
+  // world.ActivateClient(): raise the world window / main frame to the front.
+  std::function<void()> m_fn_activate_client;
+
+  // world.DeleteLines(n): remove the last n lines from the output pane buffer.
+  // Called by DeleteLines() after it trims m_LineList.
+  std::function<void(long)> m_fn_delete_lines;
 #endif
 
   protected:

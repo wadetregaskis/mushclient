@@ -18,6 +18,7 @@
 #include <wx/spinctrl.h>
 #include <wx/filename.h>
 #include <wx/fontpicker.h>
+#include <wx/clrpicker.h>  // wxColourPickerCtrl
 #include <wx/dnd.h>        // wxFileDropTarget
 #include <wx/dirdlg.h>     // wxDirDialog
 #include <unordered_map>
@@ -984,12 +985,13 @@ namespace {
 class WorldPreferencesDlg : public wxDialog
 {
 public:
-    wxTextCtrl*       m_name;
-    wxTextCtrl*       m_server;
-    wxSpinCtrl*       m_port;
-    wxCheckBox*       m_autoConnect;
-    wxSpinCtrl*       m_scrollback;  // scrollback buffer line count
-    wxFontPickerCtrl* m_fontPicker;  // output font
+    wxTextCtrl*          m_name;
+    wxTextCtrl*          m_server;
+    wxSpinCtrl*          m_port;
+    wxCheckBox*          m_autoConnect;
+    wxSpinCtrl*          m_scrollback;     // scrollback buffer line count
+    wxFontPickerCtrl*    m_fontPicker;     // output font
+    wxColourPickerCtrl*  m_bgColorPicker;  // output pane background colour
 
     WorldPreferencesDlg(wxWindow*       parent,
                         const wxString& name,
@@ -997,11 +999,13 @@ public:
                         int             port,
                         bool            autoConnect,
                         const wxFont&   currentFont,
-                        int             scrollbackLines)
+                        int             scrollbackLines,
+                        wxColour        bgColor)
         : wxDialog(parent, wxID_ANY, wxT("World Properties"),
                    wxDefaultPosition, wxDefaultSize,
                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
         , m_scrollback(nullptr)
+        , m_bgColorPicker(nullptr)
     {
         wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
 
@@ -1039,7 +1043,7 @@ public:
         {
             wxStaticBoxSizer* dispBox =
                 new wxStaticBoxSizer(wxVERTICAL, this, wxT("Display"));
-            wxFlexGridSizer* dgrid = new wxFlexGridSizer(1, 2, 6, 8);
+            wxFlexGridSizer* dgrid = new wxFlexGridSizer(2, 2, 6, 8);
             dgrid->AddGrowableCol(1, 1);
 
             dgrid->Add(new wxStaticText(this, wxID_ANY, wxT("Output font:")),
@@ -1055,6 +1059,17 @@ public:
                                                 wxDefaultPosition, wxDefaultSize,
                                                 wxFNTP_DEFAULT_STYLE);
             dgrid->Add(m_fontPicker, 1, wxEXPAND);
+
+            dgrid->Add(new wxStaticText(this, wxID_ANY, wxT("Background:")),
+                       0, wxALIGN_CENTER_VERTICAL);
+
+            // Background colour picker.  The initial colour comes from the doc's
+            // m_iBackgroundColour; we clamp NO_COLOUR (0xFFFFFFFF) to black.
+            wxColour initBg = bgColor.IsOk() ? bgColor : wxColour(0, 0, 0);
+            m_bgColorPicker = new wxColourPickerCtrl(this, wxID_ANY, initBg,
+                                                      wxDefaultPosition, wxDefaultSize,
+                                                      wxCLRP_DEFAULT_STYLE);
+            dgrid->Add(m_bgColorPicker, 0, wxALIGN_CENTER_VERTICAL);
 
             dispBox->Add(dgrid, 1, wxEXPAND | wxALL, 8);
             vs->Add(dispBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
@@ -1138,9 +1153,15 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     wxFont currentFont;
     if (pane) currentFont = pane->GetCurrentFont();
 
+    // Seed the background colour picker.  Convert the COLORREF to wxColour;
+    // clamp NO_COLOUR (0xFFFFFFFF) to black (default).
+    unsigned long bgColorRef = doc->m_iBackgroundColour;
+    if (bgColorRef == 0xFFFFFFFFUL) bgColorRef = 0;
+    wxColour bgColor(GetRValue(bgColorRef), GetGValue(bgColorRef), GetBValue(bgColorRef));
+
     int scrollbackLines = doc->m_maxlines > 0 ? (int)doc->m_maxlines : 5000;
     WorldPreferencesDlg dlg(parent, name, server, port, autoConnect,
-                            currentFont, scrollbackLines);
+                            currentFont, scrollbackLines, bgColor);
     if (dlg.ShowModal() != wxID_OK)
         return false;
 
@@ -1177,6 +1198,19 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
         if (newMax != (int)doc->m_maxlines) {
             doc->m_maxlines = newMax;
             if (pane) pane->SetMaxLines(newMax);
+        }
+    }
+
+    // ── Apply background colour ───────────────────────────────────────────────
+    if (dlg.m_bgColorPicker) {
+        wxColour chosen = dlg.m_bgColorPicker->GetColour();
+        unsigned long newBg = RGB(chosen.Red(), chosen.Green(), chosen.Blue());
+        // Only apply if the colour actually changed.
+        unsigned long curBg = doc->m_iBackgroundColour;
+        if (curBg == 0xFFFFFFFFUL) curBg = 0;
+        if (newBg != curBg) {
+            doc->m_iBackgroundColour = newBg;
+            if (childFrame) childFrame->ApplyPaneBackground(newBg);
         }
     }
 

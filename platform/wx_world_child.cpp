@@ -129,9 +129,15 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                                          wxDefaultPosition, wxSize(28, -1));
         fs->Add(btnNext, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 4);
         fs->Add(btnPrev, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 2);
-        // Case-sensitive toggle ("Aa").
+        // Case-sensitive toggle ("Aa").  Restore the last user preference.
         m_findCaseBox = new wxCheckBox(m_findBar, wxID_ANY, wxT("Aa"));
         m_findCaseBox->SetToolTip(wxT("Case-sensitive search"));
+        {
+            wxConfig cfg(wxT("mushclient"));
+            bool savedCase = false;
+            cfg.Read(wxT("/find/case_sensitive"), &savedCase, false);
+            m_findCaseBox->SetValue(savedCase);
+        }
         fs->Add(m_findCaseBox, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 8);
         // Match-count label ("3 of 47" or "Not found").
         m_findLabel = new wxStaticText(m_findBar, wxID_ANY, wxEmptyString,
@@ -153,11 +159,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             m_output->HighlightSearch(m_findInput->GetValue(), cs);
             if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
         });
-        // Case toggle: re-highlight immediately and reset stale count.
+        // Case toggle: re-highlight immediately, reset stale count, and persist.
         m_findCaseBox->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) {
             bool cs = m_findCaseBox->IsChecked();
             m_output->HighlightSearch(m_findInput ? m_findInput->GetValue() : wxString(), cs);
             if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
+            wxConfig cfg(wxT("mushclient"));
+            cfg.Write(wxT("/find/case_sensitive"), cs);
         });
         m_findInput->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& e) {
             if (e.GetKeyCode() == WXK_ESCAPE) {

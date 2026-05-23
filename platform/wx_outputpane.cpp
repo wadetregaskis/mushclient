@@ -728,15 +728,17 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
             if (!run.horiz_rule)
                 plain += wxString::FromUTF8(run.text.c_str(), run.text.size());
 
-        wxString lowerPlain = plain.Lower();
-        wxString lowerTerm  = m_searchTerm.Lower();
-        int termLen = (int)lowerTerm.size();
+        // Apply case folding to both the line text and the search term unless
+        // we're in case-sensitive mode.
+        wxString cmpPlain = m_searchCaseSensitive ? plain         : plain.Lower();
+        wxString cmpTerm  = m_searchCaseSensitive ? m_searchTerm  : m_searchTerm.Lower();
+        int termLen = (int)cmpTerm.size();
 
         struct HitRange { int start, end; };
         std::vector<HitRange> hits;
         if (termLen > 0) {
-            std::wstring pw = lowerPlain.ToStdWstring();
-            std::wstring tw = lowerTerm.ToStdWstring();
+            std::wstring pw = cmpPlain.ToStdWstring();
+            std::wstring tw = cmpTerm.ToStdWstring();
             size_t p = 0;
             while ((p = pw.find(tw, p)) != std::wstring::npos) {
                 hits.push_back({(int)p, (int)(p + tw.size())});
@@ -1680,7 +1682,8 @@ wxString COutputPane::SelectedText() const
 // ── Find / Search ─────────────────────────────────────────────────────────────
 
 bool COutputPane::FindNext(const wxString& term, bool forward,
-                            int* outMatchLine, int* outOrdinal, int* outTotalMatches)
+                            int* outMatchLine, int* outOrdinal, int* outTotalMatches,
+                            bool caseSensitive)
 {
     if (outMatchLine)    *outMatchLine    = -1;
     if (outOrdinal)      *outOrdinal      = 0;
@@ -1688,7 +1691,9 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
 
     if (term.IsEmpty() || m_lines.empty()) return false;
 
-    wxString lowerTerm = term.Lower();
+    // For case-insensitive search, lower-case the term once and compare against
+    // lower-cased line text.  For case-sensitive search, compare as-is.
+    wxString searchTerm = caseSensitive ? term : term.Lower();
     int n = (int)m_lines.size();
 
     SelPoint selStart, selEnd;
@@ -1703,18 +1708,19 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
         if (startIdx < 0) startIdx = n - 1;
     }
 
-    auto lineText = [this](int i) -> wxString {
+    // Returns the (optionally lowercased) plain text of line i for matching.
+    auto lineText = [this, caseSensitive](int i) -> wxString {
         wxString s;
         for (const auto& run : m_lines[i])
             if (!run.horiz_rule)
                 s += wxString::FromUTF8(run.text.c_str(), run.text.size());
-        return s.Lower();
+        return caseSensitive ? s : s.Lower();
     };
 
     int foundIdx = -1;
     int idx = startIdx;
     for (int pass = 0; pass < n; ++pass) {
-        if (lineText(idx).Contains(lowerTerm)) {
+        if (lineText(idx).Contains(searchTerm)) {
             foundIdx = idx;
             break;
         }
@@ -1725,13 +1731,12 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
     if (foundIdx < 0) return false;
 
     // Select the precise matched substring (not the whole line) so the user
-    // can see exactly which occurrence was found.  Both lt and lowerTerm are
-    // in lowercase, so find() gives the correct byte offset into the line.
+    // can see exactly which occurrence was found.
     {
-        wxString lt      = lineText(foundIdx);   // already lowercased
-        size_t   matchOff = lt.find(lowerTerm);
+        wxString lt      = lineText(foundIdx);
+        size_t   matchOff = lt.find(searchTerm);
         int selStart = (matchOff != wxString::npos) ? (int)matchOff : 0;
-        int selEnd   = selStart + (int)lowerTerm.size();
+        int selEnd   = selStart + (int)searchTerm.size();
         m_selAnchor  = SelPoint{foundIdx, selStart};
         m_selFocus   = SelPoint{foundIdx, selEnd};
     }
@@ -1764,7 +1769,7 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
         int total   = 0;
         int ordinal = 0;
         for (int i = 0; i < n && total < 9999; ++i) {
-            if (lineText(i).Contains(lowerTerm)) {
+            if (lineText(i).Contains(searchTerm)) {
                 ++total;
                 if (i <= foundIdx) ++ordinal;
             }
@@ -1776,9 +1781,10 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
     return true;
 }
 
-void COutputPane::HighlightSearch(const wxString& term)
+void COutputPane::HighlightSearch(const wxString& term, bool caseSensitive)
 {
-    m_searchTerm = term;
+    m_searchTerm          = term;
+    m_searchCaseSensitive = caseSensitive;
     Refresh(false);
 }
 

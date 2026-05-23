@@ -129,6 +129,10 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                                          wxDefaultPosition, wxSize(28, -1));
         fs->Add(btnNext, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 4);
         fs->Add(btnPrev, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 2);
+        // Case-sensitive toggle ("Aa").
+        m_findCaseBox = new wxCheckBox(m_findBar, wxID_ANY, wxT("Aa"));
+        m_findCaseBox->SetToolTip(wxT("Case-sensitive search"));
+        fs->Add(m_findCaseBox, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 8);
         // Match-count label ("3 of 47" or "Not found").
         m_findLabel = new wxStaticText(m_findBar, wxID_ANY, wxEmptyString,
                                        wxDefaultPosition, wxSize(90, -1));
@@ -145,7 +149,14 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         });
         m_findInput->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
             // Live search: highlight as the user types; clear stale count.
-            m_output->HighlightSearch(m_findInput->GetValue());
+            bool cs = m_findCaseBox && m_findCaseBox->IsChecked();
+            m_output->HighlightSearch(m_findInput->GetValue(), cs);
+            if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
+        });
+        // Case toggle: re-highlight immediately and reset stale count.
+        m_findCaseBox->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) {
+            bool cs = m_findCaseBox->IsChecked();
+            m_output->HighlightSearch(m_findInput ? m_findInput->GetValue() : wxString(), cs);
             if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
         });
         m_findInput->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& e) {
@@ -1103,6 +1114,28 @@ void CWorldChildFrame::TriggerNAWS()
     });
 }
 
+// ── UpdateInputBarColors ──────────────────────────────────────────────────
+// Derives input bar fg/bg from the output pane's current background colour
+// and applies them to both the normal and password input bars.
+// ITU-R BT.601 luma: white text on dark backgrounds, dark text on light.
+void CWorldChildFrame::UpdateInputBarColors()
+{
+    unsigned long col = m_output ? m_output->PaneBackground() : 0UL;
+    int r = static_cast<int>(GetRValue(col));
+    int g = static_cast<int>(GetGValue(col));
+    int b = static_cast<int>(GetBValue(col));
+    int luma = (r * 299 + g * 587 + b * 114) / 1000;
+
+    wxColour inputFg = (luma < 128) ? wxColour(220, 220, 220) : wxColour(20, 20, 20);
+    wxColour inputBg = wxColour(r, g, b);
+    for (wxTextCtrl* inp : {m_input, m_inputPassword}) {
+        if (!inp) continue;
+        inp->SetForegroundColour(inputFg);
+        inp->SetBackgroundColour(inputBg);
+        inp->Refresh();
+    }
+}
+
 // ── ApplyPaneBackground ───────────────────────────────────────────────────
 // Applies col as the output pane background and styles the input bar to match.
 // When col == 0xFFFFFFFF (NO_COLOUR) the default black background is kept.
@@ -1115,23 +1148,31 @@ void CWorldChildFrame::ApplyPaneBackground(unsigned long col)
         col = 0;  // default black
 
     m_output->SetPaneBackground(col);
+    UpdateInputBarColors();
+}
 
-    // Style the input bar so it's legible against the pane background.
-    // Choose white text on dark backgrounds, black text on light ones.
-    // Brightness: ITU-R BT.601 luma approximation on 8-bit components.
-    int r = static_cast<int>(GetRValue(col));
-    int g = static_cast<int>(GetGValue(col));
-    int b = static_cast<int>(GetBValue(col));
-    int luma = (r * 299 + g * 587 + b * 114) / 1000;  // 0–255
+// ── ApplyHistRSearch ──────────────────────────────────────────────────────
+// Sets m_histRSearch and tints the input bar to signal Ctrl+R mode.
+// Tints the background deep blue when entering; restores world colors on exit.
+// The no-op guard (m_histRSearch == on) prevents redundant repaints on every
+// key press in the common case where we're not in Ctrl+R mode.
+void CWorldChildFrame::ApplyHistRSearch(bool on)
+{
+    if (m_histRSearch == on) return;
+    m_histRSearch = on;
+    if (!m_input) return;
 
-    wxColour inputFg = (luma < 128) ? wxColour(220, 220, 220) : wxColour(20, 20, 20);
-    wxColour inputBg = wxColour(r, g, b);
-    for (wxTextCtrl* inp : {m_input, m_inputPassword}) {
-        if (!inp) continue;
-        inp->SetForegroundColour(inputFg);
-        inp->SetBackgroundColour(inputBg);
-        inp->Refresh();
+    if (on) {
+        // Deep-blue tint: clearly distinguishable from the normal input bar but
+        // not so aggressive that it's distracting.  Text is pale blue so it's
+        // legible against the tinted background regardless of the world theme.
+        m_input->SetBackgroundColour(wxColour(20, 45, 95));
+        m_input->SetForegroundColour(wxColour(160, 210, 255));
+    } else {
+        // Restore to match the output pane's background.
+        UpdateInputBarColors();
     }
+    m_input->Refresh();
 }
 
 // ── ShowFindBar ───────────────────────────────────────────────────────────
@@ -1146,7 +1187,7 @@ void CWorldChildFrame::ShowFindBar(bool show)
         }
     } else {
         m_findBar->Hide();
-        if (m_output) m_output->HighlightSearch(wxEmptyString);
+        if (m_output) m_output->HighlightSearch(wxEmptyString, false);
         if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
         if (wxTextCtrl* inp = ActiveInput()) inp->SetFocus();
     }
@@ -1164,9 +1205,11 @@ void CWorldChildFrame::DoFind(bool forward)
         return;
     }
 
+    bool caseSensitive = m_findCaseBox && m_findCaseBox->IsChecked();
     int matchLine = -1, ordinal = 0, totalMatches = 0;
     bool found = m_output->FindNext(term, forward,
-                                    &matchLine, &ordinal, &totalMatches);
+                                    &matchLine, &ordinal, &totalMatches,
+                                    caseSensitive);
 
     if (found) {
         // Reset background in case a previous search had left it red.
@@ -1408,7 +1451,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Ctrl+U: clear the input line (standard Unix terminal shortcut).
     if (code == 'U' && evt.ControlDown()) {
         if (inp) inp->Clear();
-        m_histIdx = -1;
+        m_histIdx = -1; ApplyHistRSearch(false);
         return;
     }
 
@@ -1431,7 +1474,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
                 while (newPos > 0 && text[newPos - 1] != ' ')
                     --newPos;
                 inp->Remove(newPos, pos);
-                m_histIdx = -1;
+                m_histIdx = -1; ApplyHistRSearch(false);
             }
         }
         return;
@@ -1444,7 +1487,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
             long len = (long)inp->GetValue().size();
             if (pos < len) {
                 inp->Remove(pos, pos + 1);
-                m_histIdx = -1;
+                m_histIdx = -1; ApplyHistRSearch(false);
             }
         }
         return;
@@ -1466,7 +1509,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
                 while (newPos < len && text[newPos] != ' ')
                     ++newPos;
                 inp->Remove(pos, newPos);
-                m_histIdx = -1;
+                m_histIdx = -1; ApplyHistRSearch(false);
             }
         }
         return;
@@ -1479,7 +1522,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
             long len = (long)inp->GetValue().size();
             if (pos < len) {
                 inp->Remove(pos, len);
-                m_histIdx = -1;
+                m_histIdx = -1; ApplyHistRSearch(false);
             }
         }
         return;
@@ -1630,7 +1673,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         // Pressing Up exits any ongoing output-word tab cycle and Ctrl+R mode.
         m_tabWordIdx  = -1;
         m_tabWords.clear();
-        m_histRSearch = false;  // ↑ always uses prefix (startsWith) match
+        ApplyHistRSearch(false);  // ↑ always uses prefix (startsWith) match
         if (m_history.empty()) return;
         if (m_histIdx < 0) {
             // Start browsing: save the current partial input as the prefix filter.
@@ -1670,7 +1713,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         // Pressing Down exits any ongoing output-word tab cycle and Ctrl+R mode.
         m_tabWordIdx  = -1;
         m_tabWords.clear();
-        m_histRSearch = false;  // ↓ always uses prefix (startsWith) match
+        ApplyHistRSearch(false);  // ↓ always uses prefix (startsWith) match
         if (m_histIdx < 0) { evt.Skip(); return; }
         wxString lpfx = m_histSaved.Lower();
         // Search forward for the next newer match.
@@ -1700,7 +1743,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     if (code == 'R' && evt.ControlDown() && inp == m_input) {
         m_tabWordIdx = -1;
         m_tabWords.clear();
-        m_histRSearch = true;
+        ApplyHistRSearch(true);
 
         // Use the current input as the query on first press; on subsequent
         // presses keep m_histSaved (so editing history entries mid-cycle
@@ -1759,9 +1802,9 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 
     // Any non-navigation key cancels history browsing, Ctrl+R mode, and tab cycling.
     if (code != WXK_UP && code != WXK_DOWN) {
-        m_histIdx     = -1;
-        m_histRSearch = false;
-        m_tabWordIdx  = -1;
+        m_histIdx    = -1;
+        ApplyHistRSearch(false);
+        m_tabWordIdx = -1;
         m_tabWords.clear();
     }
 
@@ -1810,7 +1853,7 @@ void CWorldChildFrame::OnInputPaste(wxClipboardTextEvent& evt)
     // Prepend whatever the user had already typed to the first pasted line.
     wxString prefix = m_input->GetValue();
     m_input->Clear();
-    m_histIdx = -1; m_histRSearch = false;  // exit history browsing
+    m_histIdx = -1; ApplyHistRSearch(false);  // exit history browsing
 
     for (size_t i = 0; i + 1 < lines.size(); ++i) {
         wxString cmd = (i == 0) ? prefix + lines[i] : lines[i];
@@ -1847,7 +1890,7 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
 
     wxString text = inp->GetValue();
     inp->Clear();
-    m_histIdx = -1; m_histRSearch = false;   // exit history browsing on send
+    m_histIdx = -1; ApplyHistRSearch(false);   // exit history browsing on send
 
     // Don't record passwords in history — m_bNoEcho signals a masked prompt.
     bool isPassword = m_doc->m_bNoEcho;

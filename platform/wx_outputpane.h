@@ -79,11 +79,13 @@ public:
     // *outOrdinal      receives the 1-based ordinal of the match among all hits.
     // *outTotalMatches receives a count of all matching lines (capped at 9999).
     // All three are computed in one linear scan to avoid redundant work.
+    // caseSensitive: when true, the search is case-sensitive (default: false).
     bool FindNext(const wxString& term, bool forward = true,
                   int* outMatchLine    = nullptr,
                   int* outOrdinal      = nullptr,
-                  int* outTotalMatches = nullptr);
-    void HighlightSearch(const wxString& term);
+                  int* outTotalMatches = nullptr,
+                  bool caseSensitive   = false);
+    void HighlightSearch(const wxString& term, bool caseSensitive = false);
 
     // Change the display font (e.g. from preferences or scripting API).
     void SetOutputFont(const wxFont& font);
@@ -319,6 +321,7 @@ private:
     SelPoint m_selFocus;
 
     wxString m_searchTerm;
+    bool     m_searchCaseSensitive = false;
 
     unsigned long m_bgColor  = 0;   // COLORREF
     int           m_batchDepth = 0;

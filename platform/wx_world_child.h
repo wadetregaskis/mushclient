@@ -84,6 +84,7 @@ private:
     wxPanel*      m_findBar      = nullptr;   // collapsible panel shown by Ctrl+F
     wxTextCtrl*   m_findInput    = nullptr;   // search term text box
     wxStaticText* m_findLabel    = nullptr;   // "N of M" match count label
+    wxCheckBox*   m_findCaseBox  = nullptr;   // "Aa" case-sensitive toggle
 
     // ── Command history ────────────────────────────────────────────────────
     std::vector<wxString> m_history;           // sent commands, oldest first
@@ -125,6 +126,16 @@ private:
 
     // Returns true if a log file is currently open.
     bool IsLogging() const { return m_logFile != nullptr; }
+
+    // Apply the correct foreground/background colors to both input bars based on
+    // the output pane's background.  Factors out the luma logic so it can be
+    // called from both ApplyPaneBackground and from the Ctrl+R mode exit path.
+    void UpdateInputBarColors();
+
+    // Enter or leave Ctrl+R reverse-history-search mode.  Sets m_histRSearch and
+    // tints the input bar blue (on) or restores its normal colors (off).
+    // No-op when the state is already correct (safe to call redundantly).
+    void ApplyHistRSearch(bool on);
 
     // Write a single output line to the log file as plain text.
     void LogLine(const SOutputLine& line);

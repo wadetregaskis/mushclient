@@ -1939,6 +1939,35 @@ public:
     std::function<std::string()>              m_fn_get_clipboard;
     std::function<void(const std::string&)>   m_fn_set_clipboard;
 
+    // ── Output-pane batch-update callbacks ────────────────────────────────
+    // BeginBatch / EndBatch suppress per-line repaints; fired by UpdateAllViews.
+    std::function<void()> m_fn_begin_batch;
+    std::function<void()> m_fn_flush;
+
+    // ── Command-input callbacks ───────────────────────────────────────────
+    // world.GetCommand() / world.SetCommand(): read/write the input bar text.
+    std::function<std::string()>              m_fn_get_command;
+    std::function<bool(const std::string&)>   m_fn_set_command;
+
+    // world.SetCommandSelection(first, last): set selection in the input bar.
+    std::function<void(long, long)>           m_fn_set_command_selection;
+
+    // ── Output-font callback ──────────────────────────────────────────────
+    // world.SetFont(face, size, bold, italic): change the output pane font.
+    std::function<void(const std::string&, int, bool, bool)> m_fn_set_output_font;
+
+    // ── Scroll / selection callbacks ──────────────────────────────────────
+    // world.SetScroll(pos): scroll the output pane to a line index.
+    std::function<void(long)>                 m_fn_set_scroll;
+    // world.SetSelection(sl, el, sc, ec): set the text selection in the pane.
+    std::function<void(int, int, int, int)>   m_fn_set_selection;
+
+    // ── Window-geometry callbacks ─────────────────────────────────────────
+    // world.GetWorldWindowPosition(): screen rect of the output pane (x,y,w,h).
+    std::function<void(int&, int&, int&, int&)> m_fn_get_output_rect;
+    // world.GetMainWindowPosition(): screen rect of the MDI parent frame.
+    std::function<void(int&, int&, int&, int&)> m_fn_get_main_rect;
+
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference
     // m_pCurrentLine->styleList.GetTail() to read the current style.

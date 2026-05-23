@@ -4931,9 +4931,35 @@ static int L_SetBackgroundColour(lua_State* L)
 static int L_SetBackgroundImage(lua_State* L) { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetCursor(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetChanged(lua_State* L)        { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_GetMainWindowPosition(lua_State* L) { world_doc(L); lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 800); lua_pushnumber(L, 600); return 4; }
-static int L_GetWorldWindowPosition(lua_State* L){ world_doc(L); lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 800); lua_pushnumber(L, 600); return 4; }
-static int L_GetWorldWindowPositionX(lua_State* L){ world_doc(L); lua_pushnumber(L, 0); return 1; }
+static int L_GetMainWindowPosition(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    int x = 0, y = 0, w = 1024, h = 768;
+    if (pDoc->m_fn_get_main_rect)
+        pDoc->m_fn_get_main_rect(x, y, w, h);
+    lua_pushnumber(L, x); lua_pushnumber(L, y);
+    lua_pushnumber(L, w); lua_pushnumber(L, h);
+    return 4;
+}
+static int L_GetWorldWindowPosition(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    int x = 0, y = 0, w = 800, h = 600;
+    if (pDoc->m_fn_get_output_rect)
+        pDoc->m_fn_get_output_rect(x, y, w, h);
+    lua_pushnumber(L, x); lua_pushnumber(L, y);
+    lua_pushnumber(L, w); lua_pushnumber(L, h);
+    return 4;
+}
+// GetWorldWindowPositionX(which): 0=x, 1=y, 2=width, 3=height of output pane.
+static int L_GetWorldWindowPositionX(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    int which = (int)luaL_optinteger(L, 1, 2);   // default = width
+    int x = 0, y = 0, w = 800, h = 600;
+    if (pDoc->m_fn_get_output_rect)
+        pDoc->m_fn_get_output_rect(x, y, w, h);
+    int vals[4] = { x, y, w, h };
+    lua_pushnumber(L, (which >= 0 && which < 4) ? vals[which] : 0);
+    return 1;
+}
 static int L_MoveMainWindow(lua_State* L)    { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_MoveWorldWindow(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_MoveWorldWindowX(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }
@@ -5353,11 +5379,23 @@ static int L_GetSelectionEndLine(lua_State* L)     { world_doc(L); lua_pushnumbe
 static int L_GetSelectionStartColumn(lua_State* L) { world_doc(L); lua_pushnumber(L, 0); return 1; }
 static int L_GetSelectionEndColumn(lua_State* L)   { world_doc(L); lua_pushnumber(L, 0); return 1; }
 
+// ── Miniwindow Lua API (mushcore/mushcli stubs) ───────────────────────────────
+// lua_world_api_portable.cpp is compiled into mushcore only.  The mushgui build
+// uses mushapp which compiles lua_methods.cpp instead — that file already has
+// the full real Window* implementations backed by wx_gdi_compat CDC/CBitmap.
+//
+// The stubs below keep mushcli functional: scripts that call Window* get a
+// graceful eNoSuchWindow error rather than a crash.
+//
+// NOTE: The pushVariant helper below is unused by mushcore (no Window* methods),
+// but is kept here as documentation for how the full-build variants work.
+
 // ── Not-available stubs (GUI / Chat / Notepad subsystems) ────────────────────
 // These functions exist in the Windows build but require GUI objects that are
 // absent in the portable build.  Rather than letting scripts crash with
 // "attempt to call a nil value (field 'WindowCreate')", we return a meaningful
 // error code so the caller can handle the failure gracefully.
+
 
 // miniwindow operations → eNoSuchWindow
 static int L_WindowStub(lua_State* L)
@@ -5374,6 +5412,7 @@ static int L_WindowListStub(lua_State* L)
     lua_newtable(L);
     return 1;
 }
+
 
 // Chat subsystem → eNoChatConnections
 static int L_ChatStub(lua_State* L)
@@ -5822,7 +5861,10 @@ static const luaL_Reg worldlib[] = {
     { "ResetStatusTime",    L_ResetStatusTime   },
     { "SaveState",          L_SaveState         },
 
-    // ── miniwindow (Window*) stubs — return eNoSuchWindow ────────────────────
+    // ── miniwindow (Window*) stubs ────────────────────────────────────────────
+    // lua_world_api_portable.cpp is only compiled into mushcore (mushcli).
+    // mushgui uses mushapp which compiles lua_methods.cpp with real Window* impls.
+    // These stubs keep mushcli functional: scripts get eNoSuchWindow gracefully.
     { "WindowCreate",           L_WindowStub },
     { "WindowDelete",           L_WindowStub },
     { "WindowAddHotspot",       L_WindowStub },
@@ -5861,7 +5903,6 @@ static const luaL_Reg worldlib[] = {
     { "WindowTextWidth",        L_WindowStub },
     { "WindowTransformImage",   L_WindowStub },
     { "WindowWrite",            L_WindowStub },
-    // Window data queries → empty table or nil
     { "WindowList",             L_WindowListStub },
     { "WindowFontInfo",         L_GuiNilStub     },
     { "WindowFontList",         L_WindowListStub },

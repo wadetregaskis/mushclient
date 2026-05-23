@@ -201,6 +201,14 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (m_output) m_output->Refresh(false);
         };
 
+        // world.SetStatus(msg): show a message in the MDI parent's status bar.
+        // This overrides the connection-state message until the next timer tick
+        // refreshes it, or until a new world.SetStatus() call replaces it.
+        m_doc->m_fn_status = [this](const std::string& msg) {
+            if (g_wxhook_set_status && IsActiveWorld())
+                g_wxhook_set_status(msg.c_str());
+        };
+
         // world.SetBackgroundColour(rgb): update output pane background.
         m_doc->m_fn_set_background_colour = [this](unsigned long col) {
             ApplyPaneBackground(col);
@@ -229,6 +237,29 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 wxTheClipboard->SetData(new wxTextDataObject(
                     wxString::FromUTF8(text.c_str())));
                 wxTheClipboard->Close();
+            }
+        };
+
+        // world.GetWorldWindowPosition(): return screen rect of the output pane.
+        // Scripts use this to position miniwindows relative to the output area.
+        m_doc->m_fn_get_output_rect = [this](int& x, int& y, int& w, int& h) {
+            if (m_output) {
+                wxPoint pos = m_output->ClientToScreen(wxPoint(0, 0));
+                wxSize  sz  = m_output->GetClientSize();
+                x = pos.x; y = pos.y; w = sz.x; h = sz.y;
+            } else {
+                x = 0; y = 0; w = 800; h = 600;
+            }
+        };
+
+        // world.GetMainWindowPosition(): return screen rect of the MDI parent frame.
+        m_doc->m_fn_get_main_rect = [this](int& x, int& y, int& w, int& h) {
+            wxMDIParentFrame* parent = wxDynamicCast(GetParent(), wxMDIParentFrame);
+            if (parent) {
+                wxRect r = parent->GetScreenRect();
+                x = r.x; y = r.y; w = r.width; h = r.height;
+            } else {
+                x = 0; y = 0; w = 1024; h = 768;
             }
         };
     }
@@ -1384,40 +1415,55 @@ void CWorldChildFrame::UpdateStatusBar()
 
     int phase = m_doc->m_iConnectPhase;
 
+    // Build a world-name prefix ("WorldName — ") for every message so the user
+    // always knows which world is active in the MDI parent's status bar.
+    std::string worldName = static_cast<const char*>(m_doc->m_mush_name);
+    std::string prefix;
+    if (!worldName.empty()) {
+        prefix = worldName;
+        prefix += " \xe2\x80\x94 ";   // " — " (em dash)
+    }
+
     // Script-provided status message takes priority over connection state.
     if (!m_doc->m_strStatusMessage.IsEmpty()) {
-        g_wxhook_set_status(static_cast<const char*>(m_doc->m_strStatusMessage));
+        std::string msg = prefix + static_cast<const char*>(m_doc->m_strStatusMessage);
+        g_wxhook_set_status(msg.c_str());
         return;
     }
 
     if (phase == eConnectConnectedToMud) {
-        std::string msg = "Connected to ";
+        std::string msg = prefix + "Connected to ";
         msg += static_cast<const char*>(m_doc->m_server);
         msg += ":";
         msg += std::to_string(m_doc->m_port);
+        // If logging, append the log indicator.
+        if (IsLogging())
+            msg += "  \xf0\x9f\x94\xb4 Logging";   // 🔴
         g_wxhook_set_status(msg.c_str());
     } else if (m_reconnectCountdown > 0) {
-        int secs = m_reconnectCountdown / 10;
-        std::string msg = "Reconnecting in " + std::to_string(secs) + "s\xe2\x80\xa6";
+        int secs = (m_reconnectCountdown + 9) / 10;   // round up
+        std::string msg = prefix + "Reconnecting in " + std::to_string(secs) + "s\xe2\x80\xa6";
         g_wxhook_set_status(msg.c_str());
-    } else if (!m_output->IsAutoScrolling()) {
+    } else if (m_output && !m_output->IsAutoScrolling()) {
+        // Scrolled-back indicator: no world prefix so the arrow stands out.
         g_wxhook_set_status(
-            "\xe2\x86\x91 Scrolled back \xe2\x80\x94 scroll down to resume auto-scroll");
+            "\xe2\x86\x91 Scrolled back \xe2\x80\x94 press Escape or scroll to bottom to resume");
     } else {
-        const char* statusStr = "Not connected.";
+        const char* stateStr = "Not connected.";
         switch (phase) {
         case eConnectMudNameLookup:
-        case eConnectProxyNameLookup:        statusStr = "Resolving\xe2\x80\xa6";     break;
+        case eConnectProxyNameLookup:        stateStr = "Resolving\xe2\x80\xa6";     break;
         case eConnectConnectingToMud:
-        case eConnectConnectingToProxy:      statusStr = "Connecting\xe2\x80\xa6";    break;
+        case eConnectConnectingToProxy:      stateStr = "Connecting\xe2\x80\xa6";    break;
         case eConnectAwaitingProxyResponse1:
         case eConnectAwaitingProxyResponse2:
-        case eConnectAwaitingProxyResponse3: statusStr = "Proxy\xe2\x80\xa6";         break;
-        case eConnectAwaitingSSLHandshake:   statusStr = "TLS\xe2\x80\xa6";           break;
-        case eConnectDisconnecting:          statusStr = "Disconnecting\xe2\x80\xa6"; break;
-        default:                             statusStr = "Not connected.";            break;
+        case eConnectAwaitingProxyResponse3: stateStr = "Connecting via proxy\xe2\x80\xa6"; break;
+        case eConnectAwaitingSSLHandshake:   stateStr = "TLS handshake\xe2\x80\xa6"; break;
+        case eConnectDisconnecting:          stateStr = "Disconnecting\xe2\x80\xa6"; break;
+        default:                             stateStr = "Not connected.";             break;
         }
-        g_wxhook_set_status(statusStr);
+        std::string msg = prefix + stateStr;
+        g_wxhook_set_status(msg.c_str());
     }
 }
 
@@ -2150,10 +2196,13 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_command_selection = nullptr;
         m_doc->m_fn_set_paused           = nullptr;
         m_doc->m_fn_repaint                  = nullptr;
+        m_doc->m_fn_status                   = nullptr;
         m_doc->m_fn_set_background_colour    = nullptr;
         m_doc->m_fn_set_max_lines            = nullptr;
         m_doc->m_fn_get_clipboard            = nullptr;
         m_doc->m_fn_set_clipboard            = nullptr;
+        m_doc->m_fn_get_output_rect          = nullptr;
+        m_doc->m_fn_get_main_rect            = nullptr;
 
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.

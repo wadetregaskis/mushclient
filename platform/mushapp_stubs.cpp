@@ -194,6 +194,11 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
 
     // Close the batch (triggers a single scrollbar update + repaint).
     if (batchOpen && m_fn_flush) m_fn_flush();
+
+    // Always trigger a repaint so miniwindow operations (WindowCreate,
+    // WindowShow, WindowPosition, …) that call UpdateAllViews without emitting
+    // any new text lines still refresh the canvas.
+    if (m_fn_repaint) m_fn_repaint();
 }
 
 // ── CMUSHclientDoc::InitZlib ──────────────────────────────────────────────────

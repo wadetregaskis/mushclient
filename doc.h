@@ -1535,6 +1535,15 @@ public:
   // world.GetClipboard() / world.SetClipboard(): system clipboard access.
   std::function<std::string()>              m_fn_get_clipboard;
   std::function<void(const std::string&)>   m_fn_set_clipboard;
+
+  // Returns the screen-relative position and size of the output pane (x,y,w,h).
+  // Used by world.GetWorldWindowPosition() so Lua scripts can position
+  // miniwindows relative to the actual pane geometry.
+  std::function<void(int&, int&, int&, int&)> m_fn_get_output_rect;
+
+  // Returns the screen-relative position and size of the MDI parent frame.
+  // Used by world.GetMainWindowPosition() so scripts know the main window rect.
+  std::function<void(int&, int&, int&, int&)> m_fn_get_main_rect;
 #endif
 
   protected:

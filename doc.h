@@ -1477,9 +1477,22 @@ public:
   // Count of lines already forwarded to m_fn_line_ready; decremented by
   // JUMP_SIZE when RemoveChunk() evicts the oldest lines.
   long                                    m_gui_lines_emitted = 0;
-  // Current output pane height in character rows; updated by CWorldChildFrame
-  // via SendNAWS() so that SendWindowSizes() can send a valid NAWS row count.
-  int                                     m_gui_rows = 24;
+
+  // Output pane character-grid dimensions (updated by CWorldChildFrame on
+  // resize / font change via SendNAWS and m_fn_grid_changed).
+  int  m_gui_rows        = 24;   // visible rows in the output pane
+  int  m_gui_cols        = 80;   // visible columns in the output pane
+  int  m_gui_font_height = 18;   // pixel height of one line  (GetInfo 212)
+  int  m_gui_font_width  = 10;   // avg pixel width of one char (GetInfo 213)
+
+  // True while the output pane is pinned (not auto-scrolling to the bottom).
+  // world.Pause(bPause) sets this; read by GetInfo(eScrolledBack).
+  bool m_gui_paused = false;
+
+  // ── Non-Windows status callback ──────────────────────────────────────────
+  // Called when the connection status changes so the active frame can refresh
+  // the status bar text.  Argument is ignored (the frame re-reads m_doc state).
+  std::function<void(const std::string&)> m_fn_status;
 
   // ── Non-Windows GUI input/view callbacks ──────────────────────────────────
   // world.GetCommand(): return the current text in the command input bar.
@@ -1505,6 +1518,23 @@ public:
   // world.SetCommandSelection(First, Last): select text in the input bar.
   // Arguments are 1-based character positions; Last=-1 means end of text.
   std::function<void(long, long)>  m_fn_set_command_selection;
+
+  // world.Pause(bPause): lock/unlock auto-scrolling of the output pane.
+  std::function<void(bool)>  m_fn_set_paused;
+
+  // world.Repaint(): force a repaint of the output pane.
+  std::function<void()>  m_fn_repaint;
+
+  // world.SetBackgroundColour(rgb): change the output pane background colour.
+  // Argument is a COLORREF; 0xFFFFFFFF (NO_COLOUR) means default black.
+  std::function<void(unsigned long)>  m_fn_set_background_colour;
+
+  // SetOption("max_output_lines", n): resize the scrollback buffer.
+  std::function<void(int)>  m_fn_set_max_lines;
+
+  // world.GetClipboard() / world.SetClipboard(): system clipboard access.
+  std::function<std::string()>              m_fn_get_clipboard;
+  std::function<void(const std::string&)>   m_fn_set_clipboard;
 #endif
 
   protected:

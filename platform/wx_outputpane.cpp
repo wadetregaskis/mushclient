@@ -26,6 +26,19 @@ static const int ID_COPY       = wxID_COPY;
 static const int ID_SELECTALL  = wxID_SELECTALL;
 static const int ID_CLEAR      = wxID_HIGHEST + 100;
 
+// ── UTF-8 character counting ──────────────────────────────────────────────────
+// Returns the number of Unicode code points in a UTF-8 encoded std::string.
+// This is always <= s.size() (equal for ASCII, less for multi-byte sequences).
+// Used wherever we treat character positions as column indices for selection,
+// wrapping, and link hit-testing — byte counts are wrong for non-ASCII text.
+static inline int UTF8CharLen(const std::string& s)
+{
+    int n = 0;
+    for (unsigned char c : s)
+        if ((c & 0xC0u) != 0x80u) ++n;   // count lead bytes; skip continuation bytes
+    return n;
+}
+
 // ── Hint bar ──────────────────────────────────────────────────────────────────
 // Height (px) of the "↓ new output below" banner painted at the bottom of the
 // client area when the user has scrolled up and new lines are arriving.
@@ -233,7 +246,7 @@ void COutputPane::AppendLine(SOutputLine&& line)
     line = DetectURLs(std::move(line));
 
     int lineChars = 0;
-    for (const auto& run : line) lineChars += (int)run.text.size();
+    for (const auto& run : line) lineChars += UTF8CharLen(run.text);
     if (lineChars > m_maxLineChars) m_maxLineChars = lineChars;
 
     // Append to wrap cache before the line is in m_lines so WrapCount() works.
@@ -403,7 +416,7 @@ void COutputPane::SetSelectionRange(int startLine, int endLine,
     // Column 0 in the API means "start / end of line".
     int lineLen = [&](int li) {
         int len = 0;
-        for (const auto& run : m_lines[li]) len += (int)run.text.size();
+        for (const auto& run : m_lines[li]) len += UTF8CharLen(run.text);
         return len;
     };
     int sc = (startCol <= 0) ? 0
@@ -907,7 +920,7 @@ int COutputPane::WrapCount(int lineIdx) const
     if (line.size() == 1 && line[0].horiz_rule) return 1;
     int chars = 0;
     for (const auto& run : line)
-        chars += (int)run.text.size();
+        chars += UTF8CharLen(run.text);
     if (chars == 0 || m_wrapCols <= 0) return 1;
     return (chars + m_wrapCols - 1) / m_wrapCols;
 }
@@ -1031,10 +1044,10 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
     if (lineIdx < 0 || lineIdx >= (int)m_lines.size() || m_charW <= 0)
         return 0;
 
-    // Count total characters on the line.
+    // Count total characters on the line (Unicode code points, not UTF-8 bytes).
     int totalChars = 0;
     for (const auto& run : m_lines[lineIdx])
-        totalChars += (int)run.text.size();
+        totalChars += UTF8CharLen(run.text);
 
     // Convert client x to virtual (unscrolled) x.
     // Horizontal scroll is always 0 (H-scrolling is disabled), but keep the
@@ -1117,7 +1130,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
             // Build the full line length and select it end-to-end.
             int lineLen = 0;
             for (const auto& run : m_lines[clickLine])
-                if (!run.horiz_rule) lineLen += (int)run.text.size();
+                if (!run.horiz_rule) lineLen += UTF8CharLen(run.text);
             m_selAnchor      = SelPoint{clickLine, 0};
             m_selFocus       = SelPoint{clickLine, lineLen};
             m_lastDClickLine = -1;   // consume so a 4th click starts fresh
@@ -1158,7 +1171,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
             int clickCol = XToChar(lineIdx, evt.GetX(), evt.GetY());
             int c = 0;
             for (const auto& run : m_lines[lineIdx]) {
-                int runLen = (int)run.text.size();
+                int runLen = UTF8CharLen(run.text);
                 if (!run.action.empty() &&
                     clickCol >= c && clickCol < c + runLen)
                 {
@@ -1386,7 +1399,7 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
                 // (already wrap-aware via XToChar in MouseToSelPoint).
                 int c = 0;
                 for (const auto& run : m_lines[pt.line]) {
-                    int runLen = (int)run.text.size();
+                    int runLen = UTF8CharLen(run.text);
                     if (!run.action.empty() &&
                         pt.col >= c && pt.col < c + runLen)
                     {
@@ -1424,7 +1437,7 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
             int col = XToChar(lineIdx, evt.GetX(), evt.GetY());
             int c = 0;
             for (const auto& run : m_lines[lineIdx]) {
-                int runLen = (int)run.text.size();
+                int runLen = UTF8CharLen(run.text);
                 if (!run.action.empty() &&
                     col >= c && col < c + runLen)
                 {
@@ -1668,7 +1681,7 @@ void COutputPane::SelectAll()
     int lastLine = (int)m_lines.size() - 1;
     int lastCol  = 0;
     for (const auto& run : m_lines[lastLine])
-        lastCol += (int)run.text.size();
+        lastCol += UTF8CharLen(run.text);
 
     m_selAnchor = SelPoint{0, 0};
     m_selFocus  = SelPoint{lastLine, lastCol};

@@ -704,9 +704,17 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
         globalChar += runLen;
     }
 
-    // Fill the remainder of the last visual row with the pane background.
+    // Fill the remainder of the last visual row.
+    // When the selection extends past the end of this line (selColEnd == INT_MAX
+    // means "selected through to the next line"), fill with the system highlight
+    // colour so the selection band stretches to the right margin — this is the
+    // standard visual for multi-line selections.
     if (x < rightEdge) {
-        dc.SetBrush(wxBrush(bgC));
+        bool trailSelected = lineInSel && (selColEnd == INT_MAX);
+        wxColour fillCol = trailSelected
+            ? wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHT)
+            : bgC;
+        dc.SetBrush(wxBrush(fillCol));
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.DrawRectangle(x, currentY, rightEdge - x, m_lineH);
     }
@@ -991,8 +999,13 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
 
 SelPoint COutputPane::MouseToSelPoint(const wxMouseEvent& evt) const
 {
-    int line = YToLine(evt.GetY());
-    int col  = XToChar(line, evt.GetX(), evt.GetY());
+    return PointToChar(evt.GetX(), evt.GetY());
+}
+
+SelPoint COutputPane::PointToChar(int clientX, int clientY) const
+{
+    int line = YToLine(clientY);
+    int col  = XToChar(line, clientX, clientY);
     return SelPoint{line, col};
 }
 

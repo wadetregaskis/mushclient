@@ -329,6 +329,14 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             wxConfig cfg(wxT("mushclient"));
             cfg.Write(wxT("/display/font_size"), (long)m_output->FontSize());
         }
+        // Keep the input bars in sync with the output pane font so Ctrl+scroll
+        // zoom also updates the input bar typeface.
+        {
+            const wxFont& outFont = m_output->GetCurrentFont();
+            if (m_input)         { m_input->SetFont(outFont);         m_input->Refresh(); }
+            if (m_inputPassword) { m_inputPassword->SetFont(outFont); m_inputPassword->Refresh(); }
+            Layout();  // re-measure input bar height for the new font size
+        }
         CallAfter([this]() {
             if (!m_doc || !m_output) return;
             int charW = m_output->CharWidth();
@@ -861,29 +869,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             return pHotspot->m_sTooltipText;
 
         // 2. Check MXP hint text on the output line under the cursor.
-        int scrollX, scrollY, unitW, unitH;
-        m_output->GetViewStart(&scrollX, &scrollY);
-        m_output->GetScrollPixelsPerUnit(&unitW, &unitH);
-        int lineH = m_output->LineHeight();
-        if (lineH <= 0) return {};
-
-        int virtualY     = y + scrollY * unitH;
-        int lineIdx      = virtualY / lineH;
-        const SOutputLine* line = m_output->GetLine(lineIdx);
+        // Use PointToChar for wrap-aware hit-testing: it returns the absolute
+        // character column within the logical line, which we then walk to find
+        // which run the cursor is over (same approach as link detection).
+        SelPoint pt = m_output->PointToChar(x, y);
+        const SOutputLine* line = m_output->GetLine(pt.line);
         if (!line) return {};
 
-        // Walk runs using the same monospace m_charW step used by DrawLine,
-        // so tooltip hit areas match the rendered glyph positions.
-        int clickVirtualX = x + scrollX * unitW;
-        int charW = m_output->CharWidth();
-        if (charW <= 0) return {};
-        int runX = 0;
+        int c = 0;
         for (const auto& run : *line) {
-            if (run.text.empty()) continue;
-            int runW = (int)run.text.size() * charW;
-            if (clickVirtualX >= runX && clickVirtualX < runX + runW)
+            int runLen = (int)run.text.size();
+            if (pt.col >= c && pt.col < c + runLen)
                 return run.hint;   // may be empty — that's fine
-            runX += runW;
+            c += runLen;
         }
         return {};
     };
@@ -967,6 +965,15 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                                      wxTE_PASSWORD | wxTE_PROCESS_ENTER);
     sizer->Add(m_inputPassword, 0, wxEXPAND);
     m_inputPassword->Hide();
+
+    // Apply the output pane's monospace font to both input bars so that the
+    // input line uses the same typeface as the output — consistent look and
+    // feel, and correct column-count alignment for users who type long lines.
+    {
+        const wxFont& outFont = m_output->GetCurrentFont();
+        m_input->SetFont(outFont);
+        m_inputPassword->SetFont(outFont);
+    }
     // Wire the same send/key handlers directly to m_inputPassword.
     m_inputPassword->Bind(wxEVT_TEXT_ENTER,
         [this](wxCommandEvent& e) { OnInputEnter(e); });
@@ -1485,11 +1492,33 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     if (code == WXK_UP && inp == m_input) {
         if (m_history.empty()) return;
         if (m_histIdx < 0) {
-            // Start browsing: save current partial input.
-            m_histSaved = m_input->GetValue();
-            m_histIdx   = (int)m_history.size() - 1;
-        } else if (m_histIdx > 0) {
-            --m_histIdx;
+            // Start browsing: save the current partial input as the prefix filter.
+            // If the user has typed "say ", ↑ will only cycle through "say …"
+            // entries — like zsh's up-line-or-beginning-search.  An empty input
+            // browses all entries from newest to oldest.
+            m_histSaved   = m_input->GetValue();
+            wxString lpfx = m_histSaved.Lower();
+            // Find the most recent entry that starts with the current input.
+            m_histIdx = -1;
+            for (int i = (int)m_history.size() - 1; i >= 0; --i) {
+                if (lpfx.IsEmpty() || m_history[i].Lower().StartsWith(lpfx)) {
+                    m_histIdx = i;
+                    break;
+                }
+            }
+            if (m_histIdx < 0) return;  // no match — consume but don't change input
+        } else {
+            // Continue searching backward for the next older match.
+            wxString lpfx = m_histSaved.Lower();
+            int found = -1;
+            for (int i = m_histIdx - 1; i >= 0; --i) {
+                if (lpfx.IsEmpty() || m_history[i].Lower().StartsWith(lpfx)) {
+                    found = i;
+                    break;
+                }
+            }
+            if (found < 0) return;  // at oldest match — stay put
+            m_histIdx = found;
         }
         m_input->SetValue(m_history[m_histIdx]);
         m_input->SetInsertionPointEnd();
@@ -1498,13 +1527,22 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 
     if (code == WXK_DOWN && inp == m_input) {
         if (m_histIdx < 0) { evt.Skip(); return; }
-        if (m_histIdx < (int)m_history.size() - 1) {
-            ++m_histIdx;
-            m_input->SetValue(m_history[m_histIdx]);
-        } else {
-            // Reached the end: restore the partial command the user was typing.
+        wxString lpfx = m_histSaved.Lower();
+        // Search forward for the next newer match.
+        int found = -1;
+        for (int i = m_histIdx + 1; i < (int)m_history.size(); ++i) {
+            if (lpfx.IsEmpty() || m_history[i].Lower().StartsWith(lpfx)) {
+                found = i;
+                break;
+            }
+        }
+        if (found < 0) {
+            // Past the newest match: restore the partial input the user was typing.
             m_histIdx = -1;
             m_input->SetValue(m_histSaved);
+        } else {
+            m_histIdx = found;
+            m_input->SetValue(m_history[m_histIdx]);
         }
         m_input->SetInsertionPointEnd();
         return;

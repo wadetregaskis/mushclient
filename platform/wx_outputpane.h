@@ -141,6 +141,13 @@ public:
     int LineHeight() const { return m_lineH; }
     int CharWidth()  const { return m_charW; }
 
+    // Convert a client-space point to a buffer position (logical line + char
+    // column).  Wrap-aware: correctly resolves which visual row within a
+    // wrapped logical line was hit.  Returns an invalid SelPoint if the buffer
+    // is empty.  Exposed for callers (e.g. CWorldChildFrame tooltip handler)
+    // that need to map pixel coordinates to text without owning a wxMouseEvent.
+    SelPoint PointToChar(int clientX, int clientY) const;
+
     // Number of lines currently in the buffer.
     int LineCount() const { return (int)m_lines.size(); }
 

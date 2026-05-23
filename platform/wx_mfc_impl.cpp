@@ -379,7 +379,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     fileMenu->Append(wxID_SAVE,   wxT("Save World\tCtrl+S"));
     fileMenu->Append(wxID_SAVEAS, wxT("Save World As…"));
     fileMenu->AppendSeparator();
-    fileMenu->Append(wxID_CLOSE,  wxT("Close World\tCtrl+W"));
+    fileMenu->Append(wxID_CLOSE,  wxT("Close World\tCtrl+Shift+W"));
+    // Note: plain Ctrl+W is reserved for word-delete-backward in the input bar.
     fileMenu->AppendSeparator();
     fileMenu->Append(32246 /*ID_FILE_PREFERENCES*/, wxT("Preferences…"));
     fileMenu->AppendSeparator();

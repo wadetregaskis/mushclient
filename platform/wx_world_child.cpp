@@ -1595,6 +1595,13 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
+    // Ctrl+P / Ctrl+N: emacs-style aliases for history Up/Down.
+    // Re-map the key code so the existing Up/Down handlers below take over
+    // without duplicating any logic.  These must be checked before the
+    // Tab and Up/Down blocks so the re-mapped value is seen by them.
+    if (evt.ControlDown() && code == 'P') code = WXK_UP;
+    else if (evt.ControlDown() && code == 'N') code = WXK_DOWN;
+
     // Tab: complete the current partial command.
     //
     // Phase 1 — history prefix search: scan backward through m_history for

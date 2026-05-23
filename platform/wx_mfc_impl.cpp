@@ -782,45 +782,9 @@ static void* hook_open_world_file(const char* path)
         if (child->IsActiveWorld()) child->UpdateStatusBar();
     };
 
-    // Wire input-bar / font callbacks for scripting APIs.
-    doc->m_fn_get_command = [child]() -> std::string {
-        wxTextCtrl* inp = child->OutputPane() ? child->ActiveInputPublic() : nullptr;
-        return inp ? std::string(inp->GetValue().ToUTF8()) : std::string();
-    };
-    doc->m_fn_set_command = [child](const std::string& text) -> bool {
-        wxTextCtrl* inp = child->ActiveInputPublic();
-        if (!inp) return false;
-        if (!inp->GetValue().IsEmpty()) return false;   // eCommandNotEmpty
-        inp->SetValue(wxString::FromUTF8(text.c_str()));
-        inp->SetInsertionPointEnd();
-        return true;
-    };
-    doc->m_fn_set_output_font = [pane](const std::string& face, int pts, bool bold, bool italic) {
-        wxFont f = pane->GetCurrentFont();
-        if (!face.empty())
-            f.SetFaceName(wxString::FromUTF8(face.c_str()));
-        if (pts > 0) f.SetPointSize(pts);
-        f.SetWeight(bold ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL);
-        f.SetStyle(italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL);
-        pane->SetOutputFont(f);
-    };
-    doc->m_fn_set_scroll = [pane](long position) {
-        if (position == -1)
-            pane->ScrollToBottom();
-        else if (position >= 0)
-            pane->ScrollToLine((int)position);   // treat as 0-based line index
-    };
-    doc->m_fn_set_selection = [pane](int sl, int el, int sc, int ec) {
-        pane->SetSelectionRange(sl, el, sc, ec);
-    };
-    doc->m_fn_set_command_selection = [child](long first, long last) {
-        wxTextCtrl* inp = child->ActiveInputPublic();
-        if (!inp) return;
-        long len = (long)inp->GetValue().size();
-        long f = (first > 0) ? first - 1 : 0;   // 1-based → 0-based
-        long l = (last  < 0) ? len       : last; // -1 → end
-        inp->SetSelection(f, l);
-    };
+    // Note: m_fn_get_command, m_fn_set_command, m_fn_set_output_font,
+    // m_fn_set_scroll, m_fn_set_selection, m_fn_set_command_selection
+    // are all wired in CWorldChildFrame's constructor.  No need to repeat them here.
 
     // Apply display settings loaded from the world file.
     ApplyWorldFont(pane, doc);
@@ -1686,45 +1650,9 @@ static void* hook_new_world()
         if (child->IsActiveWorld()) child->UpdateStatusBar();
     };
 
-    // Wire input-bar / font callbacks for scripting APIs.
-    doc->m_fn_get_command = [child]() -> std::string {
-        wxTextCtrl* inp = child->ActiveInputPublic();
-        return inp ? std::string(inp->GetValue().ToUTF8()) : std::string();
-    };
-    doc->m_fn_set_command = [child](const std::string& text) -> bool {
-        wxTextCtrl* inp = child->ActiveInputPublic();
-        if (!inp) return false;
-        if (!inp->GetValue().IsEmpty()) return false;
-        inp->SetValue(wxString::FromUTF8(text.c_str()));
-        inp->SetInsertionPointEnd();
-        return true;
-    };
-    doc->m_fn_set_output_font = [pane](const std::string& face, int pts, bool bold, bool italic) {
-        wxFont f = pane->GetCurrentFont();
-        if (!face.empty())
-            f.SetFaceName(wxString::FromUTF8(face.c_str()));
-        if (pts > 0) f.SetPointSize(pts);
-        f.SetWeight(bold ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL);
-        f.SetStyle(italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL);
-        pane->SetOutputFont(f);
-    };
-    doc->m_fn_set_scroll = [pane](long position) {
-        if (position == -1)
-            pane->ScrollToBottom();
-        else if (position >= 0)
-            pane->ScrollToLine((int)position);   // treat as 0-based line index
-    };
-    doc->m_fn_set_selection = [pane](int sl, int el, int sc, int ec) {
-        pane->SetSelectionRange(sl, el, sc, ec);
-    };
-    doc->m_fn_set_command_selection = [child](long first, long last) {
-        wxTextCtrl* inp = child->ActiveInputPublic();
-        if (!inp) return;
-        long len = (long)inp->GetValue().size();
-        long f = (first > 0) ? first - 1 : 0;   // 1-based → 0-based
-        long l = (last  < 0) ? len       : last; // -1 → end
-        inp->SetSelection(f, l);
-    };
+    // Note: m_fn_get_command, m_fn_set_command, m_fn_set_output_font,
+    // m_fn_set_scroll, m_fn_set_selection, m_fn_set_command_selection
+    // are all wired in CWorldChildFrame's constructor.  No need to repeat them here.
 
     // Apply background colour (Quick Connect worlds use default black unless
     // a world-file background has been specified — m_iBackgroundColour starts

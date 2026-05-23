@@ -270,17 +270,17 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             return std::string(inp->GetValue().ToUTF8());
         };
 
-        // world.SetCommand(text): replace the command bar contents.
-        // Returns true if the bar was empty (set unconditionally per Windows behaviour);
-        // false if it was non-empty (caller may inspect and decide to overwrite anyway).
+        // world.SetCommand(text): set the command bar contents.
+        // Per the Windows API contract, returns false (eCommandNotEmpty) and does
+        // NOT overwrite if the bar is already non-empty.  Returns true on success.
         m_doc->m_fn_set_command = [this](const std::string& text) -> bool {
             wxTextCtrl* inp = ActiveInput();
             if (!inp) return false;
-            bool wasEmpty = inp->GetValue().IsEmpty();
+            if (!inp->GetValue().IsEmpty()) return false;  // eCommandNotEmpty
             inp->SetValue(wxString::FromUTF8(text.c_str()));
             inp->SetInsertionPointEnd();
             m_histIdx = -1; ApplyHistRSearch(false);
-            return wasEmpty;
+            return true;
         };
 
         // world.SetCommandSelection(first, last): select a range in the command bar.

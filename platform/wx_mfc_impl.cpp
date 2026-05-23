@@ -1110,130 +1110,204 @@ static void hook_file_preferences(wxWindow* parent)
 }
 
 // ── WorldPreferencesDlg ───────────────────────────────────────────────────
-// Simple dialog for editing the world's name, server, port, and connect flag.
-// Intentionally minimal: the full property sheet is Windows-only; this covers
-// the essential settings needed to connect.
+// Dialog for editing world properties: connection, display, scripting, options.
+// Covers the settings needed to connect and run Lua scripts without the full
+// Windows property-sheet UI.
 
 namespace {
 class WorldPreferencesDlg : public wxDialog
 {
 public:
+    // Connection
     wxTextCtrl*          m_name;
     wxTextCtrl*          m_server;
     wxSpinCtrl*          m_port;
     wxCheckBox*          m_autoConnect;
-    wxSpinCtrl*          m_scrollback;     // scrollback buffer line count
-    wxFontPickerCtrl*    m_fontPicker;     // output font
-    wxColourPickerCtrl*  m_bgColorPicker;  // output pane background colour
+    // Display
+    wxFontPickerCtrl*    m_fontPicker;
+    wxColourPickerCtrl*  m_bgColorPicker;
+    // Scripting
+    wxTextCtrl*          m_scriptFile;
+    wxButton*            m_scriptBrowse;
+    wxTextCtrl*          m_scriptPrefix;
+    // Options
+    wxSpinCtrl*          m_scrollback;
+    wxSpinCtrl*          m_wrapColumn;
+    wxCheckBox*          m_enableBeeps;
 
-    WorldPreferencesDlg(wxWindow*       parent,
-                        const wxString& name,
-                        const wxString& server,
-                        int             port,
-                        bool            autoConnect,
-                        const wxFont&   currentFont,
-                        int             scrollbackLines,
-                        wxColour        bgColor)
+    struct Params {
+        // Connection
+        wxString name, server;
+        int      port;
+        bool     autoConnect;
+        // Display
+        wxFont   currentFont;
+        int      scrollbackLines;
+        wxColour bgColor;
+        // Scripting
+        wxString scriptFile;
+        wxString scriptPrefix;
+        // Options
+        int  wrapColumn;
+        bool enableBeeps;
+    };
+
+    explicit WorldPreferencesDlg(wxWindow* parent, const Params& p)
         : wxDialog(parent, wxID_ANY, wxT("World Properties"),
                    wxDefaultPosition, wxDefaultSize,
                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+        , m_scriptBrowse(nullptr)
         , m_scrollback(nullptr)
+        , m_wrapColumn(nullptr)
         , m_bgColorPicker(nullptr)
+        , m_enableBeeps(nullptr)
     {
         wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
 
-        // ── Connection settings group ─────────────────────────────────────
-        {
-            wxStaticBoxSizer* connBox =
-                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Connection"));
-            wxFlexGridSizer* grid = new wxFlexGridSizer(3, 2, 6, 8);
-            grid->AddGrowableCol(1, 1);
+        // Helper: add a label+control pair to a flex grid
+        // (captured below per group, so we use a lambda that closes over grid)
 
-            auto addRow = [&](const wxString& label, wxWindow* ctrl) {
-                grid->Add(new wxStaticText(this, wxID_ANY, label),
-                          0, wxALIGN_CENTER_VERTICAL);
-                grid->Add(ctrl, 1, wxEXPAND);
+        // ── Connection settings ──────────────────────────────────────────
+        {
+            wxStaticBoxSizer* box =
+                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Connection"));
+            wxFlexGridSizer* g = new wxFlexGridSizer(3, 2, 6, 8);
+            g->AddGrowableCol(1, 1);
+
+            auto row = [&](const wxString& lbl, wxWindow* ctrl) {
+                g->Add(new wxStaticText(this, wxID_ANY, lbl),
+                       0, wxALIGN_CENTER_VERTICAL);
+                g->Add(ctrl, 1, wxEXPAND);
             };
 
-            m_name   = new wxTextCtrl(this, wxID_ANY, name,
-                                      wxDefaultPosition, wxSize(300, -1));
-            m_server = new wxTextCtrl(this, wxID_ANY, server,
-                                      wxDefaultPosition, wxSize(300, -1));
+            m_name   = new wxTextCtrl(this, wxID_ANY, p.name,
+                                      wxDefaultPosition, wxSize(340, -1));
+            m_server = new wxTextCtrl(this, wxID_ANY, p.server);
             m_port   = new wxSpinCtrl(this, wxID_ANY, wxEmptyString,
-                                      wxDefaultPosition, wxDefaultSize,
+                                      wxDefaultPosition, wxSize(90, -1),
                                       wxSP_ARROW_KEYS, 1, 65535,
-                                      port > 0 ? port : 23);
+                                      p.port > 0 ? p.port : 23);
+            row(wxT("World name:"),     m_name);
+            row(wxT("Server address:"), m_server);
+            row(wxT("Port:"),           m_port);
 
-            addRow(wxT("World name:"),     m_name);
-            addRow(wxT("Server address:"), m_server);
-            addRow(wxT("Port:"),           m_port);
-
-            connBox->Add(grid, 1, wxEXPAND | wxALL, 8);
-            vs->Add(connBox, 0, wxEXPAND | wxALL, 12);
+            box->Add(g, 1, wxEXPAND | wxALL, 8);
+            vs->Add(box, 0, wxEXPAND | wxALL, 12);
         }
 
-        // ── Display group ─────────────────────────────────────────────────
+        // ── Display ──────────────────────────────────────────────────────
         {
-            wxStaticBoxSizer* dispBox =
+            wxStaticBoxSizer* box =
                 new wxStaticBoxSizer(wxVERTICAL, this, wxT("Display"));
-            wxFlexGridSizer* dgrid = new wxFlexGridSizer(2, 2, 6, 8);
-            dgrid->AddGrowableCol(1, 1);
+            wxFlexGridSizer* g = new wxFlexGridSizer(2, 2, 6, 8);
+            g->AddGrowableCol(1, 1);
 
-            dgrid->Add(new wxStaticText(this, wxID_ANY, wxT("Output font:")),
+            auto row = [&](const wxString& lbl, wxWindow* ctrl) {
+                g->Add(new wxStaticText(this, wxID_ANY, lbl),
                        0, wxALIGN_CENTER_VERTICAL);
+                g->Add(ctrl, 1, wxEXPAND);
+            };
 
-            // Use the current pane font as the initial selection; fall back to
-            // a generic monospace font if none was provided.
-            wxFont initFont = currentFont.IsOk()
-                            ? currentFont
-                            : wxFont(12, wxFONTFAMILY_TELETYPE,
-                                     wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL);
+            wxFont initFont = p.currentFont.IsOk()
+                ? p.currentFont
+                : wxFont(12, wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL,
+                         wxFONTWEIGHT_NORMAL);
             m_fontPicker = new wxFontPickerCtrl(this, wxID_ANY, initFont,
                                                 wxDefaultPosition, wxDefaultSize,
                                                 wxFNTP_DEFAULT_STYLE);
-            dgrid->Add(m_fontPicker, 1, wxEXPAND);
+            row(wxT("Output font:"), m_fontPicker);
 
-            dgrid->Add(new wxStaticText(this, wxID_ANY, wxT("Background:")),
-                       0, wxALIGN_CENTER_VERTICAL);
-
-            // Background colour picker.  The initial colour comes from the doc's
-            // m_iBackgroundColour; we clamp NO_COLOUR (0xFFFFFFFF) to black.
-            wxColour initBg = bgColor.IsOk() ? bgColor : wxColour(0, 0, 0);
+            wxColour initBg = p.bgColor.IsOk() ? p.bgColor : wxColour(0, 0, 0);
             m_bgColorPicker = new wxColourPickerCtrl(this, wxID_ANY, initBg,
-                                                      wxDefaultPosition, wxDefaultSize,
-                                                      wxCLRP_DEFAULT_STYLE);
-            dgrid->Add(m_bgColorPicker, 0, wxALIGN_CENTER_VERTICAL);
+                                                     wxDefaultPosition, wxDefaultSize,
+                                                     wxCLRP_DEFAULT_STYLE);
+            // Place colour picker left-aligned (don't expand)
+            g->Add(new wxStaticText(this, wxID_ANY, wxT("Background:")),
+                   0, wxALIGN_CENTER_VERTICAL);
+            g->Add(m_bgColorPicker, 0, wxALIGN_CENTER_VERTICAL);
 
-            dispBox->Add(dgrid, 1, wxEXPAND | wxALL, 8);
-            vs->Add(dispBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+            box->Add(g, 1, wxEXPAND | wxALL, 8);
+            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
         }
 
-        // ── Options group ─────────────────────────────────────────────────
+        // ── Scripting ────────────────────────────────────────────────────
         {
-            wxStaticBoxSizer* optBox =
+            wxStaticBoxSizer* box =
+                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Scripting (Lua)"));
+            wxFlexGridSizer* g = new wxFlexGridSizer(2, 3, 6, 8);
+            g->AddGrowableCol(1, 1);
+
+            // Script file row: label | text field | Browse button
+            g->Add(new wxStaticText(this, wxID_ANY, wxT("Script file:")),
+                   0, wxALIGN_CENTER_VERTICAL);
+            m_scriptFile = new wxTextCtrl(this, wxID_ANY, p.scriptFile);
+            g->Add(m_scriptFile, 1, wxEXPAND);
+            m_scriptBrowse = new wxButton(this, wxID_ANY, wxT("Browse\xe2\x80\xa6"),
+                                          wxDefaultPosition, wxDefaultSize,
+                                          wxBU_EXACTFIT);
+            g->Add(m_scriptBrowse, 0, wxALIGN_CENTER_VERTICAL);
+
+            // Script prefix row: label | text field | empty spacer
+            g->Add(new wxStaticText(this, wxID_ANY, wxT("Script prefix:")),
+                   0, wxALIGN_CENTER_VERTICAL);
+            m_scriptPrefix = new wxTextCtrl(this, wxID_ANY, p.scriptPrefix,
+                                            wxDefaultPosition, wxSize(60, -1));
+            g->Add(m_scriptPrefix, 0);   // don't expand — prefix is short
+            g->AddSpacer(0);             // spacer in third column
+
+            box->Add(g, 1, wxEXPAND | wxALL, 8);
+
+            // Hint label below the grid.
+            wxStaticText* hint = new wxStaticText(this, wxID_ANY,
+                wxT("Leave script file empty for no scripting. ")
+                wxT("The prefix (e.g. \">\") lets you run Lua\n")
+                wxT("from the command bar by typing prefix+code."));
+            wxFont small = hint->GetFont();
+            small.SetPointSize(std::max(8, small.GetPointSize() - 1));
+            hint->SetFont(small);
+            box->Add(hint, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+        }
+
+        // ── Options ──────────────────────────────────────────────────────
+        {
+            wxStaticBoxSizer* box =
                 new wxStaticBoxSizer(wxVERTICAL, this, wxT("Options"));
 
             m_autoConnect = new wxCheckBox(this, wxID_ANY,
                                            wxT("Connect automatically when world opens"));
-            m_autoConnect->SetValue(autoConnect);
-            optBox->Add(m_autoConnect, 0, wxALL, 8);
+            m_autoConnect->SetValue(p.autoConnect);
+            box->Add(m_autoConnect, 0, wxALL, 8);
 
-            // Scrollback buffer size
-            wxBoxSizer* sbRow = new wxBoxSizer(wxHORIZONTAL);
-            sbRow->Add(new wxStaticText(this, wxID_ANY, wxT("Scrollback buffer:")),
+            m_enableBeeps = new wxCheckBox(this, wxID_ANY,
+                                           wxT("Enable beeps (BEL character)"));
+            m_enableBeeps->SetValue(p.enableBeeps);
+            box->Add(m_enableBeeps, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            // Two spinners on one row: scrollback + wrap column.
+            wxBoxSizer* spRow = new wxBoxSizer(wxHORIZONTAL);
+
+            spRow->Add(new wxStaticText(this, wxID_ANY, wxT("Scrollback:")),
                        0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
             m_scrollback = new wxSpinCtrl(this, wxID_ANY, wxEmptyString,
-                                          wxDefaultPosition, wxSize(90, -1),
-                                          wxSP_ARROW_KEYS,
-                                          100,     // minimum lines
-                                          50000,   // maximum lines
-                                          scrollbackLines > 0 ? scrollbackLines : 5000);
-            sbRow->Add(m_scrollback, 0, wxALIGN_CENTER_VERTICAL);
-            sbRow->Add(new wxStaticText(this, wxID_ANY, wxT("lines")),
-                       0, wxALIGN_CENTER_VERTICAL | wxLEFT, 6);
-            optBox->Add(sbRow, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+                                          wxDefaultPosition, wxSize(80, -1),
+                                          wxSP_ARROW_KEYS, 100, 50000,
+                                          p.scrollbackLines > 0 ? p.scrollbackLines : 5000);
+            spRow->Add(m_scrollback, 0, wxALIGN_CENTER_VERTICAL);
+            spRow->Add(new wxStaticText(this, wxID_ANY, wxT("lines")),
+                       0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, 6);
 
-            vs->Add(optBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+            spRow->Add(new wxStaticText(this, wxID_ANY, wxT("Wrap at column:")),
+                       0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+            m_wrapColumn = new wxSpinCtrl(this, wxID_ANY, wxEmptyString,
+                                          wxDefaultPosition, wxSize(70, -1),
+                                          wxSP_ARROW_KEYS, 20, 500,
+                                          p.wrapColumn > 0 ? p.wrapColumn : 80);
+            spRow->Add(m_wrapColumn, 0, wxALIGN_CENTER_VERTICAL);
+
+            box->Add(spRow, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
         }
 
         vs->Add(CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
@@ -1250,7 +1324,24 @@ public:
         };
         m_server->Bind(wxEVT_TEXT, updateOk);
         if (wxButton* ok = dynamic_cast<wxButton*>(FindWindowById(wxID_OK)))
-            ok->Enable(!server.IsEmpty());
+            ok->Enable(!p.server.IsEmpty());
+
+        // Browse button: open a file chooser for the Lua script.
+        m_scriptBrowse->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            wxString cur = m_scriptFile->GetValue();
+            wxString dir, file;
+            if (!cur.IsEmpty()) {
+                dir  = wxFileName(cur).GetPath();
+                file = wxFileName(cur).GetFullName();
+            }
+            wxFileDialog dlg(this,
+                             wxT("Choose Lua Script File"),
+                             dir, file,
+                             wxT("Lua files (*.lua)|*.lua|All files (*.*)|*.*"),
+                             wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+            if (dlg.ShowModal() == wxID_OK)
+                m_scriptFile->SetValue(dlg.GetPath());
+        });
     }
 };
 } // anonymous namespace
@@ -1274,27 +1365,30 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
         }
     }
 
-    // Read current values from the doc.
-    wxString name        = wxString::FromUTF8(static_cast<const char*>(doc->m_mush_name));
-    wxString server      = wxString::FromUTF8(static_cast<const char*>(doc->m_server));
-    int      port        = doc->m_port;
-    bool     autoConnect = (doc->m_connect_now != 0);
+    // Populate dialog parameters from the doc.
+    WorldPreferencesDlg::Params p;
+    p.name        = wxString::FromUTF8(static_cast<const char*>(doc->m_mush_name));
+    p.server      = wxString::FromUTF8(static_cast<const char*>(doc->m_server));
+    p.port        = doc->m_port;
+    p.autoConnect = (doc->m_connect_now != 0);
+    p.enableBeeps = (doc->m_enable_beeps != 0);
 
-    // Seed the font picker with the pane's current font (if available).
-    // Use GetCurrentFont() rather than GetFont() so we pick up the exact
-    // wxFont object (including the live point size after Ctrl+scroll zoom).
-    wxFont currentFont;
-    if (pane) currentFont = pane->GetCurrentFont();
+    // Font: use pane's live font (post Ctrl+scroll zoom) or fall back.
+    if (pane) p.currentFont = pane->GetCurrentFont();
 
-    // Seed the background colour picker.  Convert the COLORREF to wxColour;
-    // clamp NO_COLOUR (0xFFFFFFFF) to black (default).
-    unsigned long bgColorRef = doc->m_iBackgroundColour;
-    if (bgColorRef == 0xFFFFFFFFUL) bgColorRef = 0;
-    wxColour bgColor(GetRValue(bgColorRef), GetGValue(bgColorRef), GetBValue(bgColorRef));
+    // Background colour: clamp NO_COLOUR (0xFFFFFFFF) → black.
+    unsigned long bgRef = doc->m_iBackgroundColour;
+    if (bgRef == 0xFFFFFFFFUL) bgRef = 0;
+    p.bgColor = wxColour(GetRValue(bgRef), GetGValue(bgRef), GetBValue(bgRef));
 
-    int scrollbackLines = doc->m_maxlines > 0 ? (int)doc->m_maxlines : 5000;
-    WorldPreferencesDlg dlg(parent, name, server, port, autoConnect,
-                            currentFont, scrollbackLines, bgColor);
+    p.scrollbackLines = doc->m_maxlines > 0 ? (int)doc->m_maxlines : 5000;
+    p.wrapColumn      = doc->m_nWrapColumn  > 0 ? (int)doc->m_nWrapColumn : 80;
+
+    // Scripting
+    p.scriptFile   = wxString::FromUTF8(static_cast<const char*>(doc->m_strScriptFilename));
+    p.scriptPrefix = wxString::FromUTF8(static_cast<const char*>(doc->m_strScriptPrefix));
+
+    WorldPreferencesDlg dlg(parent, p);
     if (dlg.ShowModal() != wxID_OK)
         return false;
 
@@ -1303,29 +1397,25 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     doc->m_server      = CString(dlg.m_server->GetValue().ToUTF8().data());
     doc->m_port        = static_cast<unsigned short>(dlg.m_port->GetValue());
     doc->m_connect_now = dlg.m_autoConnect->GetValue() ? 1 : 0;
+    doc->m_enable_beeps = dlg.m_enableBeeps->GetValue() ? 1 : 0;
 
     // ── Apply font ────────────────────────────────────────────────────────
-    // Write back to the pane immediately so the change is visible at once.
-    // Also persist into the doc's LOGFONT fields so world-file save captures it.
     if (pane && dlg.m_fontPicker) {
         wxFont chosen = dlg.m_fontPicker->GetSelectedFont();
         if (chosen.IsOk()) {
             pane->SetOutputFont(chosen);
 
-            // Persist into the doc so Ctrl+S saves the new font.
             std::string face = chosen.GetFaceName().ToUTF8().data();
             doc->m_font_name   = CString(face.c_str());
             // Convert wx points → LOGFONT negative-pixel convention at 96 DPI.
             doc->m_font_height = -(chosen.GetPointSize() * 96 / 72);
             doc->m_font_weight = (chosen.GetWeight() >= wxFONTWEIGHT_BOLD)
                                  ? 700 : 400;
-
-            // Notify the doc that grid metrics may have changed so NAWS is resent.
             if (childFrame) childFrame->TriggerNAWS();
         }
     }
 
-    // ── Apply scrollback buffer size ─────────────────────────────────────────
+    // ── Apply scrollback buffer size ─────────────────────────────────────
     if (dlg.m_scrollback) {
         int newMax = dlg.m_scrollback->GetValue();
         if (newMax != (int)doc->m_maxlines) {
@@ -1334,16 +1424,49 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
         }
     }
 
-    // ── Apply background colour ───────────────────────────────────────────────
+    // ── Apply wrap column ─────────────────────────────────────────────────
+    // m_nWrapColumn governs where the engine word-wraps incoming text.
+    // Also update m_gui_cols so the value reported to NAWS stays consistent.
+    if (dlg.m_wrapColumn) {
+        int newWrap = dlg.m_wrapColumn->GetValue();
+        if (newWrap != (int)doc->m_nWrapColumn) {
+            doc->m_nWrapColumn = (unsigned short)newWrap;
+            doc->m_gui_cols    = newWrap;
+            if (childFrame) childFrame->TriggerNAWS();
+        }
+    }
+
+    // ── Apply background colour ───────────────────────────────────────────
     if (dlg.m_bgColorPicker) {
         wxColour chosen = dlg.m_bgColorPicker->GetColour();
         unsigned long newBg = RGB(chosen.Red(), chosen.Green(), chosen.Blue());
-        // Only apply if the colour actually changed.
         unsigned long curBg = doc->m_iBackgroundColour;
         if (curBg == 0xFFFFFFFFUL) curBg = 0;
         if (newBg != curBg) {
             doc->m_iBackgroundColour = newBg;
             if (childFrame) childFrame->ApplyPaneBackground(newBg);
+        }
+    }
+
+    // ── Apply scripting settings ──────────────────────────────────────────
+    // Script prefix is always safe to set in place.
+    doc->m_strScriptPrefix = CString(dlg.m_scriptPrefix->GetValue().ToUTF8().data());
+
+    // Script file: if changed, reload the script engine.
+    // Use the same DisableScripting/CreateScriptEngine path as
+    // CMUSHclientDoc::OnGameReloadScriptFile so all cleanup runs correctly.
+    {
+        CString newFile(dlg.m_scriptFile->GetValue().ToUTF8().data());
+        if (newFile != doc->m_strScriptFilename) {
+            doc->m_strScriptFilename = newFile;
+            // Language is always Lua on non-Windows.
+            if (newFile.IsEmpty())
+                doc->DisableScripting();
+            else {
+                doc->m_strLanguage = CString("Lua");
+                doc->DisableScripting();
+                doc->CreateScriptEngine();
+            }
         }
     }
 
@@ -1354,7 +1477,7 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     if (doc->m_iConnectPhase == eConnectConnectedToMud) {
         wxMessageBox(
             wxT("World properties updated.\n\n")
-            wxT("Font changes take effect immediately.\n")
+            wxT("Font and scripting changes take effect immediately.\n")
             wxT("Changes to server address and port will take effect\n")
             wxT("the next time you reconnect."),
             wxT("World Properties"),

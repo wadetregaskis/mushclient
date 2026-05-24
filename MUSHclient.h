@@ -7,7 +7,7 @@
 	#error include 'stdafx.h' before including this file for PCH
 #endif
 
-#include "othertypes.h"
+#include "OtherTypes.h"
 #include "resource.h"       // resource IDs (pure #defines, platform-independent)
 
 #ifdef _WIN32

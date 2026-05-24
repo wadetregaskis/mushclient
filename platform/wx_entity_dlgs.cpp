@@ -193,7 +193,7 @@ private:
         if (match.IsEmpty()) {
             wxMessageBox("Match pattern cannot be empty.", "Error", wxICON_ERROR, this); return;
         }
-        if (CheckObjectName(label) != eOK) {
+        if (m_pDoc->CheckObjectName(label) != eOK) {
             wxMessageBox("Label contains invalid characters.", "Error", wxICON_ERROR, this); return;
         }
 
@@ -375,7 +375,7 @@ private:
         if (match.IsEmpty()) {
             wxMessageBox("Match pattern cannot be empty.", "Error", wxICON_ERROR, this); return;
         }
-        if (CheckObjectName(label) != eOK) {
+        if (m_pDoc->CheckObjectName(label) != eOK) {
             wxMessageBox("Label contains invalid characters.", "Error", wxICON_ERROR, this); return;
         }
 
@@ -560,7 +560,7 @@ private:
         if (label.IsEmpty()) {
             wxMessageBox("Label cannot be empty.", "Error", wxICON_ERROR, this); return;
         }
-        if (CheckObjectName(label) != eOK) {
+        if (m_pDoc->CheckObjectName(label) != eOK) {
             wxMessageBox("Label contains invalid characters.", "Error", wxICON_ERROR, this); return;
         }
 
@@ -1020,7 +1020,7 @@ private:
             wxMessageBox("Name cannot be empty.", "Error", wxICON_ERROR, this);
             return;
         }
-        if (CheckObjectName(name) != eOK) {
+        if (m_pDoc->CheckObjectName(name) != eOK) {
             wxMessageBox("Name contains invalid characters.", "Error",
                          wxICON_ERROR, this);
             return;

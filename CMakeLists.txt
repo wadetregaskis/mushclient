@@ -768,6 +768,7 @@ if(NOT WIN32)
             # GUI widgets (wx headers first, then MUSHclient headers)
             platform/wx_outputpane.cpp
             platform/wx_world_child.cpp
+            platform/wx_entity_dlgs.cpp
         )
         # mushgui links mushapp (full MUSHclient engine with doc.cpp, dialogs,
         # scripting, etc.) rather than the portable mushcore stub.

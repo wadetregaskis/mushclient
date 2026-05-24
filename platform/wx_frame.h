@@ -79,6 +79,9 @@ private:
     void OnMenuRecentWorld(wxCommandEvent& evt);  // one of the MRU entries
     void OnMenuReconnect(wxCommandEvent& evt);
     void OnMenuCloseWorld(wxCommandEvent& evt);
+    void OnMenuTriggers(wxCommandEvent& evt);
+    void OnMenuAliases(wxCommandEvent& evt);
+    void OnMenuTimers(wxCommandEvent& evt);
 
     wxDECLARE_EVENT_TABLE();
 };

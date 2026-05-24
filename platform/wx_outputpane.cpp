@@ -428,7 +428,7 @@ void COutputPane::SetSelectionRange(int startLine, int endLine,
     int el = std::max(0, std::min(n - 1, endLine   - 1));
 
     // Column 0 in the API means "start / end of line".
-    int lineLen = [&](int li) {
+    auto lineLen = [&](int li) {
         int len = 0;
         for (const auto& run : m_lines[li]) len += UTF8CharLen(run.text);
         return len;
@@ -1658,7 +1658,7 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
     // Only forward when no modifier is held (Ctrl/Alt combos are shortcuts).
     if (!evt.ControlDown() && !evt.AltDown() && !evt.MetaDown()) {
         wxChar ch = (wxChar)evt.GetUnicodeKey();
-        if (ch != WXK_NONE && wxIsPrint(ch)) {
+        if (ch != WXK_NONE && wxIsprint(ch)) {
             if (m_fn_key_to_input) { m_fn_key_to_input(ch); return; }
         }
     }

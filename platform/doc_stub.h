@@ -1584,6 +1584,10 @@ public:
     CString        m_strScriptFilename;  // external .lua file (world attribute)
     CString        m_strScript;          // accumulated inline <script> content
 
+    // ── Shift+Tab completion items ────────────────────────────────────
+    set<string>    m_ExtraShiftTabCompleteItems;
+    bool           m_bTabCompleteFunctions = false;
+
     // ── Timer enable ───────────────────────────────────────────────────
     unsigned short m_bEnableTimers = 1;
 

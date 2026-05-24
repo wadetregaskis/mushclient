@@ -15,6 +15,7 @@
 // ── wxWidgets ─────────────────────────────────────────────────────────────
 #include <wx/wx.h>
 #include <wx/mdi.h>
+#include <wx/config.h>     // wxConfig
 #include <wx/spinctrl.h>
 #include <wx/filename.h>
 #include <wx/fontpicker.h>
@@ -733,7 +734,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         } else if (id == 32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/) {
             if (CMUSHclientDoc* doc = activeDoc()) {
                 if (doc->m_bEnableScripts || !doc->m_strScriptFilename.IsEmpty()) {
-                    doc->OnGameReloadScriptFile();
+                    doc->DisableScripting();
+                    doc->CreateScriptEngine();
                     if (s_statusBar)
                         s_statusBar->SetStatusText(wxT("Script reloaded."));
                 } else {
@@ -1223,10 +1225,10 @@ public:
         : wxDialog(parent, wxID_ANY, wxT("World Properties"),
                    wxDefaultPosition, wxDefaultSize,
                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+        , m_bgColorPicker(nullptr)
         , m_scriptBrowse(nullptr)
         , m_scrollback(nullptr)
         , m_wrapColumn(nullptr)
-        , m_bgColorPicker(nullptr)
         , m_enableBeeps(nullptr)
     {
         wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);

@@ -64,9 +64,13 @@ static const int  kMaxRecentWorlds = 10;
 static const int  kRecentMenuBase  = wxID_HIGHEST + 300;
 
 // ── Configure menu IDs ────────────────────────────────────────────────────────
-static const int ID_MENU_CFG_TRIGGERS = wxID_HIGHEST + 400;
-static const int ID_MENU_CFG_ALIASES  = wxID_HIGHEST + 401;
-static const int ID_MENU_CFG_TIMERS   = wxID_HIGHEST + 402;
+static const int ID_MENU_CFG_TRIGGERS  = wxID_HIGHEST + 400;
+static const int ID_MENU_CFG_ALIASES   = wxID_HIGHEST + 401;
+static const int ID_MENU_CFG_TIMERS    = wxID_HIGHEST + 402;
+static const int ID_MENU_CFG_VARIABLES = wxID_HIGHEST + 403;
+
+// ── Connection / logging IDs ──────────────────────────────────────────────────
+static const int ID_CONN_LOG_TOGGLE = wxID_HIGHEST + 410;
 static wxMenu*    s_recentMenu     = nullptr;
 static std::vector<std::string> s_recentWorlds;
 
@@ -494,6 +498,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     connMenu->Append(32239 /*ID_CONNECTION_CONNECT*/,    wxT("Connect"));
     connMenu->Append(0xE200,                    wxT("Disconnect"));
     connMenu->Append(0xE201,                    wxT("Reconnect\tCtrl+Shift+R"));
+    connMenu->AppendSeparator();
+    connMenu->Append(ID_CONN_LOG_TOGGLE,        wxT("Start &Logging…"));
     mb->Append(connMenu, wxT("&Connection"));
 
     wxMenu* gameMenu = new wxMenu();
@@ -504,9 +510,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
 
     // ── Configure menu ────────────────────────────────────────────────────
     wxMenu* cfgMenu = new wxMenu();
-    cfgMenu->Append(ID_MENU_CFG_TRIGGERS, wxT("&Triggers…\tCtrl+T"));
-    cfgMenu->Append(ID_MENU_CFG_ALIASES,  wxT("&Aliases…\tCtrl+Shift+A"));
-    cfgMenu->Append(ID_MENU_CFG_TIMERS,   wxT("T&imers…\tCtrl+Shift+I"));
+    cfgMenu->Append(ID_MENU_CFG_TRIGGERS,  wxT("&Triggers…\tCtrl+T"));
+    cfgMenu->Append(ID_MENU_CFG_ALIASES,   wxT("&Aliases…\tCtrl+Shift+A"));
+    cfgMenu->Append(ID_MENU_CFG_TIMERS,    wxT("T&imers…\tCtrl+Shift+I"));
+    cfgMenu->AppendSeparator();
+    cfgMenu->Append(ID_MENU_CFG_VARIABLES, wxT("&Variables…\tCtrl+Shift+V"));
     mb->Append(cfgMenu, wxT("&Configure"));
 
     // ── Window menu ───────────────────────────────────────────────────────
@@ -607,11 +615,19 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         } else if (id == wxID_SAVE || id == wxID_SAVEAS ||
                    id == wxID_CLOSE ||
                    id == 32158 /*ID_GAME_PREFERENCES*/ ||
-                   id == ID_MENU_CFG_TRIGGERS ||
-                   id == ID_MENU_CFG_ALIASES  ||
-                   id == ID_MENU_CFG_TIMERS) {
+                   id == ID_MENU_CFG_TRIGGERS  ||
+                   id == ID_MENU_CFG_ALIASES   ||
+                   id == ID_MENU_CFG_TIMERS    ||
+                   id == ID_MENU_CFG_VARIABLES) {
             // Need an active world.
             evt.Enable(doc != nullptr);
+        } else if (id == ID_CONN_LOG_TOGGLE) {
+            // Need an active world; label flips between Start/Stop.
+            evt.Enable(doc != nullptr);
+            if (doc) {
+                bool logging = (doc->m_logfile != nullptr);
+                evt.SetText(logging ? wxT("Stop &Logging") : wxT("Start &Logging…"));
+            }
         } else {
             evt.Skip();  // default behaviour for all other items
         }
@@ -756,6 +772,42 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             if (CMUSHclientDoc* doc = activeDoc()) {
                 CTimerListDlg dlg(frame, doc);
                 dlg.ShowModal();
+            }
+        } else if (id == ID_MENU_CFG_VARIABLES) {
+            if (CMUSHclientDoc* doc = activeDoc()) {
+                CVariableListDlg dlg(frame, doc);
+                dlg.ShowModal();
+            }
+        } else if (id == ID_CONN_LOG_TOGGLE) {
+            CMUSHclientDoc* doc = activeDoc();
+            if (!doc) { evt.Skip(); return; }
+            if (doc->m_logfile) {
+                // Stop logging.
+                fclose(doc->m_logfile);
+                doc->m_logfile = nullptr;
+                if (s_statusBar)
+                    s_statusBar->SetStatusText(wxT("Logging stopped."));
+            } else {
+                // Start logging — ask for a file.
+                wxString defaultName = wxString::FromUTF8(
+                    static_cast<const char*>(doc->m_strAutoLogFileName));
+                wxFileDialog dlg(frame,
+                                 wxT("Log to File"),
+                                 wxEmptyString, defaultName,
+                                 wxT("Log files (*.log;*.txt)|*.log;*.txt|All files (*.*)|*.*"),
+                                 wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+                if (dlg.ShowModal() != wxID_OK) return;
+                wxString path = dlg.GetPath();
+                doc->m_logfile_name = CString(path.ToUTF8().data());
+                doc->m_logfile = fopen(static_cast<const char*>(doc->m_logfile_name), "a+");
+                if (!doc->m_logfile) {
+                    wxMessageBox(wxT("Could not open log file:\n") + path,
+                                 wxT("Logging Error"), wxOK | wxICON_ERROR, frame);
+                } else {
+                    if (s_statusBar)
+                        s_statusBar->SetStatusText(
+                            wxT("Logging to: ") + path);
+                }
             }
         } else {
             evt.Skip();

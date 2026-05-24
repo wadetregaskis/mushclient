@@ -620,7 +620,9 @@ private:
 // ─────────────────────────────────────────────────────────────────────────────
 
 enum {
-    ID_TRIG_ADD = wxID_HIGHEST + 300,
+    // Base at +500 — avoids clash with kRecentMenuBase (+300) in wx_mfc_impl.cpp
+    // and ID_MENU_CFG_* (+400..403).
+    ID_TRIG_ADD  = wxID_HIGHEST + 500,
     ID_TRIG_EDIT,
     ID_TRIG_DEL,
     ID_ALIAS_ADD,
@@ -629,6 +631,9 @@ enum {
     ID_TIMER_ADD,
     ID_TIMER_EDIT,
     ID_TIMER_DEL,
+    ID_VAR_ADD,
+    ID_VAR_EDIT,
+    ID_VAR_DEL,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -949,6 +954,207 @@ void CTimerListDlg::OnItemActivated(wxListEvent& evt)
 {
     CTimer* t = (CTimer*)evt.GetData();
     CTimerEditDlg dlg(this, m_pDoc, t);
+    if (dlg.ShowModal() == wxID_OK) Populate();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── Variable edit dialog ──────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+class CVariableEditDlg : public wxDialog
+{
+public:
+    // Pass nullptr for pVar to create a new variable; non-null to edit.
+    CVariableEditDlg(wxWindow* parent, CMUSHclientDoc* pDoc,
+                     CVariable* pVar = nullptr)
+        : wxDialog(parent, wxID_ANY,
+                   pVar ? "Edit Variable" : "Add Variable",
+                   wxDefaultPosition, wxDefaultSize,
+                   wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+        , m_pDoc(pDoc), m_pVar(pVar)
+    {
+        auto* top  = new wxBoxSizer(wxVERTICAL);
+        auto* grid = new wxFlexGridSizer(2, wxSize(6, 4));
+        grid->AddGrowableCol(1, 1);
+
+        auto addRow = [&](const wxString& lbl, wxWindow* w) {
+            grid->Add(new wxStaticText(this, wxID_ANY, lbl),
+                      0, wxALIGN_CENTER_VERTICAL);
+            grid->Add(w, 1, wxEXPAND);
+        };
+
+        m_name  = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxSize(340, -1));
+        m_value = new wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition,
+                                  wxSize(340, 80), wxTE_MULTILINE);
+
+        addRow("Name:",  m_name);
+        addRow("Value:", m_value);
+
+        top->Add(grid, 1, wxEXPAND | wxALL, 8);
+        top->Add(CreateButtonSizer(wxOK | wxCANCEL), 0,
+                 wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+        SetSizerAndFit(top);
+        SetMinSize(wxSize(380, -1));
+
+        if (m_pVar) {
+            m_name ->SetValue(cs2wx(m_pVar->strLabel));
+            m_value->SetValue(cs2wx(m_pVar->strContents));
+        }
+
+        Bind(wxEVT_BUTTON, &CVariableEditDlg::OnOK, this, wxID_OK);
+    }
+
+    wxString m_resultName;
+
+private:
+    CMUSHclientDoc* m_pDoc;
+    CVariable*      m_pVar;
+    wxTextCtrl*     m_name;
+    wxTextCtrl*     m_value;
+
+    void OnOK(wxCommandEvent&)
+    {
+        CString name = wx2cs(m_name->GetValue().Trim());
+        if (name.IsEmpty()) {
+            wxMessageBox("Name cannot be empty.", "Error", wxICON_ERROR, this);
+            return;
+        }
+        if (CheckObjectName(name) != eOK) {
+            wxMessageBox("Name contains invalid characters.", "Error",
+                         wxICON_ERROR, this);
+            return;
+        }
+
+        bool nameChanged = !m_pVar ||
+                           (name.CompareNoCase(m_pVar->strLabel) != 0);
+        CVariable* existing = nullptr;
+        if (nameChanged && m_pDoc->GetVariableMap().Lookup(name, existing)) {
+            wxMessageBox("A variable with that name already exists.", "Error",
+                         wxICON_ERROR, this);
+            return;
+        }
+
+        CVariable* v = m_pVar;
+        if (v) {
+            if (nameChanged)
+                m_pDoc->GetVariableMap().RemoveKey(m_pVar->strLabel);
+        } else {
+            v = new CVariable();
+            m_pVar = v;
+        }
+
+        v->strLabel    = name;
+        v->strContents = wx2cs(m_value->GetValue());
+
+        m_pDoc->GetVariableMap().SetAt(name, v);
+
+        m_resultName = cs2wx(name);
+        EndModal(wxID_OK);
+    }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── CVariableListDlg ──────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+wxBEGIN_EVENT_TABLE(CVariableListDlg, wxDialog)
+    EVT_BUTTON(ID_VAR_ADD,             CVariableListDlg::OnAdd)
+    EVT_BUTTON(ID_VAR_EDIT,            CVariableListDlg::OnEdit)
+    EVT_BUTTON(ID_VAR_DEL,             CVariableListDlg::OnDelete)
+    EVT_LIST_ITEM_ACTIVATED(wxID_ANY,  CVariableListDlg::OnItemActivated)
+wxEND_EVENT_TABLE()
+
+CVariableListDlg::CVariableListDlg(wxWindow* parent, CMUSHclientDoc* pDoc)
+    : wxDialog(parent, wxID_ANY, "Variables",
+               wxDefaultPosition, wxSize(620, 400),
+               wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+    , m_pDoc(pDoc)
+{
+    auto* top = new wxBoxSizer(wxVERTICAL);
+
+    m_list = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                             wxLC_REPORT | wxLC_SINGLE_SEL | wxLC_HRULES);
+    m_list->AppendColumn("Name",  wxLIST_FORMAT_LEFT, 200);
+    m_list->AppendColumn("Value", wxLIST_FORMAT_LEFT, 360);
+
+    top->Add(m_list, 1, wxEXPAND | wxALL, 8);
+
+    auto* btnRow = new wxBoxSizer(wxHORIZONTAL);
+    btnRow->Add(new wxButton(this, ID_VAR_ADD,  "Add"),    0, wxRIGHT, 4);
+    btnRow->Add(new wxButton(this, ID_VAR_EDIT, "Edit"),   0, wxRIGHT, 4);
+    btnRow->Add(new wxButton(this, ID_VAR_DEL,  "Delete"), 0, wxRIGHT, 4);
+    btnRow->AddStretchSpacer();
+    btnRow->Add(new wxButton(this, wxID_CLOSE, "Close"), 0);
+    top->Add(btnRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+    SetSizer(top);
+    Bind(wxEVT_BUTTON, [this](wxCommandEvent&){ Close(); }, wxID_CLOSE);
+    Populate();
+}
+
+void CVariableListDlg::Populate()
+{
+    m_list->DeleteAllItems();
+
+    struct Row { CString name; CVariable* v; };
+    std::vector<Row> rows;
+    CVariableMap& map = m_pDoc->GetVariableMap();
+    CString key; CVariable* v;
+    for (POSITION pos = map.GetStartPosition(); pos; )
+        map.GetNextAssoc(pos, key, v), rows.push_back({key, v});
+
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+        return a.name.CompareNoCase(b.name) < 0;
+    });
+
+    long i = 0;
+    for (auto& r : rows) {
+        m_list->InsertItem(i, cs2wx(r.v->strLabel));
+        // Truncate long values in the list display (full value shown in edit dlg).
+        wxString val = cs2wx(r.v->strContents);
+        if (val.length() > 120) val = val.Left(117) + "...";
+        // Replace newlines so multi-line values show on one row.
+        val.Replace("\n", "↵");
+        val.Replace("\r", "");
+        m_list->SetItem(i, 1, val);
+        m_list->SetItemData(i, (wxUIntPtr)r.v);
+        ++i;
+    }
+}
+
+void CVariableListDlg::OnAdd(wxCommandEvent&)
+{
+    CVariableEditDlg dlg(this, m_pDoc);
+    if (dlg.ShowModal() == wxID_OK) Populate();
+}
+
+void CVariableListDlg::OnEdit(wxCommandEvent&)
+{
+    long sel = m_list->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
+    if (sel < 0) { wxMessageBox("Select a variable first.", "Edit"); return; }
+    CVariable* v = (CVariable*)m_list->GetItemData(sel);
+    CVariableEditDlg dlg(this, m_pDoc, v);
+    if (dlg.ShowModal() == wxID_OK) Populate();
+}
+
+void CVariableListDlg::OnDelete(wxCommandEvent&)
+{
+    long sel = m_list->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
+    if (sel < 0) { wxMessageBox("Select a variable first.", "Delete"); return; }
+    CVariable* v = (CVariable*)m_list->GetItemData(sel);
+    if (wxMessageBox(wxString::Format("Delete variable '%s'?", cs2wx(v->strLabel)),
+                     "Confirm Delete", wxYES_NO | wxICON_QUESTION, this) != wxYES)
+        return;
+    m_pDoc->GetVariableMap().RemoveKey(v->strLabel);
+    delete v;
+    Populate();
+}
+
+void CVariableListDlg::OnItemActivated(wxListEvent& evt)
+{
+    CVariable* v = (CVariable*)evt.GetData();
+    CVariableEditDlg dlg(this, m_pDoc, v);
     if (dlg.ShowModal() == wxID_OK) Populate();
 }
 

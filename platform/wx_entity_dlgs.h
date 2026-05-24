@@ -1,10 +1,11 @@
 #pragma once
-// platform/wx_entity_dlgs.h — Trigger / Alias / Timer editor dialogs (wxWidgets)
+// platform/wx_entity_dlgs.h — Trigger / Alias / Timer / Variable editor dialogs (wxWidgets)
 //
-// Three list dialogs, each opening a per-item edit subdialog:
-//   CTriggerListDlg   — Edit > Triggers…
-//   CAliasListDlg     — Edit > Aliases…
-//   CTimerListDlg     — Edit > Timers…
+// List dialogs, each opening a per-item edit subdialog:
+//   CTriggerListDlg   — Configure > Triggers…
+//   CAliasListDlg     — Configure > Aliases…
+//   CTimerListDlg     — Configure > Timers…
+//   CVariableListDlg  — Configure > Variables…
 //
 // All dialogs take a raw CMUSHclientDoc* and manipulate the maps directly.
 
@@ -65,6 +66,27 @@ class CTimerListDlg : public wxDialog
 {
 public:
     CTimerListDlg(wxWindow* parent, CMUSHclientDoc* pDoc);
+
+private:
+    CMUSHclientDoc* m_pDoc;
+    wxListCtrl*     m_list;
+
+    void Populate();
+    void OnAdd(wxCommandEvent&);
+    void OnEdit(wxCommandEvent&);
+    void OnDelete(wxCommandEvent&);
+    void OnItemActivated(wxListEvent&);
+
+    wxDECLARE_EVENT_TABLE();
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CVariableListDlg
+// ─────────────────────────────────────────────────────────────────────────────
+class CVariableListDlg : public wxDialog
+{
+public:
+    CVariableListDlg(wxWindow* parent, CMUSHclientDoc* pDoc);
 
 private:
     CMUSHclientDoc* m_pDoc;

@@ -26,7 +26,7 @@
 #include "doc.h"              // CMUSHclientDoc: GetTriggerMap, SortTriggers, …
 #include "flags.h"            // eEnabled, eIgnoreCase, eTriggerRegularExpression, …
 #include "regexp.h"           // t_regexp, regcomp
-#include "mcpcre/pcre.h"      // PCRE_CASELESS
+#include "pcre/pcre.h"        // PCRE_CASELESS
 #include "scripting/errors.h" // eOK
 
 #include "platform/wx_entity_dlgs.h"

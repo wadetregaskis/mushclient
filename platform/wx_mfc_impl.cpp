@@ -33,6 +33,7 @@
 #include "mainfrm.h"       // CMainFrame full definition
 #include "doc.h"           // CMUSHclientDoc (needed for hook_new_world)
 #include "platform/wx_world_child.h"  // CWorldChildFrame
+#include "platform/wx_entity_dlgs.h" // CTriggerListDlg, CAliasListDlg, CTimerListDlg
 
 // Hook pointer definitions live in platform/wx_mfc_hooks_storage.cpp (compiled
 // into both mushcore and mushapp) so that mushcli and tests can link without
@@ -61,6 +62,11 @@ static void world_list_remove(const std::string& path);
 
 static const int  kMaxRecentWorlds = 10;
 static const int  kRecentMenuBase  = wxID_HIGHEST + 300;
+
+// ── Configure menu IDs ────────────────────────────────────────────────────────
+static const int ID_MENU_CFG_TRIGGERS = wxID_HIGHEST + 400;
+static const int ID_MENU_CFG_ALIASES  = wxID_HIGHEST + 401;
+static const int ID_MENU_CFG_TIMERS   = wxID_HIGHEST + 402;
 static wxMenu*    s_recentMenu     = nullptr;
 static std::vector<std::string> s_recentWorlds;
 
@@ -496,6 +502,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->Append(32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/, wxT("Reload Script"));
     mb->Append(gameMenu, wxT("&Game"));
 
+    // ── Configure menu ────────────────────────────────────────────────────
+    wxMenu* cfgMenu = new wxMenu();
+    cfgMenu->Append(ID_MENU_CFG_TRIGGERS, wxT("&Triggers…\tCtrl+T"));
+    cfgMenu->Append(ID_MENU_CFG_ALIASES,  wxT("&Aliases…\tCtrl+Shift+A"));
+    cfgMenu->Append(ID_MENU_CFG_TIMERS,   wxT("T&imers…\tCtrl+Shift+I"));
+    mb->Append(cfgMenu, wxT("&Configure"));
+
     // ── Window menu ───────────────────────────────────────────────────────
     // wxMDIParentFrame recognises a menu named exactly "&Window" and populates
     // it automatically with the list of open child frames on macOS/GTK.
@@ -593,7 +606,10 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             evt.Enable(doc && doc->m_iConnectPhase == eConnectNotConnected);
         } else if (id == wxID_SAVE || id == wxID_SAVEAS ||
                    id == wxID_CLOSE ||
-                   id == 32158 /*ID_GAME_PREFERENCES*/) {
+                   id == 32158 /*ID_GAME_PREFERENCES*/ ||
+                   id == ID_MENU_CFG_TRIGGERS ||
+                   id == ID_MENU_CFG_ALIASES  ||
+                   id == ID_MENU_CFG_TIMERS) {
             // Need an active world.
             evt.Enable(doc != nullptr);
         } else {
@@ -726,6 +742,21 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             int idx = id - kRecentMenuBase;
             if (idx < (int)s_recentWorlds.size())
                 hook_open_world_file(s_recentWorlds[idx].c_str());
+        } else if (id == ID_MENU_CFG_TRIGGERS) {
+            if (CMUSHclientDoc* doc = activeDoc()) {
+                CTriggerListDlg dlg(frame, doc);
+                dlg.ShowModal();
+            }
+        } else if (id == ID_MENU_CFG_ALIASES) {
+            if (CMUSHclientDoc* doc = activeDoc()) {
+                CAliasListDlg dlg(frame, doc);
+                dlg.ShowModal();
+            }
+        } else if (id == ID_MENU_CFG_TIMERS) {
+            if (CMUSHclientDoc* doc = activeDoc()) {
+                CTimerListDlg dlg(frame, doc);
+                dlg.ShowModal();
+            }
         } else {
             evt.Skip();
         }

@@ -10,6 +10,7 @@
 #include <wx/wx.h>
 #include <wx/mdi.h>
 #include <wx/config.h>
+#include <wx/clipbrd.h>   // wxTheClipboard, wxTextDataObject, wxDF_TEXT
 #include <string>
 
 // ── MUSHclient headers ────────────────────────────────────────────────────
@@ -900,7 +901,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // Equivalent to CMUSHView::Send_Mouse_Event_To_Plugin() but uses wxWidgets
     // key-state APIs instead of GetKeyState(VK_*).
     auto send_mw_event =
-        [this](CMUSHclientDoc* pDoc, DISPID& dispid,
+        [](CMUSHclientDoc* pDoc, DISPID& dispid,
                const std::string& pluginId, const std::string& routine,
                const std::string& hotspotId, long flags)
     {

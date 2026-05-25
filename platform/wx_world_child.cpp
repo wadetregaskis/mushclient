@@ -1419,7 +1419,7 @@ void CWorldChildFrame::UpdateInputBarColors()
     wxColour inputFg = (luma < 128) ? wxColour(220, 220, 220) : wxColour(20, 20, 20);
     wxColour inputBg = wxColour(r, g, b);
     for (wxTextCtrl* inp : {m_input, m_inputPassword}) {
-        if (!inp) continue;
+        if (!inp || !inp->GetHandle()) continue;  // skip if platform window not yet realized
         inp->SetForegroundColour(inputFg);
         inp->SetBackgroundColour(inputBg);
         inp->Refresh();

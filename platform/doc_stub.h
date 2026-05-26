@@ -1870,6 +1870,9 @@ public:
     bool    SeeIfHandlerCanExecute(const CString& strName);
     CScriptEngine* GetScriptEngine();
     long    ShiftTabCompleteItem(LPCTSTR Item);
+    // Shift+Tab completion — populated by world.ShiftTabCompleteItem() Lua API.
+    std::set<std::string> m_ExtraShiftTabCompleteItems;
+    bool                  m_bTabCompleteFunctions = false;
     bool    ExecuteScript(DISPID& dispid, const char* szProcedure,
                           const unsigned short iReason,
                           const char* szType, const char* szReason,

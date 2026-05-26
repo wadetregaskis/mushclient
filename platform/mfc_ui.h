@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <unistd.h>   // readlink, ssize_t, realpath
 #include <stdlib.h>   // realpath, free()
+#include <sys/stat.h> // stat() — used by CFile::GetStatus
 #if defined(__APPLE__)
 #  include <mach-o/dyld.h>  // _NSGetExecutablePath
 #endif
@@ -2297,8 +2298,21 @@ public:
 };
 #endif
 
-// ── CFileStatus forward declaration ───────────────────────────────────────
-struct CFileStatus;  // fully defined in the new constants block below
+// ── CFileStatus ────────────────────────────────────────────────────────────
+// Defined here (before CFile) so CFile::GetStatus can populate it inline.
+// The duplicate guard at the bottom of the file keeps it idempotent.
+#ifndef CFileStatus_defined
+#define CFileStatus_defined
+struct CFileStatus {
+    CTime    m_ctime;
+    CTime    m_mtime;
+    CTime    m_atime;
+    LONG     m_size      = 0;
+    BYTE     m_attribute = 0;
+    BYTE     _m_padding  = 0;
+    TCHAR    m_szFullName[_MAX_PATH] = {};
+};
+#endif
 
 // ── CFile ─────────────────────────────────────────────────────────────────
 class CFile {
@@ -2417,7 +2431,21 @@ public:
 
     static bool Rename(LPCTSTR from, LPCTSTR to) { return ::rename(from, to) == 0; }
     static bool Remove(LPCTSTR path) { return ::remove(path) == 0; }
-    static bool GetStatus(LPCTSTR, CFileStatus&) { return false; }
+
+    // Populate a CFileStatus from POSIX stat().  Returns true on success.
+    static bool GetStatus(LPCTSTR path, CFileStatus& st) {
+        struct ::stat s;
+        if (!path || ::stat(path, &s) != 0) return false;
+        st.m_ctime = CTime((time_t)s.st_ctime);
+        st.m_mtime = CTime((time_t)s.st_mtime);
+        st.m_atime = CTime((time_t)s.st_atime);
+        st.m_size  = (LONG)s.st_size;
+        st.m_attribute = S_ISDIR(s.st_mode) ? 0x10 :
+                         !(s.st_mode & S_IWUSR) ? 0x01 : 0x00;
+        strncpy(st.m_szFullName, path, _MAX_PATH - 1);
+        st.m_szFullName[_MAX_PATH - 1] = '\0';
+        return true;
+    }
     static bool GetStatus(LPCTSTR, void*) { return false; }
 };
 

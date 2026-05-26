@@ -1382,6 +1382,11 @@ pCmdUI->Enable ();
 // cancels any sound currently playing
 void CMainFrame::CancelSound (void)
   {
+#ifndef _WIN32
+  // On non-Windows, delegate to the wxWidgets sound hook.
+  if (g_wxhook_stop_sound) g_wxhook_stop_sound();
+  return;
+#endif
   if (m_wDeviceID)
     {
     mciSendCommand(m_wDeviceID, MCI_STOP, MCI_WAIT, NULL);
@@ -1391,10 +1396,16 @@ void CMainFrame::CancelSound (void)
 
   PlaySound (NULL, NULL, SND_PURGE);
 
-  } // end of CMainFrame::CancelSound 
+  } // end of CMainFrame::CancelSound
 
 bool CMainFrame::PlaySoundFile (const CString & strSound)
   {
+#ifndef _WIN32
+  // On non-Windows, delegate to the wxWidgets sound hook.
+  if (g_wxhook_play_sound)
+    return g_wxhook_play_sound(static_cast<const char*>(strSound));
+  return false;   // no sound backend available
+#endif
 MCI_OPEN_PARMS mciOpenParms;
 MCI_PLAY_PARMS mciPlayParms;
 DWORD dwReturn;

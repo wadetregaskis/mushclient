@@ -45,5 +45,7 @@ void* (*g_wxhook_create_text_window)(
     unsigned long, unsigned long,
     const char*, const char*,
     bool, bool, bool, bool, bool, int, int)                      = nullptr;
+bool (*g_wxhook_play_sound)(const char*)                         = nullptr;
+void (*g_wxhook_stop_sound)()                                    = nullptr;
 
 #endif // !_WIN32

@@ -25,6 +25,9 @@
 #include <wx/notebook.h>   // wxNotebook (CMacrosDlg)
 #include <wx/clipbrd.h>    // wxTheClipboard
 #include <wx/dataobj.h>    // wxTextDataObject
+#if wxUSE_SOUND
+#  include <wx/sound.h>    // wxSound (trigger / MSP audio)
+#endif
 #include <algorithm>
 #include <unordered_map>
 #include <string>
@@ -2693,6 +2696,44 @@ static void* hook_create_text_window(
 }
 
 // ── Install all hooks ─────────────────────────────────────────────────────
+// ── Sound hooks ───────────────────────────────────────────────────────────
+// CMainFrame::PlaySoundFile and CancelSound delegate here on non-Windows so
+// that trigger sounds and MSP audio actually play via wxWidgets.
+//
+// wxSound supports .wav on all platforms.  For macOS the underlying backend
+// (NSSound) also handles .aiff, .mp3, .m4a, etc.  On Linux only .wav via
+// OSS/ALSA is guaranteed.  Formats that wxSound cannot play are silently
+// ignored (returns false), leaving the MUD session uninterrupted.
+#if wxUSE_SOUND
+namespace {
+// Keep the current wxSound alive while it plays asynchronously.
+// Replaced (and therefore stopped) when a new sound is requested.
+wxSound* s_currentSound = nullptr;
+} // anonymous namespace
+
+static bool hook_play_sound(const char* path)
+{
+    if (!path || !*path) return false;
+    wxSound* snd = new wxSound(wxString::FromUTF8(path));
+    if (!snd->IsOk()) {
+        delete snd;
+        return false;
+    }
+    // Stop whatever was playing before we replace the pointer.
+    wxSound::Stop();
+    delete s_currentSound;
+    s_currentSound = snd;
+    return s_currentSound->Play(wxSOUND_ASYNC);
+}
+
+static void hook_stop_sound()
+{
+    wxSound::Stop();
+    delete s_currentSound;
+    s_currentSound = nullptr;
+}
+#endif // wxUSE_SOUND
+
 void wx_mfc_install_hooks()
 {
     g_wxhook_invalidate       = hook_invalidate;
@@ -2718,6 +2759,10 @@ void wx_mfc_install_hooks()
     g_wxhook_get_clipboard_text   = hook_get_clipboard_text;
     g_wxhook_set_clipboard_text   = hook_set_clipboard_text;
     g_wxhook_create_text_window   = hook_create_text_window;
+#if wxUSE_SOUND
+    g_wxhook_play_sound           = hook_play_sound;
+    g_wxhook_stop_sound           = hook_stop_sound;
+#endif
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce
     // an audible alert on macOS/Linux via wxWidgets.

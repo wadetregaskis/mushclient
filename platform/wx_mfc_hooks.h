@@ -140,6 +140,14 @@ extern char* (*g_wxhook_get_clipboard_text)();
 // Set the system clipboard to the given UTF-8 string.
 extern void  (*g_wxhook_set_clipboard_text)(const char* text);
 
+// ── Sound hooks ───────────────────────────────────────────────────────────
+// Play a sound file asynchronously.  path is a UTF-8 filesystem path.
+// Returns true if playback started successfully, false on error or if no
+// sound backend is available.
+extern bool (*g_wxhook_play_sound)(const char* path);
+// Stop any sound currently playing via g_wxhook_play_sound.
+extern void (*g_wxhook_stop_sound)();
+
 // ── Notepad hook ───────────────────────────────────────────────────────────
 // Create a notepad window.  All string parameters are UTF-8.
 // sText           — initial content (may be "")

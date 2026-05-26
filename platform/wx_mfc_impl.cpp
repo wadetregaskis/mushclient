@@ -2636,8 +2636,9 @@ static void* hook_create_text_window(
     if (!App.m_pNormalDocTemplate)
         return nullptr;
 
-    // Allocate the document object.
-    CTextDocument* td = new CTextDocument();
+    // Allocate the document object via the static factory (constructor is
+    // protected in MFC document classes).
+    CTextDocument* td = CTextDocument::CreateInstance();
     td->m_pRelatedWorld         = pDoc;
     td->m_iUniqueDocumentNumber = iUniqueDocNum;
     td->m_strFontName           = strFontName  ? strFontName  : "";

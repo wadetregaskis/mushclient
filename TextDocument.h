@@ -127,6 +127,13 @@ public:
   void SetTheFont (void);
   void SetReadOnly (BOOL bReadOnly);
 
+#ifndef _WIN32
+  // Non-Windows factory: bypasses the protected constructor so that the wx
+  // notepad hook (hook_create_text_window in wx_mfc_impl.cpp) can allocate
+  // documents directly without going through the MFC document template.
+  static CTextDocument* CreateInstance() { return new CTextDocument(); }
+#endif
+
 	// Generated message map functions
 protected:
 	//{{AFX_MSG(CTextDocument)

@@ -813,16 +813,21 @@ void CMUSHclientDoc::NoteHr()
 
   // refresh views
 
+#ifdef _WIN32
   for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
     {
     CView* pView = GetNextView(pos);
-    
+
     if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
       {
       CMUSHView* pmyView = (CMUSHView*)pView;
 
       pmyView->addedstuff();
-      } 
+      }
     }
+#else
+  // Non-Windows: emit the completed HORIZ_RULE line to the wxWidgets pane.
+  UpdateAllViews (NULL);
+#endif
 
 }  // end of CMUSHclientDoc::NoteHr

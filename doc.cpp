@@ -3867,9 +3867,25 @@ BOOL GetClipboardContents (CString & strClipboard, const bool bUnicode, const bo
 
   strClipboard.Empty ();
 
+#ifndef _WIN32
+  // On non-Windows use the wxWidgets clipboard hook installed by wx_mfc_impl.cpp.
+  if (g_wxhook_get_clipboard_text) {
+    char* text = g_wxhook_get_clipboard_text();
+    if (!text) {
+      if (bWarning)
+        TMessageBox("Unable to get Clipboard data");
+      return FALSE;
+    }
+    strClipboard = CString(text);
+    free(text);
+    return TRUE;
+  }
+  return FALSE;
+#else
+
 // get the contents of the clipboard into a local string
 
-HGLOBAL hData = NULL;  
+HGLOBAL hData = NULL;
 bool bHaveUnicode = false;
 
 // Open clipboard
@@ -3946,6 +3962,7 @@ UINT iEnum = 0;
 
    return TRUE;
 
+#endif // !_WIN32
   } // end of GetClipboardContents
 
 /* +++++++++++++++++++++++++++++++++++++++++++++++++++ */
@@ -3959,6 +3976,13 @@ UINT iEnum = 0;
 
 BOOL putontoclipboard (const CString & data, const bool bUnicode)
   {
+
+#ifndef _WIN32
+  // On non-Windows use the wxWidgets clipboard hook installed by wx_mfc_impl.cpp.
+  if (g_wxhook_set_clipboard_text)
+    g_wxhook_set_clipboard_text(static_cast<const char*>(data));
+  return FALSE;   // FALSE = success (MFC convention for this function)
+#else
 
 // Open clipboard
 
@@ -4064,7 +4088,8 @@ BOOL putontoclipboard (const CString & data, const bool bUnicode)
 
   return FALSE;
 
-  } // end of putontoclipboard 
+#endif // !_WIN32
+  } // end of putontoclipboard
 
 // returns TRUE if bad label
 

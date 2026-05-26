@@ -132,6 +132,14 @@ extern char* (*g_wxhook_file_dialog)(bool bOpen,
                                      const char* filter,
                                      bool overwrite);
 
+// ── Clipboard hooks ────────────────────────────────────────────────────────
+// Get the system clipboard text as a UTF-8 malloc'd string (caller must free),
+// or nullptr if the clipboard is empty or contains no text.
+extern char* (*g_wxhook_get_clipboard_text)();
+
+// Set the system clipboard to the given UTF-8 string.
+extern void  (*g_wxhook_set_clipboard_text)(const char* text);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

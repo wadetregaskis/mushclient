@@ -2318,6 +2318,37 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     return true;
 }
 
+// ── hook_get_clipboard_text / hook_set_clipboard_text ─────────────────────────
+// System clipboard access for non-Windows.  Used by GetClipboardContents() and
+// putontoclipboard() in doc.cpp (which power the world.GetClipboard() /
+// world.SetClipboard() Lua API, the colour-from-clipboard picker, and
+// IsClipboardXML()).
+static char* hook_get_clipboard_text()
+{
+    if (!wxTheClipboard->Open()) return nullptr;
+    char* result = nullptr;
+    if (wxTheClipboard->IsSupported(wxDF_UNICODETEXT) ||
+        wxTheClipboard->IsSupported(wxDF_TEXT))
+    {
+        wxTextDataObject data;
+        wxTheClipboard->GetData(data);
+        wxScopedCharBuffer buf = data.GetText().ToUTF8();
+        if (buf.length() > 0)
+            result = strdup(buf.data());
+    }
+    wxTheClipboard->Close();
+    return result;   // caller must free()
+}
+
+static void hook_set_clipboard_text(const char* text)
+{
+    if (!text) return;
+    if (wxTheClipboard->Open()) {
+        wxTheClipboard->SetData(new wxTextDataObject(wxString::FromUTF8(text)));
+        wxTheClipboard->Close();
+    }
+}
+
 // ── hook_file_dialog ──────────────────────────────────────────────────────────
 // Generic file-open / file-save dialog used by CFileDialog::DoModal() on
 // non-Windows.  Converts the MFC-style pipe-separated filter string to a
@@ -2596,6 +2627,8 @@ void wx_mfc_install_hooks()
     g_wxhook_game_preferences   = hook_game_preferences;
     g_wxhook_save_world         = hook_save_world;
     g_wxhook_file_dialog        = hook_file_dialog;
+    g_wxhook_get_clipboard_text = hook_get_clipboard_text;
+    g_wxhook_set_clipboard_text = hook_set_clipboard_text;
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce
     // an audible alert on macOS/Linux via wxWidgets.

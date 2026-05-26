@@ -7,7 +7,9 @@
 #include "../../doc.h"
 #include "../errors.h"
 
+#ifdef _WIN32
 #include "../../dialogs/ColourPickerDlg.h"
+#endif
 
 
 // Implements:
@@ -216,9 +218,9 @@ VARIANT CMUSHclientDoc::MapColourList()
 }  // end of CMUSHclientDoc::MapColourList
 
 
-long CMUSHclientDoc::PickColour(long Suggested) 
+long CMUSHclientDoc::PickColour(long Suggested)
 {
-
+#ifdef _WIN32
   CColourPickerDlg dlg;
 
   if (Suggested != -1)
@@ -227,11 +229,15 @@ long CMUSHclientDoc::PickColour(long Suggested)
     dlg.m_bPickColour = true;
     }
 
-
   if (dlg.DoModal () != IDOK)
     return -1;
 
   return dlg.GetColor ();
+#else
+  if (g_wxhook_pick_colour)
+    return g_wxhook_pick_colour (Suggested);
+  return -1;   // no GUI available (e.g. mushcli)
+#endif
 }  // end of CMUSHclientDoc::PickColour
 
 

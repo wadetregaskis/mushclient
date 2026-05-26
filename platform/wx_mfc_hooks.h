@@ -189,6 +189,20 @@ extern void* (*g_wxhook_create_text_window)(
     int  iLines,
     int  iNotepadType);
 
+// ── Colour picker hook ────────────────────────────────────────────────────
+// Open a colour-picker dialog.  suggested is a COLORREF (0x00BBGGRR), or
+// -1 to start with no pre-selected colour.  Returns the picked COLORREF, or
+// -1 if the user cancelled.
+extern long (*g_wxhook_pick_colour)(long suggested);
+
+// ── Menu / choice hook ─────────────────────────────────────────────────────
+// Show a single-choice dialog populated with the null-terminated strings in
+// items[0..count-1].  defaultItem is the item to pre-select (may be "").
+// Returns the chosen string as a heap-allocated char* (caller must free()),
+// or nullptr if the user cancelled.
+extern char* (*g_wxhook_menu_dialog)(const char* const* items, int count,
+                                     const char* defaultItem);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

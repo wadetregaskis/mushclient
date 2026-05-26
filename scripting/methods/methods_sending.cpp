@@ -68,11 +68,14 @@ long CMUSHclientDoc::SendNoEcho(LPCTSTR Message)
 
 void CMUSHclientDoc::AddToCommandHistory (LPCTSTR Message)
   {
-
+#ifndef _WIN32
+  if (m_fn_add_to_history && Message && *Message)
+    m_fn_add_to_history(std::string(Message));
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	  {
 		  CSendView* pmyView = (CSendView*)pView;
@@ -95,7 +98,7 @@ void CMUSHclientDoc::AddToCommandHistory (LPCTSTR Message)
       break;
 	    }	  // end of being a CSendView
     }   // end of loop through views
-
+#endif
   } // end of CMUSHclientDoc::AddToCommandHistory
 
 long CMUSHclientDoc::SendPush(LPCTSTR Message) 

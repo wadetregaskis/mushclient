@@ -1565,6 +1565,10 @@ public:
   // world.DeleteCommandHistory(): clear the command input history.
   std::function<void()> m_fn_delete_command_history;
 
+  // world.AddToCommandHistory(text): inject a command string into the history.
+  // Duplicate-suppression (same as last entry) is applied by the implementation.
+  std::function<void(const std::string&)> m_fn_add_to_history;
+
   // world.PushCommand(): push current command bar text onto history, clear bar.
   // Returns the pushed command text.
   std::function<std::string()> m_fn_push_command;

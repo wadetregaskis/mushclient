@@ -261,6 +261,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             }
         };
 
+        // world.AddToCommandHistory(text): inject a string into history.
+        // Mirrors the duplicate-suppression logic in methods_sending.cpp.
+        m_doc->m_fn_add_to_history = [this](const std::string& text) {
+            if (text.empty()) return;
+            wxString entry = wxString::FromUTF8(text.c_str());
+            if (!m_history.empty() && m_history.back() == entry)
+                return;   // same as last entry — don't add duplicate
+            m_history.push_back(entry);
+            if ((int)m_history.size() > kMaxHistory)
+                m_history.erase(m_history.begin());
+            m_histIdx = -1;  // reset browsing position
+        };
+
         // world.PushCommand(): save current bar text to history, clear bar.
         m_doc->m_fn_push_command = [this]() -> std::string {
             wxTextCtrl* inp = ActiveInput();
@@ -2769,6 +2782,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_delete_lines             = nullptr;
         m_doc->m_fn_select_command           = nullptr;
         m_doc->m_fn_delete_command_history   = nullptr;
+        m_doc->m_fn_add_to_history           = nullptr;
         m_doc->m_fn_push_command             = nullptr;
         m_doc->m_fn_get_command_list         = nullptr;
         m_doc->m_fn_get_command_selection    = nullptr;

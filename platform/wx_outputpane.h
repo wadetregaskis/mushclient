@@ -173,6 +173,12 @@ public:
     // True while the pane is pinned to the bottom.
     bool IsAutoScrolling() const { return m_autoScroll; }
 
+    // Controls whether scrolling up engages the freeze (stops auto-scroll).
+    // When false the pane always keeps auto-scrolling; new output is always
+    // visible regardless of where the user has scrolled.  Mirrors the world's
+    // m_bAutoFreeze field.  Default is true (freeze on scroll-up).
+    void SetAllowAutoFreeze(bool allow) { m_allowAutoFreeze = allow; }
+
     // Set the pane's default background colour (COLORREF, 0 = black).
     void SetPaneBackground(unsigned long col);
     unsigned long PaneBackground() const { return m_bgColor; }
@@ -308,6 +314,12 @@ private:
     std::deque<SOutputLine> m_lines;
     int                     m_maxLines;
 
+    // In-progress (pending) line — the telnet engine's m_pCurrentLine.
+    // Updated each timer tick via AppendLine(line with pending=true).
+    // Rendered as a dim trailing row below the committed lines.
+    // Cleared (empty) when there is no partial line in progress.
+    SOutputLine m_pendingLine;
+
     wxFont m_font;
     // Cached font variants — rebuilt whenever m_font changes so DrawRunChunk
     // never constructs wxFont objects on the hot rendering path.
@@ -349,7 +361,10 @@ private:
     // Fired as a link click on mouse-up only if no drag occurred.
     std::string m_linkAtDown;
 
-    bool m_autoScroll = true;
+    bool m_autoScroll      = true;
+    // When false, scrolling up does NOT freeze output — new lines keep
+    // scrolling into view.  Mirrors the world's m_bAutoFreeze flag.
+    bool m_allowAutoFreeze = true;
 
     // Triple-click detection: record the timestamp and line of the last
     // double-click so OnLeftDown can promote the third click to a line select.

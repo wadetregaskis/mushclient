@@ -242,6 +242,23 @@ static SOutputLine DetectURLs(SOutputLine line)
 
 void COutputPane::AppendLine(SOutputLine&& line)
 {
+    // Pending lines (m_pCurrentLine in the telnet engine, not yet completed)
+    // are rendered as a dim trailing row below the committed buffer.  They are
+    // never added to m_lines; they simply replace m_pendingLine.
+    if (line.pending) {
+        m_pendingLine = std::move(line);
+        if (m_batchDepth == 0) {
+            UpdateScrollbars(m_autoScroll);
+            Refresh(false);
+        }
+        return;
+    }
+
+    // A completed line arriving always clears any pending content (the engine
+    // has committed the line; the next pending update will carry new partial text).
+    m_pendingLine.clear();
+    m_pendingLine.pending = false;
+
     // Auto-detect plain http:// / https:// URLs and split them into link runs.
     line = DetectURLs(std::move(line));
 
@@ -599,6 +616,43 @@ void COutputPane::OnPaint(wxPaintEvent&)
             // yOff of the first visual row of logical line i.
             int lineVR = (i < (int)m_visualRowStart.size()) ? m_visualRowStart[i] : 0;
             DrawLine(dc, i, lineVR * m_lineH);
+        }
+    }
+
+    // ── In-progress (pending) line ─────────────────────────────────────────
+    // The telnet engine's m_pCurrentLine is emitted each timer tick as a
+    // pending SOutputLine and rendered here as a dim trailing row.  It shows
+    // partial server output before the '\n' arrives (useful for MUDs that send
+    // a prompt without a trailing newline, e.g. "> ").
+    if (!m_pendingLine.empty() && m_lineH > 0) {
+        int pendingY = m_totalVisualRows * m_lineH;  // virtual y, just after committed lines
+        int clientTop = scrollY * unitH;
+        if (pendingY >= clientTop && pendingY < clientTop + clientH) {
+            dc.SetFont(m_font);
+            // Draw each run of the pending line at reduced opacity by blending
+            // the foreground halfway toward the background (gives a dim look).
+            int x = 0;
+            for (const auto& run : m_pendingLine) {
+                if (run.text.empty()) continue;
+                // Dim the fg colour: blend 50% toward bg.
+                auto blend = [](uint8_t fg, uint8_t bg) -> uint8_t {
+                    return (uint8_t)((int(fg) + int(bg)) / 2);
+                };
+                uint8_t bgR = GetRValue(m_bgColor), bgG = GetGValue(m_bgColor),
+                        bgB = GetBValue(m_bgColor);
+                wxColour fg(blend(GetRValue(run.fg), bgR),
+                            blend(GetGValue(run.fg), bgG),
+                            blend(GetBValue(run.fg), bgB));
+                wxColour bg(bgR, bgG, bgB);
+                dc.SetTextForeground(fg);
+                dc.SetTextBackground(bg);
+                dc.SetBackgroundMode(wxSOLID);
+                wxString text = wxString::FromUTF8(run.text.c_str());
+                dc.DrawText(text, x, pendingY);
+                wxCoord tw, th;
+                dc.GetTextExtent(text, &tw, &th);
+                x += tw;
+            }
         }
     }
 
@@ -993,7 +1047,9 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
     int clientW, clientH;
     GetClientSize(&clientW, &clientH);
 
-    int totalH = m_totalVisualRows * m_lineH;
+    // Add one row for the in-progress (pending) line when it has content.
+    int pendingRows = (!m_pendingLine.empty()) ? 1 : 0;
+    int totalH = (m_totalVisualRows + pendingRows) * m_lineH;
 
     // Virtual width = client width: horizontal scrolling is disabled; long
     // lines are visually wrapped rather than requiring H-scroll.
@@ -1037,8 +1093,11 @@ void COutputPane::OnScrollWinUpdate(wxScrollWinEvent& evt)
         GetClientSize(nullptr, &clientH);
         int totalH = m_totalVisualRows * m_lineH;
         bool wasAuto = m_autoScroll;
-        m_autoScroll = (unitH > 0) &&
-                       (scrollY * unitH + clientH >= totalH - m_lineH);
+        bool atBottom = (unitH > 0) &&
+                        (scrollY * unitH + clientH >= totalH - m_lineH);
+        // If auto-freeze is disabled the pane stays in auto-scroll mode
+        // regardless of scroll position; new output always scrolls into view.
+        m_autoScroll = atBottom || !m_allowAutoFreeze;
         if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
             m_fn_autoscroll_changed(m_autoScroll);
     });
@@ -1564,7 +1623,7 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
 
 void COutputPane::OnMouseWheel(wxMouseEvent& evt)
 {
-    if (evt.ControlDown()) {
+    if (evt.RawControlDown()) {
         AdjustFontSize((evt.GetWheelRotation() > 0) ? 1 : -1);
         return;
     }
@@ -1603,12 +1662,12 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
         return;
     }
 
-    if (code == 'C' && evt.ControlDown()) { CopySelection(); return; }
-    if (code == 'A' && evt.ControlDown()) { SelectAll();     return; }
-    if (code == 'L' && evt.ControlDown()) { ClearOutput();   return; }
+    if (code == 'C' && evt.RawControlDown()) { CopySelection(); return; }
+    if (code == 'A' && evt.RawControlDown()) { SelectAll();     return; }
+    if (code == 'L' && evt.RawControlDown()) { ClearOutput();   return; }
 
     // Ctrl+G: put selected text into the input bar (output→input shortcut).
-    if (code == 'G' && evt.ControlDown()) {
+    if (code == 'G' && evt.RawControlDown()) {
         if (m_fn_put_in_input) {
             wxString sel = SelectedText();
             if (!sel.IsEmpty()) m_fn_put_in_input(sel);
@@ -1622,22 +1681,22 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
     }
 
     // Ctrl+F: show the find bar and search forward.
-    if (code == 'F' && evt.ControlDown()) {
+    if (code == 'F' && evt.RawControlDown()) {
         if (m_fn_find_next_key) m_fn_find_next_key(true);
         return;
     }
 
-    if (evt.ControlDown() &&
+    if (evt.RawControlDown() &&
         (code == '=' || code == '+' || code == WXK_NUMPAD_ADD)) {
         AdjustFontSize(1); return;
     }
-    if (evt.ControlDown() &&
+    if (evt.RawControlDown() &&
         (code == '-' || code == WXK_NUMPAD_SUBTRACT)) {
         AdjustFontSize(-1); return;
     }
-    if (evt.ControlDown() && code == '0') { ResetFontSize(); return; }
+    if (evt.RawControlDown() && code == '0') { ResetFontSize(); return; }
 
-    if (evt.ControlDown() && code == WXK_HOME) {
+    if (evt.RawControlDown() && code == WXK_HOME) {
         // Ctrl+Home: scroll to the very top of the buffer.
         int scrollX;
         GetViewStart(&scrollX, nullptr);
@@ -1647,7 +1706,7 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
         if (wasAuto && m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
         return;
     }
-    if (evt.ControlDown() && code == WXK_END) {
+    if (evt.RawControlDown() && code == WXK_END) {
         // Ctrl+End: scroll to the bottom and re-engage auto-scroll.
         ScrollToBottom();
         return;
@@ -1656,7 +1715,7 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
     // Forward printable characters to the command input bar so the user can
     // type without having to click back into it after scrolling through output.
     // Only forward when no modifier is held (Ctrl/Alt combos are shortcuts).
-    if (!evt.ControlDown() && !evt.AltDown() && !evt.MetaDown()) {
+    if (!evt.RawControlDown() && !evt.AltDown() && !evt.MetaDown()) {
         wxChar ch = (wxChar)evt.GetUnicodeKey();
         if (ch != WXK_NONE && wxIsprint(ch)) {
             if (m_fn_key_to_input) { m_fn_key_to_input(ch); return; }

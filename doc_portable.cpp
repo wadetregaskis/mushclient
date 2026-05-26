@@ -1778,13 +1778,12 @@ void CMUSHclientDoc::SendMsg(CString strText,
 // Enum values from OtherTypes.h (included via doc_stub.h):
 //   0=World, 1=Command, 2=Output, 3=Status, 4=Notepad, 6=LogFile,
 //   8=CommandQueue, 9=Variable, 10=Execute, 12=Script …
-// Only the most common cases are implemented; the rest are no-ops.
 void CMUSHclientDoc::SendTo(const unsigned short iWhere,
                              const CString strSendText,
                              const bool bOmitFromOutput,
                              const bool bOmitFromLog,
                              const CString /*strDescription*/,
-                             const CString /*strVariable*/,
+                             const CString strVariable,
                              CString& /*strOutput*/)
 {
     switch (iWhere) {
@@ -1796,6 +1795,13 @@ void CMUSHclientDoc::SendTo(const unsigned short iWhere,
                 !bOmitFromLog);
         break;
 
+    case eSendToCommand:      // 1 — put text in command bar (only if empty)
+        // m_fn_set_command returns false without overwriting if the bar is
+        // non-empty, matching the Windows CSendView iteration behaviour.
+        if (m_fn_set_command)
+            m_fn_set_command(std::string((const char*)strSendText));
+        break;
+
     case eSendToOutput:       // 2 — display in output window without sending
         if (!bOmitFromOutput)
             Note(strSendText);
@@ -1805,14 +1811,30 @@ void CMUSHclientDoc::SendTo(const unsigned short iWhere,
         m_strStatusMessage = strSendText;
         break;
 
-    case eSendToVariable:     // 9 — set a world variable (not yet implemented)
-        // CVariable just has strLabel / strContents; full variable-name
-        // routing requires the strVariable parameter — stubbed for now.
+    case eSendToVariable:     // 9 — set a world variable by name
+        if (!strVariable.IsEmpty()) {
+            CVariable* var = nullptr;
+            if (GetVariableMap().Lookup(strVariable, var))
+                delete var;
+            var = new CVariable();
+            var->strLabel    = strVariable;
+            var->strContents = strSendText;
+            m_bVariablesChanged = true;
+            GetVariableMap().SetAt(strVariable, var);
+        }
+        break;
+
+    case eSendToExecute:      // 10 — execute as a MUSHclient command
+        {
+            bool bOmit = bOmitFromLog;
+            EvaluateCommand(strSendText, /*countThem=*/false,
+                            bOmit, /*test=*/false);
+        }
         break;
 
     default:
-        // eSendToCommand(1), eSendToNotepad(4), eSendToLogFile(6),
-        // eSendToPane(15), etc. — not yet implemented on non-Windows.
+        // eSendToNotepad(4), eSendToLogFile(6), eSendToPane(15), etc.
+        // Not implemented on non-Windows.
         break;
     }
 }

@@ -6544,11 +6544,18 @@ void CMUSHclientDoc::SendTo (
     {
     case eSendToCommand:
 
+#ifndef _WIN32
+      // Non-Windows: route through the wxWidgets command-bar callback.
+      // m_fn_set_command already enforces the "only if bar is empty" contract
+      // (returns false and does NOT overwrite if the bar is non-empty).
+      if (m_fn_set_command)
+        m_fn_set_command(std::string((const char*)strSendText));
+#else
       // put trigger response into command buffer - provided it is empty
       for (pos = GetFirstViewPosition(); pos != NULL; )
 	      {
 	      CView* pView = GetNextView(pos);
-	      
+
 	      if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
   	      {
 		      CSendView* pmyView = (CSendView*)pView;
@@ -6563,6 +6570,7 @@ void CMUSHclientDoc::SendTo (
             }   // end of command being empty
 	        }	  // end of being a CMUSHView
         }   // end of loop through views
+#endif
       break;
 
     case eSendToWorld:

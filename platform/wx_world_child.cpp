@@ -488,6 +488,9 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             }
             // Scrollback limit.
             if (m_doc->m_maxlines > 0) m_output->SetMaxLines(m_doc->m_maxlines);
+            // Auto-freeze: if the world has it disabled, the pane should keep
+            // auto-scrolling even when the user has scrolled up.
+            m_output->SetAllowAutoFreeze(m_doc->m_bAutoFreeze != 0);
             // Background colour (NO_COLOUR = 0xFFFFFFFF → black).
             ApplyPaneBackground(m_doc->m_iBackgroundColour);
         }
@@ -909,7 +912,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
 
         // Add keyboard modifier flags (same bits as Windows impl).
         if (wxGetKeyState(WXK_SHIFT))   flags |= MW_MOUSE_SHIFT;
-        if (wxGetKeyState(WXK_CONTROL)) flags |= MW_MOUSE_CTRL;
+        if (wxGetKeyState(WXK_RAW_CONTROL)) flags |= MW_MOUSE_CTRL;
         if (wxGetKeyState(WXK_ALT))     flags |= MW_MOUSE_ALT;
 
         if (pluginId.empty()) {
@@ -1331,13 +1334,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     m_output->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& evt) {
         int code = evt.GetKeyCode();
         // Ctrl+F → show the find bar.
-        if (code == 'F' && evt.ControlDown()) {
+        if (code == 'F' && evt.RawControlDown()) {
             ShowFindBar(true);
             return;
         }
         // Let Ctrl+C, Ctrl+A, Ctrl+±/0 (zoom), and arrow keys be handled by
         // the output pane's own handler.
-        bool paneOwns = evt.ControlDown() ||
+        bool paneOwns = evt.RawControlDown() ||
                         code == WXK_UP || code == WXK_DOWN ||
                         code == WXK_LEFT || code == WXK_RIGHT ||
                         code == WXK_PAGEUP || code == WXK_PAGEDOWN ||
@@ -1742,11 +1745,11 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Ctrl+Home / Ctrl+End: jump to the very top or bottom of the output buffer
     // without leaving the input bar.  Mirrors the Ctrl+Home/End shortcuts that
     // work when the output pane itself has focus (COutputPane::OnKeyDown).
-    if (code == WXK_HOME && evt.ControlDown()) {
+    if (code == WXK_HOME && evt.RawControlDown()) {
         if (m_output) m_output->ScrollToTop();
         return;
     }
-    if (code == WXK_END && evt.ControlDown()) {
+    if (code == WXK_END && evt.RawControlDown()) {
         if (m_output) m_output->ScrollToBottom();
         return;
     }
@@ -1755,7 +1758,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 
     // Ctrl+U: kill the entire input line (standard Unix terminal shortcut).
     // Saves to the kill ring so Ctrl+Y can restore it.
-    if (code == 'U' && evt.ControlDown()) {
+    if (code == 'U' && evt.RawControlDown()) {
         if (inp) {
             m_killBuf = inp->GetValue();
             inp->Clear();
@@ -1768,8 +1771,8 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Ctrl+W is the Unix terminal convention; Ctrl+Backspace matches most GUI
     // apps on Windows and macOS.  Both skip trailing spaces then delete back
     // to the next word boundary.  Saves to the kill ring.
-    bool deleteWordBack = (code == 'W' && evt.ControlDown()) ||
-                         (code == WXK_BACK && evt.ControlDown());
+    bool deleteWordBack = (code == 'W' && evt.RawControlDown()) ||
+                         (code == WXK_BACK && evt.RawControlDown());
     if (deleteWordBack) {
         if (inp) {
             long pos = inp->GetInsertionPoint();
@@ -1791,7 +1794,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
 
     // Ctrl+D: delete character forward (emacs/Unix convention).
-    if (code == 'D' && evt.ControlDown()) {
+    if (code == 'D' && evt.RawControlDown()) {
         if (inp) {
             long pos = inp->GetInsertionPoint();
             long len = (long)inp->GetValue().size();
@@ -1805,7 +1808,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 
     // Ctrl+Delete: delete the word immediately after the cursor.
     // Skips leading spaces then deletes forward to the next space boundary.
-    if (code == WXK_DELETE && evt.ControlDown()) {
+    if (code == WXK_DELETE && evt.RawControlDown()) {
         if (inp) {
             long pos = inp->GetInsertionPoint();
             wxString text = inp->GetValue();
@@ -1827,7 +1830,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 
     // Ctrl+K: kill from the cursor to the end of the input line.
     // Saves the killed text to the kill ring so Ctrl+Y can restore it.
-    if (code == 'K' && evt.ControlDown()) {
+    if (code == 'K' && evt.RawControlDown()) {
         if (inp) {
             long pos = inp->GetInsertionPoint();
             wxString text = inp->GetValue();
@@ -1843,7 +1846,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 
     // Ctrl+Y: yank (paste) the most recently killed text at the cursor.
     // Complements Ctrl+K / Ctrl+W / Ctrl+U.  No-op if the kill ring is empty.
-    if (code == 'Y' && evt.ControlDown()) {
+    if (code == 'Y' && evt.RawControlDown()) {
         if (inp && !m_killBuf.IsEmpty()) {
             long pos = inp->GetInsertionPoint();
             inp->SetInsertionPoint(pos);
@@ -1857,13 +1860,13 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Note: Ctrl+A is already bound to SelectAll on macOS for text controls,
     // so we only intercept it explicitly here; the result is the same on all
     // platforms — cursor moves to position 0.
-    if (code == 'A' && evt.ControlDown()) {
+    if (code == 'A' && evt.RawControlDown()) {
         if (inp) inp->SetInsertionPoint(0);
         return;
     }
 
     // Ctrl+E: move cursor to the end of the input line (Unix terminal).
-    if (code == 'E' && evt.ControlDown()) {
+    if (code == 'E' && evt.RawControlDown()) {
         if (inp) inp->SetInsertionPointEnd();
         return;
     }
@@ -1877,7 +1880,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // (it already produces the correct word-selection behaviour on all platforms)
     // so we don't have to reimplement extend-selection logic.
     if ((code == WXK_LEFT || code == WXK_RIGHT) &&
-        (evt.ControlDown() || evt.AltDown()))
+        (evt.RawControlDown() || evt.AltDown()))
     {
         if (evt.ShiftDown()) { evt.Skip(); return; }   // native handles Shift+word-nav
         if (inp) {
@@ -1902,8 +1905,8 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Re-map the key code so the existing Up/Down handlers below take over
     // without duplicating any logic.  These must be checked before the
     // Tab and Up/Down blocks so the re-mapped value is seen by them.
-    if (evt.ControlDown() && code == 'P') code = WXK_UP;
-    else if (evt.ControlDown() && code == 'N') code = WXK_DOWN;
+    if (evt.RawControlDown() && code == 'P') code = WXK_UP;
+    else if (evt.RawControlDown() && code == 'N') code = WXK_DOWN;
 
     // Shift+Tab: show a popup list of script-defined completion items and/or
     // Lua global function names (mirroring Windows FunctionMenu behaviour).
@@ -2147,7 +2150,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Mirrors Ctrl+R in bash/zsh: each press cycles to the next older entry
     // whose text contains the current input as a substring (case-insensitive).
     // Not available in password mode.
-    if (code == 'R' && evt.ControlDown() && inp == m_input) {
+    if (code == 'R' && evt.RawControlDown() && inp == m_input) {
         m_tabWordIdx = -1;
         m_tabWords.clear();
         ApplyHistRSearch(true);
@@ -2188,7 +2191,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
 
     // Ctrl+F → open the find bar.
-    if (code == 'F' && evt.ControlDown()) {
+    if (code == 'F' && evt.RawControlDown()) {
         ShowFindBar(true);
         return;   // consume — don't forward to the doc
     }
@@ -2202,9 +2205,147 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 
     // Ctrl+L → clear the output pane (same as the menu item and Ctrl+L in the
     // output pane itself; terminal convention: clear screen without disconnect).
-    if (code == 'L' && evt.ControlDown()) {
+    if (code == 'L' && evt.RawControlDown()) {
         if (m_output) m_output->ClearOutput();
         return;
+    }
+
+    // ── F-key and numpad macros ──────────────────────────────────────────────
+    // Map function keys (F1-F12, Shift+F1-F12, Ctrl+F1-F12) to m_macros[] and
+    // numpad keys to m_keypad[] when m_keypad_enable is set.  User-configured
+    // macros take priority over built-in bindings (e.g. F3 for Find).
+    // All macros are processed on the input bar, not the output pane, because
+    // we want them available while typing.
+    if (!evt.AltDown() && m_doc) {
+        // Helper: dispatch a macro by index.
+        // REPLACE_COMMAND → set input bar; SEND_NOW → send via EvaluateCommand;
+        // ADD_TO_COMMAND → insert at cursor.
+        auto fireMacro = [this, inp](int idx) -> bool {
+            if (idx < 0 || idx >= MACRO_COUNT) return false;
+            const CString& mac = m_doc->m_macros[idx];
+            if (mac.IsEmpty()) return false;
+            switch (m_doc->m_macro_type[idx]) {
+            case REPLACE_COMMAND:
+                if (inp) {
+                    inp->SetValue(wxString::FromUTF8(static_cast<const char*>(mac)));
+                    inp->SetInsertionPointEnd();
+                }
+                break;
+            case SEND_NOW: {
+                bool bOmit = false;
+                m_doc->EvaluateCommand(mac, /*count=*/true, bOmit);
+                m_doc->UpdateAllViews(nullptr);
+                break;
+            }
+            case ADD_TO_COMMAND:
+                if (inp) inp->WriteText(wxString::FromUTF8(static_cast<const char*>(mac)));
+                break;
+            default:
+                break;
+            }
+            return true;
+        };
+
+        // Helper: send a keypad key by index.
+        auto fireKeypad = [this](int idx) -> bool {
+            if (!m_doc->m_keypad_enable) return false;
+            if (idx < 0 || idx >= eKeypad_Max_Items) return false;
+            const CString& kp = m_doc->m_keypad[idx];
+            if (kp.IsEmpty()) return false;
+            bool bOmit = false;
+            m_doc->EvaluateCommand(kp, /*count=*/true, bOmit);
+            m_doc->UpdateAllViews(nullptr);
+            return true;
+        };
+
+        bool ctrl  = evt.RawControlDown();
+        bool shift = evt.ShiftDown();
+        int macIdx  = -1;
+        int kpIdx   = -1;
+
+        if (!ctrl && !shift) {
+            switch (code) {
+            case WXK_F1:  macIdx = MAC_F1;  break;
+            case WXK_F2:  macIdx = MAC_F2;  break;
+            case WXK_F3:  macIdx = MAC_F3;  break;
+            case WXK_F4:  macIdx = MAC_F4;  break;
+            case WXK_F5:  macIdx = MAC_F5;  break;
+            case WXK_F6:  macIdx = MAC_F6;  break;
+            case WXK_F7:  macIdx = MAC_F7;  break;
+            case WXK_F8:  macIdx = MAC_F8;  break;
+            case WXK_F9:  macIdx = MAC_F9;  break;
+            case WXK_F10: macIdx = MAC_F10; break;
+            case WXK_F11: macIdx = MAC_F11; break;
+            case WXK_F12: macIdx = MAC_F12; break;
+            // Numpad digits
+            case WXK_NUMPAD0:        kpIdx = eKeypad_0;    break;
+            case WXK_NUMPAD1:        kpIdx = eKeypad_1;    break;
+            case WXK_NUMPAD2:        kpIdx = eKeypad_2;    break;
+            case WXK_NUMPAD3:        kpIdx = eKeypad_3;    break;
+            case WXK_NUMPAD4:        kpIdx = eKeypad_4;    break;
+            case WXK_NUMPAD5:        kpIdx = eKeypad_5;    break;
+            case WXK_NUMPAD6:        kpIdx = eKeypad_6;    break;
+            case WXK_NUMPAD7:        kpIdx = eKeypad_7;    break;
+            case WXK_NUMPAD8:        kpIdx = eKeypad_8;    break;
+            case WXK_NUMPAD9:        kpIdx = eKeypad_9;    break;
+            case WXK_NUMPAD_DECIMAL: kpIdx = eKeypad_Dot;  break;
+            case WXK_NUMPAD_DIVIDE:  kpIdx = eKeypad_Slash; break;
+            case WXK_NUMPAD_MULTIPLY:kpIdx = eKeypad_Star; break;
+            case WXK_NUMPAD_SUBTRACT:kpIdx = eKeypad_Dash; break;
+            case WXK_NUMPAD_ADD:     kpIdx = eKeypad_Plus; break;
+            default: break;
+            }
+        } else if (shift && !ctrl) {
+            switch (code) {
+            case WXK_F1:  macIdx = MAC_SHIFT_F1;  break;
+            case WXK_F2:  macIdx = MAC_SHIFT_F2;  break;
+            case WXK_F3:  macIdx = MAC_SHIFT_F3;  break;
+            case WXK_F4:  macIdx = MAC_SHIFT_F4;  break;
+            case WXK_F5:  macIdx = MAC_SHIFT_F5;  break;
+            case WXK_F6:  macIdx = MAC_SHIFT_F6;  break;
+            case WXK_F7:  macIdx = MAC_SHIFT_F7;  break;
+            case WXK_F8:  macIdx = MAC_SHIFT_F8;  break;
+            case WXK_F9:  macIdx = MAC_SHIFT_F9;  break;
+            case WXK_F10: macIdx = MAC_SHIFT_F10; break;
+            case WXK_F11: macIdx = MAC_SHIFT_F11; break;
+            case WXK_F12: macIdx = MAC_SHIFT_F12; break;
+            default: break;
+            }
+        } else if (ctrl && !shift) {
+            switch (code) {
+            case WXK_F1:  macIdx = MAC_CTRL_F1;  break;
+            case WXK_F2:  macIdx = MAC_CTRL_F2;  break;
+            case WXK_F3:  macIdx = MAC_CTRL_F3;  break;
+            case WXK_F5:  macIdx = MAC_CTRL_F5;  break;
+            case WXK_F6:  macIdx = MAC_CTRL_F6;  break;
+            case WXK_F7:  macIdx = MAC_CTRL_F7;  break;
+            case WXK_F8:  macIdx = MAC_CTRL_F8;  break;
+            case WXK_F9:  macIdx = MAC_CTRL_F9;  break;
+            case WXK_F10: macIdx = MAC_CTRL_F10; break;
+            case WXK_F11: macIdx = MAC_CTRL_F11; break;
+            case WXK_F12: macIdx = MAC_CTRL_F12; break;
+            // Ctrl+numpad
+            case WXK_NUMPAD0:        kpIdx = eCtrl_Keypad_0;    break;
+            case WXK_NUMPAD1:        kpIdx = eCtrl_Keypad_1;    break;
+            case WXK_NUMPAD2:        kpIdx = eCtrl_Keypad_2;    break;
+            case WXK_NUMPAD3:        kpIdx = eCtrl_Keypad_3;    break;
+            case WXK_NUMPAD4:        kpIdx = eCtrl_Keypad_4;    break;
+            case WXK_NUMPAD5:        kpIdx = eCtrl_Keypad_5;    break;
+            case WXK_NUMPAD6:        kpIdx = eCtrl_Keypad_6;    break;
+            case WXK_NUMPAD7:        kpIdx = eCtrl_Keypad_7;    break;
+            case WXK_NUMPAD8:        kpIdx = eCtrl_Keypad_8;    break;
+            case WXK_NUMPAD9:        kpIdx = eCtrl_Keypad_9;    break;
+            case WXK_NUMPAD_DECIMAL: kpIdx = eCtrl_Keypad_Dot;  break;
+            case WXK_NUMPAD_DIVIDE:  kpIdx = eCtrl_Keypad_Slash; break;
+            case WXK_NUMPAD_MULTIPLY:kpIdx = eCtrl_Keypad_Star; break;
+            case WXK_NUMPAD_SUBTRACT:kpIdx = eCtrl_Keypad_Dash; break;
+            case WXK_NUMPAD_ADD:     kpIdx = eCtrl_Keypad_Plus; break;
+            default: break;
+            }
+        }
+
+        if (macIdx >= 0 && fireMacro(macIdx)) return;
+        if (kpIdx  >= 0 && fireKeypad(kpIdx))  return;
     }
 
     // Any non-navigation key cancels history browsing, Ctrl+R mode, and tab cycling.
@@ -2213,6 +2354,20 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         ApplyHistRSearch(false);
         m_tabWordIdx = -1;
         m_tabWords.clear();
+    }
+
+    // Return / Enter in an empty input field.
+    // On macOS, wxEVT_TEXT_ENTER is not fired for empty wxTextCtrl, so pressing
+    // Return on a blank line never calls OnInputEnter — sending the empty line
+    // (which some MUDs use to keep the connection alive) becomes impossible.
+    // Detect it here and call OnInputEnter directly.
+    if ((code == WXK_RETURN || code == WXK_NUMPAD_ENTER) &&
+        !evt.RawControlDown() && !evt.AltDown() && !evt.MetaDown()) {
+        if (inp && inp->GetValue().IsEmpty()) {
+            wxCommandEvent dummy(wxEVT_TEXT_ENTER);
+            OnInputEnter(dummy);
+            return;  // consume — don't insert a newline
+        }
     }
 
     evt.Skip();

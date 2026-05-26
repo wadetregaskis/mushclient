@@ -22,6 +22,7 @@
 #include <wx/clrpicker.h>  // wxColourPickerCtrl
 #include <wx/dnd.h>        // wxFileDropTarget
 #include <wx/dirdlg.h>     // wxDirDialog
+#include <wx/notebook.h>   // wxNotebook (CMacrosDlg)
 #include <algorithm>
 #include <unordered_map>
 #include <string>
@@ -35,6 +36,13 @@
 #include "doc.h"           // CMUSHclientDoc (needed for hook_new_world)
 #include "platform/wx_world_child.h"  // CWorldChildFrame
 #include "platform/wx_entity_dlgs.h" // CTriggerListDlg, CAliasListDlg, CTimerListDlg
+#include "scripting/scripting.h"     // CScriptEngine
+
+// Lua C API — included after MUSHclient headers to avoid wx/macro conflicts.
+extern "C" {
+#include "lua.h"
+#include "lauxlib.h"
+}
 
 // Hook pointer definitions live in platform/wx_mfc_hooks_storage.cpp (compiled
 // into both mushcore and mushapp) so that mushcli and tests can link without
@@ -53,6 +61,617 @@ static std::unordered_map<CMUSHclientDoc*, CWorldChildFrame*> s_docFrameMap;
 // Forward declaration — defined in the World-list persistence section below.
 static void world_list_remove(const std::string& path);
 
+// ── Lua Immediate / Eval Dialog ───────────────────────────────────────────────
+// Game → Execute Lua… opens this dialog for the currently active world.
+// Sends a chunk of Lua code through the world's existing CScriptEngine (same
+// lua_State as triggers/aliases/timers) so scripts can inspect and mutate live
+// world state.  Results (return values) and errors are shown in the output area.
+// The input field retains its text between calls so snippets can be re-run with
+// minor edits; a dedicated Clear button wipes both panes.
+class CLuaEvalDlg : public wxDialog
+{
+public:
+    CLuaEvalDlg(wxWindow* parent, CMUSHclientDoc* doc)
+        : wxDialog(parent, wxID_ANY, wxT("Execute Lua"),
+                   wxDefaultPosition, wxSize(600, 420),
+                   wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+        , m_doc(doc)
+    {
+        wxBoxSizer* top = new wxBoxSizer(wxVERTICAL);
+
+        // ── Code input area ────────────────────────────────────────────────
+        top->Add(new wxStaticText(this, wxID_ANY, wxT("Lua code:")),
+                 0, wxLEFT | wxTOP, 8);
+
+        m_code = new wxTextCtrl(this, wxID_ANY, wxEmptyString,
+                                wxDefaultPosition, wxDefaultSize,
+                                wxTE_MULTILINE | wxTE_DONTWRAP | wxTE_PROCESS_TAB |
+                                wxHSCROLL | wxTE_PROCESS_ENTER);
+        m_code->SetMinSize(wxSize(-1, 120));
+        // Monospace font for code.
+        wxFont codeFont = wxFont(wxFontInfo(12).Family(wxFONTFAMILY_TELETYPE));
+        m_code->SetFont(codeFont);
+        top->Add(m_code, 1, wxEXPAND | wxALL, 8);
+
+        // ── Button row ────────────────────────────────────────────────────
+        wxBoxSizer* btnRow = new wxBoxSizer(wxHORIZONTAL);
+        wxButton* execBtn  = new wxButton(this, wxID_OK,     wxT("Execute"));
+        wxButton* clearBtn = new wxButton(this, wxID_CLEAR,  wxT("Clear"));
+        wxButton* closeBtn = new wxButton(this, wxID_CANCEL, wxT("Close"));
+        execBtn->SetDefault();
+        btnRow->Add(execBtn,  0, wxRIGHT, 8);
+        btnRow->Add(clearBtn, 0, wxRIGHT, 8);
+        btnRow->AddStretchSpacer();
+        btnRow->Add(closeBtn, 0);
+        top->Add(btnRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+        // ── Output / results area ─────────────────────────────────────────
+        top->Add(new wxStaticText(this, wxID_ANY, wxT("Output:")),
+                 0, wxLEFT, 8);
+        m_output = new wxTextCtrl(this, wxID_ANY, wxEmptyString,
+                                  wxDefaultPosition, wxDefaultSize,
+                                  wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP |
+                                  wxHSCROLL);
+        m_output->SetMinSize(wxSize(-1, 140));
+        m_output->SetFont(codeFont);
+        m_output->SetBackgroundColour(wxColour(30, 30, 30));
+        m_output->SetForegroundColour(wxColour(200, 200, 200));
+        top->Add(m_output, 1, wxEXPAND | wxALL, 8);
+
+        SetSizer(top);
+        Layout();
+        m_code->SetFocus();
+
+        // ── Event handlers ────────────────────────────────────────────────
+        execBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Execute(); });
+        clearBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            m_code->Clear();
+            m_output->Clear();
+            m_code->SetFocus();
+        });
+        // Ctrl+Enter also executes (convenient alternative to clicking Execute).
+        m_code->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& evt) {
+            if (evt.GetKeyCode() == WXK_RETURN && evt.RawControlDown()) {
+                Execute();
+                return;
+            }
+            evt.Skip();
+        });
+
+        // Raise parent (MDI frame) on activate to stay above MDI children.
+        Bind(wxEVT_ACTIVATE, [this](wxActivateEvent& evt) {
+            if (evt.GetActive() && GetParent()) {
+                GetParent()->Raise();
+                Raise();
+            }
+            evt.Skip();
+        });
+    }
+
+private:
+    void Execute()
+    {
+        wxString code = m_code->GetValue();
+        if (code.IsEmpty()) return;
+
+        CScriptEngine* eng = m_doc->GetScriptEngine();
+        if (!eng || !eng->L) {
+            m_output->AppendText(wxT("ERROR: No active Lua scripting engine.\n"));
+            return;
+        }
+
+        lua_State* L = eng->L;
+        std::string chunk = std::string(code.ToUTF8().data());
+
+        // Wrap bare expressions in "return …" so simple queries like
+        // "world.GetWorldName()" display their result without needing "return".
+        // We try the original chunk first; if it fails to parse with a message
+        // containing "<eof>" we retry with "return " prepended.
+        int topBefore = lua_gettop(L);
+
+        // Try loading as a statement block.
+        int loadErr = luaL_loadbuffer(L, chunk.c_str(), chunk.size(), "=(eval)");
+        if (loadErr) {
+            // Parse error — try "return <expr>" to handle bare expressions.
+            const char* errMsg = lua_tostring(L, -1);
+            bool isEofErr = (errMsg && strstr(errMsg, "<eof>"));
+            lua_pop(L, 1);  // pop the error
+
+            if (isEofErr) {
+                std::string exprChunk = "return " + chunk;
+                loadErr = luaL_loadbuffer(L, exprChunk.c_str(), exprChunk.size(), "=(eval)");
+            }
+        }
+
+        if (loadErr) {
+            // Still a parse error.
+            wxString msg = wxT("PARSE ERROR: ");
+            if (const char* e = lua_tostring(L, -1)) msg += wxString::FromUTF8(e);
+            msg += wxT("\n");
+            lua_pop(L, 1);
+            m_output->AppendText(msg);
+            return;
+        }
+
+        // Execute with one base for error handler (traceback).
+        lua_getglobal(L, "debug");
+        lua_getfield(L, -1, "traceback");
+        lua_remove(L, -2);  // remove "debug" table
+        int tracebackIdx = lua_gettop(L) - 1;  // position of traceback fn before chunk fn
+
+        // Stack: [chunk_fn, traceback_fn]  — need traceback *before* chunk fn.
+        // Swap: move traceback to topBefore+1.
+        lua_insert(L, topBefore + 1);  // traceback now just above original top
+
+        int callErr = lua_pcall(L, 0, LUA_MULTRET, topBefore + 1);
+
+        if (callErr) {
+            wxString msg = wxT("ERROR: ");
+            if (const char* e = lua_tostring(L, -1)) msg += wxString::FromUTF8(e);
+            msg += wxT("\n");
+            lua_settop(L, topBefore);  // restore stack
+            m_output->AppendText(msg);
+            return;
+        }
+
+        // Collect return values.
+        int nResults = lua_gettop(L) - (topBefore + 1);  // +1 for the traceback fn
+        wxString resultLine;
+        for (int i = topBefore + 2; i <= lua_gettop(L); ++i) {
+            if (!resultLine.IsEmpty()) resultLine += wxT("\t");
+            int t = lua_type(L, i);
+            if (t == LUA_TSTRING) {
+                resultLine += wxString::FromUTF8(lua_tostring(L, i));
+            } else if (t == LUA_TNUMBER) {
+                resultLine += wxString::FromUTF8(lua_tostring(L, i));
+            } else if (t == LUA_TBOOLEAN) {
+                resultLine += lua_toboolean(L, i) ? wxT("true") : wxT("false");
+            } else if (t == LUA_TNIL) {
+                resultLine += wxT("nil");
+            } else {
+                // table, userdata, function, thread
+                resultLine += wxString::FromUTF8(lua_typename(L, t));
+                resultLine += wxString::Format(wxT(": %p"),
+                    static_cast<const void*>(lua_topointer(L, i)));
+            }
+        }
+        lua_settop(L, topBefore);  // restore stack cleanly
+
+        if (nResults == 0) {
+            m_output->AppendText(wxT("OK (no return values)\n"));
+        } else {
+            m_output->AppendText(wxT("=> ") + resultLine + wxT("\n"));
+        }
+    }
+
+    CMUSHclientDoc* m_doc;
+    wxTextCtrl*     m_code   = nullptr;
+    wxTextCtrl*     m_output = nullptr;
+};
+
+// ── Macros & Keypad Dialog ────────────────────────────────────────────────────
+// Configure → Macros & Keypad… — edit f-key macros and numpad macros for the
+// currently active world.  Mirrors the Windows Keypad/Macro tab in world prefs.
+//
+// F-key macros live in doc->m_macros[MACRO_COUNT] (text) and
+// doc->m_macro_type[MACRO_COUNT] (send type: REPLACE_COMMAND / SEND_NOW /
+// ADD_TO_COMMAND).  Keypad macros live in doc->m_keypad[eKeypad_Max_Items]
+// (text only — no separate type array).
+class CMacrosDlg : public wxDialog
+{
+public:
+    explicit CMacrosDlg(wxWindow* parent, CMUSHclientDoc* doc)
+        : wxDialog(parent, wxID_ANY, wxT("Macros & Keypad"),
+                   wxDefaultPosition, wxSize(560, 600),
+                   wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+        , m_doc(doc)
+    {
+        wxBoxSizer* top = new wxBoxSizer(wxVERTICAL);
+
+        wxNotebook* nb = new wxNotebook(this, wxID_ANY);
+
+        // ── Function Keys page ────────────────────────────────────────────
+        {
+            auto* page = new wxScrolledWindow(nb, wxID_ANY);
+            page->SetScrollRate(0, 16);
+            BuildFKeyPage(page);
+            nb->AddPage(page, wxT("Function Keys"));
+        }
+
+        // ── Numpad page ───────────────────────────────────────────────────
+        {
+            auto* page = new wxScrolledWindow(nb, wxID_ANY);
+            page->SetScrollRate(0, 16);
+            BuildKpadPage(page);
+            nb->AddPage(page, wxT("Numpad"));
+        }
+
+        top->Add(nb, 1, wxEXPAND | wxALL, 8);
+        top->Add(CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
+                 wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+        SetSizer(top);
+
+        Bind(wxEVT_ACTIVATE, [this](wxActivateEvent& evt) {
+            if (evt.GetActive() && GetParent()) {
+                GetParent()->Raise();
+                Raise();
+            }
+            evt.Skip();
+        });
+
+        Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
+            if (evt.GetId() == wxID_OK) Apply();
+            evt.Skip();  // let dialog close normally
+        });
+    }
+
+private:
+    // ── F-key table ───────────────────────────────────────────────────────
+    // (label, macro index — use -1 for combinations that don't exist)
+    struct FKeyDef { const char* label; int idx; };
+
+    static const FKeyDef* FKeyTable()
+    {
+        // F1-F12 plain, Shift+F1-F12, Ctrl+F1-F12 (no Ctrl+F4 in MUSHclient).
+        // Indexed so section headers can be inserted at rows 0, 12, 24.
+        static const FKeyDef t[] = {
+            // ── Plain ──────────────────────────────────────────────────────
+            { "F1",          MAC_F1  },
+            { "F2",          MAC_F2  },
+            { "F3",          MAC_F3  },
+            { "F4",          MAC_F4  },
+            { "F5",          MAC_F5  },
+            { "F6",          MAC_F6  },
+            { "F7",          MAC_F7  },
+            { "F8",          MAC_F8  },
+            { "F9",          MAC_F9  },
+            { "F10",         MAC_F10 },
+            { "F11",         MAC_F11 },
+            { "F12",         MAC_F12 },
+            // ── Shift ──────────────────────────────────────────────────────
+            { "Shift+F1",    MAC_SHIFT_F1  },
+            { "Shift+F2",    MAC_SHIFT_F2  },
+            { "Shift+F3",    MAC_SHIFT_F3  },
+            { "Shift+F4",    MAC_SHIFT_F4  },
+            { "Shift+F5",    MAC_SHIFT_F5  },
+            { "Shift+F6",    MAC_SHIFT_F6  },
+            { "Shift+F7",    MAC_SHIFT_F7  },
+            { "Shift+F8",    MAC_SHIFT_F8  },
+            { "Shift+F9",    MAC_SHIFT_F9  },
+            { "Shift+F10",   MAC_SHIFT_F10 },
+            { "Shift+F11",   MAC_SHIFT_F11 },
+            { "Shift+F12",   MAC_SHIFT_F12 },
+            // ── Ctrl ───────────────────────────────────────────────────────
+            { "Ctrl+F1",     MAC_CTRL_F1   },
+            { "Ctrl+F2",     MAC_CTRL_F2   },
+            { "Ctrl+F3",     MAC_CTRL_F3   },
+            { "Ctrl+F4",     -1            },   // does not exist in MUSHclient
+            { "Ctrl+F5",     MAC_CTRL_F5   },
+            { "Ctrl+F6",     MAC_CTRL_F6   },
+            { "Ctrl+F7",     MAC_CTRL_F7   },
+            { "Ctrl+F8",     MAC_CTRL_F8   },
+            { "Ctrl+F9",     MAC_CTRL_F9   },
+            { "Ctrl+F10",    MAC_CTRL_F10  },
+            { "Ctrl+F11",    MAC_CTRL_F11  },
+            { "Ctrl+F12",    MAC_CTRL_F12  },
+        };
+        return t;
+    }
+    static constexpr int kFKeyCount = 36;  // 3 groups × 12
+
+    // ── Keypad table ──────────────────────────────────────────────────────
+    struct KpadDef { const char* label; int idx; };
+
+    static const KpadDef* KpadTable()
+    {
+        static const KpadDef t[] = {
+            // ── Plain keypad ───────────────────────────────────────────────
+            { "Num 0",       eKeypad_0    },
+            { "Num 1",       eKeypad_1    },
+            { "Num 2",       eKeypad_2    },
+            { "Num 3",       eKeypad_3    },
+            { "Num 4",       eKeypad_4    },
+            { "Num 5",       eKeypad_5    },
+            { "Num 6",       eKeypad_6    },
+            { "Num 7",       eKeypad_7    },
+            { "Num 8",       eKeypad_8    },
+            { "Num 9",       eKeypad_9    },
+            { "Num .",       eKeypad_Dot  },
+            { "Num /",       eKeypad_Slash},
+            { "Num *",       eKeypad_Star },
+            { "Num -",       eKeypad_Dash },
+            { "Num +",       eKeypad_Plus },
+            // ── Ctrl+keypad ────────────────────────────────────────────────
+            { "Ctrl+Num 0",  eCtrl_Keypad_0    },
+            { "Ctrl+Num 1",  eCtrl_Keypad_1    },
+            { "Ctrl+Num 2",  eCtrl_Keypad_2    },
+            { "Ctrl+Num 3",  eCtrl_Keypad_3    },
+            { "Ctrl+Num 4",  eCtrl_Keypad_4    },
+            { "Ctrl+Num 5",  eCtrl_Keypad_5    },
+            { "Ctrl+Num 6",  eCtrl_Keypad_6    },
+            { "Ctrl+Num 7",  eCtrl_Keypad_7    },
+            { "Ctrl+Num 8",  eCtrl_Keypad_8    },
+            { "Ctrl+Num 9",  eCtrl_Keypad_9    },
+            { "Ctrl+Num .",  eCtrl_Keypad_Dot  },
+            { "Ctrl+Num /",  eCtrl_Keypad_Slash},
+            { "Ctrl+Num *",  eCtrl_Keypad_Star },
+            { "Ctrl+Num -",  eCtrl_Keypad_Dash },
+            { "Ctrl+Num +",  eCtrl_Keypad_Plus },
+        };
+        return t;
+    }
+    static constexpr int kKpadCount = 30;  // eKeypad_Max_Items
+
+    // ── Widget storage ────────────────────────────────────────────────────
+    struct FKeyRow { wxTextCtrl* text = nullptr; wxChoice* type = nullptr; int idx = -1; };
+    struct KpadRow { wxTextCtrl* text = nullptr; int idx = -1; };
+
+    std::vector<FKeyRow> m_fkeyRows;  // kFKeyCount entries
+    std::vector<KpadRow> m_kpadRows;  // kKpadCount entries
+
+    // ── Page builders ─────────────────────────────────────────────────────
+    void BuildFKeyPage(wxScrolledWindow* page)
+    {
+        // 3 columns: label (fixed) | text ctrl (expand) | type choice (fixed)
+        wxFlexGridSizer* grid = new wxFlexGridSizer(0, 3, 4, 8);
+        grid->AddGrowableCol(1, 1);
+
+        static const char* kTypeLabels[] = { "Replace", "Send", "Add To" };
+
+        const FKeyDef* defs = FKeyTable();
+        m_fkeyRows.resize(kFKeyCount);
+
+        // Helper: insert a bold separator row.
+        auto addSep = [&](const wxString& label) {
+            auto* st = new wxStaticText(page, wxID_ANY, label);
+            wxFont f = st->GetFont(); f.MakeBold(); st->SetFont(f);
+            grid->Add(st, 0, wxALIGN_CENTER_VERTICAL | wxTOP, 6);
+            grid->AddSpacer(0);
+            grid->AddSpacer(0);
+        };
+
+        for (int i = 0; i < kFKeyCount; ++i) {
+            // Section headers at start of each group.
+            if (i ==  0) addSep(wxT("Plain"));
+            if (i == 12) addSep(wxT("Shift"));
+            if (i == 24) addSep(wxT("Ctrl"));
+
+            const FKeyDef& d = defs[i];
+            bool exists = (d.idx >= 0);
+
+            grid->Add(new wxStaticText(page, wxID_ANY, wxString::FromUTF8(d.label)),
+                      0, wxALIGN_CENTER_VERTICAL);
+
+            wxTextCtrl* tc = new wxTextCtrl(page, wxID_ANY,
+                exists ? wxString::FromUTF8(static_cast<const char*>(m_doc->m_macros[d.idx]))
+                       : wxString());
+            if (!exists) tc->Enable(false);
+            grid->Add(tc, 1, wxEXPAND);
+
+            wxChoice* ch = new wxChoice(page, wxID_ANY);
+            ch->Append(wxT("Replace"));
+            ch->Append(wxT("Send"));
+            ch->Append(wxT("Add To"));
+            if (exists) {
+                int sel = (int)m_doc->m_macro_type[d.idx];
+                ch->SetSelection(sel >= 0 && sel < 3 ? sel : 1 /*SEND_NOW*/);
+            } else {
+                ch->SetSelection(1);
+                ch->Enable(false);
+            }
+            grid->Add(ch, 0, wxALIGN_CENTER_VERTICAL);
+
+            m_fkeyRows[i] = { tc, ch, d.idx };
+        }
+
+        wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
+        vs->Add(grid, 1, wxEXPAND | wxALL, 8);
+        page->SetSizer(vs);
+        page->FitInside();
+    }
+
+    void BuildKpadPage(wxScrolledWindow* page)
+    {
+        // 2 columns: label (fixed) | text ctrl (expand)
+        wxFlexGridSizer* grid = new wxFlexGridSizer(0, 2, 4, 8);
+        grid->AddGrowableCol(1, 1);
+
+        const KpadDef* defs = KpadTable();
+        m_kpadRows.resize(kKpadCount);
+
+        // Section headers.
+        auto addSep = [&](const wxString& label) {
+            auto* st = new wxStaticText(page, wxID_ANY, label);
+            wxFont f = st->GetFont(); f.MakeBold(); st->SetFont(f);
+            grid->Add(st, 0, wxALIGN_CENTER_VERTICAL | wxTOP, 6);
+            grid->AddSpacer(0);
+        };
+
+        for (int i = 0; i < kKpadCount; ++i) {
+            if (i ==  0) addSep(wxT("Plain"));
+            if (i == 15) addSep(wxT("Ctrl"));
+
+            const KpadDef& d = defs[i];
+            grid->Add(new wxStaticText(page, wxID_ANY, wxString::FromUTF8(d.label)),
+                      0, wxALIGN_CENTER_VERTICAL);
+
+            wxTextCtrl* tc = new wxTextCtrl(page, wxID_ANY,
+                wxString::FromUTF8(static_cast<const char*>(m_doc->m_keypad[d.idx])));
+            grid->Add(tc, 1, wxEXPAND);
+            m_kpadRows[i] = { tc, d.idx };
+        }
+
+        wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
+        vs->Add(grid, 1, wxEXPAND | wxALL, 8);
+        page->SetSizer(vs);
+        page->FitInside();
+    }
+
+    // ── Apply changes to doc ──────────────────────────────────────────────
+    void Apply()
+    {
+        for (const FKeyRow& r : m_fkeyRows) {
+            if (r.idx < 0 || !r.text) continue;
+            m_doc->m_macros[r.idx]     = CString(r.text->GetValue().ToUTF8().data());
+            m_doc->m_macro_type[r.idx] = static_cast<unsigned short>(
+                std::max(0, r.type ? r.type->GetSelection() : 1));
+        }
+        for (const KpadRow& r : m_kpadRows) {
+            if (r.idx < 0 || !r.text) continue;
+            m_doc->m_keypad[r.idx] = CString(r.text->GetValue().ToUTF8().data());
+        }
+        m_doc->SetModifiedFlag(TRUE);
+    }
+
+    CMUSHclientDoc* m_doc;
+};
+
+// ── ANSI Color Palette Dialog ─────────────────────────────────────────────────
+// Configure → Colors… — edit the 8 normal and 8 bright ANSI colors for the
+// current world.  Changes affect GetStyleRGB color conversion immediately but
+// only take visual effect on text received after the dialog is closed (already-
+// buffered lines in the output pane retain the colors they were rendered with).
+//
+// Colors are stored as Windows COLORREFs (0x00BBGGRR) in doc->m_normalcolour[8]
+// and doc->m_boldcolour[8] (indices 0-7 = Black, Red, Green, Yellow, Blue,
+// Magenta, Cyan, White).  The wxColourPickerCtrl converts RGB↔COLORREF.
+class CColorsDlg : public wxDialog
+{
+public:
+    explicit CColorsDlg(wxWindow* parent, CMUSHclientDoc* doc)
+        : wxDialog(parent, wxID_ANY, wxT("ANSI Color Palette"),
+                   wxDefaultPosition, wxDefaultSize,
+                   wxDEFAULT_DIALOG_STYLE)
+        , m_doc(doc)
+    {
+        wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
+
+        // ── Header row ────────────────────────────────────────────────────
+        {
+            wxFlexGridSizer* hdr = new wxFlexGridSizer(1, 3, 0, 8);
+            hdr->AddGrowableCol(0, 1);
+            hdr->Add(new wxStaticText(this, wxID_ANY, wxEmptyString));  // spacer
+            auto* n = new wxStaticText(this, wxID_ANY, wxT("Normal"));
+            auto* b = new wxStaticText(this, wxID_ANY, wxT("Bright / Bold"));
+            wxFont f = n->GetFont(); f.MakeBold(); n->SetFont(f); b->SetFont(f);
+            hdr->Add(n, 0, wxALIGN_CENTER);
+            hdr->Add(b, 0, wxALIGN_CENTER);
+            vs->Add(hdr, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12);
+        }
+
+        // ── Color rows (3 columns: label | normal picker | bold picker) ──
+        wxFlexGridSizer* grid = new wxFlexGridSizer(8, 3, 6, 10);
+        grid->AddGrowableCol(0, 1);
+
+        static const char* kNames[] = {
+            "Black", "Red", "Green", "Yellow",
+            "Blue",  "Magenta", "Cyan", "White"
+        };
+
+        for (int i = 0; i < 8; ++i) {
+            grid->Add(new wxStaticText(this, wxID_ANY, wxString::FromUTF8(kNames[i])),
+                      0, wxALIGN_CENTER_VERTICAL);
+
+            // Normal color
+            COLORREF nr = doc->m_normalcolour[i];
+            wxColour nc(GetRValue(nr), GetGValue(nr), GetBValue(nr));
+            m_normal[i] = new wxColourPickerCtrl(this, wxID_ANY, nc,
+                              wxDefaultPosition, wxSize(60, -1),
+                              wxCLRP_DEFAULT_STYLE | wxCLRP_SHOW_LABEL);
+            grid->Add(m_normal[i], 0, wxALIGN_CENTER_VERTICAL);
+
+            // Bold/bright color
+            COLORREF br = doc->m_boldcolour[i];
+            wxColour bc(GetRValue(br), GetGValue(br), GetBValue(br));
+            m_bold[i] = new wxColourPickerCtrl(this, wxID_ANY, bc,
+                            wxDefaultPosition, wxSize(60, -1),
+                            wxCLRP_DEFAULT_STYLE | wxCLRP_SHOW_LABEL);
+            grid->Add(m_bold[i], 0, wxALIGN_CENTER_VERTICAL);
+        }
+        vs->Add(grid, 0, wxEXPAND | wxALL, 12);
+
+        // ── Hint ─────────────────────────────────────────────────────────
+        auto* hint = new wxStaticText(this, wxID_ANY,
+            wxT("Color changes apply to newly received text."));
+        wxFont hf = hint->GetFont();
+        hf.SetPointSize(std::max(8, hf.GetPointSize() - 1));
+        hint->SetFont(hf);
+        vs->Add(hint, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
+
+        // ── Restore defaults button + OK/Cancel ───────────────────────────
+        wxBoxSizer* btnRow = new wxBoxSizer(wxHORIZONTAL);
+        wxButton* defBtn = new wxButton(this, wxID_ANY, wxT("Restore Defaults"));
+        defBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { RestoreDefaults(); });
+        btnRow->Add(defBtn, 0);
+        btnRow->AddStretchSpacer();
+        btnRow->Add(CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0);
+        vs->Add(btnRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+
+        SetSizerAndFit(vs);
+
+        Bind(wxEVT_ACTIVATE, [this](wxActivateEvent& evt) {
+            if (evt.GetActive() && GetParent()) {
+                GetParent()->Raise();
+                Raise();
+            }
+            evt.Skip();
+        });
+
+        Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
+            if (evt.GetId() == wxID_OK) Apply();
+            evt.Skip();
+        });
+    }
+
+private:
+    void RestoreDefaults()
+    {
+        static const COLORREF kNormal[8] = {
+            RGB(  0,   0,   0),   // Black
+            RGB(128,   0,   0),   // Red
+            RGB(  0, 128,   0),   // Green
+            RGB(128, 128,   0),   // Yellow
+            RGB(  0,   0, 128),   // Blue
+            RGB(128,   0, 128),   // Magenta
+            RGB(  0, 128, 128),   // Cyan
+            RGB(192, 192, 192),   // White
+        };
+        static const COLORREF kBold[8] = {
+            RGB(128, 128, 128),   // Bold Black  (dark grey)
+            RGB(255,   0,   0),   // Bold Red
+            RGB(  0, 255,   0),   // Bold Green
+            RGB(255, 255,   0),   // Bold Yellow
+            RGB(  0,   0, 255),   // Bold Blue
+            RGB(255,   0, 255),   // Bold Magenta
+            RGB(  0, 255, 255),   // Bold Cyan
+            RGB(255, 255, 255),   // Bold White
+        };
+        for (int i = 0; i < 8; ++i) {
+            m_normal[i]->SetColour(wxColour(GetRValue(kNormal[i]),
+                                            GetGValue(kNormal[i]),
+                                            GetBValue(kNormal[i])));
+            m_bold[i]->SetColour(wxColour(GetRValue(kBold[i]),
+                                          GetGValue(kBold[i]),
+                                          GetBValue(kBold[i])));
+        }
+    }
+
+    void Apply()
+    {
+        for (int i = 0; i < 8; ++i) {
+            wxColour nc = m_normal[i]->GetColour();
+            wxColour bc = m_bold[i]->GetColour();
+            m_doc->m_normalcolour[i] = RGB(nc.Red(), nc.Green(), nc.Blue());
+            m_doc->m_boldcolour[i]   = RGB(bc.Red(), bc.Green(), bc.Blue());
+        }
+        m_doc->SetModifiedFlag(TRUE);
+    }
+
+    CMUSHclientDoc*      m_doc;
+    wxColourPickerCtrl*  m_normal[8];
+    wxColourPickerCtrl*  m_bold[8];
+};
+
 // ── Recent Worlds list ────────────────────────────────────────────────────────
 // Tracks up to kMaxRecentWorlds file paths most recently opened or saved,
 // persisted to wxConfig at /recent/0 … /recent/N-1.  Shown in File → Open
@@ -69,9 +688,14 @@ static const int ID_MENU_CFG_TRIGGERS  = wxID_HIGHEST + 400;
 static const int ID_MENU_CFG_ALIASES   = wxID_HIGHEST + 401;
 static const int ID_MENU_CFG_TIMERS    = wxID_HIGHEST + 402;
 static const int ID_MENU_CFG_VARIABLES = wxID_HIGHEST + 403;
+static const int ID_MENU_CFG_MACROS    = wxID_HIGHEST + 404;
+static const int ID_MENU_CFG_COLORS    = wxID_HIGHEST + 405;
 
 // ── Connection / logging IDs ──────────────────────────────────────────────────
-static const int ID_CONN_LOG_TOGGLE = wxID_HIGHEST + 410;
+static const int ID_CONN_LOG_TOGGLE    = wxID_HIGHEST + 410;
+
+// ── Game menu IDs ─────────────────────────────────────────────────────────────
+static const int ID_MENU_GAME_LUA_EVAL = wxID_HIGHEST + 411;
 static wxMenu*    s_recentMenu     = nullptr;
 static std::vector<std::string> s_recentWorlds;
 
@@ -507,6 +1131,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->Append(32158 /*ID_GAME_PREFERENCES*/,     wxT("World Properties…\tCtrl+,"));
     gameMenu->AppendSeparator();
     gameMenu->Append(32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/, wxT("Reload Script"));
+    gameMenu->Append(ID_MENU_GAME_LUA_EVAL,              wxT("Execute Lua…\tCtrl+Shift+L"));
     mb->Append(gameMenu, wxT("&Game"));
 
     // ── Configure menu ────────────────────────────────────────────────────
@@ -516,6 +1141,9 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     cfgMenu->Append(ID_MENU_CFG_TIMERS,    wxT("T&imers…\tCtrl+Shift+I"));
     cfgMenu->AppendSeparator();
     cfgMenu->Append(ID_MENU_CFG_VARIABLES, wxT("&Variables…\tCtrl+Shift+V"));
+    cfgMenu->AppendSeparator();
+    cfgMenu->Append(ID_MENU_CFG_MACROS,   wxT("&Macros && Keypad…"));
+    cfgMenu->Append(ID_MENU_CFG_COLORS,   wxT("&Colors…"));
     mb->Append(cfgMenu, wxT("&Configure"));
 
     // ── Window menu ───────────────────────────────────────────────────────
@@ -619,9 +1247,15 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                    id == ID_MENU_CFG_TRIGGERS  ||
                    id == ID_MENU_CFG_ALIASES   ||
                    id == ID_MENU_CFG_TIMERS    ||
-                   id == ID_MENU_CFG_VARIABLES) {
+                   id == ID_MENU_CFG_VARIABLES ||
+                   id == ID_MENU_CFG_MACROS    ||
+                   id == ID_MENU_CFG_COLORS) {
             // Need an active world.
             evt.Enable(doc != nullptr);
+        } else if (id == ID_MENU_GAME_LUA_EVAL ||
+                   id == 32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/) {
+            // Need an active world with scripting enabled.
+            evt.Enable(doc != nullptr && doc->m_bEnableScripts);
         } else if (id == ID_CONN_LOG_TOGGLE) {
             // Need an active world; label flips between Start/Stop.
             evt.Enable(doc != nullptr);
@@ -744,6 +1378,19 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                                  wxT("Reload Script"), wxOK | wxICON_INFORMATION, frame);
                 }
             }
+        } else if (id == ID_MENU_GAME_LUA_EVAL) {
+            if (CMUSHclientDoc* doc = activeDoc()) {
+                CScriptEngine* eng = doc->GetScriptEngine();
+                if (!eng || !eng->L) {
+                    wxMessageBox(
+                        wxT("No active Lua scripting engine for this world.\n"
+                            "Enable scripting in Game → World Properties → Scripting."),
+                        wxT("Execute Lua"), wxOK | wxICON_INFORMATION, frame);
+                } else {
+                    CLuaEvalDlg dlg(frame, doc);
+                    dlg.ShowModal();
+                }
+            }
         } else if (id == wxID_ABOUT) {
             wxString ver = wxString::FromUTF8(
                 static_cast<const char*>(MUSHCLIENT_VERSION));
@@ -778,6 +1425,16 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         } else if (id == ID_MENU_CFG_VARIABLES) {
             if (CMUSHclientDoc* doc = activeDoc()) {
                 CVariableListDlg dlg(frame, doc);
+                dlg.ShowModal();
+            }
+        } else if (id == ID_MENU_CFG_MACROS) {
+            if (CMUSHclientDoc* doc = activeDoc()) {
+                CMacrosDlg dlg(frame, doc);
+                dlg.ShowModal();
+            }
+        } else if (id == ID_MENU_CFG_COLORS) {
+            if (CMUSHclientDoc* doc = activeDoc()) {
+                CColorsDlg dlg(frame, doc);
                 dlg.ShowModal();
             }
         } else if (id == ID_CONN_LOG_TOGGLE) {
@@ -1191,6 +1848,7 @@ public:
     wxTextCtrl*          m_name;
     wxTextCtrl*          m_server;
     wxSpinCtrl*          m_port;
+    wxCheckBox*          m_useSSL;
     wxCheckBox*          m_autoConnect;
     // Display
     wxFontPickerCtrl*    m_fontPicker;
@@ -1203,11 +1861,18 @@ public:
     wxSpinCtrl*          m_scrollback;
     wxSpinCtrl*          m_wrapColumn;
     wxCheckBox*          m_enableBeeps;
+    wxCheckBox*          m_displayMyInput;
+    wxCheckBox*          m_autoFreeze;
+    wxCheckBox*          m_carriageReturn;
+    // Logging
+    wxTextCtrl*          m_autoLogFile;
+    wxButton*            m_autoLogBrowse;
 
     struct Params {
         // Connection
         wxString name, server;
         int      port;
+        bool     useSSL;
         bool     autoConnect;
         // Display
         wxFont   currentFont;
@@ -1219,6 +1884,11 @@ public:
         // Options
         int  wrapColumn;
         bool enableBeeps;
+        bool displayMyInput;
+        bool autoFreeze;
+        bool carriageReturn;
+        // Logging
+        wxString autoLogFile;
     };
 
     explicit WorldPreferencesDlg(wxWindow* parent, const Params& p)
@@ -1226,10 +1896,16 @@ public:
                    wxDefaultPosition, wxDefaultSize,
                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
         , m_bgColorPicker(nullptr)
+        , m_useSSL(nullptr)
         , m_scriptBrowse(nullptr)
         , m_scrollback(nullptr)
         , m_wrapColumn(nullptr)
         , m_enableBeeps(nullptr)
+        , m_displayMyInput(nullptr)
+        , m_autoFreeze(nullptr)
+        , m_carriageReturn(nullptr)
+        , m_autoLogFile(nullptr)
+        , m_autoLogBrowse(nullptr)
     {
         wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
 
@@ -1261,6 +1937,14 @@ public:
             row(wxT("Port:"),           m_port);
 
             box->Add(g, 1, wxEXPAND | wxALL, 8);
+
+            m_useSSL = new wxCheckBox(this, wxID_ANY,
+                                      wxT("Use SSL/TLS encryption"));
+            m_useSSL->SetValue(p.useSSL);
+            m_useSSL->SetToolTip(wxT("Encrypt the connection using TLS. "
+                                     "Required by some modern MUD servers."));
+            box->Add(m_useSSL, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
             vs->Add(box, 0, wxEXPAND | wxALL, 12);
         }
 
@@ -1311,7 +1995,7 @@ public:
                    0, wxALIGN_CENTER_VERTICAL);
             m_scriptFile = new wxTextCtrl(this, wxID_ANY, p.scriptFile);
             g->Add(m_scriptFile, 1, wxEXPAND);
-            m_scriptBrowse = new wxButton(this, wxID_ANY, wxT("Browse\xe2\x80\xa6"),
+            m_scriptBrowse = new wxButton(this, wxID_ANY, wxT("Browse…"),
                                           wxDefaultPosition, wxDefaultSize,
                                           wxBU_EXACTFIT);
             g->Add(m_scriptBrowse, 0, wxALIGN_CENTER_VERTICAL);
@@ -1354,6 +2038,21 @@ public:
             m_enableBeeps->SetValue(p.enableBeeps);
             box->Add(m_enableBeeps, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
 
+            m_displayMyInput = new wxCheckBox(this, wxID_ANY,
+                                              wxT("Echo typed commands in output window"));
+            m_displayMyInput->SetValue(p.displayMyInput);
+            box->Add(m_displayMyInput, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_autoFreeze = new wxCheckBox(this, wxID_ANY,
+                                          wxT("Freeze output when scrolled up (auto-pause)"));
+            m_autoFreeze->SetValue(p.autoFreeze);
+            box->Add(m_autoFreeze, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_carriageReturn = new wxCheckBox(this, wxID_ANY,
+                                              wxT("Carriage return (\\r) clears the current line"));
+            m_carriageReturn->SetValue(p.carriageReturn);
+            box->Add(m_carriageReturn, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
             // Two spinners on one row: scrollback + wrap column.
             wxBoxSizer* spRow = new wxBoxSizer(wxHORIZONTAL);
 
@@ -1376,6 +2075,53 @@ public:
             spRow->Add(m_wrapColumn, 0, wxALIGN_CENTER_VERTICAL);
 
             box->Add(spRow, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+        }
+
+        // ── Logging ──────────────────────────────────────────────────────
+        {
+            wxStaticBoxSizer* box =
+                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Logging"));
+
+            wxBoxSizer* row = new wxBoxSizer(wxHORIZONTAL);
+            row->Add(new wxStaticText(this, wxID_ANY, wxT("Auto-log file:")),
+                     0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+            m_autoLogFile = new wxTextCtrl(this, wxID_ANY, p.autoLogFile,
+                                           wxDefaultPosition, wxSize(260, -1));
+            m_autoLogFile->SetToolTip(
+                wxT("If set, logging starts automatically on connect. ")
+                wxT("Supports strftime codes: %Y (year), %m (month), %d (day), etc."));
+            row->Add(m_autoLogFile, 1, wxEXPAND);
+
+            m_autoLogBrowse = new wxButton(this, wxID_ANY, wxT("…"),
+                                           wxDefaultPosition, wxSize(28, -1));
+            m_autoLogBrowse->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+                wxString cur = m_autoLogFile->GetValue();
+                // Strip time-format codes for the initial directory hint.
+                wxString dir = cur.IsEmpty()
+                    ? wxString()
+                    : wxFileName(cur).GetPath();
+                wxFileDialog dlg(this,
+                                 wxT("Choose Auto-Log File"),
+                                 dir, wxString(),
+                                 wxT("Log files (*.log;*.txt)|*.log;*.txt"
+                                     "|All files (*.*)|*.*"),
+                                 wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+                if (dlg.ShowModal() == wxID_OK)
+                    m_autoLogFile->SetValue(dlg.GetPath());
+            });
+            row->Add(m_autoLogBrowse, 0, wxLEFT, 4);
+
+            box->Add(row, 0, wxEXPAND | wxALL, 8);
+
+            wxStaticText* hint = new wxStaticText(this, wxID_ANY,
+                wxT("Leave empty to disable automatic logging. ")
+                wxT("Use time codes (%Y, %m, %d, %H, %M, %S) in the filename."));
+            wxFont small = hint->GetFont();
+            small.SetPointSize(std::max(8, small.GetPointSize() - 1));
+            hint->SetFont(small);
+            box->Add(hint, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
             vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
         }
 
@@ -1439,8 +2185,14 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     p.name        = wxString::FromUTF8(static_cast<const char*>(doc->m_mush_name));
     p.server      = wxString::FromUTF8(static_cast<const char*>(doc->m_server));
     p.port        = doc->m_port;
-    p.autoConnect = (doc->m_connect_now != 0);
-    p.enableBeeps = (doc->m_enable_beeps != 0);
+    p.useSSL         = (doc->m_bUseSSL != 0);
+    p.autoConnect    = (doc->m_connect_now != 0);
+    p.enableBeeps    = (doc->m_enable_beeps != 0);
+    p.displayMyInput = (doc->m_display_my_input != 0);
+    p.autoFreeze     = (doc->m_bAutoFreeze != 0);
+    p.carriageReturn = (doc->m_bCarriageReturnClearsLine != 0);
+    p.autoLogFile    = wxString::FromUTF8(
+                           static_cast<const char*>(doc->m_strAutoLogFileName));
 
     // Font: use pane's live font (post Ctrl+scroll zoom) or fall back.
     if (pane) p.currentFont = pane->GetCurrentFont();
@@ -1465,8 +2217,16 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     doc->m_mush_name   = CString(dlg.m_name->GetValue().ToUTF8().data());
     doc->m_server      = CString(dlg.m_server->GetValue().ToUTF8().data());
     doc->m_port        = static_cast<unsigned short>(dlg.m_port->GetValue());
-    doc->m_connect_now = dlg.m_autoConnect->GetValue() ? 1 : 0;
-    doc->m_enable_beeps = dlg.m_enableBeeps->GetValue() ? 1 : 0;
+    doc->m_bUseSSL                   = dlg.m_useSSL->GetValue()         ? 1 : 0;
+    doc->m_connect_now               = dlg.m_autoConnect->GetValue()    ? 1 : 0;
+    doc->m_enable_beeps              = dlg.m_enableBeeps->GetValue()    ? 1 : 0;
+    doc->m_display_my_input          = dlg.m_displayMyInput->GetValue() ? 1 : 0;
+    doc->m_bAutoFreeze               = dlg.m_autoFreeze->GetValue()     ? 1 : 0;
+    doc->m_bCarriageReturnClearsLine = dlg.m_carriageReturn->GetValue() ? 1 : 0;
+    doc->m_strAutoLogFileName        = CString(dlg.m_autoLogFile->GetValue().ToUTF8().data());
+
+    // Propagate auto-freeze setting to the live output pane immediately.
+    if (pane) pane->SetAllowAutoFreeze(doc->m_bAutoFreeze != 0);
 
     // ── Apply font ────────────────────────────────────────────────────────
     if (pane && dlg.m_fontPicker) {
@@ -1549,8 +2309,8 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
         wxMessageBox(
             wxT("World properties updated.\n\n")
             wxT("Font and scripting changes take effect immediately.\n")
-            wxT("Changes to server address and port will take effect\n")
-            wxT("the next time you reconnect."),
+            wxT("Changes to server address, port, and SSL/TLS settings\n")
+            wxT("will take effect the next time you reconnect."),
             wxT("World Properties"),
             wxOK | wxICON_INFORMATION, parent);
     }

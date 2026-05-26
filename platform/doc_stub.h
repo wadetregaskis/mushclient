@@ -1584,10 +1584,6 @@ public:
     CString        m_strScriptFilename;  // external .lua file (world attribute)
     CString        m_strScript;          // accumulated inline <script> content
 
-    // ── Shift+Tab completion items ────────────────────────────────────
-    set<string>    m_ExtraShiftTabCompleteItems;
-    bool           m_bTabCompleteFunctions = false;
-
     // ── Timer enable ───────────────────────────────────────────────────
     unsigned short m_bEnableTimers = 1;
 
@@ -2000,11 +1996,6 @@ public:
     // Sets selStart and selEnd (both 0-based, in characters).
     // If nothing is selected, both are set to the caret position.
     std::function<void(long&, long&)> m_fn_get_command_selection;
-
-    // GetSelectionStartLine / GetSelectionEndLine / …Column:
-    // query the output-pane text selection.
-    // Fills four 1-based (line, col) values; returns false if no selection.
-    std::function<bool(long&, long&, long&, long&)> m_fn_get_output_selection;
 
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference

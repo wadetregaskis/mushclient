@@ -17,7 +17,6 @@
 
 #include "platform/wx_frame.h"
 #include "platform/doc_stub.h"
-#include "platform/wx_entity_dlgs.h"
 #include "platform/wx_outputpane.h"
 #include "worldsock.h"
 #include "platform/posix_socket.h"
@@ -46,11 +45,8 @@ static const int ID_MENU_CLOSE        = wxID_HIGHEST + 4;
 static const int ID_MENU_OPEN_WORLD   = wxID_HIGHEST + 5;
 static const int ID_MENU_RECONNECT    = wxID_HIGHEST + 6;
 // Recent-worlds MRU: kMaxRecentWorlds consecutive IDs (9 slots)
-static const int ID_MENU_RECENT_FIRST  = wxID_HIGHEST + 10;
-static const int ID_MENU_RECENT_LAST   = ID_MENU_RECENT_FIRST + kMaxRecentWorlds - 1;
-static const int ID_MENU_TRIGGERS      = wxID_HIGHEST + 30;
-static const int ID_MENU_ALIASES       = wxID_HIGHEST + 31;
-static const int ID_MENU_TIMERS        = wxID_HIGHEST + 32;
+static const int ID_MENU_RECENT_FIRST = wxID_HIGHEST + 10;
+static const int ID_MENU_RECENT_LAST  = ID_MENU_RECENT_FIRST + kMaxRecentWorlds - 1;
 
 // ── Event table ───────────────────────────────────────────────────────────────
 wxBEGIN_EVENT_TABLE(CWorldFrame, wxFrame)
@@ -60,9 +56,6 @@ wxBEGIN_EVENT_TABLE(CWorldFrame, wxFrame)
     EVT_MENU(ID_MENU_OPEN_WORLD,       CWorldFrame::OnMenuOpenWorld)
     EVT_MENU(ID_MENU_RECONNECT,        CWorldFrame::OnMenuReconnect)
     EVT_MENU(ID_MENU_CLOSE,            CWorldFrame::OnMenuCloseWorld)
-    EVT_MENU(ID_MENU_TRIGGERS,         CWorldFrame::OnMenuTriggers)
-    EVT_MENU(ID_MENU_ALIASES,          CWorldFrame::OnMenuAliases)
-    EVT_MENU(ID_MENU_TIMERS,           CWorldFrame::OnMenuTimers)
     EVT_CLOSE(                         CWorldFrame::OnClose)
 wxEND_EVENT_TABLE()
 
@@ -124,16 +117,6 @@ CWorldFrame::CWorldFrame(const std::string& host, int port)
     worldMenu->Append(ID_MENU_CLOSE,      "&Close World\tCtrl+W",
                       "Close this world window");
     menuBar->Append(worldMenu, "&World");
-
-    // Configure menu — triggers, aliases, timers for this world
-    wxMenu* cfgMenu = new wxMenu();
-    cfgMenu->Append(ID_MENU_TRIGGERS, "&Triggers…\tCtrl+T",
-                    "Edit triggers for this world");
-    cfgMenu->Append(ID_MENU_ALIASES,  "&Aliases…\tCtrl+Shift+A",
-                    "Edit aliases for this world");
-    cfgMenu->Append(ID_MENU_TIMERS,   "T&imers…\tCtrl+Shift+I",
-                    "Edit timers for this world");
-    menuBar->Append(cfgMenu, "&Configure");
 
     SetMenuBar(menuBar);
 
@@ -525,27 +508,6 @@ void CWorldFrame::OnMenuReconnect(wxCommandEvent&)
 void CWorldFrame::OnMenuCloseWorld(wxCommandEvent&)
 {
     Close(true);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Configure menu — Triggers / Aliases / Timers editors
-// ─────────────────────────────────────────────────────────────────────────────
-void CWorldFrame::OnMenuTriggers(wxCommandEvent&)
-{
-    CTriggerListDlg dlg(this, m_doc.get());
-    dlg.ShowModal();
-}
-
-void CWorldFrame::OnMenuAliases(wxCommandEvent&)
-{
-    CAliasListDlg dlg(this, m_doc.get());
-    dlg.ShowModal();
-}
-
-void CWorldFrame::OnMenuTimers(wxCommandEvent&)
-{
-    CTimerListDlg dlg(this, m_doc.get());
-    dlg.ShowModal();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

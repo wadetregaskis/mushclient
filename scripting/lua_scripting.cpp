@@ -431,11 +431,23 @@ void LuaError (lua_State *L,
     }
 
 #else
-  // macOS / non-Windows: print to stderr
+  // macOS / non-Windows: route to doc output pane (same as
+  // m_bScriptErrorsToOutputWindow on Windows) and also log to stderr.
   fprintf (stderr, "[LuaError] %s\n", strEvent);
   fprintf (stderr, "  %s\n", (const char *) strRaisedBy);
-  fprintf (stderr, "  %s\n", (const char *) strCalledBy);
+  if (strlen (strCalledBy) > 0)
+    fprintf (stderr, "  %s\n", (const char *) strCalledBy);
   fprintf (stderr, "  %s\n", (const char *) strDescription);
+  if (pDoc) {
+    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR,
+                      CString("Script error: ") + strEvent);
+    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, strRaisedBy);
+    if (!strCalledBy.IsEmpty())
+      pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, strCalledBy);
+    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, strDescription);
+    // Flush the new notes to the output pane immediately.
+    pDoc->UpdateAllViews(nullptr);
+  }
   (void) bImmediate; (void) nLine;
 #endif
 

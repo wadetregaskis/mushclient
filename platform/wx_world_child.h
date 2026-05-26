@@ -74,9 +74,9 @@ public:
     void DoFind(bool forward);
 
 private:
-    COutputPane*         m_output          = nullptr;  // scrolled styled-text widget
-    wxTextCtrl*          m_input           = nullptr;  // normal command input bar
-    wxTextCtrl*          m_inputPassword   = nullptr;  // masked input — shown when telnet suppresses echo
+    COutputPane*         m_output;         // scrolled styled-text widget
+    wxTextCtrl*          m_input;          // normal command input bar
+    wxTextCtrl*          m_inputPassword;  // masked input — shown when telnet suppresses echo
     CMUSHclientDoc*      m_doc;            // non-owning reference to the world doc
     wxTimer*             m_worldTimer;     // drives CheckTimers() / ON_PLUGIN_TICK
 

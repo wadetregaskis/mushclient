@@ -310,6 +310,17 @@ void CMUSHclientDoc::CheckTimers ()
       }
 
     }   // end of log file open
+#else // !_WIN32
+  // Flush log file to disk every 2 minutes (simple fflush — no reopen needed).
+  if (m_logfile)
+    {
+    CTimeSpan ts = CTime::GetCurrentTime() - m_LastFlushTime;
+    if (ts.GetTotalSeconds () > 120.0)
+      {
+      m_LastFlushTime = CTime::GetCurrentTime();
+      fflush (m_logfile);
+      }
+    }
 #endif // _WIN32
 
 // if reconnection wanted, attempt it now ...

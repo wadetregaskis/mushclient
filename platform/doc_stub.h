@@ -1541,6 +1541,7 @@ public:
     BOOL           m_bLogInColour             = FALSE;
     unsigned short m_bLogHTML                 = 0;
     BOOL           m_bLogRaw                  = FALSE;
+    CTime          m_LastFlushTime;                     // for periodic log flush in CheckTimers
     CString        m_strLogFilePreamble;
     CString        m_strLogFilePostamble;
     CString        m_strLogLinePreambleInput;

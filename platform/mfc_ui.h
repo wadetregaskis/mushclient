@@ -30,10 +30,15 @@
 #include <cstdio>
 #include <algorithm>
 #include <unistd.h>   // readlink, ssize_t, realpath
-#include <stdlib.h>   // realpath
+#include <stdlib.h>   // realpath, free()
 #if defined(__APPLE__)
 #  include <mach-o/dyld.h>  // _NSGetExecutablePath
 #endif
+
+// wx hook function pointers — must be included after stdlib but before any
+// class definitions that call through the hooks (e.g. CFileDialog::DoModal).
+// wx_mfc_hooks.h is self-contained: no wx or MFC includes.
+#include "platform/wx_mfc_hooks.h"
 
 // ── Mixed-type min / max for legacy MSVC-style calls ─────────────────────
 // std::min / std::max require identical types; these templates handle the
@@ -2818,6 +2823,24 @@ public:
     int   m_nShadowSize   = 0;
 };
 
+// ── Open File Dialog flags (OFN_*) ─────────────────────────────────────────
+// Defined here, before OPENFILENAME and CFileDialog, so inline methods can use
+// them.  The duplicate guard at the bottom of the file is retained for safety.
+#ifndef OFN_HIDEREADONLY
+#  define OFN_HIDEREADONLY      0x00000004
+#  define OFN_NOCHANGEDIR       0x00000008
+#  define OFN_OVERWRITEPROMPT   0x00000002
+#  define OFN_FILEMUSTEXIST     0x00001000
+#  define OFN_PATHMUSTEXIST     0x00000800
+#  define OFN_ALLOWMULTISELECT  0x00000200
+#  define OFN_ENABLESIZING      0x00800000
+#  define OFN_LONGNAMES         0x00200000
+#  define OFN_EXPLORER          0x00080000
+#  define OFN_CREATEPROMPT      0x00002000
+#  define OFN_NOREADONLYRETURN  0x00008000
+#  define OFN_NOTESTFILECREATE  0x00010000
+#endif
+
 // ── OPENFILENAME — must precede CFileDialog which holds an m_ofn member ──
 struct OPENFILENAME {
     DWORD   lStructSize      = sizeof(OPENFILENAME);
@@ -3642,15 +3665,98 @@ public:
 class CFileDialog : public CDialog {
 public:
     OPENFILENAME m_ofn = {};   // MFC exposes the raw OPENFILENAME struct
-    CFileDialog(BOOL, LPCTSTR=nullptr, LPCTSTR=nullptr, DWORD=0, LPCTSTR=nullptr, CWnd* = nullptr) {}
-    CString GetPathName() const  { return {}; }
-    CString GetFileName() const  { return {}; }
-    CString GetFileExt() const   { return {}; }
-    CString GetFileTitle() const { return {}; }
-    void    SetDefExt(LPCTSTR)   {}
-    // Multi-file selection support
-    POSITION GetStartPosition() const { return nullptr; }
-    CString  GetNextPathName(POSITION& pos) const { pos = nullptr; return {}; }
+    bool    m_bOpenFileDialog = true;
+    CString m_strResult;       // path selected by the user (set by DoModal on OK)
+
+    CFileDialog(BOOL bOpenFileDialog,
+                LPCTSTR lpszDefExt      = nullptr,
+                LPCTSTR lpszFileName    = nullptr,
+                DWORD   dwFlags         = 0,
+                LPCTSTR lpszFilter      = nullptr,
+                CWnd*   /*pParentWnd*/  = nullptr)
+        : m_bOpenFileDialog(bOpenFileDialog != FALSE)
+    {
+        m_ofn.lpstrDefExt = lpszDefExt;
+        m_ofn.Flags       = dwFlags;
+        m_ofn.lpstrFilter = lpszFilter;
+        // lpszFileName and lpstrFile/lpstrTitle are usually set by callers
+        // after construction via m_ofn.lpstrFile / m_ofn.lpstrTitle.
+        if (lpszFileName && *lpszFileName)
+            m_strResult = lpszFileName;  // pre-fill as hint
+    }
+
+    INT_PTR DoModal() override {
+        // Derive the initial-filename hint from whichever is set.
+        const char* initFile = m_ofn.lpstrFile && *m_ofn.lpstrFile
+                                   ? m_ofn.lpstrFile
+                                   : static_cast<const char*>(m_strResult);
+
+        // Strip any directory component from the hint so wxFileDialog gets
+        // just the leaf name in its "File name" field.
+        const char* leaf = initFile ? initFile : "";
+        const char* p    = strrchr(leaf, '/');
+        if (!p) p        = strrchr(leaf, '\\');
+        if (p)  leaf     = p + 1;
+
+        // Initial directory: prefer m_ofn.lpstrInitialDir; fall back to
+        // extracting it from the full initial path.
+        CString initDir;
+        if (m_ofn.lpstrInitialDir && *m_ofn.lpstrInitialDir) {
+            initDir = m_ofn.lpstrInitialDir;
+        } else if (initFile && (p = strrchr(initFile, '/')) != nullptr) {
+            initDir = CString(initFile, (int)(p - initFile));
+        }
+
+        bool overwrite = (m_ofn.Flags & OFN_OVERWRITEPROMPT) != 0;
+
+        if (g_wxhook_file_dialog) {
+            char* path = g_wxhook_file_dialog(
+                m_bOpenFileDialog,
+                m_ofn.lpstrTitle,
+                initDir.IsEmpty() ? nullptr : static_cast<const char*>(initDir),
+                leaf,
+                m_ofn.lpstrFilter,
+                overwrite);
+            if (path) {
+                m_strResult = path;
+                free(path);
+                return IDOK;
+            }
+        }
+        return IDCANCEL;
+    }
+
+    CString GetPathName() const { return m_strResult; }
+
+    CString GetFileName() const {
+        int sep = m_strResult.ReverseFind('/');
+        if (sep < 0) sep = m_strResult.ReverseFind('\\');
+        return (sep >= 0) ? m_strResult.Mid(sep + 1) : m_strResult;
+    }
+
+    CString GetFileExt() const {
+        CString name = GetFileName();
+        int dot = name.ReverseFind('.');
+        return (dot >= 0) ? name.Mid(dot + 1) : CString{};
+    }
+
+    CString GetFileTitle() const {
+        CString name = GetFileName();
+        int dot = name.ReverseFind('.');
+        return (dot >= 0) ? name.Left(dot) : name;
+    }
+
+    void SetDefExt(LPCTSTR ext) { m_ofn.lpstrDefExt = ext; }
+
+    // Multi-file selection (OFN_ALLOWMULTISELECT): not implemented — single-
+    // select only on non-Windows.  Iteration returns the one selected file.
+    POSITION GetStartPosition() const {
+        return m_strResult.IsEmpty() ? nullptr : (POSITION)1;
+    }
+    CString GetNextPathName(POSITION& pos) const {
+        pos = nullptr;
+        return m_strResult;
+    }
 };
 
 class CFindReplaceDialog : public CDialog {

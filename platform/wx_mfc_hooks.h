@@ -115,6 +115,23 @@ extern bool (*g_wxhook_game_preferences)(void* doc, int iPage);
 // The parent window (wxWindow*) is used as the dialog parent.
 extern bool (*g_wxhook_save_world)(void* doc, bool saveAs, void* parent);
 
+// ── Generic file dialog hook ───────────────────────────────────────────────
+// Called from CFileDialog::DoModal() on non-Windows.
+// bOpen:       true = open dialog (file must exist), false = save dialog
+// title:       dialog title (UTF-8), or nullptr for default
+// defaultDir:  initial directory (UTF-8), or nullptr
+// defaultFile: suggested filename without path (UTF-8), or nullptr
+// filter:      MFC-style filter string "Desc|*.ext|Desc2|*.ext2||" (| separators, || end)
+// overwrite:   if true (OFN_OVERWRITEPROMPT), confirm before overwriting
+// Returns a heap-allocated (malloc) selected path (caller must free()), or
+// nullptr if the user cancelled.  The path is UTF-8.
+extern char* (*g_wxhook_file_dialog)(bool bOpen,
+                                     const char* title,
+                                     const char* defaultDir,
+                                     const char* defaultFile,
+                                     const char* filter,
+                                     bool overwrite);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

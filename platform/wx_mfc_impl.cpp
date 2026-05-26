@@ -2318,6 +2318,54 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     return true;
 }
 
+// ── hook_file_dialog ──────────────────────────────────────────────────────────
+// Generic file-open / file-save dialog used by CFileDialog::DoModal() on
+// non-Windows.  Converts the MFC-style pipe-separated filter string to a
+// wxFileDialog wildcard string, shows the dialog, and returns the selected path
+// as a heap-allocated (malloc) UTF-8 string.  The caller must free() it.
+// Returns nullptr if the user cancels or if something goes wrong.
+static char* hook_file_dialog(bool bOpen,
+                               const char* title,
+                               const char* defaultDir,
+                               const char* defaultFile,
+                               const char* filter,
+                               bool overwrite)
+{
+    // Convert MFC filter "Desc1|*.ext1|Desc2|*.ext2||" → wx "Desc1|*.ext1|Desc2|*.ext2"
+    // MFC uses | between tokens and || (or trailing |) to end the list.
+    // wx uses the same | separator but without a trailing || terminator.
+    wxString wxFilter;
+    if (filter && *filter) {
+        wxFilter = wxString::FromUTF8(filter);
+        // Strip trailing |s (MFC uses "||" as end-of-list sentinel).
+        while (!wxFilter.IsEmpty() && wxFilter.Last() == '|')
+            wxFilter.RemoveLast();
+    }
+    if (wxFilter.IsEmpty())
+        wxFilter = wxT("All files (*.*)|*.*");
+
+    wxString wxTitle = title && *title
+                       ? wxString::FromUTF8(title)
+                       : (bOpen ? wxT("Open") : wxT("Save As"));
+    wxString wxDir  = defaultDir && *defaultDir
+                      ? wxString::FromUTF8(defaultDir) : wxEmptyString;
+    wxString wxFile = defaultFile && *defaultFile
+                      ? wxString::FromUTF8(defaultFile) : wxEmptyString;
+
+    long style = bOpen
+        ? (wxFD_OPEN | wxFD_FILE_MUST_EXIST)
+        : (wxFD_SAVE | (overwrite ? wxFD_OVERWRITE_PROMPT : 0));
+
+    // Use the MDI parent as the dialog owner when available.
+    wxWindow* parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+
+    wxFileDialog dlg(parent, wxTitle, wxDir, wxFile, wxFilter, style);
+    if (dlg.ShowModal() != wxID_OK)
+        return nullptr;
+
+    return strdup(dlg.GetPath().ToUTF8().data());
+}
+
 // ── hook_save_world ───────────────────────────────────────────────────────────
 // Saves the world file for the given doc.  If saveAs is true or the doc has no
 // path, opens a save-file dialog.  parent is a wxWindow* used as dialog parent.
@@ -2547,6 +2595,7 @@ void wx_mfc_install_hooks()
     g_wxhook_set_status         = hook_set_status;
     g_wxhook_game_preferences   = hook_game_preferences;
     g_wxhook_save_world         = hook_save_world;
+    g_wxhook_file_dialog        = hook_file_dialog;
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce
     // an audible alert on macOS/Linux via wxWidgets.

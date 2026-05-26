@@ -2474,13 +2474,95 @@ public:
     }
 };
 
+// ── CMemFile ──────────────────────────────────────────────────────────────
+// An in-memory CFile backed by a std::vector<BYTE>.  Supports two modes:
+//
+//  1. Writable (default constructor): starts empty, grows as data is written.
+//     Detach() transfers ownership of a malloc'd copy to the caller.
+//
+//  2. Read-only (buffer constructor): wraps an external byte array.  Writes
+//     are silently ignored; Detach() returns nullptr.
+//
+// Used by ImportXML / ExportXML Lua APIs, clipboard XML paste detection, and
+// several world-debug helpers.
 class CMemFile : public CFile {
 public:
-    CMemFile(UINT = 1024) {}
-    // Constructor that attaches to an existing buffer (no-op stub)
-    CMemFile(BYTE* /*lpBuffer*/, UINT /*nBufferSize*/, UINT /*nGrowBytes*/ = 0) {}
-    void*  Detach()       { return nullptr; }
-    DWORD  GetLength() const override { return 0; }
+    // Default: empty writable in-memory file.
+    explicit CMemFile(UINT /*nGrowBytes*/ = 1024)
+        : m_readBuf(nullptr), m_readBufSize(0), m_pos(0), m_ownsBuf(true) {}
+
+    // Attach to an existing external buffer (read-only semantics).
+    CMemFile(BYTE* lpBuffer, UINT nBufferSize, UINT /*nGrowBytes*/ = 0)
+        : m_readBuf(lpBuffer), m_readBufSize(nBufferSize),
+          m_pos(0), m_ownsBuf(false) {}
+
+    // CFile interface --------------------------------------------------------
+    UINT Read(void* buf, UINT count) override {
+        UINT avail = GetLength() - m_pos;
+        UINT n = count < avail ? count : avail;
+        if (n > 0) {
+            memcpy(buf, (m_readBuf ? m_readBuf : m_buf.data()) + m_pos, n);
+            m_pos += n;
+        }
+        return n;
+    }
+
+    void Write(const void* buf, UINT count) override {
+        if (!m_ownsBuf || !buf || count == 0) return;
+        const BYTE* p = static_cast<const BYTE*>(buf);
+        m_buf.insert(m_buf.end(), p, p + count);
+    }
+
+    LONG Seek(LONG offset, UINT from) override {
+        LONG size = (LONG)GetLength();
+        LONG newPos;
+        if      (from == begin)   newPos = offset;
+        else if (from == current) newPos = (LONG)m_pos + offset;
+        else                      newPos = size + offset;
+        if (newPos < 0) newPos = 0;
+        if (newPos > size) newPos = size;
+        m_pos = (UINT)newPos;
+        return (LONG)m_pos;
+    }
+
+    DWORD GetLength() const override {
+        return m_readBuf ? m_readBufSize : (DWORD)m_buf.size();
+    }
+    DWORD GetPosition() const override { return m_pos; }
+
+    void SeekToBegin() { m_pos = 0; }
+    void SeekToEnd()   { m_pos = GetLength(); }
+    void Close() override {}   // nothing to close for an in-memory file
+    void Flush() override {}
+
+    // CMemFile-specific ------------------------------------------------------
+    // Transfers ownership of the internal buffer to the caller as a malloc'd
+    // block (callers do free(p)).  Returns nullptr for read-only instances.
+    BYTE* Detach() {
+        if (!m_ownsBuf) return nullptr;
+        BYTE* p = static_cast<BYTE*>(malloc(m_buf.size() + 1));
+        if (p) {
+            if (!m_buf.empty()) memcpy(p, m_buf.data(), m_buf.size());
+            p[m_buf.size()] = '\0';   // null-terminate for string callers
+        }
+        m_buf.clear();
+        m_pos = 0;
+        return p;
+    }
+
+    // Returns a pointer into the internal buffer at the current read position.
+    BYTE* GetMemoryPos() const {
+        return m_readBuf ? m_readBuf + m_pos
+                         : (m_buf.empty() ? nullptr
+                                          : const_cast<BYTE*>(m_buf.data()) + m_pos);
+    }
+
+private:
+    std::vector<BYTE> m_buf;       // owned writable buffer (mode 1)
+    BYTE*             m_readBuf;   // external read-only buffer (mode 2)
+    UINT              m_readBufSize;
+    UINT              m_pos;
+    bool              m_ownsBuf;
 };
 
 // ── CArchive ──────────────────────────────────────────────────────────────

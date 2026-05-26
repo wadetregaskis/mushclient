@@ -1971,6 +1971,8 @@ public:
     // ── Window-geometry callbacks ─────────────────────────────────────────
     // world.GetWorldWindowPosition(): screen rect of the output pane (x,y,w,h).
     std::function<void(int&, int&, int&, int&)> m_fn_get_output_rect;
+    // world.GetSelectionStart/EndLine/Column(): current output-pane selection.
+    std::function<void(long&, long&, long&, long&)> m_fn_get_output_selection;
     // world.GetMainWindowPosition(): screen rect of the MDI parent frame.
     std::function<void(int&, int&, int&, int&)> m_fn_get_main_rect;
 

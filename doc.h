@@ -1543,6 +1543,11 @@ public:
   // miniwindows relative to the actual pane geometry.
   std::function<void(int&, int&, int&, int&)> m_fn_get_output_rect;
 
+  // Returns the current text selection in the output pane as 1-based
+  // (startLine, startCol, endLine, endCol).  All four are 0 if nothing selected.
+  // Used by world.GetSelectionStartLine/Column and GetSelectionEndLine/Column.
+  std::function<void(long&, long&, long&, long&)> m_fn_get_output_selection;
+
   // Returns the screen-relative position and size of the MDI parent frame.
   // Used by world.GetMainWindowPosition() so scripts know the main window rect.
   std::function<void(int&, int&, int&, int&)> m_fn_get_main_rect;

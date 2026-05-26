@@ -113,6 +113,7 @@ private:
     int  m_reconnectCountdown  = 0;    // ticks until auto-reconnect (0 = idle)
     bool m_lastNoEcho          = false; // last known m_doc->m_bNoEcho state
     int  m_pluginTickAccum     = 0;    // ms accumulated toward next ON_PLUGIN_TICK (~40 ms)
+    int  m_speedWalkAccum      = 0;    // ms accumulated toward next queued-command drain
 
     // ── Session log ────────────────────────────────────────────────────────
     // Log is written as plain UTF-8 text to a user-chosen file.  Logging starts

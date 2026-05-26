@@ -2482,6 +2482,45 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
 {
     if (!m_doc) return;
 
+    // ── Speed-walk / command queue draining ──────────────────────────────────
+    // On Windows, CTimerWnd fires a WM_TIMER at m_iSpeedWalkDelay ms intervals
+    // and drains one queued command each time.  On non-Windows, m_pTimerWnd is
+    // null, so we replicate that rate here via an accumulator.
+    if (!m_doc->m_QueuedCommandsList.IsEmpty()) {
+        int delay = m_doc->m_iSpeedWalkDelay;   // 0 = flush all immediately
+        if (delay <= 0) {
+            // No delay — drain the entire queue now.
+            while (!m_doc->m_QueuedCommandsList.IsEmpty()) {
+                CString strCommand = m_doc->m_QueuedCommandsList.RemoveHead();
+                char cMessageType = strCommand[0];
+                m_doc->DoSendMsg(strCommand.Mid(1),
+                                 toupper(cMessageType) == QUEUE_WITH_ECHO ||
+                                 toupper(cMessageType) == IMMEDIATE_WITH_ECHO,
+                                 cMessageType >= 'A');
+            }
+            m_speedWalkAccum = 0;
+        } else {
+            // Drain one QUEUE_* command each time the accumulator reaches the delay.
+            m_speedWalkAccum += 100;    // 100 ms per timer tick
+            while (m_speedWalkAccum >= delay && !m_doc->m_QueuedCommandsList.IsEmpty()) {
+                m_speedWalkAccum -= delay;
+                CString strCommand = m_doc->m_QueuedCommandsList.RemoveHead();
+                char cMessageType = strCommand[0];
+                m_doc->DoSendMsg(strCommand.Mid(1),
+                                 toupper(cMessageType) == QUEUE_WITH_ECHO ||
+                                 toupper(cMessageType) == IMMEDIATE_WITH_ECHO,
+                                 cMessageType >= 'A');
+                // QUEUE_* commands must wait for the next tick; IMMEDIATE_* fall through.
+                if (toupper(cMessageType) == QUEUE_WITH_ECHO ||
+                    toupper(cMessageType) == QUEUE_WITHOUT_ECHO)
+                    break;
+            }
+        }
+        m_doc->ShowQueuedCommands();
+    } else {
+        m_speedWalkAccum = 0;   // reset when queue is empty
+    }
+
     // ── World timers (triggers based on elapsed time, speed-walk queues, etc.)
     m_doc->CheckTimers();
 

@@ -1045,6 +1045,29 @@ void CMUSHclientDoc::OnConnect(int nErrorCode)
 
     fprintf(stderr, "[Connected to %s]\n", (const char*)m_mush_name);
 
+    // Auto-log: if the world has an auto-log filename, open the log file now.
+    // Mirrors the logic in doc.cpp's connect sequence.
+    if (!m_strAutoLogFileName.IsEmpty() && !m_logfile) {
+        CTime theTime = CTime::GetCurrentTime();
+        CString strName = FormatTime(theTime, m_strAutoLogFileName, m_bLogHTML != 0);
+        if (!strName.IsEmpty()) {
+            m_logfile = fopen((const char*)strName, "a+");
+            if (m_logfile) {
+                m_logfile_name = strName;
+                if (!m_strLogFilePreamble.IsEmpty() && !m_bLogRaw) {
+                    CString pre = m_strLogFilePreamble;
+                    pre.Replace("%n", "\n");
+                    pre = FormatTime(theTime, pre, m_bLogHTML != 0);
+                    pre.Replace(ENDLINE, "\n");
+                    WriteToLog(pre);
+                    WriteToLog("\n", 1);
+                }
+            } else {
+                Note(CString("Could not open auto-log file: ") + strName);
+            }
+        }
+    }
+
     // Send auto-connect text (login commands, etc.) if configured
     if (!m_connect_text.IsEmpty()) {
         // connect_text may be multi-line; send each line
@@ -1593,8 +1616,55 @@ void CMUSHclientDoc::LogCommand(const char* sText)
     WriteToLog("\n", 1);
 }
 
-// ── CMUSHclientDoc::OutputOutstandingLines — flush pending lines (no-op) ──
-void CMUSHclientDoc::OutputOutstandingLines()                    {}
+// ── CMUSHclientDoc::OutputOutstandingLines ────────────────────────────────
+// Re-outputs note/tell lines that were deferred while a trigger was
+// processing (e.g. when a trigger omits an incoming MUD line).
+// Mirrors the doc.cpp implementation, adapted for the mushcli/GUI paths:
+// instead of calling Tell() (which is in methods_noting.cpp / mushapp only),
+// we write directly through DisplayMsg() using the COLOUR_RGB style flag so
+// that GetStyleRGB() treats m_iForeColour/m_iBackColour as raw COLOREFs.
+// For the GUI path (m_fn_line_ready set) each item becomes a styled run;
+// for the CLI path it becomes an ANSI-coloured terminal line.
+void CMUSHclientDoc::OutputOutstandingLines()
+{
+    if (m_OutstandingLines.empty())
+        return;
+
+    // Save and restore the current MUD-stream style so that the note lines
+    // don't pollute the style state used for subsequent MUD output.
+    unsigned short savedFlags  = m_iFlags;
+    COLORREF       savedFore   = m_iForeColour;
+    COLORREF       savedBack   = m_iBackColour;
+
+    for (const CPaneStyle& item : m_OutstandingLines) {
+        // Set COLOUR_RGB so GetStyleRGB() treats iForeColour/iBackColour as
+        // raw COLOREFs — exactly what CPaneStyle stores.
+        m_iFlags      = (unsigned short)((item.m_iStyle & ~COLOURTYPE) | COLOUR_RGB);
+        m_iForeColour = item.m_cText;
+        m_iBackColour = item.m_cBack;
+
+        const char* text = item.m_sText.c_str();
+        int         len  = (int)item.m_sText.size();
+
+        if (len > 0)
+            DisplayMsg(text, len, NOTE_OR_COMMAND);
+
+        // Each pending item represents one logical line; append a newline
+        // (unless the text already ends with one, e.g. ENDLINE entries).
+        if (len == 0 || item.m_sText.back() != '\n')
+            DisplayMsg("\n", 1, NOTE_OR_COMMAND);
+    }
+
+    m_OutstandingLines.clear();
+
+    m_iFlags      = savedFlags;
+    m_iForeColour = savedFore;
+    m_iBackColour = savedBack;
+
+    // Re-sync terminal colours after restoring the stream state.
+    if (!m_fn_line_ready)
+        TermResetStyle();
+}
 
 // ── CMUSHclientDoc::PlaySoundFile — MSP audio (no-op) ───────────────────
 void CMUSHclientDoc::PlaySoundFile(CString /*strFile*/)         {}

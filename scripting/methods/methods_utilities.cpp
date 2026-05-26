@@ -126,8 +126,12 @@ CString strResult = ::StripAnsi (Message);
 }
 
 
-void CMUSHclientDoc::Activate() 
+void CMUSHclientDoc::Activate()
 {
+#ifndef _WIN32
+  if (m_fn_activate_client)
+    m_fn_activate_client();
+#else
   for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
     {
     CView* pView = GetNextView(pos);
@@ -146,7 +150,7 @@ void CMUSHclientDoc::Activate()
 
       }	  // end of being a CSendView
     }
-
+#endif
 }  // end of CMUSHclientDoc::Activate
 
 

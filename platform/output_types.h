@@ -46,6 +46,14 @@ struct SOutputRun {
 // A complete styled line: vector of consecutive SOutputRun spans.
 // Produced by DisplayMsg() on each '\n'; consumed by COutputPane::AppendLine().
 // A line with a single run where run.horiz_rule==true is a horizontal rule.
-using SOutputLine = std::vector<SOutputRun>;
+//
+// pending: true while the line is still being built (no trailing '\n' yet).
+// A pending SOutputLine replaces the current "typing indicator" row in the
+// output pane without being committed to m_lines.
+struct SOutputLine : std::vector<SOutputRun> {
+    bool pending = false;
+    // Inherit all std::vector constructors (default, initializer_list, etc.).
+    using std::vector<SOutputRun>::vector;
+};
 
 #endif // !_WIN32

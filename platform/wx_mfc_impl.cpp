@@ -23,6 +23,8 @@
 #include <wx/dnd.h>        // wxFileDropTarget
 #include <wx/dirdlg.h>     // wxDirDialog
 #include <wx/notebook.h>   // wxNotebook (CMacrosDlg)
+#include <wx/clipbrd.h>    // wxTheClipboard
+#include <wx/dataobj.h>    // wxTextDataObject
 #include <algorithm>
 #include <unordered_map>
 #include <string>
@@ -34,6 +36,7 @@
 #include "MUSHclient.h"    // CMUSHclientApp full definition
 #include "mainfrm.h"       // CMainFrame full definition
 #include "doc.h"           // CMUSHclientDoc (needed for hook_new_world)
+#include "TextDocument.h"             // CTextDocument (for hook_create_text_window)
 #include "platform/wx_world_child.h"  // CWorldChildFrame
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_entity_dlgs.h" // CTriggerListDlg, CAliasListDlg, CTimerListDlg
@@ -2376,13 +2379,13 @@ static char* hook_file_dialog(bool bOpen,
     if (wxFilter.IsEmpty())
         wxFilter = wxT("All files (*.*)|*.*");
 
-    wxString wxTitle = title && *title
+    wxString wxTitle = (title && *title)
                        ? wxString::FromUTF8(title)
-                       : (bOpen ? wxT("Open") : wxT("Save As"));
-    wxString wxDir  = defaultDir && *defaultDir
-                      ? wxString::FromUTF8(defaultDir) : wxEmptyString;
-    wxString wxFile = defaultFile && *defaultFile
-                      ? wxString::FromUTF8(defaultFile) : wxEmptyString;
+                       : wxString(bOpen ? wxT("Open") : wxT("Save As"));
+    wxString wxDir  = (defaultDir  && *defaultDir)
+                      ? wxString::FromUTF8(defaultDir)  : wxString(wxEmptyString);
+    wxString wxFile = (defaultFile && *defaultFile)
+                      ? wxString::FromUTF8(defaultFile) : wxString(wxEmptyString);
 
     long style = bOpen
         ? (wxFD_OPEN | wxFD_FILE_MUST_EXIST)

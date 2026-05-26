@@ -943,7 +943,8 @@ bool bPlugin;
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4189)     // warning C4189: 'iVersion' : local variable is initialized but not referenced
-void CMUSHclientDoc::Load_General_XML (CXMLelement & parent, 
+#endif
+void CMUSHclientDoc::Load_General_XML (CXMLelement & parent,
                                        const unsigned long iFlags)
   {
   // see if we have "world" tag(s)
@@ -985,6 +986,7 @@ void CMUSHclientDoc::Load_General_XML (CXMLelement & parent,
   END_LOAD_LOOP;
 
   } // end of CMUSHclientDoc::Load_General_XML
+#ifdef _MSC_VER
 #pragma warning(pop)
 #endif
 
@@ -2356,6 +2358,7 @@ long iSequence;
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4189)     // warning C4189: 'iVersion' : local variable is initialized but not referenced
+#endif
 void CMUSHclientDoc::Load_Comments_XML (CXMLelement & parent)
   {
 CString strComment;
@@ -2388,6 +2391,7 @@ int iFlags = 0; // for use by GET_VERSION_AND_DEFAULTS macro
   ActivateNotepad (strTitle);
 
   } // end of CMUSHclientDoc::Load_Comments_XML
+#ifdef _MSC_VER
 #pragma warning(pop)
 #endif
 

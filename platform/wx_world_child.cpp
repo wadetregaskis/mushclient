@@ -1386,6 +1386,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // Also flushes any output the timer callbacks may have produced.
     m_worldTimer = new wxTimer(this, ID_WORLD_TIMER);
     m_worldTimer->Start(100);
+
+    // Register this world document with the application's world doc-template
+    // so that GetWorldList() / GetWorld() / GetWorldById() can enumerate all
+    // open worlds.  Matched by UnregisterDoc() in OnClose.
+    if (m_doc && App.m_pWorldDocTemplate)
+        App.m_pWorldDocTemplate->RegisterDoc(m_doc);
 }
 
 // ── UpdateTitle ───────────────────────────────────────────────────────────
@@ -2787,6 +2793,11 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_get_command_list         = nullptr;
         m_doc->m_fn_get_command_selection    = nullptr;
         m_doc->m_fn_get_output_selection     = nullptr;
+
+        // Deregister from the world doc-template so GetWorldList() no longer
+        // returns this world after it is destroyed.
+        if (App.m_pWorldDocTemplate)
+            App.m_pWorldDocTemplate->UnregisterDoc(m_doc);
 
         // Remove from the doc→frame registry before deleting so that no hook
         // can look up a dangling frame pointer during the destructor.

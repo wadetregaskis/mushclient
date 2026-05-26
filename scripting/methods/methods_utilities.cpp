@@ -648,11 +648,21 @@ CString m_strFilter = Name;
 
 
 
-BSTR CMUSHclientDoc::Menu(LPCTSTR Items, LPCTSTR Default) 
+BSTR CMUSHclientDoc::Menu(LPCTSTR Items, LPCTSTR Default)
 {
-	CString strResult;
-  CSendView* pmyView = NULL;
+  CString strResult;
 
+  vector<string> v;
+  StringToVector (Items, v, "|");
+
+  int iCount = v.size ();
+
+  // must have at least one item
+  if (iCount < 1)
+    return strResult.AllocSysString();
+
+#ifdef _WIN32
+  CSendView* pmyView = NULL;
 
   for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
     {
@@ -662,7 +672,6 @@ BSTR CMUSHclientDoc::Menu(LPCTSTR Items, LPCTSTR Default)
       {
       pmyView = (CSendView*)pView;
       break;
-
       }	  // end of being a CSendView
     }
 
@@ -680,18 +689,8 @@ BSTR CMUSHclientDoc::Menu(LPCTSTR Items, LPCTSTR Default)
   if (nEndChar < 0)
     nEndChar = nStartChar;
 
-  vector<string> v;
-
-  StringToVector (Items, v, "|");
-
-  int iCount = v.size ();
-
-  // must have at least one item
-  if (iCount < 1)
-    return strResult.AllocSysString();
-
   CCompleteWordDlg dlg;
-  
+
   set<string> extraItems;
 
   for (vector<string>::const_iterator i = v.begin (); i != v.end (); i++)
@@ -706,8 +705,24 @@ BSTR CMUSHclientDoc::Menu(LPCTSTR Items, LPCTSTR Default)
 
   if (dlg.DoModal () == IDOK)
      strResult = dlg.m_strResult;
+#else
+  // Build a C array of item strings and delegate to the wx hook.
+  if (g_wxhook_menu_dialog)
+    {
+    vector<const char*> ptrs;
+    ptrs.reserve (v.size ());
+    for (const auto& s : v)
+      ptrs.push_back (s.c_str ());
+    char* chosen = g_wxhook_menu_dialog (ptrs.data (), (int)ptrs.size (), Default);
+    if (chosen)
+      {
+      strResult = chosen;
+      free (chosen);
+      }
+    }
+#endif // _WIN32
 
-	return strResult.AllocSysString();
+  return strResult.AllocSysString();
 }   // end of CMUSHclientDoc::Menu
 
 

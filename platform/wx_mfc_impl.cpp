@@ -2734,6 +2734,62 @@ static void hook_stop_sound()
 }
 #endif // wxUSE_SOUND
 
+// ── Colour picker ─────────────────────────────────────────────────────────
+
+static long hook_pick_colour(long suggested)
+{
+    wxColourData data;
+    if (suggested != -1)
+    {
+        // COLORREF is 0x00BBGGRR — extract R, G, B.
+        unsigned char r = (suggested >>  0) & 0xFF;
+        unsigned char g = (suggested >>  8) & 0xFF;
+        unsigned char b = (suggested >> 16) & 0xFF;
+        data.SetColour(wxColour(r, g, b));
+    }
+    wxColourDialog dlg(wxGetActiveWindow(), &data);
+    if (dlg.ShowModal() != wxID_OK)
+        return -1;
+    wxColour col = dlg.GetColourData().GetColour();
+    // Pack back into COLORREF (0x00BBGGRR).
+    return (long)(((unsigned long)col.Blue()  << 16) |
+                  ((unsigned long)col.Green() <<  8) |
+                   (unsigned long)col.Red());
+}
+
+// ── Menu / choice dialog ──────────────────────────────────────────────────
+
+static char* hook_menu_dialog(const char* const* items, int count,
+                               const char* defaultItem)
+{
+    if (count <= 0)
+        return nullptr;
+
+    wxArrayString choices;
+    int selection = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        choices.Add(wxString::FromUTF8(items[i]));
+        if (defaultItem && defaultItem[0] && strcmp(items[i], defaultItem) == 0)
+            selection = i;
+    }
+
+    wxSingleChoiceDialog dlg(wxGetActiveWindow(),
+                             wxT("Select an item:"),
+                             wxT("Menu"),
+                             choices);
+    dlg.SetSelection(selection);
+    if (dlg.ShowModal() != wxID_OK)
+        return nullptr;
+
+    wxString chosen = dlg.GetStringSelection();
+    std::string utf8 = chosen.ToUTF8().data();
+    char* result = static_cast<char*>(malloc(utf8.size() + 1));
+    if (result)
+        memcpy(result, utf8.c_str(), utf8.size() + 1);
+    return result;
+}
+
 void wx_mfc_install_hooks()
 {
     g_wxhook_invalidate       = hook_invalidate;
@@ -2759,6 +2815,8 @@ void wx_mfc_install_hooks()
     g_wxhook_get_clipboard_text   = hook_get_clipboard_text;
     g_wxhook_set_clipboard_text   = hook_set_clipboard_text;
     g_wxhook_create_text_window   = hook_create_text_window;
+    g_wxhook_pick_colour          = hook_pick_colour;
+    g_wxhook_menu_dialog          = hook_menu_dialog;
 #if wxUSE_SOUND
     g_wxhook_play_sound           = hook_play_sound;
     g_wxhook_stop_sound           = hook_stop_sound;

@@ -2670,10 +2670,30 @@ public:
 class CMultiDocTemplate : public CDocTemplate {
 public:
     HACCEL m_hAccelTable = nullptr;  // Windows stores accel table here
+
+    // Real document list so FindNotepad / GetNotepadList can iterate.
+    std::vector<CDocument*> m_docs;
+
+    void RegisterDoc(CDocument* d)   { m_docs.push_back(d); }
+    void UnregisterDoc(CDocument* d) {
+        auto it = std::find(m_docs.begin(), m_docs.end(), d);
+        if (it != m_docs.end()) m_docs.erase(it);
+    }
+
     CMultiDocTemplate(UINT, const CRuntimeClass*, const CRuntimeClass*, const CRuntimeClass*) {}
-    // Document iteration (MFC API mirrors GetFirstViewPosition pattern)
-    POSITION GetFirstDocPosition() const { return nullptr; }
-    CDocument* GetNextDoc(POSITION& pos) const { (void)pos; return nullptr; }
+
+    // Document iteration — backed by m_docs; returns nullptr when empty.
+    POSITION GetFirstDocPosition() const {
+        return m_docs.empty() ? nullptr : (POSITION)(uintptr_t)1;
+    }
+    CDocument* GetNextDoc(POSITION& pos) const {
+        if (!pos) return nullptr;
+        size_t idx = (size_t)(uintptr_t)pos - 1;
+        if (idx >= m_docs.size()) { pos = nullptr; return nullptr; }
+        pos = (idx + 1 < m_docs.size()) ? (POSITION)(uintptr_t)(idx + 2) : nullptr;
+        return m_docs[idx];
+    }
+
     // Override OpenDocumentFile to route through the appropriate wxWidgets hook:
     //   • path == nullptr / empty → Quick Connect dialog (new world)
     //   • path provided           → open existing world file
@@ -4664,12 +4684,37 @@ typedef struct { DWORD cRDN; CERT_RDN* rgRDN; } CERT_NAME_INFO;
 BOOL putontoclipboard(const CString&, bool = false);
 BOOL GetClipboardContents(CString&, bool, bool = true);
 
-// CreateTextWindow — Windows-only function stub
+// Forward-declare the notepad hook so the inline below compiles without
+// pulling in wx_mfc_hooks.h (which would create a circular include chain).
 class CMUSHclientDoc;
-inline bool CreateTextWindow(const char*, const char*, CMUSHclientDoc*,
-    long long, const CString, long, long, DWORD, COLORREF, COLORREF,
-    const CString, const CString, bool, bool, bool, bool, bool, int, int)
-    { return false; }
+extern void* (*g_wxhook_create_text_window)(
+    const char*, const char*, CMUSHclientDoc*, long long,
+    const char*, long, long, unsigned int,
+    unsigned long, unsigned long,
+    const char*, const char*,
+    bool, bool, bool, bool, bool, int, int);
+
+// CreateTextWindow — dispatches to g_wxhook_create_text_window on non-Windows.
+inline bool CreateTextWindow(const char* sText, const char* sTitle,
+    CMUSHclientDoc* pDoc, long long iUniqueDocNum,
+    const CString strFontName, long iFontSize, long iFontWeight,
+    DWORD iFontCharset, COLORREF textColour, COLORREF backColour,
+    const CString strSearchString, const CString strRecallLinePreamble,
+    bool bMatchCase, bool bRegexp, bool bCommands, bool bOutput,
+    bool bNotes, int iLines, int iNotepadType)
+{
+    if (!g_wxhook_create_text_window) return false;
+    return g_wxhook_create_text_window(
+        sText, sTitle, pDoc, iUniqueDocNum,
+        static_cast<const char*>(strFontName), iFontSize, iFontWeight,
+        static_cast<unsigned int>(iFontCharset),
+        static_cast<unsigned long>(textColour),
+        static_cast<unsigned long>(backColour),
+        static_cast<const char*>(strSearchString),
+        static_cast<const char*>(strRecallLinePreamble),
+        bMatchCase, bRegexp, bCommands, bOutput,
+        bNotes, iLines, iNotepadType) != nullptr;
+}
 
 // LoadLibrary / GetProcAddress stubs
 inline HMODULE LoadLibrary(LPCTSTR)               { return nullptr; }

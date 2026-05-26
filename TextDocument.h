@@ -63,6 +63,40 @@ public:
 
    BOOL m_bReadOnly;
 
+#ifndef _WIN32
+   // ── wx notepad callbacks ─────────────────────────────────────────────────
+   // Wired by CWxNotepadFrame (platform/wx_notepad.cpp) at window creation.
+   // Each callback is cleared to nullptr when the window is destroyed.
+
+   // Read the full text content of the notepad.
+   std::function<std::string()>              m_fn_get_text;
+   // Return the number of characters in the notepad.
+   std::function<int()>                      m_fn_get_text_length;
+   // Set the edit-control selection.  Negative end → select to end.
+   std::function<void(int, int)>             m_fn_set_sel;
+   // Replace the current selection with the given UTF-8 string.
+   std::function<void(const std::string&)>   m_fn_replace_sel;
+   // Bring this notepad window to the foreground and activate it.
+   std::function<void()>                     m_fn_activate;
+   // Move/resize the notepad window (screen coordinates).
+   std::function<void(int,int,int,int)>      m_fn_move_window;
+   // Get the window rect as "left top right bottom" string.
+   std::function<std::string()>              m_fn_get_rect;
+   // Save to a file; if path is empty use the current path.
+   // Returns true on success, false on cancel / error.
+   std::function<bool(const std::string&, bool)> m_fn_save_to_file;
+   // Apply font changes (called after m_strFontName / m_iFontSize change).
+   std::function<void()>                     m_fn_apply_font;
+   // Apply colour changes (called after m_textColour / m_backColour change).
+   std::function<void()>                     m_fn_apply_colours;
+   // Set read-only state on the wx text control.
+   std::function<void(bool)>                 m_fn_set_read_only;
+   // Close the window (called from CloseNotepad / OnCloseDocument).
+   std::function<void()>                     m_fn_close_window;
+   // Pointer back to the wx frame (for IsKindOf checks via GetParentFrame).
+   void*                                     m_pWxFrame = nullptr;
+#endif // !_WIN32
+
 // Operations
 public:
 

@@ -140,6 +140,47 @@ extern char* (*g_wxhook_get_clipboard_text)();
 // Set the system clipboard to the given UTF-8 string.
 extern void  (*g_wxhook_set_clipboard_text)(const char* text);
 
+// ── Notepad hook ───────────────────────────────────────────────────────────
+// Create a notepad window.  All string parameters are UTF-8.
+// sText           — initial content (may be "")
+// sTitle          — display title
+// pDoc            — owning CMUSHclientDoc (may be nullptr)
+// iUniqueDocNum   — m_iUniqueDocumentNumber of pDoc
+// strFontName     — font face name
+// iFontSize       — point size
+// iFontWeight     — FW_NORMAL (400) or FW_BOLD (700)
+// iFontCharset    — Windows charset value (ignored on non-Windows)
+// textColour      — COLORREF foreground
+// backColour      — COLORREF background
+// strSearchString — search/recall string stored on the doc
+// strRecallLinePreamble — recall preamble stored on the doc
+// bMatchCase, bRegexp, bCommands, bOutput, bNotes — recall flags
+// iLines          — recall line count (stored; 0 = not a recall)
+// iNotepadType    — eNotepad* enum value
+// Returns a heap-allocated CTextDocument* (caller must not free directly;
+// the frame owns the doc lifetime).  Returns nullptr on failure.
+class CMUSHclientDoc;
+extern void* (*g_wxhook_create_text_window)(
+    const char* sText,
+    const char* sTitle,
+    CMUSHclientDoc* pDoc,
+    long long iUniqueDocNum,
+    const char* strFontName,
+    long  iFontSize,
+    long  iFontWeight,
+    unsigned int iFontCharset,
+    unsigned long textColour,
+    unsigned long backColour,
+    const char* strSearchString,
+    const char* strRecallLinePreamble,
+    bool bMatchCase,
+    bool bRegexp,
+    bool bCommands,
+    bool bOutput,
+    bool bNotes,
+    int  iLines,
+    int  iNotepadType);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

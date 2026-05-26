@@ -143,10 +143,17 @@ void CTextDocument::OnUpdateStatusModified(CCmdUI* pCmdUI)
 
   */
 
-void CTextDocument::OnCloseDocument() 
+void CTextDocument::OnCloseDocument()
 {
+#ifdef _WIN32
   KillThread (m_pThread, m_eventFileChanged);
-	CDocument::OnCloseDocument();
+  CDocument::OnCloseDocument();
+#else
+  // Non-Windows: ask the wx frame to close itself (it will unregister the doc
+  // from the template and delete us).
+  if (m_fn_close_window)
+    m_fn_close_window();
+#endif
 }
 
 
@@ -302,6 +309,16 @@ void CTextDocument::OnFileChanged(void)
 // kill the monitoring thread during the save
 BOOL CTextDocument::DoSave(LPCTSTR lpszPathName, BOOL bReplace)
   {
+#ifndef _WIN32
+  // Non-Windows: delegate to the wx frame callback which shows a save
+  // dialog if lpszPathName is empty.
+  if (m_fn_save_to_file)
+    {
+    std::string path = lpszPathName ? lpszPathName : "";
+    return m_fn_save_to_file(path, bReplace != FALSE) ? TRUE : FALSE;
+    }
+  return FALSE;
+#else
   KillThread (m_pThread, m_eventFileChanged);
 
   BOOL bResult = CDocument::DoSave (lpszPathName, bReplace);
@@ -310,6 +327,7 @@ BOOL CTextDocument::DoSave(LPCTSTR lpszPathName, BOOL bReplace)
   if (!GetPathName ().IsEmpty ())
     CreateMonitoringThread (GetPathName ());
   return bResult;
+#endif // _WIN32
   }
 
 
@@ -370,7 +388,11 @@ void CTextDocument::OnFileOpen()
 
 void CTextDocument::SetTheFont (void)
   {
-  
+#ifndef _WIN32
+  if (m_fn_apply_font)
+    m_fn_apply_font();
+  return;
+#else
   // find first view
   POSITION pos = GetFirstViewPosition();
 
@@ -381,8 +403,8 @@ void CTextDocument::SetTheFont (void)
   CTextView * pView = (CTextView *) GetNextView(pos);
 
   // ensure font displayed correctly
-  pView->SetTheFont ();  
-
+  pView->SetTheFont ();
+#endif // _WIN32
   }
 
 
@@ -470,13 +492,60 @@ CMUSHclientDoc * pDoc = FindWorld ();
 
 }
 
-BOOL CTextDocument::SaveModified() 
+BOOL CTextDocument::SaveModified()
 {
+#ifndef _WIN32
+  // Non-Windows: use m_fn_get_text to check emptiness; show our own dialog.
+  if (m_fn_get_text)
+    {
+    // empty notepad — nothing to save
+    if (m_fn_get_text().empty())
+      return TRUE;
+
+    switch (m_iSaveOnChange)
+      {
+      case eNotepadSaveAlways: break;     // fall through to save
+      case eNotepadSaveNever:  return TRUE;
+      case eNotepadSaveDefault:
+        switch (m_iNotepadType)
+          {
+          case eNotepadMXPdebug:
+            if (!App.m_bConfirmBeforeClosingMXPdebug) return TRUE;
+            break;
+          case eNotepadPacketDebug:
+          case eNotepadLineInfo:
+          case eNotepadWorldLoadError:
+          case eNotepadXMLcomments:
+          case eNotepadPluginInfo:
+          case eNotepadRecall:
+            return TRUE;   // these close without asking
+          default:
+            break;
+          }
+        break;
+      }
+
+    CString prompt = TFormat (
+        "Save changes to \"%s\"?",
+        m_strTitle.IsEmpty() ? (LPCTSTR) GetTitle() : (LPCTSTR) m_strTitle);
+    int r = TMessageBox (prompt, MB_YESNOCANCEL | MB_ICONQUESTION);
+    if (r == IDCANCEL) return FALSE;
+    if (r == IDYES)
+      {
+      // DoSave will show a file dialog if there's no path yet
+      if (!DoSave (GetPathName().IsEmpty() ? nullptr : (LPCTSTR)GetPathName()))
+        return FALSE;
+      }
+    return TRUE;
+    }
+  return TRUE;  // no callback — assume OK
+#else
 // don't bother asking if they want to save an empty document
 CTextView* pView = (CTextView*) (m_viewList.empty() ? nullptr : m_viewList.front());
-  
+
 	if (GetText (pView->GetEditCtrl ()).IsEmpty ())
     return TRUE;
+#endif // _WIN32
 
   switch (m_iSaveOnChange)
     {
@@ -527,10 +596,14 @@ CString strContents;
 
 void CTextDocument::SetReadOnly (BOOL bReadOnly)
   {
-CTextView* pView = (CTextView*) (m_viewList.empty() ? nullptr : m_viewList.front());
-  
+  m_bReadOnly = bReadOnly;
+#ifndef _WIN32
+  if (m_fn_set_read_only)
+    m_fn_set_read_only(bReadOnly != FALSE);
+#else
+  CTextView* pView = (CTextView*) (m_viewList.empty() ? nullptr : m_viewList.front());
+
   if (pView)
     pView->GetEditCtrl ().SetReadOnly (bReadOnly);
-
-  m_bReadOnly = bReadOnly;
+#endif // _WIN32
   } // end of CTextDocument::SetReadOnly

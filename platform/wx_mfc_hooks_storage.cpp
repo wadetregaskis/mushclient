@@ -39,5 +39,11 @@ char* (*g_wxhook_file_dialog)(bool, const char*, const char*,
                                const char*, const char*, bool)   = nullptr;
 char* (*g_wxhook_get_clipboard_text)()                           = nullptr;
 void  (*g_wxhook_set_clipboard_text)(const char*)                = nullptr;
+void* (*g_wxhook_create_text_window)(
+    const char*, const char*, CMUSHclientDoc*, long long,
+    const char*, long, long, unsigned int,
+    unsigned long, unsigned long,
+    const char*, const char*,
+    bool, bool, bool, bool, bool, int, int)                      = nullptr;
 
 #endif // !_WIN32

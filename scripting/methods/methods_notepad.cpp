@@ -34,6 +34,22 @@
 
 bool CMUSHclientDoc::SwitchToNotepad (void)
   {
+#ifndef _WIN32
+  // Non-Windows: activate the first notepad belonging to this world, if any.
+  for (POSITION docPos = App.m_pNormalDocTemplate->GetFirstDocPosition();
+      docPos != NULL; )
+    {
+    CTextDocument * pTextDoc = (CTextDocument *) App.m_pNormalDocTemplate->GetNextDoc(docPos);
+    if (pTextDoc->m_pRelatedWorld == this &&
+       pTextDoc->m_iUniqueDocumentNumber == m_iUniqueDocumentNumber)
+      {
+      if (pTextDoc->m_fn_activate)
+        pTextDoc->m_fn_activate();
+      return true;
+      }
+    }
+  return false;
+#else
   int iCount = 0;
 
   for (POSITION docPos = App.m_pNormalDocTemplate->GetFirstDocPosition();
@@ -74,13 +90,14 @@ bool CMUSHclientDoc::SwitchToNotepad (void)
           return true;
           } // end of having the right type of view
         }   // end of having a view
-      
+
       }   // end of choosing an existing document
 
     }   // end of having other documents
 
 
   return false;
+#endif // _WIN32
   }   // end of CMUSHclientDoc::SwitchToNotepad
 
 bool CMUSHclientDoc::AppendToTheNotepad (const CString strTitle,
@@ -92,6 +109,21 @@ CTextDocument * pTextDoc = FindNotepad (strTitle);
 
   if (pTextDoc)
     {
+#ifndef _WIN32
+    // Non-Windows: use the m_fn_* callbacks wired by CWxNotepadFrame.
+    if (pTextDoc->m_fn_get_text_length && pTextDoc->m_fn_set_sel &&
+        pTextDoc->m_fn_replace_sel)
+      {
+      int iLength = pTextDoc->m_fn_get_text_length();
+      if (bReplace)
+        pTextDoc->m_fn_set_sel(0, -1);
+      else
+        pTextDoc->m_fn_set_sel(iLength, iLength);
+      pTextDoc->m_fn_replace_sel(std::string(strText));
+      return true;
+      }
+    return false;
+#else
     // append to the view
     POSITION pos=pTextDoc->GetFirstViewPosition();
 
@@ -116,6 +148,7 @@ CTextDocument * pTextDoc = FindNotepad (strTitle);
         } // end of having the right type of view
       }   // end of having a view
     return false;
+#endif // _WIN32
     } // end of having an existing notepad document
 
   BOOL bOK = CreateTextWindow ((LPCTSTR) strText,     // contents
@@ -174,12 +207,19 @@ BOOL CMUSHclientDoc::AppendToNotepad(LPCTSTR Title, LPCTSTR Contents)
   return AppendToTheNotepad (Title, Contents, false);   // append mode
 }    // end of CMUSHclientDoc::AppendToNotepad
 
-BOOL CMUSHclientDoc::ActivateNotepad(LPCTSTR Title) 
+BOOL CMUSHclientDoc::ActivateNotepad(LPCTSTR Title)
 {
 CTextDocument * pTextDoc = FindNotepad (Title);
 
   if (pTextDoc)
     {
+#ifndef _WIN32
+    if (pTextDoc->m_fn_activate)
+      {
+      pTextDoc->m_fn_activate();
+      return true;
+      }
+#else
     // activate the view
     POSITION pos=pTextDoc->GetFirstViewPosition();
 
@@ -195,6 +235,7 @@ CTextDocument * pTextDoc = FindNotepad (Title);
         return true;
         } // end of having the right type of view
       }   // end of having a view
+#endif // _WIN32
     } // end of having an existing notepad document
  return false;
 }   // end of CMUSHclientDoc::ActivateNotepad
@@ -262,7 +303,7 @@ return false;
 }   // end of CMUSHclientDoc::CloseNotepad
 
 
-long CMUSHclientDoc::GetNotepadLength(LPCTSTR Title) 
+long CMUSHclientDoc::GetNotepadLength(LPCTSTR Title)
 {
 CTextDocument * pTextDoc = FindNotepad (Title);
 
@@ -270,6 +311,10 @@ int iLength = 0;
 
   if (pTextDoc)
     {
+#ifndef _WIN32
+    if (pTextDoc->m_fn_get_text_length)
+      iLength = pTextDoc->m_fn_get_text_length();
+#else
     // find the view
     POSITION pos=pTextDoc->GetFirstViewPosition();
 
@@ -282,18 +327,23 @@ int iLength = 0;
         iLength = pmyView->GetWindowTextLength ();
         } // end of having the right type of view
       }   // end of having a view
+#endif // _WIN32
     } // end of having an existing notepad document
 
 	return iLength;
 }   // end of CMUSHclientDoc::GetNotepadLength
 
-BSTR CMUSHclientDoc::GetNotepadText(LPCTSTR Title) 
+BSTR CMUSHclientDoc::GetNotepadText(LPCTSTR Title)
 {
 CString strResult;
 CTextDocument * pTextDoc = FindNotepad (Title);
 
   if (pTextDoc)
     {
+#ifndef _WIN32
+    if (pTextDoc->m_fn_get_text)
+      strResult = CString(pTextDoc->m_fn_get_text().c_str());
+#else
     // find the view
     POSITION pos=pTextDoc->GetFirstViewPosition();
 
@@ -306,6 +356,7 @@ CTextDocument * pTextDoc = FindNotepad (Title);
         pmyView->GetWindowText (strResult);
         } // end of having the right type of view
       }   // end of having a view
+#endif // _WIN32
     } // end of having an existing notepad document
 
 
@@ -314,7 +365,7 @@ CTextDocument * pTextDoc = FindNotepad (Title);
 
 
 // warning - different in Lua
-BSTR CMUSHclientDoc::GetNotepadWindowPosition(LPCTSTR Title) 
+BSTR CMUSHclientDoc::GetNotepadWindowPosition(LPCTSTR Title)
 {
 	CString strResult;
 
@@ -322,6 +373,10 @@ BSTR CMUSHclientDoc::GetNotepadWindowPosition(LPCTSTR Title)
 
   if (pTextDoc)
     {
+#ifndef _WIN32
+    if (pTextDoc->m_fn_get_rect)
+      strResult = CString(pTextDoc->m_fn_get_rect().c_str());
+#else
     CWindowPlacement wp;
 
     // get the view
@@ -338,6 +393,7 @@ BSTR CMUSHclientDoc::GetNotepadWindowPosition(LPCTSTR Title)
       	windowPositionHelper (strResult, wp.rcNormalPosition);
         } // end of having the right type of view
       }   // end of having a view
+#endif // _WIN32
     } // end of having an existing notepad document
 
 	return strResult.AllocSysString();
@@ -365,7 +421,12 @@ CTextDocument * pTextDoc = FindNotepad (Title);
   pTextDoc->m_textColour = iTextColour;
   pTextDoc->m_backColour = iBackColour;
 
+#ifndef _WIN32
+  if (pTextDoc->m_fn_apply_colours)
+    pTextDoc->m_fn_apply_colours();
+#else
   pTextDoc->UpdateAllViews (NULL);
+#endif
   return true;  // did it!
 
 }   // end of CMUSHclientDoc::NotepadColour
@@ -488,12 +549,21 @@ CTextDocument * pTextDoc = FindNotepad (Title);
 
 
 
-long CMUSHclientDoc::MoveNotepadWindow(LPCTSTR Title, long Left, long Top, long Width, long Height) 
+long CMUSHclientDoc::MoveNotepadWindow(LPCTSTR Title, long Left, long Top, long Width, long Height)
 {
 CTextDocument * pTextDoc = FindNotepad (Title);
 
   if (pTextDoc)
     {
+#ifndef _WIN32
+    if (pTextDoc->m_fn_move_window)
+      {
+      pTextDoc->m_fn_move_window(
+          static_cast<int>(Left), static_cast<int>(Top),
+          static_cast<int>(Width), static_cast<int>(Height));
+      return true;
+      }
+#else
     // get the view
     POSITION pos=pTextDoc->GetFirstViewPosition();
 
@@ -505,9 +575,10 @@ CTextDocument * pTextDoc = FindNotepad (Title);
         {
         CTextView* pmyView = (CTextView*)pView;
         pmyView->GetParentFrame ()->MoveWindow (Left, Top, Width, Height);
-        return true;            
+        return true;
         } // end of having the right type of view
       }   // end of having a view
+#endif // _WIN32
     } // end of having an existing notepad document
 
 

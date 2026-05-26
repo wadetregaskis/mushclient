@@ -35,6 +35,7 @@
 #include "mainfrm.h"       // CMainFrame full definition
 #include "doc.h"           // CMUSHclientDoc (needed for hook_new_world)
 #include "platform/wx_world_child.h"  // CWorldChildFrame
+#include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_entity_dlgs.h" // CTriggerListDlg, CAliasListDlg, CTimerListDlg
 #include "scripting/scripting.h"     // CScriptEngine
 
@@ -2604,6 +2605,89 @@ static int hook_init_instance()
     return App.InitInstance() != FALSE ? 1 : 0;
 }
 
+// ── hook_create_text_window ───────────────────────────────────────────────
+// Allocates a CTextDocument, fills its fields from the parameters, creates a
+// CWxNotepadFrame that wires all m_fn_* callbacks and registers the doc with
+// App.m_pNormalDocTemplate, then returns the doc pointer (the frame owns it).
+static void* hook_create_text_window(
+    const char* sText,
+    const char* sTitle,
+    CMUSHclientDoc* pDoc,
+    long long iUniqueDocNum,
+    const char* strFontName,
+    long  iFontSize,
+    long  iFontWeight,
+    unsigned int iFontCharset,
+    unsigned long textColour,
+    unsigned long backColour,
+    const char* strSearchString,
+    const char* strRecallLinePreamble,
+    bool bMatchCase,
+    bool bRegexp,
+    bool bCommands,
+    bool bOutput,
+    bool bNotes,
+    int  iLines,
+    int  iNotepadType)
+{
+    if (!App.m_pNormalDocTemplate)
+        return nullptr;
+
+    // Allocate the document object.
+    CTextDocument* td = new CTextDocument();
+    td->m_pRelatedWorld         = pDoc;
+    td->m_iUniqueDocumentNumber = iUniqueDocNum;
+    td->m_strFontName           = strFontName  ? strFontName  : "";
+    td->m_iFontSize             = iFontSize;
+    td->m_iFontWeight           = iFontWeight;
+    td->m_iFontCharset          = iFontCharset;
+    td->m_textColour            = static_cast<COLORREF>(textColour);
+    td->m_backColour            = static_cast<COLORREF>(backColour);
+    td->m_strSearchString       = strSearchString       ? strSearchString       : "";
+    td->m_strRecallLinePreamble = strRecallLinePreamble ? strRecallLinePreamble : "";
+    td->m_bMatchCase            = bMatchCase;
+    td->m_bRegexp               = bRegexp;
+    td->m_bCommands             = bCommands;
+    td->m_bOutput               = bOutput;
+    td->m_bNotes                = bNotes;
+    td->m_iLines                = iLines;
+    td->m_iNotepadType          = iNotepadType;
+
+    // Apply notepad-type colour overrides (matches Utilities.cpp logic).
+    if (iNotepadType == eNotepadWorldLoadError) {
+        td->m_textColour = RGB(128,   0,   0);   // maroon
+        td->m_backColour = RGB(255, 228, 181);   // moccasin
+    } else if (iNotepadType == eNotepadXMLcomments) {
+        td->m_textColour = RGB(  0, 100,   0);   // darkgreen
+        td->m_backColour = RGB(176, 224, 230);   // powderblue
+    } else if (App.m_cNotepadTextColour != App.m_cNotepadBackColour) {
+        td->m_textColour = App.m_cNotepadTextColour;
+        td->m_backColour = App.m_cNotepadBackColour;
+    }
+
+    // Sanitise title for display (matches Utilities.cpp).
+    CString strTitle = sTitle ? sTitle : "";
+    td->m_strTitle = strTitle;
+    strTitle.Replace(" ",  "");
+    strTitle.Replace("#",  "");
+    strTitle.Replace("%",  "");
+    strTitle.Replace(";",  "");
+    strTitle.Replace("/",  "-");
+    strTitle.Replace("\\", "-");
+    strTitle.Replace(":",  "-");
+    td->SetTitle(strTitle);
+
+    wxString wxTitle = wxString::FromUTF8(
+        static_cast<const char*>(td->m_strTitle));
+    wxString wxText  = wxString::FromUTF8(sText ? sText : "");
+
+    // CWxNotepadFrame constructor registers td with the template and shows.
+    // The frame takes ownership of td.
+    new CWxNotepadFrame(td, wxTitle, wxText);
+
+    return static_cast<void*>(td);
+}
+
 // ── Install all hooks ─────────────────────────────────────────────────────
 void wx_mfc_install_hooks()
 {
@@ -2627,8 +2711,9 @@ void wx_mfc_install_hooks()
     g_wxhook_game_preferences   = hook_game_preferences;
     g_wxhook_save_world         = hook_save_world;
     g_wxhook_file_dialog        = hook_file_dialog;
-    g_wxhook_get_clipboard_text = hook_get_clipboard_text;
-    g_wxhook_set_clipboard_text = hook_set_clipboard_text;
+    g_wxhook_get_clipboard_text   = hook_get_clipboard_text;
+    g_wxhook_set_clipboard_text   = hook_set_clipboard_text;
+    g_wxhook_create_text_window   = hook_create_text_window;
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce
     // an audible alert on macOS/Linux via wxWidgets.

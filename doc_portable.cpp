@@ -1104,8 +1104,27 @@ void CMUSHclientDoc::ContinueSSLHandshake()
     OnConnectionDisconnect();
 }
 
-// ── CloseLog ──────────────────────────────────────────────────────────────────
-void CMUSHclientDoc::CloseLog()  {}
+// ── CloseLog ─────────────────────────────────────────────────────────────────
+// Writes the log-file postamble (if any) and closes m_logfile.
+// Mirrors the implementation in scripting/methods/methods_logging.cpp.
+void CMUSHclientDoc::CloseLog()
+{
+    if (!m_logfile)
+        return;
+
+    if (!m_strLogFilePostamble.IsEmpty() && !m_bLogRaw) {
+        CTime theTime = CTime::GetCurrentTime();
+        CString strPost = m_strLogFilePostamble;
+        strPost.Replace("%n", "\n");
+        strPost = FormatTime(theTime, strPost, m_bLogHTML != 0);
+        strPost.Replace(ENDLINE, "\n");
+        WriteToLog(strPost);
+        WriteToLog("\n", 1);
+    }
+
+    fclose(m_logfile);
+    m_logfile = nullptr;
+}
 
 // ── Note ─────────────────────────────────────────────────────────────────────
 void CMUSHclientDoc::Note(const CString& s)
@@ -1492,12 +1511,87 @@ void CMUSHclientDoc::Trace(const char* fmt, ...)
     if (g_after_output) g_after_output();
 }
 
-// ── CMUSHclientDoc::WriteToLog — log-file write (no-op) ──────────────────
-void CMUSHclientDoc::WriteToLog(const CString& /*sText*/)       {}
-void CMUSHclientDoc::WriteToLog(const char* /*pText*/, unsigned long /*nLen*/) {}
+// ── CMUSHclientDoc::WriteToLog ────────────────────────────────────────────
+// Writes raw bytes to the open log file.  On write error the file is closed
+// and a Note() is emitted so the user sees the problem.
+// Mirrors the implementation in doc.cpp (which uses UMessageBox instead).
+void CMUSHclientDoc::WriteToLog(const char* pText, unsigned long nLen)
+{
+    if (!m_logfile || nLen == 0)
+        return;
 
-// ── CMUSHclientDoc::LogCommand — command logger (no-op) ──────────────────
-void CMUSHclientDoc::LogCommand(const char* /*sText*/)           {}
+    size_t written = fwrite(pText, 1, nLen, m_logfile);
+    if (written != nLen) {
+        CString msg;
+        msg.Format("Error writing to log file \"%s\" — logging stopped.",
+                   (const char*)m_logfile_name);
+        fclose(m_logfile);
+        m_logfile = nullptr;
+        Note(msg);
+    }
+}
+
+void CMUSHclientDoc::WriteToLog(const CString& sText)
+{
+    WriteToLog((const char*)sText, (unsigned long)sText.GetLength());
+}
+
+// ── CMUSHclientDoc::LogCommand ────────────────────────────────────────────
+// Logs a command sent to the MUD when input logging is active.
+// Mirrors the implementation in doc.cpp, minus the Windows-only UI calls.
+void CMUSHclientDoc::LogCommand(const char* sText)
+{
+    if (!m_logfile || !LoggingInput() || m_bLogRaw)
+        return;
+
+    CString strMessage = sText;
+
+    // strip trailing CR/LF
+    if (strMessage.Right(2) == ENDLINE)
+        strMessage = strMessage.Left(strMessage.GetLength() - 2);
+    strMessage.Replace(ENDLINE, "\n");
+
+    CTime now = CTime::GetCurrentTime();
+
+    // preamble
+    CString pre = m_strLogLinePreambleInput;
+    pre.Replace("%n", "\n");
+    if (pre.Find('%') != -1)
+        pre = FormatTime(now, pre, m_bLogHTML != 0);
+
+    // postamble
+    CString post = m_strLogLinePostambleInput;
+    post.Replace("%n", "\n");
+    if (post.Find('%') != -1)
+        post = FormatTime(now, post, m_bLogHTML != 0);
+
+    WriteToLog(pre);
+
+    if (m_bLogHTML) {
+        // Escape HTML entities in the command text
+        strMessage.Replace("&", "&amp;");
+        strMessage.Replace("<", "&lt;");
+        strMessage.Replace(">", "&gt;");
+
+        if (m_bLogInColour && m_echo_colour != SAMECOLOUR) {
+            COLORREF col = m_customtext[m_echo_colour];
+            CString tag;
+            tag.Format("<font color=\"#%02X%02X%02X\">",
+                       GetRValue(col), GetGValue(col), GetBValue(col));
+            WriteToLog(tag);
+        }
+
+        WriteToLog(strMessage);
+
+        if (m_bLogInColour && m_echo_colour != SAMECOLOUR)
+            WriteToLog("</font>", 7);
+    } else {
+        WriteToLog(strMessage);
+    }
+
+    WriteToLog(post);
+    WriteToLog("\n", 1);
+}
 
 // ── CMUSHclientDoc::OutputOutstandingLines — flush pending lines (no-op) ──
 void CMUSHclientDoc::OutputOutstandingLines()                    {}

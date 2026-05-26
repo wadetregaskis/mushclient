@@ -1199,9 +1199,10 @@ public:
     // ── Colour tables ──────────────────────────────────────────────────
     COLORREF m_normalcolour[8];
     COLORREF m_boldcolour[8];
-    COLORREF m_customtext[MAX_CUSTOM];
-    COLORREF m_customback[MAX_CUSTOM];
-    CString  m_strCustomColourName[MAX_CUSTOM];
+    COLORREF       m_customtext[MAX_CUSTOM];
+    COLORREF       m_customback[MAX_CUSTOM];
+    CString        m_strCustomColourName[MAX_CUSTOM];
+    unsigned short m_echo_colour = SAMECOLOUR; // colour for echoed input in logs
 
     // ── ANSI parse state ───────────────────────────────────────────────
     BOOL m_bAlternativeInverse      = FALSE;
@@ -1540,6 +1541,10 @@ public:
     BOOL           m_bLogInColour             = FALSE;
     unsigned short m_bLogHTML                 = 0;
     BOOL           m_bLogRaw                  = FALSE;
+    CString        m_strLogFilePreamble;
+    CString        m_strLogFilePostamble;
+    CString        m_strLogLinePreambleInput;
+    CString        m_strLogLinePostambleInput;
     CString        m_strLogLinePreambleOutput;
     CString        m_strLogLinePostambleOutput;
     CString        m_strLogLinePreambleNotes;
@@ -1840,8 +1845,8 @@ public:
     bool SendToAllPluginCallbacks(const string& sName, const char* sData,
                                   bool bDefaultReturn) { return bDefaultReturn; }
 
-    // ── Clipboard (no-ops on non-Windows) ─────────────────────────────
-    bool LoggingInput() const { return false; }
+    // ── Logging helpers ───────────────────────────────────────────────
+    bool LoggingInput() const { return m_log_input != 0; }
 
     // ── Stub methods (doc_portable.cpp) ──────────────────────────────
     void SendToAllPluginCallbacks(const string& sName);

@@ -2769,6 +2769,46 @@ static char** hook_get_notepad_list()
     return arr;
 }
 
+// ── Notepad activate / close / move / position ───────────────────────────
+
+static bool hook_activate_notepad(const char* title)
+{
+    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
+    if (!frame) return false;
+    if (!frame->IsShown()) frame->Show(true);
+    frame->Raise();
+    return true;
+}
+
+static bool hook_close_notepad(const char* title)
+{
+    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
+    if (!frame) return false;
+    frame->Close(false);   // allow SaveModified check
+    return true;
+}
+
+static bool hook_move_notepad(const char* title, int x, int y, int w, int h)
+{
+    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
+    if (!frame) return false;
+    frame->SetSize(x, y, w, h);
+    return true;
+}
+
+static char* hook_get_notepad_position(const char* title)
+{
+    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
+    if (!frame) return nullptr;
+    wxRect r = frame->GetRect();
+    char buf[80];
+    snprintf(buf, sizeof(buf), "%d %d %d %d",
+             r.GetLeft(), r.GetTop(), r.GetWidth(), r.GetHeight());
+    char* result = static_cast<char*>(malloc(strlen(buf) + 1));
+    if (result) strcpy(result, buf);
+    return result;
+}
+
 // ── Colour picker ─────────────────────────────────────────────────────────
 
 static long hook_pick_colour(long suggested)
@@ -2879,6 +2919,10 @@ void wx_mfc_install_hooks()
     g_wxhook_append_to_notepad    = hook_append_to_notepad;
     g_wxhook_get_notepad_text     = hook_get_notepad_text;
     g_wxhook_get_notepad_list     = hook_get_notepad_list;
+    g_wxhook_activate_notepad     = hook_activate_notepad;
+    g_wxhook_close_notepad        = hook_close_notepad;
+    g_wxhook_move_notepad         = hook_move_notepad;
+    g_wxhook_get_notepad_position = hook_get_notepad_position;
 #endif
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce

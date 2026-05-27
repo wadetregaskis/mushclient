@@ -6345,6 +6345,55 @@ static int L_GetNotepadList(lua_State* L)
     return 1;
 }
 
+// ── More notepad API ─────────────────────────────────────────────────────────
+
+// ActivateNotepad(title) → eOK or eNoSuchWindow
+static int L_ActivateNotepad(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    bool found = g_wxhook_activate_notepad && g_wxhook_activate_notepad(title);
+    lua_pushnumber(L, found ? eOK : eNoSuchWindow);
+    return 1;
+}
+
+// CloseNotepad(title) → eOK or eNoSuchWindow
+static int L_CloseNotepad(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    bool found = g_wxhook_close_notepad && g_wxhook_close_notepad(title);
+    lua_pushnumber(L, found ? eOK : eNoSuchWindow);
+    return 1;
+}
+
+// MoveNotepadWindow(title, x, y, width, height) → eOK or eNoSuchWindow
+static int L_MoveNotepadWindow(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    int x = (int)luaL_optnumber(L, 2, -1);
+    int y = (int)luaL_optnumber(L, 3, -1);
+    int w = (int)luaL_optnumber(L, 4, -1);
+    int h = (int)luaL_optnumber(L, 5, -1);
+    bool found = g_wxhook_move_notepad && g_wxhook_move_notepad(title, x, y, w, h);
+    lua_pushnumber(L, found ? eOK : eNoSuchWindow);
+    return 1;
+}
+
+// GetNotepadWindowPosition(title) → "x y width height" string or nil
+static int L_GetNotepadWindowPosition(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    if (!g_wxhook_get_notepad_position) { lua_pushnil(L); return 1; }
+    char* pos = g_wxhook_get_notepad_position(title);
+    if (!pos) { lua_pushnil(L); return 1; }
+    lua_pushstring(L, pos);
+    free(pos);
+    return 1;
+}
+
 // Notepad / mapping / GUI display actions that have no return value → eOK
 static int L_GuiOkStub(lua_State* L)
 {
@@ -6863,10 +6912,10 @@ static const luaL_Reg worldlib[] = {
     { "SpellCheckDlg",          L_SpellStub },
 
     // ── Notepad stubs ─────────────────────────────────────────────────────────
-    { "ActivateNotepad",        L_GuiOkStub  },
+    { "ActivateNotepad",        L_ActivateNotepad       },
     { "AppendToNotepad",        L_AppendToNotepad },
-    { "CloseNotepad",           L_GuiOkStub  },
-    { "MoveNotepadWindow",      L_GuiOkStub  },
+    { "CloseNotepad",           L_CloseNotepad          },
+    { "MoveNotepadWindow",      L_MoveNotepadWindow     },
     { "NotepadColour",          L_GuiOkStub  },
     { "NotepadFont",            L_GuiOkStub  },
     { "NotepadReadOnly",        L_GuiOkStub  },
@@ -6877,7 +6926,7 @@ static const luaL_Reg worldlib[] = {
     { "GetNotepadLength",       L_GetNotepadLength },
     { "GetNotepadList",         L_GetNotepadList   },
     { "GetNotepadText",         L_GetNotepadText   },
-    { "GetNotepadWindowPosition",L_GuiNilStub},
+    { "GetNotepadWindowPosition", L_GetNotepadWindowPosition },
 
     // ── Extended mapping stubs ────────────────────────────────────────────────
     { "GetMapping",             L_GuiNilStub },

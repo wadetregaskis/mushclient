@@ -209,6 +209,18 @@ extern char* (*g_wxhook_get_notepad_text)(const char* title);
 // the array itself.
 extern char** (*g_wxhook_get_notepad_list)();
 
+// ── Notepad activate / close / move / position hooks ────────────────────────
+// All operate on a notepad identified by title (case-insensitive).
+// activate: bring window to front; returns true if found.
+extern bool (*g_wxhook_activate_notepad)(const char* title);
+// close: close the notepad window; returns true if found.
+extern bool (*g_wxhook_close_notepad)(const char* title);
+// move: reposition and/or resize; returns true if found.
+extern bool (*g_wxhook_move_notepad)(const char* title, int x, int y, int w, int h);
+// position: "x y width height" string for an open notepad, or nullptr if not found.
+// Caller must free().
+extern char* (*g_wxhook_get_notepad_position)(const char* title);
+
 // ── Colour picker hook ────────────────────────────────────────────────────
 // Open a colour-picker dialog.  suggested is a COLORREF (0x00BBGGRR), or
 // -1 to start with no pre-selected colour.  Returns the picked COLORREF, or

@@ -852,6 +852,7 @@ static int L_GetTrigger(lua_State* L)
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* name = luaL_checkstring(L, 1);
     CString strLabel(name);
+    CheckObjectName(strLabel, false);
     CTrigger* pt = nullptr;
     if (!pDoc->GetTriggerMap().Lookup(strLabel, pt) || !pt) {
         lua_pushnumber(L, eTriggerNotFound);
@@ -861,18 +862,26 @@ static int L_GetTrigger(lua_State* L)
         return 8;
     }
     long flags = 0;
-    if (pt->bEnabled)   flags |= eEnabled;
-    if (pt->bRegexp)    flags |= eTriggerRegularExpression;
-    if (pt->ignore_case) flags |= eIgnoreCase;
+    if (pt->bEnabled)            flags |= eEnabled;
+    if (pt->bRegexp)             flags |= eTriggerRegularExpression;
+    if (pt->ignore_case)         flags |= eIgnoreCase;
+    if (pt->bOmitFromOutput)     flags |= eOmitFromOutput;
+    if (pt->bKeepEvaluating)     flags |= eKeepEvaluating;
+    if (pt->omit_from_log)       flags |= eOmitFromOutput;  // mirrors Windows
+    if (pt->bLowercaseWildcard)  flags |= eLowercaseWildcard;
+    if (pt->bTemporary)          flags |= eTemporary;
+    if (pt->bOneShot)            flags |= eTriggerOneShot;
 
-    lua_pushnumber(L, eOK);                          // 1 result code
-    lua_pushstring(L, (const char*)pt->trigger);     // 2 match text
-    lua_pushstring(L, (const char*)pt->contents);    // 3 send text
-    lua_pushnumber(L, flags);                        // 4 flags
-    lua_pushnumber(L, 0);                            // 5 colour (stub)
-    lua_pushnumber(L, 0);                            // 6 wildcard (stub)
-    lua_pushstring(L, "");                           // 7 sound file (stub)
-    lua_pushstring(L, (const char*)pt->strProcedure);// 8 script name
+    short colour = (pt->colour == SAMECOLOUR) ? -1 : (short)pt->colour;
+
+    lua_pushnumber(L, eOK);                                  // 1 result code
+    lua_pushstring(L, (const char*)pt->trigger);             // 2 match text
+    lua_pushstring(L, (const char*)pt->contents);            // 3 send text
+    lua_pushnumber(L, flags);                                // 4 flags
+    lua_pushnumber(L, colour);                               // 5 colour
+    lua_pushnumber(L, pt->iClipboardArg);                    // 6 wildcard arg
+    lua_pushstring(L, (const char*)pt->sound_to_play);       // 7 sound file
+    lua_pushstring(L, (const char*)pt->strProcedure);        // 8 script name
     return 8;
 }
 
@@ -881,6 +890,7 @@ static int L_GetAlias(lua_State* L)
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* name = luaL_checkstring(L, 1);
     CString strLabel(name);
+    CheckObjectName(strLabel, false);
     CAlias* pa = nullptr;
     if (!pDoc->GetAliasMap().Lookup(strLabel, pa) || !pa) {
         lua_pushnumber(L, eAliasNotFound);
@@ -889,8 +899,17 @@ static int L_GetAlias(lua_State* L)
         return 5;
     }
     long flags = 0;
-    if (pa->bEnabled) flags |= eEnabled;
-    if (pa->bRegexp)  flags |= eAliasRegularExpression;
+    if (pa->bEnabled)                               flags |= eEnabled;
+    if (pa->bRegexp)                                flags |= eAliasRegularExpression;
+    if (pa->bIgnoreCase)                            flags |= eIgnoreAliasCase;
+    if (pa->bOmitFromLog)                           flags |= eOmitFromLogFile;
+    if (pa->bOmitFromOutput)                        flags |= eAliasOmitFromOutput;
+    if (pa->bExpandVariables)                       flags |= eExpandVariables;
+    if (pa->iSendTo == eSendToSpeedwalk)            flags |= eAliasSpeedWalk;
+    if (pa->iSendTo == eSendToCommandQueue)         flags |= eAliasQueue;
+    if (pa->bMenu)                                  flags |= eAliasMenu;
+    if (pa->bTemporary)                             flags |= eTemporary;
+    if (pa->bOneShot)                               flags |= eAliasOneShot;
 
     lua_pushnumber(L, eOK);                          // 1 result code
     lua_pushstring(L, (const char*)pa->name);        // 2 match text
@@ -905,6 +924,7 @@ static int L_GetTimer(lua_State* L)
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* name = luaL_checkstring(L, 1);
     CString strLabel(name);
+    CheckObjectName(strLabel, false);
     CTimer* pt = nullptr;
     if (!pDoc->GetTimerMap().Lookup(strLabel, pt) || !pt) {
         lua_pushnumber(L, eTimerNotFound);
@@ -913,8 +933,12 @@ static int L_GetTimer(lua_State* L)
         return 7;
     }
     long flags = 0;
-    if (pt->bEnabled)              flags |= eEnabled;
-    if (pt->iType == CTimer::eAtTime) flags |= eAtTime;
+    if (pt->bEnabled)                    flags |= eEnabled;
+    if (pt->iType == CTimer::eAtTime)    flags |= eAtTime;
+    if (pt->bOneShot)                    flags |= eOneShot;
+    if (pt->iSendTo == eSendToSpeedwalk) flags |= eTimerSpeedWalk;
+    if (pt->iSendTo == eSendToOutput)    flags |= eTimerNote;
+    if (pt->bActiveWhenClosed)           flags |= eActiveWhenClosed;
 
     int    hour   = (pt->iType == CTimer::eAtTime) ? pt->iAtHour    : pt->iEveryHour;
     int    minute = (pt->iType == CTimer::eAtTime) ? pt->iAtMinute  : pt->iEveryMinute;

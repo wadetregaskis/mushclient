@@ -4494,14 +4494,21 @@ long i;
   for(pos=GetFirstViewPosition();pos!=NULL;)
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
   	  {
 		  CMUSHView* pmyView = (CMUSHView*)pView;
 
 		  pmyView->addedstuff();
-	    }	
+	    }
     }
+
+#ifndef _WIN32
+  // Non-Windows: the view loop above is a no-op (no CMUSHView registered).
+  // Tell the wxWidgets output pane to repaint so that the scroll-bar state
+  // and visible content reflect the newly resized line buffer.
+  UpdateAllViews (NULL);
+#endif
 
   ShowStatusLine ();
 

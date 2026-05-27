@@ -1862,6 +1862,22 @@ CTextDocument * pTextDoc = FindNotepad (strTitle);
 
   if (pTextDoc)
     {
+#ifndef _WIN32
+    // Non-Windows: CTextView is not registered in the MFC view system.
+    // Use the wx callbacks wired by CWxNotepadFrame instead.
+    if (pTextDoc->m_fn_replace_sel && pTextDoc->m_fn_set_sel)
+      {
+      int iLength = pTextDoc->m_fn_get_text_length
+                      ? pTextDoc->m_fn_get_text_length () : 0;
+      if (bReplace)
+        pTextDoc->m_fn_set_sel (0, -1);
+      else
+        pTextDoc->m_fn_set_sel (iLength, iLength);
+      pTextDoc->m_fn_replace_sel (std::string ((LPCTSTR) strText));
+      return true;
+      }
+    return false;
+#else
     // append to the view
     POSITION pos=pTextDoc->GetFirstViewPosition();
 
@@ -1886,6 +1902,7 @@ CTextDocument * pTextDoc = FindNotepad (strTitle);
         } // end of having the right type of view
       }   // end of having a view
     return false;
+#endif
     } // end of having an existing notepad document
 
   BOOL bOK = CreateTextWindow ((LPCTSTR) strText,     // contents

@@ -203,6 +203,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (m_output) m_output->Refresh(false);
         };
 
+        // world.ClearOutput(): wipe the pane's internal line buffer and reset
+        // the GUI-emission counter so the next UpdateAllViews starts from zero.
+        m_doc->m_fn_clear_output = [this]() {
+            if (m_output) m_output->ClearOutput();
+            m_doc->m_gui_lines_emitted = 0;
+        };
+
         // world.SetStatus(msg): show a message in the MDI parent's status bar.
         // This overrides the connection-state message until the next timer tick
         // refreshes it, or until a new world.SetStatus() call replaces it.
@@ -2779,6 +2786,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_command_selection = nullptr;
         m_doc->m_fn_set_paused           = nullptr;
         m_doc->m_fn_repaint                  = nullptr;
+        m_doc->m_fn_clear_output             = nullptr;
         m_doc->m_fn_status                   = nullptr;
         m_doc->m_fn_set_title                = nullptr;
         m_doc->m_fn_set_main_title           = nullptr;

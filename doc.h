@@ -1527,6 +1527,11 @@ public:
   // world.Repaint(): force a repaint of the output pane.
   std::function<void()>  m_fn_repaint;
 
+  // world.ClearOutput(): wipe all content from the wx output pane buffer.
+  // Called from CMUSHclientDoc::ClearOutput() on non-Windows so the visible
+  // pane empties immediately rather than retaining the old lines.
+  std::function<void()>  m_fn_clear_output;
+
   // world.SetBackgroundColour(rgb): change the output pane background colour.
   // Argument is a COLORREF; 0xFFFFFFFF (NO_COLOUR) means default black.
   std::function<void(unsigned long)>  m_fn_set_background_colour;

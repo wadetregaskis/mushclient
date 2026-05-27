@@ -1939,6 +1939,10 @@ public:
     // Called by world.Repaint() to force a repaint of the output pane.
     std::function<void()> m_fn_repaint;
 
+    // Called by world.ClearOutput() to wipe the wx pane buffer and reset
+    // m_gui_lines_emitted so UpdateAllViews starts fresh.
+    std::function<void()> m_fn_clear_output;
+
     // Called by world.SetBackgroundColour(rgb) to update the pane background.
     // Receives a COLORREF; 0xFFFFFFFF means "default" (black).
     std::function<void(unsigned long)> m_fn_set_background_colour;

@@ -5045,18 +5045,25 @@ POSITION pos;
 
   // we need to force views to update scroll bar positions and things like that
 
+#ifndef _WIN32
+  // Non-Windows: no CMUSHView; clear the wx output pane's internal buffer and
+  // reset the GUI-emission counter so UpdateAllViews starts from zero.
+  if (m_fn_clear_output)
+    m_fn_clear_output ();
+#else
   for(pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
   	  {
 		  CMUSHView* pmyView = (CMUSHView*)pView;
 
       pmyView->ScrollToPosition (CPoint (0, 0), false);
 		  pmyView->addedstuff();
-	    }	
+	    }
     }
+#endif
 
   // no recent trigger lines
   m_sRecentLines.clear ();

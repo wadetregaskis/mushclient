@@ -9,7 +9,6 @@
 #ifndef _WIN32
 
 #include "platform/doc_stub.h"
-#include "platform/wx_mfc_hooks.h"
 #include "Color.h"
 #include "worldsock.h"
 #ifdef OPENSSL_FOUND
@@ -22,10 +21,7 @@
 #include <climits>
 #include <zlib.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <sys/stat.h>
 #include <sys/ioctl.h>
-#include <time.h>    // clock_gettime, struct timespec
 
 // ── Output hooks (readline integration) ──────────────────────────────────
 void (*g_before_output)() = nullptr;
@@ -159,7 +155,6 @@ CMUSHclientDoc::CMUSHclientDoc()
     }
 
     m_strTerminalIdentification = "MUSHCLIENT";
-    m_tWorldOpenTime = time(nullptr);
 
     // ── Scratch line for ANSI style state ─────────────────────────────────
     // InterpretANSIcode / Interpret256ANSIcode always call
@@ -267,16 +262,6 @@ CStyle* CMUSHclientDoc::AddStyle(const unsigned short iFlags,
     p->iLength     = (unsigned short)iLength;
     p->pAction     = pAction;
     pLine->styleList.AddTail(p);
-
-    // Keep m_current_action/hint in sync so DisplayMsg can populate SOutputRun.
-    if (pAction && (iFlags & (ACTION_HYPERLINK | ACTION_SEND))) {
-        m_current_action = static_cast<const char*>(pAction->m_strAction);
-        m_current_hint   = static_cast<const char*>(pAction->m_strHint);
-    } else if (!(iFlags & (ACTION_HYPERLINK | ACTION_SEND))) {
-        m_current_action.clear();
-        m_current_hint.clear();
-    }
-
     return p;
 }
 
@@ -292,39 +277,10 @@ CStyle* CMUSHclientDoc::AddStyle(const unsigned short iFlags,
                     static_cast<CAction*>(nullptr), pLine);
 }
 
-// ── CheckObjectName ───────────────────────────────────────────────────────
-// Mirrors CMUSHclientDoc::CheckObjectName in doc.cpp:
-//   1. Trim leading/trailing whitespace.
-//   2. If bConform: validate with CheckLabel — return eInvalidObjectLabel on fail.
-//   3. Lowercase the name (keys in the trigger/alias/timer maps are lowercase).
-// Returns eOK on success.
-
-// CheckLabel: first char must be alpha; remaining chars alpha/digit/underscore.
-// Returns TRUE if the label is INVALID (matching doc.cpp convention).
-static BOOL CheckLabel(const CString& strLabel)
+// ── CheckObjectName stub ──────────────────────────────────────────────────
+// Validates an object label; stub always accepts (returns eOK).
+long CheckObjectName(const CString& /*strName*/, const bool /*bConform*/)
 {
-    if (strLabel.IsEmpty())
-        return TRUE;  // empty = invalid
-    if (!isalpha((unsigned char)strLabel[0]))
-        return TRUE;
-    for (int i = 1; i < strLabel.GetLength(); i++) {
-        char c = strLabel[i];
-        if (!isalpha((unsigned char)c) && !isdigit((unsigned char)c) && c != '_')
-            return TRUE;
-    }
-    return FALSE;  // valid
-}
-
-long CheckObjectName(CString& strName, const bool bConform)
-{
-    strName.TrimLeft();
-    strName.TrimRight();
-
-    if (bConform)
-        if (CheckLabel(strName))
-            return eInvalidObjectLabel;
-
-    strName.MakeLower();
     return eOK;
 }
 
@@ -850,8 +806,6 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
                     bool underline     = (m_iFlags & UNDERLINE) != 0;
                     bool italic        = (m_iFlags & BLINK)     != 0;  // MUSHclient maps BLINK → italic
                     bool strikethrough = (m_iFlags & STRIKEOUT) != 0;
-                    const std::string& cur_action = m_current_action;
-                    const std::string& cur_hint   = m_current_hint;
                     // Append to current run if style unchanged, else start new run.
                     if (m_gui_line_buf.empty()                               ||
                         m_gui_line_buf.back().fg            != fg            ||
@@ -859,9 +813,7 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
                         m_gui_line_buf.back().bold          != bold          ||
                         m_gui_line_buf.back().underline     != underline     ||
                         m_gui_line_buf.back().italic        != italic        ||
-                        m_gui_line_buf.back().strikethrough != strikethrough ||
-                        m_gui_line_buf.back().action        != cur_action    ||
-                        m_gui_line_buf.back().hint          != cur_hint)
+                        m_gui_line_buf.back().strikethrough != strikethrough)
                     {
                         SOutputRun run;
                         run.text          = std::string(1, (char)c);
@@ -871,8 +823,6 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
                         run.underline     = underline;
                         run.italic        = italic;
                         run.strikethrough = strikethrough;
-                        run.action        = cur_action;
-                        run.hint          = cur_hint;
                         m_gui_line_buf.push_back(std::move(run));
                     } else {
                         m_gui_line_buf.back().text += (char)c;
@@ -1297,40 +1247,11 @@ void CMUSHclientDoc::ColourTell(const char* fg, const char* bg, const char* text
 
 // ── UpdateAllViews ────────────────────────────────────────────────────────────
 void CMUSHclientDoc::UpdateAllViews(void*) {}
-long CMUSHclientDoc::GetUniqueNumber()          { return App.GetUniqueNumber() & 0x7FFFFFFFL; }
+long CMUSHclientDoc::GetUniqueNumber()          { return 0; }
 
-bool CMUSHclientDoc::AppendToTheNotepad(const CString strTitle,
-                                         const CString strText,
-                                         const bool bReplace,
-                                         const int  iNotepadType)
-{
-    // Try to find and update an existing notepad by title.
-    if (g_wxhook_append_to_notepad)
-    {
-        const char* title = static_cast<const char*>(strTitle);
-        const char* text  = static_cast<const char*>(strText);
-        if (g_wxhook_append_to_notepad(title, text, bReplace))
-            return true;
-    }
-
-    // No existing notepad — create a new one with the given text.
-    return CreateTextWindow(
-        static_cast<const char*>(strText),
-        static_cast<const char*>(strTitle),
-        this,
-        0,                              // iUniqueDocNum (not tracked portably)
-        App.m_strLuaScript,             // use default font name (fallback)
-        10,                             // default font size
-        400,                            // FW_NORMAL
-        0,                              // charset
-        RGB(0,   0,   0),               // black text
-        RGB(255, 255, 255),             // white background
-        CString(""),                    // no search string
-        CString(""),                    // no line preamble
-        false, false, false, false, false,
-        0,
-        iNotepadType);
-}
+bool CMUSHclientDoc::AppendToTheNotepad(const CString, const CString,
+                                         const bool, const int)
+{ return false; }
 
 bool CMUSHclientDoc::SeeIfHandlerCanExecute(const CString&)
 { return false; }
@@ -1495,66 +1416,16 @@ void ThrowErrorException(const char* fmt, ...)
     throw std::runtime_error(buf);
 }
 
-// ── FixHTMLString — escape HTML special characters ────────────────────────
-// Mirrors Utilities.cpp::FixHTMLString: < > & " → &lt; &gt; &amp; &quot;
-CString FixHTMLString(CString strToFix)
+// ── FixHTMLString — strip/escape HTML (pass-through stub) ─────────────────
+CString FixHTMLString(CString s)
 {
-    CString strOld = strToFix;
-    CString strNew;
-    int i;
-    while ((i = strOld.FindOneOf("<>&\"")) != -1) {
-        strNew += strOld.Left(i);
-        switch (strOld[i]) {
-        case '<':  strNew += "&lt;";   break;
-        case '>':  strNew += "&gt;";   break;
-        case '&':  strNew += "&amp;";  break;
-        case '"':  strNew += "&quot;"; break;
-        }
-        strOld = strOld.Mid(i + 1);
-    }
-    strNew += strOld;
-    return strNew;
+    return s;
 }
 
-// ── FixupEscapeSequences — convert C-style escape sequences ──────────────
-// Mirrors Utilities.cpp::FixupEscapeSequences.
-// Converts \n \t \r \a \b \f \v \' \" \\ \? \x## in the source string.
-CString FixupEscapeSequences(const CString& strSource)
+// ── FixupEscapeSequences — convert \\n → \n etc. (pass-through stub) ─────
+CString FixupEscapeSequences(const CString& s)
 {
-    CString strDest;
-    const char* p = static_cast<const char*>(strSource);
-    for (; *p; ++p) {
-        if (*p != '\\') { strDest += *p; continue; }
-        char c = *++p;
-        if (!c) break;
-        switch (c) {
-        case 'a':  strDest += '\a'; break;
-        case 'b':  strDest += '\b'; break;
-        case 'f':  strDest += '\f'; break;
-        case 'n':  strDest += '\n'; break;
-        case 'r':  strDest += '\r'; break;
-        case 't':  strDest += '\t'; break;
-        case 'v':  strDest += '\v'; break;
-        case '\'': strDest += '\''; break;
-        case '"':  strDest += '"';  break;
-        case '\\': strDest += '\\'; break;
-        case '?':  strDest += '?';  break;
-        case 'x': {
-            // hex escape: up to 2 hex digits
-            unsigned char val = 0;
-            int digits = 0;
-            for (++p; *p && isxdigit((unsigned char)*p) && digits < 2; ++p, ++digits) {
-                int d = toupper((unsigned char)*p);
-                val = (unsigned char)((val << 4) + (d >= 'A' ? d - 'A' + 10 : d - '0'));
-            }
-            --p;  // will be incremented by the outer for loop
-            strDest += (char)val;
-            break;
-        }
-        default:   strDest += c; break;
-        }
-    }
-    return strDest;
+    return s;
 }
 
 // ── ConvertToRegularExpression — wildcard to regex ────────────────────────
@@ -1640,23 +1511,12 @@ bool IsArchiveXML(class CArchive& /*ar*/)
     return false;
 }
 
-// ── MakeRandomNumber — SHS-based random seed ──────────────────────────────
-// Mirrors Utilities.cpp::MakeRandomNumber on Windows: hash together the
-// world name, rand(), pid, current time, and the doc pointer for entropy.
-// Used for Pueblo MD5 challenge-response and chat-socket nonces.
-void MakeRandomNumber(CMUSHclientDoc* pDoc, SHS_INFO& shsInfo)
+// ── MakeRandomNumber — SHS-based random seed (stub) ──────────────────────
+// ProcessPreviousLine.cpp uses this to seed the Lua random generator.
+// SHS_INFO is forward-declared via doc_stub.h → scripting/shs.h.
+void MakeRandomNumber(CMUSHclientDoc* /*pDoc*/, SHS_INFO& shsInfo)
 {
-    char buf[256];
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    int n = snprintf(buf, sizeof(buf), "%s %d %d %ld %ld %p",
-                     pDoc ? static_cast<const char*>(pDoc->m_mush_name) : "",
-                     rand(), (int)getpid(),
-                     (long)ts.tv_sec, ts.tv_nsec,
-                     static_cast<void*>(pDoc));
-    shsInit(&shsInfo);
-    shsUpdate(&shsInfo, reinterpret_cast<unsigned char*>(buf), n);
-    shsFinal(&shsInfo);
+    memset(&shsInfo, 0, sizeof shsInfo);
 }
 
 // ── CMUSHclientDoc::Trace — debug trace with printf format ───────────────
@@ -1806,21 +1666,8 @@ void CMUSHclientDoc::OutputOutstandingLines()
         TermResetStyle();
 }
 
-// ── CMUSHclientDoc::PlaySoundFile / CancelSound — MSP audio ─────────────
-// On non-Windows, delegate to the wxWidgets sound hook so that trigger
-// sounds and MSP audio actually play in mushgui.  mushcli silently drops
-// sound requests (no hook installed → nullptr check is sufficient).
-void CMUSHclientDoc::PlaySoundFile(CString strFile)
-{
-    if (g_wxhook_play_sound)
-        g_wxhook_play_sound((const char*)strFile);
-}
-
-void CMUSHclientDoc::CancelSound()
-{
-    if (g_wxhook_stop_sound)
-        g_wxhook_stop_sound();
-}
+// ── CMUSHclientDoc::PlaySoundFile — MSP audio (no-op) ───────────────────
+void CMUSHclientDoc::PlaySoundFile(CString /*strFile*/)         {}
 
 // ── CMUSHclientDoc::FormatTime ─────────────────────────────────────────────
 // Converts a CTime to a formatted string.  Used for log line timestamps.
@@ -2093,15 +1940,13 @@ void CMUSHclientDoc::SendMsg(CString strText,
 // ── CMUSHclientDoc::SendTo ────────────────────────────────────────────────
 // Routes a trigger/alias response to the appropriate destination.
 // Enum values from OtherTypes.h (included via doc_stub.h):
-//   0=World,  1=Command,   2=Output,     3=Status,   4=Notepad,
-//   5=Append, 6=LogFile,   7=Replace,    8=CmdQueue, 9=Variable,
-//  10=Execute,11=Speedwalk,12=Script,   13=Immediate,14=ScriptAfterOmit,
-//  15=Pane
+//   0=World, 1=Command, 2=Output, 3=Status, 4=Notepad, 6=LogFile,
+//   8=CommandQueue, 9=Variable, 10=Execute, 12=Script …
 void CMUSHclientDoc::SendTo(const unsigned short iWhere,
                              const CString strSendText,
                              const bool bOmitFromOutput,
                              const bool bOmitFromLog,
-                             const CString strDescription,
+                             const CString /*strDescription*/,
                              const CString strVariable,
                              CString& /*strOutput*/)
 {
@@ -2130,28 +1975,6 @@ void CMUSHclientDoc::SendTo(const unsigned short iWhere,
         m_strStatusMessage = strSendText;
         break;
 
-    case eSendToNotepad:      // 4 — open new notepad (create or append)
-    case eAppendToNotepad:    // 5 — append to existing notepad with this title
-    case eReplaceNotepad:     // 7 — replace contents of notepad with this title
-        {
-            // strDescription is the notepad title.
-            // AppendToTheNotepad() will create a new window if one with that
-            // title doesn't exist yet, so all three variants work through it.
-            bool bReplace = (iWhere == eReplaceNotepad);
-            AppendToTheNotepad(strDescription,
-                               strSendText + ENDLINE,
-                               bReplace,
-                               eNotepadTrigger);
-        }
-        break;
-
-    case eSendToLogFile:      // 6 — append text to the open log file
-        if (m_logfile && !m_bLogRaw) {
-            WriteToLog(strSendText);
-            WriteToLog("\n", 1);
-        }
-        break;
-
     case eSendToVariable:     // 9 — set a world variable by name
         if (!strVariable.IsEmpty()) {
             CVariable* var = nullptr;
@@ -2173,47 +1996,9 @@ void CMUSHclientDoc::SendTo(const unsigned short iWhere,
         }
         break;
 
-    case eSendToSpeedwalk:    // 11 — evaluate and send as speedwalk sequence
-        {
-            CString strEvaluated = DoEvaluateSpeedwalk(strSendText);
-            if (!strEvaluated.IsEmpty()) {
-                if (strEvaluated[0] == '*') {
-                    // Error message from DoEvaluateSpeedwalk — display it.
-                    Note(strEvaluated.Mid(1));
-                } else {
-                    SendMsg(strEvaluated,
-                            bOmitFromOutput ? false : (bool)m_display_my_input,
-                            /*bQueueIt=*/true,
-                            bOmitFromLog ? false : (bool)LoggingInput());
-                }
-            }
-        }
-        break;
-
-    case eSendToScript:           // 12 — pass text to the script engine
-    case eSendToScriptAfterOmit:  // 14 — same but after omit processing
-        {
-            CScriptEngine* engine = GetScriptEngine();
-            if (engine)
-                engine->Parse(strSendText, strDescription);
-            else
-                ColourNote("white", "red",
-                    "Send-to-script cannot execute because scripting is not enabled.");
-        }
-        break;
-
-    case eSendImmediate:      // 13 — send directly (bypasses spam prevention)
-        // On Windows this calls DoSendMsg() which additionally runs plugin
-        // hooks and spam-prevention.  In the portable build those aren't
-        // available, so we fall back to SendMsg() with no queuing.
-        SendMsg(strSendText,
-                bOmitFromOutput ? false : (bool)m_display_my_input,
-                /*bQueueIt=*/false,
-                !bOmitFromLog);
-        break;
-
     default:
-        // eSendToPane(15) and any future destinations — not implemented.
+        // eSendToNotepad(4), eSendToLogFile(6), eSendToPane(15), etc.
+        // Not implemented on non-Windows.
         break;
     }
 }
@@ -2379,97 +2164,6 @@ long CMUSHclientDoc::ShiftTabCompleteItem(LPCTSTR Item)
         m_ExtraShiftTabCompleteItems.insert(Item);
     }
     return eOK;
-}
-
-// ── CMUSHclientDoc::OnScriptFileChanged ──────────────────────────────────────
-// Portable replacement for the Windows version (scripting/scripting.cpp).
-// Called from the mushcli event loop (cli_main.cpp) and the wxWidgets world
-// timer (wx_world_child.cpp) every ~2 seconds.
-//
-// Checks whether the script file on disk has changed since the last load.
-// If it has, the old engine is destroyed and the script is reloaded from the
-// file.  On non-Windows there is no GUI prompt: the script is always
-// reloaded automatically (equivalent to m_nReloadOption == eReloadAlways).
-// The bForce parameter is accepted for API compatibility but has no effect
-// on non-Windows (we never prompt, so "force" vs "ask" is the same).
-void CMUSHclientDoc::OnScriptFileChanged(bool /*bForce*/)
-{
-    // Re-entrancy guard (the scripting callbacks could trigger us again).
-    if (m_bInScriptFileChanged)
-        return;
-
-    // Nothing to watch if there is no external script file.
-    if (m_strScriptFilename.IsEmpty())
-        return;
-
-    // Check the file's mtime via stat().
-    struct stat st;
-    if (::stat((const char*)m_strScriptFilename, &st) != 0)
-        return;  // file disappeared or unreadable — leave engine as-is
-
-    if (st.st_mtime == m_scriptFileMtime)
-        return;  // unchanged
-
-    m_bInScriptFileChanged = true;
-
-    fprintf(stderr, "[script] \"%s\" changed — reloading\n",
-            (const char*)m_strScriptFilename);
-
-    // ── Tear down the old engine ──────────────────────────────────────────
-    delete m_ScriptEngine;
-    m_ScriptEngine = nullptr;
-
-    // ── Read the file ─────────────────────────────────────────────────────
-    FILE* f = fopen((const char*)m_strScriptFilename, "rb");
-    if (!f) {
-        fprintf(stderr, "[script] could not open \"%s\": %s\n",
-                (const char*)m_strScriptFilename, strerror(errno));
-        m_bInScriptFileChanged = false;
-        return;
-    }
-    fseek(f, 0, SEEK_END);
-    long fileLen = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* buf = (char*)malloc(fileLen + 1);
-    if (!buf) {
-        fclose(f);
-        m_bInScriptFileChanged = false;
-        return;
-    }
-    fread(buf, 1, fileLen, f);
-    fclose(f);
-    buf[fileLen] = '\0';
-    m_strScript = CString(buf);
-    free(buf);
-
-    // Record new mtime before creating the engine so a re-entrant call
-    // during Parse() sees the updated timestamp and does not loop.
-    m_scriptFileMtime = st.st_mtime;
-
-    // ── Create and initialise new Lua engine ──────────────────────────────
-    CScriptEngine* engine = new CScriptEngine(this, "lua");
-    if (engine->CreateScriptEngine()) {
-        fprintf(stderr, "[script] could not initialise Lua engine\n");
-        delete engine;
-        m_bInScriptFileChanged = false;
-        return;
-    }
-
-    if (engine->Parse(m_strScript, m_strScriptFilename)) {
-        fprintf(stderr, "[script] error parsing \"%s\"\n",
-                (const char*)m_strScriptFilename);
-        delete engine;
-        m_bInScriptFileChanged = false;
-        return;
-    }
-
-    m_ScriptEngine = engine;
-    ResolveAllEntryPoints();
-
-    fprintf(stderr, "[script] \"%s\" reloaded successfully\n",
-            (const char*)m_strScriptFilename);
-
-    m_bInScriptFileChanged = false;
 }
 
 #endif // !_WIN32

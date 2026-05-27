@@ -28,6 +28,18 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>   // chdir
+#include <sys/stat.h>    // stat() for script file mtime
+#include <sys/utsname.h> // uname() for OS version
+#include <cstdlib>    // free() for g_wxhook_menu_dialog result
+#include <ctime>      // clock_gettime, time()
+#include <cmath>      // cos() for WindowBlendColor
+
+#include "platform/wx_mfc_hooks.h"  // g_wxhook_pick_colour, g_wxhook_menu_dialog, …
+#include "sqlite3/sqlite3.h"         // sqlite3_libversion()
+#include <png.h>                     // PNG_LIBPNG_VER_STRING
+#ifdef __APPLE__
+#  include <mach-o/dyld.h>           // _NSGetExecutablePath
+#endif
 
 using std::string;
 
@@ -849,6 +861,7 @@ static int L_GetTrigger(lua_State* L)
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* name = luaL_checkstring(L, 1);
     CString strLabel(name);
+    CheckObjectName(strLabel, false);
     CTrigger* pt = nullptr;
     if (!pDoc->GetTriggerMap().Lookup(strLabel, pt) || !pt) {
         lua_pushnumber(L, eTriggerNotFound);
@@ -858,18 +871,26 @@ static int L_GetTrigger(lua_State* L)
         return 8;
     }
     long flags = 0;
-    if (pt->bEnabled)   flags |= eEnabled;
-    if (pt->bRegexp)    flags |= eTriggerRegularExpression;
-    if (pt->ignore_case) flags |= eIgnoreCase;
+    if (pt->bEnabled)            flags |= eEnabled;
+    if (pt->bRegexp)             flags |= eTriggerRegularExpression;
+    if (pt->ignore_case)         flags |= eIgnoreCase;
+    if (pt->bOmitFromOutput)     flags |= eOmitFromOutput;
+    if (pt->bKeepEvaluating)     flags |= eKeepEvaluating;
+    if (pt->omit_from_log)       flags |= eOmitFromOutput;  // mirrors Windows
+    if (pt->bLowercaseWildcard)  flags |= eLowercaseWildcard;
+    if (pt->bTemporary)          flags |= eTemporary;
+    if (pt->bOneShot)            flags |= eTriggerOneShot;
 
-    lua_pushnumber(L, eOK);                          // 1 result code
-    lua_pushstring(L, (const char*)pt->trigger);     // 2 match text
-    lua_pushstring(L, (const char*)pt->contents);    // 3 send text
-    lua_pushnumber(L, flags);                        // 4 flags
-    lua_pushnumber(L, 0);                            // 5 colour (stub)
-    lua_pushnumber(L, 0);                            // 6 wildcard (stub)
-    lua_pushstring(L, "");                           // 7 sound file (stub)
-    lua_pushstring(L, (const char*)pt->strProcedure);// 8 script name
+    short colour = (pt->colour == SAMECOLOUR) ? -1 : (short)pt->colour;
+
+    lua_pushnumber(L, eOK);                                  // 1 result code
+    lua_pushstring(L, (const char*)pt->trigger);             // 2 match text
+    lua_pushstring(L, (const char*)pt->contents);            // 3 send text
+    lua_pushnumber(L, flags);                                // 4 flags
+    lua_pushnumber(L, colour);                               // 5 colour
+    lua_pushnumber(L, pt->iClipboardArg);                    // 6 wildcard arg
+    lua_pushstring(L, (const char*)pt->sound_to_play);       // 7 sound file
+    lua_pushstring(L, (const char*)pt->strProcedure);        // 8 script name
     return 8;
 }
 
@@ -878,6 +899,7 @@ static int L_GetAlias(lua_State* L)
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* name = luaL_checkstring(L, 1);
     CString strLabel(name);
+    CheckObjectName(strLabel, false);
     CAlias* pa = nullptr;
     if (!pDoc->GetAliasMap().Lookup(strLabel, pa) || !pa) {
         lua_pushnumber(L, eAliasNotFound);
@@ -886,8 +908,17 @@ static int L_GetAlias(lua_State* L)
         return 5;
     }
     long flags = 0;
-    if (pa->bEnabled) flags |= eEnabled;
-    if (pa->bRegexp)  flags |= eAliasRegularExpression;
+    if (pa->bEnabled)                               flags |= eEnabled;
+    if (pa->bRegexp)                                flags |= eAliasRegularExpression;
+    if (pa->bIgnoreCase)                            flags |= eIgnoreAliasCase;
+    if (pa->bOmitFromLog)                           flags |= eOmitFromLogFile;
+    if (pa->bOmitFromOutput)                        flags |= eAliasOmitFromOutput;
+    if (pa->bExpandVariables)                       flags |= eExpandVariables;
+    if (pa->iSendTo == eSendToSpeedwalk)            flags |= eAliasSpeedWalk;
+    if (pa->iSendTo == eSendToCommandQueue)         flags |= eAliasQueue;
+    if (pa->bMenu)                                  flags |= eAliasMenu;
+    if (pa->bTemporary)                             flags |= eTemporary;
+    if (pa->bOneShot)                               flags |= eAliasOneShot;
 
     lua_pushnumber(L, eOK);                          // 1 result code
     lua_pushstring(L, (const char*)pa->name);        // 2 match text
@@ -902,6 +933,7 @@ static int L_GetTimer(lua_State* L)
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* name = luaL_checkstring(L, 1);
     CString strLabel(name);
+    CheckObjectName(strLabel, false);
     CTimer* pt = nullptr;
     if (!pDoc->GetTimerMap().Lookup(strLabel, pt) || !pt) {
         lua_pushnumber(L, eTimerNotFound);
@@ -910,8 +942,12 @@ static int L_GetTimer(lua_State* L)
         return 7;
     }
     long flags = 0;
-    if (pt->bEnabled)              flags |= eEnabled;
-    if (pt->iType == CTimer::eAtTime) flags |= eAtTime;
+    if (pt->bEnabled)                    flags |= eEnabled;
+    if (pt->iType == CTimer::eAtTime)    flags |= eAtTime;
+    if (pt->bOneShot)                    flags |= eOneShot;
+    if (pt->iSendTo == eSendToSpeedwalk) flags |= eTimerSpeedWalk;
+    if (pt->iSendTo == eSendToOutput)    flags |= eTimerNote;
+    if (pt->bActiveWhenClosed)           flags |= eActiveWhenClosed;
 
     int    hour   = (pt->iType == CTimer::eAtTime) ? pt->iAtHour    : pt->iEveryHour;
     int    minute = (pt->iType == CTimer::eAtTime) ? pt->iAtMinute  : pt->iEveryMinute;
@@ -1085,32 +1121,175 @@ static int L_GetInfo(lua_State* L)
     int iType = (int)luaL_checknumber(L, 1);
     switch (iType) {
         // ── Strings ──────────────────────────────────────────────────────────
-        case 1:   lua_pushstring(L, (const char*)pDoc->m_server);             return 1;
-        case 2:   lua_pushstring(L, (const char*)pDoc->m_mush_name);          return 1;
-        case 3:   lua_pushstring(L, (const char*)pDoc->m_name);               return 1;
-        case 51:  lua_pushstring(L, (const char*)pDoc->m_logfile_name);       return 1;
-        case 52:  lua_pushstring(L, "");                                       return 1;
-        case 53:  lua_pushstring(L, (const char*)pDoc->m_strStatusMessage);   return 1;
-        case 72:  lua_pushstring(L, MUSHCLIENT_VERSION);                       return 1;
-        case 87:  lua_pushstring(L, (const char*)pDoc->m_strLastCommandSent); return 1;
-        case 88:  lua_pushstring(L, (const char*)pDoc->m_strWindowTitle);     return 1;
-        case 89:  lua_pushstring(L, (const char*)pDoc->m_strMainWindowTitle); return 1;
+        case 1:   lua_pushstring(L, (const char*)pDoc->m_server);              return 1;
+        case 2:   lua_pushstring(L, (const char*)pDoc->m_mush_name);           return 1;
+        case 3:   lua_pushstring(L, (const char*)pDoc->m_name);                return 1;
+        // 4-7: file/line preamble/postamble — not in portable CMUSHclientDoc
+        case 4: case 5: case 6: case 7: lua_pushstring(L, "");                 return 1;
+        case 8:   lua_pushstring(L, (const char*)pDoc->m_notes);               return 1;
+        case 9:   lua_pushstring(L, (const char*)pDoc->m_new_activity_sound);  return 1;
+        case 10:  lua_pushstring(L, (const char*)pDoc->m_strScriptEditor);     return 1;
+        case 20:  lua_pushstring(L, (const char*)pDoc->m_font_name);           return 1;
+        case 23:  lua_pushstring(L, (const char*)pDoc->m_input_font_name);     return 1;
+        case 24:  lua_pushstring(L, (const char*)pDoc->m_paste_postamble);     return 1;
+        case 25:  lua_pushstring(L, (const char*)pDoc->m_paste_preamble);      return 1;
+        case 26:  lua_pushstring(L, (const char*)pDoc->m_pasteline_postamble); return 1;
+        case 27:  lua_pushstring(L, (const char*)pDoc->m_pasteline_preamble);  return 1;
+        case 19:  lua_pushstring(L, (const char*)pDoc->m_strSpeedWalkFiller);  return 1;
+        case 22:  lua_pushstring(L, (const char*)pDoc->m_connect_text);        return 1;
+        case 11:  lua_pushstring(L, (const char*)pDoc->m_strLogFilePreamble);  return 1;
+        case 12:  lua_pushstring(L, (const char*)pDoc->m_strLogFilePostamble); return 1;
+        case 13:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePreambleInput);   return 1;
+        case 14:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePreambleNotes);   return 1;
+        case 15:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePreambleOutput);  return 1;
+        case 16:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePostambleInput);  return 1;
+        case 17:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePostambleNotes);  return 1;
+        case 18:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePostambleOutput); return 1;
+        case 21:  lua_pushstring(L, (const char*)pDoc->m_speed_walk_prefix);   return 1;
+        case 28:  lua_pushstring(L, (const char*)pDoc->m_strLanguage);         return 1;
+        case 29:  lua_pushstring(L, (const char*)pDoc->m_strWorldOpen);        return 1;
+        case 30:  lua_pushstring(L, (const char*)pDoc->m_strWorldClose);       return 1;
+        case 31:  lua_pushstring(L, (const char*)pDoc->m_strWorldConnect);     return 1;
+        case 32:  lua_pushstring(L, (const char*)pDoc->m_strWorldDisconnect);  return 1;
+        case 33:  lua_pushstring(L, (const char*)pDoc->m_strWorldGetFocus);    return 1;
+        case 34:  lua_pushstring(L, (const char*)pDoc->m_strWorldLoseFocus);   return 1;
+        case 37:  lua_pushstring(L, (const char*)pDoc->m_strAutoSayString);         return 1;
+        case 38:  lua_pushstring(L, (const char*)pDoc->m_strOverridePrefix);        return 1;
+        case 39:  lua_pushstring(L, (const char*)pDoc->m_strTabCompletionDefaults); return 1;
+        case 41:  lua_pushstring(L, (const char*)pDoc->m_strRecallLinePreamble);    return 1;
+        case 50:  lua_pushstring(L, (const char*)pDoc->m_strBeepSound);             return 1;
+        case 35:  lua_pushstring(L, (const char*)pDoc->m_strScriptFilename);   return 1;
+        case 36:  lua_pushstring(L, (const char*)pDoc->m_strScriptPrefix);     return 1;
+        case 40:  lua_pushstring(L, (const char*)pDoc->m_strAutoLogFileName);  return 1;
+        case 42:  lua_pushstring(L, (const char*)pDoc->m_strTerminalIdentification); return 1;
+        case 43:  lua_pushstring(L, (const char*)pDoc->m_strMappingFailure);   return 1;
+        case 44:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_Start);      return 1;
+        case 45:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_Stop);       return 1;
+        case 46:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_Error);      return 1;
+        case 47:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_OpenTag);    return 1;
+        case 48:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_CloseTag);   return 1;
+        case 49:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_SetVariable);return 1;
+        case 51:  lua_pushstring(L, (const char*)pDoc->m_logfile_name);        return 1;
+        case 52:  lua_pushstring(L, "");   // last immediate expression
+                  return 1;
+        case 53:  lua_pushstring(L, (const char*)pDoc->m_strStatusMessage);    return 1;
+        case 54:  lua_pushstring(L, (const char*)pDoc->GetPathName());          return 1;
+        case 55:  lua_pushstring(L, (const char*)pDoc->GetTitle());             return 1;
+        // 56-60, 66, 69-71, 74, 82, 85: App object fields not available in portable build
+        case 56: case 57: case 58: case 60: case 66: case 69:
+        case 70: case 71: case 74: case 82: case 85:
+            lua_pushstring(L, "");                                              return 1;
+        case 59:  {   // directory containing the executable
+            char buf[4096] = ".";
+#ifdef __APPLE__
+            uint32_t sz = sizeof(buf);
+            if (_NSGetExecutablePath(buf, &sz) == 0) {
+                char* p = strrchr(buf, '/'); if (p) *p = '\0';
+            }
+#else
+            ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf)-1);
+            if (n > 0) { buf[n] = '\0'; char* p = strrchr(buf, '/'); if (p) *p = '\0'; }
+#endif
+            lua_pushstring(L, buf);
+        }   return 1;
+        case 61:  {   // server IP as dotted string (resolve if connected)
+            struct addrinfo hints{}, *res = nullptr;
+            hints.ai_family = AF_INET;
+            hints.ai_socktype = SOCK_STREAM;
+            const char* host = static_cast<const char*>(pDoc->m_server);
+            char ip[INET_ADDRSTRLEN] = "";
+            if (host && *host && getaddrinfo(host, nullptr, &hints, &res) == 0 && res) {
+                inet_ntop(AF_INET,
+                    &reinterpret_cast<struct sockaddr_in*>(res->ai_addr)->sin_addr,
+                    ip, sizeof(ip));
+                freeaddrinfo(res);
+            }
+            lua_pushstring(L, ip);
+        }   return 1;
+        case 62:  lua_pushstring(L, "");   // proxy IP — not resolved portably
+                  return 1;
+        case 63:  {   // local hostname
+            char host[256] = "";
+            gethostname(host, sizeof(host));
+            lua_pushstring(L, host);
+        }   return 1;
+        case 64:  {   // current working directory (trailing slash)
+            char* cwd = getcwd(nullptr, 0);
+            if (cwd) {
+                string s(cwd); free(cwd);
+                if (s.empty() || s.back() != '/') s += '/';
+                lua_pushstring(L, s.c_str());
+            } else { lua_pushstring(L, ""); }
+        }   return 1;
+        case 65:  lua_pushstring(L, (const char*)pDoc->m_strWorldSave);        return 1;
+        case 67:  {   // directory containing the world file
+            CString path = pDoc->GetPathName();
+            const char* p = static_cast<const char*>(path);
+            const char* slash = strrchr(p, '/');
+            if (slash) lua_pushlstring(L, p, (size_t)(slash - p + 1));
+            else        lua_pushstring(L, "");
+        }   return 1;
+        case 68:  {   // working_dir (startup working directory, same as cwd portably)
+            char* cwd = getcwd(nullptr, 0);
+            if (cwd) {
+                string s(cwd); free(cwd);
+                if (s.empty() || s.back() != '/') s += '/';
+                lua_pushstring(L, s.c_str());
+            } else { lua_pushstring(L, ""); }
+        }   return 1;
+        case 72:  lua_pushstring(L, MUSHCLIENT_VERSION);                        return 1;
+        case 73:  lua_pushstring(L, __DATE__ " " __TIME__);                    return 1;
+        case 75:  lua_pushstring(L, pDoc->m_IAC_subnegotiation_data.c_str());  return 1;
+        // 76-79, 81, 84, 86: font/image/browser fields not available
+        case 76: case 77: case 78: case 79: case 81: case 84: case 86:
+            lua_pushstring(L, "");                                              return 1;
+        case 80:  lua_pushstring(L, PNG_LIBPNG_VER_STRING);                    return 1;
+        case 83:  lua_pushstring(L, sqlite3_libversion());                      return 1;
+        case 87:  lua_pushstring(L, (const char*)pDoc->m_strLastCommandSent);  return 1;
+        case 88:  lua_pushstring(L, (const char*)pDoc->m_strWindowTitle);      return 1;
+        case 89:  lua_pushstring(L, (const char*)pDoc->m_strMainWindowTitle);  return 1;
         // ── Booleans ─────────────────────────────────────────────────────────
-        case 101: lua_pushboolean(L, pDoc->m_bNoEcho);                        return 1;
-        case 104: lua_pushboolean(L, pDoc->m_bMXP);                           return 1;
+        case 101: lua_pushboolean(L, pDoc->m_bNoEcho);                         return 1;
+        case 102: lua_pushboolean(L, false);  // debug packets — always false
+                  return 1;
+        case 103: lua_pushboolean(L, pDoc->m_bCompress);                        return 1;
+        case 104: lua_pushboolean(L, pDoc->m_bMXP);                            return 1;
+        case 105: lua_pushboolean(L, pDoc->m_bPuebloActive);                   return 1;
         case 106: lua_pushboolean(L,
-                      pDoc->m_iConnectPhase != eConnectConnectedToMud);        return 1;
+                      pDoc->m_iConnectPhase != eConnectConnectedToMud);         return 1;
         case 107: lua_pushboolean(L,
                       pDoc->m_iConnectPhase != eConnectNotConnected &&
-                      pDoc->m_iConnectPhase != eConnectConnectedToMud);        return 1;
-        case 109: lua_pushboolean(L, pDoc->m_bTrace);                         return 1;
+                      pDoc->m_iConnectPhase != eConnectConnectedToMud);         return 1;
+        case 108: lua_pushboolean(L, pDoc->m_bDisconnectOK);                   return 1;
+        case 109: lua_pushboolean(L, pDoc->m_bTrace);                          return 1;
+        case 110: lua_pushboolean(L, false);  // script file changed — not tracked
+                  return 1;
+        case 111: lua_pushboolean(L, pDoc->IsModified() != FALSE);              return 1;
+        case 112: lua_pushboolean(L, pDoc->m_bMapping);                        return 1;
         case 113: lua_pushboolean(L,
-                      pDoc->m_iConnectPhase == eConnectConnectedToMud);        return 1;
-        case 114: lua_pushboolean(L, pDoc->m_gui_paused);                     return 1;
+                      pDoc->m_iConnectPhase == eConnectConnectedToMud);         return 1;
+        case 114: lua_pushboolean(L, pDoc->m_gui_paused);                      return 1;
+        case 115: lua_pushboolean(L, false);  // localization not supported     return 1;
+        case 118: lua_pushboolean(L, pDoc->m_bVariablesChanged);               return 1;
+        case 119: lua_pushboolean(L, pDoc->m_ScriptEngine != nullptr);         return 1;
+        case 120: lua_pushboolean(L, false);  // scroll-bar-wanted not tracked  return 1;
+        case 121: lua_pushboolean(L, true);   // clock_gettime always available return 1;
+        case 122: lua_pushboolean(L, sqlite3_threadsafe() != 0);               return 1;
+        case 123: lua_pushboolean(L, pDoc->m_bDoingSimulate);                  return 1;
+        case 124: lua_pushboolean(L, pDoc->m_bLineOmittedFromOutput);          return 1;
+        case 125: lua_pushboolean(L, false);  // fullscreen not supported       return 1;
         // ── Numbers ──────────────────────────────────────────────────────────
         case 141: // fall through — same field, both type numbers used in the wild
         case 201: lua_pushnumber(L, pDoc->m_total_lines);                     return 1;
         case 203: lua_pushnumber(L, pDoc->m_nTotalLinesSent);                 return 1;
+        case 204: lua_pushnumber(L, pDoc->m_iInputPacketCount);               return 1;
+        case 205: lua_pushnumber(L, 0);  // output packet count not tracked   return 1;
+        case 206: lua_pushnumber(L, pDoc->m_nTotalUncompressed);              return 1;
+        case 207: lua_pushnumber(L, pDoc->m_nTotalCompressed);                return 1;
+        case 208: lua_pushnumber(L, pDoc->m_iMCCP_type);                      return 1;
+        case 209: lua_pushnumber(L, (double)pDoc->m_iMXPerrors);              return 1;
+        case 210: lua_pushnumber(L, (double)pDoc->m_iMXPtags);                return 1;
+        case 211: lua_pushnumber(L, (double)pDoc->m_iMXPentities);            return 1;
         case 212: lua_pushnumber(L, pDoc->m_gui_font_height);                 return 1;
         case 213: lua_pushnumber(L, pDoc->m_gui_font_width);                  return 1;
         case 214: lua_pushnumber(L, pDoc->m_gui_font_height); return 1; // input same as output
@@ -1128,6 +1307,10 @@ static int L_GetInfo(lua_State* L)
         case 225: lua_pushnumber(L, (double)pDoc->m_CustomElementMap.GetCount()); return 1;
         case 226: lua_pushnumber(L, (double)pDoc->m_CustomEntityMap.GetCount()); return 1;
         case 227: lua_pushnumber(L, pDoc->m_iConnectPhase);                   return 1;
+        case 228: lua_pushnumber(L, 0);  // server IP as long — sockAddr not in portable build
+                  return 1;
+        case 229: lua_pushnumber(L, 0);  // proxy IP as long — ProxyAddr not in portable build
+                  return 1;
         case 230: lua_pushnumber(L, pDoc->m_iExecutionDepth);                 return 1;
         case 231: // log file size
             lua_pushnumber(L, pDoc->m_logfile ? (double)ftell(pDoc->m_logfile) : 0.0);
@@ -1150,7 +1333,85 @@ static int L_GetInfo(lua_State* L)
         case 246: lua_pushnumber(L, pDoc->m_iAliasesEvaluatedCount);          return 1;
         case 247: lua_pushnumber(L, pDoc->m_iAliasesMatchedCount);            return 1;
         case 248: lua_pushnumber(L, pDoc->m_iTimersFiredCount);               return 1;
+        // 251-260: Windows toolbar/statusbar dimensions — not applicable on non-Windows.
+        case 251: case 252: case 253: case 254: case 255:
+        case 256: case 257: case 258: case 259: case 260:
+            lua_pushnumber(L, 0);                                             return 1;
+        // 261-264: world child-frame dimensions (non-client / client height & width).
+        // Windows queries the MDI CChildFrame; here we use m_fn_get_output_rect
+        // (wired by wx_world_child.cpp) for the closest portable equivalent.
+        case 261: case 262: case 263: case 264: {
+            int x = 0, y = 0, w = 0, h = 0;
+            if (pDoc->m_fn_get_output_rect)
+                pDoc->m_fn_get_output_rect(x, y, w, h);
+            // 261=non-client height, 262=non-client width,
+            // 263=client height,     264=client width — identical on non-Windows.
+            lua_pushnumber(L, (iType == 261 || iType == 263) ? h : w);
+        }   return 1;
+        case 265: case 266: case 267: case 268: {   // OS version via uname
+            struct utsname u{};
+            uname(&u);
+            // release is e.g. "23.4.0" (macOS) or "6.5.0-45-generic" (Linux)
+            int major = 0, minor = 0, build = 0;
+            sscanf(u.release, "%d.%d.%d", &major, &minor, &build);
+            if      (iType == 265) lua_pushnumber(L, major);
+            else if (iType == 266) lua_pushnumber(L, minor);
+            else if (iType == 267) lua_pushnumber(L, build);
+            else                   lua_pushnumber(L, 0);   // dwPlatformId — N/A on POSIX
+        }   return 1;
+        case 285: lua_pushboolean(L, pDoc->m_fn_line_ready != nullptr);       return 1;
+        case 232: {   // high-resolution timer (seconds since epoch as double)
+            struct timespec ts{};
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            lua_pushnumber(L, (double)ts.tv_sec + ts.tv_nsec * 1e-9);
+        }   return 1;
+        case 233: lua_pushnumber(L, 0.0); return 1; // trigger exec time — not tracked portably
+        case 234: lua_pushnumber(L, 0.0); return 1; // alias exec time — not tracked portably
+        case 238: lua_pushnumber(L, 0);   return 1; // world window display flags — N/A
+        case 242: lua_pushnumber(L, 0);   return 1; // bad UTF-8 lines — not tracked
+        case 243: lua_pushnumber(L, 0);   return 1; // fixed pitch font size — N/A
+        case 286: lua_pushnumber(L, pDoc->m_iTriggersMatchedThisSessionCount); return 1;
+        case 287: lua_pushnumber(L, pDoc->m_iAliasesMatchedThisSessionCount);  return 1;
+        case 288: lua_pushnumber(L, pDoc->m_iTimersFiredThisSessionCount);     return 1;
         case 289: lua_pushnumber(L, pDoc->m_last_line_with_IAC_GA);           return 1;
+        case 297: lua_pushnumber(L, 1);  // perf-counter freq — we use clock_gettime (seconds) so freq=1
+                  return 1;
+        case 298: {   // SQLite3 version as integer (e.g. 3044000)
+            lua_pushnumber(L, sqlite3_libversion_number());
+        }   return 1;
+        case 299: lua_pushnumber(L, 0);  // ANSI code page — N/A on POSIX
+                  return 1;
+        case 300: lua_pushnumber(L, 0);  // OEM code page — N/A on POSIX
+                  return 1;
+        case 310: lua_pushnumber(L, pDoc->m_newlines_received);               return 1;
+        // ── Dates — returned as Unix timestamps (doubles) ─────────────────
+        case 301: {
+            time_t t = pDoc->m_tConnectTime.GetTime();
+            if (t) lua_pushnumber(L, (double)t); else lua_pushnil(L);
+        }   return 1;
+        case 302: {
+            time_t t = pDoc->m_LastFlushTime.GetTime();
+            if (t) lua_pushnumber(L, (double)t); else lua_pushnil(L);
+        }   return 1;
+        case 303: {   // script file modification time
+            const char* sf = static_cast<const char*>(pDoc->m_strScriptFilename);
+            struct stat st;
+            if (sf && *sf && stat(sf, &st) == 0)
+                lua_pushnumber(L, (double)st.st_mtime);
+            else
+                lua_pushnil(L);
+        }   return 1;
+        case 304: lua_pushnumber(L, (double)time(nullptr));                   return 1;
+        case 305: {   // client start time — captured once at first call
+            static time_t s_clientStart = time(nullptr);
+            lua_pushnumber(L, (double)s_clientStart);
+        }   return 1;
+        case 306: {   // world open time — set in CMUSHclientDoc constructor
+            if (pDoc->m_tWorldOpenTime)
+                lua_pushnumber(L, (double)pDoc->m_tWorldOpenTime);
+            else
+                lua_pushnil(L);
+        }   return 1;
         default:  lua_pushnil(L);                                              return 1;
     }
 }
@@ -1200,14 +1461,27 @@ static int L_GetOption(lua_State* L)
     if      (!strcmp(opt, "enable_triggers"))   OPT_GET_MEMBER(pDoc->m_enable_triggers  ? 1 : 0);
     else if (!strcmp(opt, "enable_aliases"))    OPT_GET_MEMBER(pDoc->m_enable_aliases   ? 1 : 0);
     else if (!strcmp(opt, "enable_timers"))     OPT_GET_MEMBER(pDoc->m_bEnableTimers    ? 1 : 0);
+    else if (!strcmp(opt, "enable_trigger_sounds")) OPT_GET_MEMBER(pDoc->m_enable_trigger_sounds ? 1 : 0);
+    else if (!strcmp(opt, "enable_speed_walk")) OPT_GET_MEMBER(pDoc->m_enable_speed_walk? 1 : 0);
     else if (!strcmp(opt, "display_my_input"))  OPT_GET_MEMBER(pDoc->m_display_my_input ? 1 : 0);
     else if (!strcmp(opt, "log_output"))        OPT_GET_MEMBER(pDoc->m_bLogOutput);
     else if (!strcmp(opt, "log_notes"))         OPT_GET_MEMBER(pDoc->m_bLogNotes);
     else if (!strcmp(opt, "log_input"))         OPT_GET_MEMBER(pDoc->m_log_input);
+    else if (!strcmp(opt, "log_html"))          OPT_GET_MEMBER(pDoc->m_bLogHTML);
+    else if (!strcmp(opt, "log_raw"))           OPT_GET_MEMBER(pDoc->m_bLogRaw ? 1 : 0);
+    else if (!strcmp(opt, "log_in_colour"))     OPT_GET_MEMBER(pDoc->m_bLogInColour ? 1 : 0);
     else if (!strcmp(opt, "port"))              OPT_GET_MEMBER(pDoc->m_port);
     else if (!strcmp(opt, "trace"))             OPT_GET_MEMBER(pDoc->m_bTrace ? 1 : 0);
     else if (!strcmp(opt, "wrap_column"))       OPT_GET_MEMBER(pDoc->m_nWrapColumn);
     else if (!strcmp(opt, "max_output_lines"))  OPT_GET_MEMBER(pDoc->m_maxlines);
+    else if (!strcmp(opt, "utf_8"))             OPT_GET_MEMBER(pDoc->m_bUTF_8 ? 1 : 0);
+    else if (!strcmp(opt, "use_mxp"))           OPT_GET_MEMBER(pDoc->m_iUseMXP);
+    else if (!strcmp(opt, "detect_pueblo"))     OPT_GET_MEMBER(pDoc->m_bPueblo ? 1 : 0);
+    else if (!strcmp(opt, "naws"))              OPT_GET_MEMBER(pDoc->m_bNAWS ? 1 : 0);
+    else if (!strcmp(opt, "disable_compression")) OPT_GET_MEMBER(pDoc->m_bDisableCompression ? 1 : 0);
+    else if (!strcmp(opt, "connect_method"))    OPT_GET_MEMBER(pDoc->m_connect_now);
+    // use_ssl / proxy_port / proxy_type: not stored as live members in the
+    // portable stub — fall through to cache / OptionsTable default below.
 
     // 2. Cache — value previously written by SetOption.
     {
@@ -1233,15 +1507,27 @@ static int L_SetOption(lua_State* L)
     long val = (long)luaL_checknumber(L, 2);
 
     // 1. Known live members — update the real field.
+    // These are kept symmetric with the live-member reads in L_GetOption.
     bool is_member = true;
-    if      (!strcmp(opt, "enable_triggers"))  pDoc->m_enable_triggers  = (val != 0);
-    else if (!strcmp(opt, "enable_aliases"))   pDoc->m_enable_aliases   = (val != 0);
-    else if (!strcmp(opt, "enable_timers"))    pDoc->m_bEnableTimers    = (val != 0);
-    else if (!strcmp(opt, "display_my_input")) pDoc->m_display_my_input = (val != 0);
-    else if (!strcmp(opt, "log_output"))       pDoc->m_bLogOutput       = (short)val;
-    else if (!strcmp(opt, "log_notes"))        pDoc->m_bLogNotes        = (short)val;
-    else if (!strcmp(opt, "log_input"))        pDoc->m_log_input        = (short)val;
-    else if (!strcmp(opt, "trace"))            pDoc->m_bTrace           = (val != 0);
+    if      (!strcmp(opt, "enable_triggers"))      pDoc->m_enable_triggers        = (val != 0);
+    else if (!strcmp(opt, "enable_aliases"))       pDoc->m_enable_aliases         = (val != 0);
+    else if (!strcmp(opt, "enable_timers"))        pDoc->m_bEnableTimers          = (val != 0);
+    else if (!strcmp(opt, "display_my_input"))     pDoc->m_display_my_input       = (val != 0);
+    else if (!strcmp(opt, "log_output"))           pDoc->m_bLogOutput             = (short)val;
+    else if (!strcmp(opt, "log_notes"))            pDoc->m_bLogNotes              = (short)val;
+    else if (!strcmp(opt, "log_input"))            pDoc->m_log_input              = (short)val;
+    else if (!strcmp(opt, "trace"))                pDoc->m_bTrace                 = (val != 0);
+    else if (!strcmp(opt, "enable_trigger_sounds"))pDoc->m_enable_trigger_sounds  = (val != 0);
+    else if (!strcmp(opt, "enable_speed_walk"))    pDoc->m_enable_speed_walk      = (val != 0);
+    else if (!strcmp(opt, "log_html"))             pDoc->m_bLogHTML               = (val != 0);
+    else if (!strcmp(opt, "log_raw"))              pDoc->m_bLogRaw                = (val != 0);
+    else if (!strcmp(opt, "log_in_colour"))        pDoc->m_bLogInColour           = (val != 0);
+    else if (!strcmp(opt, "utf_8"))                pDoc->m_bUTF_8                 = (val != 0);
+    else if (!strcmp(opt, "use_mxp"))              pDoc->m_iUseMXP                = (short)val;
+    else if (!strcmp(opt, "detect_pueblo"))        pDoc->m_bPueblo                = (val != 0);
+    else if (!strcmp(opt, "naws"))                 pDoc->m_bNAWS                  = (val != 0);
+    else if (!strcmp(opt, "disable_compression"))  pDoc->m_bDisableCompression    = (val != 0);
+    else if (!strcmp(opt, "connect_method"))       pDoc->m_connect_now            = (short)val;
     else if (!strcmp(opt, "wrap_column")) {
         if (val >= 20 && val <= MAX_LINE_WIDTH) {
             pDoc->m_nWrapColumn = (unsigned short)val;
@@ -1253,7 +1539,7 @@ static int L_SetOption(lua_State* L)
             if (pDoc->m_fn_set_max_lines) pDoc->m_fn_set_max_lines((int)val);
         }
     }
-    else                                       is_member = false;
+    else                                           is_member = false;
 
     // 2. Validate: reject completely unknown option names.
     if (!is_member && opt_numeric_default(opt) == LONG_MIN) {
@@ -1286,28 +1572,45 @@ static void push_trigger_info(lua_State* L, CTrigger* t, int infoType)
         case  9: lua_pushboolean(L, t->bRegexp);                       return;
         case 10: lua_pushboolean(L, t->ignore_case);                   return;
         case 11: lua_pushboolean(L, t->bRepeat);                       return;
+        case 12: lua_pushboolean(L, t->bSoundIfInactive);              return;
         case 13: lua_pushboolean(L, t->bExpandVariables);              return;
+        case 14: lua_pushnumber(L, t->iClipboardArg);                  return;
         case 15: lua_pushnumber(L, t->iSendTo);                        return;
         case 16: lua_pushnumber(L, t->iSequence);                      return;
+        case 17: lua_pushnumber(L, t->iMatch);                         return;
+        case 18: lua_pushnumber(L, t->iStyle);                         return;
+        case 19: lua_pushnumber(L, t->colour);                         return;
         case 20: lua_pushnumber(L, t->nInvocationCount);               return;
         case 21: lua_pushnumber(L, t->nMatched);                       return;
+        case 22: {  // last-matched time as Unix timestamp (0 = never)
+            time_t ts = t->tWhenMatched.GetTime();
+            if (ts) lua_pushnumber(L, (double)ts); else lua_pushnil(L);
+            return;
+        }
         case 23: lua_pushboolean(L, t->bTemporary);                    return;
+        case 24: lua_pushboolean(L, t->bIncluded);                     return;
         case 25: lua_pushboolean(L, t->bLowercaseWildcard);            return;
         case 26: lua_pushstring(L, (const char*)t->strGroup);          return;
         case 27: lua_pushstring(L, (const char*)t->strVariable);       return;
         case 28: lua_pushnumber(L, t->iUserOption);                    return;
+        case 29: lua_pushnumber(L, t->iOtherForeground);               return;
+        case 30: lua_pushnumber(L, t->iOtherBackground);               return;
         case 31: lua_pushnumber(L, t->regexp ? t->regexp->m_iCount : 0);          return;
         case 32: lua_pushstring(L, t->regexp ? t->regexp->m_sTarget.c_str() : ""); return;
         case 33: lua_pushboolean(L, t->bExecutingScript);              return;
         case 34: lua_pushboolean(L, t->dispid != DISPID_UNKNOWN);      return;
+        case 35: lua_pushnumber(L, (t->regexp && t->regexp->m_program == NULL)
+                                    ? t->regexp->m_iExecutionError : 0); return;
         case 36: lua_pushboolean(L, t->bOneShot);                      return;
+        case 37: lua_pushnumber(L, 0); return;  // regexp timing (no perf counter on non-Windows)
         case 38: lua_pushnumber(L, t->regexp ? (double)t->regexp->m_iMatchAttempts : 0); return;
-        // Wildcard results (101..109)
+        // Wildcard results: 101..109 = wildcards[1..9], 110 = wildcards[0]
         case 101: case 102: case 103: case 104: case 105:
         case 106: case 107: case 108: case 109: {
             int w = infoType - 100;
             lua_pushstring(L, t->wildcards[w].c_str()); return;
         }
+        case 110: lua_pushstring(L, t->wildcards[0].c_str()); return;
         default: lua_pushnil(L); return;
     }
 }
@@ -1339,19 +1642,38 @@ static void push_alias_info(lua_State* L, CAlias* a, int infoType)
         case  9: lua_pushboolean(L, a->bExpandVariables);              return;
         case 10: lua_pushnumber(L, a->nInvocationCount);               return;
         case 11: lua_pushnumber(L, a->nMatched);                       return;
+        case 12: lua_pushboolean(L, a->bMenu);                         return;
+        case 13: {  // last-matched time as Unix timestamp (nil = never)
+            time_t ts = a->tWhenMatched.GetTime();
+            if (ts) lua_pushnumber(L, (double)ts); else lua_pushnil(L);
+            return;
+        }
         case 14: lua_pushboolean(L, a->bTemporary);                    return;
+        case 15: lua_pushboolean(L, a->bIncluded);                     return;
         case 16: lua_pushstring(L, (const char*)a->strGroup);          return;
         case 17: lua_pushstring(L, (const char*)a->strVariable);       return;
         case 18: lua_pushnumber(L, a->iSendTo);                        return;
         case 19: lua_pushboolean(L, a->bKeepEvaluating);               return;
         case 20: lua_pushnumber(L, a->iSequence);                      return;
         case 21: lua_pushboolean(L, a->bEchoAlias);                    return;
+        case 22: lua_pushboolean(L, a->bOmitFromCommandHistory);       return;
         case 23: lua_pushnumber(L, a->iUserOption);                    return;
         case 24: lua_pushnumber(L, a->regexp ? a->regexp->m_iCount : 0);          return;
         case 25: lua_pushstring(L, a->regexp ? a->regexp->m_sTarget.c_str() : ""); return;
         case 26: lua_pushboolean(L, a->bExecutingScript);              return;
         case 27: lua_pushboolean(L, a->dispid != DISPID_UNKNOWN);      return;
+        case 28: lua_pushnumber(L, (a->regexp && a->regexp->m_program == NULL)
+                                    ? a->regexp->m_iExecutionError : 0); return;
         case 29: lua_pushboolean(L, a->bOneShot);                      return;
+        case 30: lua_pushnumber(L, 0); return;  // regexp timing (no perf counter on non-Windows)
+        case 31: lua_pushnumber(L, a->regexp ? (double)a->regexp->m_iMatchAttempts : 0); return;
+        // Wildcard results: 101..109 = wildcards[1..9], 110 = wildcards[0]
+        case 101: case 102: case 103: case 104: case 105:
+        case 106: case 107: case 108: case 109: {
+            int w = infoType - 100;
+            lua_pushstring(L, a->wildcards[w].c_str()); return;
+        }
+        case 110: lua_pushstring(L, a->wildcards[0].c_str()); return;
         default: lua_pushnil(L); return;
     }
 }
@@ -1383,6 +1705,19 @@ static void push_timer_info(lua_State* L, CTimer* t, int infoType)
         case  8: lua_pushboolean(L, atTime);                                   return;
         case  9: lua_pushnumber(L, t->nInvocationCount);                       return;
         case 10: lua_pushnumber(L, t->nMatched);                               return;
+        case 11: {  // last-fired time as Unix timestamp (nil = never)
+            // CmcDateTime stores OLE dates (days since 1899-12-30); convert to Unix epoch
+            double ole = t->tWhenFired.GetTime();
+            if (ole != 0.0) lua_pushnumber(L, (ole - 25569.0) * 86400.0);
+            else             lua_pushnil(L);
+            return;
+        }
+        case 12: {  // next scheduled fire time as Unix timestamp (nil = not set)
+            double ole = t->tFireTime.GetTime();
+            if (ole != 0.0) lua_pushnumber(L, (ole - 25569.0) * 86400.0);
+            else             lua_pushnil(L);
+            return;
+        }
         case 13: {
             CmcDateTime tNow = CmcDateTime::GetTimeNow();
             if (t->tFireTime <= tNow) { lua_pushnumber(L, 0); }
@@ -1393,8 +1728,10 @@ static void push_timer_info(lua_State* L, CTimer* t, int infoType)
             return;
         }
         case 14: lua_pushboolean(L, t->bTemporary);                            return;
+        case 15: lua_pushboolean(L, t->iSendTo == eSendToSpeedwalk);           return;
         case 16: lua_pushboolean(L, t->iSendTo == eSendToOutput);              return;
         case 17: lua_pushboolean(L, t->bActiveWhenClosed);                     return;
+        case 18: lua_pushboolean(L, t->bIncluded);                             return;
         case 19: lua_pushstring(L, (const char*)t->strGroup);                  return;
         case 20: lua_pushnumber(L, t->iSendTo);                                return;
         case 21: lua_pushnumber(L, t->iUserOption);                            return;
@@ -1560,8 +1897,17 @@ static int L_GetLineInfo(lua_State* L)
     CLine* pLine = GetLineAt(pDoc, idx);
     if (!pLine) { lua_pushnil(L); return 1; }
 
+    // Helper: format time as "MM/DD/YYYY HH:MM:SS AM/PM" (matches Windows COleDateTime default).
+    auto fmtTime = [](time_t t) -> std::string {
+        struct tm* tm_info = localtime(&t);
+        char buf[32];
+        if (!tm_info) { buf[0] = '\0'; }
+        else          { strftime(buf, sizeof(buf), "%m/%d/%Y %I:%M:%S %p", tm_info); }
+        return std::string(buf);
+    };
+
     if (infoType == 0) {
-        // Return full table matching Windows infoType=0
+        // Return full table matching Windows infoType=0 table format.
         lua_newtable(L);
         lua_pushstring(L, pLine->text ? std::string(pLine->text, pLine->len).c_str() : "");
         lua_setfield(L, -2, "text");
@@ -1575,14 +1921,34 @@ static int L_GetLineInfo(lua_State* L)
         lua_setfield(L, -2, "user");
         lua_pushboolean(L, (pLine->flags & LOG_LINE)   ? 1 : 0);
         lua_setfield(L, -2, "log");
-        lua_pushnumber(L, (double)pLine->m_theTime.GetTime());
+        lua_pushboolean(L, (pLine->flags & BOOKMARK)   ? 1 : 0);
+        lua_setfield(L, -2, "bookmark");
+        lua_pushboolean(L, (pLine->flags & HORIZ_RULE) ? 1 : 0);
+        lua_setfield(L, -2, "hr");
+        time_t t = (time_t)pLine->m_theTime.GetTime();
+        lua_pushnumber(L, (double)t);
         lua_setfield(L, -2, "time");
+        lua_pushstring(L, fmtTime(t).c_str());
+        lua_setfield(L, -2, "timestr");
         lua_pushnumber(L, (double)pLine->m_nLineNumber);
         lua_setfield(L, -2, "line");
+        lua_pushnumber(L, (double)pLine->styleList.GetCount());
+        lua_setfield(L, -2, "styles");
+        {   // ticks: monotonic time in seconds (same unit as GetInfo(232))
+            struct timespec ts{};
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            lua_pushnumber(L, (double)ts.tv_sec + ts.tv_nsec * 1e-9);
+        }
+        lua_setfield(L, -2, "ticks");
+        {   // elapsed: seconds since connection (0 if not connected)
+            time_t ct = pDoc->m_tConnectTime.GetTime();
+            lua_pushnumber(L, ct ? (double)(time(nullptr) - ct) : 0.0);
+        }
+        lua_setfield(L, -2, "elapsed");
         return 1;
     }
 
-    // Scalar infoTypes (subset matching Windows API)
+    // Scalar infoTypes matching the Windows GetLineInfo(line, type) API.
     switch (infoType) {
         case 1:  // text
             lua_pushstring(L, pLine->text
@@ -1591,7 +1957,7 @@ static int L_GetLineInfo(lua_State* L)
         case 2:  // length
             lua_pushnumber(L, pLine->len);
             break;
-        case 3:  // hard return
+        case 3:  // hard return (newline)
             lua_pushboolean(L, pLine->hard_return ? 1 : 0);
             break;
         case 4:  // is note/comment
@@ -1600,11 +1966,27 @@ static int L_GetLineInfo(lua_State* L)
         case 5:  // is user input
             lua_pushboolean(L, (pLine->flags & USER_INPUT) ? 1 : 0);
             break;
-        case 9:  // timestamp
+        case 6:  // is log line
+            lua_pushboolean(L, (pLine->flags & LOG_LINE) ? 1 : 0);
+            break;
+        case 7:  // is bookmarked
+            lua_pushboolean(L, (pLine->flags & BOOKMARK) ? 1 : 0);
+            break;
+        case 8:  // is horizontal rule
+            lua_pushboolean(L, (pLine->flags & HORIZ_RULE) ? 1 : 0);
+            break;
+        case 9:  // timestamp (OLE date on Windows, Unix seconds here)
             lua_pushnumber(L, (double)pLine->m_theTime.GetTime());
             break;
         case 10: // line number
             lua_pushnumber(L, (double)pLine->m_nLineNumber);
+            break;
+        case 11: // style count
+            lua_pushnumber(L, (double)pLine->styleList.GetCount());
+            break;
+        case 12: // high-perf ticks — not available portably
+        case 13: // elapsed since world start — not available portably
+            lua_pushnumber(L, 0.0);
             break;
         default:
             lua_pushnil(L);
@@ -2040,6 +2422,38 @@ static int L_GetAlphaOption(lua_State* L)
     else if (!strcmp(opt, "notes"))            OPT_GET_STR(pDoc->m_notes);
     else if (!strcmp(opt, "terminal_identification")) OPT_GET_STR(pDoc->m_strTerminalIdentification);
     else if (!strcmp(opt, "mapping_failure"))  OPT_GET_STR(pDoc->m_strMappingFailure);
+    // Connection text
+    else if (!strcmp(opt, "connect_text"))     OPT_GET_STR(pDoc->m_connect_text);
+    else if (!strcmp(opt, "auto_log_file_name")) OPT_GET_STR(pDoc->m_strAutoLogFileName);
+    // Speed walk
+    else if (!strcmp(opt, "speed_walk_prefix"))  OPT_GET_STR(pDoc->m_speed_walk_prefix);
+    else if (!strcmp(opt, "speed_walk_filler"))  OPT_GET_STR(pDoc->m_strSpeedWalkFiller);
+    // World ID
+    else if (!strcmp(opt, "id"))               OPT_GET_STR(pDoc->m_strWorldID);
+    // World callbacks
+    else if (!strcmp(opt, "on_world_open"))       OPT_GET_STR(pDoc->m_strWorldOpen);
+    else if (!strcmp(opt, "on_world_close"))      OPT_GET_STR(pDoc->m_strWorldClose);
+    else if (!strcmp(opt, "on_world_save"))       OPT_GET_STR(pDoc->m_strWorldSave);
+    else if (!strcmp(opt, "on_world_connect"))    OPT_GET_STR(pDoc->m_strWorldConnect);
+    else if (!strcmp(opt, "on_world_disconnect")) OPT_GET_STR(pDoc->m_strWorldDisconnect);
+    else if (!strcmp(opt, "on_world_get_focus"))  OPT_GET_STR(pDoc->m_strWorldGetFocus);
+    else if (!strcmp(opt, "on_world_lose_focus")) OPT_GET_STR(pDoc->m_strWorldLoseFocus);
+    // MXP callbacks
+    else if (!strcmp(opt, "on_mxp_start"))        OPT_GET_STR(pDoc->m_strOnMXP_Start);
+    else if (!strcmp(opt, "on_mxp_stop"))         OPT_GET_STR(pDoc->m_strOnMXP_Stop);
+    else if (!strcmp(opt, "on_mxp_error"))        OPT_GET_STR(pDoc->m_strOnMXP_Error);
+    else if (!strcmp(opt, "on_mxp_open_tag"))     OPT_GET_STR(pDoc->m_strOnMXP_OpenTag);
+    else if (!strcmp(opt, "on_mxp_close_tag"))    OPT_GET_STR(pDoc->m_strOnMXP_CloseTag);
+    else if (!strcmp(opt, "on_mxp_set_variable")) OPT_GET_STR(pDoc->m_strOnMXP_SetVariable);
+    // Log preambles/postambles
+    else if (!strcmp(opt, "log_file_preamble"))         OPT_GET_STR(pDoc->m_strLogFilePreamble);
+    else if (!strcmp(opt, "log_file_postamble"))        OPT_GET_STR(pDoc->m_strLogFilePostamble);
+    else if (!strcmp(opt, "log_line_preamble_input"))   OPT_GET_STR(pDoc->m_strLogLinePreambleInput);
+    else if (!strcmp(opt, "log_line_preamble_notes"))   OPT_GET_STR(pDoc->m_strLogLinePreambleNotes);
+    else if (!strcmp(opt, "log_line_preamble_output"))  OPT_GET_STR(pDoc->m_strLogLinePreambleOutput);
+    else if (!strcmp(opt, "log_line_postamble_input"))  OPT_GET_STR(pDoc->m_strLogLinePostambleInput);
+    else if (!strcmp(opt, "log_line_postamble_notes"))  OPT_GET_STR(pDoc->m_strLogLinePostambleNotes);
+    else if (!strcmp(opt, "log_line_postamble_output")) OPT_GET_STR(pDoc->m_strLogLinePostambleOutput);
 
     // 2. Cache — value previously written by SetAlphaOption.
     {
@@ -2079,6 +2493,38 @@ static int L_SetAlphaOption(lua_State* L)
     else if (!strcmp(opt, "terminal_identification"))
                                                pDoc->m_strTerminalIdentification = CString(val);
     else if (!strcmp(opt, "mapping_failure"))  pDoc->m_strMappingFailure    = CString(val);
+    // Connection text
+    else if (!strcmp(opt, "connect_text"))     pDoc->m_connect_text         = CString(val);
+    else if (!strcmp(opt, "auto_log_file_name")) pDoc->m_strAutoLogFileName = CString(val);
+    // Speed walk
+    else if (!strcmp(opt, "speed_walk_prefix"))  pDoc->m_speed_walk_prefix  = CString(val);
+    else if (!strcmp(opt, "speed_walk_filler"))  pDoc->m_strSpeedWalkFiller = CString(val);
+    // World ID
+    else if (!strcmp(opt, "id"))               pDoc->m_strWorldID           = CString(val);
+    // World callbacks
+    else if (!strcmp(opt, "on_world_open"))       pDoc->m_strWorldOpen       = CString(val);
+    else if (!strcmp(opt, "on_world_close"))      pDoc->m_strWorldClose      = CString(val);
+    else if (!strcmp(opt, "on_world_save"))       pDoc->m_strWorldSave       = CString(val);
+    else if (!strcmp(opt, "on_world_connect"))    pDoc->m_strWorldConnect    = CString(val);
+    else if (!strcmp(opt, "on_world_disconnect")) pDoc->m_strWorldDisconnect = CString(val);
+    else if (!strcmp(opt, "on_world_get_focus"))  pDoc->m_strWorldGetFocus   = CString(val);
+    else if (!strcmp(opt, "on_world_lose_focus")) pDoc->m_strWorldLoseFocus  = CString(val);
+    // MXP callbacks
+    else if (!strcmp(opt, "on_mxp_start"))        pDoc->m_strOnMXP_Start       = CString(val);
+    else if (!strcmp(opt, "on_mxp_stop"))         pDoc->m_strOnMXP_Stop        = CString(val);
+    else if (!strcmp(opt, "on_mxp_error"))        pDoc->m_strOnMXP_Error       = CString(val);
+    else if (!strcmp(opt, "on_mxp_open_tag"))     pDoc->m_strOnMXP_OpenTag     = CString(val);
+    else if (!strcmp(opt, "on_mxp_close_tag"))    pDoc->m_strOnMXP_CloseTag    = CString(val);
+    else if (!strcmp(opt, "on_mxp_set_variable")) pDoc->m_strOnMXP_SetVariable = CString(val);
+    // Log preambles/postambles
+    else if (!strcmp(opt, "log_file_preamble"))         pDoc->m_strLogFilePreamble        = CString(val);
+    else if (!strcmp(opt, "log_file_postamble"))        pDoc->m_strLogFilePostamble       = CString(val);
+    else if (!strcmp(opt, "log_line_preamble_input"))   pDoc->m_strLogLinePreambleInput   = CString(val);
+    else if (!strcmp(opt, "log_line_preamble_notes"))   pDoc->m_strLogLinePreambleNotes   = CString(val);
+    else if (!strcmp(opt, "log_line_preamble_output"))  pDoc->m_strLogLinePreambleOutput  = CString(val);
+    else if (!strcmp(opt, "log_line_postamble_input"))  pDoc->m_strLogLinePostambleInput  = CString(val);
+    else if (!strcmp(opt, "log_line_postamble_notes"))  pDoc->m_strLogLinePostambleNotes  = CString(val);
+    else if (!strcmp(opt, "log_line_postamble_output")) pDoc->m_strLogLinePostambleOutput = CString(val);
     else if (!strcmp(opt, "output_font_name")) {
         // Immediately apply the face name to the output pane.
         if (pDoc->m_fn_set_output_font && val && *val)
@@ -2526,6 +2972,7 @@ static void push_trigger_option(lua_State* L, CTrigger* t, const char* option)
 {
     string opt(option);
     for (auto& c : opt) c = (char)tolower((unsigned char)c);
+    // boolean options
     if (opt=="enabled")              { lua_pushboolean(L, t->bEnabled);          return; }
     if (opt=="expand_variables")     { lua_pushboolean(L, t->bExpandVariables);  return; }
     if (opt=="ignore_case")          { lua_pushboolean(L, t->ignore_case);       return; }
@@ -2535,12 +2982,23 @@ static void push_trigger_option(lua_State* L, CTrigger* t, const char* option)
     if (opt=="omit_from_output")     { lua_pushboolean(L, t->bOmitFromOutput);   return; }
     if (opt=="regexp")               { lua_pushboolean(L, t->bRegexp);           return; }
     if (opt=="repeat")               { lua_pushboolean(L, t->bRepeat);           return; }
+    if (opt=="sound_if_inactive")    { lua_pushboolean(L, t->bSoundIfInactive);  return; }
     if (opt=="lowercase_wildcard")   { lua_pushboolean(L, t->bLowercaseWildcard);return; }
     if (opt=="temporary")            { lua_pushboolean(L, t->bTemporary);        return; }
     if (opt=="one_shot")             { lua_pushboolean(L, t->bOneShot);          return; }
+    // numeric options
+    if (opt=="clipboard_arg")        { lua_pushnumber(L, t->iClipboardArg);      return; }
+    if (opt=="colour_change_type")   { lua_pushnumber(L, t->iColourChangeType);  return; }
+    if (opt=="custom_colour")        { lua_pushnumber(L, t->colour);             return; }
+    if (opt=="lines_to_match")       { lua_pushnumber(L, t->iLinesToMatch);      return; }
+    if (opt=="match_style")          { lua_pushnumber(L, t->iMatch);             return; }
+    if (opt=="new_style")            { lua_pushnumber(L, t->iStyle);             return; }
+    if (opt=="other_text_colour")    { lua_pushnumber(L, t->iOtherForeground);   return; }
+    if (opt=="other_back_colour")    { lua_pushnumber(L, t->iOtherBackground);   return; }
     if (opt=="send_to")              { lua_pushnumber(L, t->iSendTo);            return; }
     if (opt=="sequence")             { lua_pushnumber(L, t->iSequence);          return; }
     if (opt=="user")                 { lua_pushnumber(L, t->iUserOption);        return; }
+    // string options
     if (opt=="group")    { lua_pushstring(L, (const char*)t->strGroup);    return; }
     if (opt=="match")    { lua_pushstring(L, (const char*)t->trigger);     return; }
     if (opt=="script")   { lua_pushstring(L, (const char*)t->strProcedure);return; }
@@ -2578,24 +3036,39 @@ static int L_SetTriggerOption(lua_State* L)
     string opt(option), val(value);
     for (auto& c : opt) c = (char)tolower((unsigned char)c);
     bool bval = (val == "1" || val == "y" || val == "Y");
-    if (opt=="enabled")            { t->bEnabled = bval; }
-    else if (opt=="expand_variables") { t->bExpandVariables = bval; }
-    else if (opt=="keep_evaluating")  { t->bKeepEvaluating = bval; }
-    else if (opt=="multi_line")       { t->bMultiLine = bval; }
-    else if (opt=="omit_from_log")    { t->omit_from_log = bval; }
-    else if (opt=="omit_from_output") { t->bOmitFromOutput = bval; }
-    else if (opt=="repeat")           { t->bRepeat = bval; }
+    // read-only options (OPT_CANNOT_WRITE in Windows) → ePluginCannotSetOption
+    if (opt=="ignore_case" || opt=="regexp")
+        { lua_pushnumber(L, ePluginCannotSetOption); return 1; }
+    // boolean options
+    if (opt=="enabled")             { t->bEnabled = bval; }
+    else if (opt=="expand_variables")  { t->bExpandVariables = bval; }
+    else if (opt=="keep_evaluating")   { t->bKeepEvaluating = bval; }
+    else if (opt=="multi_line")        { t->bMultiLine = bval; }
+    else if (opt=="omit_from_log")     { t->omit_from_log = bval; }
+    else if (opt=="omit_from_output")  { t->bOmitFromOutput = bval; }
+    else if (opt=="repeat")            { t->bRepeat = bval; }
+    else if (opt=="sound_if_inactive") { t->bSoundIfInactive = bval; }
     else if (opt=="lowercase_wildcard"){ t->bLowercaseWildcard = bval; }
-    else if (opt=="temporary")        { t->bTemporary = bval; }
-    else if (opt=="one_shot")         { t->bOneShot = bval; }
-    else if (opt=="send_to")          { t->iSendTo = (unsigned short)atoi(value); }
-    else if (opt=="sequence")         { t->iSequence = atoi(value); }
-    else if (opt=="user")             { t->iUserOption = atol(value); }
-    else if (opt=="group")            { t->strGroup = CString(value); }
-    else if (opt=="script")           { t->strProcedure = CString(value); }
-    else if (opt=="sound")            { t->sound_to_play = CString(value); }
-    else if (opt=="send")             { t->contents = CString(value); }
-    else if (opt=="variable")         { t->strVariable = CString(value); }
+    else if (opt=="temporary")         { t->bTemporary = bval; }
+    else if (opt=="one_shot")          { t->bOneShot = bval; }
+    // numeric options
+    else if (opt=="clipboard_arg")     { t->iClipboardArg = (unsigned short)atoi(value); }
+    else if (opt=="colour_change_type"){ t->iColourChangeType = (unsigned short)atoi(value); }
+    else if (opt=="custom_colour")     { t->colour = (unsigned short)atoi(value); }
+    else if (opt=="lines_to_match")    { t->iLinesToMatch = (unsigned short)atoi(value); }
+    else if (opt=="match_style")       { t->iMatch = (unsigned short)atoi(value); }
+    else if (opt=="new_style")         { t->iStyle = (unsigned short)atoi(value); }
+    else if (opt=="other_text_colour") { t->iOtherForeground = (COLORREF)atol(value); }
+    else if (opt=="other_back_colour") { t->iOtherBackground = (COLORREF)atol(value); }
+    else if (opt=="send_to")           { t->iSendTo = (unsigned short)atoi(value); }
+    else if (opt=="sequence")          { t->iSequence = atoi(value); }
+    else if (opt=="user")              { t->iUserOption = atol(value); }
+    // string options
+    else if (opt=="group")             { t->strGroup = CString(value); }
+    else if (opt=="script")            { t->strProcedure = CString(value); }
+    else if (opt=="sound")             { t->sound_to_play = CString(value); }
+    else if (opt=="send")              { t->contents = CString(value); }
+    else if (opt=="variable")          { t->strVariable = CString(value); }
     else { lua_pushnumber(L, eUnknownOption); return 1; }
     lua_pushnumber(L, eOK);
     return 1;
@@ -2607,20 +3080,21 @@ static void push_alias_option(lua_State* L, CAlias* a, const char* option)
 {
     string opt(option);
     for (auto& c : opt) c = (char)tolower((unsigned char)c);
-    if (opt=="enabled")              { lua_pushboolean(L, a->bEnabled);          return; }
-    if (opt=="expand_variables")     { lua_pushboolean(L, a->bExpandVariables);  return; }
-    if (opt=="ignore_case")          { lua_pushboolean(L, a->bIgnoreCase);       return; }
-    if (opt=="keep_evaluating")      { lua_pushboolean(L, a->bKeepEvaluating);   return; }
-    if (opt=="omit_from_log")        { lua_pushboolean(L, a->bOmitFromLog);      return; }
-    if (opt=="omit_from_output")     { lua_pushboolean(L, a->bOmitFromOutput);   return; }
-    if (opt=="regexp")               { lua_pushboolean(L, a->bRegexp);           return; }
-    if (opt=="echo_alias")           { lua_pushboolean(L, a->bEchoAlias);        return; }
-    if (opt=="temporary")            { lua_pushboolean(L, a->bTemporary);        return; }
-    if (opt=="one_shot")             { lua_pushboolean(L, a->bOneShot);          return; }
-    if (opt=="menu")                 { lua_pushboolean(L, a->bMenu);             return; }
-    if (opt=="send_to")              { lua_pushnumber(L, a->iSendTo);            return; }
-    if (opt=="sequence")             { lua_pushnumber(L, a->iSequence);          return; }
-    if (opt=="user")                 { lua_pushnumber(L, a->iUserOption);        return; }
+    if (opt=="enabled")                   { lua_pushboolean(L, a->bEnabled);                  return; }
+    if (opt=="expand_variables")          { lua_pushboolean(L, a->bExpandVariables);           return; }
+    if (opt=="ignore_case")               { lua_pushboolean(L, a->bIgnoreCase);                return; }
+    if (opt=="keep_evaluating")           { lua_pushboolean(L, a->bKeepEvaluating);            return; }
+    if (opt=="omit_from_log")             { lua_pushboolean(L, a->bOmitFromLog);               return; }
+    if (opt=="omit_from_command_history") { lua_pushboolean(L, a->bOmitFromCommandHistory);    return; }
+    if (opt=="omit_from_output")          { lua_pushboolean(L, a->bOmitFromOutput);            return; }
+    if (opt=="regexp")                    { lua_pushboolean(L, a->bRegexp);                    return; }
+    if (opt=="echo_alias")                { lua_pushboolean(L, a->bEchoAlias);                 return; }
+    if (opt=="temporary")                 { lua_pushboolean(L, a->bTemporary);                 return; }
+    if (opt=="one_shot")                  { lua_pushboolean(L, a->bOneShot);                   return; }
+    if (opt=="menu")                      { lua_pushboolean(L, a->bMenu);                      return; }
+    if (opt=="send_to")                   { lua_pushnumber(L, a->iSendTo);                     return; }
+    if (opt=="sequence")                  { lua_pushnumber(L, a->iSequence);                   return; }
+    if (opt=="user")                      { lua_pushnumber(L, a->iUserOption);                 return; }
     if (opt=="group")    { lua_pushstring(L, (const char*)a->strGroup);    return; }
     if (opt=="match")    { lua_pushstring(L, (const char*)a->name);        return; }
     if (opt=="script")   { lua_pushstring(L, (const char*)a->strProcedure);return; }
@@ -2657,22 +3131,29 @@ static int L_SetAliasOption(lua_State* L)
     string opt(option);
     for (auto& c : opt) c = (char)tolower((unsigned char)c);
     bool bval = (strcmp(value,"1")==0 || strcmp(value,"y")==0 || strcmp(value,"Y")==0);
-    if (opt=="enabled")            { a->bEnabled = bval; }
-    else if (opt=="expand_variables"){ a->bExpandVariables = bval; }
-    else if (opt=="keep_evaluating") { a->bKeepEvaluating = bval; }
-    else if (opt=="omit_from_log")   { a->bOmitFromLog = bval; }
-    else if (opt=="omit_from_output"){ a->bOmitFromOutput = bval; }
-    else if (opt=="echo_alias")      { a->bEchoAlias = bval; }
-    else if (opt=="temporary")       { a->bTemporary = bval; }
-    else if (opt=="one_shot")        { a->bOneShot = bval; }
-    else if (opt=="menu")            { a->bMenu = bval; }
-    else if (opt=="send_to")         { a->iSendTo = (unsigned short)atoi(value); }
-    else if (opt=="sequence")        { a->iSequence = atoi(value); }
-    else if (opt=="user")            { a->iUserOption = atol(value); }
-    else if (opt=="group")           { a->strGroup = CString(value); }
-    else if (opt=="script")          { a->strProcedure = CString(value); }
-    else if (opt=="send")            { a->contents = CString(value); }
-    else if (opt=="variable")        { a->strVariable = CString(value); }
+    // read-only options
+    if (opt=="ignore_case" || opt=="regexp")
+        { lua_pushnumber(L, ePluginCannotSetOption); return 1; }
+    // boolean options
+    if (opt=="enabled")                    { a->bEnabled = bval; }
+    else if (opt=="expand_variables")          { a->bExpandVariables = bval; }
+    else if (opt=="keep_evaluating")           { a->bKeepEvaluating = bval; }
+    else if (opt=="omit_from_log")             { a->bOmitFromLog = bval; }
+    else if (opt=="omit_from_command_history") { a->bOmitFromCommandHistory = bval; }
+    else if (opt=="omit_from_output")          { a->bOmitFromOutput = bval; }
+    else if (opt=="echo_alias")                { a->bEchoAlias = bval; }
+    else if (opt=="temporary")                 { a->bTemporary = bval; }
+    else if (opt=="one_shot")                  { a->bOneShot = bval; }
+    else if (opt=="menu")                      { a->bMenu = bval; }
+    // numeric options
+    else if (opt=="send_to")                   { a->iSendTo = (unsigned short)atoi(value); }
+    else if (opt=="sequence")                  { a->iSequence = atoi(value); }
+    else if (opt=="user")                      { a->iUserOption = atol(value); }
+    // string options
+    else if (opt=="group")                     { a->strGroup = CString(value); }
+    else if (opt=="script")                    { a->strProcedure = CString(value); }
+    else if (opt=="send")                      { a->contents = CString(value); }
+    else if (opt=="variable")                  { a->strVariable = CString(value); }
     else { lua_pushnumber(L, eUnknownOption); return 1; }
     lua_pushnumber(L, eOK);
     return 1;
@@ -2694,9 +3175,12 @@ static void push_timer_option(lua_State* L, CTimer* t, const char* option)
     if (opt=="temporary")        { lua_pushboolean(L, t->bTemporary);       return; }
     if (opt=="send_to")          { lua_pushnumber(L, t->iSendTo);           return; }
     if (opt=="user")             { lua_pushnumber(L, t->iUserOption);       return; }
-    if (opt=="hour")             { lua_pushnumber(L, atTime ? t->iAtHour   : t->iEveryHour);   return; }
-    if (opt=="minute")           { lua_pushnumber(L, atTime ? t->iAtMinute : t->iEveryMinute); return; }
-    if (opt=="second")           { lua_pushnumber(L, atTime ? t->fAtSecond : t->fEverySecond); return; }
+    if (opt=="hour")          { lua_pushnumber(L, atTime ? t->iAtHour    : t->iEveryHour);    return; }
+    if (opt=="minute")        { lua_pushnumber(L, atTime ? t->iAtMinute  : t->iEveryMinute);  return; }
+    if (opt=="second")        { lua_pushnumber(L, atTime ? t->fAtSecond  : t->fEverySecond);  return; }
+    if (opt=="offset_hour")   { lua_pushnumber(L, t->iOffsetHour);          return; }
+    if (opt=="offset_minute") { lua_pushnumber(L, t->iOffsetMinute);        return; }
+    if (opt=="offset_second") { lua_pushnumber(L, t->fOffsetSecond);        return; }
     if (opt=="group")    { lua_pushstring(L, (const char*)t->strGroup);     return; }
     if (opt=="script")   { lua_pushstring(L, (const char*)t->strProcedure); return; }
     if (opt=="send")     { lua_pushstring(L, (const char*)t->strContents);  return; }
@@ -2741,13 +3225,16 @@ static int L_SetTimerOption(lua_State* L)
     else if (opt=="temporary")     { t->bTemporary = bval; }
     else if (opt=="send_to")       { t->iSendTo = (unsigned short)atoi(value); }
     else if (opt=="user")          { t->iUserOption = atol(value); }
-    else if (opt=="hour")   { if (atTime) t->iAtHour   = atoi(value); else t->iEveryHour   = atoi(value); }
-    else if (opt=="minute") { if (atTime) t->iAtMinute = atoi(value); else t->iEveryMinute = atoi(value); }
-    else if (opt=="second") { if (atTime) t->fAtSecond = atof(value); else t->fEverySecond = atof(value); }
-    else if (opt=="group")   { t->strGroup = CString(value); }
-    else if (opt=="script")  { t->strProcedure = CString(value); }
-    else if (opt=="send")    { t->strContents = CString(value); }
-    else if (opt=="variable"){ t->strVariable = CString(value); }
+    else if (opt=="hour")          { if (atTime) t->iAtHour    = atoi(value); else t->iEveryHour    = atoi(value); }
+    else if (opt=="minute")        { if (atTime) t->iAtMinute  = atoi(value); else t->iEveryMinute  = atoi(value); }
+    else if (opt=="second")        { if (atTime) t->fAtSecond  = atof(value); else t->fEverySecond  = atof(value); }
+    else if (opt=="offset_hour")   { t->iOffsetHour   = atoi(value); }
+    else if (opt=="offset_minute") { t->iOffsetMinute = atoi(value); }
+    else if (opt=="offset_second") { t->fOffsetSecond = atof(value); }
+    else if (opt=="group")         { t->strGroup     = CString(value); }
+    else if (opt=="script")        { t->strProcedure = CString(value); }
+    else if (opt=="send")          { t->strContents  = CString(value); }
+    else if (opt=="variable")      { t->strVariable  = CString(value); }
     else { lua_pushnumber(L, eUnknownOption); return 1; }
     lua_pushnumber(L, eOK);
     return 1;
@@ -2838,16 +3325,50 @@ static int L_AtTime(lua_State* L)
 }
 
 // ── Hyperlink ─────────────────────────────────────────────────────────────────
-// Minimal portable stub — outputs the text as a note (no clickable links yet).
+// Injects a styled clickable run into the note output stream.
+// Signature: Hyperlink(action, text, hint, fore_colour, back_colour, url, no_underline)
+// fore/back are either "#RRGGBB" strings or colour names; empty string = default.
 
 static int L_Hyperlink(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    // action, text, hint, fore, back, url, no_underline
-    const char* text = luaL_optstring(L, 2, "");
-    if (!text || text[0] == 0)
-        text = luaL_optstring(L, 1, "");  // fall back to action
-    pDoc->Note(CString(text));
+
+    const char* action      = luaL_optstring(L, 1, "");
+    const char* text        = luaL_optstring(L, 2, "");
+    const char* hint        = luaL_optstring(L, 3, "");
+    const char* fore_str    = luaL_optstring(L, 4, "");
+    const char* back_str    = luaL_optstring(L, 5, "");
+    // arg 6 = url (bool) — determines ACTION_HYPERLINK vs ACTION_SEND flag
+    // arg 7 = no_underline (bool)
+    bool url          = lua_toboolean(L, 6) != 0;
+    bool no_underline = lua_toboolean(L, 7) != 0;
+
+    if (!action || action[0] == 0) return 0;
+    if (!text   || text[0]   == 0) text = action;
+    if (!hint   || hint[0]   == 0) hint = action;
+
+    // Resolve fore/back colours.
+    COLORREF fg = pDoc->m_iHyperlinkColour;
+    COLORREF bg = 0x00000000u;
+    if (fore_str && fore_str[0]) SetColour(CString(fore_str), fg);
+    if (back_str && back_str[0]) SetColour(CString(back_str), bg);
+
+    // Push a note-line style with the action — this sets m_current_action/hint.
+    unsigned short flags = COLOUR_RGB |
+                           (url ? ACTION_HYPERLINK : ACTION_SEND) |
+                           (no_underline ? 0 : UNDERLINE);
+    CAction* pAction = pDoc->GetAction(CString(action),
+                                       CString(hint),
+                                       CString(""));
+    pDoc->AddStyle(flags, fg, bg, 0, pAction);
+    if (pAction) pAction->Release();
+
+    // Output the link text so it gets picked up by DisplayMsg.
+    pDoc->AddToLine(text, COMMENT);
+
+    // Restore normal note style — clears m_current_action/hint.
+    pDoc->AddStyle(COLOUR_RGB, pDoc->m_NoteColourFore, pDoc->m_NoteColourBack, 0,
+                   static_cast<CAction*>(nullptr));
     return 0;
 }
 
@@ -4743,12 +5264,21 @@ static int L_Reset(lua_State* L)
 
 static int L_Sound(lua_State* L)
 {
-    world_doc(L); luaL_checkstring(L, 1);
-    lua_pushnumber(L, eCannotPlaySound); return 1;
+    world_doc(L);
+    const char* filename = luaL_checkstring(L, 1);
+    if (g_wxhook_play_sound && filename && *filename) {
+        bool ok = g_wxhook_play_sound(filename);
+        lua_pushnumber(L, ok ? eOK : eCannotPlaySound);
+    } else {
+        lua_pushnumber(L, eCannotPlaySound);
+    }
+    return 1;
 }
 static int L_StopSound(lua_State* L)
 {
-    world_doc(L); luaL_optnumber(L, 1, 0);
+    world_doc(L);
+    // Buffer arg (1) ignored — we have a single sound slot portably.
+    if (g_wxhook_stop_sound) g_wxhook_stop_sound();
     lua_pushnumber(L, eOK); return 1;
 }
 static int L_GetSoundStatus(lua_State* L)
@@ -4759,8 +5289,20 @@ static int L_GetSoundStatus(lua_State* L)
 static int L_PlaySound(lua_State* L)
 {
     world_doc(L);
-    // (buffer, filename, loop, volume, pan) — stub
-    lua_pushnumber(L, eCannotPlaySound); return 1;
+    // Args: Buffer (1, ignored portably), Filename (2), Loop (3), Volume (4), Pan (5).
+    // Buffer-slot management and volume/pan are DirectSound-only; we play the
+    // file once via the wxWidgets sound hook and return eOK on success.
+    const char* filename = luaL_optstring(L, 2, "");
+    if (!filename || !*filename) {
+        lua_pushnumber(L, eOK); return 1;
+    }
+    if (g_wxhook_play_sound) {
+        bool ok = g_wxhook_play_sound(filename);
+        lua_pushnumber(L, ok ? eOK : eCannotPlaySound);
+    } else {
+        lua_pushnumber(L, eCannotPlaySound);
+    }
+    return 1;
 }
 
 // ── UDP ───────────────────────────────────────────────────────────────────────
@@ -4885,8 +5427,16 @@ static int L_DeleteCommandHistory(lua_State* L)
 
 // PushCommand / PasteCommand / SelectCommand / SetCommand / GetQueue are
 // command-window concepts.
-static int L_PushCommand(lua_State* L)   { world_doc(L); lua_pushstring(L, ""); return 1; }
-static int L_SelectCommand(lua_State* L) { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_PushCommand(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    std::string s = pDoc->m_fn_push_command ? pDoc->m_fn_push_command() : std::string();
+    lua_pushstring(L, s.c_str()); return 1;
+}
+static int L_SelectCommand(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    if (pDoc->m_fn_select_command) pDoc->m_fn_select_command();
+    lua_pushnumber(L, eOK); return 1;
+}
 
 static int L_PasteCommand(lua_State* L)
 {
@@ -4937,10 +5487,22 @@ static int L_InfoClear(lua_State* L)        { world_doc(L); lua_pushnumber(L, eO
 static int L_InfoColour(lua_State* L)       { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_InfoFont(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 
-// ── GUI stubs ─────────────────────────────────────────────────────────────────
-static int L_Activate(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_ActivateClient(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_Redraw(lua_State* L)           { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+// ── GUI callbacks ─────────────────────────────────────────────────────────────
+static int L_Activate(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    if (pDoc->m_fn_activate_client) pDoc->m_fn_activate_client();
+    lua_pushnumber(L, eOK); return 1;
+}
+static int L_ActivateClient(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    if (pDoc->m_fn_activate_client) pDoc->m_fn_activate_client();
+    lua_pushnumber(L, eOK); return 1;
+}
+static int L_Redraw(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    if (pDoc->m_fn_repaint) pDoc->m_fn_repaint();
+    lua_pushnumber(L, eOK); return 1;
+}
 static int L_Repaint(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
@@ -4977,7 +5539,14 @@ static int L_SetBackgroundColour(lua_State* L)
 }
 static int L_SetBackgroundImage(lua_State* L) { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetCursor(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_SetChanged(lua_State* L)        { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_SetChanged(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    // SetChanged(flag) — mark the world file as modified (true) or clean (false).
+    BOOL flag = (BOOL)luaL_optinteger(L, 1, TRUE);
+    pDoc->SetModifiedFlag(flag);
+    lua_pushnumber(L, eOK);
+    return 1;
+}
 static int L_GetMainWindowPosition(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
     int x = 0, y = 0, w = 1024, h = 768;
@@ -5007,15 +5576,88 @@ static int L_GetWorldWindowPositionX(lua_State* L) {
     lua_pushnumber(L, (which >= 0 && which < 4) ? vals[which] : 0);
     return 1;
 }
-static int L_MoveMainWindow(lua_State* L)    { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_MoveWorldWindow(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_MoveWorldWindowX(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_FlashIcon(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_MoveMainWindow(lua_State* L) {
+    world_doc(L);
+    long l = (long)luaL_optnumber(L, 1, 0);
+    long t = (long)luaL_optnumber(L, 2, 0);
+    long w = (long)luaL_optnumber(L, 3, 0);
+    long h = (long)luaL_optnumber(L, 4, 0);
+    if (g_wxhook_move_main_window) g_wxhook_move_main_window(l, t, w, h);
+    lua_pushnumber(L, eOK); return 1;
+}
+static int L_MoveWorldWindow(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    long l = (long)luaL_optnumber(L, 1, 0);
+    long t = (long)luaL_optnumber(L, 2, 0);
+    long w = (long)luaL_optnumber(L, 3, 0);
+    long h = (long)luaL_optnumber(L, 4, 0);
+    if (pDoc->m_fn_move_world_window) pDoc->m_fn_move_world_window(l, t, w, h);
+    lua_pushnumber(L, eOK); return 1;
+}
+static int L_MoveWorldWindowX(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    long l = (long)luaL_optnumber(L, 1, 0);
+    long t = (long)luaL_optnumber(L, 2, 0);
+    long w = (long)luaL_optnumber(L, 3, 0);
+    long h = (long)luaL_optnumber(L, 4, 0);
+    short which = (short)luaL_optinteger(L, 5, 1);
+    if (which == 1 && pDoc->m_fn_move_world_window)
+        pDoc->m_fn_move_world_window(l, t, w, h);
+    lua_pushnumber(L, eOK); return 1;
+}
+static int L_FlashIcon(lua_State* L) {
+    world_doc(L);
+    if (g_wxhook_flash_icon) g_wxhook_flash_icon();
+    lua_pushnumber(L, eOK); return 1;
+}
 static int L_Help(lua_State* L)              { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_Menu(lua_State* L)              { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_PickColour(lua_State* L)        { world_doc(L); lua_pushnumber(L, -1); return 1; }
-static int L_Save(lua_State* L)              { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_SetWorldWindowStatus(lua_State* L){ world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_Menu(lua_State* L) {
+    world_doc(L);
+    const char* items_str   = luaL_checkstring(L, 1);
+    const char* default_str = luaL_optstring(L, 2, "");
+
+    // Split the pipe-delimited items string into individual entries.
+    std::vector<std::string> items;
+    for (const char* p = items_str, *start = p; ; ++p) {
+        if (*p == '|' || *p == '\0') {
+            items.emplace_back(start, p - start);
+            if (!*p) break;
+            start = p + 1;
+        }
+    }
+
+    std::string result;
+    if (!items.empty() && g_wxhook_menu_dialog) {
+        std::vector<const char*> ptrs;
+        ptrs.reserve(items.size());
+        for (const auto& s : items)
+            ptrs.push_back(s.c_str());
+        char* chosen = g_wxhook_menu_dialog(ptrs.data(), (int)ptrs.size(), default_str);
+        if (chosen) {
+            result = chosen;
+            free(chosen);
+        }
+    }
+    lua_pushstring(L, result.c_str()); return 1;
+}
+static int L_PickColour(lua_State* L) {
+    world_doc(L);
+    long suggested = (long)luaL_optnumber(L, 1, -1);
+    long result = g_wxhook_pick_colour ? g_wxhook_pick_colour(suggested) : -1;
+    lua_pushnumber(L, result); return 1;
+}
+static int L_Save(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    bool ok = pDoc->m_fn_save ? pDoc->m_fn_save() : true;
+    lua_pushnumber(L, ok ? eOK : eWorldClosed);
+    return 1;
+}
+static int L_SetWorldWindowStatus(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    short param = (short)luaL_optinteger(L, 1, 3);
+    if (pDoc->m_fn_set_window_status) pDoc->m_fn_set_window_status(param);
+    lua_pushnumber(L, eOK); return 1;
+}
 
 // ── Mapper stubs ──────────────────────────────────────────────────────────────
 static int L_AddMapperComment(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }
@@ -5249,20 +5891,96 @@ static int L_GetLoadedValue(lua_State* L)
 }
 
 // ── GetGlobalOption / GetGlobalOptionList ─────────────────────────────────────
-// Global options are app-wide (not per-world).  In the portable single-world
-// build there is no App object, so these return nil / empty table.
+// Global options are app-wide (not per-world).  The portable CMUSHclientApp
+// (doc_stub.h) carries a subset of the Windows App fields; we surface those here
+// with the same camel-case names the Windows registry table uses (_stricmp match).
+//
+// Numeric options (long/bool):
+//   AllTypingToCommandWindow, BleedBackground, DisableKeyboardMenuActivation,
+//   ErrorNotificationToOutputWindow, F1macro, NotifyOnDisconnect,
+//   PrinterFontSize, PrinterLeftMargin, PrinterLinesPerPage, PrinterTopMargin,
+//   ReconnectOnLinkFailure, SmoothScrolling, SmootherScrolling
+//
+// Alpha options (string):
+//   DefaultLogFileDirectory, LuaScript, PrinterFont, WordDelimitersDblClick
 static int L_GetGlobalOption(lua_State* L)
 {
     world_doc(L);
-    luaL_checkstring(L, 1);   // consume argument
-    lua_pushnil(L);
+    const char* name = luaL_checkstring(L, 1);
+
+    // ── numeric (bool/int) options ──────────────────────────────────────────
+    struct { const char* nm; long val; } nums[] = {
+        { "AllTypingToCommandWindow",        App.m_bAllTypingToCommandWindow        },
+        { "BleedBackground",                 App.m_bBleedBackground                 },
+        { "DisableKeyboardMenuActivation",   App.m_bDisableKeyboardMenuActivation   },
+        { "ErrorNotificationToOutputWindow", App.m_bErrorNotificationToOutputWindow },
+        { "F1macro",                         App.m_bF1macro                         },
+        { "NotifyOnDisconnect",              App.m_bNotifyOnDisconnect              },
+        { "PrinterFontSize",                 App.m_nPrinterFontSize                 },
+        { "PrinterLeftMargin",               App.m_nPrinterLeftMargin               },
+        { "PrinterLinesPerPage",             App.m_nPrinterLinesPerPage             },
+        { "PrinterTopMargin",                App.m_nPrinterTopMargin                },
+        { "ReconnectOnLinkFailure",          App.m_bReconnectOnLinkFailure          },
+        { "SmoothScrolling",                 App.m_bSmoothScrolling                 },
+        { "SmootherScrolling",               App.m_bSmootherScrolling               },
+        { nullptr, 0 }
+    };
+    for (int i = 0; nums[i].nm; ++i) {
+        if (strcasecmp(name, nums[i].nm) == 0) {
+            lua_pushnumber(L, nums[i].val);
+            return 1;
+        }
+    }
+
+    // ── alpha (string) options ──────────────────────────────────────────────
+    struct { const char* nm; const char* val; } strs[] = {
+        { "DefaultLogFileDirectory", App.m_strDefaultLogFileDirectory.c_str() },
+        { "LuaScript",               static_cast<const char*>(App.m_strLuaScript) },
+        { "PrinterFont",             static_cast<const char*>(App.m_strPrinterFont) },
+        { "WordDelimitersDblClick",  static_cast<const char*>(App.m_strWordDelimitersDblClick) },
+        { nullptr, nullptr }
+    };
+    for (int i = 0; strs[i].nm; ++i) {
+        if (strcasecmp(name, strs[i].nm) == 0) {
+            lua_pushstring(L, strs[i].val ? strs[i].val : "");
+            return 1;
+        }
+    }
+
+    lua_pushnil(L);   // unknown option
     return 1;
 }
 
 static int L_GetGlobalOptionList(lua_State* L)
 {
     world_doc(L);
+    static const char* const kNames[] = {
+        // numeric
+        "AllTypingToCommandWindow",
+        "BleedBackground",
+        "DisableKeyboardMenuActivation",
+        "ErrorNotificationToOutputWindow",
+        "F1macro",
+        "NotifyOnDisconnect",
+        "PrinterFontSize",
+        "PrinterLeftMargin",
+        "PrinterLinesPerPage",
+        "PrinterTopMargin",
+        "ReconnectOnLinkFailure",
+        "SmoothScrolling",
+        "SmootherScrolling",
+        // alpha
+        "DefaultLogFileDirectory",
+        "LuaScript",
+        "PrinterFont",
+        "WordDelimitersDblClick",
+        nullptr
+    };
     lua_newtable(L);
+    for (int i = 0; kNames[i]; ++i) {
+        lua_pushstring(L, kNames[i]);
+        lua_rawseti(L, -2, i + 1);
+    }
     return 1;
 }
 
@@ -5316,10 +6034,9 @@ static int L_GetWorldIdList(lua_State* L)
 // treat this as a note to stderr; the string result is the empty string.
 static int L_Debug(lua_State* L)
 {
-    world_doc(L);
+    CMUSHclientDoc* pDoc = world_doc(L);
     const char* cmd = luaL_optstring(L, 1, "");
-    if (cmd && *cmd)
-        fprintf(stderr, "[DEBUG] %s\n", cmd);
+    pDoc->Debug(cmd ? cmd : "");
     lua_pushstring(L, "");
     return 1;
 }
@@ -5490,6 +6207,155 @@ static int L_Bookmark(lua_State* L)
     return 0;
 }
 
+// ── BlendPixel ────────────────────────────────────────────────────────────────
+// Pure colour-math function — no GUI required.  Ported directly from
+// CMUSHclientDoc::BlendPixel in scripting/methods/methods_miniwindows.cpp.
+// Uses the same blending.h macros and color.h CColor class.
+
+#include "blending.h"   // Blend_It, Colour_Op, Blend_Normal, …
+#include "color.h"      // CColor (HSL conversion) for modes 60-64
+
+#define Blend_It_Local(Op) \
+   do { \
+     if (Opacity < 1.0) { \
+       r = Blend_Opacity(rA, rB, Op, Opacity); \
+       g = Blend_Opacity(gA, gB, Op, Opacity); \
+       b = Blend_Opacity(bA, bB, Op, Opacity); \
+     } else { \
+       r = Op(rA, rB); \
+       g = Op(gA, gB); \
+       b = Op(bA, bB); \
+     } \
+   } while (false)
+
+#define Colour_Op_Local(fR,fG,fB) \
+   do { \
+     if (Opacity < 1.0) { \
+       r = Simple_Opacity(rB, fR, Opacity); \
+       g = Simple_Opacity(gB, fG, Opacity); \
+       b = Simple_Opacity(bB, fB, Opacity); \
+     } else { r = (fR); g = (fG); b = (fB); } \
+   } while (false)
+
+static int L_BlendPixel(lua_State* L)
+{
+    world_doc(L);
+    long Blend   = (long)luaL_checknumber(L, 1);
+    long Base    = (long)luaL_checknumber(L, 2);
+    short Mode   = (short)luaL_checkinteger(L, 3);
+    double Opacity = luaL_optnumber(L, 4, 1.0);
+
+    if (Opacity < 0.0 || Opacity > 1.0) { lua_pushnumber(L, -2); return 1; }
+
+    long rA = GetRValue(Blend), gA = GetGValue(Blend), bA = GetBValue(Blend);
+    long rB = GetRValue(Base),  gB = GetGValue(Base),  bB = GetBValue(Base);
+    long r, g, b;
+
+    // cos table for Interpolate mode
+    static unsigned char cos_table[256];
+    static bool bTableComputed = false;
+    if (!bTableComputed) {
+        double pi_div255 = 3.1415926535898 / 255.0;
+        for (int i = 0; i < 256; i++) {
+            double a = 64.0 - cos((double)i * pi_div255) * 64.0;
+            cos_table[i] = (uint8)(a + 0.5);
+        }
+        bTableComputed = true;
+    }
+
+    switch (Mode) {
+    case  1: Blend_It_Local(Blend_Normal);    break;
+    case  2: Blend_It_Local(Blend_Average);   break;
+    case  3: Blend_It_Local(Blend_Interpolate); break;
+    case  4: { double rnd = genrand();
+               r = (rnd < Opacity) ? rA : rB;
+               g = (rnd < Opacity) ? gA : gB;
+               b = (rnd < Opacity) ? bA : bB; } break;
+    case  5: Blend_It_Local(Blend_Darken);    break;
+    case  6: Blend_It_Local(Blend_Multiply);  break;
+    case  7: Blend_It_Local(Blend_ColorBurn); break;
+    case  8: Blend_It_Local(Blend_LinearBurn);break;
+    case  9: Blend_It_Local(Blend_InverseColorBurn); break;
+    case 10: Blend_It_Local(Blend_Subtract);  break;
+    case 11: Blend_It_Local(Blend_Lighten);   break;
+    case 12: Blend_It_Local(Blend_Screen);    break;
+    case 13: Blend_It_Local(Blend_ColorDodge);break;
+    case 14: Blend_It_Local(Blend_LinearDodge);break;
+    case 15: Blend_It_Local(Blend_InverseColorDodge); break;
+    case 16: Blend_It_Local(Blend_Add);       break;
+    case 17: Blend_It_Local(Blend_Overlay);   break;
+    case 18: Blend_It_Local(Blend_SoftLight); break;
+    case 19: Blend_It_Local(Blend_HardLight); break;
+    case 20: Blend_It_Local(Blend_VividLight);break;
+    case 21: Blend_It_Local(Blend_LinearLight);break;
+    case 22: Blend_It_Local(Blend_PinLight);  break;
+    case 23: Blend_It_Local(Blend_HardMix);   break;
+    case 24: Blend_It_Local(Blend_Difference);break;
+    case 25: Blend_It_Local(Blend_Exclusion); break;
+    case 26: Blend_It_Local(Blend_Reflect);   break;
+    case 27: Blend_It_Local(Blend_Glow);      break;
+    case 28: Blend_It_Local(Blend_Freeze);    break;
+    case 29: Blend_It_Local(Blend_Heat);      break;
+    case 30: Blend_It_Local(Blend_Negation);  break;
+    case 31: Blend_It_Local(Blend_Phoenix);   break;
+    case 32: Blend_It_Local(Blend_Stamp);     break;
+    case 33: Blend_It_Local(Blend_Xor);       break;
+    case 34: Blend_It_Local(Blend_And);       break;
+    case 35: Blend_It_Local(Blend_Or);        break;
+    case 36: Colour_Op_Local(rA, gB, bB); break;
+    case 37: Colour_Op_Local(rB, gA, bB); break;
+    case 38: Colour_Op_Local(rB, gB, bA); break;
+    case 39: Colour_Op_Local(rA, gA, bB); break;
+    case 40: Colour_Op_Local(rB, gA, bA); break;
+    case 41: Colour_Op_Local(rA, gB, bA); break;
+    case 42: Colour_Op_Local(rA, (gA>rA)?rA:gA, bA); break;
+    case 43: Colour_Op_Local(rA, (gA>bA)?bA:gA, bA); break;
+    case 44: Colour_Op_Local(rA, (gA>((rA+bA)/2))?((rA+bA)/2):gA, bA); break;
+    case 45: Colour_Op_Local(rA, gA, (bA>rA)?rA:bA); break;
+    case 46: Colour_Op_Local(rA, gA, (bA>gA)?gA:bA); break;
+    case 47: Colour_Op_Local(rA, gA, (bA>((rA+gA)/2))?((rA+gA)/2):bA); break;
+    case 48: Colour_Op_Local((rA>gA)?gA:rA, gA, bA); break;
+    case 49: Colour_Op_Local((rA>bA)?bA:rA, gA, bA); break;
+    case 50: Colour_Op_Local((rA>((gA+bA)/2))?((gA+bA)/2):rA, gA, bA); break;
+    case 51: Colour_Op_Local(rA, 0, 0);  break;
+    case 52: Colour_Op_Local(0, gA, 0);  break;
+    case 53: Colour_Op_Local(0, 0, bA);  break;
+    case 54: Colour_Op_Local(0, gA, bA); break;
+    case 55: Colour_Op_Local(rA, 0, bA); break;
+    case 56: Colour_Op_Local(rA, gA, 0); break;
+    case 57: Colour_Op_Local(rA, rA, rA); break;
+    case 58: Colour_Op_Local(gA, gA, gA); break;
+    case 59: Colour_Op_Local(bA, bA, bA); break;
+    case 60: { CColor cA, cB; cA.SetRGB(rA,gA,bA); cB.SetRGB(rB,gB,bB);
+               cB.SetHue(cA.GetHue());
+               r=Simple_Opacity(rB,cB.GetRed(),Opacity); g=Simple_Opacity(gB,cB.GetGreen(),Opacity); b=Simple_Opacity(bB,cB.GetBlue(),Opacity); } break;
+    case 61: { CColor cA, cB; cA.SetRGB(rA,gA,bA); cB.SetRGB(rB,gB,bB);
+               cB.SetSaturation(cA.GetSaturation());
+               r=Simple_Opacity(rB,cB.GetRed(),Opacity); g=Simple_Opacity(gB,cB.GetGreen(),Opacity); b=Simple_Opacity(bB,cB.GetBlue(),Opacity); } break;
+    case 62: { CColor cA, cB; cA.SetRGB(rA,gA,bA); cB.SetRGB(rB,gB,bB);
+               cB.SetHue(cA.GetHue()); cB.SetSaturation(cA.GetSaturation());
+               r=Simple_Opacity(rB,cB.GetRed(),Opacity); g=Simple_Opacity(gB,cB.GetGreen(),Opacity); b=Simple_Opacity(bB,cB.GetBlue(),Opacity); } break;
+    case 63: { CColor cA, cB; cA.SetRGB(rA,gA,bA); cB.SetRGB(rB,gB,bB);
+               cB.SetLuminance(cA.GetLuminance());
+               r=Simple_Opacity(rB,cB.GetRed(),Opacity); g=Simple_Opacity(gB,cB.GetGreen(),Opacity); b=Simple_Opacity(bB,cB.GetBlue(),Opacity); } break;
+    case 64: { CColor cA; cA.SetRGB(rA,gA,bA);
+               r=Simple_Opacity(rB,cA.GetHue(),Opacity); g=Simple_Opacity(gB,cA.GetSaturation(),Opacity); b=Simple_Opacity(bB,cA.GetLuminance(),Opacity); } break;
+    default: lua_pushnumber(L, -1); return 1;
+    }
+
+    lua_pushnumber(L, RGB(CLAMP(r), CLAMP(g), CLAMP(b)));
+    return 1;
+}
+
+// ── Accelerator / AcceleratorTo / AcceleratorList ─────────────────────────────
+// On non-Windows, keyboard accelerators (custom keystroke bindings) cannot be
+// wired to the Win32 HACCEL / accelerator-table mechanism.  Scripts that call
+// these functions receive a graceful error code rather than a crash.
+
+static int L_Accelerator(lua_State* L)    { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_AcceleratorTo(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_AcceleratorList(lua_State* L){ world_doc(L); lua_newtable(L); return 1; }
+
 // ── Miniwindow Lua API (mushcore/mushcli stubs) ───────────────────────────────
 // lua_world_api_portable.cpp is compiled into mushcore only.  The mushgui build
 // uses mushapp which compiles lua_methods.cpp instead — that file already has
@@ -5545,6 +6411,203 @@ static int L_SpellStub(lua_State* L)
 {
     world_doc(L);
     lua_pushnumber(L, eSpellCheckNotActive);
+    return 1;
+}
+
+// ── Notepad API ──────────────────────────────────────────────────────────────
+// AppendToNotepad(title, text) → bool
+// Creates or appends to a named notepad window.
+static int L_AppendToNotepad(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    const char* text  = luaL_optstring(L, 2, "");
+    bool ok = pDoc->AppendToTheNotepad(CString(title), CString(text),
+                                        false, eNotepadNormal);
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// ReplaceNotepad(title, text) → bool
+// Creates or replaces the content of a named notepad window.
+static int L_ReplaceNotepad(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    const char* text  = luaL_optstring(L, 2, "");
+    bool ok = pDoc->AppendToTheNotepad(CString(title), CString(text),
+                                        true, eNotepadNormal);
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// GetNotepadText(title) → string or nil
+static int L_GetNotepadText(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    if (!g_wxhook_get_notepad_text) { lua_pushnil(L); return 1; }
+    char* text = g_wxhook_get_notepad_text(title);
+    if (!text) { lua_pushnil(L); return 1; }
+    lua_pushstring(L, text);
+    free(text);
+    return 1;
+}
+
+// GetNotepadLength(title) → number (0 if not found)
+static int L_GetNotepadLength(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    if (!g_wxhook_get_notepad_text) { lua_pushnumber(L, 0); return 1; }
+    char* text = g_wxhook_get_notepad_text(title);
+    long len = text ? (long)strlen(text) : 0;
+    free(text);
+    lua_pushnumber(L, (lua_Number)len);
+    return 1;
+}
+
+// GetNotepadList() → table of title strings
+static int L_GetNotepadList(lua_State* L)
+{
+    world_doc(L);
+    lua_newtable(L);
+    if (!g_wxhook_get_notepad_list) return 1;
+    char** list = g_wxhook_get_notepad_list();
+    if (!list) return 1;
+    for (int i = 0; list[i]; ++i) {
+        lua_pushstring(L, list[i]);
+        lua_rawseti(L, -2, i + 1);
+        free(list[i]);
+    }
+    free(list);
+    return 1;
+}
+
+// ── More notepad API ─────────────────────────────────────────────────────────
+
+// ActivateNotepad(title) → eOK or eNoSuchWindow
+static int L_ActivateNotepad(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    bool found = g_wxhook_activate_notepad && g_wxhook_activate_notepad(title);
+    lua_pushnumber(L, found ? eOK : eNoSuchWindow);
+    return 1;
+}
+
+// CloseNotepad(title) → eOK or eNoSuchWindow
+static int L_CloseNotepad(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    bool found = g_wxhook_close_notepad && g_wxhook_close_notepad(title);
+    lua_pushnumber(L, found ? eOK : eNoSuchWindow);
+    return 1;
+}
+
+// MoveNotepadWindow(title, x, y, width, height) → eOK or eNoSuchWindow
+static int L_MoveNotepadWindow(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    int x = (int)luaL_optnumber(L, 2, -1);
+    int y = (int)luaL_optnumber(L, 3, -1);
+    int w = (int)luaL_optnumber(L, 4, -1);
+    int h = (int)luaL_optnumber(L, 5, -1);
+    bool found = g_wxhook_move_notepad && g_wxhook_move_notepad(title, x, y, w, h);
+    lua_pushnumber(L, found ? eOK : eNoSuchWindow);
+    return 1;
+}
+
+// GetNotepadWindowPosition(title) → "x y width height" string or nil
+static int L_GetNotepadWindowPosition(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    if (!g_wxhook_get_notepad_position) { lua_pushnil(L); return 1; }
+    char* pos = g_wxhook_get_notepad_position(title);
+    if (!pos) { lua_pushnil(L); return 1; }
+    lua_pushstring(L, pos);
+    free(pos);
+    return 1;
+}
+
+// SendToNotepad(title, text) → bool
+// Creates a new notepad window with the given text (or appends to existing).
+// Uses AppendToTheNotepad (append=false → creates if absent, appends if present).
+static int L_SendToNotepad(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    const char* text  = luaL_optstring(L, 2, "");
+    // SendToNotepad always creates a fresh window on Windows, but portable
+    // behaviour (append-or-create) is equally useful and avoids a separate hook.
+    bool ok = pDoc->AppendToTheNotepad(CString(title), CString(text),
+                                        false, eNotepadScript);
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// SaveNotepad(title, filename, replaceExisting) → 0 (success) or error
+static int L_SaveNotepad(lua_State* L)
+{
+    world_doc(L);
+    const char* title    = luaL_checkstring(L, 1);
+    const char* filename = luaL_optstring(L, 2, "");
+    bool        replace  = lua_toboolean(L, 3) != 0;
+    if (!g_wxhook_save_notepad) { lua_pushnumber(L, eNoSuchWindow); return 1; }
+    bool ok = g_wxhook_save_notepad(title, filename, replace);
+    lua_pushnumber(L, ok ? 0 : eNoSuchWindow);
+    return 1;
+}
+
+// NotepadColour(title, textColour, backColour) → 0 on success
+// Colour strings: "#RRGGBB" or a named colour from the MUSHclient colour table.
+// Forward-declare SetColour from mxp/mxputils.cpp (available in mushcore).
+bool SetColour(const CString& strName, COLORREF& iColour);
+
+static int L_NotepadColour(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    const char* fgStr = luaL_checkstring(L, 2);
+    const char* bgStr = luaL_checkstring(L, 3);
+    if (!g_wxhook_notepad_colour) { lua_pushnumber(L, eNoSuchWindow); return 1; }
+    COLORREF fg = 0, bg = 0;
+    if (SetColour(CString(fgStr), fg)) { lua_pushnumber(L, false); return 1; }
+    if (SetColour(CString(bgStr), bg)) { lua_pushnumber(L, false); return 1; }
+    bool ok = g_wxhook_notepad_colour(title, (unsigned long)fg, (unsigned long)bg);
+    lua_pushnumber(L, ok ? 0 : eNoSuchWindow);
+    return 1;
+}
+
+// NotepadFont(title, fontName, size, style [, charset]) → 0 on success
+// style bits: 1=bold, 2=italic, 4=underline, 8=strikeout.
+// size=0 keeps current size; empty fontName keeps current face.
+static int L_NotepadFont(lua_State* L)
+{
+    world_doc(L);
+    const char* title    = luaL_checkstring(L, 1);
+    const char* fontName = luaL_checkstring(L, 2);
+    int         size     = (int)luaL_checknumber(L, 3);
+    int         style    = (int)luaL_checknumber(L, 4);
+    int         charset  = (int)luaL_optnumber(L, 5, 0);
+    if (!g_wxhook_notepad_font) { lua_pushnumber(L, eNoSuchWindow); return 1; }
+    bool ok = g_wxhook_notepad_font(title, fontName, size, style, charset);
+    lua_pushnumber(L, ok ? 0 : eNoSuchWindow);
+    return 1;
+}
+
+// NotepadReadOnly(title [, readOnly=true]) → 0 on success
+static int L_NotepadReadOnly(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    bool ro = (lua_isnone(L, 2) || lua_isnil(L, 2)) ? true : lua_toboolean(L, 2) != 0;
+    if (!g_wxhook_notepad_readonly) { lua_pushnumber(L, eNoSuchWindow); return 1; }
+    bool ok = g_wxhook_notepad_readonly(title, ro);
+    lua_pushnumber(L, ok ? 0 : eNoSuchWindow);
     return 1;
 }
 
@@ -5968,6 +7031,12 @@ static const luaL_Reg worldlib[] = {
     { "GetSelectionEndLine",    L_GetSelectionEndLine    },
     { "GetSelectionStartColumn",L_GetSelectionStartColumn},
     { "GetSelectionEndColumn",  L_GetSelectionEndColumn  },
+    // Accelerator stubs (Win32 accelerator tables not available on non-Windows)
+    { "Accelerator",        L_Accelerator       },
+    { "AcceleratorTo",      L_AcceleratorTo     },
+    { "AcceleratorList",    L_AcceleratorList   },
+    // BlendPixel — pure colour math, fully portable
+    { "BlendPixel",         L_BlendPixel        },
     // Misc stubs
     { "ResetIP",            L_ResetIP           },
     { "ResetStatusTime",    L_ResetStatusTime   },
@@ -6060,21 +7129,21 @@ static const luaL_Reg worldlib[] = {
     { "SpellCheckDlg",          L_SpellStub },
 
     // ── Notepad stubs ─────────────────────────────────────────────────────────
-    { "ActivateNotepad",        L_GuiOkStub  },
-    { "AppendToNotepad",        L_GuiOkStub  },
-    { "CloseNotepad",           L_GuiOkStub  },
-    { "MoveNotepadWindow",      L_GuiOkStub  },
-    { "NotepadColour",          L_GuiOkStub  },
-    { "NotepadFont",            L_GuiOkStub  },
-    { "NotepadReadOnly",        L_GuiOkStub  },
+    { "ActivateNotepad",        L_ActivateNotepad       },
+    { "AppendToNotepad",        L_AppendToNotepad },
+    { "CloseNotepad",           L_CloseNotepad          },
+    { "MoveNotepadWindow",      L_MoveNotepadWindow     },
+    { "NotepadColour",          L_NotepadColour   },
+    { "NotepadFont",            L_NotepadFont     },
+    { "NotepadReadOnly",        L_NotepadReadOnly },
     { "NotepadSaveMethod",      L_GuiOkStub  },
-    { "ReplaceNotepad",         L_GuiOkStub  },
-    { "SaveNotepad",            L_GuiOkStub  },
-    { "SendToNotepad",          L_GuiOkStub  },
-    { "GetNotepadLength",       L_GuiNilStub },
-    { "GetNotepadList",         L_WindowListStub },
-    { "GetNotepadText",         L_GuiNilStub },
-    { "GetNotepadWindowPosition",L_GuiNilStub},
+    { "ReplaceNotepad",         L_ReplaceNotepad  },
+    { "SaveNotepad",            L_SaveNotepad   },
+    { "SendToNotepad",          L_SendToNotepad },
+    { "GetNotepadLength",       L_GetNotepadLength },
+    { "GetNotepadList",         L_GetNotepadList   },
+    { "GetNotepadText",         L_GetNotepadText   },
+    { "GetNotepadWindowPosition", L_GetNotepadWindowPosition },
 
     // ── Extended mapping stubs ────────────────────────────────────────────────
     { "GetMapping",             L_GuiNilStub },

@@ -1594,28 +1594,71 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
         }, itemLog->GetId());
     }
 
-    // If a URL link was right-clicked, add browser/clipboard options.
-    bool isURL = !linkAtClick.empty() &&
-                 (linkAtClick.compare(0, 7, "http://")  == 0 ||
-                  linkAtClick.compare(0, 8, "https://") == 0);
-    if (isURL) {
+    // If a link was right-clicked, add appropriate context menu options.
+    if (!linkAtClick.empty()) {
+        bool isURL = (linkAtClick.compare(0, 7, "http://")  == 0 ||
+                      linkAtClick.compare(0, 8, "https://") == 0);
         menu.AppendSeparator();
 
-        wxMenuItem* itemOpen = menu.Append(wxID_ANY, "Open URL in Browser");
-        menu.Bind(wxEVT_MENU,
-            [this, linkAtClick](wxCommandEvent&) {
-                if (m_fn_link_clicked) m_fn_link_clicked(linkAtClick);
-            }, itemOpen->GetId());
+        if (isURL) {
+            wxMenuItem* itemOpen = menu.Append(wxID_ANY, "Open URL in Browser");
+            menu.Bind(wxEVT_MENU,
+                [this, linkAtClick](wxCommandEvent&) {
+                    if (m_fn_link_clicked) m_fn_link_clicked(linkAtClick);
+                }, itemOpen->GetId());
 
-        wxMenuItem* itemCopyURL = menu.Append(wxID_ANY, "Copy URL");
-        menu.Bind(wxEVT_MENU,
-            [linkAtClick](wxCommandEvent&) {
-                if (wxTheClipboard->Open()) {
-                    wxTheClipboard->SetData(new wxTextDataObject(
-                        wxString::FromUTF8(linkAtClick.c_str())));
-                    wxTheClipboard->Close();
+            wxMenuItem* itemCopyURL = menu.Append(wxID_ANY, "Copy URL");
+            menu.Bind(wxEVT_MENU,
+                [linkAtClick](wxCommandEvent&) {
+                    if (wxTheClipboard->Open()) {
+                        wxTheClipboard->SetData(new wxTextDataObject(
+                            wxString::FromUTF8(linkAtClick.c_str())));
+                        wxTheClipboard->Close();
+                    }
+                }, itemCopyURL->GetId());
+        } else {
+            // MXP send-link or Lua Hyperlink() action.
+            // Split pipe-delimited alternatives and show each as a menu item.
+            std::vector<std::string> choices;
+            {
+                size_t start = 0;
+                for (;;) {
+                    size_t sep = linkAtClick.find('|', start);
+                    std::string part = linkAtClick.substr(start,
+                        (sep == std::string::npos) ? std::string::npos : sep - start);
+                    if (!part.empty()) choices.push_back(std::move(part));
+                    if (sep == std::string::npos) break;
+                    start = sep + 1;
                 }
-            }, itemCopyURL->GetId());
+            }
+            for (const std::string& ch : choices) {
+                wxString label = wxString::Format(wxT("Send: %s"),
+                    wxString::FromUTF8(ch.c_str(), ch.size()));
+                wxMenuItem* item = menu.Append(wxID_ANY, label);
+                menu.Bind(wxEVT_MENU,
+                    [this, cmd = ch](wxCommandEvent&) {
+                        if (m_fn_link_clicked) m_fn_link_clicked(cmd);
+                    }, item->GetId());
+            }
+            if (choices.size() > 1) {
+                // Also offer "Send first" as a quick one-click action.
+                wxMenuItem* itemAll = menu.Append(wxID_ANY,
+                    wxT("Send All (in order)"));
+                menu.Bind(wxEVT_MENU,
+                    [this, linkAtClick](wxCommandEvent&) {
+                        if (m_fn_link_clicked) m_fn_link_clicked(linkAtClick);
+                    }, itemAll->GetId());
+            }
+            wxMenuItem* itemCopy = menu.Append(wxID_ANY, "Copy Action");
+            menu.Bind(wxEVT_MENU,
+                [linkAtClick](wxCommandEvent&) {
+                    if (wxTheClipboard->Open()) {
+                        wxTheClipboard->SetData(new wxTextDataObject(
+                            wxString::FromUTF8(linkAtClick.c_str())));
+                        wxTheClipboard->Close();
+                    }
+                }, itemCopy->GetId());
+        }
     }
 
     PopupMenu(&menu, evt.GetPosition());

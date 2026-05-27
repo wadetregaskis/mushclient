@@ -842,18 +842,27 @@ void CMUSHclientDoc::SetUpOutputWindow (void)
 
   // set output window(s) to "pause" if wanted
 
+#ifndef _WIN32
+  if (m_bStartPaused)
+    {
+    m_gui_paused = true;
+    if (m_fn_set_paused)
+      m_fn_set_paused (true);
+    }
+#else
   for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
   	  {
 		  CMUSHView* pmyView = (CMUSHView*)pView;
 
 		  pmyView->m_freeze = m_bStartPaused;
 
-	    }	
+	    }
     } // end of looping through views
+#endif
 
 // ------ load global plugins (unless already loaded from world file)
 

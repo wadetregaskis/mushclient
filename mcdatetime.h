@@ -95,6 +95,23 @@ public:
 	int SetDate(int nYear, int nMonth, int nDay);
 	int SetTime(int nHour, int nMin, double nSec);
 
+#ifndef _WIN32
+	// Format — uses strftime-style fmt string, returns a CString.
+	// Only the subset used by MUSHclient is guaranteed to work.
+	CString Format(const char* fmt) const {
+		struct tm t = {};
+		t.tm_year = GetYear() - 1900;
+		t.tm_mon  = GetMonth() - 1;
+		t.tm_mday = GetDay();
+		t.tm_hour = GetHour();
+		t.tm_min  = GetMinute();
+		t.tm_sec  = GetSecond();
+		char buf[64];
+		strftime(buf, sizeof(buf), fmt, &t);
+		return CString(buf);
+	}
+#endif
+
 // Implementation
 protected:
 	void CheckRange();

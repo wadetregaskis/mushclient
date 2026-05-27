@@ -21,6 +21,10 @@
 #include <vector>
 #include <cstdlib>   // malloc/realloc/free
 #include <cstdio>    // fprintf
+#include <ctime>    // time()
+#include <cstdlib>  // getcwd, free
+#include <vector>   // std::vector in utils functions
+#include <unistd.h> // getcwd
 
 using std::string;
 using std::vector;
@@ -140,6 +144,608 @@ void MakeTableItemBool (lua_State * L, const char * name, const bool b)
     lua_rawset(L, -3);
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// utils.* Lua table — portable (non-Windows) implementation
+//
+// Mirrors the "utils" table registered by lua_utils.cpp in the Windows build.
+// Pure-computation functions are copied verbatim; dialog functions dispatch
+// through the wx hook system (nullptr → returns nil in CLI/headless builds).
+// ─────────────────────────────────────────────────────────────────────────────
+
+#include "Dmetaph.h"              // MString / DoubleMetaphone
+// Forward declarations for symbols defined elsewhere in mushcore
+int EditDistance(const std::string source, const std::string target);
+
+struct tInfoTypeMapping { int iInfoType; const char* sDescription; };
+extern tInfoTypeMapping InfoTypes[];
+
+struct tInternalFunctionsTable { char sFunction[50]; char sArgs[200]; };
+extern tInternalFunctionsTable InternalFunctionsTable[];
+
+extern std::string PluginCallbacksNames[];
+
+// PCRE internal helpers (bundled PCRE, always available in mushcore)
+extern "C" {
+    int  _pcre_ord2utf(int, unsigned char*);
+    int  _pcre_valid_utf8(const unsigned char*, int);
+}
+
+// xterm 256-colour table (initialised by lua_world_api_portable.cpp at load)
+extern COLORREF xterm_256_colours[256];
+
+// ── UTF-8 encode: codepoints → UTF-8 string ──────────────────────────────────
+static int utils_utf8encode(lua_State* L)
+{
+    int numArgs = lua_gettop(L);
+    std::string sOutput;
+    unsigned char utf8[10];
+    for (int i = 1; i <= numArgs; i++) {
+        if (lua_istable(L, i)) {
+            for (int j = 1; ; j++) {
+                lua_rawgeti(L, i, j);
+                if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+                if (!lua_isnumber(L, -1))
+                    luaL_error(L, "Index [%d] of table arg #%d must be a number", j, i);
+                double f = lua_tonumber(L, -1);
+                lua_pop(L, 1);
+                int n = (int)f;
+                sOutput.append((const char*)utf8, _pcre_ord2utf(n, utf8));
+            }
+        } else {
+            double f = luaL_checknumber(L, i);
+            int n = (int)f;
+            sOutput.append((const char*)utf8, _pcre_ord2utf(n, utf8));
+        }
+    }
+    lua_pushlstring(L, sOutput.c_str(), sOutput.size());
+    return 1;
+}
+
+// ── UTF-8 convert: Latin-1 string → UTF-8 ────────────────────────────────────
+static int utils_utf8convert(lua_State* L)
+{
+    const unsigned char* s = (const unsigned char*)luaL_checkstring(L, 1);
+    std::string sOutput;
+    unsigned char utf8[10];
+    for (const unsigned char* p = s; *p; p++)
+        sOutput.append((const char*)utf8, _pcre_ord2utf(*p, utf8));
+    lua_pushlstring(L, sOutput.c_str(), sOutput.size());
+    return 1;
+}
+
+// ── UTF-8 decode: UTF-8 string → table of codepoints ─────────────────────────
+static int utils_utf8decode(lua_State* L)
+{
+    size_t len;
+    const unsigned char* data = (const unsigned char*)luaL_checklstring(L, 1, &len);
+    int iBad = _pcre_valid_utf8(data, (int)len);
+    if (iBad > 0)
+        luaL_error(L, "Bad UTF-8 string. Error at column %d", iBad + 1);
+    lua_newtable(L);
+    int idx = 1;
+    for (size_t i = 0; i < len; ) {
+        unsigned char c = data[i];
+        unsigned long cp;
+        int bytes;
+        if      (c < 0x80)                       { cp = c;           bytes = 1; }
+        else if ((c & 0xE0) == 0xC0)             { cp = c & 0x1F;   bytes = 2; }
+        else if ((c & 0xF0) == 0xE0)             { cp = c & 0x0F;   bytes = 3; }
+        else if ((c & 0xF8) == 0xF0)             { cp = c & 0x07;   bytes = 4; }
+        else                                      { cp = c;           bytes = 1; }
+        for (int b = 1; b < bytes && i + b < len; b++)
+            cp = (cp << 6) | (data[i + b] & 0x3F);
+        lua_pushnumber(L, (lua_Number)cp);
+        lua_rawseti(L, -2, idx++);
+        i += bytes;
+    }
+    return 1;
+}
+
+// ── UTF-8 valid: return true if string is valid UTF-8 ────────────────────────
+static int utils_utf8valid(lua_State* L)
+{
+    size_t len;
+    const unsigned char* s = (const unsigned char*)luaL_checklstring(L, 1, &len);
+    lua_pushboolean(L, _pcre_valid_utf8(s, (int)len) <= 0);
+    return 1;
+}
+
+// Helper: byte-advance one UTF-8 codepoint
+static const unsigned char* utf8_next(const unsigned char* p)
+{
+    unsigned char c = *p;
+    if (c < 0x80)        return p + 1;
+    if ((c & 0xE0)==0xC0) return p + 2;
+    if ((c & 0xF0)==0xE0) return p + 3;
+    if ((c & 0xF8)==0xF0) return p + 4;
+    return p + 1;
+}
+
+// ── UTF-8 sub: substring by codepoint indices (1-based, negative = from end) ──
+static int utils_utf8sub(lua_State* L)
+{
+    size_t len;
+    const unsigned char* s = (const unsigned char*)luaL_checklstring(L, 1, &len);
+    int start = (int)luaL_checknumber(L, 2);
+    int stop  = (int)luaL_optnumber(L, 3, -1);
+
+    // Count total codepoints
+    int total = 0;
+    for (const unsigned char* p = s; p < s + len; p = utf8_next(p)) total++;
+
+    if (start < 0) start = total + start + 1;
+    if (stop  < 0) stop  = total + stop  + 1;
+    if (start < 1) start = 1;
+    if (stop  > total) stop = total;
+
+    if (start > stop) { lua_pushlstring(L, "", 0); return 1; }
+
+    const unsigned char* begin_p = s;
+    int i = 1;
+    for (; i < start; i++) begin_p = utf8_next(begin_p);
+    const unsigned char* end_p = begin_p;
+    for (; i <= stop; i++) end_p = utf8_next(end_p);
+    lua_pushlstring(L, (const char*)begin_p, end_p - begin_p);
+    return 1;
+}
+
+// ── edit_distance ─────────────────────────────────────────────────────────────
+static int utils_edit_distance(lua_State* L)
+{
+    const char* s = luaL_checkstring(L, 1);
+    const char* t = luaL_checkstring(L, 2);
+    lua_pushnumber(L, ::EditDistance(std::string(s), std::string(t)));
+    return 1;
+}
+
+// ── metaphone ─────────────────────────────────────────────────────────────────
+static int utils_metaphone(lua_State* L)
+{
+    const char* word = luaL_checkstring(L, 1);
+    int length = (int)luaL_optnumber(L, 2, 4);
+    MString m(word, length);
+    CString str1, str2;
+    m.DoubleMetaphone(str1, str2);
+    lua_pushstring(L, (const char*)str1);
+    if (str2.IsEmpty())
+        lua_pushnil(L);
+    else
+        lua_pushstring(L, (const char*)str2);
+    return 2;
+}
+
+// ── colourcube ────────────────────────────────────────────────────────────────
+static int utils_colourcube(lua_State* L)
+{
+    int which = (int)luaL_checknumber(L, 1);
+    static const unsigned char values[6] = { 0, 95, 135, 175, 215, 255 };
+    static const unsigned char incr = 51;
+    switch (which) {
+    case 1:
+        for (int r = 0; r < 6; r++)
+          for (int g = 0; g < 6; g++)
+            for (int b = 0; b < 6; b++)
+              xterm_256_colours[16 + r*36 + g*6 + b] =
+                RGB(values[r], values[g], values[b]);
+        break;
+    case 2:
+        for (int r = 0; r < 6; r++)
+          for (int g = 0; g < 6; g++)
+            for (int b = 0; b < 6; b++)
+              xterm_256_colours[16 + r*36 + g*6 + b] =
+                RGB(r*incr, g*incr, b*incr);
+        break;
+    default: luaL_error(L, "Unknown option");
+    }
+    return 0;
+}
+
+// ── timer: seconds since epoch using QPC (high-res on non-Windows) ───────────
+static int utils_timer(lua_State* L)
+{
+    if (App.m_iCounterFrequency) {
+        LARGE_INTEGER t;
+        QueryPerformanceCounter(&t);
+        lua_pushnumber(L, (double)t.QuadPart / (double)App.m_iCounterFrequency);
+    } else {
+        lua_pushnumber(L, (double)time(nullptr));
+    }
+    return 1;
+}
+
+// ── infotypes: table of GetInfo selector descriptions ────────────────────────
+static int utils_infotypes(lua_State* L)
+{
+    lua_newtable(L);
+    for (int i = 0; InfoTypes[i].iInfoType; i++) {
+        lua_pushstring(L, InfoTypes[i].sDescription);
+        lua_rawseti(L, -2, InfoTypes[i].iInfoType);
+    }
+    return 1;
+}
+
+// ── functionlist / functionargs / callbackslist ───────────────────────────────
+static int utils_functionlist(lua_State* L)
+{
+    lua_newtable(L);
+    for (int i = 0; InternalFunctionsTable[i].sFunction[0]; i++) {
+        lua_pushstring(L, InternalFunctionsTable[i].sFunction);
+        lua_rawseti(L, -2, i + 1);
+    }
+    return 1;
+}
+static int utils_functionargs(lua_State* L)
+{
+    lua_newtable(L);
+    for (int i = 0; InternalFunctionsTable[i].sFunction[0]; i++) {
+        lua_pushstring(L, InternalFunctionsTable[i].sFunction);
+        lua_pushstring(L, InternalFunctionsTable[i].sArgs);
+        lua_rawset(L, -3);
+    }
+    return 1;
+}
+static int utils_callbackslist(lua_State* L)
+{
+    lua_newtable(L);
+    for (int i = 0; PluginCallbacksNames[i] != ""; i++) {
+        lua_pushstring(L, PluginCallbacksNames[i].c_str());
+        lua_rawseti(L, -2, i + 1);
+    }
+    return 1;
+}
+
+// ── getfontfamilies: empty table on non-Windows ───────────────────────────────
+static int utils_getfontfamilies(lua_State* L)
+{
+    lua_newtable(L);
+    return 1;
+}
+
+// ── glyph_available: not supported ───────────────────────────────────────────
+static int utils_glyph_available(lua_State* L)
+{
+    lua_pushnumber(L, 0);
+    return 1;
+}
+
+// ── info: system information table ───────────────────────────────────────────
+static int utils_info(lua_State* L)
+{
+    lua_newtable(L);
+    char* p = getcwd(nullptr, 1024);
+    if (p) {
+        CString strPath(p);
+        free(p);
+        if (strPath.Right(1) != "/") strPath += "/";
+        lua_pushstring(L, (const char*)strPath);
+        lua_setfield(L, -2, "current_directory");
+    }
+    // log_files_directory is the only directory field available in the
+    // CMUSHclientApp stub on non-Windows.
+    lua_pushstring(L, App.m_strDefaultLogFileDirectory.c_str());
+    lua_setfield(L, -2, "log_files_directory");
+    return 1;
+}
+
+// ── msgbox / umsgbox: dispatch through UMessageBox ───────────────────────────
+static int utils_generic_msgbox(lua_State* L)
+{
+    const char* msg     = luaL_checkstring(L, 1);
+    const char* title   = luaL_optstring(L, 2, "MUSHclient");
+    const char* boxtype = luaL_optstring(L, 3, "ok");
+    const char* boxicon = luaL_optstring(L, 4, "!");
+    int         defbtn  = (int)luaL_optnumber(L, 5, 1);
+
+    UINT flags = MB_APPLMODAL;
+    if      (strcmp(boxtype,"ok")==0)                flags = MB_OK;
+    else if (strcmp(boxtype,"abortretryignore")==0)  flags = MB_ABORTRETRYIGNORE;
+    else if (strcmp(boxtype,"okcancel")==0)           flags = MB_OKCANCEL;
+    else if (strcmp(boxtype,"retrycancel")==0)        flags = MB_RETRYCANCEL;
+    else if (strcmp(boxtype,"yesno")==0)              flags = MB_YESNO;
+    else if (strcmp(boxtype,"yesnocancel")==0)        flags = MB_YESNOCANCEL;
+    else luaL_error(L, "msgbox type unknown");
+
+    switch (tolower((unsigned char)boxicon[0])) {
+    case '?': flags |= MB_ICONQUESTION;    break;
+    case '!': flags |= MB_ICONEXCLAMATION; break;
+    case 'i': flags |= MB_ICONINFORMATION; break;
+    case '.': flags |= MB_ICONSTOP;        break;
+    default:  luaL_error(L, "msgbox icon unknown");
+    }
+    switch (defbtn) {
+    case 1: flags |= MB_DEFBUTTON1; break;
+    case 2: flags |= MB_DEFBUTTON2; break;
+    case 3: flags |= MB_DEFBUTTON3; break;
+    }
+
+    int r = UMessageBox(msg, flags, title);
+    const char* res;
+    switch (r) {
+    case IDYES:    res = "yes";    break;
+    case IDNO:     res = "no";     break;
+    case IDOK:     res = "ok";     break;
+    case IDRETRY:  res = "retry";  break;
+    case IDIGNORE: res = "ignore"; break;
+    case IDCANCEL: res = "cancel"; break;
+    case IDABORT:  res = "abort";  break;
+    default:       res = "other";  break;
+    }
+    lua_pushstring(L, res);
+    return 1;
+}
+static int utils_msgbox(lua_State* L)  { return utils_generic_msgbox(L); }
+static int utils_umsgbox(lua_State* L) { return utils_generic_msgbox(L); }
+
+// ── inputbox / editbox ────────────────────────────────────────────────────────
+static int utils_gen_inputbox(lua_State* L, bool multiline)
+{
+    const char* title    = luaL_optstring(L, 1, "Input");
+    const char* prompt   = luaL_optstring(L, 2, "");
+    const char* defval   = luaL_optstring(L, 3, "");
+    if (!g_wxhook_inputbox) { lua_pushnil(L); return 1; }
+    char* result = g_wxhook_inputbox(title, prompt, defval, multiline);
+    if (!result) { lua_pushnil(L); return 1; }
+    lua_pushstring(L, result);
+    free(result);
+    return 1;
+}
+static int utils_inputbox(lua_State* L) { return utils_gen_inputbox(L, false); }
+static int utils_editbox(lua_State* L)  { return utils_gen_inputbox(L, true);  }
+
+// ── filepicker ────────────────────────────────────────────────────────────────
+static int utils_filepicker(lua_State* L)
+{
+    const char* title   = luaL_optstring(L, 1, "");
+    const char* defname = luaL_optstring(L, 2, "");
+    const char* defext  = luaL_optstring(L, 3, "");
+    // arg 4: filter table (ignored — we pass wildcard)
+    bool bSave = lua_toboolean(L, 5) != 0;
+
+    if (!g_wxhook_file_dialog) { lua_pushnil(L); return 1; }
+    char* path = g_wxhook_file_dialog(!bSave, title, defname, defext, nullptr, bSave);
+    if (!path) { lua_pushnil(L); return 1; }
+    lua_pushstring(L, path);
+    free(path);
+    return 1;
+}
+
+// ── directorypicker ───────────────────────────────────────────────────────────
+static int utils_directorypicker(lua_State* L)
+{
+    const char* title   = luaL_optstring(L, 1, "Select directory");
+    const char* defpath = luaL_optstring(L, 2, "");
+    if (!g_wxhook_directorypicker) { lua_pushnil(L); return 1; }
+    char* path = g_wxhook_directorypicker(title, defpath);
+    if (!path) { lua_pushnil(L); return 1; }
+    lua_pushstring(L, path);
+    free(path);
+    return 1;
+}
+
+// ── choose / listbox: single-choice dialog ────────────────────────────────────
+static int utils_choose(lua_State* L)
+{
+    // args: table-of-items, optional default, optional title
+    if (!lua_istable(L, 1)) luaL_error(L, "argument 1 must be a table");
+    std::vector<const char*> items;
+    std::vector<std::string> storage;
+    for (int j = 1; ; j++) {
+        lua_rawgeti(L, 1, j);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        storage.push_back(luaL_checkstring(L, -1));
+        lua_pop(L, 1);
+    }
+    for (auto& s : storage) items.push_back(s.c_str());
+    const char* defval = luaL_optstring(L, 2, "");
+
+    if (!g_wxhook_menu_dialog || items.empty()) { lua_pushnil(L); return 1; }
+    char* chosen = g_wxhook_menu_dialog(items.data(), (int)items.size(), defval);
+    if (!chosen) { lua_pushnil(L); return 1; }
+    lua_pushstring(L, chosen);
+    free(chosen);
+    return 1;
+}
+static int utils_listbox(lua_State* L)      { return utils_choose(L); }
+static int utils_multilistbox(lua_State* L) {
+    // Multi-select not yet supported; fall back to single-choice
+    return utils_choose(L);
+}
+
+// ── appendtonotepad / activatenotepad ─────────────────────────────────────────
+static int utils_appendtonotepad(lua_State* L)
+{
+    const char* title   = luaL_checkstring(L, 1);
+    const char* message = luaL_checkstring(L, 2);
+    bool bReplace = lua_toboolean(L, 3) != 0;
+    // Route through the GUI notepad hook (nullptr in CLI builds).
+    bool ok = false;
+    if (g_wxhook_append_to_notepad)
+        ok = g_wxhook_append_to_notepad(title, message, bReplace);
+    lua_pushboolean(L, ok);
+    return 1;
+}
+static int utils_activatenotepad(lua_State* L)
+{
+    const char* title = luaL_checkstring(L, 1);
+    bool ok = false;
+    if (g_wxhook_activate_notepad)
+        ok = g_wxhook_activate_notepad(title);
+    lua_pushboolean(L, ok);
+    return 1;
+}
+
+// ── showdebugstatus ───────────────────────────────────────────────────────────
+extern bool bShowDebugStatus;
+static int utils_showdebugstatus(lua_State* L)
+{
+    bShowDebugStatus = lua_toboolean(L, 1) != 0;
+    return 0;
+}
+
+// ── xmlread ───────────────────────────────────────────────────────────────────
+// Parses an XML string and returns a nested Lua table (same structure as
+// the Windows utils.xmlread built on CXMLparser).
+#include "xml/xmlparse.h"
+
+static void xmlOutputElement(lua_State* L, CXMLelement& node)
+{
+    lua_newtable(L);
+
+    lua_pushstring(L, (const char*)node.strName);
+    lua_setfield(L, -2, "name");
+
+    lua_pushstring(L, (const char*)node.strContent);
+    lua_setfield(L, -2, "content");
+
+    if (node.bEmpty) {
+        lua_pushboolean(L, 1);
+        lua_setfield(L, -2, "empty");
+    }
+
+    lua_pushnumber(L, node.iLine);
+    lua_setfield(L, -2, "line");
+
+    if (!node.AttributeMap.IsEmpty()) {
+        lua_newtable(L);
+        CString strName;
+        CAttribute* attr = nullptr;
+        for (POSITION pos = node.AttributeMap.GetStartPosition(); pos; ) {
+            node.AttributeMap.GetNextAssoc(pos, strName, attr);
+            lua_pushstring(L, (const char*)attr->strValue);
+            lua_setfield(L, -2, (const char*)strName);
+        }
+        lua_setfield(L, -2, "attributes");
+    }
+
+    if (!node.ChildrenList.IsEmpty()) {
+        lua_newtable(L);
+        int idx = 1;
+        for (POSITION pos = node.ChildrenList.GetHeadPosition(); pos; ) {
+            CXMLelement* child = node.ChildrenList.GetNext(pos);
+            xmlOutputElement(L, *child);
+            lua_rawseti(L, -2, idx++);
+        }
+        lua_setfield(L, -2, "nodes");
+    }
+}
+
+static int utils_xmlread(lua_State* L)
+{
+    size_t xmlLen;
+    const char* xml = luaL_checklstring(L, 1, &xmlLen);
+    CXMLparser parser;
+    try {
+        CMemFile f((unsigned char*)xml, (UINT)xmlLen);
+        CArchive ar(&f, CArchive::load);
+        parser.BuildStructure(ar.GetFile());
+    } catch (CException* e) {
+        char msg[1000] = {};
+        e->GetErrorMessage(msg, sizeof msg);
+        e->Delete();
+        lua_pushnil(L);
+        lua_pushstring(L, msg);
+        lua_pushnumber(L, (lua_Number)parser.m_xmlLine);
+        return 3;
+    }
+    xmlOutputElement(L, parser.m_xmlRoot);
+    lua_pushstring(L, (const char*)parser.m_strDocumentName);
+
+    int nResults = 2;
+    if (!parser.m_CustomEntityMap.IsEmpty()) {
+        lua_newtable(L);
+        CString k, v;
+        for (POSITION pos = parser.m_CustomEntityMap.GetStartPosition(); pos; ) {
+            parser.m_CustomEntityMap.GetNextAssoc(pos, k, v);
+            lua_pushstring(L, (const char*)v);
+            lua_setfield(L, -2, (const char*)k);
+        }
+        nResults = 3;
+    }
+    return nResults;
+}
+
+// ── sendtofront / shellexecute / fontpicker / filterpicker / spellcheck ───────
+// Stubs: return nil or false where a return value is expected.
+static int utils_sendtofront(lua_State* L)   { lua_pushboolean(L, 0); return 1; }
+
+static int utils_shellexecute(lua_State* L)
+{
+    // On non-Windows, use xdg-open (Linux) or open (macOS) for the filename arg.
+    const char* file = luaL_checkstring(L, 1);
+    std::string cmd;
+#ifdef __APPLE__
+    cmd = "open ";
+#else
+    cmd = "xdg-open ";
+#endif
+    cmd += "'";
+    // Simple shell-safe: escape single quotes in file path
+    for (const char* p = file; *p; p++) {
+        if (*p == '\'') cmd += "'\\''";
+        else            cmd += *p;
+    }
+    cmd += "' &";
+    system(cmd.c_str());  // fire-and-forget
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int utils_fontpicker(lua_State* L)    { lua_pushnil(L); return 1; }
+static int utils_filterpicker(lua_State* L)  { lua_pushnil(L); return 1; }
+static int utils_spellcheckdialog(lua_State* L){ lua_pushnil(L); return 1; }
+static int utils_menufontsize(lua_State* L)  { lua_pushnumber(L, 0); return 1; }
+static int utils_setbgcolour(lua_State* L)   { return 0; }
+static int utils_reload_global_prefs(lua_State* L) { return 0; }
+
+// ── utils table registration ──────────────────────────────────────────────────
+static const luaL_Reg utils_lib[] = {
+    { "activatenotepad",    utils_activatenotepad  },
+    { "appendtonotepad",    utils_appendtonotepad  },
+    { "callbackslist",      utils_callbackslist    },
+    { "choose",             utils_choose           },
+    { "colourcube",         utils_colourcube       },
+    { "directorypicker",    utils_directorypicker  },
+    { "edit_distance",      utils_edit_distance    },
+    { "editbox",            utils_editbox          },
+    { "filepicker",         utils_filepicker       },
+    { "filterpicker",       utils_filterpicker     },
+    { "fontpicker",         utils_fontpicker       },
+    { "functionargs",       utils_functionargs     },
+    { "functionlist",       utils_functionlist     },
+    { "getfontfamilies",    utils_getfontfamilies  },
+    { "glyph_available",    utils_glyph_available  },
+    { "info",               utils_info             },
+    { "infotypes",          utils_infotypes        },
+    { "inputbox",           utils_inputbox         },
+    { "listbox",            utils_listbox          },
+    { "menufontsize",       utils_menufontsize     },
+    { "metaphone",          utils_metaphone        },
+    { "msgbox",             utils_msgbox           },
+    { "multilistbox",       utils_multilistbox     },
+    { "reload_global_prefs",utils_reload_global_prefs },
+    { "sendtofront",        utils_sendtofront      },
+    { "setbackgroundcolour",utils_setbgcolour      },
+    { "shellexecute",       utils_shellexecute     },
+    { "showdebugstatus",    utils_showdebugstatus  },
+    { "spellcheckdialog",   utils_spellcheckdialog },
+    { "timer",              utils_timer            },
+    { "umsgbox",            utils_umsgbox          },
+    { "utf8decode",         utils_utf8decode       },
+    { "utf8encode",         utils_utf8encode       },
+    { "utf8convert",        utils_utf8convert      },
+    { "utf8sub",            utils_utf8sub          },
+    { "utf8valid",          utils_utf8valid        },
+    { "xmlread",            utils_xmlread          },
+    { nullptr, nullptr }
+};
+
+static void RegisterUtilsLib(lua_State* L)
+{
+    luaL_register(L, "utils", utils_lib);
+    lua_pop(L, 1);
+}
+
 // ── RegisterLuaRoutines ───────────────────────────────────────────────────────
 // On Windows this (in lua_methods.cpp) registers the full MUSHclient Lua API
 // ("world" library, trigger/alias/timer flag tables, colour name tables, etc.).
@@ -164,6 +770,7 @@ int RegisterLuaRoutines (lua_State * L)
 
     // Register the "world" library (Note, SetVariable, Send, Execute, …)
     RegisterWorldLib(L);
+    RegisterUtilsLib(L);
 
     // ── Flag/constant tables (mirror lua_methods.cpp MakeFlagsTable calls) ──
     // trigger_flag table

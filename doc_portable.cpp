@@ -1445,16 +1445,66 @@ void ThrowErrorException(const char* fmt, ...)
     throw std::runtime_error(buf);
 }
 
-// ── FixHTMLString — strip/escape HTML (pass-through stub) ─────────────────
-CString FixHTMLString(CString s)
+// ── FixHTMLString — escape HTML special characters ────────────────────────
+// Mirrors Utilities.cpp::FixHTMLString: < > & " → &lt; &gt; &amp; &quot;
+CString FixHTMLString(CString strToFix)
 {
-    return s;
+    CString strOld = strToFix;
+    CString strNew;
+    int i;
+    while ((i = strOld.FindOneOf("<>&\"")) != -1) {
+        strNew += strOld.Left(i);
+        switch (strOld[i]) {
+        case '<':  strNew += "&lt;";   break;
+        case '>':  strNew += "&gt;";   break;
+        case '&':  strNew += "&amp;";  break;
+        case '"':  strNew += "&quot;"; break;
+        }
+        strOld = strOld.Mid(i + 1);
+    }
+    strNew += strOld;
+    return strNew;
 }
 
-// ── FixupEscapeSequences — convert \\n → \n etc. (pass-through stub) ─────
-CString FixupEscapeSequences(const CString& s)
+// ── FixupEscapeSequences — convert C-style escape sequences ──────────────
+// Mirrors Utilities.cpp::FixupEscapeSequences.
+// Converts \n \t \r \a \b \f \v \' \" \\ \? \x## in the source string.
+CString FixupEscapeSequences(const CString& strSource)
 {
-    return s;
+    CString strDest;
+    const char* p = static_cast<const char*>(strSource);
+    for (; *p; ++p) {
+        if (*p != '\\') { strDest += *p; continue; }
+        char c = *++p;
+        if (!c) break;
+        switch (c) {
+        case 'a':  strDest += '\a'; break;
+        case 'b':  strDest += '\b'; break;
+        case 'f':  strDest += '\f'; break;
+        case 'n':  strDest += '\n'; break;
+        case 'r':  strDest += '\r'; break;
+        case 't':  strDest += '\t'; break;
+        case 'v':  strDest += '\v'; break;
+        case '\'': strDest += '\''; break;
+        case '"':  strDest += '"';  break;
+        case '\\': strDest += '\\'; break;
+        case '?':  strDest += '?';  break;
+        case 'x': {
+            // hex escape: up to 2 hex digits
+            unsigned char val = 0;
+            int digits = 0;
+            for (++p; *p && isxdigit((unsigned char)*p) && digits < 2; ++p, ++digits) {
+                int d = toupper((unsigned char)*p);
+                val = (unsigned char)((val << 4) + (d >= 'A' ? d - 'A' + 10 : d - '0'));
+            }
+            --p;  // will be incremented by the outer for loop
+            strDest += (char)val;
+            break;
+        }
+        default:   strDest += c; break;
+        }
+    }
+    return strDest;
 }
 
 // ── ConvertToRegularExpression — wildcard to regex ────────────────────────

@@ -1127,10 +1127,14 @@ static int L_GetInfo(lua_State* L)
         // 4-7: file/line preamble/postamble — not in portable CMUSHclientDoc
         case 4: case 5: case 6: case 7: lua_pushstring(L, "");                 return 1;
         case 8:   lua_pushstring(L, (const char*)pDoc->m_notes);               return 1;
-        // 9, 10, 20, 23-27: fields absent from portable doc_stub
-        case 9: case 10: case 20:
-        case 23: case 24: case 25: case 26: case 27:
-            lua_pushstring(L, "");                                              return 1;
+        case 9:   lua_pushstring(L, (const char*)pDoc->m_new_activity_sound);  return 1;
+        case 10:  lua_pushstring(L, (const char*)pDoc->m_strScriptEditor);     return 1;
+        case 20:  lua_pushstring(L, (const char*)pDoc->m_font_name);           return 1;
+        case 23:  lua_pushstring(L, (const char*)pDoc->m_input_font_name);     return 1;
+        case 24:  lua_pushstring(L, (const char*)pDoc->m_paste_postamble);     return 1;
+        case 25:  lua_pushstring(L, (const char*)pDoc->m_paste_preamble);      return 1;
+        case 26:  lua_pushstring(L, (const char*)pDoc->m_pasteline_postamble); return 1;
+        case 27:  lua_pushstring(L, (const char*)pDoc->m_pasteline_preamble);  return 1;
         case 19:  lua_pushstring(L, (const char*)pDoc->m_strSpeedWalkFiller);  return 1;
         case 22:  lua_pushstring(L, (const char*)pDoc->m_connect_text);        return 1;
         case 11:  lua_pushstring(L, (const char*)pDoc->m_strLogFilePreamble);  return 1;
@@ -1149,9 +1153,11 @@ static int L_GetInfo(lua_State* L)
         case 32:  lua_pushstring(L, (const char*)pDoc->m_strWorldDisconnect);  return 1;
         case 33:  lua_pushstring(L, (const char*)pDoc->m_strWorldGetFocus);    return 1;
         case 34:  lua_pushstring(L, (const char*)pDoc->m_strWorldLoseFocus);   return 1;
-        // 37-39, 41, 50: fields absent from portable doc_stub
-        case 37: case 38: case 39: case 41: case 50:
-            lua_pushstring(L, "");                                              return 1;
+        case 37:  lua_pushstring(L, (const char*)pDoc->m_strAutoSayString);         return 1;
+        case 38:  lua_pushstring(L, (const char*)pDoc->m_strOverridePrefix);        return 1;
+        case 39:  lua_pushstring(L, (const char*)pDoc->m_strTabCompletionDefaults); return 1;
+        case 41:  lua_pushstring(L, (const char*)pDoc->m_strRecallLinePreamble);    return 1;
+        case 50:  lua_pushstring(L, (const char*)pDoc->m_strBeepSound);             return 1;
         case 35:  lua_pushstring(L, (const char*)pDoc->m_strScriptFilename);   return 1;
         case 36:  lua_pushstring(L, (const char*)pDoc->m_strScriptPrefix);     return 1;
         case 40:  lua_pushstring(L, (const char*)pDoc->m_strAutoLogFileName);  return 1;

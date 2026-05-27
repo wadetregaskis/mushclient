@@ -1354,6 +1354,21 @@ public:
     CString m_connect_text;       // text sent on connect
     CString m_strScriptPrefix;    // prefix to invoke scripts from command window
     CString m_strWorldFilePath;   // path to the loaded world file
+
+    // ── World properties (absent from original stub; added for GetInfo parity) ─
+    CString m_new_activity_sound;       // GetInfo(9):  new-activity beep file
+    CString m_strScriptEditor;          // GetInfo(10): script editor path
+    CString m_font_name;                // GetInfo(20): output font name
+    CString m_input_font_name;          // GetInfo(23): input-bar font name
+    CString m_paste_postamble;          // GetInfo(24): text appended after paste
+    CString m_paste_preamble;           // GetInfo(25): text prepended before paste
+    CString m_pasteline_postamble;      // GetInfo(26): appended after each paste line
+    CString m_pasteline_preamble;       // GetInfo(27): prepended before each paste line
+    CString m_strAutoSayString;         // GetInfo(37): auto-say prefix
+    CString m_strOverridePrefix;        // GetInfo(38): override-prefix char
+    CString m_strTabCompletionDefaults; // GetInfo(39): default tab-completion words
+    CString m_strRecallLinePreamble;    // GetInfo(41): recall-window line preamble
+    CString m_strBeepSound;             // GetInfo(50): beep sound file
     int     m_connect_now      = 0;
     long    m_nTotalLinesSent  = 0;
 

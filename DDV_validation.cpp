@@ -1,6 +1,10 @@
 #include "stdafx.h"
 #include "resource.h"
 
+// Real DDX/DDV implementations — only compiled in the full mushapp build.
+// In mushcore (no MUSHCLIENT_FULL_BUILD) mfc_ui.h already provides inline stubs.
+#ifdef MUSHCLIENT_FULL_BUILD
+
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #undef THIS_FILE
@@ -70,4 +74,6 @@ void AFXAPI DDX_MinMaxCBString(CDataExchange* pDX, int nIDC, CString& value)
   {
   DDX_CBString(pDX, nIDC, value);
   }
+
+#endif // MUSHCLIENT_FULL_BUILD
 

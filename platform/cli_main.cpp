@@ -156,6 +156,15 @@ int main(int argc, char* argv[])
     App.MXP_LoadEntities();
     App.MXP_LoadColours();
 
+    // ── Initialise high-resolution performance counter ───────────────────────
+    // QueryPerformanceFrequency() on POSIX returns 1 GHz (nanoseconds).
+    // Setting m_iCounterFrequency enables script-time profiling and GetInfo(232).
+    {
+        LARGE_INTEGER li;
+        if (QueryPerformanceFrequency(&li))
+            App.m_iCounterFrequency = li.QuadPart;
+    }
+
     // ── Set up the document (world state) ────────────────────────────────────
     CMUSHclientDoc doc;
     g_doc = &doc;

@@ -844,8 +844,9 @@ public:
     CString m_strLuaScript;              // sandbox script (empty on macOS — no sandbox)
     string  m_strDefaultLogFileDirectory;// prefix for log files
 
-    // Performance counter (0 = not available; keeps timing guards inactive)
-    long    m_iCounterFrequency = 0;
+    // Performance counter frequency in ticks/second (nanoseconds on POSIX).
+    // Non-zero once initialised; zero keeps all timing guards inactive.
+    LONGLONG m_iCounterFrequency = 0;
 
     void MXP_LoadColours();
     void MXP_LoadEntities();

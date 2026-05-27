@@ -140,8 +140,14 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
         --toSkip;
     }
 
-    // Fast-exit: nothing pending.
-    if (!pos) return;
+    // Fast-exit: nothing pending — but still repaint so that operations that
+    // change the visual state without emitting a new line (e.g. RemoveChunk
+    // after a buffer-size change, or a miniwindow deletion) still refresh the
+    // canvas.
+    if (!pos) {
+        if (m_fn_repaint) m_fn_repaint();
+        return;
+    }
 
     bool batchOpen = false;
 

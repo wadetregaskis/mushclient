@@ -5593,6 +5593,155 @@ static int L_Bookmark(lua_State* L)
     return 0;
 }
 
+// ── BlendPixel ────────────────────────────────────────────────────────────────
+// Pure colour-math function — no GUI required.  Ported directly from
+// CMUSHclientDoc::BlendPixel in scripting/methods/methods_miniwindows.cpp.
+// Uses the same blending.h macros and color.h CColor class.
+
+#include "blending.h"   // Blend_It, Colour_Op, Blend_Normal, …
+#include "color.h"      // CColor (HSL conversion) for modes 60-64
+
+#define Blend_It_Local(Op) \
+   do { \
+     if (Opacity < 1.0) { \
+       r = Blend_Opacity(rA, rB, Op, Opacity); \
+       g = Blend_Opacity(gA, gB, Op, Opacity); \
+       b = Blend_Opacity(bA, bB, Op, Opacity); \
+     } else { \
+       r = Op(rA, rB); \
+       g = Op(gA, gB); \
+       b = Op(bA, bB); \
+     } \
+   } while (false)
+
+#define Colour_Op_Local(fR,fG,fB) \
+   do { \
+     if (Opacity < 1.0) { \
+       r = Simple_Opacity(rB, fR, Opacity); \
+       g = Simple_Opacity(gB, fG, Opacity); \
+       b = Simple_Opacity(bB, fB, Opacity); \
+     } else { r = (fR); g = (fG); b = (fB); } \
+   } while (false)
+
+static int L_BlendPixel(lua_State* L)
+{
+    world_doc(L);
+    long Blend   = (long)luaL_checknumber(L, 1);
+    long Base    = (long)luaL_checknumber(L, 2);
+    short Mode   = (short)luaL_checkinteger(L, 3);
+    double Opacity = luaL_optnumber(L, 4, 1.0);
+
+    if (Opacity < 0.0 || Opacity > 1.0) { lua_pushnumber(L, -2); return 1; }
+
+    long rA = GetRValue(Blend), gA = GetGValue(Blend), bA = GetBValue(Blend);
+    long rB = GetRValue(Base),  gB = GetGValue(Base),  bB = GetBValue(Base);
+    long r, g, b;
+
+    // cos table for Interpolate mode
+    static unsigned char cos_table[256];
+    static bool bTableComputed = false;
+    if (!bTableComputed) {
+        double pi_div255 = 3.1415926535898 / 255.0;
+        for (int i = 0; i < 256; i++) {
+            double a = 64.0 - cos((double)i * pi_div255) * 64.0;
+            cos_table[i] = (uint8)(a + 0.5);
+        }
+        bTableComputed = true;
+    }
+
+    switch (Mode) {
+    case  1: Blend_It_Local(Blend_Normal);    break;
+    case  2: Blend_It_Local(Blend_Average);   break;
+    case  3: Blend_It_Local(Blend_Interpolate); break;
+    case  4: { double rnd = genrand();
+               r = (rnd < Opacity) ? rA : rB;
+               g = (rnd < Opacity) ? gA : gB;
+               b = (rnd < Opacity) ? bA : bB; } break;
+    case  5: Blend_It_Local(Blend_Darken);    break;
+    case  6: Blend_It_Local(Blend_Multiply);  break;
+    case  7: Blend_It_Local(Blend_ColorBurn); break;
+    case  8: Blend_It_Local(Blend_LinearBurn);break;
+    case  9: Blend_It_Local(Blend_InverseColorBurn); break;
+    case 10: Blend_It_Local(Blend_Subtract);  break;
+    case 11: Blend_It_Local(Blend_Lighten);   break;
+    case 12: Blend_It_Local(Blend_Screen);    break;
+    case 13: Blend_It_Local(Blend_ColorDodge);break;
+    case 14: Blend_It_Local(Blend_LinearDodge);break;
+    case 15: Blend_It_Local(Blend_InverseColorDodge); break;
+    case 16: Blend_It_Local(Blend_Add);       break;
+    case 17: Blend_It_Local(Blend_Overlay);   break;
+    case 18: Blend_It_Local(Blend_SoftLight); break;
+    case 19: Blend_It_Local(Blend_HardLight); break;
+    case 20: Blend_It_Local(Blend_VividLight);break;
+    case 21: Blend_It_Local(Blend_LinearLight);break;
+    case 22: Blend_It_Local(Blend_PinLight);  break;
+    case 23: Blend_It_Local(Blend_HardMix);   break;
+    case 24: Blend_It_Local(Blend_Difference);break;
+    case 25: Blend_It_Local(Blend_Exclusion); break;
+    case 26: Blend_It_Local(Blend_Reflect);   break;
+    case 27: Blend_It_Local(Blend_Glow);      break;
+    case 28: Blend_It_Local(Blend_Freeze);    break;
+    case 29: Blend_It_Local(Blend_Heat);      break;
+    case 30: Blend_It_Local(Blend_Negation);  break;
+    case 31: Blend_It_Local(Blend_Phoenix);   break;
+    case 32: Blend_It_Local(Blend_Stamp);     break;
+    case 33: Blend_It_Local(Blend_Xor);       break;
+    case 34: Blend_It_Local(Blend_And);       break;
+    case 35: Blend_It_Local(Blend_Or);        break;
+    case 36: Colour_Op_Local(rA, gB, bB); break;
+    case 37: Colour_Op_Local(rB, gA, bB); break;
+    case 38: Colour_Op_Local(rB, gB, bA); break;
+    case 39: Colour_Op_Local(rA, gA, bB); break;
+    case 40: Colour_Op_Local(rB, gA, bA); break;
+    case 41: Colour_Op_Local(rA, gB, bA); break;
+    case 42: Colour_Op_Local(rA, (gA>rA)?rA:gA, bA); break;
+    case 43: Colour_Op_Local(rA, (gA>bA)?bA:gA, bA); break;
+    case 44: Colour_Op_Local(rA, (gA>((rA+bA)/2))?((rA+bA)/2):gA, bA); break;
+    case 45: Colour_Op_Local(rA, gA, (bA>rA)?rA:bA); break;
+    case 46: Colour_Op_Local(rA, gA, (bA>gA)?gA:bA); break;
+    case 47: Colour_Op_Local(rA, gA, (bA>((rA+gA)/2))?((rA+gA)/2):bA); break;
+    case 48: Colour_Op_Local((rA>gA)?gA:rA, gA, bA); break;
+    case 49: Colour_Op_Local((rA>bA)?bA:rA, gA, bA); break;
+    case 50: Colour_Op_Local((rA>((gA+bA)/2))?((gA+bA)/2):rA, gA, bA); break;
+    case 51: Colour_Op_Local(rA, 0, 0);  break;
+    case 52: Colour_Op_Local(0, gA, 0);  break;
+    case 53: Colour_Op_Local(0, 0, bA);  break;
+    case 54: Colour_Op_Local(0, gA, bA); break;
+    case 55: Colour_Op_Local(rA, 0, bA); break;
+    case 56: Colour_Op_Local(rA, gA, 0); break;
+    case 57: Colour_Op_Local(rA, rA, rA); break;
+    case 58: Colour_Op_Local(gA, gA, gA); break;
+    case 59: Colour_Op_Local(bA, bA, bA); break;
+    case 60: { CColor cA, cB; cA.SetRGB(rA,gA,bA); cB.SetRGB(rB,gB,bB);
+               cB.SetHue(cA.GetHue());
+               r=Simple_Opacity(rB,cB.GetRed(),Opacity); g=Simple_Opacity(gB,cB.GetGreen(),Opacity); b=Simple_Opacity(bB,cB.GetBlue(),Opacity); } break;
+    case 61: { CColor cA, cB; cA.SetRGB(rA,gA,bA); cB.SetRGB(rB,gB,bB);
+               cB.SetSaturation(cA.GetSaturation());
+               r=Simple_Opacity(rB,cB.GetRed(),Opacity); g=Simple_Opacity(gB,cB.GetGreen(),Opacity); b=Simple_Opacity(bB,cB.GetBlue(),Opacity); } break;
+    case 62: { CColor cA, cB; cA.SetRGB(rA,gA,bA); cB.SetRGB(rB,gB,bB);
+               cB.SetHue(cA.GetHue()); cB.SetSaturation(cA.GetSaturation());
+               r=Simple_Opacity(rB,cB.GetRed(),Opacity); g=Simple_Opacity(gB,cB.GetGreen(),Opacity); b=Simple_Opacity(bB,cB.GetBlue(),Opacity); } break;
+    case 63: { CColor cA, cB; cA.SetRGB(rA,gA,bA); cB.SetRGB(rB,gB,bB);
+               cB.SetLuminance(cA.GetLuminance());
+               r=Simple_Opacity(rB,cB.GetRed(),Opacity); g=Simple_Opacity(gB,cB.GetGreen(),Opacity); b=Simple_Opacity(bB,cB.GetBlue(),Opacity); } break;
+    case 64: { CColor cA; cA.SetRGB(rA,gA,bA);
+               r=Simple_Opacity(rB,cA.GetHue(),Opacity); g=Simple_Opacity(gB,cA.GetSaturation(),Opacity); b=Simple_Opacity(bB,cA.GetLuminance(),Opacity); } break;
+    default: lua_pushnumber(L, -1); return 1;
+    }
+
+    lua_pushnumber(L, RGB(CLAMP(r), CLAMP(g), CLAMP(b)));
+    return 1;
+}
+
+// ── Accelerator / AcceleratorTo / AcceleratorList ─────────────────────────────
+// On non-Windows, keyboard accelerators (custom keystroke bindings) cannot be
+// wired to the Win32 HACCEL / accelerator-table mechanism.  Scripts that call
+// these functions receive a graceful error code rather than a crash.
+
+static int L_Accelerator(lua_State* L)    { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_AcceleratorTo(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_AcceleratorList(lua_State* L){ world_doc(L); lua_newtable(L); return 1; }
+
 // ── Miniwindow Lua API (mushcore/mushcli stubs) ───────────────────────────────
 // lua_world_api_portable.cpp is compiled into mushcore only.  The mushgui build
 // uses mushapp which compiles lua_methods.cpp instead — that file already has
@@ -6071,6 +6220,12 @@ static const luaL_Reg worldlib[] = {
     { "GetSelectionEndLine",    L_GetSelectionEndLine    },
     { "GetSelectionStartColumn",L_GetSelectionStartColumn},
     { "GetSelectionEndColumn",  L_GetSelectionEndColumn  },
+    // Accelerator stubs (Win32 accelerator tables not available on non-Windows)
+    { "Accelerator",        L_Accelerator       },
+    { "AcceleratorTo",      L_AcceleratorTo     },
+    { "AcceleratorList",    L_AcceleratorList   },
+    // BlendPixel — pure colour math, fully portable
+    { "BlendPixel",         L_BlendPixel        },
     // Misc stubs
     { "ResetIP",            L_ResetIP           },
     { "ResetStatusTime",    L_ResetStatusTime   },

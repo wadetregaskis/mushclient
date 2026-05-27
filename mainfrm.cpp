@@ -636,6 +636,11 @@ BOOL CMainFrame::OnWorldSwitch (UINT nIDC)
   if (!pDoc)   // didn't find 
     return TRUE;
 
+#ifndef _WIN32
+  // Non-Windows: no CSendView; raise the wx MDI child frame via the callback.
+  if (pDoc->m_fn_activate_client)
+    pDoc->m_fn_activate_client ();
+#else
   for(POSITION pos=pDoc->GetFirstViewPosition();pos!=NULL;)
     {
     CView* pView = pDoc->GetNextView(pos);
@@ -652,8 +657,9 @@ BOOL CMainFrame::OnWorldSwitch (UINT nIDC)
 
       break;
 
-      }	
+      }
     }
+#endif
 
   return TRUE;
   }   // end of CMainFrame::OnWorldSwitch
@@ -2218,6 +2224,11 @@ CMUSHclientDoc* pDoc = NULL;
     if (iWorld == (pDoc->m_view_number - 1))
       {
 
+#ifndef _WIN32
+      // Non-Windows: no system-tray widget and no CSendView; just raise the frame.
+      if (pDoc->m_fn_activate_client)
+        pDoc->m_fn_activate_client ();
+#else
       for(POSITION pos=pDoc->GetFirstViewPosition();pos!=NULL;)
         {
         CView* pView = pDoc->GetNextView(pos);
@@ -2234,8 +2245,9 @@ CMUSHclientDoc* pDoc = NULL;
 
           break;
 
-          }	
+          }
         }
+#endif
 
       }   // end of found the world
 

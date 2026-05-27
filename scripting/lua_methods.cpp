@@ -3089,6 +3089,21 @@ static int L_GetNotepadWindowPosition (lua_State *L)
 
   if (pTextDoc)
     {
+#ifndef _WIN32
+    // Non-Windows: CTextView is not registered in the MFC view system.
+    // Use the m_fn_get_rect callback wired by CWxNotepadFrame instead.
+    if (pTextDoc->m_fn_get_rect)
+      {
+      std::string s = pTextDoc->m_fn_get_rect ();
+      int l = 0, t = 0, r = 0, b = 0;
+      if (sscanf (s.c_str (), "%d %d %d %d", &l, &t, &r, &b) == 4)
+        {
+        CRect rect (l, t, r, b);
+        luaWindowPositionHelper (L, rect);
+        return 1;  // number of result fields
+        }
+      }
+#else
     CWindowPlacement wp;
 
     // get the view
@@ -3106,6 +3121,7 @@ static int L_GetNotepadWindowPosition (lua_State *L)
         return 1;  // number of result fields
         } // end of having the right type of view
       }   // end of having a view
+#endif
     } // end of having an existing notepad document
 
   return 0;   // no results, notepad not found

@@ -203,33 +203,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (m_output) m_output->Refresh(false);
         };
 
-        // world.MoveWorldWindow(l,t,w,h): reposition/resize this MDI child frame.
-        // Coordinates are in pixels relative to the MDI parent client area.
-        m_doc->m_fn_move_world_window = [this](long l, long t, long w, long h) {
-            SetSize((int)l, (int)t, (int)w, (int)h);
-        };
-
-        // world.Save(): save the world file to its current path.  Returns false
-        // if the world has no path yet (the caller should handle that case).
-        m_doc->m_fn_save = [this]() -> bool {
-            CString pathCStr = m_doc->GetPathName();
-            std::string savePath = static_cast<const char*>(pathCStr);
-            if (savePath.empty()) return false;
-            return m_doc->OnSaveDocument(savePath.c_str()) != FALSE;
-        };
-
-        // world.SetWorldWindowStatus(n): change the MDI child frame window state.
-        // 1=maximize, 2=iconize/minimize, 3=restore, 4=show normal.
-        m_doc->m_fn_set_window_status = [this](short param) {
-            switch (param)
-              {
-              case 1: Maximize(true);                    break;
-              case 2: Iconize(true);                     break;
-              case 3: Restore();                         break;
-              case 4: Maximize(false); Iconize(false);   break;
-              }
-        };
-
         // world.ClearOutput(): wipe the pane's internal line buffer and reset
         // the GUI-emission counter so the next UpdateAllViews starts from zero.
         m_doc->m_fn_clear_output = [this]() {
@@ -506,12 +479,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 // Convert 1-based → 0-based.
                 m_output->ScrollToLine((int)(pos - 1));
             }
-        };
-
-        // GetInfo(296): return current y scroll offset in pixels from the top of
-        // the virtual scrollback area.  Mirrors CScrollView::GetScrollPosition().y.
-        m_doc->m_fn_get_scroll_pos = [this]() -> long {
-            return m_output ? m_output->GetScrollPositionY() : 0L;
         };
 
         // world.SetSelection(sl, el, sc, ec): set text selection in the output pane.
@@ -2606,15 +2573,6 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     // ── World timers (triggers based on elapsed time, speed-walk queues, etc.)
     m_doc->CheckTimers();
 
-    // ── Script file monitoring: poll mtime every 2 s ─────────────────────
-    // Equivalent to the Windows FindFirstChangeNotification thread, but runs
-    // on the main thread so UMessageBox / scripting calls are always safe.
-    m_scriptCheckAccum += 100;
-    if (m_scriptCheckAccum >= 2000) {
-        m_scriptCheckAccum = 0;
-        m_doc->OnScriptFileChanged(false);
-    }
-
     // ── ON_PLUGIN_TICK: Windows fires this every ~40 ms.  We drive it via an
     //    accumulator so that the average rate matches even though our timer
     //    only fires every 100 ms.  Each 100 ms tick we fire it 2–3 times,
@@ -2844,14 +2802,10 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_output_font      = nullptr;
         m_doc->m_fn_set_input_font       = nullptr;
         m_doc->m_fn_set_scroll           = nullptr;
-        m_doc->m_fn_get_scroll_pos       = nullptr;
         m_doc->m_fn_set_selection        = nullptr;
         m_doc->m_fn_set_command_selection = nullptr;
         m_doc->m_fn_set_paused           = nullptr;
         m_doc->m_fn_repaint                  = nullptr;
-        m_doc->m_fn_move_world_window        = nullptr;
-        m_doc->m_fn_save                     = nullptr;
-        m_doc->m_fn_set_window_status        = nullptr;
         m_doc->m_fn_clear_output             = nullptr;
         m_doc->m_fn_status                   = nullptr;
         m_doc->m_fn_set_title                = nullptr;

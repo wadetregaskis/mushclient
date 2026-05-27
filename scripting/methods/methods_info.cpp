@@ -768,7 +768,12 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 	          }	  // end of being a CSendView
           }   // end of loop through views
 #else
-        SetUpVariantLong (vaResult, 0L);  // non-Windows: stub
+        if (m_fn_get_command_selection)
+          {
+          long selStart = 0, selEnd = 0;
+          m_fn_get_command_selection (selStart, selEnd);
+          SetUpVariantLong (vaResult, selStart);
+          }
 #endif
       }
       break;
@@ -797,7 +802,12 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 	          }	  // end of being a CSendView
           }   // end of loop through views
 #else
-        SetUpVariantLong (vaResult, 0L);  // non-Windows: stub
+        if (m_fn_get_command_selection)
+          {
+          long selStart = 0, selEnd = 0;
+          m_fn_get_command_selection (selStart, selEnd);
+          SetUpVariantLong (vaResult, selEnd);
+          }
 #endif
       }
       break;
@@ -1485,12 +1495,22 @@ COLORREF colour1,
 }    // end of CMUSHclientDoc::GetStyleInfo
 
 
-long CMUSHclientDoc::GetSelectionStartLine() 
+long CMUSHclientDoc::GetSelectionStartLine()
 {
+#ifndef _WIN32
+  // Non-Windows: query the output pane selection via the GUI callback.
+  if (m_fn_get_output_selection)
+    {
+    long sl = 0, sc = 0, el = 0, ec = 0;
+    m_fn_get_output_selection (sl, sc, el, ec);
+    return sl;   // already 1-based; 0 = no selection
+    }
+  return 0;
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)) && m_LineList.GetCount () > 0)
   	  {
 		  CMUSHView* pmyView = (CMUSHView*)pView;
@@ -1507,24 +1527,33 @@ long CMUSHclientDoc::GetSelectionStartLine()
       endcol    = MIN (pmyView->m_selend_col, pEndLine->len);
 
       // return 0 if no selection
-      if (!(pmyView->m_selend_line > pmyView->m_selstart_line || 
-                  (pmyView->m_selend_line == pmyView->m_selstart_line && 
+      if (!(pmyView->m_selend_line > pmyView->m_selstart_line ||
+                  (pmyView->m_selend_line == pmyView->m_selstart_line &&
                    endcol > startcol)))
         return 0;
       return pmyView->m_selstart_line + 1;
 	    }	  // end of being a CMUSHView
     }   // end of loop through views
 
-
 	return 0;
+#endif
 }   // end of CMUSHclientDoc::GetSelectionStartLine
 
-long CMUSHclientDoc::GetSelectionEndLine() 
+long CMUSHclientDoc::GetSelectionEndLine()
 {
+#ifndef _WIN32
+  if (m_fn_get_output_selection)
+    {
+    long sl = 0, sc = 0, el = 0, ec = 0;
+    m_fn_get_output_selection (sl, sc, el, ec);
+    return el;
+    }
+  return 0;
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)) && m_LineList.GetCount () > 0)
   	  {
 		  CMUSHView* pmyView = (CMUSHView*)pView;
@@ -1541,8 +1570,8 @@ long CMUSHclientDoc::GetSelectionEndLine()
       endcol    = MIN (pmyView->m_selend_col, pEndLine->len);
 
       // return 0 if no selection
-      if (!(pmyView->m_selend_line > pmyView->m_selstart_line || 
-                  (pmyView->m_selend_line == pmyView->m_selstart_line && 
+      if (!(pmyView->m_selend_line > pmyView->m_selstart_line ||
+                  (pmyView->m_selend_line == pmyView->m_selstart_line &&
                    endcol > startcol)))
         return 0;
 
@@ -1551,16 +1580,26 @@ long CMUSHclientDoc::GetSelectionEndLine()
     }   // end of loop through views
 
 	return 0;
+#endif
 }    // end of CMUSHclientDoc::GetSelectionEndLine
 
 
 
-long CMUSHclientDoc::GetSelectionStartColumn() 
+long CMUSHclientDoc::GetSelectionStartColumn()
 {
+#ifndef _WIN32
+  if (m_fn_get_output_selection)
+    {
+    long sl = 0, sc = 0, el = 0, ec = 0;
+    m_fn_get_output_selection (sl, sc, el, ec);
+    return sc;
+    }
+  return 0;
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)) && m_LineList.GetCount () > 0)
   	  {
 		  CMUSHView* pmyView = (CMUSHView*)pView;
@@ -1577,8 +1616,8 @@ long CMUSHclientDoc::GetSelectionStartColumn()
       endcol    = MIN (pmyView->m_selend_col, pEndLine->len);
 
       // return 0 if no selection
-      if (!(pmyView->m_selend_line > pmyView->m_selstart_line || 
-                  (pmyView->m_selend_line == pmyView->m_selstart_line && 
+      if (!(pmyView->m_selend_line > pmyView->m_selstart_line ||
+                  (pmyView->m_selend_line == pmyView->m_selstart_line &&
                    endcol > startcol)))
         return 0;
 
@@ -1587,14 +1626,24 @@ long CMUSHclientDoc::GetSelectionStartColumn()
     }   // end of loop through views
 
 	return 0;
+#endif
 }  // end of CMUSHclientDoc::GetSelectionStartColumn
 
-long CMUSHclientDoc::GetSelectionEndColumn() 
+long CMUSHclientDoc::GetSelectionEndColumn()
 {
+#ifndef _WIN32
+  if (m_fn_get_output_selection)
+    {
+    long sl = 0, sc = 0, el = 0, ec = 0;
+    m_fn_get_output_selection (sl, sc, el, ec);
+    return ec;
+    }
+  return 0;
+#else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)) && m_LineList.GetCount () > 0)
   	  {
 		  CMUSHView* pmyView = (CMUSHView*)pView;
@@ -1611,8 +1660,8 @@ long CMUSHclientDoc::GetSelectionEndColumn()
       endcol    = MIN (pmyView->m_selend_col, pEndLine->len);
 
       // return 0 if no selection
-      if (!(pmyView->m_selend_line > pmyView->m_selstart_line || 
-                  (pmyView->m_selend_line == pmyView->m_selstart_line && 
+      if (!(pmyView->m_selend_line > pmyView->m_selstart_line ||
+                  (pmyView->m_selend_line == pmyView->m_selstart_line &&
                    endcol > startcol)))
         return 0;
 
@@ -1621,6 +1670,7 @@ long CMUSHclientDoc::GetSelectionEndColumn()
     }   // end of loop through views
 
 	return 0;
+#endif
 }     // end of CMUSHclientDoc::GetSelectionEndColumn
 
 

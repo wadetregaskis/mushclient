@@ -213,13 +213,8 @@ enum {
 
 // ── Notepad types (from doc.h) ────────────────────────────────────────────
 enum {
-    eNotepadNormal      = 0,
-    eNotepadMXPdebug    = 1,
-    eNotepadTrigger     = 2,
-    eNotepadRecall      = 3,
-    eNotepadScript      = 4,
-    eNotepadPacketDebug = 5,
-    eNotepadLineInfo    = 6
+    eNotepadNormal   = 0,
+    eNotepadMXPdebug = 6   // approximate value; only used for AppendToTheNotepad stub
 };
 
 // ── eWorldAction (from doc.h) ─────────────────────────────────────────────
@@ -844,9 +839,8 @@ public:
     CString m_strLuaScript;              // sandbox script (empty on macOS — no sandbox)
     string  m_strDefaultLogFileDirectory;// prefix for log files
 
-    // Performance counter frequency in ticks/second (nanoseconds on POSIX).
-    // Non-zero once initialised; zero keeps all timing guards inactive.
-    LONGLONG m_iCounterFrequency = 0;
+    // Performance counter (0 = not available; keeps timing guards inactive)
+    long    m_iCounterFrequency = 0;
 
     void MXP_LoadColours();
     void MXP_LoadEntities();
@@ -991,12 +985,8 @@ extern const string ON_PLUGIN_TELNET_OPTION;
 extern const string ON_PLUGIN_TELNET_SUBNEGOTIATION;
 
 // ── Object name validation (from utilities) ───────────────────────────────
-// Trims whitespace, optionally validates the label, then lowercases the name
-// (matching CMUSHclientDoc::CheckObjectName in doc.cpp).  Returns eOK if the
-// name is valid, otherwise a non-zero error code.
-// NOTE: takes a non-const ref so the caller's CString is lowercased in place,
-// exactly as the Windows member-method version does.
-long CheckObjectName(CString& strName, const bool bConform = true);
+// Returns eOK if name is valid; non-zero error code otherwise.
+long CheckObjectName(const CString& strName, const bool bConform = true);
 
 // ── Free function declarations ────────────────────────────────────────────
 unsigned long MakeActionHash(const CString& strAction,
@@ -1355,28 +1345,6 @@ public:
     CString m_connect_text;       // text sent on connect
     CString m_strScriptPrefix;    // prefix to invoke scripts from command window
     CString m_strWorldFilePath;   // path to the loaded world file
-
-    // ── World properties (absent from original stub; added for GetInfo parity) ─
-    CString m_new_activity_sound;       // GetInfo(9):  new-activity beep file
-    CString m_strScriptEditor;          // GetInfo(10): script editor path
-    CString m_font_name;                // GetInfo(20): output font name
-    CString m_input_font_name;          // GetInfo(23): input-bar font name
-    CString m_paste_postamble;          // GetInfo(24): text appended after paste
-    CString m_paste_preamble;           // GetInfo(25): text prepended before paste
-    CString m_pasteline_postamble;      // GetInfo(26): appended after each paste line
-    CString m_pasteline_preamble;       // GetInfo(27): prepended before each paste line
-    CString m_strAutoSayString;         // GetInfo(37): auto-say prefix
-    CString m_strOverridePrefix;        // GetInfo(38): override-prefix char
-    CString m_strTabCompletionDefaults; // GetInfo(39): default tab-completion words
-    CString m_strRecallLinePreamble;    // GetInfo(41): recall-window line preamble
-    CString m_strBeepSound;             // GetInfo(50): beep sound file
-
-    // ── Current hyperlink state (set by AddStyle, consumed by DisplayMsg) ─
-    // Cleared automatically when the style with ACTION_HYPERLINK/ACTION_SEND
-    // is replaced by one without an action.
-    std::string m_current_action;       // action string for current MXP/Lua link
-    std::string m_current_hint;         // hint/tooltip for current link
-
     int     m_connect_now      = 0;
     long    m_nTotalLinesSent  = 0;
 
@@ -1403,8 +1371,7 @@ public:
     long m_maxlines                         = 5000;
 
     // ── Connect/disconnect timestamps ────────────────────────────────────
-    CTime   m_tConnectTime;
-    time_t  m_tWorldOpenTime = 0;  // when this world document was constructed
+    CTime m_tConnectTime;
 
     // ── Disconnect behaviour ──────────────────────────────────────────────
     bool    m_bShowConnectDisconnect = false;
@@ -1623,26 +1590,12 @@ public:
     CString        m_strScriptFilename;  // external .lua file (world attribute)
     CString        m_strScript;          // accumulated inline <script> content
 
-    // ── Script file auto-reload (non-Windows mtime polling) ───────────
-    time_t         m_scriptFileMtime        = 0;     // mtime recorded at last load
-    bool           m_bInScriptFileChanged   = false; // re-entrancy guard
-
     // ── Timer enable ───────────────────────────────────────────────────
     unsigned short m_bEnableTimers = 1;
 
     // ── Window titles (SetTitle / SetMainTitle) ───────────────────────
     CString        m_strWindowTitle;
     CString        m_strMainWindowTitle;
-
-    // ── CDocument-compatible accessors (inline — no layout change) ────
-    // The Windows CMUSHclientDoc inherits GetPathName/GetTitle/IsModified
-    // from CDocument.  In the portable stub we provide them as inline
-    // methods over existing fields.
-    CString GetPathName()  const { return m_strWorldFilePath; }
-    CString GetTitle()     const { return m_mush_name; }
-    BOOL    IsModified()   const { return FALSE; }  // not tracked portably
-    void    SetPathName(const CString& path) { m_strWorldFilePath = path; }
-    void    SetTitle(const CString& title)   { m_mush_name = title; }
 
     // ── Option caches (portable GetOption / SetOption backing store) ──
     // Stores values for numeric/alpha options that don't have a dedicated
@@ -1850,7 +1803,6 @@ public:
                         bool bIsRegexp, bool bThrowExceptions,
                         const char* sName);
     void PlaySoundFile(CString strFile);
-    void CancelSound();
     void Redraw() {}
     void DoFixMenus(void*) {}
     void ShowStatusLine(bool) {}
@@ -1879,19 +1831,6 @@ public:
     // Lua dispids so ExecuteLua can call them.
     void ResolveAllEntryPoints();
     bool CheckScriptingAvailable(const char*, int, const char*) { return false; }
-    void OnScriptFileChanged(bool bForce = false);
-
-    // ── Debug (world.Debug Lua API) ───────────────────────────────────────
-    VARIANT Debug(LPCTSTR Command);
-    void    DebugHelper(const CString strAction, CString strArgument);
-    void    DebugShow(const char* sTitle, const char* sString);
-    void    DebugShow(const char* sTitle, const long iNumber);
-    void    DebugShow(const char* sTitle, const bool iBoolean);
-    void    DebugShow(const char* sTitle, const CmcDateTime theDate);
-    void    DebugShow(const char* sTitle, const CTime theDate);
-    void    DebugShowD(const char* sTitle, const double fNumber);
-    void    ShowOptions();
-    void    ShowAlphaOptions();
 
     // ── World load/save (archive-dependent, not yet ported) ──────────
     void Load_World_XML(class CArchive&, unsigned long, unsigned long,
@@ -1899,7 +1838,7 @@ public:
                         unsigned int*, unsigned int*, unsigned int*,
                         unsigned int*, unsigned int*) {}
     void Save_World_XML(class CArchive&, unsigned long, CString) {}
-    void Serialize_World_XML(class CArchive&);
+    void Serialize_World_XML(class CArchive&) {}
     void OnFileReloaddefaults() {}
     CString GetAlphaOptionItem(int) { return ""; }
 
@@ -1953,7 +1892,7 @@ public:
     void ColourNote(const char* fg, const char* bg, const CString& text);
     void ColourNote(const char* fg, const char* bg, const char* text);
     void ColourTell(const char* fg, const char* bg, const char* text);
-    void SetModifiedFlag(BOOL = TRUE) {}  // modification not tracked portably
+    void SetModifiedFlag(BOOL) {}
     void ShowErrorLines(int) {}
     void WriteErrorLines(int, FILE*) {}
 
@@ -2000,12 +1939,6 @@ public:
     // Called by world.Repaint() to force a repaint of the output pane.
     std::function<void()> m_fn_repaint;
 
-    // Called by world.MoveWorldWindow(l,t,w,h) to reposition the MDI child frame.
-    std::function<void(long, long, long, long)> m_fn_move_world_window;
-
-    // Called by world.SetWorldWindowStatus(n): 1=maximize, 2=iconize, 3=restore, 4=normal.
-    std::function<void(short)> m_fn_set_window_status;
-
     // Called by world.ClearOutput() to wipe the wx pane buffer and reset
     // m_gui_lines_emitted so UpdateAllViews starts fresh.
     std::function<void()> m_fn_clear_output;
@@ -2045,8 +1978,6 @@ public:
     // ── Scroll / selection callbacks ──────────────────────────────────────
     // world.SetScroll(pos): scroll the output pane to a line index.
     std::function<void(long)>                 m_fn_set_scroll;
-    // GetInfo(296): y scroll offset in pixels (mirrors CScrollView::GetScrollPosition().y).
-    std::function<long()>                     m_fn_get_scroll_pos;
     // world.SetSelection(sl, el, sc, ec): set the text selection in the pane.
     std::function<void(int, int, int, int)>   m_fn_set_selection;
 
@@ -2087,10 +2018,6 @@ public:
     // Sets selStart and selEnd (both 0-based, in characters).
     // If nothing is selected, both are set to the caret position.
     std::function<void(long&, long&)> m_fn_get_command_selection;
-
-    // world.Save(): save this world's file to its current path (or prompt for
-    // a new path if the world has not been saved yet).  Returns true on success.
-    std::function<bool()> m_fn_save;
 
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference

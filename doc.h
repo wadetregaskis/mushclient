@@ -1517,10 +1517,6 @@ public:
   // Visible is ignored (scrollbar always shown on non-Windows).
   std::function<void(long position)>  m_fn_set_scroll;
 
-  // GetInfo(296): return current y scroll offset in pixels (top of scrollback = 0).
-  // Equivalent to CMUSHView::GetScrollPosition().y on Windows.
-  std::function<long()>  m_fn_get_scroll_pos;
-
   // world.SetSelection(StartLine, EndLine, StartColumn, EndColumn): select a
   // text range in the output pane.  Arguments are 1-based; 0 = no selection.
   std::function<void(int, int, int, int)>  m_fn_set_selection;
@@ -1534,15 +1530,6 @@ public:
 
   // world.Repaint(): force a repaint of the output pane.
   std::function<void()>  m_fn_repaint;
-
-  // world.MoveWorldWindow(l,t,w,h): reposition/resize the MDI child frame.
-  // Ignored on non-Windows if not wired; the Which parameter in MoveWorldWindowX
-  // is always 1 in practice (MUSHclient only opens one output window per world).
-  std::function<void(long, long, long, long)>  m_fn_move_world_window;
-
-  // world.SetWorldWindowStatus(n): change the MDI child frame's window state.
-  // Values: 1=maximize, 2=minimize/iconize, 3=restore, 4=show normal.
-  std::function<void(short)>  m_fn_set_window_status;
 
   // world.ClearOutput(): wipe all content from the wx output pane buffer.
   // Called from CMUSHclientDoc::ClearOutput() on non-Windows so the visible

@@ -1536,6 +1536,10 @@ public:
   // is always 1 in practice (MUSHclient only opens one output window per world).
   std::function<void(long, long, long, long)>  m_fn_move_world_window;
 
+  // world.SetWorldWindowStatus(n): change the MDI child frame's window state.
+  // Values: 1=maximize, 2=minimize/iconize, 3=restore, 4=show normal.
+  std::function<void(short)>  m_fn_set_window_status;
+
   // world.ClearOutput(): wipe all content from the wx output pane buffer.
   // Called from CMUSHclientDoc::ClearOutput() on non-Windows so the visible
   // pane empties immediately rather than retaining the old lines.

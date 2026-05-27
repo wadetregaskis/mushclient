@@ -379,9 +379,12 @@ BOOL CMUSHclientDoc::Transparency(long Key, short Amount)
 }  // end of CMUSHclientDoc::Transparency
 
 
-void CMUSHclientDoc::SetWorldWindowStatus(short Parameter) 
+void CMUSHclientDoc::SetWorldWindowStatus(short Parameter)
 {
-
+#ifndef _WIN32
+  if (m_fn_set_window_status)
+    m_fn_set_window_status (Parameter);
+#else
 CFrameWnd* pParent = NULL;
 
   for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
@@ -396,7 +399,7 @@ CFrameWnd* pParent = NULL;
 
       break;
 
-      }	
+      }
     }
 
   if (pParent)
@@ -409,6 +412,7 @@ CFrameWnd* pParent = NULL;
       case 4: pParent->ShowWindow(SW_SHOWNORMAL); break;
       } // end of switch
     } // have parent
+#endif
 }  // end of CMUSHclientDoc::SetWorldWindowStatus
 
 

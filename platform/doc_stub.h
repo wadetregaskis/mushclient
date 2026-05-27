@@ -1942,6 +1942,9 @@ public:
     // Called by world.MoveWorldWindow(l,t,w,h) to reposition the MDI child frame.
     std::function<void(long, long, long, long)> m_fn_move_world_window;
 
+    // Called by world.SetWorldWindowStatus(n): 1=maximize, 2=iconize, 3=restore, 4=normal.
+    std::function<void(short)> m_fn_set_window_status;
+
     // Called by world.ClearOutput() to wipe the wx pane buffer and reset
     // m_gui_lines_emitted so UpdateAllViews starts fresh.
     std::function<void()> m_fn_clear_output;

@@ -209,6 +209,18 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             SetSize((int)l, (int)t, (int)w, (int)h);
         };
 
+        // world.SetWorldWindowStatus(n): change the MDI child frame window state.
+        // 1=maximize, 2=iconize/minimize, 3=restore, 4=show normal.
+        m_doc->m_fn_set_window_status = [this](short param) {
+            switch (param)
+              {
+              case 1: Maximize(true);                    break;
+              case 2: Iconize(true);                     break;
+              case 3: Restore();                         break;
+              case 4: Maximize(false); Iconize(false);   break;
+              }
+        };
+
         // world.ClearOutput(): wipe the pane's internal line buffer and reset
         // the GUI-emission counter so the next UpdateAllViews starts from zero.
         m_doc->m_fn_clear_output = [this]() {
@@ -2813,6 +2825,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_paused           = nullptr;
         m_doc->m_fn_repaint                  = nullptr;
         m_doc->m_fn_move_world_window        = nullptr;
+        m_doc->m_fn_set_window_status        = nullptr;
         m_doc->m_fn_clear_output             = nullptr;
         m_doc->m_fn_status                   = nullptr;
         m_doc->m_fn_set_title                = nullptr;

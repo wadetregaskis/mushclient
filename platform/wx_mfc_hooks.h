@@ -269,6 +269,28 @@ extern void (*g_wxhook_flash_icon)();
 // pixels (same convention as wxWindow::SetSize).
 extern void (*g_wxhook_move_main_window)(long left, long top, long width, long height);
 
+// ── utils.inputbox / utils.editbox hook ──────────────────────────────────
+// Shows a modal text-entry dialog.
+//   title:     window title
+//   prompt:    label text shown above the entry field
+//   defValue:  initial content of the entry field
+//   multiline: true for a multi-line edit area, false for single-line
+// Returns a heap-allocated string that the caller must free(), or nullptr if
+// the user cancelled.
+extern char* (*g_wxhook_inputbox)(const char* title,
+                                  const char* prompt,
+                                  const char* defValue,
+                                  bool        multiline);
+
+// ── utils.directorypicker hook ────────────────────────────────────────────
+// Shows a modal directory-chooser dialog.
+//   title:   window title / message
+//   defPath: directory to pre-select (may be "" for cwd)
+// Returns a heap-allocated path string that the caller must free(), or
+// nullptr if the user cancelled.
+extern char* (*g_wxhook_directorypicker)(const char* title,
+                                         const char* defPath);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

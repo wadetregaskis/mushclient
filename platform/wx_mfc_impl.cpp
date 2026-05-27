@@ -2945,6 +2945,64 @@ static void hook_move_main_window(long left, long top, long width, long height)
     if (win) win->SetSize((int)left, (int)top, (int)width, (int)height);
 }
 
+
+// ── utils.inputbox / utils.editbox ────────────────────────────────────────
+// Shows a simple text entry dialog.  Returns heap-allocated string (caller
+// frees) or nullptr on cancel.
+
+static char* hook_inputbox(const char* title,
+                            const char* prompt,
+                            const char* defValue,
+                            bool        multiline)
+{
+    wxWindow* parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    wxString result;
+    if (multiline) {
+        wxDialog dlg(parent, wxID_ANY, wxString::FromUTF8(title ? title : "Input"),
+                     wxDefaultPosition, wxSize(400, 300),
+                     wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
+        wxBoxSizer* sz = new wxBoxSizer(wxVERTICAL);
+        if (prompt && *prompt)
+            sz->Add(new wxStaticText(&dlg, wxID_ANY, wxString::FromUTF8(prompt)),
+                    0, wxALL, 8);
+        wxTextCtrl* txt = new wxTextCtrl(&dlg, wxID_ANY,
+            wxString::FromUTF8(defValue ? defValue : ""),
+            wxDefaultPosition, wxDefaultSize,
+            wxTE_MULTILINE | wxTE_DONTWRAP);
+        sz->Add(txt, 1, wxEXPAND | wxLEFT | wxRIGHT, 8);
+        wxStdDialogButtonSizer* btns = new wxStdDialogButtonSizer();
+        btns->AddButton(new wxButton(&dlg, wxID_OK));
+        btns->AddButton(new wxButton(&dlg, wxID_CANCEL));
+        btns->Realize();
+        sz->Add(btns, 0, wxALL, 8);
+        dlg.SetSizer(sz);
+        dlg.Centre();
+        if (dlg.ShowModal() != wxID_OK) return nullptr;
+        result = txt->GetValue();
+    } else {
+        wxTextEntryDialog dlg(parent,
+            wxString::FromUTF8(prompt ? prompt : ""),
+            wxString::FromUTF8(title ? title : "Input"),
+            wxString::FromUTF8(defValue ? defValue : ""));
+        if (dlg.ShowModal() != wxID_OK) return nullptr;
+        result = dlg.GetValue();
+    }
+    return strdup(result.ToUTF8().data());
+}
+
+// ── utils.directorypicker ─────────────────────────────────────────────────
+
+static char* hook_directorypicker(const char* title, const char* defPath)
+{
+    wxWindow* parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    wxDirDialog dlg(parent,
+        wxString::FromUTF8(title ? title : "Select directory"),
+        wxString::FromUTF8(defPath ? defPath : ""),
+        wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
+    if (dlg.ShowModal() != wxID_OK) return nullptr;
+    return strdup(dlg.GetPath().ToUTF8().data());
+}
+
 void wx_mfc_install_hooks()
 {
     g_wxhook_invalidate       = hook_invalidate;
@@ -2974,6 +3032,8 @@ void wx_mfc_install_hooks()
     g_wxhook_menu_dialog          = hook_menu_dialog;
     g_wxhook_flash_icon           = hook_flash_icon;
     g_wxhook_move_main_window     = hook_move_main_window;
+    g_wxhook_inputbox             = hook_inputbox;
+    g_wxhook_directorypicker      = hook_directorypicker;
 #if wxUSE_SOUND
     g_wxhook_play_sound           = hook_play_sound;
     g_wxhook_stop_sound           = hook_stop_sound;
@@ -2997,3 +3057,10 @@ void wx_mfc_install_hooks()
 }
 
 #endif // !_WIN32
+
+// ── utils.inputbox / utils.editbox ────────────────────────────────────────
+// Shows a simple text entry dialog.  Returns heap-allocated string (caller
+// frees) or nullptr on cancel.
+// NOTE: appended after the end of the file by the port script; the
+// wx_mfc_install_hooks() call below must remain LAST so these static
+// functions are visible to it.

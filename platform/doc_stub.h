@@ -1369,6 +1369,13 @@ public:
     CString m_strTabCompletionDefaults; // GetInfo(39): default tab-completion words
     CString m_strRecallLinePreamble;    // GetInfo(41): recall-window line preamble
     CString m_strBeepSound;             // GetInfo(50): beep sound file
+
+    // ── Current hyperlink state (set by AddStyle, consumed by DisplayMsg) ─
+    // Cleared automatically when the style with ACTION_HYPERLINK/ACTION_SEND
+    // is replaced by one without an action.
+    std::string m_current_action;       // action string for current MXP/Lua link
+    std::string m_current_hint;         // hint/tooltip for current link
+
     int     m_connect_now      = 0;
     long    m_nTotalLinesSent  = 0;
 

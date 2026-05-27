@@ -1919,9 +1919,16 @@ static int L_GetLineInfo(lua_State* L)
         lua_setfield(L, -2, "line");
         lua_pushnumber(L, (double)pLine->styleList.GetCount());
         lua_setfield(L, -2, "styles");
-        lua_pushnumber(L, 0.0);   // ticks: high-perf counter not available portably
+        {   // ticks: monotonic time in seconds (same unit as GetInfo(232))
+            struct timespec ts{};
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            lua_pushnumber(L, (double)ts.tv_sec + ts.tv_nsec * 1e-9);
+        }
         lua_setfield(L, -2, "ticks");
-        lua_pushnumber(L, 0.0);   // elapsed: world-start reference not in portable stub
+        {   // elapsed: seconds since connection (0 if not connected)
+            time_t ct = pDoc->m_tConnectTime.GetTime();
+            lua_pushnumber(L, ct ? (double)(time(nullptr) - ct) : 0.0);
+        }
         lua_setfield(L, -2, "elapsed");
         return 1;
     }
@@ -3303,16 +3310,50 @@ static int L_AtTime(lua_State* L)
 }
 
 // ── Hyperlink ─────────────────────────────────────────────────────────────────
-// Minimal portable stub — outputs the text as a note (no clickable links yet).
+// Injects a styled clickable run into the note output stream.
+// Signature: Hyperlink(action, text, hint, fore_colour, back_colour, url, no_underline)
+// fore/back are either "#RRGGBB" strings or colour names; empty string = default.
 
 static int L_Hyperlink(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    // action, text, hint, fore, back, url, no_underline
-    const char* text = luaL_optstring(L, 2, "");
-    if (!text || text[0] == 0)
-        text = luaL_optstring(L, 1, "");  // fall back to action
-    pDoc->Note(CString(text));
+
+    const char* action      = luaL_optstring(L, 1, "");
+    const char* text        = luaL_optstring(L, 2, "");
+    const char* hint        = luaL_optstring(L, 3, "");
+    const char* fore_str    = luaL_optstring(L, 4, "");
+    const char* back_str    = luaL_optstring(L, 5, "");
+    // arg 6 = url (bool) — determines ACTION_HYPERLINK vs ACTION_SEND flag
+    // arg 7 = no_underline (bool)
+    bool url          = lua_toboolean(L, 6) != 0;
+    bool no_underline = lua_toboolean(L, 7) != 0;
+
+    if (!action || action[0] == 0) return 0;
+    if (!text   || text[0]   == 0) text = action;
+    if (!hint   || hint[0]   == 0) hint = action;
+
+    // Resolve fore/back colours.
+    COLORREF fg = pDoc->m_iHyperlinkColour;
+    COLORREF bg = 0x00000000u;
+    if (fore_str && fore_str[0]) SetColour(CString(fore_str), fg);
+    if (back_str && back_str[0]) SetColour(CString(back_str), bg);
+
+    // Push a note-line style with the action — this sets m_current_action/hint.
+    unsigned short flags = COLOUR_RGB |
+                           (url ? ACTION_HYPERLINK : ACTION_SEND) |
+                           (no_underline ? 0 : UNDERLINE);
+    CAction* pAction = pDoc->GetAction(CString(action),
+                                       CString(hint),
+                                       CString(""));
+    pDoc->AddStyle(flags, fg, bg, 0, pAction);
+    if (pAction) pAction->Release();
+
+    // Output the link text so it gets picked up by DisplayMsg.
+    pDoc->AddToLine(text, COMMENT);
+
+    // Restore normal note style — clears m_current_action/hint.
+    pDoc->AddStyle(COLOUR_RGB, pDoc->m_NoteColourFore, pDoc->m_NoteColourBack, 0,
+                   static_cast<CAction*>(nullptr));
     return 0;
 }
 
@@ -5208,8 +5249,15 @@ static int L_Reset(lua_State* L)
 
 static int L_Sound(lua_State* L)
 {
-    world_doc(L); luaL_checkstring(L, 1);
-    lua_pushnumber(L, eCannotPlaySound); return 1;
+    world_doc(L);
+    const char* filename = luaL_checkstring(L, 1);
+    if (g_wxhook_play_sound && filename && *filename) {
+        bool ok = g_wxhook_play_sound(filename);
+        lua_pushnumber(L, ok ? eOK : eCannotPlaySound);
+    } else {
+        lua_pushnumber(L, eCannotPlaySound);
+    }
+    return 1;
 }
 static int L_StopSound(lua_State* L)
 {

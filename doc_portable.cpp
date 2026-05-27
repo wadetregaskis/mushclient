@@ -265,6 +265,16 @@ CStyle* CMUSHclientDoc::AddStyle(const unsigned short iFlags,
     p->iLength     = (unsigned short)iLength;
     p->pAction     = pAction;
     pLine->styleList.AddTail(p);
+
+    // Keep m_current_action/hint in sync so DisplayMsg can populate SOutputRun.
+    if (pAction && (iFlags & (ACTION_HYPERLINK | ACTION_SEND))) {
+        m_current_action = static_cast<const char*>(pAction->m_strAction);
+        m_current_hint   = static_cast<const char*>(pAction->m_strHint);
+    } else if (!(iFlags & (ACTION_HYPERLINK | ACTION_SEND))) {
+        m_current_action.clear();
+        m_current_hint.clear();
+    }
+
     return p;
 }
 
@@ -838,6 +848,8 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
                     bool underline     = (m_iFlags & UNDERLINE) != 0;
                     bool italic        = (m_iFlags & BLINK)     != 0;  // MUSHclient maps BLINK → italic
                     bool strikethrough = (m_iFlags & STRIKEOUT) != 0;
+                    const std::string& cur_action = m_current_action;
+                    const std::string& cur_hint   = m_current_hint;
                     // Append to current run if style unchanged, else start new run.
                     if (m_gui_line_buf.empty()                               ||
                         m_gui_line_buf.back().fg            != fg            ||
@@ -845,7 +857,9 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
                         m_gui_line_buf.back().bold          != bold          ||
                         m_gui_line_buf.back().underline     != underline     ||
                         m_gui_line_buf.back().italic        != italic        ||
-                        m_gui_line_buf.back().strikethrough != strikethrough)
+                        m_gui_line_buf.back().strikethrough != strikethrough ||
+                        m_gui_line_buf.back().action        != cur_action    ||
+                        m_gui_line_buf.back().hint          != cur_hint)
                     {
                         SOutputRun run;
                         run.text          = std::string(1, (char)c);
@@ -855,6 +869,8 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
                         run.underline     = underline;
                         run.italic        = italic;
                         run.strikethrough = strikethrough;
+                        run.action        = cur_action;
+                        run.hint          = cur_hint;
                         m_gui_line_buf.push_back(std::move(run));
                     } else {
                         m_gui_line_buf.back().text += (char)c;

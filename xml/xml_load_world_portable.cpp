@@ -451,6 +451,23 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
         getAttr("on_mxp_set_variable", doc.m_strOnMXP_SetVariable);
         getAttr("on_mxp_error",        doc.m_strOnMXP_Error);
 
+        // World properties from OptionsTable (scriptingoptions_portable.cpp)
+        getAttr("auto_say_override_prefix",   doc.m_strOverridePrefix);
+        getAttr("auto_say_string",            doc.m_strAutoSayString);
+        getAttr("beep_sound",                 doc.m_strBeepSound);
+        getAttr("input_font_name",            doc.m_input_font_name);
+        getAttr("new_activity_sound",         doc.m_new_activity_sound);
+        getAttr("output_font_name",           doc.m_font_name);
+        getAttr("recall_line_preamble",       doc.m_strRecallLinePreamble);
+        getAttr("script_editor",              doc.m_strScriptEditor);
+        getAttr("tab_completion_defaults",    doc.m_strTabCompletionDefaults);
+
+        // Paste fields — multi-line, stored as child elements
+        FindNodeContents(*pWorld, "paste_postamble",      doc.m_paste_postamble,      false);
+        FindNodeContents(*pWorld, "paste_preamble",       doc.m_paste_preamble,       false);
+        FindNodeContents(*pWorld, "paste_line_postamble", doc.m_pasteline_postamble,  false);
+        FindNodeContents(*pWorld, "paste_line_preamble",  doc.m_pasteline_preamble,   false);
+
         // Port — stored as attribute
         CAttribute* pPort;
         if (pWorld->AttributeMap.Lookup("port", pPort) && pPort) {

@@ -1437,15 +1437,27 @@ static int L_SetOption(lua_State* L)
     long val = (long)luaL_checknumber(L, 2);
 
     // 1. Known live members — update the real field.
+    // These are kept symmetric with the live-member reads in L_GetOption.
     bool is_member = true;
-    if      (!strcmp(opt, "enable_triggers"))  pDoc->m_enable_triggers  = (val != 0);
-    else if (!strcmp(opt, "enable_aliases"))   pDoc->m_enable_aliases   = (val != 0);
-    else if (!strcmp(opt, "enable_timers"))    pDoc->m_bEnableTimers    = (val != 0);
-    else if (!strcmp(opt, "display_my_input")) pDoc->m_display_my_input = (val != 0);
-    else if (!strcmp(opt, "log_output"))       pDoc->m_bLogOutput       = (short)val;
-    else if (!strcmp(opt, "log_notes"))        pDoc->m_bLogNotes        = (short)val;
-    else if (!strcmp(opt, "log_input"))        pDoc->m_log_input        = (short)val;
-    else if (!strcmp(opt, "trace"))            pDoc->m_bTrace           = (val != 0);
+    if      (!strcmp(opt, "enable_triggers"))      pDoc->m_enable_triggers        = (val != 0);
+    else if (!strcmp(opt, "enable_aliases"))       pDoc->m_enable_aliases         = (val != 0);
+    else if (!strcmp(opt, "enable_timers"))        pDoc->m_bEnableTimers          = (val != 0);
+    else if (!strcmp(opt, "display_my_input"))     pDoc->m_display_my_input       = (val != 0);
+    else if (!strcmp(opt, "log_output"))           pDoc->m_bLogOutput             = (short)val;
+    else if (!strcmp(opt, "log_notes"))            pDoc->m_bLogNotes              = (short)val;
+    else if (!strcmp(opt, "log_input"))            pDoc->m_log_input              = (short)val;
+    else if (!strcmp(opt, "trace"))                pDoc->m_bTrace                 = (val != 0);
+    else if (!strcmp(opt, "enable_trigger_sounds"))pDoc->m_enable_trigger_sounds  = (val != 0);
+    else if (!strcmp(opt, "enable_speed_walk"))    pDoc->m_enable_speed_walk      = (val != 0);
+    else if (!strcmp(opt, "log_html"))             pDoc->m_bLogHTML               = (val != 0);
+    else if (!strcmp(opt, "log_raw"))              pDoc->m_bLogRaw                = (val != 0);
+    else if (!strcmp(opt, "log_in_colour"))        pDoc->m_bLogInColour           = (val != 0);
+    else if (!strcmp(opt, "utf_8"))                pDoc->m_bUTF_8                 = (val != 0);
+    else if (!strcmp(opt, "use_mxp"))              pDoc->m_iUseMXP                = (short)val;
+    else if (!strcmp(opt, "detect_pueblo"))        pDoc->m_bPueblo                = (val != 0);
+    else if (!strcmp(opt, "naws"))                 pDoc->m_bNAWS                  = (val != 0);
+    else if (!strcmp(opt, "disable_compression"))  pDoc->m_bDisableCompression    = (val != 0);
+    else if (!strcmp(opt, "connect_method"))       pDoc->m_connect_now            = (short)val;
     else if (!strcmp(opt, "wrap_column")) {
         if (val >= 20 && val <= MAX_LINE_WIDTH) {
             pDoc->m_nWrapColumn = (unsigned short)val;
@@ -1457,7 +1469,7 @@ static int L_SetOption(lua_State* L)
             if (pDoc->m_fn_set_max_lines) pDoc->m_fn_set_max_lines((int)val);
         }
     }
-    else                                       is_member = false;
+    else                                           is_member = false;
 
     // 2. Validate: reject completely unknown option names.
     if (!is_member && opt_numeric_default(opt) == LONG_MIN) {

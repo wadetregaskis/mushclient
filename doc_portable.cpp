@@ -1278,7 +1278,7 @@ void CMUSHclientDoc::ColourTell(const char* fg, const char* bg, const char* text
 
 // ── UpdateAllViews ────────────────────────────────────────────────────────────
 void CMUSHclientDoc::UpdateAllViews(void*) {}
-long CMUSHclientDoc::GetUniqueNumber()          { return 0; }
+long CMUSHclientDoc::GetUniqueNumber()          { return App.GetUniqueNumber() & 0x7FFFFFFFL; }
 
 bool CMUSHclientDoc::AppendToTheNotepad(const CString, const CString,
                                          const bool, const int)

@@ -5128,7 +5128,9 @@ static int L_Sound(lua_State* L)
 }
 static int L_StopSound(lua_State* L)
 {
-    world_doc(L); luaL_optnumber(L, 1, 0);
+    world_doc(L);
+    // Buffer arg (1) ignored — we have a single sound slot portably.
+    if (g_wxhook_stop_sound) g_wxhook_stop_sound();
     lua_pushnumber(L, eOK); return 1;
 }
 static int L_GetSoundStatus(lua_State* L)

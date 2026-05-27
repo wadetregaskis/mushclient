@@ -202,9 +202,19 @@ int i = 0;
 }   // end of CMUSHclientDoc::MoveWorldWindowX
 
 // warning - different in Lua
-BSTR CMUSHclientDoc::GetWorldWindowPositionX(short Which) 
+BSTR CMUSHclientDoc::GetWorldWindowPositionX(short Which)
 {
 CString strResult;
+
+#ifndef _WIN32
+  // Non-Windows: each world has exactly one MDI child frame; Which is always 1.
+  if (Which == 1 && m_fn_get_output_rect)
+    {
+    int x = 0, y = 0, w = 800, h = 600;
+    m_fn_get_output_rect (x, y, w, h);
+    strResult.Format ("%d,%d,%d,%d", x, y, w, h);
+    }
+#else
 int i = 0;
 
   CWindowPlacement wp;
@@ -222,13 +232,14 @@ int i = 0;
       if (i != Which)
         continue;   // wrong one
 
-      pmyView->GetParentFrame ()->GetWindowPlacement(&wp); 
+      pmyView->GetParentFrame ()->GetWindowPlacement(&wp);
     	windowPositionHelper (strResult, wp.rcNormalPosition);
 
       break;
 
-      }	
+      }
     }
+#endif
 
 	return strResult.AllocSysString();
 }   // end of CMUSHclientDoc::GetWorldWindowPositionX

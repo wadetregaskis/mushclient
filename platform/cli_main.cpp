@@ -156,15 +156,6 @@ int main(int argc, char* argv[])
     App.MXP_LoadEntities();
     App.MXP_LoadColours();
 
-    // ── Initialise high-resolution performance counter ───────────────────────
-    // QueryPerformanceFrequency() on POSIX returns 1 GHz (nanoseconds).
-    // Setting m_iCounterFrequency enables script-time profiling and GetInfo(232).
-    {
-        LARGE_INTEGER li;
-        if (QueryPerformanceFrequency(&li))
-            App.m_iCounterFrequency = li.QuadPart;
-    }
-
     // ── Set up the document (world state) ────────────────────────────────────
     CMUSHclientDoc doc;
     g_doc = &doc;
@@ -246,15 +237,12 @@ int main(int argc, char* argv[])
     struct timespec ts_last_timer;
     clock_gettime(CLOCK_MONOTONIC, &ts_last_timer);
 
-    // Script-file monitoring: track last check time for 2 s poll interval
-    struct timespec ts_last_script_check = ts_last_timer;
-
     while (!g_quit) {
 
         // Poll sockets (10 ms timeout keeps CPU usage low)
         CAsyncSocket::Poll(10);
 
-        // Fire timers every ~100 ms; also poll script file mtime every ~2 s
+        // Fire timers every ~100 ms
         {
             struct timespec ts_now;
             clock_gettime(CLOCK_MONOTONIC, &ts_now);
@@ -264,14 +252,6 @@ int main(int argc, char* argv[])
                 ts_last_timer = ts_now;
                 if (doc.m_bEnableTimers && !doc.m_CurrentPlugin)
                     doc.CheckTimerList(doc.GetTimerMap());
-
-                // Script file auto-reload check every 2 s
-                long ms2 = (ts_now.tv_sec  - ts_last_script_check.tv_sec)  * 1000
-                         + (ts_now.tv_nsec - ts_last_script_check.tv_nsec) / 1000000;
-                if (ms2 >= 2000) {
-                    ts_last_script_check = ts_now;
-                    doc.OnScriptFileChanged(false);
-                }
             }
         }
 

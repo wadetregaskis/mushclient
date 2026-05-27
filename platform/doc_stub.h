@@ -2045,6 +2045,8 @@ public:
     // ── Scroll / selection callbacks ──────────────────────────────────────
     // world.SetScroll(pos): scroll the output pane to a line index.
     std::function<void(long)>                 m_fn_set_scroll;
+    // GetInfo(296): y scroll offset in pixels (mirrors CScrollView::GetScrollPosition().y).
+    std::function<long()>                     m_fn_get_scroll_pos;
     // world.SetSelection(sl, el, sc, ec): set the text selection in the pane.
     std::function<void(int, int, int, int)>   m_fn_set_selection;
 

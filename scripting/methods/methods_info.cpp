@@ -1122,13 +1122,19 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 
     case 296:
       {
+#ifndef _WIN32
+      // Non-Windows: query the output pane via a callback set by wx_world_child.cpp.
+      if (m_fn_get_scroll_pos)
+        SetUpVariantLong (vaResult, m_fn_get_scroll_pos ());
+#else
       CMUSHView* pmyView = GetFirstOutputWindow ();
-      if (pmyView) 
+      if (pmyView)
         {
         CPoint pt = pmyView->GetScrollPosition ();
         SetUpVariantLong (vaResult, pt.y);
         break;
         }
+#endif
       }
       break;
 

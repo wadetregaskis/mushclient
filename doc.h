@@ -1517,6 +1517,10 @@ public:
   // Visible is ignored (scrollbar always shown on non-Windows).
   std::function<void(long position)>  m_fn_set_scroll;
 
+  // GetInfo(296): return current y scroll offset in pixels (top of scrollback = 0).
+  // Equivalent to CMUSHView::GetScrollPosition().y on Windows.
+  std::function<long()>  m_fn_get_scroll_pos;
+
   // world.SetSelection(StartLine, EndLine, StartColumn, EndColumn): select a
   // text range in the output pane.  Arguments are 1-based; 0 = no selection.
   std::function<void(int, int, int, int)>  m_fn_set_selection;

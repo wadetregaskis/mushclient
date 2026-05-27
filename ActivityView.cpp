@@ -396,10 +396,6 @@ void CActivityView::OnPopupSwitchtoworld()
   if (!pDoc)
     return;
 
-#ifndef _WIN32
-  if (pDoc->m_fn_activate_client)
-    pDoc->m_fn_activate_client ();
-#else
   for(POSITION pos=pDoc->GetFirstViewPosition();pos!=NULL;)
     {
     CView* pView = pDoc->GetNextView(pos);
@@ -416,9 +412,8 @@ void CActivityView::OnPopupSwitchtoworld()
 
       break;
 
-      }
+      }	
     }
-#endif
 }       // end of CActivityView::OnPopupSwitchtoworld 
 
 

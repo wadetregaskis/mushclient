@@ -508,6 +508,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             }
         };
 
+        // GetInfo(296): return current y scroll offset in pixels from the top of
+        // the virtual scrollback area.  Mirrors CScrollView::GetScrollPosition().y.
+        m_doc->m_fn_get_scroll_pos = [this]() -> long {
+            return m_output ? m_output->GetScrollPositionY() : 0L;
+        };
+
         // world.SetSelection(sl, el, sc, ec): set text selection in the output pane.
         // Lines and columns are 1-based; 0 means start/end of line.
         // All-zeros clears the selection.
@@ -2838,6 +2844,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_output_font      = nullptr;
         m_doc->m_fn_set_input_font       = nullptr;
         m_doc->m_fn_set_scroll           = nullptr;
+        m_doc->m_fn_get_scroll_pos       = nullptr;
         m_doc->m_fn_set_selection        = nullptr;
         m_doc->m_fn_set_command_selection = nullptr;
         m_doc->m_fn_set_paused           = nullptr;

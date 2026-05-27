@@ -401,6 +401,14 @@ void COutputPane::SetPaused(bool paused)
     }
 }
 
+long COutputPane::GetScrollPositionY() const
+{
+    int scrollY = 0, unitH = 0;
+    const_cast<COutputPane*>(this)->GetViewStart(nullptr, &scrollY);
+    const_cast<COutputPane*>(this)->GetScrollPixelsPerUnit(nullptr, &unitH);
+    return (long)scrollY * (long)(unitH > 0 ? unitH : m_lineH);
+}
+
 void COutputPane::ScrollToTop()
 {
     int scrollX;

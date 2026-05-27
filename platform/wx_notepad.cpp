@@ -33,9 +33,6 @@ wxBEGIN_EVENT_TABLE(CWxNotepadFrame, wxFrame)
     EVT_MENU(ID_NP_FILE_NEW,   CWxNotepadFrame::OnMenuNew)
 wxEND_EVENT_TABLE()
 
-// ── Static registry ────────────────────────────────────────────────────────
-std::map<std::string, CWxNotepadFrame*> CWxNotepadFrame::s_registry;
-
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 // Build a wxFont from the fields stored in pDoc.
@@ -182,90 +179,7 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     if (App.m_pNormalDocTemplate)
         App.m_pNormalDocTemplate->RegisterDoc(pDoc);
 
-    // ── Register in the static title registry ─────────────────────────────
-    {
-        std::string key = std::string(title.ToUTF8());
-        for (char& c : key) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
-        s_registry[key] = this;
-    }
-
     Show(true);
-}
-
-// ── Find ───────────────────────────────────────────────────────────────────
-
-/*static*/ CWxNotepadFrame* CWxNotepadFrame::Find(const std::string& title)
-{
-    std::string key = title;
-    for (char& c : key) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
-    auto it = s_registry.find(key);
-    return (it != s_registry.end()) ? it->second : nullptr;
-}
-
-// ── AppendText ─────────────────────────────────────────────────────────────
-
-void CWxNotepadFrame::AppendText(const std::string& text, bool replace)
-{
-    if (!m_ctrl) return;
-    if (replace) {
-        m_ctrl->SetValue(wxString::FromUTF8(text.c_str()));
-    } else {
-        m_ctrl->AppendText(wxString::FromUTF8(text.c_str()));
-    }
-    Raise();
-}
-
-// ── GetText ────────────────────────────────────────────────────────────────
-
-std::string CWxNotepadFrame::GetText() const
-{
-    if (!m_ctrl) return {};
-    return std::string(m_ctrl->GetValue().ToUTF8());
-}
-
-// ── ListTitles ─────────────────────────────────────────────────────────────
-
-/*static*/ std::vector<std::string> CWxNotepadFrame::ListTitles()
-{
-    std::vector<std::string> titles;
-    titles.reserve(s_registry.size());
-    for (const auto& kv : s_registry)
-        titles.push_back(kv.second->GetTitle().ToUTF8().data());
-    return titles;
-}
-
-// ── SetColours ─────────────────────────────────────────────────────────────
-
-void CWxNotepadFrame::SetColours(unsigned long fg, unsigned long bg)
-{
-    if (!m_pDoc) return;
-    m_pDoc->m_textColour = static_cast<COLORREF>(fg);
-    m_pDoc->m_backColour = static_cast<COLORREF>(bg);
-    ApplyColours();
-}
-
-// ── SetFont ────────────────────────────────────────────────────────────────
-
-void CWxNotepadFrame::SetFont(const std::string& face, int size, int style, int /*charset*/)
-{
-    if (!m_pDoc) return;
-    if (!face.empty())
-        m_pDoc->m_strFontName = face.c_str();
-    if (size > 0)
-        m_pDoc->m_iFontSize = size;
-    m_pDoc->m_iFontWeight  = (style & 1) ? FW_BOLD : FW_NORMAL;
-    m_pDoc->m_bFontItalic    = (style & 2) != 0;
-    m_pDoc->m_bFontUnderline = (style & 4) != 0;
-    // m_bFontStrikeout is not in CTextDocument on non-Windows; skip strikeout.
-    ApplyFont();
-}
-
-// ── SetReadOnly ────────────────────────────────────────────────────────────
-
-void CWxNotepadFrame::SetReadOnly(bool ro)
-{
-    if (!m_ctrl) return;
-    m_ctrl->SetEditable(!ro);
 }
 
 // ── Destructor ─────────────────────────────────────────────────────────────
@@ -323,14 +237,10 @@ void CWxNotepadFrame::OnClose(wxCloseEvent& evt)
 
     // ── Cleanup ─────────────────────────────────────────────────────────
     if (m_pDoc) {
-        // Unregister from the doc template and static registry.
+        // Unregister from the doc template so FindNotepad can't find it
+        // after this point.
         if (App.m_pNormalDocTemplate)
             App.m_pNormalDocTemplate->UnregisterDoc(m_pDoc);
-        {
-            std::string key = std::string(GetTitle().ToUTF8());
-            for (char& c : key) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
-            s_registry.erase(key);
-        }
 
         // Clear all callbacks to prevent use-after-free if anything tries to
         // call them during the delete.

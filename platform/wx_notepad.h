@@ -10,9 +10,6 @@
 
 #include <wx/wx.h>
 #include <wx/stc/stc.h>       // wxStyledTextCtrl for Find/replace support
-#include <map>
-#include <string>
-#include <vector>
 
 // Forward declaration — avoids pulling stdafx.h into wx headers.
 class CTextDocument;
@@ -28,29 +25,6 @@ public:
                     const wxString& text);
     ~CWxNotepadFrame() override;
 
-    // Find an existing frame by title (case-insensitive).
-    // Returns nullptr if not found.
-    static CWxNotepadFrame* Find(const std::string& title);
-
-    // Append or replace the text content of this frame.
-    void AppendText(const std::string& text, bool replace);
-
-    // Return all text content of this frame.
-    std::string GetText() const;
-
-    // Return a snapshot of all open titles (lower-cased keys → original titles).
-    static std::vector<std::string> ListTitles();
-
-    // Set foreground/background colours (COLORREF: 0x00BBGGRR).
-    void SetColours(unsigned long fg, unsigned long bg);
-
-    // Set font properties.  size=0 keeps the current size.
-    // style bits: 1=bold, 2=italic, 4=underline, 8=strikeout.
-    void SetFont(const std::string& face, int size, int style, int charset);
-
-    // Set or clear read-only mode.
-    void SetReadOnly(bool ro);
-
 private:
     CTextDocument* m_pDoc;
     wxTextCtrl*    m_ctrl;
@@ -64,10 +38,6 @@ private:
     void OnClose   (wxCloseEvent&   evt);
     void OnMenuNew (wxCommandEvent& evt);
     void OnMenuSave(wxCommandEvent& evt);
-
-    // Static registry: lower-cased title → frame pointer.
-    // Populated in constructor; erased in destructor.
-    static std::map<std::string, CWxNotepadFrame*> s_registry;
 
     wxDECLARE_EVENT_TABLE();
 };

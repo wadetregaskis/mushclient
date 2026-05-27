@@ -189,62 +189,6 @@ extern void* (*g_wxhook_create_text_window)(
     int  iLines,
     int  iNotepadType);
 
-// ── Notepad append hook ───────────────────────────────────────────────────
-// Find an existing notepad window by title (case-insensitive) and append or
-// replace its text.  Returns true if a matching window was found and updated,
-// false if no such window exists (caller should create one instead).
-extern bool (*g_wxhook_append_to_notepad)(const char* title,
-                                          const char* text,
-                                          bool replace);
-
-// ── Notepad get-text hook ─────────────────────────────────────────────────
-// Find an existing notepad by title (case-insensitive) and return a
-// heap-allocated copy of its text content, or nullptr if not found.
-// The caller is responsible for free()-ing the returned pointer.
-extern char* (*g_wxhook_get_notepad_text)(const char* title);
-
-// ── Notepad list hook ─────────────────────────────────────────────────────
-// Return a null-terminated array of heap-allocated title strings for all
-// currently open notepad windows.  The caller must free each string and
-// the array itself.
-extern char** (*g_wxhook_get_notepad_list)();
-
-// ── Notepad activate / close / move / position hooks ────────────────────────
-// All operate on a notepad identified by title (case-insensitive).
-// activate: bring window to front; returns true if found.
-extern bool (*g_wxhook_activate_notepad)(const char* title);
-// close: close the notepad window; returns true if found.
-extern bool (*g_wxhook_close_notepad)(const char* title);
-// move: reposition and/or resize; returns true if found.
-extern bool (*g_wxhook_move_notepad)(const char* title, int x, int y, int w, int h);
-// position: "x y width height" string for an open notepad, or nullptr if not found.
-// Caller must free().
-extern char* (*g_wxhook_get_notepad_position)(const char* title);
-
-// ── Notepad save hook ─────────────────────────────────────────────────────
-// Save the content of a named notepad to a file.
-// filename may be "" to trigger a save-as dialog.
-// Returns true if the save succeeded, false if not found or cancelled.
-extern bool (*g_wxhook_save_notepad)(const char* title,
-                                     const char* filename,
-                                     bool replaceExisting);
-
-// ── Notepad property hooks ─────────────────────────────────────────────────
-// Set foreground/background colours on a named notepad (COLORREFs: 0x00BBGGRR).
-extern bool (*g_wxhook_notepad_colour)(const char* title,
-                                       unsigned long fg,
-                                       unsigned long bg);
-// Set font on a named notepad.
-// style bits: 1=bold, 2=italic, 4=underline, 8=strikeout (matches Windows API).
-// size=0 → keep current; charset is ignored on non-Windows.
-extern bool (*g_wxhook_notepad_font)(const char* title,
-                                     const char* fontName,
-                                     int size,
-                                     int style,
-                                     int charset);
-// Set or clear read-only mode on a named notepad.
-extern bool (*g_wxhook_notepad_readonly)(const char* title, bool readOnly);
-
 // ── Colour picker hook ────────────────────────────────────────────────────
 // Open a colour-picker dialog.  suggested is a COLORREF (0x00BBGGRR), or
 // -1 to start with no pre-selected colour.  Returns the picked COLORREF, or
@@ -258,16 +202,6 @@ extern long (*g_wxhook_pick_colour)(long suggested);
 // or nullptr if the user cancelled.
 extern char* (*g_wxhook_menu_dialog)(const char* const* items, int count,
                                      const char* defaultItem);
-
-// ── Flash icon / request user attention ───────────────────────────────────
-// Flashes the main application window's taskbar button to alert the user.
-// Equivalent to the Windows FlashWindow(TRUE) call.
-extern void (*g_wxhook_flash_icon)();
-
-// ── Move main window ──────────────────────────────────────────────────────
-// Repositions and/or resizes the MDI parent frame.  Coordinates are screen
-// pixels (same convention as wxWindow::SetSize).
-extern void (*g_wxhook_move_main_window)(long left, long top, long width, long height);
 
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.

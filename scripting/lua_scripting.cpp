@@ -285,10 +285,18 @@ bool CScriptEngine::ParseLua (const CString & strCode, const CString & strWhat)
   LARGE_INTEGER start, 
                 finish;
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     QueryPerformanceCounter (&start);
   else
-    { start.QuadPart = 0; finish.QuadPart = 0; }
+    {
+    start.QuadPart = 0;
+    finish.QuadPart = 0;
+    }
+#else
+  start.QuadPart = 0; finish.QuadPart = 0;
+#endif
+
 
   // note - an error here is a *compile* error
   if (luaL_loadbuffer(L, strCode, strCode.GetLength (), strWhat))
@@ -308,6 +316,9 @@ bool CScriptEngine::ParseLua (const CString & strCode, const CString & strWhat)
 
   lua_settop(L, 0);   // clear stack
 
+// -----------------
+
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     {
     QueryPerformanceCounter (&finish);
@@ -315,6 +326,7 @@ bool CScriptEngine::ParseLua (const CString & strCode, const CString & strWhat)
     if (m_pDoc->m_CurrentPlugin)
       m_pDoc->m_CurrentPlugin->m_iScriptTimeTaken += finish.QuadPart - start.QuadPart;
     }
+#endif
 
   return false;
 
@@ -509,11 +521,18 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
       ON_PLUGIN_TICK != szProcedure)
     m_pDoc->Trace (TFormat ("Executing %s script \"%s\"", szType, szProcedure));
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     QueryPerformanceCounter (&start);
   else
-    { start.QuadPart = 0; finish.QuadPart = 0; }
-
+    {
+    start.QuadPart = 0;
+    finish.QuadPart = 0;
+    }
+#else
+  start.QuadPart = 0; finish.QuadPart = 0;
+#endif
+             
   unsigned short iOldStyle = m_pDoc->m_iNoteStyle;
   m_pDoc->m_iNoteStyle = NORMAL;    // back to default style
 
@@ -669,6 +688,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
 
   nInvocationCount++;   // count number of times used
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     {
     QueryPerformanceCounter (&finish);
@@ -676,6 +696,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
     if (m_pDoc->m_CurrentPlugin)
       m_pDoc->m_CurrentPlugin->m_iScriptTimeTaken += finish.QuadPart - start.QuadPart;
     }
+#endif
 
   if (result)
     {
@@ -727,11 +748,18 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
       ON_PLUGIN_TICK != szProcedure)
     m_pDoc->Trace (TFormat ("Executing %s script \"%s\"", szType, szProcedure));
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     QueryPerformanceCounter (&start);
   else
-    { start.QuadPart = 0; finish.QuadPart = 0; }
-
+    {
+    start.QuadPart = 0;
+    finish.QuadPart = 0;
+    }
+#else
+  start.QuadPart = 0; finish.QuadPart = 0;
+#endif
+             
   unsigned short iOldStyle = m_pDoc->m_iNoteStyle;
   m_pDoc->m_iNoteStyle = NORMAL;    // back to default style
 
@@ -762,6 +790,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
 
   nInvocationCount++;   // count number of times used
 
+#ifdef _WIN32
   if (App.m_iCounterFrequency)
     {
     QueryPerformanceCounter (&finish);
@@ -769,6 +798,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
     if (m_pDoc->m_CurrentPlugin)
       m_pDoc->m_CurrentPlugin->m_iScriptTimeTaken += finish.QuadPart - start.QuadPart;
     }
+#endif
 
   if (lua_gettop (L) > 0 && lua_isstring (L, 1))
     {

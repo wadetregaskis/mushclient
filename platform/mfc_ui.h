@@ -4568,13 +4568,20 @@ public:
 inline int MulDiv(int n, int m, int d) {
     return d ? (int)((long long)n * m / d) : 0;
 }
-inline BOOL QueryPerformanceCounter(LARGE_INTEGER* li) {
-    if (li) { li->QuadPart = 0; }
-    return FALSE;
-}
+// High-resolution performance counter using POSIX clock_gettime(CLOCK_MONOTONIC).
+// Frequency is 1 GHz (nanoseconds).  Both functions always succeed.
+#include <time.h>
 inline BOOL QueryPerformanceFrequency(LARGE_INTEGER* li) {
-    if (li) { li->QuadPart = 1; }
-    return FALSE;
+    if (li) { li->QuadPart = 1000000000LL; }  // 1 ns resolution
+    return TRUE;
+}
+inline BOOL QueryPerformanceCounter(LARGE_INTEGER* li) {
+    if (li) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        li->QuadPart = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    }
+    return TRUE;
 }
 
 // ── WM_SETFONT / more window messages ─────────────────────────────────────

@@ -1004,49 +1004,69 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 
     case 290:
       {
+#ifndef _WIN32
+      // Non-Windows: text area starts at client origin.
+      SetUpVariantLong (vaResult, 0);
+#else
       CMUSHView* pmyView = GetFirstOutputWindow ();
-      if (pmyView) 
+      if (pmyView)
         {
         RECT rect = pmyView->GetTextRectangle ();
         SetUpVariantLong (vaResult, rect.left);
         break;
         }
+#endif
       }
       break;
 
     case 291:
       {
+#ifndef _WIN32
+      // Non-Windows: text area starts at client origin.
+      SetUpVariantLong (vaResult, 0);
+#else
       CMUSHView* pmyView = GetFirstOutputWindow ();
-      if (pmyView) 
+      if (pmyView)
         {
         RECT rect = pmyView->GetTextRectangle ();
         SetUpVariantLong (vaResult, rect.top);
         break;
         }
+#endif
       }
       break;
 
     case 292:
       {
+#ifndef _WIN32
+      // Non-Windows: text area right edge = output pane client width.
+      SetUpVariantLong (vaResult, m_gui_cols * m_gui_font_width);
+#else
       CMUSHView* pmyView = GetFirstOutputWindow ();
-      if (pmyView) 
+      if (pmyView)
         {
         RECT rect = pmyView->GetTextRectangle ();
         SetUpVariantLong (vaResult, rect.right);
         break;
         }
+#endif
       }
       break;
 
     case 293:
       {
+#ifndef _WIN32
+      // Non-Windows: text area bottom edge = output pane client height.
+      SetUpVariantLong (vaResult, m_gui_rows * m_gui_font_height);
+#else
       CMUSHView* pmyView = GetFirstOutputWindow ();
-      if (pmyView) 
+      if (pmyView)
         {
         RECT rect = pmyView->GetTextRectangle ();
         SetUpVariantLong (vaResult, rect.bottom);
         break;
         }
+#endif
       }
       break;
 

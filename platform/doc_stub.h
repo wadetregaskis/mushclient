@@ -213,8 +213,13 @@ enum {
 
 // ── Notepad types (from doc.h) ────────────────────────────────────────────
 enum {
-    eNotepadNormal   = 0,
-    eNotepadMXPdebug = 6   // approximate value; only used for AppendToTheNotepad stub
+    eNotepadNormal      = 0,
+    eNotepadMXPdebug    = 1,
+    eNotepadTrigger     = 2,
+    eNotepadRecall      = 3,
+    eNotepadScript      = 4,
+    eNotepadPacketDebug = 5,
+    eNotepadLineInfo    = 6
 };
 
 // ── eWorldAction (from doc.h) ─────────────────────────────────────────────

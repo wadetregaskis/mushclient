@@ -156,6 +156,7 @@ CMUSHclientDoc::CMUSHclientDoc()
     }
 
     m_strTerminalIdentification = "MUSHCLIENT";
+    m_tWorldOpenTime = time(nullptr);
 
     // ── Scratch line for ANSI style state ─────────────────────────────────
     // InterpretANSIcode / Interpret256ANSIcode always call

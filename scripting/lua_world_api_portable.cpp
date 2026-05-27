@@ -1340,8 +1340,16 @@ static int L_GetInfo(lua_State* L)
         }   return 1;
         case 303: lua_pushnil(L);  return 1; // script file mod time — not tracked portably
         case 304: lua_pushnumber(L, (double)time(nullptr));                   return 1;
-        case 305: lua_pushnil(L);  return 1; // client start time — not tracked portably
-        case 306: lua_pushnil(L);  return 1; // world open time — not tracked portably
+        case 305: {   // client start time — captured once at first call
+            static time_t s_clientStart = time(nullptr);
+            lua_pushnumber(L, (double)s_clientStart);
+        }   return 1;
+        case 306: {   // world open time — set in CMUSHclientDoc constructor
+            if (pDoc->m_tWorldOpenTime)
+                lua_pushnumber(L, (double)pDoc->m_tWorldOpenTime);
+            else
+                lua_pushnil(L);
+        }   return 1;
         default:  lua_pushnil(L);                                              return 1;
     }
 }

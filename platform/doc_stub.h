@@ -1375,7 +1375,8 @@ public:
     long m_maxlines                         = 5000;
 
     // ── Connect/disconnect timestamps ────────────────────────────────────
-    CTime m_tConnectTime;
+    CTime   m_tConnectTime;
+    time_t  m_tWorldOpenTime = 0;  // when this world document was constructed
 
     // ── Disconnect behaviour ──────────────────────────────────────────────
     bool    m_bShowConnectDisconnect = false;

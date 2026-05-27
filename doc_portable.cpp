@@ -277,10 +277,39 @@ CStyle* CMUSHclientDoc::AddStyle(const unsigned short iFlags,
                     static_cast<CAction*>(nullptr), pLine);
 }
 
-// ── CheckObjectName stub ──────────────────────────────────────────────────
-// Validates an object label; stub always accepts (returns eOK).
-long CheckObjectName(const CString& /*strName*/, const bool /*bConform*/)
+// ── CheckObjectName ───────────────────────────────────────────────────────
+// Mirrors CMUSHclientDoc::CheckObjectName in doc.cpp:
+//   1. Trim leading/trailing whitespace.
+//   2. If bConform: validate with CheckLabel — return eInvalidObjectLabel on fail.
+//   3. Lowercase the name (keys in the trigger/alias/timer maps are lowercase).
+// Returns eOK on success.
+
+// CheckLabel: first char must be alpha; remaining chars alpha/digit/underscore.
+// Returns TRUE if the label is INVALID (matching doc.cpp convention).
+static BOOL CheckLabel(const CString& strLabel)
 {
+    if (strLabel.IsEmpty())
+        return TRUE;  // empty = invalid
+    if (!isalpha((unsigned char)strLabel[0]))
+        return TRUE;
+    for (int i = 1; i < strLabel.GetLength(); i++) {
+        char c = strLabel[i];
+        if (!isalpha((unsigned char)c) && !isdigit((unsigned char)c) && c != '_')
+            return TRUE;
+    }
+    return FALSE;  // valid
+}
+
+long CheckObjectName(CString& strName, const bool bConform)
+{
+    strName.TrimLeft();
+    strName.TrimRight();
+
+    if (bConform)
+        if (CheckLabel(strName))
+            return eInvalidObjectLabel;
+
+    strName.MakeLower();
     return eOK;
 }
 

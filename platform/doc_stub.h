@@ -985,8 +985,12 @@ extern const string ON_PLUGIN_TELNET_OPTION;
 extern const string ON_PLUGIN_TELNET_SUBNEGOTIATION;
 
 // ── Object name validation (from utilities) ───────────────────────────────
-// Returns eOK if name is valid; non-zero error code otherwise.
-long CheckObjectName(const CString& strName, const bool bConform = true);
+// Trims whitespace, optionally validates the label, then lowercases the name
+// (matching CMUSHclientDoc::CheckObjectName in doc.cpp).  Returns eOK if the
+// name is valid, otherwise a non-zero error code.
+// NOTE: takes a non-const ref so the caller's CString is lowercased in place,
+// exactly as the Windows member-method version does.
+long CheckObjectName(CString& strName, const bool bConform = true);
 
 // ── Free function declarations ────────────────────────────────────────────
 unsigned long MakeActionHash(const CString& strAction,

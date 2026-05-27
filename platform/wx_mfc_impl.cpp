@@ -2745,6 +2745,30 @@ static bool hook_append_to_notepad(const char* title, const char* text, bool rep
     return true;
 }
 
+
+static char* hook_get_notepad_text(const char* title)
+{
+    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
+    if (!frame) return nullptr;
+    std::string text = frame->GetText();
+    char* result = static_cast<char*>(malloc(text.size() + 1));
+    if (result) memcpy(result, text.c_str(), text.size() + 1);
+    return result;
+}
+
+static char** hook_get_notepad_list()
+{
+    std::vector<std::string> titles = CWxNotepadFrame::ListTitles();
+    char** arr = static_cast<char**>(malloc((titles.size() + 1) * sizeof(char*)));
+    if (!arr) return nullptr;
+    for (size_t i = 0; i < titles.size(); ++i) {
+        arr[i] = static_cast<char*>(malloc(titles[i].size() + 1));
+        if (arr[i]) memcpy(arr[i], titles[i].c_str(), titles[i].size() + 1);
+    }
+    arr[titles.size()] = nullptr;
+    return arr;
+}
+
 // ── Colour picker ─────────────────────────────────────────────────────────
 
 static long hook_pick_colour(long suggested)
@@ -2853,6 +2877,8 @@ void wx_mfc_install_hooks()
     g_wxhook_play_sound           = hook_play_sound;
     g_wxhook_stop_sound           = hook_stop_sound;
     g_wxhook_append_to_notepad    = hook_append_to_notepad;
+    g_wxhook_get_notepad_text     = hook_get_notepad_text;
+    g_wxhook_get_notepad_list     = hook_get_notepad_list;
 #endif
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce

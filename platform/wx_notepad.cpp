@@ -215,6 +215,25 @@ void CWxNotepadFrame::AppendText(const std::string& text, bool replace)
     Raise();
 }
 
+// ── GetText ────────────────────────────────────────────────────────────────
+
+std::string CWxNotepadFrame::GetText() const
+{
+    if (!m_ctrl) return {};
+    return std::string(m_ctrl->GetValue().ToUTF8());
+}
+
+// ── ListTitles ─────────────────────────────────────────────────────────────
+
+/*static*/ std::vector<std::string> CWxNotepadFrame::ListTitles()
+{
+    std::vector<std::string> titles;
+    titles.reserve(s_registry.size());
+    for (const auto& kv : s_registry)
+        titles.push_back(kv.second->GetTitle().ToUTF8().data());
+    return titles;
+}
+
 // ── Destructor ─────────────────────────────────────────────────────────────
 
 CWxNotepadFrame::~CWxNotepadFrame()

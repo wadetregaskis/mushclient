@@ -12,6 +12,7 @@
 #include <wx/stc/stc.h>       // wxStyledTextCtrl for Find/replace support
 #include <map>
 #include <string>
+#include <vector>
 
 // Forward declaration — avoids pulling stdafx.h into wx headers.
 class CTextDocument;
@@ -33,6 +34,12 @@ public:
 
     // Append or replace the text content of this frame.
     void AppendText(const std::string& text, bool replace);
+
+    // Return all text content of this frame.
+    std::string GetText() const;
+
+    // Return a snapshot of all open titles (lower-cased keys → original titles).
+    static std::vector<std::string> ListTitles();
 
 private:
     CTextDocument* m_pDoc;

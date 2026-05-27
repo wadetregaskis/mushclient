@@ -197,6 +197,18 @@ extern bool (*g_wxhook_append_to_notepad)(const char* title,
                                           const char* text,
                                           bool replace);
 
+// ── Notepad get-text hook ─────────────────────────────────────────────────
+// Find an existing notepad by title (case-insensitive) and return a
+// heap-allocated copy of its text content, or nullptr if not found.
+// The caller is responsible for free()-ing the returned pointer.
+extern char* (*g_wxhook_get_notepad_text)(const char* title);
+
+// ── Notepad list hook ─────────────────────────────────────────────────────
+// Return a null-terminated array of heap-allocated title strings for all
+// currently open notepad windows.  The caller must free each string and
+// the array itself.
+extern char** (*g_wxhook_get_notepad_list)();
+
 // ── Colour picker hook ────────────────────────────────────────────────────
 // Open a colour-picker dialog.  suggested is a COLORREF (0x00BBGGRR), or
 // -1 to start with no pre-selected colour.  Returns the picked COLORREF, or

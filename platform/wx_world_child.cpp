@@ -504,6 +504,10 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             // Auto-freeze: if the world has it disabled, the pane should keep
             // auto-scrolling even when the user has scrolled up.
             m_output->SetAllowAutoFreeze(m_doc->m_bAutoFreeze != 0);
+            // Start-paused: if the world's "auto_pause" option is set, begin
+            // with auto-scroll disengaged so output doesn't scroll on arrival.
+            if (m_doc->m_bStartPaused)
+                m_output->SetPaused(true);
             // Background colour (NO_COLOUR = 0xFFFFFFFF → black).
             ApplyPaneBackground(m_doc->m_iBackgroundColour);
         }

@@ -4885,8 +4885,16 @@ static int L_DeleteCommandHistory(lua_State* L)
 
 // PushCommand / PasteCommand / SelectCommand / SetCommand / GetQueue are
 // command-window concepts.
-static int L_PushCommand(lua_State* L)   { world_doc(L); lua_pushstring(L, ""); return 1; }
-static int L_SelectCommand(lua_State* L) { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_PushCommand(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    std::string s = pDoc->m_fn_push_command ? pDoc->m_fn_push_command() : std::string();
+    lua_pushstring(L, s.c_str()); return 1;
+}
+static int L_SelectCommand(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    if (pDoc->m_fn_select_command) pDoc->m_fn_select_command();
+    lua_pushnumber(L, eOK); return 1;
+}
 
 static int L_PasteCommand(lua_State* L)
 {
@@ -4937,10 +4945,22 @@ static int L_InfoClear(lua_State* L)        { world_doc(L); lua_pushnumber(L, eO
 static int L_InfoColour(lua_State* L)       { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_InfoFont(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 
-// ── GUI stubs ─────────────────────────────────────────────────────────────────
-static int L_Activate(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_ActivateClient(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_Redraw(lua_State* L)           { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+// ── GUI callbacks ─────────────────────────────────────────────────────────────
+static int L_Activate(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    if (pDoc->m_fn_activate_client) pDoc->m_fn_activate_client();
+    lua_pushnumber(L, eOK); return 1;
+}
+static int L_ActivateClient(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    if (pDoc->m_fn_activate_client) pDoc->m_fn_activate_client();
+    lua_pushnumber(L, eOK); return 1;
+}
+static int L_Redraw(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    if (pDoc->m_fn_repaint) pDoc->m_fn_repaint();
+    lua_pushnumber(L, eOK); return 1;
+}
 static int L_Repaint(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
@@ -5008,14 +5028,37 @@ static int L_GetWorldWindowPositionX(lua_State* L) {
     return 1;
 }
 static int L_MoveMainWindow(lua_State* L)    { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_MoveWorldWindow(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_MoveWorldWindowX(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_MoveWorldWindow(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    long l = (long)luaL_optnumber(L, 1, 0);
+    long t = (long)luaL_optnumber(L, 2, 0);
+    long w = (long)luaL_optnumber(L, 3, 0);
+    long h = (long)luaL_optnumber(L, 4, 0);
+    if (pDoc->m_fn_move_world_window) pDoc->m_fn_move_world_window(l, t, w, h);
+    lua_pushnumber(L, eOK); return 1;
+}
+static int L_MoveWorldWindowX(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    long l = (long)luaL_optnumber(L, 1, 0);
+    long t = (long)luaL_optnumber(L, 2, 0);
+    long w = (long)luaL_optnumber(L, 3, 0);
+    long h = (long)luaL_optnumber(L, 4, 0);
+    short which = (short)luaL_optinteger(L, 5, 1);
+    if (which == 1 && pDoc->m_fn_move_world_window)
+        pDoc->m_fn_move_world_window(l, t, w, h);
+    lua_pushnumber(L, eOK); return 1;
+}
 static int L_FlashIcon(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_Help(lua_State* L)              { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_Menu(lua_State* L)              { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_PickColour(lua_State* L)        { world_doc(L); lua_pushnumber(L, -1); return 1; }
 static int L_Save(lua_State* L)              { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_SetWorldWindowStatus(lua_State* L){ world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_SetWorldWindowStatus(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    short param = (short)luaL_optinteger(L, 1, 3);
+    if (pDoc->m_fn_set_window_status) pDoc->m_fn_set_window_status(param);
+    lua_pushnumber(L, eOK); return 1;
+}
 
 // ── Mapper stubs ──────────────────────────────────────────────────────────────
 static int L_AddMapperComment(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }

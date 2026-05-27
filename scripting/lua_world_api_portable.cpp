@@ -5052,7 +5052,12 @@ static int L_FlashIcon(lua_State* L)         { world_doc(L); lua_pushnumber(L, e
 static int L_Help(lua_State* L)              { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_Menu(lua_State* L)              { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_PickColour(lua_State* L)        { world_doc(L); lua_pushnumber(L, -1); return 1; }
-static int L_Save(lua_State* L)              { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_Save(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    bool ok = pDoc->m_fn_save ? pDoc->m_fn_save() : true;
+    lua_pushnumber(L, ok ? eOK : eWorldNotFound);
+    return 1;
+}
 static int L_SetWorldWindowStatus(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
     short param = (short)luaL_optinteger(L, 1, 3);

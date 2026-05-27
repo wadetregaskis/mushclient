@@ -209,6 +209,15 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             SetSize((int)l, (int)t, (int)w, (int)h);
         };
 
+        // world.Save(): save the world file to its current path.  Returns false
+        // if the world has no path yet (the caller should handle that case).
+        m_doc->m_fn_save = [this]() -> bool {
+            CString pathCStr = m_doc->GetPathName();
+            std::string savePath = static_cast<const char*>(pathCStr);
+            if (savePath.empty()) return false;
+            return m_doc->OnSaveDocument(savePath.c_str()) != FALSE;
+        };
+
         // world.SetWorldWindowStatus(n): change the MDI child frame window state.
         // 1=maximize, 2=iconize/minimize, 3=restore, 4=show normal.
         m_doc->m_fn_set_window_status = [this](short param) {
@@ -2825,6 +2834,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_paused           = nullptr;
         m_doc->m_fn_repaint                  = nullptr;
         m_doc->m_fn_move_world_window        = nullptr;
+        m_doc->m_fn_save                     = nullptr;
         m_doc->m_fn_set_window_status        = nullptr;
         m_doc->m_fn_clear_output             = nullptr;
         m_doc->m_fn_status                   = nullptr;

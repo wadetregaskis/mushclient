@@ -2025,6 +2025,10 @@ public:
     // If nothing is selected, both are set to the caret position.
     std::function<void(long&, long&)> m_fn_get_command_selection;
 
+    // world.Save(): save this world's file to its current path (or prompt for
+    // a new path if the world has not been saved yet).  Returns true on success.
+    std::function<bool()> m_fn_save;
+
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference
     // m_pCurrentLine->styleList.GetTail() to read the current style.

@@ -1601,6 +1601,16 @@ public:
     CString        m_strWindowTitle;
     CString        m_strMainWindowTitle;
 
+    // ── CDocument-compatible accessors (inline — no layout change) ────
+    // The Windows CMUSHclientDoc inherits GetPathName/GetTitle/IsModified
+    // from CDocument.  In the portable stub we provide them as inline
+    // methods over existing fields.
+    CString GetPathName()  const { return m_strWorldFilePath; }
+    CString GetTitle()     const { return m_mush_name; }
+    BOOL    IsModified()   const { return FALSE; }  // not tracked portably
+    void    SetPathName(const CString& path) { m_strWorldFilePath = path; }
+    void    SetTitle(const CString& title)   { m_mush_name = title; }
+
     // ── Option caches (portable GetOption / SetOption backing store) ──
     // Stores values for numeric/alpha options that don't have a dedicated
     // CMUSHclientDoc member in the portable build.  Pre-populated from
@@ -1896,7 +1906,7 @@ public:
     void ColourNote(const char* fg, const char* bg, const CString& text);
     void ColourNote(const char* fg, const char* bg, const char* text);
     void ColourTell(const char* fg, const char* bg, const char* text);
-    void SetModifiedFlag(BOOL) {}
+    void SetModifiedFlag(BOOL = TRUE) {}  // modification not tracked portably
     void ShowErrorLines(int) {}
     void WriteErrorLines(int, FILE*) {}
 

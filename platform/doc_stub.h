@@ -1881,7 +1881,7 @@ public:
                         unsigned int*, unsigned int*, unsigned int*,
                         unsigned int*, unsigned int*) {}
     void Save_World_XML(class CArchive&, unsigned long, CString) {}
-    void Serialize_World_XML(class CArchive&) {}
+    void Serialize_World_XML(class CArchive&);
     void OnFileReloaddefaults() {}
     CString GetAlphaOptionItem(int) { return ""; }
 

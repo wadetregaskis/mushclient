@@ -277,6 +277,9 @@ if(NOT WIN32)
 
         # Portable world-file loader (triggers, aliases, variables, timers)
         xml/xml_load_world_portable.cpp
+
+        # Portable world-file writer (mushcli save)
+        xml/xml_save_world_portable.cpp
     )
 
     add_library(mushcore STATIC ${MUSHCORE_SOURCES})

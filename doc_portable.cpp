@@ -1280,9 +1280,38 @@ void CMUSHclientDoc::ColourTell(const char* fg, const char* bg, const char* text
 void CMUSHclientDoc::UpdateAllViews(void*) {}
 long CMUSHclientDoc::GetUniqueNumber()          { return App.GetUniqueNumber() & 0x7FFFFFFFL; }
 
-bool CMUSHclientDoc::AppendToTheNotepad(const CString, const CString,
-                                         const bool, const int)
-{ return false; }
+bool CMUSHclientDoc::AppendToTheNotepad(const CString strTitle,
+                                         const CString strText,
+                                         const bool bReplace,
+                                         const int  iNotepadType)
+{
+    // Try to find and update an existing notepad by title.
+    if (g_wxhook_append_to_notepad)
+    {
+        const char* title = static_cast<const char*>(strTitle);
+        const char* text  = static_cast<const char*>(strText);
+        if (g_wxhook_append_to_notepad(title, text, bReplace))
+            return true;
+    }
+
+    // No existing notepad — create a new one with the given text.
+    return CreateTextWindow(
+        static_cast<const char*>(strText),
+        static_cast<const char*>(strTitle),
+        this,
+        0,                              // iUniqueDocNum (not tracked portably)
+        App.m_strLuaScript,             // use default font name (fallback)
+        10,                             // default font size
+        400,                            // FW_NORMAL
+        0,                              // charset
+        RGB(0,   0,   0),               // black text
+        RGB(255, 255, 255),             // white background
+        CString(""),                    // no search string
+        CString(""),                    // no line preamble
+        false, false, false, false, false,
+        0,
+        iNotepadType);
+}
 
 bool CMUSHclientDoc::SeeIfHandlerCanExecute(const CString&)
 { return false; }

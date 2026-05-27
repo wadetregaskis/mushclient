@@ -10,6 +10,8 @@
 
 #include <wx/wx.h>
 #include <wx/stc/stc.h>       // wxStyledTextCtrl for Find/replace support
+#include <map>
+#include <string>
 
 // Forward declaration — avoids pulling stdafx.h into wx headers.
 class CTextDocument;
@@ -25,6 +27,13 @@ public:
                     const wxString& text);
     ~CWxNotepadFrame() override;
 
+    // Find an existing frame by title (case-insensitive).
+    // Returns nullptr if not found.
+    static CWxNotepadFrame* Find(const std::string& title);
+
+    // Append or replace the text content of this frame.
+    void AppendText(const std::string& text, bool replace);
+
 private:
     CTextDocument* m_pDoc;
     wxTextCtrl*    m_ctrl;
@@ -38,6 +47,10 @@ private:
     void OnClose   (wxCloseEvent&   evt);
     void OnMenuNew (wxCommandEvent& evt);
     void OnMenuSave(wxCommandEvent& evt);
+
+    // Static registry: lower-cased title → frame pointer.
+    // Populated in constructor; erased in destructor.
+    static std::map<std::string, CWxNotepadFrame*> s_registry;
 
     wxDECLARE_EVENT_TABLE();
 };

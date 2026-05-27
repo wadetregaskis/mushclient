@@ -33,6 +33,9 @@ wxBEGIN_EVENT_TABLE(CWxNotepadFrame, wxFrame)
     EVT_MENU(ID_NP_FILE_NEW,   CWxNotepadFrame::OnMenuNew)
 wxEND_EVENT_TABLE()
 
+// ── Static registry ────────────────────────────────────────────────────────
+std::map<std::string, CWxNotepadFrame*> CWxNotepadFrame::s_registry;
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 // Build a wxFont from the fields stored in pDoc.
@@ -179,7 +182,37 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     if (App.m_pNormalDocTemplate)
         App.m_pNormalDocTemplate->RegisterDoc(pDoc);
 
+    // ── Register in the static title registry ─────────────────────────────
+    {
+        std::string key = std::string(title.ToUTF8());
+        for (char& c : key) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        s_registry[key] = this;
+    }
+
     Show(true);
+}
+
+// ── Find ───────────────────────────────────────────────────────────────────
+
+/*static*/ CWxNotepadFrame* CWxNotepadFrame::Find(const std::string& title)
+{
+    std::string key = title;
+    for (char& c : key) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    auto it = s_registry.find(key);
+    return (it != s_registry.end()) ? it->second : nullptr;
+}
+
+// ── AppendText ─────────────────────────────────────────────────────────────
+
+void CWxNotepadFrame::AppendText(const std::string& text, bool replace)
+{
+    if (!m_ctrl) return;
+    if (replace) {
+        m_ctrl->SetValue(wxString::FromUTF8(text.c_str()));
+    } else {
+        m_ctrl->AppendText(wxString::FromUTF8(text.c_str()));
+    }
+    Raise();
 }
 
 // ── Destructor ─────────────────────────────────────────────────────────────
@@ -237,10 +270,14 @@ void CWxNotepadFrame::OnClose(wxCloseEvent& evt)
 
     // ── Cleanup ─────────────────────────────────────────────────────────
     if (m_pDoc) {
-        // Unregister from the doc template so FindNotepad can't find it
-        // after this point.
+        // Unregister from the doc template and static registry.
         if (App.m_pNormalDocTemplate)
             App.m_pNormalDocTemplate->UnregisterDoc(m_pDoc);
+        {
+            std::string key = std::string(GetTitle().ToUTF8());
+            for (char& c : key) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+            s_registry.erase(key);
+        }
 
         // Clear all callbacks to prevent use-after-free if anything tries to
         // call them during the delete.

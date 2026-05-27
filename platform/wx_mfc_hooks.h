@@ -189,6 +189,14 @@ extern void* (*g_wxhook_create_text_window)(
     int  iLines,
     int  iNotepadType);
 
+// ── Notepad append hook ───────────────────────────────────────────────────
+// Find an existing notepad window by title (case-insensitive) and append or
+// replace its text.  Returns true if a matching window was found and updated,
+// false if no such window exists (caller should create one instead).
+extern bool (*g_wxhook_append_to_notepad)(const char* title,
+                                          const char* text,
+                                          bool replace);
+
 // ── Colour picker hook ────────────────────────────────────────────────────
 // Open a colour-picker dialog.  suggested is a COLORREF (0x00BBGGRR), or
 // -1 to start with no pre-selected colour.  Returns the picked COLORREF, or

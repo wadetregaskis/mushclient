@@ -2734,6 +2734,17 @@ static void hook_stop_sound()
 }
 #endif // wxUSE_SOUND
 
+
+// ── Notepad append ────────────────────────────────────────────────────────
+
+static bool hook_append_to_notepad(const char* title, const char* text, bool replace)
+{
+    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
+    if (!frame) return false;
+    frame->AppendText(text ? text : "", replace);
+    return true;
+}
+
 // ── Colour picker ─────────────────────────────────────────────────────────
 
 static long hook_pick_colour(long suggested)
@@ -2841,6 +2852,7 @@ void wx_mfc_install_hooks()
 #if wxUSE_SOUND
     g_wxhook_play_sound           = hook_play_sound;
     g_wxhook_stop_sound           = hook_stop_sound;
+    g_wxhook_append_to_notepad    = hook_append_to_notepad;
 #endif
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce

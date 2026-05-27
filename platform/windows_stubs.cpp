@@ -194,4 +194,18 @@ int TMessageBox(const char* sText, UINT nType) {
     return UMessageBox(sText, nType, "MUSHclient");
 }
 
+// ── Stubs for lua_utils_portable.cpp ─────────────────────────────────────
+// These symbols are defined in mushapp-only files (mainfrm.cpp,
+// scripting/methods/methods_info.cpp, scripting/functionlist.cpp, plugins.cpp).
+// Provide empty sentinel-terminated tables so mushcore links and the
+// corresponding utils.* Lua functions return empty tables rather than crashing.
+bool bShowDebugStatus = false;                              // mainfrm.cpp owns the real one
+
+// tInfoTypeMapping and tInternalFunctionsTable are typedef'd in doc.h / stdafx.h
+// (both included above via stdafx.h → doc.h).  Sentinel for InfoTypes: iInfoType==0.
+// Sentinel for InternalFunctionsTable: sFunction[0]=='\0' (empty string literal).
+tInfoTypeMapping           InfoTypes[]              = { {0, nullptr} };
+tInternalFunctionsTable    InternalFunctionsTable[] = { {"", ""} };
+std::string                PluginCallbacksNames[]   = { "" };  // sentinel: empty string
+
 #endif // !_WIN32

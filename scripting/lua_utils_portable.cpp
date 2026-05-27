@@ -160,15 +160,63 @@ int EditDistance(const std::string source, const std::string target);
 struct tInfoTypeMapping { int iInfoType; const char* sDescription; };
 extern tInfoTypeMapping InfoTypes[];
 
-struct tInternalFunctionsTable { char sFunction[50]; char sArgs[200]; };
+// tInternalFunctionsTable: matches the typedef in stdafx.h (const char* fields).
+struct tInternalFunctionsTable { const char* sFunction; const char* sArgs; };
 extern tInternalFunctionsTable InternalFunctionsTable[];
 
 extern std::string PluginCallbacksNames[];
 
-// PCRE internal helpers (bundled PCRE, always available in mushcore)
-extern "C" {
-    int  _pcre_ord2utf(int, unsigned char*);
-    int  _pcre_valid_utf8(const unsigned char*, int);
+// Self-contained UTF-8 encode/validate helpers.
+// These replace calls to _pcre_ord2utf/_pcre_valid_utf8, which are PCRE
+// internal symbols not exported from the bundled mcpcre library.
+
+// Encode a Unicode codepoint to UTF-8.  Returns the number of bytes written (1–4).
+static int ord2utf8(int c, unsigned char* buf)
+{
+    if (c < 0x80) {
+        buf[0] = (unsigned char)c;
+        return 1;
+    }
+    if (c < 0x800) {
+        buf[0] = (unsigned char)(0xC0 | (c >> 6));
+        buf[1] = (unsigned char)(0x80 | (c & 0x3F));
+        return 2;
+    }
+    if (c < 0x10000) {
+        buf[0] = (unsigned char)(0xE0 | (c >> 12));
+        buf[1] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
+        buf[2] = (unsigned char)(0x80 | (c & 0x3F));
+        return 3;
+    }
+    buf[0] = (unsigned char)(0xF0 | (c >> 18));
+    buf[1] = (unsigned char)(0x80 | ((c >> 12) & 0x3F));
+    buf[2] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
+    buf[3] = (unsigned char)(0x80 | (c & 0x3F));
+    return 4;
+}
+
+// Validate a UTF-8 byte sequence of length `len`.
+// Mirrors the _pcre_valid_utf8 contract:
+//   returns 0             if the entire sequence is valid UTF-8;
+//   returns (offset + 1)  (always > 0) at the first invalid byte.
+// This lets callers use "result <= 0" to test validity and "result > 0" to
+// detect errors — both patterns are used in the utils_utf8* functions below.
+static int valid_utf8(const unsigned char* s, int len)
+{
+    for (int i = 0; i < len; ) {
+        unsigned char c = s[i];
+        int bytes;
+        if      (c < 0x80)           { i++; continue; }
+        else if ((c & 0xE0) == 0xC0) { bytes = 2; }
+        else if ((c & 0xF0) == 0xE0) { bytes = 3; }
+        else if ((c & 0xF8) == 0xF0) { bytes = 4; }
+        else return i + 1;
+        if (i + bytes > len) return i + 1;
+        for (int j = 1; j < bytes; j++)
+            if ((s[i+j] & 0xC0) != 0x80) return i + 1;
+        i += bytes;
+    }
+    return 0;
 }
 
 // xterm 256-colour table (initialised by lua_world_api_portable.cpp at load)
@@ -190,12 +238,12 @@ static int utils_utf8encode(lua_State* L)
                 double f = lua_tonumber(L, -1);
                 lua_pop(L, 1);
                 int n = (int)f;
-                sOutput.append((const char*)utf8, _pcre_ord2utf(n, utf8));
+                sOutput.append((const char*)utf8, ord2utf8(n, utf8));
             }
         } else {
             double f = luaL_checknumber(L, i);
             int n = (int)f;
-            sOutput.append((const char*)utf8, _pcre_ord2utf(n, utf8));
+            sOutput.append((const char*)utf8, ord2utf8(n, utf8));
         }
     }
     lua_pushlstring(L, sOutput.c_str(), sOutput.size());
@@ -209,7 +257,7 @@ static int utils_utf8convert(lua_State* L)
     std::string sOutput;
     unsigned char utf8[10];
     for (const unsigned char* p = s; *p; p++)
-        sOutput.append((const char*)utf8, _pcre_ord2utf(*p, utf8));
+        sOutput.append((const char*)utf8, ord2utf8(*p, utf8));
     lua_pushlstring(L, sOutput.c_str(), sOutput.size());
     return 1;
 }
@@ -219,7 +267,7 @@ static int utils_utf8decode(lua_State* L)
 {
     size_t len;
     const unsigned char* data = (const unsigned char*)luaL_checklstring(L, 1, &len);
-    int iBad = _pcre_valid_utf8(data, (int)len);
+    int iBad = valid_utf8(data, (int)len);
     if (iBad > 0)
         luaL_error(L, "Bad UTF-8 string. Error at column %d", iBad + 1);
     lua_newtable(L);
@@ -247,7 +295,7 @@ static int utils_utf8valid(lua_State* L)
 {
     size_t len;
     const unsigned char* s = (const unsigned char*)luaL_checklstring(L, 1, &len);
-    lua_pushboolean(L, _pcre_valid_utf8(s, (int)len) <= 0);
+    lua_pushboolean(L, valid_utf8(s, (int)len) <= 0);
     return 1;
 }
 

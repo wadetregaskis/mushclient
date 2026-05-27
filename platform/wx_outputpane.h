@@ -134,6 +134,11 @@ public:
     // Disengages auto-scroll (same as the user manually scrolling up).
     void ScrollToLine(int lineIdx);
 
+    // Return the current scroll position as a y-pixel offset from the top of
+    // the virtual (full scrollback) area.  Equivalent to CScrollView::
+    // GetScrollPosition().y on Windows; used to implement GetInfo(296).
+    long GetScrollPositionY() const;
+
     // Scroll to the very top of the buffer (disengages auto-scroll).
     // Safe to call at any time; no-op if already at the top.
     void ScrollToTop();

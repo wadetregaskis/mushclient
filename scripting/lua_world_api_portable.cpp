@@ -1843,8 +1843,17 @@ static int L_GetLineInfo(lua_State* L)
     CLine* pLine = GetLineAt(pDoc, idx);
     if (!pLine) { lua_pushnil(L); return 1; }
 
+    // Helper: format time as "MM/DD/YYYY HH:MM:SS AM/PM" (matches Windows COleDateTime default).
+    auto fmtTime = [](time_t t) -> std::string {
+        struct tm* tm_info = localtime(&t);
+        char buf[32];
+        if (!tm_info) { buf[0] = '\0'; }
+        else          { strftime(buf, sizeof(buf), "%m/%d/%Y %I:%M:%S %p", tm_info); }
+        return std::string(buf);
+    };
+
     if (infoType == 0) {
-        // Return full table matching Windows infoType=0
+        // Return full table matching Windows infoType=0 table format.
         lua_newtable(L);
         lua_pushstring(L, pLine->text ? std::string(pLine->text, pLine->len).c_str() : "");
         lua_setfield(L, -2, "text");
@@ -1858,14 +1867,27 @@ static int L_GetLineInfo(lua_State* L)
         lua_setfield(L, -2, "user");
         lua_pushboolean(L, (pLine->flags & LOG_LINE)   ? 1 : 0);
         lua_setfield(L, -2, "log");
-        lua_pushnumber(L, (double)pLine->m_theTime.GetTime());
+        lua_pushboolean(L, (pLine->flags & BOOKMARK)   ? 1 : 0);
+        lua_setfield(L, -2, "bookmark");
+        lua_pushboolean(L, (pLine->flags & HORIZ_RULE) ? 1 : 0);
+        lua_setfield(L, -2, "hr");
+        time_t t = (time_t)pLine->m_theTime.GetTime();
+        lua_pushnumber(L, (double)t);
         lua_setfield(L, -2, "time");
+        lua_pushstring(L, fmtTime(t).c_str());
+        lua_setfield(L, -2, "timestr");
         lua_pushnumber(L, (double)pLine->m_nLineNumber);
         lua_setfield(L, -2, "line");
+        lua_pushnumber(L, (double)pLine->styleList.GetCount());
+        lua_setfield(L, -2, "styles");
+        lua_pushnumber(L, 0.0);   // ticks: high-perf counter not available portably
+        lua_setfield(L, -2, "ticks");
+        lua_pushnumber(L, 0.0);   // elapsed: world-start reference not in portable stub
+        lua_setfield(L, -2, "elapsed");
         return 1;
     }
 
-    // Scalar infoTypes (subset matching Windows API)
+    // Scalar infoTypes matching the Windows GetLineInfo(line, type) API.
     switch (infoType) {
         case 1:  // text
             lua_pushstring(L, pLine->text
@@ -1874,7 +1896,7 @@ static int L_GetLineInfo(lua_State* L)
         case 2:  // length
             lua_pushnumber(L, pLine->len);
             break;
-        case 3:  // hard return
+        case 3:  // hard return (newline)
             lua_pushboolean(L, pLine->hard_return ? 1 : 0);
             break;
         case 4:  // is note/comment
@@ -1883,11 +1905,27 @@ static int L_GetLineInfo(lua_State* L)
         case 5:  // is user input
             lua_pushboolean(L, (pLine->flags & USER_INPUT) ? 1 : 0);
             break;
-        case 9:  // timestamp
+        case 6:  // is log line
+            lua_pushboolean(L, (pLine->flags & LOG_LINE) ? 1 : 0);
+            break;
+        case 7:  // is bookmarked
+            lua_pushboolean(L, (pLine->flags & BOOKMARK) ? 1 : 0);
+            break;
+        case 8:  // is horizontal rule
+            lua_pushboolean(L, (pLine->flags & HORIZ_RULE) ? 1 : 0);
+            break;
+        case 9:  // timestamp (OLE date on Windows, Unix seconds here)
             lua_pushnumber(L, (double)pLine->m_theTime.GetTime());
             break;
         case 10: // line number
             lua_pushnumber(L, (double)pLine->m_nLineNumber);
+            break;
+        case 11: // style count
+            lua_pushnumber(L, (double)pLine->styleList.GetCount());
+            break;
+        case 12: // high-perf ticks — not available portably
+        case 13: // elapsed since world start — not available portably
+            lua_pushnumber(L, 0.0);
             break;
         default:
             lua_pushnil(L);

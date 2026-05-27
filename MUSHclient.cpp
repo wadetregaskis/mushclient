@@ -1954,12 +1954,21 @@ CTextDocument * pTextDoc = NULL;
   return NULL;    // not found
   }  // end of CMUSHclientApp::FindNotepad
 
-BOOL CMUSHclientApp::ActivateNotepad(LPCTSTR Title) 
+BOOL CMUSHclientApp::ActivateNotepad(LPCTSTR Title)
 {
 CTextDocument * pTextDoc = FindNotepad (Title);
 
   if (pTextDoc)
     {
+#ifndef _WIN32
+    // Non-Windows: use the wx callback wired by CWxNotepadFrame.
+    if (pTextDoc->m_fn_activate)
+      {
+      pTextDoc->m_fn_activate ();
+      return true;
+      }
+    return false;
+#else
     // activate the view
     POSITION pos=pTextDoc->GetFirstViewPosition();
 
@@ -1975,6 +1984,7 @@ CTextDocument * pTextDoc = FindNotepad (Title);
         return true;
         } // end of having the right type of view
       }   // end of having a view
+#endif
     } // end of having an existing notepad document
  return false;
 }   // end of CMUSHclientApp::ActivateNotepad

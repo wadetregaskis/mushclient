@@ -6423,6 +6423,55 @@ static int L_SaveNotepad(lua_State* L)
     return 1;
 }
 
+// NotepadColour(title, textColour, backColour) → 0 on success
+// Colour strings: "#RRGGBB" or a named colour from the MUSHclient colour table.
+// Forward-declare SetColour from mxp/mxputils.cpp (available in mushcore).
+bool SetColour(const CString& strName, COLORREF& iColour);
+
+static int L_NotepadColour(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    const char* fgStr = luaL_checkstring(L, 2);
+    const char* bgStr = luaL_checkstring(L, 3);
+    if (!g_wxhook_notepad_colour) { lua_pushnumber(L, eNoSuchWindow); return 1; }
+    COLORREF fg = 0, bg = 0;
+    if (SetColour(CString(fgStr), fg)) { lua_pushnumber(L, false); return 1; }
+    if (SetColour(CString(bgStr), bg)) { lua_pushnumber(L, false); return 1; }
+    bool ok = g_wxhook_notepad_colour(title, (unsigned long)fg, (unsigned long)bg);
+    lua_pushnumber(L, ok ? 0 : eNoSuchWindow);
+    return 1;
+}
+
+// NotepadFont(title, fontName, size, style [, charset]) → 0 on success
+// style bits: 1=bold, 2=italic, 4=underline, 8=strikeout.
+// size=0 keeps current size; empty fontName keeps current face.
+static int L_NotepadFont(lua_State* L)
+{
+    world_doc(L);
+    const char* title    = luaL_checkstring(L, 1);
+    const char* fontName = luaL_checkstring(L, 2);
+    int         size     = (int)luaL_checknumber(L, 3);
+    int         style    = (int)luaL_checknumber(L, 4);
+    int         charset  = (int)luaL_optnumber(L, 5, 0);
+    if (!g_wxhook_notepad_font) { lua_pushnumber(L, eNoSuchWindow); return 1; }
+    bool ok = g_wxhook_notepad_font(title, fontName, size, style, charset);
+    lua_pushnumber(L, ok ? 0 : eNoSuchWindow);
+    return 1;
+}
+
+// NotepadReadOnly(title [, readOnly=true]) → 0 on success
+static int L_NotepadReadOnly(lua_State* L)
+{
+    world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    bool ro = (lua_isnone(L, 2) || lua_isnil(L, 2)) ? true : lua_toboolean(L, 2) != 0;
+    if (!g_wxhook_notepad_readonly) { lua_pushnumber(L, eNoSuchWindow); return 1; }
+    bool ok = g_wxhook_notepad_readonly(title, ro);
+    lua_pushnumber(L, ok ? 0 : eNoSuchWindow);
+    return 1;
+}
+
 // Notepad / mapping / GUI display actions that have no return value → eOK
 static int L_GuiOkStub(lua_State* L)
 {
@@ -6945,9 +6994,9 @@ static const luaL_Reg worldlib[] = {
     { "AppendToNotepad",        L_AppendToNotepad },
     { "CloseNotepad",           L_CloseNotepad          },
     { "MoveNotepadWindow",      L_MoveNotepadWindow     },
-    { "NotepadColour",          L_GuiOkStub  },
-    { "NotepadFont",            L_GuiOkStub  },
-    { "NotepadReadOnly",        L_GuiOkStub  },
+    { "NotepadColour",          L_NotepadColour   },
+    { "NotepadFont",            L_NotepadFont     },
+    { "NotepadReadOnly",        L_NotepadReadOnly },
     { "NotepadSaveMethod",      L_GuiOkStub  },
     { "ReplaceNotepad",         L_ReplaceNotepad  },
     { "SaveNotepad",            L_SaveNotepad   },

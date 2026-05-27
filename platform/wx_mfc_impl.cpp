@@ -2811,6 +2811,31 @@ static char* hook_get_notepad_position(const char* title)
 
 // ── Notepad save ─────────────────────────────────────────────────────────
 
+static bool hook_notepad_colour(const char* title, unsigned long fg, unsigned long bg)
+{
+    CWxNotepadFrame* f = CWxNotepadFrame::Find(title ? title : "");
+    if (!f) return false;
+    f->SetColours(fg, bg);
+    return true;
+}
+
+static bool hook_notepad_font(const char* title, const char* fontName,
+                               int size, int style, int charset)
+{
+    CWxNotepadFrame* f = CWxNotepadFrame::Find(title ? title : "");
+    if (!f) return false;
+    f->SetFont(fontName ? fontName : "", size, style, charset);
+    return true;
+}
+
+static bool hook_notepad_readonly(const char* title, bool readOnly)
+{
+    CWxNotepadFrame* f = CWxNotepadFrame::Find(title ? title : "");
+    if (!f) return false;
+    f->SetReadOnly(readOnly);
+    return true;
+}
+
 static bool hook_save_notepad(const char* title, const char* filename, bool /*replaceExisting*/)
 {
     CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
@@ -2952,6 +2977,8 @@ void wx_mfc_install_hooks()
 #if wxUSE_SOUND
     g_wxhook_play_sound           = hook_play_sound;
     g_wxhook_stop_sound           = hook_stop_sound;
+#endif
+    // Notepad hooks do not depend on wxUSE_SOUND — always install them.
     g_wxhook_append_to_notepad    = hook_append_to_notepad;
     g_wxhook_get_notepad_text     = hook_get_notepad_text;
     g_wxhook_get_notepad_list     = hook_get_notepad_list;
@@ -2960,7 +2987,9 @@ void wx_mfc_install_hooks()
     g_wxhook_move_notepad         = hook_move_notepad;
     g_wxhook_get_notepad_position = hook_get_notepad_position;
     g_wxhook_save_notepad         = hook_save_notepad;
-#endif
+    g_wxhook_notepad_colour       = hook_notepad_colour;
+    g_wxhook_notepad_font         = hook_notepad_font;
+    g_wxhook_notepad_readonly     = hook_notepad_readonly;
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce
     // an audible alert on macOS/Linux via wxWidgets.

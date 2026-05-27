@@ -229,6 +229,22 @@ extern bool (*g_wxhook_save_notepad)(const char* title,
                                      const char* filename,
                                      bool replaceExisting);
 
+// ── Notepad property hooks ─────────────────────────────────────────────────
+// Set foreground/background colours on a named notepad (COLORREFs: 0x00BBGGRR).
+extern bool (*g_wxhook_notepad_colour)(const char* title,
+                                       unsigned long fg,
+                                       unsigned long bg);
+// Set font on a named notepad.
+// style bits: 1=bold, 2=italic, 4=underline, 8=strikeout (matches Windows API).
+// size=0 → keep current; charset is ignored on non-Windows.
+extern bool (*g_wxhook_notepad_font)(const char* title,
+                                     const char* fontName,
+                                     int size,
+                                     int style,
+                                     int charset);
+// Set or clear read-only mode on a named notepad.
+extern bool (*g_wxhook_notepad_readonly)(const char* title, bool readOnly);
+
 // ── Colour picker hook ────────────────────────────────────────────────────
 // Open a colour-picker dialog.  suggested is a COLORREF (0x00BBGGRR), or
 // -1 to start with no pre-selected colour.  Returns the picked COLORREF, or

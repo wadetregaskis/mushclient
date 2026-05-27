@@ -234,6 +234,40 @@ std::string CWxNotepadFrame::GetText() const
     return titles;
 }
 
+// ── SetColours ─────────────────────────────────────────────────────────────
+
+void CWxNotepadFrame::SetColours(unsigned long fg, unsigned long bg)
+{
+    if (!m_pDoc) return;
+    m_pDoc->m_textColour = static_cast<COLORREF>(fg);
+    m_pDoc->m_backColour = static_cast<COLORREF>(bg);
+    ApplyColours();
+}
+
+// ── SetFont ────────────────────────────────────────────────────────────────
+
+void CWxNotepadFrame::SetFont(const std::string& face, int size, int style, int /*charset*/)
+{
+    if (!m_pDoc) return;
+    if (!face.empty())
+        m_pDoc->m_strFontName = face.c_str();
+    if (size > 0)
+        m_pDoc->m_iFontSize = size;
+    m_pDoc->m_iFontWeight  = (style & 1) ? FW_BOLD : FW_NORMAL;
+    m_pDoc->m_bFontItalic    = (style & 2) != 0;
+    m_pDoc->m_bFontUnderline = (style & 4) != 0;
+    // m_bFontStrikeout is not in CTextDocument on non-Windows; skip strikeout.
+    ApplyFont();
+}
+
+// ── SetReadOnly ────────────────────────────────────────────────────────────
+
+void CWxNotepadFrame::SetReadOnly(bool ro)
+{
+    if (!m_ctrl) return;
+    m_ctrl->SetEditable(!ro);
+}
+
 // ── Destructor ─────────────────────────────────────────────────────────────
 
 CWxNotepadFrame::~CWxNotepadFrame()

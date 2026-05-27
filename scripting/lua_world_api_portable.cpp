@@ -2604,6 +2604,7 @@ static void push_trigger_option(lua_State* L, CTrigger* t, const char* option)
 {
     string opt(option);
     for (auto& c : opt) c = (char)tolower((unsigned char)c);
+    // boolean options
     if (opt=="enabled")              { lua_pushboolean(L, t->bEnabled);          return; }
     if (opt=="expand_variables")     { lua_pushboolean(L, t->bExpandVariables);  return; }
     if (opt=="ignore_case")          { lua_pushboolean(L, t->ignore_case);       return; }
@@ -2613,12 +2614,23 @@ static void push_trigger_option(lua_State* L, CTrigger* t, const char* option)
     if (opt=="omit_from_output")     { lua_pushboolean(L, t->bOmitFromOutput);   return; }
     if (opt=="regexp")               { lua_pushboolean(L, t->bRegexp);           return; }
     if (opt=="repeat")               { lua_pushboolean(L, t->bRepeat);           return; }
+    if (opt=="sound_if_inactive")    { lua_pushboolean(L, t->bSoundIfInactive);  return; }
     if (opt=="lowercase_wildcard")   { lua_pushboolean(L, t->bLowercaseWildcard);return; }
     if (opt=="temporary")            { lua_pushboolean(L, t->bTemporary);        return; }
     if (opt=="one_shot")             { lua_pushboolean(L, t->bOneShot);          return; }
+    // numeric options
+    if (opt=="clipboard_arg")        { lua_pushnumber(L, t->iClipboardArg);      return; }
+    if (opt=="colour_change_type")   { lua_pushnumber(L, t->iColourChangeType);  return; }
+    if (opt=="custom_colour")        { lua_pushnumber(L, t->colour);             return; }
+    if (opt=="lines_to_match")       { lua_pushnumber(L, t->iLinesToMatch);      return; }
+    if (opt=="match_style")          { lua_pushnumber(L, t->iMatch);             return; }
+    if (opt=="new_style")            { lua_pushnumber(L, t->iStyle);             return; }
+    if (opt=="other_text_colour")    { lua_pushnumber(L, t->iOtherForeground);   return; }
+    if (opt=="other_back_colour")    { lua_pushnumber(L, t->iOtherBackground);   return; }
     if (opt=="send_to")              { lua_pushnumber(L, t->iSendTo);            return; }
     if (opt=="sequence")             { lua_pushnumber(L, t->iSequence);          return; }
     if (opt=="user")                 { lua_pushnumber(L, t->iUserOption);        return; }
+    // string options
     if (opt=="group")    { lua_pushstring(L, (const char*)t->strGroup);    return; }
     if (opt=="match")    { lua_pushstring(L, (const char*)t->trigger);     return; }
     if (opt=="script")   { lua_pushstring(L, (const char*)t->strProcedure);return; }
@@ -2656,24 +2668,39 @@ static int L_SetTriggerOption(lua_State* L)
     string opt(option), val(value);
     for (auto& c : opt) c = (char)tolower((unsigned char)c);
     bool bval = (val == "1" || val == "y" || val == "Y");
-    if (opt=="enabled")            { t->bEnabled = bval; }
-    else if (opt=="expand_variables") { t->bExpandVariables = bval; }
-    else if (opt=="keep_evaluating")  { t->bKeepEvaluating = bval; }
-    else if (opt=="multi_line")       { t->bMultiLine = bval; }
-    else if (opt=="omit_from_log")    { t->omit_from_log = bval; }
-    else if (opt=="omit_from_output") { t->bOmitFromOutput = bval; }
-    else if (opt=="repeat")           { t->bRepeat = bval; }
+    // read-only options (OPT_CANNOT_WRITE in Windows) → ePluginCannotSetOption
+    if (opt=="ignore_case" || opt=="regexp")
+        { lua_pushnumber(L, ePluginCannotSetOption); return 1; }
+    // boolean options
+    if (opt=="enabled")             { t->bEnabled = bval; }
+    else if (opt=="expand_variables")  { t->bExpandVariables = bval; }
+    else if (opt=="keep_evaluating")   { t->bKeepEvaluating = bval; }
+    else if (opt=="multi_line")        { t->bMultiLine = bval; }
+    else if (opt=="omit_from_log")     { t->omit_from_log = bval; }
+    else if (opt=="omit_from_output")  { t->bOmitFromOutput = bval; }
+    else if (opt=="repeat")            { t->bRepeat = bval; }
+    else if (opt=="sound_if_inactive") { t->bSoundIfInactive = bval; }
     else if (opt=="lowercase_wildcard"){ t->bLowercaseWildcard = bval; }
-    else if (opt=="temporary")        { t->bTemporary = bval; }
-    else if (opt=="one_shot")         { t->bOneShot = bval; }
-    else if (opt=="send_to")          { t->iSendTo = (unsigned short)atoi(value); }
-    else if (opt=="sequence")         { t->iSequence = atoi(value); }
-    else if (opt=="user")             { t->iUserOption = atol(value); }
-    else if (opt=="group")            { t->strGroup = CString(value); }
-    else if (opt=="script")           { t->strProcedure = CString(value); }
-    else if (opt=="sound")            { t->sound_to_play = CString(value); }
-    else if (opt=="send")             { t->contents = CString(value); }
-    else if (opt=="variable")         { t->strVariable = CString(value); }
+    else if (opt=="temporary")         { t->bTemporary = bval; }
+    else if (opt=="one_shot")          { t->bOneShot = bval; }
+    // numeric options
+    else if (opt=="clipboard_arg")     { t->iClipboardArg = (unsigned short)atoi(value); }
+    else if (opt=="colour_change_type"){ t->iColourChangeType = (unsigned short)atoi(value); }
+    else if (opt=="custom_colour")     { t->colour = (unsigned short)atoi(value); }
+    else if (opt=="lines_to_match")    { t->iLinesToMatch = (unsigned short)atoi(value); }
+    else if (opt=="match_style")       { t->iMatch = (unsigned short)atoi(value); }
+    else if (opt=="new_style")         { t->iStyle = (unsigned short)atoi(value); }
+    else if (opt=="other_text_colour") { t->iOtherForeground = (COLORREF)atol(value); }
+    else if (opt=="other_back_colour") { t->iOtherBackground = (COLORREF)atol(value); }
+    else if (opt=="send_to")           { t->iSendTo = (unsigned short)atoi(value); }
+    else if (opt=="sequence")          { t->iSequence = atoi(value); }
+    else if (opt=="user")              { t->iUserOption = atol(value); }
+    // string options
+    else if (opt=="group")             { t->strGroup = CString(value); }
+    else if (opt=="script")            { t->strProcedure = CString(value); }
+    else if (opt=="sound")             { t->sound_to_play = CString(value); }
+    else if (opt=="send")              { t->contents = CString(value); }
+    else if (opt=="variable")          { t->strVariable = CString(value); }
     else { lua_pushnumber(L, eUnknownOption); return 1; }
     lua_pushnumber(L, eOK);
     return 1;
@@ -2685,20 +2712,21 @@ static void push_alias_option(lua_State* L, CAlias* a, const char* option)
 {
     string opt(option);
     for (auto& c : opt) c = (char)tolower((unsigned char)c);
-    if (opt=="enabled")              { lua_pushboolean(L, a->bEnabled);          return; }
-    if (opt=="expand_variables")     { lua_pushboolean(L, a->bExpandVariables);  return; }
-    if (opt=="ignore_case")          { lua_pushboolean(L, a->bIgnoreCase);       return; }
-    if (opt=="keep_evaluating")      { lua_pushboolean(L, a->bKeepEvaluating);   return; }
-    if (opt=="omit_from_log")        { lua_pushboolean(L, a->bOmitFromLog);      return; }
-    if (opt=="omit_from_output")     { lua_pushboolean(L, a->bOmitFromOutput);   return; }
-    if (opt=="regexp")               { lua_pushboolean(L, a->bRegexp);           return; }
-    if (opt=="echo_alias")           { lua_pushboolean(L, a->bEchoAlias);        return; }
-    if (opt=="temporary")            { lua_pushboolean(L, a->bTemporary);        return; }
-    if (opt=="one_shot")             { lua_pushboolean(L, a->bOneShot);          return; }
-    if (opt=="menu")                 { lua_pushboolean(L, a->bMenu);             return; }
-    if (opt=="send_to")              { lua_pushnumber(L, a->iSendTo);            return; }
-    if (opt=="sequence")             { lua_pushnumber(L, a->iSequence);          return; }
-    if (opt=="user")                 { lua_pushnumber(L, a->iUserOption);        return; }
+    if (opt=="enabled")                   { lua_pushboolean(L, a->bEnabled);                  return; }
+    if (opt=="expand_variables")          { lua_pushboolean(L, a->bExpandVariables);           return; }
+    if (opt=="ignore_case")               { lua_pushboolean(L, a->bIgnoreCase);                return; }
+    if (opt=="keep_evaluating")           { lua_pushboolean(L, a->bKeepEvaluating);            return; }
+    if (opt=="omit_from_log")             { lua_pushboolean(L, a->bOmitFromLog);               return; }
+    if (opt=="omit_from_command_history") { lua_pushboolean(L, a->bOmitFromCommandHistory);    return; }
+    if (opt=="omit_from_output")          { lua_pushboolean(L, a->bOmitFromOutput);            return; }
+    if (opt=="regexp")                    { lua_pushboolean(L, a->bRegexp);                    return; }
+    if (opt=="echo_alias")                { lua_pushboolean(L, a->bEchoAlias);                 return; }
+    if (opt=="temporary")                 { lua_pushboolean(L, a->bTemporary);                 return; }
+    if (opt=="one_shot")                  { lua_pushboolean(L, a->bOneShot);                   return; }
+    if (opt=="menu")                      { lua_pushboolean(L, a->bMenu);                      return; }
+    if (opt=="send_to")                   { lua_pushnumber(L, a->iSendTo);                     return; }
+    if (opt=="sequence")                  { lua_pushnumber(L, a->iSequence);                   return; }
+    if (opt=="user")                      { lua_pushnumber(L, a->iUserOption);                 return; }
     if (opt=="group")    { lua_pushstring(L, (const char*)a->strGroup);    return; }
     if (opt=="match")    { lua_pushstring(L, (const char*)a->name);        return; }
     if (opt=="script")   { lua_pushstring(L, (const char*)a->strProcedure);return; }
@@ -2735,22 +2763,29 @@ static int L_SetAliasOption(lua_State* L)
     string opt(option);
     for (auto& c : opt) c = (char)tolower((unsigned char)c);
     bool bval = (strcmp(value,"1")==0 || strcmp(value,"y")==0 || strcmp(value,"Y")==0);
-    if (opt=="enabled")            { a->bEnabled = bval; }
-    else if (opt=="expand_variables"){ a->bExpandVariables = bval; }
-    else if (opt=="keep_evaluating") { a->bKeepEvaluating = bval; }
-    else if (opt=="omit_from_log")   { a->bOmitFromLog = bval; }
-    else if (opt=="omit_from_output"){ a->bOmitFromOutput = bval; }
-    else if (opt=="echo_alias")      { a->bEchoAlias = bval; }
-    else if (opt=="temporary")       { a->bTemporary = bval; }
-    else if (opt=="one_shot")        { a->bOneShot = bval; }
-    else if (opt=="menu")            { a->bMenu = bval; }
-    else if (opt=="send_to")         { a->iSendTo = (unsigned short)atoi(value); }
-    else if (opt=="sequence")        { a->iSequence = atoi(value); }
-    else if (opt=="user")            { a->iUserOption = atol(value); }
-    else if (opt=="group")           { a->strGroup = CString(value); }
-    else if (opt=="script")          { a->strProcedure = CString(value); }
-    else if (opt=="send")            { a->contents = CString(value); }
-    else if (opt=="variable")        { a->strVariable = CString(value); }
+    // read-only options
+    if (opt=="ignore_case" || opt=="regexp")
+        { lua_pushnumber(L, ePluginCannotSetOption); return 1; }
+    // boolean options
+    if (opt=="enabled")                    { a->bEnabled = bval; }
+    else if (opt=="expand_variables")          { a->bExpandVariables = bval; }
+    else if (opt=="keep_evaluating")           { a->bKeepEvaluating = bval; }
+    else if (opt=="omit_from_log")             { a->bOmitFromLog = bval; }
+    else if (opt=="omit_from_command_history") { a->bOmitFromCommandHistory = bval; }
+    else if (opt=="omit_from_output")          { a->bOmitFromOutput = bval; }
+    else if (opt=="echo_alias")                { a->bEchoAlias = bval; }
+    else if (opt=="temporary")                 { a->bTemporary = bval; }
+    else if (opt=="one_shot")                  { a->bOneShot = bval; }
+    else if (opt=="menu")                      { a->bMenu = bval; }
+    // numeric options
+    else if (opt=="send_to")                   { a->iSendTo = (unsigned short)atoi(value); }
+    else if (opt=="sequence")                  { a->iSequence = atoi(value); }
+    else if (opt=="user")                      { a->iUserOption = atol(value); }
+    // string options
+    else if (opt=="group")                     { a->strGroup = CString(value); }
+    else if (opt=="script")                    { a->strProcedure = CString(value); }
+    else if (opt=="send")                      { a->contents = CString(value); }
+    else if (opt=="variable")                  { a->strVariable = CString(value); }
     else { lua_pushnumber(L, eUnknownOption); return 1; }
     lua_pushnumber(L, eOK);
     return 1;
@@ -2772,9 +2807,12 @@ static void push_timer_option(lua_State* L, CTimer* t, const char* option)
     if (opt=="temporary")        { lua_pushboolean(L, t->bTemporary);       return; }
     if (opt=="send_to")          { lua_pushnumber(L, t->iSendTo);           return; }
     if (opt=="user")             { lua_pushnumber(L, t->iUserOption);       return; }
-    if (opt=="hour")             { lua_pushnumber(L, atTime ? t->iAtHour   : t->iEveryHour);   return; }
-    if (opt=="minute")           { lua_pushnumber(L, atTime ? t->iAtMinute : t->iEveryMinute); return; }
-    if (opt=="second")           { lua_pushnumber(L, atTime ? t->fAtSecond : t->fEverySecond); return; }
+    if (opt=="hour")          { lua_pushnumber(L, atTime ? t->iAtHour    : t->iEveryHour);    return; }
+    if (opt=="minute")        { lua_pushnumber(L, atTime ? t->iAtMinute  : t->iEveryMinute);  return; }
+    if (opt=="second")        { lua_pushnumber(L, atTime ? t->fAtSecond  : t->fEverySecond);  return; }
+    if (opt=="offset_hour")   { lua_pushnumber(L, t->iOffsetHour);          return; }
+    if (opt=="offset_minute") { lua_pushnumber(L, t->iOffsetMinute);        return; }
+    if (opt=="offset_second") { lua_pushnumber(L, t->fOffsetSecond);        return; }
     if (opt=="group")    { lua_pushstring(L, (const char*)t->strGroup);     return; }
     if (opt=="script")   { lua_pushstring(L, (const char*)t->strProcedure); return; }
     if (opt=="send")     { lua_pushstring(L, (const char*)t->strContents);  return; }
@@ -2819,13 +2857,16 @@ static int L_SetTimerOption(lua_State* L)
     else if (opt=="temporary")     { t->bTemporary = bval; }
     else if (opt=="send_to")       { t->iSendTo = (unsigned short)atoi(value); }
     else if (opt=="user")          { t->iUserOption = atol(value); }
-    else if (opt=="hour")   { if (atTime) t->iAtHour   = atoi(value); else t->iEveryHour   = atoi(value); }
-    else if (opt=="minute") { if (atTime) t->iAtMinute = atoi(value); else t->iEveryMinute = atoi(value); }
-    else if (opt=="second") { if (atTime) t->fAtSecond = atof(value); else t->fEverySecond = atof(value); }
-    else if (opt=="group")   { t->strGroup = CString(value); }
-    else if (opt=="script")  { t->strProcedure = CString(value); }
-    else if (opt=="send")    { t->strContents = CString(value); }
-    else if (opt=="variable"){ t->strVariable = CString(value); }
+    else if (opt=="hour")          { if (atTime) t->iAtHour    = atoi(value); else t->iEveryHour    = atoi(value); }
+    else if (opt=="minute")        { if (atTime) t->iAtMinute  = atoi(value); else t->iEveryMinute  = atoi(value); }
+    else if (opt=="second")        { if (atTime) t->fAtSecond  = atof(value); else t->fEverySecond  = atof(value); }
+    else if (opt=="offset_hour")   { t->iOffsetHour   = atoi(value); }
+    else if (opt=="offset_minute") { t->iOffsetMinute = atoi(value); }
+    else if (opt=="offset_second") { t->fOffsetSecond = atof(value); }
+    else if (opt=="group")         { t->strGroup     = CString(value); }
+    else if (opt=="script")        { t->strProcedure = CString(value); }
+    else if (opt=="send")          { t->strContents  = CString(value); }
+    else if (opt=="variable")      { t->strVariable  = CString(value); }
     else { lua_pushnumber(L, eUnknownOption); return 1; }
     lua_pushnumber(L, eOK);
     return 1;

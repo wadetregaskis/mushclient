@@ -29,6 +29,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>   // chdir
 #include <cstdlib>    // free() for g_wxhook_menu_dialog result
+#include <ctime>      // clock_gettime, time()
 
 #include "platform/wx_mfc_hooks.h"  // g_wxhook_pick_colour, g_wxhook_menu_dialog, …
 #include "sqlite3/sqlite3.h"         // sqlite3_libversion()
@@ -1123,10 +1124,12 @@ static int L_GetInfo(lua_State* L)
         // 4-7: file/line preamble/postamble — not in portable CMUSHclientDoc
         case 4: case 5: case 6: case 7: lua_pushstring(L, "");                 return 1;
         case 8:   lua_pushstring(L, (const char*)pDoc->m_notes);               return 1;
-        // 9, 10, 19-20, 22-27: fields absent from portable doc_stub
-        case 9: case 10: case 19: case 20:
-        case 22: case 23: case 24: case 25: case 26: case 27:
+        // 9, 10, 20, 23-27: fields absent from portable doc_stub
+        case 9: case 10: case 20:
+        case 23: case 24: case 25: case 26: case 27:
             lua_pushstring(L, "");                                              return 1;
+        case 19:  lua_pushstring(L, (const char*)pDoc->m_strSpeedWalkFiller);  return 1;
+        case 22:  lua_pushstring(L, (const char*)pDoc->m_connect_text);        return 1;
         case 11:  lua_pushstring(L, (const char*)pDoc->m_strLogFilePreamble);  return 1;
         case 12:  lua_pushstring(L, (const char*)pDoc->m_strLogFilePostamble); return 1;
         case 13:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePreambleInput);   return 1;
@@ -1143,9 +1146,11 @@ static int L_GetInfo(lua_State* L)
         case 32:  lua_pushstring(L, (const char*)pDoc->m_strWorldDisconnect);  return 1;
         case 33:  lua_pushstring(L, (const char*)pDoc->m_strWorldGetFocus);    return 1;
         case 34:  lua_pushstring(L, (const char*)pDoc->m_strWorldLoseFocus);   return 1;
-        // 35-39, 41, 50: fields absent from portable doc_stub
-        case 35: case 36: case 37: case 38: case 39: case 41: case 50:
+        // 37-39, 41, 50: fields absent from portable doc_stub
+        case 37: case 38: case 39: case 41: case 50:
             lua_pushstring(L, "");                                              return 1;
+        case 35:  lua_pushstring(L, (const char*)pDoc->m_strScriptFilename);   return 1;
+        case 36:  lua_pushstring(L, (const char*)pDoc->m_strScriptPrefix);     return 1;
         case 40:  lua_pushstring(L, (const char*)pDoc->m_strAutoLogFileName);  return 1;
         case 42:  lua_pushstring(L, (const char*)pDoc->m_strTerminalIdentification); return 1;
         case 43:  lua_pushstring(L, (const char*)pDoc->m_strMappingFailure);   return 1;
@@ -1245,10 +1250,27 @@ static int L_GetInfo(lua_State* L)
         case 113: lua_pushboolean(L,
                       pDoc->m_iConnectPhase == eConnectConnectedToMud);         return 1;
         case 114: lua_pushboolean(L, pDoc->m_gui_paused);                      return 1;
+        case 115: lua_pushboolean(L, false);  // localization not supported     return 1;
+        case 118: lua_pushboolean(L, pDoc->m_bVariablesChanged);               return 1;
+        case 119: lua_pushboolean(L, pDoc->m_ScriptEngine != nullptr);         return 1;
+        case 120: lua_pushboolean(L, false);  // scroll-bar-wanted not tracked  return 1;
+        case 121: lua_pushboolean(L, true);   // clock_gettime always available return 1;
+        case 122: lua_pushboolean(L, sqlite3_threadsafe() != 0);               return 1;
+        case 123: lua_pushboolean(L, pDoc->m_bDoingSimulate);                  return 1;
+        case 124: lua_pushboolean(L, pDoc->m_bLineOmittedFromOutput);          return 1;
+        case 125: lua_pushboolean(L, false);  // fullscreen not supported       return 1;
         // ── Numbers ──────────────────────────────────────────────────────────
         case 141: // fall through — same field, both type numbers used in the wild
         case 201: lua_pushnumber(L, pDoc->m_total_lines);                     return 1;
         case 203: lua_pushnumber(L, pDoc->m_nTotalLinesSent);                 return 1;
+        case 204: lua_pushnumber(L, pDoc->m_iInputPacketCount);               return 1;
+        case 205: lua_pushnumber(L, 0);  // output packet count not tracked   return 1;
+        case 206: lua_pushnumber(L, pDoc->m_nTotalUncompressed);              return 1;
+        case 207: lua_pushnumber(L, pDoc->m_nTotalCompressed);                return 1;
+        case 208: lua_pushnumber(L, pDoc->m_iMCCP_type);                      return 1;
+        case 209: lua_pushnumber(L, (double)pDoc->m_iMXPerrors);              return 1;
+        case 210: lua_pushnumber(L, (double)pDoc->m_iMXPtags);                return 1;
+        case 211: lua_pushnumber(L, (double)pDoc->m_iMXPentities);            return 1;
         case 212: lua_pushnumber(L, pDoc->m_gui_font_height);                 return 1;
         case 213: lua_pushnumber(L, pDoc->m_gui_font_width);                  return 1;
         case 214: lua_pushnumber(L, pDoc->m_gui_font_height); return 1; // input same as output
@@ -1288,7 +1310,37 @@ static int L_GetInfo(lua_State* L)
         case 246: lua_pushnumber(L, pDoc->m_iAliasesEvaluatedCount);          return 1;
         case 247: lua_pushnumber(L, pDoc->m_iAliasesMatchedCount);            return 1;
         case 248: lua_pushnumber(L, pDoc->m_iTimersFiredCount);               return 1;
+        case 232: {   // high-resolution timer (seconds since epoch as double)
+            struct timespec ts{};
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            lua_pushnumber(L, (double)ts.tv_sec + ts.tv_nsec * 1e-9);
+        }   return 1;
+        case 233: lua_pushnumber(L, 0.0); return 1; // trigger exec time — not tracked portably
+        case 234: lua_pushnumber(L, 0.0); return 1; // alias exec time — not tracked portably
+        case 238: lua_pushnumber(L, 0);   return 1; // world window display flags — N/A
+        case 242: lua_pushnumber(L, 0);   return 1; // bad UTF-8 lines — not tracked
+        case 243: lua_pushnumber(L, 0);   return 1; // fixed pitch font size — N/A
+        case 286: lua_pushnumber(L, pDoc->m_iTriggersMatchedThisSessionCount); return 1;
+        case 287: lua_pushnumber(L, pDoc->m_iAliasesMatchedThisSessionCount);  return 1;
+        case 288: lua_pushnumber(L, pDoc->m_iTimersFiredThisSessionCount);     return 1;
         case 289: lua_pushnumber(L, pDoc->m_last_line_with_IAC_GA);           return 1;
+        case 298: {   // SQLite3 version as integer (e.g. 3044000)
+            lua_pushnumber(L, sqlite3_libversion_number());
+        }   return 1;
+        case 310: lua_pushnumber(L, pDoc->m_newlines_received);               return 1;
+        // ── Dates — returned as Unix timestamps (doubles) ─────────────────
+        case 301: {
+            time_t t = pDoc->m_tConnectTime.GetTime();
+            if (t) lua_pushnumber(L, (double)t); else lua_pushnil(L);
+        }   return 1;
+        case 302: {
+            time_t t = pDoc->m_LastFlushTime.GetTime();
+            if (t) lua_pushnumber(L, (double)t); else lua_pushnil(L);
+        }   return 1;
+        case 303: lua_pushnil(L);  return 1; // script file mod time — not tracked portably
+        case 304: lua_pushnumber(L, (double)time(nullptr));                   return 1;
+        case 305: lua_pushnil(L);  return 1; // client start time — not tracked portably
+        case 306: lua_pushnil(L);  return 1; // world open time — not tracked portably
         default:  lua_pushnil(L);                                              return 1;
     }
 }

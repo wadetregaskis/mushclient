@@ -3137,8 +3137,22 @@ static int L_GetWorldWindowPosition (lua_State *L)
   int which = my_optnumber (L, 1, 1);  // Which
   bool screen = optboolean (L, 2, 0);  // client or screen
   bool useGetWindowRect = optboolean (L, 3, 0);  // if true use GetWindowRect
-  int count = 0;
 
+#ifndef _WIN32
+  // Non-Windows: no CSendView in the MFC view system.
+  // Use the m_fn_get_output_rect callback wired by CWorldChildFrame instead.
+  // Only "which == 1" is supported — there is exactly one output pane per world.
+  (void) screen; (void) useGetWindowRect;
+  if (which == 1 && pDoc->m_fn_get_output_rect)
+    {
+    int x = 0, y = 0, w = 0, h = 0;
+    pDoc->m_fn_get_output_rect (x, y, w, h);
+    CRect rect (x, y, x + w, y + h);
+    luaWindowPositionHelper (L, rect);
+    return 1;  // number of result fields
+    }
+#else
+  int count = 0;
 
   for(POSITION pos=pDoc->GetFirstViewPosition();pos!=NULL;)
     {
@@ -3171,8 +3185,9 @@ static int L_GetWorldWindowPosition (lua_State *L)
       luaWindowPositionHelper (L, rect);
       return 1;  // number of result fields
 
-      }	
+      }
     }
+#endif
 
   return 0; // oops, that one not found (returns nil)
 

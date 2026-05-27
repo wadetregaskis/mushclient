@@ -5743,20 +5743,96 @@ static int L_GetLoadedValue(lua_State* L)
 }
 
 // ── GetGlobalOption / GetGlobalOptionList ─────────────────────────────────────
-// Global options are app-wide (not per-world).  In the portable single-world
-// build there is no App object, so these return nil / empty table.
+// Global options are app-wide (not per-world).  The portable CMUSHclientApp
+// (doc_stub.h) carries a subset of the Windows App fields; we surface those here
+// with the same camel-case names the Windows registry table uses (_stricmp match).
+//
+// Numeric options (long/bool):
+//   AllTypingToCommandWindow, BleedBackground, DisableKeyboardMenuActivation,
+//   ErrorNotificationToOutputWindow, F1macro, NotifyOnDisconnect,
+//   PrinterFontSize, PrinterLeftMargin, PrinterLinesPerPage, PrinterTopMargin,
+//   ReconnectOnLinkFailure, SmoothScrolling, SmootherScrolling
+//
+// Alpha options (string):
+//   DefaultLogFileDirectory, LuaScript, PrinterFont, WordDelimitersDblClick
 static int L_GetGlobalOption(lua_State* L)
 {
     world_doc(L);
-    luaL_checkstring(L, 1);   // consume argument
-    lua_pushnil(L);
+    const char* name = luaL_checkstring(L, 1);
+
+    // ── numeric (bool/int) options ──────────────────────────────────────────
+    struct { const char* nm; long val; } nums[] = {
+        { "AllTypingToCommandWindow",        App.m_bAllTypingToCommandWindow        },
+        { "BleedBackground",                 App.m_bBleedBackground                 },
+        { "DisableKeyboardMenuActivation",   App.m_bDisableKeyboardMenuActivation   },
+        { "ErrorNotificationToOutputWindow", App.m_bErrorNotificationToOutputWindow },
+        { "F1macro",                         App.m_bF1macro                         },
+        { "NotifyOnDisconnect",              App.m_bNotifyOnDisconnect              },
+        { "PrinterFontSize",                 App.m_nPrinterFontSize                 },
+        { "PrinterLeftMargin",               App.m_nPrinterLeftMargin               },
+        { "PrinterLinesPerPage",             App.m_nPrinterLinesPerPage             },
+        { "PrinterTopMargin",                App.m_nPrinterTopMargin                },
+        { "ReconnectOnLinkFailure",          App.m_bReconnectOnLinkFailure          },
+        { "SmoothScrolling",                 App.m_bSmoothScrolling                 },
+        { "SmootherScrolling",               App.m_bSmootherScrolling               },
+        { nullptr, 0 }
+    };
+    for (int i = 0; nums[i].nm; ++i) {
+        if (strcasecmp(name, nums[i].nm) == 0) {
+            lua_pushnumber(L, nums[i].val);
+            return 1;
+        }
+    }
+
+    // ── alpha (string) options ──────────────────────────────────────────────
+    struct { const char* nm; const char* val; } strs[] = {
+        { "DefaultLogFileDirectory", App.m_strDefaultLogFileDirectory.c_str() },
+        { "LuaScript",               static_cast<const char*>(App.m_strLuaScript) },
+        { "PrinterFont",             static_cast<const char*>(App.m_strPrinterFont) },
+        { "WordDelimitersDblClick",  static_cast<const char*>(App.m_strWordDelimitersDblClick) },
+        { nullptr, nullptr }
+    };
+    for (int i = 0; strs[i].nm; ++i) {
+        if (strcasecmp(name, strs[i].nm) == 0) {
+            lua_pushstring(L, strs[i].val ? strs[i].val : "");
+            return 1;
+        }
+    }
+
+    lua_pushnil(L);   // unknown option
     return 1;
 }
 
 static int L_GetGlobalOptionList(lua_State* L)
 {
     world_doc(L);
+    static const char* const kNames[] = {
+        // numeric
+        "AllTypingToCommandWindow",
+        "BleedBackground",
+        "DisableKeyboardMenuActivation",
+        "ErrorNotificationToOutputWindow",
+        "F1macro",
+        "NotifyOnDisconnect",
+        "PrinterFontSize",
+        "PrinterLeftMargin",
+        "PrinterLinesPerPage",
+        "PrinterTopMargin",
+        "ReconnectOnLinkFailure",
+        "SmoothScrolling",
+        "SmootherScrolling",
+        // alpha
+        "DefaultLogFileDirectory",
+        "LuaScript",
+        "PrinterFont",
+        "WordDelimitersDblClick",
+        nullptr
+    };
     lua_newtable(L);
+    for (int i = 0; kNames[i]; ++i) {
+        lua_pushstring(L, kNames[i]);
+        lua_rawseti(L, -2, i + 1);
+    }
     return 1;
 }
 

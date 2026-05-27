@@ -28,6 +28,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>   // chdir
+#include <sys/stat.h> // stat() for script file mtime
 #include <cstdlib>    // free() for g_wxhook_menu_dialog result
 #include <ctime>      // clock_gettime, time()
 #include <cmath>      // cos() for WindowBlendColor
@@ -1338,7 +1339,14 @@ static int L_GetInfo(lua_State* L)
             time_t t = pDoc->m_LastFlushTime.GetTime();
             if (t) lua_pushnumber(L, (double)t); else lua_pushnil(L);
         }   return 1;
-        case 303: lua_pushnil(L);  return 1; // script file mod time — not tracked portably
+        case 303: {   // script file modification time
+            const char* sf = static_cast<const char*>(pDoc->m_strScriptFilename);
+            struct stat st;
+            if (sf && *sf && stat(sf, &st) == 0)
+                lua_pushnumber(L, (double)st.st_mtime);
+            else
+                lua_pushnil(L);
+        }   return 1;
         case 304: lua_pushnumber(L, (double)time(nullptr));                   return 1;
         case 305: {   // client start time — captured once at first call
             static time_t s_clientStart = time(nullptr);

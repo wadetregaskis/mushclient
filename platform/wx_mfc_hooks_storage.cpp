@@ -54,6 +54,7 @@ bool   (*g_wxhook_activate_notepad)(const char*)                   = nullptr;
 bool   (*g_wxhook_close_notepad)(const char*)                      = nullptr;
 bool   (*g_wxhook_move_notepad)(const char*, int, int, int, int)   = nullptr;
 char*  (*g_wxhook_get_notepad_position)(const char*)               = nullptr;
+bool   (*g_wxhook_save_notepad)(const char*, const char*, bool)    = nullptr;
 long (*g_wxhook_pick_colour)(long)                               = nullptr;
 char* (*g_wxhook_menu_dialog)(const char* const*, int,
                                const char*)                      = nullptr;

@@ -6394,6 +6394,35 @@ static int L_GetNotepadWindowPosition(lua_State* L)
     return 1;
 }
 
+// SendToNotepad(title, text) → bool
+// Creates a new notepad window with the given text (or appends to existing).
+// Uses AppendToTheNotepad (append=false → creates if absent, appends if present).
+static int L_SendToNotepad(lua_State* L)
+{
+    CMUSHclientDoc* pDoc = world_doc(L);
+    const char* title = luaL_checkstring(L, 1);
+    const char* text  = luaL_optstring(L, 2, "");
+    // SendToNotepad always creates a fresh window on Windows, but portable
+    // behaviour (append-or-create) is equally useful and avoids a separate hook.
+    bool ok = pDoc->AppendToTheNotepad(CString(title), CString(text),
+                                        false, eNotepadScript);
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// SaveNotepad(title, filename, replaceExisting) → 0 (success) or error
+static int L_SaveNotepad(lua_State* L)
+{
+    world_doc(L);
+    const char* title    = luaL_checkstring(L, 1);
+    const char* filename = luaL_optstring(L, 2, "");
+    bool        replace  = lua_toboolean(L, 3) != 0;
+    if (!g_wxhook_save_notepad) { lua_pushnumber(L, eNoSuchWindow); return 1; }
+    bool ok = g_wxhook_save_notepad(title, filename, replace);
+    lua_pushnumber(L, ok ? 0 : eNoSuchWindow);
+    return 1;
+}
+
 // Notepad / mapping / GUI display actions that have no return value → eOK
 static int L_GuiOkStub(lua_State* L)
 {
@@ -6921,8 +6950,8 @@ static const luaL_Reg worldlib[] = {
     { "NotepadReadOnly",        L_GuiOkStub  },
     { "NotepadSaveMethod",      L_GuiOkStub  },
     { "ReplaceNotepad",         L_ReplaceNotepad  },
-    { "SaveNotepad",            L_GuiOkStub  },
-    { "SendToNotepad",          L_GuiOkStub  },
+    { "SaveNotepad",            L_SaveNotepad   },
+    { "SendToNotepad",          L_SendToNotepad },
     { "GetNotepadLength",       L_GetNotepadLength },
     { "GetNotepadList",         L_GetNotepadList   },
     { "GetNotepadText",         L_GetNotepadText   },

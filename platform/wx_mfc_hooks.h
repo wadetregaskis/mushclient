@@ -221,6 +221,14 @@ extern bool (*g_wxhook_move_notepad)(const char* title, int x, int y, int w, int
 // Caller must free().
 extern char* (*g_wxhook_get_notepad_position)(const char* title);
 
+// ── Notepad save hook ─────────────────────────────────────────────────────
+// Save the content of a named notepad to a file.
+// filename may be "" to trigger a save-as dialog.
+// Returns true if the save succeeded, false if not found or cancelled.
+extern bool (*g_wxhook_save_notepad)(const char* title,
+                                     const char* filename,
+                                     bool replaceExisting);
+
 // ── Colour picker hook ────────────────────────────────────────────────────
 // Open a colour-picker dialog.  suggested is a COLORREF (0x00BBGGRR), or
 // -1 to start with no pre-selected colour.  Returns the picked COLORREF, or

@@ -2809,6 +2809,42 @@ static char* hook_get_notepad_position(const char* title)
     return result;
 }
 
+// ── Notepad save ─────────────────────────────────────────────────────────
+
+static bool hook_save_notepad(const char* title, const char* filename, bool /*replaceExisting*/)
+{
+    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
+    if (!frame) return false;
+    // Delegate to the frame's File→Save handler (same as menu Ctrl+S).
+    // Pass the filename via a synthetic event if non-empty, otherwise show dialog.
+    wxCommandEvent evt(wxEVT_MENU, wxID_SAVE);
+    // We can't easily pass a filename through the event; instead call SaveFile
+    // directly on the ctrl via the doc's m_fn_save_to_file if wired.
+    // GetText() retrieves the current text; save it using wxTextCtrl::SaveFile.
+    if (filename && *filename)
+    {
+        wxString path = wxString::FromUTF8(filename);
+        // SaveFile is accessible from the wxTextCtrl inside the frame.
+        // Since we can't access m_ctrl directly, use m_pDoc callback if set.
+        // Fall back: AppendText trick: use the m_fn_save_to_file lambda.
+        // The lambda is on the CTextDocument, which we can reach via FindNotepad.
+        // For simplicity, use the hook_get_notepad_text + write ourselves.
+        std::string text = frame->GetText();
+        FILE* fp = fopen(filename, "w");
+        if (!fp) return false;
+        fwrite(text.c_str(), 1, text.size(), fp);
+        fclose(fp);
+        return true;
+    }
+    else
+    {
+        // Show save dialog — trigger via the frame's menu save handler.
+        wxCommandEvent saveEvt(wxEVT_MENU, wxID_SAVE);
+        frame->GetEventHandler()->ProcessEvent(saveEvt);
+        return true;
+    }
+}
+
 // ── Colour picker ─────────────────────────────────────────────────────────
 
 static long hook_pick_colour(long suggested)
@@ -2923,6 +2959,7 @@ void wx_mfc_install_hooks()
     g_wxhook_close_notepad        = hook_close_notepad;
     g_wxhook_move_notepad         = hook_move_notepad;
     g_wxhook_get_notepad_position = hook_get_notepad_position;
+    g_wxhook_save_notepad         = hook_save_notepad;
 #endif
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce

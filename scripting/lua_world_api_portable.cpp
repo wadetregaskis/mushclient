@@ -28,7 +28,8 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>   // chdir
-#include <sys/stat.h> // stat() for script file mtime
+#include <sys/stat.h>    // stat() for script file mtime
+#include <sys/utsname.h> // uname() for OS version
 #include <cstdlib>    // free() for g_wxhook_menu_dialog result
 #include <ctime>      // clock_gettime, time()
 #include <cmath>      // cos() for WindowBlendColor
@@ -1199,6 +1200,8 @@ static int L_GetInfo(lua_State* L)
             }
             lua_pushstring(L, ip);
         }   return 1;
+        case 62:  lua_pushstring(L, "");   // proxy IP — not resolved portably
+                  return 1;
         case 63:  {   // local hostname
             char host[256] = "";
             gethostname(host, sizeof(host));
@@ -1219,6 +1222,14 @@ static int L_GetInfo(lua_State* L)
             const char* slash = strrchr(p, '/');
             if (slash) lua_pushlstring(L, p, (size_t)(slash - p + 1));
             else        lua_pushstring(L, "");
+        }   return 1;
+        case 68:  {   // working_dir (startup working directory, same as cwd portably)
+            char* cwd = getcwd(nullptr, 0);
+            if (cwd) {
+                string s(cwd); free(cwd);
+                if (s.empty() || s.back() != '/') s += '/';
+                lua_pushstring(L, s.c_str());
+            } else { lua_pushstring(L, ""); }
         }   return 1;
         case 72:  lua_pushstring(L, MUSHCLIENT_VERSION);                        return 1;
         case 73:  lua_pushstring(L, __DATE__ " " __TIME__);                    return 1;
@@ -1290,6 +1301,10 @@ static int L_GetInfo(lua_State* L)
         case 225: lua_pushnumber(L, (double)pDoc->m_CustomElementMap.GetCount()); return 1;
         case 226: lua_pushnumber(L, (double)pDoc->m_CustomEntityMap.GetCount()); return 1;
         case 227: lua_pushnumber(L, pDoc->m_iConnectPhase);                   return 1;
+        case 228: lua_pushnumber(L, 0);  // server IP as long — sockAddr not in portable build
+                  return 1;
+        case 229: lua_pushnumber(L, 0);  // proxy IP as long — ProxyAddr not in portable build
+                  return 1;
         case 230: lua_pushnumber(L, pDoc->m_iExecutionDepth);                 return 1;
         case 231: // log file size
             lua_pushnumber(L, pDoc->m_logfile ? (double)ftell(pDoc->m_logfile) : 0.0);
@@ -1312,6 +1327,18 @@ static int L_GetInfo(lua_State* L)
         case 246: lua_pushnumber(L, pDoc->m_iAliasesEvaluatedCount);          return 1;
         case 247: lua_pushnumber(L, pDoc->m_iAliasesMatchedCount);            return 1;
         case 248: lua_pushnumber(L, pDoc->m_iTimersFiredCount);               return 1;
+        case 265: case 266: case 267: case 268: {   // OS version via uname
+            struct utsname u{};
+            uname(&u);
+            // release is e.g. "23.4.0" (macOS) or "6.5.0-45-generic" (Linux)
+            int major = 0, minor = 0, build = 0;
+            sscanf(u.release, "%d.%d.%d", &major, &minor, &build);
+            if      (iType == 265) lua_pushnumber(L, major);
+            else if (iType == 266) lua_pushnumber(L, minor);
+            else if (iType == 267) lua_pushnumber(L, build);
+            else                   lua_pushnumber(L, 0);   // dwPlatformId — N/A on POSIX
+        }   return 1;
+        case 285: lua_pushboolean(L, pDoc->m_fn_line_ready != nullptr);       return 1;
         case 232: {   // high-resolution timer (seconds since epoch as double)
             struct timespec ts{};
             clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -1326,9 +1353,15 @@ static int L_GetInfo(lua_State* L)
         case 287: lua_pushnumber(L, pDoc->m_iAliasesMatchedThisSessionCount);  return 1;
         case 288: lua_pushnumber(L, pDoc->m_iTimersFiredThisSessionCount);     return 1;
         case 289: lua_pushnumber(L, pDoc->m_last_line_with_IAC_GA);           return 1;
+        case 297: lua_pushnumber(L, 1);  // perf-counter freq — we use clock_gettime (seconds) so freq=1
+                  return 1;
         case 298: {   // SQLite3 version as integer (e.g. 3044000)
             lua_pushnumber(L, sqlite3_libversion_number());
         }   return 1;
+        case 299: lua_pushnumber(L, 0);  // ANSI code page — N/A on POSIX
+                  return 1;
+        case 300: lua_pushnumber(L, 0);  // OEM code page — N/A on POSIX
+                  return 1;
         case 310: lua_pushnumber(L, pDoc->m_newlines_received);               return 1;
         // ── Dates — returned as Unix timestamps (doubles) ─────────────────
         case 301: {

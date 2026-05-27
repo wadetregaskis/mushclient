@@ -3547,7 +3547,7 @@ dc.CreateCompatibleDC (NULL);
       // Non-Windows: no CSendView; use the wx callback to update the input bar.
       if (m_fn_set_input_font)
         {
-        bool bold   = (nWeight >= FW_SEMIBOLD);
+        bool bold   = (nWeight >= 600);  // 600 = FW_SEMIBOLD
         bool italic = (bItalic != 0);
         m_fn_set_input_font (std::string (lpszFacename ? lpszFacename : ""),
                              nHeight, bold, italic);

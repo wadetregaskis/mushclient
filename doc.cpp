@@ -6003,6 +6003,11 @@ CTextDocument * pTextDoc = NULL;
 
   if (pTextDoc)
     {
+#ifndef _WIN32
+    // Non-Windows: no CTextView in the MFC view system — use the wx callback.
+    if (pTextDoc->m_fn_activate)
+      pTextDoc->m_fn_activate ();
+#else
     // activate the view
     POSITION pos=pTextDoc->GetFirstViewPosition();
 
@@ -6018,6 +6023,7 @@ CTextDocument * pTextDoc = NULL;
         return;
         } // end of having the right type of view
       }   // end of having a view
+#endif
     } // end of having an existing notepad document
   else
     CreateTextWindow ("",     // contents

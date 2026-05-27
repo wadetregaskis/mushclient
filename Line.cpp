@@ -41,11 +41,7 @@ CLine::CLine (const long nLineNumber,
   len = 0;
   m_iPreambleOffset = 0;
   m_theTime = CTime::GetCurrentTime();
-#ifdef _WIN32
   QueryPerformanceCounter (&m_lineHighPerformanceTime);
-#else
-  m_lineHighPerformanceTime.QuadPart = 0;
-#endif
   m_nLineNumber = nLineNumber;
 
   if (bUnicode)

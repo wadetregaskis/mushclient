@@ -244,6 +244,10 @@ int i;
 
 
 
+#ifdef _WIN32
+// On non-Windows, CreateTextWindow is defined inline in platform/mfc_ui.h and
+// dispatches to g_wxhook_create_text_window.  The Windows implementation below
+// uses MFC CTextView and is only compiled on Windows.
 bool CreateTextWindow (const char * sText,
                        const char * sTitle,
                        CMUSHclientDoc * pDoc,
@@ -342,6 +346,7 @@ bool CreateTextWindow (const char * sText,
   return pView->SetText (sText); // send the text to it
 
   }
+#endif // _WIN32
 
 
 CString FixHTMLString (const CString strToFix)

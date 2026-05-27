@@ -5,6 +5,9 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "dialogs/RegexpProblemDlg.h"
+#else
+// Needed for the full CMUSHclientApp definition (App.m_iCounterFrequency).
+#include "platform/doc_stub.h"
 #endif // _WIN32
 #include "pcre/config.h"
 #include "pcre/pcre.h"
@@ -85,29 +88,21 @@ int count;
   // allocate enough memory
   vector<int> offsets ((capturecount + 1) * 3);  // we always get offset 0 - the whole match
 
-  LARGE_INTEGER start, 
-                finish;
-#ifdef _WIN32
+  LARGE_INTEGER start, finish;
   if (App.m_iCounterFrequency)
     QueryPerformanceCounter (&start);
   else
-#endif // _WIN32
-    {
-    start.QuadPart = 0;
-    finish.QuadPart = 0;
-    }
+    { start.QuadPart = 0; finish.QuadPart = 0; }
 
   pcre_callout = NULL;
   count = pcre_exec(prog->m_program, prog->m_extra, string, strlen (string),
                     start_offset, options, &offsets [0], offsets.size ());
 
-#ifdef _WIN32
   if (App.m_iCounterFrequency)
     {
     QueryPerformanceCounter (&finish);
     prog->iTimeTaken += finish.QuadPart - start.QuadPart;
     }
-#endif // _WIN32
 
   prog->m_iMatchAttempts++;  // how many times did we try to match?
 

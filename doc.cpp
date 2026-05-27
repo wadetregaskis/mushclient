@@ -842,18 +842,27 @@ void CMUSHclientDoc::SetUpOutputWindow (void)
 
   // set output window(s) to "pause" if wanted
 
+#ifndef _WIN32
+  if (m_bStartPaused)
+    {
+    m_gui_paused = true;
+    if (m_fn_set_paused)
+      m_fn_set_paused (true);
+    }
+#else
   for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
 	  {
 	  CView* pView = GetNextView(pos);
-	  
+
 	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
   	  {
 		  CMUSHView* pmyView = (CMUSHView*)pView;
 
 		  pmyView->m_freeze = m_bStartPaused;
 
-	    }	
+	    }
     } // end of looping through views
+#endif
 
 // ------ load global plugins (unless already loaded from world file)
 
@@ -3538,7 +3547,7 @@ dc.CreateCompatibleDC (NULL);
       // Non-Windows: no CSendView; use the wx callback to update the input bar.
       if (m_fn_set_input_font)
         {
-        bool bold   = (nWeight >= FW_SEMIBOLD);
+        bool bold   = (nWeight >= 600);  // 600 = FW_SEMIBOLD
         bool italic = (bItalic != 0);
         m_fn_set_input_font (std::string (lpszFacename ? lpszFacename : ""),
                              nHeight, bold, italic);

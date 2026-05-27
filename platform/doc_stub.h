@@ -1623,6 +1623,10 @@ public:
     CString        m_strScriptFilename;  // external .lua file (world attribute)
     CString        m_strScript;          // accumulated inline <script> content
 
+    // ── Script file auto-reload (non-Windows mtime polling) ───────────
+    time_t         m_scriptFileMtime        = 0;     // mtime recorded at last load
+    bool           m_bInScriptFileChanged   = false; // re-entrancy guard
+
     // ── Timer enable ───────────────────────────────────────────────────
     unsigned short m_bEnableTimers = 1;
 
@@ -1875,6 +1879,7 @@ public:
     // Lua dispids so ExecuteLua can call them.
     void ResolveAllEntryPoints();
     bool CheckScriptingAvailable(const char*, int, const char*) { return false; }
+    void OnScriptFileChanged(bool bForce = false);
 
     // ── World load/save (archive-dependent, not yet ported) ──────────
     void Load_World_XML(class CArchive&, unsigned long, unsigned long,

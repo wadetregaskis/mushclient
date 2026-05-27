@@ -19,6 +19,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <sys/stat.h>
 
 // ── helpers shared with xmlparse.cpp ─────────────────────────────────────
 // (declared in xmlparse.h, implemented in xmlparse.cpp)
@@ -877,6 +878,14 @@ static bool Init_Script_Engine(CMUSHclientDoc& doc, const char* worldPath)
     doc.m_ScriptEngine = engine;
     fprintf(stderr, "[world load] Lua script engine ready (\"%s\")\n",
             (const char*)strSource);
+
+    // Record the script file's mtime so the auto-reload poll (OnScriptFileChanged)
+    // doesn't immediately trigger a false reload on the first check.
+    if (!doc.m_strScriptFilename.IsEmpty()) {
+        struct stat st;
+        if (::stat((const char*)doc.m_strScriptFilename, &st) == 0)
+            doc.m_scriptFileMtime = st.st_mtime;
+    }
 
     // Resolve all trigger/alias/timer/world-callback dispids now that
     // the script is parsed — otherwise ExecuteLua silently skips them.

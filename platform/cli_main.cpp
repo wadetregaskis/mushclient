@@ -246,12 +246,15 @@ int main(int argc, char* argv[])
     struct timespec ts_last_timer;
     clock_gettime(CLOCK_MONOTONIC, &ts_last_timer);
 
+    // Script-file monitoring: track last check time for 2 s poll interval
+    struct timespec ts_last_script_check = ts_last_timer;
+
     while (!g_quit) {
 
         // Poll sockets (10 ms timeout keeps CPU usage low)
         CAsyncSocket::Poll(10);
 
-        // Fire timers every ~100 ms
+        // Fire timers every ~100 ms; also poll script file mtime every ~2 s
         {
             struct timespec ts_now;
             clock_gettime(CLOCK_MONOTONIC, &ts_now);
@@ -261,6 +264,14 @@ int main(int argc, char* argv[])
                 ts_last_timer = ts_now;
                 if (doc.m_bEnableTimers && !doc.m_CurrentPlugin)
                     doc.CheckTimerList(doc.GetTimerMap());
+
+                // Script file auto-reload check every 2 s
+                long ms2 = (ts_now.tv_sec  - ts_last_script_check.tv_sec)  * 1000
+                         + (ts_now.tv_nsec - ts_last_script_check.tv_nsec) / 1000000;
+                if (ms2 >= 2000) {
+                    ts_last_script_check = ts_now;
+                    doc.OnScriptFileChanged(false);
+                }
             }
         }
 

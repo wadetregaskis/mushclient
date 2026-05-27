@@ -22,6 +22,8 @@
 #include <climits>
 #include <zlib.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <time.h>    // clock_gettime, struct timespec
 
@@ -2315,6 +2317,97 @@ long CMUSHclientDoc::ShiftTabCompleteItem(LPCTSTR Item)
         m_ExtraShiftTabCompleteItems.insert(Item);
     }
     return eOK;
+}
+
+// ── CMUSHclientDoc::OnScriptFileChanged ──────────────────────────────────────
+// Portable replacement for the Windows version (scripting/scripting.cpp).
+// Called from the mushcli event loop (cli_main.cpp) and the wxWidgets world
+// timer (wx_world_child.cpp) every ~2 seconds.
+//
+// Checks whether the script file on disk has changed since the last load.
+// If it has, the old engine is destroyed and the script is reloaded from the
+// file.  On non-Windows there is no GUI prompt: the script is always
+// reloaded automatically (equivalent to m_nReloadOption == eReloadAlways).
+// The bForce parameter is accepted for API compatibility but has no effect
+// on non-Windows (we never prompt, so "force" vs "ask" is the same).
+void CMUSHclientDoc::OnScriptFileChanged(bool /*bForce*/)
+{
+    // Re-entrancy guard (the scripting callbacks could trigger us again).
+    if (m_bInScriptFileChanged)
+        return;
+
+    // Nothing to watch if there is no external script file.
+    if (m_strScriptFilename.IsEmpty())
+        return;
+
+    // Check the file's mtime via stat().
+    struct stat st;
+    if (::stat((const char*)m_strScriptFilename, &st) != 0)
+        return;  // file disappeared or unreadable — leave engine as-is
+
+    if (st.st_mtime == m_scriptFileMtime)
+        return;  // unchanged
+
+    m_bInScriptFileChanged = true;
+
+    fprintf(stderr, "[script] \"%s\" changed — reloading\n",
+            (const char*)m_strScriptFilename);
+
+    // ── Tear down the old engine ──────────────────────────────────────────
+    delete m_ScriptEngine;
+    m_ScriptEngine = nullptr;
+
+    // ── Read the file ─────────────────────────────────────────────────────
+    FILE* f = fopen((const char*)m_strScriptFilename, "rb");
+    if (!f) {
+        fprintf(stderr, "[script] could not open \"%s\": %s\n",
+                (const char*)m_strScriptFilename, strerror(errno));
+        m_bInScriptFileChanged = false;
+        return;
+    }
+    fseek(f, 0, SEEK_END);
+    long fileLen = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* buf = (char*)malloc(fileLen + 1);
+    if (!buf) {
+        fclose(f);
+        m_bInScriptFileChanged = false;
+        return;
+    }
+    fread(buf, 1, fileLen, f);
+    fclose(f);
+    buf[fileLen] = '\0';
+    m_strScript = CString(buf);
+    free(buf);
+
+    // Record new mtime before creating the engine so a re-entrant call
+    // during Parse() sees the updated timestamp and does not loop.
+    m_scriptFileMtime = st.st_mtime;
+
+    // ── Create and initialise new Lua engine ──────────────────────────────
+    CScriptEngine* engine = new CScriptEngine(this, "lua");
+    if (engine->CreateScriptEngine()) {
+        fprintf(stderr, "[script] could not initialise Lua engine\n");
+        delete engine;
+        m_bInScriptFileChanged = false;
+        return;
+    }
+
+    if (engine->Parse(m_strScript, m_strScriptFilename)) {
+        fprintf(stderr, "[script] error parsing \"%s\"\n",
+                (const char*)m_strScriptFilename);
+        delete engine;
+        m_bInScriptFileChanged = false;
+        return;
+    }
+
+    m_ScriptEngine = engine;
+    ResolveAllEntryPoints();
+
+    fprintf(stderr, "[script] \"%s\" reloaded successfully\n",
+            (const char*)m_strScriptFilename);
+
+    m_bInScriptFileChanged = false;
 }
 
 #endif // !_WIN32

@@ -2600,6 +2600,15 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     // ── World timers (triggers based on elapsed time, speed-walk queues, etc.)
     m_doc->CheckTimers();
 
+    // ── Script file monitoring: poll mtime every 2 s ─────────────────────
+    // Equivalent to the Windows FindFirstChangeNotification thread, but runs
+    // on the main thread so UMessageBox / scripting calls are always safe.
+    m_scriptCheckAccum += 100;
+    if (m_scriptCheckAccum >= 2000) {
+        m_scriptCheckAccum = 0;
+        m_doc->OnScriptFileChanged(false);
+    }
+
     // ── ON_PLUGIN_TICK: Windows fires this every ~40 ms.  We drive it via an
     //    accumulator so that the average rate matches even though our timer
     //    only fires every 100 ms.  Each 100 ms tick we fire it 2–3 times,

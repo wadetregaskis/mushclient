@@ -1817,6 +1817,7 @@ public:
                         bool bIsRegexp, bool bThrowExceptions,
                         const char* sName);
     void PlaySoundFile(CString strFile);
+    void CancelSound();
     void Redraw() {}
     void DoFixMenus(void*) {}
     void ShowStatusLine(bool) {}

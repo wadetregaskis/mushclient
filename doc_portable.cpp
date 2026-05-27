@@ -9,6 +9,7 @@
 #ifndef _WIN32
 
 #include "platform/doc_stub.h"
+#include "platform/wx_mfc_hooks.h"
 #include "Color.h"
 #include "worldsock.h"
 #ifdef OPENSSL_FOUND
@@ -1745,8 +1746,21 @@ void CMUSHclientDoc::OutputOutstandingLines()
         TermResetStyle();
 }
 
-// ── CMUSHclientDoc::PlaySoundFile — MSP audio (no-op) ───────────────────
-void CMUSHclientDoc::PlaySoundFile(CString /*strFile*/)         {}
+// ── CMUSHclientDoc::PlaySoundFile / CancelSound — MSP audio ─────────────
+// On non-Windows, delegate to the wxWidgets sound hook so that trigger
+// sounds and MSP audio actually play in mushgui.  mushcli silently drops
+// sound requests (no hook installed → nullptr check is sufficient).
+void CMUSHclientDoc::PlaySoundFile(CString strFile)
+{
+    if (g_wxhook_play_sound)
+        g_wxhook_play_sound((const char*)strFile);
+}
+
+void CMUSHclientDoc::CancelSound()
+{
+    if (g_wxhook_stop_sound)
+        g_wxhook_stop_sound();
+}
 
 // ── CMUSHclientDoc::FormatTime ─────────────────────────────────────────────
 // Converts a CTime to a formatted string.  Used for log line timestamps.

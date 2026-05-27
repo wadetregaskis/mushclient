@@ -5119,8 +5119,20 @@ static int L_GetSoundStatus(lua_State* L)
 static int L_PlaySound(lua_State* L)
 {
     world_doc(L);
-    // (buffer, filename, loop, volume, pan) — stub
-    lua_pushnumber(L, eCannotPlaySound); return 1;
+    // Args: Buffer (1, ignored portably), Filename (2), Loop (3), Volume (4), Pan (5).
+    // Buffer-slot management and volume/pan are DirectSound-only; we play the
+    // file once via the wxWidgets sound hook and return eOK on success.
+    const char* filename = luaL_optstring(L, 2, "");
+    if (!filename || !*filename) {
+        lua_pushnumber(L, eOK); return 1;
+    }
+    if (g_wxhook_play_sound) {
+        bool ok = g_wxhook_play_sound(filename);
+        lua_pushnumber(L, ok ? eOK : eCannotPlaySound);
+    } else {
+        lua_pushnumber(L, eCannotPlaySound);
+    }
+    return 1;
 }
 
 // ── UDP ───────────────────────────────────────────────────────────────────────

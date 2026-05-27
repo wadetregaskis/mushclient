@@ -2790,6 +2790,25 @@ static char* hook_menu_dialog(const char* const* items, int count,
     return result;
 }
 
+// ── Flash icon / request user attention ───────────────────────────────────
+// Requests user attention on the main application frame.  On macOS this
+// bounces the dock icon; on Linux it flashes the taskbar button.
+
+static void hook_flash_icon()
+{
+    wxWindow* top = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    if (top) top->RequestUserAttention(wxUSER_ATTENTION_INFO);
+}
+
+// ── Move main window ──────────────────────────────────────────────────────
+// Repositions and/or resizes the MDI parent frame.
+
+static void hook_move_main_window(long left, long top, long width, long height)
+{
+    wxWindow* win = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    if (win) win->SetSize((int)left, (int)top, (int)width, (int)height);
+}
+
 void wx_mfc_install_hooks()
 {
     g_wxhook_invalidate       = hook_invalidate;
@@ -2817,6 +2836,8 @@ void wx_mfc_install_hooks()
     g_wxhook_create_text_window   = hook_create_text_window;
     g_wxhook_pick_colour          = hook_pick_colour;
     g_wxhook_menu_dialog          = hook_menu_dialog;
+    g_wxhook_flash_icon           = hook_flash_icon;
+    g_wxhook_move_main_window     = hook_move_main_window;
 #if wxUSE_SOUND
     g_wxhook_play_sound           = hook_play_sound;
     g_wxhook_stop_sound           = hook_stop_sound;

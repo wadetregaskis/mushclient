@@ -28,6 +28,9 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>   // chdir
+#include <cstdlib>    // free() for g_wxhook_menu_dialog result
+
+#include "platform/wx_mfc_hooks.h"  // g_wxhook_pick_colour, g_wxhook_menu_dialog, …
 
 using std::string;
 
@@ -4997,7 +5000,14 @@ static int L_SetBackgroundColour(lua_State* L)
 }
 static int L_SetBackgroundImage(lua_State* L) { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_SetCursor(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_SetChanged(lua_State* L)        { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_SetChanged(lua_State* L) {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    // SetChanged(flag) — mark the world file as modified (true) or clean (false).
+    BOOL flag = (BOOL)luaL_optinteger(L, 1, TRUE);
+    pDoc->SetModifiedFlag(flag);
+    lua_pushnumber(L, eOK);
+    return 1;
+}
 static int L_GetMainWindowPosition(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
     int x = 0, y = 0, w = 1024, h = 768;
@@ -5027,7 +5037,15 @@ static int L_GetWorldWindowPositionX(lua_State* L) {
     lua_pushnumber(L, (which >= 0 && which < 4) ? vals[which] : 0);
     return 1;
 }
-static int L_MoveMainWindow(lua_State* L)    { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_MoveMainWindow(lua_State* L) {
+    world_doc(L);
+    long l = (long)luaL_optnumber(L, 1, 0);
+    long t = (long)luaL_optnumber(L, 2, 0);
+    long w = (long)luaL_optnumber(L, 3, 0);
+    long h = (long)luaL_optnumber(L, 4, 0);
+    if (g_wxhook_move_main_window) g_wxhook_move_main_window(l, t, w, h);
+    lua_pushnumber(L, eOK); return 1;
+}
 static int L_MoveWorldWindow(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
     long l = (long)luaL_optnumber(L, 1, 0);
@@ -5048,10 +5066,47 @@ static int L_MoveWorldWindowX(lua_State* L) {
         pDoc->m_fn_move_world_window(l, t, w, h);
     lua_pushnumber(L, eOK); return 1;
 }
-static int L_FlashIcon(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_FlashIcon(lua_State* L) {
+    world_doc(L);
+    if (g_wxhook_flash_icon) g_wxhook_flash_icon();
+    lua_pushnumber(L, eOK); return 1;
+}
 static int L_Help(lua_State* L)              { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_Menu(lua_State* L)              { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_PickColour(lua_State* L)        { world_doc(L); lua_pushnumber(L, -1); return 1; }
+static int L_Menu(lua_State* L) {
+    world_doc(L);
+    const char* items_str   = luaL_checkstring(L, 1);
+    const char* default_str = luaL_optstring(L, 2, "");
+
+    // Split the pipe-delimited items string into individual entries.
+    std::vector<std::string> items;
+    for (const char* p = items_str, *start = p; ; ++p) {
+        if (*p == '|' || *p == '\0') {
+            items.emplace_back(start, p - start);
+            if (!*p) break;
+            start = p + 1;
+        }
+    }
+
+    std::string result;
+    if (!items.empty() && g_wxhook_menu_dialog) {
+        std::vector<const char*> ptrs;
+        ptrs.reserve(items.size());
+        for (const auto& s : items)
+            ptrs.push_back(s.c_str());
+        char* chosen = g_wxhook_menu_dialog(ptrs.data(), (int)ptrs.size(), default_str);
+        if (chosen) {
+            result = chosen;
+            free(chosen);
+        }
+    }
+    lua_pushstring(L, result.c_str()); return 1;
+}
+static int L_PickColour(lua_State* L) {
+    world_doc(L);
+    long suggested = (long)luaL_optnumber(L, 1, -1);
+    long result = g_wxhook_pick_colour ? g_wxhook_pick_colour(suggested) : -1;
+    lua_pushnumber(L, result); return 1;
+}
 static int L_Save(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
     bool ok = pDoc->m_fn_save ? pDoc->m_fn_save() : true;

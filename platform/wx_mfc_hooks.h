@@ -203,6 +203,16 @@ extern long (*g_wxhook_pick_colour)(long suggested);
 extern char* (*g_wxhook_menu_dialog)(const char* const* items, int count,
                                      const char* defaultItem);
 
+// ── Flash icon / request user attention ───────────────────────────────────
+// Flashes the main application window's taskbar button to alert the user.
+// Equivalent to the Windows FlashWindow(TRUE) call.
+extern void (*g_wxhook_flash_icon)();
+
+// ── Move main window ──────────────────────────────────────────────────────
+// Repositions and/or resizes the MDI parent frame.  Coordinates are screen
+// pixels (same convention as wxWindow::SetSize).
+extern void (*g_wxhook_move_main_window)(long left, long top, long width, long height);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

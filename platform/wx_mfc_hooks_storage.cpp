@@ -50,5 +50,7 @@ void (*g_wxhook_stop_sound)()                                    = nullptr;
 long (*g_wxhook_pick_colour)(long)                               = nullptr;
 char* (*g_wxhook_menu_dialog)(const char* const*, int,
                                const char*)                      = nullptr;
+void (*g_wxhook_flash_icon)()                                    = nullptr;
+void (*g_wxhook_move_main_window)(long, long, long, long)        = nullptr;
 
 #endif // !_WIN32

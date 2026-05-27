@@ -30,6 +30,7 @@
 #include <unistd.h>   // chdir
 #include <cstdlib>    // free() for g_wxhook_menu_dialog result
 #include <ctime>      // clock_gettime, time()
+#include <cmath>      // cos() for WindowBlendColor
 
 #include "platform/wx_mfc_hooks.h"  // g_wxhook_pick_colour, g_wxhook_menu_dialog, …
 #include "sqlite3/sqlite3.h"         // sqlite3_libversion()
@@ -1390,14 +1391,27 @@ static int L_GetOption(lua_State* L)
     if      (!strcmp(opt, "enable_triggers"))   OPT_GET_MEMBER(pDoc->m_enable_triggers  ? 1 : 0);
     else if (!strcmp(opt, "enable_aliases"))    OPT_GET_MEMBER(pDoc->m_enable_aliases   ? 1 : 0);
     else if (!strcmp(opt, "enable_timers"))     OPT_GET_MEMBER(pDoc->m_bEnableTimers    ? 1 : 0);
+    else if (!strcmp(opt, "enable_trigger_sounds")) OPT_GET_MEMBER(pDoc->m_enable_trigger_sounds ? 1 : 0);
+    else if (!strcmp(opt, "enable_speed_walk")) OPT_GET_MEMBER(pDoc->m_enable_speed_walk? 1 : 0);
     else if (!strcmp(opt, "display_my_input"))  OPT_GET_MEMBER(pDoc->m_display_my_input ? 1 : 0);
     else if (!strcmp(opt, "log_output"))        OPT_GET_MEMBER(pDoc->m_bLogOutput);
     else if (!strcmp(opt, "log_notes"))         OPT_GET_MEMBER(pDoc->m_bLogNotes);
     else if (!strcmp(opt, "log_input"))         OPT_GET_MEMBER(pDoc->m_log_input);
+    else if (!strcmp(opt, "log_html"))          OPT_GET_MEMBER(pDoc->m_bLogHTML);
+    else if (!strcmp(opt, "log_raw"))           OPT_GET_MEMBER(pDoc->m_bLogRaw ? 1 : 0);
+    else if (!strcmp(opt, "log_in_colour"))     OPT_GET_MEMBER(pDoc->m_bLogInColour ? 1 : 0);
     else if (!strcmp(opt, "port"))              OPT_GET_MEMBER(pDoc->m_port);
     else if (!strcmp(opt, "trace"))             OPT_GET_MEMBER(pDoc->m_bTrace ? 1 : 0);
     else if (!strcmp(opt, "wrap_column"))       OPT_GET_MEMBER(pDoc->m_nWrapColumn);
     else if (!strcmp(opt, "max_output_lines"))  OPT_GET_MEMBER(pDoc->m_maxlines);
+    else if (!strcmp(opt, "utf_8"))             OPT_GET_MEMBER(pDoc->m_bUTF_8 ? 1 : 0);
+    else if (!strcmp(opt, "use_mxp"))           OPT_GET_MEMBER(pDoc->m_iUseMXP);
+    else if (!strcmp(opt, "detect_pueblo"))     OPT_GET_MEMBER(pDoc->m_bPueblo ? 1 : 0);
+    else if (!strcmp(opt, "naws"))              OPT_GET_MEMBER(pDoc->m_bNAWS ? 1 : 0);
+    else if (!strcmp(opt, "disable_compression")) OPT_GET_MEMBER(pDoc->m_bDisableCompression ? 1 : 0);
+    else if (!strcmp(opt, "connect_method"))    OPT_GET_MEMBER(pDoc->m_connect_now);
+    // use_ssl / proxy_port / proxy_type: not stored as live members in the
+    // portable stub — fall through to cache / OptionsTable default below.
 
     // 2. Cache — value previously written by SetOption.
     {
@@ -2281,6 +2295,38 @@ static int L_GetAlphaOption(lua_State* L)
     else if (!strcmp(opt, "notes"))            OPT_GET_STR(pDoc->m_notes);
     else if (!strcmp(opt, "terminal_identification")) OPT_GET_STR(pDoc->m_strTerminalIdentification);
     else if (!strcmp(opt, "mapping_failure"))  OPT_GET_STR(pDoc->m_strMappingFailure);
+    // Connection text
+    else if (!strcmp(opt, "connect_text"))     OPT_GET_STR(pDoc->m_connect_text);
+    else if (!strcmp(opt, "auto_log_file_name")) OPT_GET_STR(pDoc->m_strAutoLogFileName);
+    // Speed walk
+    else if (!strcmp(opt, "speed_walk_prefix"))  OPT_GET_STR(pDoc->m_speed_walk_prefix);
+    else if (!strcmp(opt, "speed_walk_filler"))  OPT_GET_STR(pDoc->m_strSpeedWalkFiller);
+    // World ID
+    else if (!strcmp(opt, "id"))               OPT_GET_STR(pDoc->m_strWorldID);
+    // World callbacks
+    else if (!strcmp(opt, "on_world_open"))       OPT_GET_STR(pDoc->m_strWorldOpen);
+    else if (!strcmp(opt, "on_world_close"))      OPT_GET_STR(pDoc->m_strWorldClose);
+    else if (!strcmp(opt, "on_world_save"))       OPT_GET_STR(pDoc->m_strWorldSave);
+    else if (!strcmp(opt, "on_world_connect"))    OPT_GET_STR(pDoc->m_strWorldConnect);
+    else if (!strcmp(opt, "on_world_disconnect")) OPT_GET_STR(pDoc->m_strWorldDisconnect);
+    else if (!strcmp(opt, "on_world_get_focus"))  OPT_GET_STR(pDoc->m_strWorldGetFocus);
+    else if (!strcmp(opt, "on_world_lose_focus")) OPT_GET_STR(pDoc->m_strWorldLoseFocus);
+    // MXP callbacks
+    else if (!strcmp(opt, "on_mxp_start"))        OPT_GET_STR(pDoc->m_strOnMXP_Start);
+    else if (!strcmp(opt, "on_mxp_stop"))         OPT_GET_STR(pDoc->m_strOnMXP_Stop);
+    else if (!strcmp(opt, "on_mxp_error"))        OPT_GET_STR(pDoc->m_strOnMXP_Error);
+    else if (!strcmp(opt, "on_mxp_open_tag"))     OPT_GET_STR(pDoc->m_strOnMXP_OpenTag);
+    else if (!strcmp(opt, "on_mxp_close_tag"))    OPT_GET_STR(pDoc->m_strOnMXP_CloseTag);
+    else if (!strcmp(opt, "on_mxp_set_variable")) OPT_GET_STR(pDoc->m_strOnMXP_SetVariable);
+    // Log preambles/postambles
+    else if (!strcmp(opt, "log_file_preamble"))         OPT_GET_STR(pDoc->m_strLogFilePreamble);
+    else if (!strcmp(opt, "log_file_postamble"))        OPT_GET_STR(pDoc->m_strLogFilePostamble);
+    else if (!strcmp(opt, "log_line_preamble_input"))   OPT_GET_STR(pDoc->m_strLogLinePreambleInput);
+    else if (!strcmp(opt, "log_line_preamble_notes"))   OPT_GET_STR(pDoc->m_strLogLinePreambleNotes);
+    else if (!strcmp(opt, "log_line_preamble_output"))  OPT_GET_STR(pDoc->m_strLogLinePreambleOutput);
+    else if (!strcmp(opt, "log_line_postamble_input"))  OPT_GET_STR(pDoc->m_strLogLinePostambleInput);
+    else if (!strcmp(opt, "log_line_postamble_notes"))  OPT_GET_STR(pDoc->m_strLogLinePostambleNotes);
+    else if (!strcmp(opt, "log_line_postamble_output")) OPT_GET_STR(pDoc->m_strLogLinePostambleOutput);
 
     // 2. Cache — value previously written by SetAlphaOption.
     {
@@ -2320,6 +2366,38 @@ static int L_SetAlphaOption(lua_State* L)
     else if (!strcmp(opt, "terminal_identification"))
                                                pDoc->m_strTerminalIdentification = CString(val);
     else if (!strcmp(opt, "mapping_failure"))  pDoc->m_strMappingFailure    = CString(val);
+    // Connection text
+    else if (!strcmp(opt, "connect_text"))     pDoc->m_connect_text         = CString(val);
+    else if (!strcmp(opt, "auto_log_file_name")) pDoc->m_strAutoLogFileName = CString(val);
+    // Speed walk
+    else if (!strcmp(opt, "speed_walk_prefix"))  pDoc->m_speed_walk_prefix  = CString(val);
+    else if (!strcmp(opt, "speed_walk_filler"))  pDoc->m_strSpeedWalkFiller = CString(val);
+    // World ID
+    else if (!strcmp(opt, "id"))               pDoc->m_strWorldID           = CString(val);
+    // World callbacks
+    else if (!strcmp(opt, "on_world_open"))       pDoc->m_strWorldOpen       = CString(val);
+    else if (!strcmp(opt, "on_world_close"))      pDoc->m_strWorldClose      = CString(val);
+    else if (!strcmp(opt, "on_world_save"))       pDoc->m_strWorldSave       = CString(val);
+    else if (!strcmp(opt, "on_world_connect"))    pDoc->m_strWorldConnect    = CString(val);
+    else if (!strcmp(opt, "on_world_disconnect")) pDoc->m_strWorldDisconnect = CString(val);
+    else if (!strcmp(opt, "on_world_get_focus"))  pDoc->m_strWorldGetFocus   = CString(val);
+    else if (!strcmp(opt, "on_world_lose_focus")) pDoc->m_strWorldLoseFocus  = CString(val);
+    // MXP callbacks
+    else if (!strcmp(opt, "on_mxp_start"))        pDoc->m_strOnMXP_Start       = CString(val);
+    else if (!strcmp(opt, "on_mxp_stop"))         pDoc->m_strOnMXP_Stop        = CString(val);
+    else if (!strcmp(opt, "on_mxp_error"))        pDoc->m_strOnMXP_Error       = CString(val);
+    else if (!strcmp(opt, "on_mxp_open_tag"))     pDoc->m_strOnMXP_OpenTag     = CString(val);
+    else if (!strcmp(opt, "on_mxp_close_tag"))    pDoc->m_strOnMXP_CloseTag    = CString(val);
+    else if (!strcmp(opt, "on_mxp_set_variable")) pDoc->m_strOnMXP_SetVariable = CString(val);
+    // Log preambles/postambles
+    else if (!strcmp(opt, "log_file_preamble"))         pDoc->m_strLogFilePreamble        = CString(val);
+    else if (!strcmp(opt, "log_file_postamble"))        pDoc->m_strLogFilePostamble       = CString(val);
+    else if (!strcmp(opt, "log_line_preamble_input"))   pDoc->m_strLogLinePreambleInput   = CString(val);
+    else if (!strcmp(opt, "log_line_preamble_notes"))   pDoc->m_strLogLinePreambleNotes   = CString(val);
+    else if (!strcmp(opt, "log_line_preamble_output"))  pDoc->m_strLogLinePreambleOutput  = CString(val);
+    else if (!strcmp(opt, "log_line_postamble_input"))  pDoc->m_strLogLinePostambleInput  = CString(val);
+    else if (!strcmp(opt, "log_line_postamble_notes"))  pDoc->m_strLogLinePostambleNotes  = CString(val);
+    else if (!strcmp(opt, "log_line_postamble_output")) pDoc->m_strLogLinePostambleOutput = CString(val);
     else if (!strcmp(opt, "output_font_name")) {
         // Immediately apply the face name to the output pane.
         if (pDoc->m_fn_set_output_font && val && *val)
@@ -5389,7 +5467,7 @@ static int L_PickColour(lua_State* L) {
 static int L_Save(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
     bool ok = pDoc->m_fn_save ? pDoc->m_fn_save() : true;
-    lua_pushnumber(L, ok ? eOK : eWorldNotFound);
+    lua_pushnumber(L, ok ? eOK : eWorldClosed);
     return 1;
 }
 static int L_SetWorldWindowStatus(lua_State* L) {

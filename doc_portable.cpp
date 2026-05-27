@@ -23,6 +23,7 @@
 #include <zlib.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <time.h>    // clock_gettime, struct timespec
 
 // ── Output hooks (readline integration) ──────────────────────────────────
 void (*g_before_output)() = nullptr;
@@ -1621,12 +1622,23 @@ bool IsArchiveXML(class CArchive& /*ar*/)
     return false;
 }
 
-// ── MakeRandomNumber — SHS-based random seed (stub) ──────────────────────
-// ProcessPreviousLine.cpp uses this to seed the Lua random generator.
-// SHS_INFO is forward-declared via doc_stub.h → scripting/shs.h.
-void MakeRandomNumber(CMUSHclientDoc* /*pDoc*/, SHS_INFO& shsInfo)
+// ── MakeRandomNumber — SHS-based random seed ──────────────────────────────
+// Mirrors Utilities.cpp::MakeRandomNumber on Windows: hash together the
+// world name, rand(), pid, current time, and the doc pointer for entropy.
+// Used for Pueblo MD5 challenge-response and chat-socket nonces.
+void MakeRandomNumber(CMUSHclientDoc* pDoc, SHS_INFO& shsInfo)
 {
-    memset(&shsInfo, 0, sizeof shsInfo);
+    char buf[256];
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    int n = snprintf(buf, sizeof(buf), "%s %d %d %ld %ld %p",
+                     pDoc ? static_cast<const char*>(pDoc->m_mush_name) : "",
+                     rand(), (int)getpid(),
+                     (long)ts.tv_sec, ts.tv_nsec,
+                     static_cast<void*>(pDoc));
+    shsInit(&shsInfo);
+    shsUpdate(&shsInfo, reinterpret_cast<unsigned char*>(buf), n);
+    shsFinal(&shsInfo);
 }
 
 // ── CMUSHclientDoc::Trace — debug trace with printf format ───────────────

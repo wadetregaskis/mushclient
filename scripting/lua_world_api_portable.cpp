@@ -1313,28 +1313,45 @@ static void push_trigger_info(lua_State* L, CTrigger* t, int infoType)
         case  9: lua_pushboolean(L, t->bRegexp);                       return;
         case 10: lua_pushboolean(L, t->ignore_case);                   return;
         case 11: lua_pushboolean(L, t->bRepeat);                       return;
+        case 12: lua_pushboolean(L, t->bSoundIfInactive);              return;
         case 13: lua_pushboolean(L, t->bExpandVariables);              return;
+        case 14: lua_pushnumber(L, t->iClipboardArg);                  return;
         case 15: lua_pushnumber(L, t->iSendTo);                        return;
         case 16: lua_pushnumber(L, t->iSequence);                      return;
+        case 17: lua_pushnumber(L, t->iMatch);                         return;
+        case 18: lua_pushnumber(L, t->iStyle);                         return;
+        case 19: lua_pushnumber(L, t->colour);                         return;
         case 20: lua_pushnumber(L, t->nInvocationCount);               return;
         case 21: lua_pushnumber(L, t->nMatched);                       return;
+        case 22: {  // last-matched time as Unix timestamp (0 = never)
+            time_t ts = t->tWhenMatched.GetTime();
+            if (ts) lua_pushnumber(L, (double)ts); else lua_pushnil(L);
+            return;
+        }
         case 23: lua_pushboolean(L, t->bTemporary);                    return;
+        case 24: lua_pushboolean(L, t->bIncluded);                     return;
         case 25: lua_pushboolean(L, t->bLowercaseWildcard);            return;
         case 26: lua_pushstring(L, (const char*)t->strGroup);          return;
         case 27: lua_pushstring(L, (const char*)t->strVariable);       return;
         case 28: lua_pushnumber(L, t->iUserOption);                    return;
+        case 29: lua_pushnumber(L, t->iOtherForeground);               return;
+        case 30: lua_pushnumber(L, t->iOtherBackground);               return;
         case 31: lua_pushnumber(L, t->regexp ? t->regexp->m_iCount : 0);          return;
         case 32: lua_pushstring(L, t->regexp ? t->regexp->m_sTarget.c_str() : ""); return;
         case 33: lua_pushboolean(L, t->bExecutingScript);              return;
         case 34: lua_pushboolean(L, t->dispid != DISPID_UNKNOWN);      return;
+        case 35: lua_pushnumber(L, (t->regexp && t->regexp->m_program == NULL)
+                                    ? t->regexp->m_iExecutionError : 0); return;
         case 36: lua_pushboolean(L, t->bOneShot);                      return;
+        case 37: lua_pushnumber(L, 0); return;  // regexp timing (no perf counter on non-Windows)
         case 38: lua_pushnumber(L, t->regexp ? (double)t->regexp->m_iMatchAttempts : 0); return;
-        // Wildcard results (101..109)
+        // Wildcard results: 101..109 = wildcards[1..9], 110 = wildcards[0]
         case 101: case 102: case 103: case 104: case 105:
         case 106: case 107: case 108: case 109: {
             int w = infoType - 100;
             lua_pushstring(L, t->wildcards[w].c_str()); return;
         }
+        case 110: lua_pushstring(L, t->wildcards[0].c_str()); return;
         default: lua_pushnil(L); return;
     }
 }
@@ -1366,19 +1383,38 @@ static void push_alias_info(lua_State* L, CAlias* a, int infoType)
         case  9: lua_pushboolean(L, a->bExpandVariables);              return;
         case 10: lua_pushnumber(L, a->nInvocationCount);               return;
         case 11: lua_pushnumber(L, a->nMatched);                       return;
+        case 12: lua_pushboolean(L, a->bMenu);                         return;
+        case 13: {  // last-matched time as Unix timestamp (nil = never)
+            time_t ts = a->tWhenMatched.GetTime();
+            if (ts) lua_pushnumber(L, (double)ts); else lua_pushnil(L);
+            return;
+        }
         case 14: lua_pushboolean(L, a->bTemporary);                    return;
+        case 15: lua_pushboolean(L, a->bIncluded);                     return;
         case 16: lua_pushstring(L, (const char*)a->strGroup);          return;
         case 17: lua_pushstring(L, (const char*)a->strVariable);       return;
         case 18: lua_pushnumber(L, a->iSendTo);                        return;
         case 19: lua_pushboolean(L, a->bKeepEvaluating);               return;
         case 20: lua_pushnumber(L, a->iSequence);                      return;
         case 21: lua_pushboolean(L, a->bEchoAlias);                    return;
+        case 22: lua_pushboolean(L, a->bOmitFromCommandHistory);       return;
         case 23: lua_pushnumber(L, a->iUserOption);                    return;
         case 24: lua_pushnumber(L, a->regexp ? a->regexp->m_iCount : 0);          return;
         case 25: lua_pushstring(L, a->regexp ? a->regexp->m_sTarget.c_str() : ""); return;
         case 26: lua_pushboolean(L, a->bExecutingScript);              return;
         case 27: lua_pushboolean(L, a->dispid != DISPID_UNKNOWN);      return;
+        case 28: lua_pushnumber(L, (a->regexp && a->regexp->m_program == NULL)
+                                    ? a->regexp->m_iExecutionError : 0); return;
         case 29: lua_pushboolean(L, a->bOneShot);                      return;
+        case 30: lua_pushnumber(L, 0); return;  // regexp timing (no perf counter on non-Windows)
+        case 31: lua_pushnumber(L, a->regexp ? (double)a->regexp->m_iMatchAttempts : 0); return;
+        // Wildcard results: 101..109 = wildcards[1..9], 110 = wildcards[0]
+        case 101: case 102: case 103: case 104: case 105:
+        case 106: case 107: case 108: case 109: {
+            int w = infoType - 100;
+            lua_pushstring(L, a->wildcards[w].c_str()); return;
+        }
+        case 110: lua_pushstring(L, a->wildcards[0].c_str()); return;
         default: lua_pushnil(L); return;
     }
 }
@@ -1410,6 +1446,19 @@ static void push_timer_info(lua_State* L, CTimer* t, int infoType)
         case  8: lua_pushboolean(L, atTime);                                   return;
         case  9: lua_pushnumber(L, t->nInvocationCount);                       return;
         case 10: lua_pushnumber(L, t->nMatched);                               return;
+        case 11: {  // last-fired time as Unix timestamp (nil = never)
+            // CmcDateTime stores OLE dates (days since 1899-12-30); convert to Unix epoch
+            double ole = t->tWhenFired.GetTime();
+            if (ole != 0.0) lua_pushnumber(L, (ole - 25569.0) * 86400.0);
+            else             lua_pushnil(L);
+            return;
+        }
+        case 12: {  // next scheduled fire time as Unix timestamp (nil = not set)
+            double ole = t->tFireTime.GetTime();
+            if (ole != 0.0) lua_pushnumber(L, (ole - 25569.0) * 86400.0);
+            else             lua_pushnil(L);
+            return;
+        }
         case 13: {
             CmcDateTime tNow = CmcDateTime::GetTimeNow();
             if (t->tFireTime <= tNow) { lua_pushnumber(L, 0); }
@@ -1420,8 +1469,10 @@ static void push_timer_info(lua_State* L, CTimer* t, int infoType)
             return;
         }
         case 14: lua_pushboolean(L, t->bTemporary);                            return;
+        case 15: lua_pushboolean(L, t->iSendTo == eSendToSpeedwalk);           return;
         case 16: lua_pushboolean(L, t->iSendTo == eSendToOutput);              return;
         case 17: lua_pushboolean(L, t->bActiveWhenClosed);                     return;
+        case 18: lua_pushboolean(L, t->bIncluded);                             return;
         case 19: lua_pushstring(L, (const char*)t->strGroup);                  return;
         case 20: lua_pushnumber(L, t->iSendTo);                                return;
         case 21: lua_pushnumber(L, t->iUserOption);                            return;

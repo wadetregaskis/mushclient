@@ -31,6 +31,11 @@
 #include <cstdlib>    // free() for g_wxhook_menu_dialog result
 
 #include "platform/wx_mfc_hooks.h"  // g_wxhook_pick_colour, g_wxhook_menu_dialog, …
+#include "sqlite3/sqlite3.h"         // sqlite3_libversion()
+#include <png.h>                     // PNG_LIBPNG_VER_STRING
+#ifdef __APPLE__
+#  include <mach-o/dyld.h>           // _NSGetExecutablePath
+#endif
 
 using std::string;
 
@@ -1112,28 +1117,134 @@ static int L_GetInfo(lua_State* L)
     int iType = (int)luaL_checknumber(L, 1);
     switch (iType) {
         // ── Strings ──────────────────────────────────────────────────────────
-        case 1:   lua_pushstring(L, (const char*)pDoc->m_server);             return 1;
-        case 2:   lua_pushstring(L, (const char*)pDoc->m_mush_name);          return 1;
-        case 3:   lua_pushstring(L, (const char*)pDoc->m_name);               return 1;
-        case 51:  lua_pushstring(L, (const char*)pDoc->m_logfile_name);       return 1;
-        case 52:  lua_pushstring(L, "");                                       return 1;
-        case 53:  lua_pushstring(L, (const char*)pDoc->m_strStatusMessage);   return 1;
-        case 72:  lua_pushstring(L, MUSHCLIENT_VERSION);                       return 1;
-        case 87:  lua_pushstring(L, (const char*)pDoc->m_strLastCommandSent); return 1;
-        case 88:  lua_pushstring(L, (const char*)pDoc->m_strWindowTitle);     return 1;
-        case 89:  lua_pushstring(L, (const char*)pDoc->m_strMainWindowTitle); return 1;
+        case 1:   lua_pushstring(L, (const char*)pDoc->m_server);              return 1;
+        case 2:   lua_pushstring(L, (const char*)pDoc->m_mush_name);           return 1;
+        case 3:   lua_pushstring(L, (const char*)pDoc->m_name);                return 1;
+        // 4-7: file/line preamble/postamble — not in portable CMUSHclientDoc
+        case 4: case 5: case 6: case 7: lua_pushstring(L, "");                 return 1;
+        case 8:   lua_pushstring(L, (const char*)pDoc->m_notes);               return 1;
+        // 9, 10, 19-20, 22-27: fields absent from portable doc_stub
+        case 9: case 10: case 19: case 20:
+        case 22: case 23: case 24: case 25: case 26: case 27:
+            lua_pushstring(L, "");                                              return 1;
+        case 11:  lua_pushstring(L, (const char*)pDoc->m_strLogFilePreamble);  return 1;
+        case 12:  lua_pushstring(L, (const char*)pDoc->m_strLogFilePostamble); return 1;
+        case 13:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePreambleInput);   return 1;
+        case 14:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePreambleNotes);   return 1;
+        case 15:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePreambleOutput);  return 1;
+        case 16:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePostambleInput);  return 1;
+        case 17:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePostambleNotes);  return 1;
+        case 18:  lua_pushstring(L, (const char*)pDoc->m_strLogLinePostambleOutput); return 1;
+        case 21:  lua_pushstring(L, (const char*)pDoc->m_speed_walk_prefix);   return 1;
+        case 28:  lua_pushstring(L, (const char*)pDoc->m_strLanguage);         return 1;
+        case 29:  lua_pushstring(L, (const char*)pDoc->m_strWorldOpen);        return 1;
+        case 30:  lua_pushstring(L, (const char*)pDoc->m_strWorldClose);       return 1;
+        case 31:  lua_pushstring(L, (const char*)pDoc->m_strWorldConnect);     return 1;
+        case 32:  lua_pushstring(L, (const char*)pDoc->m_strWorldDisconnect);  return 1;
+        case 33:  lua_pushstring(L, (const char*)pDoc->m_strWorldGetFocus);    return 1;
+        case 34:  lua_pushstring(L, (const char*)pDoc->m_strWorldLoseFocus);   return 1;
+        // 35-39, 41, 50: fields absent from portable doc_stub
+        case 35: case 36: case 37: case 38: case 39: case 41: case 50:
+            lua_pushstring(L, "");                                              return 1;
+        case 40:  lua_pushstring(L, (const char*)pDoc->m_strAutoLogFileName);  return 1;
+        case 42:  lua_pushstring(L, (const char*)pDoc->m_strTerminalIdentification); return 1;
+        case 43:  lua_pushstring(L, (const char*)pDoc->m_strMappingFailure);   return 1;
+        case 44:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_Start);      return 1;
+        case 45:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_Stop);       return 1;
+        case 46:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_Error);      return 1;
+        case 47:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_OpenTag);    return 1;
+        case 48:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_CloseTag);   return 1;
+        case 49:  lua_pushstring(L, (const char*)pDoc->m_strOnMXP_SetVariable);return 1;
+        case 51:  lua_pushstring(L, (const char*)pDoc->m_logfile_name);        return 1;
+        case 52:  lua_pushstring(L, "");   // last immediate expression
+                  return 1;
+        case 53:  lua_pushstring(L, (const char*)pDoc->m_strStatusMessage);    return 1;
+        case 54:  lua_pushstring(L, (const char*)pDoc->GetPathName());          return 1;
+        case 55:  lua_pushstring(L, (const char*)pDoc->GetTitle());             return 1;
+        // 56-60, 66, 69-71, 74, 82, 85: App object fields not available in portable build
+        case 56: case 57: case 58: case 60: case 66: case 69:
+        case 70: case 71: case 74: case 82: case 85:
+            lua_pushstring(L, "");                                              return 1;
+        case 59:  {   // directory containing the executable
+            char buf[4096] = ".";
+#ifdef __APPLE__
+            uint32_t sz = sizeof(buf);
+            if (_NSGetExecutablePath(buf, &sz) == 0) {
+                char* p = strrchr(buf, '/'); if (p) *p = '\0';
+            }
+#else
+            ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf)-1);
+            if (n > 0) { buf[n] = '\0'; char* p = strrchr(buf, '/'); if (p) *p = '\0'; }
+#endif
+            lua_pushstring(L, buf);
+        }   return 1;
+        case 61:  {   // server IP as dotted string (resolve if connected)
+            struct addrinfo hints{}, *res = nullptr;
+            hints.ai_family = AF_INET;
+            hints.ai_socktype = SOCK_STREAM;
+            const char* host = static_cast<const char*>(pDoc->m_server);
+            char ip[INET_ADDRSTRLEN] = "";
+            if (host && *host && getaddrinfo(host, nullptr, &hints, &res) == 0 && res) {
+                inet_ntop(AF_INET,
+                    &reinterpret_cast<struct sockaddr_in*>(res->ai_addr)->sin_addr,
+                    ip, sizeof(ip));
+                freeaddrinfo(res);
+            }
+            lua_pushstring(L, ip);
+        }   return 1;
+        case 63:  {   // local hostname
+            char host[256] = "";
+            gethostname(host, sizeof(host));
+            lua_pushstring(L, host);
+        }   return 1;
+        case 64:  {   // current working directory (trailing slash)
+            char* cwd = getcwd(nullptr, 0);
+            if (cwd) {
+                string s(cwd); free(cwd);
+                if (s.empty() || s.back() != '/') s += '/';
+                lua_pushstring(L, s.c_str());
+            } else { lua_pushstring(L, ""); }
+        }   return 1;
+        case 65:  lua_pushstring(L, (const char*)pDoc->m_strWorldSave);        return 1;
+        case 67:  {   // directory containing the world file
+            CString path = pDoc->GetPathName();
+            const char* p = static_cast<const char*>(path);
+            const char* slash = strrchr(p, '/');
+            if (slash) lua_pushlstring(L, p, (size_t)(slash - p + 1));
+            else        lua_pushstring(L, "");
+        }   return 1;
+        case 72:  lua_pushstring(L, MUSHCLIENT_VERSION);                        return 1;
+        case 73:  lua_pushstring(L, __DATE__ " " __TIME__);                    return 1;
+        case 75:  lua_pushstring(L, pDoc->m_IAC_subnegotiation_data.c_str());  return 1;
+        // 76-79, 81, 84, 86: font/image/browser fields not available
+        case 76: case 77: case 78: case 79: case 81: case 84: case 86:
+            lua_pushstring(L, "");                                              return 1;
+        case 80:  lua_pushstring(L, PNG_LIBPNG_VER_STRING);                    return 1;
+        case 83:  lua_pushstring(L, sqlite3_libversion());                      return 1;
+        case 87:  lua_pushstring(L, (const char*)pDoc->m_strLastCommandSent);  return 1;
+        case 88:  lua_pushstring(L, (const char*)pDoc->m_strWindowTitle);      return 1;
+        case 89:  lua_pushstring(L, (const char*)pDoc->m_strMainWindowTitle);  return 1;
         // ── Booleans ─────────────────────────────────────────────────────────
-        case 101: lua_pushboolean(L, pDoc->m_bNoEcho);                        return 1;
-        case 104: lua_pushboolean(L, pDoc->m_bMXP);                           return 1;
+        case 101: lua_pushboolean(L, pDoc->m_bNoEcho);                         return 1;
+        case 102: lua_pushboolean(L, false);  // debug packets — always false
+                  return 1;
+        case 103: lua_pushboolean(L, pDoc->m_bCompress);                        return 1;
+        case 104: lua_pushboolean(L, pDoc->m_bMXP);                            return 1;
+        case 105: lua_pushboolean(L, pDoc->m_bPuebloActive);                   return 1;
         case 106: lua_pushboolean(L,
-                      pDoc->m_iConnectPhase != eConnectConnectedToMud);        return 1;
+                      pDoc->m_iConnectPhase != eConnectConnectedToMud);         return 1;
         case 107: lua_pushboolean(L,
                       pDoc->m_iConnectPhase != eConnectNotConnected &&
-                      pDoc->m_iConnectPhase != eConnectConnectedToMud);        return 1;
-        case 109: lua_pushboolean(L, pDoc->m_bTrace);                         return 1;
+                      pDoc->m_iConnectPhase != eConnectConnectedToMud);         return 1;
+        case 108: lua_pushboolean(L, pDoc->m_bDisconnectOK);                   return 1;
+        case 109: lua_pushboolean(L, pDoc->m_bTrace);                          return 1;
+        case 110: lua_pushboolean(L, false);  // script file changed — not tracked
+                  return 1;
+        case 111: lua_pushboolean(L, pDoc->IsModified() != FALSE);              return 1;
+        case 112: lua_pushboolean(L, pDoc->m_bMapping);                        return 1;
         case 113: lua_pushboolean(L,
-                      pDoc->m_iConnectPhase == eConnectConnectedToMud);        return 1;
-        case 114: lua_pushboolean(L, pDoc->m_gui_paused);                     return 1;
+                      pDoc->m_iConnectPhase == eConnectConnectedToMud);         return 1;
+        case 114: lua_pushboolean(L, pDoc->m_gui_paused);                      return 1;
         // ── Numbers ──────────────────────────────────────────────────────────
         case 141: // fall through — same field, both type numbers used in the wild
         case 201: lua_pushnumber(L, pDoc->m_total_lines);                     return 1;

@@ -1881,6 +1881,18 @@ public:
     bool CheckScriptingAvailable(const char*, int, const char*) { return false; }
     void OnScriptFileChanged(bool bForce = false);
 
+    // ── Debug (world.Debug Lua API) ───────────────────────────────────────
+    VARIANT Debug(LPCTSTR Command);
+    void    DebugHelper(const CString strAction, CString strArgument);
+    void    DebugShow(const char* sTitle, const char* sString);
+    void    DebugShow(const char* sTitle, const long iNumber);
+    void    DebugShow(const char* sTitle, const bool iBoolean);
+    void    DebugShow(const char* sTitle, const CmcDateTime theDate);
+    void    DebugShow(const char* sTitle, const CTime theDate);
+    void    DebugShowD(const char* sTitle, const double fNumber);
+    void    ShowOptions();
+    void    ShowAlphaOptions();
+
     // ── World load/save (archive-dependent, not yet ported) ──────────
     void Load_World_XML(class CArchive&, unsigned long, unsigned long,
                         unsigned int*, unsigned int*, unsigned int*,

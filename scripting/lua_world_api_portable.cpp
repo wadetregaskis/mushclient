@@ -6019,10 +6019,9 @@ static int L_GetWorldIdList(lua_State* L)
 // treat this as a note to stderr; the string result is the empty string.
 static int L_Debug(lua_State* L)
 {
-    world_doc(L);
+    CMUSHclientDoc* pDoc = world_doc(L);
     const char* cmd = luaL_optstring(L, 1, "");
-    if (cmd && *cmd)
-        fprintf(stderr, "[DEBUG] %s\n", cmd);
+    pDoc->Debug(cmd ? cmd : "");
     lua_pushstring(L, "");
     return 1;
 }

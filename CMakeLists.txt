@@ -318,6 +318,10 @@ if(NOT WIN32)
             # Portable "world" Lua library (Note, SetVariable, Send, Execute, …)
             # On Windows the full ~8000-line lua_methods.cpp is used instead.
             scripting/lua_world_api_portable.cpp
+
+            # Portable world.Debug() — trigger/alias/timer/variable/telnet listings.
+            # On Windows the full implementation is in world_debug.cpp (mushapp only).
+            scripting/world_debug_portable.cpp
         )
         # Signal to scriptengine.cpp that the real Lua impl is compiled in
         target_compile_definitions(mushcore PRIVATE MUSHCLIENT_LUA_SCRIPTING)

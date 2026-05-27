@@ -25,6 +25,7 @@
 #include <wx/notebook.h>   // wxNotebook (CMacrosDlg)
 #include <wx/clipbrd.h>    // wxTheClipboard
 #include <wx/dataobj.h>    // wxTextDataObject
+#include <wx/colordlg.h>   // wxColourDialog
 #if wxUSE_SOUND
 #  include <wx/sound.h>    // wxSound (trigger / MSP audio)
 #endif
@@ -1902,8 +1903,8 @@ public:
         : wxDialog(parent, wxID_ANY, wxT("World Properties"),
                    wxDefaultPosition, wxDefaultSize,
                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
-        , m_bgColorPicker(nullptr)
         , m_useSSL(nullptr)
+        , m_bgColorPicker(nullptr)
         , m_scriptBrowse(nullptr)
         , m_scrollback(nullptr)
         , m_wrapColumn(nullptr)
@@ -2932,7 +2933,8 @@ static char* hook_menu_dialog(const char* const* items, int count,
 
 static void hook_flash_icon()
 {
-    wxWindow* top = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    wxWindow* topWin = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    wxTopLevelWindow* top = wxDynamicCast(topWin, wxTopLevelWindow);
     if (top) top->RequestUserAttention(wxUSER_ATTENTION_INFO);
 }
 

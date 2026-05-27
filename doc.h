@@ -1602,6 +1602,10 @@ public:
   // GetInfo(236/237): query the command input selection range.
   // Sets selStart and selEnd (both 0-based, in characters).
   std::function<void(long&, long&)> m_fn_get_command_selection;
+
+  // world.Save(): save the world file to its current path.
+  // Returns false if the world has no path set yet.
+  std::function<bool()> m_fn_save;
 #endif
 
   protected:

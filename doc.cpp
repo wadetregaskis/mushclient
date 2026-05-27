@@ -3533,6 +3533,17 @@ dc.CreateCompatibleDC (NULL);
 
     // fix up all input windows
     if (m_input_font)
+      {
+#ifndef _WIN32
+      // Non-Windows: no CSendView; use the wx callback to update the input bar.
+      if (m_fn_set_input_font)
+        {
+        bool bold   = (nWeight >= FW_SEMIBOLD);
+        bool italic = (bItalic != 0);
+        m_fn_set_input_font (std::string (lpszFacename ? lpszFacename : ""),
+                             nHeight, bold, italic);
+        }
+#else
       for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
         {
         CView* pView = GetNextView(pos);
@@ -3548,6 +3559,8 @@ dc.CreateCompatibleDC (NULL);
           pmyView->AdjustCommandWindowSize ();
           }	  // end of being a CSendView
         }
+#endif
+      }
 
 } // end of CMUSHclientDoc::ChangeInputFont
 

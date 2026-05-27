@@ -449,6 +449,25 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             Layout();
         };
 
+        // world.SetInputFont(face, pts, weight, italic): change the command-bar font.
+        // weight is a numeric CSS weight (400=normal, 700=bold); anything >= 600 is bold.
+        m_doc->m_fn_set_input_font = [this](const std::string& face, int pts,
+                                            bool bold, bool italic) {
+            wxFont cur = m_input ? m_input->GetFont() : wxNullFont;
+            wxString faceName = face.empty()
+                ? (cur.IsOk() ? cur.GetFaceName() : wxString())
+                : wxString::FromUTF8(face.c_str());
+            int size = (pts > 0) ? pts : (cur.IsOk() ? cur.GetPointSize() : 10);
+            wxFontStyle  style  = italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL;
+            wxFontWeight weight = bold   ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL;
+            wxFont f(size, wxFONTFAMILY_TELETYPE, style, weight,
+                     /*underline=*/false, faceName);
+            if (!f.IsOk()) return;
+            if (m_input)         { m_input->SetFont(f);         m_input->Refresh(); }
+            if (m_inputPassword) { m_inputPassword->SetFont(f); m_inputPassword->Refresh(); }
+            Layout();
+        };
+
         // world.SetScroll(line): scroll the output pane to a specific line number.
         // Line is 1-based; negative values scroll relative to the end.
         // pos == -1 → bottom (auto-scroll); pos == 0 → top.
@@ -2781,6 +2800,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_get_command          = nullptr;
         m_doc->m_fn_set_command          = nullptr;
         m_doc->m_fn_set_output_font      = nullptr;
+        m_doc->m_fn_set_input_font       = nullptr;
         m_doc->m_fn_set_scroll           = nullptr;
         m_doc->m_fn_set_selection        = nullptr;
         m_doc->m_fn_set_command_selection = nullptr;

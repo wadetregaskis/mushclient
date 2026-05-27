@@ -1508,6 +1508,10 @@ public:
   //       bold flag, italic flag.
   std::function<void(const std::string&, int, bool, bool)> m_fn_set_output_font;
 
+  // world.SetInputFont(): change the command-bar font on non-Windows.
+  // Same signature as m_fn_set_output_font.
+  std::function<void(const std::string&, int, bool, bool)> m_fn_set_input_font;
+
   // world.SetScroll(Position, Visible): scroll the output pane.
   // Position: -1 = bottom, -2 = no change, >= 0 = line index (0-based).
   // Visible is ignored (scrollbar always shown on non-Windows).

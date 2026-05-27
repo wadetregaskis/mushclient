@@ -1972,6 +1972,9 @@ public:
     // world.SetFont(face, size, bold, italic): change the output pane font.
     std::function<void(const std::string&, int, bool, bool)> m_fn_set_output_font;
 
+    // world.SetInputFont(face, size, weight, italic): change the command-bar font.
+    std::function<void(const std::string&, int, bool, bool)> m_fn_set_input_font;
+
     // ── Scroll / selection callbacks ──────────────────────────────────────
     // world.SetScroll(pos): scroll the output pane to a line index.
     std::function<void(long)>                 m_fn_set_scroll;

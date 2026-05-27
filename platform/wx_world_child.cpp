@@ -203,6 +203,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (m_output) m_output->Refresh(false);
         };
 
+        // world.MoveWorldWindow(l,t,w,h): reposition/resize this MDI child frame.
+        // Coordinates are in pixels relative to the MDI parent client area.
+        m_doc->m_fn_move_world_window = [this](long l, long t, long w, long h) {
+            SetSize((int)l, (int)t, (int)w, (int)h);
+        };
+
         // world.ClearOutput(): wipe the pane's internal line buffer and reset
         // the GUI-emission counter so the next UpdateAllViews starts from zero.
         m_doc->m_fn_clear_output = [this]() {
@@ -2806,6 +2812,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_command_selection = nullptr;
         m_doc->m_fn_set_paused           = nullptr;
         m_doc->m_fn_repaint                  = nullptr;
+        m_doc->m_fn_move_world_window        = nullptr;
         m_doc->m_fn_clear_output             = nullptr;
         m_doc->m_fn_status                   = nullptr;
         m_doc->m_fn_set_title                = nullptr;

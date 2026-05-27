@@ -165,12 +165,17 @@ MoveWorldWindowX (Left, Top, Width, Height, 1);   // move first window
 }  // end of CMUSHclientDoc::MoveWorldWindow
 
 
-void CMUSHclientDoc::MoveWorldWindowX(long Left, 
-                                      long Top, 
-                                      long Width, 
-                                      long Height, 
-                                      short Which) 
+void CMUSHclientDoc::MoveWorldWindowX(long Left,
+                                      long Top,
+                                      long Width,
+                                      long Height,
+                                      short Which)
 {
+#ifndef _WIN32
+  // Non-Windows: each world has exactly one MDI child frame; Which is always 1.
+  if (Which == 1 && m_fn_move_world_window)
+    m_fn_move_world_window (Left, Top, Width, Height);
+#else
 int i = 0;
 
   for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
@@ -190,8 +195,9 @@ int i = 0;
 
       break;
 
-      }	
+      }
     }
+#endif
 
 }   // end of CMUSHclientDoc::MoveWorldWindowX
 

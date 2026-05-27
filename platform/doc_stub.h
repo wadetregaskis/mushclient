@@ -1939,6 +1939,9 @@ public:
     // Called by world.Repaint() to force a repaint of the output pane.
     std::function<void()> m_fn_repaint;
 
+    // Called by world.MoveWorldWindow(l,t,w,h) to reposition the MDI child frame.
+    std::function<void(long, long, long, long)> m_fn_move_world_window;
+
     // Called by world.ClearOutput() to wipe the wx pane buffer and reset
     // m_gui_lines_emitted so UpdateAllViews starts fresh.
     std::function<void()> m_fn_clear_output;

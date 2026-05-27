@@ -1531,6 +1531,11 @@ public:
   // world.Repaint(): force a repaint of the output pane.
   std::function<void()>  m_fn_repaint;
 
+  // world.MoveWorldWindow(l,t,w,h): reposition/resize the MDI child frame.
+  // Ignored on non-Windows if not wired; the Which parameter in MoveWorldWindowX
+  // is always 1 in practice (MUSHclient only opens one output window per world).
+  std::function<void(long, long, long, long)>  m_fn_move_world_window;
+
   // world.ClearOutput(): wipe all content from the wx output pane buffer.
   // Called from CMUSHclientDoc::ClearOutput() on non-Windows so the visible
   // pane empties immediately rather than retaining the old lines.

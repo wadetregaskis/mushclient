@@ -1575,10 +1575,16 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     // output window info
 
     CRect r (0, 0, 0, 0);
+#ifndef _WIN32
+    // Non-Windows: derive output pixel dimensions from font/rows/cols metrics.
+    r.right  = m_gui_cols * m_gui_font_width;
+    r.bottom = m_gui_rows * m_gui_font_height;
+#else
     CMUSHView* pmyView = GetFirstOutputWindow ();
 
     if (pmyView)
         pmyView->GetClientRect(&r);
+#endif
 
     Note (TFormat ("Output pixels: width %ld, height: %ld, font width: %ld, font height: %ld",
           r.right, r.bottom, m_FontWidth, m_FontHeight));

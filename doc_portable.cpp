@@ -15,6 +15,7 @@
 #ifdef OPENSSL_FOUND
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
+#  include <openssl/x509.h>
 #endif
 #include <cstdio>
 #include <cstdarg>
@@ -1068,10 +1069,7 @@ void CMUSHclientDoc::OnConnect(int nErrorCode)
         return;
     }
 
-    // No proxy, no SSL for now: go straight to connected state
-    m_iConnectPhase  = eConnectConnectedToMud;
-    m_tConnectTime   = CTime::GetCurrentTime();
-    m_tLastPlayerInput = CTime::GetCurrentTime();
+    // Initialise per-session counters immediately (before any SSL handshake).
     m_bCompress      = false;
     m_nTotalLinesSent   = 0;
     m_nTotalLinesReceived = 0;
@@ -1093,10 +1091,30 @@ void CMUSHclientDoc::OnConnect(int nErrorCode)
     ZeroMemory(m_bClient_got_IAC_WILL,  sizeof m_bClient_got_IAC_WILL);
     ZeroMemory(m_bClient_got_IAC_WONT,  sizeof m_bClient_got_IAC_WONT);
 
+    // If SSL requested, hand off to the handshake path; ConnectionEstablished()
+    // will be called once the handshake succeeds.
+    if (m_bUseSSL) {
+        StartSSLHandshake();
+        return;
+    }
+
+    ConnectionEstablished();
+}
+
+// ── ConnectionEstablished ─────────────────────────────────────────────────────
+// Called once the TCP connection (and SSL handshake, if any) is complete.
+// Sets the connect-phase, timestamps, and fires the world-connect callbacks.
+
+void CMUSHclientDoc::ConnectionEstablished()
+{
+    m_iConnectPhase  = eConnectConnectedToMud;
+    m_tConnectTime   = CTime::GetCurrentTime();
+    m_tLastPlayerInput = CTime::GetCurrentTime();
+
     fprintf(stderr, "[Connected to %s]\n", (const char*)m_mush_name);
 
     // Auto-log: if the world has an auto-log filename, open the log file now.
-    // Mirrors the logic in doc.cpp's connect sequence.
+    // Mirrors the logic in doc.cpp's ConnectionEstablished.
     if (!m_strAutoLogFileName.IsEmpty() && !m_logfile) {
         CTime theTime = CTime::GetCurrentTime();
         CString strName = FormatTime(theTime, m_strAutoLogFileName, m_bLogHTML != 0);
@@ -1155,26 +1173,117 @@ void CMUSHclientDoc::OnConnect(int nErrorCode)
     SendToAllPluginCallbacks(ON_PLUGIN_CONNECT);
 }
 
-// ── SSLCleanup / ContinueSSLHandshake ─────────────────────────────────────────
+// ── SSL implementation ────────────────────────────────────────────────────────
 
 void CMUSHclientDoc::SSLCleanup()
 {
 #ifdef OPENSSL_FOUND
     if (m_pSSL) {
-        SSL_shutdown(m_pSSL);
+        if (m_bSSL_Connected)
+            SSL_shutdown(m_pSSL);
         SSL_free(m_pSSL);
         m_pSSL = nullptr;
+    }
+    if (m_pSSL_CTX) {
+        SSL_CTX_free(m_pSSL_CTX);
+        m_pSSL_CTX = nullptr;
     }
 #endif
     m_bSSL_Connected = false;
 }
 
+void CMUSHclientDoc::StartSSLHandshake()
+{
+#ifdef OPENSSL_FOUND
+    m_iConnectPhase = eConnectAwaitingSSLHandshake;
+
+    m_pSSL_CTX = SSL_CTX_new(TLS_client_method());
+    if (!m_pSSL_CTX) {
+        Note("--- SSL error: unable to create SSL context ---");
+        OnConnectionDisconnect();
+        return;
+    }
+
+    // Require TLS 1.2 or better
+    SSL_CTX_set_min_proto_version(m_pSSL_CTX, TLS1_2_VERSION);
+
+    // Enable certificate verification (warn-only, won't abort connection)
+    SSL_CTX_set_verify(m_pSSL_CTX, SSL_VERIFY_PEER,
+                       [](int preverify_ok, X509_STORE_CTX*) -> int {
+                           return preverify_ok;  // accept; log result after handshake
+                       });
+
+    // Load system certificate store
+    SSL_CTX_set_default_verify_paths(m_pSSL_CTX);
+
+    m_pSSL = SSL_new(m_pSSL_CTX);
+    if (!m_pSSL) {
+        Note("--- SSL error: unable to create SSL object ---");
+        SSLCleanup();
+        OnConnectionDisconnect();
+        return;
+    }
+
+    SSL_set_fd(m_pSSL, m_pSocket->m_hSocket);
+    SSL_set_tlsext_host_name(m_pSSL, (const char*)m_server);
+    SSL_set_connect_state(m_pSSL);
+
+    ContinueSSLHandshake();
+#else
+    Note("--- SSL not available: rebuild with OpenSSL ---");
+    OnConnectionDisconnect();
+#endif
+}
+
 void CMUSHclientDoc::ContinueSSLHandshake()
 {
-    // Phase 4: plain-text only — SSL handshake stub
-    // Real implementation requires SSL_connect() loop; left for Phase 5.
-    fprintf(stderr, "MUSHclient: SSL not yet supported in CLI mode\n");
+#ifdef OPENSSL_FOUND
+    int ret = SSL_do_handshake(m_pSSL);
+
+    if (ret == 1) {
+        // Handshake succeeded
+        m_bSSL_Connected = true;
+
+        long verify_result = SSL_get_verify_result(m_pSSL);
+        if (verify_result != X509_V_OK) {
+            CString msg;
+            msg.Format("--- TLS certificate verification warning: %s ---",
+                       X509_verify_cert_error_string(verify_result));
+            Note(msg);
+        }
+
+        const char* version = SSL_get_version(m_pSSL);
+        const char* cipher  = SSL_get_cipher_name(m_pSSL);
+        CString info;
+        info.Format("--- Connected via %s (%s) ---", version, cipher);
+        Note(info);
+
+        m_iConnectPhase = eConnectConnectedToMud;
+        ConnectionEstablished();
+        return;
+    }
+
+    int ssl_err = SSL_get_error(m_pSSL, ret);
+
+    if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE)
+        return;  // Wait for next OnReceive / OnSend callback
+
+    // Handshake failed
+    unsigned long err_code = ERR_get_error();
+    char err_buf[256];
+    ERR_error_string_n(err_code, err_buf, sizeof(err_buf));
+
+    CString msg;
+    msg.Format("--- TLS handshake failed: %s ---", err_buf);
+    Note(msg);
+
+    m_strSSLLastError = err_buf;
+    SSLCleanup();
     OnConnectionDisconnect();
+#else
+    // No OpenSSL — shouldn't reach here, but be safe
+    OnConnectionDisconnect();
+#endif
 }
 
 // ── CloseLog ─────────────────────────────────────────────────────────────────

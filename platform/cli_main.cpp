@@ -214,10 +214,40 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    fprintf(stderr, "[Connecting to %s port %u ...]\n", host, port);
+    // Always resolve the MUD address and store it in m_sockAddr.
+    // When using a proxy the TCP connection goes to the proxy server, but
+    // ProcessProxyResponse3 / SendProxyConnectSequence need the resolved
+    // MUD address to tell the proxy where to connect.
+    {
+        struct addrinfo hints{}, *res = nullptr;
+        hints.ai_family   = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        char port_str[16];
+        snprintf(port_str, sizeof port_str, "%u", port);
+        if (::getaddrinfo(host, port_str, &hints, &res) == 0 && res) {
+            doc.m_sockAddr = *reinterpret_cast<struct sockaddr_in*>(res->ai_addr);
+            ::freeaddrinfo(res);
+        }
+    }
+
+    const char* connect_host = host;
+    unsigned    connect_port = port;
+
+    if (doc.m_iSocksProcessing != eProxyServerNone &&
+        !doc.m_strProxyServerName.IsEmpty() &&
+        doc.m_iProxyServerPort != 0) {
+        connect_host = (const char*)doc.m_strProxyServerName;
+        connect_port = doc.m_iProxyServerPort;
+        fprintf(stderr, "[Connecting via %s proxy at %s port %u ...]\n",
+                doc.m_iSocksProcessing == eProxyServerSocks4 ? "SOCKS4" : "SOCKS5",
+                connect_host, connect_port);
+    } else {
+        fprintf(stderr, "[Connecting to %s port %u ...]\n", host, port);
+    }
+
     doc.m_iConnectPhase = eConnectConnecting;
 
-    if (!sock->Connect(host, port)) {
+    if (!sock->Connect(connect_host, connect_port)) {
         if (sock->GetLastError() != WSAEWOULDBLOCK) {
             fprintf(stderr, "Error: connect failed immediately (%d)\n",
                     sock->GetLastError());

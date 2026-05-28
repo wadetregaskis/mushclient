@@ -956,6 +956,45 @@ void CMUSHclientDoc::ReceiveMsg()
         return;
     }
 
+    // SOCKS proxy negotiation phases — consume the proxy packet then continue
+    if (m_iConnectPhase == eConnectAwaitingProxyResponse1 ||
+        m_iConnectPhase == eConnectAwaitingProxyResponse2 ||
+        m_iConnectPhase == eConnectAwaitingProxyResponse3) {
+        char proxy_buf[512];
+        int n;
+#ifdef OPENSSL_FOUND
+        n = (m_pSSL && m_bSSL_Connected)
+              ? SSL_read(m_pSSL, proxy_buf, (int)sizeof(proxy_buf) - 1)
+              : (int)::recv(m_pSocket->m_hSocket, proxy_buf,
+                            sizeof(proxy_buf) - 1, 0);
+#else
+        n = (int)::recv(m_pSocket->m_hSocket, proxy_buf,
+                        sizeof(proxy_buf) - 1, 0);
+#endif
+        if (n <= 0) return;
+
+        int iBytesToMove = 0;
+        switch (m_iConnectPhase) {
+            case eConnectAwaitingProxyResponse1:
+                iBytesToMove = ProcessProxyResponse1(proxy_buf, n); break;
+            case eConnectAwaitingProxyResponse2:
+                iBytesToMove = ProcessProxyResponse2(proxy_buf, n); break;
+            case eConnectAwaitingProxyResponse3:
+                iBytesToMove = ProcessProxyResponse3(proxy_buf, n); break;
+            default: break;
+        }
+        if (iBytesToMove < 0) return;  // error — already disconnected
+        // If the proxy packet had extra data (rare), process it below.
+        if (n <= iBytesToMove) return;
+        // Fall through with the leftover bytes treated as normal MUD data.
+        int leftover = n - iBytesToMove;
+        memmove(buff, proxy_buf + iBytesToMove, (size_t)leftover);
+        // Route directly to DisplayMsg and return; count isn't set up yet.
+        if (m_logfile && m_bLogRaw) WriteToLog(buff, leftover);
+        DisplayMsg(buff, leftover, 0);
+        return;
+    }
+
     int count;
 
 #ifdef OPENSSL_FOUND
@@ -1091,6 +1130,38 @@ void CMUSHclientDoc::OnConnect(int nErrorCode)
     ZeroMemory(m_bClient_got_IAC_WILL,  sizeof m_bClient_got_IAC_WILL);
     ZeroMemory(m_bClient_got_IAC_WONT,  sizeof m_bClient_got_IAC_WONT);
 
+    // SOCKS proxy: TCP is connected to the proxy; send the CONNECT request.
+    if (m_iSocksProcessing != eProxyServerNone) {
+        if (m_iSocksProcessing == eProxyServerSocks4) {
+            // SOCKS4: send version + CONNECT + port + address + username + NUL
+            m_iConnectPhase = eConnectAwaitingProxyResponse3;
+            unsigned long  address = m_sockAddr.sin_addr.s_addr;
+            unsigned short port    = m_sockAddr.sin_port;
+            unsigned char  pkt[3 + 255 + sizeof address + sizeof port] = { 4, 1 };
+            int len = 2;
+            memcpy(&pkt[len], &port,    sizeof port);    len += (int)sizeof port;
+            memcpy(&pkt[len], &address, sizeof address); len += (int)sizeof address;
+            if (m_strProxyUserName.GetLength() <= 255) {
+                memcpy(&pkt[len], (const char*)m_strProxyUserName,
+                       m_strProxyUserName.GetLength());
+                len += m_strProxyUserName.GetLength();
+            }
+            pkt[len++] = 0;  // NUL terminator
+            SendPacket(pkt, len);
+        } else {
+            // SOCKS5: send version + method list
+            m_iConnectPhase = eConnectAwaitingProxyResponse1;
+            if (m_strProxyUserName.IsEmpty()) {
+                unsigned char pkt[3] = { 5, 1, 0 };   // no-auth only
+                SendPacket(pkt, sizeof pkt);
+            } else {
+                unsigned char pkt[4] = { 5, 2, 0, 2 };  // no-auth + user/pass
+                SendPacket(pkt, sizeof pkt);
+            }
+        }
+        return;
+    }
+
     // If SSL requested, hand off to the handshake path; ConnectionEstablished()
     // will be called once the handshake succeeds.
     if (m_bUseSSL) {
@@ -1171,6 +1242,156 @@ void CMUSHclientDoc::ConnectionEstablished()
 
     // Fire OnPluginConnect for every loaded plugin
     SendToAllPluginCallbacks(ON_PLUGIN_CONNECT);
+}
+
+// ── SOCKS proxy helpers ───────────────────────────────────────────────────────
+
+bool CMUSHclientDoc::CheckExpectedProxyResponse(char cExpected, char cReceived)
+{
+    if (cReceived != cExpected) {
+        OnConnectionDisconnect();
+        if (App.m_bNotifyIfCannotConnect) {
+            CString msg;
+            msg.Format("Unexpected proxy server response %i, expected %i",
+                       (int)cReceived, (int)cExpected);
+            Note(msg);
+        }
+        return true;   // not OK
+    }
+    return false;      // OK
+}
+
+void CMUSHclientDoc::SendProxyConnectSequence()
+{
+    // SOCKS5 CONNECT: tell the proxy server to connect to the MUD
+    unsigned long  address = m_sockAddr.sin_addr.s_addr;
+    unsigned short port    = m_sockAddr.sin_port;
+    unsigned char  pkt[4 + sizeof address + sizeof port] = { 5, 1, 0, 1 };
+    int len = 4;
+    memcpy(&pkt[len], &address, sizeof address); len += (int)sizeof address;
+    memcpy(&pkt[len], &port,    sizeof port);    len += (int)sizeof port;
+    SendPacket(pkt, len);
+}
+
+bool CMUSHclientDoc::SendProxyUserNameAndPassword()
+{
+    if (m_strProxyUserName.GetLength() > 255 ||
+        m_strProxyPassword.GetLength() > 255) {
+        OnConnectionDisconnect();
+        Note("Proxy username or password exceeds 255 characters");
+        return true;  // error
+    }
+    unsigned char auth[3 + 255 + 255] = { 1 };
+    int len = 1;
+    unsigned char ulen = (unsigned char)m_strProxyUserName.GetLength();
+    unsigned char plen = (unsigned char)m_strProxyPassword.GetLength();
+    auth[len++] = ulen;
+    memcpy(&auth[len], (const char*)m_strProxyUserName, ulen); len += ulen;
+    auth[len++] = plen;
+    memcpy(&auth[len], (const char*)m_strProxyPassword, plen); len += plen;
+    SendPacket(auth, len);
+    return false;  // OK
+}
+
+int CMUSHclientDoc::ProcessProxyResponse1(char* buff, int count)
+{
+    // SOCKS5: server chose authentication method
+    if (CheckExpectedProxyResponse(5, buff[0])) return -1;
+    if (count < 2) buff[1] = (char)0xFF;
+
+    switch ((unsigned char)buff[1]) {
+        case 2:  // username/password required
+            if (SendProxyUserNameAndPassword()) return -1;
+            m_iConnectPhase = eConnectAwaitingProxyResponse2;
+            return 2;
+        case 0:  // no authentication required
+            SendProxyConnectSequence();
+            m_iConnectPhase = eConnectAwaitingProxyResponse3;
+            return 2;
+        default:
+            OnConnectionDisconnect();
+            if (App.m_bNotifyIfCannotConnect)
+                Note("Proxy server: no acceptable authentication method");
+            return -1;
+    }
+}
+
+int CMUSHclientDoc::ProcessProxyResponse2(char* buff, int count)
+{
+    // SOCKS5: authentication result
+    if (CheckExpectedProxyResponse(1, buff[0])) return -1;
+    if (count < 2 || buff[1] != 0) {
+        OnConnectionDisconnect();
+        if (App.m_bNotifyIfCannotConnect)
+            Note("Proxy server refused authentication");
+        return -1;
+    }
+    SendProxyConnectSequence();
+    m_iConnectPhase = eConnectAwaitingProxyResponse3;
+    return 2;
+}
+
+int CMUSHclientDoc::ProcessProxyResponse3(char* buff, int count)
+{
+    // Both SOCKS4 and SOCKS5 connection-established response
+    int iBytesToMove;
+
+    if (CheckExpectedProxyResponse(
+            m_iSocksProcessing == eProxyServerSocks4 ? 0 : 5,
+            buff[0]))
+        return -1;
+
+    if (m_iSocksProcessing == eProxyServerSocks4) {
+        if (count < 2 || (unsigned char)buff[1] != 90) {
+            if (count < 2) buff[1] = 91;
+            const char* p = "request rejected";
+            switch ((unsigned char)buff[1]) {
+                case 91: p = "request rejected or failed";            break;
+                case 92: p = "cannot connect to ident server";        break;
+                case 93: p = "client and identd report different IDs"; break;
+            }
+            OnConnectionDisconnect();
+            if (App.m_bNotifyIfCannotConnect) {
+                CString msg;
+                msg.Format("Proxy server refused connection: %s", p);
+                Note(msg);
+            }
+            return -1;
+        }
+        iBytesToMove = 8;
+    } else {
+        // SOCKS5
+        if (count < 2 || buff[1] != 0) {
+            if (count < 2) buff[1] = 1;
+            const char* p = "unknown error";
+            switch ((unsigned char)buff[1]) {
+                case 1: p = "general SOCKS server failure";        break;
+                case 2: p = "connection not allowed by ruleset";   break;
+                case 3: p = "network unreachable";                 break;
+                case 4: p = "host unreachable";                    break;
+                case 5: p = "connection refused";                  break;
+                case 6: p = "TTL expired";                         break;
+                case 7: p = "command not supported";               break;
+                case 8: p = "address type not supported";          break;
+            }
+            OnConnectionDisconnect();
+            if (App.m_bNotifyIfCannotConnect) {
+                CString msg;
+                msg.Format("Proxy server refused connection: %s", p);
+                Note(msg);
+            }
+            return -1;
+        }
+        iBytesToMove = 10;
+    }
+
+    // Proxy accepted — proceed to SSL or plain connection
+    if (m_bUseSSL) {
+        StartSSLHandshake();
+        return iBytesToMove;
+    }
+    ConnectionEstablished();
+    return iBytesToMove;
 }
 
 // ── SSL implementation ────────────────────────────────────────────────────────

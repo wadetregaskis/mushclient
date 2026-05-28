@@ -298,8 +298,20 @@ int main(int argc, char* argv[])
                     + (ts_now.tv_nsec - ts_last_timer.tv_nsec) / 1000000;
             if (ms >= 100) {
                 ts_last_timer = ts_now;
-                if (doc.m_bEnableTimers && !doc.m_CurrentPlugin)
+                if (doc.m_bEnableTimers && !doc.m_CurrentPlugin) {
+                    // World timers
                     doc.CheckTimerList(doc.GetTimerMap());
+                    // Plugin timers — mirrors CheckTimers() in timers.cpp
+                    for (PluginListIterator pit = doc.m_PluginList.begin();
+                         pit != doc.m_PluginList.end(); ++pit) {
+                        doc.m_CurrentPlugin = *pit;
+                        if (doc.m_CurrentPlugin->m_bEnabled)
+                            doc.CheckTimerList(doc.GetTimerMap());
+                    }
+                    doc.m_CurrentPlugin = nullptr;
+                    // Per-tick plugin callback
+                    doc.SendToAllPluginCallbacks(ON_PLUGIN_TICK);
+                }
 
                 // Script file auto-reload check every 2 s
                 long ms2 = (ts_now.tv_sec  - ts_last_script_check.tv_sec)  * 1000

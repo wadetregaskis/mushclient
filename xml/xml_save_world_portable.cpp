@@ -148,6 +148,11 @@ static long get_numeric_value(const CMUSHclientDoc* doc, const char* opt)
     if (!strcmp(opt, "use_mxp"))               return doc->m_iUseMXP;
     if (!strcmp(opt, "utf_8"))                 return doc->m_bUTF_8               ? 1 : 0;
     if (!strcmp(opt, "wrap_column"))           return doc->m_nWrapColumn;
+    if (!strcmp(opt, "use_ssl"))              return doc->m_bUseSSL;
+    if (!strcmp(opt, "proxy_type"))           return doc->m_iSocksProcessing;
+    if (!strcmp(opt, "proxy_port"))           return doc->m_iProxyServerPort;
+    if (!strcmp(opt, "send_keep_alives"))     return doc->m_bSendKeepAlives;
+    if (!strcmp(opt, "save_world_automatically")) return doc->m_bSaveWorldAutomatically;
 
     auto it = doc->m_numericOptionCache.find(opt);
     if (it != doc->m_numericOptionCache.end()) return it->second;
@@ -197,6 +202,9 @@ static CString get_alpha_value(const CMUSHclientDoc* doc, const char* opt)
     if (!strcmp(opt, "speed_walk_filler"))       return doc->m_strSpeedWalkFiller;
     if (!strcmp(opt, "speed_walk_prefix"))       return doc->m_speed_walk_prefix;
     if (!strcmp(opt, "terminal_identification")) return doc->m_strTerminalIdentification;
+    if (!strcmp(opt, "proxy_server"))          return doc->m_strProxyServerName;
+    if (!strcmp(opt, "proxy_username"))        return doc->m_strProxyUserName;
+    if (!strcmp(opt, "proxy_password"))        return doc->m_strProxyPassword;
 
     auto it = doc->m_alphaOptionCache.find(opt);
     if (it != doc->m_alphaOptionCache.end()) return CString(it->second.c_str());

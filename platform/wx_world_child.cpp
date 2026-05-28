@@ -579,19 +579,32 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // doc has already been loaded via OnOpenDocument before the constructor
         // runs, so these reflect the saved world settings.
         if (m_output) {
-            // Font: m_font_name is face name; m_font_height is LOGFONT lfHeight
-            // (negative pixels at 96 DPI).  Skip if not configured.
+            // Font: m_font_name is face name; m_font_height encodes size as either:
+            //   negative → LOGFONT pixel height at 96 DPI (from world XML saved on
+            //              Windows, e.g. -12 = 9pt); convert to points.
+            //   positive → already a point size (scripting options default = 12;
+            //              App.m_iDefaultOutputFontHeight default = 9).
+            // Skip altogether if neither face nor height is configured.
             const char* face = static_cast<const char*>(m_doc->m_font_name);
             int         lfH  = (int)m_doc->m_font_height;
-            if (face && *face && lfH != 0) {
-                int pixH   = (lfH < 0) ? -lfH : lfH;
-                int points = (pixH * 72 + 48) / 96;   // round to nearest pt
+            if ((face && *face) || lfH != 0) {
+                int points;
+                if (lfH < 0)
+                    points = (-lfH * 72 + 48) / 96;  // LOGFONT pixels → points
+                else if (lfH > 0)
+                    points = lfH;                      // already a point size
+                else
+                    points = COutputPane::kDefaultFontSize;
                 points = std::max(COutputPane::kMinFontSize,
                                   std::min(COutputPane::kMaxFontSize, points));
                 wxFontWeight weight = (m_doc->m_font_weight >= 700)
                                       ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL;
+                // An empty or Windows-only face name (e.g. "FixedSys") still
+                // produces a valid font via wxFONTFAMILY_TELETYPE fallback.
+                wxString faceName = (face && *face)
+                                    ? wxString::FromUTF8(face) : wxString();
                 wxFont font(points, wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL,
-                            weight, false, wxString::FromUTF8(face));
+                            weight, false, faceName);
                 if (font.IsOk()) m_output->SetOutputFont(font);
             }
             // Scrollback limit.

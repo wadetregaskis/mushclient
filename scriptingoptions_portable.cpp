@@ -263,7 +263,7 @@ tConfigurationAlphaOption AlphaOptionsTable  [] =
 {"on_world_get_focus",            "",         A(m_strWorldGetFocus)},
 {"on_world_lose_focus",           "",         A(m_strWorldLoseFocus)},
 {"on_world_open",                 "",         A(m_strWorldOpen)},
-{"output_font_name",              "FixedSys", A(m_font_name), OPT_UPDATE_OUTPUT_FONT},
+{"output_font_name",              "",         A(m_font_name), OPT_UPDATE_OUTPUT_FONT}, // empty → platform monospace default
 {"password",                      "",         A(m_password), OPT_PASSWORD | OPT_PLUGIN_CANNOT_RW},
 {"paste_line_postamble",          "",         A(m_pasteline_postamble), OPT_KEEP_SPACES},
 {"paste_line_preamble",           "",         A(m_pasteline_preamble), OPT_KEEP_SPACES},

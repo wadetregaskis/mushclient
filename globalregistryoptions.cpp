@@ -208,6 +208,13 @@ void CMUSHclientApp::LoadGlobalsFromDatabase (void)
       strDefault = "./worlds/plugins/";
     else if (strcmp (AlphaGlobalOptionsTable [i].pName, "AsciiArtFont") == 0)
       strDefault = "fonts/standard.flf";
+    // "FixedSys" is a Windows-only bitmap font; use empty string on non-Windows
+    // so that wxWidgets picks the platform monospace (DejaVu Sans Mono, etc.).
+    else if ((strcmp (AlphaGlobalOptionsTable [i].pName, "DefaultOutputFont") == 0 ||
+              strcmp (AlphaGlobalOptionsTable [i].pName, "DefaultInputFont")  == 0 ||
+              strcmp (AlphaGlobalOptionsTable [i].pName, "FixedPitchFont")    == 0) &&
+             strDefault == "FixedSys")
+      strDefault = "";
 #endif
 
     db_simple_query ((LPCTSTR) CFormat (

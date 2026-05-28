@@ -787,6 +787,24 @@ bool bError = true;
       // Release the shell's allocator.
       pMalloc->Release();
       }
+#else  // !_WIN32
+    // On non-Windows, use the wxWidgets directory-picker hook.
+    if (g_wxhook_directorypicker)
+      {
+      const char* startDir = static_cast<const char*>(App.m_strPluginsDirectory);
+      char* picked = g_wxhook_directorypicker (
+                       "Folder for saving plugin state files",
+                       startDir);
+      if (picked)
+        {
+        App.m_strDefaultStateFilesDirectory = picked;
+        if (App.m_strDefaultStateFilesDirectory.Right (1) != "/")
+          App.m_strDefaultStateFilesDirectory += "/";
+        strFilename = App.m_strDefaultStateFilesDirectory;
+        App.SaveGlobalsToDatabase ();
+        free (picked);
+        }
+      }
 #endif // _WIN32
     }  // end of no save state folder
 

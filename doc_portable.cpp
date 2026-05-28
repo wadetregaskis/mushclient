@@ -345,6 +345,8 @@ const string ON_PLUGIN_MXP_SETENTITY         = "OnPluginMXPsetEntity";
 const string ON_PLUGIN_MXP_ERROR             = "OnPluginMXPerror";
 const string ON_PLUGIN_CONNECT               = "OnPluginConnect";
 const string ON_PLUGIN_DISCONNECT            = "OnPluginDisconnect";
+const string ON_PLUGIN_WORLD_SAVE            = "OnPluginWorldSave";
+const string ON_PLUGIN_CLOSE                 = "OnPluginClose";
 
 // ── MakeActionHash ────────────────────────────────────────────────────────
 // Simple FNV-1a-like hash of the three action strings.

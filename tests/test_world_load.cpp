@@ -680,4 +680,87 @@ TEST(PluginLoad, NoPluginElementReturnsFalse)
     EXPECT_FALSE(doc.InternalLoadPlugin(CString(path.c_str())));
 }
 
+// ── World settings — OptionsTable-driven loading ─────────────────────────
+
+TEST(WorldLoad, WorldSettingsNumericOptions)
+{
+    // Verify OptionsTable-driven loading: boolean, range, and alpha options
+    // all survive a round-trip through LoadWorldFromFile.
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000"
+  enable_triggers="n"
+  enable_aliases="n"
+  enable_timers="n"
+  wrap_column="120"
+  max_output_lines="5000"
+  use_ssl="y"
+  proxy_type="2"
+  proxy_port="1080"
+  send_keep_alives="y"
+  save_world_automatically="y"
+  utf_8="y"
+  connect_method="1"
+  player="wizard"
+  script_prefix="#"
+  proxy_server="proxy.example.com"
+  proxy_username="user1"
+>
+</world>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    // Numeric/boolean live members
+    EXPECT_EQ(0,    (int)doc.m_enable_triggers);
+    EXPECT_EQ(0,    (int)doc.m_enable_aliases);
+    EXPECT_EQ(0,    (int)doc.m_bEnableTimers);
+    EXPECT_EQ(120,  (int)doc.m_nWrapColumn);
+    EXPECT_EQ(5000, (long)doc.m_maxlines);
+    EXPECT_EQ(1,    (int)doc.m_bUseSSL);
+    EXPECT_EQ(2,    (int)doc.m_iSocksProcessing);   // eProxyServerSocks5
+    EXPECT_EQ(1080, (int)doc.m_iProxyServerPort);
+    EXPECT_EQ(1,    (int)doc.m_bSendKeepAlives);
+    EXPECT_EQ(1,    (int)doc.m_bSaveWorldAutomatically);
+    EXPECT_EQ(1,    (int)doc.m_bUTF_8);
+    EXPECT_EQ(1,    (int)doc.m_connect_now);         // connect_method
+
+    // Alpha live members
+    EXPECT_STREQ("wizard",            (const char*)doc.m_name);
+    EXPECT_STREQ("#",                 (const char*)doc.m_strScriptPrefix);
+    EXPECT_STREQ("proxy.example.com", (const char*)doc.m_strProxyServerName);
+    EXPECT_STREQ("user1",             (const char*)doc.m_strProxyUserName);
+}
+
+TEST(WorldLoad, WorldSettingsInOptionCache)
+{
+    // Values loaded from XML must also be visible via the option caches so
+    // that GetOption / GetAlphaOption return correct values without a live
+    // struct member for every option.
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="cache.mud" port="9999"
+  wrap_column="100"
+  proxy_server="myproxy"
+>
+</world>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    // Numeric cache
+    auto nit = doc.m_numericOptionCache.find("wrap_column");
+    ASSERT_NE(doc.m_numericOptionCache.end(), nit);
+    EXPECT_EQ(100L, nit->second);
+
+    // Alpha cache
+    auto ait = doc.m_alphaOptionCache.find("proxy_server");
+    ASSERT_NE(doc.m_alphaOptionCache.end(), ait);
+    EXPECT_EQ("myproxy", ait->second);
+}
+
 MC_TEST_MAIN()

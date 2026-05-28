@@ -419,84 +419,180 @@ static unsigned int Load_Timers(CXMLelement& parent, CMUSHclientDoc& doc)
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// Option dispatch helpers — mirror L_SetOption / L_SetAlphaOption in
+// lua_world_api_portable.cpp so OptionsTable-driven loading can set real
+// struct members rather than only writing to the option caches.
+// ══════════════════════════════════════════════════════════════════════════
+
+static void apply_numeric_option(CMUSHclientDoc& doc, const char* opt, long val)
+{
+    // Live members — kept in sync with L_SetOption in lua_world_api_portable.cpp
+    if      (!strcmp(opt, "enable_triggers"))      doc.m_enable_triggers        = (val != 0);
+    else if (!strcmp(opt, "enable_aliases"))       doc.m_enable_aliases         = (val != 0);
+    else if (!strcmp(opt, "enable_timers"))        doc.m_bEnableTimers          = (val != 0);
+    else if (!strcmp(opt, "display_my_input"))     doc.m_display_my_input       = (val != 0);
+    else if (!strcmp(opt, "log_output"))           doc.m_bLogOutput             = (short)val;
+    else if (!strcmp(opt, "log_notes"))            doc.m_bLogNotes              = (short)val;
+    else if (!strcmp(opt, "log_input"))            doc.m_log_input              = (short)val;
+    else if (!strcmp(opt, "trace"))                doc.m_bTrace                 = (val != 0);
+    else if (!strcmp(opt, "enable_trigger_sounds"))doc.m_enable_trigger_sounds  = (val != 0);
+    else if (!strcmp(opt, "enable_speed_walk"))    doc.m_enable_speed_walk      = (val != 0);
+    else if (!strcmp(opt, "log_html"))             doc.m_bLogHTML               = (val != 0);
+    else if (!strcmp(opt, "log_raw"))              doc.m_bLogRaw                = (val != 0);
+    else if (!strcmp(opt, "log_in_colour"))        doc.m_bLogInColour           = (val != 0);
+    else if (!strcmp(opt, "utf_8"))                doc.m_bUTF_8                 = (val != 0);
+    else if (!strcmp(opt, "use_mxp"))              doc.m_iUseMXP                = (short)val;
+    else if (!strcmp(opt, "detect_pueblo"))        doc.m_bPueblo                = (val != 0);
+    else if (!strcmp(opt, "naws"))                 doc.m_bNAWS                  = (val != 0);
+    else if (!strcmp(opt, "disable_compression"))  doc.m_bDisableCompression    = (val != 0);
+    else if (!strcmp(opt, "connect_method"))       doc.m_connect_now            = (short)val;
+    else if (!strcmp(opt, "use_ssl"))              doc.m_bUseSSL                = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "proxy_type"))           doc.m_iSocksProcessing       = (unsigned short)val;
+    else if (!strcmp(opt, "proxy_port"))           doc.m_iProxyServerPort       = (unsigned short)val;
+    else if (!strcmp(opt, "send_keep_alives"))     doc.m_bSendKeepAlives        = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "save_world_automatically")) doc.m_bSaveWorldAutomatically = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "wrap_column")) {
+        if (val >= 20 && val <= MAX_LINE_WIDTH)
+            doc.m_nWrapColumn = (unsigned short)val;
+    }
+    else if (!strcmp(opt, "max_output_lines")) {
+        if (val >= 200 && val <= 500000)
+            doc.m_maxlines = val;
+    }
+    else if (!strcmp(opt, "port")) {
+        if (val >= 1 && val <= USHRT_MAX)
+            doc.m_port = (unsigned short)val;
+    }
+    // Unknown options fall through to the cache (set by the caller's loop)
+}
+
+static void apply_alpha_option(CMUSHclientDoc& doc, const char* opt, const CString& val)
+{
+    // Live members — kept in sync with L_SetAlphaOption in lua_world_api_portable.cpp
+    // Note: "site" → m_mush_name is intentional for mushcli (cli_main uses m_mush_name as host)
+    if      (!strcmp(opt, "site"))             doc.m_mush_name              = val;
+    else if (!strcmp(opt, "name"))             {}  // world display name — not needed by CLI
+    else if (!strcmp(opt, "player"))           doc.m_name                   = val;
+    else if (!strcmp(opt, "script_filename"))  doc.m_strScriptFilename      = val;
+    else if (!strcmp(opt, "script_language"))  doc.m_strLanguage            = val;
+    else if (!strcmp(opt, "script_prefix"))    doc.m_strScriptPrefix        = val;
+    else if (!strcmp(opt, "notes"))            doc.m_notes                  = val;
+    else if (!strcmp(opt, "terminal_identification"))
+                                               doc.m_strTerminalIdentification = val;
+    else if (!strcmp(opt, "mapping_failure"))  doc.m_strMappingFailure      = val;
+    else if (!strcmp(opt, "connect_text"))     doc.m_connect_text           = val;
+    else if (!strcmp(opt, "auto_log_file_name")) doc.m_strAutoLogFileName   = val;
+    else if (!strcmp(opt, "speed_walk_prefix"))  doc.m_speed_walk_prefix    = val;
+    else if (!strcmp(opt, "speed_walk_filler"))  doc.m_strSpeedWalkFiller   = val;
+    else if (!strcmp(opt, "id"))               doc.m_strWorldID             = val;
+    else if (!strcmp(opt, "on_world_open"))       doc.m_strWorldOpen        = val;
+    else if (!strcmp(opt, "on_world_close"))      doc.m_strWorldClose       = val;
+    else if (!strcmp(opt, "on_world_save"))       doc.m_strWorldSave        = val;
+    else if (!strcmp(opt, "on_world_connect"))    doc.m_strWorldConnect     = val;
+    else if (!strcmp(opt, "on_world_disconnect")) doc.m_strWorldDisconnect  = val;
+    else if (!strcmp(opt, "on_world_get_focus"))  doc.m_strWorldGetFocus    = val;
+    else if (!strcmp(opt, "on_world_lose_focus")) doc.m_strWorldLoseFocus   = val;
+    else if (!strcmp(opt, "on_mxp_start"))        doc.m_strOnMXP_Start      = val;
+    else if (!strcmp(opt, "on_mxp_stop"))         doc.m_strOnMXP_Stop       = val;
+    else if (!strcmp(opt, "on_mxp_error"))        doc.m_strOnMXP_Error      = val;
+    else if (!strcmp(opt, "on_mxp_open_tag"))     doc.m_strOnMXP_OpenTag    = val;
+    else if (!strcmp(opt, "on_mxp_close_tag"))    doc.m_strOnMXP_CloseTag   = val;
+    else if (!strcmp(opt, "on_mxp_set_variable")) doc.m_strOnMXP_SetVariable= val;
+    else if (!strcmp(opt, "log_file_preamble"))         doc.m_strLogFilePreamble        = val;
+    else if (!strcmp(opt, "log_file_postamble"))        doc.m_strLogFilePostamble       = val;
+    else if (!strcmp(opt, "log_line_preamble_input"))   doc.m_strLogLinePreambleInput   = val;
+    else if (!strcmp(opt, "log_line_preamble_notes"))   doc.m_strLogLinePreambleNotes   = val;
+    else if (!strcmp(opt, "log_line_preamble_output"))  doc.m_strLogLinePreambleOutput  = val;
+    else if (!strcmp(opt, "log_line_postamble_input"))  doc.m_strLogLinePostambleInput  = val;
+    else if (!strcmp(opt, "log_line_postamble_notes"))  doc.m_strLogLinePostambleNotes  = val;
+    else if (!strcmp(opt, "log_line_postamble_output")) doc.m_strLogLinePostambleOutput = val;
+    else if (!strcmp(opt, "proxy_server"))       doc.m_strProxyServerName    = val;
+    else if (!strcmp(opt, "proxy_username"))     doc.m_strProxyUserName      = val;
+    // Unknown options: caller stores in cache
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // World settings loading (host, port, connect_text, etc.)
 // ══════════════════════════════════════════════════════════════════════════
 
 static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
 {
     LOAD_LOOP(root, "world", pWorld)
-        // Helper: read an attribute directly
-        auto getAttr = [&](const char* name, CString& dest) {
-            CAttribute* a;
-            if (pWorld->AttributeMap.Lookup(name, a) && a) {
-                dest = a->strValue;
-                a->bUsed = true;
+        bool bUseDefault = false;
+
+        // ── Numeric options via OptionsTable ─────────────────────────────────
+        // Iterates all registered options; for each whose attribute appears in
+        // the <world> element, applies the value to the right struct member or
+        // to the option cache (for non-live-member options).
+        for (int i = 0; OptionsTable[i].pName; i++) {
+            const char* optName = OptionsTable[i].pName;
+            bool is_bool = (OptionsTable[i].iMinimum == 0 &&
+                            OptionsTable[i].iMaximum == 0);
+            bool is_colour = (OptionsTable[i].iFlags & OPT_RGB_COLOUR) != 0;
+            long val = (long)OptionsTable[i].iDefault;
+
+            bool got;
+            if (is_colour) {
+                COLORREF c = (COLORREF)val;
+                got = Get_XML_colour(*pWorld, optName, c, bUseDefault);
+                val = (long)c;
+            } else if (is_bool) {
+                bool bFlag = (val != 0);
+                got = Get_XML_boolean(*pWorld, optName, bFlag, bUseDefault);
+                val = bFlag ? 1 : 0;
+            } else {
+                got = Get_XML_long(*pWorld, optName, val, bUseDefault,
+                                   (long)OptionsTable[i].iMinimum,
+                                   (long)OptionsTable[i].iMaximum);
             }
-        };
+            if (!got) continue;
 
-        getAttr("site",                doc.m_mush_name);
-        getAttr("script_language",     doc.m_strLanguage);
-        getAttr("script_filename",     doc.m_strScriptFilename);
-        // World lifecycle callbacks
-        getAttr("on_world_open",       doc.m_strWorldOpen);
-        getAttr("on_world_close",      doc.m_strWorldClose);
-        getAttr("on_world_save",       doc.m_strWorldSave);
-        getAttr("on_world_connect",    doc.m_strWorldConnect);
-        getAttr("on_world_disconnect", doc.m_strWorldDisconnect);
-        getAttr("on_world_get_focus",  doc.m_strWorldGetFocus);
-        getAttr("on_world_lose_focus", doc.m_strWorldLoseFocus);
-        // MXP callbacks
-        getAttr("on_mxp_start",        doc.m_strOnMXP_Start);
-        getAttr("on_mxp_stop",         doc.m_strOnMXP_Stop);
-        getAttr("on_mxp_open_tag",     doc.m_strOnMXP_OpenTag);
-        getAttr("on_mxp_close_tag",    doc.m_strOnMXP_CloseTag);
-        getAttr("on_mxp_set_variable", doc.m_strOnMXP_SetVariable);
-        getAttr("on_mxp_error",        doc.m_strOnMXP_Error);
+            apply_numeric_option(doc, optName, val);
+            // Also update the cache so GetOption always sees the correct value
+            doc.m_numericOptionCache[optName] = val;
+        }
 
-        // World properties from OptionsTable (scriptingoptions_portable.cpp)
-        getAttr("auto_say_override_prefix",   doc.m_strOverridePrefix);
-        getAttr("auto_say_string",            doc.m_strAutoSayString);
-        getAttr("beep_sound",                 doc.m_strBeepSound);
-        getAttr("input_font_name",            doc.m_input_font_name);
-        getAttr("new_activity_sound",         doc.m_new_activity_sound);
-        getAttr("output_font_name",           doc.m_font_name);
-        getAttr("recall_line_preamble",       doc.m_strRecallLinePreamble);
-        getAttr("script_editor",              doc.m_strScriptEditor);
-        getAttr("tab_completion_defaults",    doc.m_strTabCompletionDefaults);
+        // ── Single-line alpha options via AlphaOptionsTable ──────────────────
+        for (int i = 0; AlphaOptionsTable[i].pName; i++) {
+            if (AlphaOptionsTable[i].iFlags & OPT_MULTLINE) continue;
+            if (AlphaOptionsTable[i].iFlags & OPT_PASSWORD) continue;
 
-        // Paste fields — multi-line, stored as child elements
+            const char* optName = AlphaOptionsTable[i].pName;
+            CAttribute* a;
+            if (!pWorld->AttributeMap.Lookup(optName, a) || !a) continue;
+            a->bUsed = true;
+            CString val = a->strValue;
+
+            apply_alpha_option(doc, optName, val);
+            doc.m_alphaOptionCache[optName] = std::string((const char*)val);
+        }
+
+        // ── Multi-line alpha options (child elements, not attributes) ─────────
+        for (int i = 0; AlphaOptionsTable[i].pName; i++) {
+            if (!(AlphaOptionsTable[i].iFlags & OPT_MULTLINE)) continue;
+            if (AlphaOptionsTable[i].iFlags & OPT_PASSWORD)    continue;
+
+            const char* optName = AlphaOptionsTable[i].pName;
+            CString val;
+            if (!FindNodeContents(*pWorld, optName, val, false)) continue;
+
+            apply_alpha_option(doc, optName, val);
+            doc.m_alphaOptionCache[optName] = std::string((const char*)val);
+        }
+
+        // ── Fields handled separately (port, connect_text, script_prefix) ────
+        // Port is a ushort stored as a plain decimal attribute; it is also in
+        // OptionsTable as "port" so it is handled by the loop above, but the
+        // hardcoded path below is kept as a fallback for files that may omit it
+        // from the OptionsTable range (very old world files).
+        FindNodeContents(*pWorld, "connect_text",  doc.m_connect_text,    true);
+        FindNodeContents(*pWorld, "script_prefix", doc.m_strScriptPrefix, true);
+
+        // ── Paste fields (multi-line child elements, NOT in AlphaOptionsTable)
         FindNodeContents(*pWorld, "paste_postamble",      doc.m_paste_postamble,      false);
         FindNodeContents(*pWorld, "paste_preamble",       doc.m_paste_preamble,       false);
         FindNodeContents(*pWorld, "paste_line_postamble", doc.m_pasteline_postamble,  false);
         FindNodeContents(*pWorld, "paste_line_preamble",  doc.m_pasteline_preamble,   false);
-
-        // Port — stored as attribute
-        CAttribute* pPort;
-        if (pWorld->AttributeMap.Lookup("port", pPort) && pPort) {
-            doc.m_port = (unsigned short)atoi(pPort->strValue);
-            pPort->bUsed = true;
-        }
-
-        // Multi-line text fields stored as child elements
-        FindNodeContents(*pWorld, "connect_text",  doc.m_connect_text,    true);
-        FindNodeContents(*pWorld, "script_prefix", doc.m_strScriptPrefix, true);
-
-        // Boolean world flags (stored as unsigned short in the doc)
-        bool bUseDefault = false;
-        bool bUTF8 = (doc.m_bUTF_8 != 0);
-        Get_XML_boolean(*pWorld, "utf_8", bUTF8, bUseDefault);
-        doc.m_bUTF_8 = bUTF8 ? 1 : 0;
-
-        // Proxy / SSL / keep-alives
-        Get_XML_boolean_ushort(*pWorld, "use_ssl",                  doc.m_bUseSSL,               bUseDefault);
-        Get_XML_ushort        (*pWorld, "proxy_type",               doc.m_iSocksProcessing,      bUseDefault, eProxyServerNone, eProxyServerLast - 1);
-        Get_XML_ushort        (*pWorld, "proxy_port",               doc.m_iProxyServerPort,      bUseDefault, 0, USHRT_MAX);
-        Get_XML_boolean_ushort(*pWorld, "send_keep_alives",         doc.m_bSendKeepAlives,       bUseDefault);
-        Get_XML_boolean_ushort(*pWorld, "save_world_automatically", doc.m_bSaveWorldAutomatically, bUseDefault);
-        getAttr("proxy_server",   doc.m_strProxyServerName);
-        getAttr("proxy_username", doc.m_strProxyUserName);
-        // proxy_password is OPT_PASSWORD — saved base64-encoded by Windows,
-        // skipped by xml_save_world_portable.cpp, so nothing to load here.
 
     END_LOAD_LOOP
 }

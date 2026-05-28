@@ -102,17 +102,6 @@ bool SendToFront(const char* /*name*/)
     return false;
 }
 
-// ── Set_Up_Set_Strings ────────────────────────────────────────────────────────
-// Populates file-dialog strings for a settings-file type (Windows-only).
-// Returns TRUE (= error / not applicable) on non-Windows.
-BOOL Set_Up_Set_Strings(const int   /*set_type*/,
-                         CString   & /*suggested_name*/,
-                         CString   & /*filter*/,
-                         CString   & /*title*/,
-                         CString   & /*suggested_extension*/)
-{
-    return TRUE;
-}
 
 // ── CMUSHclientDoc::Note (CString overload) ───────────────────────────────────
 void CMUSHclientDoc::Note(const CString& s)
@@ -295,21 +284,201 @@ void CMUSHclientDoc::CreateMonitoringThread()
 {
 }
 
-// ── CMUSHclientDoc::Load_Set ──────────────────────────────────────────────────
-// Loads a settings file via a Windows file dialog.  Not implemented on non-Windows.
-BOOL CMUSHclientDoc::Load_Set(const int /*set_type*/,
-                               CString   /*strFileName*/,
-                               CWnd*     /*pParentWnd*/)
+// ── Set_Up_Set_Strings: non-Windows version ───────────────────────────────────
+// Returns the file extension, dialog title, and wxWidgets wildcard filter string
+// for each set type.  Returns TRUE on bad set_type (mirrors Windows version).
+BOOL Set_Up_Set_Strings(int set_type,
+                                CString& suggested_name,
+                                CString& filter,
+                                CString& title,
+                                CString& ext)
 {
-    return TRUE;   // TRUE = error / not applicable
+    switch (set_type) {
+    case TRIGGER:
+        ext    = "mct";
+        filter = "MUSHclient trigger files (*.mct)|*.mct|All files (*.*)|*.*";
+        title  = "Trigger file";
+        break;
+    case ALIAS:
+        ext    = "mca";
+        filter = "MUSHclient alias files (*.mca)|*.mca|All files (*.*)|*.*";
+        title  = "Alias file";
+        break;
+    case COLOUR:
+        ext    = "mcc";
+        filter = "MUSHclient colour files (*.mcc)|*.mcc|All files (*.*)|*.*";
+        title  = "Colour file";
+        break;
+    case MACRO:
+        ext    = "mcm";
+        filter = "MUSHclient macro files (*.mcm)|*.mcm|All files (*.*)|*.*";
+        title  = "Macro file";
+        break;
+    case TIMER:
+        ext    = "mci";
+        filter = "MUSHclient timer files (*.mci)|*.mci|All files (*.*)|*.*";
+        title  = "Timer file";
+        break;
+    default:
+        return TRUE;   // bad set_type
+    }
+    return FALSE;
+}
+
+// ── CMUSHclientDoc::Load_Set ──────────────────────────────────────────────────
+// Loads a trigger/alias/colour/macro/timer set from an XML .mc? file.
+// When strFileName is empty a file-open dialog is shown; otherwise the file is
+// loaded directly (used by doc_construct.cpp for default-set files).
+BOOL CMUSHclientDoc::Load_Set(const int set_type,
+                               CString   strFileName,
+                               CWnd*     pParentWnd)
+{
+    BOOL replace = TRUE;
+
+    if (strFileName.IsEmpty()) {
+        CString suggested_name = m_mush_name;
+        CString filter, title, ext;
+        if (Set_Up_Set_Strings(set_type, suggested_name, filter, title, ext))
+            return TRUE;    // bad set_type
+
+        CFileDialog filedlg(TRUE,   // open
+                            ext,
+                            "",
+                            OFN_HIDEREADONLY | OFN_FILEMUSTEXIST,
+                            filter,
+                            pParentWnd);
+        filedlg.m_ofn.lpstrTitle = title;
+
+        ChangeToFileBrowsingDirectory();
+        int nResult = filedlg.DoModal();
+        ChangeToStartupDirectory();
+
+        if (nResult != IDOK)
+            return TRUE;   // cancelled
+
+        if (set_type == TRIGGER && !m_TriggerMap.IsEmpty()) {
+            if (::TMessageBox("Replace existing triggers?\n"
+                              "If you reply \"No\", then triggers from the file"
+                              " will be added to existing triggers",
+                              MB_YESNO | MB_ICONQUESTION) == IDNO)
+                replace = FALSE;
+        } else if (set_type == ALIAS && !m_AliasMap.IsEmpty()) {
+            if (::TMessageBox("Replace existing aliases?\n"
+                              "If you reply \"No\", then aliases from the file"
+                              " will be added to existing aliases",
+                              MB_YESNO | MB_ICONQUESTION) == IDNO)
+                replace = FALSE;
+        } else if (set_type == TIMER && !m_TimerMap.IsEmpty()) {
+            if (::TMessageBox("Replace existing timers?\n"
+                              "If you reply \"No\", then timers from the file"
+                              " will be added to existing timers",
+                              MB_YESNO | MB_ICONQUESTION) == IDNO)
+                replace = FALSE;
+        }
+        strFileName = filedlg.GetPathName();
+    }
+
+    CFile*    f  = nullptr;
+    CArchive* ar = nullptr;
+    try {
+        f  = new CFile(strFileName, CFile::modeRead | CFile::shareDenyWrite);
+        ar = new CArchive(f, CArchive::load);
+
+        if (IsArchiveXML(*ar)) {
+            switch (set_type) {
+            case TRIGGER:
+                if (replace) DELETE_MAP(m_TriggerMap, CTrigger);
+                Load_World_XML(*ar, XML_TRIGGERS | XML_NO_PLUGINS | XML_IMPORT_MAIN_FILE_ONLY);
+                break;
+            case ALIAS:
+                if (replace) DELETE_MAP(m_AliasMap, CAlias);
+                Load_World_XML(*ar, XML_ALIASES  | XML_NO_PLUGINS | XML_IMPORT_MAIN_FILE_ONLY);
+                break;
+            case COLOUR:
+                Load_World_XML(*ar, XML_COLOURS  | XML_NO_PLUGINS | XML_IMPORT_MAIN_FILE_ONLY);
+                break;
+            case MACRO:
+                Load_World_XML(*ar, XML_MACROS   | XML_NO_PLUGINS | XML_IMPORT_MAIN_FILE_ONLY);
+                break;
+            case TIMER:
+                if (replace) DELETE_MAP(m_TimerMap, CTimer);
+                Load_World_XML(*ar, XML_TIMERS   | XML_NO_PLUGINS | XML_IMPORT_MAIN_FILE_ONLY);
+                break;
+            }
+        } else {
+            ::TMessageBox("File does not have a valid MUSHclient XML signature.",
+                          MB_ICONSTOP);
+            AfxThrowArchiveException(CArchiveException::badSchema);
+        }
+    }
+    catch (CFileException* e)    { ::UMessageBox(TFormat("Unable to open or read %s", (LPCTSTR)strFileName), MB_ICONSTOP); e->Delete(); }
+    catch (CMemoryException* e)  { ::TMessageBox("Insufficient memory to do this operation", MB_ICONEXCLAMATION); e->Delete(); }
+    catch (CArchiveException* e) { ::TMessageBox("There was a problem in the data format", MB_ICONEXCLAMATION); e->Delete(); }
+    catch (...)                  { ::TMessageBox("Unknown error loading file", MB_ICONEXCLAMATION); }
+
+    delete ar;
+    delete f;
+    SetModifiedFlag(TRUE);
+    return FALSE;   // FALSE = OK (matches Windows convention)
 }
 
 // ── CMUSHclientDoc::Save_Set ──────────────────────────────────────────────────
-// Saves a settings file via a Windows file dialog.  Not implemented on non-Windows.
-BOOL CMUSHclientDoc::Save_Set(const int /*set_type*/,
-                               CWnd*     /*pParentWnd*/)
+// Saves a trigger/alias/colour/macro/timer set to an XML .mc? file.
+BOOL CMUSHclientDoc::Save_Set(const int set_type,
+                               CWnd*     pParentWnd)
 {
-    return TRUE;   // TRUE = error / not applicable
+    CString suggested_name = m_mush_name;
+    CString filter, title, ext;
+    if (Set_Up_Set_Strings(set_type, suggested_name, filter, title, ext))
+        return TRUE;    // bad set_type
+
+    // Strip characters invalid in filenames
+    int i;
+    while ((i = suggested_name.FindOneOf("<>\"|?:#%;/\\")) != -1)
+        suggested_name = suggested_name.Left(i) + suggested_name.Mid(i + 1);
+
+    CFileDialog filedlg(FALSE,  // save
+                        ext,
+                        suggested_name,
+                        OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+                        filter,
+                        pParentWnd);
+    filedlg.m_ofn.lpstrTitle = title;
+
+    ChangeToFileBrowsingDirectory();
+    int nResult = filedlg.DoModal();
+    ChangeToStartupDirectory();
+
+    if (nResult != IDOK)
+        return TRUE;   // cancelled
+
+    CPlugin* pSavedPlugin = m_CurrentPlugin;
+    m_CurrentPlugin = nullptr;   // save main triggers, not plugin ones
+
+    BOOL error = TRUE;
+    CFile*    f  = nullptr;
+    CArchive* ar = nullptr;
+    try {
+        f  = new CFile(filedlg.GetPathName(), CFile::modeCreate | CFile::modeReadWrite);
+        ar = new CArchive(f, CArchive::store);
+
+        switch (set_type) {
+        case TRIGGER: Save_World_XML(*ar, XML_TRIGGERS); break;
+        case ALIAS:   Save_World_XML(*ar, XML_ALIASES);  break;
+        case COLOUR:  Save_World_XML(*ar, XML_COLOURS);  break;
+        case MACRO:   Save_World_XML(*ar, XML_MACROS);   break;
+        case TIMER:   Save_World_XML(*ar, XML_TIMERS);   break;
+        }
+        error = FALSE;
+    }
+    catch (CFileException* e)    { ::TMessageBox("Unable to create the requested file", MB_ICONEXCLAMATION); e->Delete(); }
+    catch (CMemoryException* e)  { ::TMessageBox("Insufficient memory to do this operation", MB_ICONEXCLAMATION); e->Delete(); }
+    catch (CArchiveException* e) { ::TMessageBox("There was a problem in the data format", MB_ICONEXCLAMATION); e->Delete(); }
+
+    m_CurrentPlugin = pSavedPlugin;
+    delete ar;
+    delete f;
+    return error;
 }
 
 // ── CMUSHclientDoc::GamePreferences ──────────────────────────────────────────

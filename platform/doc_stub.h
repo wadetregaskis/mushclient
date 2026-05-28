@@ -21,6 +21,8 @@
 #include <set>
 #include <functional>
 #include <zlib.h>              // z_stream, Bytef — for compression fields
+#include <netinet/in.h>        // sockaddr_in / SOCKADDR_IN for proxy fields
+typedef struct sockaddr_in SOCKADDR_IN;
 
 using std::string;
 using std::vector;
@@ -441,13 +443,22 @@ enum {
 #endif
 
 // ── Connection phase enum (from doc.h) — tracks state machine for m_iConnectPhase
+// Values must match doc.h exactly so that mushapp and mushcore share world files.
 enum {
-    eConnectNotConnected         = 0,
-    eConnectConnecting           = 1,
-    eConnectAwaitingSSLHandshake = 2,
-    eConnectConnectedToMud       = 5,   // fully established, MUD data flowing
-    eConnectConnected            = 10,
-    eConnectDisconnecting        = 20,
+    eConnectNotConnected            = 0,
+    eConnectMudNameLookup           = 1,
+    eConnectProxyNameLookup         = 2,
+    eConnectConnectingToMud         = 3,
+    eConnectConnectingToProxy       = 4,
+    eConnectAwaitingProxyResponse1  = 5,  // sent SOCKS method, awaiting confirmation
+    eConnectAwaitingProxyResponse2  = 6,  // sent SOCKS user/pass, awaiting confirmation
+    eConnectAwaitingProxyResponse3  = 7,  // sent SOCKS CONNECT, awaiting confirmation
+    eConnectAwaitingSSLHandshake    = 8,
+    eConnectConnectedToMud          = 9,  // fully established, MUD data flowing
+    eConnectDisconnecting           = 10,
+    // Legacy aliases used in some portable paths
+    eConnectConnecting              = eConnectConnectingToMud,
+    eConnectConnected               = eConnectConnectedToMud,
 };
 
 // ── Trigger evaluation control (from doc.h) ───────────────────────────────
@@ -862,8 +873,9 @@ public:
         return ++s_counter;
     }
 
-    // Notification flags (used by worldsock.cpp OnClose)
+    // Notification flags (used by worldsock.cpp OnClose and proxy error handling)
     bool m_bNotifyOnDisconnect              = false;
+    bool m_bNotifyIfCannotConnect           = false;
     bool m_bErrorNotificationToOutputWindow = false;
     bool m_bReconnectOnLinkFailure          = false;
 
@@ -1451,6 +1463,8 @@ public:
     CString        m_mush_name;
     CString        m_server;       // host name / IP address
     unsigned short m_port          = 0;
+    SOCKADDR_IN    m_sockAddr      = {};  // resolved MUD address (used by proxy)
+    SOCKADDR_IN    m_ProxyAddr     = {};  // resolved proxy server address
     CString        m_strWorldID;   // unique UUID-style ID for this world
     CString        m_strSpeedWalkFiller;  // filler direction (default empty)
 
@@ -1980,6 +1994,13 @@ public:
     void ContinueSSLHandshake();
     void SSLCleanup();
     void CloseLog();
+    // SOCKS proxy helpers
+    bool CheckExpectedProxyResponse(char cExpected, char cReceived);
+    void SendProxyConnectSequence();
+    bool SendProxyUserNameAndPassword();
+    int  ProcessProxyResponse1(char* buff, int count);
+    int  ProcessProxyResponse2(char* buff, int count);
+    int  ProcessProxyResponse3(char* buff, int count);
     void OnConnect(int nErrorCode);
     void Note(const CString& s);
     void Note(const char* s);

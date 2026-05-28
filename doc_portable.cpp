@@ -599,6 +599,25 @@ void CMUSHclientDoc::FireWorldClose()
                        nInvocations);
 }
 
+// ── FireWorldSave — fire the on_world_save Lua callback ──────────────────────
+// Called from OnSaveDocument (doc_stub.h) before the file is written.
+// Mirrors the ExecuteScript(m_dispidWorldSave,...) call in doc.cpp DoSave().
+void CMUSHclientDoc::FireWorldSave()
+{
+    if (m_dispidWorldSave == DISPID_UNKNOWN) return;
+    CScriptEngine* engine = GetScriptEngine();
+    if (!engine || !engine->IsLua()) return;
+    list<double> nparams;
+    list<string> sparams;
+    long nInvocations = 0;
+    engine->ExecuteLua(m_dispidWorldSave,
+                       m_strWorldSave,
+                       eWorldAction,
+                       "world", "save",
+                       nparams, sparams,
+                       nInvocations);
+}
+
 // ── TermSyncStyle / TermResetStyle — emit ANSI escapes to the real terminal ───
 //
 // The ANSI/256/24-bit colour state machine in ansi.cpp updates m_iFlags,

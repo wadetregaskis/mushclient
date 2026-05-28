@@ -609,6 +609,8 @@ extern const string ON_PLUGIN_SENT;
 extern const string ON_PLUGIN_IAC_GA;
 extern const string ON_PLUGIN_TELNET_REQUEST;
 extern const string ON_PLUGIN_TELNET_OPTION;
+extern const string ON_PLUGIN_WORLD_SAVE;
+extern const string ON_PLUGIN_CLOSE;
 extern const string ON_PLUGIN_TELNET_SUBNEGOTIATION;
 extern const string ON_PLUGIN_MXP_START;
 extern const string ON_PLUGIN_MXP_STOP;
@@ -1936,6 +1938,11 @@ public:
     // CDocument::OnSaveDocument → Serialize chain that the Windows / mushapp
     // build uses via CDocument inheritance.
     BOOL OnSaveDocument(LPCTSTR lpszPathName) {
+        // Fire the on_world_save Lua callback and plugin callbacks before writing,
+        // mirroring the DoSave() path in the Windows doc.cpp.
+        FireWorldSave();
+        SendToAllPluginCallbacks(ON_PLUGIN_WORLD_SAVE);
+
         CFile f;
         if (!f.Open(lpszPathName,
                     CFile::modeWrite | CFile::modeCreate | CFile::shareDenyWrite))
@@ -1982,6 +1989,7 @@ public:
     bool    InitZlib(z_stream& zs);
     void    OnConnectionDisconnect();
     void    FireWorldClose();
+    void    FireWorldSave();
     void    DisplayMsg(const char* lpszText, int size,
                        const int flags, const bool fake = false);
     long    GetUniqueNumber();

@@ -2549,9 +2549,15 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     // EvaluateCommand processes aliases, speed-walks, and scripting callbacks
     // before sending the text to the MUD — the same path Windows uses for
     // keyboard input from CMUSHclientView::OnChar / ProcessCommand.
+    // EvaluateCommand drops empty strings immediately (evaluate.cpp), so bypass
+    // it for blank Enter presses and send the bare newline directly.
     CString cmd(text.ToUTF8().data());
     bool bOmitFromLog = isPassword;   // don't log passwords either
-    m_doc->EvaluateCommand(cmd, true /*countThem*/, bOmitFromLog);
+    if (cmd.IsEmpty()) {
+        m_doc->DoSendMsg(cmd, m_doc->m_bLocalEcho, !bOmitFromLog);
+    } else {
+        m_doc->EvaluateCommand(cmd, true /*countThem*/, bOmitFromLog);
+    }
 
     // Flush any output produced by alias scripts / triggers to the pane.
     m_doc->UpdateAllViews(nullptr);

@@ -1929,7 +1929,13 @@ public:
     wxTextCtrl*          m_server;
     wxSpinCtrl*          m_port;
     wxCheckBox*          m_useSSL;
-    wxCheckBox*          m_autoConnect;
+    wxCheckBox*          m_saveWorldAuto;
+    wxCheckBox*          m_keepAlives;
+    // Login / auto-connect
+    wxChoice*            m_connectType;
+    wxTextCtrl*          m_charName;
+    wxTextCtrl*          m_charPassword;
+    wxTextCtrl*          m_connectText;
     // Display
     wxFontPickerCtrl*    m_fontPicker;
     wxColourPickerCtrl*  m_bgColorPicker;
@@ -1947,13 +1953,25 @@ public:
     // Logging
     wxTextCtrl*          m_autoLogFile;
     wxButton*            m_autoLogBrowse;
+    // Proxy
+    wxChoice*            m_proxyType;
+    wxTextCtrl*          m_proxyServer;
+    wxSpinCtrl*          m_proxyPort;
+    wxTextCtrl*          m_proxyUser;
+    wxTextCtrl*          m_proxyPassword;
 
     struct Params {
         // Connection
         wxString name, server;
         int      port;
         bool     useSSL;
-        bool     autoConnect;
+        bool     saveWorldAuto;
+        bool     keepAlives;
+        // Login / auto-connect
+        int      connectType;     // eNoAutoConnect=0, eConnectMUSH=1, eConnectDiku=2, eConnectMXP=3
+        wxString charName;
+        wxString charPassword;
+        wxString connectText;
         // Display
         wxFont   currentFont;
         int      scrollbackLines;
@@ -1969,6 +1987,12 @@ public:
         bool carriageReturn;
         // Logging
         wxString autoLogFile;
+        // Proxy
+        int      proxyType;       // eProxyServerNone=0, eProxyServerSocks4=1, eProxyServerSocks5=2
+        wxString proxyServer;
+        int      proxyPort;
+        wxString proxyUser;
+        wxString proxyPassword;
     };
 
     explicit WorldPreferencesDlg(wxWindow* parent, const Params& p)
@@ -1976,6 +2000,12 @@ public:
                    wxDefaultPosition, wxDefaultSize,
                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
         , m_useSSL(nullptr)
+        , m_saveWorldAuto(nullptr)
+        , m_keepAlives(nullptr)
+        , m_connectType(nullptr)
+        , m_charName(nullptr)
+        , m_charPassword(nullptr)
+        , m_connectText(nullptr)
         , m_bgColorPicker(nullptr)
         , m_scriptBrowse(nullptr)
         , m_scrollback(nullptr)
@@ -1986,6 +2016,11 @@ public:
         , m_carriageReturn(nullptr)
         , m_autoLogFile(nullptr)
         , m_autoLogBrowse(nullptr)
+        , m_proxyType(nullptr)
+        , m_proxyServer(nullptr)
+        , m_proxyPort(nullptr)
+        , m_proxyUser(nullptr)
+        , m_proxyPassword(nullptr)
     {
         wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
 
@@ -2025,7 +2060,90 @@ public:
                                      "Required by some modern MUD servers."));
             box->Add(m_useSSL, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
 
+            m_saveWorldAuto = new wxCheckBox(this, wxID_ANY,
+                                             wxT("Save world file automatically on connect"));
+            m_saveWorldAuto->SetValue(p.saveWorldAuto);
+            box->Add(m_saveWorldAuto, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_keepAlives = new wxCheckBox(this, wxID_ANY,
+                                          wxT("Send TCP keep-alives"));
+            m_keepAlives->SetValue(p.keepAlives);
+            m_keepAlives->SetToolTip(wxT("Enable the SO_KEEPALIVE socket option to "
+                                         "detect dropped connections more quickly."));
+            box->Add(m_keepAlives, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
             vs->Add(box, 0, wxEXPAND | wxALL, 12);
+        }
+
+        // ── Login / auto-connect ─────────────────────────────────────────
+        {
+            wxStaticBoxSizer* box =
+                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Login / Auto-connect"));
+
+            // Connect type choice
+            wxBoxSizer* typeRow = new wxBoxSizer(wxHORIZONTAL);
+            typeRow->Add(new wxStaticText(this, wxID_ANY, wxT("Auto-connect:")),
+                         0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+            m_connectType = new wxChoice(this, wxID_ANY);
+            m_connectType->Append(wxT("None — don't send login commands"));
+            m_connectType->Append(wxT("MUSH — send \"connect name password\""));
+            m_connectType->Append(wxT("Diku — send name, then password (on separate lines)"));
+            m_connectType->Append(wxT("MXP — MXP auto-login"));
+            m_connectType->SetSelection(
+                (p.connectType >= 0 && p.connectType <= 3) ? p.connectType : 0);
+            typeRow->Add(m_connectType, 1, wxEXPAND);
+            box->Add(typeRow, 0, wxEXPAND | wxALL, 8);
+
+            // Name / password fields
+            wxFlexGridSizer* g = new wxFlexGridSizer(3, 2, 6, 8);
+            g->AddGrowableCol(1, 1);
+
+            auto row = [&](const wxString& lbl, wxWindow* ctrl) {
+                g->Add(new wxStaticText(this, wxID_ANY, lbl),
+                       0, wxALIGN_CENTER_VERTICAL);
+                g->Add(ctrl, 1, wxEXPAND);
+            };
+
+            m_charName = new wxTextCtrl(this, wxID_ANY, p.charName);
+            m_charName->SetToolTip(wxT("Character name sent during auto-login."));
+            row(wxT("Character name:"), m_charName);
+
+            m_charPassword = new wxTextCtrl(this, wxID_ANY, p.charPassword,
+                                            wxDefaultPosition, wxDefaultSize,
+                                            wxTE_PASSWORD);
+            m_charPassword->SetToolTip(wxT("Password sent during auto-login "
+                                           "(stored in the world file — not encrypted)."));
+            row(wxT("Password:"), m_charPassword);
+
+            m_connectText = new wxTextCtrl(this, wxID_ANY, p.connectText);
+            m_connectText->SetToolTip(
+                wxT("Extra commands sent after the auto-login sequence.\n")
+                wxT("Use %name% and %password% as substitution tokens."));
+            row(wxT("Connect string:"), m_connectText);
+
+            box->Add(g, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            wxStaticText* hint = new wxStaticText(this, wxID_ANY,
+                wxT("The connect string is always sent (if non-empty), even when ")
+                wxT("auto-connect is None.\nIt can contain %name% and %password% tokens."));
+            wxFont small = hint->GetFont();
+            small.SetPointSize(std::max(8, small.GetPointSize() - 1));
+            hint->SetFont(small);
+            box->Add(hint, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            // Enable/disable name+password fields based on type selection.
+            auto updateLoginFields = [this](wxCommandEvent&) {
+                bool hasLogin = (m_connectType->GetSelection() != 0);
+                m_charName->Enable(hasLogin);
+                m_charPassword->Enable(hasLogin);
+            };
+            m_connectType->Bind(wxEVT_CHOICE, updateLoginFields);
+            // Set initial enable state.
+            bool hasLogin = (p.connectType != 0);
+            m_charName->Enable(hasLogin);
+            m_charPassword->Enable(hasLogin);
+
+            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
         }
 
         // ── Display ──────────────────────────────────────────────────────
@@ -2107,11 +2225,6 @@ public:
         {
             wxStaticBoxSizer* box =
                 new wxStaticBoxSizer(wxVERTICAL, this, wxT("Options"));
-
-            m_autoConnect = new wxCheckBox(this, wxID_ANY,
-                                           wxT("Connect automatically when world opens"));
-            m_autoConnect->SetValue(p.autoConnect);
-            box->Add(m_autoConnect, 0, wxALL, 8);
 
             m_enableBeeps = new wxCheckBox(this, wxID_ANY,
                                            wxT("Enable beeps (BEL character)"));
@@ -2205,6 +2318,70 @@ public:
             vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
         }
 
+        // ── Proxy ────────────────────────────────────────────────────────
+        {
+            wxStaticBoxSizer* box =
+                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Proxy"));
+
+            wxBoxSizer* typeRow = new wxBoxSizer(wxHORIZONTAL);
+            typeRow->Add(new wxStaticText(this, wxID_ANY, wxT("Proxy type:")),
+                         0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+            m_proxyType = new wxChoice(this, wxID_ANY);
+            m_proxyType->Append(wxT("None (direct connection)"));
+            m_proxyType->Append(wxT("SOCKS 4"));
+            m_proxyType->Append(wxT("SOCKS 5"));
+            m_proxyType->SetSelection(
+                (p.proxyType >= 0 && p.proxyType <= 2) ? p.proxyType : 0);
+            typeRow->Add(m_proxyType, 0);
+            box->Add(typeRow, 0, wxEXPAND | wxALL, 8);
+
+            wxFlexGridSizer* g = new wxFlexGridSizer(4, 2, 6, 8);
+            g->AddGrowableCol(1, 1);
+
+            auto row = [&](const wxString& lbl, wxWindow* ctrl) {
+                g->Add(new wxStaticText(this, wxID_ANY, lbl),
+                       0, wxALIGN_CENTER_VERTICAL);
+                g->Add(ctrl, 1, wxEXPAND);
+            };
+
+            m_proxyServer = new wxTextCtrl(this, wxID_ANY, p.proxyServer);
+            row(wxT("Proxy server:"), m_proxyServer);
+
+            m_proxyPort = new wxSpinCtrl(this, wxID_ANY, wxEmptyString,
+                                         wxDefaultPosition, wxSize(90, -1),
+                                         wxSP_ARROW_KEYS, 1, 65535,
+                                         p.proxyPort > 0 ? p.proxyPort : 1080);
+            row(wxT("Proxy port:"), m_proxyPort);
+
+            m_proxyUser = new wxTextCtrl(this, wxID_ANY, p.proxyUser);
+            row(wxT("Username:"), m_proxyUser);
+
+            m_proxyPassword = new wxTextCtrl(this, wxID_ANY, p.proxyPassword,
+                                             wxDefaultPosition, wxDefaultSize,
+                                             wxTE_PASSWORD);
+            row(wxT("Password:"), m_proxyPassword);
+
+            box->Add(g, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            // Enable/disable proxy fields based on type selection.
+            auto updateProxyFields = [this](wxCommandEvent&) {
+                bool useProxy = (m_proxyType->GetSelection() != 0);
+                m_proxyServer->Enable(useProxy);
+                m_proxyPort->Enable(useProxy);
+                m_proxyUser->Enable(useProxy);
+                m_proxyPassword->Enable(useProxy);
+            };
+            m_proxyType->Bind(wxEVT_CHOICE, updateProxyFields);
+            // Set initial enable state.
+            bool useProxy = (p.proxyType != 0);
+            m_proxyServer->Enable(useProxy);
+            m_proxyPort->Enable(useProxy);
+            m_proxyUser->Enable(useProxy);
+            m_proxyPassword->Enable(useProxy);
+
+            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+        }
+
         vs->Add(CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
                 wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
@@ -2266,13 +2443,23 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     p.server      = wxString::FromUTF8(static_cast<const char*>(doc->m_server));
     p.port        = doc->m_port;
     p.useSSL         = (doc->m_bUseSSL != 0);
-    p.autoConnect    = (doc->m_connect_now != 0);
+    p.saveWorldAuto  = (doc->m_bSaveWorldAutomatically != 0);
+    p.keepAlives     = (doc->m_bSendKeepAlives != 0);
+    p.connectType    = (int)doc->m_connect_now;    // eNoAutoConnect .. eConnectMXP
+    p.charName       = wxString::FromUTF8(static_cast<const char*>(doc->m_name));
+    p.charPassword   = wxString::FromUTF8(static_cast<const char*>(doc->m_password));
+    p.connectText    = wxString::FromUTF8(static_cast<const char*>(doc->m_connect_text));
     p.enableBeeps    = (doc->m_enable_beeps != 0);
     p.displayMyInput = (doc->m_display_my_input != 0);
     p.autoFreeze     = (doc->m_bAutoFreeze != 0);
     p.carriageReturn = (doc->m_bCarriageReturnClearsLine != 0);
     p.autoLogFile    = wxString::FromUTF8(
                            static_cast<const char*>(doc->m_strAutoLogFileName));
+    p.proxyType      = (int)doc->m_iSocksProcessing;  // eProxyServerNone .. eProxyServerSocks5
+    p.proxyServer    = wxString::FromUTF8(static_cast<const char*>(doc->m_strProxyServerName));
+    p.proxyPort      = doc->m_iProxyServerPort > 0 ? (int)doc->m_iProxyServerPort : 1080;
+    p.proxyUser      = wxString::FromUTF8(static_cast<const char*>(doc->m_strProxyUserName));
+    p.proxyPassword  = wxString::FromUTF8(static_cast<const char*>(doc->m_strProxyPassword));
 
     // Font: use pane's live font (post Ctrl+scroll zoom) or fall back.
     if (pane) p.currentFont = pane->GetCurrentFont();
@@ -2294,16 +2481,29 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
         return false;
 
     // ── Apply connection settings ─────────────────────────────────────────
-    doc->m_mush_name   = CString(dlg.m_name->GetValue().ToUTF8().data());
-    doc->m_server      = CString(dlg.m_server->GetValue().ToUTF8().data());
-    doc->m_port        = static_cast<unsigned short>(dlg.m_port->GetValue());
-    doc->m_bUseSSL                   = dlg.m_useSSL->GetValue()         ? 1 : 0;
-    doc->m_connect_now               = dlg.m_autoConnect->GetValue()    ? 1 : 0;
+    doc->m_mush_name              = CString(dlg.m_name->GetValue().ToUTF8().data());
+    doc->m_server                 = CString(dlg.m_server->GetValue().ToUTF8().data());
+    doc->m_port                   = static_cast<unsigned short>(dlg.m_port->GetValue());
+    doc->m_bUseSSL                = dlg.m_useSSL->GetValue()         ? 1 : 0;
+    doc->m_bSaveWorldAutomatically= dlg.m_saveWorldAuto->GetValue()  ? 1 : 0;
+    doc->m_bSendKeepAlives        = dlg.m_keepAlives->GetValue()     ? 1 : 0;
+    // Login / auto-connect
+    doc->m_connect_now            = static_cast<unsigned short>(dlg.m_connectType->GetSelection());
+    doc->m_name                   = CString(dlg.m_charName->GetValue().ToUTF8().data());
+    doc->m_password               = CString(dlg.m_charPassword->GetValue().ToUTF8().data());
+    doc->m_connect_text           = CString(dlg.m_connectText->GetValue().ToUTF8().data());
+    // Options
     doc->m_enable_beeps              = dlg.m_enableBeeps->GetValue()    ? 1 : 0;
     doc->m_display_my_input          = dlg.m_displayMyInput->GetValue() ? 1 : 0;
     doc->m_bAutoFreeze               = dlg.m_autoFreeze->GetValue()     ? 1 : 0;
     doc->m_bCarriageReturnClearsLine = dlg.m_carriageReturn->GetValue() ? 1 : 0;
     doc->m_strAutoLogFileName        = CString(dlg.m_autoLogFile->GetValue().ToUTF8().data());
+    // Proxy
+    doc->m_iSocksProcessing      = static_cast<unsigned short>(dlg.m_proxyType->GetSelection());
+    doc->m_strProxyServerName    = CString(dlg.m_proxyServer->GetValue().ToUTF8().data());
+    doc->m_iProxyServerPort      = static_cast<unsigned short>(dlg.m_proxyPort->GetValue());
+    doc->m_strProxyUserName      = CString(dlg.m_proxyUser->GetValue().ToUTF8().data());
+    doc->m_strProxyPassword      = CString(dlg.m_proxyPassword->GetValue().ToUTF8().data());
 
     // Propagate auto-freeze setting to the live output pane immediately.
     if (pane) pane->SetAllowAutoFreeze(doc->m_bAutoFreeze != 0);
@@ -2384,13 +2584,13 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     // Mark the document dirty so Ctrl+S will offer to save.
     doc->SetModifiedFlag(TRUE);
 
-    // If currently connected, note that server/port changes take effect on reconnect.
+    // If currently connected, note that some changes take effect only on reconnect.
     if (doc->m_iConnectPhase == eConnectConnectedToMud) {
         wxMessageBox(
             wxT("World properties updated.\n\n")
             wxT("Font and scripting changes take effect immediately.\n")
-            wxT("Changes to server address, port, and SSL/TLS settings\n")
-            wxT("will take effect the next time you reconnect."),
+            wxT("Changes to server address, port, SSL/TLS, proxy,\n")
+            wxT("and login settings will take effect the next time you reconnect."),
             wxT("World Properties"),
             wxOK | wxICON_INFORMATION, parent);
     }

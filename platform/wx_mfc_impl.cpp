@@ -1272,7 +1272,10 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         int id = evt.GetId();
         CMUSHclientDoc* doc = activeDoc();
 
-        if (id == 0xE200 /*Disconnect*/) {
+        if (id == 32239 /*ID_CONNECTION_CONNECT*/) {
+            // Enable only when disconnected and a world is open.
+            evt.Enable(doc && doc->m_iConnectPhase == eConnectNotConnected);
+        } else if (id == 0xE200 /*Disconnect*/) {
             // Enable only when connected.
             evt.Enable(doc && doc->m_iConnectPhase == eConnectConnectedToMud);
         } else if (id == 0xE201 /*Reconnect*/) {

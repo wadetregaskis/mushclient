@@ -1533,6 +1533,33 @@ static int L_GetOption(lua_State* L)
     else if (!strcmp(opt, "input_font_italic"))    OPT_GET_MEMBER((long)pDoc->m_input_font_italic);
     else if (!strcmp(opt, "input_font_weight"))    OPT_GET_MEMBER(pDoc->m_input_font_weight);
     else if (!strcmp(opt, "input_font_charset"))   OPT_GET_MEMBER((long)pDoc->m_input_font_charset);
+    // Behaviour options with live members added to doc_stub.h
+    else if (!strcmp(opt, "enable_scripts"))             OPT_GET_MEMBER(pDoc->m_bEnableScripts ? 1 : 0);
+    else if (!strcmp(opt, "auto_pause"))                 OPT_GET_MEMBER(pDoc->m_bAutoFreeze ? 1 : 0);
+    else if (!strcmp(opt, "enable_beeps"))               OPT_GET_MEMBER(pDoc->m_enable_beeps ? 1 : 0);
+    else if (!strcmp(opt, "carriage_return_clears_line"))OPT_GET_MEMBER(pDoc->m_bCarriageReturnClearsLine ? 1 : 0);
+    else if (!strcmp(opt, "send_echo"))                  OPT_GET_MEMBER(pDoc->m_bSendEcho ? 1 : 0);
+    // Command / history options
+    else if (!strcmp(opt, "enable_command_stack"))   OPT_GET_MEMBER(pDoc->m_enable_command_stack ? 1 : 0);
+    else if (!strcmp(opt, "history_lines"))          OPT_GET_MEMBER(pDoc->m_nHistoryLines);
+    else if (!strcmp(opt, "escape_deletes_input"))   OPT_GET_MEMBER(pDoc->m_bEscapeDeletesInput ? 1 : 0);
+    else if (!strcmp(opt, "copy_selection_to_clipboard")) OPT_GET_MEMBER(pDoc->m_bCopySelectionToClipboard ? 1 : 0);
+    else if (!strcmp(opt, "unpause_on_send"))        OPT_GET_MEMBER(pDoc->m_bUnpauseOnSend ? 1 : 0);
+    else if (!strcmp(opt, "auto_wrap_window_width")) OPT_GET_MEMBER(pDoc->m_bAutoWrapWindowWidth ? 1 : 0);
+    else if (!strcmp(opt, "speed_walk_delay"))       OPT_GET_MEMBER(pDoc->m_iSpeedWalkDelay);
+    // Spam prevention
+    else if (!strcmp(opt, "enable_spam_prevention")) OPT_GET_MEMBER(pDoc->m_bEnableSpamPrevention ? 1 : 0);
+    else if (!strcmp(opt, "spam_line_count"))        OPT_GET_MEMBER(pDoc->m_iSpamLineCount);
+    // Telnet / echo
+    else if (!strcmp(opt, "no_echo_off"))            OPT_GET_MEMBER(pDoc->m_bNoEchoOff ? 1 : 0);
+    // Hyperlink / display
+    else if (!strcmp(opt, "use_custom_link_colour")) OPT_GET_MEMBER(pDoc->m_bUseCustomLinkColour ? 1 : 0);
+    else if (!strcmp(opt, "hyperlink_colour"))       OPT_GET_MEMBER((long)pDoc->m_iHyperlinkColour);
+    else if (!strcmp(opt, "show_connect_disconnect"))OPT_GET_MEMBER(pDoc->m_bShowConnectDisconnect ? 1 : 0);
+    else if (!strcmp(opt, "send_mxp_afk_response"))  OPT_GET_MEMBER(pDoc->m_bSendMXP_AFK_Response ? 1 : 0);
+    // Script logging
+    else if (!strcmp(opt, "script_errors_to_output_window")) OPT_GET_MEMBER(pDoc->m_bScriptErrorsToOutputWindow ? 1 : 0);
+    else if (!strcmp(opt, "log_script_errors"))      OPT_GET_MEMBER(pDoc->m_bLogScriptErrors ? 1 : 0);
 
     // 2. Cache — value previously written by SetOption.
     {
@@ -1594,6 +1621,33 @@ static int L_SetOption(lua_State* L)
     else if (!strcmp(opt, "input_font_italic"))    pDoc->m_input_font_italic   = (BYTE)(val != 0);
     else if (!strcmp(opt, "input_font_weight"))    pDoc->m_input_font_weight   = val;
     else if (!strcmp(opt, "input_font_charset"))   pDoc->m_input_font_charset  = (DWORD)val;
+    // Behaviour options with live members added to doc_stub.h
+    else if (!strcmp(opt, "enable_scripts"))             pDoc->m_bEnableScripts            = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "auto_pause"))                 pDoc->m_bAutoFreeze               = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "enable_beeps"))               pDoc->m_enable_beeps              = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "carriage_return_clears_line"))pDoc->m_bCarriageReturnClearsLine = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "send_echo"))                  pDoc->m_bSendEcho                 = (unsigned short)(val != 0);
+    // Command / history options
+    else if (!strcmp(opt, "enable_command_stack"))   pDoc->m_enable_command_stack      = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "history_lines"))          pDoc->m_nHistoryLines             = val;
+    else if (!strcmp(opt, "escape_deletes_input"))   pDoc->m_bEscapeDeletesInput       = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "copy_selection_to_clipboard")) pDoc->m_bCopySelectionToClipboard = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "unpause_on_send"))        pDoc->m_bUnpauseOnSend            = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "auto_wrap_window_width")) pDoc->m_bAutoWrapWindowWidth      = (BOOL)(val != 0);
+    else if (!strcmp(opt, "speed_walk_delay"))       pDoc->m_iSpeedWalkDelay           = (unsigned short)val;
+    // Spam prevention
+    else if (!strcmp(opt, "enable_spam_prevention")) pDoc->m_bEnableSpamPrevention     = (val != 0);
+    else if (!strcmp(opt, "spam_line_count"))        pDoc->m_iSpamLineCount            = (int)val;
+    // Telnet / echo
+    else if (!strcmp(opt, "no_echo_off"))            pDoc->m_bNoEchoOff                = (unsigned short)(val != 0);
+    // Hyperlink / display
+    else if (!strcmp(opt, "use_custom_link_colour")) pDoc->m_bUseCustomLinkColour      = (val != 0);
+    else if (!strcmp(opt, "hyperlink_colour"))       pDoc->m_iHyperlinkColour          = (COLORREF)val;
+    else if (!strcmp(opt, "show_connect_disconnect"))pDoc->m_bShowConnectDisconnect    = (val != 0);
+    else if (!strcmp(opt, "send_mxp_afk_response"))  pDoc->m_bSendMXP_AFK_Response    = (val != 0);
+    // Script logging
+    else if (!strcmp(opt, "script_errors_to_output_window")) pDoc->m_bScriptErrorsToOutputWindow = (val != 0);
+    else if (!strcmp(opt, "log_script_errors"))      pDoc->m_bLogScriptErrors          = (val != 0);
     else if (!strcmp(opt, "wrap_column")) {
         if (val >= 20 && val <= MAX_LINE_WIDTH) {
             pDoc->m_nWrapColumn = (unsigned short)val;

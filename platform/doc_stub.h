@@ -1595,6 +1595,15 @@ public:
     CString         m_notes;
     bool            m_bTrace               = false;
 
+    // ── Behaviour options not in doc.h subset above ───────────────────
+    // Kept in sync with GetOption/SetOption live-member lists in
+    // lua_world_api_portable.cpp and with xml_load/save_world_portable.cpp.
+    unsigned short  m_bEnableScripts            = 1;    // enable scripting
+    unsigned short  m_bAutoFreeze               = 1;    // freeze when not at bottom
+    unsigned short  m_enable_beeps              = 1;    // play BEL character
+    unsigned short  m_bCarriageReturnClearsLine = 0;    // \r wipes current line
+    unsigned short  m_bSendEcho                 = 0;    // send echo negotiation
+
     // ── Scripting state ───────────────────────────────────────────────
     unsigned short  m_iCurrentActionSource = eUnknownActionSource;
     unsigned short  m_iNoteStyle           = NORMAL;

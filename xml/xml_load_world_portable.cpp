@@ -531,6 +531,19 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
             bool is_colour = (OptionsTable[i].iFlags & OPT_RGB_COLOUR) != 0;
             long val = (long)OptionsTable[i].iDefault;
 
+            // Skip entirely if the attribute is not present in the XML.
+            // Get_XML_number substitutes "0" for absent attributes when
+            // bUseDefault=false, which throws a range error for options
+            // whose minimum > 0 (e.g. auto_resize_minimum_lines, range 1-100).
+            // Checking attribute presence first avoids that false rejection.
+            // Colours and booleans are typically safe (default 0 is valid), but
+            // we skip them consistently for correctness.
+            {
+                CAttribute* attr = nullptr;
+                if (!pWorld->AttributeMap.Lookup(optName, attr) || !attr)
+                    continue;
+            }
+
             bool got;
             if (is_colour) {
                 COLORREF c = (COLORREF)val;

@@ -15,6 +15,7 @@
 #include "../regexp.h"
 #include "../scripting/scripting.h"
 
+#include <climits>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -485,6 +486,17 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
         bool bUTF8 = (doc.m_bUTF_8 != 0);
         Get_XML_boolean(*pWorld, "utf_8", bUTF8, bUseDefault);
         doc.m_bUTF_8 = bUTF8 ? 1 : 0;
+
+        // Proxy / SSL / keep-alives
+        Get_XML_boolean_ushort(*pWorld, "use_ssl",                  doc.m_bUseSSL,               bUseDefault);
+        Get_XML_ushort        (*pWorld, "proxy_type",               doc.m_iSocksProcessing,      bUseDefault, eProxyServerNone, eProxyServerLast - 1);
+        Get_XML_ushort        (*pWorld, "proxy_port",               doc.m_iProxyServerPort,      bUseDefault, 0, USHRT_MAX);
+        Get_XML_boolean_ushort(*pWorld, "send_keep_alives",         doc.m_bSendKeepAlives,       bUseDefault);
+        Get_XML_boolean_ushort(*pWorld, "save_world_automatically", doc.m_bSaveWorldAutomatically, bUseDefault);
+        getAttr("proxy_server",   doc.m_strProxyServerName);
+        getAttr("proxy_username", doc.m_strProxyUserName);
+        // proxy_password is OPT_PASSWORD — saved base64-encoded by Windows,
+        // skipped by xml_save_world_portable.cpp, so nothing to load here.
 
     END_LOAD_LOOP
 }

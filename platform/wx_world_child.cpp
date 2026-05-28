@@ -12,6 +12,8 @@
 #include <wx/config.h>
 #include <wx/clipbrd.h>   // wxTheClipboard, wxTextDataObject, wxDF_TEXT
 #include <string>
+#include <thread>   // std::thread for async DNS lookup
+#include <netdb.h>  // getaddrinfo, freeaddrinfo
 
 // ── MUSHclient headers ────────────────────────────────────────────────────
 // stdafx.h and MUSHclient.h must precede doc.h: MUSHclient.h pulls in
@@ -216,6 +218,40 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             std::string savePath = static_cast<const char*>(pathCStr);
             if (savePath.empty()) return false;
             return m_doc->OnSaveDocument(savePath.c_str()) != FALSE;
+        };
+
+        // Async DNS: run getaddrinfo on a background thread so the main thread
+        // (and GUI) remains responsive during hostname resolution.  When the
+        // thread completes, wxCallAfter delivers the result back to the main
+        // thread where LookupHostNameComplete() is safe to call.
+        m_doc->m_fn_lookup_host = [this](const std::string& host, int phase) {
+            CMUSHclientDoc* doc = m_doc;
+            std::thread([doc, host, phase]() {
+                struct addrinfo hints{}, *res = nullptr;
+                hints.ai_family   = AF_INET;
+                hints.ai_socktype = SOCK_STREAM;
+                bool ok = (::getaddrinfo(host.c_str(), nullptr, &hints, &res) == 0 && res);
+                struct in_addr addr{};
+                if (ok && res) {
+                    addr = reinterpret_cast<struct sockaddr_in*>(res->ai_addr)->sin_addr;
+                    ::freeaddrinfo(res);
+                }
+                // Post the result back to the main thread.  Check the doc is
+                // still alive (world might have been closed while resolving).
+                wxTheApp->CallAfter([doc, addr, phase, ok]() {
+                    if (!App.m_pWorldDocTemplate) return;
+                    bool alive = false;
+                    POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
+                    while (pos) {
+                        CDocument* p = App.m_pWorldDocTemplate->GetNextDoc(pos);
+                        if (p == doc) { alive = true; break; }
+                    }
+                    if (!alive) return;
+                    // Also guard against the user disconnecting during lookup.
+                    if (doc->m_iConnectPhase != phase) return;
+                    doc->LookupHostNameComplete(addr, phase, ok);
+                });
+            }).detach();
         };
 
         // world.SetWorldWindowStatus(n): change the MDI child frame window state.
@@ -2857,6 +2893,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_repaint                  = nullptr;
         m_doc->m_fn_move_world_window        = nullptr;
         m_doc->m_fn_save                     = nullptr;
+        m_doc->m_fn_lookup_host              = nullptr;
         m_doc->m_fn_set_window_status        = nullptr;
         m_doc->m_fn_clear_output             = nullptr;
         m_doc->m_fn_status                   = nullptr;

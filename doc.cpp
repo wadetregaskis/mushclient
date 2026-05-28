@@ -6902,76 +6902,110 @@ bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
 
 #else  // !_WIN32
 
-  // Non-Windows: synchronous DNS resolution using getaddrinfo.
-  // WSAAsyncGetHostByName is Windows-only; on POSIX we resolve immediately
-  // (blocking briefly) then call InitiateConnection directly.
+  // Non-Windows: async DNS resolution using a background thread so the GUI
+  // remains responsive during lookups (getaddrinfo blocks).
+  // If m_fn_lookup_host is set (mushgui), delegate to it — it will call
+  // LookupHostNameComplete() on the main thread when done.
+  // Otherwise (mushcli) fall back to synchronous resolution.
   {
     delete [] m_pGetHostStruct;
     m_pGetHostStruct = NULL;
 
+    if (m_fn_lookup_host)
+      {
+      // Async path: GUI build.  Return immediately; result arrives later via
+      // LookupHostNameComplete().
+      m_fn_lookup_host (std::string (sName), m_iConnectPhase);
+      return false;
+      }
+
+    // Synchronous fallback (mushcli or before the frame has wired the callback).
     struct addrinfo hints{}, *res = nullptr;
     hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
-    if (::getaddrinfo (sName, nullptr, &hints, &res) != 0 || !res)
+    struct in_addr resolved{};
+    bool ok = (::getaddrinfo (sName, nullptr, &hints, &res) == 0 && res);
+    if (ok)
       {
-      m_bDisconnectOK = true;
-      m_iConnectPhase = eConnectNotConnected;
-      App.m_bUpdateActivity = TRUE;
-
-      if (App.m_bNotifyIfCannotConnect)
-        {
-        CString strMsg = TFormat ("Unable to resolve host name for \"%s\"",
-                                  sName);
-        if (App.m_bErrorNotificationToOutputWindow)
-          Note (strMsg);
-        else
-          UMessageBox (strMsg);
-        }
-
-      return true;   // error — caller should abort
+      resolved = ((struct sockaddr_in *) res->ai_addr)->sin_addr;
+      ::freeaddrinfo (res);
       }
 
-    struct in_addr resolved = ((struct sockaddr_in *) res->ai_addr)->sin_addr;
-    ::freeaddrinfo (res);
-
-    if (m_iConnectPhase == eConnectMudNameLookup)
-      m_sockAddr.sin_addr = resolved;
-    else if (m_iConnectPhase == eConnectProxyNameLookup)
-      m_ProxyAddr.sin_addr = resolved;
-    else
-      {
-      TMessageBox ("Unexpected phase in LookupHostName");
-      return true;
-      }
-
-    // If we resolved the MUD address and a proxy is configured,
-    // check whether the proxy address also needs resolving.
-    if (m_iConnectPhase == eConnectMudNameLookup &&
-        m_iSocksProcessing != eProxyServerNone)
-      {
-      if (m_ProxyAddr.sin_family != AF_INET ||
-          m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
-        {
-        m_ProxyAddr.sin_family         = AF_INET;
-        m_ProxyAddr.sin_addr.s_addr    = inet_addr (m_strProxyServerName);
-        if (m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
-          {
-          m_iConnectPhase = eConnectProxyNameLookup;
-          LookupHostName (m_strProxyServerName);
-          return false;
-          }
-        }
-      }
-
-    InitiateConnection ();
-    return false;   // connection attempt started
+    LookupHostNameComplete (resolved, m_iConnectPhase, ok);
+    return !ok;   // true = error, caller should abort
   }
 
 #endif  // _WIN32
 
 
-  } // end of CMUSHclientDoc::LookupHostName  
+  } // end of CMUSHclientDoc::LookupHostName
+
+
+#ifndef _WIN32
+// Called on the main thread when an async (or synchronous fallback) DNS
+// lookup finishes.  addr is the resolved address; phase is the connect phase
+// that was active when LookupHostName was called; ok is false on failure.
+void CMUSHclientDoc::LookupHostNameComplete (struct in_addr addr, int phase, bool ok)
+  {
+  // Guard: the user may have disconnected while the DNS thread was running.
+  if (m_iConnectPhase != phase)
+    return;
+
+  if (!ok)
+    {
+    m_bDisconnectOK = true;
+    m_iConnectPhase = eConnectNotConnected;
+    App.m_bUpdateActivity = TRUE;
+    UpdateAllViews (NULL);
+
+    if (App.m_bNotifyIfCannotConnect)
+      {
+      CString strWhich = (phase == eConnectProxyNameLookup)
+                         ? m_strProxyServerName
+                         : m_server;
+      CString strMsg = TFormat ("Unable to resolve host name for \"%s\"",
+                                (LPCTSTR) strWhich);
+      if (App.m_bErrorNotificationToOutputWindow)
+        Note (strMsg);
+      else
+        UMessageBox (strMsg);
+      }
+    return;
+    }
+
+  if (phase == eConnectMudNameLookup)
+    m_sockAddr.sin_addr = addr;
+  else if (phase == eConnectProxyNameLookup)
+    m_ProxyAddr.sin_addr = addr;
+  else
+    {
+    TMessageBox ("Unexpected phase in LookupHostNameComplete");
+    return;
+    }
+
+  // If we just resolved the MUD address and a proxy is configured,
+  // check whether the proxy address also needs resolving.
+  if (phase == eConnectMudNameLookup &&
+      m_iSocksProcessing != eProxyServerNone)
+    {
+    if (m_ProxyAddr.sin_family != AF_INET ||
+        m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
+      {
+      m_ProxyAddr.sin_family         = AF_INET;
+      m_ProxyAddr.sin_addr.s_addr    = inet_addr (m_strProxyServerName);
+      if (m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
+        {
+        m_iConnectPhase = eConnectProxyNameLookup;
+        LookupHostName (m_strProxyServerName);
+        return;
+        }
+      }
+    }
+
+  InitiateConnection ();
+  } // end of CMUSHclientDoc::LookupHostNameComplete
+#endif  // !_WIN32
 
 
 // we come here when we know (both) IP addresses (mud and proxy)

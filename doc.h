@@ -1606,6 +1606,12 @@ public:
   // world.Save(): save the world file to its current path.
   // Returns false if the world has no path set yet.
   std::function<bool()> m_fn_save;
+
+  // Async DNS: called by LookupHostName to resolve a hostname off the main
+  // thread so the GUI stays responsive.  The callback must eventually call
+  // LookupHostNameComplete(addr, phase, ok) on the main thread.
+  // If nullptr (e.g. mushcli), LookupHostName falls back to synchronous resolution.
+  std::function<void(const std::string& host, int phase)> m_fn_lookup_host;
 #endif
 
   protected:
@@ -2051,6 +2057,12 @@ public:
   void HostNameResolved (WPARAM wParam, LPARAM lParam);
   CString GetSocketError (int nError);
   bool LookupHostName (LPCTSTR sName);
+#ifndef _WIN32
+  // Called (on the main thread) when an async DNS lookup launched by
+  // m_fn_lookup_host completes.  addr is the resolved address; ok is false
+  // if resolution failed.  phase is the m_iConnectPhase value at lookup start.
+  void LookupHostNameComplete (struct in_addr addr, int phase, bool ok);
+#endif
   void InitiateConnection (void);
   void ConnectionEstablished (void);
 

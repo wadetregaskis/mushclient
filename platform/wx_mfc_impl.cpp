@@ -699,6 +699,18 @@ static const int ID_MENU_CFG_VARIABLES = wxID_HIGHEST + 403;
 static const int ID_MENU_CFG_MACROS    = wxID_HIGHEST + 404;
 static const int ID_MENU_CFG_COLORS    = wxID_HIGHEST + 405;
 
+// Import / Export set IDs (one pair per set type)
+static const int ID_MENU_IMPORT_TRIGGERS = wxID_HIGHEST + 420;
+static const int ID_MENU_EXPORT_TRIGGERS = wxID_HIGHEST + 421;
+static const int ID_MENU_IMPORT_ALIASES  = wxID_HIGHEST + 422;
+static const int ID_MENU_EXPORT_ALIASES  = wxID_HIGHEST + 423;
+static const int ID_MENU_IMPORT_TIMERS   = wxID_HIGHEST + 424;
+static const int ID_MENU_EXPORT_TIMERS   = wxID_HIGHEST + 425;
+static const int ID_MENU_IMPORT_COLORS   = wxID_HIGHEST + 426;
+static const int ID_MENU_EXPORT_COLORS   = wxID_HIGHEST + 427;
+static const int ID_MENU_IMPORT_MACROS   = wxID_HIGHEST + 428;
+static const int ID_MENU_EXPORT_MACROS   = wxID_HIGHEST + 429;
+
 // ── Connection / logging IDs ──────────────────────────────────────────────────
 static const int ID_CONN_LOG_TOGGLE    = wxID_HIGHEST + 410;
 
@@ -1152,6 +1164,23 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     cfgMenu->AppendSeparator();
     cfgMenu->Append(ID_MENU_CFG_MACROS,   wxT("&Macros && Keypad…"));
     cfgMenu->Append(ID_MENU_CFG_COLORS,   wxT("&Colors…"));
+    cfgMenu->AppendSeparator();
+    // Import / Export submenus
+    wxMenu* importMenu = new wxMenu();
+    importMenu->Append(ID_MENU_IMPORT_TRIGGERS, wxT("&Triggers…"));
+    importMenu->Append(ID_MENU_IMPORT_ALIASES,  wxT("&Aliases…"));
+    importMenu->Append(ID_MENU_IMPORT_TIMERS,   wxT("T&imers…"));
+    importMenu->Append(ID_MENU_IMPORT_COLORS,   wxT("&Colors…"));
+    importMenu->Append(ID_MENU_IMPORT_MACROS,   wxT("&Macros…"));
+    cfgMenu->AppendSubMenu(importMenu, wxT("&Import"));
+
+    wxMenu* exportMenu = new wxMenu();
+    exportMenu->Append(ID_MENU_EXPORT_TRIGGERS, wxT("&Triggers…"));
+    exportMenu->Append(ID_MENU_EXPORT_ALIASES,  wxT("&Aliases…"));
+    exportMenu->Append(ID_MENU_EXPORT_TIMERS,   wxT("T&imers…"));
+    exportMenu->Append(ID_MENU_EXPORT_COLORS,   wxT("&Colors…"));
+    exportMenu->Append(ID_MENU_EXPORT_MACROS,   wxT("&Macros…"));
+    cfgMenu->AppendSubMenu(exportMenu, wxT("E&xport"));
     mb->Append(cfgMenu, wxT("&Configure"));
 
     // ── Window menu ───────────────────────────────────────────────────────
@@ -1257,7 +1286,17 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                    id == ID_MENU_CFG_TIMERS    ||
                    id == ID_MENU_CFG_VARIABLES ||
                    id == ID_MENU_CFG_MACROS    ||
-                   id == ID_MENU_CFG_COLORS) {
+                   id == ID_MENU_CFG_COLORS    ||
+                   id == ID_MENU_IMPORT_TRIGGERS ||
+                   id == ID_MENU_EXPORT_TRIGGERS ||
+                   id == ID_MENU_IMPORT_ALIASES  ||
+                   id == ID_MENU_EXPORT_ALIASES  ||
+                   id == ID_MENU_IMPORT_TIMERS   ||
+                   id == ID_MENU_EXPORT_TIMERS   ||
+                   id == ID_MENU_IMPORT_COLORS   ||
+                   id == ID_MENU_EXPORT_COLORS   ||
+                   id == ID_MENU_IMPORT_MACROS   ||
+                   id == ID_MENU_EXPORT_MACROS) {
             // Need an active world.
             evt.Enable(doc != nullptr);
         } else if (id == ID_MENU_GAME_LUA_EVAL ||
@@ -1445,6 +1484,36 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 CColorsDlg dlg(frame, doc);
                 dlg.ShowModal();
             }
+        } else if (id == ID_MENU_IMPORT_TRIGGERS) {
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->Load_Set(TRIGGER, "", nullptr);
+        } else if (id == ID_MENU_EXPORT_TRIGGERS) {
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->Save_Set(TRIGGER, nullptr);
+        } else if (id == ID_MENU_IMPORT_ALIASES) {
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->Load_Set(ALIAS, "", nullptr);
+        } else if (id == ID_MENU_EXPORT_ALIASES) {
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->Save_Set(ALIAS, nullptr);
+        } else if (id == ID_MENU_IMPORT_TIMERS) {
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->Load_Set(TIMER, "", nullptr);
+        } else if (id == ID_MENU_EXPORT_TIMERS) {
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->Save_Set(TIMER, nullptr);
+        } else if (id == ID_MENU_IMPORT_COLORS) {
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->Load_Set(COLOUR, "", nullptr);
+        } else if (id == ID_MENU_EXPORT_COLORS) {
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->Save_Set(COLOUR, nullptr);
+        } else if (id == ID_MENU_IMPORT_MACROS) {
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->Load_Set(MACRO, "", nullptr);
+        } else if (id == ID_MENU_EXPORT_MACROS) {
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->Save_Set(MACRO, nullptr);
         } else if (id == ID_CONN_LOG_TOGGLE) {
             CMUSHclientDoc* doc = activeDoc();
             if (!doc) { evt.Skip(); return; }

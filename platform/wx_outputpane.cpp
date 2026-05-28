@@ -535,12 +535,27 @@ void COutputPane::SetOutputFont(const wxFont& font)
                         m_fontItalic, m_fontBoldItalic,
                         m_fontItalicUnderline, m_fontBoldItalicUnderline);
 
-    // wxMemoryDC for reliable measurement (same reason as constructor).
-    wxBitmap bmp(1, 1, 24);
-    wxMemoryDC mdc(bmp);
-    mdc.SetFont(m_font);
-    wxCoord w, h;
-    mdc.GetTextExtent("M", &w, &h);
+    // Use wxClientDC here — the window already exists at this point (SetOutputFont
+    // is called from wx_world_child.cpp after creation).  wxClientDC inherits the
+    // window's DPI and scale factor, so GetTextExtent returns logical pixel widths
+    // that match what DrawText will actually render.  A bitmap-backed wxMemoryDC
+    // (used in the constructor) may report physical pixel widths on Retina/HiDPI
+    // displays (2× the logical width), causing selection rectangles and click-to-
+    // character mapping to be off by a factor of ~2.
+    wxCoord w = 0, h = 0;
+    {
+        wxClientDC cdc(this);
+        cdc.SetFont(m_font);
+        cdc.GetTextExtent("M", &w, &h);
+    }
+    // Fallback: if wxClientDC didn't give useful metrics (can happen on some GTK
+    // configurations before the first paint), retry with a bitmap-backed MemoryDC.
+    if (w <= 0 || h <= 0) {
+        wxBitmap bmp(1, 1, 24);
+        wxMemoryDC mdc(bmp);
+        mdc.SetFont(m_font);
+        mdc.GetTextExtent("M", &w, &h);
+    }
     if (h > 0) m_lineH = h + 2;
     if (w > 0) m_charW = w;
 
@@ -583,6 +598,34 @@ void COutputPane::OnPaint(wxPaintEvent&)
     // displays produces a blurry 1× bitmap blown up to 2× physical pixels.
     wxAutoBufferedPaintDC dc(this);
     PrepareDC(dc);
+
+    // Re-measure character metrics from the live rendering DC.  On macOS/HiDPI
+    // the wxMemoryDC used during construction may report physical pixel widths
+    // (2× logical), while the paint DC works in logical pixels.  If the stored
+    // m_charW / m_lineH don't match the DC, selection rectangles and click-to-
+    // char mapping are off by the scale factor.  Rebuilding the wrap cache is
+    // deferred via CallAfter so it doesn't happen inside the paint handler itself.
+    {
+        dc.SetFont(m_font);
+        wxCoord dcW = 0, dcH = 0;
+        dc.GetTextExtent("M", &dcW, &dcH);
+        if (dcW > 0 && dcH > 0) {
+            int newLineH = dcH + 2;
+            if (dcW != m_charW || newLineH != m_lineH) {
+                m_charW = dcW;
+                m_lineH = newLineH;
+                // Defer the wrap-cache rebuild so we don't invalidate layout
+                // while in the middle of a paint pass.
+                CallAfter([this]() {
+                    SetScrollRate(0, m_lineH);
+                    RebuildWrapCache();
+                    UpdateScrollbars(m_autoScroll);
+                    Refresh();
+                    if (m_fn_grid_changed) m_fn_grid_changed();
+                });
+            }
+        }
+    }
 
     wxColour bgCol(GetRValue(m_bgColor), GetGValue(m_bgColor), GetBValue(m_bgColor));
     dc.SetBackground(wxBrush(bgCol));

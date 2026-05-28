@@ -520,25 +520,6 @@ static void apply_alpha_option(CMUSHclientDoc& doc, const char* opt, const CStri
     else if (!strcmp(opt, "log_line_postamble_output")) doc.m_strLogLinePostambleOutput = val;
     else if (!strcmp(opt, "proxy_server"))       doc.m_strProxyServerName    = val;
     else if (!strcmp(opt, "proxy_username"))     doc.m_strProxyUserName      = val;
-    // Auto-say
-    else if (!strcmp(opt, "auto_say_string"))           doc.m_strAutoSayString         = val;
-    else if (!strcmp(opt, "auto_say_override_prefix"))  doc.m_strOverridePrefix        = val;
-    // Command stacking / spam
-    else if (!strcmp(opt, "command_stack_character"))   doc.m_strCommandStackCharacter = val;
-    else if (!strcmp(opt, "spam_message"))              doc.m_strSpamMessage           = val;
-    // Tab completion / recall
-    else if (!strcmp(opt, "tab_completion_defaults"))   doc.m_strTabCompletionDefaults = val;
-    else if (!strcmp(opt, "recall_line_preamble"))      doc.m_strRecallLinePreamble    = val;
-    // Script editor
-    else if (!strcmp(opt, "script_editor"))             doc.m_strScriptEditor          = val;
-    // Sound files
-    else if (!strcmp(opt, "beep_sound"))                doc.m_strBeepSound             = val;
-    else if (!strcmp(opt, "new_activity_sound"))        doc.m_new_activity_sound       = val;
-    // Paste strings
-    else if (!strcmp(opt, "paste_preamble"))            doc.m_paste_preamble           = val;
-    else if (!strcmp(opt, "paste_postamble"))           doc.m_paste_postamble          = val;
-    else if (!strcmp(opt, "paste_line_preamble"))       doc.m_pasteline_preamble       = val;
-    else if (!strcmp(opt, "paste_line_postamble"))      doc.m_pasteline_postamble      = val;
     // Unknown options: caller stores in cache
 }
 

@@ -12,6 +12,7 @@
 #ifndef _WIN32
 
 #include "platform/doc_stub.h"
+#include "scripting/scripting.h"  // DOCUMENT_STATE, WORLD_LIBRARY
 
 #ifdef LUA_VERSION  // Lua headers available (always true here — file only compiled with LUA_FOUND)
 
@@ -797,8 +798,8 @@ static void RegisterUtilsLib(lua_State* L)
 // ── RegisterLuaRoutines ───────────────────────────────────────────────────────
 // On Windows this (in lua_methods.cpp) registers the full MUSHclient Lua API
 // ("world" library, trigger/alias/timer flag tables, colour name tables, etc.).
-// On macOS we the portable world library plus the standard extension
-// modules that are compiled on macOS (rex, compress, bits, bc, lpeg).
+// On macOS we register the portable world library plus standard extension
+// modules (rex, compress, bits, bc, lpeg).
 
 // Forward declaration — implemented in lua_world_api_portable.cpp.
 void RegisterWorldLib(lua_State* L);
@@ -811,14 +812,50 @@ extern "C" {
     int luaopen_lpeg   (lua_State *);
 }
 
+// Override for Lua print(): routes through world.Note() so output appears in
+// the MUSHclient output window rather than stdout.
+// Mirrors l_print() in lua_methods.cpp.
+static int l_print_via_note(lua_State* L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, DOCUMENT_STATE);
+    CMUSHclientDoc* pDoc = static_cast<CMUSHclientDoc*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!pDoc) return 0;
+
+    int n = lua_gettop(L);
+    string out;
+    lua_getglobal(L, "tostring");
+    for (int i = 1; i <= n; ++i) {
+        lua_pushvalue(L, -1);    // tostring
+        lua_pushvalue(L, i);     // arg
+        lua_call(L, 1, 1);
+        const char* s = lua_tostring(L, -1);
+        if (!s) luaL_error(L, "'tostring' must return a string");
+        if (i > 1) out += '\t';
+        out += s;
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);  // pop tostring
+
+    pDoc->Note(out.c_str());
+    return 0;
+}
+
 int RegisterLuaRoutines (lua_State * L)
 {
     // Open all standard Lua libraries (io, os, string, table, math, package …)
     luaL_openlibs(L);
 
-    // Register the "world" library (Note, SetVariable, Send, Execute, …)
+    // Register the "world" library (Note, SetVariable, Send, Execute, …).
+    // Also sets up: the _G metatable (bare Note() calls) and the mushclient.world
+    // named metatable (w:Note() OOP-style calls from GetWorld()).
     RegisterWorldLib(L);
     RegisterUtilsLib(L);
+
+    // Override print() to route through world.Note() — mirrors l_print in
+    // lua_methods.cpp so scripts calling print() see output in the world window.
+    lua_pushcfunction(L, l_print_via_note);
+    lua_setglobal(L, "print");
 
     // ── Flag/constant tables (mirror lua_methods.cpp MakeFlagsTable calls) ──
     // trigger_flag table

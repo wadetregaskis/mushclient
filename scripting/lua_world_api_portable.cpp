@@ -45,9 +45,35 @@ using std::string;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-// Retrieve the doc pointer stored in the Lua registry by CScriptEngine.
+// The Lua type name for world userdata objects (mirrors lua_methods.cpp).
+// RegisterWorldLib() creates a named metatable under this key so that
+// GetWorld("name"):Note("hello") OOP-style calls work.
+const char mushclient_typename[] = "mushclient.world";
+
+// Retrieve the doc pointer, following Windows lua_methods.cpp doc() semantics:
+//   • If argument 1 is a mushclient.world userdata (from GetWorld()), use that.
+//     Remove it from the stack so the rest of the function sees the real args.
+//   • Otherwise fall back to the doc stored in the Lua registry.
 static CMUSHclientDoc* world_doc(lua_State* L)
 {
+    // Check if argument 1 is a world userdata (OOP call: w:Note("hello"))
+    void* p = lua_touserdata(L, 1);
+    if (p && lua_getmetatable(L, 1)) {
+        lua_getfield(L, LUA_REGISTRYINDEX, mushclient_typename);
+        int ok = lua_rawequal(L, -1, -2);
+        lua_pop(L, 2);
+        if (ok) {
+            CMUSHclientDoc* pWanted = *(CMUSHclientDoc**)p;
+            lua_remove(L, 1);  // strip userdata so callers see normal arg list
+            // Verify the world still exists in the doc list
+            for (POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition(); pos; ) {
+                CMUSHclientDoc* pDoc = (CMUSHclientDoc*)App.m_pWorldDocTemplate->GetNextDoc(pos);
+                if (pDoc == pWanted) return pDoc;
+            }
+            luaL_error(L, "world is no longer available");
+        }
+    }
+    // Fall back to the registry-stored doc (normal world.Note() call)
     lua_getfield(L, LUA_REGISTRYINDEX, DOCUMENT_STATE);
     CMUSHclientDoc* pDoc = static_cast<CMUSHclientDoc*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
@@ -55,6 +81,19 @@ static CMUSHclientDoc* world_doc(lua_State* L)
         luaL_error(L, "world is no longer available");
     return pDoc;
 }
+
+// Push a full userdata representing pDoc with the mushclient.world metatable.
+// This is what GetWorld()/GetWorldById() return so that OOP calls work.
+static void push_world_userdata(lua_State* L, CMUSHclientDoc* pDoc)
+{
+    CMUSHclientDoc** ud = (CMUSHclientDoc**)lua_newuserdata(L, sizeof(CMUSHclientDoc*));
+    *ud = pDoc;
+    luaL_getmetatable(L, mushclient_typename);
+    lua_setmetatable(L, -2);
+}
+
+// __tostring for world userdata objects — mirrors world2string() in lua_methods.cpp.
+static int world2string_fn(lua_State* L) { lua_pushliteral(L, "world"); return 1; }
 
 // Concatenate all string arguments on the Lua stack (like world.Note's vararg).
 static string concat_args(lua_State* L, const char* delim = "", int first = 1)
@@ -6131,47 +6170,56 @@ static int L_GetGlobalOptionList(lua_State* L)
 }
 
 // ── GetWorld / GetWorldById / GetWorldIdList / GetWorldList ───────────────────
-// In the portable single-world build, "world" == the doc bound to this Lua state.
-// GetWorld and GetWorldById return the current world if the name/id matches.
-// GetWorldList / GetWorldIdList return a one-element table.
+// These mirror the Windows implementations in lua_methods.cpp: search all open
+// worlds in App.m_pWorldDocTemplate and return a mushclient.world userdata so
+// that OOP-style calls like GetWorld("name"):Note("hello") work correctly.
 static int L_GetWorld(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
     const char* name = luaL_checkstring(L, 1);
-    if (strcasecmp(name, static_cast<const char*>(pDoc->m_mush_name)) == 0) {
-        // Return a light userdata representing the doc pointer
-        lua_pushlightuserdata(L, pDoc);
-        return 1;
+    for (POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition(); pos; ) {
+        CMUSHclientDoc* pDoc = (CMUSHclientDoc*)App.m_pWorldDocTemplate->GetNextDoc(pos);
+        if (pDoc->m_mush_name.CompareNoCase(name) == 0) {
+            push_world_userdata(L, pDoc);
+            return 1;
+        }
     }
     return 0;
 }
 
 static int L_GetWorldById(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
     const char* id = luaL_checkstring(L, 1);
-    if (strcasecmp(id, static_cast<const char*>(pDoc->m_strWorldID)) == 0) {
-        lua_pushlightuserdata(L, pDoc);
-        return 1;
+    for (POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition(); pos; ) {
+        CMUSHclientDoc* pDoc = (CMUSHclientDoc*)App.m_pWorldDocTemplate->GetNextDoc(pos);
+        if (pDoc->m_strWorldID.CompareNoCase(id) == 0) {
+            push_world_userdata(L, pDoc);
+            return 1;
+        }
     }
     return 0;
 }
 
 static int L_GetWorldList(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
     lua_newtable(L);
-    lua_pushstring(L, static_cast<const char*>(pDoc->m_mush_name));
-    lua_rawseti(L, -2, 1);
+    int i = 1;
+    for (POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition(); pos; ) {
+        CMUSHclientDoc* pDoc = (CMUSHclientDoc*)App.m_pWorldDocTemplate->GetNextDoc(pos);
+        lua_pushstring(L, static_cast<const char*>(pDoc->m_mush_name));
+        lua_rawseti(L, -2, i++);
+    }
     return 1;
 }
 
 static int L_GetWorldIdList(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
     lua_newtable(L);
-    lua_pushstring(L, static_cast<const char*>(pDoc->m_strWorldID));
-    lua_rawseti(L, -2, 1);
+    int i = 1;
+    for (POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition(); pos; ) {
+        CMUSHclientDoc* pDoc = (CMUSHclientDoc*)App.m_pWorldDocTemplate->GetNextDoc(pos);
+        lua_pushstring(L, static_cast<const char*>(pDoc->m_strWorldID));
+        lua_rawseti(L, -2, i++);
+    }
     return 1;
 }
 
@@ -7378,10 +7426,33 @@ static const luaL_Reg worldlib[] = {
 };
 
 // Called from RegisterLuaRoutines() in lua_utils_portable.cpp.
+// Mirrors the world-registration block in lua_methods.cpp::RegisterLuaRoutines().
 void RegisterWorldLib(lua_State* L)
 {
+    // ── Register the "world" global library ──────────────────────────────────
+    // luaL_register leaves the world table on the stack.
     luaL_register(L, WORLD_LIBRARY, worldlib);
-    lua_pop(L, 1);  // pop the table luaL_register left on the stack
+
+    // ── _G metatable so bare calls work: Note("hi") == world.Note("hi") ──────
+    // Mirrors: lua_pushvalue(L,LUA_GLOBALSINDEX) / newtable / setfield __index /
+    //          setmetatable in lua_methods.cpp.
+    lua_pushvalue(L, LUA_GLOBALSINDEX);  // _G
+    lua_newtable(L);                      // new metatable for _G
+    lua_pushvalue(L, -3);                 // world table (copy)
+    lua_setfield(L, -2, "__index");       // metatable.__index = world
+    lua_setmetatable(L, -2);              // _G's metatable = our table
+    lua_pop(L, 1);                        // pop _G
+
+    // ── mushclient.world named metatable for OOP: w:Note("hi") ───────────────
+    // Mirrors the luaL_newmetatable / worldlib_meta / __index = world block.
+    luaL_newmetatable(L, mushclient_typename);  // "mushclient.world" metatable
+    lua_pushcfunction(L, world2string_fn);
+    lua_setfield(L, -2, "__tostring");
+    lua_pushvalue(L, -2);                       // world table (still on stack)
+    lua_setfield(L, -2, "__index");             // meta.__index = world
+    lua_pop(L, 1);                              // pop the named metatable
+
+    lua_pop(L, 1);  // pop the world table
 }
 
 #endif // !_WIN32

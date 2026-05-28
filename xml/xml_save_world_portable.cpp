@@ -219,25 +219,6 @@ static CString get_alpha_value(const CMUSHclientDoc* doc, const char* opt)
     if (!strcmp(opt, "proxy_server"))          return doc->m_strProxyServerName;
     if (!strcmp(opt, "proxy_username"))        return doc->m_strProxyUserName;
     if (!strcmp(opt, "proxy_password"))        return doc->m_strProxyPassword;
-    // Auto-say
-    if (!strcmp(opt, "auto_say_string"))           return doc->m_strAutoSayString;
-    if (!strcmp(opt, "auto_say_override_prefix"))  return doc->m_strOverridePrefix;
-    // Command stacking / spam
-    if (!strcmp(opt, "command_stack_character"))   return doc->m_strCommandStackCharacter;
-    if (!strcmp(opt, "spam_message"))              return doc->m_strSpamMessage;
-    // Tab completion / recall
-    if (!strcmp(opt, "tab_completion_defaults"))   return doc->m_strTabCompletionDefaults;
-    if (!strcmp(opt, "recall_line_preamble"))      return doc->m_strRecallLinePreamble;
-    // Script editor
-    if (!strcmp(opt, "script_editor"))             return doc->m_strScriptEditor;
-    // Sound files
-    if (!strcmp(opt, "beep_sound"))                return doc->m_strBeepSound;
-    if (!strcmp(opt, "new_activity_sound"))        return doc->m_new_activity_sound;
-    // Paste strings
-    if (!strcmp(opt, "paste_preamble"))            return doc->m_paste_preamble;
-    if (!strcmp(opt, "paste_postamble"))           return doc->m_paste_postamble;
-    if (!strcmp(opt, "paste_line_preamble"))       return doc->m_pasteline_preamble;
-    if (!strcmp(opt, "paste_line_postamble"))      return doc->m_pasteline_postamble;
 
     auto it = doc->m_alphaOptionCache.find(opt);
     if (it != doc->m_alphaOptionCache.end()) return CString(it->second.c_str());

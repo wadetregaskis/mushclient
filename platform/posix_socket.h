@@ -315,7 +315,12 @@ public:
                 char peek;
                 int n = (int)::recv(fd, &peek, 1, MSG_PEEK | MSG_DONTWAIT);
                 if (n == 0) {
+                    // EOF — notify and close.  Without Close() the fd stays
+                    // readable-with-EOF on every subsequent poll, firing OnClose
+                    // again and again until the fd is actually closed.
                     s->OnClose(0);
+                    if (s->m_hSocket != INVALID_SOCKET)
+                        s->Close();
                 } else {
                     s->OnReceive(0);
                 }

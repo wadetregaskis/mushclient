@@ -1923,13 +1923,36 @@ public:
     void    ShowOptions();
     void    ShowAlphaOptions();
 
-    // ── World load/save (archive-dependent, not yet ported) ──────────
+    // ── World load/save ───────────────────────────────────────────────
     void Load_World_XML(class CArchive&, unsigned long, unsigned long,
                         unsigned int*, unsigned int*, unsigned int*,
                         unsigned int*, unsigned int*, unsigned int*,
                         unsigned int*, unsigned int*) {}
     void Save_World_XML(class CArchive&, unsigned long, CString) {}
     void Serialize_World_XML(class CArchive&);
+
+    // Portable world-file save.  Opens lpszPathName for writing, calls
+    // Serialize_World_XML, and returns TRUE on success.  Mirrors the
+    // CDocument::OnSaveDocument → Serialize chain that the Windows / mushapp
+    // build uses via CDocument inheritance.
+    BOOL OnSaveDocument(LPCTSTR lpszPathName) {
+        CFile f;
+        if (!f.Open(lpszPathName,
+                    CFile::modeWrite | CFile::modeCreate | CFile::shareDenyWrite))
+            return FALSE;
+        BOOL ok = TRUE;
+        try {
+            CArchive ar(&f, CArchive::store);
+            Serialize_World_XML(ar);
+            ar.Close();
+        } catch (...) {
+            ok = FALSE;
+        }
+        f.Flush();
+        f.Close();
+        return ok;
+    }
+
     void OnFileReloaddefaults() {}
     CString GetAlphaOptionItem(int) { return ""; }
 
@@ -1958,6 +1981,7 @@ public:
 
     bool    InitZlib(z_stream& zs);
     void    OnConnectionDisconnect();
+    void    FireWorldClose();
     void    DisplayMsg(const char* lpszText, int size,
                        const int flags, const bool fake = false);
     long    GetUniqueNumber();

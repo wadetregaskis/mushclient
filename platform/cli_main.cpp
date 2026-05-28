@@ -172,6 +172,12 @@ int main(int argc, char* argv[])
     doc.m_bNAWS               = TRUE; // negotiate window size with server
     doc.m_bUTF_8              = 1;    // advertise UTF-8 and pass through multibyte chars
 
+    // Wire world.Save() Lua API: save to the loaded world file path.
+    doc.m_fn_save = [&doc]() -> bool {
+        if (doc.m_strWorldFilePath.IsEmpty()) return false;
+        return doc.OnSaveDocument((const char*)doc.m_strWorldFilePath) != FALSE;
+    };
+
     // ── Load world file if specified ──────────────────────────────────────────
     if (worldFile) {
         if (!doc.LoadWorldFromFile(worldFile)) {
@@ -363,6 +369,22 @@ int main(int argc, char* argv[])
 
     g_before_output = nullptr;
     g_after_output  = nullptr;
+
+    // ── World-close script callback ───────────────────────────────────────────
+    // Fire on_world_close before tearing down the world, mirroring the
+    // Windows OnCloseDocument / SaveModified path.
+    doc.FireWorldClose();
+
+    // ── Auto-save on exit ─────────────────────────────────────────────────────
+    // If the world was loaded from a file and save_world_automatically is set,
+    // write it back now.  This mirrors doc.cpp SaveModified() behaviour.
+    if (doc.m_bSaveWorldAutomatically && !doc.m_strWorldFilePath.IsEmpty()) {
+        const char* savePath = (const char*)doc.m_strWorldFilePath;
+        if (doc.OnSaveDocument(savePath))
+            fprintf(stderr, "[auto-save] saved \"%s\"\n", savePath);
+        else
+            fprintf(stderr, "[auto-save] failed to save \"%s\"\n", savePath);
+    }
 
     if (doc.m_pSocket) {
         delete doc.m_pSocket;

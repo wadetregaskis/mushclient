@@ -579,6 +579,26 @@ void CMUSHclientDoc::OnConnectionDisconnect()
     m_iConnectPhase = eConnectNotConnected;
 }
 
+// ── FireWorldClose — fire the on_world_close Lua callback ────────────────────
+// Mirrors the on_world_disconnect path in OnConnectionDisconnect().
+// Called from cli_main.cpp just before the process exits so that scripts
+// can do any final cleanup (e.g. saving state, logging).
+void CMUSHclientDoc::FireWorldClose()
+{
+    if (m_dispidWorldClose == DISPID_UNKNOWN) return;
+    CScriptEngine* engine = GetScriptEngine();
+    if (!engine || !engine->IsLua()) return;
+    list<double> nparams;
+    list<string> sparams;
+    long nInvocations = 0;
+    engine->ExecuteLua(m_dispidWorldClose,
+                       m_strWorldClose,
+                       eWorldAction,
+                       "world", "close",
+                       nparams, sparams,
+                       nInvocations);
+}
+
 // ── TermSyncStyle / TermResetStyle — emit ANSI escapes to the real terminal ───
 //
 // The ANSI/256/24-bit colour state machine in ansi.cpp updates m_iFlags,

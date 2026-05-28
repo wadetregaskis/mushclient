@@ -1246,6 +1246,36 @@ void CMUSHclientDoc::ConnectionEstablished()
         }
     }
 
+    // MUSH/Diku structured auto-login (connect_method setting).
+    // Mirrors the switch(m_connect_now) block in doc.cpp ConnectionEstablished.
+    if (m_connect_now != eNoAutoConnect) {
+        CString password = m_password;
+        switch (m_connect_now) {
+            case eConnectMUSH:
+                // Send "connect <name> <password>"
+                if (!m_name.IsEmpty()) {
+                    CString str;
+                    if (password.IsEmpty())
+                        str = CString("connect ") + m_name;
+                    else
+                        str.Format("connect %s %s",
+                                   (const char*)m_name,
+                                   (const char*)password);
+                    SendMsg(str, false, false, false);
+                }
+                break;
+            case eConnectDiku:
+                // Send name CR, then password CR (suppress echo for password)
+                if (!m_name.IsEmpty())
+                    SendMsg(m_name, m_display_my_input, false, false);
+                if (!password.IsEmpty())
+                    SendMsg(password, false, false, false);
+                break;
+            default:
+                break;
+        }
+    }
+
     // Send auto-connect text (login commands, etc.) if configured
     if (!m_connect_text.IsEmpty()) {
         // connect_text may be multi-line; send each line

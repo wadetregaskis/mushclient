@@ -408,10 +408,13 @@ struct tConfigurationNumericOption {
 enum { eConnectNormal = 0, eConnectMXP = 3 };
 
 // ── Auto-connect method enum (from doc.h) ────────────────────────────────
+// Values must match doc.h exactly (they are stored in world files).
 enum {
-    eNoAutoConnect  = 0,
-    eConnectOnOpen  = 1,
-    eConnectTypeMax = 2,   // sentinel — must be last
+    eNoAutoConnect  = 0,   // no auto-login
+    eConnectMUSH    = 1,   // send "connect <name> <password>"
+    eConnectDiku    = 2,   // send <name> CR <password> CR
+    // eConnectMXP  = 3,   // already defined above
+    eConnectTypeMax = 4,   // sentinel — must be last
 };
 
 // ── Proxy server type enum (from doc.h) ──────────────────────────────────

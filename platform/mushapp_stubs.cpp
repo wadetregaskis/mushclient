@@ -203,6 +203,41 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
     // Close the batch (triggers a single scrollbar update + repaint).
     if (batchOpen && m_fn_flush) m_fn_flush();
 
+    // ── Emit the in-progress line as a pending update ──────────────────────
+    // m_pCurrentLine is the line still being assembled (no trailing '\n' yet).
+    // MUDs often send a prompt without a newline (e.g. "> " or "Press enter
+    // to continue") — we emit it as a pending SOutputLine so the output pane
+    // can display it as a dim trailing row even before the '\n' arrives.
+    // Re-emitting on every UpdateAllViews call is cheap: AppendLine just
+    // replaces m_pendingLine and schedules a single Refresh().
+    if (m_pCurrentLine && m_pCurrentLine->len > 0) {
+        SOutputLine pending;
+        POSITION spos = m_pCurrentLine->styleList.GetHeadPosition();
+        int charOff = 0;
+        while (spos) {
+            CStyle* pStyle = m_pCurrentLine->styleList.GetNext(spos);
+            if (pStyle->iLength > 0) {
+                SOutputRun run;
+                GetStyleRGB(pStyle, run.fg, run.bg);
+                run.bold          = (pStyle->iFlags & HILITE)    != 0;
+                run.underline     = (pStyle->iFlags & UNDERLINE) != 0;
+                run.italic        = (pStyle->iFlags & BLINK)     != 0;
+                run.strikethrough = (pStyle->iFlags & STRIKEOUT) != 0;
+                run.text = std::string(m_pCurrentLine->text + charOff, pStyle->iLength);
+                if (pStyle->pAction) {
+                    run.action = static_cast<const char*>(pStyle->pAction->m_strAction);
+                    run.hint   = static_cast<const char*>(pStyle->pAction->m_strHint);
+                }
+                pending.push_back(std::move(run));
+            }
+            charOff += pStyle->iLength;
+        }
+        if (!pending.empty()) {
+            pending.pending = true;
+            m_fn_line_ready(std::move(pending));
+        }
+    }
+
     // Always trigger a repaint so miniwindow operations (WindowCreate,
     // WindowShow, WindowPosition, …) that call UpdateAllViews without emitting
     // any new text lines still refresh the canvas.

@@ -1012,6 +1012,20 @@ static bool Init_Script_Engine(CMUSHclientDoc& doc, const char* worldPath)
     // the script is parsed — otherwise ExecuteLua silently skips them.
     doc.ResolveAllEntryPoints();
 
+    // Fire the on_world_open callback now that the engine is ready and
+    // all entry points are resolved.  Mirrors OpenSession() in doc.cpp.
+    if (doc.m_dispidWorldOpen != DISPID_UNKNOWN) {
+        list<double> nparams;
+        list<string> sparams;
+        long nInvocations = 0;
+        engine->ExecuteLua(doc.m_dispidWorldOpen,
+                           doc.m_strWorldOpen,
+                           eWorldAction,
+                           "world", "open",
+                           nparams, sparams,
+                           nInvocations);
+    }
+
     return true;
 }
 

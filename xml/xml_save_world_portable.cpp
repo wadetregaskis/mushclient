@@ -164,6 +164,33 @@ static long get_numeric_value(const CMUSHclientDoc* doc, const char* opt)
     if (!strcmp(opt, "proxy_port"))           return doc->m_iProxyServerPort;
     if (!strcmp(opt, "send_keep_alives"))     return doc->m_bSendKeepAlives;
     if (!strcmp(opt, "save_world_automatically")) return doc->m_bSaveWorldAutomatically;
+    // Behaviour options
+    if (!strcmp(opt, "enable_scripts"))             return doc->m_bEnableScripts            ? 1 : 0;
+    if (!strcmp(opt, "auto_pause"))                 return doc->m_bAutoFreeze               ? 1 : 0;
+    if (!strcmp(opt, "enable_beeps"))               return doc->m_enable_beeps              ? 1 : 0;
+    if (!strcmp(opt, "carriage_return_clears_line"))return doc->m_bCarriageReturnClearsLine ? 1 : 0;
+    if (!strcmp(opt, "send_echo"))                  return doc->m_bSendEcho                 ? 1 : 0;
+    // Command / history options
+    if (!strcmp(opt, "enable_command_stack"))   return doc->m_enable_command_stack      ? 1 : 0;
+    if (!strcmp(opt, "history_lines"))          return doc->m_nHistoryLines;
+    if (!strcmp(opt, "escape_deletes_input"))   return doc->m_bEscapeDeletesInput       ? 1 : 0;
+    if (!strcmp(opt, "copy_selection_to_clipboard")) return doc->m_bCopySelectionToClipboard ? 1 : 0;
+    if (!strcmp(opt, "unpause_on_send"))        return doc->m_bUnpauseOnSend            ? 1 : 0;
+    if (!strcmp(opt, "auto_wrap_window_width")) return doc->m_bAutoWrapWindowWidth      ? 1 : 0;
+    if (!strcmp(opt, "speed_walk_delay"))       return (long)doc->m_iSpeedWalkDelay;
+    // Spam prevention
+    if (!strcmp(opt, "enable_spam_prevention")) return doc->m_bEnableSpamPrevention     ? 1 : 0;
+    if (!strcmp(opt, "spam_line_count"))        return (long)doc->m_iSpamLineCount;
+    // Telnet / echo
+    if (!strcmp(opt, "no_echo_off"))            return doc->m_bNoEchoOff                ? 1 : 0;
+    // Hyperlink / display
+    if (!strcmp(opt, "use_custom_link_colour")) return doc->m_bUseCustomLinkColour      ? 1 : 0;
+    if (!strcmp(opt, "hyperlink_colour"))       return (long)doc->m_iHyperlinkColour;
+    if (!strcmp(opt, "show_connect_disconnect"))return doc->m_bShowConnectDisconnect    ? 1 : 0;
+    if (!strcmp(opt, "send_mxp_afk_response"))  return doc->m_bSendMXP_AFK_Response    ? 1 : 0;
+    // Script logging
+    if (!strcmp(opt, "script_errors_to_output_window")) return doc->m_bScriptErrorsToOutputWindow ? 1 : 0;
+    if (!strcmp(opt, "log_script_errors"))      return doc->m_bLogScriptErrors          ? 1 : 0;
 
     auto it = doc->m_numericOptionCache.find(opt);
     if (it != doc->m_numericOptionCache.end()) return it->second;
@@ -219,6 +246,25 @@ static CString get_alpha_value(const CMUSHclientDoc* doc, const char* opt)
     if (!strcmp(opt, "proxy_server"))          return doc->m_strProxyServerName;
     if (!strcmp(opt, "proxy_username"))        return doc->m_strProxyUserName;
     if (!strcmp(opt, "proxy_password"))        return doc->m_strProxyPassword;
+    // Auto-say
+    if (!strcmp(opt, "auto_say_string"))           return doc->m_strAutoSayString;
+    if (!strcmp(opt, "auto_say_override_prefix"))  return doc->m_strOverridePrefix;
+    // Command stacking / spam
+    if (!strcmp(opt, "command_stack_character"))   return doc->m_strCommandStackCharacter;
+    if (!strcmp(opt, "spam_message"))              return doc->m_strSpamMessage;
+    // Tab completion / recall
+    if (!strcmp(opt, "tab_completion_defaults"))   return doc->m_strTabCompletionDefaults;
+    if (!strcmp(opt, "recall_line_preamble"))      return doc->m_strRecallLinePreamble;
+    // Script editor
+    if (!strcmp(opt, "script_editor"))             return doc->m_strScriptEditor;
+    // Sound files
+    if (!strcmp(opt, "beep_sound"))                return doc->m_strBeepSound;
+    if (!strcmp(opt, "new_activity_sound"))        return doc->m_new_activity_sound;
+    // Paste strings
+    if (!strcmp(opt, "paste_preamble"))            return doc->m_paste_preamble;
+    if (!strcmp(opt, "paste_postamble"))           return doc->m_paste_postamble;
+    if (!strcmp(opt, "paste_line_preamble"))       return doc->m_pasteline_preamble;
+    if (!strcmp(opt, "paste_line_postamble"))      return doc->m_pasteline_postamble;
 
     auto it = doc->m_alphaOptionCache.find(opt);
     if (it != doc->m_alphaOptionCache.end()) return CString(it->second.c_str());

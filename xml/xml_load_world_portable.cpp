@@ -460,6 +460,33 @@ static void apply_numeric_option(CMUSHclientDoc& doc, const char* opt, long val)
     else if (!strcmp(opt, "proxy_port"))           doc.m_iProxyServerPort       = (unsigned short)val;
     else if (!strcmp(opt, "send_keep_alives"))     doc.m_bSendKeepAlives        = (unsigned short)(val != 0);
     else if (!strcmp(opt, "save_world_automatically")) doc.m_bSaveWorldAutomatically = (unsigned short)(val != 0);
+    // Behaviour options
+    else if (!strcmp(opt, "enable_scripts"))             doc.m_bEnableScripts            = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "auto_pause"))                 doc.m_bAutoFreeze               = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "enable_beeps"))               doc.m_enable_beeps              = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "carriage_return_clears_line"))doc.m_bCarriageReturnClearsLine = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "send_echo"))                  doc.m_bSendEcho                 = (unsigned short)(val != 0);
+    // Command / history options
+    else if (!strcmp(opt, "enable_command_stack"))   doc.m_enable_command_stack      = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "history_lines"))          doc.m_nHistoryLines             = val;
+    else if (!strcmp(opt, "escape_deletes_input"))   doc.m_bEscapeDeletesInput       = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "copy_selection_to_clipboard")) doc.m_bCopySelectionToClipboard = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "unpause_on_send"))        doc.m_bUnpauseOnSend            = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "auto_wrap_window_width")) doc.m_bAutoWrapWindowWidth      = (BOOL)(val != 0);
+    else if (!strcmp(opt, "speed_walk_delay"))       doc.m_iSpeedWalkDelay           = (unsigned short)val;
+    // Spam prevention
+    else if (!strcmp(opt, "enable_spam_prevention")) doc.m_bEnableSpamPrevention     = (val != 0);
+    else if (!strcmp(opt, "spam_line_count"))        doc.m_iSpamLineCount            = (int)val;
+    // Telnet / echo
+    else if (!strcmp(opt, "no_echo_off"))            doc.m_bNoEchoOff                = (unsigned short)(val != 0);
+    // Hyperlink / display
+    else if (!strcmp(opt, "use_custom_link_colour")) doc.m_bUseCustomLinkColour      = (val != 0);
+    else if (!strcmp(opt, "hyperlink_colour"))       doc.m_iHyperlinkColour          = (COLORREF)val;
+    else if (!strcmp(opt, "show_connect_disconnect"))doc.m_bShowConnectDisconnect    = (val != 0);
+    else if (!strcmp(opt, "send_mxp_afk_response"))  doc.m_bSendMXP_AFK_Response    = (val != 0);
+    // Script logging
+    else if (!strcmp(opt, "script_errors_to_output_window")) doc.m_bScriptErrorsToOutputWindow = (val != 0);
+    else if (!strcmp(opt, "log_script_errors"))      doc.m_bLogScriptErrors          = (val != 0);
     else if (!strcmp(opt, "wrap_column")) {
         if (val >= 20 && val <= MAX_LINE_WIDTH)
             doc.m_nWrapColumn = (unsigned short)val;
@@ -520,6 +547,25 @@ static void apply_alpha_option(CMUSHclientDoc& doc, const char* opt, const CStri
     else if (!strcmp(opt, "log_line_postamble_output")) doc.m_strLogLinePostambleOutput = val;
     else if (!strcmp(opt, "proxy_server"))       doc.m_strProxyServerName    = val;
     else if (!strcmp(opt, "proxy_username"))     doc.m_strProxyUserName      = val;
+    // Auto-say
+    else if (!strcmp(opt, "auto_say_string"))           doc.m_strAutoSayString         = val;
+    else if (!strcmp(opt, "auto_say_override_prefix"))  doc.m_strOverridePrefix        = val;
+    // Command stacking / spam
+    else if (!strcmp(opt, "command_stack_character"))   doc.m_strCommandStackCharacter = val;
+    else if (!strcmp(opt, "spam_message"))              doc.m_strSpamMessage           = val;
+    // Tab completion / recall
+    else if (!strcmp(opt, "tab_completion_defaults"))   doc.m_strTabCompletionDefaults = val;
+    else if (!strcmp(opt, "recall_line_preamble"))      doc.m_strRecallLinePreamble    = val;
+    // Script editor
+    else if (!strcmp(opt, "script_editor"))             doc.m_strScriptEditor          = val;
+    // Sound files
+    else if (!strcmp(opt, "beep_sound"))                doc.m_strBeepSound             = val;
+    else if (!strcmp(opt, "new_activity_sound"))        doc.m_new_activity_sound       = val;
+    // Paste strings
+    else if (!strcmp(opt, "paste_preamble"))            doc.m_paste_preamble           = val;
+    else if (!strcmp(opt, "paste_postamble"))           doc.m_paste_postamble          = val;
+    else if (!strcmp(opt, "paste_line_preamble"))       doc.m_pasteline_preamble       = val;
+    else if (!strcmp(opt, "paste_line_postamble"))      doc.m_pasteline_postamble      = val;
     // Unknown options: caller stores in cache
 }
 

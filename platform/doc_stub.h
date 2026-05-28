@@ -1380,6 +1380,16 @@ public:
     int     m_connect_now      = 0;
     long    m_nTotalLinesSent  = 0;
 
+    // ── Proxy / SSL / keep-alives (mirrored from doc.h) ──────────────────────
+    unsigned short m_bUseSSL               = 0;
+    unsigned short m_bSendKeepAlives       = 0;
+    unsigned short m_bSaveWorldAutomatically = 0;
+    unsigned short m_iSocksProcessing      = 0;   // 0=none,1=SOCKS4,2=SOCKS5
+    unsigned short m_iProxyServerPort      = 1080;
+    CString        m_strProxyServerName;
+    CString        m_strProxyUserName;
+    CString        m_strProxyPassword;
+
     // ── Socket / connection phase (worldsock.cpp) ─────────────────────────
     CWorldSocket* m_pSocket          = nullptr;
     int           m_iConnectPhase    = eConnectNotConnected;

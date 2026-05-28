@@ -1480,8 +1480,11 @@ static int L_GetOption(lua_State* L)
     else if (!strcmp(opt, "naws"))              OPT_GET_MEMBER(pDoc->m_bNAWS ? 1 : 0);
     else if (!strcmp(opt, "disable_compression")) OPT_GET_MEMBER(pDoc->m_bDisableCompression ? 1 : 0);
     else if (!strcmp(opt, "connect_method"))    OPT_GET_MEMBER(pDoc->m_connect_now);
-    // use_ssl / proxy_port / proxy_type: not stored as live members in the
-    // portable stub — fall through to cache / OptionsTable default below.
+    else if (!strcmp(opt, "use_ssl"))              OPT_GET_MEMBER(pDoc->m_bUseSSL);
+    else if (!strcmp(opt, "proxy_type"))           OPT_GET_MEMBER(pDoc->m_iSocksProcessing);
+    else if (!strcmp(opt, "proxy_port"))           OPT_GET_MEMBER(pDoc->m_iProxyServerPort);
+    else if (!strcmp(opt, "send_keep_alives"))     OPT_GET_MEMBER(pDoc->m_bSendKeepAlives);
+    else if (!strcmp(opt, "save_world_automatically")) OPT_GET_MEMBER(pDoc->m_bSaveWorldAutomatically);
 
     // 2. Cache — value previously written by SetOption.
     {
@@ -1528,6 +1531,11 @@ static int L_SetOption(lua_State* L)
     else if (!strcmp(opt, "naws"))                 pDoc->m_bNAWS                  = (val != 0);
     else if (!strcmp(opt, "disable_compression"))  pDoc->m_bDisableCompression    = (val != 0);
     else if (!strcmp(opt, "connect_method"))       pDoc->m_connect_now            = (short)val;
+    else if (!strcmp(opt, "use_ssl"))              pDoc->m_bUseSSL                = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "proxy_type"))           pDoc->m_iSocksProcessing       = (unsigned short)val;
+    else if (!strcmp(opt, "proxy_port"))           pDoc->m_iProxyServerPort       = (unsigned short)val;
+    else if (!strcmp(opt, "send_keep_alives"))     pDoc->m_bSendKeepAlives        = (unsigned short)(val != 0);
+    else if (!strcmp(opt, "save_world_automatically")) pDoc->m_bSaveWorldAutomatically = (unsigned short)(val != 0);
     else if (!strcmp(opt, "wrap_column")) {
         if (val >= 20 && val <= MAX_LINE_WIDTH) {
             pDoc->m_nWrapColumn = (unsigned short)val;
@@ -2425,6 +2433,10 @@ static int L_GetAlphaOption(lua_State* L)
     // Connection text
     else if (!strcmp(opt, "connect_text"))     OPT_GET_STR(pDoc->m_connect_text);
     else if (!strcmp(opt, "auto_log_file_name")) OPT_GET_STR(pDoc->m_strAutoLogFileName);
+    // Proxy
+    else if (!strcmp(opt, "proxy_server"))       OPT_GET_STR(pDoc->m_strProxyServerName);
+    else if (!strcmp(opt, "proxy_username"))     OPT_GET_STR(pDoc->m_strProxyUserName);
+    else if (!strcmp(opt, "proxy_password"))     OPT_GET_STR(pDoc->m_strProxyPassword);
     // Speed walk
     else if (!strcmp(opt, "speed_walk_prefix"))  OPT_GET_STR(pDoc->m_speed_walk_prefix);
     else if (!strcmp(opt, "speed_walk_filler"))  OPT_GET_STR(pDoc->m_strSpeedWalkFiller);
@@ -2496,6 +2508,10 @@ static int L_SetAlphaOption(lua_State* L)
     // Connection text
     else if (!strcmp(opt, "connect_text"))     pDoc->m_connect_text         = CString(val);
     else if (!strcmp(opt, "auto_log_file_name")) pDoc->m_strAutoLogFileName = CString(val);
+    // Proxy
+    else if (!strcmp(opt, "proxy_server"))       pDoc->m_strProxyServerName = CString(val);
+    else if (!strcmp(opt, "proxy_username"))     pDoc->m_strProxyUserName   = CString(val);
+    else if (!strcmp(opt, "proxy_password"))     pDoc->m_strProxyPassword   = CString(val);
     // Speed walk
     else if (!strcmp(opt, "speed_walk_prefix"))  pDoc->m_speed_walk_prefix  = CString(val);
     else if (!strcmp(opt, "speed_walk_filler"))  pDoc->m_strSpeedWalkFiller = CString(val);

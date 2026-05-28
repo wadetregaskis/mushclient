@@ -547,6 +547,8 @@ inline const char* TranslateTime(const char* fmt) { return fmt; }
 #if !defined(OPENSSL_FOUND) && !defined(PLATFORM_OPENSSL_SSL_H_INCLUDED)
 struct ssl_st {};
 typedef struct ssl_st SSL;
+struct ssl_ctx_st {};
+typedef struct ssl_ctx_st SSL_CTX;
 inline int  SSL_pending      (SSL*)                    { return 0;  }
 inline int  SSL_read         (SSL*, void*, int)        { return -1; }
 inline int  SSL_write        (SSL*, const void*, int)  { return -1; }
@@ -567,6 +569,8 @@ inline int  SSL_shutdown     (SSL*)                    { return 1;  }
 // which is included after this header in worldsock.cpp.
 struct ssl_st;
 typedef struct ssl_st SSL;
+struct ssl_ctx_st;
+typedef struct ssl_ctx_st SSL_CTX;
 #endif
 // When PLATFORM_OPENSSL_SSL_H_INCLUDED, SSL types are already defined.
 
@@ -1492,8 +1496,10 @@ public:
     CString m_strTerminalIdentification;
 
     // ── SSL ────────────────────────────────────────────────────────────
-    bool  m_bSSL_Connected = false;
-    SSL*  m_pSSL           = nullptr;
+    bool     m_bSSL_Connected = false;
+    SSL*     m_pSSL           = nullptr;
+    SSL_CTX* m_pSSL_CTX       = nullptr;
+    CString  m_strSSLLastError;
 
     // ── UTF-8 ──────────────────────────────────────────────────────────
     unsigned short m_bUTF_8          = 0;
@@ -1969,6 +1975,8 @@ public:
 
     // ── Networking methods (real implementations in doc_portable.cpp) ──────
     void ReceiveMsg();
+    void ConnectionEstablished();
+    void StartSSLHandshake();
     void ContinueSSLHandshake();
     void SSLCleanup();
     void CloseLog();

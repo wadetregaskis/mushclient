@@ -30,6 +30,9 @@
 
 #include "dialogs/Splash.h"
 #include "direct.h"
+#ifndef _WIN32
+#include <sys/utsname.h>
+#endif
 extern "C" 
   {
   #include "scripting/number.h"
@@ -689,6 +692,25 @@ BOOL CMUSHclientApp::InitInstance()
      VER_PLATFORM_WIN32_WINDOWS) && (os_version.dwMinorVersion == 0);
   bWin98 = (os_version.dwPlatformId ==
      VER_PLATFORM_WIN32_WINDOWS) && (os_version.dwMinorVersion > 0);
+#else  // !_WIN32
+  // Populate os_version from uname(2) so GetInfo(265-268) returns
+  // meaningful values and miniwindow gradient code paths are enabled.
+  {
+    struct utsname u;
+    if (uname(&u) == 0) {
+      // Parse "major.minor" from utsname.release (e.g. "6.5.0-35-generic")
+      unsigned maj = 0, min = 0, bld = 0;
+      sscanf(u.release, "%u.%u.%u", &maj, &min, &bld);
+      os_version.dwMajorVersion = maj;
+      os_version.dwMinorVersion = min;
+      os_version.dwBuildNumber  = bld;
+      os_version.dwPlatformId   = VER_PLATFORM_WIN32_NT;  // "NT-class"
+      strncpy(os_version.szCSDVersion, u.sysname, sizeof(os_version.szCSDVersion) - 1);
+    }
+    bWinNT = true;   // non-Windows behaves as NT for code-path decisions
+    bWin95 = false;
+    bWin98 = false;
+  }
 #endif // _WIN32
 
   // MXP initialisation

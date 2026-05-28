@@ -945,6 +945,15 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
               GetWindowWidth  (pFrame, vaResult, true);   // client width
             break;
             }
+#else  // !_WIN32 — cases 251-264: no toolbars/frames; return 0
+    case 251: case 252: case 253: case 254:
+    case 255: case 256: case 257: case 258:
+    case 259: case 260:
+      SetUpVariantLong (vaResult, 0); break;
+    case 261: case 263:  // client/non-client height of world child frame
+      SetUpVariantLong (vaResult, m_gui_rows * m_gui_font_height); break;
+    case 262: case 264:  // client/non-client width of world child frame
+      SetUpVariantLong (vaResult, m_gui_cols * m_gui_font_width); break;
 #endif // _WIN32 — cases 251-264 use Windows GUI objects
 
     case 265: SetUpVariantLong (vaResult, os_version.dwMajorVersion); break;

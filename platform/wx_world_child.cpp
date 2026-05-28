@@ -618,6 +618,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 m_output->SetPaused(true);
             // Background colour (NO_COLOUR = 0xFFFFFFFF → black).
             ApplyPaneBackground(m_doc->m_iBackgroundColour);
+            // Word delimiters for double-click selection (global pref).
+            m_output->SetWordDelimitersDblClick(
+                static_cast<const char*>(App.m_strWordDelimitersDblClick));
+            // Auto-copy selection to clipboard (world pref).
+            m_output->SetCopySelectionToClipboard(
+                m_doc->m_bCopySelectionToClipboard != 0);
         }
     }
 
@@ -1856,9 +1862,13 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     int code = evt.GetKeyCode();
 
     // Escape: snap the output pane back to the bottom (re-engage auto-scroll).
-    // Useful when the user has scrolled up and wants to return to live output.
+    // If escape_deletes_input is set, also clear the command bar.
     if (code == WXK_ESCAPE) {
         if (m_output) m_output->ScrollToBottom();
+        if (m_doc && m_doc->m_bEscapeDeletesInput) {
+            wxTextCtrl* inp = ActiveInput();
+            if (inp) inp->Clear();
+        }
         return;   // consume — don't close dialogs or deselect in the input bar
     }
 
@@ -2594,6 +2604,10 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
         if ((int)m_history.size() > kMaxHistory)
             m_history.erase(m_history.begin());
     }
+
+    // Unpause output on send (unpause_on_send world option, default on).
+    if (m_doc->m_bUnpauseOnSend && m_output && m_output->IsPaused())
+        m_output->SetPaused(false);
 
     // EvaluateCommand processes aliases, speed-walks, and scripting callbacks
     // before sending the text to the MUD — the same path Windows uses for

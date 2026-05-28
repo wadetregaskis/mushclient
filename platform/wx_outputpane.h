@@ -184,6 +184,17 @@ public:
     // m_bAutoFreeze field.  Default is true (freeze on scroll-up).
     void SetAllowAutoFreeze(bool allow) { m_allowAutoFreeze = allow; }
 
+    // Whether to auto-copy text selection to the clipboard on mouse release.
+    // Corresponds to world option copy_selection_to_clipboard.
+    void SetCopySelectionToClipboard(bool v) { m_copySelToClip = v; }
+
+    // Word delimiters used for double-click word selection.
+    // Characters in this string break words; defaults to ".,()[]\"\'" matching
+    // the MUSHclient Windows default.
+    void SetWordDelimitersDblClick(const std::string& delims) {
+        m_wordDelimitersDblClick = delims;
+    }
+
     // Set the pane's default background colour (COLORREF, 0 = black).
     void SetPaneBackground(unsigned long col);
     unsigned long PaneBackground() const { return m_bgColor; }
@@ -369,7 +380,9 @@ private:
     bool m_autoScroll      = true;
     // When false, scrolling up does NOT freeze output — new lines keep
     // scrolling into view.  Mirrors the world's m_bAutoFreeze flag.
-    bool m_allowAutoFreeze = true;
+    bool        m_allowAutoFreeze    = true;
+    bool        m_copySelToClip     = false;  // copy_selection_to_clipboard
+    std::string m_wordDelimitersDblClick = ".,()[]\"\'";
 
     // Triple-click detection: record the timestamp and line of the last
     // double-click so OnLeftDown can promote the third click to a line select.

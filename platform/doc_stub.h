@@ -1381,7 +1381,14 @@ public:
     CString m_new_activity_sound;       // GetInfo(9):  new-activity beep file
     CString m_strScriptEditor;          // GetInfo(10): script editor path
     CString m_font_name;                // GetInfo(20): output font name
+    LONG    m_font_height   = 0;        // output font height (0=unset; neg=LOGFONT px; pos=pt)
+    LONG    m_font_weight   = 0;        // output font weight (0 = FW_DONTCARE)
+    DWORD   m_font_charset  = 1;        // output font charset (1 = DEFAULT_CHARSET)
     CString m_input_font_name;          // GetInfo(23): input-bar font name
+    LONG    m_input_font_height  = 0;   // input font height (0=unset)
+    BYTE    m_input_font_italic  = 0;   // input font italic flag
+    LONG    m_input_font_weight  = 0;   // input font weight (0 = FW_DONTCARE)
+    DWORD   m_input_font_charset = 1;   // input font charset (1 = DEFAULT_CHARSET)
     CString m_paste_postamble;          // GetInfo(24): text appended after paste
     CString m_paste_preamble;           // GetInfo(25): text prepended before paste
     CString m_pasteline_postamble;      // GetInfo(26): appended after each paste line
@@ -1544,6 +1551,8 @@ public:
     unsigned short m_enable_speed_walk  = 0;
     CString        m_speed_walk_prefix;
     unsigned short m_iSpeedWalkDelay    = 0;
+    unsigned short m_enable_command_stack   = 0;
+    CString        m_strCommandStackCharacter;
 
     // ── Command echoing and queuing ───────────────────────────────────
     unsigned short m_display_my_input   = 1;  // echo typed commands
@@ -1553,12 +1562,18 @@ public:
     long           m_new_lines          = 0;  // unseen line count
     CStringList    m_CommandHistory;           // typed-command history
     CString        m_CurrentCommand;           // command being typed
+    LONG           m_nHistoryLines      = 500; // max command-history entries
+    unsigned short m_bEscapeDeletesInput = 0;  // Esc clears the input bar
+    unsigned short m_bCopySelectionToClipboard = 0;  // auto-copy selection
+    unsigned short m_bUnpauseOnSend     = 1;   // cancel pause on send
+    BOOL           m_bAutoWrapWindowWidth = FALSE; // wrap to window width
 
     void AddToCommandHistory(const CString& cmd) {
         if (!cmd.IsEmpty()) {
             m_CommandHistory.AddTail(cmd);
-            // cap history at 500 entries
-            while (m_CommandHistory.GetCount() > 500)
+            // cap history at m_nHistoryLines entries (min 50)
+            long cap = m_nHistoryLines > 50 ? m_nHistoryLines : 500;
+            while (m_CommandHistory.GetCount() > (size_t)cap)
                 m_CommandHistory.RemoveHead();
         }
     }

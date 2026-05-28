@@ -1773,25 +1773,61 @@ public:
 } // anonymous namespace
 
 // ── GlobalPrefsDlg ────────────────────────────────────────────────────────
-// Application-wide preferences dialog.  Covers the settings most relevant on
-// non-Windows: connection behaviour, disconnect notifications, and display.
-// These map directly to CMUSHclientApp members loaded from the preferences DB.
+// Application-wide preferences dialog (tabbed).  Maps directly to
+// CMUSHclientApp members stored in the preferences DB.
 
 namespace {
+
+// Helper: make a directory-picker row (label + text + "…" browse button).
+// The text control is returned; parent owns all widgets.
+static wxTextCtrl* MakeDirRow(wxWindow* parent, wxSizer* box,
+                               const wxString& label, const wxString& value,
+                               const wxString& dlgTitle)
+{
+    wxBoxSizer* row = new wxBoxSizer(wxHORIZONTAL);
+    row->Add(new wxStaticText(parent, wxID_ANY, label),
+             0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+    wxTextCtrl* ctrl = new wxTextCtrl(parent, wxID_ANY, value,
+                                       wxDefaultPosition, wxSize(260, -1));
+    row->Add(ctrl, 1, wxEXPAND);
+    wxButton* btn = new wxButton(parent, wxID_ANY, wxT("…"),
+                                  wxDefaultPosition, wxSize(28, -1));
+    btn->Bind(wxEVT_BUTTON, [ctrl, dlgTitle](wxCommandEvent&) {
+        wxDirDialog dlg(nullptr, dlgTitle, ctrl->GetValue(),
+                        wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
+        if (dlg.ShowModal() == wxID_OK)
+            ctrl->SetValue(dlg.GetPath());
+    });
+    row->Add(btn, 0, wxLEFT, 4);
+    box->Add(row, 0, wxEXPAND | wxALL, 6);
+    return ctrl;
+}
+
 class GlobalPrefsDlg : public wxDialog
 {
 public:
-    // Connection group
+    // ── General tab ───────────────────────────────────────────────────────
     wxCheckBox* m_reconnectOnFail;
     wxCheckBox* m_notifyOnDisconnect;
     wxCheckBox* m_notifyCannotConnect;
-    // Display group
+    wxCheckBox* m_autoConnect;
     wxCheckBox* m_errorsToOutput;
-    // Behaviour group
+    wxCheckBox* m_regexpMatchEmpty;
+    wxCheckBox* m_openMaximised;
     wxCheckBox* m_confirmCloseWorld;
     wxCheckBox* m_confirmCloseApp;
-    // Paths group
-    wxTextCtrl* m_worldDir;     // default world file directory
+    wxCheckBox* m_confirmSaveVars;
+    wxCheckBox* m_appendToLog;
+    wxCheckBox* m_autoLog;
+    wxCheckBox* m_allTypingToCommand;
+    wxTextCtrl* m_wordDelimitersDblClick;
+    // ── Font tab ──────────────────────────────────────────────────────────
+    wxTextCtrl*   m_fontName;      // output font face name
+    wxSpinCtrl*   m_fontSize;      // output font point size
+    // ── Directories tab ───────────────────────────────────────────────────
+    wxTextCtrl* m_worldDir;
+    wxTextCtrl* m_pluginsDir;
+    wxTextCtrl* m_logDir;
 
     explicit GlobalPrefsDlg(wxWindow* parent)
         : wxDialog(parent, wxID_ANY, wxT("Preferences"),
@@ -1799,83 +1835,199 @@ public:
                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
     {
         wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
+        wxNotebook* nb = new wxNotebook(this, wxID_ANY);
 
-        // ── Connection ────────────────────────────────────────────────────
+        // ════════════════════════════════════════════════════════════════
+        // Tab 1: General
+        // ════════════════════════════════════════════════════════════════
         {
-            wxStaticBoxSizer* box =
-                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Connection"));
-            m_reconnectOnFail    = new wxCheckBox(this, wxID_ANY,
-                wxT("Reconnect automatically on link failure"));
-            m_notifyOnDisconnect = new wxCheckBox(this, wxID_ANY,
-                wxT("Notify when world disconnects"));
-            m_notifyCannotConnect = new wxCheckBox(this, wxID_ANY,
-                wxT("Notify if connection attempt fails"));
-            m_reconnectOnFail->SetValue(App.m_bReconnectOnLinkFailure != 0);
-            m_notifyOnDisconnect->SetValue(App.m_bNotifyOnDisconnect != 0);
-            m_notifyCannotConnect->SetValue(App.m_bNotifyIfCannotConnect != 0);
-            box->Add(m_reconnectOnFail,    0, wxALL, 6);
-            box->Add(m_notifyOnDisconnect, 0, wxLEFT | wxRIGHT | wxBOTTOM, 6);
-            box->Add(m_notifyCannotConnect, 0, wxLEFT | wxRIGHT | wxBOTTOM, 6);
-            vs->Add(box, 0, wxEXPAND | wxALL, 10);
+            wxScrolledWindow* pg = new wxScrolledWindow(nb);
+            pg->SetScrollRate(0, 10);
+            wxBoxSizer* pvs = new wxBoxSizer(wxVERTICAL);
+
+            // Connection
+            {
+                wxStaticBoxSizer* box =
+                    new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Connection"));
+                m_reconnectOnFail    = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Reconnect automatically on link failure"));
+                m_notifyOnDisconnect = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Notify when world disconnects"));
+                m_notifyCannotConnect = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Notify if connection attempt fails"));
+                m_autoConnect         = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Auto-connect worlds when opened"));
+                m_reconnectOnFail->SetValue(App.m_bReconnectOnLinkFailure     != 0);
+                m_notifyOnDisconnect->SetValue(App.m_bNotifyOnDisconnect       != 0);
+                m_notifyCannotConnect->SetValue(App.m_bNotifyIfCannotConnect   != 0);
+                m_autoConnect->SetValue(App.m_bAutoConnectWorlds               != 0);
+                box->Add(m_reconnectOnFail,     0, wxALL, 6);
+                box->Add(m_notifyOnDisconnect,  0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
+                box->Add(m_notifyCannotConnect, 0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
+                box->Add(m_autoConnect,         0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
+                pvs->Add(box, 0, wxEXPAND | wxALL, 10);
+            }
+            // Display / Scripting
+            {
+                wxStaticBoxSizer* box =
+                    new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Display / Scripting"));
+                m_errorsToOutput  = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Show script errors in the output window"));
+                m_regexpMatchEmpty = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Regular expressions can match empty strings"));
+                m_openMaximised   = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Open worlds maximised"));
+                m_errorsToOutput->SetValue(App.m_bErrorNotificationToOutputWindow != 0);
+                m_regexpMatchEmpty->SetValue(App.m_bRegexpMatchEmpty               != 0);
+                m_openMaximised->SetValue(App.m_bOpenWorldsMaximised               != 0);
+                box->Add(m_errorsToOutput,   0, wxALL, 6);
+                box->Add(m_regexpMatchEmpty, 0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
+                box->Add(m_openMaximised,    0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
+                pvs->Add(box, 0, wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 10);
+            }
+            // Behaviour / Logging
+            {
+                wxStaticBoxSizer* box =
+                    new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Behaviour / Logging"));
+                m_confirmCloseWorld = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Confirm before closing a world"));
+                m_confirmCloseApp   = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Confirm before quitting MUSHclient"));
+                m_confirmSaveVars   = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Confirm before saving variables to file"));
+                m_autoLog           = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Auto-log all worlds"));
+                m_appendToLog       = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Append to existing log files (don't overwrite)"));
+                m_confirmCloseWorld->SetValue(App.m_bConfirmBeforeClosingWorld     != 0);
+                m_confirmCloseApp->SetValue(App.m_bConfirmBeforeClosingMushclient  != 0);
+                m_confirmSaveVars->SetValue(App.m_bConfirmBeforeSavingVariables    != 0);
+                m_autoLog->SetValue(App.m_bAutoLogWorld                            != 0);
+                m_appendToLog->SetValue(App.m_bAppendToLogFiles                    != 0);
+                box->Add(m_confirmCloseWorld, 0, wxALL, 6);
+                box->Add(m_confirmCloseApp,   0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
+                box->Add(m_confirmSaveVars,   0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
+                box->Add(m_autoLog,           0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
+                box->Add(m_appendToLog,       0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
+                pvs->Add(box, 0, wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 10);
+            }
+            // Input / editing
+            {
+                wxStaticBoxSizer* box =
+                    new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Input / editing"));
+                m_allTypingToCommand = new wxCheckBox(pg, wxID_ANY,
+                    wxT("Send all keyboard input to the command bar"));
+                m_allTypingToCommand->SetValue(App.m_bAllTypingToCommandWindow != 0);
+                box->Add(m_allTypingToCommand, 0, wxALL, 6);
+
+                wxBoxSizer* delimRow = new wxBoxSizer(wxHORIZONTAL);
+                delimRow->Add(new wxStaticText(pg, wxID_ANY,
+                    wxT("Double-click word delimiters:")),
+                    0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+                m_wordDelimitersDblClick = new wxTextCtrl(pg, wxID_ANY,
+                    wxString::FromUTF8(
+                        static_cast<const char*>(App.m_strWordDelimitersDblClick)),
+                    wxDefaultPosition, wxSize(160, -1));
+                delimRow->Add(m_wordDelimitersDblClick, 1, wxEXPAND);
+                box->Add(delimRow, 0, wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 6);
+                pvs->Add(box, 0, wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 10);
+            }
+            pg->SetSizer(pvs);
+            nb->AddPage(pg, wxT("General"));
         }
 
-        // ── Display ───────────────────────────────────────────────────────
+        // ════════════════════════════════════════════════════════════════
+        // Tab 2: Font
+        // ════════════════════════════════════════════════════════════════
         {
+            wxPanel* pg = new wxPanel(nb);
+            wxBoxSizer* pvs = new wxBoxSizer(wxVERTICAL);
+
             wxStaticBoxSizer* box =
-                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Display"));
-            m_errorsToOutput = new wxCheckBox(this, wxID_ANY,
-                wxT("Show script errors in the output window"));
-            m_errorsToOutput->SetValue(App.m_bErrorNotificationToOutputWindow != 0);
-            box->Add(m_errorsToOutput, 0, wxALL, 6);
-            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+                new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Default output / input font"));
+            box->Add(new wxStaticText(pg, wxID_ANY,
+                wxT("Applied to new worlds.  Leave blank to use the system\n"
+                    "monospace font.  Existing worlds keep their saved font.")),
+                0, wxALL, 6);
+
+            // Face name row
+            {
+                wxBoxSizer* row = new wxBoxSizer(wxHORIZONTAL);
+                row->Add(new wxStaticText(pg, wxID_ANY, wxT("Font:")),
+                         0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+                m_fontName = new wxTextCtrl(pg, wxID_ANY,
+                    wxString::FromUTF8(static_cast<const char*>(App.m_strDefaultOutputFont)),
+                    wxDefaultPosition, wxSize(200, -1));
+                row->Add(m_fontName, 1, wxEXPAND);
+
+                // "Choose…" button opens a wxFontDialog
+                wxButton* chooseBtn = new wxButton(pg, wxID_ANY, wxT("Choose…"));
+                chooseBtn->Bind(wxEVT_BUTTON, [this, pg](wxCommandEvent&) {
+                    wxString face = m_fontName->GetValue();
+                    int      pts  = m_fontSize->GetValue();
+                    wxFont   init(pts > 0 ? pts : 12,
+                                  wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL,
+                                  wxFONTWEIGHT_NORMAL, false, face);
+                    wxFontData fd;
+                    fd.SetInitialFont(init);
+                    fd.SetAllowSymbols(false);
+                    wxFontDialog dlg(pg, fd);
+                    if (dlg.ShowModal() == wxID_OK) {
+                        wxFont chosen = dlg.GetFontData().GetChosenFont();
+                        m_fontName->SetValue(chosen.GetFaceName());
+                        m_fontSize->SetValue(chosen.GetPointSize());
+                    }
+                });
+                row->Add(chooseBtn, 0, wxLEFT, 6);
+                box->Add(row, 0, wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 6);
+            }
+            // Size row
+            {
+                wxBoxSizer* row = new wxBoxSizer(wxHORIZONTAL);
+                row->Add(new wxStaticText(pg, wxID_ANY, wxT("Size (pt):")),
+                         0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+                m_fontSize = new wxSpinCtrl(pg, wxID_ANY,
+                    wxEmptyString, wxDefaultPosition, wxSize(70, -1),
+                    wxSP_ARROW_KEYS, 4, 72,
+                    App.m_iDefaultOutputFontHeight > 0
+                        ? App.m_iDefaultOutputFontHeight : 12);
+                row->Add(m_fontSize, 0);
+                box->Add(row, 0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
+            }
+            pvs->Add(box, 0, wxEXPAND | wxALL, 10);
+            pg->SetSizer(pvs);
+            nb->AddPage(pg, wxT("Font"));
         }
 
-        // ── Behaviour ─────────────────────────────────────────────────────
+        // ════════════════════════════════════════════════════════════════
+        // Tab 3: Directories
+        // ════════════════════════════════════════════════════════════════
         {
+            wxPanel* pg = new wxPanel(nb);
+            wxBoxSizer* pvs = new wxBoxSizer(wxVERTICAL);
             wxStaticBoxSizer* box =
-                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Behaviour"));
-            m_confirmCloseWorld = new wxCheckBox(this, wxID_ANY,
-                wxT("Confirm before closing a world"));
-            m_confirmCloseApp   = new wxCheckBox(this, wxID_ANY,
-                wxT("Confirm before quitting MUSHclient"));
-            m_confirmCloseWorld->SetValue(App.m_bConfirmBeforeClosingWorld != 0);
-            m_confirmCloseApp->SetValue(App.m_bConfirmBeforeClosingMushclient != 0);
-            box->Add(m_confirmCloseWorld, 0, wxALL, 6);
-            box->Add(m_confirmCloseApp,   0, wxLEFT | wxRIGHT | wxBOTTOM, 6);
-            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
-        }
+                new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Default directories"));
 
-        // ── Paths ─────────────────────────────────────────────────────────
-        {
-            wxStaticBoxSizer* box =
-                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Paths"));
-            wxBoxSizer* row = new wxBoxSizer(wxHORIZONTAL);
-            row->Add(new wxStaticText(this, wxID_ANY, wxT("World file directory:")),
-                     0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
-
-            m_worldDir = new wxTextCtrl(this, wxID_ANY,
+            m_worldDir   = MakeDirRow(pg, box, wxT("World files:"),
                 wxString::FromUTF8(static_cast<const char*>(App.m_strDefaultWorldFileDirectory)),
-                wxDefaultPosition, wxSize(280, -1));
-            row->Add(m_worldDir, 1, wxEXPAND);
+                wxT("Choose default world directory"));
+            m_pluginsDir = MakeDirRow(pg, box, wxT("Plugins:"),
+                wxString::FromUTF8(static_cast<const char*>(App.m_strPluginsDirectory)),
+                wxT("Choose plugins directory"));
+            m_logDir     = MakeDirRow(pg, box, wxT("Log files:"),
+                wxString::FromUTF8(static_cast<const char*>(App.m_strDefaultLogFileDirectory)),
+                wxT("Choose default log directory"));
 
-            wxButton* browseBtn = new wxButton(this, wxID_ANY, wxT("…"),
-                                               wxDefaultPosition, wxSize(28, -1));
-            browseBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-                wxDirDialog dlg(this, wxT("Choose default world directory"),
-                                m_worldDir->GetValue(),
-                                wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
-                if (dlg.ShowModal() == wxID_OK)
-                    m_worldDir->SetValue(dlg.GetPath());
-            });
-            row->Add(browseBtn, 0, wxLEFT, 4);
-
-            box->Add(row, 0, wxEXPAND | wxALL, 6);
-            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+            pvs->Add(box, 0, wxEXPAND | wxALL, 10);
+            pg->SetSizer(pvs);
+            nb->AddPage(pg, wxT("Directories"));
         }
 
+        vs->Add(nb, 1, wxEXPAND | wxALL, 8);
         vs->Add(CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
-                wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+                wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 10);
         SetSizerAndFit(vs);
+        SetSize(wxSize(520, -1));
     }
 };
 } // anonymous namespace
@@ -1885,34 +2037,84 @@ static void hook_file_preferences(wxWindow* parent)
     GlobalPrefsDlg dlg(parent);
     if (dlg.ShowModal() != wxID_OK) return;
 
-    App.m_bReconnectOnLinkFailure          = dlg.m_reconnectOnFail->GetValue()    ? 1 : 0;
-    App.m_bNotifyOnDisconnect              = dlg.m_notifyOnDisconnect->GetValue()  ? 1 : 0;
-    App.m_bNotifyIfCannotConnect           = dlg.m_notifyCannotConnect->GetValue() ? 1 : 0;
-    App.m_bErrorNotificationToOutputWindow = dlg.m_errorsToOutput->GetValue()      ? 1 : 0;
-    App.m_bConfirmBeforeClosingWorld       = dlg.m_confirmCloseWorld->GetValue()   ? 1 : 0;
-    App.m_bConfirmBeforeClosingMushclient  = dlg.m_confirmCloseApp->GetValue()     ? 1 : 0;
+    // ── General tab ───────────────────────────────────────────────────────
+    App.m_bReconnectOnLinkFailure          = dlg.m_reconnectOnFail->GetValue()     ? 1 : 0;
+    App.m_bNotifyOnDisconnect              = dlg.m_notifyOnDisconnect->GetValue()   ? 1 : 0;
+    App.m_bNotifyIfCannotConnect           = dlg.m_notifyCannotConnect->GetValue()  ? 1 : 0;
+    App.m_bAutoConnectWorlds               = dlg.m_autoConnect->GetValue()          ? 1 : 0;
+    App.m_bErrorNotificationToOutputWindow = dlg.m_errorsToOutput->GetValue()       ? 1 : 0;
+    App.m_bRegexpMatchEmpty                = dlg.m_regexpMatchEmpty->GetValue()      ? 1 : 0;
+    App.m_bOpenWorldsMaximised             = dlg.m_openMaximised->GetValue()         ? 1 : 0;
+    App.m_bConfirmBeforeClosingWorld       = dlg.m_confirmCloseWorld->GetValue()    ? 1 : 0;
+    App.m_bConfirmBeforeClosingMushclient  = dlg.m_confirmCloseApp->GetValue()      ? 1 : 0;
+    App.m_bConfirmBeforeSavingVariables    = dlg.m_confirmSaveVars->GetValue()      ? 1 : 0;
+    App.m_bAutoLogWorld                    = dlg.m_autoLog->GetValue()              ? 1 : 0;
+    App.m_bAppendToLogFiles                = dlg.m_appendToLog->GetValue()          ? 1 : 0;
+    App.m_bAllTypingToCommandWindow        = dlg.m_allTypingToCommand->GetValue()   ? 1 : 0;
+    App.m_strWordDelimitersDblClick =
+        CString(dlg.m_wordDelimitersDblClick->GetValue().ToUTF8().data());
 
-    // World directory path
-    if (dlg.m_worldDir) {
-        App.m_strDefaultWorldFileDirectory =
-            CString(dlg.m_worldDir->GetValue().ToUTF8().data());
-    }
+    // ── Font tab ──────────────────────────────────────────────────────────
+    App.m_strDefaultOutputFont       = CString(dlg.m_fontName->GetValue().ToUTF8().data());
+    App.m_strDefaultInputFont        = App.m_strDefaultOutputFont;  // keep in sync
+    App.m_strFixedPitchFont          = App.m_strDefaultOutputFont;
+    App.m_iDefaultOutputFontHeight   = dlg.m_fontSize->GetValue();
+    App.m_iDefaultInputFontHeight    = App.m_iDefaultOutputFontHeight;
+    App.m_iFixedPitchFontSize        = App.m_iDefaultOutputFontHeight;
 
-    // Persist to the preferences DB (mirrors what mainfrm.cpp does on Windows).
-    App.db_write_int("prefs", "ReconnectOnLinkFailure",
-                     App.m_bReconnectOnLinkFailure);
-    App.db_write_int("prefs", "NotifyOnDisconnect",
-                     App.m_bNotifyOnDisconnect);
-    App.db_write_int("prefs", "NotifyIfCannotConnect",
-                     App.m_bNotifyIfCannotConnect);
-    App.db_write_int("prefs", "ErrorNotificationToOutputWindow",
-                     App.m_bErrorNotificationToOutputWindow);
-    App.db_write_int("prefs", "ConfirmBeforeClosingWorld",
-                     App.m_bConfirmBeforeClosingWorld);
-    App.db_write_int("prefs", "ConfirmBeforeClosingMushclient",
-                     App.m_bConfirmBeforeClosingMushclient);
+    // ── Directories tab ───────────────────────────────────────────────────
+    App.m_strDefaultWorldFileDirectory =
+        CString(dlg.m_worldDir->GetValue().ToUTF8().data());
+    App.m_strPluginsDirectory =
+        CString(dlg.m_pluginsDir->GetValue().ToUTF8().data());
+    App.m_strDefaultLogFileDirectory =
+        CString(dlg.m_logDir->GetValue().ToUTF8().data());
+
+    // ── Persist all changed values to the preferences DB ──────────────────
+    // Boolean settings
+    App.db_write_int("prefs", "ReconnectOnLinkFailure",         App.m_bReconnectOnLinkFailure);
+    App.db_write_int("prefs", "NotifyOnDisconnect",             App.m_bNotifyOnDisconnect);
+    App.db_write_int("prefs", "NotifyIfCannotConnect",          App.m_bNotifyIfCannotConnect);
+    App.db_write_int("prefs", "AutoConnectWorlds",              App.m_bAutoConnectWorlds);
+    App.db_write_int("prefs", "ErrorNotificationToOutputWindow",App.m_bErrorNotificationToOutputWindow);
+    App.db_write_int("prefs", "RegexpMatchEmpty",               App.m_bRegexpMatchEmpty);
+    App.db_write_int("prefs", "OpenWorldsMaximised",            App.m_bOpenWorldsMaximised);
+    App.db_write_int("prefs", "ConfirmBeforeClosingWorld",      App.m_bConfirmBeforeClosingWorld);
+    App.db_write_int("prefs", "ConfirmBeforeClosingMushclient", App.m_bConfirmBeforeClosingMushclient);
+    App.db_write_int("prefs", "ConfirmBeforeSavingVariables",   App.m_bConfirmBeforeSavingVariables);
+    App.db_write_int("prefs", "AutoLogWorld",                   App.m_bAutoLogWorld);
+    App.db_write_int("prefs", "AppendToLogFiles",               App.m_bAppendToLogFiles);
+    App.db_write_int("prefs", "AllTypingToCommandWindow",       App.m_bAllTypingToCommandWindow);
+    App.db_write_string("prefs", "WordDelimitersDblClick",
+                        static_cast<const char*>(App.m_strWordDelimitersDblClick));
+    // Font settings
+    App.db_write_string("prefs", "DefaultOutputFont",
+                        static_cast<const char*>(App.m_strDefaultOutputFont));
+    App.db_write_string("prefs", "DefaultInputFont",
+                        static_cast<const char*>(App.m_strDefaultInputFont));
+    App.db_write_string("prefs", "FixedPitchFont",
+                        static_cast<const char*>(App.m_strFixedPitchFont));
+    App.db_write_int("prefs", "DefaultOutputFontHeight",  App.m_iDefaultOutputFontHeight);
+    App.db_write_int("prefs", "DefaultInputFontHeight",   App.m_iDefaultInputFontHeight);
+    App.db_write_int("prefs", "FixedPitchFontSize",       App.m_iFixedPitchFontSize);
+    // Directory settings
     App.db_write_string("prefs", "DefaultWorldFileDirectory",
                         static_cast<const char*>(App.m_strDefaultWorldFileDirectory));
+    App.db_write_string("prefs", "PluginsDirectory",
+                        static_cast<const char*>(App.m_strPluginsDirectory));
+    App.db_write_string("prefs", "DefaultLogFileDirectory",
+                        static_cast<const char*>(App.m_strDefaultLogFileDirectory));
+
+    // ── Live-update all open worlds with new global pref values ──────────
+    // Word delimiters and copy-to-clipboard are per-pane state; push the
+    // new values to every currently-open CWorldChildFrame output pane.
+    std::string newDelims =
+        static_cast<const char*>(App.m_strWordDelimitersDblClick);
+    for (auto& kv : s_docFrameMap) {
+        CWorldChildFrame* cf = kv.second;
+        if (cf && cf->OutputPane())
+            cf->OutputPane()->SetWordDelimitersDblClick(newDelims);
+    }
 }
 
 // ── WorldPreferencesDlg ───────────────────────────────────────────────────
@@ -1950,9 +2152,37 @@ public:
     wxCheckBox*          m_displayMyInput;
     wxCheckBox*          m_autoFreeze;
     wxCheckBox*          m_carriageReturn;
+    // Input behaviour
+    wxCheckBox*          m_translateBackslash;
+    wxCheckBox*          m_noEchoOff;
+    wxCheckBox*          m_autoRepeat;
+    // Spam prevention
+    wxCheckBox*          m_enableSpam;
+    wxSpinCtrl*          m_spamLineCount;
+    wxTextCtrl*          m_spamMessage;
     // Logging
     wxTextCtrl*          m_autoLogFile;
     wxButton*            m_autoLogBrowse;
+    wxCheckBox*          m_logOutput;
+    wxCheckBox*          m_logNotes;
+    wxCheckBox*          m_logHTML;
+    wxCheckBox*          m_logInColour;
+    // Output behaviour
+    wxCheckBox*          m_utf8Mode;
+    wxCheckBox*          m_naws;
+    wxCheckBox*          m_convertGA;
+    wxCheckBox*          m_showConnectDisconnect;
+    wxCheckBox*          m_copySelectionToClipboard;
+    wxCheckBox*          m_unpauseOnSend;
+    wxCheckBox*          m_autoWrapWindowWidth;
+    // Command options
+    wxCheckBox*          m_enableCommandStack;
+    wxTextCtrl*          m_commandStackChar;
+    wxCheckBox*          m_enableSpeedWalkDlg;
+    wxTextCtrl*          m_speedWalkPrefix;
+    wxSpinCtrl*          m_speedWalkDelay;
+    wxSpinCtrl*          m_historyLines;
+    wxCheckBox*          m_escapeDeletesInput;
     // Proxy
     wxChoice*            m_proxyType;
     wxTextCtrl*          m_proxyServer;
@@ -1985,8 +2215,37 @@ public:
         bool displayMyInput;
         bool autoFreeze;
         bool carriageReturn;
+        // Input behaviour
+        bool translateBackslash;
+        bool noEchoOff;
+        bool autoRepeat;
+        // Spam prevention
+        bool     enableSpam;
+        int      spamLineCount;
+        wxString spamMessage;
+        // Logging flags
+        bool logOutput;
+        bool logNotes;
+        bool logHTML;
+        bool logInColour;
         // Logging
         wxString autoLogFile;
+        // Output behaviour
+        bool utf8Mode;
+        bool naws;
+        bool convertGA;
+        bool showConnectDisconnect;
+        bool copySelectionToClipboard;
+        bool unpauseOnSend;
+        bool autoWrapWindowWidth;
+        // Command options
+        bool     enableCommandStack;
+        wxString commandStackChar;
+        bool     enableSpeedWalk;
+        wxString speedWalkPrefix;
+        int      speedWalkDelay;
+        int      historyLines;
+        bool     escapeDeletesInput;
         // Proxy
         int      proxyType;       // eProxyServerNone=0, eProxyServerSocks4=1, eProxyServerSocks5=2
         wxString proxyServer;
@@ -2014,8 +2273,32 @@ public:
         , m_displayMyInput(nullptr)
         , m_autoFreeze(nullptr)
         , m_carriageReturn(nullptr)
+        , m_translateBackslash(nullptr)
+        , m_noEchoOff(nullptr)
+        , m_autoRepeat(nullptr)
+        , m_enableSpam(nullptr)
+        , m_spamLineCount(nullptr)
+        , m_spamMessage(nullptr)
         , m_autoLogFile(nullptr)
         , m_autoLogBrowse(nullptr)
+        , m_logOutput(nullptr)
+        , m_logNotes(nullptr)
+        , m_logHTML(nullptr)
+        , m_logInColour(nullptr)
+        , m_utf8Mode(nullptr)
+        , m_naws(nullptr)
+        , m_convertGA(nullptr)
+        , m_showConnectDisconnect(nullptr)
+        , m_copySelectionToClipboard(nullptr)
+        , m_unpauseOnSend(nullptr)
+        , m_autoWrapWindowWidth(nullptr)
+        , m_enableCommandStack(nullptr)
+        , m_commandStackChar(nullptr)
+        , m_enableSpeedWalkDlg(nullptr)
+        , m_speedWalkPrefix(nullptr)
+        , m_speedWalkDelay(nullptr)
+        , m_historyLines(nullptr)
+        , m_escapeDeletesInput(nullptr)
         , m_proxyType(nullptr)
         , m_proxyServer(nullptr)
         , m_proxyPort(nullptr)
@@ -2271,6 +2554,75 @@ public:
             vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
         }
 
+        // ── Input Behaviour ───────────────────────────────────────────────
+        {
+            wxStaticBoxSizer* box =
+                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Input Behaviour"));
+
+            m_translateBackslash = new wxCheckBox(this, wxID_ANY,
+                wxT("Translate \\n, \\t, \\b, etc. in typed commands"));
+            m_translateBackslash->SetValue(p.translateBackslash);
+            m_translateBackslash->SetToolTip(
+                wxT("When enabled, \\n in a command becomes a newline, \\t a tab, etc."));
+            box->Add(m_translateBackslash, 0, wxLEFT | wxRIGHT | wxTOP | wxBOTTOM, 8);
+
+            m_noEchoOff = new wxCheckBox(this, wxID_ANY,
+                wxT("Keep local echo even if MUD requests password mode (no echo off)"));
+            m_noEchoOff->SetValue(p.noEchoOff);
+            m_noEchoOff->SetToolTip(
+                wxT("Normally the client hides typed characters when the MUD sends ")
+                wxT("WILL ECHO (password prompts). Check this to always show them."));
+            box->Add(m_noEchoOff, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_autoRepeat = new wxCheckBox(this, wxID_ANY,
+                wxT("Repeat last command when an empty line is sent"));
+            m_autoRepeat->SetValue(p.autoRepeat);
+            box->Add(m_autoRepeat, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            // ── Spam prevention sub-box ───────────────────────────────────
+            {
+                wxStaticBoxSizer* spam =
+                    new wxStaticBoxSizer(wxVERTICAL, this, wxT("Spam Prevention"));
+
+                m_enableSpam = new wxCheckBox(this, wxID_ANY,
+                    wxT("Enable spam prevention (suppress repeated identical lines)"));
+                m_enableSpam->SetValue(p.enableSpam);
+                spam->Add(m_enableSpam, 0, wxLEFT | wxRIGHT | wxTOP, 8);
+
+                wxBoxSizer* spamRow = new wxBoxSizer(wxHORIZONTAL);
+                spamRow->Add(new wxStaticText(this, wxID_ANY, wxT("After")),
+                             0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+                m_spamLineCount = new wxSpinCtrl(this, wxID_ANY, wxEmptyString,
+                                                 wxDefaultPosition, wxSize(60, -1),
+                                                 wxSP_ARROW_KEYS, 2, 200,
+                                                 p.spamLineCount > 1 ? p.spamLineCount : 20);
+                spamRow->Add(m_spamLineCount, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+                spamRow->Add(new wxStaticText(this, wxID_ANY, wxT("identical lines, show:")),
+                             0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+                m_spamMessage = new wxTextCtrl(this, wxID_ANY, p.spamMessage,
+                                               wxDefaultPosition, wxSize(160, -1));
+                m_spamMessage->SetToolTip(wxT("Text to show instead (e.g. \"<spam suppressed>\"). "
+                                              "Leave empty to suppress silently."));
+                spamRow->Add(m_spamMessage, 1, wxALIGN_CENTER_VERTICAL);
+                spam->Add(spamRow, 0, wxEXPAND | wxALL, 8);
+
+                // Enable/disable spam sub-controls based on checkbox state.
+                auto updateSpam = [this](wxCommandEvent&) {
+                    bool on = m_enableSpam->GetValue();
+                    m_spamLineCount->Enable(on);
+                    m_spamMessage->Enable(on);
+                };
+                m_enableSpam->Bind(wxEVT_CHECKBOX, updateSpam);
+                bool on = p.enableSpam;
+                m_spamLineCount->Enable(on);
+                m_spamMessage->Enable(on);
+
+                box->Add(spam, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+            }
+
+            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+        }
+
         // ── Logging ──────────────────────────────────────────────────────
         {
             wxStaticBoxSizer* box =
@@ -2314,6 +2666,163 @@ public:
             small.SetPointSize(std::max(8, small.GetPointSize() - 1));
             hint->SetFont(small);
             box->Add(hint, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            // ── What gets written to the log file ─────────────────────────
+            m_logOutput = new wxCheckBox(this, wxID_ANY,
+                wxT("Log MUD output to file"));
+            m_logOutput->SetValue(p.logOutput);
+            m_logOutput->SetToolTip(wxT("Write received MUD text to the log file."));
+            box->Add(m_logOutput, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_logNotes = new wxCheckBox(this, wxID_ANY,
+                wxT("Include Note() output in log"));
+            m_logNotes->SetValue(p.logNotes);
+            m_logNotes->SetToolTip(wxT("Also write script Note() calls to the log file."));
+            box->Add(m_logNotes, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_logHTML = new wxCheckBox(this, wxID_ANY,
+                wxT("Write log as HTML (with colour tags)"));
+            m_logHTML->SetValue(p.logHTML);
+            box->Add(m_logHTML, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_logInColour = new wxCheckBox(this, wxID_ANY,
+                wxT("Include ANSI colour codes in plain-text log"));
+            m_logInColour->SetValue(p.logInColour);
+            m_logInColour->SetToolTip(
+                wxT("Embed ANSI escape sequences in the log so colour-aware viewers "
+                    "show the correct colours. Has no effect when 'Write as HTML' is on."));
+            box->Add(m_logInColour, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            // Disable HTML / colour controls based on each other.
+            auto updateLogCtrls = [this](wxCommandEvent&) {
+                if (m_logHTML && m_logInColour)
+                    m_logInColour->Enable(!m_logHTML->GetValue());
+            };
+            if (m_logHTML) m_logHTML->Bind(wxEVT_CHECKBOX, updateLogCtrls);
+            if (m_logHTML && m_logInColour)
+                m_logInColour->Enable(!p.logHTML);
+
+            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+        }
+
+        // ── Output behaviour ─────────────────────────────────────────────
+        {
+            wxStaticBoxSizer* box =
+                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Output behaviour"));
+
+            m_utf8Mode = new wxCheckBox(this, wxID_ANY,
+                wxT("UTF-8 mode (expect UTF-8 encoded MUD text)"));
+            m_utf8Mode->SetValue(p.utf8Mode);
+            box->Add(m_utf8Mode, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_naws = new wxCheckBox(this, wxID_ANY,
+                wxT("Send window size via NAWS telnet option"));
+            m_naws->SetValue(p.naws);
+            box->Add(m_naws, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_convertGA = new wxCheckBox(this, wxID_ANY,
+                wxT("Convert Telnet GA to newline"));
+            m_convertGA->SetValue(p.convertGA);
+            box->Add(m_convertGA, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_showConnectDisconnect = new wxCheckBox(this, wxID_ANY,
+                wxT("Show connect / disconnect messages in output"));
+            m_showConnectDisconnect->SetValue(p.showConnectDisconnect);
+            box->Add(m_showConnectDisconnect, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_copySelectionToClipboard = new wxCheckBox(this, wxID_ANY,
+                wxT("Copy selected text to clipboard automatically"));
+            m_copySelectionToClipboard->SetValue(p.copySelectionToClipboard);
+            box->Add(m_copySelectionToClipboard, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_unpauseOnSend = new wxCheckBox(this, wxID_ANY,
+                wxT("Unpause output when a command is sent"));
+            m_unpauseOnSend->SetValue(p.unpauseOnSend);
+            box->Add(m_unpauseOnSend, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_autoWrapWindowWidth = new wxCheckBox(this, wxID_ANY,
+                wxT("Automatically wrap text to current window width"));
+            m_autoWrapWindowWidth->SetValue(p.autoWrapWindowWidth);
+            box->Add(m_autoWrapWindowWidth, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+        }
+
+        // ── Commands ──────────────────────────────────────────────────────
+        {
+            wxStaticBoxSizer* box =
+                new wxStaticBoxSizer(wxVERTICAL, this, wxT("Commands"));
+
+            wxFlexGridSizer* g = new wxFlexGridSizer(0, 2, 6, 8);
+            g->AddGrowableCol(1, 1);
+
+            auto row = [&](const wxString& lbl, wxWindow* ctrl) {
+                g->Add(new wxStaticText(this, wxID_ANY, lbl),
+                       0, wxALIGN_CENTER_VERTICAL);
+                g->Add(ctrl, 1, wxEXPAND);
+            };
+
+            // Command stacking
+            m_enableCommandStack = new wxCheckBox(this, wxID_ANY,
+                wxT("Enable command stacking"));
+            m_enableCommandStack->SetValue(p.enableCommandStack);
+            box->Add(m_enableCommandStack, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            m_commandStackChar = new wxTextCtrl(this, wxID_ANY, p.commandStackChar,
+                                                wxDefaultPosition, wxSize(40, -1));
+            row(wxT("Command stack character:"), m_commandStackChar);
+
+            // Enable/disable stack char based on checkbox.
+            auto updateStack = [this](wxCommandEvent&) {
+                m_commandStackChar->Enable(m_enableCommandStack->GetValue());
+            };
+            m_enableCommandStack->Bind(wxEVT_CHECKBOX, updateStack);
+            m_commandStackChar->Enable(p.enableCommandStack);
+
+            // Speed walk
+            m_enableSpeedWalkDlg = new wxCheckBox(this, wxID_ANY,
+                wxT("Enable speed walk"));
+            m_enableSpeedWalkDlg->SetValue(p.enableSpeedWalk);
+            box->Add(m_enableSpeedWalkDlg, 0, wxLEFT | wxRIGHT | wxTOP | wxBOTTOM, 8);
+
+            m_speedWalkPrefix = new wxTextCtrl(this, wxID_ANY, p.speedWalkPrefix,
+                                               wxDefaultPosition, wxSize(40, -1));
+            row(wxT("Speed walk prefix character:"), m_speedWalkPrefix);
+
+            m_speedWalkDelay = new wxSpinCtrl(this, wxID_ANY, wxEmptyString,
+                                              wxDefaultPosition, wxSize(90, -1),
+                                              wxSP_ARROW_KEYS, 0, 30000,
+                                              p.speedWalkDelay);
+            row(wxT("Speed walk delay (ms):"), m_speedWalkDelay);
+
+            // Enable/disable speed walk fields based on checkbox.
+            auto updateSpeedWalk = [this](wxCommandEvent&) {
+                bool on = m_enableSpeedWalkDlg->GetValue();
+                m_speedWalkPrefix->Enable(on);
+                m_speedWalkDelay->Enable(on);
+            };
+            m_enableSpeedWalkDlg->Bind(wxEVT_CHECKBOX, updateSpeedWalk);
+            m_speedWalkPrefix->Enable(p.enableSpeedWalk);
+            m_speedWalkDelay->Enable(p.enableSpeedWalk);
+
+            box->Add(g, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            // History lines
+            wxBoxSizer* histRow = new wxBoxSizer(wxHORIZONTAL);
+            histRow->Add(new wxStaticText(this, wxID_ANY, wxT("Command history lines:")),
+                         0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+            m_historyLines = new wxSpinCtrl(this, wxID_ANY, wxEmptyString,
+                                            wxDefaultPosition, wxSize(90, -1),
+                                            wxSP_ARROW_KEYS, 20, 5000,
+                                            p.historyLines);
+            histRow->Add(m_historyLines, 0, wxALIGN_CENTER_VERTICAL);
+            box->Add(histRow, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+
+            // Escape deletes input
+            m_escapeDeletesInput = new wxCheckBox(this, wxID_ANY,
+                wxT("Escape key clears the input bar"));
+            m_escapeDeletesInput->SetValue(p.escapeDeletesInput);
+            box->Add(m_escapeDeletesInput, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
 
             vs->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
         }
@@ -2453,8 +2962,40 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     p.displayMyInput = (doc->m_display_my_input != 0);
     p.autoFreeze     = (doc->m_bAutoFreeze != 0);
     p.carriageReturn = (doc->m_bCarriageReturnClearsLine != 0);
+    // Input behaviour
+    p.translateBackslash = (doc->m_bTranslateBackslashSequences != 0);
+    p.noEchoOff          = (doc->m_bNoEchoOff != 0);
+    p.autoRepeat         = (doc->m_bAutoRepeat != 0);
+    // Spam prevention
+    p.enableSpam    = (doc->m_bEnableSpamPrevention != 0);
+    p.spamLineCount = doc->m_iSpamLineCount > 1 ? (int)doc->m_iSpamLineCount : 20;
+    p.spamMessage   = wxString::FromUTF8(static_cast<const char*>(doc->m_strSpamMessage));
+    // Logging flags
+    p.logOutput   = (doc->m_bLogOutput  != 0);
+    p.logNotes    = (doc->m_bLogNotes   != 0);
+    p.logHTML     = (doc->m_bLogHTML    != 0);
+    p.logInColour = (doc->m_bLogInColour != 0);
     p.autoLogFile    = wxString::FromUTF8(
                            static_cast<const char*>(doc->m_strAutoLogFileName));
+    // Output behaviour
+    p.utf8Mode                = (doc->m_bUTF_8              != 0);
+    p.naws                    = (doc->m_bNAWS               != 0);
+    p.convertGA               = (doc->m_bConvertGAtoNewline != 0);
+    p.showConnectDisconnect   = doc->m_bShowConnectDisconnect;
+    p.copySelectionToClipboard= (doc->m_bCopySelectionToClipboard != 0);
+    p.unpauseOnSend           = (doc->m_bUnpauseOnSend      != 0);
+    p.autoWrapWindowWidth     = (doc->m_bAutoWrapWindowWidth != 0);
+    // Command options
+    p.enableCommandStack = (doc->m_enable_command_stack != 0);
+    p.commandStackChar   = wxString::FromUTF8(
+                               static_cast<const char*>(doc->m_strCommandStackCharacter));
+    p.enableSpeedWalk    = (doc->m_enable_speed_walk != 0);
+    p.speedWalkPrefix    = wxString::FromUTF8(
+                               static_cast<const char*>(doc->m_speed_walk_prefix));
+    p.speedWalkDelay     = (int)doc->m_iSpeedWalkDelay;
+    p.historyLines       = (int)(doc->m_nHistoryLines > 20 ? doc->m_nHistoryLines : 500);
+    p.escapeDeletesInput = (doc->m_bEscapeDeletesInput != 0);
+    // Proxy
     p.proxyType      = (int)doc->m_iSocksProcessing;  // eProxyServerNone .. eProxyServerSocks5
     p.proxyServer    = wxString::FromUTF8(static_cast<const char*>(doc->m_strProxyServerName));
     p.proxyPort      = doc->m_iProxyServerPort > 0 ? (int)doc->m_iProxyServerPort : 1080;
@@ -2497,7 +3038,36 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     doc->m_display_my_input          = dlg.m_displayMyInput->GetValue() ? 1 : 0;
     doc->m_bAutoFreeze               = dlg.m_autoFreeze->GetValue()     ? 1 : 0;
     doc->m_bCarriageReturnClearsLine = dlg.m_carriageReturn->GetValue() ? 1 : 0;
+    // Input behaviour
+    doc->m_bTranslateBackslashSequences = dlg.m_translateBackslash->GetValue() ? 1 : 0;
+    doc->m_bNoEchoOff                   = dlg.m_noEchoOff->GetValue()          ? 1 : 0;
+    doc->m_bAutoRepeat                  = dlg.m_autoRepeat->GetValue()          ? 1 : 0;
+    // Spam prevention
+    doc->m_bEnableSpamPrevention = dlg.m_enableSpam->GetValue() ? 1 : 0;
+    doc->m_iSpamLineCount        = static_cast<short>(dlg.m_spamLineCount->GetValue());
+    doc->m_strSpamMessage        = CString(dlg.m_spamMessage->GetValue().ToUTF8().data());
+    // Logging flags
+    doc->m_bLogOutput   = dlg.m_logOutput->GetValue()   ? 1 : 0;
+    doc->m_bLogNotes    = dlg.m_logNotes->GetValue()    ? 1 : 0;
+    doc->m_bLogHTML     = dlg.m_logHTML->GetValue()     ? 1 : 0;
+    doc->m_bLogInColour = dlg.m_logInColour->GetValue() ? 1 : 0;
     doc->m_strAutoLogFileName        = CString(dlg.m_autoLogFile->GetValue().ToUTF8().data());
+    // Output behaviour
+    doc->m_bUTF_8                    = dlg.m_utf8Mode->GetValue()                ? 1 : 0;
+    doc->m_bNAWS                     = dlg.m_naws->GetValue()                    ? TRUE : FALSE;
+    doc->m_bConvertGAtoNewline       = dlg.m_convertGA->GetValue()               ? 1 : 0;
+    doc->m_bShowConnectDisconnect    = dlg.m_showConnectDisconnect->GetValue();
+    doc->m_bCopySelectionToClipboard = dlg.m_copySelectionToClipboard->GetValue() ? 1 : 0;
+    doc->m_bUnpauseOnSend            = dlg.m_unpauseOnSend->GetValue()            ? 1 : 0;
+    doc->m_bAutoWrapWindowWidth      = dlg.m_autoWrapWindowWidth->GetValue()      ? TRUE : FALSE;
+    // Command options
+    doc->m_enable_command_stack      = dlg.m_enableCommandStack->GetValue() ? 1 : 0;
+    doc->m_strCommandStackCharacter  = CString(dlg.m_commandStackChar->GetValue().ToUTF8().data());
+    doc->m_enable_speed_walk         = dlg.m_enableSpeedWalkDlg->GetValue() ? 1 : 0;
+    doc->m_speed_walk_prefix         = CString(dlg.m_speedWalkPrefix->GetValue().ToUTF8().data());
+    doc->m_iSpeedWalkDelay           = static_cast<unsigned short>(dlg.m_speedWalkDelay->GetValue());
+    doc->m_nHistoryLines             = static_cast<LONG>(dlg.m_historyLines->GetValue());
+    doc->m_bEscapeDeletesInput       = dlg.m_escapeDeletesInput->GetValue() ? 1 : 0;
     // Proxy
     doc->m_iSocksProcessing      = static_cast<unsigned short>(dlg.m_proxyType->GetSelection());
     doc->m_strProxyServerName    = CString(dlg.m_proxyServer->GetValue().ToUTF8().data());
@@ -2506,7 +3076,10 @@ static bool hook_game_preferences(void* vdoc, int /*iPage*/)
     doc->m_strProxyPassword      = CString(dlg.m_proxyPassword->GetValue().ToUTF8().data());
 
     // Propagate auto-freeze setting to the live output pane immediately.
-    if (pane) pane->SetAllowAutoFreeze(doc->m_bAutoFreeze != 0);
+    if (pane) {
+        pane->SetAllowAutoFreeze(doc->m_bAutoFreeze != 0);
+        pane->SetCopySelectionToClipboard(doc->m_bCopySelectionToClipboard != 0);
+    }
 
     // ── Apply font ────────────────────────────────────────────────────────
     if (pane && dlg.m_fontPicker) {

@@ -127,6 +127,16 @@ static void wMulti(CArchive& ar, const char* name, const CString& val)
 
 static long get_numeric_value(const CMUSHclientDoc* doc, const char* opt)
 {
+    // Font options: height == 0 means "not configured" — return LONG_MIN so the
+    // save loop substitutes the OptionsTable default and skips writing the
+    // attribute (matches Windows behaviour for default-valued options).
+    if (!strcmp(opt, "output_font_height"))    return doc->m_font_height  ? doc->m_font_height  : LONG_MIN;
+    if (!strcmp(opt, "output_font_weight"))    return doc->m_font_weight;
+    if (!strcmp(opt, "output_font_charset"))   return (long)doc->m_font_charset;
+    if (!strcmp(opt, "input_font_height"))     return doc->m_input_font_height ? doc->m_input_font_height : LONG_MIN;
+    if (!strcmp(opt, "input_font_italic"))     return doc->m_input_font_italic;
+    if (!strcmp(opt, "input_font_weight"))     return doc->m_input_font_weight;
+    if (!strcmp(opt, "input_font_charset"))    return (long)doc->m_input_font_charset;
     if (!strcmp(opt, "connect_method"))        return doc->m_connect_now;
     if (!strcmp(opt, "detect_pueblo"))         return doc->m_bPueblo              ? 1 : 0;
     if (!strcmp(opt, "disable_compression"))   return doc->m_bDisableCompression  ? 1 : 0;
@@ -167,6 +177,9 @@ static long get_numeric_value(const CMUSHclientDoc* doc, const char* opt)
 
 static CString get_alpha_value(const CMUSHclientDoc* doc, const char* opt)
 {
+    // Font name options: return the live member (empty string == use default).
+    if (!strcmp(opt, "output_font_name"))      return doc->m_font_name;
+    if (!strcmp(opt, "input_font_name"))       return doc->m_input_font_name;
     if (!strcmp(opt, "auto_log_file_name"))      return doc->m_strAutoLogFileName;
     if (!strcmp(opt, "connect_text"))            return doc->m_connect_text;
     if (!strcmp(opt, "id"))                      return doc->m_strWorldID;

@@ -427,7 +427,16 @@ static unsigned int Load_Timers(CXMLelement& parent, CMUSHclientDoc& doc)
 static void apply_numeric_option(CMUSHclientDoc& doc, const char* opt, long val)
 {
     // Live members — kept in sync with L_SetOption in lua_world_api_portable.cpp
-    if      (!strcmp(opt, "enable_triggers"))      doc.m_enable_triggers        = (val != 0);
+    // Font options
+    if      (!strcmp(opt, "output_font_height"))   doc.m_font_height         = val;
+    else if (!strcmp(opt, "output_font_weight"))   doc.m_font_weight         = val;
+    else if (!strcmp(opt, "output_font_charset"))  doc.m_font_charset        = (DWORD)val;
+    else if (!strcmp(opt, "input_font_height"))    doc.m_input_font_height   = val;
+    else if (!strcmp(opt, "input_font_italic"))    doc.m_input_font_italic   = (BYTE)(val != 0);
+    else if (!strcmp(opt, "input_font_weight"))    doc.m_input_font_weight   = val;
+    else if (!strcmp(opt, "input_font_charset"))   doc.m_input_font_charset  = (DWORD)val;
+    // World behaviour options
+    else if (!strcmp(opt, "enable_triggers"))      doc.m_enable_triggers        = (val != 0);
     else if (!strcmp(opt, "enable_aliases"))       doc.m_enable_aliases         = (val != 0);
     else if (!strcmp(opt, "enable_timers"))        doc.m_bEnableTimers          = (val != 0);
     else if (!strcmp(opt, "display_my_input"))     doc.m_display_my_input       = (val != 0);
@@ -469,8 +478,11 @@ static void apply_numeric_option(CMUSHclientDoc& doc, const char* opt, long val)
 static void apply_alpha_option(CMUSHclientDoc& doc, const char* opt, const CString& val)
 {
     // Live members — kept in sync with L_SetAlphaOption in lua_world_api_portable.cpp
+    // Font name options
+    if      (!strcmp(opt, "output_font_name")) doc.m_font_name              = val;
+    else if (!strcmp(opt, "input_font_name"))  doc.m_input_font_name        = val;
     // Note: "site" → m_mush_name is intentional for mushcli (cli_main uses m_mush_name as host)
-    if      (!strcmp(opt, "site"))             doc.m_mush_name              = val;
+    else if (!strcmp(opt, "site"))             doc.m_mush_name              = val;
     else if (!strcmp(opt, "name"))             {}  // world display name — not needed by CLI
     else if (!strcmp(opt, "player"))           doc.m_name                   = val;
     else if (!strcmp(opt, "script_filename"))  doc.m_strScriptFilename      = val;

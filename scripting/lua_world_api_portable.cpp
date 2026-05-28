@@ -1479,12 +1479,21 @@ static int L_GetOption(lua_State* L)
     else if (!strcmp(opt, "detect_pueblo"))     OPT_GET_MEMBER(pDoc->m_bPueblo ? 1 : 0);
     else if (!strcmp(opt, "naws"))              OPT_GET_MEMBER(pDoc->m_bNAWS ? 1 : 0);
     else if (!strcmp(opt, "disable_compression")) OPT_GET_MEMBER(pDoc->m_bDisableCompression ? 1 : 0);
+    else if (!strcmp(opt, "convert_ga_to_newline")) OPT_GET_MEMBER(pDoc->m_bConvertGAtoNewline ? 1 : 0);
     else if (!strcmp(opt, "connect_method"))    OPT_GET_MEMBER(pDoc->m_connect_now);
     else if (!strcmp(opt, "use_ssl"))              OPT_GET_MEMBER(pDoc->m_bUseSSL);
     else if (!strcmp(opt, "proxy_type"))           OPT_GET_MEMBER(pDoc->m_iSocksProcessing);
     else if (!strcmp(opt, "proxy_port"))           OPT_GET_MEMBER(pDoc->m_iProxyServerPort);
     else if (!strcmp(opt, "send_keep_alives"))     OPT_GET_MEMBER(pDoc->m_bSendKeepAlives);
     else if (!strcmp(opt, "save_world_automatically")) OPT_GET_MEMBER(pDoc->m_bSaveWorldAutomatically);
+    // Font numeric options
+    else if (!strcmp(opt, "output_font_height"))   OPT_GET_MEMBER(pDoc->m_font_height);
+    else if (!strcmp(opt, "output_font_weight"))   OPT_GET_MEMBER(pDoc->m_font_weight);
+    else if (!strcmp(opt, "output_font_charset"))  OPT_GET_MEMBER((long)pDoc->m_font_charset);
+    else if (!strcmp(opt, "input_font_height"))    OPT_GET_MEMBER(pDoc->m_input_font_height);
+    else if (!strcmp(opt, "input_font_italic"))    OPT_GET_MEMBER((long)pDoc->m_input_font_italic);
+    else if (!strcmp(opt, "input_font_weight"))    OPT_GET_MEMBER(pDoc->m_input_font_weight);
+    else if (!strcmp(opt, "input_font_charset"))   OPT_GET_MEMBER((long)pDoc->m_input_font_charset);
 
     // 2. Cache — value previously written by SetOption.
     {
@@ -1530,12 +1539,22 @@ static int L_SetOption(lua_State* L)
     else if (!strcmp(opt, "detect_pueblo"))        pDoc->m_bPueblo                = (val != 0);
     else if (!strcmp(opt, "naws"))                 pDoc->m_bNAWS                  = (val != 0);
     else if (!strcmp(opt, "disable_compression"))  pDoc->m_bDisableCompression    = (val != 0);
+    else if (!strcmp(opt, "convert_ga_to_newline"))pDoc->m_bConvertGAtoNewline    = (unsigned short)(val != 0);
     else if (!strcmp(opt, "connect_method"))       pDoc->m_connect_now            = (short)val;
     else if (!strcmp(opt, "use_ssl"))              pDoc->m_bUseSSL                = (unsigned short)(val != 0);
     else if (!strcmp(opt, "proxy_type"))           pDoc->m_iSocksProcessing       = (unsigned short)val;
     else if (!strcmp(opt, "proxy_port"))           pDoc->m_iProxyServerPort       = (unsigned short)val;
     else if (!strcmp(opt, "send_keep_alives"))     pDoc->m_bSendKeepAlives        = (unsigned short)(val != 0);
     else if (!strcmp(opt, "save_world_automatically")) pDoc->m_bSaveWorldAutomatically = (unsigned short)(val != 0);
+    // Font numeric options — update live members; GUI callback (world.SetFont)
+    // is the preferred way to change the displayed font interactively.
+    else if (!strcmp(opt, "output_font_height"))   pDoc->m_font_height         = val;
+    else if (!strcmp(opt, "output_font_weight"))   pDoc->m_font_weight         = val;
+    else if (!strcmp(opt, "output_font_charset"))  pDoc->m_font_charset        = (DWORD)val;
+    else if (!strcmp(opt, "input_font_height"))    pDoc->m_input_font_height   = val;
+    else if (!strcmp(opt, "input_font_italic"))    pDoc->m_input_font_italic   = (BYTE)(val != 0);
+    else if (!strcmp(opt, "input_font_weight"))    pDoc->m_input_font_weight   = val;
+    else if (!strcmp(opt, "input_font_charset"))   pDoc->m_input_font_charset  = (DWORD)val;
     else if (!strcmp(opt, "wrap_column")) {
         if (val >= 20 && val <= MAX_LINE_WIDTH) {
             pDoc->m_nWrapColumn = (unsigned short)val;
@@ -2457,6 +2476,9 @@ static int L_GetAlphaOption(lua_State* L)
     else if (!strcmp(opt, "on_mxp_open_tag"))     OPT_GET_STR(pDoc->m_strOnMXP_OpenTag);
     else if (!strcmp(opt, "on_mxp_close_tag"))    OPT_GET_STR(pDoc->m_strOnMXP_CloseTag);
     else if (!strcmp(opt, "on_mxp_set_variable")) OPT_GET_STR(pDoc->m_strOnMXP_SetVariable);
+    // Font names
+    else if (!strcmp(opt, "output_font_name"))    OPT_GET_STR(pDoc->m_font_name);
+    else if (!strcmp(opt, "input_font_name"))     OPT_GET_STR(pDoc->m_input_font_name);
     // Log preambles/postambles
     else if (!strcmp(opt, "log_file_preamble"))         OPT_GET_STR(pDoc->m_strLogFilePreamble);
     else if (!strcmp(opt, "log_file_postamble"))        OPT_GET_STR(pDoc->m_strLogFilePostamble);
@@ -2542,9 +2564,16 @@ static int L_SetAlphaOption(lua_State* L)
     else if (!strcmp(opt, "log_line_postamble_notes"))  pDoc->m_strLogLinePostambleNotes  = CString(val);
     else if (!strcmp(opt, "log_line_postamble_output")) pDoc->m_strLogLinePostambleOutput = CString(val);
     else if (!strcmp(opt, "output_font_name")) {
-        // Immediately apply the face name to the output pane.
+        // Update live member and, if a GUI is attached, apply the font
+        // immediately so the change takes effect without a world restart.
+        pDoc->m_font_name = CString(val);
         if (pDoc->m_fn_set_output_font && val && *val)
             pDoc->m_fn_set_output_font(std::string(val), 0, false, false);
+    }
+    else if (!strcmp(opt, "input_font_name")) {
+        pDoc->m_input_font_name = CString(val);
+        if (pDoc->m_fn_set_input_font && val && *val)
+            pDoc->m_fn_set_input_font(std::string(val), 0, false, false);
     }
     else                                       is_member = false;
 
@@ -5526,9 +5555,57 @@ static int L_Repaint(lua_State* L)
     lua_pushnumber(L, eOK);
     return 1;
 }
-static int L_GetSysColor(lua_State* L)      { world_doc(L); lua_pushnumber(L, 0); return 1; }
-static int L_GetSystemMetrics(lua_State* L) { world_doc(L); lua_pushnumber(L, 0); return 1; }
-static int L_GetDeviceCaps(lua_State* L)    { world_doc(L); lua_pushnumber(L, 0); return 1; }
+// Portable system-colour / metrics / device-caps implementations.
+// These cannot query the OS directly from mushcore (no wxWidgets), so we
+// return the most common/neutral values for the constants scripts use most.
+// COLORREF format: 0x00BBGGRR (same as Win32 GetSysColor return value).
+static int L_GetSysColor(lua_State* L)
+{
+    world_doc(L);
+    long idx = (long)luaL_optnumber(L, 1, -1);
+    long result;
+    switch (idx) {
+        case 0:  result = RGB(192,192,192); break; // COLOR_SCROLLBAR
+        case 5:  result = RGB(255,255,255); break; // COLOR_WINDOW
+        case 8:  result = RGB(  0,  0,  0); break; // COLOR_WINDOWTEXT
+        case 13: result = RGB(  0,120,215); break; // COLOR_HIGHLIGHT
+        case 14: result = RGB(255,255,255); break; // COLOR_HIGHLIGHTTEXT
+        case 15: result = RGB(240,240,240); break; // COLOR_BTNFACE
+        case 18: result = RGB(  0,  0,  0); break; // COLOR_BTNTEXT
+        default: result = 0; break;
+    }
+    lua_pushnumber(L, result);
+    return 1;
+}
+static int L_GetSystemMetrics(lua_State* L)
+{
+    world_doc(L);
+    long idx = (long)luaL_optnumber(L, 1, -1);
+    long result;
+    switch (idx) {
+        // Scrollbar dimensions in pixels (typical value, matching Win32 default)
+        case 2: result = 17; break; // SM_CXVSCROLL
+        case 3: result = 17; break; // SM_CYHSCROLL
+        // Screen dimensions: not knowable without GUI context — return 0
+        default: result = 0; break;
+    }
+    lua_pushnumber(L, result);
+    return 1;
+}
+static int L_GetDeviceCaps(lua_State* L)
+{
+    world_doc(L);
+    long idx = (long)luaL_optnumber(L, 1, -1);
+    long result;
+    switch (idx) {
+        case 12: result = 32; break; // BITSPIXEL — 32-bit colour
+        case 88: result = 96; break; // LOGPIXELSX — standard 96 DPI
+        case 90: result = 96; break; // LOGPIXELSY — standard 96 DPI
+        default: result = 0; break;
+    }
+    lua_pushnumber(L, result);
+    return 1;
+}
 static int L_GetClipboard(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
@@ -7124,6 +7201,15 @@ static const luaL_Reg worldlib[] = {
     { "WindowImageInfo",        L_GuiNilStub     },
     { "WindowImageList",        L_WindowListStub },
     { "WindowInfo",             L_GuiNilStub     },
+
+    // ── Pane stubs — legacy API replaced by miniwindows, never fully implemented
+    // even on Windows (#ifdef PANE / #if 0).  CreatePane returns eOK so callers
+    // don't abort; all others return eNoSuchWindow (30073) since no pane exists.
+    { "ClearPane",   [](lua_State* L) -> int { world_doc(L); lua_pushnumber(L, eNoSuchWindow); return 1; } },
+    { "ClosePane",   [](lua_State* L) -> int { world_doc(L); lua_pushnumber(L, eNoSuchWindow); return 1; } },
+    { "CreatePane",  [](lua_State* L) -> int { world_doc(L); lua_pushnumber(L, eOK);           return 1; } },
+    { "PaneLine",    [](lua_State* L) -> int { world_doc(L); lua_pushnumber(L, eNoSuchWindow); return 1; } },
+    { "PaneText",    [](lua_State* L) -> int { world_doc(L); lua_pushnumber(L, eNoSuchWindow); return 1; } },
 
     // ── Chat stubs — return eNoChatConnections ────────────────────────────────
     { "ChatAcceptCalls",        L_ChatStub },

@@ -1351,25 +1351,31 @@ void COutputPane::OnLeftUp(wxMouseEvent& evt)
         }
         m_linkAtDown.clear();
 
-        // Auto-copy non-empty selection to clipboard (terminal-style).
-        SelPoint s, e;
-        if (GetNormalizedSel(s, e)) {
-            wxString text = SelectedText();
-            if (!text.IsEmpty()) {
-                if (wxTheClipboard->Open()) {
-                    wxTheClipboard->SetData(new wxTextDataObject(text));
-                    wxTheClipboard->Close();
-                }
+        // Auto-copy non-empty selection to clipboard when
+        // copy_selection_to_clipboard is enabled (off by default).
+        // On GTK we always write the X11 primary selection regardless, because
+        // middle-click paste is a universal Unix convention users rely on.
+        {
+            SelPoint s, e;
+            if (GetNormalizedSel(s, e)) {
+                wxString text = SelectedText();
+                if (!text.IsEmpty()) {
+                    if (m_copySelToClip) {
+                        if (wxTheClipboard->Open()) {
+                            wxTheClipboard->SetData(new wxTextDataObject(text));
+                            wxTheClipboard->Close();
+                        }
+                    }
 #ifdef __WXGTK__
-                // X11 primary selection: also write to the PRIMARY clipboard
-                // so the user can paste with middle-click in other GTK windows.
-                if (wxTheClipboard->Open()) {
-                    wxTheClipboard->UsePrimarySelection(true);
-                    wxTheClipboard->SetData(new wxTextDataObject(text));
-                    wxTheClipboard->UsePrimarySelection(false);
-                    wxTheClipboard->Close();
-                }
+                    // X11 primary selection: always set so middle-click works.
+                    if (wxTheClipboard->Open()) {
+                        wxTheClipboard->UsePrimarySelection(true);
+                        wxTheClipboard->SetData(new wxTextDataObject(text));
+                        wxTheClipboard->UsePrimarySelection(false);
+                        wxTheClipboard->Close();
+                    }
 #endif
+                }
             }
         }
     }
@@ -1405,17 +1411,23 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
             col = std::max(0, std::min((int)lineText.size(), col));
 
             // Expand left to word start.
+            // A character is a word character if it is not in m_wordDelimitersDblClick
+            // and not whitespace — matching the Windows MUSHclient convention.
+            auto isWordChar = [this](wxUniChar ch) -> bool {
+                if (wxIsspace(ch)) return false;
+                // Convert to a single-byte char for the delimiter lookup; for
+                // non-ASCII code points (which can't be delimiters) treat as word.
+                if (ch > 127) return true;
+                char c = static_cast<char>(ch.GetValue());
+                return m_wordDelimitersDblClick.find(c) == std::string::npos;
+            };
             int wordStart = col;
-            while (wordStart > 0 &&
-                   (wxIsalnum(lineText[wordStart - 1]) ||
-                    lineText[wordStart - 1] == '_'))
+            while (wordStart > 0 && isWordChar(lineText[wordStart - 1]))
                 --wordStart;
 
             // Expand right to word end.
             int wordEnd = col;
-            while (wordEnd < (int)lineText.size() &&
-                   (wxIsalnum(lineText[wordEnd]) ||
-                    lineText[wordEnd] == '_'))
+            while (wordEnd < (int)lineText.size() && isWordChar(lineText[wordEnd]))
                 ++wordEnd;
 
             if (wordEnd > wordStart) {

@@ -2488,6 +2488,25 @@ static int L_GetAlphaOption(lua_State* L)
     else if (!strcmp(opt, "log_line_postamble_input"))  OPT_GET_STR(pDoc->m_strLogLinePostambleInput);
     else if (!strcmp(opt, "log_line_postamble_notes"))  OPT_GET_STR(pDoc->m_strLogLinePostambleNotes);
     else if (!strcmp(opt, "log_line_postamble_output")) OPT_GET_STR(pDoc->m_strLogLinePostambleOutput);
+    // Auto-say
+    else if (!strcmp(opt, "auto_say_string"))           OPT_GET_STR(pDoc->m_strAutoSayString);
+    else if (!strcmp(opt, "auto_say_override_prefix"))  OPT_GET_STR(pDoc->m_strOverridePrefix);
+    // Command stacking / spam
+    else if (!strcmp(opt, "command_stack_character"))   OPT_GET_STR(pDoc->m_strCommandStackCharacter);
+    else if (!strcmp(opt, "spam_message"))              OPT_GET_STR(pDoc->m_strSpamMessage);
+    // Tab completion / recall
+    else if (!strcmp(opt, "tab_completion_defaults"))   OPT_GET_STR(pDoc->m_strTabCompletionDefaults);
+    else if (!strcmp(opt, "recall_line_preamble"))      OPT_GET_STR(pDoc->m_strRecallLinePreamble);
+    // Script editor
+    else if (!strcmp(opt, "script_editor"))             OPT_GET_STR(pDoc->m_strScriptEditor);
+    // Sound files
+    else if (!strcmp(opt, "beep_sound"))                OPT_GET_STR(pDoc->m_strBeepSound);
+    else if (!strcmp(opt, "new_activity_sound"))        OPT_GET_STR(pDoc->m_new_activity_sound);
+    // Paste strings
+    else if (!strcmp(opt, "paste_preamble"))            OPT_GET_STR(pDoc->m_paste_preamble);
+    else if (!strcmp(opt, "paste_postamble"))           OPT_GET_STR(pDoc->m_paste_postamble);
+    else if (!strcmp(opt, "paste_line_preamble"))       OPT_GET_STR(pDoc->m_pasteline_preamble);
+    else if (!strcmp(opt, "paste_line_postamble"))      OPT_GET_STR(pDoc->m_pasteline_postamble);
 
     // 2. Cache — value previously written by SetAlphaOption.
     {
@@ -2575,6 +2594,25 @@ static int L_SetAlphaOption(lua_State* L)
         if (pDoc->m_fn_set_input_font && val && *val)
             pDoc->m_fn_set_input_font(std::string(val), 0, false, false);
     }
+    // Auto-say
+    else if (!strcmp(opt, "auto_say_string"))           pDoc->m_strAutoSayString         = CString(val);
+    else if (!strcmp(opt, "auto_say_override_prefix"))  pDoc->m_strOverridePrefix        = CString(val);
+    // Command stacking / spam
+    else if (!strcmp(opt, "command_stack_character"))   pDoc->m_strCommandStackCharacter = CString(val);
+    else if (!strcmp(opt, "spam_message"))              pDoc->m_strSpamMessage           = CString(val);
+    // Tab completion / recall
+    else if (!strcmp(opt, "tab_completion_defaults"))   pDoc->m_strTabCompletionDefaults = CString(val);
+    else if (!strcmp(opt, "recall_line_preamble"))      pDoc->m_strRecallLinePreamble    = CString(val);
+    // Script editor
+    else if (!strcmp(opt, "script_editor"))             pDoc->m_strScriptEditor          = CString(val);
+    // Sound files
+    else if (!strcmp(opt, "beep_sound"))                pDoc->m_strBeepSound             = CString(val);
+    else if (!strcmp(opt, "new_activity_sound"))        pDoc->m_new_activity_sound       = CString(val);
+    // Paste strings
+    else if (!strcmp(opt, "paste_preamble"))            pDoc->m_paste_preamble           = CString(val);
+    else if (!strcmp(opt, "paste_postamble"))           pDoc->m_paste_postamble          = CString(val);
+    else if (!strcmp(opt, "paste_line_preamble"))       pDoc->m_pasteline_preamble       = CString(val);
+    else if (!strcmp(opt, "paste_line_postamble"))      pDoc->m_pasteline_postamble      = CString(val);
     else                                       is_member = false;
 
     // 2. Validate: reject completely unknown option names.

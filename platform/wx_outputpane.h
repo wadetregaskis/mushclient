@@ -177,6 +177,7 @@ public:
 
     // True while the pane is pinned to the bottom.
     bool IsAutoScrolling() const { return m_autoScroll; }
+    bool IsPaused()        const { return !m_autoScroll; }
 
     // Controls whether scrolling up engages the freeze (stops auto-scroll).
     // When false the pane always keeps auto-scrolling; new output is always

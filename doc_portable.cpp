@@ -2871,4 +2871,78 @@ void CMUSHclientDoc::OnScriptFileChanged(bool /*bForce*/)
     m_bInScriptFileChanged = false;
 }
 
+// ── ConnectSocket ─────────────────────────────────────────────────────────────
+// Portable reconnect: tears down the current socket (if any), creates a fresh
+// CWorldSocket, re-resolves the MUD hostname, and initiates the TCP connection.
+// Mirrors the essential logic of doc.cpp's ConnectSocket() without the MFC UI
+// callbacks (status bar, frame title, etc.) that only exist on Windows.
+//
+// Called automatically from timers.cpp's CheckTimers() when:
+//   App.m_bReconnectOnLinkFailure is true AND
+//   !m_bDisconnectOK AND m_iConnectPhase == eConnectNotConnected
+void CMUSHclientDoc::ConnectSocket()
+{
+    if (m_mush_name.IsEmpty() || m_port == 0) return;
+    if (m_iConnectPhase != eConnectNotConnected) return;
+
+    // ── Tear down existing socket ─────────────────────────────────────────
+    if (m_pSocket) {
+        delete m_pSocket;
+        m_pSocket = nullptr;
+    }
+
+    // Reset SSL and connect-phase state accumulated during the previous session.
+    m_bSSL_Connected = false;
+
+    // ── Create new socket ─────────────────────────────────────────────────
+    CWorldSocket* sock = new CWorldSocket(this);
+    m_pSocket = sock;
+
+    if (!sock->Create()) {
+        Note("Reconnect: could not create socket.");
+        delete m_pSocket;
+        m_pSocket = nullptr;
+        return;
+    }
+
+    // ── Re-resolve the MUD hostname → m_sockAddr (needed by proxy) ───────
+    {
+        struct addrinfo hints{}, *res = nullptr;
+        hints.ai_family   = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        char port_str[16];
+        snprintf(port_str, sizeof port_str, "%u", (unsigned)m_port);
+        if (::getaddrinfo((const char*)m_mush_name, port_str, &hints, &res) == 0 && res) {
+            m_sockAddr = *reinterpret_cast<struct sockaddr_in*>(res->ai_addr);
+            ::freeaddrinfo(res);
+        }
+    }
+
+    // ── Connect (via proxy or direct) ─────────────────────────────────────
+    const char*  connect_host = (const char*)m_mush_name;
+    unsigned int connect_port = m_port;
+    if (m_iSocksProcessing != eProxyServerNone &&
+        !m_strProxyServerName.IsEmpty() &&
+        m_iProxyServerPort != 0) {
+        connect_host = (const char*)m_strProxyServerName;
+        connect_port = m_iProxyServerPort;
+        Note(CString("Reconnecting via proxy at ") + m_strProxyServerName + " ...");
+    } else {
+        Note(CString("Reconnecting to ") + m_mush_name + " ...");
+    }
+
+    m_iConnectPhase = eConnectConnecting;
+    m_bDisconnectOK = false;
+
+    if (!sock->Connect(connect_host, connect_port)) {
+        if (sock->GetLastError() != WSAEWOULDBLOCK) {
+            Note("Reconnect: connect() failed immediately.");
+            delete m_pSocket;
+            m_pSocket = nullptr;
+            m_iConnectPhase = eConnectNotConnected;
+        }
+        // WSAEWOULDBLOCK is normal for non-blocking sockets; OnConnect fires later.
+    }
+}
+
 #endif // !_WIN32

@@ -1849,7 +1849,7 @@ public:
 
     // ── Connection helpers ─────────────────────────────────────────────
     BOOL CheckConnected();   // returns FALSE (0) if connected; non-zero if not
-    void ConnectSocket() {}
+    void ConnectSocket();   // implemented in doc_portable.cpp
 
     // ── Trigger execution (stub — scripting not wired yet) ────────────
     void ExecuteTriggerScript(CTrigger* pTrigger, CString strLine,

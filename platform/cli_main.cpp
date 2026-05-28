@@ -313,6 +313,13 @@ int main(int argc, char* argv[])
                     doc.SendToAllPluginCallbacks(ON_PLUGIN_TICK);
                 }
 
+                // Auto-reconnect if the link dropped unexpectedly.
+                // Mirrors the check in timers.cpp CheckTimers().
+                if (App.m_bReconnectOnLinkFailure &&
+                    !doc.m_bDisconnectOK &&
+                    doc.m_iConnectPhase == eConnectNotConnected)
+                    doc.ConnectSocket();
+
                 // Script file auto-reload check every 2 s
                 long ms2 = (ts_now.tv_sec  - ts_last_script_check.tv_sec)  * 1000
                          + (ts_now.tv_nsec - ts_last_script_check.tv_nsec) / 1000000;
@@ -323,10 +330,15 @@ int main(int argc, char* argv[])
             }
         }
 
-        // Check for disconnect
-        if (doc.m_iConnectPhase == eConnectNotConnected) {
-            fprintf(stderr, "\n[Disconnected]\n");
-            break;
+        // Check for disconnect: exit the loop only if we are not configured to
+        // auto-reconnect (or the user quit intentionally via Ctrl-D / SIGINT).
+        if (doc.m_iConnectPhase == eConnectNotConnected && !doc.m_pSocket) {
+            // ConnectSocket() sets m_pSocket when it initiates a reconnect.
+            // If m_pSocket is null here we're truly done.
+            if (!App.m_bReconnectOnLinkFailure || doc.m_bDisconnectOK || g_quit) {
+                fprintf(stderr, "\n[Disconnected]\n");
+                break;
+            }
         }
 
         // Handle terminal resize — update wrap column and re-send NAWS
@@ -371,6 +383,10 @@ int main(int argc, char* argv[])
         }
 #endif
     }
+
+    // Mark as intentional disconnect so ConnectSocket() and timers.cpp's
+    // reconnect check don't attempt to reconnect during teardown.
+    doc.m_bDisconnectOK = true;
 
     // ── Clean up ──────────────────────────────────────────────────────────────
 #ifdef HAVE_READLINE

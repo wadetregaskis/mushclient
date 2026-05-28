@@ -98,7 +98,7 @@ void CChatSocket::SendChatMessage (int, CString, long) {}
 // the TUs that include doc.h (evaluate.cpp, ProcessPreviousLine.cpp,
 // timers.cpp, serialize.cpp).
 
-BOOL CMUSHclientDoc::ConnectSocket() { return TRUE; /* not connected */ }
+// ConnectSocket() is implemented in doc_portable.cpp.
 
 bool CMUSHclientDoc::FindStyle(const CLine* /*pLine*/,
                                int /*iWantedCol*/,

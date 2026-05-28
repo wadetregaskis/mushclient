@@ -282,6 +282,16 @@ extern char* (*g_wxhook_inputbox)(const char* title,
                                   const char* defValue,
                                   bool        multiline);
 
+// ── password dialog hook ──────────────────────────────────────────────────
+// Shows a modal masked-input dialog for a MUD login password.
+//   charName:    character/login name shown in the prompt (may be "").
+//   outPassword: receives a heap-allocated password string; caller must
+//                free() it.  Set only when IDOK is returned.
+// Returns IDOK (1) if the user entered a password and confirmed,
+//         IDCANCEL (2) if the user cancelled or left the field empty.
+extern int (*g_wxhook_password_dialog)(const char* charName,
+                                       char**      outPassword);
+
 // ── utils.directorypicker hook ────────────────────────────────────────────
 // Shows a modal directory-chooser dialog.
 //   title:   window title / message

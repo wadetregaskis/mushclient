@@ -66,5 +66,6 @@ void (*g_wxhook_move_main_window)(long, long, long, long)        = nullptr;
 char* (*g_wxhook_inputbox)(const char*, const char*,
                             const char*, bool)                   = nullptr;
 char* (*g_wxhook_directorypicker)(const char*, const char*)      = nullptr;
+int   (*g_wxhook_password_dialog)(const char*, char**)           = nullptr;
 
 #endif // !_WIN32

@@ -59,8 +59,29 @@ END_MESSAGE_MAP()
 /////////////////////////////////////////////////////////////////////////////
 // CPasswordDialog message handlers
 
-void CPasswordDialog::OnHelpbutton() 
+void CPasswordDialog::OnHelpbutton()
 {
-//	  OnCmdMsg(ID_HELP, CN_COMMAND, NULL, NULL);	
+//	  OnCmdMsg(ID_HELP, CN_COMMAND, NULL, NULL);
 	App.HelpHelper(m_nIDHelp + HID_BASE_RESOURCE);
 }
+
+#ifndef _WIN32
+// Non-Windows override: route through the wxWidgets password entry hook so
+// CPasswordDialog::DoModal() shows a real masked-input dialog instead of the
+// base CDialog stub that always returns IDCANCEL.
+INT_PTR CPasswordDialog::DoModal()
+{
+    if (!g_wxhook_password_dialog)
+        return IDCANCEL;
+
+    char* pw = nullptr;
+    int result = g_wxhook_password_dialog(
+        static_cast<const char*>(m_character), &pw);
+
+    if (result == IDOK && pw) {
+        m_password = CString(pw);
+        free(pw);
+    }
+    return result;
+}
+#endif // !_WIN32

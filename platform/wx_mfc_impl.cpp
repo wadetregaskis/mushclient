@@ -3277,6 +3277,33 @@ static char* hook_directorypicker(const char* title, const char* defPath)
     return strdup(dlg.GetPath().ToUTF8().data());
 }
 
+// ── password_dialog ───────────────────────────────────────────────────────
+// Called from CPasswordDialog::DoModal() on non-Windows when connecting to a
+// world that has a character name but no stored password.
+
+static int hook_password_dialog(const char* charName, char** outPassword)
+{
+    wxWindow* parent = App.m_pMainWnd
+                      ? static_cast<wxWindow*>(App.m_pMainWnd->m_hWnd)
+                      : nullptr;
+
+    wxString prompt;
+    if (charName && *charName)
+        prompt.Printf(wxT("Enter password for %s:"),
+                      wxString::FromUTF8(charName));
+    else
+        prompt = wxT("Enter password:");
+
+    wxPasswordEntryDialog dlg(parent, prompt, wxT("Password Required"));
+    if (dlg.ShowModal() != wxID_OK) return IDCANCEL;
+
+    wxString pw = dlg.GetValue();
+    if (pw.IsEmpty()) return IDCANCEL;
+
+    *outPassword = strdup(pw.ToUTF8().data());
+    return IDOK;
+}
+
 void wx_mfc_install_hooks()
 {
     g_wxhook_invalidate       = hook_invalidate;
@@ -3308,6 +3335,7 @@ void wx_mfc_install_hooks()
     g_wxhook_move_main_window     = hook_move_main_window;
     g_wxhook_inputbox             = hook_inputbox;
     g_wxhook_directorypicker      = hook_directorypicker;
+    g_wxhook_password_dialog      = hook_password_dialog;
 #if wxUSE_SOUND
     g_wxhook_play_sound           = hook_play_sound;
     g_wxhook_stop_sound           = hook_stop_sound;

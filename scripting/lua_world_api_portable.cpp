@@ -5687,18 +5687,33 @@ static int L_RemoveBacktracks(lua_State* L)  { world_doc(L); lua_pushnumber(L, e
 static int L_DoAfterSpeedWalk(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 
 // ── ExportXML / ImportXML ─────────────────────────────────────────────────────
-// Full XML serialization requires CArchive; stub for now.
+// ExportXML(type, name) → XML string or ""
+//   type: 0=trigger, 1=alias, 2=timer, 3=macro (unsupported), 4=variable, 5=keypad (unsupported)
+// ImportXML(xml) → count of items imported (or -1 on error)
 static int L_ExportXML(lua_State* L)
 {
-    world_doc(L);
-    lua_pushstring(L, "");  // return empty string — not implemented
+    CMUSHclientDoc* pDoc = world_doc(L);
+    int type = (int)luaL_checknumber(L, 1);
+    const char* name = luaL_checkstring(L, 2);
+    CString result;
+    CString strName(name);
+    switch (type) {
+        case 0: result = pDoc->ExportXML_Trigger (strName); break;
+        case 1: result = pDoc->ExportXML_Alias   (strName); break;
+        case 2: result = pDoc->ExportXML_Timer   (strName); break;
+        case 4: result = pDoc->ExportXML_Variable(strName); break;
+        // case 3 (macro) and case 5 (keypad) are not supported in the portable build
+        default: break;
+    }
+    lua_pushstring(L, static_cast<const char*>(result));
     return 1;
 }
 static int L_ImportXML(lua_State* L)
 {
-    world_doc(L);
-    luaL_checkstring(L, 1);
-    lua_pushnumber(L, 0);   // 0 items imported
+    CMUSHclientDoc* pDoc = world_doc(L);
+    const char* xml = luaL_checkstring(L, 1);
+    long count = pDoc->ImportXMLFromString(xml);
+    lua_pushnumber(L, (lua_Number)count);
     return 1;
 }
 

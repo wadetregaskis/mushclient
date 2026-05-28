@@ -1099,4 +1099,51 @@ bool CMUSHclientDoc::LoadWorldFromFile(const char* path)
     }
 }
 
+// ── CMUSHclientDoc::ImportXMLFromString ───────────────────────────────────────
+// Parses an XML string (as returned by ExportXML or produced by hand) and
+// imports the triggers/aliases/timers/variables it contains into this world.
+// Returns the total count of items added, or -1 on parse error.
+// Mirrors the behaviour of the Windows ImportXML() (methods_xml.cpp) which
+// uses CMemFile + CArchive + Load_World_XML, but without those Windows classes.
+
+long CMUSHclientDoc::ImportXMLFromString(const char* xml)
+{
+    if (!xml || !*xml)
+        return -1;
+
+    // Quick sanity-check: must start with an XML declaration or a known element.
+    // (Mirrors IsArchiveXML which checks for the <?xml ... ?> preamble.)
+    const char* p = xml;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    if (strncmp(p, "<?xml", 5) != 0 && strncmp(p, "<muclient", 9) != 0
+        && strncmp(p, "<triggers", 9) != 0 && strncmp(p, "<aliases", 8) != 0
+        && strncmp(p, "<timers", 7) != 0  && strncmp(p, "<variables", 10) != 0)
+        return -1;   // not recognisable XML
+
+    // Wrap the string in a read-only CMemFile so xmlparse can read it.
+    UINT len = (UINT)strlen(xml);
+    CMemFile f(const_cast<BYTE*>(reinterpret_cast<const BYTE*>(xml)), len);
+
+    CXMLparser parser;
+    try {
+        parser.BuildStructure(&f);
+    } catch (CException* e) {
+        e->Delete();
+        return -1;
+    } catch (...) {
+        return -1;
+    }
+
+    CXMLelement& root = parser.m_xmlRoot;
+    CXMLelement* pMuClient = FindNode(root, "muclient");
+    CXMLelement& top = pMuClient ? *pMuClient : root;
+
+    long count = 0;
+    count += (long)Load_Triggers (top, *this);
+    count += (long)Load_Aliases  (top, *this);
+    count += (long)Load_Variables(top, *this);
+    count += (long)Load_Timers   (top, *this);
+    return count;
+}
+
 #endif // !_WIN32

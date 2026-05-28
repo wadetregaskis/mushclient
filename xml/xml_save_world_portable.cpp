@@ -19,6 +19,7 @@
 
 #include <cstring>
 #include <climits>
+#include <functional>
 
 // ── compile-time assertions ───────────────────────────────────────────────────
 // CTimer::eAtTime must still == 1 for the hour/minute/second logic below.
@@ -430,6 +431,183 @@ static void save_variables(CArchive& ar, CMUSHclientDoc& doc)
     }
 
     ar.WriteString("</variables>" NL);
+}
+
+// ── Single-item save helpers (for ExportXML Lua API) ─────────────────────────
+// Each helper serialises one named item (trigger / alias / timer / variable)
+// to an in-memory XML string that matches the format ExportXML returns on
+// Windows.  An empty CString is returned when the item does not exist.
+
+static CString save_item_to_string(
+        const std::function<void(CArchive&)>& write_header,
+        const std::function<void(CArchive&)>& write_item,
+        const std::function<void(CArchive&)>& write_footer)
+{
+    CMemFile f;
+    CArchive ar(&f, CArchive::store);
+    ar.WriteString("<?xml version=\"1.0\" encoding=\"iso-8859-1\"?>" NL);
+    ar.WriteString("<!DOCTYPE muclient>" NL);
+    ar.WriteString("<muclient>" NL);
+    write_header(ar);
+    write_item(ar);
+    write_footer(ar);
+    ar.WriteString("</muclient>" NL);
+    ar.Close();
+    UINT n = f.GetLength();
+    BYTE* p = f.Detach();
+    CString result;
+    if (p) {
+        result = CString(reinterpret_cast<char*>(p), n);
+        free(p);
+    }
+    return result;
+}
+
+CString CMUSHclientDoc::ExportXML_Trigger(const CString& strName)
+{
+    CTrigger* t = nullptr;
+    if (!GetTriggerMap().Lookup(strName, t) || !t)
+        return CString();
+    return save_item_to_string(
+        [](CArchive& a){ a.WriteString("<triggers>" NL); },
+        [t](CArchive& a){
+            a.WriteString("  <trigger" NL);
+            wNum  (a, "back_colour",        (t->iMatch >> 8) & 0x0F);
+            wBool (a, "bold",               t->iMatch & HILITE);
+            wNum  (a, "clipboard_arg",      t->iClipboardArg);
+            if (t->colour != SAMECOLOUR)
+                wNum(a, "custom_colour",    t->colour + 1);
+            wNum  (a, "colour_change_type", t->iColourChangeType);
+            wBool (a, "enabled",            t->bEnabled);
+            wBool (a, "expand_variables",   t->bExpandVariables);
+            wStr  (a, "group",              t->strGroup);
+            wBool (a, "ignore_case",        t->ignore_case);
+            wBool (a, "inverse",            t->iMatch & INVERSE);
+            wBool (a, "italic",             t->iMatch & BLINK);
+            wNum  (a, "lines_to_match",     t->iLinesToMatch);
+            wBool (a, "keep_evaluating",    t->bKeepEvaluating);
+            wBool (a, "make_bold",          t->iStyle & HILITE);
+            wBool (a, "make_italic",        t->iStyle & BLINK);
+            wBool (a, "make_underline",     t->iStyle & UNDERLINE);
+            wStr  (a, "match",              t->trigger);
+            wBool (a, "match_back_colour",  t->iMatch & TRIGGER_MATCH_BACK);
+            wBool (a, "match_bold",         t->iMatch & TRIGGER_MATCH_HILITE);
+            wBool (a, "match_inverse",      t->iMatch & TRIGGER_MATCH_INVERSE);
+            wBool (a, "match_italic",       t->iMatch & TRIGGER_MATCH_BLINK);
+            wBool (a, "match_text_colour",  t->iMatch & TRIGGER_MATCH_TEXT);
+            wBool (a, "match_underline",    t->iMatch & TRIGGER_MATCH_UNDERLINE);
+            wBool (a, "multi_line",         t->bMultiLine);
+            wStr  (a, "name",               t->strLabel);
+            wBool (a, "one_shot",           t->bOneShot);
+            wBool (a, "omit_from_log",      t->omit_from_log);
+            wBool (a, "omit_from_output",   t->bOmitFromOutput);
+            wBool (a, "regexp",             t->bRegexp);
+            wBool (a, "repeat",             t->bRepeat);
+            wStr  (a, "script",             t->strProcedure);
+            wNum  (a, "send_to",            t->iSendTo);
+            wNum  (a, "sequence",           t->iSequence);
+            wStr  (a, "sound",              t->sound_to_play);
+            wBool (a, "sound_if_inactive",  t->bSoundIfInactive);
+            wBool (a, "lowercase_wildcard", t->bLowercaseWildcard);
+            wBool (a, "temporary",          t->bTemporary);
+            wNum  (a, "text_colour",        (t->iMatch >> 4) & 0x0F);
+            wNum  (a, "user",               t->iUserOption);
+            wStr  (a, "variable",           t->strVariable);
+            if (t->iOtherForeground)
+                wColour(a, "other_text_colour", t->iOtherForeground);
+            if (t->iOtherBackground)
+                wColour(a, "other_back_colour", t->iOtherBackground);
+            a.WriteString("  >" NL);
+            wMulti(a, "send", t->contents);
+            a.WriteString("  </trigger>" NL);
+        },
+        [](CArchive& a){ a.WriteString("</triggers>" NL); });
+}
+
+CString CMUSHclientDoc::ExportXML_Alias(const CString& strName)
+{
+    CAlias* al = nullptr;
+    if (!GetAliasMap().Lookup(strName, al) || !al)
+        return CString();
+    return save_item_to_string(
+        [](CArchive& a){ a.WriteString("<aliases>" NL); },
+        [al](CArchive& a){
+            a.WriteString("  <alias" NL);
+            wStr  (a, "name",                      al->strLabel);
+            wStr  (a, "script",                    al->strProcedure);
+            wStr  (a, "match",                     al->name);
+            wBool (a, "enabled",                   al->bEnabled);
+            wBool (a, "echo_alias",                al->bEchoAlias);
+            wBool (a, "expand_variables",          al->bExpandVariables);
+            wStr  (a, "group",                     al->strGroup);
+            wStr  (a, "variable",                  al->strVariable);
+            wBool (a, "omit_from_command_history", al->bOmitFromCommandHistory);
+            wBool (a, "omit_from_log",             al->bOmitFromLog);
+            wBool (a, "regexp",                    al->bRegexp);
+            wNum  (a, "send_to",                   al->iSendTo);
+            wBool (a, "omit_from_output",          al->bOmitFromOutput);
+            wBool (a, "one_shot",                  al->bOneShot);
+            wBool (a, "menu",                      al->bMenu);
+            wBool (a, "ignore_case",               al->bIgnoreCase);
+            wBool (a, "keep_evaluating",           al->bKeepEvaluating);
+            wNum  (a, "sequence",                  al->iSequence);
+            wBool (a, "temporary",                 al->bTemporary);
+            wNum  (a, "user",                      al->iUserOption);
+            a.WriteString("  >" NL);
+            wMulti(a, "send", al->contents);
+            a.WriteString("  </alias>" NL);
+        },
+        [](CArchive& a){ a.WriteString("</aliases>" NL); });
+}
+
+CString CMUSHclientDoc::ExportXML_Timer(const CString& strName)
+{
+    CTimer* t = nullptr;
+    if (!GetTimerMap().Lookup(strName, t) || !t)
+        return CString();
+    return save_item_to_string(
+        [](CArchive& a){ a.WriteString("<timers>" NL); },
+        [t](CArchive& a){
+            a.WriteString("  <timer ");
+            wStr   (a, "name",             t->strLabel,     true);
+            wStr   (a, "script",           t->strProcedure, true);
+            wBool  (a, "enabled",          t->bEnabled,     true);
+            wNum   (a, "hour",    (long)(t->iType == CTimer::eAtTime ? t->iAtHour    : t->iEveryHour),   true);
+            wNum   (a, "minute",  (long)(t->iType == CTimer::eAtTime ? t->iAtMinute  : t->iEveryMinute), true);
+            wDouble(a, "second",           t->iType == CTimer::eAtTime ? t->fAtSecond  : t->fEverySecond, true);
+            wNum   (a, "offset_hour",   (long)t->iOffsetHour,   true);
+            wNum   (a, "offset_minute", (long)t->iOffsetMinute, true);
+            wDouble(a, "offset_second",    t->fOffsetSecond, true);
+            wNum   (a, "send_to",       (long)t->iSendTo);
+            wBool  (a, "temporary",        t->bTemporary);
+            wNum   (a, "user",             t->iUserOption);
+            wBool  (a, "at_time",          t->iType,        true);
+            wStr   (a, "group",            t->strGroup,     true);
+            wStr   (a, "variable",         t->strVariable);
+            wBool  (a, "one_shot",         t->bOneShot,     true);
+            wBool  (a, "omit_from_output", t->bOmitFromOutput, true);
+            wBool  (a, "omit_from_log",    t->bOmitFromLog,    true);
+            wBool  (a, "active_closed",    t->bActiveWhenClosed, true);
+            a.WriteString(">" NL);
+            wMulti(a, "send", t->strContents);
+            a.WriteString(NL "  </timer>" NL);
+        },
+        [](CArchive& a){ a.WriteString("</timers>" NL); });
+}
+
+CString CMUSHclientDoc::ExportXML_Variable(const CString& strName)
+{
+    CVariable* v = nullptr;
+    if (!GetVariableMap().Lookup(strName, v) || !v)
+        return CString();
+    return save_item_to_string(
+        [](CArchive& a){ a.WriteString("<variables>" NL); },
+        [v](CArchive& a){
+            a.WriteString(CFormat("  <variable name=\"%s\">%s</variable>" NL,
+                            (LPCTSTR)v->strLabel,
+                            (LPCTSTR)FixMulti(v->strContents)));
+        },
+        [](CArchive& a){ a.WriteString("</variables>" NL); });
 }
 
 // ── CMUSHclientDoc::Serialize_World_XML ──────────────────────────────────────

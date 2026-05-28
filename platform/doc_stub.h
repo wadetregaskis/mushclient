@@ -1936,6 +1936,16 @@ public:
     void Save_World_XML(class CArchive&, unsigned long, CString) {}
     void Serialize_World_XML(class CArchive&);
 
+    // XML import/export (portable implementations in xml_save/load_world_portable.cpp).
+    // ExportXML_* returns the full XML string for the named item, or "" if not found.
+    CString ExportXML_Trigger (const CString& name);
+    CString ExportXML_Alias   (const CString& name);
+    CString ExportXML_Timer   (const CString& name);
+    CString ExportXML_Variable(const CString& name);
+    // ImportXMLFromString parses xml and adds items to this world.
+    // Returns total items added, or -1 on parse error.
+    long    ImportXMLFromString(const char* xml);
+
     // Portable world-file save.  Opens lpszPathName for writing, calls
     // Serialize_World_XML, and returns TRUE on success.  Mirrors the
     // CDocument::OnSaveDocument → Serialize chain that the Windows / mushapp

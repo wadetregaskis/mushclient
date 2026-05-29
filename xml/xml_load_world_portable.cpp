@@ -998,6 +998,13 @@ bool CMUSHclientDoc::InternalLoadPlugin(const CString& strPluginPath)
     unsigned int nTimers    = Load_Timers   (top, *this);
     Load_Plugin_Scripts(top, *plugin);
 
+    // Sort the plugin's own arrays by sequence number so ProcessPreviousLine
+    // and evaluate.cpp see triggers/aliases in the correct priority order.
+    // m_CurrentPlugin is still set to plugin here, so SortTriggers/SortAliases
+    // operate on the plugin's arrays via GetTriggerArray() / GetAliasArray().
+    if (nTriggers > 0) SortTriggers();
+    if (nAliases  > 0) SortAliases();
+
     m_CurrentPlugin = pSavedPlugin;
 
     // Initialise the plugin's Lua engine
@@ -1278,6 +1285,13 @@ bool CMUSHclientDoc::LoadWorldFromFile(const char* path)
         // Process <include> elements (regular and plugin)
         Load_Includes(top, *this, path);
 
+        // Sort the doc's own trigger/alias arrays by sequence number.
+        // (Plugin arrays are sorted inside InternalLoadPlugin.)
+        // Must be called after Load_Includes because regular includes may
+        // add more triggers/aliases directly into the doc's maps.
+        if (nTriggers > 0) SortTriggers();
+        if (nAliases  > 0) SortAliases();
+
         fprintf(stderr, "[world load] \"%s\": %u trigger(s), %u alias(es), "
                         "%u variable(s), %u timer(s), %u script block(s), "
                         "%zu plugin(s)\n",
@@ -1344,10 +1358,15 @@ long CMUSHclientDoc::ImportXMLFromString(const char* xml)
     CXMLelement& top = pMuClient ? *pMuClient : root;
 
     long count = 0;
-    count += (long)Load_Triggers (top, *this);
-    count += (long)Load_Aliases  (top, *this);
+    long nTrig = (long)Load_Triggers (top, *this);
+    long nAls  = (long)Load_Aliases  (top, *this);
+    count += nTrig;
+    count += nAls;
     count += (long)Load_Variables(top, *this);
     count += (long)Load_Timers   (top, *this);
+    // Re-sort after import so new items land in correct sequence order.
+    if (nTrig > 0) SortTriggers();
+    if (nAls  > 0) SortAliases();
     return count;
 }
 

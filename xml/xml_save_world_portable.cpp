@@ -723,6 +723,19 @@ void CMUSHclientDoc::Serialize_World_XML(CArchive& ar)
     save_variables(ar, *this);
     save_colours  (ar, *this);
 
+    // Emit <include plugin="y" name="..."/> for each loaded plugin,
+    // mirroring Save_Plugins_XML in xml_save_world.cpp.  On non-Windows
+    // there is no m_bGlobal concept — all loaded plugins are treated as local.
+    if (!m_PluginList.empty()) {
+        ar.WriteString(NL "<!-- plugins -->" NL);
+        for (CPlugin* p : m_PluginList) {
+            ar.WriteString("<include ");
+            wStr (ar, "name",   p->m_strSource, /*sameline=*/true);
+            wBool(ar, "plugin", true,            /*sameline=*/true);
+            ar.WriteString("/>" NL);
+        }
+    }
+
     ar.WriteString("</muclient>" NL);
 }
 

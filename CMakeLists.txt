@@ -835,6 +835,15 @@ if(NOT WIN32)
                 MACOSX_BUNDLE_BUNDLE_NAME     "MUSHclient"
                 MACOSX_BUNDLE_SHORT_VERSION_STRING "5.07"
             )
+            # Bundle the Lua module library into the .app so plugins can
+            # require() the shipped modules (movewindow, mapper, gauge, …)
+            # regardless of the working directory.  OpenLuaDelayed() adds
+            # Contents/Resources/lua to package.path on non-Windows.
+            add_custom_command(TARGET mushgui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_SOURCE_DIR}/lua"
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/lua"
+                COMMENT "Bundling lua/ modules into mushgui.app/Contents/Resources")
         endif()
     elseif(NOT wxWidgets_FOUND)
         message(STATUS "wxWidgets not found — mushgui target skipped")

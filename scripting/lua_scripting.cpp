@@ -240,6 +240,32 @@ void CScriptEngine::OpenLuaDelayed ()
   lua_pop (L, 1);   // get rid of package table from stack
 #endif
 
+#ifndef _WIN32
+  // ── Lua module search path (non-Windows) ──────────────────────────────
+  // On Windows, plugins locate the bundled Lua modules (movewindow, mapper,
+  // gauge, …) via the install directory, which is on package.path implicitly.
+  // The non-Windows build must add the module directory explicitly, otherwise
+  // every plugin that require()s a shipped module fails to load.  We add the
+  // app bundle's Resources/lua (the canonical macOS location) and a lua/
+  // folder beside the executable (flat / Linux installs).
+  // m_strMUSHclientFileName holds the executable's *directory* (with trailing
+  // separator) — see CMUSHclientApp::InitInstance.
+  {
+    CString strExeDir = App.m_strMUSHclientFileName;
+    if (!strExeDir.IsEmpty ())
+      {
+      CString strCmd;
+      strCmd.Format (
+        "do local bases = { [[%slua/]], [[%s../Resources/lua/]] }\n"
+        "for _, b in ipairs (bases) do\n"
+        "  package.path = b .. [[?.lua;]] .. b .. [[?/init.lua;]] .. package.path\n"
+        "end end",
+        (LPCTSTR) strExeDir, (LPCTSTR) strExeDir);
+      ParseLua (strCmd, "Lua module search path");
+      }
+  }
+#endif
+
   // this is so useful I am adding it in (see check.lua)
   ParseLua ( \
   "function check (result)  \

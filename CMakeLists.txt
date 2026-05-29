@@ -41,6 +41,27 @@ add_compile_definitions(HAVE_CONFIG_H)  # for PCRE config.h
 if(NOT WIN32)
     find_package(OpenSSL QUIET)
     find_package(ZLIB REQUIRED)
+
+    # libpng: on macOS find_package(PNG) can mis-detect a stale header dir
+    # (e.g. /Library/Frameworks/Mono.framework/Headers — libpng 1.4) while
+    # linking Homebrew's libpng 1.6, a latent header/ABI mismatch masked only
+    # by -isystem include ordering.  Steer detection to Homebrew's libpng so the
+    # header and library always match.  Uses `brew --prefix` so it works on both
+    # Apple Silicon (/opt/homebrew) and Intel (/usr/local).
+    if(APPLE)
+        find_program(BREW_EXECUTABLE brew)
+        if(BREW_EXECUTABLE)
+            execute_process(COMMAND ${BREW_EXECUTABLE} --prefix libpng
+                            OUTPUT_VARIABLE _png_prefix
+                            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            if(_png_prefix AND EXISTS "${_png_prefix}/include/png.h")
+                set(PNG_ROOT "${_png_prefix}")
+                # Override any stale cached include dir from a prior configure.
+                set(PNG_PNG_INCLUDE_DIR "${_png_prefix}/include"
+                    CACHE PATH "libpng include dir" FORCE)
+            endif()
+        endif()
+    endif()
     find_package(PNG REQUIRED)
 
     # Lua 5.1 — try several common names

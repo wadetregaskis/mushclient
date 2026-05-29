@@ -1761,6 +1761,11 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
 {
     int code = evt.GetKeyCode();
 
+    // Lua Accelerator() API — check before built-in key bindings so scripts
+    // can override any key.
+    if (m_fn_accelerator_check && m_fn_accelerator_check(evt))
+        return;
+
     // Escape: scroll to bottom (if paused) then return focus to the input bar.
     if (code == WXK_ESCAPE) {
         if (!m_autoScroll && !m_lines.empty()) ScrollToBottom();

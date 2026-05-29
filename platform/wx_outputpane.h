@@ -258,6 +258,11 @@ public:
     // can keep typing without having to click back into the input bar.
     std::function<void(wxChar ch)> m_fn_key_to_input;
 
+    // Called for every key-down event in the output pane before built-in
+    // output-pane bindings are checked.  Return true to consume the event.
+    // Wired by CWorldChildFrame to CWorldChildFrame::FireAcceleratorIfMatch.
+    std::function<bool(wxKeyEvent&)> m_fn_accelerator_check;
+
 private:
     // ── Paint ────────────────────────────────────────────────────────────────
     void OnPaint(wxPaintEvent& evt);

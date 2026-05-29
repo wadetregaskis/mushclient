@@ -157,6 +157,10 @@ private:
     void OnInputEnter(wxCommandEvent& evt);
     // Up/Down keys in the input bar for history navigation.
     void OnInputKeyDown(wxKeyEvent& evt);
+    // Lua Accelerator() API: check a key event against the doc's accelerator
+    // map and fire the command if it matches.  Returns true if matched.
+    bool FireAcceleratorIfMatch(wxKeyEvent& evt);
+    void FireAcceleratorCommand(WORD nID);
     // Multi-line paste: split at newlines, send all but the last fragment.
     void OnInputPaste(wxClipboardTextEvent& evt);
     // Frame is about to close — delete the doc (disconnects + frees memory).

@@ -724,6 +724,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         inp->SetInsertionPointEnd();
     };
 
+    // Forward accelerator key events from the output pane to the world frame's
+    // FireAcceleratorIfMatch so Lua Accelerator() bindings fire even when the
+    // user has scrolled the output pane and focus is there rather than the input.
+    m_output->m_fn_accelerator_check = [this](wxKeyEvent& e) {
+        return FireAcceleratorIfMatch(e);
+    };
+
     // When the auto-scroll state changes, update the status bar.
     // "↑ Scrolled back" reminds the user that new output is not visible yet.
     // Restoring auto-scroll shows the connection status again.
@@ -1855,11 +1862,165 @@ void CWorldChildFrame::OnActivate(wxActivateEvent& evt)
     evt.Skip();
 }
 
+// ── FireAcceleratorIfMatch / FireAcceleratorCommand ────────────────────────
+// Non-Windows implementation of the Lua Accelerator()/AcceleratorTo() API.
+//
+// On Windows, MUSHclient registers a HACCEL table with the OS; the OS detects
+// matching key presses and dispatches WM_COMMAND to CSendView::OnAcceleratorCommand.
+// On non-Windows we replicate that dispatch manually: convert the wx key event to
+// the Windows ACCEL encoding (FVIRTKEY | modifier flags, plus the VK code), look
+// it up in m_AcceleratorToCommandMap, and call FireAcceleratorCommand if found.
+//
+// The wx→Windows VK mapping only covers keys that appear in the VirtualKeys[]
+// table in accelerators.cpp (the set a user can actually name in a Lua script).
+
+static WORD WxKeyToWinVK(int wxCode)
+{
+    // Upper-case alpha A-Z: wx delivers the upper-case code point, same as Windows VK
+    if (wxCode >= 'A' && wxCode <= 'Z') return (WORD)wxCode;
+    // Digit 0-9: same code point on both platforms
+    if (wxCode >= '0' && wxCode <= '9') return (WORD)wxCode;
+
+    switch (wxCode) {
+        // Function keys
+        case WXK_F1:  return VK_F1;
+        case WXK_F2:  return VK_F1 + 1;
+        case WXK_F3:  return VK_F1 + 2;
+        case WXK_F4:  return VK_F1 + 3;
+        case WXK_F5:  return VK_F1 + 4;
+        case WXK_F6:  return VK_F1 + 5;
+        case WXK_F7:  return VK_F1 + 6;
+        case WXK_F8:  return VK_F1 + 7;
+        case WXK_F9:  return VK_F1 + 8;
+        case WXK_F10: return VK_F10;
+        case WXK_F11: return VK_F11;
+        case WXK_F12: return VK_F12;
+#ifdef WXK_F13
+        case WXK_F13: return VK_F13; case WXK_F14: return VK_F14;
+        case WXK_F15: return VK_F15; case WXK_F16: return VK_F16;
+        case WXK_F17: return VK_F17; case WXK_F18: return VK_F18;
+        case WXK_F19: return VK_F19; case WXK_F20: return VK_F20;
+        case WXK_F21: return VK_F21; case WXK_F22: return VK_F22;
+        case WXK_F23: return VK_F23; case WXK_F24: return VK_F24;
+#endif
+        // Navigation
+        case WXK_LEFT:     return VK_LEFT;
+        case WXK_RIGHT:    return VK_RIGHT;
+        case WXK_UP:       return VK_UP;
+        case WXK_DOWN:     return VK_DOWN;
+        case WXK_HOME:     return VK_HOME;
+        case WXK_END:      return VK_END;
+        case WXK_PAGEUP:   return VK_PRIOR;
+        case WXK_PAGEDOWN: return VK_NEXT;
+        case WXK_INSERT:   return VK_INSERT;
+        case WXK_DELETE:   return VK_DELETE;
+        // Common editing / whitespace
+        case WXK_BACK:   return VK_BACK;
+        case WXK_TAB:    return VK_TAB;
+        case WXK_RETURN: return VK_RETURN;
+        case WXK_ESCAPE: return VK_ESCAPE;
+        case WXK_SPACE:  return VK_SPACE;
+        // Numpad
+        case WXK_NUMPAD0:    return VK_NUMPAD0;
+        case WXK_NUMPAD1:    return VK_NUMPAD0 + 1;
+        case WXK_NUMPAD2:    return VK_NUMPAD0 + 2;
+        case WXK_NUMPAD3:    return VK_NUMPAD0 + 3;
+        case WXK_NUMPAD4:    return VK_NUMPAD0 + 4;
+        case WXK_NUMPAD5:    return VK_NUMPAD0 + 5;
+        case WXK_NUMPAD6:    return VK_NUMPAD0 + 6;
+        case WXK_NUMPAD7:    return VK_NUMPAD0 + 7;
+        case WXK_NUMPAD8:    return VK_NUMPAD0 + 8;
+        case WXK_NUMPAD9:    return VK_NUMPAD0 + 9;
+        case WXK_MULTIPLY:   return VK_MULTIPLY;
+        case WXK_ADD:        return VK_ADD;
+        case WXK_SUBTRACT:   return VK_SUBTRACT;
+        case WXK_DECIMAL:    return VK_DECIMAL;
+        case WXK_DIVIDE:     return VK_DIVIDE;
+        default: return 0;
+    }
+}
+
+bool CWorldChildFrame::FireAcceleratorIfMatch(wxKeyEvent& evt)
+{
+    if (!m_doc || m_doc->m_AcceleratorToCommandMap.empty())
+        return false;
+
+    WORD vk = WxKeyToWinVK(evt.GetKeyCode());
+    if (vk == 0) return false;
+
+    BYTE fVirt = FVIRTKEY | FNOINVERT;
+    if (evt.ShiftDown())        fVirt |= FSHIFT;
+    if (evt.RawControlDown())   fVirt |= FCONTROL;
+    if (evt.AltDown())          fVirt |= FALT;
+
+    long lookup = ((long)fVirt << 16) | vk;
+    auto it = m_doc->m_AcceleratorToCommandMap.find(lookup);
+    if (it == m_doc->m_AcceleratorToCommandMap.end())
+        return false;
+
+    FireAcceleratorCommand(it->second);
+    return true;
+}
+
+void CWorldChildFrame::FireAcceleratorCommand(WORD nID)
+{
+    if (!m_doc) return;
+
+    string sCommand = m_doc->m_CommandToMacroMap[nID];
+    if (sCommand.empty()) return;
+
+    BOOL bSavedAutoSay = m_doc->m_bEnableAutoSay;
+    m_doc->m_bEnableAutoSay = FALSE;
+    m_doc->m_iCurrentActionSource = eUserAccelerator;
+
+    if (m_doc->m_CommandToSendToMap[nID] == eSendToExecute) {
+        // Same path as CSendView::SendCommand: evaluate the string through
+        // aliases/scripting without adding it to command history.
+        m_doc->EvaluateCommand(sCommand.c_str(), /*countThem=*/true, /*omitFromOutput=*/false);
+    } else {
+        // Resolve the key name for the trace message (linear search — rare path).
+        CString key = "unknown key";
+        for (auto& kv : m_doc->m_AcceleratorToCommandMap) {
+            if (kv.second == nID) {
+                key = KeyCodeToString((BYTE)(kv.first >> 16), (WORD)kv.first);
+                break;
+            }
+        }
+
+        CString strExtraOutput;
+        CPlugin* pSavedPlugin = m_doc->m_CurrentPlugin;
+        m_doc->m_CurrentPlugin = m_doc->GetPlugin(m_doc->m_CommandToPluginMap[nID].c_str());
+
+        if (m_doc->m_CurrentPlugin || m_doc->m_CommandToPluginMap[nID].empty()) {
+            m_doc->SendTo(m_doc->m_CommandToSendToMap[nID],
+                          sCommand.c_str(),
+                          TRUE,   // omit from output
+                          TRUE,   // omit from log
+                          TFormat("Accelerator: %s", (LPCTSTR)key),
+                          "",     // variable name (unused for most destinations)
+                          strExtraOutput);
+        }
+
+        m_doc->m_CurrentPlugin = pSavedPlugin;
+
+        if (!strExtraOutput.IsEmpty())
+            m_doc->DisplayMsg(strExtraOutput, strExtraOutput.GetLength(), COMMENT);
+    }
+
+    m_doc->m_iCurrentActionSource = eUnknownActionSource;
+    m_doc->m_bEnableAutoSay = bSavedAutoSay;
+}
+
 // ── OnInputKeyDown ─────────────────────────────────────────────────────────
 // Up/Down arrows navigate command history; all other keys pass through normally.
 void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 {
     int code = evt.GetKeyCode();
+
+    // Lua Accelerator() API — check before built-in key bindings so scripts
+    // can override any key (including Escape, PgUp/Dn, etc.).
+    if (FireAcceleratorIfMatch(evt))
+        return;
 
     // Escape: snap the output pane back to the bottom (re-engage auto-scroll).
     // If escape_deletes_input is set, also clear the command bar.

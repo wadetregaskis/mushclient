@@ -36,6 +36,12 @@ CPlugin::~CPlugin()
     DELETE_MAP(m_AliasMap,    CAlias);
     DELETE_MAP(m_TimerMap,    CTimer);
     DELETE_MAP(m_VariableMap, CVariable);
+    // Free scripting arrays (mirrors plugins.cpp destructor).
+    for (auto& kv : m_Arrays) {
+        kv.second->clear();
+        delete kv.second;
+    }
+    m_Arrays.clear();
 }
 
 #endif // _WIN32

@@ -1386,6 +1386,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                              wxTE_PROCESS_ENTER);
     sizer->Add(m_input, 0, wxEXPAND);
 
+    // Fire OnPluginCommandChanged per-keystroke — mirrors CSendView::OnChange()
+    // in sendvw.cpp (line 1175).  Re-entrancy guard prevents recursion if a
+    // plugin callback itself modifies the command bar.
+    m_input->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
+        if (!m_doc) return;
+        static thread_local bool s_firing = false;
+        if (!s_firing) {
+            s_firing = true;
+            m_doc->SendToAllPluginCallbacks(ON_PLUGIN_COMMAND_CHANGED);
+            s_firing = false;
+        }
+    });
+
     // Password-mode input bar: shown in place of m_input when the MUD sends
     // IAC WILL ECHO (telnet echo suppression) to signal a password prompt.
     // Uses wxTE_PASSWORD so characters are masked.  Hidden by default.

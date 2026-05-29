@@ -273,12 +273,32 @@ public:
         // sync() called by FormatV
     }
     void FormatV(const char* fmt, va_list args) {
+        // Translate the MSVC 64-bit length modifier "I64" (e.g. %I64d, %08I64x)
+        // to the portable "ll" — vsnprintf off-Windows does not understand
+        // %I64 and would mis-parse it (producing wrong, often non-unique output;
+        // GetUniqueString() relied on %I64d).  Only rewrite inside conversion
+        // specifiers so literal text is left untouched.
+        static const std::string kConv = "diouxXeEfgGaAcCspn";
+        std::string xlat;
+        xlat.reserve(std::char_traits<char>::length(fmt) + 8);
+        for (const char* p = fmt; *p; ) {
+            if (*p != '%') { xlat += *p++; continue; }
+            xlat += *p++;                                  // the '%'
+            if (*p == '%') { xlat += *p++; continue; }     // literal "%%"
+            while (*p && kConv.find(*p) == std::string::npos) {
+                if (p[0] == 'I' && p[1] == '6' && p[2] == '4') { xlat += "ll"; p += 3; }
+                else xlat += *p++;
+            }
+            if (*p) xlat += *p++;                          // the conversion char
+        }
+        const char* f = xlat.c_str();
+
         va_list args2;
         va_copy(args2, args);
-        int n = vsnprintf(nullptr, 0, fmt, args);
+        int n = vsnprintf(nullptr, 0, f, args);
         if (n < 0) { va_end(args2); return; }
         s_.resize((size_t)n);
-        vsnprintf(&s_[0], (size_t)n + 1, fmt, args2);
+        vsnprintf(&s_[0], (size_t)n + 1, f, args2);
         va_end(args2);
         sync();
     }

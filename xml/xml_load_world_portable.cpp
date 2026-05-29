@@ -858,6 +858,22 @@ static bool Init_Plugin_Script_Engine(CMUSHclientDoc& doc, CPlugin& plugin)
     }
 
     plugin.m_ScriptEngine = engine;
+
+    // Resolve DISPIDs for all of the plugin's triggers, aliases, and timers
+    // against the newly-parsed Lua script.  Without this every item's dispid
+    // stays DISPID_UNKNOWN and their script procedures never fire.
+    //
+    // Mirrors xml_load_world.cpp:527 where FindAllEntryPoints() is called
+    // while m_CurrentPlugin is set — which makes GetTriggerMap() etc. route
+    // to the plugin's own maps and GetScriptEngine() return the plugin's Lua
+    // engine.
+    {
+        CPlugin* pSaved    = doc.m_CurrentPlugin;
+        doc.m_CurrentPlugin = &plugin;
+        doc.ResolveAllEntryPoints();
+        doc.m_CurrentPlugin = pSaved;
+    }
+
     return true;
 }
 

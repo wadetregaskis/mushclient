@@ -1977,8 +1977,13 @@ bool CMUSHclientDoc::SeeIfHandlerCanExecute(const CString&)
 // After the Lua engine is initialised and the script parsed, every trigger,
 // alias, and timer that has a strProcedure name needs its dispid resolved so
 // that ExecuteLua() will actually call the function (it skips calls when
-// dispid == DISPID_UNKNOWN).  We also resolve the world-level callbacks
-// (OnWorldConnect, OnWorldDisconnect, etc.).
+// dispid == DISPID_UNKNOWN).
+//
+// When m_CurrentPlugin is set, the function resolves the plugin's own
+// triggers/aliases/timers (via GetTriggerMap() etc.) using the plugin's Lua
+// engine (via GetScriptEngine()).  World-level callbacks are only resolved
+// when m_CurrentPlugin is null.  This mirrors the split between
+// FindAllEntryPoints() and FindGlobalEntryPoints() in scripting.cpp.
 void CMUSHclientDoc::ResolveAllEntryPoints()
 {
     CScriptEngine* engine = GetScriptEngine();
@@ -1991,30 +1996,36 @@ void CMUSHclientDoc::ResolveAllEntryPoints()
         return engine->GetLuaDispid(name);
     };
 
-    // ── World-level callbacks ─────────────────────────────────────────────
-    m_dispidWorldOpen       = resolve(m_strWorldOpen);
-    m_dispidWorldClose      = resolve(m_strWorldClose);
-    m_dispidWorldSave       = resolve(m_strWorldSave);
-    m_dispidWorldConnect    = resolve(m_strWorldConnect);
-    m_dispidWorldDisconnect = resolve(m_strWorldDisconnect);
-    m_dispidWorldGetFocus   = resolve(m_strWorldGetFocus);
-    m_dispidWorldLoseFocus  = resolve(m_strWorldLoseFocus);
+    // ── World-level and MXP callbacks — only for the doc's own script ─────
+    // Mirrors FindGlobalEntryPoints() which is only called from
+    // FindAllEntryPoints() when m_CurrentPlugin == nullptr.
+    if (!m_CurrentPlugin) {
+        m_dispidWorldOpen       = resolve(m_strWorldOpen);
+        m_dispidWorldClose      = resolve(m_strWorldClose);
+        m_dispidWorldSave       = resolve(m_strWorldSave);
+        m_dispidWorldConnect    = resolve(m_strWorldConnect);
+        m_dispidWorldDisconnect = resolve(m_strWorldDisconnect);
+        m_dispidWorldGetFocus   = resolve(m_strWorldGetFocus);
+        m_dispidWorldLoseFocus  = resolve(m_strWorldLoseFocus);
 
-    // ── MXP callbacks ─────────────────────────────────────────────────────
-    m_dispidOnMXP_Start       = resolve(m_strOnMXP_Start);
-    m_dispidOnMXP_Stop        = resolve(m_strOnMXP_Stop);
-    m_dispidOnMXP_OpenTag     = resolve(m_strOnMXP_OpenTag);
-    m_dispidOnMXP_CloseTag    = resolve(m_strOnMXP_CloseTag);
-    m_dispidOnMXP_SetVariable = resolve(m_strOnMXP_SetVariable);
-    m_dispidOnMXP_Error       = resolve(m_strOnMXP_Error);
+        m_dispidOnMXP_Start       = resolve(m_strOnMXP_Start);
+        m_dispidOnMXP_Stop        = resolve(m_strOnMXP_Stop);
+        m_dispidOnMXP_OpenTag     = resolve(m_strOnMXP_OpenTag);
+        m_dispidOnMXP_CloseTag    = resolve(m_strOnMXP_CloseTag);
+        m_dispidOnMXP_SetVariable = resolve(m_strOnMXP_SetVariable);
+        m_dispidOnMXP_Error       = resolve(m_strOnMXP_Error);
+    }
 
     // ── Triggers ──────────────────────────────────────────────────────────
+    // Use GetTriggerMap() not m_TriggerMap — when m_CurrentPlugin is set this
+    // returns the plugin's own map, matching FindAllEntryPoints() in scripting.cpp.
     {
         CTrigger* pTrigger;
         CString   strName;
-        for (POSITION pos = m_TriggerMap.GetStartPosition(); pos; )
+        CTriggerMap& tmap = GetTriggerMap();
+        for (POSITION pos = tmap.GetStartPosition(); pos; )
         {
-            m_TriggerMap.GetNextAssoc(pos, strName, pTrigger);
+            tmap.GetNextAssoc(pos, strName, pTrigger);
             pTrigger->dispid = resolve(pTrigger->strProcedure);
         }
     }
@@ -2023,9 +2034,10 @@ void CMUSHclientDoc::ResolveAllEntryPoints()
     {
         CAlias* pAlias;
         CString strName;
-        for (POSITION pos = m_AliasMap.GetStartPosition(); pos; )
+        CAliasMap& amap = GetAliasMap();
+        for (POSITION pos = amap.GetStartPosition(); pos; )
         {
-            m_AliasMap.GetNextAssoc(pos, strName, pAlias);
+            amap.GetNextAssoc(pos, strName, pAlias);
             pAlias->dispid = resolve(pAlias->strProcedure);
         }
     }
@@ -2034,9 +2046,10 @@ void CMUSHclientDoc::ResolveAllEntryPoints()
     {
         CTimer* pTimer;
         CString strName;
-        for (POSITION pos = m_TimerMap.GetStartPosition(); pos; )
+        CTimerMap& timap = GetTimerMap();
+        for (POSITION pos = timap.GetStartPosition(); pos; )
         {
-            m_TimerMap.GetNextAssoc(pos, strName, pTimer);
+            timap.GetNextAssoc(pos, strName, pTimer);
             pTimer->dispid = resolve(pTimer->strProcedure);
         }
     }

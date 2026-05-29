@@ -409,6 +409,7 @@ long FindBaseOption(const char* OptionName,
 // Overload 1 — fire callback, ignore return value.
 void CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName)
 {
+    CPlugin* pSaved = m_CurrentPlugin;
     for (CPlugin* p : m_PluginList) {
         if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
         CString strName(callbackName.c_str());
@@ -417,12 +418,15 @@ void CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName)
         list<double> nparams;
         list<string> sparams;
         long nInvocations = 0;
+        m_CurrentPlugin = p;
         p->m_ScriptEngine->ExecuteLua(dispid, strName,
                                        eInputFromServer,
                                        "plugin", callbackName.c_str(),
                                        nparams, sparams,
                                        nInvocations);
+        m_CurrentPlugin = pSaved;
     }
+    m_CurrentPlugin = pSaved;
 }
 
 // Overload 2 — fire callback with one integer and one string param;
@@ -433,6 +437,7 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
                                                bool /*bStop*/,
                                                bool bDefaultReturn)
 {
+    CPlugin* pSaved = m_CurrentPlugin;
     bool result = bDefaultReturn;
     for (CPlugin* p : m_PluginList) {
         if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
@@ -443,6 +448,7 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
         list<string> sparams = { sParam };
         bool pluginResult = bDefaultReturn;
         long nInvocations = 0;
+        m_CurrentPlugin = p;
         p->m_ScriptEngine->ExecuteLua(dispid, strName,
                                        eInputFromServer,
                                        "plugin", callbackName.c_str(),
@@ -450,8 +456,10 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
                                        nInvocations,
                                        nullptr, nullptr, nullptr,
                                        &pluginResult);
+        m_CurrentPlugin = pSaved;
         result = pluginResult;
     }
+    m_CurrentPlugin = pSaved;
     return result;
 }
 
@@ -460,6 +468,7 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
 bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
                                                const CString& sParam)
 {
+    CPlugin* pSaved = m_CurrentPlugin;
     for (CPlugin* p : m_PluginList) {
         if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
         CString strName(callbackName.c_str());
@@ -469,6 +478,7 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
         list<string> sparams = { string((const char*)sParam) };
         bool intercepted = false;
         long nInvocations = 0;
+        m_CurrentPlugin = p;
         p->m_ScriptEngine->ExecuteLua(dispid, strName,
                                        eInputFromServer,
                                        "plugin", callbackName.c_str(),
@@ -476,8 +486,10 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
                                        nInvocations,
                                        nullptr, nullptr, nullptr,
                                        &intercepted);
+        m_CurrentPlugin = pSaved;
         if (intercepted) return false;  // plugin intercepted — stop
     }
+    m_CurrentPlugin = pSaved;
     return true;  // no interception
 }
 
@@ -487,6 +499,7 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
                                                const CString& sParam,
                                                bool /*bStop*/)
 {
+    CPlugin* pSaved = m_CurrentPlugin;
     for (CPlugin* p : m_PluginList) {
         if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
         CString strName(callbackName.c_str());
@@ -496,6 +509,7 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
         list<string> sparams = { string((const char*)sParam) };
         bool handled = false;
         long nInvocations = 0;
+        m_CurrentPlugin = p;
         p->m_ScriptEngine->ExecuteLua(dispid, strName,
                                        eInputFromServer,
                                        "plugin", callbackName.c_str(),
@@ -503,8 +517,10 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
                                        nInvocations,
                                        nullptr, nullptr, nullptr,
                                        &handled);
+        m_CurrentPlugin = pSaved;
         if (handled) return true;
     }
+    m_CurrentPlugin = pSaved;
     return false;
 }
 

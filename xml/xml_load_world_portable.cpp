@@ -1011,6 +1011,27 @@ bool CMUSHclientDoc::InternalLoadPlugin(const CString& strPluginPath)
             (const char*)plugin->m_strName, path,
             nTriggers, nAliases, nVariables, nTimers);
 
+    // Fire OnPluginInstall on the newly-loaded plugin.
+    // Must be done after push_back so the plugin is in the list before its
+    // own install handler runs (mirrors xml_load_world.cpp line 573).
+    if (plugin->m_ScriptEngine) {
+        CString strInstall("OnPluginInstall");
+        DISPID dispid = plugin->m_ScriptEngine->GetLuaDispid(strInstall);
+        if (dispid != DISPID_UNKNOWN) {
+            list<double> nparams;
+            list<string> sparams;
+            long nInvocations = 0;
+            CPlugin* pSaved = m_CurrentPlugin;
+            m_CurrentPlugin = plugin;
+            plugin->m_ScriptEngine->ExecuteLua(dispid, strInstall,
+                                               eInputFromServer,
+                                               "plugin", "install",
+                                               nparams, sparams,
+                                               nInvocations);
+            m_CurrentPlugin = pSaved;
+        }
+    }
+
     return true;
 }
 

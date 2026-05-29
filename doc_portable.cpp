@@ -366,6 +366,7 @@ const string ON_PLUGIN_CONNECT               = "OnPluginConnect";
 const string ON_PLUGIN_DISCONNECT            = "OnPluginDisconnect";
 const string ON_PLUGIN_WORLD_SAVE            = "OnPluginWorldSave";
 const string ON_PLUGIN_CLOSE                 = "OnPluginClose";
+const string ON_PLUGIN_INSTALL               = "OnPluginInstall";
 
 // ── MakeActionHash ────────────────────────────────────────────────────────
 // Simple FNV-1a-like hash of the three action strings.

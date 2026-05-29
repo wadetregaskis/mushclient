@@ -4255,28 +4255,41 @@ inline BOOL   SystemParametersInfo(UINT, UINT, PVOID, UINT) { return FALSE; }
 inline DWORD  GetTickCount()                 { return 0; }
 inline DWORD  timeGetTime()                  { return 0; }
 inline void   Sleep(DWORD)                   {}
-inline HINSTANCE ShellExecute(HWND, LPCTSTR /*op*/, LPCTSTR file, LPCTSTR /*params*/, LPCTSTR /*dir*/, int /*show*/)
+inline HINSTANCE ShellExecute(HWND, LPCTSTR /*op*/, LPCTSTR file, LPCTSTR params, LPCTSTR /*dir*/, int /*show*/)
 {
-    // Use the platform's default URL/file opener.
-    if (file && file[0]) {
-        std::string cmd;
+    if (!file || !file[0])
+        return nullptr;
+
+    // Helper: single-quote a string for the shell, escaping embedded quotes.
+    auto shellQuote = [](const char* s) -> std::string {
+        std::string q;
+        q += '\'';
+        for (const char* p = s; *p; ++p) {
+            if (*p == '\'') q += "'\\''";
+            else q += *p;
+        }
+        q += '\'';
+        return q;
+    };
+
+    std::string cmd;
+    if (params && params[0]) {
+        // Editor-launch form: ShellExecute(hwnd, "open", editor, "file.lua", ...)
+        // Run the editor directly with the argument string.
+        cmd = shellQuote(file);
+        cmd += ' ';
+        cmd += params;          // already shell-quoted by EditFileWithEditor
+    } else {
+        // URL / file open form: use the platform default opener.
 #if defined(__APPLE__)
         cmd = "open ";
 #else
         cmd = "xdg-open ";
 #endif
-        // Simple shell-quoting: wrap in single quotes and escape embedded quotes.
-        cmd += '\'';
-        for (const char* p = file; *p; ++p) {
-            if (*p == '\'') cmd += "'\\''";
-            else cmd += *p;
-        }
-        cmd += '\'';
-        cmd += " &";   // don't block the MUD connection
-        if (::system(cmd.c_str()) == 0)
-            return (HINSTANCE)33;  // > 32 means success on Windows
+        cmd += shellQuote(file);
     }
-    return nullptr;
+    cmd += " &";   // don't block the MUD connection
+    return (::system(cmd.c_str()) == 0) ? (HINSTANCE)33 : nullptr;
 }
 // MessageBox already defined earlier; avoid redefinition.
 

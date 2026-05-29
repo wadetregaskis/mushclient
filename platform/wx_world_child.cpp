@@ -2354,7 +2354,10 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
                 if (hist.Lower().StartsWith(lowerPartial) &&
                     hist.Len() > partial.Len()) {
                     m_histIdx = i;
-                    m_input->SetValue(hist);
+                    CString sMatch(hist.ToUTF8().data());
+                    m_doc->SendToAllPluginCallbacksRtn(ON_PLUGIN_TABCOMPLETE, sMatch);
+                    if (sMatch == "\t") return;  // plugin cancelled
+                    m_input->SetValue(wxString::FromUTF8((const char*)sMatch));
                     m_input->SetInsertionPointEnd();
                     return;
                 }
@@ -2403,6 +2406,12 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         if (m_tabWords.empty()) return;  // no candidates — consume Tab silently
 
         m_tabWordIdx = 0;
+        {
+            CString sMatch(m_tabWords[0].ToUTF8().data());
+            m_doc->SendToAllPluginCallbacksRtn(ON_PLUGIN_TABCOMPLETE, sMatch);
+            if (sMatch == "\t") return;  // plugin cancelled
+            m_tabWords[0] = wxString::FromUTF8((const char*)sMatch);
+        }
         m_input->SetValue(m_tabWords[0]);
         m_input->SetInsertionPointEnd();
         return;

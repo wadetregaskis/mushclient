@@ -2212,7 +2212,30 @@ static int L_EnablePlugin(lua_State* L)
 
     for (auto* p : pDoc->m_PluginList) {
         if (strcmp((const char*)p->m_strID, id) == 0) {
-            p->m_bEnabled = enable ? TRUE : FALSE;
+            if (p->m_bEnabled != (enable ? TRUE : FALSE)) {
+                p->m_bEnabled = enable ? TRUE : FALSE;
+                // Fire OnPluginEnable / OnPluginDisable — mirrors EnablePlugin()
+                // in scripting/methods/methods_plugins.cpp.
+                if (p->m_ScriptEngine) {
+                    const string& cbName = enable ? ON_PLUGIN_ENABLE : ON_PLUGIN_DISABLE;
+                    CString strName(cbName.c_str());
+                    DISPID dispid = p->m_ScriptEngine->GetLuaDispid(strName);
+                    if (dispid != DISPID_UNKNOWN) {
+                        list<double> nparams;
+                        list<string> sparams;
+                        long nInvocations = 0;
+                        CPlugin* pSaved = pDoc->m_CurrentPlugin;
+                        pDoc->m_CurrentPlugin = p;
+                        p->m_ScriptEngine->ExecuteLua(dispid, strName,
+                                                       eInputFromServer,
+                                                       "plugin",
+                                                       enable ? "enable" : "disable",
+                                                       nparams, sparams,
+                                                       nInvocations);
+                        pDoc->m_CurrentPlugin = pSaved;
+                    }
+                }
+            }
             lua_pushnumber(L, eOK);
             return 1;
         }

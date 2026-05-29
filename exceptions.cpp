@@ -128,5 +128,10 @@ void ThrowErrorException(LPCTSTR lpszFormat, ...)
 	va_end(argList);
 
 	TRACE1("Throw error exception, %s\n", (LPCTSTR) strText);
-	throw new CErrorException("%s", strText);
+	// strText MUST be passed as LPCTSTR, not as a CString by value.  Off-Windows
+	// CString is non-trivially-copyable (it holds a std::string), so passing it
+	// through a variadic "..." is undefined and clang emits a hard trap (SIGTRAP)
+	// at the call site.  That trap would bypass the catch(CException*) handlers
+	// that are meant to turn a load error into a graceful failure.
+	throw new CErrorException("%s", (LPCTSTR) strText);
 }

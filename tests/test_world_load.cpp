@@ -597,6 +597,76 @@ TEST(PluginLoad, MissingFileReturnsFalse)
     EXPECT_EQ(0u, doc.m_PluginList.size());
 }
 
+// Verify that triggers loaded from a world file are sorted by sequence number
+// in the TriggerArray, regardless of their order in the XML.  This ensures
+// ProcessPreviousLine evaluates them in the correct priority order.
+TEST(WorldLoad, TriggerArraySortedBySequence)
+{
+    // Write the high-sequence trigger FIRST in XML — load must still sort it last.
+    static const char* xml = R"(<?xml version="1.0"?>
+<muclient>
+<triggers>
+  <trigger match="high priority" name="hi"  enabled="y" sequence="200">
+    <send>hi fires</send>
+  </trigger>
+  <trigger match="low priority"  name="lo"  enabled="y" sequence="100">
+    <send>lo fires</send>
+  </trigger>
+</triggers>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    // Array must have both triggers, with sequence-100 at index 0.
+    ASSERT_EQ(2, doc.m_TriggerArray.GetSize());
+    CTrigger* first  = doc.m_TriggerArray[0];
+    CTrigger* second = doc.m_TriggerArray[1];
+    ASSERT_NE(nullptr, first);
+    ASSERT_NE(nullptr, second);
+    EXPECT_EQ(100, first->iSequence);
+    EXPECT_EQ(200, second->iSequence);
+}
+
+// Same check for a plugin's trigger array.
+TEST(PluginLoad, TriggerArraySortedBySequence)
+{
+    static const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<plugin name="SortPlugin" author="A" id="sort-plugin-0001" version="1.0" />
+<triggers>
+  <trigger match="high" name="hi" enabled="y" sequence="200">
+    <send>hi</send>
+  </trigger>
+  <trigger match="low"  name="lo" enabled="y" sequence="100">
+    <send>lo</send>
+  </trigger>
+</triggers>
+</muclient>)";
+
+    std::string path = write_temp_named("sort.xml", xml);
+    ASSERT_TRUE(!path.empty());
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.InternalLoadPlugin(CString(path.c_str())));
+
+    ASSERT_EQ(1u, doc.m_PluginList.size());
+    CPlugin* p = doc.m_PluginList.front();
+
+    // Plugin's TriggerArray must be sorted: sequence 100 before 200.
+    ASSERT_EQ(2, p->m_TriggerArray.GetSize());
+    CTrigger* first  = p->m_TriggerArray[0];
+    CTrigger* second = p->m_TriggerArray[1];
+    ASSERT_NE(nullptr, first);
+    ASSERT_NE(nullptr, second);
+    EXPECT_EQ(100, first->iSequence);
+    EXPECT_EQ(200, second->iSequence);
+
+    // Doc's own array must be empty (triggers are plugin-owned).
+    EXPECT_EQ(0, doc.m_TriggerArray.GetSize());
+}
+
 TEST(PluginLoad, NoNameRejected)
 {
     const char* xml = R"(<?xml version="1.0"?>

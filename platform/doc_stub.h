@@ -1407,6 +1407,12 @@ public:
     COLORREF    m_current_style_fg = 0x00C0C0C0u;  // fg from most recent AddStyle (light grey)
     COLORREF    m_current_style_bg = 0x00000000u;  // bg from most recent AddStyle (black)
 
+    // ── GUI ColourNote/ColourTell line buffer ──────────────────────────────
+    // ColourTell segments accumulate here until ColourNote (or Note) flushes.
+    // Enables multi-segment colour lines (ColourTell…ColourTell…ColourNote)
+    // to arrive at the output pane as a single SOutputLine with multiple runs.
+    SOutputLine m_gui_note_buf;
+
     int     m_connect_now      = 0;
     long    m_nTotalLinesSent  = 0;
 

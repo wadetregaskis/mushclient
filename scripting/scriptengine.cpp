@@ -659,7 +659,16 @@ bool CScriptEngine::Execute (DISPID& dispid,
   return true;
   }
 
-bool CScriptEngine::CreateScriptEngine (void) { return false; }
+bool CScriptEngine::CreateScriptEngine (void)
+  {
+  // COM scripting (VBScript/JScript) is unavailable on macOS; only Lua is
+  // supported.  Mirror the Windows path (see the _WIN32 branch above): for a
+  // Lua engine, open the Lua state now — otherwise L stays null and Parse()
+  // can never compile anything.  Returns false = success (Windows convention).
+  if (m_strLanguage.CompareNoCase ("Lua") == 0)
+    OpenLua ();
+  return false;
+  }
 
 bool CScriptEngine::Parse (const CString& strCode, const CString& strWhat)
   {

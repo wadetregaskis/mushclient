@@ -492,6 +492,40 @@ static void save_variables(CArchive& ar, CMUSHclientDoc& doc)
     ar.WriteString("</variables>" NL);
 }
 
+static void save_colours(CArchive& ar, const CMUSHclientDoc& doc)
+{
+    ar.WriteString("<colours>" NL);
+    ar.WriteString(NL "<ansi>" NL);
+
+    ar.WriteString(NL " <normal>" NL);
+    for (int i = 0; i < 8; i++) {
+        ar.WriteString(CFormat("   <colour seq=\"%d\" rgb=\"%s\"/>" NL,
+                               i + 1, (LPCTSTR)ColourToName(doc.m_normalcolour[i])));
+    }
+    ar.WriteString(NL " </normal>" NL);
+
+    ar.WriteString(NL " <bold>" NL);
+    for (int i = 0; i < 8; i++) {
+        ar.WriteString(CFormat("   <colour seq=\"%d\" rgb=\"%s\"/>" NL,
+                               i + 1, (LPCTSTR)ColourToName(doc.m_boldcolour[i])));
+    }
+    ar.WriteString(NL " </bold>" NL);
+
+    ar.WriteString(NL "</ansi>" NL);
+
+    ar.WriteString(NL "<custom>" NL);
+    for (int i = 0; i < MAX_CUSTOM; i++) {
+        ar.WriteString(CFormat("  <colour seq=\"%d\" name=\"%s\" text=\"%s\" back=\"%s\"/>" NL,
+                               i + 1,
+                               (LPCTSTR)FixHTMLString(doc.m_strCustomColourName[i]),
+                               (LPCTSTR)ColourToName(doc.m_customtext[i]),
+                               (LPCTSTR)ColourToName(doc.m_customback[i])));
+    }
+    ar.WriteString(NL "</custom>" NL);
+
+    ar.WriteString(NL "</colours>" NL);
+}
+
 // ── Single-item save helpers (for ExportXML Lua API) ─────────────────────────
 // Each helper serialises one named item (trigger / alias / timer / variable)
 // to an in-memory XML string that matches the format ExportXML returns on
@@ -687,6 +721,7 @@ void CMUSHclientDoc::Serialize_World_XML(CArchive& ar)
     save_aliases  (ar, *this);
     save_timers   (ar, *this);
     save_variables(ar, *this);
+    save_colours  (ar, *this);
 
     ar.WriteString("</muclient>" NL);
 }

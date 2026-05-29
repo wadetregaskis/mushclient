@@ -643,6 +643,54 @@ static void apply_alpha_option(CMUSHclientDoc& doc, const char* opt, const CStri
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// Colour table loading (<colours>)
+// ══════════════════════════════════════════════════════════════════════════
+
+static unsigned int Load_Colours(CXMLelement& parent, CMUSHclientDoc& doc)
+{
+    unsigned int count = 0;
+
+    LOAD_LOOP(parent, "colours", pColours)
+
+        // ── ANSI colours: <ansi><normal>…</normal><bold>…</bold></ansi> ─────
+        CXMLelement* pAnsi = FindNode(*pColours, "ansi");
+        if (pAnsi) {
+            for (int group = 0; group < 2; group++) {
+                CXMLelement* pGroup = FindNode(*pAnsi, group == 0 ? "normal" : "bold");
+                if (!pGroup) continue;
+
+                LOAD_LOOP(*pGroup, "colour", node)
+                    long seq = 0;
+                    if (!Get_XML_number(*node, "seq", seq, false, 1, 8))
+                        continue;
+                    seq--;   // make zero-relative
+                    COLORREF* table = (group == 0) ? doc.m_normalcolour : doc.m_boldcolour;
+                    Get_XML_colour(*node, "rgb", table[seq], false);
+                    count++;
+                END_LOAD_LOOP
+            }
+        }
+
+        // ── Custom colours: <custom><colour seq="N" name="…" text="…" back="…"/>…</custom> ──
+        CXMLelement* pCustom = FindNode(*pColours, "custom");
+        if (pCustom) {
+            LOAD_LOOP(*pCustom, "colour", node)
+                long seq = 0;
+                if (!Get_XML_number(*node, "seq", seq, false, 1, MAX_CUSTOM))
+                    continue;
+                seq--;   // make zero-relative
+                Get_XML_string(*node, "name", doc.m_strCustomColourName[seq], false, true);
+                Get_XML_colour(*node, "text", doc.m_customtext[seq], false);
+                Get_XML_colour(*node, "back", doc.m_customback[seq], false);
+                count++;
+            END_LOAD_LOOP
+        }
+
+    END_LOAD_LOOP
+    return count;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // World settings loading (host, port, connect_text, etc.)
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -1194,6 +1242,7 @@ bool CMUSHclientDoc::LoadWorldFromFile(const char* path)
         CXMLelement& top = pMuClient ? *pMuClient : root;
 
         Load_World_Settings(top, *this);
+        Load_Colours       (top, *this);
 
         unsigned int nTriggers  = Load_Triggers (top, *this);
         unsigned int nAliases   = Load_Aliases  (top, *this);

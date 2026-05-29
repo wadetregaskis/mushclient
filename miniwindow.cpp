@@ -851,6 +851,7 @@ long CMiniWindow::Text (LPCTSTR FontId,  // which previously-created font
 
   if (Unicode)
     {
+#ifdef _WIN32
     vector<WCHAR> v (utf8_length);    // get correct size vector
     int iUnicodeCharacters = MultiByteToWideChar (CP_UTF8, 0,
                               Text, length,            // input
@@ -866,6 +867,17 @@ long CMiniWindow::Text (LPCTSTR FontId,  // which previously-created font
         iUnicodeCharacters,   // number of characters in string
         &textsize             // pointer to structure for string size
       );
+#else
+    // The wx CDC builds a wxString from the UTF-8 bytes and renders via
+    // wxDC::DrawText, so it is already Unicode-correct — the Windows
+    // UTF-8 -> UTF-16 -> ExtTextOutW detour is unnecessary off-Windows (and
+    // the wide GDI calls are not implemented there).
+    (void) utf8_length;
+    pdc->ExtTextOut (Left, Top, ETO_CLIPPED,
+                  CRect (Left, Top, FixRight (Right), FixBottom (Bottom)),
+                  Text, length, NULL);
+    textsize = pdc->GetTextExtent (Text, length);
+#endif
 
     }
   else
@@ -916,6 +928,7 @@ long CMiniWindow::TextWidth (LPCTSTR FontId,  // which previously-created font
 
   if (Unicode)
     {
+#ifdef _WIN32
     vector<WCHAR> v (utf8_length);    // get correct size vector
     int iUnicodeCharacters = MultiByteToWideChar (CP_UTF8, 0,
                               Text, length,           // input
@@ -928,6 +941,11 @@ long CMiniWindow::TextWidth (LPCTSTR FontId,  // which previously-created font
         iUnicodeCharacters, // number of characters in string
         &textsize           // pointer to structure for string size
       );
+#else
+    // wx CDC measures the UTF-8 bytes directly (Unicode-correct).
+    (void) utf8_length;
+    textsize = pdc->GetTextExtent (Text, length);
+#endif
 
     }
   else

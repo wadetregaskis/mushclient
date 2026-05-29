@@ -508,6 +508,34 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
     return false;
 }
 
+// Rtn variant — string in/out: each plugin may transform strResult.
+// Used by OnPluginCommandEntered: plugins can modify, discard ("\t"), or
+// silently ignore ("\r") the command the user typed.
+// Mirrors plugins.cpp CMUSHclientDoc::SendToAllPluginCallbacksRtn.
+void CMUSHclientDoc::SendToAllPluginCallbacksRtn(const string& callbackName,
+                                                  CString& strResult)
+{
+    CPlugin* pSavedPlugin = m_CurrentPlugin;
+    for (CPlugin* p : m_PluginList) {
+        if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
+        CString strName(callbackName.c_str());
+        DISPID dispid = p->m_ScriptEngine->GetLuaDispid(strName);
+        if (dispid == DISPID_UNKNOWN) continue;
+        long nInvocations = 0;
+        m_CurrentPlugin = p;
+        p->m_ScriptEngine->ExecuteLua(dispid, (LPCTSTR)strName,
+                                       eDontChangeAction,
+                                       "plugin", callbackName.c_str(),
+                                       strResult,
+                                       nInvocations,
+                                       strResult);
+        m_CurrentPlugin = pSavedPlugin;
+        // "\t" = discard command, "\r" = ignore silently — stop on either
+        if (strResult == "\t" || strResult == "\r") break;
+    }
+    m_CurrentPlugin = pSavedPlugin;
+}
+
 void CMUSHclientDoc::SendPacket(const char* lpBuf, const int nBufLen)
 {
     if (!m_pSocket || nBufLen <= 0) return;
@@ -1963,9 +1991,10 @@ void StringToVector(const string s, vector<string>& v,
 IMPLEMENT_DYNAMIC(CVariable, CObject)
 
 // ── Additional plugin callback string constants ───────────────────────────
-const string ON_PLUGIN_LINE_RECEIVED = "OnPluginLineReceived";
-const string ON_PLUGIN_SEND          = "OnPluginSend";
-const string ON_PLUGIN_SENT          = "OnPluginSent";
+const string ON_PLUGIN_LINE_RECEIVED   = "OnPluginLineReceived";
+const string ON_PLUGIN_SEND            = "OnPluginSend";
+const string ON_PLUGIN_SENT            = "OnPluginSent";
+const string ON_PLUGIN_COMMAND_ENTERED = "OnPluginCommandEntered";
 
 // AlphaOptionsTable[] is defined in scriptingoptions_portable.cpp (real table).
 

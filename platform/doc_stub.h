@@ -609,6 +609,7 @@ extern const string ON_PLUGIN_DISCONNECT;
 extern const string ON_PLUGIN_LINE_RECEIVED;
 extern const string ON_PLUGIN_SEND;
 extern const string ON_PLUGIN_SENT;
+extern const string ON_PLUGIN_COMMAND_ENTERED;
 extern const string ON_PLUGIN_IAC_GA;
 extern const string ON_PLUGIN_TELNET_REQUEST;
 extern const string ON_PLUGIN_TELNET_OPTION;
@@ -2036,6 +2037,9 @@ public:
     bool SendToAllPluginCallbacks(const string& sName, const CString& sData);
     bool SendToAllPluginCallbacks(const string& sName, const CString& sData,
                                   bool bStopOnTrue);
+    // Rtn variant: each plugin may transform strResult in place.
+    // "\t" return = discard command; "\r" = ignore silently.
+    void SendToAllPluginCallbacksRtn(const string& sName, CString& strResult);
 
     void SendPacket    (const char* lpBuf, const int nBufLen);
     void SendPacket    (const unsigned char* lpBuf, const int nBufLen);

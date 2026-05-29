@@ -2777,6 +2777,23 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     // it for blank Enter presses and send the bare newline directly.
     CString cmd(text.ToUTF8().data());
     bool bOmitFromLog = isPassword;   // don't log passwords either
+
+    // Fire OnPluginCommandEntered — mirrors sendvw.cpp line 352.
+    // Plugins may modify cmd, or return "\t" (discard) / "\r" (ignore silently).
+    if (!cmd.IsEmpty()) {
+        m_doc->SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, cmd);
+        if (cmd == "\t") {
+            // Plugin discarded the command; no-op (input already cleared).
+            m_doc->UpdateAllViews(nullptr);
+            return;
+        }
+        if (cmd == "\r") {
+            // Plugin said ignore silently.
+            m_doc->UpdateAllViews(nullptr);
+            return;
+        }
+    }
+
     if (cmd.IsEmpty()) {
         m_doc->DoSendMsg(cmd, m_doc->m_bLocalEcho, !bOmitFromLog);
     } else {

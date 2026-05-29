@@ -8,6 +8,15 @@
 //   - Array subsystem
 //   - Hashing functions
 //   - String utilities (Replace, EditDistance, Metaphone, TranslateGerman)
+//
+// KNOWN PORTABLE-SUBSET FAILURES (deferred — low priority):
+// Several tests below (AddAndGetTrigger, DeleteTrigger, EnableDisableTrigger,
+// AddAndGetAlias, AddAndGetTimer, GuiStubsReturnValues,
+// SetAlphaOptionCacheRoundTrip, ArrayCreateSetGet, MD5, SHA256, WorldAddress)
+// assert the FULL world API.  lua_world_api_portable.cpp (used by mushcore /
+// mushcli / these tests) implements only a subset; the product, mushgui, uses
+// the complete scripting/lua_methods.cpp where these work.  Bringing the
+// portable layer to parity is deferred — the GUI is the product.
 
 #ifdef MUSHCLIENT_LUA_SCRIPTING
 

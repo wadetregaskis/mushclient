@@ -4,6 +4,12 @@
 // Each test writes a minimal .mcl-format XML string to a temp file, calls
 // LoadWorldFromFile, then inspects the resulting trigger/alias/variable/timer
 // maps.
+//
+// KNOWN PORTABLE-SUBSET FAILURES (deferred — low priority):
+// PluginLoad.MultipleDistinctPlugins and PluginLoad.ViaIncludeInWorldFile
+// exercise plugin loading/flattening that the portable mushcore loader only
+// partially implements; the product, mushgui, loads plugins through the full
+// engine.  Closing this gap is deferred — the GUI is the product.
 
 #include "mc_test.h"
 #include "platform/doc_stub.h"

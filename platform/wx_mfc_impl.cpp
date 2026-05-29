@@ -26,6 +26,7 @@
 #include <wx/clipbrd.h>    // wxTheClipboard
 #include <wx/dataobj.h>    // wxTextDataObject
 #include <wx/colordlg.h>   // wxColourDialog
+#include <wx/fontdlg.h>    // wxFontDialog, wxFontData
 #if wxUSE_SOUND
 #  include <wx/sound.h>    // wxSound (trigger / MSP audio)
 #endif

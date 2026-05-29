@@ -57,6 +57,8 @@ static CString UniqueString() {
         Get_XML_long(node, name, var, bUseDefault, lo, hi)
 #define GET_DOUBLE(name, var, lo, hi) \
         Get_XML_double(node, name, var, bUseDefault, lo, hi)
+#define GET_COLOUR(name, var) \
+        Get_XML_colour(node, name, var, bUseDefault)
 
 #define LOAD_LOOP(parent, type, node) \
     for (POSITION pos##node = (parent).ChildrenList.GetHeadPosition(); pos##node; ) { \
@@ -115,31 +117,68 @@ static bool Load_One_Trigger(CXMLelement& node, CMUSHclientDoc& doc,
     try {
         Get_XML_boolean(node, DEFAULTS_LIT, bUseDefault, true);
 
-        GET_STRING     ("match",             t->trigger);
-        GET_STRING_TRIM("name",              t->strLabel);
-        GET_STRING_TRIM("script",            t->strProcedure);
+        // Colour 17 (MAX_CUSTOM + 1) = "other" colour (iOtherForeground/Background).
+        // Stored 1-relative so zero means "no custom colour" (SAMECOLOUR).
+        if (Get_XML_ushort(node, "custom_colour", t->colour, bUseDefault, 0, MAX_CUSTOM + 1)) {
+            if (t->colour == 0) t->colour = SAMECOLOUR; else t->colour--;
+        } else {
+            t->colour = SAMECOLOUR;
+        }
+        GET_USHORT     ("clipboard_arg",     t->iClipboardArg, 0, 10);
+        GET_USHORT     ("colour_change_type",t->iColourChangeType,
+                        TRIGGER_COLOUR_CHANGE_BOTH, TRIGGER_COLOUR_CHANGE_BACKGROUND);
         GET_BOOL_USHORT("enabled",           t->bEnabled);
-        GET_BOOL_USHORT("regexp",            t->bRegexp);
-        GET_BOOL_USHORT("ignore_case",       t->ignore_case);
-        GET_BOOL_USHORT("keep_evaluating",   t->bKeepEvaluating);
         GET_BOOL_USHORT("expand_variables",  t->bExpandVariables);
+        GET_STRING_TRIM("group",             t->strGroup);
+        GET_BOOL_USHORT("ignore_case",       t->ignore_case);
+        GET_USHORT     ("lines_to_match",    t->iLinesToMatch, 0, MAX_RECENT_LINES);
+        GET_BOOL_USHORT("keep_evaluating",   t->bKeepEvaluating);
+        GET_BOOL_USHORT_MASK("make_bold",    t->iStyle, HILITE);
+        GET_BOOL_USHORT_MASK("make_italic",  t->iStyle, BLINK);
+        GET_BOOL_USHORT_MASK("make_underline",t->iStyle, UNDERLINE);
+        GET_STRING     ("match",             t->trigger);
         GET_BOOL_USHORT("multi_line",        t->bMultiLine);
-        GET_BOOL_USHORT("repeat",            t->bRepeat);
-        GET_BOOL_USHORT("omit_from_output",  t->bOmitFromOutput);
-        GET_BOOL_USHORT("omit_from_log",     t->omit_from_log);
-        GET_BOOL       ("lowercase_wildcard", t->bLowercaseWildcard);
-        GET_BOOL       ("temporary",         t->bTemporary);
+        GET_STRING_TRIM("name",              t->strLabel);
         GET_BOOL_BOOL  ("one_shot",          t->bOneShot);
+        GET_BOOL_USHORT("omit_from_log",     t->omit_from_log);
+        GET_BOOL_USHORT("omit_from_output",  t->bOmitFromOutput);
+        GET_BOOL_USHORT("regexp",            t->bRegexp);
+        GET_BOOL_USHORT("repeat",            t->bRepeat);
+        GET_STRING_TRIM("script",            t->strProcedure);
         GET_USHORT     ("send_to",           t->iSendTo,      0, eSendToLast - 1);
         GET_USHORT     ("sequence",          t->iSequence,    0, 10000);
-        GET_USHORT     ("lines_to_match",    t->iLinesToMatch, 0, MAX_RECENT_LINES);
-        GET_LONG       ("user",              t->iUserOption,  LONG_MIN, LONG_MAX);
-        GET_STRING_TRIM("group",             t->strGroup);
-        GET_STRING_TRIM("variable",          t->strVariable);
         GET_STRING_TRIM("sound",             t->sound_to_play);
-        GET_BOOL_USHORT_MASK("make_bold",      t->iStyle, HILITE);
-        GET_BOOL_USHORT_MASK("make_italic",    t->iStyle, BLINK);
-        GET_BOOL_USHORT_MASK("make_underline", t->iStyle, UNDERLINE);
+        GET_BOOL_USHORT("sound_if_inactive", t->bSoundIfInactive);
+        GET_BOOL       ("lowercase_wildcard",t->bLowercaseWildcard);
+        GET_BOOL       ("temporary",         t->bTemporary);
+        GET_LONG       ("user",              t->iUserOption,  LONG_MIN, LONG_MAX);
+        GET_STRING_TRIM("variable",          t->strVariable);
+
+        // iMatch flag bits — match conditions and trigger colour
+        {
+            unsigned short iColour = 0;
+            if (GET_USHORT("text_colour", iColour, 0, 15)) {
+                t->iMatch &= ~0x0F0u;
+                t->iMatch |= (iColour << 4);
+            }
+            if (GET_USHORT("back_colour", iColour, 0, 15)) {
+                t->iMatch &= ~0xF00u;
+                t->iMatch |= (iColour << 8);
+            }
+        }
+        GET_BOOL_USHORT_MASK("bold",             t->iMatch, HILITE);
+        GET_BOOL_USHORT_MASK("match_back_colour",t->iMatch, TRIGGER_MATCH_BACK);
+        GET_BOOL_USHORT_MASK("match_bold",       t->iMatch, TRIGGER_MATCH_HILITE);
+        GET_BOOL_USHORT_MASK("match_inverse",    t->iMatch, TRIGGER_MATCH_INVERSE);
+        GET_BOOL_USHORT_MASK("match_italic",     t->iMatch, TRIGGER_MATCH_BLINK);
+        GET_BOOL_USHORT_MASK("match_text_colour",t->iMatch, TRIGGER_MATCH_TEXT);
+        GET_BOOL_USHORT_MASK("match_underline",  t->iMatch, TRIGGER_MATCH_UNDERLINE);
+        GET_BOOL_USHORT_MASK("inverse",          t->iMatch, INVERSE);
+        GET_BOOL_USHORT_MASK("italic",           t->iMatch, BLINK);
+
+        // "Other" foreground/background: full COLORREF colour (written by wColour as colour name)
+        GET_COLOUR("other_text_colour", t->iOtherForeground);
+        GET_COLOUR("other_back_colour", t->iOtherBackground);
 
         FindNodeContents(node, "send", t->contents, bUseDefault);
 
@@ -225,15 +264,31 @@ static bool Load_One_Alias(CXMLelement& node, CMUSHclientDoc& doc,
         GET_BOOL_USHORT("expand_variables",  a->bExpandVariables);
         GET_BOOL_USHORT("omit_from_log",     a->bOmitFromLog);
         GET_BOOL_USHORT("omit_from_output",  a->bOmitFromOutput);
-        GET_BOOL_USHORT("echo_alias",        a->bEchoAlias);
-        GET_BOOL_USHORT("menu",              a->bMenu);
-        GET_BOOL       ("temporary",         a->bTemporary);
-        GET_BOOL_BOOL  ("one_shot",          a->bOneShot);
-        GET_USHORT     ("send_to",           a->iSendTo,   0, eSendToLast - 1);
-        GET_USHORT     ("sequence",          a->iSequence, 0, 10000);
-        GET_LONG       ("user",              a->iUserOption, LONG_MIN, LONG_MAX);
-        GET_STRING_TRIM("group",             a->strGroup);
-        GET_STRING_TRIM("variable",          a->strVariable);
+        GET_BOOL_USHORT("echo_alias",                a->bEchoAlias);
+        GET_BOOL_USHORT("menu",                      a->bMenu);
+        GET_BOOL_USHORT("omit_from_command_history", a->bOmitFromCommandHistory);
+        GET_BOOL       ("temporary",                 a->bTemporary);
+        GET_BOOL_BOOL  ("one_shot",                  a->bOneShot);
+        GET_USHORT     ("send_to",                   a->iSendTo,   0, eSendToLast - 1);
+        GET_USHORT     ("sequence",                  a->iSequence, 0, 10000);
+        GET_LONG       ("user",                      a->iUserOption, LONG_MIN, LONG_MAX);
+        GET_STRING_TRIM("group",                     a->strGroup);
+        GET_STRING_TRIM("variable",                  a->strVariable);
+
+        // Backward-compat boolean overrides for files saved before MUSHclient 3.35
+        // (these are now encoded into iSendTo).
+        {
+            bool bSpeedWalk = false, bVariable = false, bQueue = false;
+            GET_BOOL("speed_walk",   bSpeedWalk);
+            GET_BOOL("set_variable", bVariable);
+            GET_BOOL("queue",        bQueue);
+            if (bSpeedWalk && (a->iSendTo == eSendToWorld || a->iSendTo == eSendToSpeedwalk))
+                a->iSendTo = eSendToSpeedwalk;
+            if (bVariable && (a->iSendTo == eSendToWorld || a->iSendTo == eSendToVariable))
+                a->iSendTo = eSendToVariable;
+            if (bQueue && (a->iSendTo == eSendToWorld || a->iSendTo == eSendToCommandQueue))
+                a->iSendTo = eSendToCommandQueue;
+        }
 
         FindNodeContents(node, "send", a->contents, bUseDefault);
 
@@ -358,10 +413,13 @@ static bool Load_One_Timer(CXMLelement& node, CMUSHclientDoc& doc,
         GET_USHORT     ("send_to",         t->iSendTo, 0, eSendToLast - 1);
         GET_LONG       ("user",            t->iUserOption, LONG_MIN, LONG_MAX);
 
-        // type: 0=interval (eInterval), 1=at-time (eAtTime)
-        int iType = CTimer::eInterval;
-        Get_XML_int(node, "type", iType, bUseDefault, CTimer::eInterval, CTimer::eAtTime);
-        t->iType = iType;
+        // "at_time" boolean: true = fire at a specific time of day (eAtTime),
+        // false = fire every N hours/minutes/seconds (eInterval).
+        {
+            bool bAtTime = false;
+            Get_XML_boolean(node, "at_time", bAtTime, bUseDefault);
+            t->iType = bAtTime ? CTimer::eAtTime : CTimer::eInterval;
+        }
 
         if (t->iType == CTimer::eAtTime) {
             GET_INT   ("hour",   t->iAtHour,   0, 23);
@@ -371,11 +429,26 @@ static bool Load_One_Timer(CXMLelement& node, CMUSHclientDoc& doc,
             GET_INT   ("hour",   t->iEveryHour,   0, 23);
             GET_INT   ("minute", t->iEveryMinute, 0, 59);
             GET_DOUBLE("second", t->fEverySecond, 0.0, 59.9999);
+            if (!(t->iEveryHour || t->iEveryMinute || t->fEverySecond > 0.0))
+                ThrowErrorException("Timer for 'every' time cannot have zero interval");
         }
 
         GET_INT   ("offset_hour",   t->iOffsetHour,   0, 23);
         GET_INT   ("offset_minute", t->iOffsetMinute, 0, 59);
         GET_DOUBLE("offset_second", t->fOffsetSecond, 0.0, 59.9999);
+
+        GET_BOOL_BOOL("active_closed", t->bActiveWhenClosed);
+
+        // Backward-compat boolean overrides for files saved before MUSHclient 3.35.
+        {
+            bool bSpeedWalk = false, bNote = false;
+            GET_BOOL("speed_walk", bSpeedWalk);
+            GET_BOOL("note",       bNote);
+            if (bSpeedWalk && (t->iSendTo == eSendToWorld || t->iSendTo == eSendToSpeedwalk))
+                t->iSendTo = eSendToSpeedwalk;
+            if (bNote && (t->iSendTo == eSendToWorld || t->iSendTo == eSendToOutput))
+                t->iSendTo = eSendToOutput;
+        }
 
         FindNodeContents(node, "send", t->strContents, bUseDefault);
 

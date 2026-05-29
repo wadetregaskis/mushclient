@@ -176,6 +176,10 @@ CMUSHclientDoc::CMUSHclientDoc()
     pInitStyle->iLength     = 0;
     m_pScratchLine->styleList.AddTail(pInitStyle);
     m_pCurrentLine = m_pScratchLine;
+
+    // Register with the global world-document list so that
+    // world.GetWorld() / GetWorldList() etc. can find this doc.
+    App.m_pWorldDocTemplate->AddDoc(this);
 }
 
 // ── CMUSHclientDoc destructor ─────────────────────────────────────────────
@@ -184,6 +188,10 @@ CMUSHclientDoc::CMUSHclientDoc()
 // resources that mushcore owns.
 CMUSHclientDoc::~CMUSHclientDoc()
 {
+    // Unregister from the global world-document list first, so no stale
+    // pointer remains visible to GetWorld()/GetWorldList() during teardown.
+    App.m_pWorldDocTemplate->RemoveDoc(this);
+
     // Close socket first so no callbacks fire into a partially-destroyed doc.
     if (m_pSocket) {
         delete m_pSocket;

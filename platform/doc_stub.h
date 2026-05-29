@@ -16,6 +16,7 @@
 #include <vector>
 #include <list>
 #include <deque>
+#include <algorithm>
 #include <map>
 #include <unordered_map>
 #include <set>
@@ -888,6 +889,38 @@ struct CPlugin {
     ~CPlugin();
 };
 
+// ── CWorldDocTemplate ─────────────────────────────────────────────────────
+// Portable equivalent of MFC CDocTemplate for iterating open world docs.
+// Mirrors the App.m_pWorldDocTemplate->GetFirstDocPosition() /
+// GetNextDoc() pattern used throughout the codebase.
+class CMUSHclientDoc;   // forward declaration
+class CWorldDocTemplate {
+public:
+    std::vector<CMUSHclientDoc*> m_docs;
+
+    void AddDoc(CMUSHclientDoc* doc) {
+        m_docs.push_back(doc);
+    }
+    void RemoveDoc(CMUSHclientDoc* doc) {
+        m_docs.erase(std::remove(m_docs.begin(), m_docs.end(), doc),
+                     m_docs.end());
+    }
+
+    // POSITION is void* (see mfc_collections.h); we store a 1-based index.
+    POSITION GetFirstDocPosition() const {
+        return m_docs.empty() ? nullptr : (POSITION)1;
+    }
+    CMUSHclientDoc* GetNextDoc(POSITION& pos) const {
+        size_t idx = (size_t)pos - 1;
+        CMUSHclientDoc* doc = (idx < m_docs.size()) ? m_docs[idx] : nullptr;
+        ++idx;
+        pos = (idx < m_docs.size()) ? (POSITION)(idx + 1) : nullptr;
+        return doc;
+    }
+    // Stub so mainfrm_stub.h can call OpenDocumentFile without a crash.
+    CMUSHclientDoc* OpenDocumentFile(const char*) { return nullptr; }
+};
+
 // ── CMUSHclientApp ────────────────────────────────────────────────────────
 // Stub for the global App object; holds shared MXP lookup tables.
 #ifndef CMUSHclientApp_defined
@@ -955,6 +988,12 @@ public:
 
     // File → New
     void OnFileNew() {}
+
+    // World document registry — portable equivalent of the Windows
+    // CDocTemplate.  All open CMUSHclientDoc objects register here so that
+    // world.GetWorld(), world.GetWorldList(), etc. can find them.
+    CWorldDocTemplate  m_worldDocTemplate;
+    CWorldDocTemplate* m_pWorldDocTemplate = &m_worldDocTemplate;
 };
 #endif // CMUSHclientApp_defined
 extern CMUSHclientApp App;

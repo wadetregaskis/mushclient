@@ -2003,7 +2003,8 @@ void CWorldChildFrame::FireAcceleratorCommand(WORD nID)
     if (m_doc->m_CommandToSendToMap[nID] == eSendToExecute) {
         // Same path as CSendView::SendCommand: evaluate the string through
         // aliases/scripting without adding it to command history.
-        m_doc->EvaluateCommand(sCommand.c_str(), /*countThem=*/true, /*omitFromOutput=*/false);
+        bool bOmitAccelLog = false;
+        m_doc->EvaluateCommand(sCommand.c_str(), /*countThem=*/true, bOmitAccelLog);
     } else {
         // Resolve the key name for the trace message (linear search — rare path).
         CString key = "unknown key";
@@ -2831,7 +2832,8 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     }
 
     if (cmd.IsEmpty()) {
-        m_doc->DoSendMsg(cmd, m_doc->m_bLocalEcho, !bOmitFromLog);
+        // m_display_my_input: whether to echo the user's command back to the output window.
+        m_doc->DoSendMsg(cmd, m_doc->m_display_my_input, !bOmitFromLog);
     } else {
         m_doc->EvaluateCommand(cmd, true /*countThem*/, bOmitFromLog);
     }

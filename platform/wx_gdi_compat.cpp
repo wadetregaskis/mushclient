@@ -158,40 +158,9 @@ HBITMAP CreateDIBSection(HDC /*hdc*/, const BITMAPINFO* pbmi, UINT /*iUsage*/,
     return handle;
 }
 
-// SelectObject(HDC, HGDIOBJ) — non-Windows implementation.
-// Intercepts raw Win32 SelectObject calls (e.g. SelectObject(A_DC.m_hDC, hbm))
-// so that DIBSection bitmaps are actually selected into the right CDC.
-HGDIOBJ SelectObject(HDC hdc, HGDIOBJ hObject)
-{
-    if (!hdc) return nullptr;
-
-    HGDIOBJ prev = nullptr;
-    auto prevIt = g_hdcToSelectedDib.find(hdc);
-    if (prevIt != g_hdcToSelectedDib.end()) prev = (HGDIOBJ)prevIt->second;
-
-    HBITMAP hbm = reinterpret_cast<HBITMAP>(hObject);
-    auto dibIt = g_dibSections.find(hbm);
-    if (dibIt != g_dibSections.end()) {
-        // It's a DIBSection — track the selection and put the wxBitmap into the CDC.
-        g_hdcToSelectedDib[hdc] = hbm;
-
-        auto cdcIt = g_hdcToCDC.find(hdc);
-        if (cdcIt != g_hdcToCDC.end()) {
-            // Delegate to the CDC's member SelectObject so the wxMemoryDC is updated.
-            cdcIt->second->SelectObject(nullptr);  // deselect previous
-            // Directly select the DIBSection's wxBitmap into the wxMemoryDC.
-            CDCImpl* impl = static_cast<CDCImpl*>(cdcIt->second->m_impl);
-            if (impl) {
-                impl->dc.SelectObject(*dibIt->second->bmp);
-                impl->currentBitmap = nullptr;  // DIBSection managed externally
-            }
-        }
-    } else {
-        g_hdcToSelectedDib.erase(hdc);
-    }
-
-    return prev;
-}
+// SelectObject(HDC, HGDIOBJ) is defined near the END of this file, after the
+// CDCImpl struct is fully declared — it needs CDCImpl's members (impl->dc).
+// See the definition following WxBitmapFromCBitmap().
 
 // ── CDCImpl — internal state for CDC ────────────────────────────────────
 
@@ -1311,6 +1280,48 @@ bool CDC::StretchBlt(int x, int y, int nWidth, int nHeight,
     return true;
 }
 
+// ── GradientFill ─────────────────────────────────────────────────────────
+// Called by CMiniWindow::Gradient() with the raw HDC from pdc->m_hDC.
+// Mode 1 = horizontal (GRADIENT_FILL_RECT_H), 2 = vertical (GRADIENT_FILL_RECT_V).
+BOOL GradientFill(HDC hdc, TRIVERTEX* pVertex, ULONG nVertex,
+                  void* pMesh, ULONG nMesh, ULONG ulMode)
+{
+    if (!hdc || !pVertex || nVertex < 2 || !pMesh || nMesh < 1) return FALSE;
+    auto it = g_hdcToCDC.find(hdc);
+    if (it == g_hdcToCDC.end()) return FALSE;
+    CDCImpl* p = Impl(it->second);
+    if (!p) return FALSE;
+
+    GRADIENT_RECT* r = static_cast<GRADIENT_RECT*>(pMesh);
+    if (r->UpperLeft >= nVertex || r->LowerRight >= nVertex) return FALSE;
+
+    TRIVERTEX& v0 = pVertex[r->UpperLeft];
+    TRIVERTEX& v1 = pVertex[r->LowerRight];
+
+    int x = (int)v0.x, y = (int)v0.y;
+    int w = (int)v1.x - x;
+    int h = (int)v1.y - y;
+    if (w <= 0 || h <= 0) return FALSE;
+
+    // TRIVERTEX Red/Green/Blue store 16-bit values: high byte = colour, low byte = fraction.
+    wxColour startCol((unsigned char)(v0.Red   >> 8),
+                      (unsigned char)(v0.Green >> 8),
+                      (unsigned char)(v0.Blue  >> 8));
+    wxColour endCol  ((unsigned char)(v1.Red   >> 8),
+                      (unsigned char)(v1.Green >> 8),
+                      (unsigned char)(v1.Blue  >> 8));
+
+    wxDirection dir;
+    switch (ulMode) {
+        case GRADIENT_FILL_RECT_H: dir = wxRIGHT; break;  // horizontal
+        case GRADIENT_FILL_RECT_V: dir = wxDOWN;  break;  // vertical
+        default: return FALSE;
+    }
+
+    p->dc.GradientFillLinear(wxRect(x, y, w, h), startCol, endCol, dir);
+    return TRUE;
+}
+
 // ── Text output ───────────────────────────────────────────────────────────
 
 bool CDC::TextOut(int x, int y, LPCTSTR lpszString, int nCount) {
@@ -1481,4 +1492,40 @@ wxDC* WxDCFromCDC(CDC* dc)
 wxBitmap* WxBitmapFromCBitmap(CBitmap* bmp)
 {
     return (bmp && bmp->m_impl) ? static_cast<wxBitmap*>(bmp->m_impl) : nullptr;
+}
+
+// ── SelectObject(HDC, HGDIOBJ) ─────────────────────────────────────────────
+// Intercepts raw Win32 SelectObject calls (e.g. SelectObject(A_DC.m_hDC, hbm))
+// so that a DIBSection's wxBitmap is selected into the right CDC's wxMemoryDC.
+// Defined here (rather than with the DIBSection infra block above) because it
+// needs the full CDCImpl definition.
+HGDIOBJ SelectObject(HDC hdc, HGDIOBJ hObject)
+{
+    if (!hdc) return nullptr;
+
+    HGDIOBJ prev = nullptr;
+    auto prevIt = g_hdcToSelectedDib.find(hdc);
+    if (prevIt != g_hdcToSelectedDib.end()) prev = (HGDIOBJ)prevIt->second;
+
+    HBITMAP hbm = reinterpret_cast<HBITMAP>(hObject);
+    auto dibIt = g_dibSections.find(hbm);
+    if (dibIt != g_dibSections.end()) {
+        // It's a DIBSection — track the selection and put the wxBitmap into the CDC.
+        g_hdcToSelectedDib[hdc] = hbm;
+
+        auto cdcIt = g_hdcToCDC.find(hdc);
+        if (cdcIt != g_hdcToCDC.end()) {
+            // Select the DIBSection's wxBitmap directly into the wxMemoryDC.
+            // (wxMemoryDC::SelectObject auto-deselects any previously selected bitmap.)
+            CDCImpl* impl = static_cast<CDCImpl*>(cdcIt->second->m_impl);
+            if (impl) {
+                impl->dc.SelectObject(*dibIt->second->bmp);
+                impl->currentBitmap = nullptr;  // DIBSection managed externally
+            }
+        }
+    } else {
+        g_hdcToSelectedDib.erase(hdc);
+    }
+
+    return prev;
 }

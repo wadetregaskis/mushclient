@@ -3662,6 +3662,11 @@ inline HDC  CreateCompatibleDC(HDC) { return nullptr; }
 inline HBITMAP CreateCompatibleBitmap(HDC,int,int) { return nullptr; }
 #ifndef MUSHCLIENT_FULL_BUILD
 inline HGDIOBJ SelectObject(HDC, HGDIOBJ) { return nullptr; }
+#else
+// Real implementation in wx_gdi_compat.cpp (selects a DIBSection's wxBitmap
+// into the CDC); resolved at the mushgui link step.  Mirrors CreateDIBSection
+// and GradientFill below.
+HGDIOBJ SelectObject(HDC hdc, HGDIOBJ hObject);
 #endif
 inline BOOL DeleteObject(HGDIOBJ) { return FALSE; }
 inline BOOL BitBlt(HDC,int,int,int,int,HDC,int,int,DWORD) { return FALSE; }
@@ -5036,8 +5041,63 @@ inline BOOL  FindNextFile(HANDLE,void*)        { return FALSE; }
 inline BOOL  CreateDirectory(LPCTSTR,void*)    { return FALSE; }
 inline BOOL  RemoveDirectory(LPCTSTR)          { return FALSE; }
 inline DWORD FormatMessage(DWORD,const void*,DWORD,DWORD,LPTSTR,DWORD,va_list*) { return 0; }
-inline int   MultiByteToWideChar(UINT,DWORD,LPCSTR,int,LPWSTR,int) { return 0; }
-inline int   WideCharToMultiByte(UINT,DWORD,LPCWSTR,int,LPSTR,int,LPCSTR,BOOL*) { return 0; }
+// ── MultiByteToWideChar / WideCharToMultiByte — portable UTF-8 implementation
+// Treats all code pages as UTF-8 (correct for modern POSIX systems).
+// Returns number of wide characters written (or needed if lpWStr == nullptr/cchWStr == 0).
+inline int MultiByteToWideChar(UINT /*CodePage*/, DWORD /*dwFlags*/,
+                                LPCSTR lpStr, int cbStr, LPWSTR lpWStr, int cchWStr)
+{
+    if (!lpStr) return 0;
+    int srcLen = (cbStr < 0) ? (int)strlen(lpStr) + 1 : cbStr; // include NUL if cbStr<0
+    // Count or copy UTF-8 → wchar_t.
+    int out = 0;
+    for (int i = 0; i < srcLen; ) {
+        uint32_t cp = 0;
+        unsigned char c = (unsigned char)lpStr[i];
+        int charLen = 1;
+        if      (c < 0x80)                            { cp = c; charLen = 1; }
+        else if ((c & 0xE0) == 0xC0 && i+1 < srcLen) { cp = ((c&0x1F)<<6)|(lpStr[i+1]&0x3F); charLen = 2; }
+        else if ((c & 0xF0) == 0xE0 && i+2 < srcLen) { cp = ((c&0x0F)<<12)|((lpStr[i+1]&0x3F)<<6)|(lpStr[i+2]&0x3F); charLen = 3; }
+        else if ((c & 0xF8) == 0xF0 && i+3 < srcLen) { cp = ((c&0x07)<<18)|((lpStr[i+1]&0x3F)<<12)|((lpStr[i+2]&0x3F)<<6)|(lpStr[i+3]&0x3F); charLen = 4; }
+        i += charLen;
+        if (sizeof(wchar_t) == 2 && cp > 0xFFFF) {
+            cp -= 0x10000;
+            if (cchWStr > 0 && lpWStr && out + 1 < cchWStr) {
+                lpWStr[out]   = (wchar_t)(0xD800 | (cp >> 10));
+                lpWStr[out+1] = (wchar_t)(0xDC00 | (cp & 0x3FF));
+            }
+            out += 2;
+        } else {
+            if (cchWStr > 0 && lpWStr && out < cchWStr) lpWStr[out] = (wchar_t)cp;
+            out++;
+        }
+    }
+    return out;
+}
+inline int WideCharToMultiByte(UINT /*CodePage*/, DWORD /*dwFlags*/,
+                                LPCWSTR lpWStr, int cchWStr,
+                                LPSTR lpStr, int cbStr, LPCSTR /*lpDef*/, BOOL* /*lpUsedDef*/)
+{
+    if (!lpWStr) return 0;
+    int srcLen = (cchWStr < 0) ? (int)wcslen(lpWStr) + 1 : cchWStr;
+    int out = 0;
+    for (int i = 0; i < srcLen; ++i) {
+        uint32_t cp = (uint32_t)lpWStr[i];
+        // Handle surrogate pairs on 2-byte wchar_t platforms
+        if (sizeof(wchar_t) == 2 && cp >= 0xD800 && cp <= 0xDBFF && i+1 < srcLen) {
+            uint32_t low = (uint32_t)lpWStr[i+1];
+            if (low >= 0xDC00 && low <= 0xDFFF) { cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00); i++; }
+        }
+        char buf[4]; int n = 0;
+        if      (cp < 0x80)    { buf[n++] = (char)cp; }
+        else if (cp < 0x800)   { buf[n++] = (char)(0xC0|(cp>>6)); buf[n++] = (char)(0x80|(cp&0x3F)); }
+        else if (cp < 0x10000) { buf[n++] = (char)(0xE0|(cp>>12)); buf[n++] = (char)(0x80|((cp>>6)&0x3F)); buf[n++] = (char)(0x80|(cp&0x3F)); }
+        else                   { buf[n++] = (char)(0xF0|(cp>>18)); buf[n++] = (char)(0x80|((cp>>12)&0x3F)); buf[n++] = (char)(0x80|((cp>>6)&0x3F)); buf[n++] = (char)(0x80|(cp&0x3F)); }
+        if (cbStr > 0 && lpStr) { for (int k = 0; k < n && out < cbStr; ++k) lpStr[out++] = buf[k]; }
+        else out += n;
+    }
+    return out;
+}
 inline HANDLE CreateMutex(void*,BOOL,LPCTSTR)  { return nullptr; }
 inline DWORD WaitForSingleObject(HANDLE,DWORD) { return 0; }
 inline BOOL  ReleaseMutex(HANDLE)              { return FALSE; }
@@ -5832,7 +5892,13 @@ struct XFORM {
 #  define GRADIENT_FILL_TRIANGLE 0x02
 struct TRIVERTEX { LONG x, y; COLORREF Red, Green, Blue, Alpha; };
 struct GRADIENT_RECT { ULONG UpperLeft, LowerRight; };
+#ifndef MUSHCLIENT_FULL_BUILD
 inline BOOL GradientFill(HDC, TRIVERTEX*, ULONG, void*, ULONG, ULONG) { return FALSE; }
+#else
+// Real implementation in wx_gdi_compat.cpp using wxDC::GradientFillLinear.
+BOOL GradientFill(HDC hdc, TRIVERTEX* pVertex, ULONG nVertex,
+                  void* pMesh, ULONG nMesh, ULONG ulMode);
+#endif
 #endif
 
 // ── Shell folder browser ───────────────────────────────────────────────────

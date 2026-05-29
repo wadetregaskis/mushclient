@@ -2062,6 +2062,14 @@ public:
   // m_fn_lookup_host completes.  addr is the resolved address; ok is false
   // if resolution failed.  phase is the m_iConnectPhase value at lookup start.
   void LookupHostNameComplete (struct in_addr addr, int phase, bool ok);
+
+  // Non-Windows equivalents of the OnSetFocus / OnKillFocus Lua callbacks
+  // fired by the Windows mushview.cpp (CSendView::OnSetFocus / OnKillFocus).
+  // Used by wx_world_child.cpp::OnActivate to fire the world-level callbacks.
+  void FireWorldGetFocus();
+  void FireWorldLoseFocus();
+  void FireWorldClose();
+  void FireWorldSave();
 #endif
   void InitiateConnection (void);
   void ConnectionEstablished (void);

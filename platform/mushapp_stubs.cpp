@@ -547,6 +547,49 @@ BOOL CMDIFrameWnd::LoadFrame(UINT id, DWORD style, CWnd* pParent, void* /*pConte
     return FALSE;
 }
 
+// ── FireWorldGetFocus / FireWorldLoseFocus / FireWorldClose / FireWorldSave ──
+// wx_world_child.cpp (mushgui) calls these to fire world-level Lua callbacks on
+// focus/blur, close, and save events.  They are declared in doc.h under
+// #ifndef _WIN32.  The Windows path fires equivalent callbacks differently
+// (mushview.cpp / DoSave() / OnCloseDocument()), so these mushapp
+// implementations are only reached on non-Windows.
+void CMUSHclientDoc::FireWorldGetFocus()
+{
+    if (m_dispidWorldGetFocus == DISPID_UNKNOWN) return;
+    CScriptEngine* engine = GetScriptEngine();
+    if (!engine || !engine->IsLua()) return;
+    list<double> nparams; list<string> sparams; long n = 0;
+    engine->ExecuteLua(m_dispidWorldGetFocus, m_strWorldGetFocus,
+                       eWorldAction, "world", "get focus", nparams, sparams, n);
+}
+void CMUSHclientDoc::FireWorldLoseFocus()
+{
+    if (m_dispidWorldLoseFocus == DISPID_UNKNOWN) return;
+    CScriptEngine* engine = GetScriptEngine();
+    if (!engine || !engine->IsLua()) return;
+    list<double> nparams; list<string> sparams; long n = 0;
+    engine->ExecuteLua(m_dispidWorldLoseFocus, m_strWorldLoseFocus,
+                       eWorldAction, "world", "lose focus", nparams, sparams, n);
+}
+void CMUSHclientDoc::FireWorldClose()
+{
+    if (m_dispidWorldClose == DISPID_UNKNOWN) return;
+    CScriptEngine* engine = GetScriptEngine();
+    if (!engine || !engine->IsLua()) return;
+    list<double> nparams; list<string> sparams; long n = 0;
+    engine->ExecuteLua(m_dispidWorldClose, m_strWorldClose,
+                       eWorldAction, "world", "close", nparams, sparams, n);
+}
+void CMUSHclientDoc::FireWorldSave()
+{
+    if (m_dispidWorldSave == DISPID_UNKNOWN) return;
+    CScriptEngine* engine = GetScriptEngine();
+    if (!engine || !engine->IsLua()) return;
+    list<double> nparams; list<string> sparams; long n = 0;
+    engine->ExecuteLua(m_dispidWorldSave, m_strWorldSave,
+                       eWorldAction, "world", "save", nparams, sparams, n);
+}
+
 // ── UMessageBox / TMessageBox ─────────────────────────────────────────────
 // Route through g_wxhook_message_box when it is set (mushgui at runtime);
 // fall back to stderr for headless builds.

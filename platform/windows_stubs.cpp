@@ -111,8 +111,67 @@ const bool CMUSHclientDoc::CheckScriptingAvailable(const char* /*sWhat*/,
                                                    const char* /*sScript*/)
 { return false; }
 
-void CMUSHclientDoc::SortTriggers() {}
-void CMUSHclientDoc::SortAliases()  {}
+// Comparison functions — mirrors doc.cpp exactly (duplicated here because
+// doc.cpp is not compiled into mushcore, only into mushapp).
+static int CompareTrigger(const void* elem1, const void* elem2)
+{
+    CTrigger* t1 = *((CTrigger**)elem1);
+    CTrigger* t2 = *((CTrigger**)elem2);
+    if (t1->iSequence < t2->iSequence) return -1;
+    if (t1->iSequence > t2->iSequence) return  1;
+    // identical sequence → stable order by match text
+    if (t1->trigger < t2->trigger) return -1;
+    if (t1->trigger > t2->trigger) return  1;
+    return 0;
+}
+
+static int CompareAlias(const void* elem1, const void* elem2)
+{
+    CAlias* a1 = *((CAlias**)elem1);
+    CAlias* a2 = *((CAlias**)elem2);
+    if (a1->iSequence < a2->iSequence) return -1;
+    if (a1->iSequence > a2->iSequence) return  1;
+    if (a1->name < a2->name) return -1;
+    if (a1->name > a2->name) return  1;
+    return 0;
+}
+
+// Rebuild the sorted arrays from the maps and update the reverse map.
+// Called from methods_triggers.cpp / methods_aliases.cpp after every add/
+// delete/change so that evaluate.cpp sees triggers and aliases in the
+// correct priority order.
+void CMUSHclientDoc::SortTriggers()
+{
+    int iCount = GetTriggerMap().GetCount();
+    GetTriggerArray().SetSize(iCount);
+    GetTriggerRevMap().clear();
+    CString name;
+    CTrigger* pt;
+    int i = 0;
+    for (POSITION pos = GetTriggerMap().GetStartPosition(); pos; ++i) {
+        GetTriggerMap().GetNextAssoc(pos, name, pt);
+        GetTriggerArray().SetAt(i, pt);
+        GetTriggerRevMap()[pt] = std::string((const char*)name);
+    }
+    qsort(GetTriggerArray().GetData(), iCount, sizeof(CTrigger*), CompareTrigger);
+}
+
+void CMUSHclientDoc::SortAliases()
+{
+    int iCount = GetAliasMap().GetCount();
+    GetAliasArray().SetSize(iCount);
+    GetAliasRevMap().clear();
+    CString name;
+    CAlias* pa;
+    int i = 0;
+    for (POSITION pos = GetAliasMap().GetStartPosition(); pos; ++i) {
+        GetAliasMap().GetNextAssoc(pos, name, pa);
+        GetAliasArray().SetAt(i, pa);
+        GetAliasRevMap()[pa] = std::string((const char*)name);
+    }
+    qsort(GetAliasArray().GetData(), iCount, sizeof(CAlias*), CompareAlias);
+}
+
 void CMUSHclientDoc::Redraw()       {}
 
 void CMUSHclientDoc::DoFixMenus(CCmdUI* /*pCmdUI*/) {}

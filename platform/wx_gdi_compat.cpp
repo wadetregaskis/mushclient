@@ -31,6 +31,8 @@
 #include <algorithm>
 #include <vector>
 #include <cstring>
+#include <atomic>
+#include <unordered_map>
 
 // ── Colour helpers ───────────────────────────────────────────────────────
 // COLORREF is stored as 0x00BBGGRR (same as Windows).
@@ -41,6 +43,154 @@ static inline wxColour WxCol(COLORREF c) {
 
 static inline COLORREF CRef(const wxColour& c) {
     return (COLORREF)c.Red() | ((COLORREF)c.Green() << 8) | ((COLORREF)c.Blue() << 16);
+}
+
+// ── CreateDIBSection / DIBSection infrastructure ─────────────────────────
+//
+// MUSHclient's miniwindow pixel-manipulation functions (BlendImage, Filter,
+// MergeImageAlpha, DrawImageAlpha, GetImageAlpha, TransformImage, Write, etc.)
+// use CreateDIBSection to get a raw pixel buffer, then blit miniwindow content
+// into a CDC that has that DIBSection selected, then manipulate/read the raw
+// buffer directly.
+//
+// The Windows pattern:
+//   HBITMAP hbm = CreateDIBSection(..., &pBits, NULL, 0);
+//   SelectObject(A_DC.m_hDC, hbm);          // raw Win32, selects into HDC
+//   A_DC.BitBlt(0, 0, w, h, &src, ...);     // copies pixels; end up in pBits
+//   // pBits now contains the raw pixel data
+//   pBits[i] = ...;                          // direct pixel manipulation
+//
+// On non-Windows, m_hDC is normally nullptr (no real HDC), so
+// SelectObject(m_hDC, hbm) is a stub.  To make this work we:
+//  1. Give each CDC a unique fake HDC.
+//  2. Track "DIBSection selected in which CDC" via g_hdcToSelectedDib.
+//  3. In SelectObject(HDC, HGDIOBJ): if the object is a DIBSection, also
+//     call CDC::SelectObject to put the DIBSection's wxBitmap into the DC.
+//  4. After BitBlt INTO a CDC with a DIBSection: sync wxBitmap→raw buffer.
+//  5. Before BitBlt FROM a CDC with a DIBSection: sync raw buffer→wxBitmap.
+
+struct DIBSectionData {
+    int width  = 0;
+    int height = 0;     // always abs(biHeight)
+    bool bottomUp = true; // biHeight > 0 → rows stored bottom-up in buffer
+    int stride = 0;     // bytes per row, padded to 4-byte boundary
+    std::vector<unsigned char> pixels; // raw 24-bit BGR pixel data
+    wxBitmap* bmp = nullptr;  // wxBitmap for rendering (owned here)
+
+    ~DIBSectionData() { delete bmp; }
+
+    // Copy pixels from wxBitmap into raw buffer (call after BitBlt INTO this DC).
+    void SyncBitmapToPixels() {
+        if (!bmp || !bmp->IsOk()) return;
+        wxImage img = bmp->ConvertToImage();
+        for (int y = 0; y < height; ++y) {
+            // img is always top-down; pixels buffer may be bottom-up
+            int imgRow = bottomUp ? (height - 1 - y) : y;
+            unsigned char* dst = pixels.data() + y * stride;
+            for (int x = 0; x < width; ++x) {
+                dst[x*3+0] = img.GetBlue (x, imgRow);  // BGR
+                dst[x*3+1] = img.GetGreen(x, imgRow);
+                dst[x*3+2] = img.GetRed  (x, imgRow);
+            }
+        }
+    }
+
+    // Copy raw buffer into wxBitmap (call before BitBlt FROM this DC).
+    void SyncPixelsToBitmap() {
+        if (!bmp) return;
+        wxImage img(width > 0 ? width : 1, height > 0 ? height : 1);
+        for (int y = 0; y < height; ++y) {
+            int bufRow = bottomUp ? (height - 1 - y) : y;
+            const unsigned char* src = pixels.data() + bufRow * stride;
+            for (int x = 0; x < width; ++x) {
+                img.SetRGB(x, y, src[x*3+2], src[x*3+1], src[x*3+0]);  // BGR→RGB
+            }
+        }
+        delete bmp;
+        bmp = new wxBitmap(img, 32);
+    }
+};
+
+// Global maps: HBITMAP→DIBSectionData, HDC→selected HBITMAP, HDC→CDC*
+static std::unordered_map<HBITMAP, DIBSectionData*> g_dibSections;
+static std::unordered_map<HDC,    HBITMAP>          g_hdcToSelectedDib;
+static std::unordered_map<HDC,    CDC*>              g_hdcToCDC;
+static std::atomic<uintptr_t> s_hdcCounter{1000};
+
+// Helper: look up any DIBSection selected into the given HDC.
+static inline DIBSectionData* GetDIBForHDC(HDC hdc) {
+    auto it = g_hdcToSelectedDib.find(hdc);
+    if (it == g_hdcToSelectedDib.end()) return nullptr;
+    auto it2 = g_dibSections.find(it->second);
+    return (it2 != g_dibSections.end()) ? it2->second : nullptr;
+}
+
+// CreateDIBSection — non-Windows portable implementation.
+// Allocates a raw pixel buffer, creates a wxBitmap, and ties them together.
+// The returned HBITMAP is actually a DIBSectionData* cast to HBITMAP.
+HBITMAP CreateDIBSection(HDC /*hdc*/, const BITMAPINFO* pbmi, UINT /*iUsage*/,
+                          void** ppvBits, HANDLE /*hSection*/, DWORD /*offset*/)
+{
+    if (!pbmi || !ppvBits) return nullptr;
+    const BITMAPINFOHEADER& h = pbmi->bmiHeader;
+
+    int w  = abs(h.biWidth);
+    int he = abs((int)h.biHeight);
+    bool bottomUp = ((int)h.biHeight > 0);
+
+    // Only 24-bit DIBs are used by MUSHclient miniwindow code.
+    int bpp = (h.biBitCount > 0) ? h.biBitCount : 24;
+    int bytesPerPixel = (bpp + 7) / 8;
+    int stride = (w * bytesPerPixel + 3) & ~3;
+
+    DIBSectionData* dib = new DIBSectionData();
+    dib->width    = w;
+    dib->height   = he;
+    dib->bottomUp = bottomUp;
+    dib->stride   = stride;
+    dib->pixels.assign(stride * (he > 0 ? he : 1), 0);
+    dib->bmp      = new wxBitmap(w > 0 ? w : 1, he > 0 ? he : 1, 32);
+
+    *ppvBits = dib->pixels.data();
+
+    HBITMAP handle = reinterpret_cast<HBITMAP>(dib);
+    g_dibSections[handle] = dib;
+    return handle;
+}
+
+// SelectObject(HDC, HGDIOBJ) — non-Windows implementation.
+// Intercepts raw Win32 SelectObject calls (e.g. SelectObject(A_DC.m_hDC, hbm))
+// so that DIBSection bitmaps are actually selected into the right CDC.
+HGDIOBJ SelectObject(HDC hdc, HGDIOBJ hObject)
+{
+    if (!hdc) return nullptr;
+
+    HGDIOBJ prev = nullptr;
+    auto prevIt = g_hdcToSelectedDib.find(hdc);
+    if (prevIt != g_hdcToSelectedDib.end()) prev = (HGDIOBJ)prevIt->second;
+
+    HBITMAP hbm = reinterpret_cast<HBITMAP>(hObject);
+    auto dibIt = g_dibSections.find(hbm);
+    if (dibIt != g_dibSections.end()) {
+        // It's a DIBSection — track the selection and put the wxBitmap into the CDC.
+        g_hdcToSelectedDib[hdc] = hbm;
+
+        auto cdcIt = g_hdcToCDC.find(hdc);
+        if (cdcIt != g_hdcToCDC.end()) {
+            // Delegate to the CDC's member SelectObject so the wxMemoryDC is updated.
+            cdcIt->second->SelectObject(nullptr);  // deselect previous
+            // Directly select the DIBSection's wxBitmap into the wxMemoryDC.
+            CDCImpl* impl = static_cast<CDCImpl*>(cdcIt->second->m_impl);
+            if (impl) {
+                impl->dc.SelectObject(*dibIt->second->bmp);
+                impl->currentBitmap = nullptr;  // DIBSection managed externally
+            }
+        }
+    } else {
+        g_hdcToSelectedDib.erase(hdc);
+    }
+
+    return prev;
 }
 
 // ── CDCImpl — internal state for CDC ────────────────────────────────────
@@ -482,11 +632,13 @@ static inline const CDCImpl* Impl(const CDC* dc) {
 }
 
 CDC::~CDC() {
+    if (m_hDC) { g_hdcToCDC.erase(m_hDC); m_hDC = nullptr; }
     if (m_impl) { delete static_cast<CDCImpl*>(m_impl); m_impl = nullptr; }
 }
 
 bool CDC::CreateCompatibleDC(CDC* /*pDC*/) {
     // pDC is ignored on non-Windows: we always create a screenless MemoryDC.
+    if (m_hDC) { g_hdcToCDC.erase(m_hDC); m_hDC = nullptr; }
     if (m_impl) { delete static_cast<CDCImpl*>(m_impl); m_impl = nullptr; }
     CDCImpl* p = new CDCImpl();
     // Create an initial 1x1 bitmap so the DC is valid immediately.
@@ -494,10 +646,14 @@ bool CDC::CreateCompatibleDC(CDC* /*pDC*/) {
     p->dc.SelectObject(*placeholder);
     delete placeholder;   // wxMemoryDC copies the bitmap data; safe to delete
     m_impl = p;
+    // Assign a unique HDC so raw SelectObject(m_hDC, hbm) calls can find us.
+    m_hDC = reinterpret_cast<HDC>(++s_hdcCounter);
+    g_hdcToCDC[m_hDC] = this;
     return true;
 }
 
 bool CDC::DeleteDC() {
+    if (m_hDC) { g_hdcToCDC.erase(m_hDC); m_hDC = nullptr; }
     if (m_impl) { delete static_cast<CDCImpl*>(m_impl); m_impl = nullptr; }
     return true;
 }
@@ -1108,8 +1264,24 @@ bool CDC::BitBlt(int x, int y, int nWidth, int nHeight,
     CDCImpl* p = Impl(this);
     CDCImpl* src = pSrcDC ? Impl(pSrcDC) : nullptr;
     if (!p || !src) return false;
+
+    // If the SOURCE has a DIBSection selected, sync raw buffer→wxBitmap first
+    // so the caller's pixel manipulations (written to pBits) are visible in the DC.
+    if (pSrcDC && pSrcDC->m_hDC) {
+        if (DIBSectionData* dib = GetDIBForHDC(pSrcDC->m_hDC))
+            dib->SyncPixelsToBitmap();
+    }
+
     wxRasterOperationMode fn = MapRop(dwRop);
     p->dc.Blit(x, y, nWidth, nHeight, &src->dc, xSrc, ySrc, fn);
+
+    // If the DESTINATION has a DIBSection selected, sync wxBitmap→raw buffer
+    // so the caller can read the blitted pixels directly via pBits.
+    if (m_hDC) {
+        if (DIBSectionData* dib = GetDIBForHDC(m_hDC))
+            dib->SyncBitmapToPixels();
+    }
+
     return true;
 }
 
@@ -1120,9 +1292,22 @@ bool CDC::StretchBlt(int x, int y, int nWidth, int nHeight,
     CDCImpl* p = Impl(this);
     CDCImpl* src = pSrcDC ? Impl(pSrcDC) : nullptr;
     if (!p || !src) return false;
+
+    // Same DIBSection sync as BitBlt.
+    if (pSrcDC && pSrcDC->m_hDC) {
+        if (DIBSectionData* dib = GetDIBForHDC(pSrcDC->m_hDC))
+            dib->SyncPixelsToBitmap();
+    }
+
     wxRasterOperationMode fn = MapRop(dwRop);
     p->dc.StretchBlit(x, y, nWidth, nHeight,
                       &src->dc, xSrc, ySrc, nSrcWidth, nSrcHeight, fn);
+
+    if (m_hDC) {
+        if (DIBSectionData* dib = GetDIBForHDC(m_hDC))
+            dib->SyncBitmapToPixels();
+    }
+
     return true;
 }
 

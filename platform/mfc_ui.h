@@ -3660,7 +3660,9 @@ inline BOOL RestoreDC(HDC, int)  { return FALSE; }
 inline BOOL DeleteDC(HDC)        { return FALSE; }
 inline HDC  CreateCompatibleDC(HDC) { return nullptr; }
 inline HBITMAP CreateCompatibleBitmap(HDC,int,int) { return nullptr; }
+#ifndef MUSHCLIENT_FULL_BUILD
 inline HGDIOBJ SelectObject(HDC, HGDIOBJ) { return nullptr; }
+#endif
 inline BOOL DeleteObject(HGDIOBJ) { return FALSE; }
 inline BOOL BitBlt(HDC,int,int,int,int,HDC,int,int,DWORD) { return FALSE; }
 inline BOOL Rectangle(HDC,int,int,int,int) { return FALSE; }
@@ -5978,7 +5980,16 @@ inline BOOL SetGraphicsMode(HDC, int) { return FALSE; }
 inline BOOL SetWorldTransform(HDC, const XFORM*) { return FALSE; }
 inline BOOL ModifyWorldTransform(HDC, const XFORM*, DWORD) { return FALSE; }
 inline COLORREF GetPixel(HDC, int, int) { return 0; }
+// CreateDIBSection: in the full build this has a real implementation in
+// wx_gdi_compat.cpp that allocates a pixel buffer and syncs with CDC::BitBlt.
+// SelectObject(HDC, HGDIOBJ) is declared above near the other raw Win32 stubs
+// (guarded #ifndef MUSHCLIENT_FULL_BUILD) and in wx_gdi_compat.cpp for the full build.
+#ifndef MUSHCLIENT_FULL_BUILD
 inline HBITMAP CreateDIBSection(HDC, const BITMAPINFO*, UINT, void**, HANDLE, DWORD) { return nullptr; }
+#else
+HBITMAP CreateDIBSection(HDC hdc, const BITMAPINFO* pbmi, UINT iUsage,
+                          void** ppvBits, HANDLE hSection, DWORD offset);
+#endif
 
 // ── CWnd additional methods ───────────────────────────────────────────────
 // (methods used in various .cpp files that weren't in the original stub)

@@ -3269,7 +3269,19 @@ static int L_SetTriggerOption(lua_State* L)
     else if (opt=="user")              { t->iUserOption = atol(value); }
     // string options
     else if (opt=="group")             { t->strGroup = CString(value); }
-    else if (opt=="script")            { t->strProcedure = CString(value); }
+    else if (opt=="script") {
+        // Mirrors methods_triggers.cpp: resolve new DISPID, reject if not found.
+        if (*value) {
+            DISPID d = resolve_dispid(pDoc, value);
+            if (d == DISPID_UNKNOWN) {
+                lua_pushnumber(L, eScriptNameNotLocated); return 1;
+            }
+            t->dispid = d;
+        } else {
+            t->dispid = DISPID_UNKNOWN;
+        }
+        t->strProcedure = CString(value);
+    }
     else if (opt=="sound")             { t->sound_to_play = CString(value); }
     else if (opt=="send")              { t->contents = CString(value); }
     else if (opt=="variable")          { t->strVariable = CString(value); }
@@ -3355,7 +3367,19 @@ static int L_SetAliasOption(lua_State* L)
     else if (opt=="user")                      { a->iUserOption = atol(value); }
     // string options
     else if (opt=="group")                     { a->strGroup = CString(value); }
-    else if (opt=="script")                    { a->strProcedure = CString(value); }
+    else if (opt=="script") {
+        // Mirrors methods_aliases.cpp: resolve new DISPID, reject if not found.
+        if (*value) {
+            DISPID d = resolve_dispid(pDoc, value);
+            if (d == DISPID_UNKNOWN) {
+                lua_pushnumber(L, eScriptNameNotLocated); return 1;
+            }
+            a->dispid = d;
+        } else {
+            a->dispid = DISPID_UNKNOWN;
+        }
+        a->strProcedure = CString(value);
+    }
     else if (opt=="send")                      { a->contents = CString(value); }
     else if (opt=="variable")                  { a->strVariable = CString(value); }
     else { lua_pushnumber(L, eUnknownOption); return 1; }
@@ -3436,7 +3460,19 @@ static int L_SetTimerOption(lua_State* L)
     else if (opt=="offset_minute") { t->iOffsetMinute = atoi(value); }
     else if (opt=="offset_second") { t->fOffsetSecond = atof(value); }
     else if (opt=="group")         { t->strGroup     = CString(value); }
-    else if (opt=="script")        { t->strProcedure = CString(value); }
+    else if (opt=="script") {
+        // Mirrors methods_timers.cpp: resolve new DISPID, reject if not found.
+        if (*value) {
+            DISPID d = resolve_dispid(pDoc, value);
+            if (d == DISPID_UNKNOWN) {
+                lua_pushnumber(L, eScriptNameNotLocated); return 1;
+            }
+            t->dispid = d;
+        } else {
+            t->dispid = DISPID_UNKNOWN;
+        }
+        t->strProcedure = CString(value);
+    }
     else if (opt=="send")          { t->strContents  = CString(value); }
     else if (opt=="variable")      { t->strVariable  = CString(value); }
     else { lua_pushnumber(L, eUnknownOption); return 1; }

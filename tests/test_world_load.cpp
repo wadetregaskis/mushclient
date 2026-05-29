@@ -539,32 +539,55 @@ TEST(PluginLoad, SourcePathRecorded)
     EXPECT_STREQ(path.c_str(), (const char*)p->m_strSource);
 }
 
-TEST(PluginLoad, TriggersLandInDocMap)
+TEST(PluginLoad, TriggersLandInPluginMap)
 {
+    // Triggers defined inside a plugin XML must be stored in the plugin's own
+    // m_TriggerMap, not the doc's map.  This mirrors the Windows behaviour:
+    // GetTriggerMap() returns plugin->m_TriggerMap when m_CurrentPlugin is set,
+    // so InternalLoadPlugin (which sets m_CurrentPlugin = plugin before loading)
+    // routes items into the plugin's collections.
     std::string path = write_temp_named("trig.xml", PLUGIN_WITH_TRIGGER);
     ASSERT_TRUE(!path.empty());
 
     CMUSHclientDoc doc;
     ASSERT_TRUE(doc.InternalLoadPlugin(CString(path.c_str())));
 
+    ASSERT_EQ(1u, doc.m_PluginList.size());
+    CPlugin* p = doc.m_PluginList.front();
+
+    // Item must be in the plugin's map, NOT in the doc's map.
     CTrigger* t = nullptr;
-    EXPECT_TRUE(doc.GetTriggerMap().Lookup("ptrig", t));
+    EXPECT_TRUE(p->m_TriggerMap.Lookup("ptrig", t));
     ASSERT_NE(nullptr, t);
     EXPECT_STREQ("plugin fires",  (const char*)t->trigger);
     EXPECT_STREQ("yes it does",   (const char*)t->contents);
+
+    // Doc map must NOT contain the plugin's trigger.
+    CTrigger* dt = nullptr;
+    EXPECT_FALSE(doc.m_TriggerMap.Lookup("ptrig", dt));
 }
 
-TEST(PluginLoad, VariablesLandInDocMap)
+TEST(PluginLoad, VariablesLandInPluginMap)
 {
+    // Variables defined inside a plugin XML must be stored in the plugin's
+    // own m_VariableMap, mirroring the Windows behaviour.
     std::string path = write_temp_named("var.xml", PLUGIN_WITH_VARIABLE);
     ASSERT_TRUE(!path.empty());
 
     CMUSHclientDoc doc;
     ASSERT_TRUE(doc.InternalLoadPlugin(CString(path.c_str())));
 
+    ASSERT_EQ(1u, doc.m_PluginList.size());
+    CPlugin* p = doc.m_PluginList.front();
+
     CVariable* v = nullptr;
-    ASSERT_TRUE(doc.GetVariableMap().Lookup("plugin_var", v));
+    EXPECT_TRUE(p->m_VariableMap.Lookup("plugin_var", v));
+    ASSERT_NE(nullptr, v);
     EXPECT_STREQ("plugin_value", (const char*)v->strContents);
+
+    // Doc map must NOT contain the plugin's variable.
+    CVariable* dv = nullptr;
+    EXPECT_FALSE(doc.m_VariableMap.Lookup("plugin_var", dv));
 }
 
 TEST(PluginLoad, MissingFileReturnsFalse)

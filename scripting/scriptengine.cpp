@@ -640,19 +640,31 @@ void CScriptEngine::DisableScripting (void)
 // entirely by lua_scripting.cpp.
 
 bool CScriptEngine::Execute (DISPID& dispid,
-                              LPCTSTR, const unsigned short,
-                              LPCTSTR, LPCTSTR,
-                              DISPPARAMS&, long&, COleVariant*)
+                              LPCTSTR szProcedure, const unsigned short iReason,
+                              LPCTSTR szType, LPCTSTR szReason,
+                              DISPPARAMS&, long& nInvocationCount, COleVariant* result)
   {
-  // Delegate to Lua if active; otherwise signal "not found".
+  // Delegate to Lua if active; otherwise signal "not found".  The procedure
+  // NAME and reason/type/reason must be forwarded to ExecuteLua, which
+  // resolves the function by name (via GetNestedFunction).  The previous stub
+  // passed "" for the name, so every handler invoked through this path
+  // (on_world_open / on_world_connect / on_world_disconnect / get-focus /
+  // lose-focus, and any send-to-script trigger/alias/timer routed via
+  // CMUSHclientDoc::ExecuteScript) silently failed to resolve and never ran.
   if (L)
     {
     list<double> nparams;
     list<string> sparams;
     bool r = false;
-    long dummy = 0;
-    return ExecuteLua (dispid, "", 0, "", "", nparams, sparams, dummy,
-                       nullptr, nullptr, nullptr, &r);
+    bool status = ExecuteLua (dispid, szProcedure, iReason, szType, szReason,
+                              nparams, sparams, nInvocationCount,
+                              nullptr, nullptr, nullptr, &r);
+    if (result)
+      {
+      result->vt = VT_BOOL;
+      result->boolVal = r;
+      }
+    return status;
     }
   if (dispid == DISPID_UNKNOWN) return false;
   dispid = DISPID_UNKNOWN;

@@ -846,8 +846,11 @@ struct CPlugin {
     CVariableMap   m_VariableMap;
     // Back-pointer
     CMUSHclientDoc* m_pDoc               = nullptr;
-    // Constructor
+    // Constructor / destructor
     explicit CPlugin(CMUSHclientDoc* pDoc = nullptr) : m_pDoc(pDoc) {}
+    // Destructor declared here; defined in platform/plugin_portable.cpp so it
+    // sees only the stub CPlugin layout (not the full plugins.h version).
+    ~CPlugin();
 };
 
 // ── CMUSHclientApp ────────────────────────────────────────────────────────
@@ -1719,8 +1722,16 @@ public:
     unordered_map<string, long>   m_numericOptionCache;
     unordered_map<string, string> m_alphaOptionCache;
 
-    // ── Constructor ────────────────────────────────────────────────────
+    // ── Constructor / destructor / move ──────────────────────────────
     CMUSHclientDoc();
+    ~CMUSHclientDoc();   // defined in doc_portable.cpp; fires OnPluginClose
+
+    // Restore the move constructor that the user-defined destructor would
+    // otherwise suppress.  The tests' make_doc() returns CMUSHclientDoc by
+    // value; NRVO always elides the move there, so the "raw pointer member
+    // is not zeroed in the moved-from object" issue never manifests in
+    // practice.  CMUSHclientDoc objects are never actually moved at runtime.
+    CMUSHclientDoc(CMUSHclientDoc&&) = default;
 
     // ── ANSI parser methods ───────────────────────────────────────────
     void    InterpretANSIcode(const int iCode);

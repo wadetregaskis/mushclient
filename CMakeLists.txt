@@ -264,6 +264,11 @@ if(NOT WIN32)
         # CMUSHView::classCMUSHView, CSendView, CChatSocket, CPaneLine, etc.)
         platform/windows_stubs.cpp
 
+        # CPlugin destructor — separate file so it includes only doc_stub.h
+        # (windows_stubs.cpp sees the full plugins.h layout via doc.h, which
+        # would cause a struct-size mismatch with the stub CPlugin).
+        platform/plugin_portable.cpp
+
         # Hook function pointer storage (definitions for wx_mfc_hooks.h externs).
         # Also compiled into mushapp so mushgui (which links mushapp, not mushcore)
         # can resolve the same symbols without linking both libraries.

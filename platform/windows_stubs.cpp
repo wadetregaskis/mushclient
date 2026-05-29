@@ -253,6 +253,12 @@ int TMessageBox(const char* sText, UINT nType) {
     return UMessageBox(sText, nType, "MUSHclient");
 }
 
+// ── CPlugin destructor ────────────────────────────────────────────────────
+// Moved to platform/plugin_portable.cpp — that file includes only doc_stub.h
+// and therefore sees the stub CPlugin layout that matches InternalLoadPlugin's
+// `new CPlugin(this)` allocation.  Defining it here (which sees the full
+// plugins.h CPlugin via doc.h) would cause a struct-size mismatch and crash.
+
 // ── Stubs for lua_utils_portable.cpp ─────────────────────────────────────
 // These symbols are defined in mushapp-only files (mainfrm.cpp,
 // scripting/methods/methods_info.cpp, scripting/functionlist.cpp, plugins.cpp).

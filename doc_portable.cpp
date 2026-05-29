@@ -178,6 +178,22 @@ CMUSHclientDoc::CMUSHclientDoc()
     m_pCurrentLine = m_pScratchLine;
 }
 
+// ── CMUSHclientDoc destructor ─────────────────────────────────────────────
+// On non-Windows, doc_construct.cpp is not compiled into mushcore.  This
+// portable destructor fires OnPluginClose for each loaded plugin (via
+// CPlugin::~CPlugin()) and then frees them.  The scratch line is also freed.
+CMUSHclientDoc::~CMUSHclientDoc()
+{
+    for (auto it = m_PluginList.begin(); it != m_PluginList.end();
+         it = m_PluginList.erase(it))
+        delete *it;  // CPlugin::~CPlugin() fires OnPluginClose
+    if (m_pScratchLine) {
+        delete m_pScratchLine;
+        m_pScratchLine = nullptr;
+        m_pCurrentLine = nullptr;
+    }
+}
+
 // ── GetStyleRGB ───────────────────────────────────────────────────────────
 void CMUSHclientDoc::GetStyleRGB(CStyle* pStyle,
                                   COLORREF& colour1,

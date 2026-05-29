@@ -113,6 +113,17 @@ public:
         Node* n = reinterpret_cast<Node*>(pos);
         RemoveNodeAt(n->it);
     }
+    // std::list-compatible erase: removes element at `it`, returns next iterator.
+    Iter erase(Iter it) {
+        for (auto nit = nodes_.begin(); nit != nodes_.end(); ++nit) {
+            if ((*nit)->it == it) {
+                delete *nit;
+                nodes_.erase(nit);
+                break;
+            }
+        }
+        return list_.erase(it);
+    }
     void RemoveAll() {
         list_.clear();
         for (Node* n : nodes_) delete n;
@@ -169,8 +180,14 @@ public:
 
     // ── Query ─────────────────────────────────────────────────────────────
 
-    int  GetCount() const  { return (int)list_.size(); }
-    bool IsEmpty()  const  { return list_.empty(); }
+    int    GetCount() const  { return (int)list_.size(); }
+    bool   IsEmpty()  const  { return list_.empty(); }
+    // std::list-compatible aliases (used by test code and range-erase loops)
+    size_t size()     const  { return list_.size(); }
+    TYPE&  front()           { return list_.front(); }
+    TYPE   front()    const  { return list_.front(); }
+    TYPE&  back()            { return list_.back(); }
+    TYPE   back()     const  { return list_.back(); }
 
     // ── Find ──────────────────────────────────────────────────────────────
 
@@ -221,14 +238,7 @@ private:
     }
 
     void RemoveNodeAt(Iter it) {
-        for (auto nit = nodes_.begin(); nit != nodes_.end(); ++nit) {
-            if ((*nit)->it == it) {
-                delete *nit;
-                nodes_.erase(nit);
-                break;
-            }
-        }
-        list_.erase(it);
+        erase(it);  // delegate to public erase(); return value ignored
     }
 };
 

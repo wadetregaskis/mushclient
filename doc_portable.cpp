@@ -698,6 +698,45 @@ void CMUSHclientDoc::FireWorldSave()
                        nInvocations);
 }
 
+// ── FireWorldGetFocus / FireWorldLoseFocus ────────────────────────────────────
+// Fire the on_world_get_focus / on_world_lose_focus Lua callbacks.
+// Called from wx_world_child.cpp OnActivate() — mirrors mushview.cpp OnSetFocus /
+// OnKillFocus which call ExecuteScript(m_dispidWorldGetFocus/LoseFocus, ...) and
+// then SendToAllPluginCallbacks(ON_PLUGIN_GETFOCUS/LOSEFOCUS).
+// Note: plugin callbacks are fired in wx_world_child.cpp (where m_bWorldClosing is
+// accessible) rather than here.
+void CMUSHclientDoc::FireWorldGetFocus()
+{
+    if (m_dispidWorldGetFocus == DISPID_UNKNOWN) return;
+    CScriptEngine* engine = GetScriptEngine();
+    if (!engine || !engine->IsLua()) return;
+    list<double> nparams;
+    list<string> sparams;
+    long nInvocations = 0;
+    engine->ExecuteLua(m_dispidWorldGetFocus,
+                       m_strWorldGetFocus,
+                       eWorldAction,
+                       "world", "get focus",
+                       nparams, sparams,
+                       nInvocations);
+}
+
+void CMUSHclientDoc::FireWorldLoseFocus()
+{
+    if (m_dispidWorldLoseFocus == DISPID_UNKNOWN) return;
+    CScriptEngine* engine = GetScriptEngine();
+    if (!engine || !engine->IsLua()) return;
+    list<double> nparams;
+    list<string> sparams;
+    long nInvocations = 0;
+    engine->ExecuteLua(m_dispidWorldLoseFocus,
+                       m_strWorldLoseFocus,
+                       eWorldAction,
+                       "world", "lose focus",
+                       nparams, sparams,
+                       nInvocations);
+}
+
 // ── TermSyncStyle / TermResetStyle — emit ANSI escapes to the real terminal ───
 //
 // The ANSI/256/24-bit colour state machine in ansi.cpp updates m_iFlags,

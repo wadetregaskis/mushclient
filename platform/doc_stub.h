@@ -2053,6 +2053,8 @@ public:
     void    OnConnectionDisconnect();
     void    FireWorldClose();
     void    FireWorldSave();
+    void    FireWorldGetFocus();
+    void    FireWorldLoseFocus();
     void    DisplayMsg(const char* lpszText, int size,
                        const int flags, const bool fake = false);
     long    GetUniqueNumber();

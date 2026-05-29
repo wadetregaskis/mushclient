@@ -1866,12 +1866,26 @@ void CWorldChildFrame::UpdateStatusBar()
 
 // ── OnActivate ────────────────────────────────────────────────────────────
 // Called when this MDI child is activated (gets focus) or deactivated.
-// On activation, immediately refresh the status bar so switching between
-// worlds gives instant visual feedback in the status bar.
+// On activation, refresh the status bar so switching worlds gives immediate
+// visual feedback.  Also fires on_world_get_focus / on_world_lose_focus Lua
+// callbacks and OnPluginGetFocus / OnPluginLoseFocus plugin callbacks,
+// mirroring CMUSHView::OnSetFocus / OnKillFocus in mushview.cpp.
 void CWorldChildFrame::OnActivate(wxActivateEvent& evt)
 {
-    if (evt.GetActive())
+    if (evt.GetActive()) {
         UpdateStatusBar();
+        if (m_doc) {
+            m_doc->FireWorldGetFocus();
+            if (!m_doc->m_bWorldClosing)
+                m_doc->SendToAllPluginCallbacks(ON_PLUGIN_GETFOCUS);
+        }
+    } else {
+        if (m_doc) {
+            m_doc->FireWorldLoseFocus();
+            if (!m_doc->m_bWorldClosing)
+                m_doc->SendToAllPluginCallbacks(ON_PLUGIN_LOSEFOCUS);
+        }
+    }
     evt.Skip();
 }
 

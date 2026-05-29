@@ -2580,6 +2580,16 @@ void CMUSHclientDoc::SendMsg(CString strText,
            strText.Right(2) == CString(ENDLINE))
         strText = strText.Left(strText.GetLength() - 2);
 
+    // "OnPluginSend" — plugins can cancel the send by returning false.
+    // Guard with m_bPluginProcessingSend to prevent infinite recursion
+    // (a plugin calling world.Send() inside OnPluginSend).
+    if (!m_bPluginProcessingSend) {
+        m_bPluginProcessingSend = true;
+        bool ok = SendToAllPluginCallbacks(ON_PLUGIN_SEND, strText);
+        m_bPluginProcessingSend = false;
+        if (!ok) return;  // plugin vetoed the send
+    }
+
     // Echo sent text to the output window
     if (bEchoIt && !m_bNoEcho)
         DisplayMsg(((const char*)strText + string("\n")).c_str(),
@@ -2590,6 +2600,13 @@ void CMUSHclientDoc::SendMsg(CString strText,
     SendPacket((const char*)toSend, toSend.GetLength());
 
     ++m_nTotalLinesSent;
+
+    // "OnPluginSent" — notify plugins that the line was sent.
+    if (!m_bPluginProcessingSent) {
+        m_bPluginProcessingSent = true;
+        SendToAllPluginCallbacks(ON_PLUGIN_SENT, strText);
+        m_bPluginProcessingSent = false;
+    }
 }
 
 // ── CMUSHclientDoc::SendTo ────────────────────────────────────────────────

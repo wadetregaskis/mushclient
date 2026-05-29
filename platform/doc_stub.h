@@ -815,6 +815,34 @@ extern COLORREF xterm_256_colours[256];
 // The full definition comes later via scripting/scripting.h.
 class CScriptEngine;
 
+// ── Array map types (needed by CPlugin::m_Arrays and CMUSHclientDoc::m_Arrays)
+// Defined here — before CPlugin — so the struct is visible when both use it.
+// The same definition appears under #ifndef ARRAY_LESS_DEFINED in stdafx.h on
+// Windows.  Guard so it is harmless if a TU pulls in stdafx.h first.
+#ifndef ARRAY_LESS_DEFINED
+#define ARRAY_LESS_DEFINED
+struct array_less
+{
+    bool operator()(const string& s1, const string& s2) const
+    {
+        auto isnum = [](const string& s) {
+            if (s.empty()) return false;
+            size_t i = (s[0] == '-') ? 1 : 0;
+            if (i == s.size()) return false;
+            for (; i < s.size(); ++i)
+                if (!isdigit((unsigned char)s[i])) return false;
+            return true;
+        };
+        bool n1 = isnum(s1), n2 = isnum(s2);
+        if (n1 && n2) return atoll(s1.c_str()) < atoll(s2.c_str());
+        if (!n1 && !n2) return s1 < s2;
+        return n1;  // numbers sort before strings
+    }
+};
+typedef map<string, string, array_less>              tStringToStringMap;
+typedef map<string, tStringToStringMap*, array_less> tStringMapOfMaps;
+#endif // ARRAY_LESS_DEFINED
+
 // ── CPlugin stub ─────────────────────────────────────────────────────────
 // Fields accessed from lua_scripting.cpp, ProcessPreviousLine.cpp,
 // evaluate.cpp, and the portable plugin loader.
@@ -850,6 +878,7 @@ struct CPlugin {
     CTimerMap      m_TimerMap;
     CTimerRevMap   m_TimerRevMap;
     CVariableMap   m_VariableMap;
+    tStringMapOfMaps m_Arrays;           // scripting arrays (world.ArrayCreate etc.)
     // Back-pointer
     CMUSHclientDoc* m_pDoc               = nullptr;
     // Constructor / destructor
@@ -1191,34 +1220,6 @@ typedef list<OneShotItem> OneShotItemMap;
 // be shared between the mushcore (doc_stub.h) and mushapp (doc.h) builds.
 #include "platform/output_types.h"
 
-// ── Array map types (mirrors stdafx.h typedefs) ──────────────────────────────
-// Sort comparator: numeric comparison when both operands look like integers,
-// string comparison otherwise (mirrors Windows array_less in stdafx.h).
-// Guard: stdafx.h defines the same struct on Windows/when stdafx.h is pulled in.
-#ifndef ARRAY_LESS_DEFINED
-#define ARRAY_LESS_DEFINED
-struct array_less
-{
-    bool operator()(const string& s1, const string& s2) const
-    {
-        auto isnum = [](const string& s) {
-            if (s.empty()) return false;
-            size_t i = (s[0] == '-') ? 1 : 0;
-            if (i == s.size()) return false;
-            for (; i < s.size(); ++i)
-                if (!isdigit((unsigned char)s[i])) return false;
-            return true;
-        };
-        bool n1 = isnum(s1), n2 = isnum(s2);
-        if (n1 && n2) return atoll(s1.c_str()) < atoll(s2.c_str());
-        if (!n1 && !n2) return s1 < s2;
-        return n1;  // numbers sort before strings
-    }
-};
-typedef map<string, string, array_less>              tStringToStringMap;
-typedef map<string, tStringToStringMap*, array_less> tStringMapOfMaps;
-#endif // ARRAY_LESS_DEFINED
-
 // ── SQLite database types (mirrors doc.h) ─────────────────────────────────────
 #include "sqlite3/sqlite3.h"
 
@@ -1331,22 +1332,25 @@ public:
     CTimerMap          m_TimerMap;
     CTimerRevMap       m_TimerRevMap;
 
-    // Accessors — on non-Windows plugins have no trigger/alias collections,
-    // so these always return the document's own collections.
-    CTriggerMap&    GetTriggerMap()    { return m_TriggerMap;    }
-    CTriggerRevMap& GetTriggerRevMap() { return m_TriggerRevMap; }
-    CTriggerArray&  GetTriggerArray()  { return m_TriggerArray;  }
-    CAliasMap&      GetAliasMap()      { return m_AliasMap;      }
-    CAliasRevMap&   GetAliasRevMap()   { return m_AliasRevMap;   }
-    CAliasArray&    GetAliasArray()    { return m_AliasArray;    }
-    CTimerMap&      GetTimerMap()      { return m_TimerMap;      }
-    CTimerRevMap&   GetTimerRevMap()   { return m_TimerRevMap;   }
-    CVariableMap&   GetVariableMap()   { return m_VariableMap;   }
+    // Accessors — mirror doc.h: when inside a plugin context (m_CurrentPlugin ≠
+    // nullptr) return the plugin's own collection; otherwise the doc's.
+    // m_CurrentPlugin is declared later in this class; C++ allows forward refs
+    // to other members in inline method bodies because the whole class is parsed
+    // before any body is compiled.
+    CTriggerMap&    GetTriggerMap()    { return m_CurrentPlugin ? m_CurrentPlugin->m_TriggerMap    : m_TriggerMap;    }
+    CTriggerRevMap& GetTriggerRevMap() { return m_CurrentPlugin ? m_CurrentPlugin->m_TriggerRevMap : m_TriggerRevMap; }
+    CTriggerArray&  GetTriggerArray()  { return m_CurrentPlugin ? m_CurrentPlugin->m_TriggerArray  : m_TriggerArray;  }
+    CAliasMap&      GetAliasMap()      { return m_CurrentPlugin ? m_CurrentPlugin->m_AliasMap      : m_AliasMap;      }
+    CAliasRevMap&   GetAliasRevMap()   { return m_CurrentPlugin ? m_CurrentPlugin->m_AliasRevMap   : m_AliasRevMap;   }
+    CAliasArray&    GetAliasArray()    { return m_CurrentPlugin ? m_CurrentPlugin->m_AliasArray    : m_AliasArray;    }
+    CTimerMap&      GetTimerMap()      { return m_CurrentPlugin ? m_CurrentPlugin->m_TimerMap      : m_TimerMap;      }
+    CTimerRevMap&   GetTimerRevMap()   { return m_CurrentPlugin ? m_CurrentPlugin->m_TimerRevMap   : m_TimerRevMap;   }
+    CVariableMap&   GetVariableMap()   { return m_CurrentPlugin ? m_CurrentPlugin->m_VariableMap   : m_VariableMap;   }
     CString         GetLanguage()      { return m_strLanguage;   }
 
     // ── Scripting arrays (world.ArrayCreate / ArrayGet / etc.) ────────
     tStringMapOfMaps  m_Arrays;
-    tStringMapOfMaps& GetArrayMap()    { return m_Arrays;         }
+    tStringMapOfMaps& GetArrayMap()    { return m_CurrentPlugin ? m_CurrentPlugin->m_Arrays        : m_Arrays;        }
 
     // ── SQLite databases (world.DatabaseOpen / etc.) ───────────────────
     tDatabaseMap      m_Databases;

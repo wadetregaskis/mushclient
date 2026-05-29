@@ -2151,7 +2151,8 @@ public:
 
     // ── GUI output callbacks ──────────────────────────────────────────────
     // When m_fn_line_ready is non-null, DisplayMsg() routes output through it
-    // instead of stdout.  Set by wx_frame.cpp before connecting.
+    // instead of stdout.  Set by the CLI/mushcore host (cli_main.cpp) before
+    // connecting.
     // Each '\n' fires m_fn_line_ready with the fully assembled SOutputLine.
     // Note() fires m_fn_note (or falls back to puts()).
     std::function<void(SOutputLine&&)>      m_fn_line_ready;

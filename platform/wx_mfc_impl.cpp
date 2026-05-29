@@ -1216,8 +1216,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
 
     // ── Socket polling timer ──────────────────────────────────────────────
     // CAsyncSocket::Poll() must be called periodically on the GUI thread to
-    // deliver OnConnect / OnReceive / OnClose callbacks.  20 ms matches the
-    // interval used by the mushcore CWorldFrame path in wx_frame.cpp.
+    // deliver OnConnect / OnReceive / OnClose callbacks.  20 ms is a
+    // responsive polling interval that keeps the UI smooth.
     wxTimer* pollTimer = new wxTimer(frame);
     frame->Bind(wxEVT_TIMER, [](wxTimerEvent&) {
         CAsyncSocket::Poll(0);

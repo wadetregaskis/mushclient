@@ -4331,6 +4331,7 @@ static int L_UnloadPlugin(lua_State* L)
 
     pDoc->m_PluginList.erase(pit);
     delete pPlugin;
+    pDoc->PluginListChanged();
     lua_pushnumber(L, eOK);
     return 1;
 }

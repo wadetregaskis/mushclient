@@ -613,6 +613,8 @@ extern const string ON_PLUGIN_COMMAND_ENTERED;
 extern const string ON_PLUGIN_COMMAND_CHANGED;
 extern const string ON_PLUGIN_ENABLE;
 extern const string ON_PLUGIN_DISABLE;
+extern const string ON_PLUGIN_LIST_CHANGED;
+extern const string ON_PLUGIN_TABCOMPLETE;
 extern const string ON_PLUGIN_IAC_GA;
 extern const string ON_PLUGIN_TELNET_REQUEST;
 extern const string ON_PLUGIN_TELNET_OPTION;
@@ -2055,6 +2057,7 @@ public:
     void    FireWorldSave();
     void    FireWorldGetFocus();
     void    FireWorldLoseFocus();
+    void    PluginListChanged();
     void    DisplayMsg(const char* lpszText, int size,
                        const int flags, const bool fake = false);
     long    GetUniqueNumber();

@@ -698,6 +698,19 @@ void CMUSHclientDoc::FireWorldSave()
                        nInvocations);
 }
 
+// ── PluginListChanged — fire OnPluginListChanged with re-entrancy guard ──────
+// Mirrors CMUSHclientDoc::PluginListChanged() in plugins.cpp.
+// Called after InternalLoadPlugin / L_UnloadPlugin so every loaded plugin
+// is notified that the plugin roster has changed.
+void CMUSHclientDoc::PluginListChanged()
+{
+    static thread_local bool s_firing = false;
+    if (s_firing) return;
+    s_firing = true;
+    SendToAllPluginCallbacks(ON_PLUGIN_LIST_CHANGED);
+    s_firing = false;
+}
+
 // ── FireWorldGetFocus / FireWorldLoseFocus ────────────────────────────────────
 // Fire the on_world_get_focus / on_world_lose_focus Lua callbacks.
 // Called from wx_world_child.cpp OnActivate() — mirrors mushview.cpp OnSetFocus /
@@ -2037,6 +2050,8 @@ const string ON_PLUGIN_COMMAND_ENTERED = "OnPluginCommandEntered";
 const string ON_PLUGIN_COMMAND_CHANGED = "OnPluginCommandChanged";
 const string ON_PLUGIN_ENABLE          = "OnPluginEnable";
 const string ON_PLUGIN_DISABLE         = "OnPluginDisable";
+const string ON_PLUGIN_LIST_CHANGED    = "OnPluginListChanged";
+const string ON_PLUGIN_TABCOMPLETE     = "OnPluginTabComplete";
 
 // AlphaOptionsTable[] is defined in scriptingoptions_portable.cpp (real table).
 

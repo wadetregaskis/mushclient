@@ -1032,6 +1032,10 @@ bool CMUSHclientDoc::InternalLoadPlugin(const CString& strPluginPath)
         }
     }
 
+    // Notify all other plugins that the plugin list has changed.
+    // Mirrors xml_load_world.cpp calling PluginListChanged() after loading plugins.
+    PluginListChanged();
+
     return true;
 }
 

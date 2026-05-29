@@ -92,7 +92,12 @@ long CMUSHclientDoc::DatabaseOpen(LPCTSTR Name, LPCTSTR Filename, long Flags)
       return DATABASE_ERROR_DATABASE_ALREADY_EXISTS;   // database already exists under this id but a different disk name
     }
 
+#ifdef _WIN32
 	int rc = sqlite3_open_v2 (Filename, &pDatabase->db, Flags, NULL);
+#else
+	// Plugins routinely pass Windows-style backslash paths; POSIX needs '/'.
+	int rc = sqlite3_open_v2 (PortableFilePath (Filename).c_str (), &pDatabase->db, Flags, NULL);
+#endif
 
   // add to map if opened OK
   if (rc == SQLITE_OK && pDatabase->db != NULL)

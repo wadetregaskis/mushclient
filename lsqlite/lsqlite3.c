@@ -1679,10 +1679,35 @@ static int lsqlite_temp_directory(lua_State *L) {
 static int lsqlite_do_open(lua_State *L, const char *filename) {
     sdb *db = newdb(L); /* create and leave in stack */
 
+#ifndef _WIN32
+    /* MUSHclient plugins embed Windows-style backslash path separators; POSIX
+       filesystems need '/'.  Normalize on a private copy (sqlite3_open copies
+       the string internally, so the copy can be freed immediately afterwards). */
+    {
+        char *fixed = NULL;
+        int rc;
+        if (filename && strchr(filename, '\\')) {
+            size_t i, n = strlen(filename);
+            fixed = (char *) malloc(n + 1);
+            if (fixed) {
+                for (i = 0; i <= n; ++i)
+                    fixed[i] = (filename[i] == '\\') ? '/' : filename[i];
+                filename = fixed;
+            }
+        }
+        rc = sqlite3_open(filename, &db->db);
+        free(fixed);  /* free(NULL) is safe */
+        if (rc == SQLITE_OK) {
+            /* database handle already in the stack - return it */
+            return 1;
+        }
+    }
+#else
     if (sqlite3_open(filename, &db->db) == SQLITE_OK) {
         /* database handle already in the stack - return it */
         return 1;
     }
+#endif
 
     /* failed to open database */
     lua_pushnil(L);                             /* push nil */

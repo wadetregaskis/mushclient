@@ -24,6 +24,23 @@
 #include "mfc_exceptions.h"
 #include "mfc_time.h"
 
+// ── File path separator normalization ───────────────────────────────────────
+// MUSHclient is a Windows application; its source and a great many plugins embed
+// Windows-style backslash path separators (e.g. ".\\quow_plugins\\maps\\foo.db").
+// POSIX filesystems treat '\\' as an ordinary filename character, so any such
+// path must have its separators translated to '/' before being handed to a
+// POSIX file API (sqlite3_open, fopen, the image / sound loaders, …).  Windows
+// accepts '/' natively, hence this is a non-Windows-only transformation.
+#include <string>
+inline std::string PortableFilePath (const char * p)
+{
+  std::string s (p ? p : "");
+  for (std::string::size_type i = 0; i < s.size (); ++i)
+    if (s [i] == '\\')
+      s [i] = '/';
+  return s;
+}
+
 // ── CFormat ────────────────────────────────────────────────────────────────
 // CFormat is declared in format.h (included via stdafx.h) and defined in
 // format.cpp. On non-Windows it inherits from CString just like on Windows.

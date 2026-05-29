@@ -2359,13 +2359,25 @@ protected:
         return "rb";   // default: read-only
     }
 
+    // Translate Windows-style backslash separators to POSIX '/'.  MUSHclient and
+    // many plugins embed backslash paths (e.g. ".\\worlds\\plugins\\state\\");
+    // POSIX treats '\\' as an ordinary filename character, so normalize before
+    // any fopen()/stat()/rename()/remove() call.  Kept self-contained so this
+    // header has no include-ordering dependency on compat.h's PortableFilePath().
+    static std::string PosixPath(LPCTSTR path) {
+        std::string s(path ? path : "");
+        for (std::string::size_type i = 0; i < s.size(); ++i)
+            if (s[i] == '\\') s[i] = '/';
+        return s;
+    }
+
 public:
     CFile() = default;
 
     // Open file by path + flags (mirrors MFC CFile constructor that throws on error).
     CFile(LPCTSTR path, UINT flags) {
         const char* mode = FlagsToMode(flags);
-        m_fp = fopen(path, mode);
+        m_fp = fopen(PosixPath(path).c_str(), mode);
         if (m_fp)
             m_strPath = path;
         // On failure m_fp == nullptr; callers that check Open() return value should
@@ -2382,7 +2394,7 @@ public:
     virtual bool Open(LPCTSTR path, UINT flags, void* /*pError*/ = nullptr) {
         if (m_fp) { fclose(m_fp); m_fp = nullptr; }
         const char* mode = FlagsToMode(flags);
-        m_fp = fopen(path, mode);
+        m_fp = fopen(PosixPath(path).c_str(), mode);
         if (m_fp) { m_strPath = path; return true; }
         return false;
     }
@@ -2429,13 +2441,13 @@ public:
     CString GetFilePath() const { return m_strPath; }
     void SetFilePath(LPCTSTR path) { m_strPath = path; }
 
-    static bool Rename(LPCTSTR from, LPCTSTR to) { return ::rename(from, to) == 0; }
-    static bool Remove(LPCTSTR path) { return ::remove(path) == 0; }
+    static bool Rename(LPCTSTR from, LPCTSTR to) { return ::rename(PosixPath(from).c_str(), PosixPath(to).c_str()) == 0; }
+    static bool Remove(LPCTSTR path) { return ::remove(PosixPath(path).c_str()) == 0; }
 
     // Populate a CFileStatus from POSIX stat().  Returns true on success.
     static bool GetStatus(LPCTSTR path, CFileStatus& st) {
         struct ::stat s;
-        if (!path || ::stat(path, &s) != 0) return false;
+        if (!path || ::stat(PosixPath(path).c_str(), &s) != 0) return false;
         st.m_ctime = CTime((time_t)s.st_ctime);
         st.m_mtime = CTime((time_t)s.st_mtime);
         st.m_atime = CTime((time_t)s.st_atime);

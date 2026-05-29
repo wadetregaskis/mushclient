@@ -240,8 +240,8 @@ void CScriptEngine::OpenLuaDelayed ()
   lua_pop (L, 1);   // get rid of package table from stack
 #endif
 
-#ifndef _WIN32
-  // ── Lua module search path (non-Windows) ──────────────────────────────
+#if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD)
+  // ── Lua module search path (mushapp / GUI build) ──────────────────────
   // On Windows, plugins locate the bundled Lua modules (movewindow, mapper,
   // gauge, …) via the install directory, which is on package.path implicitly.
   // The non-Windows build must add the module directory explicitly, otherwise
@@ -249,7 +249,9 @@ void CScriptEngine::OpenLuaDelayed ()
   // app bundle's Resources/lua (the canonical macOS location) and a lua/
   // folder beside the executable (flat / Linux installs).
   // m_strMUSHclientFileName holds the executable's *directory* (with trailing
-  // separator) — see CMUSHclientApp::InitInstance.
+  // separator) — see CMUSHclientApp::InitInstance.  Guarded to the full build
+  // because mushcore's App stub (CLI/tests) has no m_strMUSHclientFileName, and
+  // that path does not load module-using plugins.
   {
     CString strExeDir = App.m_strMUSHclientFileName;
     if (!strExeDir.IsEmpty ())

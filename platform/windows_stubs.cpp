@@ -208,8 +208,6 @@ void CMUSHclientDoc::Save_World_XML(CArchive& /*ar*/,
                                     const unsigned long /*iMask*/,
                                     CString /*strComment*/) {}
 
-void CMUSHclientDoc::Serialize_World_XML(CArchive& /*ar*/) {}
-
 // ── CMainFrame virtual-override stubs ─────────────────────────────────────
 // mainfrm_stub.h declares these as overrides of CMDIFrameWnd virtuals but
 // provides no inline bodies.  Without out-of-line definitions the vtable for

@@ -1715,6 +1715,14 @@ void SetDefaultCustomColours (COLORREF * customtext, COLORREF * customback)
 
 bool GetNestedFunction (lua_State * L, const char * sName, const bool bRaiseError)
   {
+  // An empty (or null) name is never a function — treat it as "not found"
+  // without raising an error.  Resolving "" walks zero name components and
+  // leaves the globals table itself on the stack, which otherwise produces a
+  // spurious "Cannot find the function '' - item '' is table" message box (seen
+  // when opening a world whose unset handlers default to empty strings).
+  if (sName == NULL || *sName == '\0')
+    return false;
+
   vector<string> v;
   StringToVector (sName, v, ".", true);
 #ifdef LUA_52

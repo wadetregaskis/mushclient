@@ -3199,6 +3199,8 @@ void CWorldChildFrame::OnSize(wxSizeEvent& evt)
         // column width.  Matches what cli_main.cpp does on SIGWINCH.
         m_doc->m_nWrapColumn = (unsigned short)std::max(1, std::min(cols, 65535));
         m_doc->SendNAWS(cols, rows);
+        // Fire OnPluginWorldOutputResized — mirrors mushview.cpp CMUSHView::OnSize().
+        m_doc->SendToAllPluginCallbacks(ON_PLUGIN_WORLD_OUTPUT_RESIZED);
     });
 }
 

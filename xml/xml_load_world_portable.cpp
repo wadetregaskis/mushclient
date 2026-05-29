@@ -1004,6 +1004,9 @@ bool CMUSHclientDoc::InternalLoadPlugin(const CString& strPluginPath)
     // operate on the plugin's arrays via GetTriggerArray() / GetAliasArray().
     if (nTriggers > 0) SortTriggers();
     if (nAliases  > 0) SortAliases();
+    // Reset plugin timers so they know when they are next due to fire.
+    // Mirrors xml_load_world.cpp line 460: ResetAllTimers(GetTimerMap()).
+    if (nTimers   > 0) ResetAllTimers(GetTimerMap());
 
     m_CurrentPlugin = pSavedPlugin;
 

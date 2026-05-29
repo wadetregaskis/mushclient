@@ -1404,6 +1404,8 @@ public:
     // is replaced by one without an action.
     std::string m_current_action;       // action string for current MXP/Lua link
     std::string m_current_hint;         // hint/tooltip for current link
+    COLORREF    m_current_style_fg = 0x00C0C0C0u;  // fg from most recent AddStyle (light grey)
+    COLORREF    m_current_style_bg = 0x00000000u;  // bg from most recent AddStyle (black)
 
     int     m_connect_now      = 0;
     long    m_nTotalLinesSent  = 0;

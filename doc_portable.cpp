@@ -269,7 +269,10 @@ CStyle* CMUSHclientDoc::AddStyle(const unsigned short iFlags,
     p->pAction     = pAction;
     pLine->styleList.AddTail(p);
 
-    // Keep m_current_action/hint in sync so DisplayMsg can populate SOutputRun.
+    // Keep m_current_action/hint/fg/bg in sync so DisplayMsg and AddToLine
+    // can populate SOutputRun correctly.
+    m_current_style_fg = iForeColour;
+    m_current_style_bg = iBackColour;
     if (pAction && (iFlags & (ACTION_HYPERLINK | ACTION_SEND))) {
         m_current_action = static_cast<const char*>(pAction->m_strAction);
         m_current_hint   = static_cast<const char*>(pAction->m_strHint);
@@ -508,7 +511,37 @@ void CMUSHclientDoc::SendPacket(const unsigned char* lpBuf, const int nBufLen)
     SendPacket(reinterpret_cast<const char*>(lpBuf), nBufLen);
 }
 
-void CMUSHclientDoc::AddToLine(const char*, const int)      {}
+// ── AddToLine ────────────────────────────────────────────────────────────────
+// Called by Lua Hyperlink() to inject a styled run into the output stream.
+// On Windows, this appends to the current line being assembled by DisplayMsg.
+// On non-Windows, there is no global "current line"; we flush text immediately.
+//
+// GUI path: build a single SOutputRun with the colour/action from the most
+//   recent AddStyle() call and deliver it as a complete line.
+// CLI path: print the text to stdout (styled output) followed by a newline.
+void CMUSHclientDoc::AddToLine(const char* text, const int /*flags*/)
+{
+    if (!text || !*text) return;
+
+    if (m_fn_line_ready) {
+        // GUI path: emit as a one-run styled line so the output pane can
+        // render the link with the correct colour and click action.
+        SOutputRun run;
+        run.text      = text;
+        run.fg        = m_current_style_fg;
+        run.bg        = m_current_style_bg;
+        run.underline = !m_current_action.empty();  // underline links by default
+        run.action    = m_current_action;
+        run.hint      = m_current_hint;
+        SOutputLine line;
+        line.push_back(std::move(run));
+        m_fn_line_ready(std::move(line));
+    } else {
+        // CLI path: plain text with newline.
+        puts(text);
+        fflush(stdout);
+    }
+}
 
 // SendWindowSizes — send IAC SB NAWS w_hi w_lo h_hi h_lo IAC SE to the MUD.
 // iNewWidth is the new column count (already stored in m_nWrapColumn by caller).

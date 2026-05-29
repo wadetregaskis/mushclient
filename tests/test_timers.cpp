@@ -111,7 +111,7 @@ TEST(TimerTest, TimerFiresMultipleTimes)
     EXPECT_EQ(2L, t->nMatched);
 }
 
-TEST(TimerTest, OneShotTimerDisablesItselfAfterFiring)
+TEST(TimerTest, OneShotTimerRemovedAfterFiring)
 {
     CMUSHclientDoc doc = make_doc();
     CTimer* t = add_timer(doc, "t1");
@@ -119,13 +119,17 @@ TEST(TimerTest, OneShotTimerDisablesItselfAfterFiring)
     make_overdue(t);
 
     tick(doc);
-    EXPECT_EQ(1L, t->nMatched);
-    EXPECT_EQ(FALSE, t->bEnabled);
 
-    // Second tick should not fire
-    make_overdue(t);
+    // A one-shot timer fires once and is then DELETED from the timer map — the
+    // shared Windows behaviour (CheckTimerList removes it after firing).  `t`
+    // is freed by the tick above and must not be dereferenced; verify via the
+    // map instead.
+    CTimer* gone = nullptr;
+    EXPECT_FALSE(doc.GetTimerMap().Lookup("t1", gone));
+
+    // A second tick must be a harmless no-op (nothing left to fire).
     tick(doc);
-    EXPECT_EQ(1L, t->nMatched);
+    EXPECT_FALSE(doc.GetTimerMap().Lookup("t1", gone));
 }
 
 TEST(TimerTest, MultipleTimersBothFire)

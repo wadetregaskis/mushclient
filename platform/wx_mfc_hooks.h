@@ -301,6 +301,13 @@ extern int (*g_wxhook_password_dialog)(const char* charName,
 extern char* (*g_wxhook_directorypicker)(const char* title,
                                          const char* defPath);
 
+// ── WindowMenu popup hook ─────────────────────────────────────────────────
+// Shows a plugin's miniwindow popup menu (built by CMiniWindow::Menu into the
+// portable CMenu tree from platform/mfc_ui.h) at screen pixel (x, y), and
+// returns the selected command id, or 0 if the user cancelled.
+class CMenu;
+extern int (*g_wxhook_popup_menu)(CMenu* menu, int x, int y);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

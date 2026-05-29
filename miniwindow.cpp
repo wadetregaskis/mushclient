@@ -3594,6 +3594,7 @@ static CString strMXP_menu_item [MXP_MENU_COUNT];
 
 CMenu* GrabAMenu (void)
   {
+#ifdef _WIN32
   CMenu menu;
   VERIFY(menu.LoadMenu(IDR_MXP_MENU));
 
@@ -3604,6 +3605,11 @@ CMenu* GrabAMenu (void)
   pPopup->DeleteMenu (0, MF_BYPOSITION);  // get rid of dummy item
 
   return pPopup;
+#else
+  // No menu resources off-Windows; hand out a fresh popup from the CMenu arena
+  // (freed wholesale by CMiniWindow::Menu's CMenu::ResetArena() on next use).
+  return CMenu::NewPopup ();
+#endif
   }   // end of GrabAMenu
 
 CString CMiniWindow::Menu(long Left, long Top, LPCTSTR Items, CMUSHView* pView)
@@ -3699,16 +3705,28 @@ CPoint menupoint (Left, Top);
 
   list<CMenu*> vPopup;    // nested menus
 
+#ifndef _WIN32
+  // Free the menus built for the previous (now-closed, modal) popup before we
+  // allocate this one from the arena.
+  CMenu::ResetArena ();
+#endif
+
   CMenu* pPopup = GrabAMenu ();   // top level
   if (pPopup == NULL)
     return strResult;     // doesn't exist, strange
   vPopup.push_back (pPopup);
 
   CWnd* pWndPopupOwner = (CWnd *) pView;
+#ifdef _WIN32
   while (pWndPopupOwner->GetStyle() & WS_CHILD)
     pWndPopupOwner = pWndPopupOwner->GetParent();
 
   ClientToScreen(pView->m_hWnd, &menupoint);
+#else
+  // The wx port has no CMUSHView (pView is null) and renders the popup at the
+  // mouse cursor (see g_wxhook_popup_menu), so neither the owner-window walk nor
+  // the client→screen conversion is needed here.
+#endif
 
   int j = 0;
 

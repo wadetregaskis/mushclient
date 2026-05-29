@@ -3851,6 +3851,60 @@ static char* hook_directorypicker(const char* title, const char* defPath)
     return strdup(dlg.GetPath().ToUTF8().data());
 }
 
+// ── WindowMenu popup ────────────────────────────────────────────────────────
+// CMiniWindow::Menu() builds the plugin's context menu into the portable CMenu
+// tree (platform/mfc_ui.h); render it as a wxWidgets popup and return the
+// selected command id (TPM_RETURNCMD semantics), or 0 if cancelled.
+static wxMenu* wx_build_popup_menu(CMenu* m)
+{
+    wxMenu* wxm = new wxMenu();
+    for (const CMenu::Item& it : m->m_items)
+    {
+        if (it.flags & MF_SEPARATOR)
+            wxm->AppendSeparator();
+        else if (it.flags & MF_POPUP)
+        {
+            CMenu*  child   = CMenu::FromMenuHandle((HMENU)(intptr_t) it.arg);
+            wxMenu* wxchild = child ? wx_build_popup_menu(child) : new wxMenu();
+            wxm->AppendSubMenu(wxchild, wxString::FromUTF8(it.text.c_str()));
+        }
+        else
+        {
+            // Regular command item.  Grayed placeholder items arrive with id 0.
+            int id = (it.arg != 0) ? (int) it.arg : wxID_ANY;
+            wxMenuItem* mi = (it.flags & MF_CHECKED)
+                ? wxm->AppendCheckItem(id, wxString::FromUTF8(it.text.c_str()))
+                : wxm->Append         (id, wxString::FromUTF8(it.text.c_str()));
+            if (mi)
+            {
+                if (it.flags & MF_CHECKED) mi->Check(true);
+                if (it.flags & MF_GRAYED)  mi->Enable(false);
+            }
+        }
+    }
+    return wxm;
+}
+
+static int hook_popup_menu(CMenu* menu, int /*x*/, int /*y*/)
+{
+    if (!menu) return 0;
+    wxWindow* win = wxGetActiveWindow();
+    if (!win) win = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    if (!win) return 0;
+
+    wxMenu* wxm = wx_build_popup_menu(menu);
+    // A context menu is invoked in response to a click, so anchor it at the
+    // mouse cursor.  (The Left/Top the caller passes are in client coordinates
+    // that the port's no-op ClientToScreen leaves unconverted, so the live
+    // cursor position is the reliable anchor.)  GetPopupMenuSelectionFromUser
+    // returns the chosen id without firing a menu event — exactly the
+    // TPM_RETURNCMD behaviour CMiniWindow::Menu expects.
+    wxPoint pt = win->ScreenToClient(::wxGetMousePosition());
+    int sel = win->GetPopupMenuSelectionFromUser(*wxm, pt);
+    delete wxm;
+    return (sel > 0) ? sel : 0;   // wxID_NONE / negative ⇒ cancelled
+}
+
 // ── password_dialog ───────────────────────────────────────────────────────
 // Called from CPasswordDialog::DoModal() on non-Windows when connecting to a
 // world that has a character name but no stored password.
@@ -3910,6 +3964,7 @@ void wx_mfc_install_hooks()
     g_wxhook_inputbox             = hook_inputbox;
     g_wxhook_directorypicker      = hook_directorypicker;
     g_wxhook_password_dialog      = hook_password_dialog;
+    g_wxhook_popup_menu           = hook_popup_menu;
 #if wxUSE_SOUND
     g_wxhook_play_sound           = hook_play_sound;
     g_wxhook_stop_sound           = hook_stop_sound;

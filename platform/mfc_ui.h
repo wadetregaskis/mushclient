@@ -25,6 +25,7 @@
 
 #include <string>
 #include <vector>
+#include <deque>
 #include <functional>
 #include <cstring>
 #include <cstdio>
@@ -4360,26 +4361,68 @@ public:
 };
 
 // CMenu stub
+// Popup-menu hook: implemented in the wx layer (wx_mfc_impl.cpp); null in the
+// headless library, where TrackPopupMenu then simply returns 0 (no menu).
+extern int (*g_wxhook_popup_menu)(CMenu* menu, int x, int y);
+
+// The real MFC CMenu is a thin wrapper over a Windows HMENU.  Off-Windows we
+// record the menu as a flat list of items (a nested submenu is referenced by
+// its child CMenu's handle) and render it with a wxWidgets popup through
+// g_wxhook_popup_menu.  Menus are built fresh per right-click via GrabAMenu and
+// live in a pointer-stable arena that CMiniWindow::Menu() resets at the start of
+// each invocation — safe because popup menus are modal, so the previous one has
+// already closed.  Item flags (MF_*) are interpreted by the wx layer, so this
+// class deliberately stores them verbatim and references no MF_ macros (those
+// are #defined further down this header).
 class CMenu {
 public:
     HMENU m_hMenu = 0;
-    BOOL  CreatePopupMenu()    { return FALSE; }
-    BOOL  CreateMenu()         { return FALSE; }
+
+    struct Item {
+        UINT        flags = 0;   // MF_SEPARATOR / MF_STRING / MF_POPUP / MF_CHECKED / MF_GRAYED
+        UINT_PTR    arg   = 0;   // command id (MF_STRING) or child menu handle (MF_POPUP)
+        std::string text;
+    };
+    std::vector<Item> m_items;
+
+    static std::deque<CMenu>& Arena()  { static std::deque<CMenu> a; return a; }
+    static void   ResetArena()         { Arena().clear(); }
+    static CMenu* NewPopup() {
+        Arena().emplace_back();
+        CMenu* p = &Arena().back();
+        p->m_hMenu = (HMENU)(intptr_t) Arena().size();   // 1-based handle into the arena
+        return p;
+    }
+    static CMenu* FromMenuHandle(HMENU h) {
+        size_t i = (size_t)(intptr_t) h;
+        std::deque<CMenu>& a = Arena();
+        return (i >= 1 && i <= a.size()) ? &a[i - 1] : nullptr;
+    }
+
+    BOOL  CreatePopupMenu()    { m_items.clear(); return TRUE; }
+    BOOL  CreateMenu()         { m_items.clear(); return TRUE; }
     BOOL  LoadMenu(UINT)       { return FALSE; }
-    BOOL  DestroyMenu()        { return FALSE; }
-    BOOL  AppendMenu(UINT, UINT_PTR=0, LPCTSTR=nullptr) { return FALSE; }
+    BOOL  DestroyMenu()        { m_items.clear(); return TRUE; }
+    BOOL  AppendMenu(UINT flags, UINT_PTR idItem = 0, LPCTSTR text = nullptr) {
+        Item it; it.flags = flags; it.arg = idItem;
+        if (text) it.text = text;
+        m_items.push_back(it);
+        return TRUE;
+    }
     BOOL  AppendMenu(UINT, UINT_PTR, const CBitmap*) { return FALSE; }
     BOOL  InsertMenu(UINT, UINT, UINT_PTR=0, LPCTSTR=nullptr) { return FALSE; }
     BOOL  ModifyMenu(UINT, UINT, UINT_PTR=0, LPCTSTR=nullptr) { return FALSE; }
     BOOL  DeleteMenu(UINT, UINT) { return FALSE; }
     BOOL  CheckMenuItem(UINT, UINT) { return FALSE; }
     BOOL  EnableMenuItem(UINT, UINT) { return FALSE; }
-    UINT  GetMenuItemCount() const   { return 0; }
+    UINT  GetMenuItemCount() const   { return (UINT) m_items.size(); }
     UINT  GetMenuState(UINT, UINT) const { return 0; }
     int   GetMenuString(UINT, CString&, UINT) const { return 0; }
     CMenu* GetSubMenu(int) const { return nullptr; }
     UINT  GetMenuItemID(int) const { return 0; }
-    UINT  TrackPopupMenu(UINT, int, int, CWnd*, LPCRECT=nullptr) { return 0; }
+    UINT  TrackPopupMenu(UINT /*flags*/, int x, int y, CWnd* /*owner*/, LPCRECT=nullptr) {
+        return g_wxhook_popup_menu ? (UINT) g_wxhook_popup_menu(this, x, y) : 0;
+    }
     HMENU GetSafeHmenu() const { return m_hMenu; }
     static CMenu* FromHandle(HMENU) { return nullptr; }
     operator HMENU() const { return m_hMenu; }

@@ -24,6 +24,17 @@ public:
         if (!g_wxhook_init_instance || !g_wxhook_init_instance())
             return false;
 
+        // Open any world files passed on the command line (matches the Windows
+        // `mushclient world.mcl` behaviour).  Uses the same hook as File > Open
+        // World.  InitInstance itself ignores argv on this port (the bootstrap
+        // hook hard-codes an empty command line), so handle it here.
+        if (g_wxhook_open_world_file)
+            for (int i = 1; i < argc; ++i) {
+                wxString path = argv[i];
+                if (!path.empty())
+                    g_wxhook_open_world_file(path.utf8_str());
+            }
+
         return true;
     }
 

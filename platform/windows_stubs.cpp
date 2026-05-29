@@ -265,6 +265,60 @@ bool bShowDebugStatus = false;                              // mainfrm.cpp owns 
 // Sentinel for InternalFunctionsTable: sFunction[0]=='\0' (empty string literal).
 tInfoTypeMapping           InfoTypes[]              = { {0, nullptr} };
 tInternalFunctionsTable    InternalFunctionsTable[] = { {"", ""} };
-std::string                PluginCallbacksNames[]   = { "" };  // sentinel: empty string
+
+// ── PluginCallbacksNames — full list of valid plugin callback names ────────
+// On Windows this is defined in plugins.cpp.  mushcore needs it so that
+// utils.PluginCallbacks() returns the correct set to plugin authors.
+// Keep in sync with plugins.cpp.  Sentinel: empty string at end.
+std::string PluginCallbacksNames[] = {
+    "OnPluginBroadcast",
+    "OnPluginChatAccept",
+    "OnPluginChatDisplay",
+    "OnPluginChatMessage",
+    "OnPluginChatMessageOut",
+    "OnPluginChatNewUser",
+    "OnPluginChatUserDisconnect",
+    "OnPluginClose",
+    "OnPluginCommand",
+    "OnPluginCommandChanged",
+    "OnPluginCommandEntered",
+    "OnPluginConnect",
+    "OnPluginDisable",
+    "OnPluginDisconnect",
+    "OnPluginDrawOutputWindow",
+    "OnPluginEnable",
+    "OnPluginGetFocus",
+    "OnPlugin_IAC_GA",
+    "OnPluginInstall",
+    "OnPluginLineReceived",
+    "OnPluginListChanged",
+    "OnPluginLoseFocus",
+    "OnPluginMouseMoved",
+    "OnPluginMXPcloseTag",
+    "OnPluginMXPerror",
+    "OnPluginMXPopenTag",
+    "OnPluginMXPsetEntity",
+    "OnPluginMXPsetVariable",
+    "OnPluginMXPstart",
+    "OnPluginMXPstop",
+    "OnPluginPacketReceived",
+    "OnPluginPartialLine",
+    "OnPluginPlaySound",
+    "OnPluginSaveState",
+    "OnPluginScreendraw",
+    "OnPluginSelectionChanged",
+    "OnPluginSend",
+    "OnPluginSent",
+    "OnPluginTabComplete",
+    "OnPluginTelnetOption",
+    "OnPluginTelnetRequest",
+    "OnPluginTelnetSubnegotiation",
+    "OnPluginTick",
+    "OnPluginTrace",
+    "OnPluginPacketDebug",
+    "OnPluginWorldOutputResized",
+    "OnPluginWorldSave",
+    ""   // sentinel
+};
 
 #endif // !_WIN32

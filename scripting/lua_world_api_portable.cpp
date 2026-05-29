@@ -1890,9 +1890,14 @@ static int L_GetUniqueNumber(lua_State* L)
 // ── Connection control ────────────────────────────────────────────────────────
 
 // world.IsConnected() → bool  (already registered above as L_IsConnected)
-// world.Connect() — not applicable in single-world portable mode; no-op.
+// world.Connect() — initiate connection if not already connected.
 static int L_ConnectWorld(lua_State* L)
 {
+    CMUSHclientDoc* pDoc = world_doc(L);
+    if (pDoc->m_iConnectPhase == eConnectNotConnected) {
+        pDoc->m_bDisconnectOK = false;
+        pDoc->ConnectSocket();
+    }
     lua_pushnumber(L, eOK);
     return 1;
 }

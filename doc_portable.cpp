@@ -180,13 +180,51 @@ CMUSHclientDoc::CMUSHclientDoc()
 
 // ── CMUSHclientDoc destructor ─────────────────────────────────────────────
 // On non-Windows, doc_construct.cpp is not compiled into mushcore.  This
-// portable destructor fires OnPluginClose for each loaded plugin (via
-// CPlugin::~CPlugin()) and then frees them.  The scratch line is also freed.
+// portable destructor — mirrors doc_construct.cpp's ~CMUSHclientDoc for the
+// resources that mushcore owns.
 CMUSHclientDoc::~CMUSHclientDoc()
 {
+    // Close socket first so no callbacks fire into a partially-destroyed doc.
+    if (m_pSocket) {
+        delete m_pSocket;
+        m_pSocket = nullptr;
+    }
+
+    // Delete plugins (CPlugin::~CPlugin() fires OnPluginClose for each).
+    // Erase from list during iteration so re-entrant PluginList queries see a
+    // consistent list (mirrors the Windows destructor in doc_construct.cpp).
     for (auto it = m_PluginList.begin(); it != m_PluginList.end();
          it = m_PluginList.erase(it))
-        delete *it;  // CPlugin::~CPlugin() fires OnPluginClose
+        delete *it;
+
+    // Tear down the world's own Lua script engine.
+    delete m_ScriptEngine;
+    m_ScriptEngine = nullptr;
+
+    // Free the doc's own trigger/alias/timer/variable maps.
+    DELETE_MAP(m_TriggerMap,  CTrigger);
+    DELETE_MAP(m_AliasMap,    CAlias);
+    DELETE_MAP(m_TimerMap,    CTimer);
+    DELETE_MAP(m_VariableMap, CVariable);
+
+    // Free scripting arrays (world.ArrayCreate etc.).
+    for (auto& kv : m_Arrays) {
+        kv.second->clear();
+        delete kv.second;
+    }
+    m_Arrays.clear();
+
+    // Free SQLite databases (world.DatabaseOpen etc.).
+    for (auto& kv : m_Databases) {
+        if (kv.second->pStmt)
+            sqlite3_finalize(kv.second->pStmt);
+        if (kv.second->db)
+            sqlite3_close(kv.second->db);
+        delete kv.second;
+    }
+    m_Databases.clear();
+
+    // Free the in-progress MUD output line.
     if (m_pScratchLine) {
         delete m_pScratchLine;
         m_pScratchLine = nullptr;

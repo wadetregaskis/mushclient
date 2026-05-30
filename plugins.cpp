@@ -723,7 +723,22 @@ bool bError = true;
 
   if (!CFile::GetStatus(strFolder, status))
     {
+#ifndef _WIN32
+    // Auto-create the plugin-state folder (mkdir -p) rather than blocking with a
+    // modal on a fresh setup — the default ".\\worlds\\plugins\\state\\" won't
+    // exist yet.  Translate Windows '\' separators to '/' first.
+    {
+      std::string s = PortableFilePath ((LPCTSTR) strFolder);
+      while (s.size () > 1 && s.back () == '/') s.pop_back ();
+      for (std::string::size_type i = 1; i < s.size (); ++i)
+        if (s [i] == '/') ::mkdir (s.substr (0, i).c_str (), 0755);
+      if (!s.empty ()) ::mkdir (s.c_str (), 0755);
+    }
+    if (!CFile::GetStatus(strFolder, status))   // creation genuinely failed
+      strError = "does not exist";
+#else
     strError = "does not exist";
+#endif
     }
   else
     {   // file exists, is it a writable folder?

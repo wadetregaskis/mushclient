@@ -3080,12 +3080,16 @@ typedef OPENFILENAME * LPOPENFILENAME;
 class CDialog : public CWnd {
 public:
     UINT m_nIDHelp = 0;
-    explicit CDialog(UINT = 0, CWnd* = nullptr) {}
-    virtual INT_PTR DoModal()          { return IDCANCEL; }
-    virtual void    EndDialog(int nResult) {}
+    UINT m_nIDTemplate = 0;            // dialog resource id (IDD), set by ctor
+    explicit CDialog(UINT nID = 0, CWnd* pParent = nullptr) : m_nIDTemplate(nID) { m_pParentWnd = pParent; }
+    // DoModal: the bridge builds the wxDialog from template m_nIDTemplate, runs
+    // OnInitDialog, shows it modally, and dispatches OK/Cancel.  No bridge (CLI/
+    // tests) -> IDCANCEL, the prior stub behaviour.
+    virtual INT_PTR DoModal()          { return g_run_mfc_dialog ? g_run_mfc_dialog(this, m_nIDTemplate) : IDCANCEL; }
+    virtual void    EndDialog(int nResult) { if (g_end_mfc_dialog) g_end_mfc_dialog(this, nResult); }
     virtual BOOL    OnInitDialog()     { return TRUE; }
-    virtual void    OnOK()             {}
-    virtual void    OnCancel()         {}
+    virtual void    OnOK()             { UpdateData(TRUE); EndDialog(IDOK); }      // MFC default
+    virtual void    OnCancel()         { EndDialog(IDCANCEL); }                    // MFC default
     void   UpdateData(BOOL = TRUE)     {}
     CWnd*  GetDlgItem(int) const       { return nullptr; }
     void   SetDlgItemText(int, LPCTSTR) {}

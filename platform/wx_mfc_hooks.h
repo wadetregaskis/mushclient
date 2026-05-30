@@ -308,6 +308,18 @@ extern char* (*g_wxhook_directorypicker)(const char* title,
 class CMenu;
 extern int (*g_wxhook_popup_menu)(CMenu* menu, int x, int y);
 
+// ── MFC dialog bridge hooks ───────────────────────────────────────────────
+// g_run_mfc_dialog: CDialog::DoModal calls this with `self` = the CDialog* and
+// `idd` = its template id.  The bridge builds a wxDialog from the recovered
+// template, sets self->m_hWnd, runs OnInitDialog, shows it modally, dispatches
+// OK/Cancel (and, later, control events) to the canonical handlers, and returns
+// the result (IDOK/IDCANCEL/...).  nullptr in non-GUI builds -> DoModal returns
+// IDCANCEL (the prior stub behaviour).
+extern intptr_t (*g_run_mfc_dialog)(void* self, unsigned idd);
+// g_end_mfc_dialog: CDialog::EndDialog ends the modal loop of the wxDialog
+// backing `self`, with the given result.
+extern void (*g_end_mfc_dialog)(void* self, int result);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

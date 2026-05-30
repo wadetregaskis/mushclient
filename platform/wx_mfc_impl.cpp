@@ -32,6 +32,7 @@
 #endif
 #include <algorithm>
 #include <unordered_map>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,7 @@
 #include "platform/wx_world_child.h"  // CWorldChildFrame
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_entity_dlgs.h" // CTriggerListDlg, CAliasListDlg, CTimerListDlg
+#include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
 #include "scripting/scripting.h"     // CScriptEngine
 
 // Lua C API — included after MUSHclient headers to avoid wx/macro conflicts.
@@ -3962,8 +3964,65 @@ static int hook_password_dialog(const char* charName, char** outPassword)
     return IDOK;
 }
 
+// ── MFC dialog bridge: DoModal / EndDialog ────────────────────────────────
+// Maps a live CDialog* to the wxDialog backing its modal loop, so EndDialog
+// (which the canonical OnOK/OnCancel call) can end the right ShowModal.
+static std::map<void*, wxDialog*> s_mfcModalDialogs;
+
+static void hook_end_dialog(void* self, int result)
+{
+    auto it = s_mfcModalDialogs.find(self);
+    if (it != s_mfcModalDialogs.end() && it->second && it->second->IsModal())
+        it->second->EndModal(result);
+}
+
+static intptr_t hook_run_dialog(void* self, unsigned idd)
+{
+    CDialog* cdlg = static_cast<CDialog*>(self);
+    const RcDialog* t = MfcDialogResources().FindDialog((int)idd);
+    if (!t)
+    {
+        std::fprintf(stderr, "[dialog-bridge] DoModal: template %u not found\n", idd);
+        return IDCANCEL;
+    }
+
+    wxWindow* parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    wxDialog* dlg = BuildWxDialogFromTemplate(parent, *t);
+    if (!dlg) return IDCANCEL;
+
+    cdlg->m_hWnd = (HWND) dlg;
+    s_mfcModalDialogs[self] = dlg;
+
+    // Route control commands to the canonical handlers.  OK/Cancel use the MFC
+    // virtuals (which call EndDialog); other buttons will dispatch through the
+    // reactivated message map (task #12) — for now they are inert.
+    dlg->Bind(wxEVT_BUTTON, [cdlg](wxCommandEvent& e) {
+        switch (e.GetId())
+        {
+            case IDOK:     cdlg->OnOK();     break;
+            case IDCANCEL: cdlg->OnCancel(); break;
+            default:       e.Skip();         break;
+        }
+    });
+    // Closing the window (X / Esc) behaves like Cancel.
+    dlg->Bind(wxEVT_CLOSE_WINDOW, [dlg](wxCloseEvent&) {
+        if (dlg->IsModal()) dlg->EndModal(IDCANCEL);
+    });
+
+    cdlg->OnInitDialog();
+
+    int result = dlg->ShowModal();
+
+    cdlg->m_hWnd = nullptr;
+    s_mfcModalDialogs.erase(self);
+    dlg->Destroy();
+    return result;
+}
+
 void wx_mfc_install_hooks()
 {
+    g_run_mfc_dialog          = hook_run_dialog;
+    g_end_mfc_dialog          = hook_end_dialog;
     g_wxhook_invalidate       = hook_invalidate;
     g_wxhook_show_window      = hook_show_window;
     g_wxhook_update_window    = hook_update_window;

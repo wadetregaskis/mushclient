@@ -21,6 +21,7 @@
 #include <string>
 
 #include "wx_dialog_resource.h"
+#include "wx_dialog_bridge.h"
 
 namespace {
 

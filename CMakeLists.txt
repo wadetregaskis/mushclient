@@ -810,6 +810,7 @@ if(NOT WIN32)
             # MFC dialog bridge: parses the recovered dialog/menu resources so the
             # canonical dialogs/**/*.cpp render natively (vs hand-rebuilt in wx)
             platform/wx_dialog_resource.cpp
+            platform/wx_dialog_bridge.cpp
         )
         # mushgui links mushapp (full MUSHclient engine with doc.cpp, dialogs,
         # scripting, etc.) rather than the portable mushcore stub.
@@ -851,6 +852,14 @@ if(NOT WIN32)
                     "${CMAKE_SOURCE_DIR}/lua"
                     "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/lua"
                 COMMENT "Bundling lua/ modules into mushgui.app/Contents/Resources")
+            # Bundle the recovered dialog resources + the resource.h symbol table
+            # so the MFC-dialog bridge can parse them at runtime.
+            add_custom_command(TARGET mushgui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_SOURCE_DIR}/platform/mushclient_dialogs.rc"
+                    "${CMAKE_SOURCE_DIR}/resource.h"
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/"
+                COMMENT "Bundling dialog resources into mushgui.app/Contents/Resources")
         endif()
     elseif(NOT wxWidgets_FOUND)
         message(STATUS "wxWidgets not found — mushgui target skipped")

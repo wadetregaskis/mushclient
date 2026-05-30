@@ -12,12 +12,18 @@
 #include <wx/wx.h>
 #include "platform/wx_mfc_hooks.h"
 
+// Defined in wx_dialog_bridge.cpp: parse the bundled dialog resources once.
+void LoadMfcDialogResources();
+
 class CMUSHWxApp : public wxApp {
 public:
     bool OnInit() override
     {
         // Install all MFC→wx bridge hooks before any MUSHclient code runs.
         wx_mfc_install_hooks();
+
+        // Pre-load the recovered dialog/menu resources (logs the parse result).
+        LoadMfcDialogResources();
 
         // Boot the real MUSHclient application.
         // The hook calls App.InitInstance() which creates the main MDI frame.

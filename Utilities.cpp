@@ -3024,7 +3024,13 @@ static int BytesPerLine (int nWidth, int nBitsPerPixel)
 long LoadPng (LPCTSTR FileName, HBITMAP & hbmp)  // load a PNG file into a bitmap
   {
   // open file
+#ifdef _WIN32
   FILE *fp = fopen(FileName, "rb");
+#else
+  // Plugins (e.g. Quow's Cow Bar map tiles) reference images by Windows-style
+  // backslash paths; POSIX needs '/'.
+  FILE *fp = fopen(PortableFilePath(FileName).c_str(), "rb");
+#endif
   if (!fp)
       return (eFileNotFound);
 

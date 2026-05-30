@@ -3561,7 +3561,10 @@ wxSound* s_currentSound = nullptr;
 static bool hook_play_sound(const char* path)
 {
     if (!path || !*path) return false;
-    wxSound* snd = new wxSound(wxString::FromUTF8(path));
+    // Plugins reference sound files by Windows-style backslash paths; POSIX
+    // needs '/'.
+    std::string fixed = PortableFilePath(path);
+    wxSound* snd = new wxSound(wxString::FromUTF8(fixed.c_str()));
     if (!snd->IsOk()) {
         delete snd;
         return false;

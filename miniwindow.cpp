@@ -1283,7 +1283,11 @@ long CMiniWindow::Write (LPCTSTR FileName)
 long CMiniWindow::WritePng (LPCTSTR FileName, const BITMAPINFO * bmi, unsigned char * pData)
   {
   // open file
+#ifdef _WIN32
   FILE *fp = fopen(FileName, "wb");
+#else
+  FILE *fp = fopen(PortableFilePath(FileName).c_str(), "wb");   // plugins use '\' paths
+#endif
   if (!fp)
       return (eCouldNotOpenFile);
 

@@ -362,7 +362,15 @@ struct SAFEARRAY {
     PVOID  pvData = nullptr;
     SAFEARRAYBOUND rgsabound[1];
 };
-// SafeArray stubs — overloaded for both LONG (int32_t) and long to handle 64-bit Linux
+// SafeArray functions.  In the full (mushapp/GUI) build these have REAL
+// implementations in platform/mfc_ui.h — they need the VARIANT layout, which is
+// only defined there — so here we just forward-declare the one VariantClear()
+// needs (the rest are defined and used entirely after mfc_ui.h is included).
+// In the headless (mushcore) build there is no VARIANT array support, so the
+// no-op stubs below stand in (overloaded for LONG (int32_t) and long).
+#if defined(MUSHCLIENT_FULL_BUILD)
+HRESULT SafeArrayDestroy(SAFEARRAY*);
+#else
 inline HRESULT SafeArrayGetLBound(SAFEARRAY*, UINT, LONG* pl) { if(pl)*pl=0; return S_OK; }
 inline HRESULT SafeArrayGetLBound(SAFEARRAY*, UINT, long* pl) { if(pl)*pl=0; return S_OK; }
 inline HRESULT SafeArrayGetUBound(SAFEARRAY*, UINT, LONG* pl) { if(pl)*pl=-1; return S_OK; }
@@ -370,6 +378,7 @@ inline HRESULT SafeArrayGetUBound(SAFEARRAY*, UINT, long* pl) { if(pl)*pl=-1; re
 inline HRESULT SafeArrayGetElement(SAFEARRAY*, LONG*, void*) { return E_FAIL; }
 inline HRESULT SafeArrayGetElement(SAFEARRAY*, long*, void*) { return E_FAIL; }
 inline HRESULT SafeArrayDestroy(SAFEARRAY*) { return S_OK; }
+#endif
 
 // SysFreeString / SysAllocString — COM BSTR helpers
 #ifndef BSTR

@@ -1660,8 +1660,16 @@ struct VARIANT {
 #endif
 
 // ── VARIANT helpers ────────────────────────────────────────────────────────
-// VariantClear / VariantInit — Windows OLE functions; no-op stubs on non-Windows.
-inline void VariantClear(VARIANT* pv) { if (pv) { pv->vt = 0; pv->lVal = 0; } }
+// VariantInit — Windows OLE; no-op on non-Windows.
+// VariantClear — clears the variant AND, for a VT_ARRAY variant, frees the
+// backing SafeArray (and its elements).  0x2000 == VT_ARRAY (defined below).
+// SafeArrayDestroy is forward-declared in windows_types.h for the full build.
+inline void VariantClear(VARIANT* pv) {
+    if (!pv) return;
+    if ((pv->vt & 0x2000) && pv->parray) SafeArrayDestroy(pv->parray);
+    pv->vt = 0;
+    pv->lVal = 0;
+}
 inline void VariantInit(VARIANT* pv)  { if (pv) { pv->vt = 0; pv->lVal = 0; } }
 
 // ── COleTemplateServer stub ────────────────────────────────────────────────
@@ -1726,6 +1734,52 @@ typedef const IID*   REFIID;
 #ifndef VT_ARRAY
 #  define VT_ARRAY    0x2000
 #endif
+
+#if defined(MUSHCLIENT_FULL_BUILD)
+// ── Real SafeArray implementation (full / GUI build) ────────────────────────
+// MUSHclient's GetPluginList/GetVariableList/GetTriggerList/... build a
+// one-dimensional COleSafeArray of VARIANTs and hand it back as a VT_ARRAY
+// VARIANT; pushVariant() (lua_methods.cpp) walks it via these functions to make
+// a Lua table.  The elements live as a heap VARIANT[] in SAFEARRAY::pvData;
+// VT_BSTR elements own a strdup'd copy of their string (freed by Destroy), so
+// callers that reuse a temporary CString per element are safe.
+inline HRESULT SafeArrayGetLBound(SAFEARRAY* psa, UINT, long* pl) {
+    if (pl) *pl = psa ? psa->rgsabound[0].lLbound : 0;
+    return S_OK;
+}
+inline HRESULT SafeArrayGetLBound(SAFEARRAY* psa, UINT d, LONG* pl) {
+    long t = 0; SafeArrayGetLBound(psa, d, &t); if (pl) *pl = (LONG) t; return S_OK;
+}
+inline HRESULT SafeArrayGetUBound(SAFEARRAY* psa, UINT, long* pl) {
+    if (pl) *pl = psa ? (psa->rgsabound[0].lLbound + (long) psa->rgsabound[0].cElements - 1) : -1;
+    return S_OK;
+}
+inline HRESULT SafeArrayGetUBound(SAFEARRAY* psa, UINT d, LONG* pl) {
+    long t = -1; SafeArrayGetUBound(psa, d, &t); if (pl) *pl = (LONG) t; return S_OK;
+}
+inline HRESULT SafeArrayGetElement(SAFEARRAY* psa, long* index, void* pv) {
+    if (!psa || !psa->pvData || !index || !pv) return E_FAIL;
+    long i = index[0] - psa->rgsabound[0].lLbound;
+    if (i < 0 || (unsigned long) i >= psa->rgsabound[0].cElements) return E_FAIL;
+    *(VARIANT*) pv = ((VARIANT*) psa->pvData)[i];   // shallow copy; bstrVal is borrowed
+    return S_OK;
+}
+inline HRESULT SafeArrayGetElement(SAFEARRAY* psa, LONG* index, void* pv) {
+    long ix[2] = { index ? index[0] : 0, index ? index[1] : 0 };
+    return SafeArrayGetElement(psa, ix, pv);
+}
+inline HRESULT SafeArrayDestroy(SAFEARRAY* psa) {
+    if (!psa) return S_OK;
+    if (VARIANT* data = (VARIANT*) psa->pvData) {
+        for (unsigned long i = 0; i < psa->rgsabound[0].cElements; ++i)
+            if (data[i].vt == VT_BSTR && data[i].bstrVal) free(data[i].bstrVal);
+        delete [] data;
+    }
+    delete psa;
+    return S_OK;
+}
+#endif // MUSHCLIENT_FULL_BUILD
+
 // VTS_* string-encoded type tags for DISP_FUNCTION — these are only
 // consumed by the DISP_* macros which are no-ops on non-Windows.
 #ifndef VTS_BSTR
@@ -4951,6 +5005,64 @@ public:
 };
 
 // COleSafeArray — Windows-specific safe array; no-op stub
+#if defined(MUSHCLIENT_FULL_BUILD)
+// Real one-dimensional safe array of VARIANTs, backed by the SAFEARRAY/VARIANT
+// machinery above.  Used by CMUSHclientDoc::GetPluginList/GetVariableList/etc.
+// to return arrays to Lua.  Owns its SAFEARRAY until Detach()/Attach() transfer
+// ownership into a VARIANT (which VariantClear then frees).
+class COleSafeArray {
+public:
+    SAFEARRAY* m_psa = nullptr;
+
+    COleSafeArray() = default;
+    ~COleSafeArray() { if (m_psa) SafeArrayDestroy(m_psa); }
+    COleSafeArray(const COleSafeArray&)            = delete;
+    COleSafeArray& operator=(const COleSafeArray&) = delete;
+
+    void CreateOneDim(UINT /*vt*/, UINT count, const void* = nullptr, LONG lbound = 0) {
+        if (m_psa) { SafeArrayDestroy(m_psa); m_psa = nullptr; }
+        m_psa = new SAFEARRAY();
+        m_psa->cDims = 1; m_psa->fFeatures = 0; m_psa->cLocks = 0;
+        m_psa->cbElements = sizeof(VARIANT);
+        m_psa->rgsabound[0].cElements = count;
+        m_psa->rgsabound[0].lLbound   = lbound;
+        m_psa->pvData = new VARIANT[count ? count : 1]();   // value-init: vt = 0
+    }
+    void PutElement(long* index, void* pv) {
+        if (!m_psa || !m_psa->pvData || !index || !pv) return;
+        long i = index[0] - m_psa->rgsabound[0].lLbound;
+        if (i < 0 || (unsigned long) i >= m_psa->rgsabound[0].cElements) return;
+        VARIANT* dst = &((VARIANT*) m_psa->pvData)[i];
+        VARIANT* src = (VARIANT*) pv;
+        if (dst->vt == VT_BSTR && dst->bstrVal) free(dst->bstrVal);
+        *dst = *src;
+        if (src->vt == VT_BSTR && src->bstrVal) dst->bstrVal = strdup(src->bstrVal); // own it
+    }
+    void GetElement(long* index, void* pv) { SafeArrayGetElement(m_psa, index, pv); }
+    long GetOneDimSize() const { return m_psa ? (long) m_psa->rgsabound[0].cElements : 0; }
+    void AccessData(void** pp) { if (pp) *pp = m_psa ? m_psa->pvData : nullptr; }
+    void UnaccessData() {}
+    // Detach: hand the array to a VARIANT and give up ownership.
+    COleVariant Detach() {
+        COleVariant v; v.vt = (unsigned short)(VT_ARRAY | VT_VARIANT);
+        v.parray = m_psa; m_psa = nullptr; return v;
+    }
+    void Detach(VARIANT& out) {
+        out.vt = (unsigned short)(VT_ARRAY | VT_VARIANT);
+        out.parray = m_psa; m_psa = nullptr;
+    }
+    void Attach(VARIANT& v) {
+        if (m_psa) SafeArrayDestroy(m_psa);
+        m_psa = v.parray; v.parray = nullptr; v.vt = 0;
+    }
+    void Clear() { if (m_psa) { SafeArrayDestroy(m_psa); m_psa = nullptr; } }
+    // Implicit conversion: shares the array WITHOUT detaching, so use only when
+    // the COleSafeArray outlives the result (GetXxxList uses Detach() instead).
+    operator COleVariant() const {
+        COleVariant v; v.vt = (unsigned short)(VT_ARRAY | VT_VARIANT); v.parray = m_psa; return v;
+    }
+};
+#else
 class COleSafeArray {
 public:
     VARIANT* m_pvariant = nullptr;
@@ -4966,6 +5078,7 @@ public:
     void PutElement(long*, void*) {}
     operator COleVariant() const { return COleVariant(); }
 };
+#endif // MUSHCLIENT_FULL_BUILD
 
 // ── Clipboard format IDs ────────────────────────────────────────────────────
 #ifndef CF_TEXT

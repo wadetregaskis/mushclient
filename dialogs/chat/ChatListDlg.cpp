@@ -151,7 +151,7 @@ BOOL CChatListDlg::OnInitDialog()
 	CDialog::OnInitDialog();
 	
     // update window title
-  SetWindowText (TFormat ("Chat sessions for %s", m_pDoc->m_mush_name));
+  SetWindowText (TFormat ("Chat sessions for %s", (LPCTSTR) m_pDoc->m_mush_name));
 	
 int iColOrder [eColumnChatCount] = {0, 1, 2, 3, 4, 5},
     iColWidth [eColumnChatCount] = {90, 66, 81, 81, 55, 50};

@@ -1030,7 +1030,7 @@ void CMUSHclientDoc::OnFilePluginwizard()
 
     // when did we save it?
     ar.WriteString (CFormat ("<!-- Saved on %s -->" NL, 
-          FixHTMLString (CTime::GetCurrentTime().Format 
+          (LPCTSTR) FixHTMLString (CTime::GetCurrentTime().Format 
           (TranslateTime ("%A, %B %d, %Y, %#I:%M %p")))));
 
     // which version was it?

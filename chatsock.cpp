@@ -363,7 +363,7 @@ int count = Receive (buff, sizeof (buff) - 1);
                     (LPCTSTR) m_strRemoteUserName));
 
       // tell them our acceptance, and chat name
-      SendData (CFormat ("YES:%s\n", m_pDoc->m_strOurChatName));
+      SendData (CFormat ("YES:%s\n", (LPCTSTR) m_pDoc->m_strOurChatName));
 
       // connected now
       m_iChatStatus = eChatConnected;
@@ -559,10 +559,10 @@ CString strAddresses;
   // tell them our chat name, IP address, incoming port
   if (m_iChatConnectionType == eChatZMud)
     SendData (CFormat ("ZCHAT:%s\t\n%s%05u",
-              m_pDoc->m_strOurChatName, strAddresses, m_pDoc->m_IncomingChatPort));
+              (LPCTSTR) m_pDoc->m_strOurChatName, (LPCTSTR) strAddresses, m_pDoc->m_IncomingChatPort));
   else
     SendData (CFormat ("CHAT:%s\n%s%-5u",
-              m_pDoc->m_strOurChatName, strAddresses, m_pDoc->m_IncomingChatPort));
+              (LPCTSTR) m_pDoc->m_strOurChatName, (LPCTSTR) strAddresses, m_pDoc->m_IncomingChatPort));
 
   m_iChatStatus = eChatAwaitingConnectConfirm;
 
@@ -725,7 +725,7 @@ void CChatSocket::ProcessChatMessage (const int iMessage, const CString strMessa
       // tell them we don't support that
       SendChatMessage (CHAT_MESSAGE, 
           TFormat ("\n%s does not support the chat command %i.\n",
-                    m_pDoc->m_strOurChatName, iMessage));
+                    (LPCTSTR) m_pDoc->m_strOurChatName, iMessage));
       // tell us we got it
       m_pDoc->ChatNote (eChatInformation,
                   TFormat ("Received unsupported chat command %i from %s",
@@ -1525,7 +1525,7 @@ void CChatSocket::Process_Snoop					      (const CString strMessage)
     {
     SendChatMessage (CHAT_MESSAGE, 
       TFormat ("\nYou are no longer snooping %s.\n",
-                m_pDoc->m_strOurChatName));
+                (LPCTSTR) m_pDoc->m_strOurChatName));
     m_pDoc->ChatNote (eChatInformation,
                 TFormat ("%s has stopped snooping you.",
                               (LPCTSTR) m_strRemoteUserName));
@@ -1634,7 +1634,7 @@ void CChatSocket::Process_Send_command				  (const CString strMessage)
     {   // not allowed to send commands
     SendChatMessage (CHAT_MESSAGE, 
         TFormat ("\n%s has not given you permission to send commands.\n",
-                  m_pDoc->m_strOurChatName));
+                  (LPCTSTR) m_pDoc->m_strOurChatName));
     m_pDoc->ChatNote (eChatCommand,
                 TFormat ("%s attempted to send you a command.",
                               (LPCTSTR) m_strRemoteUserName));

@@ -41,7 +41,7 @@ void CMUSHclientDoc::MXP_collected_entity (void)
     {
     MXP_error (DBG_ERROR, errMXP_InvalidEntityName,
                 TFormat ("Invalid MXP entity name \"%s\" supplied.",
-                m_strMXPstring)); 
+                (LPCTSTR) m_strMXPstring)); 
     return;
     }
 

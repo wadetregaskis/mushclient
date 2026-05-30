@@ -48,7 +48,7 @@ void CMUSHclientDoc::Save_World_XML (CArchive& ar,
     {
     // when did we save it?
     ar.WriteString (CFormat ("<!-- Saved on %s -->" NL, 
-          FixHTMLString (CTime::GetCurrentTime().Format 
+          (LPCTSTR) FixHTMLString (CTime::GetCurrentTime().Format 
           (TranslateTime ("%A, %B %d, %Y, %#I:%M %p")))));
     }
 

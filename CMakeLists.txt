@@ -374,11 +374,15 @@ if(NOT WIN32)
         -Wno-unused-variable
         -Wno-sign-compare
         -Wno-missing-field-initializers
-        # CString has implicit operator const char*, so passing it to a C-style
-        # variadic (TFormat, printf-family) is intentional and correct throughout
-        # the MUSHclient codebase.  AppleClang 17 escalates -Wnon-pod-varargs to
-        # an error; suppress it here rather than cast every call-site.
-        -Wno-non-pod-varargs
+        # A non-trivially-copyable CString (it holds a std::string) CANNOT be
+        # passed through a C variadic ("...") on clang: despite operator const
+        # char*, clang emits a runtime TRAP (SIGTRAP) at the call site, which
+        # silently crashes the app on otherwise-rare paths (error reporting,
+        # world/plugin-state save, …).  Every such call site is cast to
+        # (LPCTSTR); keep this a hard error so the latent-crash class can't
+        # return.  (On Windows CString is a thin pointer wrapper, so the cast is
+        # a harmless no-op there.)
+        -Werror=non-pod-varargs
         # Windows source initialises double struct fields with LONG_MAX; MSVC
         # accepts this silently.  Suppress the GCC/Clang narrowing error.
         -Wno-narrowing
@@ -701,7 +705,7 @@ if(NOT WIN32)
         -Wno-unused-variable
         -Wno-sign-compare
         -Wno-missing-field-initializers
-        -Wno-non-pod-varargs
+        -Werror=non-pod-varargs
         -Wno-narrowing
         -Wno-unused-function
     )
@@ -821,7 +825,7 @@ if(NOT WIN32)
             ${wxWidgets_CXX_FLAGS}
             -Wall
             -Wno-deprecated-declarations
-            -Wno-non-pod-varargs
+            -Werror=non-pod-varargs
             -Wno-unused-variable
             -Wno-sign-compare
             -Wno-missing-field-initializers

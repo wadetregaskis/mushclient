@@ -297,7 +297,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     int i;
     for (i = 0; i < MAX_CUSTOM; i++)
       {
-      CString strName = TFormat (" Custom #%2i (%s)", i + 1, m_strCustomColourName [i]);
+      CString strName = TFormat (" Custom #%2i (%s)", i + 1, (LPCTSTR) m_strCustomColourName [i]);
       ColourNote ( ColourToName (m_customtext [i]), ColourToName (m_customback [i]), strName);
       }     // end for loop
     } // end of custom_colour
@@ -1071,7 +1071,7 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
                   SHOW_TRUE (App.m_bEnablePackageLibrary)));
 
     Note (TFormat ("Scripting prefix: '%s'. External editor in use: %s.",
-          m_strScriptPrefix, SHOW_TRUE (!m_bEditScriptWithNotepad)));
+          (LPCTSTR) m_strScriptPrefix, SHOW_TRUE (!m_bEditScriptWithNotepad)));
     if (!m_bEditScriptWithNotepad)
       Note (TFormat ("Editor path: %s", (LPCTSTR) m_strScriptEditor));
 

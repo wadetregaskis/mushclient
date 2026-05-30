@@ -1339,7 +1339,7 @@ CString strVariable;
         delete trigger_check;
       else
         ThrowErrorException ("Duplicate trigger label \"%s\" ", 
-                             strTriggerName);
+                             (LPCTSTR) strTriggerName);
       }   // end of duplicate
 
   // all triggers are now regular expressions
@@ -1570,7 +1570,7 @@ CString strVariable;
         delete alias_check;
       else
         ThrowErrorException ("Duplicate alias label \"%s\" ", 
-                             strAliasName);
+                             (LPCTSTR) strAliasName);
       } // end of duplicate
 
   // all aliases are now regular expressions
@@ -1810,7 +1810,7 @@ CString strTimerName,
         delete timer_check;
       else
         ThrowErrorException ("Duplicate timer label \"%s\" ", 
-                             strTimerName);
+                             (LPCTSTR) strTimerName);
       } // end of duplciate
 
     // remember if this was from an include
@@ -2485,7 +2485,7 @@ void CMUSHclientDoc::Load_Plugin_XML (CXMLelement & parent)
         {
         CPlugin * p = *pit;
         if (m_CurrentPlugin->m_strID == p->m_strID)
-           ThrowErrorException ("The plugin '%s' is already loaded.", p->m_strName);
+           ThrowErrorException ("The plugin '%s' is already loaded.", (LPCTSTR) p->m_strName);
         }      // end of looping through each plugins
 
       // check language

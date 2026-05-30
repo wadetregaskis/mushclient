@@ -707,7 +707,7 @@ int nItem,
         sName += "s";
 
     if (::UMessageBox (TFormat ("Delete %i %s - are you sure?",
-        iCount + iGroupCount, sName), MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2)
+        iCount + iGroupCount, (LPCTSTR) sName), MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2)
         != IDYES )
         return;
     } // end of wanting to confirm

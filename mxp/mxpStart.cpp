@@ -49,7 +49,7 @@ CString strName;
     {
     MXP_error (DBG_ERROR, errMXP_InvalidElementName,
                 TFormat ("Invalid MXP element name \"%s\" supplied.",
-                strName)); 
+                (LPCTSTR) strName)); 
     return;
     }
 

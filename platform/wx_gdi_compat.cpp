@@ -74,7 +74,8 @@ struct DIBSectionData {
     int height = 0;     // always abs(biHeight)
     bool bottomUp = true; // biHeight > 0 → rows stored bottom-up in buffer
     int stride = 0;     // bytes per row, padded to 4-byte boundary
-    std::vector<unsigned char> pixels; // raw 24-bit BGR pixel data
+    int bytesPerPixel = 3; // 3 = 24-bit BGR, 4 = 32-bit BGRA (e.g. PNG w/ alpha)
+    std::vector<unsigned char> pixels; // raw BGR(A) pixel data
     wxBitmap* bmp = nullptr;  // wxBitmap for rendering (owned here)
 
     ~DIBSectionData() { delete bmp; }
@@ -82,28 +83,37 @@ struct DIBSectionData {
     // Copy pixels from wxBitmap into raw buffer (call after BitBlt INTO this DC).
     void SyncBitmapToPixels() {
         if (!bmp || !bmp->IsOk()) return;
+        const int bpp = bytesPerPixel;
         wxImage img = bmp->ConvertToImage();
+        const bool srcAlpha = (bpp == 4) && img.HasAlpha();
         for (int y = 0; y < height; ++y) {
             // img is always top-down; pixels buffer may be bottom-up
             int imgRow = bottomUp ? (height - 1 - y) : y;
             unsigned char* dst = pixels.data() + y * stride;
             for (int x = 0; x < width; ++x) {
-                dst[x*3+0] = img.GetBlue (x, imgRow);  // BGR
-                dst[x*3+1] = img.GetGreen(x, imgRow);
-                dst[x*3+2] = img.GetRed  (x, imgRow);
+                dst[x*bpp+0] = img.GetBlue (x, imgRow);  // BGR
+                dst[x*bpp+1] = img.GetGreen(x, imgRow);
+                dst[x*bpp+2] = img.GetRed  (x, imgRow);
+                if (bpp == 4)
+                    dst[x*bpp+3] = srcAlpha ? img.GetAlpha(x, imgRow) : 255;
             }
         }
     }
 
     // Copy raw buffer into wxBitmap (call before BitBlt FROM this DC).
     void SyncPixelsToBitmap() {
-        if (!bmp) return;
-        wxImage img(width > 0 ? width : 1, height > 0 ? height : 1);
+        if (width <= 0 || height <= 0) return;
+        const int bpp = bytesPerPixel;
+        wxImage img(width, height);
+        if (bpp == 4) img.SetAlpha();
         for (int y = 0; y < height; ++y) {
             int bufRow = bottomUp ? (height - 1 - y) : y;
             const unsigned char* src = pixels.data() + bufRow * stride;
             for (int x = 0; x < width; ++x) {
-                img.SetRGB(x, y, src[x*3+2], src[x*3+1], src[x*3+0]);  // BGR→RGB
+                const unsigned char* px = src + x*bpp;
+                img.SetRGB(x, y, px[2], px[1], px[0]);  // BGR→RGB
+                if (bpp == 4)
+                    img.SetAlpha(x, y, px[3]);
             }
         }
         delete bmp;
@@ -123,6 +133,23 @@ static inline DIBSectionData* GetDIBForHDC(HDC hdc) {
     if (it == g_hdcToSelectedDib.end()) return nullptr;
     auto it2 = g_dibSections.find(it->second);
     return (it2 != g_dibSections.end()) ? it2->second : nullptr;
+}
+
+// Materialize a DIBSection handle (DIBSectionData*) into a standalone wxBitmap,
+// freeing the DIBSection.  Used by CBitmap::Attach so that a CBitmap's m_impl is
+// ALWAYS a plain wxBitmap* — the rest of the GDI shim (GetBitmap, SelectObject,
+// the destructors, …) can then treat m_impl uniformly with no special-casing.
+// Returns nullptr if hObject is not a DIBSection handle.
+static wxBitmap* MaterializeDIBSection(HGDIOBJ hObject) {
+    auto it = g_dibSections.find(reinterpret_cast<HBITMAP>(hObject));
+    if (it == g_dibSections.end()) return nullptr;
+    DIBSectionData* dib = it->second;
+    dib->SyncPixelsToBitmap();   // raw pixel buffer → wxBitmap
+    wxBitmap* out = (dib->bmp && dib->bmp->IsOk()) ? new wxBitmap(*dib->bmp)
+                                                   : new wxBitmap(1, 1, 32);
+    g_dibSections.erase(it);
+    delete dib;                  // owns its pixel buffer + working wxBitmap
+    return out;
 }
 
 // CreateDIBSection — non-Windows portable implementation.
@@ -148,6 +175,7 @@ HBITMAP CreateDIBSection(HDC /*hdc*/, const BITMAPINFO* pbmi, UINT /*iUsage*/,
     dib->height   = he;
     dib->bottomUp = bottomUp;
     dib->stride   = stride;
+    dib->bytesPerPixel = bytesPerPixel;
     dib->pixels.assign(stride * (he > 0 ? he : 1), 0);
     dib->bmp      = new wxBitmap(w > 0 ? w : 1, he > 0 ? he : 1, 32);
 
@@ -569,9 +597,17 @@ int CBitmap::GetObject(int /*nCount*/, void* lpObject) const {
 BOOL CBitmap::Attach(HGDIOBJ hObject) {
     if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
     m_hObject = hObject;
-    // hObject is expected to be a wxBitmap* (e.g. from CreateDIBSection stub)
-    // For now just store it; DrawBitmap won't work without a proper wxBitmap
-    m_impl = hObject;
+    // hObject is normally a wxBitmap*, but the PNG/BMP loaders hand us a
+    // DIBSection handle (CreateDIBSection → LoadPng) whose live image lives in a
+    // raw pixel buffer.  Materialize that into a standalone wxBitmap so m_impl is
+    // always a plain wxBitmap* for the rest of the GDI shim (this is what makes
+    // WindowDrawImage of a loaded PNG actually render instead of crashing).
+    if (wxBitmap* materialized = MaterializeDIBSection(hObject)) {
+        m_impl = materialized;
+        m_hObject = nullptr;   // the DIBSection handle has been freed
+    } else {
+        m_impl = hObject;      // already a wxBitmap* (or null)
+    }
     return TRUE;
 }
 

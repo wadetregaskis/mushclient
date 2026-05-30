@@ -2353,6 +2353,19 @@ public:
 };
 #endif
 
+#if defined(MUSHCLIENT_FULL_BUILD)
+// Real thrower (forward-declared in windows_types.h): throw a CArchiveException*
+// so the catch (CArchiveException*) handlers in LoadPlugin / Serialize / the XML
+// import paths actually catch it, instead of an unhandled std::runtime_error
+// terminating the whole application (e.g. when a world or plugin has a bad schema
+// or uses an unsupported script language).
+inline void AfxThrowArchiveException(int cause, LPCTSTR /*name*/) {
+    CArchiveException* e = new CArchiveException();
+    e->m_cause = cause;
+    throw e;
+}
+#endif
+
 // ── CFileStatus ────────────────────────────────────────────────────────────
 // Defined here (before CFile) so CFile::GetStatus can populate it inline.
 // The duplicate guard at the bottom of the file keeps it idempotent.

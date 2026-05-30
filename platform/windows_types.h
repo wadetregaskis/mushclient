@@ -312,13 +312,24 @@ inline BOOL AfxIsValidString(LPCTSTR /*psz*/, int /*nLength*/ = -1) { return TRU
 #  define _getpid getpid
 #endif
 
-// AfxThrowArchiveException stub (MFC throws on bad serialize)
+// AfxThrowArchiveException: MFC throws this on a bad serialize/schema, and the
+// callers (LoadPlugin, Serialize, the XML import paths) all "catch
+// (CArchiveException*)".  So we MUST throw a CArchiveException* — but that class
+// is not defined this early, so in the full (GUI) build forward-declare the
+// thrower here and define it in mfc_ui.h (after CArchiveException).  Throwing the
+// wrong type (a std::runtime_error) slips past those catch handlers and
+// terminates the app — e.g. when loading an unsupported VBScript plugin.  The
+// headless build keeps the placeholder (its load paths don't depend on the type).
 #ifndef AfxThrowArchiveException
-#  include <stdexcept>
+#  if defined(MUSHCLIENT_FULL_BUILD)
+void AfxThrowArchiveException(int cause, LPCTSTR name = nullptr);
+#  else
+#    include <stdexcept>
 inline void AfxThrowArchiveException(int /*cause*/, LPCTSTR = nullptr)
 {
     throw std::runtime_error("CArchiveException");
 }
+#  endif
 #endif
 
 // ── Windows geometry structs ───────────────────────────────────────────────

@@ -112,6 +112,37 @@ static tGlobalConfigurationAlphaOption AlphaGlobalOptionsTable  [] = {
 };    // end of table
 
 
+#ifndef _WIN32
+// Map an alpha global-option's raw (Windows-style) table default to its POSIX /
+// macOS equivalent.  Writable user-data directories are rooted under the per-user
+// data directory (PortableUserDataDir(), e.g. ~/Library/Application Support/
+// MUSHclient/) because a .app bundle and the launch CWD are not writable homes
+// for user data.  Used by BOTH PopulateDatabase() (fresh DB) and the read path,
+// so the two cannot diverge — an earlier attempt overrode only the read path, so
+// a freshly-populated DB kept the CWD-relative ".\worlds\plugins\" defaults.
+static CString PosixAlphaGlobalDefault (const char * name, const CString & rawDefault)
+{
+  if (strcmp (name, "PluginsDirectory") == 0)
+    return (PortableUserDataDir () + "worlds/plugins/").c_str ();
+  if (strcmp (name, "StateFilesDirectory") == 0)
+    return (PortableUserDataDir () + "worlds/plugins/state/").c_str ();
+  if (strcmp (name, "DefaultWorldFileDirectory") == 0)
+    return (PortableUserDataDir () + "worlds/").c_str ();
+  if (strcmp (name, "DefaultLogFileDirectory") == 0)
+    return (PortableUserDataDir () + "logs/").c_str ();
+  if (strcmp (name, "AsciiArtFont") == 0)
+    return "fonts/standard.flf";
+  // "FixedSys" is a Windows-only bitmap font; leave empty so wxWidgets picks the
+  // platform monospace (DejaVu Sans Mono, etc.).
+  if ((strcmp (name, "DefaultOutputFont") == 0 ||
+       strcmp (name, "DefaultInputFont")  == 0 ||
+       strcmp (name, "FixedPitchFont")    == 0) &&
+      rawDefault == "FixedSys")
+    return CString ("");
+  return rawDefault;
+}
+#endif
+
 // copy the registry prefs into the SQLite database into table 'prefs'
 int CMUSHclientApp::PopulateDatabase (void)
   {
@@ -145,8 +176,12 @@ int CMUSHclientApp::PopulateDatabase (void)
     
 
     CString strDefault = AlphaGlobalOptionsTable [i].sDefault;
+#ifndef _WIN32
+    // Root writable user-data directories under the per-user data dir (macOS).
+    strDefault = PosixAlphaGlobalDefault (AlphaGlobalOptionsTable [i].pName, strDefault);
+#endif
 
-    CString strValue = GetProfileString ("Global prefs",  
+    CString strValue = GetProfileString ("Global prefs",
                                         AlphaGlobalOptionsTable [i].pName, 
                                         strDefault);     
 
@@ -199,22 +234,11 @@ void CMUSHclientApp::LoadGlobalsFromDatabase (void)
 #endif
       }
 #ifndef _WIN32
-    // On POSIX the static table defaults use Windows backslashes; replace them.
-    else if (strcmp (AlphaGlobalOptionsTable [i].pName, "DefaultLogFileDirectory") == 0)
-      strDefault = "./logs/";
-    else if (strcmp (AlphaGlobalOptionsTable [i].pName, "DefaultWorldFileDirectory") == 0)
-      strDefault = "./worlds/";
-    else if (strcmp (AlphaGlobalOptionsTable [i].pName, "PluginsDirectory") == 0)
-      strDefault = "./worlds/plugins/";
-    else if (strcmp (AlphaGlobalOptionsTable [i].pName, "AsciiArtFont") == 0)
-      strDefault = "fonts/standard.flf";
-    // "FixedSys" is a Windows-only bitmap font; use empty string on non-Windows
-    // so that wxWidgets picks the platform monospace (DejaVu Sans Mono, etc.).
-    else if ((strcmp (AlphaGlobalOptionsTable [i].pName, "DefaultOutputFont") == 0 ||
-              strcmp (AlphaGlobalOptionsTable [i].pName, "DefaultInputFont")  == 0 ||
-              strcmp (AlphaGlobalOptionsTable [i].pName, "FixedPitchFont")    == 0) &&
-             strDefault == "FixedSys")
-      strDefault = "";
+    // Everything except StateFilesDirectory (derived above) takes its POSIX/macOS
+    // default from the shared helper, so this read path and PopulateDatabase()
+    // always agree on where user data lives.
+    else
+      strDefault = PosixAlphaGlobalDefault (AlphaGlobalOptionsTable [i].pName, strDefault);
 #endif
 
     db_simple_query ((LPCTSTR) CFormat (

@@ -41,6 +41,75 @@ inline std::string PortableFilePath (const char * p)
   return s;
 }
 
+// ── Per-user writable app-data directories (macOS / POSIX) ───────────────────
+// A macOS .app bundle is read-only, so MUSHclient cannot keep its writable files
+// next to the executable (nor rely on the launch CWD) the way the Windows build
+// does.  These helpers return — and create on first use — the conventional
+// per-user locations, so the same canonical code paths work on every platform:
+//
+//   Settings (preferences DB, MUSHclient.ini) → ~/Library/Preferences/MUSHclient/
+//   Data     (plugins, plugin state, logs,    → ~/Library/Application Support/
+//             saved worlds, downloaded media)     MUSHclient/
+//
+// On non-Apple POSIX the XDG base-directory spec is honoured.  Windows is wholly
+// unaffected: it keeps its historical working-directory behaviour and never calls
+// these.  Both returned paths end in '/'.
+#include <cstdlib>      // getenv
+#include <sys/stat.h>   // mkdir, stat
+
+// mkdir -p: create each component of a (possibly trailing-slash) absolute path.
+inline bool PortableMakeDirs (const std::string & path)
+{
+  if (path.empty ())
+    return false;
+  std::string acc;
+  for (std::string::size_type i = 0; i < path.size (); ++i)
+    {
+    acc += path [i];
+    if (path [i] == '/' && acc.size () > 1)
+      ::mkdir (acc.c_str (), 0755);          // intermediate; ignore EEXIST
+    }
+  ::mkdir (path.c_str (), 0755);             // final component, if no trailing '/'
+  struct stat st;
+  return ::stat (path.c_str (), &st) == 0 && S_ISDIR (st.st_mode);
+}
+
+// ~/Library/Preferences/MUSHclient/  (macOS)  ·  $XDG_CONFIG_HOME or ~/.config (else)
+inline std::string PortableUserSettingsDir ()
+{
+  const char * home = getenv ("HOME");
+  if (!home || !*home)
+    return std::string ();                   // caller falls back to a relative path
+  std::string dir (home);
+#if defined (__APPLE__)
+  dir += "/Library/Preferences/MUSHclient/";
+#else
+  const char * xdg = getenv ("XDG_CONFIG_HOME");
+  if (xdg && *xdg) { dir = xdg; if (dir [dir.size () - 1] != '/') dir += '/'; dir += "MUSHclient/"; }
+  else            { dir += "/.config/MUSHclient/"; }
+#endif
+  PortableMakeDirs (dir);
+  return dir;
+}
+
+// ~/Library/Application Support/MUSHclient/  (macOS)  ·  $XDG_DATA_HOME or ~/.local/share (else)
+inline std::string PortableUserDataDir ()
+{
+  const char * home = getenv ("HOME");
+  if (!home || !*home)
+    return std::string ();
+  std::string dir (home);
+#if defined (__APPLE__)
+  dir += "/Library/Application Support/MUSHclient/";
+#else
+  const char * xdg = getenv ("XDG_DATA_HOME");
+  if (xdg && *xdg) { dir = xdg; if (dir [dir.size () - 1] != '/') dir += '/'; dir += "MUSHclient/"; }
+  else            { dir += "/.local/share/MUSHclient/"; }
+#endif
+  PortableMakeDirs (dir);
+  return dir;
+}
+
 // ── CFormat ────────────────────────────────────────────────────────────────
 // CFormat is declared in format.h (included via stdafx.h) and defined in
 // format.cpp. On non-Windows it inherits from CString just like on Windows.

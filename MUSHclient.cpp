@@ -290,7 +290,13 @@ BOOL CMUSHclientApp::InitInstance()
    // Change the name of the .INI file--CWinApp destructor will free
    // the memory.
 
+#ifdef _WIN32
    CString strIniFile (working_dir);
+#else
+   // settings (this .ini and the prefs DB below) live in the per-user settings
+   // directory (~/Library/Preferences/MUSHclient/ on macOS), not the launch CWD.
+   CString strIniFile (PortableUserSettingsDir ().c_str ());
+#endif
    strIniFile += "MUSHclient.ini";
 
    m_pszProfileName=_tcsdup(strIniFile);
@@ -303,6 +309,7 @@ BOOL CMUSHclientApp::InitInstance()
   int rc;
   CFileStatus	status;
 
+#ifdef _WIN32
   // initially look in MUSHclient working directory for database
   m_PreferencesDatabaseName = working_dir;
   m_PreferencesDatabaseName += PREFERENCES_DATABASE_FILE;
@@ -320,6 +327,15 @@ BOOL CMUSHclientApp::InitInstance()
 
     // if not, leave in the working directory
     }
+#else
+  // On macOS/POSIX the preferences database lives in the per-user settings
+  // directory (~/Library/Preferences/MUSHclient/ etc.); sqlite3_open() creates
+  // it there.  There is no read-only "application directory" fallback — a .app
+  // bundle is not writable.
+  (void) status;
+  m_PreferencesDatabaseName = PortableUserSettingsDir ();
+  m_PreferencesDatabaseName += PREFERENCES_DATABASE_FILE;
+#endif
 
 
   db = NULL;

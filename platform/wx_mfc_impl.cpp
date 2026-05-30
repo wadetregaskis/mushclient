@@ -1583,6 +1583,29 @@ static void* hook_open_world_file(const char* path)
                         static_cast<wxWindow*>(App.m_pMainWnd->m_hWnd));
     if (!mdiParent || !path || !*path) return nullptr;
 
+    // If this world file is already open, activate its window instead of opening
+    // a second copy.  This happens when a world is BOTH in the auto-reopen
+    // WorldList (opened by InitInstance) AND passed on the command line / double-
+    // clicked / chosen from File > Recent.  Matches Windows MUSHclient, which
+    // focuses the existing world rather than loading a duplicate.
+    {
+        char canon[4096];
+        std::string keyNew = ::realpath(path, canon) ? canon : path;
+        for (const auto& kv : s_docFrameMap) {
+            if (!kv.first || !kv.second) continue;
+            CString existing = kv.first->GetPathName();
+            if (existing.IsEmpty()) continue;
+            char canon2[4096];
+            const char* ep = static_cast<const char*>((LPCTSTR) existing);
+            std::string keyOld = ::realpath(ep, canon2) ? canon2 : ep;
+            if (keyNew == keyOld) {
+                kv.second->Activate();
+                kv.second->Raise();
+                return kv.first;            // already open → return the existing doc
+            }
+        }
+    }
+
     CMUSHclientDoc* doc = new CMUSHclientDoc();
 
     // Initialise colour tables (same as hook_new_world; overridden by world file).
@@ -1620,6 +1643,10 @@ static void* hook_open_world_file(const char* path)
         world_list_remove(path);
         return nullptr;
     }
+
+    // Record the file path on the document (the base OnOpenDocument doesn't), so
+    // it can be identified as already-open above, and so Save writes back here.
+    doc->SetPathName(path);
 
     // Patch custom-text colours to be visible (same as hook_new_world).
     for (int i = 0; i < MAX_CUSTOM; ++i)

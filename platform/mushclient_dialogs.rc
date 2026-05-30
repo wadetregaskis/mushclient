@@ -1,0 +1,3238 @@
+// MUSHclient dialog + menu resources, decompiled from the MFC localisation
+// DLL (MUSHclient 5.06 locale/en.dll, RT_DIALOG + RT_MENU) by
+// tools/decompile_dialogs.py.  Numeric IDs mapped to resource.h symbols.
+//
+// NOT part of the Windows resource compile (Windows loads these from the
+// localisation DLL at runtime).  This file is bundled into the macOS .app
+// and parsed by the wx MFC-dialog shim so the canonical dialogs/**/*.cpp
+// render natively.  Regenerate with tools/decompile_dialogs.py.
+#include "resource.h"
+#include "afxres.h"
+
+IDD_ABOUTBOX DIALOGEX 34, 22, 252, 173
+STYLE 0x80C800C0
+CAPTION "About MUSHclient"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "OK", IDOK, "Button", 0x50030001, 6, 149, 57, 14
+    CONTROL "&Credits...", IDC_CREDITS, "Button", 0x50010000, 104, 149, 50, 14
+    CONTROL "&License ...", IDC_LICENSE, "Button", 0x50010000, 195, 149, 50, 14
+    CONTROL "", IDC_LOGO, "Static", 0x50000003, 9, 6, 20, 20
+    CONTROL "MUSHclient", IDC_STATIC, "Static", 0x50020000, 43, 4, 39, 8
+    CONTROL "Copyright © 2007 - Gammon Software Solutions\nAll rights reserved worldwide by Gammon Software Solutions.", IDC_STATIC, "Static", 0x50020000, 43, 24, 196, 18
+    CONTROL "Version (entered at runtime)", IDC_VERSION_LABEL, "Static", 0x50020000, 89, 4, 105, 8
+    CONTROL "Distributed as FreeWare.", IDC_STATIC, "Static", 0x50020000, 4, 106, 123, 10
+    CONTROL "Support:", IDC_STATIC, "Static", 0x50020002, 7, 53, 28, 8
+    CONTROL "Web:", IDC_STATIC, "Static", 0x50020002, 17, 70, 18, 8
+    CONTROL "Email address", IDC_EMAIL_ADDRESS, "Static", 0x50020000, 39, 53, 201, 8
+    CONTROL "Web address", IDC_WEB_ADDRESS, "Static", 0x50020000, 39, 70, 201, 8
+    CONTROL "Changes:", IDC_STATIC, "Static", 0x50020002, 4, 87, 31, 8
+    CONTROL "MUSHclient change history", IDC_CHANGES_ADDRESS, "Static", 0x50020000, 39, 87, 201, 8
+    CONTROL "See License Agreement for limitation of liability for use of this program.", IDC_STATIC, "Static", 0x50020000, 4, 124, 216, 19
+END
+
+IDD_TIP DIALOGEX 0, 0, 231, 164
+STYLE 0x80C800C0
+CAPTION "Tip of the Day"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_STATIC, "Static", 0x50000007, 12, 11, 207, 123
+    CONTROL "Some String", IDC_TIPSTRING, "Static", 0x50020000, 28, 63, 177, 60
+    CONTROL "&Show Tips on StartUp", IDC_STARTUP, "Button", 0x50030003, 13, 146, 85, 10
+    CONTROL "&Next Tip", IDC_NEXTTIP, "Button", 0x50030000, 109, 143, 50, 14
+    CONTROL "&Close", IDOK, "Button", 0x50030001, 168, 143, 50, 14
+    CONTROL "", IDC_BULB, "Static", 0x5000000E, 20, 17, 190, 111
+END
+
+IDD_COMMAND_HISTORY DIALOGEX 0, 0, 282, 215
+STYLE 0x90C800C0
+CAPTION "Command history"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_COMMANDS, "ListBox", 0x50B10101, 10, 5, 260, 125
+    CONTROL "&Recall", IDOK, "Button", 0x50010001, 9, 176, 50, 14
+    CONTROL "&Do", IDC_DO, "Button", 0x50010000, 9, 195, 50, 14
+    CONTROL "N&otepad...", IDC_NOTEPAD, "Button", 0x50010000, 77, 176, 50, 14
+    CONTROL "&Find...", IDC_FIND, "Button", 0x50010000, 145, 176, 50, 14
+    CONTROL "Find &Next", IDC_FIND_NEXT, "Button", 0x50010000, 145, 195, 50, 14
+    CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 213, 176, 50, 14
+    CONTROL "Close", IDCANCEL, "Button", 0x50010000, 213, 195, 50, 14
+    CONTROL "", IDC_HISTORY_ITEM, "Edit", 0x50A10844, 10, 135, 260, 35
+END
+
+IDD_PREFS_P1 DIALOGEX 0, 0, 520, 350
+STYLE 0x40C00040
+CAPTION "General"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "World &Name:", IDC_STATIC, "Static", 0x50020002, 37, 37, 42, 8
+    CONTROL "", IDC_MUSH_NAME, "Edit", 0x50810080, 83, 35, 199, 13
+    CONTROL "MUD address and port", IDC_STATIC, "Button", 0x50000007, 12, 73, 245, 101
+    CONTROL "&TCP/IP Address:", IDC_STATIC, "Static", 0x50020002, 24, 90, 54, 8
+    CONTROL "", IDC_SERVER, "Edit", 0x50810080, 82, 88, 165, 13
+    CONTROL "&Port Number:", IDC_STATIC, "Static", 0x50020002, 36, 111, 42, 8
+    CONTROL "", IDC_CHANNEL, "Edit", 0x50812000, 82, 108, 30, 14
+    CONTROL "Clear Cached IP", IDC_BUTTON2, "Button", 0x50010000, 82, 136, 67, 14
+    CONTROL "Pr&oxy Server", IDC_STATIC, "Button", 0x50000007, 325, 73, 173, 101
+    CONTROL "Type:", IDC_STATIC, "Static", 0x50020002, 343, 93, 19, 8
+    CONTROL "", IDC_PROXY_TYPE, "ComboBox", 0x50210003, 369, 88, 45, 50
+    CONTROL "&Address:", IDC_STATIC, "Static", 0x50020002, 333, 112, 28, 8
+    CONTROL "", IDC_PROXY_SERVER_NAME, "Edit", 0x50810080, 369, 109, 95, 13
+    CONTROL "Port:", IDC_STATIC, "Static", 0x50020002, 345, 131, 16, 8
+    CONTROL "", IDC_PROXY_PORT, "Edit", 0x50812080, 369, 128, 30, 13
+    CONTROL "Proxy server pass&word...", IDC_BUTTON1, "Button", 0x50010000, 369, 151, 95, 14
+    CONTROL "&Save World Automatically On Close", IDC_SAVE_AUTOMATICALLY, "Button", 0x50010003, 25, 179, 127, 10
+    CONTROL "Looking for a MUD to connect to? Click on the link below for some suggested lists of MUDs.", IDC_STATIC, "Static", 0x50020000, 53, 263, 301, 11
+    CONTROL "MUD lists", IDC_MUD_LISTS, "Static", 0x50020000, 86, 279, 334, 8
+    CONTROL "Found a bug? Have a suggestion? Report it here:", IDC_STATIC, "Static", 0x50020000, 53, 313, 157, 8
+    CONTROL "Bug report URL", IDC_BUG_REPORT, "Static", 0x50020000, 84, 327, 349, 8
+END
+
+IDD_PREFS_P2 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Sound"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "New activity sound", IDC_STATIC, "Button", 0x50000007, 127, 128, 250, 95
+    CONTROL "Sound pathname", IDC_SOUND_PATH, "Static", 0x50020000, 132, 143, 240, 10
+    CONTROL "&Browse...", IDC_BROWSE_SOUNDS, "Button", 0x50010000, 137, 163, 50, 14
+    CONTROL "&Test", IDC_TEST_SOUND, "Button", 0x50010000, 137, 183, 50, 14
+    CONTROL "&No sound", IDC_NO_SOUND, "Button", 0x50010000, 137, 203, 50, 14
+END
+
+IDD_PREFS_P3 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Custom Colours"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_CUSTOM_NAME1, "Edit", 0x50810080, 94, 13, 98, 14
+    CONTROL "1", IDC_SWATCH_CUSTOM1, "Button", 0x5001000B, 202, 13, 15, 15
+    CONTROL "1", IDC_SWATCH_CUSTOM17, "Button", 0x5001000B, 224, 13, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME2, "Edit", 0x50810080, 94, 33, 98, 14
+    CONTROL "2", IDC_SWATCH_CUSTOM2, "Button", 0x5001000B, 202, 34, 15, 15
+    CONTROL "2", IDC_SWATCH_CUSTOM18, "Button", 0x5001000B, 224, 34, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME3, "Edit", 0x50810080, 94, 53, 98, 14
+    CONTROL "3", IDC_SWATCH_CUSTOM3, "Button", 0x5001000B, 202, 53, 15, 15
+    CONTROL "3", IDC_SWATCH_CUSTOM19, "Button", 0x5001000B, 224, 53, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME4, "Edit", 0x50810080, 94, 73, 98, 14
+    CONTROL "4", IDC_SWATCH_CUSTOM4, "Button", 0x5001000B, 202, 74, 15, 15
+    CONTROL "4", IDC_SWATCH_CUSTOM20, "Button", 0x5001000B, 224, 74, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME5, "Edit", 0x50810080, 94, 93, 98, 14
+    CONTROL "5", IDC_SWATCH_CUSTOM5, "Button", 0x5001000B, 202, 93, 15, 15
+    CONTROL "5", IDC_SWATCH_CUSTOM21, "Button", 0x5001000B, 224, 93, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME6, "Edit", 0x50810080, 94, 113, 98, 14
+    CONTROL "6", IDC_SWATCH_CUSTOM6, "Button", 0x5001000B, 202, 114, 15, 15
+    CONTROL "6", IDC_SWATCH_CUSTOM22, "Button", 0x5001000B, 224, 114, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME7, "Edit", 0x50810080, 94, 133, 98, 14
+    CONTROL "7", IDC_SWATCH_CUSTOM7, "Button", 0x5001000B, 202, 133, 15, 15
+    CONTROL "7", IDC_SWATCH_CUSTOM23, "Button", 0x5001000B, 224, 133, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME8, "Edit", 0x50810080, 94, 153, 98, 14
+    CONTROL "8", IDC_SWATCH_CUSTOM8, "Button", 0x5001000B, 202, 154, 15, 15
+    CONTROL "8", IDC_SWATCH_CUSTOM24, "Button", 0x5001000B, 224, 154, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME9, "Edit", 0x50810080, 94, 173, 98, 14
+    CONTROL "9", IDC_SWATCH_CUSTOM9, "Button", 0x5001000B, 202, 173, 15, 15
+    CONTROL "9", IDC_SWATCH_CUSTOM25, "Button", 0x5001000B, 224, 173, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME10, "Edit", 0x50810080, 94, 193, 98, 14
+    CONTROL "10", IDC_SWATCH_CUSTOM10, "Button", 0x5001000B, 202, 194, 15, 15
+    CONTROL "10", IDC_SWATCH_CUSTOM26, "Button", 0x5001000B, 224, 194, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME11, "Edit", 0x50810080, 94, 213, 98, 14
+    CONTROL "11", IDC_SWATCH_CUSTOM11, "Button", 0x5001000B, 202, 213, 15, 15
+    CONTROL "11", IDC_SWATCH_CUSTOM27, "Button", 0x5001000B, 224, 213, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME12, "Edit", 0x50810080, 94, 233, 98, 14
+    CONTROL "12", IDC_SWATCH_CUSTOM12, "Button", 0x5001000B, 202, 234, 15, 15
+    CONTROL "12", IDC_SWATCH_CUSTOM28, "Button", 0x5001000B, 224, 234, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME13, "Edit", 0x50810080, 94, 253, 98, 14
+    CONTROL "13", IDC_SWATCH_CUSTOM13, "Button", 0x5001000B, 202, 253, 15, 15
+    CONTROL "13", IDC_SWATCH_CUSTOM29, "Button", 0x5001000B, 224, 253, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME14, "Edit", 0x50810080, 94, 273, 98, 14
+    CONTROL "14", IDC_SWATCH_CUSTOM14, "Button", 0x5001000B, 202, 274, 15, 15
+    CONTROL "14", IDC_SWATCH_CUSTOM30, "Button", 0x5001000B, 224, 274, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME15, "Edit", 0x50810080, 94, 293, 98, 14
+    CONTROL "15", IDC_SWATCH_CUSTOM15, "Button", 0x5001000B, 202, 293, 15, 15
+    CONTROL "15", IDC_SWATCH_CUSTOM31, "Button", 0x5001000B, 224, 293, 15, 15
+    CONTROL "", IDC_CUSTOM_NAME16, "Edit", 0x50810080, 94, 313, 98, 14
+    CONTROL "16", IDC_SWATCH_CUSTOM16, "Button", 0x5001000B, 202, 314, 15, 15
+    CONTROL "16", IDC_SWATCH_CUSTOM32, "Button", 0x5001000B, 224, 314, 15, 15
+    CONTROL "text/background", IDC_STATIC, "Static", 0x50020000, 196, 2, 54, 8
+    CONTROL "<- Swap ->", IDC_SWAP, "Button", 0x50010000, 196, 333, 48, 14
+    CONTROL "De&faults...", IDC_BUTTON1, "Button", 0x50010000, 331, 53, 65, 15
+    CONTROL "&Lighter", IDC_ALL_LIGHTER, "Button", 0x50010000, 331, 74, 65, 15
+    CONTROL "&Darker", IDC_ALL_DARKER, "Button", 0x50010000, 331, 94, 65, 15
+    CONTROL "&More colour", IDC_ALL_MORE_COLOUR, "Button", 0x50010000, 331, 114, 65, 15
+    CONTROL "L&ess colour", IDC_ALL_LESS_COLOUR, "Button", 0x50010000, 331, 134, 65, 15
+    CONTROL "&Invert", IDC_BUTTON2, "Button", 0x50010000, 331, 154, 65, 15
+    CONTROL "&Random...", IDC_SPECIAL_MOVE, "Button", 0x50010000, 331, 174, 65, 15
+    CONTROL "ANSI Colours for this world (for comparison)", IDC_STATIC, "Button", 0x50000007, 265, 272, 205, 45
+    CONTROL "B", IDC_BLACK_SWATCH, "Button", 0x5801000B, 274, 283, 13, 12
+    CONTROL "", IDC_RED_SWATCH, "Button", 0x5801000B, 300, 283, 13, 12
+    CONTROL "", IDC_GREEN_SWATCH, "Button", 0x5801000B, 324, 283, 13, 12
+    CONTROL "", IDC_YELLOW_SWATCH, "Button", 0x5801000B, 350, 283, 13, 12
+    CONTROL "", IDC_BLUE_SWATCH, "Button", 0x5801000B, 374, 283, 13, 12
+    CONTROL "", IDC_MAGENTA_SWATCH, "Button", 0x5801000B, 400, 283, 13, 12
+    CONTROL "", IDC_CYAN_SWATCH, "Button", 0x5801000B, 424, 283, 13, 12
+    CONTROL "T", IDC_WHITE_SWATCH, "Button", 0x5801000B, 450, 283, 13, 12
+    CONTROL "", IDC_BLACK_SWATCH_BOLD, "Button", 0x5801000B, 274, 298, 13, 12
+    CONTROL "", IDC_RED_SWATCH_BOLD, "Button", 0x5801000B, 300, 298, 13, 12
+    CONTROL "", IDC_GREEN_SWATCH_BOLD, "Button", 0x5801000B, 324, 298, 13, 12
+    CONTROL "", IDC_YELLOW_SWATCH_BOLD, "Button", 0x5801000B, 350, 298, 13, 12
+    CONTROL "", IDC_BLUE_SWATCH_BOLD, "Button", 0x5801000B, 374, 298, 13, 12
+    CONTROL "", IDC_MAGENTA_SWATCH_BOLD, "Button", 0x5801000B, 400, 298, 13, 12
+    CONTROL "", IDC_CYAN_SWATCH_BOLD, "Button", 0x5801000B, 424, 298, 13, 12
+    CONTROL "", IDC_WHITE_SWATCH_BOLD, "Button", 0x5801000B, 450, 298, 13, 12
+    CONTROL "Custom colour name", IDC_STATIC, "Static", 0x50020000, 94, 1, 65, 8
+    CONTROL "Use the ANSI Colour configuration tab to change the ANSI colours", IDC_STATIC, "Static", 0x50020000, 267, 322, 210, 8
+END
+
+IDD_PASSWORD DIALOGEX 0, 0, 211, 92
+STYLE 0x90C800C0
+CAPTION "Enter password"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Please enter password for:", IDC_STATIC, "Static", 0x50020000, 10, 10, 90, 8
+    CONTROL "Character name", IDC_CHARACTER, "Static", 0x50020000, 105, 10, 100, 8
+    CONTROL "", IDC_PASSWORD, "Edit", 0x508100A0, 10, 30, 190, 13
+    CONTROL "OK", IDOK, "Button", 0x50010001, 10, 65, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 75, 65, 50, 14
+    CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 150, 65, 50, 14
+END
+
+IDD_PREFS_P4 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Logging"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "File &Preamble:", IDC_STATIC, "Static", 0x50020000, 10, 7, 45, 8
+    CONTROL "", IDC_LOG_FILE_PREAMBLE, "Edit", 0x50A11004, 60, 7, 354, 56
+    CONTROL "?", IDC_BUTTON2, "Button", 0x50010000, 424, 7, 20, 12
+    CONTROL "...", IDC_EDIT_PREAMBLE, "Button", 0x50010000, 424, 33, 20, 12
+    CONTROL "File Pos&tamble:", IDC_STATIC, "Static", 0x50020000, 7, 76, 48, 8
+    CONTROL "", IDC_LOG_FILE_POSTAMBLE, "Edit", 0x50A11004, 61, 76, 354, 56
+    CONTROL "...", IDC_TEMPORARY_ALIAS, "Button", 0x50010000, 424, 76, 20, 12
+    CONTROL "Standard HTML preamble/postamble", IDC_BUTTON1, "Button", 0x50000000, 61, 138, 130, 14
+    CONTROL "What to log", IDC_STATIC, "Button", 0x50000007, 6, 162, 109, 54
+    CONTROL "Log &Output", IDC_LOG_OUTPUT, "Button", 0x50010003, 16, 174, 51, 10
+    CONTROL "Log &Commands", IDC_LOG_INPUT, "Button", 0x50010003, 16, 188, 65, 10
+    CONTROL "Log &Notes", IDC_LOG_NOTES, "Button", 0x50010003, 16, 202, 49, 10
+    CONTROL "Format of log", IDC_STATIC, "Button", 0x50000007, 148, 162, 109, 54
+    CONTROL "&HTML", IDC_LOG_HTML, "Button", 0x50010003, 160, 174, 36, 10
+    CONTROL "Colour", IDC_LOG_COLOUR, "Button", 0x50010003, 160, 188, 36, 10
+    CONTROL "Raw", IDC_RAW_LOG, "Button", 0x50010003, 160, 202, 31, 10
+    CONTROL "&Write world name to log file", IDC_WRITE_WORLD_NAME, "Button", 0x50010003, 285, 174, 101, 10
+    CONTROL "&Automatically log to this file:", IDC_STATIC, "Static", 0x50020000, 7, 226, 87, 8
+    CONTROL "", IDC_LOG_FILE, "Edit", 0x50810080, 7, 239, 307, 14
+    CONTROL "&Browse...", IDC_BROWSE, "Button", 0x50010000, 323, 239, 50, 14
+    CONTROL "Preamble", IDC_STATIC, "Static", 0x50020000, 148, 266, 30, 8
+    CONTROL "Output lines:", IDC_STATIC, "Static", 0x50020002, 16, 283, 40, 8
+    CONTROL "", IDC_LINE_PREAMBLE_OUTPUT, "Edit", 0x50810080, 65, 280, 196, 14
+    CONTROL "", IDC_LINE_POSTAMBLE_OUTPUT, "Edit", 0x50810080, 284, 280, 196, 14
+    CONTROL "Commands:", IDC_STATIC, "Static", 0x50020002, 18, 302, 38, 8
+    CONTROL "", IDC_LINE_PREAMBLE_INPUT, "Edit", 0x50810080, 65, 299, 196, 14
+    CONTROL "", IDC_LINE_POSTAMBLE_INPUT, "Edit", 0x50810080, 284, 299, 196, 14
+    CONTROL "Script notes:", IDC_STATIC, "Static", 0x50020002, 16, 321, 40, 8
+    CONTROL "", IDC_LINE_PREAMBLE_NOTES, "Edit", 0x50810080, 65, 318, 196, 14
+    CONTROL "", IDC_LINE_POSTAMBLE_NOTES, "Edit", 0x50810080, 284, 318, 196, 14
+    CONTROL "All fields above can include date fields, eg. %a %d %b %Y", IDC_STATIC, "Static", 0x50020000, 65, 340, 181, 8
+    CONTROL "Postamble", IDC_STATIC, "Static", 0x50020000, 365, 266, 34, 8
+END
+
+IDD_PREFS_P5 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "ANSI colours"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Black:", IDC_STATIC, "Static", 0x50020000, 82, 35, 21, 8
+    CONTROL "Red:", IDC_STATIC, "Static", 0x50020000, 87, 56, 16, 8
+    CONTROL "Green:", IDC_STATIC, "Static", 0x50020000, 81, 75, 22, 8
+    CONTROL "Yellow:", IDC_STATIC, "Static", 0x50020000, 79, 96, 24, 8
+    CONTROL "Blue:", IDC_STATIC, "Static", 0x50020000, 86, 115, 17, 8
+    CONTROL "Magenta:", IDC_STATIC, "Static", 0x50020000, 72, 131, 31, 8
+    CONTROL "Cyan:", IDC_STATIC, "Static", 0x50020000, 84, 155, 19, 8
+    CONTROL "White:", IDC_STATIC, "Static", 0x50020000, 81, 176, 22, 8
+    CONTROL "Normal", IDC_STATIC, "Button", 0x50000007, 108, 22, 33, 170
+    CONTROL "B", IDC_BLACK_SWATCH, "Button", 0x5001000B, 118, 32, 15, 15
+    CONTROL "", IDC_RED_SWATCH, "Button", 0x5001000B, 118, 52, 15, 15
+    CONTROL "", IDC_GREEN_SWATCH, "Button", 0x5001000B, 118, 72, 15, 15
+    CONTROL "", IDC_YELLOW_SWATCH, "Button", 0x5001000B, 118, 92, 15, 15
+    CONTROL "", IDC_BLUE_SWATCH, "Button", 0x5001000B, 118, 112, 15, 15
+    CONTROL "", IDC_MAGENTA_SWATCH, "Button", 0x5001000B, 118, 132, 15, 15
+    CONTROL "", IDC_CYAN_SWATCH, "Button", 0x5001000B, 118, 152, 15, 15
+    CONTROL "T", IDC_WHITE_SWATCH, "Button", 0x5001000B, 118, 172, 15, 15
+    CONTROL "Bold", IDC_STATIC, "Button", 0x50000007, 191, 22, 33, 170
+    CONTROL "", IDC_BLACK_SWATCH_BOLD, "Button", 0x5001000B, 201, 32, 15, 15
+    CONTROL "", IDC_RED_SWATCH_BOLD, "Button", 0x5001000B, 201, 52, 15, 15
+    CONTROL "", IDC_GREEN_SWATCH_BOLD, "Button", 0x5001000B, 201, 72, 15, 15
+    CONTROL "", IDC_YELLOW_SWATCH_BOLD, "Button", 0x5001000B, 201, 92, 15, 15
+    CONTROL "", IDC_BLUE_SWATCH_BOLD, "Button", 0x5001000B, 201, 112, 15, 15
+    CONTROL "", IDC_MAGENTA_SWATCH_BOLD, "Button", 0x5001000B, 201, 132, 15, 15
+    CONTROL "", IDC_CYAN_SWATCH_BOLD, "Button", 0x5001000B, 201, 152, 15, 15
+    CONTROL "", IDC_WHITE_SWATCH_BOLD, "Button", 0x5001000B, 201, 172, 15, 15
+    CONTROL "Lighter", IDC_NORMAL_LIGHTER, "Button", 0x50010000, 92, 207, 65, 15
+    CONTROL "Darker", IDC_NORMAL_DARKER, "Button", 0x50010000, 92, 225, 65, 15
+    CONTROL "Lighter", IDC_BOLD_LIGHTER, "Button", 0x50010000, 175, 207, 65, 15
+    CONTROL "Darker", IDC_BOLD_DARKER, "Button", 0x50010000, 175, 225, 65, 15
+    CONTROL "<- Swap ->", IDC_SWAP, "Button", 0x50010000, 139, 255, 50, 15
+    CONTROL "B = Normal Background", IDC_STATIC, "Static", 0x50020000, 234, 36, 76, 8
+    CONTROL "&ANSI colours...", IDC_ANSI_COLOURS, "Button", 0x50010000, 331, 25, 65, 15
+    CONTROL "&Load...", IDC_LOAD_COLOURS, "Button", 0x50010000, 331, 46, 65, 15
+    CONTROL "&Save...", IDC_SAVE_COLOURS, "Button", 0x50010000, 331, 67, 65, 15
+    CONTROL "L&ighter", IDC_ALL_LIGHTER, "Button", 0x50010000, 331, 88, 65, 15
+    CONTROL "&Darker", IDC_ALL_DARKER, "Button", 0x50010000, 331, 109, 65, 15
+    CONTROL "&More colour", IDC_ALL_MORE_COLOUR, "Button", 0x50010000, 331, 130, 65, 15
+    CONTROL "L&ess colour", IDC_ALL_LESS_COLOUR, "Button", 0x50010000, 331, 151, 65, 15
+    CONTROL "&Copy to custom...", IDC_BUTTON1, "Button", 0x50010000, 331, 172, 65, 15
+    CONTROL "Invert", IDC_BUTTON2, "Button", 0x50010000, 331, 193, 65, 15
+    CONTROL "&Random...", IDC_SPECIAL_MOVE, "Button", 0x50010000, 331, 214, 65, 15
+    CONTROL "T = Normal Text", IDC_STATIC, "Static", 0x50020000, 234, 176, 52, 8
+    CONTROL "Use Custom Colour 16 as default", IDC_USE_CUSTOM_COLOUR_16, "Button", 0x50010003, 81, 294, 119, 10
+    CONTROL "O&verride with default colours", IDC_USE_DEFAULT_COLOURS, "Button", 0x50010003, 81, 309, 105, 10
+END
+
+IDD_PREFS_P6 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Macros"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Generic1", IDC_MACROS_LIST, "SysListView32", 0x5081000D, 10, 3, 499, 282
+    CONTROL "Customise output from function keys and 'Game' menu.", IDC_STATIC, "Static", 0x50020000, 12, 294, 173, 8
+    CONTROL "O&verride with default macros", IDC_USE_DEFAULT_MACROS, "Button", 0x50010003, 12, 310, 105, 10
+    CONTROL "&Edit...", IDC_EDIT_MACRO, "Button", 0x50010000, 12, 329, 45, 14
+    CONTROL "&Find...", IDC_FIND, "Button", 0x50010000, 148, 310, 45, 14
+    CONTROL "Find &Next", IDC_FIND_NEXT, "Button", 0x50010000, 148, 329, 45, 14
+    CONTROL "&Load...", IDC_LOAD_MACRO, "Button", 0x50010000, 218, 310, 45, 14
+    CONTROL "&Save...", IDC_SAVE_MACRO, "Button", 0x50010000, 218, 329, 45, 14
+END
+
+IDD_EDIT_MACRO DIALOGEX 0, 0, 520, 350
+STYLE 0x90C800C0
+CAPTION "Edit macro"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Send:", IDC_STATIC, "Static", 0x50020000, 15, 32, 25, 8
+    CONTROL "", IDC_MACRO_TEXT, "Edit", 0x508110C4, 16, 46, 471, 199
+    CONTROL "&Edit...", IDC_EDIT, "Button", 0x50010000, 16, 252, 50, 14
+    CONTROL "OK", IDOK, "Button", 0x50010001, 15, 327, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 105, 327, 50, 14
+    CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 195, 327, 50, 14
+    CONTROL "Send action", IDC_STATIC, "Button", 0x50000007, 16, 284, 230, 30
+    CONTROL "&Replace", IDC_SEND_TYPE, "Button", 0x50020009, 31, 300, 40, 10
+    CONTROL "Send &Now", IDC_RADIO2, "Button", 0x50000009, 113, 300, 50, 10
+    CONTROL "&Insert", IDC_RADIO3, "Button", 0x50000009, 205, 300, 35, 10
+    CONTROL "Macro type:", IDC_STATIC, "Static", 0x50020000, 15, 11, 45, 8
+    CONTROL "<Macro description>", IDC_MACRO_TYPE, "Static", 0x50020000, 70, 11, 125, 8
+END
+
+IDD_PREFS_P7 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Aliases"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Generic1", IDC_ALIASES_LIST, "SysListView32", 0x50810009, 10, 3, 499, 260
+    CONTROL "Ena&ble Aliases", IDC_ENABLE_ALIASES, "Button", 0x50010003, 66, 279, 62, 10
+    CONTROL "O&verride with default aliases", IDC_USE_DEFAULT_ALIASES, "Button", 0x50010003, 66, 290, 104, 10
+    CONTROL "F&ilter by:", IDC_FILTER, "Button", 0x50010003, 193, 289, 42, 10
+    CONTROL "...", IDC_BUTTON1, "Button", 0x50010000, 241, 290, 21, 10
+    CONTROL "&Add...", IDC_ADD_ALIAS, "Button", 0x50010000, 11, 284, 45, 14
+    CONTROL "&Edit...", IDC_CHANGE_ALIAS, "Button", 0x50010000, 11, 303, 45, 14
+    CONTROL "&Remove", IDC_DELETE_ALIAS, "Button", 0x50010000, 11, 322, 45, 14
+    CONTROL "&Find...", IDC_FIND, "Button", 0x50010000, 64, 303, 45, 14
+    CONTROL "Find &Next", IDC_FIND_NEXT, "Button", 0x50010000, 64, 322, 45, 14
+    CONTROL "&Load...", IDC_LOAD_ALIAS, "Button", 0x50010000, 117, 303, 45, 14
+    CONTROL "&Save...", IDC_SAVE_ALIAS, "Button", 0x50010000, 117, 322, 45, 14
+    CONTROL "Move &Up", IDC_MOVE_UP, "Button", 0x50010000, 171, 303, 45, 14
+    CONTROL "Move &Down", IDC_MOVE_DOWN, "Button", 0x50010000, 171, 322, 45, 14
+    CONTROL "&Copy", IDC_COPY, "Button", 0x50010000, 231, 303, 31, 14
+    CONTROL "&Paste", IDC_PASTE, "Button", 0x50010000, 231, 322, 31, 14
+    CONTROL "0 aliases.", IDC_COUNT, "Static", 0x50020000, 13, 268, 244, 8
+END
+
+IDD_PREFS_P8 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Triggers"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Generic1", IDC_TRIGGERS_LIST, "SysListView32", 0x50810009, 10, 3, 499, 260
+    CONTROL "Enable &Triggers", IDC_ENABLE_TRIGGERS, "Button", 0x50010003, 66, 279, 65, 10
+    CONTROL "Enable Trigger S&ounds", IDC_ENABLE_TRIGGERS_SOUNDS, "Button", 0x50010003, 151, 279, 88, 10
+    CONTROL "O&verride with default triggers", IDC_USE_DEFAULT_TRIGGERS, "Button", 0x50010003, 66, 290, 105, 10
+    CONTROL "F&ilter by:", IDC_FILTER, "Button", 0x50010003, 193, 289, 42, 10
+    CONTROL "...", IDC_BUTTON1, "Button", 0x50010000, 241, 290, 21, 10
+    CONTROL "&Add...", IDC_ADD_TRIGGER, "Button", 0x50010000, 11, 284, 45, 14
+    CONTROL "&Edit...", IDC_CHANGE_TRIGGER, "Button", 0x50010000, 11, 303, 45, 14
+    CONTROL "&Remove", IDC_DELETE_TRIGGER, "Button", 0x50010000, 11, 322, 45, 14
+    CONTROL "&Find...", IDC_FIND, "Button", 0x50010000, 64, 303, 45, 14
+    CONTROL "Find &Next", IDC_FIND_NEXT, "Button", 0x50010000, 64, 322, 45, 14
+    CONTROL "&Load...", IDC_LOAD_TRIGGER, "Button", 0x50010000, 117, 303, 45, 14
+    CONTROL "&Save...", IDC_SAVE_TRIGGER, "Button", 0x50010000, 117, 322, 45, 14
+    CONTROL "Move &Up", IDC_MOVE_UP, "Button", 0x50010000, 171, 303, 45, 14
+    CONTROL "Move &Down", IDC_MOVE_DOWN, "Button", 0x50010000, 171, 322, 45, 14
+    CONTROL "&Copy", IDC_COPY, "Button", 0x50010000, 231, 303, 31, 14
+    CONTROL "&Paste", IDC_PASTE, "Button", 0x50010000, 231, 322, 31, 14
+    CONTROL "0 triggers.", IDC_COUNT, "Static", 0x50020000, 13, 268, 244, 8
+END
+
+IDD_PREFS_P9 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Commands"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Output Window", IDC_STATIC, "Button", 0x50000007, 7, 8, 256, 38
+    CONTROL "Echo My &Input In:", IDC_ECHO_INPUT, "Button", 0x50010003, 14, 24, 72, 10
+    CONTROL "", IDC_ECHO_COLOUR, "ComboBox", 0x50210213, 88, 22, 103, 215
+    CONTROL "", IDC_INPUT_SWATCH, "Button", 0x5801000B, 207, 20, 15, 15
+    CONTROL "", IDC_INPUT_SWATCH2, "Button", 0x5801000B, 232, 20, 15, 15
+    CONTROL "Speed Walking", IDC_STATIC, "Button", 0x50000007, 7, 50, 256, 43
+    CONTROL "Enable &Speed Walking, prefix is:", IDC_ENABLE_SPEED_WALK, "Button", 0x50010003, 22, 62, 118, 10
+    CONTROL "", IDC_SPEED_WALK_PREFIX, "Edit", 0x50810080, 143, 60, 25, 12
+    CONTROL "Filler:", IDC_STATIC, "Static", 0x50020002, 20, 78, 17, 8
+    CONTROL "", IDC_SPEED_WALK_FILLER, "Edit", 0x50810080, 43, 76, 60, 12
+    CONTROL "Delay:", IDC_STATIC, "Static", 0x50020002, 109, 78, 27, 8
+    CONTROL "", IDC_SPEED_WALK_DELAY, "Edit", 0x50812082, 143, 76, 36, 12
+    CONTROL "ms.", IDC_STATIC, "Static", 0x50020000, 184, 80, 12, 8
+    CONTROL "Command Stacking", IDC_STATIC, "Button", 0x50000007, 7, 101, 256, 29
+    CONTROL "&Command Stacking Using:", IDC_ENABLE_COMMAND_STACKING, "Button", 0x50010003, 23, 113, 99, 10
+    CONTROL "", IDC_COMMAND_STACK_CHARACTER, "Edit", 0x50810080, 128, 111, 23, 12
+    CONTROL "Command Window", IDC_STATIC, "Button", 0x50000007, 7, 139, 256, 121
+    CONTROL "Command Colours", IDC_STATIC, "Button", 0x50000007, 19, 153, 226, 39
+    CONTROL "", IDC_TEXT_SWATCH, "Button", 0x5001000B, 35, 166, 15, 15
+    CONTROL "on", IDC_STATIC, "Static", 0x50020000, 58, 169, 9, 8
+    CONTROL "", IDC_BACKGROUND_SWATCH, "Button", 0x5001000B, 75, 166, 15, 15
+    CONTROL "Font", IDC_STATIC, "Button", 0x50000007, 19, 198, 226, 53
+    CONTROL "Change &Font...", IDC_INPUT_FONT, "Button", 0x50010000, 31, 210, 60, 14
+    CONTROL "O&verride With Default", IDC_USE_DEFAULT_INPUT_FONT, "Button", 0x50010003, 101, 212, 84, 10
+    CONTROL "Font name", IDC_FONT_NAME, "Static", 0x50020000, 30, 226, 205, 8
+    CONTROL "Font style", IDC_INPUT_STYLE, "Static", 0x50020000, 30, 239, 150, 8
+    CONTROL "Spam prevention", IDC_STATIC, "Button", 0x50000007, 7, 271, 256, 67
+    CONTROL "Enable Spam Prevention", IDC_CHECK1, "Button", 0x50010003, 15, 283, 94, 10
+    CONTROL "Every", IDC_STATIC, "Static", 0x50020002, 13, 298, 19, 8
+    CONTROL "", IDC_SPAM_LINE_COUNT, "Edit", 0x50812082, 39, 296, 30, 12
+    CONTROL "identical commands", IDC_STATIC, "Static", 0x50020000, 75, 298, 63, 8
+    CONTROL "Send", IDC_STATIC, "Static", 0x50020002, 15, 314, 18, 8
+    CONTROL "", IDC_SPAM_FILLER, "Edit", 0x50810080, 39, 312, 85, 12
+    CONTROL "Auto-repeat Command", IDC_AUTO_REPEAT, "Button", 0x50010003, 294, 57, 86, 10
+    CONTROL "Tab Completion In Lower Case", IDC_LOWER_CASE_TAB_COMPLETION, "Button", 0x50010003, 294, 68, 113, 10
+    CONTROL "Translate German characters", IDC_TRANSLATE_GERMAN, "Button", 0x50010003, 294, 78, 107, 10
+    CONTROL "Spell Check On Send", IDC_SPELL_CHECK_ON_SEND, "Button", 0x50010003, 294, 87, 84, 10
+    CONTROL "&Translate Backslash Sequences", IDC_TRANSLATE_BACKSLASH, "Button", 0x50010003, 294, 97, 118, 10
+    CONTROL "Keep Commands On Prompt Line", IDC_TRANSLATE_BACKSLASH2, "Button", 0x50010003, 294, 108, 120, 10
+    CONTROL "Ignore 'Echo Off' messages", IDC_NO_ECHO_OFF, "Button", 0x50010003, 294, 118, 102, 10
+    CONTROL "Tab Completion...", IDC_TAB_COMPLETION_DEFAULTS, "Button", 0x50010000, 294, 172, 90, 14
+    CONTROL "Keyboard preferences...", IDC_KEYBOARD_PREFS, "Button", 0x50010000, 294, 194, 90, 14
+    CONTROL "Command History", IDC_STATIC, "Button", 0x50000007, 294, 227, 149, 50
+    CONTROL "&Keep:", IDC_STATIC, "Static", 0x50020000, 313, 252, 20, 8
+    CONTROL "", IDC_HISTORY_LINES, "Edit", 0x50812080, 345, 250, 46, 12
+    CONTROL "Spin1", IDC_SPIN_HISTORY_LINES, "msctls_updown32", 0x500000B6, 383, 249, 11, 15
+    CONTROL "lines.", IDC_STATIC, "Static", 0x50020000, 413, 252, 17, 8
+END
+
+IDD_EDIT_ALIAS DIALOGEX 0, 0, 520, 350
+STYLE 0x90C800C0
+CAPTION "Edit alias"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Alias:", IDC_STATIC, "Static", 0x50020002, 5, 5, 25, 8
+    CONTROL "", IDC_ALIAS_NAME, "Edit", 0x50810080, 35, 3, 477, 12
+    CONTROL "...", IDC_EDIT2, "Button", 0x50010000, 35, 20, 20, 12
+    CONTROL "(edit)", IDC_STATIC, "Static", 0x50020000, 65, 22, 16, 8
+    CONTROL "Convert to Regular Expression", IDC_CONVERT_TO_REGEXP, "Button", 0x50010000, 103, 19, 110, 14
+    CONTROL "&Send:", IDC_STATIC, "Static", 0x50020000, 13, 41, 25, 8
+    CONTROL "", IDC_ALIAS_CONTENTS, "Edit", 0x50A11044, 13, 52, 346, 122
+    CONTROL "...", IDC_EDIT_SEND, "Button", 0x50010000, 15, 179, 20, 12
+    CONTROL "(edit)", IDC_STATIC, "Static", 0x50020000, 43, 182, 16, 8
+    CONTROL "Reverse Speedwalk", IDC_REVERSE, "Button", 0x50010000, 249, 180, 110, 14
+    CONTROL "Send To:", IDC_STATIC, "Static", 0x50020002, 13, 207, 30, 8
+    CONTROL "", IDC_SEND_TO, "ComboBox", 0x50210003, 49, 204, 90, 185
+    CONTROL "Seq&uence:", IDC_STATIC, "Static", 0x50020002, 7, 225, 36, 8
+    CONTROL "", IDC_SEQUENCE, "Edit", 0x50812082, 49, 222, 55, 12
+    CONTROL "La&bel:", IDC_STATIC, "Static", 0x50020002, 23, 243, 20, 8
+    CONTROL "", IDC_ALIAS_LABEL, "Edit", 0x50810080, 49, 240, 140, 12
+    CONTROL "Sc&ript:", IDC_STATIC, "Static", 0x50020002, 22, 261, 21, 8
+    CONTROL "", IDC_SCRIPT_NAME, "Edit", 0x50810080, 49, 258, 140, 12
+    CONTROL "&Group:", IDC_STATIC, "Static", 0x50020002, 21, 279, 22, 8
+    CONTROL "", IDC_PRINT_UNDERLINE6, "Edit", 0x50810080, 49, 276, 140, 12
+    CONTROL "Variable:", IDC_STATIC, "Static", 0x50020002, 15, 297, 28, 8
+    CONTROL "", IDC_VARIABLE, "Edit", 0x50810080, 49, 294, 140, 12
+    CONTROL "&Enabled", IDC_ENABLED, "Button", 0x50010003, 375, 51, 42, 10
+    CONTROL "&Omit From Log File", IDC_OMIT_FROM_LOG, "Button", 0x50010003, 375, 62, 74, 10
+    CONTROL "&Ignore Case", IDC_IGNORE_CASE, "Button", 0x50010003, 375, 73, 54, 10
+    CONTROL "Regular E&xpression", IDC_REGEXP, "Button", 0x50010003, 375, 84, 77, 10
+    CONTROL "Expand &Variables", IDC_EXPAND_VARIABLES, "Button", 0x50010003, 375, 95, 71, 10
+    CONTROL "Omit &From Output", IDC_OMIT_FROM_OUTPUT, "Button", 0x50010003, 375, 106, 71, 10
+    CONTROL "&Temporary", IDC_TEMPORARY_ALIAS, "Button", 0x50010003, 375, 117, 49, 10
+    CONTROL "&Keep Evaluating", IDC_KEEP_EVALUATING, "Button", 0x50010003, 375, 128, 68, 10
+    CONTROL "Echo Alias", IDC_CHECK1, "Button", 0x50010003, 375, 139, 49, 10
+    CONTROL "Omit From Command History", IDC_OMIT_FROM_COMMAND_HISTORY, "Button", 0x50010003, 375, 150, 104, 10
+    CONTROL "&Menu", IDC_ALIAS_MENU, "Button", 0x50010003, 375, 161, 34, 10
+    CONTROL "One-shot", IDC_ONE_SHOT, "Button", 0x50010003, 375, 172, 45, 10
+    CONTROL "(included)", IDC_INCLUDED, "Static", 0x50020002, 353, 295, 139, 8
+    CONTROL "0 matches.", IDC_MATCHES, "Static", 0x50020002, 353, 311, 139, 8
+    CONTROL "0 calls.", IDC_INVOCATIONS, "Static", 0x50020002, 353, 327, 139, 8
+    CONTROL "OK", IDOK, "Button", 0x50010001, 15, 327, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 93, 327, 50, 14
+    CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 169, 327, 50, 14
+    CONTROL "", IDC_REGEXP_ERROR, "Static", 0x50020000, 225, 23, 287, 8
+END
+
+IDD_EDIT_TRIGGER DIALOGEX 0, 0, 520, 350
+STYLE 0x90C800C0
+CAPTION "Edit trigger"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Trigger:", IDC_STATIC, "Static", 0x50020002, 5, 3, 29, 8
+    CONTROL "", IDC_TRIGGER, "Edit", 0x50810080, 43, 1, 467, 12
+    CONTROL "...", IDC_EDIT, "Button", 0x50010000, 43, 18, 20, 12
+    CONTROL "(edit)", IDC_STATIC, "Static", 0x50020000, 69, 20, 16, 8
+    CONTROL "Convert to Regular Expression", IDC_CONVERT_TO_REGEXP, "Button", 0x50010000, 119, 17, 105, 14
+    CONTROL "", IDC_REGEXP_ERROR, "Static", 0x50020000, 231, 19, 274, 11
+    CONTROL "Mat&ch:", IDC_STATIC, "Static", 0x50020002, 5, 40, 23, 8
+    CONTROL "", IDC_MATCH_TEXT_COLOUR, "ComboBox", 0x50210003, 33, 37, 58, 185
+    CONTROL "on", IDC_STATIC, "Static", 0x50020000, 105, 40, 9, 8
+    CONTROL "", IDC_MATCH_BACK_COLOUR, "ComboBox", 0x50210003, 125, 37, 58, 185
+    CONTROL "Bold", IDC_MATCH_BOLD, "Button", 0x50010006, 195, 39, 30, 10
+    CONTROL "Italic", IDC_MATCH_ITALIC, "Button", 0x50010006, 243, 39, 31, 10
+    CONTROL "Inverse", IDC_MATCH_INVERSE, "Button", 0x50010006, 292, 39, 39, 10
+    CONTROL "&Send:", IDC_STATIC, "Static", 0x50020000, 8, 55, 24, 8
+    CONTROL "", IDC_TRIGGER_CONTENTS, "Edit", 0x50A11044, 8, 67, 346, 106
+    CONTROL "...", IDC_EDIT_SEND, "Button", 0x50010000, 8, 177, 20, 12
+    CONTROL "(edit)", IDC_STATIC, "Static", 0x50020000, 37, 179, 16, 8
+    CONTROL "Send to:", IDC_STATIC, "Static", 0x50020002, 21, 201, 28, 8
+    CONTROL "", IDC_SEND_TO, "ComboBox", 0x50210003, 55, 198, 89, 185
+    CONTROL "Seq&uence:", IDC_STATIC, "Static", 0x50020002, 13, 218, 36, 8
+    CONTROL "", IDC_SEQUENCE, "Edit", 0x50812082, 55, 215, 55, 12
+    CONTROL "Copy &wildcard:", IDC_STATIC, "Static", 0x50020002, 2, 235, 47, 8
+    CONTROL "", IDC_WILDCARD_CLIPBOARD, "ComboBox", 0x50210003, 55, 232, 60, 110
+    CONTROL "to Clipboard.", IDC_STATIC, "Static", 0x50020000, 129, 233, 40, 8
+    CONTROL "&Label:", IDC_STATIC, "Static", 0x50020002, 29, 252, 20, 8
+    CONTROL "", IDC_TRIGGER_NAME, "Edit", 0x50810080, 55, 249, 125, 12
+    CONTROL "Sc&ript:", IDC_STATIC, "Static", 0x50020002, 28, 269, 21, 8
+    CONTROL "", IDC_SCRIPT_NAME, "Edit", 0x50810080, 55, 266, 125, 12
+    CONTROL "&Group:", IDC_STATIC, "Static", 0x50020002, 27, 286, 22, 8
+    CONTROL "", IDC_PRINT_UNDERLINE6, "Edit", 0x50810080, 55, 283, 125, 12
+    CONTROL "Variable:", IDC_VARIABLE_LABEL, "Static", 0x50020002, 21, 303, 28, 8
+    CONTROL "", IDC_VARIABLE, "Edit", 0x50810080, 55, 300, 125, 12
+    CONTROL "En&abled", IDC_ENABLED, "Button", 0x50010003, 369, 48, 42, 10
+    CONTROL "&Ignore case", IDC_IGNORE_CASE, "Button", 0x50010003, 369, 60, 57, 10
+    CONTROL "&Omit from log file", IDC_OMIT_FROM_LOG, "Button", 0x50010003, 369, 72, 71, 10
+    CONTROL "O&mit from output", IDC_OMIT_FROM_OUTPUT, "Button", 0x50010003, 369, 84, 67, 10
+    CONTROL "&Keep evaluating", IDC_KEEP_EVALUATING, "Button", 0x50010003, 369, 96, 67, 10
+    CONTROL "Regular e&xpression", IDC_REGEXP, "Button", 0x50010003, 369, 108, 76, 10
+    CONTROL "Repeat on same line", IDC_REPEAT, "Button", 0x50010003, 369, 120, 81, 10
+    CONTROL "Expand variables", IDC_EXPAND_VARIABLES, "Button", 0x50010003, 369, 132, 70, 10
+    CONTROL "Temporary", IDC_TEMPORARY, "Button", 0x50010003, 369, 144, 49, 10
+    CONTROL "Multi-li&ne, match:", IDC_CHECK1, "Button", 0x50010003, 369, 156, 69, 10
+    CONTROL "", IDC_LINES_TO_MATCH, "Edit", 0x50812082, 447, 153, 33, 14
+    CONTROL "lines.", IDC_STATIC, "Static", 0x50020000, 486, 156, 17, 8
+    CONTROL "Make wildcards lower-case", IDC_LOWERCASE_WILDCARD, "Button", 0x50010003, 369, 168, 99, 10
+    CONTROL "One-shot", IDC_ONE_SHOT, "Button", 0x50010003, 369, 180, 44, 10
+    CONTROL "Change colour and style to:", IDC_STATIC, "Button", 0x50000007, 206, 196, 300, 42
+    CONTROL "", IDC_TRIGGER_COLOUR, "ComboBox", 0x50210213, 231, 206, 100, 201
+    CONTROL "", IDC_COLOUR_CHANGE_TYPE, "ComboBox", 0x50210003, 349, 206, 45, 47
+    CONTROL "Bold", IDC_BOLD, "Button", 0x50010003, 230, 223, 30, 10
+    CONTROL "Italic", IDC_ITALIC, "Button", 0x50010003, 264, 223, 31, 10
+    CONTROL "Underline", IDC_UNDERLINE, "Button", 0x50010003, 299, 223, 46, 10
+    CONTROL "", IDC_TRIGGER_SWATCH, "Button", 0x5801000B, 348, 221, 15, 12
+    CONTROL "", IDC_TRIGGER_SWATCH2, "Button", 0x5801000B, 368, 221, 15, 12
+    CONTROL "Sound", IDC_STATIC, "Button", 0x50020007, 206, 243, 300, 44
+    CONTROL "&Browse...", IDC_BROWSE_SOUNDS, "Button", 0x50010000, 212, 256, 50, 14
+    CONTROL "T&est", IDC_TEST_SOUND, "Button", 0x50010000, 267, 256, 50, 14
+    CONTROL "No soun&d", IDC_NO_SOUND, "Button", 0x50010000, 322, 256, 50, 14
+    CONTROL "Only if inactive", IDC_SOUND_IF_INACTIVE, "Button", 0x50010003, 382, 258, 62, 10
+    CONTROL "Sound pathname", IDC_SOUND_PATH, "Static", 0x50020000, 212, 274, 287, 8
+    CONTROL "(included)", IDC_INCLUDED, "Static", 0x50020000, 469, 292, 32, 8
+    CONTROL "OK", IDOK, "Button", 0x50010001, 15, 327, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 93, 327, 50, 14
+    CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 169, 327, 50, 14
+    CONTROL "0 calls.", IDC_INVOCATIONS, "Static", 0x50020002, 362, 334, 139, 8
+    CONTROL "0 matches.", IDC_MATCHES, "Static", 0x50020002, 362, 306, 139, 8
+    CONTROL "0.0 sec.", IDC_TIME_TAKEN, "Static", 0x50020002, 362, 320, 139, 8
+END
+
+IDD_TEST_COMMAND DIALOGEX 0, 0, 231, 141
+STYLE 0x90C800C0
+CAPTION "Test command"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Enter (or paste) the command you wish to test:", IDC_STATIC, "Static", 0x50020000, 10, 5, 210, 8
+    CONTROL "", IDC_TEST_COMMAND, "Edit", 0x50810080, 10, 20, 210, 55
+    CONTROL "When you click OK you will be shown what actually gets sent to the world in response to the above command, after aliases, speed walking, command stacking etc. are evaluated.", IDC_STATIC, "Static", 0x50020000, 10, 80, 210, 30
+    CONTROL "OK", IDOK, "Button", 0x50010001, 10, 120, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 75, 120, 50, 14
+    CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 170, 120, 50, 14
+END
+
+IDD_TEST_TRIGGER DIALOGEX 0, 0, 231, 156
+STYLE 0x90C800C0
+CAPTION "Test trigger"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Enter (or paste) the trigger you wish to test:", IDC_STATIC, "Static", 0x50020000, 10, 5, 210, 8
+    CONTROL "", IDC_TEST_TRIGGER, "Edit", 0x50810080, 10, 20, 210, 55
+    CONTROL "When you click OK you will be shown what actually gets sent to the world in response to receiving the above text from the world, after all triggers are evaluated.", IDC_STATIC, "Static", 0x50020000, 10, 80, 210, 30
+    CONTROL "Ignore triggers that match on colours or styles", IDC_IGNORE_COLOURS, "Button", 0x50010003, 10, 115, 180, 10
+    CONTROL "OK", IDOK, "Button", 0x50010001, 10, 135, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 80, 135, 50, 14
+    CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 170, 135, 50, 14
+END
+
+IDD_TEST_RESULT DIALOGEX 0, 0, 237, 201
+STYLE 0x90C800C0
+CAPTION "Test results"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "OK", IDOK, "Button", 0x50010001, 15, 179, 50, 14
+    CONTROL "The following would be sent to the world:", IDC_STATIC, "Static", 0x50020000, 15, 10, 205, 8
+    CONTROL "", IDC_TEST_RESULT, "Edit", 0x50A10884, 15, 25, 205, 95
+    CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 170, 179, 50, 14
+    CONTROL "&Omit from log file", IDC_OMIT_FROM_LOG, "Button", 0x58010003, 15, 128, 71, 10
+    CONTROL "O&mit from output", IDC_OMIT_FROM_OUTPUT, "Button", 0x58010003, 15, 141, 67, 10
+    CONTROL "Colour:", IDC_COLOUR_LABEL, "Static", 0x50020000, 15, 162, 23, 8
+    CONTROL "", IDC_TRIGGER_COLOUR, "ComboBox", 0x58210213, 50, 160, 100, 185
+    CONTROL "", IDC_TRIGGER_SWATCH, "Button", 0x5801000B, 157, 160, 15, 12
+    CONTROL "", IDC_TRIGGER_SWATCH2, "Button", 0x5801000B, 177, 160, 15, 12
+END
+
+IDD_PREFS_P10 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Send to world"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&1. Send this at the start of a ""send file to world"":", IDC_STATIC, "Static", 0x50020000, 11, 6, 150, 8
+    CONTROL "", IDC_FILE_PREAMBLE, "Edit", 0x50A11004, 11, 19, 441, 75
+    CONTROL "&2. Send this at the start of each line:", IDC_STATIC, "Static", 0x50020000, 11, 103, 145, 8
+    CONTROL "", IDC_LINE_PREAMBLE, "Edit", 0x50810080, 11, 116, 441, 13
+    CONTROL "&3. Send this at the end of each line:", IDC_STATIC, "Static", 0x50020000, 11, 137, 145, 8
+    CONTROL "", IDC_LINE_POSTAMBLE, "Edit", 0x50810080, 11, 150, 441, 13
+    CONTROL "&4. Send this at the end of a ""send file to world"":", IDC_STATIC, "Static", 0x50020000, 11, 173, 150, 8
+    CONTROL "", IDC_FILE_POSTAMBLE, "Edit", 0x50A11004, 11, 187, 441, 75
+    CONTROL "&Delay between lines:", IDC_STATIC, "Static", 0x50020002, 15, 279, 66, 8
+    CONTROL "", IDC_LINE_DELAY, "Edit", 0x50810080, 87, 276, 40, 14
+    CONTROL "milliseconds (1000 milliseconds = 1 second)", IDC_STATIC, "Static", 0x50020000, 133, 279, 137, 8
+    CONTROL "E&very:", IDC_STATIC, "Static", 0x50020002, 61, 295, 21, 8
+    CONTROL "", IDC_LINE_DELAY_PER_LINES, "Edit", 0x50810080, 87, 292, 40, 14
+    CONTROL "lines.", IDC_STATIC, "Static", 0x50020000, 133, 295, 17, 8
+    CONTROL "Commented &Softcode", IDC_COMMENTED_SOFTCODE, "Button", 0x50010003, 17, 314, 84, 10
+    CONTROL "&Echo to output window", IDC_ECHO, "Button", 0x50010003, 17, 325, 89, 10
+    CONTROL "&Confirm on each ""send file to world""", IDC_CONFIRM_ON_SEND, "Button", 0x50010003, 17, 335, 129, 10
+END
+
+IDD_PREFS_P11 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Notes"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_NOTES, "Edit", 0x50A11104, 8, 4, 502, 312
+    CONTROL "&Load...", IDC_LOAD_NOTES, "Button", 0x50010000, 11, 325, 41, 14
+    CONTROL "&Save...", IDC_SAVE_NOTES, "Button", 0x50010000, 63, 325, 41, 14
+    CONTROL "&Edit...", IDC_EDIT, "Button", 0x50010000, 115, 325, 41, 14
+    CONTROL "&Find...", IDC_FIND, "Button", 0x50010000, 167, 325, 41, 14
+    CONTROL "Find &Next", IDC_FIND_NEXT, "Button", 0x50010000, 219, 325, 41, 14
+END
+
+IDD_WELCOME DIALOGEX 34, 22, 306, 149
+STYLE 0x80C800C0
+CAPTION "Welcome to MUSHclient!"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 10, 5, 20, 20
+    CONTROL "OK", IDOK, "Button", 0x50020000, 10, 125, 42, 14
+    CONTROL "Welcome to MUSHclient!", IDC_STATIC, "Static", 0x50020001, 86, 15, 133, 8
+    CONTROL "I notice that this is the first time you have used MUSHclient Version %% on this PC.", IDC_MESSAGE, "Static", 0x50020000, 10, 35, 280, 15
+    CONTROL "You can obtain help on how to use the various parts of the program at any time by pressing the F1 key, or clicking on the ""Help"" button in the various dialog boxes.", IDC_STATIC, "Static", 0x50020000, 10, 50, 285, 20
+    CONTROL "This screen will not appear again.", IDC_STATIC, "Static", 0x50020000, 10, 105, 130, 8
+    CONTROL "- Nick Gammon", IDC_STATIC, "Static", 0x50020000, 240, 130, 55, 8
+    CONTROL "Changes in this version:", IDC_STATIC, "Static", 0x50020000, 10, 75, 76, 8
+    CONTROL "MUSHclient change history", IDC_CHANGES_ADDRESS, "Static", 0x50020000, 90, 75, 189, 12
+END
+
+IDD_PREFS_P12 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Numeric Keypad"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&/", IDC_STATIC, "Static", 0x50020001, 192, 35, 40, 8
+    CONTROL "", IDC_KEYPAD_SLASH, "Edit", 0x50810080, 170, 47, 85, 13
+    CONTROL "&*", IDC_STATIC, "Static", 0x50020001, 305, 35, 40, 8
+    CONTROL "", IDC_KEYPAD_STAR, "Edit", 0x50810080, 283, 47, 85, 13
+    CONTROL "&-", IDC_STATIC, "Static", 0x50020001, 439, 35, 40, 8
+    CONTROL "", IDC_KEYPAD_DASH, "Edit", 0x50810080, 417, 47, 85, 13
+    CONTROL "&7", IDC_STATIC, "Static", 0x50020001, 79, 87, 40, 8
+    CONTROL "", IDC_KEYPAD_7, "Edit", 0x50810080, 57, 97, 85, 13
+    CONTROL "&8", IDC_STATIC, "Static", 0x50020001, 192, 87, 40, 8
+    CONTROL "", IDC_KEYPAD_8, "Edit", 0x50810080, 170, 97, 85, 13
+    CONTROL "&9", IDC_STATIC, "Static", 0x50020001, 305, 87, 40, 8
+    CONTROL "", IDC_KEYPAD_9, "Edit", 0x50810080, 283, 97, 85, 13
+    CONTROL "&+", IDC_STATIC, "Static", 0x50020001, 439, 87, 40, 8
+    CONTROL "", IDC_KEYPAD_PLUS, "Edit", 0x50810080, 417, 97, 85, 13
+    CONTROL "&4", IDC_STATIC, "Static", 0x50020001, 79, 121, 40, 8
+    CONTROL "", IDC_KEYPAD_4, "Edit", 0x50810080, 57, 135, 85, 13
+    CONTROL "&5", IDC_STATIC, "Static", 0x50020001, 192, 121, 40, 8
+    CONTROL "", IDC_KEYPAD_5, "Edit", 0x50810080, 170, 135, 85, 13
+    CONTROL "&6", IDC_STATIC, "Static", 0x50020001, 305, 121, 40, 8
+    CONTROL "", IDC_KEYPAD_6, "Edit", 0x50810080, 283, 135, 85, 13
+    CONTROL "&1", IDC_STATIC, "Static", 0x50020001, 79, 156, 40, 8
+    CONTROL "", IDC_KEYPAD_1, "Edit", 0x50810080, 57, 169, 85, 13
+    CONTROL "&2", IDC_STATIC, "Static", 0x50020001, 192, 156, 40, 8
+    CONTROL "", IDC_KEYPAD_2, "Edit", 0x50810080, 170, 169, 85, 13
+    CONTROL "&3", IDC_STATIC, "Static", 0x50020001, 305, 156, 40, 8
+    CONTROL "", IDC_KEYPAD_3, "Edit", 0x50810080, 283, 169, 85, 13
+    CONTROL "&0", IDC_STATIC, "Static", 0x50020001, 135, 191, 40, 8
+    CONTROL "", IDC_KEYPAD_0, "Edit", 0x50810080, 57, 207, 197, 13
+    CONTROL "&.", IDC_STATIC, "Static", 0x50020001, 305, 191, 40, 8
+    CONTROL "", IDC_KEYPAD_DOT, "Edit", 0x50810080, 283, 207, 85, 13
+    CONTROL "&Enable Keypad Keys", IDC_ENABLE_KEYPAD, "Button", 0x50010003, 47, 256, 85, 10
+    CONTROL """NumLock"" must be active for these keys to work", IDC_STATIC, "Button", 0x50000007, 47, 71, 353, 170
+    CONTROL "Show Contents If &CTRL Held Down", IDC_CHECK1, "Button", 0x50010003, 47, 272, 128, 10
+END
+
+IDD_PREFS_P13 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Paste"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&1. Send this at the start of a ""paste to world"":", IDC_STATIC, "Static", 0x50020000, 10, 6, 150, 8
+    CONTROL "", IDC_PASTE_PREAMBLE, "Edit", 0x50A11004, 11, 19, 441, 75
+    CONTROL "&2. Send this at the start of each line:", IDC_STATIC, "Static", 0x50020000, 11, 103, 145, 8
+    CONTROL "", IDC_PASTELINE_PREAMBLE, "Edit", 0x50810080, 11, 116, 441, 13
+    CONTROL "&3. Send this at the end of each line:", IDC_STATIC, "Static", 0x50020000, 11, 137, 145, 8
+    CONTROL "", IDC_PASTELINE_POSTAMBLE, "Edit", 0x50810080, 11, 150, 441, 13
+    CONTROL "&4. Send this at the end of a ""paste to world"":", IDC_STATIC, "Static", 0x50020000, 11, 173, 150, 8
+    CONTROL "", IDC_PASTE_POSTAMBLE, "Edit", 0x50A11004, 11, 187, 441, 75
+    CONTROL "&Delay between lines:", IDC_STATIC, "Static", 0x50020002, 15, 279, 66, 8
+    CONTROL "", IDC_LINE_DELAY, "Edit", 0x50810080, 87, 276, 40, 14
+    CONTROL "milliseconds (1000 milliseconds = 1 second)", IDC_STATIC, "Static", 0x50020000, 133, 279, 137, 8
+    CONTROL "E&very:", IDC_STATIC, "Static", 0x50020002, 61, 295, 21, 8
+    CONTROL "", IDC_LINE_DELAY_PER_LINES, "Edit", 0x50810080, 87, 292, 40, 14
+    CONTROL "lines.", IDC_STATIC, "Static", 0x50020000, 133, 295, 17, 8
+    CONTROL "Commented &Softcode", IDC_COMMENTED_SOFTCODE, "Button", 0x50010003, 17, 314, 84, 10
+    CONTROL "&Echo to output window", IDC_ECHO, "Button", 0x50010003, 17, 325, 89, 10
+    CONTROL "&Confirm on each ""paste to world""", IDC_CONFIRM_ON_PASTE, "Button", 0x50010003, 17, 335, 129, 10
+END
+
+IDD_PREFS_P14 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Output"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Sound to play when receiving a ""bell"" character", IDC_STATIC, "Button", 0x50000007, 6, 10, 289, 67
+    CONTROL "&Enable beeps", IDC_ENABLE_BEEPS, "Button", 0x50010003, 14, 23, 59, 10
+    CONTROL "Beep Sound:", IDC_STATIC, "Static", 0x50020000, 14, 42, 42, 8
+    CONTROL "&Browse...", IDC_BROWSE_SOUNDS, "Button", 0x50010000, 61, 39, 50, 14
+    CONTROL "Test", IDC_TEST_SOUND, "Button", 0x50010000, 119, 39, 50, 14
+    CONTROL "Sound pathname", IDC_SOUND_PATH, "Static", 0x50020000, 14, 62, 270, 8
+    CONTROL "Spacing", IDC_STATIC, "Button", 0x50000007, 6, 83, 289, 57
+    CONTROL "Text &offset from edge (pixels):", IDC_STATIC, "Static", 0x50020000, 31, 97, 93, 8
+    CONTROL "", IDC_PIXEL_OFFSET, "Edit", 0x50812080, 129, 94, 31, 14
+    CONTROL "Spin1", IDC_SPIN_OFFSET, "msctls_updown32", 0x500000B6, 149, 94, 11, 14
+    CONTROL "Line spacing (pixels):", IDC_STATIC, "Static", 0x50020000, 47, 115, 66, 8
+    CONTROL "", IDC_LINE_SPACING, "Edit", 0x50812080, 129, 115, 31, 14
+    CONTROL "Spin1", IDC_PRINT_BOLD6, "msctls_updown32", 0x500000B6, 149, 115, 11, 14
+    CONTROL "Font", IDC_STATIC, "Button", 0x50000007, 6, 146, 289, 65
+    CONTROL "&Font...", IDC_CHOOSE_FONT, "Button", 0x50010000, 16, 159, 39, 14
+    CONTROL "Output font", IDC_FONT_NAME, "Static", 0x50020000, 83, 162, 130, 8
+    CONTROL "Output style", IDC_OUTPUT_STYLE, "Static", 0x50020000, 221, 162, 60, 8
+    CONTROL "O&verride with default", IDC_USE_DEFAULT_OUTPUT_FONT, "Button", 0x50010003, 16, 180, 81, 10
+    CONTROL "Bold", IDC_SHOW_BOLD, "Button", 0x50010003, 43, 196, 30, 10
+    CONTROL "Italic", IDC_SHOW_ITALIC, "Button", 0x50010003, 78, 196, 31, 10
+    CONTROL "Underline", IDC_SHOW_UNDERLINE, "Button", 0x50010003, 114, 196, 46, 10
+    CONTROL "New activity sound:", IDC_STATIC, "Static", 0x50020000, 19, 237, 63, 8
+    CONTROL "Browse...", IDC_ALL_DARKER, "Button", 0x50010000, 99, 234, 50, 14
+    CONTROL "Test", IDC_ALL_LESS_COLOUR, "Button", 0x50010000, 164, 234, 50, 14
+    CONTROL "No sound", IDC_NO_SOUND, "Button", 0x50010000, 229, 235, 50, 14
+    CONTROL "Sound pathname", IDC_ALL_LIGHTER, "Static", 0x50020000, 19, 255, 266, 10
+    CONTROL "&Number of lines in output buffer:", IDC_STATIC, "Static", 0x50020002, 33, 291, 101, 8
+    CONTROL "", IDC_LINES, "Edit", 0x50812080, 147, 289, 55, 12
+    CONTROL "(200 to 500,000)", IDC_STATIC, "Static", 0x50020000, 212, 291, 55, 8
+    CONTROL "&Wrap output at column number:", IDC_WRAP_OUTPUT, "Button", 0x50010003, 19, 308, 115, 10
+    CONTROL "", IDC_WRAP_COLUMN, "Edit", 0x50812080, 147, 307, 55, 12
+    CONTROL "Spin1", IDC_SPIN_WRAP_COLUMN, "msctls_updown32", 0x500000B6, 192, 307, 11, 14
+    CONTROL "(20 to 500)", IDC_STATIC, "Static", 0x50020000, 219, 309, 35, 8
+    CONTROL "Adjust width to size", IDC_ADJUST_WIDTH, "Button", 0x50010000, 20, 325, 65, 14
+    CONTROL "Adjust size to width", IDC_BUTTON1, "Button", 0x50010000, 96, 325, 65, 14
+    CONTROL "Show &Line Information", IDC_LINE_INFORMATION, "Button", 0x50010003, 315, 14, 86, 10
+    CONTROL "Start &Paused", IDC_START_PAUSED, "Button", 0x50010003, 315, 25, 57, 10
+    CONTROL "&Auto Pause", IDC_AUTOFREEZE, "Button", 0x50010003, 315, 36, 53, 10
+    CONTROL "&Un-Pause on send", IDC_UNPAUSEONSEND, "Button", 0x50010003, 315, 47, 75, 10
+    CONTROL "New activity flashes taskbar", IDC_FLASH_ICON, "Button", 0x50010003, 315, 58, 104, 10
+    CONTROL "Disable compression", IDC_DISABLE_COMPRESSION, "Button", 0x50010003, 315, 69, 81, 10
+    CONTROL "&Indent paragraphs", IDC_INDENT_PARAS, "Button", 0x50010003, 315, 80, 73, 10
+    CONTROL "Negotiate About Window Size", IDC_NAWS, "Button", 0x50010003, 315, 91, 111, 10
+    CONTROL "Carriage-return clears line", IDC_CARRIAGE_RETURN_CLEARS_LINE, "Button", 0x50010003, 315, 102, 95, 10
+    CONTROL "UTF-&8 (Unicode)", IDC_UTF_8, "Button", 0x50010003, 315, 113, 69, 10
+    CONTROL "Auto-wrap to window size", IDC_AUTO_WRAP_WINDOW, "Button", 0x50010003, 315, 124, 101, 10
+    CONTROL "Alternative inverse/highlight display", IDC_ALTERNATIVE_INVERSE, "Button", 0x50010003, 315, 135, 125, 10
+    CONTROL "Show connect/disconnect message", IDC_SHOW_CONNECT_DISCONNECT, "Button", 0x50010003, 315, 146, 130, 10
+    CONTROL "Copy selection to Clipboard", IDC_COPY_SELECTION_TO_CLIPBOARD, "Button", 0x50010003, 315, 157, 101, 10
+    CONTROL "HTML", IDC_CHECK1, "Button", 0x50010003, 344, 168, 36, 10
+    CONTROL "Convert IAC EOR/GA to new line", IDC_CONVERT_GA_TO_NEWLINE, "Button", 0x50010003, 315, 179, 121, 10
+    CONTROL "Telnet Terminal Type:", IDC_STATIC, "Static", 0x50020002, 314, 317, 55, 19
+    CONTROL "", IDC_TERMINAL_TYPE, "Edit", 0x50810080, 381, 319, 94, 14
+    CONTROL "(0 = use font default)", IDC_STATIC, "Static", 0x50020000, 47, 123, 66, 8
+    CONTROL "Show:", IDC_STATIC, "Static", 0x50020000, 17, 197, 21, 8
+    CONTROL "Sound to play on new activity", IDC_STATIC, "Button", 0x50000007, 6, 217, 289, 54
+    CONTROL "Output buffer size", IDC_STATIC, "Button", 0x50000007, 6, 277, 289, 68
+END
+
+IDD_PASTE_PREAMBLES DIALOGEX 0, 0, 322, 241
+STYLE 0x80C800C0
+CAPTION "Confirm preamble and postamble for pasting or sending file to the world"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "OK", IDOK, "Button", 0x50010001, 260, 20, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 260, 38, 50, 14
+    CONTROL "&1. Send this at the start:", IDC_STATIC, "Static", 0x50020000, 10, 3, 150, 8
+    CONTROL "", IDC_FILE_PREAMBLE, "Edit", 0x50A11004, 10, 17, 240, 35
+    CONTROL "&2. Send this at the start of each line:", IDC_STATIC, "Static", 0x50020000, 10, 59, 145, 8
+    CONTROL "", IDC_LINE_PREAMBLE, "Edit", 0x50810080, 10, 72, 240, 13
+    CONTROL "&3. Send this at the end of each line:", IDC_STATIC, "Static", 0x50020000, 10, 92, 145, 8
+    CONTROL "", IDC_LINE_POSTAMBLE, "Edit", 0x50810080, 10, 105, 240, 13
+    CONTROL "&4. Send this at the end:", IDC_STATIC, "Static", 0x50020000, 10, 124, 150, 8
+    CONTROL "", IDC_FILE_POSTAMBLE, "Edit", 0x50A11004, 10, 137, 240, 33
+    CONTROL "Static", IDC_PASTE_MESSAGE, "Static", 0x50020000, 10, 220, 240, 15
+    CONTROL "&Delay between lines:", IDC_STATIC, "Static", 0x50020002, 10, 178, 66, 8
+    CONTROL "", IDC_LINE_DELAY, "Edit", 0x50810080, 80, 175, 40, 14
+    CONTROL "milliseconds (1000 milliseconds = 1 second)", IDC_STATIC, "Static", 0x50020000, 127, 180, 137, 8
+    CONTROL "E&very:", IDC_STATIC, "Static", 0x50020002, 55, 193, 21, 8
+    CONTROL "", IDC_LINE_DELAY_PER_LINES, "Edit", 0x50810080, 80, 190, 40, 14
+    CONTROL "lines.", IDC_STATIC, "Static", 0x50020000, 127, 195, 17, 8
+    CONTROL "&Commented softcode", IDC_COMMENTED_SOFTCODE, "Button", 0x50010003, 10, 207, 83, 10
+    CONTROL "&Echo each line to output window", IDC_ECHO_LINES, "Button", 0x50010003, 165, 205, 119, 10
+END
+
+IDD_PREFS_P15 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Info"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "TCP/IP address of this world:", IDC_STATIC, "Static", 0x50020002, 101, 5, 93, 8
+    CONTROL "", IDC_IP_ADDRESS, "Edit", 0x50000880, 201, 5, 145, 12
+    CONTROL "Lines in output buffer:", IDC_STATIC, "Static", 0x50020002, 125, 35, 69, 8
+    CONTROL "Lines in output buffer", IDC_BUFFER_LINES, "Static", 0x50020000, 201, 35, 115, 8
+    CONTROL "Memory used by output buffer:", IDC_STATIC, "Static", 0x50020002, 98, 46, 96, 8
+    CONTROL "Memory used by output buffer:", IDC_OUTPUT_MEMORY, "Static", 0x50020000, 201, 46, 115, 8
+    CONTROL "Time connection established:", IDC_STATIC, "Static", 0x50020002, 101, 74, 93, 8
+    CONTROL "Time of connection", IDC_CONNECTION_TIME, "Static", 0x50020000, 201, 74, 140, 8
+    CONTROL "Connection duration:", IDC_STATIC, "Static", 0x50020002, 128, 85, 66, 8
+    CONTROL "Duration of connection", IDC_CONNECTION_DURATION, "Static", 0x50020000, 201, 85, 73, 8
+    CONTROL "Triggers:", IDC_STATIC, "Static", 0x50020002, 100, 114, 28, 8
+    CONTROL "Trigger count", IDC_TRIGGERS, "Static", 0x50020000, 136, 114, 144, 8
+    CONTROL "Aliases:", IDC_STATIC, "Static", 0x50020002, 103, 136, 25, 8
+    CONTROL "Alias count", IDC_ALIASES, "Static", 0x50020000, 136, 136, 144, 8
+    CONTROL "Timers:", IDC_STATIC, "Static", 0x50020002, 104, 147, 24, 8
+    CONTROL "Timer count", IDC_TIMERS, "Static", 0x50020000, 136, 147, 144, 8
+    CONTROL "Compression ratio:", IDC_STATIC, "Static", 0x50020002, 136, 181, 58, 8
+    CONTROL "Compression ratio", IDC_COMPRESSION_RATIO, "Static", 0x50020000, 203, 181, 145, 8
+    CONTROL "Received:", IDC_STATIC, "Static", 0x50020002, 160, 230, 34, 8
+    CONTROL "Bytes received", IDC_BYTES_RECEIVED, "Static", 0x50020002, 201, 230, 101, 8
+    CONTROL "Sent:", IDC_STATIC, "Static", 0x50020002, 176, 241, 18, 8
+    CONTROL "Bytes sent", IDC_BYTES_SENT, "Static", 0x50020002, 201, 241, 101, 8
+    CONTROL "Time taken", IDC_TIME_TAKEN, "Static", 0x50020000, 136, 125, 145, 8
+    CONTROL "MXP statistics", IDC_STATIC, "Button", 0x50000007, 82, 261, 336, 83
+    CONTROL "Built-in elements:", IDC_STATIC, "Static", 0x50020002, 130, 271, 54, 8
+    CONTROL "Static", IDC_MXP_BUILTIN_ELEMENTS, "Static", 0x50020002, 194, 271, 19, 8
+    CONTROL "Built-in entities:", IDC_STATIC, "Static", 0x50020002, 136, 286, 48, 8
+    CONTROL "Static", IDC_MXP_BUILTIN_ENTITIES, "Static", 0x50020002, 194, 286, 19, 8
+    CONTROL "MUD-defined elements:", IDC_STATIC, "Static", 0x50020002, 109, 301, 75, 8
+    CONTROL "Static", IDC_MXP_MUD_ELEMENTS, "Static", 0x50020002, 194, 301, 19, 8
+    CONTROL "MUD-defined entities:", IDC_STATIC, "Static", 0x50020002, 115, 316, 69, 8
+    CONTROL "Static", IDC_MXP_MUD_ENTITIES, "Static", 0x50020002, 194, 316, 19, 8
+    CONTROL "Errors:", IDC_STATIC, "Static", 0x50020002, 307, 271, 21, 8
+    CONTROL "Static", IDC_MXP_ERRORS, "Static", 0x50020002, 332, 271, 39, 8
+    CONTROL "Tags received:", IDC_STATIC, "Static", 0x50020002, 280, 286, 48, 8
+    CONTROL "Static", IDC_MXP_TAGS_RECEIVED, "Static", 0x50020002, 332, 286, 39, 8
+    CONTROL "Entities received:", IDC_STATIC, "Static", 0x50020002, 273, 301, 55, 8
+    CONTROL "Static", IDC_MXP_ENTITIES_RECEIVED, "Static", 0x50020002, 332, 301, 39, 8
+    CONTROL "Unclosed tags:", IDC_STATIC, "Static", 0x50020002, 136, 331, 48, 8
+    CONTROL "Static", IDC_MXP_UNCLOSED_TAGS, "Static", 0x50020002, 194, 331, 19, 8
+    CONTROL "Compressed in:", IDC_STATIC, "Static", 0x50020002, 145, 192, 49, 8
+    CONTROL "Compressed in", IDC_COMPRESSED_IN, "Static", 0x50020000, 203, 192, 62, 8
+    CONTROL "out:", IDC_STATIC, "Static", 0x50020000, 301, 192, 13, 8
+    CONTROL "Compressed out", IDC_COMPRESSED_OUT, "Static", 0x50020000, 327, 192, 74, 8
+    CONTROL "Time taken", IDC_TIME_TAKEN_COMPRESSING, "Static", 0x50020000, 203, 203, 145, 8
+    CONTROL "Reference count:", IDC_STATIC, "Static", 0x50020002, 272, 331, 56, 8
+    CONTROL "Static", IDC_MXP_REFERENCE_COUNT, "Static", 0x50020002, 332, 331, 39, 8
+    CONTROL "Actions cached:", IDC_STATIC, "Static", 0x50020002, 276, 316, 52, 8
+    CONTROL "Static", IDC_MXP_ACTIONS_CACHED, "Static", 0x50020002, 332, 316, 39, 8
+    CONTROL "&Calculate", IDC_BUTTON1, "Button", 0x50010000, 332, 43, 48, 14
+    CONTROL "Input/Output", IDC_STATIC, "Button", 0x50000007, 82, 221, 336, 35
+    CONTROL "Compression (MCCP)", IDC_STATIC, "Button", 0x50000007, 82, 168, 336, 50
+    CONTROL "Memory usage", IDC_STATIC, "Button", 0x50000007, 82, 22, 336, 40
+    CONTROL "Counts", IDC_STATIC, "Button", 0x50000007, 84, 104, 336, 60
+    CONTROL "Time", IDC_STATIC, "Button", 0x50000007, 84, 65, 336, 35
+END
+
+IDD_EDIT_TIMER DIALOGEX 0, 0, 520, 350
+STYLE 0x90C800C0
+CAPTION "Edit timer"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Event:", IDC_STATIC, "Static", 0x50020000, 5, 4, 22, 8
+    CONTROL "&Every interval:", IDC_BUTTON_EVERY, "Button", 0x50020009, 40, 4, 61, 10
+    CONTROL "&At the time:", IDC_BUTTON_AT, "Button", 0x50000009, 40, 64, 51, 10
+    CONTROL "", IDC_INTERVAL_HOUR, "Edit", 0x50812080, 105, 4, 25, 12
+    CONTROL "Spin1", IDC_SPIN_EVERY_HOUR, "msctls_updown32", 0x50000037, 130, 4, 11, 14
+    CONTROL "", IDC_INTERVAL_MINUTE, "Edit", 0x50812080, 155, 4, 25, 12
+    CONTROL "Spin1", IDC_SPIN_EVERY_MINUTE, "msctls_updown32", 0x50000037, 180, 4, 11, 14
+    CONTROL "", IDC_INTERVAL_SECOND, "Edit", 0x50810080, 205, 4, 37, 12
+    CONTROL "hour", IDC_STATIC, "Static", 0x50020001, 105, 17, 25, 8
+    CONTROL "minute", IDC_STATIC, "Static", 0x50020001, 156, 17, 25, 8
+    CONTROL "second", IDC_STATIC, "Static", 0x50020001, 205, 17, 25, 8
+    CONTROL "&Offset:", IDC_STATIC, "Static", 0x50020000, 75, 34, 22, 8
+    CONTROL "", IDC_OFFSET_HOUR, "Edit", 0x50812080, 105, 30, 25, 12
+    CONTROL "Spin1", IDC_SPIN_OFFSET_HOUR, "msctls_updown32", 0x50000037, 130, 29, 11, 14
+    CONTROL "", IDC_OFFSET_MINUTE, "Edit", 0x50812080, 155, 30, 25, 12
+    CONTROL "Spin1", IDC_SPIN_OFFSET_MINUTE, "msctls_updown32", 0x50000037, 180, 29, 11, 14
+    CONTROL "", IDC_OFFSET_SECOND, "Edit", 0x50810080, 205, 30, 37, 12
+    CONTROL "hour", IDC_STATIC, "Static", 0x50020001, 105, 44, 25, 8
+    CONTROL "minute", IDC_STATIC, "Static", 0x50020001, 156, 44, 25, 8
+    CONTROL "second", IDC_STATIC, "Static", 0x50020001, 205, 44, 25, 8
+    CONTROL "", IDC_AT_HOUR, "Edit", 0x50812080, 105, 62, 25, 12
+    CONTROL "Spin1", IDC_SPIN_AT_HOUR, "msctls_updown32", 0x50000037, 130, 63, 11, 14
+    CONTROL "", IDC_AT_MINUTE, "Edit", 0x50812080, 155, 62, 25, 12
+    CONTROL "Spin1", IDC_SPIN_AT_MINUTE, "msctls_updown32", 0x50000037, 180, 63, 11, 14
+    CONTROL "", IDC_AT_SECOND, "Edit", 0x50810080, 205, 62, 37, 12
+    CONTROL "hour", IDC_STATIC, "Static", 0x50020001, 105, 76, 25, 8
+    CONTROL "minute", IDC_STATIC, "Static", 0x50020001, 156, 76, 25, 8
+    CONTROL "second", IDC_STATIC, "Static", 0x50020001, 205, 76, 25, 8
+    CONTROL "&Send:", IDC_STATIC, "Static", 0x50020002, 6, 81, 25, 8
+    CONTROL "", IDC_TIMER_CONTENTS, "Edit", 0x50A11044, 12, 94, 357, 105
+    CONTROL "...", IDC_EDIT_SEND, "Button", 0x50010000, 13, 205, 20, 12
+    CONTROL "(edit)", IDC_STATIC, "Static", 0x50020000, 45, 207, 16, 8
+    CONTROL "Send To:", IDC_STATIC, "Static", 0x50020002, 8, 225, 30, 8
+    CONTROL "", IDC_SEND_TO, "ComboBox", 0x50210003, 43, 222, 89, 185
+    CONTROL "La&bel:", IDC_STATIC, "Static", 0x50020002, 18, 243, 20, 8
+    CONTROL "", IDC_TIMER_LABEL, "Edit", 0x50810080, 43, 240, 140, 12
+    CONTROL "Sc&ript:", IDC_STATIC, "Static", 0x50020002, 17, 261, 21, 8
+    CONTROL "", IDC_SCRIPT_NAME, "Edit", 0x50810080, 43, 258, 140, 12
+    CONTROL "&Group:", IDC_STATIC, "Static", 0x50020002, 16, 279, 22, 8
+    CONTROL "", IDC_PRINT_UNDERLINE6, "Edit", 0x50810080, 43, 276, 140, 12
+    CONTROL "Variable:", IDC_STATIC, "Static", 0x50020002, 10, 297, 28, 8
+    CONTROL "", IDC_VARIABLE, "Edit", 0x50810080, 43, 294, 140, 12
+    CONTROL "Enable&d", IDC_ENABLED, "Button", 0x50010003, 391, 101, 42, 10
+    CONTROL "Only &Fire Once", IDC_ONE_SHOT_TIMER, "Button", 0x50010003, 391, 117, 63, 10
+    CONTROL "&Temporary", IDC_TEMPORARY, "Button", 0x50010003, 391, 133, 49, 10
+    CONTROL "Active When Disconnected", IDC_ACTIVE_WHEN_CLOSED, "Button", 0x50010003, 391, 149, 103, 10
+    CONTROL "Omit From Output", IDC_OMIT_FROM_OUTPUT, "Button", 0x50010003, 391, 165, 71, 10
+    CONTROL "Omit From Log", IDC_OMIT_FROM_LOG, "Button", 0x50010003, 391, 181, 61, 10
+    CONTROL "(included)", IDC_INCLUDED, "Static", 0x50020002, 365, 291, 139, 8
+    CONTROL "Fired 0 times.", IDC_MATCHES, "Static", 0x50020002, 365, 309, 139, 8
+    CONTROL "0 calls.", IDC_INVOCATIONS, "Static", 0x50020002, 365, 327, 139, 8
+    CONTROL "OK", IDOK, "Button", 0x50010001, 15, 327, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 105, 327, 50, 14
+    CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 195, 327, 50, 14
+END
+
+IDD_GLOBAL_PREFSP1 DIALOGEX 0, 0, 262, 201
+STYLE 0x48C00040
+CAPTION "Worlds"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Worlds to open at startup ...", IDC_STATIC, "Static", 0x50020000, 10, 2, 88, 8
+    CONTROL "", IDC_WORLD_LIST, "ListBox", 0x50B10101, 10, 15, 235, 102
+    CONTROL "&Add...", IDC_NEW_STARTUP_WORLD, "Button", 0x50010000, 10, 153, 54, 14
+    CONTROL "&Remove", IDC_REMOVE_STARTUP_WORLD, "Button", 0x50010000, 71, 153, 54, 14
+    CONTROL "Move &Up", IDC_MOVE_UP, "Button", 0x50010000, 132, 153, 54, 14
+    CONTROL "Move &Down", IDC_MOVE_DOWN, "Button", 0x50010000, 193, 153, 54, 14
+    CONTROL "&Default world files directory...", IDC_DEFAULT_DIRECTORY, "Button", 0x50010000, 10, 170, 110, 14
+    CONTROL "Add &Current World", IDC_ADD_CURRENT_WORLD, "Button", 0x50010000, 175, 170, 72, 14
+    CONTROL "Default directory", IDC_DEFAULT_DIRECTORY_NAME, "Static", 0x50020000, 10, 188, 245, 8
+    CONTROL "Static", IDC_WORLD_COUNT, "Static", 0x50020002, 160, 2, 85, 8
+    CONTROL "Selected world", IDC_LOGON_PASSWORD, "Static", 0x50020000, 10, 122, 245, 25
+END
+
+IDD_GLOBAL_PREFSP2 DIALOGEX 0, 0, 262, 212
+STYLE 0x48C00040
+CAPTION "General"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Auto connect to world on open", IDC_AUTO_CONNECT, "Button", 0x50010003, 5, 3, 113, 10
+    CONTROL "&Reconnect on disconnect", IDC_RECONNECT, "Button", 0x50010003, 5, 13, 98, 10
+    CONTROL "Open worlds &Maximized", IDC_OPEN_WORLDS_MAXIMISED, "Button", 0x50010003, 5, 23, 90, 10
+    CONTROL "&Notify me when connection broken", IDC_NOTIFY_DISCONNECT, "Button", 0x50010003, 5, 33, 128, 10
+    CONTROL "Notify me if unable to connect", IDC_NOTIFY_IF_CANNOT_CONNECT, "Button", 0x50010003, 5, 43, 110, 10
+    CONTROL "Notify to output window", IDC_NOTIFY_TO_OUTPUT, "Button", 0x50010003, 26, 55, 100, 10
+    CONTROL "All &typing goes to command window", IDC_ALL_TYPING_TO_COMMAND, "Button", 0x50010003, 5, 73, 128, 10
+    CONTROL "ALT key does not activate menu bar", IDC_DISABLE_KEYBOARD_MENU_ACTIVATION, "Button", 0x50010003, 5, 83, 131, 10
+    CONTROL "&Use fixed space font when editing triggers/aliases etc.", IDC_FIXED_FONT, "Button", 0x50010003, 5, 92, 186, 10
+    CONTROL "Regular expressions can match on an empty string", IDC_REGEXP_MATCH_EMPTY, "Button", 0x50010003, 5, 102, 174, 10
+    CONTROL "Confirm before removing triggers/aliases/timers", IDC_CHECK1, "Button", 0x50010003, 5, 112, 163, 10
+    CONTROL "Auto-expand config screens", IDC_AUTO_EXPAND, "Button", 0x50010003, 140, 3, 104, 10
+    CONTROL "Use colour gradient in &config", IDC_COLOUR_GRADIENT, "Button", 0x50010003, 140, 13, 106, 10
+    CONTROL "&Bleed background colour to edge", IDC_BLEED_BACKGROUND, "Button", 0x50010003, 140, 23, 121, 10
+    CONTROL "&Smoother scrolling", IDC_SMOOTHER_SCROLLING, "Button", 0x50010003, 140, 33, 73, 10
+    CONTROL "&Very smooth scrolling", IDC_SMOOTH_SCROLLING, "Button", 0x50010003, 140, 43, 82, 10
+    CONTROL "Show grid lines in list views", IDC_SHOW_GRID_LINES, "Button", 0x50010003, 140, 53, 101, 10
+    CONTROL "Flat toolbars", IDC_BLUE_SLIDER, "Button", 0x50010003, 140, 63, 68, 10
+    CONTROL "F1, F6 are macros", IDC_F1_MACRO, "Button", 0x50010003, 140, 73, 70, 10
+    CONTROL "&Word delimiters", IDC_STATIC, "Button", 0x50000007, 6, 127, 183, 46
+    CONTROL "Tab completion:", IDC_STATIC, "Static", 0x50020002, 13, 141, 52, 8
+    CONTROL "", IDC_WORD_DELIMITERS, "Edit", 0x50810080, 73, 138, 110, 14
+    CONTROL "Double-click:", IDC_STATIC, "Static", 0x50020002, 23, 157, 42, 8
+    CONTROL "", IDC_WORD_DELIMITERS2, "Edit", 0x50810080, 73, 154, 110, 14
+    CONTROL "Spell checker", IDC_STATIC, "Button", 0x50000007, 6, 180, 72, 27
+    CONTROL "&Enable", IDC_ENABLE_SPELL_CHECK, "Button", 0x50010003, 16, 191, 38, 10
+    CONTROL "&Locale code:", IDC_STATIC, "Static", 0x50020000, 162, 193, 42, 8
+    CONTROL "", IDC_LOCALE, "Edit", 0x50810088, 209, 190, 34, 14
+    CONTROL "Window tabs:", IDC_STATIC, "Static", 0x50020000, 197, 132, 44, 8
+    CONTROL "", IDC_TABS, "ComboBox", 0x50210003, 195, 146, 48, 49
+END
+
+IDD_GLOBAL_PREFSP3 DIALOGEX 0, 0, 262, 201
+STYLE 0x48C00040
+CAPTION "Closing"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Confirm before closing &World", IDC_CONFIRM_BEFORE_CLOSING_WORLD, "Button", 0x50010003, 15, 10, 106, 10
+    CONTROL "Offer to save world if only &Variables have changed.", IDC_CONFIRM_BEFORE_SAVING_VARIABLES, "Button", 0x50010003, 15, 28, 176, 10
+    CONTROL "Confirm before closing &MUSHclient", IDC_CONFIRM_BEFORE_CLOSING_MUSHCLIENT, "Button", 0x50010003, 15, 46, 125, 10
+    CONTROL "Offer to save MXP &debug windows", IDC_CONFIRM_BEFORE_CLOSING_MXP_DEBUG, "Button", 0x50010003, 15, 64, 125, 10
+END
+
+IDD_GLOBAL_PREFSP4 DIALOGEX 0, 0, 262, 201
+STYLE 0x48C00040
+CAPTION "Printing"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Font...", IDC_FONT, "Button", 0x50010000, 5, 10, 50, 14
+    CONTROL "&Top margin:", IDC_STATIC, "Static", 0x50020002, 19, 63, 38, 8
+    CONTROL "", IDC_TOP_MARGIN, "Edit", 0x50812080, 64, 60, 40, 14
+    CONTROL "Spin1", IDC_SPIN_TOP_MARGIN, "msctls_updown32", 0x50000036, 94, 60, 11, 14
+    CONTROL "mm.", IDC_STATIC, "Static", 0x50020000, 109, 65, 14, 8
+    CONTROL "&Left margin:", IDC_STATIC, "Static", 0x50020002, 19, 88, 38, 8
+    CONTROL "", IDC_LEFT_MARGIN, "Edit", 0x50812080, 64, 85, 40, 14
+    CONTROL "Spin1", IDC_SPIN_LEFT_MARGIN, "msctls_updown32", 0x50000036, 94, 85, 11, 14
+    CONTROL "mm.", IDC_STATIC, "Static", 0x50020000, 109, 90, 14, 8
+    CONTROL "&Lines per page:", IDC_STATIC, "Static", 0x50020002, 7, 116, 50, 8
+    CONTROL "", IDC_LINES_PER_PAGE, "Edit", 0x50812080, 64, 113, 40, 14
+    CONTROL "Spin1", IDC_SPIN_LINES_PER_PAGE, "msctls_updown32", 0x50000036, 93, 113, 11, 14
+    CONTROL "Font name", IDC_FONT_NAME, "Static", 0x50020000, 10, 35, 240, 8
+END
+
+IDD_GLOBAL_PREFSP5 DIALOGEX 0, 0, 262, 201
+STYLE 0x48C00040
+CAPTION "Logging"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Default log files directory...", IDC_DEFAULT_DIRECTORY, "Button", 0x50010000, 10, 20, 95, 14
+    CONTROL "Default directory", IDC_DEFAULT_DIRECTORY_NAME, "Static", 0x50020000, 10, 44, 245, 8
+    CONTROL "Auto &Log when opening world", IDC_AUTO_LOG, "Button", 0x40010003, 10, 62, 107, 10
+    CONTROL "&Append to log files", IDC_AUTO_APPEND, "Button", 0x50010003, 10, 82, 74, 10
+    CONTROL "&Confirm when closing log file", IDC_CONFIRM_LOG_FILE_CLOSE, "Button", 0x50010003, 10, 102, 105, 10
+END
+
+IDD_GLOBAL_PREFSP6 DIALOGEX 0, 0, 262, 201
+STYLE 0x48C00040
+CAPTION "Timers"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Timer interval (seconds):", IDC_STATIC, "Static", 0x50020000, 10, 43, 78, 8
+    CONTROL "", IDC_TIMER_INTERVAL, "Edit", 0x50812080, 95, 40, 40, 14
+    CONTROL "Spin1", IDC_SPIN_TIMER, "msctls_updown32", 0x50000036, 125, 40, 11, 14
+    CONTROL "Set to zero for timers that can fire up to 1/10 of a second apart.", IDC_STATIC, "Static", 0x50020000, 11, 77, 241, 8
+END
+
+IDD_IMMEDIATE DIALOGEX 0, 0, 262, 191
+STYLE 0x80C800C0
+CAPTION "Immediate"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_EXPRESSION, "Edit", 0x50A11004, 5, 5, 250, 155
+    CONTROL "&Run", IDOK, "Button", 0x50010001, 10, 170, 50, 14
+    CONTROL "&Edit....", IDC_EDIT, "Button", 0x50010000, 107, 170, 50, 14
+    CONTROL "Close", IDCANCEL, "Button", 0x50010000, 204, 170, 50, 14
+END
+
+IDD_PREFS_P17 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Scripting"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Scripting L&anguage:", IDC_STATIC, "Static", 0x50020000, 3, 5, 64, 8
+    CONTROL "", IDC_LANGUAGE, "ComboBox", 0x50010003, 73, 3, 95, 81
+    CONTROL "Script &Prefix:", IDC_STATIC, "Static", 0x50020000, 207, 5, 40, 8
+    CONTROL "", IDC_SCRIPT_PREFIX, "Edit", 0x50810080, 257, 3, 94, 12
+    CONTROL "&Enable scripting", IDC_ENABLE, "Button", 0x50010003, 8, 22, 72, 10
+    CONTROL "&Warn if inactive", IDC_CHECK1, "Button", 0x50010003, 113, 22, 65, 10
+    CONTROL "Not active.", IDC_IS_ACTIVE, "Static", 0x50020000, 268, 23, 111, 8
+    CONTROL "External Script File", IDC_STATIC, "Button", 0x50000007, 5, 38, 375, 92
+    CONTROL "Script &File:", IDC_STATIC, "Static", 0x50020000, 18, 55, 34, 8
+    CONTROL "", IDC_SCRIPT_FILENAME, "Edit", 0x50810080, 57, 53, 307, 12
+    CONTROL "&Browse...", IDC_BROWSE, "Button", 0x50010000, 19, 72, 58, 14
+    CONTROL "New...", IDC_BUTTON1, "Button", 0x50010000, 89, 72, 58, 14
+    CONTROL "Edit &Script", IDC_EDIT_SCRIPT, "Button", 0x50010000, 159, 72, 58, 14
+    CONTROL "&Use inbuilt notepad to edit scripts", IDC_USE_NOTEPAD, "Button", 0x50010003, 241, 75, 120, 10
+    CONTROL "Choose Editor...", IDC_CHOOSE_EDITOR, "Button", 0x50010000, 19, 93, 58, 14
+    CONTROL "Script editor", IDC_SCRIPT_EDITOR, "Static", 0x50020000, 85, 96, 284, 10
+    CONTROL "Recompile when script file changes:", IDC_STATIC, "Static", 0x50020000, 20, 114, 114, 8
+    CONTROL "", IDC_RELOAD_OPTION, "ComboBox", 0x50210003, 141, 111, 60, 75
+    CONTROL "Note errors", IDC_ERRORS_AS_NOTES, "Button", 0x50010003, 15, 143, 51, 10
+    CONTROL "&Note Colour:", IDC_STATIC, "Static", 0x50020000, 104, 142, 40, 8
+    CONTROL "", IDC_TEXT_COLOUR, "ComboBox", 0x50210213, 150, 141, 105, 189
+    CONTROL "", IDC_SCRIPT_TEXT_SWATCH, "Button", 0x5801000B, 264, 139, 15, 15
+    CONTROL "", IDC_SCRIPT_TEXT_SWATCH2, "Button", 0x5801000B, 283, 139, 15, 15
+    CONTROL "World Events", IDC_STATIC, "Button", 0x50000007, 7, 171, 294, 170
+    CONTROL "&Open:", IDC_STATIC, "Static", 0x50020002, 32, 188, 20, 8
+    CONTROL "", IDC_ON_WORLD_OPEN, "Edit", 0x50810080, 62, 186, 232, 12
+    CONTROL "&Connect:", IDC_STATIC, "Static", 0x50020002, 22, 207, 30, 8
+    CONTROL "", IDC_ON_WORLD_CONNECT, "Edit", 0x50810080, 62, 205, 232, 12
+    CONTROL "&Get Focus:", IDC_STATIC, "Static", 0x50020002, 16, 226, 36, 8
+    CONTROL "", IDC_ON_WORLD_GET_FOCUS, "Edit", 0x50810080, 62, 224, 232, 12
+    CONTROL "&Lose Focus:", IDC_STATIC, "Static", 0x50020002, 12, 245, 40, 8
+    CONTROL "", IDC_ON_WORLD_LOSE_FOCUS, "Edit", 0x50810080, 62, 243, 232, 12
+    CONTROL "&Disconnect:", IDC_STATIC, "Static", 0x50020002, 13, 264, 39, 8
+    CONTROL "", IDC_ON_WORLD_DISCONNECT, "Edit", 0x50810080, 62, 262, 232, 12
+    CONTROL "Close:", IDC_STATIC, "Static", 0x50020002, 32, 283, 20, 8
+    CONTROL "", IDC_ON_WORLD_CLOSE, "Edit", 0x50810080, 62, 281, 232, 12
+    CONTROL "Save:", IDC_STATIC, "Static", 0x50020002, 32, 302, 20, 8
+    CONTROL "", IDC_ON_MXP_OPENING_TAG, "Edit", 0x50810080, 62, 300, 232, 12
+    CONTROL "&MXP...", IDC_MXP_SCRIPTS, "Button", 0x50010000, 62, 319, 48, 14
+    CONTROL "Execution time", IDC_EXECUTION_TIME, "Static", 0x50020000, 318, 306, 186, 8
+    CONTROL "&Register DLL", IDC_REGISTER, "Button", 0x50010000, 318, 324, 60, 14
+    CONTROL "(Click for MXP-related script handlers)", IDC_STATIC, "Static", 0x50020000, 125, 322, 118, 8
+END
+
+IDD_PREFS_P18 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Variables"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Generic1", IDC_VARIABLES_LIST, "SysListView32", 0x50810009, 10, 3, 499, 260
+    CONTROL "F&ilter by:", IDC_FILTER, "Button", 0x50010003, 193, 290, 42, 10
+    CONTROL "...", IDC_BUTTON1, "Button", 0x50010000, 241, 290, 21, 10
+    CONTROL "&Add...", IDC_ADD_VARIABLE, "Button", 0x50010000, 11, 285, 45, 14
+    CONTROL "&Edit...", IDC_CHANGE_VARIABLE, "Button", 0x50010000, 11, 304, 45, 14
+    CONTROL "&Remove", IDC_DELETE_VARIABLE, "Button", 0x50010000, 11, 323, 45, 14
+    CONTROL "&Find...", IDC_FIND, "Button", 0x50010000, 64, 304, 45, 14
+    CONTROL "Find &Next", IDC_FIND_NEXT, "Button", 0x50010000, 64, 323, 45, 14
+    CONTROL "&Load...", IDC_LOAD_VARIABLES, "Button", 0x50010000, 117, 304, 45, 14
+    CONTROL "&Save...", IDC_SAVE_VARIABLES, "Button", 0x50010000, 117, 323, 45, 14
+    CONTROL "&Copy", IDC_COPY, "Button", 0x50010000, 231, 304, 31, 14
+    CONTROL "&Paste", IDC_PASTE, "Button", 0x50010000, 231, 323, 31, 14
+    CONTROL "0 variables.", IDC_COUNT, "Static", 0x50020000, 13, 268, 244, 8
+END
+
+IDD_EDIT_VARIABLE DIALOGEX 0, 0, 520, 350
+STYLE 0x90C800C0
+CAPTION "Edit variable"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Name", IDC_STATIC, "Static", 0x50020002, 11, 12, 25, 8
+    CONTROL "", IDC_VARIABLE_NAME, "Edit", 0x50810080, 45, 10, 438, 12
+    CONTROL "&Contents:", IDC_STATIC, "Static", 0x50020002, 15, 30, 31, 8
+    CONTROL "", IDC_VARIABLE_CONTENTS, "Edit", 0x50A11004, 15, 45, 490, 250
+    CONTROL "&Edit...", IDC_EDIT_CONTENTS, "Button", 0x50010000, 15, 299, 50, 14
+    CONTROL "OK", IDOK, "Button", 0x50010001, 15, 327, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 105, 327, 50, 14
+    CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 195, 327, 50, 14
+END
+
+IDD_FIND DIALOGEX 0, 0, 262, 76
+STYLE 0x80C800C0
+CAPTION "Find"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Fi&nd what:", IDC_STATIC, "Static", 0x50020002, 6, 7, 34, 8
+    CONTROL "", IDC_FIND_WHAT, "ComboBox", 0x50210002, 45, 5, 205, 65
+    CONTROL "Match &case", IDC_MATCH_CASE, "Button", 0x50010003, 5, 35, 53, 10
+    CONTROL "&Regular expression", IDC_REGEXP, "Button", 0x50010003, 5, 50, 76, 10
+    CONTROL "?", IDC_BUTTON1, "Button", 0x50010000, 86, 49, 20, 12
+    CONTROL "Direction", IDC_STATIC, "Button", 0x50000007, 115, 25, 70, 40
+    CONTROL "&Up", IDC_FIND_UP, "Button", 0x50020009, 124, 35, 25, 10
+    CONTROL "&Down", IDC_FIND_DOWN, "Button", 0x50000009, 124, 50, 35, 10
+    CONTROL "&Find", IDOK, "Button", 0x50010001, 200, 35, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 200, 52, 50, 14
+END
+
+CG_IDD_PROGRESS DIALOGEX 0, 0, 264, 79
+STYLE 0x90C800C0
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010001, 106, 58, 50, 14
+    CONTROL "Progress1", CG_IDC_PROGDLG_PROGRESS, "msctls_progress32", 0x50800000, 10, 34, 243, 13
+    CONTROL " 0 %", CG_IDC_PROGDLG_PERCENT, "Static", 0x50020000, 122, 23, 18, 8
+    CONTROL "", CG_IDC_PROGDLG_STATUS, "Static", 0x50020000, 13, 7, 238, 8
+END
+
+CG_IDS_PROGRESS_CAPTION DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Auto-say"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Enable Auto Say", IDC_ENABLE_AUTOSAY, "Button", 0x50010003, 119, 59, 80, 10
+    CONTROL "Exclude &commands starting with special characters", IDC_EXCLUDE_NON_ALPHA, "Button", 0x50010003, 149, 129, 176, 10
+    CONTROL "Exclude &macros", IDC_EXCLUDE_MACROS, "Button", 0x50010003, 149, 150, 66, 10
+    CONTROL "&Override prefix:", IDC_STATIC, "Static", 0x50020000, 155, 171, 48, 8
+    CONTROL "", IDC_OVERRIDE_PREFIX, "Edit", 0x50810080, 209, 169, 50, 12
+    CONTROL "&Auto Say text:", IDC_STATIC, "Static", 0x50020000, 139, 217, 45, 8
+    CONTROL "", IDC_AUTO_SAY_STRING, "Edit", 0x50810080, 189, 214, 160, 12
+    CONTROL "Auto say configuration", IDC_STATIC, "Button", 0x50000007, 119, 89, 245, 165
+    CONTROL "Exclusions", IDC_STATIC, "Button", 0x50000007, 135, 110, 205, 90
+    CONTROL "Send auto-say response to command interpreter (for aliases etc.)", IDC_CHECK1, "Button", 0x50010003, 135, 234, 217, 10
+END
+
+IDD_PREFS_P20 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Printing"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Normal", IDC_STATIC, "Button", 0x50000007, 92, 2, 249, 158
+    CONTROL "Bold", IDC_STATIC, "Button", 0x50000007, 92, 175, 249, 158
+    CONTROL "Black:", IDC_STATIC, "Static", 0x50020000, 123, 16, 21, 8
+    CONTROL "Red:", IDC_STATIC, "Static", 0x50020000, 128, 34, 16, 8
+    CONTROL "Green:", IDC_STATIC, "Static", 0x50020000, 122, 52, 22, 8
+    CONTROL "Yellow:", IDC_STATIC, "Static", 0x50020000, 120, 70, 24, 8
+    CONTROL "Blue:", IDC_STATIC, "Static", 0x50020000, 127, 88, 17, 8
+    CONTROL "Magenta:", IDC_STATIC, "Static", 0x50020000, 113, 106, 31, 8
+    CONTROL "Cyan:", IDC_STATIC, "Static", 0x50020000, 125, 124, 19, 8
+    CONTROL "White:", IDC_STATIC, "Static", 0x50020000, 122, 144, 22, 8
+    CONTROL "Bold", IDC_PRINT_BOLD0, "Button", 0x50010003, 196, 15, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC0, "Button", 0x50010003, 236, 15, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE0, "Button", 0x50010003, 277, 15, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD1, "Button", 0x50010003, 196, 33, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC1, "Button", 0x50010003, 236, 33, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE1, "Button", 0x50010003, 277, 33, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD2, "Button", 0x50010003, 196, 51, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC2, "Button", 0x50010003, 236, 51, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE2, "Button", 0x50010003, 277, 51, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD3, "Button", 0x50010003, 196, 69, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC3, "Button", 0x50010003, 236, 69, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE3, "Button", 0x50010003, 277, 69, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD4, "Button", 0x50010003, 196, 87, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC4, "Button", 0x50010003, 236, 87, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE4, "Button", 0x50010003, 277, 87, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD5, "Button", 0x50010003, 196, 105, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC5, "Button", 0x50010003, 236, 105, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE5, "Button", 0x50010003, 277, 105, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD6, "Button", 0x50010003, 196, 123, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC6, "Button", 0x50010003, 236, 123, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE6, "Button", 0x50010003, 277, 123, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD7, "Button", 0x50010003, 196, 143, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC7, "Button", 0x50010003, 236, 143, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE7, "Button", 0x50010003, 277, 143, 46, 10
+    CONTROL "Black:", IDC_STATIC, "Static", 0x50020000, 123, 192, 21, 8
+    CONTROL "Red:", IDC_STATIC, "Static", 0x50020000, 128, 208, 16, 8
+    CONTROL "Green:", IDC_STATIC, "Static", 0x50020000, 122, 226, 22, 8
+    CONTROL "Yellow:", IDC_STATIC, "Static", 0x50020000, 120, 244, 24, 8
+    CONTROL "Blue:", IDC_STATIC, "Static", 0x50020000, 127, 262, 17, 8
+    CONTROL "Magenta:", IDC_STATIC, "Static", 0x50020000, 113, 280, 31, 8
+    CONTROL "Cyan:", IDC_STATIC, "Static", 0x50020000, 125, 298, 19, 8
+    CONTROL "White:", IDC_STATIC, "Static", 0x50020000, 122, 316, 22, 8
+    CONTROL "Bold", IDC_PRINT_BOLD8, "Button", 0x50010003, 196, 191, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC8, "Button", 0x50010003, 236, 191, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE8, "Button", 0x50010003, 277, 191, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD9, "Button", 0x50010003, 196, 207, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC9, "Button", 0x50010003, 236, 207, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE9, "Button", 0x50010003, 277, 207, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD10, "Button", 0x50010003, 196, 225, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC10, "Button", 0x50010003, 236, 225, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE10, "Button", 0x50010003, 277, 225, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD11, "Button", 0x50010003, 196, 243, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC11, "Button", 0x50010003, 236, 243, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE11, "Button", 0x50010003, 277, 243, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD12, "Button", 0x50010003, 196, 261, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC12, "Button", 0x50010003, 236, 261, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE12, "Button", 0x50010003, 277, 261, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD13, "Button", 0x50010003, 196, 279, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC13, "Button", 0x50010003, 236, 279, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE13, "Button", 0x50010003, 277, 279, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD14, "Button", 0x50010003, 196, 297, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC14, "Button", 0x50010003, 236, 297, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE14, "Button", 0x50010003, 277, 297, 46, 10
+    CONTROL "Bold", IDC_PRINT_BOLD15, "Button", 0x50010003, 196, 315, 30, 10
+    CONTROL "Italic", IDC_PRINT_ITALIC15, "Button", 0x50010003, 236, 315, 31, 10
+    CONTROL "Underline", IDC_PRINT_UNDERLINE15, "Button", 0x50010003, 277, 315, 46, 10
+END
+
+IDD_GLOBAL_PREFSP7 DIALOGEX 0, 0, 262, 201
+STYLE 0x48C00040
+CAPTION "Activity"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Open activity window at startup", IDC_OPEN_ACTIVITY, "Button", 0x50010003, 25, 25, 115, 10
+    CONTROL "Update activity window", IDC_STATIC, "Button", 0x50000007, 25, 45, 195, 60
+    CONTROL "On &New Activity", IDC_UPDATE_ACTIVITY, "Button", 0x50020009, 35, 60, 67, 10
+    CONTROL "&Periodically, every:", IDC_PERIODICALLY, "Button", 0x50000009, 35, 74, 75, 10
+    CONTROL "&Both", IDC_BOTH, "Button", 0x50000009, 35, 90, 31, 10
+    CONTROL "", IDC_ACTIVITY_INTERVAL, "Edit", 0x50812080, 115, 70, 30, 14
+    CONTROL "Spin1", IDC_PERIOD_SPIN, "msctls_updown32", 0x50000036, 141, 70, 11, 14
+    CONTROL "second(s)", IDC_STATIC, "Static", 0x50020000, 161, 74, 32, 8
+    CONTROL "&Activity button bar style:", IDC_STATIC, "Static", 0x50020000, 25, 132, 76, 8
+    CONTROL "", IDC_ACTIVITY_BUTTONS_STYLE, "ComboBox", 0x50210003, 115, 130, 78, 75
+END
+
+IDD_MISSING_ENTRY_POINTS DIALOGEX 0, 0, 520, 350
+STYLE 0x80C800C0
+CAPTION "Missing script procedure names"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Close", IDOK, "Button", 0x50010001, 3, 329, 50, 14
+    CONTROL "The following errors were encountered when attempting to link to script subroutines. The missing subroutines will not be called.", IDC_STATIC, "Static", 0x50020000, 5, 10, 230, 20
+    CONTROL "", IDC_ERROR_LIST, "Edit", 0x50A10804, 5, 35, 505, 287
+END
+
+IDD_PREFS_P21 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Connecting"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Character name and password", IDC_STATIC, "Button", 0x50000007, 10, 10, 458, 134
+    CONTROL "&Name:", IDC_STATIC, "Static", 0x50020002, 43, 32, 25, 8
+    CONTROL "", IDC_CHARACTER, "Edit", 0x50810080, 75, 30, 175, 13
+    CONTROL "&Password:", IDC_STATIC, "Static", 0x50020002, 28, 67, 40, 8
+    CONTROL "", IDC_PASSWORD, "Edit", 0x508100A0, 75, 65, 175, 13
+    CONTROL "&Connect:", IDC_STATIC, "Static", 0x50020002, 38, 102, 30, 8
+    CONTROL "", IDC_CONNECT_OPTION, "ComboBox", 0x50210003, 75, 100, 175, 75
+    CONTROL "Connect &Text. (Sent after connected):", IDC_STATIC, "Static", 0x50020000, 10, 166, 120, 8
+    CONTROL "", IDC_CONNECT_TEXT, "Edit", 0x50A11004, 10, 180, 452, 137
+    CONTROL "You can use ""%name%"" or ""%password%"" if you wish the name or password supplied above to be inserted.", IDC_STATIC, "Static", 0x50020000, 10, 327, 359, 12
+    CONTROL "(0 lines)", IDC_LINE_COUNT, "Static", 0x50020002, 375, 166, 87, 8
+    CONTROL "(This is your avatar name for this game)", IDC_STATIC, "Static", 0x50020000, 269, 32, 124, 8
+END
+
+IDD_CREDITS DIALOGEX 0, 0, 520, 350
+STYLE 0x80C800C0
+CAPTION "Credits"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_CREDITS_LIST, "Edit", 0x50A10804, 5, 5, 511, 322
+    CONTROL "OK", IDOK, "Button", 0x50010001, 8, 332, 50, 14
+END
+
+IDD_QUICK_CONNECT DIALOGEX 0, 0, 237, 95
+STYLE 0x80C800C0
+CAPTION "Quick Connect"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&World Name:", IDC_STATIC, "Static", 0x50020002, 20, 12, 42, 8
+    CONTROL "", IDC_MUSH_NAME, "Edit", 0x50810080, 69, 10, 160, 13
+    CONTROL "&TCP/IP Address:", IDC_STATIC, "Static", 0x50020002, 8, 29, 54, 8
+    CONTROL "", IDC_SERVER, "Edit", 0x50810080, 69, 27, 160, 13
+    CONTROL "&Port Number:", IDC_STATIC, "Static", 0x50020002, 20, 46, 42, 8
+    CONTROL "", IDC_CHANNEL, "Edit", 0x50810000, 69, 44, 50, 13
+    CONTROL "OK", IDOK, "Button", 0x50010001, 9, 75, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 93, 75, 50, 14
+END
+
+IDD_LINE_COUNT DIALOGEX 0, 0, 262, 166
+STYLE 0x90C800C0
+CAPTION "Log game session"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Include:", IDC_STATIC, "Static", 0x50020000, 10, 12, 30, 8
+    CONTROL "", IDC_LINES, "Edit", 0x50810080, 45, 10, 45, 13
+    CONTROL "lines from screen buffer in log file.", IDC_STATIC, "Static", 0x50020000, 100, 12, 115, 8
+    CONTROL "Co&mment to put in log file:", IDC_STATIC, "Static", 0x50020000, 10, 30, 82, 8
+    CONTROL "", IDC_LOG_FILE_PREAMBLE, "Edit", 0x50A11004, 10, 45, 240, 30
+    CONTROL "Log &Output", IDC_LOG_OUTPUT, "Button", 0x50010003, 10, 80, 51, 10
+    CONTROL "Log &Commands", IDC_LOG_INPUT, "Button", 0x50010003, 10, 90, 65, 10
+    CONTROL "Log &Notes", IDC_LOG_NOTES, "Button", 0x50010003, 10, 100, 49, 10
+    CONTROL "&Append to existing log file", IDC_APPEND_TO_LOG_FILE, "Button", 0x50010003, 10, 110, 96, 10
+    CONTROL "&Write world name to log file", IDC_WRITE_WORLD_NAME, "Button", 0x50010003, 10, 120, 101, 10
+    CONTROL "OK", IDOK, "Button", 0x50010001, 10, 141, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 75, 141, 50, 14
+    CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 155, 141, 50, 14
+END
+
+IDD_WELCOME1 DIALOGEX 34, 22, 306, 142
+STYLE 0x80C800C0
+CAPTION "Thanks for upgrading MUSHclient!"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 10, 5, 20, 20
+    CONTROL "OK", IDOK, "Button", 0x50020000, 10, 119, 42, 14
+    CONTROL "Welcome to MUSHclient, version %%", IDC_MESSAGE1, "Static", 0x50020001, 86, 15, 133, 8
+    CONTROL "Thank you for upgrading MUSHclient to version %%", IDC_MESSAGE2, "Static", 0x50020000, 10, 35, 280, 15
+    CONTROL "This version has various bug fixes and enhancements. You can find what these are by visiting the MUSHclient release notes web page, see link below:", IDC_STATIC, "Static", 0x50020000, 10, 54, 285, 20
+    CONTROL "This screen will not appear again for this version.", IDC_STATIC, "Static", 0x50020000, 10, 98, 171, 8
+    CONTROL "- Nick Gammon", IDC_STATIC, "Static", 0x50020000, 239, 124, 55, 8
+    CONTROL "MUSHclient release notes:", IDC_STATIC, "Static", 0x50020000, 10, 80, 85, 8
+    CONTROL "MUSHclient change history", IDC_CHANGES_ADDRESS, "Static", 0x50020000, 103, 80, 189, 12
+END
+
+IDD_PREFS_P16 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Timers"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Generic1", IDC_TIMERS_LIST, "SysListView32", 0x50810009, 10, 3, 499, 260
+    CONTROL "Enable &Timers", IDC_ENABLE_TIMERS, "Button", 0x50010003, 66, 279, 61, 10
+    CONTROL "O&verride with default timers", IDC_USE_DEFAULT_TIMERS, "Button", 0x50010003, 66, 290, 101, 10
+    CONTROL "F&ilter by:", IDC_FILTER, "Button", 0x50010003, 193, 289, 42, 10
+    CONTROL "...", IDC_BUTTON1, "Button", 0x50010000, 241, 290, 21, 10
+    CONTROL "&Add...", IDC_ADD_TIMER, "Button", 0x50010000, 11, 284, 45, 14
+    CONTROL "&Edit...", IDC_CHANGE_TIMER, "Button", 0x50010000, 11, 303, 45, 14
+    CONTROL "&Remove", IDC_DELETE_TIMER, "Button", 0x50010000, 11, 322, 45, 14
+    CONTROL "&Find...", IDC_FIND, "Button", 0x50010000, 64, 303, 45, 14
+    CONTROL "Find &Next", IDC_FIND_NEXT, "Button", 0x50010000, 64, 322, 45, 14
+    CONTROL "&Load...", IDC_LOAD_TIMERS, "Button", 0x50010000, 117, 303, 45, 14
+    CONTROL "&Save...", IDC_SAVE_TIMERS, "Button", 0x50010000, 117, 322, 45, 14
+    CONTROL "Reset All Timers", IDC_RESET_TIMERS, "Button", 0x50010000, 166, 303, 60, 14
+    CONTROL "&Copy", IDC_COPY, "Button", 0x50010000, 231, 303, 31, 14
+    CONTROL "&Paste", IDC_PASTE, "Button", 0x50010000, 231, 322, 31, 14
+    CONTROL "0 timers.", IDC_COUNT, "Static", 0x50020000, 13, 267, 244, 8
+END
+
+IDD_TAB_COMPLETION_DEFAULTS_DLG DIALOGEX 0, 0, 261, 180
+STYLE 0x80C800C0
+CAPTION "Tab completion"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Default Word List:", IDC_STATIC, "Static", 0x50020000, 9, 9, 58, 8
+    CONTROL "Words below will be checked for first when you press <tab> to complete a word in the command window. Enter each word with a space between them.", IDC_STATIC, "Static", 0x50020000, 9, 25, 190, 25
+    CONTROL "", IDC_WORD_LIST, "Edit", 0x50810004, 9, 55, 244, 70
+    CONTROL "&Lines To Check:", IDC_STATIC, "Static", 0x50020000, 11, 135, 53, 8
+    CONTROL "", IDC_TAB_COMPLETION_LINES, "Edit", 0x50812082, 71, 132, 55, 14
+    CONTROL "&Insert Space After Word", IDC_CHECK1, "Button", 0x50010003, 144, 133, 92, 10
+    CONTROL "OK", IDOK, "Button", 0x50010001, 9, 158, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 85, 158, 50, 14
+END
+
+IDD_GLOBAL_CHANGE DIALOGEX 0, 0, 247, 106
+STYLE 0x80C800C0
+CAPTION "Global change"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "In the current command window:", IDC_STATIC, "Static", 0x50020000, 10, 10, 104, 8
+    CONTROL "&Find:", IDC_STATIC, "Static", 0x50020000, 43, 33, 16, 8
+    CONTROL "", IDC_CHANGE_FROM, "Edit", 0x50810080, 66, 30, 160, 14
+    CONTROL "&Replace with:", IDC_STATIC, "Static", 0x50020000, 15, 58, 44, 8
+    CONTROL "", IDC_CHANGE_TO, "Edit", 0x50810080, 66, 55, 160, 14
+    CONTROL "&Change All", IDOK, "Button", 0x50010001, 66, 80, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 176, 80, 50, 14
+END
+
+IDD_PREFERENCES DIALOGEX 0, 0, 636, 360
+STYLE 0x80C800C0
+CAPTION "Preferences"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "OK", IDOK, "Button", 0x50010001, 3, 404, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 63, 404, 50, 14
+    CONTROL "Tree1", IDC_TREE1, "SysTreeView32", 0x50810000, 5, 5, 106, 390
+END
+
+IDD_PREFS_P0 DIALOGEX 0, 0, 520, 350
+STYLE 0x40C00040
+CAPTION "Divider"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Please choose an item on the left.", IDC_STATIC, "Static", 0x50020000, 131, 111, 108, 8
+    CONTROL "Use CTRL+PAGE-UP to go to the next configuration page.", IDC_STATIC, "Static", 0x50020000, 131, 139, 186, 8
+    CONTROL "Use CTRL+PAGE-DOWN to go to the previous configuration page.", IDC_STATIC, "Static", 0x50020000, 131, 167, 212, 8
+    CONTROL "Click on a + sign to expand a category.", IDC_STATIC, "Static", 0x50020000, 131, 195, 124, 8
+END
+
+ID_RECALL_WINDOW DIALOGEX 0, 0, 442, 233
+STYLE 0x00CC0040
+CAPTION "Recall"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_TEXT, "Edit", 0x50A11004, 5, 20, 335, 160
+END
+
+IDD_RECALL DIALOGEX 0, 0, 262, 130
+STYLE 0x80CB00C0
+CAPTION "Recall"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Recall &What:", IDC_STATIC, "Static", 0x50020002, 17, 7, 42, 8
+    CONTROL "", IDC_FIND_WHAT, "ComboBox", 0x50210002, 67, 5, 187, 65
+    CONTROL "&Match case", IDC_MATCH_CASE, "Button", 0x50010003, 67, 25, 53, 10
+    CONTROL "&Regular expression", IDC_REGEXP, "Button", 0x50010003, 67, 37, 76, 10
+    CONTROL "?", IDC_BUTTON1, "Button", 0x50010000, 150, 34, 20, 12
+    CONTROL "&Examine:", IDC_STATIC, "Static", 0x50020002, 29, 58, 30, 8
+    CONTROL "", IDC_LINE_COUNT, "Edit", 0x50812080, 67, 55, 75, 14
+    CONTROL "lines from end.", IDC_STATIC, "Static", 0x50020000, 150, 60, 46, 8
+    CONTROL "&Output", IDC_OUTPUT, "Button", 0x50010003, 67, 75, 37, 10
+    CONTROL "&Commands", IDC_COMMANDS, "Button", 0x50010003, 130, 75, 51, 10
+    CONTROL "&Notes", IDC_NOTES, "Button", 0x50010003, 205, 75, 35, 10
+    CONTROL "&Line Preamble:", IDC_STATIC, "Static", 0x50020002, 12, 93, 48, 8
+    CONTROL "", IDC_EDIT1, "Edit", 0x50810080, 67, 90, 143, 14
+    CONTROL "?", IDC_BUTTON2, "Button", 0x50010000, 225, 91, 20, 12
+    CONTROL "&Find", IDOK, "Button", 0x50010001, 67, 110, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 145, 110, 50, 14
+END
+
+IDD_SEND_TO_ALL DIALOGEX 0, 0, 282, 206
+STYLE 0x80C800C0
+CAPTION "Send to multiple worlds"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_SEND_TEXT, "Edit", 0x50A11004, 5, 130, 255, 50
+    CONTROL "OK", IDOK, "Button", 0x50010001, 5, 185, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 75, 185, 50, 14
+    CONTROL "&Send to selected worlds:", IDC_STATIC, "Static", 0x50020000, 5, 3, 78, 8
+    CONTROL "", IDC_WORLD_LIST, "ListBox", 0x50A1010B, 5, 15, 255, 90
+    CONTROL "Select &All", IDC_SELECT_ALL, "Button", 0x50010000, 5, 110, 50, 14
+    CONTROL "Select &None", IDC_SELECT_NONE, "Button", 0x50010000, 80, 110, 50, 14
+    CONTROL "&Echo in output window", IDC_ECHO, "Button", 0x50010003, 160, 112, 88, 10
+END
+
+IDD_TEXT_ATTRIBUTES DIALOGEX 0, 0, 202, 231
+STYLE 0x80C800C0
+CAPTION "Text attributes"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Close", IDOK, "Button", 0x50010001, 9, 209, 50, 14
+    CONTROL "&Line info...", IDC_LINE_INFO, "Button", 0x50010000, 139, 209, 50, 14
+    CONTROL "The start of the current selection is:", IDC_STATIC, "Static", 0x50020000, 10, 5, 112, 8
+    CONTROL "Letter:", IDC_STATIC, "Static", 0x50020002, 53, 24, 21, 8
+    CONTROL "", IDC_LETTER, "Edit", 0x50810880, 84, 21, 20, 14
+    CONTROL "Text colour:", IDC_STATIC, "Static", 0x50020002, 36, 42, 38, 8
+    CONTROL "", IDC_TEXT_COLOUR, "Edit", 0x50810880, 84, 39, 105, 14
+    CONTROL "Background colour:", IDC_STATIC, "Static", 0x50020002, 11, 60, 63, 8
+    CONTROL "", IDC_BACK_COLOUR, "Edit", 0x50810880, 84, 57, 105, 14
+    CONTROL "Custom colour:", IDC_STATIC, "Static", 0x50020002, 26, 78, 48, 8
+    CONTROL "", IDC_CUSTOM_COLOUR, "Edit", 0x50810880, 84, 75, 105, 14
+    CONTROL "Bold", IDC_BOLD, "Button", 0x58010003, 77, 156, 30, 10
+    CONTROL "Italic", IDC_ITALIC, "Button", 0x58010003, 77, 166, 31, 10
+    CONTROL "Inverse", IDC_INVERSE, "Button", 0x58010003, 77, 176, 39, 10
+    CONTROL "The colour or style HAS been modified by a trigger.", IDC_MODIFIED, "Static", 0x50020000, 12, 193, 170, 8
+    CONTROL "Text:", IDC_STATIC, "Static", 0x50020002, 57, 111, 17, 8
+    CONTROL "", IDC_INPUT_SWATCH2, "Edit", 0x50810880, 84, 108, 74, 14
+    CONTROL "", IDC_RGB_TEXT_SWATCH, "Button", 0x5801000B, 171, 108, 15, 15
+    CONTROL "Background:", IDC_STATIC, "Static", 0x50020002, 32, 129, 42, 8
+    CONTROL "", IDC_DESCRIPTION, "Edit", 0x50810880, 84, 126, 73, 14
+    CONTROL "", IDC_SCRIPT_BACKGROUND_SWATCH, "Button", 0x5801000B, 171, 126, 15, 15
+    CONTROL "RGB colour", IDC_STATIC, "Button", 0x50000007, 11, 98, 185, 49
+END
+
+IDD_SCRIPT_ERROR DIALOGEX 0, 0, 357, 231
+STYLE 0x80C800C0
+CAPTION "Scripting Error"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Close", IDOK, "Button", 0x50010001, 8, 214, 50, 14
+    CONTROL "&Show errors in output window next time", IDC_CHECK1, "Button", 0x50010003, 105, 216, 145, 10
+    CONTROL "&Copy Details", IDC_COPY, "Button", 0x50010000, 297, 214, 50, 14
+    CONTROL "Error number:", IDC_STATIC, "Static", 0x50020002, 69, 4, 43, 8
+    CONTROL "", IDC_ERROR_NUMBER, "Edit", 0x50810880, 119, 1, 65, 14
+    CONTROL "Event:", IDC_STATIC, "Static", 0x50020002, 90, 22, 22, 8
+    CONTROL "", IDC_EVENT, "Edit", 0x50810880, 119, 19, 228, 14
+    CONTROL "Raised by:", IDC_RAISED_BY_LABEL, "Static", 0x50020000, 78, 40, 34, 8
+    CONTROL "", IDC_EDIT1, "Edit", 0x50810880, 119, 37, 228, 14
+    CONTROL "Description:", IDC_STATIC, "Static", 0x50020002, 8, 46, 38, 8
+    CONTROL "", IDC_DESCRIPTION, "Edit", 0x50A11844, 8, 58, 339, 107
+    CONTROL "Called by:", IDC_STATIC, "Static", 0x50020002, 8, 169, 32, 8
+    CONTROL "", IDC_CALLED_BY, "Edit", 0x50811844, 47, 169, 300, 37
+END
+
+IDD_GENERATED_NAME DIALOGEX 0, 0, 267, 66
+STYLE 0x80C800C0
+CAPTION "Name generator"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Generated name:", IDC_STATIC, "Static", 0x50020000, 5, 8, 56, 8
+    CONTROL "", IDC_GENERATED_NAME, "Edit", 0x50810880, 65, 5, 130, 14
+    CONTROL "&Copy", IDC_COPY, "Button", 0x50010000, 5, 26, 55, 14
+    CONTROL "&Try again", IDC_TRY_AGAIN, "Button", 0x50010000, 71, 26, 55, 14
+    CONTROL "Send to &World", IDC_SEND_TO_WORLD, "Button", 0x50010000, 137, 26, 55, 14
+    CONTROL "Close", IDOK, "Button", 0x50010001, 203, 26, 55, 14
+    CONTROL "File name", IDC_FILENAME, "Static", 0x50020000, 5, 52, 230, 8
+    CONTROL "...", IDC_BROWSE_NAME, "Button", 0x50010000, 245, 49, 15, 14
+END
+
+IDD_GLOBAL_PREFSP9 DIALOGEX 0, 0, 262, 201
+STYLE 0x58C80040
+CAPTION "Defaults"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Colours:", IDC_STATIC, "Static", 0x50020002, 5, 8, 26, 8
+    CONTROL "", IDC_DEFAULT_COLOURS, "Edit", 0x50810080, 35, 5, 160, 14
+    CONTROL "Browse...", IDC_BROWSE_COLOURS, "Button", 0x50010000, 204, 5, 50, 14
+    CONTROL "Triggers:", IDC_STATIC, "Static", 0x50020002, 3, 28, 28, 8
+    CONTROL "", IDC_DEFAULT_TRIGGERS, "Edit", 0x50810080, 35, 25, 160, 14
+    CONTROL "Browse...", IDC_BROWSE_TRIGGERS, "Button", 0x50010000, 204, 25, 50, 14
+    CONTROL "Aliases:", IDC_STATIC, "Static", 0x50020002, 6, 48, 25, 8
+    CONTROL "", IDC_DEFAULT_ALIASES, "Edit", 0x50810080, 35, 45, 160, 14
+    CONTROL "Browse...", IDC_BROWSE_ALIASES, "Button", 0x50010000, 204, 45, 50, 14
+    CONTROL "Macros:", IDC_STATIC, "Static", 0x50020002, 5, 68, 26, 8
+    CONTROL "", IDC_DEFAULT_MACROS, "Edit", 0x50810080, 35, 65, 160, 14
+    CONTROL "Browse...", IDC_BROWSE_MACROS, "Button", 0x50010000, 204, 65, 50, 14
+    CONTROL "Timers:", IDC_STATIC, "Static", 0x50020002, 7, 88, 24, 8
+    CONTROL "", IDC_DEFAULT_TIMERS, "Edit", 0x50810080, 35, 85, 160, 14
+    CONTROL "Browse...", IDC_BROWSE_TIMERS, "Button", 0x50010000, 204, 85, 50, 14
+    CONTROL "Output Font...", IDC_SELECT_OUTPUT_FONT, "Button", 0x50010000, 5, 115, 50, 14
+    CONTROL "", IDC_DEFAULT_OUTPUT_FONT, "Edit", 0x50810880, 61, 115, 120, 14
+    CONTROL "", IDC_OUTPUT_STYLE, "Edit", 0x50810880, 185, 115, 70, 14
+    CONTROL "Input Font...", IDC_SELECT_INPUT_FONT, "Button", 0x50010000, 5, 135, 50, 14
+    CONTROL "", IDC_DEFAULT_INPUT_FONT, "Edit", 0x50810880, 61, 135, 120, 14
+    CONTROL "", IDC_INPUT_STYLE, "Edit", 0x50810880, 185, 135, 70, 14
+END
+
+IDD_GOTO DIALOGEX 0, 0, 186, 46
+STYLE 0x80C800C0
+CAPTION "Go to line"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Enter line number:", IDC_STATIC, "Static", 0x50020000, 10, 8, 58, 8
+    CONTROL "", ID_CHANGE_BTN, "Edit", 0x50812080, 80, 5, 80, 14
+    CONTROL "OK", IDOK, "Button", 0x50010001, 5, 25, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 80, 25, 50, 14
+END
+
+IDD_GLOBAL_PREFSP10 DIALOGEX 0, 0, 262, 201
+STYLE 0x58C80040
+CAPTION "Notepad"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Word Wrap", IDC_WORD_WRAP, "Button", 0x50010003, 10, 25, 53, 10
+    CONTROL "Window colour", IDC_STATIC, "Button", 0x50000007, 155, 5, 90, 33
+    CONTROL "", IDC_TEXT_SWATCH, "Button", 0x5001000B, 173, 18, 15, 15
+    CONTROL "on", IDC_STATIC, "Static", 0x50020000, 196, 21, 9, 8
+    CONTROL "", IDC_BACKGROUND_SWATCH, "Button", 0x5001000B, 213, 18, 15, 15
+    CONTROL "Parenthesis matching preferences", IDC_STATIC, "Button", 0x50000007, 5, 45, 240, 85
+    CONTROL "Braces nest", IDC_BRACES_NEST, "Button", 0x50010003, 15, 65, 53, 10
+    CONTROL "\\ escapes next character", IDC_BACKSLASH_ESCAPES, "Button", 0x50010003, 15, 74, 99, 10
+    CONTROL "% escapes next character", IDC_PERCENT_ESCAPES, "Button", 0x50010003, 15, 85, 97, 10
+    CONTROL "' quotes a string", IDC_SINGLE_QUOTES, "Button", 0x50010003, 15, 95, 65, 10
+    CONTROL "... with escape inside quotes", IDC_ESCAPE_SINGLE_QUOTES, "Button", 0x50010003, 100, 95, 105, 10
+    CONTROL """ quotes a string", IDC_DOUBLE_QUOTES, "Button", 0x50010003, 15, 105, 67, 10
+    CONTROL "... with escape inside quotes", IDC_ESCAPE_DOUBLE_QUOTES, "Button", 0x50010003, 100, 105, 105, 10
+    CONTROL "&Font...", IDC_SELECT_NOTEPAD_FONT, "Button", 0x40010000, 5, 145, 50, 14
+    CONTROL "", IDC_DEFAULT_NOTEPAD_FONT, "Edit", 0x40810880, 61, 145, 120, 14
+    CONTROL "", IDC_NOTEPAD_STYLE, "Edit", 0x40810880, 185, 145, 70, 14
+    CONTROL "Quote string:", IDC_STATIC, "Static", 0x50020000, 9, 168, 41, 8
+    CONTROL "", IDC_QUOTE_STRING, "Edit", 0x50810080, 61, 165, 190, 14
+END
+
+IDD_CHOOSE_NOTEPAD DIALOGEX 0, 0, 277, 141
+STYLE 0x80C800C0
+CAPTION "Choose notepad window"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&This world already has the following related notepad windows:", IDC_STATIC, "Static", 0x50020000, 10, 5, 195, 8
+    CONTROL "", IDC_NOTEPAD_LIST, "ListBox", 0x50A10103, 10, 20, 255, 90
+    CONTROL "&New", IDOK, "Button", 0x50010000, 10, 120, 63, 14
+    CONTROL "&Open existing", IDC_OPEN_EXISTING, "Button", 0x50010001, 107, 120, 63, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 204, 120, 63, 14
+END
+
+IDD_WINSOCK_INFO DIALOGEX 0, 0, 222, 175
+STYLE 0x80C800C0
+CAPTION "Windows Sockets information"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Close", IDOK, "Button", 0x50010001, 10, 155, 50, 14
+    CONTROL "Version:", IDC_STATIC, "Static", 0x50020002, 33, 10, 26, 8
+    CONTROL "", IDC_VERSION, "Edit", 0x50010880, 71, 10, 130, 12
+    CONTROL "High version:", IDC_STATIC, "Static", 0x50020002, 17, 30, 42, 8
+    CONTROL "", IDC_HIGH_VERSION, "Edit", 0x50010880, 71, 30, 130, 12
+    CONTROL "Description:", IDC_STATIC, "Static", 0x50020002, 21, 50, 38, 8
+    CONTROL "", IDC_DESCRIPTION, "Edit", 0x50010880, 71, 50, 130, 12
+    CONTROL "Status:", IDC_STATIC, "Static", 0x50020002, 36, 70, 23, 8
+    CONTROL "", IDC_STATUS, "Edit", 0x50010880, 71, 70, 130, 12
+    CONTROL "Max sockets:", IDC_STATIC, "Static", 0x50020002, 16, 90, 43, 8
+    CONTROL "", IDC_MAX_SOCKETS, "Edit", 0x50010880, 71, 90, 130, 12
+    CONTROL "Host name:", IDC_STATIC, "Static", 0x50020002, 22, 110, 37, 8
+    CONTROL "", IDC_HOST_NAME, "Edit", 0x50010880, 71, 110, 130, 12
+    CONTROL "Our address(es):", IDC_STATIC, "Static", 0x50020002, 7, 130, 52, 8
+    CONTROL "", IDC_ADDRESSES, "Edit", 0x50010880, 71, 130, 130, 20
+END
+
+IDD_MAPPER DIALOGEX 0, 0, 322, 221
+STYLE 0x80C800C0
+CAPTION "Mapper"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Enabled", IDC_ENABLE, "Button", 0x50010003, 5, 5, 42, 10
+    CONTROL "&Special Move...", IDC_SPECIAL_MOVE, "Button", 0x50010000, 160, 5, 65, 14
+    CONTROL "Current route:", IDC_STATIC, "Static", 0x50020000, 5, 18, 44, 8
+    CONTROL "", IDC_FORWARDS, "Edit", 0x50810844, 5, 29, 220, 33
+    CONTROL "Reverse route:", IDC_STATIC, "Static", 0x50020000, 5, 65, 48, 8
+    CONTROL "", IDC_BACKWARDS, "Edit", 0x50810844, 5, 76, 220, 33
+    CONTROL "Failure message:", IDC_STATIC, "Static", 0x50020000, 5, 113, 54, 8
+    CONTROL "", IDC_MAPPING_FAILURE, "Edit", 0x50A10004, 5, 124, 220, 45
+    CONTROL "Regular E&xpression", IDC_REGEXP, "Button", 0x50010003, 5, 172, 77, 10
+    CONTROL "Remove &All ...", IDC_REMOVE_ALL, "Button", 0x50010000, 235, 29, 80, 14
+    CONTROL "Remove &Last", IDC_REMOVE_LAST, "Button", 0x50010000, 235, 48, 80, 14
+    CONTROL "&Take Reverse Route", IDC_TAKE_REVERSE, "Button", 0x50010000, 235, 76, 80, 14
+    CONTROL "Edit &Failure Message...", IDC_EDIT, "Button", 0x50010000, 235, 122, 80, 14
+    CONTROL "&Make Alias ...", IDC_MAKE_ALIAS, "Button", 0x50010000, 235, 142, 80, 14
+    CONTROL "Make Re&verse Alias ...", IDC_MAKE_REVERSE_ALIAS, "Button", 0x50010000, 235, 162, 80, 14
+    CONTROL "&Remove Backtracks", IDC_REMOVE_REVERSES, "Button", 0x50010003, 235, 198, 81, 10
+    CONTROL "OK", IDOK, "Button", 0x50010001, 5, 196, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 85, 196, 50, 14
+    CONTROL "Convert to Regular Expression", IDC_CONVERT_TO_REGEXP, "Button", 0x50010000, 117, 172, 105, 14
+END
+
+IDD_MAP_MOVE DIALOGEX 0, 0, 186, 121
+STYLE 0x80C800C0
+CAPTION "Special Map Movement"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Action:", IDC_STATIC, "Static", 0x50020000, 17, 9, 23, 8
+    CONTROL "", IDC_ACTION, "Edit", 0x50810080, 45, 6, 120, 14
+    CONTROL "eg. unlock door, open south, climb down", IDC_STATIC, "Static", 0x50020000, 45, 25, 129, 8
+    CONTROL "&Reverse:", IDC_STATIC, "Static", 0x50020000, 10, 43, 30, 8
+    CONTROL "", IDC_REVERSE, "Edit", 0x50810080, 45, 40, 120, 14
+    CONTROL "eg. lock door, open north, climb up", IDC_STATIC, "Static", 0x50020000, 45, 59, 110, 8
+    CONTROL "Send to MUD", IDC_SEND_TO_MUD, "Button", 0x50010003, 45, 80, 59, 10
+    CONTROL "OK", IDOK, "Button", 0x50010001, 10, 100, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 105, 100, 50, 14
+END
+
+IDD_EDIT DIALOGEX 0, 0, 292, 206
+STYLE 0x80C40040
+CAPTION "Edit"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "->", IDC_BUTTON1, "Button", 0x40000000, 135, 185, 15, 14
+    CONTROL "", IDC_TEXT, "Edit", 0x50A10004, 0, 0, 291, 175
+    CONTROL "OK", IDOK, "Button", 0x50010001, 5, 185, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 230, 185, 50, 14
+END
+
+IDD_ASCII_ART DIALOGEX 0, 0, 257, 116
+STYLE 0x80C800C0
+CAPTION "ASCII Art"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Text:", IDC_STATIC, "Static", 0x50020002, 20, 8, 17, 8
+    CONTROL "", IDC_TEXT, "Edit", 0x50810080, 44, 5, 200, 14
+    CONTROL "&Layout:", IDC_STATIC, "Static", 0x50020002, 13, 30, 24, 8
+    CONTROL "", IDC_LAYOUT, "ComboBox", 0x50210003, 44, 28, 90, 70
+    CONTROL "&Font:", IDC_STATIC, "Static", 0x50020002, 20, 52, 17, 8
+    CONTROL "", IDC_FONT, "Edit", 0x50810080, 44, 49, 200, 14
+    CONTROL "&Browse...", IDC_BROWSE, "Button", 0x50010000, 45, 70, 50, 14
+    CONTROL "&Insert", IDOK, "Button", 0x50010001, 45, 95, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 194, 95, 50, 14
+END
+
+IDD_COMMAND_OPTIONS DIALOGEX 0, 0, 277, 181
+STYLE 0x80C800C0
+CAPTION "Keyboard preferences"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Double click", IDC_STATIC, "Button", 0x50000007, 5, 5, 115, 50
+    CONTROL "&Double-click Pastes Word", IDC_DOUBLE_CLICK_INSERTS, "Button", 0x50010003, 15, 20, 98, 10
+    CONTROL "Double-click Sends Word", IDC_DOUBLE_CLICK_SENDS, "Button", 0x50010003, 15, 31, 97, 10
+    CONTROL "Deleting", IDC_STATIC, "Button", 0x50000007, 130, 5, 135, 50
+    CONTROL "&Escape Deletes Typing", IDC_ESCAPE_DELETES_TYPING, "Button", 0x50010003, 140, 19, 89, 10
+    CONTROL "Save Deleted Command", IDC_SAVE_DELETED, "Button", 0x50010003, 140, 29, 93, 10
+    CONTROL "Confirm Before &Replacing Typing", IDC_CONFIRM_REPLACE_TYPING, "Button", 0x50010003, 140, 39, 119, 10
+    CONTROL "Arrow keys", IDC_STATIC, "Button", 0x50000007, 5, 60, 160, 60
+    CONTROL "Arrow Keys Wrap History", IDC_ARROWS_WRAP, "Button", 0x50010003, 15, 75, 94, 10
+    CONTROL "&Arrow Keys Traverse History", IDC_ARROW_KEYS_TRAVERSE_HISTORY, "Button", 0x50010003, 15, 85, 105, 10
+    CONTROL "Arrow Key Recalls Partial Command", IDC_ARROW_KEYS_RECALL_PARTIAL_COMMAND, "Button", 0x50010003, 15, 95, 128, 10
+    CONTROL "Alt+Arrow Key Recalls &Partial Command", IDC_RECALL_PARTIAL, "Button", 0x50010003, 15, 105, 140, 10
+    CONTROL "Compatibility", IDC_STATIC, "Button", 0x50000007, 5, 125, 160, 50
+    CONTROL "Ctrl+Z Goes To End Of Output Window", IDC_CTRL_Z_END_WINDOW, "Button", 0x50010003, 15, 135, 139, 10
+    CONTROL "Ctrl+P Recalls Previous Command", IDC_CTRL_P_PREVIOUS_COMMAND, "Button", 0x50010003, 15, 145, 125, 10
+    CONTROL "Ctrl+N Recalls Next Command", IDC_CTRL_N_PREVIOUS_COMMAND, "Button", 0x50010003, 15, 155, 125, 10
+    CONTROL "OK", IDOK, "Button", 0x50010001, 215, 130, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 215, 154, 50, 14
+END
+
+IDD_MXP_SCRIPTS DIALOGEX 0, 0, 247, 156
+STYLE 0x80C800C0
+CAPTION "MXP script routines"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Startup:", IDC_STATIC, "Static", 0x50020002, 26, 31, 26, 8
+    CONTROL "", IDC_ON_MXP_STARTUP, "Edit", 0x50810080, 58, 29, 171, 12
+    CONTROL "Shutdown:", IDC_STATIC, "Static", 0x50020002, 17, 48, 35, 8
+    CONTROL "", IDC_ON_MXP_SHUTDOWN, "Edit", 0x50810080, 58, 46, 171, 12
+    CONTROL "Opening tag:", IDC_STATIC, "Static", 0x50020002, 10, 65, 42, 8
+    CONTROL "", IDC_ON_MXP_OPENING_TAG, "Edit", 0x50810080, 58, 63, 171, 12
+    CONTROL "Closing tag:", IDC_STATIC, "Static", 0x50020002, 14, 82, 38, 8
+    CONTROL "", IDC_ON_MXP_CLOSING_TAG, "Edit", 0x50810080, 58, 80, 171, 12
+    CONTROL "Set variable:", IDC_STATIC, "Static", 0x50020002, 12, 99, 40, 8
+    CONTROL "", IDC_ON_MXP_SET_VARIABLE, "Edit", 0x50810080, 58, 97, 171, 12
+    CONTROL "Error:", IDC_STATIC, "Static", 0x50020002, 34, 116, 18, 8
+    CONTROL "", IDC_ON_MXP_ERROR, "Edit", 0x50810080, 58, 114, 171, 12
+    CONTROL "OK", IDOK, "Button", 0x50010001, 70, 136, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 155, 136, 50, 14
+    CONTROL "Script routines called when these events happen if the world is using MXP (MUD Extension Protocol).", IDC_STATIC, "Static", 0x50020000, 58, 5, 170, 20
+END
+
+IDD_DEBUG_INPUT DIALOGEX 0, 0, 342, 238
+STYLE 0x80C800C0
+CAPTION "Debug simulated world input"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Text to simulate arriving from the world:", IDC_STATIC, "Static", 0x50020000, 9, 34, 123, 8
+    CONTROL "", IDC_TEXT, "Edit", 0x50A10004, 9, 46, 325, 166
+    CONTROL "OK", IDOK, "Button", 0x50010001, 9, 219, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 111, 219, 50, 14
+    CONTROL "Enter simulated text received from world, use \\xx for hex and \\\\ for one backslash:", IDC_STATIC, "Static", 0x50020000, 9, 3, 269, 8
+    CONTROL "Press Ctrl+Enter to enter line-breaks.", IDC_STATIC, "Static", 0x50020000, 218, 217, 115, 8
+    CONTROL "&Specials:", IDC_STATIC, "Static", 0x50020000, 9, 18, 30, 8
+    CONTROL "", IDC_INSERT_SPECIAL, "ComboBox", 0x50210003, 45, 16, 147, 205
+    CONTROL "&Insert special", IDC_BUTTON1, "Button", 0x50010000, 199, 15, 64, 14
+    CONTROL "Insert &Unicode", IDC_BUTTON2, "Button", 0x50010000, 279, 15, 55, 14
+END
+
+IDD_COLOUR_PICKER DIALOGEX 0, 0, 259, 258
+STYLE 0x80C800C0
+CAPTION "Colour picker"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "List1", IDC_COLOURLIST, "SysListView32", 0x5081400D, 5, 2, 161, 158
+    CONTROL "&Name:", IDC_STATIC, "Static", 0x50020002, 4, 173, 22, 8
+    CONTROL "Colour name", IDC_COLOUR_NAME, "Button", 0x50018000, 31, 170, 135, 14
+    CONTROL "&Red:", IDC_STATIC, "Static", 0x50020002, 6, 194, 16, 8
+    CONTROL "Slider2", IDC_RED_SLIDER, "msctls_trackbar32", 0x50010018, 25, 190, 118, 15
+    CONTROL "255", IDC_RED, "Static", 0x50020002, 143, 194, 15, 8
+    CONTROL "&Green:", IDC_STATIC, "Static", 0x50020002, 0, 212, 22, 8
+    CONTROL "Slider2", IDC_GREEN_SLIDER, "msctls_trackbar32", 0x50010018, 25, 209, 118, 15
+    CONTROL "255", IDC_GREEN, "Static", 0x50020002, 143, 212, 15, 8
+    CONTROL "&Blue:", IDC_STATIC, "Static", 0x50020002, 5, 230, 17, 8
+    CONTROL "Slider2", IDC_BLUE_SLIDER, "msctls_trackbar32", 0x50010018, 25, 227, 118, 15
+    CONTROL "255", IDC_BLUE, "Static", 0x50020002, 143, 230, 15, 8
+    CONTROL "", IDC_COLOUR_SWATCH, "Button", 0x5001000B, 185, 2, 64, 64
+    CONTROL "OK", IDOK, "Button", 0x50010001, 185, 69, 64, 14
+    CONTROL "R&andom", IDC_SPECIAL_MOVE, "Button", 0x50010000, 185, 86, 64, 14
+    CONTROL "&Other colour...", ID_FILE_NAME_LBL, "Button", 0x50010000, 185, 103, 64, 14
+    CONTROL "&Paste", IDC_PASTE, "Button", 0x50010000, 185, 120, 64, 14
+    CONTROL "&Close", IDCANCEL, "Button", 0x50010000, 185, 137, 64, 14
+    CONTROL "&Sort:", IDC_STATIC, "Static", 0x50020002, 176, 159, 16, 8
+    CONTROL "", IDC_COLOUR_SORT, "ComboBox", 0x50210003, 197, 157, 52, 75
+    CONTROL "&MXP:", IDC_STATIC, "Static", 0x50020002, 174, 180, 18, 8
+    CONTROL "MXP value", IDC_MXP_NAME, "Button", 0x50018000, 197, 177, 52, 14
+    CONTROL "&VB:", IDC_STATIC, "Static", 0x50020002, 180, 196, 12, 8
+    CONTROL "VB value", IDC_VB_NAME, "Button", 0x50018000, 197, 193, 52, 14
+    CONTROL "&JScript:", IDC_STATIC, "Static", 0x50020002, 168, 212, 24, 8
+    CONTROL "JScript value", IDC_JSCRIPT_NAME, "Button", 0x50018000, 197, 209, 52, 14
+    CONTROL "&Lua:", IDC_STATIC, "Static", 0x50020002, 177, 228, 15, 8
+    CONTROL "Lua value", IDC_LUA_NAME, "Button", 0x50018000, 197, 225, 52, 14
+    CONTROL "Hue: xxx", IDC_HUE, "Static", 0x50020000, 43, 246, 64, 8
+    CONTROL "Saturation: xxx", IDC_SATURATION, "Static", 0x50020000, 116, 246, 64, 8
+    CONTROL "Luminance: xxx", IDC_BRIGHTNESS, "Static", 0x50020000, 189, 246, 64, 8
+END
+
+IDD_PREFS_P22 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "MXP"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "MUD Extension Procotol.", IDC_STATIC, "Static", 0x50020000, 15, 6, 80, 8
+    CONTROL "MXP inactive", IDC_MXP_ACTIVE, "Static", 0x50020002, 281, 6, 90, 8
+    CONTROL "Use MXP/Pueblo:", IDC_STATIC, "Static", 0x50020002, 81, 46, 58, 8
+    CONTROL "", IDC_MXP_OPTION, "ComboBox", 0x50210003, 144, 44, 78, 75
+    CONTROL "Detect Pueblo initiation string", IDC_PUEBLO, "Button", 0x50010003, 144, 66, 107, 10
+    CONTROL "MXP debug level:", IDC_STATIC, "Static", 0x50020002, 82, 94, 57, 8
+    CONTROL "", IDC_MXP_DEBUG_LEVEL, "ComboBox", 0x50210003, 144, 92, 78, 75
+    CONTROL "Hyperlinks", IDC_STATIC, "Button", 0x50000007, 88, 144, 215, 125
+    CONTROL "Custom link colour:", IDC_STATIC, "Static", 0x50020000, 98, 160, 60, 8
+    CONTROL "", IDC_HYPERLINK_SWATCH, "Button", 0x5001000B, 168, 154, 15, 15
+    CONTROL "Use custom link colour", IDC_USE_CUSTOM_LINK, "Button", 0x50010003, 98, 179, 87, 10
+    CONTROL "MUD can change link colour", IDC_MUD_CAN_CHANGE_LINK_COLOUR, "Button", 0x50010003, 98, 190, 107, 10
+    CONTROL "Underline hyperlinks", IDC_UNDERLINE_HYPERLINKS, "Button", 0x50010003, 98, 204, 79, 10
+    CONTROL "MUD can remove underline", IDC_MUD_CAN_REMOVE_UNDERLINE, "Button", 0x50010003, 98, 214, 103, 10
+    CONTROL "Save hyperlink mouse clicks in history", IDC_SAVE_HYPERLINK_CLICKS, "Button", 0x50010003, 98, 230, 135, 10
+    CONTROL "Echo hyperlink mouse clicks in output", IDC_ECHO_HYPERLINK_CLICKS, "Button", 0x50010003, 98, 239, 135, 10
+    CONTROL "Ignore colour changes", IDC_IGNORE_COLOUR_CHANGES, "Button", 0x50010003, 94, 282, 87, 10
+    CONTROL "Send AFK response", IDC_SEND_AFK_RESPONSE, "Button", 0x50010003, 94, 292, 79, 10
+    CONTROL "MUD can change some options", IDC_MUD_CAN_CHANGE_OPTIONS, "Button", 0x50010003, 94, 302, 116, 10
+    CONTROL "Reset tags", IDC_RESET_TAGS, "Button", 0x50010000, 93, 325, 55, 14
+    CONTROL "(Debugging messages appear in a separate window)", IDC_STATIC, "Static", 0x50020000, 97, 113, 166, 8
+END
+
+IDD_IMPORT_XML DIALOGEX 0, 0, 248, 223
+STYLE 0x80C800C0
+CAPTION "Import"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Plugins:", IDC_STATIC, "Button", 0x50000007, 5, 5, 214, 40
+    CONTROL "&Load / View Plugins ...", IDC_PLUGINS_LIST, "Button", 0x50010001, 18, 21, 94, 14
+    CONTROL "Import other XML data for:", IDC_STATIC, "Button", 0x50000007, 5, 50, 214, 147
+    CONTROL "&File ...", IDOK, "Button", 0x50010000, 143, 92, 50, 14
+    CONTROL "&Clipboard", IDC_CLIPBOARD, "Button", 0x50010000, 143, 122, 50, 14
+    CONTROL "Close", IDCANCEL, "Button", 0x50010000, 87, 204, 50, 14
+    CONTROL "&General world configuration", IDC_GENERAL, "Button", 0x50010003, 13, 62, 102, 10
+    CONTROL "&Triggers", IDC_TRIGGERS, "Button", 0x50010003, 13, 77, 41, 10
+    CONTROL "&Aliases", IDC_ALIASES, "Button", 0x50010003, 13, 92, 38, 10
+    CONTROL "T&imers", IDC_TIMERS, "Button", 0x50010003, 13, 107, 37, 10
+    CONTROL "&Macros", IDC_MACROS, "Button", 0x50010003, 13, 122, 39, 10
+    CONTROL "&Variables", IDC_VARIABLES, "Button", 0x50010003, 13, 137, 45, 10
+    CONTROL "C&olours", IDC_COLOURS, "Button", 0x50010003, 13, 152, 39, 10
+    CONTROL "&Numeric keypad", IDC_KEYPAD, "Button", 0x50010003, 13, 167, 67, 10
+    CONTROL "&Printing configuration", IDC_PRINTING, "Button", 0x50010003, 13, 182, 82, 10
+    CONTROL "Import from:", IDC_STATIC, "Button", 0x50000007, 129, 77, 75, 70
+END
+
+IDD_PLUGINS DIALOGEX 0, 0, 282, 214
+STYLE 0x80C40040
+CAPTION "Plugins"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "List1", IDC_PLUGINS_LIST, "SysListView32", 0x50810001, 5, 5, 270, 160
+    CONTROL "&Add...", IDC_ADD_PLUGIN, "Button", 0x50010000, 5, 175, 45, 14
+    CONTROL "&Remove", IDC_DELETE_PLUGIN, "Button", 0x50010000, 5, 193, 45, 14
+    CONTROL "Re&Install", IDC_RELOAD, "Button", 0x50010000, 79, 175, 45, 14
+    CONTROL "&Show Info", IDC_SHOW_DESCRIPTION, "Button", 0x50010000, 79, 193, 45, 14
+    CONTROL "E&nable", IDC_ENABLE, "Button", 0x50010000, 153, 175, 45, 14
+    CONTROL "&Disable", IDC_ON_MXP_SET_VARIABLE, "Button", 0x50010000, 153, 193, 45, 14
+    CONTROL "&Edit", IDC_EDIT, "Button", 0x50010000, 227, 175, 45, 14
+    CONTROL "&Close", IDCANCEL, "Button", 0x50010000, 227, 193, 45, 14
+END
+
+IDD_MAP_COMMENT DIALOGEX 0, 0, 322, 46
+STYLE 0x80C800C0
+CAPTION "Map Comment"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_COMMENT, "Edit", 0x50810080, 5, 5, 310, 14
+    CONTROL "OK", IDOK, "Button", 0x50010001, 5, 25, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 85, 25, 50, 14
+END
+
+IDD_INFO DIALOGEX 0, 0, 671, 13
+STYLE 0x40000040
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_INFOTEXT, "RICHEDIT", 0x58000800, 3, 2, 667, 10
+END
+
+IDD_CHAT_LIST DIALOGEX 0, 0, 312, 236
+STYLE 0x80C800C0
+CAPTION "Chat sessions"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Status", IDC_STATUS, "Static", 0x50020000, 5, 5, 140, 8
+    CONTROL "New Ca&ll...", IDC_BUTTON1, "Button", 0x50010000, 165, 3, 50, 14
+    CONTROL "Close", IDOK, "Button", 0x50010001, 255, 3, 50, 14
+    CONTROL "List1", IDC_CHAT_SESSIONS, "SysListView32", 0x50810009, 5, 20, 300, 115
+    CONTROL "&Edit...", IDC_EDIT, "Button", 0x50010000, 15, 154, 50, 14
+    CONTROL "&Ping", IDC_PING, "Button", 0x50010000, 73, 154, 50, 14
+    CONTROL "Sn&oop", IDC_SNOOP, "Button", 0x50010000, 131, 154, 50, 14
+    CONTROL "Send &File...", IDC_SENDFILE, "Button", 0x50010000, 189, 154, 50, 14
+    CONTROL "&Hang Up", IDC_HANGUP, "Button", 0x50010000, 247, 154, 50, 14
+    CONTROL "&Chat...", IDC_CHAT, "Button", 0x50010000, 15, 175, 50, 14
+    CONTROL "E&mote...", IDC_EMOTE, "Button", 0x50010000, 73, 175, 50, 14
+    CONTROL "Peek Connec&tions", IDC_PEEK, "Button", 0x50010000, 131, 175, 79, 14
+    CONTROL "&Request Connections", IDC_REQUEST, "Button", 0x50010000, 218, 175, 79, 14
+    CONTROL "Chat &All...", IDC_CHAT_ALL, "Button", 0x50010000, 21, 211, 50, 14
+    CONTROL "Emote All&...", IDC_EMOTE_ALL, "Button", 0x50010000, 79, 211, 50, 14
+    CONTROL "All connections", IDC_STATIC, "Button", 0x50000007, 5, 200, 135, 31
+    CONTROL "Selected connection(s)", IDC_STATIC, "Button", 0x50000007, 5, 140, 300, 55
+    CONTROL "Flags: A = can send commands; I = ignore;", IDC_STATIC, "Static", 0x50020000, 160, 201, 135, 8
+    CONTROL "P = private; n = can snoop; N = is snooping;", IDC_STATIC, "Static", 0x50020000, 160, 211, 139, 8
+    CONTROL "S = incoming; F = can send files; z = zChat", IDC_STATIC, "Static", 0x50020000, 160, 221, 134, 8
+END
+
+IDD_CHAT_CALL DIALOGEX 0, 0, 222, 90
+STYLE 0x80C800C0
+CAPTION "Call chat user"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "TCP/IP &Address:", IDC_STATIC, "Static", 0x50020002, 13, 8, 54, 8
+    CONTROL "", IDC_IP_ADDRESS, "Edit", 0x50810080, 75, 5, 140, 14
+    CONTROL "&Port:", IDC_STATIC, "Static", 0x50020002, 51, 28, 16, 8
+    CONTROL "", IDC_PORT, "Edit", 0x50812080, 75, 25, 40, 14
+    CONTROL "Use &zChat protocol", IDC_CHECK1, "Button", 0x50010003, 75, 45, 76, 10
+    CONTROL "OK", IDOK, "Button", 0x50010001, 10, 65, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 165, 65, 50, 14
+END
+
+IDD_CHAT_DETAILS DIALOGEX 0, 0, 252, 206
+STYLE 0x80C800C0
+CAPTION "Chat details"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Name:", IDC_STATIC, "Static", 0x50020002, 50, 8, 22, 8
+    CONTROL "", IDC_CHATNAME, "Edit", 0x50000880, 85, 8, 160, 12
+    CONTROL "&Group:", IDC_STATIC, "Static", 0x50020002, 50, 25, 22, 8
+    CONTROL "", IDC_PRINT_UNDERLINE6, "Edit", 0x50810080, 85, 22, 95, 14
+    CONTROL "Actual IP address:", IDC_STATIC, "Static", 0x50020002, 14, 42, 58, 8
+    CONTROL "", IDC_ACTUAL_IP, "Edit", 0x50000880, 85, 42, 165, 12
+    CONTROL "Call them on:", IDC_STATIC, "Static", 0x50020002, 30, 59, 42, 8
+    CONTROL "", IDC_CALL_IP, "Edit", 0x50000880, 85, 59, 165, 12
+    CONTROL "Port:", IDC_STATIC, "Static", 0x50020002, 56, 76, 16, 8
+    CONTROL "", IDC_PORT, "Edit", 0x50000880, 85, 76, 70, 12
+    CONTROL "ID:", IDC_STATIC, "Static", 0x50020002, 62, 93, 10, 8
+    CONTROL "Chat ID", IDC_CHAT_ID, "Static", 0x50020000, 85, 93, 160, 8
+    CONTROL "I&ncoming", IDC_CHECK1, "Button", 0x50010003, 30, 130, 45, 10
+    CONTROL "Can &snoop", IDC_WORD_WRAP, "Button", 0x50010003, 30, 140, 50, 10
+    CONTROL "Can send us &files", IDC_USE_NOTEPAD, "Button", 0x50010003, 30, 150, 69, 10
+    CONTROL "&Private", IDC_SMOOTHER_SCROLLING, "Button", 0x50010003, 30, 160, 38, 10
+    CONTROL "&Ignore", IDC_IGNORE_COLOURS, "Button", 0x50010003, 30, 170, 36, 10
+    CONTROL "Can send us &commands", IDC_REMOVE_REVERSES, "Button", 0x50010003, 30, 180, 91, 10
+    CONTROL "OK", IDOK, "Button", 0x50010001, 185, 160, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 185, 185, 50, 14
+    CONTROL "Client:", IDC_STATIC, "Static", 0x50020002, 50, 110, 20, 8
+    CONTROL "Client", IDC_HANGUP, "Static", 0x50020000, 85, 110, 160, 8
+END
+
+IDD_PROXY_PASSWORD DIALOGEX 0, 0, 232, 71
+STYLE 0x80C800C0
+CAPTION "Proxy server username and password"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Proxy Server Logon &Name:", IDC_STATIC, "Static", 0x50020002, 10, 8, 86, 8
+    CONTROL "", IDC_LOGON_NAME, "Edit", 0x50810080, 105, 5, 115, 14
+    CONTROL "Proxy Server &Password:", IDC_STATIC, "Static", 0x50020002, 20, 28, 76, 8
+    CONTROL "", IDC_LOGON_PASSWORD, "Edit", 0x508100A0, 105, 25, 115, 14
+    CONTROL "OK", IDOK, "Button", 0x50010001, 15, 50, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 80, 50, 50, 14
+END
+
+ID_GETTING_STARTED DIALOGEX 0, 0, 400, 93
+STYLE 0x80C800C0
+CAPTION "Problem parsing regular expression"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Nature of problem.", IDC_ERROR_MESSAGE, "Static", 0x50020000, 11, 5, 378, 11
+    CONTROL "", IDC_REGEXP_TEXT, "Edit", 0x50910804, 11, 21, 378, 36, 0x00000001
+    CONTROL "The error occurred at column: xxxxxxxx", IDC_COLUMN, "Static", 0x50020000, 11, 62, 375, 8
+    CONTROL "OK", IDOK, "Button", 0x50010001, 11, 75, 50, 14
+END
+
+IDD_PLUGINWIZARDPAGE1 DIALOGEX 0, 0, 262, 181
+STYLE 0x48C00040
+CAPTION "General"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Name:", IDC_STATIC, "Static", 0x50020002, 26, 8, 22, 8
+    CONTROL "", IDC_NAME, "Edit", 0x50810080, 54, 5, 115, 14
+    CONTROL "&Purpose:", IDC_STATIC, "Static", 0x50020002, 19, 27, 29, 8
+    CONTROL "", IDC_SPEED_WALK_FILLER, "Edit", 0x50810080, 54, 24, 205, 14
+    CONTROL "&Author:", IDC_STATIC, "Static", 0x50020002, 24, 46, 24, 8
+    CONTROL "", IDC_VERSION, "Edit", 0x50810080, 54, 43, 115, 14
+    CONTROL "&Requires:", IDC_STATIC, "Static", 0x50020002, 17, 65, 31, 8
+    CONTROL "", IDC_WORD_DELIMITERS, "Edit", 0x50810080, 54, 62, 41, 14
+    CONTROL "(MUSHclient version - the earlier the better)", IDC_STATIC, "Static", 0x50020000, 102, 65, 136, 8
+    CONTROL "Date Written:", IDC_STATIC, "Static", 0x50020002, 5, 84, 43, 8
+    CONTROL "", IDC_HIGH_VERSION, "Edit", 0x58810080, 54, 81, 115, 14
+    CONTROL "Version:", IDC_STATIC, "Static", 0x50020002, 22, 103, 26, 8
+    CONTROL "", IDC_LINE_COUNT, "Edit", 0x58810080, 54, 100, 30, 14
+    CONTROL "ID:", IDC_STATIC, "Static", 0x50020002, 38, 122, 10, 8
+    CONTROL "", IDC_SPEED_WALK_DELAY, "Edit", 0x58810080, 54, 119, 115, 14
+    CONTROL "This wizard will write a plugin for you.", IDC_STATIC, "Static", 0x50020000, 10, 138, 116, 8
+    CONTROL "Remove triggers/aliases/timers/variables from world file", IDC_CHECK1, "Button", 0x50010003, 10, 153, 189, 10
+    CONTROL "(If checked, they will be removed when you click the 'Create' button)", IDC_STATIC, "Static", 0x50020000, 10, 167, 216, 8
+END
+
+IDD_PLUGINWIZARDPAGE2 DIALOGEX 0, 0, 262, 191
+STYLE 0x48C00040
+CAPTION "Description"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "The user of the plugin will see this description if desired (ie. the 'help' text).", IDC_STATIC, "Static", 0x50020000, 5, 5, 245, 8
+    CONTROL "", IDC_DESCRIPTION, "Edit", 0x50A11004, 5, 20, 245, 125
+    CONTROL "&Edit...", IDC_EDIT, "Button", 0x50010000, 5, 150, 50, 14
+    CONTROL "&Generate 'Help' Alias, Name:", IDC_GENERATE_HELP, "Button", 0x50010003, 10, 172, 106, 10
+    CONTROL "", IDC_HELP_ALIAS, "Edit", 0x50810080, 119, 170, 131, 14
+END
+
+IDD_PLUGINWIZARDPAGE3 DIALOGEX 0, 0, 262, 181
+STYLE 0x48C00040
+CAPTION "Triggers"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "List1", IDC_TRIGGER_LIST, "SysListView32", 0x50810009, 5, 15, 245, 145
+    CONTROL "Select &All", IDC_SELECT_ALL, "Button", 0x50010000, 5, 165, 50, 14
+    CONTROL "Select &None", IDC_SELECT_NONE, "Button", 0x50010000, 65, 165, 50, 14
+    CONTROL "Select the triggers to be moved from this world to the plugin.", IDC_STATIC, "Static", 0x50020000, 5, 5, 188, 8
+    CONTROL "Ctrl+Click to select/deselect.", IDC_STATIC, "Static", 0x50020000, 159, 168, 91, 8
+END
+
+IDD_PLUGINWIZARDPAGE4 DIALOGEX 0, 0, 262, 181
+STYLE 0x48C00040
+CAPTION "Aliases"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "List1", IDC_ALIAS_LIST, "SysListView32", 0x50810009, 5, 15, 245, 145
+    CONTROL "Select &All", IDC_SELECT_ALL, "Button", 0x50010000, 5, 165, 50, 14
+    CONTROL "Select &None", IDC_SELECT_NONE, "Button", 0x50010000, 65, 165, 50, 14
+    CONTROL "Select the aliases to be moved from this world to the plugin.", IDC_STATIC, "Static", 0x50020000, 5, 5, 187, 8
+    CONTROL "Ctrl+Click to select/deselect.", IDC_STATIC, "Static", 0x50020000, 159, 168, 91, 8
+END
+
+IDD_PLUGINWIZARDPAGE5 DIALOGEX 0, 0, 262, 181
+STYLE 0x48C00040
+CAPTION "Timers"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "List1", IDC_TIMER_LIST, "SysListView32", 0x50810009, 5, 15, 245, 145
+    CONTROL "Select &All", IDC_SELECT_ALL, "Button", 0x50010000, 5, 165, 50, 14
+    CONTROL "Select &None", IDC_SELECT_NONE, "Button", 0x50010000, 65, 165, 50, 14
+    CONTROL "Select the timers to be moved from this world to the plugin.", IDC_STATIC, "Static", 0x50020000, 5, 5, 184, 8
+    CONTROL "Ctrl+Click to select/deselect.", IDC_STATIC, "Static", 0x50020000, 159, 168, 91, 8
+END
+
+IDD_PLUGINWIZARDPAGE6 DIALOGEX 0, 0, 262, 181
+STYLE 0x48C00040
+CAPTION "Variables"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "List1", IDC_VARIABLE_LIST, "SysListView32", 0x50810009, 5, 15, 245, 145
+    CONTROL "Select &All", IDC_SELECT_ALL, "Button", 0x50010000, 5, 165, 50, 14
+    CONTROL "Select &None", IDC_SELECT_NONE, "Button", 0x50010000, 65, 165, 50, 14
+    CONTROL "&Retain State (Remember Variables)", IDC_RETAIN_STATE, "Button", 0x50010003, 125, 167, 126, 10
+    CONTROL "Select the variables to be moved from this world to the plugin.", IDC_STATIC, "Static", 0x50020000, 5, 5, 194, 8
+END
+
+IDD_PLUGINWIZARDPAGE7 DIALOGEX 0, 0, 262, 181
+STYLE 0x48C00040
+CAPTION "Script"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Language:", IDC_STATIC, "Static", 0x50020000, 5, 7, 35, 8
+    CONTROL "", IDC_LANGUAGE, "ComboBox", 0x50210002, 50, 5, 75, 82
+    CONTROL "&Include Standard Constants", IDC_INCLUDE_CONSTANTS, "Button", 0x50010003, 145, 6, 103, 10
+    CONTROL "", IDC_SCRIPT, "Edit", 0x50A11004, 5, 25, 245, 135
+    CONTROL "&Edit...", IDC_EDIT, "Button", 0x50010000, 5, 165, 50, 14
+END
+
+IDD_PLUGINWIZARDPAGE8 DIALOGEX 0, 0, 262, 181
+STYLE 0x48C00040
+CAPTION "Comments"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "These comments will appear in the plugin file to assist the developer (you).", IDC_STATIC, "Static", 0x50020000, 5, 5, 245, 8
+    CONTROL "", IDC_COMMENTS, "Edit", 0x50A11004, 5, 20, 245, 140
+    CONTROL "&Edit...", IDC_EDIT, "Button", 0x50010000, 5, 165, 50, 14
+END
+
+IDD_EDIT_MULTILINE DIALOGEX 0, 0, 398, 236
+STYLE 0x80C40040
+CAPTION "Multi-line Edit"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_TEXT, "Edit", 0x50A11004, 0, 0, 397, 210
+    CONTROL "&OK", IDOK, "Button", 0x50010001, 5, 217, 50, 14
+    CONTROL "&Functions...", IDC_BUTTON1, "Button", 0x50010000, 88, 217, 50, 14
+    CONTROL "&Complete...", IDC_BUTTON2, "Button", 0x50010000, 171, 217, 50, 14
+    CONTROL "&Go To Line...", IDC_SPECIAL_MOVE, "Button", 0x50010000, 254, 217, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 337, 217, 50, 14
+END
+
+IDD_PREFS_P23 DIALOGEX 0, 0, 520, 350
+STYLE 0x58C00040
+CAPTION "Chat"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Our chat &name:", IDC_STATIC, "Static", 0x50020000, 104, 12, 50, 8
+    CONTROL "", IDC_CHAT_NAME, "Edit", 0x50810080, 159, 9, 75, 14
+    CONTROL "Automatically allow &snoop", IDC_AUTO_ACCEPT_SNOOP, "Button", 0x50010003, 115, 40, 97, 10
+    CONTROL "Incoming calls", IDC_STATIC, "Button", 0x50000007, 106, 58, 244, 54
+    CONTROL "&Accept incoming calls on port:", IDC_CHECK1, "Button", 0x50010003, 115, 73, 111, 10
+    CONTROL "", IDC_CHAT_PORT, "Edit", 0x50812080, 231, 71, 35, 14
+    CONTROL "&Validate caller", IDC_VALIDATE_CALLS, "Button", 0x50010003, 115, 92, 60, 10
+    CONTROL "Message Appearance", IDC_STATIC, "Button", 0x50000007, 106, 121, 244, 83
+    CONTROL "&Messages in:", IDC_STATIC, "Static", 0x50020000, 117, 137, 42, 8
+    CONTROL "", IDC_CHAT_TEXT_SWATCH, "Button", 0x5001000B, 162, 134, 15, 15
+    CONTROL "on", IDC_STATIC, "Static", 0x50020000, 187, 137, 9, 8
+    CONTROL "", IDC_NO_ECHO_OFF, "Button", 0x5001000B, 207, 134, 15, 15
+    CONTROL "&Ignore incoming colours", IDC_IGNORE_COLOURS, "Button", 0x50010003, 131, 155, 91, 10
+    CONTROL "&Prefix messages with:", IDC_STATIC, "Static", 0x50020000, 116, 177, 68, 8
+    CONTROL "", IDC_CHAT_PREFIX, "Edit", 0x50810080, 191, 174, 85, 14
+    CONTROL "Max. &lines per message:", IDC_STATIC, "Static", 0x50020002, 120, 228, 76, 8
+    CONTROL "Message size limits", IDC_STATIC, "Button", 0x50000007, 106, 215, 244, 50
+    CONTROL "", IDC_MAX_MESSAGE_LINES, "Edit", 0x50810080, 203, 225, 44, 14
+    CONTROL "(0 = no limit)", IDC_STATIC, "Static", 0x50020000, 266, 228, 38, 8
+    CONTROL "Max. bytes per message:", IDC_STATIC, "Static", 0x50020002, 117, 246, 79, 8
+    CONTROL "", IDC_MAX_MESSAGE_BYTES, "Edit", 0x50810080, 203, 243, 44, 14
+    CONTROL "(0 = no limit)", IDC_STATIC, "Static", 0x50020000, 266, 246, 38, 8
+    CONTROL "Incoming Files", IDC_STATIC, "Button", 0x50000007, 106, 276, 244, 72
+    CONTROL "Automatically accept &files", IDC_AUTO_ACCEPT_FILES, "Button", 0x50010003, 116, 287, 95, 10
+    CONTROL "Save &to:", IDC_STATIC, "Static", 0x50020000, 111, 303, 28, 8
+    CONTROL "", IDC_CHAT_SAVE_DIRECTORY, "Edit", 0x50810080, 146, 300, 194, 14
+    CONTROL "&Browse...", IDC_BUTTON1, "Button", 0x50010000, 113, 324, 50, 14
+END
+
+IDD_CHAT_SAY_ALL DIALOGEX 0, 0, 322, 81
+STYLE 0x80C800C0
+CAPTION "Chat to all"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Say:", IDC_STATIC, "Static", 0x50020000, 10, 8, 15, 8
+    CONTROL "", IDC_SAY_TEXT, "Edit", 0x50A10004, 35, 5, 280, 45
+    CONTROL "OK", IDOK, "Button", 0x50010001, 10, 60, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 70, 60, 50, 14
+END
+
+IDD_CHAT_EMOTE_ALL DIALOGEX 0, 0, 322, 46
+STYLE 0x80C800C0
+CAPTION "Emote to all"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Emote:", IDC_STATIC, "Static", 0x50020000, 10, 8, 23, 8
+    CONTROL "", IDC_EMOTE_TEXT, "Edit", 0x50810080, 40, 5, 275, 14
+    CONTROL "OK", IDOK, "Button", 0x50010001, 10, 25, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 70, 25, 50, 14
+END
+
+IDD_GLOBAL_PREFSP11 DIALOGEX 0, 0, 262, 201
+STYLE 0x58C80040
+CAPTION "Tray/Taskbar"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Show MUSHclient in:", IDC_STATIC, "Static", 0x50020000, 11, 3, 68, 8
+    CONTROL "", IDC_MINIMISE_TO, "ComboBox", 0x50210003, 89, 1, 54, 49
+    CONTROL "MUSHclient", IDC_MUSHCLIENT_ICON, "Button", 0x50030009, 53, 33, 54, 10
+    CONTROL "Icon 1", IDC_CD_ICON, "Button", 0x50010009, 53, 56, 36, 10
+    CONTROL "Icon 2", IDC_SPANNER_ICON, "Button", 0x50010009, 53, 82, 36, 10
+    CONTROL "Icon 3", IDC_CLOCK_ICON, "Button", 0x50010009, 53, 108, 36, 10
+    CONTROL "Icon 4", IDC_WORLD_ICON, "Button", 0x50010009, 53, 134, 36, 10
+    CONTROL "Icon 5", IDC_GRAPH_ICON, "Button", 0x50010009, 169, 33, 36, 10
+    CONTROL "Icon 6", IDC_HANDS_ICON, "Button", 0x50010009, 169, 56, 36, 10
+    CONTROL "Icon 7", IDC_MAIL_ICON, "Button", 0x50010009, 169, 82, 36, 10
+    CONTROL "Icon 8", IDC_NETWORK_ICON, "Button", 0x50010009, 169, 108, 36, 10
+    CONTROL "Icon 9", IDC_BANANA_ICON, "Button", 0x50010009, 169, 134, 36, 10
+    CONTROL "Custom:", IDC_CUSTOM_ICON, "Button", 0x50010009, 53, 157, 41, 10
+    CONTROL "Choose...", IDC_BUTTON1, "Button", 0x50030000, 106, 155, 50, 14
+    CONTROL "File name", IDC_ICON_FILE_NAME, "Static", 0x50020000, 5, 179, 253, 8
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 18, 28, 20, 20
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 18, 51, 20, 20
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 18, 77, 20, 20
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 18, 103, 20, 20
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 18, 132, 20, 20
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 128, 28, 20, 20
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 129, 51, 20, 20
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 128, 77, 20, 20
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 127, 103, 20, 20
+    CONTROL "", IDC_STATIC, "Static", 0x50000003, 126, 132, 20, 20
+END
+
+IDD_GLOBAL_PREFSP12 DIALOGEX 0, 0, 262, 201
+STYLE 0x58C80040
+CAPTION "Plugins"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Global plugins (load into each world) ...", IDC_STATIC, "Static", 0x50020000, 10, 3, 122, 8
+    CONTROL "", IDC_PLUGIN_LIST, "ListBox", 0x50B10101, 10, 15, 235, 102
+    CONTROL "&Add...", IDC_NEW_PLUGIN, "Button", 0x50010000, 9, 153, 54, 14
+    CONTROL "&Remove", IDC_REMOVE_PLUGIN, "Button", 0x50010000, 71, 153, 54, 14
+    CONTROL "Move &Up", IDC_MOVE_UP, "Button", 0x50010000, 132, 153, 54, 14
+    CONTROL "Move &Down", IDC_MOVE_DOWN, "Button", 0x50010000, 193, 153, 54, 14
+    CONTROL "Static", IDC_PLUGIN_COUNT, "Static", 0x50020002, 160, 3, 85, 8
+    CONTROL "Selected plugin", IDC_SELECTED_PLUGIN, "Static", 0x50020000, 9, 121, 245, 25
+    CONTROL "Plugins Directory...", IDC_PLUGINS_DIRECTORY, "Button", 0x50010000, 10, 171, 70, 14
+    CONTROL "Default plugins directory", IDC_PLUGINS_DIRECTORY_NAME, "Static", 0x50020000, 10, 190, 245, 8
+END
+
+IDR_PANETYPE DIALOGEX 0, 0, 262, 201
+STYLE 0x58C80040
+CAPTION "Lua"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "Allow &DLLs to be loaded", IDC_CHECK1, "Button", 0x50010003, 155, 184, 99, 10
+    CONTROL "&Preliminary code (executed each time a Lua script session starts):", IDC_STATIC, "Static", 0x50020000, 8, 3, 205, 8
+    CONTROL "", IDC_LUA_SCRIPT, "Edit", 0x50A11004, 8, 22, 246, 156
+    CONTROL "&Edit...", IDC_EDIT, "Button", 0x50010000, 8, 182, 50, 14
+END
+
+IDD_HIGHLIGHT DIALOGEX 0, 0, 293, 122
+STYLE 0x80C800C0
+CAPTION "Highlight word or phrase"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Highlight:", IDC_STATIC, "Static", 0x50020000, 7, 10, 30, 8
+    CONTROL "", IDC_HIGHLIGHT_TEXT, "Edit", 0x50810080, 7, 23, 281, 14
+    CONTROL "&Colour:", IDC_STATIC, "Button", 0x50000007, 7, 44, 281, 33
+    CONTROL "", IDC_TRIGGER_COLOUR, "ComboBox", 0x50210213, 25, 57, 121, 201
+    CONTROL "&Text:", IDC_STATIC, "Static", 0x50020002, 154, 59, 23, 8
+    CONTROL "", IDC_TRIGGER_SWATCH_TEXT, "Button", 0x5801000B, 186, 57, 15, 12
+    CONTROL "&Background:", IDC_STATIC, "Static", 0x50020002, 209, 59, 47, 8
+    CONTROL "", IDC_TRIGGER_SWATCH_BGND, "Button", 0x5801000B, 264, 57, 15, 12
+    CONTROL "&Whole Word Only", IDC_CHECK1, "Button", 0x50010003, 11, 84, 75, 10
+    CONTROL "&Match Case", IDC_MATCH_CASE, "Button", 0x50010003, 11, 99, 54, 10
+    CONTROL "OK", IDOK, "Button", 0x50010001, 238, 84, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 238, 102, 50, 14
+END
+
+IDD_GENERATE_UNIQUE_ID DIALOGEX 0, 0, 132, 55
+STYLE 0x80C800C0
+CAPTION "Unique ID"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_SPEED_WALK_DELAY, "Edit", 0x50810880, 5, 8, 120, 14
+    CONTROL "Close", IDOK, "Button", 0x50010001, 41, 34, 50, 14
+END
+
+IDD_MULTILINE_TRIGGER DIALOGEX 0, 0, 406, 207
+STYLE 0x80C800C0
+CAPTION "Make Multi-Line Trigger"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "OK", IDOK, "Button", 0x50010001, 18, 185, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 149, 185, 50, 14
+    CONTROL "&Match Case", IDC_MATCH_CASE, "Button", 0x50010003, 337, 187, 54, 10
+    CONTROL "&Trigger on:", IDC_STATIC, "Static", 0x50020000, 4, 4, 35, 8
+    CONTROL "", IDC_TRIGGER_TEXT, "Edit", 0x50B11084, 4, 15, 395, 161
+END
+
+IDD_LUA_INPUTBOX DIALOGEX 0, 0, 353, 165
+STYLE 0x80C800C0
+CAPTION "MUSHclient"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_INPUT_BOX_REPLY, "Edit", 0x50810080, 7, 121, 339, 14
+    CONTROL "OK", IDOK, "Button", 0x50010001, 7, 143, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 296, 144, 50, 14
+    CONTROL "Static", IDC_INPUT_BOX_MESSAGE, "Static", 0x50020000, 7, 5, 339, 109
+END
+
+IDD_LUA_CHOOSE DIALOGEX 0, 0, 268, 89
+STYLE 0x80C000C0
+CAPTION "Choose ..."
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_CHOOSE_COMBO, "ComboBox", 0x50210103, 7, 50, 195, 124
+    CONTROL "OK", IDOK, "Button", 0x50010001, 211, 50, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 211, 67, 50, 14
+    CONTROL "Static", IDC_CHOOSE_MSG, "Static", 0x50020000, 7, 5, 250, 39
+END
+
+IDD_LUA_CHOOSE_LIST DIALOGEX 0, 0, 298, 221
+STYLE 0x80C000C0
+CAPTION "Choose ..."
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "List1", IDC_CHOOSE_LIST, "SysListView32", 0x5081401D, 9, 62, 277, 129
+    CONTROL "OK", IDOK, "Button", 0x50010001, 9, 200, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 236, 200, 50, 14
+    CONTROL "Static", IDC_CHOOSE_MSG, "Static", 0x50020000, 8, 5, 278, 50
+END
+
+IDD_FUNCTION_LIST DIALOGEX 0, 0, 520, 350
+STYLE 0x80C800C0
+CAPTION "Functions"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "List1", IDC_FUNCTIONS_LIST, "SysListView32", 0x5081001F, 12, 9, 485, 304
+    CONTROL "&Filter:", IDC_STATIC, "Static", 0x50020000, 11, 329, 18, 8
+    CONTROL "", IDC_FILTER, "Edit", 0x50810080, 43, 326, 90, 14
+    CONTROL "OK", IDOK, "Button", 0x50010001, 151, 326, 50, 14
+    CONTROL "&Copy", IDC_BUTTON1, "Button", 0x50010000, 216, 326, 50, 14
+    CONTROL "&Lua", IDC_BUTTON2, "Button", 0x50010000, 281, 326, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 346, 326, 50, 14
+END
+
+IDD_LUA_GSUB DIALOGEX 0, 0, 354, 117
+STYLE 0x80C800C0
+CAPTION "Global Replace"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Find Pattern:", IDC_STATIC, "Static", 0x50020000, 13, 13, 41, 8
+    CONTROL "", IDC_FIND_PATTERN, "Edit", 0x50810080, 60, 10, 253, 14
+    CONTROL "...", IDC_EDIT_FIND, "Button", 0x50000000, 323, 11, 20, 12
+    CONTROL "&Replacement:", IDC_STATIC, "Static", 0x50020000, 9, 36, 45, 8
+    CONTROL "", IDC_REPLACEMENT, "Edit", 0x50810080, 60, 33, 253, 14
+    CONTROL "...", IDC_ADD_CURRENT_WORLD, "Button", 0x50000000, 323, 34, 20, 12
+    CONTROL "&Line By Line", IDC_CHECK1, "Button", 0x50010003, 60, 57, 55, 10
+    CONTROL "&Escape Sequences", IDC_ESCAPE_SEQUENCES, "Button", 0x50010003, 125, 57, 78, 10
+    CONTROL "&Call Function:", IDC_BUTTON1, "Button", 0x50010003, 240, 57, 59, 10
+    CONTROL "&Script...", IDC_BUTTON2, "Button", 0x50010000, 307, 55, 36, 14
+    CONTROL "OK", IDOK, "Button", 0x50010001, 60, 80, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 293, 80, 50, 14
+    CONTROL "Size of selection", IDC_SELECTION_SIZE, "Static", 0x50020000, 59, 103, 260, 8
+END
+
+IDD_COMPLETE_WORD DIALOGEX 0, 0, 108, 95
+STYLE 0x80800040
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_WORD_LIST, "ListBox", 0x50A10103, 0, 0, 107, 94
+END
+
+IDD_LUA_INPUTEDIT DIALOGEX 0, 0, 384, 313
+STYLE 0x80CC0040
+CAPTION "MUSHclient"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "", IDC_INPUT_BOX_REPLY, "Edit", 0x50A11004, 6, 49, 371, 236
+    CONTROL "OK", IDOK, "Button", 0x50010001, 6, 294, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 327, 294, 50, 14
+    CONTROL "Static", IDC_INPUT_BOX_MESSAGE, "Static", 0x50020000, 6, 4, 370, 40
+END
+
+IDD_KEY_NAME DIALOGEX 0, 0, 186, 84
+STYLE 0x80C800C0
+CAPTION "Key name"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Press a key:", IDC_STATIC, "Static", 0x50020002, 6, 10, 40, 8
+    CONTROL "HotKey1", IDC_HOTKEY_VALUE, "msctls_hotkey32", 0x50810000, 53, 7, 116, 14
+    CONTROL "&Name:", IDC_STATIC, "Static", 0x50020002, 24, 39, 22, 8
+    CONTROL "", IDC_TEXT_NAME, "Edit", 0x50810880, 53, 36, 116, 14
+    CONTROL "OK", IDOK, "Button", 0x50010001, 62, 61, 50, 14
+END
+
+IDD_LUA_CHOOSE_LIST_MULTI DIALOGEX 0, 0, 298, 221
+STYLE 0x80C000C0
+CAPTION "Choose ..."
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "List1", IDC_CHOOSE_LIST, "SysListView32", 0x50814019, 9, 62, 277, 129
+    CONTROL "OK", IDOK, "Button", 0x50010001, 9, 200, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 236, 200, 50, 14
+    CONTROL "Static", IDC_CHOOSE_MSG, "Static", 0x50020000, 8, 5, 278, 50
+END
+
+IDD_LUA_DEBUG DIALOGEX 0, 0, 309, 188
+STYLE 0x80C800C0
+CAPTION "Debug"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Command:", IDC_STATIC, "Static", 0x50020000, 5, 114, 34, 8
+    CONTROL "", IDC_COMMAND, "Edit", 0x50A10084, 6, 125, 293, 36
+    CONTROL "&Do Command", ID_DO_COMMAND, "Button", 0x50010001, 6, 168, 56, 14
+    CONTROL "Continue Execution (Esc)", IDCANCEL, "Button", 0x50010000, 111, 168, 89, 14
+    CONTROL "&Abort Script", IDC_ABORT, "Button", 0x50010000, 249, 168, 50, 14
+    CONTROL "Source:", IDC_STATIC, "Static", 0x50020002, 47, 8, 26, 8
+    CONTROL "", IDC_SOURCE, "Edit", 0x50810880, 82, 6, 215, 14
+    CONTROL "First, last lines:", IDC_STATIC, "Static", 0x50020002, 27, 27, 46, 8
+    CONTROL "", IDC_LINES, "Edit", 0x50810880, 82, 25, 87, 14
+    CONTROL "Current line:", IDC_STATIC, "Static", 0x50020002, 177, 27, 38, 8
+    CONTROL "", IDC_HIGH_VERSION, "Edit", 0x50810880, 224, 25, 73, 14
+    CONTROL "What function is:", IDC_STATIC, "Static", 0x50020002, 19, 44, 54, 8
+    CONTROL "", IDC_SPEED_WALK_FILLER, "Edit", 0x50810880, 82, 42, 87, 14
+    CONTROL "Name:", IDC_STATIC, "Static", 0x50020002, 51, 62, 22, 8
+    CONTROL "", IDC_LINE_COUNT, "Edit", 0x50810880, 82, 60, 87, 14
+    CONTROL "Function:", IDC_STATIC, "Static", 0x50020002, 43, 80, 30, 8
+    CONTROL "", IDC_SPEED_WALK_DELAY, "Edit", 0x50810880, 82, 78, 87, 14
+    CONTROL "Number of upvalues:", IDC_STATIC, "Static", 0x50020002, 7, 98, 66, 8
+    CONTROL "", IDC_WORD_DELIMITERS, "Edit", 0x50810880, 82, 96, 35, 14
+    CONTROL "Show &Upvalues", IDC_BUTTON1, "Button", 0x50010000, 236, 45, 63, 14
+    CONTROL "Show &Locals", IDC_SHOW_LOCALS, "Button", 0x50010000, 236, 64, 63, 14
+    CONTROL "&Traceback", IDC_TRACEBACK, "Button", 0x50010000, 236, 82, 63, 14
+    CONTROL "&Edit...", IDC_BUTTON2, "Button", 0x50010000, 249, 108, 50, 14
+END
+
+IDD_SPELLCHECK_DIALOG DIALOGEX 15, 28, 287, 180
+STYLE 0x90C000C0
+CAPTION "Spell Check"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Misspelt:", IDC_STATIC, "Static", 0x50020000, 5, 3, 28, 8
+    CONTROL "", ID_MISSPELT_WORD, "Edit", 0x50810080, 5, 15, 215, 15
+    CONTROL "S&uggestions:", IDC_STATIC, "Static", 0x50020000, 5, 33, 42, 8
+    CONTROL "", ID_SUGGESTIONS, "ListBox", 0x50A10001, 5, 45, 215, 133
+    CONTROL "&Ignore", ID_IGNORE, "Button", 0x50010000, 230, 5, 50, 14
+    CONTROL "I&gnore All", ID_IGNORE_ALL, "Button", 0x50010000, 230, 36, 50, 14
+    CONTROL "&Add", ID_ADD, "Button", 0x50010000, 230, 67, 50, 14
+    CONTROL "&Change", ID_CHANGE, "Button", 0x50010000, 230, 98, 50, 14
+    CONTROL "Change A&ll", ID_CHANGE_ALL, "Button", 0x50010000, 230, 129, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 230, 160, 50, 14
+END
+
+IDD_INSERT_UNICODE DIALOGEX 0, 0, 199, 119
+STYLE 0x80C800C0
+CAPTION "Insert Unicode Character"
+FONT 8, "MS Sans Serif"
+BEGIN
+    CONTROL "&Character Code:", IDC_STATIC, "Static", 0x50020000, 11, 15, 52, 8
+    CONTROL "", IDC_UNICODE_CHARACTER, "Edit", 0x50810080, 79, 12, 81, 14
+    CONTROL "&Hex", IDC_CHECK1, "Button", 0x50010003, 79, 33, 29, 10
+    CONTROL "Enter code number of Unicode character (0 to 2147483647 in decimal or 0 to 7FFFFFFF in Hex).", IDC_STATIC, "Static", 0x50020000, 34, 52, 133, 31
+    CONTROL "OK", IDOK, "Button", 0x50010001, 17, 95, 50, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 114, 95, 50, 14
+END
+
+30721 DIALOGEX 9, 26, 183, 70
+STYLE 0x80C800C4
+CAPTION "New"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    CONTROL "&New ", IDC_STATIC, "Static", 0x50000000, 6, 5, 123, 8
+    CONTROL "", IDD_ABOUTBOX, "ListBox", 0x50A10001, 6, 15, 125, 49
+    CONTROL "OK", IDOK, "Button", 0x50010001, 137, 6, 40, 14
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 137, 23, 40, 14
+    CONTROL "&Help", 57670, "Button", 0x50010000, 137, 43, 40, 14
+END
+
+30722 DIALOGEX 6, 18, 133, 95
+STYLE 0x80C000C4
+FONT 8, "MS Shell Dlg"
+BEGIN
+    CONTROL "Printing", IDC_STATIC, "Static", 0x50020001, 0, 9, 133, 8
+    CONTROL "", IDD_EDIT_MUD, "Static", 0x50020001, 0, 19, 133, 8
+    CONTROL "on the", IDC_STATIC, "Static", 0x50020001, 0, 29, 133, 8
+    CONTROL "", IDD_GLOBAL_PREFSP8, "Static", 0x50020001, 0, 39, 133, 8
+    CONTROL "", IDD_CREDITS, "Static", 0x50020001, 0, 49, 133, 8
+    CONTROL "", IDD_REGPAGE17, "Static", 0x50020001, 0, 59, 133, 8
+    CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 46, 74, 40, 14
+END
+
+30723 DIALOGEX 0, 0, 330, 16
+STYLE 0x40000044
+FONT 8, "MS Shell Dlg"
+BEGIN
+    CONTROL "&Print...", 58116, "Button", 0x50010000, 2, 2, 44, 12
+    CONTROL "&Next Page", 58114, "Button", 0x50010000, 48, 2, 44, 12
+    CONTROL "Pre&v Page", 58115, "Button", 0x50010000, 94, 2, 44, 12
+    CONTROL "", 58113, "Button", 0x50010000, 140, 2, 44, 12
+    CONTROL "Zoom &In", 58117, "Button", 0x50010000, 186, 2, 44, 12
+    CONTROL "Zoom &Out", 58118, "Button", 0x50010000, 232, 2, 44, 12
+    CONTROL "&Close", 58112, "Button", 0x50010000, 278, 2, 44, 12
+END
+
+CG_IDR_POPUP_SEND_VIEW MENU
+BEGIN
+  POPUP "_POPUP_"
+  BEGIN
+    MENUITEM "Cu&t", 57635
+    MENUITEM "&Copy", 57634
+    MENUITEM "&Paste", 57637
+    MENUITEM "Global change...", ID_INPUT_GLOBALCHANGE
+    MENUITEM "Sp&ell Check", ID_EDIT_SPELLCHECK
+    MENUITEM SEPARATOR
+    MENUITEM "Next Command", ID_KEYS_NEXTCOMMAND
+    MENUITEM "Previous Command", ID_KEYS_PREVCOMMAND
+    MENUITEM SEPARATOR
+    MENUITEM "Command &History...", ID_GAME_COMMANDHISTORY
+    MENUITEM "&World Configuration...", ID_GAME_PREFERENCES
+    MENUITEM SEPARATOR
+    MENUITEM "&Send File...", ID_GAME_PASTEFILE
+    MENUITEM SEPARATOR
+    MENUITEM "&Find...", ID_DISPLAY_FIND
+    MENUITEM "Find Again", ID_DISPLAY_FINDAGAIN
+    MENUITEM "&Recall Text...", ID_DISPLAY_RECALLTEXT
+    MENUITEM SEPARATOR
+    MENUITEM "&Auto say", ID_GAME_AUTOSAY
+    MENUITEM "&Full screen mode", ID_VIEW_FULLSCREENMODE
+    MENUITEM "&Notepad", ID_EDIT_NOTESWORKAREA
+  END
+END
+
+CG_IDR_POPUP_MUSHVIEW MENU
+BEGIN
+  POPUP "_POPUP_"
+  BEGIN
+    MENUITEM "&Copy", 57634
+    MENUITEM "Copy as &HTML", ID_EDIT_COPYASHTML
+    MENUITEM "Highlight word...", ID_DISPLAY_HIGHLIGHTPHRASE
+    MENUITEM "&Multi-Line trigger...", ID_DISPLAY_MULTILINETRIGGER
+    MENUITEM SEPARATOR
+    MENUITEM "&Pause output", ID_DISPLAY_FREEZEOUTPUT
+    MENUITEM "&Wrap output", ID_GAME_WRAPLINES
+    MENUITEM SEPARATOR
+    MENUITEM "&Activity list", ID_DISPLAY_ACTIVITYLIST
+    MENUITEM "W&orld configuration...", ID_GAME_PREFERENCES
+    MENUITEM "&Log session...", ID_FILE_LOGSESSION
+    MENUITEM SEPARATOR
+    MENUITEM "&Find...", ID_DISPLAY_FIND
+    MENUITEM "Find again", ID_DISPLAY_FINDAGAIN
+    MENUITEM "&Recall text...", ID_DISPLAY_RECALLTEXT
+    MENUITEM SEPARATOR
+    MENUITEM "Go to URL...", ID_DISPLAY_GOTOURL
+    MENUITEM "Send mail to...", ID_DISPLAY_SENDMAILTO
+    MENUITEM SEPARATOR
+    MENUITEM "&Bookmark selection", ID_DISPLAY_BOOKMARKSELECTION
+    MENUITEM "&Go to bookmark", ID_DISPLAY_GOTOBOOKMARK
+    MENUITEM "Full screen mode", ID_VIEW_FULLSCREENMODE
+    MENUITEM "&Notepad", ID_EDIT_NOTESWORKAREA
+  END
+END
+
+CG_IDR_POPUP_MAIN_FRAME MENU
+BEGIN
+  POPUP "_POPUP_"
+  BEGIN
+    MENUITEM "&New World...", 57600
+    MENUITEM "&Open World...", 57601
+    MENUITEM SEPARATOR
+    MENUITEM "&Activity List", ID_DISPLAY_ACTIVITYLIST
+    MENUITEM "&Full screen mode", ID_VIEW_FULLSCREENMODE
+    MENUITEM "&Notepad", ID_EDIT_NOTESWORKAREA
+  END
+END
+
+CG_IDR_POPUP_ACTIVITY_VIEW MENU
+BEGIN
+  POPUP "_POPUP_"
+  BEGIN
+    MENUITEM "&Switch to world", ID_POPUP_SWITCHTOWORLD
+    MENUITEM "Configure &world", ID_POPUP_CONFIGUREWORLD
+    MENUITEM SEPARATOR
+    MENUITEM "&Connect", ID_CONNECTION_CONNECT
+    MENUITEM "&Disconnect", ID_CONNECTION_DISCONNECT
+    MENUITEM SEPARATOR
+    MENUITEM "Close World", ID_POPUP_FILE_CLOSE
+    MENUITEM "Save World Details", ID_POPUP_FILE_SAVE
+    MENUITEM "Save World Details As...", ID_POPUP_SAVEWORLDDETAILSAS
+    MENUITEM SEPARATOR
+    MENUITEM "&Full screen mode", ID_VIEW_FULLSCREENMODE
+    MENUITEM "&Notepad", ID_EDIT_NOTESWORKAREA
+  END
+END
+
+ID_VIEW_GAME_TOOLBAR MENU
+BEGIN
+  POPUP "&File"
+  BEGIN
+    MENUITEM "&New World\tCtrl+N", 57600
+    MENUITEM "&Open World...\tCtrl+O", 57601
+    MENUITEM "Open Worlds In Startup List\tCtrl+Alt+O", ID_FILE_OPENWORLDSINSTARTUPLIST
+    MENUITEM SEPARATOR
+    MENUITEM "P&rint Setup...", 57606
+    MENUITEM SEPARATOR
+    MENUITEM "&Global Preferences...", ID_FILE_PREFERENCES
+    MENUITEM "Windows Socket Info...", ID_FILE_WINSOCK
+    MENUITEM SEPARATOR
+    MENUITEM "Recent File", 57616
+    MENUITEM SEPARATOR
+    MENUITEM "E&xit", 57665
+  END
+  POPUP "&Edit"
+  BEGIN
+    MENUITEM "Convert Clipboard Forum Codes\tShift+Ctrl+Alt+Q", ID_EDIT_CONVERTCLIPBOARDFORUMCODES
+  END
+  POPUP "&View"
+  BEGIN
+    MENUITEM "&Toolbar", 59392
+    MENUITEM "&World Toolbar", ID_VIEW_GAME_TOOLBAR
+    MENUITEM "&Activity Toolbar", ID_VIEW_ACTIVITYTOOLBAR
+    MENUITEM "&Status Bar", 59393
+    MENUITEM "&Info Bar", ID_VIEW_INFOBAR
+    MENUITEM SEPARATOR
+    MENUITEM "&Reset Toolbar Locations", ID_VIEW_RESET_TOOLBARS
+    MENUITEM "Always &On Top", ID_VIEW_ALWAYSONTOP
+    MENUITEM "&Full Screen Mode\tCtrl+Alt+F", ID_VIEW_FULLSCREENMODE
+    MENUITEM SEPARATOR
+    MENUITEM "&Notepad\tCtrl+Alt+W", ID_EDIT_NOTESWORKAREA
+  END
+  POPUP "&Connection"
+  BEGIN
+    MENUITEM "&Quick Connect...\tCtrl+Alt+Shift+K", ID_CONNECTION_QUICK_CONNECT
+    MENUITEM SEPARATOR
+    MENUITEM "&Auto Connect", ID_CONNECTION_AUTOCONNECT
+    MENUITEM "&Reconnect On Disconnect", ID_CONNECTION_RECONNECTONDISCONNECT
+    MENUITEM SEPARATOR
+    MENUITEM "Connect To Worlds &In Startup List", ID_CONNECTION_CONNECTTOWORLDSINSTARTUPLIST
+  END
+  POPUP "&Game"
+  BEGIN
+    MENUITEM "&Activity List\tShift+Ctrl+L", ID_DISPLAY_ACTIVITYLIST
+    MENUITEM "Minimize &Program\tCtrl+M", ID_GAME_MINIMISEPROGRAM
+  END
+  POPUP "&Window"
+  BEGIN
+    MENUITEM "&Cascade", 57650
+    MENUITEM "Tile &Horizontally", 57651
+    MENUITEM "Tile &Vertically", 57652
+    MENUITEM "&Arrange Icons", 57649
+    MENUITEM "Close A&ll Notepad Windows", ID_WINDOW_CLOSEALLNOTEPADWINDOWS
+  END
+  POPUP "&Help"
+  BEGIN
+    MENUITEM "&Tip Of The Day...", ID_HELP_TIPOFTHEDAY
+    MENUITEM SEPARATOR
+    MENUITEM "&Getting Started...", ID_HELP_GETTINGSTARTED
+    MENUITEM SEPARATOR
+    MENUITEM "&Contents", ID_HELP_CONTENTS
+    MENUITEM "&Index", 57666
+    MENUITEM "&Using Help", 57668
+    MENUITEM SEPARATOR
+    MENUITEM "&Bug Reports...", ID_HELP_BUGREPORTSUGGESTION
+    MENUITEM "&Documentation Web Page...", ID_HELP_DOCUMENTATIONWEBPAGE
+    MENUITEM "&Forum...\tShift+Ctrl+Alt+F", ID_HELP_FORUM
+    MENUITEM "Functions &List...\tShift+Ctrl+Alt+L", ID_GAME_FUNCTIONSLIST
+    MENUITEM "Fu&nctions Web Page ...\tShift+Ctrl+Alt+U", ID_HELP_FUNCTIONSWEBPAGE
+    MENUITEM "&MUD Lists...", ID_HELP_MUDLISTS
+    MENUITEM "MUSHclient &Web Page...\tShift+Ctrl+Alt+W", ID_WEB_PAGE
+    MENUITEM "&Plugins List...", ID_HELP_PLUGINSLIST
+    MENUITEM "Regular &Expressions Web Page...", ID_HELP_REGULAREXPRESSIONSWEBPAGE
+    MENUITEM SEPARATOR
+    MENUITEM "&About MUSHclient...", 57664
+  END
+END
+
+IDR_MUSHCLTYPE MENU
+BEGIN
+  POPUP "&File"
+  BEGIN
+    MENUITEM "&New World...\tCtrl+N", 57600
+    MENUITEM "&Open World...\tCtrl+O", 57601
+    MENUITEM "Open Worlds In Startup List\tCtrl+Alt+O", ID_FILE_OPENWORLDSINSTARTUPLIST
+    MENUITEM "&Close World", 57602
+    MENUITEM "&Import...\tCtrl+Alt+I", ID_FILE_IMPORT
+    MENUITEM "Pl&ugins...\tShift+Ctrl+P", ID_FILE_PLUGINS
+    MENUITEM "Plugin Wizard...\tShift+Ctrl+Alt+P", ID_FILE_PLUGINWIZARD
+    MENUITEM "&Save World Details\tCtrl+S", 57603
+    MENUITEM "Save World Details &As...", 57604
+    MENUITEM "Save Selection...", ID_FILE_SAVESELECTION
+    MENUITEM SEPARATOR
+    MENUITEM "&Print...\tCtrl+P", ID_FILE_PRINT_WORLD
+    MENUITEM "Print Se&tup...", 57606
+    MENUITEM SEPARATOR
+    MENUITEM "&Global Preferences...\tCtrl+Alt+G", ID_FILE_PREFERENCES
+    MENUITEM "&Log Session...\tShift+Ctrl+J", ID_FILE_LOGSESSION
+    MENUITEM "&Reload Defaults\tCtrl+Alt+R", ID_FILE_RELOADDEFAULTS
+    MENUITEM "&World Properties...\tAlt+Enter", ID_GAME_PREFERENCES
+    MENUITEM "Windows Socket Info...", ID_FILE_WINSOCK
+    MENUITEM SEPARATOR
+    MENUITEM "Recent File", 57616
+    MENUITEM SEPARATOR
+    MENUITEM "E&xit", 57665
+  END
+  POPUP "&Edit"
+  BEGIN
+    MENUITEM "&Undo\tCtrl+Z", 57643
+    MENUITEM SEPARATOR
+    MENUITEM "Cu&t\tCtrl+X", 57635
+    MENUITEM "&Copy\tCtrl+C", 57634
+    MENUITEM "Copy as HTML\tCtrl+Alt+C", ID_EDIT_COPYASHTML
+    MENUITEM "&Paste\tCtrl+V", 57637
+    MENUITEM SEPARATOR
+    MENUITEM "Paste To &World...\tShift+Ctrl+V", ID_EDIT_PASTETOMUSH
+    MENUITEM "Recall Last Word\tCtrl+Backspace", ID_REPEAT_LAST_WORD
+    MENUITEM SEPARATOR
+    MENUITEM "Select &All\tCtrl+A", 57642
+    MENUITEM "Sp&ell Check\tCtrl+J", ID_EDIT_SPELLCHECK
+    MENUITEM SEPARATOR
+    MENUITEM "&Generate Character Name...\tCtrl+Alt+N", ID_EDIT_GENERATECHARACTERNAME
+    MENUITEM "&Reload Names File...", ID_EDIT_RELOADNAMESFILE
+    MENUITEM "Generate Unique &ID...", ID_EDIT_GENERATEUNIQUEID
+    MENUITEM SEPARATOR
+    MENUITEM "&Notepad\tCtrl+Alt+W", ID_EDIT_NOTESWORKAREA
+    MENUITEM "&Flip To Notepad\tCtrl+Alt+Space", ID_EDIT_FLIPTONOTEPAD
+    MENUITEM SEPARATOR
+    MENUITEM "Colour Picker\tCtrl+Alt+P", ID_EDIT_COLOURPICKER
+    MENUITEM "Debug Packets\tCtrl+Alt+F11", ID_EDIT_DEBUGINCOMINGPACKETS
+    MENUITEM SEPARATOR
+    MENUITEM "Go To &Matching Brace\tCtrl+E", ID_EDIT_GOTOMATCHINGBRACE
+    MENUITEM "Select To Matching &Brace\tShift+Ctrl+E", ID_EDIT_SELECTTOMATCHINGBRACE
+    MENUITEM SEPARATOR
+    MENUITEM "Convert Clipboard Forum Codes\tShift+Ctrl+Alt+Q", ID_EDIT_CONVERTCLIPBOARDFORUMCODES
+  END
+  POPUP "&View"
+  BEGIN
+    MENUITEM "&Toolbar", 59392
+    MENUITEM "&World Toolbar", ID_VIEW_GAME_TOOLBAR
+    MENUITEM "&Activity Toolbar", ID_VIEW_ACTIVITYTOOLBAR
+    MENUITEM "&Status Bar", 59393
+    MENUITEM "&Info Bar", ID_VIEW_INFOBAR
+    MENUITEM SEPARATOR
+    MENUITEM "&Reset Toolbar Locations", ID_VIEW_RESET_TOOLBARS
+    MENUITEM "Always &On Top", ID_VIEW_ALWAYSONTOP
+    MENUITEM "&Full Screen Mode\tCtrl+Alt+F", ID_VIEW_FULLSCREENMODE
+  END
+  POPUP "&Connection"
+  BEGIN
+    MENUITEM "&Quick Connect...\tCtrl+Alt+Shift+K", ID_CONNECTION_QUICK_CONNECT
+    MENUITEM SEPARATOR
+    MENUITEM "&Connect\tCtrl+K", ID_CONNECTION_CONNECT
+    MENUITEM "&Disconnect\tShift+Ctrl+K", ID_CONNECTION_DISCONNECT
+    MENUITEM SEPARATOR
+    MENUITEM "&Auto Connect", ID_CONNECTION_AUTOCONNECT
+    MENUITEM "&Reconnect On Disconnect", ID_CONNECTION_RECONNECTONDISCONNECT
+    MENUITEM SEPARATOR
+    MENUITEM "Connect To All Open &Worlds\tCtrl+Alt+K", ID_CONNECTION_CONNECTTOALLOPENWORLDS
+    MENUITEM "Connect To Worlds &In Startup List", ID_CONNECTION_CONNECTTOWORLDSINSTARTUPLIST
+  END
+  POPUP "&Input"
+  BEGIN
+    MENUITEM "Activate &Input Area\tTab", ID_KEYS_ACTIVATECOMMANDVIEW
+    MENUITEM SEPARATOR
+    MENUITEM "&Next Command\tAlt+Down", ID_KEYS_NEXTCOMMAND
+    MENUITEM "&Previous Command\tAlt+Up", ID_KEYS_PREVCOMMAND
+    MENUITEM "&Repeat Last Command\tCtrl+R", ID_REPEAT_LAST_COMMAND
+    MENUITEM "&Quit From This World...\tShift+Ctrl+Q", ID_ACTIONS_QUIT
+    MENUITEM SEPARATOR
+    MENUITEM "Command &History...\tCtrl+H", ID_GAME_COMMANDHISTORY
+    MENUITEM "&Clear Command History...\tShift+Ctrl+D", ID_DISPLAY_CLEAR_COMMAND_HISTORY
+    MENUITEM "&Discard Queued Commands\tCtrl+D", ID_INPUT_DISCARDQUEUEDCOMMANDS
+    MENUITEM SEPARATOR
+    MENUITEM "&Auto Say\tShift+Ctrl+A", ID_GAME_AUTOSAY
+    MENUITEM "&Send File...\tShift+Ctrl+O", ID_GAME_PASTEFILE
+    MENUITEM "Global Change...\tShift+Ctrl+G", ID_INPUT_GLOBALCHANGE
+    MENUITEM "&Key Name...", ID_INPUT_KEYNAME
+  END
+  POPUP "&Display"
+  BEGIN
+    MENUITEM "&Start\tCtrl+Home", ID_TEST_START
+    MENUITEM "Page &Up\tPageUp", ID_TEST_PAGEUP
+    MENUITEM "Page &Down\tPageDown", ID_TEST_PAGEDOWN
+    MENUITEM "&End\tCtrl+End", ID_TEST_END
+    MENUITEM "Line Up\tCtrl+Up", ID_TEST_LINEUP
+    MENUITEM "Line Down\tCtrl+Down", ID_TEST_LINEDOWN
+    MENUITEM SEPARATOR
+    MENUITEM "&Activity List\tShift+Ctrl+L", ID_DISPLAY_ACTIVITYLIST
+    MENUITEM "Pause &Output\tCtrl+Space", ID_DISPLAY_FREEZEOUTPUT
+    MENUITEM SEPARATOR
+    MENUITEM "&Find...\tCtrl+F", ID_DISPLAY_FIND
+    MENUITEM "Find Again\tShift+Ctrl+F", ID_DISPLAY_FINDAGAIN
+    MENUITEM "&Recall Text...\tCtrl+U", ID_DISPLAY_RECALLTEXT
+    MENUITEM "Go To Line...\tCtrl+Alt+L", ID_DISPLAY_GOTOLINE
+    MENUITEM SEPARATOR
+    MENUITEM "Go To URL...\tCtrl+Alt+J", ID_DISPLAY_GOTOURL
+    MENUITEM "Send Mail To...", ID_DISPLAY_SENDMAILTO
+    MENUITEM SEPARATOR
+    MENUITEM "Clear Output Buffer...\tShift+Ctrl+C", ID_DISPLAY_CLEAR_OUTPUT
+    MENUITEM "Stop Sound Playing\tCtrl+Alt+B", ID_DISPLAY_STOPSOUNDPLAYING
+    MENUITEM SEPARATOR
+    MENUITEM "&Bookmark Selection\tShift+Ctrl+B", ID_DISPLAY_BOOKMARKSELECTION
+    MENUITEM "&Go To Bookmark\tCtrl+B", ID_DISPLAY_GOTOBOOKMARK
+    MENUITEM "&Highlight Word...\tCtrl+Alt+H", ID_DISPLAY_HIGHLIGHTPHRASE
+    MENUITEM "&Multi-Line Trigger...", ID_DISPLAY_MULTILINETRIGGER
+    MENUITEM "&Text Attributes...\tCtrl+Alt+A", ID_DISPLAY_TEXTATTRIBUTES
+    MENUITEM SEPARATOR
+    MENUITEM "No Command Echo\tCtrl+Alt+E", ID_DISPLAY_NOCOMMANDECHO
+  END
+  POPUP "&Game"
+  BEGIN
+    POPUP "&Configure"
+    BEGIN
+      MENUITEM "All &Configuration...\tAlt+Enter", ID_GAME_PREFERENCES
+      MENUITEM SEPARATOR
+      MENUITEM "MUD Name/IP address...\tAlt+1", ID_GAME_CONFIGURE_MUDADDRESS
+      MENUITEM "Connecting...\tAlt+2", ID_GAME_CONFIGURE_NAME_AND_PASSWORD
+      MENUITEM "Chat...\tAlt+7", ID_GAME_CONFIGURE_CHAT
+      MENUITEM "Logging...\tAlt+3", ID_GAME_CONFIGURE_LOGGING
+      MENUITEM "Notes...\tAlt+4", ID_GAME_CONFIGURE_NOTES
+      MENUITEM SEPARATOR
+      MENUITEM "Output...\tAlt+5", ID_GAME_CONFIGURE_OUTPUT
+      MENUITEM "MXP / Pueblo...\tCtrl+Alt+U", ID_GAME_CONFIGURE_MXPPUEBLO
+      MENUITEM "ANSI Colours...\tAlt+6", ID_GAME_CONFIGURE_COLOURS
+      MENUITEM "Custom Colours...\tAlt+8", ID_GAME_CONFIGURE_CUSTOM_COLOURS
+      MENUITEM "Printing...\tAlt+9", ID_GAME_CONFIGURE_PRINTING
+      MENUITEM SEPARATOR
+      MENUITEM "Commands...\tAlt+0", ID_GAME_CONFIGURE_COMMANDS
+      MENUITEM "Keypad...\tShift+Ctrl+1", ID_GAME_CONFIGURE_KEYPAD
+      MENUITEM "Macros...\tShift+Ctrl+2", ID_GAME_CONFIGURE_MACROS
+      MENUITEM "Auto say...\tShift+Ctrl+3", ID_GAME_CONFIGURE_AUTOSAY
+      MENUITEM SEPARATOR
+      MENUITEM "Paste to world...\tShift+Ctrl+4", ID_GAME_CONFIGURE_PASTETOWORLD
+      MENUITEM "Send file...\tShift+Ctrl+5", ID_GAME_CONFIGURE_SENDFILE
+      MENUITEM SEPARATOR
+      MENUITEM "Scripting...\tShift+Ctrl+6", ID_GAME_CONFIGURE_SCRIPTING
+      MENUITEM "Variables...\tShift+Ctrl+7", ID_GAME_CONFIGURE_VARIABLES
+      MENUITEM SEPARATOR
+      MENUITEM "Timers...\tShift+Ctrl+0", ID_GAME_CONFIGURE_TIMERS
+      MENUITEM "Triggers...\tShift+Ctrl+8", ID_GAME_CONFIGURE_TRIGGERS
+      MENUITEM "Aliases...\tShift+Ctrl+9", ID_GAME_CONFIGURE_ALIASES
+      MENUITEM SEPARATOR
+      MENUITEM "Info...\tShift+Ctrl+I", ID_GAME_CONFIGURE_INFO
+    END
+    MENUITEM "Chat Sessions\tCtrl+Alt+Shift+C", ID_GAME_CHATSESSIONS
+    MENUITEM "Wrap &Output", ID_GAME_WRAPLINES
+    MENUITEM SEPARATOR
+    MENUITEM "Test &Trigger...\tShift+Ctrl+F12", ID_DEBUG_WORLD_INPUT
+    MENUITEM SEPARATOR
+    MENUITEM "Minimize &Program\tCtrl+M", ID_GAME_MINIMISEPROGRAM
+    MENUITEM SEPARATOR
+    MENUITEM "&Immediate...\tCtrl+I", ID_GAME_IMMEDIATE
+    MENUITEM "&Edit Script File...\tShift+Ctrl+H", ID_GAME_EDITSCRIPTFILE
+    MENUITEM "&Reload Script File\tShift+Ctrl+R", ID_GAME_RELOAD_SCRIPT_FILE
+    MENUITEM "Tr&ace\tCtrl+Alt+T", ID_GAME_TRACE
+    MENUITEM SEPARATOR
+    MENUITEM "Reset All Timers\tShift+Ctrl+T", ID_GAME_RESETALLTIMERS
+    MENUITEM SEPARATOR
+    MENUITEM "&Send To All Worlds...\tCtrl+Alt+S", ID_GAME_SENDTOALLWORLDS
+    MENUITEM "&Mapper\tCtrl+Alt+M", ID_GAME_MAPPER
+    MENUITEM "&Do Mapper Special...\tCtrl+Alt+D", ID_GAME_DOMAPPERSPECIAL
+    MENUITEM "Add Mapper Comment...\tCtrl+Alt+Shift+D", ID_GAME_DOMAPPERCOMMENT
+  END
+  POPUP "&Window"
+  BEGIN
+    MENUITEM "&New Window", 57648
+    MENUITEM "&Cascade", 57650
+    MENUITEM "&Tile Horizontally", 57651
+    MENUITEM "Tile Vertically", 57652
+    MENUITEM "&Arrange Icons", 57649
+    MENUITEM "&Minimize\tShift+Ctrl+M", ID_WINDOW_MINIMIZE
+    MENUITEM "Close A&ll Notepad Windows", ID_WINDOW_CLOSEALLNOTEPADWINDOWS
+    MENUITEM "Maximize", ID_WINDOW_MAXIMIZE
+    MENUITEM "Restore", ID_WINDOW_RESTORE
+  END
+  POPUP "&Help"
+  BEGIN
+    MENUITEM "&Tip Of The Day...", ID_HELP_TIPOFTHEDAY
+    MENUITEM SEPARATOR
+    MENUITEM "&Getting Started...", ID_HELP_GETTINGSTARTED
+    MENUITEM SEPARATOR
+    MENUITEM "&Contents", ID_HELP_CONTENTS
+    MENUITEM "&Index", 57666
+    MENUITEM "&Using Help", 57668
+    MENUITEM SEPARATOR
+    MENUITEM "&Bug Reports...", ID_HELP_BUGREPORTSUGGESTION
+    MENUITEM "&Documentation Web Page...", ID_HELP_DOCUMENTATIONWEBPAGE
+    MENUITEM "&Forum...\tShift+Ctrl+Alt+F", ID_HELP_FORUM
+    MENUITEM "Functions &List...\tShift+Ctrl+Alt+L", ID_GAME_FUNCTIONSLIST
+    MENUITEM "Fu&nctions Web Page ...\tShift+Ctrl+Alt+U", ID_HELP_FUNCTIONSWEBPAGE
+    MENUITEM "&MUD Lists...", ID_HELP_MUDLISTS
+    MENUITEM "MUSHclient &Web Page...\tShift+Ctrl+Alt+W", ID_WEB_PAGE
+    MENUITEM "&Plugins List...", ID_HELP_PLUGINSLIST
+    MENUITEM "Regular &Expressions Web Page...", ID_HELP_REGULAREXPRESSIONSWEBPAGE
+    MENUITEM SEPARATOR
+    MENUITEM "&About MUSHclient...", 57664
+  END
+END
+
+IDR_NORMALTYPE MENU
+BEGIN
+  POPUP "&File"
+  BEGIN
+    MENUITEM "&New\tCtrl+N", 57600
+    MENUITEM "&Open...\tCtrl+O", 57601
+    MENUITEM "&Close\tCtrl+W", 57602
+    MENUITEM "&Save\tCtrl+S", 57603
+    MENUITEM "Save &As...", 57604
+    MENUITEM SEPARATOR
+    MENUITEM "&Print...\tCtrl+P", 57607
+    MENUITEM "Print Pre&view", 57609
+    MENUITEM "P&rint Setup...", 57606
+    MENUITEM SEPARATOR
+    MENUITEM "&Global Preferences...\tCtrl+Alt+G", ID_FILE_PREFERENCES
+    MENUITEM SEPARATOR
+    MENUITEM "Recent File", 57616
+    MENUITEM SEPARATOR
+    MENUITEM "E&xit", 57665
+  END
+  POPUP "&Edit"
+  BEGIN
+    MENUITEM "&Undo\tCtrl+Z", 57643
+    MENUITEM SEPARATOR
+    MENUITEM "Cu&t\tCtrl+X", 57635
+    MENUITEM "&Copy\tCtrl+C", 57634
+    MENUITEM "&Paste\tCtrl+V", 57637
+    MENUITEM SEPARATOR
+    MENUITEM "ASCII Art...\tShift+Ctrl+A", ID_EDIT_ASCIIART
+    MENUITEM "&Go To...\tCtrl+G", ID_EDIT_GOTO
+    MENUITEM "Insert &Date/Time\tCtrl+D", ID_EDIT_INSERTDATETIME
+    MENUITEM "Select &All\tCtrl+A", 57642
+    MENUITEM "Sp&ell Check\tCtrl+J", ID_EDIT_SPELLCHECK
+    MENUITEM "&Word Count...\tF4", ID_EDIT_WORDCOUNT
+    MENUITEM SEPARATOR
+    MENUITEM "Go To &Matching Brace\tCtrl+E", ID_EDIT_GOTOMATCHINGBRACE
+    MENUITEM "Select To Matching &Brace\tShift+Ctrl+E", ID_EDIT_SELECTTOMATCHINGBRACE
+    MENUITEM "Complete Function Name...\tCtrl+Space", ID_COMPLETE_FUNCTION
+    MENUITEM SEPARATOR
+    MENUITEM "Send To Command Wind&ow\tShift+Ctrl+C", ID_EDIT_SENDTOCOMMANDWINDOW
+    MENUITEM "Send To Script\tShift+Ctrl+I", ID_EDIT_SENDTOIMMEDIATE
+    MENUITEM "&Send To World\tShift+Ctrl+S", ID_EDIT_SENDTOWORLD
+    MENUITEM "&Refresh Recalled Data\tF5", ID_EDIT_REFRESHRECALLEDDATA
+    MENUITEM "&Flip to World\tCtrl+Alt+Space", ID_EDIT_FLIPTONOTEPAD
+    MENUITEM SEPARATOR
+    MENUITEM "Colour Picker\tCtrl+Alt+P", ID_EDIT_COLOURPICKER
+    MENUITEM "Generate Unique &ID...", ID_EDIT_GENERATEUNIQUEID
+    MENUITEM SEPARATOR
+    MENUITEM "Convert Clipboard Forum Codes\tShift+Ctrl+Alt+Q", ID_EDIT_CONVERTCLIPBOARDFORUMCODES
+  END
+  POPUP "&View"
+  BEGIN
+    MENUITEM "&Toolbar", 59392
+    MENUITEM "&World Toolbar", ID_VIEW_GAME_TOOLBAR
+    MENUITEM "&Activity Toolbar", ID_VIEW_ACTIVITYTOOLBAR
+    MENUITEM "&Status Bar", 59393
+    MENUITEM "&Info Bar", ID_VIEW_INFOBAR
+    MENUITEM SEPARATOR
+    MENUITEM "&Reset Toolbar Locations", ID_VIEW_RESET_TOOLBARS
+    MENUITEM "Always &On Top", ID_VIEW_ALWAYSONTOP
+    MENUITEM "&Full Screen Mode\tCtrl+Alt+F", ID_VIEW_FULLSCREENMODE
+    MENUITEM SEPARATOR
+    MENUITEM "Activity List", ID_DISPLAY_ACTIVITYLIST
+  END
+  POPUP "&Search"
+  BEGIN
+    MENUITEM "&Find...\tCtrl+F", IDABORT
+    MENUITEM "Find &Next\tF3", ID_SEARCH_FINDNEXT
+    MENUITEM "&Replace...\tCtrl+H", ID_SEARCH_REPLACE
+    MENUITEM "&Global Replace...\tCtrl+Shift+G", ID_SEARCH_GLOBALREPLACE
+  END
+  POPUP "&Convert"
+  BEGIN
+    MENUITEM "&Unix To DOS", ID_CONVERT_UNIXTODOS
+    MENUITEM "&DOS To Unix", ID_CONVERT_DOSTOUNIX
+    MENUITEM SEPARATOR
+    MENUITEM "&Mac To DOS", ID_CONVERT_MACTODOS
+    MENUITEM "DOS To M&ac", ID_CONVERT_DOSTOMAC
+    MENUITEM SEPARATOR
+    MENUITEM "&Wrap Lines\tCtrl+L", ID_CONVERT_REMOVEENDOFLINES
+    MENUITEM "&Quote Lines\tCtrl+Q", ID_CONVERT_QUOTELINES
+    MENUITEM SEPARATOR
+    MENUITEM "Upper Case\tShift+Ctrl+U", ID_CONVERT_UPPERCASE
+    MENUITEM "Lower Case\tShift+Ctrl+L", ID_CONVERT_LOWERCASE
+    MENUITEM "&Remove Extra Blanks\tCtrl+B", ID_CONVERT_REMOVEEXTRABLANKS
+    MENUITEM SEPARATOR
+    MENUITEM "Quote Forum Codes\tShift+Ctrl+Q", ID_CONVERT_QUOTEFORUMCODES
+    MENUITEM SEPARATOR
+    MENUITEM "Base64 Encode\tCtrl+Alt+E", ID_CONVERT_BASE64ENCODE
+    MENUITEM "Base64 Decode\tCtrl+Alt+D", ID_CONVERT_BASE64DECODE
+    MENUITEM SEPARATOR
+    MENUITEM "Convert HTML special\tShift+Ctrl+H", ID_CONVERT_CONVERTHTMLSPECIAL
+    MENUITEM "Unconvert HTML special\tShift+Ctrl+Alt+H", ID_UNCONVERT_CONVERTHTMLSPECIAL
+  END
+  POPUP "&Window"
+  BEGIN
+    MENUITEM "&Cascade", 57650
+    MENUITEM "&Tile Horizontally", 57651
+    MENUITEM "Tile Vertically", 57652
+    MENUITEM "&Arrange Icons", 57649
+    MENUITEM "Close A&ll Notepad Windows", ID_WINDOW_CLOSEALLNOTEPADWINDOWS
+  END
+  POPUP "&Help"
+  BEGIN
+    MENUITEM "&Tip Of The Day...", ID_HELP_TIPOFTHEDAY
+    MENUITEM SEPARATOR
+    MENUITEM "&Getting Started...", ID_HELP_GETTINGSTARTED
+    MENUITEM SEPARATOR
+    MENUITEM "&Contents", ID_HELP_CONTENTS
+    MENUITEM "&Index", 57666
+    MENUITEM "&Using Help", 57668
+    MENUITEM SEPARATOR
+    MENUITEM "&Bug Reports...", ID_HELP_BUGREPORTSUGGESTION
+    MENUITEM "&Documentation Web Page...", ID_HELP_DOCUMENTATIONWEBPAGE
+    MENUITEM "&Forum...\tShift+Ctrl+Alt+F", ID_HELP_FORUM
+    MENUITEM "Functions &List...\tShift+Ctrl+Alt+L", ID_GAME_FUNCTIONSLIST
+    MENUITEM "Fu&nctions Web Page ...\tShift+Ctrl+Alt+U", ID_HELP_FUNCTIONSWEBPAGE
+    MENUITEM "&MUD Lists...", ID_HELP_MUDLISTS
+    MENUITEM "MUSHclient &Web Page...\tShift+Ctrl+Alt+W", ID_WEB_PAGE
+    MENUITEM "&Plugins List...", ID_HELP_PLUGINSLIST
+    MENUITEM "Regular &Expressions Web Page...", ID_HELP_REGULAREXPRESSIONSWEBPAGE
+    MENUITEM SEPARATOR
+    MENUITEM "&About MUSHclient...", 57664
+  END
+END
+
+IDR_ACTIVITYTYPE MENU
+BEGIN
+  POPUP "&File"
+  BEGIN
+    MENUITEM "&New World\tCtrl+N", 57600
+    MENUITEM "&Open World...\tCtrl+O", 57601
+    MENUITEM "&Close World", ID_POPUP_FILE_CLOSE
+    MENUITEM "&Save World Details", ID_POPUP_FILE_SAVE
+    MENUITEM "Save World Details &As...", ID_POPUP_SAVEWORLDDETAILSAS
+    MENUITEM SEPARATOR
+    MENUITEM "P&rint Setup...", 57606
+    MENUITEM SEPARATOR
+    MENUITEM "&Global Preferences...", ID_FILE_PREFERENCES
+    MENUITEM SEPARATOR
+    MENUITEM "Recent File", 57616
+    MENUITEM SEPARATOR
+    MENUITEM "E&xit", 57665
+  END
+  POPUP "&View"
+  BEGIN
+    MENUITEM "&Toolbar", 59392
+    MENUITEM "&World Toolbar", ID_VIEW_GAME_TOOLBAR
+    MENUITEM "&Activity Toolbar", ID_VIEW_ACTIVITYTOOLBAR
+    MENUITEM "&Status Bar", 59393
+    MENUITEM "&Info Bar", ID_VIEW_INFOBAR
+    MENUITEM SEPARATOR
+    MENUITEM "&Reset Toolbar Locations", ID_VIEW_RESET_TOOLBARS
+    MENUITEM "&Full Screen Mode\tCtrl+Alt+F", ID_VIEW_FULLSCREENMODE
+    MENUITEM "&Notepad\tCtrl+Alt+W", ID_EDIT_NOTESWORKAREA
+  END
+  POPUP "&Connection"
+  BEGIN
+    MENUITEM "&Quick Connect...\tShift+Ctrl+C", ID_CONNECTION_QUICK_CONNECT
+    MENUITEM SEPARATOR
+    MENUITEM "&Connect\tCtrl+K", ID_CONNECTION_CONNECT
+    MENUITEM "&Disconnect\tShift+Ctrl+K", ID_CONNECTION_DISCONNECT
+    MENUITEM SEPARATOR
+    MENUITEM "&Auto Connect", ID_CONNECTION_AUTOCONNECT
+    MENUITEM "&Reconnect On Disconnect", ID_CONNECTION_RECONNECTONDISCONNECT
+  END
+  POPUP "&Game"
+  BEGIN
+    MENUITEM "&Configuration...\tAlt+Enter", ID_GAME_PREFERENCES
+    MENUITEM "Minimize &Program\tCtrl+M", ID_GAME_MINIMISEPROGRAM
+    MENUITEM SEPARATOR
+    MENUITEM "Send To All Worlds...\tShift+Ctrl+Z", ID_GAME_SENDTOALLWORLDS
+  END
+  POPUP "&Window"
+  BEGIN
+    MENUITEM "&Cascade", 57650
+    MENUITEM "&Tile Horizontally", 57651
+    MENUITEM "Tile Vertically", 57652
+    MENUITEM "&Arrange Icons", 57649
+    MENUITEM "Close A&ll Notepad Windows", ID_WINDOW_CLOSEALLNOTEPADWINDOWS
+  END
+  POPUP "&Help"
+  BEGIN
+    MENUITEM "&Tip of the day...", ID_HELP_TIPOFTHEDAY
+    MENUITEM SEPARATOR
+    MENUITEM "&Getting started...", ID_HELP_GETTINGSTARTED
+    MENUITEM SEPARATOR
+    MENUITEM "&Contents", ID_HELP_CONTENTS
+    MENUITEM "&Index", 57666
+    MENUITEM "&Using Help", 57668
+    MENUITEM SEPARATOR
+    MENUITEM "&Bug Reports...", ID_HELP_BUGREPORTSUGGESTION
+    MENUITEM "&Documentation Web Page...", ID_HELP_DOCUMENTATIONWEBPAGE
+    MENUITEM "&Forum...\tShift+Ctrl+Alt+F", ID_HELP_FORUM
+    MENUITEM "Functions &List...\tShift+Ctrl+Alt+L", ID_GAME_FUNCTIONSLIST
+    MENUITEM "Fu&nctions Web Page ...\tShift+Ctrl+Alt+U", ID_HELP_FUNCTIONSWEBPAGE
+    MENUITEM "&MUD Lists...", ID_HELP_MUDLISTS
+    MENUITEM "MUSHclient &Web Page...\tShift+Ctrl+Alt+W", ID_WEB_PAGE
+    MENUITEM "&Plugins List...", ID_HELP_PLUGINSLIST
+    MENUITEM "Regular &Expressions Web Page...", ID_HELP_REGULAREXPRESSIONSWEBPAGE
+    MENUITEM SEPARATOR
+    MENUITEM "&About MUSHclient...", 57664
+  END
+END
+
+IDR_COLOUR_POPUP MENU
+BEGIN
+  POPUP "_POPUP_"
+  BEGIN
+    MENUITEM "&Copy", ID_POPUP_COPYCOLOUR
+    MENUITEM "&Paste", ID_POPUP_PASTECOLOUR
+  END
+END
+
+IDR_NON_MENU_ITEMS MENU
+BEGIN
+  POPUP "Statusline"
+  BEGIN
+    MENUITEM "MushName", ID_STATUSLINE_MUSHNAME
+    MENUITEM "Time", ID_STATUSLINE_TIME
+    MENUITEM "Lines", ID_STATUSLINE_LINES
+    MENUITEM "Pause", ID_STATUSLINE_FREEZE
+    MENUITEM "Log", ID_STATUSLINE_LOG
+  END
+  POPUP "Worlds"
+  BEGIN
+    MENUITEM "World1", ID_WORLDS_WORLD1
+    MENUITEM "World2", ID_WORLDS_WORLD2
+    MENUITEM "World3", ID_WORLDS_WORLD3
+    MENUITEM "World4", ID_WORLDS_WORLD4
+    MENUITEM "World5", ID_WORLDS_WORLD5
+    MENUITEM "World6", ID_WORLDS_WORLD6
+    MENUITEM "World7", ID_WORLDS_WORLD7
+    MENUITEM "World8", ID_WORLDS_WORLD8
+    MENUITEM "World9", ID_WORLDS_WORLD9
+    MENUITEM "World0", ID_WORLDS_WORLD0
+  END
+  POPUP "Keypad"
+  BEGIN
+    MENUITEM "0", ID_KEYPAD_0
+    MENUITEM "1", ID_KEYPAD_1
+    MENUITEM "2", ID_KEYPAD_2
+    MENUITEM "3", ID_KEYPAD_3
+    MENUITEM "4", ID_KEYPAD_4
+    MENUITEM "5", ID_KEYPAD_5
+    MENUITEM "6", ID_KEYPAD_6
+    MENUITEM "7", ID_KEYPAD_7
+    MENUITEM "8", ID_KEYPAD_8
+    MENUITEM "9", ID_KEYPAD_9
+    MENUITEM "dot", ID_KEYPAD_DOT
+    MENUITEM "slash", ID_KEYPAD_SLASH
+    MENUITEM "star", ID_KEYPAD_STAR
+    MENUITEM "dash", ID_KEYPAD_DASH
+    MENUITEM "plus", ID_KEYPAD_PLUS
+  END
+END
+
+IDR_MXP_MENU MENU
+BEGIN
+  POPUP "_POPUP_"
+  BEGIN
+    MENUITEM "Delete this", ID_POPUP_DELETETHIS
+  END
+END
+
+IDR_RIGHT_TRAY_MENU MENU
+BEGIN
+  POPUP "_POPUP_"
+  BEGIN
+    MENUITEM "&About...", 57664
+    MENUITEM "E&xit", 57665
+    MENUITEM SEPARATOR
+  END
+END
+
+IDR_PANETYPE MENU
+BEGIN
+  POPUP "&File"
+  BEGIN
+    MENUITEM "&New\tCtrl+N", 57600
+    MENUITEM "&Open...\tCtrl+O", 57601
+    MENUITEM "&Close\tCtrl+W", 57602
+    MENUITEM "&Save\tCtrl+S", 57603
+    MENUITEM "Save &As...", 57604
+    MENUITEM SEPARATOR
+    MENUITEM "&Print...\tCtrl+P", 57607
+    MENUITEM "Print Pre&view", 57609
+    MENUITEM "P&rint Setup...", 57606
+    MENUITEM SEPARATOR
+    MENUITEM "&Global Preferences...\tCtrl+Alt+G", ID_FILE_PREFERENCES
+    MENUITEM SEPARATOR
+    MENUITEM "Recent File", 57616
+    MENUITEM SEPARATOR
+    MENUITEM "E&xit", 57665
+  END
+  POPUP "&Edit"
+  BEGIN
+    MENUITEM "&Undo\tCtrl+Z", 57643
+    MENUITEM SEPARATOR
+    MENUITEM "Cu&t\tCtrl+X", 57635
+    MENUITEM "&Copy\tCtrl+C", 57634
+    MENUITEM "&Paste\tCtrl+V", 57637
+    MENUITEM SEPARATOR
+    MENUITEM "&Flip to World\tCtrl+Alt+Space", ID_EDIT_FLIPTONOTEPAD
+    MENUITEM SEPARATOR
+    MENUITEM "Colour Picker\tCtrl+Alt+P", ID_EDIT_COLOURPICKER
+  END
+  POPUP "&View"
+  BEGIN
+    MENUITEM "&Toolbar", 59392
+    MENUITEM "&World Toolbar", ID_VIEW_GAME_TOOLBAR
+    MENUITEM "&Activity Toolbar", ID_VIEW_ACTIVITYTOOLBAR
+    MENUITEM "&Status Bar", 59393
+    MENUITEM "&Info Bar", ID_VIEW_INFOBAR
+    MENUITEM SEPARATOR
+    MENUITEM "&Reset Toolbar Locations", ID_VIEW_RESET_TOOLBARS
+    MENUITEM "Always &On Top", ID_VIEW_ALWAYSONTOP
+    MENUITEM "&Full Screen Mode\tCtrl+Alt+F", ID_VIEW_FULLSCREENMODE
+    MENUITEM SEPARATOR
+    MENUITEM "&Activity List", ID_DISPLAY_ACTIVITYLIST
+  END
+  POPUP "&Window"
+  BEGIN
+    MENUITEM "&Cascade", 57650
+    MENUITEM "&Tile", 57651
+    MENUITEM "&Arrange Icons", 57649
+    MENUITEM "Close A&ll Notepad Windows", ID_WINDOW_CLOSEALLNOTEPADWINDOWS
+  END
+  POPUP "&Help"
+  BEGIN
+    MENUITEM "&Tip Of The Day...", ID_HELP_TIPOFTHEDAY
+    MENUITEM SEPARATOR
+    MENUITEM "&Getting Started...", ID_HELP_GETTINGSTARTED
+    MENUITEM SEPARATOR
+    MENUITEM "&Contents", ID_HELP_CONTENTS
+    MENUITEM "&Index", 57666
+    MENUITEM "&Using Help", 57668
+    MENUITEM SEPARATOR
+    MENUITEM "&Bug Reports...", ID_HELP_BUGREPORTSUGGESTION
+    MENUITEM "&Documentation Web Page...", ID_HELP_DOCUMENTATIONWEBPAGE
+    MENUITEM "&Forum...\tShift+Ctrl+Alt+F", ID_HELP_FORUM
+    MENUITEM "Fu&nctions Web Page ...\tShift+Ctrl+Alt+U", ID_HELP_FUNCTIONSWEBPAGE
+    MENUITEM "&MUD Lists...", ID_HELP_MUDLISTS
+    MENUITEM "MUSHclient &Web Page...\tShift+Ctrl+Alt+W", ID_WEB_PAGE
+    MENUITEM "&Plugins List...", ID_HELP_PLUGINSLIST
+    MENUITEM "Regular &Expressions Web Page...", ID_HELP_REGULAREXPRESSIONSWEBPAGE
+    MENUITEM SEPARATOR
+    MENUITEM "&Register MUSHclient...", ID_HELP_REGISTERMUSHCLIENT
+    MENUITEM SEPARATOR
+    MENUITEM "&About MUSHclient...", 57664
+  END
+END
+
+IDR_LUA_SCRIPT MENU
+BEGIN
+  POPUP "_POPUP_"
+  BEGIN
+    POPUP "Character Class"
+    BEGIN
+      MENUITEM "Delete me", ID_POPUP_CHARACTERCLASS_DELETEME
+    END
+    POPUP "Quantifiers"
+    BEGIN
+      MENUITEM "Delete me", ID_POPUP_QUANTIFIERS_DELETEME
+    END
+    POPUP "Grouping"
+    BEGIN
+      MENUITEM "Delete me", ID_POPUP_GROUPING_DELETEME
+    END
+    POPUP "Position"
+    BEGIN
+      MENUITEM "Delete me", ID_POPUP_POSITION_DELETEME
+    END
+    POPUP "Assertions"
+    BEGIN
+      MENUITEM "Delete me", ID_POPUP_ASSERTIONS_DELETEME
+    END
+    POPUP "Options"
+    BEGIN
+      MENUITEM "Delete me", ID_POPUP_OPTIONS_DELETEME
+    END
+    MENUITEM "Help...", ID_POPUP_HELP
+  END
+END

@@ -807,6 +807,9 @@ if(NOT WIN32)
             platform/wx_world_child.cpp
             platform/wx_notepad.cpp
             platform/wx_entity_dlgs.cpp
+            # MFC dialog bridge: parses the recovered dialog/menu resources so the
+            # canonical dialogs/**/*.cpp render natively (vs hand-rebuilt in wx)
+            platform/wx_dialog_resource.cpp
         )
         # mushgui links mushapp (full MUSHclient engine with doc.cpp, dialogs,
         # scripting, etc.) rather than the portable mushcore stub.

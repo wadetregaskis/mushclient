@@ -14,6 +14,8 @@
 #endif
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
+#include <wx/settings.h>   // wxSystemSettings (native dialog font)
+#include <wx/statline.h>   // wxStaticLine (etched separators)
 
 #include <cstdio>
 #include <fstream>
@@ -131,15 +133,29 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
     }
     else if (cls == "Static")
     {
-        long st = 0;
         switch (c.style & SS_TYPEMASK)
         {
-            case SS_CENTER: st = wxALIGN_CENTRE_HORIZONTAL; break;
-            case SS_RIGHT:  st = wxALIGN_RIGHT; break;
-            default:        st = wxALIGN_LEFT; break;
+            case 0x10: // SS_ETCHEDHORZ — a horizontal separator line
+                w = new wxStaticLine(parent, id, pos, wxSize(size.x, 2), wxLI_HORIZONTAL);
+                break;
+            case 0x11: // SS_ETCHEDVERT — a vertical separator line
+                w = new wxStaticLine(parent, id, pos, wxSize(2, size.y), wxLI_VERTICAL);
+                break;
+            case 7: case 8: case 9: case 0x12: // SS_*FRAME — a rectangular frame
+                w = new wxStaticBox(parent, id, wxEmptyString, pos, size);
+                break;
+            case SS_ICON: case SS_BITMAP: // image statics: reserve space (no source yet)
+                w = new wxStaticText(parent, id, wxEmptyString, pos, size);
+                break;
+            default:
+            {
+                long st = ((c.style & SS_TYPEMASK) == SS_CENTER) ? wxALIGN_CENTRE_HORIZONTAL
+                        : ((c.style & SS_TYPEMASK) == SS_RIGHT)  ? wxALIGN_RIGHT
+                        :                                          wxALIGN_LEFT;
+                w = new wxStaticText(parent, id, U(c.text), pos, size, st);
+                break;
+            }
         }
-        // icon/bitmap statics: a blank placeholder of the right size for now
-        w = new wxStaticText(parent, id, U(c.text), pos, size, st);
     }
     else if (cls == "Edit")
     {
@@ -174,7 +190,11 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         w = new wxPanel(parent, id, pos, size);
     }
 
-    if (w && (c.style & WS_DISABLED)) w->Enable(false);
+    if (w)
+    {
+        w->SetFont(parent->GetFont());          // match the layout-conversion font
+        if (c.style & WS_DISABLED) w->Enable(false);
+    }
     return w;
 }
 
@@ -189,11 +209,13 @@ wxDialog* BuildWxDialogFromTemplate(wxWindow* parent, const RcDialog& t)
                                  wxDefaultPosition, wxDefaultSize,
                                  wxDEFAULT_DIALOG_STYLE);
 
-    // The dialog font drives dialog-unit -> pixel conversion (MapDialogRect).
-    if (!t.fontFace.empty())
-        dlg->SetFont(wxFont(t.fontPt > 0 ? t.fontPt : 8,
-                            wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL,
-                            wxFONTWEIGHT_NORMAL, false, U(t.fontFace)));
+    // Use the native macOS dialog font for BOTH the dialog-unit -> pixel
+    // conversion (ConvertDialogToPixels, below) AND the controls (each control
+    // gets this same font in CreateControl).  The recovered template's font
+    // ("MS Sans Serif" 8pt) has no macOS equivalent, and mixing an 8pt
+    // conversion with default ~13pt control text is exactly what made the
+    // earlier layout wrong: rects sized for one font, text drawn in another.
+    dlg->SetFont(wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT));
 
     dlg->SetClientSize(dlg->ConvertDialogToPixels(wxSize(t.cx, t.cy)));
 

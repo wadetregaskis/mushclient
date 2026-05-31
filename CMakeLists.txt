@@ -446,6 +446,10 @@ if(NOT WIN32)
         platform/mushapp_globals.cpp
         # Non-Windows stubs/forwarders needed by mushapp but not by mushcore
         platform/mushapp_stubs.cpp
+        # Port-only lightweight CTreePropertySheet (World Properties container):
+        # records the canonical pages + tree structure, DoModal -> wxTreebook.
+        # Replaces the heavy GDI TreePropertySheet.cpp (excluded below).
+        platform/wx_tree_property_sheet.cpp
         # Hook pointer definitions (also in mushcore for mushcli; no ODR conflict
         # because no target links both mushapp and mushcore simultaneously).
         platform/wx_mfc_hooks_storage.cpp
@@ -567,7 +571,8 @@ if(NOT WIN32)
         dialogs/world_prefs/PrefsPropertySheet.cpp
         dialogs/world_prefs/TabDefaultsDlg.cpp
         dialogs/world_prefs/TimerDlg.cpp
-        dialogs/world_prefs/TreePropertySheet.cpp
+        # TreePropertySheet.cpp (heavy GDI custom-draw) is Windows-only; the port
+        # uses platform/wx_tree_property_sheet.cpp + a wxTreebook instead.
         dialogs/world_prefs/aliasdlg.cpp
         dialogs/world_prefs/configuration.cpp
         dialogs/world_prefs/editmac.cpp

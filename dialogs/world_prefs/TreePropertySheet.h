@@ -34,6 +34,8 @@ enum	{
 	tps_capborder_flow=2
 };
 
+#ifdef _WIN32   // ── canonical Windows implementation (heavy GDI custom-draw) ──
+
 class CTreePropertySheet : public CPropertySheet
 {
 	DECLARE_DYNAMIC(CTreePropertySheet)
@@ -294,6 +296,50 @@ protected:
   afx_msg LRESULT OnKickIdle(WPARAM, LPARAM);
 	DECLARE_MESSAGE_MAP()
 };
+
+#else  // ── portable implementation: a lightweight wxTreebook-backed sheet ──
+
+#include <vector>
+
+// On the port the canonical *pages* (CPropertyPage subclasses) are reused
+// verbatim; only the container chrome (tree + caption gradient) is platform
+// native.  This lightweight CTreePropertySheet just records the pages and their
+// tree structure as GamePreferences adds them; DoModal() hands the list to the
+// wx layer (g_run_mfc_property_sheet) which builds a real wxTreebook.  There is
+// deliberately no GDI / no CMemDC / no CTreeCtrl here — constructing those would
+// dereference the null port CWnd::GetDesktopWindow().
+class CTreePropertySheet : public CPropertySheet
+{
+public:
+	// One added page: its tree role (tps_item_branch/node/endbranch | flags),
+	// the canonical page object, and its tree caption.
+	struct PortPage { int nType; CPropertyPage* pPage; CString caption; };
+
+	CTreePropertySheet(CWnd* pParentWnd, UINT iSelectPage = 0);
+	CTreePropertySheet(int nTreeWidth, UINT nIDCaption,
+	                   CWnd* pParentWnd = NULL, UINT iSelectPage = 0);
+	CTreePropertySheet(int nTreeWidth = 100, LPCTSTR pszCaption = _T("Tree property sheet"),
+	                   CWnd* pParentWnd = NULL, UINT iSelectPage = 0);
+
+	void    AddPage(int nType, CPropertyPage* pPage, LPCTSTR lpszCaptionDescr = _T(""));
+	INT_PTR DoModal();
+	// Pages call ((CTreePropertySheet*)GetParent())->PageHasChanged(this) when
+	// they switch page programmatically; the wxTreebook drives its own
+	// selection, so this is a no-op on the port.
+	void    PageHasChanged(CPropertyPage* /*pNewPage*/) {}
+
+	// Caption-gradient colours set by GamePreferences.  Unused by the wx chrome
+	// for now, but kept so the canonical setup code compiles unchanged.
+	COLORREF m_clrCaptionLeft = 0, m_clrCaptionRight = 0;
+	COLORREF m_clrCaptionTextLeft = 0, m_clrCaptionTextRight = 0;
+	COLORREF m_clrCaptionBorderTopLeft = 0, m_clrCaptionBorderBottomRight = 0;
+
+	int      m_iWantedPage = 0;   // ePage* value to show first
+	CString  m_caption;           // window title (AppendMUDName("Configuration"))
+	std::vector<PortPage> m_portPages;
+};
+
+#endif // _WIN32
 
 /////////////////////////////////////////////////////////////////////////////
 

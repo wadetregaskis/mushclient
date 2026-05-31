@@ -319,6 +319,14 @@ extern intptr_t (*g_run_mfc_dialog)(void* self, unsigned idd);
 // g_end_mfc_dialog: CDialog::EndDialog ends the modal loop of the wxDialog
 // backing `self`, with the given result.
 extern void (*g_end_mfc_dialog)(void* self, int result);
+// g_run_mfc_property_sheet: CTreePropertySheet::DoModal calls this with `self` =
+// the CTreePropertySheet* (port-only lightweight class).  The bridge builds a
+// wxDialog hosting a wxTreebook — one page per recorded CPropertyPage, branch/
+// node/endbranch -> AddPage/AddSubPage — populates each page panel from its
+// recovered template, runs OnInitDialog (DDX load) + control dispatch, selects
+// the wanted page, and on OK runs each page's UpdateData(TRUE).  Returns
+// IDOK/IDCANCEL.  nullptr -> IDCANCEL.
+extern intptr_t (*g_run_mfc_property_sheet)(void* self);
 
 // ── Dialog control accessors (GetDlgItem / DDX) ───────────────────────────
 // g_wxhook_get_dlg_item: the wxWindow* of `parent`'s child with control id `id`

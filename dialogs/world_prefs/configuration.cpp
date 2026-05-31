@@ -2410,6 +2410,38 @@ void CMUSHclientDoc::OnGamePreferences()
 
 #endif // _WIN32
 
+#ifndef _WIN32
+// The Game > Configure > X menu handlers (and Reset All Timers) live inside the
+// Windows-only block above.  On the port, recreate them as the same one-liners:
+// each opens the World Properties property sheet at its page via GamePreferences
+// (which routes to the wx prefs hook).  Reactivating the MFC message maps means
+// these handlers must now link.
+void CMUSHclientDoc::OnGameConfigureMudaddress()      { GamePreferences (ePageGeneral); }
+void CMUSHclientDoc::OnGameConfigureNameAndPassword() { GamePreferences (ePageConnecting); }
+void CMUSHclientDoc::OnGameConfigureLogging()         { GamePreferences (ePageLogging); }
+void CMUSHclientDoc::OnGameConfigureChat()            { GamePreferences (ePageChat); }
+void CMUSHclientDoc::OnGameConfigureInfo()            { GamePreferences (ePageInfo); }
+void CMUSHclientDoc::OnGameConfigureNotes()           { GamePreferences (ePageNotes); }
+void CMUSHclientDoc::OnGameConfigureOutput()          { GamePreferences (ePageOutput); }
+void CMUSHclientDoc::OnGameConfigureColours()         { GamePreferences (ePageANSIColours); }
+void CMUSHclientDoc::OnGameConfigureCustomColours()   { GamePreferences (ePageCustomColours); }
+void CMUSHclientDoc::OnGameConfigureHighlighting()    { }  // (no page on Windows either)
+void CMUSHclientDoc::OnGameConfigurePrinting()        { GamePreferences (ePagePrinting); }
+void CMUSHclientDoc::OnGameConfigureCommands()        { GamePreferences (ePageCommands); }
+void CMUSHclientDoc::OnGameConfigureKeypad()          { GamePreferences (ePageKeypad); }
+void CMUSHclientDoc::OnGameConfigureMacros()          { GamePreferences (ePageMacros); }
+void CMUSHclientDoc::OnGameConfigureAutosay()         { GamePreferences (ePageAutosay); }
+void CMUSHclientDoc::OnGameConfigurePastetoworld()    { GamePreferences (ePagePaste); }
+void CMUSHclientDoc::OnGameConfigureSendfile()        { GamePreferences (ePageSend); }
+void CMUSHclientDoc::OnGameConfigureScripting()       { GamePreferences (ePageScripts); }
+void CMUSHclientDoc::OnGameConfigureVariables()       { GamePreferences (ePageVariables); }
+void CMUSHclientDoc::OnGameConfigureTriggers()        { GamePreferences (ePageTriggers); }
+void CMUSHclientDoc::OnGameConfigureAliases()         { GamePreferences (ePageAliases); }
+void CMUSHclientDoc::OnGameConfigureTimers()          { GamePreferences (ePageTimers); }
+void CMUSHclientDoc::OnGameConfigureMxppueblo()       { GamePreferences (ePageMXP); }
+void CMUSHclientDoc::OnGameResetalltimers()           { ResetAllTimers (GetTimerMap ()); }
+#endif // !_WIN32
+
 int CMUSHclientDoc::RecompileRegularExpressions ()
   {
     int iTriggerErrors = 0;

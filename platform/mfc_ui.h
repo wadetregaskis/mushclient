@@ -822,6 +822,7 @@ struct TVSORTCB { HTREEITEM hParent; PFNTVCOMPARE lpfnCompare; LPARAM lParam; };
 #  define ID_FILE_PRINT_SETUP   0xE106
 #  define ID_FILE_PRINT         0xE107
 #  define ID_FILE_PRINT_PREVIEW 0xE108
+#  define ID_FILE_PRINT_DIRECT  0xE109
 #  define ID_FILE_SEND_MAIL     0xE10A
 #  define ID_FILE_MRU_FIRST     0xE110
 #  define ID_FILE_MRU_LAST      0xE11F
@@ -844,6 +845,7 @@ struct TVSORTCB { HTREEITEM hParent; PFNTVCOMPARE lpfnCompare; LPARAM lParam; };
 #ifndef ID_APP_ABOUT
 #  define ID_APP_ABOUT          0xE140
 #  define ID_APP_EXIT           0xE141
+#  define ID_DEFAULT_HELP       0xE142
 #  define ID_HELP               0xE143
 #  define ID_HELP_INDEX         0xE144
 #  define ID_HELP_USING         0xE145
@@ -1618,6 +1620,90 @@ public:
 #define ON_CONTROL(notif, id, fn)
 #define ON_CONTROL_RANGE(notif, id1, id2, fn)
 #define ON_MYMESSAGE(msg, fn)
+
+// ── Reactivated message-map macros (approach a) ─────────────────────────────
+// Replace the no-op stubs above with real AFX_MSGMAP table generation so
+// CDialog can route control commands to the canonical handlers.  Macros NOT
+// overridden here (ON_WM_*, ON_UPDATE_COMMAND_UI, ON_NOTIFY, ON_MESSAGE,
+// ON_COMMAND_EX, ...) remain no-ops and simply vanish from the table — they are
+// not yet routed.  Each real macro emits one brace entry WITH a trailing comma,
+// so interleaved empty macros disappear cleanly between entries.
+#undef DECLARE_MESSAGE_MAP
+#undef BEGIN_MESSAGE_MAP
+#undef END_MESSAGE_MAP
+#undef ON_COMMAND
+#undef ON_COMMAND_RANGE
+#undef ON_BN_CLICKED
+#undef ON_CONTROL
+#undef ON_CONTROL_RANGE
+#undef ON_CBN_SELCHANGE
+#undef ON_EN_CHANGE
+#undef ON_LBN_SELCHANGE
+#undef ON_LBN_DBLCLK
+
+#define DECLARE_MESSAGE_MAP() \
+public: \
+    static const AFX_MSGMAP* GetThisMessageMap(); \
+    virtual const AFX_MSGMAP* GetMessageMap() const;
+
+#define BEGIN_MESSAGE_MAP(theClass, baseClass) \
+    const AFX_MSGMAP* theClass::GetMessageMap() const { return theClass::GetThisMessageMap(); } \
+    const AFX_MSGMAP* theClass::GetThisMessageMap() { \
+        typedef theClass ThisClass; (void) sizeof (ThisClass); \
+        typedef baseClass TheBaseClass; \
+        static const AFX_MSGMAP_ENTRY _entries[] = {
+
+#define END_MESSAGE_MAP() \
+            { 0, 0, 0, 0, AfxSig_end, (AFX_PMSG)0 } \
+        }; \
+        static const AFX_MSGMAP _map = { &TheBaseClass::GetThisMessageMap, _entries }; \
+        return &_map; \
+    }
+
+// Command/control handlers are void() (AfxSig_vv); range handlers are void(UINT)
+// (AfxSig_vw).  The static_cast does the class downcast to CCmdTarget (handling
+// any this-pointer adjustment); for the VW case the result is then reinterpreted
+// to the void() AFX_PMSG slot (same class, signature-only — safe) and cast back
+// in the dispatcher.
+#define _AFX_CMD_VV(code, id, lastid, fn) \
+    { WM_COMMAND, (UINT)(code), (UINT)(id), (UINT)(lastid), AfxSig_vv, \
+      static_cast<void (CCmdTarget::*)()>(&ThisClass::fn) },
+#define _AFX_CMD_VW(code, id, lastid, fn) \
+    { WM_COMMAND, (UINT)(code), (UINT)(id), (UINT)(lastid), AfxSig_vw, \
+      reinterpret_cast<AFX_PMSG>(static_cast<void (CCmdTarget::*)(UINT)>(&ThisClass::fn)) },
+
+#define ON_COMMAND(id, fn)                   _AFX_CMD_VV(0, id, id, fn)
+#define ON_BN_CLICKED(id, fn)                _AFX_CMD_VV(BN_CLICKED, id, id, fn)
+#define ON_CONTROL(code, id, fn)             _AFX_CMD_VV(code, id, id, fn)
+#define ON_CBN_SELCHANGE(id, fn)             _AFX_CMD_VV(CBN_SELCHANGE, id, id, fn)
+#define ON_EN_CHANGE(id, fn)                 _AFX_CMD_VV(EN_CHANGE, id, id, fn)
+#define ON_LBN_SELCHANGE(id, fn)             _AFX_CMD_VV(LBN_SELCHANGE, id, id, fn)
+#define ON_LBN_DBLCLK(id, fn)                _AFX_CMD_VV(LBN_DBLCLK, id, id, fn)
+#define ON_COMMAND_RANGE(id1, id2, fn)       _AFX_CMD_VW(0, id1, id2, fn)
+#define ON_CONTROL_RANGE(code, id1, id2, fn) _AFX_CMD_VW(code, id1, id2, fn)
+
+// Dispatch a WM_COMMAND-style notification to the first matching handler in the
+// target's message-map chain.  Returns TRUE if handled.
+inline BOOL AfxDispatchCommand(CCmdTarget* target, UINT code, UINT id) {
+    if (!target) return FALSE;
+    for (const AFX_MSGMAP* m = target->GetMessageMap(); m;
+         m = m->pfnGetBaseMap ? m->pfnGetBaseMap() : nullptr) {
+        for (const AFX_MSGMAP_ENTRY* e = m->lpEntries; e->nSig != (UINT_PTR)AfxSig_end; ++e) {
+            if (e->nMessage == (UINT)WM_COMMAND && e->nCode == code &&
+                id >= e->nID && id <= e->nLastID) {
+                if (e->nSig == (UINT_PTR)AfxSig_vw) {
+                    void (CCmdTarget::*pfn)(UINT) =
+                        reinterpret_cast<void (CCmdTarget::*)(UINT)>(e->pfn);
+                    (target->*pfn)(id);
+                } else {
+                    (target->*(e->pfn))();
+                }
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
 
 // ── Dispatch-map macros — no-ops ───────────────────────────────────────────
 // The full DISPATCH_MAP block in doc.cpp is guarded #ifdef _WIN32 separately;
@@ -2912,6 +2998,11 @@ public:
     CDocument* m_pDocument = nullptr;
     virtual CDocument* GetDocument() const { return m_pDocument; }
 
+    // Standard MFC command handlers referenced by message maps (stubs on the
+    // port — printing goes through wx / is unsupported here).
+    void OnFilePrint() {}
+    void OnFilePrintPreview() {}
+
     virtual void OnDraw(CDC*) {}
     virtual void OnInitialUpdate() {}
     virtual void OnUpdate(CView*, LPARAM, CObject*) {}
@@ -3006,6 +3097,11 @@ public:
 class CEdit;  // forward-declare; fully defined after CComboBox below
 class CEditView : public CScrollView {
 public:
+    // Standard CEditView command handlers referenced by message maps (stubs).
+    void OnEditSelectAll() {}
+    void OnEditFind() {}
+    void OnEditRepeat() {}
+    void OnEditReplace() {}
     // CEditView wraps a CEdit internally; expose minimal surface
     void SetWindowText(LPCTSTR) {}
     void GetWindowText(CString&) const {}
@@ -4099,6 +4195,13 @@ public:
 // ── Frame / app classes ────────────────────────────────────────────────────
 class CFrameWnd : public CWnd {
 public:
+    // Standard frame help/context command handlers referenced by message maps
+    // (CMDIFrameWnd inherits these); stubs on the port.
+    void OnContextHelp() {}
+    void OnHelp() {}
+    void OnHelpIndex() {}
+    void OnHelpFinder() {}
+    void OnHelpUsing() {}
     void       SetActiveView(CView*) {}
     CView*     GetActiveView() const { return nullptr; }
     CDocument* GetActiveDocument() const { return nullptr; }
@@ -4249,6 +4352,12 @@ class CWinApp : public CCmdTarget {
 public:
     // Constructor sets the global g_pWinApp so AfxGetApp() returns this instance.
     CWinApp() { g_pWinApp = this; }
+
+    // Standard MFC app command handlers referenced by message maps (the real
+    // new/open is CMUSHclientApp's own; these are the framework defaults — stubs).
+    void OnFileNew() {}
+    void OnFileOpen() {}
+    void OnFilePrintSetup() {}
 
     LPCTSTR    m_lpszAppName      = nullptr;
     LPCTSTR    m_lpszProfileName  = nullptr;

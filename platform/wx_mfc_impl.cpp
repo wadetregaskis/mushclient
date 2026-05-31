@@ -3996,13 +3996,20 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     // Route control commands to the canonical handlers.  OK/Cancel use the MFC
     // virtuals (which call EndDialog); other buttons will dispatch through the
     // reactivated message map (task #12) — for now they are inert.
+    // OK/Cancel use the CDialog virtuals; every other control command is routed
+    // through the reactivated message map to its canonical ON_BN_CLICKED/etc.
+    // handler.  Buttons, checkboxes and radios all send BN_CLICKED.
     dlg->Bind(wxEVT_BUTTON, [cdlg](wxCommandEvent& e) {
-        switch (e.GetId())
-        {
-            case IDOK:     cdlg->OnOK();     break;
-            case IDCANCEL: cdlg->OnCancel(); break;
-            default:       e.Skip();         break;
-        }
+        int id = e.GetId();
+        if (id == IDOK)          cdlg->OnOK();
+        else if (id == IDCANCEL) cdlg->OnCancel();
+        else if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) id)) e.Skip();
+    });
+    dlg->Bind(wxEVT_CHECKBOX, [cdlg](wxCommandEvent& e) {
+        if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) e.GetId())) e.Skip();
+    });
+    dlg->Bind(wxEVT_RADIOBUTTON, [cdlg](wxCommandEvent& e) {
+        if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) e.GetId())) e.Skip();
     });
     // Closing the window (X / Esc) behaves like Cancel.
     dlg->Bind(wxEVT_CLOSE_WINDOW, [dlg](wxCloseEvent&) {

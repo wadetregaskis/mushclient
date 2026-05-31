@@ -195,6 +195,23 @@ class CSize;
 class CScrollBar;
 class CDC;    // fully defined in mfc_ui.h; forward-declare so CWnd can use CDC*
 
+// ── MFC message-map structures (reactivated for the dialog/command bridge) ──
+// Real AFX_MSGMAP tables let CDialog route control commands to the canonical
+// ON_BN_CLICKED/ON_COMMAND/... handlers — the chosen "reactivate the maps"
+// approach.  See the macros in mfc_ui.h and AfxDispatchCommand().
+class CCmdTarget;
+typedef void (CCmdTarget::*AFX_PMSG)(void);
+enum { AfxSig_end = 0, AfxSig_vv, AfxSig_vw };  // _vv = void(); _vw = void(UINT) (ranges)
+struct AFX_MSGMAP_ENTRY {
+    UINT      nMessage, nCode, nID, nLastID;
+    UINT_PTR  nSig;
+    AFX_PMSG  pfn;
+};
+struct AFX_MSGMAP {
+    const AFX_MSGMAP* (*pfnGetBaseMap)();
+    const AFX_MSGMAP_ENTRY* lpEntries;
+};
+
 // ── CCmdTarget ───────────────────────────────────────────────────────────
 // Defined here (before CWnd) so CWnd can inherit from it.
 // mfc_ui.h used to redefine this class — it now defers to this definition.
@@ -205,7 +222,15 @@ public:
     void BeginWaitCursor()   {}
     void EndWaitCursor()     {}
     void RestoreWaitCursor() {}
+    // Root of the message-map chain (terminates here — no base map).
+    static const AFX_MSGMAP* GetThisMessageMap();
+    virtual const AFX_MSGMAP* GetMessageMap() const { return GetThisMessageMap(); }
 };
+inline const AFX_MSGMAP* CCmdTarget::GetThisMessageMap() {
+    static const AFX_MSGMAP_ENTRY entries[] = { { 0, 0, 0, 0, AfxSig_end, (AFX_PMSG)0 } };
+    static const AFX_MSGMAP map = { nullptr, entries };
+    return &map;
+}
 
 // ── CWnd ──────────────────────────────────────────────────────────────────
 // Base class for all GUI windows.  mfc_ui.h derives many classes from CWnd,

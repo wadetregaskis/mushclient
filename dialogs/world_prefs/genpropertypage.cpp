@@ -1457,6 +1457,7 @@ BOOL CGenPropertyPage::OnInitDialog()
 {
 	CPropertyPage::OnInitDialog();
 
+#ifdef _WIN32
   // Tree View stuff
 
   WINDOWPLACEMENT wndpl;        // where original control is
@@ -1540,6 +1541,15 @@ BOOL CGenPropertyPage::OnInitDialog()
   delete [] iColOrder;
 
   m_bReloadList = true;   // defer so focus gets set correctly
+#else
+  // Port: the trigger/alias/timer/variable list + tree controls are not yet
+  // bridged to native widgets (the template's list area is a placeholder panel).
+  // Skip the native CListCtrl/CTreeCtrl + font setup above, which assumes real
+  // Win32 controls — GetDlgItem(IDC_COPY)->GetFont() is null on the port, so
+  // GetLogFont() would dereference null and crash.  The page still renders its
+  // template and runs DDX; list population lands with CListCtrl -> wxListCtrl.
+  m_bReloadList = false;
+#endif // _WIN32
 
 	return FALSE;  // return TRUE unless you set the focus to a control
 	              // EXCEPTION: OCX Property Pages should return FALSE

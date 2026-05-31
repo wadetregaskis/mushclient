@@ -33,6 +33,16 @@ extern bool g_debug;
 // Shared styled-line types and GUI output callbacks.
 #include "platform/output_types.h"
 #include <functional>
+// The world-prefs property-page classes (full defs in prefspropertypages.h,
+// which is Windows-only in this header).  CMUSHclientDoc's Load/Changed/Save
+// prefs methods take these by reference, so forward declarations suffice here;
+// the definitions in configuration.cpp include the full header.
+class CPrefsP1;  class CPrefsP2;  class CPrefsP3;  class CPrefsP4;
+class CPrefsP5;  class CPrefsP6;  class CPrefsP7;  class CPrefsP8;
+class CPrefsP9;  class CPrefsP10; class CPrefsP11; class CPrefsP12;
+class CPrefsP13; class CPrefsP14; class CPrefsP15; class CPrefsP16;
+class CPrefsP17; class CPrefsP18; class CPrefsP19; class CPrefsP20;
+class CPrefsP21; class CPrefsP22; class CPrefsP23;
 #endif
 
 // ============================================================================
@@ -2250,7 +2260,8 @@ public:
                                  const bool bStopOnFalse);
 
   // load from document into property page (Windows GUI only)
-#ifdef _WIN32
+  // World-prefs data marshaling — portable (definitions in configuration.cpp;
+  // these only take page references, satisfied by the forward declarations above).
   void LoadPrefsP1  (CPrefsP1  &page1);
   void LoadPrefsP2  (CPrefsP2  &page2);
   void LoadPrefsP3  (CPrefsP3  &page3);
@@ -2326,7 +2337,6 @@ public:
   void SavePrefsP21 (CPrefsP21 &page21);
   void SavePrefsP22 (CPrefsP22 &page22);
   void SavePrefsP23 (CPrefsP23 &page23);
-#endif // _WIN32 || WIN32
 
   CString AppendMUDName (const CString strName);
 

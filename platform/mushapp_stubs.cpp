@@ -481,24 +481,10 @@ BOOL CMUSHclientDoc::Save_Set(const int set_type,
     return error;
 }
 
-// ── CMUSHclientDoc::GamePreferences ──────────────────────────────────────────
-// Shows the world-preferences dialog.
-// On non-Windows, calls g_wxhook_game_preferences (set by wx_mfc_impl.cpp) which
-// shows a real wxWidgets dialog.  Falls back to true (accepted) if hook is null.
-bool CMUSHclientDoc::GamePreferences(const int iPage)
-{
-    if (g_wxhook_game_preferences)
-        return g_wxhook_game_preferences(this, iPage);
-    return true;
-}
-
-// ── CMUSHclientDoc::OnGamePreferences ────────────────────────────────────────
-// MFC message-map handler for ID_GAME_PREFERENCES.  Calls GamePreferences(-1)
-// to open on the last-used page.  On non-Windows the dialog is a no-op stub.
-void CMUSHclientDoc::OnGamePreferences()
-{
-    GamePreferences(-1);
-}
+// GamePreferences / OnGamePreferences are no longer stubbed here: the canonical
+// implementations in dialogs/world_prefs/configuration.cpp now compile on the
+// port and build the real CTreePropertySheet (rendered as a native wxTreebook
+// via hook_run_property_sheet).
 
 // ── CMUSHclientDoc::SortTimers ────────────────────────────────────────────────
 // On Windows this rebuilds a sorted timer display list.  On non-Windows the

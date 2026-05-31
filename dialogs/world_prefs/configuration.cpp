@@ -96,7 +96,13 @@ CString CMUSHclientDoc::AppendMUDName (const CString strName)
 
   } // end of CMUSHclientDoc::AppendMUDName
 
-#ifdef _WIN32   // prefs-dialog methods are Windows GUI only
+// The world-preferences data marshaling (Load/Changed/Save per page) and the
+// GamePreferences property-sheet driver below are portable.  On the port,
+// GamePreferences builds the canonical CTreePropertySheet, which DoModal()s
+// through a native wxTreebook (platform/wx_tree_property_sheet.cpp +
+// wx_mfc_impl.cpp::hook_run_property_sheet).  Only the Game > Configure > X menu
+// *handlers* stay Windows-only (the port defines equivalents in the
+// #ifndef _WIN32 block at the end of this file).
 
 /* *******************************************************************
    load from document into property page
@@ -1865,7 +1871,10 @@ void CMUSHclientDoc:: SavePrefsP23 (CPrefsP23 &page23)
 
 
 
-void CMUSHclientDoc::OnGameConfigureMudaddress() 
+#ifdef _WIN32   // canonical Game > Configure > X menu handlers; the port defines
+                // equivalents in the #ifndef _WIN32 block at the end of this file
+                // (same one-liners calling the now-portable GamePreferences).
+void CMUSHclientDoc::OnGameConfigureMudaddress()
 {
 GamePreferences (ePageGeneral);
 }
@@ -1983,13 +1992,15 @@ GamePreferences (ePageTimers);
 }
 
 
-void CMUSHclientDoc::OnGameConfigureMxppueblo() 
+void CMUSHclientDoc::OnGameConfigureMxppueblo()
 {
 GamePreferences (ePageMXP);
 }
 
+#endif // _WIN32  (end canonical menu handlers)
 
-bool CMUSHclientDoc::GamePreferences (const int iPage) 
+
+bool CMUSHclientDoc::GamePreferences (const int iPage)
 {
 Frame.DelayDebugStatus ("Starting world config");
 
@@ -2407,8 +2418,6 @@ void CMUSHclientDoc::OnGamePreferences()
   {
   GamePreferences (-1);  // use last page, whatever it was
   }  // end of CMUSHclientDoc::OnGamePreferences
-
-#endif // _WIN32
 
 #ifndef _WIN32
 // The Game > Configure > X menu handlers (and Reset All Timers) live inside the

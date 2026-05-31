@@ -17,8 +17,13 @@ class wxDialog;
 // The process-wide registry of recovered dialog/menu templates (lazy-loaded).
 RcResources& MfcDialogResources();
 
-// Build a wxDialog (controls absolutely positioned per the template) from a
-// recovered template.  The caller owns the returned dialog.
+// Populate an arbitrary window (a wxDialog, or a wxTreebook page wxPanel)
+// with the template's controls, absolutely positioned.  Sets the target's
+// min-client-size to the template size.
+void PopulateWindowFromTemplate(wxWindow* target, const RcDialog& t);
+
+// Build a standalone wxDialog (controls absolutely positioned per the
+// template) from a recovered template.  The caller owns the returned dialog.
 wxDialog* BuildWxDialogFromTemplate(wxWindow* parent, const RcDialog& t);
 
 #endif // !_WIN32

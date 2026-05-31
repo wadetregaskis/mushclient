@@ -206,30 +206,39 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
 
 } // namespace
 
-// Build a wxDialog from a recovered template.  `parent` may be null.
+// Populate `target` (a wxDialog, or a wxTreebook page wxPanel, …) with the
+// template's controls, absolutely positioned via wx's dialog-unit conversion.
 // Controls are created in template order (groupboxes first, so siblings paint
-// on top) and positioned absolutely via wx's dialog-unit conversion.
-wxDialog* BuildWxDialogFromTemplate(wxWindow* parent, const RcDialog& t)
+// on top).  The target's min-client-size is set to the template's size so a
+// container (e.g. wxTreebook) can size itself to the largest page.
+void PopulateWindowFromTemplate(wxWindow* target, const RcDialog& t)
 {
-    wxDialog* dlg = new wxDialog(parent, wxID_ANY, U(t.caption),
-                                 wxDefaultPosition, wxDefaultSize,
-                                 wxDEFAULT_DIALOG_STYLE);
-
     // Use the native macOS dialog font for BOTH the dialog-unit -> pixel
     // conversion (ConvertDialogToPixels, below) AND the controls (each control
     // gets this same font in CreateControl).  The recovered template's font
     // ("MS Sans Serif" 8pt) has no macOS equivalent, and mixing an 8pt
     // conversion with default ~13pt control text is exactly what made the
     // earlier layout wrong: rects sized for one font, text drawn in another.
-    dlg->SetFont(wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT));
+    target->SetFont(wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT));
 
-    dlg->SetClientSize(dlg->ConvertDialogToPixels(wxSize(t.cx, t.cy)));
+    wxSize client = target->ConvertDialogToPixels(wxSize(t.cx, t.cy));
 
     for (const RcControl& c : t.controls)
     {
-        wxPoint pos = dlg->ConvertDialogToPixels(wxPoint(c.x, c.y));
-        wxSize  sz  = dlg->ConvertDialogToPixels(wxSize(c.cx, c.cy));
-        CreateControl(dlg, c, pos, sz);
+        wxPoint pos = target->ConvertDialogToPixels(wxPoint(c.x, c.y));
+        wxSize  sz  = target->ConvertDialogToPixels(wxSize(c.cx, c.cy));
+        CreateControl(target, c, pos, sz);
     }
+    target->SetMinClientSize(client);
+}
+
+// Build a standalone wxDialog from a recovered template.  `parent` may be null.
+wxDialog* BuildWxDialogFromTemplate(wxWindow* parent, const RcDialog& t)
+{
+    wxDialog* dlg = new wxDialog(parent, wxID_ANY, U(t.caption),
+                                 wxDefaultPosition, wxDefaultSize,
+                                 wxDEFAULT_DIALOG_STYLE);
+    PopulateWindowFromTemplate(dlg, t);
+    dlg->SetClientSize(dlg->GetMinClientSize());
     return dlg;
 }

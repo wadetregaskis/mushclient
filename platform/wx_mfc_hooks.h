@@ -102,11 +102,9 @@ extern int   (*g_wxhook_quick_connect_dlg)(char** outName, char** outAddr, int* 
 // msg is UTF-8; passing nullptr clears the bar.
 extern void (*g_wxhook_set_status)(const char* msg);
 
-// ── World preferences dialog ───────────────────────────────────────────────
-// Shows a wxWidgets dialog for editing the world's connection settings.
-// doc is a CMUSHclientDoc*; iPage is the requested tab (ignored if < 0).
-// Returns true if the user clicked OK (settings were applied), false on cancel.
-extern bool (*g_wxhook_game_preferences)(void* doc, int iPage);
+// (World preferences are no longer a hook: the canonical CMUSHclientDoc::
+// GamePreferences runs on the port and shows the real CTreePropertySheet as a
+// native wxTreebook — see g_run_mfc_property_sheet / hook_run_property_sheet.)
 
 // ── Save world file ────────────────────────────────────────────────────────
 // Saves the world file for a specific doc (CMUSHclientDoc*).

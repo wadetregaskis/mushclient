@@ -152,7 +152,9 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
                 long st = ((c.style & SS_TYPEMASK) == SS_CENTER) ? wxALIGN_CENTRE_HORIZONTAL
                         : ((c.style & SS_TYPEMASK) == SS_RIGHT)  ? wxALIGN_RIGHT
                         :                                          wxALIGN_LEFT;
-                w = new wxStaticText(parent, id, U(c.text), pos, size, st);
+                // Keep the control at its template size (MFC statics have fixed
+                // rects) so text set later via DDX wraps to the right width.
+                w = new wxStaticText(parent, id, U(c.text), pos, size, st | wxST_NO_AUTORESIZE);
                 break;
             }
         }
@@ -193,6 +195,10 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
     if (w)
     {
         w->SetFont(parent->GetFont());          // match the layout-conversion font
+        // MFC text statics word-wrap within their rectangle; wxStaticText clips
+        // by default, so wrap long label text to the control width.
+        if (wxStaticText* st = wxDynamicCast(w, wxStaticText))
+            st->Wrap(size.GetWidth());
         if (c.style & WS_DISABLED) w->Enable(false);
     }
     return w;

@@ -860,6 +860,13 @@ if(NOT WIN32)
                     "${CMAKE_SOURCE_DIR}/resource.h"
                     "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/"
                 COMMENT "Bundling dialog resources into mushgui.app/Contents/Resources")
+            # Bundle data files the engine opens relative to the executable
+            # (GetModuleFileName's directory): the Tip-of-the-Day text, name lists.
+            add_custom_command(TARGET mushgui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_SOURCE_DIR}/tips.txt"
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/MacOS/"
+                COMMENT "Bundling tips.txt next to the executable (CTipDlg reads it there)")
         endif()
     elseif(NOT wxWidgets_FOUND)
         message(STATUS "wxWidgets not found — mushgui target skipped")

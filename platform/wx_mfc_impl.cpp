@@ -896,7 +896,19 @@ static void hook_get_client_rect(const void* h, RECT* r)
 
 static void hook_set_window_text(void* h, const char* text)
 {
-    if (auto* w = toWx(h)) w->SetLabel(wxString::FromUTF8(text ? text : ""));
+    auto* w = toWx(h);
+    if (!w) return;
+    wxString s = wxString::FromUTF8(text ? text : "");
+    // Static text: set the label then re-wrap to the control's (fixed) width,
+    // since MFC statics word-wrap within their rectangle and wxStaticText clips.
+    if (wxStaticText* st = wxDynamicCast(w, wxStaticText))
+    {
+        int width = st->GetSize().GetWidth();
+        st->SetLabel(s);
+        if (width > 0) st->Wrap(width);
+    }
+    else
+        w->SetLabel(s);
 }
 
 static void hook_move_window(void* h, int x, int y, int w, int ht, bool repaint)

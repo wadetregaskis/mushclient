@@ -27,6 +27,7 @@
 #include <wx/dataobj.h>    // wxTextDataObject
 #include <wx/colordlg.h>   // wxColourDialog
 #include <wx/fontdlg.h>    // wxFontDialog, wxFontData
+#include <wx/treebook.h>   // wxTreebook (World Properties property sheet)
 #if wxUSE_SOUND
 #  include <wx/sound.h>    // wxSound (trigger / MSP audio)
 #endif
@@ -47,6 +48,7 @@
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_entity_dlgs.h" // CTriggerListDlg, CAliasListDlg, CTimerListDlg
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
+#include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
 #include "scripting/scripting.h"     // CScriptEngine
 
 // Lua C API — included after MUSHclient headers to avoid wx/macro conflicts.
@@ -4038,6 +4040,111 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     return result;
 }
 
+// ── MFC property-sheet bridge: CTreePropertySheet::DoModal -> wxTreebook ──────
+// World Properties (24 pages).  The canonical CPropertyPage objects are reused
+// verbatim; we render them as a native wxTreebook (branch -> top-level page,
+// node/endbranch -> child of the last top-level page), populate each page panel
+// from its recovered template, run its OnInitDialog (canonical setup +
+// UpdateData(FALSE) DDX load), and route in-page control commands through the
+// reactivated message map.  On OK every page does UpdateData(TRUE) so the
+// canonical GamePreferences ChangedPrefsP*/SavePrefsP* see the edited values.
+static intptr_t hook_run_property_sheet(void* self)
+{
+    CTreePropertySheet* sheet = static_cast<CTreePropertySheet*>(self);
+    if (!sheet) return IDCANCEL;
+
+    wxWindow* parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    wxString title = sheet->m_caption.IsEmpty()
+                       ? wxString(wxT("World Properties"))
+                       : wxString::FromUTF8((const char*) sheet->m_caption);
+
+    wxDialog dlg(parent, wxID_ANY, title, wxDefaultPosition, wxDefaultSize,
+                 wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
+
+    wxTreebook* tb = new wxTreebook(&dlg, wxID_ANY);
+
+    // Pages, index-aligned with the treebook (insertion order == add order ==
+    // the canonical nPage that m_iWantedPage is compared against).
+    std::vector<CPropertyPage*> pages;
+    pages.reserve(sheet->m_portPages.size());
+
+    for (const auto& pp : sheet->m_portPages)
+    {
+        CPropertyPage* page  = pp.pPage;
+        wxPanel*       panel = new wxPanel(tb, wxID_ANY);
+
+        const RcDialog* t = page
+            ? MfcDialogResources().FindDialog((int) page->m_nIDTemplate)
+            : nullptr;
+        if (t)
+            PopulateWindowFromTemplate(panel, *t);
+        else
+            panel->SetMinClientSize(wxSize(420, 240));  // keep index aligned
+
+        wxString label = wxString::FromUTF8((const char*) pp.caption);
+        if ((pp.nType & tps_item_type_mask) == tps_item_branch)
+            tb->AddPage(panel, label);
+        else
+            tb->AddSubPage(panel, label);
+
+        pages.push_back(page);
+
+        if (page)
+        {
+            page->m_hWnd = (HWND) panel;   // GetDlgItem/DDX search within this panel
+
+            // Route this page's in-panel control commands to its canonical
+            // ON_BN_CLICKED/etc. handlers (e.g. checkboxes that enable siblings).
+            panel->Bind(wxEVT_BUTTON, [page](wxCommandEvent& e) {
+                if (!AfxDispatchCommand(page, BN_CLICKED, (UINT) e.GetId())) e.Skip();
+            });
+            panel->Bind(wxEVT_CHECKBOX, [page](wxCommandEvent& e) {
+                if (!AfxDispatchCommand(page, BN_CLICKED, (UINT) e.GetId())) e.Skip();
+            });
+            panel->Bind(wxEVT_RADIOBUTTON, [page](wxCommandEvent& e) {
+                if (!AfxDispatchCommand(page, BN_CLICKED, (UINT) e.GetId())) e.Skip();
+            });
+
+            page->OnInitDialog();   // canonical setup + DDX load (UpdateData(FALSE))
+        }
+    }
+
+    // Open at the wanted page (m_iWantedPage == add-order index; see
+    // TreePropertySheet.cpp OnInitDialog `nPage == m_iWantedPage`).
+    int wanted = sheet->m_iWantedPage;
+    if (wanted >= 0 && wanted < (int) tb->GetPageCount())
+        tb->SetSelection((size_t) wanted);
+
+    // Standard OK / Cancel (wxDialog ends the modal loop on these ids itself).
+    wxStdDialogButtonSizer* btns = new wxStdDialogButtonSizer();
+    wxButton* ok = new wxButton(&dlg, wxID_OK);
+    btns->AddButton(ok);
+    btns->AddButton(new wxButton(&dlg, wxID_CANCEL));
+    btns->Realize();
+    ok->SetDefault();
+
+    wxBoxSizer* top = new wxBoxSizer(wxVERTICAL);
+    top->Add(tb,   1, wxEXPAND | wxALL, 6);
+    top->Add(btns, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+    dlg.SetSizer(top);
+    dlg.Fit();
+    wxSize sz = dlg.GetSize();
+    dlg.SetSize(wxSize(std::max(sz.x, 680), std::max(sz.y, 520)));
+    dlg.CentreOnParent();
+
+    int rc = dlg.ShowModal();
+
+    int result = (rc == wxID_OK || rc == IDOK) ? IDOK : IDCANCEL;
+    if (result == IDOK)
+        for (CPropertyPage* page : pages)        // DDX save: controls -> members
+            if (page) page->UpdateData(TRUE);
+
+    for (CPropertyPage* page : pages)            // detach before panels die
+        if (page) page->m_hWnd = nullptr;
+
+    return result;
+}
+
 // ── Dialog control accessors (GetDlgItem / DDX) ───────────────────────────
 static void* hook_get_dlg_item(void* parent, int id)
 {
@@ -4079,6 +4186,7 @@ void wx_mfc_install_hooks()
 {
     g_run_mfc_dialog          = hook_run_dialog;
     g_end_mfc_dialog          = hook_end_dialog;
+    g_run_mfc_property_sheet  = hook_run_property_sheet;
     g_wxhook_get_dlg_item     = hook_get_dlg_item;
     g_wxhook_get_window_text  = hook_get_window_text;
     g_wxhook_button_set_check = hook_button_set_check;

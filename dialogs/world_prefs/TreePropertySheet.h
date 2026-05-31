@@ -318,10 +318,10 @@ public:
 	CTreePropertySheet(CWnd* pParentWnd, UINT iSelectPage = 0);
 	CTreePropertySheet(int nTreeWidth, UINT nIDCaption,
 	                   CWnd* pParentWnd = NULL, UINT iSelectPage = 0);
-	CTreePropertySheet(int nTreeWidth = 100, LPCTSTR pszCaption = _T("Tree property sheet"),
+	CTreePropertySheet(int nTreeWidth = 100, LPCTSTR pszCaption = "Tree property sheet",
 	                   CWnd* pParentWnd = NULL, UINT iSelectPage = 0);
 
-	void    AddPage(int nType, CPropertyPage* pPage, LPCTSTR lpszCaptionDescr = _T(""));
+	void    AddPage(int nType, CPropertyPage* pPage, LPCTSTR lpszCaptionDescr = "");
 	INT_PTR DoModal();
 	// Pages call ((CTreePropertySheet*)GetParent())->PageHasChanged(this) when
 	// they switch page programmatically; the wxTreebook drives its own

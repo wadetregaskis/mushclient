@@ -3087,13 +3087,13 @@ public:
     // tests) -> IDCANCEL, the prior stub behaviour.
     virtual INT_PTR DoModal()          { return g_run_mfc_dialog ? g_run_mfc_dialog(this, m_nIDTemplate) : IDCANCEL; }
     virtual void    EndDialog(int nResult) { if (g_end_mfc_dialog) g_end_mfc_dialog(this, nResult); }
-    virtual BOOL    OnInitDialog()     { return TRUE; }
+    virtual BOOL    OnInitDialog()     { UpdateData(FALSE); return TRUE; }         // initial DDX load
     virtual void    OnOK()             { UpdateData(TRUE); EndDialog(IDOK); }      // MFC default
     virtual void    OnCancel()         { EndDialog(IDCANCEL); }                    // MFC default
-    void   UpdateData(BOOL = TRUE)     {}
-    CWnd*  GetDlgItem(int) const       { return nullptr; }
-    void   SetDlgItemText(int, LPCTSTR) {}
-    void   GetDlgItemText(int, CString&) const {}
+    BOOL   UpdateData(BOOL bSaveAndValidate = TRUE);    // defined below (needs CDataExchange)
+    CWnd*  GetDlgItem(int id) const    { return CWnd::GetDlgItem(id); }
+    void   SetDlgItemText(int id, LPCTSTR s) { if (CWnd* w = GetDlgItem(id)) w->SetWindowText(s); }
+    void   GetDlgItemText(int id, CString& s) const { if (CWnd* w = GetDlgItem(id)) w->GetWindowText(s); else s = ""; }
     int    GetDlgItemInt(int, BOOL* = nullptr, BOOL=TRUE) const { return 0; }
     void   SetDlgItemInt(int, UINT, BOOL=TRUE) {}
     void   GotoDlgCtrl(CWnd*) {}
@@ -3154,8 +3154,26 @@ public:
     void  Fail() {}
 };
 
-// DDX / DDV exchange functions — all no-ops
-inline void DDX_Text(CDataExchange*, int, CString&) {}
+// CDialog::UpdateData — run DoDataExchange in the requested direction (FALSE =
+// members -> controls, TRUE = controls -> members).  Defined here now that
+// CDataExchange is complete.
+inline BOOL CDialog::UpdateData(BOOL bSaveAndValidate) {
+    CDataExchange dx;
+    dx.m_bSaveAndValidate = bSaveAndValidate;
+    dx.m_pDlgWnd = this;
+    DoDataExchange(&dx);
+    return TRUE;
+}
+
+// DDX / DDV exchange functions.  DDX_Text(CString) is real (needs only CWnd);
+// the control-class-specific ones (DDX_Check, ...) are real but defined after
+// their control classes below.  The rest remain no-ops for now.
+inline void DDX_Text(CDataExchange* pDX, int id, CString& s) {
+    CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
+    if (!w) return;
+    if (pDX->m_bSaveAndValidate) w->GetWindowText(s);
+    else                         w->SetWindowText((LPCTSTR) s);
+}
 inline void DDX_Text(CDataExchange*, int, int&) {}
 inline void DDX_Text(CDataExchange*, int, short&) {}
 inline void DDX_Text(CDataExchange*, int, long&) {}
@@ -3163,8 +3181,8 @@ inline void DDX_Text(CDataExchange*, int, UINT&) {}
 // DWORD == UINT == uint32_t; no separate overload needed
 inline void DDX_Text(CDataExchange*, int, float&) {}
 inline void DDX_Text(CDataExchange*, int, double&) {}
-inline void DDX_Check(CDataExchange*, int, int&) {}
-// Note: BOOL == int so no separate BOOL& overload needed
+// Note: BOOL == int so no separate BOOL& overload needed.  DDX_Check is real,
+// but defined after CButton below (it casts GetDlgItem's result to CButton*).
 inline void DDX_Radio(CDataExchange*, int, int&) {}
 inline void DDX_CBIndex(CDataExchange*, int, int&) {}
 inline void DDX_CBString(CDataExchange*, int, CString&) {}
@@ -3299,8 +3317,8 @@ inline CEdit& CEditView::GetEditCtrl() { static CEdit e; return e; }
 
 class CButton : public CWnd {
 public:
-    void  SetCheck(int) {}
-    int   GetCheck() const { return 0; }
+    void  SetCheck(int n) { if (g_wxhook_button_set_check) g_wxhook_button_set_check(m_hWnd, n); }
+    int   GetCheck() const { return g_wxhook_button_get_check ? g_wxhook_button_get_check(m_hWnd) : 0; }
     void  SetState(BOOL) {}
     UINT  GetState() const { return 0; }
     void  SetIcon(HICON) {}
@@ -3320,6 +3338,17 @@ public:
     HICON   GetIcon() const { return nullptr; }
     BOOL    Create(LPCTSTR, DWORD, const RECT&, CWnd*, UINT=0) { return FALSE; }
 };
+
+// DDX_Check — checkbox / radio-button state <-> int (BST_CHECKED / BST_UNCHECKED).
+// Defined here, after CButton, since it casts GetDlgItem's CWnd* to CButton*
+// (the control classes add no data, so the cast is valid — MFC's contract).
+inline void DDX_Check(CDataExchange* pDX, int id, int& value) {
+    CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
+    if (!w) return;
+    CButton* b = (CButton*) w;
+    if (pDX->m_bSaveAndValidate) value = b->GetCheck();
+    else                         b->SetCheck(value);
+}
 
 class CListCtrl : public CWnd {
 public:

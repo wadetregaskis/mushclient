@@ -70,5 +70,10 @@ int   (*g_wxhook_password_dialog)(const char*, char**)           = nullptr;
 int   (*g_wxhook_popup_menu)(CMenu*, int, int)                   = nullptr;
 intptr_t (*g_run_mfc_dialog)(void*, unsigned)                    = nullptr;
 void  (*g_end_mfc_dialog)(void*, int)                            = nullptr;
+void* (*g_wxhook_get_dlg_item)(void*, int)                       = nullptr;
+char* (*g_wxhook_get_window_text)(void*)                         = nullptr;
+void  (*g_wxhook_button_set_check)(void*, int)                   = nullptr;
+int   (*g_wxhook_button_get_check)(void*)                        = nullptr;
+void  (*g_wxhook_enable_window)(void*, int)                      = nullptr;
 
 #endif // !_WIN32

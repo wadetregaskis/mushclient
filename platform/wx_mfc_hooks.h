@@ -320,6 +320,18 @@ extern intptr_t (*g_run_mfc_dialog)(void* self, unsigned idd);
 // backing `self`, with the given result.
 extern void (*g_end_mfc_dialog)(void* self, int result);
 
+// ── Dialog control accessors (GetDlgItem / DDX) ───────────────────────────
+// g_wxhook_get_dlg_item: the wxWindow* of `parent`'s child with control id `id`
+// (FindWindowById), or nullptr.  CWnd::GetDlgItem wraps it via FromHandle.
+extern void* (*g_wxhook_get_dlg_item)(void* parent, int id);
+// g_wxhook_get_window_text: the control's text, heap-allocated (caller free()s).
+extern char* (*g_wxhook_get_window_text)(void* hwnd);
+// Checkbox/radio state (BST_CHECKED=1 / BST_UNCHECKED=0 / BST_INDETERMINATE=2).
+extern void (*g_wxhook_button_set_check)(void* hwnd, int state);
+extern int  (*g_wxhook_button_get_check)(void* hwnd);
+// Enable/disable a control window.
+extern void (*g_wxhook_enable_window)(void* hwnd, int enable);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

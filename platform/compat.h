@@ -54,8 +54,9 @@ inline std::string PortableFilePath (const char * p)
 // On non-Apple POSIX the XDG base-directory spec is honoured.  Windows is wholly
 // unaffected: it keeps its historical working-directory behaviour and never calls
 // these.  Both returned paths end in '/'.
-#include <cstdlib>      // getenv
+#include <cstdlib>      // getenv, free
 #include <sys/stat.h>   // mkdir, stat
+#include <unordered_map> // CWnd::FromHandle handle map
 
 // mkdir -p: create each component of a (possibly trailing-slash) absolute path.
 inline bool PortableMakeDirs (const std::string & path)
@@ -240,12 +241,19 @@ public:
     void SetWindowText(const char* text) {
         if (g_wxhook_set_window_text) g_wxhook_set_window_text(m_hWnd, text);
     }
-    void GetWindowText(CString&) const {}
+    void GetWindowText(CString& s) const {
+        if (g_wxhook_get_window_text) {
+            char* t = g_wxhook_get_window_text(m_hWnd);
+            s = t ? t : ""; if (t) free(t);
+        } else s = "";
+    }
     int  GetWindowTextLength() const { return 0; }
     void ShowWindow(int nCmd) {
         if (g_wxhook_show_window) g_wxhook_show_window(m_hWnd, nCmd);
     }
-    void EnableWindow(BOOL = TRUE) {}
+    void EnableWindow(BOOL bEnable = TRUE) {
+        if (g_wxhook_enable_window) g_wxhook_enable_window(m_hWnd, bEnable != FALSE);
+    }
     BOOL IsWindowEnabled() const { return TRUE; }
     BOOL IsWindowVisible() const { return m_hWnd != nullptr; }
     void SetFocus() {
@@ -269,7 +277,9 @@ public:
     CWnd* SetParent(CWnd*) { return nullptr; }
     void  MapWindowPoints(CWnd*, RECT*) const {}
     void  MapWindowPoints(CWnd*, POINT*, UINT) const {}
-    CWnd* GetDlgItem(int) const { return nullptr; }
+    CWnd* GetDlgItem(int id) const {
+        return g_wxhook_get_dlg_item ? CWnd::FromHandle(g_wxhook_get_dlg_item(m_hWnd, id)) : nullptr;
+    }
     UINT  IsDlgButtonChecked(int) const { return 0; }
     BOOL  CheckDlgButton(int, UINT) { return FALSE; }
     CWnd* SetCapture() { return nullptr; }
@@ -363,8 +373,18 @@ public:
     virtual BOOL OnEraseBkgnd(CDC*) { return FALSE; }
 
     // Static handle-to-CWnd map (MFC API stubs)
-    static CWnd* FromHandle(HWND)            { return nullptr; }
-    static CWnd* FromHandlePermanent(HWND)   { return nullptr; }
+    // Return a stable CWnd wrapper for a wxWindow* handle.  unordered_map
+    // guarantees element pointers survive rehash, so &entry is safe to return.
+    // Control classes (CButton/CEdit/…) add no data, so callers may cast the
+    // result to those types (MFC's GetDlgItem contract).
+    static CWnd* FromHandle(HWND h) {
+        if (!h) return nullptr;
+        static std::unordered_map<void*, CWnd> s_handleMap;
+        CWnd& w = s_handleMap[h];
+        w.m_hWnd = h;
+        return &w;
+    }
+    static CWnd* FromHandlePermanent(HWND h) { return FromHandle(h); }
     static CWnd* GetDesktopWindow()          { return nullptr; }
     static CWnd* GetForegroundWindow()       { return nullptr; }
 

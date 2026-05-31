@@ -4019,10 +4019,52 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     return result;
 }
 
+// ── Dialog control accessors (GetDlgItem / DDX) ───────────────────────────
+static void* hook_get_dlg_item(void* parent, int id)
+{
+    return parent ? ((wxWindow*) parent)->FindWindow(id) : nullptr;
+}
+
+static char* hook_get_window_text(void* hwnd)
+{
+    wxWindow* w = (wxWindow*) hwnd;
+    if (!w) return nullptr;
+    wxString s;
+    if (wxTextCtrl* t = wxDynamicCast(w, wxTextCtrl))      s = t->GetValue();
+    else if (wxComboBox* c = wxDynamicCast(w, wxComboBox)) s = c->GetValue();
+    else                                                   s = w->GetLabel();
+    return strdup(s.utf8_str());
+}
+
+static void hook_button_set_check(void* hwnd, int state)
+{
+    wxWindow* w = (wxWindow*) hwnd;
+    if (wxCheckBox* cb = wxDynamicCast(w, wxCheckBox))         cb->SetValue(state != 0);
+    else if (wxRadioButton* rb = wxDynamicCast(w, wxRadioButton)) rb->SetValue(state != 0);
+}
+
+static int hook_button_get_check(void* hwnd)
+{
+    wxWindow* w = (wxWindow*) hwnd;
+    if (wxCheckBox* cb = wxDynamicCast(w, wxCheckBox))            return cb->GetValue() ? 1 : 0;
+    if (wxRadioButton* rb = wxDynamicCast(w, wxRadioButton))      return rb->GetValue() ? 1 : 0;
+    return 0;
+}
+
+static void hook_enable_window(void* hwnd, int enable)
+{
+    if (hwnd) ((wxWindow*) hwnd)->Enable(enable != 0);
+}
+
 void wx_mfc_install_hooks()
 {
     g_run_mfc_dialog          = hook_run_dialog;
     g_end_mfc_dialog          = hook_end_dialog;
+    g_wxhook_get_dlg_item     = hook_get_dlg_item;
+    g_wxhook_get_window_text  = hook_get_window_text;
+    g_wxhook_button_set_check = hook_button_set_check;
+    g_wxhook_button_get_check = hook_button_get_check;
+    g_wxhook_enable_window    = hook_enable_window;
     g_wxhook_invalidate       = hook_invalidate;
     g_wxhook_show_window      = hook_show_window;
     g_wxhook_update_window    = hook_update_window;

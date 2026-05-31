@@ -3184,7 +3184,7 @@ public:
     virtual INT_PTR DoModal()          { return g_run_mfc_dialog ? g_run_mfc_dialog(this, m_nIDTemplate) : IDCANCEL; }
     virtual void    EndDialog(int nResult) { if (g_end_mfc_dialog) g_end_mfc_dialog(this, nResult); }
     virtual BOOL    OnInitDialog()     { UpdateData(FALSE); return TRUE; }         // initial DDX load
-    virtual void    OnOK()             { UpdateData(TRUE); EndDialog(IDOK); }      // MFC default
+    virtual void    OnOK()             { if (UpdateData(TRUE)) EndDialog(IDOK); }  // MFC default: validation veto keeps it open
     virtual void    OnCancel()         { EndDialog(IDCANCEL); }                    // MFC default
     BOOL   UpdateData(BOOL bSaveAndValidate = TRUE);    // defined below (needs CDataExchange)
     CWnd*  GetDlgItem(int id) const    { return CWnd::GetDlgItem(id); }
@@ -3241,13 +3241,22 @@ public:
 };
 
 // CDataExchange stub (used by DoDataExchange)
+// Thrown by CDataExchange::Fail() (MFC's DDV/validation failure signal) and
+// caught by CDialog::UpdateData, which then returns FALSE.  Matches MFC: the
+// first failed validation aborts the rest of DoDataExchange, so only ONE message
+// box shows per UpdateData (not a cascade), and the OK is vetoed.
+struct CDdxValidationFail {};
+
 class CDataExchange {
 public:
     BOOL m_bSaveAndValidate = TRUE;
     CWnd* m_pDlgWnd = nullptr;
     void  PrepareCtrl(int) {}
     void  PrepareEditCtrl(int) {}
-    void  Fail() {}
+    // MFC's CDataExchange::Fail() sets focus then throws CUserException; the port
+    // throws a lightweight sentinel that UpdateData catches.  Canonical
+    // DoDataExchange code already expects Fail() to abort (Windows contract).
+    void  Fail() { throw CDdxValidationFail(); }
 };
 
 // CDialog::UpdateData — run DoDataExchange in the requested direction (FALSE =
@@ -3257,7 +3266,11 @@ inline BOOL CDialog::UpdateData(BOOL bSaveAndValidate) {
     CDataExchange dx;
     dx.m_bSaveAndValidate = bSaveAndValidate;
     dx.m_pDlgWnd = this;
-    DoDataExchange(&dx);
+    try {
+        DoDataExchange(&dx);
+    } catch (const CDdxValidationFail&) {
+        return FALSE;   // a DDV / pDX->Fail() failed; the page already showed its message
+    }
     return TRUE;
 }
 

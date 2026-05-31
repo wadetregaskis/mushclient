@@ -4115,7 +4115,21 @@ static intptr_t hook_run_property_sheet(void* self)
     if (wanted >= 0 && wanted < (int) tb->GetPageCount())
         tb->SetSelection((size_t) wanted);
 
-    // Standard OK / Cancel (wxDialog ends the modal loop on these ids itself).
+    // Validate-on-leave, matching MFC's OnKillActive: when the user navigates
+    // away from a page, capture its controls into members (UpdateData(TRUE)) and
+    // run its DDV; if validation fails the page already showed its message, so
+    // veto the page change and stay put.  Bound AFTER the initial SetSelection so
+    // it doesn't fire during setup.  Pages never visited keep their LoadPrefs
+    // values (valid) — exactly as on Windows, where unvisited pages aren't
+    // validated and GamePreferences' SavePrefsP* then writes back unchanged.
+    tb->Bind(wxEVT_TREEBOOK_PAGE_CHANGING, [&pages](wxBookCtrlEvent& e) {
+        int leaving = e.GetOldSelection();
+        if (leaving >= 0 && leaving < (int) pages.size()
+            && pages[leaving] && !pages[leaving]->UpdateData(TRUE))
+            e.Veto();   // validation failed (message shown); stay on this page
+    });
+
+    // Standard OK / Cancel.
     wxStdDialogButtonSizer* btns = new wxStdDialogButtonSizer();
     wxButton* ok = new wxButton(&dlg, wxID_OK);
     btns->AddButton(ok);
@@ -4132,17 +4146,27 @@ static intptr_t hook_run_property_sheet(void* self)
     dlg.SetSize(wxSize(std::max(sz.x, 680), std::max(sz.y, 520)));
     dlg.CentreOnParent();
 
-    int rc = dlg.ShowModal();
+    // OK: validate the ACTIVE page only (MFC validates the active page's
+    // OnKillActive on OK; other pages were already captured/validated when the
+    // user navigated away from them, and unvisited pages keep their loaded
+    // values).  If the active page fails validation it has shown its message, so
+    // keep the sheet open.  Accept (EndModal) only when the active page passes.
+    // (Cancel keeps wxDialog's default: ends the modal loop with wxID_CANCEL.)
+    dlg.Bind(wxEVT_BUTTON, [&dlg, &pages, tb](wxCommandEvent& e) {
+        if (e.GetId() != wxID_OK) { e.Skip(); return; }
+        int active = tb->GetSelection();
+        if (active >= 0 && active < (int) pages.size()
+            && pages[active] && !pages[active]->UpdateData(TRUE))
+            return;   // validation failed (message shown); stay open
+        dlg.EndModal(wxID_OK);
+    }, wxID_OK);
 
-    int result = (rc == wxID_OK || rc == IDOK) ? IDOK : IDCANCEL;
-    if (result == IDOK)
-        for (CPropertyPage* page : pages)        // DDX save: controls -> members
-            if (page) page->UpdateData(TRUE);
+    int rc = dlg.ShowModal();
 
     for (CPropertyPage* page : pages)            // detach before panels die
         if (page) page->m_hWnd = nullptr;
 
-    return result;
+    return (rc == wxID_OK) ? IDOK : IDCANCEL;
 }
 
 // ── Dialog control accessors (GetDlgItem / DDX) ───────────────────────────

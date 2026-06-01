@@ -49,6 +49,7 @@
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
 #include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
+#include "dialogs/ImmediateDlg.h"     // CImmediateDlg (canonical Execute-Lua dialog)
 #include "scripting/scripting.h"     // CScriptEngine
 
 // Lua C API — included after MUSHclient headers to avoid wx/macro conflicts.
@@ -73,194 +74,6 @@ static std::unordered_map<CMUSHclientDoc*, CWorldChildFrame*> s_docFrameMap;
 
 // Forward declaration — defined in the World-list persistence section below.
 static void world_list_remove(const std::string& path);
-
-// ── Lua Immediate / Eval Dialog ───────────────────────────────────────────────
-// Game → Execute Lua… opens this dialog for the currently active world.
-// Sends a chunk of Lua code through the world's existing CScriptEngine (same
-// lua_State as triggers/aliases/timers) so scripts can inspect and mutate live
-// world state.  Results (return values) and errors are shown in the output area.
-// The input field retains its text between calls so snippets can be re-run with
-// minor edits; a dedicated Clear button wipes both panes.
-class CLuaEvalDlg : public wxDialog
-{
-public:
-    CLuaEvalDlg(wxWindow* parent, CMUSHclientDoc* doc)
-        : wxDialog(parent, wxID_ANY, wxT("Execute Lua"),
-                   wxDefaultPosition, wxSize(600, 420),
-                   wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
-        , m_doc(doc)
-    {
-        wxBoxSizer* top = new wxBoxSizer(wxVERTICAL);
-
-        // ── Code input area ────────────────────────────────────────────────
-        top->Add(new wxStaticText(this, wxID_ANY, wxT("Lua code:")),
-                 0, wxLEFT | wxTOP, 8);
-
-        m_code = new wxTextCtrl(this, wxID_ANY, wxEmptyString,
-                                wxDefaultPosition, wxDefaultSize,
-                                wxTE_MULTILINE | wxTE_DONTWRAP | wxTE_PROCESS_TAB |
-                                wxHSCROLL | wxTE_PROCESS_ENTER);
-        m_code->SetMinSize(wxSize(-1, 120));
-        // Monospace font for code.
-        wxFont codeFont = wxFont(wxFontInfo(12).Family(wxFONTFAMILY_TELETYPE));
-        m_code->SetFont(codeFont);
-        top->Add(m_code, 1, wxEXPAND | wxALL, 8);
-
-        // ── Button row ────────────────────────────────────────────────────
-        wxBoxSizer* btnRow = new wxBoxSizer(wxHORIZONTAL);
-        wxButton* execBtn  = new wxButton(this, wxID_OK,     wxT("Execute"));
-        wxButton* clearBtn = new wxButton(this, wxID_CLEAR,  wxT("Clear"));
-        wxButton* closeBtn = new wxButton(this, wxID_CANCEL, wxT("Close"));
-        execBtn->SetDefault();
-        btnRow->Add(execBtn,  0, wxRIGHT, 8);
-        btnRow->Add(clearBtn, 0, wxRIGHT, 8);
-        btnRow->AddStretchSpacer();
-        btnRow->Add(closeBtn, 0);
-        top->Add(btnRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
-
-        // ── Output / results area ─────────────────────────────────────────
-        top->Add(new wxStaticText(this, wxID_ANY, wxT("Output:")),
-                 0, wxLEFT, 8);
-        m_output = new wxTextCtrl(this, wxID_ANY, wxEmptyString,
-                                  wxDefaultPosition, wxDefaultSize,
-                                  wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP |
-                                  wxHSCROLL);
-        m_output->SetMinSize(wxSize(-1, 140));
-        m_output->SetFont(codeFont);
-        m_output->SetBackgroundColour(wxColour(30, 30, 30));
-        m_output->SetForegroundColour(wxColour(200, 200, 200));
-        top->Add(m_output, 1, wxEXPAND | wxALL, 8);
-
-        SetSizer(top);
-        Layout();
-        m_code->SetFocus();
-
-        // ── Event handlers ────────────────────────────────────────────────
-        execBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Execute(); });
-        clearBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-            m_code->Clear();
-            m_output->Clear();
-            m_code->SetFocus();
-        });
-        // Ctrl+Enter also executes (convenient alternative to clicking Execute).
-        m_code->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& evt) {
-            if (evt.GetKeyCode() == WXK_RETURN && evt.RawControlDown()) {
-                Execute();
-                return;
-            }
-            evt.Skip();
-        });
-
-        // Raise parent (MDI frame) on activate to stay above MDI children.
-        Bind(wxEVT_ACTIVATE, [this](wxActivateEvent& evt) {
-            if (evt.GetActive() && GetParent()) {
-                GetParent()->Raise();
-                Raise();
-            }
-            evt.Skip();
-        });
-    }
-
-private:
-    void Execute()
-    {
-        wxString code = m_code->GetValue();
-        if (code.IsEmpty()) return;
-
-        CScriptEngine* eng = m_doc->GetScriptEngine();
-        if (!eng || !eng->L) {
-            m_output->AppendText(wxT("ERROR: No active Lua scripting engine.\n"));
-            return;
-        }
-
-        lua_State* L = eng->L;
-        std::string chunk = std::string(code.ToUTF8().data());
-
-        // Wrap bare expressions in "return …" so simple queries like
-        // "world.GetWorldName()" display their result without needing "return".
-        // We try the original chunk first; if it fails to parse with a message
-        // containing "<eof>" we retry with "return " prepended.
-        int topBefore = lua_gettop(L);
-
-        // Try loading as a statement block.
-        int loadErr = luaL_loadbuffer(L, chunk.c_str(), chunk.size(), "=(eval)");
-        if (loadErr) {
-            // Parse error — try "return <expr>" to handle bare expressions.
-            const char* errMsg = lua_tostring(L, -1);
-            bool isEofErr = (errMsg && strstr(errMsg, "<eof>"));
-            lua_pop(L, 1);  // pop the error
-
-            if (isEofErr) {
-                std::string exprChunk = "return " + chunk;
-                loadErr = luaL_loadbuffer(L, exprChunk.c_str(), exprChunk.size(), "=(eval)");
-            }
-        }
-
-        if (loadErr) {
-            // Still a parse error.
-            wxString msg = wxT("PARSE ERROR: ");
-            if (const char* e = lua_tostring(L, -1)) msg += wxString::FromUTF8(e);
-            msg += wxT("\n");
-            lua_pop(L, 1);
-            m_output->AppendText(msg);
-            return;
-        }
-
-        // Execute with one base for error handler (traceback).
-        lua_getglobal(L, "debug");
-        lua_getfield(L, -1, "traceback");
-        lua_remove(L, -2);  // remove "debug" table
-        int tracebackIdx = lua_gettop(L) - 1;  // position of traceback fn before chunk fn
-
-        // Stack: [chunk_fn, traceback_fn]  — need traceback *before* chunk fn.
-        // Swap: move traceback to topBefore+1.
-        lua_insert(L, topBefore + 1);  // traceback now just above original top
-
-        int callErr = lua_pcall(L, 0, LUA_MULTRET, topBefore + 1);
-
-        if (callErr) {
-            wxString msg = wxT("ERROR: ");
-            if (const char* e = lua_tostring(L, -1)) msg += wxString::FromUTF8(e);
-            msg += wxT("\n");
-            lua_settop(L, topBefore);  // restore stack
-            m_output->AppendText(msg);
-            return;
-        }
-
-        // Collect return values.
-        int nResults = lua_gettop(L) - (topBefore + 1);  // +1 for the traceback fn
-        wxString resultLine;
-        for (int i = topBefore + 2; i <= lua_gettop(L); ++i) {
-            if (!resultLine.IsEmpty()) resultLine += wxT("\t");
-            int t = lua_type(L, i);
-            if (t == LUA_TSTRING) {
-                resultLine += wxString::FromUTF8(lua_tostring(L, i));
-            } else if (t == LUA_TNUMBER) {
-                resultLine += wxString::FromUTF8(lua_tostring(L, i));
-            } else if (t == LUA_TBOOLEAN) {
-                resultLine += lua_toboolean(L, i) ? wxT("true") : wxT("false");
-            } else if (t == LUA_TNIL) {
-                resultLine += wxT("nil");
-            } else {
-                // table, userdata, function, thread
-                resultLine += wxString::FromUTF8(lua_typename(L, t));
-                resultLine += wxString::Format(wxT(": %p"),
-                    static_cast<const void*>(lua_topointer(L, i)));
-            }
-        }
-        lua_settop(L, topBefore);  // restore stack cleanly
-
-        if (nResults == 0) {
-            m_output->AppendText(wxT("OK (no return values)\n"));
-        } else {
-            m_output->AppendText(wxT("=> ") + resultLine + wxT("\n"));
-        }
-    }
-
-    CMUSHclientDoc* m_doc;
-    wxTextCtrl*     m_code   = nullptr;
-    wxTextCtrl*     m_output = nullptr;
-};
 
 // ── ANSI Color Palette Dialog ─────────────────────────────────────────────────
 // Configure → Colors… — edit the 8 normal and 8 bright ANSI colors for the
@@ -1185,8 +998,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                             "Enable scripting in Game → World Properties → Scripting."),
                         wxT("Execute Lua"), wxOK | wxICON_INFORMATION, frame);
                 } else {
-                    CLuaEvalDlg dlg(frame, doc);
-                    dlg.ShowModal();
+                    // Canonical immediate-execution dialog (IDD_IMMEDIATE): OnRun
+                    // (mapped to IDOK) runs the entered script via the world's
+                    // script engine and keeps the dialog open.
+                    CImmediateDlg dlg;
+                    dlg.m_pDoc = doc;
+                    dlg.DoModal();
                 }
             }
         } else if (id == wxID_ABOUT) {
@@ -2687,17 +2504,19 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     cdlg->m_hWnd = (HWND) dlg;
     s_mfcModalDialogs[self] = dlg;
 
-    // Route control commands to the canonical handlers.  OK/Cancel use the MFC
-    // virtuals (which call EndDialog); other buttons will dispatch through the
-    // reactivated message map (task #12) — for now they are inert.
-    // OK/Cancel use the CDialog virtuals; every other control command is routed
-    // through the reactivated message map to its canonical ON_BN_CLICKED/etc.
-    // handler.  Buttons, checkboxes and radios all send BN_CLICKED.
+    // Route control commands to the canonical handlers.  A control with an
+    // explicit ON_BN_CLICKED handler in the message map wins (MFC dispatches the
+    // mapped handler before the default) — this matters for dialogs that remap
+    // IDOK, e.g. CImmediateDlg's ON_BN_CLICKED(IDOK, OnRun), which runs script
+    // and deliberately does NOT close.  Only when no handler is mapped do IDOK/
+    // IDCANCEL fall back to the CDialog OnOK/OnCancel virtuals (DDX + EndDialog).
+    // Buttons, checkboxes and radios all send BN_CLICKED.
     dlg->Bind(wxEVT_BUTTON, [cdlg](wxCommandEvent& e) {
         int id = e.GetId();
+        if (AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) id)) return;  // mapped handler ran
         if (id == IDOK)          cdlg->OnOK();
         else if (id == IDCANCEL) cdlg->OnCancel();
-        else if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) id)) e.Skip();
+        else                     e.Skip();
     });
     dlg->Bind(wxEVT_CHECKBOX, [cdlg](wxCommandEvent& e) {
         if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) e.GetId())) e.Skip();

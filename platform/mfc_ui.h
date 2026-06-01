@@ -3486,8 +3486,17 @@ inline void DDX_CBIndex(CDataExchange* pDX, int id, int& index) {
     CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
     if (!w) return;
     CComboBox* cb = (CComboBox*) w;   // CComboBox adds no data over CWnd
-    if (pDX->m_bSaveAndValidate) index = cb->GetCurSel();
-    else                         cb->SetCurSel(index);
+    if (pDX->m_bSaveAndValidate) {
+        int sel = cb->GetCurSel();
+        // Preserve the member when the combo is empty / has no selection.  Some
+        // recovered .rc templates carry no embedded combo items (the decompiler
+        // doesn't extract CB item lists), so a combo populated only via the .rc
+        // would otherwise clobber a valid member with -1 (CB_ERR) on save and
+        // fail the page's validation (e.g. "Unknown proxy server type").
+        if (sel != CB_ERR) index = sel;
+    } else {
+        cb->SetCurSel(index);
+    }
 }
 inline void DDX_CBString(CDataExchange* pDX, int id, CString& value) {
     CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;

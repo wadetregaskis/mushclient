@@ -663,7 +663,15 @@ bool CDC::DeleteDC() {
     return true;
 }
 
-CDC* CDC::FromHandle(HDC /*hDC*/) {
+CDC* CDC::FromHandle(HDC hDC) {
+    // Return the CDC that owns this HDC (registered in CreateCompatibleDC), so
+    // code like `CDC::FromHandle(lpDrawItemStruct->hDC)->FillSolidRect(...)`
+    // (owner-draw DrawItem) actually paints to the intended DC.  Falls back to a
+    // static dummy for unknown handles (keeps old no-op behaviour).
+    if (hDC) {
+        auto it = g_hdcToCDC.find(hDC);
+        if (it != g_hdcToCDC.end() && it->second) return it->second;
+    }
     static CDC dc;
     return &dc;
 }

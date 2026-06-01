@@ -3298,7 +3298,18 @@ inline void DDX_CBString(CDataExchange*, int, CString&) {}
 inline void DDX_CBStringExact(CDataExchange*, int, CString&) {}
 inline void DDX_LBIndex(CDataExchange*, int, int&) {}
 inline void DDX_LBString(CDataExchange*, int, CString&) {}
-inline void DDX_Control(CDataExchange*, int, CWnd&) {}
+// DDX_Control subclasses a CWnd member onto the live dialog control (MFC: the
+// member becomes the C++ wrapper for that HWND).  On the port we just point the
+// member's m_hWnd at the control's wxWindow (looked up via the dialog), so
+// control-class methods (CListCtrl/CStatic/CButton/…) route through the hooks to
+// the real widget.  Direction-independent: the binding is needed for both load
+// and save.
+inline void DDX_Control(CDataExchange* pDX, int id, CWnd& ctl) {
+    if (pDX && pDX->m_pDlgWnd) {
+        if (g_wxhook_get_dlg_item)
+            ctl.m_hWnd = (HWND) g_wxhook_get_dlg_item(pDX->m_pDlgWnd->m_hWnd, id);
+    }
+}
 inline void DDV_MinMaxInt(CDataExchange*, int, int, int) {}
 inline void DDV_MinMaxLong(CDataExchange*, long, long, long) {}
 inline void DDV_MinMaxUInt(CDataExchange*, UINT, UINT, UINT) {}
@@ -3459,28 +3470,81 @@ inline void DDX_Check(CDataExchange* pDX, int id, int& value) {
     else                         b->SetCheck(value);
 }
 
+// CListCtrl wraps a report-mode wxListCtrl (the entity-manager object list).
+// Each method routes through a g_wxhook_listctrl_* hook keyed on m_hWnd (the
+// wxListCtrl*, bound by DDX_Control).  Methods the canonical pages don't use
+// remain inert.  Off-GUI builds (mushcore) have null hooks → safe no-ops.
 class CListCtrl : public CWnd {
 public:
-    int       InsertItem(int, LPCTSTR)    { return -1; }
-    int       InsertItem(const LVITEM*)   { return -1; }
+    int       InsertItem(int item, LPCTSTR text) {
+        return g_wxhook_listctrl_insert_item
+             ? g_wxhook_listctrl_insert_item(m_hWnd, item, text ? text : "") : -1;
+    }
+    int       InsertItem(const LVITEM* p) {
+        return (p && g_wxhook_listctrl_insert_item)
+             ? g_wxhook_listctrl_insert_item(m_hWnd, p->iItem,
+                   p->pszText ? p->pszText : "") : -1;
+    }
     BOOL      SetItem(const LVITEM*)      { return FALSE; }
-    BOOL      SetItemText(int, int, LPCTSTR) { return FALSE; }
-    BOOL      SetItemData(int, DWORD_PTR){ return FALSE; }
-    DWORD_PTR GetItemData(int) const     { return 0; }
+    BOOL      SetItemText(int item, int col, LPCTSTR text) {
+        if (g_wxhook_listctrl_set_item_text)
+            g_wxhook_listctrl_set_item_text(m_hWnd, item, col, text ? text : "");
+        return TRUE;
+    }
+    BOOL      SetItemData(int item, DWORD_PTR data) {
+        if (g_wxhook_listctrl_set_item_data)
+            g_wxhook_listctrl_set_item_data(m_hWnd, item, (void*) data);
+        return TRUE;
+    }
+    DWORD_PTR GetItemData(int item) const {
+        return g_wxhook_listctrl_get_item_data
+             ? (DWORD_PTR) g_wxhook_listctrl_get_item_data(m_hWnd, item) : 0;
+    }
     CString   GetItemText(int, int) const{ return {}; }
-    int       GetItemCount() const        { return 0; }
-    int       GetNextItem(int, int) const { return -1; }
-    BOOL      DeleteItem(int)             { return FALSE; }
-    void      DeleteAllItems()            {}
-    int       InsertColumn(int, LPCTSTR, int=LVCFMT_LEFT, int=100, int=-1) { return -1; }
+    int       GetItemCount() const {
+        return g_wxhook_listctrl_get_item_count
+             ? g_wxhook_listctrl_get_item_count(m_hWnd) : 0;
+    }
+    int       GetNextItem(int start, int flags) const {
+        return g_wxhook_listctrl_get_next_item
+             ? g_wxhook_listctrl_get_next_item(m_hWnd, start, flags) : -1;
+    }
+    BOOL      DeleteItem(int item) {
+        if (g_wxhook_listctrl_delete_item) g_wxhook_listctrl_delete_item(m_hWnd, item);
+        return TRUE;
+    }
+    void      DeleteAllItems() {
+        if (g_wxhook_listctrl_delete_all_items) g_wxhook_listctrl_delete_all_items(m_hWnd);
+    }
+    int       InsertColumn(int col, LPCTSTR heading, int fmt=LVCFMT_LEFT, int width=100, int=-1) {
+        if (g_wxhook_listctrl_insert_column)
+            g_wxhook_listctrl_insert_column(m_hWnd, col, heading ? heading : "", fmt, width);
+        return col;
+    }
     int       InsertColumn(int, const LVCOLUMN*) { return -1; }
     BOOL      GetColumn(int, LVCOLUMN*) const { return FALSE; }
     BOOL      SetColumn(int, const LVCOLUMN*) { return FALSE; }
-    int       GetSelectedCount() const   { return 0; }
-    UINT      GetItemState(int, UINT) const { return 0; }
-    BOOL      SetItemState(int, UINT, UINT) { return FALSE; }
-    void      SortItems(int(*)(LPARAM,LPARAM,LPARAM), LPARAM) {}
-    void      EnsureVisible(int, BOOL=FALSE) {}
+    int       GetSelectedCount() const {
+        return g_wxhook_listctrl_get_selected_count
+             ? g_wxhook_listctrl_get_selected_count(m_hWnd) : 0;
+    }
+    UINT      GetItemState(int item, UINT mask) const {
+        return g_wxhook_listctrl_get_item_state
+             ? g_wxhook_listctrl_get_item_state(m_hWnd, item, mask) : 0;
+    }
+    BOOL      SetItemState(int item, UINT state, UINT mask) {
+        if (g_wxhook_listctrl_set_item_state)
+            g_wxhook_listctrl_set_item_state(m_hWnd, item, state, mask);
+        return TRUE;
+    }
+    void      SortItems(int(*cmp)(LPARAM,LPARAM,LPARAM), LPARAM lp) {
+        if (g_wxhook_listctrl_sort_items)
+            g_wxhook_listctrl_sort_items(m_hWnd,
+                (int(*)(intptr_t,intptr_t,intptr_t)) cmp, (intptr_t) lp);
+    }
+    void      EnsureVisible(int item, BOOL=FALSE) {
+        if (g_wxhook_listctrl_ensure_visible) g_wxhook_listctrl_ensure_visible(m_hWnd, item);
+    }
     void      SetExtendedStyle(DWORD) {}
     DWORD     GetExtendedStyle() const   { return 0; }
     CEdit*    EditLabel(int)             { return nullptr; }
@@ -3491,13 +3555,16 @@ public:
     BOOL      Scroll(CSize) { return FALSE; }
     int       GetTopIndex() const { return 0; }
     int       GetCountPerPage() const { return 0; }
-    BOOL      RedrawItems(int,int) { return FALSE; }
+    BOOL      RedrawItems(int,int) { return TRUE; }   // wxListCtrl repaints itself
     void      SetBkColor(COLORREF) {}
     void      SetTextColor(COLORREF) {}
     void      SetTextBkColor(COLORREF) {}
     BOOL      SetImageList(void*, int) { return FALSE; }
     int       GetColumnWidth(int) const { return 0; }
-    BOOL      SetColumnWidth(int, int)  { return FALSE; }
+    BOOL      SetColumnWidth(int col, int width) {
+        if (g_wxhook_listctrl_set_column_width) g_wxhook_listctrl_set_column_width(m_hWnd, col, width);
+        return TRUE;
+    }
 };
 
 // ── Forward declarations needed for CTabCtrl ─────────────────────────────

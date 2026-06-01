@@ -28,6 +28,7 @@
 #include <wx/colordlg.h>   // wxColourDialog
 #include <wx/fontdlg.h>    // wxFontDialog, wxFontData
 #include <wx/treebook.h>   // wxTreebook (World Properties property sheet)
+#include <wx/listctrl.h>   // wxListCtrl (entity-manager object lists)
 #if wxUSE_SOUND
 #  include <wx/sound.h>    // wxSound (trigger / MSP audio)
 #endif
@@ -3158,6 +3159,140 @@ static void hook_enable_window(void* hwnd, int enable)
     if (hwnd) ((wxWindow*) hwnd)->Enable(enable != 0);
 }
 
+// ── CListCtrl → wxListCtrl (entity-manager object lists) ──────────────────
+// `hwnd` is the wxListCtrl* (bound onto a CListCtrl member by DDX_Control).
+// The canonical CGenPropertyPage list pages drive these in report mode and stash
+// a CString* (the object name) as each row's item data.
+namespace {
+inline wxListCtrl* LC(void* hwnd) { return wxDynamicCast((wxWindow*) hwnd, wxListCtrl); }
+}
+
+static void hook_listctrl_insert_column(void* hwnd, int col, const char* heading,
+                                        int fmt, int width)
+{
+    wxListCtrl* lc = LC(hwnd);
+    if (!lc) return;
+    // LVCFMT_RIGHT=1, LVCFMT_CENTER=2 → wxLIST_FORMAT_*; default left.
+    int wxfmt = (fmt == 1) ? wxLIST_FORMAT_RIGHT
+              : (fmt == 2) ? wxLIST_FORMAT_CENTRE
+              :              wxLIST_FORMAT_LEFT;
+    lc->InsertColumn(col, wxString::FromUTF8(heading ? heading : ""), wxfmt,
+                     width > 0 ? width : wxLIST_AUTOSIZE);
+}
+
+static int hook_listctrl_insert_item(void* hwnd, int item, const char* text)
+{
+    wxListCtrl* lc = LC(hwnd);
+    if (!lc) return -1;
+    return lc->InsertItem(item, wxString::FromUTF8(text ? text : ""));
+}
+
+static void hook_listctrl_set_item_text(void* hwnd, int item, int col, const char* text)
+{
+    if (wxListCtrl* lc = LC(hwnd))
+        lc->SetItem(item, col, wxString::FromUTF8(text ? text : ""));
+}
+
+static int hook_listctrl_get_item_count(void* hwnd)
+{
+    wxListCtrl* lc = LC(hwnd);
+    return lc ? lc->GetItemCount() : 0;
+}
+
+static void hook_listctrl_set_item_data(void* hwnd, int item, void* data)
+{
+    if (wxListCtrl* lc = LC(hwnd))
+        lc->SetItemPtrData(item, (wxUIntPtr) data);
+}
+
+static void* hook_listctrl_get_item_data(void* hwnd, int item)
+{
+    wxListCtrl* lc = LC(hwnd);
+    return lc ? (void*) lc->GetItemData(item) : nullptr;
+}
+
+// MFC: GetNextItem(start, flags) returns the next item after `start` matching
+// `flags` (LVNI_ALL=0 → any; LVNI_SELECTED=2 → selected), or -1.  start==-1
+// means "from the beginning".
+static int hook_listctrl_get_next_item(void* hwnd, int start, int flags)
+{
+    wxListCtrl* lc = LC(hwnd);
+    if (!lc) return -1;
+    int geom = (flags & 0x2 /*LVNI_SELECTED*/)
+                 ? wxLIST_NEXT_ALL : wxLIST_NEXT_ALL;
+    int state = (flags & 0x2 /*LVNI_SELECTED*/)
+                 ? wxLIST_STATE_SELECTED : wxLIST_STATE_DONTCARE;
+    return lc->GetNextItem(start, geom, state);
+}
+
+static void hook_listctrl_set_item_state(void* hwnd, int item, unsigned state, unsigned mask)
+{
+    wxListCtrl* lc = LC(hwnd);
+    if (!lc) return;
+    long wxstate = 0, wxmask = 0;
+    if (mask & 0x2 /*LVIS_SELECTED*/) { wxmask |= wxLIST_STATE_SELECTED;
+        if (state & 0x2) wxstate |= wxLIST_STATE_SELECTED; }
+    if (mask & 0x1 /*LVIS_FOCUSED*/)  { wxmask |= wxLIST_STATE_FOCUSED;
+        if (state & 0x1) wxstate |= wxLIST_STATE_FOCUSED; }
+    lc->SetItemState(item, wxstate, wxmask);
+}
+
+static unsigned hook_listctrl_get_item_state(void* hwnd, int item, unsigned mask)
+{
+    wxListCtrl* lc = LC(hwnd);
+    if (!lc) return 0;
+    unsigned out = 0;
+    if ((mask & 0x2) && lc->GetItemState(item, wxLIST_STATE_SELECTED)) out |= 0x2;
+    if ((mask & 0x1) && lc->GetItemState(item, wxLIST_STATE_FOCUSED))  out |= 0x1;
+    return out;
+}
+
+static int hook_listctrl_get_selected_count(void* hwnd)
+{
+    wxListCtrl* lc = LC(hwnd);
+    return lc ? lc->GetSelectedItemCount() : 0;
+}
+
+static void hook_listctrl_delete_item(void* hwnd, int item)
+{
+    if (wxListCtrl* lc = LC(hwnd)) lc->DeleteItem(item);
+}
+
+static void hook_listctrl_delete_all_items(void* hwnd)
+{
+    if (wxListCtrl* lc = LC(hwnd)) lc->DeleteAllItems();
+}
+
+static void hook_listctrl_ensure_visible(void* hwnd, int item)
+{
+    if (wxListCtrl* lc = LC(hwnd)) lc->EnsureVisible(item);
+}
+
+static void hook_listctrl_set_column_width(void* hwnd, int col, int width)
+{
+    if (wxListCtrl* lc = LC(hwnd)) lc->SetColumnWidth(col, width);
+}
+
+// CListCtrl::SortItems(cmp, lparam): cmp compares two rows by their item data
+// (the CString* the page stored).  wxListCtrl::SortItems does exactly this —
+// it reorders rows (text + data move together) by a comparator over item data.
+namespace {
+struct ListSortCtx { int (*cmp)(intptr_t, intptr_t, intptr_t); intptr_t lparam; };
+int wxCALLBACK ListSortTrampoline(wxIntPtr a, wxIntPtr b, wxIntPtr ctxp)
+{
+    ListSortCtx* ctx = (ListSortCtx*) ctxp;
+    return ctx->cmp((intptr_t) a, (intptr_t) b, ctx->lparam);
+}
+}
+static void hook_listctrl_sort_items(void* hwnd,
+        int (*cmp)(intptr_t, intptr_t, intptr_t), intptr_t lparam)
+{
+    wxListCtrl* lc = LC(hwnd);
+    if (!lc || !cmp) return;
+    ListSortCtx ctx{cmp, lparam};
+    lc->SortItems(ListSortTrampoline, (wxIntPtr) &ctx);
+}
+
 void wx_mfc_install_hooks()
 {
     g_run_mfc_dialog          = hook_run_dialog;
@@ -3168,6 +3303,21 @@ void wx_mfc_install_hooks()
     g_wxhook_button_set_check = hook_button_set_check;
     g_wxhook_button_get_check = hook_button_get_check;
     g_wxhook_enable_window    = hook_enable_window;
+    g_wxhook_listctrl_insert_column   = hook_listctrl_insert_column;
+    g_wxhook_listctrl_insert_item     = hook_listctrl_insert_item;
+    g_wxhook_listctrl_set_item_text   = hook_listctrl_set_item_text;
+    g_wxhook_listctrl_get_item_count  = hook_listctrl_get_item_count;
+    g_wxhook_listctrl_set_item_data   = hook_listctrl_set_item_data;
+    g_wxhook_listctrl_get_item_data   = hook_listctrl_get_item_data;
+    g_wxhook_listctrl_get_next_item   = hook_listctrl_get_next_item;
+    g_wxhook_listctrl_set_item_state  = hook_listctrl_set_item_state;
+    g_wxhook_listctrl_get_item_state  = hook_listctrl_get_item_state;
+    g_wxhook_listctrl_get_selected_count = hook_listctrl_get_selected_count;
+    g_wxhook_listctrl_delete_item     = hook_listctrl_delete_item;
+    g_wxhook_listctrl_delete_all_items = hook_listctrl_delete_all_items;
+    g_wxhook_listctrl_ensure_visible  = hook_listctrl_ensure_visible;
+    g_wxhook_listctrl_set_column_width = hook_listctrl_set_column_width;
+    g_wxhook_listctrl_sort_items      = hook_listctrl_sort_items;
     g_wxhook_invalidate       = hook_invalidate;
     g_wxhook_show_window      = hook_show_window;
     g_wxhook_update_window    = hook_update_window;

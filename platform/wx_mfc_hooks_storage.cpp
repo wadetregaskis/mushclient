@@ -75,5 +75,21 @@ char* (*g_wxhook_get_window_text)(void*)                         = nullptr;
 void  (*g_wxhook_button_set_check)(void*, int)                   = nullptr;
 int   (*g_wxhook_button_get_check)(void*)                        = nullptr;
 void  (*g_wxhook_enable_window)(void*, int)                      = nullptr;
+void (*g_wxhook_listctrl_insert_column)(void*, int, const char*, int, int) = nullptr;
+int  (*g_wxhook_listctrl_insert_item)(void*, int, const char*)   = nullptr;
+void (*g_wxhook_listctrl_set_item_text)(void*, int, int, const char*) = nullptr;
+int  (*g_wxhook_listctrl_get_item_count)(void*)                  = nullptr;
+void (*g_wxhook_listctrl_set_item_data)(void*, int, void*)       = nullptr;
+void* (*g_wxhook_listctrl_get_item_data)(void*, int)             = nullptr;
+int  (*g_wxhook_listctrl_get_next_item)(void*, int, int)         = nullptr;
+void (*g_wxhook_listctrl_set_item_state)(void*, int, unsigned, unsigned) = nullptr;
+unsigned (*g_wxhook_listctrl_get_item_state)(void*, int, unsigned) = nullptr;
+int  (*g_wxhook_listctrl_get_selected_count)(void*)              = nullptr;
+void (*g_wxhook_listctrl_delete_item)(void*, int)                = nullptr;
+void (*g_wxhook_listctrl_delete_all_items)(void*)                = nullptr;
+void (*g_wxhook_listctrl_ensure_visible)(void*, int)             = nullptr;
+void (*g_wxhook_listctrl_set_column_width)(void*, int, int)      = nullptr;
+void (*g_wxhook_listctrl_sort_items)(void*,
+        int (*)(intptr_t, intptr_t, intptr_t), intptr_t)         = nullptr;
 
 #endif // !_WIN32

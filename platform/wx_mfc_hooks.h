@@ -338,6 +338,30 @@ extern int  (*g_wxhook_button_get_check)(void* hwnd);
 // Enable/disable a control window.
 extern void (*g_wxhook_enable_window)(void* hwnd, int enable);
 
+// ── CListCtrl → wxListCtrl (entity-manager object lists) ──────────────────
+// `hwnd` is the wxListCtrl* (a CListCtrl member's m_hWnd, bound by DDX_Control).
+// Report-mode list ops mirroring the CListCtrl methods the canonical
+// CGenPropertyPage list pages use.  Item "data" is the canonical CString* the
+// page stores per row (object name); we keep it in the row's item data.
+extern void (*g_wxhook_listctrl_insert_column)(void* hwnd, int col, const char* heading, int fmt, int width);
+extern int  (*g_wxhook_listctrl_insert_item)(void* hwnd, int item, const char* text);
+extern void (*g_wxhook_listctrl_set_item_text)(void* hwnd, int item, int col, const char* text);
+extern int  (*g_wxhook_listctrl_get_item_count)(void* hwnd);
+extern void (*g_wxhook_listctrl_set_item_data)(void* hwnd, int item, void* data);
+extern void* (*g_wxhook_listctrl_get_item_data)(void* hwnd, int item);
+extern int  (*g_wxhook_listctrl_get_next_item)(void* hwnd, int start, int flags);
+extern void (*g_wxhook_listctrl_set_item_state)(void* hwnd, int item, unsigned state, unsigned mask);
+extern unsigned (*g_wxhook_listctrl_get_item_state)(void* hwnd, int item, unsigned mask);
+extern int  (*g_wxhook_listctrl_get_selected_count)(void* hwnd);
+extern void (*g_wxhook_listctrl_delete_item)(void* hwnd, int item);
+extern void (*g_wxhook_listctrl_delete_all_items)(void* hwnd);
+extern void (*g_wxhook_listctrl_ensure_visible)(void* hwnd, int item);
+extern void (*g_wxhook_listctrl_set_column_width)(void* hwnd, int col, int width);
+// SortItems: `cmp(lp1, lp2, lparam)` compares two rows' item data; we sort the
+// rows and reorder them, preserving per-row text + item data.
+extern void (*g_wxhook_listctrl_sort_items)(void* hwnd,
+        int (*cmp)(intptr_t, intptr_t, intptr_t), intptr_t lparam);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

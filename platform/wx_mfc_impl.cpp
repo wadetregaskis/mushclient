@@ -1158,63 +1158,9 @@ static void hook_save_active_world(wxMDIParentFrame* frame, bool saveAs)
     recent_worlds_add(savePath);
 }
 
-// ── Quick Connect dialog ──────────────────────────────────────────────────
-// Shows a small wx dialog with World Name / Server / Port fields.
-// Fills *outName and *outAddr with heap-allocated strings (caller frees).
-// Returns IDOK on success, IDCANCEL if the user cancels.
-
-namespace {
-class QuickConnectDlg : public wxDialog
-{
-public:
-    wxTextCtrl* m_name;
-    wxTextCtrl* m_addr;
-    wxSpinCtrl* m_port;
-
-    QuickConnectDlg(wxWindow* parent)
-        : wxDialog(parent, wxID_ANY, wxT("Quick Connect"),
-                   wxDefaultPosition, wxDefaultSize,
-                   wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
-    {
-        wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
-        wxFlexGridSizer* grid = new wxFlexGridSizer(3, 2, 6, 8);
-        grid->AddGrowableCol(1, 1);
-
-        auto addRow = [&](const wxString& label, wxWindow* ctrl) {
-            grid->Add(new wxStaticText(this, wxID_ANY, label),
-                      0, wxALIGN_CENTER_VERTICAL);
-            grid->Add(ctrl, 1, wxEXPAND);
-        };
-
-        m_name = new wxTextCtrl(this, wxID_ANY, wxT("My World"),
-                                wxDefaultPosition, wxSize(280, -1));
-        m_addr = new wxTextCtrl(this, wxID_ANY, wxEmptyString,
-                                wxDefaultPosition, wxSize(280, -1));
-        m_port = new wxSpinCtrl(this, wxID_ANY, wxT("4000"),
-                                wxDefaultPosition, wxDefaultSize,
-                                wxSP_ARROW_KEYS, 1, 65535, 4000);
-
-        addRow(wxT("World name:"), m_name);
-        addRow(wxT("Server:"),     m_addr);
-        addRow(wxT("Port:"),       m_port);
-
-        vs->Add(grid, 1, wxEXPAND | wxALL, 12);
-        vs->Add(CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
-                wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
-
-        SetSizerAndFit(vs);
-        m_addr->SetFocus();
-
-        // Allow OK only when server is non-empty.
-        m_addr->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
-            if (wxButton* ok = dynamic_cast<wxButton*>(FindWindowById(wxID_OK)))
-                ok->Enable(!m_addr->GetValue().IsEmpty());
-        });
-        if (wxButton* ok = dynamic_cast<wxButton*>(FindWindowById(wxID_OK)))
-            ok->Enable(false);
-    }
-};
-} // anonymous namespace
+// (Quick Connect is no longer a hand-built wx dialog: the canonical
+// CQuickConnectDlg uses the inherited CDialog::DoModal, which the bridge renders
+// from the recovered IDD_QUICK_CONNECT template — see doc_construct.cpp.)
 
 // ── GlobalPrefsDlg ────────────────────────────────────────────────────────
 // Application-wide preferences dialog (tabbed).  Maps directly to
@@ -1693,51 +1639,6 @@ static bool hook_save_world(void* vdoc, bool saveAs, void* vparent)
     world_list_add(savePath);
     recent_worlds_add(savePath);
     return true;
-}
-
-static int hook_quick_connect_dlg(char** outName, char** outAddr, int* outPort)
-{
-    // Use the MDI parent frame as dialog parent.
-    // Frame.m_hWnd holds the wxMDIParentFrame* set by hook_load_mdi_frame.
-    // Same as hook_new_world: use App.m_pMainWnd, not the stub Frame global.
-    wxWindow* parent = App.m_pMainWnd
-                     ? static_cast<wxWindow*>(App.m_pMainWnd->m_hWnd)
-                     : nullptr;
-
-    QuickConnectDlg dlg(parent);
-
-    // Pre-fill with the last-used values so repeat connections need fewer clicks.
-    {
-        wxConfig cfg(wxT("mushclient"));
-        wxString lastAddr;
-        long     lastPort = 0;
-        wxString lastName;
-        if (cfg.Read(wxT("/quickconnect/addr"), &lastAddr) && !lastAddr.IsEmpty()) {
-            dlg.m_addr->SetValue(lastAddr);
-            if (wxButton* ok = dynamic_cast<wxButton*>(dlg.FindWindowById(wxID_OK)))
-                ok->Enable(true);
-        }
-        if (cfg.Read(wxT("/quickconnect/port"), &lastPort) && lastPort > 0)
-            dlg.m_port->SetValue((int)lastPort);
-        if (cfg.Read(wxT("/quickconnect/name"), &lastName) && !lastName.IsEmpty())
-            dlg.m_name->SetValue(lastName);
-    }
-
-    if (dlg.ShowModal() != wxID_OK)
-        return IDCANCEL;
-
-    // Persist for next time.
-    {
-        wxConfig cfg(wxT("mushclient"));
-        cfg.Write(wxT("/quickconnect/addr"), dlg.m_addr->GetValue());
-        cfg.Write(wxT("/quickconnect/port"), (long)dlg.m_port->GetValue());
-        cfg.Write(wxT("/quickconnect/name"), dlg.m_name->GetValue());
-    }
-
-    *outName = strdup(dlg.m_name->GetValue().ToUTF8().data());
-    *outAddr = strdup(dlg.m_addr->GetValue().ToUTF8().data());
-    *outPort = dlg.m_port->GetValue();
-    return IDOK;
 }
 
 // ── New-world hook ────────────────────────────────────────────────────────
@@ -2962,7 +2863,6 @@ void wx_mfc_install_hooks()
     g_wxhook_init_instance    = hook_init_instance;
     g_wxhook_new_world          = hook_new_world;
     g_wxhook_open_world_file    = hook_open_world_file;
-    g_wxhook_quick_connect_dlg  = hook_quick_connect_dlg;
     g_wxhook_set_status         = hook_set_status;
     g_wxhook_save_world         = hook_save_world;
     g_wxhook_file_dialog        = hook_file_dialog;

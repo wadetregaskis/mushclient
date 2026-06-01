@@ -5,27 +5,10 @@
 #include "../mushclient.h"
 #include "QuickConnectDlg.h"
 
-#ifndef _WIN32
-// ── Non-Windows DoModal ───────────────────────────────────────────────────
-// Calls the wxWidgets Quick Connect dialog hook set up by wx_mfc_impl.cpp.
-// Falls back to IDOK with the pre-set defaults if no hook is installed.
-INT_PTR CQuickConnectDlg::DoModal()
-{
-    if (!g_wxhook_quick_connect_dlg) return IDOK;  // fallback: use defaults
-
-    char* name = nullptr;
-    char* addr = nullptr;
-    int   port = m_iPort;
-
-    int result = g_wxhook_quick_connect_dlg(&name, &addr, &port);
-    if (result == IDOK) {
-        if (name) { m_strWorldName = name; free(name); }
-        if (addr) { m_strAddress   = addr; free(addr); }
-        m_iPort = port;
-    }
-    return result;
-}
-#endif // !_WIN32
+// On non-Windows, CQuickConnectDlg uses the inherited CDialog::DoModal, which the
+// MFC-dialog bridge renders from the recovered IDD_QUICK_CONNECT template and
+// drives via the canonical DoDataExchange (DDX_MinMaxString + DDV_MinMaxString) —
+// no port-specific dialog code.
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

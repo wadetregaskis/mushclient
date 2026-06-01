@@ -91,11 +91,8 @@ extern void* (*g_wxhook_new_world)();
 // Returns the new CMUSHclientDoc* cast to void*, or nullptr on failure.
 extern void* (*g_wxhook_open_world_file)(const char* path);
 
-// ── Quick Connect dialog hook ──────────────────────────────────────────────
-// Shows a wxWidgets dialog to collect world name, server address, and port.
-// On OK:  fills *outName / *outAddr (caller must free()) / *outPort; returns IDOK.
-// On cancel: returns IDCANCEL; output pointers are unchanged.
-extern int   (*g_wxhook_quick_connect_dlg)(char** outName, char** outAddr, int* outPort);
+// (Quick Connect is no longer a hook: the canonical CQuickConnectDlg renders via
+// the MFC-dialog bridge from IDD_QUICK_CONNECT — see dialogs/QuickConnectDlg.cpp.)
 
 // ── Status bar ────────────────────────────────────────────────────────────
 // Set the text shown in the MDI parent frame's status bar.

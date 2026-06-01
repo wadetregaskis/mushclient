@@ -31,7 +31,6 @@ int  (*g_wxhook_run_app_loop)()                                  = nullptr;
 int  (*g_wxhook_init_instance)()                                 = nullptr;
 void* (*g_wxhook_new_world)()                                    = nullptr;
 void* (*g_wxhook_open_world_file)(const char*)                   = nullptr;
-int   (*g_wxhook_quick_connect_dlg)(char**, char**, int*)        = nullptr;
 void  (*g_wxhook_set_status)(const char*)                        = nullptr;
 bool  (*g_wxhook_save_world)(void*, bool, void*)                 = nullptr;
 char* (*g_wxhook_file_dialog)(bool, const char*, const char*,

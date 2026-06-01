@@ -100,5 +100,7 @@ char* (*g_wxhook_combo_get_lb_text)(void*, int)                  = nullptr;
 void (*g_wxhook_combo_reset_content)(void*)                      = nullptr;
 int  (*g_wxhook_radio_get)(void*, int)                           = nullptr;
 void (*g_wxhook_radio_set)(void*, int, int)                      = nullptr;
+void* (*g_wxhook_make_owner_draw_button)(void*, int, const char*, int, int, int, int) = nullptr;
+void (*g_wxhook_bind_owner_draw)(void*, void*)                   = nullptr;
 
 #endif // !_WIN32

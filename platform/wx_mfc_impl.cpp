@@ -50,6 +50,7 @@
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
 #include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
 #include "dialogs/ImmediateDlg.h"     // CImmediateDlg (canonical Execute-Lua dialog)
+#include "platform/wx_gdi_compat.h"   // PaintOwnerDrawButton (real CDC lives there)
 #include "scripting/scripting.h"     // CScriptEngine
 
 // Lua C API — included after MUSHclient headers to avoid wx/macro conflicts.
@@ -2938,6 +2939,75 @@ static void hook_radio_set(void* dlg, int firstId, int index)
         g[index]->SetValue(true);
 }
 
+// ── Owner-draw buttons (BS_OWNERDRAW → canonical CButton::DrawItem) ────────
+// A self-painting wx control whose paint handler runs the canonical DrawItem
+// (e.g. CColourButton's colour swatch).  The backing CButton* is bound by
+// DDX_Control via g_wxhook_bind_owner_draw; until then the control paints blank.
+namespace {
+class OwnerDrawButton : public wxControl
+{
+public:
+    OwnerDrawButton(wxWindow* parent, wxWindowID id, const wxString& label,
+                    const wxPoint& pos, const wxSize& size)
+        : wxControl(parent, id, pos, size, wxBORDER_NONE)
+    {
+        SetLabel(label);
+        Bind(wxEVT_PAINT, &OwnerDrawButton::OnPaint, this);
+        // A swatch click edits the colour; route to the canonical handler
+        // (BN_CLICKED) so e.g. CPrefsP5::On<colour> opens the colour picker.
+        Bind(wxEVT_LEFT_UP, &OwnerDrawButton::OnClick, this);
+    }
+    CButton* m_cbtn = nullptr;   // canonical backing button (set by bind hook)
+
+private:
+    void OnPaint(wxPaintEvent&)
+    {
+        wxPaintDC pdc(this);
+        wxSize sz = GetClientSize();
+        if (sz.x <= 0 || sz.y <= 0) return;
+
+        if (!m_cbtn) {                       // not yet bound: neutral fill
+            pdc.SetBackground(wxBrush(GetBackgroundColour()));
+            pdc.Clear();
+            return;
+        }
+
+        // Paint via the canonical CButton::DrawItem.  The CDC work lives in
+        // wx_gdi_compat.cpp (the only TU built with MUSHCLIENT_FULL_BUILD → the
+        // real wx-backed CDC; here we see the stub CDC whose CreateCompatibleDC
+        // is a no-op, which is why the helper can't live in this file).
+        wxBitmap* painted = PaintOwnerDrawButton(m_cbtn, sz.x, sz.y, !IsThisEnabled());
+        if (painted) {
+            pdc.DrawBitmap(*painted, 0, 0, false);
+            delete painted;
+        }
+    }
+
+    void OnClick(wxMouseEvent& e)
+    {
+        if (m_cbtn) AfxDispatchCommand(m_cbtn, BN_CLICKED, (UINT) GetId());
+        e.Skip();
+    }
+};
+} // namespace
+
+static void* hook_make_owner_draw_button(void* parent, int id, const char* text,
+                                         int x, int y, int w, int h)
+{
+    return new OwnerDrawButton((wxWindow*) parent,
+                               id < 0 ? wxID_ANY : id,
+                               wxString::FromUTF8(text ? text : ""),
+                               wxPoint(x, y), wxSize(w, h));
+}
+
+static void hook_bind_owner_draw(void* hwnd, void* cbtn)
+{
+    if (OwnerDrawButton* odb = dynamic_cast<OwnerDrawButton*>((wxWindow*) hwnd)) {
+        odb->m_cbtn = static_cast<CButton*>(cbtn);
+        odb->Refresh();   // repaint now that the backing button is available
+    }
+}
+
 void wx_mfc_install_hooks()
 {
     g_run_mfc_dialog          = hook_run_dialog;
@@ -2972,6 +3042,8 @@ void wx_mfc_install_hooks()
     g_wxhook_combo_reset_content      = hook_combo_reset_content;
     g_wxhook_radio_get                = hook_radio_get;
     g_wxhook_radio_set                = hook_radio_set;
+    g_wxhook_make_owner_draw_button   = hook_make_owner_draw_button;
+    g_wxhook_bind_owner_draw          = hook_bind_owner_draw;
     g_wxhook_invalidate       = hook_invalidate;
     g_wxhook_show_window      = hook_show_window;
     g_wxhook_update_window    = hook_update_window;

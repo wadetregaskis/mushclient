@@ -383,6 +383,18 @@ extern void (*g_wxhook_combo_reset_content)(void* hwnd);
 extern int  (*g_wxhook_radio_get)(void* dlg, int firstId);
 extern void (*g_wxhook_radio_set)(void* dlg, int firstId, int index);
 
+// ── Owner-draw buttons (BS_OWNERDRAW, e.g. CColourButton swatches) ─────────
+// make_owner_draw_button: build a self-painting wx control for a BS_OWNERDRAW
+// button; its paint handler runs the canonical CButton::DrawItem.  Returns the
+// wxWindow* (as void*).  Defined in wx_mfc_impl.cpp (needs OwnerDrawButton).
+extern void* (*g_wxhook_make_owner_draw_button)(void* parent, int id,
+                                                const char* text,
+                                                int x, int y, int w, int h);
+// bind_owner_draw: associate the control's wxWindow (hwnd) with the canonical
+// CButton* that backs it (set by DDX_Control), so its paint handler can call
+// that button's virtual DrawItem.  `cbtn` is a CButton* (as void*).
+extern void (*g_wxhook_bind_owner_draw)(void* hwnd, void* cbtn);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

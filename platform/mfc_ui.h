@@ -3367,6 +3367,10 @@ inline void DDX_Control(CDataExchange* pDX, int id, CWnd& ctl) {
     if (pDX && pDX->m_pDlgWnd) {
         if (g_wxhook_get_dlg_item)
             ctl.m_hWnd = (HWND) g_wxhook_get_dlg_item(pDX->m_pDlgWnd->m_hWnd, id);
+        // Owner-draw (BS_OWNERDRAW, e.g. CColourButton): tell the wx widget which
+        // CButton backs it, so its paint handler can call the canonical DrawItem.
+        if (g_wxhook_bind_owner_draw && ctl.m_hWnd)
+            g_wxhook_bind_owner_draw(ctl.m_hWnd, &ctl);
     }
 }
 inline void DDV_MinMaxInt(CDataExchange*, int, int, int) {}
@@ -3566,6 +3570,10 @@ public:
     void  SetBitmap(HBITMAP) {}
     void  SetButtonStyle(UINT, BOOL=TRUE) {}
     BOOL  Create(LPCTSTR, DWORD, const RECT&, CWnd*, UINT) { return FALSE; }
+    // Owner-draw paint entry point (BS_OWNERDRAW).  Subclasses (CColourButton)
+    // override this to paint via the passed CDC; the owner-draw wx bridge calls
+    // it with a CDC over the control's paint bitmap.  Base = no custom paint.
+    virtual void DrawItem(LPDRAWITEMSTRUCT) {}
 };
 
 class CStatic : public CWnd {

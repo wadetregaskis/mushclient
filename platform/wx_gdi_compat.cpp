@@ -1538,6 +1538,39 @@ wxBitmap* WxBitmapFromCBitmap(CBitmap* bmp)
     return (bmp && bmp->m_impl) ? static_cast<wxBitmap*>(bmp->m_impl) : nullptr;
 }
 
+wxBitmap* PaintOwnerDrawButton(CButton* btn, int w, int h, bool disabled)
+{
+    if (!btn || w <= 0 || h <= 0) return nullptr;
+
+    // Real (wx-backed) CDC — this TU is compiled with MUSHCLIENT_FULL_BUILD.
+    CDC dc;
+    dc.CreateCompatibleDC(nullptr);
+    CBitmap bmp;
+    bmp.CreateCompatibleBitmap(&dc, w, h);
+    CBitmap* oldBmp = dc.SelectObject(&bmp);
+
+    DRAWITEMSTRUCT dis;
+    memset(&dis, 0, sizeof(dis));
+    dis.CtlType      = ODT_BUTTON;
+    dis.hDC          = dc.GetSafeHdc();
+    dis.rcItem.left  = 0; dis.rcItem.top    = 0;
+    dis.rcItem.right = w; dis.rcItem.bottom = h;
+    dis.itemState    = disabled ? ODS_DISABLED : 0;
+
+    btn->DrawItem(&dis);                 // virtual → CColourButton::DrawItem etc.
+
+    dc.SelectObject(oldBmp);             // deselect so the wxBitmap is readable
+
+    wxBitmap* src = static_cast<wxBitmap*>(bmp.m_impl);
+    if (!src || !src->IsOk()) return nullptr;
+    // Return an opaque copy (the swatch bitmap is 32-bit; strip any alpha so the
+    // painted RGB shows when blitted rather than reading back transparent/black).
+    wxImage img = src->ConvertToImage();
+    if (!img.IsOk()) return new wxBitmap(*src);
+    if (img.HasAlpha()) img.ClearAlpha();
+    return new wxBitmap(img, 24);
+}
+
 // ── SelectObject(HDC, HGDIOBJ) ─────────────────────────────────────────────
 // Intercepts raw Win32 SelectObject calls (e.g. SelectObject(A_DC.m_hDC, hbm))
 // so that a DIBSection's wxBitmap is selected into the right CDC's wxMemoryDC.

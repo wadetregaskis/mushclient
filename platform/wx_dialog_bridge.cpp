@@ -25,6 +25,7 @@
 
 #include "wx_dialog_resource.h"
 #include "wx_dialog_bridge.h"
+#include "wx_mfc_hooks.h"   // g_wxhook_make_owner_draw_button (BS_OWNERDRAW)
 
 namespace {
 
@@ -127,7 +128,16 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
                 w = new wxRadioButton(parent, id, U(c.text), pos, size,
                                       (c.style & 0x20000 /*WS_GROUP*/) ? wxRB_GROUP : 0);
                 break;
-            default:   // BS_PUSHBUTTON / BS_DEFPUSHBUTTON / owner-draw
+            case 0x0B: /*BS_OWNERDRAW*/
+                // Self-painting control: its paint handler runs the canonical
+                // CButton::DrawItem (e.g. CColourButton's colour swatch).
+                if (g_wxhook_make_owner_draw_button)
+                    w = (wxWindow*) g_wxhook_make_owner_draw_button(
+                            parent, id, c.text.c_str(), pos.x, pos.y, size.x, size.y);
+                else
+                    w = new wxButton(parent, id, U(c.text), pos, size);
+                break;
+            default:   // BS_PUSHBUTTON / BS_DEFPUSHBUTTON
                 w = new wxButton(parent, id, U(c.text), pos, size);
                 break;
         }

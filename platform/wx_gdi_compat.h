@@ -18,6 +18,7 @@ class wxDC;
 class wxBitmap;
 class CDC;
 class CBitmap;
+class CButton;
 
 // Return the wxDC* that backs dc (a mushapp CDC with an active CDCImpl).
 // Returns nullptr if dc is null or has no impl (e.g. a mushcore stub CDC).
@@ -26,6 +27,14 @@ wxDC*     WxDCFromCDC(CDC* dc);
 // Return the wxBitmap* stored in bmp->m_impl.
 // Returns nullptr if bmp is null or has no backing bitmap.
 wxBitmap* WxBitmapFromCBitmap(CBitmap* bmp);
+
+// Paint an owner-draw button (BS_OWNERDRAW, e.g. CColourButton) into a fresh
+// w×h wxBitmap by running the canonical CButton::DrawItem against a real CDC.
+// MUST live here (not wx_mfc_impl.cpp) because only this TU is compiled with
+// MUSHCLIENT_FULL_BUILD → the real (wx-backed) CDC; wx_mfc_impl.cpp sees the
+// stub CDC whose CreateCompatibleDC is a no-op.  `disabled` → ODS_DISABLED.
+// Returns a heap wxBitmap* (caller deletes), opaque (alpha stripped), or null.
+wxBitmap* PaintOwnerDrawButton(CButton* btn, int w, int h, bool disabled);
 
 #endif // MUSHCLIENT_WX_BACKEND
 #endif // !_WIN32

@@ -216,6 +216,7 @@ struct AFX_MSGMAP {
 // Defined here (before CWnd) so CWnd can inherit from it.
 // mfc_ui.h used to redefine this class — it now defers to this definition.
 class CCmdTarget : public CObject {
+    SHIM_RUNTIME_CLASS(CCmdTarget, CObject)
 public:
     virtual ~CCmdTarget() {}
     void EnableAutomation()  {}
@@ -236,6 +237,7 @@ inline const AFX_MSGMAP* CCmdTarget::GetThisMessageMap() {
 // Base class for all GUI windows.  mfc_ui.h derives many classes from CWnd,
 // so it must be defined BEFORE mfc_ui.h is included.
 class CWnd : public CCmdTarget {
+    SHIM_RUNTIME_CLASS(CWnd, CCmdTarget)
 public:
     virtual ~CWnd() {}
     void* GetSafeHwnd()  const { return nullptr; }

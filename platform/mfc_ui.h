@@ -2885,6 +2885,7 @@ public:
 class CView;
 
 class CDocument : public CCmdTarget {
+    SHIM_RUNTIME_CLASS(CDocument, CCmdTarget)
 public:
     CString m_strTitle;
     CString m_strPathName;
@@ -2994,6 +2995,7 @@ public:
 
 // ── CView ─────────────────────────────────────────────────────────────────
 class CView : public CWnd {
+    SHIM_RUNTIME_CLASS(CView, CWnd)
 public:
     CDocument* m_pDocument = nullptr;
     virtual CDocument* GetDocument() const { return m_pDocument; }
@@ -3084,6 +3086,7 @@ public:
 };
 
 class CScrollView : public CView {
+    SHIM_RUNTIME_CLASS(CScrollView, CView)
 public:
     enum { MM_NONE=0, MM_SCALETOFIT=-1 };
     void SetScrollSizes(int, CSize, CSize=CSize(), CSize=CSize()) {}
@@ -3096,6 +3099,7 @@ public:
 
 class CEdit;  // forward-declare; fully defined after CComboBox below
 class CEditView : public CScrollView {
+    SHIM_RUNTIME_CLASS(CEditView, CScrollView)
 public:
     // Standard CEditView command handlers referenced by message maps (stubs).
     void OnEditSelectAll() {}
@@ -3174,6 +3178,7 @@ typedef OPENFILENAME * LPOPENFILENAME;
 
 // ── CDialog ───────────────────────────────────────────────────────────────
 class CDialog : public CWnd {
+    SHIM_RUNTIME_CLASS(CDialog, CWnd)
 public:
     UINT m_nIDHelp = 0;
     UINT m_nIDTemplate = 0;            // dialog resource id (IDD), set by ctor
@@ -3449,6 +3454,7 @@ public:
 };
 
 class CStatic : public CWnd {
+    SHIM_RUNTIME_CLASS(CStatic, CWnd)
 public:
     void    SetWindowText(LPCTSTR) {}
     void    GetWindowText(CString&) const {}
@@ -3475,6 +3481,7 @@ inline void DDX_Check(CDataExchange* pDX, int id, int& value) {
 // wxListCtrl*, bound by DDX_Control).  Methods the canonical pages don't use
 // remain inert.  Off-GUI builds (mushcore) have null hooks → safe no-ops.
 class CListCtrl : public CWnd {
+    SHIM_RUNTIME_CLASS(CListCtrl, CWnd)
 public:
     int       InsertItem(int item, LPCTSTR text) {
         return g_wxhook_listctrl_insert_item
@@ -4206,6 +4213,7 @@ struct PROPSHEETPAGE { DWORD dwFlags = 0; };
 #endif
 
 class CPropertyPage : public CDialog {
+    SHIM_RUNTIME_CLASS(CPropertyPage, CDialog)
 public:
     PROPSHEETPAGE m_psp;   // Windows exposes this raw struct member
     explicit CPropertyPage(UINT id = 0) : CDialog(id) {}
@@ -4224,6 +4232,7 @@ public:
 };
 
 class CPropertySheet : public CWnd {
+    SHIM_RUNTIME_CLASS(CPropertySheet, CWnd)
 public:
     CPropertySheet(LPCTSTR=nullptr, CWnd* = nullptr, UINT=0) {}
     CPropertySheet(UINT, CWnd* = nullptr, UINT=0) {}
@@ -4274,6 +4283,7 @@ public:
 
 // ── Frame / app classes ────────────────────────────────────────────────────
 class CFrameWnd : public CWnd {
+    SHIM_RUNTIME_CLASS(CFrameWnd, CWnd)
 public:
     // Standard frame help/context command handlers referenced by message maps
     // (CMDIFrameWnd inherits these); stubs on the port.
@@ -4303,6 +4313,7 @@ public:
 };
 
 class CMDIChildWnd : public CFrameWnd {
+    SHIM_RUNTIME_CLASS(CMDIChildWnd, CFrameWnd)
 public:
     void MDIMaximize() {}
     void MDIRestore() {}
@@ -4320,6 +4331,7 @@ public:
 };
 
 class CMDIFrameWnd : public CFrameWnd {
+    SHIM_RUNTIME_CLASS(CMDIFrameWnd, CFrameWnd)
 public:
     HWND m_hWndMDIClient = nullptr;
 
@@ -4429,6 +4441,7 @@ public:
 
 // ── CWinApp ───────────────────────────────────────────────────────────────
 class CWinApp : public CCmdTarget {
+    SHIM_RUNTIME_CLASS(CWinApp, CCmdTarget)
 public:
     // Constructor sets the global g_pWinApp so AfxGetApp() returns this instance.
     CWinApp() { g_pWinApp = this; }
@@ -4738,6 +4751,7 @@ public:
 
 // Thread support stubs (CWinThread)
 class CWinThread : public CCmdTarget {
+    SHIM_RUNTIME_CLASS(CWinThread, CCmdTarget)
 public:
     HANDLE m_hThread = nullptr;
     DWORD  m_nThreadID = 0;

@@ -4,6 +4,7 @@
 #include "compat.h"
 
 class CListView : public CView {
+    SHIM_RUNTIME_CLASS(CListView, CView)
 public:
     CListCtrl& GetListCtrl() { static CListCtrl s; return s; }
     virtual void OnDestroy() {}

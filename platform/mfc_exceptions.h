@@ -12,12 +12,14 @@
 #include <string>
 #include "windows_types.h"
 #include "mfc_string.h"
+#include "mfc_object.h"   // CRuntimeClass + SHIM_RUNTIME_CLASS_ROOT (RTTI)
 
 // ── CException base ───────────────────────────────────────────────────────
 // MFC CException is the root of all MFC exceptions.
 
 class CException : public std::exception
 {
+    SHIM_RUNTIME_CLASS_ROOT(CException)
 public:
     virtual ~CException() {}
     // MFC signature: writes error message into buffer, returns TRUE on success.

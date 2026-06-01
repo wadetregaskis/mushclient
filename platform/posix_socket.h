@@ -20,6 +20,7 @@
 // When included via compat.h these are already present; when included
 // standalone (e.g. utilities_portable.cpp) we need them directly.
 #include "platform/windows_types.h"
+#include "platform/mfc_object.h"   // CRuntimeClass + SHIM_RUNTIME_CLASS_ROOT (RTTI)
 
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -67,6 +68,7 @@ static const SOCKET INVALID_SOCKET_VAL = -1;
 // ── CAsyncSocket ──────────────────────────────────────────────────────────────
 
 class CAsyncSocket {
+    SHIM_RUNTIME_CLASS_ROOT(CAsyncSocket)   // for IMPLEMENT_DYNAMIC(CWorldSocket, CAsyncSocket)
 public:
     // ── Types ─────────────────────────────────────────────────────────────────
     enum ShutdownHow { receives = 0, sends = 1, both = 2 };

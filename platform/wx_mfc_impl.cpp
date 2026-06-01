@@ -47,7 +47,6 @@
 #include "TextDocument.h"             // CTextDocument (for hook_create_text_window)
 #include "platform/wx_world_child.h"  // CWorldChildFrame
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
-#include "platform/wx_entity_dlgs.h" // CTriggerListDlg, CAliasListDlg, CTimerListDlg
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
 #include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
 #include "scripting/scripting.h"     // CScriptEngine
@@ -1476,24 +1475,20 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             if (idx < (int)s_recentWorlds.size())
                 hook_open_world_file(s_recentWorlds[idx].c_str());
         } else if (id == ID_MENU_CFG_TRIGGERS) {
-            if (CMUSHclientDoc* doc = activeDoc()) {
-                CTriggerListDlg dlg(frame, doc);
-                dlg.ShowModal();
-            }
+            // Open the canonical World Properties at the Triggers page (matches
+            // Windows' Game ▸ Configure ▸ Triggers).  The page IS the manager —
+            // its list, Add/Edit/Remove/Find/etc. are all canonical code.
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->GamePreferences(ePageTriggers);
         } else if (id == ID_MENU_CFG_ALIASES) {
-            if (CMUSHclientDoc* doc = activeDoc()) {
-                CAliasListDlg dlg(frame, doc);
-                dlg.ShowModal();
-            }
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->GamePreferences(ePageAliases);
         } else if (id == ID_MENU_CFG_TIMERS) {
-            if (CMUSHclientDoc* doc = activeDoc()) {
-                CTimerListDlg dlg(frame, doc);
-                dlg.ShowModal();
-            }
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->GamePreferences(ePageTimers);
         } else if (id == ID_MENU_CFG_VARIABLES) {
             if (CMUSHclientDoc* doc = activeDoc()) {
-                CVariableListDlg dlg(frame, doc);
-                dlg.ShowModal();
+                doc->GamePreferences(ePageVariables);
             }
         } else if (id == ID_MENU_CFG_MACROS) {
             if (CMUSHclientDoc* doc = activeDoc()) {

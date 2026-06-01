@@ -19,7 +19,6 @@
 #include <wx/spinctrl.h>
 #include <wx/filename.h>
 #include <wx/fontpicker.h>
-#include <wx/clrpicker.h>  // wxColourPickerCtrl
 #include <wx/dnd.h>        // wxFileDropTarget
 #include <wx/dirdlg.h>     // wxDirDialog
 #include <wx/notebook.h>   // wxNotebook (GlobalPrefsDlg tabs)
@@ -75,152 +74,6 @@ static std::unordered_map<CMUSHclientDoc*, CWorldChildFrame*> s_docFrameMap;
 
 // Forward declaration — defined in the World-list persistence section below.
 static void world_list_remove(const std::string& path);
-
-// ── ANSI Color Palette Dialog ─────────────────────────────────────────────────
-// Configure → Colors… — edit the 8 normal and 8 bright ANSI colors for the
-// current world.  Changes affect GetStyleRGB color conversion immediately but
-// only take visual effect on text received after the dialog is closed (already-
-// buffered lines in the output pane retain the colors they were rendered with).
-//
-// Colors are stored as Windows COLORREFs (0x00BBGGRR) in doc->m_normalcolour[8]
-// and doc->m_boldcolour[8] (indices 0-7 = Black, Red, Green, Yellow, Blue,
-// Magenta, Cyan, White).  The wxColourPickerCtrl converts RGB↔COLORREF.
-class CColorsDlg : public wxDialog
-{
-public:
-    explicit CColorsDlg(wxWindow* parent, CMUSHclientDoc* doc)
-        : wxDialog(parent, wxID_ANY, wxT("ANSI Color Palette"),
-                   wxDefaultPosition, wxDefaultSize,
-                   wxDEFAULT_DIALOG_STYLE)
-        , m_doc(doc)
-    {
-        wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
-
-        // ── Header row ────────────────────────────────────────────────────
-        {
-            wxFlexGridSizer* hdr = new wxFlexGridSizer(1, 3, 0, 8);
-            hdr->AddGrowableCol(0, 1);
-            hdr->Add(new wxStaticText(this, wxID_ANY, wxEmptyString));  // spacer
-            auto* n = new wxStaticText(this, wxID_ANY, wxT("Normal"));
-            auto* b = new wxStaticText(this, wxID_ANY, wxT("Bright / Bold"));
-            wxFont f = n->GetFont(); f.MakeBold(); n->SetFont(f); b->SetFont(f);
-            hdr->Add(n, 0, wxALIGN_CENTER);
-            hdr->Add(b, 0, wxALIGN_CENTER);
-            vs->Add(hdr, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12);
-        }
-
-        // ── Color rows (3 columns: label | normal picker | bold picker) ──
-        wxFlexGridSizer* grid = new wxFlexGridSizer(8, 3, 6, 10);
-        grid->AddGrowableCol(0, 1);
-
-        static const char* kNames[] = {
-            "Black", "Red", "Green", "Yellow",
-            "Blue",  "Magenta", "Cyan", "White"
-        };
-
-        for (int i = 0; i < 8; ++i) {
-            grid->Add(new wxStaticText(this, wxID_ANY, wxString::FromUTF8(kNames[i])),
-                      0, wxALIGN_CENTER_VERTICAL);
-
-            // Normal color
-            COLORREF nr = doc->m_normalcolour[i];
-            wxColour nc(GetRValue(nr), GetGValue(nr), GetBValue(nr));
-            m_normal[i] = new wxColourPickerCtrl(this, wxID_ANY, nc,
-                              wxDefaultPosition, wxSize(60, -1),
-                              wxCLRP_DEFAULT_STYLE | wxCLRP_SHOW_LABEL);
-            grid->Add(m_normal[i], 0, wxALIGN_CENTER_VERTICAL);
-
-            // Bold/bright color
-            COLORREF br = doc->m_boldcolour[i];
-            wxColour bc(GetRValue(br), GetGValue(br), GetBValue(br));
-            m_bold[i] = new wxColourPickerCtrl(this, wxID_ANY, bc,
-                            wxDefaultPosition, wxSize(60, -1),
-                            wxCLRP_DEFAULT_STYLE | wxCLRP_SHOW_LABEL);
-            grid->Add(m_bold[i], 0, wxALIGN_CENTER_VERTICAL);
-        }
-        vs->Add(grid, 0, wxEXPAND | wxALL, 12);
-
-        // ── Hint ─────────────────────────────────────────────────────────
-        auto* hint = new wxStaticText(this, wxID_ANY,
-            wxT("Color changes apply to newly received text."));
-        wxFont hf = hint->GetFont();
-        hf.SetPointSize(std::max(8, hf.GetPointSize() - 1));
-        hint->SetFont(hf);
-        vs->Add(hint, 0, wxLEFT | wxRIGHT | wxBOTTOM, 12);
-
-        // ── Restore defaults button + OK/Cancel ───────────────────────────
-        wxBoxSizer* btnRow = new wxBoxSizer(wxHORIZONTAL);
-        wxButton* defBtn = new wxButton(this, wxID_ANY, wxT("Restore Defaults"));
-        defBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { RestoreDefaults(); });
-        btnRow->Add(defBtn, 0);
-        btnRow->AddStretchSpacer();
-        btnRow->Add(CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0);
-        vs->Add(btnRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
-
-        SetSizerAndFit(vs);
-
-        Bind(wxEVT_ACTIVATE, [this](wxActivateEvent& evt) {
-            if (evt.GetActive() && GetParent()) {
-                GetParent()->Raise();
-                Raise();
-            }
-            evt.Skip();
-        });
-
-        Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
-            if (evt.GetId() == wxID_OK) Apply();
-            evt.Skip();
-        });
-    }
-
-private:
-    void RestoreDefaults()
-    {
-        static const COLORREF kNormal[8] = {
-            RGB(  0,   0,   0),   // Black
-            RGB(128,   0,   0),   // Red
-            RGB(  0, 128,   0),   // Green
-            RGB(128, 128,   0),   // Yellow
-            RGB(  0,   0, 128),   // Blue
-            RGB(128,   0, 128),   // Magenta
-            RGB(  0, 128, 128),   // Cyan
-            RGB(192, 192, 192),   // White
-        };
-        static const COLORREF kBold[8] = {
-            RGB(128, 128, 128),   // Bold Black  (dark grey)
-            RGB(255,   0,   0),   // Bold Red
-            RGB(  0, 255,   0),   // Bold Green
-            RGB(255, 255,   0),   // Bold Yellow
-            RGB(  0,   0, 255),   // Bold Blue
-            RGB(255,   0, 255),   // Bold Magenta
-            RGB(  0, 255, 255),   // Bold Cyan
-            RGB(255, 255, 255),   // Bold White
-        };
-        for (int i = 0; i < 8; ++i) {
-            m_normal[i]->SetColour(wxColour(GetRValue(kNormal[i]),
-                                            GetGValue(kNormal[i]),
-                                            GetBValue(kNormal[i])));
-            m_bold[i]->SetColour(wxColour(GetRValue(kBold[i]),
-                                          GetGValue(kBold[i]),
-                                          GetBValue(kBold[i])));
-        }
-    }
-
-    void Apply()
-    {
-        for (int i = 0; i < 8; ++i) {
-            wxColour nc = m_normal[i]->GetColour();
-            wxColour bc = m_bold[i]->GetColour();
-            m_doc->m_normalcolour[i] = RGB(nc.Red(), nc.Green(), nc.Blue());
-            m_doc->m_boldcolour[i]   = RGB(bc.Red(), bc.Green(), bc.Blue());
-        }
-        m_doc->SetModifiedFlag(TRUE);
-    }
-
-    CMUSHclientDoc*      m_doc;
-    wxColourPickerCtrl*  m_normal[8];
-    wxColourPickerCtrl*  m_bold[8];
-};
 
 // ── Recent Worlds list ────────────────────────────────────────────────────────
 // Tracks up to kMaxRecentWorlds file paths most recently opened or saved,
@@ -1046,10 +899,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             if (CMUSHclientDoc* doc = activeDoc())
                 doc->GamePreferences(ePageMacros);
         } else if (id == ID_MENU_CFG_COLORS) {
-            if (CMUSHclientDoc* doc = activeDoc()) {
-                CColorsDlg dlg(frame, doc);
-                dlg.ShowModal();
-            }
+            // Canonical ANSI Colour page (CPrefsP5) in the World Properties
+            // treebook — its owner-draw swatches + CColourPickerDlg (RGB sliders)
+            // are all canonical code now that the owner-draw + slider bridges land.
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->GamePreferences(ePageANSIColours);
         } else if (id == ID_MENU_IMPORT_TRIGGERS) {
             if (CMUSHclientDoc* doc = activeDoc())
                 doc->Load_Set(TRIGGER, "", nullptr);

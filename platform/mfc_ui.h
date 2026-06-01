@@ -3288,13 +3288,54 @@ inline void DDX_Text(CDataExchange* pDX, int id, CString& s) {
     if (pDX->m_bSaveAndValidate) w->GetWindowText(s);
     else                         w->SetWindowText((LPCTSTR) s);
 }
-inline void DDX_Text(CDataExchange*, int, int&) {}
-inline void DDX_Text(CDataExchange*, int, short&) {}
-inline void DDX_Text(CDataExchange*, int, long&) {}
-inline void DDX_Text(CDataExchange*, int, UINT&) {}
+// Numeric DDX_Text: save formats the value into the control's text; load reads
+// the control text and parses it back.  Mirrors MFC's AfxTextFloatFormat /
+// integer DDX (minus the locale plumbing).  Without these, every numeric prefs
+// field (port, font sizes, line spacing, timer intervals, …) silently failed to
+// load OR save on the port.
+inline void DDX_TextNumImpl(CDataExchange* pDX, int id, CString& text) {
+    CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
+    if (!w) { text.Empty(); return; }
+    if (pDX->m_bSaveAndValidate) w->GetWindowText(text);   // control -> text (caller parses)
+    else                         w->SetWindowText((LPCTSTR) text);  // text -> control
+}
+inline void DDX_Text(CDataExchange* pDX, int id, int& value) {
+    CString s;
+    if (!pDX->m_bSaveAndValidate) s.Format("%d", value);
+    DDX_TextNumImpl(pDX, id, s);
+    if (pDX->m_bSaveAndValidate) value = (int) strtol((LPCTSTR) s, nullptr, 10);
+}
+inline void DDX_Text(CDataExchange* pDX, int id, short& value) {
+    CString s;
+    if (!pDX->m_bSaveAndValidate) s.Format("%d", (int) value);
+    DDX_TextNumImpl(pDX, id, s);
+    if (pDX->m_bSaveAndValidate) value = (short) strtol((LPCTSTR) s, nullptr, 10);
+}
+inline void DDX_Text(CDataExchange* pDX, int id, long& value) {
+    CString s;
+    if (!pDX->m_bSaveAndValidate) s.Format("%ld", value);
+    DDX_TextNumImpl(pDX, id, s);
+    if (pDX->m_bSaveAndValidate) value = strtol((LPCTSTR) s, nullptr, 10);
+}
+inline void DDX_Text(CDataExchange* pDX, int id, UINT& value) {
+    CString s;
+    if (!pDX->m_bSaveAndValidate) s.Format("%u", value);
+    DDX_TextNumImpl(pDX, id, s);
+    if (pDX->m_bSaveAndValidate) value = (UINT) strtoul((LPCTSTR) s, nullptr, 10);
+}
 // DWORD == UINT == uint32_t; no separate overload needed
-inline void DDX_Text(CDataExchange*, int, float&) {}
-inline void DDX_Text(CDataExchange*, int, double&) {}
+inline void DDX_Text(CDataExchange* pDX, int id, float& value) {
+    CString s;
+    if (!pDX->m_bSaveAndValidate) s.Format("%g", (double) value);
+    DDX_TextNumImpl(pDX, id, s);
+    if (pDX->m_bSaveAndValidate) value = (float) strtod((LPCTSTR) s, nullptr);
+}
+inline void DDX_Text(CDataExchange* pDX, int id, double& value) {
+    CString s;
+    if (!pDX->m_bSaveAndValidate) s.Format("%g", value);
+    DDX_TextNumImpl(pDX, id, s);
+    if (pDX->m_bSaveAndValidate) value = strtod((LPCTSTR) s, nullptr);
+}
 // Note: BOOL == int so no separate BOOL& overload needed.  DDX_Check is real,
 // but defined after CButton below (it casts GetDlgItem's result to CButton*).
 inline void DDX_Radio(CDataExchange*, int, int&) {}

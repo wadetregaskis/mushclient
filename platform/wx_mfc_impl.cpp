@@ -901,9 +901,17 @@ static void hook_set_window_text(void* h, const char* text)
     auto* w = toWx(h);
     if (!w) return;
     wxString s = wxString::FromUTF8(text ? text : "");
+    // wxTextCtrl / wxComboBox ignore SetLabel — their text is the *value*.  This
+    // is what DDX_Text(...FALSE) calls to push a member into an edit control, so
+    // getting it wrong leaves every edit field blank.  ChangeValue (not SetValue)
+    // avoids firing a change event during the DDX load.
+    if (wxTextCtrl* tc = wxDynamicCast(w, wxTextCtrl))
+        tc->ChangeValue(s);
+    else if (wxComboBox* cb = wxDynamicCast(w, wxComboBox))
+        cb->SetValue(s);
     // Static text: set the label then re-wrap to the control's (fixed) width,
     // since MFC statics word-wrap within their rectangle and wxStaticText clips.
-    if (wxStaticText* st = wxDynamicCast(w, wxStaticText))
+    else if (wxStaticText* st = wxDynamicCast(w, wxStaticText))
     {
         int width = st->GetSize().GetWidth();
         st->SetLabel(s);

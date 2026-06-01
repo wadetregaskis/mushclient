@@ -16,6 +16,7 @@
 #include <wx/filename.h>
 #include <wx/settings.h>   // wxSystemSettings (native dialog font)
 #include <wx/statline.h>   // wxStaticLine (etched separators)
+#include <wx/listctrl.h>   // wxListCtrl (SysListView32 — entity managers)
 
 #include <cstdio>
 #include <fstream>
@@ -184,11 +185,22 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         w = new wxScrollBar(parent, id, pos, size,
                             (c.style & SBS_VERT) ? wxSB_VERTICAL : wxSB_HORIZONTAL);
     }
+    else if (cls == "SysListView32")
+    {
+        // The entity managers' object list (triggers/aliases/timers/variables).
+        // The canonical pages drive it in report mode (LVS_REPORT == 0x1); they
+        // add columns + items via the bridged CListCtrl methods.  Single-select
+        // unless LVS_SINGLESEL (0x4) is absent → MFC default is multi-select.
+        long st = wxLC_REPORT;
+        if (c.style & 0x4 /*LVS_SINGLESEL*/) st |= wxLC_SINGLE_SEL;
+        if (c.style & 0x8000 /*LVS_NOSORTHEADER*/) st |= wxLC_NO_SORT_HEADER;
+        w = new wxListCtrl(parent, id, pos, size, st);
+    }
     else
     {
-        // Unknown / custom window class (SysListView32, SysTreeView32,
-        // SysTabControl32, RICHEDIT, …): a placeholder panel preserves layout
-        // and z-order without crashing.  Real mappings come later.
+        // Unknown / custom window class (SysTreeView32, SysTabControl32,
+        // RICHEDIT, …): a placeholder panel preserves layout and z-order
+        // without crashing.  Real mappings come later.
         w = new wxPanel(parent, id, pos, size);
     }
 

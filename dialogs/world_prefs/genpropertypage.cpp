@@ -1458,22 +1458,28 @@ BOOL CGenPropertyPage::OnInitDialog()
 	CPropertyPage::OnInitDialog();
 
 #ifdef _WIN32
-  // Tree View stuff
+  // ── Tree View stuff (Windows-only) ──────────────────────────────────────
+  // The optional CTreeCtrl alternative view + its "Tree View" checkbox are
+  // created natively here (WC_TREEVIEW CreateEx, GetWindowPlacement, the
+  // checkbox-font hack via GetDlgItem(IDC_COPY)->GetFont()->GetLogFont()).
+  // None of that is bridged to wx yet, and GetFont() is null on the port (so
+  // GetLogFont would crash), so this stays Windows-only.  The port shows the
+  // list view (the default) which IS bridged.
 
   WINDOWPLACEMENT wndpl;        // where original control is
   m_ctlList->GetWindowPlacement (&wndpl);
-  
+
   // add in the tree control
 	m_cTreeCtrl.CWnd::CreateEx(WS_EX_CLIENTEDGE,
-							 WC_TREEVIEW, 
-							 NULL, 
+							 WC_TREEVIEW,
+							 NULL,
 							 WS_CHILD|WS_VISIBLE|WS_TABSTOP|TVS_SHOWSELALWAYS|
-							 TVS_HASLINES|TVS_LINESATROOT|TVS_HASBUTTONS, 
+							 TVS_HASLINES|TVS_LINESATROOT|TVS_HASBUTTONS,
                wndpl.rcNormalPosition.left,
                wndpl.rcNormalPosition.top,
                wndpl.rcNormalPosition.right - wndpl.rcNormalPosition.left,
                wndpl.rcNormalPosition.bottom - wndpl.rcNormalPosition.top,
-							 GetSafeHwnd(), 
+							 GetSafeHwnd(),
 							 (HMENU)ID_TREEVIEW);
 
   if (m_strObjectType != "variable")
@@ -1490,16 +1496,16 @@ BOOL CGenPropertyPage::OnInitDialog()
     rCountText.right = rCheckBox.left;
 
     // size down count window so it doesn't overlap checkbox
-    GetDlgItem (IDC_COUNT)->MoveWindow (rCountText.left, 
+    GetDlgItem (IDC_COUNT)->MoveWindow (rCountText.left,
                                         rCountText.top,
                                         rCountText.right - rCountText.left,
                                         rCountText.bottom - rCountText.top);
-  
+
     // make checkbox
-    m_cUseTreeViewCtrl.Create(Translate ("Tree Vie&w"), 
-              BS_CHECKBOX | BS_AUTOCHECKBOX | BS_NOTIFY | WS_VISIBLE | WS_CHILD | WS_TABSTOP, 
-              rCheckBox, 
-              this, 
+    m_cUseTreeViewCtrl.Create(Translate ("Tree Vie&w"),
+              BS_CHECKBOX | BS_AUTOCHECKBOX | BS_NOTIFY | WS_VISIBLE | WS_CHILD | WS_TABSTOP,
+              rCheckBox,
+              this,
               ID_USE_TREEVIEW);
 
     // bloody hell! so much work ...
@@ -1517,7 +1523,16 @@ BOOL CGenPropertyPage::OnInitDialog()
     }   // end of adding "treeview" checkbox
 
   // end tree view stuff
+#else
+  // Port: there is no native tree-view alternative yet, so always use the list
+  // view (which is bridged to a wxListCtrl).  m_cTreeCtrl is never created here.
+  m_bWantTreeControl = false;
+#endif // _WIN32
 
+  // ── List columns (portable) ─────────────────────────────────────────────
+  // Add the report-mode columns + restore saved widths/order.  On the port this
+  // drives the bridged wxListCtrl; RestoreColumnConfiguration's LVM_* SendMessage
+  // calls and the LVM_SETCOLUMNORDERARRAY below are harmless no-ops there.
   CString strDescription = m_strObjectType;
   strDescription += " list";
 
@@ -1537,19 +1552,18 @@ BOOL CGenPropertyPage::OnInitDialog()
 // recover column sequence
 
   m_ctlList->SendMessage (LVM_SETCOLUMNORDERARRAY, m_iColumnCount, (DWORD)(DWORD_PTR) iColOrder);
- 
+
   delete [] iColOrder;
 
   m_bReloadList = true;   // defer so focus gets set correctly
-#else
-  // Port: the trigger/alias/timer/variable list + tree controls are not yet
-  // bridged to native widgets (the template's list area is a placeholder panel).
-  // Skip the native CListCtrl/CTreeCtrl + font setup above, which assumes real
-  // Win32 controls — GetDlgItem(IDC_COPY)->GetFont() is null on the port, so
-  // GetLogFont() would dereference null and crash.  The page still renders its
-  // template and runs DDX; list population lands with CListCtrl -> wxListCtrl.
+
+#ifndef _WIN32
+  // On Windows the deferred reload fires from the idle loop (WM_KICKIDLE ->
+  // OnKickIdle).  The port has no MFC idle pump, so populate the list now — the
+  // page panel + its wxListCtrl are fully built by this point.
   m_bReloadList = false;
-#endif // _WIN32
+  LoadList ();
+#endif
 
 	return FALSE;  // return TRUE unless you set the focus to a control
 	              // EXCEPTION: OCX Property Pages should return FALSE

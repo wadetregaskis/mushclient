@@ -102,5 +102,10 @@ int  (*g_wxhook_radio_get)(void*, int)                           = nullptr;
 void (*g_wxhook_radio_set)(void*, int, int)                      = nullptr;
 void* (*g_wxhook_make_owner_draw_button)(void*, int, const char*, int, int, int, int) = nullptr;
 void (*g_wxhook_bind_owner_draw)(void*, void*)                   = nullptr;
+void (*g_wxhook_slider_set_range)(void*, int, int)               = nullptr;
+int  (*g_wxhook_slider_get_pos)(void*)                           = nullptr;
+void (*g_wxhook_slider_set_pos)(void*, int)                      = nullptr;
+void (*g_wxhook_slider_set_page_size)(void*, int)                = nullptr;
+void (*g_wxhook_bind_slider)(void*, void*)                       = nullptr;
 
 #endif // !_WIN32

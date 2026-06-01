@@ -3371,6 +3371,11 @@ inline void DDX_Control(CDataExchange* pDX, int id, CWnd& ctl) {
         // CButton backs it, so its paint handler can call the canonical DrawItem.
         if (g_wxhook_bind_owner_draw && ctl.m_hWnd)
             g_wxhook_bind_owner_draw(ctl.m_hWnd, &ctl);
+        // Slider (msctls_trackbar32): tell the wx slider which dialog owns it, so
+        // its move event drives the canonical CWnd::OnHScroll.  The hook no-ops
+        // for non-slider controls.
+        if (g_wxhook_bind_slider && ctl.m_hWnd)
+            g_wxhook_bind_slider(ctl.m_hWnd, pDX->m_pDlgWnd);
     }
 }
 inline void DDV_MinMaxInt(CDataExchange*, int, int, int) {}
@@ -3820,12 +3825,23 @@ public:
     void SetBarColor(COLORREF)  {}
 };
 
+// CSliderCtrl wraps a wxSlider (msctls_trackbar32).  Methods route through
+// g_wxhook_slider_* keyed on m_hWnd (bound by DDX_Control).  Off-GUI builds
+// (mushcore) have null hooks → safe no-ops / 0.
 class CSliderCtrl : public CWnd {
 public:
-    void SetRange(int,int,BOOL=FALSE) {}
-    void SetPos(int)           {}
-    int  GetPos() const        { return 0; }
-    void SetPageSize(int)      {}
+    void SetRange(int lo, int hi, BOOL = FALSE) {
+        if (g_wxhook_slider_set_range) g_wxhook_slider_set_range(m_hWnd, lo, hi);
+    }
+    void SetPos(int pos) {
+        if (g_wxhook_slider_set_pos) g_wxhook_slider_set_pos(m_hWnd, pos);
+    }
+    int  GetPos() const {
+        return g_wxhook_slider_get_pos ? g_wxhook_slider_get_pos(m_hWnd) : 0;
+    }
+    void SetPageSize(int n) {
+        if (g_wxhook_slider_set_page_size) g_wxhook_slider_set_page_size(m_hWnd, n);
+    }
     int  GetPageSize() const   { return 0; }
 };
 

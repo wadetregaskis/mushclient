@@ -2985,7 +2985,13 @@ private:
 
     void OnClick(wxMouseEvent& e)
     {
-        if (m_cbtn) AfxDispatchCommand(m_cbtn, BN_CLICKED, (UINT) GetId());
+        // A BN_CLICKED from a child routes to the PARENT dialog's message map
+        // (e.g. CPrefsP5::OnRedSwatch), not the button's.  Emit a wxEVT_BUTTON
+        // command that bubbles up to the panel's dispatch binding (which calls
+        // AfxDispatchCommand on the page), matching how real buttons are routed.
+        wxCommandEvent evt(wxEVT_BUTTON, GetId());
+        evt.SetEventObject(this);
+        wxPostEvent(GetParent(), evt);
         e.Skip();
     }
 };
@@ -3006,6 +3012,44 @@ static void hook_bind_owner_draw(void* hwnd, void* cbtn)
         odb->m_cbtn = static_cast<CButton*>(cbtn);
         odb->Refresh();   // repaint now that the backing button is available
     }
+}
+
+// ── CSliderCtrl → wxSlider ────────────────────────────────────────────────
+namespace {
+inline wxSlider* SL(void* hwnd) { return wxDynamicCast((wxWindow*) hwnd, wxSlider); }
+}
+static void hook_slider_set_range(void* hwnd, int lo, int hi)
+{
+    if (wxSlider* s = SL(hwnd)) s->SetRange(lo, hi);
+}
+static int hook_slider_get_pos(void* hwnd)
+{
+    wxSlider* s = SL(hwnd);
+    return s ? s->GetValue() : 0;
+}
+static void hook_slider_set_pos(void* hwnd, int pos)
+{
+    if (wxSlider* s = SL(hwnd)) s->SetValue(pos);
+}
+static void hook_slider_set_page_size(void* hwnd, int n)
+{
+    if (wxSlider* s = SL(hwnd)) s->SetPageSize(n > 0 ? n : 1);
+}
+// Bind a slider's move event to the owning dialog's canonical OnHScroll (the
+// ON_WM_HSCROLL handler that recomputes derived state, e.g. the colour swatch).
+static void hook_bind_slider(void* hwnd, void* dlgp)
+{
+    wxSlider* s = SL(hwnd);
+    if (!s || !dlgp) return;
+    CDialog* dlg = static_cast<CDialog*>(dlgp);
+    s->Bind(wxEVT_SLIDER, [dlg, hwnd](wxCommandEvent& e) {
+        // MFC OnHScroll(nSBCode, nPos, pScrollBar): pScrollBar is the moved
+        // control as a CScrollBar* — OnHScroll re-reads each slider's GetPos, so
+        // the CWnd wrapper for this slider's HWND suffices.
+        dlg->OnHScroll(SB_THUMBTRACK, (UINT) e.GetInt(),
+                       (CScrollBar*) CWnd::FromHandle((HWND) hwnd));
+        e.Skip();
+    });
 }
 
 void wx_mfc_install_hooks()
@@ -3044,6 +3088,11 @@ void wx_mfc_install_hooks()
     g_wxhook_radio_set                = hook_radio_set;
     g_wxhook_make_owner_draw_button   = hook_make_owner_draw_button;
     g_wxhook_bind_owner_draw          = hook_bind_owner_draw;
+    g_wxhook_slider_set_range         = hook_slider_set_range;
+    g_wxhook_slider_get_pos           = hook_slider_get_pos;
+    g_wxhook_slider_set_pos           = hook_slider_set_pos;
+    g_wxhook_slider_set_page_size     = hook_slider_set_page_size;
+    g_wxhook_bind_slider              = hook_bind_slider;
     g_wxhook_invalidate       = hook_invalidate;
     g_wxhook_show_window      = hook_show_window;
     g_wxhook_update_window    = hook_update_window;

@@ -17,6 +17,7 @@
 #include <wx/settings.h>   // wxSystemSettings (native dialog font)
 #include <wx/statline.h>   // wxStaticLine (etched separators)
 #include <wx/listctrl.h>   // wxListCtrl (SysListView32 — entity managers)
+#include <wx/slider.h>     // wxSlider (msctls_trackbar32 — ColourPickerDlg RGB)
 
 #include <cstdio>
 #include <fstream>
@@ -194,6 +195,14 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
     {
         w = new wxScrollBar(parent, id, pos, size,
                             (c.style & SBS_VERT) ? wxSB_VERTICAL : wxSB_HORIZONTAL);
+    }
+    else if (cls == "msctls_trackbar32")
+    {
+        // Slider (CSliderCtrl), e.g. the RGB sliders in ColourPickerDlg.  TBS_VERT
+        // == 0x2; default horizontal.  Range/pos/page set later via the bridged
+        // CSliderCtrl methods.
+        long st = (c.style & 0x2 /*TBS_VERT*/) ? wxSL_VERTICAL : wxSL_HORIZONTAL;
+        w = new wxSlider(parent, id, 0, 0, 100, pos, size, st);
     }
     else if (cls == "SysListView32")
     {

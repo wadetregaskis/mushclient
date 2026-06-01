@@ -395,6 +395,17 @@ extern void* (*g_wxhook_make_owner_draw_button)(void* parent, int id,
 // that button's virtual DrawItem.  `cbtn` is a CButton* (as void*).
 extern void (*g_wxhook_bind_owner_draw)(void* hwnd, void* cbtn);
 
+// ── CSliderCtrl → wxSlider (msctls_trackbar32, e.g. ColourPickerDlg RGB) ────
+// `hwnd` is the wxSlider* (a CSliderCtrl member's m_hWnd, bound by DDX_Control).
+extern void (*g_wxhook_slider_set_range)(void* hwnd, int lo, int hi);
+extern int  (*g_wxhook_slider_get_pos)(void* hwnd);
+extern void (*g_wxhook_slider_set_pos)(void* hwnd, int pos);
+extern void (*g_wxhook_slider_set_page_size)(void* hwnd, int n);
+// bind_slider: when a slider moves it must drive the canonical CWnd::OnHScroll
+// (the ON_WM_HSCROLL handler that recomputes the colour).  `dlg` is the owning
+// CDialog* (as void*), so the slider-event handler can call dlg->OnHScroll.
+extern void (*g_wxhook_bind_slider)(void* hwnd, void* dlg);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

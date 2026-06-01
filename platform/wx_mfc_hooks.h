@@ -374,6 +374,15 @@ extern int  (*g_wxhook_combo_find_string_exact)(void* hwnd, int after, const cha
 extern char* (*g_wxhook_combo_get_lb_text)(void* hwnd, int index);  // heap; caller free()s
 extern void (*g_wxhook_combo_reset_content)(void* hwnd);
 
+// ── Radio-button group (DDX_Radio) ────────────────────────────────────────
+// `dlg` is the dialog/page wxWindow; `firstId` is the group's first radio (the
+// one carrying WS_GROUP / wxRB_GROUP).  The group is the run of wxRadioButtons
+// from firstId up to (not incl.) the next wxRB_GROUP — matching MFC's DDX_Radio,
+// which walks consecutive controls until a new WS_GROUP.  get returns the 0-based
+// index of the checked member (-1 if none); set checks the index'th member.
+extern int  (*g_wxhook_radio_get)(void* dlg, int firstId);
+extern void (*g_wxhook_radio_set)(void* dlg, int firstId, int index);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

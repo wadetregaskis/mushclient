@@ -98,5 +98,7 @@ void (*g_wxhook_combo_set_cur_sel)(void*, int)                   = nullptr;
 int  (*g_wxhook_combo_find_string_exact)(void*, int, const char*) = nullptr;
 char* (*g_wxhook_combo_get_lb_text)(void*, int)                  = nullptr;
 void (*g_wxhook_combo_reset_content)(void*)                      = nullptr;
+int  (*g_wxhook_radio_get)(void*, int)                           = nullptr;
+void (*g_wxhook_radio_set)(void*, int, int)                      = nullptr;
 
 #endif // !_WIN32

@@ -3349,6 +3349,52 @@ static void hook_combo_reset_content(void* hwnd)
     if (wxComboBox* cb = CB(hwnd)) cb->Clear();
 }
 
+// ── Radio-button group (DDX_Radio) ────────────────────────────────────────
+// Collect the group's radio buttons in child/z order: start at firstId's radio,
+// then take following siblings that are radios, stopping at the next one with
+// wxRB_GROUP (a new group) — mirroring MFC's "consecutive until next WS_GROUP".
+namespace {
+std::vector<wxRadioButton*> RadioGroup(void* dlgp, int firstId)
+{
+    std::vector<wxRadioButton*> group;
+    wxWindow* dlg = (wxWindow*) dlgp;
+    if (!dlg) return group;
+    wxWindow* first = dlg->FindWindow(firstId);
+    wxRadioButton* firstRb = wxDynamicCast(first, wxRadioButton);
+    if (!firstRb) return group;
+    // Walk the first radio's parent's children in order; collect from firstRb on.
+    wxWindow* parent = firstRb->GetParent();
+    if (!parent) { group.push_back(firstRb); return group; }
+    bool started = false;
+    for (wxWindowList::compatibility_iterator node = parent->GetChildren().GetFirst();
+         node; node = node->GetNext())
+    {
+        wxRadioButton* rb = wxDynamicCast(node->GetData(), wxRadioButton);
+        if (!started) {
+            if (node->GetData() == firstRb) { started = true; group.push_back(firstRb); }
+            continue;
+        }
+        if (!rb) continue;                                  // skip non-radios
+        if (rb->HasFlag(wxRB_GROUP)) break;                 // next group starts
+        group.push_back(rb);
+    }
+    return group;
+}
+}
+static int hook_radio_get(void* dlg, int firstId)
+{
+    std::vector<wxRadioButton*> g = RadioGroup(dlg, firstId);
+    for (size_t i = 0; i < g.size(); ++i)
+        if (g[i]->GetValue()) return (int) i;
+    return -1;
+}
+static void hook_radio_set(void* dlg, int firstId, int index)
+{
+    std::vector<wxRadioButton*> g = RadioGroup(dlg, firstId);
+    if (index >= 0 && index < (int) g.size())
+        g[index]->SetValue(true);
+}
+
 void wx_mfc_install_hooks()
 {
     g_run_mfc_dialog          = hook_run_dialog;
@@ -3381,6 +3427,8 @@ void wx_mfc_install_hooks()
     g_wxhook_combo_find_string_exact  = hook_combo_find_string_exact;
     g_wxhook_combo_get_lb_text        = hook_combo_get_lb_text;
     g_wxhook_combo_reset_content      = hook_combo_reset_content;
+    g_wxhook_radio_get                = hook_radio_get;
+    g_wxhook_radio_set                = hook_radio_set;
     g_wxhook_invalidate       = hook_invalidate;
     g_wxhook_show_window      = hook_show_window;
     g_wxhook_update_window    = hook_update_window;

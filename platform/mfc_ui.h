@@ -3338,7 +3338,18 @@ inline void DDX_Text(CDataExchange* pDX, int id, double& value) {
 }
 // Note: BOOL == int so no separate BOOL& overload needed.  DDX_Check is real,
 // but defined after CButton below (it casts GetDlgItem's result to CButton*).
-inline void DDX_Radio(CDataExchange*, int, int&) {}
+// DDX_Radio: member <-> which radio in the group starting at `firstId` is set
+// (0-based index; -1 = none).  Routes to the radio-group hook keyed on the
+// dialog's m_hWnd.
+inline void DDX_Radio(CDataExchange* pDX, int firstId, int& value) {
+    if (!pDX || !pDX->m_pDlgWnd) return;
+    void* dlg = pDX->m_pDlgWnd->m_hWnd;
+    if (pDX->m_bSaveAndValidate) {
+        if (g_wxhook_radio_get) value = g_wxhook_radio_get(dlg, firstId);
+    } else {
+        if (g_wxhook_radio_set) g_wxhook_radio_set(dlg, firstId, value);
+    }
+}
 // DDX_CBIndex / DDX_CBString are real, but defined after CComboBox below (they
 // cast GetDlgItem's CWnd* to CComboBox* — legal since CComboBox adds no data).
 void DDX_CBIndex(CDataExchange* pDX, int id, int& index);

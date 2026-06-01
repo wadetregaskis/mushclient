@@ -91,5 +91,12 @@ void (*g_wxhook_listctrl_ensure_visible)(void*, int)             = nullptr;
 void (*g_wxhook_listctrl_set_column_width)(void*, int, int)      = nullptr;
 void (*g_wxhook_listctrl_sort_items)(void*,
         int (*)(intptr_t, intptr_t, intptr_t), intptr_t)         = nullptr;
+int  (*g_wxhook_combo_add_string)(void*, const char*)            = nullptr;
+int  (*g_wxhook_combo_get_count)(void*)                          = nullptr;
+int  (*g_wxhook_combo_get_cur_sel)(void*)                        = nullptr;
+void (*g_wxhook_combo_set_cur_sel)(void*, int)                   = nullptr;
+int  (*g_wxhook_combo_find_string_exact)(void*, int, const char*) = nullptr;
+char* (*g_wxhook_combo_get_lb_text)(void*, int)                  = nullptr;
+void (*g_wxhook_combo_reset_content)(void*)                      = nullptr;
 
 #endif // !_WIN32

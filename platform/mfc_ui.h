@@ -3339,8 +3339,10 @@ inline void DDX_Text(CDataExchange* pDX, int id, double& value) {
 // Note: BOOL == int so no separate BOOL& overload needed.  DDX_Check is real,
 // but defined after CButton below (it casts GetDlgItem's result to CButton*).
 inline void DDX_Radio(CDataExchange*, int, int&) {}
-inline void DDX_CBIndex(CDataExchange*, int, int&) {}
-inline void DDX_CBString(CDataExchange*, int, CString&) {}
+// DDX_CBIndex / DDX_CBString are real, but defined after CComboBox below (they
+// cast GetDlgItem's CWnd* to CComboBox* — legal since CComboBox adds no data).
+void DDX_CBIndex(CDataExchange* pDX, int id, int& index);
+void DDX_CBString(CDataExchange* pDX, int id, CString& value);
 inline void DDX_CBStringExact(CDataExchange*, int, CString&) {}
 inline void DDX_LBIndex(CDataExchange*, int, int&) {}
 inline void DDX_LBString(CDataExchange*, int, CString&) {}
@@ -3410,26 +3412,55 @@ public:
     void      Dir(UINT, LPCTSTR) {}
 };
 
+// CComboBox wraps a wxComboBox.  List ops (AddString/GetCurSel/SetCurSel/…)
+// route through g_wxhook_combo_* keyed on m_hWnd (bound by DDX_Control); the
+// edit text uses the same CWnd Get/SetWindowText hooks (wxComboBox handles both
+// in hook_get/set_window_text).  Null hooks (mushcore) → safe CB_ERR/no-op.
 class CComboBox : public CWnd {
 public:
-    int       AddString(LPCTSTR) { return CB_ERR; }
+    int       AddString(LPCTSTR s) {
+        return g_wxhook_combo_add_string ? g_wxhook_combo_add_string(m_hWnd, s ? s : "") : CB_ERR;
+    }
     int       InsertString(int, LPCTSTR) { return CB_ERR; }
     int       DeleteString(UINT) { return CB_ERR; }
-    void      ResetContent() {}
-    int       GetCount() const { return 0; }
-    int       GetCurSel() const { return CB_ERR; }
-    int       SetCurSel(int) { return CB_ERR; }
+    void      ResetContent() {
+        if (g_wxhook_combo_reset_content) g_wxhook_combo_reset_content(m_hWnd);
+    }
+    int       GetCount() const {
+        return g_wxhook_combo_get_count ? g_wxhook_combo_get_count(m_hWnd) : 0;
+    }
+    int       GetCurSel() const {
+        return g_wxhook_combo_get_cur_sel ? g_wxhook_combo_get_cur_sel(m_hWnd) : CB_ERR;
+    }
+    int       SetCurSel(int sel) {
+        if (g_wxhook_combo_set_cur_sel) g_wxhook_combo_set_cur_sel(m_hWnd, sel);
+        return sel;
+    }
     int       GetLBText(int, LPTSTR) const { return CB_ERR; }
-    void      GetLBText(int, CString&) const {}
+    void      GetLBText(int index, CString& s) const {
+        s.Empty();
+        if (g_wxhook_combo_get_lb_text) {
+            char* t = g_wxhook_combo_get_lb_text(m_hWnd, index);
+            if (t) { s = t; free(t); }
+        }
+    }
     int       GetLBTextLen(int) const { return CB_ERR; }
-    void      GetWindowText(CString&) const {}
-    void      SetWindowText(LPCTSTR) {}
+    // GetWindowText/SetWindowText: use the CWnd hooks (wxComboBox supported there).
+    void      GetWindowText(CString& s) const { CWnd::GetWindowText(s); }
+    void      SetWindowText(LPCTSTR s)        { CWnd::SetWindowText(s); }
     int       GetWindowTextLength() const { return 0; }
     void      SetItemData(int, DWORD_PTR) {}
     DWORD_PTR GetItemData(int) const { return 0; }
-    int       FindString(int, LPCTSTR) const { return CB_ERR; }
-    int       FindStringExact(int, LPCTSTR) const { return CB_ERR; }
-    int       SelectString(int, LPCTSTR) { return CB_ERR; }
+    int       FindString(int after, LPCTSTR s) const { return FindStringExact(after, s); }
+    int       FindStringExact(int after, LPCTSTR s) const {
+        return g_wxhook_combo_find_string_exact
+             ? g_wxhook_combo_find_string_exact(m_hWnd, after, s ? s : "") : CB_ERR;
+    }
+    int       SelectString(int after, LPCTSTR s) {
+        int idx = FindStringExact(after, s);
+        if (idx != CB_ERR) SetCurSel(idx);
+        return idx;
+    }
     void      ShowDropDown(BOOL=TRUE) {}
     void      GetDroppedControlRect(LPRECT) const {}
     BOOL      GetDroppedState() const { return FALSE; }
@@ -3437,6 +3468,29 @@ public:
     int       SetEditSel(int, int) { return CB_ERR; }
     BOOL      GetEditSel(LPDWORD, LPDWORD) const { return FALSE; }
 };
+
+// DDX_CBIndex: member <-> combo's selected index.  DDX_CBString: member <->
+// the selected item's text.  Defined here now that CComboBox is complete.
+inline void DDX_CBIndex(CDataExchange* pDX, int id, int& index) {
+    CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
+    if (!w) return;
+    CComboBox* cb = (CComboBox*) w;   // CComboBox adds no data over CWnd
+    if (pDX->m_bSaveAndValidate) index = cb->GetCurSel();
+    else                         cb->SetCurSel(index);
+}
+inline void DDX_CBString(CDataExchange* pDX, int id, CString& value) {
+    CWnd* w = (pDX && pDX->m_pDlgWnd) ? pDX->m_pDlgWnd->GetDlgItem(id) : nullptr;
+    if (!w) return;
+    CComboBox* cb = (CComboBox*) w;
+    if (pDX->m_bSaveAndValidate) {
+        int sel = cb->GetCurSel();
+        if (sel >= 0) cb->GetLBText(sel, value);
+        else          cb->GetWindowText(value);   // editable combo: free text
+    } else {
+        if (cb->SelectString(-1, (LPCTSTR) value) == CB_ERR)
+            cb->SetWindowText((LPCTSTR) value);    // not in list → set edit text
+    }
+}
 
 class CEdit : public CWnd {
 public:

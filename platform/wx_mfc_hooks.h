@@ -362,6 +362,18 @@ extern void (*g_wxhook_listctrl_set_column_width)(void* hwnd, int col, int width
 extern void (*g_wxhook_listctrl_sort_items)(void* hwnd,
         int (*cmp)(intptr_t, intptr_t, intptr_t), intptr_t lparam);
 
+// ── CComboBox → wxComboBox (drop-down selectors: proxy type, colour combos…) ─
+// `hwnd` is the wxComboBox* (a CComboBox member's m_hWnd, bound by DDX_Control).
+// Return values match the Win32 CB_* conventions the canonical code expects:
+// GetCurSel/FindStringExact return -1 (CB_ERR) when there's no match/selection.
+extern int  (*g_wxhook_combo_add_string)(void* hwnd, const char* text);
+extern int  (*g_wxhook_combo_get_count)(void* hwnd);
+extern int  (*g_wxhook_combo_get_cur_sel)(void* hwnd);
+extern void (*g_wxhook_combo_set_cur_sel)(void* hwnd, int sel);
+extern int  (*g_wxhook_combo_find_string_exact)(void* hwnd, int after, const char* text);
+extern char* (*g_wxhook_combo_get_lb_text)(void* hwnd, int index);  // heap; caller free()s
+extern void (*g_wxhook_combo_reset_content)(void* hwnd);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

@@ -3296,6 +3296,59 @@ static void hook_listctrl_sort_items(void* hwnd,
     lc->SortItems(ListSortTrampoline, (wxIntPtr) &ctx);
 }
 
+// ── CComboBox → wxComboBox ────────────────────────────────────────────────
+namespace {
+inline wxComboBox* CB(void* hwnd) { return wxDynamicCast((wxWindow*) hwnd, wxComboBox); }
+}
+static int hook_combo_add_string(void* hwnd, const char* text)
+{
+    wxComboBox* cb = CB(hwnd);
+    if (!cb) return -1;   // CB_ERR
+    return (int) cb->Append(wxString::FromUTF8(text ? text : ""));
+}
+static int hook_combo_get_count(void* hwnd)
+{
+    wxComboBox* cb = CB(hwnd);
+    return cb ? (int) cb->GetCount() : 0;
+}
+static int hook_combo_get_cur_sel(void* hwnd)
+{
+    wxComboBox* cb = CB(hwnd);
+    if (!cb) return -1;
+    int sel = cb->GetSelection();
+    return (sel == wxNOT_FOUND) ? -1 : sel;   // CB_ERR == -1
+}
+static void hook_combo_set_cur_sel(void* hwnd, int sel)
+{
+    wxComboBox* cb = CB(hwnd);
+    if (!cb) return;
+    if (sel < 0 || sel >= (int) cb->GetCount()) cb->SetSelection(wxNOT_FOUND);
+    else                                        cb->SetSelection(sel);
+}
+static int hook_combo_find_string_exact(void* hwnd, int after, const char* text)
+{
+    wxComboBox* cb = CB(hwnd);
+    if (!cb) return -1;
+    // MFC: search starts AFTER index `after` (-1 → from start), wraps once.
+    int n = (int) cb->GetCount();
+    wxString want = wxString::FromUTF8(text ? text : "");
+    for (int i = 0; i < n; ++i) {
+        int idx = ((after + 1 + i) % n);
+        if (cb->GetString(idx).IsSameAs(want, /*caseSensitive*/false)) return idx;
+    }
+    return -1;
+}
+static char* hook_combo_get_lb_text(void* hwnd, int index)
+{
+    wxComboBox* cb = CB(hwnd);
+    if (!cb || index < 0 || index >= (int) cb->GetCount()) return nullptr;
+    return strdup(cb->GetString(index).utf8_str());
+}
+static void hook_combo_reset_content(void* hwnd)
+{
+    if (wxComboBox* cb = CB(hwnd)) cb->Clear();
+}
+
 void wx_mfc_install_hooks()
 {
     g_run_mfc_dialog          = hook_run_dialog;
@@ -3321,6 +3374,13 @@ void wx_mfc_install_hooks()
     g_wxhook_listctrl_ensure_visible  = hook_listctrl_ensure_visible;
     g_wxhook_listctrl_set_column_width = hook_listctrl_set_column_width;
     g_wxhook_listctrl_sort_items      = hook_listctrl_sort_items;
+    g_wxhook_combo_add_string         = hook_combo_add_string;
+    g_wxhook_combo_get_count          = hook_combo_get_count;
+    g_wxhook_combo_get_cur_sel        = hook_combo_get_cur_sel;
+    g_wxhook_combo_set_cur_sel        = hook_combo_set_cur_sel;
+    g_wxhook_combo_find_string_exact  = hook_combo_find_string_exact;
+    g_wxhook_combo_get_lb_text        = hook_combo_get_lb_text;
+    g_wxhook_combo_reset_content      = hook_combo_reset_content;
     g_wxhook_invalidate       = hook_invalidate;
     g_wxhook_show_window      = hook_show_window;
     g_wxhook_update_window    = hook_update_window;

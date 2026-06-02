@@ -3523,8 +3523,9 @@ inline void DDX_CBString(CDataExchange* pDX, int id, CString& value) {
 
 class CEdit : public CWnd {
 public:
-    void GetWindowText(CString&) const {}
-    void SetWindowText(LPCTSTR) {}
+    // NOTE: do NOT shadow Get/SetWindowText with stubs — CWnd's real versions
+    // route to the wx hooks.  Stubbing them here silently broke direct reads/
+    // writes such as CImmediateDlg::OnRun (Execute Lua read an empty script).
     int  GetWindowTextLength() const { return 0; }
     void LimitText(int) {}
     void SetSel(int, int, BOOL=FALSE) {}
@@ -3584,8 +3585,9 @@ public:
 class CStatic : public CWnd {
     SHIM_RUNTIME_CLASS(CStatic, CWnd)
 public:
-    void    SetWindowText(LPCTSTR) {}
-    void    GetWindowText(CString&) const {}
+    // Get/SetWindowText inherited from CWnd (route to the wx hooks) — don't
+    // shadow them: stubbing SetWindowText was why the entity-list summary count
+    // ("0 triggers.") never refreshed after LoadList.
     void    SetBitmap(HBITMAP) {}
     HBITMAP GetBitmap() const { return nullptr; }
     void    SetIcon(HICON) {}
@@ -3877,8 +3879,7 @@ public:
 class CRichEditCtrl : public CWnd {
 public:
     int  GetTextLength() const { return 0; }
-    void GetWindowText(CString&) const {}
-    void SetWindowText(LPCTSTR) {}
+    // Get/SetWindowText inherited from CWnd (wx hooks) — don't shadow.
     void AppendText(LPCTSTR) {}
     void SetReadOnly(BOOL=TRUE) {}
     void SetFont(CFont*, BOOL=TRUE) {}

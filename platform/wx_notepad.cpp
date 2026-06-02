@@ -19,6 +19,7 @@
 
 #include "wx_notepad.h"
 #include "compat.h"           // GetRValue / GetGValue / GetBValue
+#include "wx_osx_text.h"       // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
 
 // ── Menu IDs ──────────────────────────────────────────────────────────────
 enum {
@@ -80,6 +81,7 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
 
     m_ctrl = new wxTextCtrl(this, wxID_ANY, wxEmptyString,
                             wxDefaultPosition, wxDefaultSize, ctrlStyle);
+    wxOSXDisableSmartSubstitutions(m_ctrl);   // no curly quotes in script files
 
     // ── Initial content ─────────────────────────────────────────────────
     if (!text.IsEmpty())

@@ -1,0 +1,48 @@
+// wx_osx_text.mm — macOS implementation of wxOSXDisableSmartSubstitutions().
+//
+// Compiled only on Apple (added to the mushgui target under if(APPLE) in
+// CMakeLists.txt; OBJCXX is enabled there too).  See wx_osx_text.h for why.
+
+#import <AppKit/AppKit.h>
+#include <wx/textctrl.h>
+#include "wx_osx_text.h"
+
+void wxOSXDisableSmartSubstitutions(wxTextCtrl* ctrl)
+{
+    if (!ctrl)
+        return;
+
+    // wxWindow::GetHandle() returns the native peer's main NSView.  For a
+    // multiline wxTextCtrl that is the enclosing NSScrollView, whose
+    // documentView is the NSTextView we want; for a control that already *is*
+    // an NSTextView, use it directly.  Single-line controls (NSTextField) have
+    // no NSTextView document view → nothing to do.
+    id peer = (id) ctrl->GetHandle();
+    if (!peer)
+        return;
+
+    NSTextView* tv = nil;
+    if ([peer isKindOfClass:[NSTextView class]])
+        tv = (NSTextView*) peer;
+    else if ([peer respondsToSelector:@selector(documentView)])
+    {
+        id doc = [peer documentView];
+        if ([doc isKindOfClass:[NSTextView class]])
+            tv = (NSTextView*) doc;
+    }
+    if (!tv)
+        return;
+
+    // Turn off every automatic substitution that can mangle source text.
+    [tv setAutomaticQuoteSubstitutionEnabled:NO];
+    [tv setAutomaticDashSubstitutionEnabled:NO];
+    [tv setAutomaticTextReplacementEnabled:NO];
+    [tv setAutomaticSpellingCorrectionEnabled:NO];
+    [tv setSmartInsertDeleteEnabled:NO];
+
+    // Also drop the matching "check while typing" types so nothing re-enables
+    // them implicitly (e.g. when the view is re-shown).
+    tv.enabledTextCheckingTypes &= ~(NSTextCheckingTypeQuote |
+                                     NSTextCheckingTypeDash |
+                                     NSTextCheckingTypeReplacement);
+}

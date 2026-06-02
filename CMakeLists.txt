@@ -28,6 +28,14 @@ if(APPLE AND EXISTS /opt/homebrew)
     message(STATUS "Apple Silicon detected — preferring arm64 Homebrew at /opt/homebrew")
 endif()
 
+# ── Objective-C++ (macOS only) ────────────────────────────────────────────
+# A few mushgui sources (.mm) call AppKit directly — e.g. disabling NSTextView
+# smart-quote substitution so typed Lua isn't corrupted.  Enable the language
+# on Apple only; other platforms never compile a .mm.
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
 # ── Global include paths ──────────────────────────────────────────────────
 include_directories(
     ${CMAKE_SOURCE_DIR}           # root (for stdafx.h, lua.h, etc.)
@@ -842,6 +850,9 @@ if(NOT WIN32)
         )
         # wxWidgets on macOS needs the bundle type for proper menu bar / event loop
         if(APPLE)
+            # macOS-only Obj-C++ helper (AppKit): disable NSTextView smart-quote
+            # substitution so typed/pasted Lua isn't corrupted in script edits.
+            target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/platform/wx_osx_text.mm)
             set_target_properties(mushgui PROPERTIES
                 MACOSX_BUNDLE_GUI_IDENTIFIER  "au.com.gammon.MUSHclient"
                 MACOSX_BUNDLE_BUNDLE_NAME     "MUSHclient"

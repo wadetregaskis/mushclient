@@ -45,6 +45,7 @@
 #include "doc.h"           // CMUSHclientDoc (needed for hook_new_world)
 #include "TextDocument.h"             // CTextDocument (for hook_create_text_window)
 #include "platform/wx_world_child.h"  // CWorldChildFrame
+#include "platform/wx_osx_text.h"     // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
 #include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
@@ -1815,6 +1816,7 @@ static char* hook_inputbox(const char* title,
             wxString::FromUTF8(defValue ? defValue : ""),
             wxDefaultPosition, wxDefaultSize,
             wxTE_MULTILINE | wxTE_DONTWRAP);
+        wxOSXDisableSmartSubstitutions(txt);
         sz->Add(txt, 1, wxEXPAND | wxLEFT | wxRIGHT, 8);
         wxStdDialogButtonSizer* btns = new wxStdDialogButtonSizer();
         btns->AddButton(new wxButton(&dlg, wxID_OK));

@@ -27,6 +27,7 @@
 #include "wx_dialog_resource.h"
 #include "wx_dialog_bridge.h"
 #include "wx_mfc_hooks.h"   // g_wxhook_make_owner_draw_button (BS_OWNERDRAW)
+#include "wx_osx_text.h"    // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
 
 namespace {
 
@@ -180,6 +181,8 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         if (c.style & ES_RIGHT)     st |= wxTE_RIGHT;
         else if (c.style & ES_CENTER) st |= wxTE_CENTRE;
         w = new wxTextCtrl(parent, id, U(c.text), pos, size, st);
+        if (st & wxTE_MULTILINE)   // keep typed/pasted Lua from being mangled
+            wxOSXDisableSmartSubstitutions(static_cast<wxTextCtrl*>(w));
     }
     else if (cls == "ComboBox")
     {

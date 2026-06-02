@@ -1535,10 +1535,17 @@ static void* hook_create_text_window(
 // ignored (returns false), leaving the MUD session uninterrupted.
 #if wxUSE_SOUND
 namespace {
-// Keep the current wxSound alive while it plays asynchronously.
-// Replaced (and therefore stopped) when a new sound is requested.
+// Keep the current wxSound alive while it plays asynchronously; replaced (and
+// thereby stopped) when the next sound is requested.
 wxSound* s_currentSound = nullptr;
 } // anonymous namespace
+
+static void hook_stop_sound()
+{
+    wxSound::Stop();
+    delete s_currentSound;
+    s_currentSound = nullptr;
+}
 
 static bool hook_play_sound(const char* path)
 {
@@ -1546,23 +1553,28 @@ static bool hook_play_sound(const char* path)
     // Plugins reference sound files by Windows-style backslash paths; POSIX
     // needs '/'.
     std::string fixed = PortableFilePath(path);
+
     wxSound* snd = new wxSound(wxString::FromUTF8(fixed.c_str()));
-    if (!snd->IsOk()) {
+    if (!snd->IsOk()) {            // genuine load failure (missing / not a sound)
         delete snd;
         return false;
     }
-    // Stop whatever was playing before we replace the pointer.
-    wxSound::Stop();
-    delete s_currentSound;
-    s_currentSound = snd;
-    return s_currentSound->Play(wxSOUND_ASYNC);
-}
 
-static void hook_stop_sound()
-{
-    wxSound::Stop();
-    delete s_currentSound;
-    s_currentSound = nullptr;
+    hook_stop_sound();             // stop & free any previously-playing sound
+    s_currentSound = snd;
+
+    const bool started = s_currentSound->Play(wxSOUND_ASYNC);
+#ifdef __APPLE__
+    // wxOSX's AudioToolbox backend plays the sound correctly but Play()/DoPlay()
+    // returns false even on success (verified: audio is audible while Play()
+    // == false).  IsOk() above is the meaningful check — a loaded sound is a
+    // successful play request here, so ignore the bogus bool.  Other platforms
+    // keep wxSound's real Play() result.
+    (void) started;
+    return true;
+#else
+    return started;
+#endif
 }
 #endif // wxUSE_SOUND
 

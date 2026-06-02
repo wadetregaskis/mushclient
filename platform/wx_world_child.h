@@ -62,6 +62,10 @@ public:
     // wx control so the apply step lives here (CSendView is stubbed on the port).
     void GlobalChangeInput();
 
+    // Generate a random character name (Game ▸ Generate Character Name) via the
+    // canonical GenerateName() + CGeneratedNameDlg.
+    void GenerateCharacterName();
+
     // Re-send NAWS with the current pane dimensions.  Call after a font change
     // so the MUD learns the new character-grid size.
     void TriggerNAWS();

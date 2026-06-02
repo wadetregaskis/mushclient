@@ -22,6 +22,7 @@
 #include "MUSHclient.h"               // CMUSHclientApp + OtherTypes.h + all prerequisites
 #include "doc.h"                      // CMUSHclientDoc, SendMsg, etc.
 #include "dialogs/GlobalChangeDlg.h"  // CGlobalChangeDlg (Game ▸ Global Change)
+#include "dialogs/GeneratedNameDlg.h" // CGeneratedNameDlg (Game ▸ Generate Character Name)
 #include "miniwindow.h"               // CMiniWindow, MiniWindowVector, MINIWINDOW_* flags
 #include "scripting/scripting.h"      // CScriptEngine, lua_State* — for Shift+Tab globals
 #include "platform/wx_world_child.h"  // our own header (CWorldChildFrame, COutputPane)
@@ -1734,6 +1735,31 @@ void CWorldChildFrame::GlobalChangeInput()
     CString strNew = Replace(strCurrent, from, to);   // replace all (canonical helper)
     inp->SetValue(wxString::FromUTF8(static_cast<const char*>(strNew)));
     inp->SetInsertionPointEnd();
+}
+
+// ── Generate Character Name ────────────────────────────────────────────────
+// Mirrors CSendView::OnEditGeneratecharactername (stubbed on the port).
+void CWorldChildFrame::GenerateCharacterName()
+{
+    if (!m_doc)
+        return;
+
+    // On first use, default the names file to the one bundled next to the exe
+    // (Contents/MacOS/names.txt) so GenerateName() doesn't pop a file picker.
+    if (App.m_strDefaultNameGenerationFile.IsEmpty())
+        App.m_strDefaultNameGenerationFile =
+            ExtractDirectory(App.m_strMUSHclientFileName) + "names.txt";
+
+    CString strName = GenerateName();
+    if (strName.IsEmpty())
+        return;   // no usable names file
+
+    // Canonical dialog (bridged): shows the name, Try Again / Copy / Send to World.
+    CGeneratedNameDlg dlg;
+    dlg.m_strName     = strName;
+    dlg.m_pDoc        = m_doc;
+    dlg.m_strFileName = App.m_strDefaultNameGenerationFile;
+    dlg.DoModal();
 }
 
 // ── ApplyNoEcho ───────────────────────────────────────────────────────────

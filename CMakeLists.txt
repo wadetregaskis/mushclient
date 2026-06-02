@@ -893,8 +893,9 @@ if(NOT WIN32)
             add_custom_command(TARGET mushgui POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy
                     "${CMAKE_SOURCE_DIR}/tips.txt"
+                    "${CMAKE_SOURCE_DIR}/names.txt"
                     "$<TARGET_BUNDLE_DIR:mushgui>/Contents/MacOS/"
-                COMMENT "Bundling tips.txt next to the executable (CTipDlg reads it there)")
+                COMMENT "Bundling tips.txt + names.txt next to the executable (CTipDlg / GenerateName read them there)")
         endif()
     elseif(NOT wxWidgets_FOUND)
         message(STATUS "wxWidgets not found — mushgui target skipped")

@@ -594,6 +594,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->AppendSeparator();
     gameMenu->Append(32320 /*ID_INPUT_GLOBALCHANGE*/,    wxT("&Global Change…\tCtrl+Shift+G"));
     gameMenu->Append(32203 /*ID_DISPLAY_ACTIVITYLIST*/,  wxT("&Activity List"));
+    gameMenu->Append(32326 /*ID_EDIT_GENERATECHARACTERNAME*/, wxT("Generate Character &Name…"));
     mb->Append(gameMenu, wxT("&Game"));
 
     // ── Configure menu ────────────────────────────────────────────────────
@@ -808,6 +809,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         // ── Activity List: per-world overview window ───────────────────────
         if (id == 32203 /*ID_DISPLAY_ACTIVITYLIST*/) {
             ShowActivityWindow();
+            return;
+        }
+
+        // ── Generate Character Name (random name → canonical dialog) ───────
+        if (id == 32326 /*ID_EDIT_GENERATECHARACTERNAME*/) {
+            if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
+                child->GenerateCharacterName();
             return;
         }
 

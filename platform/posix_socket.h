@@ -286,11 +286,15 @@ public:
         int rc = ::select(maxfd + 1, &rd, &wr, &ex, &tv);
         if (rc <= 0) return;
 
-        // Take a snapshot: callbacks may modify s_sockets
+        // Take a snapshot: callbacks may modify s_sockets — and may even DELETE
+        // a socket (e.g. a TLS certificate-verification failure tears the
+        // connection down from inside OnReceive, freeing the CAsyncSocket).
+        // Re-check IsLive(s) after every callback so we never dereference a
+        // pointer in the snapshot that a callback has since freed/unregistered.
         std::vector<CAsyncSocket*> snap(s_sockets);
 
         for (CAsyncSocket* s : snap) {
-            if (s->m_hSocket == INVALID_SOCKET) continue;
+            if (!IsLive(s) || s->m_hSocket == INVALID_SOCKET) continue;
             int fd = s->m_hSocket;
 
             if (FD_ISSET(fd, &wr)) {
@@ -311,6 +315,7 @@ public:
                     s->OnSend(0);
                 }
             }
+            if (!IsLive(s) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
 
             if (FD_ISSET(fd, &rd)) {
                 // Peek to distinguish data vs. EOF
@@ -321,12 +326,13 @@ public:
                     // readable-with-EOF on every subsequent poll, firing OnClose
                     // again and again until the fd is actually closed.
                     s->OnClose(0);
-                    if (s->m_hSocket != INVALID_SOCKET)
+                    if (IsLive(s) && s->m_hSocket != INVALID_SOCKET)
                         s->Close();
                 } else {
                     s->OnReceive(0);
                 }
             }
+            if (!IsLive(s) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
 
             if (FD_ISSET(fd, &ex)) {
                 s->OnReceive(MSG_OOB);  // out-of-band data
@@ -357,6 +363,14 @@ private:
     {
         auto& v = AllSockets();
         v.erase(std::remove(v.begin(), v.end(), s), v.end());
+    }
+    // True iff `s` is still a live, registered socket.  A callback may delete a
+    // socket (the destructor Unregisters it), so Poll() uses this to avoid
+    // dereferencing a pointer in its snapshot that has since been freed.
+    static bool IsLive(CAsyncSocket* s)
+    {
+        auto& v = AllSockets();
+        return std::find(v.begin(), v.end(), s) != v.end();
     }
 };
 

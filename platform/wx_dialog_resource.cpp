@@ -163,11 +163,13 @@ long resolveValue(const RcResources& res, const std::string& tok, bool* ok)
 
 bool RcResources::ParseRc(const std::string& rc)
 {
-    enum { NONE, DIALOG, MENU } mode = NONE;
+    enum { NONE, DIALOG, MENU, DLGINIT } mode = NONE;
     RcDialog curDlg;
     RcMenu   curMenu;
     std::vector<std::vector<RcMenuItem>*> menuStack;   // for nested POPUPs
     int blockDepth = 0;
+    int dlginitDlgId = 0;                                          // dialog a DLGINIT block targets
+    std::unordered_map<int, std::vector<std::string>> dlginitItems; // control id -> combo items
 
     size_t pos = 0;
     while (pos < rc.size())
@@ -207,6 +209,15 @@ bool RcResources::ParseRc(const std::string& rc)
                 curMenu.id = (int)resolveValue(*this, tok0, nullptr);   // symbol or raw number
                 menuStack.clear();
                 mode = MENU;
+                continue;
+            }
+            if (startsWord(rest, "DLGINIT"))
+            {
+                // Combo-box preset items for the dialog of the same id (emitted
+                // right after that dialog's block, so it is already parsed).
+                dlginitDlgId = (int)resolveValue(*this, tok0, nullptr);
+                dlginitItems.clear();
+                mode = DLGINIT;
                 continue;
             }
         }
@@ -283,6 +294,32 @@ bool RcResources::ParseRc(const std::string& rc)
                 menuStack.back()->push_back(it);
                 continue;
             }
+        }
+        else if (mode == DLGINIT)
+        {
+            if (startsWord(line, "BEGIN")) continue;
+            if (startsWord(line, "END"))
+            {
+                // Attach the accumulated combo items to the (already-parsed)
+                // dialog's controls, matched by control id.
+                auto dit = m_dialogs.find(dlginitDlgId);
+                if (dit != m_dialogs.end())
+                    for (RcControl& ctl : dit->second.controls)
+                    {
+                        auto mit = dlginitItems.find(ctl.id);
+                        if (mit != dlginitItems.end()) ctl.comboItems = mit->second;
+                    }
+                mode = NONE;
+                continue;
+            }
+            // Item line:  <control-id>, "string"
+            RcCursor c(line);
+            bool ok;
+            int cid = (int)resolveValue(*this, c.parseToken(), &ok);
+            c.skipComma();
+            std::string item;
+            if (ok && c.parseString(item)) dlginitItems[cid].push_back(item);
+            continue;
         }
     }
     return true;

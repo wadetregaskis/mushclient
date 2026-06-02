@@ -130,6 +130,20 @@ def main(dll, resh, out):
         items(o, 1)
         return out
 
+    def parse_dlginit(b):           # RT_DLGINIT: {WORD id, WORD msg, DWORD len, data}* then WORD 0
+        recs = []; o = 0
+        while o + 2 <= len(b):
+            idCtrl = struct.unpack_from("<H", b, o)[0]; o += 2
+            if idCtrl == 0:
+                break
+            if o + 6 > len(b):
+                break
+            msg = struct.unpack_from("<H", b, o)[0]; o += 2
+            ln  = struct.unpack_from("<I", b, o)[0]; o += 4
+            data = b[o:o + ln]; o += ln
+            recs.append((idCtrl, msg, data.split(b"\x00")[0].decode("latin-1", "replace")))
+        return recs
+
     pe = pefile.PE(dll)
 
     def res(tid):
@@ -142,7 +156,7 @@ def main(dll, resh, out):
                 d[de.id] = pe.get_data(ds.OffsetToData, ds.Size)
         return d
 
-    dlgs, menus = res(5), res(4)
+    dlgs, menus, dlginits = res(5), res(4), res(240)
     L = [
         "// MUSHclient dialog + menu resources, decompiled from the MFC localisation",
         "// DLL (MUSHclient 5.06 locale/en.dll, RT_DIALOG + RT_MENU) by",
@@ -175,12 +189,23 @@ def main(dll, resh, out):
                      f'0x{ist:08X}, {ix}, {iy}, {icx}, {icy}{tail}')
         L.append("END")
         L.append("")
+        if rid in dlginits:                 # combo-box preset items (CB_ADDSTRING)
+            combo = [(cid, s) for (cid, msg, s) in parse_dlginit(dlginits[rid])
+                     if msg == 0x0403]
+            if combo:
+                L.append(f"{sym(rid)} DLGINIT")
+                L.append("BEGIN")
+                for (cid, s) in combo:
+                    L.append(f"    {sym(cid)}, {esc(s)}")
+                L.append("END")
+                L.append("")
     for rid in sorted(menus):
         L.append(f"{sym(rid)} MENU")
         L.append("BEGIN"); L.extend(parse_menu(menus[rid])); L.append("END"); L.append("")
 
     open(out, "w", encoding="latin-1").write("\n".join(L))
-    print(f"wrote {out}: {len(dlgs)} dialogs, {len(menus)} menus, {len(L)} lines")
+    print(f"wrote {out}: {len(dlgs)} dialogs, {len(menus)} menus, "
+          f"{len(dlginits)} dlginit, {len(L)} lines")
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:

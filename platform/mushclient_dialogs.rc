@@ -88,6 +88,13 @@ BEGIN
     CONTROL "Bug report URL", IDC_BUG_REPORT, "Static", 0x50020000, 84, 327, 349, 8
 END
 
+IDD_PREFS_P1 DLGINIT
+BEGIN
+    IDC_PROXY_TYPE, "None"
+    IDC_PROXY_TYPE, "Socks 4"
+    IDC_PROXY_TYPE, "Socks 5"
+END
+
 IDD_PREFS_P2 DIALOGEX 0, 0, 520, 350
 STYLE 0x58C00040
 CAPTION "Sound"
@@ -424,6 +431,27 @@ BEGIN
     CONTROL "lines.", IDC_STATIC, "Static", 0x50020000, 413, 252, 17, 8
 END
 
+IDD_PREFS_P9 DLGINIT
+BEGIN
+    IDC_ECHO_COLOUR, "(no change)"
+    IDC_ECHO_COLOUR, "Custom1"
+    IDC_ECHO_COLOUR, "Custom2"
+    IDC_ECHO_COLOUR, "Custom3"
+    IDC_ECHO_COLOUR, "Custom4"
+    IDC_ECHO_COLOUR, "Custom5"
+    IDC_ECHO_COLOUR, "Custom6"
+    IDC_ECHO_COLOUR, "Custom7"
+    IDC_ECHO_COLOUR, "Custom8"
+    IDC_ECHO_COLOUR, "Custom9"
+    IDC_ECHO_COLOUR, "Custom10"
+    IDC_ECHO_COLOUR, "Custom11"
+    IDC_ECHO_COLOUR, "Custom12"
+    IDC_ECHO_COLOUR, "Custom13"
+    IDC_ECHO_COLOUR, "Custom14"
+    IDC_ECHO_COLOUR, "Custom15"
+    IDC_ECHO_COLOUR, "Custom16"
+END
+
 IDD_EDIT_ALIAS DIALOGEX 0, 0, 520, 350
 STYLE 0x90C800C0
 CAPTION "Edit alias"
@@ -470,6 +498,24 @@ BEGIN
     CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 93, 327, 50, 14
     CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 169, 327, 50, 14
     CONTROL "", IDC_REGEXP_ERROR, "Static", 0x50020000, 225, 23, 287, 8
+END
+
+IDD_EDIT_ALIAS DLGINIT
+BEGIN
+    IDC_SEND_TO, "World"
+    IDC_SEND_TO, "Command"
+    IDC_SEND_TO, "Output"
+    IDC_SEND_TO, "Status"
+    IDC_SEND_TO, "Notepad (new)"
+    IDC_SEND_TO, "Notepad (append)"
+    IDC_SEND_TO, "Log file"
+    IDC_SEND_TO, "Notepad (replace)"
+    IDC_SEND_TO, "World (speedwalk delay)"
+    IDC_SEND_TO, "Variable"
+    IDC_SEND_TO, "Execute"
+    IDC_SEND_TO, "Speedwalk"
+    IDC_SEND_TO, "Script"
+    IDC_SEND_TO, "World (immediate)"
 END
 
 IDD_EDIT_TRIGGER DIALOGEX 0, 0, 520, 350
@@ -546,6 +592,75 @@ BEGIN
     CONTROL "0.0 sec.", IDC_TIME_TAKEN, "Static", 0x50020002, 362, 320, 139, 8
 END
 
+IDD_EDIT_TRIGGER DLGINIT
+BEGIN
+    IDC_MATCH_TEXT_COLOUR, "(any)"
+    IDC_MATCH_TEXT_COLOUR, "Black"
+    IDC_MATCH_TEXT_COLOUR, "Red"
+    IDC_MATCH_TEXT_COLOUR, "Green"
+    IDC_MATCH_TEXT_COLOUR, "Yellow"
+    IDC_MATCH_TEXT_COLOUR, "Blue"
+    IDC_MATCH_TEXT_COLOUR, "Magenta"
+    IDC_MATCH_TEXT_COLOUR, "Cyan"
+    IDC_MATCH_TEXT_COLOUR, "White"
+    IDC_MATCH_BACK_COLOUR, "(any)"
+    IDC_MATCH_BACK_COLOUR, "Black"
+    IDC_MATCH_BACK_COLOUR, "Red"
+    IDC_MATCH_BACK_COLOUR, "Green"
+    IDC_MATCH_BACK_COLOUR, "Yellow"
+    IDC_MATCH_BACK_COLOUR, "Blue"
+    IDC_MATCH_BACK_COLOUR, "Magenta"
+    IDC_MATCH_BACK_COLOUR, "Cyan"
+    IDC_MATCH_BACK_COLOUR, "White"
+    IDC_SEND_TO, "World"
+    IDC_SEND_TO, "Command"
+    IDC_SEND_TO, "Output"
+    IDC_SEND_TO, "Status"
+    IDC_SEND_TO, "Notepad (new)"
+    IDC_SEND_TO, "Notepad (append)"
+    IDC_SEND_TO, "Log file"
+    IDC_SEND_TO, "Notepad (replace)"
+    IDC_SEND_TO, "World (speedwalk delay)"
+    IDC_SEND_TO, "Variable"
+    IDC_SEND_TO, "Execute"
+    IDC_SEND_TO, "Speedwalk"
+    IDC_SEND_TO, "Script"
+    IDC_SEND_TO, "World (immediate)"
+    IDC_SEND_TO, "Script (after omit)"
+    IDC_WILDCARD_CLIPBOARD, "(none)"
+    IDC_WILDCARD_CLIPBOARD, "1"
+    IDC_WILDCARD_CLIPBOARD, "2"
+    IDC_WILDCARD_CLIPBOARD, "3"
+    IDC_WILDCARD_CLIPBOARD, "4"
+    IDC_WILDCARD_CLIPBOARD, "5"
+    IDC_WILDCARD_CLIPBOARD, "6"
+    IDC_WILDCARD_CLIPBOARD, "7"
+    IDC_WILDCARD_CLIPBOARD, "8"
+    IDC_WILDCARD_CLIPBOARD, "9"
+    IDC_WILDCARD_CLIPBOARD, "10"
+    IDC_TRIGGER_COLOUR, "(no change)"
+    IDC_TRIGGER_COLOUR, "Custom1"
+    IDC_TRIGGER_COLOUR, "Custom2"
+    IDC_TRIGGER_COLOUR, "Custom3"
+    IDC_TRIGGER_COLOUR, "Custom4"
+    IDC_TRIGGER_COLOUR, "Custom5"
+    IDC_TRIGGER_COLOUR, "Custom6"
+    IDC_TRIGGER_COLOUR, "Custom7"
+    IDC_TRIGGER_COLOUR, "Custom8"
+    IDC_TRIGGER_COLOUR, "Custom9"
+    IDC_TRIGGER_COLOUR, "Custom10"
+    IDC_TRIGGER_COLOUR, "Custom11"
+    IDC_TRIGGER_COLOUR, "Custom12"
+    IDC_TRIGGER_COLOUR, "Custom13"
+    IDC_TRIGGER_COLOUR, "Custom14"
+    IDC_TRIGGER_COLOUR, "Custom15"
+    IDC_TRIGGER_COLOUR, "Custom16"
+    IDC_TRIGGER_COLOUR, "Other..."
+    IDC_COLOUR_CHANGE_TYPE, "Both"
+    IDC_COLOUR_CHANGE_TYPE, "Text"
+    IDC_COLOUR_CHANGE_TYPE, "Back"
+END
+
 IDD_TEST_COMMAND DIALOGEX 0, 0, 231, 141
 STYLE 0x90C800C0
 CAPTION "Test command"
@@ -588,6 +703,27 @@ BEGIN
     CONTROL "", IDC_TRIGGER_COLOUR, "ComboBox", 0x58210213, 50, 160, 100, 185
     CONTROL "", IDC_TRIGGER_SWATCH, "Button", 0x5801000B, 157, 160, 15, 12
     CONTROL "", IDC_TRIGGER_SWATCH2, "Button", 0x5801000B, 177, 160, 15, 12
+END
+
+IDD_TEST_RESULT DLGINIT
+BEGIN
+    IDC_TRIGGER_COLOUR, "(no change)"
+    IDC_TRIGGER_COLOUR, "Custom1"
+    IDC_TRIGGER_COLOUR, "Custom2"
+    IDC_TRIGGER_COLOUR, "Custom3"
+    IDC_TRIGGER_COLOUR, "Custom4"
+    IDC_TRIGGER_COLOUR, "Custom5"
+    IDC_TRIGGER_COLOUR, "Custom6"
+    IDC_TRIGGER_COLOUR, "Custom7"
+    IDC_TRIGGER_COLOUR, "Custom8"
+    IDC_TRIGGER_COLOUR, "Custom9"
+    IDC_TRIGGER_COLOUR, "Custom10"
+    IDC_TRIGGER_COLOUR, "Custom11"
+    IDC_TRIGGER_COLOUR, "Custom12"
+    IDC_TRIGGER_COLOUR, "Custom13"
+    IDC_TRIGGER_COLOUR, "Custom14"
+    IDC_TRIGGER_COLOUR, "Custom15"
+    IDC_TRIGGER_COLOUR, "Custom16"
 END
 
 IDD_PREFS_P10 DIALOGEX 0, 0, 520, 350
@@ -920,6 +1056,24 @@ BEGIN
     CONTROL "&Help", IDC_HELPBUTTON, "Button", 0x50010000, 195, 327, 50, 14
 END
 
+IDD_EDIT_TIMER DLGINIT
+BEGIN
+    IDC_SEND_TO, "World"
+    IDC_SEND_TO, "Command"
+    IDC_SEND_TO, "Output"
+    IDC_SEND_TO, "Status"
+    IDC_SEND_TO, "Notepad (new)"
+    IDC_SEND_TO, "Notepad (append)"
+    IDC_SEND_TO, "Log file"
+    IDC_SEND_TO, "Notepad (replace)"
+    IDC_SEND_TO, "World (speedwalk delay)"
+    IDC_SEND_TO, "Variable"
+    IDC_SEND_TO, "Execute"
+    IDC_SEND_TO, "Speedwalk"
+    IDC_SEND_TO, "Script"
+    IDC_SEND_TO, "World (immediate)"
+END
+
 IDD_GLOBAL_PREFSP1 DIALOGEX 0, 0, 262, 201
 STYLE 0x48C00040
 CAPTION "Worlds"
@@ -973,6 +1127,13 @@ BEGIN
     CONTROL "", IDC_LOCALE, "Edit", 0x50810088, 209, 190, 34, 14
     CONTROL "Window tabs:", IDC_STATIC, "Static", 0x50020000, 197, 132, 44, 8
     CONTROL "", IDC_TABS, "ComboBox", 0x50210003, 195, 146, 48, 49
+END
+
+IDD_GLOBAL_PREFSP2 DLGINIT
+BEGIN
+    IDC_TABS, "None"
+    IDC_TABS, "Top"
+    IDC_TABS, "Bottom"
 END
 
 IDD_GLOBAL_PREFSP3 DIALOGEX 0, 0, 262, 201
@@ -1087,6 +1248,38 @@ BEGIN
     CONTROL "Execution time", IDC_EXECUTION_TIME, "Static", 0x50020000, 318, 306, 186, 8
     CONTROL "&Register DLL", IDC_REGISTER, "Button", 0x50010000, 318, 324, 60, 14
     CONTROL "(Click for MXP-related script handlers)", IDC_STATIC, "Static", 0x50020000, 125, 322, 118, 8
+END
+
+IDD_PREFS_P17 DLGINIT
+BEGIN
+    IDC_LANGUAGE, "VBscript"
+    IDC_LANGUAGE, "JScript"
+    IDC_LANGUAGE, "PerlScript"
+    IDC_LANGUAGE, "Python"
+    IDC_LANGUAGE, "Tcl"
+    IDC_LANGUAGE, "Lua"
+    IDC_LANGUAGE, "PhpScript"
+    IDC_LANGUAGE, "Ruby"
+    IDC_RELOAD_OPTION, "Confirm"
+    IDC_RELOAD_OPTION, "Always"
+    IDC_RELOAD_OPTION, "Never"
+    IDC_TEXT_COLOUR, "(no change)"
+    IDC_TEXT_COLOUR, "Custom1"
+    IDC_TEXT_COLOUR, "Custom2"
+    IDC_TEXT_COLOUR, "Custom3"
+    IDC_TEXT_COLOUR, "Custom4"
+    IDC_TEXT_COLOUR, "Custom5"
+    IDC_TEXT_COLOUR, "Custom6"
+    IDC_TEXT_COLOUR, "Custom7"
+    IDC_TEXT_COLOUR, "Custom8"
+    IDC_TEXT_COLOUR, "Custom9"
+    IDC_TEXT_COLOUR, "Custom10"
+    IDC_TEXT_COLOUR, "Custom11"
+    IDC_TEXT_COLOUR, "Custom12"
+    IDC_TEXT_COLOUR, "Custom13"
+    IDC_TEXT_COLOUR, "Custom14"
+    IDC_TEXT_COLOUR, "Custom15"
+    IDC_TEXT_COLOUR, "Custom16"
 END
 
 IDD_PREFS_P18 DIALOGEX 0, 0, 520, 350
@@ -1258,6 +1451,16 @@ BEGIN
     CONTROL "", IDC_ACTIVITY_BUTTONS_STYLE, "ComboBox", 0x50210003, 115, 130, 78, 75
 END
 
+IDD_GLOBAL_PREFSP7 DLGINIT
+BEGIN
+    IDC_ACTIVITY_BUTTONS_STYLE, "Style 1"
+    IDC_ACTIVITY_BUTTONS_STYLE, "Style 2"
+    IDC_ACTIVITY_BUTTONS_STYLE, "Style 3"
+    IDC_ACTIVITY_BUTTONS_STYLE, "Style 4"
+    IDC_ACTIVITY_BUTTONS_STYLE, "Style 5"
+    IDC_ACTIVITY_BUTTONS_STYLE, "Style 6"
+END
+
 IDD_MISSING_ENTRY_POINTS DIALOGEX 0, 0, 520, 350
 STYLE 0x80C800C0
 CAPTION "Missing script procedure names"
@@ -1285,6 +1488,14 @@ BEGIN
     CONTROL "You can use ""%name%"" or ""%password%"" if you wish the name or password supplied above to be inserted.", IDC_STATIC, "Static", 0x50020000, 10, 327, 359, 12
     CONTROL "(0 lines)", IDC_LINE_COUNT, "Static", 0x50020002, 375, 166, 87, 8
     CONTROL "(This is your avatar name for this game)", IDC_STATIC, "Static", 0x50020000, 269, 32, 124, 8
+END
+
+IDD_PREFS_P21 DLGINIT
+BEGIN
+    IDC_CONNECT_OPTION, "No auto-connect"
+    IDC_CONNECT_OPTION, "MUSH/MOO ( CONNECT name password )"
+    IDC_CONNECT_OPTION, "Diku-style ( name, password)"
+    IDC_CONNECT_OPTION, "MXP (automatically when requested)"
 END
 
 IDD_CREDITS DIALOGEX 0, 0, 520, 350
@@ -1697,6 +1908,15 @@ BEGIN
     CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 194, 95, 50, 14
 END
 
+IDD_ASCII_ART DLGINIT
+BEGIN
+    IDC_LAYOUT, "Smush"
+    IDC_LAYOUT, "Always Smush"
+    IDC_LAYOUT, "Kern"
+    IDC_LAYOUT, "Full Width"
+    IDC_LAYOUT, "Overlap"
+END
+
 IDD_COMMAND_OPTIONS DIALOGEX 0, 0, 277, 181
 STYLE 0x80C800C0
 CAPTION "Keyboard preferences"
@@ -1799,6 +2019,17 @@ BEGIN
     CONTROL "Luminance: xxx", IDC_BRIGHTNESS, "Static", 0x50020000, 189, 246, 64, 8
 END
 
+IDD_COLOUR_PICKER DLGINIT
+BEGIN
+    IDC_COLOUR_SORT, "Names"
+    IDC_COLOUR_SORT, "Hue"
+    IDC_COLOUR_SORT, "Saturation"
+    IDC_COLOUR_SORT, "Luminance"
+    IDC_COLOUR_SORT, "Red"
+    IDC_COLOUR_SORT, "Green"
+    IDC_COLOUR_SORT, "Blue"
+END
+
 IDD_PREFS_P22 DIALOGEX 0, 0, 520, 350
 STYLE 0x58C00040
 CAPTION "MXP"
@@ -1825,6 +2056,19 @@ BEGIN
     CONTROL "MUD can change some options", IDC_MUD_CAN_CHANGE_OPTIONS, "Button", 0x50010003, 94, 302, 116, 10
     CONTROL "Reset tags", IDC_RESET_TAGS, "Button", 0x50010000, 93, 325, 55, 14
     CONTROL "(Debugging messages appear in a separate window)", IDC_STATIC, "Static", 0x50020000, 97, 113, 166, 8
+END
+
+IDD_PREFS_P22 DLGINIT
+BEGIN
+    IDC_MXP_OPTION, "On command"
+    IDC_MXP_OPTION, "On query"
+    IDC_MXP_OPTION, "Yes - always"
+    IDC_MXP_OPTION, "No - never"
+    IDC_MXP_DEBUG_LEVEL, "None"
+    IDC_MXP_DEBUG_LEVEL, "Errors"
+    IDC_MXP_DEBUG_LEVEL, "Warnings"
+    IDC_MXP_DEBUG_LEVEL, "Information"
+    IDC_MXP_DEBUG_LEVEL, "The Lot"
 END
 
 IDD_IMPORT_XML DIALOGEX 0, 0, 248, 223
@@ -2074,6 +2318,18 @@ BEGIN
     CONTROL "&Edit...", IDC_EDIT, "Button", 0x50010000, 5, 165, 50, 14
 END
 
+IDD_PLUGINWIZARDPAGE7 DLGINIT
+BEGIN
+    IDC_LANGUAGE, "VBscript"
+    IDC_LANGUAGE, "JScript"
+    IDC_LANGUAGE, "PerlScript"
+    IDC_LANGUAGE, "Python"
+    IDC_LANGUAGE, "Tcl"
+    IDC_LANGUAGE, "Lua"
+    IDC_LANGUAGE, "PhpScript"
+    IDC_LANGUAGE, "Ruby"
+END
+
 IDD_PLUGINWIZARDPAGE8 DIALOGEX 0, 0, 262, 181
 STYLE 0x48C00040
 CAPTION "Comments"
@@ -2185,6 +2441,13 @@ BEGIN
     CONTROL "", IDC_STATIC, "Static", 0x50000003, 126, 132, 20, 20
 END
 
+IDD_GLOBAL_PREFSP11 DLGINIT
+BEGIN
+    IDC_MINIMISE_TO, "Task bar"
+    IDC_MINIMISE_TO, "Tray"
+    IDC_MINIMISE_TO, "Both"
+END
+
 IDD_GLOBAL_PREFSP12 DIALOGEX 0, 0, 262, 201
 STYLE 0x58C80040
 CAPTION "Plugins"
@@ -2230,6 +2493,27 @@ BEGIN
     CONTROL "&Match Case", IDC_MATCH_CASE, "Button", 0x50010003, 11, 99, 54, 10
     CONTROL "OK", IDOK, "Button", 0x50010001, 238, 84, 50, 14
     CONTROL "Cancel", IDCANCEL, "Button", 0x50010000, 238, 102, 50, 14
+END
+
+IDD_HIGHLIGHT DLGINIT
+BEGIN
+    IDC_TRIGGER_COLOUR, "Custom1"
+    IDC_TRIGGER_COLOUR, "Custom2"
+    IDC_TRIGGER_COLOUR, "Custom3"
+    IDC_TRIGGER_COLOUR, "Custom4"
+    IDC_TRIGGER_COLOUR, "Custom5"
+    IDC_TRIGGER_COLOUR, "Custom6"
+    IDC_TRIGGER_COLOUR, "Custom7"
+    IDC_TRIGGER_COLOUR, "Custom8"
+    IDC_TRIGGER_COLOUR, "Custom9"
+    IDC_TRIGGER_COLOUR, "Custom10"
+    IDC_TRIGGER_COLOUR, "Custom11"
+    IDC_TRIGGER_COLOUR, "Custom12"
+    IDC_TRIGGER_COLOUR, "Custom13"
+    IDC_TRIGGER_COLOUR, "Custom14"
+    IDC_TRIGGER_COLOUR, "Custom15"
+    IDC_TRIGGER_COLOUR, "Custom16"
+    IDC_TRIGGER_COLOUR, "Other..."
 END
 
 IDD_GENERATE_UNIQUE_ID DIALOGEX 0, 0, 132, 55

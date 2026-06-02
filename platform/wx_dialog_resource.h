@@ -27,6 +27,10 @@ struct RcControl
     unsigned int style = 0;   // full Win32 window style
     unsigned int exStyle = 0;
     int x = 0, y = 0, cx = 0, cy = 0;   // dialog units
+    // Preset items for a ComboBox, recovered from the dialog's DLGINIT resource
+    // (CB_ADDSTRING blobs).  Empty for non-combo controls or combos populated by
+    // code (OnInitDialog AddString).
+    std::vector<std::string> comboItems;
 };
 
 // A dialog template (an .rc DIALOGEX block).

@@ -184,7 +184,17 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
     else if (cls == "ComboBox")
     {
         long st = ((c.style & 3) == CBS_DROPDOWNLIST) ? wxCB_READONLY : 0;
-        w = new wxComboBox(parent, id, wxEmptyString, pos, size, 0, nullptr, st);
+        // A combo's template height (cy) is the DROPPED-DOWN list height, not the
+        // closed control height — using it verbatim makes the combo absurdly tall
+        // and overlap its siblings.  Let wx pick the natural (closed) height.
+        wxComboBox* cb = new wxComboBox(parent, id, wxEmptyString, pos,
+                                        wxSize(size.GetWidth(), -1), 0, nullptr, st);
+        // Preset items recovered from the dialog's DLGINIT resource (e.g. the
+        // scripting-language list, proxy type, alias/timer "send to").  Combos
+        // that instead fill themselves in OnInitDialog have no DLGINIT items.
+        for (const std::string& item : c.comboItems)
+            cb->Append(wxString::FromUTF8(item.c_str()));
+        w = cb;
     }
     else if (cls == "ListBox")
     {

@@ -21,6 +21,7 @@
 #include "stdafx.h"                   // compat.h → mfc_ui.h → wx_mfc_hooks.h
 #include "MUSHclient.h"               // CMUSHclientApp + OtherTypes.h + all prerequisites
 #include "doc.h"                      // CMUSHclientDoc, SendMsg, etc.
+#include "dialogs/GlobalChangeDlg.h"  // CGlobalChangeDlg (Game ▸ Global Change)
 #include "miniwindow.h"               // CMiniWindow, MiniWindowVector, MINIWINDOW_* flags
 #include "scripting/scripting.h"      // CScriptEngine, lua_State* — for Shift+Tab globals
 #include "platform/wx_world_child.h"  // our own header (CWorldChildFrame, COutputPane)
@@ -1696,6 +1697,43 @@ wxTextCtrl* CWorldChildFrame::ActiveInput() const
     if (m_inputPassword && m_inputPassword->IsShown())
         return m_inputPassword;
     return m_input;
+}
+
+// ── Global Change (input find/replace) ────────────────────────────────────
+// Mirrors CSendView::OnInputGlobalchange (stubbed on the port): prompt with the
+// canonical CGlobalChangeDlg, then replace every occurrence in the input bar.
+void CWorldChildFrame::GlobalChangeInput()
+{
+    wxTextCtrl* inp = ActiveInput();
+    if (!inp)
+        return;
+
+    // Remember the last from/to across invocations (CSendView kept these as
+    // view members; a static is the port equivalent — shared, which is fine).
+    static CString s_lastFrom, s_lastTo;
+
+    CGlobalChangeDlg dlg;
+    dlg.m_strChangeFrom = s_lastFrom;
+    dlg.m_strChangeTo   = s_lastTo;
+    if (dlg.DoModal() != IDOK)
+        return;
+    s_lastFrom = dlg.m_strChangeFrom;
+    s_lastTo   = dlg.m_strChangeTo;
+
+    CString strCurrent(inp->GetValue().ToUTF8().data());
+    strCurrent.Replace("\r", "");   // drop carriage-returns
+
+    // Canonical backslash handling: \\ -> \, \n -> newline, \t -> tab.
+    CString from = dlg.m_strChangeFrom, to = dlg.m_strChangeTo;
+    from.Replace("\\\\", "\x01"); from.Replace("\\n", "\n"); from.Replace("\\t", "\t"); from.Replace("\x01", "\\");
+    to.Replace  ("\\\\", "\x01"); to.Replace  ("\\n", "\n"); to.Replace  ("\\t", "\t"); to.Replace  ("\x01", "\\");
+
+    if (from.IsEmpty())
+        return;   // nothing to find
+
+    CString strNew = Replace(strCurrent, from, to);   // replace all (canonical helper)
+    inp->SetValue(wxString::FromUTF8(static_cast<const char*>(strNew)));
+    inp->SetInsertionPointEnd();
 }
 
 // ── ApplyNoEcho ───────────────────────────────────────────────────────────

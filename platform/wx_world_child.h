@@ -57,6 +57,11 @@ public:
     // wx_mfc_impl.cpp can read/write it for world.GetCommand/SetCommand.
     wxTextCtrl* ActiveInputPublic() const { return ActiveInput(); }
 
+    // Find/replace within the command-input text (Game ▸ Global Change).
+    // Runs the canonical CGlobalChangeDlg for the from/to prompt; the input is a
+    // wx control so the apply step lives here (CSendView is stubbed on the port).
+    void GlobalChangeInput();
+
     // Re-send NAWS with the current pane dimensions.  Call after a font change
     // so the MUD learns the new character-grid size.
     void TriggerNAWS();

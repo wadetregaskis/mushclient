@@ -590,6 +590,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->Append(ID_MENU_GAME_LUA_EVAL,              wxT("Execute Lua…\tCtrl+Shift+L"));
     gameMenu->AppendSeparator();
     gameMenu->Append(32983 /*ID_FILE_PLUGINS*/,          wxT("Plugins…"));
+    gameMenu->AppendSeparator();
+    gameMenu->Append(32320 /*ID_INPUT_GLOBALCHANGE*/,    wxT("&Global Change…\tCtrl+Shift+G"));
     mb->Append(gameMenu, wxT("&Game"));
 
     // ── Configure menu ────────────────────────────────────────────────────
@@ -792,6 +794,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 }
             }
             return;   // consumed — do not call evt.Skip()
+        }
+
+        // ── Global Change: find/replace within the active input bar ────────
+        if (id == 32320 /*ID_INPUT_GLOBALCHANGE*/) {
+            if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
+                child->GlobalChangeInput();
+            return;
         }
 
         if (id == wxID_EXIT || id == 0xE141 /*ID_APP_EXIT*/) {

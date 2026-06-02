@@ -2476,7 +2476,7 @@ void CMUSHclientDoc::OutputOutstandingLines()
 void CMUSHclientDoc::PlaySoundFile(CString strFile)
 {
     if (g_wxhook_play_sound)
-        g_wxhook_play_sound((const char*)strFile);
+        g_wxhook_play_sound((const char*)strFile, false);
 }
 
 void CMUSHclientDoc::CancelSound()

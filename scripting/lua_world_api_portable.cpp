@@ -5508,7 +5508,7 @@ static int L_Sound(lua_State* L)
     world_doc(L);
     const char* filename = luaL_checkstring(L, 1);
     if (g_wxhook_play_sound && filename && *filename) {
-        bool ok = g_wxhook_play_sound(filename);
+        bool ok = g_wxhook_play_sound(filename, false);
         lua_pushnumber(L, ok ? eOK : eCannotPlaySound);
     } else {
         lua_pushnumber(L, eCannotPlaySound);
@@ -5538,7 +5538,7 @@ static int L_PlaySound(lua_State* L)
         lua_pushnumber(L, eOK); return 1;
     }
     if (g_wxhook_play_sound) {
-        bool ok = g_wxhook_play_sound(filename);
+        bool ok = g_wxhook_play_sound(filename, false);
         lua_pushnumber(L, ok ? eOK : eCannotPlaySound);
     } else {
         lua_pushnumber(L, eCannotPlaySound);

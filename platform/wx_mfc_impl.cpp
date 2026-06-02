@@ -1547,7 +1547,7 @@ static void hook_stop_sound()
     s_currentSound = nullptr;
 }
 
-static bool hook_play_sound(const char* path)
+static bool hook_play_sound(const char* path, bool loop)
 {
     if (!path || !*path) return false;
     // Plugins reference sound files by Windows-style backslash paths; POSIX
@@ -1563,7 +1563,8 @@ static bool hook_play_sound(const char* path)
     hook_stop_sound();             // stop & free any previously-playing sound
     s_currentSound = snd;
 
-    const bool started = s_currentSound->Play(wxSOUND_ASYNC);
+    const bool started =
+        s_currentSound->Play(wxSOUND_ASYNC | (loop ? wxSOUND_LOOP : 0));
 #ifdef __APPLE__
     // wxOSX's AudioToolbox backend plays the sound correctly but Play()/DoPlay()
     // returns false even on success (verified: audio is audible while Play()

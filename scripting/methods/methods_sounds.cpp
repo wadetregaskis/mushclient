@@ -450,13 +450,14 @@ long CMUSHclientDoc::GetSoundStatus(short Buffer)
 // which MSP and trigger sounds already use.  These methods hand the Lua sound API
 // (world.Sound / PlaySound / StopSound) to that same path.
 //
-// wxSound is a single async channel: per-buffer mixing, Volume, Pan, looping and
-// memory-buffer playback are NOT supported here (accepted-but-ignored, or
-// rejected for memory buffers).  In mushcli/tests the hook is null, so playback
-// silently no-ops.  TODO(port): add loop/volume via a richer audio backend.
+// wxSound is a single async channel: per-buffer mixing, Volume and Pan are NOT
+// supported (accepted-but-ignored); memory-buffer playback is rejected.  Looping
+// IS supported — PlaySound passes its Loop flag through g_wxhook_play_sound to
+// wxSOUND_LOOP.  In mushcli/tests the hook is null, so playback silently no-ops.
 
 #include "../errors.h"
 #include <cctype>
+#include "platform/wx_mfc_hooks.h"   // g_wxhook_play_sound (loop-capable)
 
 // world.Sound — play a sound file (the common one-shot API).  Mirrors Windows:
 // empty name → error; otherwise hand off to the working PlaySoundFile path.
@@ -469,11 +470,11 @@ long CMUSHclientDoc::Sound(LPCTSTR SoundFileName)
   return eOK;
 }
 
-// world.PlaySound — the buffered API.  Portably this just plays the file: Buffer,
-// Loop, Volume and Pan are accepted but not applied (single wxSound channel);
-// memory-buffer playback is rejected.  Resolves a non-absolute path against the
+// world.PlaySound — the buffered API.  Portably: Buffer, Volume and Pan are
+// accepted but not applied (single wxSound channel) and memory-buffer playback is
+// rejected, but Loop IS honoured.  Resolves a non-absolute path against the
 // MUSHclient "sounds" directory, matching the Windows helper.
-long CMUSHclientDoc::PlaySoundHelper(short /*Buffer*/, LPCTSTR FileName, BOOL /*Loop*/,
+long CMUSHclientDoc::PlaySoundHelper(short /*Buffer*/, LPCTSTR FileName, BOOL Loop,
                                      double /*Volume*/, double /*Pan*/,
                                      LPCTSTR MemoryBuffer, size_t /*MemLen*/)
 {
@@ -488,7 +489,11 @@ long CMUSHclientDoc::PlaySoundHelper(short /*Buffer*/, LPCTSTR FileName, BOOL /*
       !(isalpha ((unsigned char) strName [0]) && strName [1] == ':'))
     strName = ExtractDirectory (App.m_strMUSHclientFileName) + "sounds/" + strName;
 
-  if (!PlaySoundFile (strName))
+  // Play via the sound hook directly so the Loop flag reaches wxSOUND_LOOP
+  // (CMUSHclientDoc::PlaySoundFile can't carry it).  This mirrors Windows, where
+  // PlaySound uses the buffered path, not the plugin-callback PlaySoundFile route.
+  // Null hook (mushcli/tests) → no audio backend available.
+  if (!g_wxhook_play_sound || !g_wxhook_play_sound ((LPCTSTR) strName, Loop != 0))
     return eCannotPlaySound;
   return eOK;
 }
@@ -498,10 +503,14 @@ long CMUSHclientDoc::PlaySound(short Buffer, LPCTSTR FileName, BOOL Loop, double
   return PlaySoundHelper (Buffer, FileName, Loop, Volume, Pan, NULL, 0);
 }
 
-// world.StopSound — single-channel backend, so any Buffer stops the sound.
+// world.StopSound — stop the (single) wxSound channel directly via the hook.
+// Do NOT call CancelSound(): the canonical CancelSound() ends with StopSound(0)
+// (on Windows that stops a DirectSound buffer), so routing StopSound back through
+// CancelSound() recurses infinitely on the port (stack overflow / SIGSEGV).
 long CMUSHclientDoc::StopSound(short /*Buffer*/)
 {
-  CancelSound ();
+  if (g_wxhook_stop_sound)
+    g_wxhook_stop_sound();
   return eOK;
 }
 

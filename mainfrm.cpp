@@ -1409,7 +1409,7 @@ bool CMainFrame::PlaySoundFile (const CString & strSound)
 #ifndef _WIN32
   // On non-Windows, delegate to the wxWidgets sound hook.
   if (g_wxhook_play_sound)
-    return g_wxhook_play_sound(static_cast<const char*>(strSound));
+    return g_wxhook_play_sound(static_cast<const char*>(strSound), false);
   return false;   // no sound backend available
 #endif
 MCI_OPEN_PARMS mciOpenParms;

@@ -88,8 +88,8 @@ END_MESSAGE_MAP()
 
 void CProgressDlg::SetStatus(LPCTSTR lpszMessage)
 {
-    ASSERT(m_hWnd); // Don't call this _before_ the dialog has
-                    // been created. Can be called from OnInitDialog
+    if (m_hWnd == NULL)   // no window (headless / wx port) — nothing to show
+        return;
     CWnd *pWndStatus = GetDlgItem(CG_IDC_PROGDLG_STATUS);
 
     // Verify that the static text control exists
@@ -141,8 +141,10 @@ int CProgressDlg::StepIt()
 
 void CProgressDlg::PumpMessages()
 {
-    // Must call Create() before using the dialog
-    ASSERT(m_hWnd!=NULL);
+    // Must call Create() before using the dialog; with no window (the wx port
+    // has no real progress dialog) this is a no-op rather than an assert/crash.
+    if (m_hWnd == NULL)
+        return;
 
     MSG msg;
     // Handle dialog messages
@@ -176,6 +178,8 @@ BOOL CProgressDlg::CheckCancelButton()
 
 void CProgressDlg::UpdatePercent(int nNewPos)
 {
+    if (m_hWnd == NULL)   // no window — nothing to update
+        return;
     CWnd *pWndPercent = GetDlgItem(CG_IDC_PROGDLG_PERCENT);
     int nPercent;
     

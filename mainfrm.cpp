@@ -1064,15 +1064,34 @@ BOOL CMainFrame::PreTranslateMessage(MSG* pMsg)
    if (pDoc)
      {
      CString strPrompt;
-     strPrompt.Format ("TLS connection to \"%s\" failed.\n\n%s\n\n"
-                       "Connect without encryption?",
-                       (LPCTSTR) pDoc->m_mush_name,
-                       (LPCTSTR) pDoc->m_strSSLLastError);
-
-     if (UMessageBox (strPrompt, MB_YESNO | MB_ICONQUESTION) == IDYES)
+     if (pMsg->lParam == 1)
        {
-       pDoc->m_bUseSSL = false;
-       pDoc->ConnectSocket ();
+       // certificate verification failure: stay encrypted, but the user must
+       // consent to accepting an unverifiable certificate.
+       strPrompt.Format ("The TLS certificate for \"%s\" could not be verified:\n\n"
+                         "%s\n\n"
+                         "This can mean the connection is being intercepted. "
+                         "Connect anyway (still encrypted, but unverified)?",
+                         (LPCTSTR) pDoc->m_mush_name,
+                         (LPCTSTR) pDoc->m_strSSLLastError);
+       if (UMessageBox (strPrompt, MB_YESNO | MB_ICONEXCLAMATION) == IDYES)
+         {
+         pDoc->m_bSSLAllowInvalidCert = true;
+         pDoc->ConnectSocket ();
+         }
+       }
+     else
+       {
+       // handshake failure: offer to fall back to an unencrypted connection.
+       strPrompt.Format ("TLS connection to \"%s\" failed.\n\n%s\n\n"
+                         "Connect without encryption?",
+                         (LPCTSTR) pDoc->m_mush_name,
+                         (LPCTSTR) pDoc->m_strSSLLastError);
+       if (UMessageBox (strPrompt, MB_YESNO | MB_ICONQUESTION) == IDYES)
+         {
+         pDoc->m_bUseSSL = false;
+         pDoc->ConnectSocket ();
+         }
        }
      }
 

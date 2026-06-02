@@ -374,26 +374,45 @@ static int hook_post_message(void* h, unsigned msg, uintptr_t wp, intptr_t lp)
     // event-loop iteration so we're not inside a socket callback stack.
     if (msg == WM_USER_SSL_FALLBACK_PROMPT && wp != 0) {
         CMUSHclientDoc* doc = reinterpret_cast<CMUSHclientDoc*>(wp);
+        bool certFailure = (lp == 1);   // 1 = cert verification, 0 = handshake
         wxWindow* parent = App.m_pMainWnd
                          ? static_cast<wxWindow*>(App.m_pMainWnd->m_hWnd)
                          : nullptr;
-        wxTheApp->CallAfter([doc, parent]() {
+        wxTheApp->CallAfter([doc, parent, certFailure]() {
             // Verify the doc is still live before touching it.
             if (s_docFrameMap.find(doc) == s_docFrameMap.end())
                 return;
-            wxString prompt = wxString::Format(
-                wxT("TLS connection to \"%s\" failed.\n\n%s\n\n"
-                    "Connect without encryption?"),
-                wxString::FromUTF8(static_cast<const char*>(doc->m_mush_name)),
-                wxString::FromUTF8(static_cast<const char*>(doc->m_strSSLLastError)));
-            if (wxMessageBox(prompt, wxT("TLS Connection Failed"),
-                             wxYES_NO | wxICON_QUESTION, parent) == wxYES)
-            {
-                doc->m_bUseSSL = false;
-                doc->ConnectSocket();
+            wxString name = wxString::FromUTF8(static_cast<const char*>(doc->m_mush_name));
+            wxString err  = wxString::FromUTF8(static_cast<const char*>(doc->m_strSSLLastError));
+            if (certFailure) {
+                // Certificate could not be verified: stay encrypted, but require
+                // the user to consent to accepting an unverifiable certificate.
+                wxString prompt = wxString::Format(
+                    wxT("The TLS certificate for \"%s\" could not be verified:\n\n"
+                        "%s\n\n"
+                        "This can mean the connection is being intercepted. "
+                        "Connect anyway (still encrypted, but unverified)?"),
+                    name, err);
+                if (wxMessageBox(prompt, wxT("TLS Certificate Not Verified"),
+                                 wxYES_NO | wxICON_EXCLAMATION, parent) == wxYES)
+                {
+                    doc->m_bSSLAllowInvalidCert = true;
+                    doc->ConnectSocket();
+                }
+            } else {
+                // Handshake failed: offer an unencrypted fallback connection.
+                wxString prompt = wxString::Format(
+                    wxT("TLS connection to \"%s\" failed.\n\n%s\n\n"
+                        "Connect without encryption?"),
+                    name, err);
+                if (wxMessageBox(prompt, wxT("TLS Connection Failed"),
+                                 wxYES_NO | wxICON_QUESTION, parent) == wxYES)
+                {
+                    doc->m_bUseSSL = false;
+                    doc->ConnectSocket();
+                }
             }
         });
-        (void)lp;
         return TRUE;
     }
 

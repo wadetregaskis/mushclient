@@ -1710,6 +1710,11 @@ void CMUSHclientDoc::StartSSLHandshake()
 
     SSL_set_fd(m_pSSL, m_pSocket->m_hSocket);
     SSL_set_tlsext_host_name(m_pSSL, (const char*)m_server);
+    // Verify the certificate is actually issued for this host (CN/SAN match).
+    // The verify callback returns preverify_ok, so a mismatch aborts the
+    // handshake — the CLI has no prompt, so it fails closed (secure default).
+    if (!m_server.IsEmpty())
+        SSL_set1_host(m_pSSL, (const char*)m_server);
     SSL_set_connect_state(m_pSSL);
 
     ContinueSSLHandshake();

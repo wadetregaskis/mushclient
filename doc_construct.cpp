@@ -135,6 +135,7 @@ int i;
   m_pSSL = NULL;
   m_pSSL_CTX = NULL;
   m_bSSL_Connected = false;
+  m_bSSLAllowInvalidCert = false;
 
   // deprecated options  - set to zero for saving comparison (for XML testing)
 

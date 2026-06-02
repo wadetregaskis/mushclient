@@ -648,6 +648,8 @@ public:
   struct ssl_ctx_st * m_pSSL_CTX;    // OpenSSL context object
   bool m_bSSL_Connected;             // true once TLS handshake is complete
   CString m_strSSLLastError;         // saved for deferred fallback prompt
+  bool m_bSSLAllowInvalidCert;       // user opted to proceed despite a failed
+                                     // certificate verification (this session only)
 
 // stuff saved to disk
 

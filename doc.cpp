@@ -7626,6 +7626,14 @@ void CMUSHclientDoc::StartSSLHandshake (void)
   // set SNI hostname
   SSL_set_tlsext_host_name (m_pSSL, (LPCTSTR) m_server);
 
+  // verify the certificate is actually issued for this host (CN/SAN match).
+  // Without this, any cert with a valid chain — for ANY hostname — passes
+  // SSL_get_verify_result, defeating the point of verification.  The verify
+  // callback still returns 1 so the handshake completes; we inspect the result
+  // (now including hostname mismatch) afterwards and prompt the user.
+  if (!m_server.IsEmpty ())
+    SSL_set1_host (m_pSSL, (LPCTSTR) m_server);
+
   // initiate the handshake
   SSL_set_connect_state (m_pSSL);
 
@@ -7644,13 +7652,32 @@ void CMUSHclientDoc::ContinueSSLHandshake (void)
     // handshake succeeded
     m_bSSL_Connected = true;
 
-    // check certificate verification result (warn only)
+    // check certificate verification result
     long verify_result = SSL_get_verify_result (m_pSSL);
     if (verify_result != X509_V_OK)
       {
+      const char * reason = X509_verify_cert_error_string (verify_result);
+      if (!m_bSSLAllowInvalidCert)
+        {
+        // Block: the certificate could not be verified and the user has not
+        // (yet) chosen to accept it.  Tear down and defer a prompt to the main
+        // loop (we're inside a socket callback).  "Connect anyway" sets
+        // m_bSSLAllowInvalidCert and reconnects — still over TLS, but accepting
+        // this unverifiable certificate for the session.
+        CString strMsg;
+        strMsg.Format ("--- TLS certificate for \"%s\" could NOT be verified: %s ---",
+                       (LPCTSTR) m_server, reason);
+        Note (strMsg);
+        m_strSSLLastError = reason;
+        SSLCleanup ();
+        OnConnectionDisconnect ();
+        Frame.PostMessage (WM_USER_SSL_FALLBACK_PROMPT, (WPARAM) this, (LPARAM) 1);
+        return;
+        }
+      // user already opted to proceed despite the failure — connect, but warn
       CString strMsg;
-      strMsg.Format ("--- TLS certificate verification warning: %s ---",
-                     X509_verify_cert_error_string (verify_result));
+      strMsg.Format ("--- WARNING: proceeding with UNVERIFIED TLS certificate for \"%s\": %s ---",
+                     (LPCTSTR) m_server, reason);
       Note (strMsg);
       }
 

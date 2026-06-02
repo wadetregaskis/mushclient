@@ -1942,6 +1942,8 @@ static void hook_end_dialog(void* self, int result)
         it->second->EndModal(result);
 }
 
+static void bind_list_notifications(wxWindow* win, CCmdTarget* target);  // defined below
+
 static intptr_t hook_run_dialog(void* self, unsigned idd)
 {
     CDialog* cdlg = static_cast<CDialog*>(self);
@@ -1979,6 +1981,7 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     dlg->Bind(wxEVT_RADIOBUTTON, [cdlg](wxCommandEvent& e) {
         if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) e.GetId())) e.Skip();
     });
+    bind_list_notifications(dlg, cdlg);   // list column-sort / double-click (e.g. CPluginsDlg)
     // Closing the window (X / Esc) behaves like Cancel.
     dlg->Bind(wxEVT_CLOSE_WINDOW, [dlg](wxCloseEvent&) {
         if (dlg->IsModal()) dlg->EndModal(IDCANCEL);
@@ -2002,6 +2005,33 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
 // UpdateData(FALSE) DDX load), and route in-page control commands through the
 // reactivated message map.  On OK every page does UpdateData(TRUE) so the
 // canonical GamePreferences ChangedPrefsP*/SavePrefsP* see the edited values.
+// Route a window's list-control notifications to the canonical ON_NOTIFY handlers
+// on `target` (the owning dialog/page).  wxListEvent is a command event and
+// propagates up to the parent, so binding on the dialog/page panel catches every
+// list it contains.  Covers column-click (sort) and double-click (edit/show-info).
+static void bind_list_notifications(wxWindow* win, CCmdTarget* target)
+{
+    if (!win || !target) return;
+    win->Bind(wxEVT_LIST_COL_CLICK, [target](wxListEvent& e) {
+        NMLISTVIEW nm{};
+        nm.hdr.idFrom = (UINT) e.GetId();
+        nm.hdr.code   = (UINT) LVN_COLUMNCLICK;
+        nm.iSubItem   = e.GetColumn();
+        LRESULT res = 0;
+        if (!AfxDispatchNotify(target, (UINT) LVN_COLUMNCLICK, (UINT) e.GetId(), &nm.hdr, &res))
+            e.Skip();
+    });
+    win->Bind(wxEVT_LIST_ITEM_ACTIVATED, [target](wxListEvent& e) {
+        NMITEMACTIVATE nm{};
+        nm.hdr.idFrom = (UINT) e.GetId();
+        nm.hdr.code   = (UINT) NM_DBLCLK;
+        nm.iItem      = e.GetIndex();
+        LRESULT res = 0;
+        if (!AfxDispatchNotify(target, (UINT) NM_DBLCLK, (UINT) e.GetId(), &nm.hdr, &res))
+            e.Skip();
+    });
+}
+
 // Build a panel for one canonical CPropertyPage under `bookParent` (a wxTreebook
 // or wxNotebook): populate from its recovered template, bind its m_hWnd, route
 // in-panel control commands to its canonical ON_BN_CLICKED/etc. handlers, and run
@@ -2029,6 +2059,7 @@ static wxPanel* build_canonical_sheet_page(wxWindow* bookParent, CPropertyPage* 
         panel->Bind(wxEVT_BUTTON,      dispatch);
         panel->Bind(wxEVT_CHECKBOX,    dispatch);
         panel->Bind(wxEVT_RADIOBUTTON, dispatch);
+        bind_list_notifications(panel, page);   // list column-sort / double-click
 
         page->OnInitDialog();          // canonical setup + DDX load (UpdateData(FALSE))
     }

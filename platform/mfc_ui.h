@@ -656,9 +656,13 @@ inline BOOL  GetTextExtentPoint32(HDC, LPCTSTR, int, SIZE*) { return FALSE; }
 #  define LVN_COLUMNCLICK  (LVN_FIRST-8)
 #  define TVN_FIRST        ((UINT)(-400))
 #  define TVN_SELCHANGED   (TVN_FIRST-2)
+#  define TVN_SELCHANGEDW  (TVN_FIRST-51)
 #  define NM_CLICK         (-2)
 #  define NM_DBLCLK        (-3)
+#  define NM_RETURN        (-4)
 #  define NM_RCLICK        (-5)
+#  define NM_RDBLCLK       (-6)
+#  define NM_CUSTOMDRAW    (-12)
 #  define CBN_SELCHANGE    1
 #  define BN_CLICKED       0
 #  define EN_CHANGE        0x0300
@@ -1640,6 +1644,9 @@ public:
 #undef ON_EN_CHANGE
 #undef ON_LBN_SELCHANGE
 #undef ON_LBN_DBLCLK
+#undef ON_NOTIFY
+#undef ON_NM_DBLCLK
+#undef ON_LVN_COLUMNCLICK
 
 #define DECLARE_MESSAGE_MAP() \
 public: \
@@ -1682,6 +1689,16 @@ public: \
 #define ON_COMMAND_RANGE(id1, id2, fn)       _AFX_CMD_VW(0, id1, id2, fn)
 #define ON_CONTROL_RANGE(code, id1, id2, fn) _AFX_CMD_VW(code, id1, id2, fn)
 
+// WM_NOTIFY handlers — void(NMHDR*, LRESULT*).  The member-fn pointer is parked in
+// the void()-typed AFX_PMSG slot (signature-only reinterpret; same class) and cast
+// back in AfxDispatchNotify, mirroring the _AFX_CMD_VW trick.
+#define _AFX_NOTIFY(notif, id, fn) \
+    { WM_NOTIFY, (UINT)(notif), (UINT)(id), (UINT)(id), AfxSig_notify, \
+      reinterpret_cast<AFX_PMSG>(static_cast<void (CCmdTarget::*)(NMHDR*, LRESULT*)>(&ThisClass::fn)) },
+#define ON_NOTIFY(notif, id, fn)        _AFX_NOTIFY(notif, id, fn)
+#define ON_NM_DBLCLK(id, fn)            _AFX_NOTIFY(NM_DBLCLK, id, fn)
+#define ON_LVN_COLUMNCLICK(id, fn)      _AFX_NOTIFY(LVN_COLUMNCLICK, id, fn)
+
 // Dispatch a WM_COMMAND-style notification to the first matching handler in the
 // target's message-map chain.  Returns TRUE if handled.
 inline BOOL AfxDispatchCommand(CCmdTarget* target, UINT code, UINT id) {
@@ -1698,6 +1715,28 @@ inline BOOL AfxDispatchCommand(CCmdTarget* target, UINT code, UINT id) {
                 } else {
                     (target->*(e->pfn))();
                 }
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+
+// Dispatch a WM_NOTIFY-style notification (e.g. LVN_COLUMNCLICK, NM_DBLCLK) to the
+// first matching ON_NOTIFY handler in the target's message-map chain.  `pnmh`
+// points at the (possibly extended, e.g. NMLISTVIEW) notification struct; the
+// handler receives it as NMHDR* and casts as needed.  Returns TRUE if handled.
+inline BOOL AfxDispatchNotify(CCmdTarget* target, UINT code, UINT id,
+                              NMHDR* pnmh, LRESULT* pResult) {
+    if (!target) return FALSE;
+    for (const AFX_MSGMAP* m = target->GetMessageMap(); m;
+         m = m->pfnGetBaseMap ? m->pfnGetBaseMap() : nullptr) {
+        for (const AFX_MSGMAP_ENTRY* e = m->lpEntries; e->nSig != (UINT_PTR)AfxSig_end; ++e) {
+            if (e->nMessage == (UINT)WM_NOTIFY && e->nSig == (UINT_PTR)AfxSig_notify &&
+                e->nCode == code && id >= e->nID && id <= e->nLastID) {
+                void (CCmdTarget::*pfn)(NMHDR*, LRESULT*) =
+                    reinterpret_cast<void (CCmdTarget::*)(NMHDR*, LRESULT*)>(e->pfn);
+                (target->*pfn)(pnmh, pResult);
                 return TRUE;
             }
         }

@@ -49,6 +49,7 @@
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
 #include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
 #include "dialogs/ImmediateDlg.h"     // CImmediateDlg (canonical Execute-Lua dialog)
+#include "dialogs/plugins/PluginsDlg.h" // CPluginsDlg (canonical plugin manager)
 #include "platform/wx_gdi_compat.h"   // PaintOwnerDrawButton (real CDC lives there)
 #include "scripting/scripting.h"     // CScriptEngine
 
@@ -567,6 +568,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->AppendSeparator();
     gameMenu->Append(32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/, wxT("Reload Script"));
     gameMenu->Append(ID_MENU_GAME_LUA_EVAL,              wxT("Execute Lua…\tCtrl+Shift+L"));
+    gameMenu->AppendSeparator();
+    gameMenu->Append(32983 /*ID_FILE_PLUGINS*/,          wxT("Plugins…"));
     mb->Append(gameMenu, wxT("&Game"));
 
     // ── Configure menu ────────────────────────────────────────────────────
@@ -859,6 +862,17 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                     dlg.m_pDoc = doc;
                     dlg.DoModal();
                 }
+            }
+        } else if (id == 32983 /*ID_FILE_PLUGINS*/) {
+            // Canonical plugin manager (IDD_PLUGINS): lists the active world's
+            // plugins with Add/Delete/Enable/Disable/Reload/Edit/Show-Description.
+            // Same inline pattern as Execute Lua — CPluginsDlg is a CDialog, so
+            // DoModal() renders via hook_run_dialog and its CListCtrl populates
+            // through the wxListCtrl bridge.
+            if (CMUSHclientDoc* doc = activeDoc()) {
+                CPluginsDlg dlg;
+                dlg.m_pDoc = doc;
+                dlg.DoModal();
             }
         } else if (id == wxID_ABOUT) {
             wxString ver = wxString::FromUTF8(

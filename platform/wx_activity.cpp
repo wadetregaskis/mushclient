@@ -1,0 +1,133 @@
+// wx_activity.cpp — Activity window implementation (see wx_activity.h).
+//
+// Mirrors CActivityView::OnUpdate's data/columns, but renders into a plain wx
+// frame (the MFC CListView/MDI doc-view framework is not used on the port).
+
+// wx headers MUST precede the MFC-compat headers: stdafx.h (compat.h) defines
+// Windows-style macros (DrawText, GetObject, …) that otherwise clobber wx's own
+// headers (wx/graphics.h etc.).  Same ordering as wx_mfc_impl.cpp / wx_world_child.cpp.
+#include <wx/wx.h>
+#include <wx/listctrl.h>
+#include <wx/timer.h>
+
+#include "stdafx.h"                   // compat.h, GetConnectionStatus()
+#include "MUSHclient.h"               // CMUSHclientApp + App + doc template
+#include "doc.h"                      // CMUSHclientDoc, eConnectConnectedToMud
+#include "platform/wx_activity.h"
+
+namespace {
+
+// Column order (a useful subset of CActivityView's columns).
+enum { kColWorld, kColNew, kColLines, kColStatus, kColSince, kColDuration };
+
+wxString C(const CString& s) { return wxString::FromUTF8(static_cast<const char*>(s)); }
+
+class CActivityFrame : public wxFrame
+{
+public:
+    static CActivityFrame* s_instance;
+
+    explicit CActivityFrame(wxWindow* parent)
+        : wxFrame(parent, wxID_ANY, wxT("Activity"),
+                  wxDefaultPosition, wxSize(600, 300))
+    {
+        s_instance = this;
+
+        m_list = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                wxLC_REPORT | wxLC_SINGLE_SEL);
+        m_list->InsertColumn(kColWorld,    wxT("World"),     wxLIST_FORMAT_LEFT,  150);
+        m_list->InsertColumn(kColNew,      wxT("New"),       wxLIST_FORMAT_RIGHT,  60);
+        m_list->InsertColumn(kColLines,    wxT("Lines"),     wxLIST_FORMAT_RIGHT,  80);
+        m_list->InsertColumn(kColStatus,   wxT("Status"),    wxLIST_FORMAT_LEFT,  110);
+        m_list->InsertColumn(kColSince,    wxT("Connected"), wxLIST_FORMAT_LEFT,  150);
+        m_list->InsertColumn(kColDuration, wxT("Duration"),  wxLIST_FORMAT_LEFT,  120);
+
+        m_timer.SetOwner(this);
+        Bind(wxEVT_TIMER,        &CActivityFrame::OnTimer, this);
+        Bind(wxEVT_CLOSE_WINDOW, &CActivityFrame::OnClose, this);
+
+        Repopulate();
+        m_timer.Start(1000);   // refresh once a second while open
+    }
+
+private:
+    void OnTimer(wxTimerEvent&) { Repopulate(); }
+
+    void OnClose(wxCloseEvent&)
+    {
+        m_timer.Stop();
+        s_instance = nullptr;
+        Destroy();
+    }
+
+    void Repopulate()
+    {
+        if (!m_list || !App.m_pWorldDocTemplate)
+            return;
+
+        m_list->Freeze();
+        m_list->DeleteAllItems();
+
+        POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
+        int row = 0;
+        while (pos)
+        {
+            CMUSHclientDoc* pDoc =
+                (CMUSHclientDoc*) App.m_pWorldDocTemplate->GetNextDoc(pos);
+            if (!pDoc)
+                continue;
+
+            CString strStatus = GetConnectionStatus(pDoc->m_iConnectPhase);
+
+            CString strSince;
+            if (pDoc->m_iConnectPhase == eConnectConnectedToMud)
+                strSince = pDoc->FormatTime(pDoc->m_tConnectTime, "%#I:%M %p, %d %b");
+
+            // Total connected time = prior sessions + the current one (if live).
+            CTimeSpan ts = pDoc->m_tsConnectDuration;
+            if (pDoc->m_iConnectPhase == eConnectConnectedToMud)
+                ts += CTime::GetCurrentTime() - pDoc->m_tConnectTime;
+
+            CString strDuration;
+            if (ts.GetDays() > 0)
+                strDuration = ts.Format("%Dd %Hh %Mm %Ss");
+            else if (ts.GetHours() > 0)
+                strDuration = ts.Format("%Hh %Mm %Ss");
+            else if (ts.GetMinutes() > 0)
+                strDuration = ts.Format("%Mm %Ss");
+            else
+                strDuration = ts.Format("%Ss");
+
+            long idx = m_list->InsertItem(row, C(pDoc->m_mush_name));
+            m_list->SetItem(idx, kColNew,      wxString::Format(wxT("%ld"), pDoc->m_new_lines));
+            m_list->SetItem(idx, kColLines,    wxString::Format(wxT("%ld"), pDoc->m_total_lines));
+            m_list->SetItem(idx, kColStatus,   C(strStatus));
+            m_list->SetItem(idx, kColSince,    C(strSince));
+            m_list->SetItem(idx, kColDuration, C(strDuration));
+            ++row;
+        }
+
+        m_list->Thaw();
+    }
+
+    wxListCtrl* m_list = nullptr;
+    wxTimer     m_timer;
+};
+
+CActivityFrame* CActivityFrame::s_instance = nullptr;
+
+} // namespace
+
+void ShowActivityWindow()
+{
+    if (CActivityFrame::s_instance)
+    {
+        CActivityFrame::s_instance->Raise();
+        return;
+    }
+
+    wxWindow* parent = (App.m_pMainWnd && App.m_pMainWnd->m_hWnd)
+                     ? static_cast<wxWindow*>(App.m_pMainWnd->m_hWnd)
+                     : nullptr;
+    (new CActivityFrame(parent))->Show();
+}

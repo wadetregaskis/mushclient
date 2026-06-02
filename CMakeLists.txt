@@ -835,6 +835,7 @@ if(NOT WIN32)
             # canonical dialogs/**/*.cpp render natively (vs hand-rebuilt in wx)
             platform/wx_dialog_resource.cpp
             platform/wx_dialog_bridge.cpp
+            platform/wx_activity.cpp
         )
         # mushgui links mushapp (full MUSHclient engine with doc.cpp, dialogs,
         # scripting, etc.) rather than the portable mushcore stub.

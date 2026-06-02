@@ -46,6 +46,7 @@
 #include "TextDocument.h"             // CTextDocument (for hook_create_text_window)
 #include "platform/wx_world_child.h"  // CWorldChildFrame
 #include "platform/wx_osx_text.h"     // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
+#include "platform/wx_activity.h"     // ShowActivityWindow (Game ▸ Activity List)
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
 #include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
@@ -592,6 +593,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->Append(32983 /*ID_FILE_PLUGINS*/,          wxT("Plugins…"));
     gameMenu->AppendSeparator();
     gameMenu->Append(32320 /*ID_INPUT_GLOBALCHANGE*/,    wxT("&Global Change…\tCtrl+Shift+G"));
+    gameMenu->Append(32203 /*ID_DISPLAY_ACTIVITYLIST*/,  wxT("&Activity List"));
     mb->Append(gameMenu, wxT("&Game"));
 
     // ── Configure menu ────────────────────────────────────────────────────
@@ -800,6 +802,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         if (id == 32320 /*ID_INPUT_GLOBALCHANGE*/) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
                 child->GlobalChangeInput();
+            return;
+        }
+
+        // ── Activity List: per-world overview window ───────────────────────
+        if (id == 32203 /*ID_DISPLAY_ACTIVITYLIST*/) {
+            ShowActivityWindow();
             return;
         }
 

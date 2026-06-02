@@ -60,7 +60,7 @@ int count = 0;
 
     nItem = pList->AddString(str);  // add to list (truncate to 500 chars)
     if (nItem != LB_ERR  && nItem != LB_ERRSPACE)
-      pList->SetItemData (nItem, (DWORD)(DWORD_PTR) itemPos);   // remember all about this string
+      pList->SetItemData (nItem, (DWORD_PTR) itemPos);   // remember all about this string
     count++;
     }
 

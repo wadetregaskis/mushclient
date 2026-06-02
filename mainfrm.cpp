@@ -1437,7 +1437,7 @@ CString strType = strSound.Right (4);
   if (dwReturn = mciSendCommand(NULL, 
                                 MCI_OPEN,
                                 MCI_OPEN_ELEMENT,        
-                                (DWORD)(DWORD_PTR)(LPVOID) &mciOpenParms))
+                                (DWORD_PTR)(LPVOID) &mciOpenParms))
     {
      ShowMCIError (dwReturn, strSound);
      return false;   // couldn't play it
@@ -1448,11 +1448,11 @@ CString strType = strSound.Right (4);
     Frame.m_wDeviceID = mciOpenParms.wDeviceID;
 
     // Use our frame's window for messages
-    mciPlayParms.dwCallback = (DWORD)(DWORD_PTR) Frame.m_hWnd;
+    mciPlayParms.dwCallback = (DWORD_PTR) Frame.m_hWnd;
 
     // play the file - our frame window will close it when finished
     if (dwReturn = mciSendCommand(Frame.m_wDeviceID, MCI_PLAY, MCI_NOTIFY, 
-                      (DWORD)(DWORD_PTR)(LPSTR)&mciPlayParms))
+                      (DWORD_PTR)(LPSTR)&mciPlayParms))
       {
       mciSendCommand(Frame.m_wDeviceID, MCI_CLOSE, 0, NULL);  // close on error
       Frame.m_wDeviceID = 0;

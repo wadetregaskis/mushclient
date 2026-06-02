@@ -1184,7 +1184,7 @@ int * iColOrder;
 
 // find column sequence
 
-  ctlList.SendMessage (LVM_GETCOLUMNORDERARRAY, iColCount, (DWORD)(DWORD_PTR) iColOrder);
+  ctlList.SendMessage (LVM_GETCOLUMNORDERARRAY, iColCount, (DWORD_PTR) iColOrder);
 
 // save column sequence and column width
 

@@ -538,16 +538,16 @@ struct CThreadData
 {
 	char *	m_strFilename;    // which file to monitor
 	HWND	m_hWnd;             // window to post event to
-  DWORD m_pDoc;             // which document it belongs to
+  DWORD_PTR m_pDoc;         // which document it belongs to (pointer-sized)
 	HANDLE	m_hEvent;         // event which will become signalled
 };
 
 void ThreadFunc(LPVOID pParam);
 void KillThread (HANDLE & pThread, CEvent & eventFileChanged);
-HANDLE CreateMonitoringThread(const char * sName, DWORD pDoc, CEvent & eventFileChanged);
+HANDLE CreateMonitoringThread(const char * sName, DWORD_PTR pDoc, CEvent & eventFileChanged);
 #else  // non-Windows: no-op stubs so call sites compile unchanged
 inline void   KillThread(HANDLE&, CEvent&) {}
-inline HANDLE CreateMonitoringThread(const char*, DWORD, CEvent&) { return nullptr; }
+inline HANDLE CreateMonitoringThread(const char*, DWORD_PTR, CEvent&) { return nullptr; }
 #endif // _WIN32
 
 #define WM_USER_FILE_CONTENTS_CHANGED (WM_USER + 1001)

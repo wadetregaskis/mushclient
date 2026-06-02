@@ -164,7 +164,7 @@ void ThreadFunc(LPVOID pParam)
 {
   CThreadData*	pData = (CThreadData*) pParam;
 	char * strDir = pData->m_strFilename;
-  DWORD pDoc = pData->m_pDoc;
+  DWORD_PTR pDoc = pData->m_pDoc;
 	char * p = strrchr (strDir, '\\');
 	if (!p)
 		p = strrchr (strDir, ':');   // why?
@@ -234,7 +234,7 @@ void KillThread (HANDLE & pThread, CEvent & eventFileChanged)
 
 // Create script source file monitoring thread
 //
-HANDLE CreateMonitoringThread(const char * sName, DWORD pDoc, CEvent & eventFileChanged)
+HANDLE CreateMonitoringThread(const char * sName, DWORD_PTR pDoc, CEvent & eventFileChanged)
 {
   HANDLE pThread;
 
@@ -344,7 +344,7 @@ void CTextDocument::CreateMonitoringThread(const char * sName)
   m_timeFileMod = status.m_mtime;
 
   // create the thread
-  m_pThread = ::CreateMonitoringThread (sName, (DWORD)(DWORD_PTR) this, m_eventFileChanged);
+  m_pThread = ::CreateMonitoringThread (sName, (DWORD_PTR) this, m_eventFileChanged);
 
   UpdateAllViews  (NULL);     // force window title to be redrawn
 }

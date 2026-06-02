@@ -2400,7 +2400,7 @@ int iColOrder [eColumnCount] = {0, 1, 2},
 
 // recover column sequence
 
-  m_ctlMacroList.SendMessage (LVM_SETCOLUMNORDERARRAY, eColumnCount, (DWORD)(DWORD_PTR) iColOrder);
+  m_ctlMacroList.SendMessage (LVM_SETCOLUMNORDERARRAY, eColumnCount, (DWORD_PTR) iColOrder);
 
   load_list ();
   

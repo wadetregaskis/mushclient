@@ -114,7 +114,7 @@ int iColOrder [eColumnCount] = {0, 1, 2, 3, 4, 5, 6},
                                                        
 // recover column sequence
 
-  m_ctlPluginList.SendMessage (LVM_SETCOLUMNORDERARRAY, eColumnCount, (DWORD)(DWORD_PTR) iColOrder);
+  m_ctlPluginList.SendMessage (LVM_SETCOLUMNORDERARRAY, eColumnCount, (DWORD_PTR) iColOrder);
 
   CWindowPlacement wp;
   wp.Restore ("Plugins List", this, false);
@@ -199,7 +199,7 @@ int nItem = 0;
 	  m_ctlPluginList.SetItemText (nItem, eColumnFile, p->m_strSource);
     m_ctlPluginList.SetItemText (nItem, eColumnEnabled, p->m_bEnabled ? "Yes" : "No");
     m_ctlPluginList.SetItemText (nItem, eColumnVersion, CFormat ("%5.2f", p->m_dVersion));
-    m_ctlPluginList.SetItemData (nItem, (DWORD)(DWORD_PTR) p);
+    m_ctlPluginList.SetItemData (nItem, (DWORD_PTR) p);
 
     }
 

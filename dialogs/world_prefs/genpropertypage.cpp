@@ -503,9 +503,9 @@ CString strMsg;
 
     // record item's new name as the list object data
     if (hdlItem)
-      m_cTreeCtrl.SetItemData (hdlItem, (DWORD)(DWORD_PTR) pstrObjectName);
+      m_cTreeCtrl.SetItemData (hdlItem, (DWORD_PTR) pstrObjectName);
     else
-      m_ctlList->SetItemData (nItem, (DWORD)(DWORD_PTR) pstrObjectName);
+      m_ctlList->SetItemData (nItem, (DWORD_PTR) pstrObjectName);
     }   // end of label changing
 
   SetInternalName (pItem, strObjectName);  // set internal name
@@ -834,7 +834,7 @@ int CGenPropertyPage::add_list_item (CObject * pItem,
   int nNewItem = AddItem (pItem, nItem, bInsert);
 
   // record item's name as the list object data
-  m_ctlList->SetItemData(nNewItem, (DWORD)(DWORD_PTR) pstrObjectName);
+  m_ctlList->SetItemData(nNewItem, (DWORD_PTR) pstrObjectName);
 
   // stamp with a number so we know if it was updated without our knowledge
   SetModificationNumber (pItem, m_nUpdateNumber);
@@ -887,7 +887,7 @@ HTREEITEM CGenPropertyPage::add_tree_item (CObject * pItem,
   HTREEITEM hNewItem = m_cTreeCtrl.InsertItem (strDescription, hParent);
 
   // record item's name as the list object data
-  m_cTreeCtrl.SetItemData (hNewItem, (DWORD)(DWORD_PTR) pstrObjectName);
+  m_cTreeCtrl.SetItemData (hNewItem, (DWORD_PTR) pstrObjectName);
 
   // stamp with a number so we know if it was updated without our knowledge
   SetModificationNumber (pItem, m_nUpdateNumber);
@@ -1551,7 +1551,7 @@ BOOL CGenPropertyPage::OnInitDialog()
 
 // recover column sequence
 
-  m_ctlList->SendMessage (LVM_SETCOLUMNORDERARRAY, m_iColumnCount, (DWORD)(DWORD_PTR) iColOrder);
+  m_ctlList->SendMessage (LVM_SETCOLUMNORDERARRAY, m_iColumnCount, (DWORD_PTR) iColOrder);
 
   delete [] iColOrder;
 

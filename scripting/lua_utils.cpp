@@ -969,6 +969,14 @@ static int info (lua_State *L)
     }
 
   MakeTableItem (L, "app_directory", ExtractDirectory (App.m_strMUSHclientFileName));
+  // Writable data directory: App Support/MUSHclient/ on macOS/Linux (the .app
+  // bundle is read-only), the executable's directory on Windows.  Used e.g. by
+  // spellchecker.lua to put its writable spell.sqlite somewhere it can create it.
+#ifdef _WIN32
+  MakeTableItem (L, "data_directory", ExtractDirectory (App.m_strMUSHclientFileName));
+#else
+  MakeTableItem (L, "data_directory", CString (PortableUserDataDir ().c_str ()));
+#endif
   MakeTableItem (L, "world_files_directory", App.m_strDefaultWorldFileDirectory);
   MakeTableItem (L, "state_files_directory", App.m_strDefaultStateFilesDirectory);
   MakeTableItem (L, "locale", App.m_strLocale);

@@ -896,6 +896,17 @@ if(NOT WIN32)
                     "${CMAKE_SOURCE_DIR}/names.txt"
                     "$<TARGET_BUNDLE_DIR:mushgui>/Contents/MacOS/"
                 COMMENT "Bundling tips.txt + names.txt next to the executable (CTipDlg / GenerateName read them there)")
+            # Spell checker: the engine script (loaded from app_directory) + the
+            # read-only dictionaries (app_directory/spell/).  spell.sqlite is built
+            # at runtime in the writable data dir (utils.info().data_directory).
+            add_custom_command(TARGET mushgui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_SOURCE_DIR}/scripting/spellchecker.lua"
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/MacOS/"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_SOURCE_DIR}/spell"
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/MacOS/spell"
+                COMMENT "Bundling spellchecker.lua + spell/ dictionaries (spell checker)")
         endif()
     elseif(NOT wxWidgets_FOUND)
         message(STATUS "wxWidgets not found — mushgui target skipped")

@@ -20,9 +20,12 @@ local IGNORE_IMBEDDED_NUMBERS = false -- ignore words with numbers in them? true
 -- this is the pattern we use to find "words" in the text to be spell-checked
 local pattern = "%a+'?[%a%d]+" -- regexp to give us a word with a possible single imbedded quote
 
--- path to the spell check dictionaries
-local directory = utils.info ().app_directory .. "spell\\"
--- file name of the user dictionary, in the above path
+-- Dictionaries are read-only and bundled next to the executable (app_directory).
+-- The user dictionary and the compiled spell.sqlite get WRITTEN, so they live in
+-- a writable data directory (App Support on macOS/Linux; the app dir on Windows).
+local dict_directory = utils.info ().app_directory .. "spell/"
+local directory      = utils.info ().data_directory or dict_directory
+-- file name of the user dictionary, in the writable directory
 local userdict = "userdict.txt"
 
 -- stuff below used internally
@@ -287,17 +290,20 @@ end -- spellcheck_string
 
 -- read one of the dictionaries
 local function read_dict (dlg, name)
+ -- bundled dictionaries are read-only (dict_directory); the user dictionary is
+ -- writable and lives in the data directory.
+ local dir = (name == userdict) and directory or dict_directory
  if SHOW_PROGRESS_BAR then
    dlg:step ()
-   dlg:status (directory .. name)
+   dlg:status (dir .. name)
    if dlg:checkcancel () then
      error "Dictionary loading cancelled"
    end -- if cancelled
  end -- if SHOW_PROGRESS_BAR
 
-  for line in io.lines (directory .. name) do
+  for line in io.lines (dir .. name) do
     insert_word (line, 0)
-  end 
+  end
 end -- read_dict
   
 local function init ()

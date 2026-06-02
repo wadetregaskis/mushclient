@@ -1435,6 +1435,40 @@ bool CMUSHclientApp::SpellCheck (CWnd * pWnd, CEdit * pEdit)
   }
 
 
+// Spell-check a string via the Lua spellchecker; returns the (corrected) text.
+// The Lua `spellcheck` function shows its own suggestion dialog per misspelling.
+// Shared logic factored out of SpellCheck() so the wx port can use it on its
+// wxTextCtrl input (SpellCheck() itself needs a CEdit).
+CString CMUSHclientApp::SpellCheckString (const CString & strText, bool bAll)
+  {
+  if (!m_bSpellCheckOK || !m_SpellChecker_Lua)
+    return strText;
+
+  lua_State * L = m_SpellChecker_Lua;
+  lua_settop (L, 0);
+  lua_getglobal (L, SPELLCHECKFUNCTION);
+  if (!lua_isfunction (L, -1))
+    return strText;
+
+  lua_pushstring (L, strText);
+  lua_pushboolean (L, bAll);
+
+  if (CallLuaWithTraceBack (L, 2, 1))
+    {
+    LuaError (L, "Run-time error", SPELLCHECKFUNCTION, "Command-line spell-check");
+    lua_close (L);
+    m_SpellChecker_Lua = NULL;
+    m_bSpellCheckOK = false;
+    return strText;
+    }
+
+  CString strResult = strText;
+  if (lua_isstring (L, -1))
+    strResult = lua_tostring (L, -1);
+  return strResult;
+  }   // end of CMUSHclientApp::SpellCheckString
+
+
 LUALIB_API int luaopen_progress_dialog(lua_State *L);
 
 void CMUSHclientApp::OpenLuaDelayed ()

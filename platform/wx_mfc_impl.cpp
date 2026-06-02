@@ -595,6 +595,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->Append(32320 /*ID_INPUT_GLOBALCHANGE*/,    wxT("&Global Change…\tCtrl+Shift+G"));
     gameMenu->Append(32203 /*ID_DISPLAY_ACTIVITYLIST*/,  wxT("&Activity List"));
     gameMenu->Append(32326 /*ID_EDIT_GENERATECHARACTERNAME*/, wxT("Generate Character &Name…"));
+    gameMenu->Append(32323 /*ID_EDIT_SPELLCHECK*/,       wxT("Chec&k Spelling"));
     mb->Append(gameMenu, wxT("&Game"));
 
     // ── Configure menu ────────────────────────────────────────────────────
@@ -816,6 +817,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         if (id == 32326 /*ID_EDIT_GENERATECHARACTERNAME*/) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
                 child->GenerateCharacterName();
+            return;
+        }
+
+        // ── Check Spelling (input spell-check via canonical Lua + dialog) ──
+        if (id == 32323 /*ID_EDIT_SPELLCHECK*/) {
+            if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
+                child->SpellCheckInput();
             return;
         }
 
@@ -2460,6 +2468,45 @@ static void hook_listctrl_sort_items(void* hwnd,
     lc->SortItems(ListSortTrampoline, (wxIntPtr) &ctx);
 }
 
+// ── CListBox → wxListBox ──────────────────────────────────────────────────
+namespace { inline wxListBox* LBX(void* hwnd) { return wxDynamicCast((wxWindow*) hwnd, wxListBox); } }
+static int  hook_listbox_add_string(void* hwnd, const char* text)
+{
+    wxListBox* lb = LBX(hwnd);
+    return lb ? (int) lb->Append(wxString::FromUTF8(text ? text : "")) : LB_ERR;
+}
+static void hook_listbox_reset_content(void* hwnd)
+{
+    if (wxListBox* lb = LBX(hwnd)) lb->Clear();
+}
+static int  hook_listbox_get_count(void* hwnd)
+{
+    wxListBox* lb = LBX(hwnd);
+    return lb ? (int) lb->GetCount() : 0;
+}
+static int  hook_listbox_get_cur_sel(void* hwnd)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (!lb) return LB_ERR;
+    int sel = lb->GetSelection();
+    return (sel == wxNOT_FOUND) ? LB_ERR : sel;
+}
+static int  hook_listbox_set_cur_sel(void* hwnd, int sel)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (!lb) return LB_ERR;
+    if (sel < 0) { lb->SetSelection(wxNOT_FOUND); return LB_ERR; }
+    if (sel >= (int) lb->GetCount()) return LB_ERR;
+    lb->SetSelection(sel);
+    return sel;
+}
+static char* hook_listbox_get_text(void* hwnd, int index)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (!lb || index < 0 || index >= (int) lb->GetCount()) return nullptr;
+    return strdup(lb->GetString(index).utf8_str());
+}
+
 // ── CComboBox → wxComboBox ────────────────────────────────────────────────
 namespace {
 inline wxComboBox* CB(void* hwnd) { return wxDynamicCast((wxWindow*) hwnd, wxComboBox); }
@@ -2698,6 +2745,12 @@ void wx_mfc_install_hooks()
     g_wxhook_listctrl_ensure_visible  = hook_listctrl_ensure_visible;
     g_wxhook_listctrl_set_column_width = hook_listctrl_set_column_width;
     g_wxhook_listctrl_sort_items      = hook_listctrl_sort_items;
+    g_wxhook_listbox_add_string       = hook_listbox_add_string;
+    g_wxhook_listbox_reset_content    = hook_listbox_reset_content;
+    g_wxhook_listbox_get_count        = hook_listbox_get_count;
+    g_wxhook_listbox_get_cur_sel      = hook_listbox_get_cur_sel;
+    g_wxhook_listbox_set_cur_sel      = hook_listbox_set_cur_sel;
+    g_wxhook_listbox_get_text         = hook_listbox_get_text;
     g_wxhook_combo_add_string         = hook_combo_add_string;
     g_wxhook_combo_get_count          = hook_combo_get_count;
     g_wxhook_combo_get_cur_sel        = hook_combo_get_cur_sel;

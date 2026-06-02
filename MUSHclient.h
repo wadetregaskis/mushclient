@@ -251,6 +251,10 @@ public:
   // spell check stuff
   void InitSpellCheck (void);
   bool SpellCheck (CWnd * pWnd, CEdit * pEdit);
+  // Spell-check a string and return the (possibly corrected) text.  Factors the
+  // Lua call out of SpellCheck() so the wx port can spell-check its wxTextCtrl
+  // input (which is not a CEdit).
+  CString SpellCheckString (const CString & strText, bool bAll);
 
   __int64 GetUniqueNumber (void) { return m_nUniqueNumber++; };
   CString GetUniqueString (void);

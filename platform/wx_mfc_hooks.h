@@ -365,6 +365,16 @@ extern void (*g_wxhook_listctrl_set_column_width)(void* hwnd, int col, int width
 extern void (*g_wxhook_listctrl_sort_items)(void* hwnd,
         int (*cmp)(intptr_t, intptr_t, intptr_t), intptr_t lparam);
 
+// ── CListBox → wxListBox (e.g. the spell-check suggestion list) ───────────────
+// `hwnd` is the wxListBox* (a CListBox member's m_hWnd, bound by DDX_Control).
+// GetCurSel returns LB_ERR (-1) when there's no selection (Win32 convention).
+extern int   (*g_wxhook_listbox_add_string)(void* hwnd, const char* text);
+extern void  (*g_wxhook_listbox_reset_content)(void* hwnd);
+extern int   (*g_wxhook_listbox_get_count)(void* hwnd);
+extern int   (*g_wxhook_listbox_get_cur_sel)(void* hwnd);
+extern int   (*g_wxhook_listbox_set_cur_sel)(void* hwnd, int sel);
+extern char* (*g_wxhook_listbox_get_text)(void* hwnd, int index);   // heap; caller free()s
+
 // ── CComboBox → wxComboBox (drop-down selectors: proxy type, colour combos…) ─
 // `hwnd` is the wxComboBox* (a CComboBox member's m_hWnd, bound by DDX_Control).
 // Return values match the Win32 CB_* conventions the canonical code expects:

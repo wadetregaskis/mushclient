@@ -66,6 +66,10 @@ public:
     // canonical GenerateName() + CGeneratedNameDlg.
     void GenerateCharacterName();
 
+    // Spell-check the command-input text (Game ▸ Check Spelling) — runs the
+    // canonical spell-check Lua (which shows the suggestion dialog per word).
+    void SpellCheckInput();
+
     // Re-send NAWS with the current pane dimensions.  Call after a font change
     // so the MUD learns the new character-grid size.
     void TriggerNAWS();

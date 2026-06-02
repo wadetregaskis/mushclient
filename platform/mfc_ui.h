@@ -3446,17 +3446,31 @@ inline void DDV_MinMaxCBString(CDataExchange*, CString&, int, int)    {}
 
 class CListBox : public CWnd {
 public:
-    int       AddString(LPCTSTR) { return LB_ERR; }
+    int       AddString(LPCTSTR s) {
+        return g_wxhook_listbox_add_string
+             ? g_wxhook_listbox_add_string(m_hWnd, s ? s : "") : LB_ERR;
+    }
     int       InsertString(int, LPCTSTR) { return LB_ERR; }
     int       DeleteString(UINT) { return LB_ERR; }
-    void      ResetContent() {}
-    int       GetCount() const { return 0; }
-    int       GetCurSel() const { return LB_ERR; }
-    int       SetCurSel(int) { return LB_ERR; }
+    void      ResetContent() {
+        if (g_wxhook_listbox_reset_content) g_wxhook_listbox_reset_content(m_hWnd);
+    }
+    int       GetCount() const {
+        return g_wxhook_listbox_get_count ? g_wxhook_listbox_get_count(m_hWnd) : 0;
+    }
+    int       GetCurSel() const {
+        return g_wxhook_listbox_get_cur_sel ? g_wxhook_listbox_get_cur_sel(m_hWnd) : LB_ERR;
+    }
+    int       SetCurSel(int sel) {
+        return g_wxhook_listbox_set_cur_sel ? g_wxhook_listbox_set_cur_sel(m_hWnd, sel) : LB_ERR;
+    }
     int       GetSel(int) const { return LB_ERR; }
     int       SetSel(int, BOOL=TRUE) { return LB_ERR; }
     int       GetText(int, LPTSTR) const { return LB_ERR; }
-    void      GetText(int, CString&) const {}
+    void      GetText(int i, CString& s) const {
+        char* p = g_wxhook_listbox_get_text ? g_wxhook_listbox_get_text(m_hWnd, i) : nullptr;
+        if (p) { s = p; ::free(p); } else s.Empty();
+    }
     int       GetTextLen(int) const { return LB_ERR; }
     void      SetItemData(int, DWORD_PTR) {}
     DWORD_PTR GetItemData(int) const { return 0; }

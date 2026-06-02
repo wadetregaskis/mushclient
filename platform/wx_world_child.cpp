@@ -1762,6 +1762,31 @@ void CWorldChildFrame::GenerateCharacterName()
     dlg.DoModal();
 }
 
+// ── Spell-check the input ──────────────────────────────────────────────────
+// Mirrors CSendView::OnEditSpellcheck (stubbed): runs the canonical spell-check
+// Lua over the input text (it pops the suggestion dialog per misspelling) and
+// writes the corrected text back.
+void CWorldChildFrame::SpellCheckInput()
+{
+    wxTextCtrl* inp = ActiveInput();
+    if (!inp)
+        return;
+
+    long from = 0, to = 0;
+    inp->GetSelection(&from, &to);
+    bool bAll = (from == to);   // no selection → check the whole line
+    wxString wtext = bAll ? inp->GetValue() : inp->GetStringSelection();
+
+    CString corrected = App.SpellCheckString(CString(wtext.ToUTF8().data()), bAll);
+    wxString wcorrected = wxString::FromUTF8(static_cast<const char*>(corrected));
+
+    if (bAll)
+        inp->SetValue(wcorrected);
+    else
+        inp->Replace(from, to, wcorrected);
+    inp->SetInsertionPointEnd();
+}
+
 // ── ApplyNoEcho ───────────────────────────────────────────────────────────
 // Switches the input bar between normal and password (masked) mode.
 // Called from OnWorldTimer whenever m_doc->m_bNoEcho changes.

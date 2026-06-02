@@ -557,8 +557,9 @@ inline const char* TranslateTime(const char* fmt) { return fmt; }
 // ── SSL forward declarations ──────────────────────────────────────────────
 // When OpenSSL is present, <openssl/ssl.h> provides the full definition.
 // When absent, we supply a hollow stub so SSL* can be used as a pointer type.
-// PLATFORM_OPENSSL_SSL_H_INCLUDED is defined by platform/openssl/ssl.h which
-// is pulled in via mfc_ui.h; if it's already there, skip this duplicate block.
+// PLATFORM_OPENSSL_SSL_H_INCLUDED is defined by the fallback stub
+// platform/openssl_fallback/openssl/ssl.h (only on the include path when no real
+// OpenSSL was found); if it's already there, skip this duplicate block.
 #if !defined(OPENSSL_FOUND) && !defined(PLATFORM_OPENSSL_SSL_H_INCLUDED)
 struct ssl_st {};
 typedef struct ssl_st SSL;

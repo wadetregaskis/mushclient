@@ -63,6 +63,9 @@ static inline int   SSL_pending(SSL* s)  { (void)s; return 0; }
 // Macro for SNI (server name indication)
 #define SSL_set_tlsext_host_name(ssl, name) ((void)0)
 
+// Hostname verification (no-op stub; real OpenSSL checks the cert CN/SAN)
+static inline int SSL_set1_host(SSL* s, const char* host) { (void)s;(void)host; return 1; }
+
 typedef int (*SSL_verify_cb)(int, X509_STORE_CTX*);
 
 static inline void SSL_CTX_set_verify(SSL_CTX* c, int m, SSL_verify_cb cb) {

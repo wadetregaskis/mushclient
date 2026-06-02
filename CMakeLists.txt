@@ -48,6 +48,18 @@ add_compile_definitions(HAVE_CONFIG_H)  # for PCRE config.h
 # ── Find system libraries (macOS / Linux) ─────────────────────────────────
 if(NOT WIN32)
     find_package(OpenSSL QUIET)
+    if(NOT (OpenSSL_FOUND OR OPENSSL_FOUND))
+        # No system OpenSSL: fall back to minimal compile-only stub headers so the
+        # TLS code still builds (non-functional — connections will report
+        # "unable to create SSL context").  These live in platform/openssl_fallback/
+        # — deliberately OUTSIDE the default platform/ search path so they can NEVER
+        # shadow real <openssl/*.h> when OpenSSL IS present (which previously left
+        # TLS permanently stubbed out even on systems with OpenSSL installed).
+        include_directories(${CMAKE_SOURCE_DIR}/platform/openssl_fallback)
+        message(STATUS "OpenSSL not found — using compile-only stub headers (TLS disabled)")
+    else()
+        message(STATUS "OpenSSL found — TLS enabled (real headers, not the stub)")
+    endif()
     find_package(ZLIB REQUIRED)
 
     # libpng: on macOS find_package(PNG) can mis-detect a stale header dir

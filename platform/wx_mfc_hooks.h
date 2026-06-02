@@ -322,6 +322,12 @@ extern void (*g_end_mfc_dialog)(void* self, int result);
 // the wanted page, and on OK runs each page's UpdateData(TRUE).  Returns
 // IDOK/IDCANCEL.  nullptr -> IDCANCEL.
 extern intptr_t (*g_run_mfc_property_sheet)(void* self);
+// g_run_mfc_property_sheet_flat: base CPropertySheet::DoModal calls this with
+// `self` = the CPropertySheet* (e.g. CGlobalPrefsSheet — File ▸ Preferences).
+// Same as above but builds a flat wxNotebook (tabs) from the base m_flatPages
+// list (no tree structure); tab labels come from each page template's caption.
+// Returns IDOK/IDCANCEL.  nullptr -> IDCANCEL.
+extern intptr_t (*g_run_mfc_property_sheet_flat)(void* self);
 
 // ── Dialog control accessors (GetDlgItem / DDX) ───────────────────────────
 // g_wxhook_get_dlg_item: the wxWindow* of `parent`'s child with control id `id`

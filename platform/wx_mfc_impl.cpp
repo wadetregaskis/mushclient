@@ -21,7 +21,7 @@
 #include <wx/fontpicker.h>
 #include <wx/dnd.h>        // wxFileDropTarget
 #include <wx/dirdlg.h>     // wxDirDialog
-#include <wx/notebook.h>   // wxNotebook (GlobalPrefsDlg tabs)
+#include <wx/notebook.h>   // wxNotebook (flat property-sheet bridge: hook_run_property_sheet_flat)
 #include <wx/clipbrd.h>    // wxTheClipboard
 #include <wx/dataobj.h>    // wxTextDataObject
 #include <wx/colordlg.h>   // wxColourDialog
@@ -1162,349 +1162,21 @@ static void hook_save_active_world(wxMDIParentFrame* frame, bool saveAs)
 // CQuickConnectDlg uses the inherited CDialog::DoModal, which the bridge renders
 // from the recovered IDD_QUICK_CONNECT template — see doc_construct.cpp.)
 
-// ── GlobalPrefsDlg ────────────────────────────────────────────────────────
-// Application-wide preferences dialog (tabbed).  Maps directly to
-// CMUSHclientApp members stored in the preferences DB.
+// (The hand-built GlobalPrefsDlg + its MakeDirRow helper were removed: File ▸
+//  Preferences now renders the canonical CGlobalPrefsSheet (12 CGlobalPrefsP*
+//  pages) through the CPropertySheet bridge — see hook_file_preferences below
+//  and hook_run_property_sheet_flat.)
 
-namespace {
+// File ▸ Preferences — the app-wide global preferences sheet.  Routes to the
+// canonical DoGlobalPrefs(), which builds CGlobalPrefsSheet (the 12 CGlobalPrefsP*
+// pages) and runs the real load → DoModal → save (SaveGlobalsToDatabase) logic;
+// the base CPropertySheet bridge renders the sheet as a wxNotebook (see
+// hook_run_property_sheet_flat).  Replaces the former hand-built GlobalPrefsDlg.
+void DoGlobalPrefs(CMUSHclientDoc* pCurrentDoc);   // dialogs/global_prefs/GlobalPrefs.cpp
 
-// Helper: make a directory-picker row (label + text + "…" browse button).
-// The text control is returned; parent owns all widgets.
-static wxTextCtrl* MakeDirRow(wxWindow* parent, wxSizer* box,
-                               const wxString& label, const wxString& value,
-                               const wxString& dlgTitle)
+static void hook_file_preferences(wxWindow* /*parent*/)
 {
-    wxBoxSizer* row = new wxBoxSizer(wxHORIZONTAL);
-    row->Add(new wxStaticText(parent, wxID_ANY, label),
-             0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
-    wxTextCtrl* ctrl = new wxTextCtrl(parent, wxID_ANY, value,
-                                       wxDefaultPosition, wxSize(260, -1));
-    row->Add(ctrl, 1, wxEXPAND);
-    wxButton* btn = new wxButton(parent, wxID_ANY, wxT("…"),
-                                  wxDefaultPosition, wxSize(28, -1));
-    btn->Bind(wxEVT_BUTTON, [ctrl, dlgTitle](wxCommandEvent&) {
-        wxDirDialog dlg(nullptr, dlgTitle, ctrl->GetValue(),
-                        wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
-        if (dlg.ShowModal() == wxID_OK)
-            ctrl->SetValue(dlg.GetPath());
-    });
-    row->Add(btn, 0, wxLEFT, 4);
-    box->Add(row, 0, wxEXPAND | wxALL, 6);
-    return ctrl;
-}
-
-class GlobalPrefsDlg : public wxDialog
-{
-public:
-    // ── General tab ───────────────────────────────────────────────────────
-    wxCheckBox* m_reconnectOnFail;
-    wxCheckBox* m_notifyOnDisconnect;
-    wxCheckBox* m_notifyCannotConnect;
-    wxCheckBox* m_autoConnect;
-    wxCheckBox* m_errorsToOutput;
-    wxCheckBox* m_regexpMatchEmpty;
-    wxCheckBox* m_openMaximised;
-    wxCheckBox* m_confirmCloseWorld;
-    wxCheckBox* m_confirmCloseApp;
-    wxCheckBox* m_confirmSaveVars;
-    wxCheckBox* m_appendToLog;
-    wxCheckBox* m_autoLog;
-    wxCheckBox* m_allTypingToCommand;
-    wxTextCtrl* m_wordDelimitersDblClick;
-    // ── Font tab ──────────────────────────────────────────────────────────
-    wxTextCtrl*   m_fontName;      // output font face name
-    wxSpinCtrl*   m_fontSize;      // output font point size
-    // ── Directories tab ───────────────────────────────────────────────────
-    wxTextCtrl* m_worldDir;
-    wxTextCtrl* m_pluginsDir;
-    wxTextCtrl* m_logDir;
-
-    explicit GlobalPrefsDlg(wxWindow* parent)
-        : wxDialog(parent, wxID_ANY, wxT("Preferences"),
-                   wxDefaultPosition, wxDefaultSize,
-                   wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
-    {
-        wxBoxSizer* vs = new wxBoxSizer(wxVERTICAL);
-        wxNotebook* nb = new wxNotebook(this, wxID_ANY);
-
-        // ════════════════════════════════════════════════════════════════
-        // Tab 1: General
-        // ════════════════════════════════════════════════════════════════
-        {
-            wxScrolledWindow* pg = new wxScrolledWindow(nb);
-            pg->SetScrollRate(0, 10);
-            wxBoxSizer* pvs = new wxBoxSizer(wxVERTICAL);
-
-            // Connection
-            {
-                wxStaticBoxSizer* box =
-                    new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Connection"));
-                m_reconnectOnFail    = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Reconnect automatically on link failure"));
-                m_notifyOnDisconnect = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Notify when world disconnects"));
-                m_notifyCannotConnect = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Notify if connection attempt fails"));
-                m_autoConnect         = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Auto-connect worlds when opened"));
-                m_reconnectOnFail->SetValue(App.m_bReconnectOnLinkFailure     != 0);
-                m_notifyOnDisconnect->SetValue(App.m_bNotifyOnDisconnect       != 0);
-                m_notifyCannotConnect->SetValue(App.m_bNotifyIfCannotConnect   != 0);
-                m_autoConnect->SetValue(App.m_bAutoConnectWorlds               != 0);
-                box->Add(m_reconnectOnFail,     0, wxALL, 6);
-                box->Add(m_notifyOnDisconnect,  0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
-                box->Add(m_notifyCannotConnect, 0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
-                box->Add(m_autoConnect,         0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
-                pvs->Add(box, 0, wxEXPAND | wxALL, 10);
-            }
-            // Display / Scripting
-            {
-                wxStaticBoxSizer* box =
-                    new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Display / Scripting"));
-                m_errorsToOutput  = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Show script errors in the output window"));
-                m_regexpMatchEmpty = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Regular expressions can match empty strings"));
-                m_openMaximised   = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Open worlds maximised"));
-                m_errorsToOutput->SetValue(App.m_bErrorNotificationToOutputWindow != 0);
-                m_regexpMatchEmpty->SetValue(App.m_bRegexpMatchEmpty               != 0);
-                m_openMaximised->SetValue(App.m_bOpenWorldsMaximised               != 0);
-                box->Add(m_errorsToOutput,   0, wxALL, 6);
-                box->Add(m_regexpMatchEmpty, 0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
-                box->Add(m_openMaximised,    0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
-                pvs->Add(box, 0, wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 10);
-            }
-            // Behaviour / Logging
-            {
-                wxStaticBoxSizer* box =
-                    new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Behaviour / Logging"));
-                m_confirmCloseWorld = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Confirm before closing a world"));
-                m_confirmCloseApp   = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Confirm before quitting MUSHclient"));
-                m_confirmSaveVars   = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Confirm before saving variables to file"));
-                m_autoLog           = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Auto-log all worlds"));
-                m_appendToLog       = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Append to existing log files (don't overwrite)"));
-                m_confirmCloseWorld->SetValue(App.m_bConfirmBeforeClosingWorld     != 0);
-                m_confirmCloseApp->SetValue(App.m_bConfirmBeforeClosingMushclient  != 0);
-                m_confirmSaveVars->SetValue(App.m_bConfirmBeforeSavingVariables    != 0);
-                m_autoLog->SetValue(App.m_bAutoLogWorld                            != 0);
-                m_appendToLog->SetValue(App.m_bAppendToLogFiles                    != 0);
-                box->Add(m_confirmCloseWorld, 0, wxALL, 6);
-                box->Add(m_confirmCloseApp,   0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
-                box->Add(m_confirmSaveVars,   0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
-                box->Add(m_autoLog,           0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
-                box->Add(m_appendToLog,       0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
-                pvs->Add(box, 0, wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 10);
-            }
-            // Input / editing
-            {
-                wxStaticBoxSizer* box =
-                    new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Input / editing"));
-                m_allTypingToCommand = new wxCheckBox(pg, wxID_ANY,
-                    wxT("Send all keyboard input to the command bar"));
-                m_allTypingToCommand->SetValue(App.m_bAllTypingToCommandWindow != 0);
-                box->Add(m_allTypingToCommand, 0, wxALL, 6);
-
-                wxBoxSizer* delimRow = new wxBoxSizer(wxHORIZONTAL);
-                delimRow->Add(new wxStaticText(pg, wxID_ANY,
-                    wxT("Double-click word delimiters:")),
-                    0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
-                m_wordDelimitersDblClick = new wxTextCtrl(pg, wxID_ANY,
-                    wxString::FromUTF8(
-                        static_cast<const char*>(App.m_strWordDelimitersDblClick)),
-                    wxDefaultPosition, wxSize(160, -1));
-                delimRow->Add(m_wordDelimitersDblClick, 1, wxEXPAND);
-                box->Add(delimRow, 0, wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 6);
-                pvs->Add(box, 0, wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 10);
-            }
-            pg->SetSizer(pvs);
-            nb->AddPage(pg, wxT("General"));
-        }
-
-        // ════════════════════════════════════════════════════════════════
-        // Tab 2: Font
-        // ════════════════════════════════════════════════════════════════
-        {
-            wxPanel* pg = new wxPanel(nb);
-            wxBoxSizer* pvs = new wxBoxSizer(wxVERTICAL);
-
-            wxStaticBoxSizer* box =
-                new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Default output / input font"));
-            box->Add(new wxStaticText(pg, wxID_ANY,
-                wxT("Applied to new worlds.  Leave blank to use the system\n"
-                    "monospace font.  Existing worlds keep their saved font.")),
-                0, wxALL, 6);
-
-            // Face name row
-            {
-                wxBoxSizer* row = new wxBoxSizer(wxHORIZONTAL);
-                row->Add(new wxStaticText(pg, wxID_ANY, wxT("Font:")),
-                         0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
-                m_fontName = new wxTextCtrl(pg, wxID_ANY,
-                    wxString::FromUTF8(static_cast<const char*>(App.m_strDefaultOutputFont)),
-                    wxDefaultPosition, wxSize(200, -1));
-                row->Add(m_fontName, 1, wxEXPAND);
-
-                // "Choose…" button opens a wxFontDialog
-                wxButton* chooseBtn = new wxButton(pg, wxID_ANY, wxT("Choose…"));
-                chooseBtn->Bind(wxEVT_BUTTON, [this, pg](wxCommandEvent&) {
-                    wxString face = m_fontName->GetValue();
-                    int      pts  = m_fontSize->GetValue();
-                    wxFont   init(pts > 0 ? pts : 12,
-                                  wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL,
-                                  wxFONTWEIGHT_NORMAL, false, face);
-                    wxFontData fd;
-                    fd.SetInitialFont(init);
-                    fd.SetAllowSymbols(false);
-                    wxFontDialog dlg(pg, fd);
-                    if (dlg.ShowModal() == wxID_OK) {
-                        wxFont chosen = dlg.GetFontData().GetChosenFont();
-                        m_fontName->SetValue(chosen.GetFaceName());
-                        m_fontSize->SetValue(chosen.GetPointSize());
-                    }
-                });
-                row->Add(chooseBtn, 0, wxLEFT, 6);
-                box->Add(row, 0, wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 6);
-            }
-            // Size row
-            {
-                wxBoxSizer* row = new wxBoxSizer(wxHORIZONTAL);
-                row->Add(new wxStaticText(pg, wxID_ANY, wxT("Size (pt):")),
-                         0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
-                m_fontSize = new wxSpinCtrl(pg, wxID_ANY,
-                    wxEmptyString, wxDefaultPosition, wxSize(70, -1),
-                    wxSP_ARROW_KEYS, 4, 72,
-                    App.m_iDefaultOutputFontHeight > 0
-                        ? App.m_iDefaultOutputFontHeight : 12);
-                row->Add(m_fontSize, 0);
-                box->Add(row, 0, wxLEFT|wxRIGHT|wxBOTTOM, 6);
-            }
-            pvs->Add(box, 0, wxEXPAND | wxALL, 10);
-            pg->SetSizer(pvs);
-            nb->AddPage(pg, wxT("Font"));
-        }
-
-        // ════════════════════════════════════════════════════════════════
-        // Tab 3: Directories
-        // ════════════════════════════════════════════════════════════════
-        {
-            wxPanel* pg = new wxPanel(nb);
-            wxBoxSizer* pvs = new wxBoxSizer(wxVERTICAL);
-            wxStaticBoxSizer* box =
-                new wxStaticBoxSizer(wxVERTICAL, pg, wxT("Default directories"));
-
-            m_worldDir   = MakeDirRow(pg, box, wxT("World files:"),
-                wxString::FromUTF8(static_cast<const char*>(App.m_strDefaultWorldFileDirectory)),
-                wxT("Choose default world directory"));
-            m_pluginsDir = MakeDirRow(pg, box, wxT("Plugins:"),
-                wxString::FromUTF8(static_cast<const char*>(App.m_strPluginsDirectory)),
-                wxT("Choose plugins directory"));
-            m_logDir     = MakeDirRow(pg, box, wxT("Log files:"),
-                wxString::FromUTF8(static_cast<const char*>(App.m_strDefaultLogFileDirectory)),
-                wxT("Choose default log directory"));
-
-            pvs->Add(box, 0, wxEXPAND | wxALL, 10);
-            pg->SetSizer(pvs);
-            nb->AddPage(pg, wxT("Directories"));
-        }
-
-        vs->Add(nb, 1, wxEXPAND | wxALL, 8);
-        vs->Add(CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
-                wxEXPAND | wxLEFT|wxRIGHT|wxBOTTOM, 10);
-        SetSizerAndFit(vs);
-        SetSize(wxSize(520, -1));
-    }
-};
-} // anonymous namespace
-
-static void hook_file_preferences(wxWindow* parent)
-{
-    GlobalPrefsDlg dlg(parent);
-    if (dlg.ShowModal() != wxID_OK) return;
-
-    // ── General tab ───────────────────────────────────────────────────────
-    App.m_bReconnectOnLinkFailure          = dlg.m_reconnectOnFail->GetValue()     ? 1 : 0;
-    App.m_bNotifyOnDisconnect              = dlg.m_notifyOnDisconnect->GetValue()   ? 1 : 0;
-    App.m_bNotifyIfCannotConnect           = dlg.m_notifyCannotConnect->GetValue()  ? 1 : 0;
-    App.m_bAutoConnectWorlds               = dlg.m_autoConnect->GetValue()          ? 1 : 0;
-    App.m_bErrorNotificationToOutputWindow = dlg.m_errorsToOutput->GetValue()       ? 1 : 0;
-    App.m_bRegexpMatchEmpty                = dlg.m_regexpMatchEmpty->GetValue()      ? 1 : 0;
-    App.m_bOpenWorldsMaximised             = dlg.m_openMaximised->GetValue()         ? 1 : 0;
-    App.m_bConfirmBeforeClosingWorld       = dlg.m_confirmCloseWorld->GetValue()    ? 1 : 0;
-    App.m_bConfirmBeforeClosingMushclient  = dlg.m_confirmCloseApp->GetValue()      ? 1 : 0;
-    App.m_bConfirmBeforeSavingVariables    = dlg.m_confirmSaveVars->GetValue()      ? 1 : 0;
-    App.m_bAutoLogWorld                    = dlg.m_autoLog->GetValue()              ? 1 : 0;
-    App.m_bAppendToLogFiles                = dlg.m_appendToLog->GetValue()          ? 1 : 0;
-    App.m_bAllTypingToCommandWindow        = dlg.m_allTypingToCommand->GetValue()   ? 1 : 0;
-    App.m_strWordDelimitersDblClick =
-        CString(dlg.m_wordDelimitersDblClick->GetValue().ToUTF8().data());
-
-    // ── Font tab ──────────────────────────────────────────────────────────
-    App.m_strDefaultOutputFont       = CString(dlg.m_fontName->GetValue().ToUTF8().data());
-    App.m_strDefaultInputFont        = App.m_strDefaultOutputFont;  // keep in sync
-    App.m_strFixedPitchFont          = App.m_strDefaultOutputFont;
-    App.m_iDefaultOutputFontHeight   = dlg.m_fontSize->GetValue();
-    App.m_iDefaultInputFontHeight    = App.m_iDefaultOutputFontHeight;
-    App.m_iFixedPitchFontSize        = App.m_iDefaultOutputFontHeight;
-
-    // ── Directories tab ───────────────────────────────────────────────────
-    App.m_strDefaultWorldFileDirectory =
-        CString(dlg.m_worldDir->GetValue().ToUTF8().data());
-    App.m_strPluginsDirectory =
-        CString(dlg.m_pluginsDir->GetValue().ToUTF8().data());
-    App.m_strDefaultLogFileDirectory =
-        CString(dlg.m_logDir->GetValue().ToUTF8().data());
-
-    // ── Persist all changed values to the preferences DB ──────────────────
-    // Boolean settings
-    App.db_write_int("prefs", "ReconnectOnLinkFailure",         App.m_bReconnectOnLinkFailure);
-    App.db_write_int("prefs", "NotifyOnDisconnect",             App.m_bNotifyOnDisconnect);
-    App.db_write_int("prefs", "NotifyIfCannotConnect",          App.m_bNotifyIfCannotConnect);
-    App.db_write_int("prefs", "AutoConnectWorlds",              App.m_bAutoConnectWorlds);
-    App.db_write_int("prefs", "ErrorNotificationToOutputWindow",App.m_bErrorNotificationToOutputWindow);
-    App.db_write_int("prefs", "RegexpMatchEmpty",               App.m_bRegexpMatchEmpty);
-    App.db_write_int("prefs", "OpenWorldsMaximised",            App.m_bOpenWorldsMaximised);
-    App.db_write_int("prefs", "ConfirmBeforeClosingWorld",      App.m_bConfirmBeforeClosingWorld);
-    App.db_write_int("prefs", "ConfirmBeforeClosingMushclient", App.m_bConfirmBeforeClosingMushclient);
-    App.db_write_int("prefs", "ConfirmBeforeSavingVariables",   App.m_bConfirmBeforeSavingVariables);
-    App.db_write_int("prefs", "AutoLogWorld",                   App.m_bAutoLogWorld);
-    App.db_write_int("prefs", "AppendToLogFiles",               App.m_bAppendToLogFiles);
-    App.db_write_int("prefs", "AllTypingToCommandWindow",       App.m_bAllTypingToCommandWindow);
-    App.db_write_string("prefs", "WordDelimitersDblClick",
-                        static_cast<const char*>(App.m_strWordDelimitersDblClick));
-    // Font settings
-    App.db_write_string("prefs", "DefaultOutputFont",
-                        static_cast<const char*>(App.m_strDefaultOutputFont));
-    App.db_write_string("prefs", "DefaultInputFont",
-                        static_cast<const char*>(App.m_strDefaultInputFont));
-    App.db_write_string("prefs", "FixedPitchFont",
-                        static_cast<const char*>(App.m_strFixedPitchFont));
-    App.db_write_int("prefs", "DefaultOutputFontHeight",  App.m_iDefaultOutputFontHeight);
-    App.db_write_int("prefs", "DefaultInputFontHeight",   App.m_iDefaultInputFontHeight);
-    App.db_write_int("prefs", "FixedPitchFontSize",       App.m_iFixedPitchFontSize);
-    // Directory settings
-    App.db_write_string("prefs", "DefaultWorldFileDirectory",
-                        static_cast<const char*>(App.m_strDefaultWorldFileDirectory));
-    App.db_write_string("prefs", "PluginsDirectory",
-                        static_cast<const char*>(App.m_strPluginsDirectory));
-    App.db_write_string("prefs", "DefaultLogFileDirectory",
-                        static_cast<const char*>(App.m_strDefaultLogFileDirectory));
-
-    // ── Live-update all open worlds with new global pref values ──────────
-    // Word delimiters and copy-to-clipboard are per-pane state; push the
-    // new values to every currently-open CWorldChildFrame output pane.
-    std::string newDelims =
-        static_cast<const char*>(App.m_strWordDelimitersDblClick);
-    for (auto& kv : s_docFrameMap) {
-        CWorldChildFrame* cf = kv.second;
-        if (cf && cf->OutputPane())
-            cf->OutputPane()->SetWordDelimitersDblClick(newDelims);
-    }
+    DoGlobalPrefs(NULL);
 }
 
 // ── WorldPreferencesDlg ───────────────────────────────────────────────────
@@ -2303,6 +1975,39 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
 // UpdateData(FALSE) DDX load), and route in-page control commands through the
 // reactivated message map.  On OK every page does UpdateData(TRUE) so the
 // canonical GamePreferences ChangedPrefsP*/SavePrefsP* see the edited values.
+// Build a panel for one canonical CPropertyPage under `bookParent` (a wxTreebook
+// or wxNotebook): populate from its recovered template, bind its m_hWnd, route
+// in-panel control commands to its canonical ON_BN_CLICKED/etc. handlers, and run
+// OnInitDialog (DDX load via UpdateData(FALSE)).  Shared by the tree
+// (hook_run_property_sheet) and flat (hook_run_property_sheet_flat) bridges.
+static wxPanel* build_canonical_sheet_page(wxWindow* bookParent, CPropertyPage* page)
+{
+    wxPanel* panel = new wxPanel(bookParent, wxID_ANY);
+
+    const RcDialog* t = page
+        ? MfcDialogResources().FindDialog((int) page->m_nIDTemplate)
+        : nullptr;
+    if (t)
+        PopulateWindowFromTemplate(panel, *t);
+    else
+        panel->SetMinClientSize(wxSize(420, 240));   // keep page-index alignment
+
+    if (page)
+    {
+        page->m_hWnd = (HWND) panel;   // GetDlgItem/DDX search within this panel
+
+        auto dispatch = [page](wxCommandEvent& e) {
+            if (!AfxDispatchCommand(page, BN_CLICKED, (UINT) e.GetId())) e.Skip();
+        };
+        panel->Bind(wxEVT_BUTTON,      dispatch);
+        panel->Bind(wxEVT_CHECKBOX,    dispatch);
+        panel->Bind(wxEVT_RADIOBUTTON, dispatch);
+
+        page->OnInitDialog();          // canonical setup + DDX load (UpdateData(FALSE))
+    }
+    return panel;
+}
+
 static intptr_t hook_run_property_sheet(void* self)
 {
     CTreePropertySheet* sheet = static_cast<CTreePropertySheet*>(self);
@@ -2326,15 +2031,7 @@ static intptr_t hook_run_property_sheet(void* self)
     for (const auto& pp : sheet->m_portPages)
     {
         CPropertyPage* page  = pp.pPage;
-        wxPanel*       panel = new wxPanel(tb, wxID_ANY);
-
-        const RcDialog* t = page
-            ? MfcDialogResources().FindDialog((int) page->m_nIDTemplate)
-            : nullptr;
-        if (t)
-            PopulateWindowFromTemplate(panel, *t);
-        else
-            panel->SetMinClientSize(wxSize(420, 240));  // keep index aligned
+        wxPanel*       panel = build_canonical_sheet_page(tb, page);
 
         wxString label = wxString::FromUTF8((const char*) pp.caption);
         if ((pp.nType & tps_item_type_mask) == tps_item_branch)
@@ -2343,25 +2040,6 @@ static intptr_t hook_run_property_sheet(void* self)
             tb->AddSubPage(panel, label);
 
         pages.push_back(page);
-
-        if (page)
-        {
-            page->m_hWnd = (HWND) panel;   // GetDlgItem/DDX search within this panel
-
-            // Route this page's in-panel control commands to its canonical
-            // ON_BN_CLICKED/etc. handlers (e.g. checkboxes that enable siblings).
-            panel->Bind(wxEVT_BUTTON, [page](wxCommandEvent& e) {
-                if (!AfxDispatchCommand(page, BN_CLICKED, (UINT) e.GetId())) e.Skip();
-            });
-            panel->Bind(wxEVT_CHECKBOX, [page](wxCommandEvent& e) {
-                if (!AfxDispatchCommand(page, BN_CLICKED, (UINT) e.GetId())) e.Skip();
-            });
-            panel->Bind(wxEVT_RADIOBUTTON, [page](wxCommandEvent& e) {
-                if (!AfxDispatchCommand(page, BN_CLICKED, (UINT) e.GetId())) e.Skip();
-            });
-
-            page->OnInitDialog();   // canonical setup + DDX load (UpdateData(FALSE))
-        }
     }
 
     // Open at the wanted page (m_iWantedPage == add-order index; see
@@ -2410,6 +2088,89 @@ static intptr_t hook_run_property_sheet(void* self)
     dlg.Bind(wxEVT_BUTTON, [&dlg, &pages, tb](wxCommandEvent& e) {
         if (e.GetId() != wxID_OK) { e.Skip(); return; }
         int active = tb->GetSelection();
+        if (active >= 0 && active < (int) pages.size()
+            && pages[active] && !pages[active]->UpdateData(TRUE))
+            return;   // validation failed (message shown); stay open
+        dlg.EndModal(wxID_OK);
+    }, wxID_OK);
+
+    int rc = dlg.ShowModal();
+
+    for (CPropertyPage* page : pages)            // detach before panels die
+        if (page) page->m_hWnd = nullptr;
+
+    return (rc == wxID_OK) ? IDOK : IDCANCEL;
+}
+
+// Flat (tabbed) property sheet — base CPropertySheet::DoModal.  Used by plain
+// CPropertySheet subclasses such as CGlobalPrefsSheet (File ▸ Preferences).
+// Builds a wxNotebook from the base m_flatPages list (one tab per canonical
+// CPropertyPage, tab label = the page template's caption), running each page's
+// OnInitDialog/DDX.  Validate-on-leave + validate-active-on-OK mirror MFC's
+// OnKillActive; unvisited pages keep their loaded values, which the caller
+// (DoGlobalPrefs) then writes back unchanged.  Returns IDOK/IDCANCEL.
+static intptr_t hook_run_property_sheet_flat(void* self)
+{
+    CPropertySheet* sheet = static_cast<CPropertySheet*>(self);
+    if (!sheet) return IDCANCEL;
+
+    wxWindow* parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    wxDialog dlg(parent, wxID_ANY, wxT("Global Preferences"),
+                 wxDefaultPosition, wxDefaultSize,
+                 wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
+
+    wxNotebook* nb = new wxNotebook(&dlg, wxID_ANY);
+
+    std::vector<CPropertyPage*> pages;
+    pages.reserve(sheet->m_flatPages.size());
+
+    int pageNo = 0;
+    for (CPropertyPage* page : sheet->m_flatPages)
+    {
+        wxPanel* panel = build_canonical_sheet_page(nb, page);
+
+        const RcDialog* t = page
+            ? MfcDialogResources().FindDialog((int) page->m_nIDTemplate)
+            : nullptr;
+        wxString label = (t && !t->caption.empty())
+                           ? wxString::FromUTF8(t->caption.c_str())
+                           : wxString::Format(wxT("Page %d"), pageNo + 1);
+        nb->AddPage(panel, label);
+
+        pages.push_back(page);
+        ++pageNo;
+    }
+
+    // Validate-on-leave (MFC OnKillActive): capture + validate the page being
+    // left; veto the tab change if it fails (the page already showed its msg).
+    nb->Bind(wxEVT_NOTEBOOK_PAGE_CHANGING, [&pages](wxBookCtrlEvent& e) {
+        int leaving = e.GetOldSelection();
+        if (leaving >= 0 && leaving < (int) pages.size()
+            && pages[leaving] && !pages[leaving]->UpdateData(TRUE))
+            e.Veto();
+    });
+
+    wxStdDialogButtonSizer* btns = new wxStdDialogButtonSizer();
+    wxButton* ok = new wxButton(&dlg, wxID_OK);
+    btns->AddButton(ok);
+    btns->AddButton(new wxButton(&dlg, wxID_CANCEL));
+    btns->Realize();
+    ok->SetDefault();
+
+    wxBoxSizer* top = new wxBoxSizer(wxVERTICAL);
+    top->Add(nb,   1, wxEXPAND | wxALL, 6);
+    top->Add(btns, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+    dlg.SetSizer(top);
+    dlg.Fit();
+    wxSize sz = dlg.GetSize();
+    dlg.SetSize(wxSize(std::max(sz.x, 680), std::max(sz.y, 520)));
+    dlg.CentreOnParent();
+
+    // OK: validate the active page only (others validated on leave; unvisited
+    // pages keep their loaded values).  Keep the sheet open on failure.
+    dlg.Bind(wxEVT_BUTTON, [&dlg, &pages, nb](wxCommandEvent& e) {
+        if (e.GetId() != wxID_OK) { e.Skip(); return; }
+        int active = nb->GetSelection();
         if (active >= 0 && active < (int) pages.size()
             && pages[active] && !pages[active]->UpdateData(TRUE))
             return;   // validation failed (message shown); stay open
@@ -2812,6 +2573,7 @@ void wx_mfc_install_hooks()
     g_run_mfc_dialog          = hook_run_dialog;
     g_end_mfc_dialog          = hook_end_dialog;
     g_run_mfc_property_sheet  = hook_run_property_sheet;
+    g_run_mfc_property_sheet_flat = hook_run_property_sheet_flat;
     g_wxhook_get_dlg_item     = hook_get_dlg_item;
     g_wxhook_get_window_text  = hook_get_window_text;
     g_wxhook_button_set_check = hook_button_set_check;

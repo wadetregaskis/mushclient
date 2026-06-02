@@ -57,4 +57,16 @@ INT_PTR CTreePropertySheet::DoModal()
     return IDCANCEL;
 }
 
+// Base CPropertySheet::DoModal — plain tabbed sheets (e.g. CGlobalPrefsSheet,
+// the File ▸ Preferences dialog).  The pages were recorded by the base AddPage()
+// into m_flatPages; the flat-sheet hook renders them as a wxNotebook running each
+// canonical CPropertyPage's OnInitDialog/DDX/DDV.  CTreePropertySheet overrides
+// this (above) for its tree layout, so only non-tree sheets reach here.
+INT_PTR CPropertySheet::DoModal()
+{
+    if (g_run_mfc_property_sheet_flat)
+        return (INT_PTR) g_run_mfc_property_sheet_flat(this);
+    return IDCANCEL;
+}
+
 #endif // !_WIN32

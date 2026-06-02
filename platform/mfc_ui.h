@@ -4375,8 +4375,14 @@ class CPropertySheet : public CWnd {
 public:
     CPropertySheet(LPCTSTR=nullptr, CWnd* = nullptr, UINT=0) {}
     CPropertySheet(UINT, CWnd* = nullptr, UINT=0) {}
-    void AddPage(CPropertyPage*) {}
-    INT_PTR DoModal()         { return IDCANCEL; }
+    // Port: record the added pages so the bridge can render a wxNotebook of the
+    // canonical CPropertyPage subclasses (see g_run_mfc_property_sheet_flat /
+    // hook_run_property_sheet_flat).  CTreePropertySheet overrides AddPage/DoModal
+    // (tree structure → wxTreebook) and is unaffected.
+    void AddPage(CPropertyPage* p) { if (p) m_flatPages.push_back(p); }
+    // Out-of-line (in wx_tree_property_sheet.cpp): routes to the flat-sheet hook.
+    // Virtual so CTreePropertySheet::DoModal properly overrides it.
+    virtual INT_PTR DoModal();
     void SetActivePage(int)   {}
     void SetActivePage(CPropertyPage*) {}
     int  GetActiveIndex() const { return 0; }
@@ -4402,6 +4408,9 @@ public:
     CPropertyPage* GetPage(CPropertyPage*) const { return nullptr; }
     void           RemovePage(CPropertyPage*) {}
     void           RemovePage(int) {}
+
+    // Port: pages recorded by AddPage(), handed to the flat-sheet bridge hook.
+    std::vector<CPropertyPage*> m_flatPages;
 };
 
 // ── Splitter window ────────────────────────────────────────────────────────

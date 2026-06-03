@@ -1605,6 +1605,16 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     menu.Append(ID_SELECTALL, "Select All\tCtrl+A");
     menu.Enable(ID_COPY, hasSel);
 
+    // "Copy as HTML": same selection, but as colour-preserving HTML markup
+    // (canonical ID_EDIT_COPYASHTML).  Only meaningful with a selection.
+    {
+        wxMenuItem* itemHtml = menu.Append(wxID_ANY, wxT("Copy as HTML"));
+        menu.Enable(itemHtml->GetId(), hasSel);
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+            CopySelectionAsHTML(GetFont().GetFaceName());
+        }, itemHtml->GetId());
+    }
+
     // When text is selected, offer quick-send shortcuts.
     if (hasSel) {
         menu.AppendSeparator();
@@ -1870,6 +1880,147 @@ void COutputPane::CopySelection()
     if (text.IsEmpty()) return;
     if (wxTheClipboard->Open()) {
         wxTheClipboard->SetData(new wxTextDataObject(text));
+        wxTheClipboard->Close();
+    }
+}
+
+void COutputPane::CopySelectionAsHTML(const wxString& fontName)
+{
+    SelPoint s, e;
+    if (!GetNormalizedSel(s, e)) return;
+
+    int lo = std::max(0, s.line);
+    int hi = std::min((int)m_lines.size() - 1, e.line);
+    if (lo > hi) return;
+
+    // HTML-escape one byte string (matches Utilities.cpp FixHTMLString:
+    // < > & " → entities; UTF-8 bytes pass through untouched).
+    auto fixHTML = [](const std::string& in) {
+        std::string out;
+        out.reserve(in.size());
+        for (char ch : in)
+            switch (ch) {
+            case '<': out += "&lt;";   break;
+            case '>': out += "&gt;";   break;
+            case '&': out += "&amp;";  break;
+            case '"': out += "&quot;"; break;
+            default:  out += ch;       break;
+            }
+        return out;
+    };
+    // Byte offset where character index `targetChar` begins (str.size() if past
+    // the end).  Lead-byte counting matches UTF8CharLen above.
+    auto byteForChar = [](const std::string& str, int targetChar) -> size_t {
+        int charIdx = 0;
+        for (size_t i = 0; i < str.size(); ++i)
+            if (((unsigned char)str[i] & 0xC0u) != 0x80u) {
+                if (charIdx == targetChar) return i;
+                ++charIdx;
+            }
+        return str.size();
+    };
+    auto utf8Slice = [&](const std::string& str, int startChar, int count) {
+        if (count <= 0) return std::string();
+        size_t a = byteForChar(str, startChar);
+        size_t b = byteForChar(str, startChar + count);
+        return str.substr(a, b - a);
+    };
+
+    // Default background = first run's bg on the start line (canonical uses the
+    // start line's first style); fall back to the pane background.
+    uint32_t defaultBack = m_bgColor;
+    if (!m_lines[lo].empty()) defaultBack = m_lines[lo][0].bg;
+
+    char buf[256];
+    std::string html;
+    html += "<!-- Produced by MUSHclient - www.mushclient.com -->\n";
+    std::snprintf(buf, sizeof buf,
+                  "<table border=0 cellpadding=5 bgcolor=\"#%02X%02X%02X\">\n",
+                  (int)GetRValue(defaultBack), (int)GetGValue(defaultBack),
+                  (int)GetBValue(defaultBack));
+    html += buf;
+    html += "<tr><td>\n";
+
+    std::string face;
+    if (!fontName.IsEmpty() && fontName != wxT("FixedSys"))
+        face = std::string(fontName.utf8_str()) + ", ";
+    html += "<pre><code><font size=2 face=\"" + face +
+            "FixedSys, Lucida Console, Courier New, Courier\"><font color=\"#0\">\n";
+
+    uint32_t lastFore = 0, lastBack = 0;
+    bool bInSpan = false, firstLine = true;
+
+    for (int li = lo; li <= hi; ++li) {
+        const SOutputLine& line = m_lines[li];
+
+        int lineLen = 0;
+        for (const auto& run : line)
+            if (!run.horiz_rule) lineLen += UTF8CharLen(run.text);
+
+        int startCol = (li == lo) ? std::max(0, (int)s.col) : 0;
+        int endCol   = (li == hi) ? std::min(lineLen, (int)e.col) : lineLen;
+
+        if (!firstLine) html += "\n";   // newline between selected lines
+        firstLine = false;
+
+        if (!line.empty() && line[0].horiz_rule) {
+            html += "&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;";
+            continue;
+        }
+        if (endCol <= startCol) continue;   // nothing selected on this line
+
+        int col = 0;   // running char position within the line
+        for (const auto& run : line) {
+            if (run.horiz_rule) continue;
+            int runLen = UTF8CharLen(run.text);
+            if (runLen <= 0) continue;
+
+            int runStart = col;
+            int runEnd   = col + runLen;
+            col = runEnd;
+
+            int from = std::max(runStart, startCol);
+            int to   = std::min(runEnd,   endCol);
+            if (to <= from) {
+                if (runStart >= endCol) break;   // past the selection on this line
+                continue;
+            }
+
+            uint32_t colour1 = run.fg, colour2 = run.bg;
+            if (colour1 != lastFore || colour2 != lastBack) {
+                if (bInSpan) { html += "</span>"; bInSpan = false; }
+                std::snprintf(buf, sizeof buf, "</font><font color=\"#%02X%02X%02X\">",
+                              (int)GetRValue(colour1), (int)GetGValue(colour1),
+                              (int)GetBValue(colour1));
+                html += buf;
+                // Only open a <span> when the background differs from the default
+                // (canonical optimisation — keeps the markup small).
+                if (colour2 != defaultBack) {
+                    std::snprintf(buf, sizeof buf,
+                        "<span style=\"color: #%02X%02X%02X; background: #%02X%02X%02X\">",
+                        (int)GetRValue(colour1), (int)GetGValue(colour1), (int)GetBValue(colour1),
+                        (int)GetRValue(colour2), (int)GetGValue(colour2), (int)GetBValue(colour2));
+                    html += buf;
+                    bInSpan = true;
+                }
+                lastFore = colour1;
+                lastBack = colour2;
+            }
+
+            if (run.underline) html += "<u>";
+            html += fixHTML(utf8Slice(run.text, from - runStart, to - from));
+            if (run.underline) html += "</u>";
+
+            if (col >= endCol) break;
+        }
+    }
+
+    if (bInSpan) html += "</span>";
+    html += "</font></font></code></pre>\n</td></tr></table>\n";
+
+    if (wxTheClipboard->Open()) {
+        wxTheClipboard->SetData(
+            new wxTextDataObject(wxString::FromUTF8(html.c_str(), html.size())));
         wxTheClipboard->Close();
     }
 }

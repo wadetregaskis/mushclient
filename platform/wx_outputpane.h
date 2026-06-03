@@ -112,6 +112,13 @@ public:
     // Copy the selected text to the clipboard.
     void CopySelection();
 
+    // Copy the selection to the clipboard as HTML markup (Display ▸ Copy as
+    // HTML).  Mirrors the canonical CMUSHView::OnEditCopyashtml: emits a
+    // <table>/<pre><code> block with per-run <font>/<span> colour markup and
+    // places that markup *as text* on the clipboard.  No-op if no selection.
+    // fontName feeds the <font face=...> list (the world's display font).
+    void CopySelectionAsHTML(const wxString& fontName);
+
     // Programmatically select a range of text.  Arguments are 1-based line and
     // column numbers, matching the MUSHclient SetSelection() Lua API.
     // Pass all-zero arguments to clear the selection.

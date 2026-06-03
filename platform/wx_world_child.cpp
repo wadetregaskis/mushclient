@@ -27,6 +27,7 @@
 #include "scripting/scripting.h"      // CScriptEngine, lua_State* — for Shift+Tab globals
 #include "platform/wx_world_child.h"  // our own header (CWorldChildFrame, COutputPane)
 #include "platform/wx_print.h"        // PrintOutputPane (File ▸ Print World)
+#include <wx/numdlg.h>                // wxGetNumberFromUser (Display ▸ Go To Line)
 
 // MW_MOUSE_* flag constants (from mushview.h — copied here to avoid pulling in
 // all of mushview.h which declares the Windows-only CMUSHView class).
@@ -1792,6 +1793,28 @@ void CWorldChildFrame::SpellCheckInput()
 void CWorldChildFrame::PrintWorld()
 {
     PrintOutputPane(this, GetTitle(), m_output);
+}
+
+// ── Freeze Output: toggle the output pane's autoscroll pause ────────────────
+void CWorldChildFrame::FreezeOutput()
+{
+    if (m_output)
+        m_output->SetPaused(!m_output->IsPaused());
+}
+
+// ── Go To Line: prompt for a line number and scroll the output to it ────────
+void CWorldChildFrame::GotoLine()
+{
+    if (!m_output)
+        return;
+    int total = m_output->LineCount();
+    if (total <= 0)
+        return;
+    long line = wxGetNumberFromUser(
+        wxString::Format(wxT("Go to which line? (1 - %d)"), total),
+        wxT("Line:"), wxT("Go To Line"), total, 1, total, this);
+    if (line >= 1)
+        m_output->ScrollToLine((int) line - 1);
 }
 
 // ── ApplyNoEcho ───────────────────────────────────────────────────────────

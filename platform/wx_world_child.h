@@ -73,6 +73,10 @@ public:
     // Print the world output buffer (File ▸ Print World) via wxHtmlEasyPrinting.
     void PrintWorld();
 
+    // Output-pane Display commands.
+    void FreezeOutput();   // toggle autoscroll pause (Display ▸ Freeze Output)
+    void GotoLine();       // prompt for a line number and scroll the output to it
+
     // Re-send NAWS with the current pane dimensions.  Call after a font change
     // so the MUD learns the new character-grid size.
     void TriggerNAWS();

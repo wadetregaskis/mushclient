@@ -600,6 +600,16 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->Append(32323 /*ID_EDIT_SPELLCHECK*/,       wxT("Chec&k Spelling"));
     mb->Append(gameMenu, wxT("&Game"));
 
+    // ── Display menu (output-pane view commands) ──────────────────────────
+    // No Ctrl+F accelerator here — the inline find bar already binds it.
+    wxMenu* displayMenu = new wxMenu();
+    displayMenu->Append(32248 /*ID_DISPLAY_FIND*/,         wxT("&Find…"));
+    displayMenu->Append(32249 /*ID_DISPLAY_FINDAGAIN*/,    wxT("Find &Again"));
+    displayMenu->AppendSeparator();
+    displayMenu->Append(32201 /*ID_DISPLAY_FREEZEOUTPUT*/, wxT("Free&ze Output"));
+    displayMenu->Append(32963 /*ID_DISPLAY_GOTOLINE*/,     wxT("&Go To Line…"));
+    mb->Append(displayMenu, wxT("&Display"));
+
     // ── Configure menu ────────────────────────────────────────────────────
     wxMenu* cfgMenu = new wxMenu();
     cfgMenu->Append(ID_MENU_CFG_TRIGGERS,  wxT("&Triggers…\tCtrl+T"));
@@ -833,6 +843,18 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         if (id == 32250 /*ID_FILE_PRINT_WORLD*/) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
                 child->PrintWorld();
+            return;
+        }
+
+        // ── Display menu: find / find-again / freeze / goto-line ───────────
+        if (id == 32248 /*ID_DISPLAY_FIND*/      || id == 32249 /*ID_DISPLAY_FINDAGAIN*/ ||
+            id == 32201 /*ID_DISPLAY_FREEZEOUTPUT*/ || id == 32963 /*ID_DISPLAY_GOTOLINE*/) {
+            if (auto* c = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
+                if      (id == 32248) c->ShowFindBar(true);
+                else if (id == 32249) c->DoFind(true);
+                else if (id == 32201) c->FreezeOutput();
+                else                  c->GotoLine();
+            }
             return;
         }
 

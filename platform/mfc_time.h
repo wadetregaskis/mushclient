@@ -9,6 +9,7 @@
 #ifndef _WIN32
 
 #include <ctime>
+#include <cstdio>
 #include <string>
 #include "windows_types.h"
 #include "mfc_string.h"
@@ -39,9 +40,27 @@ struct CTimeSpan {
     bool operator<=(const CTimeSpan& o) const { return m_secs <= o.m_secs; }
     bool operator> (const CTimeSpan& o) const { return m_secs >  o.m_secs; }
     bool operator>=(const CTimeSpan& o) const { return m_secs >= o.m_secs; }
-    // Format — stub returns empty string (no locale support on macOS stub)
-    CString Format(LPCTSTR /*pszFormat*/) const { return {}; }
-    CString Format(UINT /*nID*/) const { return {}; }
+    // Format — MFC-style elapsed-time codes: %D = total days, %H/%M/%S = the
+    // hours/minutes/seconds components (zero-padded to 2 digits), %% = literal %.
+    // e.g. Format("%Dd %Hh %Mm %Ss") → "2d 03h 05m 09s".
+    CString Format(LPCTSTR pszFormat) const {
+        if (!pszFormat) return {};
+        std::string out;
+        for (const char* p = pszFormat; *p; ++p) {
+            if (*p != '%' || !p[1]) { out += *p; continue; }
+            char buf[32];
+            switch (*++p) {
+            case 'D': std::snprintf(buf, sizeof buf, "%ld",   GetDays());     out += buf; break;
+            case 'H': std::snprintf(buf, sizeof buf, "%02ld", GetHours());    out += buf; break;
+            case 'M': std::snprintf(buf, sizeof buf, "%02ld", GetMinutes());  out += buf; break;
+            case 'S': std::snprintf(buf, sizeof buf, "%02ld", GetSeconds());  out += buf; break;
+            case '%': out += '%'; break;
+            default:  out += '%'; out += *p; break;
+            }
+        }
+        return CString(out.c_str());
+    }
+    CString Format(UINT /*nID*/) const { return {}; }   // string-table form: unused on the port
 };
 
 class CTime

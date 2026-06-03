@@ -26,6 +26,7 @@
 #include "miniwindow.h"               // CMiniWindow, MiniWindowVector, MINIWINDOW_* flags
 #include "scripting/scripting.h"      // CScriptEngine, lua_State* — for Shift+Tab globals
 #include "platform/wx_world_child.h"  // our own header (CWorldChildFrame, COutputPane)
+#include "platform/wx_print.h"        // PrintOutputPane (File ▸ Print World)
 
 // MW_MOUSE_* flag constants (from mushview.h — copied here to avoid pulling in
 // all of mushview.h which declares the Windows-only CMUSHView class).
@@ -1785,6 +1786,12 @@ void CWorldChildFrame::SpellCheckInput()
     else
         inp->Replace(from, to, wcorrected);
     inp->SetInsertionPointEnd();
+}
+
+// ── Print the world output buffer ──────────────────────────────────────────
+void CWorldChildFrame::PrintWorld()
+{
+    PrintOutputPane(this, GetTitle(), m_output);
 }
 
 // ── ApplyNoEcho ───────────────────────────────────────────────────────────

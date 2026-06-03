@@ -70,6 +70,9 @@ public:
     // canonical spell-check Lua (which shows the suggestion dialog per word).
     void SpellCheckInput();
 
+    // Print the world output buffer (File ▸ Print World) via wxHtmlEasyPrinting.
+    void PrintWorld();
+
     // Re-send NAWS with the current pane dimensions.  Call after a font change
     // so the MUD learns the new character-grid size.
     void TriggerNAWS();

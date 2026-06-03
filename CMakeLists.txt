@@ -781,7 +781,7 @@ if(NOT WIN32)
     # Requires wxWidgets 3.x AND Lua 5.1 (mushapp links both).
     # On macOS: brew install wxwidgets lua@5.1
     # On Linux: apt install libwxgtk3.0-gtk3-dev liblua5.1-dev
-    find_package(wxWidgets QUIET COMPONENTS core base)
+    find_package(wxWidgets QUIET COMPONENTS core base html)
 
     # Fallback: if find_package didn't find wx but a wx-config binary is known,
     # query it directly.  This handles the case where wx was built from source
@@ -791,7 +791,7 @@ if(NOT WIN32)
             COMMAND "${wxWidgets_CONFIG_EXECUTABLE}" --cxxflags
             OUTPUT_VARIABLE _wx_cxx OUTPUT_STRIP_TRAILING_WHITESPACE)
         execute_process(
-            COMMAND "${wxWidgets_CONFIG_EXECUTABLE}" --libs core,base
+            COMMAND "${wxWidgets_CONFIG_EXECUTABLE}" --libs core,base,html
             OUTPUT_VARIABLE _wx_libs OUTPUT_STRIP_TRAILING_WHITESPACE)
         execute_process(
             COMMAND "${wxWidgets_CONFIG_EXECUTABLE}" --version
@@ -836,6 +836,7 @@ if(NOT WIN32)
             platform/wx_dialog_resource.cpp
             platform/wx_dialog_bridge.cpp
             platform/wx_activity.cpp
+            platform/wx_print.cpp
         )
         # mushgui links mushapp (full MUSHclient engine with doc.cpp, dialogs,
         # scripting, etc.) rather than the portable mushcore stub.

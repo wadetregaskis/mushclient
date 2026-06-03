@@ -553,6 +553,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     fileMenu->Append(wxID_CLOSE,  wxT("Close World\tCtrl+Shift+W"));
     // Note: plain Ctrl+W is reserved for word-delete-backward in the input bar.
     fileMenu->AppendSeparator();
+    fileMenu->Append(32250 /*ID_FILE_PRINT_WORLD*/, wxT("&Print World…\tCtrl+P"));
+    fileMenu->AppendSeparator();
     fileMenu->Append(32246 /*ID_FILE_PREFERENCES*/, wxT("Preferences…"));
     fileMenu->AppendSeparator();
     fileMenu->Append(wxID_EXIT,   wxT("Quit MUSHclient\tCtrl+Q"));
@@ -824,6 +826,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         if (id == 32323 /*ID_EDIT_SPELLCHECK*/) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
                 child->SpellCheckInput();
+            return;
+        }
+
+        // ── Print World (output buffer → wxHtmlEasyPrinting preview) ───────
+        if (id == 32250 /*ID_FILE_PRINT_WORLD*/) {
+            if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
+                child->PrintWorld();
             return;
         }
 

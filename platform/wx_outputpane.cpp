@@ -1643,7 +1643,7 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     // Zoom and find — for discoverability (same as keyboard shortcuts).
     menu.AppendSeparator();
     {
-        wxMenuItem* fi = menu.Append(wxID_ANY, "Find…\tCtrl+F");
+        wxMenuItem* fi = menu.Append(wxID_ANY, wxT("Find…\tCtrl+F"));
         menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) {
             if (m_fn_find_next_key) m_fn_find_next_key(true);
         }, fi->GetId());

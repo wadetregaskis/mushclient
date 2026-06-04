@@ -120,6 +120,18 @@ static tGlobalConfigurationAlphaOption AlphaGlobalOptionsTable  [] = {
 // for user data.  Used by BOTH PopulateDatabase() (fresh DB) and the read path,
 // so the two cannot diverge — an earlier attempt overrode only the read path, so
 // a freshly-populated DB kept the CWD-relative ".\worlds\plugins\" defaults.
+// Platform monospace font face for the fixed-pitch / default fonts.  "FixedSys"
+// (a Windows bitmap font) does not exist off-Windows, so we substitute the
+// system monospace family.
+static const char * PortableFixedPitchFont ()
+{
+#ifdef __APPLE__
+  return "Menlo";
+#else
+  return "DejaVu Sans Mono";
+#endif
+}
+
 static CString PosixAlphaGlobalDefault (const char * name, const CString & rawDefault)
 {
   if (strcmp (name, "PluginsDirectory") == 0)
@@ -132,13 +144,14 @@ static CString PosixAlphaGlobalDefault (const char * name, const CString & rawDe
     return (PortableUserDataDir () + "logs/").c_str ();
   if (strcmp (name, "AsciiArtFont") == 0)
     return "fonts/standard.flf";
-  // "FixedSys" is a Windows-only bitmap font; leave empty so wxWidgets picks the
-  // platform monospace (DejaVu Sans Mono, etc.).
+  // "FixedSys" is a Windows-only bitmap font that does not exist off-Windows.
+  // Substitute a real platform monospace face so the prefs fields show a font
+  // name and the font actually resolves.
   if ((strcmp (name, "DefaultOutputFont") == 0 ||
        strcmp (name, "DefaultInputFont")  == 0 ||
        strcmp (name, "FixedPitchFont")    == 0) &&
       rawDefault == "FixedSys")
-    return CString ("");
+    return CString (PortableFixedPitchFont ());
   return rawDefault;
 }
 #endif
@@ -250,6 +263,23 @@ void CMUSHclientApp::LoadGlobalsFromDatabase (void)
     * (CString *) p = db_value.c_str ();
 
     };
+
+#ifndef _WIN32
+  // Older prefs databases stored these fonts as empty strings (a previous
+  // "leave empty" default).  Substitute a real platform monospace face so the
+  // prefs fields display a font name and font handling has a face to use.
+  if (m_strFixedPitchFont.IsEmpty ())    m_strFixedPitchFont    = PortableFixedPitchFont ();
+  if (m_strDefaultOutputFont.IsEmpty ()) m_strDefaultOutputFont = PortableFixedPitchFont ();
+  if (m_strDefaultInputFont.IsEmpty ())  m_strDefaultInputFont  = PortableFixedPitchFont ();
+
+  // Strip a stray trailing Windows backslash from directory paths.  Older saves
+  // appended '\\' unconditionally (GlobalPrefs.cpp), producing "…/worlds/\".
+  CString * dirs [] = { &m_strDefaultWorldFileDirectory, &m_strPluginsDirectory,
+                        &m_strDefaultLogFileDirectory };
+  for (CString * d : dirs)
+    while (!d->IsEmpty () && d->Right (1) == "\\")
+      *d = d->Left (d->GetLength () - 1);
+#endif
 
 
   // get Lua initialisation (sandbox) if necessary

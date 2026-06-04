@@ -314,6 +314,19 @@ void CGlobalPrefsP1::OnMoveDown()
 
 void CGlobalPrefsP1::OnDefaultDirectory()
 {
+#ifndef _WIN32
+    // Portable folder picker (wxDirDialog via the bridge).
+    {
+    CString strDir;
+    GetDlgItemText (IDC_DEFAULT_DIRECTORY_NAME, strDir);
+    if (g_wxhook_directorypicker)
+        {
+        char * picked = g_wxhook_directorypicker ("World files folder", (LPCTSTR) strDir);
+        if (picked) { SetDlgItemText (IDC_DEFAULT_DIRECTORY_NAME, picked); free (picked); }
+        }
+    }
+    return;
+#endif
 #ifdef _WIN32
 	// Gets the Shell's default allocator
 	LPMALLOC pMalloc;
@@ -616,6 +629,19 @@ END_MESSAGE_MAP()
 
 void CGlobalPrefsP5::OnDefaultDirectory()
 {
+#ifndef _WIN32
+    // Portable folder picker (wxDirDialog via the bridge).
+    {
+    CString strDir;
+    GetDlgItemText (IDC_DEFAULT_DIRECTORY_NAME, strDir);
+    if (g_wxhook_directorypicker)
+        {
+        char * picked = g_wxhook_directorypicker ("Log files folder", (LPCTSTR) strDir);
+        if (picked) { SetDlgItemText (IDC_DEFAULT_DIRECTORY_NAME, picked); free (picked); }
+        }
+    }
+    return;
+#endif
 #ifdef _WIN32
 	// Gets the Shell's default allocator
 	LPMALLOC pMalloc;
@@ -1320,12 +1346,20 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
     }   // end of timer interval changing
 
 
-  if (propSheet.m_Page1.m_strDefaultWorldFileDirectory.Right (1) != '\\')
-    propSheet.m_Page1.m_strDefaultWorldFileDirectory += '\\';
-  if (propSheet.m_Page12.m_strPluginsDirectory.Right (1) != '\\')
-    propSheet.m_Page12.m_strPluginsDirectory += '\\';
-  if (propSheet.m_Page5.m_strDefaultLogFileDirectory.Right (1) != '\\')
-    propSheet.m_Page5.m_strDefaultLogFileDirectory += '\\';
+#ifdef _WIN32
+  const char chDirSep = '\\';
+#else
+  const char chDirSep = '/';
+#endif
+  if (propSheet.m_Page1.m_strDefaultWorldFileDirectory.Right (1) != '\\' &&
+      propSheet.m_Page1.m_strDefaultWorldFileDirectory.Right (1) != '/')
+    propSheet.m_Page1.m_strDefaultWorldFileDirectory += chDirSep;
+  if (propSheet.m_Page12.m_strPluginsDirectory.Right (1) != '\\' &&
+      propSheet.m_Page12.m_strPluginsDirectory.Right (1) != '/')
+    propSheet.m_Page12.m_strPluginsDirectory += chDirSep;
+  if (propSheet.m_Page5.m_strDefaultLogFileDirectory.Right (1) != '\\' &&
+      propSheet.m_Page5.m_strDefaultLogFileDirectory.Right (1) != '/')
+    propSheet.m_Page5.m_strDefaultLogFileDirectory += chDirSep;
 
   // *** also see table in globalregistryoptions.cpp
 
@@ -1558,6 +1592,19 @@ END_MESSAGE_MAP()
 
 void CGlobalPrefsP12::OnPluginsDirectory()
 {
+#ifndef _WIN32
+    // Portable folder picker (wxDirDialog via the bridge).
+    {
+    CString strDir;
+    GetDlgItemText (IDC_PLUGINS_DIRECTORY_NAME, strDir);
+    if (g_wxhook_directorypicker)
+        {
+        char * picked = g_wxhook_directorypicker ("Plugins folder", (LPCTSTR) strDir);
+        if (picked) { SetDlgItemText (IDC_PLUGINS_DIRECTORY_NAME, picked); free (picked); }
+        }
+    }
+    return;
+#endif
 #ifdef _WIN32
 	// Gets the Shell's default allocator
 	LPMALLOC pMalloc;

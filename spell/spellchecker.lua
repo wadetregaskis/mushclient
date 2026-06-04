@@ -70,7 +70,8 @@ end -- trim
 -- insert a word into our metaphone table - called by reading dictionaries
 -- and also by adding a word during the spellcheck
 local function insert_word (word, user)
-  
+
+  word = trim (word)   -- strip CR/LF (dict files are CRLF) + surrounding space
   if word == "" then
     return
   end -- empty word
@@ -151,7 +152,7 @@ local function checkword_and_suggest (word)
   local function lookup_metaphone (m)
     local found = false
     for row in db:rows(string.format ("SELECT name FROM words WHERE metaphone = '%s'", m)) do
-      local word = row [1]
+      local word = trim (row [1])   -- existing DBs were built from CRLF dicts
       if make_upper (word) == uc_word then
         found = true -- found exact match
         break
@@ -259,7 +260,7 @@ local function checkword (word)
   
   local found = false
   for row in db:rows(string.format ("SELECT name FROM words WHERE metaphone = '%s'", m)) do
-    local word = row [1]
+    local word = trim (row [1])   -- existing DBs were built from CRLF dicts
     if make_upper (word) == uc_word then
       found = true -- found exact match
       break

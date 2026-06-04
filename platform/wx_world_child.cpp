@@ -1746,9 +1746,13 @@ void CWorldChildFrame::GenerateCharacterName()
     if (!m_doc)
         return;
 
-    // On first use, default the names file to the one bundled next to the exe
-    // (Contents/MacOS/names.txt) so GenerateName() doesn't pop a file picker.
-    if (App.m_strDefaultNameGenerationFile.IsEmpty())
+    // Resolve the names file.  Its default is a bare "names.txt", which
+    // GenerateName() would look for in the current working directory (not found
+    // → silent failure).  If the path is empty or has no directory component,
+    // resolve it next to the executable (Contents/MacOS/names.txt), where the
+    // build bundles it.
+    if (App.m_strDefaultNameGenerationFile.IsEmpty() ||
+        App.m_strDefaultNameGenerationFile.Find('/') == -1)
         App.m_strDefaultNameGenerationFile =
             ExtractDirectory(App.m_strMUSHclientFileName) + "names.txt";
 

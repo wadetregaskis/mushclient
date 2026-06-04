@@ -186,18 +186,34 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
     }
     else if (cls == "ComboBox")
     {
-        long st = ((c.style & 3) == CBS_DROPDOWNLIST) ? wxCB_READONLY : 0;
         // A combo's template height (cy) is the DROPPED-DOWN list height, not the
         // closed control height — using it verbatim makes the combo absurdly tall
         // and overlap its siblings.  Let wx pick the natural (closed) height.
-        wxComboBox* cb = new wxComboBox(parent, id, wxEmptyString, pos,
-                                        wxSize(size.GetWidth(), -1), 0, nullptr, st);
         // Preset items recovered from the dialog's DLGINIT resource (e.g. the
         // scripting-language list, proxy type, alias/timer "send to").  Combos
         // that instead fill themselves in OnInitDialog have no DLGINIT items.
-        for (const std::string& item : c.comboItems)
-            cb->Append(wxString::FromUTF8(item.c_str()));
-        w = cb;
+        if ((c.style & 3) == CBS_DROPDOWNLIST)
+        {
+            // Read-only drop-down → a native pop-up menu (NSPopUpButton on
+            // macOS): clicking anywhere opens the list, and the text is not
+            // editable/selectable.  A wxCB_READONLY wxComboBox on macOS is still
+            // an editable-style combo (click-on-text doesn't open it), which is
+            // exactly the reported bug.
+            wxChoice* ch = new wxChoice(parent, id, pos,
+                                        wxSize(size.GetWidth(), -1), 0, nullptr);
+            for (const std::string& item : c.comboItems)
+                ch->Append(wxString::FromUTF8(item.c_str()));
+            w = ch;
+        }
+        else
+        {
+            // Editable combo (CBS_DROPDOWN / CBS_SIMPLE).
+            wxComboBox* cb = new wxComboBox(parent, id, wxEmptyString, pos,
+                                            wxSize(size.GetWidth(), -1), 0, nullptr, 0);
+            for (const std::string& item : c.comboItems)
+                cb->Append(wxString::FromUTF8(item.c_str()));
+            w = cb;
+        }
     }
     else if (cls == "ListBox")
     {

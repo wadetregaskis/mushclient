@@ -35,6 +35,7 @@ void  (*g_wxhook_set_status)(const char*)                        = nullptr;
 bool  (*g_wxhook_save_world)(void*, bool, void*)                 = nullptr;
 char* (*g_wxhook_file_dialog)(bool, const char*, const char*,
                                const char*, const char*, bool)   = nullptr;
+int   (*g_wxhook_font_dialog)(void*, struct WxFontChoice*)       = nullptr;
 char* (*g_wxhook_get_clipboard_text)()                           = nullptr;
 void  (*g_wxhook_set_clipboard_text)(const char*)                = nullptr;
 void* (*g_wxhook_create_text_window)(

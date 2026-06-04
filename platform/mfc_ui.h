@@ -3829,7 +3829,10 @@ public:
     CImageList* GetImageList() const { return nullptr; }
     BOOL Create(DWORD, const RECT&, CWnd*, UINT) { return FALSE; }
     void RemoveImage(int) {}
-    BOOL RedrawWindow(const RECT* =nullptr, CRgn* =nullptr, UINT =0) { return FALSE; }
+    BOOL RedrawWindow(const RECT* =nullptr, CRgn* =nullptr, UINT =0) {
+        if (g_wxhook_invalidate) g_wxhook_invalidate(m_hWnd, true);
+        return TRUE;
+    }
 };
 
 class CTreeCtrl : public CWnd {
@@ -4272,20 +4275,59 @@ class CFontDialog : public CDialog {
 public:
     LOGFONT    m_lf = {};
     CHOOSEFONT m_cf = {};
+    // Results populated by DoModal() on IDOK.
+    CString  m_resFace;
+    int      m_resPoints    = 0;          // chosen size, whole points
+    int      m_resWeight    = FW_NORMAL;
+    bool     m_resItalic    = false;
+    bool     m_resUnderline = false;
+    bool     m_resStrike    = false;
+    int      m_resCharset   = 0;
+    COLORREF m_resColor     = 0;
+
     CFontDialog(LOGFONT* pLF = nullptr, DWORD = 0, CDC* = nullptr, CWnd* = nullptr) {
         if (pLF) m_lf = *pLF;
         m_cf.lpLogFont = &m_lf;
     }
-    CString  GetFaceName()  const { return {}; }
+
+    // Run wxFontDialog via the bridge (g_wxhook_font_dialog).  Falls back to
+    // IDCANCEL in headless/mushcore builds where the hook is null.
+    INT_PTR DoModal() override {
+        if (!g_wxhook_font_dialog) return IDCANCEL;
+        WxFontChoice fc = {};
+        strncpy(fc.faceName, m_lf.lfFaceName, sizeof(fc.faceName) - 1);
+        fc.lfHeight = m_lf.lfHeight;
+        fc.weight   = m_lf.lfWeight ? (int) m_lf.lfWeight : (int) FW_NORMAL;
+        fc.italic   = m_lf.lfItalic ? 1 : 0;
+        if (g_wxhook_font_dialog(nullptr, &fc) != 1)
+            return IDCANCEL;
+        m_resFace      = fc.faceName;
+        m_resPoints    = fc.pointSize;
+        m_resWeight    = fc.weight;
+        m_resItalic    = fc.italic    != 0;
+        m_resUnderline = fc.underline != 0;
+        m_resStrike    = fc.strikeout != 0;
+        m_resColor     = fc.color;
+        m_resCharset   = m_lf.lfCharSet;   // dialog does not choose a charset
+        // Mirror the result back into m_lf so callers reading m_cf.lpLogFont
+        // (== &m_lf) observe the chosen face/weight/italic.
+        strncpy(m_lf.lfFaceName, fc.faceName, sizeof(m_lf.lfFaceName) - 1);
+        m_lf.lfFaceName[sizeof(m_lf.lfFaceName) - 1] = 0;
+        m_lf.lfWeight = fc.weight;
+        m_lf.lfItalic = (BYTE)(fc.italic ? 1 : 0);
+        return IDOK;
+    }
+
+    CString  GetFaceName()  const { return m_resFace; }
     CString  GetStyleName() const { return {}; }
-    int      GetSize()      const { return 0; }
-    int      GetWeight()    const { return FW_NORMAL; }
-    COLORREF GetColor()     const { return 0; }
-    BOOL     IsItalic()     const { return FALSE; }
-    BOOL     IsBold()       const { return FALSE; }
-    BOOL     IsUnderline()  const { return FALSE; }
-    BOOL     IsStrikeOut()  const { return FALSE; }
-    int      GetCharset()   const { return 0; }
+    int      GetSize()      const { return m_resPoints * 10; }   // tenths of a point
+    int      GetWeight()    const { return m_resWeight; }
+    COLORREF GetColor()     const { return m_resColor; }
+    BOOL     IsItalic()     const { return m_resItalic    ? TRUE : FALSE; }
+    BOOL     IsBold()       const { return m_resWeight >= FW_BOLD ? TRUE : FALSE; }
+    BOOL     IsUnderline()  const { return m_resUnderline ? TRUE : FALSE; }
+    BOOL     IsStrikeOut()  const { return m_resStrike    ? TRUE : FALSE; }
+    int      GetCharset()   const { return m_resCharset; }
 };
 
 class CFileDialog : public CDialog {

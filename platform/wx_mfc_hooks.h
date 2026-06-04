@@ -127,6 +127,24 @@ extern char* (*g_wxhook_file_dialog)(bool bOpen,
                                      const char* filter,
                                      bool overwrite);
 
+// ── Font chooser hook (CFontDialog → wxFontDialog) ─────────────────────────
+// Exchange struct (no wx/MFC types so mfc_ui.h can use it).  On input:
+// faceName + lfHeight (MFC LOGFONT height, negative device units) + weight
+// (FW_NORMAL=400 / FW_BOLD=700) + italic seed the dialog.  On OK (return 1):
+// faceName, pointSize (whole points), weight, italic/underline/strikeout, and
+// color are filled with the chosen font.  Returns 0 if the user cancels.
+struct WxFontChoice {
+    char     faceName[64];
+    long     lfHeight;     // in:  LOGFONT height (typically negative)
+    int      pointSize;    // out: chosen size in whole points
+    int      weight;       // in/out: FW_NORMAL=400 / FW_BOLD=700
+    int      italic;       // in/out: 0 or 1
+    int      underline;    // out: 0 or 1
+    int      strikeout;    // out: 0 or 1
+    uint32_t color;        // out: COLORREF of the chosen colour (if any)
+};
+extern int (*g_wxhook_font_dialog)(void* parentHwnd, struct WxFontChoice* io);
+
 // ── Clipboard hooks ────────────────────────────────────────────────────────
 // Get the system clipboard text as a UTF-8 malloc'd string (caller must free),
 // or nullptr if the clipboard is empty or contains no text.

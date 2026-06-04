@@ -298,7 +298,11 @@ public:
     void SetWindowPos(const CWnd*, int, int, int, int, UINT) {}
     void BringWindowToTop() {}
     void SetRedraw(BOOL = TRUE) {}
-    void RedrawWindow(const RECT* = nullptr, CRgn* = nullptr, UINT = 0) {}
+    void RedrawWindow(const RECT* = nullptr, CRgn* = nullptr, UINT = 0) {
+        // Owner-draw controls (e.g. CColourButton swatches) call RedrawWindow()
+        // to repaint after their colour changes; route it to a wx Refresh.
+        if (g_wxhook_invalidate) g_wxhook_invalidate(m_hWnd, true);
+    }
     CWnd* GetParent() const { return nullptr; }
     CWnd* GetOwner()  const { return nullptr; }
     CWnd* SetParent(CWnd*) { return nullptr; }

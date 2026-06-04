@@ -302,6 +302,8 @@ static void hook_set_window_text(void* h, const char* text)
         tc->ChangeValue(s);
     else if (wxComboBox* cb = wxDynamicCast(w, wxComboBox))
         cb->SetValue(s);
+    else if (wxChoice* ch = wxDynamicCast(w, wxChoice))
+        ch->SetStringSelection(s);   // read-only pop-up: select the matching item
     // Static text: set the label then re-wrap to the control's (fixed) width,
     // since MFC statics word-wrap within their rectangle and wxStaticText clips.
     else if (wxStaticText* st = wxDynamicCast(w, wxStaticText))
@@ -1362,6 +1364,57 @@ static char* hook_file_dialog(bool bOpen,
     return strdup(dlg.GetPath().ToUTF8().data());
 }
 
+// ── hook_font_dialog ──────────────────────────────────────────────────────────
+// CFontDialog::DoModal() on non-Windows.  Seeds wxFontDialog from the incoming
+// LOGFONT-style fields (face + lfHeight + weight + italic), shows it, and writes
+// the chosen font back into *io.  Returns 1 on OK, 0 on cancel.  The point size
+// is recovered from lfHeight using the same display PPI that GetDeviceCaps
+// (LOGPIXELSY) reports, so it round-trips the caller's MulDiv exactly.
+static int hook_font_dialog(void* /*parentHwnd*/, WxFontChoice* io)
+{
+    if (!io) return 0;
+
+    wxWindow* parent = wxGetActiveWindow();
+    if (!parent) parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+
+    long h   = io->lfHeight < 0 ? -io->lfHeight : io->lfHeight;
+    int  dpi = wxGetDisplayPPI().y;
+    int  points = (dpi > 0 && h != 0)
+                  ? (int)((h * 72 + dpi / 2) / dpi)
+                  : (io->pointSize > 0 ? io->pointSize : 10);
+    if (points <= 0) points = 10;
+
+    wxFont initial(points,
+                   wxFONTFAMILY_DEFAULT,
+                   io->italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL,
+                   io->weight >= FW_BOLD ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL,
+                   false,
+                   wxString::FromUTF8(io->faceName));
+
+    wxFontData data;
+    data.EnableEffects(false);
+    if (initial.IsOk()) data.SetInitialFont(initial);
+
+    wxFontDialog dlg(parent, data);
+    if (dlg.ShowModal() != wxID_OK) return 0;
+
+    wxFontData ret = dlg.GetFontData();
+    wxFont     f   = ret.GetChosenFont();
+    if (!f.IsOk()) return 0;
+
+    wxString face = f.GetFaceName();
+    strncpy(io->faceName, face.utf8_str(), sizeof(io->faceName) - 1);
+    io->faceName[sizeof(io->faceName) - 1] = 0;
+    io->pointSize = f.GetPointSize();
+    io->weight    = (f.GetWeight() >= wxFONTWEIGHT_BOLD) ? FW_BOLD : FW_NORMAL;
+    io->italic    = (f.GetStyle() != wxFONTSTYLE_NORMAL) ? 1 : 0;
+    io->underline = f.GetUnderlined()    ? 1 : 0;
+    io->strikeout = f.GetStrikethrough() ? 1 : 0;
+    wxColour c    = ret.GetColour();
+    io->color     = RGB(c.Red(), c.Green(), c.Blue());
+    return 1;
+}
+
 // ── hook_save_world ───────────────────────────────────────────────────────────
 // Saves the world file for the given doc.  If saveAs is true or the doc has no
 // path, opens a save-file dialog.  parent is a wxWindow* used as dialog parent.
@@ -2115,6 +2168,27 @@ static void bind_list_notifications(wxWindow* win, CCmdTarget* target)
         if (!AfxDispatchNotify(target, (UINT) NM_DBLCLK, (UINT) e.GetId(), &nm.hdr, &res))
             e.Skip();
     });
+    // Item selection change → LVN_ITEMCHANGED.  Without this, e.g. the canonical
+    // CColourPickerDlg never updates its RGB sliders/preview when you pick a
+    // colour from the list (OnItemchangedColourlist never fires), and entity
+    // managers never enable/disable their Edit/Remove buttons.  Fire on both
+    // select and deselect with the matching LVIS_SELECTED state so handlers that
+    // test uNewState behave correctly.
+    auto onSelChange = [target](wxListEvent& e) {
+        bool selected = (e.GetEventType() == wxEVT_LIST_ITEM_SELECTED);
+        NMLISTVIEW nm{};
+        nm.hdr.idFrom = (UINT) e.GetId();
+        nm.hdr.code   = (UINT) LVN_ITEMCHANGED;
+        nm.iItem      = e.GetIndex();
+        nm.uChanged   = LVIF_STATE;
+        nm.uNewState  = selected ? LVIS_SELECTED : 0;
+        nm.uOldState  = selected ? 0 : LVIS_SELECTED;
+        LRESULT res = 0;
+        if (!AfxDispatchNotify(target, (UINT) LVN_ITEMCHANGED, (UINT) e.GetId(), &nm.hdr, &res))
+            e.Skip();
+    };
+    win->Bind(wxEVT_LIST_ITEM_SELECTED,   onSelChange);
+    win->Bind(wxEVT_LIST_ITEM_DESELECTED, onSelChange);
 }
 
 // Build a panel for one canonical CPropertyPage under `bookParent` (a wxTreebook
@@ -2341,6 +2415,7 @@ static char* hook_get_window_text(void* hwnd)
     wxString s;
     if (wxTextCtrl* t = wxDynamicCast(w, wxTextCtrl))      s = t->GetValue();
     else if (wxComboBox* c = wxDynamicCast(w, wxComboBox)) s = c->GetValue();
+    else if (wxChoice* ch = wxDynamicCast(w, wxChoice))    s = ch->GetStringSelection();
     else                                                   s = w->GetLabel();
     return strdup(s.utf8_str());
 }
@@ -2538,38 +2613,46 @@ static char* hook_listbox_get_text(void* hwnd, int index)
     return strdup(lb->GetString(index).utf8_str());
 }
 
-// ── CComboBox → wxComboBox ────────────────────────────────────────────────
+// ── CComboBox → wxComboBox (editable) or wxChoice (read-only pop-up) ───────
+// CBS_DROPDOWNLIST combos are built as wxChoice (native pop-up menu); editable
+// combos as wxComboBox.  Both derive from wxItemContainer, which provides all
+// the item operations the CComboBox hooks need, so we bridge against that base.
 namespace {
-inline wxComboBox* CB(void* hwnd) { return wxDynamicCast((wxWindow*) hwnd, wxComboBox); }
+inline wxItemContainer* CB(void* hwnd) {
+    wxWindow* w = (wxWindow*) hwnd;
+    if (wxComboBox* c = wxDynamicCast(w, wxComboBox)) return c;
+    if (wxChoice*   c = wxDynamicCast(w, wxChoice))   return c;
+    return nullptr;
+}
 }
 static int hook_combo_add_string(void* hwnd, const char* text)
 {
-    wxComboBox* cb = CB(hwnd);
+    wxItemContainer* cb = CB(hwnd);
     if (!cb) return -1;   // CB_ERR
     return (int) cb->Append(wxString::FromUTF8(text ? text : ""));
 }
 static int hook_combo_get_count(void* hwnd)
 {
-    wxComboBox* cb = CB(hwnd);
+    wxItemContainer* cb = CB(hwnd);
     return cb ? (int) cb->GetCount() : 0;
 }
 static int hook_combo_get_cur_sel(void* hwnd)
 {
-    wxComboBox* cb = CB(hwnd);
+    wxItemContainer* cb = CB(hwnd);
     if (!cb) return -1;
     int sel = cb->GetSelection();
     return (sel == wxNOT_FOUND) ? -1 : sel;   // CB_ERR == -1
 }
 static void hook_combo_set_cur_sel(void* hwnd, int sel)
 {
-    wxComboBox* cb = CB(hwnd);
+    wxItemContainer* cb = CB(hwnd);
     if (!cb) return;
     if (sel < 0 || sel >= (int) cb->GetCount()) cb->SetSelection(wxNOT_FOUND);
     else                                        cb->SetSelection(sel);
 }
 static int hook_combo_find_string_exact(void* hwnd, int after, const char* text)
 {
-    wxComboBox* cb = CB(hwnd);
+    wxItemContainer* cb = CB(hwnd);
     if (!cb) return -1;
     // MFC: search starts AFTER index `after` (-1 → from start), wraps once.
     int n = (int) cb->GetCount();
@@ -2582,13 +2665,13 @@ static int hook_combo_find_string_exact(void* hwnd, int after, const char* text)
 }
 static char* hook_combo_get_lb_text(void* hwnd, int index)
 {
-    wxComboBox* cb = CB(hwnd);
+    wxItemContainer* cb = CB(hwnd);
     if (!cb || index < 0 || index >= (int) cb->GetCount()) return nullptr;
     return strdup(cb->GetString(index).utf8_str());
 }
 static void hook_combo_reset_content(void* hwnd)
 {
-    if (wxComboBox* cb = CB(hwnd)) cb->Clear();
+    if (wxItemContainer* cb = CB(hwnd)) cb->Clear();
 }
 
 // ── Radio-button group (DDX_Radio) ────────────────────────────────────────
@@ -2709,6 +2792,13 @@ static void hook_bind_owner_draw(void* hwnd, void* cbtn)
     if (OwnerDrawButton* odb = dynamic_cast<OwnerDrawButton*>((wxWindow*) hwnd)) {
         odb->m_cbtn = static_cast<CButton*>(cbtn);
         odb->Refresh();   // repaint now that the backing button is available
+        // The swatch colour (CColourButton::m_colour) is usually assigned in the
+        // page's OnInitDialog, which runs AFTER this DDX_Control bind.  Without a
+        // later repaint the swatch keeps the default (black) it was painted with
+        // here.  Queue a repaint for the next event-loop pass — by then
+        // OnInitDialog has set the colour.  (If the control is destroyed first,
+        // wxEvtHandler removes the pending call, so this is safe.)
+        odb->CallAfter([odb]{ odb->Refresh(); });
     }
 }
 
@@ -2816,6 +2906,7 @@ void wx_mfc_install_hooks()
     g_wxhook_set_status         = hook_set_status;
     g_wxhook_save_world         = hook_save_world;
     g_wxhook_file_dialog        = hook_file_dialog;
+    g_wxhook_font_dialog        = hook_font_dialog;
     g_wxhook_get_clipboard_text   = hook_get_clipboard_text;
     g_wxhook_set_clipboard_text   = hook_set_clipboard_text;
     g_wxhook_create_text_window   = hook_create_text_window;

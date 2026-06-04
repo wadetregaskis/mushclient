@@ -877,6 +877,22 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                                                : doc->m_bTrace;
                     flag  = !flag;
                     state = flag;
+                    // Both features stay silent until there is traffic/activity,
+                    // which makes the toggle look like it did nothing.  Confirm
+                    // the new state in the output window and say where the real
+                    // output will appear.
+                    if (id == 32971)
+                        doc->Note(state
+                            ? "[Debug] Incoming/outgoing packet logging ON — once "
+                              "connected, raw bytes (including telnet IAC "
+                              "negotiation and other invisible protocol traffic) "
+                              "appear in a \"Packet debug\" notepad window."
+                            : "[Debug] Packet logging OFF.");
+                    else
+                        doc->Note(state
+                            ? "[Trace] ON — trigger, alias and timer matches will "
+                              "be shown here as TRACE: lines."
+                            : "[Trace] OFF.");
                 }
             }
             if (wxMenuBar* bar = frame->GetMenuBar())
@@ -1666,6 +1682,15 @@ static void* hook_create_text_window(
     } else if (App.m_cNotepadTextColour != App.m_cNotepadBackColour) {
         td->m_textColour = App.m_cNotepadTextColour;
         td->m_backColour = App.m_cNotepadBackColour;
+    }
+
+    // Never leave a notepad with text == background — the default notepad
+    // colours are 0/0 (black on black), which the canonical treats as "use the
+    // system default" but which renders as unreadable here.  Fall back to black
+    // text on a white background so e.g. the packet-debug notepad is legible.
+    if (td->m_textColour == td->m_backColour) {
+        td->m_textColour = RGB(0, 0, 0);
+        td->m_backColour = RGB(255, 255, 255);
     }
 
     // Sanitise title for display (matches Utilities.cpp).

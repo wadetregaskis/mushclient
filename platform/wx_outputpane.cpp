@@ -1034,7 +1034,16 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
     else if (drawUnderline)                           dc.SetFont(m_fontUnderline);
     else                                              dc.SetFont(m_font);
 
-    dc.DrawText(text, x, yOff);
+    // Draw each character at its fixed grid cell (x + i*m_charW) rather than
+    // letting one DrawText flow the whole string at the font's natural advances.
+    // A monospace font's natural advance can differ from the integer cell width
+    // m_charW on macOS, so a single DrawText drifts off the grid — which both
+    // misaligns the grid-computed selection rectangle with the glyphs and shifts
+    // the text when a run is split for a partial selection.  Per-cell drawing
+    // keeps glyph positions identical whether or not the run is split, and lined
+    // up with the selection rectangle and click hit-testing (both grid-based).
+    for (size_t i = 0; i < text.size(); ++i)
+        dc.DrawText(text.Mid(i, 1), x + (int) i * m_charW, yOff);
 
     // Strikethrough: draw a horizontal line through the vertical centre of the glyph.
     if (run.strikethrough) {

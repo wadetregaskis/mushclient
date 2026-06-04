@@ -610,6 +610,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     displayMenu->AppendSeparator();
     displayMenu->Append(32201 /*ID_DISPLAY_FREEZEOUTPUT*/, wxT("Free&ze Output"));
     displayMenu->Append(32963 /*ID_DISPLAY_GOTOLINE*/,     wxT("&Go To Line…"));
+    displayMenu->AppendSeparator();
+    // Connection diagnostics (toggle, reflected as a check mark).  "Debug
+    // Incoming Packets" displays every received byte — including telnet
+    // negotiation (IAC WILL/WONT…), MCCP, and other normally-invisible
+    // protocol traffic.  "Trace" logs trigger/alias/timer/script activity.
+    displayMenu->AppendCheckItem(32971 /*ID_EDIT_DEBUGINCOMINGPACKETS*/,
+                                 wxT("&Debug Incoming Packets"));
+    displayMenu->AppendCheckItem(32334 /*ID_GAME_TRACE*/, wxT("&Trace"));
     mb->Append(displayMenu, wxT("&Display"));
 
     // ── Configure menu ────────────────────────────────────────────────────
@@ -857,6 +865,23 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 else if (id == 32201) c->FreezeOutput();
                 else                  c->GotoLine();
             }
+            return;
+        }
+
+        // ── Display menu: connection diagnostics (toggle flags on the doc) ──
+        if (id == 32971 /*ID_EDIT_DEBUGINCOMINGPACKETS*/ || id == 32334 /*ID_GAME_TRACE*/) {
+            bool state = false;
+            if (auto* c = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
+                if (CMUSHclientDoc* doc = c->GetDoc()) {
+                    bool& flag = (id == 32971) ? doc->m_bDebugIncomingPackets
+                                               : doc->m_bTrace;
+                    flag  = !flag;
+                    state = flag;
+                }
+            }
+            if (wxMenuBar* bar = frame->GetMenuBar())
+                if (wxMenuItem* mi = bar->FindItem(id))
+                    mi->Check(state);
             return;
         }
 
@@ -1610,8 +1635,13 @@ static void* hook_create_text_window(
     CTextDocument* td = CTextDocument::CreateInstance();
     td->m_pRelatedWorld         = pDoc;
     td->m_iUniqueDocumentNumber = iUniqueDocNum;
-    td->m_strFontName           = strFontName  ? strFontName  : "";
-    td->m_iFontSize             = iFontSize;
+    // Default to the global notepad font (Prefs ▸ Notepad ▸ Font…) when the
+    // caller didn't specify one.
+    td->m_strFontName           = (strFontName && *strFontName)
+                                      ? strFontName
+                                      : (LPCTSTR) App.m_strNotepadFont;
+    td->m_iFontSize             = iFontSize > 0 ? iFontSize
+                                               : (long) App.m_iNotepadFontSize;
     td->m_iFontWeight           = iFontWeight;
     td->m_iFontCharset          = iFontCharset;
     td->m_textColour            = static_cast<COLORREF>(textColour);

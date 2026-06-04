@@ -63,6 +63,7 @@ static tGlobalConfigurationNumericOption GlobalOptionsTable [] = {
 { GLB_OPT (m_nActivityWindowRefreshType     ), "ActivityWindowRefreshType", CMUSHclientApp::eRefreshBoth },
 { GLB_OPT (m_nParenMatchFlags               ), "ParenMatchFlags",                         PAREN_NEST_BRACES | PAREN_BACKSLASH_ESCAPES | PAREN_PERCENT_ESCAPES }, 
 { GLB_OPT (m_nPrinterFontSize               ), "PrinterFontSize",               10 },
+{ GLB_OPT (m_iNotepadFontSize               ), "NotepadFontSize",                9 },
 { GLB_OPT (m_nPrinterLeftMargin             ), "PrinterLeftMargin",             15 },
 { GLB_OPT (m_nPrinterLinesPerPage           ), "PrinterLinesPerPage",           60 },
 { GLB_OPT (m_nPrinterTopMargin              ), "PrinterTopMargin",              15 },
@@ -99,6 +100,7 @@ static tGlobalConfigurationAlphaOption AlphaGlobalOptionsTable  [] = {
 { GLB_ALPHA_OPT (m_strPluginsDirectory         ), "PluginsDirectory", ".\\worlds\\plugins\\" },
 { GLB_ALPHA_OPT (m_strDefaultStateFilesDirectory), "StateFilesDirectory", ".\\worlds\\plugins\\state\\" },   // however see below
 { GLB_ALPHA_OPT (m_strPrinterFont              ), "PrinterFont",                "Courier" },
+{ GLB_ALPHA_OPT (m_strNotepadFont              ), "NotepadFont",               "FixedSys" },
 { GLB_ALPHA_OPT (m_strTrayIconFileName         ), "TrayIconFileName",  "" },                    
 { GLB_ALPHA_OPT (m_strWordDelimiters           ), "WordDelimiters",         ".,()[]\"\'" },
 { GLB_ALPHA_OPT (m_strWordDelimitersDblClick   ), "WordDelimitersDblClick", ".,()[]\"\'" },
@@ -149,6 +151,7 @@ static CString PosixAlphaGlobalDefault (const char * name, const CString & rawDe
   // name and the font actually resolves.
   if ((strcmp (name, "DefaultOutputFont") == 0 ||
        strcmp (name, "DefaultInputFont")  == 0 ||
+       strcmp (name, "NotepadFont")       == 0 ||
        strcmp (name, "FixedPitchFont")    == 0) &&
       rawDefault == "FixedSys")
     return CString (PortableFixedPitchFont ());
@@ -271,6 +274,7 @@ void CMUSHclientApp::LoadGlobalsFromDatabase (void)
   if (m_strFixedPitchFont.IsEmpty ())    m_strFixedPitchFont    = PortableFixedPitchFont ();
   if (m_strDefaultOutputFont.IsEmpty ()) m_strDefaultOutputFont = PortableFixedPitchFont ();
   if (m_strDefaultInputFont.IsEmpty ())  m_strDefaultInputFont  = PortableFixedPitchFont ();
+  if (m_strNotepadFont.IsEmpty ())       m_strNotepadFont       = PortableFixedPitchFont ();
 
   // Strip a stray trailing Windows backslash from directory paths.  Older saves
   // appended '\\' unconditionally (GlobalPrefs.cpp), producing "…/worlds/\".

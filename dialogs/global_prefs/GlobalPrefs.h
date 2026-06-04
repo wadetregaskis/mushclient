@@ -434,6 +434,7 @@ public:
 	//}}AFX_DATA
 
   unsigned int m_nParenMatchFlags;
+  unsigned int m_iNotepadFontSize;   // notepad font size (points)
 
   COLORREF m_cNotepadTextColour;
   COLORREF m_cNotepadBackColour;
@@ -454,6 +455,7 @@ protected:
 	//{{AFX_MSG(CGlobalPrefsP10)
 	afx_msg void OnTextSwatch();
 	afx_msg void OnBackgroundSwatch();
+	afx_msg void OnFont();
 	virtual BOOL OnInitDialog();
 	//}}AFX_MSG
   afx_msg LRESULT OnKickIdle(WPARAM, LPARAM);

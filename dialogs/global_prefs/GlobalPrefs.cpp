@@ -1095,6 +1095,7 @@ CGlobalPrefsP10::CGlobalPrefsP10() : CPropertyPage(CGlobalPrefsP10::IDD)
 	m_bNotepadWordWrap = FALSE;
 	m_strNotepadQuoteString = _T("");
 	//}}AFX_DATA_INIT
+	m_iNotepadFontSize = 9;
 }
 
 CGlobalPrefsP10::~CGlobalPrefsP10()
@@ -1150,6 +1151,7 @@ BEGIN_MESSAGE_MAP(CGlobalPrefsP10, CPropertyPage)
 	//{{AFX_MSG_MAP(CGlobalPrefsP10)
 	ON_BN_CLICKED(IDC_TEXT_SWATCH, OnTextSwatch)
 	ON_BN_CLICKED(IDC_BACKGROUND_SWATCH, OnBackgroundSwatch)
+	ON_BN_CLICKED(IDC_SELECT_NOTEPAD_FONT, OnFont)
 	//}}AFX_MSG_MAP
   ON_MESSAGE(WM_KICKIDLE, OnKickIdle)
   ON_UPDATE_COMMAND_UI(IDC_ESCAPE_SINGLE_QUOTES, OnUpdateNeedSingleQuotes)
@@ -1171,7 +1173,38 @@ BOOL CGlobalPrefsP10::OnInitDialog()
 	              // EXCEPTION: OCX Property Pages should return FALSE
 }
 
-void CGlobalPrefsP10::OnOK() 
+void CGlobalPrefsP10::OnFont()
+{
+UpdateData (TRUE);   // pull the current field text into m_strNotepadFont
+
+CDC dc;
+
+dc.CreateCompatibleDC (NULL);
+
+LOGFONT lf;
+
+ZeroMemory (&lf, sizeof lf);
+
+lf.lfHeight = -MulDiv(m_iNotepadFontSize, dc.GetDeviceCaps(LOGPIXELSY), 72);
+strncpy (lf.lfFaceName, m_strNotepadFont, sizeof (lf.lfFaceName) - 1);
+lf.lfFaceName [sizeof (lf.lfFaceName) - 1] = 0;
+
+CFontDialog dlg (&lf,
+                 CF_BOTH,
+                 NULL,
+                 GetOwner ());       // owner view
+
+if (dlg.DoModal () != IDOK)
+  return;
+
+m_iNotepadFontSize = dlg.GetSize () / 10;
+m_strNotepadFont   = dlg.GetFaceName ();
+m_strNotepadStyle  = CFormat ("%i pt.", m_iNotepadFontSize);
+
+UpdateData (FALSE);  // push the new font name + style back to the fields
+}
+
+void CGlobalPrefsP10::OnOK()
 {
 // remember colour of text
   
@@ -1314,6 +1347,9 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
   propSheet.m_Page10.m_cNotepadBackColour           =  pApp->m_cNotepadBackColour;
   propSheet.m_Page10.m_nParenMatchFlags             =  pApp->m_nParenMatchFlags;
   propSheet.m_Page10.m_strNotepadQuoteString        =  pApp->m_strNotepadQuoteString;
+  propSheet.m_Page10.m_strNotepadFont               =  pApp->m_strNotepadFont;
+  propSheet.m_Page10.m_iNotepadFontSize             =  pApp->m_iNotepadFontSize;
+  propSheet.m_Page10.m_strNotepadStyle              =  CFormat ("%i pt.", pApp->m_iNotepadFontSize);
 
   CString strStyle = CFormat ("%i pt.", pApp->m_iDefaultInputFontHeight);
   if (pApp->m_iDefaultInputFontWeight == FW_BOLD)
@@ -1434,6 +1470,8 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
   pApp->m_cNotepadTextColour           =  propSheet.m_Page10.m_cNotepadTextColour;
   pApp->m_cNotepadBackColour           =  propSheet.m_Page10.m_cNotepadBackColour;
   pApp->m_strNotepadQuoteString        =  propSheet.m_Page10.m_strNotepadQuoteString;
+  pApp->m_strNotepadFont               =  propSheet.m_Page10.m_strNotepadFont;
+  pApp->m_iNotepadFontSize             =  propSheet.m_Page10.m_iNotepadFontSize;
 
   // tray
 

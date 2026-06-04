@@ -163,6 +163,7 @@ public:
   unsigned int m_nActivityWindowRefreshType;
   unsigned int m_nParenMatchFlags;
   unsigned int m_nPrinterFontSize;
+  unsigned int m_iNotepadFontSize;   // default notepad font size (points)
   unsigned int m_nPrinterLeftMargin;
   unsigned int m_nPrinterLinesPerPage;
   unsigned int m_nPrinterTopMargin;
@@ -191,6 +192,7 @@ public:
   CString m_strPluginList;
   CString m_strPluginsDirectory;
   CString m_strPrinterFont;
+  CString m_strNotepadFont;          // default notepad font face
   CString m_strTrayIconFileName;
   CString m_strWordDelimiters;
   CString m_strWordDelimitersDblClick;

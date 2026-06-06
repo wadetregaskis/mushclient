@@ -46,7 +46,10 @@ void CChooseNotepadDlg::DoDataExchange(CDataExchange* pDX)
       {
       int nItem;
 
-      CTextDocument * pDoc = (CTextDocument *) App.m_pWorldDocTemplate->GetNextDoc(docPos);
+      // Advance through the same template the position came from: notepad/text
+      // docs live in m_pNormalDocTemplate, and the portable POSITION shim is
+      // per-template (see CMUSHclientDoc::OnEditFliptonotepad for details).
+      CTextDocument * pDoc = (CTextDocument *) App.m_pNormalDocTemplate->GetNextDoc(docPos);
 
       // ignore unrelated worlds
       if (pDoc->m_pRelatedWorld != m_pWorld ||

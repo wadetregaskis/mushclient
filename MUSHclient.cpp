@@ -2013,7 +2013,10 @@ CTextDocument * pTextDoc = NULL;
   for (POSITION docPos = App.m_pNormalDocTemplate->GetFirstDocPosition();
       docPos != NULL; )
     {
-    pTextDoc = (CTextDocument *) App.m_pWorldDocTemplate->GetNextDoc(docPos);
+    // Advance through the same template the position came from (see the note in
+    // CMUSHclientDoc::OnEditFliptonotepad): notepad docs live in
+    // m_pNormalDocTemplate, and the portable POSITION shim is per-template.
+    pTextDoc = (CTextDocument *) App.m_pNormalDocTemplate->GetNextDoc(docPos);
 
     // ignore related worlds
     if (pTextDoc->m_pRelatedWorld == NULL &&

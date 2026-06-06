@@ -6020,7 +6020,13 @@ CTextDocument * pTextDoc = NULL;
   for (POSITION docPos = App.m_pNormalDocTemplate->GetFirstDocPosition();
       docPos != NULL; )
     {
-    pTextDoc = (CTextDocument *) App.m_pWorldDocTemplate->GetNextDoc(docPos);
+    // Iterate the SAME template the position came from (notepad/text docs live
+    // in m_pNormalDocTemplate). On Windows GetNextDoc just follows the node's
+    // pNext chain so the template object is immaterial, but the portable shim
+    // treats POSITION as an index into that template's own list — so using the
+    // world template here would wrongly index the world docs and never find the
+    // existing notepad, spawning a duplicate.
+    pTextDoc = (CTextDocument *) App.m_pNormalDocTemplate->GetNextDoc(docPos);
 
     // ignore unrelated worlds
     if (pTextDoc->m_pRelatedWorld == this &&

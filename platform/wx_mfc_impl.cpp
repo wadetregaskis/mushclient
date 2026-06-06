@@ -573,6 +573,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     editMenu->Append(wxID_SELECTALL, wxT("Select All\tCtrl+A"));
     editMenu->AppendSeparator();
     editMenu->Append(wxID_FIND,      wxT("Find…\tCtrl+F"));
+    editMenu->AppendSeparator();
+    // Canonical "Flip to Notepad" (ID_EDIT_FLIPTONOTEPAD): opens this world's
+    // scratch notepad, creating it the first time and re-activating it after.
+    editMenu->Append(32953 /*ID_EDIT_FLIPTONOTEPAD*/,
+                     wxT("New Notepad\tCtrl+Shift+N"));
     mb->Append(editMenu, wxT("&Edit"));
 
     wxMenu* connMenu = new wxMenu();
@@ -898,6 +903,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             if (wxMenuBar* bar = frame->GetMenuBar())
                 if (wxMenuItem* mi = bar->FindItem(id))
                     mi->Check(state);
+            return;
+        }
+
+        // ── Edit ▸ New Notepad (canonical Flip to Notepad on the active doc) ──
+        if (id == 32953 /*ID_EDIT_FLIPTONOTEPAD*/) {
+            if (auto* c = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
+                if (CMUSHclientDoc* doc = c->GetDoc())
+                    AfxDispatchCommand(doc, BN_CLICKED, 32953 /*ID_EDIT_FLIPTONOTEPAD*/);
             return;
         }
 

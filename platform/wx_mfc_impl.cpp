@@ -574,10 +574,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     editMenu->AppendSeparator();
     editMenu->Append(wxID_FIND,      wxT("Find…\tCtrl+F"));
     editMenu->AppendSeparator();
-    // Canonical "Flip to Notepad" (ID_EDIT_FLIPTONOTEPAD): opens this world's
+    // Canonical "Flip To Notepad" (ID_EDIT_FLIPTONOTEPAD): opens this world's
     // scratch notepad, creating it the first time and re-activating it after.
     editMenu->Append(32953 /*ID_EDIT_FLIPTONOTEPAD*/,
-                     wxT("New Notepad\tCtrl+Shift+N"));
+                     wxT("Flip To Notepad\tCtrl+Shift+N"));
+    // Port-local "New Notepad": always opens a fresh, standalone blank notepad
+    // (not tied to any world). Inherits the Notepad-preferences font + colours.
+    editMenu->Append(40001 /*port-local: New standalone Notepad*/,
+                     wxT("New Notepad"));
     mb->Append(editMenu, wxT("&Edit"));
 
     wxMenu* connMenu = new wxMenu();
@@ -906,11 +910,31 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return;
         }
 
-        // ── Edit ▸ New Notepad (canonical Flip to Notepad on the active doc) ──
+        // ── Edit ▸ Flip To Notepad (canonical, on the active world doc) ──────
+        // Find-or-create this world's scratch notepad and bring it forward.
         if (id == 32953 /*ID_EDIT_FLIPTONOTEPAD*/) {
             if (auto* c = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
                 if (CMUSHclientDoc* doc = c->GetDoc())
                     AfxDispatchCommand(doc, BN_CLICKED, 32953 /*ID_EDIT_FLIPTONOTEPAD*/);
+            return;
+        }
+
+        // ── Edit ▸ New Notepad (port-local: always a fresh standalone pad) ───
+        // Not tied to any world; passing "" / 0 lets CreateTextWindow apply the
+        // Notepad-preferences font and colours (with a black-on-white fallback).
+        if (id == 40001 /*port-local: New standalone Notepad*/) {
+            CreateTextWindow("",                 // contents
+                             "Notepad",          // title
+                             nullptr,            // no related world (standalone)
+                             0,                  // unique document number
+                             "",                 // font name → App.m_strNotepadFont
+                             0,                  // font size → App.m_iNotepadFontSize
+                             FW_NORMAL,          // weight
+                             DEFAULT_CHARSET,    // charset
+                             0, 0,               // colours → Notepad prefs / fallback
+                             "", "",             // search string / line preamble
+                             false, false, false, false, false,
+                             0, eNotepadNormal);
             return;
         }
 

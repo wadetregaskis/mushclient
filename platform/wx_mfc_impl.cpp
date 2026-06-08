@@ -2216,6 +2216,14 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     dlg->Bind(wxEVT_CLOSE_WINDOW, [dlg](wxCloseEvent&) {
         if (dlg->IsModal()) dlg->EndModal(IDCANCEL);
     });
+    // Resizeable dialogs (WS_THICKFRAME) drive the canonical OnSize handler,
+    // which re-lays-out controls via CWnd::MoveWindow (now wired to wx).  OnSize
+    // is a virtual, so this reaches the derived dialog's override directly.
+    dlg->Bind(wxEVT_SIZE, [cdlg, dlg](wxSizeEvent& e) {
+        wxSize cs = dlg->GetClientSize();
+        cdlg->OnSize(0 /*SIZE_RESTORED*/, cs.GetWidth(), cs.GetHeight());
+        e.Skip();
+    });
 
     cdlg->OnInitDialog();
 

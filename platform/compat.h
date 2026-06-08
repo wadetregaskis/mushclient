@@ -292,9 +292,16 @@ public:
     void GetClientRect(CRect*) const {}
     void GetWindowRect(RECT*) const {}
     void GetWindowRect(CRect*) const {}
-    void MoveWindow(int, int, int, int, BOOL = TRUE) {}
-    void MoveWindow(const RECT*) {}
-    void MoveWindow(const RECT*, BOOL) {}   // CRect* overload (CRect derives from RECT)
+    void MoveWindow(int x, int y, int w, int h, BOOL repaint = TRUE) {
+        if (g_wxhook_move_window)
+            g_wxhook_move_window(m_hWnd, x, y, w, h, repaint != FALSE);
+    }
+    void MoveWindow(const RECT* r, BOOL repaint = TRUE) {   // CRect* derives from RECT
+        if (r && g_wxhook_move_window)
+            g_wxhook_move_window(m_hWnd, r->left, r->top,
+                                 r->right - r->left, r->bottom - r->top,
+                                 repaint != FALSE);
+    }
     void SetWindowPos(const CWnd*, int, int, int, int, UINT) {}
     void BringWindowToTop() {}
     void SetRedraw(BOOL = TRUE) {}
@@ -375,7 +382,10 @@ public:
     CFont* GetFont() const { return nullptr; }
     void  DragAcceptFiles(BOOL = TRUE) {}
     BOOL  SetForegroundWindow() { return FALSE; }
-    BOOL  GetWindowPlacement(WINDOWPLACEMENT*) const { return FALSE; }
+    // Defined out-of-line in mfc_ui.h (WINDOWPLACEMENT is incomplete here).
+    // Fills rcNormalPosition with the control's size so GetButtonSize() etc.
+    // get correct dimensions for the canonical OnSize relayout.
+    BOOL  GetWindowPlacement(WINDOWPLACEMENT* wp) const;
     BOOL  SetWindowPlacement(const WINDOWPLACEMENT*) { return FALSE; }
     void  FlashWindow(BOOL) {}
     void  MessageBox(LPCTSTR, LPCTSTR = nullptr, UINT = MB_OK) {}

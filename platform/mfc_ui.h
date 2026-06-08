@@ -1160,6 +1160,24 @@ struct WINDOWPLACEMENT {
     RECT  rcNormalPosition;
 };
 
+// CWnd::GetWindowPlacement — out-of-line (WINDOWPLACEMENT is forward-declared in
+// compat.h).  Fills rcNormalPosition with the control's size (0,0,w,h); callers
+// like GetButtonSize() only use the width/height.  Enough for the canonical
+// OnSize relayout (e.g. CPluginsDlg) to compute correct button dimensions.
+inline BOOL CWnd::GetWindowPlacement(WINDOWPLACEMENT* wp) const {
+    if (!wp) return FALSE;
+    wp->length  = sizeof(WINDOWPLACEMENT);
+    wp->flags   = 0;
+    wp->showCmd = 1;   // SW_SHOWNORMAL
+    wp->ptMinPosition.x = wp->ptMinPosition.y = 0;
+    wp->ptMaxPosition.x = wp->ptMaxPosition.y = 0;
+    wp->rcNormalPosition.left = wp->rcNormalPosition.top = 0;
+    wp->rcNormalPosition.right = wp->rcNormalPosition.bottom = 0;
+    if (g_wxhook_get_client_rect)
+        g_wxhook_get_client_rect(m_hWnd, &wp->rcNormalPosition);
+    return TRUE;
+}
+
 typedef CREATESTRUCT *        LPCREATESTRUCT;
 typedef const CREATESTRUCT *  LPCCREATESTRUCT;
 

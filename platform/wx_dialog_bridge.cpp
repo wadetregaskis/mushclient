@@ -295,10 +295,21 @@ void PopulateWindowFromTemplate(wxWindow* target, const RcDialog& t)
 // Build a standalone wxDialog from a recovered template.  `parent` may be null.
 wxDialog* BuildWxDialogFromTemplate(wxWindow* parent, const RcDialog& t)
 {
+    // Honour WS_THICKFRAME (0x00040000) in the template: such dialogs are meant
+    // to be resizeable on Windows (and have an OnSize handler that re-lays-out
+    // their controls).  Add wxRESIZE_BORDER so the user can resize them here too.
+    long style = wxDEFAULT_DIALOG_STYLE;
+    if (t.style & 0x00040000 /*WS_THICKFRAME*/)
+        style |= wxRESIZE_BORDER;
+
     wxDialog* dlg = new wxDialog(parent, wxID_ANY, U(t.caption),
                                  wxDefaultPosition, wxDefaultSize,
-                                 wxDEFAULT_DIALOG_STYLE);
+                                 style);
     PopulateWindowFromTemplate(dlg, t);
     dlg->SetClientSize(dlg->GetMinClientSize());
+    // The template size is the smallest sensible layout; let the user grow the
+    // dialog but not shrink controls into each other.
+    if (style & wxRESIZE_BORDER)
+        dlg->SetMinSize(dlg->GetSize());
     return dlg;
 }

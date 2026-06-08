@@ -801,6 +801,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // The DC is already positioned at client origin (scroll removed by caller).
     // We implement our own rectangle calculation here rather than calling the
     // Windows-only CMUSHView::Calculate_MiniWindow_Rectangles().
+    // Text rectangle (world.TextRectangle): expose the world's reserved text
+    // area so the output pane shifts/narrows its text to avoid docked
+    // miniwindows.  Mirrors CMUSHView::HaveTextRectangle() — active when the
+    // rectangle is not all-zero.
+    m_output->m_fn_text_rect = [this](int& l, int& t, int& r, int& b) -> bool {
+        if (!m_doc) return false;
+        const CRect& tr = m_doc->m_TextRectangle;
+        if (tr.left == 0 && tr.top == 0 && tr.right == 0 && tr.bottom == 0)
+            return false;
+        l = tr.left; t = tr.top; r = tr.right; b = tr.bottom;
+        return true;
+    };
+
     m_output->m_fn_composite_miniwindows =
         [this](wxDC& destDC, int clientW, int clientH, bool bUnder)
     {
@@ -1128,6 +1141,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
 
         if (pHotspot) {
             mw->m_sMouseDownHotspot = sHotspotId;
+            mw->m_FlagsOnMouseDown  = flags;   // remembered for Move/Release callbacks
             m_mw_mouseDown = true;
             mw->m_bExecutingScript = true;
             send_mw_event(m_doc, pHotspot->m_dispid_MouseDown,
@@ -1146,12 +1160,38 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         [this, send_mw_event, mw_hit_test](int x, int y, long flags) -> bool
     {
         if (!m_doc) return false;
+        bool wasDown = m_mw_mouseDown;
         m_mw_mouseDown = false;
+
+        // ── Drag release ────────────────────────────────────────────────────
+        // Fire the captured hotspot's ReleaseCallback so the plugin can finalise
+        // a drag (e.g. save the new window position). Mirrors the drag-and-drop
+        // block in CMUSHView::Mouse_Up_MiniWindow (mushview.cpp). Safe for plain
+        // clicks too: send_mw_event no-ops when the hotspot has no ReleaseCallback.
+        if (wasDown && !m_mw_prevWindow.empty()) {
+            auto wit = m_doc->m_MiniWindows.find(m_mw_prevWindow);
+            if (wit != m_doc->m_MiniWindows.end()) {
+                CMiniWindow* prev_mw = wit->second;
+                prev_mw->m_client_mouseposition = CPoint(x, y);
+                if (!prev_mw->m_sMouseDownHotspot.empty()) {
+                    auto hit = prev_mw->m_Hotspots.find(prev_mw->m_sMouseDownHotspot);
+                    if (hit != prev_mw->m_Hotspots.end()) {
+                        prev_mw->m_bExecutingScript = true;
+                        send_mw_event(m_doc, hit->second->m_dispid_ReleaseCallback,
+                                      prev_mw->m_sCallbackPlugin,
+                                      hit->second->m_sReleaseCallback,
+                                      prev_mw->m_sMouseDownHotspot,
+                                      prev_mw->m_FlagsOnMouseDown);
+                        prev_mw->m_bExecutingScript = false;
+                    }
+                }
+            }
+        }
 
         std::string sHotspotId, sMiniwindowId;
         CHotspot* pHotspot = nullptr;
         CMiniWindow* mw = mw_hit_test(m_doc, x, y, sHotspotId, pHotspot, sMiniwindowId);
-        if (!mw) return false;
+        if (!mw) return wasDown;
 
         mw->m_last_mouseposition = CPoint(x - mw->m_rect.left, y - mw->m_rect.top);
         mw->m_last_mouse_update++;
@@ -1172,7 +1212,40 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     m_output->m_fn_miniwindow_mouse_move =
         [this, send_mw_event, mw_hit_test](int x, int y)
     {
-        if (!m_doc || m_mw_mouseDown) return;   // ignore moves while button held
+        if (!m_doc) return;
+
+        // ── Drag in progress ────────────────────────────────────────────────
+        // While a button is held after a mouse-down on a hotspot, dispatch that
+        // hotspot's MoveCallback so the plugin can reposition/resize the window
+        // as the mouse moves. Mirrors the drag-and-drop block in
+        // CMUSHView::Mouse_Move_MiniWindow (mushview.cpp).
+        if (m_mw_mouseDown) {
+            if (!m_mw_prevWindow.empty()) {
+                auto wit = m_doc->m_MiniWindows.find(m_mw_prevWindow);
+                if (wit != m_doc->m_MiniWindows.end()) {
+                    CMiniWindow* prev_mw = wit->second;
+                    // Record both absolute (client) and window-relative mouse
+                    // positions so the callback can read either via WindowInfo.
+                    prev_mw->m_client_mouseposition = CPoint(x, y);
+                    prev_mw->m_last_mouseposition   =
+                        CPoint(x - prev_mw->m_rect.left, y - prev_mw->m_rect.top);
+                    prev_mw->m_last_mouse_update++;
+                    if (!prev_mw->m_sMouseDownHotspot.empty()) {
+                        auto hit = prev_mw->m_Hotspots.find(prev_mw->m_sMouseDownHotspot);
+                        if (hit != prev_mw->m_Hotspots.end()) {
+                            prev_mw->m_bExecutingScript = true;
+                            send_mw_event(m_doc, hit->second->m_dispid_MoveCallback,
+                                          prev_mw->m_sCallbackPlugin,
+                                          hit->second->m_sMoveCallback,
+                                          prev_mw->m_sMouseDownHotspot,
+                                          prev_mw->m_FlagsOnMouseDown);
+                            prev_mw->m_bExecutingScript = false;
+                        }
+                    }
+                }
+            }
+            return;   // drag consumes the move (no MouseOver processing)
+        }
 
         std::string sHotspotId, sMiniwindowId;
         CHotspot* pHotspot = nullptr;

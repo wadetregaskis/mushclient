@@ -641,12 +641,36 @@ void COutputPane::OnPaint(wxPaintEvent&)
 
     int yPixOffset = scrollY * unitH;
 
+    // ── Text rectangle (world.TextRectangle) ──────────────────────────────
+    // A plugin may reserve part of the output area for a docked miniwindow;
+    // the text then shifts to its top-left and wraps within its width.
+    int trL, trT, trR, trB;
+    bool trActive = TextRect(trL, trT, trR, trB);
+    if (!trActive) { trL = 0; trT = 0; }
+    // If the rectangle changed since the last paint, rebuild the wrap cache
+    // (deferred so we don't reflow layout mid-paint).
+    if (trActive != m_trActive || trL != m_trL || trT != m_trT ||
+        trR != m_trR || trB != m_trB)
+    {
+        m_trActive = trActive; m_trL = trL; m_trT = trT; m_trR = trR; m_trB = trB;
+        CallAfter([this]() {
+            RebuildWrapCache();
+            UpdateScrollbars(m_autoScroll);
+            Refresh();
+        });
+    }
+
     // ── Miniwindows: draw-underneath pass ─────────────────────────────────
     if (m_fn_composite_miniwindows) {
         dc.SetDeviceOrigin(0, 0);
         m_fn_composite_miniwindows(dc, clientW, clientH, /*bUnder=*/true);
         dc.SetDeviceOrigin(-scrollX * unitW, -scrollY * unitH);
     }
+
+    // Shift the text-drawing origin to the text rectangle's top-left so output
+    // (and its selection highlight, which DrawLine renders at the same origin)
+    // avoids any docked miniwindows.  No-op when no rectangle is set.
+    dc.SetDeviceOrigin(trL - scrollX * unitW, trT - scrollY * unitH);
 
     if (!m_lines.empty() && m_lineH > 0) {
         // When the hint bar is visible, don't render lines that fall behind it
@@ -1068,12 +1092,35 @@ int COutputPane::WrapCount(int lineIdx) const
     return (chars + m_wrapCols - 1) / m_wrapCols;
 }
 
+// Resolve the active text rectangle (world.TextRectangle) into client pixels.
+// Returns false (and the full client area) when no rectangle is set.
+bool COutputPane::TextRect(int& l, int& t, int& r, int& b) const
+{
+    int clientW = 0, clientH = 0;
+    const_cast<COutputPane*>(this)->GetClientSize(&clientW, &clientH);
+    l = 0; t = 0; r = clientW; b = clientH;
+    if (!m_fn_text_rect) return false;
+    int rl = 0, rt = 0, rr = 0, rb = 0;
+    if (!m_fn_text_rect(rl, rt, rr, rb)) return false;
+    // Clamp to the client area; ignore degenerate rectangles.
+    l = std::max(0, rl);
+    t = std::max(0, rt);
+    r = (rr > 0) ? std::min(clientW, rr) : clientW;
+    b = (rb > 0) ? std::min(clientH, rb) : clientH;
+    if (r <= l || b <= t) { l = 0; t = 0; r = clientW; b = clientH; return false; }
+    return true;
+}
+
 void COutputPane::RebuildWrapCache()
 {
     int clientW;
     GetClientSize(&clientW, nullptr);
-    int newCols = (m_charW > 0 && clientW > 0)
-                  ? std::max(1, clientW / m_charW)
+    // Narrow the wrap width to the text rectangle when a plugin has reserved
+    // part of the output area (e.g. a docked miniwindow on the left/right).
+    int trL, trT, trR, trB;
+    int wrapW = TextRect(trL, trT, trR, trB) ? (trR - trL) : clientW;
+    int newCols = (m_charW > 0 && wrapW > 0)
+                  ? std::max(1, wrapW / m_charW)
                   : 80;
     m_wrapCols = newCols;
 
@@ -1176,6 +1223,9 @@ int COutputPane::YToLine(int clientY) const
 {
     if (m_lines.empty()) return 0;
 
+    // Honor the text rectangle's vertical offset (text starts at its top).
+    { int l, t, r, b; if (TextRect(l, t, r, b)) { clientY -= t; } }
+
     int scrollY;
     const_cast<COutputPane*>(this)->GetViewStart(nullptr, &scrollY);
     int unitH;
@@ -1191,6 +1241,10 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
 {
     if (lineIdx < 0 || lineIdx >= (int)m_lines.size() || m_charW <= 0)
         return 0;
+
+    // Honor the text rectangle: text is drawn from its top-left, so hit-testing
+    // must subtract that offset before mapping pixels to characters.
+    { int l, t, r, b; if (TextRect(l, t, r, b)) { clientX -= l; clientY -= t; } }
 
     // Count total characters on the line (Unicode code points, not UTF-8 bytes).
     int totalChars = 0;

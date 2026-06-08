@@ -226,6 +226,13 @@ public:
     std::function<void(wxDC& dc, int clientW, int clientH, bool bUnder)>
         m_fn_composite_miniwindows;
 
+    // Plugin text rectangle (world.TextRectangle): when a plugin reserves part
+    // of the output area for a docked miniwindow, the text must avoid it.  The
+    // frame wires this to the world's m_TextRectangle.  Returns true and fills
+    // left/top/right/bottom (client pixels) when a rectangle is active; false
+    // means use the full client area.
+    std::function<bool(int& l, int& t, int& r, int& b)> m_fn_text_rect;
+
     // Miniwindow mouse routing.  Return true if the event was consumed.
     std::function<bool(int x, int y, long flags)> m_fn_miniwindow_mouse_down;
     std::function<bool(int x, int y, long flags)> m_fn_miniwindow_mouse_up;
@@ -371,6 +378,14 @@ private:
     std::vector<int> m_visualRowStart;   // m_visualRowStart[i] = visual row of logical line i
     int              m_totalVisualRows = 0;
     int              m_wrapCols        = 80;
+
+    // ── Text rectangle (world.TextRectangle) ────────────────────────────────────
+    // Resolved client-pixel rect that the text must stay within (origin offset
+    // + wrap width).  m_trActive is false when no rectangle is set (full width).
+    // Returns the resolved values via m_fn_text_rect, clamped to the client.
+    bool TextRect(int& l, int& t, int& r, int& b) const;
+    bool m_trActive = false;             // last-seen rect state (change detection)
+    int  m_trL = 0, m_trT = 0, m_trR = 0, m_trB = 0;
 
     // Selection: anchor is where the mouse went down; focus tracks the drag.
     // When anchor == focus, there is no selection (just a cursor position).

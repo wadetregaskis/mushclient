@@ -886,9 +886,9 @@ if(NOT WIN32)
                 MACOSX_BUNDLE_SHORT_VERSION_STRING "5.07"
                 MACOSX_BUNDLE_ICON_FILE       "MUSHclient.icns"
             )
-            # The real app icon (built from res/MUSHclient.ico via iconutil) →
-            # Contents/Resources, named by CFBundleIconFile above, so the Dock,
-            # Cmd-Tab switcher and Finder show MUSHclient's icon, not a blank.
+            # The app icon (built from platform/dialog_art/MUSHclient.png via
+            # iconutil) → Contents/Resources, named by CFBundleIconFile above, so
+            # the Dock, Cmd-Tab switcher and Finder show MUSHclient's icon.
             add_custom_command(TARGET mushgui POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy
                     "${CMAKE_SOURCE_DIR}/platform/macos/MUSHclient.icns"

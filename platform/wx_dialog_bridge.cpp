@@ -67,7 +67,7 @@ static wxString DialogArtFile(int resId)
 {
     switch (resId) {
         case 103: return wxT("litebulb.bmp");   // IDB_LIGHTBULB  (Tip-of-the-Day bulb)
-        case 128: return wxT("MUSHclient.ico");  // IDR_MAINFRAME  (app icon / About logo)
+        case 128: return wxT("MUSHclient.png");  // IDR_MAINFRAME  (app icon / About logo)
         case 129: return wxT("doc.ico");         // IDR_MUSHCLTYPE (tray default)
         case 288: return wxT("Cdrom01.ico");     // IDI_ICON1
         case 289: return wxT("Wrench.ico");      // IDI_ICON2

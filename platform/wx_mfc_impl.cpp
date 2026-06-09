@@ -1050,15 +1050,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 dlg.DoModal();
             }
         } else if (id == wxID_ABOUT) {
-            wxString ver = wxString::FromUTF8(
-                static_cast<const char*>(MUSHCLIENT_VERSION));
-            wxMessageBox(
-                wxT("MUSHclient version ") + ver + wxT("\n")
-                wxT("macOS/Linux port — wxWidgets GUI\n\n")
-                wxT("Original Windows version by Nick Gammon\n")
-                wxT("http://www.gammon.com.au/mushclient"),
-                wxT("About MUSHclient"),
-                wxOK | wxICON_INFORMATION, frame);
+            // Canonical About box (IDD_ABOUTBOX) via the app's message map —
+            // CMUSHclientApp::OnAppAbout sets the version + web/changes links and
+            // runs CAboutDlg::DoModal, which the bridge renders: the app-icon
+            // logo (IDC_LOGO), version and links.  (Its Credits/License buttons
+            // open CCreditsDlg, which shows "Could not load text" on the port —
+            // the licence TEXT resources aren't bundled — rather than crashing.)
+            AfxDispatchCommand(&App, BN_CLICKED /*0 = ON_COMMAND*/, ID_APP_ABOUT);
         } else if (id >= kRecentMenuBase &&
                    id <  kRecentMenuBase + kMaxRecentWorlds) {
             // File → Open Recent → pick a specific entry.

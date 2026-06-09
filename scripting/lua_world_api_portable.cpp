@@ -36,6 +36,10 @@
 
 #include "platform/wx_mfc_hooks.h"  // g_wxhook_pick_colour, g_wxhook_menu_dialog, …
 #include "sqlite3/sqlite3.h"         // sqlite3_libversion()
+extern "C" {                         // md5.h / sha256.h are C headers (no extern "C")
+#include "scripting/md5.h"           // world.MD5
+#include "scripting/sha256.h"        // world.SHA256
+}
 #include <png.h>                     // PNG_LIBPNG_VER_STRING
 #ifdef __APPLE__
 #  include <mach-o/dyld.h>           // _NSGetExecutablePath
@@ -497,9 +501,17 @@ static int L_AddTriggerEx(lua_State* L)
 //                  sound [, script]) → error code
 static int L_AddTrigger(lua_State* L)
 {
-    // Push defaults for the extra AddTriggerEx arguments and delegate
-    lua_pushnumber(L, eSendToWorld);
-    lua_pushnumber(L, DEFAULT_TRIGGER_SEQUENCE);
+    // AddTrigger(name, match, response, flags, colour, wildcard, sound [, script]).
+    // The canonical binding tolerates missing trailing arguments (its my_check*
+    // readers default them); pad the optional ones (colour/wildcard/sound/script)
+    // so the delegated AddTriggerEx always sees a well-formed call, then append
+    // its two extra arguments (send-to, sequence).
+    while (lua_gettop(L) < 5) lua_pushnumber(L, 0);    // colour
+    while (lua_gettop(L) < 6) lua_pushnumber(L, 0);    // wildcard
+    while (lua_gettop(L) < 7) lua_pushstring(L, "");   // sound
+    while (lua_gettop(L) < 8) lua_pushstring(L, "");   // script
+    lua_pushnumber(L, eSendToWorld);                    // send-to (arg 9)
+    lua_pushnumber(L, DEFAULT_TRIGGER_SEQUENCE);        // sequence (arg 10)
     return L_AddTriggerEx(L);
 }
 
@@ -797,8 +809,9 @@ static int L_Version(lua_State* L)
 // world.WorldAddress() → string
 static int L_WorldAddress(lua_State* L)
 {
+    // WorldAddress() returns the server host (m_server), not the world's name.
     CMUSHclientDoc* pDoc = world_doc(L);
-    lua_pushstring(L, static_cast<const char*>(pDoc->m_mush_name));
+    lua_pushstring(L, static_cast<const char*>(pDoc->m_server));
     return 1;
 }
 
@@ -2178,6 +2191,38 @@ static int L_Hash(lua_State* L)
              (unsigned long)sha.digest[0], (unsigned long)sha.digest[1],
              (unsigned long)sha.digest[2], (unsigned long)sha.digest[3],
              (unsigned long)sha.digest[4]);
+    lua_pushstring(L, buf);
+    return 1;
+}
+
+// world.MD5(text) → 32-char lowercase hex MD5 digest (vendored md5.c).
+static int L_MD5(lua_State* L)
+{
+    size_t len = 0;
+    const char* text = luaL_checklstring(L, 1, &len);
+    md5_context ctx;
+    unsigned char digest[16];
+    md5_starts(&ctx);
+    md5_update(&ctx, (unsigned char*)text, (unsigned int)len);
+    md5_finish(&ctx, digest);
+    char buf[33];
+    for (int i = 0; i < 16; ++i) snprintf(buf + i * 2, 3, "%02x", digest[i]);
+    lua_pushstring(L, buf);
+    return 1;
+}
+
+// world.SHA256(text) → 64-char lowercase hex SHA-256 digest (vendored sha256.c).
+static int L_SHA256(lua_State* L)
+{
+    size_t len = 0;
+    const char* text = luaL_checklstring(L, 1, &len);
+    sha256_context ctx;
+    unsigned char digest[32];
+    sha256_starts(&ctx);
+    sha256_update(&ctx, (unsigned char*)text, (unsigned int)len);
+    sha256_finish(&ctx, digest);
+    char buf[65];
+    for (int i = 0; i < 32; ++i) snprintf(buf + i * 2, 3, "%02x", digest[i]);
     lua_pushstring(L, buf);
     return 1;
 }
@@ -7029,6 +7074,8 @@ static const luaL_Reg worldlib[] = {
     { "EvaluateSpeedwalk",  L_EvaluateSpeedwalk },
     // Hashing
     { "Hash",               L_Hash              },
+    { "MD5",                L_MD5               },
+    { "SHA256",             L_SHA256            },
     // Plugin helpers
     { "GetPluginName",      L_GetPluginName     },
     { "IsPluginInstalled",  L_IsPluginInstalled },

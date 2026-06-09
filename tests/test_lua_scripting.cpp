@@ -232,8 +232,9 @@ TEST(LuaScripting, AddAndGetTrigger)
     ASSERT_NE(nullptr, t);
     EXPECT_STREQ("you have died", (const char*)t->trigger);
 
-    // GetTriggerInfo: name (type 1) and match string (type 5) etc.
-    n = run_ret(L, "return world.GetTriggerInfo('trig1', 5)");
+    // GetTriggerInfo: match text is type 1, response/"send" text is type 2
+    // (type 5 is the omit-from-log flag) — matches the canonical numbering.
+    n = run_ret(L, "return world.GetTriggerInfo('trig1', 2)");
     EXPECT_EQ(1, n);
     EXPECT_STREQ("say I died!", lua_tostring(L, -1));
     lua_settop(L, 0);
@@ -286,8 +287,11 @@ TEST(LuaScripting, AddAndGetAlias)
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
+    // AddAlias(name, match, response, flags [, script]).  The optional 5th arg
+    // is the script ROUTINE NAME (a string); a non-empty name that doesn't
+    // resolve is rejected with eScriptNameNotLocated (as on Windows), so omit it.
     int n = run_ret(L,
-        "return world.AddAlias('a1', '^go (.+)$', 'go %1', 128+1024, 0)"
+        "return world.AddAlias('a1', '^go (.+)$', 'go %1', 128+1024)"
     );
     EXPECT_EQ(1, n);
     EXPECT_EQ(0.0, lua_tonumber(L, -1));
@@ -309,9 +313,11 @@ TEST(LuaScripting, AddAndGetTimer)
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    // AddTimer(name, hour, minute, second, send, flags, sendto, group, script)
+    // AddTimer(name, hour, minute, second, send, flags [, script]).  The
+    // optional 7th arg is the script ROUTINE NAME (a string); omit it rather
+    // than pass a number (which would be a non-existent routine name).
     int n = run_ret(L,
-        "return world.AddTimer('tmr1', 0, 0, 30, 'ping', 1, 0)"
+        "return world.AddTimer('tmr1', 0, 0, 30, 'ping', 1)"
     );
     EXPECT_EQ(1, n);
     EXPECT_EQ(0.0, lua_tonumber(L, -1));
@@ -357,10 +363,11 @@ TEST(LuaScripting, GuiStubsReturnValues)
     EXPECT_EQ(30064.0, lua_tonumber(L, -1));
     lua_settop(L, 0);
 
-    // Notepad stubs → eOK (no-op)
+    // ActivateNotepad on a title that doesn't exist → eNoSuchWindow (30073),
+    // exactly as on Windows (no 'test' notepad was created here).
     n = run_ret(L, "return world.ActivateNotepad('test')");
     EXPECT_EQ(1, n);
-    EXPECT_EQ(0.0, lua_tonumber(L, -1));
+    EXPECT_EQ(30073.0, lua_tonumber(L, -1));
     lua_settop(L, 0);
 
     lua_close(L);
@@ -673,7 +680,9 @@ TEST(LuaScripting, ArrayCreateSetGet)
     EXPECT_STREQ("value1", lua_tostring(L, -1));
     lua_settop(L, 0);
 
-    EXPECT_EQ(1, run_ret(L, "return world.ArrayCount('myarr')"));
+    // ArraySize(name) is the element count of one array; ArrayCount() (no arg)
+    // is the number of arrays — use ArraySize here to count myarr's two keys.
+    EXPECT_EQ(1, run_ret(L, "return world.ArraySize('myarr')"));
     EXPECT_EQ(2.0, lua_tonumber(L, -1));
     lua_settop(L, 0);
 

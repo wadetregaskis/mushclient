@@ -160,6 +160,10 @@ CMUSHclientDoc::CMUSHclientDoc()
     }
 
     m_strTerminalIdentification = "MUSHCLIENT";
+    // Default scripting language (AlphaOptionsTable default for "script_language").
+    // The GUI applies the options-table defaults at construction; mirror the key
+    // one here so a freshly-constructed doc reports "lua" like Windows does.
+    m_strLanguage = "lua";
     m_tWorldOpenTime = time(nullptr);
 
     // ── Scratch line for ANSI style state ─────────────────────────────────

@@ -1762,6 +1762,21 @@ inline BOOL AfxDispatchNotify(CCmdTarget* target, UINT code, UINT id,
     return FALSE;
 }
 
+// ── ON_UPDATE_COMMAND_UI (command-UI enable/check state) ───────────────────
+// MFC's WM_KICKIDLE-driven UI update.  The early stub block #defined these as
+// no-ops; redefine them to emit real map entries (handler sig void(CCmdUI*)) so
+// the bridge can run them and enable/disable/check dialog controls by state.
+class CCmdUI;  // fully defined later in this file
+#undef ON_UPDATE_COMMAND_UI
+#undef ON_UPDATE_COMMAND_UI_RANGE
+#define _AFX_CMDUI(id, lastid, fn) \
+    { WM_COMMAND, 0xFFFFu /*cmdui marker, never a real notification code*/, \
+      (UINT)(id), (UINT)(lastid), AfxSig_cmdui, \
+      reinterpret_cast<AFX_PMSG>(static_cast<void (CCmdTarget::*)(CCmdUI*)>(&ThisClass::fn)) },
+#define ON_UPDATE_COMMAND_UI(id, fn)             _AFX_CMDUI(id, id, fn)
+#define ON_UPDATE_COMMAND_UI_RANGE(id1, id2, fn) _AFX_CMDUI(id1, id2, fn)
+// AfxDispatchUpdateUI is defined after CCmdUI (needs its complete type).
+
 // ── Dispatch-map macros — no-ops ───────────────────────────────────────────
 // The full DISPATCH_MAP block in doc.cpp is guarded #ifdef _WIN32 separately;
 // these macros exist to suppress errors if the guard is ever removed.
@@ -1941,12 +1956,44 @@ public:
     UINT   m_nID     = 0;
     int    m_nIndex  = 0;
     CMenu* m_pMenu   = nullptr;   // non-null when routing through a menu
-    void Enable(BOOL = TRUE) {}
-    void SetCheck(int = 1) {}
-    void SetText(LPCTSTR) {}
-    void SetRadio(BOOL = TRUE) {}
+    void*  m_hWndCtrl = nullptr;  // the control this CCmdUI updates (port: wxWindow*)
+    void Enable(BOOL bOn = TRUE) {
+        if (m_hWndCtrl && g_wxhook_enable_window)
+            g_wxhook_enable_window(m_hWndCtrl, bOn != FALSE);
+    }
+    void SetCheck(int nCheck = 1) {
+        // BM_SETCHECK (0x00F1) is #defined later in this header than CCmdUI.
+        if (m_hWndCtrl && g_wxhook_send_message)
+            g_wxhook_send_message(m_hWndCtrl, 0x00F1 /*BM_SETCHECK*/, (uintptr_t)nCheck, 0);
+    }
+    void SetText(LPCTSTR s) {
+        if (m_hWndCtrl && g_wxhook_set_window_text)
+            g_wxhook_set_window_text(m_hWndCtrl, s ? s : "");
+    }
+    void SetRadio(BOOL bOn = TRUE) { SetCheck(bOn ? 1 : 0); }
     void ContinueRouting() {}
 };
+
+// Dispatch a command-UI update to the first matching ON_UPDATE_COMMAND_UI handler
+// in the target's message-map chain.  pCmdUI->m_nID selects the control; the
+// handler then enables/checks/sets-text on it via the CCmdUI.  Returns TRUE if a
+// handler ran (so the caller can leave the control in its default state if not).
+inline BOOL AfxDispatchUpdateUI(CCmdTarget* target, CCmdUI* pCmdUI) {
+    if (!target || !pCmdUI) return FALSE;
+    for (const AFX_MSGMAP* m = target->GetMessageMap(); m;
+         m = m->pfnGetBaseMap ? m->pfnGetBaseMap() : nullptr) {
+        for (const AFX_MSGMAP_ENTRY* e = m->lpEntries; e->nSig != (UINT_PTR)AfxSig_end; ++e) {
+            if (e->nSig == (UINT_PTR)AfxSig_cmdui &&
+                pCmdUI->m_nID >= e->nID && pCmdUI->m_nID <= e->nLastID) {
+                void (CCmdTarget::*pfn)(CCmdUI*) =
+                    reinterpret_cast<void (CCmdTarget::*)(CCmdUI*)>(e->pfn);
+                (target->*pfn)(pCmdUI);
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
 
 // ── GDI object stubs / declarations ──────────────────────────────────────
 //
@@ -3163,6 +3210,7 @@ public:
     void OnEditFind() {}
     void OnEditRepeat() {}
     void OnEditReplace() {}
+    void OnUpdateNeedFind(CCmdUI*) {}   // referenced by CTextView's message map
     // CEditView wraps a CEdit internally; expose minimal surface
     void SetWindowText(LPCTSTR) {}
     void GetWindowText(CString&) const {}

@@ -201,7 +201,7 @@ class CDC;    // fully defined in mfc_ui.h; forward-declare so CWnd can use CDC*
 // approach.  See the macros in mfc_ui.h and AfxDispatchCommand().
 class CCmdTarget;
 typedef void (CCmdTarget::*AFX_PMSG)(void);
-enum { AfxSig_end = 0, AfxSig_vv, AfxSig_vw, AfxSig_notify };  // _vv = void(); _vw = void(UINT) (ranges); _notify = void(NMHDR*, LRESULT*)
+enum { AfxSig_end = 0, AfxSig_vv, AfxSig_vw, AfxSig_notify, AfxSig_cmdui };  // _vv = void(); _vw = void(UINT) (ranges); _notify = void(NMHDR*, LRESULT*); _cmdui = void(CCmdUI*)
 struct AFX_MSGMAP_ENTRY {
     UINT      nMessage, nCode, nID, nLastID;
     UINT_PTR  nSig;

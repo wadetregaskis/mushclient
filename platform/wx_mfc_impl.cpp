@@ -2174,6 +2174,23 @@ static void hook_end_dialog(void* self, int result)
 
 static void bind_list_notifications(wxWindow* win, CCmdTarget* target);  // defined below
 
+// Simulate MFC's WM_KICKIDLE command-UI update for a bridged dialog: run each
+// control's ON_UPDATE_COMMAND_UI handler (if any) so buttons enable/disable/
+// check themselves by state (e.g. CPluginsDlg greys "Show Info" when the
+// selected plugin has no description, "Disable" for a disabled plugin, etc.).
+static void pump_dialog_update_ui(CCmdTarget* target, wxDialog* dlg, const RcDialog& t)
+{
+    if (!target || !dlg) return;
+    for (const auto& c : t.controls) {
+        if (c.id <= 0) continue;   // IDC_STATIC (-1) and unnamed controls
+        CCmdUI cmdui;
+        cmdui.m_nID      = (UINT) c.id;
+        cmdui.m_hWndCtrl = g_wxhook_get_dlg_item ? g_wxhook_get_dlg_item(dlg, c.id) : nullptr;
+        if (cmdui.m_hWndCtrl)
+            AfxDispatchUpdateUI(target, &cmdui);
+    }
+}
+
 static intptr_t hook_run_dialog(void* self, unsigned idd)
 {
     CDialog* cdlg = static_cast<CDialog*>(self);
@@ -2224,8 +2241,17 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
         cdlg->OnSize(0 /*SIZE_RESTORED*/, cs.GetWidth(), cs.GetHeight());
         e.Skip();
     });
+    // Command-UI: run each control's ON_UPDATE_COMMAND_UI handler on idle so
+    // buttons enable/disable/check by state (e.g. after a list-selection change),
+    // mirroring MFC's WM_KICKIDLE.  wxEVT_IDLE fires once the event queue drains
+    // after each interaction, which is exactly when control state may have changed.
+    dlg->Bind(wxEVT_IDLE, [cdlg, dlg, t](wxIdleEvent& e) {
+        pump_dialog_update_ui(cdlg, dlg, *t);
+        e.Skip();
+    });
 
     cdlg->OnInitDialog();
+    pump_dialog_update_ui(cdlg, dlg, *t);   // set initial control state
 
     int result = dlg->ShowModal();
 

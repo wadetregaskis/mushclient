@@ -606,6 +606,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->Append(32983 /*ID_FILE_PLUGINS*/,          wxT("Plugins…"));
     gameMenu->AppendSeparator();
     gameMenu->Append(32320 /*ID_INPUT_GLOBALCHANGE*/,    wxT("&Global Change…\tCtrl+Shift+G"));
+    gameMenu->Append(32325 /*ID_GAME_SENDTOALLWORLDS*/,  wxT("&Send To All Worlds…\tCtrl+Alt+S"));
     gameMenu->Append(32203 /*ID_DISPLAY_ACTIVITYLIST*/,  wxT("&Activity List"));
     gameMenu->Append(32326 /*ID_EDIT_GENERATECHARACTERNAME*/, wxT("Generate Character &Name…"));
     gameMenu->Append(32323 /*ID_EDIT_SPELLCHECK*/,       wxT("Chec&k Spelling"));
@@ -835,6 +836,15 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         if (id == 32320 /*ID_INPUT_GLOBALCHANGE*/) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
                 child->GlobalChangeInput();
+            return;
+        }
+
+        // ── Send to All Worlds: cross-world broadcast.  Runs the canonical
+        // CMainFrame::OnGameSendtoallworlds() via the message map — it presents
+        // CSendToAllDlg (multi-select world list, bridged through the wxListBox
+        // hooks) and sends the entered text to every selected connected world.
+        if (id == 32325 /*ID_GAME_SENDTOALLWORLDS*/) {
+            AfxDispatchCommand(&Frame, BN_CLICKED /*0 = ON_COMMAND*/, 32325);
             return;
         }
 
@@ -2738,6 +2748,51 @@ static char* hook_listbox_get_text(void* hwnd, int index)
     if (!lb || index < 0 || index >= (int) lb->GetCount()) return nullptr;
     return strdup(lb->GetString(index).utf8_str());
 }
+static void hook_listbox_set_item_data(void* hwnd, int index, intptr_t data)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (lb && index >= 0 && index < (int) lb->GetCount())
+        lb->SetClientData(index, reinterpret_cast<void*>(data));
+}
+static intptr_t hook_listbox_get_item_data(void* hwnd, int index)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (lb && index >= 0 && index < (int) lb->GetCount())
+        return reinterpret_cast<intptr_t>(lb->GetClientData(index));
+    return 0;
+}
+static int hook_listbox_get_sel_count(void* hwnd)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (!lb) return 0;
+    wxArrayInt sel;
+    return (int) lb->GetSelections(sel);
+}
+static int hook_listbox_get_sel_items(void* hwnd, int maxItems, int* buffer)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (!lb || !buffer || maxItems <= 0) return 0;
+    wxArrayInt sel;
+    int n = (int) lb->GetSelections(sel);
+    int m = (n < maxItems) ? n : maxItems;
+    for (int i = 0; i < m; ++i) buffer[i] = sel[i];
+    return m;
+}
+static int hook_listbox_get_sel(void* hwnd, int index)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (lb && index >= 0 && index < (int) lb->GetCount())
+        return lb->IsSelected(index) ? 1 : 0;
+    return 0;
+}
+static int hook_listbox_set_sel(void* hwnd, int index, int select)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (!lb || index < 0 || index >= (int) lb->GetCount()) return LB_ERR;
+    if (select) lb->SetSelection(index);   // multi-select: adds without clearing others
+    else        lb->Deselect(index);
+    return 0;
+}
 
 // ── CComboBox → wxComboBox (editable) or wxChoice (read-only pop-up) ───────
 // CBS_DROPDOWNLIST combos are built as wxChoice (native pop-up menu); editable
@@ -2998,6 +3053,12 @@ void wx_mfc_install_hooks()
     g_wxhook_listbox_get_cur_sel      = hook_listbox_get_cur_sel;
     g_wxhook_listbox_set_cur_sel      = hook_listbox_set_cur_sel;
     g_wxhook_listbox_get_text         = hook_listbox_get_text;
+    g_wxhook_listbox_set_item_data    = hook_listbox_set_item_data;
+    g_wxhook_listbox_get_item_data    = hook_listbox_get_item_data;
+    g_wxhook_listbox_get_sel_count    = hook_listbox_get_sel_count;
+    g_wxhook_listbox_get_sel_items    = hook_listbox_get_sel_items;
+    g_wxhook_listbox_get_sel          = hook_listbox_get_sel;
+    g_wxhook_listbox_set_sel          = hook_listbox_set_sel;
     g_wxhook_combo_add_string         = hook_combo_add_string;
     g_wxhook_combo_get_count          = hook_combo_get_count;
     g_wxhook_combo_get_cur_sel        = hook_combo_get_cur_sel;

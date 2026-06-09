@@ -3530,21 +3530,33 @@ public:
     int       SetCurSel(int sel) {
         return g_wxhook_listbox_set_cur_sel ? g_wxhook_listbox_set_cur_sel(m_hWnd, sel) : LB_ERR;
     }
-    int       GetSel(int) const { return LB_ERR; }
-    int       SetSel(int, BOOL=TRUE) { return LB_ERR; }
+    int       GetSel(int i) const {
+        return g_wxhook_listbox_get_sel ? g_wxhook_listbox_get_sel(m_hWnd, i) : 0;
+    }
+    int       SetSel(int i, BOOL sel = TRUE) {
+        return g_wxhook_listbox_set_sel ? g_wxhook_listbox_set_sel(m_hWnd, i, sel != FALSE) : LB_ERR;
+    }
     int       GetText(int, LPTSTR) const { return LB_ERR; }
     void      GetText(int i, CString& s) const {
         char* p = g_wxhook_listbox_get_text ? g_wxhook_listbox_get_text(m_hWnd, i) : nullptr;
         if (p) { s = p; ::free(p); } else s.Empty();
     }
     int       GetTextLen(int) const { return LB_ERR; }
-    void      SetItemData(int, DWORD_PTR) {}
-    DWORD_PTR GetItemData(int) const { return 0; }
+    void      SetItemData(int i, DWORD_PTR d) {
+        if (g_wxhook_listbox_set_item_data) g_wxhook_listbox_set_item_data(m_hWnd, i, (intptr_t) d);
+    }
+    DWORD_PTR GetItemData(int i) const {
+        return g_wxhook_listbox_get_item_data ? (DWORD_PTR) g_wxhook_listbox_get_item_data(m_hWnd, i) : 0;
+    }
     int       FindString(int, LPCTSTR) const { return LB_ERR; }
     int       FindStringExact(int, LPCTSTR) const { return LB_ERR; }
     int       SelectString(int, LPCTSTR) { return LB_ERR; }
-    int       GetSelCount() const { return 0; }
-    int       GetSelItems(int, LPINT) const { return 0; }
+    int       GetSelCount() const {
+        return g_wxhook_listbox_get_sel_count ? g_wxhook_listbox_get_sel_count(m_hWnd) : 0;
+    }
+    int       GetSelItems(int nMax, LPINT buf) const {
+        return g_wxhook_listbox_get_sel_items ? g_wxhook_listbox_get_sel_items(m_hWnd, nMax, buf) : 0;
+    }
     void      SetColumnWidth(int) {}
     void      SetHorizontalExtent(int) {}
     int       GetHorizontalExtent() const { return 0; }

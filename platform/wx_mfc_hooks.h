@@ -392,6 +392,13 @@ extern int   (*g_wxhook_listbox_get_count)(void* hwnd);
 extern int   (*g_wxhook_listbox_get_cur_sel)(void* hwnd);
 extern int   (*g_wxhook_listbox_set_cur_sel)(void* hwnd, int sel);
 extern char* (*g_wxhook_listbox_get_text)(void* hwnd, int index);   // heap; caller free()s
+// Per-item data + multi-selection (Send-to-All world list, Choose-Notepad).
+extern void     (*g_wxhook_listbox_set_item_data)(void* hwnd, int index, intptr_t data);
+extern intptr_t (*g_wxhook_listbox_get_item_data)(void* hwnd, int index);
+extern int      (*g_wxhook_listbox_get_sel_count)(void* hwnd);
+extern int      (*g_wxhook_listbox_get_sel_items)(void* hwnd, int maxItems, int* buffer);
+extern int      (*g_wxhook_listbox_get_sel)(void* hwnd, int index);          // >0 if selected
+extern int      (*g_wxhook_listbox_set_sel)(void* hwnd, int index, int select);
 
 // ── CComboBox → wxComboBox (drop-down selectors: proxy type, colour combos…) ─
 // `hwnd` is the wxComboBox* (a CComboBox member's m_hWnd, bound by DDX_Control).

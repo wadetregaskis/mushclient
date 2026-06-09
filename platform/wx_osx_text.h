@@ -11,9 +11,15 @@
 #pragma once
 
 class wxTextCtrl;
+class wxBitmap;
 
 #ifdef __APPLE__
 void wxOSXDisableSmartSubstitutions(wxTextCtrl* ctrl);   // defined in wx_osx_text.mm
+// Set the application's Dock icon at runtime ([NSApp setApplicationIconImage:]).
+// macOS has no system tray, so this is where MUSHclient's tray/taskbar-icon
+// choice lives on the port.  Ignored if the bitmap is invalid.
+void wxOSXSetDockIcon(const wxBitmap& bmp);
 #else
 inline void wxOSXDisableSmartSubstitutions(wxTextCtrl*) {}
+inline void wxOSXSetDockIcon(const wxBitmap&) {}
 #endif

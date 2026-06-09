@@ -911,6 +911,14 @@ if(NOT WIN32)
                     "${CMAKE_SOURCE_DIR}/resource.h"
                     "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/"
                 COMMENT "Bundling dialog resources into mushgui.app/Contents/Resources")
+            # Dialog art (Tip bulb, tray icons, app icon) — the bitmaps/icons the
+            # canonical dialogs reference, from nickgammon/mushclient_resources.
+            # Rendered into SS_ICON/SS_BITMAP statics + the Dock icon by the bridge.
+            add_custom_command(TARGET mushgui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_SOURCE_DIR}/platform/dialog_art"
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/dialog_art"
+                COMMENT "Bundling dialog art (image statics + Dock icons)")
             # Bundle data files the engine opens relative to the executable
             # (GetModuleFileName's directory): the Tip-of-the-Day text, name lists.
             add_custom_command(TARGET mushgui POST_BUILD

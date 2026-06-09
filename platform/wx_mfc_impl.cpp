@@ -1363,9 +1363,31 @@ static void hook_save_active_world(wxMDIParentFrame* frame, bool saveAs)
 // hook_run_property_sheet_flat).  Replaces the former hand-built GlobalPrefsDlg.
 void DoGlobalPrefs(CMUSHclientDoc* pCurrentDoc);   // dialogs/global_prefs/GlobalPrefs.cpp
 
+// Apply MUSHclient's tray/taskbar-icon choice to the macOS Dock icon.  macOS has
+// no system tray, so the Dock icon is where that choice lives here.  Index 0
+// (the default) keeps the real app icon (IDR_MAINFRAME); 1..9 select the novelty
+// icons (IDI_ICON1..9); 10 loads the user's custom .ico file.
+static void ApplyDockIconFromPrefs()
+{
+    int sel = (int) App.m_iTrayIcon;
+    wxBitmap bmp;
+    if (sel >= 1 && sel <= 9)
+        bmp = LoadDialogArt(287 + sel);          // IDI_ICON1 (288) .. IDI_ICON9 (296)
+    else if (sel == 10 && !App.m_strTrayIconFileName.IsEmpty())
+    {
+        wxImage im;
+        if (im.LoadFile(wxString::FromUTF8((const char*) App.m_strTrayIconFileName)))
+            bmp = wxBitmap(im);
+    }
+    if (!bmp.IsOk())
+        bmp = LoadDialogArt(128);                // IDR_MAINFRAME — the app icon (default)
+    wxOSXSetDockIcon(bmp);
+}
+
 static void hook_file_preferences(wxWindow* /*parent*/)
 {
     DoGlobalPrefs(NULL);
+    ApplyDockIconFromPrefs();   // the Tray/Taskbar page may have changed the icon
 }
 
 // ── WorldPreferencesDlg ───────────────────────────────────────────────────
@@ -1663,7 +1685,10 @@ static int hook_init_instance()
     App.m_lpCmdLine = "";
     App.m_nCmdShow  = SW_SHOWNORMAL;
 
-    return App.InitInstance() != FALSE ? 1 : 0;
+    int ok = App.InitInstance() != FALSE ? 1 : 0;
+    if (ok)
+        ApplyDockIconFromPrefs();   // honour the saved tray/taskbar-icon choice
+    return ok;
 }
 
 // ── hook_create_text_window ───────────────────────────────────────────────

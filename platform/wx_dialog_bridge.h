@@ -13,6 +13,12 @@
 
 class wxWindow;
 class wxDialog;
+class wxBitmap;
+
+// Load a bundled dialog-art image (Tip bulb, app icon, tray icons) by its Win32
+// resource id.  Invalid wxBitmap if unknown/missing.  (Drives both the dialog
+// image statics and the macOS Dock icon.)
+wxBitmap LoadDialogArt(int resId);
 
 // The process-wide registry of recovered dialog/menu templates (lazy-loaded).
 RcResources& MfcDialogResources();

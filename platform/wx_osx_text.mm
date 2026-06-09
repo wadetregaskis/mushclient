@@ -5,6 +5,7 @@
 
 #import <AppKit/AppKit.h>
 #include <wx/textctrl.h>
+#include <wx/bitmap.h>
 #include "wx_osx_text.h"
 
 void wxOSXDisableSmartSubstitutions(wxTextCtrl* ctrl)
@@ -45,4 +46,22 @@ void wxOSXDisableSmartSubstitutions(wxTextCtrl* ctrl)
     tv.enabledTextCheckingTypes &= ~(NSTextCheckingTypeQuote |
                                      NSTextCheckingTypeDash |
                                      NSTextCheckingTypeReplacement);
+}
+
+void wxOSXSetDockIcon(const wxBitmap& bmp)
+{
+    if (!bmp.IsOk())
+        return;
+    CGImageRef cg = bmp.CreateCGImage();
+    if (!cg)
+        return;
+    // size:NSZeroSize → NSImage adopts the CGImage's pixel size; the Dock scales
+    // it up as needed (MUSHclient's icons are small/low-res, faithfully so).
+    NSImage* img = [[NSImage alloc] initWithCGImage:cg size:NSZeroSize];
+    CGImageRelease(cg);
+    if (img)
+    {
+        [NSApp setApplicationIconImage:img];
+        [img release];   // this .mm is compiled MRR (no ARC), as is wxOSX
+    }
 }

@@ -16,8 +16,11 @@
 #include <wx/filename.h>
 #include <wx/settings.h>   // wxSystemSettings (native dialog font)
 #include <wx/statline.h>   // wxStaticLine (etched separators)
+#include <wx/statbmp.h>    // wxStaticBitmap (SS_ICON / SS_BITMAP image statics)
+#include <wx/image.h>      // wxImage / wxInitAllImageHandlers (BMP / ICO art)
 #include <wx/listctrl.h>   // wxListCtrl (SysListView32 — entity managers)
 #include <wx/slider.h>     // wxSlider (msctls_trackbar32 — ColourPickerDlg RGB)
+#include <algorithm>       // std::min
 
 #include <cstdio>
 #include <fstream>
@@ -56,6 +59,46 @@ wxString FindResource(const wxString& name)
 }
 
 } // namespace
+
+// Map a Win32 image-resource id to its bundled dialog-art filename.  These files
+// come from nickgammon/mushclient_resources (res/ + MUSHclient.rc) and are
+// bundled into Contents/Resources/dialog_art/.  Returns "" for ids with no art.
+static wxString DialogArtFile(int resId)
+{
+    switch (resId) {
+        case 103: return wxT("litebulb.bmp");   // IDB_LIGHTBULB  (Tip-of-the-Day bulb)
+        case 128: return wxT("MUSHclient.ico");  // IDR_MAINFRAME  (app icon / About logo)
+        case 129: return wxT("doc.ico");         // IDR_MUSHCLTYPE (tray default)
+        case 288: return wxT("Cdrom01.ico");     // IDI_ICON1
+        case 289: return wxT("Wrench.ico");      // IDI_ICON2
+        case 290: return wxT("Clock05.ico");     // IDI_ICON3
+        case 291: return wxT("Earth.ico");       // IDI_ICON4
+        case 292: return wxT("Graph08.ico");     // IDI_ICON5
+        case 293: return wxT("Handshak.ico");    // IDI_ICON6
+        case 294: return wxT("Mail16b.ico");     // IDI_ICON7
+        case 295: return wxT("Net01.ico");       // IDI_ICON8
+        case 296: return wxT("Point11.ico");     // IDI_ICON9
+        case 297: return wxT("Clip07.ico");      // IDI_ICON10
+        default:  return wxString();
+    }
+}
+
+// Load a bundled dialog-art image (BMP / ICO) by Win32 resource id.  Returns an
+// invalid wxBitmap if the id is unknown or the file is missing.  Used to render
+// SS_ICON / SS_BITMAP statics and to drive the macOS Dock icon (ma — see
+// wx_mfc_impl.cpp).
+wxBitmap LoadDialogArt(int resId)
+{
+    wxString file = DialogArtFile(resId);
+    if (file.empty()) return wxBitmap();
+    static bool handlersAdded = false;
+    if (!handlersAdded) { wxInitAllImageHandlers(); handlersAdded = true; }
+    wxString path = FindResource(wxT("dialog_art") + wxString(wxFILE_SEP_PATH) + file);
+    if (!wxFileName::FileExists(path)) return wxBitmap();
+    wxImage img;
+    if (!img.LoadFile(path)) return wxBitmap();
+    return wxBitmap(img);
+}
 
 // Process-wide registry of the recovered dialog/menu templates, loaded once.
 RcResources& MfcDialogResources()
@@ -109,7 +152,8 @@ inline wxString U(const std::string& s) { return wxString::FromUTF8(s.c_str()); 
 // Create the wx widget for one RcControl, already positioned in pixels.
 // Returns the created window (added as a child of `parent`), or null if skipped.
 wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
-                        const wxPoint& pos, const wxSize& size)
+                        const wxPoint& pos, const wxSize& size,
+                        int imageResId = 0)
 {
     const std::string& cls = c.className;
     int id = (c.id == -1) ? wxID_ANY : c.id;     // IDC_STATIC -> no id
@@ -157,9 +201,31 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
             case 7: case 8: case 9: case 0x12: // SS_*FRAME — a rectangular frame
                 w = new wxStaticBox(parent, id, wxEmptyString, pos, size);
                 break;
-            case SS_ICON: case SS_BITMAP: // image statics: reserve space (no source yet)
-                w = new wxStaticText(parent, id, wxEmptyString, pos, size);
+            case SS_ICON: case SS_BITMAP: // image statics (Tip bulb, About logo, tray icons)
+            {
+                wxBitmap bmp = imageResId ? LoadDialogArt(imageResId) : wxBitmap();
+                if (bmp.IsOk())
+                {
+                    // Scale DOWN to fit the control rect (preserving aspect) so
+                    // icons sit in their small boxes; never upscale, so a small
+                    // bitmap (e.g. the bulb) shows at natural size top-left —
+                    // matching the Windows SS_ICON/SS_BITMAP statics.
+                    wxImage im = bmp.ConvertToImage();
+                    if (size.x > 0 && size.y > 0 &&
+                        (im.GetWidth() > size.x || im.GetHeight() > size.y))
+                    {
+                        double s = std::min((double) size.x / im.GetWidth(),
+                                            (double) size.y / im.GetHeight());
+                        im = im.Scale(std::max(1, (int)(im.GetWidth()  * s)),
+                                      std::max(1, (int)(im.GetHeight() * s)),
+                                      wxIMAGE_QUALITY_HIGH);
+                    }
+                    w = new wxStaticBitmap(parent, id, wxBitmap(im), pos);
+                }
+                else
+                    w = new wxStaticText(parent, id, wxEmptyString, pos, size);
                 break;
+            }
             default:
             {
                 long st = ((c.style & SS_TYPEMASK) == SS_CENTER) ? wxALIGN_CENTRE_HORIZONTAL
@@ -283,11 +349,27 @@ void PopulateWindowFromTemplate(wxWindow* target, const RcDialog& t)
 
     wxSize client = target->ConvertDialogToPixels(wxSize(t.cx, t.cy));
 
+    // Image statics carry no source in the decompiled template (the icon ordinal
+    // was lost), so map them here: named ones by control id, and the Tray/Taskbar
+    // page's anonymous (IDC_STATIC) preview icons by their order — they line up
+    // with the radio choices MUSHclient / CD / spanner / clock / world / graph /
+    // hands / mail / network / banana (IDR_MUSHCLTYPE then IDI_ICON1..9).
+    static const int kTrayArt[10] = { 129, 288, 289, 290, 291, 292, 293, 294, 295, 296 };
+    int trayIconSeen = 0;
+
     for (const RcControl& c : t.controls)
     {
         wxPoint pos = target->ConvertDialogToPixels(wxPoint(c.x, c.y));
         wxSize  sz  = target->ConvertDialogToPixels(wxSize(c.cx, c.cy));
-        CreateControl(target, c, pos, sz);
+
+        int imageResId = 0;
+        if      (c.id == 2436) imageResId = 128;   // IDC_LOGO → IDR_MAINFRAME (About logo)
+        else if (c.id == 2005) imageResId = 103;   // IDC_BULB → IDB_LIGHTBULB (Tip bulb)
+        else if (c.className == "Static" && (c.style & SS_TYPEMASK) == SS_ICON &&
+                 t.id == 317 /*IDD_GLOBAL_PREFSP11 (Tray/Taskbar)*/ && trayIconSeen < 10)
+            imageResId = kTrayArt[trayIconSeen++];
+
+        CreateControl(target, c, pos, sz, imageResId);
     }
     target->SetMinClientSize(client);
 }

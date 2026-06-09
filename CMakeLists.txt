@@ -919,6 +919,13 @@ if(NOT WIN32)
                     "${CMAKE_SOURCE_DIR}/platform/dialog_art"
                     "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/dialog_art"
                 COMMENT "Bundling dialog art (image statics + Dock icons)")
+            # Licence + credits text (the About box's CCreditsDlg reads these as
+            # "TEXT" resources via the bundled-resource bridge).
+            add_custom_command(TARGET mushgui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_SOURCE_DIR}/platform/dialog_text"
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/text"
+                COMMENT "Bundling licence + credits text (About box)")
             # Bundle data files the engine opens relative to the executable
             # (GetModuleFileName's directory): the Tip-of-the-Day text, name lists.
             add_custom_command(TARGET mushgui POST_BUILD

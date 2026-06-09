@@ -28,13 +28,13 @@
 #include <wx/fontdlg.h>    // wxFontDialog, wxFontData
 #include <wx/treebook.h>   // wxTreebook (World Properties property sheet)
 #include <wx/listctrl.h>   // wxListCtrl (entity-manager object lists)
-#if wxUSE_SOUND
-#  include <wx/sound.h>    // wxSound (trigger / MSP audio)
-#endif
+#include <wx/stdpaths.h>   // wxStandardPaths (bundled text resources)
 #include <algorithm>
 #include <unordered_map>
 #include <map>
 #include <string>
+#include <fstream>         // bundled "TEXT" resources (licence / credits)
+#include <sstream>
 #include <vector>
 
 // ── MUSHclient headers (MFC compat layer) ────────────────────────────────
@@ -1832,6 +1832,40 @@ static void hook_sound_stop_buffer(int buffer) { ma_audio_stop(buffer); }
 static int  hook_sound_status(int buffer) { return ma_audio_status(buffer); }
 
 
+// ── Bundled "TEXT" resources (licence + credits) ──────────────────────────
+// The About box's CCreditsDlg loads its text via FindResource(.., "TEXT") +
+// LoadResource/LockResource.  On the port those map here (mfc_ui.h) and we serve
+// the text from Contents/Resources/text/, bundled from mushclient_resources.
+static const char* hook_load_text_resource(int id, unsigned* size)
+{
+    const char* file = (id == 177) ? "credits.txt"      // IDR_CREDITS
+                     : (id == 252) ? "agreement.txt"    // IDR_LICENSE
+                     : nullptr;
+    if (!file) { if (size) *size = 0; return nullptr; }
+
+    static std::map<int, std::string> cache;
+    auto it = cache.find(id);
+    if (it == cache.end())
+    {
+        wxString name = wxString(wxT("text")) + wxFILE_SEP_PATH + wxString::FromUTF8(file);
+        wxString cands[] = {
+            wxStandardPaths::Get().GetResourcesDir() + wxFILE_SEP_PATH + name,
+            wxFileName(wxStandardPaths::Get().GetExecutablePath()).GetPath()
+                + wxFILE_SEP_PATH + name,
+        };
+        std::string data;
+        for (const wxString& p : cands)
+        {
+            std::ifstream f(p.fn_str(), std::ios::binary);
+            if (f) { std::stringstream ss; ss << f.rdbuf(); data = ss.str(); break; }
+        }
+        it = cache.emplace(id, std::move(data)).first;
+    }
+    if (size) *size = (unsigned) it->second.size();
+    return it->second.empty() ? nullptr : it->second.c_str();
+}
+
+
 // ── Notepad append ────────────────────────────────────────────────────────
 
 static bool hook_append_to_notepad(const char* title, const char* text, bool replace)
@@ -3136,15 +3170,15 @@ void wx_mfc_install_hooks()
     g_wxhook_directorypicker      = hook_directorypicker;
     g_wxhook_password_dialog      = hook_password_dialog;
     g_wxhook_popup_menu           = hook_popup_menu;
-#if wxUSE_SOUND
+    // Sound is the miniaudio engine (platform/ma_sound.*), not wxSound, so these
+    // are always installed (no wxUSE_SOUND gate).
     g_wxhook_play_sound           = hook_play_sound;
     g_wxhook_stop_sound           = hook_stop_sound;
     g_wxhook_sound_play           = hook_sound_play;
     g_wxhook_sound_adjust         = hook_sound_adjust;
     g_wxhook_sound_stop_buffer    = hook_sound_stop_buffer;
     g_wxhook_sound_status         = hook_sound_status;
-#endif
-    // Notepad hooks do not depend on wxUSE_SOUND — always install them.
+    g_wxhook_load_text_resource   = hook_load_text_resource;
     g_wxhook_append_to_notepad    = hook_append_to_notepad;
     g_wxhook_get_notepad_text     = hook_get_notepad_text;
     g_wxhook_get_notepad_list     = hook_get_notepad_list;

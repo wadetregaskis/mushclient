@@ -4287,10 +4287,30 @@ inline BOOL SetScrollRange(HWND, int, int, int, BOOL) { return FALSE; }
 
 // Additional Win32 API stubs needed by dialog code
 inline HANDLE LoadImage(HINSTANCE, LPCTSTR, UINT, int, int, UINT) { return nullptr; }
-inline HRSRC  FindResource(HINSTANCE, LPCTSTR, LPCTSTR) { return nullptr; }
-inline HANDLE LoadResource(HINSTANCE, HRSRC) { return nullptr; }
-inline DWORD  SizeofResource(HINSTANCE, HRSRC) { return 0; }
-inline void*  LockResource(HANDLE) { return nullptr; }
+// FindResource/LoadResource/SizeofResource/LockResource for RT-"TEXT"
+// int-resources (the About box's licence + credits) route to bundled files via
+// g_wxhook_load_text_resource.  The "handle" carried through the chain is just
+// the resource id; the bytes are resolved (and cached) by the hook on Size/Lock.
+// `type` is a string for "TEXT" (pointer > 0xFFFF); `name` is MAKEINTRESOURCE(id)
+// (value <= 0xFFFF).  Anything else → null (the canonical caller then degrades).
+inline HRSRC  FindResource(HINSTANCE, LPCTSTR name, LPCTSTR type) {
+    if (type && (uintptr_t) type > 0xFFFF && std::strcmp(type, "TEXT") == 0 &&
+        name != 0 && (uintptr_t) name <= 0xFFFF)
+        return (HRSRC)(uintptr_t) name;          // handle = resource id
+    return nullptr;
+}
+inline HANDLE LoadResource(HINSTANCE, HRSRC h) { return (HANDLE) h; }
+inline DWORD  SizeofResource(HINSTANCE, HRSRC h) {
+    unsigned sz = 0;
+    if (g_wxhook_load_text_resource)
+        g_wxhook_load_text_resource((int)(uintptr_t) h, &sz);
+    return sz;
+}
+inline void*  LockResource(HANDLE h) {
+    unsigned sz = 0;
+    return g_wxhook_load_text_resource
+         ? (void*) g_wxhook_load_text_resource((int)(uintptr_t) h, &sz) : nullptr;
+}
 inline BOOL   GetDIBColorTable(HDC, UINT, UINT, void*) { return FALSE; }
 inline BOOL   PeekMessage(MSG*, HWND, UINT, UINT, UINT) { return FALSE; }
 inline BOOL   TranslateMessage(const MSG*) { return FALSE; }

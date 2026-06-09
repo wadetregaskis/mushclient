@@ -178,6 +178,14 @@ extern int  (*g_wxhook_sound_adjust)(int buffer, int loop,
 extern void (*g_wxhook_sound_stop_buffer)(int buffer);
 extern int  (*g_wxhook_sound_status)(int buffer);
 
+// ── Bundled "TEXT" resources ──────────────────────────────────────────────
+// Win32 FindResource/LoadResource/LockResource for RT-"TEXT" int-resources map
+// to bundled files via this hook (the licence + credits text shown by the About
+// box's CCreditsDlg).  Returns a pointer to the cached text (NUL-terminated) and
+// its length via *size, or null if the id isn't a bundled text resource.  The
+// returned pointer stays valid for the process lifetime (cached).
+extern const char* (*g_wxhook_load_text_resource)(int id, unsigned* size);
+
 // ── Notepad hook ───────────────────────────────────────────────────────────
 // Create a notepad window.  All string parameters are UTF-8.
 // sText           — initial content (may be "")

@@ -2178,14 +2178,18 @@ static void bind_list_notifications(wxWindow* win, CCmdTarget* target);  // defi
 // control's ON_UPDATE_COMMAND_UI handler (if any) so buttons enable/disable/
 // check themselves by state (e.g. CPluginsDlg greys "Show Info" when the
 // selected plugin has no description, "Disable" for a disabled plugin, etc.).
-static void pump_dialog_update_ui(CCmdTarget* target, wxDialog* dlg, const RcDialog& t)
+// Run every ON_UPDATE_COMMAND_UI handler in `target`'s map against the controls
+// of `container` (a wxDialog or a property-sheet page's wxPanel) — MFC's
+// WM_KICKIDLE.  `container` is only used to resolve control HWNDs via
+// g_wxhook_get_dlg_item, so any wxWindow works.
+static void pump_dialog_update_ui(CCmdTarget* target, wxWindow* container, const RcDialog& t)
 {
-    if (!target || !dlg) return;
+    if (!target || !container) return;
     for (const auto& c : t.controls) {
         if (c.id <= 0) continue;   // IDC_STATIC (-1) and unnamed controls
         CCmdUI cmdui;
         cmdui.m_nID      = (UINT) c.id;
-        cmdui.m_hWndCtrl = g_wxhook_get_dlg_item ? g_wxhook_get_dlg_item(dlg, c.id) : nullptr;
+        cmdui.m_hWndCtrl = g_wxhook_get_dlg_item ? g_wxhook_get_dlg_item(container, c.id) : nullptr;
         if (cmdui.m_hWndCtrl)
             AfxDispatchUpdateUI(target, &cmdui);
     }
@@ -2347,6 +2351,20 @@ static wxPanel* build_canonical_sheet_page(wxWindow* bookParent, CPropertyPage* 
         bind_list_notifications(panel, page);   // list column-sort / double-click
 
         page->OnInitDialog();          // canonical setup + DDX load (UpdateData(FALSE))
+
+        // Command-UI pump (WM_KICKIDLE) so ON_UPDATE_COMMAND_UI handlers run —
+        // e.g. the entity pages' Edit/Copy/Delete buttons enable/disable with the
+        // list selection (CGenPropertyPage::OnUpdateNeedSelection).  Pump on idle
+        // but only for the page that's actually on screen (the treebook/notebook
+        // hides the rest), plus once now to set the initial state.
+        if (t) {
+            panel->Bind(wxEVT_IDLE, [page, panel, t](wxIdleEvent& e) {
+                if (panel->IsShownOnScreen())
+                    pump_dialog_update_ui(page, panel, *t);
+                e.Skip();
+            });
+            pump_dialog_update_ui(page, panel, *t);
+        }
     }
     return panel;
 }

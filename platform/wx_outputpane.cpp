@@ -493,7 +493,8 @@ void COutputPane::ScrollPage(int direction)
 
     int scrollX, scrollY;
     GetViewStart(&scrollX, &scrollY);
-    int pageUnits = std::max(1, clientH / unitH - 1);
+    int viewH = TextViewportH();   // text band height (honours world.TextRectangle)
+    int pageUnits = std::max(1, viewH / unitH - 1);
 
     int newY;
     if (direction < 0)
@@ -507,7 +508,7 @@ void COutputPane::ScrollPage(int direction)
     GetViewStart(nullptr, &newY);   // read back clamped position
     int totalH = m_totalVisualRows * m_lineH;
     bool wasAuto = m_autoScroll;
-    m_autoScroll = (unitH > 0) && (newY * unitH + clientH >= totalH - m_lineH);
+    m_autoScroll = (unitH > 0) && (newY * unitH + viewH >= totalH - m_lineH);
     if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
         m_fn_autoscroll_changed(m_autoScroll);
 }
@@ -672,10 +673,18 @@ void COutputPane::OnPaint(wxPaintEvent&)
     // avoids any docked miniwindows.  No-op when no rectangle is set.
     dc.SetDeviceOrigin(trL - scrollX * unitW, trT - scrollY * unitH);
 
+    // Clip output (and its selection highlight) to the text rectangle so nothing
+    // spills past its edges — in particular below the bottom margin.  Device
+    // coordinates, so the shifted origin above doesn't affect it.  Reset after
+    // the text + pending line, before the miniwindow over-pass.
+    if (trActive)
+        dc.SetDeviceClippingRegion(wxRegion(trL, trT, trR - trL, trB - trT));
+
     if (!m_lines.empty() && m_lineH > 0) {
-        // When the hint bar is visible, don't render lines that fall behind it
-        // — saves work and avoids paint artifacts on the boundary.
-        int usableH = m_autoScroll ? clientH : clientH - kHintBarH;
+        // Rows are drawn within the text viewport: the rectangle's height when a
+        // plugin reserved one, else the client (less the hint bar when showing).
+        int usableH = trActive ? (trB - trT)
+                    : (m_autoScroll ? clientH : clientH - kHintBarH);
 
         // Map visible pixel range → visible logical lines using the wrap cache.
         int firstVR = yPixOffset / m_lineH;
@@ -730,6 +739,9 @@ void COutputPane::OnPaint(wxPaintEvent&)
             }
         }
     }
+
+    if (trActive)
+        dc.DestroyClippingRegion();   // text drawing done; miniwindows aren't clipped
 
     // ── Miniwindows: draw-on-top pass ──────────────────────────────────────
     if (m_fn_composite_miniwindows) {
@@ -1111,6 +1123,15 @@ bool COutputPane::TextRect(int& l, int& t, int& r, int& b) const
     return true;
 }
 
+int COutputPane::TextViewportH() const
+{
+    int l, t, r, b;
+    if (TextRect(l, t, r, b)) return b - t;
+    int h = 0;
+    const_cast<COutputPane*>(this)->GetClientSize(nullptr, &h);
+    return h;
+}
+
 void COutputPane::RebuildWrapCache()
 {
     int clientW;
@@ -1160,7 +1181,11 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
 
     // Virtual width = client width: horizontal scrolling is disabled; long
     // lines are visually wrapped rather than requiring H-scroll.
-    SetVirtualSize(clientW, totalH);
+    // When a plugin reserved part of the area (world.TextRectangle), the text's
+    // visible band is shorter than the client; pad the virtual height by the
+    // reserved amount so "scroll to bottom" lands the newest line at the
+    // rectangle's bottom (not the window's, where the clip would hide it).
+    SetVirtualSize(clientW, totalH + (clientH - TextViewportH()));
 
     if (scrollToBottom && !m_lines.empty()) {
         int unitH;
@@ -1196,12 +1221,11 @@ void COutputPane::OnScrollWinUpdate(wxScrollWinEvent& evt)
         GetViewStart(nullptr, &scrollY);
         int unitH;
         GetScrollPixelsPerUnit(nullptr, &unitH);
-        int clientH;
-        GetClientSize(nullptr, &clientH);
+        int viewH = TextViewportH();
         int totalH = m_totalVisualRows * m_lineH;
         bool wasAuto = m_autoScroll;
         bool atBottom = (unitH > 0) &&
-                        (scrollY * unitH + clientH >= totalH - m_lineH);
+                        (scrollY * unitH + viewH >= totalH - m_lineH);
         // If auto-freeze is disabled the pane stays in auto-scroll mode
         // regardless of scroll position; new output always scrolls into view.
         m_autoScroll = atBottom || !m_allowAutoFreeze;
@@ -1214,6 +1238,11 @@ void COutputPane::OnSize(wxSizeEvent& evt)
 {
     RebuildWrapCache();
     UpdateScrollbars(m_autoScroll);
+    // Notify so the world frame refreshes the doc's GUI geometry (GetInfo
+    // 280/281) — the pane resizes on layout changes that don't resize the frame
+    // (e.g. the input bar taking its space at startup), which the frame's own
+    // OnSize would miss.
+    if (m_fn_resized) m_fn_resized();
     evt.Skip();
 }
 
@@ -1819,12 +1848,11 @@ void COutputPane::OnMouseWheel(wxMouseEvent& evt)
         GetViewStart(nullptr, &scrollY);
         int unitH;
         GetScrollPixelsPerUnit(nullptr, &unitH);
-        int clientH;
-        GetClientSize(nullptr, &clientH);
+        int viewH = TextViewportH();
         int totalH = m_totalVisualRows * m_lineH;
         bool wasAuto = m_autoScroll;
         m_autoScroll = (unitH > 0) &&
-                       (scrollY * unitH + clientH >= totalH - m_lineH);
+                       (scrollY * unitH + viewH >= totalH - m_lineH);
         if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
             m_fn_autoscroll_changed(m_autoScroll);
     });

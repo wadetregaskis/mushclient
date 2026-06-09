@@ -795,6 +795,25 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         });
     };
 
+    // Keep the doc's GUI geometry (GetInfo 280/281) current on every pane resize
+    // — including layout-driven shrinks that don't resize the frame (the input
+    // bar claiming its space at startup), which the frame's OnSize misses.  This
+    // is why a plugin's bottom margin (computed from GetInfo(280)) used to land
+    // too low: GetInfo(280) kept the taller startup height.
+    m_output->m_fn_resized = [this]() {
+        if (!m_doc || !m_output) return;
+        int charW = m_output->CharWidth();
+        int lineH = m_output->LineHeight();
+        if (charW <= 0 || lineH <= 0) return;
+        int paneW, paneH;
+        m_output->GetClientSize(&paneW, &paneH);
+        if (paneW <= 0 || paneH <= 0) return;
+        m_doc->m_gui_cols        = paneW / charW;
+        m_doc->m_gui_rows        = paneH / lineH;
+        m_doc->m_gui_font_height = lineH;
+        m_doc->m_gui_font_width  = charW;
+    };
+
     // ── Miniwindow compositing callback ───────────────────────────────────
     // Called from COutputPane::OnPaint() twice per frame: once before text
     // (bUnder=true, MINIWINDOW_DRAW_UNDERNEATH) and once after (bUnder=false).
@@ -3405,6 +3424,21 @@ void CWorldChildFrame::OnSize(wxSizeEvent& evt)
         // Keep m_nWrapColumn in sync so the engine wraps output at the correct
         // column width.  Matches what cli_main.cpp does on SIGWINCH.
         m_doc->m_nWrapColumn = (unsigned short)std::max(1, std::min(cols, 65535));
+        // Keep the GUI geometry fields current too — GetInfo(280/281) report the
+        // output pane's pixel height/width from these (rows*lineH, cols*charW), and
+        // plugins (e.g. Quow's screen margins) compute their bottom/right margins
+        // from them.  The font-change path sets these; without doing it here as
+        // well they'd keep the *startup* height after the pane later shrinks (when
+        // the input bar takes its space), so GetInfo(280) over-reported and bottom
+        // margins landed too low.
+        m_doc->m_gui_cols        = cols;
+        m_doc->m_gui_rows        = rows;
+        m_doc->m_gui_font_height = lineH;
+        m_doc->m_gui_font_width  = charW;
+        m_doc->m_FontHeight      = lineH;
+        m_doc->m_FontWidth       = charW;
+        m_doc->m_InputFontHeight = lineH;
+        m_doc->m_InputFontWidth  = charW;
         m_doc->SendNAWS(cols, rows);
         // Fire OnPluginWorldOutputResized — mirrors mushview.cpp CMUSHView::OnSize().
         m_doc->SendToAllPluginCallbacks(ON_PLUGIN_WORLD_OUTPUT_RESIZED);

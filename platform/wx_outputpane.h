@@ -212,6 +212,11 @@ public:
     // Called whenever font metrics (m_lineH, m_charW) change.
     std::function<void()> m_fn_grid_changed;
 
+    // Called whenever the pane is resized (after the new client size is in
+    // effect) — including layout-driven changes that don't resize the frame, so
+    // the doc's GUI geometry (GetInfo 280/281) stays current.
+    std::function<void()> m_fn_resized;
+
     // Returns the tooltip text for a client-space point; "" = clear tooltip.
     std::function<std::string(int x, int y)> m_fn_get_tooltip;
 
@@ -384,6 +389,11 @@ private:
     // + wrap width).  m_trActive is false when no rectangle is set (full width).
     // Returns the resolved values via m_fn_text_rect, clamped to the client.
     bool TextRect(int& l, int& t, int& r, int& b) const;
+    // Height (client px) of the band the text is allowed to occupy: the text
+    // rectangle's height when one is set, else the full client height.  Used by
+    // the scroll/autoscroll math so the newest line sits at the rectangle's
+    // bottom rather than the window's.
+    int  TextViewportH() const;
     bool m_trActive = false;             // last-seen rect state (change detection)
     int  m_trL = 0, m_trT = 0, m_trR = 0, m_trB = 0;
 

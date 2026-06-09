@@ -238,6 +238,21 @@ BOOL CMDIClientWnd::OnEraseBkgnd(CDC*) { return FALSE; }
 // must be satisfied even though no window is ever painted on non-Windows.
 void CMyToolBar::DoPaint(CDC*) {}
 
+// ── Stub message maps ─────────────────────────────────────────────────────
+// CMainFrame / CMyToolBar / CMDIClientWnd each DECLARE_MESSAGE_MAP(); their real
+// maps live in mainfrm.cpp, which is mushapp-only.  Their vtables are emitted in
+// this translation unit (it defines the global Frame, the ctors, DoPaint, …), so
+// the virtual GetMessageMap() must be defined or mushcore-linked binaries
+// (mushcli + the unit tests) fail to link.  These windows are inert in the
+// headless build, so an empty map suffices — chain it to CCmdTarget, the only
+// ancestor whose GetThisMessageMap() is defined on the port (compat.h).
+BEGIN_MESSAGE_MAP(CMainFrame, CCmdTarget)
+END_MESSAGE_MAP()
+BEGIN_MESSAGE_MAP(CMyToolBar, CCmdTarget)
+END_MESSAGE_MAP()
+BEGIN_MESSAGE_MAP(CMDIClientWnd, CCmdTarget)
+END_MESSAGE_MAP()
+
 // ── UMessageBox / TMessageBox ─────────────────────────────────────────────
 // Route through g_wxhook_message_box when it is set (mushgui at runtime);
 // fall back to stderr for CLI / headless test builds.

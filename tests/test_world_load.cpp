@@ -725,11 +725,17 @@ TEST(PluginLoad, MultipleDistinctPlugins)
     EXPECT_TRUE(doc.InternalLoadPlugin(CString(p2.c_str())));
     EXPECT_EQ(2u, doc.m_PluginList.size());
 
-    // Both plugins' items should be present
+    // Each plugin's items live in that plugin's own maps (plugin isolation),
+    // not the doc's — search the loaded plugins (cf. SingleTriggerPlugin above).
     CTrigger* t = nullptr;
-    EXPECT_TRUE(doc.GetTriggerMap().Lookup("ptrig", t));
     CVariable* v = nullptr;
-    EXPECT_TRUE(doc.GetVariableMap().Lookup("plugin_var", v));
+    bool haveTrig = false, haveVar = false;
+    for (CPlugin* p : doc.m_PluginList) {
+        if (p->m_TriggerMap.Lookup("ptrig", t))       haveTrig = true;
+        if (p->m_VariableMap.Lookup("plugin_var", v))  haveVar  = true;
+    }
+    EXPECT_TRUE(haveTrig);
+    EXPECT_TRUE(haveVar);
 }
 
 TEST(PluginLoad, ViaIncludeInWorldFile)
@@ -758,9 +764,9 @@ TEST(PluginLoad, ViaIncludeInWorldFile)
     EXPECT_EQ(1u, doc.m_PluginList.size());
     EXPECT_STREQ("TrigPlugin", (const char*)doc.m_PluginList.front()->m_strName);
 
-    // Plugin's trigger should be in the doc
+    // Plugin's trigger lives in the plugin's own map (isolation), not the doc's.
     CTrigger* t = nullptr;
-    EXPECT_TRUE(doc.GetTriggerMap().Lookup("ptrig", t));
+    EXPECT_TRUE(doc.m_PluginList.front()->m_TriggerMap.Lookup("ptrig", t));
 }
 
 TEST(PluginLoad, NoPluginElementReturnsFalse)

@@ -25,6 +25,23 @@
 enum {
     ID_NP_FILE_SAVE    = wxID_HIGHEST + 2000,
     ID_NP_FILE_NEW,
+    // Convert-menu transforms (parity with canonical CTextView ID_CONVERT_*).
+    // Kept contiguous so the event table can bind them as one range.
+    ID_NP_CONVERT_FIRST,
+    ID_NP_CONVERT_UPPER = ID_NP_CONVERT_FIRST,
+    ID_NP_CONVERT_LOWER,
+    ID_NP_CONVERT_UNIX2DOS,
+    ID_NP_CONVERT_DOS2UNIX,
+    ID_NP_CONVERT_MAC2DOS,
+    ID_NP_CONVERT_DOS2MAC,
+    ID_NP_CONVERT_REMOVEEOL,
+    ID_NP_CONVERT_QUOTELINES,
+    ID_NP_CONVERT_REMOVEBLANKS,
+    ID_NP_CONVERT_QUOTEFORUM,
+    ID_NP_CONVERT_BASE64ENC,
+    ID_NP_CONVERT_BASE64DEC,
+    ID_NP_CONVERT_HTMLSPECIAL,
+    ID_NP_CONVERT_LAST = ID_NP_CONVERT_HTMLSPECIAL,
 };
 
 // ── Event table ───────────────────────────────────────────────────────────
@@ -32,6 +49,7 @@ wxBEGIN_EVENT_TABLE(CWxNotepadFrame, wxFrame)
     EVT_CLOSE                (CWxNotepadFrame::OnClose)
     EVT_MENU(ID_NP_FILE_SAVE,  CWxNotepadFrame::OnMenuSave)
     EVT_MENU(ID_NP_FILE_NEW,   CWxNotepadFrame::OnMenuNew)
+    EVT_MENU_RANGE(ID_NP_CONVERT_FIRST, ID_NP_CONVERT_LAST, CWxNotepadFrame::OnConvert)
 wxEND_EVENT_TABLE()
 
 // ── Static registry ────────────────────────────────────────────────────────
@@ -54,6 +72,76 @@ static wxFont MakeFont(const CTextDocument* pDoc)
                   pDoc->m_bFontUnderline, face);
 }
 
+// ── Text-conversion transforms ──────────────────────────────────────────────
+// Pure CString→CString, mirroring the canonical CTextView::OnConvert* logic
+// (TextView.cpp).  base64 / forum-codes reuse the shared canonical helpers
+// (encodeBase64/decodeBase64/QuoteForumCodes).
+namespace {
+
+CString NP_UnixToDos(const CString& in) {            // LF → CRLF (drop stray CR)
+    std::string out; for (const char* p = in; *p; ++p) {
+        if (*p == '\r') continue;
+        if (*p == '\n') out += '\r';
+        out += *p;
+    }
+    return CString(out.c_str());
+}
+CString NP_DosToUnix(const CString& in) {            // strip CR
+    std::string out; for (const char* p = in; *p; ++p) if (*p != '\r') out += *p;
+    return CString(out.c_str());
+}
+CString NP_MacToDos(const CString& in) {             // CR → CRLF (drop stray LF)
+    std::string out; for (const char* p = in; *p; ++p) {
+        if (*p == '\n') continue;
+        out += *p;
+        if (*p == '\r') out += '\n';
+    }
+    return CString(out.c_str());
+}
+CString NP_DosToMac(const CString& in) {             // strip LF
+    std::string out; for (const char* p = in; *p; ++p) if (*p != '\n') out += *p;
+    return CString(out.c_str());
+}
+CString NP_RemoveExtraBlanks(const CString& in) {    // collapse runs of space/tab
+    std::string out; for (const char* p = in; *p; ++p) {
+        if (*p == ' ' || *p == '\t') { if (p[1] != ' ' && p[1] != '\t') out += ' '; continue; }
+        out += *p;
+    }
+    return CString(out.c_str());
+}
+CString NP_QuoteLines(const CString& in, const char* q) {  // prefix every line with q
+    std::string out; out += q;
+    for (const char* p = in; *p; ++p) { out += *p; if (*p == '\n') out += q; }
+    return CString(out.c_str());
+}
+CString NP_HtmlSpecial(const CString& in) {          // < > & "  → entities
+    std::string out; for (const char* p = in; *p; ++p) switch (*p) {
+        case '<':  out += "&lt;";   break;
+        case '>':  out += "&gt;";   break;
+        case '&':  out += "&amp;";  break;
+        case '"':  out += "&quot;"; break;
+        default:   out += *p;
+    }
+    return CString(out.c_str());
+}
+CString NP_RemoveEndOfLines(const CString& in) {     // join lines, keep paragraph breaks
+    std::string out; char last = ' ';
+    for (const char* p = in; *p; ) {
+        if (*p == '\r') {
+            if (*++p == '\n') ++p;                    // skip the CR (+ LF)
+            const char* s = p;
+            while (*s == ' ' || *s == '\t') ++s;      // a blank line → paragraph break
+            if (s[0] == '\r' && s[1] == '\n') { p = s + 2; out += "\r\n"; }
+            else if (last != ' ') out += ' ';         // else fold to a single space
+        } else {
+            last = *p; out += *p; ++p;
+        }
+    }
+    return CString(out.c_str());
+}
+
+} // namespace
+
 // ── Constructor ────────────────────────────────────────────────────────────
 
 CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
@@ -72,6 +160,40 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     mnu->Append(ID_NP_FILE_NEW,  wxT("&New notepad\tCtrl+N"));
     mnu->Append(ID_NP_FILE_SAVE, wxT("&Save\tCtrl+S"));
     mb->Append(mnu, wxT("&File"));
+
+    // Edit menu — wxTextCtrl handles these standard ids when focused.
+    wxMenu* edit = new wxMenu();
+    edit->Append(wxID_UNDO,      wxT("&Undo\tCtrl+Z"));
+    edit->Append(wxID_REDO,      wxT("&Redo\tCtrl+Shift+Z"));
+    edit->AppendSeparator();
+    edit->Append(wxID_CUT,       wxT("Cu&t\tCtrl+X"));
+    edit->Append(wxID_COPY,      wxT("&Copy\tCtrl+C"));
+    edit->Append(wxID_PASTE,     wxT("&Paste\tCtrl+V"));
+    edit->AppendSeparator();
+    edit->Append(wxID_SELECTALL, wxT("Select &All\tCtrl+A"));
+    mb->Append(edit, wxT("&Edit"));
+
+    // Convert menu — text transforms (canonical CTextView ID_CONVERT_* parity).
+    // Each acts on the selection, or the whole document when nothing is selected.
+    wxMenu* conv = new wxMenu();
+    conv->Append(ID_NP_CONVERT_UPPER,        wxT("&UPPER CASE"));
+    conv->Append(ID_NP_CONVERT_LOWER,        wxT("&lower case"));
+    conv->AppendSeparator();
+    conv->Append(ID_NP_CONVERT_UNIX2DOS,     wxT("Unix → &DOS (LF → CRLF)"));
+    conv->Append(ID_NP_CONVERT_DOS2UNIX,     wxT("DOS → &Unix (CRLF → LF)"));
+    conv->Append(ID_NP_CONVERT_MAC2DOS,      wxT("&Mac → DOS (CR → CRLF)"));
+    conv->Append(ID_NP_CONVERT_DOS2MAC,      wxT("DOS → M&ac (CRLF → CR)"));
+    conv->AppendSeparator();
+    conv->Append(ID_NP_CONVERT_REMOVEEOL,    wxT("&Remove end-of-lines (join)"));
+    conv->Append(ID_NP_CONVERT_REMOVEBLANKS, wxT("Remove e&xtra blanks"));
+    conv->Append(ID_NP_CONVERT_QUOTELINES,   wxT("&Quote lines"));
+    conv->AppendSeparator();
+    conv->Append(ID_NP_CONVERT_QUOTEFORUM,   wxT("Quote &forum codes"));
+    conv->Append(ID_NP_CONVERT_BASE64ENC,    wxT("Base64 &encode"));
+    conv->Append(ID_NP_CONVERT_BASE64DEC,    wxT("Base64 &decode"));
+    conv->Append(ID_NP_CONVERT_HTMLSPECIAL,  wxT("Convert &HTML special characters"));
+    mb->Append(conv, wxT("&Convert"));
+
     SetMenuBar(mb);
 
     // ── Text control ────────────────────────────────────────────────────
@@ -391,6 +513,57 @@ void CWxNotepadFrame::OnMenuNew(wxCommandEvent& /*evt*/)
                      "",
                      false, false, false, false, false, 0,
                      eNotepadNormal);
+}
+
+// ── Convert menu: text transforms (CTextView::OnConvert* parity) ─────────────
+void CWxNotepadFrame::OnConvert(wxCommandEvent& evt)
+{
+    if (!m_ctrl) return;
+
+    // Operate on the selection, or the whole document when nothing is selected
+    // (mirrors CTextView::GetSelection / ReplaceAndReselect).
+    long from = 0, to = 0;
+    m_ctrl->GetSelection(&from, &to);
+    bool bAll = (from == to);
+    wxString wxsrc = bAll ? m_ctrl->GetValue() : m_ctrl->GetStringSelection();
+    CString src(static_cast<const char*>(wxsrc.ToUTF8()));
+    CString dst;
+
+    switch (evt.GetId()) {
+        case ID_NP_CONVERT_UPPER:        dst = src; dst.MakeUpper();      break;
+        case ID_NP_CONVERT_LOWER:        dst = src; dst.MakeLower();      break;
+        case ID_NP_CONVERT_UNIX2DOS:     dst = NP_UnixToDos(src);         break;
+        case ID_NP_CONVERT_DOS2UNIX:     dst = NP_DosToUnix(src);         break;
+        case ID_NP_CONVERT_MAC2DOS:      dst = NP_MacToDos(src);          break;
+        case ID_NP_CONVERT_DOS2MAC:      dst = NP_DosToMac(src);          break;
+        case ID_NP_CONVERT_REMOVEEOL:    dst = NP_RemoveEndOfLines(src);  break;
+        case ID_NP_CONVERT_REMOVEBLANKS: dst = NP_RemoveExtraBlanks(src); break;
+        case ID_NP_CONVERT_QUOTELINES: {
+            CString q = App.m_strNotepadQuoteString;
+            if (q.IsEmpty()) q = "> ";
+            dst = NP_QuoteLines(src, static_cast<const char*>(q));
+            break;
+        }
+        case ID_NP_CONVERT_QUOTEFORUM:   dst = QuoteForumCodes(src);      break;
+        case ID_NP_CONVERT_BASE64ENC:
+            dst = encodeBase64(static_cast<const char*>(src), true);      break;
+        case ID_NP_CONVERT_BASE64DEC:
+            try { dst = decodeBase64(static_cast<const char*>(src)); }
+            catch (CException* e) { e->Delete(); wxBell(); return; }
+            catch (...)           { wxBell(); return; }
+            break;
+        case ID_NP_CONVERT_HTMLSPECIAL:  dst = NP_HtmlSpecial(src);       break;
+        default: return;
+    }
+
+    wxString wxdst = wxString::FromUTF8(static_cast<const char*>(dst));
+    if (bAll) {
+        m_ctrl->SetValue(wxdst);
+        m_ctrl->SetSelection(0, m_ctrl->GetLastPosition());
+    } else {
+        m_ctrl->Replace(from, to, wxdst);
+        m_ctrl->SetSelection(from, from + static_cast<long>(wxdst.length()));
+    }
 }
 
 #endif // !_WIN32

@@ -837,11 +837,24 @@ if(NOT WIN32)
             platform/wx_dialog_bridge.cpp
             platform/wx_activity.cpp
             platform/wx_print.cpp
+            # miniaudio sound engine: concurrent buffers + volume/pan/loop
+            # (backs world.PlaySound / MSP / trigger sounds)
+            platform/ma_sound.cpp
         )
         # mushgui links mushapp (full MUSHclient engine with doc.cpp, dialogs,
         # scripting, etc.) rather than the portable mushcore stub.
         # wx_mfc_impl.cpp bridges the MFC compatibility layer to real wxWidgets.
         target_link_libraries(mushgui PRIVATE mushapp ${wxWidgets_LIBRARIES})
+        # miniaudio (platform/ma_sound.cpp) needs the OS audio backend:
+        # CoreAudio family on macOS; pthread/dl/m on Linux (it dlopen's ALSA/Pulse).
+        if(APPLE)
+            target_link_libraries(mushgui PRIVATE
+                "-framework CoreAudio" "-framework AudioToolbox"
+                "-framework AudioUnit" "-framework CoreFoundation")
+        else()
+            find_package(Threads REQUIRED)
+            target_link_libraries(mushgui PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
+        endif()
         target_include_directories(mushgui PRIVATE
             ${CMAKE_SOURCE_DIR}
             ${CMAKE_SOURCE_DIR}/platform

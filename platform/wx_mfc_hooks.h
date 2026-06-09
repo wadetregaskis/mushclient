@@ -156,10 +156,27 @@ extern void  (*g_wxhook_set_clipboard_text)(const char* text);
 // ── Sound hooks ───────────────────────────────────────────────────────────
 // Play a sound file asynchronously.  path is a UTF-8 filesystem path.
 // Returns true if playback started successfully, false on error or if no
-// sound backend is available.
+// sound backend is available.  Used by MSP / trigger sounds and the
+// world-properties "test" button (auto-buffer, full volume, centred).
 extern bool (*g_wxhook_play_sound)(const char* path, bool loop);
-// Stop any sound currently playing via g_wxhook_play_sound.
+// Stop ALL sounds currently playing via the sound engine (CancelSound).
 extern void (*g_wxhook_stop_sound)();
+
+// Buffered sound API (world.PlaySound): up to MAX_SOUND_BUFFERS concurrent
+// voices with per-voice volume + pan + looping, mixed by the audio engine.
+// buffer is 1..N, or 0 to auto-select a free slot.  volume is a percent in
+// [-100,0] (0 = full); pan is a percent in [-100,+100].  Backed by miniaudio
+// (platform/ma_sound.*).  Null in mushcore/CLI/tests → no audio.
+//   play   → 1-based buffer used, or 0 on failure
+//   adjust → 1 if an already-playing buffer was retuned, else 0
+//   stop   → buffer 1..N, or 0 for all
+//   status → -2 free, 0 not playing, 1 playing, 2 playing+looping
+extern int  (*g_wxhook_sound_play)(int buffer, const char* path, int loop,
+                                   double volume, double pan);
+extern int  (*g_wxhook_sound_adjust)(int buffer, int loop,
+                                     double volume, double pan);
+extern void (*g_wxhook_sound_stop_buffer)(int buffer);
+extern int  (*g_wxhook_sound_status)(int buffer);
 
 // ── Notepad hook ───────────────────────────────────────────────────────────
 // Create a notepad window.  All string parameters are UTF-8.

@@ -47,6 +47,7 @@
 #include "platform/wx_world_child.h"  // CWorldChildFrame
 #include "platform/wx_osx_text.h"     // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
 #include "platform/wx_activity.h"     // ShowActivityWindow (Game ▸ Activity List)
+#include "platform/ma_sound.h"        // miniaudio sound engine (volume/pan/buffers)
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
 #include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
@@ -1768,55 +1769,44 @@ static void* hook_create_text_window(
 // CMainFrame::PlaySoundFile and CancelSound delegate here on non-Windows so
 // that trigger sounds and MSP audio actually play via wxWidgets.
 //
-// wxSound supports .wav on all platforms.  For macOS the underlying backend
-// (NSSound) also handles .aiff, .mp3, .m4a, etc.  On Linux only .wav via
-// OSS/ALSA is guaranteed.  Formats that wxSound cannot play are silently
-// ignored (returns false), leaving the MUD session uninterrupted.
-#if wxUSE_SOUND
-namespace {
-// Keep the current wxSound alive while it plays asynchronously; replaced (and
-// thereby stopped) when the next sound is requested.
-wxSound* s_currentSound = nullptr;
-} // anonymous namespace
+// Audio runs through the miniaudio engine (platform/ma_sound.*): one mixer with
+// up to MAX_SOUND_BUFFERS concurrent voices, each with its own volume, pan and
+// loop flag — the same capabilities DirectSound gave the Windows build.  Plays
+// .wav/.mp3/.flac.  (This replaced single-channel wxSound, which couldn't mix,
+// pan or set volume.)  Plugins reference sounds with Windows-style backslash
+// paths, so every path is normalised to POSIX via PortableFilePath() here.
 
-static void hook_stop_sound()
-{
-    wxSound::Stop();
-    delete s_currentSound;
-    s_currentSound = nullptr;
-}
-
+// MSP / trigger sounds + the world-properties "test" button: auto-buffer, full
+// volume, centred — the simple fire-and-forget path.
 static bool hook_play_sound(const char* path, bool loop)
 {
     if (!path || !*path) return false;
-    // Plugins reference sound files by Windows-style backslash paths; POSIX
-    // needs '/'.
     std::string fixed = PortableFilePath(path);
-
-    wxSound* snd = new wxSound(wxString::FromUTF8(fixed.c_str()));
-    if (!snd->IsOk()) {            // genuine load failure (missing / not a sound)
-        delete snd;
-        return false;
-    }
-
-    hook_stop_sound();             // stop & free any previously-playing sound
-    s_currentSound = snd;
-
-    const bool started =
-        s_currentSound->Play(wxSOUND_ASYNC | (loop ? wxSOUND_LOOP : 0));
-#ifdef __APPLE__
-    // wxOSX's AudioToolbox backend plays the sound correctly but Play()/DoPlay()
-    // returns false even on success (verified: audio is audible while Play()
-    // == false).  IsOk() above is the meaningful check — a loaded sound is a
-    // successful play request here, so ignore the bogus bool.  Other platforms
-    // keep wxSound's real Play() result.
-    (void) started;
-    return true;
-#else
-    return started;
-#endif
+    return ma_audio_play(0 /*auto buffer*/, fixed.c_str(), loop ? 1 : 0,
+                         0.0 /*full volume*/, 0.0 /*centre*/) != 0;
 }
-#endif // wxUSE_SOUND
+
+// CancelSound / StopSound(0): stop every voice.
+static void hook_stop_sound()
+{
+    ma_audio_stop(0);
+}
+
+// Buffered world.PlaySound: explicit buffer (0 = auto), volume %, pan %, loop.
+static int hook_sound_play(int buffer, const char* path, int loop,
+                           double volume, double pan)
+{
+    if (!path || !*path) return 0;
+    std::string fixed = PortableFilePath(path);
+    return ma_audio_play(buffer, fixed.c_str(), loop, volume, pan);
+}
+
+static int  hook_sound_adjust(int buffer, int loop, double volume, double pan)
+{ return ma_audio_adjust(buffer, loop, volume, pan); }
+
+static void hook_sound_stop_buffer(int buffer) { ma_audio_stop(buffer); }
+
+static int  hook_sound_status(int buffer) { return ma_audio_status(buffer); }
 
 
 // ── Notepad append ────────────────────────────────────────────────────────
@@ -3108,6 +3098,10 @@ void wx_mfc_install_hooks()
 #if wxUSE_SOUND
     g_wxhook_play_sound           = hook_play_sound;
     g_wxhook_stop_sound           = hook_stop_sound;
+    g_wxhook_sound_play           = hook_sound_play;
+    g_wxhook_sound_adjust         = hook_sound_adjust;
+    g_wxhook_sound_stop_buffer    = hook_sound_stop_buffer;
+    g_wxhook_sound_status         = hook_sound_status;
 #endif
     // Notepad hooks do not depend on wxUSE_SOUND — always install them.
     g_wxhook_append_to_notepad    = hook_append_to_notepad;

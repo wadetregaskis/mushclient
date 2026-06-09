@@ -450,14 +450,17 @@ long CMUSHclientDoc::GetSoundStatus(short Buffer)
 // which MSP and trigger sounds already use.  These methods hand the Lua sound API
 // (world.Sound / PlaySound / StopSound) to that same path.
 //
-// wxSound is a single async channel: per-buffer mixing, Volume and Pan are NOT
-// supported (accepted-but-ignored); memory-buffer playback is rejected.  Looping
-// IS supported — PlaySound passes its Loop flag through g_wxhook_play_sound to
-// wxSOUND_LOOP.  In mushcli/tests the hook is null, so playback silently no-ops.
+// The port's audio backend is miniaudio (platform/ma_sound.*), reached through
+// the g_wxhook_sound_* hooks.  It mixes up to MAX_SOUND_BUFFERS concurrent
+// voices, each with its own Volume, Pan and Loop — the same capabilities
+// DirectSound gave the Windows build — so PlaySound / StopSound / GetSoundStatus
+// now behave like Windows (buffers, volume, pan, the "adjust playing buffer"
+// case, and real per-buffer status).  Memory-buffer playback is the one gap
+// (rejected, as before).  In mushcli/tests the hooks are null → playback no-ops.
 
 #include "../errors.h"
 #include <cctype>
-#include "platform/wx_mfc_hooks.h"   // g_wxhook_play_sound (loop-capable)
+#include "platform/wx_mfc_hooks.h"   // g_wxhook_sound_* (miniaudio engine)
 
 // world.Sound — play a sound file (the common one-shot API).  Mirrors Windows:
 // empty name → error; otherwise hand off to the working PlaySoundFile path.
@@ -470,17 +473,45 @@ long CMUSHclientDoc::Sound(LPCTSTR SoundFileName)
   return eOK;
 }
 
-// world.PlaySound — the buffered API.  Portably: Buffer, Volume and Pan are
-// accepted but not applied (single wxSound channel) and memory-buffer playback is
-// rejected, but Loop IS honoured.  Resolves a non-absolute path against the
-// MUSHclient "sounds" directory, matching the Windows helper.
-long CMUSHclientDoc::PlaySoundHelper(short /*Buffer*/, LPCTSTR FileName, BOOL Loop,
-                                     double /*Volume*/, double /*Pan*/,
+// world.PlaySound — the buffered API.  Drives the miniaudio engine via the
+// g_wxhook_sound_* hooks: Buffer (0 = auto), Volume %, Pan % and Loop all apply,
+// and "empty filename + buffer" retunes an already-playing voice.  Mirrors the
+// Windows DirectSound helper's parameter handling.  Memory-buffer playback is
+// the one gap (rejected).  Null hooks (mushcli/tests) → no audio backend.
+long CMUSHclientDoc::PlaySoundHelper(short Buffer, LPCTSTR FileName, BOOL Loop,
+                                     double Volume, double Pan,
                                      LPCTSTR MemoryBuffer, size_t /*MemLen*/)
 {
+  if (!g_wxhook_sound_play)
+    return eCannotPlaySound;                 // no audio backend (CLI / tests)
+
   if (MemoryBuffer != NULL)
     return eCannotPlaySound;                 // memory-buffer playback unsupported
-  if (!FileName || strlen (FileName) < 1)
+
+  // Force Volume / Pan into range exactly like the Windows helper.
+  if (Volume > 0 || Volume < -100.0) Volume = 0.0;
+  if (Pan > 100.0 || Pan < -100.0)   Pan    = 0.0;
+
+  // ---- empty filename + valid buffer → adjust the playing voice in place ----
+  if (Buffer >= 1 && Buffer <= MAX_SOUND_BUFFERS &&
+      (FileName == NULL || strlen (FileName) == 0))
+    {
+    int status = g_wxhook_sound_status ? g_wxhook_sound_status (Buffer) : -2;
+    if (status == -2)                        // buffer is free → nothing to adjust
+      return eBadParameter;
+    if (status <= 0)                         // loaded but not playing
+      return eCannotPlaySound;
+    return (g_wxhook_sound_adjust &&
+            g_wxhook_sound_adjust (Buffer, Loop != 0, Volume, Pan))
+           ? eOK : eCannotPlaySound;
+    }
+
+  // Need a real filename from here on.
+  if (FileName == NULL || strlen (FileName) < 2)
+    return eBadParameter;
+
+  // Buffer must be 0 (auto) or 1..MAX.
+  if (Buffer < 0 || Buffer > MAX_SOUND_BUFFERS)
     return eBadParameter;
 
   // Resolve a non-absolute path against <exe-dir>/sounds/ (mirrors Windows).
@@ -489,11 +520,8 @@ long CMUSHclientDoc::PlaySoundHelper(short /*Buffer*/, LPCTSTR FileName, BOOL Lo
       !(isalpha ((unsigned char) strName [0]) && strName [1] == ':'))
     strName = ExtractDirectory (App.m_strMUSHclientFileName) + "sounds/" + strName;
 
-  // Play via the sound hook directly so the Loop flag reaches wxSOUND_LOOP
-  // (CMUSHclientDoc::PlaySoundFile can't carry it).  This mirrors Windows, where
-  // PlaySound uses the buffered path, not the plugin-callback PlaySoundFile route.
-  // Null hook (mushcli/tests) → no audio backend available.
-  if (!g_wxhook_play_sound || !g_wxhook_play_sound ((LPCTSTR) strName, Loop != 0))
+  // play returns the buffer used (1..N), or 0 on failure.
+  if (g_wxhook_sound_play (Buffer, (LPCTSTR) strName, Loop != 0, Volume, Pan) == 0)
     return eCannotPlaySound;
   return eOK;
 }
@@ -503,22 +531,28 @@ long CMUSHclientDoc::PlaySound(short Buffer, LPCTSTR FileName, BOOL Loop, double
   return PlaySoundHelper (Buffer, FileName, Loop, Volume, Pan, NULL, 0);
 }
 
-// world.StopSound — stop the (single) wxSound channel directly via the hook.
-// Do NOT call CancelSound(): the canonical CancelSound() ends with StopSound(0)
-// (on Windows that stops a DirectSound buffer), so routing StopSound back through
-// CancelSound() recurses infinitely on the port (stack overflow / SIGSEGV).
-long CMUSHclientDoc::StopSound(short /*Buffer*/)
+// world.StopSound — stop one buffer (1..N) or all (0) via the engine.
+// Do NOT call CancelSound(): canonical CancelSound() ends with StopSound(0), so
+// routing StopSound back through it would recurse infinitely on the port.
+long CMUSHclientDoc::StopSound(short Buffer)
 {
-  if (g_wxhook_stop_sound)
+  if (g_wxhook_sound_stop_buffer)
+    g_wxhook_sound_stop_buffer (Buffer);
+  else if (Buffer == 0 && g_wxhook_stop_sound)
     g_wxhook_stop_sound();
   return eOK;
 }
 
-// world.GetSoundStatus — wxSound can't report per-buffer playing state; report
-// "not playing / unknown" on the port.
-long CMUSHclientDoc::GetSoundStatus(short /*Buffer*/)
+// world.GetSoundStatus — real per-buffer state from the engine.
+//   -3 sound system unavailable, -1 buffer out of range, -2 free,
+//    0 not playing, 1 playing, 2 playing + looping.
+long CMUSHclientDoc::GetSoundStatus(short Buffer)
 {
-  return 0;
+  if (!g_wxhook_sound_status)
+    return -3;                               // no audio backend
+  if (Buffer < 1 || Buffer > MAX_SOUND_BUFFERS)
+    return -1;
+  return g_wxhook_sound_status (Buffer);
 }
 
 #endif // _NOSOUND

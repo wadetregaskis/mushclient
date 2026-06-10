@@ -194,6 +194,21 @@ extern char** (*g_wxhook_get_font_families)();
 // the Unicode code point, else 0.  macOS uses CoreText; 0 where unsupported.
 extern int    (*g_wxhook_font_has_glyph)(const char* facename, unsigned int codepoint);
 
+// ── System queries (world.GetSysColor / GetSystemMetrics / GetPixel) ────────
+// GetSysColor(COLOR_*): map a Win32 system-colour index to the live desktop
+// theme colour (wxSystemSettings).  Returns 0xC0C0C0 from the stub when unset.
+extern unsigned long (*g_wxhook_get_sys_color)(int index);
+// GetSystemMetrics(SM_*): map a Win32 metric index to the real value (screen
+// size, icon/scrollbar dimensions, …).  Returns 0 from the stub when unset.
+extern int           (*g_wxhook_get_system_metric)(int index);
+// ::GetPixel(HDC,x,y): read a pixel from the wx device context that owns hdc —
+// for loaded images this reads the materialised DIBSection bits, so colour-key
+// transparency keys on the real top-left pixel rather than black.
+extern unsigned long (*g_wxhook_get_pixel)(void* hdc, int x, int y);
+// world.SetCursor(n): set the mouse cursor over the doc's output pane.  n is the
+// MUSHclient cursor index (-1 = hidden, 0 = arrow, 1 = hand, …, 12 = help).
+extern void (*g_wxhook_set_cursor)(void* doc, int cursorNum);
+
 // ── Notepad hook ───────────────────────────────────────────────────────────
 // Create a notepad window.  All string parameters are UTF-8.
 // sText           — initial content (may be "")

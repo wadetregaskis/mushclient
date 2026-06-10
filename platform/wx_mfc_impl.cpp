@@ -30,6 +30,8 @@
 #include <wx/listctrl.h>   // wxListCtrl (entity-manager object lists)
 #include <wx/stdpaths.h>   // wxStandardPaths (bundled text resources)
 #include <wx/fontenum.h>   // wxFontEnumerator (utils.getfontfamilies)
+#include <wx/settings.h>   // wxSystemSettings (world.GetSysColor / GetSystemMetrics)
+#include <wx/display.h>    // wxDisplay (screen-size system metrics)
 #include <algorithm>
 #include <unordered_map>
 #include <map>
@@ -1887,6 +1889,111 @@ static int hook_font_has_glyph(const char* facename, unsigned int codepoint)
     return wxOSXFontHasGlyph(facename, codepoint);
 }
 
+// ::GetPixel(HDC,x,y) reader — implemented in wx_gdi_compat.cpp (it needs the
+// DIBSection internals defined there); assigned to g_wxhook_get_pixel below.
+extern unsigned long wxgdi_get_pixel(void* hdc, int x, int y);
+
+// world.GetSysColor(COLOR_*) — map the Win32 system-colour index to the live
+// desktop theme colour.  The COLOR_* literals are the stable Win32 constants
+// (only a handful are #defined in the compat headers, so spell them out).
+// Returns COLORREF (0x00BBGGRR); unknown index → MFC light-grey default.
+static unsigned long hook_get_sys_color(int idx)
+{
+    wxSystemColour which;
+    switch (idx)
+    {
+    case 0:  which = wxSYS_COLOUR_SCROLLBAR;            break; // COLOR_SCROLLBAR
+    case 1:  which = wxSYS_COLOUR_BACKGROUND;           break; // COLOR_BACKGROUND/DESKTOP
+    case 2:  which = wxSYS_COLOUR_ACTIVECAPTION;        break; // COLOR_ACTIVECAPTION
+    case 3:  which = wxSYS_COLOUR_INACTIVECAPTION;      break; // COLOR_INACTIVECAPTION
+    case 4:  which = wxSYS_COLOUR_MENU;                 break; // COLOR_MENU
+    case 5:  which = wxSYS_COLOUR_WINDOW;               break; // COLOR_WINDOW
+    case 6:  which = wxSYS_COLOUR_WINDOWFRAME;          break; // COLOR_WINDOWFRAME
+    case 7:  which = wxSYS_COLOUR_MENUTEXT;             break; // COLOR_MENUTEXT
+    case 8:  which = wxSYS_COLOUR_WINDOWTEXT;           break; // COLOR_WINDOWTEXT
+    case 9:  which = wxSYS_COLOUR_CAPTIONTEXT;          break; // COLOR_CAPTIONTEXT
+    case 10: which = wxSYS_COLOUR_ACTIVEBORDER;         break; // COLOR_ACTIVEBORDER
+    case 11: which = wxSYS_COLOUR_INACTIVEBORDER;       break; // COLOR_INACTIVEBORDER
+    case 12: which = wxSYS_COLOUR_APPWORKSPACE;         break; // COLOR_APPWORKSPACE
+    case 13: which = wxSYS_COLOUR_HIGHLIGHT;            break; // COLOR_HIGHLIGHT
+    case 14: which = wxSYS_COLOUR_HIGHLIGHTTEXT;        break; // COLOR_HIGHLIGHTTEXT
+    case 15: which = wxSYS_COLOUR_BTNFACE;              break; // COLOR_BTNFACE/3DFACE
+    case 16: which = wxSYS_COLOUR_BTNSHADOW;            break; // COLOR_BTNSHADOW
+    case 17: which = wxSYS_COLOUR_GRAYTEXT;             break; // COLOR_GRAYTEXT
+    case 18: which = wxSYS_COLOUR_BTNTEXT;              break; // COLOR_BTNTEXT
+    case 19: which = wxSYS_COLOUR_INACTIVECAPTIONTEXT;  break; // COLOR_INACTIVECAPTIONTEXT
+    case 20: which = wxSYS_COLOUR_BTNHIGHLIGHT;         break; // COLOR_BTNHIGHLIGHT
+    default: return 0xC0C0C0;
+    }
+    wxColour c = wxSystemSettings::GetColour(which);
+    if (!c.IsOk()) return 0xC0C0C0;
+    return (unsigned long) c.Red()
+         | ((unsigned long) c.Green() << 8)
+         | ((unsigned long) c.Blue()  << 16);
+}
+
+// world.GetSystemMetrics(SM_*) — map the indices scripts actually use to the
+// live wx metric.  SM_* literals are stable Win32 constants; unmapped indices
+// return 0 (matching the Win32 contract for unsupported metrics).
+static int hook_get_system_metric(int idx)
+{
+    switch (idx)
+    {
+    case 0:  return wxSystemSettings::GetMetric(wxSYS_SCREEN_X);          // SM_CXSCREEN
+    case 1:  return wxSystemSettings::GetMetric(wxSYS_SCREEN_Y);          // SM_CYSCREEN
+    case 2:  return wxSystemSettings::GetMetric(wxSYS_VSCROLL_X);         // SM_CXVSCROLL
+    case 3:  return wxSystemSettings::GetMetric(wxSYS_HSCROLL_Y);         // SM_CYHSCROLL
+    case 4:  return wxSystemSettings::GetMetric(wxSYS_CAPTION_Y);         // SM_CYCAPTION
+    case 5:  return wxSystemSettings::GetMetric(wxSYS_BORDER_X);          // SM_CXBORDER
+    case 6:  return wxSystemSettings::GetMetric(wxSYS_BORDER_Y);          // SM_CYBORDER
+    case 11: return wxSystemSettings::GetMetric(wxSYS_ICON_X);            // SM_CXICON
+    case 12: return wxSystemSettings::GetMetric(wxSYS_ICON_Y);            // SM_CYICON
+    case 13: return wxSystemSettings::GetMetric(wxSYS_CURSOR_X);          // SM_CXCURSOR
+    case 14: return wxSystemSettings::GetMetric(wxSYS_CURSOR_Y);          // SM_CYCURSOR
+    case 15: return wxSystemSettings::GetMetric(wxSYS_MENU_Y);            // SM_CYMENU
+    case 16: return wxSystemSettings::GetMetric(wxSYS_SCREEN_X);          // SM_CXFULLSCREEN (≈)
+    case 17: return wxSystemSettings::GetMetric(wxSYS_SCREEN_Y);          // SM_CYFULLSCREEN (≈)
+    case 20: return wxSystemSettings::GetMetric(wxSYS_VSCROLL_ARROW_Y);   // SM_CYVSCROLL
+    case 21: return wxSystemSettings::GetMetric(wxSYS_HSCROLL_ARROW_X);   // SM_CXHSCROLL
+    case 43: return wxSystemSettings::GetMetric(wxSYS_MOUSE_BUTTONS);     // SM_CMOUSEBUTTONS
+    case 49: return wxSystemSettings::GetMetric(wxSYS_SMALLICON_X);       // SM_CXSMICON
+    case 50: return wxSystemSettings::GetMetric(wxSYS_SMALLICON_Y);       // SM_CYSMICON
+    default: return 0;
+    }
+}
+
+// world.SetCursor(n) — set the mouse cursor over the doc's output pane.  Maps
+// the MUSHclient cursor index to the nearest wx stock cursor.
+static void hook_set_cursor(void* docv, int cursorNum)
+{
+    CMUSHclientDoc* doc = static_cast<CMUSHclientDoc*>(docv);
+    auto it = s_docFrameMap.find(doc);
+    if (it == s_docFrameMap.end() || !it->second) return;
+    COutputPane* pane = it->second->OutputPane();
+    if (!pane) return;
+
+    wxStockCursor sc;
+    switch (cursorNum)
+    {
+    case -1: sc = wxCURSOR_BLANK;          break; // no cursor
+    case  0: sc = wxCURSOR_ARROW;          break; // arrow
+    case  1: sc = wxCURSOR_HAND;           break; // hand
+    case  2: sc = wxCURSOR_IBEAM;          break; // I-beam
+    case  3: sc = wxCURSOR_CROSS;          break; // cross
+    case  4: sc = wxCURSOR_WAIT;           break; // hour-glass
+    case  5: sc = wxCURSOR_ARROW;          break; // up arrow (no wx stock equivalent)
+    case  6: sc = wxCURSOR_SIZENWSE;       break; // arrow nw-se
+    case  7: sc = wxCURSOR_SIZENESW;       break; // arrow ne-sw
+    case  8: sc = wxCURSOR_SIZEWE;         break; // arrow e-w
+    case  9: sc = wxCURSOR_SIZENS;         break; // arrow n-s
+    case 10: sc = wxCURSOR_SIZING;         break; // arrow all ways
+    case 11: sc = wxCURSOR_NO_ENTRY;       break; // (X) no
+    case 12: sc = wxCURSOR_QUESTION_ARROW; break; // help
+    default: sc = wxCURSOR_ARROW;          break;
+    }
+    pane->SetCursor(wxCursor(sc));
+}
+
 
 // ── Notepad append ────────────────────────────────────────────────────────
 
@@ -3203,6 +3310,10 @@ void wx_mfc_install_hooks()
     g_wxhook_load_text_resource   = hook_load_text_resource;
     g_wxhook_get_font_families    = hook_get_font_families;
     g_wxhook_font_has_glyph       = hook_font_has_glyph;
+    g_wxhook_get_sys_color        = hook_get_sys_color;
+    g_wxhook_get_system_metric    = hook_get_system_metric;
+    g_wxhook_get_pixel            = wxgdi_get_pixel;   // defined in wx_gdi_compat.cpp
+    g_wxhook_set_cursor           = hook_set_cursor;
     g_wxhook_append_to_notepad    = hook_append_to_notepad;
     g_wxhook_get_notepad_text     = hook_get_notepad_text;
     g_wxhook_get_notepad_list     = hook_get_notepad_list;

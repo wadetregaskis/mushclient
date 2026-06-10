@@ -21,8 +21,15 @@ void wxOSXDisableSmartSubstitutions(wxTextCtrl* ctrl);   // defined in wx_osx_te
 void wxOSXSetDockIcon(const wxBitmap& bmp);
 // 1 if the named font has a glyph for the Unicode code point, else 0 (CoreText).
 int wxOSXFontHasGlyph(const char* facename, unsigned int codepoint);
+// utils.sendtofront(name): activate (raise to front) a running application whose
+// name matches `name` (case-insensitive substring of the localized app name or
+// its bundle identifier).  This is the closest macOS analogue of the Windows
+// "bring window with this title to front" behaviour, used to surface an external
+// script editor.  Returns true if a matching app was found and activated.
+bool wxOSXActivateApp(const char* name);
 #else
 inline void wxOSXDisableSmartSubstitutions(wxTextCtrl*) {}
 inline void wxOSXSetDockIcon(const wxBitmap&) {}
 inline int  wxOSXFontHasGlyph(const char*, unsigned int) { return 0; }
+inline bool wxOSXActivateApp(const char*) { return false; }
 #endif

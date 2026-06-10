@@ -1257,6 +1257,33 @@ COLORREF CDC::GetPixel(int x, int y) const {
     return CRef(col);
 }
 
+// Global ::GetPixel(HDC,x,y) bridge — assigned to g_wxhook_get_pixel in
+// wx_mfc_impl.cpp's install block.  When a DIBSection is bound to hdc (loaded
+// PNG/BMP images), read straight from its raw BGR(A) buffer — that is the
+// authoritative source for colour-key transparency (miniwindow.cpp reads pixel
+// 0,0 as the transparent colour).  Otherwise fall back to the wxBitmap that the
+// owning CDC has selected.
+unsigned long wxgdi_get_pixel(void* hdcv, int x, int y) {
+    HDC hdc = reinterpret_cast<HDC>(hdcv);
+    if (!hdc) return 0;
+    if (DIBSectionData* dib = GetDIBForHDC(hdc)) {
+        if (x < 0 || y < 0 || x >= dib->width || y >= dib->height)
+            return 0;
+        const int row = dib->bottomUp ? (dib->height - 1 - y) : y;
+        const size_t off = (size_t) row * (size_t) dib->stride
+                         + (size_t) x * (size_t) dib->bytesPerPixel;
+        if (off + (size_t) dib->bytesPerPixel > dib->pixels.size())
+            return 0;
+        const unsigned char* px = &dib->pixels[off];
+        // buffer is BGR(A); COLORREF is 0x00BBGGRR.
+        return (unsigned long) px[2]
+             | ((unsigned long) px[1] << 8)
+             | ((unsigned long) px[0] << 16);
+    }
+    CDC* dc = CDC::FromHandle(hdc);
+    return dc ? (unsigned long) dc->GetPixel(x, y) : 0;
+}
+
 bool CDC::PatBlt(int x, int y, int nWidth, int nHeight, DWORD dwRop) {
     CDCImpl* p = Impl(this);
     if (!p) return false;

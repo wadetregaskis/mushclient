@@ -1956,12 +1956,28 @@ BSTR CMUSHclientDoc::ErrorDesc(long Code)
 
 
 // warning - different in Lua
-BSTR CMUSHclientDoc::GetMainWindowPosition() 
+BSTR CMUSHclientDoc::GetMainWindowPosition()
 {
 	CString strResult;
 
   CWindowPlacement wp;
-  Frame.GetWindowPlacement(&wp);  
+#ifndef _WIN32
+  // Port: Frame.m_hWnd is null (the real window is the wx MDI parent frame), so
+  // GetWindowPlacement can't see it.  Reuse the same m_fn_get_main_rect callback
+  // that the Lua world.GetMainWindowPosition() uses (wired by CWorldChildFrame).
+  memset (&wp.rcNormalPosition, 0, sizeof (wp.rcNormalPosition));
+  if (m_fn_get_main_rect)
+    {
+    int x = 0, y = 0, w = 0, h = 0;
+    m_fn_get_main_rect (x, y, w, h);
+    wp.rcNormalPosition.left   = x;
+    wp.rcNormalPosition.top    = y;
+    wp.rcNormalPosition.right  = x + w;
+    wp.rcNormalPosition.bottom = y + h;
+    }
+#else
+  Frame.GetWindowPlacement(&wp);
+#endif
 
 	windowPositionHelper (strResult, wp.rcNormalPosition);
   return strResult.AllocSysString();

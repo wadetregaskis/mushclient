@@ -96,3 +96,32 @@ int wxOSXFontHasGlyph(const char* facename, unsigned int codepoint)
     CFRelease(font);
     return ok ? 1 : 0;
 }
+
+// utils.sendtofront(name): raise a running app to the front.  Windows matches a
+// top-level window title; macOS has no global window-title registry for other
+// processes, so match on the application instead — case-insensitive substring of
+// the localized name or the bundle identifier.  Activating an app brings its
+// windows forward, which is what scripts use this for (surfacing an external
+// editor after world.shellexecute opens a script file).
+bool wxOSXActivateApp(const char* name)
+{
+    if (!name || !*name)
+        return false;
+
+    NSString* needle = [[NSString stringWithUTF8String:name] lowercaseString];
+    if (!needle)
+        return false;
+
+    for (NSRunningApplication* app in [[NSWorkspace sharedWorkspace] runningApplications])
+    {
+        NSString* appName   = [[app localizedName] lowercaseString];
+        NSString* bundleId  = [[app bundleIdentifier] lowercaseString];
+        if ((appName  && [appName  rangeOfString:needle].location != NSNotFound) ||
+            (bundleId && [bundleId rangeOfString:needle].location != NSNotFound))
+        {
+            [app activateWithOptions:NSApplicationActivateAllWindows];
+            return true;
+        }
+    }
+    return false;
+}

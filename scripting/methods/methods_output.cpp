@@ -759,8 +759,18 @@ long CMUSHclientDoc::TextRectangle(long Left, long Top, long Right, long Bottom,
 }   // end of CMUSHclientDoc::TextRectangle
   
 
-long CMUSHclientDoc::SetCursor(long Cursor) 
+long CMUSHclientDoc::SetCursor(long Cursor)
 {
+#ifndef _WIN32
+  // Port: set the output pane's wx cursor (the Win32 ::SetCursor + LoadCursor
+  // path below is meaningless without an HCURSOR registry).  Validate the range
+  // first so out-of-range values still report eBadParameter as on Windows.
+  if (Cursor < -1 || Cursor > 12)
+    return eBadParameter;
+  if (g_wxhook_set_cursor)
+    g_wxhook_set_cursor (this, (int) Cursor);
+  return eOK;
+#else
   switch (Cursor)
     {
     case -1:  ::SetCursor (NULL);                              break;    // no cursor
@@ -782,6 +792,7 @@ long CMUSHclientDoc::SetCursor(long Cursor)
     } // end of switch
 
   return eOK;
+#endif // _WIN32
 }   // end of CMUSHclientDoc::SetCursor
 
 

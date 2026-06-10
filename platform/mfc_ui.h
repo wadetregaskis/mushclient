@@ -4912,7 +4912,10 @@ inline BOOL   AppendMenu(HMENU, UINT, UINT_PTR, LPCTSTR) { return FALSE; }
 inline BOOL   DeleteMenu(HMENU, UINT, UINT)  { return FALSE; }
 inline int    GetMenuItemCount(HMENU)        { return 0; }
 inline BOOL   DrawMenuBar(HWND)              { return FALSE; }
-inline int    GetSystemMetrics(int)          { return 0; }
+inline int    GetSystemMetrics(int idx) {
+    if (g_wxhook_get_system_metric) return g_wxhook_get_system_metric(idx);
+    return 0;
+}
 #ifndef SystemParametersInfo
 inline BOOL   SystemParametersInfo(UINT, UINT, PVOID, UINT) { return FALSE; }
 #endif
@@ -6149,7 +6152,12 @@ inline HRESULT CoCreateGuid(GUID* pguid) {
 #endif
 
 // ── Global Win32 function stubs ───────────────────────────────────────────
-inline DWORD GetSysColor(int) { return 0xC0C0C0; }   // light grey default
+// GUI build routes to the live desktop theme (wxSystemSettings) via the hook;
+// mushcore/CLI (hook unset) keeps the light-grey fallback.
+inline DWORD GetSysColor(int idx) {
+    if (g_wxhook_get_sys_color) return (DWORD) g_wxhook_get_sys_color(idx);
+    return 0xC0C0C0;   // light grey default
+}
 inline BOOL  DestroyIcon(HICON) { return TRUE; }
 inline BOOL  SetMenu(HWND, HMENU) { return FALSE; }
 inline HMENU GetMenu(HWND) { return 0; }
@@ -6804,7 +6812,12 @@ inline BOOL SetBrushOrgEx(HDC, int, int, POINT*) { return FALSE; }
 inline BOOL SetGraphicsMode(HDC, int) { return FALSE; }
 inline BOOL SetWorldTransform(HDC, const XFORM*) { return FALSE; }
 inline BOOL ModifyWorldTransform(HDC, const XFORM*, DWORD) { return FALSE; }
-inline COLORREF GetPixel(HDC, int, int) { return 0; }
+// GUI build reads the real pixel from the wx DC / DIBSection that owns the HDC
+// (so colour-key transparency keys on the true pixel); mushcore returns 0.
+inline COLORREF GetPixel(HDC hdc, int x, int y) {
+    if (g_wxhook_get_pixel) return (COLORREF) g_wxhook_get_pixel((void*) hdc, x, y);
+    return 0;
+}
 // CreateDIBSection: in the full build this has a real implementation in
 // wx_gdi_compat.cpp that allocates a pixel buffer and syncs with CDC::BitBlt.
 // SelectObject(HDC, HGDIOBJ) is declared above near the other raw Win32 stubs

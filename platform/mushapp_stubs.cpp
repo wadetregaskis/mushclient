@@ -23,6 +23,7 @@
 #include "doc.h"
 #include "OtherTypes.h"   // CLine, CStyle, HILITE, UNDERLINE
 #include "scripting/errors.h"  // eOK
+#include "platform/wx_osx_text.h"  // wxOSXActivateApp (utils.sendtofront)
 #include <zlib.h>
 #include <cstdarg>
 #include <cstdio>
@@ -96,10 +97,12 @@ long CheckObjectName(const CString& /*strName*/, const bool /*bConform*/)
 }
 
 // ── SendToFront ───────────────────────────────────────────────────────────────
-// Raises an editor window to the front (Windows-only feature).
-bool SendToFront(const char* /*name*/)
+// utils.sendtofront(name): raise a matching application to the front.  On macOS
+// this activates a running app whose name/bundle-id matches (wxOSXActivateApp);
+// elsewhere it is a no-op returning false.
+bool SendToFront(const char* name)
 {
-    return false;
+    return wxOSXActivateApp(name);
 }
 
 

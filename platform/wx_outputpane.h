@@ -123,6 +123,12 @@ public:
     // / Highlight Word reimplementations in CWorldChildFrame).  Empty if none.
     wxString GetSelectionText() const { return SelectedText(); }
 
+    // Display ▸ Bookmark Selection — toggle a bookmark on the selected line (or
+    // the last line if nothing is selected); shows a left-margin marker.
+    // Display ▸ Go To Bookmark — scroll to the next bookmarked line (cycling).
+    void ToggleBookmark();
+    void GotoNextBookmark();
+
     // Programmatically select a range of text.  Arguments are 1-based line and
     // column numbers, matching the MUSHclient SetSelection() Lua API.
     // Pass all-zero arguments to clear the selection.
@@ -405,6 +411,9 @@ private:
     // When anchor == focus, there is no selection (just a cursor position).
     SelPoint m_selAnchor;
     SelPoint m_selFocus;
+
+    // Index of the last bookmark jumped to, so Go To Bookmark cycles forward.
+    int m_lastBookmarkLine = -1;
 
     wxString m_searchTerm;
     bool     m_searchCaseSensitive = false;

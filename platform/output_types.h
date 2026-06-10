@@ -51,7 +51,8 @@ struct SOutputRun {
 // A pending SOutputLine replaces the current "typing indicator" row in the
 // output pane without being committed to m_lines.
 struct SOutputLine : std::vector<SOutputRun> {
-    bool pending = false;
+    bool pending  = false;
+    bool bookmark = false;   // Display ▸ Bookmark Selection toggles this
     // Inherit all std::vector constructors (default, initializer_list, etc.).
     using std::vector<SOutputRun>::vector;
 };

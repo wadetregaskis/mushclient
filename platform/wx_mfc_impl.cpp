@@ -699,6 +699,9 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                      wxT("New Notepad"));
     append_canon_section(editMenu, SEC_EDIT);   // Paste To World, Reload Names, Unique ID, Colour Picker, …
     editMenu->Append(32974 /*ID_EDIT_COPYASHTML*/, wxT("Copy as &HTML\tCtrl+Alt+C"));
+    editMenu->AppendSeparator();
+    editMenu->Append(32946 /*ID_EDIT_GOTOMATCHINGBRACE*/,   wxT("Go To Matching &Brace\tCtrl+E"));
+    editMenu->Append(32947 /*ID_EDIT_SELECTTOMATCHINGBRACE*/,wxT("Select To Matching Brace\tShift+Ctrl+E"));
     mb->Append(editMenu, wxT("&Edit"));
 
     wxMenu* connMenu = new wxMenu();
@@ -732,6 +735,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->AppendSeparator();
     gameMenu->Append(32152 /*ID_GAME_COMMANDHISTORY*/,  wxT("Command &History…\tCtrl+H"));
     gameMenu->Append(32272 /*ID_REPEAT_LAST_COMMAND*/,  wxT("&Repeat Last Command"));
+    gameMenu->Append(33046 /*ID_GAME_FUNCTIONSLIST*/,   wxT("&Functions List…"));
     mb->Append(gameMenu, wxT("&Game"));
 
     // ── Display menu (output-pane view commands) ──────────────────────────
@@ -757,6 +761,9 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     displayMenu->Append(32276 /*ID_DISPLAY_SENDMAILTO*/,      wxT("Send &Mail To…"));
     displayMenu->Append(33036 /*ID_DISPLAY_HIGHLIGHTPHRASE*/, wxT("&Highlight Word…\tCtrl+Alt+H"));
     displayMenu->Append(33044 /*ID_DISPLAY_MULTILINETRIGGER*/,wxT("&Multi-Line Trigger…"));
+    displayMenu->Append(32331 /*ID_DISPLAY_TEXTATTRIBUTES*/,  wxT("Text &Attributes…"));
+    displayMenu->Append(32318 /*ID_DISPLAY_BOOKMARKSELECTION*/, wxT("&Bookmark Selection\tShift+Ctrl+B"));
+    displayMenu->Append(32319 /*ID_DISPLAY_GOTOBOOKMARK*/,    wxT("&Go To Bookmark\tCtrl+B"));
     mb->Append(displayMenu, wxT("&Display"));
 
     // ── View menu (port-local; real wx implementations, not the canonical
@@ -961,7 +968,9 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             evt.Enable(child != nullptr);
             evt.Check(child && child->IsStatusBarStripShown());
         } else if (id == 32275 || id == 32276 || id == 32974 || id == 32272 ||
-                   id == 32152 || id == 33036 || id == 33044) {
+                   id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
+                   id == 32946 || id == 32947 || id == 33046 ||
+                   id == 32318 || id == 32319) {
             // View-level output/input commands — need an active world.
             evt.Enable(doc != nullptr);
         } else {
@@ -1013,7 +1022,9 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         // ── View-level output/input commands (canonical handlers live on the
         // un-instantiated CMUSHView/CSendView; reimplemented on the child frame).
         if (id == 32275 || id == 32276 || id == 32974 || id == 32272 ||
-            id == 32152 || id == 33036 || id == 33044) {
+            id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
+            id == 32946 || id == 32947 || id == 33046 ||
+            id == 32318 || id == 32319) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
                 switch (id) {
                 case 32275: child->GotoSelectedURL();      break; // ID_DISPLAY_GOTOURL
@@ -1023,6 +1034,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 case 32152: child->ShowCommandHistory();   break; // ID_GAME_COMMANDHISTORY
                 case 33036: child->HighlightSelectedWord();break; // ID_DISPLAY_HIGHLIGHTPHRASE
                 case 33044: child->MakeMultiLineTrigger(); break; // ID_DISPLAY_MULTILINETRIGGER
+                case 32331: child->ShowTextAttributes();   break; // ID_DISPLAY_TEXTATTRIBUTES
+                case 32946: child->GotoMatchingBrace(false); break; // ID_EDIT_GOTOMATCHINGBRACE
+                case 32947: child->GotoMatchingBrace(true);  break; // ID_EDIT_SELECTTOMATCHINGBRACE
+                case 33046: child->ShowFunctionsList();    break; // ID_GAME_FUNCTIONSLIST
+                case 32318: child->BookmarkSelection();    break; // ID_DISPLAY_BOOKMARKSELECTION
+                case 32319: child->GotoBookmark();         break; // ID_DISPLAY_GOTOBOOKMARK
                 }
             }
             return;

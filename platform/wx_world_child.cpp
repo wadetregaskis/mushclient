@@ -25,6 +25,7 @@
 #include "dialogs/GeneratedNameDlg.h" // CGeneratedNameDlg (Game ▸ Generate Character Name)
 #include "dialogs/HighlightPhraseDlg.h"  // CHighlightPhraseDlg (Display ▸ Highlight Word)
 #include "dialogs/MultiLineTriggerDlg.h" // CMultiLineTriggerDlg (Display ▸ Multi-Line Trigger)
+#include "dialogs/TextAttributesDlg.h"   // CTextAttributesDlg (Display ▸ Text Attributes)
 #include "miniwindow.h"               // CMiniWindow, MiniWindowVector, MINIWINDOW_* flags
 #include "scripting/scripting.h"      // CScriptEngine, lua_State* — for Shift+Tab globals
 #include "platform/wx_world_child.h"  // our own header (CWorldChildFrame, COutputPane)
@@ -2171,6 +2172,127 @@ void CWorldChildFrame::MakeMultiLineTrigger()
     trigger_item->iLinesToMatch   = iCount;
     m_doc->SortTriggers();
     m_doc->SetModifiedFlag(TRUE);
+}
+
+// Edit ▸ Go To / Select To Matching Brace — operates on the command input bar.
+// (Canonical FindMatchingBrace works on a CEdit; the port input is a wxTextCtrl,
+// so the brace scan is reimplemented here.)
+void CWorldChildFrame::GotoMatchingBrace(bool select)
+{
+    wxTextCtrl* inp = ActiveInput();
+    if (!inp) return;
+    wxString text = inp->GetValue();
+    const long len = (long) text.length();
+    if (len == 0) return;
+
+    static const wxString kOpen = wxT("([{"), kClose = wxT(")]}");
+    long pos = inp->GetInsertionPoint();
+
+    // Find a brace at the cursor, else just before it.
+    long bracePos = -1; int dir = 0; wxUniChar want;
+    auto classify = [&](long p) -> bool {
+        if (p < 0 || p >= len) return false;
+        int oi = kOpen.Find(text[p]);
+        if (oi != wxNOT_FOUND)  { bracePos = p; dir = +1; want = kClose[oi]; return true; }
+        int ci = kClose.Find(text[p]);
+        if (ci != wxNOT_FOUND)  { bracePos = p; dir = -1; want = kOpen[ci];  return true; }
+        return false;
+    };
+    if (!classify(pos) && !classify(pos - 1)) return;
+
+    const wxUniChar brace = text[bracePos];
+    int depth = 0;
+    long p = bracePos;
+    for (; p >= 0 && p < len; p += dir) {
+        if      (text[p] == brace) ++depth;
+        else if (text[p] == want)  { if (--depth == 0) break; }
+    }
+    if (depth != 0 || p < 0 || p >= len) return;   // no match
+
+    if (select)
+        inp->SetSelection(wxMin(bracePos, p), wxMax(bracePos, p) + 1);
+    else
+        inp->SetInsertionPoint(p);
+    inp->ShowPosition(p);
+    inp->SetFocus();
+}
+
+// Game ▸ Functions List — the canonical scripting-function reference window
+// (IDD_FUNCTION_LIST), seeded with the input-bar text + selection.
+void CWorldChildFrame::ShowFunctionsList()
+{
+    wxTextCtrl* inp = ActiveInput();
+    if (!inp || !m_doc) return;
+    CString text((const char*) inp->GetValue().utf8_str());
+    long from = 0, to = 0;
+    inp->GetSelection(&from, &to);
+    bool bLua = m_doc->GetScriptEngine() && m_doc->GetScriptEngine()->L;
+    ::ShowFunctionslist(text, (int) from, (int) to, bLua);
+}
+
+// Display ▸ Text Attributes — show the style (colour/flags) of the first
+// selected character via the canonical CTextAttributesDlg (IDD_TEXT_ATTRIBUTES).
+void CWorldChildFrame::ShowTextAttributes()
+{
+    if (!m_doc || !m_output) return;
+
+    long sLine, sCol, eLine, eCol;
+    if (!m_output->GetSelectionInfo(sLine, sCol, eLine, eCol) ||
+        !(eLine > sLine || (eLine == sLine && eCol > sCol)))
+        return;   // need a non-empty selection
+
+    CLine* pLine = m_doc->m_LineList.GetAt(m_doc->GetLinePosition(sLine));
+    if (!pLine) return;
+    long startcol = MIN(sCol, pLine->len);
+
+    CStyle* pStyle; int iCol; POSITION fp;
+    if (!m_doc->FindStyle(pLine, startcol + 1, iCol, pStyle, fp)) {
+        ::TMessageBox("Cannot find style of this character");
+        return;
+    }
+
+    static const char* sColours[8] =
+        { "Black","Red","Green","Yellow","Blue","Magenta","Cyan","White" };
+    unsigned int iStyle = pStyle->iFlags;
+
+    CTextAttributesDlg dlg;
+    dlg.m_pDoc   = m_doc;
+    dlg.m_iLine  = sLine + 1;       // 1-relative
+    dlg.m_pLine  = pLine;
+    dlg.m_strLetter = (startcol < pLine->len) ? CString(pLine->text[startcol]) : CString(" ");
+
+    if ((iStyle & COLOURTYPE) == COLOUR_CUSTOM) {
+        dlg.m_strTextColour   = "Custom";
+        dlg.m_strBackColour   = "Custom";
+        dlg.m_strCustomColour = m_doc->m_strCustomColourName[pStyle->iForeColour];
+    } else if ((iStyle & COLOURTYPE) == COLOUR_RGB) {
+        dlg.m_strTextColour = CFormat("R=%i, G=%i, B=%i",
+            GetRValue(pStyle->iForeColour), GetGValue(pStyle->iForeColour), GetBValue(pStyle->iForeColour));
+        dlg.m_strBackColour = CFormat("R=%i, G=%i, B=%i",
+            GetRValue(pStyle->iBackColour), GetGValue(pStyle->iBackColour), GetBValue(pStyle->iBackColour));
+        dlg.m_strCustomColour = "RGB";
+    } else {   // COLOUR_ANSI
+        dlg.m_strTextColour = (pStyle->iForeColour >= 8)
+            ? CFormat("R=%i, G=%i, B=%i", GetRValue(xterm_256_colours[pStyle->iForeColour]),
+                      GetGValue(xterm_256_colours[pStyle->iForeColour]), GetBValue(xterm_256_colours[pStyle->iForeColour]))
+            : CString(sColours[pStyle->iForeColour & 7]);
+        dlg.m_strBackColour = (pStyle->iBackColour >= 8)
+            ? CFormat("R=%i, G=%i, B=%i", GetRValue(xterm_256_colours[pStyle->iBackColour]),
+                      GetGValue(xterm_256_colours[pStyle->iBackColour]), GetBValue(xterm_256_colours[pStyle->iBackColour]))
+            : CString(sColours[pStyle->iBackColour & 7]);
+        dlg.m_strCustomColour = "n/a";
+    }
+    dlg.DoModal();
+}
+
+void CWorldChildFrame::BookmarkSelection()
+{
+    if (m_output) m_output->ToggleBookmark();
+}
+
+void CWorldChildFrame::GotoBookmark()
+{
+    if (m_output) m_output->GotoNextBookmark();
 }
 
 // ── Freeze Output: toggle the output pane's autoscroll pause ────────────────

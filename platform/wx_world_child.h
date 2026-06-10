@@ -85,6 +85,11 @@ public:
     void ShowCommandHistory();    // Input ▸ Command History (pick a past command)
     void HighlightSelectedWord(); // Display ▸ Highlight Word (canonical dialog → trigger)
     void MakeMultiLineTrigger();  // Display ▸ Multi-Line Trigger (canonical dialog → trigger)
+    void GotoMatchingBrace(bool select); // Edit ▸ Go To / Select To Matching Brace (input bar)
+    void ShowFunctionsList();     // Game ▸ Functions List (canonical reference dialog)
+    void ShowTextAttributes();    // Display ▸ Text Attributes (style of selected char)
+    void BookmarkSelection();     // Display ▸ Bookmark Selection (toggle on output line)
+    void GotoBookmark();          // Display ▸ Go To Bookmark (scroll to next bookmark)
 
     // Output-pane Display commands.
     void FreezeOutput();   // toggle autoscroll pause (Display ▸ Freeze Output)

@@ -436,6 +436,32 @@ void COutputPane::ScrollToLine(int lineIdx)
     Refresh(false);
 }
 
+// ── Bookmarks (Display ▸ Bookmark Selection / Go To Bookmark) ─────────────────
+void COutputPane::ToggleBookmark()
+{
+    int line = -1;
+    SelPoint s, e;
+    if (GetNormalizedSel(s, e))      line = (int) s.line;             // selection start
+    else if (!m_lines.empty())       line = (int) m_lines.size() - 1; // else the last line
+    if (line < 0 || line >= (int) m_lines.size()) return;
+    m_lines[line].bookmark = !m_lines[line].bookmark;
+    Refresh(false);
+}
+
+void COutputPane::GotoNextBookmark()
+{
+    const int n = (int) m_lines.size();
+    if (n == 0) return;
+    for (int i = 1; i <= n; ++i) {     // start just past the last one we jumped to
+        int idx = (((m_lastBookmarkLine % n) + n + i) % n);
+        if (m_lines[idx].bookmark) {
+            m_lastBookmarkLine = idx;
+            ScrollToLine(idx);
+            return;
+        }
+    }
+}
+
 void COutputPane::SetSelectionRange(int startLine, int endLine,
                                      int startCol, int endCol)
 {
@@ -1007,6 +1033,17 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
             // Restore DC state so subsequent DrawLine calls start clean.
             dc.SetFont(m_font);
         }
+    }
+
+    // ── Bookmark marker ───────────────────────────────────────────────────────
+    // A 4-pixel blue bar in the left margin on each visual row of a bookmarked
+    // line (drawn last so it sits on top of the text background).
+    if (line.bookmark) {
+        dc.SetBrush(wxBrush(wxColour(60, 140, 255)));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        int wc = WrapCount(lineIdx);
+        for (int vr = 0; vr < wc; ++vr)
+            dc.DrawRectangle(0, yOff + vr * m_lineH, 4, m_lineH);
     }
 }
 

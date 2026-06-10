@@ -4276,8 +4276,18 @@ inline UINT GetDlgItemInt(HWND, int, BOOL*, BOOL) { return 0; }
 inline BOOL CheckDlgButton(HWND, int, UINT) { return FALSE; }
 inline UINT IsDlgButtonChecked(HWND, int) { return 0; }
 // Single-argument form used as CWnd member — defined on CWnd below
-inline int  MessageBox(HWND, LPCTSTR msg, LPCTSTR, UINT)
-    { fprintf(stderr, "%s\n", msg?msg:""); return IDOK; }
+// Route to the wx message-box hook (same path as ::UMessageBox) so utils.msgbox
+// and the startup error/info boxes show a real dialog and return the user's
+// choice; fall back to stderr for headless builds where the hook is unset.
+inline int  MessageBox(HWND, LPCTSTR msg, LPCTSTR caption, UINT type)
+    {
+    if (g_wxhook_message_box)
+        return g_wxhook_message_box(msg ? msg : "",
+                                    caption ? caption : "MUSHclient", type);
+    fprintf(stderr, "MUSHclient [%s]: %s\n",
+            caption ? caption : "MUSHclient", msg ? msg : "");
+    return (type & MB_YESNO) ? IDNO : IDOK;
+    }
 inline BOOL PostMessage(HWND, UINT, WPARAM, LPARAM) { return FALSE; }
 inline LRESULT SendMessage(HWND, UINT, WPARAM, LPARAM) { return 0; }
 inline BOOL SendDlgItemMessage(HWND, int, UINT, WPARAM, LPARAM) { return FALSE; }

@@ -2154,6 +2154,10 @@ static int setbackgroundcolour (lua_State *L)
   {
   Frame.m_backgroundColour = luaL_optnumber (L, 1, 0);
   Frame.InvalidateRect(NULL);
+#ifndef _WIN32
+  if (g_wxhook_set_main_background)
+    g_wxhook_set_main_background (Frame.m_backgroundColour);
+#endif
   return 0;  // return nothing
   } // end of setbackgroundcolour
 

@@ -320,9 +320,15 @@ static void hook_set_window_text(void* h, const char* text)
         w->SetLabel(s);
 }
 
+static wxWindow* resolveTarget(void* h);   // defined below; null h → main frame
+
 static void hook_move_window(void* h, int x, int y, int w, int ht, bool repaint)
 {
-    if (auto* wnd = toWx(h)) {
+    // Use resolveTarget (not toWx) so a null handle resolves to the MDI parent
+    // frame — that is how world.MoveMainWindow reaches the main window, whose
+    // Frame.m_hWnd is always null on the port.  For non-null handles
+    // resolveTarget == toWx, so other callers are unaffected.
+    if (auto* wnd = resolveTarget(h)) {
         wnd->SetSize(x, y, w, ht);
         if (repaint) wnd->Refresh();
     }
@@ -1994,6 +2000,26 @@ static void hook_set_cursor(void* docv, int cursorNum)
     pane->SetCursor(wxCursor(sc));
 }
 
+// utils.setbackgroundcolour / world.SetFrameBackgroundColour — set the MDI
+// parent frame's backdrop colour (the area behind world child windows).
+static void hook_set_main_background(unsigned long colour)
+{
+    wxWindow* top = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    if (!top) return;
+    wxColour c;   // default-constructed = invalid → resets to system default
+    if (colour != 0xFFFFFFFF)   // 0xFFFFFFFF is MUSHclient's "use default" value
+        c = wxColour((unsigned char)( colour        & 0xFF),   // COLORREF 0x00BBGGRR
+                     (unsigned char)((colour >> 8)  & 0xFF),
+                     (unsigned char)((colour >> 16) & 0xFF));
+    top->SetBackgroundColour(c);
+    if (wxMDIParentFrame* mdi = wxDynamicCast(top, wxMDIParentFrame))
+        if (wxWindow* client = mdi->GetClientWindow()) {
+            client->SetBackgroundColour(c);
+            client->Refresh();
+        }
+    top->Refresh();
+}
+
 
 // ── Notepad append ────────────────────────────────────────────────────────
 
@@ -3314,6 +3340,7 @@ void wx_mfc_install_hooks()
     g_wxhook_get_system_metric    = hook_get_system_metric;
     g_wxhook_get_pixel            = wxgdi_get_pixel;   // defined in wx_gdi_compat.cpp
     g_wxhook_set_cursor           = hook_set_cursor;
+    g_wxhook_set_main_background  = hook_set_main_background;
     g_wxhook_append_to_notepad    = hook_append_to_notepad;
     g_wxhook_get_notepad_text     = hook_get_notepad_text;
     g_wxhook_get_notepad_list     = hook_get_notepad_list;

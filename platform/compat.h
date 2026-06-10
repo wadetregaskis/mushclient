@@ -23,6 +23,7 @@
 #include "mfc_collections.h"
 #include "mfc_exceptions.h"
 #include "mfc_time.h"
+#include "wx_mfc_hooks.h"   // g_wxhook_* (e.g. CWnd::FlashWindow → flash hook)
 
 // ── File path separator normalization ───────────────────────────────────────
 // MUSHclient is a Windows application; its source and a great many plugins embed
@@ -387,7 +388,13 @@ public:
     // get correct dimensions for the canonical OnSize relayout.
     BOOL  GetWindowPlacement(WINDOWPLACEMENT* wp) const;
     BOOL  SetWindowPlacement(const WINDOWPLACEMENT*) { return FALSE; }
-    void  FlashWindow(BOOL) {}
+    void  FlashWindow(BOOL bInvert) {
+        // No per-window taskbar flash on macOS/Linux.  On "start flash"
+        // (bInvert TRUE) bounce the Dock icon / request user attention via the
+        // wx hook; there is no separate "stop" (the request is one-shot).  The
+        // only callers are the main frame (activity flash, world.FlashIcon).
+        if (bInvert && g_wxhook_flash_icon) g_wxhook_flash_icon();
+    }
     void  MessageBox(LPCTSTR, LPCTSTR = nullptr, UINT = MB_OK) {}
     // IsKindOf inherited from CObject (returns int/BOOL, always 0)
     BOOL  IsIconic() const { return FALSE; }

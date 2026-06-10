@@ -772,8 +772,12 @@ void CMUSHclientDoc::SetSelection(long StartLine, long EndLine, long StartColumn
 
 // Sets the "frame" background colour. Same behaviour as utils.setbackgroundcolour ()
 
-void CMUSHclientDoc::SetFrameBackgroundColour(long Colour) 
+void CMUSHclientDoc::SetFrameBackgroundColour(long Colour)
 {
   Frame.m_backgroundColour = Colour;
   Frame.InvalidateRect(NULL);
+#ifndef _WIN32
+  if (g_wxhook_set_main_background)
+    g_wxhook_set_main_background (Frame.m_backgroundColour);
+#endif
 }   // end of CMUSHclientDoc::SetFrameBackgroundColour

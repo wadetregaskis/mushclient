@@ -208,6 +208,10 @@ extern unsigned long (*g_wxhook_get_pixel)(void* hdc, int x, int y);
 // world.SetCursor(n): set the mouse cursor over the doc's output pane.  n is the
 // MUSHclient cursor index (-1 = hidden, 0 = arrow, 1 = hand, …, 12 = help).
 extern void (*g_wxhook_set_cursor)(void* doc, int cursorNum);
+// utils.setbackgroundcolour / world.SetFrameBackgroundColour: set the MDI parent
+// frame's backdrop colour (behind world windows).  colour is a COLORREF
+// (0x00BBGGRR); 0xFFFFFFFF resets to the system default.
+extern void (*g_wxhook_set_main_background)(unsigned long colour);
 
 // ── Notepad hook ───────────────────────────────────────────────────────────
 // Create a notepad window.  All string parameters are UTF-8.

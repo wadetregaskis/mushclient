@@ -27,6 +27,7 @@ void wx_world_remove_from_list(const char* path);
 #include <wx/wx.h>
 #include <wx/mdi.h>
 #include <wx/timer.h>
+#include <wx/textctrl.h>              // wxTextCtrl, wxTextAttr (info bar)
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -97,6 +98,8 @@ private:
     COutputPane*         m_output         = nullptr; // scrolled styled-text widget
     wxTextCtrl*          m_input          = nullptr; // normal command input bar
     wxTextCtrl*          m_inputPassword  = nullptr; // masked input — shown when telnet suppresses echo
+    wxTextCtrl*          m_infobar        = nullptr; // world.Info* styled status strip (hidden until ShowInfoBar)
+    wxTextAttr           m_infobarStyle;             // current style applied to appended Info text
     CMUSHclientDoc*      m_doc            = nullptr; // non-owning reference to the world doc
     wxTimer*             m_worldTimer     = nullptr; // drives CheckTimers() / ON_PLUGIN_TICK
 

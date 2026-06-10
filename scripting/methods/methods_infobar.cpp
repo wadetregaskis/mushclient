@@ -18,15 +18,23 @@
 //    ShowInfoBar
 
 
-void CMUSHclientDoc::ShowInfoBar(BOOL Visible) 
+void CMUSHclientDoc::ShowInfoBar(BOOL Visible)
 {
+#ifndef _WIN32
+  if (m_fn_infobar_show) m_fn_infobar_show(Visible != 0);
+  return;
+#endif
   if (Frame.m_wndInfoBar.m_hWnd)
   	Frame.ShowControlBar(&Frame.m_wndInfoBar, Visible != 0, FALSE);
 } // end of CMUSHclientDoc::ShowInfoBar
 
 
-void CMUSHclientDoc::InfoClear() 
+void CMUSHclientDoc::InfoClear()
 {
+#ifndef _WIN32
+  if (m_fn_infobar_clear) m_fn_infobar_clear();
+  return;
+#endif
   if (!Frame.m_wndInfoBar.m_hWnd)
     return;
 
@@ -45,8 +53,12 @@ void CMUSHclientDoc::InfoClear()
 } // end of CMUSHclientDoc::InfoClear
 
 
-void CMUSHclientDoc::Info(LPCTSTR Message) 
+void CMUSHclientDoc::Info(LPCTSTR Message)
 {
+#ifndef _WIN32
+  if (m_fn_infobar_text && Message) m_fn_infobar_text(Message);
+  return;
+#endif
   if (!Frame.m_wndInfoBar.m_hWnd)
     return;
 
@@ -68,8 +80,12 @@ void CMUSHclientDoc::Info(LPCTSTR Message)
 */
 
 
-void CMUSHclientDoc::InfoFont(LPCTSTR FontName, short Size, short Style) 
+void CMUSHclientDoc::InfoFont(LPCTSTR FontName, short Size, short Style)
 {
+#ifndef _WIN32
+  if (m_fn_infobar_font) m_fn_infobar_font(FontName ? FontName : "", Size, Style);
+  return;
+#endif
   if (!Frame.m_wndInfoBar.m_hWnd)
     return;
 
@@ -125,8 +141,16 @@ CHARFORMAT cf;
 }   // end of CMUSHclientDoc::InfoFont
 
 
-void CMUSHclientDoc::InfoColour(LPCTSTR Name) 
+void CMUSHclientDoc::InfoColour(LPCTSTR Name)
 {
+#ifndef _WIN32
+  {
+    COLORREF c = 0;
+    // SetColour returns non-zero on FAILURE (bad name); apply on success.
+    if (!SetColour(Name, c) && m_fn_infobar_colour) m_fn_infobar_colour(c);
+  }
+  return;
+#endif
   if (!Frame.m_wndInfoBar.m_hWnd)
     return;
 
@@ -148,8 +172,15 @@ CHARFORMAT cf;
 
 } // end of CMUSHclientDoc::InfoColour
 
-void CMUSHclientDoc::InfoBackground(LPCTSTR Name) 
+void CMUSHclientDoc::InfoBackground(LPCTSTR Name)
 {
+#ifndef _WIN32
+  {
+    COLORREF c = 0;
+    if (!SetColour(Name, c) && m_fn_infobar_background) m_fn_infobar_background(c);
+  }
+  return;
+#endif
   if (!Frame.m_wndInfoBar.m_hWnd)
     return;
 

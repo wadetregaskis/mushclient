@@ -1603,6 +1603,18 @@ public:
   // Duplicate-suppression (same as last entry) is applied by the implementation.
   std::function<void(const std::string&)> m_fn_add_to_history;
 
+  // Info bar (world.Info / InfoClear / InfoColour / InfoBackground / InfoFont /
+  // ShowInfoBar).  On Windows these drive a CRichEditCtrl on the main frame; on
+  // the port the world child frame hosts a styled wxTextCtrl that these callbacks
+  // append to.  Colours are COLORREF (0x00BBGGRR); font Style bits 1=bold,
+  // 2=italic, 4=underline, 8=strikeout (size 0 keeps the current size).
+  std::function<void(bool)>                        m_fn_infobar_show;
+  std::function<void()>                            m_fn_infobar_clear;
+  std::function<void(const std::string&)>          m_fn_infobar_text;
+  std::function<void(unsigned long)>               m_fn_infobar_colour;
+  std::function<void(unsigned long)>               m_fn_infobar_background;
+  std::function<void(const std::string&, int, int)> m_fn_infobar_font;
+
   // world.PushCommand(): push current command bar text onto history, clear bar.
   // Returns the pushed command text.
   std::function<std::string()> m_fn_push_command;

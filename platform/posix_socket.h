@@ -179,7 +179,9 @@ public:
 
     BOOL Listen(int nConnectionBacklog = 5)
     {
-        return (::listen(m_hSocket, nConnectionBacklog) == 0) ? TRUE : FALSE;
+        if (::listen(m_hSocket, nConnectionBacklog) != 0) return FALSE;
+        m_state = kListening;   // Poll() turns readability into OnAccept
+        return TRUE;
     }
 
     // Accept an incoming connection into rConnectedSocket.
@@ -275,7 +277,7 @@ public:
         for (CAsyncSocket* s : s_sockets) {
             if (s->m_hSocket == INVALID_SOCKET) continue;
             int fd = s->m_hSocket;
-            if (s->m_events & (FD_READ  | FD_CLOSE))  FD_SET(fd, &rd);
+            if (s->m_events & (FD_READ  | FD_CLOSE | FD_ACCEPT)) FD_SET(fd, &rd);
             if (s->m_events & (FD_WRITE | FD_CONNECT)) FD_SET(fd, &wr);
             if (s->m_events & FD_OOB)                  FD_SET(fd, &ex);
             if (fd > maxfd) maxfd = fd;
@@ -318,18 +320,27 @@ public:
             if (!IsLive(s) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
 
             if (FD_ISSET(fd, &rd)) {
-                // Peek to distinguish data vs. EOF
-                char peek;
-                int n = (int)::recv(fd, &peek, 1, MSG_PEEK | MSG_DONTWAIT);
-                if (n == 0) {
-                    // EOF — notify and close.  Without Close() the fd stays
-                    // readable-with-EOF on every subsequent poll, firing OnClose
-                    // again and again until the fd is actually closed.
-                    s->OnClose(0);
-                    if (IsLive(s) && s->m_hSocket != INVALID_SOCKET)
-                        s->Close();
+                if (s->m_state == kListening) {
+                    // A pending inbound connection makes a listening socket
+                    // readable — hand off to OnAccept (which calls Accept()).
+                    // This is how CChatListenSocket receives incoming MUD chat
+                    // calls; without it the listen fd would be recv()'d below
+                    // and the connection silently dropped.
+                    s->OnAccept(0);
                 } else {
-                    s->OnReceive(0);
+                    // Peek to distinguish data vs. EOF
+                    char peek;
+                    int n = (int)::recv(fd, &peek, 1, MSG_PEEK | MSG_DONTWAIT);
+                    if (n == 0) {
+                        // EOF — notify and close.  Without Close() the fd stays
+                        // readable-with-EOF on every subsequent poll, firing OnClose
+                        // again and again until the fd is actually closed.
+                        s->OnClose(0);
+                        if (IsLive(s) && s->m_hSocket != INVALID_SOCKET)
+                            s->Close();
+                    } else {
+                        s->OnReceive(0);
+                    }
                 }
             }
             if (!IsLive(s) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
@@ -341,7 +352,7 @@ public:
     }
 
 private:
-    enum State { kIdle, kConnecting, kConnected };
+    enum State { kIdle, kConnecting, kConnected, kListening };
     State m_state  = kIdle;
     long  m_events = FD_READ | FD_WRITE | FD_OOB | FD_ACCEPT | FD_CONNECT | FD_CLOSE;
 

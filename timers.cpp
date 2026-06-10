@@ -72,9 +72,11 @@ CString strTimerName;
 CmcDateTime tNow = CmcDateTime::GetTimeNow();
 CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
 
-#ifdef _WIN32
-// check for deleted chat sessions
-
+// check for deleted chat sessions.  Runs on Windows and the full GUI build
+// (mushapp) — both have the real CChatSocket; the headless mushcore/CLI engine
+// uses a stub without m_bDeleteMe and has no chat sockets to reap.  On the port
+// this now matters because inbound chat is accepted (see posix_socket.h).
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
   for (POSITION chatpos = m_ChatList.GetHeadPosition (); chatpos; )
     {
     POSITION oldpos = chatpos;
@@ -86,7 +88,7 @@ CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
       break;    // list is no longer valid
       }
     }
-#endif // _WIN32
+#endif
 
   set <string> firedTimersList;
   POSITION pos;

@@ -23,6 +23,8 @@
 #include "doc.h"                      // CMUSHclientDoc, SendMsg, etc.
 #include "dialogs/GlobalChangeDlg.h"  // CGlobalChangeDlg (Game ▸ Global Change)
 #include "dialogs/GeneratedNameDlg.h" // CGeneratedNameDlg (Game ▸ Generate Character Name)
+#include "dialogs/HighlightPhraseDlg.h"  // CHighlightPhraseDlg (Display ▸ Highlight Word)
+#include "dialogs/MultiLineTriggerDlg.h" // CMultiLineTriggerDlg (Display ▸ Multi-Line Trigger)
 #include "miniwindow.h"               // CMiniWindow, MiniWindowVector, MINIWINDOW_* flags
 #include "scripting/scripting.h"      // CScriptEngine, lua_State* — for Shift+Tab globals
 #include "platform/wx_world_child.h"  // our own header (CWorldChildFrame, COutputPane)
@@ -1956,6 +1958,219 @@ void CWorldChildFrame::SpellCheckInput()
 void CWorldChildFrame::PrintWorld()
 {
     PrintOutputPane(this, GetTitle(), m_output);
+}
+
+// ── View-level output/input commands ──────────────────────────────────────────
+// Ports of CMUSHView/CSendView handlers (those views are not instantiated on the
+// port).  The output selection comes from the wx pane; ShellExecute is the
+// macOS `open` shim, the same path the canonical handlers use.
+
+void CWorldChildFrame::GotoSelectedURL()
+{
+    if (!m_output) return;
+    CString sel((const char*) m_output->GetSelectionText().utf8_str());
+    sel.TrimLeft();  sel.TrimRight();
+    if (sel.IsEmpty())
+        ::TMessageBox("No URL selected", MB_ICONEXCLAMATION);
+    else if (sel.GetLength() > 512)
+        ::TMessageBox("URL too long", MB_ICONEXCLAMATION);
+    else
+    {
+        CString upper = sel;  upper.MakeUpper();
+        if (upper.Left(15).Find("://") == -1)
+            sel = "http://" + sel;
+        if ((long) ShellExecute((HWND)nullptr, "open", (LPCTSTR) sel, NULL, NULL, SW_SHOWNORMAL) <= 32)
+            ::UMessageBox(TFormat("Unable to open the URL \"%s\"", (const char*) sel),
+                          MB_ICONEXCLAMATION);
+    }
+    if (wxTextCtrl* inp = ActiveInput()) inp->SetFocus();
+}
+
+void CWorldChildFrame::SendMailToSelection()
+{
+    if (!m_output) return;
+    CString sel((const char*) m_output->GetSelectionText().utf8_str());
+    sel.TrimLeft();  sel.TrimRight();
+    if (sel.IsEmpty())
+        ::TMessageBox("No email address selected", MB_ICONEXCLAMATION);
+    else if (sel.GetLength() > 128)
+        ::TMessageBox("Email address too long", MB_ICONEXCLAMATION);
+    else if (sel.Find('@') == -1)
+        ::UMessageBox(TFormat("Email address \"%s\" invalid - does not contain a \"@\"",
+                              (const char*) sel), MB_ICONEXCLAMATION);
+    else
+    {
+        CString upper = sel;  upper.MakeUpper();
+        if (upper.Left(7) != "MAILTO:")
+            sel = "mailto:" + sel;
+        if ((long) ShellExecute((HWND)nullptr, "open", (LPCTSTR) sel, NULL, NULL, SW_SHOWNORMAL) <= 32)
+            ::UMessageBox(TFormat("Unable to send mail to \"%s\"", (const char*) sel),
+                          MB_ICONEXCLAMATION);
+    }
+    if (wxTextCtrl* inp = ActiveInput()) inp->SetFocus();
+}
+
+void CWorldChildFrame::CopySelectionHTML()
+{
+    if (m_output)
+        m_output->CopySelectionAsHTML(m_output->GetCurrentFont().GetFaceName());
+}
+
+void CWorldChildFrame::RepeatLastCommand()
+{
+    if (!m_doc || m_history.empty()) return;
+    CString cmd((const char*) m_history.back().utf8_str());
+    bool bOmit = false;
+    if (!cmd.IsEmpty())
+        m_doc->EvaluateCommand(cmd, true /*countThem*/, bOmit);
+}
+
+void CWorldChildFrame::ShowCommandHistory()
+{
+    if (m_history.empty()) {
+        wxMessageBox(wxT("No command history yet."), wxT("Command History"),
+                     wxOK | wxICON_INFORMATION, this);
+        return;
+    }
+    wxArrayString choices;   // most-recent first
+    for (auto it = m_history.rbegin(); it != m_history.rend(); ++it)
+        choices.Add(*it);
+    wxSingleChoiceDialog dlg(this, wxT("Pick a command to place in the input bar:"),
+                             wxT("Command History"), choices);
+    if (dlg.ShowModal() == wxID_OK) {
+        if (wxTextCtrl* inp = ActiveInput()) {
+            inp->SetValue(dlg.GetStringSelection());
+            inp->SetInsertionPointEnd();
+            inp->SetFocus();
+        }
+    }
+}
+
+void CWorldChildFrame::HighlightSelectedWord()
+{
+    if (!m_doc || !m_output) return;
+
+    CHighlightPhraseDlg dlg;
+    dlg.m_iOtherForeground = m_doc->m_normalcolour[WHITE];
+    dlg.m_iOtherBackground = m_doc->m_normalcolour[BLACK];
+
+    // Pre-fill from the selection (first line, <=80 chars) + its style colour.
+    long sLine, sCol, eLine, eCol;
+    if (m_output->GetSelectionInfo(sLine, sCol, eLine, eCol) &&
+        (eLine > sLine || (eLine == sLine && eCol > sCol)))
+    {
+        CString strSelection((const char*) m_output->GetSelectionText().utf8_str());
+        int nl = strSelection.Find("\n");
+        if (nl != -1) strSelection = strSelection.Left(nl);
+        if (strSelection.GetLength() > 80) strSelection = strSelection.Left(80);
+        dlg.m_strText = strSelection;
+
+        CLine* pLine = m_doc->m_LineList.GetAt(m_doc->GetLinePosition(sLine));
+        if (pLine) {
+            CStyle* pStyle; int iCol; POSITION fp;
+            if (m_doc->FindStyle(pLine, sCol, iCol, pStyle, fp))
+                m_doc->GetStyleRGB(pStyle, dlg.m_iOtherForeground, dlg.m_iOtherBackground);
+        }
+    }
+
+    memcpy(dlg.m_customtext, m_doc->m_customtext, sizeof(dlg.m_customtext));
+    memcpy(dlg.m_customback, m_doc->m_customback, sizeof(dlg.m_customback));
+    for (int i = 0; i < MAX_CUSTOM; i++)
+        dlg.m_strCustomName[i] = m_doc->m_strCustomColourName[i];
+    dlg.m_iColour = OTHER_CUSTOM + 1;
+    dlg.m_bWord   = true;
+
+    if (dlg.DoModal() != IDOK) { if (wxTextCtrl* inp = ActiveInput()) inp->SetFocus(); return; }
+
+    CString strText;
+    if (dlg.m_bWord) strText += "\\b";
+    strText += ConvertToRegularExpression(dlg.m_strText, false, false);
+    if (dlg.m_bWord) strText += "\\b";
+
+    t_regexp* regexp = NULL;
+    try {
+        regexp = regcomp(strText, (dlg.m_bMatchCase ? 0 : PCRE_CASELESS) |
+                                  (m_doc->m_bUTF_8 ? PCRE_UTF8 : 0));
+    } catch (CException* e) {
+        e->Delete();
+        ::TMessageBox("Cannot compile regular expression");
+        return;
+    }
+
+    CString strTriggerName;
+    strTriggerName.Format("*trigger%s", (LPCTSTR) App.GetUniqueString());
+    CTrigger* trigger_item;
+    m_doc->GetTriggerMap().SetAt(strTriggerName, trigger_item = new CTrigger);
+    trigger_item->nUpdateNumber    = App.GetUniqueNumber();
+    trigger_item->strInternalName  = strTriggerName;
+    trigger_item->trigger          = strText;
+    trigger_item->colour           = dlg.m_iColour - 1;
+    trigger_item->bKeepEvaluating  = true;
+    trigger_item->ignore_case      = !dlg.m_bMatchCase;
+    trigger_item->bRegexp          = true;
+    trigger_item->bRepeat          = true;
+    trigger_item->regexp           = regexp;
+    trigger_item->iSendTo          = eSendToWorld;
+    trigger_item->iSequence        = 90;
+    trigger_item->strGroup         = "Highlighted Words";
+    trigger_item->iOtherForeground = dlg.m_iOtherForeground;
+    trigger_item->iOtherBackground = dlg.m_iOtherBackground;
+    m_doc->SortTriggers();
+    m_doc->SetModifiedFlag(TRUE);
+}
+
+void CWorldChildFrame::MakeMultiLineTrigger()
+{
+    if (!m_doc || !m_output) return;
+
+    CMultiLineTriggerDlg dlg;
+    CString strSelection((const char*) m_output->GetSelectionText().utf8_str());
+    strSelection = strSelection.Left(10000);
+    strSelection.Replace("\r", "");
+
+    dlg.m_strTriggerText = ConvertToRegularExpression(strSelection, false, false);
+    dlg.m_strTriggerText.Replace("\\n", "\r\n");   // show linebreaks
+    dlg.m_bMatchCase = true;
+
+    if (dlg.DoModal() != IDOK) return;
+
+    CString strText = dlg.m_strTriggerText;
+    int iCount = 1;
+    for (const char* p = strText; *p; p++)
+        if (*p == '\n') iCount++;
+
+    strText.Replace(ENDLINE, "\\n");
+    strText += "\\Z";
+
+    t_regexp* regexp = NULL;
+    try {
+        regexp = regcomp(strText, (dlg.m_bMatchCase ? 0 : PCRE_CASELESS) |
+                                  (m_doc->m_bUTF_8 ? PCRE_UTF8 : 0));
+    } catch (CException* e) {
+        e->Delete();
+        ::TMessageBox("Cannot compile regular expression");
+        return;
+    }
+
+    CString strTriggerName;
+    strTriggerName.Format("*trigger%s", (LPCTSTR) App.GetUniqueString());
+    CTrigger* trigger_item;
+    m_doc->GetTriggerMap().SetAt(strTriggerName, trigger_item = new CTrigger);
+    trigger_item->nUpdateNumber   = App.GetUniqueNumber();
+    trigger_item->strInternalName = strTriggerName;
+    trigger_item->trigger         = strText;
+    trigger_item->colour          = SAMECOLOUR;
+    trigger_item->ignore_case     = !dlg.m_bMatchCase;
+    trigger_item->contents        = "%0";
+    trigger_item->bRegexp         = true;
+    trigger_item->bMultiLine      = true;
+    trigger_item->bKeepEvaluating = true;
+    trigger_item->regexp          = regexp;
+    trigger_item->iSendTo         = eSendToOutput;
+    trigger_item->strGroup        = "Multi Line";
+    trigger_item->iLinesToMatch   = iCount;
+    m_doc->SortTriggers();
+    m_doc->SetModifiedFlag(TRUE);
 }
 
 // ── Freeze Output: toggle the output pane's autoscroll pause ────────────────

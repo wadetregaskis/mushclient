@@ -74,6 +74,18 @@ public:
     // Print the world output buffer (File ▸ Print World) via wxHtmlEasyPrinting.
     void PrintWorld();
 
+    // ── View-level output/input commands ──────────────────────────────────
+    // The canonical handlers for these live on CMUSHView / CSendView (not
+    // instantiated on the port), so they are reimplemented here against the
+    // wx output pane / input bar / canonical dialogs.
+    void GotoSelectedURL();       // Display ▸ Go To URL  (selection → browser)
+    void SendMailToSelection();   // Display ▸ Send Mail To (selection → mailto:)
+    void CopySelectionHTML();     // Edit ▸ Copy as HTML
+    void RepeatLastCommand();     // Input ▸ Repeat Last Command
+    void ShowCommandHistory();    // Input ▸ Command History (pick a past command)
+    void HighlightSelectedWord(); // Display ▸ Highlight Word (canonical dialog → trigger)
+    void MakeMultiLineTrigger();  // Display ▸ Multi-Line Trigger (canonical dialog → trigger)
+
     // Output-pane Display commands.
     void FreezeOutput();   // toggle autoscroll pause (Display ▸ Freeze Output)
     void GotoLine();       // prompt for a line number and scroll the output to it

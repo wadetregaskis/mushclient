@@ -119,6 +119,10 @@ public:
     // fontName feeds the <font face=...> list (the world's display font).
     void CopySelectionAsHTML(const wxString& fontName);
 
+    // Public accessor for the current selection text (Go To URL / Send Mail To
+    // / Highlight Word reimplementations in CWorldChildFrame).  Empty if none.
+    wxString GetSelectionText() const { return SelectedText(); }
+
     // Programmatically select a range of text.  Arguments are 1-based line and
     // column numbers, matching the MUSHclient SetSelection() Lua API.
     // Pass all-zero arguments to clear the selection.

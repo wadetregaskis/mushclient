@@ -1572,6 +1572,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         };
     }
 
+    // ── Per-world status bar (bottom of the child frame) ──────────────────
+    // On macOS the wxMDIParentFrame's own status bar is covered by the
+    // maximised child, so each world frame carries its own.  Five fields
+    // mirroring the Windows status line; UpdateStatusBar() fills them.
+    m_statusBar = new wxStatusBar(this, wxID_ANY,
+                                  wxSTB_DEFAULT_STYLE & ~wxSTB_SIZEGRIP);
+    m_statusBar->SetFieldsCount(5);
+    {
+        const int widths[5] = { -1, 160, 90, 130, 70 };  // -1 = stretch (message)
+        m_statusBar->SetStatusWidths(5, widths);
+    }
+    sizer->Add(m_statusBar, 0, wxEXPAND);
+
     SetSizer(sizer);
 
     // ── Restore child frame size from config ──────────────────────────────
@@ -2077,60 +2090,83 @@ void CWorldChildFrame::LogLine(const SOutputLine& line)
 // check IsActiveWorld() before calling (or let it be a no-op when inactive).
 void CWorldChildFrame::UpdateStatusBar()
 {
-    if (!g_wxhook_set_status || !m_doc) return;
+    if (!m_doc || !m_statusBar) return;
+
+    auto pane = [this](int field, const std::string& s) {
+        m_statusBar->SetStatusText(wxString::FromUTF8(s), field);
+    };
 
     int phase = m_doc->m_iConnectPhase;
+    const bool connected = (phase == eConnectConnectedToMud);
 
-    // Build a world-name prefix ("WorldName — ") for every message so the user
-    // always knows which world is active in the MDI parent's status bar.
-    std::string worldName = static_cast<const char*>(m_doc->m_mush_name);
-    std::string prefix;
-    if (!worldName.empty()) {
-        prefix = worldName;
-        prefix += " \xe2\x80\x94 ";   // " — " (em dash)
-    }
+    // ── Pane 1: world name (its own field now, no longer a message prefix) ──
+    pane(1, static_cast<const char*>(m_doc->m_mush_name));
 
-    // Script-provided status message takes priority over connection state.
+    // ── Pane 0 (stretch): main status / connection state ───────────────────
+    // Script status takes priority, then scrollback, reconnect countdown, the
+    // connected server, otherwise the in-progress connection phase.
+    std::string msg;
     if (!m_doc->m_strStatusMessage.IsEmpty()) {
-        std::string msg = prefix + static_cast<const char*>(m_doc->m_strStatusMessage);
-        g_wxhook_set_status(msg.c_str());
-        return;
-    }
-
-    if (phase == eConnectConnectedToMud) {
-        std::string msg = prefix + "Connected to ";
-        msg += static_cast<const char*>(m_doc->m_server);
-        msg += ":";
-        msg += std::to_string(m_doc->m_port);
-        // If logging, append the log indicator.
-        if (IsLogging())
-            msg += "  \xf0\x9f\x94\xb4 Logging";   // 🔴
-        g_wxhook_set_status(msg.c_str());
-    } else if (m_reconnectCountdown > 0) {
-        int secs = (m_reconnectCountdown + 9) / 10;   // round up
-        std::string msg = prefix + "Reconnecting in " + std::to_string(secs) + "s\xe2\x80\xa6";
-        g_wxhook_set_status(msg.c_str());
+        msg = static_cast<const char*>(m_doc->m_strStatusMessage);
     } else if (m_output && !m_output->IsAutoScrolling()) {
-        // Scrolled-back indicator: no world prefix so the arrow stands out.
-        g_wxhook_set_status(
-            "\xe2\x86\x91 Scrolled back \xe2\x80\x94 press Escape or scroll to bottom to resume");
+        msg = "\xe2\x86\x91 Scrolled back \xe2\x80\x94 press Escape or scroll to bottom to resume";
+    } else if (m_reconnectCountdown > 0) {
+        msg = "Reconnecting in " + std::to_string((m_reconnectCountdown + 9) / 10) + "s\xe2\x80\xa6";
+    } else if (connected) {
+        msg = "Connected to ";
+        msg += static_cast<const char*>(m_doc->m_server);
+        msg += ":" + std::to_string(m_doc->m_port);
     } else {
-        const char* stateStr = "Not connected.";
         switch (phase) {
         case eConnectMudNameLookup:
-        case eConnectProxyNameLookup:        stateStr = "Resolving\xe2\x80\xa6";     break;
+        case eConnectProxyNameLookup:        msg = "Resolving\xe2\x80\xa6";     break;
         case eConnectConnectingToMud:
-        case eConnectConnectingToProxy:      stateStr = "Connecting\xe2\x80\xa6";    break;
+        case eConnectConnectingToProxy:      msg = "Connecting\xe2\x80\xa6";    break;
         case eConnectAwaitingProxyResponse1:
         case eConnectAwaitingProxyResponse2:
-        case eConnectAwaitingProxyResponse3: stateStr = "Connecting via proxy\xe2\x80\xa6"; break;
-        case eConnectAwaitingSSLHandshake:   stateStr = "TLS handshake\xe2\x80\xa6"; break;
-        case eConnectDisconnecting:          stateStr = "Disconnecting\xe2\x80\xa6"; break;
-        default:                             stateStr = "Not connected.";             break;
+        case eConnectAwaitingProxyResponse3: msg = "Connecting via proxy\xe2\x80\xa6"; break;
+        case eConnectAwaitingSSLHandshake:   msg = "TLS handshake\xe2\x80\xa6"; break;
+        case eConnectDisconnecting:          msg = "Disconnecting\xe2\x80\xa6"; break;
+        default:                             msg = "Not connected.";             break;
         }
-        std::string msg = prefix + stateStr;
-        g_wxhook_set_status(msg.c_str());
     }
+    pane(0, msg);
+
+    // ── Pane 2: connection duration (H:MM:SS) while connected ──────────────
+    if (connected) {
+        time_t start = m_doc->m_tConnectTime.GetTime();
+        time_t now   = time(nullptr);
+        long secs = (start > 0 && now >= start) ? (long)(now - start) : 0;
+        char buf[32];
+        snprintf(buf, sizeof buf, "%ld:%02ld:%02ld", secs / 3600, (secs / 60) % 60, secs % 60);
+        pane(2, buf);
+    } else {
+        pane(2, "");
+    }
+
+    // ── Pane 3: lines received ↓ / sent ↑ this connection ──────────────────
+    {
+        char buf[64];
+        snprintf(buf, sizeof buf, "\xe2\x86\x93%ld \xe2\x86\x91%ld",
+                 (long) m_doc->m_nTotalLinesReceived, (long) m_doc->m_nTotalLinesSent);
+        pane(3, buf);
+    }
+
+    // ── Pane 4: log indicator ──────────────────────────────────────────────
+    pane(4, IsLogging() ? "\xf0\x9f\x94\xb4 Log" : "");
+}
+
+void CWorldChildFrame::ShowStatusBarStrip(bool show)
+{
+    if (m_statusBar && m_statusBar->IsShown() != show) {
+        m_statusBar->Show(show);
+        Layout();   // reclaim/yield the strip's height
+    }
+}
+
+bool CWorldChildFrame::IsStatusBarStripShown() const
+{
+    return m_statusBar && m_statusBar->IsShown();
 }
 
 // ── OnActivate ────────────────────────────────────────────────────────────

@@ -118,6 +118,12 @@ static const int ID_CONN_LOG_TOGGLE    = wxID_HIGHEST + 410;
 
 // ── Game menu IDs ─────────────────────────────────────────────────────────────
 static const int ID_MENU_GAME_LUA_EVAL = wxID_HIGHEST + 411;
+
+// ── View menu IDs (port-local; real wx implementations, not canonical) ────────
+static const int ID_MENU_VIEW_ALWAYSONTOP = wxID_HIGHEST + 420;
+static const int ID_MENU_VIEW_FULLSCREEN  = wxID_HIGHEST + 421;
+static const int ID_MENU_VIEW_STATUSBAR   = wxID_HIGHEST + 422;
+
 static wxMenu*    s_recentMenu     = nullptr;
 static std::vector<std::string> s_recentWorlds;
 
@@ -464,8 +470,9 @@ static int hook_message_box(const char* text, const char* caption, unsigned flag
 static void hook_set_status(const char* msg)
 {
     if (s_statusBar)
-        s_statusBar->SetStatusText(msg ? wxString::FromUTF8(msg) : wxString());
+        s_statusBar->SetStatusText(msg ? wxString::FromUTF8(msg) : wxString(), 0);
 }
+
 
 // ── MDI frame creation ────────────────────────────────────────────────────
 // Called when CMDIFrameWnd::LoadFrame() is invoked on CMainFrame.
@@ -501,6 +508,101 @@ public:
     }
 };
 } // anonymous namespace
+
+// ── Table-driven canonical menu commands ──────────────────────────────────
+// Standard MUSHclient menu commands whose real handler already lives in a
+// canonical MFC message map (doc.cpp / mainfrm.cpp / MUSHclient.cpp).  Rather
+// than a bespoke build + dispatch + update-UI branch per command, the menu
+// builder appends them from this one table and a single generic handler routes
+// clicks via AfxDispatchCommand and enable/check state via AfxDispatchUpdateUI.
+// Adding a standard command is then one row of data.
+//   target:    'D' = active world doc, 'F' = &Frame (CMainFrame), 'A' = &App.
+//   checkable: a toggle — check state comes from the canonical ON_UPDATE_COMMAND_UI.
+//   needsDoc:  greyed out when no world window is active.
+enum CanonSection { SEC_FILE, SEC_EDIT, SEC_CONN, SEC_DISPLAY, SEC_GAME, SEC_HELP };
+struct CanonMenuCmd {
+    CanonSection section;
+    int          id;
+    const char*  label;     // UTF-8; "&Mnemonic\tAccel"
+    char         target;
+    bool         checkable;
+    bool         needsDoc;
+};
+static const CanonMenuCmd kCanonCmds[] = {
+  // ── File ──
+  { SEC_FILE, 32980, "&Import\xE2\x80\xA6\tCtrl+Alt+I",      'D', false, true  }, // ID_FILE_IMPORT
+  { SEC_FILE, 32117, "&Log Session\xE2\x80\xA6",             'D', false, true  }, // ID_FILE_LOGSESSION
+  { SEC_FILE, 32954, "Open Worlds In Startup List",          'F', false, false }, // ID_FILE_OPENWORLDSINSTARTUPLIST
+  { SEC_FILE, 32330, "Reload Defaults",                      'D', false, true  }, // ID_FILE_RELOADDEFAULTS
+  // ── Edit ──
+  { SEC_EDIT, 32244, "Paste To &World\xE2\x80\xA6\tShift+Ctrl+V", 'D', false, true  }, // ID_EDIT_PASTETOMUSH
+  { SEC_EDIT, 32327, "Reload Names File\xE2\x80\xA6",        'F', false, false }, // ID_EDIT_RELOADNAMESFILE
+  { SEC_EDIT, 33037, "Generate Unique &ID\xE2\x80\xA6",      'F', false, false }, // ID_EDIT_GENERATEUNIQUEID
+  { SEC_EDIT, 32968, "Colour Picker\xE2\x80\xA6",            'A', false, false }, // ID_EDIT_COLOURPICKER
+  { SEC_EDIT, 33052, "Convert Clipboard Forum Codes",        'F', false, false }, // ID_EDIT_CONVERTCLIPBOARDFORUMCODES
+  // ── Connection ──
+  { SEC_CONN, 32241, "&Auto Connect",                        'F', true,  false }, // ID_CONNECTION_AUTOCONNECT
+  { SEC_CONN, 32341, "&Reconnect On Disconnect",             'F', true,  false }, // ID_CONNECTION_RECONNECTONDISCONNECT
+  { SEC_CONN, 32975, "Connect To All Open &Worlds",          'F', false, false }, // ID_CONNECTION_CONNECTTOALLOPENWORLDS
+  { SEC_CONN, 32976, "Connect To Worlds In Startup List",    'F', false, false }, // ID_CONNECTION_CONNECTTOWORLDSINSTARTUPLIST
+  // ── Display ──
+  { SEC_DISPLAY, 32324, "&Recall Text\xE2\x80\xA6\tCtrl+U",  'D', false, true  }, // ID_DISPLAY_RECALLTEXT
+  { SEC_DISPLAY, 32291, "Clear Output Buffer\xE2\x80\xA6",   'D', false, true  }, // ID_DISPLAY_CLEAR_OUTPUT
+  { SEC_DISPLAY, 32292, "Stop Sound Playing",                'F', false, false }, // ID_DISPLAY_STOPSOUNDPLAYING
+  { SEC_DISPLAY, 32970, "No Command Echo",                   'D', true,  true  }, // ID_DISPLAY_NOCOMMANDECHO
+  // ── Game ──
+  { SEC_GAME, 32118, "Wrap &Output",                         'D', true,  true  }, // ID_GAME_WRAPLINES
+  { SEC_GAME, 32252, "&Auto Say",                            'D', true,  true  }, // ID_GAME_AUTOSAY
+  { SEC_GAME, 32216, "Send &File\xE2\x80\xA6",               'D', false, true  }, // ID_GAME_PASTEFILE
+  { SEC_GAME, 32956, "&Discard Queued Commands",             'D', false, true  }, // ID_INPUT_DISCARDQUEUEDCOMMANDS
+  { SEC_GAME, 32316, "Reset All Timers",                     'D', false, true  }, // ID_GAME_RESETALLTIMERS
+  { SEC_GAME, 32958, "&Mapper",                              'D', false, true  }, // ID_GAME_MAPPER
+  { SEC_GAME, 32959, "&Do Mapper Special\xE2\x80\xA6",       'D', false, true  }, // ID_GAME_DOMAPPERSPECIAL
+  { SEC_GAME, 32985, "Add Mapper Comment\xE2\x80\xA6",       'D', false, true  }, // ID_GAME_DOMAPPERCOMMENT
+  { SEC_GAME, 32991, "Chat Sessions",                        'D', false, true  }, // ID_GAME_CHATSESSIONS
+  { SEC_GAME, 32321, "&Edit Script File\xE2\x80\xA6",        'D', false, true  }, // ID_GAME_EDITSCRIPTFILE
+  { SEC_GAME, 32967, "Test &Trigger\xE2\x80\xA6",            'D', false, true  }, // ID_DEBUG_WORLD_INPUT
+  { SEC_GAME, 32234, "Minimize &Program\tCtrl+M",            'A', false, false }, // ID_GAME_MINIMISEPROGRAM
+  // ── Help (web links use the working ShellExecute shim) ──
+  { SEC_HELP, 32237, "&Tip Of The Day\xE2\x80\xA6",          'F', false, false }, // ID_HELP_TIPOFTHEDAY
+  { SEC_HELP, 32294, "&Getting Started\xE2\x80\xA6",         'A', false, false }, // ID_HELP_GETTINGSTARTED
+  { SEC_HELP, 32986, "MUSHclient &Forum (web)",              'F', false, false }, // ID_HELP_FORUM
+  { SEC_HELP, 32271, "MUSHclient &Web Page",                 'F', false, false }, // ID_WEB_PAGE
+  { SEC_HELP, 32987, "Function &List (web)",                 'F', false, false }, // ID_HELP_FUNCTIONSWEBPAGE
+  { SEC_HELP, 33029, "&Documentation (web)",                 'F', false, false }, // ID_HELP_DOCUMENTATIONWEBPAGE
+  { SEC_HELP, 33030, "&Regular Expressions (web)",           'F', false, false }, // ID_HELP_REGULAREXPRESSIONSWEBPAGE
+  { SEC_HELP, 32287, "&MUD Lists (web)",                     'F', false, false }, // ID_HELP_MUDLISTS
+  { SEC_HELP, 33034, "&Plugins List (web)",                  'F', false, false }, // ID_HELP_PLUGINSLIST
+  { SEC_HELP, 32293, "&Bug Reports / Suggestions\xE2\x80\xA6",'F', false, false }, // ID_HELP_BUGREPORTSUGGESTION
+};
+
+// Append every table command for one section to `menu`, led by a separator.
+static void append_canon_section(wxMenu* menu, CanonSection sec)
+{
+    bool first = true;
+    for (const CanonMenuCmd& c : kCanonCmds) {
+        if (c.section != sec) continue;
+        if (first) { menu->AppendSeparator(); first = false; }
+        if (c.checkable) menu->AppendCheckItem(c.id, wxString::FromUTF8(c.label));
+        else             menu->Append(c.id, wxString::FromUTF8(c.label));
+    }
+}
+static const CanonMenuCmd* find_canon_cmd(int id)
+{
+    for (const CanonMenuCmd& c : kCanonCmds)
+        if (c.id == id) return &c;
+    return nullptr;
+}
+// Resolve a table target letter to its canonical CCmdTarget (or nullptr).
+static CCmdTarget* canon_target(char t, CMUSHclientDoc* doc)
+{
+    switch (t) {
+        case 'D': return doc;
+        case 'F': return &Frame;
+        case 'A': return &App;
+    }
+    return nullptr;
+}
 
 static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                                 unsigned long /*style*/, void* /*parentHwnd*/)
@@ -568,6 +670,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     fileMenu->Append(32250 /*ID_FILE_PRINT_WORLD*/, wxT("&Print World…\tCtrl+P"));
     fileMenu->AppendSeparator();
     fileMenu->Append(32246 /*ID_FILE_PREFERENCES*/, wxT("Preferences…"));
+    append_canon_section(fileMenu, SEC_FILE);   // Import, Log Session, Open Startup, Reload Defaults
     fileMenu->AppendSeparator();
     fileMenu->Append(wxID_EXIT,   wxT("Quit MUSHclient\tCtrl+Q"));
     mb->Append(fileMenu, wxT("&File"));
@@ -592,6 +695,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // (not tied to any world). Inherits the Notepad-preferences font + colours.
     editMenu->Append(40001 /*port-local: New standalone Notepad*/,
                      wxT("New Notepad"));
+    append_canon_section(editMenu, SEC_EDIT);   // Paste To World, Reload Names, Unique ID, Colour Picker, …
     mb->Append(editMenu, wxT("&Edit"));
 
     wxMenu* connMenu = new wxMenu();
@@ -605,6 +709,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     connMenu->Append(0xE201,                    wxT("Reconnect\tCtrl+Shift+R"));
     connMenu->AppendSeparator();
     connMenu->Append(ID_CONN_LOG_TOGGLE,        wxT("Start &Logging…"));
+    append_canon_section(connMenu, SEC_CONN);   // Auto Connect, Reconnect, Connect-All, Connect-Startup
     mb->Append(connMenu, wxT("&Connection"));
 
     wxMenu* gameMenu = new wxMenu();
@@ -620,6 +725,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->Append(32203 /*ID_DISPLAY_ACTIVITYLIST*/,  wxT("&Activity List"));
     gameMenu->Append(32326 /*ID_EDIT_GENERATECHARACTERNAME*/, wxT("Generate Character &Name…"));
     gameMenu->Append(32323 /*ID_EDIT_SPELLCHECK*/,       wxT("Chec&k Spelling"));
+    append_canon_section(gameMenu, SEC_GAME);   // Mapper, Reset Timers, Auto Say, Send File, Wrap Output, …
     mb->Append(gameMenu, wxT("&Game"));
 
     // ── Display menu (output-pane view commands) ──────────────────────────
@@ -638,7 +744,17 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     displayMenu->AppendCheckItem(32971 /*ID_EDIT_DEBUGINCOMINGPACKETS*/,
                                  wxT("&Debug Incoming Packets"));
     displayMenu->AppendCheckItem(32334 /*ID_GAME_TRACE*/, wxT("&Trace"));
+    append_canon_section(displayMenu, SEC_DISPLAY); // Recall Text, Clear Output, Stop Sound, No Command Echo
     mb->Append(displayMenu, wxT("&Display"));
+
+    // ── View menu (port-local; real wx implementations, not the canonical
+    // SetWindowPos/ModifyStyle paths which are Windows-only stubs) ─────────
+    wxMenu* viewMenu = new wxMenu();
+    viewMenu->AppendCheckItem(ID_MENU_VIEW_ALWAYSONTOP, wxT("Always On &Top"));
+    viewMenu->AppendCheckItem(ID_MENU_VIEW_FULLSCREEN,  wxT("&Full Screen\tCtrl+Alt+F"));
+    viewMenu->AppendSeparator();
+    viewMenu->AppendCheckItem(ID_MENU_VIEW_STATUSBAR,   wxT("&Status Bar"));
+    mb->Append(viewMenu, wxT("&View"));
 
     // ── Configure menu ────────────────────────────────────────────────────
     wxMenu* cfgMenu = new wxMenu();
@@ -682,6 +798,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
 
     wxMenu* helpMenu = new wxMenu();
     helpMenu->Append(wxID_ABOUT, wxT("About MUSHclient"));
+    append_canon_section(helpMenu, SEC_HELP);   // Tip, Getting Started, Forum/Web/Docs/Functions/Bug Reports
     mb->Append(helpMenu, wxT("&Help"));
 
     frame->SetMenuBar(mb);
@@ -691,9 +808,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     recent_worlds_update_menu();
 
     // ── Status bar ────────────────────────────────────────────────────────
+    // The MDI parent's status bar carries transient global messages.  On macOS
+    // it is covered by the maximised child, so the *world* status line (world
+    // name, duration, line counts, log) lives on each CWorldChildFrame's own
+    // status bar instead — see CWorldChildFrame::UpdateStatusBar.
     s_statusBar = frame->CreateStatusBar(1);
     if (s_statusBar)
-        s_statusBar->SetStatusText(wxT("Ready"));
+        s_statusBar->SetStatusText(wxT("Ready"), 0);
 
     // ── Drag-and-drop world files ─────────────────────────────────────────
     // Ownership of the drop target transfers to the window.
@@ -758,6 +879,26 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         int id = evt.GetId();
         CMUSHclientDoc* doc = activeDoc();
 
+        // ── Table-driven canonical commands: enable + check come from the
+        // canonical ON_UPDATE_COMMAND_UI handler, captured onto the menu item.
+        if (const CanonMenuCmd* c = find_canon_cmd(id)) {
+            CCmdTarget* tgt = canon_target(c->target, doc);
+            bool enabled = true; int checked = -1;
+            if (tgt) {
+                CCmdUI cmdui;
+                cmdui.m_nID            = (UINT) id;
+                cmdui.m_pCaptureEnable = &enabled;
+                cmdui.m_pCaptureCheck  = &checked;
+                if (!AfxDispatchUpdateUI(tgt, &cmdui))
+                    enabled = c->needsDoc ? (doc != nullptr) : true;
+            } else {
+                enabled = false;   // 'D' target with no active world
+            }
+            evt.Enable(enabled);
+            if (c->checkable && checked >= 0) evt.Check(checked != 0);
+            return;
+        }
+
         if (id == 32239 /*ID_CONNECTION_CONNECT*/) {
             // Enable only when disconnected and a world is open.
             evt.Enable(doc && doc->m_iConnectPhase == eConnectNotConnected);
@@ -799,6 +940,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 bool logging = (doc->m_logfile != nullptr);
                 evt.SetText(logging ? wxT("Stop &Logging") : wxT("Start &Logging…"));
             }
+        } else if (id == ID_MENU_VIEW_ALWAYSONTOP) {
+            evt.Check((frame->GetWindowStyleFlag() & wxSTAY_ON_TOP) != 0);
+        } else if (id == ID_MENU_VIEW_FULLSCREEN) {
+            evt.Check(frame->IsFullScreen());
+        } else if (id == ID_MENU_VIEW_STATUSBAR) {
+            auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
+            evt.Enable(child != nullptr);
+            evt.Check(child && child->IsStatusBarStripShown());
         } else {
             evt.Skip();  // default behaviour for all other items
         }
@@ -815,6 +964,35 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             auto* child = dynamic_cast<CWorldChildFrame*>(active);
             return child ? child->GetDoc() : nullptr;
         };
+
+        // ── Table-driven canonical commands: route the click to its MFC
+        // message-map handler.  One path for every standard command. ──────────
+        if (const CanonMenuCmd* c = find_canon_cmd(id)) {
+            if (CCmdTarget* tgt = canon_target(c->target, activeDoc()))
+                AfxDispatchCommand(tgt, 0 /*ON_COMMAND*/, id);
+            return;
+        }
+
+        // ── View menu (port-local; real wx, since the canonical Always-On-Top /
+        // Full-Screen handlers bottom out in Windows-only SetWindowPos/ModifyStyle).
+        if (id == ID_MENU_VIEW_ALWAYSONTOP) {
+            long style = frame->GetWindowStyleFlag();
+            frame->SetWindowStyleFlag((style & wxSTAY_ON_TOP)
+                                      ? (style & ~wxSTAY_ON_TOP)
+                                      : (style |  wxSTAY_ON_TOP));
+            return;
+        }
+        if (id == ID_MENU_VIEW_FULLSCREEN) {
+            frame->ShowFullScreen(!frame->IsFullScreen());
+            return;
+        }
+        if (id == ID_MENU_VIEW_STATUSBAR) {
+            // Toggle the active world's own status bar (the visible one on macOS;
+            // the MDI parent's bar is hidden behind the child).
+            if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
+                child->ShowStatusBarStrip(!child->IsStatusBarStripShown());
+            return;
+        }
 
         // ── Edit menu: Copy / Cut / Paste / Select All ─────────────────────
         // The frame's Bind intercepts menu events before wxMDI can route them

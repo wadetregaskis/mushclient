@@ -96,7 +96,8 @@ extern void* (*g_wxhook_open_world_file)(const char* path);
 
 // ── Status bar ────────────────────────────────────────────────────────────
 // Set the text shown in the MDI parent frame's status bar.
-// msg is UTF-8; passing nullptr clears the bar.
+// msg is UTF-8; passing nullptr clears the bar.  (Transient global messages; the
+// per-world status line lives on each CWorldChildFrame's own status bar.)
 extern void (*g_wxhook_set_status)(const char* msg);
 
 // (World preferences are no longer a hook: the canonical CMUSHclientDoc::

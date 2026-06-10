@@ -1957,11 +1957,18 @@ public:
     int    m_nIndex  = 0;
     CMenu* m_pMenu   = nullptr;   // non-null when routing through a menu
     void*  m_hWndCtrl = nullptr;  // the control this CCmdUI updates (port: wxWindow*)
+    // Capture mode: when these are non-null, Enable/SetCheck record into them
+    // rather than routing to a control hook.  Used to drive a wx MENU item from
+    // a canonical ON_UPDATE_COMMAND_UI handler (there is no control HWND then).
+    bool*  m_pCaptureEnable = nullptr;
+    int*   m_pCaptureCheck  = nullptr;
     void Enable(BOOL bOn = TRUE) {
+        if (m_pCaptureEnable) { *m_pCaptureEnable = (bOn != FALSE); return; }
         if (m_hWndCtrl && g_wxhook_enable_window)
             g_wxhook_enable_window(m_hWndCtrl, bOn != FALSE);
     }
     void SetCheck(int nCheck = 1) {
+        if (m_pCaptureCheck) { *m_pCaptureCheck = nCheck; return; }
         // BM_SETCHECK (0x00F1) is #defined later in this header than CCmdUI.
         if (m_hWndCtrl && g_wxhook_send_message)
             g_wxhook_send_message(m_hWndCtrl, 0x00F1 /*BM_SETCHECK*/, (uintptr_t)nCheck, 0);

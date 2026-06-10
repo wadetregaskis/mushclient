@@ -88,6 +88,10 @@ public:
     // loaded so custom world backgrounds take effect on first display.
     void ApplyPaneBackground(unsigned long col);
 
+    // Show/hide this world's status bar (View ▸ Status Bar).
+    void ShowStatusBarStrip(bool show);
+    bool IsStatusBarStripShown() const;
+
     // Show/hide the inline find bar (Ctrl+F to show, Escape in find bar to hide).
     void ShowFindBar(bool show);
 
@@ -99,6 +103,7 @@ private:
     wxTextCtrl*          m_input          = nullptr; // normal command input bar
     wxTextCtrl*          m_inputPassword  = nullptr; // masked input — shown when telnet suppresses echo
     wxTextCtrl*          m_infobar        = nullptr; // world.Info* styled status strip (hidden until ShowInfoBar)
+    wxStatusBar*         m_statusBar      = nullptr; // per-world status bar (macOS: parent MDI status bar is hidden by the child)
     wxTextAttr           m_infobarStyle;             // current style applied to appended Info text
     CMUSHclientDoc*      m_doc            = nullptr; // non-owning reference to the world doc
     wxTimer*             m_worldTimer     = nullptr; // drives CheckTimers() / ON_PLUGIN_TICK

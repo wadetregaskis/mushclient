@@ -1144,11 +1144,23 @@ CString str;
     {
     int optval = 1;
     setsockopt (m_pSocket->m_hSocket, SOL_SOCKET,  SO_KEEPALIVE,  &optval, sizeof (optval));
-    // TCP_KEEPIDLE / TCP_KEEPINTVL are POSIX extensions; guard defensively.
+    // Match the Windows SIO_KEEPALIVE_VALS timing above: start probing after
+    // 120 s idle, then probe every 6 s.  The per-socket idle-time option is
+    // named TCP_KEEPIDLE on Linux but TCP_KEEPALIVE on macOS/BSD; both take a
+    // value in seconds.  TCP_KEEPINTVL / TCP_KEEPCNT are common to both.  Each
+    // is guarded so this still compiles where the extension is absent (there
+    // SO_KEEPALIVE alone applies, at the OS-default timing).
+    int keepidle = 120, keepintvl = 6, keepcnt = 6;
 #if defined(TCP_KEEPIDLE)
-    int keepidle = 120, keepintvl = 6;
     setsockopt (m_pSocket->m_hSocket, IPPROTO_TCP, TCP_KEEPIDLE,  &keepidle,  sizeof (keepidle));
+#elif defined(TCP_KEEPALIVE)
+    setsockopt (m_pSocket->m_hSocket, IPPROTO_TCP, TCP_KEEPALIVE, &keepidle,  sizeof (keepidle));
+#endif
+#if defined(TCP_KEEPINTVL)
     setsockopt (m_pSocket->m_hSocket, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof (keepintvl));
+#endif
+#if defined(TCP_KEEPCNT)
+    setsockopt (m_pSocket->m_hSocket, IPPROTO_TCP, TCP_KEEPCNT,   &keepcnt,   sizeof (keepcnt));
 #endif
     }
 #endif

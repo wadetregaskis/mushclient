@@ -186,6 +186,14 @@ extern int  (*g_wxhook_sound_status)(int buffer);
 // returned pointer stays valid for the process lifetime (cached).
 extern const char* (*g_wxhook_load_text_resource)(int id, unsigned* size);
 
+// ── Fonts ─────────────────────────────────────────────────────────────────
+// utils.getfontfamilies(): a NULL-terminated array of installed font family
+// names (each string and the array itself are heap — caller free()s them).
+extern char** (*g_wxhook_get_font_families)();
+// utils.glyph_available(face, codepoint): 1 if the named font has a glyph for
+// the Unicode code point, else 0.  macOS uses CoreText; 0 where unsupported.
+extern int    (*g_wxhook_font_has_glyph)(const char* facename, unsigned int codepoint);
+
 // ── Notepad hook ───────────────────────────────────────────────────────────
 // Create a notepad window.  All string parameters are UTF-8.
 // sText           — initial content (may be "")

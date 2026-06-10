@@ -29,6 +29,7 @@
 #include <wx/treebook.h>   // wxTreebook (World Properties property sheet)
 #include <wx/listctrl.h>   // wxListCtrl (entity-manager object lists)
 #include <wx/stdpaths.h>   // wxStandardPaths (bundled text resources)
+#include <wx/fontenum.h>   // wxFontEnumerator (utils.getfontfamilies)
 #include <algorithm>
 #include <unordered_map>
 #include <map>
@@ -1866,6 +1867,27 @@ static const char* hook_load_text_resource(int id, unsigned* size)
 }
 
 
+// ── Fonts ─────────────────────────────────────────────────────────────────
+// utils.getfontfamilies(): the installed font family names.
+static char** hook_get_font_families()
+{
+    wxArrayString faces = wxFontEnumerator::GetFacenames();
+    char** arr = (char**) malloc((faces.GetCount() + 1) * sizeof(char*));
+    if (!arr) return nullptr;
+    size_t n = 0;
+    for (size_t i = 0; i < faces.GetCount(); ++i)
+        arr[n++] = strdup(faces[i].utf8_str());
+    arr[n] = nullptr;
+    return arr;
+}
+
+// utils.glyph_available(): CoreText on macOS (wx_osx_text.mm); 0 elsewhere.
+static int hook_font_has_glyph(const char* facename, unsigned int codepoint)
+{
+    return wxOSXFontHasGlyph(facename, codepoint);
+}
+
+
 // ── Notepad append ────────────────────────────────────────────────────────
 
 static bool hook_append_to_notepad(const char* title, const char* text, bool replace)
@@ -3179,6 +3201,8 @@ void wx_mfc_install_hooks()
     g_wxhook_sound_stop_buffer    = hook_sound_stop_buffer;
     g_wxhook_sound_status         = hook_sound_status;
     g_wxhook_load_text_resource   = hook_load_text_resource;
+    g_wxhook_get_font_families    = hook_get_font_families;
+    g_wxhook_font_has_glyph       = hook_font_has_glyph;
     g_wxhook_append_to_notepad    = hook_append_to_notepad;
     g_wxhook_get_notepad_text     = hook_get_notepad_text;
     g_wxhook_get_notepad_list     = hook_get_notepad_list;

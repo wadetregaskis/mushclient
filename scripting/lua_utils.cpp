@@ -1600,9 +1600,23 @@ static int getfontfamilies (lua_State *L)
                       EnumFontFamExProc,  // pointer to callback function
                       (long) L,           // application-supplied data
                       0);                 // reserved; must be zero
+#else // !_WIN32
+  // Enumerate installed font families via wxFontEnumerator (wx_mfc_impl.cpp).
+  if (g_wxhook_get_font_families) {
+    char** names = g_wxhook_get_font_families ();
+    if (names) {
+      for (char** p = names; *p; ++p) {
+        lua_pushstring (L, *p);
+        lua_pushboolean (L, true);
+        lua_rawset (L, -3);
+        free (*p);
+      }
+      free (names);
+    }
+  }
 #endif // _WIN32
 
-  return 1;  // one table of entries (empty on non-Windows)
+  return 1;  // one table of entries (keyed by face name → true)
 
   }
 
@@ -2022,8 +2036,11 @@ static int glyph_available (lua_State *L)
     lua_pushnumber (L, 0);
 
 #else // !_WIN32
-  // glyph availability queries are not supported on non-Windows
-  lua_pushnumber (L, 0);
+  // CoreText glyph lookup on macOS (wx_osx_text.mm); 0 where unsupported.
+  const char * fontName = luaL_checkstring (L, 1);
+  unsigned int glyph    = (unsigned int) luaL_checknumber (L, 2);
+  lua_pushnumber (L, g_wxhook_font_has_glyph
+                   ? g_wxhook_font_has_glyph (fontName, glyph) : 0);
 #endif // _WIN32
 
   return 1;   // one result

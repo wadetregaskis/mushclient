@@ -850,7 +850,8 @@ if(NOT WIN32)
         if(APPLE)
             target_link_libraries(mushgui PRIVATE
                 "-framework CoreAudio" "-framework AudioToolbox"
-                "-framework AudioUnit" "-framework CoreFoundation")
+                "-framework AudioUnit" "-framework CoreFoundation"
+                "-framework CoreText")  # utils.glyph_available (wx_osx_text.mm)
         else()
             find_package(Threads REQUIRED)
             target_link_libraries(mushgui PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)

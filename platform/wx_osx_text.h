@@ -19,7 +19,10 @@ void wxOSXDisableSmartSubstitutions(wxTextCtrl* ctrl);   // defined in wx_osx_te
 // macOS has no system tray, so this is where MUSHclient's tray/taskbar-icon
 // choice lives on the port.  Ignored if the bitmap is invalid.
 void wxOSXSetDockIcon(const wxBitmap& bmp);
+// 1 if the named font has a glyph for the Unicode code point, else 0 (CoreText).
+int wxOSXFontHasGlyph(const char* facename, unsigned int codepoint);
 #else
 inline void wxOSXDisableSmartSubstitutions(wxTextCtrl*) {}
 inline void wxOSXSetDockIcon(const wxBitmap&) {}
+inline int  wxOSXFontHasGlyph(const char*, unsigned int) { return 0; }
 #endif

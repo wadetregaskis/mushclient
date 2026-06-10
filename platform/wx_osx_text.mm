@@ -4,6 +4,7 @@
 // CMakeLists.txt; OBJCXX is enabled there too).  See wx_osx_text.h for why.
 
 #import <AppKit/AppKit.h>
+#import <CoreText/CoreText.h>
 #include <wx/textctrl.h>
 #include <wx/bitmap.h>
 #include "wx_osx_text.h"
@@ -64,4 +65,34 @@ void wxOSXSetDockIcon(const wxBitmap& bmp)
         [NSApp setApplicationIconImage:img];
         [img release];   // this .mm is compiled MRR (no ARC), as is wxOSX
     }
+}
+
+int wxOSXFontHasGlyph(const char* facename, unsigned int codepoint)
+{
+    if (!facename || !*facename)
+        return 0;
+    CFStringRef name = CFStringCreateWithCString(NULL, facename, kCFStringEncodingUTF8);
+    if (!name)
+        return 0;
+    CTFontRef font = CTFontCreateWithName(name, 12.0, NULL);
+    CFRelease(name);
+    if (!font)
+        return 0;
+
+    // Encode the code point as UTF-16 (a surrogate pair beyond the BMP).
+    UniChar  chars[2];
+    CGGlyph  glyphs[2] = { 0, 0 };
+    CFIndex  count;
+    if (codepoint > 0xFFFF) {
+        unsigned int c = codepoint - 0x10000;
+        chars[0] = (UniChar)(0xD800 + (c >> 10));
+        chars[1] = (UniChar)(0xDC00 + (c & 0x3FF));
+        count = 2;
+    } else {
+        chars[0] = (UniChar) codepoint;
+        count = 1;
+    }
+    bool ok = CTFontGetGlyphsForCharacters(font, chars, glyphs, count) && glyphs[0] != 0;
+    CFRelease(font);
+    return ok ? 1 : 0;
 }

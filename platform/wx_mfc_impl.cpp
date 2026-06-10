@@ -668,8 +668,10 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // Note: plain Ctrl+W is reserved for word-delete-backward in the input bar.
     fileMenu->AppendSeparator();
     fileMenu->Append(32250 /*ID_FILE_PRINT_WORLD*/, wxT("&Print World…\tCtrl+P"));
-    fileMenu->AppendSeparator();
-    fileMenu->Append(32246 /*ID_FILE_PREFERENCES*/, wxT("Preferences…"));
+    // File ▸ Preferences uses wxID_PREFERENCES so wxWidgets automatically moves
+    // it to the macOS application menu as "Settings…" (⌘,), where Mac users
+    // expect it.  (No surrounding separator here — it leaves the File menu.)
+    fileMenu->Append(wxID_PREFERENCES, wxT("Settings…"));
     append_canon_section(fileMenu, SEC_FILE);   // Import, Log Session, Open Startup, Reload Defaults
     fileMenu->AppendSeparator();
     fileMenu->Append(wxID_EXIT,   wxT("Quit MUSHclient\tCtrl+Q"));
@@ -1222,7 +1224,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                         s_statusBar->SetStatusText(wxT("Connecting…"));
                 }
             }
-        } else if (id == 32246 /*ID_FILE_PREFERENCES*/) {
+        } else if (id == wxID_PREFERENCES /*macOS app-menu Settings…*/) {
             hook_file_preferences(frame);
         } else if (id == 32158 /*ID_GAME_PREFERENCES*/) {
             if (CMUSHclientDoc* doc = activeDoc())

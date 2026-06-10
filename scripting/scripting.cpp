@@ -411,6 +411,14 @@ void CMUSHclientDoc::OnScriptFileChanged(const bool bForce)
       DisableScripting ();
       CreateScriptEngine ();
       } // end of approving modification or wanting it anyway
+#ifndef _WIN32
+    else
+      // Port: change detection is poll-driven (the world timer calls this every
+      // 2 s) rather than Windows' event-driven monitoring thread, so record the
+      // new mtime even when the user declines — otherwise the same change would
+      // re-prompt on every poll until the file is touched again.
+      m_timeScriptFileMod = status.m_mtime;
+#endif
     } // end of time changing
 
 	m_bInScriptFileChanged = false;

@@ -69,9 +69,6 @@ extern int  (*g_wxhook_load_mdi_frame)(void* self, unsigned id,
                                         unsigned long style,
                                         void* parentHwnd);
 
-// Run the wxApp event loop (called after InitInstance from wx_app.cpp's OnInit)
-extern int  (*g_wxhook_run_app_loop)();
-
 // ── InitInstance bootstrap ─────────────────────────────────────────────────
 // Declared here; defined in wx_mfc_impl.cpp.
 // wx_app.cpp calls this to boot the real MUSHclient app.

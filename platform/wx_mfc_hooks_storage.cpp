@@ -27,7 +27,6 @@ long (*g_wxhook_send_message)(void*, unsigned, uintptr_t, intptr_t) = nullptr;
 int  (*g_wxhook_post_message)(void*, unsigned, uintptr_t, intptr_t) = nullptr;
 int  (*g_wxhook_message_box)(const char*, const char*, unsigned) = nullptr;
 int  (*g_wxhook_load_mdi_frame)(void*, unsigned, unsigned long, void*) = nullptr;
-int  (*g_wxhook_run_app_loop)()                                  = nullptr;
 int  (*g_wxhook_init_instance)()                                 = nullptr;
 void* (*g_wxhook_new_world)()                                    = nullptr;
 void* (*g_wxhook_open_world_file)(const char*)                   = nullptr;

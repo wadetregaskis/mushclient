@@ -19,6 +19,12 @@ class CMUSHWxApp : public wxApp {
 public:
     bool OnInit() override
     {
+        // Name the app "MUSHclient" (the canonical Windows name) so the macOS
+        // application menu's Hide/Quit items and the app menu title read
+        // "MUSHclient" rather than the executable basename.
+        SetAppName(wxT("MUSHclient"));
+        SetAppDisplayName(wxT("MUSHclient"));
+
         // Install all MFC→wx bridge hooks before any MUSHclient code runs.
         wx_mfc_install_hooks();
 

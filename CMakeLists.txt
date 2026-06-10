@@ -882,6 +882,12 @@ if(NOT WIN32)
             # substitution so typed/pasted Lua isn't corrupted in script edits.
             target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/platform/wx_osx_text.mm)
             set_target_properties(mushgui PROPERTIES
+                # The CMake target stays "mushgui" (mushcore/mushcli/mushapp/mushgui
+                # build-target convention), but the bundle + executable are named
+                # "MUSHclient" to match the canonical Windows app — so it is
+                # MUSHclient.app/Contents/MacOS/MUSHclient, and wxWidgets' default
+                # app display name (derived from argv[0]) reads "MUSHclient" too.
+                OUTPUT_NAME                   "MUSHclient"
                 MACOSX_BUNDLE_GUI_IDENTIFIER  "au.com.gammon.MUSHclient"
                 MACOSX_BUNDLE_BUNDLE_NAME     "MUSHclient"
                 MACOSX_BUNDLE_SHORT_VERSION_STRING "5.07"
@@ -891,6 +897,10 @@ if(NOT WIN32)
             # iconutil) → Contents/Resources, named by CFBundleIconFile above, so
             # the Dock, Cmd-Tab switcher and Finder show MUSHclient's icon.
             add_custom_command(TARGET mushgui POST_BUILD
+                # Ensure Contents/Resources exists first — on a freshly-created
+                # bundle this icon copy can be the first thing to write there.
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources"
                 COMMAND ${CMAKE_COMMAND} -E copy
                     "${CMAKE_SOURCE_DIR}/platform/macos/MUSHclient.icns"
                     "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/"

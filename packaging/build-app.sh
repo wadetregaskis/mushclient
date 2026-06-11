@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+#
+# build-app.sh — build a complete, self-contained, signed MUSHclient.app on macOS.
+#
+# One command does the whole pipeline:
+#   1. configure + build the Release `mushgui` target
+#   2. relocate every non-system dylib / framework it links into the bundle
+#      (Contents/Frameworks) and rewrite the load commands → the .app no longer
+#      depends on Homebrew / Xcode being installed
+#   3. (optional) bundle Quow's Discworld plugins inside the app
+#   4. code-sign inside-out with the hardened runtime + entitlements
+#   5. (optional) notarize + staple
+#   6. produce a DMG (and a .zip)
+#
+# You need an Apple "Developer ID Application" certificate in your keychain to
+# produce a distributable build; without one the script ad-hoc signs so the app
+# still runs locally (it just can't be notarized or opened on other Macs).
+#
+# Examples
+#   # local self-contained build, ad-hoc signed, DMG in dist/
+#   packaging/build-app.sh
+#
+#   # signed + notarized release (identity + notary profile from your keychain)
+#   packaging/build-app.sh \
+#       --sign-identity "Developer ID Application: Jane Dev (TEAMID)" \
+#       --notarize-profile mushclient-notary
+#
+#   # Discworld edition with Quow's plugins pre-bundled
+#   packaging/fetch-discworld-plugins.sh          # stage them first (see script)
+#   packaging/build-app.sh --with-discworld --sign-identity "Developer ID Application: ..."
+#
+set -euo pipefail
+
+# ── locate the repo ─────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# ── defaults (overridable by flags / env) ───────────────────────────────────
+APP_NAME="MUSHclient"
+BUILD_TYPE="Release"
+BUILD_DIR="$REPO/build-release"
+OUTPUT_DIR="$REPO/dist"
+ENTITLEMENTS="$SCRIPT_DIR/entitlements.plist"
+SIGN_ID="${CODESIGN_IDENTITY:--}"                  # "-" == ad-hoc
+NOTARIZE_PROFILE="${NOTARYTOOL_PROFILE:-}"         # keychain profile name
+DISCWORLD_DIR="${DISCWORLD_PLUGINS_DIR:-$SCRIPT_DIR/discworld-plugins}"
+WITH_DISCWORLD=0
+MAKE_DMG=1
+DO_RELOCATE=1
+DO_CLEAN=0
+MIN_MACOS="11.0"
+JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+
+note() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+usage() {
+    sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    cat <<EOF
+
+Options
+  -t, --build-type TYPE     CMake build type (default: Release)
+  -s, --sign-identity ID    codesign identity, or "-" for ad-hoc
+                            (default: \$CODESIGN_IDENTITY, else ad-hoc)
+  -n, --notarize-profile P  notarytool keychain profile; if set, notarize+staple
+                            (default: \$NOTARYTOOL_PROFILE)
+  -d, --with-discworld      bundle Quow's plugins from the staging dir
+      --discworld-dir DIR   staging dir (default: packaging/discworld-plugins)
+  -o, --output DIR          where to put the .app / .dmg (default: dist/)
+  -j, --jobs N              parallel build jobs (default: ncpu)
+      --no-dmg              skip DMG creation (leave the .app in dist/)
+      --no-relocate         skip dylib bundling (faster; not self-contained)
+      --clean               wipe the build dir first
+  -h, --help                this help
+EOF
+}
+
+# ── parse args ──────────────────────────────────────────────────────────────
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -t|--build-type)      BUILD_TYPE="$2"; shift 2;;
+        -s|--sign-identity)   SIGN_ID="$2"; shift 2;;
+        -n|--notarize-profile) NOTARIZE_PROFILE="$2"; shift 2;;
+        -d|--with-discworld)  WITH_DISCWORLD=1; shift;;
+        --discworld-dir)      DISCWORLD_DIR="$2"; shift 2;;
+        -o|--output)          OUTPUT_DIR="$2"; shift 2;;
+        -j|--jobs)            JOBS="$2"; shift 2;;
+        --no-dmg)             MAKE_DMG=0; shift;;
+        --no-relocate)        DO_RELOCATE=0; shift;;
+        --clean)              DO_CLEAN=1; shift;;
+        -h|--help)            usage; exit 0;;
+        *) die "unknown option: $1 (try --help)";;
+    esac
+done
+
+[ "$(uname -s)" = "Darwin" ] || die "this script builds a macOS .app; run it on macOS"
+command -v cmake >/dev/null || die "cmake not found"
+
+APP="$BUILD_DIR/$APP_NAME.app"
+EXE="$APP/Contents/MacOS/$APP_NAME"
+FRAMEWORKS="$APP/Contents/Frameworks"
+
+# ════════════════════════════════════════════════════════════════════════════
+# 1. build
+# ════════════════════════════════════════════════════════════════════════════
+[ "$DO_CLEAN" = 1 ] && { note "cleaning $BUILD_DIR"; rm -rf "$BUILD_DIR"; }
+note "configuring ($BUILD_TYPE) → $BUILD_DIR"
+# EXTRA_CMAKE_ARGS lets you steer the configure, e.g. point at a redistributable
+# python.org framework:  EXTRA_CMAKE_ARGS="-DPython3_ROOT_DIR=/Library/Frameworks/Python.framework/Versions/3.12 -DPython3_FIND_FRAMEWORK=ONLY"
+# shellcheck disable=SC2086
+cmake -S "$REPO" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" ${EXTRA_CMAKE_ARGS:-} >/dev/null
+note "building mushgui (-j$JOBS)"
+# Force a pristine relink so the executable carries its ORIGINAL (Homebrew/Xcode)
+# rpaths + install names every run.  Without this, re-running on an already-
+# relocated binary (incremental build doesn't relink) leaves dyld unable to find
+# the still-un-bundled originals, and relocation resolves nothing.
+rm -f "$EXE"
+cmake --build "$BUILD_DIR" --target mushgui -j"$JOBS"
+[ -d "$APP" ] || die "build did not produce $APP"
+
+# ════════════════════════════════════════════════════════════════════════════
+# 2. bundle Discworld plugins (optional) — done before signing so they're sealed
+# ════════════════════════════════════════════════════════════════════════════
+if [ "$WITH_DISCWORLD" = 1 ]; then
+    shopt -s nullglob
+    plugins=("$DISCWORLD_DIR"/*.xml)
+    shopt -u nullglob
+    [ ${#plugins[@]} -gt 0 ] || die "no *.xml plugins in $DISCWORLD_DIR
+  Stage Quow's plugins there first:  packaging/fetch-discworld-plugins.sh"
+    note "bundling ${#plugins[@]} Discworld plugin(s) into the app"
+    mkdir -p "$APP/Contents/Resources/plugins"
+    cp "${plugins[@]}" "$APP/Contents/Resources/plugins/"
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
+# 3. relocate dependencies → self-contained bundle
+# ════════════════════════════════════════════════════════════════════════════
+is_system_lib() { case "$1" in /usr/lib/*|/System/*) return 0;; *) return 1;; esac; }
+
+# rpaths of a Mach-O binary (one per line).  In `otool -l`, each LC_RPATH is
+# three lines (cmd / cmdsize / path …); capture the path that follows the cmd.
+rpaths_of() { otool -l "$1" | awk '/^ *cmd LC_RPATH$/{f=1} f&&/^ *path /{print $2; f=0}'; }
+
+add_rpath_once() {
+    local bin="$1" rp="$2"
+    rpaths_of "$bin" | grep -qxF "$rp" || install_name_tool -add_rpath "$rp" "$bin" 2>/dev/null || true
+}
+
+# resolve a dependency string (absolute / @rpath / @loader_path / @executable_path)
+# to an on-disk path, using the loading binary's rpaths for @rpath
+resolve_dep() {
+    local dep="$1" bin="$2" bindir; bindir="$(dirname "$bin")"
+    case "$dep" in
+        /*) [ -f "$dep" ] && echo "$dep"; return;;
+        @loader_path/*)     echo "$bindir/${dep#@loader_path/}"; return;;
+        @executable_path/*) echo "$(dirname "$EXE")/${dep#@executable_path/}"; return;;
+        @rpath/*)
+            local rest="${dep#@rpath/}" rp exp
+            while IFS= read -r rp; do
+                exp="${rp/@loader_path/$bindir}"; exp="${exp/@executable_path/$(dirname "$EXE")}"
+                [ -e "$exp/$rest" ] && { echo "$exp/$rest"; return; }
+            done < <(rpaths_of "$bin")
+            # last resort: the standard Homebrew/local link dirs.  All our deps
+            # are Homebrew-provided, so this resolves even if $bin's own rpaths
+            # were already rewritten (e.g. on a re-run) or never pointed here.
+            for exp in /opt/homebrew/lib /usr/local/lib; do
+                [ -e "$exp/$rest" ] && { echo "$exp/$rest"; return; }
+            done
+            ;;
+    esac
+}
+
+relocate_framework() {  # $1=loading bin, $2=dep string pointing inside a .framework
+    local bin="$1" dep="$2"
+    local fwname inner resolved fwroot
+    fwname="$(basename "${dep%%.framework/*}").framework"   # e.g. Python3.framework
+    inner="${dep#*.framework/}"                             # e.g. Versions/3.9/Python3
+    if [ ! -d "$FRAMEWORKS/$fwname" ]; then
+        resolved="$(resolve_dep "$dep" "$bin")"
+        [ -n "$resolved" ] && [ -e "$resolved" ] || { warn "cannot resolve framework $dep"; return; }
+        fwroot="${resolved%%.framework/*}.framework"
+        case "$fwroot" in /Applications/Xcode*|*/CommandLineTools/*)
+            warn "bundling $fwname from Xcode/CLT: $fwroot
+         This is Apple's framework — fine for local/testing, but NOT cleanly
+         redistributable. For public release, rebuild against a python.org
+         framework (see packaging/README.md) and re-run this script."
+        ;; esac
+        note "  bundling framework $fwname"
+        cp -R "$fwroot" "$FRAMEWORKS/$fwname"               # -R keeps internal symlinks
+        chmod -R u+w "$FRAMEWORKS/$fwname" 2>/dev/null || true
+    fi
+    install_name_tool -change "$dep" "@rpath/$fwname/$inner" "$bin" 2>/dev/null || true
+}
+
+WORKLIST=()   # plain indexed array (bash 3.2 has no associative arrays);
+              # "already bundled?" is answered by testing for the file on disk.
+
+relocate_one() {  # scan one binary, bundle + rewrite its non-system deps
+    local bin="$1" dep base resolved selfbase; selfbase="$(basename "$bin")"
+    while IFS= read -r dep; do
+        [ -z "$dep" ] && continue
+        is_system_lib "$dep" && continue
+        [ "$(basename "$dep")" = "$selfbase" ] && continue   # skip a dylib's own id line
+        case "$dep" in
+            *.framework/*) relocate_framework "$bin" "$dep";;
+            *)
+                base="$(basename "$dep")"
+                if [ ! -f "$FRAMEWORKS/$base" ]; then          # not yet bundled
+                    resolved="$(resolve_dep "$dep" "$bin")"
+                    if [ -n "$resolved" ] && [ -f "$resolved" ]; then
+                        cp -L "$resolved" "$FRAMEWORKS/$base"
+                        chmod u+w "$FRAMEWORKS/$base"
+                        install_name_tool -id "@rpath/$base" "$FRAMEWORKS/$base" 2>/dev/null || true
+                        add_rpath_once "$FRAMEWORKS/$base" "@loader_path"
+                        # Keep the source dir on the rpath *temporarily* so this lib's
+                        # own @rpath siblings (e.g. libwebp → libsharpyuv, in the same
+                        # Homebrew dir) resolve while we recurse.  Stripped afterwards.
+                        add_rpath_once "$FRAMEWORKS/$base" "$(dirname "$resolved")"
+                        WORKLIST+=("$FRAMEWORKS/$base")
+                    else
+                        warn "could not resolve $dep (needed by $selfbase)"
+                    fi
+                fi
+                install_name_tool -change "$dep" "@rpath/$base" "$bin" 2>/dev/null || true
+                ;;
+        esac
+    done < <(otool -L "$bin" | tail -n +2 | awk '{print $1}')
+}
+
+if [ "$DO_RELOCATE" = 1 ]; then
+    note "relocating dependencies into $APP_NAME.app/Contents/Frameworks"
+    rm -rf "$FRAMEWORKS"          # always relocate from scratch (no stale state on re-runs)
+    mkdir -p "$FRAMEWORKS"
+    WORKLIST=("$EXE")
+    widx=0
+    while [ $widx -lt ${#WORKLIST[@]} ]; do      # index walk: relocate_one appends (BFS)
+        bin="${WORKLIST[$widx]}"; widx=$((widx + 1))
+        relocate_one "$bin"
+    done
+    # the main executable finds the bundled libs/frameworks via this rpath
+    add_rpath_once "$EXE" "@executable_path/../Frameworks"
+    # drop the build-host rpaths (Homebrew/Xcode dirs) from the exe AND every
+    # bundled dylib so nothing leaks the build machine; @loader_path (added on
+    # each copy) keeps siblings resolvable inside Contents/Frameworks.
+    for b in "$EXE" "$FRAMEWORKS"/*.dylib; do
+        [ -f "$b" ] || continue
+        while IFS= read -r rp; do
+            case "$rp" in /opt/*|/usr/local/*|/Applications/Xcode*|*/CommandLineTools/*)
+                install_name_tool -delete_rpath "$rp" "$b" 2>/dev/null || true;; esac
+        done < <(rpaths_of "$b")
+    done
+    note "  bundled $(ls -1 "$FRAMEWORKS" | wc -l | tr -d ' ') item(s); residual non-system deps:"
+    otool -L "$EXE" | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/|@)' | sed 's/^/    LEAK: /' || true
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
+# 4. Info.plist touch-ups
+# ════════════════════════════════════════════════════════════════════════════
+PB=/usr/libexec/PlistBuddy
+plist="$APP/Contents/Info.plist"
+$PB -c "Set :LSMinimumSystemVersion $MIN_MACOS" "$plist" 2>/dev/null || \
+    $PB -c "Add :LSMinimumSystemVersion string $MIN_MACOS" "$plist"
+$PB -c "Set :NSHighResolutionCapable true" "$plist" 2>/dev/null || \
+    $PB -c "Add :NSHighResolutionCapable bool true" "$plist"
+$PB -c "Print :CFBundleVersion" "$plist" >/dev/null 2>&1 || \
+    $PB -c "Add :CFBundleVersion string $($PB -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null || echo 1.0)" "$plist"
+
+# ════════════════════════════════════════════════════════════════════════════
+# 5. code sign (inside-out)
+# ════════════════════════════════════════════════════════════════════════════
+# A real Developer ID signature gets a secure timestamp (needs network); ad-hoc
+# ("-") cannot be timestamped/notarized.  Avoid an empty-array flag so the
+# script stays bash-3.2 clean under `set -u`.
+sign_lib() {
+    if [ "$SIGN_ID" = "-" ]; then codesign --force --options runtime --sign - "$1"
+    else codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$1"; fi
+}
+sign_app() {
+    if [ "$SIGN_ID" = "-" ]; then
+        codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$1"
+    else
+        codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$1"
+    fi
+}
+
+# codesign refuses a bundle whose files carry extended attributes (resource
+# forks / Finder info / com.apple.quarantine), which cp and downloaded assets
+# routinely leave behind.  Strip them before signing.
+note "stripping extended attributes (xattr -cr)"
+xattr -cr "$APP"
+
+note "code signing with identity: $SIGN_ID"
+[ "$SIGN_ID" = "-" ] && warn "ad-hoc signing — fine for THIS Mac, but cannot be notarized or run elsewhere"
+if [ -d "$FRAMEWORKS" ]; then
+    # nested Mach-O first (deepest last is fine; each is independent)
+    while IFS= read -r -d '' f; do sign_lib "$f"; done \
+        < <(find "$FRAMEWORKS" -type f \( -name '*.dylib' -o -name '*.so' \) -print0)
+    for f in "$FRAMEWORKS"/*.framework; do [ -d "$f" ] && sign_lib "$f"; done
+fi
+sign_app "$APP"
+codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /' || warn "codesign --verify reported issues"
+
+# ════════════════════════════════════════════════════════════════════════════
+# 6. notarize (optional) + package
+# ════════════════════════════════════════════════════════════════════════════
+mkdir -p "$OUTPUT_DIR"
+ZIP="$OUTPUT_DIR/$APP_NAME.zip"
+
+if [ -n "$NOTARIZE_PROFILE" ]; then
+    [ "$SIGN_ID" = "-" ] && die "cannot notarize an ad-hoc-signed app; pass --sign-identity"
+    note "notarizing via keychain profile '$NOTARIZE_PROFILE' (this can take a few minutes)"
+    ditto -c -k --keepParent "$APP" "$ZIP"
+    xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARIZE_PROFILE" --wait
+    note "stapling ticket"
+    xcrun stapler staple "$APP"
+fi
+
+note "packaging → $OUTPUT_DIR"
+rm -rf "$OUTPUT_DIR/$APP_NAME.app"
+cp -R "$APP" "$OUTPUT_DIR/$APP_NAME.app"
+ditto -c -k --keepParent "$OUTPUT_DIR/$APP_NAME.app" "$ZIP"
+note "  wrote $ZIP"
+
+if [ "$MAKE_DMG" = 1 ]; then
+    DMG="$OUTPUT_DIR/$APP_NAME.dmg"
+    stage="$(mktemp -d)"
+    cp -R "$APP" "$stage/$APP_NAME.app"
+    ln -s /Applications "$stage/Applications"
+    rm -f "$DMG"
+    hdiutil create -volname "$APP_NAME" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
+    rm -rf "$stage"
+    [ -n "$NOTARIZE_PROFILE" ] && xcrun stapler staple "$DMG" 2>/dev/null || true
+    note "  wrote $DMG"
+fi
+
+note "done."
+echo
+echo "  app : $OUTPUT_DIR/$APP_NAME.app"
+echo "  zip : $ZIP"
+[ "$MAKE_DMG" = 1 ] && echo "  dmg : $OUTPUT_DIR/$APP_NAME.dmg"
+[ "$SIGN_ID" = "-" ] && echo "  (ad-hoc signed — for a distributable build pass --sign-identity / --notarize-profile)"

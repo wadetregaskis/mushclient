@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for the signed/notarized MUSHclient.app.
+
+  MUSHclient embeds three scripting engines, and each needs a relaxation of the
+  hardened runtime to work:
+
+    * JavaScriptCore compiles JS to native code  → allow-jit
+    * CPython / libperl allocate executable pages → allow-unsigned-executable-memory
+    * the embedded interpreters dlopen extension modules / the app loads the
+      bundled (and, in dev, Homebrew) dylibs that are not all signed by us
+                                                  → disable-library-validation
+
+  These are the minimum needed; nothing here grants network/file entitlements
+  (a non-sandboxed Developer-ID app already has normal file/network access).
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

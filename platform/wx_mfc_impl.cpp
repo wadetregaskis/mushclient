@@ -39,6 +39,7 @@
 #include <fstream>         // bundled "TEXT" resources (licence / credits)
 #include <sstream>
 #include <vector>
+#include <filesystem>      // first-run seeding of bundled plugins (Discworld edition)
 
 // ── MUSHclient headers (MFC compat layer) ────────────────────────────────
 // Must come AFTER wx so our stubs don't shadow wx internals inside this TU.
@@ -1964,6 +1965,52 @@ static void* hook_new_world()
     return static_cast<void*>(doc);
 }
 
+// ── First-run seeding of bundled plugins ──────────────────────────────────
+// A "Discworld edition" build (packaging/build-app.sh --with-discworld) ships
+// Quow's plugins inside the app at Contents/Resources/plugins/.  Copy any the
+// user doesn't already have into their writable plugins dir so they appear in
+// the plugin manager and can be added to a Discworld world.  Non-destructive:
+// an existing file is never overwritten, so user edits / newer versions stay.
+// No-op for a normal build (no bundled plugins dir present).
+static void SeedBundledPlugins()
+{
+    namespace fs = std::filesystem;
+    try
+    {
+        // wxStandardPaths resolves the bundle's Contents/Resources reliably
+        // (vs. second-guessing the executable path).  On Linux this is the
+        // install prefix's share dir; a packager may seed plugins there too.
+        const std::string resDir (wxStandardPaths::Get ().GetResourcesDir ().utf8_str ());
+        const fs::path src = fs::path (resDir) / "plugins";
+        if (!fs::is_directory (src))
+            return;   // ordinary build — nothing bundled to seed
+
+        const fs::path dst = fs::path (PortableUserDataDir ()) / "worlds" / "plugins";
+        std::error_code ec;
+        fs::create_directories (dst, ec);
+
+        int seeded = 0;
+        for (const auto & entry : fs::directory_iterator (src, ec))
+        {
+            if (!entry.is_regular_file ())
+                continue;
+            const fs::path target = dst / entry.path ().filename ();
+            if (fs::exists (target))
+                continue;   // keep the user's existing copy
+            std::error_code cec;
+            if (fs::copy_file (entry.path (), target, cec) && !cec)
+                ++seeded;
+        }
+        if (seeded)
+            fprintf (stderr, "[plugins] seeded %d bundled plugin(s) into %s\n",
+                     seeded, dst.string ().c_str ());
+    }
+    catch (const std::exception & ex)
+    {
+        fprintf (stderr, "[plugins] bundled-plugin seeding skipped: %s\n", ex.what ());
+    }
+}
+
 // ── App InitInstance bootstrap ────────────────────────────────────────────
 // Called by wx_app.cpp::OnInit() via the hook pointer to avoid including
 // MUSHclient.h in wx_app.cpp (which would conflict with wx headers).
@@ -1973,6 +2020,10 @@ static int hook_init_instance()
     // Set basic CWinApp members that MFC normally sets before InitInstance.
     App.m_lpCmdLine = "";
     App.m_nCmdShow  = SW_SHOWNORMAL;
+
+    // Stage any bundled plugins BEFORE InitInstance so worlds auto-opened
+    // during startup already see them.
+    SeedBundledPlugins();
 
     int ok = App.InitInstance() != FALSE ? 1 : 0;
     if (ok)

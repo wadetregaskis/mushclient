@@ -91,6 +91,13 @@ commit-phase1.sh
 scripting/methods/methods_sounds_patch.py
 
 #
+# Packaging: build output + staged third-party plugins (Quow's Discworld pack).
+# Quow's plugins are NOT ours to redistribute — never commit them.
+#
+dist/
+packaging/discworld-plugins/
+
+#
 # Port working notes (not part of project history)
 #
 LOGBOOK.md

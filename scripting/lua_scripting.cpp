@@ -519,6 +519,15 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
 
   {
 
+#ifndef _WIN32
+  // Python world (the trigger/alias/timer/plugin call sites gate on
+  // IsLua() || IsPython(), so a Python engine lands here): forward to the
+  // embedded interpreter with the identical parameter set.
+  if (m_pyEngine)
+    return ExecutePython (dispid, szProcedure, iReason, szType, szReason,
+                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
+#endif
+
   // safety check ;)
   if (!L)
     return false;
@@ -736,6 +745,12 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
                                long & nInvocationCount,  // count of invocations
                                CString & result)         // where to put result
   {
+
+#ifndef _WIN32
+  if (m_pyEngine)
+    return ExecutePython (dispid, szProcedure, iReason, szType, szReason,
+                          strParam, nInvocationCount, result);
+#endif
 
   // safety check ;)
   if (!L)

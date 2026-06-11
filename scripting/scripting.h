@@ -16,6 +16,10 @@ extern "C"
 
 #include "paneline.h"
 
+// Opaque per-engine Python state (one module namespace per world/plugin).
+// Defined in platform/py_engine.cpp; null unless the world's language is Python.
+class CPythonEngine;
+
 #define DOCUMENT_STATE "mushclient.document"
 #define WORLD_LIBRARY "world"
 
@@ -42,6 +46,9 @@ class CScriptEngine : public CObject
       m_pDispatch = NULL;
 #endif
       L = NULL;
+#ifndef _WIN32
+      m_pyEngine = NULL;
+#endif
       };  // end of constructor
 
     ~CScriptEngine () // destructor
@@ -103,6 +110,39 @@ class CScriptEngine : public CObject
 
   const bool IsLua () const { return L != NULL; }
   lua_State           * L;                  // Lua state
+
+  // IsPython() is defined on every platform (false on Windows, where the COM
+  // host — not this embedded engine — runs the alternate languages) so the
+  // shared trigger/alias/timer/plugin call sites can write
+  // `IsLua() || IsPython()` without per-site #ifdefs.
+#ifdef _WIN32
+  const bool IsPython () const { return false; }
+#else
+  // ── Python engine (port) ────────────────────────────────────────────────
+  // Real CPython, embedded.  The world API is reached through the portable
+  // dispatch-map Invoke (platform/mc_dispatch.cpp), not a hand-written binding.
+  // See platform/py_engine.cpp.  m_pyEngine is null for Lua worlds, so
+  // IsPython() gates the Python paths without disturbing the others.
+  const bool IsPython () const { return m_pyEngine != NULL; }
+  void   OpenPython ();
+  void   ClosePython ();
+  bool   ParsePython (const CString & strCode, const CString & strWhat);
+  DISPID GetPythonDispid (const CString & strName);
+
+  // Rich callback — exact mirror of the ExecuteLua overloads above, so the same
+  // doc/evaluate/plugins/timers call sites drive it.
+  bool ExecutePython (DISPID & dispid, LPCTSTR szProcedure, const unsigned short iReason,
+                      LPCTSTR szType, LPCTSTR szReason,
+                      list<double> & nparams, list<string> & sparams,
+                      long & nInvocationCount, const t_regexp * regexp = NULL,
+                      map<string, string> * table = NULL, CPaneLine * paneline = NULL,
+                      bool * result = NULL);
+  bool ExecutePython (DISPID & dispid, LPCTSTR szProcedure, const unsigned short iReason,
+                      LPCTSTR szType, LPCTSTR szReason, CString strParam,
+                      long & nInvocationCount, CString & result);
+
+  CPythonEngine * m_pyEngine;               // opaque per-engine Python state
+#endif
 
   private:
 

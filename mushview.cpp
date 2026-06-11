@@ -5848,7 +5848,7 @@ ASSERT_VALID(pDoc);
           CString strReason =  TFormat ("processing alias \"%s\"", 
                                         (LPCTSTR) pAlias->strLabel);
 
-      if (pDoc->GetScriptEngine () && pDoc->GetScriptEngine ()->IsLua ())
+      if (pDoc->GetScriptEngine () && (pDoc->GetScriptEngine ()->IsLua () || pDoc->GetScriptEngine ()->IsPython ()))
             {
             list<double> nparams;
             list<string> sparams;

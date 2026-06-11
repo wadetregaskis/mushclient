@@ -184,6 +184,16 @@ if(NOT WIN32)
             set(LUA_FOUND TRUE)
         endif()
     endif()
+
+    # ── Python 3 (embedded alternate scripting engine — mushapp/GUI only) ──
+    # Optional: when present, a world whose language is "Python" runs on real
+    # CPython via platform/py_engine.cpp.  Absent → scriptengine.cpp link stubs.
+    find_package(Python3 QUIET COMPONENTS Development.Embed)
+    if(Python3_FOUND)
+        message(STATUS "Python3 ${Python3_VERSION} found — Python scripting enabled")
+    else()
+        message(STATUS "Python3 (Development.Embed) not found — Python scripting disabled")
+    endif()
 endif()
 
 # ── Vendored library: PCRE ────────────────────────────────────────────────
@@ -473,6 +483,9 @@ if(NOT WIN32)
         # Hook pointer definitions (also in mushcore for mushcli; no ODR conflict
         # because no target links both mushapp and mushcore simultaneously).
         platform/wx_mfc_hooks_storage.cpp
+        # Phase 3 scripting: portable IDispatch::Invoke over the doc dispatch map
+        # (shared substrate for the non-Lua engines — see platform/mc_dispatch.h).
+        platform/mc_dispatch.cpp
         # (utilities_portable.cpp → Utilities.cpp)
         Utilities.cpp
         # (doc_portable.cpp → doc.cpp + doc_construct.cpp)
@@ -704,6 +717,14 @@ if(NOT WIN32)
             scripting/lua_progressdlg.cpp
         )
         target_compile_definitions(mushapp PRIVATE MUSHCLIENT_LUA_SCRIPTING)
+    endif()
+
+    if(Python3_FOUND)
+        # Embedded CPython scripting engine (routes the world API through the
+        # portable dispatch-map Invoke in platform/mc_dispatch.cpp).
+        target_sources(mushapp PRIVATE platform/py_engine.cpp)
+        target_compile_definitions(mushapp PRIVATE MUSHCLIENT_PYTHON_SCRIPTING)
+        target_link_libraries(mushapp PUBLIC Python3::Python)
     endif()
 
     target_include_directories(mushapp PUBLIC

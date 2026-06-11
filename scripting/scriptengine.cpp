@@ -666,6 +666,23 @@ bool CScriptEngine::Execute (DISPID& dispid,
       }
     return status;
     }
+  if (m_pyEngine)
+    {
+    // World events (on_world_open / connect / disconnect / focus) reach the
+    // engine through this generic entry, with no rich parameters.
+    list<double> nparams;
+    list<string> sparams;
+    bool r = false;
+    bool status = ExecutePython (dispid, szProcedure, iReason, szType, szReason,
+                                 nparams, sparams, nInvocationCount,
+                                 nullptr, nullptr, nullptr, &r);
+    if (result)
+      {
+      result->vt = VT_BOOL;
+      result->boolVal = r;
+      }
+    return status;
+    }
   if (dispid == DISPID_UNKNOWN) return false;
   dispid = DISPID_UNKNOWN;
   return true;
@@ -679,18 +696,22 @@ bool CScriptEngine::CreateScriptEngine (void)
   // can never compile anything.  Returns false = success (Windows convention).
   if (m_strLanguage.CompareNoCase ("Lua") == 0)
     OpenLua ();
+  else if (m_strLanguage.CompareNoCase ("Python") == 0)
+    OpenPython ();
   return false;
   }
 
 bool CScriptEngine::Parse (const CString& strCode, const CString& strWhat)
   {
   if (L) return ParseLua (strCode, strWhat);
+  if (m_pyEngine) return ParsePython (strCode, strWhat);
   return true; // error: no engine
   }
 
 DISPID CScriptEngine::GetDispid (const CString& strName)
   {
   if (L) return GetLuaDispid (strName);
+  if (m_pyEngine) return GetPythonDispid (strName);
   return DISPID_UNKNOWN;
   }
 
@@ -699,6 +720,7 @@ bool CScriptEngine::ShowError (const HRESULT, const CString) { return false; }
 void CScriptEngine::DisableScripting (void)
   {
   if (L) CloseLua ();
+  if (m_pyEngine) ClosePython ();
   }
 
 #ifndef MUSHCLIENT_LUA_SCRIPTING  // lua_scripting.cpp not compiled — provide link-time stubs
@@ -724,6 +746,29 @@ bool CScriptEngine::ExecuteLua (DISPID& dispid,
                                  CString, long&, CString&)
   { dispid = DISPID_UNKNOWN; return false; }
 #endif // !MUSHCLIENT_LUA_SCRIPTING
+
+#ifndef MUSHCLIENT_PYTHON_SCRIPTING  // py_engine.cpp not compiled — link stubs
+// Defined in platform/py_engine.cpp when CMake finds Python3; these no-ops let
+// the library link (and a "Python" world simply gets no engine) otherwise.
+void   CScriptEngine::OpenPython ()  {}
+void   CScriptEngine::ClosePython () { m_pyEngine = NULL; }
+bool   CScriptEngine::ParsePython (const CString&, const CString&) { return true; }
+DISPID CScriptEngine::GetPythonDispid (const CString&) { return DISPID_UNKNOWN; }
+
+bool CScriptEngine::ExecutePython (DISPID& dispid,
+                                   LPCTSTR, const unsigned short,
+                                   LPCTSTR, LPCTSTR,
+                                   list<double>&, list<string>&, long&,
+                                   const t_regexp*, map<string,string>*,
+                                   CPaneLine*, bool*)
+  { dispid = DISPID_UNKNOWN; return false; }
+
+bool CScriptEngine::ExecutePython (DISPID& dispid,
+                                   LPCTSTR, const unsigned short,
+                                   LPCTSTR, LPCTSTR,
+                                   CString, long&, CString&)
+  { dispid = DISPID_UNKNOWN; return false; }
+#endif // !MUSHCLIENT_PYTHON_SCRIPTING
 
 #endif // _WIN32
 

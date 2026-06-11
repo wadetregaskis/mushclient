@@ -1,0 +1,458 @@
+// platform/py_engine.cpp — embedded CPython scripting engine for the port.
+//
+// On Windows the alternate languages ride COM ActiveScripting; off Windows we
+// embed the real interpreter directly.  The world object model is NOT re-bound
+// by hand (the way lua_methods.cpp binds Lua) — instead the `world` proxy routes
+// every call through the portable dispatch-map Invoke (platform/mc_dispatch.cpp),
+// so all 403 automation methods are reachable for free and stay in sync with the
+// Windows dispatch map.
+//
+// One CPython interpreter is shared process-wide (Py_Initialize once); each world
+// or plugin (each CScriptEngine) gets its own module-namespace dict so globals
+// don't collide.  All scripting runs on the UI thread, so the GIL is simply held
+// throughout — no per-call GIL juggling.
+//
+// Built only when CMake finds Python3 (MUSHCLIENT_PYTHON_SCRIPTING) in the full
+// (mushapp) build; scriptengine.cpp provides link stubs otherwise.
+
+#if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD) && defined(MUSHCLIENT_PYTHON_SCRIPTING)
+
+#include <Python.h>          // must precede the MFC/MUSHclient headers
+
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/scripting.h"
+#include "platform/mc_dispatch.h"
+
+#include <string>
+#include <vector>
+#include <cstring>
+
+#ifndef VT_ERROR
+#define VT_ERROR 10
+#endif
+#ifndef VT_DISPATCH
+#define VT_DISPATCH 9
+#endif
+
+// Per-engine Python state (opaque to the rest of the program; CScriptEngine
+// holds it as CPythonEngine*).
+class CPythonEngine
+  {
+  public:
+  CMUSHclientDoc* doc   = nullptr;
+  PyObject*       ns    = nullptr;   // module namespace (globals for exec/eval)
+  PyObject*       world = nullptr;   // the `world` proxy object (a WorldObject)
+  };
+
+namespace {
+
+// ── world / world-method proxy types ────────────────────────────────────────
+struct WorldObject  { PyObject_HEAD; CMUSHclientDoc* doc; };
+struct MethodObject { PyObject_HEAD; CMUSHclientDoc* doc; char* name; };
+
+// Head-initialised (ob_refcnt=1, ob_type=NULL, rest zeroed); fields filled in
+// ensure_init() so the layout stays robust across CPython versions.
+PyTypeObject WorldType  = { PyVarObject_HEAD_INIT(NULL, 0) };
+PyTypeObject MethodType = { PyVarObject_HEAD_INIT(NULL, 0) };
+
+PyObject* make_world(CMUSHclientDoc* doc)
+  {
+  WorldObject* w = PyObject_New(WorldObject, &WorldType);
+  if (w) w->doc = doc;
+  return (PyObject*) w;
+  }
+
+PyObject* make_method(CMUSHclientDoc* doc, const char* name)
+  {
+  MethodObject* m = PyObject_New(MethodObject, &MethodType);
+  if (m) { m->doc = doc; m->name = strdup(name); }
+  return (PyObject*) m;
+  }
+
+// ── PyObject <-> VARIANT marshalling ────────────────────────────────────────
+void py_to_variant(PyObject* o, VARIANT& v)
+  {
+  VariantInit(&v);
+  if (o == nullptr || o == Py_None)        { v.vt = VT_EMPTY; return; }
+  if (PyBool_Check(o))                     { v.vt = VT_BOOL; v.boolVal = (o == Py_True); return; }
+  if (PyLong_Check(o))                     { v.vt = VT_I4;   v.lVal = PyLong_AsLong(o);
+                                             if (v.lVal == -1 && PyErr_Occurred())
+                                               { PyErr_Clear(); v.vt = VT_R8; v.dblVal = PyLong_AsDouble(o); }
+                                             return; }
+  if (PyFloat_Check(o))                    { v.vt = VT_R8;   v.dblVal = PyFloat_AsDouble(o); return; }
+  if (PyUnicode_Check(o))
+    {
+    Py_ssize_t len = 0;
+    const char* s = PyUnicode_AsUTF8AndSize(o, &len);
+    v.vt = VT_BSTR; v.bstrVal = SysAllocString(s ? s : "");
+    return;
+    }
+  if (PyBytes_Check(o))                    { v.vt = VT_BSTR; v.bstrVal = SysAllocString(PyBytes_AsString(o)); return; }
+  // Fallback: str(o)
+  PyObject* str = PyObject_Str(o);
+  v.vt = VT_BSTR;
+  v.bstrVal = SysAllocString(str ? PyUnicode_AsUTF8(str) : "");
+  Py_XDECREF(str);
+  }
+
+PyObject* variant_to_py(const VARIANT& v)
+  {
+  if (v.vt & VT_ARRAY)
+    {
+    SAFEARRAY* sa = v.parray;
+    if (!sa || sa->cDims < 1) return PyList_New(0);
+    long count = (long) sa->rgsabound[0].cElements;
+    unsigned base = v.vt & ~VT_ARRAY;
+    PyObject* list = PyList_New(count);
+    for (long i = 0; i < count; i++)
+      {
+      PyObject* item;
+      if (base == VT_BSTR)
+        {
+        BSTR* p = ((BSTR*) sa->pvData) + i;
+        item = (*p) ? PyUnicode_DecodeUTF8(*p, strlen(*p), "surrogateescape")
+                    : PyUnicode_FromString("");
+        }
+      else // VT_VARIANT (the MUSHclient norm) or anything else: element is a VARIANT
+        {
+        VARIANT* p = ((VARIANT*) sa->pvData) + i;
+        item = variant_to_py(*p);
+        }
+      PyList_SET_ITEM(list, i, item);   // steals ref
+      }
+    return list;
+    }
+
+  switch (v.vt)
+    {
+    case VT_EMPTY: case VT_NULL: case VT_ERROR: Py_RETURN_NONE;
+    case VT_I2:   return PyLong_FromLong(v.iVal);
+    case VT_I4:   return PyLong_FromLong(v.lVal);
+    case VT_R4:   return PyFloat_FromDouble(v.fltVal);
+    case VT_R8:   return PyFloat_FromDouble(v.dblVal);
+    case VT_BOOL: return PyBool_FromLong(v.boolVal);
+    case VT_BSTR: return v.bstrVal ? PyUnicode_DecodeUTF8(v.bstrVal, strlen(v.bstrVal), "surrogateescape")
+                                   : PyUnicode_FromString("");
+    case VT_DISPATCH: if (v.byref) return make_world((CMUSHclientDoc*) v.byref);
+                      Py_RETURN_NONE;
+    default:      Py_RETURN_NONE;
+    }
+  }
+
+// ── world.<Method>(...) — marshal args, Invoke, marshal the return ──────────
+PyObject* Method_call(PyObject* self, PyObject* args, PyObject* /*kw*/)
+  {
+  MethodObject* m = (MethodObject*) self;
+  Py_ssize_t n = PyTuple_GET_SIZE(args);
+
+  std::vector<VARIANT> vargs((size_t) n);
+  for (Py_ssize_t i = 0; i < n; i++)
+    py_to_variant(PyTuple_GET_ITEM(args, i), vargs[(size_t) i]);
+
+  VARIANT result; VariantInit(&result);
+  std::vector<VARIANT> outargs;
+  int rc = MC_DispatchInvoke(m->doc, m->name,
+                             n ? vargs.data() : nullptr, (int) n, result, &outargs);
+
+  for (auto& a : vargs) MC_VariantClear(a);
+
+  if (rc == MC_DISP_UNKNOWN)
+    { PyErr_Format(PyExc_AttributeError, "world has no method '%s'", m->name); return nullptr; }
+  if (rc != MC_DISP_OK)
+    { PyErr_Format(PyExc_RuntimeError, "world.%s: bad arguments", m->name);
+      MC_VariantClear(result); return nullptr; }
+
+  PyObject* res = variant_to_py(result);
+  MC_VariantClear(result);
+
+  if (outargs.empty())
+    return res;
+
+  // By-ref getters (GetTrigger/GetAlias/GetTimer): return (result, out0, out1, ...)
+  PyObject* tup = PyTuple_New(1 + (Py_ssize_t) outargs.size());
+  PyTuple_SET_ITEM(tup, 0, res);
+  for (size_t i = 0; i < outargs.size(); i++)
+    { PyTuple_SET_ITEM(tup, (Py_ssize_t)(i + 1), variant_to_py(outargs[i])); MC_VariantClear(outargs[i]); }
+  return tup;
+  }
+
+void Method_dealloc(PyObject* self)
+  {
+  free(((MethodObject*) self)->name);
+  Py_TYPE(self)->tp_free(self);
+  }
+
+// world.<name> -> a bound MethodObject when <name> is a dispatch method.
+PyObject* World_getattro(PyObject* self, PyObject* nameobj)
+  {
+  const char* name = PyUnicode_AsUTF8(nameobj);
+  if (name && MC_DispatchHas(name))
+    return make_method(((WorldObject*) self)->doc, name);
+  return PyObject_GenericGetAttr(self, nameobj);   // dunders, errors
+  }
+
+bool g_inited = false;
+
+void ensure_init()
+  {
+  if (g_inited) return;
+  Py_InitializeEx(0);          // embedded: don't trap signals
+  g_inited = true;
+
+  WorldType.tp_name      = "mushclient.world";
+  WorldType.tp_basicsize = sizeof(WorldObject);
+  WorldType.tp_flags     = Py_TPFLAGS_DEFAULT;
+  WorldType.tp_getattro  = World_getattro;
+  WorldType.tp_doc       = "MUSHclient world object";
+  PyType_Ready(&WorldType);
+
+  MethodType.tp_name      = "mushclient.world_method";
+  MethodType.tp_basicsize = sizeof(MethodObject);
+  MethodType.tp_flags     = Py_TPFLAGS_DEFAULT;
+  MethodType.tp_call      = Method_call;
+  MethodType.tp_dealloc   = Method_dealloc;
+  PyType_Ready(&MethodType);
+  }
+
+// Resolve a (possibly dotted) procedure name in the namespace; new ref or null.
+PyObject* resolve(PyObject* ns, const char* dotted)
+  {
+  if (!ns || !dotted || !*dotted) return nullptr;
+  std::string s(dotted);
+  PyObject* obj = nullptr;
+  size_t start = 0;
+  bool first = true;
+  for (;;)
+    {
+    size_t dot = s.find('.', start);
+    std::string part = (dot == std::string::npos) ? s.substr(start) : s.substr(start, dot - start);
+    if (first)
+      {
+      PyObject* o = PyDict_GetItemString(ns, part.c_str());   // borrowed
+      if (!o) return nullptr;
+      Py_INCREF(o); obj = o; first = false;
+      }
+    else
+      {
+      PyObject* o = PyObject_GetAttrString(obj, part.c_str()); // new ref
+      Py_DECREF(obj);
+      if (!o) { PyErr_Clear(); return nullptr; }
+      obj = o;
+      }
+    if (dot == std::string::npos) break;
+    start = dot + 1;
+    }
+  return obj;
+  }
+
+// Format the pending Python exception and surface it like LuaError does.
+void report_error(CMUSHclientDoc* doc, const char* what, const char* proc)
+  {
+  if (!PyErr_Occurred()) return;
+  PyObject *type = nullptr, *value = nullptr, *tb = nullptr;
+  PyErr_Fetch(&type, &value, &tb);
+  PyErr_NormalizeException(&type, &value, &tb);
+
+  CString msg;
+  PyObject* tbmod = PyImport_ImportModule("traceback");
+  if (tbmod && type)
+    {
+    PyObject* fmt = PyObject_CallMethod(tbmod, "format_exception", "OOO",
+                                        type, value ? value : Py_None, tb ? tb : Py_None);
+    if (fmt)
+      {
+      PyObject* sep = PyUnicode_FromString("");
+      PyObject* joined = PyUnicode_Join(sep, fmt);
+      if (joined) { const char* s = PyUnicode_AsUTF8(joined); if (s) msg = s; Py_DECREF(joined); }
+      Py_DECREF(sep); Py_DECREF(fmt);
+      }
+    }
+  Py_XDECREF(tbmod);
+  if (msg.IsEmpty() && value)
+    { PyObject* str = PyObject_Str(value); if (str) { const char* s = PyUnicode_AsUTF8(str); if (s) msg = s; Py_DECREF(str); } }
+
+  Py_XDECREF(type); Py_XDECREF(value); Py_XDECREF(tb);
+  PyErr_Clear();
+
+  if (doc)
+    {
+    CString hdr;
+    hdr.Format ("Python error: %s%s%s\n",
+                what ? what : "",
+                (proc && *proc) ? " / " : "",
+                proc ? proc : "");
+    doc->ColourNote ("white", "red", hdr + msg);
+    }
+  }
+
+} // anonymous namespace
+
+// ── CScriptEngine Python methods ────────────────────────────────────────────
+void CScriptEngine::OpenPython ()
+  {
+  ensure_init ();
+  CPythonEngine* e = new CPythonEngine ();
+  e->doc = m_pDoc;
+  e->ns  = PyDict_New ();
+  PyObject* builtins = PyImport_ImportModule ("builtins");
+  if (builtins) { PyDict_SetItemString (e->ns, "__builtins__", builtins); Py_DECREF (builtins); }
+  e->world = make_world (m_pDoc);
+  if (e->world) PyDict_SetItemString (e->ns, "world", e->world);
+  m_pyEngine = e;
+  }
+
+void CScriptEngine::ClosePython ()
+  {
+  if (!m_pyEngine) return;
+  Py_XDECREF (m_pyEngine->world);
+  Py_XDECREF (m_pyEngine->ns);
+  delete m_pyEngine;
+  m_pyEngine = NULL;
+  }
+
+bool CScriptEngine::ParsePython (const CString & strCode, const CString & strWhat)
+  {
+  if (!m_pyEngine) return true;
+  PyObject* r = PyRun_String ((LPCTSTR) strCode, Py_file_input, m_pyEngine->ns, m_pyEngine->ns);
+  if (!r) { report_error (m_pDoc, strWhat, ""); return true; }
+  Py_DECREF (r);
+  return false;
+  }
+
+DISPID CScriptEngine::GetPythonDispid (const CString & strName)
+  {
+  if (!m_pyEngine || strName.IsEmpty ()) return DISPID_UNKNOWN;
+  PyObject* fn = resolve (m_pyEngine->ns, (LPCTSTR) strName);
+  bool ok = fn && PyCallable_Check (fn);
+  Py_XDECREF (fn);
+  return ok ? 1 : DISPID_UNKNOWN;       // sentinel; the name is what matters
+  }
+
+bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
+                                   const unsigned short iReason,
+                                   LPCTSTR szType, LPCTSTR szReason,
+                                   list<double> & nparams, list<string> & sparams,
+                                   long & nInvocationCount, const t_regexp * regexp,
+                                   map<string, string> * table, CPaneLine * paneline,
+                                   bool * result)
+  {
+  if (!m_pyEngine) return false;
+  if (dispid == DISPID_UNKNOWN) return false;
+
+  PyObject* fn = resolve (m_pyEngine->ns, szProcedure);
+  if (!fn || !PyCallable_Check (fn))
+    { Py_XDECREF (fn); dispid = DISPID_UNKNOWN; return true; }
+
+  // Build the positional argument list: numbers, strings, [wildcards], [table],
+  // [styles] — the same order ExecuteLua pushes onto the Lua stack.
+  PyObject* argl = PyList_New (0);
+
+  for (double d : nparams)
+    { PyObject* o = PyFloat_FromDouble (d); PyList_Append (argl, o); Py_DECREF (o); }
+
+  for (const string & s : sparams)
+    { PyObject* o = PyUnicode_DecodeUTF8 (s.data (), s.size (), "surrogateescape");
+      PyList_Append (argl, o); Py_DECREF (o); }
+
+  if (regexp)
+    {
+    int ncapt = 0;
+    pcre_fullinfo (regexp->m_program, regexp->m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
+    PyObject* wl = PyList_New (ncapt + 1);   // [0]=whole match, [1..n]=groups
+    for (int i = 0; i <= ncapt; i++)
+      {
+      string w (regexp->GetWildcard (i));
+      PyList_SET_ITEM (wl, i, PyUnicode_DecodeUTF8 (w.data (), w.size (), "surrogateescape"));
+      }
+    PyList_Append (argl, wl); Py_DECREF (wl);
+    }
+
+  if (table)
+    {
+    PyObject* d = PyDict_New ();
+    for (const auto & kv : *table)
+      { PyObject* val = PyUnicode_DecodeUTF8 (kv.second.data (), kv.second.size (), "surrogateescape");
+        PyDict_SetItemString (d, kv.first.c_str (), val); Py_DECREF (val); }
+    PyList_Append (argl, d); Py_DECREF (d);
+    }
+
+  // NB: the Lua trigger path also passes a 4th "styles" (paneline) argument, but
+  // the Windows COM languages (VBScript/JScript/Python) receive only
+  // (name, line, wildcards).  For script parity we deliberately do NOT append
+  // the styled-line argument here — `paneline` is accepted and ignored.
+  (void) paneline;
+
+  PyObject* argtuple = PyList_AsTuple (argl);
+  Py_DECREF (argl);
+
+  if (iReason != eDontChangeAction)
+    m_pDoc->m_iCurrentActionSource = iReason;
+
+  PyObject* res = PyObject_CallObject (fn, argtuple);
+
+  if (iReason != eDontChangeAction)
+    m_pDoc->m_iCurrentActionSource = eUnknownActionSource;
+
+  Py_DECREF (argtuple);
+  Py_DECREF (fn);
+
+  if (!res)
+    { dispid = DISPID_UNKNOWN; report_error (m_pDoc, szType, szProcedure); return true; }
+
+  nInvocationCount++;
+
+  if (result)
+    {
+    *result = true;
+    if (PyBool_Check (res))      *result = (res == Py_True);
+    else if (PyLong_Check (res)) *result = (PyLong_AsLong (res) != 0);
+    else if (res == Py_None)     *result = true;   // no explicit return → keep going
+    else                         *result = PyObject_IsTrue (res) ? true : false;
+    }
+
+  Py_DECREF (res);
+  return false;
+  }
+
+// Simple string-in / string-out overload (speed-walk, send-to-script, etc.)
+bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
+                                   const unsigned short iReason,
+                                   LPCTSTR szType, LPCTSTR szReason,
+                                   CString strParam, long & nInvocationCount,
+                                   CString & result)
+  {
+  if (!m_pyEngine) return false;
+  if (dispid == DISPID_UNKNOWN) return false;
+
+  PyObject* fn = resolve (m_pyEngine->ns, szProcedure);
+  if (!fn || !PyCallable_Check (fn))
+    { Py_XDECREF (fn); dispid = DISPID_UNKNOWN; return true; }
+
+  PyObject* arg = PyUnicode_DecodeUTF8 ((LPCTSTR) strParam, strParam.GetLength (), "surrogateescape");
+
+  if (iReason != eDontChangeAction)
+    m_pDoc->m_iCurrentActionSource = iReason;
+  PyObject* res = PyObject_CallFunctionObjArgs (fn, arg, NULL);
+  if (iReason != eDontChangeAction)
+    m_pDoc->m_iCurrentActionSource = eUnknownActionSource;
+
+  Py_DECREF (arg);
+  Py_DECREF (fn);
+
+  if (!res)
+    { dispid = DISPID_UNKNOWN; report_error (m_pDoc, szType, szProcedure); return true; }
+
+  nInvocationCount++;
+
+  if (res != Py_None)
+    {
+    PyObject* str = PyObject_Str (res);
+    if (str) { const char* s = PyUnicode_AsUTF8 (str); if (s) result = s; Py_DECREF (str); }
+    }
+  Py_DECREF (res);
+  return false;
+  }
+
+#endif // !_WIN32 && MUSHCLIENT_FULL_BUILD && MUSHCLIENT_PYTHON_SCRIPTING

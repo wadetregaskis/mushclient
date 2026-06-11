@@ -1663,6 +1663,25 @@ static void hook_set_clipboard_text(const char* text)
     }
 }
 
+// ── Bridged-dialog parent stack ──────────────────────────────────────────────
+// Innermost-last stack of bridged modal dialogs currently on screen (pushed by
+// hook_run_dialog / hook_run_property_sheet around their ShowModal).  Nested
+// native pickers (file/font) parent to the front entry: inside a bridged
+// dialog's modal loop on macOS wxGetActiveWindow() returns null, and the other
+// fallback — the MDI parent frame — is decoupled and may sit off-screen, so a
+// picker parented to it can open invisibly (looking like the button did nothing).
+std::vector<wxWindow*>& BridgedDialogStack()
+{
+    static std::vector<wxWindow*> s;
+    return s;
+}
+static wxWindow* ActiveDialogParent()
+{
+    if (!BridgedDialogStack().empty()) return BridgedDialogStack().back();
+    wxWindow* w = wxGetActiveWindow();
+    return w ? w : (wxTheApp ? wxTheApp->GetTopWindow() : nullptr);
+}
+
 // ── hook_file_dialog ──────────────────────────────────────────────────────────
 // Generic file-open / file-save dialog used by CFileDialog::DoModal() on
 // non-Windows.  Converts the MFC-style pipe-separated filter string to a
@@ -1705,8 +1724,7 @@ static char* hook_file_dialog(bool bOpen,
     // opened from (e.g. the Plugins manager's "Add…").  Parenting to the MDI
     // frame instead can leave the file dialog behind an app-modal dialog on
     // macOS, so it looks like nothing happened.  (hook_font_dialog does the same.)
-    wxWindow* parent = wxGetActiveWindow();
-    if (!parent) parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    wxWindow* parent = ActiveDialogParent();
 
     wxFileDialog dlg(parent, wxTitle, wxDir, wxFile, wxFilter, style);
     if (dlg.ShowModal() != wxID_OK)
@@ -1725,8 +1743,7 @@ static int hook_font_dialog(void* /*parentHwnd*/, WxFontChoice* io)
 {
     if (!io) return 0;
 
-    wxWindow* parent = wxGetActiveWindow();
-    if (!parent) parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    wxWindow* parent = ActiveDialogParent();
 
     long h   = io->lfHeight < 0 ? -io->lfHeight : io->lfHeight;
     int  dpi = wxGetDisplayPPI().y;
@@ -2702,7 +2719,9 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     cdlg->OnInitDialog();
     pump_dialog_update_ui(cdlg, dlg, *t);   // set initial control state
 
+    BridgedDialogStack().push_back(dlg);    // nested pickers parent to this dialog
     int result = dlg->ShowModal();
+    BridgedDialogStack().pop_back();
 
     cdlg->m_hWnd = nullptr;
     s_mfcModalDialogs.erase(self);
@@ -2900,7 +2919,9 @@ static intptr_t hook_run_property_sheet(void* self)
         dlg.EndModal(wxID_OK);
     }, wxID_OK);
 
+    BridgedDialogStack().push_back(&dlg);   // nested pickers (Font…/Browse…) parent here
     int rc = dlg.ShowModal();
+    BridgedDialogStack().pop_back();
 
     for (CPropertyPage* page : pages)            // detach before panels die
         if (page) page->m_hWnd = nullptr;
@@ -2983,7 +3004,9 @@ static intptr_t hook_run_property_sheet_flat(void* self)
         dlg.EndModal(wxID_OK);
     }, wxID_OK);
 
+    BridgedDialogStack().push_back(&dlg);   // nested pickers (Font…/Browse…) parent here
     int rc = dlg.ShowModal();
+    BridgedDialogStack().pop_back();
 
     for (CPropertyPage* page : pages)            // detach before panels die
         if (page) page->m_hWnd = nullptr;

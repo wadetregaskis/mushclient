@@ -262,10 +262,12 @@ bool CScriptEngine::ParsePerl (const CString & strCode, const CString & strWhat)
   PERL_SET_CONTEXT (g_perl);
   CPerlEngine* e = m_perlEngine;
 
-  // Run the script in its own package and seed $world there (declared `our` so
-  // `use strict` scripts can reference it unqualified).
-  SV* sv = newSVpvf ("package %s;\nour $world = %s->new(%lld);\n#line 1 \"script\"\n",
-                     e->pkg.c_str (), WORLD_STASH, (long long) (intptr_t) e->doc);
+  // Run the script in its own package and seed the package global $world there.
+  // Set it WITHOUT `our` (as a plain package variable, like Windows PerlScript):
+  // non-strict scripts use $world directly, `use strict` scripts declare their
+  // own `our $world` — and either way there's no "redeclared" warning.
+  SV* sv = newSVpvf ("package %s;\n$%s::world = %s->new(%lld);\n#line 1 \"script\"\n",
+                     e->pkg.c_str (), e->pkg.c_str (), WORLD_STASH, (long long) (intptr_t) e->doc);
   sv_catpvn (sv, (LPCTSTR) strCode, strCode.GetLength ());
   eval_sv (sv, G_DISCARD);
   SvREFCNT_dec (sv);

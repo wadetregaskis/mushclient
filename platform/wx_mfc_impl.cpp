@@ -1682,6 +1682,38 @@ static wxWindow* ActiveDialogParent()
     return w ? w : (wxTheApp ? wxTheApp->GetTopWindow() : nullptr);
 }
 
+// The MDI "&Window" menu, or null.  wxMDIParentFrame auto-populates it with the
+// open world child frames; we add disabled entries for modal bridged dialogs.
+static wxMenu* MdiWindowMenu()
+{
+    wxWindow* top = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    wxMDIParentFrame* mdi = wxDynamicCast(top, wxMDIParentFrame);
+    if (!mdi || !mdi->GetMenuBar()) return nullptr;
+    int idx = mdi->GetMenuBar()->FindMenu(wxT("Window"));
+    return (idx == wxNOT_FOUND) ? nullptr : mdi->GetMenuBar()->GetMenu(idx);
+}
+
+// Mark a bridged modal dialog as on screen: push it (so nested pickers parent to
+// it) and add a disabled Window-menu entry so the user sees it's open even though
+// it's app-modal.  Pair with pop_bridged_dialog().
+static wxMenuItem* push_bridged_dialog(wxWindow* dlg)
+{
+    BridgedDialogStack().push_back(dlg);
+    wxMenu* wm = MdiWindowMenu();
+    if (!wm) return nullptr;
+    wxString title = dlg->GetLabel();           // a TLW's label is its title
+    if (title.IsEmpty()) title = wxT("Dialog");
+    wxMenuItem* item = wm->Append(wxID_ANY, title);
+    if (item) item->Enable(false);              // can't switch to an app-modal dialog
+    return item;
+}
+
+static void pop_bridged_dialog(wxMenuItem* item)
+{
+    if (item) { if (wxMenu* wm = MdiWindowMenu()) wm->Destroy(item); }
+    if (!BridgedDialogStack().empty()) BridgedDialogStack().pop_back();
+}
+
 // ── hook_file_dialog ──────────────────────────────────────────────────────────
 // Generic file-open / file-save dialog used by CFileDialog::DoModal() on
 // non-Windows.  Converts the MFC-style pipe-separated filter string to a
@@ -2719,9 +2751,9 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     cdlg->OnInitDialog();
     pump_dialog_update_ui(cdlg, dlg, *t);   // set initial control state
 
-    BridgedDialogStack().push_back(dlg);    // nested pickers parent to this dialog
+    wxMenuItem* wmItem = push_bridged_dialog(dlg);  // parent for nested pickers + Window-menu entry
     int result = dlg->ShowModal();
-    BridgedDialogStack().pop_back();
+    pop_bridged_dialog(wmItem);
 
     cdlg->m_hWnd = nullptr;
     s_mfcModalDialogs.erase(self);
@@ -2919,9 +2951,9 @@ static intptr_t hook_run_property_sheet(void* self)
         dlg.EndModal(wxID_OK);
     }, wxID_OK);
 
-    BridgedDialogStack().push_back(&dlg);   // nested pickers (Font…/Browse…) parent here
+    wxMenuItem* wmItem = push_bridged_dialog(&dlg);  // nested pickers parent here + Window-menu entry
     int rc = dlg.ShowModal();
-    BridgedDialogStack().pop_back();
+    pop_bridged_dialog(wmItem);
 
     for (CPropertyPage* page : pages)            // detach before panels die
         if (page) page->m_hWnd = nullptr;
@@ -3004,9 +3036,9 @@ static intptr_t hook_run_property_sheet_flat(void* self)
         dlg.EndModal(wxID_OK);
     }, wxID_OK);
 
-    BridgedDialogStack().push_back(&dlg);   // nested pickers (Font…/Browse…) parent here
+    wxMenuItem* wmItem = push_bridged_dialog(&dlg);  // nested pickers parent here + Window-menu entry
     int rc = dlg.ShowModal();
-    BridgedDialogStack().pop_back();
+    pop_bridged_dialog(wmItem);
 
     for (CPropertyPage* page : pages)            // detach before panels die
         if (page) page->m_hWnd = nullptr;

@@ -116,7 +116,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     : wxMDIChildFrame(parent, wxID_ANY, title,
                       wxDefaultPosition, wxSize(800, 600))
     , m_doc(doc)
-    , m_worldTimer(nullptr)
 {
     // Vertical sizer: output pane takes all space; input bar at bottom.
     wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
@@ -1688,8 +1687,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // Fires every 100 ms to drive CheckTimers() (world/plugin timers) and
     // SendToAllPluginCallbacks(ON_PLUGIN_TICK) (every ~40 ms via accumulator).
     // Also flushes any output the timer callbacks may have produced.
-    m_worldTimer = new wxTimer(this, ID_WORLD_TIMER);
-    m_worldTimer->Start(100);
+    m_worldTimer.SetOwner(this, ID_WORLD_TIMER);
+    m_worldTimer.Start(100);
 
     // Register this world document with the application's world doc-template
     // so that GetWorldList() / GetWorld() / GetWorldById() can enumerate all
@@ -3749,11 +3748,10 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
     if (IsLogging()) StopLogging();
 
     // Stop the world timer before we touch the doc — prevents a timer callback
-    // from firing between m_fn_line_ready=nullptr and delete doc.
-    if (m_worldTimer) {
-        m_worldTimer->Stop();
-        m_worldTimer = nullptr;
-    }
+    // from firing between m_fn_line_ready=nullptr and delete doc.  (The value
+    // member also stops itself when the frame is destroyed, covering the Cmd+Q
+    // teardown path where OnClose never runs.)
+    m_worldTimer.Stop();
 
     if (m_doc) {
         // Capture the world file path before clearing the doc, so we can

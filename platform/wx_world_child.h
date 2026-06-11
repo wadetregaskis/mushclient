@@ -123,7 +123,11 @@ private:
     wxStatusBar*         m_statusBar      = nullptr; // per-world status bar (macOS: parent MDI status bar is hidden by the child)
     wxTextAttr           m_infobarStyle;             // current style applied to appended Info text
     CMUSHclientDoc*      m_doc            = nullptr; // non-owning reference to the world doc
-    wxTimer*             m_worldTimer     = nullptr; // drives CheckTimers() / ON_PLUGIN_TICK
+    wxTimer              m_worldTimer;                // drives CheckTimers() / ON_PLUGIN_TICK.
+                                                      // A value member so it is stopped when the
+                                                      // frame is destroyed — even on Cmd+Q teardown,
+                                                      // where OnClose does not run — preventing a
+                                                      // timer callback into a freed frame.
 
     // ── Find bar ──────────────────────────────────────────────────────────
     wxPanel*      m_findBar      = nullptr;   // collapsible panel shown by Ctrl+F

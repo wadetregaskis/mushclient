@@ -1701,8 +1701,12 @@ static char* hook_file_dialog(bool bOpen,
         ? (wxFD_OPEN | wxFD_FILE_MUST_EXIST)
         : (wxFD_SAVE | (overwrite ? wxFD_OVERWRITE_PROMPT : 0));
 
-    // Use the MDI parent as the dialog owner when available.
-    wxWindow* parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+    // Parent to the front-most active window — usually the modal dialog this was
+    // opened from (e.g. the Plugins manager's "Add…").  Parenting to the MDI
+    // frame instead can leave the file dialog behind an app-modal dialog on
+    // macOS, so it looks like nothing happened.  (hook_font_dialog does the same.)
+    wxWindow* parent = wxGetActiveWindow();
+    if (!parent) parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
 
     wxFileDialog dlg(parent, wxTitle, wxDir, wxFile, wxFilter, style);
     if (dlg.ShowModal() != wxID_OK)

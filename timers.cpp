@@ -212,7 +212,7 @@ CmcDateTimeSpan tsOneDay (1, 0, 0, 0);
       if (pLabel [0] == 0)
         pLabel = GetTimerRevMap () [timer_item].c_str ();
 
-      if (GetScriptEngine () && (GetScriptEngine ()->IsLua () || GetScriptEngine ()->IsPython ()))
+      if (GetScriptEngine () && GetScriptEngine ()->UsesEmbeddedCallback ())
         {
         list<double> nparams;
         list<string> sparams;

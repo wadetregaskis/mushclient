@@ -194,6 +194,25 @@ if(NOT WIN32)
     else()
         message(STATUS "Python3 (Development.Embed) not found — Python scripting disabled")
     endif()
+
+    # ── Perl (embedded, via ExtUtils::Embed) — mushapp/GUI only ────────────────
+    # ccopts carry -iwithsysroot for the SDK's CORE headers; ldopts carry -lperl.
+    set(PERL_EMBED_FOUND FALSE)
+    find_program(PERL_EXECUTABLE perl)
+    if(PERL_EXECUTABLE)
+        execute_process(COMMAND ${PERL_EXECUTABLE} -MExtUtils::Embed -e ccopts
+                        OUTPUT_VARIABLE PERL_CCOPTS OUTPUT_STRIP_TRAILING_WHITESPACE
+                        RESULT_VARIABLE _perl_cc_rc ERROR_QUIET)
+        execute_process(COMMAND ${PERL_EXECUTABLE} -MExtUtils::Embed -e ldopts
+                        OUTPUT_VARIABLE PERL_LDOPTS OUTPUT_STRIP_TRAILING_WHITESPACE
+                        RESULT_VARIABLE _perl_ld_rc ERROR_QUIET)
+        if(_perl_cc_rc EQUAL 0 AND _perl_ld_rc EQUAL 0 AND PERL_LDOPTS MATCHES "-lperl")
+            set(PERL_EMBED_FOUND TRUE)
+            message(STATUS "Perl embedding found — Perl scripting enabled")
+        else()
+            message(STATUS "Perl embedding not available — Perl scripting disabled")
+        endif()
+    endif()
 endif()
 
 # ── Vendored library: PCRE ────────────────────────────────────────────────
@@ -725,6 +744,18 @@ if(NOT WIN32)
         target_sources(mushapp PRIVATE platform/py_engine.cpp)
         target_compile_definitions(mushapp PRIVATE MUSHCLIENT_PYTHON_SCRIPTING)
         target_link_libraries(mushapp PUBLIC Python3::Python)
+    endif()
+
+    if(PERL_EMBED_FOUND)
+        # Embedded Perl engine (same dispatch substrate as Python).  The perl
+        # CORE headers come via -iwithsysroot in PERL_CCOPTS, so apply those flags
+        # to just this source file; link the libperl ldopts.
+        target_sources(mushapp PRIVATE platform/perl_engine.cpp)
+        target_compile_definitions(mushapp PRIVATE MUSHCLIENT_PERL_SCRIPTING)
+        set_source_files_properties(platform/perl_engine.cpp PROPERTIES
+                                    COMPILE_FLAGS "${PERL_CCOPTS}")
+        separate_arguments(PERL_LDOPTS_LIST UNIX_COMMAND "${PERL_LDOPTS}")
+        target_link_libraries(mushapp PUBLIC ${PERL_LDOPTS_LIST})
     endif()
 
     target_include_directories(mushapp PUBLIC

@@ -651,7 +651,11 @@ bool CScriptEngine::Execute (DISPID& dispid,
   // (on_world_open / on_world_connect / on_world_disconnect / get-focus /
   // lose-focus, and any send-to-script trigger/alias/timer routed via
   // CMUSHclientDoc::ExecuteScript) silently failed to resolve and never ran.
-  if (L)
+  // World events (on_world_open / connect / disconnect / focus) reach the engine
+  // through this generic entry with no rich parameters.  ExecuteLua early-
+  // dispatches to whichever alt-language engine is active (Python/Perl/JS), so a
+  // single call covers Lua and all of them.
+  if (UsesEmbeddedCallback ())
     {
     list<double> nparams;
     list<string> sparams;
@@ -659,23 +663,6 @@ bool CScriptEngine::Execute (DISPID& dispid,
     bool status = ExecuteLua (dispid, szProcedure, iReason, szType, szReason,
                               nparams, sparams, nInvocationCount,
                               nullptr, nullptr, nullptr, &r);
-    if (result)
-      {
-      result->vt = VT_BOOL;
-      result->boolVal = r;
-      }
-    return status;
-    }
-  if (m_pyEngine)
-    {
-    // World events (on_world_open / connect / disconnect / focus) reach the
-    // engine through this generic entry, with no rich parameters.
-    list<double> nparams;
-    list<string> sparams;
-    bool r = false;
-    bool status = ExecutePython (dispid, szProcedure, iReason, szType, szReason,
-                                 nparams, sparams, nInvocationCount,
-                                 nullptr, nullptr, nullptr, &r);
     if (result)
       {
       result->vt = VT_BOOL;
@@ -698,20 +685,31 @@ bool CScriptEngine::CreateScriptEngine (void)
     OpenLua ();
   else if (m_strLanguage.CompareNoCase ("Python") == 0)
     OpenPython ();
+  else if (m_strLanguage.CompareNoCase ("perlscript") == 0 ||
+           m_strLanguage.CompareNoCase ("perl") == 0)
+    OpenPerl ();
+  else if (m_strLanguage.CompareNoCase ("jscript") == 0 ||
+           m_strLanguage.CompareNoCase ("javascript") == 0 ||
+           m_strLanguage.CompareNoCase ("js") == 0)
+    OpenJS ();
   return false;
   }
 
 bool CScriptEngine::Parse (const CString& strCode, const CString& strWhat)
   {
   if (L) return ParseLua (strCode, strWhat);
-  if (m_pyEngine) return ParsePython (strCode, strWhat);
+  if (m_pyEngine)   return ParsePython (strCode, strWhat);
+  if (m_perlEngine) return ParsePerl   (strCode, strWhat);
+  if (m_jsEngine)   return ParseJS     (strCode, strWhat);
   return true; // error: no engine
   }
 
 DISPID CScriptEngine::GetDispid (const CString& strName)
   {
   if (L) return GetLuaDispid (strName);
-  if (m_pyEngine) return GetPythonDispid (strName);
+  if (m_pyEngine)   return GetPythonDispid (strName);
+  if (m_perlEngine) return GetPerlDispid   (strName);
+  if (m_jsEngine)   return GetJSDispid     (strName);
   return DISPID_UNKNOWN;
   }
 
@@ -720,7 +718,9 @@ bool CScriptEngine::ShowError (const HRESULT, const CString) { return false; }
 void CScriptEngine::DisableScripting (void)
   {
   if (L) CloseLua ();
-  if (m_pyEngine) ClosePython ();
+  if (m_pyEngine)   ClosePython ();
+  if (m_perlEngine) ClosePerl ();
+  if (m_jsEngine)   CloseJS ();
   }
 
 #ifndef MUSHCLIENT_LUA_SCRIPTING  // lua_scripting.cpp not compiled — provide link-time stubs
@@ -747,28 +747,32 @@ bool CScriptEngine::ExecuteLua (DISPID& dispid,
   { dispid = DISPID_UNKNOWN; return false; }
 #endif // !MUSHCLIENT_LUA_SCRIPTING
 
-#ifndef MUSHCLIENT_PYTHON_SCRIPTING  // py_engine.cpp not compiled — link stubs
-// Defined in platform/py_engine.cpp when CMake finds Python3; these no-ops let
-// the library link (and a "Python" world simply gets no engine) otherwise.
-void   CScriptEngine::OpenPython ()  {}
-void   CScriptEngine::ClosePython () { m_pyEngine = NULL; }
-bool   CScriptEngine::ParsePython (const CString&, const CString&) { return true; }
-DISPID CScriptEngine::GetPythonDispid (const CString&) { return DISPID_UNKNOWN; }
+// When an engine's source isn't compiled (CMake didn't find its toolkit), these
+// no-op stubs let the library link — a world in that language simply gets no
+// engine.  Each real implementation lives in platform/{py,perl,js}_engine.cpp.
+#define MC_ENGINE_LINK_STUBS(Lang, member)                                           \
+  void   CScriptEngine::Open##Lang ()  {}                                            \
+  void   CScriptEngine::Close##Lang () { member = NULL; }                            \
+  bool   CScriptEngine::Parse##Lang (const CString&, const CString&) { return true; } \
+  DISPID CScriptEngine::Get##Lang##Dispid (const CString&) { return DISPID_UNKNOWN; } \
+  bool CScriptEngine::Execute##Lang (DISPID& dispid, LPCTSTR, const unsigned short,   \
+              LPCTSTR, LPCTSTR, list<double>&, list<string>&, long&,                  \
+              const t_regexp*, map<string,string>*, CPaneLine*, bool*)               \
+    { dispid = DISPID_UNKNOWN; return false; }                                       \
+  bool CScriptEngine::Execute##Lang (DISPID& dispid, LPCTSTR, const unsigned short,   \
+              LPCTSTR, LPCTSTR, CString, long&, CString&)                             \
+    { dispid = DISPID_UNKNOWN; return false; }
 
-bool CScriptEngine::ExecutePython (DISPID& dispid,
-                                   LPCTSTR, const unsigned short,
-                                   LPCTSTR, LPCTSTR,
-                                   list<double>&, list<string>&, long&,
-                                   const t_regexp*, map<string,string>*,
-                                   CPaneLine*, bool*)
-  { dispid = DISPID_UNKNOWN; return false; }
-
-bool CScriptEngine::ExecutePython (DISPID& dispid,
-                                   LPCTSTR, const unsigned short,
-                                   LPCTSTR, LPCTSTR,
-                                   CString, long&, CString&)
-  { dispid = DISPID_UNKNOWN; return false; }
-#endif // !MUSHCLIENT_PYTHON_SCRIPTING
+#ifndef MUSHCLIENT_PYTHON_SCRIPTING
+MC_ENGINE_LINK_STUBS(Python, m_pyEngine)
+#endif
+#ifndef MUSHCLIENT_PERL_SCRIPTING
+MC_ENGINE_LINK_STUBS(Perl, m_perlEngine)
+#endif
+#ifndef MUSHCLIENT_JS_SCRIPTING
+MC_ENGINE_LINK_STUBS(JS, m_jsEngine)
+#endif
+#undef MC_ENGINE_LINK_STUBS
 
 #endif // _WIN32
 

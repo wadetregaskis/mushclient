@@ -16,9 +16,12 @@ extern "C"
 
 #include "paneline.h"
 
-// Opaque per-engine Python state (one module namespace per world/plugin).
-// Defined in platform/py_engine.cpp; null unless the world's language is Python.
+// Opaque per-engine state for each embedded alt-language interpreter (one per
+// world/plugin).  Defined in platform/{py_engine,perl_engine,js_engine}.cpp;
+// null unless the world's scripting language is that one.
 class CPythonEngine;
+class CPerlEngine;
+class CJSEngine;
 
 #define DOCUMENT_STATE "mushclient.document"
 #define WORLD_LIBRARY "world"
@@ -48,6 +51,8 @@ class CScriptEngine : public CObject
       L = NULL;
 #ifndef _WIN32
       m_pyEngine = NULL;
+      m_perlEngine = NULL;
+      m_jsEngine = NULL;
 #endif
       };  // end of constructor
 
@@ -111,38 +116,57 @@ class CScriptEngine : public CObject
   const bool IsLua () const { return L != NULL; }
   lua_State           * L;                  // Lua state
 
-  // IsPython() is defined on every platform (false on Windows, where the COM
-  // host — not this embedded engine — runs the alternate languages) so the
-  // shared trigger/alias/timer/plugin call sites can write
-  // `IsLua() || IsPython()` without per-site #ifdefs.
+  // The non-Lua engines (Python, Perl, JavaScript) are embedded directly on the
+  // port and reach the world API through the portable dispatch-map Invoke
+  // (platform/mc_dispatch.cpp), not a hand-written per-language binding.  Each
+  // Is<Lang>() is defined on every platform — false on Windows, where the COM
+  // host runs these languages instead — so the shared trigger/alias/timer/plugin
+  // call sites gate on UsesEmbeddedCallback() with no per-site #ifdefs.  See
+  // platform/{py_engine,perl_engine,js_engine}.cpp.
 #ifdef _WIN32
   const bool IsPython () const { return false; }
+  const bool IsPerl   () const { return false; }
+  const bool IsJS     () const { return false; }
 #else
-  // ── Python engine (port) ────────────────────────────────────────────────
-  // Real CPython, embedded.  The world API is reached through the portable
-  // dispatch-map Invoke (platform/mc_dispatch.cpp), not a hand-written binding.
-  // See platform/py_engine.cpp.  m_pyEngine is null for Lua worlds, so
-  // IsPython() gates the Python paths without disturbing the others.
-  const bool IsPython () const { return m_pyEngine != NULL; }
-  void   OpenPython ();
-  void   ClosePython ();
-  bool   ParsePython (const CString & strCode, const CString & strWhat);
-  DISPID GetPythonDispid (const CString & strName);
+  const bool IsPython () const { return m_pyEngine   != NULL; }
+  const bool IsPerl   () const { return m_perlEngine != NULL; }
+  const bool IsJS     () const { return m_jsEngine   != NULL; }
 
-  // Rich callback — exact mirror of the ExecuteLua overloads above, so the same
-  // doc/evaluate/plugins/timers call sites drive it.
-  bool ExecutePython (DISPID & dispid, LPCTSTR szProcedure, const unsigned short iReason,
-                      LPCTSTR szType, LPCTSTR szReason,
-                      list<double> & nparams, list<string> & sparams,
-                      long & nInvocationCount, const t_regexp * regexp = NULL,
-                      map<string, string> * table = NULL, CPaneLine * paneline = NULL,
-                      bool * result = NULL);
-  bool ExecutePython (DISPID & dispid, LPCTSTR szProcedure, const unsigned short iReason,
-                      LPCTSTR szType, LPCTSTR szReason, CString strParam,
-                      long & nInvocationCount, CString & result);
+  void   OpenPython ();   void   OpenPerl ();   void   OpenJS ();
+  void   ClosePython ();  void   ClosePerl ();  void   CloseJS ();
+  bool   ParsePython (const CString &, const CString &);
+  bool   ParsePerl   (const CString &, const CString &);
+  bool   ParseJS     (const CString &, const CString &);
+  DISPID GetPythonDispid (const CString &);
+  DISPID GetPerlDispid   (const CString &);
+  DISPID GetJSDispid     (const CString &);
 
-  CPythonEngine * m_pyEngine;               // opaque per-engine Python state
+  // Rich + simple callback overloads — exact mirrors of the ExecuteLua pair, so
+  // the same doc/evaluate/plugins/timers/mushview call sites drive every engine.
+  #define MC_DECL_EXEC(Name)                                                       \
+    bool Name (DISPID & dispid, LPCTSTR szProcedure, const unsigned short iReason,  \
+               LPCTSTR szType, LPCTSTR szReason,                                    \
+               list<double> & nparams, list<string> & sparams,                     \
+               long & nInvocationCount, const t_regexp * regexp = NULL,             \
+               map<string, string> * table = NULL, CPaneLine * paneline = NULL,     \
+               bool * result = NULL);                                              \
+    bool Name (DISPID & dispid, LPCTSTR szProcedure, const unsigned short iReason,  \
+               LPCTSTR szType, LPCTSTR szReason, CString strParam,                  \
+               long & nInvocationCount, CString & result);
+  MC_DECL_EXEC (ExecutePython)
+  MC_DECL_EXEC (ExecutePerl)
+  MC_DECL_EXEC (ExecuteJS)
+  #undef MC_DECL_EXEC
+
+  CPythonEngine * m_pyEngine;               // opaque per-engine engine state
+  CPerlEngine   * m_perlEngine;             // (null unless this is that language)
+  CJSEngine     * m_jsEngine;
 #endif
+
+  // True when a trigger/alias/timer/plugin callback should run through the
+  // Lua-style call path — Lua itself, or any embedded alt-language engine.
+  const bool UsesEmbeddedCallback () const
+    { return IsLua () || IsPython () || IsPerl () || IsJS (); }
 
   private:
 

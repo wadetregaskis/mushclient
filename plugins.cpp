@@ -232,7 +232,7 @@ void CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo)
                                  (LPCTSTR) m_strName,
                                  callinfo._name.c_str () );
 
-    if (m_ScriptEngine->IsLua () || m_ScriptEngine->IsPython ())
+    if (m_ScriptEngine->UsesEmbeddedCallback ())
       {
       list<double> nparams;
       list<string> sparams;
@@ -280,7 +280,7 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
                                  (LPCTSTR) m_strName,
                                  callinfo._name.c_str () );
 
-    if (m_ScriptEngine->IsLua () || m_ScriptEngine->IsPython ())
+    if (m_ScriptEngine->UsesEmbeddedCallback ())
       {
       list<double> nparams;
       list<string> sparams;
@@ -360,7 +360,7 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
                                        (LPCTSTR) m_strName,
                                        callinfo._name.c_str () );
 
-    if (m_ScriptEngine && (m_ScriptEngine->IsLua () || m_ScriptEngine->IsPython ()))
+    if (m_ScriptEngine && (m_ScriptEngine->UsesEmbeddedCallback ()))
       {
       bool bResult;
       list<double> nparams;
@@ -450,7 +450,7 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
                                        (LPCTSTR) m_strName,
                                        callinfo._name.c_str () );
 
-    if (m_ScriptEngine && (m_ScriptEngine->IsLua () || m_ScriptEngine->IsPython ()))
+    if (m_ScriptEngine && (m_ScriptEngine->UsesEmbeddedCallback ()))
       {
       bool bResult;
       list<double> nparams;
@@ -538,7 +538,7 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
                                        (LPCTSTR) m_strName,
                                        callinfo._name.c_str () );
 
-    if (m_ScriptEngine && (m_ScriptEngine->IsLua () || m_ScriptEngine->IsPython ()))
+    if (m_ScriptEngine && (m_ScriptEngine->UsesEmbeddedCallback ()))
       {
       bool bResult;
       list<double> nparams;
@@ -628,7 +628,7 @@ void CPlugin::ExecutePluginScriptRtn (CScriptCallInfo & callinfo,
                                  (LPCTSTR) m_strName,
                                  callinfo._name.c_str () );
 
-    if (m_ScriptEngine->IsLua () || m_ScriptEngine->IsPython ())
+    if (m_ScriptEngine->UsesEmbeddedCallback ())
       {
       m_ScriptEngine->ExecuteLua (iRoutine,
                                   callinfo._name.c_str (),

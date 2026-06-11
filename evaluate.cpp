@@ -1042,7 +1042,7 @@ bool CMUSHclientDoc::ExecuteAliasScript (CAlias * alias_item,
     if (pLabel [0] == 0)
        pLabel = GetAliasRevMap () [alias_item].c_str ();
 
-    if (GetScriptEngine () && (GetScriptEngine ()->IsLua () || GetScriptEngine ()->IsPython ()))
+    if (GetScriptEngine () && GetScriptEngine ()->UsesEmbeddedCallback ())
       {
       list<double> nparams;
       list<string> sparams;

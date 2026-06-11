@@ -2372,7 +2372,7 @@ void CMUSHclientDoc::ExecuteTriggerScript (CTrigger * trigger_item,
   if (pLabel [0] == 0)
      pLabel = GetTriggerRevMap () [trigger_item].c_str ();
 
-  if (GetScriptEngine () && (GetScriptEngine ()->IsLua () || GetScriptEngine ()->IsPython ()))
+  if (GetScriptEngine () && GetScriptEngine ()->UsesEmbeddedCallback ())
     {
     list<double> nparams;
     list<string> sparams;
@@ -2461,7 +2461,7 @@ void CMUSHclientDoc::ExecuteHotspotScript (DISPID & dispid,  // dispatch ID, wil
   CString strType = "hotspot";
   CString strReason =  Translate ("processing hotspot callback");
 
-  if (GetScriptEngine () && (GetScriptEngine ()->IsLua () || GetScriptEngine ()->IsPython ()))
+  if (GetScriptEngine () && GetScriptEngine ()->UsesEmbeddedCallback ())
     {
     list<double> nparams;
     list<string> sparams;

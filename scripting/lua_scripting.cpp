@@ -520,12 +520,14 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
   {
 
 #ifndef _WIN32
-  // Python world (the trigger/alias/timer/plugin call sites gate on
-  // IsLua() || IsPython(), so a Python engine lands here): forward to the
-  // embedded interpreter with the identical parameter set.
-  if (m_pyEngine)
-    return ExecutePython (dispid, szProcedure, iReason, szType, szReason,
-                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
+  // Alt-language world (the call sites gate on UsesEmbeddedCallback(), so an
+  // embedded Python/Perl/JS engine lands here): forward with identical params.
+  if (m_pyEngine)   return ExecutePython (dispid, szProcedure, iReason, szType, szReason,
+                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
+  if (m_perlEngine) return ExecutePerl   (dispid, szProcedure, iReason, szType, szReason,
+                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
+  if (m_jsEngine)   return ExecuteJS     (dispid, szProcedure, iReason, szType, szReason,
+                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
 #endif
 
   // safety check ;)
@@ -747,9 +749,12 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
   {
 
 #ifndef _WIN32
-  if (m_pyEngine)
-    return ExecutePython (dispid, szProcedure, iReason, szType, szReason,
-                          strParam, nInvocationCount, result);
+  if (m_pyEngine)   return ExecutePython (dispid, szProcedure, iReason, szType, szReason,
+                                          strParam, nInvocationCount, result);
+  if (m_perlEngine) return ExecutePerl   (dispid, szProcedure, iReason, szType, szReason,
+                                          strParam, nInvocationCount, result);
+  if (m_jsEngine)   return ExecuteJS     (dispid, szProcedure, iReason, szType, szReason,
+                                          strParam, nInvocationCount, result);
 #endif
 
   // safety check ;)

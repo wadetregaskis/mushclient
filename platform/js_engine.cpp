@@ -190,6 +190,23 @@ void Method_finalize(JSObjectRef function)
   delete (MethodData*) JSObjectGetPrivate(function);
   }
 
+// world.getpluginname (no parens, e.g. in a string concat or passed as an arg) —
+// COM languages auto-invoke a no-arg method here.  JS keeps it as a callable, so
+// coerce it by invoking with no args and returning the value; world.foo() still
+// calls it normally.  Lets COM-style JScript plugins that use world.X work.
+JSValueRef Method_convertToType(JSContextRef ctx, JSObjectRef object,
+                                JSType /*type*/, JSValueRef* /*exception*/)
+  {
+  MethodData* m = (MethodData*) JSObjectGetPrivate(object);
+  if (!m) return nullptr;
+  VARIANT result; VariantInit(&result);
+  if (MC_DispatchInvoke(m->doc, m->name.c_str(), nullptr, 0, result, nullptr) != MC_DISP_OK)
+    { MC_VariantClear(result); return nullptr; }
+  JSValueRef v = variant_to_js(ctx, result);
+  MC_VariantClear(result);
+  return v;
+  }
+
 // world.<name> -> bound method (callable) or property value.
 JSValueRef World_getProperty(JSContextRef ctx, JSObjectRef object,
                              JSStringRef propertyName, JSValueRef* /*exception*/)
@@ -244,6 +261,7 @@ void ensure_classes()
   md.className      = "WorldMethod";
   md.callAsFunction = Method_call;
   md.finalize       = Method_finalize;
+  md.convertToType  = Method_convertToType;
   g_methodClass = JSClassCreate(&md);
   }
 

@@ -184,6 +184,26 @@ void Method_dealloc(PyObject* self)
   Py_TYPE(self)->tp_free(self);
   }
 
+// str(world.Foo) — COM languages auto-invoke a no-arg method accessed without
+// parens (e.g. world.GetPluginID passed as an argument).  Python keeps the
+// method as a callable, so coerce it by invoking with no args and stringifying
+// the result; this lets COM-style plugins that pass world.X (no parens) work.
+PyObject* Method_str(PyObject* self)
+  {
+  MethodObject* m = (MethodObject*) self;
+  VARIANT result; VariantInit(&result);
+  if (MC_DispatchInvoke(m->doc, m->name, nullptr, 0, result, nullptr) == MC_DISP_OK)
+    {
+    PyObject* v = variant_to_py(result);
+    MC_VariantClear(result);
+    PyObject* s = PyObject_Str(v);
+    Py_DECREF(v);
+    return s;
+    }
+  MC_VariantClear(result);
+  return PyUnicode_FromFormat("<world method %s>", m->name);
+  }
+
 // world.<name> -> a bound MethodObject for a dispatch method, or the value of a
 // dispatch property (world.Trace, world.NoteColour, …).
 PyObject* World_getattro(PyObject* self, PyObject* nameobj)
@@ -241,6 +261,7 @@ void ensure_init()
   MethodType.tp_flags     = Py_TPFLAGS_DEFAULT;
   MethodType.tp_call      = Method_call;
   MethodType.tp_dealloc   = Method_dealloc;
+  MethodType.tp_str       = Method_str;
   PyType_Ready(&MethodType);
   }
 

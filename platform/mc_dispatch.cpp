@@ -26,6 +26,17 @@
 
 namespace {
 
+// Automation names are case-insensitive on Windows (IDispatch::GetIDsOfNames),
+// so real COM-language plugins call world.note / world.GetPluginName / NOTE
+// interchangeably.  Key the tables — and every lookup — by the lower-cased name
+// to match.  (ASCII only; all dispatch names are ASCII.)
+std::string lc(const char* s)
+  {
+  std::string r(s ? s : "");
+  for (char& c : r) if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+  return r;
+  }
+
 // ── VARIANT teardown / copy ────────────────────────────────────────────────
 // The stock VariantClear (mfc_ui.h) only frees SAFEARRAYs, so dispatch results
 // (which may own a BSTR the method allocated) leak through it.  Route all
@@ -213,7 +224,7 @@ std::unordered_map<std::string, Thunk>& table()
 template<class Ret, class... Args>
 void register_disp(const char* name, Ret (CMUSHclientDoc::*pmf)(Args...))
   {
-  table()[name] = [pmf](CMUSHclientDoc* doc, const VARIANT* args, int n,
+  table()[lc(name)] = [pmf](CMUSHclientDoc* doc, const VARIANT* args, int n,
                         VARIANT& result, std::vector<VARIANT>* outargs)
     {
     return call_impl(doc, pmf, args, n, result, outargs,
@@ -238,7 +249,7 @@ template<class M>
 void register_prop_member(const char* name, M CMUSHclientDoc::*pm,
                           void (CMUSHclientDoc::*notify)())
   {
-  prop_table()[name] = PropEntry{
+  prop_table()[lc(name)] = PropEntry{
     [pm](CMUSHclientDoc* d, VARIANT& out)        { to_variant(out, d->*pm); },
     [pm, notify](CMUSHclientDoc* d, const VARIANT& v)
       { d->*pm = prop_from<M>(&v); if (notify) (d->*notify)(); }
@@ -250,7 +261,7 @@ template<class R, class A>
 void register_prop_ex(const char* name, R (CMUSHclientDoc::*get)(),
                       void (CMUSHclientDoc::*set)(A))
   {
-  prop_table()[name] = PropEntry{
+  prop_table()[lc(name)] = PropEntry{
     [get](CMUSHclientDoc* d, VARIANT& out)        { to_variant(out, (d->*get)()); },
     [set](CMUSHclientDoc* d, const VARIANT& v)    { (d->*set)(prop_from<std::decay_t<A>>(&v)); }
     };
@@ -310,7 +321,7 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
   {
   build_table();
   VariantInit(&result);
-  auto it = table().find(name);
+  auto it = table().find(lc(name));
   if (it == table().end())
     return MC_DISP_UNKNOWN;
   if (!it->second(doc, args, nargs, result, outargs))
@@ -321,20 +332,20 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
 bool MC_DispatchHas(const char* name)
   {
   build_table();
-  return table().find(name) != table().end();
+  return table().find(lc(name)) != table().end();
   }
 
 bool MC_DispatchHasProperty(const char* name)
   {
   build_table();
-  return prop_table().find(name) != prop_table().end();
+  return prop_table().find(lc(name)) != prop_table().end();
   }
 
 bool MC_DispatchGetProperty(CMUSHclientDoc* doc, const char* name, VARIANT& result)
   {
   build_table();
   VariantInit(&result);
-  auto it = prop_table().find(name);
+  auto it = prop_table().find(lc(name));
   if (it == prop_table().end() || !it->second.get) return false;
   it->second.get(doc, result);
   return true;
@@ -343,7 +354,7 @@ bool MC_DispatchGetProperty(CMUSHclientDoc* doc, const char* name, VARIANT& resu
 bool MC_DispatchSetProperty(CMUSHclientDoc* doc, const char* name, const VARIANT& value)
   {
   build_table();
-  auto it = prop_table().find(name);
+  auto it = prop_table().find(lc(name));
   if (it == prop_table().end() || !it->second.set) return false;
   it->second.set(doc, value);
   return true;

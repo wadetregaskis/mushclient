@@ -266,7 +266,14 @@ bool CScriptEngine::ParsePerl (const CString & strCode, const CString & strWhat)
   // Set it WITHOUT `our` (as a plain package variable, like Windows PerlScript):
   // non-strict scripts use $world directly, `use strict` scripts declare their
   // own `our $world` — and either way there's no "redeclared" warning.
-  SV* sv = newSVpvf ("package %s;\n$%s::world = %s->new(%lld);\n#line 1 \"script\"\n",
+  // A package AUTOLOAD forwards bare world-API calls — Note(...), GetPluginInfo(...)
+  // — to $world->Note(...), matching how Windows PerlScript injects the world
+  // object's methods as global subs.  Script-defined subs (the handlers) are
+  // resolved normally and never reach AUTOLOAD.
+  SV* sv = newSVpvf ("package %s;\n$%s::world = %s->new(%lld);\n"
+                     "sub AUTOLOAD { our $AUTOLOAD; (my $n=$AUTOLOAD)=~s/.*:://;"
+                     " return if $n eq 'DESTROY'; return $world->$n(\@_); }\n"
+                     "#line 1 \"script\"\n",
                      e->pkg.c_str (), e->pkg.c_str (), WORLD_STASH, (long long) (intptr_t) e->doc);
   sv_catpvn (sv, (LPCTSTR) strCode, strCode.GetLength ());
   eval_sv (sv, G_DISCARD);

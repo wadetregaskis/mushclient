@@ -2496,7 +2496,7 @@ void CMUSHclientDoc::Load_Plugin_XML (CXMLelement & parent)
             m_CurrentPlugin->m_strLanguage != "jscript" &&
             m_CurrentPlugin->m_strLanguage != "jscript.encode" &&
             m_CurrentPlugin->m_strLanguage != "perlscript" 
-#ifdef USE_PYTHON
+#if defined(USE_PYTHON) || !defined(_WIN32)
             && m_CurrentPlugin->m_strLanguage != "python"
 #endif
 #ifdef USE_TCL

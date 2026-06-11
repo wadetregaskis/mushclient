@@ -213,6 +213,20 @@ if(NOT WIN32)
             message(STATUS "Perl embedding not available — Perl scripting disabled")
         endif()
     endif()
+
+    # ── JavaScript via JavaScriptCore (macOS system framework) ─────────────────
+    # A modern JS engine standing in for Windows' COM-only JScript.  macOS only;
+    # on other platforms JS scripting stays disabled (scriptengine.cpp link stubs).
+    set(JS_ENGINE_FOUND FALSE)
+    if(APPLE)
+        find_library(JAVASCRIPTCORE_FRAMEWORK JavaScriptCore)
+        if(JAVASCRIPTCORE_FRAMEWORK)
+            set(JS_ENGINE_FOUND TRUE)
+            message(STATUS "JavaScriptCore found — JavaScript scripting enabled")
+        else()
+            message(STATUS "JavaScriptCore not found — JavaScript scripting disabled")
+        endif()
+    endif()
 endif()
 
 # ── Vendored library: PCRE ────────────────────────────────────────────────
@@ -756,6 +770,13 @@ if(NOT WIN32)
                                     COMPILE_FLAGS "${PERL_CCOPTS}")
         separate_arguments(PERL_LDOPTS_LIST UNIX_COMMAND "${PERL_LDOPTS}")
         target_link_libraries(mushapp PUBLIC ${PERL_LDOPTS_LIST})
+    endif()
+
+    if(JS_ENGINE_FOUND)
+        # Embedded JavaScript engine via JavaScriptCore (same dispatch substrate).
+        target_sources(mushapp PRIVATE platform/js_engine.cpp)
+        target_compile_definitions(mushapp PRIVATE MUSHCLIENT_JS_SCRIPTING)
+        target_link_libraries(mushapp PUBLIC ${JAVASCRIPTCORE_FRAMEWORK})
     endif()
 
     target_include_directories(mushapp PUBLIC

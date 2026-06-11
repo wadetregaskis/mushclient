@@ -1023,12 +1023,18 @@ void CMUSHclientDoc::Load_World_Numeric_Options_XML (CXMLelement & parent,
         if (Get_XML_boolean (parent, 
                             OptionsTable [i].pName, 
                             bValue,
-                            bUseDefault || m_NumericConfiguration [i]->bInclude
+ //                         bUseDefault || m_NumericConfiguration [i]->bInclude
+                            TRUE  //  keep program default for an omitted boolean,
+                                  //  as the colour (v3.83) and number (v4.30) branches already do
                             ))
           SetOptionItem (i, bValue, true, (iFlags & LOAD_INCLUDE) != 0);
+        /*  An omitted boolean now keeps the default set by SetDefaults() in the
+            ctor, instead of being forced to 0.  This finishes the v3.83/v4.30
+            migration (colours, then numbers) that never reached the boolean case.
         else // not found, use default?
           if (!(bUseDefault || m_NumericConfiguration [i]->bInclude))
             SetOptionItem (i, 0, true, false);        // then take zero
+        */
   
         }   // end of boolean 
       else

@@ -57,6 +57,21 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
 // True if `name` is a known automation method.
 bool MC_DispatchHas(const char* name);
 
+// ── Properties (DISP_PROPERTY_NOTIFY / DISP_PROPERTY_EX) ────────────────────
+// The dispatch map's member- and accessor-backed properties (world.Trace,
+// world.NoteColour, world.LogNotes, …) surface to scripts as readable/writable
+// attributes.  (Indexed DISP_PROPERTY_PARAM properties are instead registered as
+// plain Get*/Set* methods, reachable through MC_DispatchInvoke.)
+bool MC_DispatchHasProperty(const char* name);
+
+// Read property `name` into `result` (caller releases via MC_VariantClear).
+// Returns false if there is no such property.
+bool MC_DispatchGetProperty(CMUSHclientDoc* doc, const char* name, VARIANT& result);
+
+// Write `value` to property `name` (and run its change handler, if any).
+// Returns false if there is no such property.
+bool MC_DispatchSetProperty(CMUSHclientDoc* doc, const char* name, const VARIANT& value);
+
 // Deep-free a VARIANT produced by MC_DispatchInvoke (frees an owned BSTR or
 // SAFEARRAY).  The stock VariantClear in mfc_ui.h only frees arrays, so the
 // dispatch/engine code routes all VARIANT teardown through this.

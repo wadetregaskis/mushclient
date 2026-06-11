@@ -184,13 +184,40 @@ void Method_dealloc(PyObject* self)
   Py_TYPE(self)->tp_free(self);
   }
 
-// world.<name> -> a bound MethodObject when <name> is a dispatch method.
+// world.<name> -> a bound MethodObject for a dispatch method, or the value of a
+// dispatch property (world.Trace, world.NoteColour, …).
 PyObject* World_getattro(PyObject* self, PyObject* nameobj)
   {
   const char* name = PyUnicode_AsUTF8(nameobj);
-  if (name && MC_DispatchHas(name))
-    return make_method(((WorldObject*) self)->doc, name);
+  CMUSHclientDoc* doc = ((WorldObject*) self)->doc;
+  if (name)
+    {
+    if (MC_DispatchHas(name))
+      return make_method(doc, name);
+    if (MC_DispatchHasProperty(name))
+      {
+      VARIANT v;
+      if (MC_DispatchGetProperty(doc, name, v))
+        { PyObject* r = variant_to_py(v); MC_VariantClear(v); return r; }
+      }
+    }
   return PyObject_GenericGetAttr(self, nameobj);   // dunders, errors
+  }
+
+// world.<name> = value -> write a dispatch property (read-only for methods).
+int World_setattro(PyObject* self, PyObject* nameobj, PyObject* value)
+  {
+  const char* name = PyUnicode_AsUTF8(nameobj);
+  CMUSHclientDoc* doc = ((WorldObject*) self)->doc;
+  if (name && value && MC_DispatchHasProperty(name))
+    {
+    VARIANT v;
+    py_to_variant(value, v);
+    bool ok = MC_DispatchSetProperty(doc, name, v);
+    MC_VariantClear(v);
+    if (ok) return 0;
+    }
+  return PyObject_GenericSetAttr(self, nameobj, value);
   }
 
 bool g_inited = false;
@@ -205,6 +232,7 @@ void ensure_init()
   WorldType.tp_basicsize = sizeof(WorldObject);
   WorldType.tp_flags     = Py_TPFLAGS_DEFAULT;
   WorldType.tp_getattro  = World_getattro;
+  WorldType.tp_setattro  = World_setattro;
   WorldType.tp_doc       = "MUSHclient world object";
   PyType_Ready(&WorldType);
 

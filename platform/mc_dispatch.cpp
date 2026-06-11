@@ -108,6 +108,17 @@ void to_variant(VARIANT& r, double v) { r.vt = VT_R8;   r.dblVal  = v; }
 void to_variant(VARIANT& r, char* v)  { r.vt = VT_BSTR; r.bstrVal = v ? v : SysAllocString (""); } // BSTR
 void to_variant(VARIANT& r, void* v)  { r.vt = VT_DISPATCH; r.byref = v; }       // LPDISPATCH
 void to_variant(VARIANT& r, VARIANT v){ r = v; }                                 // take ownership (shallow)
+void to_variant(VARIANT& r, unsigned short v) { r.vt = VT_I2; r.iVal = (short) v; }
+void to_variant(VARIANT& r, const CString& v) { r.vt = VT_BSTR; r.bstrVal = SysAllocString((LPCTSTR) v); }
+
+// VARIANT -> C++ value for property setters / member assignment.
+template<class T> T prop_from(const VARIANT* v);
+template<> long           prop_from<long>          (const VARIANT* v) { return var_to_long(v); }
+template<> short          prop_from<short>         (const VARIANT* v) { return (short) var_to_long(v); }
+template<> int            prop_from<int>           (const VARIANT* v) { return (int) var_to_long(v); }   // BOOL
+template<> unsigned short prop_from<unsigned short>(const VARIANT* v) { return (unsigned short) var_to_long(v); }
+template<> double         prop_from<double>        (const VARIANT* v) { return var_to_double(v); }
+template<> CString        prop_from<CString>       (const VARIANT* v) { return var_to_cstr(v); }
 
 // ── Argument holders (input VARIANT -> typed call argument) ─────────────────
 // Each holder owns whatever storage its argument needs and lives in the call's
@@ -210,6 +221,41 @@ void register_disp(const char* name, Ret (CMUSHclientDoc::*pmf)(Args...))
     };
   }
 
+// ── Property table (DISP_PROPERTY_NOTIFY / DISP_PROPERTY_EX) ─────────────────
+struct PropEntry
+  {
+  std::function<void(CMUSHclientDoc*, VARIANT&)>       get;
+  std::function<void(CMUSHclientDoc*, const VARIANT&)> set;
+  };
+std::unordered_map<std::string, PropEntry>& prop_table()
+  {
+  static std::unordered_map<std::string, PropEntry> t;
+  return t;
+  }
+
+// Member-backed property; `notify` (may be null) is the on-change handler.
+template<class M>
+void register_prop_member(const char* name, M CMUSHclientDoc::*pm,
+                          void (CMUSHclientDoc::*notify)())
+  {
+  prop_table()[name] = PropEntry{
+    [pm](CMUSHclientDoc* d, VARIANT& out)        { to_variant(out, d->*pm); },
+    [pm, notify](CMUSHclientDoc* d, const VARIANT& v)
+      { d->*pm = prop_from<M>(&v); if (notify) (d->*notify)(); }
+    };
+  }
+
+// Accessor-backed property: R Get(), void Set(A).
+template<class R, class A>
+void register_prop_ex(const char* name, R (CMUSHclientDoc::*get)(),
+                      void (CMUSHclientDoc::*set)(A))
+  {
+  prop_table()[name] = PropEntry{
+    [get](CMUSHclientDoc* d, VARIANT& out)        { to_variant(out, (d->*get)()); },
+    [set](CMUSHclientDoc* d, const VARIANT& v)    { (d->*set)(prop_from<std::decay_t<A>>(&v)); }
+    };
+  }
+
 // Build the table from the same dispatch map the Windows build compiles.  Only
 // the DISP_FUNCTION rows become callable methods; the DISP_PROPERTY_* rows are
 // no-ops here for now (world.* *properties* are a follow-up — the 408 methods
@@ -235,10 +281,13 @@ void build_table()
   #define ColourNote  GetUniqueNumber
   #define DISP_FUNCTION(cls, name, fn, ret, ...)         register_disp(name, &cls::fn);
   #define DISP_FUNCTION_ID(cls, name, id, fn, ret, ...)  register_disp(name, &cls::fn);
-  #define DISP_PROPERTY(cls, name, mem, type)
-  #define DISP_PROPERTY_NOTIFY(cls, name, mem, fn, type)
-  #define DISP_PROPERTY_EX(cls, name, get, set, type)
-  #define DISP_PROPERTY_PARAM(cls, name, get, set, type, ...)
+  #define DISP_PROPERTY(cls, name, mem, type)            register_prop_member(name, &cls::mem, nullptr);
+  #define DISP_PROPERTY_NOTIFY(cls, name, mem, fn, type) register_prop_member(name, &cls::mem, &cls::fn);
+  #define DISP_PROPERTY_EX(cls, name, get, set, type)    register_prop_ex(name, &cls::get, &cls::set);
+  // Indexed properties have no plain-attribute form; expose their accessors as
+  // the documented Get*/Set* methods instead (e.g. world.GetNormalColour(i)).
+  #define DISP_PROPERTY_PARAM(cls, name, get, set, type, ...) \
+            register_disp(#get, &cls::get); register_disp(#set, &cls::set);
   #define DISP_DEFVALUE(cls, name)
 
   #include "doc_dispatch_map.inc"
@@ -273,6 +322,31 @@ bool MC_DispatchHas(const char* name)
   {
   build_table();
   return table().find(name) != table().end();
+  }
+
+bool MC_DispatchHasProperty(const char* name)
+  {
+  build_table();
+  return prop_table().find(name) != prop_table().end();
+  }
+
+bool MC_DispatchGetProperty(CMUSHclientDoc* doc, const char* name, VARIANT& result)
+  {
+  build_table();
+  VariantInit(&result);
+  auto it = prop_table().find(name);
+  if (it == prop_table().end() || !it->second.get) return false;
+  it->second.get(doc, result);
+  return true;
+  }
+
+bool MC_DispatchSetProperty(CMUSHclientDoc* doc, const char* name, const VARIANT& value)
+  {
+  build_table();
+  auto it = prop_table().find(name);
+  if (it == prop_table().end() || !it->second.set) return false;
+  it->second.set(doc, value);
+  return true;
   }
 
 void MC_VariantClear(VARIANT& v) { var_clear(v); }

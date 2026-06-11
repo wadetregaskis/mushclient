@@ -23,7 +23,9 @@ local pattern = "%a+'?[%a%d]+" -- regexp to give us a word with a possible singl
 -- Dictionaries are read-only and bundled next to the executable (app_directory).
 -- The user dictionary and the compiled spell.sqlite get WRITTEN, so they live in
 -- a writable data directory (App Support on macOS/Linux; the app dir on Windows).
-local dict_directory = utils.info ().app_directory .. "spell/"
+-- read-only dictionaries ship in the bundle's resource dir (Contents/Resources/
+-- spell on macOS; next to the executable elsewhere)
+local dict_directory = (utils.info ().resource_directory or utils.info ().app_directory) .. "spell/"
 local directory      = utils.info ().data_directory or dict_directory
 -- file name of the user dictionary, in the writable directory
 local userdict = "userdict.txt"

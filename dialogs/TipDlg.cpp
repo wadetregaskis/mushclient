@@ -50,6 +50,11 @@ char * p;
 
 #ifdef _WIN32
     strcat (filename, "\\tips.txt");
+#elif defined (__APPLE__)
+    // In a .app bundle read-only resources live in Contents/Resources/, not
+    // alongside the executable in Contents/MacOS/ (code signing requires that
+    // only the executable sit there).
+    strcat (filename, "/../Resources/tips.txt");
 #else
     strcat (filename, "/tips.txt");
 #endif

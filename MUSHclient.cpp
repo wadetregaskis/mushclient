@@ -1503,6 +1503,10 @@ void CMUSHclientApp::OpenLuaDelayed ()
 
    // spell checker folder pathname
   CString luaspellcheckerpath =  ExtractDirectory (m_strMUSHclientFileName);
+#if defined (__APPLE__)
+  // .app bundles read-only resources in Contents/Resources/, not Contents/MacOS/.
+  luaspellcheckerpath += "../Resources/";
+#endif
   luaspellcheckerpath += "spellchecker.lua";
 
   int error = luaL_loadfile(m_SpellChecker_Lua, luaspellcheckerpath) ||

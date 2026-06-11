@@ -969,6 +969,14 @@ static int info (lua_State *L)
     }
 
   MakeTableItem (L, "app_directory", ExtractDirectory (App.m_strMUSHclientFileName));
+  // Read-only bundled resources (spell/ dictionaries, etc.).  In a macOS .app
+  // these live in Contents/Resources/, not next to the executable; elsewhere
+  // they sit alongside it, so this equals app_directory.
+#if defined (__APPLE__)
+  MakeTableItem (L, "resource_directory", ExtractDirectory (App.m_strMUSHclientFileName) + "../Resources/");
+#else
+  MakeTableItem (L, "resource_directory", ExtractDirectory (App.m_strMUSHclientFileName));
+#endif
   // Writable data directory: App Support/MUSHclient/ on macOS/Linux (the .app
   // bundle is read-only), the executable's directory on Windows.  Used e.g. by
   // spellchecker.lua to put its writable spell.sqlite somewhere it can create it.

@@ -1010,25 +1010,28 @@ if(NOT WIN32)
                     "${CMAKE_SOURCE_DIR}/platform/dialog_text"
                     "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/text"
                 COMMENT "Bundling licence + credits text (About box)")
-            # Bundle data files the engine opens relative to the executable
-            # (GetModuleFileName's directory): the Tip-of-the-Day text, name lists.
+            # Read-only data the engine opens at runtime: the Tip-of-the-Day
+            # text and the name-generator lists.  These go in Contents/Resources/
+            # (NOT Contents/MacOS/): code signing requires that only the
+            # executable live in MacOS/, so the lookups resolve ../Resources/ on
+            # macOS (CTipDlg, CWorldChildFrame::GenerateCharacterName).
             add_custom_command(TARGET mushgui POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy
                     "${CMAKE_SOURCE_DIR}/tips.txt"
                     "${CMAKE_SOURCE_DIR}/names.txt"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/MacOS/"
-                COMMENT "Bundling tips.txt + names.txt next to the executable (CTipDlg / GenerateName read them there)")
-            # Spell checker: the engine script (loaded from app_directory) + the
-            # read-only dictionaries (app_directory/spell/).  spell.sqlite is built
-            # at runtime in the writable data dir (utils.info().data_directory).
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/"
+                COMMENT "Bundling tips.txt + names.txt into Contents/Resources (CTipDlg / GenerateName)")
+            # Spell checker: the engine script + the read-only dictionaries, also
+            # in Contents/Resources/ (resolved via utils.info().resource_directory).
+            # spell.sqlite is built at runtime in the writable data dir.
             add_custom_command(TARGET mushgui POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy
                     "${CMAKE_SOURCE_DIR}/scripting/spellchecker.lua"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/MacOS/"
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/"
                 COMMAND ${CMAKE_COMMAND} -E copy_directory
                     "${CMAKE_SOURCE_DIR}/spell"
-                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/MacOS/spell"
-                COMMENT "Bundling spellchecker.lua + spell/ dictionaries (spell checker)")
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/spell"
+                COMMENT "Bundling spellchecker.lua + spell/ dictionaries into Contents/Resources")
         endif()
     elseif(NOT wxWidgets_FOUND)
         message(STATUS "wxWidgets not found — mushgui target skipped")

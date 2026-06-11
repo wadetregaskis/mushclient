@@ -1910,12 +1910,17 @@ void CWorldChildFrame::GenerateCharacterName()
     // Resolve the names file.  Its default is a bare "names.txt", which
     // GenerateName() would look for in the current working directory (not found
     // → silent failure).  If the path is empty or has no directory component,
-    // resolve it next to the executable (Contents/MacOS/names.txt), where the
-    // build bundles it.
+    // resolve it among the bundled resources, where the build ships it.
     if (App.m_strDefaultNameGenerationFile.IsEmpty() ||
         App.m_strDefaultNameGenerationFile.Find('/') == -1)
-        App.m_strDefaultNameGenerationFile =
-            ExtractDirectory(App.m_strMUSHclientFileName) + "names.txt";
+    {
+        CString dir = ExtractDirectory(App.m_strMUSHclientFileName);
+#if defined (__APPLE__)
+        // .app: resources live in Contents/Resources/, not Contents/MacOS/.
+        dir += "../Resources/";
+#endif
+        App.m_strDefaultNameGenerationFile = dir + "names.txt";
+    }
 
     CString strName = GenerateName();
     if (strName.IsEmpty())

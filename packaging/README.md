@@ -1,10 +1,11 @@
 # Packaging MUSHclient for macOS
 
-Two scripts live here:
+Three scripts live here:
 
 | Script | What it does |
 |--------|--------------|
 | [`build-app.sh`](build-app.sh) | Build a complete, self-contained, signed `MUSHclient.app` (+ `.dmg`). |
+| [`fetch-python.sh`](fetch-python.sh) | Stage a clean, redistributable python.org framework to embed. |
 | [`fetch-discworld-plugins.sh`](fetch-discworld-plugins.sh) | Stage Quow's Discworld plugins so they can be pre-bundled. |
 
 Everything the scripts produce lands in `dist/` (git-ignored).
@@ -104,25 +105,30 @@ the seeding step is a no-op.
 
 ---
 
-## ⚠️ Important: the embedded Python framework
+## Embedded Python (clean python.org framework)
 
-The build currently links **Xcode's** `Python3.framework`
-(`/Applications/Xcode.app/.../Python3.framework`). `build-app.sh` will bundle
-and relocate it so the app is self-contained, but **that framework is Apple's
-and is not cleanly redistributable** — fine for local use and testing, not for a
-public release. The script prints a warning when it bundles it.
-
-For a public release, rebuild against the **python.org** framework (PSF-licensed,
-relocatable, universal2):
+The app embeds CPython. To avoid shipping **Xcode's** `Python3.framework` (Apple's,
+not cleanly redistributable), stage a clean **python.org** framework once:
 
 ```bash
-# install the official macOS framework from https://www.python.org/downloads/macos/
-EXTRA_CMAKE_ARGS="-DPython3_ROOT_DIR=/Library/Frameworks/Python.framework/Versions/3.12 -DPython3_FIND_FRAMEWORK=ONLY" \
-    packaging/build-app.sh --clean --sign-identity "..." --notarize-profile mushclient-notary
+packaging/fetch-python.sh                 # downloads + extracts python.org 3.14.6
+PYTHON_VERSION=3.14.6 packaging/fetch-python.sh
+packaging/fetch-python.sh --pkg ~/Downloads/python-3.14.6-macos11.pkg   # offline
 ```
 
-`build-app.sh` then bundles *that* framework instead (no warning), and it's free
-to redistribute. (Perl uses the system `libperl`, and JavaScript uses the system
+`fetch-python.sh` downloads the official installer, extracts its `Python.framework`
+**without installing it** (`pkgutil --expand-full`), and makes it relocatable, into
+the git-ignored `packaging/python/`. After that, **`build-app.sh` uses it
+automatically** — CMake links it, and the app bundles it under
+`Contents/Frameworks/`, thinned to the app's architecture and pruned (no
+tkinter/tests/idle). The embedded interpreter finds its stdlib inside the `.app`
+at runtime (via `dladdr`), so it works on any Mac. PSF-licensed → free to ship.
+
+If `packaging/python/` is absent, `build-app.sh` falls back to whatever
+`find_package(Python3)` locates (e.g. Xcode's framework) — fine for local testing,
+**not** for a public release.
+
+(Perl uses the system `libperl`, and JavaScript uses the system
 `JavaScriptCore.framework` — both are always present on macOS, so neither needs
 bundling.)
 

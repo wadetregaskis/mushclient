@@ -188,6 +188,23 @@ if(NOT WIN32)
     # ── Python 3 (embedded alternate scripting engine — mushapp/GUI only) ──
     # Optional: when present, a world whose language is "Python" runs on real
     # CPython via platform/py_engine.cpp.  Absent → scriptengine.cpp link stubs.
+    #
+    # Prefer a vendored, redistributable python.org framework (staged by
+    # packaging/fetch-python.sh) over the system/Xcode framework, so the dev build
+    # and the packaged app embed the same relocatable Python.
+    set(_vendored_py "${CMAKE_SOURCE_DIR}/packaging/python/Python.framework")
+    if(APPLE AND EXISTS "${_vendored_py}/Versions")
+        file(GLOB _pyv RELATIVE "${_vendored_py}/Versions" "${_vendored_py}/Versions/3.*")
+        if(_pyv)
+            list(GET _pyv 0 _pyver)
+            set(Python3_ROOT_DIR "${_vendored_py}/Versions/${_pyver}")
+            set(Python3_FIND_FRAMEWORK NEVER)
+            set(Python3_FIND_STRATEGY LOCATION)
+            set(MUSHCLIENT_VENDORED_PYTHON_DIR "${CMAKE_SOURCE_DIR}/packaging/python"
+                CACHE INTERNAL "container dir of the vendored Python.framework")
+            message(STATUS "Embedding vendored python.org framework ${_pyver}")
+        endif()
+    endif()
     find_package(Python3 QUIET COMPONENTS Development.Embed)
     if(Python3_FOUND)
         message(STATUS "Python3 ${Python3_VERSION} found — Python scripting enabled")
@@ -918,6 +935,12 @@ if(NOT WIN32)
         # scripting, etc.) rather than the portable mushcore stub.
         # wx_mfc_impl.cpp bridges the MFC compatibility layer to real wxWidgets.
         target_link_libraries(mushgui PRIVATE mushapp ${wxWidgets_LIBRARIES})
+        # so @rpath/Python.framework (the embedded libpython) resolves at dev
+        # runtime; build-app.sh strips this absolute rpath and bundles the
+        # framework under Contents/Frameworks for the released app.
+        if(MUSHCLIENT_VENDORED_PYTHON_DIR)
+            target_link_options(mushgui PRIVATE "-Wl,-rpath,${MUSHCLIENT_VENDORED_PYTHON_DIR}")
+        endif()
         # miniaudio (platform/ma_sound.cpp) needs the OS audio backend:
         # CoreAudio family on macOS; pthread/dl/m on Linux (it dlopen's ALSA/Pulse).
         if(APPLE)

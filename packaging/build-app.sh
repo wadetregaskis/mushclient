@@ -47,6 +47,7 @@ DISCWORLD_DIR="${DISCWORLD_PLUGINS_DIR:-$SCRIPT_DIR/discworld-plugins}"
 WITH_DISCWORLD=0
 MAKE_DMG=1
 DO_RELOCATE=1
+PRUNE_PYTHON=1
 DO_CLEAN=0
 MIN_MACOS="11.0"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
@@ -88,6 +89,7 @@ while [ $# -gt 0 ]; do
         -j|--jobs)            JOBS="$2"; shift 2;;
         --no-dmg)             MAKE_DMG=0; shift;;
         --no-relocate)        DO_RELOCATE=0; shift;;
+        --no-prune-python)    PRUNE_PYTHON=0; shift;;
         --clean)              DO_CLEAN=1; shift;;
         -h|--help)            usage; exit 0;;
         *) die "unknown option: $1 (try --help)";;
@@ -240,18 +242,69 @@ if [ "$DO_RELOCATE" = 1 ]; then
     done
     # the main executable finds the bundled libs/frameworks via this rpath
     add_rpath_once "$EXE" "@executable_path/../Frameworks"
-    # drop the build-host rpaths (Homebrew/Xcode dirs) from the exe AND every
-    # bundled dylib so nothing leaks the build machine; @loader_path (added on
-    # each copy) keeps siblings resolvable inside Contents/Frameworks.
+    # drop every ABSOLUTE rpath (Homebrew/Xcode dirs, the dev-time vendored-Python
+    # dir, …) from the exe AND every bundled dylib, so nothing leaks the build
+    # machine; @loader_path / @executable_path rpaths keep everything resolvable
+    # inside Contents/Frameworks.
     for b in "$EXE" "$FRAMEWORKS"/*.dylib; do
         [ -f "$b" ] || continue
         while IFS= read -r rp; do
-            case "$rp" in /opt/*|/usr/local/*|/Applications/Xcode*|*/CommandLineTools/*)
+            case "$rp" in /*)
                 install_name_tool -delete_rpath "$rp" "$b" 2>/dev/null || true;; esac
         done < <(rpaths_of "$b")
     done
+
+    # ── arch consistency ───────────────────────────────────────────────────
+    # Thin every bundled Mach-O to the architecture(s) the executable actually
+    # has, so an arm64-only app never ships a fat (universal2) Python framework
+    # or dylib.  If the exe is itself multi-arch, leave deps fat (a true
+    # universal app — the deps are assumed to match).
+    APP_ARCHS="$(lipo -archs "$EXE" 2>/dev/null)"
+    if [ "$(printf '%s' "$APP_ARCHS" | wc -w | tr -d ' ')" = 1 ]; then
+        note "thinning bundled Mach-O to '$APP_ARCHS' (matching the executable)"
+        while IFS= read -r f; do
+            [ -L "$f" ] && continue
+            file "$f" 2>/dev/null | grep -q "Mach-O" || continue
+            if file "$f" | grep -q "Mach-O universal"; then          # fat → thin to target
+                lipo "$f" -thin "$APP_ARCHS" -output "$f" 2>/dev/null || true
+            fi
+            # anything still not the target arch is a stray (e.g. python's x86_64
+            # -intel64 Rosetta launcher); drop unused launchers, flag anything else.
+            if [ "$(lipo -archs "$f" 2>/dev/null)" != "$APP_ARCHS" ]; then
+                case "$f" in
+                    *-intel64|*/bin/*) rm -f "$f" ;;
+                    *) warn "non-$APP_ARCHS Mach-O kept: ${f#$APP/} ($(lipo -archs "$f" 2>/dev/null))" ;;
+                esac
+            fi
+        done < <(find "$FRAMEWORKS" -type f \( -name '*.dylib' -o -name '*.so' -o -perm +111 \))
+    else
+        note "executable is multi-arch ($APP_ARCHS) — leaving bundled Mach-O fat (universal app)"
+    fi
     note "  bundled $(ls -1 "$FRAMEWORKS" | wc -l | tr -d ' ') item(s); residual non-system deps:"
     otool -L "$EXE" | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/|@)' | sed 's/^/    LEAK: /' || true
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
+# 3b. prune the bundled Python framework (size)
+# ════════════════════════════════════════════════════════════════════════════
+# Drop the parts an embedded MUD-client interpreter never uses: Tcl/Tk (the
+# tkinter GUI — large, and it carries dangling symlinks that trip xattr/codesign),
+# the test suite, IDLE, and cached bytecode.
+pyfw="$FRAMEWORKS/Python.framework"
+if [ "$PRUNE_PYTHON" = 1 ] && [ -d "$pyfw" ]; then
+    note "pruning bundled Python (tkinter / tests / idle / bytecode)"
+    before="$(du -sm "$pyfw" 2>/dev/null | awk '{print $1}')"
+    pvd="$(echo "$pyfw"/Versions/3.*)"
+    rm -rf "$pvd"/Frameworks/Tcl.framework "$pvd"/Frameworks/Tk.framework
+    std="$(echo "$pvd"/lib/python3.*)"
+    rm -rf "$std/test" "$std/idlelib" "$std/turtledemo" "$std/tkinter" \
+           "$std/ensurepip" "$std/lib2to3" "$std/pydoc_data"
+    rm -f  "$std"/lib-dynload/_tkinter*.so
+    rm -rf "$pvd/bin"                  # command-line launchers — the embedded app never execs them
+    rm -rf "$pvd/Resources/Python.app" # GUI launcher stub (a nested Mach-O bundle the embed never uses)
+    rm -rf "$pvd/share"                # man pages / docs
+    find "$pyfw" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+    note "  Python framework: ${before}MB -> $(du -sm "$pyfw" 2>/dev/null | awk '{print $1}')MB"
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -288,7 +341,7 @@ sign_app() {
 # forks / Finder info / com.apple.quarantine), which cp and downloaded assets
 # routinely leave behind.  Strip them before signing.
 note "stripping extended attributes (xattr -cr)"
-xattr -cr "$APP"
+xattr -cr "$APP" 2>/dev/null || true   # tolerate dangling symlinks (e.g. framework PrivateHeaders)
 
 note "code signing with identity: $SIGN_ID"
 [ "$SIGN_ID" = "-" ] && warn "ad-hoc signing — fine for THIS Mac, but cannot be notarized or run elsewhere"

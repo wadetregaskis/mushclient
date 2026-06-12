@@ -103,3 +103,6 @@ packaging/discworld-plugins/
 LOGBOOK.md
 PLAN.md
 CLAUDE.md
+
+# Vendored python.org framework (fetched, not committed)
+packaging/python/

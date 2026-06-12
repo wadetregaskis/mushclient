@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <dlfcn.h>           // dladdr — locate the bundled framework at runtime
 
 #ifndef VT_ERROR
 #define VT_ERROR 10
@@ -245,7 +246,37 @@ bool g_inited = false;
 void ensure_init()
   {
   if (g_inited) return;
-  Py_InitializeEx(0);          // embedded: don't trap signals
+
+  PyConfig config;
+  PyConfig_InitPythonConfig (&config);
+#if defined (__APPLE__)
+  // On macOS the embedded interpreter lives in a RELOCATED framework, so CPython's
+  // compiled-in prefix is a build-machine path that won't exist on a user's Mac.
+  // Point it at the stdlib beside libpython instead: dladdr finds wherever
+  // libpython actually loaded from (the @rpath-resolved framework), which works
+  // for the dev build and the relocated copy inside the .app alike.  (On Linux the
+  // system libpython's own prefix is correct, so leave the default in place.)
+  Dl_info info;
+  if (dladdr ((void *) &Py_InitializeFromConfig, &info) && info.dli_fname)
+    {
+    std::string home = info.dli_fname;        // …/Python.framework/Versions/X.Y/Python
+    const size_t slash = home.find_last_of ('/');
+    if (slash != std::string::npos)
+      {
+      home.resize (slash);                    // …/Python.framework/Versions/X.Y  (the prefix)
+      wchar_t * whome = Py_DecodeLocale (home.c_str (), NULL);
+      if (whome)
+        {
+        PyConfig_SetString (&config, &config.home, whome);
+        PyMem_RawFree (whome);
+        }
+      }
+    }
+#endif
+  PyStatus status = Py_InitializeFromConfig (&config);   // embedded: doesn't trap signals
+  PyConfig_Clear (&config);
+  if (PyStatus_Exception (status) && !Py_IsInitialized ())
+    Py_InitializeEx (0);                      // last-resort fallback (default prefix)
   g_inited = true;
 
   WorldType.tp_name      = "mushclient.world";

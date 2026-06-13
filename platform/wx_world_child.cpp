@@ -1537,6 +1537,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     m_infobarStyle.SetFont(m_infobar->GetFont());
 
     if (m_doc) {
+        // world.GetInfo(257/258): live InfoBar size (0,0 while hidden).
+        m_doc->m_fn_infobar_size = [this](int& w, int& h) {
+            if (m_infobar && m_infobar->IsShown()) { wxSize s = m_infobar->GetSize(); w = s.x; h = s.y; }
+            else { w = 0; h = 0; }
+        };
+        // world.GetInfo(125): is this world's frame full-screen?
+        m_doc->m_fn_is_fullscreen = [this]() { return IsFullScreen(); };
         m_doc->m_fn_infobar_show = [this](bool show) {
             if (m_infobar->IsShown() != show) { m_infobar->Show(show); Layout(); }
         };

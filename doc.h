@@ -1614,6 +1614,11 @@ public:
   std::function<void(unsigned long)>               m_fn_infobar_colour;
   std::function<void(unsigned long)>               m_fn_infobar_background;
   std::function<void(const std::string&, int, int)> m_fn_infobar_font;
+  // world.GetInfo: live frame state the port queries from the world child frame.
+  // m_fn_infobar_size fills (width, height) of the InfoBar in pixels (0,0 when
+  // hidden); m_fn_is_fullscreen reports whether the frame is full-screen.
+  std::function<void(int&, int&)>                  m_fn_infobar_size;
+  std::function<bool()>                            m_fn_is_fullscreen;
 
   // world.PushCommand(): push current command bar text onto history, clear bar.
   // Returns the pushed command text.

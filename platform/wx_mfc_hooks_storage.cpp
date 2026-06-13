@@ -55,6 +55,7 @@ int    (*g_wxhook_font_has_glyph)(const char*, unsigned int)     = nullptr;
 unsigned long (*g_wxhook_get_sys_color)(int)                     = nullptr;
 int           (*g_wxhook_get_system_metric)(int)                = nullptr;
 unsigned long (*g_wxhook_get_pixel)(void*, int, int)            = nullptr;
+short         (*g_wxhook_get_key_state)(int)                    = nullptr;
 void          (*g_wxhook_set_cursor)(void*, int)                = nullptr;
 void          (*g_wxhook_set_main_background)(unsigned long)    = nullptr;
 bool (*g_wxhook_append_to_notepad)(const char*, const char*, bool) = nullptr;

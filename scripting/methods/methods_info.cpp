@@ -612,7 +612,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 #ifdef _WIN32
                SetUpVariantBool (vaResult, Frame.IsFullScreen ());
 #else
-               SetUpVariantBool (vaResult, FALSE);  // fullscreen not supported
+               SetUpVariantBool (vaResult, m_fn_is_fullscreen && m_fn_is_fullscreen ());
 #endif
                break;
 
@@ -947,9 +947,15 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
             }
 #else  // !_WIN32 — cases 251-264: no toolbars/frames; return 0
     case 251: case 252: case 253: case 254:
-    case 255: case 256: case 257: case 258:
+    case 255: case 256:
     case 259: case 260:
       SetUpVariantLong (vaResult, 0); break;
+    case 257:   // InfoBar height (the InfoBar IS implemented on the port)
+      { int w = 0, h = 0; if (m_fn_infobar_size) m_fn_infobar_size (w, h);
+        SetUpVariantLong (vaResult, h); } break;
+    case 258:   // InfoBar width
+      { int w = 0, h = 0; if (m_fn_infobar_size) m_fn_infobar_size (w, h);
+        SetUpVariantLong (vaResult, w); } break;
     case 261: case 263:  // client/non-client height of world child frame
       SetUpVariantLong (vaResult, m_gui_rows * m_gui_font_height); break;
     case 262: case 264:  // client/non-client width of world child frame

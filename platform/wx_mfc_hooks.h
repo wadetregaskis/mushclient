@@ -203,6 +203,10 @@ extern int           (*g_wxhook_get_system_metric)(int index);
 // for loaded images this reads the materialised DIBSection bits, so colour-key
 // transparency keys on the real top-left pixel rather than black.
 extern unsigned long (*g_wxhook_get_pixel)(void* hdc, int x, int y);
+// GetKeyState(VK_*): live keyboard-modifier / mouse-button state for world.GetInfo
+// (294).  High bit (0x8000) set = key/button down.  Returns 0 from the stub when
+// unset, and for keys wx cannot report (L/R-specific modifiers, lock toggles).
+extern short         (*g_wxhook_get_key_state)(int vk);
 // world.SetCursor(n): set the mouse cursor over the doc's output pane.  n is the
 // MUSHclient cursor index (-1 = hidden, 0 = arrow, 1 = hand, …, 12 = help).
 extern void (*g_wxhook_set_cursor)(void* doc, int cursorNum);

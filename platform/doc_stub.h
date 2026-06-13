@@ -2241,6 +2241,8 @@ public:
     std::function<void(long&, long&, long&, long&)> m_fn_get_output_selection;
     // world.GetMainWindowPosition(): screen rect of the MDI parent frame.
     std::function<void(int&, int&, int&, int&)> m_fn_get_main_rect;
+    std::function<void(int&, int&)>             m_fn_infobar_size;     // (w,h) px, 0,0 if hidden
+    std::function<bool()>                       m_fn_is_fullscreen;
 
     // world.ActivateClient(): raise the world window / main frame to the front.
     std::function<void()> m_fn_activate_client;

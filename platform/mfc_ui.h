@@ -631,7 +631,7 @@ inline BOOL SetScrollInfo(HWND, int, const SCROLLINFO*, BOOL) { return TRUE; }
 
 // Other Win32 function stubs
 #ifndef GetKeyState
-inline SHORT GetKeyState(int)  { return 0; }
+inline SHORT GetKeyState(int vk)  { return g_wxhook_get_key_state ? (SHORT) g_wxhook_get_key_state(vk) : (SHORT) 0; }
 inline HWND  GetCapture()      { return nullptr; }
 inline BOOL  IsWindow(HWND h)  { return h != nullptr; }
 inline BOOL  LockWindowUpdate(HWND)   { return FALSE; }

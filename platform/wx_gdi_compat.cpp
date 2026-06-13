@@ -1088,9 +1088,34 @@ bool CDC::Ellipse(const CRect& r) {
 bool CDC::RoundRect(int x1, int y1, int x2, int y2, int x3, int y3) {
     CDCImpl* p = Impl(this);
     if (!p) return false;
+    // Win32 passes the corner *ellipse* width/height (x3,y3) — radii x3/2, y3/2,
+    // which may differ.  wxDC::DrawRoundedRectangle only takes one radius, so
+    // trace the outline as a polygon with four quarter-elliptical corners to
+    // honour non-square corners.
+    if (x2 < x1) std::swap(x1, x2);
+    if (y2 < y1) std::swap(y1, y2);
+    double rx = std::min(x3 / 2.0, (x2 - x1) / 2.0);
+    double ry = std::min(y3 / 2.0, (y2 - y1) / 2.0);
     p->ApplyPen(); p->ApplyBrush();
-    p->dc.DrawRoundedRectangle(x1, y1, x2 - x1, y2 - y1,
-                               (double)std::min(x3, y3) / 2.0);
+    if (rx <= 0.5 || ry <= 0.5) {            // degenerate corners → plain rectangle
+        p->dc.DrawRectangle(x1, y1, x2 - x1, y2 - y1);
+        return true;
+    }
+    const int SEG = 8;                       // segments per corner
+    struct Corner { double cx, cy, a0; } corners[4] = {
+        { x2 - rx, y1 + ry, -90.0 },         // top-right    (-90°→  0°)
+        { x2 - rx, y2 - ry,   0.0 },         // bottom-right (  0°→ 90°)
+        { x1 + rx, y2 - ry,  90.0 },         // bottom-left  ( 90°→180°)
+        { x1 + rx, y1 + ry, 180.0 },         // top-left     (180°→270°)
+    };
+    std::vector<wxPoint> pts;
+    for (const Corner& c : corners)
+        for (int s = 0; s <= SEG; ++s) {
+            double a = wxDegToRad(c.a0 + 90.0 * s / SEG);
+            pts.emplace_back(wxRound(c.cx + rx * cos(a)),
+                             wxRound(c.cy + ry * sin(a)));
+        }
+    p->dc.DrawPolygon((int) pts.size(), pts.data());
     return true;
 }
 
@@ -1200,8 +1225,32 @@ bool CDC::Polygon(const POINT* lpPoints, int nCount) {
 }
 
 bool CDC::PolyBezier(const POINT* lpPoints, int nCount) {
-    // Approximate with polyline for now
-    return Polyline(lpPoints, nCount);
+    CDCImpl* p = Impl(this);
+    if (!p) return false;
+    // Win32 PolyBezier: points are [start, c1, c2, end, c1, c2, end, …] — a start
+    // point followed by cubic control/control/end triplets.  wxDC has no native
+    // Bézier, so flatten each cubic into short segments — a smooth curve rather
+    // than a zig-zag through the control points (the old placeholder).
+    if (nCount < 4) return Polyline(lpPoints, nCount);
+    p->ApplyPen();
+    std::vector<wxPoint> pts;
+    pts.emplace_back(lpPoints[0].x, lpPoints[0].y);
+    const int STEPS = 24;                    // segments per cubic
+    for (int i = 1; i + 2 < nCount; i += 3) {
+        const double x0 = lpPoints[i-1].x, y0 = lpPoints[i-1].y;
+        const double x1 = lpPoints[i  ].x, y1 = lpPoints[i  ].y;
+        const double x2 = lpPoints[i+1].x, y2 = lpPoints[i+1].y;
+        const double x3 = lpPoints[i+2].x, y3 = lpPoints[i+2].y;
+        for (int s = 1; s <= STEPS; ++s) {
+            const double t = (double) s / STEPS, u = 1.0 - t;
+            const double b0 = u*u*u, b1 = 3*u*u*t, b2 = 3*u*t*t, b3 = t*t*t;
+            pts.emplace_back(wxRound(b0*x0 + b1*x1 + b2*x2 + b3*x3),
+                             wxRound(b0*y0 + b1*y1 + b2*y2 + b3*y3));
+        }
+    }
+    if (pts.size() < 2) return false;
+    p->dc.DrawLines((int) pts.size(), pts.data());
+    return true;
 }
 
 bool CDC::FloodFill(int x, int y, COLORREF crColor) {

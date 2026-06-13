@@ -2233,6 +2233,26 @@ static int hook_font_has_glyph(const char* facename, unsigned int codepoint)
 extern unsigned long wxgdi_get_pixel(void* hdc, int x, int y);
 
 // world.GetSysColor(COLOR_*) — map the Win32 system-colour index to the live
+// GetKeyState(VK_*): live modifier/mouse-button state for world.GetInfo(294).
+// wxGetKeyState reports the generic modifiers; wxGetMouseState the buttons.  wx
+// can't portably distinguish left/right modifiers or read lock toggles, so those
+// VK_* report "not pressed" (0) rather than a wrong value.  High bit = down.
+static short hook_get_key_state(int vk)
+{
+    bool down = false;
+    switch (vk)
+    {
+    case VK_SHIFT:    down = wxGetKeyState(WXK_SHIFT);            break;
+    case VK_CONTROL:  down = wxGetKeyState(WXK_CONTROL);          break;
+    case VK_MENU:     down = wxGetKeyState(WXK_ALT);              break;
+    case VK_LBUTTON:  down = wxGetMouseState().LeftIsDown();      break;
+    case VK_RBUTTON:  down = wxGetMouseState().RightIsDown();     break;
+    case VK_MBUTTON:  down = wxGetMouseState().MiddleIsDown();    break;
+    default:          return 0;   // L/R-specific modifiers + caps/num/scroll lock
+    }
+    return down ? (short) 0x8000 : 0;
+}
+
 // desktop theme colour.  The COLOR_* literals are the stable Win32 constants
 // (only a handful are #defined in the compat headers, so spell them out).
 // Returns COLORREF (0x00BBGGRR); unknown index → MFC light-grey default.
@@ -3677,6 +3697,7 @@ void wx_mfc_install_hooks()
     g_wxhook_font_has_glyph       = hook_font_has_glyph;
     g_wxhook_get_sys_color        = hook_get_sys_color;
     g_wxhook_get_system_metric    = hook_get_system_metric;
+    g_wxhook_get_key_state        = hook_get_key_state;
     g_wxhook_get_pixel            = wxgdi_get_pixel;   // defined in wx_gdi_compat.cpp
     g_wxhook_set_cursor           = hook_set_cursor;
     g_wxhook_set_main_background  = hook_set_main_background;

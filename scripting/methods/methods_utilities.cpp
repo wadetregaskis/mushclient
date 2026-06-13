@@ -396,7 +396,13 @@ LPDISPATCH CMUSHclientDoc::Open(LPCTSTR FileName)
 CDocument * pDoc = App.OpenDocumentFile (FileName);
 
   if (pDoc)
+#ifdef _WIN32
       return pDoc->GetIDispatch (TRUE);
+#else
+      // No COM on the port; hand the engines the world doc to wrap as a `world`
+      // object (downcast first so the pointer is a real CMUSHclientDoc*).
+      return (LPDISPATCH) (CMUSHclientDoc*) pDoc;
+#endif
 
 	return NULL;
 }   // end of CMUSHclientDoc::Open

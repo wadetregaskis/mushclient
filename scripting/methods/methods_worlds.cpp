@@ -23,7 +23,14 @@ LPDISPATCH CMUSHclientDoc::GetWorld(LPCTSTR WorldName)
     CMUSHclientDoc * pDoc = (CMUSHclientDoc *) App.m_pWorldDocTemplate->GetNextDoc(docPos);
   
     if (pDoc->m_mush_name.CompareNoCase (WorldName) == 0)
+#ifdef _WIN32
       return pDoc->GetIDispatch (TRUE);
+#else
+      // No COM on the port; the embedded engines marshal a VT_DISPATCH by
+      // wrapping the CMUSHclientDoc* as a `world` object (see mc_dispatch.cpp
+      // to_variant(void*) + each engine's variant_to_X VT_DISPATCH case).
+      return (LPDISPATCH) pDoc;
+#endif
     } // end of doing each document
 
 	return NULL;
@@ -98,7 +105,14 @@ LPDISPATCH CMUSHclientDoc::GetWorldById(LPCTSTR WorldID)
     CMUSHclientDoc * pDoc = (CMUSHclientDoc *) App.m_pWorldDocTemplate->GetNextDoc(docPos);
   
     if (pDoc->m_strWorldID.CompareNoCase (WorldID) == 0)
+#ifdef _WIN32
       return pDoc->GetIDispatch (TRUE);
+#else
+      // No COM on the port; the embedded engines marshal a VT_DISPATCH by
+      // wrapping the CMUSHclientDoc* as a `world` object (see mc_dispatch.cpp
+      // to_variant(void*) + each engine's variant_to_X VT_DISPATCH case).
+      return (LPDISPATCH) pDoc;
+#endif
     } // end of doing each document
 
 	return NULL;

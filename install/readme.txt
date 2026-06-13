@@ -73,6 +73,10 @@ It will not run on Windows 3.1 or Windows 3.11, sorry! This is because the enhan
 
 It should work on Linux running Wine. See: http://www.gammon.com.au/forum/?id=8380
 
+Recent versions also build and run natively on macOS and Linux, using a
+wxWidgets port of the same application (no Wine required). The native Windows
+build remains the primary distribution; for the macOS app see packaging/README.md.
+
 
 Bug reports
 -----------

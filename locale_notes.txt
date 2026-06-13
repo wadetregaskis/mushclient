@@ -5,6 +5,10 @@ Author: Nick Gammon
 Date:   18th June 2007
 Amended: 27th May 2008 to mention large/small monitor handling
 
+NOTE: This describes Windows localization via resource .dll files (en.dll etc.).
+The macOS/Linux native port does not use these resource DLLs and is not yet
+localized; this document does not cover it.
+
 
 In the "locale" directory - which is a subdirectory under where the MUSHclient.exe program is stored, you should find the following files in the standard MUSHclient distribution:
 

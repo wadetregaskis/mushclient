@@ -6,6 +6,11 @@ Date:   14th June 2011
 
 Time required: Approx. 20 minutes.
 
+NOTE: This describes the Windows release process (Visual C++ build, .hlp help
+file, registry, signed .exe installer).  The macOS/Linux native port is built
+and packaged separately — see packaging/README.md (packaging/build-app.sh
+produces a signed .app and .dmg) — and does not use the steps below.
+
 
 PREPARATION
 

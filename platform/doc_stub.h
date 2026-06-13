@@ -1604,7 +1604,7 @@ public:
     bool m_bPluginProcessingSend = false;
     bool m_bPluginProcessingSent = false;
 
-    // ── Plugin list (empty on non-Windows — no plugin loading yet) ────
+    // ── Plugin list (loaded from the world; walked by doc_portable.cpp) ────
     CPluginList m_PluginList;
 
     // ── Alias / trigger options ────────────────────────────────────────
@@ -1649,7 +1649,7 @@ public:
     // ── Status message ────────────────────────────────────────────────
     CString m_strStatusMessage;
 
-    // ── Chat connections (empty on non-Windows) ───────────────────────
+    // ── Chat connections (MUD chat protocol sockets) ──────────────────
     CChatSocketList m_ChatList;
 
     // ── World notes & tracing ─────────────────────────────────────────

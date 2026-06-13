@@ -2,6 +2,9 @@ To make stand-alone .zip file see:
 
 http://www.gammon.com.au/forum/bbshowpost.php?id=9662
 
+(This is the Windows standalone .zip — it uses the Windows registry and DLLs.
+For the self-contained macOS .app/.dmg, see packaging/README.md instead.)
+
 Basically this:
 
 

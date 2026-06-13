@@ -635,9 +635,11 @@ void CScriptEngine::DisableScripting (void)
 
 #else // !_WIN32  ── macOS / POSIX stubs for COM-based methods ────────────────
 
-// COM scripting (VBScript/JScript) is not supported on macOS.
-// All calls are no-ops or return "not available"; Lua scripting is handled
-// entirely by lua_scripting.cpp.
+// The Windows COM IActiveScript / IDispatch host (which drove VBScript and
+// JScript) is unavailable on this platform, so the COM-based engine methods
+// below are no-ops.  Scripting itself is fully supported via the embedded
+// engines — Lua, Python, Perl and JavaScript — wired up in CreateScriptEngine
+// (see below).  Only VBScript (COM-only, with no embeddable form) is dropped.
 
 bool CScriptEngine::Execute (DISPID& dispid,
                               LPCTSTR szProcedure, const unsigned short iReason,
@@ -677,10 +679,11 @@ bool CScriptEngine::Execute (DISPID& dispid,
 
 bool CScriptEngine::CreateScriptEngine (void)
   {
-  // COM scripting (VBScript/JScript) is unavailable on macOS; only Lua is
-  // supported.  Mirror the Windows path (see the _WIN32 branch above): for a
-  // Lua engine, open the Lua state now — otherwise L stays null and Parse()
-  // can never compile anything.  Returns false = success (Windows convention).
+  // Open the embedded engine for the world's language.  Lua, Python, Perl and
+  // JavaScript (the JScript option maps here) are all supported; only VBScript
+  // (COM-only, with no embeddable form) is unavailable on this platform.  Mirror
+  // the _WIN32 branch: open the engine now, otherwise its state stays null and
+  // Parse() can never compile anything.  Returns false = success (Windows convention).
   if (m_strLanguage.CompareNoCase ("Lua") == 0)
     OpenLua ();
   else if (m_strLanguage.CompareNoCase ("Python") == 0)

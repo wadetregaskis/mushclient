@@ -2141,6 +2141,8 @@ static int menufontsize (lua_State *L)
   double points = luaL_optnumber (L, 1, 0);
 
   NONCLIENTMETRICS metrics;
+  memset (&metrics, 0, sizeof (metrics));   // on the port SystemParametersInfo is a no-op,
+                                            // so zero-init to avoid reading uninitialised fields
   metrics.cbSize = sizeof (metrics);
   SystemParametersInfo (SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0);
 

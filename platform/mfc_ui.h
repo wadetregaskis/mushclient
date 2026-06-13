@@ -3664,16 +3664,16 @@ public:
     // NOTE: do NOT shadow Get/SetWindowText with stubs — CWnd's real versions
     // route to the wx hooks.  Stubbing them here silently broke direct reads/
     // writes such as CImmediateDlg::OnRun (Execute Lua read an empty script).
-    int  GetWindowTextLength() const { return 0; }
+    int  GetWindowTextLength() const { return g_wxhook_edit_line_info ? g_wxhook_edit_line_info((void*) m_hWnd, 4, 0) : 0; }
     void LimitText(int) {}
-    void SetSel(int, int, BOOL=FALSE) {}
-    void GetSel(DWORD&, DWORD&) const {}
-    void GetSel(int&  nS, int&  nE) const { nS = 0; nE = 0; }
-    void ReplaceSel(LPCTSTR, BOOL=FALSE) {}
+    void SetSel(int s, int e, BOOL=FALSE) { if (g_wxhook_edit_set_sel) g_wxhook_edit_set_sel((void*) m_hWnd, s, e); }
+    void GetSel(DWORD& nS, DWORD& nE) const { int a=0,b=0; if (g_wxhook_edit_get_sel) g_wxhook_edit_get_sel((void*) m_hWnd, &a, &b); nS=(DWORD)a; nE=(DWORD)b; }
+    void GetSel(int&  nS, int&  nE) const { int a=0,b=0; if (g_wxhook_edit_get_sel) g_wxhook_edit_get_sel((void*) m_hWnd, &a, &b); nS=a; nE=b; }
+    void ReplaceSel(LPCTSTR t, BOOL=FALSE) { if (g_wxhook_edit_replace_sel) g_wxhook_edit_replace_sel((void*) m_hWnd, t); }
     void SetReadOnly(BOOL=TRUE) {}
-    int  GetLineCount() const { return 0; }
-    int  LineIndex(int=-1) const { return 0; }
-    int  LineLength(int=-1) const { return 0; }
+    int  GetLineCount() const { return g_wxhook_edit_line_info ? g_wxhook_edit_line_info((void*) m_hWnd, 0, 0) : 0; }
+    int  LineIndex(int n=-1) const { return g_wxhook_edit_line_info ? g_wxhook_edit_line_info((void*) m_hWnd, 1, n) : 0; }
+    int  LineLength(int n=-1) const { return g_wxhook_edit_line_info ? g_wxhook_edit_line_info((void*) m_hWnd, 2, n) : 0; }
     int  GetLine(int, LPTSTR, int) const { return 0; }
     void Clear() {}
     void Copy() {}
@@ -3690,7 +3690,7 @@ public:
     void  SetTabStops(int, const int*) {}
     BOOL  GetModify() const { return FALSE; }
     void  SetModify(BOOL = TRUE) {}
-    int   LineFromChar(int = -1) const { return 0; }
+    int   LineFromChar(int n = -1) const { return g_wxhook_edit_line_info ? g_wxhook_edit_line_info((void*) m_hWnd, 3, n) : 0; }
     BOOL  LineScroll(int, int = 0) { return FALSE; }
     int   GetFirstVisibleLine() const { return 0; }
     CPoint PosFromChar(UINT) const { return CPoint(); }  // char index → client coords
@@ -5136,7 +5136,16 @@ inline BOOL CloseClipboard() { return FALSE; }
 inline BOOL EmptyClipboard() { return FALSE; }
 inline HANDLE GetClipboardData(UINT) { return nullptr; }
 inline HANDLE SetClipboardData(UINT, HANDLE) { return nullptr; }
-inline BOOL IsClipboardFormatAvailable(UINT) { return FALSE; }
+inline BOOL IsClipboardFormatAvailable(UINT fmt) {
+    // CF_TEXT (1) / CF_UNICODETEXT (13): report whether the clipboard holds text,
+    // so the "Paste To World" command-UI (doc.cpp OnUpdateEditPastetomush) enables
+    // correctly.  Other formats aren't bridged.
+    if ((fmt == 1 || fmt == 13) && g_wxhook_get_clipboard_text) {
+        char* t = g_wxhook_get_clipboard_text();
+        if (t) { free(t); return TRUE; }
+    }
+    return FALSE;
+}
 inline HGLOBAL GlobalAlloc(UINT, size_t n) { return malloc(n); }
 inline HGLOBAL GlobalReAlloc(HGLOBAL p, size_t n, UINT) { return realloc(p, n); }
 inline HGLOBAL GlobalFree(HGLOBAL p) { free(p); return nullptr; }

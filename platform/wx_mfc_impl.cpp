@@ -273,13 +273,15 @@ static void hook_invalidate(void* h, bool erase)
 
 static void hook_show_window(void* h, int nCmd)
 {
-    if (auto* w = toWx(h)) {
-        // SW_SHOW / SW_SHOWNORMAL → Show; SW_HIDE → Hide
-        w->Show(nCmd != 0 /* SW_HIDE == 0 */);
-        // SW_MAXIMIZE
-        if (nCmd == 3 /*SW_MAXIMIZE*/)
-            if (auto* tl = wxDynamicCast(w, wxTopLevelWindow))
-                tl->Maximize();
+    auto* w = toWx(h);
+    if (!w) return;
+    auto* tl = wxDynamicCast(w, wxTopLevelWindow);
+    switch (nCmd) {
+    case 0:           w->Hide(); break;                                       // SW_HIDE
+    case 2: case 6:   w->Show(); if (tl) tl->Iconize(true);  break;           // SW_SHOWMINIMIZED / SW_MINIMIZE
+    case 3:           w->Show(); if (tl) tl->Maximize();     break;           // SW_MAXIMIZE
+    case 9:           w->Show(); if (tl) { tl->Iconize(false); tl->Maximize(false); } break; // SW_RESTORE
+    default:          w->Show(); break;                                       // SW_SHOW / SW_SHOWNORMAL / …
     }
 }
 
@@ -557,6 +559,7 @@ static const CanonMenuCmd kCanonCmds[] = {
   { SEC_GAME, 32216, "Send &File\xE2\x80\xA6",               'D', false, true  }, // ID_GAME_PASTEFILE
   { SEC_GAME, 32956, "&Discard Queued Commands",             'D', false, true  }, // ID_INPUT_DISCARDQUEUEDCOMMANDS
   { SEC_GAME, 32316, "Reset All Timers",                     'D', false, true  }, // ID_GAME_RESETALLTIMERS
+  { SEC_GAME, 33032, "Reset Connected Time",                 'D', false, true  }, // ID_GAME_RESETCONNECTEDTIME
   { SEC_GAME, 32958, "&Mapper",                              'D', false, true  }, // ID_GAME_MAPPER
   { SEC_GAME, 32959, "&Do Mapper Special\xE2\x80\xA6",       'D', false, true  }, // ID_GAME_DOMAPPERSPECIAL
   { SEC_GAME, 32985, "Add Mapper Comment\xE2\x80\xA6",       'D', false, true  }, // ID_GAME_DOMAPPERCOMMENT
@@ -698,6 +701,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // (not tied to any world). Inherits the Notepad-preferences font + colours.
     editMenu->Append(40001 /*port-local: New standalone Notepad*/,
                      wxT("New Notepad"));
+    // Canonical "Close All Notepad Windows" lives in the Windows Window menu, but
+    // on macOS wxMDIParentFrame owns the Window menu entirely (it injects the
+    // native Minimize/Zoom/window-list items and drops our manual entries), so it
+    // is homed here beside its New/Flip-Notepad siblings instead.  Dispatch is the
+    // port-local handler below (the canonical one iterates the wrong doc template).
+    editMenu->Append(32951 /*ID_WINDOW_CLOSEALLNOTEPADWINDOWS*/,
+                     wxT("Close All Notepad Windows"));
     append_canon_section(editMenu, SEC_EDIT);   // Paste To World, Reload Names, Unique ID, Colour Picker, …
     editMenu->Append(32974 /*ID_EDIT_COPYASHTML*/, wxT("Copy as &HTML\tCtrl+Alt+C"));
     editMenu->AppendSeparator();
@@ -1088,6 +1098,25 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return;
         }
 
+        // ── Close All Notepad Windows (Edit menu) ──────────────────────────
+        // The canonical CMainFrame::OnWindowCloseallnotepadwindows iterates
+        // m_pNormalDocTemplate (MFC CTextDocument notepads), but on the port
+        // notepad windows are wx frames (CWxNotepadFrame) — so close those.
+        // Iterate by frame *pointer*, not by title: several scratch notepads
+        // share the title "Notepad", so a title-keyed lookup + deferred Close()
+        // would close one repeatedly and orphan the rest.  Snapshot the frames
+        // first, because Close() mutates the top-level window list.
+        if (id == 32951 /*ID_WINDOW_CLOSEALLNOTEPADWINDOWS*/) {
+            std::vector<CWxNotepadFrame*> pads;
+            for (wxWindowList::compatibility_iterator node = wxTopLevelWindows.GetFirst();
+                 node; node = node->GetNext())
+                if (auto* pad = dynamic_cast<CWxNotepadFrame*>(node->GetData()))
+                    pads.push_back(pad);
+            for (CWxNotepadFrame* pad : pads)
+                pad->Close(false);   // false → still honour the SaveModified prompt
+            return;
+        }
+
         // ── Activity List: per-world overview window ───────────────────────
         if (id == 32203 /*ID_DISPLAY_ACTIVITYLIST*/) {
             ShowActivityWindow();
@@ -1292,9 +1321,9 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             // Canonical About box (IDD_ABOUTBOX) via the app's message map —
             // CMUSHclientApp::OnAppAbout sets the version + web/changes links and
             // runs CAboutDlg::DoModal, which the bridge renders: the app-icon
-            // logo (IDC_LOGO), version and links.  (Its Credits/License buttons
-            // open CCreditsDlg, which shows "Could not load text" on the port —
-            // the licence TEXT resources aren't bundled — rather than crashing.)
+            // logo (IDC_LOGO), version and links.  Its Credits/License buttons
+            // open CCreditsDlg, which loads the bundled licence/credits "TEXT"
+            // resources (Contents/Resources/text/) via hook_load_text_resource.
             AfxDispatchCommand(&App, BN_CLICKED /*0 = ON_COMMAND*/, ID_APP_ABOUT);
         } else if (id >= kRecentMenuBase &&
                    id <  kRecentMenuBase + kMaxRecentWorlds) {
@@ -3135,6 +3164,52 @@ static char* hook_get_window_text(void* hwnd)
     return strdup(s.utf8_str());
 }
 
+// ── CEdit selection / line / insertion (the canonical dialogs use these for
+// Go-To-Line, insert-at-caret of special chars / regexp tokens, Tab, and the
+// Notes-page Find).  hwnd is the live wxTextCtrl bound by DDX_Control. ──────
+static void hook_edit_get_sel(void* hwnd, int* s, int* e) {
+    long from = 0, to = 0;
+    if (auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl)) t->GetSelection(&from, &to);
+    if (s) *s = (int) from;
+    if (e) *e = (int) to;
+}
+static void hook_edit_set_sel(void* hwnd, int s, int e) {
+    auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl);
+    if (!t) return;
+    if (s < 0) { long ip = t->GetInsertionPoint(); t->SetSelection(ip, ip); return; }  // SetSel(-1,..) deselects
+    long end = (e < 0) ? t->GetLastPosition() : (long) e;                              // SetSel(s,-1) → to end
+    t->SetSelection((long) s, end);
+    t->ShowPosition(end);
+}
+static void hook_edit_replace_sel(void* hwnd, const char* text) {
+    auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl);
+    if (!t) return;
+    long from = 0, to = 0; t->GetSelection(&from, &to);
+    wxString s = wxString::FromUTF8(text ? text : "");
+    if (from != to) t->Replace(from, to, s);   // replace the selection
+    else            t->WriteText(s);            // or insert at the caret
+}
+static int hook_edit_line_info(void* hwnd, int op, int arg) {
+    auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl);
+    if (!t) return 0;
+    long col = 0, line = 0;
+    switch (op) {
+    case 0: return (int) t->GetNumberOfLines();                          // line count
+    case 1:                                                              // char index of line `arg`
+        if (arg < 0) { if (!t->PositionToXY(t->GetInsertionPoint(), &col, &line)) line = 0; }
+        else         line = arg;
+        { long pos = t->XYToPosition(0, line); return pos < 0 ? 0 : (int) pos; }
+    case 2:                                                              // length of line holding char `arg`
+        if (!t->PositionToXY(arg < 0 ? t->GetInsertionPoint() : (long) arg, &col, &line)) return 0;
+        return (int) t->GetLineLength(line);
+    case 3:                                                              // line of char `arg`
+        if (!t->PositionToXY(arg < 0 ? t->GetInsertionPoint() : (long) arg, &col, &line)) return 0;
+        return (int) line;
+    case 4: return (int) t->GetLastPosition();                           // total text length
+    }
+    return 0;
+}
+
 static void hook_button_set_check(void* hwnd, int state)
 {
     wxWindow* w = (wxWindow*) hwnd;
@@ -3698,6 +3773,10 @@ void wx_mfc_install_hooks()
     g_wxhook_get_sys_color        = hook_get_sys_color;
     g_wxhook_get_system_metric    = hook_get_system_metric;
     g_wxhook_get_key_state        = hook_get_key_state;
+    g_wxhook_edit_get_sel         = hook_edit_get_sel;
+    g_wxhook_edit_set_sel         = hook_edit_set_sel;
+    g_wxhook_edit_replace_sel     = hook_edit_replace_sel;
+    g_wxhook_edit_line_info       = hook_edit_line_info;
     g_wxhook_get_pixel            = wxgdi_get_pixel;   // defined in wx_gdi_compat.cpp
     g_wxhook_set_cursor           = hook_set_cursor;
     g_wxhook_set_main_background  = hook_set_main_background;

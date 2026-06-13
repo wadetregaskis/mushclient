@@ -1356,9 +1356,16 @@ void CMUSHclientApp::OnFileNew()
   App.m_pWorldDocTemplate->OpenDocumentFile(NULL);
 }
 
-void CMUSHclientApp::OnHelpGettingstarted() 
+void CMUSHclientApp::OnHelpGettingstarted()
 {
+#ifdef _WIN32
 App.HelpHelper(ID_GETTING_STARTED + HID_BASE_COMMAND);
+#else
+// No bundled .chm help file on this platform — open the online documentation
+// in the browser (the same page the Windows "help not available" notice points
+// users to).  The .chm-based HelpHelper path is Windows-only.
+ShellExecute (Frame, _T("open"), DOCUMENTATION_PAGE, NULL, NULL, SW_SHOWNORMAL);
+#endif
 }
 
 bool GetSelection (CEdit * pEdit, CString & strSelection)
@@ -2338,18 +2345,29 @@ void CMUSHclientApp::WorkOutFixedFont ()
 // Winhelp not available in Windows 10, nor any alternative
 bool CMUSHclientApp::HelpAvailable (bool showWarning)
   {
+#ifdef _WIN32
   if (os_version.dwPlatformId == VER_PLATFORM_WIN32_NT && os_version.dwMajorVersion >= 10)
     {
     if (showWarning)
       TMessageBox("Supplied help file is not compatible with Windows 10 and above.\r\n\r\n"
                   "Suggest you install the plugin \"MUSHclient_Help\" for browsing the help file, "
                   "and then type \"mchelp <subject>\"."
-                  "\r\n\r\nOr, view the online help at: http://mushclient.com/scripts/doc.php", MB_ICONINFORMATION); 
+                  "\r\n\r\nOr, view the online help at: http://mushclient.com/scripts/doc.php", MB_ICONINFORMATION);
     return false;
     }
 
 
   return true;
+#else
+  // There is no bundled .chm help file on this platform, so report help as
+  // unavailable.  Crucially, do this *silently* — never raise the Windows-only
+  // "not compatible with Windows 10" notice: the port's GetVersionEx shim
+  // reports major version 10 / NT, which would otherwise trip the branch above
+  // on every Help request.  Help instead routes to the web where it can (see
+  // CMUSHclientApp::OnHelpGettingstarted).
+  (void) showWarning;
+  return false;
+#endif
   }
 
 // show help if we can

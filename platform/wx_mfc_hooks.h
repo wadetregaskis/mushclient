@@ -207,6 +207,15 @@ extern unsigned long (*g_wxhook_get_pixel)(void* hdc, int x, int y);
 // (294).  High bit (0x8000) set = key/button down.  Returns 0 from the stub when
 // unset, and for keys wx cannot report (L/R-specific modifiers, lock toggles).
 extern short         (*g_wxhook_get_key_state)(int vk);
+// CEdit programmatic selection / line / insertion ops (hwnd is the wxTextCtrl*).
+// GetWindowText/SetWindowText already work; these add the helpers the canonical
+// dialogs use (Go-To-Line, insert-at-caret, Find-enable on multiline edits).
+extern void (*g_wxhook_edit_get_sel)(void* hwnd, int* start, int* end);
+extern void (*g_wxhook_edit_set_sel)(void* hwnd, int start, int end);   // s<0 deselect; e<0 → end
+extern void (*g_wxhook_edit_replace_sel)(void* hwnd, const char* text); // replace selection / insert at caret
+// op: 0=line count, 1=char index of line `arg` (-1=current), 2=length of line
+// holding char `arg` (-1=current), 3=line of char `arg` (-1=current), 4=text length.
+extern int  (*g_wxhook_edit_line_info)(void* hwnd, int op, int arg);
 // world.SetCursor(n): set the mouse cursor over the doc's output pane.  n is the
 // MUSHclient cursor index (-1 = hidden, 0 = arrow, 1 = hand, …, 12 = help).
 extern void (*g_wxhook_set_cursor)(void* doc, int cursorNum);

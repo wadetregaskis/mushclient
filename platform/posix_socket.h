@@ -318,6 +318,7 @@ public:
                 }
             }
             if (!IsLive(s) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
+            fd = s->m_hSocket;   // re-read: a callback may have closed/reopened this slot, so never reuse the stale fd
 
             if (FD_ISSET(fd, &rd)) {
                 if (s->m_state == kListening) {
@@ -344,6 +345,7 @@ public:
                 }
             }
             if (!IsLive(s) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
+            fd = s->m_hSocket;   // re-read: a callback may have closed/reopened this slot, so never reuse the stale fd
 
             if (FD_ISSET(fd, &ex)) {
                 s->OnReceive(MSG_OOB);  // out-of-band data

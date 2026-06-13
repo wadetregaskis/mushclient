@@ -143,48 +143,64 @@ XS(mc_perl_invoke)
   CMUSHclientDoc* doc = (CMUSHclientDoc*) (intptr_t) SvIV(ST(0));
   STRLEN nl = 0;
   const char* name = SvPV(ST(1), nl);
-
   int nargs = items - 2;
-  std::vector<VARIANT> vargs((size_t) nargs);
-  for (int i = 0; i < nargs; i++)
-    sv_to_variant(ST(2 + i), vargs[(size_t) i]);
 
-  std::vector<SV*> rets;
-  VARIANT result; VariantInit(&result);
+  // Every C++ object with a non-trivial destructor lives in this inner scope and
+  // is destroyed BEFORE any croak() below.  croak() longjmps to the enclosing
+  // Perl eval and would skip C++ destructors (leak + UB), so we capture an error
+  // string here and croak only once the scope has fully unwound.
+  std::string err;
+  int count = 0;
+  {
+    std::vector<VARIANT> vargs((size_t) nargs);
+    for (int i = 0; i < nargs; i++)
+      sv_to_variant(ST(2 + i), vargs[(size_t) i]);
 
-  if (MC_DispatchHas(name))
-    {
-    std::vector<VARIANT> outargs;
-    int rc = MC_DispatchInvoke(doc, name, nargs ? vargs.data() : nullptr, nargs,
-                               result, &outargs);
-    for (auto& a : vargs) MC_VariantClear(a);
-    if (rc != MC_DISP_OK)
-      { MC_VariantClear(result);
-        croak("world->%s: %s", name,
-              rc == MC_DISP_UNKNOWN ? "unknown method" : "bad arguments"); }
-    rets.push_back(variant_to_sv(result));
-    MC_VariantClear(result);
-    for (auto& o : outargs) { rets.push_back(variant_to_sv(o)); MC_VariantClear(o); }
-    }
-  else if (MC_DispatchHasProperty(name))
-    {
-    if (nargs == 0)
-      { MC_DispatchGetProperty(doc, name, result);
-        rets.push_back(variant_to_sv(result)); MC_VariantClear(result); }
+    std::vector<SV*> rets;
+    VARIANT result; VariantInit(&result);
+
+    if (MC_DispatchHas(name))
+      {
+      std::vector<VARIANT> outargs;
+      int rc = MC_DispatchInvoke(doc, name, nargs ? vargs.data() : nullptr, nargs,
+                                 result, &outargs);
+      for (auto& a : vargs) MC_VariantClear(a);
+      if (rc != MC_DISP_OK)
+        { MC_VariantClear(result);
+          err = std::string("world->") + name + ": "
+              + (rc == MC_DISP_UNKNOWN ? "unknown method" : "bad arguments"); }
+      else
+        {
+        rets.push_back(variant_to_sv(result));
+        MC_VariantClear(result);
+        for (auto& o : outargs) { rets.push_back(variant_to_sv(o)); MC_VariantClear(o); }
+        }
+      }
+    else if (MC_DispatchHasProperty(name))
+      {
+      if (nargs == 0)
+        { MC_DispatchGetProperty(doc, name, result);
+          rets.push_back(variant_to_sv(result)); MC_VariantClear(result); }
+      else
+        { MC_DispatchSetProperty(doc, name, vargs[0]);
+          for (auto& a : vargs) MC_VariantClear(a);
+          rets.push_back(newSV(0)); }
+      }
     else
-      { MC_DispatchSetProperty(doc, name, vargs[0]);
-        for (auto& a : vargs) MC_VariantClear(a);
-        rets.push_back(newSV(0)); }
-    }
-  else
-    {
-    for (auto& a : vargs) MC_VariantClear(a);
-    croak("world has no method or property '%s'", name);
-    }
+      {
+      for (auto& a : vargs) MC_VariantClear(a);
+      err = std::string("world has no method or property '") + name + "'";
+      }
 
-  int count = (int) rets.size();
-  if (count > items) EXTEND(SP, count - items);
-  for (int i = 0; i < count; i++) ST(i) = sv_2mortal(rets[(size_t) i]);
+    if (err.empty())   // push results onto the Perl stack while rets is alive
+      {
+      count = (int) rets.size();
+      if (count > items) EXTEND(SP, count - items);
+      for (int i = 0; i < count; i++) ST(i) = sv_2mortal(rets[(size_t) i]);
+      }
+    }   // vargs / outargs / result / rets destroyed here — safe to croak now
+
+  if (!err.empty()) croak("%s", err.c_str());
   XSRETURN(count);
   }
 

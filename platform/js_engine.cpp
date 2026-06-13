@@ -215,7 +215,12 @@ JSValueRef World_getProperty(JSContextRef ctx, JSObjectRef object,
   std::string name = jsstr_to_std(propertyName);
 
   if (MC_DispatchHas(name.c_str()))
-    return JSObjectMake(ctx, g_methodClass, new MethodData{ doc, name });
+    {
+    MethodData* md = new MethodData{ doc, name };
+    JSObjectRef obj = JSObjectMake(ctx, g_methodClass, md);
+    if (!obj) { delete md; return JSValueMakeUndefined(ctx); }  // else md would leak (no finalizer runs)
+    return obj;
+    }
 
   if (MC_DispatchHasProperty(name.c_str()))
     {

@@ -54,11 +54,14 @@ void var_clear(VARIANT& v)
 void var_copy(VARIANT& dst, const VARIANT& src)
   {
   var_clear(dst);
-  dst = src;                       // shallow first
-  if (src.vt == VT_BSTR)           // then deep-copy the owned resource
+  dst = src;                       // shallow copy of the scalar/struct fields
+  if (src.vt == VT_BSTR)           // deep-copy the one owned heap resource we marshal
     dst.bstrVal = src.bstrVal ? SysAllocString(src.bstrVal) : nullptr;
-  // SAFEARRAYs returned to scripts are read once and not re-owned here; a deep
-  // array copy is added with the array-returning getters in a later pass.
+  else if (src.vt & 0x2000)        // VT_ARRAY: there is no SafeArrayCopy in the shim, so
+    {                              // do NOT share src's SAFEARRAY — that would let both
+    dst.parray = nullptr;          // src and dst SafeArrayDestroy() the same pointer
+    dst.vt = VT_EMPTY;             // (double free).  Drop it instead (no caller deep-copies
+    }                              // arrays today; the array getters marshal directly).
   }
 
 // ── VARIANT readers (input arg -> C++ scalar/string) ───────────────────────
@@ -267,10 +270,10 @@ void register_prop_ex(const char* name, R (CMUSHclientDoc::*get)(),
     };
   }
 
-// Build the table from the same dispatch map the Windows build compiles.  Only
-// the DISP_FUNCTION rows become callable methods; the DISP_PROPERTY_* rows are
-// no-ops here for now (world.* *properties* are a follow-up — the 408 methods
-// cover Note/Send/Get/SetVariable/triggers/etc.).
+// Build the table from the same dispatch map the Windows build compiles.
+// DISP_FUNCTION rows become callable methods (table()); DISP_PROPERTY_* rows
+// become readable/writable properties (prop_table(), via register_prop_member/
+// register_prop_ex below) — both are live and used by all three engines.
 void build_table()
   {
   if (!table().empty()) return;

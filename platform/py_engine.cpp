@@ -107,6 +107,7 @@ PyObject* variant_to_py(const VARIANT& v)
     long count = (long) sa->rgsabound[0].cElements;
     unsigned base = v.vt & ~VT_ARRAY;
     PyObject* list = PyList_New(count);
+    if (!list) Py_RETURN_NONE;          // allocation failed
     for (long i = 0; i < count; i++)
       {
       PyObject* item;
@@ -173,6 +174,8 @@ PyObject* Method_call(PyObject* self, PyObject* args, PyObject* /*kw*/)
 
   // By-ref getters (GetTrigger/GetAlias/GetTimer): return (result, out0, out1, ...)
   PyObject* tup = PyTuple_New(1 + (Py_ssize_t) outargs.size());
+  if (!tup)   // OOM: degrade to the result alone rather than crash on SET_ITEM(NULL)
+    { for (auto& o : outargs) MC_VariantClear(o); return res; }
   PyTuple_SET_ITEM(tup, 0, res);
   for (size_t i = 0; i < outargs.size(); i++)
     { PyTuple_SET_ITEM(tup, (Py_ssize_t)(i + 1), variant_to_py(outargs[i])); MC_VariantClear(outargs[i]); }
@@ -428,6 +431,8 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   // Build the positional argument list: numbers, strings, [wildcards], [table],
   // [styles] — the same order ExecuteLua pushes onto the Lua stack.
   PyObject* argl = PyList_New (0);
+  if (!argl)   // OOM
+    { Py_XDECREF (fn); dispid = DISPID_UNKNOWN; return true; }
 
   for (double d : nparams)
     { PyObject* o = PyFloat_FromDouble (d); PyList_Append (argl, o); Py_DECREF (o); }
@@ -441,12 +446,15 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
     int ncapt = 0;
     pcre_fullinfo (regexp->m_program, regexp->m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
     PyObject* wl = PyList_New (ncapt + 1);   // [0]=whole match, [1..n]=groups
-    for (int i = 0; i <= ncapt; i++)
+    if (wl)
       {
-      string w (regexp->GetWildcard (i));
-      PyList_SET_ITEM (wl, i, PyUnicode_DecodeUTF8 (w.data (), w.size (), "surrogateescape"));
+      for (int i = 0; i <= ncapt; i++)
+        {
+        string w (regexp->GetWildcard (i));
+        PyList_SET_ITEM (wl, i, PyUnicode_DecodeUTF8 (w.data (), w.size (), "surrogateescape"));
+        }
+      PyList_Append (argl, wl); Py_DECREF (wl);
       }
-    PyList_Append (argl, wl); Py_DECREF (wl);
     }
 
   if (table)

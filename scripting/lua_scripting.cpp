@@ -373,7 +373,7 @@ void LuaError (lua_State *L,
   // Collect the description and caller info into plain CStrings so both
   // the Windows dialog path and the portable path can share them.
   CString strCalledBy;
-  if (!strlen (strProcedure) == 0)
+  if (strlen (strProcedure) != 0)
     {
     strCalledBy = "Function/Sub: ";
     strCalledBy += strProcedure;

@@ -310,6 +310,24 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         if (c.style & 0x8000 /*LVS_NOSORTHEADER*/) st |= wxLC_NO_SORT_HEADER;
         w = new wxListCtrl(parent, id, pos, size, st);
     }
+    else if (cls == "msctls_updown32")
+    {
+        // Spin button (CSpinButtonCtrl), e.g. margins / lines-per-page / timer
+        // hour & minute fields.  Its "buddy" edit is wired in
+        // PopulateWindowFromTemplate (UDS_AUTOBUDDY = the preceding control).
+        if (g_wxhook_make_spin)
+            w = (wxWindow*) g_wxhook_make_spin(parent, id, pos.x, pos.y, size.x, size.y);
+        else
+            w = new wxPanel(parent, id, pos, size);
+    }
+    else if (cls == "msctls_hotkey32")
+    {
+        // Key-capture control (CHotKeyCtrl), e.g. the "Show Key Name" dialog.
+        if (g_wxhook_make_hotkey)
+            w = (wxWindow*) g_wxhook_make_hotkey(parent, id, pos.x, pos.y, size.x, size.y);
+        else
+            w = new wxTextCtrl(parent, id, wxEmptyString, pos, size, wxTE_READONLY);
+    }
     else
     {
         // Unknown / custom window class (SysTreeView32, SysTabControl32,
@@ -356,6 +374,7 @@ void PopulateWindowFromTemplate(wxWindow* target, const RcDialog& t)
     // hands / mail / network / banana (IDR_MUSHCLTYPE then IDI_ICON1..9).
     static const int kTrayArt[10] = { 129, 288, 289, 290, 291, 292, 293, 294, 295, 296 };
     int trayIconSeen = 0;
+    wxWindow* prevCtrl = nullptr;   // previous control, for spin → buddy (UDS_AUTOBUDDY)
 
     for (const RcControl& c : t.controls)
     {
@@ -369,7 +388,12 @@ void PopulateWindowFromTemplate(wxWindow* target, const RcDialog& t)
                  t.id == 317 /*IDD_GLOBAL_PREFSP11 (Tray/Taskbar)*/ && trayIconSeen < 10)
             imageResId = kTrayArt[trayIconSeen++];
 
-        CreateControl(target, c, pos, sz, imageResId);
+        wxWindow* w = CreateControl(target, c, pos, sz, imageResId);
+        // A spin button steps its buddy edit (the control created just before it,
+        // per UDS_AUTOBUDDY); wire them now that both wx widgets exist.
+        if (w && c.className == "msctls_updown32" && g_wxhook_bind_spin)
+            g_wxhook_bind_spin(w, prevCtrl);
+        if (w) prevCtrl = w;
     }
     target->SetMinClientSize(client);
 }

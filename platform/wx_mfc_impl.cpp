@@ -17,6 +17,7 @@
 #include <wx/mdi.h>
 #include <wx/config.h>     // wxConfig
 #include <wx/spinctrl.h>
+#include <wx/spinbutt.h>   // wxSpinButton + wxEVT_SPIN (CSpinButtonCtrl bridge)
 #include <wx/filename.h>
 #include <wx/fontpicker.h>
 #include <wx/dnd.h>        // wxFileDropTarget
@@ -537,6 +538,7 @@ static const CanonMenuCmd kCanonCmds[] = {
   { SEC_FILE, 32117, "&Log Session\xE2\x80\xA6",             'D', false, true  }, // ID_FILE_LOGSESSION
   { SEC_FILE, 32954, "Open Worlds In Startup List",          'F', false, false }, // ID_FILE_OPENWORLDSINSTARTUPLIST
   { SEC_FILE, 32330, "Reload Defaults",                      'D', false, true  }, // ID_FILE_RELOADDEFAULTS
+  { SEC_FILE, 32984, "Plugin &Wizard\xE2\x80\xA6",           'D', false, true  }, // ID_FILE_PLUGINWIZARD
   // ── Edit ──
   { SEC_EDIT, 32244, "Paste To &World\xE2\x80\xA6\tShift+Ctrl+V", 'D', false, true  }, // ID_EDIT_PASTETOMUSH
   { SEC_EDIT, 32327, "Reload Names File\xE2\x80\xA6",        'F', false, false }, // ID_EDIT_RELOADNAMESFILE
@@ -558,6 +560,7 @@ static const CanonMenuCmd kCanonCmds[] = {
   { SEC_GAME, 32252, "&Auto Say",                            'D', true,  true  }, // ID_GAME_AUTOSAY
   { SEC_GAME, 32216, "Send &File\xE2\x80\xA6",               'D', false, true  }, // ID_GAME_PASTEFILE
   { SEC_GAME, 32956, "&Discard Queued Commands",             'D', false, true  }, // ID_INPUT_DISCARDQUEUEDCOMMANDS
+  { SEC_GAME, 33049, "Show &Key Name\xE2\x80\xA6",           'D', false, true  }, // ID_INPUT_KEYNAME
   { SEC_GAME, 32316, "Reset All Timers",                     'D', false, true  }, // ID_GAME_RESETALLTIMERS
   { SEC_GAME, 33032, "Reset Connected Time",                 'D', false, true  }, // ID_GAME_RESETCONNECTEDTIME
   { SEC_GAME, 32958, "&Mapper",                              'D', false, true  }, // ID_GAME_MAPPER
@@ -3074,7 +3077,16 @@ static intptr_t hook_run_property_sheet_flat(void* self)
     if (!sheet) return IDCANCEL;
 
     wxWindow* parent = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
-    wxDialog dlg(parent, wxID_ANY, wxT("Global Preferences"),
+    // Window title from the sheet's caption: a literal (LPCTSTR ctor / SetTitle),
+    // or a known string-resource id from the UINT ctor (the port has no string
+    // table) — IDS_PROPSHT_CAPTION1=142 (Global Prefs), 304 (Plugin Wizard).
+    wxString sheetTitle =
+        !sheet->m_strSheetCaption.IsEmpty()
+            ? wxString::FromUTF8((LPCTSTR) sheet->m_strSheetCaption)
+        : (sheet->m_nSheetCaptionId == 304) ? wxString(wxT("Plugin Wizard"))
+        : (sheet->m_nSheetCaptionId == 142) ? wxString(wxT("Global Preferences"))
+        :                                     wxString(wxT("Properties"));
+    wxDialog dlg(parent, wxID_ANY, sheetTitle,
                  wxDefaultPosition, wxDefaultSize,
                  wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
 
@@ -3675,6 +3687,149 @@ static void hook_bind_slider(void* hwnd, void* dlgp)
     });
 }
 
+// ── CSpinButtonCtrl → wxSpinButton (msctls_updown32) ──────────────────────────
+// A spin button nudges its "buddy" edit (its preceding control, UDS_AUTOBUDDY)
+// up/down within [lo,hi]; the buddy holds the value the dialog's DDX reads.  The
+// two are kept in sync both ways (type into the edit → spin; click spin → edit).
+extern WORD WxKeyToWinVK(int wxCode);   // defined in wx_world_child.cpp
+
+namespace {
+inline int clamp_int(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+class WxSpinButton : public wxSpinButton {
+public:
+    WxSpinButton(wxWindow* parent, wxWindowID id, const wxPoint& pos, const wxSize& size)
+        : wxSpinButton(parent, id, pos, size, wxSP_VERTICAL | wxSP_ARROW_KEYS)
+    {
+        SetRange(0, 100);   // overwritten by the page's SetRange() in OnInitDialog
+        Bind(wxEVT_SPIN, &WxSpinButton::OnSpin, this);
+    }
+    void SetBuddy(wxTextCtrl* b)
+    {
+        m_buddy = b;
+        if (m_buddy) m_buddy->Bind(wxEVT_TEXT, &WxSpinButton::OnBuddyText, this);
+        SyncFromBuddy();
+    }
+    void SetLogicalRange(int lo, int hi) { if (hi < lo) hi = lo; SetRange(lo, hi); SyncFromBuddy(); }
+    int  LogicalPos() const
+    {
+        if (m_buddy) { long v = 0; if (m_buddy->GetValue().ToLong(&v)) return (int) v; }
+        return GetValue();
+    }
+    void SetLogicalPos(int p)
+    {
+        p = clamp_int(p, GetMin(), GetMax());
+        SetValue(p);
+        if (m_buddy) m_buddy->ChangeValue(wxString::Format(wxT("%d"), p));
+    }
+private:
+    wxTextCtrl* m_buddy = nullptr;
+    void SyncFromBuddy()
+    {
+        if (!m_buddy) return;
+        long v = 0;
+        if (m_buddy->GetValue().ToLong(&v)) SetValue(clamp_int((int) v, GetMin(), GetMax()));
+    }
+    void OnBuddyText(wxCommandEvent& e) { SyncFromBuddy(); e.Skip(); }
+    void OnSpin(wxSpinEvent& e)
+    {
+        int v = clamp_int(GetValue(), GetMin(), GetMax());   // NSStepper already moved ±1
+        SetValue(v);
+        if (m_buddy) m_buddy->ChangeValue(wxString::Format(wxT("%d"), v));
+        e.Skip();
+    }
+};
+inline WxSpinButton* SPN(void* h) { return dynamic_cast<WxSpinButton*>((wxWindow*) h); }
+} // namespace
+
+static void* hook_make_spin(void* parent, int id, int x, int y, int w, int h)
+{
+    return new WxSpinButton((wxWindow*) parent, id < 0 ? wxID_ANY : id,
+                            wxPoint(x, y), wxSize(w, h));
+}
+static void hook_spin_set_range(void* h, int lo, int hi) { if (WxSpinButton* s = SPN(h)) s->SetLogicalRange(lo, hi); }
+static void hook_spin_set_pos(void* h, int p)            { if (WxSpinButton* s = SPN(h)) s->SetLogicalPos(p); }
+static int  hook_spin_get_pos(void* h)                   { WxSpinButton* s = SPN(h); return s ? s->LogicalPos() : 0; }
+static void hook_bind_spin(void* spin, void* buddy)
+{
+    if (WxSpinButton* s = SPN(spin))
+        s->SetBuddy(wxDynamicCast((wxWindow*) buddy, wxTextCtrl));
+}
+
+// ── CHotKeyCtrl → key-capture control (msctls_hotkey32, the Key Name dialog) ──
+// Captures one key + Shift/Ctrl/Alt, shows the chord via the canonical
+// KeyCodeToString, and remembers the Windows VK / HOTKEYF_* so GetHotKey() (read
+// on idle by CKeyNameDlg::OnUpdateKeyName) can fill the dialog's "Name" field.
+namespace {
+class WxHotKeyCtrl : public wxTextCtrl {
+public:
+    WxHotKeyCtrl(wxWindow* parent, wxWindowID id, const wxPoint& pos, const wxSize& size)
+        : wxTextCtrl(parent, id, wxEmptyString, pos, size,
+                     wxTE_READONLY | wxTE_CENTRE | wxTE_PROCESS_TAB)
+    {
+        Bind(wxEVT_KEY_DOWN, &WxHotKeyCtrl::OnKey, this);
+    }
+    WORD m_vk = 0, m_mod = 0;   // m_mod holds HOTKEYF_* flags
+private:
+    void OnKey(wxKeyEvent& e)
+    {
+        int code = e.GetKeyCode();
+        if (code == WXK_SHIFT || code == WXK_CONTROL ||
+            code == WXK_ALT || code == WXK_NONE) { e.Skip(); return; }  // bare modifier
+        WORD vk = WxKeyToWinVK(code);
+        if (vk == 0) { e.Skip(); return; }    // a key MUSHclient cannot name
+        WORD mod = 0;
+        if (e.ShiftDown())                         mod |= HOTKEYF_SHIFT;
+        if (e.ControlDown() || e.RawControlDown()) mod |= HOTKEYF_CONTROL;   // Cmd or Ctrl
+        if (e.AltDown())                           mod |= HOTKEYF_ALT;
+        m_vk = vk; m_mod = mod;
+        BYTE fVirt = 0;
+        if (mod & HOTKEYF_SHIFT)   fVirt |= FSHIFT;
+        if (mod & HOTKEYF_CONTROL) fVirt |= FCONTROL;
+        if (mod & HOTKEYF_ALT)     fVirt |= FALT;
+        ChangeValue(wxString::FromUTF8((LPCTSTR) KeyCodeToString(fVirt, vk)));
+        // consume (no Skip) so the key isn't beeped or forwarded
+    }
+};
+inline WxHotKeyCtrl* HK(void* h) { return dynamic_cast<WxHotKeyCtrl*>((wxWindow*) h); }
+} // namespace
+
+static void* hook_make_hotkey(void* parent, int id, int x, int y, int w, int h)
+{
+    return new WxHotKeyCtrl((wxWindow*) parent, id < 0 ? wxID_ANY : id,
+                            wxPoint(x, y), wxSize(w, h));
+}
+static void hook_hotkey_get(void* hwnd, unsigned short* vk, unsigned short* mod)
+{
+    WxHotKeyCtrl* c = HK(hwnd);
+    if (vk)  *vk  = c ? c->m_vk : 0;
+    if (mod) *mod = c ? c->m_mod : 0;
+}
+
+// ── CWnd geometry: screen rect + client/screen point conversion ───────────────
+static void hook_get_window_rect(const void* hwnd, RECT* r)
+{
+    if (!r) return;
+    wxWindow* w = (wxWindow*) hwnd;
+    if (!w) { r->left = r->top = r->right = r->bottom = 0; return; }
+    wxRect g = w->GetScreenRect();
+    r->left = g.x; r->top = g.y; r->right = g.x + g.width; r->bottom = g.y + g.height;
+}
+static void hook_client_to_screen(const void* hwnd, int* x, int* y)
+{
+    wxWindow* w = (wxWindow*) hwnd;
+    if (!w || !x || !y) return;
+    wxPoint p = w->ClientToScreen(wxPoint(*x, *y));
+    *x = p.x; *y = p.y;
+}
+static void hook_screen_to_client(const void* hwnd, int* x, int* y)
+{
+    wxWindow* w = (wxWindow*) hwnd;
+    if (!w || !x || !y) return;
+    wxPoint p = w->ScreenToClient(wxPoint(*x, *y));
+    *x = p.x; *y = p.y;
+}
+
 void wx_mfc_install_hooks()
 {
     g_run_mfc_dialog          = hook_run_dialog;
@@ -3729,6 +3884,16 @@ void wx_mfc_install_hooks()
     g_wxhook_slider_set_pos           = hook_slider_set_pos;
     g_wxhook_slider_set_page_size     = hook_slider_set_page_size;
     g_wxhook_bind_slider              = hook_bind_slider;
+    g_wxhook_make_spin                = hook_make_spin;
+    g_wxhook_spin_set_range           = hook_spin_set_range;
+    g_wxhook_spin_set_pos             = hook_spin_set_pos;
+    g_wxhook_spin_get_pos             = hook_spin_get_pos;
+    g_wxhook_bind_spin                = hook_bind_spin;
+    g_wxhook_make_hotkey              = hook_make_hotkey;
+    g_wxhook_hotkey_get               = hook_hotkey_get;
+    g_wxhook_get_window_rect          = hook_get_window_rect;
+    g_wxhook_client_to_screen         = hook_client_to_screen;
+    g_wxhook_screen_to_client         = hook_screen_to_client;
     g_wxhook_invalidate       = hook_invalidate;
     g_wxhook_show_window      = hook_show_window;
     g_wxhook_update_window    = hook_update_window;

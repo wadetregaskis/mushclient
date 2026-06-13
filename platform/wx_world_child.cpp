@@ -2554,7 +2554,8 @@ void CWorldChildFrame::OnActivate(wxActivateEvent& evt)
 // The wx→Windows VK mapping only covers keys that appear in the VirtualKeys[]
 // table in accelerators.cpp (the set a user can actually name in a Lua script).
 
-static WORD WxKeyToWinVK(int wxCode)
+// Not static: also reused by the Key Name dialog's hotkey control (wx_mfc_impl.cpp).
+WORD WxKeyToWinVK(int wxCode)
 {
     // Upper-case alpha A-Z: wx delivers the upper-case code point, same as Windows VK
     if (wxCode >= 'A' && wxCode <= 'Z') return (WORD)wxCode;

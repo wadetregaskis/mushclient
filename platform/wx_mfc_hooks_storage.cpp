@@ -136,5 +136,15 @@ int  (*g_wxhook_slider_get_pos)(void*)                           = nullptr;
 void (*g_wxhook_slider_set_pos)(void*, int)                      = nullptr;
 void (*g_wxhook_slider_set_page_size)(void*, int)                = nullptr;
 void (*g_wxhook_bind_slider)(void*, void*)                       = nullptr;
+void* (*g_wxhook_make_spin)(void*, int, int, int, int, int)      = nullptr;
+void (*g_wxhook_spin_set_range)(void*, int, int)                 = nullptr;
+void (*g_wxhook_spin_set_pos)(void*, int)                        = nullptr;
+int  (*g_wxhook_spin_get_pos)(void*)                             = nullptr;
+void (*g_wxhook_bind_spin)(void*, void*)                         = nullptr;
+void* (*g_wxhook_make_hotkey)(void*, int, int, int, int, int)    = nullptr;
+void  (*g_wxhook_hotkey_get)(void*, unsigned short*, unsigned short*) = nullptr;
+void (*g_wxhook_get_window_rect)(const void*, RECT*)             = nullptr;
+void (*g_wxhook_client_to_screen)(const void*, int*, int*)       = nullptr;
+void (*g_wxhook_screen_to_client)(const void*, int*, int*)       = nullptr;
 
 #endif // !_WIN32

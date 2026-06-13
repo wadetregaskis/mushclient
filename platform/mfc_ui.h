@@ -3162,22 +3162,24 @@ public:
 
     CWnd* GetOwner() const { return GetParent(); }
 
-    // IsKindOf inherited from CObject
-    void GetClientRect(RECT*) const {}
-    void GetClientRect(CRect*) const {}
-    void GetClientRect(CRect& r) const { r.left=r.top=r.right=r.bottom=0; }
+    // IsKindOf inherited from CObject.  Geometry routes to the wx window via the
+    // hooks (m_hWnd is the wxWindow*); CRect overloads delegate through RECT*
+    // (CRect : public RECT), CPoint is handled separately (it is not a POINT).
+    void GetClientRect(RECT* r) const { if (g_wxhook_get_client_rect && r) g_wxhook_get_client_rect((const void*) m_hWnd, r); else if (r) { r->left=r->top=r->right=r->bottom=0; } }
+    void GetClientRect(CRect* r) const { GetClientRect((RECT*) r); }
+    void GetClientRect(CRect& r) const { GetClientRect((RECT*) &r); }
     // Pointer overloads — must be repeated here or CWnd's versions are hidden
-    void ClientToScreen(POINT* p) const { (void)p; }
-    void ClientToScreen(CPoint* p) const { (void)p; }
-    void ClientToScreen(CRect* r) const { (void)r; }
-    void ClientToScreen(CRect& r) const { (void)r; }
-    void ScreenToClient(POINT* p) const { (void)p; }
-    void ScreenToClient(CPoint* p) const { (void)p; }
-    void ScreenToClient(CRect* r) const { (void)r; }
-    void ScreenToClient(CRect& r) const { (void)r; }
-    void GetWindowRect(RECT*) const {}
-    void GetWindowRect(CRect*) const {}
-    void GetWindowRect(CRect& r) const { r.left=r.top=r.right=r.bottom=0; }
+    void ClientToScreen(POINT* p) const { if (g_wxhook_client_to_screen && p) { int x=(int)p->x, y=(int)p->y; g_wxhook_client_to_screen((const void*) m_hWnd, &x, &y); p->x=x; p->y=y; } }
+    void ClientToScreen(CPoint* p) const { if (g_wxhook_client_to_screen && p) { int x=p->x, y=p->y; g_wxhook_client_to_screen((const void*) m_hWnd, &x, &y); p->x=x; p->y=y; } }
+    void ClientToScreen(CRect* r) const { if (g_wxhook_client_to_screen && r) { int l=(int)r->left,t=(int)r->top,ri=(int)r->right,b=(int)r->bottom; g_wxhook_client_to_screen((const void*) m_hWnd,&l,&t); g_wxhook_client_to_screen((const void*) m_hWnd,&ri,&b); r->left=l;r->top=t;r->right=ri;r->bottom=b; } }
+    void ClientToScreen(CRect& r) const { ClientToScreen(&r); }
+    void ScreenToClient(POINT* p) const { if (g_wxhook_screen_to_client && p) { int x=(int)p->x, y=(int)p->y; g_wxhook_screen_to_client((const void*) m_hWnd, &x, &y); p->x=x; p->y=y; } }
+    void ScreenToClient(CPoint* p) const { if (g_wxhook_screen_to_client && p) { int x=p->x, y=p->y; g_wxhook_screen_to_client((const void*) m_hWnd, &x, &y); p->x=x; p->y=y; } }
+    void ScreenToClient(CRect* r) const { if (g_wxhook_screen_to_client && r) { int l=(int)r->left,t=(int)r->top,ri=(int)r->right,b=(int)r->bottom; g_wxhook_screen_to_client((const void*) m_hWnd,&l,&t); g_wxhook_screen_to_client((const void*) m_hWnd,&ri,&b); r->left=l;r->top=t;r->right=ri;r->bottom=b; } }
+    void ScreenToClient(CRect& r) const { ScreenToClient(&r); }
+    void GetWindowRect(RECT* r) const { if (g_wxhook_get_window_rect && r) g_wxhook_get_window_rect((const void*) m_hWnd, r); else if (r) { r->left=r->top=r->right=r->bottom=0; } }
+    void GetWindowRect(CRect* r) const { GetWindowRect((RECT*) r); }
+    void GetWindowRect(CRect& r) const { GetWindowRect((RECT*) &r); }
     void Invalidate(BOOL=TRUE) {}
     void InvalidateRect(const RECT*, BOOL=TRUE) {}
     void InvalidateRect(const CRect*, BOOL=TRUE) {}
@@ -3990,11 +3992,13 @@ public:
 
 class CSpinButtonCtrl : public CWnd {
 public:
-    void SetRange(int,int)     {}
-    void SetRange32(int,int)   {}
-    void SetPos(int)           {}
-    int  GetPos() const        { return 0; }
-    void SetBuddy(CWnd*)       {}
+    // hwnd is the wxSpinButton (GetDlgItem(IDC_SPIN_*) → CWnd with m_hWnd set).
+    // The arrows step the buddy edit within [lo,hi]; the buddy holds the value.
+    void SetRange(int lo, int hi)   { if (g_wxhook_spin_set_range) g_wxhook_spin_set_range((void*) m_hWnd, lo, hi); }
+    void SetRange32(int lo, int hi) { if (g_wxhook_spin_set_range) g_wxhook_spin_set_range((void*) m_hWnd, lo, hi); }
+    void SetPos(int p)         { if (g_wxhook_spin_set_pos) g_wxhook_spin_set_pos((void*) m_hWnd, p); }
+    int  GetPos() const        { return g_wxhook_spin_get_pos ? g_wxhook_spin_get_pos((void*) m_hWnd) : 0; }
+    void SetBuddy(CWnd*)       {}     // buddy auto-wired at create (UDS_AUTOBUDDY) by the bridge
     CWnd* GetBuddy() const     { return nullptr; }
     void SetBase(int)          {}
 };
@@ -4013,8 +4017,18 @@ class CAnimateCtrl  : public CWnd {};
 class CHotKeyCtrl : public CWnd {
 public:
     void SetHotKey(WORD, WORD) {}
-    void GetHotKey(WORD& vk, WORD& mod) const { vk = 0; mod = 0; }
-    DWORD GetHotKey() const { return 0; }
+    // hwnd is the wx key-capture control (made by g_wxhook_make_hotkey); read the
+    // last-pressed Windows VK + HOTKEYF_* modifiers it captured.
+    void GetHotKey(WORD& vk, WORD& mod) const {
+        unsigned short v = 0, m = 0;
+        if (g_wxhook_hotkey_get) g_wxhook_hotkey_get((void*) m_hWnd, &v, &m);
+        vk = v; mod = m;
+    }
+    DWORD GetHotKey() const {
+        unsigned short v = 0, m = 0;
+        if (g_wxhook_hotkey_get) g_wxhook_hotkey_get((void*) m_hWnd, &v, &m);
+        return (DWORD)((v & 0xFF) | ((m & 0xFF) << 8));   // LOBYTE=vk, HIBYTE=mods
+    }
     void SetRules(WORD, WORD) {}
 };
 class CRichEditCtrl : public CWnd {
@@ -4584,8 +4598,8 @@ public:
 class CPropertySheet : public CWnd {
     SHIM_RUNTIME_CLASS(CPropertySheet, CWnd)
 public:
-    CPropertySheet(LPCTSTR=nullptr, CWnd* = nullptr, UINT=0) {}
-    CPropertySheet(UINT, CWnd* = nullptr, UINT=0) {}
+    CPropertySheet(LPCTSTR caption=nullptr, CWnd* = nullptr, UINT=0) { if (caption) m_strSheetCaption = caption; }
+    CPropertySheet(UINT nCaptionId, CWnd* = nullptr, UINT=0) : m_nSheetCaptionId(nCaptionId) {}
     // Port: record the added pages so the bridge can render a wxNotebook of the
     // canonical CPropertyPage subclasses (see g_run_mfc_property_sheet_flat /
     // hook_run_property_sheet_flat).  CTreePropertySheet overrides AddPage/DoModal
@@ -4601,7 +4615,7 @@ public:
     CPropertyPage* GetPage(int) const { return nullptr; }
     int  GetPageCount() const   { return 0; }
     void EnableStackedTabs(BOOL) {}
-    void SetTitle(LPCTSTR, UINT=0) {}
+    void SetTitle(LPCTSTR s, UINT=0) { if (s) m_strSheetCaption = s; }
     virtual BOOL OnInitDialog() { return TRUE; }
     void SetWizardMode() {}
     void SetFinishText(LPCTSTR) {}
@@ -4622,6 +4636,11 @@ public:
 
     // Port: pages recorded by AddPage(), handed to the flat-sheet bridge hook.
     std::vector<CPropertyPage*> m_flatPages;
+    // Port: the sheet's window caption.  Set directly from the LPCTSTR ctor /
+    // SetTitle, or as a string-resource id from the UINT ctor (the bridge maps
+    // the id to text — the port has no string table).  See hook_run_property_sheet*.
+    CString m_strSheetCaption;
+    UINT    m_nSheetCaptionId = 0;
 };
 
 // ── Splitter window ────────────────────────────────────────────────────────

@@ -507,6 +507,34 @@ extern void (*g_wxhook_slider_set_page_size)(void* hwnd, int n);
 // CDialog* (as void*), so the slider-event handler can call dlg->OnHScroll.
 extern void (*g_wxhook_bind_slider)(void* hwnd, void* dlg);
 
+// ── CSpinButtonCtrl → wxSpinButton (msctls_updown32, e.g. margins / lines-per-
+// page / timer hour & minute fields).  `hwnd` is the wxSpinButton* (the result
+// of GetDlgItem(IDC_SPIN_*) cast to CSpinButtonCtrl*).  The spin nudges its
+// "buddy" edit (wired by bind_spin) within [lo,hi]; the buddy holds the value.
+// make_spin builds the control (defined in wx_mfc_impl.cpp, needs WxSpinButton).
+extern void* (*g_wxhook_make_spin)(void* parent, int id, int x, int y, int w, int h);
+extern void (*g_wxhook_spin_set_range)(void* hwnd, int lo, int hi);
+extern void (*g_wxhook_spin_set_pos)(void* hwnd, int pos);
+extern int  (*g_wxhook_spin_get_pos)(void* hwnd);
+// bind_spin: associate a spin with its buddy edit (the preceding control, per
+// UDS_AUTOBUDDY) and wire its up/down arrows to step the buddy's integer value.
+extern void (*g_wxhook_bind_spin)(void* spin, void* buddyEdit);
+
+// ── CHotKeyCtrl → key-capture control (msctls_hotkey32, the Key Name dialog) ──
+// make_hotkey builds a control that captures a key + modifiers, shows the chord
+// (via the canonical KeyCodeToString), and stores the Windows VK / HOTKEYF_* for
+// hotkey_get.  Returns the wxWindow* (as void*).  Defined in wx_mfc_impl.cpp.
+extern void* (*g_wxhook_make_hotkey)(void* parent, int id, int x, int y, int w, int h);
+// hotkey_get: read the captured key — *vk = Windows virtual-key, *mod = HOTKEYF_*.
+extern void  (*g_wxhook_hotkey_get)(void* hwnd, unsigned short* vk, unsigned short* mod);
+
+// ── CWnd geometry (screen/client rects + point conversion); `hwnd` is wxWindow*.
+// get_client_rect (declared far above) gives the {0,0,w,h} client box; these add
+// the screen-coordinate bounds and point conversions used by a few CWnd callers.
+extern void (*g_wxhook_get_window_rect)(const void* hwnd, RECT* r);
+extern void (*g_wxhook_client_to_screen)(const void* hwnd, int* x, int* y);
+extern void (*g_wxhook_screen_to_client)(const void* hwnd, int* x, int* y);
+
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
 void wx_mfc_install_hooks();

@@ -245,17 +245,29 @@ if(NOT WIN32)
         endif()
     endif()
 
-    # ── Tcl via the Tcl system framework (macOS) ───────────────────────────────
-    # Embeds libtcl in place of Windows' COM-only "TclScript" ActiveScript engine.
-    # macOS only; elsewhere Tcl scripting stays disabled (scriptengine.cpp stubs).
+    # ── Tcl (vendored static build; falls back to the system framework) ────────
+    # Embeds Tcl in place of Windows' COM-only "TclScript" ActiveScript engine.
+    # Prefer a self-contained static libtcl 8.6 built from source by
+    # packaging/fetch-tcl.sh — the app then needs neither Homebrew nor the
+    # Apple-deprecated macOS Tcl.framework, and there is no dylib to relocate
+    # (its script library is copied into Resources/tcl8.6, below).  The system
+    # framework is the fallback when the vendored build is absent.  macOS only.
     set(TCL_ENGINE_FOUND FALSE)
+    set(TCL_VENDORED "")
     if(APPLE)
-        find_library(TCL_FRAMEWORK Tcl)
-        if(TCL_FRAMEWORK)
+        set(_tclv "${CMAKE_SOURCE_DIR}/packaging/tcl/install")
+        if(EXISTS "${_tclv}/lib/libtcl8.6.a")
             set(TCL_ENGINE_FOUND TRUE)
-            message(STATUS "Tcl framework found — Tcl scripting enabled")
+            set(TCL_VENDORED "${_tclv}")
+            message(STATUS "Tcl found — vendored static libtcl8.6 (${_tclv})")
         else()
-            message(STATUS "Tcl framework not found — Tcl scripting disabled")
+            find_library(TCL_FRAMEWORK Tcl)
+            if(TCL_FRAMEWORK)
+                set(TCL_ENGINE_FOUND TRUE)
+                message(STATUS "Tcl found — system Tcl.framework (run packaging/fetch-tcl.sh to bundle a static Tcl instead)")
+            else()
+                message(STATUS "Tcl not found — Tcl scripting disabled")
+            endif()
         endif()
     endif()
 
@@ -841,10 +853,19 @@ if(NOT WIN32)
     endif()
 
     if(TCL_ENGINE_FOUND)
-        # Embedded Tcl engine via the Tcl framework (same dispatch substrate).
+        # Embedded Tcl engine (same dispatch substrate).
         target_sources(mushapp PRIVATE platform/tcl_engine.cpp)
         target_compile_definitions(mushapp PRIVATE MUSHCLIENT_TCL_SCRIPTING)
-        target_link_libraries(mushapp PUBLIC ${TCL_FRAMEWORK})
+        if(TCL_VENDORED)
+            # Static libtcl + its system deps (tclConfig.sh TCL_LIBS = -lz -lpthread
+            # -framework CoreFoundation; pthread is in libSystem).  No dylib to ship.
+            set_source_files_properties(platform/tcl_engine.cpp PROPERTIES
+                                        INCLUDE_DIRECTORIES "${TCL_VENDORED}/include")
+            target_link_libraries(mushapp PUBLIC
+                "${TCL_VENDORED}/lib/libtcl8.6.a" z "-framework CoreFoundation")
+        else()
+            target_link_libraries(mushapp PUBLIC ${TCL_FRAMEWORK})
+        endif()
     endif()
 
     if(RUBY_ENGINE_FOUND)
@@ -1099,6 +1120,16 @@ if(NOT WIN32)
                     "${CMAKE_SOURCE_DIR}/platform/dialog_text"
                     "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/text"
                 COMMENT "Bundling licence + credits text (About box)")
+            # Vendored Tcl's script library (init.tcl, encodings, msgs) — the
+            # statically-linked Tcl finds it via TCL_LIBRARY=Resources/tcl8.6,
+            # set from the executable path in tcl_engine.cpp's OpenTcl.
+            if(TCL_VENDORED)
+                add_custom_command(TARGET mushgui POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_directory
+                        "${TCL_VENDORED}/lib/tcl8.6"
+                        "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/tcl8.6"
+                    COMMENT "Bundling the Tcl 8.6 script library into Resources/tcl8.6")
+            endif()
             # Read-only data the engine opens at runtime: the Tip-of-the-Day
             # text and the name-generator lists.  These go in Contents/Resources/
             # (NOT Contents/MacOS/): code signing requires that only the

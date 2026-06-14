@@ -104,5 +104,7 @@ LOGBOOK.md
 PLAN.md
 CLAUDE.md
 
-# Vendored python.org framework (fetched, not committed)
+# Vendored runtimes (fetched/built, not committed)
 packaging/python/
+packaging/tcl/
+packaging/ruby/

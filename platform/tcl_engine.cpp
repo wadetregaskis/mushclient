@@ -38,6 +38,10 @@
 #include <tcl.h>
 #include <string>
 #include <vector>
+#include <cstdlib>          // setenv, realpath
+#include <sys/stat.h>       // stat
+#include <mach-o/dyld.h>    // _NSGetExecutablePath
+#include <limits.h>         // PATH_MAX
 
 #ifndef VT_ERROR
 #define VT_ERROR 10
@@ -198,11 +202,34 @@ bool command_exists (Tcl_Interp* interp, const char* name)
 // ── CScriptEngine Tcl methods ────────────────────────────────────────────────
 void CScriptEngine::OpenTcl ()
   {
+  // Point the statically-linked Tcl at the bundled script library
+  // (Contents/Resources/tcl8.6) so it finds init.tcl etc. with no system Tcl.
+  // Done once, before any interp is created, derived from the executable path so
+  // it works in both the dev and packaged .app.  If the bundled library isn't
+  // present, leave TCL_LIBRARY unset → Tcl falls back to its built-in path.
+  static bool s_tclLibSet = false;
+  if (!s_tclLibSet)
+    {
+    s_tclLibSet = true;
+    char exe[PATH_MAX]; uint32_t sz = sizeof (exe); char real[PATH_MAX];
+    if (_NSGetExecutablePath (exe, &sz) == 0 && realpath (exe, real))
+      {
+      std::string p (real);                       // .../Contents/MacOS/MUSHclient
+      size_t slash = p.find_last_of ('/');
+      if (slash != std::string::npos)
+        {
+        std::string lib = p.substr (0, slash) + "/../Resources/tcl8.6";
+        struct stat st;
+        if (stat ((lib + "/init.tcl").c_str (), &st) == 0)
+          setenv ("TCL_LIBRARY", lib.c_str (), 1);
+        }
+      }
+    }
+
   CTclEngine* e = new CTclEngine ();
   e->doc    = m_pDoc;
   e->interp = Tcl_CreateInterp ();
-  Tcl_Init (e->interp);   // best-effort: load the script library if present (the
-                          // built-in commands work regardless if it is missing)
+  Tcl_Init (e->interp);   // best-effort: load the script library (built-ins work regardless)
   Tcl_CreateObjCommand (e->interp, "world", World_cmd, (ClientData) m_pDoc, nullptr);
   m_tclEngine = e;
   }

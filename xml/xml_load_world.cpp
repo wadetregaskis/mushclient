@@ -2505,7 +2505,7 @@ void CMUSHclientDoc::Load_Plugin_XML (CXMLelement & parent)
 #if defined(USE_PYTHON) || !defined(_WIN32)
             && m_CurrentPlugin->m_strLanguage != "python"
 #endif
-#ifdef USE_TCL
+#if defined(USE_TCL) || defined(MUSHCLIENT_TCL_SCRIPTING)
             && m_CurrentPlugin->m_strLanguage != "tclscript"
 #endif
             && m_CurrentPlugin->m_strLanguage != "lua"

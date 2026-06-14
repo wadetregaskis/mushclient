@@ -22,6 +22,7 @@ extern "C"
 class CPythonEngine;
 class CPerlEngine;
 class CJSEngine;
+class CTclEngine;
 
 #define DOCUMENT_STATE "mushclient.document"
 #define WORLD_LIBRARY "world"
@@ -53,6 +54,7 @@ class CScriptEngine : public CObject
       m_pyEngine = NULL;
       m_perlEngine = NULL;
       m_jsEngine = NULL;
+      m_tclEngine = NULL;
 #endif
       };  // end of constructor
 
@@ -127,19 +129,23 @@ class CScriptEngine : public CObject
   const bool IsPython () const { return false; }
   const bool IsPerl   () const { return false; }
   const bool IsJS     () const { return false; }
+  const bool IsTcl    () const { return false; }
 #else
   const bool IsPython () const { return m_pyEngine   != NULL; }
   const bool IsPerl   () const { return m_perlEngine != NULL; }
   const bool IsJS     () const { return m_jsEngine   != NULL; }
+  const bool IsTcl    () const { return m_tclEngine  != NULL; }
 
-  void   OpenPython ();   void   OpenPerl ();   void   OpenJS ();
-  void   ClosePython ();  void   ClosePerl ();  void   CloseJS ();
+  void   OpenPython ();   void   OpenPerl ();   void   OpenJS ();   void   OpenTcl ();
+  void   ClosePython ();  void   ClosePerl ();  void   CloseJS ();  void   CloseTcl ();
   bool   ParsePython (const CString &, const CString &);
   bool   ParsePerl   (const CString &, const CString &);
   bool   ParseJS     (const CString &, const CString &);
+  bool   ParseTcl    (const CString &, const CString &);
   DISPID GetPythonDispid (const CString &);
   DISPID GetPerlDispid   (const CString &);
   DISPID GetJSDispid     (const CString &);
+  DISPID GetTclDispid    (const CString &);
 
   // Rich + simple callback overloads — exact mirrors of the ExecuteLua pair, so
   // the same doc/evaluate/plugins/timers/mushview call sites drive every engine.
@@ -156,17 +162,19 @@ class CScriptEngine : public CObject
   MC_DECL_EXEC (ExecutePython)
   MC_DECL_EXEC (ExecutePerl)
   MC_DECL_EXEC (ExecuteJS)
+  MC_DECL_EXEC (ExecuteTcl)
   #undef MC_DECL_EXEC
 
   CPythonEngine * m_pyEngine;               // opaque per-engine engine state
   CPerlEngine   * m_perlEngine;             // (null unless this is that language)
   CJSEngine     * m_jsEngine;
+  CTclEngine    * m_tclEngine;
 #endif
 
   // True when a trigger/alias/timer/plugin callback should run through the
   // Lua-style call path — Lua itself, or any embedded alt-language engine.
   const bool UsesEmbeddedCallback () const
-    { return IsLua () || IsPython () || IsPerl () || IsJS (); }
+    { return IsLua () || IsPython () || IsPerl () || IsJS () || IsTcl (); }
 
   private:
 

@@ -244,6 +244,20 @@ if(NOT WIN32)
             message(STATUS "JavaScriptCore not found — JavaScript scripting disabled")
         endif()
     endif()
+
+    # ── Tcl via the Tcl system framework (macOS) ───────────────────────────────
+    # Embeds libtcl in place of Windows' COM-only "TclScript" ActiveScript engine.
+    # macOS only; elsewhere Tcl scripting stays disabled (scriptengine.cpp stubs).
+    set(TCL_ENGINE_FOUND FALSE)
+    if(APPLE)
+        find_library(TCL_FRAMEWORK Tcl)
+        if(TCL_FRAMEWORK)
+            set(TCL_ENGINE_FOUND TRUE)
+            message(STATUS "Tcl framework found — Tcl scripting enabled")
+        else()
+            message(STATUS "Tcl framework not found — Tcl scripting disabled")
+        endif()
+    endif()
 endif()
 
 # ── Vendored library: PCRE ────────────────────────────────────────────────
@@ -794,6 +808,13 @@ if(NOT WIN32)
         target_sources(mushapp PRIVATE platform/js_engine.cpp)
         target_compile_definitions(mushapp PRIVATE MUSHCLIENT_JS_SCRIPTING)
         target_link_libraries(mushapp PUBLIC ${JAVASCRIPTCORE_FRAMEWORK})
+    endif()
+
+    if(TCL_ENGINE_FOUND)
+        # Embedded Tcl engine via the Tcl framework (same dispatch substrate).
+        target_sources(mushapp PRIVATE platform/tcl_engine.cpp)
+        target_compile_definitions(mushapp PRIVATE MUSHCLIENT_TCL_SCRIPTING)
+        target_link_libraries(mushapp PUBLIC ${TCL_FRAMEWORK})
     endif()
 
     target_include_directories(mushapp PUBLIC

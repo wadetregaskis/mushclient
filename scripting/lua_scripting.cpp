@@ -521,12 +521,14 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
 
 #ifndef _WIN32
   // Alt-language world (the call sites gate on UsesEmbeddedCallback(), so an
-  // embedded Python/Perl/JS engine lands here): forward with identical params.
+  // embedded Python/Perl/JS/Tcl engine lands here): forward with identical params.
   if (m_pyEngine)   return ExecutePython (dispid, szProcedure, iReason, szType, szReason,
                                           nparams, sparams, nInvocationCount, regexp, table, paneline, result);
   if (m_perlEngine) return ExecutePerl   (dispid, szProcedure, iReason, szType, szReason,
                                           nparams, sparams, nInvocationCount, regexp, table, paneline, result);
   if (m_jsEngine)   return ExecuteJS     (dispid, szProcedure, iReason, szType, szReason,
+                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
+  if (m_tclEngine)  return ExecuteTcl    (dispid, szProcedure, iReason, szType, szReason,
                                           nparams, sparams, nInvocationCount, regexp, table, paneline, result);
 #endif
 
@@ -754,6 +756,8 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
   if (m_perlEngine) return ExecutePerl   (dispid, szProcedure, iReason, szType, szReason,
                                           strParam, nInvocationCount, result);
   if (m_jsEngine)   return ExecuteJS     (dispid, szProcedure, iReason, szType, szReason,
+                                          strParam, nInvocationCount, result);
+  if (m_tclEngine)  return ExecuteTcl    (dispid, szProcedure, iReason, szType, szReason,
                                           strParam, nInvocationCount, result);
 #endif
 

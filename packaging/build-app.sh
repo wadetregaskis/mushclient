@@ -351,6 +351,15 @@ if [ -d "$FRAMEWORKS" ]; then
         < <(find "$FRAMEWORKS" -type f \( -name '*.dylib' -o -name '*.so' \) -print0)
     for f in "$FRAMEWORKS"/*.framework; do [ -d "$f" ] && sign_lib "$f"; done
 fi
+# Nested Mach-O bundled outside Frameworks — the relocatable Ruby's libruby dylib
+# and its .bundle C extensions live under Contents/lib (load-relative finds the
+# stdlib there).  They must be signed too, or a Developer-ID / notarized build is
+# rejected for unsigned nested code.
+for d in "$APP/Contents/lib" "$APP/Contents/Resources"; do
+    [ -d "$d" ] || continue
+    while IFS= read -r -d '' f; do sign_lib "$f"; done \
+        < <(find "$d" -type f \( -name '*.dylib' -o -name '*.so' -o -name '*.bundle' \) -print0)
+done
 sign_app "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /' || warn "codesign --verify reported issues"
 

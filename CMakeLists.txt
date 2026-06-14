@@ -271,33 +271,55 @@ if(NOT WIN32)
         endif()
     endif()
 
-    # ── Ruby via the Ruby system framework (macOS) ─────────────────────────────
-    # Embeds the (deprecated, EOL 2.6) system libruby in place of Windows' COM
-    # Ruby ActiveScript engine.  The headers live only in the SDK — the framework's
-    # own Headers/ dir is self-contained (ruby.h + the arch ruby/config.h), unlike
-    # rbconfig's archhdrdir which can be a stale darwin version.  macOS only.
+    # ── Ruby (macOS) ───────────────────────────────────────────────────────────
+    # Embeds libruby in place of Windows' COM Ruby ActiveScript engine.  Prefer a
+    # vendored, relocatable Ruby built from source (staged by packaging/fetch-ruby.sh)
+    # over the Apple-deprecated system Ruby.framework (EOL 2.6, slated for removal),
+    # so the dev build and the packaged app embed the same self-contained Ruby.
     set(RUBY_ENGINE_FOUND FALSE)
+    set(RUBY_VENDORED "")
     if(APPLE)
-        execute_process(COMMAND xcrun --show-sdk-path
-                        OUTPUT_VARIABLE _sdkpath OUTPUT_STRIP_TRAILING_WHITESPACE
-                        ERROR_QUIET)
-        # All in the SDK: the framework's self-contained Headers/ dir, and the
-        # versioned linker stub libruby.<ver>.tbd (the runtime .dylib is only a
-        # symlink into the on-disk-absent dyld shared cache, so we must link via
-        # -L<dir> -l<name> against the .tbd, not a full dylib path).
-        file(GLOB _rbhdrs "${_sdkpath}/System/Library/Frameworks/Ruby.framework/Versions/*/Headers")
-        file(GLOB _rblibs "${_sdkpath}/System/Library/Frameworks/Ruby.framework/Versions/*/usr/lib/libruby.[0-9]*.tbd")
-        if(_rbhdrs AND _rblibs)
-            list(GET _rbhdrs 0 RUBY_INCLUDE_DIR)
-            list(GET _rblibs 0 _rbtbd)
-            get_filename_component(RUBY_LIBDIR "${_rbtbd}" DIRECTORY)
-            get_filename_component(_rbn "${_rbtbd}" NAME)            # libruby.2.6.tbd
-            string(REGEX REPLACE "^lib" "" _rbn "${_rbn}")
-            string(REGEX REPLACE "\\.tbd$" "" RUBY_LIBNAME "${_rbn}") # ruby.2.6
+        set(_rbv "${CMAKE_SOURCE_DIR}/packaging/ruby/install")
+        file(GLOB _rbdylib "${_rbv}/lib/libruby.*.dylib")
+        file(GLOB _rbapi   "${_rbv}/include/ruby-*")
+        if(_rbdylib AND _rbapi)
+            list(GET _rbdylib 0 RUBY_VENDORED_DYLIB)
+            list(GET _rbapi   0 RUBY_INCLUDE_DIR)               # include/ruby-3.x.0
+            set(RUBY_INCLUDE_DIRS "${RUBY_INCLUDE_DIR}")
+            # the arch-specific config.h lives one level deeper (…/<arch>-darwinNN)
+            file(GLOB _rbarch "${RUBY_INCLUDE_DIR}/*-darwin*")
+            if(_rbarch)
+                list(GET _rbarch 0 _rbarchdir)
+                list(APPEND RUBY_INCLUDE_DIRS "${_rbarchdir}")
+            endif()
+            set(RUBY_VENDORED "${_rbv}")
             set(RUBY_ENGINE_FOUND TRUE)
-            message(STATUS "Ruby framework found — Ruby scripting enabled (system libruby; deprecated): -l${RUBY_LIBNAME}")
+            message(STATUS "Ruby found — vendored relocatable libruby (${RUBY_VENDORED_DYLIB})")
         else()
-            message(STATUS "Ruby framework not found — Ruby scripting disabled")
+            # Fallback: the (deprecated, EOL 2.6) system libruby.  The headers live
+            # only in the SDK — the framework's own Headers/ dir is self-contained
+            # (ruby.h + the arch ruby/config.h), unlike rbconfig's archhdrdir which
+            # can be a stale darwin version.  We link via -L<dir> -l<name> against
+            # the versioned .tbd stub, since the runtime .dylib is only a symlink
+            # into the on-disk-absent dyld shared cache.
+            execute_process(COMMAND xcrun --show-sdk-path
+                            OUTPUT_VARIABLE _sdkpath OUTPUT_STRIP_TRAILING_WHITESPACE
+                            ERROR_QUIET)
+            file(GLOB _rbhdrs "${_sdkpath}/System/Library/Frameworks/Ruby.framework/Versions/*/Headers")
+            file(GLOB _rblibs "${_sdkpath}/System/Library/Frameworks/Ruby.framework/Versions/*/usr/lib/libruby.[0-9]*.tbd")
+            if(_rbhdrs AND _rblibs)
+                list(GET _rbhdrs 0 RUBY_INCLUDE_DIR)
+                set(RUBY_INCLUDE_DIRS "${RUBY_INCLUDE_DIR}")
+                list(GET _rblibs 0 _rbtbd)
+                get_filename_component(RUBY_LIBDIR "${_rbtbd}" DIRECTORY)
+                get_filename_component(_rbn "${_rbtbd}" NAME)        # libruby.2.6.tbd
+                string(REGEX REPLACE "^lib" "" _rbn "${_rbn}")
+                string(REGEX REPLACE "\\.tbd$" "" RUBY_LIBNAME "${_rbn}") # ruby.2.6
+                set(RUBY_ENGINE_FOUND TRUE)
+                message(STATUS "Ruby found — system libruby (deprecated; run packaging/fetch-ruby.sh to vendor a modern one): -l${RUBY_LIBNAME}")
+            else()
+                message(STATUS "Ruby not found — Ruby scripting disabled")
+            endif()
         endif()
     endif()
 endif()
@@ -869,18 +891,27 @@ if(NOT WIN32)
     endif()
 
     if(RUBY_ENGINE_FOUND)
-        # Embedded Ruby engine via the system libruby (same dispatch substrate).
-        # ruby.h's headers are applied only to this TU (its macros must not leak).
+        # Embedded Ruby engine on the same dispatch substrate.  ruby.h's headers
+        # are applied only to this TU (its macros must not leak) — the vendored
+        # build needs both the API dir and the arch config.h dir.
         target_sources(mushapp PRIVATE platform/ruby_engine.cpp)
         target_compile_definitions(mushapp PRIVATE MUSHCLIENT_RUBY_SCRIPTING)
-        # Ruby 2.6's headers use the 'register' keyword (removed in C++17).
+        # Some Ruby headers use the 'register' keyword (removed in C++17).
         set_source_files_properties(platform/ruby_engine.cpp PROPERTIES
-                                    INCLUDE_DIRECTORIES "${RUBY_INCLUDE_DIR}"
+                                    INCLUDE_DIRECTORIES "${RUBY_INCLUDE_DIRS}"
                                     COMPILE_FLAGS "-Wno-register")
-        # Link against the SDK .tbd via -L/-l (a full dylib path would make `make`
-        # treat the shared-cache symlink as an unbuildable file prerequisite).
-        target_link_directories(mushapp PUBLIC "${RUBY_LIBDIR}")
-        target_link_libraries(mushapp PUBLIC "${RUBY_LIBNAME}")
+        if(RUBY_VENDORED)
+            # libruby's id is @rpath/libruby.<ver>.dylib; mushgui adds the rpath
+            # (@executable_path/../lib) and copies the tree to Contents/lib, so
+            # --enable-load-relative finds the stdlib with no env vars.
+            target_link_libraries(mushapp PUBLIC "${RUBY_VENDORED_DYLIB}")
+        else()
+            # System libruby: link against the SDK .tbd via -L/-l (a full dylib path
+            # would make `make` treat the shared-cache symlink as an unbuildable
+            # file prerequisite).
+            target_link_directories(mushapp PUBLIC "${RUBY_LIBDIR}")
+            target_link_libraries(mushapp PUBLIC "${RUBY_LIBNAME}")
+        endif()
     endif()
 
     target_include_directories(mushapp PUBLIC
@@ -1028,6 +1059,18 @@ if(NOT WIN32)
         if(MUSHCLIENT_VENDORED_PYTHON_DIR)
             target_link_options(mushgui PRIVATE "-Wl,-rpath,${MUSHCLIENT_VENDORED_PYTHON_DIR}")
         endif()
+        # Vendored Ruby: libruby's id is @rpath/libruby.<ver>.dylib, and Ruby's own
+        # C extensions reference it as @executable_path/../lib/libruby.<ver>.dylib
+        # (load-relative's convention).  So bundle libruby at Contents/lib (the
+        # executable is in Contents/MacOS → ../lib): the extensions resolve it with
+        # no patching, load-relative computes the stdlib prefix as Contents, and this
+        # rpath lets the host resolve @rpath/libruby to the same file.  The rpath is
+        # *relative* (@executable_path), so build-app.sh keeps it (it strips only
+        # absolute rpaths).
+        if(RUBY_VENDORED)
+            target_link_options(mushgui PRIVATE
+                "-Wl,-rpath,@executable_path/../lib")
+        endif()
         # miniaudio (platform/ma_sound.cpp) needs the OS audio backend:
         # CoreAudio family on macOS; pthread/dl/m on Linux (it dlopen's ALSA/Pulse).
         if(APPLE)
@@ -1129,6 +1172,19 @@ if(NOT WIN32)
                         "${TCL_VENDORED}/lib/tcl8.6"
                         "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/tcl8.6"
                     COMMENT "Bundling the Tcl 8.6 script library into Resources/tcl8.6")
+            endif()
+            # Vendored Ruby: the relocatable libruby dylib + its stdlib and arch
+            # .bundle extensions, dropped at Contents/lib.  Ruby's extensions link
+            # libruby as @executable_path/../lib/libruby.<ver>.dylib and load-relative
+            # derives the stdlib prefix from libruby's own location (dladdr), so this
+            # one location makes both the host and every extension self-locating with
+            # no env vars and no per-file install-name patching.
+            if(RUBY_VENDORED)
+                add_custom_command(TARGET mushgui POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_directory
+                        "${RUBY_VENDORED}/lib"
+                        "$<TARGET_BUNDLE_DIR:mushgui>/Contents/lib"
+                    COMMENT "Bundling the relocatable Ruby (libruby + stdlib) into Contents/lib")
             endif()
             # Read-only data the engine opens at runtime: the Tip-of-the-Day
             # text and the name-generator lists.  These go in Contents/Resources/

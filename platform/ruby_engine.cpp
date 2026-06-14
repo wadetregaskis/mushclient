@@ -1,5 +1,9 @@
-// platform/ruby_engine.cpp — embedded Ruby scripting engine for the port, via the
-// macOS Ruby system framework (no bundled dependency).
+// platform/ruby_engine.cpp — embedded Ruby scripting engine for the port.
+//
+// libruby is embedded directly.  CMake prefers a vendored, relocatable Ruby built
+// from source (packaging/fetch-ruby.sh) — bundled under Contents/lib and self-
+// locating via --enable-load-relative — and falls back to the (deprecated) macOS
+// system Ruby.framework when that is absent.
 //
 // Windows' Ruby support was an ActiveScripting (COM) engine; the port embeds
 // libruby directly instead.  As with the Python/Perl/JS engines the world object
@@ -28,6 +32,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <pthread.h>        // pthread_get_stackaddr_np — GC stack base (see ensure_started)
 
 // MUSHclient defines WIN32 (no underscore) for source compatibility; Ruby's
 // headers read WIN32 as a native-Windows build.  The MFC/MUSHclient headers above
@@ -196,8 +201,30 @@ void ensure_started ()
   {
   if (g_started) return;
   g_started = true;
+
+  // Embedded Ruby 3.x needs the FULL bootstrap, not bare ruby_init().  Ruby 3.4
+  // defaults to the Prism parser, and the parser, the symbol/ID tables and the gem
+  // prelude are only fully set up by ruby_options() — skip it and method dispatch
+  // is left desynced (core C methods such as Kernel#require and GC.disable resolve
+  // to the wrong IDs, surfacing as bogus NoMethodErrors).  So run the same sequence
+  // the standalone `ruby` binary does, handing it a do-nothing program.
+  //
+  // The GC must also be told where the C stack begins, or it scans garbage once
+  // anything allocates heavily.  Scripting is driven from arbitrary depths of the
+  // wx event loop, not one fixed frame, so anchor the base at the very top of the
+  // (UI) thread's stack: the GC then conservatively scans the whole stack, valid
+  // for every call site.
+  static char arg0[] = "mushclient";
+  static char arg1[] = "-e0";                // bootstrap with an empty program
+  char*  argv_[] = { arg0, arg1, nullptr };
+  int    argc_   = 2;
+  char** pargv   = argv_;
+  ruby_sysinit (&argc_, &pargv);
+  ruby_init_stack ((VALUE*) pthread_get_stackaddr_np (pthread_self ()));
   ruby_init ();
+  ruby_options (argc_, pargv);                // full runtime: parser, prelude, encodings
   ruby_init_loadpath ();
+
   g_worldClass = rb_define_class ("MUSHclientWorld", rb_cObject);
   rb_global_variable (&g_worldClass);
   rb_define_method (g_worldClass, "method_missing",
@@ -223,9 +250,10 @@ void report_error (CMUSHclientDoc* doc, const char* what, const char* proc)
   {
   if (!doc) return;
   VALUE err = rb_errinfo ();
-  std::string msg = "?";
+  std::string msg = "?", klass;
   if (RTEST (err))
     {
+    klass = rb_obj_classname (err);
     VALUE s = rb_funcall (err, rb_intern ("message"), 0);
     if (TYPE (s) == T_STRING) msg = StringValueCStr (s);
     }
@@ -233,7 +261,10 @@ void report_error (CMUSHclientDoc* doc, const char* what, const char* proc)
   CString hdr;
   hdr.Format ("Ruby error: %s%s%s\n", what ? what : "",
               (proc && *proc) ? " / " : "", proc ? proc : "");
-  doc->ColourNote ("white", "red", hdr + CString (msg.c_str ()));
+  doc->ColourNote ("white", "red", hdr + CString ((klass + ": " + msg).c_str ()));
+  fprintf (stderr, "[RubyError] %s%s%s : %s: %s\n", what ? what : "",
+           (proc && *proc) ? " / " : "", proc ? proc : "",
+           klass.c_str (), msg.c_str ());
   }
 
 } // anonymous namespace

@@ -530,6 +530,8 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
                                           nparams, sparams, nInvocationCount, regexp, table, paneline, result);
   if (m_tclEngine)  return ExecuteTcl    (dispid, szProcedure, iReason, szType, szReason,
                                           nparams, sparams, nInvocationCount, regexp, table, paneline, result);
+  if (m_rubyEngine) return ExecuteRuby   (dispid, szProcedure, iReason, szType, szReason,
+                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
 #endif
 
   // safety check ;)
@@ -758,6 +760,8 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
   if (m_jsEngine)   return ExecuteJS     (dispid, szProcedure, iReason, szType, szReason,
                                           strParam, nInvocationCount, result);
   if (m_tclEngine)  return ExecuteTcl    (dispid, szProcedure, iReason, szType, szReason,
+                                          strParam, nInvocationCount, result);
+  if (m_rubyEngine) return ExecuteRuby   (dispid, szProcedure, iReason, szType, szReason,
                                           strParam, nInvocationCount, result);
 #endif
 

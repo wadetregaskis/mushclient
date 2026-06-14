@@ -698,6 +698,9 @@ bool CScriptEngine::CreateScriptEngine (void)
   else if (m_strLanguage.CompareNoCase ("tclscript") == 0 ||
            m_strLanguage.CompareNoCase ("tcl") == 0)
     OpenTcl ();
+  else if (m_strLanguage.CompareNoCase ("rubyscript") == 0 ||
+           m_strLanguage.CompareNoCase ("ruby") == 0)
+    OpenRuby ();
   return false;
   }
 
@@ -708,6 +711,7 @@ bool CScriptEngine::Parse (const CString& strCode, const CString& strWhat)
   if (m_perlEngine) return ParsePerl   (strCode, strWhat);
   if (m_jsEngine)   return ParseJS     (strCode, strWhat);
   if (m_tclEngine)  return ParseTcl    (strCode, strWhat);
+  if (m_rubyEngine) return ParseRuby   (strCode, strWhat);
   return true; // error: no engine
   }
 
@@ -718,6 +722,7 @@ DISPID CScriptEngine::GetDispid (const CString& strName)
   if (m_perlEngine) return GetPerlDispid   (strName);
   if (m_jsEngine)   return GetJSDispid     (strName);
   if (m_tclEngine)  return GetTclDispid    (strName);
+  if (m_rubyEngine) return GetRubyDispid   (strName);
   return DISPID_UNKNOWN;
   }
 
@@ -730,6 +735,7 @@ void CScriptEngine::DisableScripting (void)
   if (m_perlEngine) ClosePerl ();
   if (m_jsEngine)   CloseJS ();
   if (m_tclEngine)  CloseTcl ();
+  if (m_rubyEngine) CloseRuby ();
   }
 
 #ifndef MUSHCLIENT_LUA_SCRIPTING  // lua_scripting.cpp not compiled — provide link-time stubs
@@ -783,6 +789,9 @@ MC_ENGINE_LINK_STUBS(JS, m_jsEngine)
 #endif
 #ifndef MUSHCLIENT_TCL_SCRIPTING
 MC_ENGINE_LINK_STUBS(Tcl, m_tclEngine)
+#endif
+#ifndef MUSHCLIENT_RUBY_SCRIPTING
+MC_ENGINE_LINK_STUBS(Ruby, m_rubyEngine)
 #endif
 #undef MC_ENGINE_LINK_STUBS
 

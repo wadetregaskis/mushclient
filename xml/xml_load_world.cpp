@@ -2512,7 +2512,7 @@ void CMUSHclientDoc::Load_Plugin_XML (CXMLelement & parent)
 #ifdef USE_PHP
             && m_CurrentPlugin->m_strLanguage != "phpscript"
 #endif
-#ifdef USE_RUBY
+#if defined(USE_RUBY) || defined(MUSHCLIENT_RUBY_SCRIPTING)
             && m_CurrentPlugin->m_strLanguage != "rubyscript"
 #endif
             )

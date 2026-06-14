@@ -258,6 +258,36 @@ if(NOT WIN32)
             message(STATUS "Tcl framework not found — Tcl scripting disabled")
         endif()
     endif()
+
+    # ── Ruby via the Ruby system framework (macOS) ─────────────────────────────
+    # Embeds the (deprecated, EOL 2.6) system libruby in place of Windows' COM
+    # Ruby ActiveScript engine.  The headers live only in the SDK — the framework's
+    # own Headers/ dir is self-contained (ruby.h + the arch ruby/config.h), unlike
+    # rbconfig's archhdrdir which can be a stale darwin version.  macOS only.
+    set(RUBY_ENGINE_FOUND FALSE)
+    if(APPLE)
+        execute_process(COMMAND xcrun --show-sdk-path
+                        OUTPUT_VARIABLE _sdkpath OUTPUT_STRIP_TRAILING_WHITESPACE
+                        ERROR_QUIET)
+        # All in the SDK: the framework's self-contained Headers/ dir, and the
+        # versioned linker stub libruby.<ver>.tbd (the runtime .dylib is only a
+        # symlink into the on-disk-absent dyld shared cache, so we must link via
+        # -L<dir> -l<name> against the .tbd, not a full dylib path).
+        file(GLOB _rbhdrs "${_sdkpath}/System/Library/Frameworks/Ruby.framework/Versions/*/Headers")
+        file(GLOB _rblibs "${_sdkpath}/System/Library/Frameworks/Ruby.framework/Versions/*/usr/lib/libruby.[0-9]*.tbd")
+        if(_rbhdrs AND _rblibs)
+            list(GET _rbhdrs 0 RUBY_INCLUDE_DIR)
+            list(GET _rblibs 0 _rbtbd)
+            get_filename_component(RUBY_LIBDIR "${_rbtbd}" DIRECTORY)
+            get_filename_component(_rbn "${_rbtbd}" NAME)            # libruby.2.6.tbd
+            string(REGEX REPLACE "^lib" "" _rbn "${_rbn}")
+            string(REGEX REPLACE "\\.tbd$" "" RUBY_LIBNAME "${_rbn}") # ruby.2.6
+            set(RUBY_ENGINE_FOUND TRUE)
+            message(STATUS "Ruby framework found — Ruby scripting enabled (system libruby; deprecated): -l${RUBY_LIBNAME}")
+        else()
+            message(STATUS "Ruby framework not found — Ruby scripting disabled")
+        endif()
+    endif()
 endif()
 
 # ── Vendored library: PCRE ────────────────────────────────────────────────
@@ -815,6 +845,21 @@ if(NOT WIN32)
         target_sources(mushapp PRIVATE platform/tcl_engine.cpp)
         target_compile_definitions(mushapp PRIVATE MUSHCLIENT_TCL_SCRIPTING)
         target_link_libraries(mushapp PUBLIC ${TCL_FRAMEWORK})
+    endif()
+
+    if(RUBY_ENGINE_FOUND)
+        # Embedded Ruby engine via the system libruby (same dispatch substrate).
+        # ruby.h's headers are applied only to this TU (its macros must not leak).
+        target_sources(mushapp PRIVATE platform/ruby_engine.cpp)
+        target_compile_definitions(mushapp PRIVATE MUSHCLIENT_RUBY_SCRIPTING)
+        # Ruby 2.6's headers use the 'register' keyword (removed in C++17).
+        set_source_files_properties(platform/ruby_engine.cpp PROPERTIES
+                                    INCLUDE_DIRECTORIES "${RUBY_INCLUDE_DIR}"
+                                    COMPILE_FLAGS "-Wno-register")
+        # Link against the SDK .tbd via -L/-l (a full dylib path would make `make`
+        # treat the shared-cache symlink as an unbuildable file prerequisite).
+        target_link_directories(mushapp PUBLIC "${RUBY_LIBDIR}")
+        target_link_libraries(mushapp PUBLIC "${RUBY_LIBNAME}")
     endif()
 
     target_include_directories(mushapp PUBLIC

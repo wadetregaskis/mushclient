@@ -638,8 +638,9 @@ void CScriptEngine::DisableScripting (void)
 // The Windows COM IActiveScript / IDispatch host (which drove VBScript and
 // JScript) is unavailable on this platform, so the COM-based engine methods
 // below are no-ops.  Scripting itself is fully supported via the embedded
-// engines — Lua, Python, Perl and JavaScript — wired up in CreateScriptEngine
-// (see below).  Only VBScript (COM-only, with no embeddable form) is dropped.
+// engines — Lua, Python, Perl, JavaScript, Tcl and Ruby — wired up in
+// CreateScriptEngine (see below).  Not supported here: VBScript (COM-only, no
+// embeddable form) and PHP (no embeddable library available on macOS).
 
 bool CScriptEngine::Execute (DISPID& dispid,
                               LPCTSTR szProcedure, const unsigned short iReason,
@@ -679,9 +680,9 @@ bool CScriptEngine::Execute (DISPID& dispid,
 
 bool CScriptEngine::CreateScriptEngine (void)
   {
-  // Open the embedded engine for the world's language.  Lua, Python, Perl and
-  // JavaScript (the JScript option maps here) are all supported; only VBScript
-  // (COM-only, with no embeddable form) is unavailable on this platform.  Mirror
+  // Open the embedded engine for the world's language.  Lua, Python, Perl,
+  // JavaScript (the JScript option), Tcl and Ruby are all supported; VBScript
+  // (COM-only) and PHP (no embeddable engine available on macOS) are not.  Mirror
   // the _WIN32 branch: open the engine now, otherwise its state stays null and
   // Parse() can never compile anything.  Returns false = success (Windows convention).
   if (m_strLanguage.CompareNoCase ("Lua") == 0)
@@ -701,6 +702,16 @@ bool CScriptEngine::CreateScriptEngine (void)
   else if (m_strLanguage.CompareNoCase ("rubyscript") == 0 ||
            m_strLanguage.CompareNoCase ("ruby") == 0)
     OpenRuby ();
+  else if (!m_strLanguage.IsEmpty () && m_pDoc)
+    {
+    // VBScript (COM-only) and PHP (no embeddable engine on macOS) are not
+    // supported here — tell the user clearly instead of silently failing.
+    CString msg;
+    msg.Format ("Scripting language \"%s\" is not currently supported on this "
+                "platform.\r\nSupported languages: Lua, Python, Perl, JavaScript, "
+                "Tcl and Ruby.", (LPCTSTR) m_strLanguage);
+    m_pDoc->ColourNote ("white", "red", msg);
+    }
   return false;
   }
 

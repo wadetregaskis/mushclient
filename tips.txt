@@ -76,6 +76,6 @@ For a bit of fun, try "random colours" in the ANSI colour settings for your worl
 For a colour notepad, you can make a dummy world which doesn't connect to any MUD, and script ColourNote messages to it.
 Extensive documentation about using Regular Expressions is in the file RegularExpressions.txt which ships in the "docs" subdirectory of your MUSHclient installation.
 The output from macros (such as ALT + A) are sent through the command processor, so they can do scripting, speedwalks, or invoke aliases.
-You can script MUSHclient in Lua, Python, Perl and JavaScript.  On Windows, VBscript, Tcl, PHP and Ruby are also supported.
+You can script MUSHclient in Lua, Python, Perl, JavaScript, Tcl and Ruby.  VBscript and PHP are available only on Windows.
 MUD prompt not being displayed on its own line? Then try enabling World Properties->Output->Convert EOR/GA to newline.
 You can use SQL databases from MUSHclient. Look in the plugins directory for examples.

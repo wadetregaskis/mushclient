@@ -10,6 +10,7 @@
 #ifndef _WIN32
 
 #include <wx/wx.h>
+#include <wx/image.h>          // wxInitAllImageHandlers
 #include "platform/wx_mfc_hooks.h"
 
 // Defined in wx_dialog_bridge.cpp: parse the bundled dialog resources once.
@@ -24,6 +25,14 @@ public:
         // "MUSHclient" rather than the executable basename.
         SetAppName(wxT("MUSHclient"));
         SetAppDisplayName(wxT("MUSHclient"));
+
+        // Register every wxImage handler (BMP/PNG/ICO/…) up front, before any
+        // MUSHclient code can load an image — the Tip-of-the-Day bulb, dialog art,
+        // the Dock icon, plugin PNGs.  Registering lazily on first load is fragile:
+        // whichever load happens first can run before wx is fully ready, and if it
+        // doesn't register the handlers, later loads fail with "Unknown image data
+        // format" (the litebulb.bmp error).  OnInit is the canonical place for this.
+        wxInitAllImageHandlers();
 
         // Install all MFC→wx bridge hooks before any MUSHclient code runs.
         wx_mfc_install_hooks();

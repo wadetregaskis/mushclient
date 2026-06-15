@@ -91,11 +91,14 @@ wxBitmap LoadDialogArt(int resId)
 {
     wxString file = DialogArtFile(resId);
     if (file.empty()) return wxBitmap();
-    static bool handlersAdded = false;
-    if (!handlersAdded) { wxInitAllImageHandlers(); handlersAdded = true; }
+    // Image handlers are registered once in the app's OnInit (wx_app.cpp) — doing
+    // it here lazily was fragile (see that comment).  Suppress wx's error log
+    // around the load so a missing/odd art file degrades to "no image" instead of
+    // popping an error dialog ("Unknown image data format") at the user.
     wxString path = FindResource(wxT("dialog_art") + wxString(wxFILE_SEP_PATH) + file);
     if (!wxFileName::FileExists(path)) return wxBitmap();
     wxImage img;
+    wxLogNull noLog;
     if (!img.LoadFile(path)) return wxBitmap();
     return wxBitmap(img);
 }

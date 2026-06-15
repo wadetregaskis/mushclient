@@ -622,6 +622,29 @@ static CCmdTarget* canon_target(char t, CMUSHclientDoc* doc)
     return nullptr;
 }
 
+// ── Quit: close every top-level window ────────────────────────────────────
+// Cmd-Q / app-menu Quit must terminate the app no matter which window is
+// frontmost or what's open.  Closing just the MDI parent is not enough: ANY
+// other top-level window — a parentless Notepad, a future standalone frame, a
+// modeless dialog — survives frame->Close() and keeps the process alive on
+// macOS with only the stub app+Window menu bar, and a second Cmd-Q then does
+// nothing because the frame that owned the menu handler is already gone.  So
+// close them all: standalone frames first (a veto then leaves the rest intact),
+// the MDI parent (which takes its world children with it) last.  Veto-able, so
+// unsaved-changes prompts still fire; returns false (quit cancelled) on a veto.
+static bool QuitCloseAllTopLevelWindows()
+{
+    const wxWindowList tops = wxTopLevelWindows;  // snapshot; Close() mutates it
+    for (wxWindow* w : tops)                       // pass 1: non-MDI-parent windows
+        if (auto* tlw = wxDynamicCast(w, wxTopLevelWindow))
+            if (!wxDynamicCast(tlw, wxMDIParentFrame))
+                if (!tlw->Close(false)) return false;
+    for (wxWindow* w : tops)                       // pass 2: MDI parent(s) + children
+        if (auto* mdi = wxDynamicCast(w, wxMDIParentFrame))
+            if (!mdi->Close(false)) return false;
+    return true;
+}
+
 static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                                 unsigned long /*style*/, void* /*parentHwnd*/)
 {
@@ -1003,6 +1026,18 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         }
     });
 
+    // Handle Quit at the *application* level too, so it works no matter which
+    // window is frontmost.  On macOS the app-menu Quit (wxID_EXIT, what Cmd-Q
+    // fires) is dispatched to the frontmost window; when that's a standalone
+    // frame (e.g. a Notepad, whose parent is null) the per-frame handler below
+    // never sees the event.  wxTheApp is the last link in the command-event
+    // chain, so a binding here catches Quit from any window that doesn't consume
+    // it — while a world/main window stays frontmost, the frame handler consumes
+    // it first and this never fires (no double close).
+    wxTheApp->Bind(wxEVT_MENU,
+                   [](wxCommandEvent&) { QuitCloseAllTopLevelWindows(); },
+                   wxID_EXIT);
+
     // ── Menu event routing via Bind() ─────────────────────────────────────
     frame->Bind(wxEVT_MENU, [frame](wxCommandEvent& evt) {
         int id = evt.GetId();
@@ -1232,7 +1267,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         }
 
         if (id == wxID_EXIT || id == 0xE141 /*ID_APP_EXIT*/) {
-            frame->Close(false);  // false = veto-able so EVT_CLOSE handler can confirm
+            // Close every top-level window (see QuitCloseAllTopLevelWindows).
+            QuitCloseAllTopLevelWindows();
         } else if (id == wxID_NEW || id == 0xE100 /*ID_FILE_NEW*/
                    || id == 32289 /*ID_CONNECTION_QUICK_CONNECT*/) {
             App.OnFileNew();

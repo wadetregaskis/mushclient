@@ -34,6 +34,12 @@ public:
         // format" (the litebulb.bmp error).  OnInit is the canonical place for this.
         wxInitAllImageHandlers();
 
+        // Quit the app when the last top-level window is destroyed (the default,
+        // made explicit): together with the Quit handler closing every top-level
+        // window, this guarantees Cmd-Q actually terminates rather than leaving a
+        // windowless process behind.
+        SetExitOnFrameDelete(true);
+
         // Install all MFC→wx bridge hooks before any MUSHclient code runs.
         wx_mfc_install_hooks();
 

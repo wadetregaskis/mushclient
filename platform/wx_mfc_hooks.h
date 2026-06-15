@@ -19,6 +19,7 @@
 #ifndef _WIN32
 
 #include <cstdint>
+#include <cstddef>   // size_t (g_wxhook_sound_play_memory)
 
 // ── Types used in signatures (no wx headers) ─────────────────────────────
 
@@ -171,6 +172,8 @@ extern void (*g_wxhook_stop_sound)();
 //   status → -2 free, 0 not playing, 1 playing, 2 playing+looping
 extern int  (*g_wxhook_sound_play)(int buffer, const char* path, int loop,
                                    double volume, double pan);
+extern int  (*g_wxhook_sound_play_memory)(int buffer, const void* data, size_t len,
+                                          int loop, double volume, double pan);
 extern int  (*g_wxhook_sound_adjust)(int buffer, int loop,
                                      double volume, double pan);
 extern void (*g_wxhook_sound_stop_buffer)(int buffer);

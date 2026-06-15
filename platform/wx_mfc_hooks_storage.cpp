@@ -46,6 +46,7 @@ void* (*g_wxhook_create_text_window)(
 bool (*g_wxhook_play_sound)(const char*, bool)                   = nullptr;
 void (*g_wxhook_stop_sound)()                                    = nullptr;
 int  (*g_wxhook_sound_play)(int, const char*, int, double, double) = nullptr;
+int  (*g_wxhook_sound_play_memory)(int, const void*, size_t, int, double, double) = nullptr;
 int  (*g_wxhook_sound_adjust)(int, int, double, double)          = nullptr;
 void (*g_wxhook_sound_stop_buffer)(int)                          = nullptr;
 int  (*g_wxhook_sound_status)(int)                               = nullptr;

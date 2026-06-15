@@ -476,21 +476,31 @@ long CMUSHclientDoc::Sound(LPCTSTR SoundFileName)
 // world.PlaySound — the buffered API.  Drives the miniaudio engine via the
 // g_wxhook_sound_* hooks: Buffer (0 = auto), Volume %, Pan % and Loop all apply,
 // and "empty filename + buffer" retunes an already-playing voice.  Mirrors the
-// Windows DirectSound helper's parameter handling.  Memory-buffer playback is
-// the one gap (rejected).  Null hooks (mushcli/tests) → no audio backend.
+// Windows DirectSound helper's parameter handling, including memory-image
+// playback.  Null hooks (mushcli/tests) → no audio backend.
 long CMUSHclientDoc::PlaySoundHelper(short Buffer, LPCTSTR FileName, BOOL Loop,
                                      double Volume, double Pan,
-                                     LPCTSTR MemoryBuffer, size_t /*MemLen*/)
+                                     LPCTSTR MemoryBuffer, size_t MemLen)
 {
   if (!g_wxhook_sound_play)
     return eCannotPlaySound;                 // no audio backend (CLI / tests)
 
-  if (MemoryBuffer != NULL)
-    return eCannotPlaySound;                 // memory-buffer playback unsupported
-
   // Force Volume / Pan into range exactly like the Windows helper.
   if (Volume > 0 || Volume < -100.0) Volume = 0.0;
   if (Pan > 100.0 || Pan < -100.0)   Pan    = 0.0;
+
+  // ---- memory image (world.PlaySoundMemory): hand the encoded bytes to the
+  //      backend, which copies + decodes them.  Buffer 0 (auto) or 1..MAX. ----
+  if (MemoryBuffer != NULL)
+    {
+    if (Buffer < 0 || Buffer > MAX_SOUND_BUFFERS)
+      return eBadParameter;
+    if (!g_wxhook_sound_play_memory)
+      return eCannotPlaySound;
+    return (g_wxhook_sound_play_memory (Buffer, MemoryBuffer, MemLen,
+                                        Loop != 0, Volume, Pan) != 0)
+           ? eOK : eCannotPlaySound;
+    }
 
   // ---- empty filename + valid buffer → adjust the playing voice in place ----
   if (Buffer >= 1 && Buffer <= MAX_SOUND_BUFFERS &&

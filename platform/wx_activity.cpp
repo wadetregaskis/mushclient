@@ -15,6 +15,12 @@
 #include "doc.h"                      // CMUSHclientDoc, eConnectConnectedToMud
 #include "platform/wx_activity.h"
 
+// Defined in wx_mfc_impl.cpp, where the full CWorldChildFrame type and the correct
+// wx/MFC include order live: raise + activate the world's MDI child frame.  (We
+// cannot include wx_world_child.h here — it uses MFC types and its wx includes
+// would be clobbered by compat.h's macros in this translation unit.)
+void wx_activate_world_frame(CMUSHclientDoc* doc);
+
 namespace {
 
 // Column order (a useful subset of CActivityView's columns).
@@ -45,6 +51,8 @@ public:
         m_timer.SetOwner(this);
         Bind(wxEVT_TIMER,        &CActivityFrame::OnTimer, this);
         Bind(wxEVT_CLOSE_WINDOW, &CActivityFrame::OnClose, this);
+        // Double-click (or Enter) on a row → bring that world's window to front.
+        m_list->Bind(wxEVT_LIST_ITEM_ACTIVATED, &CActivityFrame::OnActivateRow, this);
 
         Repopulate();
         m_timer.Start(1000);   // refresh once a second while open
@@ -58,6 +66,15 @@ private:
         m_timer.Stop();
         s_instance = nullptr;
         Destroy();
+    }
+
+    // Double-click / Enter on a row → activate that world's MDI child window.
+    void OnActivateRow(wxListEvent& evt)
+    {
+        CMUSHclientDoc* pDoc = reinterpret_cast<CMUSHclientDoc*>(
+            static_cast<wxUIntPtr>(m_list->GetItemData(evt.GetIndex())));
+        if (pDoc)
+            wx_activate_world_frame(pDoc);   // no-ops if the world has since closed
     }
 
     void Repopulate()
@@ -104,6 +121,8 @@ private:
             m_list->SetItem(idx, kColStatus,   C(strStatus));
             m_list->SetItem(idx, kColSince,    C(strSince));
             m_list->SetItem(idx, kColDuration, C(strDuration));
+            // Remember which world this row is, so double-click can switch to it.
+            m_list->SetItemPtrData(idx, reinterpret_cast<wxUIntPtr>(pDoc));
             ++row;
         }
 

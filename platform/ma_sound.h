@@ -18,11 +18,20 @@
 #pragma once
 #ifndef _WIN32
 
+#include <cstddef>                // size_t
+
 #define MA_MAX_SOUND_BUFFERS 10   // mirrors MAX_SOUND_BUFFERS (MUSHclient.h)
 
 // Play `path` in `buffer` (0 = auto-select a free slot).  loop != 0 loops.
 // Returns the 1-based buffer actually used, or 0 on failure.
 int  ma_audio_play(int buffer, const char* path, int loop, double volume, double pan);
+
+// Play an in-memory encoded-audio image (the canonical world.PlaySoundMemory):
+// `data`/`len` is e.g. a WAV/MP3/FLAC blob.  The bytes are copied internally, so
+// the caller's buffer need not outlive the call.  Same buffer/return semantics as
+// ma_audio_play.
+int  ma_audio_play_memory(int buffer, const void* data, size_t len, int loop,
+                          double volume, double pan);
 
 // Adjust an already-playing buffer's loop / volume / pan in place (the canonical
 // "empty filename + buffer" case).  Returns 1 on success, 0 if that buffer is

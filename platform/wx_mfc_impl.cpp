@@ -56,6 +56,7 @@
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
 #include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
+#include "dialogs/world_prefs/GenPropertyPage.h"    // CGenPropertyPage (entity-list idle reload)
 #include "dialogs/ImmediateDlg.h"     // CImmediateDlg (canonical Execute-Lua dialog)
 #include "dialogs/plugins/PluginsDlg.h" // CPluginsDlg (canonical plugin manager)
 #include "platform/wx_gdi_compat.h"   // PaintOwnerDrawButton (real CDC lives there)
@@ -198,6 +199,16 @@ void wx_register_world_frame(CMUSHclientDoc* doc, CWorldChildFrame* frame)
 void wx_unregister_world_frame(CMUSHclientDoc* doc)
 {
     if (doc) s_docFrameMap.erase(doc);
+}
+
+void wx_activate_world_frame(CMUSHclientDoc* doc)
+{
+    auto it = s_docFrameMap.find(doc);
+    if (it == s_docFrameMap.end() || !it->second) return;
+    CWorldChildFrame* frame = it->second;
+    if (wxWindow* top = wxGetTopLevelParent(frame))
+        top->Raise();                 // bring the app's main window forward
+    frame->Activate();                // make it the active MDI child
 }
 
 void wx_world_remove_from_list(const char* path)
@@ -2198,6 +2209,10 @@ static int hook_sound_play(int buffer, const char* path, int loop,
     return ma_audio_play(buffer, fixed.c_str(), loop, volume, pan);
 }
 
+static int hook_sound_play_memory(int buffer, const void* data, size_t len,
+                                  int loop, double volume, double pan)
+{ return ma_audio_play_memory(buffer, data, len, loop, volume, pan); }
+
 static int  hook_sound_adjust(int buffer, int loop, double volume, double pan)
 { return ma_audio_adjust(buffer, loop, volume, pan); }
 
@@ -2790,6 +2805,14 @@ static void pump_dialog_update_ui(CCmdTarget* target, wxWindow* container, const
         if (cmdui.m_hWndCtrl)
             AfxDispatchUpdateUI(target, &cmdui);
     }
+
+    // Entity-list pages defer their list reload — which also rewrites the
+    // "N items." summary static — to idle via m_bReloadList (set by Add / Change /
+    // Delete / Paste).  MFC consumes it in OnKickIdle, which the command-UI loop
+    // above does not call, so honour it here; otherwise the list + count never
+    // refresh on the port.
+    if (auto* gp = dynamic_cast<CGenPropertyPage*>(target))
+        if (gp->m_bReloadList) { gp->m_bReloadList = false; gp->LoadList(); }
 }
 
 static intptr_t hook_run_dialog(void* self, unsigned idd)
@@ -3929,6 +3952,7 @@ void wx_mfc_install_hooks()
     g_wxhook_play_sound           = hook_play_sound;
     g_wxhook_stop_sound           = hook_stop_sound;
     g_wxhook_sound_play           = hook_sound_play;
+    g_wxhook_sound_play_memory    = hook_sound_play_memory;
     g_wxhook_sound_adjust         = hook_sound_adjust;
     g_wxhook_sound_stop_buffer    = hook_sound_stop_buffer;
     g_wxhook_sound_status         = hook_sound_status;

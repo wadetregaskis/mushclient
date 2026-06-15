@@ -790,6 +790,11 @@ int nItem,
       ::UMessageBox (strMsg);
     }
 
+  // Reload on the next idle so the "N items." summary static reflects the new
+  // count (the per-item DeleteItem calls above remove the rows but do not rewrite
+  // the summary, which is only set in LoadList) — consistent with Add/Change/Paste.
+  m_bReloadList = true;
+
 }   // end of CGenPropertyPage::OnDeleteItem
 
 

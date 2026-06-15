@@ -22,6 +22,7 @@
 
 #include <cmath>
 #include <mutex>
+#include <vector>
 
 namespace {
 
@@ -30,6 +31,13 @@ bool       g_engineReady  = false;
 bool       g_engineFailed = false;          // don't retry a failed device open
 ma_sound   g_sounds[MA_MAX_SOUND_BUFFERS];
 bool       g_loaded[MA_MAX_SOUND_BUFFERS] = { false };
+// For memory-sourced voices (ma_audio_play_memory): a decoder over a copy of the
+// bytes that the ma_sound reads from.  Both must outlive the voice, so they are
+// owned per slot and torn down in unloadSlot (after the sound).  File voices leave
+// these unused (g_hasDecoder false).
+ma_decoder g_decoders[MA_MAX_SOUND_BUFFERS];
+bool       g_hasDecoder[MA_MAX_SOUND_BUFFERS] = { false };
+std::vector<unsigned char> g_mem[MA_MAX_SOUND_BUFFERS];
 std::mutex g_mutex;
 
 // Open the playback device + engine once.  Returns false if no device.
@@ -63,12 +71,18 @@ float panToPan(double pan)
     return (float) (pan / 100.0);
 }
 
-// Free a slot's voice.  Caller holds g_mutex.
+// Free a slot's voice.  Caller holds g_mutex.  Order matters: the sound reads
+// from the decoder, which reads from g_mem, so tear down sound → decoder → bytes.
 void unloadSlot(int i)
 {
     if (g_loaded[i]) {
         ma_sound_uninit(&g_sounds[i]);
         g_loaded[i] = false;
+    }
+    if (g_hasDecoder[i]) {
+        ma_decoder_uninit(&g_decoders[i]);
+        g_hasDecoder[i] = false;
+        std::vector<unsigned char>().swap(g_mem[i]);   // release the byte copy
     }
 }
 
@@ -111,6 +125,60 @@ int ma_audio_play(int buffer, const char* path, int loop, double volume, double 
     if (ma_sound_init_from_file(&g_engine, path, flags, NULL, NULL, &g_sounds[idx])
             != MA_SUCCESS)
         return 0;
+    g_loaded[idx] = true;
+
+    ma_sound_set_looping(&g_sounds[idx], loop ? MA_TRUE : MA_FALSE);
+    ma_sound_set_volume (&g_sounds[idx], volumeToGain(volume));
+    ma_sound_set_pan    (&g_sounds[idx], panToPan(pan));
+
+    if (ma_sound_start(&g_sounds[idx]) != MA_SUCCESS) {
+        unloadSlot(idx);
+        return 0;
+    }
+    return idx + 1;
+}
+
+int ma_audio_play_memory(int buffer, const void* data, size_t len, int loop,
+                         double volume, double pan)
+{
+    if (!data || len == 0) return 0;
+
+    std::lock_guard<std::mutex> lk(g_mutex);
+    if (!ensureEngine()) return 0;
+
+    // Reap finished one-shot voices first (same as ma_audio_play).
+    for (int i = 0; i < MA_MAX_SOUND_BUFFERS; ++i)
+        if (g_loaded[i] && ma_sound_is_playing(&g_sounds[i]) != MA_TRUE)
+            unloadSlot(i);
+
+    int idx;
+    if (buffer >= 1 && buffer <= MA_MAX_SOUND_BUFFERS) {
+        idx = buffer - 1;                     // explicit buffer
+    } else {
+        idx = -1;                             // buffer 0 → first free slot…
+        for (int i = 0; i < MA_MAX_SOUND_BUFFERS; ++i)
+            if (!g_loaded[i]) { idx = i; break; }
+        if (idx < 0) idx = 0;                 // …else re-use slot 1 (canonical)
+    }
+
+    unloadSlot(idx);
+
+    // Own a copy of the encoded bytes; the decoder (and the voice that reads it)
+    // reference this for their whole lifetime — freed together in unloadSlot.
+    g_mem[idx].assign((const unsigned char*) data, (const unsigned char*) data + len);
+    if (ma_decoder_init_memory(g_mem[idx].data(), g_mem[idx].size(), NULL,
+                               &g_decoders[idx]) != MA_SUCCESS) {
+        std::vector<unsigned char>().swap(g_mem[idx]);
+        return 0;
+    }
+    g_hasDecoder[idx] = true;
+
+    if (ma_sound_init_from_data_source(&g_engine, &g_decoders[idx],
+                                       MA_SOUND_FLAG_NO_SPATIALIZATION, NULL,
+                                       &g_sounds[idx]) != MA_SUCCESS) {
+        unloadSlot(idx);                      // frees the decoder + bytes
+        return 0;
+    }
     g_loaded[idx] = true;
 
     ma_sound_set_looping(&g_sounds[idx], loop ? MA_TRUE : MA_FALSE);

@@ -22,13 +22,13 @@
 #
 # Usage:
 #   packaging/fetch-ruby.sh                 # default versions (below)
-#   RUBY_VERSION=3.4.1 packaging/fetch-ruby.sh
+#   RUBY_VERSION=4.0.6 packaging/fetch-ruby.sh   # override the default below
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$SCRIPT_DIR/ruby"
-RUBY_VERSION="${RUBY_VERSION:-3.4.1}"
+RUBY_VERSION="${RUBY_VERSION:-4.0.5}"
 OPENSSL_VERSION="${OPENSSL_VERSION:-3.0.15}"
 YAML_VERSION="${YAML_VERSION:-0.2.5}"
 
@@ -100,7 +100,7 @@ fi
 [ -f "$DEPS/lib/libyaml.a" ] || die "libyaml static lib missing"
 
 # ── 3. Ruby (shared, load-relative) ───────────────────────────────────────────
-SHORT="${RUBY_VERSION%.*}"                           # 3.4.1 -> 3.4
+SHORT="${RUBY_VERSION%.*}"                           # 4.0.5 -> 4.0
 PKG="ruby-$RUBY_VERSION.tar.gz"
 fetch "https://cache.ruby-lang.org/pub/ruby/$SHORT/$PKG" "$DEST/$PKG"
 extract "$DEST/$PKG" "$SRC/ruby"

@@ -7,7 +7,7 @@ The scripts here build a complete, self-contained, signed `MUSHclient.app`:
 | [`build-app.sh`](build-app.sh) | Build the whole thing — relocate deps, sign, notarize, DMG. |
 | [`fetch-python.sh`](fetch-python.sh) | Vendor a clean, redistributable **python.org** framework (Python engine). |
 | [`fetch-tcl.sh`](fetch-tcl.sh) | Build a static **Tcl 8.6** from source (Tcl engine). |
-| [`fetch-ruby.sh`](fetch-ruby.sh) | Build a relocatable **Ruby 3.4** from source, + static OpenSSL/libyaml (Ruby engine). |
+| [`fetch-ruby.sh`](fetch-ruby.sh) | Build a relocatable **Ruby 4.0** from source, + static OpenSSL/libyaml (Ruby engine). |
 | [`fetch-discworld-plugins.sh`](fetch-discworld-plugins.sh) | Stage Quow's Discworld plugins so they can be pre-bundled. |
 
 Everything the scripts produce lands in `dist/` (the final app) or git-ignored
@@ -139,7 +139,7 @@ up automatically):
 | **Lua 5.1** | Homebrew `lua@5.1`, else FetchContent | statically linked into the executable |
 | **Python 3.14** | `fetch-python.sh` (python.org framework) | `Contents/Frameworks/Python.framework` (relocated) |
 | **Tcl 8.6** | `fetch-tcl.sh` (built static) | statically linked; script library at `Contents/Resources/tcl8.6` |
-| **Ruby 3.4** | `fetch-ruby.sh` (built shared) | `Contents/lib/libruby.<ver>.dylib` + stdlib |
+| **Ruby 4.0** | `fetch-ruby.sh` (built shared) | `Contents/lib/libruby.<ver>.dylib` + stdlib |
 | **Perl 5.34** | system `libperl` | not bundled (always present) |
 | **JavaScript** | system `JavaScriptCore.framework` | not bundled (always present) |
 
@@ -149,7 +149,7 @@ world/plugin selects an unsupported language.
 
 Each `fetch-*` script is **idempotent and offline-friendly** — it caches the
 downloaded source and only rebuilds if the staged output is missing. Versions are
-overridable, e.g. `RUBY_VERSION=3.4.1 packaging/fetch-ruby.sh`,
+overridable, e.g. `RUBY_VERSION=4.0.6 packaging/fetch-ruby.sh`,
 `TCL_VERSION=8.6.16 packaging/fetch-tcl.sh`,
 `PYTHON_VERSION=3.14.6 packaging/fetch-python.sh` (the last also accepts
 `--pkg ~/Downloads/python-3.14.6-macos11.pkg` for a fully offline run).

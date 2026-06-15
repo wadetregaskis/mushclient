@@ -202,7 +202,7 @@ void ensure_started ()
   if (g_started) return;
   g_started = true;
 
-  // Embedded Ruby 3.x needs the FULL bootstrap, not bare ruby_init().  Ruby 3.4
+  // Embedded Ruby 3.x/4.x needs the FULL bootstrap, not bare ruby_init().  Ruby 3.4+
   // defaults to the Prism parser, and the parser, the symbol/ID tables and the gem
   // prelude are only fully set up by ruby_options() — skip it and method dispatch
   // is left desynced (core C methods such as Kernel#require and GC.disable resolve

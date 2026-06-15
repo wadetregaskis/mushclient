@@ -1180,7 +1180,11 @@ if(NOT WIN32)
             # one location makes both the host and every extension self-locating with
             # no env vars and no per-file install-name patching.
             if(RUBY_VENDORED)
+                # Wipe Contents/lib first so a Ruby version bump can't leave the old
+                # libruby.<ver>.dylib / lib/ruby/<ver> behind (copy_directory merges).
                 add_custom_command(TARGET mushgui POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E rm -rf
+                        "$<TARGET_BUNDLE_DIR:mushgui>/Contents/lib"
                     COMMAND ${CMAKE_COMMAND} -E copy_directory
                         "${RUBY_VENDORED}/lib"
                         "$<TARGET_BUNDLE_DIR:mushgui>/Contents/lib"

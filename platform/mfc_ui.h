@@ -33,6 +33,7 @@
 #include <unistd.h>   // readlink, ssize_t, realpath
 #include <stdlib.h>   // realpath, free()
 #include <sys/stat.h> // stat() — used by CFile::GetStatus
+#include <time.h>     // clock_gettime / nanosleep — GetTickCount / timeGetTime / Sleep
 #if defined(__APPLE__)
 #  include <mach-o/dyld.h>  // _NSGetExecutablePath
 #endif
@@ -4955,9 +4956,21 @@ inline int    GetSystemMetrics(int idx) {
 #ifndef SystemParametersInfo
 inline BOOL   SystemParametersInfo(UINT, UINT, PVOID, UINT) { return FALSE; }
 #endif
-inline DWORD  GetTickCount()                 { return 0; }
-inline DWORD  timeGetTime()                  { return 0; }
-inline void   Sleep(DWORD)                   {}
+// Real monotonic millisecond clock + sleep (POSIX).  Previously no-ops, which
+// silently broke timing code and the per-line send delay (Sleep(m_iLineDelay)
+// in doc.cpp).  GetTickCount / timeGetTime wrap at 2^32 ms like Win32.
+inline DWORD  GetTickCount() {
+    struct timespec ts;
+    ::clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (DWORD)((unsigned long long)ts.tv_sec * 1000ULL + ts.tv_nsec / 1000000ULL);
+}
+inline DWORD  timeGetTime()                  { return GetTickCount(); }
+inline void   Sleep(DWORD ms) {
+    struct timespec ts;
+    ts.tv_sec  = (time_t)(ms / 1000);
+    ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+    ::nanosleep(&ts, nullptr);
+}
 inline HINSTANCE ShellExecute(HWND, LPCTSTR /*op*/, LPCTSTR file, LPCTSTR params, LPCTSTR /*dir*/, int /*show*/)
 {
     if (!file || !file[0])

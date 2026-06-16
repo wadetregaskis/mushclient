@@ -125,14 +125,37 @@ cmake --build "$BUILD_DIR" --target mushgui -j"$JOBS"
 # 2. bundle Discworld plugins (optional) — done before signing so they're sealed
 # ════════════════════════════════════════════════════════════════════════════
 if [ "$WITH_DISCWORLD" = 1 ]; then
-    shopt -s nullglob
-    plugins=("$DISCWORLD_DIR"/*.xml)
-    shopt -u nullglob
-    [ ${#plugins[@]} -gt 0 ] || die "no *.xml plugins in $DISCWORLD_DIR
-  Stage Quow's plugins there first:  packaging/fetch-discworld-plugins.sh"
-    note "bundling ${#plugins[@]} Discworld plugin(s) into the app"
-    mkdir -p "$APP/Contents/Resources/plugins"
-    cp "${plugins[@]}" "$APP/Contents/Resources/plugins/"
+    [ -d "$DISCWORLD_DIR" ] || die "no Discworld staging dir: $DISCWORLD_DIR
+  Stage Quow's plugins + maps first:  packaging/fetch-discworld-plugins.sh"
+
+    # The app seeds Contents/Resources/userdata-seed/** into the user's data dir
+    # on first launch (see SeedBundledUserData).  The staging dir mirrors that
+    # tree: worlds/plugins/Quow*.xml (the plugins) + quow_plugins/maps/ (the room
+    # database, map images and sounds the Cow Bar mapper loads at runtime).
+    SEED="$APP/Contents/Resources/userdata-seed"
+    rm -rf "$SEED"; mkdir -p "$SEED"
+
+    if [ -d "$DISCWORLD_DIR/worlds" ] || [ -d "$DISCWORLD_DIR/quow_plugins" ]; then
+        # current mirror layout (what fetch-discworld-plugins.sh produces)
+        for sub in worlds quow_plugins; do
+            [ -d "$DISCWORLD_DIR/$sub" ] && cp -R "$DISCWORLD_DIR/$sub" "$SEED/"
+        done
+    else
+        # legacy flat layout: Quow*.xml at the top level (+ an optional maps/)
+        mkdir -p "$SEED/worlds/plugins"
+        cp "$DISCWORLD_DIR"/*.xml "$SEED/worlds/plugins/" 2>/dev/null || true
+        [ -d "$DISCWORLD_DIR/maps" ] && { mkdir -p "$SEED/quow_plugins"; cp -R "$DISCWORLD_DIR/maps" "$SEED/quow_plugins/"; }
+    fi
+
+    # never ship the per-user database (the plugin creates it) or macOS junk
+    find "$SEED" \( -name '_quowmap_userdata.db' -o -name '.DS_Store' \) -delete 2>/dev/null || true
+
+    nseed=$(find "$SEED" -type f | wc -l | tr -d ' ')
+    [ "$nseed" -gt 0 ] || die "nothing staged in $DISCWORLD_DIR
+  Stage Quow's plugins + maps first:  packaging/fetch-discworld-plugins.sh"
+    nmaps=$(find "$SEED/quow_plugins/maps" -type f 2>/dev/null | wc -l | tr -d ' ')
+    note "bundling Discworld edition: $nseed file(s), $(du -sh "$SEED" | cut -f1) (maps: $nmaps file(s))"
+    [ "$nmaps" -gt 0 ] || note "  NOTE: no map data staged — the Cow Bar mapper will not run (see fetch-discworld-plugins.sh)"
 fi
 
 # ════════════════════════════════════════════════════════════════════════════

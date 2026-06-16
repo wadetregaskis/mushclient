@@ -2054,49 +2054,58 @@ static void* hook_new_world()
     return static_cast<void*>(doc);
 }
 
-// ── First-run seeding of bundled plugins ──────────────────────────────────
-// A "Discworld edition" build (packaging/build-app.sh --with-discworld) ships
-// Quow's plugins inside the app at Contents/Resources/plugins/.  Copy any the
-// user doesn't already have into their writable plugins dir so they appear in
-// the plugin manager and can be added to a Discworld world.  Non-destructive:
-// an existing file is never overwritten, so user edits / newer versions stay.
-// No-op for a normal build (no bundled plugins dir present).
-static void SeedBundledPlugins()
+// ── First-run seeding of bundled user data ────────────────────────────────
+// A "Discworld edition" build (packaging/build-app.sh --with-discworld) ships a
+// tree under Contents/Resources/userdata-seed/ that mirrors the per-user data
+// dir: Quow's plugins (worlds/plugins/Quow*.xml) AND the mapper's data files
+// (quow_plugins/maps/ — the room database, map images and sound effects).  On
+// first run, copy anything the user doesn't already have into their writable
+// data dir, so the plugins appear in the manager and the mapper finds its maps.
+//
+// Recursive (so the maps/ subtree is seeded, not just top-level plugin files)
+// and non-destructive: directories are created and an existing file is NEVER
+// overwritten — user edits, newer versions, and the per-user
+// _quowmap_userdata.db the plugin creates for itself all survive a reinstall.
+// No-op for a normal build (no userdata-seed dir present).
+static void SeedBundledUserData()
 {
     namespace fs = std::filesystem;
     try
     {
-        // wxStandardPaths resolves the bundle's Contents/Resources reliably
-        // (vs. second-guessing the executable path).  On Linux this is the
-        // install prefix's share dir; a packager may seed plugins there too.
+        // wxStandardPaths resolves Contents/Resources reliably (vs. guessing the
+        // exe path).  On Linux this is the install prefix's share dir.
         const std::string resDir (wxStandardPaths::Get ().GetResourcesDir ().utf8_str ());
-        const fs::path src = fs::path (resDir) / "plugins";
+        const fs::path src = fs::path (resDir) / "userdata-seed";
         if (!fs::is_directory (src))
             return;   // ordinary build — nothing bundled to seed
 
-        const fs::path dst = fs::path (PortableUserDataDir ()) / "worlds" / "plugins";
-        std::error_code ec;
-        fs::create_directories (dst, ec);
-
+        const fs::path dstRoot (PortableUserDataDir ());
         int seeded = 0;
-        for (const auto & entry : fs::directory_iterator (src, ec))
+        std::error_code ec;
+        for (fs::recursive_directory_iterator it (src, ec), end; !ec && it != end;
+             it.increment (ec))
         {
-            if (!entry.is_regular_file ())
+            std::error_code fec;
+            if (!it->is_regular_file (fec) || fec)
                 continue;
-            const fs::path target = dst / entry.path ().filename ();
-            if (fs::exists (target))
+            const fs::path rel = fs::relative (it->path (), src, fec);
+            if (fec || rel.empty ())
+                continue;
+            const fs::path target = dstRoot / rel;
+            if (fs::exists (target, fec))
                 continue;   // keep the user's existing copy
+            fs::create_directories (target.parent_path (), fec);
             std::error_code cec;
-            if (fs::copy_file (entry.path (), target, cec) && !cec)
+            if (fs::copy_file (it->path (), target, cec) && !cec)
                 ++seeded;
         }
         if (seeded)
-            fprintf (stderr, "[plugins] seeded %d bundled plugin(s) into %s\n",
-                     seeded, dst.string ().c_str ());
+            fprintf (stderr, "[plugins] seeded %d bundled file(s) into %s\n",
+                     seeded, dstRoot.string ().c_str ());
     }
     catch (const std::exception & ex)
     {
-        fprintf (stderr, "[plugins] bundled-plugin seeding skipped: %s\n", ex.what ());
+        fprintf (stderr, "[plugins] bundled-data seeding skipped: %s\n", ex.what ());
     }
 }
 
@@ -2106,13 +2115,27 @@ static void SeedBundledPlugins()
 
 static int hook_init_instance()
 {
+    // Resolve plugin-relative file paths against the user data dir — the macOS
+    // analogue of the Windows "MUSHclient folder".  MUSHclient captures its
+    // working directory from getcwd() at startup (the global `working_dir`, which
+    // is the base Make_Absolute_Path prepends to relative paths), and the port's
+    // SetCurrentDirectory() is a no-op.  Without this the base would be the launch
+    // CWD ("/" under a Finder/Dock launch), so a plugin opening e.g.
+    // ".\quow_plugins\maps\_quowmap_database.db" (Quow's mapper) would never find
+    // its data.  Must run BEFORE App.InitInstance() reads getcwd into working_dir.
+    {
+        const std::string dataDir = PortableUserDataDir ();
+        if (!dataDir.empty () && chdir (dataDir.c_str ()) != 0)
+            fprintf (stderr, "[startup] could not chdir to %s\n", dataDir.c_str ());
+    }
+
     // Set basic CWinApp members that MFC normally sets before InitInstance.
     App.m_lpCmdLine = "";
     App.m_nCmdShow  = SW_SHOWNORMAL;
 
-    // Stage any bundled plugins BEFORE InitInstance so worlds auto-opened
-    // during startup already see them.
-    SeedBundledPlugins();
+    // Stage any bundled plugins + mapper data BEFORE InitInstance so worlds
+    // auto-opened during startup already see them (Discworld edition only).
+    SeedBundledUserData();
 
     int ok = App.InitInstance() != FALSE ? 1 : 0;
     if (ok)

@@ -116,13 +116,38 @@ packaging/build-app.sh --with-discworld \
     --sign-identity "Developer ID Application: ..." --notarize-profile mushclient-notary
 ```
 
-`--with-discworld` copies the staged `*.xml` into
-`MUSHclient.app/Contents/Resources/plugins/`. **On first launch** the app copies
-any of those the user doesn't already have into
-`~/Library/Application Support/MUSHclient/worlds/plugins/` (non-destructive — it
-never overwrites an existing file), so they show up in the plugin manager and
-can be added to a Discworld world. A normal build ships no bundled plugins and
-the seeding step is a no-op.
+### What gets bundled — plugins *and* their map data
+
+The Cow Bar plugin (`QuowMinimap.xml`) is a mapper: at runtime it loads a room
+database (`_quowmap_database.db`, ~18 MB), map images (`*.png`) and sound effects
+(`*.wav`) from a `quow_plugins/maps/` folder. Bundling only the `*.xml` is not
+enough — the plugin aborts on launch ("Unable to find/load the room database
+file") without that data. So `fetch-discworld-plugins.sh` stages **both**, into a
+tree that mirrors the per-user data directory:
+
+```
+packaging/discworld-plugins/
+  worlds/plugins/Quow*.xml                       # the plugins
+  quow_plugins/maps/_quowmap_database.db         # the room database
+  quow_plugins/maps/*.png  *.wav                 # map images + sounds
+```
+
+(The per-user database `_quowmap_userdata.db` — combat stats, hotspots — is
+**not** staged; the plugin creates a fresh one per user.) `fetch` finds the maps
+folder automatically from your install (`~/Library/Application Support/
+MUSHclient/quow_plugins/maps/`) or anywhere under a `--from` / `--url` source.
+
+`--with-discworld` copies that tree into
+`MUSHclient.app/Contents/Resources/userdata-seed/`. **On first launch** the app
+recursively seeds anything the user doesn't already have into their data dir —
+plugins into `worlds/plugins/`, map data into `quow_plugins/maps/` —
+non-destructive (an existing file is never overwritten, so the per-user database
+and any user edits survive a reinstall). A normal build ships no `userdata-seed`
+and the seeding step is a no-op.
+
+> The mapper finds its data via a path relative to the MUSHclient data dir, so
+> the app sets its working directory there at startup (the macOS analogue of the
+> Windows "MUSHclient folder"); without that the relative path would not resolve.
 
 ---
 

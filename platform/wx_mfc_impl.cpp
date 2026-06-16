@@ -2117,12 +2117,13 @@ static int hook_init_instance()
 {
     // Resolve plugin-relative file paths against the user data dir — the macOS
     // analogue of the Windows "MUSHclient folder".  MUSHclient captures its
-    // working directory from getcwd() at startup (the global `working_dir`, which
-    // is the base Make_Absolute_Path prepends to relative paths), and the port's
-    // SetCurrentDirectory() is a no-op.  Without this the base would be the launch
-    // CWD ("/" under a Finder/Dock launch), so a plugin opening e.g.
-    // ".\quow_plugins\maps\_quowmap_database.db" (Quow's mapper) would never find
-    // its data.  Must run BEFORE App.InitInstance() reads getcwd into working_dir.
+    // working directory from getcwd() ONCE at startup (the global `working_dir`,
+    // the base Make_Absolute_Path prepends to relative paths), so the launch CWD
+    // must already be the data dir — a Finder/Dock launch starts at "/", where a
+    // plugin opening e.g. ".\quow_plugins\maps\_quowmap_database.db" (Quow's
+    // mapper) would never find its data.  Must run BEFORE App.InitInstance()
+    // captures working_dir.  (The later SetCurrentDirectory() calls only bracket
+    // the save-file dialogs and restore the CWD, so they don't move this base.)
     {
         const std::string dataDir = PortableUserDataDir ();
         if (!dataDir.empty () && chdir (dataDir.c_str ()) != 0)

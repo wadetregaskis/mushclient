@@ -5779,13 +5779,40 @@ public:
 #  define AFX_IDS_SCTASKLIST  0xF013
 #endif
 
+// ── FormatMessage / language constants (used by FormatMessage below) ───────
+#ifndef FORMAT_MESSAGE_FROM_SYSTEM
+#  define FORMAT_MESSAGE_FROM_SYSTEM       0x00001000
+#  define FORMAT_MESSAGE_ALLOCATE_BUFFER   0x00000100
+#  define FORMAT_MESSAGE_IGNORE_INSERTS    0x00000200
+#  define FORMAT_MESSAGE_FROM_STRING       0x00000400
+#  define FORMAT_MESSAGE_FROM_HMODULE      0x00000800
+#  define LANG_NEUTRAL    0x00
+#  define SUBLANG_DEFAULT 0x01
+#  define SUBLANG_SYS_DEFAULT 0x02
+#  define MAKELANGID(p,s) ((((WORD)(s))<<10)|(WORD)(p))
+#endif
+
 // ── Additional Windows API stubs ───────────────────────────────────────────
 inline BOOL MessageBeep(UINT)          { if (g_fn_system_beep) g_fn_system_beep(); return TRUE; }
 inline BOOL Beep(DWORD, DWORD)         { if (g_fn_system_beep) g_fn_system_beep(); return TRUE; }
-inline BOOL GetCurrentDirectory(DWORD, LPTSTR) { return FALSE; }
-inline BOOL SetCurrentDirectory(LPCTSTR)       { return FALSE; }
-inline DWORD GetTempPath(DWORD, LPTSTR)        { return 0; }
-inline UINT  GetTempFileName(LPCTSTR, LPCTSTR, UINT, LPTSTR) { return 0; }
+// Real CWD accessors over POSIX getcwd/chdir.  Used by CMUSHclientDoc::
+// OnFileSave / OnFileSaveAs, which save the CWD, chdir to the world-files dir
+// for the save, then restore it.  (GetTempPath / GetTempFileName had no callers
+// and were removed — see the file/handle note further down.)
+inline DWORD GetCurrentDirectory(DWORD nBufferLength, LPTSTR lpBuffer) {
+    char* cwd = ::getcwd(nullptr, 0);   // BSD/glibc ext: allocates a fitting buffer
+    if (!cwd) return 0;
+    const size_t len = ::strlen(cwd);
+    DWORD ret;
+    if (!lpBuffer || nBufferLength < (DWORD)len + 1)
+        ret = (DWORD)len + 1;           // Win32: required size, including the NUL
+    else { ::memcpy(lpBuffer, cwd, len + 1); ret = (DWORD)len; }  // written, sans NUL
+    ::free(cwd);
+    return ret;
+}
+inline BOOL SetCurrentDirectory(LPCTSTR lpPathName) {
+    return (lpPathName && ::chdir(lpPathName) == 0) ? TRUE : FALSE;
+}
 inline DWORD GetModuleFileName(void* /*hModule*/, LPTSTR buf, DWORD n) {
     if (!buf || !n) return 0;
     buf[0] = '\0';
@@ -5831,23 +5858,42 @@ inline DWORD GetModuleFileName(void* /*hModule*/, LPTSTR buf, DWORD n) {
 #ifndef _stat
 #  define _stat stat
 #endif
-inline BOOL  CopyFile(LPCTSTR, LPCTSTR, BOOL)  { return FALSE; }
-inline BOOL  DeleteFile(LPCTSTR)               { return FALSE; }
-inline BOOL  MoveFile(LPCTSTR, LPCTSTR)        { return FALSE; }
-inline DWORD GetFileAttributes(LPCTSTR)        { return 0xFFFFFFFF; }
-inline BOOL  SetFileAttributes(LPCTSTR, DWORD) { return FALSE; }
-inline HANDLE CreateFile(LPCTSTR,DWORD,DWORD,void*,DWORD,DWORD,HANDLE) { return INVALID_HANDLE_VALUE; }
-inline BOOL  CloseHandle(HANDLE)               { return FALSE; }
-inline BOOL  ReadFile(HANDLE,void*,DWORD,LPDWORD,void*) { return FALSE; }
-inline BOOL  WriteFile(HANDLE,const void*,DWORD,LPDWORD,void*) { return FALSE; }
-inline DWORD GetLastError()                    { return (DWORD)errno; }
-inline void  SetLastError(DWORD)               {}
-inline BOOL  FindClose(HANDLE)                 { return FALSE; }
-inline HANDLE FindFirstFile(LPCTSTR,void*)     { return INVALID_HANDLE_VALUE; }
-inline BOOL  FindNextFile(HANDLE,void*)        { return FALSE; }
-inline BOOL  CreateDirectory(LPCTSTR,void*)    { return FALSE; }
-inline BOOL  RemoveDirectory(LPCTSTR)          { return FALSE; }
-inline DWORD FormatMessage(DWORD,const void*,DWORD,DWORD,LPTSTR,DWORD,va_list*) { return 0; }
+// Win32 last-error <-> POSIX errno.
+inline DWORD GetLastError()        { return (DWORD)errno; }
+inline void  SetLastError(DWORD e) { errno = (int)e; }
+
+// The Win32 file/handle/dir APIs — CopyFile, DeleteFile, MoveFile,
+// Get/SetFileAttributes, CreateFile/CloseHandle/ReadFile/WriteFile,
+// FindFirstFile/FindNextFile/FindClose, CreateDirectory/RemoveDirectory,
+// GetTempPath/GetTempFileName — had NO callers on this port (the code uses
+// CFile, std::filesystem and POSIX directly), so they are deliberately absent
+// rather than left as no-op stubs that silently fail.  If a real caller ever
+// appears, add a *working* POSIX-backed shim here (and the build will tell you).
+
+// FormatMessage: render a system error code to text.  Error codes on this port
+// flow through GetLastError == errno, so FROM_SYSTEM maps to strerror().  Honours
+// the ALLOCATE_BUFFER mode MUSHclient uses (CException::GetErrorMessage,
+// CScriptEngine): *lpBuffer then receives a heap string the caller releases with
+// LocalFree (== free).  Returns the length written, or 0 on failure.
+inline DWORD FormatMessage(DWORD dwFlags, const void* /*lpSource*/,
+                           DWORD dwMessageId, DWORD /*dwLanguageId*/,
+                           LPTSTR lpBuffer, DWORD nSize, va_list* /*Arguments*/) {
+    const char* msg = ::strerror((int)dwMessageId);
+    if (!msg || !*msg) msg = "Unknown error";
+    const size_t len = ::strlen(msg);
+    if (dwFlags & FORMAT_MESSAGE_ALLOCATE_BUFFER) {
+        char* buf = (char*)::malloc(len + 1);            // released by caller via LocalFree
+        if (!buf) return 0;
+        ::memcpy(buf, msg, len + 1);
+        *reinterpret_cast<char**>(lpBuffer) = buf;
+        return (DWORD)len;
+    }
+    if (!lpBuffer || nSize == 0) return 0;
+    const size_t n = (len < (size_t)nSize - 1) ? len : (size_t)nSize - 1;
+    ::memcpy(lpBuffer, msg, n);
+    lpBuffer[n] = '\0';
+    return (DWORD)n;
+}
 // ── MultiByteToWideChar / WideCharToMultiByte — portable UTF-8 implementation
 // Treats all code pages as UTF-8 (correct for modern POSIX systems).
 // Returns number of wide characters written (or needed if lpWStr == nullptr/cchWStr == 0).
@@ -6658,19 +6704,6 @@ BOOL OnNeedText(UINT id, NMHDR* pNMHDR, LRESULT* pResult);
 #  define WS_EX_APPWINDOW     0x00040000L
 #  define WS_EX_CLIENTEDGE    0x00000200L
 #  define WS_EX_WINDOWEDGE    0x00000100L
-#endif
-
-// ── FormatMessage constants ────────────────────────────────────────────────
-#ifndef FORMAT_MESSAGE_FROM_SYSTEM
-#  define FORMAT_MESSAGE_FROM_SYSTEM       0x00001000
-#  define FORMAT_MESSAGE_ALLOCATE_BUFFER   0x00000100
-#  define FORMAT_MESSAGE_IGNORE_INSERTS    0x00000200
-#  define FORMAT_MESSAGE_FROM_STRING       0x00000400
-#  define FORMAT_MESSAGE_FROM_HMODULE      0x00000800
-#  define LANG_NEUTRAL    0x00
-#  define SUBLANG_DEFAULT 0x01
-#  define SUBLANG_SYS_DEFAULT 0x02
-#  define MAKELANGID(p,s) ((((WORD)(s))<<10)|(WORD)(p))
 #endif
 
 // ── ListView / ListCtrl constants ──────────────────────────────────────────

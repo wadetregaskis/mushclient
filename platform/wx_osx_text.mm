@@ -125,3 +125,15 @@ bool wxOSXActivateApp(const char* name)
     }
     return false;
 }
+
+// Terminate the application the same way the Dock icon's "Quit" does.  Going
+// through -[NSApplication terminate:] runs the normal Cocoa shutdown
+// (applicationShouldTerminate: → close every window with veto/save handling →
+// end the run loop), which always exits the process — unlike closing wx windows
+// and trusting ExitOnFrameDelete, which on some macOS versions leaves the app
+// running with no windows.  This is what the menu/Cmd-Q Quit routes to so it
+// matches the Dock's (working) Quit.
+void wxOSXTerminateApp()
+{
+    [NSApp terminate:nil];
+}

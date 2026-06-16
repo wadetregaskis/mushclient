@@ -27,9 +27,16 @@ int wxOSXFontHasGlyph(const char* facename, unsigned int codepoint);
 // "bring window with this title to front" behaviour, used to surface an external
 // script editor.  Returns true if a matching app was found and activated.
 bool wxOSXActivateApp(const char* name);
+// Terminate the application the canonical Cocoa way: -[NSApplication terminate:]
+// — exactly what the Dock icon's "Quit" does.  This is more reliable than
+// closing every wx window and waiting for ExitOnFrameDelete to end the run loop
+// (which, on some macOS versions, leaves the process running windowless).  Used
+// to make Cmd-Q / the app-menu "Quit" behave like the Dock's Quit.
+void wxOSXTerminateApp();
 #else
 inline void wxOSXDisableSmartSubstitutions(wxTextCtrl*) {}
 inline void wxOSXSetDockIcon(const wxBitmap&) {}
 inline int  wxOSXFontHasGlyph(const char*, unsigned int) { return 0; }
 inline bool wxOSXActivateApp(const char*) { return false; }
+inline void wxOSXTerminateApp() {}
 #endif

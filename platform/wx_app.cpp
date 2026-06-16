@@ -34,10 +34,12 @@ public:
         // format" (the litebulb.bmp error).  OnInit is the canonical place for this.
         wxInitAllImageHandlers();
 
-        // Quit the app when the last top-level window is destroyed (the default,
-        // made explicit): together with the Quit handler closing every top-level
-        // window, this guarantees Cmd-Q actually terminates rather than leaving a
-        // windowless process behind.
+        // Exit when the last top-level window is destroyed (the wx default, made
+        // explicit) so closing the final window also ends the app.  The app-menu
+        // / Cmd-Q Quit does NOT rely on this on macOS — it terminates via
+        // -[NSApplication terminate:] (see wx_quit_application), because trusting
+        // ExitOnFrameDelete to end the loop after closing the windows proved
+        // unreliable there (the process lingered windowless).
         SetExitOnFrameDelete(true);
 
         // Install all MFC→wx bridge hooks before any MUSHclient code runs.

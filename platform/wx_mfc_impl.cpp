@@ -622,27 +622,38 @@ static CCmdTarget* canon_target(char t, CMUSHclientDoc* doc)
     return nullptr;
 }
 
-// ── Quit: close every top-level window ────────────────────────────────────
-// Cmd-Q / app-menu Quit must terminate the app no matter which window is
-// frontmost or what's open.  Closing just the MDI parent is not enough: ANY
-// other top-level window — a parentless Notepad, a future standalone frame, a
-// modeless dialog — survives frame->Close() and keeps the process alive on
-// macOS with only the stub app+Window menu bar, and a second Cmd-Q then does
-// nothing because the frame that owned the menu handler is already gone.  So
-// close them all: standalone frames first (a veto then leaves the rest intact),
-// the MDI parent (which takes its world children with it) last.  Veto-able, so
-// unsaved-changes prompts still fire; returns false (quit cancelled) on a veto.
-static bool QuitCloseAllTopLevelWindows()
+// ── Quit the application ──────────────────────────────────────────────────
+// Cmd-Q / the app-menu "Quit" must terminate the process as reliably as the
+// Dock icon's "Quit" — and on macOS it didn't.  The Dock's Quit uses Cocoa's
+// -[NSApplication terminate:], which always ends the run loop.  Our menu
+// handler instead closed every top-level window and trusted ExitOnFrameDelete
+// to end the loop once the last one was destroyed — but on some macOS versions
+// that final step never fires: the windows vanish yet the process lingers with
+// just the stub app+Window menu bar, and a second Cmd-Q does nothing.  (Users
+// confirmed the Dock's Quit worked while the menu's did not — the tell-tale
+// that the two took different paths.)
+//
+// So on macOS terminate exactly the way the Dock does.  -[NSApplication
+// terminate:] also closes every window — incl. standalone ones like a Notepad —
+// with the normal close/veto handling, so it subsumes the old close-all sweep.
+// On other platforms (GTK) the wx-idiomatic "close every top-level window" path
+// is correct and ExitOnFrameDelete is reliable, so keep it there: standalone
+// frames first (a veto then leaves the rest intact), the MDI parent — which
+// takes its world children with it — last.
+static void wx_quit_application()
 {
+#ifdef __APPLE__
+    wxOSXTerminateApp();
+#else
     const wxWindowList tops = wxTopLevelWindows;  // snapshot; Close() mutates it
-    for (wxWindow* w : tops)                       // pass 1: non-MDI-parent windows
+    for (wxWindow* w : tops)                       // standalone frames first
         if (auto* tlw = wxDynamicCast(w, wxTopLevelWindow))
             if (!wxDynamicCast(tlw, wxMDIParentFrame))
-                if (!tlw->Close(false)) return false;
-    for (wxWindow* w : tops)                       // pass 2: MDI parent(s) + children
+                if (!tlw->Close(false)) return;    // vetoed → cancel quit
+    for (wxWindow* w : tops)                         // MDI parent(s) + children last
         if (auto* mdi = wxDynamicCast(w, wxMDIParentFrame))
-            if (!mdi->Close(false)) return false;
-    return true;
+            if (!mdi->Close(false)) return;
+#endif
 }
 
 static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
@@ -1035,7 +1046,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // it — while a world/main window stays frontmost, the frame handler consumes
     // it first and this never fires (no double close).
     wxTheApp->Bind(wxEVT_MENU,
-                   [](wxCommandEvent&) { QuitCloseAllTopLevelWindows(); },
+                   [](wxCommandEvent&) { wx_quit_application(); },
                    wxID_EXIT);
 
     // ── Menu event routing via Bind() ─────────────────────────────────────
@@ -1267,8 +1278,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         }
 
         if (id == wxID_EXIT || id == 0xE141 /*ID_APP_EXIT*/) {
-            // Close every top-level window (see QuitCloseAllTopLevelWindows).
-            QuitCloseAllTopLevelWindows();
+            wx_quit_application();   // see wx_quit_application above
         } else if (id == wxID_NEW || id == 0xE100 /*ID_FILE_NEW*/
                    || id == 32289 /*ID_CONNECTION_QUICK_CONNECT*/) {
             App.OnFileNew();

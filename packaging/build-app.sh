@@ -172,6 +172,20 @@ add_rpath_once() {
     rpaths_of "$bin" | grep -qxF "$rp" || install_name_tool -add_rpath "$rp" "$bin" 2>/dev/null || true
 }
 
+# follow a symlink chain to the real file (bash 3.2; no `realpath` dependency).
+# Lets aliases of one library (e.g. libwx_…core-3.3.dylib -> …-3.3.2.dylib ->
+# …-3.3.2.0.0.dylib) collapse to a single bundled copy under the real name,
+# instead of copying each alias separately (two copies => two runtimes load =>
+# duplicate ObjC classes / "mysterious crashes").
+resolve_symlink() {
+    local p="$1" t
+    while [ -L "$p" ]; do
+        t="$(readlink "$p")"
+        case "$t" in /*) p="$t";; *) p="$(dirname "$p")/$t";; esac
+    done
+    echo "$p"
+}
+
 # resolve a dependency string (absolute / @rpath / @loader_path / @executable_path)
 # to an on-disk path, using the loading binary's rpaths for @rpath
 resolve_dep() {
@@ -230,24 +244,28 @@ relocate_one() {  # scan one binary, bundle + rewrite its non-system deps
         case "$dep" in
             *.framework/*) relocate_framework "$bin" "$dep";;
             *)
-                base="$(basename "$dep")"
-                if [ ! -f "$FRAMEWORKS/$base" ]; then          # not yet bundled
-                    resolved="$(resolve_dep "$dep" "$bin")"
-                    if [ -n "$resolved" ] && [ -f "$resolved" ]; then
-                        cp -L "$resolved" "$FRAMEWORKS/$base"
+                resolved="$(resolve_dep "$dep" "$bin")"
+                if [ -n "$resolved" ] && [ -f "$resolved" ]; then
+                    # Bundle under the REAL (symlink-resolved) name, so multiple
+                    # aliases of the same library collapse to one copy and one
+                    # loaded image.
+                    real="$(resolve_symlink "$resolved")"
+                    base="$(basename "$real")"
+                    if [ ! -f "$FRAMEWORKS/$base" ]; then          # not yet bundled
+                        cp "$real" "$FRAMEWORKS/$base"
                         chmod u+w "$FRAMEWORKS/$base"
                         install_name_tool -id "@rpath/$base" "$FRAMEWORKS/$base" 2>/dev/null || true
                         add_rpath_once "$FRAMEWORKS/$base" "@loader_path"
                         # Keep the source dir on the rpath *temporarily* so this lib's
                         # own @rpath siblings (e.g. libwebp → libsharpyuv, in the same
                         # Homebrew dir) resolve while we recurse.  Stripped afterwards.
-                        add_rpath_once "$FRAMEWORKS/$base" "$(dirname "$resolved")"
+                        add_rpath_once "$FRAMEWORKS/$base" "$(dirname "$real")"
                         WORKLIST+=("$FRAMEWORKS/$base")
-                    else
-                        warn "could not resolve $dep (needed by $selfbase)"
                     fi
+                    install_name_tool -change "$dep" "@rpath/$base" "$bin" 2>/dev/null || true
+                else
+                    warn "could not resolve $dep (needed by $selfbase)"
                 fi
-                install_name_tool -change "$dep" "@rpath/$base" "$bin" 2>/dev/null || true
                 ;;
         esac
     done < <(otool -L "$bin" | tail -n +2 | awk '{print $1}')

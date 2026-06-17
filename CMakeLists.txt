@@ -1,6 +1,21 @@
 cmake_minimum_required(VERSION 3.14)
 project(MUSHclient VERSION 5.07 LANGUAGES C CXX)
 
+# ── Linker-aware de-duplication of link libraries ──────────────────────────
+# Under the default policies for cmake_minimum_required 3.14, CMake re-emits
+# raw "-lfoo" link flags more than once when a target links both a static lib
+# and flag-form libraries — so mushgui's wxWidgets libs landed on the link line
+# twice ("ld: warning: ignoring duplicate libraries: -lwx_baseu-3.3 …").  Opt in
+# to the modern behaviour: CMP0156 (CMake 3.30) lets the linker de-duplicate;
+# CMP0179 (3.31) keeps the first occurrence of each static lib.  Guarded with
+# if(POLICY) so older CMake (down to the 3.14 minimum) still configures.
+if(POLICY CMP0156)
+    cmake_policy(SET CMP0156 NEW)
+endif()
+if(POLICY CMP0179)
+    cmake_policy(SET CMP0179 NEW)
+endif()
+
 # ── Require C++17 ─────────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -4,11 +4,15 @@
 # bundling.  Replaces the Apple-deprecated system libruby (EOL 2.6) so the app
 # depends on neither Homebrew nor the macOS system Ruby.framework.
 #
-# Strategy (mirrors what Homebrew's "portable-ruby" does):
-#   * Build OpenSSL and libyaml *statically* into a private deps prefix, so the
-#     Ruby C extensions that need them (openssl, psych) bake those libraries in
-#     and there is no extra dylib to relocate.  macOS ships neither in a form we
-#     can link, and we deliberately avoid Homebrew, so we build them ourselves.
+# Strategy:
+#   * libyaml is built *statically* into a private deps prefix (psych bakes it in;
+#     macOS ships no linkable copy, and it is tiny + Ruby-only).
+#   * OpenSSL is NOT built here.  The openssl/digest extensions link Homebrew's
+#     openssl@3 — the SAME OpenSSL the app itself links — so build-app.sh can
+#     bundle ONE copy and point the app, Python and Ruby all at it (no duplicate
+#     OpenSSL archives in the .app).  Homebrew openssl@3 is already a build
+#     prerequisite for the app, so this adds nothing; the shipped .app stays
+#     Homebrew-free at runtime (the copy is relocated into Contents/Frameworks).
 #   * Build Ruby with --enable-shared --enable-load-relative: libruby is a single
 #     dylib whose load path (the stdlib + the .bundle extensions) is computed at
 #     runtime *relative to the dylib's own location* (via dladdr).  Drop the whole
@@ -29,7 +33,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$SCRIPT_DIR/ruby"
 RUBY_VERSION="${RUBY_VERSION:-4.0.5}"
-OPENSSL_VERSION="${OPENSSL_VERSION:-3.0.15}"
 YAML_VERSION="${YAML_VERSION:-0.2.5}"
 
 note() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -37,14 +40,16 @@ die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(uname -s)" = "Darwin" ] || die "this script builds Ruby for macOS"
 ARCH="$(uname -m)"                                   # arm64 | x86_64
-case "$ARCH" in
-    arm64)  SSL_TARGET=darwin64-arm64-cc;;
-    x86_64) SSL_TARGET=darwin64-x86_64-cc;;
-    *)      die "unsupported arch $ARCH";;
-esac
+
+# OpenSSL comes from Homebrew openssl@3 — the same copy the app links — so the
+# bundle ends up with a single shared OpenSSL (build-app.sh relocates it and
+# repoints the app, Python and Ruby at it).  Override with OPENSSL_PREFIX=...
+OPENSSL_PREFIX="${OPENSSL_PREFIX:-$(brew --prefix openssl@3 2>/dev/null || true)}"
+[ -n "$OPENSSL_PREFIX" ] && [ -d "$OPENSSL_PREFIX/include/openssl" ] \
+    || die "Homebrew openssl@3 not found — 'brew install openssl@3' (shared with the app)"
 
 INSTALL="$DEST/install"                              # final staged Ruby
-DEPS="$DEST/deps"                                    # static openssl + libyaml
+DEPS="$DEST/deps"                                    # static libyaml (OpenSSL = Homebrew)
 SRC="$DEST/src"
 JOBS="$(sysctl -n hw.ncpu)"
 mkdir -p "$DEST" "$SRC"
@@ -64,24 +69,8 @@ extract() {  # $1=tarball $2=dest-dir (stripped of the top component)
     tar -xzf "$1" -C "$2" --strip-components=1
 }
 
-# ── 1. OpenSSL (static) ───────────────────────────────────────────────────────
-# Ruby's openssl/digest extensions link this; static + no-shared means the .a is
-# absorbed into openssl.bundle, leaving nothing extra to relocate.
-if [ ! -f "$DEPS/lib/libssl.a" ]; then
-    PKG="openssl-$OPENSSL_VERSION.tar.gz"
-    fetch "https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/$PKG" "$DEST/$PKG"
-    extract "$DEST/$PKG" "$SRC/openssl"
-    note "building OpenSSL $OPENSSL_VERSION (static, $SSL_TARGET)"
-    (
-        cd "$SRC/openssl"
-        # no-docs is 3.2+; install_sw skips docs anyway, so it's not needed here.
-        ./Configure "$SSL_TARGET" no-shared no-tests \
-            --prefix="$DEPS" --openssldir="$DEPS/ssl" >/dev/null
-        make -j"$JOBS" >/dev/null
-        make install_sw >/dev/null                  # libs + headers, no man pages
-    ) || die "OpenSSL build failed"
-fi
-[ -f "$DEPS/lib/libssl.a" ] && [ -f "$DEPS/lib/libcrypto.a" ] || die "OpenSSL static libs missing"
+# ── 1. OpenSSL — Homebrew openssl@3 (shared with the app; not built here) ─────
+note "OpenSSL: $("$OPENSSL_PREFIX/bin/openssl" version 2>/dev/null || echo "$OPENSSL_PREFIX") — Homebrew, shared with the app"
 
 # ── 2. libyaml (static) ───────────────────────────────────────────────────────
 # Ruby's psych (YAML) extension links this.
@@ -114,11 +103,11 @@ rm -rf "$INSTALL"
         --enable-load-relative \
         --disable-install-doc \
         --without-gmp \
-        --with-openssl-dir="$DEPS" \
+        --with-openssl-dir="$OPENSSL_PREFIX" \
         --with-libyaml-dir="$DEPS" \
-        PKG_CONFIG_PATH="$DEPS/lib/pkgconfig" \
-        CFLAGS="-I$DEPS/include" \
-        LDFLAGS="-L$DEPS/lib" \
+        PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig" \
+        CFLAGS="-I$DEPS/include -I$OPENSSL_PREFIX/include" \
+        LDFLAGS="-L$DEPS/lib -L$OPENSSL_PREFIX/lib" \
         optflags="-O2" >/dev/null
     make -j"$JOBS" >/dev/null
     make install >/dev/null
@@ -140,8 +129,10 @@ note "staged relocatable Ruby $RUBY_VERSION:"
 note "  libruby:  $DYLIB  ($(lipo -archs "$DYLIB" 2>/dev/null || echo '?'))"
 note "  id:       $(otool -D "$DYLIB" | tail -1)"
 note "  stdlib:   $INSTALL/lib/ruby/$SHORT.0/"
-note "  extensions (openssl/psych) self-contained — non-system deps of libruby:"
+note "  libruby non-system deps (should be none — psych/libyaml are static):"
 otool -L "$DYLIB" | tail -n +2 | awk '{print $1}' \
     | grep -vE '^(/usr/lib/|/System/|@)' | sed 's/^/    LEAK: /' \
     || note "    (none — only system libs + @rpath)"
+note "  openssl/digest extensions link Homebrew openssl@3 (absolute path); this is"
+note "  expected — build-app.sh relocates it into the .app as the shared OpenSSL."
 note "build with:  packaging/build-app.sh   (or a normal CMake build; auto-detects this)"

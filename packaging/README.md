@@ -189,11 +189,21 @@ Notes:
   so it bundles its own libtommath and needs only system zlib/CoreFoundation —
   nothing extra to relocate. `tcl_engine.cpp` points `TCL_LIBRARY` at the bundled
   script library.
-- **Ruby** — built `--enable-shared --enable-load-relative`, with OpenSSL +
-  libyaml linked **statically into its C extensions** so the only relocatable
-  image is `libruby`. It lives in `Contents/lib` (not `Frameworks`): Ruby's
-  extensions link it as `@executable_path/../lib/...` and load-relative derives
-  the stdlib prefix from there, so the host and every extension are self-locating.
+- **Ruby** — built `--enable-shared --enable-load-relative`, with **libyaml**
+  linked statically into psych. Its `openssl`/`digest` extensions link Homebrew
+  `openssl@3` — the *same* OpenSSL the app and Python use — so the bundle ships a
+  **single** shared OpenSSL (next note), not a private Ruby copy. `libruby` lives
+  in `Contents/lib` (not `Frameworks`): Ruby's extensions link it as
+  `@executable_path/../lib/...` and load-relative derives the stdlib prefix from
+  there, so the host and every extension are self-locating.
+- **OpenSSL (one shared copy)** — the app links Homebrew `openssl@3` for its own
+  TLS; `build-app.sh` relocates a single `libssl.3.dylib`+`libcrypto.3.dylib`
+  into `Contents/Frameworks` and repoints **all three** consumers at it: the app,
+  Ruby's `openssl`/`digest` extensions, and Python's `_ssl`/`_hashlib` (whose
+  framework-internal pair is then deleted). OpenSSL 3.x is ABI-stable within the
+  series, so Python's extensions — built against an older 3.x — load the shared
+  (newer) copy fine. Net: no duplicate OpenSSL archives in the `.app`, and one
+  version to track for CVEs.
 
 ---
 

@@ -331,6 +331,65 @@ if [ "$PRUNE_PYTHON" = 1 ] && [ -d "$pyfw" ]; then
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
+# 3c. unify OpenSSL — one libssl/libcrypto for the app, Python AND Ruby
+# ════════════════════════════════════════════════════════════════════════════
+# The relocation BFS already bundled the app's (Homebrew) libssl/libcrypto into
+# Frameworks.  But Python ships its OWN pair inside its framework, and Ruby's
+# openssl/digest extensions are dlopen'd at runtime (so the BFS never saw them,
+# and their OpenSSL dep — also Homebrew — was left as an absolute path).  Point
+# every consumer at the single Frameworks copy and delete Python's, so the .app
+# carries exactly one OpenSSL.  All OpenSSL 3.x share the soname (libssl.3.dylib,
+# compat 3.0.0); the bundled copy is the newest any consumer was built against
+# (Homebrew — the app + Ruby), so Python's _ssl (built against an older 3.x)
+# loads against it fine: OpenSSL 3.x only adds symbols within the series.
+if [ "$DO_RELOCATE" = 1 ] && ls "$FRAMEWORKS"/libssl.*.dylib >/dev/null 2>&1; then
+    note "unifying OpenSSL — single libssl/libcrypto for app + Python + Ruby"
+
+    # rewrite any libssl/libcrypto dep of $1 to the shared copy.  Written to be
+    # set -e safe (no bare `&&`/`continue` that returns non-zero on the common
+    # path); always returns 0.
+    repoint_openssl() {
+        local bin="$1" dep base changed=0
+        while IFS= read -r dep; do
+            base="$(basename "$dep")"
+            case "$base" in
+                libssl.*.dylib|libcrypto.*.dylib)
+                    if [ "$dep" != "@rpath/$base" ]; then
+                        install_name_tool -change "$dep" "@rpath/$base" "$bin" 2>/dev/null || true
+                        changed=1
+                    fi
+                    ;;
+            esac
+        done < <(otool -L "$bin" | tail -n +2 | awk '{print $1}')
+        # @executable_path is the main exe wherever this Mach-O is loaded from, so
+        # @rpath/libssl.3.dylib resolves to Contents/Frameworks for a dlopen'd
+        # extension at any nesting depth.
+        if [ "$changed" = 1 ]; then
+            add_rpath_once "$bin" "@executable_path/../Frameworks"
+        fi
+        return 0
+    }
+
+    # Ruby crypto extensions (dlopen'd — invisible to the BFS)
+    if [ -d "$APP/Contents/lib/ruby" ]; then
+        while IFS= read -r b; do repoint_openssl "$b"; done \
+            < <(find "$APP/Contents/lib/ruby" -name '*.bundle')
+    fi
+    # Python extensions, then delete Python's now-redundant internal OpenSSL pair
+    if [ -d "$FRAMEWORKS/Python.framework" ]; then
+        while IFS= read -r b; do repoint_openssl "$b"; done \
+            < <(find "$FRAMEWORKS/Python.framework" \( -name '*.so' -o -name '*.dylib' \) \
+                  ! -name 'libssl.*' ! -name 'libcrypto.*')
+        find "$FRAMEWORKS/Python.framework" \
+            \( -name 'libssl*.dylib' -o -name 'libcrypto*.dylib' \) -delete 2>/dev/null || true
+    fi
+
+    n=$(find "$APP" \( -name 'libssl*.dylib' -o -name 'libcrypto*.dylib' \) | wc -l | tr -d ' ')
+    note "  OpenSSL dylibs in bundle now: $n (expect 2 — libssl.3.dylib + libcrypto.3.dylib)"
+    [ "$n" = 2 ] || warn "expected exactly 2 OpenSSL dylibs after unify, found $n"
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
 # 4. Info.plist touch-ups
 # ════════════════════════════════════════════════════════════════════════════
 PB=/usr/libexec/PlistBuddy

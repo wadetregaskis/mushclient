@@ -288,7 +288,7 @@ bool CScriptEngine::ParsePerl (const CString & strCode, const CString & strWhat)
   // resolved normally and never reach AUTOLOAD.
   SV* sv = newSVpvf ("package %s;\n$%s::world = %s->new(%lld);\n"
                      "sub AUTOLOAD { our $AUTOLOAD; (my $n=$AUTOLOAD)=~s/.*:://;"
-                     " return if $n eq 'DESTROY'; return $world->$n(\@_); }\n"
+                     " return if $n eq 'DESTROY'; return $world->$n(@_); }\n"
                      "#line 1 \"script\"\n",
                      e->pkg.c_str (), e->pkg.c_str (), WORLD_STASH, (long long) (intptr_t) e->doc);
   sv_catpvn (sv, (LPCTSTR) strCode, strCode.GetLength ());

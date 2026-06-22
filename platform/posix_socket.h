@@ -95,6 +95,14 @@ public:
         m_hSocket = ::socket(AF_INET, nSocketType, 0);
         if (m_hSocket == INVALID_SOCKET) return FALSE;
 
+        // Don't let a write to a peer-closed socket raise SIGPIPE and kill the
+        // process.  macOS: per-socket SO_NOSIGPIPE; Linux relies on the global
+        // signal(SIGPIPE, SIG_IGN) installed at startup (send() returns EPIPE,
+        // which the world socket already treats as a disconnect).
+#ifdef SO_NOSIGPIPE
+        { int on = 1; ::setsockopt(m_hSocket, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on)); }
+#endif
+
         // Set non-blocking
         int flags = ::fcntl(m_hSocket, F_GETFL, 0);
         if (flags == -1 || ::fcntl(m_hSocket, F_SETFL, flags | O_NONBLOCK) == -1) {
@@ -277,6 +285,11 @@ public:
         for (CAsyncSocket* s : s_sockets) {
             if (s->m_hSocket == INVALID_SOCKET) continue;
             int fd = s->m_hSocket;
+            // FD_SET on an fd >= FD_SETSIZE writes past the fd_set (stack
+            // corruption).  In a long, many-world+plugin+db+log session the
+            // process fd count can exceed 1024, so skip such sockets here rather
+            // than corrupt memory.  (A poll(2)-based loop would lift this limit.)
+            if (fd >= FD_SETSIZE) continue;
             if (s->m_events & (FD_READ  | FD_CLOSE | FD_ACCEPT)) FD_SET(fd, &rd);
             if (s->m_events & (FD_WRITE | FD_CONNECT)) FD_SET(fd, &wr);
             if (s->m_events & FD_OOB)                  FD_SET(fd, &ex);

@@ -124,14 +124,34 @@ public:
 
     // ── Substrings ────────────────────────────────────────────────────────────
 
-    CString Left(int n) const  { return CString(s_.substr(0, (size_t)n)); }
+    // MFC clamps out-of-range args (returns empty/whole) rather than throwing;
+    // std::string::substr throws std::out_of_range when pos > size (and a negative
+    // int cast to size_t is huge), so clamp to match MFC and avoid crashes on
+    // truncated input (the ~100 Mid call sites in protocol/MXP/chat parsing).
+    CString Left(int n) const {
+        int len = (int)s_.size();
+        if (n <= 0)   return CString();
+        if (n >= len) return *this;
+        return CString(s_.substr(0, (size_t)n));
+    }
     CString Right(int n) const {
         int len = (int)s_.size();
-        return CString(s_.substr(n >= len ? 0 : (size_t)(len - n)));
+        if (n <= 0)   return CString();
+        if (n >= len) return *this;
+        return CString(s_.substr((size_t)(len - n)));
     }
-    CString Mid(int pos) const { return CString(s_.substr((size_t)pos)); }
-    CString Mid(int pos, int len) const {
-        return CString(s_.substr((size_t)pos, (size_t)len));
+    CString Mid(int pos) const {
+        int len = (int)s_.size();
+        if (pos < 0)    pos = 0;
+        if (pos >= len) return CString();
+        return CString(s_.substr((size_t)pos));
+    }
+    CString Mid(int pos, int count) const {
+        int len = (int)s_.size();
+        if (pos < 0)    pos = 0;
+        if (pos >= len) return CString();
+        if (count < 0)  count = len - pos;   // MFC: negative count → to end
+        return CString(s_.substr((size_t)pos, (size_t)count));
     }
 
     // ── Search ────────────────────────────────────────────────────────────────

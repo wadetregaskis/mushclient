@@ -149,6 +149,9 @@ int main(int argc, char* argv[])
     signal(SIGINT,   on_sigint);
     signal(SIGTERM,  on_sigint);
     signal(SIGWINCH, on_sigwinch);
+    // Don't let a write to a peer-closed MUD socket kill the process; send()
+    // then returns EPIPE, which the world socket already treats as a disconnect.
+    signal(SIGPIPE,  SIG_IGN);
 
     // ── Initialise global MXP tables (elements, entities, colours) ───────────
     // On Windows this happens in CMUSHclientApp::InitInstance() (MUSHclient.cpp).
@@ -259,6 +262,13 @@ int main(int argc, char* argv[])
                     sock->GetLastError());
             return 1;
         }
+    } else {
+        // Immediate (synchronous) connect — common on loopback / fast links.  The
+        // socket is already kConnected (not kConnecting), so Poll() never fires
+        // OnConnect; drive the connect-completion path now, exactly as the GUI does
+        // (doc.cpp:6635).  Otherwise the phase stays eConnectConnecting and the
+        // login/connect script never runs — the CLI just hangs "connecting".
+        doc.OnConnect(0);
     }
 
     // ── Set up input ──────────────────────────────────────────────────────────

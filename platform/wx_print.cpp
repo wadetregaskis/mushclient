@@ -49,7 +49,13 @@ void PrintOutputPane(wxWindow* parent, const wxString& title, COutputPane* pane)
 
     html << wxT("</pre></body></html>");
 
-    wxHtmlEasyPrinting printer(title.IsEmpty() ? wxT("MUSHclient") : title, parent);
-    printer.SetStandardFonts(9);
-    printer.PreviewText(html);
+    // PreviewText() shows a NON-modal preview frame and returns immediately; that
+    // frame's wxPrintPreview holds a pointer to this object's print data.  A stack
+    // wxHtmlEasyPrinting would be destroyed here, leaving the live preview with a
+    // dangling pointer → use-after-free on scroll / zoom / Print.  Heap-allocate
+    // and intentionally leak it: one small object per Print invocation, far simpler
+    // and safer than threading the (internally-created) preview frame's lifetime.
+    auto* printer = new wxHtmlEasyPrinting(title.IsEmpty() ? wxT("MUSHclient") : title, parent);
+    printer->SetStandardFonts(9);
+    printer->PreviewText(html);
 }

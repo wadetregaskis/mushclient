@@ -5207,7 +5207,60 @@ public:
     COleVariant(const CString& s){ vt = 8; bstrVal = (char*)(LPCTSTR)s; }
     COleVariant(bool b)          { vt = 11; boolVal = b ? -1 : 0; }
     void Clear()                 { vt = 0; lVal = 0; }
-    void ChangeType(VARTYPE, const COleVariant* = nullptr) {}
+    // Coerce in place between the VARIANT types MUSHclient actually uses
+    // (VT_I4/R8/BOOL/BSTR).  Previously a no-op, which broke e.g. the non-Lua
+    // plugin veto path: CPlugin::ExecutePluginScript packs a script's bool result
+    // as VT_BOOL, then does ChangeType(VT_I4) and tests `vt == VT_I4` — with the
+    // old no-op that test failed and every callback was treated as "OK'd it", so
+    // a Python/Perl/JS/Tcl/Ruby plugin could never suppress a command/line.
+    void ChangeType(VARTYPE newvt, const COleVariant* = nullptr) {
+        if (vt == newvt) return;
+        switch (newvt) {
+        case 3: {  // VT_I4
+            long v = 0;
+            switch (vt) {
+                case 5:  v = (long) dblVal;            break;  // VT_R8
+                case 11: v = boolVal ? 1 : 0;          break;  // VT_BOOL
+                case 8:  v = bstrVal ? atol(bstrVal):0; break;  // VT_BSTR
+                default: break;
+            }
+            lVal = v; vt = 3; break;
+        }
+        case 5: {  // VT_R8
+            double d = 0;
+            switch (vt) {
+                case 3:  d = (double) lVal;             break;
+                case 11: d = boolVal ? 1.0 : 0.0;       break;
+                case 8:  d = bstrVal ? atof(bstrVal):0; break;
+                default: break;
+            }
+            dblVal = d; vt = 5; break;
+        }
+        case 11: {  // VT_BOOL
+            bool b = false;
+            switch (vt) {
+                case 3:  b = (lVal != 0);            break;
+                case 5:  b = (dblVal != 0.0);        break;
+                case 8:  b = (bstrVal && *bstrVal);  break;
+                default: break;
+            }
+            boolVal = b ? -1 : 0; vt = 11; break;
+        }
+        case 8: {  // VT_BSTR — format numerics into a thread-local buffer.  Matches
+                   // the wrapper's non-owning bstrVal model (it points at borrowed
+                   // storage); the sole caller copies it into a CString immediately.
+            static thread_local char s_buf[64];
+            switch (vt) {
+                case 3:  snprintf(s_buf, sizeof s_buf, "%ld", lVal);          break;
+                case 5:  snprintf(s_buf, sizeof s_buf, "%g",  dblVal);        break;
+                case 11: snprintf(s_buf, sizeof s_buf, "%d",  boolVal ? 1:0); break;
+                default: s_buf[0] = '\0'; break;
+            }
+            bstrVal = s_buf; vt = 8; break;
+        }
+        default: break;  // other target types: leave as-is
+        }
+    }
     COleVariant& operator=(long v)          { vt = 3; lVal = v;               return *this; }
     COleVariant& operator=(double v)        { vt = 5; dblVal = v;             return *this; }
     COleVariant& operator=(LPCTSTR s)       { vt = 8; bstrVal = (char*)s;     return *this; }

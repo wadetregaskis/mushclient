@@ -178,6 +178,9 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
                 run.italic        = (pStyle->iFlags & BLINK)     != 0;  // MUSHclient maps BLINK → italic
                 run.strikethrough = (pStyle->iFlags & STRIKEOUT) != 0;
                 run.text = std::string(pLine->text + charOff, pStyle->iLength);
+                run.utf8 = m_bUTF_8;                      // non-UTF-8 worlds: tag the
+                if (!m_bUTF_8)                            // bytes' charset so the pane
+                    run.charset = (int) m_font_charset;   // decodes them (else blank)
                 // MXP hyperlink / send-link: copy action and hint strings.
                 if (pStyle->pAction) {
                     run.action = static_cast<const char*>(pStyle->pAction->m_strAction);
@@ -216,6 +219,8 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
                 run.italic        = (pStyle->iFlags & BLINK)     != 0;
                 run.strikethrough = (pStyle->iFlags & STRIKEOUT) != 0;
                 run.text = std::string(m_pCurrentLine->text + charOff, pStyle->iLength);
+                run.utf8 = m_bUTF_8;
+                if (!m_bUTF_8) run.charset = (int) m_font_charset;
                 if (pStyle->pAction) {
                     run.action = static_cast<const char*>(pStyle->pAction->m_strAction);
                     run.hint   = static_cast<const char*>(pStyle->pAction->m_strHint);

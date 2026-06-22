@@ -40,6 +40,12 @@ struct SOutputRun {
     bool        horiz_rule    = false;        // true → render as a horizontal separator
     std::string action;                       // MXP link action (empty = not a link)
     std::string hint;                         // MXP link tooltip hint
+    // Encoding of `text`.  utf8==true (the default, and the common modern case)
+    // means `text` is UTF-8.  When false the world is in its native 8-bit charset
+    // and `charset` is the Windows LOGFONT charset (the doc's m_font_charset) the
+    // renderer must decode the bytes with — mirroring the Windows 8-bit text path.
+    bool        utf8          = true;
+    int         charset       = 0;            // Windows charset enum (used iff !utf8)
 };
 
 // ── SOutputLine ───────────────────────────────────────────────────────────────

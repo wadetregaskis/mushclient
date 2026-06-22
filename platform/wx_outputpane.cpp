@@ -39,6 +39,51 @@ static inline int UTF8CharLen(const std::string& s)
     return n;
 }
 
+// ── Non-UTF-8 world text decoding ─────────────────────────────────────────────
+// Map a Windows LOGFONT charset (the world's m_font_charset) to a wxFontEncoding,
+// so a non-UTF-8 world's bytes decode the way the Windows 8-bit render path shows
+// them (GDI maps bytes→glyphs via the selected font's charset).  Unmapped/ANSI/
+// DEFAULT fall through to CP1252 (Windows Latin-1).
+static wxFontEncoding WinCharsetToEncoding(int cs)
+{
+    switch (cs) {
+        case 128: return wxFONTENCODING_CP932;   // SHIFTJIS_CHARSET    (Japanese)
+        case 129: return wxFONTENCODING_CP949;   // HANGUL_CHARSET      (Korean)
+        case 134: return wxFONTENCODING_CP936;   // GB2312_CHARSET      (Simplified Chinese)
+        case 136: return wxFONTENCODING_CP950;   // CHINESEBIG5_CHARSET (Traditional Chinese)
+        case 161: return wxFONTENCODING_CP1253;  // GREEK_CHARSET
+        case 162: return wxFONTENCODING_CP1254;  // TURKISH_CHARSET
+        case 163: return wxFONTENCODING_CP1258;  // VIETNAMESE_CHARSET
+        case 177: return wxFONTENCODING_CP1255;  // HEBREW_CHARSET
+        case 178: return wxFONTENCODING_CP1256;  // ARABIC_CHARSET
+        case 186: return wxFONTENCODING_CP1257;  // BALTIC_CHARSET
+        case 204: return wxFONTENCODING_CP1251;  // RUSSIAN_CHARSET     (Cyrillic)
+        case 222: return wxFONTENCODING_CP874;   // THAI_CHARSET
+        case 238: return wxFONTENCODING_CP1250;  // EASTEUROPE_CHARSET
+        case 255: return wxFONTENCODING_CP437;   // OEM_CHARSET
+        default:  return wxFONTENCODING_CP1252;  // ANSI / DEFAULT / unmapped
+    }
+}
+
+// Decode a run's bytes to a wxString.  UTF-8 worlds (the default, and the common
+// modern case) go straight through FromUTF8.  A non-UTF-8 world's bytes are
+// decoded with its font charset; if that conversion fails outright (wxCSConv
+// yields empty for non-empty input) we fall back to Latin-1 (From8BitData never
+// fails), so text is always visible rather than silently dropped — the bug this
+// fixes was FromUTF8() of non-UTF-8 bytes returning "" and the whole run vanishing.
+static wxString DecodeRunText(const SOutputRun& run)
+{
+    if (run.utf8)
+        return wxString::FromUTF8(run.text.c_str(), run.text.size());
+    if (run.text.empty())
+        return wxString();
+    wxCSConv conv(WinCharsetToEncoding(run.charset));
+    wxString s(run.text.c_str(), conv, run.text.size());
+    if (s.empty())
+        s = wxString::From8BitData(run.text.c_str(), run.text.size());
+    return s;
+}
+
 // ── Hint bar ──────────────────────────────────────────────────────────────────
 // Height (px) of the "↓ new output below" banner painted at the bottom of the
 // client area when the user has scrolled up and new lines are arriving.
@@ -757,7 +802,7 @@ void COutputPane::OnPaint(wxPaintEvent&)
                 dc.SetTextForeground(fg);
                 dc.SetTextBackground(bg);
                 dc.SetBackgroundMode(wxSOLID);
-                wxString text = wxString::FromUTF8(run.text.c_str());
+                wxString text = DecodeRunText(run);
                 dc.DrawText(text, x, pendingY);
                 wxCoord tw, th;
                 dc.GetTextExtent(text, &tw, &th);
@@ -872,7 +917,7 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
     for (const auto& run : line) {
         if (run.text.empty()) continue;
 
-        wxString wxText = wxString::FromUTF8(run.text.c_str(), run.text.size());
+        wxString wxText = DecodeRunText(run);
         int runLen = (int)wxText.size();
         int pos    = 0;
 
@@ -952,7 +997,7 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
         wxString plain;
         for (const auto& run : line)
             if (!run.horiz_rule)
-                plain += wxString::FromUTF8(run.text.c_str(), run.text.size());
+                plain += DecodeRunText(run);
 
         // Apply case folding to both the line text and the search term unless
         // we're in case-sensitive mode.
@@ -988,7 +1033,7 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
             int cx = 0;  // absolute char index in the logical line
             for (const auto& run : line) {
                 if (run.text.empty() || run.horiz_rule) continue;
-                wxString wxText = wxString::FromUTF8(run.text.c_str(), run.text.size());
+                wxString wxText = DecodeRunText(run);
                 int runLen = (int)wxText.size();
 
                 bool drawUnderline = run.underline || !run.action.empty();
@@ -1533,8 +1578,7 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
             wxString lineText;
             for (const auto& run : m_lines[lineIdx])
                 if (!run.horiz_rule)
-                    lineText += wxString::FromUTF8(run.text.c_str(),
-                                                   run.text.size());
+                    lineText += DecodeRunText(run);
 
             int col = XToChar(lineIdx, evt.GetX(), evt.GetY());
             col = std::max(0, std::min((int)lineText.size(), col));
@@ -2185,8 +2229,7 @@ wxString COutputPane::SelectedText() const
         wxString lineText;
         for (const auto& run : m_lines[i])
             if (!run.horiz_rule)
-                lineText += wxString::FromUTF8(run.text.c_str(),
-                                               run.text.size());
+                lineText += DecodeRunText(run);
 
         int startCol = (i == lo) ? selStart.col : 0;
         int endCol   = (i == hi) ? selEnd.col
@@ -2234,7 +2277,7 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
         wxString s;
         for (const auto& run : m_lines[i])
             if (!run.horiz_rule)
-                s += wxString::FromUTF8(run.text.c_str(), run.text.size());
+                s += DecodeRunText(run);
         return caseSensitive ? s : s.Lower();
     };
 

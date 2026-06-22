@@ -123,9 +123,12 @@ static const int ID_CONN_LOG_TOGGLE    = wxID_HIGHEST + 410;
 static const int ID_MENU_GAME_LUA_EVAL = wxID_HIGHEST + 411;
 
 // ── View menu IDs (port-local; real wx implementations, not canonical) ────────
-static const int ID_MENU_VIEW_ALWAYSONTOP = wxID_HIGHEST + 420;
-static const int ID_MENU_VIEW_FULLSCREEN  = wxID_HIGHEST + 421;
-static const int ID_MENU_VIEW_STATUSBAR   = wxID_HIGHEST + 422;
+// +420..422 are the Configure ▸ Import/Export items (above); the View toggles
+// must use a distinct range or wx can't tell the commands apart (the View branch
+// ran first, so Import/Export silently toggled View state and were unreachable).
+static const int ID_MENU_VIEW_ALWAYSONTOP = wxID_HIGHEST + 430;
+static const int ID_MENU_VIEW_FULLSCREEN  = wxID_HIGHEST + 431;
+static const int ID_MENU_VIEW_STATUSBAR   = wxID_HIGHEST + 432;
 
 static wxMenu*    s_recentMenu     = nullptr;
 static std::vector<std::string> s_recentWorlds;
@@ -456,16 +459,25 @@ static int hook_post_message(void* h, unsigned msg, uintptr_t wp, intptr_t lp)
 
 static int hook_message_box(const char* text, const char* caption, unsigned flags)
 {
-    // Map common MB_* flags to wxMessageBox styles.
+    // The MB_* button set is the low nibble — an ENUMERATION, not bit flags — and
+    // the icon is the 0xF0 nibble.  Decode each as a field; the old bitwise tests
+    // mis-read e.g. MB_OKCANCEL(1) as Yes/No (1 & 0x0003 != 0) and lost Cancel.
     long style = wxOK;
-    if (flags & 0x0001 /*MB_OKCANCEL*/)   style = wxOK | wxCANCEL;
-    if (flags & 0x0002 /*MB_ABORTRETRYIGNORE*/) style = wxOK; // approximation
-    if ((flags & 0x0003 /*MB_YESNOCANCEL*/) ||
-        (flags & 0x0004 /*MB_YESNO*/))    style = wxYES_NO;
-    if (flags & 0x0010 /*MB_ICONHAND*/)   style |= wxICON_ERROR;
-    if (flags & 0x0020 /*MB_ICONQUESTION*/) style |= wxICON_QUESTION;
-    if (flags & 0x0030 /*MB_ICONEXCLAMATION*/) style |= wxICON_WARNING;
-    if (flags & 0x0040 /*MB_ICONINFORMATION*/) style |= wxICON_INFORMATION;
+    switch (flags & 0x000F) {
+        case 0x0001: style = wxOK | wxCANCEL;     break;  // MB_OKCANCEL
+        case 0x0002: style = wxOK;                break;  // MB_ABORTRETRYIGNORE (approx)
+        case 0x0003: style = wxYES_NO | wxCANCEL; break;  // MB_YESNOCANCEL
+        case 0x0004: style = wxYES_NO;            break;  // MB_YESNO
+        case 0x0005: style = wxOK | wxCANCEL;     break;  // MB_RETRYCANCEL (approx)
+        default:     style = wxOK;                break;  // MB_OK
+    }
+    switch (flags & 0x00F0) {
+        case 0x0010: style |= wxICON_ERROR;       break;  // MB_ICONHAND / STOP
+        case 0x0020: style |= wxICON_QUESTION;    break;  // MB_ICONQUESTION
+        case 0x0030: style |= wxICON_WARNING;     break;  // MB_ICONEXCLAMATION
+        case 0x0040: style |= wxICON_INFORMATION; break;  // MB_ICONINFORMATION / ASTERISK
+        default:     break;
+    }
 
     wxString wxText    = text    ? wxString::FromUTF8(text)    : wxString();
     wxString wxCaption = caption ? wxString::FromUTF8(caption) : wxString("MUSHclient");

@@ -11,6 +11,7 @@
 
 #include <wx/wx.h>
 #include <wx/image.h>          // wxInitAllImageHandlers
+#include <csignal>             // signal, SIGPIPE
 #include "platform/wx_mfc_hooks.h"
 
 // Defined in wx_dialog_bridge.cpp: parse the bundled dialog resources once.
@@ -20,6 +21,12 @@ class CMUSHWxApp : public wxApp {
 public:
     bool OnInit() override
     {
+        // Don't let a write to a peer-closed MUD socket raise SIGPIPE and kill the
+        // app; send() then returns EPIPE, which the world socket treats as a
+        // disconnect.  (Per-socket SO_NOSIGPIPE also covers macOS; this is the
+        // belt-and-suspenders net that also covers Linux send().)
+        signal(SIGPIPE, SIG_IGN);
+
         // Name the app "MUSHclient" (the canonical Windows name) so the macOS
         // application menu's Hide/Quit items and the app menu title read
         // "MUSHclient" rather than the executable basename.

@@ -874,13 +874,28 @@ bool CDC::GetTextMetrics(TEXTMETRIC* lpMetrics) {
     return true;
 }
 
+// FromUTF8 that never silently drops 8-bit text: if the bytes aren't valid UTF-8
+// (wxString::FromUTF8 returns empty for non-empty input) fall back to Latin-1 so
+// non-UTF-8 content — e.g. a miniwindow WindowText(..., Unicode=false) with high
+// bytes — stays visible instead of vanishing.  Pure UTF-8 / ASCII callers (the
+// common case for dialogs, notepad, the bridge) are unaffected.
+static wxString CdcDecodeText(LPCTSTR lpszString, int nCount)
+{
+    if (!lpszString) return wxString();
+    wxString s = (nCount >= 0) ? wxString::FromUTF8(lpszString, nCount)
+                               : wxString::FromUTF8(lpszString);
+    const bool nonEmpty = (nCount >= 0) ? (nCount > 0) : (lpszString[0] != '\0');
+    if (s.empty() && nonEmpty)
+        s = (nCount >= 0) ? wxString::From8BitData(lpszString, nCount)
+                          : wxString::From8BitData(lpszString);
+    return s;
+}
+
 CSize CDC::GetTextExtent(LPCTSTR lpszString, int nCount) {
     CDCImpl* p = Impl(this);
     if (!p) return {};
     p->ApplyFont();
-    wxString s = (nCount >= 0)
-        ? wxString::FromUTF8(lpszString, nCount)
-        : wxString::FromUTF8(lpszString);
+    wxString s = CdcDecodeText(lpszString, nCount);
     wxSize sz = p->dc.GetTextExtent(s);
     return CSize(sz.GetWidth(), sz.GetHeight());
 }
@@ -1448,9 +1463,7 @@ bool CDC::TextOut(int x, int y, LPCTSTR lpszString, int nCount) {
     CDCImpl* p = Impl(this);
     if (!p || !lpszString) return false;
     p->ApplyFont();
-    wxString s = (nCount >= 0)
-        ? wxString::FromUTF8(lpszString, nCount)
-        : wxString::FromUTF8(lpszString);
+    wxString s = CdcDecodeText(lpszString, nCount);
 
     // Honour TA_BOTTOM (y is baseline, not top)
     if ((p->textAlign & TA_BOTTOM) && p->currentFont && p->currentFont->m_impl) {
@@ -1479,9 +1492,7 @@ bool CDC::ExtTextOut(int x, int y, UINT nOptions, LPCRECT lpRect,
     if (!p) return false;
     p->ApplyFont();
 
-    wxString s = (nCount >= 0)
-        ? wxString::FromUTF8(lpszString, nCount)
-        : wxString::FromUTF8(lpszString);
+    wxString s = CdcDecodeText(lpszString, nCount);
 
     // ETO_OPAQUE: fill the clip rectangle with bk colour first
     if ((nOptions & ETO_OPAQUE) && lpRect) {
@@ -1522,9 +1533,7 @@ int CDC::DrawText(LPCTSTR lpszString, int nCount, LPRECT lpRect, UINT nFormat) {
     if (!p) return 0;
     p->ApplyFont();
 
-    wxString s = (nCount >= 0)
-        ? wxString::FromUTF8(lpszString, nCount)
-        : wxString::FromUTF8(lpszString);
+    wxString s = CdcDecodeText(lpszString, nCount);
 
     wxRect r(lpRect->left, lpRect->top,
              lpRect->right - lpRect->left,

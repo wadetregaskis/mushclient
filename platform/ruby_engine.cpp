@@ -246,6 +246,12 @@ VALUE do_funcall (VALUE p)
   return rb_funcall2 (c->recv, c->mid, c->argc, c->argv);
   }
 
+// Fetch err.message() — invoked under rb_protect so a custom exception whose
+// #message itself raises can't longjmp out through report_error's C++ frames
+// (there's no enclosing Ruby tag here: we're already past the rb_protect that
+// caught the original exception).
+static VALUE ruby_error_message (VALUE err) { return rb_funcall (err, rb_intern ("message"), 0); }
+
 void report_error (CMUSHclientDoc* doc, const char* what, const char* proc)
   {
   if (!doc) return;
@@ -254,8 +260,12 @@ void report_error (CMUSHclientDoc* doc, const char* what, const char* proc)
   if (RTEST (err))
     {
     klass = rb_obj_classname (err);
-    VALUE s = rb_funcall (err, rb_intern ("message"), 0);
-    if (TYPE (s) == T_STRING) msg = StringValueCStr (s);
+    int state = 0;
+    VALUE s = rb_protect (ruby_error_message, err, &state);
+    if (state)
+      rb_set_errinfo (Qnil);             // #message itself raised — discard it
+    else if (TYPE (s) == T_STRING)
+      msg = StringValueCStr (s);
     }
   rb_set_errinfo (Qnil);
   CString hdr;

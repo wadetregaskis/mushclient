@@ -88,6 +88,9 @@ extern void* (*g_wxhook_new_world)();
 // auto-connects if the world's m_connect_now setting says to.
 // Returns the new CMUSHclientDoc* cast to void*, or nullptr on failure.
 extern void* (*g_wxhook_open_world_file)(const char* path);
+// Open the bundled default world (Discworld edition) if no world is open yet.
+// No-op for a normal build (no Contents/Resources/default-world marker).
+extern void  (*g_wxhook_open_default_world)();
 
 // (Quick Connect is no longer a hook: the canonical CQuickConnectDlg renders via
 // the MFC-dialog bridge from IDD_QUICK_CONNECT — see dialogs/QuickConnectDlg.cpp.)

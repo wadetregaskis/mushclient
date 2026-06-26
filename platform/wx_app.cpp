@@ -71,6 +71,12 @@ public:
                     g_wxhook_open_world_file(path.utf8_str());
             }
 
+        // Discworld edition: open the bundled default world if nothing else
+        // opened (no saved startup world, none on the command line).  No-op for
+        // a normal build (no default-world marker in Contents/Resources).
+        if (g_wxhook_open_default_world)
+            g_wxhook_open_default_world();
+
         return true;
     }
 

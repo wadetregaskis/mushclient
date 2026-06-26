@@ -2156,6 +2156,55 @@ static int hook_init_instance()
     return ok;
 }
 
+// ── hook_open_default_world ───────────────────────────────────────────────
+// Open the bundled default world if NOTHING else is open.  The world to open is
+// named in Contents/Resources/default-world (written by build-app.sh
+// --with-discworld — e.g. "Discworld.mcl"); a normal build has no such marker,
+// so this is a no-op there.  Gated on zero open worlds so it never duplicates a
+// world already opened from the saved startup list (WorldList) or one passed on
+// the command line.  Called from wx_app.cpp::OnInit() AFTER the argv worlds.
+static void hook_open_default_world()
+{
+    namespace fs = std::filesystem;
+    try
+    {
+        // Something already open (saved WorldList, command-line world)? Leave it.
+        if (App.m_pWorldDocTemplate &&
+            App.m_pWorldDocTemplate->GetFirstDocPosition())
+            return;
+
+        const std::string resDir (wxStandardPaths::Get ().GetResourcesDir ().utf8_str ());
+        const fs::path marker = fs::path (resDir) / "default-world";
+        std::error_code ec;
+        if (!fs::is_regular_file (marker, ec))
+            return;   // ordinary build — no default world bundled
+
+        std::ifstream in (marker);
+        std::string name;
+        std::getline (in, name);
+        while (!name.empty () && (name.back () == '\r' || name.back () == '\n' ||
+                                  name.back () == ' '  || name.back () == '\t'))
+            name.pop_back ();
+        if (name.empty ())
+            return;
+
+        const fs::path world = fs::path (PortableUserDataDir ()) / "worlds" / name;
+        if (!fs::is_regular_file (world, ec))
+        {
+            fprintf (stderr, "[startup] default world not found: %s\n",
+                     world.string ().c_str ());
+            return;
+        }
+        fprintf (stderr, "[startup] opening default world: %s\n",
+                 world.string ().c_str ());
+        hook_open_world_file (world.string ().c_str ());
+    }
+    catch (const std::exception & ex)
+    {
+        fprintf (stderr, "[startup] default-world open skipped: %s\n", ex.what ());
+    }
+}
+
 // ── hook_create_text_window ───────────────────────────────────────────────
 // Allocates a CTextDocument, fills its fields from the parameters, creates a
 // CWxNotepadFrame that wires all m_fn_* callbacks and registers the doc with
@@ -4014,6 +4063,7 @@ void wx_mfc_install_hooks()
     g_wxhook_init_instance    = hook_init_instance;
     g_wxhook_new_world          = hook_new_world;
     g_wxhook_open_world_file    = hook_open_world_file;
+    g_wxhook_open_default_world = hook_open_default_world;
     g_wxhook_set_status         = hook_set_status;
     g_wxhook_save_world         = hook_save_world;
     g_wxhook_file_dialog        = hook_file_dialog;

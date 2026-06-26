@@ -30,6 +30,7 @@ int  (*g_wxhook_load_mdi_frame)(void*, unsigned, unsigned long, void*) = nullptr
 int  (*g_wxhook_init_instance)()                                 = nullptr;
 void* (*g_wxhook_new_world)()                                    = nullptr;
 void* (*g_wxhook_open_world_file)(const char*)                   = nullptr;
+void  (*g_wxhook_open_default_world)()                           = nullptr;
 void  (*g_wxhook_set_status)(const char*)                        = nullptr;
 bool  (*g_wxhook_save_world)(void*, bool, void*)                 = nullptr;
 char* (*g_wxhook_file_dialog)(bool, const char*, const char*,

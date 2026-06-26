@@ -2564,6 +2564,11 @@ public:
 
 // Implementation
 public:
+	// Port: public entry to the canonical (protected) SaveModified prompt, so the
+	// macOS quit handler (hook_query_quit_save) can prompt to save dirty worlds
+	// before [NSApp terminate:] tears the process down.  A method, not a data
+	// member — no object-layout impact.
+	BOOL PortPromptSaveModified() { return SaveModified(); }
 	virtual ~CMUSHclientDoc();
 	virtual void Serialize(CArchive& ar);   // overridden for document i/o
 #ifdef _DEBUG

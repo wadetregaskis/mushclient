@@ -85,6 +85,21 @@ public:
         // ExitInstance hook could be added later if cleanup is needed.
         return wxApp::OnExit();
     }
+
+#ifdef __APPLE__
+    // Every quit on macOS — Cmd-Q, the app menu, and the Dock's Quit — funnels
+    // through Cocoa's applicationShouldTerminate:, which wx forwards here.  Run
+    // the world save/close flow first: prompt to save modified worlds and persist
+    // plugin layout (Quow's miniwindow positions).  Returning false (the user
+    // cancelled a save prompt) cancels the quit; -[NSApp terminate:] otherwise
+    // bypasses the MFC document save path entirely.
+    bool OSXOnShouldTerminate() override
+    {
+        if (g_wxhook_query_quit_save && !g_wxhook_query_quit_save())
+            return false;
+        return wxApp::OSXOnShouldTerminate();
+    }
+#endif
 };
 
 wxIMPLEMENT_APP(CMUSHWxApp);

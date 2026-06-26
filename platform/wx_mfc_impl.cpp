@@ -2205,6 +2205,58 @@ static void hook_open_default_world()
     }
 }
 
+// ── hook_query_quit_save ──────────────────────────────────────────────────
+// Called from CMUSHWxApp::OSXOnShouldTerminate() — every quit path on macOS
+// (Cmd-Q, the app menu, the Dock's Quit) funnels through Cocoa's
+// applicationShouldTerminate:.  -[NSApp terminate:] does NOT run the MFC document
+// close/save flow, so without this a quit silently discards unsaved world edits
+// and loses plugin layout (Quow's miniwindow positions).  Returns 1 to allow the
+// quit, 0 to cancel it (the user picked Cancel at a save prompt).
+static int hook_query_quit_save()
+{
+    if (!App.m_pWorldDocTemplate) return 1;
+
+    std::vector<CMUSHclientDoc*> worlds;
+    POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
+    while (pos)
+        if (CDocument* d = App.m_pWorldDocTemplate->GetNextDoc(pos))
+            worlds.push_back(static_cast<CMUSHclientDoc*>(d));
+
+    // Guard the whole flow: a save raising (e.g. a write error, an MFC
+    // CException) must not propagate through applicationShouldTerminate: — that
+    // is an Objective-C++ boundary and a C++ exception crossing it crashes.
+    try
+    {
+        // Phase 1 — prompt for any world with unsaved edits.  SaveModified() is
+        // the canonical Save / Discard / Cancel prompt: it auto-saves or prompts
+        // per the world's settings, handles the variables-only-changed case, and
+        // returns FALSE only if the user cancelled.  Run the whole prompt pass
+        // before persisting layout so a late Cancel aborts cleanly.
+        for (CMUSHclientDoc* d : worlds)
+            if (!d->PortPromptSaveModified())
+                return 0;   // user cancelled → do not quit
+
+        // Phase 2 — fire each world's plugin OnPluginClose, then SaveState, just
+        // as ~CPlugin does on a normal world close (which [NSApp terminate:]
+        // skips).  Firing OnPluginClose is what persists window LAYOUT: Quow's
+        // Cow Bar writes its miniwindow positions to its own SQLite database from
+        // OnPluginClose, NOT from OnPluginSaveState (the plugin even comments
+        // "Do not do database stuff here, as OnPluginClose is called FIRST!").
+        // SaveState then writes the standard <plugin>-state.xml variables.
+        for (CMUSHclientDoc* d : worlds)
+            d->SendToAllPluginCallbacks(ON_PLUGIN_CLOSE);
+        for (CMUSHclientDoc* d : worlds)
+            for (auto pit = d->m_PluginList.begin(); pit != d->m_PluginList.end(); ++pit)
+                if (*pit) (*pit)->SaveState();
+    }
+    catch (...)
+    {
+        fprintf(stderr, "[quit] save/close flow raised; proceeding with quit\n");
+    }
+
+    return 1;
+}
+
 // ── hook_create_text_window ───────────────────────────────────────────────
 // Allocates a CTextDocument, fills its fields from the parameters, creates a
 // CWxNotepadFrame that wires all m_fn_* callbacks and registers the doc with
@@ -4064,6 +4116,7 @@ void wx_mfc_install_hooks()
     g_wxhook_new_world          = hook_new_world;
     g_wxhook_open_world_file    = hook_open_world_file;
     g_wxhook_open_default_world = hook_open_default_world;
+    g_wxhook_query_quit_save    = hook_query_quit_save;
     g_wxhook_set_status         = hook_set_status;
     g_wxhook_save_world         = hook_save_world;
     g_wxhook_file_dialog        = hook_file_dialog;

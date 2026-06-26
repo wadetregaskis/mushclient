@@ -91,6 +91,9 @@ extern void* (*g_wxhook_open_world_file)(const char* path);
 // Open the bundled default world (Discworld edition) if no world is open yet.
 // No-op for a normal build (no Contents/Resources/default-world marker).
 extern void  (*g_wxhook_open_default_world)();
+// macOS quit: prompt to save modified worlds + persist plugin layout before the
+// process terminates.  Returns 1 to allow the quit, 0 to cancel it.
+extern int   (*g_wxhook_query_quit_save)();
 
 // (Quick Connect is no longer a hook: the canonical CQuickConnectDlg renders via
 // the MFC-dialog bridge from IDD_QUICK_CONNECT — see dialogs/QuickConnectDlg.cpp.)

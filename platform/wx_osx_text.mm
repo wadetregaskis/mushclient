@@ -126,13 +126,14 @@ bool wxOSXActivateApp(const char* name)
     return false;
 }
 
-// Terminate the application the same way the Dock icon's "Quit" does.  Going
-// through -[NSApplication terminate:] runs the normal Cocoa shutdown
-// (applicationShouldTerminate: → close every window with veto/save handling →
-// end the run loop), which always exits the process — unlike closing wx windows
-// and trusting ExitOnFrameDelete, which on some macOS versions leaves the app
-// running with no windows.  This is what the menu/Cmd-Q Quit routes to so it
-// matches the Dock's (working) Quit.
+// Terminate the application the same way the Dock icon's "Quit" does, by going
+// through -[NSApplication terminate:].  This reliably exits the process — unlike
+// closing wx windows and trusting ExitOnFrameDelete, which on some macOS versions
+// leaves the app running with no windows.  Cocoa calls applicationShouldTerminate:
+// first, which wx forwards to CMUSHWxApp::OSXOnShouldTerminate() — that is where
+// the port runs the save-modified / persist-plugin-layout flow; -[NSApp terminate:]
+// itself does NOT run the MFC document close/save handling.  Both the menu/Cmd-Q
+// Quit and the Dock's Quit funnel through here.
 void wxOSXTerminateApp()
 {
     [NSApp terminate:nil];

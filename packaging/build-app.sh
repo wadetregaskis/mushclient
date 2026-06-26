@@ -156,6 +156,18 @@ if [ "$WITH_DISCWORLD" = 1 ]; then
     nmaps=$(find "$SEED/quow_plugins/maps" -type f 2>/dev/null | wc -l | tr -d ' ')
     note "bundling Discworld edition: $nseed file(s), $(du -sh "$SEED" | cut -f1) (maps: $nmaps file(s))"
     [ "$nmaps" -gt 0 ] || note "  NOTE: no map data staged — the Cow Bar mapper will not run (see fetch-discworld-plugins.sh)"
+
+    # Mark the bundled world to auto-open on launch.  The app opens it when no
+    # other world is already open (hook_open_default_world, called from wx_app).
+    # The marker lives OUTSIDE userdata-seed/ so it is never copied into the
+    # user's writable data dir; a normal (non-Discworld) build has no marker and
+    # the hook is a no-op.
+    if [ -f "$SEED/worlds/Discworld.mcl" ]; then
+        printf 'Discworld.mcl' > "$APP/Contents/Resources/default-world"
+        note "  default world: Discworld.mcl (opens on launch)"
+    else
+        note "  NOTE: no Discworld.mcl staged — the edition will not auto-open a world"
+    fi
 fi
 
 # ════════════════════════════════════════════════════════════════════════════

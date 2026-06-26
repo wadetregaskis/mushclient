@@ -814,6 +814,16 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         m_doc->m_gui_rows        = paneH / lineH;
         m_doc->m_gui_font_height = lineH;
         m_doc->m_gui_font_width  = charW;
+        // The frame's OnSize fires OnPluginWorldOutputResized, but at startup the
+        // pane shrink (the input bar claiming its space) settles the geometry
+        // through HERE only.  Without re-notifying, Quow's plugins keep the
+        // miniwindow positions they computed from the stale start-up geometry and
+        // stay stacked at the top-left until the first manual resize.  Defer it
+        // (CallAfter is auto-cancelled if the frame closes) so the plugins don't
+        // re-enter wx in the middle of the resize.
+        CallAfter([this]() {
+            if (m_doc) m_doc->SendToAllPluginCallbacks(ON_PLUGIN_WORLD_OUTPUT_RESIZED);
+        });
     };
 
     // ── Miniwindow compositing callback ───────────────────────────────────

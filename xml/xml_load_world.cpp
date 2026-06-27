@@ -622,10 +622,12 @@ void CMUSHclientDoc::LoadError (const char * sType, const char * sMessage, UINT 
                       sType,  // type of thing (eg, trigger)
                       ENDLINE);
 
-  if (m_pLinePositions == NULL)
-    ::AfxMessageBox (str);
-  else
-    ColourNote (SCRIPTERRORCONTEXTFORECOLOUR, SCRIPTERRORBACKCOLOUR, str);
+  // Always show the detail inline as a red note, right after the "[WARNING]
+  // <file>" title — instead of an AfxMessageBox when m_pLinePositions == NULL.
+  // On the port that message box during world load is easy to miss, leaving the
+  // user with just the title and "no further information" about which
+  // attribute / node was not used.
+  ColourNote (SCRIPTERRORCONTEXTFORECOLOUR, SCRIPTERRORBACKCOLOUR, str);
 
   iErrorCount++;
   }   // end of CMUSHclientDoc::LoadError

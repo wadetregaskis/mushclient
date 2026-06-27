@@ -474,15 +474,19 @@ int iMaximum = BaseOptionsTable [iItem].iMaximum;
         break;
 
       case 4:
-        if (* (long *) p != Value)
+        // iLength == 4 means a 4-byte member; use int (4 bytes on every target).
+        // NOT long — long is 8 bytes on LP64 (macOS/Linux), which would write
+        // past the member and clobber the next field (and the matching read in
+        // GetBaseOptionItem would read 8 bytes → garbage in the high 32 bits).
+        if (* (int *) p != Value)
           bChanged = true;
-        * (long *) p = Value;
+        * (int *) p = Value;
         break;
 
       case 8:
         if (* (__int64 *) p != Value)
           bChanged = true;
-        * (__int64 *) p = Value; 
+        * (__int64 *) p = Value;
         break;
 
       default:
@@ -658,7 +662,7 @@ double GetBaseOptionItem (const int iItem,
         break;
 
       case 4:
-        Value =  * (long *) p;
+        Value =  * (int *) p;       // 4-byte member — NOT long (8 bytes on LP64)
         break;
 
       case 8:

@@ -231,7 +231,10 @@ void CMUSHclientApp::LoadGlobalsFromDatabase (void)
           true,
           (LPCTSTR) CFormat ("%i", GlobalOptionsTable [i].iDefault));
 
-    * (long *) p = atoi (db_value.c_str());
+    // These are all ints (see the warning above).  Use int, NOT long: long is
+    // 8 bytes on LP64 (macOS/Linux), so *(long*)p would write past the 4-byte
+    // member and clobber the next field in CMUSHclientApp.
+    * (int *) p = atoi (db_value.c_str());
 
     };
 

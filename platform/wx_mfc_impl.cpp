@@ -511,6 +511,7 @@ extern CMUSHclientApp App;
 static void* hook_open_world_file(const char* path);
 static void  hook_save_active_world(wxMDIParentFrame* frame, bool saveAs);
 static void  hook_file_preferences(wxWindow* parent);
+static void  SaveMainWindowGeometry(wxTopLevelWindow* frame);
 
 // ── File drop target ──────────────────────────────────────────────────────
 // Lets the user drag MUSHclient world files (.mcl, .mck, .mcp) directly onto
@@ -695,21 +696,44 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // preserved.  Iconized state is not (would be confusing on relaunch).
     {
         wxConfig cfg(wxT("mushclient"));
-        long w = 1024, h = 768;
+
+        // First-run default size: roughly 200 columns wide and the full usable
+        // screen height, but never larger than the screen's usable area (which
+        // already excludes the menu bar / Dock).  Estimate the monospace char
+        // width so "200 columns" is about right regardless of the later world
+        // font.  Subsequent runs restore the saved size instead.
+        int di = wxDisplay::GetFromWindow(frame);
+        if (di < 0) di = 0;
+        const wxRect scr = wxDisplay(di).GetClientArea();
+        int charPx = 8;
+        {
+            wxScreenDC sdc;
+            sdc.SetFont(wxFont(wxFontInfo(12).Family(wxFONTFAMILY_TELETYPE)));
+            int cw = sdc.GetTextExtent(wxT("M")).GetWidth();
+            if (cw > 0) charPx = cw;
+        }
+        const long defW = std::min<long>(scr.width, (long)(200 * charPx + 80));
+        const long defH = scr.height;
+
+        long w = defW, h = defH;
         long x = -1, y = -1;    // -1 = not saved; keep platform default
         bool maximized = false;
-        cfg.Read(wxT("/geometry/main_w"), &w, 1024L);
-        cfg.Read(wxT("/geometry/main_h"), &h,  768L);
+        cfg.Read(wxT("/geometry/main_w"), &w, defW);
+        cfg.Read(wxT("/geometry/main_h"), &h, defH);
         cfg.Read(wxT("/geometry/main_x"), &x, -1L);
         cfg.Read(wxT("/geometry/main_y"), &y, -1L);
         cfg.Read(wxT("/geometry/main_maximized"), &maximized, false);
-        // Clamp to sanity: don't restore a 1×1 or off-screen window.
-        if (w < 400) w = 1024;
-        if (h < 300) h =  768;
+        // Clamp to sanity + the usable screen: never a tiny or oversized window.
+        if (w < 400)        w = defW;
+        if (h < 300)        h = defH;
+        if (w > scr.width)  w = scr.width;
+        if (h > scr.height) h = scr.height;
         if (x >= 0 && y >= 0)
             frame->SetSize((int)x, (int)y, (int)w, (int)h);
-        else
+        else {
             frame->SetSize((int)w, (int)h);
+            frame->Centre();
+        }
         if (maximized)
             frame->Maximize(true);
     }
@@ -937,18 +961,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             }
         }
         // Save main window geometry so the next session opens at the same size.
-        if (!frame->IsIconized()) {
-            wxConfig cfg(wxT("mushclient"));
-            bool maximized = frame->IsMaximized();
-            cfg.Write(wxT("/geometry/main_maximized"), maximized);
-            if (!maximized) {
-                wxRect r = frame->GetRect();
-                cfg.Write(wxT("/geometry/main_x"), (long)r.x);
-                cfg.Write(wxT("/geometry/main_y"), (long)r.y);
-                cfg.Write(wxT("/geometry/main_w"), (long)r.width);
-                cfg.Write(wxT("/geometry/main_h"), (long)r.height);
-            }
-        }
+        SaveMainWindowGeometry(frame);
         // Stop the socket-poll timer before child frames are destroyed.
         if (pollTimer->IsRunning()) pollTimer->Stop();
         evt.Skip();  // proceed with default close (destroys child frames → the app)
@@ -2205,6 +2218,28 @@ static void hook_open_default_world()
     }
 }
 
+// ── SaveMainWindowGeometry ────────────────────────────────────────────────
+// Persist the MDI parent's size / position / maximized state to wxConfig so the
+// next session opens the same.  Called from the parent's close handler AND from
+// the quit hook, because [NSApp terminate:] does not reliably fire the close
+// handler (so the geometry would otherwise be saved only when you close the
+// window, not when you Quit).  Safe to call with a null frame.
+static void SaveMainWindowGeometry(wxTopLevelWindow* frame)
+{
+    if (!frame || frame->IsIconized()) return;
+    wxConfig cfg(wxT("mushclient"));
+    const bool maximized = frame->IsMaximized();
+    cfg.Write(wxT("/geometry/main_maximized"), maximized);
+    if (!maximized) {
+        const wxRect r = frame->GetRect();
+        cfg.Write(wxT("/geometry/main_x"), (long)r.x);
+        cfg.Write(wxT("/geometry/main_y"), (long)r.y);
+        cfg.Write(wxT("/geometry/main_w"), (long)r.width);
+        cfg.Write(wxT("/geometry/main_h"), (long)r.height);
+    }
+    cfg.Flush();
+}
+
 // ── hook_query_quit_save ──────────────────────────────────────────────────
 // Called from CMUSHWxApp::OSXOnShouldTerminate() — every quit path on macOS
 // (Cmd-Q, the app menu, the Dock's Quit) funnels through Cocoa's
@@ -2214,6 +2249,15 @@ static void hook_open_default_world()
 // quit, 0 to cancel it (the user picked Cancel at a save prompt).
 static int hook_query_quit_save()
 {
+    // Persist the main window geometry on every quit — [NSApp terminate:] does
+    // not reliably fire the MDI parent's close handler, so the size / position
+    // would otherwise be lost on Cmd-Q / app-menu / Dock Quit.
+    {
+        wxWindow* mw = App.m_pMainWnd ? static_cast<wxWindow*>(App.m_pMainWnd->m_hWnd)
+                                      : nullptr;
+        SaveMainWindowGeometry(wxDynamicCast(mw, wxTopLevelWindow));
+    }
+
     if (!App.m_pWorldDocTemplate) return 1;
 
     std::vector<CMUSHclientDoc*> worlds;

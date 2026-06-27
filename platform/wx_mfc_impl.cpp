@@ -1613,6 +1613,10 @@ static void* hook_open_world_file(const char* path)
     wx_register_world_frame(doc, child);  // keep the registry up-to-date
     child->UpdateTitle();
     child->Show();
+    // Open the world maximized so it fills the main window: the user gets the
+    // full window width of output, and plugins lay out against the real (large)
+    // geometry instead of the small default child size.
+    child->Maximize(true);
 
     // All output callbacks (m_fn_line_ready, m_fn_note, m_fn_begin_batch,
     // m_fn_flush, m_fn_status) and initial pane state (font, scrollback,
@@ -2068,6 +2072,7 @@ static void* hook_new_world()
     wx_register_world_frame(doc, child);  // keep the registry up-to-date
     child->UpdateTitle();   // set title from m_mush_name
     child->Show();
+    child->Maximize(true);  // fill the main window (see hook_open_world_file)
 
     // All output callbacks (m_fn_line_ready, m_fn_note, m_fn_begin_batch,
     // m_fn_flush, m_fn_status) and initial pane state (font, scrollback,

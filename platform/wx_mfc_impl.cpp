@@ -699,20 +699,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
 
         // First-run default size: roughly 200 columns wide and the full usable
         // screen height, but never larger than the screen's usable area (which
-        // already excludes the menu bar / Dock).  Estimate the monospace char
-        // width so "200 columns" is about right regardless of the later world
-        // font.  Subsequent runs restore the saved size instead.
+        // already excludes the menu bar / Dock).  ~1280px is about 200 columns of
+        // a typical small monospace font; a fixed value because measuring the font
+        // at app-init proved unreliable.  Subsequent runs restore the saved size.
         int di = wxDisplay::GetFromWindow(frame);
         if (di < 0) di = 0;
         const wxRect scr = wxDisplay(di).GetClientArea();
-        int charPx = 8;
-        {
-            wxScreenDC sdc;
-            sdc.SetFont(wxFont(wxFontInfo(12).Family(wxFONTFAMILY_TELETYPE)));
-            int cw = sdc.GetTextExtent(wxT("M")).GetWidth();
-            if (cw > 0) charPx = cw;
-        }
-        const long defW = std::min<long>(scr.width, (long)(200 * charPx + 80));
+        const long defW = std::min<long>(scr.width, 1280);
         const long defH = scr.height;
 
         long w = defW, h = defH;
@@ -1612,11 +1605,14 @@ static void* hook_open_world_file(const char* path)
     CWorldChildFrame* child = new CWorldChildFrame(mdiParent, doc);
     wx_register_world_frame(doc, child);  // keep the registry up-to-date
     child->UpdateTitle();
+    // Make the world fill the main window.  On macOS the MDI child becomes the
+    // single on-screen window, so size it to the main window's whole frame (in
+    // screen coords) — not Maximize() (which zooms to the full screen, defeating
+    // the ~200-column width) and not the client size at (0,0) (which would move
+    // the window to the screen corner and lose the title-bar height).
+    const wxRect want = mdiParent->GetScreenRect();
     child->Show();
-    // Open the world maximized so it fills the main window: the user gets the
-    // full window width of output, and plugins lay out against the real (large)
-    // geometry instead of the small default child size.
-    child->Maximize(true);
+    if (want.width > 100 && want.height > 100) child->SetSize(want);
 
     // All output callbacks (m_fn_line_ready, m_fn_note, m_fn_begin_batch,
     // m_fn_flush, m_fn_status) and initial pane state (font, scrollback,
@@ -2071,8 +2067,11 @@ static void* hook_new_world()
     CWorldChildFrame* child = new CWorldChildFrame(mdiParent, doc);
     wx_register_world_frame(doc, child);  // keep the registry up-to-date
     child->UpdateTitle();   // set title from m_mush_name
-    child->Show();
-    child->Maximize(true);  // fill the main window (see hook_open_world_file)
+    {   // fill the main window (see hook_open_world_file)
+        const wxRect want = mdiParent->GetScreenRect();
+        child->Show();
+        if (want.width > 100 && want.height > 100) child->SetSize(want);
+    }
 
     // All output callbacks (m_fn_line_ready, m_fn_note, m_fn_begin_batch,
     // m_fn_flush, m_fn_status) and initial pane state (font, scrollback,
@@ -2232,11 +2231,25 @@ static void hook_open_default_world()
 static void SaveMainWindowGeometry(wxTopLevelWindow* frame)
 {
     if (!frame || frame->IsIconized()) return;
+    // On macOS the window the user actually sees and resizes is the active MDI
+    // *child* (it fills the frame and becomes the single on-screen window); the
+    // MDI parent does NOT track the child's size.  So persist the active child's
+    // geometry when there is one — otherwise a resize is silently lost and the
+    // next launch reverts to the default size.  (On real-MDI platforms the child
+    // is not a top-level window, so we fall back to the parent.)
+    wxTopLevelWindow* geomWin = frame;
+    if (wxMDIParentFrame* mdi = wxDynamicCast(frame, wxMDIParentFrame)) {
+        if (wxMDIChildFrame* active = mdi->GetActiveChild()) {
+            if (wxTopLevelWindow* tlw = wxDynamicCast(active, wxTopLevelWindow))
+                if (!tlw->IsIconized())
+                    geomWin = tlw;
+        }
+    }
     wxConfig cfg(wxT("mushclient"));
-    const bool maximized = frame->IsMaximized();
+    const bool maximized = geomWin->IsMaximized();
     cfg.Write(wxT("/geometry/main_maximized"), maximized);
     if (!maximized) {
-        const wxRect r = frame->GetRect();
+        const wxRect r = geomWin->GetRect();
         cfg.Write(wxT("/geometry/main_x"), (long)r.x);
         cfg.Write(wxT("/geometry/main_y"), (long)r.y);
         cfg.Write(wxT("/geometry/main_w"), (long)r.width);

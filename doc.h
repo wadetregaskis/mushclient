@@ -1547,6 +1547,10 @@ public:
   // world.Repaint(): force a repaint of the output pane.
   std::function<void()>  m_fn_repaint;
 
+  // world.TextRectangle(): a plugin changed the reserved text area, so the
+  // engine wrap column + NAWS must be recomputed for the new visible width.
+  std::function<void()>  m_fn_text_rect_changed;
+
   // world.MoveWorldWindow(l,t,w,h): reposition/resize the MDI child frame.
   // Ignored on non-Windows if not wired; the Which parameter in MoveWorldWindowX
   // is always 1 in practice (MUSHclient only opens one output window per world).

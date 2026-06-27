@@ -2184,6 +2184,10 @@ public:
     // Called by world.Repaint() to force a repaint of the output pane.
     std::function<void()> m_fn_repaint;
 
+    // Called by world.TextRectangle() when a plugin changes the reserved text
+    // area, so the wrap column + NAWS can be recomputed for the new width.
+    std::function<void()> m_fn_text_rect_changed;
+
     // Called by world.MoveWorldWindow(l,t,w,h) to reposition the MDI child frame.
     std::function<void(long, long, long, long)> m_fn_move_world_window;
 

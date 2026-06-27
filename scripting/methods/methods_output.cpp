@@ -729,7 +729,15 @@ long CMUSHclientDoc::TextRectangle(long Left, long Top, long Right, long Bottom,
   m_TextRectangleBorderColour =       BorderColour;        
   m_TextRectangleBorderWidth =        BorderWidth;         
   m_TextRectangleOutsideFillColour =  OutsideFillColour;
-  m_TextRectangleOutsideFillStyle =   OutsideFillStyle; 
+  m_TextRectangleOutsideFillStyle =   OutsideFillStyle;
+
+  // Port: the reserved text area just changed, so the GUI must recompute the
+  // engine wrap column + re-send NAWS for the new visible width — otherwise the
+  // MUD keeps wrapping to the full window width and the client re-wraps long
+  // lines.  No-op on builds that don't wire it (mushcli / Windows).
+  if (m_fn_text_rect_changed)
+    m_fn_text_rect_changed ();
+
   bool bFixedWindowWidth = false;
 
   // refresh views  - get scroll bars right

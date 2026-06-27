@@ -100,6 +100,28 @@ static std::string GetHistoryFilePath(const std::string& worldName)
     return dir + "/history_" + safe + ".txt";
 }
 
+// The MUD should wrap to the VISIBLE text width: the full output width minus any
+// area a plugin reserved via world.TextRectangle (e.g. Quow's docked
+// miniwindows).  Without this the MUD wraps to the full width and the client
+// re-wraps long lines unexpectedly.  m_gui_cols / GetInfo(281) stays the FULL
+// width — plugins compute their own margins from it; only the engine wrap column
+// and NAWS use this reduced count.
+static int EffectiveTextCols(CMUSHclientDoc* doc, int paneW, int charW)
+{
+    if (charW <= 0) return 1;
+    int textW = paneW;
+    if (doc)
+    {
+        const CRect& tr = doc->m_TextRectangle;
+        if (!(tr.left == 0 && tr.top == 0 && tr.right == 0 && tr.bottom == 0))
+        {
+            int rw = (int) (tr.right - tr.left);
+            if (rw > 0 && rw < paneW) textW = rw;
+        }
+    }
+    return std::max(1, textW / charW);
+}
+
 // ── Event table ───────────────────────────────────────────────────────────
 wxBEGIN_EVENT_TABLE(CWorldChildFrame, wxMDIChildFrame)
     EVT_TEXT_ENTER(ID_INPUT,              CWorldChildFrame::OnInputEnter)
@@ -774,7 +796,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (paneW <= 0 || paneH <= 0) return;
             int cols = paneW / charW;
             int rows = paneH / lineH;
-            m_doc->m_nWrapColumn    = (unsigned short)std::max(1, std::min(cols, 65535));
+            int textCols = EffectiveTextCols(m_doc, paneW, charW);
+            m_doc->m_nWrapColumn    = (unsigned short)std::max(1, std::min(textCols, 65535));
             m_doc->m_gui_cols       = cols;
             m_doc->m_gui_rows       = rows;
             m_doc->m_gui_font_height = lineH;
@@ -785,7 +808,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             m_doc->m_FontWidth       = charW;
             m_doc->m_InputFontHeight = lineH;
             m_doc->m_InputFontWidth  = charW;
-            m_doc->SendNAWS(cols, rows);
+            m_doc->SendNAWS(textCols, rows);
             // Persist face name + LOGFONT height so font zoom survives save/reload.
             const wxFont& zf = m_output->GetCurrentFont();
             if (zf.IsOk()) {
@@ -843,6 +866,27 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             return false;
         l = tr.left; t = tr.top; r = tr.right; b = tr.bottom;
         return true;
+    };
+
+    // world.TextRectangle(): a plugin changed the reserved text area — recompute
+    // the engine wrap column + re-send NAWS for the new visible width, so the MUD
+    // wraps to the same width the client shows (no surprise client-side
+    // re-wrapping).  Plugins set the rectangle DURING OnPluginWorldOutputResized,
+    // i.e. AFTER the resize handler already sent NAWS for the full width, so this
+    // re-sends it; gated on an actual change to avoid NAWS spam.
+    m_doc->m_fn_text_rect_changed = [this]() {
+        if (!m_doc || !m_output) return;
+        int charW = m_output->CharWidth();
+        int lineH = m_output->LineHeight();
+        if (charW <= 0 || lineH <= 0) return;
+        int paneW, paneH;
+        m_output->GetClientSize(&paneW, &paneH);
+        if (paneW <= 0 || paneH <= 0) return;
+        int textCols = EffectiveTextCols(m_doc, paneW, charW);
+        unsigned short newWrap = (unsigned short)std::max(1, std::min(textCols, 65535));
+        if (newWrap == m_doc->m_nWrapColumn) return;   // unchanged → no NAWS spam
+        m_doc->m_nWrapColumn = newWrap;
+        m_doc->SendNAWS(textCols, paneH / lineH);
     };
 
     m_output->m_fn_composite_miniwindows =
@@ -1740,9 +1784,9 @@ void CWorldChildFrame::TriggerNAWS()
         int paneW, paneH;
         m_output->GetClientSize(&paneW, &paneH);
         if (paneW <= 0 || paneH <= 0) return;
-        int cols = paneW / charW;
-        m_doc->m_nWrapColumn = (unsigned short)std::max(1, std::min(cols, 65535));
-        m_doc->SendNAWS(cols, paneH / lineH);
+        int textCols = EffectiveTextCols(m_doc, paneW, charW);
+        m_doc->m_nWrapColumn = (unsigned short)std::max(1, std::min(textCols, 65535));
+        m_doc->SendNAWS(textCols, paneH / lineH);
     });
 }
 
@@ -3875,9 +3919,11 @@ void CWorldChildFrame::OnSize(wxSizeEvent& evt)
 
         int cols = paneW / charW;
         int rows = paneH / lineH;
-        // Keep m_nWrapColumn in sync so the engine wraps output at the correct
-        // column width.  Matches what cli_main.cpp does on SIGWINCH.
-        m_doc->m_nWrapColumn = (unsigned short)std::max(1, std::min(cols, 65535));
+        int textCols = EffectiveTextCols(m_doc, paneW, charW);
+        // Keep m_nWrapColumn in sync so the engine wraps output at the visible
+        // text width (full pane minus any plugin TextRectangle).  Matches what
+        // cli_main.cpp does on SIGWINCH.
+        m_doc->m_nWrapColumn = (unsigned short)std::max(1, std::min(textCols, 65535));
         // Keep the GUI geometry fields current too — GetInfo(280/281) report the
         // output pane's pixel height/width from these (rows*lineH, cols*charW), and
         // plugins (e.g. Quow's screen margins) compute their bottom/right margins
@@ -3893,7 +3939,7 @@ void CWorldChildFrame::OnSize(wxSizeEvent& evt)
         m_doc->m_FontWidth       = charW;
         m_doc->m_InputFontHeight = lineH;
         m_doc->m_InputFontWidth  = charW;
-        m_doc->SendNAWS(cols, rows);
+        m_doc->SendNAWS(textCols, rows);
         // Fire OnPluginWorldOutputResized — mirrors mushview.cpp CMUSHView::OnSize().
         m_doc->SendToAllPluginCallbacks(ON_PLUGIN_WORLD_OUTPUT_RESIZED);
     });

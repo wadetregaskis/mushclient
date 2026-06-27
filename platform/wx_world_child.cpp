@@ -3618,6 +3618,36 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         m_doc->SendToAllPluginCallbacks(ON_PLUGIN_TICK);
     }
 
+    // ── Plugin-layout settle re-notify ───────────────────────────────────────
+    // Some plugins (e.g. Quow's Cow Bar) only lay out their docked miniwindows
+    // on an ON_PLUGIN_WORLD_OUTPUT_RESIZED that arrives *after* they finish
+    // initialising — which for them is after the world connects, or a ~4 s
+    // fallback timer (they guard layout on a "bPreInstalled" flag set then).
+    // Every resize notification we send fires during the initial open (0–1 s),
+    // i.e. BEFORE that, so without this the windows stay stacked at the top-left
+    // until the first manual resize.  Re-send the notification at ~2 s and ~5 s
+    // after open (after both the connect and the fallback) so the layout settles
+    // by itself — exactly what a manual resize would trigger.
+    if (m_settleResizeState < 2) {
+        m_settleResizeAccum += 100;
+        if (m_settleResizeAccum >= (m_settleResizeState == 0 ? 2000 : 5000)) {
+            m_settleResizeState++;
+            if (m_output) {
+                int charW = m_output->CharWidth();
+                int lineH = m_output->LineHeight();
+                int paneW = 0, paneH = 0;
+                m_output->GetClientSize(&paneW, &paneH);
+                if (charW > 0 && lineH > 0 && paneW > 0 && paneH > 0) {
+                    m_doc->m_gui_cols        = paneW / charW;
+                    m_doc->m_gui_rows        = paneH / lineH;
+                    m_doc->m_gui_font_width  = charW;
+                    m_doc->m_gui_font_height = lineH;
+                }
+            }
+            m_doc->SendToAllPluginCallbacks(ON_PLUGIN_WORLD_OUTPUT_RESIZED);
+        }
+    }
+
     // Flush any output produced by the timer callbacks.
     m_doc->UpdateAllViews(nullptr);
 

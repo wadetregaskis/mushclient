@@ -167,6 +167,8 @@ private:
     int  m_pluginTickAccum     = 0;    // ms accumulated toward next ON_PLUGIN_TICK (~40 ms)
     int  m_speedWalkAccum      = 0;    // ms accumulated toward next queued-command drain
     int  m_scriptCheckAccum    = 0;    // ms accumulated toward next script-file mtime poll (2 s)
+    int  m_settleResizeAccum   = 0;    // ms since open, for the plugin-layout settle re-notify
+    int  m_settleResizeState   = 0;    // 0→fire at 2 s, 1→fire at 5 s, 2→done (see OnWorldTimer)
 
     // ── Session log ────────────────────────────────────────────────────────
     // Log is written as plain UTF-8 text to a user-chosen file.  Logging starts

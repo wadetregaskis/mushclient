@@ -310,6 +310,7 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     {
         std::string key = std::string(title.ToUTF8());
         for (char& c : key) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        m_registryKey = key;   // remember the insert key — Save renames the frame
         s_registry[key] = this;
     }
 
@@ -450,11 +451,11 @@ void CWxNotepadFrame::OnClose(wxCloseEvent& evt)
         // Unregister from the doc template and static registry.
         if (App.m_pNormalDocTemplate)
             App.m_pNormalDocTemplate->UnregisterDoc(m_pDoc);
-        {
-            std::string key = std::string(GetTitle().ToUTF8());
-            for (char& c : key) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
-            s_registry.erase(key);
-        }
+        // Erase by the key we inserted with, NOT GetTitle(): the Save path
+        // renames the frame (SetTitle to the saved file's basename), so the
+        // current title no longer matches the registry key — using it would
+        // leave a stale entry pointing at this freed frame (use-after-free).
+        s_registry.erase(m_registryKey);
 
         // Clear all callbacks to prevent use-after-free if anything tries to
         // call them during the delete.

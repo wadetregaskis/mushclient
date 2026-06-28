@@ -55,6 +55,8 @@ private:
     CTextDocument* m_pDoc;
     wxTextCtrl*    m_ctrl;
     bool           m_forceClose; // set by m_fn_close_window to skip SaveModified
+    std::string    m_registryKey; // stable s_registry key (the SAVE path renames the
+                                  // frame, so erase must not use the current title)
 
     // Apply font/colour fields from m_pDoc to m_ctrl.
     void ApplyFont();

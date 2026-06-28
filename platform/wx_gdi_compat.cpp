@@ -186,6 +186,29 @@ HBITMAP CreateDIBSection(HDC /*hdc*/, const BITMAPINFO* pbmi, UINT /*iUsage*/,
     return handle;
 }
 
+// DeleteObject(HGDIOBJ) — free a CreateDIBSection handle. The global Win32
+// DeleteObject is called by miniwindow.cpp on raw CreateDIBSection HBITMAPs
+// (BlendImage/Filter/MergeImageAlpha/Gradient temporaries). Without a real
+// implementation each call leaked the DIBSectionData + pixel buffer + wxBitmap
+// and left a stale g_dibSections entry. (CBitmap objects free themselves via
+// the CBitmap::DeleteObject member, so a non-DIBSection handle is a no-op here.)
+BOOL DeleteObject(HGDIOBJ hObject) {
+    if (!hObject) return FALSE;
+    auto it = g_dibSections.find(reinterpret_cast<HBITMAP>(hObject));
+    if (it == g_dibSections.end())
+        return TRUE;             // not a DIBSection handle — nothing tracked to free
+    // Drop any HDC→selected-DIB tracking that still points at this handle so a
+    // later GetDIBForHDC can't dereference the freed DIBSectionData. (The DC's own
+    // wxMemoryDC keeps a ref-counted copy of the bitmap, so this is just bookkeeping.)
+    for (auto s = g_hdcToSelectedDib.begin(); s != g_hdcToSelectedDib.end(); ) {
+        if (s->second == it->first) s = g_hdcToSelectedDib.erase(s);
+        else ++s;
+    }
+    delete it->second;           // owns its pixel buffer + working wxBitmap
+    g_dibSections.erase(it);
+    return TRUE;
+}
+
 // SelectObject(HDC, HGDIOBJ) is defined near the END of this file, after the
 // CDCImpl struct is fully declared — it needs CDCImpl's members (impl->dc).
 // See the definition following WxBitmapFromCBitmap().

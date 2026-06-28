@@ -4277,7 +4277,14 @@ inline HGDIOBJ SelectObject(HDC, HGDIOBJ) { return nullptr; }
 // and GradientFill below.
 HGDIOBJ SelectObject(HDC hdc, HGDIOBJ hObject);
 #endif
+#ifndef MUSHCLIENT_FULL_BUILD
 inline BOOL DeleteObject(HGDIOBJ) { return FALSE; }
+#else
+// Real implementation in wx_gdi_compat.cpp — frees a CreateDIBSection handle
+// (DIBSectionData + pixel buffer + wxBitmap) and erases it from g_dibSections.
+// miniwindow.cpp calls this on raw CreateDIBSection HBITMAPs; a no-op leaked them.
+BOOL DeleteObject(HGDIOBJ hObject);
+#endif
 inline BOOL BitBlt(HDC,int,int,int,int,HDC,int,int,DWORD) { return FALSE; }
 inline BOOL Rectangle(HDC,int,int,int,int) { return FALSE; }
 inline BOOL MoveToEx(HDC,int,int,POINT*) { return FALSE; }

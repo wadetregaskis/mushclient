@@ -3190,7 +3190,7 @@ void CMUSHclientDoc::OnScriptFileChanged(bool /*bForce*/)
 //   !m_bDisconnectOK AND m_iConnectPhase == eConnectNotConnected
 void CMUSHclientDoc::ConnectSocket()
 {
-    if (m_mush_name.IsEmpty() || m_port == 0) return;
+    if (m_server.IsEmpty() || m_port == 0) return;
     if (m_iConnectPhase != eConnectNotConnected) return;
 
     // ── Tear down existing socket ─────────────────────────────────────────
@@ -3220,14 +3220,14 @@ void CMUSHclientDoc::ConnectSocket()
         hints.ai_socktype = SOCK_STREAM;
         char port_str[16];
         snprintf(port_str, sizeof port_str, "%u", (unsigned)m_port);
-        if (::getaddrinfo((const char*)m_mush_name, port_str, &hints, &res) == 0 && res) {
+        if (::getaddrinfo((const char*)m_server, port_str, &hints, &res) == 0 && res) {
             m_sockAddr = *reinterpret_cast<struct sockaddr_in*>(res->ai_addr);
             ::freeaddrinfo(res);
         }
     }
 
     // ── Connect (via proxy or direct) ─────────────────────────────────────
-    const char*  connect_host = (const char*)m_mush_name;
+    const char*  connect_host = (const char*)m_server;
     unsigned int connect_port = m_port;
     if (m_iSocksProcessing != eProxyServerNone &&
         !m_strProxyServerName.IsEmpty() &&

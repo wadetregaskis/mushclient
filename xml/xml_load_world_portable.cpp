@@ -581,9 +581,10 @@ static void apply_alpha_option(CMUSHclientDoc& doc, const char* opt, const CStri
     // Font name options
     if      (!strcmp(opt, "output_font_name")) doc.m_font_name              = val;
     else if (!strcmp(opt, "input_font_name"))  doc.m_input_font_name        = val;
-    // Note: "site" → m_mush_name is intentional for mushcli (cli_main uses m_mush_name as host)
-    else if (!strcmp(opt, "site"))             doc.m_mush_name              = val;
-    else if (!strcmp(opt, "name"))             {}  // world display name — not needed by CLI
+    // site = host (canonical, matching the saver + Windows AlphaOptionsTable);
+    // name = world display name. The connect path keys on m_server.
+    else if (!strcmp(opt, "site"))             doc.m_server                 = val;
+    else if (!strcmp(opt, "name"))             doc.m_mush_name              = val;
     else if (!strcmp(opt, "player"))           doc.m_name                   = val;
     else if (!strcmp(opt, "script_filename"))  doc.m_strScriptFilename      = val;
     else if (!strcmp(opt, "script_language"))  doc.m_strLanguage            = val;

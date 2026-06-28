@@ -189,22 +189,27 @@ int main(int argc, char* argv[])
         }
         // World file may supply host/port; command-line args override
         if (host)
-            doc.m_mush_name = CString(host);
+            doc.m_server = CString(host);
         if (port)
             doc.m_port = (unsigned short)port;
     } else {
-        if (host) doc.m_mush_name = CString(host);
+        if (host) doc.m_server = CString(host);
         if (port) doc.m_port = (unsigned short)port;
     }
 
-    if (doc.m_mush_name.IsEmpty() || doc.m_port == 0) {
+    if (doc.m_server.IsEmpty() || doc.m_port == 0) {
         fprintf(stderr, "Error: no host/port specified (use <host> <port> or "
                         "-w <world.mcl> with site/port set)\n");
         fprintf(stderr, "Usage: %s [-d] [-w <world.mcl>] [<host> <port>]\n", argv[0]);
         return 1;
     }
 
-    host = (const char*)doc.m_mush_name;
+    // m_server is the host (matches the world saver + Windows); m_mush_name is the
+    // display name — fall back to the host when the world file didn't set one.
+    if (doc.m_mush_name.IsEmpty())
+        doc.m_mush_name = doc.m_server;
+
+    host = (const char*)doc.m_server;
     port = doc.m_port;
 
     // Seed m_nWrapColumn with the current terminal width

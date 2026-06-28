@@ -297,13 +297,15 @@ TEST(WorldLoad, WorldSettings)
     const char* xml = R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
-<world site="mud.example.com" port="4000">
+<world name="My MUD" site="mud.example.com" port="4000">
 </world>
 </muclient>)";
 
     CMUSHclientDoc doc;
     EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
-    EXPECT_STREQ("mud.example.com", (const char*)doc.m_mush_name);
+    // site = host (m_server, canonical); name = world display name (m_mush_name).
+    EXPECT_STREQ("mud.example.com", (const char*)doc.m_server);
+    EXPECT_STREQ("My MUD",          (const char*)doc.m_mush_name);
     EXPECT_EQ(4000, (int)doc.m_port);
 }
 

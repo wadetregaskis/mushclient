@@ -339,9 +339,14 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   ID mid = rb_intern (szProcedure);
   if (!rb_respond_to (m_rubyEngine->obj, mid)) { dispid = DISPID_UNKNOWN; return true; }
 
-  std::vector<VALUE> av;
-  for (double d : nparams)         av.push_back (DBL2NUM (d));
-  for (const string & s : sparams) av.push_back (rb_str_new_cstr (s.c_str ()));
+  // Root the args in a Ruby Array held by a C-stack local — MRI's conservative
+  // GC scans the machine stack, so this keeps every freshly-allocated arg (the
+  // Strings, the wildcard Array, the Hash) reachable through construction and the
+  // call. A C-heap std::vector<VALUE> would be invisible to the GC, so an
+  // allocation later in the loop could collect an earlier arg → use-after-collect.
+  VALUE av = rb_ary_new ();
+  for (double d : nparams)         rb_ary_push (av, DBL2NUM (d));
+  for (const string & s : sparams) rb_ary_push (av, rb_str_new_cstr (s.c_str ()));
   if (regexp)                                   // wildcards as an Array [whole, $1, ...]
     {
     int ncapt = 0;
@@ -349,18 +354,18 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
     VALUE wc = rb_ary_new ();
     for (int i = 0; i <= ncapt; i++)
       { string w (regexp->GetWildcard (i)); rb_ary_push (wc, rb_str_new_cstr (w.c_str ())); }
-    av.push_back (wc);
+    rb_ary_push (av, wc);
     }
   if (table)                                    // as a Hash
     {
     VALUE h = rb_hash_new ();
     for (const auto & kv : *table)
       rb_hash_aset (h, rb_str_new_cstr (kv.first.c_str ()), rb_str_new_cstr (kv.second.c_str ()));
-    av.push_back (h);
+    rb_ary_push (av, h);
     }
 
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = iReason;
-  CallCtx ctx { m_rubyEngine->obj, mid, (int) av.size (), av.empty () ? nullptr : av.data () };
+  CallCtx ctx { m_rubyEngine->obj, mid, RARRAY_LENINT (av), RARRAY_CONST_PTR (av) };
   int state = 0;
   VALUE r = rb_protect (do_funcall, (VALUE) &ctx, &state);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = eUnknownActionSource;

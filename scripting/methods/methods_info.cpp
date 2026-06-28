@@ -806,7 +806,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
           {
           long selStart = 0, selEnd = 0;
           m_fn_get_command_selection (selStart, selEnd);
-          SetUpVariantLong (vaResult, selEnd);
+          SetUpVariantLong (vaResult, (selEnd <= selStart) ? 0 : selEnd);  // 0 == no text selected, matching Windows
           }
 #endif
       }

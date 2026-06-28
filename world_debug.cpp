@@ -987,8 +987,10 @@ VARIANT CMUSHclientDoc::Debug(LPCTSTR Command)
     
     // work out operating system
 
-    CString sVersion = TFormat ("Unknown (Platform %ld, Major %ld, Minor %ld)",
-                               os_version.dwPlatformId, os_version.dwMajorVersion, os_version.dwMinorVersion);
+    CString sVersion = TFormat ("Unknown (Platform %u, Major %u, Minor %u)",
+                               (unsigned) os_version.dwPlatformId,
+                               (unsigned) os_version.dwMajorVersion,
+                               (unsigned) os_version.dwMinorVersion);
 
     if (os_version.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)  // Windows 95-style versions
       {

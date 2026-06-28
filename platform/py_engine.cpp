@@ -435,11 +435,11 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
     { Py_XDECREF (fn); dispid = DISPID_UNKNOWN; return true; }
 
   for (double d : nparams)
-    { PyObject* o = PyFloat_FromDouble (d); PyList_Append (argl, o); Py_DECREF (o); }
+    { PyObject* o = PyFloat_FromDouble (d); if (o) { PyList_Append (argl, o); Py_DECREF (o); } }
 
   for (const string & s : sparams)
     { PyObject* o = PyUnicode_DecodeUTF8 (s.data (), s.size (), "surrogateescape");
-      PyList_Append (argl, o); Py_DECREF (o); }
+      if (o) { PyList_Append (argl, o); Py_DECREF (o); } }   // o may be NULL on OOM; Py_DECREF(NULL) crashes
 
   if (regexp)
     {

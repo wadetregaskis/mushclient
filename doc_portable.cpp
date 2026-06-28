@@ -1372,7 +1372,7 @@ void CMUSHclientDoc::OnConnect(int nErrorCode)
         if (m_iSocksProcessing == eProxyServerSocks4) {
             // SOCKS4: send version + CONNECT + port + address + username + NUL
             m_iConnectPhase = eConnectAwaitingProxyResponse3;
-            unsigned long  address = m_sockAddr.sin_addr.s_addr;
+            uint32_t       address = m_sockAddr.sin_addr.s_addr;  // exactly 4 bytes (LP64: long is 8)
             unsigned short port    = m_sockAddr.sin_port;
             unsigned char  pkt[3 + 255 + sizeof address + sizeof port] = { 4, 1 };
             int len = 2;
@@ -1531,7 +1531,7 @@ bool CMUSHclientDoc::CheckExpectedProxyResponse(char cExpected, char cReceived)
 void CMUSHclientDoc::SendProxyConnectSequence()
 {
     // SOCKS5 CONNECT: tell the proxy server to connect to the MUD
-    unsigned long  address = m_sockAddr.sin_addr.s_addr;
+    uint32_t       address = m_sockAddr.sin_addr.s_addr;  // exactly 4 bytes (LP64: long is 8)
     unsigned short port    = m_sockAddr.sin_port;
     unsigned char  pkt[4 + sizeof address + sizeof port] = { 5, 1, 0, 1 };
     int len = 4;

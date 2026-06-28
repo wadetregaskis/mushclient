@@ -1395,8 +1395,12 @@ bool CDC::BitBlt(int x, int y, int nWidth, int nHeight,
     // If the SOURCE has a DIBSection selected, sync raw buffer→wxBitmap first
     // so the caller's pixel manipulations (written to pBits) are visible in the DC.
     if (pSrcDC && pSrcDC->m_hDC) {
-        if (DIBSectionData* dib = GetDIBForHDC(pSrcDC->m_hDC))
+        if (DIBSectionData* dib = GetDIBForHDC(pSrcDC->m_hDC)) {
             dib->SyncPixelsToBitmap();
+            // SyncPixelsToBitmap allocates a NEW wxBitmap; re-select it into the
+            // source DC, else the Blit below reads the stale (pre-edit) bitmap.
+            if (dib->bmp) src->dc.SelectObject(*dib->bmp);
+        }
     }
 
     wxRasterOperationMode fn = MapRop(dwRop);
@@ -1422,8 +1426,12 @@ bool CDC::StretchBlt(int x, int y, int nWidth, int nHeight,
 
     // Same DIBSection sync as BitBlt.
     if (pSrcDC && pSrcDC->m_hDC) {
-        if (DIBSectionData* dib = GetDIBForHDC(pSrcDC->m_hDC))
+        if (DIBSectionData* dib = GetDIBForHDC(pSrcDC->m_hDC)) {
             dib->SyncPixelsToBitmap();
+            // SyncPixelsToBitmap allocates a NEW wxBitmap; re-select it into the
+            // source DC, else the Blit below reads the stale (pre-edit) bitmap.
+            if (dib->bmp) src->dc.SelectObject(*dib->bmp);
+        }
     }
 
     wxRasterOperationMode fn = MapRop(dwRop);

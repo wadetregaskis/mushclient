@@ -3350,10 +3350,11 @@ public:
 
     // UpdateDialogControls — updates toolbar/menu UI state (no-op stub)
     void UpdateDialogControls(CCmdTarget*, BOOL = TRUE) {}
-    // Radio / check button helpers
-    void CheckRadioButton(int, int, int) {}
-    void CheckDlgButton(int, UINT) {}
-    BOOL IsDlgButtonChecked(int) const { return FALSE; }
+    // Radio / check button helpers — defined out-of-line below (after CButton),
+    // since they route through CButton::Get/SetCheck on GetDlgItem's result.
+    void CheckRadioButton(int first, int last, int check);
+    void CheckDlgButton(int id, UINT check);
+    BOOL IsDlgButtonChecked(int id) const;
     // Map dialog coords to screen pixels
     void MapDialogRect(LPRECT) const {}
     // SendDlgItemMessage
@@ -3745,6 +3746,22 @@ inline void DDX_Check(CDataExchange* pDX, int id, int& value) {
     CButton* b = (CButton*) w;
     if (pDX->m_bSaveAndValidate) value = b->GetCheck();
     else                         b->SetCheck(value);
+}
+
+// CDialog radio/check helpers — route through CButton::Get/SetCheck on the
+// GetDlgItem result (same cast contract DDX_Check relies on). Previously no-op
+// stubs, which left e.g. the Timer dialog's At/Every fields stuck and the
+// custom-icon radio unselectable after Browse.
+inline void CDialog::CheckRadioButton(int first, int last, int check) {
+    for (int id = first; id <= last; ++id)
+        if (CWnd* w = GetDlgItem(id)) ((CButton*) w)->SetCheck(id == check ? 1 : 0);
+}
+inline void CDialog::CheckDlgButton(int id, UINT check) {
+    if (CWnd* w = GetDlgItem(id)) ((CButton*) w)->SetCheck((int) check);
+}
+inline BOOL CDialog::IsDlgButtonChecked(int id) const {
+    CWnd* w = GetDlgItem(id);
+    return (w && ((CButton*) w)->GetCheck()) ? TRUE : FALSE;
 }
 
 // CListCtrl wraps a report-mode wxListCtrl (the entity-manager object list).

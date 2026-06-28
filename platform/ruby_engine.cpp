@@ -377,7 +377,10 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
 
   if (state) { dispid = DISPID_UNKNOWN; report_error (m_pDoc, szType, szProcedure); return true; }
   nInvocationCount++;
-  if (result) *result = RTEST (r);              // truthy result keeps processing (Lua parity)
+  // nil (a callback with no meaningful return — Ruby yields the last expression,
+  // usually nil) keeps processing, like Lua/Python/Perl/JS; only an explicit false
+  // cancels. (RTEST(nil)==RTEST(false)==false, so nil must be special-cased.)
+  if (result) *result = (r == Qnil) ? true : RTEST (r);
   return false;
   }
 

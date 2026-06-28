@@ -221,6 +221,9 @@ int ma_audio_status(int buffer)
 {
     std::lock_guard<std::mutex> lk(g_mutex);
     if (buffer < 1 || buffer > MA_MAX_SOUND_BUFFERS) return -2;
+    // No usable audio device -> -3, matching Windows' "no DirectSound object".
+    // ensureEngine() is the same device-open the play paths use (and takes no lock).
+    if (!ensureEngine()) return -3;
     int i = buffer - 1;
     if (!g_loaded[i]) return -2;                          // free
     if (ma_sound_is_playing(&g_sounds[i]) != MA_TRUE) return 0;  // not playing

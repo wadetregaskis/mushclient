@@ -195,6 +195,8 @@ XS(mc_perl_invoke)
     if (err.empty())   // push results onto the Perl stack while rets is alive
       {
       count = (int) rets.size();
+      SPAGAIN;   // a world method may have re-entered the shared g_perl stack
+                 // (plugin callbacks) and reallocated it — re-derive SP before EXTEND
       if (count > items) EXTEND(SP, count - items);
       for (int i = 0; i < count; i++) ST(i) = sv_2mortal(rets[(size_t) i]);
       }

@@ -955,8 +955,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         }
         // Save main window geometry so the next session opens at the same size.
         SaveMainWindowGeometry(frame);
-        // Stop the socket-poll timer before child frames are destroyed.
-        if (pollTimer->IsRunning()) pollTimer->Stop();
+        // Stop and free the socket-poll timer before child frames are destroyed
+        // (wxTimer is not a wxWindow, so the frame won't delete it for us). This
+        // only runs on the committed-close path — the veto branch returned above.
+        pollTimer->Stop();
+        delete pollTimer;
         evt.Skip();  // proceed with default close (destroys child frames → the app)
     });
 

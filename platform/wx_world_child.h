@@ -170,6 +170,11 @@ private:
     int  m_settleResizeAccum   = 0;    // ms since open, for the plugin-layout settle re-notify
     int  m_settleResizeState   = 0;    // 0→fire at 2 s, 1→fire at 5 s, 2→done (see OnWorldTimer)
 
+    // Refresh GetInfo(280/281) geometry from the pane and fire
+    // ON_PLUGIN_WORLD_OUTPUT_RESIZED, so plugins (re)lay out their docked
+    // miniwindows.  Used to settle the startup layout (see OnWorldTimer).
+    void NotifyPluginLayoutSettle();
+
     // ── Session log ────────────────────────────────────────────────────────
     // Log is written as plain UTF-8 text to a user-chosen file.  Logging starts
     // when the user chooses "Start Logging…" from the context menu and stops on

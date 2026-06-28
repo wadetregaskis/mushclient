@@ -3550,6 +3550,30 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     m_doc->UpdateAllViews(nullptr);
 }
 
+// ── NotifyPluginLayoutSettle ───────────────────────────────────────────────
+// Refresh the doc's GUI geometry (GetInfo(280/281) = rows*lineH / cols*charW)
+// from the current pane size, then fire ON_PLUGIN_WORLD_OUTPUT_RESIZED so
+// plugins re-lay-out their docked miniwindows.  Used to settle the startup
+// layout for plugins (e.g. Quow's Cow Bar) that defer their layout until after
+// the world connects; see OnWorldTimer.
+void CWorldChildFrame::NotifyPluginLayoutSettle()
+{
+    if (!m_doc) return;
+    if (m_output) {
+        int charW = m_output->CharWidth();
+        int lineH = m_output->LineHeight();
+        int paneW = 0, paneH = 0;
+        m_output->GetClientSize(&paneW, &paneH);
+        if (charW > 0 && lineH > 0 && paneW > 0 && paneH > 0) {
+            m_doc->m_gui_cols        = paneW / charW;
+            m_doc->m_gui_rows        = paneH / lineH;
+            m_doc->m_gui_font_width  = charW;
+            m_doc->m_gui_font_height = lineH;
+        }
+    }
+    m_doc->SendToAllPluginCallbacks(ON_PLUGIN_WORLD_OUTPUT_RESIZED);
+}
+
 // ── OnWorldTimer ──────────────────────────────────────────────────────────
 // Called every 100 ms.  Drives MUSHclient world/plugin timers, flushes
 // output, updates UI on phase changes, and runs the auto-reconnect countdown.
@@ -3628,23 +3652,14 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     // until the first manual resize.  Re-send the notification at ~2 s and ~5 s
     // after open (after both the connect and the fallback) so the layout settles
     // by itself — exactly what a manual resize would trigger.
+    // The connect-phase handler below fires this immediately on connect (the
+    // earliest the plugins will honour it); these ticks are the fallback for
+    // worlds that never connect (Quow flips its flag on a ~4 s timer even then).
     if (m_settleResizeState < 2) {
         m_settleResizeAccum += 100;
         if (m_settleResizeAccum >= (m_settleResizeState == 0 ? 2000 : 5000)) {
             m_settleResizeState++;
-            if (m_output) {
-                int charW = m_output->CharWidth();
-                int lineH = m_output->LineHeight();
-                int paneW = 0, paneH = 0;
-                m_output->GetClientSize(&paneW, &paneH);
-                if (charW > 0 && lineH > 0 && paneW > 0 && paneH > 0) {
-                    m_doc->m_gui_cols        = paneW / charW;
-                    m_doc->m_gui_rows        = paneH / lineH;
-                    m_doc->m_gui_font_width  = charW;
-                    m_doc->m_gui_font_height = lineH;
-                }
-            }
-            m_doc->SendToAllPluginCallbacks(ON_PLUGIN_WORLD_OUTPUT_RESIZED);
+            NotifyPluginLayoutSettle();
         }
     }
 
@@ -3682,6 +3697,16 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
             SetTitle(name);
         else
             SetTitle(name + wxT(" (") + wxString::FromUTF8(titleStatus) + wxT(")"));
+
+        // Reaching "connected" is when Quow-style plugins flip the flag that
+        // gates their real miniwindow layout (they defer it during load as a
+        // crash guard).  Fire the layout re-notify now so docked windows snap
+        // into place at connect-time — the earliest possible — instead of
+        // waiting for the 2 s/5 s fallback ticks above.
+        if (phase == eConnectConnectedToMud && m_settleResizeState < 2) {
+            NotifyPluginLayoutSettle();
+            m_settleResizeState = 2;   // fallback ticks no longer needed
+        }
 
         // Common strings used in output-pane notes.
         std::string server   = static_cast<const char*>(m_doc->m_server);

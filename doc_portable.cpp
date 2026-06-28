@@ -236,7 +236,18 @@ CMUSHclientDoc::~CMUSHclientDoc()
     }
     m_Databases.clear();
 
-    // Free the in-progress MUD output line.
+    // NOTE: the buffered output lines in m_LineList are intentionally NOT freed
+    // here (unlike Windows' DELETE_LIST(m_LineList) in doc_construct.cpp). The
+    // canonical "omit from output" path (ProcessPreviousLine.cpp) deletes/removes
+    // lines and resets m_pCurrentLine to a list tail without syncing the port's
+    // m_pScratchLine alias, so a blanket DELETE_LIST here double-frees a line that
+    // path already deleted (SIGSEGV in this destructor). This is a benign leak in
+    // mushcore only (the GUI links doc.cpp, which frees m_LineList correctly);
+    // mushcli/tests are short-lived single-document processes. Untangling the
+    // portable line-buffer ownership is a separate task — see the review notes.
+
+    // Free the in-progress MUD output line. (Its text is new[]'d to match
+    // CLine::~CLine's delete[], since USE_REALLOC is off.)
     if (m_pScratchLine) {
         delete m_pScratchLine;
         m_pScratchLine = nullptr;
@@ -1066,7 +1077,14 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
                     int newSize = (m_pCurrentLine->iMemoryAllocated < 64)
                                   ? 128
                                   : m_pCurrentLine->iMemoryAllocated * 2;
-                    m_pCurrentLine->text = (char*)realloc(m_pCurrentLine->text, newSize);
+                    // new[]/delete[] (NOT realloc) so the buffer matches how
+                    // CLine::~CLine frees it (delete[], since USE_REALLOC is off).
+                    char* nt = new char[newSize];
+                    if (m_pCurrentLine->text) {
+                        memcpy(nt, m_pCurrentLine->text, m_pCurrentLine->len);
+                        delete[] m_pCurrentLine->text;
+                    }
+                    m_pCurrentLine->text = nt;
                     m_pCurrentLine->iMemoryAllocated = newSize;
                 }
                 m_pCurrentLine->text[m_pCurrentLine->len++] = (char)c;

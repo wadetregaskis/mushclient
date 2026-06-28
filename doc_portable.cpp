@@ -237,14 +237,18 @@ CMUSHclientDoc::~CMUSHclientDoc()
     m_Databases.clear();
 
     // NOTE: the buffered output lines in m_LineList are intentionally NOT freed
-    // here (unlike Windows' DELETE_LIST(m_LineList) in doc_construct.cpp). The
-    // canonical "omit from output" path (ProcessPreviousLine.cpp) deletes/removes
-    // lines and resets m_pCurrentLine to a list tail without syncing the port's
-    // m_pScratchLine alias, so a blanket DELETE_LIST here double-frees a line that
-    // path already deleted (SIGSEGV in this destructor). This is a benign leak in
-    // mushcore only (the GUI links doc.cpp, which frees m_LineList correctly);
-    // mushcli/tests are short-lived single-document processes. Untangling the
-    // portable line-buffer ownership is a separate task — see the review notes.
+    // here (unlike Windows' DELETE_LIST(m_LineList) in doc_construct.cpp), because
+    // m_LineList can contain the SAME CLine twice — a blanket DELETE_LIST would
+    // double-free it (SIGSEGV here). Root cause: this port's StartNewLine() does
+    // AddTail(m_pCurrentLine) and THEN calls ProcessPreviousLine() while
+    // m_pCurrentLine still points at the just-added line; a trigger that fires
+    // there and echoes via <send> re-enters StartNewLine(), which AddTail()s that
+    // same m_pCurrentLine a second time. (Windows' StartNewLine adds the line at
+    // CREATION, so m_pCurrentLine is always the list tail and re-entry is safe.)
+    // This is a benign leak in mushcore only — the GUI links doc.cpp, which uses
+    // the safe Windows model; mushcli/tests are short-lived single-document
+    // processes. Fixing it means reworking the portable output-line lifecycle so
+    // re-entrant StartNewLine can't double-add (then DELETE_LIST becomes safe).
 
     // Free the in-progress MUD output line. (Its text is new[]'d to match
     // CLine::~CLine's delete[], since USE_REALLOC is off.)

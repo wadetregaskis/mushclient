@@ -213,7 +213,7 @@ CListCtrl & pList = GetListCtrl ();
     CString strSince;
     CString strDuration;
 
-    strSeq.Format   ("%ld", pDoc->m_view_number);
+    strSeq.Format   ("%ld", (long) pDoc->m_view_number);  // m_view_number is int (4 bytes); %ld reads 8 on LP64
     strNewLines.Format ("%ld", pDoc->m_new_lines);
     strLines.Format ("%ld", pDoc->m_total_lines);
 

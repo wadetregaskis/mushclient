@@ -135,7 +135,7 @@ static void ShowOneColour (CMUSHclientDoc * pDoc,
                      iGreen,
                      iRed);
 
-  strName += CFormat ("%08ld", iColour);     // Lua
+  strName += CFormat ("%08ld", (long) iColour);     // Lua (COLORREF is 4 bytes; %ld reads 8 on LP64)
 
   pDoc->Note (strName);
 

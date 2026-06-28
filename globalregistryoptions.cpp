@@ -331,7 +331,7 @@ void CMUSHclientApp::SaveGlobalsToDatabase (void)
   for (i = 0; GlobalOptionsTable [i].pName; i++)
     {
     const char * p = (const char *) this +  GlobalOptionsTable [i].iOffset;
-    const int Value = * (const long *) p;
+    const int Value = * (const int *) p;   // members are 4-byte; long is 8 on LP64
 
     db_rc = db_write_int ("prefs", GlobalOptionsTable [i].pName, Value);
 
@@ -365,9 +365,9 @@ void CMUSHclientApp::ShowGlobalOptions (CMUSHclientDoc * pDoc)
   for (i = 0; GlobalOptionsTable [i].pName; i++)
     {
     const char * p = (const char *) this +  GlobalOptionsTable [i].iOffset;
-    const int Value = * (const long *) p;
-    pDoc->Note (CFormat ("%35s = %ld",
-                   (LPCTSTR) GlobalOptionsTable [i].pName, 
+    const int Value = * (const int *) p;   // members are 4-byte; long is 8 on LP64
+    pDoc->Note (CFormat ("%35s = %d",
+                   (LPCTSTR) GlobalOptionsTable [i].pName,
                    Value));
 
     };
@@ -400,7 +400,7 @@ VARIANT CMUSHclientApp::GetGlobalOption(LPCTSTR Name)
     if (_stricmp (Name, GlobalOptionsTable [i].pName) == 0)
       {
       const char * p = (const char *) this +  GlobalOptionsTable [i].iOffset;
-      const int Value = * (const long *) p;
+      const int Value = * (const int *) p;   // members are 4-byte; long is 8 on LP64
       vaResult.vt = VT_I4;
       vaResult.lVal = Value; 
   	  return vaResult;

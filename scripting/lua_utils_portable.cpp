@@ -291,12 +291,29 @@ static int utils_utf8decode(lua_State* L)
     return 1;
 }
 
-// ── UTF-8 valid: return true if string is valid UTF-8 ────────────────────────
+// ── UTF-8 valid ──────────────────────────────────────────────────────────────
+// Matches the Windows utils.utf8valid contract: valid -> the string's length in
+// code points (a number); invalid -> (nil, offset-of-first-bad-byte).
 static int utils_utf8valid(lua_State* L)
 {
     size_t len;
     const unsigned char* s = (const unsigned char*)luaL_checklstring(L, 1, &len);
-    lua_pushboolean(L, valid_utf8(s, (int)len) <= 0);
+    int iBad = valid_utf8(s, (int)len);    // already 1-based byte offset (== Windows erroroffset+1)
+    if (iBad > 0) {
+        lua_pushnil(L);
+        lua_pushnumber(L, iBad);
+        return 2;
+    }
+    int n = 0;
+    for (size_t i = 0; i < len; n++) {
+        unsigned char c = s[i];
+        if      (c < 0x80)           i += 1;
+        else if ((c & 0xE0) == 0xC0) i += 2;
+        else if ((c & 0xF0) == 0xE0) i += 3;
+        else if ((c & 0xF8) == 0xF0) i += 4;
+        else                         i += 1;
+    }
+    lua_pushnumber(L, n);
     return 1;
 }
 

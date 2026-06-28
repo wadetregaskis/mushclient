@@ -2294,6 +2294,12 @@ public:
     // Initialised (with one default CStyle) by the CMUSHclientDoc constructor.
     CLine* m_pScratchLine = nullptr;
 
+    // Re-entrancy guard for StartNewLine: a trigger firing in ProcessPreviousLine
+    // can world.Send/<send>, whose echo re-enters DisplayMsg → StartNewLine while
+    // m_pCurrentLine is still the just-added line. Without this guard that line is
+    // added to (and later double-freed from) m_LineList a second time.
+    bool   m_bInStartNewLine = false;
+
     // ── Terminal colour state (for ANSI output on the real terminal) ──────
     // Tracks what colour/attribute codes have already been emitted so we
     // only re-emit when the style actually changes.

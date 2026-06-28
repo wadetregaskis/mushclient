@@ -236,22 +236,16 @@ CMUSHclientDoc::~CMUSHclientDoc()
     }
     m_Databases.clear();
 
-    // NOTE: the buffered output lines in m_LineList are intentionally NOT freed
-    // here (unlike Windows' DELETE_LIST(m_LineList) in doc_construct.cpp), because
-    // m_LineList can contain the SAME CLine twice — a blanket DELETE_LIST would
-    // double-free it (SIGSEGV here). Root cause: this port's StartNewLine() does
-    // AddTail(m_pCurrentLine) and THEN calls ProcessPreviousLine() while
-    // m_pCurrentLine still points at the just-added line; a trigger that fires
-    // there and echoes via <send> re-enters StartNewLine(), which AddTail()s that
-    // same m_pCurrentLine a second time. (Windows' StartNewLine adds the line at
-    // CREATION, so m_pCurrentLine is always the list tail and re-entry is safe.)
-    // This is a benign leak in mushcore only — the GUI links doc.cpp, which uses
-    // the safe Windows model; mushcli/tests are short-lived single-document
-    // processes. Fixing it means reworking the portable output-line lifecycle so
-    // re-entrant StartNewLine can't double-add (then DELETE_LIST becomes safe).
+    // Free all buffered output lines (Windows: DELETE_LIST(m_LineList) in
+    // doc_construct.cpp). Safe now that StartNewLine's re-entrancy guard prevents
+    // the same CLine being AddTail'd twice (a trigger <send> echo used to double-
+    // add it, which made a blanket free double-free). Each CLine owns a new[]'d
+    // text buffer + a style list.
+    DELETE_LIST(m_LineList);
 
-    // Free the in-progress MUD output line. (Its text is new[]'d to match
-    // CLine::~CLine's delete[], since USE_REALLOC is off.)
+    // Free the in-progress MUD output line. After StartNewLine() this is a fresh
+    // CLine NOT in m_LineList, so the DELETE_LIST above can't double-free it.
+    // (Its text is new[]'d to match CLine::~CLine's delete[], USE_REALLOC off.)
     if (m_pScratchLine) {
         delete m_pScratchLine;
         m_pScratchLine = nullptr;
@@ -1177,6 +1171,14 @@ void CMUSHclientDoc::StartNewLine(const bool hard_break, const int flags)
 {
     if (!m_pCurrentLine) return;
 
+    // Re-entrancy guard: ProcessPreviousLine() below fires triggers, and a trigger
+    // that world.Send/<send>s echoes back through DisplayMsg → StartNewLine while
+    // m_pCurrentLine still points at the line we just AddTail'd. Bail so we don't
+    // add (and later double-free) that same CLine twice. The echo's text still
+    // streams to the display via m_gui_line_buf, which is handled separately.
+    if (m_bInStartNewLine) return;
+    m_bInStartNewLine = true;
+
     // Timestamp the finished line
     m_pCurrentLine->m_theTime = CTime::GetCurrentTime();
     m_pCurrentLine->m_lineHighPerformanceTime.QuadPart = 0;
@@ -1202,6 +1204,8 @@ void CMUSHclientDoc::StartNewLine(const bool hard_break, const int flags)
     m_pScratchLine = m_pCurrentLine;   // keep alias in sync
     AddStyle(m_iFlags, m_iForeColour, m_iBackColour, 0,
              static_cast<CAction*>(nullptr));
+
+    m_bInStartNewLine = false;
 }
 
 // ── ReceiveMsg — read from socket, decompress if needed, call DisplayMsg ─────

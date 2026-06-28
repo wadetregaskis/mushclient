@@ -252,6 +252,11 @@ VALUE do_funcall (VALUE p)
 // caught the original exception).
 static VALUE ruby_error_message (VALUE err) { return rb_funcall (err, rb_intern ("message"), 0); }
 
+// Convert a callback's result via #to_s under rb_protect: a script-defined #to_s
+// can raise, and with no enclosing Ruby tag a raise here would longjmp straight
+// through the C++ frames (skipping destructors). Same hazard as ruby_error_message.
+static VALUE ruby_to_s (VALUE v) { return rb_obj_as_string (v); }
+
 void report_error (CMUSHclientDoc* doc, const char* what, const char* proc)
   {
   if (!doc) return;
@@ -398,7 +403,14 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   if (state) { dispid = DISPID_UNKNOWN; report_error (m_pDoc, szType, szProcedure); return true; }
   nInvocationCount++;
   if (RTEST (r) && TYPE (r) != T_NIL)
-    { VALUE s = rb_obj_as_string (r); result = StringValueCStr (s); }
+    {
+    int st = 0;
+    VALUE s = rb_protect (ruby_to_s, r, &st);
+    if (st)
+      rb_set_errinfo (Qnil);                          // #to_s raised — leave result empty
+    else if (TYPE (s) == T_STRING)
+      result = CString (RSTRING_PTR (s), (int) RSTRING_LEN (s));  // length-explicit: tolerates embedded NUL
+    }
   return false;
   }
 

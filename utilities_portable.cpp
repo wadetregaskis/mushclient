@@ -141,17 +141,22 @@ CString decodeBase64(const char* coded)
     char* d = strResult.GetBuffer(((i / 4) * 3) + 1);
     int j = 0;
 
-    for (; *p; p += 4) {
-        d[j++] = (char)(getBase64Value(p[0]) << 2  | getBase64Value(p[1]) >> 4);
-        d[j++] = (char)(getBase64Value(p[1]) << 4  | getBase64Value(p[2]) >> 2);
-        d[j++] = (char)(getBase64Value(p[2]) << 6  | getBase64Value(p[3]));
+    // Only decode complete 4-character groups. A non-mod-4 length is a truncated
+    // / invalid string; ignore the trailing partial group rather than reading
+    // past the NUL terminator — the original `for (; *p; p += 4)` over-read and
+    // over-wrote the (undersized) buffer on such input (e.g. "abc").
+    int full = (i / 4) * 4;
+    for (int k = 0; k < full; k += 4) {
+        d[j++] = (char)(getBase64Value(p[k])     << 2 | getBase64Value(p[k + 1]) >> 4);
+        d[j++] = (char)(getBase64Value(p[k + 1]) << 4 | getBase64Value(p[k + 2]) >> 2);
+        d[j++] = (char)(getBase64Value(p[k + 2]) << 6 | getBase64Value(p[k + 3]));
     }
     d[j] = 0;
 
-    // Trim padding bytes
-    if (j > 0 && *(p - 1) == '=') {
-        if (j > 1 && *(p - 2) == '=') d[j - 2] = '\0';
-        else                           d[j - 1] = '\0';
+    // Trim padding bytes (the '=' chars at the end of the last full group).
+    if (full > 0 && p[full - 1] == '=') {
+        if (full > 1 && p[full - 2] == '=') d[j - 2] = '\0';
+        else                                 d[j - 1] = '\0';
     }
 
     strResult.ReleaseBuffer(-1);

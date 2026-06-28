@@ -36,6 +36,7 @@
 #include <cstdio>      // snprintf
 #include <vector>
 #include <string>
+#include <utility>     // std::pair (Poll snapshot)
 
 // ── Windows socket constants mapped to POSIX ─────────────────────────────────
 
@@ -306,10 +307,14 @@ public:
         // connection down from inside OnReceive, freeing the CAsyncSocket).
         // Re-check IsLive(s) after every callback so we never dereference a
         // pointer in the snapshot that a callback has since freed/unregistered.
-        std::vector<CAsyncSocket*> snap(s_sockets);
+        std::vector<std::pair<CAsyncSocket*, unsigned long>> snap;
+        snap.reserve(s_sockets.size());
+        for (CAsyncSocket* s : s_sockets) snap.push_back({s, s->m_generation});
 
-        for (CAsyncSocket* s : snap) {
-            if (!IsLive(s) || s->m_hSocket == INVALID_SOCKET) continue;
+        for (auto& pr : snap) {
+            CAsyncSocket* s = pr.first;
+            const unsigned long gen = pr.second;
+            if (!IsLive(s, gen) || s->m_hSocket == INVALID_SOCKET) continue;
             int fd = s->m_hSocket;
 
             if (FD_ISSET(fd, &wr)) {
@@ -330,7 +335,7 @@ public:
                     s->OnSend(0);
                 }
             }
-            if (!IsLive(s) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
+            if (!IsLive(s, gen) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
             fd = s->m_hSocket;   // re-read: a callback may have closed/reopened this slot, so never reuse the stale fd
 
             if (FD_ISSET(fd, &rd)) {
@@ -350,14 +355,14 @@ public:
                         // readable-with-EOF on every subsequent poll, firing OnClose
                         // again and again until the fd is actually closed.
                         s->OnClose(0);
-                        if (IsLive(s) && s->m_hSocket != INVALID_SOCKET)
+                        if (IsLive(s, gen) && s->m_hSocket != INVALID_SOCKET)
                             s->Close();
                     } else {
                         s->OnReceive(0);
                     }
                 }
             }
-            if (!IsLive(s) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
+            if (!IsLive(s, gen) || s->m_hSocket == INVALID_SOCKET) continue;  // callback may have torn it down
             fd = s->m_hSocket;   // re-read: a callback may have closed/reopened this slot, so never reuse the stale fd
 
             if (FD_ISSET(fd, &ex)) {
@@ -370,6 +375,8 @@ private:
     enum State { kIdle, kConnecting, kConnected, kListening };
     State m_state  = kIdle;
     long  m_events = FD_READ | FD_WRITE | FD_OOB | FD_ACCEPT | FD_CONNECT | FD_CLOSE;
+    unsigned long m_generation = 0;   // bumped on each Register; lets Poll detect
+                                      // an ABA reuse of a freed socket's address
 
     // ── Static registry of all live sockets ──────────────────────────────────
     // Uses a function-local static to avoid static-initialisation order issues.
@@ -379,10 +386,13 @@ private:
         return v;
     }
 
+    static unsigned long& GenCounter() { static unsigned long g = 0; return g; }
+
     static void Register(CAsyncSocket* s)
     {
         auto& v = AllSockets();
         for (auto* p : v) if (p == s) return;
+        s->m_generation = ++GenCounter();   // unique tag for this registration
         v.push_back(s);
     }
     static void Unregister(CAsyncSocket* s)
@@ -397,6 +407,15 @@ private:
     {
         auto& v = AllSockets();
         return std::find(v.begin(), v.end(), s) != v.end();
+    }
+    // As IsLive, but also require the registration generation to match the one
+    // captured in Poll's snapshot, so a freed socket whose heap address is reused
+    // by a new socket within the same poll pass is correctly treated as gone.
+    static bool IsLive(CAsyncSocket* s, unsigned long gen)
+    {
+        auto& v = AllSockets();
+        auto it = std::find(v.begin(), v.end(), s);
+        return it != v.end() && (*it)->m_generation == gen;
     }
 };
 

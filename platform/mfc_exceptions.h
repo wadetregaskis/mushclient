@@ -36,7 +36,11 @@ public:
 // ── CMemoryException ──────────────────────────────────────────────────────
 
 class CMemoryException : public CException {};
-inline void AfxThrowMemoryException() { throw std::bad_alloc(); }
+// MFC throws a CMemoryException* (pointer); the canonical source catches it as
+// `catch (CMemoryException* e)` / `catch (CException* e)`. Throwing std::bad_alloc
+// by value would slip past every such handler and terminate the app (the same
+// hazard already fixed for AfxThrowArchiveException — see windows_types.h).
+inline void AfxThrowMemoryException() { throw new CMemoryException(); }
 
 // ── CUserException ────────────────────────────────────────────────────────
 

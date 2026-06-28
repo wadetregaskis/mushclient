@@ -1470,34 +1470,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         } else if (id == ID_CONN_LOG_TOGGLE) {
             CMUSHclientDoc* doc = activeDoc();
             if (!doc) { evt.Skip(); return; }
-            if (doc->m_logfile) {
-                // Stop logging.
-                fclose(doc->m_logfile);
-                doc->m_logfile = nullptr;
-                if (s_statusBar)
-                    s_statusBar->SetStatusText(wxT("Logging stopped."));
-            } else {
-                // Start logging — ask for a file.
-                wxString defaultName = wxString::FromUTF8(
-                    static_cast<const char*>(doc->m_strAutoLogFileName));
-                wxFileDialog dlg(frame,
-                                 wxT("Log to File"),
-                                 wxEmptyString, defaultName,
-                                 wxT("Log files (*.log;*.txt)|*.log;*.txt|All files (*.*)|*.*"),
-                                 wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-                if (dlg.ShowModal() != wxID_OK) return;
-                wxString path = dlg.GetPath();
-                doc->m_logfile_name = CString(path.ToUTF8().data());
-                doc->m_logfile = fopen(static_cast<const char*>(doc->m_logfile_name), "a+");
-                if (!doc->m_logfile) {
-                    wxMessageBox(wxT("Could not open log file:\n") + path,
-                                 wxT("Logging Error"), wxOK | wxICON_ERROR, frame);
-                } else {
-                    if (s_statusBar)
-                        s_statusBar->SetStatusText(
-                            wxT("Logging to: ") + path);
-                }
-            }
+            // Route through the canonical File ▸ Log Session handler
+            // (ID_FILE_LOGSESSION = 32117), which self-toggles: if a log is open it
+            // CloseLog()s (writing the postamble + honouring the close-confirm pref);
+            // otherwise it runs CLogDlg (preamble, previous-buffer dump, append vs
+            // truncate, the m_bLogOutput/m_log_input/m_bLogNotes choices) and writes
+            // the preamble. The previous raw fopen("a+")/fclose bypassed all of that
+            // — losing the postamble and the user's logging preferences.
+            AfxDispatchCommand(doc, 0 /*ON_COMMAND*/, 32117 /*ID_FILE_LOGSESSION*/);
         } else {
             evt.Skip();
         }

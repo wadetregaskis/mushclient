@@ -3605,16 +3605,22 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
             m_speedWalkAccum += 100;    // 100 ms per timer tick
             while (m_speedWalkAccum >= delay && !m_doc->m_QueuedCommandsList.IsEmpty()) {
                 m_speedWalkAccum -= delay;
-                CString strCommand = m_doc->m_QueuedCommandsList.RemoveHead();
-                char cMessageType = strCommand[0];
-                m_doc->DoSendMsg(strCommand.Mid(1),
-                                 toupper(cMessageType) == QUEUE_WITH_ECHO ||
-                                 toupper(cMessageType) == IMMEDIATE_WITH_ECHO,
-                                 cMessageType >= 'A');
-                // QUEUE_* commands must wait for the next tick; IMMEDIATE_* fall through.
-                if (toupper(cMessageType) == QUEUE_WITH_ECHO ||
-                    toupper(cMessageType) == QUEUE_WITHOUT_ECHO)
-                    break;
+                // Drain through to (and including) the next QUEUE_* command;
+                // interleaved IMMEDIATE_* commands fall through in the same slot,
+                // matching CTimerWnd::OnTimer (which only breaks on QUEUE_*).
+                for (;;) {
+                    CString strCommand = m_doc->m_QueuedCommandsList.RemoveHead();
+                    char cMessageType = strCommand[0];
+                    m_doc->DoSendMsg(strCommand.Mid(1),
+                                     toupper(cMessageType) == QUEUE_WITH_ECHO ||
+                                     toupper(cMessageType) == IMMEDIATE_WITH_ECHO,
+                                     cMessageType >= 'A');
+                    if (toupper(cMessageType) == QUEUE_WITH_ECHO ||
+                        toupper(cMessageType) == QUEUE_WITHOUT_ECHO)
+                        break;   // QUEUE_* command consumes this delay slot
+                    if (m_doc->m_QueuedCommandsList.IsEmpty())
+                        break;
+                }
             }
         }
         m_doc->ShowQueuedCommands();

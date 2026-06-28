@@ -772,7 +772,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
           {
           long selStart = 0, selEnd = 0;
           m_fn_get_command_selection (selStart, selEnd);
-          SetUpVariantLong (vaResult, selStart);
+          SetUpVariantLong (vaResult, selStart + 1);  // 1-based, matching the Windows branch
           }
 #endif
       }

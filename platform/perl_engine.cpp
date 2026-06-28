@@ -363,7 +363,10 @@ bool CScriptEngine::ExecutePerl (DISPID & dispid, LPCTSTR szProcedure,
   SPAGAIN;
   bool err = SvTRUE (ERRSV);
   bool truthy = true;
-  if (n > 0) { SV* r = POPs; if (!err) truthy = SvTRUE (r); }
+  // A handler with no explicit return yields undef under G_SCALAR; treat that as
+  // "keep going" (truthy stays true), matching Lua/Python. Only a *defined* value
+  // overrides it — a defined 0 is false, as on the Windows COM path.
+  if (n > 0) { SV* r = POPs; if (!err && SvOK (r)) truthy = SvTRUE (r); }
   PUTBACK;
   FREETMPS; LEAVE;
 

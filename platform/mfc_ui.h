@@ -2621,7 +2621,7 @@ protected:
         bool create = (flags & modeCreate);
         if (create && write)  return (flags & modeReadWrite) ? "w+b" : "wb";
         if (write && read)    return "r+b";
-        if (write)            return "ab";
+        if (write)            return "r+b";  // plain modeWrite: open existing for write at pos 0 (MFC), not append
         return "rb";   // default: read-only
     }
 

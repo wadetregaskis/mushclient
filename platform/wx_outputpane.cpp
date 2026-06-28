@@ -1382,9 +1382,12 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
         vrOffset = std::max(0, clickVR - lineStartVR);
     }
 
-    // Column within the visual row, then offset by wrapped rows.
-    int colInRow = (virtualX + m_charW / 2) / m_charW;
-    int col      = vrOffset * m_wrapCols + std::max(0, colInRow);
+    // Column within the visual row, then offset by wrapped rows. Clamp the
+    // per-row column to the wrap width so a click past the text on a non-final
+    // visual row can't spill into a later row's character range.
+    int colInRow = std::max(0, (virtualX + m_charW / 2) / m_charW);
+    if (m_wrapCols > 0) colInRow = std::min(colInRow, m_wrapCols);
+    int col      = vrOffset * m_wrapCols + colInRow;
     return std::max(0, std::min(totalChars, col));
 }
 

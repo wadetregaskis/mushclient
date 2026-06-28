@@ -111,10 +111,10 @@ int ma_audio_play(int buffer, const char* path, int loop, double volume, double 
     if (buffer >= 1 && buffer <= MA_MAX_SOUND_BUFFERS) {
         idx = buffer - 1;                     // explicit buffer
     } else {
-        idx = -1;                             // buffer 0 → first free slot…
-        for (int i = 0; i < MA_MAX_SOUND_BUFFERS; ++i)
-            if (!g_loaded[i]) { idx = i; break; }
-        if (idx < 0) idx = 0;                 // …else re-use slot 1 (canonical)
+        idx = -1;                             // buffer 0 → first free slot in 1..5…
+        for (int i = 0; i < (MA_MAX_SOUND_BUFFERS / 2); ++i)  // canonical: scan only
+            if (!g_loaded[i]) { idx = i; break; }             // the first half (1-5),
+        if (idx < 0) idx = 0;                 // reserving 6-10 for explicit alloc; else slot 1
     }
 
     unloadSlot(idx);
@@ -155,10 +155,10 @@ int ma_audio_play_memory(int buffer, const void* data, size_t len, int loop,
     if (buffer >= 1 && buffer <= MA_MAX_SOUND_BUFFERS) {
         idx = buffer - 1;                     // explicit buffer
     } else {
-        idx = -1;                             // buffer 0 → first free slot…
-        for (int i = 0; i < MA_MAX_SOUND_BUFFERS; ++i)
-            if (!g_loaded[i]) { idx = i; break; }
-        if (idx < 0) idx = 0;                 // …else re-use slot 1 (canonical)
+        idx = -1;                             // buffer 0 → first free slot in 1..5…
+        for (int i = 0; i < (MA_MAX_SOUND_BUFFERS / 2); ++i)  // canonical: scan only
+            if (!g_loaded[i]) { idx = i; break; }             // the first half (1-5),
+        if (idx < 0) idx = 0;                 // reserving 6-10 for explicit alloc; else slot 1
     }
 
     unloadSlot(idx);

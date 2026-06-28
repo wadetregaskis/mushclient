@@ -503,7 +503,9 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (!inp) return;
             long len = (long)inp->GetValue().size();
             long f = (first  <= 0) ? len : first  - 1;
-            long l = (last   <= 0) ? len : last   - 1;
+            // End is exclusive (one past the last char), matching Windows'
+            // CEdit::SetSel(First - 1, Last): only the start is decremented.
+            long l = (last   <= 0) ? len : last;
             inp->SetSelection(f, l);
         };
 

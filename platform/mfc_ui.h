@@ -5400,7 +5400,14 @@ public:
 
 // ── Windows math and system utilities ─────────────────────────────────────
 inline int MulDiv(int n, int m, int d) {
-    return d ? (int)((long long)n * m / d) : 0;
+    // Win32 MulDiv rounds to nearest (ties away from zero) and returns -1 on
+    // divide-by-zero — not truncation. Font-height math (-MulDiv(pts,dpi,72))
+    // relies on the rounding, so truncating yielded fonts 1px short of Windows.
+    if (d == 0) return -1;
+    long long num  = (long long)n * m;
+    long long half = (d > 0) ? (long long)d / 2 : -((long long)d / 2);
+    return ((num >= 0) == (d > 0)) ? (int)((num + half) / d)
+                                   : (int)((num - half) / d);
 }
 // High-resolution performance counter using POSIX clock_gettime(CLOCK_MONOTONIC).
 // Frequency is 1 GHz (nanoseconds).  Both functions always succeed.

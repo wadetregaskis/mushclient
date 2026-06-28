@@ -495,7 +495,7 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
     {
     *result = true;
     if (PyBool_Check (res))      *result = (res == Py_True);
-    else if (PyLong_Check (res)) *result = (PyLong_AsLong (res) != 0);
+    else if (PyLong_Check (res)) *result = (PyObject_IsTrue (res) == 1);  // never raises (PyLong_AsLong can overflow + leave an exception set)
     else if (res == Py_None)     *result = true;   // no explicit return → keep going
     else                         *result = PyObject_IsTrue (res) ? true : false;
     }

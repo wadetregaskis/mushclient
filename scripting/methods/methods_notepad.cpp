@@ -375,7 +375,15 @@ BSTR CMUSHclientDoc::GetNotepadWindowPosition(LPCTSTR Title)
     {
 #ifndef _WIN32
     if (pTextDoc->m_fn_get_rect)
-      strResult = CString(pTextDoc->m_fn_get_rect().c_str());
+      {
+      // m_fn_get_rect yields "left top right bottom" (space-separated); the
+      // Windows BSTR contract is "left,top,width,height" (comma-separated, via
+      // windowPositionHelper). Reformat so the IDispatch consumers (Python/Perl/
+      // JS/Tcl/Ruby) match Windows. (The Lua getter parses m_fn_get_rect itself.)
+      int l = 0, t = 0, r = 0, b = 0;
+      if (sscanf(pTextDoc->m_fn_get_rect().c_str(), "%d %d %d %d", &l, &t, &r, &b) == 4)
+        strResult.Format("%d,%d,%d,%d", l, t, r - l, b - t);
+      }
 #else
     CWindowPlacement wp;
 

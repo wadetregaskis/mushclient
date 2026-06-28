@@ -310,7 +310,7 @@ void CMUSHclientDoc::DebugHelper(const CString strAction, CString strArgument)
         ColourNote(SCRIPTERRORCONTEXTFORECOLOUR, "",
                    "------ World Info ------");
         Note(CFormat("  World name   : %s", (LPCTSTR)m_mush_name));
-        Note(CFormat("  Host         : %s  port %u", (LPCTSTR)m_mush_name, (unsigned)m_port));
+        Note(CFormat("  Host         : %s  port %u", (LPCTSTR)m_server, (unsigned)m_port));
         Note(CFormat("  Connected    : %s",
                      m_iConnectPhase == eConnectConnectedToMud ? "yes" : "no"));
         Note(CFormat("  Script file  : %s",

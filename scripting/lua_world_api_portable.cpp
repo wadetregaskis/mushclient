@@ -3087,8 +3087,9 @@ static int L_GetUniqueID(lua_State* L)
     shsFinal(&sha);
     char out[41];
     snprintf(out, sizeof(out), "%08lx%08lx%08lx%08lx%08lx",
-             sha.digest[0], sha.digest[1], sha.digest[2],
-             sha.digest[3], sha.digest[4]);
+             (unsigned long)sha.digest[0], (unsigned long)sha.digest[1],
+             (unsigned long)sha.digest[2], (unsigned long)sha.digest[3],
+             (unsigned long)sha.digest[4]);   // digest words are 32-bit; %lx reads 8 on LP64
     lua_pushstring(L, out);
     return 1;
 }

@@ -404,7 +404,15 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
   if (exc) { dispid = DISPID_UNKNOWN; report_error (m_pDoc, ctx, exc, szType, szProcedure); return true; }
   nInvocationCount++;
   if (result)
-    *result = ret ? JSValueToBoolean (ctx, ret) : true;
+    {
+    // A function with no explicit return yields `undefined` (a non-NULL value),
+    // which is falsy — but on Windows / Lua a no-return handler means "keep going".
+    // Only a real returned value decides; undefined/null -> true. (Mirrors the
+    // string-returning overload below.)
+    *result = true;
+    if (ret && !JSValueIsUndefined (ctx, ret) && !JSValueIsNull (ctx, ret))
+      *result = JSValueToBoolean (ctx, ret);
+    }
   return false;
   }
 

@@ -309,6 +309,56 @@ TEST(WorldLoad, WorldSettings)
     EXPECT_EQ(4000, (int)doc.m_port);
 }
 
+TEST(WorldLoad, PasswordBase64Load)
+{
+    // Windows stores passwords base64-encoded with a <name>_base64="y" flag.
+    // "secret" -> "c2VjcmV0", "proxypw" -> "cHJveHlwdw==".
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="mud.example.com" port="4000"
+       password="c2VjcmV0" password_base64="y"
+       proxy_password="cHJveHlwdw==" proxy_password_base64="y">
+</world>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    EXPECT_STREQ("secret",  (const char*)doc.m_password);
+    EXPECT_STREQ("proxypw", (const char*)doc.m_strProxyPassword);
+}
+
+TEST(WorldLoad, PasswordSaveEncodesBase64)
+{
+    // A password set in the doc must be written base64-encoded with a
+    // <name>_base64="y" flag (so it round-trips with Windows / mushcli, and the
+    // plaintext never hits disk). "secret" -> "c2VjcmV0".
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="mud.example.com" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_pw_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        doc.m_password = "secret";
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    std::string content; char buf[4096]; size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) content.append(buf, n);
+    fclose(f);
+
+    EXPECT_NE(content.find("password=\"c2VjcmV0\""), std::string::npos);  // base64
+    EXPECT_NE(content.find("password_base64=\"y\""), std::string::npos);  // flag
+    EXPECT_EQ(content.find("\"secret\""),            std::string::npos);  // not plaintext
+}
+
 // ── Error handling ────────────────────────────────────────────────────────
 
 TEST(WorldLoad, MissingFileReturnsFalse)

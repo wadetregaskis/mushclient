@@ -585,6 +585,8 @@ static void apply_alpha_option(CMUSHclientDoc& doc, const char* opt, const CStri
     // name = world display name. The connect path keys on m_server.
     else if (!strcmp(opt, "site"))             doc.m_server                 = val;
     else if (!strcmp(opt, "name"))             doc.m_mush_name              = val;
+    else if (!strcmp(opt, "password"))         doc.m_password               = val;
+    else if (!strcmp(opt, "proxy_password"))   doc.m_strProxyPassword       = val;
     else if (!strcmp(opt, "player"))           doc.m_name                   = val;
     else if (!strcmp(opt, "script_filename"))  doc.m_strScriptFilename      = val;
     else if (!strcmp(opt, "script_language"))  doc.m_strLanguage            = val;
@@ -748,13 +750,23 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
         // ── Single-line alpha options via AlphaOptionsTable ──────────────────
         for (int i = 0; AlphaOptionsTable[i].pName; i++) {
             if (AlphaOptionsTable[i].iFlags & OPT_MULTLINE) continue;
-            if (AlphaOptionsTable[i].iFlags & OPT_PASSWORD) continue;
 
             const char* optName = AlphaOptionsTable[i].pName;
             CAttribute* a;
             if (!pWorld->AttributeMap.Lookup(optName, a) || !a) continue;
             a->bUsed = true;
             CString val = a->strValue;
+
+            // Passwords are stored base64-encoded with a <name>_base64="y" flag.
+            if (AlphaOptionsTable[i].iFlags & OPT_PASSWORD) {
+                CString flagName = CString(optName) + "_base64";   // not CFormat (va_list overload footgun)
+                CAttribute* b = nullptr;
+                if (pWorld->AttributeMap.Lookup((const char*)flagName, b) && b &&
+                    (b->strValue == "y" || b->strValue == "1" || b->strValue == "true")) {
+                    val.TrimLeft(); val.TrimRight();
+                    val = decodeBase64(val);
+                }
+            }
 
             apply_alpha_option(doc, optName, val);
             doc.m_alphaOptionCache[optName] = std::string((const char*)val);

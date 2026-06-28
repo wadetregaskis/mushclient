@@ -283,11 +283,20 @@ static void save_general(CArchive& ar, const CMUSHclientDoc& doc)
     // ── single-line alpha options ─────────────────────────────────────────
     for (int i = 0; AlphaOptionsTable[i].pName; i++) {
         if (AlphaOptionsTable[i].iFlags & OPT_MULTLINE)  continue;
-        if (AlphaOptionsTable[i].iFlags & OPT_PASSWORD)  continue;
 
         CString val = get_alpha_value(&doc, AlphaOptionsTable[i].pName);
         const char* def = AlphaOptionsTable[i].sDefault ? AlphaOptionsTable[i].sDefault : "";
         if (val == CString(def)) continue;
+
+        // Passwords are base64-encoded with a <name>_base64="y" flag, like Windows.
+        // (Build the flag name by concatenation, not CFormat: a single char* arg
+        // exact-matches the CFormat(LPCTSTR, va_list) overload — va_list is char*
+        // on arm64 — and would be misread as a va_list.)
+        if ((AlphaOptionsTable[i].iFlags & OPT_PASSWORD) && !val.IsEmpty()) {
+            CString flag = CString(AlphaOptionsTable[i].pName) + "_base64";
+            wBool(ar, (const char*) flag, true);
+            val = encodeBase64(val, false);
+        }
 
         wStr(ar, AlphaOptionsTable[i].pName, val);
     }

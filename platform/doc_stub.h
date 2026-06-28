@@ -190,13 +190,15 @@ enum {
     eMXP_perm_locked = 7
 };
 
-// ── iUseMXP values ────────────────────────────────────────────────────────
+// ── iUseMXP values — MUST match doc.h exactly. The shared engine files
+// (telnet_phases.cpp, ProcessPreviousLine.cpp, …) compiled into mushcore compare
+// m_iUseMXP against these names, and world files / the OptionsTable use 0-3, so a
+// divergent set silently breaks MXP-mode logic and saves out-of-range values.
 enum {
-    eUseMXP_default  = 0,
-    eOnCommandMXP    = 1,
-    eQueryMXP        = 2,
-    eAlwaysMXP       = 3,
-    eNoMXP           = 4
+    eOnCommandMXP = 0,   // turn on after the MXP telnet sub-negotiation
+    eQueryMXP     = 1,   // turn on after option query
+    eUseMXP       = 2,   // always on
+    eNoMXP        = 3,   // always off
 };
 
 // ── MXP debug level enum (from doc.h) ─────────────────────────────────────
@@ -1329,7 +1331,8 @@ public:
 
     // ── MXP basic ──────────────────────────────────────────────────────
     bool           m_bMXP       = false;
-    unsigned short m_iUseMXP    = eNoMXP;
+    unsigned short m_iUseMXP    = eOnCommandMXP;  // OptionsTable default (== Windows); was the
+                                                  // out-of-range eNoMXP under the old broken enum
     int            m_iMXP_mode  = eMXP_open;
 
     // ── MXP parse state ────────────────────────────────────────────────

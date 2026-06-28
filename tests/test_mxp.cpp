@@ -22,7 +22,7 @@ static CMUSHclientDoc make_doc()
                  static_cast<CAction*>(nullptr));
     // Turn on MXP so the protocol methods are active
     doc.m_bMXP      = true;
-    doc.m_iUseMXP   = eAlwaysMXP;
+    doc.m_iUseMXP   = eUseMXP;   // always on
     doc.m_iMXP_mode = eMXP_open;
     return doc;
 }

@@ -359,6 +359,36 @@ TEST(WorldLoad, PasswordSaveEncodesBase64)
     EXPECT_EQ(content.find("\"secret\""),            std::string::npos);  // not plaintext
 }
 
+TEST(WorldLoad, DefaultWorldSaveUseMxpInRange)
+{
+    // Regression for the broken portable iUseMXP enum: m_iUseMXP defaulted to
+    // eNoMXP, which under the old enum was 4 — out of use_mxp's 0-3 range — and
+    // the saver wrote it out, making the world unloadable. With the corrected
+    // enum the default is eOnCommandMXP (0 == OptionsTable default), so use_mxp
+    // is omitted; in any case it must never be written out of range.
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="mud.example.com" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_rt_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    std::string content; char buf[4096]; size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) content.append(buf, n);
+    fclose(f);
+
+    EXPECT_EQ(content.find("use_mxp=\"4\""), std::string::npos);  // never out of range
+    EXPECT_EQ(content.find("use_mxp="),      std::string::npos);  // default → omitted
+}
+
 // ── Error handling ────────────────────────────────────────────────────────
 
 TEST(WorldLoad, MissingFileReturnsFalse)

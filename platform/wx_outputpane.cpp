@@ -84,6 +84,17 @@ static wxString DecodeRunText(const SOutputRun& run)
     return s;
 }
 
+// Rendered character count of a run — the metric DrawLine measures with, so all
+// column/wrap/selection/hit-test bookkeeping must use THIS, not raw lead-byte
+// counting.  For UTF-8 runs it equals the lead-byte count; for a non-UTF-8 world
+// the bytes decode through the world charset, and a byte in 0x80–0xBF (e.g. a
+// CP1252 curly quote) looks like a UTF-8 continuation byte — counting lead bytes
+// would undercount and drift the selection/wrap against the rendered grid.
+static inline int RunCharLen(const SOutputRun& run)
+{
+    return run.utf8 ? UTF8CharLen(run.text) : (int)DecodeRunText(run).size();
+}
+
 // ── Hint bar ──────────────────────────────────────────────────────────────────
 // Height (px) of the "↓ new output below" banner painted at the bottom of the
 // client area when the user has scrolled up and new lines are arriving.
@@ -308,7 +319,7 @@ void COutputPane::AppendLine(SOutputLine&& line)
     line = DetectURLs(std::move(line));
 
     int lineChars = 0;
-    for (const auto& run : line) lineChars += UTF8CharLen(run.text);
+    for (const auto& run : line) lineChars += RunCharLen(run);
     if (lineChars > m_maxLineChars) m_maxLineChars = lineChars;
 
     // Append to wrap cache before the line is in m_lines so WrapCount() works.
@@ -526,7 +537,7 @@ void COutputPane::SetSelectionRange(int startLine, int endLine,
     // Column 0 in the API means "start / end of line".
     auto lineLen = [&](int li) {
         int len = 0;
-        for (const auto& run : m_lines[li]) len += UTF8CharLen(run.text);
+        for (const auto& run : m_lines[li]) len += RunCharLen(run);
         return len;
     };
     int sc = (startCol <= 0) ? 0
@@ -1181,7 +1192,7 @@ int COutputPane::WrapCount(int lineIdx) const
     if (line.size() == 1 && line[0].horiz_rule) return 1;
     int chars = 0;
     for (const auto& run : line)
-        chars += UTF8CharLen(run.text);
+        chars += RunCharLen(run);
     if (chars == 0 || m_wrapCols <= 0) return 1;
     return (chars + m_wrapCols - 1) / m_wrapCols;
 }
@@ -1360,7 +1371,7 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
     // Count total characters on the line (Unicode code points, not UTF-8 bytes).
     int totalChars = 0;
     for (const auto& run : m_lines[lineIdx])
-        totalChars += UTF8CharLen(run.text);
+        totalChars += RunCharLen(run);
 
     // Convert client x to virtual (unscrolled) x.
     // Horizontal scroll is always 0 (H-scrolling is disabled), but keep the
@@ -1446,7 +1457,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
             // Build the full line length and select it end-to-end.
             int lineLen = 0;
             for (const auto& run : m_lines[clickLine])
-                if (!run.horiz_rule) lineLen += UTF8CharLen(run.text);
+                if (!run.horiz_rule) lineLen += RunCharLen(run);
             m_selAnchor      = SelPoint{clickLine, 0};
             m_selFocus       = SelPoint{clickLine, lineLen};
             m_lastDClickLine = -1;   // consume so a 4th click starts fresh
@@ -1487,7 +1498,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
             int clickCol = XToChar(lineIdx, evt.GetX(), evt.GetY());
             int c = 0;
             for (const auto& run : m_lines[lineIdx]) {
-                int runLen = UTF8CharLen(run.text);
+                int runLen = RunCharLen(run);
                 if (!run.action.empty() &&
                     clickCol >= c && clickCol < c + runLen)
                 {
@@ -1726,7 +1737,7 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
                 // (already wrap-aware via XToChar in MouseToSelPoint).
                 int c = 0;
                 for (const auto& run : m_lines[pt.line]) {
-                    int runLen = UTF8CharLen(run.text);
+                    int runLen = RunCharLen(run);
                     if (!run.action.empty() &&
                         pt.col >= c && pt.col < c + runLen)
                     {
@@ -1764,7 +1775,7 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
             int col = XToChar(lineIdx, evt.GetX(), evt.GetY());
             int c = 0;
             for (const auto& run : m_lines[lineIdx]) {
-                int runLen = UTF8CharLen(run.text);
+                int runLen = RunCharLen(run);
                 if (!run.action.empty() &&
                     col >= c && col < c + runLen)
                 {
@@ -2083,22 +2094,15 @@ void COutputPane::CopySelectionAsHTML(const wxString& fontName)
             }
         return out;
     };
-    // Byte offset where character index `targetChar` begins (str.size() if past
-    // the end).  Lead-byte counting matches UTF8CharLen above.
-    auto byteForChar = [](const std::string& str, int targetChar) -> size_t {
-        int charIdx = 0;
-        for (size_t i = 0; i < str.size(); ++i)
-            if (((unsigned char)str[i] & 0xC0u) != 0x80u) {
-                if (charIdx == targetChar) return i;
-                ++charIdx;
-            }
-        return str.size();
-    };
-    auto utf8Slice = [&](const std::string& str, int startChar, int count) {
+    // Slice `count` rendered characters from a run starting at character index
+    // `startChar`, returned as UTF-8 bytes.  DecodeRunText handles both UTF-8 and
+    // legacy-charset worlds and slices in the same RunCharLen space the selection
+    // columns use, so this is correct for every world (the HTML is emitted as
+    // UTF-8 — see the charset <meta> below).
+    auto runSlice = [](const SOutputRun& run, int startChar, int count) -> std::string {
         if (count <= 0) return std::string();
-        size_t a = byteForChar(str, startChar);
-        size_t b = byteForChar(str, startChar + count);
-        return str.substr(a, b - a);
+        wxString s = DecodeRunText(run).Mid(startChar, count);
+        return std::string(s.utf8_str());
     };
 
     // Default background = first run's bg on the start line (canonical uses the
@@ -2109,6 +2113,10 @@ void COutputPane::CopySelectionAsHTML(const wxString& fontName)
     char buf[256];
     std::string html;
     html += "<!-- Produced by MUSHclient - www.mushclient.com -->\n";
+    // The slices below are emitted as UTF-8 regardless of the world's charset, so
+    // declare it (legacy-charset worlds decode to UTF-8 rather than copying raw
+    // 8-bit bytes that a clipboard consumer would mis-render).
+    html += "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">\n";
     std::snprintf(buf, sizeof buf,
                   "<table border=0 cellpadding=5 bgcolor=\"#%02X%02X%02X\">\n",
                   (int)GetRValue(defaultBack), (int)GetGValue(defaultBack),
@@ -2130,7 +2138,7 @@ void COutputPane::CopySelectionAsHTML(const wxString& fontName)
 
         int lineLen = 0;
         for (const auto& run : line)
-            if (!run.horiz_rule) lineLen += UTF8CharLen(run.text);
+            if (!run.horiz_rule) lineLen += RunCharLen(run);
 
         int startCol = (li == lo) ? std::max(0, (int)s.col) : 0;
         int endCol   = (li == hi) ? std::min(lineLen, (int)e.col) : lineLen;
@@ -2147,7 +2155,7 @@ void COutputPane::CopySelectionAsHTML(const wxString& fontName)
         int col = 0;   // running char position within the line
         for (const auto& run : line) {
             if (run.horiz_rule) continue;
-            int runLen = UTF8CharLen(run.text);
+            int runLen = RunCharLen(run);
             if (runLen <= 0) continue;
 
             int runStart = col;
@@ -2183,7 +2191,7 @@ void COutputPane::CopySelectionAsHTML(const wxString& fontName)
             }
 
             if (run.underline) html += "<u>";
-            html += fixHTML(utf8Slice(run.text, from - runStart, to - from));
+            html += fixHTML(runSlice(run, from - runStart, to - from));
             if (run.underline) html += "</u>";
 
             if (col >= endCol) break;
@@ -2206,7 +2214,7 @@ void COutputPane::SelectAll()
     int lastLine = (int)m_lines.size() - 1;
     int lastCol  = 0;
     for (const auto& run : m_lines[lastLine])
-        lastCol += UTF8CharLen(run.text);
+        lastCol += RunCharLen(run);
 
     m_selAnchor = SelPoint{0, 0};
     m_selFocus  = SelPoint{lastLine, lastCol};

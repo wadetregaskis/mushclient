@@ -401,6 +401,33 @@ TEST(ANSITest, BrightForegroundAfterResetIsNormal)
     EXPECT_EQ((COLORREF)BLACK, s->iBackColour);
 }
 
+TEST(ANSITest, BrightForegroundInCustomModeConvertsToRGB)
+{
+    // Regression: a bright SGR code (90-97 / 100-107) arriving while the current
+    // style is in COLOUR_CUSTOM mode (custom_16_is_default_colour worlds) must
+    // convert the style to RGB and apply the bright colour, exactly as the
+    // standard 30-37 / 40-47 codes already do. The CUSTOM->RGB conversion guard
+    // omitted the bright ranges, so a bright code fell through to the non-RGB
+    // switch, set iForeColour to a small index (8) while LEAVING the
+    // COLOUR_CUSTOM flag set — at display the style was then read as
+    // m_customtext[8] (a custom-palette entry) instead of the intended bright
+    // colour.
+    CMUSHclientDoc doc = make_doc();
+    // Seed a custom-palette style. Use fore index 15 (not the 8 the buggy path
+    // writes) so the buggy path actually commits a visible style instead of
+    // hitting the "nothing changed" early-return.
+    doc.AddStyle(COLOUR_CUSTOM, 15, 15, 0, static_cast<CAction*>(nullptr));
+    ASSERT_EQ((unsigned short)COLOUR_CUSTOM, tail(doc)->iFlags & COLOURTYPE);
+
+    doc.InterpretANSIcode(90);   // bright black foreground
+
+    CStyle* s = tail(doc);
+    ASSERT_NE(nullptr, s);
+    // Pre-fix BUG: s stayed COLOUR_CUSTOM with iForeColour == 8.
+    EXPECT_EQ((unsigned short)COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_EQ(doc.m_boldcolour[BLACK], s->iForeColour);   // bright black, resolved
+}
+
 // ── DisplayMsg end-to-end ANSI parsing ───────────────────────────────────
 // These tests drive DisplayMsg with raw byte strings that include ESC
 // sequences and verify the resulting doc style state.  They catch the

@@ -62,6 +62,8 @@ CAction *      pAction      = pOldStyle->pAction;
   if ((iFlags & COLOURTYPE) == COLOUR_CUSTOM)
     if ((iCode >= ANSI_TEXT_BLACK && iCode <= ANSI_TEXT_WHITE) ||    // foreground colour
         (iCode >= ANSI_BACK_BLACK && iCode <= ANSI_BACK_WHITE) ||    // background colour
+        (iCode >= 90  && iCode <= 97)  ||                            // bright foreground (port ext.)
+        (iCode >= 100 && iCode <= 107) ||                            // bright background (port ext.)
         (iCode == ANSI_SET_FOREGROUND_DEFAULT) ||                    // foreground to default
         (iCode == ANSI_SET_BACKGROUND_DEFAULT)                       // background to default
         )

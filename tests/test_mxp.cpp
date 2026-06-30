@@ -248,4 +248,42 @@ TEST(MXPCollected, NormalTagCallsStartTag)
     doc.MXP_collected_element();   // must not crash
 }
 
+// ── GetWord (mxp/mxputils.cpp) ────────────────────────────────────────────
+// Regression test for an out-of-bounds read: on an UNCLOSED quote, GetWord's
+// scan loop correctly stops at the string's NUL terminator (*p == 0, still
+// in-bounds), but then did `str = ++p` unconditionally — advancing one byte
+// PAST that NUL and dereferencing it via CString's assignment, a one-past-
+// the-end read. Verify the post-fix behaviour: an unclosed quote consumes
+// the rest of the input and leaves nothing to parse, rather than reading
+// past the buffer.
+
+TEST(GetWordTest, ClosedQuoteReturnsRemainder)
+{
+    CString result, remainder = "'hello' world";
+    bool bEnd = GetWord(result, remainder);
+    EXPECT_FALSE(bEnd);
+    EXPECT_STREQ("hello", (const char*)result);
+    EXPECT_STREQ(" world", (const char*)remainder);   // leading space not stripped here
+}
+
+TEST(GetWordTest, UnclosedQuoteLeavesEmptyRemainder)
+{
+    CString result, remainder = "'unclosed";
+    bool bEnd = GetWord(result, remainder);
+    EXPECT_FALSE(bEnd);
+    EXPECT_STREQ("unclosed", (const char*)result);
+    EXPECT_STREQ("", (const char*)remainder);   // nothing left — not garbage
+}
+
+TEST(GetWordTest, UnclosedQuoteEmptyContentLeavesEmptyRemainder)
+{
+    // Boundary case: the quote is the very last character (zero-length
+    // unterminated content) — *p hits NUL immediately after the opening quote.
+    CString result, remainder = "'";
+    bool bEnd = GetWord(result, remainder);
+    EXPECT_FALSE(bEnd);
+    EXPECT_STREQ("", (const char*)result);
+    EXPECT_STREQ("", (const char*)remainder);
+}
+
 MC_TEST_MAIN()

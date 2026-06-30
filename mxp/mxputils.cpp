@@ -40,7 +40,13 @@ bool GetWord (CString & strResult, CString & str)
     for ( ; *p != quote && *p; p++)
       len++;    // count up to closing quote
     strResult = CString (pStart, len);
-    str = ++p; // return rest of line
+    // If the quote was never closed, *p is already the NUL terminator —
+    // advancing past it (++p) and assigning would dereference one byte past
+    // the string's valid storage. There's nothing left to parse either way.
+    if (*p == quote)
+      str = ++p; // skip the closing quote; return rest of line
+    else
+      str = "";  // unterminated quote: treat as end of the remaining text
     return false; // not end, even if empty
     }
 

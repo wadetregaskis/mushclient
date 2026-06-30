@@ -323,6 +323,28 @@ TEST(ANSITest, GetStyleRGBRgbPassthrough)
     EXPECT_EQ(RGB(40, 50, 60), bg);
 }
 
+TEST(ANSITest, GetStyleRGBHiliteInverseBoldsPostSwapForeground)
+{
+    // Windows parity (doc.cpp): with HILITE|INVERSE, the inverse swap happens
+    // FIRST, then bold (HILITE) is applied to the post-swap foreground — i.e.
+    // the cell that is now the foreground (originally the background index).
+    // colour2 (background cell) stays normal intensity.
+    // Pre-fix the portable code bolded the ORIGINAL foreground then swapped, so
+    // it lightened the wrong half: it produced colour1=normal-blue,
+    // colour2=bold-red instead of colour1=bold-blue, colour2=normal-red.
+    CMUSHclientDoc doc = make_doc();
+    CStyle s;
+    s.iFlags      = COLOUR_ANSI | HILITE | INVERSE;
+    s.iForeColour = 1;   // RED
+    s.iBackColour = 4;   // BLUE
+
+    COLORREF c1 = 0, c2 = 0;
+    doc.GetStyleRGB(&s, c1, c2);
+
+    EXPECT_EQ(doc.m_boldcolour[4],   c1);   // bold BLUE (post-swap fg, bolded)
+    EXPECT_EQ(doc.m_normalcolour[1], c2);   // normal RED (post-swap bg)
+}
+
 TEST(ANSITest, GetStyleRGBInverseSwapsFgBg)
 {
     CMUSHclientDoc doc = make_doc();

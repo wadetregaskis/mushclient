@@ -295,13 +295,21 @@ void CMUSHclientDoc::GetStyleRGB(CStyle* pStyle,
                     : m_normalcolour[iBackground];
             }
         } else {
-            COLORREF fg = (iForeground >= 8) ? xterm_256_colours[iForeground]
+            // Windows parity (doc.cpp): under INVERSE, swap the colour INDICES
+            // first, THEN apply HILITE to the post-swap foreground (colour1);
+            // colour2 (the background cell) is always normal intensity. The
+            // previous code applied HILITE to the *original* foreground and then
+            // swapped the finished values, which bolds the wrong half of an
+            // inverse+bold pair.
+            if (style & INVERSE) {
+                iForeground = pStyle->iBackColour;
+                iBackground = pStyle->iForeColour;
+            }
+            colour1 = (iForeground >= 8) ? xterm_256_colours[iForeground]
                 : ((style & HILITE) ? m_boldcolour[iForeground]
                                     : m_normalcolour[iForeground]);
-            COLORREF bg = (iBackground >= 8) ? xterm_256_colours[iBackground]
+            colour2 = (iBackground >= 8) ? xterm_256_colours[iBackground]
                 : m_normalcolour[iBackground];
-            if (style & INVERSE) { colour1 = bg; colour2 = fg; }
-            else                 { colour1 = fg; colour2 = bg; }
         }
     }
 }

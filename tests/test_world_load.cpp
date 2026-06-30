@@ -83,6 +83,30 @@ TEST(WorldLoad, LoadOneTrigger)
     EXPECT_EQ(1,  (int)doc.GetTriggerArray().GetSize());
 }
 
+TEST(WorldLoad, AbsentAlphaOptionsLoadTheirNonEmptyDefaults)
+{
+    // The saver omits any alpha option equal to its table default, so the loader
+    // must restore non-empty defaults for absent attributes. Without this, a
+    // world that doesn't list command_stack_character / speed_walk_prefix /
+    // spam_message / auto_say_string loads them as empty — breaking command
+    // stacking, speedwalk recognition, etc. (The portable constructor, unlike
+    // the Windows one, doesn't seed these.)
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    EXPECT_STREQ(";",     (const char*)doc.m_strCommandStackCharacter);
+    EXPECT_STREQ("#",     (const char*)doc.m_speed_walk_prefix);
+    EXPECT_STREQ("look",  (const char*)doc.m_strSpamMessage);
+    EXPECT_STREQ("say ",  (const char*)doc.m_strAutoSayString);
+}
+
 TEST(WorldLoad, NumericEntityAllowsLineFeedAndCarriageReturn)
 {
     // XML attribute-value normalization (XML 1.0 section 3.3.3) replaces any

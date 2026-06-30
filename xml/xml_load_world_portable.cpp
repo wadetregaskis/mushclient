@@ -759,7 +759,24 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
 
             const char* optName = AlphaOptionsTable[i].pName;
             CAttribute* a;
-            if (!pWorld->AttributeMap.Lookup(optName, a) || !a) continue;
+            if (!pWorld->AttributeMap.Lookup(optName, a) || !a) {
+                // Attribute absent. The saver (xml_save_world_portable.cpp) omits
+                // any option whose value equals its table default, so an absent
+                // option must be RESTORED to that default here. The Windows build
+                // gets these from the constructor (doc_construct.cpp); the
+                // portable constructor (doc_portable.cpp) does not seed them, so
+                // without this a non-empty default such as command_stack_character
+                // (";"), speed_walk_prefix ("#"), spam_message ("look") or
+                // auto_say_string ("say ") would load as empty — breaking command
+                // stacking, speedwalk recognition, etc., and silently corrupting
+                // a save→reload round-trip.
+                const char* def = AlphaOptionsTable[i].sDefault;
+                if (def && *def) {
+                    apply_alpha_option(doc, optName, CString(def));
+                    doc.m_alphaOptionCache[optName] = std::string(def);
+                }
+                continue;
+            }
             a->bUsed = true;
             CString val = a->strValue;
 

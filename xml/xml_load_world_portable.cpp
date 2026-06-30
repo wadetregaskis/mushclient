@@ -87,7 +87,13 @@ static t_regexp* compile_pattern(const CString& pattern, bool bRegexp,
     if (bRegexp)
         strRegexp = pattern;
     else
-        strRegexp = ConvertToRegularExpression(pattern, false, true);
+        // bWholeLine=true: a non-regexp (wildcard) trigger/alias must be anchored
+        // to the WHOLE line (^...$), matching Windows. Every Windows runtime
+        // compile site (xml_load_world.cpp trigger/alias load) uses the default
+        // bWholeLine=true. Passing false here compiled plain patterns as
+        // unanchored substrings, so e.g. the alias "cc" fired on "accept" and a
+        // trigger "health" fired on "Your health is low." — a parity break.
+        strRegexp = ConvertToRegularExpression(pattern, true, true);
 
     try {
         return regcomp(strRegexp,

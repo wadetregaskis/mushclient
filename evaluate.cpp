@@ -341,7 +341,7 @@ int iCount = GetTriggerArray ().GetSize ();    // how many there are
         strLazy = trigger_item->trigger;
       else
         strLazy = ConvertToRegularExpression (trigger_item->trigger,
-                                              false,  // bWholeLine
+                                              true,   // bWholeLine — anchor ^...$ like Windows
                                               true);  // bMakeAsterisksWildcards
       try
         {

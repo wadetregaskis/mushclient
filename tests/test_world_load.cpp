@@ -196,8 +196,10 @@ TEST(WorldLoad, TriggerLoadedAndFires)
 
     ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
 
-    // Feed a matching line through the full pipeline
-    std::string s = "ping pong\n";
+    // Feed a matching line through the full pipeline. A plain (non-regexp)
+    // trigger is whole-line-anchored (^ping$, Windows parity), so the line must
+    // be exactly "ping" — not merely contain it.
+    std::string s = "ping\n";
     doc.DisplayMsg(s.c_str(), (int)s.size(), 0);
 
     CTrigger* t = nullptr;
@@ -592,16 +594,19 @@ TEST(WorldLoad, TriggerColourSplitDoesNotEatTrailingChar)
     // split was skipped and the trailing character was wrongly absorbed into
     // the coloured/matched style run.
     //
-    // Trigger matches "fooba" (cols 0-4) within the single-style line "foobar"
-    // (cols 0-5, iStyleEndCol=6 exclusive) — exactly the boundary case
-    // (iEndCol=5, iStyleEndCol-1=5) that the buggy condition mishandled.
+    // Regexp trigger ^fooba matches "fooba" (cols 0-4) within the single-style
+    // line "foobar" (cols 0-5, iStyleEndCol=6 exclusive) — exactly the boundary
+    // case (iEndCol=5, iStyleEndCol-1=5) that the buggy condition mishandled.
+    // (Uses regexp="y" with an unterminated ^fooba so the match ends BEFORE the
+    // line end; a plain non-regexp trigger is whole-line-anchored and would
+    // match all of "foobar", leaving no trailing char to split.)
     const char* xml = R"xml(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
 <world script_language="lua">
 </world>
 <triggers>
-  <trigger match="fooba" name="t1" enabled="y" custom_colour="1" send_to="14">
+  <trigger match="^fooba" name="t1" regexp="y" enabled="y" custom_colour="1" send_to="14">
     <send></send>
   </trigger>
 </triggers>

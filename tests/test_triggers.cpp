@@ -79,13 +79,43 @@ TEST(TriggerTest, ExactMatchFires)
     EXPECT_EQ(1L, t->nMatched);
 }
 
-TEST(TriggerTest, SubstringMatchFires)
+TEST(TriggerTest, PlainTriggerDoesNotMatchSubstring)
 {
+    // Windows parity: a non-regexp (wildcard) trigger is anchored to the WHOLE
+    // line (^...$). "health" matches ONLY a line that is exactly "health", not
+    // a line that merely contains it. (The port previously compiled plain
+    // triggers unanchored, so this wrongly fired — the same bug made the
+    // automap alias "cc" fire on "accept".)
     CMUSHclientDoc doc = make_doc();
     CTrigger* t = add_trigger(doc, "health");
 
     feed_line(doc, "Your health is low.");
 
+    EXPECT_EQ(0L, t->nMatched);
+}
+
+TEST(TriggerTest, WildcardWrappedTriggerMatchesSubstring)
+{
+    // To match a substring you wrap the pattern in wildcards, exactly as on
+    // Windows: "*health*" -> ^(.*?)health(.*?)$.
+    CMUSHclientDoc doc = make_doc();
+    CTrigger* t = add_trigger(doc, "*health*");
+
+    feed_line(doc, "Your health is low.");
+
+    EXPECT_EQ(1L, t->nMatched);
+}
+
+TEST(TriggerTest, PlainTriggerMatchesExactLine)
+{
+    // Counterpart to the above: the plain pattern fires when the line equals it.
+    CMUSHclientDoc doc = make_doc();
+    CTrigger* t = add_trigger(doc, "north");
+
+    feed_line(doc, "go north now");   // contains but != "north"
+    EXPECT_EQ(0L, t->nMatched);
+
+    feed_line(doc, "north");          // exact whole line
     EXPECT_EQ(1L, t->nMatched);
 }
 
@@ -138,7 +168,8 @@ TEST(TriggerTest, RegexpNoMatchOnWrongLine)
 TEST(TriggerTest, FiresOncePerLine)
 {
     CMUSHclientDoc doc = make_doc();
-    CTrigger* t = add_trigger(doc, "ping");
+    // "*ping*" (wildcard-wrapped) whole-line-matches a line containing "ping".
+    CTrigger* t = add_trigger(doc, "*ping*");
 
     feed_line(doc, "ping pong ping");   // two occurrences but trigger fires once per line
 
@@ -149,7 +180,7 @@ TEST(TriggerTest, FiresOncePerLine)
 TEST(TriggerTest, MultipleLinesMultipleMatches)
 {
     CMUSHclientDoc doc = make_doc();
-    CTrigger* t = add_trigger(doc, "score");
+    CTrigger* t = add_trigger(doc, "*score*");   // wildcard-wrapped: matches lines containing "score"
 
     feed_line(doc, "Your score is 100.");
     feed_line(doc, "Total score: 100.");

@@ -1397,7 +1397,12 @@ POSITION pos;
                      }  // end if we need to split before the matching text
 
                    // if the change ends before the last column of the style we need to split into before and after
-                   if (iEndCol < (iStyleEndCol - 1))
+                   // (iEndCol is the PCRE-style exclusive end offset, same convention as
+                   // iStyleEndCol, so "ends before the style's end" is iEndCol < iStyleEndCol —
+                   // not "- 1", which wrongly absorbed one trailing unmatched character into
+                   // the matched/coloured style run whenever the match ended exactly one
+                   // column short of the style's end)
+                   if (iEndCol < iStyleEndCol)
                      {
                      CPaneStyle * pNewStyle = new CPaneStyle (*pStyle);  // make a new style
                      pNewStyle->m_sText = sText.substr (iStyleLength - (iStyleEndCol - iEndCol));    // put back part in new style run

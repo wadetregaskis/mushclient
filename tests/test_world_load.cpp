@@ -17,6 +17,13 @@
 #include <cstdio>
 #include <cstring>
 
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+extern "C" {
+#include "lua.h"
+#include "lauxlib.h"
+}
+#endif
+
 // ── helpers ───────────────────────────────────────────────────────────────
 
 // Write text to a temporary file and return the path.  The file is in the
@@ -540,6 +547,87 @@ end
     ASSERT_TRUE(doc.GetTriggerMap().Lookup("hp_trigger", t));
     ASSERT_NE(nullptr, t);
     EXPECT_STREQ("OnHealth", (const char*)t->strProcedure);
+}
+
+TEST(WorldLoad, TriggerColourSplitDoesNotEatTrailingChar)
+{
+    // Regression test for an off-by-one in ProcessPreviousLine.cpp's trigger
+    // style-splitting logic (the code that colours only the matched portion of
+    // a line, used both on-screen and for the TriggerStyleRuns table passed to
+    // "send to script after omit" triggers). PCRE match offsets are [start,end)
+    // — end is EXCLUSIVE, one past the last matched char — matching the style
+    // run's own iStyleEndCol convention. The split-after-match condition was
+    // `iEndCol < (iStyleEndCol - 1)` instead of `iEndCol < iStyleEndCol`, so
+    // whenever the match ended exactly one character before the style's end
+    // (e.g. a whole-line style run with one trailing unmatched char), the
+    // split was skipped and the trailing character was wrongly absorbed into
+    // the coloured/matched style run.
+    //
+    // Trigger matches "fooba" (cols 0-4) within the single-style line "foobar"
+    // (cols 0-5, iStyleEndCol=6 exclusive) — exactly the boundary case
+    // (iEndCol=5, iStyleEndCol-1=5) that the buggy condition mishandled.
+    const char* xml = R"xml(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world script_language="lua">
+</world>
+<triggers>
+  <trigger match="fooba" name="t1" enabled="y" custom_colour="1" send_to="14">
+    <send></send>
+  </trigger>
+</triggers>
+<script>
+function Noop() end
+</script>
+</muclient>)xml";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    ASSERT_NE(nullptr, doc.m_ScriptEngine);
+    ASSERT_TRUE(doc.m_ScriptEngine->IsLua());
+
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_iFlags        = COLOUR_ANSI;
+    doc.m_iForeColour   = WHITE;
+    doc.m_iBackColour   = BLACK;
+    doc.m_pCurrentLine  = new CLine();
+    doc.AddStyle(COLOUR_ANSI, WHITE, BLACK, 0, static_cast<CAction*>(nullptr));
+
+    const char seq[] = "foobar\n";
+    doc.DisplayMsg(seq, (int)strlen(seq), 0);
+
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("t1", t));
+    EXPECT_EQ(1L, t->nMatched);
+
+    // The trigger's deferred "send to script" runs synchronously inside
+    // DisplayMsg with the TriggerStyleRuns global set from the (possibly
+    // mis-split) style runs — inspect it directly.
+    lua_State* L = doc.m_ScriptEngine->L;
+    ASSERT_NE(nullptr, L);
+    lua_getglobal(L, "TriggerStyleRuns");
+    ASSERT_TRUE(lua_istable(L, -1));
+
+    lua_rawgeti(L, -1, 1);
+    ASSERT_TRUE(lua_istable(L, -1));
+    lua_getfield(L, -1, "text");
+    std::string run1 = lua_tostring(L, -1) ? lua_tostring(L, -1) : "";
+    lua_pop(L, 2);   // pop text, run1 table
+
+    lua_rawgeti(L, -1, 2);
+    bool hasRun2 = lua_istable(L, -1);
+    std::string run2;
+    if (hasRun2) {
+        lua_getfield(L, -1, "text");
+        run2 = lua_tostring(L, -1) ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);   // pop run2 (table or nil)
+    lua_pop(L, 1);   // pop TriggerStyleRuns
+
+    EXPECT_STREQ("fooba", run1.c_str());      // only the matched text is coloured
+    ASSERT_TRUE(hasRun2);                      // the trailing "r" must be a separate run
+    EXPECT_STREQ("r", run2.c_str());           // and must not include the matched text
 }
 
 #endif // MUSHCLIENT_LUA_SCRIPTING

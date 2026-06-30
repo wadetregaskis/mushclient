@@ -119,4 +119,21 @@ TEST(RegexpTest, WildcardCountNoGroups) {
     delete r;
 }
 
+TEST(RegexpTest, RuntimeErrorIsNotReportedAsMatch) {
+    // A PCRE *runtime* error (count < 0, distinct from PCRE_ERROR_NOMATCH) must
+    // NOT be reported as a successful match. "(a+)+$" against a long run of 'a'
+    // followed by a non-'a' forces catastrophic backtracking that exhausts the
+    // PCRE match limit (PCRE_ERROR_MATCHLIMIT). On Windows this throws; the
+    // portable path used to fall through to `return true`, spuriously firing the
+    // trigger/alias on a line it never matched.
+    t_regexp* r = regcomp("(a+)+$");
+    ASSERT_NE(nullptr, r);
+    std::string s(50, 'a');
+    s += '!';                       // guarantees the overall match must fail
+    int result = regexec(r, s.c_str());
+    EXPECT_EQ(0, result);           // errored → NON-match, not a spurious match
+    EXPECT_LT(r->m_iExecutionError, 0);  // a real runtime error code was recorded
+    delete r;
+}
+
 MC_TEST_MAIN()

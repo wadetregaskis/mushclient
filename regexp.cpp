@@ -121,8 +121,15 @@ int count;
     ThrowErrorException (TFormat ("Error executing regular expression: %s",
                          (LPCTSTR) Convert_PCRE_Runtime_Error (count)));
 #else
-    // On macOS/Linux: log to stderr and clear the program so we stop trying
+    // On macOS/Linux: log to stderr and clear the program so we stop trying.
+    // Windows throws above (noreturn); the portable equivalent of "this match
+    // attempt errored" is a NON-match. Without this return, control falls
+    // through to `return true` below, spuriously reporting a MATCH for a regex
+    // that actually errored (e.g. PCRE_ERROR_MATCHLIMIT from catastrophic
+    // backtracking), which would fire the trigger/alias on a line it never
+    // matched.
     fprintf(stderr, "Error executing regular expression (PCRE error %d)\n", count);
+    return false;
 #endif // _WIN32
     }
 

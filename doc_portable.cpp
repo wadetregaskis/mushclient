@@ -2568,16 +2568,37 @@ CString CMUSHclientDoc::DoEvaluateSpeedwalk(const char* strInput)
             continue;
         }
 
-        // read optional repeat count
+        // read optional repeat count. Check the cap per-digit (like the Windows
+        // twin methods_speedwalks.cpp), so a long digit run errors immediately
+        // instead of overflowing the int and wrapping past the >99 check.
         int count = 0;
-        while (*p && isdigit((unsigned char)*p))
+        while (*p && isdigit((unsigned char)*p)) {
             count = count * 10 + (*p++ - '0');
+            if (count > 99) return CString("*Speed walk counter exceeds 99\n");
+        }
         if (count == 0) count = 1;
-        if (count > 99) return CString("*Speed walk counter exceeds 99\n");
 
         // skip whitespace after count
         while (*p && isspace((unsigned char)*p)) ++p;
         if (!*p) break;
+
+        // action prefix C/O/L/K = close/open/lock/unlock (Windows parity). These
+        // emit a prefix word and must be followed by a direction (and must not
+        // carry a repeat count); we then fall through to expand that direction.
+        if (strchr("COLK", toupper((unsigned char)*p))) {
+            if (count > 1)
+                return CString("*Action code of C, O, L or K must not follow a speed walk count (1-99)\n");
+            switch (toupper((unsigned char)*p++)) {
+                case 'C': result += "close ";  break;
+                case 'O': result += "open ";   break;
+                case 'L': result += "lock ";   break;
+                case 'K': result += "unlock "; break;
+            }
+            while (*p && isspace((unsigned char)*p)) ++p;
+            if (*p == 0 || toupper((unsigned char)*p) == 'F' || *p == '{')
+                return CString("*Action code of C, O, L or K must be followed by a direction\n");
+            // fall through (no continue) to expand the following direction
+        }
 
         // filler 'F' — send m_strSpeedWalkFiller (skip silently if empty)
         if (toupper((unsigned char)*p) == 'F') {

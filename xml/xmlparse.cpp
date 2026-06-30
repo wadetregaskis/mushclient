@@ -79,7 +79,7 @@ CString strEntityContents;
         }
       } // end of decimal entity
 
-    if (iResult != 9)       // we will accept tabs ;)
+    if (iResult != 9 && iResult != 10 && iResult != 13)  // we will accept tabs, newlines and carriage-returns ;)
       if (iResult < 32 ||   // don't allow nonprintable characters
           iResult > 255)   // don't allow characters more than 1 byte
           {

@@ -83,6 +83,35 @@ TEST(WorldLoad, LoadOneTrigger)
     EXPECT_EQ(1,  (int)doc.GetTriggerArray().GetSize());
 }
 
+TEST(WorldLoad, NumericEntityAllowsLineFeedAndCarriageReturn)
+{
+    // XML attribute-value normalization (XML 1.0 section 3.3.3) replaces any
+    // literal CR in the source with a space, so &#10; / &#13; numeric character
+    // references are the ONLY way to embed a literal LF/CR inside an attribute
+    // value -- a normal, spec-legal XML construct. CXMLparser::Get_XML_Entity
+    // only exempted &#9; (tab) from its "disallowed control character" check,
+    // rejecting &#10; and &#13; with "Disallowed number in XML entity" and
+    // failing the whole world load -- inconsistent with the sibling MXP entity
+    // decoder (mxpEntities.cpp), which correctly exempts 9, 10, and 13.
+    const char* xml = "<?xml version=\"1.0\"?>\n"
+"<!DOCTYPE muclient>\n"
+"<muclient>\n"
+"<triggers>\n"
+"  <trigger match=\"abc&#10;def&#13;ghi\" name=\"t1\" enabled=\"y\">\n"
+"    <send></send>\n"
+"  </trigger>\n"
+"</triggers>\n"
+"</muclient>\n";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("t1", t));
+    ASSERT_NE(nullptr, t);
+    EXPECT_STREQ("abc\ndef\rghi", (const char*)t->trigger);
+}
+
 TEST(WorldLoad, TriggerRegexpFlag)
 {
     const char* xml = R"xml(<?xml version="1.0"?>

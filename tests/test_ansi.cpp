@@ -73,6 +73,25 @@ TEST(ANSITest, CancelBoldClearsHiliteFlag)
     EXPECT_TRUE((s->iFlags & HILITE) == 0);
 }
 
+TEST(ANSITest, CancelStrikeoutClearsOnlyStrikeoutFlag)
+{
+    // SGR 29 ("not strikethrough") must clear only STRIKEOUT and leave every
+    // other active attribute untouched — exactly like the other ANSI_CANCEL_*
+    // codes (see CancelBoldClearsHiliteFlag above). Regression test: the
+    // implementation used `iFlags &= STRIKEOUT` (missing the `~`), which wipes
+    // every OTHER flag and perversely *keeps* strikeout if it was set.
+    CMUSHclientDoc doc = make_doc();
+    doc.InterpretANSIcode(ANSI_BOLD);
+    doc.InterpretANSIcode(ANSI_UNDERLINE);
+    doc.InterpretANSIcode(ANSI_STRIKEOUT);
+    doc.InterpretANSIcode(ANSI_CANCEL_STRIKEOUT);
+    CStyle* s = tail(doc);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & STRIKEOUT) == 0);   // cancelled
+    EXPECT_TRUE((s->iFlags & HILITE)    != 0);   // bold must survive
+    EXPECT_TRUE((s->iFlags & UNDERLINE) != 0);   // underline must survive
+}
+
 TEST(ANSITest, UnderlineSetsUnderlineFlag)
 {
     CMUSHclientDoc doc = make_doc();

@@ -307,7 +307,7 @@ CAction *      pAction      = pOldStyle->pAction;
     case ANSI_CANCEL_UNDERLINE: iFlags &= ~UNDERLINE;   break;   // not underlined
     case ANSI_CANCEL_SLOW_BLINK: iFlags &= ~BLINK;       break;   // not blinking
     case ANSI_CANCEL_INVERSE: iFlags &= ~INVERSE;     break;   // not inverse
-    case ANSI_CANCEL_STRIKEOUT: iFlags &= STRIKEOUT; break; // not struckout
+    case ANSI_CANCEL_STRIKEOUT: iFlags &= ~STRIKEOUT; break; // not struckout
     } // end of switch
 
 // if the net effect is that nothing changed (eg. blue following blue) leave

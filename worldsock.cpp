@@ -52,7 +52,15 @@ void CWorldSocket::OnReceive(int nErrorCode)
   // Since we won't get another FD_READ for already-buffered data, drain it now.
   if (pDoc->m_pSSL && pDoc->m_bSSL_Connected)
     {
-    while (SSL_pending (pDoc->m_pSSL) > 0)
+    // Re-check m_pSSL/m_bSSL_Connected every iteration, not just SSL_pending:
+    // the in-loop ReceiveMsg() can take the clean-shutdown path (SSL_read ->
+    // SSL_ERROR_ZERO_RETURN -> OnClose -> SSLCleanup), which frees m_pSSL and
+    // sets it NULL *without* destroying m_pSocket. The m_pSocket==NULL guard
+    // below therefore would not fire, and re-evaluating SSL_pending(m_pSSL)
+    // with m_pSSL==NULL dereferences NULL (OpenSSL's SSL_pending does not
+    // NULL-check its argument). Short-circuit on the same condition that
+    // gated entry.
+    while (pDoc->m_pSSL && pDoc->m_bSSL_Connected && SSL_pending (pDoc->m_pSSL) > 0)
       {
       pDoc->ReceiveMsg();
       if (pDoc->m_pSocket == NULL)

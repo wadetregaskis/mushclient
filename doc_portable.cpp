@@ -254,75 +254,7 @@ CMUSHclientDoc::~CMUSHclientDoc()
     }
 }
 
-// ── GetStyleRGB ───────────────────────────────────────────────────────────
-void CMUSHclientDoc::GetStyleRGB(CStyle* pStyle,
-                                  COLORREF& colour1,
-                                  COLORREF& colour2) const
-{
-    unsigned short style = pStyle->iFlags & STYLE_BITS;
 
-    if ((style & COLOURTYPE) == COLOUR_CUSTOM) {
-        if (style & INVERSE) {
-            colour1 = m_customback[pStyle->iForeColour];
-            colour2 = m_customtext[pStyle->iForeColour];
-        } else {
-            colour1 = m_customtext[pStyle->iForeColour];
-            colour2 = m_customback[pStyle->iForeColour];
-        }
-    } else if ((style & COLOURTYPE) == COLOUR_RGB) {
-        if (style & INVERSE) {
-            colour1 = pStyle->iBackColour;
-            colour2 = pStyle->iForeColour;
-        } else {
-            colour1 = pStyle->iForeColour;
-            colour2 = pStyle->iBackColour;
-        }
-    } else {
-        int iForeground = pStyle->iForeColour;
-        int iBackground = pStyle->iBackColour;
-
-        if (m_bAlternativeInverse) {
-            if (style & INVERSE) {
-                colour2 = (iForeground >= 8) ? xterm_256_colours[iForeground]
-                    : ((style & HILITE) ? m_boldcolour[iForeground]
-                                       : m_normalcolour[iForeground]);
-                colour1 = (iBackground >= 8) ? xterm_256_colours[iBackground]
-                    : m_normalcolour[iBackground];
-            } else {
-                colour1 = (iForeground >= 8) ? xterm_256_colours[iForeground]
-                    : ((style & HILITE) ? m_boldcolour[iForeground]
-                                       : m_normalcolour[iForeground]);
-                colour2 = (iBackground >= 8) ? xterm_256_colours[iBackground]
-                    : m_normalcolour[iBackground];
-            }
-        } else {
-            // Windows parity (doc.cpp): under INVERSE, swap the colour INDICES
-            // first, THEN apply HILITE to the post-swap foreground (colour1);
-            // colour2 (the background cell) is always normal intensity. The
-            // previous code applied HILITE to the *original* foreground and then
-            // swapped the finished values, which bolds the wrong half of an
-            // inverse+bold pair.
-            if (style & INVERSE) {
-                iForeground = pStyle->iBackColour;
-                iBackground = pStyle->iForeColour;
-            }
-            colour1 = (iForeground >= 8) ? xterm_256_colours[iForeground]
-                : ((style & HILITE) ? m_boldcolour[iForeground]
-                                    : m_normalcolour[iForeground]);
-            colour2 = (iBackground >= 8) ? xterm_256_colours[iBackground]
-                : m_normalcolour[iBackground];
-        }
-    }
-}
-
-// ── RememberStyle ─────────────────────────────────────────────────────────
-void CMUSHclientDoc::RememberStyle(const CStyle* pStyle)
-{
-    if (!pStyle) return;
-    m_iFlags      = pStyle->iFlags & STYLE_BITS;
-    m_iForeColour = pStyle->iForeColour;
-    m_iBackColour = pStyle->iBackColour;
-}
 
 // ── AddStyle (action-pointer overload) ───────────────────────────────────
 CStyle* CMUSHclientDoc::AddStyle(const unsigned short iFlags,

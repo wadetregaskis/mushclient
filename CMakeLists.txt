@@ -416,6 +416,7 @@ if(NOT WIN32)
 
         # ANSI colour parser + supporting doc helpers (Phase 2)
         ansi.cpp
+        doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
         doc_portable.cpp
 
         # Telnet protocol parser (Phase 2)
@@ -601,6 +602,7 @@ if(NOT WIN32)
         Replace.cpp
         Dmetaph.cpp
         ansi.cpp
+        doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
         telnet_phases.cpp
         worldsock.cpp
         Line.cpp

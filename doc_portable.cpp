@@ -12,6 +12,7 @@
 #include "platform/wx_mfc_hooks.h"
 #include "Color.h"
 #include "worldsock.h"
+#include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
 #ifdef OPENSSL_FOUND
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
@@ -2541,245 +2542,52 @@ CString CMUSHclientDoc::FormatTime(CTime t, const char* fmt, bool /*bUTC*/)
     return CString(buf);
 }
 
-// ── CMUSHclientDoc::DoEvaluateSpeedwalk ────────────────────────────────────
-// Portable speedwalk evaluator.  Mirrors methods_speedwalks.cpp logic using
-// a built-in direction table (N/S/E/W/U/D and diagonals) instead of the
-// Windows MapDirectionsMap (which is populated by Mapping.cpp / dialogs).
-CString CMUSHclientDoc::DoEvaluateSpeedwalk(const char* strInput)
+// ── Speedwalk (shared) ─────────────────────────────────────────────────────
+// The speedwalk parser lives in the shared speedwalk.cpp (compiled into both
+// mushcore and mushapp) so it cannot drift from the Windows original. These thin
+// wrappers inject the portable built-in n/s/e/w/u/d direction tables — the
+// GUI-only MapDirectionsMap is not populated in the portable/CLI build. The line
+// terminator stays "\n" here, matching the portable command pipeline.
+
+static CString PortableSpeedwalkForwardDir (char letter)
 {
-    // Built-in direction table: letter code → command to send
-    static const struct { char code; const char* cmd; } kDirs[] = {
-        { 'n', "north" }, { 's', "south" }, { 'e', "east"  },
-        { 'w', "west"  }, { 'u', "up"    }, { 'd', "down"  },
-    };
-
-    CString result;
-    const char* p = strInput;
-
-    while (*p) {
-        // skip whitespace
-        while (*p && isspace((unsigned char)*p)) ++p;
-        if (!*p) break;
-
-        // skip {comment}
-        if (*p == '{') {
-            while (*p && *p != '}') ++p;
-            if (*p == '}') ++p;
-            continue;
-        }
-
-        // read optional repeat count. Check the cap per-digit (like the Windows
-        // twin methods_speedwalks.cpp), so a long digit run errors immediately
-        // instead of overflowing the int and wrapping past the >99 check.
-        int count = 0;
-        while (*p && isdigit((unsigned char)*p)) {
-            count = count * 10 + (*p++ - '0');
-            if (count > 99) return CString("*Speed walk counter exceeds 99\n");
-        }
-        if (count == 0) count = 1;
-
-        // skip whitespace after count
-        while (*p && isspace((unsigned char)*p)) ++p;
-        if (!*p) break;
-
-        // action prefix C/O/L/K = close/open/lock/unlock (Windows parity). These
-        // emit a prefix word and must be followed by a direction (and must not
-        // carry a repeat count); we then fall through to expand that direction.
-        if (strchr("COLK", toupper((unsigned char)*p))) {
-            if (count > 1)
-                return CString("*Action code of C, O, L or K must not follow a speed walk count (1-99)\n");
-            switch (toupper((unsigned char)*p++)) {
-                case 'C': result += "close ";  break;
-                case 'O': result += "open ";   break;
-                case 'L': result += "lock ";   break;
-                case 'K': result += "unlock "; break;
-            }
-            while (*p && isspace((unsigned char)*p)) ++p;
-            if (*p == 0 || toupper((unsigned char)*p) == 'F' || *p == '{')
-                return CString("*Action code of C, O, L or K must be followed by a direction\n");
-            // fall through (no continue) to expand the following direction
-        }
-
-        // filler 'F' — send m_strSpeedWalkFiller (skip silently if empty)
-        if (toupper((unsigned char)*p) == 'F') {
-            ++p;
-            if (!m_strSpeedWalkFiller.IsEmpty())
-                for (int i = 0; i < count; ++i)
-                    result += m_strSpeedWalkFiller + "\n";
-            continue;
-        }
-
-        // custom direction (something/reverse)
-        if (*p == '(') {
-            ++p;
-            CString custom;
-            while (*p && *p != ')') {
-                if (*p == '/') { while (*p && *p != ')') ++p; break; }
-                custom += *p++;
-            }
-            if (*p == ')') ++p;
-            for (int i = 0; i < count; ++i)
-                result += custom + "\n";
-            continue;
-        }
-
-        // check for two-character diagonal (NE NW SE SW)
-        char c1 = (char)toupper((unsigned char)*p);
-        char c2 = (*(p+1)) ? (char)toupper((unsigned char)*(p+1)) : 0;
-        if ((c1=='N'||c1=='S') && (c2=='E'||c2=='W')) {
-            char diag[3] = { (char)tolower((unsigned char)c1),
-                              (char)tolower((unsigned char)c2), 0 };
-            p += 2;
-            for (int i = 0; i < count; ++i) { result += diag; result += "\n"; }
-            continue;
-        }
-
-        // single-letter cardinal direction
-        bool found = false;
-        for (auto& d : kDirs) {
-            if (d.code == (char)tolower((unsigned char)*p)) {
-                ++p;
-                for (int i = 0; i < count; ++i) {
-                    result += d.cmd; result += "\n";
-                }
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            CString err;
-            err.Format("*Invalid direction '%c' in speed walk\n", *p);
-            return err;
-        }
+    switch (letter) {
+        case 'n': return "north"; case 's': return "south"; case 'e': return "east";
+        case 'w': return "west";  case 'u': return "up";    case 'd': return "down";
     }
-
-    return result;
+    return CString();   // unknown — matches the empty-MapDirectionsMap result
 }
 
-// ── CMUSHclientDoc::DoReverseSpeedwalk ─────────────────────────────────────
-// Portable reverse-speedwalk.  Walks the input string, reverses each
-// direction step, and accumulates the result in reverse order so the
-// resulting path is the exact inverse of the original.
-//
-// Direction reversal table (mirrors Mapping.cpp LoadMapDirections):
-//   n↔s  e↔w  u↔d  ne↔sw  nw↔se  f→f
-//
-// On error, returns a string starting with '*' (MakeSpeedWalkErrorString
-// convention).
+static CString PortableSpeedwalkReverseDir (char letter)
+{
+    switch (letter) {
+        case 'n': return "s"; case 's': return "n"; case 'e': return "w";
+        case 'w': return "e"; case 'u': return "d"; case 'd': return "u";
+        case 'f': return "f";
+    }
+    return CString();
+}
+
+static CString PortableSpeedwalkReverseWord (const CString& word)
+{
+    static const char* tbl[][2] = {
+        {"ne","sw"}, {"sw","ne"}, {"nw","se"}, {"se","nw"}, {"f","f"}, {nullptr,nullptr}
+    };
+    for (int i = 0; tbl[i][0]; ++i)
+        if (word == tbl[i][0]) return CString(tbl[i][1]);
+    return CString();
+}
+
+CString CMUSHclientDoc::DoEvaluateSpeedwalk(const char* strInput)
+{
+    return ExpandSpeedwalk(strInput, m_strSpeedWalkFiller, "\n",
+                           PortableSpeedwalkForwardDir);
+}
 
 CString CMUSHclientDoc::DoReverseSpeedwalk(LPCTSTR SpeedWalkString)
 {
-    // Returns the reverse of a single direction abbreviation, or the
-    // input unchanged if it is not a known abbreviation.
-    auto reverseDir = [](const std::string& d) -> std::string {
-        static const char* tbl[][2] = {
-            {"n","s"},{"s","n"},{"e","w"},{"w","e"},
-            {"u","d"},{"d","u"},
-            {"ne","sw"},{"sw","ne"},{"nw","se"},{"se","nw"},
-            {"f","f"},{nullptr,nullptr}
-        };
-        for (int i = 0; tbl[i][0]; ++i)
-            if (d == tbl[i][0]) return tbl[i][1];
-        return d;
-    };
-
-    CString strResult;
-    const char* p = SpeedWalkString;
-
-    while (*p) {
-        // Preserve and prepend whitespace
-        while (isspace((unsigned char)*p)) {
-            if (*p == '\r') { ++p; continue; }
-            strResult = CString(*p) + strResult;
-            ++p;
-        }
-        if (!*p) break;
-
-        // Preserve comments  { ... }
-        if (*p == '{') {
-            CString comment;
-            comment += *p++;
-            while (*p && *p != '}')
-                comment += *p++;
-            if (*p != '}')
-                return CString("*Comment code of '{' not terminated by a '}'");
-            comment += *p++;   // consume '}'
-            strResult = comment + strResult;
-            continue;
-        }
-
-        // Optional numeric counter
-        int count = 0;
-        while (isdigit((unsigned char)*p))
-            count = count * 10 + (*p++ - '0');
-        if (count == 0) count = 1;
-        if (count > 99)
-            return CString("*Speed walk counter exceeds 99");
-
-        // Skip spaces after counter
-        while (isspace((unsigned char)*p)) ++p;
-
-        if (count > 1 && *p == 0)
-            return CString("*Speed walk counter not followed by an action");
-        if (count > 1 && *p == '{')
-            return CString("*Speed walk counter may not be followed by a comment");
-        if (!*p) break;
-
-        // Optional action code: C O L K
-        CString strAction;
-        if (strchr("COLKcolk", *p)) {
-            if (count > 1)
-                return CString("*Action code of C, O, L or K must not follow a speed walk count");
-            strAction = CString(*p++);
-            while (isspace((unsigned char)*p)) ++p;
-            if (!*p || toupper(*p) == 'F' || *p == '{')
-                return CString("*Action code of C, O, L or K must be followed by a direction");
-        }
-
-        // Direction
-        CString dir;
-        if (*p == '(') {
-            // Special compound direction  (forward/reverse)
-            ++p;
-            std::string inner;
-            while (*p && *p != ')')
-                inner += (char)tolower((unsigned char)*p++);
-            if (*p != ')')
-                return CString("*Action code of '(' not terminated by a ')'");
-            ++p;   // consume ')'
-
-            size_t slash = inner.find('/');
-            if (slash == std::string::npos) {
-                // No slash — look up and swap
-                dir = CString(("(" + reverseDir(inner) + ")").c_str());
-            } else {
-                // Swap the two halves
-                std::string left  = inner.substr(0, slash);
-                std::string right = inner.substr(slash + 1);
-                dir = CString(("(" + right + "/" + left + ")").c_str());
-            }
-        } else {
-            switch (toupper((unsigned char)*p)) {
-            case 'N': case 'S': case 'E': case 'W':
-            case 'U': case 'D': case 'F': {
-                std::string key(1, (char)tolower((unsigned char)*p));
-                dir = CString(reverseDir(key).c_str());
-                ++p;
-                break;
-            }
-            default:
-                return CString(TFormat("*Invalid direction '%c' in speed walk", *p));
-            }
-        }
-
-        // Prepend (count + action + reversed-direction) to result
-        if (count > 1)
-            strResult = CString(TFormat("%d", count)) + strAction + dir + strResult;
-        else
-            strResult = strAction + dir + strResult;
-    }
-
-    return strResult;
+    return ReverseSpeedwalkString(SpeedWalkString, "\n",
+                                  PortableSpeedwalkReverseDir, PortableSpeedwalkReverseWord);
 }
 
 // ── CMUSHclientDoc::CheckConnected ────────────────────────────────────────

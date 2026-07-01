@@ -8,6 +8,7 @@
 #include "../../doc.h"
 #include "../../mainfrm.h"
 #include "../errors.h"
+#include "../../speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
 
 // Implements:
 
@@ -21,136 +22,33 @@
 // rewritten 17th August 2002 to make it easier to follow and less buggy :)
 //  (and support comments)
 
-CString MakeSpeedWalkErrorString (LPCTSTR sMsg)
+// MakeSpeedWalkErrorString, DoEvaluateSpeedwalk and DoReverseSpeedwalk now live
+// in the shared speedwalk.cpp (compiled into both the GUI and the portable
+// libraries) so the parsing logic cannot drift.  These thin wrappers inject the
+// MapDirectionsMap-backed direction lookups that the GUI build uses.
+
+static CString SpeedwalkForwardDir (char letter)
   {
-  CString strResult = "*";
+  return CString (MapDirectionsMap [string (1, letter)].m_sDirectionToSend.c_str ());
+  }
 
-  strResult += sMsg;
+static CString SpeedwalkReverseDir (char letter)
+  {
+  return CString (MapDirectionsMap [string (1, letter)].m_sReverseDirection.c_str ());
+  }
 
-  return strResult;
+static CString SpeedwalkReverseWord (const CString & word)
+  {
+  MapDirectionsIterator i = MapDirectionsMap.find ((LPCTSTR) word);
+  if (i != MapDirectionsMap.end ())
+    return CString (i->second.m_sReverseDirection.c_str ());
+  return CString ();
+  }
 
-  } // end of MakeSpeedWalkErrorString
-
-CString CMUSHclientDoc::DoEvaluateSpeedwalk(LPCTSTR SpeedWalkString) 
+CString CMUSHclientDoc::DoEvaluateSpeedwalk(LPCTSTR SpeedWalkString)
 {
-CString strResult,
-        str;    // temporary string
-int count; 
-const char * p = SpeedWalkString;
-
-  while (*p)  // until string runs out
-    {
-    // bypass spaces
-    while (isspace (*p))
-      p++;
-
-    // bypass comments
-    if (*p == '{')
-      {
-      while (*p && *p != '}')
-        p++;
-
-      if (*p != '}')
-        return MakeSpeedWalkErrorString (Translate ("Comment code of \'{\' not terminated by a \'}\'"));
-      p++;  // skip } symbol
-      continue;  // back to start of loop
-      }  // end of comment
-
-    // get counter, if any
-    count = 0;
-    while (isdigit (*p))
-      {
-      count = (count * 10) + (*p++ - '0');
-      if (count > 99)
-        return MakeSpeedWalkErrorString (Translate ("Speed walk counter exceeds 99"));
-      }   // end of having digit(s)
-
-    // no counter, assume do once
-    if (count == 0)
-      count = 1;
-
-    // bypass spaces after counter
-    while (isspace (*p))
-      p++;
-
-    if (count > 1 && *p == 0)
-      return MakeSpeedWalkErrorString (Translate ("Speed walk counter not followed by an action"));
-
-    if (count > 1 && *p == '{')
-      return MakeSpeedWalkErrorString (Translate ("Speed walk counter may not be followed by a comment"));
-
-    // might have had trailing space
-    if (*p == 0)
-      break;
-
-    if (strchr ("COLK", toupper (*p)))
-      {
-      if (count > 1)
-        return MakeSpeedWalkErrorString (Translate ("Action code of C, O, L or K must not follow "
-                         "a speed walk count (1-99)"));
-
-      switch (toupper (*p++))
-        {
-        case 'C': strResult += "close "; break;
-        case 'O': strResult += "open "; break;
-        case 'L': strResult += "lock "; break;
-        case 'K': strResult += "unlock "; break;
-        } // end of switch
-
-      // bypass spaces after open/close/lock/unlock
-      while (isspace (*p))
-        p++;
-
-      if (*p == 0 || 
-          toupper (*p) == 'F' || 
-          *p == '{')
-        return MakeSpeedWalkErrorString (Translate ("Action code of C, O, L or K must be followed "
-                         "by a direction"));
-
-      } // end of C, O, L, K
-      
-      // work out which direction we are going
-    switch (toupper (*p))
-      {
-      case 'N': 
-      case 'S': 
-      case 'E': 
-      case 'W': 
-      case 'U': 
-      case 'D': 
-        // we know it will be in the list - look up the direction to send
-        str = MapDirectionsMap [tolower (string (1, *p))].m_sDirectionToSend.c_str ();
-        break;
-
-      case 'F': str = m_strSpeedWalkFiller; break;
-      case '(':     // special string (eg. (ne/sw) )
-            {
-            str.Empty ();
-            for (p++ ; *p && *p != ')'; )
-              str += *p++;   // add to string
-
-            if (*p != ')')
-              return MakeSpeedWalkErrorString (Translate ("Action code of \'(\' not terminated by a \')\'"));
-            int iSlash = str.Find ("/");  // only use up to the slash
-            if (iSlash != -1)
-              str = str.Left (iSlash);
-            }
-            break;    // end of (blahblah/blah blah)
-      default: 
-            return MakeSpeedWalkErrorString (TFormat ("*Invalid direction \'%c\' in speed walk, must be "
-                             "N, S, E, W, U, D, F, or (something)",
-                             *p));
-      } // end of switch on character
-
-    p++;  // bypass whatever that character was (or the trailing bracket)
-
-    // output required number of times
-    for (int j = 0; j < count; j++) 
-      strResult += str + ENDLINE;
-
-    } // end of processing each character
-
-	return strResult;
+  return ExpandSpeedwalk (SpeedWalkString, m_strSpeedWalkFiller, ENDLINE,
+                          SpeedwalkForwardDir);
 }   // end of CMUSHclientDoc::DoEvaluateSpeedwalk
 
 
@@ -160,161 +58,10 @@ CString strResult = DoEvaluateSpeedwalk (SpeedWalkString);
 	return strResult.AllocSysString();
   }   // end of CMUSHclientDoc::EvaluateSpeedwalk
 
-CString CMUSHclientDoc::DoReverseSpeedwalk(LPCTSTR SpeedWalkString) 
+CString CMUSHclientDoc::DoReverseSpeedwalk(LPCTSTR SpeedWalkString)
 {
-CString strResult,  // build result here
-        str,        // temporary string
-        strAction;  // eg. open, close, lock, unlock
-int count; 
-const char * p = SpeedWalkString;
-
-  while (*p)  // until string runs out
-    {
-    // preserve spaces
-    while (isspace (*p))
-      {
-      switch (*p)
-        {
-        case '\r': break;    // discard carriage returns
-        case '\n': strResult = ENDLINE + strResult;  // newline
-                   break;
-        default:   strResult = *p + strResult;
-                   break;
-        } // end of switch
-
-      p++;
-      } // end of preserving spaces
-
-    // preserve comments
-    if (*p == '{')
-      {
-      str.Empty ();
-      for (; *p && *p != '}'; )
-        str += *p++;   // add to string
-
-      if (*p != '}')
-        return MakeSpeedWalkErrorString (Translate ("Comment code of \'{\' not terminated by a \'}\'"));
-
-      p++;  // skip } symbol
-
-      str += "}";
-
-      strResult = str + strResult;
-      continue;  // back to start of loop
-      }  // end of comment
-
-    // get counter, if any
-    count = 0;
-    while (isdigit (*p))
-      {
-      count = (count * 10) + (*p++ - '0');
-      if (count > 99)
-        return MakeSpeedWalkErrorString (Translate ("Speed walk counter exceeds 99"));
-      }   // end of having digit(s)
-
-    // no counter, assume do once
-    if (count == 0)
-      count = 1;
-
-    // bypass spaces after counter
-    while (isspace (*p))
-      p++;
-
-    if (count > 1 && *p == 0)
-      return MakeSpeedWalkErrorString (Translate ("Speed walk counter not followed by an action"));
-
-    if (count > 1 && *p == '{')
-      return MakeSpeedWalkErrorString (Translate ("Speed walk counter may not be followed by a comment"));
-
-    // might have had trailing space
-    if (*p == 0)
-      break;
-
-    if (strchr ("COLK", toupper (*p)))
-      {
-      if (count > 1)
-        return MakeSpeedWalkErrorString (Translate ("Action code of C, O, L or K must not follow "
-                         "a speed walk count (1-99)"));
-
-      strAction = *p++;   // remember action
-
-      // bypass spaces after open/close/lock/unlock
-      while (isspace (*p))
-        p++;
-
-      if (*p == 0 || 
-          toupper (*p) == 'F' || 
-          *p == '{')
-        return MakeSpeedWalkErrorString (Translate ("Action code of C, O, L or K must be followed "
-                         "by a direction"));
-
-      } // end of C, O, L, K
-    else
-      strAction.Empty ();  // no action
-      
-      // work out which direction we are going
-    switch (toupper (*p))
-      {
-      case 'N': 
-      case 'S': 
-      case 'E': 
-      case 'W': 
-      case 'U': 
-      case 'D': 
-      case 'F': 
-        // we know it will be in the list - look up the reverse direction
-        str = MapDirectionsMap [tolower(string (1, *p))].m_sReverseDirection.c_str ();
-        break;
-
-      case '(':     // special string (eg. (ne/sw) )
-            {
-            str.Empty ();
-            for (p++ ; *p && *p != ')'; )
-              str += (char) tolower (*p++);   // add to string
-
-            if (*p != ')')
-              return MakeSpeedWalkErrorString (Translate ("Action code of \'(\' not terminated by a \')\'"));
-            int iSlash = str.Find ("/");  // only use up to the slash
-            // if no slash try to convert whole thing (eg. ne becomes sw)
-            if (iSlash == -1)
-              {
-              MapDirectionsIterator i = MapDirectionsMap.find ((LPCTSTR) str);
-              if (i != MapDirectionsMap.end ())
-                str = i->second.m_sReverseDirection.c_str ();
-              }
-            else
-              {
-              CString strLeftPart = str.Left (iSlash);
-              CString strRightPart = str.Mid (iSlash + 1);
-              str = strRightPart + "/" +  strLeftPart; // swap parts
-              }
-
-            str = "(" + str;
-            str += ")";
-            }
-            break;    // end of (blahblah/blah blah)
-      default: 
-            return MakeSpeedWalkErrorString (TFormat ("Invalid direction \'%c\' in speed walk, must be "
-                             "N, S, E, W, U, D, F, or (something)",
-                             *p));
-      } // end of switch on character
-
-    p++;  // bypass whatever that character was (or the trailing bracket)
-
-    // output it
-    if (count > 1)
-      strResult = CFormat ("%i%s%s",       // counter, action, string
-                           count,
-                           (LPCTSTR) strAction,  // eg. open, close, lock, unlock
-                           (LPCTSTR) str)  // direction
-                           + strResult;
-
-    else
-      strResult =  strAction +  str + strResult;
-
-    } // end of processing each character
-
-	return strResult;
+  return ReverseSpeedwalkString (SpeedWalkString, ENDLINE,
+                                 SpeedwalkReverseDir, SpeedwalkReverseWord);
 }   // end of CMUSHclientDoc::DoReverseSpeedwalk
 
 BSTR CMUSHclientDoc::ReverseSpeedwalk(LPCTSTR SpeedWalkString) 

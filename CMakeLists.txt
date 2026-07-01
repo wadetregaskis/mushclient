@@ -448,6 +448,7 @@ if(NOT WIN32)
         Line.cpp
         ProcessPreviousLine.cpp
         evaluate.cpp
+        speedwalk.cpp   # shared with mushapp; portable + full builds share one parser
         timers.cpp
         serialize.cpp
 
@@ -605,6 +606,7 @@ if(NOT WIN32)
         Line.cpp
         ProcessPreviousLine.cpp
         evaluate.cpp
+        speedwalk.cpp   # shared with mushapp; portable + full builds share one parser
         timers.cpp
         serialize.cpp
         paneline.cpp

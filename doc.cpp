@@ -7173,26 +7173,6 @@ void CMUSHclientDoc::ContinueSSLHandshake (void)
   }   // end of CMUSHclientDoc::ContinueSSLHandshake
 
 
-void CMUSHclientDoc::SSLCleanup (void)
-  {
-
-  if (m_pSSL)
-    {
-    if (m_bSSL_Connected)
-      SSL_shutdown (m_pSSL);
-    SSL_free (m_pSSL);
-    m_pSSL = NULL;
-    }
-
-  if (m_pSSL_CTX)
-    {
-    SSL_CTX_free (m_pSSL_CTX);
-    m_pSSL_CTX = NULL;
-    }
-
-  m_bSSL_Connected = false;
-
-  }   // end of CMUSHclientDoc::SSLCleanup
 
 
 bool CMUSHclientDoc::CheckExpectedProxyResponse (const char cExpected,

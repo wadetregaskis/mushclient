@@ -607,26 +607,6 @@ long CMUSHclientDoc::SetCommandWindowHeight(short Height)
 
 
 // add an item for shift+tab completion
-long CMUSHclientDoc::ShiftTabCompleteItem(LPCTSTR Item) 
-{
-  if (strlen (Item) <= 0 || strlen (Item) > 30)
-    return eBadParameter;  // need a string
-
-  if (strcmp (Item, "<clear>") == 0)
-    m_ExtraShiftTabCompleteItems.clear ();
-  else if (strcmp (Item, "<functions>") == 0)
-    m_bTabCompleteFunctions = true;
-  else if (strcmp (Item, "<nofunctions>") == 0)
-    m_bTabCompleteFunctions = false;
-  else
-    {
-    if (!IsValidName (Item))    // must be alphanumeric, dot, hyphen, underscore
-      return eBadParameter;  // need a string
-    m_ExtraShiftTabCompleteItems.insert (Item);
-    }
-
-	return eOK;
-}    // end of CMUSHclientDoc::ShiftTabCompleteItem
 
 
 

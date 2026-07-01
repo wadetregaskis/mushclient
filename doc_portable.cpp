@@ -1630,22 +1630,6 @@ int CMUSHclientDoc::ProcessProxyResponse3(char* buff, int count)
 
 // ── SSL implementation ────────────────────────────────────────────────────────
 
-void CMUSHclientDoc::SSLCleanup()
-{
-#ifdef OPENSSL_FOUND
-    if (m_pSSL) {
-        if (m_bSSL_Connected)
-            SSL_shutdown(m_pSSL);
-        SSL_free(m_pSSL);
-        m_pSSL = nullptr;
-    }
-    if (m_pSSL_CTX) {
-        SSL_CTX_free(m_pSSL_CTX);
-        m_pSSL_CTX = nullptr;
-    }
-#endif
-    m_bSSL_Connected = false;
-}
 
 void CMUSHclientDoc::StartSSLHandshake()
 {
@@ -2840,30 +2824,6 @@ void MakeTableItem(lua_State*, const char*, double) {}
 
 #endif // !MUSHCLIENT_LUA_SCRIPTING
 
-// ── CMUSHclientDoc::ShiftTabCompleteItem ─────────────────────────────────────
-// Lua API: world.ShiftTabCompleteItem(item)
-// Adds/removes items from the Shift+Tab completion set, or sets the
-// "show functions" flag.  The mushcore build needs this because
-// lua_world_api_portable.cpp calls it; the implementation mirrors
-// scripting/methods/methods_commands.cpp exactly.
-long CMUSHclientDoc::ShiftTabCompleteItem(LPCTSTR Item)
-{
-    if (strlen(Item) <= 0 || strlen(Item) > 30)
-        return eBadParameter;
-
-    if (strcmp(Item, "<clear>") == 0)
-        m_ExtraShiftTabCompleteItems.clear();
-    else if (strcmp(Item, "<functions>") == 0)
-        m_bTabCompleteFunctions = true;
-    else if (strcmp(Item, "<nofunctions>") == 0)
-        m_bTabCompleteFunctions = false;
-    else {
-        if (!IsValidName(Item))
-            return eBadParameter;
-        m_ExtraShiftTabCompleteItems.insert(Item);
-    }
-    return eOK;
-}
 
 // ── CMUSHclientDoc::OnScriptFileChanged ──────────────────────────────────────
 // Portable replacement for the Windows version (scripting/scripting.cpp).

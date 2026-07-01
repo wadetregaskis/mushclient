@@ -981,27 +981,6 @@ if(NOT WIN32)
         target_compile_definitions(mushapp PRIVATE OPENSSL_FOUND)
     endif()
 
-    # ── mushcli — minimal CLI driver (Phase 4) ───────────────────────────────
-    add_executable(mushcli platform/cli_main.cpp)
-    target_link_libraries(mushcli PRIVATE mushcore)
-    target_include_directories(mushcli PRIVATE
-        ${CMAKE_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/platform
-    )
-
-    # Optional: readline (GNU readline or libedit) for command history /
-    # line editing.  Present on most systems; mushcli builds without it too.
-    find_library(READLINE_LIB NAMES readline)
-    find_path(READLINE_INCLUDE_DIR NAMES readline/readline.h)
-    if(READLINE_LIB AND READLINE_INCLUDE_DIR)
-        message(STATUS "readline found: ${READLINE_LIB}")
-        target_link_libraries(mushcli PRIVATE ${READLINE_LIB})
-        target_include_directories(mushcli PRIVATE ${READLINE_INCLUDE_DIR})
-        target_compile_definitions(mushcli PRIVATE HAVE_READLINE)
-    else()
-        message(STATUS "readline not found — mushcli will use basic line input (no history/editing)")
-    endif()
-
     # ── mushgui — wxWidgets GUI client (Phase 5) ─────────────────────────────
     # Requires wxWidgets 3.x AND Lua 5.1 (mushapp links both).
     # On macOS: brew install wxwidgets lua@5.1

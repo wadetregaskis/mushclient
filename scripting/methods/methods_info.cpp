@@ -1148,9 +1148,9 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
     case 296:
       {
 #ifndef _WIN32
-      // Non-Windows: query the output pane via a callback set by wx_world_child.cpp.
-      if (m_fn_get_scroll_pos)
-        SetUpVariantLong (vaResult, m_fn_get_scroll_pos ());
+      // Non-Windows: query the output pane's scroll position through the seam.
+      if (HaveScrollSink())
+        SetUpVariantLong (vaResult, GetScrollPos ());
 #else
       CMUSHView* pmyView = GetFirstOutputWindow ();
       if (pmyView)
@@ -1513,14 +1513,10 @@ COLORREF colour1,
 long CMUSHclientDoc::GetSelectionStartLine()
 {
 #ifndef _WIN32
-  // Non-Windows: query the output pane selection via the GUI callback.
-  if (m_fn_get_output_selection)
-    {
-    long sl = 0, sc = 0, el = 0, ec = 0;
-    m_fn_get_output_selection (sl, sc, el, ec);
-    return sl;   // already 1-based; 0 = no selection
-    }
-  return 0;
+  // Non-Windows: query the output pane selection through the seam.
+  long sl = 0, sc = 0, el = 0, ec = 0;
+  GetOutputSelection (sl, sc, el, ec);
+  return sl;   // already 1-based; 0 = no selection
 #else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
@@ -1557,13 +1553,9 @@ long CMUSHclientDoc::GetSelectionStartLine()
 long CMUSHclientDoc::GetSelectionEndLine()
 {
 #ifndef _WIN32
-  if (m_fn_get_output_selection)
-    {
-    long sl = 0, sc = 0, el = 0, ec = 0;
-    m_fn_get_output_selection (sl, sc, el, ec);
-    return el;
-    }
-  return 0;
+  long sl = 0, sc = 0, el = 0, ec = 0;
+  GetOutputSelection (sl, sc, el, ec);
+  return el;
 #else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
@@ -1603,13 +1595,9 @@ long CMUSHclientDoc::GetSelectionEndLine()
 long CMUSHclientDoc::GetSelectionStartColumn()
 {
 #ifndef _WIN32
-  if (m_fn_get_output_selection)
-    {
-    long sl = 0, sc = 0, el = 0, ec = 0;
-    m_fn_get_output_selection (sl, sc, el, ec);
-    return sc;
-    }
-  return 0;
+  long sl = 0, sc = 0, el = 0, ec = 0;
+  GetOutputSelection (sl, sc, el, ec);
+  return sc;
 #else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
@@ -1647,13 +1635,9 @@ long CMUSHclientDoc::GetSelectionStartColumn()
 long CMUSHclientDoc::GetSelectionEndColumn()
 {
 #ifndef _WIN32
-  if (m_fn_get_output_selection)
-    {
-    long sl = 0, sc = 0, el = 0, ec = 0;
-    m_fn_get_output_selection (sl, sc, el, ec);
-    return ec;
-    }
-  return 0;
+  long sl = 0, sc = 0, el = 0, ec = 0;
+  GetOutputSelection (sl, sc, el, ec);
+  return ec;
 #else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {

@@ -166,12 +166,9 @@ BSTR CMUSHclientDoc::GetCommand()
 	CString strCommand;
 
 #ifndef _WIN32
-  // Non-Windows: the command input bar is owned by CWorldChildFrame; retrieve
-  // its text via the callback wired in wx_world_child.cpp.
-  if (m_fn_get_command) {
-    std::string s = m_fn_get_command();
-    strCommand = s.c_str();
-  }
+  // Non-Windows: the command input bar is owned by the world view; read its
+  // text through the seam (empty if there is no view — strCommand starts empty).
+  strCommand = GetCommandText().c_str();
 #else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
@@ -237,8 +234,8 @@ CString strResult;
   // Non-Windows: PasteCommand appends Text to the current command bar contents
   // (replacing any selection) and returns the previously selected text.
   // We approximate by calling m_fn_set_command with the appended text.
-  if (m_fn_get_command && m_fn_set_command) {
-    std::string current = m_fn_get_command();
+  if (HaveCommandSink() && m_fn_set_command) {
+    std::string current = GetCommandText();
     std::string appended = current + std::string(Text ? Text : "");
     m_fn_set_command(appended);
     // No selection support on non-Windows; return empty string.

@@ -44,7 +44,7 @@ public:
 
     // ── frontend → core: pulls (state the engine needs to read) ───────────
     virtual std::string currentCommand() const = 0;      // input box text
-    virtual Range       outputSelection() const = 0;     // selected char range
+    virtual TextRange   outputSelection() const = 0;     // selection line/col (1-based; 0=none)
     virtual int         scrollPos() const = 0;
     virtual Size        outputAreaChars() const = 0;     // for wrap-column math
 };

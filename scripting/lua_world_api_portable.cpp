@@ -5668,12 +5668,7 @@ static int L_GetCommand(lua_State* L)
     // world.GetCommand() — returns the current text in the command input bar.
     // The n-th-from-tail history argument is accepted but ignored on
     // non-Windows since command history is kept in the frame, not the doc.
-    if (pDoc->m_fn_get_command) {
-        std::string s = pDoc->m_fn_get_command();
-        lua_pushstring(L, s.c_str());
-        return 1;
-    }
-    lua_pushstring(L, "");
+    lua_pushstring(L, pDoc->GetCommandText().c_str());
     return 1;
 }
 
@@ -5729,8 +5724,8 @@ static int L_PasteCommand(lua_State* L)
     const char* text = luaL_checkstring(L, 1);
     // Append text to the current input bar and return previously selected text
     // (empty on non-Windows since selection state is not tracked here).
-    if (pDoc->m_fn_get_command && pDoc->m_fn_set_command) {
-        std::string current = pDoc->m_fn_get_command();
+    if (pDoc->HaveCommandSink() && pDoc->m_fn_set_command) {
+        std::string current = pDoc->GetCommandText();
         std::string appended = current + std::string(text);
         // m_fn_set_command requires an empty bar; force-set via get+set.
         // Since PasteCommand replaces selection, we model it as append.
@@ -6499,9 +6494,7 @@ static int L_Open(lua_State* L)
 static void GetOutputSelection(CMUSHclientDoc* pDoc,
                                 long& sl, long& sc, long& el, long& ec)
 {
-    sl = sc = el = ec = 0;
-    if (pDoc->m_fn_get_output_selection)
-        pDoc->m_fn_get_output_selection(sl, sc, el, ec);
+    pDoc->GetOutputSelection(sl, sc, el, ec);   // seam helper pre-zeros
 }
 
 static int L_GetSelectionStartLine(lua_State* L)

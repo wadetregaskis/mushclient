@@ -2207,6 +2207,28 @@ public:
         if (m_pWorldView)      m_pWorldView->requestRepaint(pal::Rect{});
         else if (m_fn_repaint) m_fn_repaint();
     }
+    // ── PAL: frontend → core reads (pulls) ────────────────────────────────
+    bool HaveCommandSink() const { return m_pWorldView != nullptr || (bool)m_fn_get_command; }
+    std::string GetCommandText() {
+        if (m_pWorldView)     return m_pWorldView->currentCommand();
+        if (m_fn_get_command) return m_fn_get_command();
+        return {};
+    }
+    bool HaveScrollSink() const { return m_pWorldView != nullptr || (bool)m_fn_get_scroll_pos; }
+    long GetScrollPos() {
+        if (m_pWorldView)        return m_pWorldView->scrollPos();
+        if (m_fn_get_scroll_pos) return m_fn_get_scroll_pos();
+        return 0;
+    }
+    void GetOutputSelection(long& sl, long& sc, long& el, long& ec) {
+        sl = sc = el = ec = 0;
+        if (m_pWorldView) {
+            pal::TextRange r = m_pWorldView->outputSelection();
+            sl = r.startLine; sc = r.startCol; el = r.endLine; ec = r.endCol;
+        } else if (m_fn_get_output_selection) {
+            m_fn_get_output_selection(sl, sc, el, ec);
+        }
+    }
 
     // Pending styled spans for the line currently being assembled.
     // Flushed (via m_fn_line_ready) on each '\n'.

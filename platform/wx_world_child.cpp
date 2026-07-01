@@ -385,13 +385,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             selEnd   = to;
         };
 
-        // world.GetSelectionStartLine / GetSelectionEndLine / …Column:
-        // let Lua scripts query what text is currently selected in the output pane.
-        m_doc->m_fn_get_output_selection = [this](long& sl, long& sc,
-                                                   long& el, long& ec) -> bool {
-            if (!m_output) return false;
-            return m_output->GetSelectionInfo(sl, sc, el, ec);
-        };
+        // world.GetSelectionStartLine / …Column now drive IWorldView::outputSelection
+        // (this frame) via CMUSHclientDoc::GetOutputSelection; body in the section below.
 
         // world.GetClipboard() / world.SetClipboard(): system clipboard access.
         m_doc->m_fn_get_clipboard = []() -> std::string {
@@ -448,12 +443,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             Activate();
         };
 
-        // world.GetCommand(): return the text currently in the command input bar.
-        m_doc->m_fn_get_command = [this]() -> std::string {
-            wxTextCtrl* inp = ActiveInput();
-            if (!inp) return {};
-            return std::string(inp->GetValue().ToUTF8());
-        };
+        // world.GetCommand() now drives IWorldView::currentCommand (this frame) via
+        // CMUSHclientDoc::GetCommandText; body in the section below.
 
         // world.SetCommand(text): set the command bar contents.
         // Per the Windows API contract, returns false (eCommandNotEmpty) and does
@@ -546,11 +537,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             }
         };
 
-        // GetInfo(296): return current y scroll offset in pixels from the top of
-        // the virtual scrollback area.  Mirrors CScrollView::GetScrollPosition().y.
-        m_doc->m_fn_get_scroll_pos = [this]() -> long {
-            return m_output ? m_output->GetScrollPositionY() : 0L;
-        };
+        // GetInfo(296) scroll offset now drives IWorldView::scrollPos (this frame)
+        // via CMUSHclientDoc::GetScrollPos; body in the section below.
 
         // world.SetSelection(sl, el, sc, ec): set text selection in the output pane.
         // Lines and columns are 1-based; 0 means start/end of line.
@@ -3842,14 +3830,17 @@ std::string CWorldChildFrame::currentCommand() const
     return in ? std::string(in->GetValue().utf8_str()) : std::string();
 }
 
-pal::Range CWorldChildFrame::outputSelection() const
+pal::TextRange CWorldChildFrame::outputSelection() const
 {
-    // IWorldView models the selection as a flat character range, but the pane
-    // tracks it as line/column endpoints (GetSelectionInfo).  The engine has no
-    // char-range selection getter yet (it uses the m_fn_set_selection setter),
-    // so this pull is not exercised; a faithful line/col→offset mapping lands
-    // when that path migrates onto IWorldView.
-    return {};
+    // Line/col endpoints (1-based; 0 = no selection), from the pane's selection
+    // state — matches the old m_fn_get_output_selection lambda.
+    pal::TextRange r;
+    if (m_output) {
+        long sl = 0, sc = 0, el = 0, ec = 0;
+        if (m_output->GetSelectionInfo(sl, sc, el, ec))
+            r = { (int) sl, (int) sc, (int) el, (int) ec };
+    }
+    return r;
 }
 
 int CWorldChildFrame::scrollPos() const

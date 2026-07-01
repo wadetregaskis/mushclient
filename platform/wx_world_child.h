@@ -81,7 +81,7 @@ public:
     void        setPaused(bool paused) override;
     void        flash() override;
     std::string currentCommand() const override;
-    pal::Range  outputSelection() const override;
+    pal::TextRange outputSelection() const override;
     int         scrollPos() const override;
     pal::Size   outputAreaChars() const override;
 

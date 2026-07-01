@@ -34,10 +34,13 @@ struct FakeWorldView : pal::IWorldView {
     void clearOutput() override { cleared = true; lines.clear(); }
     void setPaused(bool p) override { paused = p; }
     void flash() override { flashed = true; }
-    std::string currentCommand() const override { return {}; }
-    pal::Range  outputSelection() const override { return {}; }
-    int         scrollPos() const override { return 0; }
-    pal::Size   outputAreaChars() const override { return { 80, 25 }; }
+    std::string    cmd;                     // returned by currentCommand()
+    int            scroll = 0;              // returned by scrollPos()
+    pal::TextRange sel;                     // returned by outputSelection()
+    std::string    currentCommand() const override { return cmd; }
+    pal::TextRange outputSelection() const override { return sel; }
+    int            scrollPos() const override { return scroll; }
+    pal::Size      outputAreaChars() const override { return { 80, 25 }; }
 };
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -171,6 +174,24 @@ TEST(PalWorldView, CanvasHelpersDriveTheView)
     doc.EmitClearOutput();
     EXPECT_TRUE(view.cleared);
     EXPECT_TRUE(view.lines.empty());
+}
+
+// The engine reads frontend state back through the view (pulls): command text,
+// scroll position, and the output selection.
+TEST(PalWorldView, PullsReadFromTheView)
+{
+    FakeWorldView view;
+    view.cmd    = "look north";
+    view.scroll = 42;
+    view.sel    = { 3, 5, 7, 9 };
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pWorldView = &view;
+
+    EXPECT_STREQ("look north", doc.GetCommandText().c_str());
+    EXPECT_TRUE(doc.GetScrollPos() == 42);
+    long sl = 0, sc = 0, el = 0, ec = 0;
+    doc.GetOutputSelection(sl, sc, el, ec);
+    EXPECT_TRUE(sl == 3 && sc == 5 && el == 7 && ec == 9);
 }
 
 MC_TEST_MAIN()

@@ -16,6 +16,10 @@ struct Size  { int w = 0, h = 0; };
 struct Rect  { int x = 0, y = 0, w = 0, h = 0; };
 struct Range { int start = 0, end = 0; };   // half-open [start,end); e.g. a selection
 
+// An output-pane text selection as line/column endpoints (1-based; 0 = none),
+// matching MUSHclient's GetSelectionStart/EndLine/Column model.
+struct TextRange { int startLine = 0, startCol = 0, endLine = 0, endCol = 0; };
+
 // A colour in the same packing MUSHclient uses internally (0x00BBGGRR, i.e.
 // COLORREF). Kept as a plain integer so no GDI/wx colour type crosses the seam.
 using Colour = std::uint32_t;

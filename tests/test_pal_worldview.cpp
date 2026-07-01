@@ -77,7 +77,7 @@ TEST(PalWorldView, InterfaceRecordsStyledOutput)
 {
     FakeWorldView view;
     CMUSHclientDoc doc = make_doc();
-    doc.m_fn_line_ready = [&](SOutputLine&& l) { view.appendLine(std::move(l)); };
+    doc.m_pWorldView = &view;   // drive the engine's output through the typed seam
 
     feed(doc, "\x1b[1;32mgreen\x1b[0m normal\n");
 
@@ -95,7 +95,7 @@ TEST(PalWorldView, OneCommittedLinePerNewline)
 {
     FakeWorldView view;
     CMUSHclientDoc doc = make_doc();
-    doc.m_fn_line_ready = [&](SOutputLine&& l) { view.appendLine(std::move(l)); };
+    doc.m_pWorldView = &view;   // drive the engine's output through the typed seam
 
     feed(doc, "alpha\nbeta\ngamma\n");
 

@@ -584,7 +584,7 @@ void CMUSHclientDoc::AddToLine(const char* text, const int /*flags*/)
 {
     if (!text || !*text) return;
 
-    if (m_fn_line_ready) {
+    if (HaveOutputSink()) {
         // GUI path: emit as a one-run styled line so the output pane can
         // render the link with the correct colour and click action.
         SOutputRun run;
@@ -596,7 +596,7 @@ void CMUSHclientDoc::AddToLine(const char* text, const int /*flags*/)
         run.hint      = m_current_hint;
         SOutputLine line;
         line.push_back(std::move(run));
-        m_fn_line_ready(std::move(line));
+        EmitOutputLine(std::move(line));
     } else {
         // CLI path: plain text with newline.
         puts(text);
@@ -993,9 +993,9 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
 
         // ── Phase NONE: output visible characters ─────────────────────────
         if (c == '\n') {
-            if (m_fn_line_ready) {
+            if (HaveOutputSink()) {
                 // GUI path: deliver the assembled styled line and clear buffer.
-                m_fn_line_ready(std::move(m_gui_line_buf));
+                EmitOutputLine(std::move(m_gui_line_buf));
                 m_gui_line_buf.clear();
             } else {
                 // CLI path: reset colours at line end (avoids bg bleeding).
@@ -1031,7 +1031,7 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
                     m_pCurrentLine->styleList.GetTail()->iLength++;
             }
 
-            if (m_fn_line_ready) {
+            if (HaveOutputSink()) {
                 // GUI path: accumulate into styled run buffer.
                 // On lead bytes (not 0x80–0xBF), resolve current style.
                 if ((c & 0xC0) != 0x80) {
@@ -1090,7 +1090,7 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
 
     } // end of per-character loop
 
-    if (!m_fn_line_ready) {
+    if (!HaveOutputSink()) {
         fflush(stdout);
         if (g_after_output) g_after_output();
     }
@@ -1759,9 +1759,9 @@ void CMUSHclientDoc::CloseLog()
 // ColourTell segments land in the output pane.
 static void flush_gui_note_buf(CMUSHclientDoc* doc)
 {
-    if (!doc->m_fn_line_ready) return;
+    if (!doc->HaveOutputSink()) return;
     if (doc->m_gui_note_buf.empty()) return;
-    doc->m_fn_line_ready(std::move(doc->m_gui_note_buf));
+    doc->EmitOutputLine(std::move(doc->m_gui_note_buf));
     doc->m_gui_note_buf.clear();
 }
 
@@ -1861,7 +1861,7 @@ static void gui_colour_segment(CMUSHclientDoc* doc,
                                const char* fg, const char* bg,
                                const char* text, bool flush)
 {
-    if (!doc->m_fn_line_ready) return;
+    if (!doc->HaveOutputSink()) return;
     if (text && *text) {
         SOutputRun run;
         run.text = text;
@@ -1871,7 +1871,7 @@ static void gui_colour_segment(CMUSHclientDoc* doc,
     }
     if (flush) {
         // Emit even if empty (produces a blank line, matching Note() behaviour).
-        doc->m_fn_line_ready(std::move(doc->m_gui_note_buf));
+        doc->EmitOutputLine(std::move(doc->m_gui_note_buf));
         doc->m_gui_note_buf.clear();
     }
 }
@@ -1883,7 +1883,7 @@ void CMUSHclientDoc::ColourNote(const char* fg, const char* bg, const CString& t
 
 void CMUSHclientDoc::ColourNote(const char* fg, const char* bg, const char* text)
 {
-    if (m_fn_line_ready) {
+    if (HaveOutputSink()) {
         gui_colour_segment(this, fg, bg, text, /*flush=*/true);
     } else {
         colour_print(fg, bg, text, /*newline=*/true);
@@ -1892,7 +1892,7 @@ void CMUSHclientDoc::ColourNote(const char* fg, const char* bg, const char* text
 
 void CMUSHclientDoc::ColourTell(const char* fg, const char* bg, const char* text)
 {
-    if (m_fn_line_ready) {
+    if (HaveOutputSink()) {
         gui_colour_segment(this, fg, bg, text, /*flush=*/false);
     } else {
         colour_print(fg, bg, text, /*newline=*/false);
@@ -2425,7 +2425,7 @@ void CMUSHclientDoc::OutputOutstandingLines()
     m_iBackColour = savedBack;
 
     // Re-sync terminal colours after restoring the stream state.
-    if (!m_fn_line_ready)
+    if (!HaveOutputSink())
         TermResetStyle();
 }
 

@@ -1261,6 +1261,7 @@ typedef list<OneShotItem> OneShotItemMap;
 // SOutputRun / SOutputLine are defined in platform/output_types.h so they can
 // be shared between the mushcore (doc_stub.h) and mushapp (doc.h) builds.
 #include "platform/output_types.h"
+#include "pal/iworldview.h"   // pal::IWorldView — the typed output seam
 
 // ── SQLite database types (mirrors doc.h) ─────────────────────────────────────
 #include "sqlite3/sqlite3.h"
@@ -2164,6 +2165,18 @@ public:
     std::function<void(const std::string&)> m_fn_status;     // status bar update
     std::function<void(const std::string&)> m_fn_set_title;  // child frame title bar
     std::function<void(const std::string&)> m_fn_set_main_title; // main window title bar
+
+    // ── PAL: typed output view ────────────────────────────────────────────
+    // pal::IWorldView is the typed successor to the m_fn_* output callbacks.
+    // When m_pWorldView is set the engine drives it directly; otherwise it
+    // falls back to m_fn_line_ready (so existing hosts are unaffected). This is
+    // the P2 seam-formalisation foothold — see docs/PAL.md.
+    pal::IWorldView* m_pWorldView = nullptr;
+    bool HaveOutputSink() const { return m_pWorldView != nullptr || (bool)m_fn_line_ready; }
+    void EmitOutputLine(SOutputLine&& line) {
+        if (m_pWorldView)         m_pWorldView->appendLine(std::move(line));
+        else if (m_fn_line_ready) m_fn_line_ready(std::move(line));
+    }
 
     // Pending styled spans for the line currently being assembled.
     // Flushed (via m_fn_line_ready) on each '\n'.

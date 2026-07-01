@@ -587,12 +587,14 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (m_output) m_output->SetSelectionRange(sl, el, sc, ec);
         };
 
-        // ── Output display callbacks ──────────────────────────────────────
-        // Route the engine's text output to the pane.  Wired here so they are
-        // never accidentally overwritten after construction.
-        m_doc->m_fn_line_ready = [this](SOutputLine line) {
-            if (m_output) m_output->AppendLine(std::move(line));
-        };
+        // ── Output display seam ───────────────────────────────────────────
+        // This frame IS the world's pal::IWorldView (see the header): the engine
+        // drives finished output lines through it via EmitOutputLine → appendLine.
+        // Set here so it is never accidentally overwritten after construction.
+        m_doc->m_pWorldView = this;
+        // Notes and the paint-batch bracket still use the m_fn_* callbacks
+        // (UpdateAllViews calls them directly); they migrate onto IWorldView in a
+        // later step.
         m_doc->m_fn_note = [this](const std::string& text) {
             if (m_output) m_output->AppendNote(text);
         };
@@ -3794,6 +3796,92 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     }
 }
 
+// ── pal::IWorldView ─────────────────────────────────────────────────────────
+// This frame is the wx adapter for one world's output view.  Each method
+// forwards to the output pane / input bar.  Only appendLine() is engine-driven
+// today (CMUSHclientDoc::EmitOutputLine); the others are the adapter's ready
+// surface, dormant until their engine paths migrate off the m_fn_* callbacks.
+
+void CWorldChildFrame::appendLine(SOutputLine&& line)
+{
+    if (m_output) m_output->AppendLine(std::move(line));
+}
+
+void CWorldChildFrame::note(std::string_view text)
+{
+    if (m_output) m_output->AppendNote(std::string(text));
+}
+
+void CWorldChildFrame::setTitle(std::string_view title)
+{
+    SetTitle(wxString::FromUTF8(title.data(), title.size()));
+}
+
+void CWorldChildFrame::setStatus(std::string_view text)
+{
+    if (m_statusBar)
+        m_statusBar->SetStatusText(wxString::FromUTF8(text.data(), text.size()));
+}
+
+void CWorldChildFrame::setBackgroundColour(pal::Colour c)
+{
+    ApplyPaneBackground(c);
+}
+
+void CWorldChildFrame::setMaxLines(int n)
+{
+    if (m_output) m_output->SetMaxLines(n);
+}
+
+void CWorldChildFrame::requestRepaint(pal::Rect /*area*/)
+{
+    // The engine only ever needs a full-pane refresh here; the sub-rect is
+    // advisory and the pane repaints lazily, so ignore it for now.
+    if (m_output) m_output->Refresh();
+}
+
+void CWorldChildFrame::clearOutput()
+{
+    if (m_output) m_output->ClearOutput();
+}
+
+void CWorldChildFrame::setPaused(bool paused)
+{
+    if (m_output) m_output->SetPaused(paused);
+}
+
+void CWorldChildFrame::flash()
+{
+    RequestUserAttention();
+}
+
+std::string CWorldChildFrame::currentCommand() const
+{
+    wxTextCtrl* in = ActiveInput();
+    return in ? std::string(in->GetValue().utf8_str()) : std::string();
+}
+
+pal::Range CWorldChildFrame::outputSelection() const
+{
+    // IWorldView models the selection as a flat character range, but the pane
+    // tracks it as line/column endpoints (GetSelectionInfo).  The engine has no
+    // char-range selection getter yet (it uses the m_fn_set_selection setter),
+    // so this pull is not exercised; a faithful line/col→offset mapping lands
+    // when that path migrates onto IWorldView.
+    return {};
+}
+
+int CWorldChildFrame::scrollPos() const
+{
+    return m_output ? (int) m_output->GetScrollPositionY() : 0;
+}
+
+pal::Size CWorldChildFrame::outputAreaChars() const
+{
+    return m_doc ? pal::Size{ m_doc->m_gui_cols, m_doc->m_gui_rows }
+                 : pal::Size{ 80, 24 };
+}
+
 // ── OnClose ───────────────────────────────────────────────────────────────
 void CWorldChildFrame::OnClose(wxCloseEvent& evt)
 {
@@ -3890,6 +3978,9 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
 
         // Clear all callbacks BEFORE deleting the doc so that any final output
         // flushed by the destructor doesn't call AppendLine on the dying pane.
+        // m_pWorldView is this frame; null it first so EmitOutputLine falls
+        // through to the (also-null) m_fn_line_ready and calls nothing.
+        m_doc->m_pWorldView         = nullptr;
         m_doc->m_fn_line_ready      = nullptr;
         m_doc->m_fn_note            = nullptr;
         m_doc->m_fn_begin_batch     = nullptr;

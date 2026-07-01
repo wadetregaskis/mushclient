@@ -122,7 +122,7 @@ void CMUSHclientDoc::Note(const CString& s)
 // rather than one per line.
 void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
 {
-    if (!m_fn_line_ready) return;
+    if (!HaveOutputSink()) return;
 
     // Skip lines already forwarded to the GUI.
     long toSkip = m_gui_lines_emitted;
@@ -160,7 +160,7 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
             SOutputRun hrRun;
             hrRun.horiz_rule = true;
             outline.push_back(std::move(hrRun));
-            m_fn_line_ready(std::move(outline));
+            EmitOutputLine(std::move(outline));
             ++m_gui_lines_emitted;
             continue;
         }
@@ -191,7 +191,7 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
             charOff += pStyle->iLength;
         }
 
-        m_fn_line_ready(std::move(outline));
+        EmitOutputLine(std::move(outline));
         ++m_gui_lines_emitted;
     }
 
@@ -231,7 +231,7 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
         }
         if (!pending.empty()) {
             pending.pending = true;
-            m_fn_line_ready(std::move(pending));
+            EmitOutputLine(std::move(pending));
         }
     }
 

@@ -35,9 +35,13 @@ void wx_world_remove_from_list(const char* path);
 #include <string>
 #include <vector>
 #include "platform/wx_outputpane.h"   // COutputPane → output_types.h
+#include "pal/iworldview.h"           // pal::IWorldView — this frame is the wx adapter
 
 // ── CWorldChildFrame ──────────────────────────────────────────────────────────
-class CWorldChildFrame : public wxMDIChildFrame
+// The frame IS this world's pal::IWorldView adapter (L3 in docs/PAL.md): the
+// engine drives output through the IWorldView methods below, which forward to
+// the wx output pane / input bar.  See the "── pal::IWorldView ──" section.
+class CWorldChildFrame : public wxMDIChildFrame, public pal::IWorldView
 {
 public:
     // parent  — the top-level MDI parent frame
@@ -60,6 +64,26 @@ public:
     // Public access to the active input bar so scripting callbacks in
     // wx_mfc_impl.cpp can read/write it for world.GetCommand/SetCommand.
     wxTextCtrl* ActiveInputPublic() const { return ActiveInput(); }
+
+    // ── pal::IWorldView ───────────────────────────────────────────────────
+    // The engine's typed output seam.  In the current step only appendLine()
+    // is engine-driven (via CMUSHclientDoc::EmitOutputLine); the rest are the
+    // adapter's complete, ready surface and become live as their engine paths
+    // migrate off the remaining m_fn_* callbacks.  Definitions: wx_world_child.cpp.
+    void        appendLine(SOutputLine&& line) override;
+    void        note(std::string_view text) override;
+    void        setTitle(std::string_view title) override;
+    void        setStatus(std::string_view text) override;
+    void        setBackgroundColour(pal::Colour c) override;
+    void        setMaxLines(int n) override;
+    void        requestRepaint(pal::Rect area) override;
+    void        clearOutput() override;
+    void        setPaused(bool paused) override;
+    void        flash() override;
+    std::string currentCommand() const override;
+    pal::Range  outputSelection() const override;
+    int         scrollPos() const override;
+    pal::Size   outputAreaChars() const override;
 
     // Find/replace within the command-input text (Game ▸ Global Change).
     // Runs the canonical CGlobalChangeDlg for the from/to prompt; the input is a

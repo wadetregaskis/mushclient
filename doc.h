@@ -32,6 +32,7 @@ extern bool g_debug;
 #include "OtherTypes.h"
 // Shared styled-line types and GUI output callbacks.
 #include "platform/output_types.h"
+#include "pal/iworldview.h"   // pal::IWorldView — the typed output seam (no-op on _WIN32)
 #include <functional>
 // The world-prefs property-page classes (full defs in prefspropertypages.h,
 // which is Windows-only in this header).  CMUSHclientDoc's Load/Changed/Save
@@ -1489,6 +1490,19 @@ public:
   // Count of lines already forwarded to m_fn_line_ready; decremented by
   // JUMP_SIZE when RemoveChunk() evicts the oldest lines.
   long                                    m_gui_lines_emitted = 0;
+
+  // ── PAL: typed output view ────────────────────────────────────────────────
+  // pal::IWorldView is the typed successor to the m_fn_* output callbacks.
+  // When m_pWorldView is set (the wx CWorldChildFrame sets itself here) the
+  // engine drives it directly; otherwise it falls back to m_fn_line_ready, so
+  // any host that has not opted in is byte-for-byte unchanged.  P2 seam
+  // formalisation — see docs/PAL.md.  (Mirror of the doc_stub.h twin.)
+  pal::IWorldView* m_pWorldView = nullptr;
+  bool HaveOutputSink() const { return m_pWorldView != nullptr || (bool)m_fn_line_ready; }
+  void EmitOutputLine(SOutputLine&& line) {
+      if (m_pWorldView)         m_pWorldView->appendLine(std::move(line));
+      else if (m_fn_line_ready) m_fn_line_ready(std::move(line));
+  }
 
   // Output pane character-grid dimensions (updated by CWorldChildFrame on
   // resize / font change via SendNAWS and m_fn_grid_changed).

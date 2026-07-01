@@ -137,7 +137,7 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
     // after a buffer-size change, or a miniwindow deletion) still refresh the
     // canvas.
     if (!pos) {
-        if (m_fn_repaint) m_fn_repaint();
+        EmitRepaint();
         return;
     }
 
@@ -238,7 +238,7 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
     // Always trigger a repaint so miniwindow operations (WindowCreate,
     // WindowShow, WindowPosition, …) that call UpdateAllViews without emitting
     // any new text lines still refresh the canvas.
-    if (m_fn_repaint) m_fn_repaint();
+    EmitRepaint();
 }
 
 // ── CMUSHclientDoc::InitZlib ──────────────────────────────────────────────────

@@ -225,10 +225,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // world.Pause(bPause) now drives IWorldView::setPaused (this frame) via
     // CMUSHclientDoc::EmitPaused; see the pal::IWorldView section below.
     if (m_doc) {
-        // world.Repaint(): force a repaint of the output pane.
-        m_doc->m_fn_repaint = [this]() {
-            if (m_output) m_output->Refresh(false);
-        };
+        // world.Repaint() now drives IWorldView::requestRepaint (this frame) via
+        // CMUSHclientDoc::EmitRepaint; body in the pal::IWorldView section below.
 
         // world.MoveWorldWindow(l,t,w,h): reposition/resize this MDI child frame.
         // Coordinates are in pixels relative to the MDI parent client area.
@@ -291,12 +289,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
               }
         };
 
-        // world.ClearOutput(): wipe the pane's internal line buffer and reset
-        // the GUI-emission counter so the next UpdateAllViews starts from zero.
-        m_doc->m_fn_clear_output = [this]() {
-            if (m_output) m_output->ClearOutput();
-            m_doc->m_gui_lines_emitted = 0;
-        };
+        // world.ClearOutput() now drives IWorldView::clearOutput (this frame) via
+        // CMUSHclientDoc::EmitClearOutput; the engine resets the emission counter.
 
         // world.SetStatus(msg) and world.SetTitle(s) now drive
         // IWorldView::setStatus / ::setTitle (this frame) via
@@ -310,15 +304,9 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 top->SetTitle(wxString::FromUTF8(title.c_str()));
         };
 
-        // world.SetBackgroundColour(rgb): update output pane background.
-        m_doc->m_fn_set_background_colour = [this](unsigned long col) {
-            ApplyPaneBackground(col);
-        };
-
-        // SetOption("max_output_lines", n): resize the scrollback buffer.
-        m_doc->m_fn_set_max_lines = [this](int n) {
-            if (m_output) m_output->SetMaxLines(n);
-        };
+        // world.SetBackgroundColour(rgb) and SetOption("max_output_lines", n) now
+        // drive IWorldView::setBackgroundColour / ::setMaxLines (this frame) via
+        // CMUSHclientDoc::EmitBackgroundColour / ::EmitMaxLines; bodies below.
 
         // world.DeleteLines(n): remove the last n lines from the visual buffer.
         m_doc->m_fn_delete_lines = [this](long n) {
@@ -3828,8 +3816,9 @@ void CWorldChildFrame::setMaxLines(int n)
 void CWorldChildFrame::requestRepaint(pal::Rect /*area*/)
 {
     // The engine only ever needs a full-pane refresh here; the sub-rect is
-    // advisory and the pane repaints lazily, so ignore it for now.
-    if (m_output) m_output->Refresh();
+    // advisory and the pane repaints lazily, so ignore it. Refresh(false) = no
+    // background erase (matches the old m_fn_repaint lambda).
+    if (m_output) m_output->Refresh(false);
 }
 
 void CWorldChildFrame::clearOutput()

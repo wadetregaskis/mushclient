@@ -681,8 +681,7 @@ long CMUSHclientDoc::SetBackgroundColour(long Colour)
   m_iBackgroundColour = Colour;
 
 #ifndef _WIN32
-  if (m_fn_set_background_colour)
-    m_fn_set_background_colour((unsigned long)Colour);
+  EmitBackgroundColour((unsigned long)Colour);
 #endif
 
   UpdateAllViews (NULL);

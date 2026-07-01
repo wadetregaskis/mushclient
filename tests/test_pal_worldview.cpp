@@ -21,14 +21,16 @@ struct FakeWorldView : pal::IWorldView {
     std::vector<std::string> notes;
     std::string title, status;
     bool cleared = false, paused = false, flashed = false;
+    pal::Colour bg = 0;
+    int maxLines = 0, repaints = 0;
 
     void appendLine(SOutputLine&& l) override { lines.push_back(std::move(l)); }
     void note(std::string_view t) override    { notes.emplace_back(t); }
     void setTitle(std::string_view t) override { title.assign(t); }
     void setStatus(std::string_view t) override { status.assign(t); }
-    void setBackgroundColour(pal::Colour) override {}
-    void setMaxLines(int) override {}
-    void requestRepaint(pal::Rect) override {}
+    void setBackgroundColour(pal::Colour c) override { bg = c; }
+    void setMaxLines(int n) override { maxLines = n; }
+    void requestRepaint(pal::Rect) override { ++repaints; }
     void clearOutput() override { cleared = true; lines.clear(); }
     void setPaused(bool p) override { paused = p; }
     void flash() override { flashed = true; }
@@ -144,6 +146,31 @@ TEST(PalWorldView, StateHelpersFallBackToCallbacks)
     EXPECT_TRUE(paused);
     EXPECT_STREQ("t1", title.c_str());
     EXPECT_STREQ("s1", status.c_str());
+}
+
+// Clear / background colour / max-lines / repaint drive the view via their
+// Emit* helpers as well.
+TEST(PalWorldView, CanvasHelpersDriveTheView)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pWorldView = &view;
+
+    doc.EmitBackgroundColour(0x00204060);
+    EXPECT_TRUE(view.bg == 0x00204060u);
+
+    doc.EmitMaxLines(1234);
+    EXPECT_TRUE(view.maxLines == 1234);
+
+    doc.EmitRepaint();
+    doc.EmitRepaint();
+    EXPECT_TRUE(view.repaints == 2);
+
+    feed(doc, "seed line\n");
+    ASSERT_TRUE(!committed(view).empty());
+    doc.EmitClearOutput();
+    EXPECT_TRUE(view.cleared);
+    EXPECT_TRUE(view.lines.empty());
 }
 
 MC_TEST_MAIN()

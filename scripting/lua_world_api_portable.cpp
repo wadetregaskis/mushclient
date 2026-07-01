@@ -1669,7 +1669,7 @@ static int L_SetOption(lua_State* L)
     else if (!strcmp(opt, "max_output_lines")) {
         if (val >= 200 && val <= 500000) {
             pDoc->m_maxlines = val;
-            if (pDoc->m_fn_set_max_lines) pDoc->m_fn_set_max_lines((int)val);
+            pDoc->EmitMaxLines((int)val);
         }
     }
     else                                           is_member = false;
@@ -5785,13 +5785,13 @@ static int L_ActivateClient(lua_State* L) {
 }
 static int L_Redraw(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
-    if (pDoc->m_fn_repaint) pDoc->m_fn_repaint();
+    pDoc->EmitRepaint();
     lua_pushnumber(L, eOK); return 1;
 }
 static int L_Repaint(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    if (pDoc->m_fn_repaint) pDoc->m_fn_repaint();
+    pDoc->EmitRepaint();
     lua_pushnumber(L, eOK);
     return 1;
 }
@@ -5865,8 +5865,7 @@ static int L_SetBackgroundColour(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
     unsigned long col = (unsigned long)(long)luaL_optnumber(L, 1, 0xFFFFFFFF);
-    if (pDoc->m_fn_set_background_colour)
-        pDoc->m_fn_set_background_colour(col);
+    pDoc->EmitBackgroundColour(col);
     lua_pushnumber(L, eOK);
     return 1;
 }

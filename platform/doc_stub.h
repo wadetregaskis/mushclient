@@ -2191,6 +2191,22 @@ public:
         if (m_pWorldView)        m_pWorldView->setTitle(title);
         else if (m_fn_set_title) m_fn_set_title(std::string(title));
     }
+    void EmitClearOutput() {
+        if (m_pWorldView)           m_pWorldView->clearOutput();
+        else if (m_fn_clear_output) m_fn_clear_output();
+    }
+    void EmitBackgroundColour(unsigned long col) {
+        if (m_pWorldView)                    m_pWorldView->setBackgroundColour((pal::Colour)col);
+        else if (m_fn_set_background_colour) m_fn_set_background_colour(col);
+    }
+    void EmitMaxLines(int n) {
+        if (m_pWorldView)            m_pWorldView->setMaxLines(n);
+        else if (m_fn_set_max_lines) m_fn_set_max_lines(n);
+    }
+    void EmitRepaint() {
+        if (m_pWorldView)      m_pWorldView->requestRepaint(pal::Rect{});
+        else if (m_fn_repaint) m_fn_repaint();
+    }
 
     // Pending styled spans for the line currently being assembled.
     // Flushed (via m_fn_line_ready) on each '\n'.

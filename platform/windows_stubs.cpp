@@ -243,7 +243,7 @@ void CMyToolBar::DoPaint(CDC*) {}
 // maps live in mainfrm.cpp, which is mushapp-only.  Their vtables are emitted in
 // this translation unit (it defines the global Frame, the ctors, DoPaint, …), so
 // the virtual GetMessageMap() must be defined or mushcore-linked binaries
-// (mushcli + the unit tests) fail to link.  These windows are inert in the
+// (the unit tests) fail to link.  These windows are inert in the
 // headless build, so an empty map suffices — chain it to CCmdTarget, the only
 // ancestor whose GetThisMessageMap() is defined on the port (compat.h).
 BEGIN_MESSAGE_MAP(CMainFrame, CCmdTarget)

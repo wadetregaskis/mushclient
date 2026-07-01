@@ -1,7 +1,7 @@
 // speedwalk.h — shared speedwalk expansion/reversal.
 //
 // The speedwalk parser is pure string logic (no OS or GUI dependency). It is
-// compiled into BOTH mushcore (mushcli + tests) and mushapp (mushgui) from the
+// compiled into BOTH mushcore (the headless test engine) and mushapp (mushgui) from the
 // single translation unit speedwalk.cpp, so the two builds can never drift.
 //
 // Direction resolution is injected via function pointers so the shared code

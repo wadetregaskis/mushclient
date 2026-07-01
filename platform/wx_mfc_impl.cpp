@@ -69,7 +69,7 @@ extern "C" {
 }
 
 // Hook pointer definitions live in platform/wx_mfc_hooks_storage.cpp (compiled
-// into both mushcore and mushapp) so that mushcli and tests can link without
+// into both mushcore and mushapp) so that the tests can link without
 // needing wx_mfc_impl.cpp.  wx_mfc_install_hooks() below assigns them all.
 
 // ── Status bar pointer ─────────────────────────────────────────────────────

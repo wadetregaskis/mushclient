@@ -11,7 +11,7 @@
 // The resulting files are fully interchangeable with those written by the Windows
 // build and can be loaded by xml_load_world.cpp or xml_load_world_portable.cpp.
 //
-// Guard: compiled only on non-Windows (mushcore / mushcli target).
+// Guard: compiled only on non-Windows (mushcore target).
 
 #ifndef _WIN32
 

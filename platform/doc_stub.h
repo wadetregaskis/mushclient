@@ -633,16 +633,16 @@ extern const string ON_PLUGIN_MXP_SETVARIABLE;
 extern const string ON_PLUGIN_MXP_SETENTITY;
 extern const string ON_PLUGIN_MXP_ERROR;
 
-// ── Output hooks (for readline integration in cli_main.cpp) ──────────────
+// ── Output hooks (for the former CLI (now removed)) ──────────────
 // When readline is active, incoming MUD text must temporarily clear the
 // input line before printing, then redisplay it afterwards.
-// cli_main.cpp sets these to the appropriate readline helper calls.
+// These were set by the former CLI's readline helpers (CLI now removed; inert).
 // doc_portable.cpp calls them around every batch of MUD output / Note().
 extern void (*g_before_output)();
 extern void (*g_after_output)();
 
 // ── Debug logging ─────────────────────────────────────────────────────────
-// Enable with the -d / --debug flag in mushcli.
+// (Legacy CLI debug flag; the CLI has been removed.)
 // dbg() writes to stderr; all protocol events log here when g_debug is true.
 // On Windows these are no-ops (defined as macros so no link dependency).
 extern bool g_debug;
@@ -2155,7 +2155,7 @@ public:
 
     // ── GUI output callbacks ──────────────────────────────────────────────
     // When m_fn_line_ready is non-null, DisplayMsg() routes output through it
-    // instead of stdout.  Set by the CLI/mushcore host (cli_main.cpp) before
+    // instead of stdout.  Set by the mushcore host before
     // connecting.
     // Each '\n' fires m_fn_line_ready with the fully assembled SOutputLine.
     // Note() fires m_fn_note (or falls back to puts()).

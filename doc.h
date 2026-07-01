@@ -1643,7 +1643,7 @@ public:
   // Async DNS: called by LookupHostName to resolve a hostname off the main
   // thread so the GUI stays responsive.  The callback must eventually call
   // LookupHostNameComplete(addr, phase, ok) on the main thread.
-  // If nullptr (e.g. mushcli), LookupHostName falls back to synchronous resolution.
+  // If nullptr (e.g. a headless build), LookupHostName falls back to synchronous resolution.
   std::function<void(const std::string& host, int phase)> m_fn_lookup_host;
 #endif
 

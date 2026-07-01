@@ -677,8 +677,8 @@ void CMUSHclientDoc::OnConnectionDisconnect()
 
 // ── FireWorldClose — fire the on_world_close Lua callback ────────────────────
 // Mirrors the on_world_disconnect path in OnConnectionDisconnect().
-// Called from cli_main.cpp just before the process exits so that scripts
-// can do any final cleanup (e.g. saving state, logging).
+// Fired on world/document teardown so that scripts can do any final cleanup
+// (e.g. saving state, logging).
 void CMUSHclientDoc::FireWorldClose()
 {
     if (m_dispidWorldClose == DISPID_UNKNOWN) return;
@@ -2398,7 +2398,7 @@ void CMUSHclientDoc::LogCommand(const char* sText)
 // ── CMUSHclientDoc::OutputOutstandingLines ────────────────────────────────
 // Re-outputs note/tell lines that were deferred while a trigger was
 // processing (e.g. when a trigger omits an incoming MUD line).
-// Mirrors the doc.cpp implementation, adapted for the mushcli/GUI paths:
+// Mirrors the doc.cpp implementation, adapted for the headless/GUI paths:
 // instead of calling Tell() (which is in methods_noting.cpp / mushapp only),
 // we write directly through DisplayMsg() using the COLOUR_RGB style flag so
 // that GetStyleRGB() treats m_iForeColour/m_iBackColour as raw COLOREFs.
@@ -2447,7 +2447,7 @@ void CMUSHclientDoc::OutputOutstandingLines()
 
 // ── CMUSHclientDoc::PlaySoundFile / CancelSound — MSP audio ─────────────
 // On non-Windows, delegate to the wxWidgets sound hook so that trigger
-// sounds and MSP audio actually play in mushgui.  mushcli silently drops
+// sounds and MSP audio actually play in mushgui.  A headless build silently drops
 // sound requests (no hook installed → nullptr check is sufficient).
 void CMUSHclientDoc::PlaySoundFile(CString strFile)
 {
@@ -2867,8 +2867,7 @@ long CMUSHclientDoc::ShiftTabCompleteItem(LPCTSTR Item)
 
 // ── CMUSHclientDoc::OnScriptFileChanged ──────────────────────────────────────
 // Portable replacement for the Windows version (scripting/scripting.cpp).
-// Called from the mushcli event loop (cli_main.cpp) and the wxWidgets world
-// timer (wx_world_child.cpp) every ~2 seconds.
+// Called from the wxWidgets world timer (wx_world_child.cpp) every ~2 seconds.
 //
 // Checks whether the script file on disk has changed since the last load.
 // If it has, the old engine is destroyed and the script is reloaded from the

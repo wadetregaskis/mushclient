@@ -6497,7 +6497,7 @@ static int L_Open(lua_State* L)
 
 // ── GetSelectionStart/EndLine/Column ─────────────────────────────────────────
 // Query the current output-pane text selection via m_fn_get_output_selection.
-// Returns 0 (no selection) in mushcli; in mushgui the callback is wired to the
+// Returns 0 (no selection) headless; in mushgui the callback is wired to the
 // real COutputPane::GetSelectionInfo() which returns 1-based line/col values.
 static void GetOutputSelection(CMUSHclientDoc* pDoc,
                                 long& sl, long& sc, long& el, long& ec)
@@ -6715,12 +6715,12 @@ static int L_Accelerator(lua_State* L)    { world_doc(L); lua_pushnumber(L, eOK)
 static int L_AcceleratorTo(lua_State* L)  { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_AcceleratorList(lua_State* L){ world_doc(L); lua_newtable(L); return 1; }
 
-// ── Miniwindow Lua API (mushcore/mushcli stubs) ───────────────────────────────
+// ── Miniwindow Lua API (mushcore test-engine stubs) ───────────────────────────────
 // lua_world_api_portable.cpp is compiled into mushcore only.  The mushgui build
 // uses mushapp which compiles lua_methods.cpp instead — that file already has
 // the full real Window* implementations backed by wx_gdi_compat CDC/CBitmap.
 //
-// The stubs below keep mushcli functional: scripts that call Window* get a
+// The stubs below keep the headless build functional: scripts that call Window* get a
 // graceful eNoSuchWindow error rather than a crash.
 //
 // NOTE: The pushVariant helper below is unused by mushcore (no Window* methods),
@@ -7404,9 +7404,9 @@ static const luaL_Reg worldlib[] = {
     { "SaveState",          L_SaveState         },
 
     // ── miniwindow (Window*) stubs ────────────────────────────────────────────
-    // lua_world_api_portable.cpp is only compiled into mushcore (mushcli).
+    // lua_world_api_portable.cpp is only compiled into mushcore (the test engine).
     // mushgui uses mushapp which compiles lua_methods.cpp with real Window* impls.
-    // These stubs keep mushcli functional: scripts get eNoSuchWindow gracefully.
+    // These stubs keep the headless build functional: scripts get eNoSuchWindow gracefully.
     { "WindowCreate",           L_WindowStub },
     { "WindowDelete",           L_WindowStub },
     { "WindowAddHotspot",       L_WindowStub },

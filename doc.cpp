@@ -6361,7 +6361,7 @@ bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
   // remains responsive during lookups (getaddrinfo blocks).
   // If m_fn_lookup_host is set (mushgui), delegate to it — it will call
   // LookupHostNameComplete() on the main thread when done.
-  // Otherwise (mushcli) fall back to synchronous resolution.
+  // Otherwise (headless) fall back to synchronous resolution.
   {
     delete [] m_pGetHostStruct;
     m_pGetHostStruct = NULL;
@@ -6374,7 +6374,7 @@ bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
       return false;
       }
 
-    // Synchronous fallback (mushcli or before the frame has wired the callback).
+    // Synchronous fallback (headless, or before the frame has wired the callback).
     struct addrinfo hints{}, *res = nullptr;
     hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_STREAM;

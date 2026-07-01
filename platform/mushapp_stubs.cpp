@@ -35,7 +35,7 @@ extern bool g_debug;
 
 // ── g_before_output / g_after_output ─────────────────────────────────────────
 // Declared extern in platform/doc_stub.h; provided here for the full build.
-// In the CLI build these are set by cli_main.cpp to manage readline output.
+// These were set by the former CLI to manage readline output (CLI now removed).
 // In the GUI build they stay nullptr (the GUI handles its own output ordering).
 void (*g_before_output)() = nullptr;
 void (*g_after_output)()  = nullptr;

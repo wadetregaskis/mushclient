@@ -3985,7 +3985,7 @@ void CWorldChildFrame::OnSize(wxSizeEvent& evt)
         int textCols = EffectiveTextCols(m_doc, paneW, charW);
         // Keep m_nWrapColumn in sync so the engine wraps output at the visible
         // text width (full pane minus any plugin TextRectangle).  Matches what
-        // cli_main.cpp does on SIGWINCH.
+        // a CLI would do on SIGWINCH.
         m_doc->m_nWrapColumn = (unsigned short)std::max(1, std::min(textCols, 65535));
         // Keep the GUI geometry fields current too — GetInfo(280/281) report the
         // output pane's pixel height/width from these (rows*lineH, cols*charW), and

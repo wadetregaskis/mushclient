@@ -6,7 +6,7 @@
 // This file is compiled into BOTH mushcore and mushapp so that every link
 // target that includes windows_stubs.cpp (or any other TU that calls through
 // a hook) can resolve the symbols:
-//   • mushcli  links mushcore  → gets these definitions
+//   • the tests link mushcore    → get these definitions
 //   • mushgui  links mushapp   → gets these definitions
 //   • tests    link mushcore   → get these definitions
 // No target links both libraries, so there is no ODR conflict.

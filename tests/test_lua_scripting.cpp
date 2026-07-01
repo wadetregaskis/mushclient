@@ -14,7 +14,7 @@
 // AddAndGetAlias, AddAndGetTimer, GuiStubsReturnValues,
 // SetAlphaOptionCacheRoundTrip, ArrayCreateSetGet, MD5, SHA256, WorldAddress)
 // assert the FULL world API.  lua_world_api_portable.cpp (used by mushcore /
-// mushcli / these tests) implements only a subset; the product, mushgui, uses
+// these tests) implements only a subset; the product, mushgui, uses
 // the complete scripting/lua_methods.cpp where these work.  Bringing the
 // portable layer to parity is deferred — the GUI is the product.
 

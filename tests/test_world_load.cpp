@@ -393,7 +393,7 @@ TEST(WorldLoad, PasswordBase64Load)
 TEST(WorldLoad, PasswordSaveEncodesBase64)
 {
     // A password set in the doc must be written base64-encoded with a
-    // <name>_base64="y" flag (so it round-trips with Windows / mushcli, and the
+    // <name>_base64="y" flag (so it round-trips with Windows, and the
     // plaintext never hits disk). "secret" -> "c2VjcmV0".
     const char* base = R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>

@@ -236,7 +236,7 @@ long CMUSHclientDoc::PickColour(long Suggested)
 #else
   if (g_wxhook_pick_colour)
     return g_wxhook_pick_colour (Suggested);
-  return -1;   // no GUI available (e.g. mushcli)
+  return -1;   // no GUI available (headless)
 #endif
 }  // end of CMUSHclientDoc::PickColour
 

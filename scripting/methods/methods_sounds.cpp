@@ -456,7 +456,7 @@ long CMUSHclientDoc::GetSoundStatus(short Buffer)
 // DirectSound gave the Windows build — so PlaySound / StopSound / GetSoundStatus
 // now behave like Windows (buffers, volume, pan, the "adjust playing buffer"
 // case, and real per-buffer status).  Memory-buffer playback is the one gap
-// (rejected, as before).  In mushcli/tests the hooks are null → playback no-ops.
+// (rejected, as before).  In the tests the hooks are null → playback no-ops.
 
 #include "../errors.h"
 #include <cctype>
@@ -477,7 +477,7 @@ long CMUSHclientDoc::Sound(LPCTSTR SoundFileName)
 // g_wxhook_sound_* hooks: Buffer (0 = auto), Volume %, Pan % and Loop all apply,
 // and "empty filename + buffer" retunes an already-playing voice.  Mirrors the
 // Windows DirectSound helper's parameter handling, including memory-image
-// playback.  Null hooks (mushcli/tests) → no audio backend.
+// playback.  Null hooks (tests) → no audio backend.
 long CMUSHclientDoc::PlaySoundHelper(short Buffer, LPCTSTR FileName, BOOL Loop,
                                      double Volume, double Pan,
                                      LPCTSTR MemoryBuffer, size_t MemLen)

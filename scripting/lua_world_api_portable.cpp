@@ -1955,8 +1955,7 @@ static int L_SetStatus(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* msg = luaL_optstring(L, 1, "");
-    if (pDoc->m_fn_status)
-        pDoc->m_fn_status(std::string(msg));
+    pDoc->EmitStatus(msg);
     return 0;
 }
 
@@ -3759,8 +3758,7 @@ static int L_SetTitle(lua_State* L)
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* title = luaL_optstring(L, 1, "");
     pDoc->m_strWindowTitle = title;
-    if (pDoc->m_fn_set_title)
-        pDoc->m_fn_set_title(std::string(title));
+    pDoc->EmitTitle(title);
     return 0;
 }
 
@@ -4520,7 +4518,7 @@ static int L_Pause(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
     bool bPause = lua_toboolean(L, 1) != 0;
-    if (pDoc->m_fn_set_paused) pDoc->m_fn_set_paused(bPause);
+    pDoc->EmitPaused(bPause);
     // m_gui_paused is kept up to date by m_fn_autoscroll_changed;
     // set it here too in case the pane callback fires asynchronously.
     pDoc->m_gui_paused = bPause;
@@ -5765,7 +5763,7 @@ static int L_Info(lua_State* L)
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* msg = luaL_checkstring(L, 1);
     pDoc->m_strStatusMessage = CString(msg);
-    if (pDoc->m_fn_status) pDoc->m_fn_status(msg);
+    pDoc->EmitStatus(msg);
     lua_pushnumber(L, eOK);
     return 1;
 }

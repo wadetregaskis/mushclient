@@ -2177,6 +2177,20 @@ public:
         if (m_pWorldView)         m_pWorldView->appendLine(std::move(line));
         else if (m_fn_line_ready) m_fn_line_ready(std::move(line));
     }
+    // Typed-seam helpers for the state callbacks: prefer m_pWorldView, else fall
+    // back to the matching m_fn_* callback. Twin of the doc.h helpers.
+    void EmitPaused(bool paused) {
+        if (m_pWorldView)         m_pWorldView->setPaused(paused);
+        else if (m_fn_set_paused) m_fn_set_paused(paused);
+    }
+    void EmitStatus(std::string_view text) {
+        if (m_pWorldView)     m_pWorldView->setStatus(text);
+        else if (m_fn_status) m_fn_status(std::string(text));
+    }
+    void EmitTitle(std::string_view title) {
+        if (m_pWorldView)        m_pWorldView->setTitle(title);
+        else if (m_fn_set_title) m_fn_set_title(std::string(title));
+    }
 
     // Pending styled spans for the line currently being assembled.
     // Flushed (via m_fn_line_ready) on each '\n'.

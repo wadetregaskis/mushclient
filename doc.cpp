@@ -427,8 +427,7 @@ void CMUSHclientDoc::SetUpOutputWindow (void)
   if (m_bStartPaused)
     {
     m_gui_paused = true;
-    if (m_fn_set_paused)
-      m_fn_set_paused (true);
+    EmitPaused (true);
     }
 #else
   for(POSITION pos=GetFirstViewPosition();pos!=NULL;)

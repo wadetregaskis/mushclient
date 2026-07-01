@@ -222,12 +222,9 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         if (inp) inp->SetFocus();
     };
 
-    // world.Pause(bPause): Lua scripts can scroll-lock or unlock the pane.
+    // world.Pause(bPause) now drives IWorldView::setPaused (this frame) via
+    // CMUSHclientDoc::EmitPaused; see the pal::IWorldView section below.
     if (m_doc) {
-        m_doc->m_fn_set_paused = [this](bool bPause) {
-            if (m_output) m_output->SetPaused(bPause);
-        };
-
         // world.Repaint(): force a repaint of the output pane.
         m_doc->m_fn_repaint = [this]() {
             if (m_output) m_output->Refresh(false);
@@ -301,23 +298,10 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             m_doc->m_gui_lines_emitted = 0;
         };
 
-        // world.SetStatus(msg): show a message in the MDI parent's status bar.
-        // This overrides the connection-state message until the next timer tick
-        // refreshes it, or until a new world.SetStatus() call replaces it.
-        m_doc->m_fn_status = [this](const std::string& msg) {
-            if (g_wxhook_set_status && IsActiveWorld())
-                g_wxhook_set_status(msg.c_str());
-        };
-
-        // world.SetTitle(s): update the MDI child-frame title bar.
-        // MUD scripts commonly call this to show HP/MP/status in the title bar.
-        m_doc->m_fn_set_title = [this](const std::string& title) {
-            wxString wxTitle = wxString::FromUTF8(title.c_str());
-            SetTitle(wxTitle.IsEmpty()
-                     ? wxString::FromUTF8(
-                           static_cast<const char*>(m_doc->m_mush_name))
-                     : wxTitle);
-        };
+        // world.SetStatus(msg) and world.SetTitle(s) now drive
+        // IWorldView::setStatus / ::setTitle (this frame) via
+        // CMUSHclientDoc::EmitStatus / ::EmitTitle; the bodies live in the
+        // pal::IWorldView section below.
 
         // world.SetMainTitle(s): update the main application window title.
         m_doc->m_fn_set_main_title = [](const std::string& title) {
@@ -3814,13 +3798,21 @@ void CWorldChildFrame::note(std::string_view text)
 
 void CWorldChildFrame::setTitle(std::string_view title)
 {
-    SetTitle(wxString::FromUTF8(title.data(), title.size()));
+    // world.SetTitle(s): update the MDI child-frame title bar. An empty title
+    // falls back to the world name (MUD scripts commonly set HP/MP here).
+    wxString wxTitle = wxString::FromUTF8(title.data(), title.size());
+    SetTitle(wxTitle.IsEmpty()
+             ? wxString::FromUTF8(static_cast<const char*>(m_doc->m_mush_name))
+             : wxTitle);
 }
 
 void CWorldChildFrame::setStatus(std::string_view text)
 {
-    if (m_statusBar)
-        m_statusBar->SetStatusText(wxString::FromUTF8(text.data(), text.size()));
+    // world.SetStatus(msg): show a message in the shared main-window status bar,
+    // but only for the active world (overrides the connection-state message
+    // until the next timer tick or the next SetStatus call replaces it).
+    if (g_wxhook_set_status && IsActiveWorld())
+        g_wxhook_set_status(std::string(text).c_str());
 }
 
 void CWorldChildFrame::setBackgroundColour(pal::Colour c)

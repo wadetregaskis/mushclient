@@ -78,8 +78,7 @@ void CMUSHclientDoc::DeleteOutput()
 void CMUSHclientDoc::Pause(BOOL Flag)
 {
 #ifndef _WIN32
-  if (m_fn_set_paused)
-    m_fn_set_paused(Flag != 0);
+  EmitPaused(Flag != 0);
   m_gui_paused = (Flag != 0);
 #else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
@@ -931,9 +930,8 @@ void CMUSHclientDoc::SetTitle(LPCTSTR Title)
 	    }	  // end of being a CMUSHView
     }   // end of loop through views
 #else
-  // Non-Windows: propagate via callback to the wxWidgets MDI child frame.
-  if (m_fn_set_title)
-      m_fn_set_title(std::string(static_cast<const char*>(m_strWindowTitle)));
+  // Non-Windows: propagate to the world's IWorldView (the wx MDI child frame).
+  EmitTitle(static_cast<const char*>(m_strWindowTitle));
 #endif
 
 }   // end of CMUSHclientDoc::SetTitle

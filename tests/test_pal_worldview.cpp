@@ -106,4 +106,44 @@ TEST(PalWorldView, OneCommittedLinePerNewline)
     EXPECT_STREQ("gamma", line_text(lines[2]).c_str());
 }
 
+// The state callbacks drive the typed seam too, not just line output: the
+// engine's Pause / SetTitle / SetStatus call sites now go through these helpers.
+// (Pause()/SetTitle() themselves are GUI-only method wrappers not in the headless
+// build; the EmitPaused/EmitTitle/EmitStatus routing they call IS the migration.)
+TEST(PalWorldView, StateHelpersDriveTheView)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pWorldView = &view;
+
+    doc.EmitPaused(true);
+    EXPECT_TRUE(view.paused);
+    doc.EmitPaused(false);
+    EXPECT_TRUE(!view.paused);
+
+    doc.EmitTitle("HP: 42/50");
+    EXPECT_STREQ("HP: 42/50", view.title.c_str());
+
+    doc.EmitStatus("connected");
+    EXPECT_STREQ("connected", view.status.c_str());
+}
+
+// With no view attached, the helpers fall back to the m_fn_* callbacks so any
+// non-opted-in host is unaffected.
+TEST(PalWorldView, StateHelpersFallBackToCallbacks)
+{
+    CMUSHclientDoc doc = make_doc();
+    bool paused = false; std::string title, status;
+    doc.m_fn_set_paused = [&](bool p) { paused = p; };
+    doc.m_fn_set_title  = [&](const std::string& t) { title = t; };
+    doc.m_fn_status     = [&](const std::string& s) { status = s; };
+
+    doc.EmitPaused(true);
+    doc.EmitTitle("t1");
+    doc.EmitStatus("s1");
+    EXPECT_TRUE(paused);
+    EXPECT_STREQ("t1", title.c_str());
+    EXPECT_STREQ("s1", status.c_str());
+}
+
 MC_TEST_MAIN()

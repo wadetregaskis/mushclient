@@ -419,6 +419,9 @@ if(NOT WIN32)
         doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
         doc_portable.cpp
 
+        # PAL: headless CPU reference adapter for pal::ISurface (docs/PAL.md S1)
+        pal/cpu_raster.cpp
+
         # Telnet protocol parser (Phase 2)
         telnet_phases.cpp
 

@@ -295,6 +295,12 @@ if/when the mac view adopts them.
   behaviour is GDI's last-pixel-exclusive rule (the Windows adapter conforms by
   construction; the wx adapter's inclusive rendering is a *documented, accepted
   deviation* that already ships — not conformance, and fixable independently);
+  `shape` with a null pen draws the figure one pixel smaller on right/bottom
+  (GDI's documented null-pen shrink — normative, pinned by the golden tests);
+  a partially-out-of-bounds blit source draws the in-bounds intersection at
+  the correspondingly shifted destination (BitBlt clipping); adapters MUST
+  reject a `PixelBuffer` whose declared geometry is not backed by its bytes
+  (`PixelBuffer::valid()`);
   surface has no alpha; images are engine-owned buffers; region I/O over lock;
   `FontId`/`SurfaceId` opaque, adapter-owned.
 - **Open — DPI (needs owner decision):** `WindowFont` converts points→pixels via

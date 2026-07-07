@@ -303,22 +303,35 @@ if/when the mac view adopts them.
   (`PixelBuffer::valid()`);
   surface has no alpha; images are engine-owned buffers; region I/O over lock;
   `FontId`/`SurfaceId` opaque, adapter-owned.
-- **Open — DPI (needs owner decision):** `WindowFont` converts points→pixels via
-  `MulDiv(size, dpi, 72)`. Windows reports 96; the mac adapter reports
-  `wxGetDisplayPPI()` (~72), so a 10 pt plugin font is ~10 px on mac vs ~13 px
-  on Windows — mac plugin text renders ~25 % smaller than the author intended.
-  Options: keep native DPI (status quo, zero change) or pin 96 for layout parity
-  (all plugin text grows ~⅓; layouts computed from `measureText`/`fontMetrics`
-  self-correct, fixed-pixel art may crowd). *Recommendation: pin 96 on the mac
-  adapter — parity with author intent — but only behind a live visual check of
-  Quow's minimap + the mapper, as its own reviewable commit.*
-- **Open — legacy charsets:** non-Unicode `WindowText` bytes are drawn per the
-  font's charset on Windows; the mac shim decodes UTF-8-else-Latin-1, so e.g.
-  GBK plugin text is mojibake today. Proposed: engine decodes bytes→UTF-8 above
-  the seam using the charset hint (fix-forward; not required for v1).
-- **Open — `ON_PLUGIN_DRAW_OUTPUT_WINDOW`:** Windows fires it mid-paint
-  (between underneath and text passes); the mac paint never does. Decide where
-  it lives when the composition contract is formalised.
+- **Decided — DPI: Mac-native typographic sizing (`dpi()` ≈ 72 on the mac
+  adapter; the status quo).** Owner rationale: a user's 12 pt is 12 pt — text
+  in MUSHclient should render the same size as 12 pt in any other Mac app.
+  Cross-platform ramification, accepted: pixel-layout plugins authored on
+  Windows show text ~25 % smaller relative to their fixed-pixel boxes
+  (metric-driven plugins self-correct at any DPI). The safety asymmetry
+  supports this: smaller-than-authored text always *fits* (cosmetic), while
+  pin-96 would grow all plugin text ~⅓ and can *clip/overflow* pixel-tuned
+  layouts (functional). If under-sizing ever genuinely bites, the escape hatch
+  is an opt-in "Windows plugin font parity" preference (per-world, additive),
+  not a default flip. Windows keeps reporting real GDI DPI (96), unchanged.
+- **Decided — legacy charsets: the seam stays UTF-8 + charset hint; the wx
+  adapter decodes.** When non-Unicode `WindowText` bytes are not valid UTF-8,
+  the wx adapter converts them using the font's charset hint via the *existing*
+  machinery already proven in the output pane (`WinCharsetToEncoding` +
+  `wxCSConv`, `wx_outputpane.cpp:43-90`) — mirroring GDI's "font charset
+  interprets the bytes" rule. Fix-forward (today: mojibake); the CPU adapter
+  ignores the hint; engine-side decode remains an option if a toolkit-free
+  path ever needs it. Windows native path untouched.
+- **Decided — `ON_PLUGIN_DRAW_OUTPUT_WINDOW`: fire at the same point as
+  Windows** (between the underneath-miniwindow composite and the text pass;
+  args: 1-based first visible line, pixel scroll offset). No design reason
+  against it; lands with S4. Two engineering notes: (1) argument fidelity —
+  Windows passes *doc* line indices, and the mac pane keeps its own projected
+  line list, so the pane→doc index mapping must be pinned (trim drift);
+  (2) re-entrancy — the callback runs script mid-paint, so line-appends /
+  repaints triggered inside it must be deferred until the paint completes
+  (Windows relies on the documented draw-only discipline; we should guard).
+  No bundled or Quow plugin calls it today, so priority is parity, not urgency.
 
 ### ISurface migration (S-steps, each green + independently reviewable)
 

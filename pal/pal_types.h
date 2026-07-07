@@ -26,8 +26,9 @@ using Colour = std::uint32_t;
 
 // Opaque handles minted and owned by the frontend; the core only stores and
 // passes them back. Strongly typed so they can't be confused with each other.
+// (No ImageId: images are engine-owned pixel buffers, not seam objects — see
+// the ISurface design in docs/PAL.md.)
 enum class SurfaceId : std::uint32_t { None = 0 };
-enum class ImageId   : std::uint32_t { None = 0 };
 enum class FontId    : std::uint32_t { None = 0 };
 enum class TimerId   : std::uint64_t { None = 0 };
 

@@ -73,11 +73,11 @@ each is implemented.
    untyped version of this interface is *already injected* by the headless
    build). Core→frontend pushes + a few pulls (`currentCommand`, `outputSelection`,
    `scrollPos`). See `pal/iworldview.h`.
-2. **`ISurface`** — the 2-D raster surface shared by miniwindows *and* the output
-   pane. ~20 genuine raster primitives (fill/stroke/line/ellipse/arc/polygon/
-   gradient, text + `measureText`, fonts, image load/draw/snapshot, `lockPixels`).
-   The `world.Window*` *bodies* (hotspots, z-order, filters via `lockPixels`) stay
-   in the core.
+2. **`ISurface`** — the 2-D raster surface behind miniwindows (~20 primitives:
+   shapes/lines/gradient/flood/invert, text + measure + metrics, fonts, blit with
+   colour-key, region pixel I/O). The output pane's *text* is **not** behind it
+   (both views rasterize styled lines themselves; the engine ships them via
+   `IWorldView`). Full evidence-grounded design: *ISurface — design* below.
 3. **`ITransport`** — async byte IO; the adapter owns sockets, TLS and DNS so the
    core sees only plaintext bytes + events.
 4. **`IClock` + `ITimers`** — monotonic + wall-clock time; schedule/cancel.
@@ -98,11 +98,236 @@ each is implemented.
   `slider_*`, `spin_*`, `edit_*`, `button_*`, `get_dlg_item`, …) — these exist only
   to drive faked MFC controls in today's dialog bridge and become frontend-internal.
 - Hotspots — core-side metadata + generic mouse events, not a PAL op.
-- Image filters/transforms — core math over `ISurface::lockPixels` (also makes
-  them unit-testable).
+- Image filters/transforms — core math over `ISurface` region pixel I/O (also
+  makes them unit-testable).
 - Printing (`genprint`) — add `IPrinter` when we reach it, not speculatively.
 - The 5 scripting interpreters — portable libraries behind `IScriptEngine`, not a
   platform-GUI concern.
+
+## ISurface — design
+
+Derived from a full inventory of the three real clients: `miniwindow.cpp` (the
+~30 `world.Window*` methods and their GDI + raw-DIB usage), `platform/
+wx_gdi_compat.cpp` (the wx shim — ground truth for the GDI surface MUSHclient
+*actually exercises*, and for what ships as a no-op with no visible loss), and
+the two paint paths (`mushview.cpp` `OnDraw` / `platform/wx_outputpane.cpp` +
+`wx_world_child.cpp` composite). Workload note: in the bundled mapper + Quow's
+plugins, text draw/measure dominates by an order of magnitude, then
+rect/line/gradient/circle/polygon; the blend/filter machinery is
+correctness-critical but cold.
+
+### Scope
+
+An `ISurface` adapter owns **per-miniwindow offscreen raster surfaces** and
+**fonts**. That is all.
+
+- **Output-pane text is out.** The engine ships styled lines through
+  `IWorldView::appendLine`; each view rasterizes them itself (the mac pane
+  deliberately places glyphs on its own integer grid — metrics and layout must
+  share one frontend-local source of truth).
+- **Images are out** as seam objects. PNG/BMP decode is already portable
+  (libpng, in-tree); a loaded image is an engine-owned pixel buffer (POD), a
+  snapshot of another window is `readPixels`. Images reach the adapter only as
+  the source argument of `blit`/`writePixels`. No `ImageId`.
+- **Hotspots are out** (pure engine-side geometry — `PtInRect` over stored
+  rects; never touches pixels).
+- **Composition is a separate, tiny contract** (below), not `ISurface` ops.
+
+### The contract
+
+POD argument types (in `pal_types.h` as needed):
+
+- `PixelBuffer {bytes, stride, Size, format}` — **exactly the Windows DIB
+  contract**: format `BGR24` or `BGRA32`, rows 4-byte aligned, **bottom-up**.
+  Deliberate: the ~1500 lines of existing blend/filter/merge loops
+  (miniwindow.cpp 2072–3186, 3487–3577) index buffers assuming this layout and
+  must run byte-identical on Windows at S5; a saner top-down/RGBA layout is a
+  possible v2 *after* Windows CI can validate loop rewrites.
+- `PenSpec {style, width, colour, endcap/join}` — solid/null/inside-frame any
+  width; dash variants width ≤ 1.
+- `BrushSpec {style 0–12, fg, bg, optional PixelBuffer pattern}` — the pattern
+  tiles from the surface origin and may be **any size** (`WindowImageOp` builds
+  pattern brushes from arbitrary loaded images); the 5 built-in 8×8 mono
+  patterns and the 6 hatches may be expanded engine-side into pattern pixels,
+  using BGRA32 with alpha 0 for transparent gaps (`BrushColour == -1`) — the
+  one sanctioned use of alpha in an *input* buffer.
+- `FontSpec {face, pixel height, weight, italic/underline/strikeout, charset
+  hint, pitch/family hint}` — both hints pass through on Windows (GDI font
+  mapping uses them); other adapters may ignore them.
+- `FontMetrics` — the ~20 `TEXTMETRIC`-ish fields `WindowFontInfo` exposes,
+  plus the **realized face name** (`GetTextFace` after platform substitution —
+  `WindowFontInfo 21`). Fidelity is tiered: height, ascent, descent, internal/
+  external leading and average/max char width MUST be real and consistent with
+  rendering (plugins compute layout from them); the remaining fields are
+  best-effort, documented per adapter.
+- `Matrix2x3`.
+
+```cpp
+// lifecycle
+SurfaceId createSurface(Size, Colour background);      // filled, TA_LEFT|TA_TOP baked in
+void      destroySurface(SurfaceId);
+// region pixel I/O — the direct-access path (see rationale)
+void      readPixels (SurfaceId, Rect, PixelBuffer& out);
+void      writePixels(SurfaceId, Rect, const PixelBuffer&);
+Colour    getPixel   (SurfaceId, Point);                // -1 out of bounds (CLR_INVALID)
+// drawing — stateless; stroke AND fill in one call where GDI does
+void fillRect   (SurfaceId, Rect, BrushSpec);           // + FillSolidRect
+void invertRect (SurfaceId, Rect);                      // dest-NOT; the only ROP kept
+void drawEdge   (SurfaceId, Rect, edge, flags);         // EDGE_*/BF_* system bevels only
+                 // (Draw3dRect takes two arbitrary colours — decomposed core-side)
+void shape      (SurfaceId, kind, Rect, Point a, Point b, PenSpec, BrushSpec);
+                 // kind: rect | roundRect(a = ellipse w/h) | ellipse | chord | pie.
+                 // chord/pie: a and b define rays from the ellipse centre; the arc
+                 // runs counter-clockwise from the a-ray to the b-ray (GDI default);
+                 // degenerate rays follow GDI behaviour.
+void line       (SurfaceId, Point, Point, PenSpec);     // GDI last-pixel rule noted below
+void polyline   (SurfaceId, span<Point>, PenSpec);
+void polygon    (SurfaceId, span<Point>, PenSpec, BrushSpec, fillMode /* alternate */);
+void bezier     (SurfaceId, span<Point>, PenSpec);
+void arc        (SurfaceId, Rect, Point, Point, PenSpec); // radial convention as chord/pie
+void floodFill  (SurfaceId, Point seed, Colour fill, Colour ref, mode);
+                 // border:  fill until hitting ref-coloured boundary (GDI FloodFill)
+                 // surface: fill while on ref colour (ExtFloodFill FLOODFILLSURFACE)
+                 // fill = the brush colour GDI takes from the selected brush (Colour2)
+void gradient   (SurfaceId, Rect, Colour from, Colour to, bool horizontal);
+// blit — source is another surface or an engine-owned buffer
+void blit(SurfaceId dst, Rect dstRect, SurfaceOrPixels src, Rect srcRect,
+          BlitMode mode /* copy | transparentKey(Colour) — EXACT match */,
+          Quality /* fast | smooth(HALFTONE) */, const Matrix2x3* = nullptr);
+          // matrix non-null ⇒ dstRect is ignored: device coords come entirely from
+          // M·src (GDI GM_ADVANCED convention — WindowTransformImage passes its
+          // placement inside the matrix); mode/quality still apply.
+// text — UTF-8 in; draw and measure MUST use identical metrics.
+// Background is always transparent (WindowText hard-sets TRANSPARENT,
+// miniwindow.cpp:850) — no BkMode at the seam.
+FontId      createFont(FontSpec);   void destroyFont(FontId);
+int         drawText   (SurfaceId, FontId, string_view utf8, Point,
+                        Colour, const Rect* clip);       // → width drawn
+Size        measureText(FontId, string_view utf8);      // hot (mapper calls per label)
+FontMetrics fontMetrics(FontId);
+int         dpi();                                       // for points→pixels (see decisions)
+```
+
+~22 ops. Everything else the `world.Window*` API does stays in the core:
+`FixRight`/`FixBottom` (≤0 = offset-from-edge) translation, font/image
+name-caches, tiling (a loop of blits), resize (create + blit + destroy),
+`Draw3dRect` (two arbitrary-colour bevel edges → four 1-px `fillRect`s), the
+per-pixel blend/filter/merge/gradient-texture math (now over
+`readPixels`/`writePixels`, hence unit-testable), pattern definitions
+(mono/hatch → pattern pixels), PNG/BMP codecs and save/write paths (whole-
+surface `readPixels` as BGR24 bottom-up is exactly what `WindowWrite`/
+`WritePng` need).
+
+### Rationale for the load-bearing choices
+
+- **Region pixel I/O, not `lockPixels`.** ~12 `CreateDIBSection` sites feed
+  already-portable per-pixel loops. On Windows those loops *already* round-trip
+  `BitBlt(surface → temp DIB) → mutate → BitBlt back`; because `PixelBuffer`
+  preserves the DIB layout **exactly** (BGR24/BGRA32, bottom-up, padded rows),
+  `readPixels`/`writePixels` *is* that round-trip and the loop bodies move over
+  **unmodified** — no re-indexing, so S5 runs byte-identical math on Windows.
+  Implementable by all three adapters (GDI DIB blit / wx row-copy / headless
+  memcpy), and strictly better than the wx shim's current per-pixel `wxImage`
+  sync loops. Zero-copy `lockPixels` remains a compatible v2 optimization.
+  **Never** a per-pixel virtual call: the seam is region-granular.
+- **Stateless ops.** The GDI code uses select-use-restore everywhere and has
+  documented state leaks (`FillSolidRect` clobbers the DC bk colour;
+  `SetTextColor`/`SetBkColor` triple-duty for hatch gaps and mask blits). Pens/
+  brushes/fonts as per-call arguments eliminate that class of bug at the seam.
+- **Combined stroke+fill** with the full pen/brush zoo: pen styles solid/null/
+  inside-frame any width, dash variants width ≤ 1, endcap/join variants; brush
+  styles 0–12 (solid, null, 6 hatches, 5 built-in 8×8 mono patterns,
+  pattern-from-image). Fill-only or stroke-only APIs break
+  `Rectangle`/`Ellipse`/`RoundRect`/`Chord`/`Pie`/`Polygon` parity.
+- **Exact colour-key blit as a primitive** replaces the
+  `SRCINVERT`/`SRCAND`/`SRCINVERT` mono-mask ROP dance (used by image draw,
+  transform-image, and the per-paint transparent-window composite). Exact match
+  only — no anti-aliased or alpha-blended edges — and composable with the 2×3
+  affine (`WindowTransformImage` wraps the whole keyed sequence in
+  `SetWorldTransform`). `invertRect` is the only other ROP anything needs.
+- **Alpha is pinned OFF at the surface.** The backing store is opaque-24bpp
+  *semantics* regardless of depth; per-pixel alpha exists only in loaded 32bpp
+  images and is applied by engine CPU math. Adapters must not let backend alpha
+  leak into readback.
+- **Text round-trips.** `drawText` returns min(measured, clip) width as
+  `WindowText` does; `measureText` must agree with `drawText` and be cheap;
+  `fontMetrics` must be real (plugins compute layout from it). Input is
+  validated UTF-8 (+ charset hint for legacy non-Unicode text). Per-glyph dx
+  arrays and rotated text are provably unused — excluded.
+- **Headless-implementable.** Toolkit-free CPU rasterization of this contract
+  is straightforward (and is the test adapter). That keeps the wx adapter
+  honest, unlocks golden-image tests of the `world.Window*` bodies, and leaves
+  Phase-4 miniwindow parity for `mushcore` open rather than foreclosed.
+- **Proven-dead surface excluded** (the shim ships these as no-ops with no
+  visible loss): regions, palettes, map modes/viewport origins, world transforms
+  beyond the blit matrix, `MaskBlt`, `ScrollDC`, `PatBlt` beyond invert,
+  dx-array/tabbed/gray text, `SetTextCharacterExtra`, rotated fonts.
+
+### The composition contract (engine ↔ view, not ISurface)
+
+Per paint, both frontends iterate the doc's z-ordered miniwindow list twice
+(underneath → text → on-top). The engine owns placement *spec* (position mode
+0–13, location, flags incl. draw-underneath / ignore-mouse / transparent +
+key colour, z-order — a sorted engine-side vector); the **view** computes the
+landed rect from its own geometry and **writes back** `m_rect` +
+`m_bTemporarilyHide`, which engine APIs (`WindowInfo`, hotspot hit-testing at
+reverse z-order) then read. Formalised as:
+`compositionList() → span<SurfacePlacement>` (pull, per paint) where
+`SurfacePlacement {SurfaceId, name, Size, mode, Point location, flags, Colour
+key}` in z order, + `placementResult(name, Rect, bool hidden)` (push back).
+**Pixels for the composite:** the compositing view and the `ISurface` adapter
+are the *same* quarantined frontend layer, so the view resolves each
+`SurfaceId` to its own backing store zero-copy (today's `WxDCFromCDC`
+equivalent) — no PAL op needed, and the hot path stays copy-free; a split
+design (e.g. the headless adapter under test) may fall back to `readPixels`.
+Mouse routing goes engine-side over that data: view sends mouse events with
+coordinates (capturing from button-down to button-up, as `SetCapture` does
+today so drags keep receiving moves outside the window); engine hit-tests
+(reverse z, click-through flags) and returns `{consumed, cursorId, tooltip}` —
+which also fixes a live parity gap: the mac view ignores `CHotspot::m_Cursor`
+today (Windows maps −1..12 to system cursors). Same contract carries the doc
+background/foreground images (currently Windows-only paint — a known gap)
+if/when the mac view adopts them.
+
+### Decisions taken + open decisions
+
+- **Taken:** exclusive right/bottom rects at the seam; `line`'s **normative**
+  behaviour is GDI's last-pixel-exclusive rule (the Windows adapter conforms by
+  construction; the wx adapter's inclusive rendering is a *documented, accepted
+  deviation* that already ships — not conformance, and fixable independently);
+  surface has no alpha; images are engine-owned buffers; region I/O over lock;
+  `FontId`/`SurfaceId` opaque, adapter-owned.
+- **Open — DPI (needs owner decision):** `WindowFont` converts points→pixels via
+  `MulDiv(size, dpi, 72)`. Windows reports 96; the mac adapter reports
+  `wxGetDisplayPPI()` (~72), so a 10 pt plugin font is ~10 px on mac vs ~13 px
+  on Windows — mac plugin text renders ~25 % smaller than the author intended.
+  Options: keep native DPI (status quo, zero change) or pin 96 for layout parity
+  (all plugin text grows ~⅓; layouts computed from `measureText`/`fontMetrics`
+  self-correct, fixed-pixel art may crowd). *Recommendation: pin 96 on the mac
+  adapter — parity with author intent — but only behind a live visual check of
+  Quow's minimap + the mapper, as its own reviewable commit.*
+- **Open — legacy charsets:** non-Unicode `WindowText` bytes are drawn per the
+  font's charset on Windows; the mac shim decodes UTF-8-else-Latin-1, so e.g.
+  GBK plugin text is mojibake today. Proposed: engine decodes bytes→UTF-8 above
+  the seam using the charset hint (fix-forward; not required for v1).
+- **Open — `ON_PLUGIN_DRAW_OUTPUT_WINDOW`:** Windows fires it mid-paint
+  (between underneath and text passes); the mac paint never does. Decide where
+  it lives when the composition contract is formalised.
+
+### ISurface migration (S-steps, each green + independently reviewable)
+
+- **S1** `pal/isurface.h` + PODs; headless CPU-raster adapter (the test/reference
+  implementation); golden raster tests (draw → `readPixels` → compare).
+- **S2** wx adapter implementing `ISurface` over the existing shim machinery
+  (wrap, don't rewrite) — the canonical pixel buffer kills the DIB↔bitmap sync tax.
+- **S3** reroute `CMiniWindow` op-family by op-family (shapes → text → blits →
+  pixel ops) onto `ISurface`, live-verifying Quow's minimap + the mapper after
+  each family; the temp-DIB round-trips collapse onto `readPixels`/`writePixels`.
+- **S4** formalise the composition contract (placement list, rect write-back,
+  engine-side hit-testing with cursor ids — fixes the cursor parity gap).
+- **S5** Windows native adapter: `ISurface` implemented *by* GDI (DIB-backed,
+  behaviour-identical by construction; validated on the owner's Windows CI);
+  `miniwindow.cpp` keeps exactly one drawing path.
 
 ## Migration (incremental, always-green; Windows never perturbed)
 
@@ -122,6 +347,8 @@ each is implemented.
 
 - `editSettings(model)`: Windows runs the real property sheet; mac/wx renders from
   the model. (Leaning: yes.)
-- `ISurface` handles: opaque ints owned by the frontend. (Leaning: yes.)
+- `ISurface`: see *Decisions taken + open decisions* in the ISurface design above
+  (DPI parity, legacy charsets, `ON_PLUGIN_DRAW_OUTPUT_WINDOW`). Handles question
+  resolved: opaque adapter-owned ids.
 - `SOutputLine` currently `#ifndef _WIN32`; promote to the canonical cross-platform
   line type as part of P4.

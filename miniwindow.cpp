@@ -11,6 +11,10 @@
 #include "mainfrm.h"
 #include "blending.h"
 
+#ifndef _WIN32
+#include "pal/surface_bridge.h"   // pal::ISurface migration bridge (docs/PAL.md S3)
+#endif
+
 #define PNG_NO_CONSOLE_IO
 #include "png/png.h"
 
@@ -38,6 +42,12 @@ CMiniWindow::CMiniWindow ()  :
 
 CMiniWindow::~CMiniWindow ()  // destructor
   {
+
+#ifndef _WIN32
+  // Port: release the adopted pal::ISurface before the pdc goes away.
+  if (pal::g_releaseAdoptedSurface) pal::g_releaseAdoptedSurface (m_surfaceId);
+  m_surfaceId = pal::SurfaceId::None;
+#endif
 
   // get rid of old one if any
   if (m_Bitmap)
@@ -199,6 +209,14 @@ void CMiniWindow::Create (long Left, long Top, long Width, long Height,
 
   pdc->FillSolidRect (0, 0, m_iWidth, m_iHeight, m_iBackgroundColour);
 
+#ifndef _WIN32
+  // Port: adopt the freshly-created pdc as a pal::ISurface for migrated ops.
+  if (pal::g_releaseAdoptedSurface) pal::g_releaseAdoptedSurface (m_surfaceId);
+  m_surfaceId = pal::g_adoptSurface
+              ? pal::g_adoptSurface (pdc, m_iWidth, m_iHeight)
+              : pal::SurfaceId::None;
+#endif
+
   m_bShow = false;
 
   // a newly created window has no hotspots
@@ -267,6 +285,68 @@ void  CMiniWindow::Show (bool bShow)
 // various rectangle operations
 long  CMiniWindow::RectOp (short Action, long Left, long Top, long Right, long Bottom, long Colour1, long Colour2)
   {
+#ifndef _WIN32
+  // Port (docs/PAL.md S3): draw through the pal::ISurface adapter adopted onto
+  // this window's pdc. FixRight/FixBottom (<=0 = offset-from-edge) stays engine-
+  // side, above the seam. Behaviour-identical to the pdc switch below, except
+  // floodFill (wxDC::FloodFill is a no-op on wxOSX — now works) and the exact
+  // MFC decompositions of FrameRect / Draw3dRect.
+  if (pal::g_surface && m_surfaceId != pal::SurfaceId::None)
+    {
+    pal::ISurface*    srf = pal::g_surface;
+    const pal::SurfaceId sid = m_surfaceId;
+    const int L = (int) Left, T = (int) Top;
+    const int R = (int) FixRight (Right), B = (int) FixBottom (Bottom);
+    const pal::Rect   rc { L, T, R - L, B - T };
+    const pal::Colour c1 = (pal::Colour) Colour1, c2 = (pal::Colour) Colour2;
+    switch (Action)
+      {
+      case 1:   // frame: 1px border via 4 solid fills
+        {
+        const pal::BrushSpec b { pal::BrushStyle::Solid, c1 };
+        srf->fillRect (sid, { rc.x, rc.y, rc.w, 1 }, b);
+        srf->fillRect (sid, { rc.x, rc.y + rc.h - 1, rc.w, 1 }, b);
+        srf->fillRect (sid, { rc.x, rc.y, 1, rc.h }, b);
+        srf->fillRect (sid, { rc.x + rc.w - 1, rc.y, 1, rc.h }, b);
+        return eOK;
+        }
+      case 2:   // fill
+        srf->fillRect (sid, rc, { pal::BrushStyle::Solid, c1 });
+        return eOK;
+      case 3:   // invert
+        srf->invertRect (sid, rc);
+        return eOK;
+      case 4:   // 3D rect: MFC Draw3dRect — top+left in c1, right+bottom in c2
+        {
+        const pal::BrushSpec tl  { pal::BrushStyle::Solid, c1 };
+        const pal::BrushSpec brc { pal::BrushStyle::Solid, c2 };
+        srf->fillRect (sid, { rc.x, rc.y, rc.w - 1, 1 }, tl);           // top
+        srf->fillRect (sid, { rc.x, rc.y, 1, rc.h - 1 }, tl);           // left
+        srf->fillRect (sid, { rc.x + rc.w - 1, rc.y, 1, rc.h }, brc);   // right
+        srf->fillRect (sid, { rc.x, rc.y + rc.h - 1, rc.w, 1 }, brc);   // bottom
+        return eOK;
+        }
+      case 5:   // DrawEdge — same validation as the pdc path
+        switch (Colour1)
+          {
+          case EDGE_RAISED: case EDGE_ETCHED: case EDGE_BUMP: case EDGE_SUNKEN: break;
+          default: return eBadParameter;
+          }
+        if ((Colour2 & 0xFF) > 0x1F) return eBadParameter;
+        srf->drawEdge (sid, rc, (int) Colour1, (int) Colour2);
+        return eOK;
+      case 6:   // flood fill to border: seed (L,T), fill c2, border c1
+        srf->floodFill (sid, { L, T }, c2, c1, pal::FloodMode::Border);
+        return eOK;
+      case 7:   // flood fill on surface colour c1 with c2
+        srf->floodFill (sid, { L, T }, c2, c1, pal::FloodMode::Surface);
+        return eOK;
+      default:
+        return eUnknownOption;
+      }
+    }
+#endif
+
   switch (Action)
 
     {
@@ -4209,6 +4289,14 @@ long CMiniWindow::Resize(long Width, long Height, long BackgroundColour)
 
   m_iWidth  = Width ;
   m_iHeight = Height;
+
+#ifndef _WIN32
+  // Port: re-adopt the (same) pdc at the new size for migrated ops.
+  if (pal::g_releaseAdoptedSurface) pal::g_releaseAdoptedSurface (m_surfaceId);
+  m_surfaceId = pal::g_adoptSurface
+              ? pal::g_adoptSurface (pdc, m_iWidth, m_iHeight)
+              : pal::SurfaceId::None;
+#endif
 
   return eOK;
 

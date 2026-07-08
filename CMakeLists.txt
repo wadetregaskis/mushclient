@@ -704,6 +704,7 @@ if(NOT WIN32)
         globalregistryoptions.cpp
         mainfrm.cpp
         miniwindow.cpp
+        surface_bridge.cpp   # pal::ISurface migration bridge globals (docs/PAL.md S3)
         mushview.cpp
         plugins.cpp
         scriptingoptions.cpp

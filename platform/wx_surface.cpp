@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "platform/wx_surface.h"
+#include "pal/surface_bridge.h"
 
 // Windows-charset → wxFontEncoding mapper shared with the output pane
 // (defined in wx_outputpane.cpp; the decided legacy-charset fix reuses it).
@@ -107,11 +108,25 @@ SurfaceId WxSurface::createSurface(Size sz, Colour background) {
 void WxSurface::destroySurface(SurfaceId id) {
     Surf* s = surf(id);
     if (!s) return;
-    s->dc->SelectObject(s->oldBmp);
-    s->bmp->DeleteObject();
-    delete s->bmp;
-    delete s->dc;
+    if (!s->adopted) {                      // adopted DCs are owned by the caller
+        s->dc->SelectObject(s->oldBmp);
+        s->bmp->DeleteObject();
+        delete s->bmp;
+        delete s->dc;
+    }
     m_surfaces.erase((std::uint32_t)id);
+}
+
+// Wrap an existing CDC (the CMiniWindow's pdc) as a non-owning surface.
+SurfaceId WxSurface::adopt(CDC* dc, Size sz) {
+    if (!dc) return SurfaceId::None;
+    Surf s;
+    s.dc      = dc;
+    s.size    = { sz.w > 0 ? sz.w : 1, sz.h > 0 ? sz.h : 1 };
+    s.adopted = true;
+    std::uint32_t id = m_nextSurface++;
+    m_surfaces[id] = s;
+    return (SurfaceId)id;
 }
 
 // ── region pixel I/O — the engine's temp-DIB BitBlt round-trip, verbatim ────
@@ -665,6 +680,27 @@ int WxSurface::dpi() {
 
 } // namespace pal
 
+// ── S3 migration bridge install ──────────────────────────────────────────────
+// One adapter instance hosts every miniwindow's adopted surface.
+static pal::WxSurface* s_bridgeAdapter = nullptr;
+
+static pal::SurfaceId wxAdoptSurface(void* nativeCtx, int w, int h) {
+    if (!s_bridgeAdapter || !nativeCtx) return pal::SurfaceId::None;
+    return s_bridgeAdapter->adopt(reinterpret_cast<CDC*>(nativeCtx), { w, h });
+}
+static void wxReleaseAdoptedSurface(pal::SurfaceId id) {
+    if (s_bridgeAdapter && id != pal::SurfaceId::None)
+        s_bridgeAdapter->destroySurface(id);
+}
+
+void InstallWxSurfaceBridge() {
+    if (s_bridgeAdapter) return;                 // idempotent
+    s_bridgeAdapter               = new pal::WxSurface();
+    pal::g_surface                = s_bridgeAdapter;
+    pal::g_adoptSurface           = &wxAdoptSurface;
+    pal::g_releaseAdoptedSurface  = &wxReleaseAdoptedSurface;
+}
+
 // ── conformance selftest (hidden --pal-surface-selftest flag) ────────────────
 static int g_stPass = 0, g_stFail = 0;
 static void stCheck(bool ok, const char* what) {
@@ -816,6 +852,34 @@ int RunPalSurfaceSelfTest() {
         if (c != kWhite && c != kGreen) gapsUntouched = false;
     }
     stCheck(gapsUntouched, "hatch brush: bg == -1 gaps stay untouched");
+
+    // 12. adopt an externally-owned CDC (the CMiniWindow S3 bridge) and draw the
+    // RectOp family through it — into the SAME context the engine still owns.
+    {
+        CDC dc; dc.CreateCompatibleDC(NULL); dc.SetTextAlign(TA_LEFT | TA_TOP);
+        CBitmap bmp; bmp.CreateBitmap(24, 24, 1, GetDeviceCaps(dc, BITSPIXEL), NULL);
+        CBitmap* oldb = dc.SelectObject(&bmp);
+        dc.SetWindowOrg(0, 0);
+        dc.FillSolidRect(0, 0, 24, 24, kBlack);
+        SurfaceId as = impl.adopt(&dc, { 24, 24 });
+        stCheck(as != SurfaceId::None, "adopt returns a surface for an external CDC");
+        ad.fillRect(as, { 2, 2, 10, 10 }, { BrushStyle::Solid, kBlue });   // RectOp 2
+        // RectOp 1 frame + RectOp 6 flood inside it (the wxOSX-broken op)
+        ad.fillRect(as, { 12, 12, 1, 10 }, { BrushStyle::Solid, kWhite });
+        ad.fillRect(as, { 21, 12, 1, 10 }, { BrushStyle::Solid, kWhite });
+        ad.fillRect(as, { 12, 12, 10, 1 }, { BrushStyle::Solid, kWhite });
+        ad.fillRect(as, { 12, 21, 10, 1 }, { BrushStyle::Solid, kWhite });
+        ad.floodFill(as, { 16, 16 }, kRed, kWhite, FloodMode::Border);
+        stCheck(ad.getPixel(as, { 3, 3 }) == kBlue &&
+                ad.getPixel(as, { 16, 16 }) == kRed, "adopt: RectOp fill + flood draw into the CDC");
+        // Releasing an adopted surface must NOT free the caller's CDC/bitmap.
+        ad.destroySurface(as);
+        dc.FillSolidRect(0, 0, 24, 24, kGreen);        // would crash on a freed CDC
+        SurfaceId as2 = impl.adopt(&dc, { 24, 24 });
+        stCheck(ad.getPixel(as2, { 5, 5 }) == kGreen, "adopt: release leaves the CDC usable");
+        ad.destroySurface(as2);
+        dc.SelectObject(oldb); bmp.DeleteObject();
+    }
 
     printf("  dpi() reports: %d\n", ad.dpi());
     printf("PAL-SURFACE-SELFTEST: %d passed, %d failed\n", g_stPass, g_stFail);

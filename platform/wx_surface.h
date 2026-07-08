@@ -83,14 +83,19 @@ public:
                          Colour, const Rect* clip) override;
     Size        measureText(FontId, std::string_view utf8) override;
     FontMetrics fontMetrics(FontId) override;
-    int         dpi() override;   // Mac-native (~72) per the decided DPI policy
+    int         dpi() override;   // shim LOGPIXELSY (== product; Mac-native)
+
+    // Wrap an externally-owned CDC as a surface (S3 migration bridge); the
+    // adapter draws into it but does not own/free it.
+    SurfaceId adopt(CDC* dc, Size);
 
 private:
     struct Surf {
-        CDC*     dc     = nullptr;   // CreateCompatibleDC(NULL), TA_LEFT|TA_TOP
-        CBitmap* bmp    = nullptr;   // device-depth bitmap selected into dc
-        CBitmap* oldBmp = nullptr;   // swap-back on destroy
+        CDC*     dc      = nullptr;  // CreateCompatibleDC(NULL), TA_LEFT|TA_TOP
+        CBitmap* bmp     = nullptr;  // device-depth bitmap selected into dc
+        CBitmap* oldBmp  = nullptr;  // swap-back on destroy
         Size     size;
+        bool     adopted = false;    // wraps an externally-owned CDC (S3 bridge)
     };
     struct Font {
         CFont*   font = nullptr;
@@ -108,6 +113,10 @@ private:
 };
 
 } // namespace pal
+
+// Install the wx adapter as the S3-migration surface bridge (pal::g_surface +
+// pal::g_adoptSurface/...). Call once at frontend startup. Idempotent.
+void InstallWxSurfaceBridge();
 
 // Conformance selftest: runs the adapter through the contract goldens (the
 // adapter-invariant subset of tests/test_pal_surface.cpp) inside a live wx

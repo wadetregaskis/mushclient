@@ -22,6 +22,10 @@ void LoadMfcDialogResources();
 // (docs/PAL.md S2), run via the hidden --pal-surface-selftest flag.
 int RunPalSurfaceSelfTest();
 
+// Defined in wx_surface.cpp: install the wx ISurface adapter as the S3
+// miniwindow-migration bridge (pal::g_surface + adopt/release).
+void InstallWxSurfaceBridge();
+
 class CMUSHWxApp : public wxApp {
 public:
     bool OnInit() override
@@ -46,6 +50,10 @@ public:
         // "MUSHclient" rather than the executable basename.
         SetAppName(wxT("MUSHclient"));
         SetAppDisplayName(wxT("MUSHclient"));
+
+        // Install the pal::ISurface adapter as the miniwindow-drawing bridge
+        // (docs/PAL.md S3) before any world/plugin can create a miniwindow.
+        InstallWxSurfaceBridge();
 
         // Register every wxImage handler (BMP/PNG/ICO/…) up front, before any
         // MUSHclient code can load an image — the Tip-of-the-Day bulb, dialog art,

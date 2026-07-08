@@ -1,6 +1,10 @@
 #pragma once
 // for miniwindows
 
+#ifndef _WIN32
+#include "pal/surface_bridge.h"   // pal::ISurface migration bridge (docs/PAL.md S3)
+#endif
+
 // fonts
 typedef map<string, CFont *> FontMap;
 typedef FontMap::iterator FontMapIterator;
@@ -78,6 +82,10 @@ class CMiniWindow
     CDC * pdc;                // our offscreen device context
   	CBitmap *   m_oldBitmap;  // bitmap originally found in CMyMemDC
     CBitmap *   m_Bitmap;     // where it all happens
+#ifndef _WIN32
+    // Port: pdc adopted as a pal::ISurface for the S3 migration (docs/PAL.md).
+    pal::SurfaceId m_surfaceId = pal::SurfaceId::None;
+#endif
     FontMap     m_Fonts;      // all the fonts they want
     ImageMap    m_Images;     // other images they may want to blt onto the window
 

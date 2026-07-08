@@ -12,15 +12,29 @@
 #include <wx/wx.h>
 #include <wx/image.h>          // wxInitAllImageHandlers
 #include <csignal>             // signal, SIGPIPE
+#include <cstdlib>             // std::exit (selftest flag)
 #include "platform/wx_mfc_hooks.h"
 
 // Defined in wx_dialog_bridge.cpp: parse the bundled dialog resources once.
 void LoadMfcDialogResources();
 
+// Defined in wx_surface.cpp: the pal::ISurface conformance selftest
+// (docs/PAL.md S2), run via the hidden --pal-surface-selftest flag.
+int RunPalSurfaceSelfTest();
+
 class CMUSHWxApp : public wxApp {
 public:
     bool OnInit() override
     {
+        // Hidden conformance harness: exercise the wx ISurface adapter against
+        // the contract goldens inside a real (headless-enough) wx app, print
+        // the results, and exit without booting the GUI.
+        for (int i = 1; i < argc; ++i)
+            if (wxString(argv[i]) == wxT("--pal-surface-selftest")) {
+                const int failures = RunPalSurfaceSelfTest();
+                std::exit(failures == 0 ? 0 : 1);
+            }
+
         // Don't let a write to a peer-closed MUD socket raise SIGPIPE and kill the
         // app; send() then returns EPIPE, which the world socket treats as a
         // disconnect.  (Per-socket SO_NOSIGPIPE also covers macOS; this is the

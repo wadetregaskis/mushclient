@@ -44,7 +44,9 @@ static inline int UTF8CharLen(const std::string& s)
 // so a non-UTF-8 world's bytes decode the way the Windows 8-bit render path shows
 // them (GDI maps bytes→glyphs via the selected font's charset).  Unmapped/ANSI/
 // DEFAULT fall through to CP1252 (Windows Latin-1).
-static wxFontEncoding WinCharsetToEncoding(int cs)
+// External linkage: wx_surface.cpp reuses it for legacy-charset WindowText
+// bytes (the decided ISurface charset fix — see docs/PAL.md).
+wxFontEncoding WinCharsetToEncoding(int cs)
 {
     switch (cs) {
         case 128: return wxFONTENCODING_CP932;   // SHIFTJIS_CHARSET    (Japanese)

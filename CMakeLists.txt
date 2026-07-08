@@ -1036,6 +1036,8 @@ if(NOT WIN32)
             # GDI compatibility layer: wx-backed CDC/CBitmap/CPen/CBrush/CFont
             # Resolves the GDI symbols left undefined by mushapp's miniwindow.cpp
             platform/wx_gdi_compat.cpp
+            # PAL: wx adapter for pal::ISurface + conformance selftest (S2)
+            platform/wx_surface.cpp
             # GUI widgets (wx headers first, then MUSHclient headers)
             platform/wx_outputpane.cpp
             platform/wx_world_child.cpp

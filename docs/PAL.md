@@ -303,9 +303,13 @@ if/when the mac view adopts them.
   (`PixelBuffer::valid()`);
   surface has no alpha; images are engine-owned buffers; region I/O over lock;
   `FontId`/`SurfaceId` opaque, adapter-owned.
-- **Decided — DPI: Mac-native typographic sizing (`dpi()` ≈ 72 on the mac
-  adapter; the status quo).** Owner rationale: a user's 12 pt is 12 pt — text
-  in MUSHclient should render the same size as 12 pt in any other Mac app.
+- **Decided — DPI: Mac-native typographic sizing (`dpi()` = the shim's
+  `GetDeviceCaps(LOGPIXELSY)` = `wxGetDisplayPPI`; the status quo).** On a 1x
+  display that is ~72; on a 2x Retina Mac it is 144 (a point stays a point — the
+  extra pixels are the backing-store resolution). Either way the adapter reads
+  the *same* value the product already uses, so text size is unchanged from what
+  ships. Owner rationale: a user's 12 pt is 12 pt — text in MUSHclient should
+  render the same size as 12 pt in any other Mac app.
   Cross-platform ramification, accepted: pixel-layout plugins authored on
   Windows show text ~25 % smaller relative to their fixed-pixel boxes
   (metric-driven plugins self-correct at any DPI). The safety asymmetry

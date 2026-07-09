@@ -373,11 +373,13 @@ adapter re-encodes, the GDI adapter reproducing `MakeAPen`/`CreatePatternBrush`
 exactly), including the six hatches and MUSHclient's five built-in mono pattern
 brushes (carried as `BrushSpec.monoPattern` so each adapter builds a native mono
 brush and GDI applies its own text/bk mapping — byte-exact without guessing).
-Next: **`WindowGradient`** (needs a seam extension for its texture-fill /
-multi-vertex modes) and the **image / blit family** (`WindowDrawImage`,
-`DrawImageAlpha`, `Blt`, `LoadImage`, `GetPixel`/`SetPixel` → the `blit` ops +
-`readPixels`/`writePixels`/`getPixel`, which also brings arbitrary-image pattern
-brushes). Those GDI-adapter methods remain stubbed until their family migrates.
+`WindowGradient` is also landed (all three modes: linear H/V via `gradient()`,
+and the texture fill via `MakeTexture` → `writePixels()`). The **only remaining**
+miniwindow drawing family is **image / blit** (`WindowDrawImage`, `DrawImageAlpha`,
+`Blt`, `MergeImageAlpha`, `LoadImage`, `CreateImage`, `GetPixel`/`SetPixel` → the
+`blit` ops + `readPixels`/`getPixel`, image storage moved to engine-owned
+`PixelBuffer`s, plus arbitrary-image pattern brushes). Those GDI-adapter methods
+(`createSurface`/`readPixels`/`getPixel`/`blit`) remain stubbed until it migrates.
 
 ## Migration (incremental, always-green; Windows never perturbed)
 

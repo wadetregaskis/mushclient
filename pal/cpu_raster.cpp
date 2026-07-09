@@ -317,7 +317,7 @@ void CpuRaster::blit(SurfaceId dstId, Rect dstRect, const PixelBuffer& src, Rect
 }
 
 // ── text (the deterministic test font — see the header warning) ─────────────
-static size_t decodeUtf8(std::string_view s, size_t& i) {
+static size_t decodeUtf8(const char* s, size_t len, size_t& i) {
     // Returns the codepoint at byte i, advancing i. Invalid bytes → the byte value.
     const unsigned char b0 = (unsigned char)s[i];
     size_t cp = b0, extra = 0;
@@ -325,7 +325,7 @@ static size_t decodeUtf8(std::string_view s, size_t& i) {
     else if ((b0 & 0xF0) == 0xE0) { cp = b0 & 0x0F; extra = 2; }
     else if ((b0 & 0xF8) == 0xF0) { cp = b0 & 0x07; extra = 3; }
     ++i;
-    for (; extra && i < s.size() && ((unsigned char)s[i] & 0xC0) == 0x80; --extra, ++i)
+    for (; extra && i < len && ((unsigned char)s[i] & 0xC0) == 0x80; --extra, ++i)
         cp = (cp << 6) | ((unsigned char)s[i] & 0x3F);
     return cp;
 }
@@ -342,23 +342,23 @@ FontId CpuRaster::createFont(const FontSpec& spec) {
 
 void CpuRaster::destroyFont(FontId id) { m_fonts.erase((std::uint32_t)id); }
 
-Size CpuRaster::measureText(FontId id, std::string_view utf8) {
+Size CpuRaster::measureText(FontId id, const char* utf8, size_t len) {
     auto it = m_fonts.find((std::uint32_t)id);
-    if (it == m_fonts.end()) return {};
+    if (it == m_fonts.end() || !utf8) return {};
     int n = 0;
-    for (size_t i = 0; i < utf8.size();) { decodeUtf8(utf8, i); ++n; }
+    for (size_t i = 0; i < len;) { decodeUtf8(utf8, len, i); ++n; }
     return { n * it->second.cellW, it->second.cellH };
 }
 
-int CpuRaster::drawText(SurfaceId sid, FontId fid, std::string_view utf8, Point pt,
+int CpuRaster::drawText(SurfaceId sid, FontId fid, const char* utf8, size_t len, Point pt,
                         Colour colour, const Rect* clip) {
     Surf* s = surf(sid);
     auto it = m_fonts.find((std::uint32_t)fid);
-    if (!s || it == m_fonts.end()) return 0;
+    if (!s || it == m_fonts.end() || !utf8) return 0;
     const Font& f = it->second;
     int cx = pt.x, n = 0;
-    for (size_t i = 0; i < utf8.size();) {
-        const size_t cp = decodeUtf8(utf8, i);
+    for (size_t i = 0; i < len;) {
+        const size_t cp = decodeUtf8(utf8, len, i);
         ++n;
         // Deterministic procedural glyph: a cell-filling pattern seeded by the
         // codepoint. NOT typography — exists to make the contract testable.

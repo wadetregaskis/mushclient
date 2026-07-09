@@ -257,9 +257,9 @@ TEST(PalSurface, TextContractRoundTrips)
     EXPECT_STREQ("CpuRasterTest", m.face.c_str());
 
     // measure/draw agree; return value is the measured width.
-    Size sz = ad.measureText(f, "Dog");
+    Size sz = ad.measureText(f, "Dog", 3);
     EXPECT_TRUE(sz.w == 18 && sz.h == 10);
-    EXPECT_TRUE(ad.drawText(s, f, "Dog", { 2, 2 }, WHITE, nullptr) == 18);
+    EXPECT_TRUE(ad.drawText(s, f, "Dog", 3, { 2, 2 }, WHITE, nullptr) == 18);
 
     // Something was actually drawn inside the first cell ('D' hits (0,0)).
     EXPECT_TRUE(ad.getPixel(s, { 2, 2 }) == WHITE);
@@ -268,7 +268,7 @@ TEST(PalSurface, TextContractRoundTrips)
     // and suppresses pixels outside the clip rect.
     pal::SurfaceId s2 = ad.createSurface({ 60, 20 }, BLACK);
     Rect clip = { 0, 0, 7, 20 };
-    EXPECT_TRUE(ad.drawText(s2, f, "Dog", { 0, 0 }, WHITE, &clip) == 7);
+    EXPECT_TRUE(ad.drawText(s2, f, "Dog", 3, { 0, 0 }, WHITE, &clip) == 7);
     bool outsideClean = true;
     for (int y = 0; y < 20 && outsideClean; ++y)
         for (int x = 7; x < 60; ++x)
@@ -276,7 +276,7 @@ TEST(PalSurface, TextContractRoundTrips)
     EXPECT_TRUE(outsideClean);
 
     // UTF-8: multi-byte codepoints count once.
-    EXPECT_TRUE(ad.measureText(f, "\xC3\xA9X").w == 12);   // é + X = 2 cells
+    EXPECT_TRUE(ad.measureText(f, "\xC3\xA9X", 3).w == 12);   // é + X = 2 cells
 }
 
 TEST(PalSurface, HatchAndPatternBrushes)

@@ -584,29 +584,30 @@ void WxSurface::destroyFont(FontId id) {
 // otherwise decode via the font's charset hint (the decided legacy-charset fix,
 // mirroring GDI's "the font's charset interprets the bytes"), else Latin-1 —
 // the shim's existing fallback.
-static std::string DecodeSeamText(std::string_view utf8, int charsetHint) {
-    wxString probe = wxString::FromUTF8(utf8.data(), utf8.size());
-    if (!probe.empty() || utf8.empty())
-        return std::string(utf8);
+static std::string DecodeSeamText(const char* utf8, size_t len, int charsetHint) {
+    if (!utf8 || len == 0) return std::string();
+    wxString probe = wxString::FromUTF8(utf8, len);
+    if (!probe.empty())
+        return std::string(utf8, len);
     if (charsetHint > 2) {
         wxCSConv conv(WinCharsetToEncoding(charsetHint));
-        wxString decoded(utf8.data(), conv, utf8.size());
+        wxString decoded(utf8, conv, len);
         if (!decoded.empty()) {
             const wxScopedCharBuffer b = decoded.utf8_str();
             return std::string(b.data(), b.length());
         }
     }
-    wxString latin1(utf8.data(), wxConvISO8859_1, utf8.size());
+    wxString latin1(utf8, wxConvISO8859_1, len);
     const wxScopedCharBuffer b = latin1.utf8_str();
     return std::string(b.data(), b.length());
 }
 
-int WxSurface::drawText(SurfaceId sid, FontId fid, std::string_view utf8, Point pt,
+int WxSurface::drawText(SurfaceId sid, FontId fid, const char* utf8, size_t len, Point pt,
                         Colour colour, const Rect* clip) {
     Surf* s = surf(sid);
     Font* f = font(fid);
     if (!s || !f) return 0;
-    const std::string text = DecodeSeamText(utf8, f->spec.charsetHint);
+    const std::string text = DecodeSeamText(utf8, len, f->spec.charsetHint);
     CFont* oldFont = s->dc->SelectObject(f->font);
     s->dc->SetTextColor(colour);
     s->dc->SetBkMode(TRANSPARENT);
@@ -624,10 +625,10 @@ int WxSurface::drawText(SurfaceId sid, FontId fid, std::string_view utf8, Point 
     return clip ? (measured < clip->w ? measured : clip->w) : measured;
 }
 
-Size WxSurface::measureText(FontId fid, std::string_view utf8) {
+Size WxSurface::measureText(FontId fid, const char* utf8, size_t len) {
     Font* f = font(fid);
     if (!f) return {};
-    const std::string text = DecodeSeamText(utf8, f->spec.charsetHint);
+    const std::string text = DecodeSeamText(utf8, len, f->spec.charsetHint);
     CDC* dc = measureDc();
     CFont* old = dc->SelectObject(f->font);
     CSize sz = dc->GetTextExtent(text.c_str(), (int)text.size());
@@ -774,9 +775,9 @@ int RunPalSurfaceSelfTest() {
 
     // 7. text: draw/measure agreement + metrics sanity + pixels landed
     FontId f = ad.createFont({ "", 14, 400, false, false, false, 0, 0 });
-    Size msz = ad.measureText(f, "Dog");
+    Size msz = ad.measureText(f, "Dog", 3);
     SurfaceId ts = ad.createSurface({ 100, 30 }, kBlack);
-    int drawn = ad.drawText(ts, f, "Dog", { 2, 2 }, kWhite, nullptr);
+    int drawn = ad.drawText(ts, f, "Dog", 3, { 2, 2 }, kWhite, nullptr);
     stCheck(msz.w > 0 && drawn == msz.w, "drawText returns measureText width");
     FontMetrics fm = ad.fontMetrics(f);
     stCheck(fm.height > 0 && fm.ascent > 0 && fm.ascent <= fm.height &&

@@ -79,9 +79,9 @@ public:
 
     FontId      createFont(const FontSpec&) override;
     void        destroyFont(FontId) override;
-    int         drawText(SurfaceId, FontId, std::string_view utf8, Point,
+    int         drawText(SurfaceId, FontId, const char* utf8, size_t len, Point,
                          Colour, const Rect* clip) override;
-    Size        measureText(FontId, std::string_view utf8) override;
+    Size        measureText(FontId, const char* utf8, size_t len) override;
     FontMetrics fontMetrics(FontId) override;
     int         dpi() override;   // shim LOGPIXELSY (== product; Mac-native)
 

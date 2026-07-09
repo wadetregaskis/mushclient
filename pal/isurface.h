@@ -22,9 +22,9 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
-#include <string_view>
 #include <vector>
 #include "pal/pal_types.h"
 
@@ -180,13 +180,15 @@ public:
                       BlitMode, Colour key = 0, BlitQuality = BlitQuality::Fast,
                       const Matrix2x3* = nullptr) = 0;
 
-    // text — UTF-8 in; draw and measure MUST use identical metrics.
+    // text — UTF-8 bytes + length; draw and measure MUST use identical metrics.
     // Background is always transparent (WindowText hard-sets TRANSPARENT).
+    // (const char*+len, not string_view, so this header stays C++11 — it is
+    //  compiled by every platform's build, incl. the C++14 MSVC project.)
     virtual FontId      createFont(const FontSpec&) = 0;
     virtual void        destroyFont(FontId) = 0;
-    virtual int         drawText(SurfaceId, FontId, std::string_view utf8, Point,
-                                 Colour, const Rect* clip) = 0;   // → width drawn
-    virtual Size        measureText(FontId, std::string_view utf8) = 0;
+    virtual int         drawText(SurfaceId, FontId, const char* utf8, size_t len,
+                                 Point, Colour, const Rect* clip) = 0;   // → width drawn
+    virtual Size        measureText(FontId, const char* utf8, size_t len) = 0;
     virtual FontMetrics fontMetrics(FontId) = 0;
     virtual int         dpi() = 0;     // for points→pixels (constant per adapter)
 };

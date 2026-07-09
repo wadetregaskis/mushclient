@@ -404,14 +404,44 @@ void GdiSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
     s->dc->SelectObject(oldBr);
 }
 
+void GdiSurface::polyline(SurfaceId id, const Point* pts, size_t n, const PenSpec& pen) {
+    Surf* s = surf(id);
+    if (!s || !s->dc || !pts || n < 2) return;
+    s->dc->SetBkMode(TRANSPARENT);                         // dashed-pen gaps (== pen ops)
+    CPen cpen; makePen(cpen, pen);
+    CPen* old = s->dc->SelectObject(&cpen);
+    std::vector<POINT> v(n);
+    for (size_t i = 0; i < n; ++i) { v[i].x = pts[i].x; v[i].y = pts[i].y; }
+    s->dc->Polyline(v.data(), (int)n);                     // == old Polygon(Close=false)
+    s->dc->SelectObject(old);
+}
+
+void GdiSurface::polygon(SurfaceId id, const Point* pts, size_t n, const PenSpec& pen,
+                         const BrushSpec& brush, PolyFill fill) {
+    Surf* s = surf(id);
+    if (!s || !s->dc || !pts || n < 2) return;
+    CPen cpen; makePen(cpen, pen);
+    CBrush cbr; CBitmap patternBmp;
+    if (!makeGdiBrush(cbr, s->dc, brush, patternBmp)) {
+        LOGBRUSH nb; nb.lbStyle = BS_NULL; nb.lbColor = 0; nb.lbHatch = 0;
+        cbr.CreateBrushIndirect(&nb);
+    }
+    CPen*   oldPen = s->dc->SelectObject(&cpen);
+    CBrush* oldBr  = s->dc->SelectObject(&cbr);
+    s->dc->SetPolyFillMode(fill == PolyFill::Winding ? WINDING : ALTERNATE);
+    std::vector<POINT> v(n);
+    for (size_t i = 0; i < n; ++i) { v[i].x = pts[i].x; v[i].y = pts[i].y; }
+    s->dc->Polygon(v.data(), (int)n);                      // == old Polygon(Close=true)
+    s->dc->SelectObject(oldPen);
+    s->dc->SelectObject(oldBr);
+}
+
 // ── op families not yet on the seam — stubbed until their CMiniWindow family
 //    migrates (each will map to the exact original GDI call, as above) ─────────
 SurfaceId   GdiSurface::createSurface(Size, Colour) { return SurfaceId::None; }
 void        GdiSurface::readPixels(SurfaceId, Rect, PixelBuffer& out, PixelFormat) { out = PixelBuffer{}; }
 void        GdiSurface::writePixels(SurfaceId, Rect, const PixelBuffer&) {}
 Colour      GdiSurface::getPixel(SurfaceId, Point) { return 0xFFFFFFFFu; }   // CLR_INVALID
-void        GdiSurface::polyline(SurfaceId, const Point*, size_t, const PenSpec&) {}
-void        GdiSurface::polygon(SurfaceId, const Point*, size_t, const PenSpec&, const BrushSpec&, PolyFill) {}
 void        GdiSurface::gradient(SurfaceId, Rect, Colour, Colour, bool) {}
 void        GdiSurface::blit(SurfaceId, Rect, SurfaceId, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
 void        GdiSurface::blit(SurfaceId, Rect, const PixelBuffer&, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}

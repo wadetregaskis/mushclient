@@ -138,7 +138,7 @@ enum class ShapeKind  : std::uint8_t { Rect, RoundRect, Ellipse, Chord, Pie };
 enum class FloodMode  : std::uint8_t { Border, Surface };
 enum class BlitMode   : std::uint8_t { Copy, TransparentKey };  // key: EXACT match
 enum class BlitQuality: std::uint8_t { Fast, Smooth };          // Smooth = HALFTONE-class
-enum class PolyFill   : std::uint8_t { Alternate };             // the only mode used
+enum class PolyFill   : std::uint8_t { Alternate, Winding };    // WindowPolygon's Winding flag
 
 struct Matrix2x3 { double m11 = 1, m12 = 0, m21 = 0, m22 = 1, dx = 0, dy = 0; };
 

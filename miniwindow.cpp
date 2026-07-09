@@ -1544,10 +1544,8 @@ long CMiniWindow::Polygon(LPCTSTR Points,
   if (ValidatePenStyle (PenStyle, PenWidth))
     return ePenStyleNotValid;
 
-  // validate and create requested bruch
-  CBrush br;
-
-  if (ValidateBrushStyle (BrushStyle, PenColour, BrushColour, br))
+  pal::BrushSpec brush;
+  if (BrushSpecFromWin32 (BrushStyle, PenColour, BrushColour, brush))
     return eBrushStyleNotValid;
 
   vector<string> v;
@@ -1566,7 +1564,7 @@ long CMiniWindow::Polygon(LPCTSTR Points,
 
   iCount = iCount / 2;  // number of points
 
-  vector<POINT> points (iCount);
+  vector<pal::Point> points (iCount);
 
   int iCurrent = 0;
 
@@ -1574,48 +1572,25 @@ long CMiniWindow::Polygon(LPCTSTR Points,
     {
     if (!IsStringNumber (*i, true))
       return eInvalidPoint;
-    points [iCurrent].x = atol (i->c_str ());
+    points [iCurrent].x = (int) atol (i->c_str ());
     i++;  // we know this is safe becaue of earlier check (we must have pairs of numbers)
     if (!IsStringNumber (*i, true))
       return eInvalidPoint;
-    points [iCurrent].y = atol (i->c_str ());
+    points [iCurrent].y = (int) atol (i->c_str ());
     iCurrent++;  // onto next point
     }
 
-  // create requested pen
-  CPen pen;
-  MakeAPen (pen, PenColour, PenStyle, PenWidth);
+  // Draw through the seam (docs/PAL.md S3c). Close = filled polygon (pen + brush,
+  // the Winding/Alternate fill mode); open = polyline (pen only).
+  pal::ISurface* srf = pal::g_surface;
+  if (!srf) return eOK;
 
-  // select pen and brush into device context
-  CPen* oldPen = pdc->SelectObject(&pen);
-  CBrush* oldBrush = pdc->SelectObject(&br);
-
-  pdc->SetPolyFillMode (Winding ? WINDING : ALTERNATE);
-
-  if (BrushStyle > 1 && BrushStyle <= 7)
-    {
-    pdc->SetBkColor (BrushColour);      // for hatched brushes this is the background colour
-    }
-  else
-  if (BrushStyle > 7)  // pattern brushes
-    {
-    pdc->SetTextColor (BrushColour);      // for patterned brushes
-    pdc->SetBkColor (PenColour);      // for hatched brushes and patterned brushes
-    }
-
-  if (BrushColour != -1)
-    pdc->SetBkMode (OPAQUE);
-  else
-    pdc->SetBkMode (TRANSPARENT);
-
+  const pal::PenSpec pen = PenSpecFromWin32 (PenColour, PenStyle, PenWidth);
   if (Close)
-    pdc->Polygon(&points [0], iCount);
+    srf->polygon (m_surfaceId, points.data (), (size_t) iCount, pen, brush,
+                  Winding ? pal::PolyFill::Winding : pal::PolyFill::Alternate);
   else
-    pdc->Polyline(&points [0], iCount);
-
-  // put things back
-  pdc->SelectObject (oldPen);
-  pdc->SelectObject (oldBrush);
+    srf->polyline (m_surfaceId, points.data (), (size_t) iCount, pen);
 
   return eOK;
 

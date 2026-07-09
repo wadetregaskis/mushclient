@@ -391,7 +391,7 @@ void WxSurface::polyline(SurfaceId id, const Point* pts, size_t n, const PenSpec
 }
 
 void WxSurface::polygon(SurfaceId id, const Point* pts, size_t n, const PenSpec& pen,
-                        const BrushSpec& brSpec, PolyFill) {
+                        const BrushSpec& brSpec, PolyFill fill) {
     Surf* s = surf(id);
     if (!s || !pts || n < 2) return;
     CPen cpen;
@@ -404,7 +404,7 @@ void WxSurface::polygon(SurfaceId id, const Point* pts, size_t n, const PenSpec&
     }
     CPen*   oldPen = s->dc->SelectObject(&cpen);
     CBrush* oldBr  = s->dc->SelectObject(&cbr);
-    s->dc->SetPolyFillMode(ALTERNATE);
+    s->dc->SetPolyFillMode(fill == PolyFill::Winding ? WINDING : ALTERNATE);
     std::vector<POINT> v(n);
     for (size_t i = 0; i < n; ++i) v[i] = { pts[i].x, pts[i].y };
     s->dc->Polygon(v.data(), (int)n);

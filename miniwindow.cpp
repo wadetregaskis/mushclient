@@ -122,6 +122,41 @@ static void MakeAPen (CPen & pen, long PenColour, long PenStyle, long PenWidth)
     }
   } // end of MakeAPen
 
+// Decode a Win32 pen spec (colour + style bitmask + width) into a toolkit-neutral
+// pal::PenSpec for the ISurface seam (docs/PAL.md S3c). Call ONLY after
+// ValidatePenStyle has accepted PenStyle, so the STYLE/ENDCAP/JOIN fields are one
+// of the known flags; the adapter re-encodes them (GdiSurface reproduces MakeAPen
+// exactly, so Windows is unchanged).
+static pal::PenSpec PenSpecFromWin32 (long PenColour, long PenStyle, long PenWidth)
+  {
+  pal::PenSpec p;
+  p.colour = (pal::Colour) PenColour;
+  p.width  = (int) PenWidth;
+  switch (PenStyle & PS_STYLE_MASK)
+    {
+    case PS_NULL:        p.style = pal::PenStyle::Null;        break;
+    case PS_INSIDEFRAME: p.style = pal::PenStyle::InsideFrame; break;
+    case PS_DASH:        p.style = pal::PenStyle::Dash;        break;
+    case PS_DOT:         p.style = pal::PenStyle::Dot;         break;
+    case PS_DASHDOT:     p.style = pal::PenStyle::DashDot;     break;
+    case PS_DASHDOTDOT:  p.style = pal::PenStyle::DashDotDot;  break;
+    default:             p.style = pal::PenStyle::Solid;       break;  // PS_SOLID
+    }
+  switch (PenStyle & PS_ENDCAP_MASK)
+    {
+    case PS_ENDCAP_SQUARE: p.endcap = pal::PenEndcap::Square; break;
+    case PS_ENDCAP_FLAT:   p.endcap = pal::PenEndcap::Flat;   break;
+    default:               p.endcap = pal::PenEndcap::Round;  break;  // PS_ENDCAP_ROUND
+    }
+  switch (PenStyle & PS_JOIN_MASK)
+    {
+    case PS_JOIN_BEVEL: p.join = pal::PenJoin::Bevel; break;
+    case PS_JOIN_MITER: p.join = pal::PenJoin::Miter; break;
+    default:            p.join = pal::PenJoin::Round; break;  // PS_JOIN_ROUND
+    }
+  return p;
+  } // end of PenSpecFromWin32
+
 // a negative or zero value for the bottom of a rectange is considered offset from the bottom edge
 long CMiniWindow::FixBottom (const long Bottom)
   {
@@ -887,19 +922,13 @@ long CMiniWindow::Line (long x1, long y1, long x2, long y2,
   if (ValidatePenStyle (PenStyle, PenWidth))
     return ePenStyleNotValid;
 
-  pdc->SetBkMode (TRANSPARENT);
+  // Draw through the ISurface seam (docs/PAL.md S3c). Note: NO FixRight/FixBottom
+  // on x2/y2 (as at version 4.38).
+  pal::ISurface* srf = pal::g_surface;
+  if (!srf) return eOK;
 
-  // create requested pen
-  CPen pen;
-  MakeAPen (pen, PenColour, PenStyle, PenWidth);
-
-  CPen* oldPen = pdc->SelectObject(&pen);
-
-  pdc->MoveTo (x1, y1);
-  pdc->LineTo (x2, y2);    // note NOT: FixRight (x2), FixBottom (y2) (as at version 4.38)
-
-  // put things back
-  pdc->SelectObject (oldPen);
+  srf->line (m_surfaceId, { (int) x1, (int) y1 }, { (int) x2, (int) y2 },
+             PenSpecFromWin32 (PenColour, PenStyle, PenWidth));
 
   return eOK;
 
@@ -916,20 +945,17 @@ long CMiniWindow::Arc (long Left, long Top, long Right, long Bottom,
   if (ValidatePenStyle (PenStyle, PenWidth))
     return ePenStyleNotValid;
 
-  pdc->SetBkMode (TRANSPARENT);
+  // Draw through the ISurface seam (docs/PAL.md S3c). FixRight/FixBottom (<=0 =
+  // offset-from-edge) stays engine-side; it resolves Right/Bottom AND the arc
+  // end-point x2/y2 (but NOT the start x1/y1), exactly as the old pdc->Arc.
+  pal::ISurface* srf = pal::g_surface;
+  if (!srf) return eOK;
 
-  // create requested pen
-  CPen pen;
-  MakeAPen (pen, PenColour, PenStyle, PenWidth);
-
-  CPen* oldPen = pdc->SelectObject(&pen);
-
-  pdc->Arc(Left, Top, FixRight (Right), FixBottom (Bottom),
-          x1, y1, // from
-          FixRight (x2), FixBottom (y2)); // to
-
-  // put things back
-  pdc->SelectObject (oldPen);
+  const long R = FixRight (Right), B = FixBottom (Bottom);
+  srf->arc (m_surfaceId, { (int) Left, (int) Top, (int) (R - Left), (int) (B - Top) },
+            { (int) x1, (int) y1 },
+            { (int) FixRight (x2), (int) FixBottom (y2) },
+            PenSpecFromWin32 (PenColour, PenStyle, PenWidth));
 
   return eOK;
 

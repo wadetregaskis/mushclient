@@ -264,6 +264,65 @@ FontMetrics GdiSurface::fontMetrics(FontId fid) {
     return m;
 }
 
+// ── lines / arcs (S3c live path) ─────────────────────────────────────────────
+// makePen reproduces CMiniWindow::MakeAPen EXACTLY: the legacy CreatePen unless an
+// endcap or join is non-default, in which case ExtCreatePen with a PS_GEOMETRIC
+// solid pen — so Windows line/arc rendering is unchanged. (The engine already
+// decoded the Win32 style bits into PenSpec via PenSpecFromWin32; here we re-encode
+// them, and the round-trip is exact for every ValidatePenStyle-accepted input.)
+static int psFromPenStyle(PenStyle st) {
+    switch (st) {
+    case PenStyle::Null:        return PS_NULL;
+    case PenStyle::InsideFrame: return PS_INSIDEFRAME;
+    case PenStyle::Dash:        return PS_DASH;
+    case PenStyle::Dot:         return PS_DOT;
+    case PenStyle::DashDot:     return PS_DASHDOT;
+    case PenStyle::DashDotDot:  return PS_DASHDOTDOT;
+    default:                    return PS_SOLID;
+    }
+}
+static int psFromEndcap(PenEndcap e) {
+    switch (e) { case PenEndcap::Square: return PS_ENDCAP_SQUARE;
+                 case PenEndcap::Flat:   return PS_ENDCAP_FLAT;
+                 default:                return PS_ENDCAP_ROUND; }
+}
+static int psFromJoin(PenJoin j) {
+    switch (j) { case PenJoin::Bevel: return PS_JOIN_BEVEL;
+                 case PenJoin::Miter: return PS_JOIN_MITER;
+                 default:             return PS_JOIN_ROUND; }
+}
+static void makePen(CPen& pen, const PenSpec& p) {
+    const int cap = psFromEndcap(p.endcap), join = psFromJoin(p.join);
+    const int style = psFromPenStyle(p.style);
+    if (cap == PS_ENDCAP_ROUND && join == PS_JOIN_ROUND) {
+        pen.CreatePen(style, p.width, p.colour);            // legacy path (== MakeAPen)
+    } else {
+        LOGBRUSH lb; lb.lbStyle = BS_SOLID; lb.lbColor = p.colour; lb.lbHatch = 0;
+        pen.Attach(::ExtCreatePen(style | cap | join | PS_GEOMETRIC, p.width, &lb, 0, NULL));
+    }
+}
+
+void GdiSurface::line(SurfaceId id, Point p1, Point p2, const PenSpec& pen) {
+    Surf* s = surf(id);
+    if (!s || !s->dc || pen.style == PenStyle::Null) return;
+    s->dc->SetBkMode(TRANSPARENT);                          // == old Line() SetBkMode
+    CPen cpen; makePen(cpen, pen);
+    CPen* old = s->dc->SelectObject(&cpen);
+    s->dc->MoveTo(p1.x, p1.y);
+    s->dc->LineTo(p2.x, p2.y);                              // == old MoveTo/LineTo
+    s->dc->SelectObject(old);
+}
+
+void GdiSurface::arc(SurfaceId id, Rect r, Point a, Point b, const PenSpec& pen) {
+    Surf* s = surf(id);
+    if (!s || !s->dc) return;
+    s->dc->SetBkMode(TRANSPARENT);                          // == old Arc() SetBkMode
+    CPen cpen; makePen(cpen, pen);
+    CPen* old = s->dc->SelectObject(&cpen);
+    s->dc->Arc(r.x, r.y, r.x + r.w, r.y + r.h, a.x, a.y, b.x, b.y);   // == old pdc->Arc
+    s->dc->SelectObject(old);
+}
+
 // ── op families not yet on the seam — stubbed until their CMiniWindow family
 //    migrates (each will map to the exact original GDI call, as above) ─────────
 SurfaceId   GdiSurface::createSurface(Size, Colour) { return SurfaceId::None; }
@@ -271,11 +330,9 @@ void        GdiSurface::readPixels(SurfaceId, Rect, PixelBuffer& out, PixelForma
 void        GdiSurface::writePixels(SurfaceId, Rect, const PixelBuffer&) {}
 Colour      GdiSurface::getPixel(SurfaceId, Point) { return 0xFFFFFFFFu; }   // CLR_INVALID
 void        GdiSurface::shape(SurfaceId, ShapeKind, Rect, Point, Point, const PenSpec&, const BrushSpec&) {}
-void        GdiSurface::line(SurfaceId, Point, Point, const PenSpec&) {}
 void        GdiSurface::polyline(SurfaceId, const Point*, size_t, const PenSpec&) {}
 void        GdiSurface::polygon(SurfaceId, const Point*, size_t, const PenSpec&, const BrushSpec&, PolyFill) {}
 void        GdiSurface::bezier(SurfaceId, const Point*, size_t, const PenSpec&) {}
-void        GdiSurface::arc(SurfaceId, Rect, Point, Point, const PenSpec&) {}
 void        GdiSurface::gradient(SurfaceId, Rect, Colour, Colour, bool) {}
 void        GdiSurface::blit(SurfaceId, Rect, SurfaceId, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
 void        GdiSurface::blit(SurfaceId, Rect, const PixelBuffer&, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}

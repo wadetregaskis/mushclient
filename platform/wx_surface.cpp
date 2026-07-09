@@ -355,6 +355,7 @@ void WxSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
 void WxSurface::line(SurfaceId id, Point p1, Point p2, const PenSpec& pen) {
     Surf* s = surf(id);
     if (!s || pen.style == PenStyle::Null) return;
+    s->dc->SetBkMode(TRANSPARENT);               // == the old Line() SetBkMode (dashed gaps)
     CPen cpen;
     cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
     CPen* old = s->dc->SelectObject(&cpen);
@@ -411,6 +412,7 @@ void WxSurface::bezier(SurfaceId id, const Point* pts, size_t n, const PenSpec& 
 void WxSurface::arc(SurfaceId id, Rect r, Point a, Point b, const PenSpec& pen) {
     Surf* s = surf(id);
     if (!s) return;
+    s->dc->SetBkMode(TRANSPARENT);               // == the old Arc() SetBkMode
     CPen cpen;
     cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
     CPen* old = s->dc->SelectObject(&cpen);
@@ -793,6 +795,15 @@ int RunPalSurfaceSelfTest() {
     ad.line(ln, { 2, 5 }, { 7, 5 }, { PenStyle::Solid, 1, kWhite });
     stCheck(ad.getPixel(ln, { 3, 5 }) == kWhite && ad.getPixel(ln, { 6, 5 }) == kWhite &&
             ad.getPixel(ln, { 1, 5 }) == kBlack, "line draws its interior pixels");
+
+    // 8b. arc inks pixels inside its bounding box (the WindowArc S3c path)
+    SurfaceId ac = ad.createSurface({ 20, 20 }, kBlack);
+    ad.arc(ac, { 0, 0, 20, 20 }, { 20, 0 }, { 0, 20 }, { PenStyle::Solid, 1, kWhite });
+    bool arcInked = false;
+    for (int y = 0; y < 20 && !arcInked; ++y)
+        for (int x = 0; x < 20; ++x)
+            if (ad.getPixel(ac, { x, y }) != kBlack) { arcInked = true; break; }
+    stCheck(arcInked, "arc inks pixels (WindowArc path)");
 
     // 9. shape(Rect): border + interior
     SurfaceId sh = ad.createSurface({ 10, 10 }, kBlack);

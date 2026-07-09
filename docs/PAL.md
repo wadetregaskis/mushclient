@@ -363,12 +363,16 @@ if/when the mac view adopts them.
 - **S4** formalise the composition contract (placement list, rect write-back,
   engine-side hit-testing with cursor ids — fixes the cursor parity gap).
 
-Status: **S1** (CPU reference), **S2** (wx adapter), **S3a** (the `WindowRectOp`
-family), and **S3b** (the `WindowText`/font family — `Font`/`Text`/`TextWidth`/
-`FontInfo` → `createFont`/`drawText`/`measureText`/`fontMetrics`; fonts now live
-in the adapter keyed by `FontId`) **are landed** on all platforms. The GDI adapter
-implements the rect + text ops (its remaining methods — shapes, blits, pixel I/O —
-are stubbed until their family migrates). **S3c** (shapes/lines/pen) is next.
+Status: **S1** (CPU reference), **S2** (wx adapter), **S3a** (`WindowRectOp`),
+**S3b** (the `WindowText`/font family; fonts now live in the adapter keyed by
+`FontId`), and **S3c1/S3c2** (`WindowLine`, `WindowArc`, `WindowBezier` + the pen
+model: the engine decodes the Win32 pen bitmask into a neutral `PenSpec`, each
+adapter re-encodes it — the GDI adapter reproducing `MakeAPen` exactly) **are
+landed** on all platforms. The GDI adapter implements rect + text + line/arc/bezier
+ops (its remaining methods — filled shapes, polygon, blits, gradient, pixel I/O —
+are stubbed until their family migrates). Next: **pattern brushes** (the S2-deferred
+`BrushStyle::Pattern` — `WindowCircleOp`/`WindowPolygon` need it for hatch/pattern
+fill styles 8–12), then those filled-shape ops, then blit/image and gradient.
 
 ## Migration (incremental, always-green; Windows never perturbed)
 

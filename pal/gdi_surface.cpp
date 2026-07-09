@@ -323,6 +323,18 @@ void GdiSurface::arc(SurfaceId id, Rect r, Point a, Point b, const PenSpec& pen)
     s->dc->SelectObject(old);
 }
 
+void GdiSurface::bezier(SurfaceId id, const Point* pts, size_t n, const PenSpec& pen) {
+    Surf* s = surf(id);
+    if (!s || !s->dc || !pts || n < 4) return;
+    s->dc->SetBkMode(TRANSPARENT);                          // == old Bezier() SetBkMode
+    CPen cpen; makePen(cpen, pen);
+    CPen* old = s->dc->SelectObject(&cpen);
+    std::vector<POINT> v(n);
+    for (size_t i = 0; i < n; ++i) { v[i].x = pts[i].x; v[i].y = pts[i].y; }
+    s->dc->PolyBezier(v.data(), (int)n);                    // == old pdc->PolyBezier
+    s->dc->SelectObject(old);
+}
+
 // ── op families not yet on the seam — stubbed until their CMiniWindow family
 //    migrates (each will map to the exact original GDI call, as above) ─────────
 SurfaceId   GdiSurface::createSurface(Size, Colour) { return SurfaceId::None; }
@@ -332,7 +344,6 @@ Colour      GdiSurface::getPixel(SurfaceId, Point) { return 0xFFFFFFFFu; }   // 
 void        GdiSurface::shape(SurfaceId, ShapeKind, Rect, Point, Point, const PenSpec&, const BrushSpec&) {}
 void        GdiSurface::polyline(SurfaceId, const Point*, size_t, const PenSpec&) {}
 void        GdiSurface::polygon(SurfaceId, const Point*, size_t, const PenSpec&, const BrushSpec&, PolyFill) {}
-void        GdiSurface::bezier(SurfaceId, const Point*, size_t, const PenSpec&) {}
 void        GdiSurface::gradient(SurfaceId, Rect, Colour, Colour, bool) {}
 void        GdiSurface::blit(SurfaceId, Rect, SurfaceId, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
 void        GdiSurface::blit(SurfaceId, Rect, const PixelBuffer&, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}

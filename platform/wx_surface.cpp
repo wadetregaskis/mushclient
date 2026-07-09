@@ -805,6 +805,16 @@ int RunPalSurfaceSelfTest() {
             if (ad.getPixel(ac, { x, y }) != kBlack) { arcInked = true; break; }
     stCheck(arcInked, "arc inks pixels (WindowArc path)");
 
+    // 8c. bezier inks pixels (the WindowBezier S3c path) — 4 control points
+    SurfaceId bz = ad.createSurface({ 20, 20 }, kBlack);
+    const Point bzp[4] = { { 1, 10 }, { 6, 1 }, { 13, 19 }, { 18, 10 } };
+    ad.bezier(bz, bzp, 4, { PenStyle::Solid, 1, kWhite });
+    bool bzInked = false;
+    for (int y = 0; y < 20 && !bzInked; ++y)
+        for (int x = 0; x < 20; ++x)
+            if (ad.getPixel(bz, { x, y }) != kBlack) { bzInked = true; break; }
+    stCheck(bzInked, "bezier inks pixels (WindowBezier path)");
+
     // 9. shape(Rect): border + interior
     SurfaceId sh = ad.createSurface({ 10, 10 }, kBlack);
     ad.shape(sh, ShapeKind::Rect, { 2, 2, 6, 5 }, {}, {},

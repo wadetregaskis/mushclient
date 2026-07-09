@@ -1511,7 +1511,7 @@ long CMiniWindow::Bezier(LPCTSTR Points, long PenColour, long PenStyle, long Pen
 
   iCount = iCount / 2;  // number of points
 
-  vector<POINT> points (iCount);
+  vector<pal::Point> points (iCount);
 
   int iCurrent = 0;
 
@@ -1519,28 +1519,22 @@ long CMiniWindow::Bezier(LPCTSTR Points, long PenColour, long PenStyle, long Pen
     {
     if (!IsStringNumber (*i, true))
       return eInvalidPoint;
-    points [iCurrent].x = atol (i->c_str ());
+    points [iCurrent].x = (int) atol (i->c_str ());
     i++;  // we know this is safe becaue of earlier check (we must have pairs of numbers)
     if (!IsStringNumber (*i, true))
       return eInvalidPoint;
-    points [iCurrent].y = atol (i->c_str ());
+    points [iCurrent].y = (int) atol (i->c_str ());
     iCurrent++;  // onto next point
     }
 
-  pdc->SetBkMode (TRANSPARENT);
+  // Draw through the ISurface seam (docs/PAL.md S3c).
+  pal::ISurface* srf = pal::g_surface;
+  if (!srf) return eOK;
 
-  // create requested pen
-  CPen pen;
-  MakeAPen (pen, PenColour, PenStyle, PenWidth);
-  CPen* oldPen = pdc->SelectObject(&pen);
-
-  pdc->PolyBezier(&points [0], iCount);
-
-  // put things back
-  pdc->SelectObject (oldPen);
+  srf->bezier (m_surfaceId, points.data (), (size_t) iCount,
+               PenSpecFromWin32 (PenColour, PenStyle, PenWidth));
 
   return eOK;
-
 
   }   // end of CMiniWindow::Bezier
 

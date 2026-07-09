@@ -57,6 +57,7 @@ public:
     void   readPixels (SurfaceId, Rect, PixelBuffer& out, PixelFormat) override;
     void   writePixels(SurfaceId, Rect, const PixelBuffer&) override;
     Colour getPixel   (SurfaceId, Point) override;
+    void   setPixel   (SurfaceId, Point, Colour) override;
 
     void fillRect  (SurfaceId, Rect, const BrushSpec&) override;
     void invertRect(SurfaceId, Rect) override;

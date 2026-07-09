@@ -156,6 +156,7 @@ public:
                                PixelFormat = PixelFormat::BGR24) = 0;
     virtual void   writePixels(SurfaceId, Rect, const PixelBuffer&) = 0;
     virtual Colour getPixel   (SurfaceId, Point) = 0;   // 0xFFFFFFFF (CLR_INVALID) out of bounds
+    virtual void   setPixel   (SurfaceId, Point, Colour) = 0;   // single-pixel write (WindowSetPixel)
 
     // drawing — stateless; stroke AND fill in one call where GDI does
     virtual void fillRect  (SurfaceId, Rect, const BrushSpec&) = 0;

@@ -222,6 +222,24 @@ Colour WxSurface::getPixel(SurfaceId id, Point p) {
     return (Colour)b[2] | ((Colour)b[1] << 8) | ((Colour)b[0] << 16);
 }
 
+void WxSurface::setPixel(SurfaceId id, Point p, Colour c) {
+    Surf* s = surf(id);
+    if (!s || p.x < 0 || p.y < 0 || p.x >= s->size.w || p.y >= s->size.h) return;
+    // CPU-exact 1x1 write via the DIB round-trip — consistent with getPixel and
+    // exact (wxOSX DrawPoint can antialias / subpixel-position, so SetPixel then
+    // GetPixel would not round-trip). BGR24: b[0]=B, b[1]=G, b[2]=R.
+    PixelBuffer px;
+    px.format = PixelFormat::BGR24;
+    px.size   = { 1, 1 };
+    px.stride = PixelBuffer::strideFor(1, PixelFormat::BGR24);
+    px.bytes.assign((size_t)px.stride, 0);
+    unsigned char* b = px.row(0);
+    b[0] = (unsigned char)((c >> 16) & 0xFF);
+    b[1] = (unsigned char)((c >> 8) & 0xFF);
+    b[2] = (unsigned char)(c & 0xFF);
+    writePixels(id, { p.x, p.y, 1, 1 }, px);
+}
+
 // ── brushes / pens ──────────────────────────────────────────────────────────
 static int hatchToHs(HatchKind k) {
     switch (k) {
@@ -741,6 +759,11 @@ int RunPalSurfaceSelfTest() {
             ad.getPixel(s, { 7, 5 }) == kBlue, "createSurface fills background");
     stCheck(ad.getPixel(s, { 8, 0 }) == 0xFFFFFFFFu &&
             ad.getPixel(s, { 0, -1 }) == 0xFFFFFFFFu, "getPixel OOB = CLR_INVALID");
+    // setPixel round-trips (WindowSetPixel/WindowGetPixel); OOB set is a no-op.
+    ad.setPixel(s, { 3, 2 }, kRed);
+    ad.setPixel(s, { 99, 99 }, kGreen);       // OOB — must not corrupt/crash
+    stCheck(ad.getPixel(s, { 3, 2 }) == kRed && ad.getPixel(s, { 4, 2 }) == kBlue,
+            "setPixel writes one pixel (round-trips via getPixel)");
 
     // 2. THE critical check: readPixels DIB layout (BGR, bottom-up, padded)
     SurfaceId q = ad.createSurface({ 2, 2 }, kBlack);

@@ -500,11 +500,22 @@ void GdiSurface::writePixels(SurfaceId id, Rect r, const PixelBuffer& in) {
     ::DeleteObject(hbm);
 }
 
+Colour GdiSurface::getPixel(SurfaceId id, Point p) {
+    Surf* s = surf(id);
+    if (!s || !s->dc) return 0xFFFFFFFFu;
+    return (Colour) s->dc->GetPixel(p.x, p.y);   // GDI returns CLR_INVALID out of bounds
+}
+
+void GdiSurface::setPixel(SurfaceId id, Point p, Colour c) {
+    Surf* s = surf(id);
+    if (!s || !s->dc) return;
+    s->dc->SetPixelV(p.x, p.y, c);               // == old SetPixel (pdc->SetPixelV)
+}
+
 // ── op families not yet on the seam — stubbed until their CMiniWindow family
 //    migrates (each will map to the exact original GDI call, as above) ─────────
 SurfaceId   GdiSurface::createSurface(Size, Colour) { return SurfaceId::None; }
 void        GdiSurface::readPixels(SurfaceId, Rect, PixelBuffer& out, PixelFormat) { out = PixelBuffer{}; }
-Colour      GdiSurface::getPixel(SurfaceId, Point) { return 0xFFFFFFFFu; }   // CLR_INVALID
 void        GdiSurface::blit(SurfaceId, Rect, SurfaceId, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
 void        GdiSurface::blit(SurfaceId, Rect, const PixelBuffer&, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
 

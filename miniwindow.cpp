@@ -3109,7 +3109,8 @@ long CMiniWindow::Filter(long Left, long Top, long Right, long Bottom,
 
 long CMiniWindow::SetPixel(long x, long y, long Colour)
   {
-  pdc->SetPixelV(x, y, Colour);
+  if (pal::g_surface)
+    pal::g_surface->setPixel (m_surfaceId, { (int) x, (int) y }, (pal::Colour) Colour);
   return eOK;
   } // end of CMiniWindow::SetPixel
 
@@ -3122,7 +3123,11 @@ long CMiniWindow::SetZOrder(long Order)
 
 long CMiniWindow::GetPixel(long x, long y)
   {
-  return pdc->GetPixel(x, y);
+  // getPixel returns 0xFFFFFFFF (CLR_INVALID) out of bounds — as a long that is
+  // -1 on Win32 and 4294967295 on LP64, matching the old pdc->GetPixel on each.
+  return pal::g_surface
+       ? (long) pal::g_surface->getPixel (m_surfaceId, { (int) x, (int) y })
+       : -1;
   } // end of CMiniWindow::GetPixel
 
 

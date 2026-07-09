@@ -105,6 +105,13 @@ Colour CpuRaster::getPixel(SurfaceId id, Point p) {
     return pxAt(*s, p.x, p.y);
 }
 
+void CpuRaster::setPixel(SurfaceId id, Point p, Colour c) {
+    Surf* s = surf(id);
+    if (!s || p.x < 0 || p.y < 0 || p.x >= s->size.w || p.y >= s->size.h)
+        return;
+    setPx(*s, p.x, p.y, c);
+}
+
 // ── brushes ─────────────────────────────────────────────────────────────────
 static bool hatchBit(HatchKind k, int x, int y) {
     // This adapter's own 8x8 grid; GDI phase parity is the Windows adapter's job.

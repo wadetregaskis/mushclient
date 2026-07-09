@@ -363,16 +363,21 @@ if/when the mac view adopts them.
 - **S4** formalise the composition contract (placement list, rect write-back,
   engine-side hit-testing with cursor ids — fixes the cursor parity gap).
 
-Status: **S1** (CPU reference), **S2** (wx adapter), **S3a** (`WindowRectOp`),
-**S3b** (the `WindowText`/font family; fonts now live in the adapter keyed by
-`FontId`), and **S3c1/S3c2** (`WindowLine`, `WindowArc`, `WindowBezier` + the pen
-model: the engine decodes the Win32 pen bitmask into a neutral `PenSpec`, each
-adapter re-encodes it — the GDI adapter reproducing `MakeAPen` exactly) **are
-landed** on all platforms. The GDI adapter implements rect + text + line/arc/bezier
-ops (its remaining methods — filled shapes, polygon, blits, gradient, pixel I/O —
-are stubbed until their family migrates). Next: **pattern brushes** (the S2-deferred
-`BrushStyle::Pattern` — `WindowCircleOp`/`WindowPolygon` need it for hatch/pattern
-fill styles 8–12), then those filled-shape ops, then blit/image and gradient.
+Status: **S1** (CPU reference), **S2** (wx adapter), and **S3a–S3c** are landed on
+all platforms — the whole **rect + text/font + shape/pen** drawing surface now
+routes through `ISurface`: `WindowRectOp`; `WindowText`/`WindowFont`/`WindowTextWidth`/
+`WindowFontInfo` (fonts owned by the adapter, keyed by `FontId`); `WindowLine`/
+`WindowArc`/`WindowBezier`/`WindowCircleOp`/`WindowPolygon` with the pen model (the
+engine decodes the Win32 pen/brush params into neutral `PenSpec`/`BrushSpec`; each
+adapter re-encodes, the GDI adapter reproducing `MakeAPen`/`CreatePatternBrush`
+exactly), including the six hatches and MUSHclient's five built-in mono pattern
+brushes (carried as `BrushSpec.monoPattern` so each adapter builds a native mono
+brush and GDI applies its own text/bk mapping — byte-exact without guessing).
+Next: **`WindowGradient`** (needs a seam extension for its texture-fill /
+multi-vertex modes) and the **image / blit family** (`WindowDrawImage`,
+`DrawImageAlpha`, `Blt`, `LoadImage`, `GetPixel`/`SetPixel` → the `blit` ops +
+`readPixels`/`writePixels`/`getPixel`, which also brings arbitrary-image pattern
+brushes). Those GDI-adapter methods remain stubbed until their family migrates.
 
 ## Migration (incremental, always-green; Windows never perturbed)
 

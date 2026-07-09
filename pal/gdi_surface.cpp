@@ -516,8 +516,47 @@ void GdiSurface::setPixel(SurfaceId id, Point p, Colour c) {
 //    migrates (each will map to the exact original GDI call, as above) ─────────
 SurfaceId   GdiSurface::createSurface(Size, Colour) { return SurfaceId::None; }
 void        GdiSurface::readPixels(SurfaceId, Rect, PixelBuffer& out, PixelFormat) { out = PixelBuffer{}; }
-void        GdiSurface::blit(SurfaceId, Rect, SurfaceId, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
+// buffer-source blit lands with its op family (image-pattern brushes / DrawImageAlpha).
 void        GdiSurface::blit(SurfaceId, Rect, const PixelBuffer&, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
+
+// surface -> surface blit (WindowDrawImage). Reproduces the original bit-for-bit:
+// Copy same-size = BitBlt(SRCCOPY); Copy stretched = StretchBlt(SRCCOPY) with
+// HALFTONE for Smooth; TransparentKey = the SRCINVERT/SRCAND mask dance keyed on
+// the colour, exactly as the old DrawImage Mode 3.
+void GdiSurface::blit(SurfaceId dstId, Rect dstRect, SurfaceId srcId, Rect srcRect,
+                      BlitMode mode, Colour key, BlitQuality q, const Matrix2x3* m) {
+    Surf* dst = surf(dstId);
+    Surf* src = surf(srcId);
+    if (!dst || !dst->dc || !src || !src->dc || m) return;   // matrix blit deferred
+
+    if (mode == BlitMode::TransparentKey) {
+        if (dstRect.w != srcRect.w || dstRect.h != srcRect.h) return;   // keyed+stretch deferred
+        CDC* d = dst->dc; CDC* s = src->dc;
+        COLORREF oldBk   = d->SetBkColor(RGB(255, 255, 255));
+        COLORREF oldText = d->SetTextColor(RGB(0, 0, 0));
+        CDC dcTrans; dcTrans.CreateCompatibleDC(d);
+        CBitmap mask; mask.CreateBitmap(dstRect.w, dstRect.h, 1, 1, NULL);   // mono mask
+        CBitmap* oldMask = dcTrans.SelectObject(&mask);
+        COLORREF oldSrcBk = s->SetBkColor(key);
+        dcTrans.BitBlt(0, 0, dstRect.w, dstRect.h, s, srcRect.x, srcRect.y, SRCCOPY);   // build mask
+        d->BitBlt(dstRect.x, dstRect.y, dstRect.w, dstRect.h, s, srcRect.x, srcRect.y, SRCINVERT);
+        d->BitBlt(dstRect.x, dstRect.y, dstRect.w, dstRect.h, &dcTrans, 0, 0, SRCAND);
+        d->BitBlt(dstRect.x, dstRect.y, dstRect.w, dstRect.h, s, srcRect.x, srcRect.y, SRCINVERT);
+        dcTrans.SelectObject(oldMask);
+        d->SetBkColor(oldBk); d->SetTextColor(oldText); s->SetBkColor(oldSrcBk);
+        return;
+    }
+
+    if (dstRect.w == srcRect.w && dstRect.h == srcRect.h) {
+        dst->dc->BitBlt(dstRect.x, dstRect.y, dstRect.w, dstRect.h,
+                        src->dc, srcRect.x, srcRect.y, SRCCOPY);
+    } else {
+        dst->dc->SetStretchBltMode(q == BlitQuality::Smooth ? HALFTONE : COLORONCOLOR);
+        ::SetBrushOrgEx(dst->dc->GetSafeHdc(), 0, 0, NULL);   // recommended after HALFTONE
+        dst->dc->StretchBlt(dstRect.x, dstRect.y, dstRect.w, dstRect.h,
+                            src->dc, srcRect.x, srcRect.y, srcRect.w, srcRect.h, SRCCOPY);
+    }
+}
 
 } // namespace pal
 

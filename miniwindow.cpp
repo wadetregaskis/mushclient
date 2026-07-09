@@ -1341,18 +1341,23 @@ long CMiniWindow::DrawImage(LPCTSTR ImageId,
     return eImageNotInstalled;
 
   CBitmap * bitmap = it->second;
-
-  pdc->SetBkMode (TRANSPARENT);
-
-  pdc->SetStretchBltMode (HALFTONE);  // looks better when squashed
-  SetBrushOrgEx(pdc->m_hDC, 0, 0, NULL);  // as recommended after  SetStretchBltMode
-
   BITMAP  bi;
-  bitmap->GetBitmap(&bi);
+  bitmap->GetBitmap (&bi);
 
+  pal::ISurface* srf = pal::g_surface;
+  if (!srf) return eOK;
+
+  // Adopt the image bitmap as a TEMPORARY source surface for the seam blit
+  // (docs/PAL.md S3d). The image stays engine-owned (m_Images); this just wraps
+  // its CDC exactly as the old bmDC, so DrawImage needs no image-storage change.
   CDC bmDC;
-  bmDC.CreateCompatibleDC(&(*pdc));
-  CBitmap *pOldbmp = bmDC.SelectObject(bitmap);
+  bmDC.CreateCompatibleDC (&(*pdc));
+  CBitmap * pOldbmp = bmDC.SelectObject (bitmap);
+  pal::SurfaceId srcSid = pal::g_adoptSurface
+                        ? pal::g_adoptSurface (&bmDC, bi.bmWidth, bi.bmHeight)
+                        : pal::SurfaceId::None;
+
+  long iResult = eOK;
 
   // adjust so that -1 means 1 from right
   if (SrcRight <= 0)
@@ -1368,55 +1373,38 @@ long CMiniWindow::DrawImage(LPCTSTR ImageId,
   if (iWidth > 0 && iHeight > 0)   // sanity check
     switch (Mode)
       {
-      case 1: pdc->BitBlt (Left, Top, iWidth, iHeight, &bmDC, SrcLeft, SrcTop, SRCCOPY);
-              break;      // straight copy
-
-      case 2: pdc->StretchBlt (Left, Top, FixRight (Right) - Left, FixBottom (Bottom) - Top, &bmDC,
-                             SrcLeft, SrcTop, SrcRight - SrcLeft, SrcBottom - SrcTop, SRCCOPY);
-              break;      // stretch
-
-      case 3:        // transparency, och!
-        {
-        COLORREF crOldBack = pdc->SetBkColor (RGB (255, 255, 255));    // white
-        COLORREF crOldText = pdc->SetTextColor (RGB (0, 0, 0));        // black
-        CDC dcTrans;   // transparency mask
-
-
-        // Create a memory (*pdc) for the mask
-        dcTrans.CreateCompatibleDC(&(*pdc));
-
-        // Create the mask bitmap for the subset of the main image
-        CBitmap bitmapTrans;
-        bitmapTrans.CreateBitmap(iWidth, iHeight, 1, 1, NULL);
-
-        // Select the mask bitmap into the appropriate (*pdc)
-        CBitmap* pOldBitmapTrans = dcTrans.SelectObject(&bitmapTrans);
-
-        // Our transparent pixel will be at 0,0 (top left corner) of original image (not subimage)
-        COLORREF crOldBackground = bmDC.SetBkColor (::GetPixel (bmDC, 0, 0));
-
-        // Build mask based on transparent colour at location 0, 0
-        dcTrans.BitBlt (0, 0, iWidth, iHeight, &bmDC, SrcLeft, SrcTop, SRCCOPY);
-
-        // Do the work
-        pdc->BitBlt (Left, Top, iWidth, iHeight, &bmDC, SrcLeft, SrcTop, SRCINVERT);
-        pdc->BitBlt (Left, Top, iWidth, iHeight, &dcTrans, 0, 0, SRCAND);
-        pdc->BitBlt (Left, Top, iWidth, iHeight, &bmDC, SrcLeft, SrcTop, SRCINVERT);
-
-        // Restore settings
-        dcTrans.SelectObject(pOldBitmapTrans);
-        pdc->SetBkColor(crOldBack);
-        pdc->SetTextColor(crOldText);
-        bmDC.SetBkColor(crOldBackground);
-        }
+      case 1:   // straight copy (== BitBlt SRCCOPY)
+        srf->blit (m_surfaceId, { (int) Left, (int) Top, (int) iWidth, (int) iHeight },
+                   srcSid, { (int) SrcLeft, (int) SrcTop, (int) iWidth, (int) iHeight },
+                   pal::BlitMode::Copy, 0, pal::BlitQuality::Fast, nullptr);
         break;
 
-      default: return eBadParameter;
+      case 2:   // stretch (== StretchBlt SRCCOPY, HALFTONE)
+        srf->blit (m_surfaceId,
+                   { (int) Left, (int) Top,
+                     (int) (FixRight (Right) - Left), (int) (FixBottom (Bottom) - Top) },
+                   srcSid, { (int) SrcLeft, (int) SrcTop,
+                             (int) (SrcRight - SrcLeft), (int) (SrcBottom - SrcTop) },
+                   pal::BlitMode::Copy, 0, pal::BlitQuality::Smooth, nullptr);
+        break;
+
+      case 3:   // transparency: colour-key = the image's top-left pixel (0,0)
+        srf->blit (m_surfaceId, { (int) Left, (int) Top, (int) iWidth, (int) iHeight },
+                   srcSid, { (int) SrcLeft, (int) SrcTop, (int) iWidth, (int) iHeight },
+                   pal::BlitMode::TransparentKey, srf->getPixel (srcSid, { 0, 0 }),
+                   pal::BlitQuality::Fast, nullptr);
+        break;
+
+      default:
+        iResult = eBadParameter;
+        break;
       } // end of switch
 
-  bmDC.SelectObject(pOldbmp);
+  if (pal::g_releaseAdoptedSurface)
+    pal::g_releaseAdoptedSurface (srcSid);
+  bmDC.SelectObject (pOldbmp);
 
-  return eOK;
+  return iResult;
   }  // end of CMiniWindow::DrawImage
 
 

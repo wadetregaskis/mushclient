@@ -23,6 +23,7 @@
 #include "pal/isurface.h"
 
 class CDC;
+class CFont;
 
 namespace pal {
 
@@ -75,10 +76,20 @@ private:
         Size size;
         bool adopted = false;
     };
+    struct Font {
+        CFont*   font = nullptr;     // adapter-owned CFont (was CMiniWindow::m_Fonts)
+        FontSpec spec;
+    };
     Surf* surf(SurfaceId id);
+    Font* font(FontId id);
+    CDC*  measureDc();               // lazily-created screen-compatible DC for
+                                     // measuring / metrics (no surface needed)
 
     std::map<std::uint32_t, Surf> m_surfaces;
+    std::map<std::uint32_t, Font> m_fonts;
     std::uint32_t m_nextSurface = 1;
+    std::uint32_t m_nextFont    = 1;
+    CDC* m_measureDc = nullptr;
 };
 
 } // namespace pal

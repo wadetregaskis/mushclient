@@ -660,9 +660,9 @@ FontMetrics WxSurface::fontMetrics(FontId fid) {
         m.lastChar = tm.tmLastChar;
         m.defaultChar = tm.tmDefaultChar;
         m.breakChar = tm.tmBreakChar;
-        m.italic = tm.tmItalic != 0;
-        m.underlined = tm.tmUnderlined != 0;
-        m.struckOut = tm.tmStruckOut != 0;
+        m.italic = tm.tmItalic;              // raw TEXTMETRIC bytes (WindowFontInfo
+        m.underlined = tm.tmUnderlined;      // 16/17/18 returns them verbatim, as
+        m.struckOut = tm.tmStruckOut;        // the pre-seam pdc->GetTextMetrics did)
         m.pitchAndFamily = tm.tmPitchAndFamily;
         m.charset = tm.tmCharSet;
     }
@@ -879,6 +879,28 @@ int RunPalSurfaceSelfTest() {
         SurfaceId as2 = impl.adopt(&dc, { 24, 24 });
         stCheck(ad.getPixel(as2, { 5, 5 }) == kGreen, "adopt: release leaves the CDC usable");
         ad.destroySurface(as2);
+        dc.SelectObject(oldb); bmp.DeleteObject();
+    }
+
+    // 13. text into an ADOPTED CDC — the exact CMiniWindow::Text/TextWidth (S3b)
+    // live path: create a font, draw + measure through the adopted surface.
+    {
+        CDC dc; dc.CreateCompatibleDC(NULL); dc.SetTextAlign(TA_LEFT | TA_TOP);
+        CBitmap bmp; bmp.CreateBitmap(80, 20, 1, GetDeviceCaps(dc, BITSPIXEL), NULL);
+        CBitmap* oldb = dc.SelectObject(&bmp);
+        dc.FillSolidRect(0, 0, 80, 20, kBlack);
+        SurfaceId as = impl.adopt(&dc, { 80, 20 });
+        FontId tf = ad.createFont({ "", 14, 400, false, false, false, 0, 0 });
+        const Rect clip { 0, 0, 80, 20 };
+        int w = ad.drawText(as, tf, "Text", 4, { 1, 1 }, kWhite, &clip);
+        Size m = ad.measureText(tf, "Text", 4);
+        bool inked = false;
+        for (int y = 0; y < 20 && !inked; ++y)
+            for (int x = 0; x < 80; ++x)
+                if (ad.getPixel(as, { x, y }) != kBlack) { inked = true; break; }
+        stCheck(w > 0 && w == m.w && inked, "adopt: drawText into the CDC (WindowText path)");
+        ad.destroyFont(tf);
+        ad.destroySurface(as);
         dc.SelectObject(oldb); bmp.DeleteObject();
     }
 

@@ -119,7 +119,8 @@ struct FontMetrics {
     int weight = 0, overhang = 0;
     int digitizedAspectX = 0, digitizedAspectY = 0;
     int firstChar = 0, lastChar = 0, defaultChar = 0, breakChar = 0;
-    bool italic = false, underlined = false, struckOut = false;
+    int italic = 0, underlined = 0, struckOut = 0;   // raw TEXTMETRIC bytes: GDI
+                 // may set 255 (not 1); WindowFontInfo 16/17/18 returns them verbatim
     int pitchAndFamily = 0, charset = 0;
     std::string face;                  // realized face after substitution (FontInfo 21)
 };

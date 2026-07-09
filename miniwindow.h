@@ -3,8 +3,9 @@
 
 #include "pal/surface_bridge.h"   // pal::ISurface migration bridge (docs/PAL.md S3)
 
-// fonts
-typedef map<string, CFont *> FontMap;
+// fonts — the CFont now lives inside the pal::ISurface adapter (docs/PAL.md S3b);
+// the engine keeps only the plugin's name -> opaque pal::FontId mapping.
+typedef map<string, pal::FontId> FontMap;
 typedef FontMap::iterator FontMapIterator;
 
 // images

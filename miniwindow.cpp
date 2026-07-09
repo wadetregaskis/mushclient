@@ -54,11 +54,12 @@ CMiniWindow::~CMiniWindow ()  // destructor
     }
 
 
-  // delete our fonts
-  for (FontMapIterator fit = m_Fonts.begin ();
-       fit != m_Fonts.end ();
-       fit++)
-         delete fit->second;
+  // delete our fonts (the CFont is owned by the surface adapter now, S3b)
+  if (pal::g_surface)
+    for (FontMapIterator fit = m_Fonts.begin ();
+         fit != m_Fonts.end ();
+         fit++)
+           pal::g_surface->destroyFont (fit->second);
 
   m_Fonts.clear ();
 
@@ -620,7 +621,8 @@ long CMiniWindow::Font (LPCTSTR FontId,        // eg. "inventory"
 
   if (it != m_Fonts.end ())
     {
-    delete it->second;         // delete existing font
+    if (pal::g_surface)
+      pal::g_surface->destroyFont (it->second);   // delete existing font
     m_Fonts.erase (it);
     }
 
@@ -628,31 +630,29 @@ long CMiniWindow::Font (LPCTSTR FontId,        // eg. "inventory"
   if (FontName [0] == 0 && Size == 0.0)
     return eOK;
 
-  CFont * pFont = new CFont;
-
-  int lfHeight = -MulDiv(Size ? Size : 10.0, pdc->GetDeviceCaps(LOGPIXELSY), 72);
-
-  if (pFont->CreateFont (lfHeight,
-                          0, // int nWidth,
-                          0, // int nEscapement,
-                          0, // int nOrientation,
-                          Bold ? FW_BOLD : FW_NORMAL, // int nWeight,
-                          Italic, // BYTE bItalic,
-                          Underline, // BYTE bUnderline,
-                          Strikeout, // BYTE cStrikeOut,
-                          Charset,
-                          0, // BYTE nOutPrecision,
-                          0, // BYTE nClipPrecision,
-                          0, // BYTE nQuality,
-                          PitchAndFamily,
-                          FontName) == 0)
-    {
-    delete pFont;
+  pal::ISurface* srf = pal::g_surface;
+  if (!srf)
     return eCannotAddFont;
-    }
 
+  // Create the font through the surface seam (docs/PAL.md S3b). The point size
+  // is converted to a positive pixel height via the adapter's dpi() — exactly
+  // the old  -MulDiv (Size, GetDeviceCaps (LOGPIXELSY), 72)  (the adapter negates
+  // it for the cell-height CreateFont convention). Default 10pt if Size == 0.
+  pal::FontSpec spec;
+  spec.face               = FontName;
+  spec.pixelHeight        = MulDiv (Size ? Size : 10.0, srf->dpi (), 72);
+  spec.weight             = Bold ? FW_BOLD : FW_NORMAL;
+  spec.italic             = Italic    != 0;
+  spec.underline          = Underline != 0;
+  spec.strikeout          = Strikeout != 0;
+  spec.charsetHint        = Charset;
+  spec.pitchAndFamilyHint = PitchAndFamily;
 
-  m_Fonts [FontId] = pFont;
+  pal::FontId id = srf->createFont (spec);
+  if (id == pal::FontId::None)
+    return eCannotAddFont;
+
+  m_Fonts [FontId] = id;
   return eOK;
 
   }   // end of CMiniWindow::Font
@@ -694,46 +694,41 @@ void CMiniWindow::FontInfo (LPCTSTR FontId, long InfoType, VARIANT & vaResult)
   if (it == m_Fonts.end ())
     return;   // no such font
 
-  CFont* oldFont = pdc->SelectObject(it->second);    // select in the requested font
-
-  TEXTMETRIC tm;
-  pdc->GetTextMetrics(&tm);
-
-  CString rString;
-  pdc->GetTextFace (rString);
+  // One seam call replaces select-font + GetTextMetrics + GetTextFace + restore;
+  // every InfoType maps to a pal::FontMetrics field (docs/PAL.md S3b).
+  pal::FontMetrics m = pal::g_surface ? pal::g_surface->fontMetrics (it->second)
+                                      : pal::FontMetrics ();
 
   switch (InfoType)
     {
 
-    case  1:  SetUpVariantLong (vaResult, tm.tmHeight);           break;
-    case  2:  SetUpVariantLong (vaResult, tm.tmAscent);           break;
-    case  3:  SetUpVariantLong (vaResult, tm.tmDescent);          break;
-    case  4:  SetUpVariantLong (vaResult, tm.tmInternalLeading);  break;
-    case  5:  SetUpVariantLong (vaResult, tm.tmExternalLeading);  break;
-    case  6:  SetUpVariantLong (vaResult, tm.tmAveCharWidth);     break;
-    case  7:  SetUpVariantLong (vaResult, tm.tmMaxCharWidth);     break;
-    case  8:  SetUpVariantLong (vaResult, tm.tmWeight);           break;
-    case  9:  SetUpVariantLong (vaResult, tm.tmOverhang);         break;
-    case 10:  SetUpVariantLong (vaResult, tm.tmDigitizedAspectX); break;
-    case 11:  SetUpVariantLong (vaResult, tm.tmDigitizedAspectY); break;
-    case 12:  SetUpVariantLong (vaResult, tm.tmFirstChar);        break;
-    case 13:  SetUpVariantLong (vaResult, tm.tmLastChar);         break;
-    case 14:  SetUpVariantLong (vaResult, tm.tmDefaultChar);      break;
-    case 15:  SetUpVariantLong (vaResult, tm.tmBreakChar);        break;
-    case 16:  SetUpVariantLong (vaResult, tm.tmItalic);           break;
-    case 17:  SetUpVariantLong (vaResult, tm.tmUnderlined);       break;
-    case 18:  SetUpVariantLong (vaResult, tm.tmStruckOut);        break;
-    case 19:  SetUpVariantLong (vaResult, tm.tmPitchAndFamily);   break;
-    case 20:  SetUpVariantLong (vaResult, tm.tmCharSet);          break;
-    case 21:  SetUpVariantString (vaResult, rString);             break;
+    case  1:  SetUpVariantLong (vaResult, m.height);           break;
+    case  2:  SetUpVariantLong (vaResult, m.ascent);           break;
+    case  3:  SetUpVariantLong (vaResult, m.descent);          break;
+    case  4:  SetUpVariantLong (vaResult, m.internalLeading);  break;
+    case  5:  SetUpVariantLong (vaResult, m.externalLeading);  break;
+    case  6:  SetUpVariantLong (vaResult, m.aveCharWidth);     break;
+    case  7:  SetUpVariantLong (vaResult, m.maxCharWidth);     break;
+    case  8:  SetUpVariantLong (vaResult, m.weight);           break;
+    case  9:  SetUpVariantLong (vaResult, m.overhang);         break;
+    case 10:  SetUpVariantLong (vaResult, m.digitizedAspectX); break;
+    case 11:  SetUpVariantLong (vaResult, m.digitizedAspectY); break;
+    case 12:  SetUpVariantLong (vaResult, m.firstChar);        break;
+    case 13:  SetUpVariantLong (vaResult, m.lastChar);         break;
+    case 14:  SetUpVariantLong (vaResult, m.defaultChar);      break;
+    case 15:  SetUpVariantLong (vaResult, m.breakChar);        break;
+    case 16:  SetUpVariantLong (vaResult, m.italic);           break;
+    case 17:  SetUpVariantLong (vaResult, m.underlined);       break;
+    case 18:  SetUpVariantLong (vaResult, m.struckOut);        break;
+    case 19:  SetUpVariantLong (vaResult, m.pitchAndFamily);   break;
+    case 20:  SetUpVariantLong (vaResult, m.charset);          break;
+    case 21:  SetUpVariantString (vaResult, CString (m.face.c_str ())); break;
 
     default:
       vaResult.vt = VT_NULL;
       break;
 
     } // end of switch
-
-  pdc->SelectObject(oldFont);
   }  // end of CMiniWindow::FontInfo
 
 // return list of fonts we installed
@@ -817,7 +812,6 @@ long CMiniWindow::Text (LPCTSTR FontId,  // which previously-created font
     return -2;
 
   size_t length = strlen (Text);
-  long utf8_length = 0;
 
   // give up if no text
   if (length <= 0)
@@ -826,62 +820,27 @@ long CMiniWindow::Text (LPCTSTR FontId,  // which previously-created font
   // quick sanity check on our UTF8 stuff
   if (Unicode)
     {
-    utf8_length = CalculateUTF8length (Text, length);
-    if (utf8_length < 0)
+    if (CalculateUTF8length (Text, length) < 0)
       return -3;    // ohno!
     }
 
+  pal::ISurface* srf = pal::g_surface;
+  if (!srf)
+    return -2;
 
-  CFont* oldFont = pdc->SelectObject(it->second);    // select in the requested font
+  // Draw through the surface seam (docs/PAL.md S3b). The adapter auto-detects
+  // UTF-8 vs the font's legacy charset (the decided UTF-8 + charset-hint model),
+  // so the per-call Unicode flag only gates the validity guard above; rendering
+  // is byte-identical to the old ExtTextOut/ExtTextOutW + ETO_CLIPPED path. The
+  // clip box is the engine's FixRight/FixBottom-resolved rectangle, unchanged.
+  const long right  = FixRight (Right);
+  const long bottom = FixBottom (Bottom);
+  const pal::Rect clip { (int) Left, (int) Top, (int) (right - Left), (int) (bottom - Top) };
 
-  CSize textsize;
+  int width = srf->drawText (m_surfaceId, it->second, Text, length,
+                             { (int) Left, (int) Top }, (pal::Colour) Colour, &clip);
 
-  pdc->SetTextColor (Colour);
-  pdc->SetBkMode (TRANSPARENT);
-
-  if (Unicode)
-    {
-#ifdef _WIN32
-    vector<WCHAR> v (utf8_length);    // get correct size vector
-    int iUnicodeCharacters = MultiByteToWideChar (CP_UTF8, 0,
-                              Text, length,            // input
-                              &v [0], utf8_length);    // output
-
-    ExtTextOutW (pdc->m_hDC, Left, Top, ETO_CLIPPED, CRect (Left, Top, FixRight (Right), FixBottom (Bottom) ),
-                  &v [0], iUnicodeCharacters, NULL);
-
-    // now calculate width of Unicode pixels
-    GetTextExtentPoint32W(
-        pdc->m_hDC,             // handle to device context
-        &v [0],               // pointer to text string
-        iUnicodeCharacters,   // number of characters in string
-        &textsize             // pointer to structure for string size
-      );
-#else
-    // The wx CDC builds a wxString from the UTF-8 bytes and renders via
-    // wxDC::DrawText, so it is already Unicode-correct — the Windows
-    // UTF-8 -> UTF-16 -> ExtTextOutW detour is unnecessary off-Windows (and
-    // the wide GDI calls are not implemented there).
-    (void) utf8_length;
-    pdc->ExtTextOut (Left, Top, ETO_CLIPPED,
-                  CRect (Left, Top, FixRight (Right), FixBottom (Bottom)),
-                  Text, length, NULL);
-    textsize = pdc->GetTextExtent (Text, length);
-#endif
-
-    }
-  else
-    {
-    pdc->ExtTextOut (Left, Top, ETO_CLIPPED, CRect (Left, Top, FixRight (Right), FixBottom (Bottom)),
-                  Text, length, NULL);
-    textsize = pdc->GetTextExtent (Text, length);
-
-    }
-
-
-  pdc->SelectObject(oldFont);
-
-  return min (textsize.cx, FixRight (Right) - Left);  // if clipped, length is width of rectangle
+  return min ((long) width, right - Left);  // if clipped, length is width of rectangle
   } // end of CMiniWindow::Text
 
 
@@ -897,7 +856,6 @@ long CMiniWindow::TextWidth (LPCTSTR FontId,  // which previously-created font
     return -2;
 
   size_t length = strlen (Text);
-  long utf8_length = 0;
 
   // give up if no text
   if (length <= 0)
@@ -906,45 +864,17 @@ long CMiniWindow::TextWidth (LPCTSTR FontId,  // which previously-created font
   // quick sanity check on our UTF8 stuff
   if (Unicode)
     {
-    utf8_length = CalculateUTF8length (Text, length);
-    if (utf8_length < 0)
+    if (CalculateUTF8length (Text, length) < 0)
       return -3;    // ohno!
     }
 
+  pal::ISurface* srf = pal::g_surface;
+  if (!srf)
+    return -2;
 
-  CFont* oldFont = pdc->SelectObject(it->second);    // select in the requested font
-
-  CSize textsize;
-
-  if (Unicode)
-    {
-#ifdef _WIN32
-    vector<WCHAR> v (utf8_length);    // get correct size vector
-    int iUnicodeCharacters = MultiByteToWideChar (CP_UTF8, 0,
-                              Text, length,           // input
-                              &v [0], utf8_length);   // output
-
-    // now calculate width of Unicode pixels
-    GetTextExtentPoint32W(
-        pdc->m_hDC,           // handle to device context
-        &v [0],             // pointer to text string
-        iUnicodeCharacters, // number of characters in string
-        &textsize           // pointer to structure for string size
-      );
-#else
-    // wx CDC measures the UTF-8 bytes directly (Unicode-correct).
-    (void) utf8_length;
-    textsize = pdc->GetTextExtent (Text, length);
-#endif
-
-    }
-  else
-    textsize = pdc->GetTextExtent (Text, length);
-
-
-  pdc->SelectObject(oldFont);
-
-  return textsize.cx;
+  // Measure through the seam (docs/PAL.md S3b) — the same font metrics drawText
+  // uses, so WindowTextWidth and WindowText agree.
+  return srf->measureText (it->second, Text, length).w;
 
   }  // end of  CMiniWindow::TextWidth
 

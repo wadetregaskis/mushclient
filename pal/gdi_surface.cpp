@@ -24,13 +24,37 @@ namespace pal {
 GdiSurface::~GdiSurface() {
     // Every held surface is adopted (wraps CMiniWindow's own CDC); nothing to
     // free — the engine owns the DC. Owned-surface teardown lands with
-    // createSurface().
+    // createSurface(). Fonts and the measuring DC ARE adapter-owned.
+    for (auto& kv : m_fonts) {
+        kv.second.font->DeleteObject();
+        delete kv.second.font;
+    }
+    m_fonts.clear();
+    if (m_measureDc) {
+        m_measureDc->DeleteDC();
+        delete m_measureDc;
+        m_measureDc = nullptr;
+    }
     m_surfaces.clear();
 }
 
 GdiSurface::Surf* GdiSurface::surf(SurfaceId id) {
     auto it = m_surfaces.find((std::uint32_t)id);
     return it == m_surfaces.end() ? nullptr : &it->second;
+}
+
+GdiSurface::Font* GdiSurface::font(FontId id) {
+    auto it = m_fonts.find((std::uint32_t)id);
+    return it == m_fonts.end() ? nullptr : &it->second;
+}
+
+CDC* GdiSurface::measureDc() {
+    if (!m_measureDc) {
+        m_measureDc = new CDC;
+        m_measureDc->CreateCompatibleDC(NULL);   // screen-compatible (LOGPIXELSY = screen)
+        m_measureDc->SetTextAlign(TA_LEFT | TA_TOP);   // same recipe as the miniwindow pdc
+    }
+    return m_measureDc;
 }
 
 SurfaceId GdiSurface::adopt(CDC* dc, Size sz) {
@@ -98,6 +122,148 @@ int GdiSurface::dpi() {
     return d;
 }
 
+// ── text / fonts (S3b live path) ─────────────────────────────────────────────
+// The seam dropped WindowText's per-call `Unicode` flag (the decided "UTF-8 +
+// charset-hint" model), so drawText/measureText recover it by PROBING the bytes.
+// This reproduces BOTH original Windows branches exactly:
+//   valid UTF-8  -> MultiByteToWideChar(CP_UTF8) + ExtTextOutW  (== old Unicode=true)
+//   otherwise    -> ExtTextOutA on the raw bytes               (== old Unicode=false,
+//                   where GDI interprets them in the selected font's charset)
+// Crucially the ANSI branch keeps LEGACY non-Unicode text correct on Windows
+// (e.g. Latin-1 "caf\xE9" still renders "café", not "caf?"), which an
+// unconditional CP_UTF8 path would break. The engine already rejects invalid
+// UTF-8 when Unicode=true (CalculateUTF8length -> -3), so the only bytes reaching
+// the ANSI branch are genuine legacy/ANSI text; the sole divergence from the old
+// flag is the unreachable "Unicode=false yet coincidentally-valid-UTF-8 non-ASCII"
+// input. The two-call NULL,0 sizing also fixes the old astral-char undersize bug.
+//
+// Utf8ToWide: valid UTF-8 fills `wide` and returns true; anything else -> false.
+static bool Utf8ToWide(const char* utf8, size_t len, std::vector<WCHAR>& wide) {
+    if (!utf8 || len == 0) return false;
+    int n = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, (int)len, NULL, 0);
+    if (n <= 0) return false;
+    wide.resize(n);
+    ::MultiByteToWideChar(CP_UTF8, 0, utf8, (int)len, &wide[0], n);
+    return true;
+}
+
+FontId GdiSurface::createFont(const FontSpec& spec) {
+    Font f;
+    f.spec = spec;
+    f.font = new CFont;
+    // pixelHeight arrives POSITIVE (points converted via dpi() above the seam);
+    // CreateFont wants the negative cell-height, exactly the old
+    //   -MulDiv (Size, GetDeviceCaps (LOGPIXELSY), 72).
+    // weight is already FW_BOLD/FW_NORMAL; the rest map 1:1 to the old CreateFont.
+    if (f.font->CreateFont(-spec.pixelHeight, 0, 0, 0,
+                           spec.weight,
+                           (BYTE)spec.italic, (BYTE)spec.underline, (BYTE)spec.strikeout,
+                           (BYTE)spec.charsetHint, 0, 0, 0,
+                           (BYTE)spec.pitchAndFamilyHint, spec.face.c_str()) == 0) {
+        delete f.font;
+        return FontId::None;
+    }
+    std::uint32_t id = m_nextFont++;
+    m_fonts[id] = f;
+    return (FontId)id;
+}
+
+void GdiSurface::destroyFont(FontId id) {
+    Font* f = font(id);
+    if (!f) return;
+    f->font->DeleteObject();
+    delete f->font;
+    m_fonts.erase((std::uint32_t)id);
+}
+
+int GdiSurface::drawText(SurfaceId sid, FontId fid, const char* utf8, size_t len, Point pt,
+                         Colour colour, const Rect* clip) {
+    Surf* s = surf(sid);
+    Font* f = font(fid);
+    if (!s || !s->dc || !f || !utf8 || len == 0) return 0;
+    HDC hdc = s->dc->GetSafeHdc();
+    CFont* oldFont = s->dc->SelectObject(f->font);
+    s->dc->SetTextColor(colour);
+    s->dc->SetBkMode(TRANSPARENT);            // WindowText is always transparent
+    RECT rc, *prc = NULL;
+    UINT eto = 0;
+    if (clip) {
+        rc.left = clip->x; rc.top = clip->y;
+        rc.right = clip->x + clip->w; rc.bottom = clip->y + clip->h;
+        prc = &rc; eto = ETO_CLIPPED;         // == the old CRect(...) + ETO_CLIPPED
+    }
+    int width = 0;
+    std::vector<WCHAR> wide;
+    if (Utf8ToWide(utf8, len, wide)) {
+        ::ExtTextOutW(hdc, pt.x, pt.y, eto, prc, &wide[0], (int)wide.size(), NULL);
+        SIZE sz = { 0, 0 };
+        ::GetTextExtentPoint32W(hdc, &wide[0], (int)wide.size(), &sz);
+        width = sz.cx;
+    } else {
+        ::ExtTextOutA(hdc, pt.x, pt.y, eto, prc, utf8, (int)len, NULL);
+        SIZE sz = { 0, 0 };
+        ::GetTextExtentPoint32A(hdc, utf8, (int)len, &sz);
+        width = sz.cx;
+    }
+    s->dc->SelectObject(oldFont);
+    return (clip && width > clip->w) ? clip->w : width;
+}
+
+Size GdiSurface::measureText(FontId fid, const char* utf8, size_t len) {
+    Font* f = font(fid);
+    if (!f || !utf8 || len == 0) return Size{};
+    CDC* dc = measureDc();
+    HDC hdc = dc->GetSafeHdc();
+    CFont* oldFont = dc->SelectObject(f->font);
+    SIZE sz = { 0, 0 };
+    std::vector<WCHAR> wide;
+    if (Utf8ToWide(utf8, len, wide))         // same probe as drawText -> same metrics
+        ::GetTextExtentPoint32W(hdc, &wide[0], (int)wide.size(), &sz);
+    else
+        ::GetTextExtentPoint32A(hdc, utf8, (int)len, &sz);
+    dc->SelectObject(oldFont);
+    return { sz.cx, sz.cy };
+}
+
+FontMetrics GdiSurface::fontMetrics(FontId fid) {
+    FontMetrics m;
+    Font* f = font(fid);
+    if (!f) return m;
+    CDC* dc = measureDc();
+    CFont* oldFont = dc->SelectObject(f->font);
+    TEXTMETRIC tm;
+    memset(&tm, 0, sizeof tm);
+    if (dc->GetTextMetrics(&tm)) {           // == the old FontInfo pdc->GetTextMetrics
+        m.height = tm.tmHeight;
+        m.ascent = tm.tmAscent;
+        m.descent = tm.tmDescent;
+        m.internalLeading = tm.tmInternalLeading;
+        m.externalLeading = tm.tmExternalLeading;
+        m.aveCharWidth = tm.tmAveCharWidth;
+        m.maxCharWidth = tm.tmMaxCharWidth;
+        m.weight = tm.tmWeight;
+        m.overhang = tm.tmOverhang;
+        m.digitizedAspectX = tm.tmDigitizedAspectX;
+        m.digitizedAspectY = tm.tmDigitizedAspectY;
+        m.firstChar = tm.tmFirstChar;
+        m.lastChar = tm.tmLastChar;
+        m.defaultChar = tm.tmDefaultChar;
+        m.breakChar = tm.tmBreakChar;
+        m.italic = tm.tmItalic;              // raw bytes (WindowFontInfo returns verbatim)
+        m.underlined = tm.tmUnderlined;
+        m.struckOut = tm.tmStruckOut;
+        m.pitchAndFamily = tm.tmPitchAndFamily;
+        m.charset = tm.tmCharSet;
+    }
+    CString face;
+    if (dc->GetTextFace(face) > 0)           // == the old FontInfo pdc->GetTextFace
+        m.face = (const char*)face;          // realized face after substitution
+    else
+        m.face = f->spec.face;
+    dc->SelectObject(oldFont);
+    return m;
+}
+
 // ── op families not yet on the seam — stubbed until their CMiniWindow family
 //    migrates (each will map to the exact original GDI call, as above) ─────────
 SurfaceId   GdiSurface::createSurface(Size, Colour) { return SurfaceId::None; }
@@ -113,11 +279,6 @@ void        GdiSurface::arc(SurfaceId, Rect, Point, Point, const PenSpec&) {}
 void        GdiSurface::gradient(SurfaceId, Rect, Colour, Colour, bool) {}
 void        GdiSurface::blit(SurfaceId, Rect, SurfaceId, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
 void        GdiSurface::blit(SurfaceId, Rect, const PixelBuffer&, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
-FontId      GdiSurface::createFont(const FontSpec&) { return FontId::None; }
-void        GdiSurface::destroyFont(FontId) {}
-int         GdiSurface::drawText(SurfaceId, FontId, const char*, size_t, Point, Colour, const Rect*) { return 0; }
-Size        GdiSurface::measureText(FontId, const char*, size_t) { return Size{}; }
-FontMetrics GdiSurface::fontMetrics(FontId) { return FontMetrics{}; }
 
 } // namespace pal
 

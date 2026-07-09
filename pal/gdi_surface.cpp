@@ -512,10 +512,47 @@ void GdiSurface::setPixel(SurfaceId id, Point p, Colour c) {
     s->dc->SetPixelV(p.x, p.y, c);               // == old SetPixel (pdc->SetPixelV)
 }
 
+// The DIB round-trip (== the old Filter/DrawImageAlpha CreateDIBSection + BitBlt-in):
+// reads a region into a PixelBuffer with the exact DIB layout (bottom-up, padded).
+void GdiSurface::readPixels(SurfaceId id, Rect r, PixelBuffer& out, PixelFormat fmt) {
+    Surf* s = surf(id);
+    out = PixelBuffer{};
+    if (!s || !s->dc || !gdiClipToBounds(r, s->size)) return;
+
+    const int bpp = (fmt == PixelFormat::BGR24) ? 24 : 32;
+    BITMAPINFO bmi;
+    memset(&bmi, 0, sizeof bmi);
+    bmi.bmiHeader.biSize        = sizeof bmi.bmiHeader;
+    bmi.bmiHeader.biWidth       = r.w;
+    bmi.bmiHeader.biHeight      = r.h;            // positive = bottom-up
+    bmi.bmiHeader.biPlanes      = 1;
+    bmi.bmiHeader.biBitCount    = (WORD)bpp;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    const int dibStride = (r.w * (bpp / 8) + 3) & ~3;
+    bmi.bmiHeader.biSizeImage   = dibStride * r.h;
+
+    unsigned char* bits = NULL;
+    HBITMAP hbm = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
+    if (!hbm || !bits) return;
+    CDC tmp;
+    tmp.CreateCompatibleDC(s->dc);
+    HBITMAP hOld = (HBITMAP)::SelectObject(tmp.GetSafeHdc(), hbm);
+    tmp.BitBlt(0, 0, r.w, r.h, s->dc, r.x, r.y, SRCCOPY);
+
+    out.format = fmt;
+    out.size   = { r.w, r.h };
+    out.stride = PixelBuffer::strideFor(r.w, fmt);
+    out.bytes.assign(bits, bits + bmi.bmiHeader.biSizeImage);
+    if (fmt == PixelFormat::BGRA32)              // a surface has no alpha — pin it 0
+        for (size_t i = 3; i < out.bytes.size(); i += 4) out.bytes[i] = 0;
+
+    ::SelectObject(tmp.GetSafeHdc(), hOld);
+    ::DeleteObject(hbm);
+}
+
 // ── op families not yet on the seam — stubbed until their CMiniWindow family
 //    migrates (each will map to the exact original GDI call, as above) ─────────
 SurfaceId   GdiSurface::createSurface(Size, Colour) { return SurfaceId::None; }
-void        GdiSurface::readPixels(SurfaceId, Rect, PixelBuffer& out, PixelFormat) { out = PixelBuffer{}; }
 // buffer-source blit lands with its op family (image-pattern brushes / DrawImageAlpha).
 void        GdiSurface::blit(SurfaceId, Rect, const PixelBuffer&, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
 

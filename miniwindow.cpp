@@ -2987,30 +2987,21 @@ long CMiniWindow::Filter(long Left, long Top, long Right, long Bottom,
   if (iWidth < 1 || iHeight < 1)   // sanity check
     return eOK;
 
-  // upper layer (from image id)
-  CDC gDC;
-  gDC.CreateCompatibleDC(&(*pdc));
-  CBitmap gbmp;
+  // Read the window region, filter it (the exact pixel-math functions, unchanged),
+  // and write it back through the seam (docs/PAL.md S3d) -- == the old
+  // CreateDIBSection + BitBlt-in + filter + BitBlt-out. BGR24, bottom-up: the
+  // PixelBuffer has the same layout + stride (== BytesPerLine(iWidth,24)) as the
+  // old DIB, so the filters run byte-for-byte.
+  pal::ISurface* srf = pal::g_surface;
+  if (!srf) return eOK;
 
-  BITMAPINFO bmi;
-  ZeroMemory (&bmi, sizeof bmi);
+  pal::PixelBuffer buf;
+  srf->readPixels (m_surfaceId, { (int) Left, (int) Top, (int) iWidth, (int) iHeight },
+                   buf, pal::PixelFormat::BGR24);
+  if (!buf.valid ())
+    return eOK;
 
-  bmi.bmiHeader.biSize = sizeof bmi;
-  bmi.bmiHeader.biWidth =          iWidth;
-  bmi.bmiHeader.biHeight =         iHeight;
-  bmi.bmiHeader.biPlanes =         1;
-  bmi.bmiHeader.biBitCount =       24;
-  bmi.bmiHeader.biCompression =    BI_RGB;
-  bmi.bmiHeader.biSizeImage =      iHeight * BytesPerLine (iWidth, 24);
-
-  unsigned char * pA = NULL;
-
-  HBITMAP hbmG = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**) &pA, NULL, 0);
-
-  HBITMAP hOldAbmp = (HBITMAP) SelectObject(gDC.m_hDC, hbmG);
-
-  // copy base image from miniwindow to bitmap
-  gDC.BitBlt (0, 0, iWidth, iHeight, &(*pdc), Left, Top, SRCCOPY);
+  unsigned char * pA = buf.bytes.data ();
 
   // manipulate image here
 
@@ -3081,13 +3072,7 @@ long CMiniWindow::Filter(long Left, long Top, long Right, long Bottom,
      }
 
   // copy result back
-
-  pdc->BitBlt (Left, Top, iWidth, iHeight, &gDC, 0, 0, SRCCOPY);
-
-
-  SelectObject(gDC.m_hDC, hOldAbmp);
-
-  DeleteObject (hbmG);
+  srf->writePixels (m_surfaceId, { (int) Left, (int) Top, (int) iWidth, (int) iHeight }, buf);
 
   return eOK;
 

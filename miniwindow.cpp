@@ -2531,152 +2531,34 @@ long CMiniWindow::Gradient(long Left, long Top, long Right, long Bottom,
   if (iWidth <= 0 || iHeight <= 0)   // sanity check
     return eOK;
 
-  // Texture Fill requires slower method
+  pal::ISurface* srf = pal::g_surface;
+  if (!srf) return eOK;
 
+  // Mode 3 = texture fill (docs/PAL.md S3d): MakeTexture (portable noise) into a
+  // BGR24 buffer, then writePixels — exactly the old CreateDIBSection + MakeTexture
+  // + BitBlt (SRCCOPY). The buffer is bottom-up like the old positive-height DIB,
+  // so the texture orientation is unchanged.
   if (Mode == 3)
     {
-
-    // upper layer (from image id)
-    CDC gDC;
-    gDC.CreateCompatibleDC(&(*pdc));
-    CBitmap gbmp;
-
-    BITMAPINFO bmi;
-    ZeroMemory (&bmi, sizeof bmi);
-
-    bmi.bmiHeader.biSize = sizeof bmi;
-    bmi.bmiHeader.biWidth =          iWidth;
-    bmi.bmiHeader.biHeight =         iHeight;
-    bmi.bmiHeader.biPlanes =         1;
-    bmi.bmiHeader.biBitCount =       24;
-    bmi.bmiHeader.biCompression =    BI_RGB;
-    bmi.bmiHeader.biSizeImage =      iHeight * BytesPerLine (iWidth, 24);
-
-    unsigned char * pA = NULL;
-
-    HBITMAP hbmG = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**) &pA, NULL, 0);
-
-    HBITMAP hOldAbmp = (HBITMAP) SelectObject(gDC.m_hDC, hbmG);
-
-    MakeTexture (StartColour, pA, iWidth, iHeight);
-
-    // copy result back
-
-    pdc->BitBlt (Left, Top, iWidth, iHeight, &gDC, 0, 0, SRCCOPY);
-
-
-    SelectObject(gDC.m_hDC, hOldAbmp);
-
-    DeleteObject (hbmG);
-
+    pal::PixelBuffer tex;
+    tex.format = pal::PixelFormat::BGR24;
+    tex.size   = { (int) iWidth, (int) iHeight };
+    tex.stride = pal::PixelBuffer::strideFor ((int) iWidth, pal::PixelFormat::BGR24);
+    tex.bytes.resize ((size_t) tex.stride * iHeight);
+    MakeTexture (StartColour, tex.bytes.data (), iWidth, iHeight);
+    srf->writePixels (m_surfaceId, { (int) Left, (int) Top, (int) iWidth, (int) iHeight }, tex);
     return eOK;
+    }
 
-    }  // end of texture fill
+  // Modes 1 (horizontal) / 2 (vertical): a linear two-colour gradient; anything
+  // else is eUnknownOption, as before. The GDI adapter fills via GradientFill (the
+  // old Windows-2000+ path, byte-exact); the wx adapter uses its exact-endpoint strips.
+  if (Mode != 1 && Mode != 2)
+    return eUnknownOption;
 
-
-  // for Windows 2000 onwards, use faster GDI fill mode as suggested by Twisol
-  // See: http://msdn.microsoft.com/en-us/library/aa925212.aspx
-
-  if (os_version.dwPlatformId > VER_PLATFORM_WIN32_NT ||   // some future version?
-     (os_version.dwPlatformId == VER_PLATFORM_WIN32_NT &&  // NT upwards
-      os_version.dwMajorVersion >= 5))                     // Windows 2000 upwards
-    {
-
-    TRIVERTEX        vert[2] ;
-    GRADIENT_RECT    gRect;
-    DWORD            dwMode;
-
-    // first vertex
-    vert [0] .x      = Left;
-    vert [0] .y      = Top;
-    vert [0] .Red    = GetRValue (StartColour) << 8;  // higher resolution colours
-    vert [0] .Green  = GetGValue (StartColour) << 8;
-    vert [0] .Blue   = GetBValue (StartColour) << 8;
-    vert [0] .Alpha  = 0;
-
-    // second vertex
-    vert [1] .x      = FixRight (Right);
-    vert [1] .y      = FixBottom (Bottom);
-    vert [1] .Red    = GetRValue (EndColour) << 8;
-    vert [1] .Green  = GetGValue (EndColour) << 8;
-    vert [1] .Blue   = GetBValue (EndColour) << 8;
-    vert [1] .Alpha  = 0;
-
-    // rectange goes from first vertex to second one
-    gRect.UpperLeft  = 0;
-    gRect.LowerRight = 1;
-
-    switch (Mode)
-      {
-      case 1 : dwMode = GRADIENT_FILL_RECT_H; break;  // horizontal
-      case 2 : dwMode = GRADIENT_FILL_RECT_V; break;  // vertical
-      default: return eUnknownOption;
-      } // end of switch
-
-    // do the fill
-    GradientFill (pdc->m_hDC, vert, 2, &gRect, 1, dwMode);
-
-    return eOK;
-
-    }   // end of Windows 2000 or higher
-
-  // slower method (also suggested by Twisol rather than doing individual bytes):
-  double rdiff = GetRValue (EndColour) - GetRValue (StartColour),
-         gdiff = GetGValue (EndColour) - GetGValue (StartColour),
-         bdiff = GetBValue (EndColour) - GetBValue (StartColour);
-
-  double rval = GetRValue (StartColour),
-         gval = GetGValue (StartColour),
-         bval = GetBValue (StartColour);
-
-  double rinc = rdiff / (double) (iWidth - 1),
-         ginc = gdiff / (double) (iWidth - 1),
-         binc = bdiff / (double) (iWidth - 1);
-
-  COLORREF oldColour = pdc->GetBkColor ();
-  pdc->SetBkMode (TRANSPARENT);
-
-
-  switch (Mode)
-    {
-    case 1 : // horizontal (left to right)
-
-      {
-      long iRight = FixRight (Right);
-      for (long x = Left; x < iRight; x++)
-        {
-        pdc->FillSolidRect( x, Top, 1, iHeight, RGB (rval, gval, bval) );
-        rval += rinc;
-        gval += ginc;
-        bval += binc;
-       }
-      }
-
-      break;  // end of horizontal
-
-    case 2 : // vertical  (top to bottom)
-
-      {
-      long iBottom = FixBottom (Bottom);
-      for (long y = Top; y < iBottom; y++)
-        {
-        pdc->FillSolidRect( Left, y, iWidth, 1, RGB (rval, gval, bval) );
-        rval += rinc;
-        gval += ginc;
-        bval += binc;
-       }
-      }
-
-      break;  // end of vertical
-
-
-    default: return eUnknownOption;
-
-    } // end of switch
-
-
-  pdc->SetBkColor (oldColour);  // FillSolidRect changes the background colour
-  return eOK; // end of horizontal or vertical
+  srf->gradient (m_surfaceId, { (int) Left, (int) Top, (int) iWidth, (int) iHeight },
+                 (pal::Colour) StartColour, (pal::Colour) EndColour, Mode == 1);
+  return eOK;
 
   } // end of CMiniWindow::Gradient
 

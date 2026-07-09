@@ -436,13 +436,75 @@ void GdiSurface::polygon(SurfaceId id, const Point* pts, size_t n, const PenSpec
     s->dc->SelectObject(oldBr);
 }
 
+// ── gradient + writePixels (S3d live path) ───────────────────────────────────
+void GdiSurface::gradient(SurfaceId id, Rect r, Colour from, Colour to, bool horizontal) {
+    Surf* s = surf(id);
+    if (!s || !s->dc) return;
+    TRIVERTEX vert[2];                                      // == the old Gradient Mode 1/2
+    vert[0].x = r.x; vert[0].y = r.y;
+    vert[0].Red = GetRValue(from) << 8; vert[0].Green = GetGValue(from) << 8;
+    vert[0].Blue = GetBValue(from) << 8; vert[0].Alpha = 0;
+    vert[1].x = r.x + r.w; vert[1].y = r.y + r.h;
+    vert[1].Red = GetRValue(to) << 8; vert[1].Green = GetGValue(to) << 8;
+    vert[1].Blue = GetBValue(to) << 8; vert[1].Alpha = 0;
+    GRADIENT_RECT gRect; gRect.UpperLeft = 0; gRect.LowerRight = 1;
+    ::GradientFill(s->dc->GetSafeHdc(), vert, 2, &gRect, 1,
+                   horizontal ? GRADIENT_FILL_RECT_H : GRADIENT_FILL_RECT_V);
+}
+
+static bool gdiClipToBounds(Rect& r, Size bounds) {
+    const long long rx1 = (long long)r.x + r.w, ry1 = (long long)r.y + r.h;
+    int x0 = r.x > 0 ? r.x : 0, y0 = r.y > 0 ? r.y : 0;
+    int x1 = (int)(rx1 < bounds.w ? rx1 : bounds.w);
+    int y1 = (int)(ry1 < bounds.h ? ry1 : bounds.h);
+    if (x1 <= x0 || y1 <= y0) return false;
+    r = { x0, y0, x1 - x0, y1 - y0 };
+    return true;
+}
+
+// The DIB round-trip (== the old Gradient Mode-3 CreateDIBSection + BitBlt SRCCOPY):
+// the PixelBuffer's bottom-up, 4-byte-aligned layout IS a positive-height DIB, so
+// the copy is row-wise.
+void GdiSurface::writePixels(SurfaceId id, Rect r, const PixelBuffer& in) {
+    Surf* s = surf(id);
+    if (!s || !s->dc || !in.valid()) return;
+    Rect clipped = { r.x, r.y, r.w < in.size.w ? r.w : in.size.w,
+                               r.h < in.size.h ? r.h : in.size.h };
+    if (!gdiClipToBounds(clipped, s->size)) return;
+
+    const int bpp = (in.format == PixelFormat::BGR24) ? 24 : 32;
+    BITMAPINFO bmi;
+    memset(&bmi, 0, sizeof bmi);
+    bmi.bmiHeader.biSize        = sizeof bmi.bmiHeader;
+    bmi.bmiHeader.biWidth       = in.size.w;
+    bmi.bmiHeader.biHeight      = in.size.h;               // positive = bottom-up
+    bmi.bmiHeader.biPlanes      = 1;
+    bmi.bmiHeader.biBitCount    = (WORD)bpp;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    const int dibStride = (in.size.w * (bpp / 8) + 3) & ~3;
+    bmi.bmiHeader.biSizeImage   = dibStride * in.size.h;
+
+    unsigned char* bits = NULL;
+    HBITMAP hbm = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
+    if (!hbm || !bits) return;
+    for (int y = 0; y < in.size.h; ++y)                    // row copy (strides may differ)
+        memcpy(bits + (size_t)(in.size.h - 1 - y) * dibStride, in.row(y),
+               (size_t)in.size.w * in.bytesPerPixel());
+
+    CDC tmp;
+    tmp.CreateCompatibleDC(s->dc);
+    HBITMAP hOld = (HBITMAP)::SelectObject(tmp.GetSafeHdc(), hbm);
+    s->dc->BitBlt(clipped.x, clipped.y, clipped.w, clipped.h,
+                  &tmp, clipped.x - r.x, clipped.y - r.y, SRCCOPY);
+    ::SelectObject(tmp.GetSafeHdc(), hOld);
+    ::DeleteObject(hbm);
+}
+
 // ── op families not yet on the seam — stubbed until their CMiniWindow family
 //    migrates (each will map to the exact original GDI call, as above) ─────────
 SurfaceId   GdiSurface::createSurface(Size, Colour) { return SurfaceId::None; }
 void        GdiSurface::readPixels(SurfaceId, Rect, PixelBuffer& out, PixelFormat) { out = PixelBuffer{}; }
-void        GdiSurface::writePixels(SurfaceId, Rect, const PixelBuffer&) {}
 Colour      GdiSurface::getPixel(SurfaceId, Point) { return 0xFFFFFFFFu; }   // CLR_INVALID
-void        GdiSurface::gradient(SurfaceId, Rect, Colour, Colour, bool) {}
 void        GdiSurface::blit(SurfaceId, Rect, SurfaceId, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
 void        GdiSurface::blit(SurfaceId, Rect, const PixelBuffer&, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
 

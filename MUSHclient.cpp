@@ -6,6 +6,7 @@
 
 #include "stdafx.h"
 #include "MUSHclient.h"
+#include "pal/gdi_surface.h"   // Windows pal::ISurface adapter (self-guarded #ifdef _WIN32)
 #include "doc.h"
 #include "ActivityDoc.h"
 #include "TextDocument.h"
@@ -237,6 +238,14 @@ BOOL CMUSHclientApp::InitInstance()
 {
 
   m_whenClientStarted = CTime::GetCurrentTime();
+
+#ifdef _WIN32
+  // Install the native GDI pal::ISurface adapter so CMiniWindow draws through
+  // the PAL seam (docs/PAL.md S3) on Windows, exactly as the port does through
+  // the wx adapter (InstallWxSurfaceBridge, wx_app.cpp). Must precede any
+  // miniwindow creation. Behaviour-identical to the pre-seam GDI code.
+  InstallGdiSurfaceBridge();
+#endif
 
   char fullfilename [MAX_PATH];
 

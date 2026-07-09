@@ -1404,6 +1404,8 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
       </PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="pal\surface_bridge.cpp" />
+    <ClCompile Include="pal\gdi_surface.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Midl Include="MUSHclient.odl">
@@ -1443,6 +1445,10 @@
     <ClInclude Include="luacom\tLuaVector.h" />
     <ClInclude Include="luacom\tStringBuffer.h" />
     <ClInclude Include="luacom\tUtil.h" />
+    <ClInclude Include="pal\pal_types.h" />
+    <ClInclude Include="pal\isurface.h" />
+    <ClInclude Include="pal\surface_bridge.h" />
+    <ClInclude Include="pal\gdi_surface.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="version.h" />
   </ItemGroup>

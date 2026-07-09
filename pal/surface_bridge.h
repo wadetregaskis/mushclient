@@ -7,19 +7,19 @@
 // live in the frontend (mac: wx_surface.cpp); this header stays toolkit-free
 // (native context passed as void*) so the engine names only PAL types.
 //
-// These globals are null unless a frontend installs them, so the un-migrated
-// pdc path runs whenever no adapter is present (Windows until the S5 GDI
-// adapter, and mushcore/tests). The Windows build never sees this header —
-// every use in miniwindow.cpp is #ifndef _WIN32.
+// The frontend installs these at startup: the wx adapter on the port
+// (InstallWxSurfaceBridge), the GDI adapter on Windows (InstallGdiSurfaceBridge).
+// Every platform installs one, so CMiniWindow can call the PAL unconditionally.
+// This header is toolkit-free (native context passed as void*), so it compiles
+// in every build — the CMake port AND the MSVC project.
 
 #pragma once
-#ifndef _WIN32
 
 #include "pal/isurface.h"
 
 namespace pal {
 
-// The platform surface adapter, or null.
+// The platform surface adapter (installed at startup on every platform).
 extern ISurface* g_surface;
 
 // Wrap an existing native drawing context (a CDC*, as void*) as a surface the
@@ -28,5 +28,3 @@ extern SurfaceId (*g_adoptSurface)(void* nativeCtx, int w, int h);
 extern void      (*g_releaseAdoptedSurface)(SurfaceId);
 
 } // namespace pal
-
-#endif // !_WIN32

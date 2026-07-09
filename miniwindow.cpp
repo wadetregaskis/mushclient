@@ -537,6 +537,50 @@ long ValidateBrushStyle (const long BrushStyle,
   return eOK;
   }
 
+// Build a toolkit-neutral pal::BrushSpec for the ISurface seam (docs/PAL.md S3c)
+// from the Win32 brush params of WindowCircleOp / WindowPolygon. Returns eOK (and
+// fills 'spec'), or eBrushStyleNotValid — the same validation the old
+// ValidateBrushStyle did. The 5 built-in PATTERN styles (8-12) point
+// spec.monoPattern at a static 8x8 mono table + carry fg/bg; the adapter builds
+// the mono CreatePatternBrush and applies the colours with GDI mono-brush
+// semantics, so Windows is byte-exact (the 0/1->text/bk mapping is GDI's, not ours).
+static long BrushSpecFromWin32 (long BrushStyle, long PenColour, long BrushColour,
+                                pal::BrushSpec & spec)
+  {
+  static const unsigned char kFine  [8] = { 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55 };
+  static const unsigned char kMedium[8] = { 0x33, 0x33, 0xCC, 0xCC, 0x33, 0x33, 0xCC, 0xCC };
+  static const unsigned char kCoarse[8] = { 0x0F, 0x0F, 0x0F, 0x0F, 0xF0, 0xF0, 0xF0, 0xF0 };
+  static const unsigned char kWaveH [8] = { 0xCC, 0x33, 0x00, 0x00, 0xCC, 0x33, 0x00, 0x00 };
+  static const unsigned char kWaveV [8] = { 0x11, 0x11, 0x22, 0x22, 0x11, 0x11, 0x22, 0x22 };
+  static const unsigned char * const kPatterns [5] = { kFine, kMedium, kCoarse, kWaveH, kWaveV };
+
+  switch (BrushStyle)
+    {
+    case BS_SOLID:                                       // 0
+      spec.style = pal::BrushStyle::Solid;
+      spec.fg    = (pal::Colour) BrushColour;
+      break;
+    case BS_NULL:                                        // 1
+      spec.style = pal::BrushStyle::Null;
+      break;
+    case 2: case 3: case 4: case 5: case 6: case 7:      // GDI hatches HS_*
+      spec.style = pal::BrushStyle::Hatch;
+      spec.hatch = (pal::HatchKind) (BrushStyle - 2);
+      spec.fg    = (pal::Colour) PenColour;              // hatch line colour (lb.lbColor)
+      spec.bg    = (pal::Colour) BrushColour;            // gap colour (SetBkColor); -1 = transparent
+      break;
+    case 8: case 9: case 10: case 11: case 12:           // built-in mono patterns
+      spec.style       = pal::BrushStyle::Pattern;
+      spec.monoPattern = kPatterns [BrushStyle - 8];
+      spec.fg          = (pal::Colour) BrushColour;      // SetTextColor (mono fg)
+      spec.bg          = (pal::Colour) PenColour;        // SetBkColor  (mono bg)
+      break;
+    default:
+      return eBrushStyleNotValid;
+    }
+  return eOK;
+  } // end of BrushSpecFromWin32
+
 /*
 
   Actions:
@@ -556,90 +600,40 @@ long CMiniWindow::CircleOp (short Action,
                             long BrushColour, long BrushStyle,
                             long Extra1, long Extra2, long Extra3, long Extra4)
   {
-  long iResult = eUnknownOption;
-
   if (ValidatePenStyle (PenStyle, PenWidth))
     return ePenStyleNotValid;
 
-  // validate and create requested bruch
-  CBrush br;
-
-  if (ValidateBrushStyle (BrushStyle, PenColour, BrushColour, br))
+  pal::BrushSpec brush;
+  if (BrushSpecFromWin32 (BrushStyle, PenColour, BrushColour, brush))
     return eBrushStyleNotValid;
 
-  // create requested pen
-  CPen pen;
-  MakeAPen (pen, PenColour, PenStyle, PenWidth);
-
-  // select into DC
-  CPen* oldPen = pdc->SelectObject(&pen);
-  CBrush* oldBrush = pdc->SelectObject(&br);
-
-  if (BrushStyle > 1 && BrushStyle <= 7)
-    {
-    pdc->SetBkColor (BrushColour);      // for hatched brushes this is the background colour
-    }
-  else
-  if (BrushStyle > 7)  // pattern brushes
-    {
-    pdc->SetTextColor (BrushColour);      // for patterned brushes
-    pdc->SetBkColor (PenColour);      // for hatched brushes and patterned brushes
-    }
-
-  if (BrushColour != -1)
-    pdc->SetBkMode (OPAQUE);
-  else
-    pdc->SetBkMode (TRANSPARENT);
-
+  // Map the action to a shape kind (unknown -> eUnknownOption, as before).
+  pal::ShapeKind kind;
   switch (Action)
-
     {
-    case 1:       // ellipse
-      {
-      pdc->Ellipse (CRect (Left, Top, FixRight (Right), FixBottom (Bottom)));
-      iResult = eOK;
-      break;
-      }
+    case 1:  kind = pal::ShapeKind::Ellipse;   break;
+    case 2:  kind = pal::ShapeKind::Rect;       break;
+    case 3:  kind = pal::ShapeKind::RoundRect;  break;   // Extra1/2 = corner ellipse
+    case 4:  kind = pal::ShapeKind::Chord;       break;  // Extra1/2 start, Extra3/4 end
+    case 5:  kind = pal::ShapeKind::Pie;         break;  // Extra1/2 start, Extra3/4 end
+    default: return eUnknownOption;
+    }
 
-    case 2:       // rectangle
-      {
-      pdc->Rectangle (CRect (Left, Top, FixRight (Right), FixBottom (Bottom)));
-      iResult = eOK;
-      break;
-      }
+  // Draw through the seam (docs/PAL.md S3c). FixRight/FixBottom stays engine-side;
+  // the a/b points carry the RoundRect corner / Chord+Pie endpoints, exactly as
+  // the old CPoint(Extra1,Extra2)/CPoint(Extra3,Extra4).
+  pal::ISurface* srf = pal::g_surface;
+  if (!srf) return eOK;
 
-    case 3:       // round rectangle
-      {
-      pdc->RoundRect (CRect (Left, Top, FixRight (Right), FixBottom (Bottom)), CPoint (Extra1, Extra2));
-      iResult = eOK;
-      break;
-      }
+  const long R = FixRight (Right), B = FixBottom (Bottom);
+  srf->shape (m_surfaceId, kind,
+              { (int) Left, (int) Top, (int) (R - Left), (int) (B - Top) },
+              { (int) Extra1, (int) Extra2 },
+              { (int) Extra3, (int) Extra4 },
+              PenSpecFromWin32 (PenColour, PenStyle, PenWidth),
+              brush);
 
-    case 4:       // chord
-      {
-      pdc->Chord (CRect (Left, Top, FixRight (Right), FixBottom (Bottom)),
-                CPoint (Extra1, Extra2),
-                CPoint (Extra3, Extra4));
-      iResult = eOK;
-      break;
-      }
-
-    case 5:       // pie
-      {
-      pdc->Pie (CRect (Left, Top, FixRight (Right), FixBottom (Bottom)),
-                CPoint (Extra1, Extra2),
-                CPoint (Extra3, Extra4));
-      iResult = eOK;
-      break;
-      }
-
-    } // end of switch
-
-  // put things back
-  pdc->SelectObject (oldPen);
-  pdc->SelectObject (oldBrush);
-
-  return iResult;
+  return eOK;
 
   } // end of CMiniWindow::CircleOp
 

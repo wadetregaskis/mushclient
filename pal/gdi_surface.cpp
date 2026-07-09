@@ -335,13 +335,81 @@ void GdiSurface::bezier(SurfaceId id, const Point* pts, size_t n, const PenSpec&
     s->dc->SelectObject(old);
 }
 
+// ── filled shapes (S3c live path) ────────────────────────────────────────────
+static int gdiHatch(HatchKind k) {
+    switch (k) {
+    case HatchKind::Vertical:  return HS_VERTICAL;
+    case HatchKind::FDiagonal: return HS_FDIAGONAL;
+    case HatchKind::BDiagonal: return HS_BDIAGONAL;
+    case HatchKind::Cross:     return HS_CROSS;
+    case HatchKind::DiagCross: return HS_DIAGCROSS;
+    default:                   return HS_HORIZONTAL;
+    }
+}
+// Reproduces the original WindowCircleOp/WindowPolygon brush setup exactly:
+// solid/null via CreateSolidBrush/BS_NULL; hatch = the lb.lbColor line colour
+// (== PenColour) + SetBkColor(gap)+bkmode; the 5 mono patterns = a mono
+// CreatePatternBrush (WORD-aligned rows, as the original wBits) + SetTextColor
+// (BrushColour) / SetBkColor(PenColour) / TRANSPARENT when BrushColour == -1.
+static bool makeGdiBrush(CBrush& br, CDC* dc, const BrushSpec& b, CBitmap& patternBmp) {
+    switch (b.style) {
+    case BrushStyle::Solid:
+        return br.CreateSolidBrush(b.fg) != FALSE;
+    case BrushStyle::Null: {
+        LOGBRUSH lb; lb.lbStyle = BS_NULL; lb.lbColor = 0; lb.lbHatch = 0;
+        return br.CreateBrushIndirect(&lb) != FALSE;
+    }
+    case BrushStyle::Hatch: {
+        LOGBRUSH lb; lb.lbStyle = BS_HATCHED; lb.lbColor = b.fg;
+        lb.lbHatch = (ULONG_PTR)gdiHatch(b.hatch);
+        dc->SetBkColor(b.bg);
+        dc->SetBkMode(b.bg == (Colour)-1 ? TRANSPARENT : OPAQUE);
+        return br.CreateBrushIndirect(&lb) != FALSE;
+    }
+    case BrushStyle::Pattern: {
+        if (!b.monoPattern) return false;       // image-pattern brushes deferred
+        WORD bits[8];
+        for (int i = 0; i < 8; ++i) bits[i] = (WORD)b.monoPattern[i];   // WORD rows (== wBits)
+        if (!patternBmp.CreateBitmap(8, 8, 1, 1, bits)) return false;
+        dc->SetTextColor(b.fg);
+        dc->SetBkColor(b.bg);
+        dc->SetBkMode(b.fg == (Colour)-1 ? TRANSPARENT : OPAQUE);
+        return br.CreatePatternBrush(&patternBmp) != FALSE;
+    }
+    }
+    return false;
+}
+
+void GdiSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
+                       const PenSpec& pen, const BrushSpec& brush) {
+    Surf* s = surf(id);
+    if (!s || !s->dc) return;
+    CPen cpen; makePen(cpen, pen);
+    CBrush cbr; CBitmap patternBmp;
+    if (!makeGdiBrush(cbr, s->dc, brush, patternBmp)) {     // image-pattern (deferred) -> null
+        LOGBRUSH nb; nb.lbStyle = BS_NULL; nb.lbColor = 0; nb.lbHatch = 0;
+        cbr.CreateBrushIndirect(&nb);
+    }
+    CPen*   oldPen = s->dc->SelectObject(&cpen);
+    CBrush* oldBr  = s->dc->SelectObject(&cbr);
+    CRect rc(r.x, r.y, r.x + r.w, r.y + r.h);
+    switch (kind) {                                         // == the old CircleOp switch
+    case ShapeKind::Rect:      s->dc->Rectangle(rc); break;
+    case ShapeKind::RoundRect: s->dc->RoundRect(rc, CPoint(a.x, a.y)); break;
+    case ShapeKind::Ellipse:   s->dc->Ellipse(rc); break;
+    case ShapeKind::Chord:     s->dc->Chord(rc, CPoint(a.x, a.y), CPoint(b.x, b.y)); break;
+    case ShapeKind::Pie:       s->dc->Pie(rc, CPoint(a.x, a.y), CPoint(b.x, b.y)); break;
+    }
+    s->dc->SelectObject(oldPen);
+    s->dc->SelectObject(oldBr);
+}
+
 // ── op families not yet on the seam — stubbed until their CMiniWindow family
 //    migrates (each will map to the exact original GDI call, as above) ─────────
 SurfaceId   GdiSurface::createSurface(Size, Colour) { return SurfaceId::None; }
 void        GdiSurface::readPixels(SurfaceId, Rect, PixelBuffer& out, PixelFormat) { out = PixelBuffer{}; }
 void        GdiSurface::writePixels(SurfaceId, Rect, const PixelBuffer&) {}
 Colour      GdiSurface::getPixel(SurfaceId, Point) { return 0xFFFFFFFFu; }   // CLR_INVALID
-void        GdiSurface::shape(SurfaceId, ShapeKind, Rect, Point, Point, const PenSpec&, const BrushSpec&) {}
 void        GdiSurface::polyline(SurfaceId, const Point*, size_t, const PenSpec&) {}
 void        GdiSurface::polygon(SurfaceId, const Point*, size_t, const PenSpec&, const BrushSpec&, PolyFill) {}
 void        GdiSurface::gradient(SurfaceId, Rect, Colour, Colour, bool) {}

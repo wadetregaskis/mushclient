@@ -81,22 +81,30 @@ struct PenSpec {
 enum class BrushStyle : std::uint8_t {
     Solid, Null,
     Hatch,       // one of the 6 GDI hatches (kind below)
-    Pattern,     // tiled from surface origin; ANY size (WindowImageOp builds
-                 // pattern brushes from arbitrary loaded images). BGRA32 with
-                 // alpha 0 = transparent gaps is the one sanctioned use of
-                 // alpha in an input buffer (engine expands mono patterns and
-                 // BrushColour == -1 gaps this way).
+    Pattern,     // tiled from surface origin. Two carriers:
+                 //   • monoPattern != null → one of MUSHclient's 5 built-in 8x8
+                 //     MONO patterns (WindowCircleOp/WindowPolygon brush styles
+                 //     8-12): the adapter builds a mono CreatePatternBrush and
+                 //     colours it via fg/bg with GDI mono-brush semantics
+                 //     (SetTextColor(fg) / SetBkColor(bg), TRANSPARENT gaps when
+                 //     fg == CLR (0xFFFFFFFF)). This is byte-exact to the original
+                 //     on Windows — the adapter, not the engine, applies the 0/1
+                 //     -> text/bk mapping, so no mapping is guessed off-Windows.
+                 //   • pattern (PixelBuffer) != null → an arbitrary loaded image
+                 //     tiled as a brush (WindowImageOp; alpha 0 = transparent gap).
+                 //     Deferred to the image op family.
 };
 enum class HatchKind : std::uint8_t {  // HS_* order
     Horizontal, Vertical, FDiagonal, BDiagonal, Cross, DiagCross,
 };
 
 struct BrushSpec {
-    BrushStyle         style = BrushStyle::Solid;
-    Colour             fg    = 0;
-    Colour             bg    = 0;      // hatch gap colour (ignored if pattern)
-    HatchKind          hatch = HatchKind::Horizontal;
-    const PixelBuffer* pattern = nullptr;   // non-owning; valid for the call only
+    BrushStyle           style = BrushStyle::Solid;
+    Colour               fg    = 0;   // hatch line colour; mono-pattern text colour
+    Colour               bg    = 0;   // hatch gap colour; mono-pattern bk colour
+    HatchKind            hatch = HatchKind::Horizontal;
+    const unsigned char* monoPattern = nullptr;  // 8 bytes (8x8, MSB=left) or null
+    const PixelBuffer*   pattern     = nullptr;   // non-owning; valid for the call only
 };
 
 // ── fonts / text ────────────────────────────────────────────────────────────

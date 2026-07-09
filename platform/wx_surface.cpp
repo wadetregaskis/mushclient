@@ -251,7 +251,9 @@ static int penToPs(PenStyle st) {
 // Build a CBrush for the spec; returns false for styles this adapter can't do
 // yet (Pattern — S2 gap). Sets up the DC hatch-gap state the way the engine
 // does (bg colour with OPAQUE gaps, or TRANSPARENT gaps for bg == -1).
-static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec) {
+// patternBmp is caller-owned so a mono pattern brush's backing bitmap outlives
+// the shape draw (the wxBrush stipple references it).
+static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec, CBitmap& patternBmp) {
     switch (spec.style) {
     case BrushStyle::Solid:
         return br.CreateSolidBrush(spec.fg) != 0;
@@ -270,8 +272,19 @@ static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec) {
         dc->SetTextColor(spec.fg);
         return br.CreateBrushIndirect(&lb) != 0;
     }
-    case BrushStyle::Pattern:
-        return false;                            // S2 gap (lands with ImageOp family)
+    case BrushStyle::Pattern: {
+        if (!spec.monoPattern) return false;     // image (PixelBuffer) patterns deferred
+        // The 5 built-in mono patterns (WindowCircleOp/WindowPolygon 8-12): a mono
+        // 8x8 CreatePatternBrush coloured with GDI mono-brush semantics — fg via
+        // SetTextColor, bg via SetBkColor, TRANSPARENT gaps when fg == CLR (-1).
+        // (On wxOSX the shim renders the mono stipple black/white, as it does
+        // today; Windows/GDI applies the real text/bk mapping — byte-exact.)
+        if (!patternBmp.CreateBitmap(8, 8, 1, 1, spec.monoPattern)) return false;
+        dc->SetTextColor(spec.fg);
+        dc->SetBkColor(spec.bg);
+        dc->SetBkMode(spec.fg == (Colour)-1 ? TRANSPARENT : OPAQUE);
+        return br.CreatePatternBrush(&patternBmp) != 0;
+    }
     }
     return false;
 }
@@ -334,9 +347,10 @@ void WxSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
     CPen cpen;
     cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
     CBrush cbr;
-    if (!makeBrush(cbr, s->dc, brSpec)) {
+    CBitmap patternBmp;
+    if (!makeBrush(cbr, s->dc, brSpec, patternBmp)) {
         BrushSpec nullBr; nullBr.style = BrushStyle::Null;
-        makeBrush(cbr, s->dc, nullBr);
+        makeBrush(cbr, s->dc, nullBr, patternBmp);
     }
     CPen*   oldPen = s->dc->SelectObject(&cpen);
     CBrush* oldBr  = s->dc->SelectObject(&cbr);
@@ -383,9 +397,10 @@ void WxSurface::polygon(SurfaceId id, const Point* pts, size_t n, const PenSpec&
     CPen cpen;
     cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
     CBrush cbr;
-    if (!makeBrush(cbr, s->dc, brSpec)) {
+    CBitmap patternBmp;
+    if (!makeBrush(cbr, s->dc, brSpec, patternBmp)) {
         BrushSpec nullBr; nullBr.style = BrushStyle::Null;
-        makeBrush(cbr, s->dc, nullBr);
+        makeBrush(cbr, s->dc, nullBr, patternBmp);
     }
     CPen*   oldPen = s->dc->SelectObject(&cpen);
     CBrush* oldBr  = s->dc->SelectObject(&cbr);
@@ -814,6 +829,22 @@ int RunPalSurfaceSelfTest() {
         for (int x = 0; x < 20; ++x)
             if (ad.getPixel(bz, { x, y }) != kBlack) { bzInked = true; break; }
     stCheck(bzInked, "bezier inks pixels (WindowBezier path)");
+
+    // 8d. mono pattern-brush shape fill tiles (WindowCircleOp/Polygon styles 8-12).
+    // On wxOSX the shim renders the mono stipple black/white (Windows/GDI applies
+    // the real fg/bg) — so just assert the interior is TILED: both colours present.
+    SurfaceId pf = ad.createSurface({ 16, 16 }, kBlack);
+    const unsigned char kFine[8] = { 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55 };
+    BrushSpec patBr; patBr.style = BrushStyle::Pattern;
+    patBr.monoPattern = kFine; patBr.fg = kWhite; patBr.bg = kBlack;
+    ad.shape(pf, ShapeKind::Rect, { 1, 1, 14, 14 }, {}, {}, { PenStyle::Null }, patBr);
+    int nWhite = 0, nBlack = 0;
+    for (int y = 3; y < 13; ++y)
+        for (int x = 3; x < 13; ++x) {
+            const Colour c = ad.getPixel(pf, { x, y });
+            if (c == kWhite) nWhite++; else if (c == kBlack) nBlack++;
+        }
+    stCheck(nWhite > 0 && nBlack > 0, "mono pattern brush tiles a shape fill");
 
     // 9. shape(Rect): border + interior
     SurfaceId sh = ad.createSurface({ 10, 10 }, kBlack);

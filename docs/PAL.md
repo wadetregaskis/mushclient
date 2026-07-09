@@ -363,10 +363,12 @@ if/when the mac view adopts them.
 - **S4** formalise the composition contract (placement list, rect write-back,
   engine-side hit-testing with cursor ids — fixes the cursor parity gap).
 
-Status: **S1** (CPU reference), **S2** (wx adapter), and **S3a — the
-`WindowRectOp` family — are landed** on all platforms; the GDI adapter exists and
-implements the rect family's ops (fill/invert/edge/flood), the rest stubbed until
-their family migrates. **S3b** (the `WindowText`/font family) is next.
+Status: **S1** (CPU reference), **S2** (wx adapter), **S3a** (the `WindowRectOp`
+family), and **S3b** (the `WindowText`/font family — `Font`/`Text`/`TextWidth`/
+`FontInfo` → `createFont`/`drawText`/`measureText`/`fontMetrics`; fonts now live
+in the adapter keyed by `FontId`) **are landed** on all platforms. The GDI adapter
+implements the rect + text ops (its remaining methods — shapes, blits, pixel I/O —
+are stubbed until their family migrates). **S3c** (shapes/lines/pen) is next.
 
 ## Migration (incremental, always-green; Windows never perturbed)
 

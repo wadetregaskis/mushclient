@@ -343,14 +343,30 @@ if/when the mac view adopts them.
   implementation); golden raster tests (draw → `readPixels` → compare).
 - **S2** wx adapter implementing `ISurface` over the existing shim machinery
   (wrap, don't rewrite) — the canonical pixel buffer kills the DIB↔bitmap sync tax.
-- **S3** reroute `CMiniWindow` op-family by op-family (shapes → text → blits →
-  pixel ops) onto `ISurface`, live-verifying Quow's minimap + the mapper after
-  each family; the temp-DIB round-trips collapse onto `readPixels`/`writePixels`.
+- **S3** reroute `CMiniWindow` op-family by op-family (rects → text → shapes →
+  blits → pixel ops) onto `ISurface`, live-verifying Quow's minimap + the mapper
+  after each family; the temp-DIB round-trips collapse onto `readPixels`/
+  `writePixels`. **The seam call is UNCONDITIONAL** — no `#ifdef`, no runtime
+  `if(surface)` fork (owner decision: a runtime check is no better than an
+  `#ifdef`). `miniwindow.cpp` deletes the old `pdc` path as each family moves, so
+  it keeps exactly one drawing path on every platform from S3 onward.
+- **S5 is folded into S3, not deferred.** Because the seam call is unconditional,
+  Windows draws through `ISurface` too — so each S3 family lands its **native GDI
+  adapter method** (`pal/gdi_surface.{h,cpp}`, in `MUSHclient.vcxproj`) in the
+  same step. Each op emits the *exact* MFC/GDI call the original `CMiniWindow`
+  code used, so Windows is behaviour-identical **by construction** — the only
+  safety net for the MSVC build, which can't be compiled/tested in the dev
+  environment. The mac/Linux port (same unconditional source via the wx adapter)
+  is the live proxy: build + `--pal-surface-selftest` + `ctest` gate each commit.
+  `InstallGdiSurfaceBridge()` runs at `InitInstance` (Windows) mirroring
+  `InstallWxSurfaceBridge()` (port), so `pal::g_surface` is always installed.
 - **S4** formalise the composition contract (placement list, rect write-back,
   engine-side hit-testing with cursor ids — fixes the cursor parity gap).
-- **S5** Windows native adapter: `ISurface` implemented *by* GDI (DIB-backed,
-  behaviour-identical by construction; validated on the owner's Windows CI);
-  `miniwindow.cpp` keeps exactly one drawing path.
+
+Status: **S1** (CPU reference), **S2** (wx adapter), and **S3a — the
+`WindowRectOp` family — are landed** on all platforms; the GDI adapter exists and
+implements the rect family's ops (fill/invert/edge/flood), the rest stubbed until
+their family migrates. **S3b** (the `WindowText`/font family) is next.
 
 ## Migration (incremental, always-green; Windows never perturbed)
 

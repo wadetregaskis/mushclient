@@ -378,10 +378,20 @@ if/when the mac view adopts them.
   mutated post-paint rect could never match there). And the **cursor parity
   gap is fixed**: the wx pane maps `CHotspot::m_Cursor` (−1..12) to wx
   stock cursors exactly as `CMUSHView::OnSetCursor` maps to Win32 ones.
-  Remaining: S4b2 — the stateful `Mouse_Down/Move/Up_MiniWindow` +
-  `Send_Mouse_Event_To_Plugin` extraction (view state:
-  `m_sPreviousMiniWindow` → doc; tooltips/track/capture → view hooks);
-  S4c `ON_PLUGIN_DRAW_OUTPUT_WINDOW`.
+  **S4b2 landed:** the whole stateful mouse family
+  (`Send_Mouse_Event_To_Plugin`, `Mouse_Move/Down/Up/Wheel_MiniWindow`)
+  moved verbatim to the same TU; view-specific touches (tooltips,
+  mouse-leave arming, capture, keyboard modifiers) go through a small
+  `MiniWindowMouseHooks` interface each frontend implements;
+  `m_sPreviousMiniWindow` is doc-homed (one view per doc — identical
+  behaviour). The wx frame's ~230-line mouse mirror is deleted; the port
+  gained real drag capture, Windows' exact wheel flag packing, and
+  wheel-consumption over any miniwindow.
+  **S4c landed:** the wx pane fires `ON_PLUGIN_DRAW_OUTPUT_WINDOW` between
+  the underneath composite and the text pass with Windows' exact arguments
+  (1-based first visible doc line + pixel scroll offset; pane→doc line
+  mapping via the tail-aligned counts), guarded against mid-paint script
+  re-entrancy (deferred appends). **S4 is complete.**
 
 Status: **S1** (CPU reference), **S2** (wx adapter), and **S3a–S3c** are landed on
 all platforms — the whole **rect + text/font + shape/pen** drawing surface now

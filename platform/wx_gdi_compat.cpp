@@ -1371,6 +1371,72 @@ unsigned long wxgdi_get_pixel(void* hdcv, int x, int y) {
     return dc ? (unsigned long) dc->GetPixel(x, y) : 0;
 }
 
+// Raw BGRA read of the bitmap selected in a shim CDC — used by WxSurface's
+// alpha-preserving readPixels (pal::PixelFormat::BGRA32_Alpha, i.e. the
+// WindowDrawImageAlpha / WindowGetImageAlpha image read). Deliberately does
+// NOT go through wxDC::Blit: on wxOSX Blit composites (premultiplies against
+// the destination) instead of copying bytes, which corrupts semi-transparent
+// pixels — Windows BitBlt into a 32bpp DIB copies the source's BGRA verbatim.
+// Reads the DC's DIBSection buffer when one is selected (authoritative bytes),
+// else the selected wxBitmap via wxImage (alpha 255 when it has no alpha
+// channel; note wxOSX stores premultiplied, so RGB under partial alpha can be
+// off by quantization — alpha itself is exact).
+// dst is the base of an h-row BOTTOM-UP buffer (DIB order): image row j lives
+// at dst + (h-1-j)*strideBytes, 4 bytes/pixel. Pixels outside the bitmap are
+// left untouched (callers pre-zero the buffer — BitBlt's leave-as-zero OOB
+// behaviour happens engine-side).
+bool wxgdi_read_bgra(CDC* dc, int x, int y, int w, int h,
+                     unsigned char* dst, int strideBytes)
+{
+    if (!dc || !dst || w <= 0 || h <= 0) return false;
+
+    if (dc->m_hDC) {
+        if (DIBSectionData* dib = GetDIBForHDC(dc->m_hDC)) {
+            const int bpp = dib->bytesPerPixel;
+            for (int j = 0; j < h; ++j) {
+                const int sy = y + j;
+                if (sy < 0 || sy >= dib->height) continue;
+                const int srow = dib->bottomUp ? (dib->height - 1 - sy) : sy;
+                const unsigned char* src = dib->pixels.data()
+                                         + (size_t)srow * dib->stride;
+                unsigned char* out = dst + (size_t)(h - 1 - j) * strideBytes;
+                for (int i = 0; i < w; ++i) {
+                    const int sx = x + i;
+                    if (sx < 0 || sx >= dib->width) continue;
+                    const unsigned char* px = src + (size_t)sx * bpp;
+                    unsigned char* o = out + (size_t)i * 4;
+                    o[0] = px[0]; o[1] = px[1]; o[2] = px[2];
+                    o[3] = (bpp == 4) ? px[3] : 255;
+                }
+            }
+            return true;
+        }
+    }
+
+    CDCImpl* p = Impl(dc);
+    if (!p) return false;
+    const wxBitmap& bmp = p->dc.GetSelectedBitmap();
+    if (!bmp.IsOk()) return false;
+    wxImage img = bmp.ConvertToImage();
+    const bool hasA = img.HasAlpha();
+    const int bw = img.GetWidth(), bh = img.GetHeight();
+    for (int j = 0; j < h; ++j) {
+        const int sy = y + j;
+        if (sy < 0 || sy >= bh) continue;
+        unsigned char* out = dst + (size_t)(h - 1 - j) * strideBytes;
+        for (int i = 0; i < w; ++i) {
+            const int sx = x + i;
+            if (sx < 0 || sx >= bw) continue;
+            unsigned char* o = out + (size_t)i * 4;
+            o[0] = img.GetBlue(sx, sy);
+            o[1] = img.GetGreen(sx, sy);
+            o[2] = img.GetRed(sx, sy);
+            o[3] = hasA ? img.GetAlpha(sx, sy) : 255;
+        }
+    }
+    return true;
+}
+
 bool CDC::PatBlt(int x, int y, int nWidth, int nHeight, DWORD dwRop) {
     CDCImpl* p = Impl(this);
     if (!p) return false;

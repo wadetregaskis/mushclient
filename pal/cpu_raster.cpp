@@ -76,7 +76,10 @@ void CpuRaster::readPixels(SurfaceId id, Rect r, PixelBuffer& out, PixelFormat f
         unsigned char*       dst = out.row(y);
         for (int x = 0; x < r.w; ++x, src += 4, dst += bpp) {
             dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2];
-            if (bpp == 4) dst[3] = 0;                     // surface alpha pinned 0
+            if (bpp == 4)                                 // surface alpha pinned 0;
+                dst[3] = (fmt == PixelFormat::BGRA32_Alpha) ? src[3] : 0;
+                // _Alpha passes the stored byte through (0 here — this adapter
+                // has no image sources, matching a GDI drawing surface)
         }
     }
 }

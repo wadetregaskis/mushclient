@@ -374,12 +374,20 @@ exactly), including the six hatches and MUSHclient's five built-in mono pattern
 brushes (carried as `BrushSpec.monoPattern` so each adapter builds a native mono
 brush and GDI applies its own text/bk mapping — byte-exact without guessing).
 `WindowGradient` is also landed (all three modes: linear H/V via `gradient()`,
-and the texture fill via `MakeTexture` → `writePixels()`). The **only remaining**
-miniwindow drawing family is **image / blit** (`WindowDrawImage`, `DrawImageAlpha`,
-`Blt`, `MergeImageAlpha`, `LoadImage`, `CreateImage`, `GetPixel`/`SetPixel` → the
-`blit` ops + `readPixels`/`getPixel`, image storage moved to engine-owned
-`PixelBuffer`s, plus arbitrary-image pattern brushes). Those GDI-adapter methods
-(`createSurface`/`readPixels`/`getPixel`/`blit`) remain stubbed until it migrates.
+and the texture fill via `MakeTexture` → `writePixels()`), as are **S3d1–S3d5**:
+`WindowGetPixel`/`WindowSetPixel` (`getPixel`/`setPixel`), `WindowDrawImage`
+(the temp-adopt trick: the engine-owned image `CBitmap` is wrapped as a source
+surface at draw time — no storage refactor), `WindowFilter` (`readPixels` →
+the 27 unchanged filter loops → `writePixels`), and the alpha pair
+`WindowDrawImageAlpha`/`WindowGetImageAlpha` via `PixelFormat::BGRA32_Alpha` —
+an alpha-preserving read that reproduces Windows BitBlt-into-32bpp-DIB
+semantics (real image alpha; the wx adapter reads the selected bitmap's
+`wxImage` directly because `wxDC::Blit` composites on wxOSX; reads past the
+image edge zero-fill engine-side exactly like BitBlt). Remaining in the image
+family: `MergeImageAlpha`, `BlendImage` (BGR24 — same read/loop/write recipe),
+`WindowImageOp` (arbitrary-image pattern brushes → `BrushSpec.pattern` + the
+GDI buffer-source `blit` stub), `ImageFromWindow`, and `Write` (save-window).
+GDI-adapter stubs left: `createSurface` + the buffer-source `blit` only.
 
 ## Migration (incremental, always-green; Windows never perturbed)
 

@@ -35,9 +35,15 @@ namespace pal {
 //   BGR24:  3 bytes/pixel, [B,G,R]
 //   BGRA32: 4 bytes/pixel, [B,G,R,A]  (surface readback pins A = 0; alpha is
 //           meaningful only in engine-owned image buffers and brush patterns)
+//   BGRA32_Alpha: readPixels only — as BGRA32 but the source's 4th byte is
+//           preserved instead of pinned (Windows BitBlt-into-32bpp-DIB
+//           semantics: real alpha when the source is a 32bpp image bitmap,
+//           whatever GDI left there for an ordinary drawing surface). Used by
+//           the alpha image ops (WindowDrawImageAlpha / WindowGetImageAlpha)
+//           on temporarily-adopted image sources.
 //   rows padded to 4-byte boundaries; stored BOTTOM-UP (image row y lives at
 //   buffer row h-1-y).
-enum class PixelFormat : std::uint8_t { BGR24, BGRA32 };
+enum class PixelFormat : std::uint8_t { BGR24, BGRA32, BGRA32_Alpha };
 
 struct PixelBuffer {
     std::vector<unsigned char> bytes;

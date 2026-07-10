@@ -581,6 +581,38 @@ static long BrushSpecFromWin32 (long BrushStyle, long PenColour, long BrushColou
   return eOK;
   } // end of BrushSpecFromWin32
 
+// Read a region from a surface into a full-request-size buffer, exactly like
+// the old "BitBlt into a zero-initialised DIBSection": a read past the source's
+// edge leaves zero bytes there (alpha 0 = keep base, for the alpha ops) instead
+// of shrinking the buffer the way adapters' readPixels clipping does.
+static void ReadRegionZeroFill (pal::ISurface * srf, pal::SurfaceId id,
+                                long x, long y, long w, long h,
+                                pal::PixelFormat fmt, pal::PixelBuffer & out)
+  {
+  out.format = fmt;
+  out.size   = { (int) w, (int) h };
+  out.stride = pal::PixelBuffer::strideFor ((int) w, fmt);
+  out.bytes.assign ((size_t) out.stride * h, 0);
+
+  pal::PixelBuffer part;
+  srf->readPixels (id, { (int) x, (int) y, (int) w, (int) h }, part, fmt);
+  if (!part.valid ())
+    return;
+
+  // the adapter clipped to the source bounds; place the surviving pixels where
+  // BitBlt would have put them (offset by whatever was clipped off left/top —
+  // zero for the image ops, whose x/y are pre-clamped >= 0)
+  long dx = x < 0 ? -x : 0,
+       dy = y < 0 ? -y : 0;
+  long copyW = part.size.w < w - dx ? part.size.w : w - dx;
+  if (copyW <= 0)
+    return;
+  for (int row = 0; row < part.size.h && dy + row < h; row++)
+    memcpy (out.row ((int) dy + row) + (size_t) dx * out.bytesPerPixel (),
+            part.row (row),
+            (size_t) copyW * part.bytesPerPixel ());
+  } // end of ReadRegionZeroFill
+
 /*
 
   Actions:
@@ -3686,53 +3718,44 @@ long CMiniWindow::DrawImageAlpha(LPCTSTR ImageId,
   if (iWidth <= 0 || iHeight <= 0)   // sanity check
     return eOK;
 
-  // merge layer (from image id)
-  CDC A_DC;
-  A_DC.CreateCompatibleDC(&(*pdc));
+  pal::ISurface * srf = pal::g_surface;
+  if (!srf)
+    return eOK;
 
-  BITMAPINFO bmi;
-  ZeroMemory (&bmi, sizeof bmi);
-
-  bmi.bmiHeader.biSize = sizeof bmi;
-  bmi.bmiHeader.biWidth =          iWidth;
-  bmi.bmiHeader.biHeight =         iHeight;
-  bmi.bmiHeader.biPlanes =         1;
-  bmi.bmiHeader.biBitCount =       32;
-  bmi.bmiHeader.biCompression =    BI_RGB;
-  bmi.bmiHeader.biSizeImage =      iHeight * BytesPerLine (iWidth, 32);
-
-  unsigned char * pA = NULL;
-
-  HBITMAP hbmA = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**) &pA, NULL, 0);
-
-  HBITMAP hOldAbmp = (HBITMAP) SelectObject(A_DC.m_hDC, hbmA);
-
+  // merge layer (from image id): the image's raw BGRA bytes with REAL alpha —
+  // the old code BitBlt'ed the image into a zero-initialised 32bpp DIBSection,
+  // which copies a 32bpp source's alpha verbatim and leaves zeros (alpha 0 =
+  // keep base) wherever the read runs past the image edge. The temporary adopt
+  // wraps the engine-owned CBitmap exactly as DrawImage does.
   CDC bmDC;   // for loading bitmaps into
   bmDC.CreateCompatibleDC(&(*pdc));
-
-  //copy part from image to upper layer
   CBitmap *pOldbmp = bmDC.SelectObject(bitmap);
-  A_DC.BitBlt (0, 0, iWidth, iHeight, &bmDC, SrcLeft, SrcTop, SRCCOPY);
+  pal::SurfaceId imgSid = pal::g_adoptSurface
+                        ? pal::g_adoptSurface (&bmDC, bi.bmWidth, bi.bmHeight)
+                        : pal::SurfaceId::None;
+
+  pal::PixelBuffer bufA;
+  ReadRegionZeroFill (srf, imgSid, SrcLeft, SrcTop, iWidth, iHeight,
+                      pal::PixelFormat::BGRA32_Alpha, bufA);
+
+  if (pal::g_releaseAdoptedSurface)
+    pal::g_releaseAdoptedSurface (imgSid);
   bmDC.SelectObject(pOldbmp);
 
+  // base image (from miniwindow) — always in bounds (rect pre-clamped above);
+  // its alpha bytes are pinned but the blend never reads them
+  pal::PixelBuffer bufB;
+  srf->readPixels (m_surfaceId,
+                   { (int) Left, (int) Top, (int) iWidth, (int) iHeight },
+                   bufB, pal::PixelFormat::BGRA32);
 
-  // base image (from miniwindow)
+  if (!bufB.valid () || bufB.bytes.size () != bufA.bytes.size ())
+    return eOK;
 
-  CDC B_DC;
-  B_DC.CreateCompatibleDC(&(*pdc));
-  CBitmap B_bmp;
+  unsigned char * pA = bufA.bytes.data ();
+  unsigned char * pB = bufB.bytes.data ();
 
-  unsigned char * pB = NULL;
-
-  HBITMAP hbmB = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**) &pB, NULL, 0);
-
-  HBITMAP hOldBbmp = (HBITMAP) SelectObject(B_DC.m_hDC, hbmB);
-
-  // copy base image from miniwindow to bitmap
-  B_DC.BitBlt (0, 0, iWidth, iHeight, &(*pdc), Left, Top, SRCCOPY);
-
-
-  long count = bmi.bmiHeader.biSizeImage;
+  long count = (long) bufB.bytes.size ();
 
   long i;
 
@@ -3762,14 +3785,8 @@ long CMiniWindow::DrawImageAlpha(LPCTSTR ImageId,
 
   // copy result back
 
-  pdc->BitBlt (Left, Top, iWidth, iHeight, &B_DC, 0, 0, SRCCOPY);
-
-
-  SelectObject(A_DC.m_hDC, hOldAbmp);
-  SelectObject(B_DC.m_hDC, hOldBbmp);
-
-  DeleteObject (hbmA);
-  DeleteObject (hbmB);
+  srf->writePixels (m_surfaceId,
+                    { (int) Left, (int) Top, (int) iWidth, (int) iHeight }, bufB);
 
   return eOK;
 
@@ -3820,50 +3837,39 @@ long CMiniWindow::GetImageAlpha(LPCTSTR ImageId,
   if (iWidth <= 0 || iHeight <= 0)   // sanity check
     return eOK;
 
-  // merge layer (from image id)
-  CDC A_DC;
-  A_DC.CreateCompatibleDC(&(*pdc));
+  pal::ISurface * srf = pal::g_surface;
+  if (!srf)
+    return eOK;
 
-  BITMAPINFO bmi;
-  ZeroMemory (&bmi, sizeof bmi);
-
-  bmi.bmiHeader.biSize = sizeof bmi;
-  bmi.bmiHeader.biWidth =          iWidth;
-  bmi.bmiHeader.biHeight =         iHeight;
-  bmi.bmiHeader.biPlanes =         1;
-  bmi.bmiHeader.biBitCount =       32;
-  bmi.bmiHeader.biCompression =    BI_RGB;
-  bmi.bmiHeader.biSizeImage =      iHeight * BytesPerLine (iWidth, 32);
-
-  unsigned char * pA = NULL;
-
-  HBITMAP hbmA = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**) &pA, NULL, 0);
-
-  HBITMAP hOldAbmp = (HBITMAP) SelectObject(A_DC.m_hDC, hbmA);
-
+  // merge layer (from image id) — raw BGRA with real alpha, zero-filled past
+  // the image edge, exactly the old BitBlt into a zero-initialised DIBSection
   CDC bmDC;   // for loading bitmaps into
   bmDC.CreateCompatibleDC(&(*pdc));
-
-  //copy part from image to upper layer
   CBitmap *pOldbmp = bmDC.SelectObject(bitmap);
-  A_DC.BitBlt (0, 0, iWidth, iHeight, &bmDC, SrcLeft, SrcTop, SRCCOPY);
+  pal::SurfaceId imgSid = pal::g_adoptSurface
+                        ? pal::g_adoptSurface (&bmDC, bi.bmWidth, bi.bmHeight)
+                        : pal::SurfaceId::None;
+
+  pal::PixelBuffer bufA;
+  ReadRegionZeroFill (srf, imgSid, SrcLeft, SrcTop, iWidth, iHeight,
+                      pal::PixelFormat::BGRA32_Alpha, bufA);
+
+  if (pal::g_releaseAdoptedSurface)
+    pal::g_releaseAdoptedSurface (imgSid);
   bmDC.SelectObject(pOldbmp);
 
+  // base layer starts as zeros — the old B DIBSection was zero-initialised and
+  // never blitted into
+  pal::PixelBuffer bufB;
+  bufB.format = pal::PixelFormat::BGRA32;
+  bufB.size   = { (int) iWidth, (int) iHeight };
+  bufB.stride = pal::PixelBuffer::strideFor ((int) iWidth, pal::PixelFormat::BGRA32);
+  bufB.bytes.assign ((size_t) bufB.stride * iHeight, 0);
 
-  // base image (from miniwindow)
+  unsigned char * pA = bufA.bytes.data ();
+  unsigned char * pB = bufB.bytes.data ();
 
-  CDC B_DC;
-  B_DC.CreateCompatibleDC(&(*pdc));
-  CBitmap B_bmp;
-
-  unsigned char * pB = NULL;
-
-  HBITMAP hbmB = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**) &pB, NULL, 0);
-
-  HBITMAP hOldBbmp = (HBITMAP) SelectObject(B_DC.m_hDC, hbmB);
-
-
-  long count = bmi.bmiHeader.biSizeImage;
+  long count = (long) bufB.bytes.size ();
 
   long i;
 
@@ -3879,14 +3885,8 @@ long CMiniWindow::GetImageAlpha(LPCTSTR ImageId,
 
   // copy result back
 
-  pdc->BitBlt (Left, Top, iWidth, iHeight, &B_DC, 0, 0, SRCCOPY);
-
-
-  SelectObject(A_DC.m_hDC, hOldAbmp);
-  SelectObject(B_DC.m_hDC, hOldBbmp);
-
-  DeleteObject (hbmA);
-  DeleteObject (hbmB);
+  srf->writePixels (m_surfaceId,
+                    { (int) Left, (int) Top, (int) iWidth, (int) iHeight }, bufB);
 
   return eOK;
 

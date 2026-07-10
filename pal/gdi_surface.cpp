@@ -545,6 +545,9 @@ void GdiSurface::readPixels(SurfaceId id, Rect r, PixelBuffer& out, PixelFormat 
     out.bytes.assign(bits, bits + bmi.bmiHeader.biSizeImage);
     if (fmt == PixelFormat::BGRA32)              // a surface has no alpha — pin it 0
         for (size_t i = 3; i < out.bytes.size(); i += 4) out.bytes[i] = 0;
+    // BGRA32_Alpha: no pin — the BitBlt above copied the source's 4th byte
+    // verbatim (real alpha for a 32bpp DIBSection image, GDI-left bytes for a
+    // DDB surface), which is exactly the original DrawImageAlpha A-read.
 
     ::SelectObject(tmp.GetSafeHdc(), hOld);
     ::DeleteObject(hbm);

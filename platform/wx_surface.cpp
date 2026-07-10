@@ -28,6 +28,11 @@
 // (defined in wx_outputpane.cpp; the decided legacy-charset fix reuses it).
 wxFontEncoding WinCharsetToEncoding(int cs);
 
+// Raw BGRA read of a CDC's selected bitmap, bypassing wxDC::Blit (which
+// composites on wxOSX). Defined in wx_gdi_compat.cpp; see the note there.
+bool wxgdi_read_bgra(CDC* dc, int x, int y, int w, int h,
+                     unsigned char* dst, int strideBytes);
+
 namespace pal {
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -136,6 +141,22 @@ void WxSurface::readPixels(SurfaceId id, Rect r, PixelBuffer& out, PixelFormat f
     Surf* s = surf(id);
     out = PixelBuffer{};
     if (!s || !clipToBounds(r, s->size)) return;
+
+    if (fmt == PixelFormat::BGRA32_Alpha) {
+        // Alpha-preserving read — straight off the DC's selected bitmap
+        // (wxgdi_read_bgra). The BitBlt round-trip below is unusable here:
+        // wxDC::Blit composites on wxOSX instead of copying bytes, which
+        // would corrupt semi-transparent pixels. Windows BitBlt into a
+        // 32bpp DIB copies the source's BGRA verbatim; this reproduces that.
+        out.format = fmt;
+        out.size   = { r.w, r.h };
+        out.stride = PixelBuffer::strideFor(r.w, fmt);
+        out.bytes.assign((size_t)out.stride * r.h, 0);
+        if (!wxgdi_read_bgra(s->dc, r.x, r.y, r.w, r.h,
+                             out.bytes.data(), out.stride))
+            out = PixelBuffer{};
+        return;
+    }
 
     const int bpp = (fmt == PixelFormat::BGR24) ? 24 : 32;
     BITMAPINFO bmi;
@@ -977,6 +998,62 @@ int RunPalSurfaceSelfTest() {
         ad.destroyFont(tf);
         ad.destroySurface(as);
         dc.SelectObject(oldb); bmp.DeleteObject();
+    }
+
+    // 14. alpha-preserving image read (BGRA32_Alpha) — the exact
+    // WindowDrawImageAlpha path: a 32bpp DIBSection with alpha (as LoadPng
+    // makes) Attach-materialized into a CBitmap, selected into a CDC, adopted,
+    // then read back. Alpha must be exact; RGB is asserted at A=255 only
+    // (wxOSX stores premultiplied, so RGB under partial alpha may quantize).
+    {
+        BITMAPINFO bmi; memset(&bmi, 0, sizeof bmi);
+        bmi.bmiHeader.biSize = sizeof bmi;
+        bmi.bmiHeader.biWidth = 4; bmi.bmiHeader.biHeight = 2;   // bottom-up
+        bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        bmi.bmiHeader.biSizeImage = 2 * 16;
+        unsigned char* bits = NULL;
+        HBITMAP hbm = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS,
+                                       (void**)&bits, NULL, 0);
+        auto put = [&](int x, int y, unsigned char B, unsigned char G,
+                       unsigned char R, unsigned char A) {
+            unsigned char* p = bits + (size_t)(1 - y) * 16 + (size_t)x * 4;
+            p[0] = B; p[1] = G; p[2] = R; p[3] = A;
+        };
+        put(0, 0, 10, 20, 30, 255);  put(1, 0, 40, 50, 60, 128);
+        put(2, 0, 70, 80, 90, 37);   put(3, 0, 200, 150, 100, 0);
+        put(0, 1, 1, 2, 3, 255);
+        CBitmap img; img.Attach((HGDIOBJ)hbm);   // materializes + frees the DIB
+        CDC idc; idc.CreateCompatibleDC(NULL);
+        CBitmap* oldi = idc.SelectObject(&img);
+        SurfaceId is = impl.adopt(&idc, { 4, 2 });
+
+        PixelBuffer pa;
+        ad.readPixels(is, { 0, 0, 4, 2 }, pa, PixelFormat::BGRA32_Alpha);
+        bool aOk = pa.valid() && pa.size.w == 4 && pa.size.h == 2;
+        if (aOk) {
+            const unsigned char* r0 = pa.row(0);
+            aOk = r0[3] == 255 && r0[7] == 128 && r0[11] == 37 && r0[15] == 0
+               && r0[0] == 10 && r0[1] == 20 && r0[2] == 30
+               && pa.row(1)[0] == 1 && pa.row(1)[3] == 255;
+        }
+        stCheck(aOk, "readPixels BGRA32_Alpha: real image alpha (+RGB at A=255)");
+
+        PixelBuffer pc;
+        ad.readPixels(is, { 2, 0, 4, 2 }, pc, PixelFormat::BGRA32_Alpha);
+        stCheck(pc.valid() && pc.size.w == 2 && pc.size.h == 2 &&
+                pc.row(0)[3] == 37, "BGRA32_Alpha read clips to image bounds");
+
+        PixelBuffer pp;
+        ad.readPixels(is, { 0, 0, 4, 2 }, pp, PixelFormat::BGRA32);
+        bool pinOk = pp.valid();
+        if (pinOk)
+            for (size_t k = 3; k < pp.bytes.size(); k += 4)
+                if (pp.bytes[k]) { pinOk = false; break; }
+        stCheck(pinOk, "readPixels BGRA32 still pins surface alpha to 0");
+
+        ad.destroySurface(is);
+        idc.SelectObject(oldi);
     }
 
     printf("  dpi() reports: %d\n", ad.dpi());

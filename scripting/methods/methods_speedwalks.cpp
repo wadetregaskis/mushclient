@@ -22,34 +22,11 @@
 // rewritten 17th August 2002 to make it easier to follow and less buggy :)
 //  (and support comments)
 
-// MakeSpeedWalkErrorString, DoEvaluateSpeedwalk and DoReverseSpeedwalk now live
-// in the shared speedwalk.cpp (compiled into both the GUI and the portable
-// libraries) so the parsing logic cannot drift.  These thin wrappers inject the
-// MapDirectionsMap-backed direction lookups that the GUI build uses.
+// The speedwalk parsing lives in the shared speedwalk.cpp, and the
+// MapDirectionsMap-backed direction wrappers (DoEvaluateSpeedwalk /
+// DoReverseSpeedwalk) live in the shared doc_shared.cpp — one body for every
+// build, so nothing can drift (docs/PAL.md P1).
 
-static CString SpeedwalkForwardDir (char letter)
-  {
-  return CString (MapDirectionsMap [string (1, letter)].m_sDirectionToSend.c_str ());
-  }
-
-static CString SpeedwalkReverseDir (char letter)
-  {
-  return CString (MapDirectionsMap [string (1, letter)].m_sReverseDirection.c_str ());
-  }
-
-static CString SpeedwalkReverseWord (const CString & word)
-  {
-  MapDirectionsIterator i = MapDirectionsMap.find ((LPCTSTR) word);
-  if (i != MapDirectionsMap.end ())
-    return CString (i->second.m_sReverseDirection.c_str ());
-  return CString ();
-  }
-
-CString CMUSHclientDoc::DoEvaluateSpeedwalk(LPCTSTR SpeedWalkString)
-{
-  return ExpandSpeedwalk (SpeedWalkString, m_strSpeedWalkFiller, ENDLINE,
-                          SpeedwalkForwardDir);
-}   // end of CMUSHclientDoc::DoEvaluateSpeedwalk
 
 
 BSTR CMUSHclientDoc::EvaluateSpeedwalk(LPCTSTR SpeedWalkString) 
@@ -58,11 +35,6 @@ CString strResult = DoEvaluateSpeedwalk (SpeedWalkString);
 	return strResult.AllocSysString();
   }   // end of CMUSHclientDoc::EvaluateSpeedwalk
 
-CString CMUSHclientDoc::DoReverseSpeedwalk(LPCTSTR SpeedWalkString)
-{
-  return ReverseSpeedwalkString (SpeedWalkString, ENDLINE,
-                                 SpeedwalkReverseDir, SpeedwalkReverseWord);
-}   // end of CMUSHclientDoc::DoReverseSpeedwalk
 
 BSTR CMUSHclientDoc::ReverseSpeedwalk(LPCTSTR SpeedWalkString) 
   {

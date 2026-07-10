@@ -2301,48 +2301,6 @@ CString CMUSHclientDoc::FormatTime(CTime t, const char* fmt, bool /*bUTC*/)
 // mushcore and mushapp) so it cannot drift from the Windows original. These thin
 // wrappers inject the portable built-in n/s/e/w/u/d direction tables — the
 // GUI-only MapDirectionsMap is not populated in the portable/CLI build. The line
-// terminator stays "\n" here, matching the portable command pipeline.
-
-static CString PortableSpeedwalkForwardDir (char letter)
-{
-    switch (letter) {
-        case 'n': return "north"; case 's': return "south"; case 'e': return "east";
-        case 'w': return "west";  case 'u': return "up";    case 'd': return "down";
-    }
-    return CString();   // unknown — matches the empty-MapDirectionsMap result
-}
-
-static CString PortableSpeedwalkReverseDir (char letter)
-{
-    switch (letter) {
-        case 'n': return "s"; case 's': return "n"; case 'e': return "w";
-        case 'w': return "e"; case 'u': return "d"; case 'd': return "u";
-        case 'f': return "f";
-    }
-    return CString();
-}
-
-static CString PortableSpeedwalkReverseWord (const CString& word)
-{
-    static const char* tbl[][2] = {
-        {"ne","sw"}, {"sw","ne"}, {"nw","se"}, {"se","nw"}, {"f","f"}, {nullptr,nullptr}
-    };
-    for (int i = 0; tbl[i][0]; ++i)
-        if (word == tbl[i][0]) return CString(tbl[i][1]);
-    return CString();
-}
-
-CString CMUSHclientDoc::DoEvaluateSpeedwalk(const char* strInput)
-{
-    return ExpandSpeedwalk(strInput, m_strSpeedWalkFiller, "\n",
-                           PortableSpeedwalkForwardDir);
-}
-
-CString CMUSHclientDoc::DoReverseSpeedwalk(LPCTSTR SpeedWalkString)
-{
-    return ReverseSpeedwalkString(SpeedWalkString, "\n",
-                                  PortableSpeedwalkReverseDir, PortableSpeedwalkReverseWord);
-}
 
 // ── CMUSHclientDoc::CheckConnected ────────────────────────────────────────
 // MUSHclient convention: returns 0 (FALSE) if connected, non-zero if not.

@@ -4,7 +4,8 @@
 // expansion, the C/O/L/K action prefixes (close/open/lock/unlock), and the
 // per-digit repeat-count cap (no integer overflow).
 //
-// The portable build uses ENDLINE "\n".
+// Every build shares the doc_shared.cpp wrappers now: the terminator is
+// ENDLINE ("\r\n"), exactly what Windows has always produced (P1b de-drift).
 
 #include "mc_test.h"
 #include "platform/doc_stub.h"
@@ -14,13 +15,13 @@
 TEST(Speedwalk, SingleDirectionExpands)
 {
     CMUSHclientDoc doc;
-    EXPECT_STREQ("north\n", (const char*)doc.DoEvaluateSpeedwalk("n"));
+    EXPECT_STREQ("north\r\n", (const char*)doc.DoEvaluateSpeedwalk("n"));
 }
 
 TEST(Speedwalk, RepeatCountExpands)
 {
     CMUSHclientDoc doc;
-    EXPECT_STREQ("north\nnorth\nnorth\n", (const char*)doc.DoEvaluateSpeedwalk("3n"));
+    EXPECT_STREQ("north\r\nnorth\r\nnorth\r\n", (const char*)doc.DoEvaluateSpeedwalk("3n"));
 }
 
 // ── C/O/L/K action codes (Windows parity — were missing on the port) ───────
@@ -29,22 +30,22 @@ TEST(Speedwalk, OpenActionPrefixesDirection)
 {
     // "on" -> open the door to the north, sent as one line "open north".
     CMUSHclientDoc doc;
-    EXPECT_STREQ("open north\n", (const char*)doc.DoEvaluateSpeedwalk("on"));
+    EXPECT_STREQ("open north\r\n", (const char*)doc.DoEvaluateSpeedwalk("on"));
 }
 
 TEST(Speedwalk, CloseLockUnlockActions)
 {
     CMUSHclientDoc doc;
-    EXPECT_STREQ("close south\n", (const char*)doc.DoEvaluateSpeedwalk("cs"));
-    EXPECT_STREQ("lock east\n",   (const char*)doc.DoEvaluateSpeedwalk("le"));
-    EXPECT_STREQ("unlock west\n", (const char*)doc.DoEvaluateSpeedwalk("kw"));
+    EXPECT_STREQ("close south\r\n", (const char*)doc.DoEvaluateSpeedwalk("cs"));
+    EXPECT_STREQ("lock east\r\n",   (const char*)doc.DoEvaluateSpeedwalk("le"));
+    EXPECT_STREQ("unlock west\r\n", (const char*)doc.DoEvaluateSpeedwalk("kw"));
 }
 
 TEST(Speedwalk, ActionCodeThenMovement)
 {
     // "onn": open the north door, then walk north.
     CMUSHclientDoc doc;
-    EXPECT_STREQ("open north\nnorth\n", (const char*)doc.DoEvaluateSpeedwalk("onn"));
+    EXPECT_STREQ("open north\r\nnorth\r\n", (const char*)doc.DoEvaluateSpeedwalk("onn"));
 }
 
 TEST(Speedwalk, ActionCodeWithCountIsError)

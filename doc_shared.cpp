@@ -15,6 +15,8 @@
 #include "platform/doc_stub.h"
 #endif
 
+#include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
+
 #if defined(OPENSSL_FOUND)
 #include <openssl/ssl.h>
 #endif
@@ -523,4 +525,81 @@ long CMUSHclientDoc::GetUniqueNumber()
 {
   return (long) (App.GetUniqueNumber () & 0x7FFFFFFF);
 }  // end of CMUSHclientDoc::GetUniqueNumber
+
+
+
+// ── speedwalk direction lookups + the map-direction table (P1b de-drift) ────
+// Moved verbatim from methods_speedwalks.cpp and Mapping.cpp; the hardcoded
+// doc_portable.cpp approximations are deleted. Every build now expands and
+// reverses speedwalks through the SAME MapDirectionsMap the GUI uses
+// (including the "f" filler entry and the ENDLINE = CRLF terminator the
+// portable copies had drifted from).
+
+CMapDirectionsMap MapDirectionsMap;
+
+void LoadMapDirections (void)
+  {
+  //-------------------------------------------------------------------
+  //                direction                 log        full     reverse
+                                                        
+  MapDirectionsMap ["north"]  = CMapDirection ("n",     "north",  "s");
+  MapDirectionsMap ["south"]  = CMapDirection ("s",     "south",  "n");
+  MapDirectionsMap ["east"]   = CMapDirection ("e",     "east",   "w");
+  MapDirectionsMap ["west"]   = CMapDirection ("w",     "west",   "e");
+  MapDirectionsMap ["up"]     = CMapDirection ("u",     "up",     "d");
+  MapDirectionsMap ["down"]   = CMapDirection ("d",     "down",   "u");
+  MapDirectionsMap ["ne"]     = CMapDirection ("ne",    "ne",     "sw");
+  MapDirectionsMap ["nw"]     = CMapDirection ("nw",    "nw",     "se");
+  MapDirectionsMap ["se"]     = CMapDirection ("se",    "se",     "nw");
+  MapDirectionsMap ["sw"]     = CMapDirection ("sw",    "sw",     "ne");
+
+  // filler
+  MapDirectionsMap ["f"]      = CMapDirection ("f",     "f",      "f");
+
+  // now do abbreviations (copy above entries)
+  MapDirectionsMap ["n"]      = MapDirectionsMap ["north"];
+  MapDirectionsMap ["s"]      = MapDirectionsMap ["south"];
+  MapDirectionsMap ["e"]      = MapDirectionsMap ["east"];
+  MapDirectionsMap ["w"]      = MapDirectionsMap ["west"];
+  MapDirectionsMap ["u"]      = MapDirectionsMap ["up"];
+  MapDirectionsMap ["d"]      = MapDirectionsMap ["down"];
+
+  } // end of LoadMapDirections
+
+// The GUI app loads the default directions from InitInstance; the headless
+// engine has no InitInstance, so load them at static-initialisation time.
+// (On the GUI builds the InitInstance call then re-assigns identical
+// entries — idempotent, behaviour unchanged.)
+static struct SLoadMapDirectionsAtStartup
+  { SLoadMapDirectionsAtStartup () { LoadMapDirections (); } } zz_LoadMapDirections;
+
+static CString SpeedwalkForwardDir (char letter)
+  {
+  return CString (MapDirectionsMap [string (1, letter)].m_sDirectionToSend.c_str ());
+  }
+
+static CString SpeedwalkReverseDir (char letter)
+  {
+  return CString (MapDirectionsMap [string (1, letter)].m_sReverseDirection.c_str ());
+  }
+
+static CString SpeedwalkReverseWord (const CString & word)
+  {
+  MapDirectionsIterator i = MapDirectionsMap.find ((LPCTSTR) word);
+  if (i != MapDirectionsMap.end ())
+    return CString (i->second.m_sReverseDirection.c_str ());
+  return CString ();
+  }
+
+CString CMUSHclientDoc::DoEvaluateSpeedwalk(LPCTSTR SpeedWalkString)
+{
+  return ExpandSpeedwalk (SpeedWalkString, m_strSpeedWalkFiller, ENDLINE,
+                          SpeedwalkForwardDir);
+}   // end of CMUSHclientDoc::DoEvaluateSpeedwalk
+
+CString CMUSHclientDoc::DoReverseSpeedwalk(LPCTSTR SpeedWalkString)
+{
+  return ReverseSpeedwalkString (SpeedWalkString, ENDLINE,
+                                 SpeedwalkReverseDir, SpeedwalkReverseWord);
+}   // end of CMUSHclientDoc::DoReverseSpeedwalk
 

@@ -13,36 +13,8 @@
 static char BASED_CODE THIS_FILE[] = __FILE__;
 #endif
 
-CMapDirectionsMap MapDirectionsMap;
-
-void LoadMapDirections (void)
-  {
-  //-------------------------------------------------------------------
-  //                direction                 log        full     reverse
-                                                        
-  MapDirectionsMap ["north"]  = CMapDirection ("n",     "north",  "s");
-  MapDirectionsMap ["south"]  = CMapDirection ("s",     "south",  "n");
-  MapDirectionsMap ["east"]   = CMapDirection ("e",     "east",   "w");
-  MapDirectionsMap ["west"]   = CMapDirection ("w",     "west",   "e");
-  MapDirectionsMap ["up"]     = CMapDirection ("u",     "up",     "d");
-  MapDirectionsMap ["down"]   = CMapDirection ("d",     "down",   "u");
-  MapDirectionsMap ["ne"]     = CMapDirection ("ne",    "ne",     "sw");
-  MapDirectionsMap ["nw"]     = CMapDirection ("nw",    "nw",     "se");
-  MapDirectionsMap ["se"]     = CMapDirection ("se",    "se",     "nw");
-  MapDirectionsMap ["sw"]     = CMapDirection ("sw",    "sw",     "ne");
-
-  // filler
-  MapDirectionsMap ["f"]      = CMapDirection ("f",     "f",      "f");
-
-  // now do abbreviations (copy above entries)
-  MapDirectionsMap ["n"]      = MapDirectionsMap ["north"];
-  MapDirectionsMap ["s"]      = MapDirectionsMap ["south"];
-  MapDirectionsMap ["e"]      = MapDirectionsMap ["east"];
-  MapDirectionsMap ["w"]      = MapDirectionsMap ["west"];
-  MapDirectionsMap ["u"]      = MapDirectionsMap ["up"];
-  MapDirectionsMap ["d"]      = MapDirectionsMap ["down"];
-
-  } // end of LoadMapDirections
+// MapDirectionsMap + LoadMapDirections moved to doc_shared.cpp (shared by
+// every build so the portable engine sees the same directions - P1 de-drift).
 
 
 void CMUSHclientDoc::OnGameMapper() 

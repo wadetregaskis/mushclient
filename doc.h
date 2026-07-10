@@ -1401,6 +1401,12 @@ public:
   MiniWindowMap m_MiniWindows;
   MiniWindowVector m_MiniWindowsOrder;
 
+  // miniwindow the mouse was last over / down in — state for the engine-owned
+  // mouse routing (miniwindow_compose.cpp, docs/PAL.md S4). Was a CMUSHView
+  // member; doc-homed because every frontend routes through the same code
+  // (exactly one view per doc, so behaviour is identical).
+  string m_sPreviousMiniWindow;
+
   // sort miniwindows into Z-order
   void SortWindows (void);
 

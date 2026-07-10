@@ -230,10 +230,9 @@ private:
     // Write a single output line to the log file as plain text.
     void LogLine(const SOutputLine& line);
 
-    // ── Miniwindow mouse-tracking state ───────────────────────────────────
-    // These mirror m_sPreviousMiniWindow / GetCapture() tracking from CMUSHView.
-    std::string m_mw_prevWindow;      // name of miniwindow mouse was last over
-    bool        m_mw_mouseDown = false; // true while LH button is held in miniwindow
+    // (miniwindow mouse-tracking state is doc-homed now, used by the
+    //  engine-owned routing: CMUSHclientDoc::m_sPreviousMiniWindow +
+    //  pane capture via MiniWindowMouseHooks — docs/PAL.md S4)
 
     // ── Event handlers ────────────────────────────────────────────────────
     // User pressed Enter in the input bar — send text to the MUD.

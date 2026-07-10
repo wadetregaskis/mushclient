@@ -42,6 +42,7 @@
 #  define MW_MOUSE_RH          0x20
 #  define MW_MOUSE_DBL         0x40
 #  define MW_MOUSE_NOT_FIRST   0x80
+#  define MW_MOUSE_SCROLL_BACK 0x100
 #endif
 #include "platform/wx_gdi_compat.h"   // WxDCFromCDC
 #include "platform/wx_mfc_hooks.h"    // g_wxhook_set_status
@@ -940,328 +941,81 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     };
 
     // ── Miniwindow mouse-event callbacks ──────────────────────────────────
-    // These are called from COutputPane with raw client-space coordinates.
-    // They mirror CMUSHView::Mouse_Down/Up/Move_MiniWindow() but without the
-    // Windows CMUSHView member state dependencies.
-
-    // Helper: send a mouse event to a hotspot's script callback.
-    // Equivalent to CMUSHView::Send_Mouse_Event_To_Plugin() but uses wxWidgets
-    // key-state APIs instead of GetKeyState(VK_*).
-    auto send_mw_event =
-        [](CMUSHclientDoc* pDoc, DISPID& dispid,
-               const std::string& pluginId, const std::string& routine,
-               const std::string& hotspotId, long flags)
-    {
-        if (routine.empty()) return;
-
-        // Add keyboard modifier flags (same bits as Windows impl).
-        if (wxGetKeyState(WXK_SHIFT))   flags |= MW_MOUSE_SHIFT;
-        if (wxGetKeyState(WXK_RAW_CONTROL)) flags |= MW_MOUSE_CTRL;
-        if (wxGetKeyState(WXK_ALT))     flags |= MW_MOUSE_ALT;
-
-        if (pluginId.empty()) {
-            if (dispid == DISPID_UNKNOWN)
-                return;
-            pDoc->ExecuteHotspotScript(dispid, routine.c_str(),
-                                       flags, hotspotId.c_str());
-            return;
+    // Engine-owned routing (miniwindow_compose.cpp, docs/PAL.md S4): the old
+    // CMUSHView Mouse_* family, shared verbatim with the Windows view. The
+    // pane forwards raw client-space coordinates; WxMouseHooks supplies the
+    // view services (capture + keyboard modifiers; tooltips are a no-op here
+    // because the pane polls m_fn_get_tooltip on every motion, and mouse-leave
+    // needs no arming — wx delivers wxEVT_LEAVE_WINDOW natively).
+    struct WxMouseHooks : public MiniWindowMouseHooks {
+        COutputPane* pane;
+        WxMouseHooks(COutputPane* p) : pane(p) {}
+        virtual bool IsCaptured() { return pane && pane->HasCapture(); }
+        virtual void SetMouseCapture() {
+            if (pane && !pane->HasCapture()) pane->CaptureMouse();
         }
-        CPlugin* pPlugin = pDoc->GetPlugin(pluginId.c_str());
-        if (!pPlugin || !pPlugin->m_bEnabled) return;
-        DISPID id = pPlugin->m_ScriptEngine->GetDispid(routine.c_str());
-        if (id == DISPID_UNKNOWN) return;
-        CPlugin* savedPlugin = pDoc->m_CurrentPlugin;
-        pDoc->m_CurrentPlugin = pPlugin;
-        CScriptDispatchID dispid_info(id);
-        CScriptCallInfo callinfo(routine.c_str(), dispid_info);
-        pPlugin->ExecutePluginScript(callinfo, flags, hotspotId.c_str());
-        pDoc->m_CurrentPlugin = savedPlugin;
+        virtual void ReleaseMouseCapture() {
+            if (pane && pane->HasCapture()) pane->ReleaseMouse();
+        }
+        virtual long KeyboardModifiers() {
+            long flags = 0;
+            if (wxGetKeyState(WXK_SHIFT))       flags |= MW_MOUSE_SHIFT;
+            if (wxGetKeyState(WXK_RAW_CONTROL)) flags |= MW_MOUSE_CTRL;
+            if (wxGetKeyState(WXK_ALT))         flags |= MW_MOUSE_ALT;
+            return flags;
+        }
     };
 
-    // Helper: find which miniwindow (and hotspot) a client-space point is over.
-    // Returns the miniwindow pointer (or nullptr); sets sHotspotId, pHotspot,
-    // sMiniwindowId by reference. Mirrors CMUSHView::Mouse_Over_Miniwindow().
-    auto mw_hit_test =
-        [](CMUSHclientDoc* pDoc, int x, int y,
-           std::string& sHotspotId, CHotspot*& pHotspot, std::string& sMiniwindowId)
-        -> CMiniWindow*
-    {
-        // Engine-owned hit-test shared with the Windows view
-        // (MouseOverMiniWindow, miniwindow_compose.cpp, docs/PAL.md S4).
-        return MouseOverMiniWindow(pDoc, CPoint(x, y),
-                                   sHotspotId, pHotspot, sMiniwindowId);
-    };
-
-    // Mouse-down callback: fire MouseDown script, returns true if consumed.
-    // flags carries the button identity: MW_MOUSE_LH (0x10) or MW_MOUSE_RH (0x20).
-    m_output->m_fn_miniwindow_mouse_down =
-        [this, send_mw_event, mw_hit_test](int x, int y, long flags) -> bool
-    {
+    m_output->m_fn_miniwindow_mouse_down = [this](int x, int y, long flags) -> bool {
         if (!m_doc) return false;
-        std::string sHotspotId, sMiniwindowId;
-        CHotspot* pHotspot = nullptr;
-        CMiniWindow* mw = mw_hit_test(m_doc, x, y, sHotspotId, pHotspot, sMiniwindowId);
-        if (!mw) return false;
-
-        mw->m_last_mouseposition = CPoint(x - mw->m_rect.left, y - mw->m_rect.top);
-        mw->m_last_mouse_update++;
-
-        if (pHotspot) {
-            mw->m_sMouseDownHotspot = sHotspotId;
-            mw->m_FlagsOnMouseDown  = flags;   // remembered for Move/Release callbacks
-            m_mw_mouseDown = true;
-            mw->m_bExecutingScript = true;
-            send_mw_event(m_doc, pHotspot->m_dispid_MouseDown,
-                          mw->m_sCallbackPlugin,
-                          pHotspot->m_sMouseDown,
-                          sHotspotId, flags);
-            mw->m_bExecutingScript = false;
-        }
-        m_mw_prevWindow = sMiniwindowId;
-        return true;   // consumed — don't start text-selection drag
+        WxMouseHooks hooks(m_output);
+        return MouseDownMiniWindow(m_doc, CPoint(x, y), flags, hooks);
     };
 
-    // Mouse-up callback: fire MouseUp script.
-    // flags carries the button identity: MW_MOUSE_LH (0x10) or MW_MOUSE_RH (0x20).
-    m_output->m_fn_miniwindow_mouse_up =
-        [this, send_mw_event, mw_hit_test](int x, int y, long flags) -> bool
-    {
+    m_output->m_fn_miniwindow_mouse_up = [this](int x, int y, long flags) -> bool {
         if (!m_doc) return false;
-        bool wasDown = m_mw_mouseDown;
-        m_mw_mouseDown = false;
-
-        // ── Drag release ────────────────────────────────────────────────────
-        // Fire the captured hotspot's ReleaseCallback so the plugin can finalise
-        // a drag (e.g. save the new window position). Mirrors the drag-and-drop
-        // block in CMUSHView::Mouse_Up_MiniWindow (mushview.cpp). Safe for plain
-        // clicks too: send_mw_event no-ops when the hotspot has no ReleaseCallback.
-        if (wasDown && !m_mw_prevWindow.empty()) {
-            auto wit = m_doc->m_MiniWindows.find(m_mw_prevWindow);
-            if (wit != m_doc->m_MiniWindows.end()) {
-                CMiniWindow* prev_mw = wit->second;
-                prev_mw->m_client_mouseposition = CPoint(x, y);
-                if (!prev_mw->m_sMouseDownHotspot.empty()) {
-                    auto hit = prev_mw->m_Hotspots.find(prev_mw->m_sMouseDownHotspot);
-                    if (hit != prev_mw->m_Hotspots.end()) {
-                        prev_mw->m_bExecutingScript = true;
-                        send_mw_event(m_doc, hit->second->m_dispid_ReleaseCallback,
-                                      prev_mw->m_sCallbackPlugin,
-                                      hit->second->m_sReleaseCallback,
-                                      prev_mw->m_sMouseDownHotspot,
-                                      prev_mw->m_FlagsOnMouseDown);
-                        prev_mw->m_bExecutingScript = false;
-                    }
-                }
-            }
-        }
-
-        std::string sHotspotId, sMiniwindowId;
-        CHotspot* pHotspot = nullptr;
-        CMiniWindow* mw = mw_hit_test(m_doc, x, y, sHotspotId, pHotspot, sMiniwindowId);
-        if (!mw) return wasDown;
-
-        mw->m_last_mouseposition = CPoint(x - mw->m_rect.left, y - mw->m_rect.top);
-        mw->m_last_mouse_update++;
-
-        if (pHotspot && !mw->m_sMouseDownHotspot.empty()) {
-            mw->m_bExecutingScript = true;
-            send_mw_event(m_doc, pHotspot->m_dispid_MouseUp,
-                          mw->m_sCallbackPlugin,
-                          pHotspot->m_sMouseUp,
-                          sHotspotId, flags);
-            mw->m_bExecutingScript = false;
-        }
-        mw->m_sMouseDownHotspot.clear();
-        return pHotspot != nullptr;
+        WxMouseHooks hooks(m_output);
+        return MouseUpMiniWindow(m_doc, CPoint(x, y), flags, hooks);
     };
 
-    // Mouse-move callback: fire MouseOver / CancelMouseOver scripts.
-    // Returns the hotspot cursor code for the point (CHotspot::m_Cursor,
-    // -1..12), 0 (arrow) over a miniwindow without a hotspot, or -999 when
-    // not over a miniwindow (the pane then applies its own text cursors).
-    // This is the port's CHotspot::m_Cursor parity fix — the same mapping
-    // CMUSHView::OnSetCursor applies on Windows (docs/PAL.md S4).
-    m_output->m_fn_miniwindow_mouse_move =
-        [this, send_mw_event, mw_hit_test](int x, int y) -> int
-    {
+    m_output->m_fn_miniwindow_mouse_move = [this](int x, int y) -> int {
         if (!m_doc) return -999;
-
-        // ── Drag in progress ────────────────────────────────────────────────
-        // While a button is held after a mouse-down on a hotspot, dispatch that
-        // hotspot's MoveCallback so the plugin can reposition/resize the window
-        // as the mouse moves. Mirrors the drag-and-drop block in
-        // CMUSHView::Mouse_Move_MiniWindow (mushview.cpp).
-        if (m_mw_mouseDown) {
-            if (!m_mw_prevWindow.empty()) {
-                auto wit = m_doc->m_MiniWindows.find(m_mw_prevWindow);
-                if (wit != m_doc->m_MiniWindows.end()) {
-                    CMiniWindow* prev_mw = wit->second;
-                    // Record both absolute (client) and window-relative mouse
-                    // positions so the callback can read either via WindowInfo.
-                    prev_mw->m_client_mouseposition = CPoint(x, y);
-                    prev_mw->m_last_mouseposition   =
-                        CPoint(x - prev_mw->m_rect.left, y - prev_mw->m_rect.top);
-                    prev_mw->m_last_mouse_update++;
-                    if (!prev_mw->m_sMouseDownHotspot.empty()) {
-                        auto hit = prev_mw->m_Hotspots.find(prev_mw->m_sMouseDownHotspot);
-                        if (hit != prev_mw->m_Hotspots.end()) {
-                            prev_mw->m_bExecutingScript = true;
-                            send_mw_event(m_doc, hit->second->m_dispid_MoveCallback,
-                                          prev_mw->m_sCallbackPlugin,
-                                          hit->second->m_sMoveCallback,
-                                          prev_mw->m_sMouseDownHotspot,
-                                          prev_mw->m_FlagsOnMouseDown);
-                            prev_mw->m_bExecutingScript = false;
-                        }
-                    }
-                }
-            }
-            // drag consumes the move (no MouseOver processing) — but still
-            // report the hotspot cursor under the point, as Windows'
-            // OnSetCursor keeps doing during a captured drag
-            {
-                std::string cid, cwid;
-                CHotspot* ch = nullptr;
-                CMiniWindow* cmw = mw_hit_test(m_doc, x, y, cid, ch, cwid);
-                return cmw ? (ch ? (int)ch->m_Cursor : 0) : -999;
-            }
-        }
-
-        std::string sHotspotId, sMiniwindowId;
-        CHotspot* pHotspot = nullptr;
-        CMiniWindow* mw = mw_hit_test(m_doc, x, y, sHotspotId, pHotspot, sMiniwindowId);
-
-        if (mw) {
-            mw->m_last_mouseposition = CPoint(x - mw->m_rect.left, y - mw->m_rect.top);
-            mw->m_last_mouse_update++;
-        }
-
-        // If we've left the previous miniwindow, fire its CancelMouseOver.
-        if (sMiniwindowId != m_mw_prevWindow && !m_mw_prevWindow.empty()) {
-            auto it = m_doc->m_MiniWindows.find(m_mw_prevWindow);
-            if (it != m_doc->m_MiniWindows.end()) {
-                CMiniWindow* old_mw = it->second;
-                if (!old_mw->m_sMouseOverHotspot.empty()) {
-                    auto hit = old_mw->m_Hotspots.find(old_mw->m_sMouseOverHotspot);
-                    std::string oldHotspot = old_mw->m_sMouseOverHotspot;
-                    old_mw->m_sMouseOverHotspot.clear();
-                    if (hit != old_mw->m_Hotspots.end()) {
-                        old_mw->m_bExecutingScript = true;
-                        send_mw_event(m_doc,
-                                      hit->second->m_dispid_CancelMouseOver,
-                                      old_mw->m_sCallbackPlugin,
-                                      hit->second->m_sCancelMouseOver,
-                                      oldHotspot, 0);
-                        old_mw->m_bExecutingScript = false;
-                    }
-                }
-            }
-            m_mw_prevWindow.clear();
-        }
-
-        if (!mw || !pHotspot) {
-            // Cancel current hotspot in the current window if we left it.
-            if (mw && !mw->m_sMouseOverHotspot.empty() &&
-                mw->m_sMouseOverHotspot != sHotspotId)
-            {
-                auto hit = mw->m_Hotspots.find(mw->m_sMouseOverHotspot);
-                std::string old = mw->m_sMouseOverHotspot;
-                mw->m_sMouseOverHotspot.clear();
-                if (hit != mw->m_Hotspots.end()) {
-                    mw->m_bExecutingScript = true;
-                    send_mw_event(m_doc,
-                                  hit->second->m_dispid_CancelMouseOver,
-                                  mw->m_sCallbackPlugin,
-                                  hit->second->m_sCancelMouseOver,
-                                  old, 0);
-                    mw->m_bExecutingScript = false;
-                }
-            }
-            m_mw_prevWindow = sMiniwindowId;
-            // over a miniwindow without a hotspot -> arrow, as OnSetCursor
-            return mw ? 0 : -999;
-        }
-
-        m_mw_prevWindow = sMiniwindowId;
-
-        // Cancel previous hotspot if different.
-        std::string oldHotspotId = mw->m_sMouseOverHotspot;
-        if (!oldHotspotId.empty() && oldHotspotId != sHotspotId) {
-            auto hit = mw->m_Hotspots.find(oldHotspotId);
-            mw->m_sMouseOverHotspot.clear();
-            if (hit != mw->m_Hotspots.end()) {
-                mw->m_bExecutingScript = true;
-                send_mw_event(m_doc,
-                              hit->second->m_dispid_CancelMouseOver,
-                              mw->m_sCallbackPlugin,
-                              hit->second->m_sCancelMouseOver,
-                              oldHotspotId, 0);
-                mw->m_bExecutingScript = false;
-            }
-        }
-
-        // Re-check: hotspot might have been deleted by the cancel callback.
-        if (mw->m_Hotspots.find(sHotspotId) == mw->m_Hotspots.end())
-            return 0;   // over the window, hotspot gone -> arrow
-
-        // Fire MouseOver if we're newly over this hotspot.
-        bool firstTime = (mw->m_sMouseOverHotspot != sHotspotId);
-        mw->m_sMouseOverHotspot = sHotspotId;
-        long flags = firstTime ? 0 : 0x80;  // 0x80 = not first time
-        mw->m_bExecutingScript = true;
-        send_mw_event(m_doc,
-                      pHotspot->m_dispid_MouseOver,
-                      mw->m_sCallbackPlugin,
-                      pHotspot->m_sMouseOver,
-                      sHotspotId, flags);
-        mw->m_bExecutingScript = false;
-
-        // The MouseOver callback ran script and may have deleted the hotspot
-        // or the window — re-hit-test for the cursor, exactly as Windows'
-        // OnSetCursor does with a fresh Mouse_Over_Miniwindow pass.
-        {
-            std::string cid, cwid;
-            CHotspot* ch = nullptr;
-            CMiniWindow* cmw = mw_hit_test(m_doc, x, y, cid, ch, cwid);
-            return cmw ? (ch ? (int)ch->m_Cursor : 0) : -999;
-        }
+        WxMouseHooks hooks(m_output);
+        MouseMoveMiniWindow(m_doc, CPoint(x, y), hooks);
+        // Cursor: a fresh hit-test AFTER the move processing — the callbacks
+        // it dispatched may have deleted the hotspot or the window (this is
+        // what Windows' OnSetCursor does with its own MouseOverMiniWindow
+        // pass). Returns the hotspot cursor (-1..12), 0 over a bare
+        // miniwindow, -999 when not over one.
+        std::string cid, cwid;
+        CHotspot* ch = nullptr;
+        CMiniWindow* cmw = MouseOverMiniWindow(m_doc, CPoint(x, y), cid, ch, cwid);
+        return cmw ? (ch ? (int)ch->m_Cursor : 0) : -999;
     };
 
-    // ── Miniwindow mouse-wheel callback ───────────────────────────────────
-    // Forwards scroll-wheel events to miniwindow hotspot scripts.
-    // delta > 0 = wheel forward (up), delta < 0 = backward (down).
-    m_output->m_fn_miniwindow_mouse_wheel =
-        [this, send_mw_event, mw_hit_test](int x, int y, int delta) -> bool
-    {
+    // Scroll wheel: pack the flags exactly as CMUSHView::OnMouseWheel does —
+    // direction bit + |delta| in the high-order word (the pane passes the raw
+    // wxEVT_MOUSEWHEEL rotation, same +/-120-per-notch units as Win32 zDelta).
+    m_output->m_fn_miniwindow_mouse_wheel = [this](int x, int y, int delta) -> bool {
         if (!m_doc) return false;
-        std::string sHotspotId, sMiniwindowId;
-        CHotspot* pHotspot = nullptr;
-        CMiniWindow* mw = mw_hit_test(m_doc, x, y, sHotspotId, pHotspot, sMiniwindowId);
-        if (!mw || !pHotspot) return false;
-        if (pHotspot->m_sScrollwheelCallback.empty()) return false;
-
-        long flags = (delta < 0) ? 0x100 /*MW_MOUSE_SCROLL_BACK*/ : 0;
-        mw->m_bExecutingScript = true;
-        send_mw_event(m_doc, pHotspot->m_dispid_ScrollwheelCallback,
-                      mw->m_sCallbackPlugin,
-                      pHotspot->m_sScrollwheelCallback,
-                      sHotspotId, flags);
-        mw->m_bExecutingScript = false;
-        return true;
+        WxMouseHooks hooks(m_output);
+        long flags = (delta < 0 ? MW_MOUSE_SCROLL_BACK : 0)
+                   | ((long)(delta < 0 ? -delta : delta) << 16);
+        return MouseWheelMiniWindow(m_doc, CPoint(x, y), flags, hooks);
     };
 
     // ── Tooltip callback ───────────────────────────────────────────────────
     // Returns the tooltip text for the client-space point (x, y).
     // Priority: miniwindow hotspot tooltip > MXP run hint > empty.
     m_output->m_fn_get_tooltip =
-        [this, mw_hit_test](int x, int y) -> std::string
+        [this](int x, int y) -> std::string
     {
         if (!m_doc) return {};
 
-        // 1. Check miniwindow hotspot tooltip.
+        // 1. Check miniwindow hotspot tooltip (engine-owned hit-test).
         std::string sHotspotId, sMiniwindowId;
         CHotspot* pHotspot = nullptr;
-        CMiniWindow* mw = mw_hit_test(m_doc, x, y, sHotspotId, pHotspot, sMiniwindowId);
+        MouseOverMiniWindow(m_doc, CPoint(x, y), sHotspotId, pHotspot, sMiniwindowId);
         if (pHotspot && !pHotspot->m_sTooltipText.empty())
             return pHotspot->m_sTooltipText;
 

@@ -21,6 +21,9 @@ class CMUSHView : public CView
 {
 
   friend class CSendView;
+  // adapter handing the engine-owned mouse routing this view's tooltip /
+  // capture / keyboard services (mushview.cpp; docs/PAL.md S4)
+  friend struct CMUSHViewMouseHooks;
 
 // statuses for "pause" status line entry
 
@@ -79,9 +82,17 @@ public:
         m_ScrollbarSizeLine,
         m_ScrollbarPosition;
 
-  string m_sPreviousMiniWindow;
+  // (the previous-miniwindow mouse state is doc-homed now:
+  //  CMUSHclientDoc::m_sPreviousMiniWindow — docs/PAL.md S4)
 
   BOOL m_mousedover;
+
+  // mouse-capture services for CMUSHViewMouseHooks — member-context wrappers
+  // so the capture calls keep the EXACT name lookup the old inline code had
+  // on both MFC (CWnd::GetCapture / global ReleaseCapture) and the shim
+  bool MouseIsCaptured ()      { return GetCapture () == this; }
+  void MouseSetCapture ()      { SetCapture (); }
+  void MouseReleaseCapture ()  { ReleaseCapture (); }
 
 // Operations
 public:

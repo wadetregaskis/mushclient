@@ -335,6 +335,39 @@ CMiniWindow * MouseOverMiniWindow (CMUSHclientDoc* pDoc, CPoint point,
                                    string & sHotspotId, CHotspot * &pHotspot,
                                    string & sMiniwindowId);
 
+// View-supplied services for the engine-owned mouse routing (docs/PAL.md S4).
+// The engine calls these mid-flow exactly where the old CMUSHView code touched
+// its tooltip / mouse-capture / keyboard state; each frontend implements them
+// over its own toolkit. Defaults are safe no-ops.
+struct MiniWindowMouseHooks
+  {
+  virtual ~MiniWindowMouseHooks () {}
+  virtual void RemoveToolTip () {}
+  virtual void ActivateToolTip () {}
+  virtual void TrackMouseLeave () {}   // arm a mouse-leave notification, if the
+                                       // toolkit needs arming (TrackMouseEvent)
+  virtual bool IsCaptured () { return false; }
+  virtual void SetMouseCapture () {}
+  virtual void ReleaseMouseCapture () {}
+  virtual long KeyboardModifiers () { return 0; }  // MW_MOUSE_SHIFT/CTRL/ALT bits
+  };
+
+// The engine-owned mouse routing itself (the old CMUSHView Mouse_* family,
+// moved verbatim into miniwindow_compose.cpp; the view forwards its events
+// with client-space coordinates and its hooks). Down/move/up/wheel return
+// true when the event was consumed by a miniwindow.
+void SendMouseEventToPlugin (CMUSHclientDoc* pDoc, MiniWindowMouseHooks & hooks,
+                             DISPID iDispatchID,
+                             const string m_sPluginID,
+                             const string sRoutineName,
+                             const string HotspotId,
+                             long Flags = 0,
+                             bool dont_modify_flags = false);
+bool MouseMoveMiniWindow  (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHooks & hooks);
+bool MouseDownMiniWindow  (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWindowMouseHooks & hooks);
+bool MouseUpMiniWindow    (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWindowMouseHooks & hooks);
+bool MouseWheelMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long delta, MiniWindowMouseHooks & hooks);
+
 typedef map<string, CMiniWindow *> MiniWindowMap;
 
 typedef MiniWindowMap::iterator MiniWindowMapIterator;

@@ -704,6 +704,7 @@ if(NOT WIN32)
         globalregistryoptions.cpp
         mainfrm.cpp
         miniwindow.cpp
+        miniwindow_compose.cpp   # engine-owned placement, shared with the Windows view (docs/PAL.md S4)
         surface_bridge.cpp   # pal::ISurface migration bridge globals (docs/PAL.md S3)
         mushview.cpp
         plugins.cpp

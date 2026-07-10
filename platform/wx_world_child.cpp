@@ -860,176 +860,21 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         MiniWindowVector& order = m_doc->m_MiniWindowsOrder;
         if (order.empty()) return;
 
-        // ── Phase 1: compute m_rect for ALL visible miniwindows ──────────
-        // Mirrors CMUSHView::Calculate_MiniWindow_Rectangles() which runs
-        // once for ALL windows before any blit pass — the underneath/on-top
-        // flag does not affect position calculation, only rendering order.
-        // We skip Phase 1 on the second pass (bUnder=false) to avoid
-        // overwriting rects that were correctly computed in the first pass.
+        // ── Phase 1: compute m_rect for this pass's miniwindows ─────────
+        // Engine-owned placement maths shared verbatim with the Windows view
+        // (CalculateMiniWindowRectangles, miniwindow_compose.cpp, docs/PAL.md
+        // S4). Runs per pass with pass-scoped corner tracking, exactly as
+        // CMUSHView::OnDraw always has — including the original's quirky
+        // m_rect right/bottom values for corner/wall position modes, which
+        // WindowInfo exposes to scripts (Windows parity over local tidiness).
         // "frame" rect = this child frame; "client" rect = output pane.
-        if (bUnder) {
-        int frameW, frameH;
+        {
+        int frameW = 0, frameH = 0;
         GetClientSize(&frameW, &frameH);
-
-        // Track four corner points exactly as the Windows implementation does.
-        // pt_topleft: grows right/down as top-left corners are placed.
-        // pt_topright: grows left/down as top-right corners are placed.
-        // pt_bottomright: grows left/up as bottom-right corners are placed.
-        // pt_bottomleft: grows right/up as bottom-left corners are placed.
-        int tl_x = 0,       tl_y = 0;
-        int tr_x = clientW, tr_y = 0;
-        int br_x = clientW, br_y = clientH;
-        int bl_x = 0,       bl_y = clientH;
-
-        // Centered-wall deferred lists.
-        std::list<CMiniWindow*> top_ones, right_ones, bottom_ones, left_ones;
-        long top_widths = 0, right_widths = 0, bottom_widths = 0, left_widths = 0;
-
-        for (auto& kv : order) {
-            CMiniWindow* mw = kv.second;
-            mw->m_bTemporarilyHide = false;
-
-            if (!mw->GetShow()) continue;
-            // Position calculation is independent of underneath/on-top status:
-            // process ALL visible windows so corners/wall positions are global.
-
-            long iW = mw->GetWidth(), iH = mw->GetHeight();
-
-            if (mw->GetFlags() & MINIWINDOW_ABSOLUTE_LOCATION) {
-                CPoint loc = mw->GetLocation();
-                mw->m_rect = CRect(loc.x, loc.y, loc.x + iW, loc.y + iH);
-                continue;
-            }
-
-            switch (mw->GetPosition()) {
-            case 0:  // stretch to output pane
-                mw->m_rect = CRect(0, 0, clientW, clientH);
-                continue;
-            case 1:  // stretch with aspect ratio
-                if (iH > 0)
-                    mw->m_rect = CRect(0, 0, (int)(clientH * (double)iW / iH), clientH);
-                continue;
-            case 2:  // stretch to frame
-                mw->m_rect = CRect(0, 0, frameW, frameH);
-                continue;
-            case 3:  // stretch to frame with aspect ratio
-                if (iH > 0)
-                    mw->m_rect = CRect(0, 0, (int)(frameH * (double)iW / iH), frameH);
-                continue;
-            case 4:  // top-left corner
-                mw->m_rect = CRect(0, 0, iW, iH);
-                tl_x = std::max(tl_x, (int)iW);
-                tl_y = std::max(tl_y, (int)iH);
-                break;
-            case 5:  // top wall, centered L-R (deferred)
-                top_widths += iW;
-                top_ones.push_back(mw);
-                break;
-            case 6:  // top-right corner
-                mw->m_rect = CRect(clientW - iW, 0, clientW, iH);
-                tr_x = std::min(tr_x, clientW - (int)iW);
-                tr_y = std::max(tr_y, (int)iH);
-                break;
-            case 7:  // right wall, centered T-B (deferred)
-                right_widths += iH;
-                right_ones.push_back(mw);
-                break;
-            case 8:  // bottom-right corner
-                mw->m_rect = CRect(clientW - iW, clientH - iH, clientW, clientH);
-                br_x = std::min(br_x, clientW - (int)iW);
-                br_y = std::min(br_y, clientH - (int)iH);
-                break;
-            case 9:  // bottom wall, centered L-R (deferred)
-                bottom_widths += iW;
-                bottom_ones.push_back(mw);
-                break;
-            case 10: // bottom-left corner
-                mw->m_rect = CRect(0, clientH - iH, iW, clientH);
-                bl_x = std::max(bl_x, (int)iW);
-                bl_y = std::min(bl_y, clientH - (int)iH);
-                break;
-            case 11: // left wall, centered T-B (deferred)
-                left_widths += iH;
-                left_ones.push_back(mw);
-                break;
-            case 12: // center
-                mw->m_rect = CRect((clientW - iW) / 2, (clientH - iH) / 2,
-                                   (clientW + iW) / 2, (clientH + iH) / 2);
-                continue;
-            case 13: // tile — no pre-calculation needed
-                continue;
-            default:
-                continue;
-            }
+        RECT clientrect = { 0, 0, clientW, clientH };
+        RECT ownerrect  = { 0, 0, frameW, frameH };
+        CalculateMiniWindowRectangles(m_doc, bUnder, clientrect, ownerrect);
         }
-
-        // ── Phase 1b: available room for each wall ───────────────────────
-        long top_room    = tr_x - tl_x;   // horizontal span between top corners
-        long right_room  = br_y - tr_y;   // vertical span between right corners
-        long bottom_room = br_x - bl_x;   // horizontal span between bottom corners
-        long left_room   = bl_y - tl_y;   // vertical span between left corners
-
-        // Trim items that won't fit (remove from back, mark hidden).
-        while (!top_ones.empty() && top_widths > top_room) {
-            CMiniWindow* back = top_ones.back(); top_ones.pop_back();
-            top_widths -= back->GetWidth();
-            back->m_bTemporarilyHide = true;
-        }
-        while (!right_ones.empty() && right_widths > right_room) {
-            CMiniWindow* back = right_ones.back(); right_ones.pop_back();
-            right_widths -= back->GetHeight();
-            back->m_bTemporarilyHide = true;
-        }
-        while (!bottom_ones.empty() && bottom_widths > bottom_room) {
-            CMiniWindow* back = bottom_ones.back(); bottom_ones.pop_back();
-            bottom_widths -= back->GetWidth();
-            back->m_bTemporarilyHide = true;
-        }
-        while (!left_ones.empty() && left_widths > left_room) {
-            CMiniWindow* back = left_ones.back(); left_ones.pop_back();
-            left_widths -= back->GetHeight();
-            back->m_bTemporarilyHide = true;
-        }
-
-        // Distribute evenly: gap before first + between each + gap after last.
-        if (!top_ones.empty()) {
-            long gap = (top_room - top_widths) / ((long)top_ones.size() + 1);
-            long x = tl_x + gap;
-            for (CMiniWindow* mw : top_ones) {
-                long iW = mw->GetWidth(), iH = mw->GetHeight();
-                mw->m_rect = CRect(x, 0, x + iW, iH);
-                x += iW + gap;
-            }
-        }
-        if (!right_ones.empty()) {
-            long gap = (right_room - right_widths) / ((long)right_ones.size() + 1);
-            long y = tr_y + gap;
-            for (CMiniWindow* mw : right_ones) {
-                long iW = mw->GetWidth(), iH = mw->GetHeight();
-                mw->m_rect = CRect(clientW - iW, y, clientW, y + iH);
-                y += iH + gap;
-            }
-        }
-        if (!bottom_ones.empty()) {
-            long gap = (bottom_room - bottom_widths) / ((long)bottom_ones.size() + 1);
-            long x = bl_x + gap;
-            for (CMiniWindow* mw : bottom_ones) {
-                long iW = mw->GetWidth(), iH = mw->GetHeight();
-                mw->m_rect = CRect(x, clientH - iH, x + iW, clientH);
-                x += iW + gap;
-            }
-        }
-        if (!left_ones.empty()) {
-            long gap = (left_room - left_widths) / ((long)left_ones.size() + 1);
-            long y = tl_y + gap;
-            for (CMiniWindow* mw : left_ones) {
-                long iW = mw->GetWidth(), iH = mw->GetHeight();
-                mw->m_rect = CRect(0, y, iW, y + iH);
-                y += iH + gap;
-            }
-        }
-
-        } // end if (bUnder) — Phase 1 (rect calculation) runs on first pass only
 
         // ── Phase 2: blit each visible miniwindow onto destDC ───────────
         for (auto& kv : order) {
@@ -1060,18 +905,16 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
 
             const CRect& r = mw->m_rect;
             int destX = r.left, destY = r.top;
-            int destW = r.Width(), destH = r.Height();
-            if (destW <= 0 || destH <= 0) continue;
 
-            // Stretch modes (0–3): StretchBlit.
             if (pos <= 3 && !(mw->GetFlags() & MINIWINDOW_ABSOLUTE_LOCATION)) {
-                destDC.StretchBlit(destX, destY, destW, destH,
-                                   srcDC, 0, 0, iW, iH, wxCOPY);
-                continue;
-            }
-
-            // Normal / transparent 1:1 blit.
-            if (bTransparent) {
+                // Stretch modes (0–3): StretchBlit to the landed rect. (The
+                // port stretches these; Windows' Blit_Bitmap draws miniwindows
+                // 1:1 even in modes 0–3 — an existing, deliberate divergence.)
+                int destW = r.Width(), destH = r.Height();
+                if (destW > 0 && destH > 0)
+                    destDC.StretchBlit(destX, destY, destW, destH,
+                                       srcDC, 0, 0, iW, iH, wxCOPY);
+            } else if (bTransparent) {
                 // Build a masked bitmap using the miniwindow's background colour
                 // as the transparency key, then draw it with the mask applied.
                 COLORREF bg = mw->GetBackgroundColour();
@@ -1086,6 +929,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             } else {
                 destDC.Blit(destX, destY, iW, iH, srcDC, 0, 0, wxCOPY);
             }
+
+            // == Blit_Bitmap's bUseRect mutation on Windows: after a paint,
+            // m_rect holds {left, top, WIDTH, HEIGHT} — WindowInfo 12/13
+            // expose exactly this to scripts, so keep the convention (the
+            // hit-test above reads left/top + size and doesn't care).
+            mw->m_rect.right  = iW;
+            mw->m_rect.bottom = iH;
         }
     };
 
@@ -1145,7 +995,16 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (!mw->GetShow()) continue;
             if (mw->GetFlags() & (MINIWINDOW_DRAW_UNDERNEATH | MINIWINDOW_IGNORE_MOUSE))
                 continue;
-            if (!mw->m_rect.PtInRect(pt)) continue;
+            // Hit-test on left/top + the window's own size, NOT m_rect's
+            // right/bottom: after a paint those hold WIDTH/HEIGHT (the
+            // Blit_Bitmap convention WindowInfo 12/13 exposes on Windows), so
+            // a PtInRect against them fails for windows positioned beyond
+            // their own size. This explicit form keeps hotspots working
+            // everywhere regardless of the rect convention.
+            if (pt.x < mw->m_rect.left || pt.y < mw->m_rect.top ||
+                pt.x >= mw->m_rect.left + mw->GetWidth() ||
+                pt.y >= mw->m_rect.top + mw->GetHeight())
+                continue;
 
             CPoint rel(x - mw->m_rect.left, y - mw->m_rect.top);
             for (auto& hkv : mw->m_Hotspots) {

@@ -316,6 +316,15 @@ class CMiniWindow
   };
 
 
+// miniwindow placement — engine-owned, shared by every frontend (docs/PAL.md
+// S4, "the composition contract"). Defined in miniwindow_compose.cpp (the old
+// CMUSHView::Calculate_MiniWindow_Rectangles, moved verbatim); each view calls
+// it per paint pass with its own geometry, and the engine writes back m_rect
+// and m_bTemporarilyHide for WindowInfo / hotspot hit-testing to read.
+class CMUSHclientDoc;
+void CalculateMiniWindowRectangles (CMUSHclientDoc* pDoc, const bool bUnderneath,
+                                    const RECT & clientrect, const RECT & ownerrect);
+
 typedef map<string, CMiniWindow *> MiniWindowMap;
 
 typedef MiniWindowMap::iterator MiniWindowMapIterator;

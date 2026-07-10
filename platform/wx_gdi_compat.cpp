@@ -104,15 +104,28 @@ struct DIBSectionData {
     void SyncPixelsToBitmap() {
         if (width <= 0 || height <= 0) return;
         const int bpp = bytesPerPixel;
+        // GDI ignores alpha when rendering; wx honours it. A 32bpp buffer
+        // whose alpha channel is ALL zero (e.g. a surface readback — GDI-drawn
+        // content leaves 0 in the high byte, as does ImageFromWindow) must
+        // render opaquely the way BitBlt would, not invisibly — so only carry
+        // an alpha channel when some pixel actually has alpha.
+        bool anyAlpha = false;
+        if (bpp == 4) {
+            for (int y = 0; y < height && !anyAlpha; ++y) {
+                const unsigned char* src = pixels.data() + y * stride;
+                for (int x = 0; x < width; ++x)
+                    if (src[x*4+3]) { anyAlpha = true; break; }
+            }
+        }
         wxImage img(width, height);
-        if (bpp == 4) img.SetAlpha();
+        if (bpp == 4 && anyAlpha) img.SetAlpha();
         for (int y = 0; y < height; ++y) {
             int bufRow = bottomUp ? (height - 1 - y) : y;
             const unsigned char* src = pixels.data() + bufRow * stride;
             for (int x = 0; x < width; ++x) {
                 const unsigned char* px = src + x*bpp;
                 img.SetRGB(x, y, px[2], px[1], px[0]);  // BGR→RGB
-                if (bpp == 4)
+                if (bpp == 4 && anyAlpha)
                     img.SetAlpha(x, y, px[3]);
             }
         }

@@ -2470,20 +2470,46 @@ long CMiniWindow::ImageFromWindow(LPCTSTR ImageId, CMiniWindow * pSrcWindow)
     m_Images.erase (it);
     }
 
-  // make new bitmap of appropriate size to hold image from other miniwindow
+  pal::ISurface * srf = pal::g_surface;
+  if (!srf)
+    return eOK;
+
+  // read the source window's pixels — BGRA32 with alpha pinned 0, exactly the
+  // bytes the old screen-compatible-bitmap BitBlt copy carried (GDI-drawn
+  // surfaces leave 0 in the high byte)
+  pal::PixelBuffer buf;
+  srf->readPixels (pSrcWindow->m_surfaceId,
+                   { 0, 0, pSrcWindow->m_iWidth, pSrcWindow->m_iHeight },
+                   buf, pal::PixelFormat::BGRA32);
+  if (!buf.valid ())
+    return eOK;
+
+  // materialize as a stand-alone 32bpp bitmap the way the image loaders do
+  // (CreateDIBSection + Attach). On Windows this stores a 32bpp DIBSection
+  // where a screen-depth DDB was stored before — identical bytes, identical
+  // behaviour in every image op on a 32-bit display.
+  BITMAPINFO bmi;
+  ZeroMemory (&bmi, sizeof bmi);
+  bmi.bmiHeader.biSize = sizeof bmi;
+  bmi.bmiHeader.biWidth =          buf.size.w;
+  bmi.bmiHeader.biHeight =         buf.size.h;
+  bmi.bmiHeader.biPlanes =         1;
+  bmi.bmiHeader.biBitCount =       32;
+  bmi.bmiHeader.biCompression =    BI_RGB;
+  bmi.bmiHeader.biSizeImage =      buf.size.h * BytesPerLine (buf.size.w, 32);
+
+  if ((size_t) bmi.bmiHeader.biSizeImage > buf.bytes.size ())
+    return eOK;   // cannot happen: BGRA32 stride is exactly BytesPerLine(w, 32)
+
+  unsigned char * pBits = NULL;
+  HBITMAP hbm = CreateDIBSection (NULL, &bmi, DIB_RGB_COLORS, (void**) &pBits, NULL, 0);
+  if (!hbm || !pBits)
+    return eOK;
+
+  memcpy (pBits, buf.bytes.data (), bmi.bmiHeader.biSizeImage);
+
   CBitmap * pImage = new CBitmap;
-  pImage->CreateCompatibleBitmap (&(*pdc), pSrcWindow->m_iWidth, pSrcWindow->m_iHeight);
-
-  // prepare to copy it
-  CDC bmDC;
-  bmDC.CreateCompatibleDC(&(*pdc));
-  CBitmap *pOldbmp = bmDC.SelectObject(pImage);
-
-  // copy into our bitmap
-  bmDC.BitBlt (0, 0, pSrcWindow->m_iWidth, pSrcWindow->m_iHeight, pSrcWindow->pdc, 0, 0, SRCCOPY);
-
-  // done
-  bmDC.SelectObject(pOldbmp);
+  pImage->Attach ((HGDIOBJ) hbm);
 
   // save in map
   m_Images [ImageId] = pImage;

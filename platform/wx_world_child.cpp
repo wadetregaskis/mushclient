@@ -986,41 +986,10 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
            std::string& sHotspotId, CHotspot*& pHotspot, std::string& sMiniwindowId)
         -> CMiniWindow*
     {
-        pHotspot = nullptr;
-        CPoint pt(x, y);
-        for (auto it = pDoc->m_MiniWindowsOrder.rbegin();
-             it != pDoc->m_MiniWindowsOrder.rend(); ++it)
-        {
-            CMiniWindow* mw = it->second;
-            if (!mw->GetShow()) continue;
-            if (mw->GetFlags() & (MINIWINDOW_DRAW_UNDERNEATH | MINIWINDOW_IGNORE_MOUSE))
-                continue;
-            // Hit-test on left/top + the window's own size, NOT m_rect's
-            // right/bottom: after a paint those hold WIDTH/HEIGHT (the
-            // Blit_Bitmap convention WindowInfo 12/13 exposes on Windows), so
-            // a PtInRect against them fails for windows positioned beyond
-            // their own size. This explicit form keeps hotspots working
-            // everywhere regardless of the rect convention.
-            if (pt.x < mw->m_rect.left || pt.y < mw->m_rect.top ||
-                pt.x >= mw->m_rect.left + mw->GetWidth() ||
-                pt.y >= mw->m_rect.top + mw->GetHeight())
-                continue;
-
-            CPoint rel(x - mw->m_rect.left, y - mw->m_rect.top);
-            for (auto& hkv : mw->m_Hotspots) {
-                if (hkv.second->m_rect.PtInRect(rel)) {
-                    pHotspot      = hkv.second;
-                    sHotspotId    = hkv.first;
-                    sMiniwindowId = it->first;
-                    return mw;
-                }
-            }
-            pHotspot = nullptr;
-            sMiniwindowId = it->first;
-            return mw;
-        }
-        sMiniwindowId.clear();
-        return nullptr;
+        // Engine-owned hit-test shared with the Windows view
+        // (MouseOverMiniWindow, miniwindow_compose.cpp, docs/PAL.md S4).
+        return MouseOverMiniWindow(pDoc, CPoint(x, y),
+                                   sHotspotId, pHotspot, sMiniwindowId);
     };
 
     // Mouse-down callback: fire MouseDown script, returns true if consumed.
@@ -1107,10 +1076,15 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     };
 
     // Mouse-move callback: fire MouseOver / CancelMouseOver scripts.
+    // Returns the hotspot cursor code for the point (CHotspot::m_Cursor,
+    // -1..12), 0 (arrow) over a miniwindow without a hotspot, or -999 when
+    // not over a miniwindow (the pane then applies its own text cursors).
+    // This is the port's CHotspot::m_Cursor parity fix — the same mapping
+    // CMUSHView::OnSetCursor applies on Windows (docs/PAL.md S4).
     m_output->m_fn_miniwindow_mouse_move =
-        [this, send_mw_event, mw_hit_test](int x, int y)
+        [this, send_mw_event, mw_hit_test](int x, int y) -> int
     {
-        if (!m_doc) return;
+        if (!m_doc) return -999;
 
         // ── Drag in progress ────────────────────────────────────────────────
         // While a button is held after a mouse-down on a hotspot, dispatch that
@@ -1142,7 +1116,15 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                     }
                 }
             }
-            return;   // drag consumes the move (no MouseOver processing)
+            // drag consumes the move (no MouseOver processing) — but still
+            // report the hotspot cursor under the point, as Windows'
+            // OnSetCursor keeps doing during a captured drag
+            {
+                std::string cid, cwid;
+                CHotspot* ch = nullptr;
+                CMiniWindow* cmw = mw_hit_test(m_doc, x, y, cid, ch, cwid);
+                return cmw ? (ch ? (int)ch->m_Cursor : 0) : -999;
+            }
         }
 
         std::string sHotspotId, sMiniwindowId;
@@ -1196,7 +1178,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 }
             }
             m_mw_prevWindow = sMiniwindowId;
-            return;
+            // over a miniwindow without a hotspot -> arrow, as OnSetCursor
+            return mw ? 0 : -999;
         }
 
         m_mw_prevWindow = sMiniwindowId;
@@ -1219,7 +1202,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
 
         // Re-check: hotspot might have been deleted by the cancel callback.
         if (mw->m_Hotspots.find(sHotspotId) == mw->m_Hotspots.end())
-            return;
+            return 0;   // over the window, hotspot gone -> arrow
 
         // Fire MouseOver if we're newly over this hotspot.
         bool firstTime = (mw->m_sMouseOverHotspot != sHotspotId);
@@ -1232,6 +1215,16 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                       pHotspot->m_sMouseOver,
                       sHotspotId, flags);
         mw->m_bExecutingScript = false;
+
+        // The MouseOver callback ran script and may have deleted the hotspot
+        // or the window — re-hit-test for the cursor, exactly as Windows'
+        // OnSetCursor does with a fresh Mouse_Over_Miniwindow pass.
+        {
+            std::string cid, cwid;
+            CHotspot* ch = nullptr;
+            CMiniWindow* cmw = mw_hit_test(m_doc, x, y, cid, ch, cwid);
+            return cmw ? (ch ? (int)ch->m_Cursor : 0) : -999;
+        }
     };
 
     // ── Miniwindow mouse-wheel callback ───────────────────────────────────

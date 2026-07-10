@@ -13,6 +13,73 @@
 #include "MUSHclient.h"
 #include "doc.h"
 
+// Which miniwindow (and hotspot, if any) is under a client-space point —
+// the old CMUSHView::Mouse_Over_Miniwindow, moved verbatim except for the
+// window bounds test. The original PtInRect'ed m_rect, whose right/bottom
+// hold WIDTH/HEIGHT after a paint (see Blit_Bitmap's mutation) — a
+// non-normalized rect PtInRect can never match, so hotspots silently died
+// for any window positioned beyond its own size. The explicit
+// left/top + size test below is a strict extension: every point the old
+// test matched still matches, and previously-dead windows become clickable.
+CMiniWindow * MouseOverMiniWindow (CMUSHclientDoc* pDoc,
+                                   CPoint point,
+                                   string & sHotspotId,
+                                   CHotspot * &pHotspot,
+                                   string & sMiniwindowId
+                                   )
+  {
+  pHotspot = NULL;
+
+  MiniWindowVectorReverseIterator mwit;
+
+   // mini windows - check backwards so one on top is found first
+  for (mwit = pDoc->m_MiniWindowsOrder.rbegin ();
+       mwit != pDoc->m_MiniWindowsOrder.rend ();
+       mwit++)  // NB you still go "up" to go backwards
+         {
+         CMiniWindow * mw = mwit->second;
+         // not if not being shown
+         if (!mw->GetShow ())
+           continue;
+
+         // underneath ones can't be clicked on - or if set to ignore the mouse
+         if (mw->GetFlags () & (MINIWINDOW_DRAW_UNDERNEATH | MINIWINDOW_IGNORE_MOUSE))
+           continue;
+
+         if (point.x < mw->m_rect.left || point.y < mw->m_rect.top ||
+             point.x >= mw->m_rect.left + mw->GetWidth () ||
+             point.y >= mw->m_rect.top + mw->GetHeight ())
+           continue;  // not in window
+
+         CPoint mw_relative_mouse (point);
+         mw_relative_mouse = mw_relative_mouse - mw->m_rect.TopLeft ();
+         for (HotspotMapIterator hit = mw->m_Hotspots.begin ();
+              hit != mw->m_Hotspots.end ();
+              hit++)
+                {
+                pHotspot = hit->second;
+
+                if (!pHotspot->m_rect.PtInRect(mw_relative_mouse))
+                  continue;  // not in hotspot
+
+                sHotspotId = hit->first;
+                sMiniwindowId = mwit->first;
+                return mw;
+                } // for each hotspot
+
+
+         pHotspot = NULL;
+         sMiniwindowId = mwit->first;
+         return mw;
+         }  // end for each window
+
+
+
+  sMiniwindowId.erase ();
+  return NULL;
+  } // end of MouseOverMiniWindow
+
+
 void CalculateMiniWindowRectangles (CMUSHclientDoc* pDoc, const bool bUnderneath,
                                     const RECT & clientrect, const RECT & ownerrect)
   {

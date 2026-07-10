@@ -325,6 +325,16 @@ class CMUSHclientDoc;
 void CalculateMiniWindowRectangles (CMUSHclientDoc* pDoc, const bool bUnderneath,
                                     const RECT & clientrect, const RECT & ownerrect);
 
+// Engine-owned hit-test (the old CMUSHView::Mouse_Over_Miniwindow, shared by
+// every frontend; also in miniwindow_compose.cpp). Reverse z-order; skips
+// hidden / underneath / ignore-mouse windows; returns the window (or NULL)
+// and fills the hotspot + ids.
+class CMiniWindow;
+class CHotspot;
+CMiniWindow * MouseOverMiniWindow (CMUSHclientDoc* pDoc, CPoint point,
+                                   string & sHotspotId, CHotspot * &pHotspot,
+                                   string & sMiniwindowId);
+
 typedef map<string, CMiniWindow *> MiniWindowMap;
 
 typedef MiniWindowMap::iterator MiniWindowMapIterator;

@@ -248,10 +248,15 @@ public:
     // means use the full client area.
     std::function<bool(int& l, int& t, int& r, int& b)> m_fn_text_rect;
 
-    // Miniwindow mouse routing.  Return true if the event was consumed.
+    // Miniwindow mouse routing.  Down/up return true if the event was
+    // consumed.  Move returns the hotspot cursor code under the point
+    // (CHotspot::m_Cursor, -1..12), 0 (arrow) over a miniwindow without a
+    // hotspot, or -999 when not over a miniwindow — the pane then applies
+    // its own text cursors.  (The -1..12 mapping mirrors Windows'
+    // CMUSHView::OnSetCursor; docs/PAL.md S4.)
     std::function<bool(int x, int y, long flags)> m_fn_miniwindow_mouse_down;
     std::function<bool(int x, int y, long flags)> m_fn_miniwindow_mouse_up;
-    std::function<void(int x, int y)>              m_fn_miniwindow_mouse_move;
+    std::function<int(int x, int y)>               m_fn_miniwindow_mouse_move;
     std::function<bool(int x, int y, int delta)>   m_fn_miniwindow_mouse_wheel;
 
     // Called when the user clicks an MXP hyperlink run.

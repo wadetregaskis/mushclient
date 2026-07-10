@@ -6630,60 +6630,20 @@ DISPID iDispid = pPlugin->m_ScriptEngine->GetDispid (sRoutineName.c_str ());
 
 
 
-CMiniWindow * CMUSHView::Mouse_Over_Miniwindow (CMUSHclientDoc* pDoc, 
-                                                CPoint point, 
-                                                string & sHotspotId, 
+CMiniWindow * CMUSHView::Mouse_Over_Miniwindow (CMUSHclientDoc* pDoc,
+                                                CPoint point,
+                                                string & sHotspotId,
                                                 CHotspot * &pHotspot,
                                                 string & sMiniwindowId
                                                 )
   {
-  pHotspot = NULL;
-
-  MiniWindowVectorReverseIterator mwit;
-
-   // mini windows - check backwards so one on top is found first
-  for (mwit = pDoc->m_MiniWindowsOrder.rbegin (); 
-       mwit != pDoc->m_MiniWindowsOrder.rend ();
-       mwit++)  // NB you still go "up" to go backwards
-         {
-         CMiniWindow * mw = mwit->second;
-         // not if not being shown
-         if (!mw->GetShow ())
-           continue;
-
-         // underneath ones can't be clicked on - or if set to ignore the mouse
-         if (mw->GetFlags () & (MINIWINDOW_DRAW_UNDERNEATH | MINIWINDOW_IGNORE_MOUSE))
-           continue;
-
-         if (!mw->m_rect.PtInRect(point))
-           continue;  // not in window
-
-         CPoint mw_relative_mouse (point);
-         mw_relative_mouse = mw_relative_mouse - mw->m_rect.TopLeft ();
-         for (HotspotMapIterator hit = mw->m_Hotspots.begin (); 
-              hit != mw->m_Hotspots.end ();
-              hit++)
-                {
-                pHotspot = hit->second;
-
-                if (!pHotspot->m_rect.PtInRect(mw_relative_mouse))
-                  continue;  // not in hotspot
-
-                sHotspotId = hit->first;
-                sMiniwindowId = mwit->first;
-                return mw;
-                } // for each hotspot
-         
-
-         pHotspot = NULL;
-         sMiniwindowId = mwit->first;
-         return mw;  
-         }  // end for each window
-
-
-
-  sMiniwindowId.erase ();
-  return NULL;
+  // the hit-test is engine-owned and shared with every frontend
+  // (miniwindow_compose.cpp, docs/PAL.md S4) — moved verbatim, except the
+  // window bounds test reads left/top + size instead of PtInRect over the
+  // post-paint m_rect (whose right/bottom hold width/height — see
+  // Blit_Bitmap), so hotspots also work for windows positioned beyond
+  // their own size. A strict extension: everything that matched still does.
+  return MouseOverMiniWindow (pDoc, point, sHotspotId, pHotspot, sMiniwindowId);
   } // end of  CMUSHView::Mouse_Over_Miniwindow
 
 

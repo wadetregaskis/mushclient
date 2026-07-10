@@ -1686,10 +1686,36 @@ void COutputPane::OnRightUp(wxMouseEvent& evt)
     evt.Skip();
 }
 
+// CHotspot::m_Cursor (-1..12) -> wx stock cursor, mirroring the exact
+// Windows mapping in CMUSHView::OnSetCursor (docs/PAL.md S4: the cursor
+// parity fix — the port previously ignored hotspot cursors entirely).
+// 5 (up arrow) has no wx stock equivalent -> plain arrow (best effort).
+static wxCursor MiniWindowCursor(int id)
+{
+    switch (id) {
+    default:
+    case -1: return wxCursor(wxCURSOR_BLANK);           // no cursor
+    case  0: return wxCursor(wxCURSOR_ARROW);           // arrow
+    case  1: return wxCursor(wxCURSOR_HAND);            // hand
+    case  2: return wxCursor(wxCURSOR_IBEAM);           // I-beam
+    case  3: return wxCursor(wxCURSOR_CROSS);           // + (cross)
+    case  4: return wxCursor(wxCURSOR_WAIT);            // wait
+    case  5: return wxCursor(wxCURSOR_ARROW);           // up arrow (approx.)
+    case  6: return wxCursor(wxCURSOR_SIZENWSE);        // arrow nw-se
+    case  7: return wxCursor(wxCURSOR_SIZENESW);        // arrow ne-sw
+    case  8: return wxCursor(wxCURSOR_SIZEWE);          // arrow e-w
+    case  9: return wxCursor(wxCURSOR_SIZENS);          // arrow n-s
+    case 10: return wxCursor(wxCURSOR_SIZING);          // all ways
+    case 11: return wxCursor(wxCURSOR_NO_ENTRY);        // (X) no
+    case 12: return wxCursor(wxCURSOR_QUESTION_ARROW);  // help
+    }
+}
+
 void COutputPane::OnMotion(wxMouseEvent& evt)
 {
+    int mwCursor = -999;
     if (m_fn_miniwindow_mouse_move)
-        m_fn_miniwindow_mouse_move(evt.GetX(), evt.GetY());
+        mwCursor = m_fn_miniwindow_mouse_move(evt.GetX(), evt.GetY());
 
     // Tooltip update (skip during drag to avoid flicker).
     if (!m_dragging && m_fn_get_tooltip) {
@@ -1723,14 +1749,17 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
     } else {
         // Update cursor.  Priority order:
         //   1. Hint bar area → pointing hand (clicking snaps to bottom).
-        //   2. Over an MXP / URL link run → pointing hand.
-        //   3. Anywhere else → I-beam text cursor.
+        //   2. Over a miniwindow → its hotspot cursor (-1..12), or arrow.
+        //   3. Over an MXP / URL link run → pointing hand.
+        //   4. Anywhere else → I-beam text cursor.
         int clientH;
         GetClientSize(nullptr, &clientH);
         if (!m_autoScroll && !m_lines.empty() &&
             evt.GetY() >= clientH - kHintBarH)
         {
             SetCursor(wxCursor(wxCURSOR_HAND));
+        } else if (mwCursor != -999) {
+            SetCursor(MiniWindowCursor(mwCursor));
         } else {
             SelPoint pt = MouseToSelPoint(evt);
             bool overLink = false;

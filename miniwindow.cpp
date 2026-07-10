@@ -2055,57 +2055,48 @@ long CMiniWindow::BlendImage(LPCTSTR ImageId,
   if (iWidth <= 0 || iHeight <= 0)   // sanity check
     return eOK;
 
-  BITMAPINFO bmi;
-  ZeroMemory (&bmi, sizeof bmi);
+  pal::ISurface * srf = pal::g_surface;
+  if (!srf)
+    return eOK;
 
-  bmi.bmiHeader.biSize = sizeof bmi;
-  bmi.bmiHeader.biWidth =          iWidth;
-  bmi.bmiHeader.biHeight =         iHeight;
-  bmi.bmiHeader.biPlanes =         1;
-  bmi.bmiHeader.biBitCount =       24;
-  bmi.bmiHeader.biCompression =    BI_RGB;
-  bmi.bmiHeader.biSizeImage =      iHeight * BytesPerLine (iWidth, 24);
+  // both layers are BGR24 region reads; the rectangles are pre-clamped in
+  // bounds above, exactly as MergeImageAlpha
 
-  // upper layer (from image id)
-  CDC A_DC;
-  A_DC.CreateCompatibleDC(&(*pdc));
-
-  unsigned char * pA = NULL;
-
-  HBITMAP hbmA = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**) &pA, NULL, 0);
-
-  HBITMAP hOldAbmp = (HBITMAP) SelectObject(A_DC.m_hDC, hbmA);
-
-  //copy part from image to upper layer
+  // upper layer (from image id) — via a temporary adopt, as DrawImage
+  pal::PixelBuffer bufA;
+  {
   CDC bmDC;
   bmDC.CreateCompatibleDC(&(*pdc));
   CBitmap *pOldbmp = bmDC.SelectObject(bitmap);
-
-  A_DC.BitBlt (0, 0, iWidth, iHeight, &bmDC, SrcLeft, SrcTop, SRCCOPY);
+  pal::SurfaceId sid = pal::g_adoptSurface
+                     ? pal::g_adoptSurface (&bmDC, bi.bmWidth, bi.bmHeight)
+                     : pal::SurfaceId::None;
+  srf->readPixels (sid, { (int) SrcLeft, (int) SrcTop, (int) iWidth, (int) iHeight },
+                   bufA, pal::PixelFormat::BGR24);
+  if (pal::g_releaseAdoptedSurface)
+    pal::g_releaseAdoptedSurface (sid);
   bmDC.SelectObject(pOldbmp);
-
+  }
 
   // base image (from miniwindow)
+  pal::PixelBuffer bufB;
+  srf->readPixels (m_surfaceId,
+                   { (int) Left, (int) Top, (int) iWidth, (int) iHeight },
+                   bufB, pal::PixelFormat::BGR24);
 
-  CDC B_DC;
-  B_DC.CreateCompatibleDC(&(*pdc));
-  CBitmap B_bmp;
+  if (!bufA.valid () || !bufB.valid ()
+      || bufA.bytes.size () != bufB.bytes.size ())
+    return eOK;
 
-  unsigned char * pB = NULL;
-
-  HBITMAP hbmB = CreateDIBSection(pdc->m_hDC, &bmi, DIB_RGB_COLORS, (void**) &pB, NULL, 0);
-
-  HBITMAP hOldBbmp = (HBITMAP) SelectObject(B_DC.m_hDC, hbmB);
-
-  // copy base image from miniwindow to bitmap
-  B_DC.BitBlt (0, 0, iWidth, iHeight, &(*pdc), Left, Top, SRCCOPY);
+  unsigned char * pA = bufA.bytes.data ();
+  unsigned char * pB = bufB.bytes.data ();
 
 
   // manipulate image here   A = blend, B = base
 
 
-  long count = bmi.bmiHeader.biSizeImage;
-  long perline = BytesPerLine (iWidth, 24);
+  long count = (long) bufB.bytes.size ();
+  long perline = bufB.stride;
 
   long i, row;
 
@@ -2456,14 +2447,8 @@ long CMiniWindow::BlendImage(LPCTSTR ImageId,
 
   // copy result back
 
-  pdc->BitBlt (Left, Top, iWidth, iHeight, &B_DC, 0, 0, SRCCOPY);
-
-
-  SelectObject(A_DC.m_hDC, hOldAbmp);
-  SelectObject(B_DC.m_hDC, hOldBbmp);
-
-  DeleteObject (hbmA);
-  DeleteObject (hbmB);
+  srf->writePixels (m_surfaceId,
+                    { (int) Left, (int) Top, (int) iWidth, (int) iHeight }, bufB);
 
   return eOK;
 

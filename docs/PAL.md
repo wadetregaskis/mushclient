@@ -362,6 +362,15 @@ if/when the mac view adopts them.
   `InstallWxSurfaceBridge()` (port), so `pal::g_surface` is always installed.
 - **S4** formalise the composition contract (placement list, rect write-back,
   engine-side hit-testing with cursor ids — fixes the cursor parity gap).
+  **S4a landed:** placement is engine-owned — `CalculateMiniWindowRectangles`
+  (miniwindow_compose.cpp; the old `CMUSHView::Calculate_MiniWindow_Rectangles`
+  moved verbatim) is called by both views with their own geometry; the wx
+  view also applies Blit_Bitmap's post-paint `m_rect` mutation so
+  `WindowInfo 12/13` return the Windows convention ({left, top, width,
+  height}), and its hotspot hit-test reads left/top + size (robust to the
+  convention; a documented port-only improvement over Windows' PtInRect,
+  which cannot match a window positioned beyond its own size). Remaining:
+  S4b mouse routing/cursor ids, S4c `ON_PLUGIN_DRAW_OUTPUT_WINDOW`.
 
 Status: **S1** (CPU reference), **S2** (wx adapter), and **S3a–S3c** are landed on
 all platforms — the whole **rect + text/font + shape/pen** drawing surface now

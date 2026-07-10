@@ -3215,71 +3215,62 @@ long CMiniWindow::MergeImageAlpha(LPCTSTR ImageId, LPCTSTR MaskId,
     return eBadParameter;
 
 
-  // merge layer (from image id)
-  CDC A_DC;
-  A_DC.CreateCompatibleDC(&(*pdc));
+  pal::ISurface * srf = pal::g_surface;
+  if (!srf)
+    return eOK;
 
-  BITMAPINFO bmi;
-  ZeroMemory (&bmi, sizeof bmi);
-
-  bmi.bmiHeader.biSize = sizeof bmi;
-  bmi.bmiHeader.biWidth =          iWidth;
-  bmi.bmiHeader.biHeight =         iHeight;
-  bmi.bmiHeader.biPlanes =         1;
-  bmi.bmiHeader.biBitCount =       24;
-  bmi.bmiHeader.biCompression =    BI_RGB;
-  bmi.bmiHeader.biSizeImage =      iHeight * BytesPerLine (iWidth, 24);
-
-  unsigned char * pA = NULL;
-
-  HBITMAP hbmA = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**) &pA, NULL, 0);
-
-  HBITMAP hOldAbmp = (HBITMAP) SelectObject(A_DC.m_hDC, hbmA);
-
+  // all three layers are BGR24 region reads; every rectangle is pre-clamped
+  // in bounds above, so no zero-fill is needed (unlike DrawImageAlpha)
   CDC bmDC;   // for loading bitmaps into
   bmDC.CreateCompatibleDC(&(*pdc));
 
-  //copy part from image to upper layer
-  CBitmap *pOldbmp = bmDC.SelectObject(bitmap);
-  A_DC.BitBlt (0, 0, iWidth, iHeight, &bmDC, SrcLeft, SrcTop, SRCCOPY);
-  bmDC.SelectObject(pOldbmp);
+  // merge layer (from image id) — via a temporary adopt, as DrawImage
+  pal::PixelBuffer bufA;
+  {
+  BITMAP biImg;
+  bitmap->GetBitmap (&biImg);
+  CBitmap * pOldbmp = bmDC.SelectObject (bitmap);
+  pal::SurfaceId sid = pal::g_adoptSurface
+                     ? pal::g_adoptSurface (&bmDC, biImg.bmWidth, biImg.bmHeight)
+                     : pal::SurfaceId::None;
+  srf->readPixels (sid, { (int) SrcLeft, (int) SrcTop, (int) iWidth, (int) iHeight },
+                   bufA, pal::PixelFormat::BGR24);
+  if (pal::g_releaseAdoptedSurface)
+    pal::g_releaseAdoptedSurface (sid);
+  bmDC.SelectObject (pOldbmp);
+  }
 
+  // mask image — the same source rectangle (bi still holds the mask's dims)
+  pal::PixelBuffer bufM;
+  {
+  CBitmap * pOldbmp = bmDC.SelectObject (mask_bitmap);
+  pal::SurfaceId sid = pal::g_adoptSurface
+                     ? pal::g_adoptSurface (&bmDC, bi.bmWidth, bi.bmHeight)
+                     : pal::SurfaceId::None;
+  srf->readPixels (sid, { (int) SrcLeft, (int) SrcTop, (int) iWidth, (int) iHeight },
+                   bufM, pal::PixelFormat::BGR24);
+  if (pal::g_releaseAdoptedSurface)
+    pal::g_releaseAdoptedSurface (sid);
+  bmDC.SelectObject (pOldbmp);
+  }
 
   // base image (from miniwindow)
+  pal::PixelBuffer bufB;
+  srf->readPixels (m_surfaceId,
+                   { (int) Left, (int) Top, (int) iWidth, (int) iHeight },
+                   bufB, pal::PixelFormat::BGR24);
 
-  CDC B_DC;
-  B_DC.CreateCompatibleDC(&(*pdc));
-  CBitmap B_bmp;
+  if (!bufA.valid () || !bufB.valid () || !bufM.valid ()
+      || bufA.bytes.size () != bufB.bytes.size ()
+      || bufM.bytes.size () != bufB.bytes.size ())
+    return eOK;
 
-  unsigned char * pB = NULL;
+  unsigned char * pA = bufA.bytes.data ();
+  unsigned char * pB = bufB.bytes.data ();
+  unsigned char * pM = bufM.bytes.data ();
 
-  HBITMAP hbmB = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**) &pB, NULL, 0);
-
-  HBITMAP hOldBbmp = (HBITMAP) SelectObject(B_DC.m_hDC, hbmB);
-
-  // copy base image from miniwindow to bitmap
-  B_DC.BitBlt (0, 0, iWidth, iHeight, &(*pdc), Left, Top, SRCCOPY);
-
-
-  // mask image
-
-  CDC M_DC;
-  M_DC.CreateCompatibleDC(&(*pdc));
-  CBitmap M_bmp;
-
-  unsigned char * pM = NULL;
-
-  HBITMAP hbmM = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**) &pM, NULL, 0);
-
-  HBITMAP hOldMbmp = (HBITMAP) SelectObject(M_DC.m_hDC, hbmM);
-
-  // copy mask image from image to bitmap
-  pOldbmp = bmDC.SelectObject(mask_bitmap);
-  M_DC.BitBlt (0, 0, iWidth, iHeight, &bmDC, SrcLeft, SrcTop, SRCCOPY);
-  bmDC.SelectObject(pOldbmp);
-
-  long count = bmi.bmiHeader.biSizeImage;
-  long perline = BytesPerLine (iWidth, 24);
+  long count = (long) bufB.bytes.size ();
+  long perline = bufB.stride;
 
   long i;
 
@@ -3306,7 +3297,10 @@ long CMiniWindow::MergeImageAlpha(LPCTSTR ImageId, LPCTSTR MaskId,
 
     case 1:  // transparent on pixel at 0,0
       {
-      COLORREF opaque = ::GetPixel (A_DC, 0, 0);
+      // the old ::GetPixel (A_DC, 0, 0) — the A layer's top-left pixel, i.e.
+      // image pixel (SrcLeft, SrcTop), straight from the buffer's bytes
+      const unsigned char * pA00 = bufA.row (0);
+      COLORREF opaque = RGB (pA00 [2], pA00 [1], pA00 [0]);
 
       long row;
      for (row = 0; row < iHeight; row++)
@@ -3380,16 +3374,8 @@ long CMiniWindow::MergeImageAlpha(LPCTSTR ImageId, LPCTSTR MaskId,
 
   // copy result back
 
-  pdc->BitBlt (Left, Top, iWidth, iHeight, &B_DC, 0, 0, SRCCOPY);
-
-
-  SelectObject(A_DC.m_hDC, hOldAbmp);
-  SelectObject(B_DC.m_hDC, hOldBbmp);
-  SelectObject(M_DC.m_hDC, hOldMbmp);
-
-  DeleteObject (hbmA);
-  DeleteObject (hbmB);
-  DeleteObject (hbmM);
+  srf->writePixels (m_surfaceId,
+                    { (int) Left, (int) Top, (int) iWidth, (int) iHeight }, bufB);
 
   return eOK;
 

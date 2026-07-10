@@ -369,8 +369,19 @@ if/when the mac view adopts them.
   `WindowInfo 12/13` return the Windows convention ({left, top, width,
   height}), and its hotspot hit-test reads left/top + size (robust to the
   convention; a documented port-only improvement over Windows' PtInRect,
-  which cannot match a window positioned beyond its own size). Remaining:
-  S4b mouse routing/cursor ids, S4c `ON_PLUGIN_DRAW_OUTPUT_WINDOW`.
+  which cannot match a window positioned beyond its own size).
+  **S4b1 landed:** the hotspot hit-test is engine-owned too
+  (`MouseOverMiniWindow`, same TU; the Windows member forwards; the wx
+  frame calls it) — with one flagged, deliberate strict extension: the
+  window bounds test reads left/top + size, so hotspots also work for
+  windows positioned beyond their own size (upstream's PtInRect over the
+  mutated post-paint rect could never match there). And the **cursor parity
+  gap is fixed**: the wx pane maps `CHotspot::m_Cursor` (−1..12) to wx
+  stock cursors exactly as `CMUSHView::OnSetCursor` maps to Win32 ones.
+  Remaining: S4b2 — the stateful `Mouse_Down/Move/Up_MiniWindow` +
+  `Send_Mouse_Event_To_Plugin` extraction (view state:
+  `m_sPreviousMiniWindow` → doc; tooltips/track/capture → view hooks);
+  S4c `ON_PLUGIN_DRAW_OUTPUT_WINDOW`.
 
 Status: **S1** (CPU reference), **S2** (wx adapter), and **S3a–S3c** are landed on
 all platforms — the whole **rect + text/font + shape/pen** drawing surface now

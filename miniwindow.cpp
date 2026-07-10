@@ -1182,10 +1182,12 @@ long CMiniWindow::Write (LPCTSTR FileName)
       strFileName.Right (4).CompareNoCase (".png") != 0)
     return eBadParameter;
 
-  // get window data
-  CDC gDC;
-  gDC.CreateCompatibleDC(&(*pdc));
-  CBitmap gbmp;
+  // get window data — readPixels emits the exact DIB bytes (BGR24, bottom-up,
+  // padded rows) the old BitBlt-into-a-DIBSection copy produced, so the PNG
+  // and BMP writers below consume the buffer unchanged
+  pal::ISurface * srf = pal::g_surface;
+  if (!srf)
+    return eOK;
 
   BITMAPINFO bmi;
   ZeroMemory (&bmi, sizeof bmi);
@@ -1198,14 +1200,13 @@ long CMiniWindow::Write (LPCTSTR FileName)
   bmi.bmiHeader.biCompression =    BI_RGB;
   bmi.bmiHeader.biSizeImage =      m_iHeight * BytesPerLine (m_iWidth, 24);
 
-  unsigned char * pA = NULL;
+  pal::PixelBuffer buf;
+  srf->readPixels (m_surfaceId, { 0, 0, (int) m_iWidth, (int) m_iHeight },
+                   buf, pal::PixelFormat::BGR24);
+  if (!buf.valid () || buf.bytes.size () < (size_t) bmi.bmiHeader.biSizeImage)
+    return eOK;   // cannot happen: a full-window read always succeeds
 
-  HBITMAP hbmG = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**) &pA, NULL, 0);
-
-  HBITMAP hOldAbmp = (HBITMAP) SelectObject(gDC.m_hDC, hbmG);
-
-  // copy image from miniwindow to bitmap
-  gDC.BitBlt (0, 0, m_iWidth, m_iHeight, &(*pdc), 0, 0, SRCCOPY);
+  unsigned char * pA = buf.bytes.data ();
 
   long iReturn = eOK;
 
@@ -1246,10 +1247,6 @@ long CMiniWindow::Write (LPCTSTR FileName)
       } // end of catching a file exception
 
     }   // end of writing BMP file
-
-  // finished with bitmap
-  SelectObject(gDC.m_hDC, hOldAbmp);
-  DeleteObject (hbmG);
 
   return iReturn;
 
@@ -4040,106 +4037,54 @@ long CMiniWindow::TransformImage(LPCTSTR ImageId, float Left, float Top, short M
 
   CBitmap * bitmap = it->second;
 
-  pdc->SetBkMode (TRANSPARENT);
-
   BITMAP  bi;
   bitmap->GetBitmap(&bi);
-
-  CDC bmDC;
-  bmDC.CreateCompatibleDC(&(*pdc));
-  CBitmap *pOldbmp = bmDC.SelectObject(bitmap);
 
   long iWidth  = bi.bmWidth;
   long iHeight = bi.bmHeight;
 
   if (iWidth <= 0 || iHeight <= 0)   // Sanity Claus
-    {
-    bmDC.SelectObject(pOldbmp);
     return eOK;
-    }
 
-  // need advanced mode to do SetWorldTransform successfully
-  if (SetGraphicsMode (pdc->m_hDC, GM_ADVANCED) == 0)
-    {
-    bmDC.SelectObject (pOldbmp);
+  if (Mode != 1 && Mode != 3)
     return eBadParameter;
-    }
+
+  // a non-invertible matrix made the old SetWorldTransform fail
+  if ((double) Mxx * Myy - (double) Mxy * Myx == 0.0)
+    return eBadParameter;
+
+  pal::ISurface * srf = pal::g_surface;
+  if (!srf)
+    return eOK;
 
   // x' = x * Mxx + y * Mxy + Left
   // y' = x * Myx + y * Myy + Top
+  pal::Matrix2x3 xform;   // == the old XFORM assignments, field for field
+  xform.m11 = Mxx;        // cosine
+  xform.m21 = Mxy;        // sine
+  xform.m12 = Myx;        // - sine
+  xform.m22 = Myy;        // cosine
+  xform.dx  = Left;
+  xform.dy  = Top;
 
-  XFORM xform;
-  xform.eM11 = Mxx;       // cosine
-  xform.eM21 = Mxy;       // sine
-  xform.eM12 = Myx;       // - sine
-  xform.eM22 = Myy;       // cosine
-  xform.eDx = Left;
-  xform.eDy = Top;
+  CDC bmDC;
+  bmDC.CreateCompatibleDC(&(*pdc));
+  CBitmap *pOldbmp = bmDC.SelectObject(bitmap);
+  pal::SurfaceId imgSid = pal::g_adoptSurface
+                        ? pal::g_adoptSurface (&bmDC, bi.bmWidth, bi.bmHeight)
+                        : pal::SurfaceId::None;
 
-  if (SetWorldTransform (pdc->m_hDC, &xform) == 0)
-    {
-    bmDC.SelectObject(pOldbmp);
-    return eBadParameter;
-    }
+  // Mode 1 = straight copy; Mode 3 = transparent on the image's (0,0) pixel
+  // ("transparency, nom nom nom!"). Smooth = the old HALFTONE StretchBltMode.
+  srf->blit (m_surfaceId, { 0, 0, 0, 0 },   // dstRect ignored with a matrix
+             imgSid, { 0, 0, (int) iWidth, (int) iHeight },
+             Mode == 1 ? pal::BlitMode::Copy : pal::BlitMode::TransparentKey,
+             Mode == 3 ? srf->getPixel (imgSid, { 0, 0 }) : 0,
+             pal::BlitQuality::Smooth, &xform);
 
-  // gives smoother rotations, especially with transparency
-  pdc->SetStretchBltMode (HALFTONE);
-  SetBrushOrgEx(pdc->m_hDC, 0, 0, NULL);  // as recommended after  SetStretchBltMode
-
-  switch (Mode)
-    {
-    case 1: pdc->BitBlt (0, 0, iWidth, iHeight, &bmDC, 0, 0, SRCCOPY);
-            break;      // straight copy
-
-    case 3:        // transparency, nom nom nom!
-      {
-      COLORREF crOldBack = pdc->SetBkColor (RGB (255, 255, 255));    // white
-      COLORREF crOldText = pdc->SetTextColor (RGB (0, 0, 0));        // black
-      CDC dcTrans;   // transparency mask
-
-
-      // Create a memory (*pdc) for the mask
-      dcTrans.CreateCompatibleDC(&(*pdc));
-
-      // Create the mask bitmap
-      CBitmap bitmapTrans;
-      bitmapTrans.CreateBitmap(m_iWidth, m_iHeight, 1, 1, NULL);
-
-      // Select the mask bitmap into the appropriate (*pdc)
-      CBitmap* pOldBitmapTrans = dcTrans.SelectObject(&bitmapTrans);
-
-      // Our transparent pixel will be at 0,0 (top left corner) of original image
-      COLORREF crOldBackground = bmDC.SetBkColor (::GetPixel (bmDC, 0, 0));
-
-      // Build mask based on transparent colour at location 0, 0
-      dcTrans.BitBlt (0, 0, iWidth, iHeight, &bmDC, 0, 0, SRCCOPY);
-
-      // Do the work
-      pdc->BitBlt (0, 0, iWidth, iHeight, &bmDC,    0, 0, SRCINVERT);
-      pdc->BitBlt (0, 0, iWidth, iHeight, &dcTrans, 0, 0, SRCAND);
-      pdc->BitBlt (0, 0, iWidth, iHeight, &bmDC,    0, 0, SRCINVERT);
-
-      // Restore settings
-      dcTrans.SelectObject(pOldBitmapTrans);
-      pdc->SetBkColor(crOldBack);
-      pdc->SetTextColor(crOldText);
-      bmDC.SetBkColor(crOldBackground);
-      }
-      break;
-
-    default:
-      bmDC.SelectObject(pOldbmp);
-      ModifyWorldTransform(pdc->m_hDC, &xform, MWT_IDENTITY);
-      SetGraphicsMode (pdc->m_hDC, GM_COMPATIBLE);
-      return eBadParameter;
-
-    } // end of switch
-
+  if (pal::g_releaseAdoptedSurface)
+    pal::g_releaseAdoptedSurface (imgSid);
   bmDC.SelectObject(pOldbmp);
-
-  // reset to identity transformation
-  ModifyWorldTransform(pdc->m_hDC, &xform, MWT_IDENTITY);
-  SetGraphicsMode (pdc->m_hDC, GM_COMPATIBLE);
 
   return eOK;
   }   // end of CMiniWindow::TransformImage

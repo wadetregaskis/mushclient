@@ -584,15 +584,57 @@ SurfaceId   GdiSurface::createSurface(Size, Colour) { return SurfaceId::None; }
 // buffer-source blit lands with its op family (image-pattern brushes / DrawImageAlpha).
 void        GdiSurface::blit(SurfaceId, Rect, const PixelBuffer&, Rect, BlitMode, Colour, BlitQuality, const Matrix2x3*) {}
 
-// surface -> surface blit (WindowDrawImage). Reproduces the original bit-for-bit:
-// Copy same-size = BitBlt(SRCCOPY); Copy stretched = StretchBlt(SRCCOPY) with
-// HALFTONE for Smooth; TransparentKey = the SRCINVERT/SRCAND mask dance keyed on
-// the colour, exactly as the old DrawImage Mode 3.
+// surface -> surface blit (WindowDrawImage / WindowTransformImage). Reproduces
+// the original bit-for-bit: Copy same-size = BitBlt(SRCCOPY); Copy stretched =
+// StretchBlt(SRCCOPY) with HALFTONE for Smooth; TransparentKey = the
+// SRCINVERT/SRCAND mask dance keyed on the colour, exactly as the old DrawImage
+// Mode 3; matrix = the old TransformImage GM_ADVANCED + SetWorldTransform
+// sequence around the same Copy / mask-dance blits.
 void GdiSurface::blit(SurfaceId dstId, Rect dstRect, SurfaceId srcId, Rect srcRect,
                       BlitMode mode, Colour key, BlitQuality q, const Matrix2x3* m) {
     Surf* dst = surf(dstId);
     Surf* src = surf(srcId);
-    if (!dst || !dst->dc || !src || !src->dc || m) return;   // matrix blit deferred
+    if (!dst || !dst->dc || !src || !src->dc) return;
+
+    if (m) {
+        // == the old TransformImage: draw the srcRect at device (0,0) through
+        // the world transform (which carries the translation in eDx/eDy).
+        HDC hdc = dst->dc->GetSafeHdc();
+        if (::SetGraphicsMode(hdc, GM_ADVANCED) == 0) return;
+        XFORM xf;
+        xf.eM11 = (FLOAT)m->m11; xf.eM21 = (FLOAT)m->m21;
+        xf.eM12 = (FLOAT)m->m12; xf.eM22 = (FLOAT)m->m22;
+        xf.eDx  = (FLOAT)m->dx;  xf.eDy  = (FLOAT)m->dy;
+        if (::SetWorldTransform(hdc, &xf) == 0) {
+            ::SetGraphicsMode(hdc, GM_COMPATIBLE);
+            return;
+        }
+        dst->dc->SetStretchBltMode(HALFTONE);    // smoother rotations (== old)
+        ::SetBrushOrgEx(hdc, 0, 0, NULL);
+        if (mode == BlitMode::Copy) {
+            dst->dc->BitBlt(0, 0, srcRect.w, srcRect.h,
+                            src->dc, srcRect.x, srcRect.y, SRCCOPY);
+        } else {
+            // the mask dance, exactly as the old TransformImage Mode 3 — the
+            // mask DC has NO transform (built 1:1); only the dest blits do
+            CDC* d = dst->dc; CDC* s = src->dc;
+            COLORREF oldBk   = d->SetBkColor(RGB(255, 255, 255));
+            COLORREF oldText = d->SetTextColor(RGB(0, 0, 0));
+            CDC dcTrans; dcTrans.CreateCompatibleDC(d);
+            CBitmap mask; mask.CreateBitmap(srcRect.w, srcRect.h, 1, 1, NULL);
+            CBitmap* oldMask = dcTrans.SelectObject(&mask);
+            COLORREF oldSrcBk = s->SetBkColor(key);
+            dcTrans.BitBlt(0, 0, srcRect.w, srcRect.h, s, srcRect.x, srcRect.y, SRCCOPY);
+            d->BitBlt(0, 0, srcRect.w, srcRect.h, s,        srcRect.x, srcRect.y, SRCINVERT);
+            d->BitBlt(0, 0, srcRect.w, srcRect.h, &dcTrans, 0, 0, SRCAND);
+            d->BitBlt(0, 0, srcRect.w, srcRect.h, s,        srcRect.x, srcRect.y, SRCINVERT);
+            dcTrans.SelectObject(oldMask);
+            d->SetBkColor(oldBk); d->SetTextColor(oldText); s->SetBkColor(oldSrcBk);
+        }
+        ::ModifyWorldTransform(hdc, &xf, MWT_IDENTITY);   // == the old reset
+        ::SetGraphicsMode(hdc, GM_COMPATIBLE);
+        return;
+    }
 
     if (mode == BlitMode::TransparentKey) {
         if (dstRect.w != srcRect.w || dstRect.h != srcRect.h) return;   // keyed+stretch deferred

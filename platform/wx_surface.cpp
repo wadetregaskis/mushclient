@@ -17,6 +17,7 @@
 #include "stdafx.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -560,7 +561,19 @@ void WxSurface::blit(SurfaceId dstId, Rect dstRect, SurfaceId srcId, Rect srcRec
                      BlitMode mode, Colour key, BlitQuality q, const Matrix2x3* m) {
     Surf* dst = surf(dstId);
     Surf* src = surf(srcId);
-    if (!dst || !src || m != nullptr) return;    // S2 gap: matrix
+    if (!dst || !src) return;
+    if (m) {
+        // Matrix blit (WindowTransformImage): read the source and inverse-map
+        // it CPU-side — wxDC has no world transform. Nearest sampling (the
+        // GDI HALFTONE resample is the Windows adapter's; documented deviation).
+        Rect clipped = srcRect;
+        if (!clipToBounds(clipped, src->size)) return;
+        PixelBuffer sp;
+        readPixels(srcId, clipped, sp, PixelFormat::BGR24);
+        if (!sp.valid()) return;
+        blit(dstId, dstRect, sp, { 0, 0, sp.size.w, sp.size.h }, mode, key, q, m);
+        return;
+    }
     const bool stretch = (dstRect.w != srcRect.w || dstRect.h != srcRect.h);
     // Clip srcRect to the source; the removed margin shifts the destination
     // 1:1 (BitBlt clipping). A stretched blit whose source was clipped needs a
@@ -593,7 +606,50 @@ void WxSurface::blit(SurfaceId dstId, Rect dstRect, SurfaceId srcId, Rect srcRec
 void WxSurface::blit(SurfaceId dstId, Rect dstRect, const PixelBuffer& src, Rect srcRect,
                      BlitMode mode, Colour key, BlitQuality /*q*/, const Matrix2x3* m) {
     Surf* dst = surf(dstId);
-    if (!dst || !src.valid() || m != nullptr) return;               // S2 gap: matrix
+    if (!dst || !src.valid()) return;
+    if (m) {
+        // Matrix blit: device = M·(srcRect-relative) + t; dstRect ignored
+        // (contract). Inverse-map, pixel-centre sampling, nearest neighbour.
+        const double det = m->m11 * m->m22 - m->m21 * m->m12;
+        if (det == 0.0) return;
+        // destination bounding box from the four transformed source corners
+        const double cw = srcRect.w, ch = srcRect.h;
+        const double cxs[4] = { 0, cw, 0, cw }, cys[4] = { 0, 0, ch, ch };
+        double minX = m->dx, maxX = m->dx, minY = m->dy, maxY = m->dy;
+        for (int i = 0; i < 4; ++i) {
+            const double X = cxs[i] * m->m11 + cys[i] * m->m21 + m->dx;
+            const double Y = cxs[i] * m->m12 + cys[i] * m->m22 + m->dy;
+            if (X < minX) minX = X; if (X > maxX) maxX = X;
+            if (Y < minY) minY = Y; if (Y > maxY) maxY = Y;
+        }
+        Rect box = { (int)floor(minX) - 1, (int)floor(minY) - 1,
+                     (int)ceil(maxX) - (int)floor(minX) + 2,
+                     (int)ceil(maxY) - (int)floor(minY) + 2 };
+        if (!clipToBounds(box, dst->size)) return;
+        PixelBuffer db;
+        readPixels(dstId, box, db, PixelFormat::BGR24);
+        if (!db.valid()) return;
+        const int sbpp = src.bytesPerPixel();
+        for (int y = 0; y < box.h; ++y) {
+            unsigned char* drow = db.row(y);
+            for (int x = 0; x < box.w; ++x) {
+                const double u = (box.x + x + 0.5) - m->dx;
+                const double v = (box.y + y + 0.5) - m->dy;
+                const int sx = (int)floor(( u * m->m22 - v * m->m21) / det);
+                const int sy = (int)floor((-u * m->m12 + v * m->m11) / det);
+                if (sx < 0 || sy < 0 || sx >= srcRect.w || sy >= srcRect.h) continue;
+                const int bsx = srcRect.x + sx, bsy = srcRect.y + sy;
+                if (bsx < 0 || bsy < 0 || bsx >= src.size.w || bsy >= src.size.h) continue;
+                const unsigned char* p = src.row(bsy) + (size_t)bsx * sbpp;
+                const Colour c = (Colour)p[2] | ((Colour)p[1] << 8) | ((Colour)p[0] << 16);
+                if (mode == BlitMode::TransparentKey && c == key) continue;
+                unsigned char* d = drow + (size_t)x * 3;
+                d[0] = p[0]; d[1] = p[1]; d[2] = p[2];
+            }
+        }
+        writePixels(dstId, box, db);
+        return;
+    }
     if (dstRect.w != srcRect.w || dstRect.h != srcRect.h) return;   // S2 gap: stretch
     if (mode == BlitMode::Copy) {
         // Fast path: land the buffer via the DIB round-trip.
@@ -1107,6 +1163,31 @@ int RunPalSurfaceSelfTest() {
             }
         stCheck(nRed > 0 && nGreen > 0, "image pattern brush tiles a shape fill");
         ad.destroySurface(ps);
+    }
+
+    // 16. matrix blit (WindowTransformImage): a translate-only matrix is
+    // fully deterministic under the inverse-map — pixels land 1:1 at (dx,dy).
+    // A keyed matrix blit must skip the key colour.
+    {
+        SurfaceId msrc = ad.createSurface({ 2, 2 }, kRed);
+        ad.setPixel(msrc, { 1, 1 }, kGreen);
+        SurfaceId mdst = ad.createSurface({ 12, 12 }, kBlack);
+        Matrix2x3 mt;                       // identity + translate (5,3)
+        mt.dx = 5; mt.dy = 3;
+        ad.blit(mdst, { 0, 0, 0, 0 }, msrc, { 0, 0, 2, 2 },
+                BlitMode::Copy, 0, BlitQuality::Smooth, &mt);
+        stCheck(ad.getPixel(mdst, { 5, 3 }) == kRed &&
+                ad.getPixel(mdst, { 6, 4 }) == kGreen &&
+                ad.getPixel(mdst, { 4, 3 }) == kBlack &&
+                ad.getPixel(mdst, { 7, 5 }) == kBlack,
+                "matrix blit: translate lands pixels exactly");
+        ad.blit(mdst, { 0, 0, 0, 0 }, msrc, { 0, 0, 2, 2 },
+                BlitMode::TransparentKey, kRed, BlitQuality::Smooth, &mt);
+        stCheck(ad.getPixel(mdst, { 6, 3 }) == kRed &&   // key skipped: prior copy shows
+                ad.getPixel(mdst, { 6, 4 }) == kGreen,
+                "matrix blit: transparent key skips the key colour");
+        ad.destroySurface(msrc);
+        ad.destroySurface(mdst);
     }
 
     printf("  dpi() reports: %d\n", ad.dpi());

@@ -4,6 +4,7 @@
 #include "pal/cpu_raster.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace pal {
@@ -287,7 +288,9 @@ void CpuRaster::gradient(SurfaceId id, Rect r, Colour from, Colour to, bool hori
 }
 
 // ── blits ───────────────────────────────────────────────────────────────────
-// S1: 1:1 only (srcRect and dstRect the same size), Fast quality, no matrix.
+// S1: 1:1 only (srcRect and dstRect the same size), Fast quality; matrix blits
+// are inverse-mapped with nearest sampling (the GDI HALFTONE resample is the
+// Windows adapter's job — this is the documented reference approximation).
 void CpuRaster::blit(SurfaceId dstId, Rect dstRect, SurfaceId srcId, Rect srcRect,
                      BlitMode mode, Colour key, BlitQuality q, const Matrix2x3* m) {
     Surf* src = surf(srcId);
@@ -308,7 +311,48 @@ void CpuRaster::blit(SurfaceId dstId, Rect dstRect, SurfaceId srcId, Rect srcRec
 void CpuRaster::blit(SurfaceId dstId, Rect dstRect, const PixelBuffer& src, Rect srcRect,
                      BlitMode mode, Colour key, BlitQuality /*q*/, const Matrix2x3* m) {
     Surf* dst = surf(dstId);
-    if (!dst || !src.valid() || m != nullptr) return;             // S1: no matrix
+    if (!dst || !src.valid()) return;
+    if (m) {
+        // Matrix blit (WindowTransformImage): device = M·(srcRect-relative) + t,
+        // dstRect ignored (contract). Inverse-map with pixel-centre sampling,
+        // nearest neighbour; a singular matrix draws nothing (the engine
+        // returns eBadParameter for that before calling, as SetWorldTransform
+        // failed in the original).
+        const double det = m->m11 * m->m22 - m->m21 * m->m12;
+        if (det == 0.0) return;
+        const int bpp = src.bytesPerPixel();
+        // destination bounding box: the four transformed source corners
+        double bx[4], by[4];
+        const double cw = srcRect.w, ch = srcRect.h;
+        const double cxs[4] = { 0, cw, 0, cw }, cys[4] = { 0, 0, ch, ch };
+        for (int i = 0; i < 4; ++i) {
+            bx[i] = cxs[i] * m->m11 + cys[i] * m->m21 + m->dx;
+            by[i] = cxs[i] * m->m12 + cys[i] * m->m22 + m->dy;
+        }
+        double minX = bx[0], maxX = bx[0], minY = by[0], maxY = by[0];
+        for (int i = 1; i < 4; ++i) {
+            minX = std::min(minX, bx[i]); maxX = std::max(maxX, bx[i]);
+            minY = std::min(minY, by[i]); maxY = std::max(maxY, by[i]);
+        }
+        const int x0 = std::max((int)std::floor(minX) - 1, 0);
+        const int y0 = std::max((int)std::floor(minY) - 1, 0);
+        const int x1 = std::min((int)std::ceil(maxX) + 1, dst->size.w);
+        const int y1 = std::min((int)std::ceil(maxY) + 1, dst->size.h);
+        for (int Y = y0; Y < y1; ++Y)
+            for (int X = x0; X < x1; ++X) {
+                const double u = (X + 0.5) - m->dx, v = (Y + 0.5) - m->dy;
+                const int sx = (int)std::floor(( u * m->m22 - v * m->m21) / det);
+                const int sy = (int)std::floor((-u * m->m12 + v * m->m11) / det);
+                if (sx < 0 || sy < 0 || sx >= srcRect.w || sy >= srcRect.h) continue;
+                const int bsx = srcRect.x + sx, bsy = srcRect.y + sy;
+                if (bsx < 0 || bsy < 0 || bsx >= src.size.w || bsy >= src.size.h) continue;
+                const unsigned char* p = src.row(bsy) + (size_t)bsx * bpp;
+                const Colour c = makeCol(p[2], p[1], p[0]);
+                if (mode == BlitMode::TransparentKey && c == key) continue;
+                setPx(*dst, X, Y, c);
+            }
+        return;
+    }
     if (dstRect.w != srcRect.w || dstRect.h != srcRect.h) return; // S1: no stretch
     const int bpp = src.bytesPerPixel();
     for (int y = 0; y < srcRect.h; ++y) {

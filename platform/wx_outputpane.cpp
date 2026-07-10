@@ -300,6 +300,17 @@ static SOutputLine DetectURLs(SOutputLine line)
 
 void COutputPane::AppendLine(SOutputLine&& line)
 {
+    // Script running inside the mid-paint ON_PLUGIN_DRAW_OUTPUT_WINDOW
+    // callback may print (Note etc.), which lands here while OnPaint is
+    // iterating m_lines.  Defer such appends until the paint completes
+    // (docs/PAL.md S4c re-entrancy guard; Windows relies on the documented
+    // draw-only discipline instead).
+    if (m_inPaint) {
+        auto pending = std::make_shared<SOutputLine>(std::move(line));
+        CallAfter([this, pending]() { AppendLine(std::move(*pending)); });
+        return;
+    }
+
     // Pending lines (m_pCurrentLine in the telnet engine, not yet completed)
     // are rendered as a dim trailing row below the committed buffer.  They are
     // never added to m_lines; they simply replace m_pendingLine.
@@ -750,6 +761,17 @@ void COutputPane::OnPaint(wxPaintEvent&)
         dc.SetDeviceOrigin(0, 0);
         m_fn_composite_miniwindows(dc, clientW, clientH, /*bUnder=*/true);
         dc.SetDeviceOrigin(-scrollX * unitW, -scrollY * unitH);
+    }
+
+    // ── ON_PLUGIN_DRAW_OUTPUT_WINDOW (docs/PAL.md S4c) ─────────────────────
+    // Give plugins a chance to update miniwindows to match the visible text —
+    // fired between the underneath composite and the text pass, exactly where
+    // Windows' OnDraw fires it.  The callback runs script: m_inPaint makes
+    // AppendLine defer any prints it causes until this paint completes.
+    if (m_fn_draw_output_window) {
+        m_inPaint = true;
+        m_fn_draw_output_window(YToLine(0), yPixOffset);
+        m_inPaint = false;
     }
 
     // Shift the text-drawing origin to the text rectangle's top-left so output

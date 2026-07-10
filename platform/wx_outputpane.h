@@ -248,6 +248,15 @@ public:
     // means use the full client area.
     std::function<bool(int& l, int& t, int& r, int& b)> m_fn_text_rect;
 
+    // Fired once per paint between the underneath-miniwindow composite and
+    // the text pass — ON_PLUGIN_DRAW_OUTPUT_WINDOW (docs/PAL.md S4c), the
+    // same point Windows' OnDraw fires it. Args: the first visible logical
+    // line (PANE index, 0-based; the frame maps it to a 1-based doc line)
+    // and the scroll offset in pixels. The callback runs plugin script
+    // mid-paint; AppendLine defers list mutations while painting.
+    std::function<void(int firstVisiblePaneLine, int pixelOffset)>
+        m_fn_draw_output_window;
+
     // Miniwindow mouse routing.  Down/up return true if the event was
     // consumed.  Move returns the hotspot cursor code under the point
     // (CHotspot::m_Cursor, -1..12), 0 (arrow) over a miniwindow without a
@@ -434,6 +443,11 @@ private:
     std::string m_linkAtDown;
 
     bool m_autoScroll      = true;
+    // True while OnPaint runs its mid-paint plugin callback
+    // (ON_PLUGIN_DRAW_OUTPUT_WINDOW): AppendLine defers mutations of m_lines
+    // until the paint completes, so the pass the paint is iterating stays
+    // stable even if the script prints (docs/PAL.md S4c re-entrancy guard).
+    bool m_inPaint         = false;
     // When false, scrolling up does NOT freeze output — new lines keep
     // scrolling into view.  Mirrors the world's m_bAutoFreeze flag.
     bool        m_allowAutoFreeze    = true;

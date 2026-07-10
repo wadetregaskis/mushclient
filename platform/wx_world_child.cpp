@@ -854,6 +854,20 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         m_doc->SendNAWS(textCols, paneH / lineH);
     };
 
+    // ── ON_PLUGIN_DRAW_OUTPUT_WINDOW (docs/PAL.md S4c) ─────────────────────
+    // Windows passes a 1-based DOC line index plus the pixel scroll offset.
+    // The pane speaks in its own line list, which tail-aligns with the doc's
+    // (both append one entry per completed output line and trim to the same
+    // maximum), so the doc line = doc count - pane count + pane index.
+    m_output->m_fn_draw_output_window = [this](int firstPaneLine, int pixelOffset) {
+        if (!m_doc) return;
+        long docLine = (long)m_doc->GetLastLine()
+                     - (long)m_output->LineCount() + firstPaneLine + 1;   // 1-based
+        if (docLine < 1) docLine = 1;
+        m_doc->SendToAllPluginCallbacks(ON_PLUGIN_DRAW_OUTPUT_WINDOW,
+                                        docLine, pixelOffset, "", false, false);
+    };
+
     m_output->m_fn_composite_miniwindows =
         [this](wxDC& destDC, int clientW, int clientH, bool bUnder)
     {

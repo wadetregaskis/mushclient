@@ -367,7 +367,32 @@ static bool makeGdiBrush(CBrush& br, CDC* dc, const BrushSpec& b, CBitmap& patte
         return br.CreateBrushIndirect(&lb) != FALSE;
     }
     case BrushStyle::Pattern: {
-        if (!b.monoPattern) return false;       // image-pattern brushes deferred
+        if (b.pattern) {
+            // Arbitrary-image pattern (WindowImageOp). The original passed the
+            // stored image (a DIBSection) to CreatePatternBrush; rebuilding a
+            // DIBSection from the carried pixels tiles identically — GDI
+            // ignores text/bk colours (and alpha) for colour pattern brushes.
+            const PixelBuffer* pat = b.pattern;
+            if (!pat->valid()) return false;
+            BITMAPINFO bmi;
+            memset(&bmi, 0, sizeof bmi);
+            bmi.bmiHeader.biSize        = sizeof bmi.bmiHeader;
+            bmi.bmiHeader.biWidth       = pat->size.w;
+            bmi.bmiHeader.biHeight      = pat->size.h;   // bottom-up, as the buffer
+            bmi.bmiHeader.biPlanes      = 1;
+            bmi.bmiHeader.biBitCount    = (WORD)(pat->bytesPerPixel() * 8);
+            bmi.bmiHeader.biCompression = BI_RGB;
+            bmi.bmiHeader.biSizeImage   = (DWORD)((size_t)pat->stride * pat->size.h);
+            if ((size_t)bmi.bmiHeader.biSizeImage > pat->bytes.size()) return false;
+            unsigned char* bits = NULL;
+            HBITMAP hbm = ::CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS,
+                                             (void**)&bits, NULL, 0);
+            if (!hbm || !bits) return false;
+            memcpy(bits, pat->bytes.data(), bmi.bmiHeader.biSizeImage);
+            patternBmp.Attach(hbm);              // caller-owned; outlives the draw
+            return br.CreatePatternBrush(&patternBmp) != FALSE;
+        }
+        if (!b.monoPattern) return false;
         WORD bits[8];
         for (int i = 0; i < 8; ++i) bits[i] = (WORD)b.monoPattern[i];   // WORD rows (== wBits)
         if (!patternBmp.CreateBitmap(8, 8, 1, 1, bits)) return false;
@@ -386,7 +411,7 @@ void GdiSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
     if (!s || !s->dc) return;
     CPen cpen; makePen(cpen, pen);
     CBrush cbr; CBitmap patternBmp;
-    if (!makeGdiBrush(cbr, s->dc, brush, patternBmp)) {     // image-pattern (deferred) -> null
+    if (!makeGdiBrush(cbr, s->dc, brush, patternBmp)) {     // malformed spec -> null
         LOGBRUSH nb; nb.lbStyle = BS_NULL; nb.lbColor = 0; nb.lbHatch = 0;
         cbr.CreateBrushIndirect(&nb);
     }

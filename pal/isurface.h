@@ -97,8 +97,9 @@ enum class BrushStyle : std::uint8_t {
                  //     on Windows — the adapter, not the engine, applies the 0/1
                  //     -> text/bk mapping, so no mapping is guessed off-Windows.
                  //   • pattern (PixelBuffer) != null → an arbitrary loaded image
-                 //     tiled as a brush (WindowImageOp; alpha 0 = transparent gap).
-                 //     Deferred to the image op family.
+                 //     tiled as a brush (WindowImageOp). The engine passes BGR24;
+                 //     tiling is opaque, as GDI CreatePatternBrush (which ignores
+                 //     text/bk colours — and alpha — for colour bitmaps).
 };
 enum class HatchKind : std::uint8_t {  // HS_* order
     Horizontal, Vertical, FDiagonal, BDiagonal, Cross, DiagCross,

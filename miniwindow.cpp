@@ -1079,6 +1079,7 @@ long CMiniWindow::LoadImage (LPCTSTR ImageId, LPCTSTR FileName)
      {
       CBitmap * pImage = new CBitmap;
       pImage->Attach (hBmp);
+      m_MonoImages.erase (ImageId);   // stale CreateImage pattern, if any
       m_Images [ImageId] = pImage;
       return eOK;
      }  // end of having a bitmap loaded
@@ -1117,6 +1118,7 @@ long CMiniWindow::LoadImageMemory(LPCTSTR ImageId,
   // make bitmap to add to images list
   CBitmap * pImage = new CBitmap;
   pImage->Attach (hbmp);
+  m_MonoImages.erase (ImageId);   // stale CreateImage pattern, if any
   m_Images [ImageId] = pImage;
 
   return eOK;
@@ -1151,6 +1153,7 @@ long CMiniWindow::LoadPngImage (LPCTSTR ImageId, LPCTSTR FileName)
   // make bitmap to add to images list
   CBitmap * pImage = new CBitmap;
   pImage->Attach (hbmp);
+  m_MonoImages.erase (ImageId);   // stale CreateImage pattern, if any
   m_Images [ImageId] = pImage;
 
   return eOK;
@@ -1846,8 +1849,6 @@ long CMiniWindow::ImageOp(short Action,
                           long EllipseWidth, long EllipseHeight)
   {
 
-  long iResult = eUnknownOption;
-
   ImageMapIterator it = m_Images.find (ImageId);
 
   if (it == m_Images.end ())
@@ -1855,57 +1856,70 @@ long CMiniWindow::ImageOp(short Action,
 
   CBitmap * bitmap = it->second;
 
-  pdc->SetBkMode (OPAQUE);
-
-  // for monochrome bitmaps, 1-bits will come out in pen colour, and 0-bits will come out in background colour
-  pdc->SetTextColor (BrushColour);  // for patterned brushes
-  pdc->SetBkColor (PenColour);      // for hatched brushes and patterned brushes
-
   if (ValidatePenStyle (PenStyle, PenWidth))
     return ePenStyleNotValid;
 
-  CBrush br;
+  pal::ISurface * srf = pal::g_surface;
+  if (!srf)
+    return eOK;
 
-  br.CreatePatternBrush (bitmap);
+  pal::BrushSpec brush;
+  brush.style = pal::BrushStyle::Pattern;
 
-  // create requested pen
-  CPen pen;
-  MakeAPen (pen, PenColour, PenStyle, PenWidth);
+  pal::PixelBuffer pat;
+  MonoImageMapIterator mit = m_MonoImages.find (ImageId);
+  if (mit != m_MonoImages.end ())
+    {
+    // a CreateImage 8x8 mono bitmap: the original CreatePatternBrush kept it
+    // MONO, so GDI coloured it — "1-bits will come out in pen colour, and
+    // 0-bits will come out in background colour" via SetTextColor(BrushColour)
+    // + SetBkColor(PenColour). Same carrier as the 5 built-in mono patterns,
+    // so each adapter applies its own text/bk mapping.
+    brush.monoPattern = mit->second.data ();
+    brush.fg          = (pal::Colour) BrushColour;   // SetTextColor
+    brush.bg          = (pal::Colour) PenColour;     // SetBkColor
+    }
+  else
+    {
+    // a colour image: GDI tiles the bitmap as-is (text/bk colours are ignored
+    // for colour pattern brushes) — read it out and carry the pixels
+    BITMAP bi;
+    bitmap->GetBitmap (&bi);
+    CDC bmDC;
+    bmDC.CreateCompatibleDC (&(*pdc));
+    CBitmap * pOldbmp = bmDC.SelectObject (bitmap);
+    pal::SurfaceId sid = pal::g_adoptSurface
+                       ? pal::g_adoptSurface (&bmDC, bi.bmWidth, bi.bmHeight)
+                       : pal::SurfaceId::None;
+    srf->readPixels (sid, { 0, 0, (int) bi.bmWidth, (int) bi.bmHeight },
+                     pat, pal::PixelFormat::BGR24);
+    if (pal::g_releaseAdoptedSurface)
+      pal::g_releaseAdoptedSurface (sid);
+    bmDC.SelectObject (pOldbmp);
+    if (!pat.valid ())
+      return eOK;
+    brush.pattern = &pat;
+    }
 
-  // select into DC
-  CPen* oldPen = pdc->SelectObject(&pen);
-  CBrush* oldBrush = pdc->SelectObject(&br);
+  long iResult = eUnknownOption;
+
+  pal::ShapeKind kind;
 
   switch (Action)
-
     {
-    case 1:       // ellipse
-      {
-      pdc->Ellipse (CRect (Left, Top, FixRight (Right), FixBottom (Bottom)));
-      iResult = eOK;
-      break;
-      }
-
-    case 2:       // rectangle
-      {
-      pdc->Rectangle (CRect (Left, Top, FixRight (Right), FixBottom (Bottom)));
-      iResult = eOK;
-      break;
-      }
-
-    case 3:       // round rectangle
-      {
-      pdc->RoundRect (CRect (Left, Top, FixRight (Right), FixBottom (Bottom)), CPoint (EllipseWidth, EllipseHeight));
-      iResult = eOK;
-      break;
-      }
-
-
+    case 1:  kind = pal::ShapeKind::Ellipse;    iResult = eOK; break;
+    case 2:  kind = pal::ShapeKind::Rect;       iResult = eOK; break;
+    case 3:  kind = pal::ShapeKind::RoundRect;  iResult = eOK; break;
+    default: return iResult;
     } // end of switch
 
-  // put things back
-  pdc->SelectObject (oldPen);
-  pdc->SelectObject (oldBrush);
+  const long R = FixRight (Right), B = FixBottom (Bottom);
+  srf->shape (m_surfaceId, kind,
+              { (int) Left, (int) Top, (int) (R - Left), (int) (B - Top) },
+              { (int) EllipseWidth, (int) EllipseHeight },   // RoundRect corner
+              { 0, 0 },
+              PenSpecFromWin32 (PenColour, PenStyle, PenWidth),
+              brush);
 
   return iResult;
 
@@ -1932,6 +1946,15 @@ long CMiniWindow::CreateImage(LPCTSTR ImageId, long Row1, long Row2, long Row3, 
   pImage->CreateBitmap (8, 8, 1, 1, wBits);
 
   m_Images [ImageId] = pImage;
+
+  // remember the pattern so ImageOp can rebuild a REAL mono brush portably
+  // (top scanline first, matching the wBits order CreateBitmap consumes)
+  const unsigned char rows [8] = { (unsigned char) Row8, (unsigned char) Row7,
+                                   (unsigned char) Row6, (unsigned char) Row5,
+                                   (unsigned char) Row4, (unsigned char) Row3,
+                                   (unsigned char) Row2, (unsigned char) Row1 };
+  m_MonoImages [ImageId] = vector<unsigned char> (rows, rows + 8);
+
   return eOK;
 
   }  // end of CMiniWindow::CreateImage
@@ -2512,6 +2535,7 @@ long CMiniWindow::ImageFromWindow(LPCTSTR ImageId, CMiniWindow * pSrcWindow)
   pImage->Attach ((HGDIOBJ) hbm);
 
   // save in map
+  m_MonoImages.erase (ImageId);   // stale CreateImage pattern, if any
   m_Images [ImageId] = pImage;
   return eOK;
 

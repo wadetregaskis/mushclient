@@ -287,9 +287,9 @@ static int penToPs(PenStyle st) {
     return PS_SOLID;
 }
 
-// Build a CBrush for the spec; returns false for styles this adapter can't do
-// yet (Pattern — S2 gap). Sets up the DC hatch-gap state the way the engine
-// does (bg colour with OPAQUE gaps, or TRANSPARENT gaps for bg == -1).
+// Build a CBrush for the spec; returns false for a malformed spec. Sets up
+// the DC hatch-gap state the way the engine does (bg colour with OPAQUE gaps,
+// or TRANSPARENT gaps for bg == -1).
 // patternBmp is caller-owned so a mono pattern brush's backing bitmap outlives
 // the shape draw (the wxBrush stipple references it).
 static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec, CBitmap& patternBmp) {
@@ -312,7 +312,31 @@ static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec, CBitmap& patte
         return br.CreateBrushIndirect(&lb) != 0;
     }
     case BrushStyle::Pattern: {
-        if (!spec.monoPattern) return false;     // image (PixelBuffer) patterns deferred
+        if (spec.pattern) {
+            // Arbitrary-image pattern (WindowImageOp): materialize the engine's
+            // BGR24 buffer as a bitmap and tile it. GDI ignores the text/bk
+            // colours for COLOUR pattern brushes; the wx stipple does too.
+            const PixelBuffer* pat = spec.pattern;
+            if (!pat->valid()) return false;
+            BITMAPINFO bmi;
+            memset(&bmi, 0, sizeof bmi);
+            bmi.bmiHeader.biSize        = sizeof bmi;
+            bmi.bmiHeader.biWidth       = pat->size.w;
+            bmi.bmiHeader.biHeight      = pat->size.h;   // bottom-up, as the buffer
+            bmi.bmiHeader.biPlanes      = 1;
+            bmi.bmiHeader.biBitCount    = 24;
+            bmi.bmiHeader.biCompression = BI_RGB;
+            bmi.bmiHeader.biSizeImage   = pat->size.h * BytesPerLine(pat->size.w, 24);
+            if ((size_t)bmi.bmiHeader.biSizeImage > pat->bytes.size()) return false;
+            unsigned char* bits = NULL;
+            HBITMAP hbm = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS,
+                                           (void**)&bits, NULL, 0);
+            if (!hbm || !bits) return false;
+            memcpy(bits, pat->bytes.data(), bmi.bmiHeader.biSizeImage);
+            patternBmp.Attach((HGDIOBJ)hbm);     // materializes + frees the DIB
+            return br.CreatePatternBrush(&patternBmp) != 0;
+        }
+        if (!spec.monoPattern) return false;
         // The 5 built-in mono patterns (WindowCircleOp/WindowPolygon 8-12): a mono
         // 8x8 CreatePatternBrush coloured with GDI mono-brush semantics — fg via
         // SetTextColor, bg via SetBkColor, TRANSPARENT gaps when fg == CLR (-1).
@@ -1054,6 +1078,35 @@ int RunPalSurfaceSelfTest() {
 
         ad.destroySurface(is);
         idc.SelectObject(oldi);
+    }
+
+    // 15. arbitrary-image pattern brush (WindowImageOp): a 2x2 red/green
+    // checker buffer tiled through shape(). Tiling anchor may differ per
+    // backend, so assert both colours appear inside the fill, not positions.
+    {
+        SurfaceId ps = ad.createSurface({ 16, 16 }, kBlack);
+        PixelBuffer pb;
+        pb.format = PixelFormat::BGR24;
+        pb.size   = { 2, 2 };
+        pb.stride = PixelBuffer::strideFor(2, PixelFormat::BGR24);
+        pb.bytes.assign((size_t)pb.stride * 2, 0);
+        unsigned char* r0 = pb.row(0);        // top row: red, green
+        r0[0] = 0x00; r0[1] = 0x00; r0[2] = 0xFF;
+        r0[3] = 0x00; r0[4] = 0xFF; r0[5] = 0x00;
+        unsigned char* r1 = pb.row(1);        // bottom row: green, red
+        r1[0] = 0x00; r1[1] = 0xFF; r1[2] = 0x00;
+        r1[3] = 0x00; r1[4] = 0x00; r1[5] = 0xFF;
+        BrushSpec pbr; pbr.style = BrushStyle::Pattern; pbr.pattern = &pb;
+        PenSpec ppen; ppen.colour = kWhite;
+        ad.shape(ps, ShapeKind::Rect, { 1, 1, 14, 14 }, { 0, 0 }, { 0, 0 }, ppen, pbr);
+        int nRed = 0, nGreen = 0;
+        for (int y = 3; y < 13; ++y)
+            for (int x = 3; x < 13; ++x) {
+                Colour c = ad.getPixel(ps, { x, y });
+                if (c == kRed) ++nRed; else if (c == kGreen) ++nGreen;
+            }
+        stCheck(nRed > 0 && nGreen > 0, "image pattern brush tiles a shape fill");
+        ad.destroySurface(ps);
     }
 
     printf("  dpi() reports: %d\n", ad.dpi());

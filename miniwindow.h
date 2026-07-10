@@ -12,6 +12,14 @@ typedef FontMap::iterator FontMapIterator;
 typedef map<string, CBitmap *> ImageMap;
 typedef ImageMap::iterator ImageMapIterator;
 
+// CreateImage 8x8 mono patterns, kept alongside the CBitmap so ImageOp can
+// rebuild a REAL mono pattern brush (coloured via GDI text/bk semantics) on
+// every platform — the port materializes bitmaps at 32bpp, so the mono depth
+// cannot be queried back. bytes[0] is the TOP row (Row8 in CreateImage's
+// argument order, matching CreateBitmap's scanline order), MSB = left pixel.
+typedef map<string, vector<unsigned char> > MonoImageMap;
+typedef MonoImageMap::iterator MonoImageMapIterator;
+
 
 // hotspots
 class CHotspot
@@ -85,6 +93,7 @@ class CMiniWindow
     pal::SurfaceId m_surfaceId = pal::SurfaceId::None;
     FontMap     m_Fonts;      // all the fonts they want
     ImageMap    m_Images;     // other images they may want to blt onto the window
+    MonoImageMap m_MonoImages; // CreateImage patterns (see MonoImageMap above)
 
     long    m_iWidth;   
     long    m_iHeight;

@@ -180,10 +180,6 @@ BSTR CMUSHclientDoc::Trim(LPCTSTR Source)
 }  // end of CMUSHclientDoc::Trim
 
 
-long CMUSHclientDoc::GetUniqueNumber() 
-{
-  return (long) (App.GetUniqueNumber () & 0x7FFFFFFF);
-}  // end of CMUSHclientDoc::GetUniqueNumber
 
 
 BSTR CMUSHclientDoc::FixupHTML(LPCTSTR StringToConvert) 

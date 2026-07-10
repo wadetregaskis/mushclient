@@ -1480,153 +1480,11 @@ void CMUSHclientDoc::ConnectionEstablished()
 
 // ── SOCKS proxy helpers ───────────────────────────────────────────────────────
 
-bool CMUSHclientDoc::CheckExpectedProxyResponse(char cExpected, char cReceived)
-{
-    if (cReceived != cExpected) {
-        OnConnectionDisconnect();
-        if (App.m_bNotifyIfCannotConnect) {
-            CString msg;
-            msg.Format("Unexpected proxy server response %i, expected %i",
-                       (int)cReceived, (int)cExpected);
-            Note(msg);
-        }
-        return true;   // not OK
-    }
-    return false;      // OK
-}
 
-void CMUSHclientDoc::SendProxyConnectSequence()
-{
-    // SOCKS5 CONNECT: tell the proxy server to connect to the MUD
-    uint32_t       address = m_sockAddr.sin_addr.s_addr;  // exactly 4 bytes (LP64: long is 8)
-    unsigned short port    = m_sockAddr.sin_port;
-    unsigned char  pkt[4 + sizeof address + sizeof port] = { 5, 1, 0, 1 };
-    int len = 4;
-    memcpy(&pkt[len], &address, sizeof address); len += (int)sizeof address;
-    memcpy(&pkt[len], &port,    sizeof port);    len += (int)sizeof port;
-    SendPacket(pkt, len);
-}
 
-bool CMUSHclientDoc::SendProxyUserNameAndPassword()
-{
-    if (m_strProxyUserName.GetLength() > 255 ||
-        m_strProxyPassword.GetLength() > 255) {
-        OnConnectionDisconnect();
-        Note("Proxy username or password exceeds 255 characters");
-        return true;  // error
-    }
-    unsigned char auth[3 + 255 + 255] = { 1 };
-    int len = 1;
-    unsigned char ulen = (unsigned char)m_strProxyUserName.GetLength();
-    unsigned char plen = (unsigned char)m_strProxyPassword.GetLength();
-    auth[len++] = ulen;
-    memcpy(&auth[len], (const char*)m_strProxyUserName, ulen); len += ulen;
-    auth[len++] = plen;
-    memcpy(&auth[len], (const char*)m_strProxyPassword, plen); len += plen;
-    SendPacket(auth, len);
-    return false;  // OK
-}
 
-int CMUSHclientDoc::ProcessProxyResponse1(char* buff, int count)
-{
-    // SOCKS5: server chose authentication method
-    if (CheckExpectedProxyResponse(5, buff[0])) return -1;
-    if (count < 2) buff[1] = (char)0xFF;
 
-    switch ((unsigned char)buff[1]) {
-        case 2:  // username/password required
-            if (SendProxyUserNameAndPassword()) return -1;
-            m_iConnectPhase = eConnectAwaitingProxyResponse2;
-            return 2;
-        case 0:  // no authentication required
-            SendProxyConnectSequence();
-            m_iConnectPhase = eConnectAwaitingProxyResponse3;
-            return 2;
-        default:
-            OnConnectionDisconnect();
-            if (App.m_bNotifyIfCannotConnect)
-                Note("Proxy server: no acceptable authentication method");
-            return -1;
-    }
-}
 
-int CMUSHclientDoc::ProcessProxyResponse2(char* buff, int count)
-{
-    // SOCKS5: authentication result
-    if (CheckExpectedProxyResponse(1, buff[0])) return -1;
-    if (count < 2 || buff[1] != 0) {
-        OnConnectionDisconnect();
-        if (App.m_bNotifyIfCannotConnect)
-            Note("Proxy server refused authentication");
-        return -1;
-    }
-    SendProxyConnectSequence();
-    m_iConnectPhase = eConnectAwaitingProxyResponse3;
-    return 2;
-}
-
-int CMUSHclientDoc::ProcessProxyResponse3(char* buff, int count)
-{
-    // Both SOCKS4 and SOCKS5 connection-established response
-    int iBytesToMove;
-
-    if (CheckExpectedProxyResponse(
-            m_iSocksProcessing == eProxyServerSocks4 ? 0 : 5,
-            buff[0]))
-        return -1;
-
-    if (m_iSocksProcessing == eProxyServerSocks4) {
-        if (count < 2 || (unsigned char)buff[1] != 90) {
-            if (count < 2) buff[1] = 91;
-            const char* p = "request rejected";
-            switch ((unsigned char)buff[1]) {
-                case 91: p = "request rejected or failed";            break;
-                case 92: p = "cannot connect to ident server";        break;
-                case 93: p = "client and identd report different IDs"; break;
-            }
-            OnConnectionDisconnect();
-            if (App.m_bNotifyIfCannotConnect) {
-                CString msg;
-                msg.Format("Proxy server refused connection: %s", p);
-                Note(msg);
-            }
-            return -1;
-        }
-        iBytesToMove = 8;
-    } else {
-        // SOCKS5
-        if (count < 2 || buff[1] != 0) {
-            if (count < 2) buff[1] = 1;
-            const char* p = "unknown error";
-            switch ((unsigned char)buff[1]) {
-                case 1: p = "general SOCKS server failure";        break;
-                case 2: p = "connection not allowed by ruleset";   break;
-                case 3: p = "network unreachable";                 break;
-                case 4: p = "host unreachable";                    break;
-                case 5: p = "connection refused";                  break;
-                case 6: p = "TTL expired";                         break;
-                case 7: p = "command not supported";               break;
-                case 8: p = "address type not supported";          break;
-            }
-            OnConnectionDisconnect();
-            if (App.m_bNotifyIfCannotConnect) {
-                CString msg;
-                msg.Format("Proxy server refused connection: %s", p);
-                Note(msg);
-            }
-            return -1;
-        }
-        iBytesToMove = 10;
-    }
-
-    // Proxy accepted — proceed to SSL or plain connection
-    if (m_bUseSSL) {
-        StartSSLHandshake();
-        return iBytesToMove;
-    }
-    ConnectionEstablished();
-    return iBytesToMove;
-}
 
 // ── SSL implementation ────────────────────────────────────────────────────────
 
@@ -1901,7 +1759,6 @@ void CMUSHclientDoc::ColourTell(const char* fg, const char* bg, const char* text
 
 // ── UpdateAllViews ────────────────────────────────────────────────────────────
 void CMUSHclientDoc::UpdateAllViews(void*) {}
-long CMUSHclientDoc::GetUniqueNumber()          { return App.GetUniqueNumber() & 0x7FFFFFFFL; }
 
 bool CMUSHclientDoc::AppendToTheNotepad(const CString strTitle,
                                          const CString strText,
@@ -2301,26 +2158,7 @@ void CMUSHclientDoc::Trace(const char* fmt, ...)
 // Writes raw bytes to the open log file.  On write error the file is closed
 // and a Note() is emitted so the user sees the problem.
 // Mirrors the implementation in doc.cpp (which uses UMessageBox instead).
-void CMUSHclientDoc::WriteToLog(const char* pText, unsigned long nLen)
-{
-    if (!m_logfile || nLen == 0)
-        return;
 
-    size_t written = fwrite(pText, 1, nLen, m_logfile);
-    if (written != nLen) {
-        CString msg;
-        msg.Format("Error writing to log file \"%s\" — logging stopped.",
-                   (const char*)m_logfile_name);
-        fclose(m_logfile);
-        m_logfile = nullptr;
-        Note(msg);
-    }
-}
-
-void CMUSHclientDoc::WriteToLog(const CString& sText)
-{
-    WriteToLog((const char*)sText, (unsigned long)sText.GetLength());
-}
 
 // ── CMUSHclientDoc::LogCommand ────────────────────────────────────────────
 // Logs a command sent to the MUD when input logging is active.

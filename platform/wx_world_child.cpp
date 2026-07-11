@@ -854,6 +854,67 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         m_doc->SendNAWS(textCols, paneH / lineH);
     };
 
+    // ── SetBackgroundImage / SetForegroundImage (Windows OnDraw parity) ────
+    // The exact Blit_Bitmap !bUseRect placement: modes 0/2 stretch to the
+    // pane/frame, 1/3 aspect-stretch, 4-12 positioned 1:1 (corners / wall
+    // centres / centre), 13 tile. Formerly the images loaded on the port but
+    // the view never painted them.
+    auto draw_doc_image = [this](wxDC& dc, int clientW, int clientH,
+                                 CBitmap& bmp, int mode)
+    {
+        // Draw straight from the wxBitmap the shim already holds — a wxMemoryDC
+        // source, no shim CDC (whose CreateCompatibleDC/SelectObject depend on
+        // the FULL_BUILD guard that isn't set for this TU).
+        wxBitmap* wxbmp = WxBitmapFromCBitmap(&bmp);
+        if (!wxbmp || !wxbmp->IsOk())
+            return;   // no image loaded
+        const int w = wxbmp->GetWidth(), h = wxbmp->GetHeight();
+        if (w <= 0 || h <= 0)
+            return;
+
+        int fw = 0, fh = 0;
+        GetClientSize(&fw, &fh);              // frame rect, for modes 2/3
+
+        wxMemoryDC src(*wxbmp);
+        switch (mode) {                       // == Blit_Bitmap's !bUseRect placement
+        case 0:  dc.StretchBlit(0, 0, clientW, clientH, &src, 0, 0, w, h, wxCOPY); break;
+        case 1:  dc.StretchBlit(0, 0, (int)(clientH * (double)w / h), clientH,
+                                &src, 0, 0, w, h, wxCOPY); break;
+        case 2:  dc.StretchBlit(0, 0, fw, fh, &src, 0, 0, w, h, wxCOPY); break;
+        case 3:  dc.StretchBlit(0, 0, (int)(fh * (double)w / h), fh,
+                                &src, 0, 0, w, h, wxCOPY); break;
+        case 4:  dc.Blit(0, 0, w, h, &src, 0, 0, wxCOPY); break;
+        case 5:  dc.Blit((clientW - w) / 2, 0, w, h, &src, 0, 0, wxCOPY); break;
+        case 6:  dc.Blit(clientW - w, 0, w, h, &src, 0, 0, wxCOPY); break;
+        case 7:  dc.Blit(clientW - w, (clientH - h) / 2, w, h, &src, 0, 0, wxCOPY); break;
+        case 8:  dc.Blit(clientW - w, clientH - h, w, h, &src, 0, 0, wxCOPY); break;
+        case 9:  dc.Blit((clientW - w) / 2, clientH - h, w, h, &src, 0, 0, wxCOPY); break;
+        case 10: dc.Blit(0, clientH - h, w, h, &src, 0, 0, wxCOPY); break;
+        case 11: dc.Blit(0, (clientH - h) / 2, w, h, &src, 0, 0, wxCOPY); break;
+        case 12: dc.Blit((clientW - w) / 2, (clientH - h) / 2, w, h, &src, 0, 0, wxCOPY); break;
+        case 13: {                            // tile
+            const int across = clientW / w + 1, down = clientH / h + 1;
+            for (int tx = 0; tx < across; ++tx)
+                for (int ty = 0; ty < down; ++ty)
+                    dc.Blit(tx * w, ty * h, w, h, &src, 0, 0, wxCOPY);
+            break;
+        }
+        }
+    };
+
+    m_output->m_fn_draw_background_image =
+        [this, draw_doc_image](wxDC& dc, int cw, int ch) {
+        if (m_doc)
+            draw_doc_image(dc, cw, ch, m_doc->m_BackgroundBitmap,
+                           m_doc->m_iBackgroundMode);
+    };
+    m_output->m_fn_draw_foreground_image =
+        [this, draw_doc_image](wxDC& dc, int cw, int ch) {
+        if (m_doc)
+            draw_doc_image(dc, cw, ch, m_doc->m_ForegroundBitmap,
+                           m_doc->m_iForegroundMode);
+    };
+
     // ── ON_PLUGIN_DRAW_OUTPUT_WINDOW (docs/PAL.md S4c) ─────────────────────
     // Windows passes a 1-based DOC line index plus the pixel scroll offset.
     // The pane speaks in its own line list, which tail-aligns with the doc's

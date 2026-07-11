@@ -248,6 +248,14 @@ public:
     // means use the full client area.
     std::function<bool(int& l, int& t, int& r, int& b)> m_fn_text_rect;
 
+    // Draw the world's background / foreground images (SetBackgroundImage /
+    // SetForegroundImage), placed per their mode by the frame. Background
+    // paints right after the colour fill (under everything); foreground
+    // after the text, before the on-top miniwindows — the Windows OnDraw
+    // order. (Formerly a mac-view gap: the images loaded but never drew.)
+    std::function<void(wxDC& dc, int clientW, int clientH)> m_fn_draw_background_image;
+    std::function<void(wxDC& dc, int clientW, int clientH)> m_fn_draw_foreground_image;
+
     // Fired once per paint between the underneath-miniwindow composite and
     // the text pass — ON_PLUGIN_DRAW_OUTPUT_WINDOW (docs/PAL.md S4c), the
     // same point Windows' OnDraw fires it. Args: the first visible logical

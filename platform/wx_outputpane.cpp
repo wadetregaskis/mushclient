@@ -737,6 +737,14 @@ void COutputPane::OnPaint(wxPaintEvent&)
 
     int yPixOffset = scrollY * unitH;
 
+    // ── Background image (SetBackgroundImage) ────────────────────────────
+    // Right after the colour fill, under everything — the Windows OnDraw
+    // order. Viewport-anchored (the Windows view has no scroll transform).
+    if (m_fn_draw_background_image) {
+        dc.SetDeviceOrigin(0, 0);
+        m_fn_draw_background_image(dc, clientW, clientH);
+    }
+
     // ── Text rectangle (world.TextRectangle) ──────────────────────────────
     // A plugin may reserve part of the output area for a docked miniwindow;
     // the text then shifts to its top-left and wraps within its width.
@@ -848,6 +856,13 @@ void COutputPane::OnPaint(wxPaintEvent&)
 
     if (trActive)
         dc.DestroyClippingRegion();   // text drawing done; miniwindows aren't clipped
+
+    // ── Foreground image (SetForegroundImage) ─────────────────────────────
+    // After the text, before the on-top miniwindows — the Windows OnDraw order.
+    if (m_fn_draw_foreground_image) {
+        dc.SetDeviceOrigin(0, 0);
+        m_fn_draw_foreground_image(dc, clientW, clientH);
+    }
 
     // ── Miniwindows: draw-on-top pass ──────────────────────────────────────
     if (m_fn_composite_miniwindows) {

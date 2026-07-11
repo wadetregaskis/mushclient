@@ -13,6 +13,10 @@
 #include "scripting/errors.h"   // eOK / eBadParameter (full build; doc_stub.h defines them for mushcore)
 #else
 #include "platform/doc_stub.h"
+// add ::Replace's default for the stub-only build (stdafx.h owns it in the
+// full build; doc_stub.h deliberately declares without it - see there)
+CString Replace (const CString strSource, const CString strTarget,
+                 const CString strReplacement, const bool bAll = true);
 #endif
 
 #include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
@@ -602,4 +606,134 @@ CString CMUSHclientDoc::DoReverseSpeedwalk(LPCTSTR SpeedWalkString)
   return ReverseSpeedwalkString (SpeedWalkString, ENDLINE,
                                  SpeedwalkReverseDir, SpeedwalkReverseWord);
 }   // end of CMUSHclientDoc::DoReverseSpeedwalk
+
+
+
+// ── logging + plugin-list notification (P1c de-drift) ───────────────────────
+// CloseLog (from methods_logging.cpp), LogCommand (doc.cpp) and
+// PluginListChanged (plugins.cpp), moved verbatim; the doc_portable.cpp
+// paraphrases are deleted. The headless engine now writes log preambles/
+// postambles, HTML colour spans and the CloseLog return code exactly as the
+// products do.
+
+long CMUSHclientDoc::CloseLog() 
+{
+
+  if (m_logfile)
+    {
+
+  // write log file Postamble if wanted
+
+    if (!m_strLogFilePostamble.IsEmpty () && !m_bLogRaw)
+      {
+      CTime theTime;
+      theTime = CTime::GetCurrentTime();
+
+      // allow %n for newline
+      CString strPostamble = ::Replace (m_strLogFilePostamble, "%n", "\n");
+
+      // allow for time-substitution strings
+      strPostamble = FormatTime (theTime, strPostamble, m_bLogHTML);
+
+      // this is open in text mode, don't want \r\r\n
+      strPostamble.Replace (ENDLINE, "\n");
+
+      WriteToLog (strPostamble); 
+      WriteToLog ("\n", 1);
+      }
+
+    fclose (m_logfile);
+    m_logfile = NULL;
+    return eOK;
+    }
+
+	return eLogFileNotOpen;
+}   // end of CMUSHclientDoc::CloseLog
+
+
+void CMUSHclientDoc::LogCommand (const char * text)
+  {
+
+  if (m_logfile && 
+      LoggingInput () &&
+      !m_bLogRaw)
+    {
+
+    CString strMessage = text;
+
+    // strip trailing endline
+    if (strMessage.Right (2) == ENDLINE)
+      strMessage = strMessage.Left (strMessage.GetLength () - 2);
+
+    // this is open in text mode, don't want \r\r\n
+    strMessage.Replace (ENDLINE, "\n");
+
+    // get appropriate preamble
+    CString strPreamble = m_strLogLinePreambleInput;
+
+    // allow %n for newline
+    strPreamble.Replace ("%n", "\n");
+
+    if (strPreamble.Find ('%') != -1)
+      strPreamble = FormatTime (CTime::GetCurrentTime(), strPreamble, m_bLogHTML);
+
+    // get appropriate Postamble
+    CString strPostamble = m_strLogLinePostambleInput;
+
+    // allow %n for newline
+    strPostamble.Replace ("%n", "\n");
+
+    if (strPostamble.Find ('%') != -1)
+      strPostamble = FormatTime (CTime::GetCurrentTime(), strPostamble, m_bLogHTML);
+
+    // line preamble
+    WriteToLog (strPreamble); 
+    // line itself
+    // fix up HTML sequences
+    if (m_bLogHTML)
+      {
+      strMessage = FixHTMLString (strMessage);
+
+      // change to command colour if wanted
+      if (m_bLogInColour && m_echo_colour != SAMECOLOUR)
+        {
+        COLORREF colour = m_customtext [m_echo_colour];
+        WriteToLog (CFormat ("<font color=\"#%02X%02X%02X\">",
+                              GetRValue (colour),
+                              GetGValue (colour),
+                              GetBValue (colour)));
+        }  // end of logging commands in a different colour
+      } // end of logging in HTML
+
+    WriteToLog (strMessage);
+
+    // cancel command colour
+    if (m_bLogHTML && 
+        m_bLogInColour && 
+        m_echo_colour != SAMECOLOUR)
+        WriteToLog ("</font>");
+
+    // line Postamble
+    WriteToLog (strPostamble); 
+    WriteToLog ("\n", 1);
+    }   // end of logging wanted
+
+  } // end of LogCommand
+
+
+void  CMUSHclientDoc::PluginListChanged (void)
+
+  {
+
+static bool bInPluginListChanged = false;
+
+  // don't recurse into infinite loops
+  if (bInPluginListChanged)
+    return;
+
+  bInPluginListChanged = true;
+  SendToAllPluginCallbacks (ON_PLUGIN_LIST_CHANGED);
+  bInPluginListChanged = false;
+
+  }    // end CMUSHclientDoc::PluginListChanged 
 

@@ -1160,6 +1160,16 @@ extern "C" {
 // ── Free function stubs ──────────────────────────────────────────────────
 // These are defined in Utilities.cpp on Windows; stubs live in doc_portable.cpp.
 CString FixHTMLString(CString s);
+
+// find-and-replace for strings (Replace.cpp, compiled into mushcore too).
+// No default argument here: stdafx.h declares the same function WITH the
+// default, and several portable TUs include both headers - a repeated
+// default would be a redefinition. Stub-only TUs that need the default
+// restate it (legal: a redeclaration may add a default).
+CString Replace (const CString strSource,
+                 const CString strTarget,
+                 const CString strReplacement,
+                 const bool bAll);
 CString FixupEscapeSequences(const CString& s);
 // Guard: stdafx.h declares this with the same signature (and default args).
 // Only redeclare here for TUs that don't include stdafx.h.
@@ -2141,7 +2151,7 @@ public:
     void StartSSLHandshake();
     void ContinueSSLHandshake();
     void SSLCleanup();
-    void CloseLog();
+    long CloseLog();   // returns eOK / eLogFileNotOpen, as the full build (P1c)
     // SOCKS proxy helpers
     bool CheckExpectedProxyResponse(char cExpected, char cReceived);
     void SendProxyConnectSequence();

@@ -55,39 +55,6 @@ long CMUSHclientDoc::OpenLog(LPCTSTR LogFileName, BOOL Append)
 
 }   // end of CMUSHclientDoc::OpenLog
 
-long CMUSHclientDoc::CloseLog() 
-{
-
-  if (m_logfile)
-    {
-
-  // write log file Postamble if wanted
-
-    if (!m_strLogFilePostamble.IsEmpty () && !m_bLogRaw)
-      {
-      CTime theTime;
-      theTime = CTime::GetCurrentTime();
-
-      // allow %n for newline
-      CString strPostamble = ::Replace (m_strLogFilePostamble, "%n", "\n");
-
-      // allow for time-substitution strings
-      strPostamble = FormatTime (theTime, strPostamble, m_bLogHTML);
-
-      // this is open in text mode, don't want \r\r\n
-      strPostamble.Replace (ENDLINE, "\n");
-
-      WriteToLog (strPostamble); 
-      WriteToLog ("\n", 1);
-      }
-
-    fclose (m_logfile);
-    m_logfile = NULL;
-    return eOK;
-    }
-
-	return eLogFileNotOpen;
-}   // end of CMUSHclientDoc::CloseLog
 
 
 long CMUSHclientDoc::WriteLog(LPCTSTR Message) 

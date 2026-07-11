@@ -1429,21 +1429,6 @@ void CMUSHclientDoc::OnFilePluginwizard()
 
 
 // tell plugins the list of plugins may have changed
-void  CMUSHclientDoc::PluginListChanged (void)
-
-  {
-
-static bool bInPluginListChanged = false;
-
-  // don't recurse into infinite loops
-  if (bInPluginListChanged)
-    return;
-
-  bInPluginListChanged = true;
-  SendToAllPluginCallbacks (ON_PLUGIN_LIST_CHANGED);
-  bInPluginListChanged = false;
-
-  }    // end CMUSHclientDoc::PluginListChanged 
 
 
 void CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName)   // no arguments

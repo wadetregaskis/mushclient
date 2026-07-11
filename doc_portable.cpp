@@ -718,14 +718,6 @@ void CMUSHclientDoc::FireWorldSave()
 // Mirrors CMUSHclientDoc::PluginListChanged() in plugins.cpp.
 // Called after InternalLoadPlugin / L_UnloadPlugin so every loaded plugin
 // is notified that the plugin roster has changed.
-void CMUSHclientDoc::PluginListChanged()
-{
-    static thread_local bool s_firing = false;
-    if (s_firing) return;
-    s_firing = true;
-    SendToAllPluginCallbacks(ON_PLUGIN_LIST_CHANGED);
-    s_firing = false;
-}
 
 // ── FireWorldGetFocus / FireWorldLoseFocus ────────────────────────────────────
 // Fire the on_world_get_focus / on_world_lose_focus Lua callbacks.
@@ -1591,24 +1583,6 @@ void CMUSHclientDoc::ContinueSSLHandshake()
 // ── CloseLog ─────────────────────────────────────────────────────────────────
 // Writes the log-file postamble (if any) and closes m_logfile.
 // Mirrors the implementation in scripting/methods/methods_logging.cpp.
-void CMUSHclientDoc::CloseLog()
-{
-    if (!m_logfile)
-        return;
-
-    if (!m_strLogFilePostamble.IsEmpty() && !m_bLogRaw) {
-        CTime theTime = CTime::GetCurrentTime();
-        CString strPost = m_strLogFilePostamble;
-        strPost.Replace("%n", "\n");
-        strPost = FormatTime(theTime, strPost, m_bLogHTML != 0);
-        strPost.Replace(ENDLINE, "\n");
-        WriteToLog(strPost);
-        WriteToLog("\n", 1);
-    }
-
-    fclose(m_logfile);
-    m_logfile = nullptr;
-}
 
 // ── Note / ColourNote / ColourTell ───────────────────────────────────────────
 
@@ -2163,59 +2137,6 @@ void CMUSHclientDoc::Trace(const char* fmt, ...)
 // ── CMUSHclientDoc::LogCommand ────────────────────────────────────────────
 // Logs a command sent to the MUD when input logging is active.
 // Mirrors the implementation in doc.cpp, minus the Windows-only UI calls.
-void CMUSHclientDoc::LogCommand(const char* sText)
-{
-    if (!m_logfile || !LoggingInput() || m_bLogRaw)
-        return;
-
-    CString strMessage = sText;
-
-    // strip trailing CR/LF
-    if (strMessage.Right(2) == ENDLINE)
-        strMessage = strMessage.Left(strMessage.GetLength() - 2);
-    strMessage.Replace(ENDLINE, "\n");
-
-    CTime now = CTime::GetCurrentTime();
-
-    // preamble
-    CString pre = m_strLogLinePreambleInput;
-    pre.Replace("%n", "\n");
-    if (pre.Find('%') != -1)
-        pre = FormatTime(now, pre, m_bLogHTML != 0);
-
-    // postamble
-    CString post = m_strLogLinePostambleInput;
-    post.Replace("%n", "\n");
-    if (post.Find('%') != -1)
-        post = FormatTime(now, post, m_bLogHTML != 0);
-
-    WriteToLog(pre);
-
-    if (m_bLogHTML) {
-        // Escape HTML entities in the command text
-        strMessage.Replace("&", "&amp;");
-        strMessage.Replace("<", "&lt;");
-        strMessage.Replace(">", "&gt;");
-
-        if (m_bLogInColour && m_echo_colour != SAMECOLOUR) {
-            COLORREF col = m_customtext[m_echo_colour];
-            CString tag;
-            tag.Format("<font color=\"#%02X%02X%02X\">",
-                       GetRValue(col), GetGValue(col), GetBValue(col));
-            WriteToLog(tag);
-        }
-
-        WriteToLog(strMessage);
-
-        if (m_bLogInColour && m_echo_colour != SAMECOLOUR)
-            WriteToLog("</font>", 7);
-    } else {
-        WriteToLog(strMessage);
-    }
-
-    WriteToLog(post);
-    WriteToLog("\n", 1);
-}
 
 // ── CMUSHclientDoc::OutputOutstandingLines ────────────────────────────────
 // Re-outputs note/tell lines that were deferred while a trigger was

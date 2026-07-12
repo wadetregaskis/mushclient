@@ -541,26 +541,40 @@ behaviour, GUI and headless alike).
 
 ### Migration (T1–T5, each step green)
 
-- **T1** `pal/itransport.h` + the fake adapter + characterization tests of the
-  phase machine (SOCKS4/5 sequences incl. auth, TLS success/cert-fail/
-  handshake-fail, clean close, mid-callback destruction).
-- **T2** POSIX adapter; the engine call sites switch behind typed doc helpers
-  (the P2 pattern); `CWorldSocket` dissolves into the adapter; the disconnect
-  UX body moves from CWorldSocket::OnClose into an engine method.
+- **T1 — DONE** (`08ed225`). `pal/itransport.h` + the fake adapter +
+  characterization tests of the phase machine (SOCKS4/5 sequences incl. auth,
+  TLS success/cert-fail/handshake-fail, clean close, mid-callback destruction).
+- **T2 — DONE.** The POSIX adapter and its wiring, in four steps:
+  - **T2a** (`fe7aa56`) the disconnect-UX body moved from
+    `CWorldSocket::OnClose` into `CMUSHclientDoc::ConnectionClosed`.
+  - **T2b** (`366c7c6`/`05fc74b`) `ReceiveMsg` split at the seam →
+    `OnBytesReceived` (both builds), the adapter's `onBytes` landing point.
+  - **T2c** (`a6f6870`) `platform/posix_transport.{h,cpp}` — the adapter,
+    verified UNWIRED by the hidden `--pal-transport-selftest` (13 checks
+    incl. real TLS both ways + destroy-inside-onBytes).
+  - **T2d** (`5c7bb0e`) the engine WIRED onto it: `CDocTransportEvents`
+    bridge, doc gains `m_pTransport`; ConnectSocket / InitiateConnection /
+    SendPacket / LookupHostName / StartSSLHandshake / OnConnectionDisconnect
+    switch to it on the port; `CWorldSocket` is now Windows-only. DNS (old
+    T4) folded in here — `m_fn_lookup_host` deleted, the wx poll timer calls
+    `pal::PumpTransportCompletions()`. Live-verified through the real GUI
+    (connect / ANSI receive / keyboard send / server-close disconnect).
 - **T3** single-source the doc-level twins (SendPacket, ReceiveMsg, OnConnect,
   ConnectionEstablished, CheckConnected, ConnectSocket,
   OnConnectionDisconnect) — the de-drift payoff this seam exists to unlock;
-  the portable SSL_write-no-retry bug dies here by construction.
-- **T4** DNS folds in (delete `m_fn_lookup_host`); optionally route chat's
-  hostname resolution through the same op later (it is broken today).
+  the portable SSL_write-no-retry bug dies here by construction. **Open
+  decision:** whether `mushcore`/`doc_portable.cpp` adopts a null/loopback
+  transport fake too, or keeps its own `m_pSocket` path (the proxy-ordering +
+  fail-closed-TLS divergence is real for the portable twin).
+- **T4 — DONE** as part of T2d (DNS folded in; `m_fn_lookup_host` deleted).
 - **T5** Windows adapter lands in MUSHclient.vcxproj alongside (cannot be
   compiled here — by-reasoning parity, same discipline as the GDI adapter).
 
-Known quirks, preserved deliberately until Wade rules otherwise:
-`m_nBytesOut` is double-counted (SendPacket AND the send path both add it —
-upstream behaviour, visible in world stats); the engine synthesizing
-`OnClose(0)` during teardown becomes an explicit engine call to its own
-disconnect bookkeeping.
+Known quirks: `m_nBytesOut` was double-counted on the old socket path
+(SendPacket AND the send path both add it); **the port drops the double-count
+at T2d** — bytes are counted once at `SendPacket`. Windows keeps the upstream
+double-count until T5 unifies it. The engine synthesizing `OnClose(0)` during
+teardown is now an explicit `ConnectionClosed` call.
 
 ## Migration (incremental, always-green; Windows never perturbed)
 

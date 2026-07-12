@@ -425,6 +425,143 @@ runs the original `SetWorldTransform` sequence verbatim, wx/CPU inverse-map).
 GDI-adapter stubs left: `createSurface` and the engine-unused buffer-source
 `blit` overload only.
 
+## ITransport — design
+
+Derived from a full survey of the real connection stack (2026-07-12): the shared
+`CWorldSocket` (worldsock.cpp — compiled into BOTH builds), the doc-level
+lifecycle in doc.cpp (ConnectSocket/InitiateConnection/OnConnect/
+ConnectionEstablished/ReceiveMsg/SendPacket/StartSSLHandshake/
+ContinueSSLHandshake/LookupHostName/OnConnectionDisconnect), their hand-written
+doc_portable.cpp twins, the POSIX `CAsyncSocket` shim (platform/posix_socket.h —
+a select(2) pump driven by a 20 ms wx timer; generation-tagged registry against
+callback self-deletion), and the OpenSSL usage.
+
+### What the survey established
+
+- **TLS is split-brain today.** The handshake and `SSL_read` are DOC-level in
+  BOTH builds (doc.cpp:6758/6838/1019; doc_portable.cpp:1484/1532/1198); only
+  `SSL_write` differs — socket-level with WANT_* retry in the full build
+  (worldsock.cpp:105-119) vs inline in the portable `SendPacket` with the
+  return value ignored and **no retry** (doc_portable.cpp:560-563 — a real
+  latent bug the seam fixes by construction). `SSL*`/`SSL_CTX*` are doc
+  members; a fresh per-connection CTX is built each handshake; the fd is
+  reached through the shim (`SSL_set_fd(m_pSSL, m_pSocket->m_hSocket)`).
+- **The proxy (SOCKS4/5) sits above the byte transport and below TLS**: all
+  proxy bytes ride the normal buffered `SendPacket` path in cleartext, parsed
+  by the phase machine in doc_shared.cpp; TLS starts only after the tunnel is
+  up (doc_shared.cpp:414-417). Proxy logic is engine state, NOT a transport
+  concern — the transport is proxy-unaware except for which address it dials.
+- **The engine requires exactly these operations** of the socket layer:
+  create+options (keepalives, Nagle-off), async resolve with cancellation and
+  a staleness guard, async connect, buffered append-and-it-drains write, read
+  on readiness, close notification (peer and locally synthesized), graceful
+  shutdown, TLS session (start/step/verify/read/write/pending-drain/clean-
+  shutdown/metadata), normalized error codes + strings.
+- **Interaction points back into the engine/GUI**: connect complete/failed,
+  bytes ready (with the SSL_pending re-drain), writable, closed (the
+  disconnect-UX body in CWorldSocket::OnClose is really ENGINE logic — scripts,
+  plugin callbacks, stats Notes), TLS outcome, DNS completion, and the
+  cert-decision prompt — which is DEFERRED to the main loop by design
+  (`WM_USER_SSL_FALLBACK_PROMPT`); the GUI prompts (allow-unverified /
+  fall-back-to-plaintext → mutate policy flags → full reconnect), the headless
+  build **fails closed with no prompt**.
+- **Callbacks may destroy the socket/session mid-call** (worldsock.cpp:41-48;
+  posix_socket.h generation guards). Any seam must keep that survivable.
+- **The portable connect/SSL/proxy twins are compiled but unexercised** — no
+  test drives a connection (tests hand-set `m_iConnectPhase`); mushcore has no
+  pump at all. A fake ITransport makes the whole connect state machine
+  testable for the first time.
+- Chat (stream + listen/accept) and UDP (datagram listen) are separate
+  `CAsyncSocket` consumers, mushapp-only, un-QA'd on the port; hostname chat
+  calls are already broken off-Windows (the `WSAAsyncGetHostByName` shim
+  returns failure).
+
+### Scope (v1)
+
+One `ITransport` instance per world connection attempt, owning: the fd, the
+event source (pump/messages), DNS resolution, and the WHOLE TLS session. The
+engine keeps: the connect-phase machine, proxy negotiation, MCCP, telnet,
+reconnect policy (`m_bDisconnectOK` + the timer/countdown), auto-login, and all
+disconnect UX (scripts/plugins/stats — today buried in CWorldSocket::OnClose,
+to be repatriated into the engine).
+
+Out of scope v1 (stay on the CAsyncSocket shim): the chat subsystem's
+listen/accept, UDP datagrams, and `UdpSend`'s synchronous raw socket. Add a
+listener/datagram surface only if chat is ever brought to parity ("don't
+gold-plate").
+
+### The contract (sketch — authoritative form lands in pal/itransport.h)
+
+```cpp
+struct TransportOptions { bool keepalives; /* timing fixed: 120s/6s/6 probes */ };
+struct TlsParams  { std::string serverName;   // SNI + hostname pinning
+                    bool allowInvalidCert; }; // session-only user consent
+enum class TlsFailure { CertVerify, Handshake };
+
+class ITransportEvents {           // implemented by the engine (the doc)
+  onResolved(token, addr, ok);     // stale tokens dropped by the caller
+  onConnect(int err);              // 0 = connected (or immediate success)
+  onBytes(const byte* p, size_t n);// DECRYPTED bytes; absorbs the SSL_pending drain
+  onWritable();                    // buffered queue drained enough to continue
+  onClosed(int err);               // peer close or error; engine runs disconnect UX
+  onTlsEstablished(version, cipher);
+  onTlsFailed(TlsFailure, reason); // engine decides: GUI defers a prompt to the
+};                                 // main loop; headless fails closed
+
+class ITransport {
+  resolve(host, token);  cancelResolve();
+  connect(addr, port, TransportOptions);
+  send(bytes);                     // append-and-it-drains (absorbs m_outstanding_data)
+  startTls(TlsParams);             // steps itself on readiness; engine no longer
+  close();                         //   sees WANT_READ/WANT_WRITE at all
+  lastErrorString();
+};
+```
+
+Contract rules: events are delivered on the main thread, never re-entrantly;
+an event handler may destroy the transport (adapter defers destruction or
+generation-guards, as the POSIX pump already does); **no dialogs inside
+events** — the cert-decision prompt remains an engine-side deferred main-loop
+action that mutates policy and reconnects from scratch (exact current
+behaviour, GUI and headless alike).
+
+### Adapters
+
+- **POSIX** (mac/Linux): relocation, not rewrite — posix_socket.h's pump +
+  registry, the getaddrinfo thread from wx_world_child.cpp (kills
+  `m_fn_lookup_host`, the last loose doc callback), and the OpenSSL calls
+  gathered from doc.cpp/worldsock.cpp/doc_portable.cpp into one place
+  (per-connection CTX, TLS1.2+, SNI, `SSL_set1_host`, default verify paths).
+- **Windows**: the same class shape over `CAsyncSocket`/WSAAsyncSelect +
+  `WSAAsyncGetHostByName` + the identical OpenSSL calls (they are already
+  platform-neutral apart from the ROOT-store import, which stays in the
+  Windows adapter) — behaviour-identical by construction, like GdiSurface.
+- **Fake** (tests): scripted byte streams + scripted TLS/connect outcomes →
+  the connect/proxy/SSL phase machine becomes unit-testable.
+
+### Migration (T1–T5, each step green)
+
+- **T1** `pal/itransport.h` + the fake adapter + characterization tests of the
+  phase machine (SOCKS4/5 sequences incl. auth, TLS success/cert-fail/
+  handshake-fail, clean close, mid-callback destruction).
+- **T2** POSIX adapter; the engine call sites switch behind typed doc helpers
+  (the P2 pattern); `CWorldSocket` dissolves into the adapter; the disconnect
+  UX body moves from CWorldSocket::OnClose into an engine method.
+- **T3** single-source the doc-level twins (SendPacket, ReceiveMsg, OnConnect,
+  ConnectionEstablished, CheckConnected, ConnectSocket,
+  OnConnectionDisconnect) — the de-drift payoff this seam exists to unlock;
+  the portable SSL_write-no-retry bug dies here by construction.
+- **T4** DNS folds in (delete `m_fn_lookup_host`); optionally route chat's
+  hostname resolution through the same op later (it is broken today).
+- **T5** Windows adapter lands in MUSHclient.vcxproj alongside (cannot be
+  compiled here — by-reasoning parity, same discipline as the GDI adapter).
+
+Known quirks, preserved deliberately until Wade rules otherwise:
+`m_nBytesOut` is double-counted (SendPacket AND the send path both add it —
+upstream behaviour, visible in world stats); the engine synthesizing
+`OnClose(0)` during teardown becomes an explicit engine call to its own
+disconnect bookkeeping.
+
 ## Migration (incremental, always-green; Windows never perturbed)
 
 - **P0** guardrails: coverage + golden characterization tests capturing the

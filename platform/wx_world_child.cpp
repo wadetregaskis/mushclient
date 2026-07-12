@@ -278,27 +278,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // world.GetSelectionStartLine / …Column now drive IWorldView::outputSelection
         // (this frame) via CMUSHclientDoc::GetOutputSelection; body in the section below.
 
-        // world.GetClipboard() / world.SetClipboard(): system clipboard access.
-        m_doc->m_fn_get_clipboard = []() -> std::string {
-            std::string result;
-            if (wxTheClipboard->Open()) {
-                if (wxTheClipboard->IsSupported(wxDF_TEXT)) {
-                    wxTextDataObject data;
-                    wxTheClipboard->GetData(data);
-                    result = std::string(data.GetText().ToUTF8());
-                }
-                wxTheClipboard->Close();
-            }
-            return result;
-        };
-        m_doc->m_fn_set_clipboard = [](const std::string& text) {
-            if (wxTheClipboard->Open()) {
-                wxTheClipboard->SetData(new wxTextDataObject(
-                    wxString::FromUTF8(text.c_str())));
-                wxTheClipboard->Close();
-            }
-        };
-
         // world.GetCommand() now drives IWorldView::currentCommand (this frame) via
         // CMUSHclientDoc::GetCommandText; body in the section below.
 
@@ -3164,7 +3143,7 @@ void CWorldChildFrame::requestRepaint(pal::Rect /*area*/)
 {
     // The engine only ever needs a full-pane refresh here; the sub-rect is
     // advisory and the pane repaints lazily, so ignore it. Refresh(false) = no
-    // background erase (matches the old m_fn_repaint lambda).
+    // background erase (same semantics as the old repaint callback).
     if (m_output) m_output->Refresh(false);
 }
 
@@ -3192,7 +3171,7 @@ std::string CWorldChildFrame::currentCommand() const
 pal::TextRange CWorldChildFrame::outputSelection() const
 {
     // Line/col endpoints (1-based; 0 = no selection), from the pane's selection
-    // state — matches the old m_fn_get_output_selection lambda.
+    // state — same semantics as the old selection callback.
     pal::TextRange r;
     if (m_output) {
         long sl = 0, sc = 0, el = 0, ec = 0;
@@ -3670,7 +3649,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
     if (IsLogging()) StopLogging();
 
     // Stop the world timer before we touch the doc — prevents a timer callback
-    // from firing between m_fn_line_ready=nullptr and delete doc.  (The value
+    // from firing between m_pWorldView=nullptr and delete doc.  (The value
     // member also stops itself when the frame is destroyed, covering the Cmd+Q
     // teardown path where OnClose never runs.)
     m_worldTimer.Stop();
@@ -3680,25 +3659,11 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         // remove it from the startup-reopen list below.
         std::string worldPath = static_cast<const char*>(m_doc->GetPathName());
 
-        // Clear all callbacks BEFORE deleting the doc so that any final output
-        // flushed by the destructor doesn't call AppendLine on the dying pane.
-        // m_pWorldView is this frame; null it first so EmitOutputLine falls
-        // through to the (also-null) m_fn_line_ready and calls nothing.
-        m_doc->m_pWorldView         = nullptr;
-        m_doc->m_fn_line_ready      = nullptr;
-        m_doc->m_fn_get_command          = nullptr;
-        m_doc->m_fn_get_scroll_pos       = nullptr;
-        m_doc->m_fn_set_paused           = nullptr;
-        m_doc->m_fn_repaint                  = nullptr;
-        m_doc->m_fn_lookup_host              = nullptr;
-        m_doc->m_fn_clear_output             = nullptr;
-        m_doc->m_fn_status                   = nullptr;
-        m_doc->m_fn_set_title                = nullptr;
-        m_doc->m_fn_set_background_colour    = nullptr;
-        m_doc->m_fn_set_max_lines            = nullptr;
-        m_doc->m_fn_get_clipboard            = nullptr;
-        m_doc->m_fn_set_clipboard            = nullptr;
-        m_doc->m_fn_get_output_selection     = nullptr;
+        // Detach the view BEFORE deleting the doc so that any final output
+        // flushed by the destructor doesn't call AppendLine on the dying pane
+        // (m_pWorldView is this frame; every Emit*/pull helper no-ops on null).
+        m_doc->m_pWorldView     = nullptr;
+        m_doc->m_fn_lookup_host = nullptr;
 
         // Deregister from the world doc-template so GetWorldList() no longer
         // returns this world after it is destroyed.

@@ -1586,7 +1586,7 @@ void CMUSHclientDoc::ContinueSSLHandshake()
 
 // ── Note / ColourNote / ColourTell ───────────────────────────────────────────
 
-// ── GUI helper: flush m_gui_note_buf via m_fn_line_ready ──────────────────
+// ── GUI helper: flush m_gui_note_buf via the IWorldView seam ──────────────
 // Called before any Note() or ColourNote() emits its line so that pending
 // ColourTell segments land in the output pane.
 static void flush_gui_note_buf(CMUSHclientDoc* doc)
@@ -2145,7 +2145,7 @@ void CMUSHclientDoc::Trace(const char* fmt, ...)
 // instead of calling Tell() (which is in methods_noting.cpp / mushapp only),
 // we write directly through DisplayMsg() using the COLOUR_RGB style flag so
 // that GetStyleRGB() treats m_iForeColour/m_iBackColour as raw COLOREFs.
-// For the GUI path (m_fn_line_ready set) each item becomes a styled run;
+// For the GUI path (a view attached) each item becomes a styled run;
 // for the CLI path it becomes an ANSI-coloured terminal line.
 void CMUSHclientDoc::OutputOutstandingLines()
 {

@@ -3,9 +3,8 @@
 //
 // Proves pal::IWorldView is a real, implementable interface by wiring a
 // recording implementation (the "headless test frontend") to the engine's
-// existing output path (m_fn_line_ready), then pinning the current DisplayMsg
-// styled-output behaviour as a golden — the safety net for later rewiring the
-// output path onto IWorldView directly.
+// output path, pinning the DisplayMsg styled-output behaviour as a golden —
+// the safety net for the P2 seam migration (now typed-only end to end).
 
 #include "mc_test.h"
 #include "platform/doc_stub.h"
@@ -242,22 +241,28 @@ TEST(PalWorldView, StateHelpersDriveTheView)
     EXPECT_STREQ("connected", view.status.c_str());
 }
 
-// With no view attached, the helpers fall back to the m_fn_* callbacks so any
-// non-opted-in host is unaffected.
-TEST(PalWorldView, StateHelpersFallBackToCallbacks)
+// With no view attached the state helpers are inert (typed-only seam; the
+// old m_fn_* fallbacks are gone) and the pulls report empty/zero.
+TEST(PalWorldView, StateHelpersNullHostIsInert)
 {
     CMUSHclientDoc doc = make_doc();
-    bool paused = false; std::string title, status;
-    doc.m_fn_set_paused = [&](bool p) { paused = p; };
-    doc.m_fn_set_title  = [&](const std::string& t) { title = t; };
-    doc.m_fn_status     = [&](const std::string& s) { status = s; };
 
     doc.EmitPaused(true);
     doc.EmitTitle("t1");
     doc.EmitStatus("s1");
-    EXPECT_TRUE(paused);
-    EXPECT_STREQ("t1", title.c_str());
-    EXPECT_STREQ("s1", status.c_str());
+    doc.EmitClearOutput();
+    doc.EmitBackgroundColour(0x123456);
+    doc.EmitMaxLines(99);
+    doc.EmitRepaint();
+
+    EXPECT_TRUE(!doc.HaveOutputSink());
+    EXPECT_TRUE(!doc.HaveCommandSink());
+    EXPECT_TRUE(!doc.HaveScrollSink());
+    EXPECT_STREQ("", doc.GetCommandText().c_str());
+    EXPECT_TRUE(doc.GetScrollPos() == 0);
+    long sl = 9, sc = 9, el = 9, ec = 9;
+    doc.GetOutputSelection(sl, sc, el, ec);
+    EXPECT_TRUE(sl == 0 && sc == 0 && el == 0 && ec == 0);
 }
 
 // Clear / background colour / max-lines / repaint drive the view via their

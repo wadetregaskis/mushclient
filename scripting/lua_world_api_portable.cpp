@@ -1409,7 +1409,7 @@ static int L_GetInfo(lua_State* L)
             else if (iType == 267) lua_pushnumber(L, build);
             else                   lua_pushnumber(L, 0);   // dwPlatformId — N/A on POSIX
         }   return 1;
-        case 285: lua_pushboolean(L, pDoc->m_fn_line_ready != nullptr);       return 1;
+        case 285: lua_pushboolean(L, pDoc->HaveOutputSink());                 return 1;
         case 232: {   // high-resolution timer (seconds since epoch as double)
             struct timespec ts{};
             clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -4508,8 +4508,8 @@ static int L_SetUnseenLines(lua_State* L)
 // ── Pause / Unpause ───────────────────────────────────────────────────────────
 // Pause(bPause): scroll-lock (true) or release (false) the output pane.
 // On Windows this freeze/unfreezes the CMUSHView.  On non-Windows we
-// toggle auto-scroll via m_fn_set_paused (wired to COutputPane by
-// CWorldChildFrame) and record the state in m_gui_paused.
+// toggle auto-scroll via IWorldView::setPaused (the world child frame)
+// and record the state in m_gui_paused.
 
 static int L_Pause(lua_State* L)
 {
@@ -5837,18 +5837,17 @@ static int L_GetDeviceCaps(lua_State* L)
     lua_pushnumber(L, result);
     return 1;
 }
+// No system clipboard in the headless build; the real clipboard path is the
+// GetClipboardContents/putontoclipboard globals (an IHostUi concern, P5).
 static int L_GetClipboard(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    std::string text = pDoc->m_fn_get_clipboard ? pDoc->m_fn_get_clipboard() : std::string();
-    lua_pushstring(L, text.c_str());
+    world_doc(L);
+    lua_pushstring(L, "");
     return 1;
 }
 static int L_SetClipboard(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    const char* text = luaL_optstring(L, 1, "");
-    if (pDoc->m_fn_set_clipboard) pDoc->m_fn_set_clipboard(text);
+    world_doc(L);
     lua_pushnumber(L, eOK);
     return 1;
 }
@@ -6481,8 +6480,8 @@ static int L_Open(lua_State* L)
 }
 
 // ── GetSelectionStart/EndLine/Column ─────────────────────────────────────────
-// Query the current output-pane text selection via m_fn_get_output_selection.
-// Returns 0 (no selection) headless; in mushgui the callback is wired to the
+// Query the current output-pane text selection via IWorldView::outputSelection.
+// Returns 0 (no selection) headless; in mushgui the view forwards to the
 // real COutputPane::GetSelectionInfo() which returns 1-based line/col values.
 static void GetOutputSelection(CMUSHclientDoc* pDoc,
                                 long& sl, long& sc, long& el, long& ec)

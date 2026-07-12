@@ -1597,8 +1597,7 @@ static void* hook_open_world_file(const char* path)
     child->Show();
     if (want.width > 100 && want.height > 100) child->SetSize(want);
 
-    // All output plumbing (m_fn_line_ready, the IWorldView note/batch seam,
-    // m_fn_status) and initial pane state (font, scrollback,
+    // All output plumbing (the IWorldView seam) and initial pane state (font, scrollback,
     // background) are applied inside CWorldChildFrame's constructor.
 
     // Flush any notes produced during OnOpenDocument.
@@ -1967,7 +1966,7 @@ static bool hook_save_world(void* vdoc, bool saveAs, void* vparent)
 //   1. Create CMUSHclientDoc, call OnNewDocument (→ Quick Connect dialog
 //      → SetUpOutputWindow → OpenSession).  Lines accumulate in m_LineList.
 //   2. On cancel/error: delete the doc and return nullptr.
-//   3. On success: create CWorldChildFrame, show it, wire m_fn_line_ready,
+//   3. On success: create CWorldChildFrame (the doc's IWorldView), show it,
 //      then flush all buffered lines (welcome banner + any MUD output so far).
 
 static void* hook_new_world()
@@ -2028,7 +2027,7 @@ static void* hook_new_world()
 
     // OnNewDocument: shows dialog, calls SetUpOutputWindow, OpenSession.
     // Lines produced by Note() accumulate in doc->m_LineList but are not
-    // forwarded to the pane yet (m_fn_line_ready is wired after this by the
+    // forwarded to the pane yet (the IWorldView is attached after this by the
     // CWorldChildFrame constructor; UpdateAllViews below drains the buffer).
     if (!doc->OnNewDocument()) {
         delete doc;   // user cancelled — destructor cleans up
@@ -2056,8 +2055,7 @@ static void* hook_new_world()
         if (want.width > 100 && want.height > 100) child->SetSize(want);
     }
 
-    // All output plumbing (m_fn_line_ready, the IWorldView note/batch seam,
-    // m_fn_status) and initial pane state (font, scrollback,
+    // All output plumbing (the IWorldView seam) and initial pane state (font, scrollback,
     // background) are applied inside CWorldChildFrame's constructor.
 
     // Flush welcome banner + any output buffered during OnNewDocument.

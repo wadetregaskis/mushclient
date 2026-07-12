@@ -2164,77 +2164,53 @@ public:
     void Note(const char* s);
     void UpdateAllViews(void* hint);
 
-    // ── GUI output callbacks ──────────────────────────────────────────────
-    // When m_fn_line_ready is non-null, DisplayMsg() routes output through it
-    // instead of stdout.  Set by the mushcore host before
-    // connecting.
-    // Each '\n' fires m_fn_line_ready with the fully assembled SOutputLine.
-    // Note() goes to the attached IWorldView (or falls back to puts()).
-    std::function<void(SOutputLine&&)>      m_fn_line_ready;
-    std::function<void(const std::string&)> m_fn_status;     // status bar update
-    std::function<void(const std::string&)> m_fn_set_title;  // child frame title bar
 
     // ── PAL: typed output view ────────────────────────────────────────────
-    // pal::IWorldView is the typed successor to the m_fn_* output callbacks.
-    // When m_pWorldView is set the engine drives it directly; otherwise it
-    // falls back to m_fn_line_ready (so existing hosts are unaffected). This is
-    // the P2 seam-formalisation foothold — see docs/PAL.md.
+    // pal::IWorldView is the engine's typed per-world view seam.  All
+    // display/state/pull traffic is typed-only (P2 complete): no view
+    // attached → pushes are inert, pulls report empty/zero.  Headless output
+    // still reaches stdout via the DisplayMsg/Note fallbacks in
+    // doc_portable.cpp.  See docs/PAL.md.
     pal::IWorldView* m_pWorldView = nullptr;
-    bool HaveOutputSink() const { return m_pWorldView != nullptr || (bool)m_fn_line_ready; }
+    bool HaveOutputSink() const { return m_pWorldView != nullptr; }
     void EmitOutputLine(SOutputLine&& line) {
-        if (m_pWorldView)         m_pWorldView->appendLine(std::move(line));
-        else if (m_fn_line_ready) m_fn_line_ready(std::move(line));
+        if (m_pWorldView) m_pWorldView->appendLine(std::move(line));
     }
-    // Typed-seam helpers for the state callbacks: prefer m_pWorldView, else fall
-    // back to the matching m_fn_* callback. Twin of the doc.h helpers.
     void EmitPaused(bool paused) {
-        if (m_pWorldView)         m_pWorldView->setPaused(paused);
-        else if (m_fn_set_paused) m_fn_set_paused(paused);
+        if (m_pWorldView) m_pWorldView->setPaused(paused);
     }
     void EmitStatus(std::string_view text) {
-        if (m_pWorldView)     m_pWorldView->setStatus(text);
-        else if (m_fn_status) m_fn_status(std::string(text));
+        if (m_pWorldView) m_pWorldView->setStatus(text);
     }
     void EmitTitle(std::string_view title) {
-        if (m_pWorldView)        m_pWorldView->setTitle(title);
-        else if (m_fn_set_title) m_fn_set_title(std::string(title));
+        if (m_pWorldView) m_pWorldView->setTitle(title);
     }
     void EmitClearOutput() {
-        if (m_pWorldView)           m_pWorldView->clearOutput();
-        else if (m_fn_clear_output) m_fn_clear_output();
+        if (m_pWorldView) m_pWorldView->clearOutput();
     }
     void EmitBackgroundColour(unsigned long col) {
-        if (m_pWorldView)                    m_pWorldView->setBackgroundColour((pal::Colour)col);
-        else if (m_fn_set_background_colour) m_fn_set_background_colour(col);
+        if (m_pWorldView) m_pWorldView->setBackgroundColour((pal::Colour)col);
     }
     void EmitMaxLines(int n) {
-        if (m_pWorldView)            m_pWorldView->setMaxLines(n);
-        else if (m_fn_set_max_lines) m_fn_set_max_lines(n);
+        if (m_pWorldView) m_pWorldView->setMaxLines(n);
     }
     void EmitRepaint() {
-        if (m_pWorldView)      m_pWorldView->requestRepaint(pal::Rect{});
-        else if (m_fn_repaint) m_fn_repaint();
+        if (m_pWorldView) m_pWorldView->requestRepaint(pal::Rect{});
     }
     // ── PAL: frontend → core reads (pulls) ────────────────────────────────
-    bool HaveCommandSink() const { return m_pWorldView != nullptr || (bool)m_fn_get_command; }
+    bool HaveCommandSink() const { return m_pWorldView != nullptr; }
     std::string GetCommandText() {
-        if (m_pWorldView)     return m_pWorldView->currentCommand();
-        if (m_fn_get_command) return m_fn_get_command();
-        return {};
+        return m_pWorldView ? m_pWorldView->currentCommand() : std::string();
     }
-    bool HaveScrollSink() const { return m_pWorldView != nullptr || (bool)m_fn_get_scroll_pos; }
+    bool HaveScrollSink() const { return m_pWorldView != nullptr; }
     long GetScrollPos() {
-        if (m_pWorldView)        return m_pWorldView->scrollPos();
-        if (m_fn_get_scroll_pos) return m_fn_get_scroll_pos();
-        return 0;
+        return m_pWorldView ? m_pWorldView->scrollPos() : 0;
     }
     void GetOutputSelection(long& sl, long& sc, long& el, long& ec) {
         sl = sc = el = ec = 0;
         if (m_pWorldView) {
             pal::TextRange r = m_pWorldView->outputSelection();
             sl = r.startLine; sc = r.startCol; el = r.endLine; ec = r.endCol;
-        } else if (m_fn_get_output_selection) {
-            m_fn_get_output_selection(sl, sc, el, ec);
         }
     }
 
@@ -2366,7 +2342,7 @@ public:
   }
 
     // Pending styled spans for the line currently being assembled.
-    // Flushed (via m_fn_line_ready) on each '\n'.
+    // Flushed (via EmitOutputLine) on each '\n'.
     SOutputLine m_gui_line_buf;
 
     // ── Output pane metrics (updated by CWorldChildFrame on font/size change) ─
@@ -2380,43 +2356,6 @@ public:
     // Exposed via GetInfo(114) and toggled by world.Pause().
     bool m_gui_paused      = false;
 
-    // Called by world.Pause(bPause) to toggle scroll-lock from Lua.
-    // Wired by CWorldChildFrame to COutputPane::SetPaused().
-    std::function<void(bool)> m_fn_set_paused;
-
-    // Called by world.Repaint() to force a repaint of the output pane.
-    std::function<void()> m_fn_repaint;
-
-    // Called by world.ClearOutput() to wipe the wx pane buffer and reset
-    // m_gui_lines_emitted so UpdateAllViews starts fresh.
-    std::function<void()> m_fn_clear_output;
-
-    // Called by world.SetBackgroundColour(rgb) to update the pane background.
-    // Receives a COLORREF; 0xFFFFFFFF means "default" (black).
-    std::function<void(unsigned long)> m_fn_set_background_colour;
-
-    // Called when SetOption("max_output_lines", n) changes the scrollback cap.
-    // Wired by CWorldChildFrame to COutputPane::SetMaxLines().
-    std::function<void(int)> m_fn_set_max_lines;
-
-    // Called by world.GetClipboard() / world.SetClipboard().
-    std::function<std::string()>              m_fn_get_clipboard;
-    std::function<void(const std::string&)>   m_fn_set_clipboard;
-
-    // ── Command-input callbacks ───────────────────────────────────────────
-    // world.GetCommand() / world.SetCommand(): read/write the input bar text.
-    std::function<std::string()>              m_fn_get_command;
-
-
-
-
-    // ── Scroll / selection callbacks ──────────────────────────────────────
-    // GetInfo(296): y scroll offset in pixels (mirrors CScrollView::GetScrollPosition().y).
-    std::function<long()>                     m_fn_get_scroll_pos;
-
-    // ── Window-geometry callbacks ─────────────────────────────────────────
-    // world.GetSelectionStart/EndLine/Column(): current output-pane selection.
-    std::function<void(long&, long&, long&, long&)> m_fn_get_output_selection;
 
 
 

@@ -113,7 +113,7 @@ void CMUSHclientDoc::Note(const CString& s)
 }
 
 // ── CMUSHclientDoc::UpdateAllViews ────────────────────────────────────────────
-// Emits completed lines to the wxWidgets output pane via m_fn_line_ready.
+// Emits completed lines to the wxWidgets output pane via the IWorldView seam.
 // Walk m_LineList from m_gui_lines_emitted, stop before m_pCurrentLine
 // (the line still being built).  Each CStyle run → SOutputRun.
 //

@@ -1720,6 +1720,7 @@ public:
                const bool bQueueIt,
                const bool bLogIt);
 	void ReceiveMsg();
+	void OnBytesReceived(char* buff, int count);   // post-receive: proxy/MCCP/DisplayMsg (T2b)
 	void DisplayMsg(LPCTSTR lpszText, int size, const int flags, const bool fake = false);
   void AddToLine (LPCTSTR lpszText, const int flags);
   void StartNewLine_KeepPreviousStyle (const int flags);

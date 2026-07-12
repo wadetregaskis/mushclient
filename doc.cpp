@@ -1061,6 +1061,18 @@ int count;
       return;
     }
 
+  OnBytesReceived (buff, count);
+}
+
+// ── OnBytesReceived ──────────────────────────────────────────────────────────
+// Everything that happens to a packet AFTER the transport delivered it:
+// proxy-phase parsing, byte counters, MCCP decompression, raw logging, and
+// the DisplayMsg pipeline hand-off.  Split out of ReceiveMsg (ITransport
+// migration step T2b) — this is where the transport adapter's onBytes event
+// lands once the seam is live.  `buff` may be mutated (proxy memmove).
+
+void CMUSHclientDoc::OnBytesReceived (char * buff, int count)
+{
   Frame.CheckTimerFallback ();   // see if time is up for timers to fire
 
 //  TRACE1 ("Phase now = %i\n", m_iConnectPhase);

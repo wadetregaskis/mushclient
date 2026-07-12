@@ -26,6 +26,10 @@ int RunPalSurfaceSelfTest();
 // miniwindow-migration bridge (pal::g_surface + adopt/release).
 void InstallWxSurfaceBridge();
 
+// Defined in posix_transport.cpp (mushapp): the ITransport conformance
+// harness, run via the hidden --pal-transport-selftest flag.
+int RunPalTransportSelfTest();
+
 class CMUSHWxApp : public wxApp {
 public:
     bool OnInit() override
@@ -33,11 +37,16 @@ public:
         // Hidden conformance harness: exercise the wx ISurface adapter against
         // the contract goldens inside a real (headless-enough) wx app, print
         // the results, and exit without booting the GUI.
-        for (int i = 1; i < argc; ++i)
+        for (int i = 1; i < argc; ++i) {
             if (wxString(argv[i]) == wxT("--pal-surface-selftest")) {
                 const int failures = RunPalSurfaceSelfTest();
                 std::exit(failures == 0 ? 0 : 1);
             }
+            if (wxString(argv[i]) == wxT("--pal-transport-selftest")) {
+                const int failures = RunPalTransportSelfTest();
+                std::exit(failures == 0 ? 0 : 1);
+            }
+        }
 
         // Don't let a write to a peer-closed MUD socket raise SIGPIPE and kill the
         // app; send() then returns EPIPE, which the world socket treats as a

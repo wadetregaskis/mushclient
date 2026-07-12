@@ -3158,13 +3158,12 @@ static int L_GetWorldWindowPosition (lua_State *L)
 
 #ifndef _WIN32
   // Non-Windows: no CSendView in the MFC view system.
-  // Use the m_fn_get_output_rect callback wired by CWorldChildFrame instead.
+  // Use the output-pane rect from the attached IWorldView instead.
   // Only "which == 1" is supported — there is exactly one output pane per world.
   (void) screen; (void) useGetWindowRect;
-  if (which == 1 && pDoc->m_fn_get_output_rect)
+  int x = 0, y = 0, w = 0, h = 0;
+  if (which == 1 && pDoc->GetOutputRect (x, y, w, h))
     {
-    int x = 0, y = 0, w = 0, h = 0;
-    pDoc->m_fn_get_output_rect (x, y, w, h);
     CRect rect (x, y, x + w, y + h);
     luaWindowPositionHelper (L, rect);
     return 1;  // number of result fields

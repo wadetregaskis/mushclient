@@ -309,11 +309,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // drive IWorldView::setBackgroundColour / ::setMaxLines (this frame) via
         // CMUSHclientDoc::EmitBackgroundColour / ::EmitMaxLines; bodies below.
 
-        // world.DeleteLines(n): remove the last n lines from the visual buffer.
-        m_doc->m_fn_delete_lines = [this](long n) {
-            if (m_output) m_output->DeleteTailLines(n);
-        };
-
         // world.GetSelectionStartLine / …Column now drive IWorldView::outputSelection
         // (this frame) via CMUSHclientDoc::GetOutputSelection; body in the section below.
 
@@ -335,18 +330,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 wxTheClipboard->SetData(new wxTextDataObject(
                     wxString::FromUTF8(text.c_str())));
                 wxTheClipboard->Close();
-            }
-        };
-
-        // world.GetWorldWindowPosition(): return screen rect of the output pane.
-        // Scripts use this to position miniwindows relative to the output area.
-        m_doc->m_fn_get_output_rect = [this](int& x, int& y, int& w, int& h) {
-            if (m_output) {
-                wxPoint pos = m_output->ClientToScreen(wxPoint(0, 0));
-                wxSize  sz  = m_output->GetClientSize();
-                x = pos.x; y = pos.y; w = sz.x; h = sz.y;
-            } else {
-                x = 0; y = 0; w = 800; h = 600;
             }
         };
 
@@ -375,80 +358,14 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // world.GetCommand() now drives IWorldView::currentCommand (this frame) via
         // CMUSHclientDoc::GetCommandText; body in the section below.
 
-        // world.SetOutputFont(face, pts, bold, italic): change the output pane font.
-        // pts == 0 means "keep current size".
-        m_doc->m_fn_set_output_font = [this](const std::string& face, int pts,
-                                              bool bold, bool italic) {
-            if (!m_output) return;
-            wxFont cur = m_output->GetCurrentFont();
-            wxString faceName = face.empty()
-                ? cur.GetFaceName()
-                : wxString::FromUTF8(face.c_str());
-            int size = (pts > 0) ? pts : cur.GetPointSize();
-            wxFontStyle  style  = italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL;
-            wxFontWeight weight = bold   ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL;
-            wxFont f(size, wxFONTFAMILY_TELETYPE, style, weight,
-                     /*underline=*/false, faceName);
-            if (!f.IsOk()) f = cur;  // fall back to current font on failure
-            m_output->SetOutputFont(f);
-            // Update doc font fields so Ctrl+S saves the new font to the world file.
-            {
-                std::string faceStr = f.GetFaceName().ToUTF8().data();
-                m_doc->m_font_name   = CString(faceStr.c_str());
-                m_doc->m_font_height = -(f.GetPointSize() * 96 / 72);
-                m_doc->m_font_weight = (f.GetWeight() >= wxFONTWEIGHT_BOLD) ? 700 : 400;
-            }
-            // Persist face name and size so they survive restart even without saving.
-            wxConfig cfg(wxT("mushclient"));
-            cfg.Write(wxT("/display/font_name"), faceName);
-            cfg.Write(wxT("/display/font_size"), (long)f.GetPointSize());
-            // Keep input bars in sync.
-            if (m_input)         { m_input->SetFont(f);         m_input->Refresh(); }
-            if (m_inputPassword) { m_inputPassword->SetFont(f); m_inputPassword->Refresh(); }
-            Layout();
-        };
-
-        // world.SetScroll(line): scroll the output pane to a specific line number.
-        // Line is 1-based; negative values scroll relative to the end.
-        // pos == -1 → bottom (auto-scroll); pos == 0 → top.
-        m_doc->m_fn_set_scroll = [this](long pos) {
-            if (!m_output) return;
-            if (pos <= 0) {
-                m_output->ScrollToTop();
-            } else {
-                // Convert 1-based → 0-based.
-                m_output->ScrollToLine((int)(pos - 1));
-            }
-        };
-
         // GetInfo(296) scroll offset now drives IWorldView::scrollPos (this frame)
         // via CMUSHclientDoc::GetScrollPos; body in the section below.
-
-        // world.SetSelection(sl, el, sc, ec): set text selection in the output pane.
-        // Lines and columns are 1-based; 0 means start/end of line.
-        // All-zeros clears the selection.
-        m_doc->m_fn_set_selection = [this](int sl, int el, int sc, int ec) {
-            if (m_output) m_output->SetSelectionRange(sl, el, sc, ec);
-        };
 
         // ── Output display seam ───────────────────────────────────────────
         // This frame IS the world's pal::IWorldView (see the header): the engine
         // drives finished output lines through it via EmitOutputLine → appendLine.
         // Set here so it is never accidentally overwritten after construction.
         m_doc->m_pWorldView = this;
-        // Notes and the paint-batch bracket still use the m_fn_* callbacks
-        // (UpdateAllViews calls them directly); they migrate onto IWorldView in a
-        // later step.
-        m_doc->m_fn_note = [this](const std::string& text) {
-            if (m_output) m_output->AppendNote(text);
-        };
-        m_doc->m_fn_begin_batch = [this]() {
-            if (m_output) m_output->BeginBatch();
-        };
-        m_doc->m_fn_flush = [this]() {
-            if (m_output) m_output->EndBatch();
-        };
-
         // ── Apply initial pane state from the doc ─────────────────────────
         // For quick-connect worlds the doc fields are at defaults (no face,
         // black background, 5000-line scrollback).  For world-file worlds the
@@ -714,27 +631,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             return false;
         l = tr.left; t = tr.top; r = tr.right; b = tr.bottom;
         return true;
-    };
-
-    // world.TextRectangle(): a plugin changed the reserved text area — recompute
-    // the engine wrap column + re-send NAWS for the new visible width, so the MUD
-    // wraps to the same width the client shows (no surprise client-side
-    // re-wrapping).  Plugins set the rectangle DURING OnPluginWorldOutputResized,
-    // i.e. AFTER the resize handler already sent NAWS for the full width, so this
-    // re-sends it; gated on an actual change to avoid NAWS spam.
-    m_doc->m_fn_text_rect_changed = [this]() {
-        if (!m_doc || !m_output) return;
-        int charW = m_output->CharWidth();
-        int lineH = m_output->LineHeight();
-        if (charW <= 0 || lineH <= 0) return;
-        int paneW, paneH;
-        m_output->GetClientSize(&paneW, &paneH);
-        if (paneW <= 0 || paneH <= 0) return;
-        int textCols = EffectiveTextCols(m_doc, paneW, charW);
-        unsigned short newWrap = (unsigned short)std::max(1, std::min(textCols, 65535));
-        if (newWrap == m_doc->m_nWrapColumn) return;   // unchanged → no NAWS spam
-        m_doc->m_nWrapColumn = newWrap;
-        m_doc->SendNAWS(textCols, paneH / lineH);
     };
 
     // ── SetBackgroundImage / SetForegroundImage (Windows OnDraw parity) ────
@@ -3549,6 +3445,117 @@ void CWorldChildFrame::setInputFont(std::string_view face, int pointSize,
     Layout();
 }
 
+// ── output-pane management (P2 output family) ────────────────────────────────
+
+// Bracket a run of appendLine calls: one scrollbar update + repaint per batch.
+void CWorldChildFrame::beginBatch()
+{
+    if (m_output) m_output->BeginBatch();
+}
+
+void CWorldChildFrame::endBatch()
+{
+    if (m_output) m_output->EndBatch();
+}
+
+// world.DeleteLines(n): remove the last n lines from the visual buffer.
+void CWorldChildFrame::deleteLines(long n)
+{
+    if (m_output) m_output->DeleteTailLines(n);
+}
+
+// world.SetScroll(line): -1 = bottom (resume auto-scroll, matching Windows'
+// "-1 goes to the end"), 0 = top, > 0 = 1-based line number.
+// (-2 "no change" is filtered engine-side.)
+void CWorldChildFrame::setScroll(long pos)
+{
+    if (!m_output) return;
+    if (pos == -1) {
+        m_output->ScrollToBottom();
+    } else if (pos <= 0) {
+        m_output->ScrollToTop();
+    } else {
+        // Convert 1-based → 0-based.
+        m_output->ScrollToLine((int)(pos - 1));
+    }
+}
+
+// world.SetSelection(sl, el, sc, ec): set text selection in the output pane.
+// Lines and columns are 1-based; 0 means start/end of line.
+// All-zeros clears the selection.
+void CWorldChildFrame::setOutputSelection(int sl, int el, int sc, int ec)
+{
+    if (m_output) m_output->SetSelectionRange(sl, el, sc, ec);
+}
+
+// world.SetOutputFont(face, pts, bold, italic): change the output pane font.
+// pts == 0 means "keep current size".
+void CWorldChildFrame::setOutputFont(std::string_view face, int pointSize,
+                                     bool bold, bool italic)
+{
+    if (!m_output) return;
+    wxFont cur = m_output->GetCurrentFont();
+    wxString faceName = face.empty()
+        ? cur.GetFaceName()
+        : wxString::FromUTF8(face.data(), face.size());
+    int size = (pointSize > 0) ? pointSize : cur.GetPointSize();
+    wxFontStyle  style  = italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL;
+    wxFontWeight weight = bold   ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL;
+    wxFont f(size, wxFONTFAMILY_TELETYPE, style, weight,
+             /*underline=*/false, faceName);
+    if (!f.IsOk()) f = cur;  // fall back to current font on failure
+    m_output->SetOutputFont(f);
+    // Update doc font fields so Ctrl+S saves the new font to the world file.
+    {
+        std::string faceStr = f.GetFaceName().ToUTF8().data();
+        m_doc->m_font_name   = CString(faceStr.c_str());
+        m_doc->m_font_height = -(f.GetPointSize() * 96 / 72);
+        m_doc->m_font_weight = (f.GetWeight() >= wxFONTWEIGHT_BOLD) ? 700 : 400;
+    }
+    // Persist face name and size so they survive restart even without saving.
+    wxConfig cfg(wxT("mushclient"));
+    cfg.Write(wxT("/display/font_name"), faceName);
+    cfg.Write(wxT("/display/font_size"), (long)f.GetPointSize());
+    // Keep input bars in sync.
+    if (m_input)         { m_input->SetFont(f);         m_input->Refresh(); }
+    if (m_inputPassword) { m_inputPassword->SetFont(f); m_inputPassword->Refresh(); }
+    Layout();
+}
+
+// world.TextRectangle(): a plugin changed the reserved text area — recompute
+// the engine wrap column + re-send NAWS for the new visible width, so the MUD
+// wraps to the same width the client shows (no surprise client-side
+// re-wrapping).  Plugins set the rectangle DURING OnPluginWorldOutputResized,
+// i.e. AFTER the resize handler already sent NAWS for the full width, so this
+// re-sends it; gated on an actual change to avoid NAWS spam.
+void CWorldChildFrame::textRectChanged()
+{
+    if (!m_doc || !m_output) return;
+    int charW = m_output->CharWidth();
+    int lineH = m_output->LineHeight();
+    if (charW <= 0 || lineH <= 0) return;
+    int paneW, paneH;
+    m_output->GetClientSize(&paneW, &paneH);
+    if (paneW <= 0 || paneH <= 0) return;
+    int textCols = EffectiveTextCols(m_doc, paneW, charW);
+    unsigned short newWrap = (unsigned short)std::max(1, std::min(textCols, 65535));
+    if (newWrap == m_doc->m_nWrapColumn) return;   // unchanged → no NAWS spam
+    m_doc->m_nWrapColumn = newWrap;
+    m_doc->SendNAWS(textCols, paneH / lineH);
+}
+
+// world.GetWorldWindowPosition(): screen rect of the output pane.
+// Scripts use this to position miniwindows relative to the output area.
+pal::Rect CWorldChildFrame::outputRect() const
+{
+    if (m_output) {
+        wxPoint pos = m_output->ClientToScreen(wxPoint(0, 0));
+        wxSize  sz  = m_output->GetClientSize();
+        return { pos.x, pos.y, sz.x, sz.y };
+    }
+    return { 0, 0, 800, 600 };
+}
+
 // ── OnClose ───────────────────────────────────────────────────────────────
 void CWorldChildFrame::OnClose(wxCloseEvent& evt)
 {
@@ -3649,14 +3656,8 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         // through to the (also-null) m_fn_line_ready and calls nothing.
         m_doc->m_pWorldView         = nullptr;
         m_doc->m_fn_line_ready      = nullptr;
-        m_doc->m_fn_note            = nullptr;
-        m_doc->m_fn_begin_batch     = nullptr;
-        m_doc->m_fn_flush           = nullptr;
         m_doc->m_fn_get_command          = nullptr;
-        m_doc->m_fn_set_output_font      = nullptr;
-        m_doc->m_fn_set_scroll           = nullptr;
         m_doc->m_fn_get_scroll_pos       = nullptr;
-        m_doc->m_fn_set_selection        = nullptr;
         m_doc->m_fn_set_paused           = nullptr;
         m_doc->m_fn_repaint                  = nullptr;
         m_doc->m_fn_move_world_window        = nullptr;
@@ -3671,10 +3672,8 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_set_max_lines            = nullptr;
         m_doc->m_fn_get_clipboard            = nullptr;
         m_doc->m_fn_set_clipboard            = nullptr;
-        m_doc->m_fn_get_output_rect          = nullptr;
         m_doc->m_fn_get_main_rect            = nullptr;
         m_doc->m_fn_activate_client          = nullptr;
-        m_doc->m_fn_delete_lines             = nullptr;
         m_doc->m_fn_get_output_selection     = nullptr;
         m_doc->m_fn_infobar_show             = nullptr;
         m_doc->m_fn_infobar_clear            = nullptr;

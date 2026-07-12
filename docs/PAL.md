@@ -438,10 +438,12 @@ GDI-adapter stubs left: `createSurface` and the engine-unused buffer-source
   and the pulls (currentCommand/scrollPos/outputSelection/outputAreaChars) are on
   the seam with `m_fn_*` fallbacks; the **command-input family** (setCommand,
   selectCommand, commandSelection, setCommandSelection, pushCommand, commandList,
-  addToCommandHistory, deleteCommandHistory, setInputFont) is fully promoted —
-  typed-only, its nine `m_fn_*` members deleted. Remaining families: output extras
-  (note/batch/main-title/delete-lines), output geometry/selection/font, window/frame
-  ops, infobar, clipboard (likely its own `IClipboard`).
+  addToCommandHistory, deleteCommandHistory, setInputFont) and the **output-pane
+  family** (note, beginBatch/endBatch, deleteLines, setScroll, setOutputSelection,
+  setOutputFont, textRectChanged, outputRect) are fully promoted — typed-only,
+  their eighteen `m_fn_*` members deleted. Remaining families: window/frame ops
+  (main title, move/status/main-rect/activate/fullscreen/save/lookup-host),
+  infobar, clipboard (likely its own `IClipboard`).
 - **P3** value types out of the shim into L0.
 - **P4** demote `CMUSHclientDoc` → `WorldEngine` + `WorldModel` behind the PAL.
 - **P5** unify the build into one core lib + per-platform adapters; delete the stubs.

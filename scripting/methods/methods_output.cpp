@@ -56,10 +56,8 @@ void CMUSHclientDoc::Redraw()
 void CMUSHclientDoc::SetOutputFont(LPCTSTR FontName, short PointSize)
 {
 #ifndef _WIN32
-  if (m_fn_set_output_font) {
-    std::string face(FontName ? FontName : "");
-    m_fn_set_output_font(face, (int)PointSize, false, false);
-  }
+  EmitOutputFont(std::string(FontName ? FontName : ""), (int)PointSize,
+                 false, false);
 #else
   ChangeFont(PointSize, FontName, FW_NORMAL, m_font_charset,
              m_bShowBold, m_bShowItalic, m_bShowUnderline, m_iLineSpacing);
@@ -207,12 +205,9 @@ CString strResult;
 
 #ifndef _WIN32
   // Non-Windows: each world has exactly one MDI child frame; Which is always 1.
-  if (Which == 1 && m_fn_get_output_rect)
-    {
-    int x = 0, y = 0, w = 800, h = 600;
-    m_fn_get_output_rect (x, y, w, h);
+  int x = 0, y = 0, w = 800, h = 600;
+  if (Which == 1 && GetOutputRect (x, y, w, h))
     strResult.Format ("%d,%d,%d,%d", x, y, w, h);
-    }
 #else
 int i = 0;
 
@@ -276,7 +271,11 @@ POSITION pos;
 #endif
 
 // delete all lines in this set
-  for (pos = m_LineList.GetTailPosition (); Count > 0 && pos; Count--)
+// (The original loop kept a POSITION across RemoveTail and read it afterwards
+// via GetPrev — MFC tolerates that stale read by accident (freed nodes keep
+// pPrev until reused), but it is use-after-free and crashes on the portable
+// list. Iterating by emptiness deletes exactly the same tail lines.)
+  for ( ; Count > 0 && !m_LineList.IsEmpty (); Count--)
    {
    // if this particular line was added to the line positions array, then make it null
     if (m_LineList.GetCount () % JUMP_SIZE == 1)
@@ -285,11 +284,6 @@ POSITION pos;
     delete m_LineList.GetTail (); // delete contents of tail iten -- version 3.85
     m_LineList.RemoveTail ();   // get rid of the line
     m_total_lines--;            // don't count as received
-
-   if (m_LineList.IsEmpty ())  // give up if buffer is empty
-     break;
-
-   m_LineList.GetPrev (pos);
    }
 
   // try to allow world.tells to span omitted lines
@@ -332,8 +326,8 @@ POSITION pos;
 
     // Remove the corresponding number of lines from the output pane's buffer.
     long paneRemove = guiEmittedBefore - newEmitted;
-    if (paneRemove > 0 && m_fn_delete_lines)
-      m_fn_delete_lines(paneRemove);
+    if (paneRemove > 0)
+      DeleteOutputLines(paneRemove);
   }
 #else
   for(pos = GetFirstViewPosition(); pos != NULL; )
@@ -733,8 +727,7 @@ long CMUSHclientDoc::TextRectangle(long Left, long Top, long Right, long Bottom,
   // engine wrap column + re-send NAWS for the new visible width — otherwise the
   // MUD keeps wrapping to the full window width and the client re-wraps long
   // lines.  No-op on builds that don't wire it (headless / Windows).
-  if (m_fn_text_rect_changed)
-    m_fn_text_rect_changed ();
+  EmitTextRectChanged ();
 
   bool bFixedWindowWidth = false;
 
@@ -813,8 +806,8 @@ long CMUSHclientDoc::SetScroll(long Position, BOOL Visible)
 #ifndef _WIN32
   // Position: -1 = scroll to bottom, -2 = no change, >= 0 = target line index.
   // Visible (show/hide scrollbar) is ignored — scrollbar is always visible.
-  if (m_fn_set_scroll && Position != -2)
-    m_fn_set_scroll(Position);
+  if (Position != -2)
+    EmitScroll(Position);
   return eOK;
 #else
 

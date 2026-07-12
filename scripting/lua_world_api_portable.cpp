@@ -1389,12 +1389,11 @@ static int L_GetInfo(lua_State* L)
         case 256: case 257: case 258: case 259: case 260:
             lua_pushnumber(L, 0);                                             return 1;
         // 261-264: world child-frame dimensions (non-client / client height & width).
-        // Windows queries the MDI CChildFrame; here we use m_fn_get_output_rect
-        // (wired by wx_world_child.cpp) for the closest portable equivalent.
+        // Windows queries the MDI CChildFrame; here we use the output-pane
+        // rect from the attached IWorldView for the closest portable equivalent.
         case 261: case 262: case 263: case 264: {
             int x = 0, y = 0, w = 0, h = 0;
-            if (pDoc->m_fn_get_output_rect)
-                pDoc->m_fn_get_output_rect(x, y, w, h);
+            pDoc->GetOutputRect(x, y, w, h);
             // 261=non-client height, 262=non-client width,
             // 263=client height,     264=client width — identical on non-Windows.
             lua_pushnumber(L, (iType == 261 || iType == 263) ? h : w);
@@ -2750,8 +2749,8 @@ static int L_SetAlphaOption(lua_State* L)
         // Update live member and, if a GUI is attached, apply the font
         // immediately so the change takes effect without a world restart.
         pDoc->m_font_name = CString(val);
-        if (pDoc->m_fn_set_output_font && val && *val)
-            pDoc->m_fn_set_output_font(std::string(val), 0, false, false);
+        if (val && *val)
+            pDoc->EmitOutputFont(std::string(val), 0, false, false);
     }
     else if (!strcmp(opt, "input_font_name")) {
         pDoc->m_input_font_name = CString(val);
@@ -5884,8 +5883,7 @@ static int L_GetMainWindowPosition(lua_State* L) {
 static int L_GetWorldWindowPosition(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
     int x = 0, y = 0, w = 800, h = 600;
-    if (pDoc->m_fn_get_output_rect)
-        pDoc->m_fn_get_output_rect(x, y, w, h);
+    pDoc->GetOutputRect(x, y, w, h);
     lua_pushnumber(L, x); lua_pushnumber(L, y);
     lua_pushnumber(L, w); lua_pushnumber(L, h);
     return 4;
@@ -5895,8 +5893,7 @@ static int L_GetWorldWindowPositionX(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
     int which = (int)luaL_optinteger(L, 1, 2);   // default = width
     int x = 0, y = 0, w = 800, h = 600;
-    if (pDoc->m_fn_get_output_rect)
-        pDoc->m_fn_get_output_rect(x, y, w, h);
+    pDoc->GetOutputRect(x, y, w, h);
     int vals[4] = { x, y, w, h };
     lua_pushnumber(L, (which >= 0 && which < 4) ? vals[which] : 0);
     return 1;
@@ -7542,16 +7539,15 @@ static const luaL_Reg worldlib[] = {
         CMUSHclientDoc* pDoc = world_doc(L);
         const char* face = luaL_optstring(L, 1, "");
         int pts    = (int)luaL_optnumber(L, 2, 0);
-        if (pDoc->m_fn_set_output_font)
-            pDoc->m_fn_set_output_font(std::string(face), pts, false, false);
+        pDoc->EmitOutputFont(std::string(face), pts, false, false);
         lua_pushnumber(L, eOK); return 1;
     }},
     { "SetScroll",              [](lua_State* L) -> int {
         CMUSHclientDoc* pDoc = world_doc(L);
         long pos = (long)luaL_checknumber(L, 1);
         // Visible (arg 2) is ignored on non-Windows.
-        if (pDoc->m_fn_set_scroll && pos != -2)
-            pDoc->m_fn_set_scroll(pos);
+        if (pos != -2)
+            pDoc->EmitScroll(pos);
         lua_pushnumber(L, eOK); return 1;
     }},
     { "SetSelection",           [](lua_State* L) -> int {
@@ -7560,8 +7556,7 @@ static const luaL_Reg worldlib[] = {
         int el = (int)luaL_checknumber(L, 2);
         int sc = (int)luaL_optnumber(L, 3, 0);
         int ec = (int)luaL_optnumber(L, 4, 0);
-        if (pDoc->m_fn_set_selection)
-            pDoc->m_fn_set_selection(sl, el, sc, ec);
+        pDoc->SetOutputSelectionRange(sl, el, sc, ec);
         lua_pushnumber(L, eOK); return 1;
     }},
     { "SetToolBarPosition",     L_GuiOkStub  },

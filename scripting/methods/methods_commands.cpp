@@ -544,10 +544,10 @@ void CMUSHclientDoc::SetInputFont(LPCTSTR FontName, short PointSize, short Weigh
   // On non-Windows the "input font" also controls the output font (they share
   // one monospace face in the terminal-style layout).  Forward to the output
   // pane via the wxWidgets callback.
-  if (m_fn_set_output_font) {
+  {
     std::string face(FontName ? FontName : "");
     bool bold = (Weight >= 600);
-    m_fn_set_output_font(face, (int)PointSize, bold, (bool)Italic);
+    EmitOutputFont(face, (int)PointSize, bold, (bool)Italic);
   }
 #else
   ChangeInputFont(PointSize, FontName, Weight, DEFAULT_CHARSET, Italic);

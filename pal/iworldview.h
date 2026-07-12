@@ -71,6 +71,29 @@ public:
     // Input-bar font (face "" / size 0 = keep current).
     virtual void        setInputFont(std::string_view face, int pointSize,
                                      bool bold, bool italic) = 0;
+
+    // ── core → frontend: output-pane management (P2 output family) ────────
+    // Bracket a run of appendLine calls: defer per-line scrollbar/repaint
+    // work until endBatch (one update per batch).
+    virtual void beginBatch() = 0;
+    virtual void endBatch() = 0;
+    // Buffer trim (world.DeleteLines / buffer-size change): drop the last n
+    // lines from the display.
+    virtual void deleteLines(long n) = 0;
+    // world.SetScroll: -1 = bottom (resume auto-scroll), 0 = top,
+    // > 0 = 1-based line. (-2 "no change" is filtered engine-side.)
+    virtual void setScroll(long line) = 0;
+    // world.SetSelection: 1-based line/col endpoints; all zeros clears.
+    virtual void setOutputSelection(int startLine, int endLine,
+                                    int startCol, int endCol) = 0;
+    // world.SetOutputFont (face "" / size 0 = keep current).
+    virtual void setOutputFont(std::string_view face, int pointSize,
+                               bool bold, bool italic) = 0;
+    // The reserved text rectangle changed (world.TextRectangle): recompute
+    // the wrap column + NAWS for the new visible width.
+    virtual void textRectChanged() = 0;
+    // Screen rect of the output pane (world.GetWorldWindowPosition).
+    virtual Rect outputRect() const = 0;
 };
 
 } // namespace pal

@@ -1661,10 +1661,10 @@ static void colour_print(const char* fg, const char* bg, const char* text, bool 
 // ── Note ─────────────────────────────────────────────────────────────────────
 void CMUSHclientDoc::Note(const CString& s)
 {
-    if (m_fn_note) {
+    if (m_pWorldView) {
         // Flush any in-progress ColourTell segments as a separate line first.
         flush_gui_note_buf(this);
-        m_fn_note(std::string((const char*)s));
+        EmitNote(std::string((const char*)s));
         return;
     }
     if (g_before_output) g_before_output();
@@ -1675,9 +1675,9 @@ void CMUSHclientDoc::Note(const CString& s)
 
 void CMUSHclientDoc::Note(const char* s)
 {
-    if (m_fn_note) {
+    if (m_pWorldView) {
         flush_gui_note_buf(this);
-        m_fn_note(s ? std::string(s) : std::string());
+        EmitNote(s ? std::string(s) : std::string());
         return;
     }
     if (g_before_output) g_before_output();

@@ -1486,13 +1486,6 @@ public:
   // Set by the wxWidgets layer (wx_world_child.cpp) when a world window opens.
   // DisplayMsg/StartNewLine call UpdateAllViews → emits completed lines here.
   std::function<void(SOutputLine)>        m_fn_line_ready;
-  std::function<void(const std::string&)> m_fn_note;
-  // Called before emitting a batch of lines via m_fn_line_ready; defers
-  // per-line repaint until m_fn_flush (EndBatch).
-  std::function<void()>                   m_fn_begin_batch;
-  // Called once after a batch of lines has been forwarded via m_fn_line_ready,
-  // to trigger a single scrollbar update + repaint.
-  std::function<void()>                   m_fn_flush;
   // Count of lines already forwarded to m_fn_line_ready; decremented by
   // JUMP_SIZE when RemoveChunk() evicts the oldest lines.
   long                                    m_gui_lines_emitted = 0;
@@ -1600,6 +1593,40 @@ public:
       if (m_pWorldView) m_pWorldView->setInputFont(face, pts, bold, italic);
   }
 
+  // ── PAL: output-pane management (typed-only — P2 output family) ──────────
+  void EmitNote(const std::string& text) {
+      if (m_pWorldView) m_pWorldView->note(text);
+  }
+  void BeginOutputBatch() {
+      if (m_pWorldView) m_pWorldView->beginBatch();
+  }
+  void EndOutputBatch() {
+      if (m_pWorldView) m_pWorldView->endBatch();
+  }
+  void DeleteOutputLines(long n) {
+      if (m_pWorldView) m_pWorldView->deleteLines(n);
+  }
+  void EmitScroll(long line) {
+      if (m_pWorldView) m_pWorldView->setScroll(line);
+  }
+  void SetOutputSelectionRange(int sl, int el, int sc, int ec) {
+      if (m_pWorldView) m_pWorldView->setOutputSelection(sl, el, sc, ec);
+  }
+  void EmitOutputFont(const std::string& face, int pts, bool bold, bool italic) {
+      if (m_pWorldView) m_pWorldView->setOutputFont(face, pts, bold, italic);
+  }
+  void EmitTextRectChanged() {
+      if (m_pWorldView) m_pWorldView->textRectChanged();
+  }
+  // Fills the screen rect of the output pane; false (outputs untouched) when
+  // no view is attached — callers keep their own defaults.
+  bool GetOutputRect(int& x, int& y, int& w, int& h) {
+      if (!m_pWorldView) return false;
+      pal::Rect r = m_pWorldView->outputRect();
+      x = r.x; y = r.y; w = r.w; h = r.h;
+      return true;
+  }
+
   // Output pane character-grid dimensions (updated by CWorldChildFrame on
   // resize / font change via SendNAWS and m_fn_grid_changed).
   int  m_gui_rows        = 24;   // visible rows in the output pane
@@ -1622,23 +1649,13 @@ public:
   // world.GetCommand(): return the current text in the command input bar.
   std::function<std::string()>                       m_fn_get_command;
   // world.SetOutputFont(): change the output font family / size / style.
-  // Args: face name (empty = keep current), point size (0 = keep current),
-  //       bold flag, italic flag.
-  std::function<void(const std::string&, int, bool, bool)> m_fn_set_output_font;
 
 
-  // world.SetScroll(Position, Visible): scroll the output pane.
-  // Position: -1 = bottom, -2 = no change, >= 0 = line index (0-based).
-  // Visible is ignored (scrollbar always shown on non-Windows).
-  std::function<void(long position)>  m_fn_set_scroll;
 
   // GetInfo(296): return current y scroll offset in pixels (top of scrollback = 0).
   // Equivalent to CMUSHView::GetScrollPosition().y on Windows.
   std::function<long()>  m_fn_get_scroll_pos;
 
-  // world.SetSelection(StartLine, EndLine, StartColumn, EndColumn): select a
-  // text range in the output pane.  Arguments are 1-based; 0 = no selection.
-  std::function<void(int, int, int, int)>  m_fn_set_selection;
 
 
   // world.Pause(bPause): lock/unlock auto-scrolling of the output pane.
@@ -1647,9 +1664,6 @@ public:
   // world.Repaint(): force a repaint of the output pane.
   std::function<void()>  m_fn_repaint;
 
-  // world.TextRectangle(): a plugin changed the reserved text area, so the
-  // engine wrap column + NAWS must be recomputed for the new visible width.
-  std::function<void()>  m_fn_text_rect_changed;
 
   // world.MoveWorldWindow(l,t,w,h): reposition/resize the MDI child frame.
   // Ignored on non-Windows if not wired; the Which parameter in MoveWorldWindowX
@@ -1676,10 +1690,6 @@ public:
   std::function<std::string()>              m_fn_get_clipboard;
   std::function<void(const std::string&)>   m_fn_set_clipboard;
 
-  // Returns the screen-relative position and size of the output pane (x,y,w,h).
-  // Used by world.GetWorldWindowPosition() so Lua scripts can position
-  // miniwindows relative to the actual pane geometry.
-  std::function<void(int&, int&, int&, int&)> m_fn_get_output_rect;
 
   // Returns the current text selection in the output pane as 1-based
   // (startLine, startCol, endLine, endCol).  All four are 0 if nothing selected.
@@ -1693,9 +1703,6 @@ public:
   // world.ActivateClient(): raise the world window / main frame to the front.
   std::function<void()> m_fn_activate_client;
 
-  // world.DeleteLines(n): remove the last n lines from the output pane buffer.
-  // Called by DeleteLines() after it trims m_LineList.
-  std::function<void(long)> m_fn_delete_lines;
 
 
 

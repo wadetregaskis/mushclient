@@ -2169,9 +2169,8 @@ public:
     // instead of stdout.  Set by the mushcore host before
     // connecting.
     // Each '\n' fires m_fn_line_ready with the fully assembled SOutputLine.
-    // Note() fires m_fn_note (or falls back to puts()).
+    // Note() goes to the attached IWorldView (or falls back to puts()).
     std::function<void(SOutputLine&&)>      m_fn_line_ready;
-    std::function<void(const std::string&)> m_fn_note;
     std::function<void(const std::string&)> m_fn_status;     // status bar update
     std::function<void(const std::string&)> m_fn_set_title;  // child frame title bar
     std::function<void(const std::string&)> m_fn_set_main_title; // main window title bar
@@ -2275,6 +2274,40 @@ public:
       if (m_pWorldView) m_pWorldView->setInputFont(face, pts, bold, italic);
   }
 
+  // ── PAL: output-pane management (typed-only — P2 output family) ──────────
+  void EmitNote(const std::string& text) {
+      if (m_pWorldView) m_pWorldView->note(text);
+  }
+  void BeginOutputBatch() {
+      if (m_pWorldView) m_pWorldView->beginBatch();
+  }
+  void EndOutputBatch() {
+      if (m_pWorldView) m_pWorldView->endBatch();
+  }
+  void DeleteOutputLines(long n) {
+      if (m_pWorldView) m_pWorldView->deleteLines(n);
+  }
+  void EmitScroll(long line) {
+      if (m_pWorldView) m_pWorldView->setScroll(line);
+  }
+  void SetOutputSelectionRange(int sl, int el, int sc, int ec) {
+      if (m_pWorldView) m_pWorldView->setOutputSelection(sl, el, sc, ec);
+  }
+  void EmitOutputFont(const std::string& face, int pts, bool bold, bool italic) {
+      if (m_pWorldView) m_pWorldView->setOutputFont(face, pts, bold, italic);
+  }
+  void EmitTextRectChanged() {
+      if (m_pWorldView) m_pWorldView->textRectChanged();
+  }
+  // Fills the screen rect of the output pane; false (outputs untouched) when
+  // no view is attached — callers keep their own defaults.
+  bool GetOutputRect(int& x, int& y, int& w, int& h) {
+      if (!m_pWorldView) return false;
+      pal::Rect r = m_pWorldView->outputRect();
+      x = r.x; y = r.y; w = r.w; h = r.h;
+      return true;
+  }
+
     // Pending styled spans for the line currently being assembled.
     // Flushed (via m_fn_line_ready) on each '\n'.
     SOutputLine m_gui_line_buf;
@@ -2296,10 +2329,6 @@ public:
 
     // Called by world.Repaint() to force a repaint of the output pane.
     std::function<void()> m_fn_repaint;
-
-    // Called by world.TextRectangle() when a plugin changes the reserved text
-    // area, so the wrap column + NAWS can be recomputed for the new width.
-    std::function<void()> m_fn_text_rect_changed;
 
     // Called by world.MoveWorldWindow(l,t,w,h) to reposition the MDI child frame.
     std::function<void(long, long, long, long)> m_fn_move_world_window;
@@ -2323,32 +2352,18 @@ public:
     std::function<std::string()>              m_fn_get_clipboard;
     std::function<void(const std::string&)>   m_fn_set_clipboard;
 
-    // ── Output-pane batch-update callbacks ────────────────────────────────
-    // BeginBatch / EndBatch suppress per-line repaints; fired by UpdateAllViews.
-    std::function<void()> m_fn_begin_batch;
-    std::function<void()> m_fn_flush;
-
     // ── Command-input callbacks ───────────────────────────────────────────
     // world.GetCommand() / world.SetCommand(): read/write the input bar text.
     std::function<std::string()>              m_fn_get_command;
 
 
-    // ── Output-font callback ──────────────────────────────────────────────
-    // world.SetFont(face, size, bold, italic): change the output pane font.
-    std::function<void(const std::string&, int, bool, bool)> m_fn_set_output_font;
 
 
     // ── Scroll / selection callbacks ──────────────────────────────────────
-    // world.SetScroll(pos): scroll the output pane to a line index.
-    std::function<void(long)>                 m_fn_set_scroll;
     // GetInfo(296): y scroll offset in pixels (mirrors CScrollView::GetScrollPosition().y).
     std::function<long()>                     m_fn_get_scroll_pos;
-    // world.SetSelection(sl, el, sc, ec): set the text selection in the pane.
-    std::function<void(int, int, int, int)>   m_fn_set_selection;
 
     // ── Window-geometry callbacks ─────────────────────────────────────────
-    // world.GetWorldWindowPosition(): screen rect of the output pane (x,y,w,h).
-    std::function<void(int&, int&, int&, int&)> m_fn_get_output_rect;
     // world.GetSelectionStart/EndLine/Column(): current output-pane selection.
     std::function<void(long&, long&, long&, long&)> m_fn_get_output_selection;
     // world.GetMainWindowPosition(): screen rect of the MDI parent frame.
@@ -2359,9 +2374,6 @@ public:
     // world.ActivateClient(): raise the world window / main frame to the front.
     std::function<void()> m_fn_activate_client;
 
-    // world.DeleteLines(n): remove the last n lines from the output pane buffer.
-    // Called by DeleteLines() after it trims m_LineList.
-    std::function<void(long)> m_fn_delete_lines;
 
 
 

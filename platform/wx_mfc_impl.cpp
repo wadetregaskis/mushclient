@@ -1597,8 +1597,8 @@ static void* hook_open_world_file(const char* path)
     child->Show();
     if (want.width > 100 && want.height > 100) child->SetSize(want);
 
-    // All output callbacks (m_fn_line_ready, m_fn_note, m_fn_begin_batch,
-    // m_fn_flush, m_fn_status) and initial pane state (font, scrollback,
+    // All output plumbing (m_fn_line_ready, the IWorldView note/batch seam,
+    // m_fn_status) and initial pane state (font, scrollback,
     // background) are applied inside CWorldChildFrame's constructor.
 
     // Flush any notes produced during OnOpenDocument.
@@ -2056,8 +2056,8 @@ static void* hook_new_world()
         if (want.width > 100 && want.height > 100) child->SetSize(want);
     }
 
-    // All output callbacks (m_fn_line_ready, m_fn_note, m_fn_begin_batch,
-    // m_fn_flush, m_fn_status) and initial pane state (font, scrollback,
+    // All output plumbing (m_fn_line_ready, the IWorldView note/batch seam,
+    // m_fn_status) and initial pane state (font, scrollback,
     // background) are applied inside CWorldChildFrame's constructor.
 
     // Flush welcome banner + any output buffered during OnNewDocument.

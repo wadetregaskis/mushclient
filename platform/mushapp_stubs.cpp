@@ -117,7 +117,7 @@ void CMUSHclientDoc::Note(const CString& s)
 // Walk m_LineList from m_gui_lines_emitted, stop before m_pCurrentLine
 // (the line still being built).  Each CStyle run → SOutputRun.
 //
-// Uses m_fn_begin_batch / m_fn_flush (BeginBatch / EndBatch on the pane) to
+// Uses BeginOutputBatch / EndOutputBatch (BeginBatch / EndBatch on the pane) to
 // accumulate all new lines and trigger a single scrollbar update + repaint
 // rather than one per line.
 void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
@@ -150,7 +150,7 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
 
         // Open a paint batch on the first line we actually emit.
         if (!batchOpen) {
-            if (m_fn_begin_batch) m_fn_begin_batch();
+            BeginOutputBatch();
             batchOpen = true;
         }
 
@@ -196,7 +196,7 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
     }
 
     // Close the batch (triggers a single scrollbar update + repaint).
-    if (batchOpen && m_fn_flush) m_fn_flush();
+    if (batchOpen) EndOutputBatch();
 
     // ── Emit the in-progress line as a pending update ──────────────────────
     // m_pCurrentLine is the line still being assembled (no trailing '\n' yet).

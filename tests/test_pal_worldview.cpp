@@ -88,6 +88,31 @@ struct FakeWorldView : pal::IWorldView {
         fontFace.assign(face); fontPts = pointSize;
         fontBold = bold; fontItalic = italic;
     }
+
+    // ── output-pane management (P2 output family) ──────────────────────────
+    int  batchBegins = 0, batchEnds = 0;
+    long deletedLines = 0;
+    long scrolledTo = -999;
+    int  selSL = 0, selEL = 0, selSC = 0, selEC = 0;
+    std::string outFontFace; int outFontPts = 0;
+    bool outFontBold = false, outFontItalic = false;
+    int  textRectChanges = 0;
+    pal::Rect outRect{ 10, 20, 640, 480 };   // returned by outputRect()
+
+    void beginBatch() override { ++batchBegins; }
+    void endBatch() override   { ++batchEnds; }
+    void deleteLines(long n) override { deletedLines += n; }
+    void setScroll(long line) override { scrolledTo = line; }
+    void setOutputSelection(int sl, int el, int sc, int ec) override {
+        selSL = sl; selEL = el; selSC = sc; selEC = ec;
+    }
+    void setOutputFont(std::string_view face, int pointSize,
+                       bool bold, bool italic) override {
+        outFontFace.assign(face); outFontPts = pointSize;
+        outFontBold = bold; outFontItalic = italic;
+    }
+    void textRectChanged() override { ++textRectChanges; }
+    pal::Rect outputRect() const override { return outRect; }
 };
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -303,6 +328,64 @@ TEST(PalWorldView, CommandFamilyNullHostIsInert)
     doc.GetCommandSelection(s, e);
     EXPECT_TRUE(s == 0 && e == 0);
     doc.EmitInputFont("Menlo", 14, true, false);
+}
+
+// The output-pane family drives the view through its typed-only helpers,
+// including Note()'s routing (view attached → note(), no stdout).
+TEST(PalWorldView, OutputFamilyDrivesTheView)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pWorldView = &view;
+
+    // Note() goes to the view (the doc_portable path flushes + emits).
+    doc.Note("a wild note appears");
+    ASSERT_EQ(1u, (unsigned)view.notes.size());
+    EXPECT_STREQ("a wild note appears", view.notes[0].c_str());
+
+    doc.BeginOutputBatch();
+    doc.EndOutputBatch();
+    EXPECT_TRUE(view.batchBegins == 1 && view.batchEnds == 1);
+
+    doc.DeleteOutputLines(7);
+    EXPECT_TRUE(view.deletedLines == 7);
+
+    doc.EmitScroll(-1);
+    EXPECT_TRUE(view.scrolledTo == -1);
+
+    doc.SetOutputSelectionRange(2, 5, 3, 9);
+    EXPECT_TRUE(view.selSL == 2 && view.selEL == 5 &&
+                view.selSC == 3 && view.selEC == 9);
+
+    doc.EmitOutputFont("Menlo", 13, true, false);
+    EXPECT_STREQ("Menlo", view.outFontFace.c_str());
+    EXPECT_TRUE(view.outFontPts == 13 && view.outFontBold && !view.outFontItalic);
+
+    doc.EmitTextRectChanged();
+    EXPECT_TRUE(view.textRectChanges == 1);
+
+    int x = 0, y = 0, w = 0, h = 0;
+    EXPECT_TRUE(doc.GetOutputRect(x, y, w, h));
+    EXPECT_TRUE(x == 10 && y == 20 && w == 640 && h == 480);
+}
+
+// With no view: GetOutputRect reports false and leaves its outputs untouched
+// (callers keep their own defaults), and the rest are inert.
+TEST(PalWorldView, OutputFamilyNullHostIsInert)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    int x = 1, y = 2, w = 3, h = 4;
+    EXPECT_TRUE(!doc.GetOutputRect(x, y, w, h));
+    EXPECT_TRUE(x == 1 && y == 2 && w == 3 && h == 4);
+
+    doc.BeginOutputBatch();
+    doc.EndOutputBatch();
+    doc.DeleteOutputLines(7);
+    doc.EmitScroll(5);
+    doc.SetOutputSelectionRange(1, 2, 3, 4);
+    doc.EmitOutputFont("Menlo", 13, false, false);
+    doc.EmitTextRectChanged();
 }
 
 MC_TEST_MAIN()

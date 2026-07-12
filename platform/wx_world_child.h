@@ -94,6 +94,16 @@ public:
     void        deleteCommandHistory() override;
     void        setInputFont(std::string_view face, int pointSize,
                              bool bold, bool italic) override;
+    void        beginBatch() override;
+    void        endBatch() override;
+    void        deleteLines(long n) override;
+    void        setScroll(long line) override;
+    void        setOutputSelection(int startLine, int endLine,
+                                   int startCol, int endCol) override;
+    void        setOutputFont(std::string_view face, int pointSize,
+                              bool bold, bool italic) override;
+    void        textRectChanged() override;
+    pal::Rect   outputRect() const override;
 
     // Find/replace within the command-input text (Game ▸ Global Change).
     // Runs the canonical CGlobalChangeDlg for the from/to prompt; the input is a

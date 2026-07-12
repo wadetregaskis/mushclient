@@ -739,9 +739,8 @@ void CMUSHclientDoc::SetSelection(long StartLine, long EndLine, long StartColumn
 #ifndef _WIN32
   // Forward to the wxWidgets output pane selection.  Arguments are 1-based;
   // convert to 0-based SelPoint coords expected by COutputPane.
-  if (m_fn_set_selection)
-    m_fn_set_selection((int)StartLine, (int)EndLine,
-                       (int)StartColumn, (int)EndColumn);
+  SetOutputSelectionRange((int)StartLine, (int)EndLine,
+                          (int)StartColumn, (int)EndColumn);
 #else
   CMUSHView * pmyView = GetFirstOutputWindow ();
 

@@ -1225,6 +1225,20 @@ void CMUSHclientDoc::ReceiveMsg()
     if (m_iConnectPhase != eConnectConnectedToMud)
         return;
 
+    OnBytesReceived(buff, count);
+}
+
+// ── OnBytesReceived ──────────────────────────────────────────────────────────
+// The post-transport receive tail (packet/byte counters, MCCP decompression,
+// DisplayMsg hand-off), split out of ReceiveMsg so it can be driven directly
+// with a caller-supplied buffer — no socket needed — for characterization
+// tests of the connected-data path (ITransport migration; mirrors the doc.cpp
+// OnBytesReceived seam, minus the proxy phases which the portable ReceiveMsg
+// handles before the main receive).  Caller guarantees phase ==
+// eConnectConnectedToMud.  `buff` may be mutated (MCCP stream-end shuffle).
+
+void CMUSHclientDoc::OnBytesReceived(char* buff, int count)
+{
     ++m_iInputPacketCount;
     m_nBytesIn += count;
 

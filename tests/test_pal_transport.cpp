@@ -214,6 +214,51 @@ TEST(PalTransport, Socks5TunnelEstablished)
     delete doc;
 }
 
+// ── OnBytesReceived: the T2b/c connected-data seam ──────────────────────────
+// Drives the receive tail directly (no socket): counters advance and the bytes
+// reach the display pipeline (a completed line lands in m_LineList).
+
+static CMUSHclientDoc* make_connected_doc()
+{
+    CMUSHclientDoc* doc = new CMUSHclientDoc();
+    doc->m_iConnectPhase = eConnectConnectedToMud;
+    doc->m_iFlags        = COLOUR_ANSI;
+    doc->m_iForeColour   = WHITE;
+    doc->m_iBackColour   = BLACK;
+    doc->m_pCurrentLine  = new CLine();
+    doc->AddStyle(COLOUR_ANSI, WHITE, BLACK, 0, static_cast<CAction*>(nullptr));
+    return doc;
+}
+
+TEST(PalTransport, OnBytesReceivedCountsAndDisplays)
+{
+    CMUSHclientDoc* doc = make_connected_doc();
+    long linesBefore = (long)doc->m_LineList.GetCount();
+
+    char pkt[] = "alpha\r\n";
+    doc->OnBytesReceived(pkt, (int)strlen(pkt));
+
+    EXPECT_TRUE(doc->m_nBytesIn == (long)strlen("alpha\r\n"));
+    EXPECT_TRUE(doc->m_iInputPacketCount == 1);
+    // A newline-terminated packet commits at least one line to the buffer.
+    EXPECT_TRUE((long)doc->m_LineList.GetCount() > linesBefore);
+    delete doc;
+}
+
+TEST(PalTransport, OnBytesReceivedAccumulatesAcrossPackets)
+{
+    CMUSHclientDoc* doc = make_connected_doc();
+
+    char p1[] = "one\r\n";
+    char p2[] = "two\r\n";
+    doc->OnBytesReceived(p1, (int)strlen(p1));
+    doc->OnBytesReceived(p2, (int)strlen(p2));
+
+    EXPECT_TRUE(doc->m_iInputPacketCount == 2);
+    EXPECT_TRUE(doc->m_nBytesIn == (long)(strlen(p1) + strlen(p2)));
+    delete doc;
+}
+
 // SOCKS4 final reply granted (0, 90; 8 bytes): connected to the MUD.
 TEST(PalTransport, Socks4TunnelEstablished)
 {

@@ -2147,6 +2147,7 @@ public:
 
     // ── Networking methods (real implementations in doc_portable.cpp) ──────
     void ReceiveMsg();
+    void OnBytesReceived(char* buff, int count);   // connected-data tail: counters/MCCP/DisplayMsg (T2b/c)
     void ConnectionEstablished();
     void ConnectionClosed(int nErrorCode);   // disconnect bookkeeping (doc_shared.cpp)
     void StartSSLHandshake();

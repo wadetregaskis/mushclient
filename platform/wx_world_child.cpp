@@ -12,7 +12,6 @@
 #include <wx/config.h>
 #include <wx/clipbrd.h>   // wxTheClipboard, wxTextDataObject, wxDF_TEXT
 #include <string>
-#include <thread>   // std::thread for async DNS lookup
 #include <netdb.h>  // getaddrinfo, freeaddrinfo
 
 // ── MUSHclient headers ────────────────────────────────────────────────────
@@ -229,39 +228,10 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // world.Repaint() now drives IWorldView::requestRepaint (this frame) via
         // CMUSHclientDoc::EmitRepaint; body in the pal::IWorldView section below.
 
-        // Async DNS: run getaddrinfo on a background thread so the main thread
-        // (and GUI) remains responsive during hostname resolution.  When the
-        // thread completes, wxCallAfter delivers the result back to the main
-        // thread where LookupHostNameComplete() is safe to call.
-        m_doc->m_fn_lookup_host = [this](const std::string& host, int phase) {
-            CMUSHclientDoc* doc = m_doc;
-            std::thread([doc, host, phase]() {
-                struct addrinfo hints{}, *res = nullptr;
-                hints.ai_family   = AF_INET;
-                hints.ai_socktype = SOCK_STREAM;
-                bool ok = (::getaddrinfo(host.c_str(), nullptr, &hints, &res) == 0 && res);
-                struct in_addr addr{};
-                if (ok && res) {
-                    addr = reinterpret_cast<struct sockaddr_in*>(res->ai_addr)->sin_addr;
-                    ::freeaddrinfo(res);
-                }
-                // Post the result back to the main thread.  Check the doc is
-                // still alive (world might have been closed while resolving).
-                wxTheApp->CallAfter([doc, addr, phase, ok]() {
-                    if (!App.m_pWorldDocTemplate) return;
-                    bool alive = false;
-                    POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
-                    while (pos) {
-                        CDocument* p = App.m_pWorldDocTemplate->GetNextDoc(pos);
-                        if (p == doc) { alive = true; break; }
-                    }
-                    if (!alive) return;
-                    // Also guard against the user disconnecting during lookup.
-                    if (doc->m_iConnectPhase != phase) return;
-                    doc->LookupHostNameComplete(addr, phase, ok);
-                });
-            }).detach();
-        };
+        // Async DNS now runs inside the PAL transport (pal::ITransport, T2d):
+        // its getaddrinfo thread posts the completion to a main-thread mailbox
+        // drained by pal::PumpTransportCompletions() (wx_mfc_impl poll timer),
+        // gate-guarded against doc/transport teardown mid-lookup.
 
         // world.ClearOutput() now drives IWorldView::clearOutput (this frame) via
         // CMUSHclientDoc::EmitClearOutput; the engine resets the emission counter.
@@ -3662,8 +3632,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         // Detach the view BEFORE deleting the doc so that any final output
         // flushed by the destructor doesn't call AppendLine on the dying pane
         // (m_pWorldView is this frame; every Emit*/pull helper no-ops on null).
-        m_doc->m_pWorldView     = nullptr;
-        m_doc->m_fn_lookup_host = nullptr;
+        m_doc->m_pWorldView = nullptr;
 
         // Deregister from the world doc-template so GetWorldList() no longer
         // returns this world after it is destroyed.

@@ -55,6 +55,7 @@
 #include "platform/ma_sound.h"        // miniaudio sound engine (volume/pan/buffers)
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
+#include "platform/posix_transport.h"  // pal::PumpTransportCompletions (poll timer)
 #include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
 #include "dialogs/world_prefs/GenPropertyPage.h"    // CGenPropertyPage (entity-list idle reload)
 #include "dialogs/ImmediateDlg.h"     // CImmediateDlg (canonical Execute-Lua dialog)
@@ -934,6 +935,9 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     wxTimer* pollTimer = new wxTimer(frame);
     frame->Bind(wxEVT_TIMER, [](wxTimerEvent&) {
         CAsyncSocket::Poll(0);
+        // Deliver PAL-transport main-thread completions (async DNS results)
+        // alongside the socket pump — platform/posix_transport.h (T2d).
+        pal::PumpTransportCompletions();
     }, pollTimer->GetId());
     pollTimer->Start(20);
 

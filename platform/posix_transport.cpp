@@ -393,13 +393,17 @@ private:
             m_tlsHandshaking = false;
 
             long verify_result = SSL_get_verify_result(m_ssl);
-            if (verify_result != X509_V_OK && !m_tlsParams.allowInvalidCert) {
+            std::string verifyFailure;
+            if (verify_result != X509_V_OK) {
                 const char* reason =
                     X509_verify_cert_error_string(verify_result);
                 std::string r = reason ? reason : "certificate not verified";
-                teardownTls();
-                m_events.onTlsFailed(TlsFailure::CertVerify, r);
-                return;
+                if (!m_tlsParams.allowInvalidCert) {
+                    teardownTls();
+                    m_events.onTlsFailed(TlsFailure::CertVerify, r);
+                    return;
+                }
+                verifyFailure = r;   // proceeding under user consent — report it
             }
 
             m_tlsUp = true;
@@ -407,7 +411,8 @@ private:
             const char* cipher  = SSL_get_cipher_name(m_ssl);
             std::shared_ptr<Gate> gate = m_gate;
             m_events.onTlsEstablished(version ? version : "",
-                                      cipher ? cipher : "");
+                                      cipher ? cipher : "",
+                                      verifyFailure);
             if (!gate->alive) return;
             flushSend();   // release anything buffered during the handshake
             return;
@@ -526,7 +531,7 @@ struct RecordingEvents : pal::ITransportEvents {
     std::string bytes;
     bool tlsEstablished = false, tlsFailed = false;
     pal::TlsFailure tlsFailKind = pal::TlsFailure::Handshake;
-    std::string tlsVersion, tlsFailReason;
+    std::string tlsVersion, tlsFailReason, tlsVerifyFailure;
     pal::ITransport* deleteOnBytes = nullptr;   // destroy-mid-event check
 
     void onResolved(pal::ResolveToken token, unsigned int addr, bool ok) override
@@ -545,9 +550,11 @@ struct RecordingEvents : pal::ITransportEvents {
     }
     void onWritable() override { ++writables; }
     void onClosed(int err) override { ++closes; lastCloseErr = err; }
-    void onTlsEstablished(std::string_view version, std::string_view) override
+    void onTlsEstablished(std::string_view version, std::string_view,
+                          std::string_view verifyFailure) override
     {
         tlsEstablished = true; tlsVersion.assign(version);
+        tlsVerifyFailure.assign(verifyFailure);
     }
     void onTlsFailed(pal::TlsFailure kind, std::string_view reason) override
     {
@@ -749,6 +756,8 @@ int RunPalTransportSelfTest()
                 "startTls establishes with allowInvalidCert (self-signed accepted)");
         ttCheck(ev.tlsVersion.find("TLS") != std::string::npos,
                 "onTlsEstablished reports a TLS version");
+        ttCheck(!ev.tlsVerifyFailure.empty(),
+                "consented self-signed session reports its verify failure");
 
         pumpUntil([&] { return ev.bytes.find("TLSHELLO") != std::string::npos; });
         ttCheck(ev.bytes.find("TLSHELLO") != std::string::npos,

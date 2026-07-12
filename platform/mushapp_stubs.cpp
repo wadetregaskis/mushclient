@@ -268,7 +268,7 @@ void CMUSHclientDoc::SendNAWS(int cols, int rows)
     m_gui_rows = rows;
 
     if (m_iConnectPhase != eConnectConnectedToMud ||
-        !m_pSocket || !m_bNAWS_wanted)
+        !ConnectionOpen() || !m_bNAWS_wanted)
         return;
 
     unsigned char p[] = {

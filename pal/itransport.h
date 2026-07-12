@@ -88,9 +88,14 @@ public:
 
     // startTls() outcome. On failure the adapter has already torn the TLS
     // session down; the engine decides what to do (prompt via its own
-    // deferred main-loop path, or fail closed).
+    // deferred main-loop path, or fail closed). On success, verifyFailure is
+    // empty when the chain + hostname verified clean; when the session was
+    // allowed to proceed under TlsParams::allowInvalidCert despite a failed
+    // verification it carries the reason (the engine warns the user — the
+    // shipping "proceeding with UNVERIFIED certificate" Note).
     virtual void onTlsEstablished(std::string_view version,
-                                  std::string_view cipher) = 0;
+                                  std::string_view cipher,
+                                  std::string_view verifyFailure) = 0;
     virtual void onTlsFailed(TlsFailure kind, std::string_view reason) = 0;
 };
 

@@ -47,7 +47,8 @@ struct FakeTransportEvents : pal::ITransportEvents {
     void onBytes(const char* data, size_t n) override { bytes.append(data, n); }
     void onWritable() override {}
     void onClosed(int) override { ++closes; }
-    void onTlsEstablished(std::string_view, std::string_view) override {}
+    void onTlsEstablished(std::string_view, std::string_view,
+                          std::string_view) override {}
     void onTlsFailed(pal::TlsFailure, std::string_view) override {}
 };
 

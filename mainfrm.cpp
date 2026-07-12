@@ -709,7 +709,7 @@ void CMainFrame::OnUpdateBtnWorlds (int iWorld, CCmdUI* pCmdUI)
     // green = world closed                      20 - 29
 
     iNewImage = pDoc->m_new_lines ? iWorld + 9 : iWorld - 1;
-    if (pDoc->m_iConnectPhase != eConnectConnectedToMud || !pDoc->m_pSocket)
+    if (pDoc->m_iConnectPhase != eConnectConnectedToMud || !pDoc->ConnectionOpen ())
        iNewImage = iWorld + 19;
 
     if (iNewImage != iImage)

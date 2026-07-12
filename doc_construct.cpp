@@ -537,6 +537,11 @@ int i;
 
     }
 
+#ifndef _WIN32
+  // T2d: destroy the PAL transport (the port's socket) + its events bridge
+  TeardownTransport ();
+#endif
+
 	if (m_pChatListenSocket)
 	{
 

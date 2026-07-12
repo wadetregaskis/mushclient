@@ -59,7 +59,7 @@ void CSendToAllDlg::DoDataExchange(CDataExchange* pDX)
       CMUSHclientDoc * pDoc = (CMUSHclientDoc *) App.m_pWorldDocTemplate->GetNextDoc(docPos);
 
       // ignore closed worlds
-      if (pDoc->m_iConnectPhase != eConnectConnectedToMud || !pDoc->m_pSocket)
+      if (pDoc->m_iConnectPhase != eConnectConnectedToMud || !pDoc->ConnectionOpen ())
         continue;
 
       for (int i = 0; i < nCount; i++)
@@ -84,7 +84,7 @@ void CSendToAllDlg::DoDataExchange(CDataExchange* pDX)
       CMUSHclientDoc * pDoc = (CMUSHclientDoc *) App.m_pWorldDocTemplate->GetNextDoc(docPos);
 
       // ignore closed worlds
-      if (pDoc->m_iConnectPhase != eConnectConnectedToMud || !pDoc->m_pSocket)
+      if (pDoc->m_iConnectPhase != eConnectConnectedToMud || !pDoc->ConnectionOpen ())
         continue;
 
       nItem = m_ctlWorldList.AddString (pDoc->m_mush_name);

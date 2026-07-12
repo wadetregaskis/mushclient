@@ -53,6 +53,8 @@
 #include <openssl/x509.h>
 #ifdef _WIN32
 #include <wincrypt.h>
+#else
+#include "platform/posix_transport.h"   // pal::ITransport — the port's socket (T2d)
 #endif
 
 // AfxGetFileTitle is provided by mfc_ui.h on non-Windows; on Windows it's in
@@ -601,6 +603,98 @@ void CMUSHclientDoc::Dump(CDumpContext& dc) const
 /////////////////////////////////////////////////////////////////////////////
 // CMUSHclientDoc commands
 
+#ifndef _WIN32
+
+// ── CDocTransportEvents ──────────────────────────────────────────────────────
+// The doc-side pal::ITransportEvents bridge (ITransport migration step T2d):
+// maps transport events onto the engine's connect-phase machine.  Delivery
+// contract (pal/itransport.h): main thread, never re-entrant, and any handler
+// may destroy the transport mid-event — so handlers that run scripts (which
+// can Disconnect and even reconnect) are safe.  One bridge per doc, created
+// on first ConnectSocket and destroyed with the doc; it must outlive every
+// transport, which holds a reference to it.
+
+class CDocTransportEvents : public pal::ITransportEvents
+  {
+  public:
+    explicit CDocTransportEvents (CMUSHclientDoc * pDoc) : m_pDoc (pDoc) {}
+
+    void onResolved (pal::ResolveToken token, unsigned int addrIPv4, bool ok) override
+      {
+      // token is the connect phase at resolve time — the staleness guard
+      // inside LookupHostNameComplete drops superseded completions
+      struct in_addr addr;
+      addr.s_addr = addrIPv4;
+      m_pDoc->LookupHostNameComplete (addr, token, ok);
+      }
+
+    void onConnect (int err) override
+      {
+      m_pDoc->OnConnect (err);
+      }
+
+    void onBytes (const char * data, size_t n) override
+      {
+      CMUSHclientDoc * pDoc = m_pDoc;
+      // the adapter's scratch buffer is ours to mutate in place (the proxy
+      // parser memmoves consumed bytes down) — same as ReceiveMsg's stack
+      // buffer on the Windows path
+      pDoc->OnBytesReceived (const_cast<char *> (data), (int) n);
+      // push new lines to the GUI output pane (the CWorldSocket::OnReceive
+      // parity call — the MFC invalidation mechanism is absent off-Windows)
+      pDoc->UpdateAllViews (NULL);
+      }
+
+    void onWritable () override
+      {
+      // nothing to do: the adapter owns the buffered send queue (the old
+      // FD_WRITE flush) and the TLS handshake stepping
+      }
+
+    void onClosed (int err) override
+      {
+      CMUSHclientDoc * pDoc = m_pDoc;
+      // the closed transport is done: destroy it BEFORE the bookkeeping so a
+      // disconnect-script reconnect (ConnectSocket) cannot collide with it
+      // (destroying the transport inside its own event is contract-supported)
+      delete pDoc->m_pTransport;
+      pDoc->m_pTransport = NULL;
+      pDoc->ConnectionClosed (err);
+      }
+
+    void onTlsEstablished (std::string_view version, std::string_view cipher,
+                           std::string_view verifyFailure) override
+      {
+      std::string v (version), c (cipher), f (verifyFailure);
+      m_pDoc->OnTlsEstablished (v.c_str (), c.c_str (), f.c_str ());
+      }
+
+    void onTlsFailed (pal::TlsFailure kind, std::string_view reason) override
+      {
+      std::string r (reason);
+      m_pDoc->OnTlsFailed (kind == pal::TlsFailure::CertVerify, r.c_str ());
+      }
+
+  private:
+    CMUSHclientDoc * m_pDoc;
+  };
+
+// Destroy the transport + its events bridge (doc destructor path; here
+// because both types are complete in this TU).
+void CMUSHclientDoc::TeardownTransport (void)
+  {
+  if (m_pTransport)
+    {
+    m_pTransport->close ();
+    delete m_pTransport;
+    m_pTransport = NULL;
+    }
+  delete m_pTransportEvents;
+  m_pTransportEvents = NULL;
+  }
+
+#endif // !_WIN32
+
 
 BOOL CMUSHclientDoc::ConnectSocket(void)
 {
@@ -676,11 +770,29 @@ CString str;
               (const char *) m_mush_name, m_port);
   Frame.SetStatusMessageNow (str);
 
+#ifndef _WIN32
+
+// T2d: off-Windows the connection runs through the PAL transport
+// (pal::ITransport, POSIX adapter) — CWorldSocket is not created and
+// m_pSocket stays NULL.  The adapter creates the fd at connect time and
+// applies the keepalive policy itself (TransportOptions carries on/off;
+// the 120 s / 6 s / 6-probe timing is fixed engine policy inside it).
+
+  delete m_pTransport;
+  m_pTransport = NULL;
+
+  if (!m_pTransportEvents)
+    m_pTransportEvents = new CDocTransportEvents (this);
+
+  m_pTransport = pal::CreatePosixTransport (*m_pTransportEvents);
+
+#else
+
 // get rid of any earlier socket
 
   delete m_pSocket;
 
-// now create a new one 
+// now create a new one
 
 	m_pSocket = new CWorldSocket(this);
 
@@ -712,44 +824,20 @@ CString str;
 
 
   // see: http://www.gammon.com.au/forum/?id=9848
-#ifdef _WIN32
   if (m_bSendKeepAlives)
     {
     DWORD dwBytesReturned;
     tcp_keepalive keepaliveData = {1, 60 * 1000 * 2, 6000};     // every 2 minutes
     WSAIoctl (m_pSocket->m_hSocket, SIO_KEEPALIVE_VALS, &keepaliveData, sizeof (keepaliveData), NULL, 0, &dwBytesReturned, NULL, NULL);
     }
-#else
-  if (m_bSendKeepAlives)
-    {
-    int optval = 1;
-    setsockopt (m_pSocket->m_hSocket, SOL_SOCKET,  SO_KEEPALIVE,  &optval, sizeof (optval));
-    // Match the Windows SIO_KEEPALIVE_VALS timing above: start probing after
-    // 120 s idle, then probe every 6 s.  The per-socket idle-time option is
-    // named TCP_KEEPIDLE on Linux but TCP_KEEPALIVE on macOS/BSD; both take a
-    // value in seconds.  TCP_KEEPINTVL / TCP_KEEPCNT are common to both.  Each
-    // is guarded so this still compiles where the extension is absent (there
-    // SO_KEEPALIVE alone applies, at the OS-default timing).
-    int keepidle = 120, keepintvl = 6, keepcnt = 6;
-#if defined(TCP_KEEPIDLE)
-    setsockopt (m_pSocket->m_hSocket, IPPROTO_TCP, TCP_KEEPIDLE,  &keepidle,  sizeof (keepidle));
-#elif defined(TCP_KEEPALIVE)
-    setsockopt (m_pSocket->m_hSocket, IPPROTO_TCP, TCP_KEEPALIVE, &keepidle,  sizeof (keepidle));
-#endif
-#if defined(TCP_KEEPINTVL)
-    setsockopt (m_pSocket->m_hSocket, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof (keepintvl));
-#endif
-#if defined(TCP_KEEPCNT)
-    setsockopt (m_pSocket->m_hSocket, IPPROTO_TCP, TCP_KEEPCNT,   &keepcnt,   sizeof (keepcnt));
-#endif
-    }
-#endif
 
   BOOL bStatus = m_pSocket->AsyncSelect ();
   int iStatus = 0;
 
   if (!bStatus)
     iStatus = GetLastError ();
+
+#endif // _WIN32
 
   m_iConnectPhase = eConnectNotConnected;
 
@@ -911,7 +999,7 @@ CString str = strText;
   if (m_bPluginProcessingSent)
     return;
 
-  if (!m_pSocket)
+  if (!ConnectionOpen ())
     return;
 
 // append an end-of-line if there isn't one already
@@ -4033,6 +4121,20 @@ void CMUSHclientDoc::OnConnectionDisconnect()
 
 // close the socket
 
+#ifndef _WIN32
+  // T2d: tear down the PAL transport (the port's socket) — mirrors the
+  // CWorldSocket sequence below: cancel any DNS lookup in flight, shut the
+  // stream down, run the disconnect bookkeeping, destroy.
+  if (m_pTransport)
+    {
+    m_pTransport->cancelResolve ();
+    m_pTransport->close ();
+    ConnectionClosed (0);
+    delete m_pTransport;
+    m_pTransport = NULL;
+    }
+#endif
+
 	if (m_pSocket)
 	{
 
@@ -4276,8 +4378,8 @@ BOOL CMUSHclientDoc::SaveModified()
 {
 CString str;
 
-  if (m_pSocket && 
-      m_iConnectPhase == eConnectConnectedToMud && 
+  if (ConnectionOpen () &&
+      m_iConnectPhase == eConnectConnectedToMud &&
       App.m_bConfirmBeforeClosingWorld)
     {
     str = TFormat ("This will end your %s session.", (const char *) m_mush_name);
@@ -5012,7 +5114,7 @@ bool CMUSHclientDoc::CheckConnected (void)
     return true;
 
   // if no socket, ask if they want one
-  if (m_iConnectPhase != eConnectConnectedToMud || !m_pSocket)
+  if (m_iConnectPhase != eConnectConnectedToMud || !ConnectionOpen ())
     {
     // forget it for this address
     if (m_server == "0.0.0.0")
@@ -5369,7 +5471,7 @@ void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
   // connection closed - can't do it
 
   if (m_iConnectPhase != eConnectConnectedToMud ||
-      !m_pSocket ||
+      !ConnectionOpen () ||
       !m_bNAWS_wanted)
     return;
 
@@ -5431,6 +5533,28 @@ void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
 void  CMUSHclientDoc::SendPacket (const char * lpBuf, const int nBufLen)
   {
 
+#ifndef _WIN32
+
+  // T2d: the port sends through the PAL transport (the append-and-it-drains
+  // m_outstanding_data semantics, including the TLS WANT_* retry, live in
+  // the adapter).  Bytes are counted here ONLY: the historical double-count
+  // (here AND again in CWorldSocket::OnSend as each chunk drained) is
+  // deliberately dropped on the port.
+
+  if (m_pTransport == NULL)
+    return;
+
+  m_iOutputPacketCount++;
+
+  if (m_bDebugIncomingPackets)
+    Debug_Packets ("Sent ", lpBuf, nBufLen, m_iOutputPacketCount);
+
+  m_pTransport->send (lpBuf, nBufLen);
+
+  m_nBytesOut += nBufLen;
+
+#else
+
   if (m_pSocket == NULL)
     return;
 
@@ -5442,10 +5566,12 @@ void  CMUSHclientDoc::SendPacket (const char * lpBuf, const int nBufLen)
   m_pSocket->m_outstanding_data.append (lpBuf, nBufLen);
 
   m_pSocket->OnSend (0);   // in case FD_WRITE message got lost, try to send again
-  
-  m_nBytesOut += nBufLen; 
 
-  } // end of CMUSHclientDoc::SendPacket 
+  m_nBytesOut += nBufLen;
+
+#endif // _WIN32
+
+  } // end of CMUSHclientDoc::SendPacket
 
 void  CMUSHclientDoc::SendPacket (const unsigned char * lpBuf, const int nBufLen)
   {
@@ -6278,24 +6404,22 @@ bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
 
 #else  // !_WIN32
 
-  // Non-Windows: async DNS resolution using a background thread so the GUI
-  // remains responsive during lookups (getaddrinfo blocks).
-  // If m_fn_lookup_host is set (mushgui), delegate to it — it will call
-  // LookupHostNameComplete() on the main thread when done.
-  // Otherwise (headless) fall back to synchronous resolution.
+  // Non-Windows: async DNS through the PAL transport (T2d) — its getaddrinfo
+  // thread posts the completion back to the main thread, where the events
+  // bridge calls LookupHostNameComplete().  The connect phase is the resolve
+  // token: the shipping staleness guard drops superseded completions.
   {
     delete [] m_pGetHostStruct;
     m_pGetHostStruct = NULL;
 
-    if (m_fn_lookup_host)
+    if (m_pTransport)
       {
-      // Async path: GUI build.  Return immediately; result arrives later via
-      // LookupHostNameComplete().
-      m_fn_lookup_host (std::string (sName), m_iConnectPhase);
+      m_pTransport->resolve ((const char *) sName, m_iConnectPhase);
       return false;
       }
 
-    // Synchronous fallback (headless, or before the frame has wired the callback).
+    // Synchronous fallback (defensive — ConnectSocket creates the transport
+    // before any lookup can happen).
     struct addrinfo hints{}, *res = nullptr;
     hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
@@ -6389,13 +6513,48 @@ void CMUSHclientDoc::LookupHostNameComplete (struct in_addr addr, int phase, boo
 
 void CMUSHclientDoc::InitiateConnection (void)
   {
+
+#ifndef _WIN32
+
+  // T2d: connect through the PAL transport.  Every outcome arrives via the
+  // events bridge → OnConnect: immediate success is deferred to the next
+  // pump tick (never re-entrant), an immediate LOCAL failure is delivered
+  // synchronously from connect() and lands in OnConnect's failure path —
+  // the same UX the inline error handling below produces.
+
+  // just so we don't get ridiculous times shown if we don't connect
+  m_tConnectTime = CTime::GetCurrentTime();
+
+  if (m_pTransport == NULL)
+    return;     // no transport — ConnectSocket was never run
+
+  pal::TransportOptions options;
+  options.keepalives = m_bSendKeepAlives != 0;
+
+  if (m_iSocksProcessing == eProxyServerNone)
+    {
+    m_iConnectPhase = eConnectConnectingToMud;
+    m_pTransport->connect (m_sockAddr.sin_addr.s_addr,
+                           (unsigned short) m_port, options);
+    }
+  else
+    {
+    m_iConnectPhase = eConnectConnectingToProxy;
+    m_pTransport->connect (m_ProxyAddr.sin_addr.s_addr,
+                           (unsigned short) m_iProxyServerPort, options);
+    }
+
+  return;
+
+#else
+
   BOOL connected;
 
   // just so we don't get ridiculous times shown if we don't connect
   m_tConnectTime = CTime::GetCurrentTime();
 
 // initiate asynchronous connect
-  
+
   if (m_iSocksProcessing == eProxyServerNone)
     {
     m_iConnectPhase = eConnectConnectingToMud;
@@ -6460,6 +6619,8 @@ void CMUSHclientDoc::InitiateConnection (void)
   m_iConnectPhase = eConnectNotConnected;
 
   App.m_bUpdateActivity = TRUE;   // new activity!
+
+#endif // _WIN32
 
   } // end of CMUSHclientDoc::InitiateConnection
 
@@ -6777,6 +6938,22 @@ void CMUSHclientDoc::StartSSLHandshake (void)
 
   m_iConnectPhase = eConnectAwaitingSSLHandshake;
 
+#ifndef _WIN32
+
+  // T2d: the transport owns the WHOLE TLS session on the port (context,
+  // non-blocking handshake stepping, verification, encrypted I/O, the
+  // decrypted-bytes drain).  Policy stays in the engine: the outcome lands
+  // in OnTlsEstablished / OnTlsFailed via the events bridge.
+  if (m_pTransport)
+    {
+    pal::TlsParams params;
+    params.serverName = (const char *) m_server;
+    params.allowInvalidCert = m_bSSLAllowInvalidCert;
+    m_pTransport->startTls (params);
+    }
+
+#else
+
   // create SSL context
   m_pSSL_CTX = SSL_CTX_new (TLS_client_method ());
   if (!m_pSSL_CTX)
@@ -6846,6 +7023,8 @@ void CMUSHclientDoc::StartSSLHandshake (void)
   SSL_set_connect_state (m_pSSL);
 
   ContinueSSLHandshake ();
+
+#endif // _WIN32
 
   }   // end of CMUSHclientDoc::StartSSLHandshake
 
@@ -6924,6 +7103,74 @@ void CMUSHclientDoc::ContinueSSLHandshake (void)
   Frame.PostMessage (WM_USER_SSL_FALLBACK_PROMPT, (WPARAM) this, 0);
 
   }   // end of CMUSHclientDoc::ContinueSSLHandshake
+
+
+#ifndef _WIN32
+
+// ── ITransport TLS outcomes (T2d) ────────────────────────────────────────────
+// The transport adapter owns the TLS session on the port; these are the
+// engine-policy halves of ContinueSSLHandshake above: the Notes, the phase
+// change, and the deferred consent/fallback prompt
+// (WM_USER_SSL_FALLBACK_PROMPT — handled by the frame, which reconnects on
+// user consent).
+
+void CMUSHclientDoc::OnTlsEstablished (const char * version, const char * cipher,
+                                       const char * verifyFailure)
+  {
+
+  if (verifyFailure && *verifyFailure)
+    {
+    // user already opted to proceed despite the failure — connect, but warn
+    CString strMsg;
+    strMsg.Format ("--- WARNING: proceeding with UNVERIFIED TLS certificate for \"%s\": %s ---",
+                   (LPCTSTR) m_server, verifyFailure);
+    Note (strMsg);
+    }
+
+  // the OpenSSL objects live inside the adapter now, but "TLS is up" is
+  // engine state (MTTS advertises it — telnet_phases.cpp); SSLCleanup
+  // (via ConnectionClosed / OnConnectionDisconnect) resets it
+  m_bSSL_Connected = true;
+
+  CString strInfo;
+  strInfo.Format ("--- Connected via %s (%s) ---", version, cipher);
+  Note (strInfo);
+
+  m_iConnectPhase = eConnectConnectedToMud;
+  ConnectionEstablished ();
+
+  }   // end of CMUSHclientDoc::OnTlsEstablished
+
+
+void CMUSHclientDoc::OnTlsFailed (bool bCertFailure, const char * reason)
+  {
+
+  CString strMsg;
+  if (bCertFailure)
+    // Block: the certificate could not be verified and the user has not
+    // (yet) chosen to accept it.  The deferred prompt offers "connect
+    // anyway" — still over TLS, but accepting this unverifiable certificate
+    // for the session (m_bSSLAllowInvalidCert) — and reconnects.
+    strMsg.Format ("--- TLS certificate for \"%s\" could NOT be verified: %s ---",
+                   (LPCTSTR) m_server, reason);
+  else
+    strMsg.Format ("--- TLS handshake failed: %s ---", reason);
+  Note (strMsg);
+
+  // save error for deferred prompt
+  m_strSSLLastError = reason;
+
+  // the adapter has already torn the TLS session down; this closes the
+  // transport and runs the disconnect bookkeeping
+  OnConnectionDisconnect ();
+
+  // defer the prompt via PostMessage so we're not inside a transport event
+  Frame.PostMessage (WM_USER_SSL_FALLBACK_PROMPT, (WPARAM) this,
+                     (LPARAM) (bCertFailure ? 1 : 0));
+
+  }   // end of CMUSHclientDoc::OnTlsFailed
+
+#endif // !_WIN32
 
 
 

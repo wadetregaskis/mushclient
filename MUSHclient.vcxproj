@@ -1461,6 +1461,7 @@
     <ClInclude Include="pal\isurface.h" />
     <ClInclude Include="pal\surface_bridge.h" />
     <ClInclude Include="pal\gdi_surface.h" />
+    <ClInclude Include="pal\itransport.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="version.h" />
   </ItemGroup>

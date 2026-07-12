@@ -3839,7 +3839,10 @@ BOOL connected = nErrorCode == 0;
     // address in network order
     // xxx = username
     // 0 = terminating byte
-    unsigned long address = m_sockAddr.sin_addr.s_addr;  // MUD address
+    // exactly 4 bytes on every platform: unsigned long is 8 bytes on LP64
+    // (macOS/Linux), which would put a malformed 8-byte address on the wire;
+    // on Win32 unsigned int is the same 4 bytes this always sent
+    unsigned int address = m_sockAddr.sin_addr.s_addr;  // MUD address
     short port = m_sockAddr.sin_port;       // MUD port
     unsigned char socks_address [3 + 255 + sizeof address + sizeof port] = { 4, 1 };
     int socks_address_length = 2;  // ie. the 2 bytes above

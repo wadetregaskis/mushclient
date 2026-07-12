@@ -9,6 +9,7 @@
 #if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
+#include "mainfrm.h"            // Frame (ConnectionClosed's status/button updates)
 #include "doc.h"
 #include "scripting/errors.h"   // eOK / eBadParameter (full build; doc_stub.h defines them for mushcore)
 #else
@@ -737,3 +738,126 @@ static bool bInPluginListChanged = false;
 
   }    // end CMUSHclientDoc::PluginListChanged 
 
+
+// ── ConnectionClosed ─────────────────────────────────────────────────────────
+// The engine's disconnect bookkeeping: scripts, plugin callbacks, auto-log
+// close, session-statistics Notes, notify UX, phase reset.  Moved verbatim
+// from CWorldSocket::OnClose (worldsock.cpp) — ITransport migration step T2a:
+// this is ENGINE logic, not socket mechanics, and the transport adapter's
+// onClosed event will land here once the seam is live.  Runs in both builds
+// (the socket TU is shared too, so this was already dual-build code).
+
+void CMUSHclientDoc::ConnectionClosed (int nErrorCode)
+  {
+
+bool bWasClosed = m_iConnectPhase == eConnectNotConnected;
+
+  TRACE1 ("CMUSHclientDoc::ConnectionClosed, error code %i\n", nErrorCode);
+
+  SSLCleanup ();
+
+  m_iConnectPhase = eConnectDisconnecting;
+
+  UpdateAllViews (NULL);
+
+  MXP_Off (true);   // turn off MXP now
+
+  // update button bar - make button red
+  if (m_view_number >= 1 &&
+      m_view_number <= 10)
+    Frame.OnUpdateBtnWorlds (m_view_number, NULL);
+
+  // execute "disconnect" script
+  if (m_ScriptEngine)
+    {
+    if (SeeIfHandlerCanExecute (m_strWorldDisconnect))
+      {
+      DISPPARAMS params = { NULL, NULL, 0, 0 };
+      long nInvocationCount = 0;
+
+      ExecuteScript (m_dispidWorldDisconnect,  
+                     m_strWorldDisconnect,
+                     eWorldAction,
+                     "world disconnect", 
+                     "disconnecting from world",
+                     params, 
+                     nInvocationCount); 
+      }
+    } // end of executing disconnect script
+
+  SendToAllPluginCallbacks (ON_PLUGIN_DISCONNECT);
+
+  // close log file if we auto-opened it
+  if (!m_strAutoLogFileName.IsEmpty ())
+    CloseLog ();
+
+  if (m_bShowConnectDisconnect && !bWasClosed)
+    {
+    CTime theTime;
+    theTime = CTime::GetCurrentTime();
+
+    CString strConnected;
+    strConnected = theTime.Format (TranslateTime ("--- Disconnected on %A, %B %d, %Y, %#I:%M %p ---"));
+
+    Note (strConnected);  
+
+    // find time spent connected
+    CTimeSpan ts = CTime::GetCurrentTime() - m_tConnectTime;
+      
+    CString strDuration = TFormat ("--- Connected for %i day%s, %i hour%s, %i minute%s, %i second%s. ---",
+                  PLURAL ((long) ts.GetDays()),
+                  PLURAL ((long) ts.GetHours()),
+                  PLURAL ((long) ts.GetMinutes()),
+                  PLURAL ((long) ts.GetSeconds()));
+
+    Note (strDuration);  
+
+    // and a horizontal rule
+
+    m_pCurrentLine->flags = HORIZ_RULE;  
+    StartNewLine (true, 0); 
+    }  // end of message in world window wanted
+
+  CString strInfo = TFormat ("--- Received %i line%s, sent %i line%s.",
+                PLURAL (m_nTotalLinesReceived),
+                PLURAL (m_nTotalLinesSent)
+                );
+  
+  Note (strInfo);  
+
+  strInfo = TFormat ("--- Output buffer has %i/%i line%s in it (%.1f%% full).",
+                m_LineList.GetCount (),
+                m_maxlines,
+                (m_LineList.GetCount ()) == 1 ? "" : "s",
+                (double) m_LineList.GetCount () / (double) m_maxlines * 100.0
+                );
+
+  Note (strInfo);  
+
+  strInfo = TFormat ("--- Matched %i trigger%s, %i alias%s, and %i timer%s fired.",
+                PLURAL (m_iTriggersMatchedThisSessionCount),   
+                PLURALES (m_iAliasesMatchedThisSessionCount),    
+                PLURAL (m_iTimersFiredThisSessionCount)       
+                );
+
+  Note (strInfo);  
+
+CString str;
+
+  str = TFormat ("The \"%s\" server has closed the connection", 
+              (const char *) m_mush_name);
+
+  if (App.m_bNotifyOnDisconnect && !m_bDisconnectOK)
+    {
+    if (App.m_bErrorNotificationToOutputWindow)
+      Note (str);
+    else
+      ::UMessageBox (str, MB_ICONEXCLAMATION);
+    }
+  else
+    Frame.SetStatusMessage (str);
+  m_iConnectPhase = eConnectNotConnected;
+
+  UpdateAllViews  (NULL);     // force window title to be redrawn
+
+  } // end of CMUSHclientDoc::ConnectionClosed

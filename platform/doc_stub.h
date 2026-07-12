@@ -2148,6 +2148,7 @@ public:
     // ── Networking methods (real implementations in doc_portable.cpp) ──────
     void ReceiveMsg();
     void ConnectionEstablished();
+    void ConnectionClosed(int nErrorCode);   // disconnect bookkeeping (doc_shared.cpp)
     void StartSSLHandshake();
     void ContinueSSLHandshake();
     void SSLCleanup();

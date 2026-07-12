@@ -2166,6 +2166,7 @@ public:
 #endif
   void InitiateConnection (void);
   void ConnectionEstablished (void);
+  void ConnectionClosed (int nErrorCode);   // disconnect bookkeeping (doc_shared.cpp)
 
   int ProcessProxyResponse1 (char * buff, const int count);
   int ProcessProxyResponse2 (char * buff, const int count);

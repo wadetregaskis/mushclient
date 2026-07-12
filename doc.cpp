@@ -3113,11 +3113,11 @@ dc.CreateCompatibleDC (NULL);
       {
 #ifndef _WIN32
       // Non-Windows: no CSendView; use the wx callback to update the input bar.
-      if (m_fn_set_input_font)
+      if (m_pWorldView)
         {
         bool bold   = (nWeight >= 600);  // 600 = FW_SEMIBOLD
         bool italic = (bItalic != 0);
-        m_fn_set_input_font (std::string (lpszFacename ? lpszFacename : ""),
+        EmitInputFont (std::string (lpszFacename ? lpszFacename : ""),
                              nHeight, bold, italic);
         }
 #else
@@ -5975,10 +5975,9 @@ void CMUSHclientDoc::SendTo (
 
 #ifndef _WIN32
       // Non-Windows: route through the wxWidgets command-bar callback.
-      // m_fn_set_command already enforces the "only if bar is empty" contract
+      // SetCommandText already enforces the "only if bar is empty" contract
       // (returns false and does NOT overwrite if the bar is non-empty).
-      if (m_fn_set_command)
-        m_fn_set_command(std::string((const char*)strSendText));
+      SetCommandText(std::string((const char*)strSendText));
 #else
       // put trigger response into command buffer - provided it is empty
       for (pos = GetFirstViewPosition(); pos != NULL; )

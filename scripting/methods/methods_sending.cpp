@@ -69,8 +69,8 @@ long CMUSHclientDoc::SendNoEcho(LPCTSTR Message)
 void CMUSHclientDoc::AddToCommandHistory (LPCTSTR Message)
   {
 #ifndef _WIN32
-  if (m_fn_add_to_history && Message && *Message)
-    m_fn_add_to_history(std::string(Message));
+  if (Message && *Message)
+    AddCommandToHistory(std::string(Message));
 #else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {

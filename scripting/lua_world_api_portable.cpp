@@ -1372,8 +1372,7 @@ static int L_GetInfo(lua_State* L)
         case 237: // command selection end column
             {
                 long selStart = 0, selEnd = 0;
-                if (pDoc->m_fn_get_command_selection)
-                    pDoc->m_fn_get_command_selection(selStart, selEnd);
+                pDoc->GetCommandSelection(selStart, selEnd);
                 lua_pushnumber(L, iType == 236 ? (double)selStart : (double)selEnd);
             }
             return 1;
@@ -2756,8 +2755,8 @@ static int L_SetAlphaOption(lua_State* L)
     }
     else if (!strcmp(opt, "input_font_name")) {
         pDoc->m_input_font_name = CString(val);
-        if (pDoc->m_fn_set_input_font && val && *val)
-            pDoc->m_fn_set_input_font(std::string(val), 0, false, false);
+        if (val && *val)
+            pDoc->EmitInputFont(std::string(val), 0, false, false);
     }
     // Auto-say
     else if (!strcmp(opt, "auto_say_string"))           pDoc->m_strAutoSayString         = CString(val);
@@ -5709,12 +5708,12 @@ static int L_DeleteCommandHistory(lua_State* L)
 // command-window concepts.
 static int L_PushCommand(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
-    std::string s = pDoc->m_fn_push_command ? pDoc->m_fn_push_command() : std::string();
+    std::string s = pDoc->PushCommandText();
     lua_pushstring(L, s.c_str()); return 1;
 }
 static int L_SelectCommand(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
-    if (pDoc->m_fn_select_command) pDoc->m_fn_select_command();
+    pDoc->SelectCommandText();
     lua_pushnumber(L, eOK); return 1;
 }
 
@@ -5724,14 +5723,13 @@ static int L_PasteCommand(lua_State* L)
     const char* text = luaL_checkstring(L, 1);
     // Append text to the current input bar and return previously selected text
     // (empty on non-Windows since selection state is not tracked here).
-    if (pDoc->HaveCommandSink() && pDoc->m_fn_set_command) {
+    if (pDoc->HaveCommandSink()) {
         std::string current = pDoc->GetCommandText();
         std::string appended = current + std::string(text);
-        // m_fn_set_command requires an empty bar; force-set via get+set.
+        // setCommand requires an empty bar; force-set via get+set.
         // Since PasteCommand replaces selection, we model it as append.
-        // Temporarily clear the bar to allow set_command, then set the combined text.
         // This is an approximation: we don't have selection tracking.
-        pDoc->m_fn_set_command(appended);   // may fail if bar is non-empty; ignore
+        pDoc->SetCommandText(appended);   // may fail if bar is non-empty; ignore
     }
     lua_pushstring(L, "");   // return empty string (no selection on non-Windows)
     return 1;
@@ -5741,8 +5739,8 @@ static int L_SetCommand(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* cmd = luaL_checkstring(L, 1);
-    if (pDoc->m_fn_set_command) {
-        bool ok = pDoc->m_fn_set_command(std::string(cmd));
+    if (pDoc->m_pWorldView) {
+        bool ok = pDoc->SetCommandText(std::string(cmd));
         lua_pushnumber(L, ok ? eOK : eCommandNotEmpty);
     } else {
         pDoc->m_CurrentCommand = CString(cmd);
@@ -7525,8 +7523,7 @@ static const luaL_Reg worldlib[] = {
         CMUSHclientDoc* pDoc = world_doc(L);
         long first = (long)luaL_checknumber(L, 1);
         long last  = (long)luaL_optnumber(L, 2, -1);
-        if (pDoc->m_fn_set_command_selection)
-            pDoc->m_fn_set_command_selection(first, last);
+        pDoc->SetCommandSelectionRange(first, last);
         lua_pushnumber(L, eOK); return 1;
     }},
     { "SetCommandWindowHeight", L_GuiOkStub  },
@@ -7538,8 +7535,7 @@ static const luaL_Reg worldlib[] = {
         int pts    = (int)luaL_optnumber(L, 2, 0);
         bool bold  = lua_toboolean(L, 3) != 0;
         bool italic= lua_toboolean(L, 4) != 0;
-        if (pDoc->m_fn_set_output_font)
-            pDoc->m_fn_set_output_font(std::string(face), pts, bold, italic);
+        pDoc->EmitInputFont(std::string(face), pts, bold, italic);
         lua_pushnumber(L, eOK); return 1;
     }},
     { "SetOutputFont",          [](lua_State* L) -> int {

@@ -11,6 +11,7 @@
 #include "platform/doc_stub.h"
 #include "pal/iworldview.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -41,6 +42,52 @@ struct FakeWorldView : pal::IWorldView {
     pal::TextRange outputSelection() const override { return sel; }
     int            scrollPos() const override { return scroll; }
     pal::Size      outputAreaChars() const override { return { 80, 25 }; }
+
+    // ── the command input bar (P2 command family) ──────────────────────────
+    std::vector<std::string> history;       // newest last, like the wx frame's
+    pal::Range cmdSel;                      // the bar's selection
+    bool selectedAll = false;
+    std::string fontFace; int fontPts = 0; bool fontBold = false, fontItalic = false;
+
+    bool setCommand(std::string_view text) override {
+        if (!cmd.empty()) return false;     // Windows contract: only if empty
+        cmd.assign(text);
+        return true;
+    }
+    void selectCommand() override { selectedAll = true; }
+    pal::Range commandSelection() const override { return cmdSel; }
+    void setCommandSelection(long first, long last) override {
+        long len = (long)cmd.size();
+        cmdSel.start = (int)((first <= 0) ? len : first - 1);
+        cmdSel.end   = (int)((last  <= 0) ? len : last);
+    }
+    std::string pushCommand() override {
+        std::string text = cmd;
+        if (!text.empty() && (history.empty() || history.back() != text))
+            history.push_back(text);
+        cmd.clear();
+        return text;
+    }
+    std::vector<std::string> commandList(long count) const override {
+        std::vector<std::string> out;
+        long total = (long)history.size();
+        long n = (count <= 0) ? total : std::min(count, total);
+        for (long i = total - 1; i >= total - n; --i)
+            out.push_back(history[(size_t)i]);
+        return out;
+    }
+    void addToCommandHistory(std::string_view text) override {
+        if (text.empty()) return;
+        std::string entry(text);
+        if (!history.empty() && history.back() == entry) return;
+        history.push_back(entry);
+    }
+    void deleteCommandHistory() override { history.clear(); }
+    void setInputFont(std::string_view face, int pointSize,
+                      bool bold, bool italic) override {
+        fontFace.assign(face); fontPts = pointSize;
+        fontBold = bold; fontItalic = italic;
+    }
 };
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -192,6 +239,70 @@ TEST(PalWorldView, PullsReadFromTheView)
     long sl = 0, sc = 0, el = 0, ec = 0;
     doc.GetOutputSelection(sl, sc, el, ec);
     EXPECT_TRUE(sl == 3 && sc == 5 && el == 7 && ec == 9);
+}
+
+// The command-input family drives the view through its typed-only helpers
+// (no m_fn_* fallback): set/push/history/selection/font.
+TEST(PalWorldView, CommandFamilyDrivesTheView)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pWorldView = &view;
+
+    // SetCommand honours the only-if-empty contract.
+    EXPECT_TRUE(doc.SetCommandText("kill rat"));
+    EXPECT_TRUE(!doc.SetCommandText("flee"));            // bar not empty
+    EXPECT_STREQ("kill rat", doc.GetCommandText().c_str());
+
+    // PushCommand saves to history and clears the bar.
+    EXPECT_STREQ("kill rat", doc.PushCommandText().c_str());
+    EXPECT_STREQ("", doc.GetCommandText().c_str());
+
+    // History: duplicates suppressed, newest first on read-back.
+    doc.AddCommandToHistory("north");
+    doc.AddCommandToHistory("north");                    // suppressed
+    doc.AddCommandToHistory("south");
+    auto hist = doc.GetCommandListEntries(0);
+    ASSERT_EQ(3u, (unsigned)hist.size());
+    EXPECT_STREQ("south",    hist[0].c_str());
+    EXPECT_STREQ("north",    hist[1].c_str());
+    EXPECT_STREQ("kill rat", hist[2].c_str());
+    ASSERT_EQ(1u, (unsigned)doc.GetCommandListEntries(1).size());
+
+    doc.DeleteCommandHistoryEntries();
+    EXPECT_TRUE(doc.GetCommandListEntries(0).empty());
+
+    // Selection: CEdit::SetSel(First - 1, Last) semantics.
+    doc.SetCommandText("look");
+    doc.SetCommandSelectionRange(2, 3);
+    long s = 0, e = 0;
+    doc.GetCommandSelection(s, e);
+    EXPECT_TRUE(s == 1 && e == 3);
+    doc.SelectCommandText();
+    EXPECT_TRUE(view.selectedAll);
+
+    doc.EmitInputFont("Menlo", 14, true, false);
+    EXPECT_STREQ("Menlo", view.fontFace.c_str());
+    EXPECT_TRUE(view.fontPts == 14 && view.fontBold && !view.fontItalic);
+}
+
+// With no view attached the command helpers are inert and report "no host":
+// SetCommandText false, empty pulls, no crashes.
+TEST(PalWorldView, CommandFamilyNullHostIsInert)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    EXPECT_TRUE(!doc.SetCommandText("kill rat"));
+    EXPECT_STREQ("", doc.PushCommandText().c_str());
+    EXPECT_TRUE(doc.GetCommandListEntries(0).empty());
+    doc.AddCommandToHistory("north");
+    doc.DeleteCommandHistoryEntries();
+    doc.SelectCommandText();
+    doc.SetCommandSelectionRange(1, 2);
+    long s = 99, e = 99;
+    doc.GetCommandSelection(s, e);
+    EXPECT_TRUE(s == 0 && e == 0);
+    doc.EmitInputFont("Menlo", 14, true, false);
 }
 
 MC_TEST_MAIN()

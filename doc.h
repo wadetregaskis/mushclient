@@ -1564,6 +1564,42 @@ public:
       }
   }
 
+
+  // ── PAL: command-input bar (typed-only — P2 command family; the wx frame
+  //    implements these on IWorldView, no m_fn_* fallback remains) ──────────
+  bool SetCommandText(const std::string& text) {
+      return m_pWorldView ? m_pWorldView->setCommand(text) : false;
+  }
+  void SelectCommandText() {
+      if (m_pWorldView) m_pWorldView->selectCommand();
+  }
+  void GetCommandSelection(long& s, long& e) {
+      s = e = 0;
+      if (m_pWorldView) {
+          pal::Range r = m_pWorldView->commandSelection();
+          s = r.start; e = r.end;
+      }
+  }
+  void SetCommandSelectionRange(long first, long last) {
+      if (m_pWorldView) m_pWorldView->setCommandSelection(first, last);
+  }
+  std::string PushCommandText() {
+      return m_pWorldView ? m_pWorldView->pushCommand() : std::string();
+  }
+  std::vector<std::string> GetCommandListEntries(long count) {
+      return m_pWorldView ? m_pWorldView->commandList(count)
+                          : std::vector<std::string>();
+  }
+  void AddCommandToHistory(const std::string& text) {
+      if (m_pWorldView) m_pWorldView->addToCommandHistory(text);
+  }
+  void DeleteCommandHistoryEntries() {
+      if (m_pWorldView) m_pWorldView->deleteCommandHistory();
+  }
+  void EmitInputFont(const std::string& face, int pts, bool bold, bool italic) {
+      if (m_pWorldView) m_pWorldView->setInputFont(face, pts, bold, italic);
+  }
+
   // Output pane character-grid dimensions (updated by CWorldChildFrame on
   // resize / font change via SendNAWS and m_fn_grid_changed).
   int  m_gui_rows        = 24;   // visible rows in the output pane
@@ -1585,18 +1621,11 @@ public:
   // ── Non-Windows GUI input/view callbacks ──────────────────────────────────
   // world.GetCommand(): return the current text in the command input bar.
   std::function<std::string()>                       m_fn_get_command;
-  // world.SetCommand(text): set the command input text.
-  // Return true on success; false if the bar is non-empty (matches Windows
-  // eCommandNotEmpty semantics).
-  std::function<bool(const std::string&)>            m_fn_set_command;
   // world.SetOutputFont(): change the output font family / size / style.
   // Args: face name (empty = keep current), point size (0 = keep current),
   //       bold flag, italic flag.
   std::function<void(const std::string&, int, bool, bool)> m_fn_set_output_font;
 
-  // world.SetInputFont(): change the command-bar font on non-Windows.
-  // Same signature as m_fn_set_output_font.
-  std::function<void(const std::string&, int, bool, bool)> m_fn_set_input_font;
 
   // world.SetScroll(Position, Visible): scroll the output pane.
   // Position: -1 = bottom, -2 = no change, >= 0 = line index (0-based).
@@ -1611,9 +1640,6 @@ public:
   // text range in the output pane.  Arguments are 1-based; 0 = no selection.
   std::function<void(int, int, int, int)>  m_fn_set_selection;
 
-  // world.SetCommandSelection(First, Last): select text in the input bar.
-  // Arguments are 1-based character positions; Last=-1 means end of text.
-  std::function<void(long, long)>  m_fn_set_command_selection;
 
   // world.Pause(bPause): lock/unlock auto-scrolling of the output pane.
   std::function<void(bool)>  m_fn_set_paused;
@@ -1671,15 +1697,8 @@ public:
   // Called by DeleteLines() after it trims m_LineList.
   std::function<void(long)> m_fn_delete_lines;
 
-  // world.SelectCommand(): select all text in the command input bar.
-  std::function<void()> m_fn_select_command;
 
-  // world.DeleteCommandHistory(): clear the command input history.
-  std::function<void()> m_fn_delete_command_history;
 
-  // world.AddToCommandHistory(text): inject a command string into the history.
-  // Duplicate-suppression (same as last entry) is applied by the implementation.
-  std::function<void(const std::string&)> m_fn_add_to_history;
 
   // Info bar (world.Info / InfoClear / InfoColour / InfoBackground / InfoFont /
   // ShowInfoBar).  On Windows these drive a CRichEditCtrl on the main frame; on
@@ -1698,17 +1717,8 @@ public:
   std::function<void(int&, int&)>                  m_fn_infobar_size;
   std::function<bool()>                            m_fn_is_fullscreen;
 
-  // world.PushCommand(): push current command bar text onto history, clear bar.
-  // Returns the pushed command text.
-  std::function<std::string()> m_fn_push_command;
 
-  // world.GetCommandList(count): return up to count most-recent history entries,
-  // newest first.  Returns empty vector if history is empty.
-  std::function<std::vector<std::string>(long)> m_fn_get_command_list;
 
-  // GetInfo(236/237): query the command input selection range.
-  // Sets selStart and selEnd (both 0-based, in characters).
-  std::function<void(long&, long&)> m_fn_get_command_selection;
 
   // world.Save(): save the world file to its current path.
   // Returns false if the world has no path set yet.

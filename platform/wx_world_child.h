@@ -84,6 +84,16 @@ public:
     pal::TextRange outputSelection() const override;
     int         scrollPos() const override;
     pal::Size   outputAreaChars() const override;
+    bool        setCommand(std::string_view text) override;
+    void        selectCommand() override;
+    pal::Range  commandSelection() const override;
+    void        setCommandSelection(long first, long last) override;
+    std::string pushCommand() override;
+    std::vector<std::string> commandList(long count) const override;
+    void        addToCommandHistory(std::string_view text) override;
+    void        deleteCommandHistory() override;
+    void        setInputFont(std::string_view face, int pointSize,
+                             bool bold, bool italic) override;
 
     // Find/replace within the command-input text (Game ▸ Global Change).
     // Runs the canonical CGlobalChangeDlg for the from/to prompt; the input is a

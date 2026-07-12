@@ -768,10 +768,10 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 	          }	  // end of being a CSendView
           }   // end of loop through views
 #else
-        if (m_fn_get_command_selection)
+        if (m_pWorldView)
           {
           long selStart = 0, selEnd = 0;
-          m_fn_get_command_selection (selStart, selEnd);
+          GetCommandSelection (selStart, selEnd);
           SetUpVariantLong (vaResult, selStart + 1);  // 1-based, matching the Windows branch
           }
 #endif
@@ -802,10 +802,10 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 	          }	  // end of being a CSendView
           }   // end of loop through views
 #else
-        if (m_fn_get_command_selection)
+        if (m_pWorldView)
           {
           long selStart = 0, selEnd = 0;
-          m_fn_get_command_selection (selStart, selEnd);
+          GetCommandSelection (selStart, selEnd);
           SetUpVariantLong (vaResult, (selEnd <= selStart) ? 0 : selEnd);  // 0 == no text selected, matching Windows
           }
 #endif

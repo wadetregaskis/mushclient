@@ -19,6 +19,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 #include "pal/pal_types.h"
 #include "platform/output_types.h"   // SOutputLine / SOutputRun
 
@@ -47,6 +48,29 @@ public:
     virtual TextRange   outputSelection() const = 0;     // selection line/col (1-based; 0=none)
     virtual int         scrollPos() const = 0;
     virtual Size        outputAreaChars() const = 0;     // for wrap-column math
+
+    // ── core ↔ frontend: the command input bar (P2 command family) ─────────
+    // world.SetCommand: fill the bar ONLY if it is empty; false = not empty.
+    virtual bool        setCommand(std::string_view text) = 0;
+    // world.SelectCommand: select all text in the bar.
+    virtual void        selectCommand() = 0;
+    // GetInfo 236/237: the bar's selection endpoints, in characters.
+    virtual Range       commandSelection() const = 0;
+    // world.SetCommandSelection(first, last): 1-based; <= 0 means the end
+    // (only First is decremented — CEdit::SetSel(First - 1, Last) semantics).
+    virtual void        setCommandSelection(long first, long last) = 0;
+    // world.PushCommand: save the bar's text to history, clear it, return it.
+    virtual std::string pushCommand() = 0;
+    // world.GetCommandList(n): up to n most-recent history entries, newest
+    // first; n <= 0 means all.
+    virtual std::vector<std::string> commandList(long count) const = 0;
+    // world.AddToCommandHistory: append (consecutive duplicates suppressed).
+    virtual void        addToCommandHistory(std::string_view text) = 0;
+    // world.DeleteCommandHistory: clear the history.
+    virtual void        deleteCommandHistory() = 0;
+    // Input-bar font (face "" / size 0 = keep current).
+    virtual void        setInputFont(std::string_view face, int pointSize,
+                                     bool bold, bool italic) = 0;
 };
 
 } // namespace pal

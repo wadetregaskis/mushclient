@@ -2300,10 +2300,9 @@ void CMUSHclientDoc::SendTo(const unsigned short iWhere,
         break;
 
     case eSendToCommand:      // 1 — put text in command bar (only if empty)
-        // m_fn_set_command returns false without overwriting if the bar is
+        // SetCommandText returns false without overwriting if the bar is
         // non-empty, matching the Windows CSendView iteration behaviour.
-        if (m_fn_set_command)
-            m_fn_set_command(std::string((const char*)strSendText));
+        SetCommandText(std::string((const char*)strSendText));
         break;
 
     case eSendToOutput:       // 2 — display in output window without sending

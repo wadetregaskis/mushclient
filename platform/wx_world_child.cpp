@@ -314,78 +314,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (m_output) m_output->DeleteTailLines(n);
         };
 
-        // world.SelectCommand(): select all text in the command input bar.
-        m_doc->m_fn_select_command = [this]() {
-            wxTextCtrl* inp = ActiveInput();
-            if (inp) inp->SetSelection(-1, -1);  // wxWidgets: -1,-1 = select all
-        };
-
-        // world.DeleteCommandHistory(): clear the input history.
-        m_doc->m_fn_delete_command_history = [this]() {
-            m_history.clear();
-            m_histIdx = -1;
-            m_histSaved.Clear();
-            // Rewrite (empty) history file so the cleared history persists.
-            if (!m_historyFilePath.empty()) {
-                FILE* f = fopen(m_historyFilePath.c_str(), "w");
-                if (f) fclose(f);
-            }
-        };
-
-        // world.AddToCommandHistory(text): inject a string into history.
-        // Mirrors the duplicate-suppression logic in methods_sending.cpp.
-        m_doc->m_fn_add_to_history = [this](const std::string& text) {
-            if (text.empty()) return;
-            wxString entry = wxString::FromUTF8(text.c_str());
-            if (!m_history.empty() && m_history.back() == entry)
-                return;   // same as last entry — don't add duplicate
-            m_history.push_back(entry);
-            if ((int)m_history.size() > kMaxHistory)
-                m_history.erase(m_history.begin());
-            m_histIdx = -1;  // reset browsing position
-        };
-
-        // world.PushCommand(): save current bar text to history, clear bar.
-        m_doc->m_fn_push_command = [this]() -> std::string {
-            wxTextCtrl* inp = ActiveInput();
-            if (!inp) return {};
-            std::string text(inp->GetValue().ToUTF8());
-            if (!text.empty()) {
-                wxString wxText = wxString::FromUTF8(text.c_str());
-                if (m_history.empty() || m_history.back() != wxText)
-                    m_history.push_back(wxText);
-                if ((int)m_history.size() > kMaxHistory)
-                    m_history.erase(m_history.begin());
-            }
-            inp->Clear();
-            m_histIdx = -1;
-            ApplyHistRSearch(false);
-            return text;
-        };
-
-        // world.GetCommandList(count): return up to count most-recent history
-        // entries, newest first.  count <= 0 means all.
-        m_doc->m_fn_get_command_list = [this](long count) -> std::vector<std::string> {
-            std::vector<std::string> result;
-            if (m_history.empty()) return result;
-            long total = (long)m_history.size();
-            long n = (count <= 0) ? total : std::min(count, total);
-            result.reserve((size_t)n);
-            for (long i = total - 1; i >= total - n; --i)
-                result.push_back(std::string(m_history[(size_t)i].ToUTF8()));
-            return result;
-        };
-
-        // GetInfo(236/237): query command input selection range.
-        m_doc->m_fn_get_command_selection = [this](long& selStart, long& selEnd) {
-            wxTextCtrl* inp = ActiveInput();
-            if (!inp) { selStart = selEnd = 0; return; }
-            long from = 0, to = 0;
-            inp->GetSelection(&from, &to);
-            selStart = from;
-            selEnd   = to;
-        };
-
         // world.GetSelectionStartLine / …Column now drive IWorldView::outputSelection
         // (this frame) via CMUSHclientDoc::GetOutputSelection; body in the section below.
 
@@ -447,32 +375,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // world.GetCommand() now drives IWorldView::currentCommand (this frame) via
         // CMUSHclientDoc::GetCommandText; body in the section below.
 
-        // world.SetCommand(text): set the command bar contents.
-        // Per the Windows API contract, returns false (eCommandNotEmpty) and does
-        // NOT overwrite if the bar is already non-empty.  Returns true on success.
-        m_doc->m_fn_set_command = [this](const std::string& text) -> bool {
-            wxTextCtrl* inp = ActiveInput();
-            if (!inp) return false;
-            if (!inp->GetValue().IsEmpty()) return false;  // eCommandNotEmpty
-            inp->SetValue(wxString::FromUTF8(text.c_str()));
-            inp->SetInsertionPointEnd();
-            m_histIdx = -1; ApplyHistRSearch(false);
-            return true;
-        };
-
-        // world.SetCommandSelection(first, last): select a range in the command bar.
-        // Indices are 1-based character positions (0 = end of bar).
-        m_doc->m_fn_set_command_selection = [this](long first, long last) {
-            wxTextCtrl* inp = ActiveInput();
-            if (!inp) return;
-            long len = (long)inp->GetValue().size();
-            long f = (first  <= 0) ? len : first  - 1;
-            // End is exclusive (one past the last char), matching Windows'
-            // CEdit::SetSel(First - 1, Last): only the start is decremented.
-            long l = (last   <= 0) ? len : last;
-            inp->SetSelection(f, l);
-        };
-
         // world.SetOutputFont(face, pts, bold, italic): change the output pane font.
         // pts == 0 means "keep current size".
         m_doc->m_fn_set_output_font = [this](const std::string& face, int pts,
@@ -501,25 +403,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             cfg.Write(wxT("/display/font_name"), faceName);
             cfg.Write(wxT("/display/font_size"), (long)f.GetPointSize());
             // Keep input bars in sync.
-            if (m_input)         { m_input->SetFont(f);         m_input->Refresh(); }
-            if (m_inputPassword) { m_inputPassword->SetFont(f); m_inputPassword->Refresh(); }
-            Layout();
-        };
-
-        // world.SetInputFont(face, pts, weight, italic): change the command-bar font.
-        // weight is a numeric CSS weight (400=normal, 700=bold); anything >= 600 is bold.
-        m_doc->m_fn_set_input_font = [this](const std::string& face, int pts,
-                                            bool bold, bool italic) {
-            wxFont cur = m_input ? m_input->GetFont() : wxNullFont;
-            wxString faceName = face.empty()
-                ? (cur.IsOk() ? cur.GetFaceName() : wxString())
-                : wxString::FromUTF8(face.c_str());
-            int size = (pts > 0) ? pts : (cur.IsOk() ? cur.GetPointSize() : 10);
-            wxFontStyle  style  = italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL;
-            wxFontWeight weight = bold   ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL;
-            wxFont f(size, wxFONTFAMILY_TELETYPE, style, weight,
-                     /*underline=*/false, faceName);
-            if (!f.IsOk()) return;
             if (m_input)         { m_input->SetFont(f);         m_input->Refresh(); }
             if (m_inputPassword) { m_inputPassword->SetFont(f); m_inputPassword->Refresh(); }
             Layout();
@@ -3535,6 +3418,137 @@ pal::Size CWorldChildFrame::outputAreaChars() const
                  : pal::Size{ 80, 24 };
 }
 
+// ── the command input bar (P2 command family) ────────────────────────────────
+
+// world.SetCommand(text): set the command bar contents.  Per the Windows API
+// contract, returns false (eCommandNotEmpty) and does NOT overwrite if the bar
+// is already non-empty.  Returns true on success.
+bool CWorldChildFrame::setCommand(std::string_view text)
+{
+    wxTextCtrl* inp = ActiveInput();
+    if (!inp) return false;
+    if (!inp->GetValue().IsEmpty()) return false;  // eCommandNotEmpty
+    inp->SetValue(wxString::FromUTF8(text.data(), text.size()));
+    inp->SetInsertionPointEnd();
+    m_histIdx = -1; ApplyHistRSearch(false);
+    return true;
+}
+
+// world.SelectCommand(): select all text in the command input bar.
+void CWorldChildFrame::selectCommand()
+{
+    wxTextCtrl* inp = ActiveInput();
+    if (inp) inp->SetSelection(-1, -1);  // wxWidgets: -1,-1 = select all
+}
+
+// GetInfo(236/237): the command input selection range.
+pal::Range CWorldChildFrame::commandSelection() const
+{
+    pal::Range r;
+    wxTextCtrl* inp = ActiveInput();
+    if (inp) {
+        long from = 0, to = 0;
+        inp->GetSelection(&from, &to);
+        r.start = (int) from;
+        r.end   = (int) to;
+    }
+    return r;
+}
+
+// world.SetCommandSelection(first, last): select a range in the command bar.
+// Indices are 1-based character positions (0 = end of bar).
+void CWorldChildFrame::setCommandSelection(long first, long last)
+{
+    wxTextCtrl* inp = ActiveInput();
+    if (!inp) return;
+    long len = (long)inp->GetValue().size();
+    long f = (first  <= 0) ? len : first  - 1;
+    // End is exclusive (one past the last char), matching Windows'
+    // CEdit::SetSel(First - 1, Last): only the start is decremented.
+    long l = (last   <= 0) ? len : last;
+    inp->SetSelection(f, l);
+}
+
+// world.PushCommand(): save current bar text to history, clear bar.
+std::string CWorldChildFrame::pushCommand()
+{
+    wxTextCtrl* inp = ActiveInput();
+    if (!inp) return {};
+    std::string text(inp->GetValue().ToUTF8());
+    if (!text.empty()) {
+        wxString wxText = wxString::FromUTF8(text.c_str());
+        if (m_history.empty() || m_history.back() != wxText)
+            m_history.push_back(wxText);
+        if ((int)m_history.size() > kMaxHistory)
+            m_history.erase(m_history.begin());
+    }
+    inp->Clear();
+    m_histIdx = -1;
+    ApplyHistRSearch(false);
+    return text;
+}
+
+// world.GetCommandList(count): up to count most-recent history entries,
+// newest first.  count <= 0 means all.
+std::vector<std::string> CWorldChildFrame::commandList(long count) const
+{
+    std::vector<std::string> result;
+    if (m_history.empty()) return result;
+    long total = (long)m_history.size();
+    long n = (count <= 0) ? total : std::min(count, total);
+    result.reserve((size_t)n);
+    for (long i = total - 1; i >= total - n; --i)
+        result.push_back(std::string(m_history[(size_t)i].ToUTF8()));
+    return result;
+}
+
+// world.AddToCommandHistory(text): inject a string into history.
+// Mirrors the duplicate-suppression logic in methods_sending.cpp.
+void CWorldChildFrame::addToCommandHistory(std::string_view text)
+{
+    if (text.empty()) return;
+    wxString entry = wxString::FromUTF8(text.data(), text.size());
+    if (!m_history.empty() && m_history.back() == entry)
+        return;   // same as last entry — don't add duplicate
+    m_history.push_back(entry);
+    if ((int)m_history.size() > kMaxHistory)
+        m_history.erase(m_history.begin());
+    m_histIdx = -1;  // reset browsing position
+}
+
+// world.DeleteCommandHistory(): clear the input history.
+void CWorldChildFrame::deleteCommandHistory()
+{
+    m_history.clear();
+    m_histIdx = -1;
+    m_histSaved.Clear();
+    // Rewrite (empty) history file so the cleared history persists.
+    if (!m_historyFilePath.empty()) {
+        FILE* f = fopen(m_historyFilePath.c_str(), "w");
+        if (f) fclose(f);
+    }
+}
+
+// world.SetInputFont(face, pts, bold, italic): change the command-bar font.
+// face "" / pts 0 mean "keep current".
+void CWorldChildFrame::setInputFont(std::string_view face, int pointSize,
+                                    bool bold, bool italic)
+{
+    wxFont cur = m_input ? m_input->GetFont() : wxNullFont;
+    wxString faceName = face.empty()
+        ? (cur.IsOk() ? cur.GetFaceName() : wxString())
+        : wxString::FromUTF8(face.data(), face.size());
+    int size = (pointSize > 0) ? pointSize : (cur.IsOk() ? cur.GetPointSize() : 10);
+    wxFontStyle  style  = italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL;
+    wxFontWeight weight = bold   ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL;
+    wxFont f(size, wxFONTFAMILY_TELETYPE, style, weight,
+             /*underline=*/false, faceName);
+    if (!f.IsOk()) return;
+    if (m_input)         { m_input->SetFont(f);         m_input->Refresh(); }
+    if (m_inputPassword) { m_inputPassword->SetFont(f); m_inputPassword->Refresh(); }
+    Layout();
+}
+
 // ── OnClose ───────────────────────────────────────────────────────────────
 void CWorldChildFrame::OnClose(wxCloseEvent& evt)
 {
@@ -3639,13 +3653,10 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_begin_batch     = nullptr;
         m_doc->m_fn_flush           = nullptr;
         m_doc->m_fn_get_command          = nullptr;
-        m_doc->m_fn_set_command          = nullptr;
         m_doc->m_fn_set_output_font      = nullptr;
-        m_doc->m_fn_set_input_font       = nullptr;
         m_doc->m_fn_set_scroll           = nullptr;
         m_doc->m_fn_get_scroll_pos       = nullptr;
         m_doc->m_fn_set_selection        = nullptr;
-        m_doc->m_fn_set_command_selection = nullptr;
         m_doc->m_fn_set_paused           = nullptr;
         m_doc->m_fn_repaint                  = nullptr;
         m_doc->m_fn_move_world_window        = nullptr;
@@ -3664,12 +3675,6 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_get_main_rect            = nullptr;
         m_doc->m_fn_activate_client          = nullptr;
         m_doc->m_fn_delete_lines             = nullptr;
-        m_doc->m_fn_select_command           = nullptr;
-        m_doc->m_fn_delete_command_history   = nullptr;
-        m_doc->m_fn_add_to_history           = nullptr;
-        m_doc->m_fn_push_command             = nullptr;
-        m_doc->m_fn_get_command_list         = nullptr;
-        m_doc->m_fn_get_command_selection    = nullptr;
         m_doc->m_fn_get_output_selection     = nullptr;
         m_doc->m_fn_infobar_show             = nullptr;
         m_doc->m_fn_infobar_clear            = nullptr;

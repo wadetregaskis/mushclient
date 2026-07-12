@@ -37,8 +37,8 @@ VARIANT CMUSHclientDoc::GetCommandList(long Count)
   COleSafeArray sa;   // for command list
 
 #ifndef _WIN32
-  if (m_fn_get_command_list) {
-    std::vector<std::string> hist = m_fn_get_command_list(Count);
+  {
+    std::vector<std::string> hist = GetCommandListEntries(Count);
     if (!hist.empty()) {
       long n = (long)hist.size();
       sa.CreateOneDim(VT_VARIANT, n);
@@ -99,8 +99,8 @@ BSTR CMUSHclientDoc::PushCommand()
 	CString strCommand;
 
 #ifndef _WIN32
-  if (m_fn_push_command) {
-    std::string s = m_fn_push_command();
+  {
+    std::string s = PushCommandText();
     strCommand = s.c_str();
   }
 #else
@@ -141,8 +141,7 @@ BSTR CMUSHclientDoc::PushCommand()
 void CMUSHclientDoc::SelectCommand()
 {
 #ifndef _WIN32
-  if (m_fn_select_command)
-    m_fn_select_command();
+  SelectCommandText();
 #else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
@@ -194,11 +193,12 @@ long CMUSHclientDoc::SetCommand(LPCTSTR Message)
 {
 #ifndef _WIN32
   // Non-Windows: delegate to the wxWidgets input bar.
-  if (m_fn_set_command) {
+  {
     std::string text(Message ? Message : "");
-    return m_fn_set_command(text) ? eOK : eCommandNotEmpty;
+    if (!m_pWorldView)
+      return eOK;   // no view attached (headless) — silently succeed
+    return SetCommandText(text) ? eOK : eCommandNotEmpty;
   }
-  return eOK;
 #else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
@@ -233,11 +233,11 @@ CString strResult;
 #ifndef _WIN32
   // Non-Windows: PasteCommand appends Text to the current command bar contents
   // (replacing any selection) and returns the previously selected text.
-  // We approximate by calling m_fn_set_command with the appended text.
-  if (HaveCommandSink() && m_fn_set_command) {
+  // We approximate by calling setCommand with the appended text.
+  if (HaveCommandSink() && m_pWorldView) {
     std::string current = GetCommandText();
     std::string appended = current + std::string(Text ? Text : "");
-    m_fn_set_command(appended);
+    SetCommandText(appended);
     // No selection support on non-Windows; return empty string.
   }
 #else
@@ -277,8 +277,7 @@ int nStartChar,
 void CMUSHclientDoc::DeleteCommandHistory()
 {
 #ifndef _WIN32
-  if (m_fn_delete_command_history)
-    m_fn_delete_command_history();
+  DeleteCommandHistoryEntries();
 #else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
 	  {
@@ -611,8 +610,7 @@ long CMUSHclientDoc::SetCommandWindowHeight(short Height)
 long CMUSHclientDoc::SetCommandSelection(long First, long Last)
 {
 #ifndef _WIN32
-  if (m_fn_set_command_selection)
-    m_fn_set_command_selection(First, Last);
+  SetCommandSelectionRange(First, Last);
   return eOK;
 #else
   for(POSITION pos = GetFirstViewPosition(); pos != NULL; )

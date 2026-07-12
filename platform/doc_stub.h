@@ -2240,6 +2240,41 @@ public:
         }
     }
 
+  // ── PAL: command-input bar (typed-only — P2 command family; the wx frame
+  //    implements these on IWorldView, no m_fn_* fallback remains) ──────────
+  bool SetCommandText(const std::string& text) {
+      return m_pWorldView ? m_pWorldView->setCommand(text) : false;
+  }
+  void SelectCommandText() {
+      if (m_pWorldView) m_pWorldView->selectCommand();
+  }
+  void GetCommandSelection(long& s, long& e) {
+      s = e = 0;
+      if (m_pWorldView) {
+          pal::Range r = m_pWorldView->commandSelection();
+          s = r.start; e = r.end;
+      }
+  }
+  void SetCommandSelectionRange(long first, long last) {
+      if (m_pWorldView) m_pWorldView->setCommandSelection(first, last);
+  }
+  std::string PushCommandText() {
+      return m_pWorldView ? m_pWorldView->pushCommand() : std::string();
+  }
+  std::vector<std::string> GetCommandListEntries(long count) {
+      return m_pWorldView ? m_pWorldView->commandList(count)
+                          : std::vector<std::string>();
+  }
+  void AddCommandToHistory(const std::string& text) {
+      if (m_pWorldView) m_pWorldView->addToCommandHistory(text);
+  }
+  void DeleteCommandHistoryEntries() {
+      if (m_pWorldView) m_pWorldView->deleteCommandHistory();
+  }
+  void EmitInputFont(const std::string& face, int pts, bool bold, bool italic) {
+      if (m_pWorldView) m_pWorldView->setInputFont(face, pts, bold, italic);
+  }
+
     // Pending styled spans for the line currently being assembled.
     // Flushed (via m_fn_line_ready) on each '\n'.
     SOutputLine m_gui_line_buf;
@@ -2296,17 +2331,12 @@ public:
     // ── Command-input callbacks ───────────────────────────────────────────
     // world.GetCommand() / world.SetCommand(): read/write the input bar text.
     std::function<std::string()>              m_fn_get_command;
-    std::function<bool(const std::string&)>   m_fn_set_command;
 
-    // world.SetCommandSelection(first, last): set selection in the input bar.
-    std::function<void(long, long)>           m_fn_set_command_selection;
 
     // ── Output-font callback ──────────────────────────────────────────────
     // world.SetFont(face, size, bold, italic): change the output pane font.
     std::function<void(const std::string&, int, bool, bool)> m_fn_set_output_font;
 
-    // world.SetInputFont(face, size, weight, italic): change the command-bar font.
-    std::function<void(const std::string&, int, bool, bool)> m_fn_set_input_font;
 
     // ── Scroll / selection callbacks ──────────────────────────────────────
     // world.SetScroll(pos): scroll the output pane to a line index.
@@ -2333,28 +2363,11 @@ public:
     // Called by DeleteLines() after it trims m_LineList.
     std::function<void(long)> m_fn_delete_lines;
 
-    // world.SelectCommand(): select all text in the command input bar.
-    std::function<void()> m_fn_select_command;
 
-    // world.DeleteCommandHistory(): clear the command history.
-    std::function<void()> m_fn_delete_command_history;
 
-    // world.AddToCommandHistory(text): inject a command string into the history.
-    // Duplicate-suppression (same as last entry) is applied by the implementation.
-    std::function<void(const std::string&)> m_fn_add_to_history;
 
-    // world.PushCommand(): push the current command bar text onto the history
-    // stack and clear the bar; returns the pushed command text.
-    std::function<std::string()> m_fn_push_command;
 
-    // world.GetCommandList(count): return up to `count` most-recent history
-    // entries, newest first.  Returns empty vector if history is empty.
-    std::function<std::vector<std::string>(long)> m_fn_get_command_list;
 
-    // GetInfo(236/237): query the command input selection range.
-    // Sets selStart and selEnd (both 0-based, in characters).
-    // If nothing is selected, both are set to the caret position.
-    std::function<void(long&, long&)> m_fn_get_command_selection;
 
     // world.Save(): save this world's file to its current path (or prompt for
     // a new path if the world has not been saved yet).  Returns true on success.

@@ -112,6 +112,14 @@ public:
     bool        isFullscreen() const override;
     bool        saveWorld() override;
     pal::Rect   mainRect() const override;
+    void        infobarShow(bool visible) override;
+    void        infobarClear() override;
+    void        infobarText(std::string_view text) override;
+    void        infobarColour(pal::Colour c) override;
+    void        infobarBackground(pal::Colour c) override;
+    void        infobarFont(std::string_view face, int pointSize,
+                            int style) override;
+    pal::Size   infobarSize() const override;
 
     // Find/replace within the command-input text (Game ▸ Global Change).
     // Runs the canonical CGlobalChangeDlg for the from/to prompt; the input is a

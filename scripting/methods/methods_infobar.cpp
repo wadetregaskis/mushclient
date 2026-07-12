@@ -21,7 +21,7 @@
 void CMUSHclientDoc::ShowInfoBar(BOOL Visible)
 {
 #ifndef _WIN32
-  if (m_fn_infobar_show) m_fn_infobar_show(Visible != 0);
+  EmitInfobarShow(Visible != 0);
   return;
 #endif
   if (Frame.m_wndInfoBar.m_hWnd)
@@ -32,7 +32,7 @@ void CMUSHclientDoc::ShowInfoBar(BOOL Visible)
 void CMUSHclientDoc::InfoClear()
 {
 #ifndef _WIN32
-  if (m_fn_infobar_clear) m_fn_infobar_clear();
+  EmitInfobarClear();
   return;
 #endif
   if (!Frame.m_wndInfoBar.m_hWnd)
@@ -56,7 +56,7 @@ void CMUSHclientDoc::InfoClear()
 void CMUSHclientDoc::Info(LPCTSTR Message)
 {
 #ifndef _WIN32
-  if (m_fn_infobar_text && Message) m_fn_infobar_text(Message);
+  if (Message) EmitInfobarText(Message);
   return;
 #endif
   if (!Frame.m_wndInfoBar.m_hWnd)
@@ -83,7 +83,7 @@ void CMUSHclientDoc::Info(LPCTSTR Message)
 void CMUSHclientDoc::InfoFont(LPCTSTR FontName, short Size, short Style)
 {
 #ifndef _WIN32
-  if (m_fn_infobar_font) m_fn_infobar_font(FontName ? FontName : "", Size, Style);
+  EmitInfobarFont(FontName ? FontName : "", Size, Style);
   return;
 #endif
   if (!Frame.m_wndInfoBar.m_hWnd)
@@ -147,7 +147,7 @@ void CMUSHclientDoc::InfoColour(LPCTSTR Name)
   {
     COLORREF c = 0;
     // SetColour returns non-zero on FAILURE (bad name); apply on success.
-    if (!SetColour(Name, c) && m_fn_infobar_colour) m_fn_infobar_colour(c);
+    if (!SetColour(Name, c)) EmitInfobarColour(c);
   }
   return;
 #endif
@@ -177,7 +177,7 @@ void CMUSHclientDoc::InfoBackground(LPCTSTR Name)
 #ifndef _WIN32
   {
     COLORREF c = 0;
-    if (!SetColour(Name, c) && m_fn_infobar_background) m_fn_infobar_background(c);
+    if (!SetColour(Name, c)) EmitInfobarBackground(c);
   }
   return;
 #endif

@@ -113,6 +113,20 @@ public:
     virtual bool saveWorld() = 0;
     // Screen rect of the main (MDI parent) frame (world.GetMainWindowPosition).
     virtual Rect mainRect() const = 0;
+
+    // ── core → frontend: the info bar (P2 infobar family) ─────────────────
+    // world.ShowInfoBar / InfoClear / Info / InfoColour / InfoBackground /
+    // InfoFont.  Colours are COLORREF; font style bits 1=bold, 2=italic,
+    // 4=underline, 8=strikeout (size 0 keeps the current size).
+    virtual void infobarShow(bool visible) = 0;
+    virtual void infobarClear() = 0;
+    virtual void infobarText(std::string_view text) = 0;
+    virtual void infobarColour(Colour c) = 0;
+    virtual void infobarBackground(Colour c) = 0;
+    virtual void infobarFont(std::string_view face, int pointSize,
+                             int style) = 0;
+    // GetInfo(257/258): the info bar's pixel size (0,0 when hidden).
+    virtual Size infobarSize() const = 0;
 };
 
 } // namespace pal

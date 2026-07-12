@@ -2337,6 +2337,34 @@ public:
       return true;
   }
 
+  // ── PAL: the info bar (typed-only — P2 infobar family) ───────────────────
+  void EmitInfobarShow(bool visible) {
+      if (m_pWorldView) m_pWorldView->infobarShow(visible);
+  }
+  void EmitInfobarClear() {
+      if (m_pWorldView) m_pWorldView->infobarClear();
+  }
+  void EmitInfobarText(const std::string& text) {
+      if (m_pWorldView) m_pWorldView->infobarText(text);
+  }
+  void EmitInfobarColour(unsigned long c) {
+      if (m_pWorldView) m_pWorldView->infobarColour((pal::Colour)c);
+  }
+  void EmitInfobarBackground(unsigned long c) {
+      if (m_pWorldView) m_pWorldView->infobarBackground((pal::Colour)c);
+  }
+  void EmitInfobarFont(const std::string& face, int size, int style) {
+      if (m_pWorldView) m_pWorldView->infobarFont(face, size, style);
+  }
+  // Fills the info bar's pixel size; (0,0) when hidden or no view attached.
+  void GetInfobarSize(int& w, int& h) {
+      w = h = 0;
+      if (m_pWorldView) {
+          pal::Size s = m_pWorldView->infobarSize();
+          w = s.w; h = s.h;
+      }
+  }
+
     // Pending styled spans for the line currently being assembled.
     // Flushed (via m_fn_line_ready) on each '\n'.
     SOutputLine m_gui_line_buf;
@@ -2389,7 +2417,6 @@ public:
     // ── Window-geometry callbacks ─────────────────────────────────────────
     // world.GetSelectionStart/EndLine/Column(): current output-pane selection.
     std::function<void(long&, long&, long&, long&)> m_fn_get_output_selection;
-    std::function<void(int&, int&)>             m_fn_infobar_size;     // (w,h) px, 0,0 if hidden
 
 
 

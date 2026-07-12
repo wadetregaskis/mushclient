@@ -132,6 +132,24 @@ struct FakeWorldView : pal::IWorldView {
     bool isFullscreen() const override { return fullscreen; }
     bool saveWorld() override { ++saves; return true; }
     pal::Rect mainRect() const override { return mainR; }
+
+    // ── the info bar (P2 infobar family) ────────────────────────────────────
+    bool infobarVisible = false;
+    int  infobarClears = 0;
+    std::string infobarBuf;
+    pal::Colour infobarFg = 0, infobarBg = 0;
+    std::string infobarFace; int infobarPts = 0, infobarStyle = 0;
+    pal::Size infobarSz{ 0, 0 };   // returned by infobarSize()
+
+    void infobarShow(bool visible) override { infobarVisible = visible; }
+    void infobarClear() override { ++infobarClears; infobarBuf.clear(); }
+    void infobarText(std::string_view t) override { infobarBuf.append(t); }
+    void infobarColour(pal::Colour c) override { infobarFg = c; }
+    void infobarBackground(pal::Colour c) override { infobarBg = c; }
+    void infobarFont(std::string_view face, int pointSize, int style) override {
+        infobarFace.assign(face); infobarPts = pointSize; infobarStyle = style;
+    }
+    pal::Size infobarSize() const override { return infobarSz; }
 };
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -455,6 +473,53 @@ TEST(PalWorldView, WindowFamilyNullHostIsInert)
     int x = 9, y = 9, w = 9, h = 9;
     EXPECT_TRUE(!doc.GetMainRect(x, y, w, h));
     EXPECT_TRUE(x == 9 && y == 9 && w == 9 && h == 9);
+}
+
+// The info bar family drives the view through its typed-only helpers.
+TEST(PalWorldView, InfobarFamilyDrivesTheView)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pWorldView = &view;
+
+    doc.EmitInfobarShow(true);
+    EXPECT_TRUE(view.infobarVisible);
+
+    doc.EmitInfobarText("HP: ");
+    doc.EmitInfobarText("42");
+    EXPECT_STREQ("HP: 42", view.infobarBuf.c_str());
+
+    doc.EmitInfobarColour(0x0000FF);       // COLORREF red
+    doc.EmitInfobarBackground(0xFFFFFF);
+    EXPECT_TRUE(view.infobarFg == 0x0000FFu && view.infobarBg == 0xFFFFFFu);
+
+    doc.EmitInfobarFont("Menlo", 12, 1 | 4);   // bold + underline
+    EXPECT_STREQ("Menlo", view.infobarFace.c_str());
+    EXPECT_TRUE(view.infobarPts == 12 && view.infobarStyle == 5);
+
+    doc.EmitInfobarClear();
+    EXPECT_TRUE(view.infobarClears == 1 && view.infobarBuf.empty());
+
+    view.infobarSz = { 320, 24 };
+    int w = 0, h = 0;
+    doc.GetInfobarSize(w, h);
+    EXPECT_TRUE(w == 320 && h == 24);
+}
+
+// With no view every infobar helper is inert; size reads back (0,0).
+TEST(PalWorldView, InfobarFamilyNullHostIsInert)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    doc.EmitInfobarShow(true);
+    doc.EmitInfobarClear();
+    doc.EmitInfobarText("x");
+    doc.EmitInfobarColour(1);
+    doc.EmitInfobarBackground(2);
+    doc.EmitInfobarFont("f", 10, 3);
+    int w = 7, h = 7;
+    doc.GetInfobarSize(w, h);
+    EXPECT_TRUE(w == 0 && h == 0);
 }
 
 MC_TEST_MAIN()

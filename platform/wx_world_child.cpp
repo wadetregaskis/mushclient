@@ -958,48 +958,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     m_infobarStyle = wxTextAttr(*wxBLACK);
     m_infobarStyle.SetFont(m_infobar->GetFont());
 
-    if (m_doc) {
-        // world.GetInfo(257/258): live InfoBar size (0,0 while hidden).
-        m_doc->m_fn_infobar_size = [this](int& w, int& h) {
-            if (m_infobar && m_infobar->IsShown()) { wxSize s = m_infobar->GetSize(); w = s.x; h = s.y; }
-            else { w = 0; h = 0; }
-        };        m_doc->m_fn_infobar_show = [this](bool show) {
-            if (m_infobar->IsShown() != show) { m_infobar->Show(show); Layout(); }
-        };
-        m_doc->m_fn_infobar_clear = [this]() {
-            m_infobar->Clear();
-            m_infobarStyle = wxTextAttr(*wxBLACK);
-            m_infobarStyle.SetFont(m_infobar->GetFont());
-            m_infobar->SetBackgroundColour(wxColour(255, 255, 255));
-        };
-        m_doc->m_fn_infobar_text = [this](const std::string& s) {
-            long start = m_infobar->GetLastPosition();
-            m_infobar->AppendText(wxString::FromUTF8(s.c_str()));
-            m_infobar->SetStyle(start, m_infobar->GetLastPosition(), m_infobarStyle);
-        };
-        m_doc->m_fn_infobar_colour = [this](unsigned long rgb) {
-            m_infobarStyle.SetTextColour(
-                wxColour(GetRValue(rgb), GetGValue(rgb), GetBValue(rgb)));
-        };
-        m_doc->m_fn_infobar_background = [this](unsigned long rgb) {
-            m_infobar->SetBackgroundColour(
-                wxColour(GetRValue(rgb), GetGValue(rgb), GetBValue(rgb)));
-            m_infobar->Refresh();
-        };
-        m_doc->m_fn_infobar_font = [this](const std::string& face, int size, int style) {
-            wxFont f = m_infobarStyle.HasFont() ? m_infobarStyle.GetFont()
-                                                : m_infobar->GetFont();
-            if (!face.empty()) f.SetFaceName(wxString::FromUTF8(face.c_str()));
-            if (size > 0)      f.SetPointSize(size);
-            f.SetWeight   ((style & 1) ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL);
-            f.SetStyle    ((style & 2) ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL);
-            f.SetUnderlined((style & 4) != 0);
-            m_infobarStyle.SetFont(f);
-            m_infobarStyle.SetFontUnderlined  ((style & 4) != 0);
-            m_infobarStyle.SetFontStrikethrough((style & 8) != 0);
-        };
-    }
-
     // ── Per-world status bar (bottom of the child frame) ──────────────────
     // On macOS the wxMDIParentFrame's own status bar is covered by the
     // maximised child, so each world frame carries its own.  Five fields
@@ -3565,6 +3523,69 @@ pal::Rect CWorldChildFrame::mainRect() const
     return { 0, 0, 1024, 768 };
 }
 
+// ── the info bar (P2 infobar family) ─────────────────────────────────────────
+// On Windows these drive a CRichEditCtrl on the main frame; here the world
+// child frame hosts a styled wxTextCtrl.  world.Info appends text in the
+// current style; InfoColour/InfoFont update that style; InfoBackground
+// recolours the strip.
+
+void CWorldChildFrame::infobarShow(bool visible)
+{
+    if (m_infobar->IsShown() != visible) { m_infobar->Show(visible); Layout(); }
+}
+
+void CWorldChildFrame::infobarClear()
+{
+    m_infobar->Clear();
+    m_infobarStyle = wxTextAttr(*wxBLACK);
+    m_infobarStyle.SetFont(m_infobar->GetFont());
+    m_infobar->SetBackgroundColour(wxColour(255, 255, 255));
+}
+
+void CWorldChildFrame::infobarText(std::string_view text)
+{
+    long start = m_infobar->GetLastPosition();
+    m_infobar->AppendText(wxString::FromUTF8(text.data(), text.size()));
+    m_infobar->SetStyle(start, m_infobar->GetLastPosition(), m_infobarStyle);
+}
+
+void CWorldChildFrame::infobarColour(pal::Colour rgb)
+{
+    m_infobarStyle.SetTextColour(
+        wxColour(GetRValue(rgb), GetGValue(rgb), GetBValue(rgb)));
+}
+
+void CWorldChildFrame::infobarBackground(pal::Colour rgb)
+{
+    m_infobar->SetBackgroundColour(
+        wxColour(GetRValue(rgb), GetGValue(rgb), GetBValue(rgb)));
+    m_infobar->Refresh();
+}
+
+void CWorldChildFrame::infobarFont(std::string_view face, int pointSize, int style)
+{
+    wxFont f = m_infobarStyle.HasFont() ? m_infobarStyle.GetFont()
+                                        : m_infobar->GetFont();
+    if (!face.empty()) f.SetFaceName(wxString::FromUTF8(face.data(), face.size()));
+    if (pointSize > 0) f.SetPointSize(pointSize);
+    f.SetWeight   ((style & 1) ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL);
+    f.SetStyle    ((style & 2) ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL);
+    f.SetUnderlined((style & 4) != 0);
+    m_infobarStyle.SetFont(f);
+    m_infobarStyle.SetFontUnderlined  ((style & 4) != 0);
+    m_infobarStyle.SetFontStrikethrough((style & 8) != 0);
+}
+
+// world.GetInfo(257/258): live InfoBar size (0,0 while hidden).
+pal::Size CWorldChildFrame::infobarSize() const
+{
+    if (m_infobar && m_infobar->IsShown()) {
+        wxSize s = m_infobar->GetSize();
+        return { s.x, s.y };
+    }
+    return { 0, 0 };
+}
+
 // ── OnClose ───────────────────────────────────────────────────────────────
 void CWorldChildFrame::OnClose(wxCloseEvent& evt)
 {
@@ -3678,12 +3699,6 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_get_clipboard            = nullptr;
         m_doc->m_fn_set_clipboard            = nullptr;
         m_doc->m_fn_get_output_selection     = nullptr;
-        m_doc->m_fn_infobar_show             = nullptr;
-        m_doc->m_fn_infobar_clear            = nullptr;
-        m_doc->m_fn_infobar_text             = nullptr;
-        m_doc->m_fn_infobar_colour           = nullptr;
-        m_doc->m_fn_infobar_background       = nullptr;
-        m_doc->m_fn_infobar_font             = nullptr;
 
         // Deregister from the world doc-template so GetWorldList() no longer
         // returns this world after it is destroyed.

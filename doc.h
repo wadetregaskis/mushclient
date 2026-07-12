@@ -1657,6 +1657,34 @@ public:
       return true;
   }
 
+  // ── PAL: the info bar (typed-only — P2 infobar family) ───────────────────
+  void EmitInfobarShow(bool visible) {
+      if (m_pWorldView) m_pWorldView->infobarShow(visible);
+  }
+  void EmitInfobarClear() {
+      if (m_pWorldView) m_pWorldView->infobarClear();
+  }
+  void EmitInfobarText(const std::string& text) {
+      if (m_pWorldView) m_pWorldView->infobarText(text);
+  }
+  void EmitInfobarColour(unsigned long c) {
+      if (m_pWorldView) m_pWorldView->infobarColour((pal::Colour)c);
+  }
+  void EmitInfobarBackground(unsigned long c) {
+      if (m_pWorldView) m_pWorldView->infobarBackground((pal::Colour)c);
+  }
+  void EmitInfobarFont(const std::string& face, int size, int style) {
+      if (m_pWorldView) m_pWorldView->infobarFont(face, size, style);
+  }
+  // Fills the info bar's pixel size; (0,0) when hidden or no view attached.
+  void GetInfobarSize(int& w, int& h) {
+      w = h = 0;
+      if (m_pWorldView) {
+          pal::Size s = m_pWorldView->infobarSize();
+          w = s.w; h = s.h;
+      }
+  }
+
   // Output pane character-grid dimensions (updated by CWorldChildFrame on
   // resize / font change via SendNAWS and m_fn_grid_changed).
   int  m_gui_rows        = 24;   // visible rows in the output pane
@@ -1724,21 +1752,6 @@ public:
 
 
 
-  // Info bar (world.Info / InfoClear / InfoColour / InfoBackground / InfoFont /
-  // ShowInfoBar).  On Windows these drive a CRichEditCtrl on the main frame; on
-  // the port the world child frame hosts a styled wxTextCtrl that these callbacks
-  // append to.  Colours are COLORREF (0x00BBGGRR); font Style bits 1=bold,
-  // 2=italic, 4=underline, 8=strikeout (size 0 keeps the current size).
-  std::function<void(bool)>                        m_fn_infobar_show;
-  std::function<void()>                            m_fn_infobar_clear;
-  std::function<void(const std::string&)>          m_fn_infobar_text;
-  std::function<void(unsigned long)>               m_fn_infobar_colour;
-  std::function<void(unsigned long)>               m_fn_infobar_background;
-  std::function<void(const std::string&, int, int)> m_fn_infobar_font;
-  // world.GetInfo: live frame state the port queries from the world child frame.
-  // m_fn_infobar_size fills (width, height) of the InfoBar in pixels (0,0 when
-  // hidden).
-  std::function<void(int&, int&)>                  m_fn_infobar_size;
 
 
 

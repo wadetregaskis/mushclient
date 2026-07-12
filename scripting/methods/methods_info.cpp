@@ -951,10 +951,10 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
     case 259: case 260:
       SetUpVariantLong (vaResult, 0); break;
     case 257:   // InfoBar height (the InfoBar IS implemented on the port)
-      { int w = 0, h = 0; if (m_fn_infobar_size) m_fn_infobar_size (w, h);
+      { int w = 0, h = 0; GetInfobarSize (w, h);
         SetUpVariantLong (vaResult, h); } break;
     case 258:   // InfoBar width
-      { int w = 0, h = 0; if (m_fn_infobar_size) m_fn_infobar_size (w, h);
+      { int w = 0, h = 0; GetInfobarSize (w, h);
         SetUpVariantLong (vaResult, w); } break;
     case 261: case 263:  // client/non-client height of world child frame
       SetUpVariantLong (vaResult, m_gui_rows * m_gui_font_height); break;

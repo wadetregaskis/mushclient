@@ -229,21 +229,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // world.Repaint() now drives IWorldView::requestRepaint (this frame) via
         // CMUSHclientDoc::EmitRepaint; body in the pal::IWorldView section below.
 
-        // world.MoveWorldWindow(l,t,w,h): reposition/resize this MDI child frame.
-        // Coordinates are in pixels relative to the MDI parent client area.
-        m_doc->m_fn_move_world_window = [this](long l, long t, long w, long h) {
-            SetSize((int)l, (int)t, (int)w, (int)h);
-        };
-
-        // world.Save(): save the world file to its current path.  Returns false
-        // if the world has no path yet (the caller should handle that case).
-        m_doc->m_fn_save = [this]() -> bool {
-            CString pathCStr = m_doc->GetPathName();
-            std::string savePath = static_cast<const char*>(pathCStr);
-            if (savePath.empty()) return false;
-            return m_doc->OnSaveDocument(savePath.c_str()) != FALSE;
-        };
-
         // Async DNS: run getaddrinfo on a background thread so the main thread
         // (and GUI) remains responsive during hostname resolution.  When the
         // thread completes, wxCallAfter delivers the result back to the main
@@ -278,18 +263,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             }).detach();
         };
 
-        // world.SetWorldWindowStatus(n): change the MDI child frame window state.
-        // 1=maximize, 2=iconize/minimize, 3=restore, 4=show normal.
-        m_doc->m_fn_set_window_status = [this](short param) {
-            switch (param)
-              {
-              case 1: Maximize(true);                    break;
-              case 2: Iconize(true);                     break;
-              case 3: Restore();                         break;
-              case 4: Maximize(false); Iconize(false);   break;
-              }
-        };
-
         // world.ClearOutput() now drives IWorldView::clearOutput (this frame) via
         // CMUSHclientDoc::EmitClearOutput; the engine resets the emission counter.
 
@@ -297,13 +270,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // IWorldView::setStatus / ::setTitle (this frame) via
         // CMUSHclientDoc::EmitStatus / ::EmitTitle; the bodies live in the
         // pal::IWorldView section below.
-
-        // world.SetMainTitle(s): update the main application window title.
-        m_doc->m_fn_set_main_title = [](const std::string& title) {
-            // g_wxhook_load_mdi_frame sets s_wxMainFrame; look for it via the App.
-            if (wxFrame* top = dynamic_cast<wxFrame*>(wxTheApp->GetTopWindow()))
-                top->SetTitle(wxString::FromUTF8(title.c_str()));
-        };
 
         // world.SetBackgroundColour(rgb) and SetOption("max_output_lines", n) now
         // drive IWorldView::setBackgroundColour / ::setMaxLines (this frame) via
@@ -331,28 +297,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                     wxString::FromUTF8(text.c_str())));
                 wxTheClipboard->Close();
             }
-        };
-
-        // world.GetMainWindowPosition(): return screen rect of the MDI parent frame.
-        m_doc->m_fn_get_main_rect = [this](int& x, int& y, int& w, int& h) {
-            wxMDIParentFrame* parent = wxDynamicCast(GetParent(), wxMDIParentFrame);
-            if (parent) {
-                wxRect r = parent->GetScreenRect();
-                x = r.x; y = r.y; w = r.width; h = r.height;
-            } else {
-                x = 0; y = 0; w = 1024; h = 768;
-            }
-        };
-
-        // world.ActivateClient(): restore the main frame if iconized and raise it.
-        m_doc->m_fn_activate_client = [this]() {
-            wxMDIParentFrame* parent = wxDynamicCast(GetParent(), wxMDIParentFrame);
-            if (parent) {
-                if (parent->IsIconized()) parent->Restore();
-                parent->Raise();
-            }
-            // Also bring this child frame to the front within the MDI.
-            Activate();
         };
 
         // world.GetCommand() now drives IWorldView::currentCommand (this frame) via
@@ -1019,10 +963,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         m_doc->m_fn_infobar_size = [this](int& w, int& h) {
             if (m_infobar && m_infobar->IsShown()) { wxSize s = m_infobar->GetSize(); w = s.x; h = s.y; }
             else { w = 0; h = 0; }
-        };
-        // world.GetInfo(125): is this world's frame full-screen?
-        m_doc->m_fn_is_fullscreen = [this]() { return IsFullScreen(); };
-        m_doc->m_fn_infobar_show = [this](bool show) {
+        };        m_doc->m_fn_infobar_show = [this](bool show) {
             if (m_infobar->IsShown() != show) { m_infobar->Show(show); Layout(); }
         };
         m_doc->m_fn_infobar_clear = [this]() {
@@ -3556,6 +3497,74 @@ pal::Rect CWorldChildFrame::outputRect() const
     return { 0, 0, 800, 600 };
 }
 
+// ── world/main window management (P2 window family) ──────────────────────────
+
+// world.SetMainTitle(s): update the main application window title.
+void CWorldChildFrame::setMainTitle(std::string_view title)
+{
+    if (wxFrame* top = dynamic_cast<wxFrame*>(wxTheApp->GetTopWindow()))
+        top->SetTitle(wxString::FromUTF8(title.data(), title.size()));
+}
+
+// world.MoveWorldWindow(l,t,w,h): reposition/resize this MDI child frame.
+// Coordinates are in pixels relative to the MDI parent client area.
+void CWorldChildFrame::moveWorldWindow(long l, long t, long w, long h)
+{
+    SetSize((int)l, (int)t, (int)w, (int)h);
+}
+
+// world.SetWorldWindowStatus(n): change the MDI child frame window state.
+// 1=maximize, 2=iconize/minimize, 3=restore, 4=show normal.
+void CWorldChildFrame::setWindowStatus(int status)
+{
+    switch (status)
+      {
+      case 1: Maximize(true);                    break;
+      case 2: Iconize(true);                     break;
+      case 3: Restore();                         break;
+      case 4: Maximize(false); Iconize(false);   break;
+      }
+}
+
+// world.ActivateClient(): restore the main frame if iconized and raise it.
+void CWorldChildFrame::activateClient()
+{
+    wxMDIParentFrame* parent = wxDynamicCast(GetParent(), wxMDIParentFrame);
+    if (parent) {
+        if (parent->IsIconized()) parent->Restore();
+        parent->Raise();
+    }
+    // Also bring this child frame to the front within the MDI.
+    Activate();
+}
+
+// world.GetInfo(125): is this world's frame full-screen?
+bool CWorldChildFrame::isFullscreen() const
+{
+    return IsFullScreen();
+}
+
+// world.Save(): save the world file to its current path.  Returns false
+// if the world has no path yet (the caller should handle that case).
+bool CWorldChildFrame::saveWorld()
+{
+    CString pathCStr = m_doc->GetPathName();
+    std::string savePath = static_cast<const char*>(pathCStr);
+    if (savePath.empty()) return false;
+    return m_doc->OnSaveDocument(savePath.c_str()) != FALSE;
+}
+
+// world.GetMainWindowPosition(): screen rect of the MDI parent frame.
+pal::Rect CWorldChildFrame::mainRect() const
+{
+    wxMDIParentFrame* parent = wxDynamicCast(GetParent(), wxMDIParentFrame);
+    if (parent) {
+        wxRect r = parent->GetScreenRect();
+        return { r.x, r.y, r.width, r.height };
+    }
+    return { 0, 0, 1024, 768 };
+}
+
 // ── OnClose ───────────────────────────────────────────────────────────────
 void CWorldChildFrame::OnClose(wxCloseEvent& evt)
 {
@@ -3660,20 +3669,14 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         m_doc->m_fn_get_scroll_pos       = nullptr;
         m_doc->m_fn_set_paused           = nullptr;
         m_doc->m_fn_repaint                  = nullptr;
-        m_doc->m_fn_move_world_window        = nullptr;
-        m_doc->m_fn_save                     = nullptr;
         m_doc->m_fn_lookup_host              = nullptr;
-        m_doc->m_fn_set_window_status        = nullptr;
         m_doc->m_fn_clear_output             = nullptr;
         m_doc->m_fn_status                   = nullptr;
         m_doc->m_fn_set_title                = nullptr;
-        m_doc->m_fn_set_main_title           = nullptr;
         m_doc->m_fn_set_background_colour    = nullptr;
         m_doc->m_fn_set_max_lines            = nullptr;
         m_doc->m_fn_get_clipboard            = nullptr;
         m_doc->m_fn_set_clipboard            = nullptr;
-        m_doc->m_fn_get_main_rect            = nullptr;
-        m_doc->m_fn_activate_client          = nullptr;
         m_doc->m_fn_get_output_selection     = nullptr;
         m_doc->m_fn_infobar_show             = nullptr;
         m_doc->m_fn_infobar_clear            = nullptr;

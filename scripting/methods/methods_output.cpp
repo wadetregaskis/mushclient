@@ -110,8 +110,7 @@ void CMUSHclientDoc::ResetStatusTime()
 void CMUSHclientDoc::ActivateClient()
 {
 #ifndef _WIN32
-  if (m_fn_activate_client)
-    m_fn_activate_client();
+  ActivateClientWindow();
 #else
   if (Frame.IsIconic ())
     Frame.ShowWindow(SW_RESTORE);
@@ -170,8 +169,8 @@ void CMUSHclientDoc::MoveWorldWindowX(long Left,
 {
 #ifndef _WIN32
   // Non-Windows: each world has exactly one MDI child frame; Which is always 1.
-  if (Which == 1 && m_fn_move_world_window)
-    m_fn_move_world_window (Left, Top, Width, Height);
+  if (Which == 1)
+    MoveWorldWindowRect (Left, Top, Width, Height);
 #else
 int i = 0;
 
@@ -386,8 +385,7 @@ BOOL CMUSHclientDoc::Transparency(long Key, short Amount)
 void CMUSHclientDoc::SetWorldWindowStatus(short Parameter)
 {
 #ifndef _WIN32
-  if (m_fn_set_window_status)
-    m_fn_set_window_status (Parameter);
+  EmitWindowStatus (Parameter);
 #else
 CFrameWnd* pParent = NULL;
 
@@ -935,8 +933,7 @@ void CMUSHclientDoc::SetMainTitle(LPCTSTR Title)
 #ifdef _WIN32
   Frame.FixUpTitleBar ();
 #else
-  if (m_fn_set_main_title)
-      m_fn_set_main_title(std::string(static_cast<const char*>(m_strMainWindowTitle)));
+  EmitMainTitle(std::string(static_cast<const char*>(m_strMainWindowTitle)));
 #endif
 } // end of CMUSHclientDoc::SetMainTitle
 

@@ -94,6 +94,25 @@ public:
     virtual void textRectChanged() = 0;
     // Screen rect of the output pane (world.GetWorldWindowPosition).
     virtual Rect outputRect() const = 0;
+
+    // ── core → frontend: world/main window management (P2 window family) ──
+    // world.SetMainTitle: the application (main frame) title, set from this
+    // world.
+    virtual void setMainTitle(std::string_view title) = 0;
+    // world.MoveWorldWindow: reposition/resize this world's window (pixels,
+    // relative to the MDI parent client area).
+    virtual void moveWorldWindow(long left, long top,
+                                 long width, long height) = 0;
+    // world.SetWorldWindowStatus: 1=maximize, 2=minimize, 3=restore, 4=normal.
+    virtual void setWindowStatus(int status) = 0;
+    // world.ActivateClient: restore/raise the app, bring this world to front.
+    virtual void activateClient() = 0;
+    // GetInfo(125): is this world's frame full-screen?
+    virtual bool isFullscreen() const = 0;
+    // world.Save: save the world file to its current path; false = no path.
+    virtual bool saveWorld() = 0;
+    // Screen rect of the main (MDI parent) frame (world.GetMainWindowPosition).
+    virtual Rect mainRect() const = 0;
 };
 
 } // namespace pal

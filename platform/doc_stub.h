@@ -2173,7 +2173,6 @@ public:
     std::function<void(SOutputLine&&)>      m_fn_line_ready;
     std::function<void(const std::string&)> m_fn_status;     // status bar update
     std::function<void(const std::string&)> m_fn_set_title;  // child frame title bar
-    std::function<void(const std::string&)> m_fn_set_main_title; // main window title bar
 
     // ── PAL: typed output view ────────────────────────────────────────────
     // pal::IWorldView is the typed successor to the m_fn_* output callbacks.
@@ -2308,6 +2307,36 @@ public:
       return true;
   }
 
+  // ── PAL: world/main window management (typed-only — P2 window family) ────
+  void EmitMainTitle(const std::string& title) {
+      if (m_pWorldView) m_pWorldView->setMainTitle(title);
+  }
+  void MoveWorldWindowRect(long l, long t, long w, long h) {
+      if (m_pWorldView) m_pWorldView->moveWorldWindow(l, t, w, h);
+  }
+  void EmitWindowStatus(int status) {
+      if (m_pWorldView) m_pWorldView->setWindowStatus(status);
+  }
+  void ActivateClientWindow() {
+      if (m_pWorldView) m_pWorldView->activateClient();
+  }
+  bool IsClientFullscreen() const {
+      return m_pWorldView && m_pWorldView->isFullscreen();
+  }
+  // world.Save via the view; true when no view is attached (headless hosts
+  // treat Save as trivially successful, matching the old null-callback path).
+  bool SaveWorldViaView() {
+      return m_pWorldView ? m_pWorldView->saveWorld() : true;
+  }
+  // Fills the screen rect of the main frame; false (outputs untouched) when
+  // no view is attached — callers keep their own defaults.
+  bool GetMainRect(int& x, int& y, int& w, int& h) {
+      if (!m_pWorldView) return false;
+      pal::Rect r = m_pWorldView->mainRect();
+      x = r.x; y = r.y; w = r.w; h = r.h;
+      return true;
+  }
+
     // Pending styled spans for the line currently being assembled.
     // Flushed (via m_fn_line_ready) on each '\n'.
     SOutputLine m_gui_line_buf;
@@ -2329,12 +2358,6 @@ public:
 
     // Called by world.Repaint() to force a repaint of the output pane.
     std::function<void()> m_fn_repaint;
-
-    // Called by world.MoveWorldWindow(l,t,w,h) to reposition the MDI child frame.
-    std::function<void(long, long, long, long)> m_fn_move_world_window;
-
-    // Called by world.SetWorldWindowStatus(n): 1=maximize, 2=iconize, 3=restore, 4=normal.
-    std::function<void(short)> m_fn_set_window_status;
 
     // Called by world.ClearOutput() to wipe the wx pane buffer and reset
     // m_gui_lines_emitted so UpdateAllViews starts fresh.
@@ -2366,13 +2389,7 @@ public:
     // ── Window-geometry callbacks ─────────────────────────────────────────
     // world.GetSelectionStart/EndLine/Column(): current output-pane selection.
     std::function<void(long&, long&, long&, long&)> m_fn_get_output_selection;
-    // world.GetMainWindowPosition(): screen rect of the MDI parent frame.
-    std::function<void(int&, int&, int&, int&)> m_fn_get_main_rect;
     std::function<void(int&, int&)>             m_fn_infobar_size;     // (w,h) px, 0,0 if hidden
-    std::function<bool()>                       m_fn_is_fullscreen;
-
-    // world.ActivateClient(): raise the world window / main frame to the front.
-    std::function<void()> m_fn_activate_client;
 
 
 
@@ -2381,9 +2398,7 @@ public:
 
 
 
-    // world.Save(): save this world's file to its current path (or prompt for
-    // a new path if the world has not been saved yet).  Returns true on success.
-    std::function<bool()> m_fn_save;
+
 
     // ── Scratch line for ANSI style state ────────────────────────────────
     // InterpretANSIcode and Interpret256ANSIcode always dereference

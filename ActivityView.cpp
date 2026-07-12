@@ -397,8 +397,7 @@ void CActivityView::OnPopupSwitchtoworld()
     return;
 
 #ifndef _WIN32
-  if (pDoc->m_fn_activate_client)
-    pDoc->m_fn_activate_client ();
+  pDoc->ActivateClientWindow ();
 #else
   for(POSITION pos=pDoc->GetFirstViewPosition();pos!=NULL;)
     {

@@ -113,6 +113,25 @@ struct FakeWorldView : pal::IWorldView {
     }
     void textRectChanged() override { ++textRectChanges; }
     pal::Rect outputRect() const override { return outRect; }
+
+    // ── world/main window management (P2 window family) ────────────────────
+    std::string mainTitle;
+    long mwX = -1, mwY = -1, mwW = -1, mwH = -1;
+    int  windowStatus = 0;
+    int  activations = 0;
+    bool fullscreen = false;
+    int  saves = 0;
+    pal::Rect mainR{ 5, 6, 1024, 768 };   // returned by mainRect()
+
+    void setMainTitle(std::string_view t) override { mainTitle.assign(t); }
+    void moveWorldWindow(long l, long t, long w, long h) override {
+        mwX = l; mwY = t; mwW = w; mwH = h;
+    }
+    void setWindowStatus(int s) override { windowStatus = s; }
+    void activateClient() override { ++activations; }
+    bool isFullscreen() const override { return fullscreen; }
+    bool saveWorld() override { ++saves; return true; }
+    pal::Rect mainRect() const override { return mainR; }
 };
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -386,6 +405,56 @@ TEST(PalWorldView, OutputFamilyNullHostIsInert)
     doc.SetOutputSelectionRange(1, 2, 3, 4);
     doc.EmitOutputFont("Menlo", 13, false, false);
     doc.EmitTextRectChanged();
+}
+
+// The world/main window family drives the view through its typed-only helpers.
+TEST(PalWorldView, WindowFamilyDrivesTheView)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pWorldView = &view;
+
+    doc.EmitMainTitle("MUSHclient - test");
+    EXPECT_STREQ("MUSHclient - test", view.mainTitle.c_str());
+
+    doc.MoveWorldWindowRect(10, 20, 300, 200);
+    EXPECT_TRUE(view.mwX == 10 && view.mwY == 20 &&
+                view.mwW == 300 && view.mwH == 200);
+
+    doc.EmitWindowStatus(2);
+    EXPECT_TRUE(view.windowStatus == 2);
+
+    doc.ActivateClientWindow();
+    EXPECT_TRUE(view.activations == 1);
+
+    EXPECT_TRUE(!doc.IsClientFullscreen());
+    view.fullscreen = true;
+    EXPECT_TRUE(doc.IsClientFullscreen());
+
+    EXPECT_TRUE(doc.SaveWorldViaView());
+    EXPECT_TRUE(view.saves == 1);
+
+    int x = 0, y = 0, w = 0, h = 0;
+    EXPECT_TRUE(doc.GetMainRect(x, y, w, h));
+    EXPECT_TRUE(x == 5 && y == 6 && w == 1024 && h == 768);
+}
+
+// With no view: main-rect reports false with outputs untouched, Save is
+// trivially successful (the old null-callback path), the rest inert.
+TEST(PalWorldView, WindowFamilyNullHostIsInert)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    doc.EmitMainTitle("t");
+    doc.MoveWorldWindowRect(1, 2, 3, 4);
+    doc.EmitWindowStatus(1);
+    doc.ActivateClientWindow();
+    EXPECT_TRUE(!doc.IsClientFullscreen());
+    EXPECT_TRUE(doc.SaveWorldViaView());
+
+    int x = 9, y = 9, w = 9, h = 9;
+    EXPECT_TRUE(!doc.GetMainRect(x, y, w, h));
+    EXPECT_TRUE(x == 9 && y == 9 && w == 9 && h == 9);
 }
 
 MC_TEST_MAIN()

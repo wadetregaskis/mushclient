@@ -1329,7 +1329,7 @@ static int L_GetInfo(lua_State* L)
         case 122: lua_pushboolean(L, sqlite3_threadsafe() != 0);               return 1;
         case 123: lua_pushboolean(L, pDoc->m_bDoingSimulate);                  return 1;
         case 124: lua_pushboolean(L, pDoc->m_bLineOmittedFromOutput);          return 1;
-        case 125: lua_pushboolean(L, false);  // fullscreen not supported       return 1;
+        case 125: lua_pushboolean(L, pDoc->IsClientFullscreen());            return 1;
         // ── Numbers ──────────────────────────────────────────────────────────
         case 141: // fall through — same field, both type numbers used in the wild
         case 201: lua_pushnumber(L, pDoc->m_total_lines);                     return 1;
@@ -3765,8 +3765,7 @@ static int L_SetMainTitle(lua_State* L)
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* title = luaL_optstring(L, 1, "");
     pDoc->m_strMainWindowTitle = title;
-    if (pDoc->m_fn_set_main_title)
-        pDoc->m_fn_set_main_title(std::string(title));
+    pDoc->EmitMainTitle(std::string(title));
     return 0;
 }
 
@@ -5767,12 +5766,12 @@ static int L_InfoFont(lua_State* L)         { world_doc(L); lua_pushnumber(L, eO
 // ── GUI callbacks ─────────────────────────────────────────────────────────────
 static int L_Activate(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
-    if (pDoc->m_fn_activate_client) pDoc->m_fn_activate_client();
+    pDoc->ActivateClientWindow();
     lua_pushnumber(L, eOK); return 1;
 }
 static int L_ActivateClient(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
-    if (pDoc->m_fn_activate_client) pDoc->m_fn_activate_client();
+    pDoc->ActivateClientWindow();
     lua_pushnumber(L, eOK); return 1;
 }
 static int L_Redraw(lua_State* L) {
@@ -5874,8 +5873,7 @@ static int L_SetChanged(lua_State* L) {
 static int L_GetMainWindowPosition(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
     int x = 0, y = 0, w = 1024, h = 768;
-    if (pDoc->m_fn_get_main_rect)
-        pDoc->m_fn_get_main_rect(x, y, w, h);
+    pDoc->GetMainRect(x, y, w, h);
     lua_pushnumber(L, x); lua_pushnumber(L, y);
     lua_pushnumber(L, w); lua_pushnumber(L, h);
     return 4;
@@ -5913,7 +5911,7 @@ static int L_MoveWorldWindow(lua_State* L) {
     long t = (long)luaL_optnumber(L, 2, 0);
     long w = (long)luaL_optnumber(L, 3, 0);
     long h = (long)luaL_optnumber(L, 4, 0);
-    if (pDoc->m_fn_move_world_window) pDoc->m_fn_move_world_window(l, t, w, h);
+    pDoc->MoveWorldWindowRect(l, t, w, h);
     lua_pushnumber(L, eOK); return 1;
 }
 static int L_MoveWorldWindowX(lua_State* L) {
@@ -5923,8 +5921,8 @@ static int L_MoveWorldWindowX(lua_State* L) {
     long w = (long)luaL_optnumber(L, 3, 0);
     long h = (long)luaL_optnumber(L, 4, 0);
     short which = (short)luaL_optinteger(L, 5, 1);
-    if (which == 1 && pDoc->m_fn_move_world_window)
-        pDoc->m_fn_move_world_window(l, t, w, h);
+    if (which == 1)
+        pDoc->MoveWorldWindowRect(l, t, w, h);
     lua_pushnumber(L, eOK); return 1;
 }
 static int L_FlashIcon(lua_State* L) {
@@ -5970,14 +5968,14 @@ static int L_PickColour(lua_State* L) {
 }
 static int L_Save(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
-    bool ok = pDoc->m_fn_save ? pDoc->m_fn_save() : true;
+    bool ok = pDoc->SaveWorldViaView();
     lua_pushnumber(L, ok ? eOK : eWorldClosed);
     return 1;
 }
 static int L_SetWorldWindowStatus(lua_State* L) {
     CMUSHclientDoc* pDoc = world_doc(L);
     short param = (short)luaL_optinteger(L, 1, 3);
-    if (pDoc->m_fn_set_window_status) pDoc->m_fn_set_window_status(param);
+    pDoc->EmitWindowStatus(param);
     lua_pushnumber(L, eOK); return 1;
 }
 

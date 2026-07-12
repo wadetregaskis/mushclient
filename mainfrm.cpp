@@ -638,8 +638,7 @@ BOOL CMainFrame::OnWorldSwitch (UINT nIDC)
 
 #ifndef _WIN32
   // Non-Windows: no CSendView; raise the wx MDI child frame via the callback.
-  if (pDoc->m_fn_activate_client)
-    pDoc->m_fn_activate_client ();
+  pDoc->ActivateClientWindow ();
 #else
   for(POSITION pos=pDoc->GetFirstViewPosition();pos!=NULL;)
     {
@@ -2245,8 +2244,7 @@ CMUSHclientDoc* pDoc = NULL;
 
 #ifndef _WIN32
       // Non-Windows: no system-tray widget and no CSendView; just raise the frame.
-      if (pDoc->m_fn_activate_client)
-        pDoc->m_fn_activate_client ();
+      pDoc->ActivateClientWindow ();
 #else
       for(POSITION pos=pDoc->GetFirstViewPosition();pos!=NULL;)
         {

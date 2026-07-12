@@ -612,7 +612,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 #ifdef _WIN32
                SetUpVariantBool (vaResult, Frame.IsFullScreen ());
 #else
-               SetUpVariantBool (vaResult, m_fn_is_fullscreen && m_fn_is_fullscreen ());
+               SetUpVariantBool (vaResult, IsClientFullscreen ());
 #endif
                break;
 
@@ -1953,13 +1953,12 @@ BSTR CMUSHclientDoc::GetMainWindowPosition()
   CWindowPlacement wp;
 #ifndef _WIN32
   // Port: Frame.m_hWnd is null (the real window is the wx MDI parent frame), so
-  // GetWindowPlacement can't see it.  Reuse the same m_fn_get_main_rect callback
-  // that the Lua world.GetMainWindowPosition() uses (wired by CWorldChildFrame).
+  // GetWindowPlacement can't see it.  Use the same main-frame rect (IWorldView)
+  // that the Lua world.GetMainWindowPosition() uses.
   memset (&wp.rcNormalPosition, 0, sizeof (wp.rcNormalPosition));
-  if (m_fn_get_main_rect)
+  int x = 0, y = 0, w = 0, h = 0;
+  if (GetMainRect (x, y, w, h))
     {
-    int x = 0, y = 0, w = 0, h = 0;
-    m_fn_get_main_rect (x, y, w, h);
     wp.rcNormalPosition.left   = x;
     wp.rcNormalPosition.top    = y;
     wp.rcNormalPosition.right  = x + w;

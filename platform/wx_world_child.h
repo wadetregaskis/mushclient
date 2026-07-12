@@ -104,6 +104,14 @@ public:
                               bool bold, bool italic) override;
     void        textRectChanged() override;
     pal::Rect   outputRect() const override;
+    void        setMainTitle(std::string_view title) override;
+    void        moveWorldWindow(long left, long top,
+                                long width, long height) override;
+    void        setWindowStatus(int status) override;
+    void        activateClient() override;
+    bool        isFullscreen() const override;
+    bool        saveWorld() override;
+    pal::Rect   mainRect() const override;
 
     // Find/replace within the command-input text (Game ▸ Global Change).
     // Runs the canonical CGlobalChangeDlg for the from/to prompt; the input is a

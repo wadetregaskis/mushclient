@@ -3063,13 +3063,12 @@ static int L_GetMainWindowPosition (lua_State *L)
 
 #ifndef _WIN32
   // Non-Windows: Frame.GetWindowRect/GetWindowPlacement return zero rect.
-  // Use the m_fn_get_main_rect callback wired by CWorldChildFrame instead.
+  // Use the main-frame rect from the attached IWorldView instead.
   (void) useGetWindowRect;
   CMUSHclientDoc *pDoc = doc (L);
-  if (pDoc->m_fn_get_main_rect)
+  int x = 0, y = 0, w = 0, h = 0;
+  if (pDoc->GetMainRect (x, y, w, h))
     {
-    int x = 0, y = 0, w = 0, h = 0;
-    pDoc->m_fn_get_main_rect (x, y, w, h);
     CRect rect (x, y, x + w, y + h);
     luaWindowPositionHelper (L, rect);
     }

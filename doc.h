@@ -1627,6 +1627,36 @@ public:
       return true;
   }
 
+  // ── PAL: world/main window management (typed-only — P2 window family) ────
+  void EmitMainTitle(const std::string& title) {
+      if (m_pWorldView) m_pWorldView->setMainTitle(title);
+  }
+  void MoveWorldWindowRect(long l, long t, long w, long h) {
+      if (m_pWorldView) m_pWorldView->moveWorldWindow(l, t, w, h);
+  }
+  void EmitWindowStatus(int status) {
+      if (m_pWorldView) m_pWorldView->setWindowStatus(status);
+  }
+  void ActivateClientWindow() {
+      if (m_pWorldView) m_pWorldView->activateClient();
+  }
+  bool IsClientFullscreen() const {
+      return m_pWorldView && m_pWorldView->isFullscreen();
+  }
+  // world.Save via the view; true when no view is attached (headless hosts
+  // treat Save as trivially successful, matching the old null-callback path).
+  bool SaveWorldViaView() {
+      return m_pWorldView ? m_pWorldView->saveWorld() : true;
+  }
+  // Fills the screen rect of the main frame; false (outputs untouched) when
+  // no view is attached — callers keep their own defaults.
+  bool GetMainRect(int& x, int& y, int& w, int& h) {
+      if (!m_pWorldView) return false;
+      pal::Rect r = m_pWorldView->mainRect();
+      x = r.x; y = r.y; w = r.w; h = r.h;
+      return true;
+  }
+
   // Output pane character-grid dimensions (updated by CWorldChildFrame on
   // resize / font change via SendNAWS and m_fn_grid_changed).
   int  m_gui_rows        = 24;   // visible rows in the output pane
@@ -1643,7 +1673,6 @@ public:
   // the status bar text.  Argument is ignored (the frame re-reads m_doc state).
   std::function<void(const std::string&)> m_fn_status;
   std::function<void(const std::string&)> m_fn_set_title;       // child frame title bar
-  std::function<void(const std::string&)> m_fn_set_main_title;  // main window title bar
 
   // ── Non-Windows GUI input/view callbacks ──────────────────────────────────
   // world.GetCommand(): return the current text in the command input bar.
@@ -1665,14 +1694,7 @@ public:
   std::function<void()>  m_fn_repaint;
 
 
-  // world.MoveWorldWindow(l,t,w,h): reposition/resize the MDI child frame.
-  // Ignored on non-Windows if not wired; the Which parameter in MoveWorldWindowX
-  // is always 1 in practice (MUSHclient only opens one output window per world).
-  std::function<void(long, long, long, long)>  m_fn_move_world_window;
 
-  // world.SetWorldWindowStatus(n): change the MDI child frame's window state.
-  // Values: 1=maximize, 2=minimize/iconize, 3=restore, 4=show normal.
-  std::function<void(short)>  m_fn_set_window_status;
 
   // world.ClearOutput(): wipe all content from the wx output pane buffer.
   // Called from CMUSHclientDoc::ClearOutput() on non-Windows so the visible
@@ -1696,12 +1718,7 @@ public:
   // Used by world.GetSelectionStartLine/Column and GetSelectionEndLine/Column.
   std::function<void(long&, long&, long&, long&)> m_fn_get_output_selection;
 
-  // Returns the screen-relative position and size of the MDI parent frame.
-  // Used by world.GetMainWindowPosition() so scripts know the main window rect.
-  std::function<void(int&, int&, int&, int&)> m_fn_get_main_rect;
 
-  // world.ActivateClient(): raise the world window / main frame to the front.
-  std::function<void()> m_fn_activate_client;
 
 
 
@@ -1720,16 +1737,12 @@ public:
   std::function<void(const std::string&, int, int)> m_fn_infobar_font;
   // world.GetInfo: live frame state the port queries from the world child frame.
   // m_fn_infobar_size fills (width, height) of the InfoBar in pixels (0,0 when
-  // hidden); m_fn_is_fullscreen reports whether the frame is full-screen.
+  // hidden).
   std::function<void(int&, int&)>                  m_fn_infobar_size;
-  std::function<bool()>                            m_fn_is_fullscreen;
 
 
 
 
-  // world.Save(): save the world file to its current path.
-  // Returns false if the world has no path set yet.
-  std::function<bool()> m_fn_save;
 
   // Async DNS: called by LookupHostName to resolve a hostname off the main
   // thread so the GUI stays responsive.  The callback must eventually call

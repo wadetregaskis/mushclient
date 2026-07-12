@@ -129,8 +129,7 @@ CString strResult = ::StripAnsi (Message);
 void CMUSHclientDoc::Activate()
 {
 #ifndef _WIN32
-  if (m_fn_activate_client)
-    m_fn_activate_client();
+  ActivateClientWindow();
 #else
   for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
     {

@@ -440,10 +440,14 @@ GDI-adapter stubs left: `createSurface` and the engine-unused buffer-source
   selectCommand, commandSelection, setCommandSelection, pushCommand, commandList,
   addToCommandHistory, deleteCommandHistory, setInputFont) and the **output-pane
   family** (note, beginBatch/endBatch, deleteLines, setScroll, setOutputSelection,
-  setOutputFont, textRectChanged, outputRect) are fully promoted — typed-only,
-  their eighteen `m_fn_*` members deleted. Remaining families: window/frame ops
-  (main title, move/status/main-rect/activate/fullscreen/save/lookup-host),
-  infobar, clipboard (likely its own `IClipboard`).
+  setOutputFont, textRectChanged, outputRect) and the **window family**
+  (setMainTitle, moveWorldWindow, setWindowStatus, activateClient, isFullscreen,
+  saveWorld, mainRect) are fully promoted — typed-only, their twenty-five
+  `m_fn_*` members deleted. (Main-frame ops ride on IWorldView deliberately:
+  every engine call site is doc-scoped, so the per-world seam fits; re-partition
+  onto `IAppShell` later if it gains real non-doc-scoped needs.) Remaining
+  families: infobar (7 ops), clipboard (likely `IHostUi`), async DNS lookup
+  (`m_fn_lookup_host` — `ITransport` territory, deferred to the socket seam).
 - **P3** value types out of the shim into L0.
 - **P4** demote `CMUSHclientDoc` → `WorldEngine` + `WorldModel` behind the PAL.
 - **P5** unify the build into one core lib + per-platform adapters; delete the stubs.

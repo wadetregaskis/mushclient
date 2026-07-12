@@ -434,20 +434,21 @@ GDI-adapter stubs left: `createSurface` and the engine-unused buffer-source
   shipped path).
 - **P2** formalise the seam: promote the `m_fn_*` bundle into `IWorldView` (and the
   rest of the PAL); every frontend implements every method (no silent nulls).
-  *Progress:* output lines + state (paused/title/status/clear/bg/max-lines/repaint)
-  and the pulls (currentCommand/scrollPos/outputSelection/outputAreaChars) are on
-  the seam with `m_fn_*` fallbacks; the **command-input family** (setCommand,
-  selectCommand, commandSelection, setCommandSelection, pushCommand, commandList,
-  addToCommandHistory, deleteCommandHistory, setInputFont) and the **output-pane
-  family** (note, beginBatch/endBatch, deleteLines, setScroll, setOutputSelection,
-  setOutputFont, textRectChanged, outputRect) and the **window family**
-  (setMainTitle, moveWorldWindow, setWindowStatus, activateClient, isFullscreen,
-  saveWorld, mainRect) are fully promoted — typed-only, their twenty-five
-  `m_fn_*` members deleted. (Main-frame ops ride on IWorldView deliberately:
-  every engine call site is doc-scoped, so the per-world seam fits; re-partition
-  onto `IAppShell` later if it gains real non-doc-scoped needs.) Remaining
-  families: infobar (7 ops), clipboard (likely `IHostUi`), async DNS lookup
-  (`m_fn_lookup_host` — `ITransport` territory, deferred to the socket seam).
+  *Progress (2026-07-12): IWorldView is COMPLETE and typed-only end to end.*
+  All families are promoted — display/state (lines, note, paused, title, status,
+  clear, background colour, max-lines, repaint, batching), the pulls
+  (currentCommand/scrollPos/outputSelection/outputAreaChars/outputRect/mainRect/
+  infobarSize), the command-input family, the output-pane family, the window
+  family, and the infobar family — and every `m_fn_*` fallback is deleted:
+  `m_pWorldView` is the only channel (no view → pushes inert, pulls empty/zero;
+  headless stdout output still flows via the doc_portable DisplayMsg/Note
+  fallbacks, which key off the view pointer). Main-frame ops ride on IWorldView
+  deliberately: every engine call site is doc-scoped; re-partition onto
+  `IAppShell` later if it gains real non-doc-scoped needs. The one surviving
+  loose callback is `m_fn_lookup_host` (async DNS — `ITransport` territory,
+  deferred to the socket seam). Clipboard: the headless stubs return empty/OK;
+  the real path is the `GetClipboardContents`/`putontoclipboard` globals
+  (`IHostUi`, P5).
 - **P3** value types out of the shim into L0.
 - **P4** demote `CMUSHclientDoc` → `WorldEngine` + `WorldModel` behind the PAL.
 - **P5** unify the build into one core lib + per-platform adapters; delete the stubs.

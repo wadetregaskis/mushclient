@@ -1,0 +1,224 @@
+# Windows validation handoff
+
+For the Claude instance on the Windows VM.  Your mission: build this repo's
+Windows client, validate the recent cross-platform refactor, and check for
+regressions against original/upstream MUSHclient behaviour.  Everything
+Windows-side described below was written **by reasoning only** — no MSVC
+compile or run has ever happened on it.  You are the first empirical check.
+
+## 1. Context in three paragraphs
+
+This repo is Nick Gammon's MUSHclient (a Windows MFC MUD client) plus a
+macOS/Linux port and, since 2026-07, a **Platform Abstraction Layer (PAL)**
+refactor: platform-agnostic engine + thin per-platform adapters behind small
+interfaces (`pal/*.h`).  The spec is `docs/PAL.md`.  The owner (Wade) decided
+Windows is *not* forked around: it routes through the same PAL, with native
+adapters whose bodies are the exact original Win32/MFC call sequences
+relocated behind the seams.  **The prime directive: Windows behaviour must
+not be perturbed.**  Structural change is fine; observable behaviour changes
+are defects unless listed in §6.
+
+Three seams are live on every platform:
+
+- **ISurface** (`pal/isurface.h`) — miniwindow raster drawing.  Windows
+  adapter: `pal/gdi_surface.cpp`.  All `world.Window*` drawing in
+  `miniwindow.cpp` goes through it unconditionally.
+- **ITransport** (`pal/itransport.h`) — sockets + TLS + DNS.  Windows
+  adapter: `pal/win_transport.cpp`.  `CWorldSocket`/`worldsock.{h,cpp}` are
+  **deleted**; the whole connection lifecycle is single-sourced in
+  `doc_shared.cpp` (compiled by MSVC).
+- **IWorldView** (`pal/iworldview.h`) — the per-world window (output pane,
+  command bar, titles, info bar).  Windows adapter:
+  `pal/win_worldview.cpp`, doc-owned, wired in `doc_construct.cpp`.  Five of
+  six method families have had their engine-site `#ifdef _WIN32` forks
+  deleted (the seam call is the only path); the display family
+  (`appendLine`/repaint) has NOT been flipped — Windows still paints by pull
+  (`UpdateAllViews` → `CMUSHView::OnDraw`), unchanged.
+
+The macOS side is live-verified continuously and is NOT your concern except:
+if you must edit a **shared** file (anything not whole-file
+`#ifdef _WIN32`), flag it clearly in your report so the mac side gets
+re-verified.  Prefer Windows-only fixes.
+
+## 2. Building
+
+- Solution: `MUSHclient_2022.sln` / `MUSHclient.vcxproj` (Win32, MBCS,
+  `/std:c++14` — the project sets no `<LanguageStandard>`, so **no C++17**
+  anywhere in code MSVC compiles; the pal headers were scrubbed for this).
+- OpenSSL 3.x is expected at `$(SolutionDir)openssl\include` +
+  `$(SolutionDir)openssl\lib` (`libssl.lib`, `libcrypto.lib`; `Crypt32.lib`
+  from the SDK).  If the `openssl\` directory is absent in your clone, ask
+  Wade where his copy lives — it is not committed.
+- New PAL `.cpp` files use the project's default PCH setting (`NotUsing`)
+  and include `stdafx.h` as an ordinary header.  This is the established
+  pattern (`pal/gdi_surface.cpp` builds this way).
+
+**Expect first-compile errors.**  Fixing them is part of your job.  Keep
+fixes minimal and semantics-preserving; if a fix changes behaviour rather
+than syntax, treat it as a finding (§7).  The riskiest constructs, in order:
+
+1. `pal/win_transport.cpp` — MFC `CAsyncSocket` subclass, a message-only
+   window (`HWND_MESSAGE`, `GWLP_USERDATA`, `WM_APP+401..403`),
+   `WSAAsyncGetHostByName`, the local `tcp_keepalive`/`SIO_KEEPALIVE_VALS`
+   block, OpenSSL calls, `CertOpenSystemStore` import loop.
+2. `pal/win_worldview.cpp` — view loops over `CMUSHView`/`CSendView`,
+   `Frame.m_wndInfoBar` rich-edit operations (`CHARFORMAT`,
+   `SetBackgroundColor`), `CWindowPlacement`.
+3. `doc_shared.cpp` — newly MSVC-compiled sections: the transport events
+   bridge, `CreateTransport()` (`pal::CreateWinTransport` on `_WIN32`), the
+   connection lifecycle (`ConnectSocket`, `OnConnect`, `OnBytesReceived`,
+   `ConnectionEstablished`, `OnConnectionDisconnect`, `LookupHostName`/
+   `LookupHostNameComplete`, `SendPacket`, `StartSSLHandshake`,
+   `OnTls{Established,Failed}`), `GetSocketError`, `GetConnectionStatus`,
+   `OpenLog`.  One known near-miss was already fixed (`<ws2tcpip.h>` for
+   `getaddrinfo`); expect siblings.
+4. `doc.h` / `doc_construct.cpp` — new members `m_pTransport`,
+   `m_pTransportEvents`, `m_pWorldView` (+ NSDMIs), `ConnectionOpen()`.
+5. `mainfrm.cpp` — the `WM_USER_HOST_NAME_RESOLVED` dispatcher now serves
+   **only chat sockets** (world DNS lives inside the transport).
+
+If a fix belongs to a whole-file-`#ifdef _WIN32` TU, commit freely.  Repo
+commit discipline (binding): messages never mention Claude/the assistant, no
+Co-Authored-By trailer, author is Wade's global git identity, plain
+`git commit`, no push unless Wade says so.
+
+## 3. Baseline for regression comparison
+
+Two baselines, use both:
+
+- **Official MUSHclient** (5.06/5.07 installer from mushclient.com) running
+  side by side — the gold standard for observable behaviour (rendering,
+  stats text, prompts, timings).
+- **This repo's history** — every relocation names its source.  The three
+  adapter files carry per-method "source site" maps in their header
+  comments; `git show <commit>` recovers any deleted original.  Pivotal
+  commits: `249534f` (CWorldSocket retired; T5b), `f26b54c` (win_transport),
+  `a8e0a28` (transport liveness-gate fixes), `02b7336`/`024e483` (worldview
+  adapter + wiring), `614ae7d`/`de9970b`/`a9061ce` (the WV-3/4/5 family
+  flips), `fbea7a2..1101426` (T3 lifecycle single-sourcing).
+
+## 4. What to validate, in priority order
+
+### 4a. Connection lifecycle (highest risk — total rewrite of the plumbing)
+
+Test world: **Discworld — `discworld.starturtle.net`, port `4242`** (uses
+MCCP compression, so the inflate path gets exercised for free).  Wade's
+daily world; creating a throwaway guest character is fine, but don't touch
+existing characters.
+
+- Connect by **hostname** (exercises `WSAAsyncGetHostByName` inside the
+  adapter's message-only window) and by raw IP.  Watch for the
+  "--- Connected on <date> ---" note and the MOTD rendering.
+- Type/send commands; verify echo, command history (up-arrow), and that the
+  MUD receives input.
+- Disconnect via menu; verify the full stats block ("Disconnected on …,
+  Connected for …, Received N lines, sent N lines…").  Reconnect.
+- Server-side close (log out of the MUD): same stats block, no zombie state.
+- Cancel-during-connect: disconnect while "connecting"/during DNS.
+- Bad hostname: expect the "Unable to resolve host name" path.
+- TLS: any TLS MUD, or `openssl s_server` on the VM with a self-signed
+  cert.  Expect: cert-verify failure → note + prompt ("connect anyway?") →
+  accepting reconnects over TLS with a warning note; a plain handshake
+  failure offers unencrypted fallback.  Success shows
+  "--- Connected via TLSx.y (cipher) ---".
+- Keepalives on (world config) — just verify no misbehaviour.
+- SOCKS4/5 if convenient (any local SOCKS proxy); byte-level tests exist on
+  the mac side, so this is lower priority.
+- Long idle session: no drops, timers still fire.
+
+### 4b. Miniwindows / drawing (GDI adapter, `world.Window*`)
+
+**Quow's Discworld plugin pack** is the acceptance workload (heavy mapper
+drawing, fonts, images, hotspots, drag).  Get it via
+`packaging/fetch-discworld-plugins.sh` semantics — it downloads Quow's
+portable package (see the script's `--url`/`QUOW_PACKAGE_URL`); on Windows
+you can equally install Quow's pack the normal way.  Compare the mapper,
+inventory/status windows, tooltips, hotspot hover/click/drag, and miniwindow
+z-order against the official client side by side.
+
+Also port the mac conformance checklist to a Lua script (run via
+Game ▸ Immediate, Ctrl+I): `platform/miniwindow_selftest.cpp` lists ~28
+probes (create/resize/delete lifecycle, RectOp fill exclusivity, lines,
+shapes, gradients, fonts/TextWidth, error codes).  **Windows-expected values
+differ from the port in three pinned places**: out-of-bounds
+`WindowGetPixel` = **-1** (CLR_INVALID as a Win32 long; the port sees
+4294967295), line endpoints are **excluded** (GDI `LineTo`; the port draws
+inclusive), and stroked shape outlines are **crisp pen colour** (no
+antialiasing; the port blends).  No-such-window `WindowGetPixel` = -2
+everywhere.
+
+### 4c. The flipped IWorldView families (routes changed, behaviour must not)
+
+Drive each through Lua (Immediate window) and the UI:
+
+- **Title**: `SetTitle`, `SetMainTitle` — child/main title bars update.
+- **Info bar**: `ShowInfoBar(1)`, `Info("text")`, `InfoColour("red")`,
+  `InfoBackground("yellow")`, `InfoFont("Courier New", 12, 1)`,
+  `InfoClear()` — including that InfoClear resets to the default format.
+- **Command bar**: `SetCommand` (only fills when empty; `eCommandNotEmpty`
+  otherwise), `GetCommand`, `SelectCommand`, `SetCommandSelection`,
+  `PushCommand`, `GetCommandList` (newest first), `DeleteCommandHistory`,
+  `GetInfo(236)`/`GetInfo(237)` selection endpoints.
+- **Window management**: `ActivateClient`, `SetWorldWindowStatus(1..4)`
+  (max/min/restore/normal), `GetInfo(125)` fullscreen,
+  `GetMainWindowPosition`.
+- **Output**: `Pause(1)`/`Pause(0)` (freeze), `DeleteOutput`/clear-output
+  menu (confirm + scroll home), `SetOutputFont`, `SetSelection` +
+  `GetSelectionStartLine/EndLine/StartColumn/EndColumn`,
+  `SetBackgroundColour`.
+
+### 4d. Everything else (smoke)
+
+World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,
+logging, notepads, plugins list, scripting languages you have available.
+These paths were mostly untouched on Windows but the doc grew members and
+several TUs changed — a broad smoke matters.
+
+## 5. Deliberately NOT flipped (don't report as missing/broken)
+
+These sites still run their original Windows code directly; each is a
+genuine semantic fork, documented in commits `de9970b`/`a9061ce`:
+`SetInputFont` (port maps input→output font), `PasteCommand`,
+`SendTo`→command (plugin-notify delta), `ChangeInputFont`'s view fixup,
+`MoveWorldWindowX`/`GetWorldWindowPositionX` (`Which`>1 multi-view), Lua
+`GetMainWindowPosition`/`GetWorldWindowPosition` (param variants),
+`Activate` (child-frame semantics), `SetScroll` (Visible flag),
+`DeleteLines` view resync, `GetInfo(296)`, `GetInfo(257/258)`.  Also the
+whole **display family** (line rendering) — unchanged pull model.
+
+## 6. Known intentional behaviour deltas (expected; verify they're benign)
+
+1. **Bytes-sent statistics count once.**  Upstream double-counted
+   (`SendPacket` and again in `CWorldSocket::OnSend`); session "sent" byte
+   stats will read ~half the old values.
+2. **Failed DNS *initiation*** reports through the ordinary "Unable to
+   resolve host name" path instead of its own message box.
+3. **Cert-refused TLS teardown sends no close_notify** (session was never
+   trusted).
+4. **Hard send-error** now leaves FD_READ|FD_CLOSE armed so the peer's FIN
+   completes disconnect bookkeeping (upstream silently closed and left a
+   zombie "connected" world).
+5. **Socket-create failure** reports via the generic connect-failure path
+   and `world.Connect` no longer returns FALSE for it (WSA-not-initialised /
+   handle-exhaustion only).
+
+Anything else that differs from official MUSHclient is a finding.
+
+## 7. Reporting
+
+For each finding: subsystem, repro steps, expected (official client)
+vs actual, and — where you can — the responsible adapter method + its
+source-site (the header maps in `pal/win_worldview.cpp`,
+`pal/win_transport.cpp`, `pal/gdi_surface.cpp` give you the mapping).
+Separate clearly: (a) compile fixes applied, (b) behavioural regressions,
+(c) suspected-but-unconfirmed, (d) upstream bugs faithfully preserved (these
+exist and are deliberate).  Wade arbitrates anything ambiguous.
+
+Two specific review requests from the mac side, where reasoning had the
+least to grip:
+- `pal/win_transport.cpp`: the message-only-window lifecycle (posted
+  messages after `DestroyWindow`, `WSAAsyncGetHostByName` handle matching)
+  and deleting the transport from inside its own `CAsyncSocket` callback.
+- `pal/win_worldview.cpp` `outputSelection()`: the fused four-getter
+  selection math (1-based, clamped, `endcol + 1`) against
+  `GetSelectionStartLine` et al. in official-client behaviour.

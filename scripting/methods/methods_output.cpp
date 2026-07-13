@@ -907,22 +907,9 @@ void CMUSHclientDoc::SetTitle(LPCTSTR Title)
 {
 	m_strWindowTitle = Title;
 
-#ifdef _WIN32
-  // now update all views
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
-  	  {
-		  CMUSHView* pmyView = (CMUSHView*)pView;
-      pmyView->FixupTitle ();
-	    }	  // end of being a CMUSHView
-    }   // end of loop through views
-#else
-  // Non-Windows: propagate to the world's IWorldView (the wx MDI child frame).
+  // propagate to the world's IWorldView (WV-3: the wx MDI child frame, or
+  // the native adapter's FixupTitle view loop — pal/win_worldview.cpp)
   EmitTitle(static_cast<const char*>(m_strWindowTitle));
-#endif
 
 }   // end of CMUSHclientDoc::SetTitle
 
@@ -930,11 +917,7 @@ void CMUSHclientDoc::SetTitle(LPCTSTR Title)
 void CMUSHclientDoc::SetMainTitle(LPCTSTR Title)
 {
 	m_strMainWindowTitle = Title;
-#ifdef _WIN32
-  Frame.FixUpTitleBar ();
-#else
   EmitMainTitle(std::string(static_cast<const char*>(m_strMainWindowTitle)));
-#endif
 } // end of CMUSHclientDoc::SetMainTitle
 
 void CMUSHclientDoc::SetUnseenLines(long Counter)

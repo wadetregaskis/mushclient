@@ -748,6 +748,9 @@ public:
         CRichEditCtrl* pRichEdit =
             (CRichEditCtrl*)Frame.m_wndInfoBar.GetDlgItem(IDC_INFOTEXT);
 
+        // back to default colour, font etc.
+        pRichEdit->SetDefaultCharFormat(Frame.m_defaultInfoBarFormat);
+
         // select all
         pRichEdit->SetSel(0, -1);
 

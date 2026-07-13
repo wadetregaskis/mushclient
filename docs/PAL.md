@@ -1,7 +1,11 @@
 # MUSHclient Platform Abstraction Layer (PAL) — spec
 
-**Status:** draft / living document. Design agreed; implementation just beginning
-(`IWorldView` first). Nothing here is frozen.
+**Status:** living document.  Three of the eight interfaces are LIVE on every
+platform: `IWorldView` (typed-only, P2 complete — still `#ifndef _WIN32` until
+the SOutputLine promotion), `ISurface` (S1–S4 complete incl. the native GDI
+adapter), and `ITransport` (T1–T5 complete — CWorldSocket is gone; Windows,
+macOS and the headless engine all connect through the seam).  Windows-side
+correctness of the native adapters is by-reasoning until Windows CI exists.
 
 ## Goal
 

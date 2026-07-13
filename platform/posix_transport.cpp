@@ -87,12 +87,12 @@ public:
     }
 
     // ── DNS ────────────────────────────────────────────────────────────────
-    void resolve(std::string_view host, ResolveToken token) override
+    void resolve(const char* host, ResolveToken token) override
     {
         const unsigned gen = ++m_gate->resolveGen;   // invalidates any prior lookup
         std::shared_ptr<Gate> gate = m_gate;
         PosixTransport* self = this;
-        std::string hostCopy(host);
+        std::string hostCopy(host ? host : "");
         std::thread([gate, self, gen, token, hostCopy]() {
             struct addrinfo hints {};
             struct addrinfo* res = nullptr;
@@ -400,7 +400,7 @@ private:
                 std::string r = reason ? reason : "certificate not verified";
                 if (!m_tlsParams.allowInvalidCert) {
                     teardownTls();
-                    m_events.onTlsFailed(TlsFailure::CertVerify, r);
+                    m_events.onTlsFailed(TlsFailure::CertVerify, r.c_str());
                     return;
                 }
                 verifyFailure = r;   // proceeding under user consent — report it
@@ -412,7 +412,7 @@ private:
             std::shared_ptr<Gate> gate = m_gate;
             m_events.onTlsEstablished(version ? version : "",
                                       cipher ? cipher : "",
-                                      verifyFailure);
+                                      verifyFailure.c_str());
             if (!gate->alive) return;
             flushSend();   // release anything buffered during the handshake
             return;
@@ -550,13 +550,13 @@ struct RecordingEvents : pal::ITransportEvents {
     }
     void onWritable() override { ++writables; }
     void onClosed(int err) override { ++closes; lastCloseErr = err; }
-    void onTlsEstablished(std::string_view version, std::string_view,
-                          std::string_view verifyFailure) override
+    void onTlsEstablished(const char* version, const char*,
+                          const char* verifyFailure) override
     {
         tlsEstablished = true; tlsVersion.assign(version);
         tlsVerifyFailure.assign(verifyFailure);
     }
-    void onTlsFailed(pal::TlsFailure kind, std::string_view reason) override
+    void onTlsFailed(pal::TlsFailure kind, const char* reason) override
     {
         tlsFailed = true; tlsFailKind = kind; tlsFailReason.assign(reason);
     }

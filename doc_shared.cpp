@@ -2364,17 +2364,15 @@ class CDocTransportEvents : public pal::ITransportEvents
       pDoc->ConnectionClosed (err);
       }
 
-    void onTlsEstablished (std::string_view version, std::string_view cipher,
-                           std::string_view verifyFailure) override
+    void onTlsEstablished (const char * version, const char * cipher,
+                           const char * verifyFailure) override
       {
-      std::string v (version), c (cipher), f (verifyFailure);
-      m_pDoc->OnTlsEstablished (v.c_str (), c.c_str (), f.c_str ());
+      m_pDoc->OnTlsEstablished (version, cipher, verifyFailure);
       }
 
-    void onTlsFailed (pal::TlsFailure kind, std::string_view reason) override
+    void onTlsFailed (pal::TlsFailure kind, const char * reason) override
       {
-      std::string r (reason);
-      m_pDoc->OnTlsFailed (kind == pal::TlsFailure::CertVerify, r.c_str ());
+      m_pDoc->OnTlsFailed (kind == pal::TlsFailure::CertVerify, reason);
       }
 
   private:

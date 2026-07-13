@@ -29,7 +29,12 @@
 
 #include <cstddef>
 #include <string>
-#include <string_view>
+
+// NOTE: no C++17 in this header (no std::string_view) — the Windows build
+// compiles at /std:c++14 (MUSHclient.vcxproj has no <LanguageStandard>), and
+// the T5 native adapter includes this.  String parameters are NUL-terminated
+// const char* — the same convention pal/isurface.h adopted for the same
+// reason.
 
 namespace pal {
 
@@ -93,10 +98,10 @@ public:
     // allowed to proceed under TlsParams::allowInvalidCert despite a failed
     // verification it carries the reason (the engine warns the user — the
     // shipping "proceeding with UNVERIFIED certificate" Note).
-    virtual void onTlsEstablished(std::string_view version,
-                                  std::string_view cipher,
-                                  std::string_view verifyFailure) = 0;
-    virtual void onTlsFailed(TlsFailure kind, std::string_view reason) = 0;
+    virtual void onTlsEstablished(const char* version,
+                                  const char* cipher,
+                                  const char* verifyFailure) = 0;
+    virtual void onTlsFailed(TlsFailure kind, const char* reason) = 0;
 };
 
 class ITransport {
@@ -105,7 +110,7 @@ public:
 
     // Async DNS. At most one resolve in flight; cancelResolve() (or
     // destruction) drops it. The token is echoed in onResolved.
-    virtual void resolve(std::string_view host, ResolveToken token) = 0;
+    virtual void resolve(const char* host, ResolveToken token) = 0;
     virtual void cancelResolve() = 0;
 
     // Async connect to an IPv4 address (network byte order) + port.

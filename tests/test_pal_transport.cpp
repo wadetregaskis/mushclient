@@ -29,7 +29,7 @@ struct FakeTransport : pal::ITransport {
     bool tlsStarted = false, closed = false;
     pal::ResolveToken lastToken = -1;
 
-    void resolve(std::string_view, pal::ResolveToken token) override { lastToken = token; }
+    void resolve(const char*, pal::ResolveToken token) override { lastToken = token; }
     void cancelResolve() override { lastToken = -1; }
     void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
     void send(const char* data, size_t n) override { sent.append(data, n); }
@@ -46,9 +46,9 @@ struct FakeTransportEvents : pal::ITransportEvents {
     void onBytes(const char* data, size_t n) override { bytes.append(data, n); }
     void onWritable() override {}
     void onClosed(int) override { ++closes; }
-    void onTlsEstablished(std::string_view, std::string_view,
-                          std::string_view) override {}
-    void onTlsFailed(pal::TlsFailure, std::string_view) override {}
+    void onTlsEstablished(const char*, const char*,
+                          const char*) override {}
+    void onTlsFailed(pal::TlsFailure, const char*) override {}
 };
 
 // ── helpers ─────────────────────────────────────────────────────────────────

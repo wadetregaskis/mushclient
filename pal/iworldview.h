@@ -18,8 +18,12 @@
 #ifndef _WIN32
 
 #include <string>
-#include <string_view>
 #include <vector>
+
+// NOTE: no C++17 in this header (no std::string_view) — the Windows build
+// compiles at /std:c++14.  String parameters are NUL-terminated const char*
+// (the pal/isurface.h + pal/itransport.h convention); std::string stays for
+// the pull-side return values.
 #include "pal/pal_types.h"
 #include "platform/output_types.h"   // SOutputLine / SOutputRun
 
@@ -33,9 +37,9 @@ public:
     // A finished output line (one '\n'). `pending` lines are the live
     // typing-indicator row and replace, not append.
     virtual void appendLine(SOutputLine&& line) = 0;
-    virtual void note(std::string_view text) = 0;        // out-of-band note
-    virtual void setTitle(std::string_view title) = 0;   // world/window title
-    virtual void setStatus(std::string_view text) = 0;   // status-bar text
+    virtual void note(const char* text) = 0;        // out-of-band note
+    virtual void setTitle(const char* title) = 0;   // world/window title
+    virtual void setStatus(const char* text) = 0;   // status-bar text
     virtual void setBackgroundColour(Colour c) = 0;
     virtual void setMaxLines(int n) = 0;
     virtual void requestRepaint(Rect area) = 0;          // core mutated the buffer
@@ -51,7 +55,7 @@ public:
 
     // ── core ↔ frontend: the command input bar (P2 command family) ─────────
     // world.SetCommand: fill the bar ONLY if it is empty; false = not empty.
-    virtual bool        setCommand(std::string_view text) = 0;
+    virtual bool        setCommand(const char* text) = 0;
     // world.SelectCommand: select all text in the bar.
     virtual void        selectCommand() = 0;
     // GetInfo 236/237: the bar's selection endpoints, in characters.
@@ -65,11 +69,11 @@ public:
     // first; n <= 0 means all.
     virtual std::vector<std::string> commandList(long count) const = 0;
     // world.AddToCommandHistory: append (consecutive duplicates suppressed).
-    virtual void        addToCommandHistory(std::string_view text) = 0;
+    virtual void        addToCommandHistory(const char* text) = 0;
     // world.DeleteCommandHistory: clear the history.
     virtual void        deleteCommandHistory() = 0;
     // Input-bar font (face "" / size 0 = keep current).
-    virtual void        setInputFont(std::string_view face, int pointSize,
+    virtual void        setInputFont(const char* face, int pointSize,
                                      bool bold, bool italic) = 0;
 
     // ── core → frontend: output-pane management (P2 output family) ────────
@@ -87,7 +91,7 @@ public:
     virtual void setOutputSelection(int startLine, int endLine,
                                     int startCol, int endCol) = 0;
     // world.SetOutputFont (face "" / size 0 = keep current).
-    virtual void setOutputFont(std::string_view face, int pointSize,
+    virtual void setOutputFont(const char* face, int pointSize,
                                bool bold, bool italic) = 0;
     // The reserved text rectangle changed (world.TextRectangle): recompute
     // the wrap column + NAWS for the new visible width.
@@ -98,7 +102,7 @@ public:
     // ── core → frontend: world/main window management (P2 window family) ──
     // world.SetMainTitle: the application (main frame) title, set from this
     // world.
-    virtual void setMainTitle(std::string_view title) = 0;
+    virtual void setMainTitle(const char* title) = 0;
     // world.MoveWorldWindow: reposition/resize this world's window (pixels,
     // relative to the MDI parent client area).
     virtual void moveWorldWindow(long left, long top,
@@ -120,10 +124,10 @@ public:
     // 4=underline, 8=strikeout (size 0 keeps the current size).
     virtual void infobarShow(bool visible) = 0;
     virtual void infobarClear() = 0;
-    virtual void infobarText(std::string_view text) = 0;
+    virtual void infobarText(const char* text) = 0;
     virtual void infobarColour(Colour c) = 0;
     virtual void infobarBackground(Colour c) = 0;
-    virtual void infobarFont(std::string_view face, int pointSize,
+    virtual void infobarFont(const char* face, int pointSize,
                              int style) = 0;
     // GetInfo(257/258): the info bar's pixel size (0,0 when hidden).
     virtual Size infobarSize() const = 0;

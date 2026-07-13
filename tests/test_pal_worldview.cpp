@@ -25,9 +25,9 @@ struct FakeWorldView : pal::IWorldView {
     int maxLines = 0, repaints = 0;
 
     void appendLine(SOutputLine&& l) override { lines.push_back(std::move(l)); }
-    void note(std::string_view t) override    { notes.emplace_back(t); }
-    void setTitle(std::string_view t) override { title.assign(t); }
-    void setStatus(std::string_view t) override { status.assign(t); }
+    void note(const char* t) override    { notes.emplace_back(t); }
+    void setTitle(const char* t) override { title.assign(t); }
+    void setStatus(const char* t) override { status.assign(t); }
     void setBackgroundColour(pal::Colour c) override { bg = c; }
     void setMaxLines(int n) override { maxLines = n; }
     void requestRepaint(pal::Rect) override { ++repaints; }
@@ -48,7 +48,7 @@ struct FakeWorldView : pal::IWorldView {
     bool selectedAll = false;
     std::string fontFace; int fontPts = 0; bool fontBold = false, fontItalic = false;
 
-    bool setCommand(std::string_view text) override {
+    bool setCommand(const char* text) override {
         if (!cmd.empty()) return false;     // Windows contract: only if empty
         cmd.assign(text);
         return true;
@@ -75,14 +75,14 @@ struct FakeWorldView : pal::IWorldView {
             out.push_back(history[(size_t)i]);
         return out;
     }
-    void addToCommandHistory(std::string_view text) override {
-        if (text.empty()) return;
+    void addToCommandHistory(const char* text) override {
+        if (!text || !*text) return;
         std::string entry(text);
         if (!history.empty() && history.back() == entry) return;
         history.push_back(entry);
     }
     void deleteCommandHistory() override { history.clear(); }
-    void setInputFont(std::string_view face, int pointSize,
+    void setInputFont(const char* face, int pointSize,
                       bool bold, bool italic) override {
         fontFace.assign(face); fontPts = pointSize;
         fontBold = bold; fontItalic = italic;
@@ -105,7 +105,7 @@ struct FakeWorldView : pal::IWorldView {
     void setOutputSelection(int sl, int el, int sc, int ec) override {
         selSL = sl; selEL = el; selSC = sc; selEC = ec;
     }
-    void setOutputFont(std::string_view face, int pointSize,
+    void setOutputFont(const char* face, int pointSize,
                        bool bold, bool italic) override {
         outFontFace.assign(face); outFontPts = pointSize;
         outFontBold = bold; outFontItalic = italic;
@@ -122,7 +122,7 @@ struct FakeWorldView : pal::IWorldView {
     int  saves = 0;
     pal::Rect mainR{ 5, 6, 1024, 768 };   // returned by mainRect()
 
-    void setMainTitle(std::string_view t) override { mainTitle.assign(t); }
+    void setMainTitle(const char* t) override { mainTitle.assign(t); }
     void moveWorldWindow(long l, long t, long w, long h) override {
         mwX = l; mwY = t; mwW = w; mwH = h;
     }
@@ -142,10 +142,10 @@ struct FakeWorldView : pal::IWorldView {
 
     void infobarShow(bool visible) override { infobarVisible = visible; }
     void infobarClear() override { ++infobarClears; infobarBuf.clear(); }
-    void infobarText(std::string_view t) override { infobarBuf.append(t); }
+    void infobarText(const char* t) override { infobarBuf.append(t); }
     void infobarColour(pal::Colour c) override { infobarFg = c; }
     void infobarBackground(pal::Colour c) override { infobarBg = c; }
-    void infobarFont(std::string_view face, int pointSize, int style) override {
+    void infobarFont(const char* face, int pointSize, int style) override {
         infobarFace.assign(face); infobarPts = pointSize; infobarStyle = style;
     }
     pal::Size infobarSize() const override { return infobarSz; }

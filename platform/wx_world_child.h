@@ -71,9 +71,9 @@ public:
     // adapter's complete, ready surface and become live as their engine paths
     // migrate off the remaining m_fn_* callbacks.  Definitions: wx_world_child.cpp.
     void        appendLine(SOutputLine&& line) override;
-    void        note(std::string_view text) override;
-    void        setTitle(std::string_view title) override;
-    void        setStatus(std::string_view text) override;
+    void        note(const char* text) override;
+    void        setTitle(const char* title) override;
+    void        setStatus(const char* text) override;
     void        setBackgroundColour(pal::Colour c) override;
     void        setMaxLines(int n) override;
     void        requestRepaint(pal::Rect area) override;
@@ -84,15 +84,15 @@ public:
     pal::TextRange outputSelection() const override;
     int         scrollPos() const override;
     pal::Size   outputAreaChars() const override;
-    bool        setCommand(std::string_view text) override;
+    bool        setCommand(const char* text) override;
     void        selectCommand() override;
     pal::Range  commandSelection() const override;
     void        setCommandSelection(long first, long last) override;
     std::string pushCommand() override;
     std::vector<std::string> commandList(long count) const override;
-    void        addToCommandHistory(std::string_view text) override;
+    void        addToCommandHistory(const char* text) override;
     void        deleteCommandHistory() override;
-    void        setInputFont(std::string_view face, int pointSize,
+    void        setInputFont(const char* face, int pointSize,
                              bool bold, bool italic) override;
     void        beginBatch() override;
     void        endBatch() override;
@@ -100,11 +100,11 @@ public:
     void        setScroll(long line) override;
     void        setOutputSelection(int startLine, int endLine,
                                    int startCol, int endCol) override;
-    void        setOutputFont(std::string_view face, int pointSize,
+    void        setOutputFont(const char* face, int pointSize,
                               bool bold, bool italic) override;
     void        textRectChanged() override;
     pal::Rect   outputRect() const override;
-    void        setMainTitle(std::string_view title) override;
+    void        setMainTitle(const char* title) override;
     void        moveWorldWindow(long left, long top,
                                 long width, long height) override;
     void        setWindowStatus(int status) override;
@@ -114,10 +114,10 @@ public:
     pal::Rect   mainRect() const override;
     void        infobarShow(bool visible) override;
     void        infobarClear() override;
-    void        infobarText(std::string_view text) override;
+    void        infobarText(const char* text) override;
     void        infobarColour(pal::Colour c) override;
     void        infobarBackground(pal::Colour c) override;
-    void        infobarFont(std::string_view face, int pointSize,
+    void        infobarFont(const char* face, int pointSize,
                             int style) override;
     pal::Size   infobarSize() const override;
 

@@ -3075,22 +3075,22 @@ void CWorldChildFrame::appendLine(SOutputLine&& line)
     if (m_output) m_output->AppendLine(std::move(line));
 }
 
-void CWorldChildFrame::note(std::string_view text)
+void CWorldChildFrame::note(const char* text)
 {
     if (m_output) m_output->AppendNote(std::string(text));
 }
 
-void CWorldChildFrame::setTitle(std::string_view title)
+void CWorldChildFrame::setTitle(const char* title)
 {
     // world.SetTitle(s): update the MDI child-frame title bar. An empty title
     // falls back to the world name (MUD scripts commonly set HP/MP here).
-    wxString wxTitle = wxString::FromUTF8(title.data(), title.size());
+    wxString wxTitle = wxString::FromUTF8(title);
     SetTitle(wxTitle.IsEmpty()
              ? wxString::FromUTF8(static_cast<const char*>(m_doc->m_mush_name))
              : wxTitle);
 }
 
-void CWorldChildFrame::setStatus(std::string_view text)
+void CWorldChildFrame::setStatus(const char* text)
 {
     // world.SetStatus(msg): show a message in the shared main-window status bar,
     // but only for the active world (overrides the connection-state message
@@ -3167,12 +3167,12 @@ pal::Size CWorldChildFrame::outputAreaChars() const
 // world.SetCommand(text): set the command bar contents.  Per the Windows API
 // contract, returns false (eCommandNotEmpty) and does NOT overwrite if the bar
 // is already non-empty.  Returns true on success.
-bool CWorldChildFrame::setCommand(std::string_view text)
+bool CWorldChildFrame::setCommand(const char* text)
 {
     wxTextCtrl* inp = ActiveInput();
     if (!inp) return false;
     if (!inp->GetValue().IsEmpty()) return false;  // eCommandNotEmpty
-    inp->SetValue(wxString::FromUTF8(text.data(), text.size()));
+    inp->SetValue(wxString::FromUTF8(text));
     inp->SetInsertionPointEnd();
     m_histIdx = -1; ApplyHistRSearch(false);
     return true;
@@ -3248,10 +3248,10 @@ std::vector<std::string> CWorldChildFrame::commandList(long count) const
 
 // world.AddToCommandHistory(text): inject a string into history.
 // Mirrors the duplicate-suppression logic in methods_sending.cpp.
-void CWorldChildFrame::addToCommandHistory(std::string_view text)
+void CWorldChildFrame::addToCommandHistory(const char* text)
 {
-    if (text.empty()) return;
-    wxString entry = wxString::FromUTF8(text.data(), text.size());
+    if (!*text) return;
+    wxString entry = wxString::FromUTF8(text);
     if (!m_history.empty() && m_history.back() == entry)
         return;   // same as last entry — don't add duplicate
     m_history.push_back(entry);
@@ -3275,13 +3275,13 @@ void CWorldChildFrame::deleteCommandHistory()
 
 // world.SetInputFont(face, pts, bold, italic): change the command-bar font.
 // face "" / pts 0 mean "keep current".
-void CWorldChildFrame::setInputFont(std::string_view face, int pointSize,
+void CWorldChildFrame::setInputFont(const char* face, int pointSize,
                                     bool bold, bool italic)
 {
     wxFont cur = m_input ? m_input->GetFont() : wxNullFont;
-    wxString faceName = face.empty()
+    wxString faceName = !*face
         ? (cur.IsOk() ? cur.GetFaceName() : wxString())
-        : wxString::FromUTF8(face.data(), face.size());
+        : wxString::FromUTF8(face);
     int size = (pointSize > 0) ? pointSize : (cur.IsOk() ? cur.GetPointSize() : 10);
     wxFontStyle  style  = italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL;
     wxFontWeight weight = bold   ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL;
@@ -3338,14 +3338,14 @@ void CWorldChildFrame::setOutputSelection(int sl, int el, int sc, int ec)
 
 // world.SetOutputFont(face, pts, bold, italic): change the output pane font.
 // pts == 0 means "keep current size".
-void CWorldChildFrame::setOutputFont(std::string_view face, int pointSize,
+void CWorldChildFrame::setOutputFont(const char* face, int pointSize,
                                      bool bold, bool italic)
 {
     if (!m_output) return;
     wxFont cur = m_output->GetCurrentFont();
-    wxString faceName = face.empty()
+    wxString faceName = !*face
         ? cur.GetFaceName()
-        : wxString::FromUTF8(face.data(), face.size());
+        : wxString::FromUTF8(face);
     int size = (pointSize > 0) ? pointSize : cur.GetPointSize();
     wxFontStyle  style  = italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL;
     wxFontWeight weight = bold   ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL;
@@ -3407,10 +3407,10 @@ pal::Rect CWorldChildFrame::outputRect() const
 // ── world/main window management (P2 window family) ──────────────────────────
 
 // world.SetMainTitle(s): update the main application window title.
-void CWorldChildFrame::setMainTitle(std::string_view title)
+void CWorldChildFrame::setMainTitle(const char* title)
 {
     if (wxFrame* top = dynamic_cast<wxFrame*>(wxTheApp->GetTopWindow()))
-        top->SetTitle(wxString::FromUTF8(title.data(), title.size()));
+        top->SetTitle(wxString::FromUTF8(title));
 }
 
 // world.MoveWorldWindow(l,t,w,h): reposition/resize this MDI child frame.
@@ -3491,10 +3491,10 @@ void CWorldChildFrame::infobarClear()
     m_infobar->SetBackgroundColour(wxColour(255, 255, 255));
 }
 
-void CWorldChildFrame::infobarText(std::string_view text)
+void CWorldChildFrame::infobarText(const char* text)
 {
     long start = m_infobar->GetLastPosition();
-    m_infobar->AppendText(wxString::FromUTF8(text.data(), text.size()));
+    m_infobar->AppendText(wxString::FromUTF8(text));
     m_infobar->SetStyle(start, m_infobar->GetLastPosition(), m_infobarStyle);
 }
 
@@ -3511,11 +3511,11 @@ void CWorldChildFrame::infobarBackground(pal::Colour rgb)
     m_infobar->Refresh();
 }
 
-void CWorldChildFrame::infobarFont(std::string_view face, int pointSize, int style)
+void CWorldChildFrame::infobarFont(const char* face, int pointSize, int style)
 {
     wxFont f = m_infobarStyle.HasFont() ? m_infobarStyle.GetFont()
                                         : m_infobar->GetFont();
-    if (!face.empty()) f.SetFaceName(wxString::FromUTF8(face.data(), face.size()));
+    if (!!*face) f.SetFaceName(wxString::FromUTF8(face));
     if (pointSize > 0) f.SetPointSize(pointSize);
     f.SetWeight   ((style & 1) ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL);
     f.SetStyle    ((style & 2) ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL);

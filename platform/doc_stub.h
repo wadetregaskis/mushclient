@@ -2253,10 +2253,10 @@ public:
     void EmitPaused(bool paused) {
         if (m_pWorldView) m_pWorldView->setPaused(paused);
     }
-    void EmitStatus(std::string_view text) {
+    void EmitStatus(const char* text) {
         if (m_pWorldView) m_pWorldView->setStatus(text);
     }
-    void EmitTitle(std::string_view title) {
+    void EmitTitle(const char* title) {
         if (m_pWorldView) m_pWorldView->setTitle(title);
     }
     void EmitClearOutput() {
@@ -2291,7 +2291,7 @@ public:
   // ── PAL: command-input bar (typed-only — P2 command family; the wx frame
   //    implements these on IWorldView, no m_fn_* fallback remains) ──────────
   bool SetCommandText(const std::string& text) {
-      return m_pWorldView ? m_pWorldView->setCommand(text) : false;
+      return m_pWorldView ? m_pWorldView->setCommand(text.c_str()) : false;
   }
   void SelectCommandText() {
       if (m_pWorldView) m_pWorldView->selectCommand();
@@ -2314,18 +2314,18 @@ public:
                           : std::vector<std::string>();
   }
   void AddCommandToHistory(const std::string& text) {
-      if (m_pWorldView) m_pWorldView->addToCommandHistory(text);
+      if (m_pWorldView) m_pWorldView->addToCommandHistory(text.c_str());
   }
   void DeleteCommandHistoryEntries() {
       if (m_pWorldView) m_pWorldView->deleteCommandHistory();
   }
   void EmitInputFont(const std::string& face, int pts, bool bold, bool italic) {
-      if (m_pWorldView) m_pWorldView->setInputFont(face, pts, bold, italic);
+      if (m_pWorldView) m_pWorldView->setInputFont(face.c_str(), pts, bold, italic);
   }
 
   // ── PAL: output-pane management (typed-only — P2 output family) ──────────
   void EmitNote(const std::string& text) {
-      if (m_pWorldView) m_pWorldView->note(text);
+      if (m_pWorldView) m_pWorldView->note(text.c_str());
   }
   void BeginOutputBatch() {
       if (m_pWorldView) m_pWorldView->beginBatch();
@@ -2343,7 +2343,7 @@ public:
       if (m_pWorldView) m_pWorldView->setOutputSelection(sl, el, sc, ec);
   }
   void EmitOutputFont(const std::string& face, int pts, bool bold, bool italic) {
-      if (m_pWorldView) m_pWorldView->setOutputFont(face, pts, bold, italic);
+      if (m_pWorldView) m_pWorldView->setOutputFont(face.c_str(), pts, bold, italic);
   }
   void EmitTextRectChanged() {
       if (m_pWorldView) m_pWorldView->textRectChanged();
@@ -2359,7 +2359,7 @@ public:
 
   // ── PAL: world/main window management (typed-only — P2 window family) ────
   void EmitMainTitle(const std::string& title) {
-      if (m_pWorldView) m_pWorldView->setMainTitle(title);
+      if (m_pWorldView) m_pWorldView->setMainTitle(title.c_str());
   }
   void MoveWorldWindowRect(long l, long t, long w, long h) {
       if (m_pWorldView) m_pWorldView->moveWorldWindow(l, t, w, h);
@@ -2395,7 +2395,7 @@ public:
       if (m_pWorldView) m_pWorldView->infobarClear();
   }
   void EmitInfobarText(const std::string& text) {
-      if (m_pWorldView) m_pWorldView->infobarText(text);
+      if (m_pWorldView) m_pWorldView->infobarText(text.c_str());
   }
   void EmitInfobarColour(unsigned long c) {
       if (m_pWorldView) m_pWorldView->infobarColour((pal::Colour)c);
@@ -2404,7 +2404,7 @@ public:
       if (m_pWorldView) m_pWorldView->infobarBackground((pal::Colour)c);
   }
   void EmitInfobarFont(const std::string& face, int size, int style) {
-      if (m_pWorldView) m_pWorldView->infobarFont(face, size, style);
+      if (m_pWorldView) m_pWorldView->infobarFont(face.c_str(), size, style);
   }
   // Fills the info bar's pixel size; (0,0) when hidden or no view attached.
   void GetInfobarSize(int& w, int& h) {

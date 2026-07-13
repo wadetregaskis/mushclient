@@ -38,6 +38,7 @@
 #include <openssl/x509.h>
 #include <wincrypt.h>
 
+#include <memory>
 #include <string>
 
 // From: mstcpip.h  (the same block doc.cpp carried — the header itself was
@@ -86,7 +87,7 @@ const char* const kWndClass = "MUSHclientPalWinTransport";
 class WinTransport : public ITransport {
 public:
     explicit WinTransport(ITransportEvents& events)
-        : m_events(events)
+        : m_events(events), m_alive(std::make_shared<bool>(true))
     {
         m_sock.m_owner = this;
         registerWindowClass();
@@ -102,6 +103,7 @@ public:
 
     ~WinTransport() override
     {
+        *m_alive = false;   // guard event-handler continuations (see handleReadable)
         cancelResolve();
         teardownTls();
         m_sock.Close();
@@ -119,6 +121,13 @@ public:
     {
         cancelResolve();
         m_resolveToken = token;
+        if (!m_hWnd) {
+            // out-of-resources only (window creation failed): without a
+            // window neither the completion nor a deferred failure can be
+            // delivered — report synchronously rather than losing it
+            m_events.onResolved(token, 0, false);
+            return;
+        }
         m_hLookup = ::WSAAsyncGetHostByName(m_hWnd, WM_WT_RESOLVED,
                                             host ? host : "",
                                             m_hostBuf, sizeof m_hostBuf);
@@ -168,8 +177,13 @@ public:
             // Immediate success: defer delivery via the message window — the
             // engine never sees a re-entrant onConnect.  (The old engine
             // called OnConnect(0) inline from InitiateConnection; deferral is
-            // the contract's non-re-entrancy rule, live-verified on POSIX.)
-            ::PostMessage(m_hWnd, WM_WT_CONNECTED, 0, 0);
+            // the contract's non-re-entrancy rule, live-verified on POSIX.
+            // Windows non-blocking connect never actually completes inline;
+            // the no-window fallback matches the old inline call.)
+            if (m_hWnd)
+                ::PostMessage(m_hWnd, WM_WT_CONNECTED, 0, 0);
+            else
+                m_events.onConnect(0);
             return;
         }
         if (m_sock.GetLastError() == WSAEWOULDBLOCK)
@@ -244,9 +258,12 @@ public:
     {
         teardownTls();
         // ShutDownSocket semantics: stop events, shut down both directions,
-        // close.  No onClosed for a locally requested close.
-        m_sock.AsyncSelect(0);
+        // close.  No onClosed for a locally requested close.  The whole
+        // sequence is guarded — real MFC's AsyncSelect ASSERTs on an invalid
+        // handle, and close() on a never-connected transport is routine
+        // (Disconnect during a DNS lookup; teardown after a failed lookup).
         if (m_sock.m_hSocket != INVALID_SOCKET) {
+            m_sock.AsyncSelect(0);
             m_sock.ShutDown(CAsyncSocket::both);
             m_sock.Close();
         }
@@ -351,7 +368,10 @@ private:
         }
         if (m_outgoing.empty())
             return;
+        std::shared_ptr<bool> alive = m_alive;
         flushSend();
+        if (!*alive)
+            return;
         if (m_outgoing.empty())
             m_events.onWritable();
     }
@@ -364,6 +384,7 @@ private:
         }
         char buff[9000];   // must be less than COMPRESS_BUFFER_LENGTH (ReceiveMsg)
         int count;
+        std::shared_ptr<bool> alive = m_alive;
 
         if (m_tlsUp && m_ssl) {
             count = SSL_read(m_ssl, buff, (int)sizeof buff - 1);
@@ -379,10 +400,12 @@ private:
                 return;
             }
             m_events.onBytes(buff, (size_t)count);
+            if (!*alive)
+                return;   // the handler destroyed the transport (contract)
             // Drain buffered decrypted data: no further FD_READ will fire for
             // bytes OpenSSL already holds (the worldsock OnReceive
             // SSL_pending loop, re-checking liveness every iteration).
-            while (m_tlsUp && m_ssl && SSL_pending(m_ssl) > 0) {
+            while (*alive && m_tlsUp && m_ssl && SSL_pending(m_ssl) > 0) {
                 count = SSL_read(m_ssl, buff, (int)sizeof buff - 1);
                 if (count <= 0)
                     break;
@@ -465,9 +488,12 @@ private:
             m_tlsUp = true;
             const char* version = SSL_get_version(m_ssl);
             const char* cipher  = SSL_get_cipher_name(m_ssl);
+            std::shared_ptr<bool> alive = m_alive;
             m_events.onTlsEstablished(version ? version : "",
                                       cipher ? cipher : "",
                                       verifyFailure.c_str());
+            if (!*alive)
+                return;   // the handler destroyed the transport (contract)
             flushSend();   // release anything buffered during the handshake
             return;
         }
@@ -506,10 +532,16 @@ private:
     EventSocket       m_sock;
     std::string       m_outgoing;
 
+    // Liveness sentinel: any event handler may destroy the transport
+    // mid-call (the contract); continuations after an m_events call re-check
+    // through a stack-held copy.  The dtor flips it.  (The POSIX adapter's
+    // Gate, minus the resolve generation — DNS here is window-message based.)
+    std::shared_ptr<bool> m_alive;
+
     HWND         m_hWnd         = NULL;
     HANDLE       m_hLookup      = NULL;   // WSAAsyncGetHostByName task handle
     ResolveToken m_resolveToken = 0;
-    char         m_hostBuf[MAXGETHOSTSTRUCT];   // hostent + data (LookupHostName)
+    alignas(hostent) char m_hostBuf[MAXGETHOSTSTRUCT];   // hostent + data
 
     bool      m_tlsHandshaking = false;
     bool      m_tlsUp          = false;

@@ -231,9 +231,11 @@ public:
         teardownTls();
 #endif
         // ShutDownSocket semantics: stop events, shut down both directions,
-        // close.  No onClosed for a locally requested close.
-        m_sock.AsyncSelect(0);
+        // close.  No onClosed for a locally requested close.  Guarded as the
+        // original ShutDownSocket was (and real MFC's AsyncSelect ASSERTs on
+        // an invalid handle — keeps the Windows twin a 1:1 diff).
         if (m_sock.m_hSocket != INVALID_SOCKET) {
+            m_sock.AsyncSelect(0);
             m_sock.ShutDown(CAsyncSocket::both);
             m_sock.Close();
         }

@@ -10,12 +10,13 @@
 // Implemented by: the native Win32/MFC view (Windows), the wx output pane
 // (mac/Linux), and a recording fake (tests). See docs/PAL.md.
 //
-// NB: still guarded on !_WIN32 while SOutputLine (platform/output_types.h) is;
-// promoting SOutputLine to a cross-platform canonical type is a P4 step, after
-// which this guard is removed and the Windows view implements IWorldView too.
+// Cross-platform since P4 (SOutputLine promoted with it): MSVC compiles this
+// interface too.  No Windows adapter exists yet — the doc's m_pWorldView stays
+// NULL there, every push helper is inert and every pull reports empty/zero —
+// but the seam is ready for one (the real P4/P5 step: CMUSHView becomes the
+// native adapter and the Windows display path emits through it).
 
 #pragma once
-#ifndef _WIN32
 
 #include <string>
 #include <vector>
@@ -135,4 +136,3 @@ public:
 
 } // namespace pal
 
-#endif // !_WIN32

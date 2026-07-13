@@ -1486,11 +1486,10 @@ public:
   CPaneMap m_PaneMap;
 #endif // PANE
 
-#ifndef _WIN32
-  // ── Non-Windows public helpers ────────────────────────────────────────────
-  // OnConnectionDisconnect is afx_msg (protected) in the Windows build.  On
-  // non-Windows there is no MFC message pump to route WM_COMMAND through, so
-  // we expose a thin public wrapper that the wxWidgets layer can call directly.
+  // ── Cross-platform view-seam helpers (unguarded at P4) ───────────────────
+  // A thin public wrapper over OnConnectionDisconnect (afx_msg/protected on
+  // Windows); the wx layer calls it directly since there is no message pump
+  // to route WM_COMMAND through off-Windows.
   void DisconnectWorld()
   {
       m_bDisconnectOK = true;
@@ -1501,11 +1500,13 @@ public:
   // JUMP_SIZE when RemoveChunk() evicts the oldest lines.
   long                                    m_gui_lines_emitted = 0;
 
-  // ── PAL: typed output view ────────────────────────────────────────────────
+  // ── PAL: typed output view (every platform since P4) ─────────────────────
   // pal::IWorldView is the engine's typed per-world view seam; the wx
   // CWorldChildFrame sets itself here.  All display/state/pull traffic is
   // typed-only (P2 complete): no view attached → pushes are inert, pulls
-  // report empty/zero.  See docs/PAL.md.  (Mirror of the doc_stub.h twin.)
+  // report empty/zero — which is Windows' permanent state until its native
+  // adapter lands (CMUSHView, the real P4/P5 step).  See docs/PAL.md.
+  // (Mirror of the doc_stub.h twin.)
   pal::IWorldView* m_pWorldView = nullptr;
   bool HaveOutputSink() const { return m_pWorldView != nullptr; }
   void EmitOutputLine(SOutputLine&& line) {
@@ -1714,7 +1715,6 @@ public:
 
 
 
-#endif
 
   protected:
 

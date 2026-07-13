@@ -9,7 +9,6 @@
 // pull in the full CMUSHclientDoc definition.
 
 #pragma once
-#ifndef _WIN32
 
 #include <cstdint>
 #include <string>
@@ -63,4 +62,3 @@ struct SOutputLine : std::vector<SOutputRun> {
     using std::vector<SOutputRun>::vector;
 };
 
-#endif // !_WIN32

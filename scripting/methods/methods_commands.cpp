@@ -36,7 +36,6 @@ VARIANT CMUSHclientDoc::GetCommandList(long Count)
 {
   COleSafeArray sa;   // for command list
 
-#ifndef _WIN32
   {
     std::vector<std::string> hist = GetCommandListEntries(Count);
     if (!hist.empty()) {
@@ -48,44 +47,6 @@ VARIANT CMUSHclientDoc::GetCommandList(long Count)
       }
     }
   }
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
-  	  {
-		  CSendView* pmyView = (CSendView*)pView;
-
-      POSITION pos;
-      long iCount;
-
-      // put the commands into the array
-      if (!pmyView->m_msgList.IsEmpty ())    // cannot create empty dimension
-        {
-        if (Count <= 0)
-          Count = pmyView->m_msgList.GetCount ();    // zero means all
-        else
-          Count = MIN (Count, pmyView->m_msgList.GetCount ());  // don't exceed what we have
-
-        sa.CreateOneDim (VT_VARIANT, Count);
-
-        for (iCount = 0, pos = pmyView->m_msgList.GetTailPosition();
-            pos && iCount < Count;
-            )
-          {
-          CString strLine = pmyView->m_msgList.GetPrev (pos);
-
-          // the array must be a bloody array of variants, or VBscript kicks up
-          COleVariant v (strLine);
-          sa.PutElement (&iCount, &v);
-          iCount++;
-          }      // end of looping through each command
-        } // end of having at least one
-
-	    }	  // end of being a CSendView
-    }   // end of loop through views
-#endif
 
 	return sa.Detach ();
 }    // end of CMUSHclientDoc::GetCommandList
@@ -98,40 +59,10 @@ BSTR CMUSHclientDoc::PushCommand()
 {
 	CString strCommand;
 
-#ifndef _WIN32
   {
     std::string s = PushCommandText();
     strCommand = s.c_str();
   }
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
-  	  {
-		  CSendView* pmyView = (CSendView*)pView;
-
-      // find what the command is
-      pmyView->GetEditCtrl().GetWindowText (strCommand);
-
-      // save the echo flag
-      bool bSaveNoEcho = m_bNoEcho;
-      m_bNoEcho = false;  // make sure we save it
-
-      // remember it
-      pmyView->AddToCommandHistory (strCommand);
-
-      // restore the command
-      m_bNoEcho = bSaveNoEcho;
-
-      pmyView->GetEditCtrl().SetSel (0, -1);   // select all
-      pmyView->GetEditCtrl().ReplaceSel ("", TRUE);   // blank it out
-      pmyView->NotifyPluginCommandChanged ();
-
-      }	  // end of being a CSendView
-    }   // end of loop through views
-#endif
 
 	return strCommand.AllocSysString();
 }   // end of CMUSHclientDoc::PushCommand
@@ -140,22 +71,7 @@ BSTR CMUSHclientDoc::PushCommand()
 
 void CMUSHclientDoc::SelectCommand()
 {
-#ifndef _WIN32
   SelectCommandText();
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
-  	  {
-		  CSendView* pmyView = (CSendView*)pView;
-
-      pmyView->GetEditCtrl().SetSel (0, -1);   // select all
-
-      }	  // end of being a CSendView
-    }   // end of loop through views
-#endif
 }    // end of CMUSHclientDoc::SelectCommand
 
 // world.GetCommand - gets the command in the command window
@@ -164,25 +80,9 @@ BSTR CMUSHclientDoc::GetCommand()
 {
 	CString strCommand;
 
-#ifndef _WIN32
-  // Non-Windows: the command input bar is owned by the world view; read its
-  // text through the seam (empty if there is no view — strCommand starts empty).
+  // the command input bar is owned by the world view; read its text through
+  // the seam (empty if there is no view — strCommand starts empty)
   strCommand = GetCommandText().c_str();
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
-  	  {
-		  CSendView* pmyView = (CSendView*)pView;
-
-      // find what the command is
-      pmyView->GetEditCtrl().GetWindowText (strCommand);
-
-      }	  // end of being a CSendView
-    }   // end of loop through views
-#endif
 
 	return strCommand.AllocSysString();
 }   // end of CMUSHclientDoc::GetCommand
@@ -191,39 +91,14 @@ BSTR CMUSHclientDoc::GetCommand()
 
 long CMUSHclientDoc::SetCommand(LPCTSTR Message)
 {
-#ifndef _WIN32
-  // Non-Windows: delegate to the wxWidgets input bar.
+  // delegate to the world view's input bar; the seam enforces the
+  // "only if the bar is empty" contract (false = not empty)
   {
     std::string text(Message ? Message : "");
     if (!m_pWorldView)
       return eOK;   // no view attached (headless) — silently succeed
     return SetCommandText(text) ? eOK : eCommandNotEmpty;
   }
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
-  	  {
-		  CSendView* pmyView = (CSendView*)pView;
-
-      CString strCurrent;
-
-      pmyView->GetEditCtrl().GetWindowText (strCurrent);
-      if (strCurrent.IsEmpty ())
-        {
-        pmyView->GetEditCtrl().ReplaceSel (Message, TRUE);
-        pmyView->NotifyPluginCommandChanged ();
-        return eOK;
-        }   // end of command being empty
-      else
-        return eCommandNotEmpty;
-	    }	  // end of being a CSendView
-    }   // end of loop through views
-
-	return eOK;
-#endif
 }     // end of CMUSHclientDoc::SetCommand
 
 BSTR CMUSHclientDoc::PasteCommand(LPCTSTR Text)
@@ -276,30 +151,7 @@ int nStartChar,
 
 void CMUSHclientDoc::DeleteCommandHistory()
 {
-#ifndef _WIN32
   DeleteCommandHistoryEntries();
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
-  	  {
-		  CSendView* pmyView = (CSendView*)pView;
-
-      // OK, do it ...
-	    pmyView->m_msgList.RemoveAll ();
-      pmyView->m_HistoryPosition = NULL;
-      pmyView->m_inputcount = 0;
-      pmyView->m_HistoryFindInfo.m_pFindPosition = NULL;
-      pmyView->m_HistoryFindInfo.m_nCurrentLine = 0;
-      pmyView->m_HistoryFindInfo.m_bAgain = FALSE;
-      pmyView->m_strPartialCommand.Empty ();
-      pmyView->m_last_command.Empty ();
-
-      }	  // end of being a CSendView
-    }   // end of loop through views
-#endif
 }   // end of CMUSHclientDoc::DeleteCommandHistory
 
 
@@ -609,23 +461,7 @@ long CMUSHclientDoc::SetCommandWindowHeight(short Height)
 
 long CMUSHclientDoc::SetCommandSelection(long First, long Last)
 {
-#ifndef _WIN32
   SetCommandSelectionRange(First, Last);
   return eOK;
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
-  	  {
-		  CSendView* pmyView = (CSendView*)pView;
-      pmyView->GetEditCtrl().SetSel(First - 1, Last, FALSE);
-
-	    }	  // end of being a CSendView
-    }   // end of loop through views
-
-	return eOK;
-#endif
 }  // end of CMUSHclientDoc::SetCommandSelection
 

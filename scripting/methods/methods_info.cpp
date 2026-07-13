@@ -748,67 +748,23 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
 
     case 236:   // command selection start column
       {
-#ifdef _WIN32
-        for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	        {
-	        CView* pView = GetNextView(pos);
-
-	        if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
-  	        {
-		        CSendView* pmyView = (CSendView*)pView;
-            int nStartChar;
-            int nEndChar;
-
-              // find where cursor is
-
-            pmyView->GetEditCtrl().GetSel(nStartChar, nEndChar);
-            SetUpVariantLong (vaResult, nStartChar + 1);  // start column
-            break;
-
-	          }	  // end of being a CSendView
-          }   // end of loop through views
-#else
         if (m_pWorldView)
           {
           long selStart = 0, selEnd = 0;
           GetCommandSelection (selStart, selEnd);
           SetUpVariantLong (vaResult, selStart + 1);  // 1-based, matching the Windows branch
           }
-#endif
       }
       break;
 
     case 237:   // command selection end column
       {
-#ifdef _WIN32
-        for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	        {
-	        CView* pView = GetNextView(pos);
-
-	        if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
-  	        {
-		        CSendView* pmyView = (CSendView*)pView;
-            int nStartChar;
-            int nEndChar;
-
-              // find where cursor is
-
-            pmyView->GetEditCtrl().GetSel(nStartChar, nEndChar);
-            if (nEndChar <= nStartChar)
-              nEndChar = 0;  // zero indicates no text selected
-            SetUpVariantLong (vaResult, nEndChar);  // end column
-            break;
-
-	          }	  // end of being a CSendView
-          }   // end of loop through views
-#else
         if (m_pWorldView)
           {
           long selStart = 0, selEnd = 0;
           GetCommandSelection (selStart, selEnd);
           SetUpVariantLong (vaResult, (selEnd <= selStart) ? 0 : selEnd);  // 0 == no text selected, matching Windows
           }
-#endif
       }
       break;
 

@@ -711,6 +711,7 @@ if(NOT WIN32)
         miniwindow_compose.cpp   # engine-owned placement, shared with the Windows view (docs/PAL.md S4)
         surface_bridge.cpp   # pal::ISurface migration bridge globals (docs/PAL.md S3)
         platform/posix_transport.cpp   # pal::ITransport POSIX adapter + selftest (docs/PAL.md ITransport T2c)
+        platform/miniwindow_selftest.cpp  # world.Window* engine conformance (--pal-miniwindow-selftest; Phase 4)
         mushview.cpp
         plugins.cpp
         scriptingoptions.cpp

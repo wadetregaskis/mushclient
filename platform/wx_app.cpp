@@ -30,6 +30,14 @@ void InstallWxSurfaceBridge();
 // harness, run via the hidden --pal-transport-selftest flag.
 int RunPalTransportSelfTest();
 
+// In-app conformance harness for the REAL world.Window* engine over the
+// installed surface bridge (platform/miniwindow_selftest.cpp), run via the
+// hidden --pal-miniwindow-selftest flag.
+int RunPalMiniWindowSelfTest();
+
+#include "pal/surface_bridge.h"   // pal::g_surface — checked before installing
+                                  // the bridge for the miniwindow selftest
+
 class CMUSHWxApp : public wxApp {
 public:
     bool OnInit() override
@@ -44,6 +52,15 @@ public:
             }
             if (wxString(argv[i]) == wxT("--pal-transport-selftest")) {
                 const int failures = RunPalTransportSelfTest();
+                std::exit(failures == 0 ? 0 : 1);
+            }
+            if (wxString(argv[i]) == wxT("--pal-miniwindow-selftest")) {
+                // CMiniWindow draws through the bridge unconditionally; the
+                // normal install point is below (after this loop), so install
+                // it here first.
+                if (!pal::g_surface)
+                    InstallWxSurfaceBridge();
+                const int failures = RunPalMiniWindowSelfTest();
                 std::exit(failures == 0 ? 0 : 1);
             }
         }

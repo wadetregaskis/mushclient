@@ -48,3 +48,19 @@ mc_test(test_pal_worldview)
 mc_test(test_pal_transport)
 mc_test(test_pal_surface)
 mc_test(test_lua_scripting)
+
+# ── In-app conformance selftests ────────────────────────────────────────────
+# The hidden --pal-*-selftest flags run inside the real app binary (real wx
+# adapter, real transport, real world.Window* engine) and exit before the GUI
+# boots — no prefs, worlds, or windows are touched.  The wx-backed ones need
+# a window server, so they are registered only when the GUI target exists.
+if(TARGET mushgui)
+    add_test(NAME selftest_pal_surface
+             COMMAND $<TARGET_FILE:mushgui> --pal-surface-selftest)
+    add_test(NAME selftest_pal_transport
+             COMMAND $<TARGET_FILE:mushgui> --pal-transport-selftest)
+    add_test(NAME selftest_pal_miniwindow
+             COMMAND $<TARGET_FILE:mushgui> --pal-miniwindow-selftest)
+    set_tests_properties(selftest_pal_surface selftest_pal_transport
+                         selftest_pal_miniwindow PROPERTIES TIMEOUT 120)
+endif()

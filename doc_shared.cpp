@@ -867,6 +867,529 @@ CString str;
   } // end of CMUSHclientDoc::ConnectionClosed
 
 
+// ── Connect / receive-tail / disconnect (single-sourced, T3c) ───────────────
+
+//#include <mstcpip.h>
+// From: mstcpip.h
+/* Argument structure for SIO_KEEPALIVE_VALS */
+
+#ifdef _WIN32
+struct tcp_keepalive {
+    ULONG onoff;
+    ULONG keepalivetime;
+    ULONG keepaliveinterval;
+};
+#endif // _WIN32
+
+//
+// New WSAIoctl Options
+// 
+#ifdef _WIN32
+#define SIO_RCVALL            _WSAIOW(IOC_VENDOR,1)
+#define SIO_RCVALL_MCAST      _WSAIOW(IOC_VENDOR,2)
+#define SIO_RCVALL_IGMPMCAST  _WSAIOW(IOC_VENDOR,3)
+#define SIO_KEEPALIVE_VALS    _WSAIOW(IOC_VENDOR,4)
+#define SIO_ABSORB_RTRALERT   _WSAIOW(IOC_VENDOR,5)
+#define SIO_UCAST_IF          _WSAIOW(IOC_VENDOR,6)
+#define SIO_LIMIT_BROADCASTS  _WSAIOW(IOC_VENDOR,7)
+#define SIO_INDEX_BIND        _WSAIOW(IOC_VENDOR,8)
+#define SIO_INDEX_MCASTIF     _WSAIOW(IOC_VENDOR,9)
+#define SIO_INDEX_ADD_MCAST   _WSAIOW(IOC_VENDOR,10)
+#define SIO_INDEX_DEL_MCAST   _WSAIOW(IOC_VENDOR,11)
+//      SIO_UDP_CONNRESET     _WSAIOW(IOC_VENDOR,12)
+#define SIO_RCVALL_MCAST_IF   _WSAIOW(IOC_VENDOR,13)
+#define SIO_RCVALL_IF         _WSAIOW(IOC_VENDOR,14)
+#endif // _WIN32
+
+
+BOOL CMUSHclientDoc::ConnectSocket(void)
+{
+
+CString str;
+
+  // no IP? don't connect
+  if (m_server == "0.0.0.0")
+    return FALSE;
+
+// a few checks, in case they slip in blank names/site/port via configuration
+
+  if (m_mush_name.IsEmpty ())
+    {
+    TMessageBox ("Cannot connect. World name not specified");
+		  return FALSE;
+    }
+
+  if (m_server.IsEmpty ())
+    {
+    UMessageBox (TFormat ("Cannot connect to \"%s\", TCP/IP address not specified", 
+                    (const char *) m_mush_name));
+		  return FALSE;
+    }
+
+  if (m_port <= 0)
+    {
+    UMessageBox (TFormat ("Cannot connect to \"%s\", port number not specified", 
+                    (const char *) m_mush_name));
+		  return FALSE;
+    }
+
+  switch (m_iSocksProcessing)
+    {
+    case eProxyServerNone:
+      break;    // nothing needed here
+
+    case eProxyServerSocks4:     // socks 4
+    case eProxyServerSocks5:     // socks 5
+      if (m_strProxyServerName.IsEmpty ())
+          {
+          TMessageBox("The proxy server address cannot be blank.");
+		      return FALSE;
+          }     // end of proxy server name being blank
+
+      if (m_iProxyServerPort == 0)
+          {
+          TMessageBox("The proxy server port must be specified.");
+		      return FALSE;
+          }     // end of proxy server port being zero
+      break;
+
+    default:
+          UMessageBox(TFormat ("Unknown proxy server type: %d.", m_iSocksProcessing));
+		      return FALSE;
+          break;
+
+    } // end of switch
+
+	m_bEnableAutoSay = FALSE;		// auto-say off at start of session
+
+  m_bDisconnectOK = false;    // not OK to disconnect
+  
+  m_bCompress = FALSE;        // not compressing yet
+  m_iMCCP_type = 0;           // no MCCP type yet
+  m_bSupports_MCCP_2 = false; // haven't offered MCCP 2 yet
+  m_bNoEcho = false;          // no echo suppression yet
+  m_iInputPacketCount = 0;
+  m_iOutputPacketCount = 0;
+  m_iUTF8ErrorCount = 0;
+
+  str = TFormat ("Connecting to %s, port %d", 
+              (const char *) m_mush_name, m_port);
+  Frame.SetStatusMessageNow (str);
+
+#ifndef _WIN32
+
+// T2d: off-Windows the connection runs through the PAL transport
+// (pal::ITransport, POSIX adapter) — CWorldSocket is not created and
+// m_pSocket stays NULL.  The adapter creates the fd at connect time and
+// applies the keepalive policy itself (TransportOptions carries on/off;
+// the 120 s / 6 s / 6-probe timing is fixed engine policy inside it).
+
+  CreateTransport ();
+
+#else
+
+// get rid of any earlier socket
+
+  delete m_pSocket;
+
+// now create a new one
+
+	m_pSocket = new CWorldSocket(this);
+
+	if (!m_pSocket->Create(0,
+                         SOCK_STREAM,
+                         FD_READ | FD_WRITE | FD_CONNECT | FD_CLOSE,
+                         NULL))
+	  {
+
+    int iStatus = GetLastError ();
+
+    // tell them socket create failed
+
+    UMessageBox (TFormat ("Unable to create TCP/IP socket for \"%s\", code = %i (%s)",
+                    (const char *) m_mush_name,
+                    iStatus,
+                    (LPCTSTR) GetSocketError (iStatus)));
+
+		  delete m_pSocket;
+		  m_pSocket = NULL;
+
+		  return FALSE;
+	  }     // end of can't create socket
+
+// stop socket from lingering on close
+
+//  BOOL bLinger = TRUE;
+//  m_pSocket->SetSockOpt (SO_DONTLINGER, &bLinger, sizeof bLinger);
+
+
+  // see: http://www.gammon.com.au/forum/?id=9848
+  if (m_bSendKeepAlives)
+    {
+    DWORD dwBytesReturned;
+    tcp_keepalive keepaliveData = {1, 60 * 1000 * 2, 6000};     // every 2 minutes
+    WSAIoctl (m_pSocket->m_hSocket, SIO_KEEPALIVE_VALS, &keepaliveData, sizeof (keepaliveData), NULL, 0, &dwBytesReturned, NULL, NULL);
+    }
+
+  BOOL bStatus = m_pSocket->AsyncSelect ();
+  int iStatus = 0;
+
+  if (!bStatus)
+    iStatus = GetLastError ();
+
+#endif // _WIN32
+
+  m_iConnectPhase = eConnectNotConnected;
+
+  App.m_bUpdateActivity = TRUE;   // new activity!
+
+  m_sockAddr.sin_port = htons((u_short)m_port);   // normal MUD port
+  m_ProxyAddr.sin_port = htons((u_short)m_iProxyServerPort);  // proxy server port
+
+// fix up server name to dotted a socket address, if necessary
+
+  if (m_sockAddr.sin_family != AF_INET || m_sockAddr.sin_addr.s_addr == INADDR_NONE)
+    {
+
+	  m_sockAddr.sin_family = AF_INET;
+	  m_sockAddr.sin_addr.s_addr = inet_addr(m_server);
+
+// if address is INADDR_NONE then address was a name, not a number
+
+	  if (m_sockAddr.sin_addr.s_addr == INADDR_NONE)
+	   {
+      m_iConnectPhase = eConnectMudNameLookup;
+
+      if (LookupHostName (m_server))
+        return FALSE;
+
+      return TRUE;    // we are waiting for host name lookup to finish
+
+	   }   // end of address not being an IP address
+
+    }   // end of not having converted the name to an address
+
+// if we got this far we know the host IP address - how about the proxy server address?
+
+  if (m_iSocksProcessing != eProxyServerNone)
+    {
+    if (m_ProxyAddr.sin_family != AF_INET || m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
+      {
+
+	    m_ProxyAddr.sin_family = AF_INET;
+	    m_ProxyAddr.sin_addr.s_addr = inet_addr(m_strProxyServerName);
+
+  // if address is INADDR_NONE then address was a name, not a number
+
+	    if (m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
+	     {
+        m_iConnectPhase = eConnectProxyNameLookup;
+
+        if (LookupHostName (m_strProxyServerName))
+          return FALSE;
+
+        return TRUE;    // we are waiting for proxy name lookup to finish
+
+	     }   // end of address not being an IP address
+
+      }   // end of not having converted the name to an address
+
+    }   // end of needing a proxy server address
+
+
+// it seems both the world and proxy server addresses are known - 
+// get on with connecting to one of them
+
+  InitiateConnection ();
+
+	return TRUE;
+}
+
+
+// ── OnBytesReceived ──────────────────────────────────────────────────────────
+// Everything that happens to a packet AFTER the transport delivered it:
+// proxy-phase parsing, byte counters, MCCP decompression, raw logging, and
+// the DisplayMsg pipeline hand-off.  Split out of ReceiveMsg (ITransport
+// migration step T2b) — this is where the transport adapter's onBytes event
+// lands once the seam is live.  `buff` may be mutated (proxy memmove).
+
+void CMUSHclientDoc::OnBytesReceived (char * buff, int count)
+{
+  Frame.CheckTimerFallback ();   // see if time is up for timers to fire
+
+//  TRACE1 ("Phase now = %i\n", m_iConnectPhase);
+//  TRACE2 ("Buff [0] = %i, Buff [1] = %i\n",
+//          (int) buff [0], (int) buff [1]);
+
+// if we are expecting a response from the proxy server, process that
+
+// SOCKS 5 - see RFC 1928
+
+  if (m_iConnectPhase == eConnectAwaitingProxyResponse1 ||
+      m_iConnectPhase == eConnectAwaitingProxyResponse2 ||
+      m_iConnectPhase == eConnectAwaitingProxyResponse3)
+    {
+    int iBytesToMove = 0;
+
+    switch (m_iConnectPhase)
+      {
+      case eConnectAwaitingProxyResponse1: 
+         iBytesToMove = ProcessProxyResponse1 (buff, count);
+         break;
+
+      case eConnectAwaitingProxyResponse2: 
+         iBytesToMove = ProcessProxyResponse2 (buff, count);
+         break;
+
+      case eConnectAwaitingProxyResponse3:
+         iBytesToMove = ProcessProxyResponse3 (buff, count);
+         break;
+      
+      }   // end of switch
+
+    if (iBytesToMove < 0)
+      return;   // error return
+
+    // only the expected response? that's it for that packet
+    if (count <= iBytesToMove)
+      return;
+
+    // throw away proxy response, and keep going
+    memmove (buff, &buff [iBytesToMove], count - iBytesToMove);
+    count -= iBytesToMove;
+
+    }   // end of processing proxy server response
+
+  // we aren't connected - discard anything we get here
+  if (m_iConnectPhase != eConnectConnectedToMud)
+    return;
+
+  m_iInputPacketCount++;       // count packets
+  m_nBytesIn += count;    // count bytes in
+
+  if (m_bCompress)   // if we are compressing, put data into zlib buffer
+    {
+    if ((COMPRESS_BUFFER_LENGTH - m_zCompress.avail_in) < (uInt) count)
+      {
+      OnConnectionDisconnect ();    // close the world
+      TMessageBox ("Insufficient memory in buffer to decompress text", MB_ICONEXCLAMATION);
+      return;
+      }
+    // shuffle existing input to-be-processed to start of buffer
+    if (m_zCompress.avail_in)
+      memmove (m_CompressInput, m_zCompress.next_in, m_zCompress.avail_in);
+    m_zCompress.next_in = m_CompressInput;
+    // add new stuff
+    memcpy (&m_zCompress.next_in [m_zCompress.avail_in], buff, count);
+    m_zCompress.avail_in += count;
+    // stats - count compressed bytes
+    m_nTotalCompressed += count;
+    }
+
+  // now display the message, unless we are getting compressed data
+
+  // decompress until something stops us (like the big goat)
+  while (true)
+    {
+
+    // if we aren't in decompression mode, just process the text as usual
+    if (!m_bCompress)   // not compressed yet
+      {
+      if (m_logfile && m_bLogRaw)  // raw log if wanted
+        WriteToLog (buff, count);  
+      DisplayMsg (buff, count, 0);
+      }
+
+    // if that didn't throw us into compressed, mode, just exit
+    if (!m_bCompress)  
+      break;    // still not compressed - exit
+
+    // is compressed now
+
+    // give up if nothing to display
+    if (m_zCompress.avail_in <= 0)
+       break;    // no data to process
+
+    LARGE_INTEGER start, 
+                  finish;
+
+    if (App.m_iCounterFrequency)
+      QueryPerformanceCounter (&start);
+    else
+      {
+      start.QuadPart = 0;
+      finish.QuadPart = 0;
+      }
+
+    // decompress it
+    int iCompressResult;
+    do {
+       iCompressResult = inflate (&m_zCompress, Z_SYNC_FLUSH);
+
+       // buffer too small? (highly compressed text, huh?)
+       // make larger, try again - version 4.74
+       // See: http://www.gammon.com.au/forum/?id=11160 
+       if (iCompressResult == Z_BUF_ERROR)
+         {
+         m_nCompressionOutputBufferSize += COMPRESS_BUFFER_LENGTH;
+         m_zCompress.avail_out += COMPRESS_BUFFER_LENGTH;
+         m_CompressOutput = (Bytef *) realloc (m_CompressOutput, m_nCompressionOutputBufferSize);
+
+         if (m_CompressOutput == NULL)
+           {
+            OnConnectionDisconnect ();    // close the world
+            free (m_CompressInput);       // may as well get rid of compression input as well
+            m_CompressInput = NULL;
+            TMessageBox ("Insufficient memory to decompress MCCP text.", MB_ICONEXCLAMATION);
+            return;
+           }  // end of cannot get more memory
+         }  // end of Z_BUF_ERROR
+
+      } while (iCompressResult == Z_BUF_ERROR);
+
+    if (App.m_iCounterFrequency)
+      {
+      QueryPerformanceCounter (&finish);
+      m_iCompressionTimeTaken += finish.QuadPart - start.QuadPart;
+      }
+
+    // error?
+    if (iCompressResult < 0)
+      {
+      char * pMsg = m_zCompress.msg;    // closing may clear the message
+
+      OnConnectionDisconnect ();    // close the world
+      if (pMsg)
+        UMessageBox (TFormat ("Could not decompress text from MUD: %s",
+                          (LPCTSTR) pMsg), MB_ICONEXCLAMATION);
+      else
+        UMessageBox (TFormat ("Could not decompress text from MUD: %i",
+                          iCompressResult), MB_ICONEXCLAMATION);
+      return;
+      }
+
+    // work out how much we got, and display it
+    int iLength = m_nCompressionOutputBufferSize - m_zCompress.avail_out;
+    
+    // stats - count uncompressed bytes
+    m_nTotalUncompressed += iLength;
+
+    if (iLength > 0)
+      {
+      // display it - hopefully we won't get a compression code in the middle of our
+      // compressed data - *that* would cause problems. :)
+
+      if (m_logfile && m_bLogRaw)  // raw log if wanted
+        WriteToLog ((LPCTSTR) m_CompressOutput, iLength);  
+
+      DisplayMsg ((LPCTSTR) m_CompressOutput, iLength, 0);    // send uncompressed data to screen
+      m_zCompress.next_out = m_CompressOutput;      // reset for more output
+      m_zCompress.avail_out = m_nCompressionOutputBufferSize;
+      }
+
+    // if end of stream, turn decompression off
+    if (iCompressResult == Z_STREAM_END)
+      {    // we can stop decompressing
+      m_bCompress = false;
+      // put remaining stuff back into buff
+      memcpy (buff, m_zCompress.next_in, m_zCompress.avail_in);
+      count = m_zCompress.avail_in;
+      }   // end of Z_STREAM_END
+
+    }   // end of decompression loop
+
+}
+
+
+void CMUSHclientDoc::OnConnectionDisconnect() 
+{
+
+  TRACE ("CMUSHclientDoc::OnConnectionDisconnect\n");
+
+  m_bDisconnectOK = true;     // don't want reconnect on manual disconnect
+
+  // work out how long they were connected
+  m_tsConnectDuration += CTime::GetCurrentTime() - m_tConnectTime;
+
+// first cancel any host name lookup that might be in progress
+
+  if (m_hNameLookup)
+    WSACancelAsyncRequest (m_hNameLookup);  // cancel host name lookup in progress
+
+  delete [] m_pGetHostStruct;   // delete buffer used by host name lookup
+  m_pGetHostStruct = NULL;
+  m_hNameLookup = NULL;
+
+  App.m_bUpdateActivity = TRUE;   // new activity!
+
+  MXP_Off (true);   // turn off MXP now
+
+// clean up SSL before closing the socket
+
+  SSLCleanup ();
+
+// close the socket
+
+#ifndef _WIN32
+  // T2d: tear down the PAL transport (the port's socket) — mirrors the
+  // CWorldSocket sequence below: cancel any DNS lookup in flight, shut the
+  // stream down, run the disconnect bookkeeping, destroy.
+  if (m_pTransport)
+    {
+    m_pTransport->cancelResolve ();
+    m_pTransport->close ();
+    ConnectionClosed (0);
+    delete m_pTransport;
+    m_pTransport = NULL;
+    }
+#endif
+
+#ifdef _WIN32
+	if (m_pSocket)
+	{
+
+    ShutDownSocket (*m_pSocket);
+
+    m_pSocket->OnClose (0);
+
+// delete the socket
+
+    delete m_pSocket;
+    m_pSocket = NULL;
+
+    }
+#endif // _WIN32
+
+  m_iConnectPhase = eConnectNotConnected;
+
+  }
+
+
+#ifndef _WIN32
+// StartSSLHandshake, port body (T3c): the transport owns the WHOLE TLS
+// session (context, non-blocking handshake stepping, verification, encrypted
+// I/O, the decrypted-bytes drain).  Policy stays in the engine: the outcome
+// lands in OnTlsEstablished / OnTlsFailed via the events bridge.  The
+// Windows body (native OpenSSL over CWorldSocket) stays in doc.cpp until T5.
+void CMUSHclientDoc::StartSSLHandshake (void)
+  {
+
+  TRACE ("CMUSHclientDoc::StartSSLHandshake\n");
+
+  m_iConnectPhase = eConnectAwaitingSSLHandshake;
+
+  if (m_pTransport)
+    {
+    pal::TlsParams params;
+    params.serverName = (const char *) m_server;
+    params.allowInvalidCert = m_bSSLAllowInvalidCert;
+    m_pTransport->startTls (params);
+    }
+
+  }   // end of CMUSHclientDoc::StartSSLHandshake
+#endif // !_WIN32
+
+
 // ── Send + connect-outcome (single-sourced, T3b) ────────────────────────────
 
 CString GetConnectionStatus (const int iStatus)

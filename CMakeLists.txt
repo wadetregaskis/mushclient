@@ -446,7 +446,8 @@ if(NOT WIN32)
         scripting/scriptengine.cpp
 
         # Networking (Phase 3)
-        worldsock.cpp
+        # (worldsock.cpp left the mushcore build at T3c: off-Windows the
+        # engine connects through pal::ITransport, never CWorldSocket)
         # pal::ITransport POSIX adapter (T3a): mushcore drives the SAME
         # transport code the product ships — the connection lifecycle is
         # single-sourced in doc_shared.cpp on top of it.

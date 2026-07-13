@@ -18,7 +18,6 @@
 
 #include "mc_test.h"
 #include "platform/doc_stub.h"
-#include "worldsock.h"
 #include "pal/itransport.h"
 
 #include <cstring>
@@ -277,7 +276,7 @@ TEST(PalTransport, Socks4TunnelEstablished)
 }
 
 // A wrong SOCKS version in the method reply aborts: parser returns -1 and
-// the connection is torn down (socket deleted, phase reset).
+// the connection is torn down (transport destroyed, phase reset).
 TEST(PalTransport, Socks5BadVersionAborts)
 {
     CMUSHclientDoc* doc = make_proxy_doc(eProxyServerSocks5, "", "");
@@ -286,7 +285,7 @@ TEST(PalTransport, Socks5BadVersionAborts)
     char reply[] = { 4, 0 };
     int consumed = doc->ProcessProxyResponse1(reply, 2);
     EXPECT_TRUE(consumed == -1);
-    EXPECT_TRUE(doc->m_pSocket == nullptr);
+    EXPECT_TRUE(doc->m_pTransport == nullptr);   // the transport is torn down
     EXPECT_TRUE(doc->m_iConnectPhase == eConnectNotConnected);
     delete doc;
 }
@@ -302,7 +301,7 @@ TEST(PalTransport, Socks5ConnectRefusedAborts)
     char reply3[] = { 5, 5, 0, 1, 0, 0, 0, 0, 0, 0 };   // 5 = refused
     int consumed = doc->ProcessProxyResponse3(reply3, 10);
     EXPECT_TRUE(consumed == -1);
-    EXPECT_TRUE(doc->m_pSocket == nullptr);
+    EXPECT_TRUE(doc->m_pTransport == nullptr);   // the transport is torn down
     EXPECT_TRUE(doc->m_iConnectPhase == eConnectNotConnected);
     delete doc;
 }

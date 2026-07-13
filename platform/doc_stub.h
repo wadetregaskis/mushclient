@@ -826,7 +826,7 @@ public:
 // ── Forward declarations ──────────────────────────────────────────────────
 // (CFont is now fully defined in platform/mfc_ui.h)
 class CMUSHclientDoc;
-class CWorldSocket;      // defined in worldsock.h; used as CMUSHclientDoc::m_pSocket
+class CWorldSocket;      // defined in worldsock.h (Windows-only since T3c)
 
 // ── CMUSHView / CSendView stubs ───────────────────────────────────────────
 // ProcessPreviousLine.cpp uses RUNTIME_CLASS(CMUSHView) and IsKindOf().
@@ -1542,8 +1542,7 @@ public:
     CString        m_strProxyUserName;
     CString        m_strProxyPassword;
 
-    // ── Socket / connection phase (worldsock.cpp) ─────────────────────────
-    CWorldSocket* m_pSocket          = nullptr;
+    // ── Connection phase (the socket itself is the PAL transport below) ───
     int           m_iConnectPhase    = eConnectNotConnected;
 
     // ── PAL: the byte-transport seam (ITransport T3a; mirrors doc.h) ──────
@@ -1669,6 +1668,8 @@ public:
     SSL*     m_pSSL           = nullptr;
     SSL_CTX* m_pSSL_CTX       = nullptr;
     CString  m_strSSLLastError;
+    bool     m_bSSLAllowInvalidCert  = false;  // user consent, session only
+    BOOL     m_bEnableAutoSay        = FALSE;  // auto-say off at connect (doc.h twin)
 
     // ── UTF-8 ──────────────────────────────────────────────────────────
     unsigned short m_bUTF_8          = 0;
@@ -2024,7 +2025,7 @@ public:
 
     // ── Connection helpers ─────────────────────────────────────────────
     BOOL CheckConnected();   // returns FALSE (0) if connected; non-zero if not
-    void ConnectSocket();   // implemented in doc_portable.cpp
+    BOOL ConnectSocket(void);   // single-sourced in doc_shared.cpp (T3c)
 
     // ── Trigger execution (stub — scripting not wired yet) ────────────
     void ExecuteTriggerScript(CTrigger* pTrigger, CString strLine,

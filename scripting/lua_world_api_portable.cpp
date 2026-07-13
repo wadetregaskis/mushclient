@@ -1917,7 +1917,7 @@ static int L_ConnectWorld(lua_State* L)
 static int L_DisconnectWorld(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    if (pDoc->m_pSocket) {
+    if (pDoc->ConnectionOpen()) {
         pDoc->OnConnectionDisconnect();
     }
     lua_pushnumber(L, eOK);

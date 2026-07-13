@@ -4,7 +4,7 @@
 // Aliases intercept typed commands before they go to the MUD and can
 // substitute, suppress, or expand them.  m_nTotalLinesSent is the observable:
 // SendMsg increments it for every line actually written to the socket.
-// (SendPacket is a no-op when m_pSocket == nullptr, so no real socket needed.)
+// (SendPacket is a no-op when m_pTransport == nullptr, so no transport needed.)
 
 #include "mc_test.h"
 #include "platform/doc_stub.h"

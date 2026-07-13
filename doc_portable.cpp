@@ -198,11 +198,6 @@ CMUSHclientDoc::~CMUSHclientDoc()
     App.m_pWorldDocTemplate->RemoveDoc(this);
 
     // Close socket first so no callbacks fire into a partially-destroyed doc.
-    if (m_pSocket) {
-        delete m_pSocket;
-        m_pSocket = nullptr;
-    }
-
     TeardownTransport();   // PAL transport + events bridge (doc_shared.cpp)
 
     // Delete plugins (CPlugin::~CPlugin() fires OnPluginClose for each).
@@ -604,7 +599,7 @@ void CMUSHclientDoc::AddToLine(const char* text, const int /*flags*/)
 // We read the actual terminal size from the OS; fall back to iNewWidth x 24.
 void CMUSHclientDoc::SendWindowSizes(const int iNewWidth)
 {
-    if (!m_pSocket) return;
+    if (!ConnectionOpen()) return;
 
     unsigned short cols = (unsigned short)iNewWidth;
     unsigned short rows = 24;
@@ -640,35 +635,7 @@ bool CMUSHclientDoc::InitZlib(z_stream& zs)
     return (inflateInit(&zs) == Z_OK);
 }
 
-void CMUSHclientDoc::OnConnectionDisconnect()
-{
-    // Fire OnWorldDisconnect Lua callback before tearing down socket
-    if (m_iConnectPhase == eConnectConnectedToMud &&
-        m_dispidWorldDisconnect != DISPID_UNKNOWN) {
-        CScriptEngine* engine = GetScriptEngine();
-        if (engine && engine->IsLua()) {
-            list<double> nparams;
-            list<string> sparams;
-            long nInvocations = 0;
-            engine->ExecuteLua(m_dispidWorldDisconnect,
-                               m_strWorldDisconnect,
-                               eInputFromServer,
-                               "world", "disconnect",
-                               nparams, sparams,
-                               nInvocations);
-        }
-    }
-
-    // Fire OnPluginDisconnect for every loaded plugin
-    if (m_iConnectPhase == eConnectConnectedToMud)
-        SendToAllPluginCallbacks(ON_PLUGIN_DISCONNECT);
-
-    if (m_pSocket) {
-        delete m_pSocket;
-        m_pSocket = nullptr;
-    }
-    m_iConnectPhase = eConnectNotConnected;
-}
+// OnConnectionDisconnect: single-sourced in doc_shared.cpp (T3c).
 
 // ── FireWorldClose — fire the on_world_close Lua callback ────────────────────
 // Mirrors the on_world_disconnect path in OnConnectionDisconnect().
@@ -1138,171 +1105,9 @@ void CMUSHclientDoc::StartNewLine(const bool hard_break, const int flags)
 
 // ── ReceiveMsg — read from socket, decompress if needed, call DisplayMsg ─────
 
-void CMUSHclientDoc::ReceiveMsg()
-{
-    char buff[9000];   // < COMPRESS_BUFFER_LENGTH
-
-    if (m_iConnectPhase == eConnectAwaitingSSLHandshake) {
-        ContinueSSLHandshake();
-        return;
-    }
-
-    // SOCKS proxy negotiation phases — consume the proxy packet then continue
-    if (m_iConnectPhase == eConnectAwaitingProxyResponse1 ||
-        m_iConnectPhase == eConnectAwaitingProxyResponse2 ||
-        m_iConnectPhase == eConnectAwaitingProxyResponse3) {
-        char proxy_buf[512];
-        int n;
-#ifdef OPENSSL_FOUND
-        n = (m_pSSL && m_bSSL_Connected)
-              ? SSL_read(m_pSSL, proxy_buf, (int)sizeof(proxy_buf) - 1)
-              : (int)::recv(m_pSocket->m_hSocket, proxy_buf,
-                            sizeof(proxy_buf) - 1, 0);
-#else
-        n = (int)::recv(m_pSocket->m_hSocket, proxy_buf,
-                        sizeof(proxy_buf) - 1, 0);
-#endif
-        if (n <= 0) return;
-
-        int iBytesToMove = 0;
-        switch (m_iConnectPhase) {
-            case eConnectAwaitingProxyResponse1:
-                iBytesToMove = ProcessProxyResponse1(proxy_buf, n); break;
-            case eConnectAwaitingProxyResponse2:
-                iBytesToMove = ProcessProxyResponse2(proxy_buf, n); break;
-            case eConnectAwaitingProxyResponse3:
-                iBytesToMove = ProcessProxyResponse3(proxy_buf, n); break;
-            default: break;
-        }
-        if (iBytesToMove < 0) return;  // error — already disconnected
-        // If the proxy packet had extra data (rare), process it below.
-        if (n <= iBytesToMove) return;
-        // Fall through with the leftover bytes treated as normal MUD data.
-        int leftover = n - iBytesToMove;
-        memmove(buff, proxy_buf + iBytesToMove, (size_t)leftover);
-        // Route directly to DisplayMsg and return; count isn't set up yet.
-        if (m_logfile && m_bLogRaw) WriteToLog(buff, leftover);
-        DisplayMsg(buff, leftover, 0);
-        return;
-    }
-
-    int count;
-
-#ifdef OPENSSL_FOUND
-    if (m_pSSL && m_bSSL_Connected) {
-        count = SSL_read(m_pSSL, buff, (int)sizeof(buff) - 1);
-        if (count <= 0) {
-            int ssl_err = SSL_get_error(m_pSSL, count);
-            if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE)
-                return;
-            if (ssl_err == SSL_ERROR_ZERO_RETURN) {   // clean TLS shutdown
-                if (m_pSocket) m_pSocket->OnClose(0);
-                return;
-            }
-            if (m_iConnectPhase == eConnectDisconnecting) return;
-            if (m_pSocket) m_pSocket->OnClose(0);
-            delete m_pSocket; m_pSocket = nullptr;
-            return;
-        }
-    } else
-#endif
-    {
-        count = m_pSocket->Receive(buff, (int)sizeof(buff) - 1);
-        if (count == SOCKET_ERROR) {
-            if (m_iConnectPhase == eConnectDisconnecting) return;
-            if (m_pSocket) m_pSocket->OnClose(m_pSocket->GetLastError());
-            delete m_pSocket; m_pSocket = nullptr;
-            return;
-        }
-        if (count <= 0) return;
-    }
-
-    if (m_iConnectPhase != eConnectConnectedToMud)
-        return;
-
-    OnBytesReceived(buff, count);
-}
-
-// ── OnBytesReceived ──────────────────────────────────────────────────────────
-// The post-transport receive tail (packet/byte counters, MCCP decompression,
-// DisplayMsg hand-off), split out of ReceiveMsg so it can be driven directly
-// with a caller-supplied buffer — no socket needed — for characterization
-// tests of the connected-data path (ITransport migration; mirrors the doc.cpp
-// OnBytesReceived seam, minus the proxy phases which the portable ReceiveMsg
-// handles before the main receive).  Caller guarantees phase ==
-// eConnectConnectedToMud.  `buff` may be mutated (MCCP stream-end shuffle).
-
-void CMUSHclientDoc::OnBytesReceived(char* buff, int count)
-{
-    ++m_iInputPacketCount;
-    m_nBytesIn += count;
-
-    // ── MCCP decompression path ───────────────────────────────────────────
-    if (m_bCompress) {
-        if ((COMPRESS_BUFFER_LENGTH - (int)m_zCompress.avail_in) < count) {
-            OnConnectionDisconnect();
-            fprintf(stderr, "MUSHclient: MCCP input buffer overflow\n");
-            return;
-        }
-        if (m_zCompress.avail_in)
-            memmove(m_CompressInput, m_zCompress.next_in, m_zCompress.avail_in);
-        m_zCompress.next_in = m_CompressInput;
-        memcpy(&m_zCompress.next_in[m_zCompress.avail_in], buff, count);
-        m_zCompress.avail_in  += count;
-        m_nTotalCompressed    += count;
-    }
-
-    while (true) {
-        if (!m_bCompress) {
-            DisplayMsg(buff, count, 0);
-        }
-        if (!m_bCompress)
-            break;  // not yet compressed or just turned off
-
-        if (m_zCompress.avail_in <= 0)
-            break;
-
-        int iResult;
-        do {
-            iResult = inflate(&m_zCompress, Z_SYNC_FLUSH);
-            if (iResult == Z_BUF_ERROR) {
-                m_nCompressionOutputBufferSize += COMPRESS_BUFFER_LENGTH;
-                m_zCompress.avail_out += COMPRESS_BUFFER_LENGTH;
-                m_CompressOutput = (Bytef*)realloc(m_CompressOutput,
-                                                    m_nCompressionOutputBufferSize);
-                if (!m_CompressOutput) {
-                    OnConnectionDisconnect();
-                    fprintf(stderr, "MUSHclient: out of memory during MCCP inflate\n");
-                    return;
-                }
-            }
-        } while (iResult == Z_BUF_ERROR);
-
-        if (iResult < 0) {
-            const char* msg = m_zCompress.msg;
-            OnConnectionDisconnect();
-            fprintf(stderr, "MUSHclient: MCCP decompress error: %s\n",
-                    msg ? msg : "(unknown)");
-            return;
-        }
-
-        int iLength = m_nCompressionOutputBufferSize - (int)m_zCompress.avail_out;
-        m_nTotalUncompressed += iLength;
-
-        if (iLength > 0) {
-            DisplayMsg((const char*)m_CompressOutput, iLength, 0);
-            m_zCompress.next_out  = m_CompressOutput;
-            m_zCompress.avail_out = (uInt)m_nCompressionOutputBufferSize;
-        }
-
-        if (iResult == Z_STREAM_END) {
-            m_bCompress = false;
-            memcpy(buff, m_zCompress.next_in, m_zCompress.avail_in);
-            count = (int)m_zCompress.avail_in;
-        }
-    }
-}
-
+// ReceiveMsg: dead off-Windows — bytes arrive via the transport bridge
+// (CDocTransportEvents::onBytes -> OnBytesReceived, doc_shared.cpp; T3c).
+// OnBytesReceived: single-sourced in doc_shared.cpp (T3c).
 // OnConnect: single-sourced in doc_shared.cpp (T3b).
 
 // ── ConnectionEstablished ─────────────────────────────────────────────────────
@@ -1418,104 +1223,9 @@ void CMUSHclientDoc::ConnectionEstablished()
 // ── SSL implementation ────────────────────────────────────────────────────────
 
 
-void CMUSHclientDoc::StartSSLHandshake()
-{
-#ifdef OPENSSL_FOUND
-    m_iConnectPhase = eConnectAwaitingSSLHandshake;
-
-    m_pSSL_CTX = SSL_CTX_new(TLS_client_method());
-    if (!m_pSSL_CTX) {
-        Note("--- SSL error: unable to create SSL context ---");
-        OnConnectionDisconnect();
-        return;
-    }
-
-    // Require TLS 1.2 or better
-    SSL_CTX_set_min_proto_version(m_pSSL_CTX, TLS1_2_VERSION);
-
-    // Enable certificate verification (warn-only, won't abort connection)
-    SSL_CTX_set_verify(m_pSSL_CTX, SSL_VERIFY_PEER,
-                       [](int preverify_ok, X509_STORE_CTX*) -> int {
-                           return preverify_ok;  // accept; log result after handshake
-                       });
-
-    // Load system certificate store
-    SSL_CTX_set_default_verify_paths(m_pSSL_CTX);
-
-    m_pSSL = SSL_new(m_pSSL_CTX);
-    if (!m_pSSL) {
-        Note("--- SSL error: unable to create SSL object ---");
-        SSLCleanup();
-        OnConnectionDisconnect();
-        return;
-    }
-
-    SSL_set_fd(m_pSSL, m_pSocket->m_hSocket);
-    SSL_set_tlsext_host_name(m_pSSL, (const char*)m_server);
-    // Verify the certificate is actually issued for this host (CN/SAN match).
-    // The verify callback returns preverify_ok, so a mismatch aborts the
-    // handshake — the CLI has no prompt, so it fails closed (secure default).
-    if (!m_server.IsEmpty())
-        SSL_set1_host(m_pSSL, (const char*)m_server);
-    SSL_set_connect_state(m_pSSL);
-
-    ContinueSSLHandshake();
-#else
-    Note("--- SSL not available: rebuild with OpenSSL ---");
-    OnConnectionDisconnect();
-#endif
-}
-
-void CMUSHclientDoc::ContinueSSLHandshake()
-{
-#ifdef OPENSSL_FOUND
-    int ret = SSL_do_handshake(m_pSSL);
-
-    if (ret == 1) {
-        // Handshake succeeded
-        m_bSSL_Connected = true;
-
-        long verify_result = SSL_get_verify_result(m_pSSL);
-        if (verify_result != X509_V_OK) {
-            CString msg;
-            msg.Format("--- TLS certificate verification warning: %s ---",
-                       X509_verify_cert_error_string(verify_result));
-            Note(msg);
-        }
-
-        const char* version = SSL_get_version(m_pSSL);
-        const char* cipher  = SSL_get_cipher_name(m_pSSL);
-        CString info;
-        info.Format("--- Connected via %s (%s) ---", version, cipher);
-        Note(info);
-
-        m_iConnectPhase = eConnectConnectedToMud;
-        ConnectionEstablished();
-        return;
-    }
-
-    int ssl_err = SSL_get_error(m_pSSL, ret);
-
-    if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE)
-        return;  // Wait for next OnReceive / OnSend callback
-
-    // Handshake failed
-    unsigned long err_code = ERR_get_error();
-    char err_buf[256];
-    ERR_error_string_n(err_code, err_buf, sizeof(err_buf));
-
-    CString msg;
-    msg.Format("--- TLS handshake failed: %s ---", err_buf);
-    Note(msg);
-
-    m_strSSLLastError = err_buf;
-    SSLCleanup();
-    OnConnectionDisconnect();
-#else
-    // No OpenSSL — shouldn't reach here, but be safe
-    OnConnectionDisconnect();
-#endif
-}
+// StartSSLHandshake: single-sourced in doc_shared.cpp (T3c); the TLS
+// session itself lives inside the transport adapter (no doc-level
+// handshake stepping off-Windows — ContinueSSLHandshake is gone).
 
 // ── CloseLog ─────────────────────────────────────────────────────────────────
 // Writes the log-file postamble (if any) and closes m_logfile.
@@ -2577,69 +2287,6 @@ void CMUSHclientDoc::OnScriptFileChanged(bool /*bForce*/)
 // Called automatically from timers.cpp's CheckTimers() when:
 //   App.m_bReconnectOnLinkFailure is true AND
 //   !m_bDisconnectOK AND m_iConnectPhase == eConnectNotConnected
-void CMUSHclientDoc::ConnectSocket()
-{
-    if (m_server.IsEmpty() || m_port == 0) return;
-    if (m_iConnectPhase != eConnectNotConnected) return;
-
-    // ── Tear down existing socket ─────────────────────────────────────────
-    if (m_pSocket) {
-        delete m_pSocket;
-        m_pSocket = nullptr;
-    }
-
-    // Reset SSL and connect-phase state accumulated during the previous session.
-    m_bSSL_Connected = false;
-
-    // ── Create new socket ─────────────────────────────────────────────────
-    CWorldSocket* sock = new CWorldSocket(this);
-    m_pSocket = sock;
-
-    if (!sock->Create()) {
-        Note("Reconnect: could not create socket.");
-        delete m_pSocket;
-        m_pSocket = nullptr;
-        return;
-    }
-
-    // ── Re-resolve the MUD hostname → m_sockAddr (needed by proxy) ───────
-    {
-        struct addrinfo hints{}, *res = nullptr;
-        hints.ai_family   = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        char port_str[16];
-        snprintf(port_str, sizeof port_str, "%u", (unsigned)m_port);
-        if (::getaddrinfo((const char*)m_server, port_str, &hints, &res) == 0 && res) {
-            m_sockAddr = *reinterpret_cast<struct sockaddr_in*>(res->ai_addr);
-            ::freeaddrinfo(res);
-        }
-    }
-
-    // ── Connect (via proxy or direct) ─────────────────────────────────────
-    const char*  connect_host = (const char*)m_server;
-    unsigned int connect_port = m_port;
-    if (m_iSocksProcessing != eProxyServerNone &&
-        !m_strProxyServerName.IsEmpty() &&
-        m_iProxyServerPort != 0) {
-        connect_host = (const char*)m_strProxyServerName;
-        connect_port = m_iProxyServerPort;
-        Note(CString("Reconnecting via proxy at ") + m_strProxyServerName + " ...");
-    } else {
-        Note(CString("Reconnecting to ") + m_mush_name + " ...");
-    }
-
-    m_iConnectPhase = eConnectConnecting;
-    m_bDisconnectOK = false;
-
-    if (!sock->Connect(connect_host, connect_port)) {
-        if (sock->GetLastError() != WSAEWOULDBLOCK) {
-            Note("Reconnect: connect() failed immediately.");
-            delete m_pSocket;
-            m_pSocket = nullptr;
-            m_iConnectPhase = eConnectNotConnected;
-        }
-        // WSAEWOULDBLOCK is normal for non-blocking sockets; OnConnect fires later.
-    }
-}
+// ConnectSocket: single-sourced in doc_shared.cpp (T3c).
 
 #endif // !_WIN32

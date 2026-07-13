@@ -1,11 +1,13 @@
 # MUSHclient Platform Abstraction Layer (PAL) — spec
 
 **Status:** living document.  Three of the eight interfaces are LIVE on every
-platform: `IWorldView` (typed-only, P2 complete — still `#ifndef _WIN32` until
-the SOutputLine promotion), `ISurface` (S1–S4 complete incl. the native GDI
+platform: `IWorldView` (typed-only, P2 complete; **unconditional since P4** —
+SOutputLine promoted, so MSVC compiles the seam too, though no native Windows
+adapter emits through it yet), `ISurface` (S1–S4 complete incl. the native GDI
 adapter), and `ITransport` (T1–T5 complete — CWorldSocket is gone; Windows,
-macOS and the headless engine all connect through the seam).  Windows-side
-correctness of the native adapters is by-reasoning until Windows CI exists.
+macOS and the headless engine all connect through the seam).  Every seam the
+engine calls is now compiled on every platform.  Windows-side correctness of
+the native adapters is by-reasoning until Windows CI exists.
 
 ## Goal
 

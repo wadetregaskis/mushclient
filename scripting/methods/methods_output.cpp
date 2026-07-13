@@ -55,13 +55,8 @@ void CMUSHclientDoc::Redraw()
 
 void CMUSHclientDoc::SetOutputFont(LPCTSTR FontName, short PointSize)
 {
-#ifndef _WIN32
   EmitOutputFont(std::string(FontName ? FontName : ""), (int)PointSize,
                  false, false);
-#else
-  ChangeFont(PointSize, FontName, FW_NORMAL, m_font_charset,
-             m_bShowBold, m_bShowItalic, m_bShowUnderline, m_iLineSpacing);
-#endif
 }  // end of CMUSHclientDoc::SetOutputFont
 
 
@@ -75,21 +70,8 @@ void CMUSHclientDoc::DeleteOutput()
 // set pause to true or false for all views
 void CMUSHclientDoc::Pause(BOOL Flag)
 {
-#ifndef _WIN32
   EmitPaused(Flag != 0);
   m_gui_paused = (Flag != 0);
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
-  	  {
-		  CMUSHView* pmyView = (CMUSHView*)pView;
-      pmyView->m_freeze = Flag != 0;
-	    }	  // end of being a CMUSHView
-    }   // end of loop through views
-#endif
 }   // end of CMUSHclientDoc::Pause
 
 
@@ -109,15 +91,7 @@ void CMUSHclientDoc::ResetStatusTime()
 // restores the main frame and brings it to the front
 void CMUSHclientDoc::ActivateClient()
 {
-#ifndef _WIN32
   ActivateClientWindow();
-#else
-  if (Frame.IsIconic ())
-    Frame.ShowWindow(SW_RESTORE);
-
-  Frame.SetForegroundWindow();
-  Frame.SetFocus();
-#endif
 }  // end of CMUSHclientDoc::ActivateClient
 
 
@@ -168,7 +142,7 @@ void CMUSHclientDoc::MoveWorldWindowX(long Left,
                                       short Which)
 {
 #ifndef _WIN32
-  // Non-Windows: each world has exactly one MDI child frame; Which is always 1.
+  // each world has exactly one MDI child frame here; Which is always 1
   if (Which == 1)
     MoveWorldWindowRect (Left, Top, Width, Height);
 #else
@@ -203,7 +177,7 @@ BSTR CMUSHclientDoc::GetWorldWindowPositionX(short Which)
 CString strResult;
 
 #ifndef _WIN32
-  // Non-Windows: each world has exactly one MDI child frame; Which is always 1.
+  // each world has exactly one MDI child frame here; Which is always 1
   int x = 0, y = 0, w = 800, h = 600;
   if (Which == 1 && GetOutputRect (x, y, w, h))
     strResult.Format ("%d,%d,%d,%d", x, y, w, h);
@@ -384,37 +358,7 @@ BOOL CMUSHclientDoc::Transparency(long Key, short Amount)
 
 void CMUSHclientDoc::SetWorldWindowStatus(short Parameter)
 {
-#ifndef _WIN32
   EmitWindowStatus (Parameter);
-#else
-CFrameWnd* pParent = NULL;
-
-  for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
-    {
-    CView* pView = GetNextView(pos);
-
-    if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
-      {
-      CSendView* pmyView = (CSendView*)pView;
-
-      pParent = pmyView->GetParentFrame ();
-
-      break;
-
-      }
-    }
-
-  if (pParent)
-    {
-    switch (Parameter)
-      {
-      case 1: pParent->ShowWindow(SW_SHOWMAXIMIZED); break;
-      case 2: pParent->ShowWindow(SW_MINIMIZE); break;
-      case 3: pParent->ShowWindow(SW_RESTORE); break;
-      case 4: pParent->ShowWindow(SW_SHOWNORMAL); break;
-      } // end of switch
-    } // have parent
-#endif
 }  // end of CMUSHclientDoc::SetWorldWindowStatus
 
 
@@ -672,9 +616,7 @@ long CMUSHclientDoc::SetBackgroundColour(long Colour)
 
   m_iBackgroundColour = Colour;
 
-#ifndef _WIN32
   EmitBackgroundColour((unsigned long)Colour);
-#endif
 
   UpdateAllViews (NULL);
 

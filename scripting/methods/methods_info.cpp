@@ -609,11 +609,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
     case  123: SetUpVariantBool (vaResult, m_bDoingSimulate); break;
     case  124: SetUpVariantBool (vaResult, m_bLineOmittedFromOutput); break;
     case  125:
-#ifdef _WIN32
-               SetUpVariantBool (vaResult, Frame.IsFullScreen ());
-#else
                SetUpVariantBool (vaResult, IsClientFullscreen ());
-#endif
                break;
 
     case  201: SetUpVariantLong (vaResult, m_total_lines); break;
@@ -1104,7 +1100,7 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
     case 296:
       {
 #ifndef _WIN32
-      // Non-Windows: query the output pane's scroll position through the seam.
+      // query the output pane's scroll position through the seam
       if (HaveScrollSink())
         SetUpVariantLong (vaResult, GetScrollPos ());
 #else
@@ -1468,164 +1464,33 @@ COLORREF colour1,
 
 long CMUSHclientDoc::GetSelectionStartLine()
 {
-#ifndef _WIN32
-  // Non-Windows: query the output pane selection through the seam.
+  // query the output pane selection through the seam
   long sl = 0, sc = 0, el = 0, ec = 0;
   GetOutputSelection (sl, sc, el, ec);
   return sl;   // already 1-based; 0 = no selection
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)) && m_LineList.GetCount () > 0)
-  	  {
-		  CMUSHView* pmyView = (CMUSHView*)pView;
-      long startcol,
-           endcol;
-
-      CLine * pStartLine,
-            * pEndLine;
-
-      pStartLine = m_LineList.GetAt (GetLinePosition (pmyView->m_selstart_line));
-      pEndLine   = m_LineList.GetAt (GetLinePosition (pmyView->m_selend_line));
-
-      startcol  = MIN (pmyView->m_selstart_col, pStartLine->len);
-      endcol    = MIN (pmyView->m_selend_col, pEndLine->len);
-
-      // return 0 if no selection
-      if (!(pmyView->m_selend_line > pmyView->m_selstart_line ||
-                  (pmyView->m_selend_line == pmyView->m_selstart_line &&
-                   endcol > startcol)))
-        return 0;
-      return pmyView->m_selstart_line + 1;
-	    }	  // end of being a CMUSHView
-    }   // end of loop through views
-
-	return 0;
-#endif
 }   // end of CMUSHclientDoc::GetSelectionStartLine
 
 long CMUSHclientDoc::GetSelectionEndLine()
 {
-#ifndef _WIN32
   long sl = 0, sc = 0, el = 0, ec = 0;
   GetOutputSelection (sl, sc, el, ec);
   return el;
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)) && m_LineList.GetCount () > 0)
-  	  {
-		  CMUSHView* pmyView = (CMUSHView*)pView;
-      long startcol,
-           endcol;
-
-      CLine * pStartLine,
-            * pEndLine;
-
-      pStartLine = m_LineList.GetAt (GetLinePosition (pmyView->m_selstart_line));
-      pEndLine   = m_LineList.GetAt (GetLinePosition (pmyView->m_selend_line));
-
-      startcol  = MIN (pmyView->m_selstart_col, pStartLine->len);
-      endcol    = MIN (pmyView->m_selend_col, pEndLine->len);
-
-      // return 0 if no selection
-      if (!(pmyView->m_selend_line > pmyView->m_selstart_line ||
-                  (pmyView->m_selend_line == pmyView->m_selstart_line &&
-                   endcol > startcol)))
-        return 0;
-
-      return pmyView->m_selend_line + 1;
-	    }	  // end of being a CMUSHView
-    }   // end of loop through views
-
-	return 0;
-#endif
 }    // end of CMUSHclientDoc::GetSelectionEndLine
 
 
 
 long CMUSHclientDoc::GetSelectionStartColumn()
 {
-#ifndef _WIN32
   long sl = 0, sc = 0, el = 0, ec = 0;
   GetOutputSelection (sl, sc, el, ec);
   return sc;
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)) && m_LineList.GetCount () > 0)
-  	  {
-		  CMUSHView* pmyView = (CMUSHView*)pView;
-      long startcol,
-           endcol;
-
-      CLine * pStartLine,
-            * pEndLine;
-
-      pStartLine = m_LineList.GetAt (GetLinePosition (pmyView->m_selstart_line));
-      pEndLine   = m_LineList.GetAt (GetLinePosition (pmyView->m_selend_line));
-
-      startcol  = MIN (pmyView->m_selstart_col, pStartLine->len);
-      endcol    = MIN (pmyView->m_selend_col, pEndLine->len);
-
-      // return 0 if no selection
-      if (!(pmyView->m_selend_line > pmyView->m_selstart_line ||
-                  (pmyView->m_selend_line == pmyView->m_selstart_line &&
-                   endcol > startcol)))
-        return 0;
-
-      return startcol + 1;
-	    }	  // end of being a CMUSHView
-    }   // end of loop through views
-
-	return 0;
-#endif
 }  // end of CMUSHclientDoc::GetSelectionStartColumn
 
 long CMUSHclientDoc::GetSelectionEndColumn()
 {
-#ifndef _WIN32
   long sl = 0, sc = 0, el = 0, ec = 0;
   GetOutputSelection (sl, sc, el, ec);
   return ec;
-#else
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)) && m_LineList.GetCount () > 0)
-  	  {
-		  CMUSHView* pmyView = (CMUSHView*)pView;
-      long startcol,
-           endcol;
-
-      CLine * pStartLine,
-            * pEndLine;
-
-      pStartLine = m_LineList.GetAt (GetLinePosition (pmyView->m_selstart_line));
-      pEndLine   = m_LineList.GetAt (GetLinePosition (pmyView->m_selend_line));
-
-      startcol  = MIN (pmyView->m_selstart_col, pStartLine->len);
-      endcol    = MIN (pmyView->m_selend_col, pEndLine->len);
-
-      // return 0 if no selection
-      if (!(pmyView->m_selend_line > pmyView->m_selstart_line ||
-                  (pmyView->m_selend_line == pmyView->m_selstart_line &&
-                   endcol > startcol)))
-        return 0;
-
-      return endcol + 1;
-	    }	  // end of being a CMUSHView
-    }   // end of loop through views
-
-	return 0;
-#endif
 }     // end of CMUSHclientDoc::GetSelectionEndColumn
 
 
@@ -1907,7 +1772,6 @@ BSTR CMUSHclientDoc::GetMainWindowPosition()
 	CString strResult;
 
   CWindowPlacement wp;
-#ifndef _WIN32
   // Port: Frame.m_hWnd is null (the real window is the wx MDI parent frame), so
   // GetWindowPlacement can't see it.  Use the same main-frame rect (IWorldView)
   // that the Lua world.GetMainWindowPosition() uses.
@@ -1920,9 +1784,6 @@ BSTR CMUSHclientDoc::GetMainWindowPosition()
     wp.rcNormalPosition.right  = x + w;
     wp.rcNormalPosition.bottom = y + h;
     }
-#else
-  Frame.GetWindowPlacement(&wp);
-#endif
 
 	windowPositionHelper (strResult, wp.rcNormalPosition);
   return strResult.AllocSysString();

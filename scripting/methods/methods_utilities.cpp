@@ -735,38 +735,10 @@ BSTR CMUSHclientDoc::Menu(LPCTSTR Items, LPCTSTR Default)
 
 void CMUSHclientDoc::SetSelection(long StartLine, long EndLine, long StartColumn, long EndColumn)
 {
-#ifndef _WIN32
-  // Forward to the wxWidgets output pane selection.  Arguments are 1-based;
+  // Forward to the world view's output selection.  Arguments are 1-based;
   // convert to 0-based SelPoint coords expected by COutputPane.
   SetOutputSelectionRange((int)StartLine, (int)EndLine,
                           (int)StartColumn, (int)EndColumn);
-#else
-  CMUSHView * pmyView = GetFirstOutputWindow ();
-
-  // return if unable
-  if (!pmyView)
-    return;
-
-  pmyView->m_selstart_line  = StartLine - 1;
-  pmyView->m_selend_line    = EndLine - 1;
-  pmyView->m_selstart_col   = StartColumn - 1;
-  pmyView->m_selend_col     = EndColumn - 1;
-
-  pmyView->m_pin_line       = pmyView->m_selstart_line;
-  pmyView->m_pin_col        = pmyView->m_selstart_col;
-
-  pmyView->SelectionChanged ();
-
-  CRgn newrgn;
-
-  if (!pmyView->get_selection (newrgn) && m_bAutoFreeze)
-     pmyView->m_freeze = true;   // freeze output so they can copy or print it
-
-  newrgn.DeleteObject ();
-
-  // Invalidate new stuff
-  UpdateAllViews (NULL);
-#endif
 }   // end of CMUSHclientDoc::SetSelection
 
 

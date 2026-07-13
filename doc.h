@@ -1690,8 +1690,8 @@ public:
   // world.Pause(bPause) sets this; read by GetInfo(eScrolledBack).
   bool m_gui_paused = false;
 
-  // ── Non-Windows GUI input/view callbacks ──────────────────────────────────
-  // world.SetOutputFont(): change the output font family / size / style.
+  // (the m_fn_* GUI callbacks that once followed were all promoted to typed
+  // IWorldView methods during P2 — see pal/iworldview.h)
 
 
 

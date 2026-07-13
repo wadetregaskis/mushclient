@@ -3803,25 +3803,10 @@ POSITION pos;
 
   // we need to force views to update scroll bar positions and things like that
 
-#ifndef _WIN32
-  // Non-Windows: no CMUSHView; clear the world view's output buffer and reset
+  // clear the world view's output buffer (via the seam) and reset
   // the GUI-emission counter so UpdateAllViews starts from zero.
   EmitClearOutput ();
   m_gui_lines_emitted = 0;
-#else
-  for(pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
-  	  {
-		  CMUSHView* pmyView = (CMUSHView*)pView;
-
-      pmyView->ScrollToPosition (CPoint (0, 0), false);
-		  pmyView->addedstuff();
-	    }
-    }
-#endif
 
   // no recent trigger lines
   m_sRecentLines.clear ();

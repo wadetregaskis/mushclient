@@ -612,7 +612,6 @@ if(NOT WIN32)
         ansi.cpp
         doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
         telnet_phases.cpp
-        worldsock.cpp
         Line.cpp
         ProcessPreviousLine.cpp
         evaluate.cpp

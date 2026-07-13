@@ -975,17 +975,14 @@ BOOL CMainFrame::PreTranslateMessage(MSG* pMsg)
   if (pMsg->message == WM_USER_HOST_NAME_RESOLVED && pMsg->wParam != 0)
     {
 
-// find which world this message was for
+// find which chat socket this message was for (world DNS lives inside the
+// PAL transport since T5 — only chat still resolves through this window)
 
  	  POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
-    CMUSHclientDoc* pDoc = NULL;
 
 	  while (pos)
 	  {
-       pDoc = (CMUSHclientDoc*) App.m_pWorldDocTemplate->GetNextDoc(pos);
-
-      if (pDoc->m_hNameLookup == (char *) pMsg->wParam)
-        break;
+      CMUSHclientDoc* pDoc = (CMUSHclientDoc*) App.m_pWorldDocTemplate->GetNextDoc(pos);
 
       for (POSITION chatpos = pDoc->m_ChatList.GetHeadPosition (); chatpos; )
         {
@@ -997,12 +994,7 @@ BOOL CMainFrame::PreTranslateMessage(MSG* pMsg)
           }   // end of found a chat socket that was resolving a host name
         }  // end of checking chat sockets
 
-      pDoc = NULL;
-
      }  // end of checking documents
-
-    if (pDoc)
-      pDoc->HostNameResolved (pMsg->wParam, pMsg->lParam);
 
     return TRUE;    // message was handled
     }

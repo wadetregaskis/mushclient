@@ -23,8 +23,11 @@ CString Replace (const CString strSource, const CString strTarget,
 
 #include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
 
-#ifndef _WIN32
-#include "platform/posix_transport.h"   // pal::ITransport + events (T3a bridge below)
+// The transport adapter — the ONE per-platform choice this TU makes (T5).
+#ifdef _WIN32
+#include "pal/win_transport.h"          // native CAsyncSocket/OpenSSL adapter
+#else
+#include "platform/posix_transport.h"   // POSIX pump/getaddrinfo/OpenSSL adapter
 #endif
 
 #if defined(OPENSSL_FOUND)
@@ -1208,37 +1211,8 @@ CString strIpAddress = inet_ntoa (*((struct in_addr *) lpHostEntry->h_addr));
 
 // ── Connect / receive-tail / disconnect (single-sourced, T3c) ───────────────
 
-//#include <mstcpip.h>
-// From: mstcpip.h
-/* Argument structure for SIO_KEEPALIVE_VALS */
-
-#ifdef _WIN32
-struct tcp_keepalive {
-    ULONG onoff;
-    ULONG keepalivetime;
-    ULONG keepaliveinterval;
-};
-#endif // _WIN32
-
-//
-// New WSAIoctl Options
-// 
-#ifdef _WIN32
-#define SIO_RCVALL            _WSAIOW(IOC_VENDOR,1)
-#define SIO_RCVALL_MCAST      _WSAIOW(IOC_VENDOR,2)
-#define SIO_RCVALL_IGMPMCAST  _WSAIOW(IOC_VENDOR,3)
-#define SIO_KEEPALIVE_VALS    _WSAIOW(IOC_VENDOR,4)
-#define SIO_ABSORB_RTRALERT   _WSAIOW(IOC_VENDOR,5)
-#define SIO_UCAST_IF          _WSAIOW(IOC_VENDOR,6)
-#define SIO_LIMIT_BROADCASTS  _WSAIOW(IOC_VENDOR,7)
-#define SIO_INDEX_BIND        _WSAIOW(IOC_VENDOR,8)
-#define SIO_INDEX_MCASTIF     _WSAIOW(IOC_VENDOR,9)
-#define SIO_INDEX_ADD_MCAST   _WSAIOW(IOC_VENDOR,10)
-#define SIO_INDEX_DEL_MCAST   _WSAIOW(IOC_VENDOR,11)
-//      SIO_UDP_CONNRESET     _WSAIOW(IOC_VENDOR,12)
-#define SIO_RCVALL_MCAST_IF   _WSAIOW(IOC_VENDOR,13)
-#define SIO_RCVALL_IF         _WSAIOW(IOC_VENDOR,14)
-#endif // _WIN32
+// (the tcp_keepalive / SIO_* block moved into pal/win_transport.cpp at T5 —
+// the adapter owns the keepalive mechanics on every platform)
 
 
 BOOL CMUSHclientDoc::ConnectSocket(void)
@@ -1315,68 +1289,13 @@ CString str;
               (const char *) m_mush_name, m_port);
   Frame.SetStatusMessageNow (str);
 
-#ifndef _WIN32
-
-// T2d: off-Windows the connection runs through the PAL transport
-// (pal::ITransport, POSIX adapter) — CWorldSocket is not created and
-// m_pSocket stays NULL.  The adapter creates the fd at connect time and
-// applies the keepalive policy itself (TransportOptions carries on/off;
-// the 120 s / 6 s / 6-probe timing is fixed engine policy inside it).
+// The connection runs through the PAL transport on EVERY platform (T5):
+// the adapter (native CAsyncSocket/WSAAsyncSelect on Windows, the POSIX
+// pump elsewhere) creates the fd at connect time and applies the keepalive
+// policy itself (TransportOptions carries on/off; the 120 s / 6 s / 6-probe
+// timing is fixed engine policy inside it).
 
   CreateTransport ();
-
-#else
-
-// get rid of any earlier socket
-
-  delete m_pSocket;
-
-// now create a new one
-
-	m_pSocket = new CWorldSocket(this);
-
-	if (!m_pSocket->Create(0,
-                         SOCK_STREAM,
-                         FD_READ | FD_WRITE | FD_CONNECT | FD_CLOSE,
-                         NULL))
-	  {
-
-    int iStatus = GetLastError ();
-
-    // tell them socket create failed
-
-    UMessageBox (TFormat ("Unable to create TCP/IP socket for \"%s\", code = %i (%s)",
-                    (const char *) m_mush_name,
-                    iStatus,
-                    (LPCTSTR) GetSocketError (iStatus)));
-
-		  delete m_pSocket;
-		  m_pSocket = NULL;
-
-		  return FALSE;
-	  }     // end of can't create socket
-
-// stop socket from lingering on close
-
-//  BOOL bLinger = TRUE;
-//  m_pSocket->SetSockOpt (SO_DONTLINGER, &bLinger, sizeof bLinger);
-
-
-  // see: http://www.gammon.com.au/forum/?id=9848
-  if (m_bSendKeepAlives)
-    {
-    DWORD dwBytesReturned;
-    tcp_keepalive keepaliveData = {1, 60 * 1000 * 2, 6000};     // every 2 minutes
-    WSAIoctl (m_pSocket->m_hSocket, SIO_KEEPALIVE_VALS, &keepaliveData, sizeof (keepaliveData), NULL, 0, &dwBytesReturned, NULL, NULL);
-    }
-
-  BOOL bStatus = m_pSocket->AsyncSelect ();
-  int iStatus = 0;
-
-  if (!bStatus)
-    iStatus = GetLastError ();
-
-#endif // _WIN32
 
   m_iConnectPhase = eConnectNotConnected;
 
@@ -1650,14 +1569,7 @@ void CMUSHclientDoc::OnConnectionDisconnect()
   // work out how long they were connected
   m_tsConnectDuration += CTime::GetCurrentTime() - m_tConnectTime;
 
-// first cancel any host name lookup that might be in progress
-
-  if (m_hNameLookup)
-    WSACancelAsyncRequest (m_hNameLookup);  // cancel host name lookup in progress
-
-  delete [] m_pGetHostStruct;   // delete buffer used by host name lookup
-  m_pGetHostStruct = NULL;
-  m_hNameLookup = NULL;
+// (any host name lookup in progress is cancelled by the transport below)
 
   App.m_bUpdateActivity = TRUE;   // new activity!
 
@@ -1669,10 +1581,9 @@ void CMUSHclientDoc::OnConnectionDisconnect()
 
 // close the socket
 
-#ifndef _WIN32
-  // T2d: tear down the PAL transport (the port's socket) — mirrors the
-  // CWorldSocket sequence below: cancel any DNS lookup in flight, shut the
-  // stream down, run the disconnect bookkeeping, destroy.
+  // tear down the transport (the socket, every platform since T5): cancel
+  // any DNS lookup in flight, shut the stream down, run the disconnect
+  // bookkeeping, destroy — the CWorldSocket shutdown/OnClose/delete sequence.
   if (m_pTransport)
     {
     m_pTransport->cancelResolve ();
@@ -1681,35 +1592,16 @@ void CMUSHclientDoc::OnConnectionDisconnect()
     delete m_pTransport;
     m_pTransport = NULL;
     }
-#endif
-
-#ifdef _WIN32
-	if (m_pSocket)
-	{
-
-    ShutDownSocket (*m_pSocket);
-
-    m_pSocket->OnClose (0);
-
-// delete the socket
-
-    delete m_pSocket;
-    m_pSocket = NULL;
-
-    }
-#endif // _WIN32
 
   m_iConnectPhase = eConnectNotConnected;
 
   }
 
 
-#ifndef _WIN32
-// StartSSLHandshake, port body (T3c): the transport owns the WHOLE TLS
-// session (context, non-blocking handshake stepping, verification, encrypted
-// I/O, the decrypted-bytes drain).  Policy stays in the engine: the outcome
-// lands in OnTlsEstablished / OnTlsFailed via the events bridge.  The
-// Windows body (native OpenSSL over CWorldSocket) stays in doc.cpp until T5.
+// StartSSLHandshake (T3c; all platforms since T5): the transport owns the
+// WHOLE TLS session (context, non-blocking handshake stepping, verification,
+// encrypted I/O, the decrypted-bytes drain).  Policy stays in the engine:
+// the outcome lands in OnTlsEstablished / OnTlsFailed via the events bridge.
 void CMUSHclientDoc::StartSSLHandshake (void)
   {
 
@@ -1726,7 +1618,6 @@ void CMUSHclientDoc::StartSSLHandshake (void)
     }
 
   }   // end of CMUSHclientDoc::StartSSLHandshake
-#endif // !_WIN32
 
 
 // ── Send + connect-outcome (single-sourced, T3b) ────────────────────────────
@@ -1828,8 +1719,6 @@ CString CMUSHclientDoc::GetSocketError (int nError)
 void  CMUSHclientDoc::SendPacket (const char * lpBuf, const int nBufLen)
   {
 
-#ifndef _WIN32
-
   // T2d: the port sends through the PAL transport (the append-and-it-drains
   // m_outstanding_data semantics, including the TLS WANT_* retry, live in
   // the adapter).  Bytes are counted here ONLY: the historical double-count
@@ -1847,24 +1736,6 @@ void  CMUSHclientDoc::SendPacket (const char * lpBuf, const int nBufLen)
   m_pTransport->send (lpBuf, nBufLen);
 
   m_nBytesOut += nBufLen;
-
-#else
-
-  if (m_pSocket == NULL)
-    return;
-
-  m_iOutputPacketCount++;
-
-  if (m_bDebugIncomingPackets)
-    Debug_Packets ("Sent ", lpBuf, nBufLen, m_iOutputPacketCount);
-
-  m_pSocket->m_outstanding_data.append (lpBuf, nBufLen);
-
-  m_pSocket->OnSend (0);   // in case FD_WRITE message got lost, try to send again
-
-  m_nBytesOut += nBufLen;
-
-#endif // _WIN32
 
   } // end of CMUSHclientDoc::SendPacket
 
@@ -2042,8 +1913,6 @@ BOOL connected = nErrorCode == 0;
 void CMUSHclientDoc::InitiateConnection (void)
   {
 
-#ifndef _WIN32
-
   // T2d: connect through the PAL transport.  Every outcome arrives via the
   // events bridge → OnConnect: immediate success is deferred to the next
   // pump tick (never re-entrant), an immediate LOCAL failure is delivered
@@ -2072,136 +1941,23 @@ void CMUSHclientDoc::InitiateConnection (void)
                            (unsigned short) m_iProxyServerPort, options);
     }
 
-  return;
-
-#else
-
-  BOOL connected;
-
-  // just so we don't get ridiculous times shown if we don't connect
-  m_tConnectTime = CTime::GetCurrentTime();
-
-// initiate asynchronous connect
-
-  if (m_iSocksProcessing == eProxyServerNone)
-    {
-    m_iConnectPhase = eConnectConnectingToMud;
-    connected = m_pSocket->Connect((SOCKADDR*)&m_sockAddr, sizeof(m_sockAddr));
-    }
-  else
-    {
-    m_iConnectPhase = eConnectConnectingToProxy;
-    connected = m_pSocket->Connect((SOCKADDR*)&m_ProxyAddr, sizeof(m_ProxyAddr));
-    }
-
-  if (connected)
-    {
-    OnConnect (0);    // we have connected already! Do logon of character etc.
-    return;
-    }
-
-// if error code is "would block" then it will finish later
-
-  int iStatus = GetLastError ();
-
-  if (iStatus == WSAEWOULDBLOCK)
-    return;
-
-// tell them connect failed
-
-  if (App.m_bNotifyIfCannotConnect)
-    {
-    CString strMsg;
-
-    strMsg = TFormat ("Unable to connect to \"%s\", code = %i (%s)\n\n"
-                    "Error occurred during phase: %s",
-                    (const char *) m_mush_name,
-                    iStatus,
-                    (LPCTSTR) GetSocketError (iStatus),
-                    (const char *) GetConnectionStatus (m_iConnectPhase));
-
-    // i18n TODO - fix this:
-    switch (m_iConnectPhase)
-      {
-      case eConnectConnectingToMud:      
-        strMsg += ": ";
-        strMsg += inet_ntoa (m_sockAddr.sin_addr);
-        strMsg += CFormat (", port %d", m_port);
-        break; 
-      case eConnectConnectingToProxy:    
-        strMsg += ": ";
-        strMsg += inet_ntoa (m_ProxyAddr.sin_addr);
-        strMsg += CFormat (", port %d", m_iProxyServerPort);
-        break; 
-      } // end of switch
-
-    if (App.m_bErrorNotificationToOutputWindow)
-      Note (strMsg);
-    else
-      UMessageBox (strMsg);
-    }     // end of notification wanted
-
-  TRACE ("CCMUSHclientDoc::InitiateConnection - cannot connect\n");
-
-  m_bDisconnectOK = true;     // don't want reconnect
-  m_iConnectPhase = eConnectNotConnected;
-
-  App.m_bUpdateActivity = TRUE;   // new activity!
-
-#endif // _WIN32
 
   } // end of CMUSHclientDoc::InitiateConnection
 
 
-// ── Async DNS (single-sourced, T3a) ─────────────────────────────────────────
-// Windows resolves via WSAAsyncGetHostByName (HostNameResolved, doc.cpp);
-// the port resolves through the transport (LookupHostNameComplete below).
+// ── Async DNS (single-sourced, T3a; transport-only since T5) ────────────────
+// Every platform resolves through the transport; the completion lands in
+// LookupHostNameComplete below.
 
 bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
   {
-  delete [] m_pGetHostStruct;   // delete buffer just in case
-  m_pGetHostStruct = new char [MAXGETHOSTSTRUCT];
 
-  if (!m_pGetHostStruct)
-    {
-    TMessageBox ("Unable to allocate memory for host name lookup");
-    return true;
-    }
-
-#ifdef _WIN32
-  if (Frame.GetSafeHwnd ())   // forget it if we don't have a window yet
-    m_hNameLookup = WSAAsyncGetHostByName (Frame.GetSafeHwnd (),
-                                           WM_USER_HOST_NAME_RESOLVED,
-                                           sName,
-                                           m_pGetHostStruct,
-                                           MAXGETHOSTSTRUCT);
-
-  if (!m_hNameLookup)
-    {
-    CString strMsg;
-
-    strMsg = TFormat ("Unable to initiate host name lookup for \"%s\"",
-                   sName);
-    UMessageBox (strMsg);
-    delete [] m_pGetHostStruct;
-    m_pGetHostStruct = NULL;
-    m_iConnectPhase = eConnectNotConnected;
-
-    App.m_bUpdateActivity = TRUE;   // new activity!
-
-    }
-
-  return false;    // we are waiting for host name lookup to finish
-
-#else  // !_WIN32
-
-  // Non-Windows: async DNS through the PAL transport (T2d) — its getaddrinfo
-  // thread posts the completion back to the main thread, where the events
-  // bridge calls LookupHostNameComplete().  The connect phase is the resolve
+  // Async DNS through the PAL transport (every platform since T5 — the
+  // Windows adapter keeps the WSAAsyncGetHostByName mechanics the doc used,
+  // delivered to its own window).  The completion arrives via the events
+  // bridge -> LookupHostNameComplete().  The connect phase is the resolve
   // token: the shipping staleness guard drops superseded completions.
   {
-    delete [] m_pGetHostStruct;
-    m_pGetHostStruct = NULL;
 
     if (m_pTransport)
       {
@@ -2227,13 +1983,9 @@ bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
     return !ok;   // true = error, caller should abort
   }
 
-#endif  // _WIN32
-
-
   } // end of CMUSHclientDoc::LookupHostName
 
 
-#ifndef _WIN32
 // Called on the main thread when an async (or synchronous fallback) DNS
 // lookup finishes.  addr is the resolved address; phase is the connect phase
 // that was active when LookupHostName was called; ok is false on failure.
@@ -2296,16 +2048,13 @@ void CMUSHclientDoc::LookupHostNameComplete (struct in_addr addr, int phase, boo
 
   InitiateConnection ();
   } // end of CMUSHclientDoc::LookupHostNameComplete
-#endif  // !_WIN32
 
 
 // ═════════════════════════════════════════════════════════════════════════
-// ITransport (T3a): the transport events bridge + engine TLS policy — the
-// port's single connection substrate, compiled into BOTH builds so mushcore
-// drives the same transport code the product ships.  Windows keeps
-// CWorldSocket (doc.cpp) until T5.
+// ITransport (T3a; all platforms since T5): the transport events bridge +
+// engine TLS policy — the single connection substrate for the product, the
+// headless engine, AND Windows (CWorldSocket is gone).
 // ═════════════════════════════════════════════════════════════════════════
-#ifndef _WIN32
 
 // ── CDocTransportEvents ──────────────────────────────────────────────────────
 // The doc-side pal::ITransportEvents bridge (ITransport migration step T2d):
@@ -2391,7 +2140,11 @@ void CMUSHclientDoc::CreateTransport (void)
   if (!m_pTransportEvents)
     m_pTransportEvents = new CDocTransportEvents (this);
 
+#ifdef _WIN32
+  m_pTransport = pal::CreateWinTransport (*m_pTransportEvents);
+#else
   m_pTransport = pal::CreatePosixTransport (*m_pTransportEvents);
+#endif
   }
 
 // Destroy the transport + its events bridge (doc destructor path; here
@@ -2471,5 +2224,3 @@ void CMUSHclientDoc::OnTlsFailed (bool bCertFailure, const char * reason)
                      (LPARAM) (bCertFailure ? 1 : 0));
 
   }   // end of CMUSHclientDoc::OnTlsFailed
-
-#endif // !_WIN32

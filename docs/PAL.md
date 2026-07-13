@@ -587,8 +587,22 @@ behaviour, GUI and headless alike).
   pipeline (the P2/P4 output territory), ReceiveMsg/ContinueSSLHandshake
   (Windows-only mechanics — they die at T5 with CWorldSocket).
 - **T4 — DONE** as part of T2d (DNS folded in; `m_fn_lookup_host` deleted).
-- **T5** Windows adapter lands in MUSHclient.vcxproj alongside (cannot be
-  compiled here — by-reasoning parity, same discipline as the GDI adapter).
+- **T5 — DONE** (adapter `f26b54c`, flip below).  pal/win_transport.{h,cpp}
+  mirrors the live-verified POSIX adapter section for section (review = diff);
+  every mechanic is the exact shipping call sequence relocated (CAsyncSocket
+  events, SIO_KEEPALIVE_VALS, OnSend buffered send, the CertOpenSystemStore
+  TLS body, WSAAsyncGetHostByName into an adapter-owned message-only window).
+  The flip then made the transport THE connection path on every platform:
+  CreateTransport() forks per platform; the #ifdef _WIN32 socket branches in
+  the shared bodies are gone; doc.cpp's ReceiveMsg / ContinueSSLHandshake /
+  StartSSLHandshake(Windows) / HostNameResolved are deleted; worldsock.{h,cpp}
+  is removed from the repo; m_pSocket / m_hNameLookup / m_pGetHostStruct left
+  the doc (the mainfrm WM_USER_HOST_NAME_RESOLVED dispatcher now serves ONLY
+  chat sockets, which keep their own async DNS).  Windows correctness is
+  by-reasoning until Windows CI exists — the one deliberate behaviour deltas
+  there: bytes-out counted once (the upstream double-count died with
+  CWorldSocket::OnSend), and a failed lookup *initiation* now reports through
+  the ordinary "Unable to resolve host name" path.
 
 Known quirks: `m_nBytesOut` was double-counted on the old socket path
 (SendPacket AND the send path both add it); **the port drops the double-count

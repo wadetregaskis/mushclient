@@ -11,7 +11,6 @@
 #include "platform/doc_stub.h"
 #include "platform/wx_mfc_hooks.h"
 #include "Color.h"
-#include "worldsock.h"
 #include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
 #ifdef OPENSSL_FOUND
 #  include <openssl/ssl.h>
@@ -1103,10 +1102,8 @@ void CMUSHclientDoc::StartNewLine(const bool hard_break, const int flags)
     m_bInStartNewLine = false;
 }
 
-// ── ReceiveMsg — read from socket, decompress if needed, call DisplayMsg ─────
-
-// ReceiveMsg: dead off-Windows — bytes arrive via the transport bridge
-// (CDocTransportEvents::onBytes -> OnBytesReceived, doc_shared.cpp; T3c).
+// ReceiveMsg: gone — bytes arrive via the transport bridge
+// (CDocTransportEvents::onBytes -> OnBytesReceived, doc_shared.cpp; T3c/T5).
 // OnBytesReceived: single-sourced in doc_shared.cpp (T3c).
 // OnConnect: single-sourced in doc_shared.cpp (T3b).
 
@@ -2179,10 +2176,7 @@ void CMUSHclientDoc::OnScriptFileChanged(bool /*bForce*/)
 }
 
 // ── ConnectSocket ─────────────────────────────────────────────────────────────
-// Portable reconnect: tears down the current socket (if any), creates a fresh
-// CWorldSocket, re-resolves the MUD hostname, and initiates the TCP connection.
-// Mirrors the essential logic of doc.cpp's ConnectSocket() without the MFC UI
-// callbacks (status bar, frame title, etc.) that only exist on Windows.
+// Single-sourced in doc_shared.cpp (T3c) — connects through the PAL transport.
 //
 // Called automatically from timers.cpp's CheckTimers() when:
 //   App.m_bReconnectOnLinkFailure is true AND

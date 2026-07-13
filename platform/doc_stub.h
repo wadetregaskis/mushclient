@@ -59,10 +59,6 @@ inline BOOL QueryPerformanceCounter(LARGE_INTEGER* li) {
     return TRUE;
 }
 #endif // MC_QPC_SHIMS_DEFINED
-#ifndef MC_WSACANCEL_SHIM_DEFINED
-#define MC_WSACANCEL_SHIM_DEFINED
-inline int WSACancelAsyncRequest(HANDLE) { return 0; }
-#endif // MC_WSACANCEL_SHIM_DEFINED
 #ifndef MAXGETHOSTSTRUCT
 #define MAXGETHOSTSTRUCT 1024
 #endif
@@ -826,7 +822,6 @@ public:
 // ── Forward declarations ──────────────────────────────────────────────────
 // (CFont is now fully defined in platform/mfc_ui.h)
 class CMUSHclientDoc;
-class CWorldSocket;      // defined in worldsock.h (Windows-only since T3c)
 
 // ── CMUSHView / CSendView stubs ───────────────────────────────────────────
 // ProcessPreviousLine.cpp uses RUNTIME_CLASS(CMUSHView) and IsKindOf().
@@ -1555,10 +1550,6 @@ public:
     // this header is never compiled for Windows, so no #ifdef fork).
     bool ConnectionOpen (void) const { return m_pTransport != nullptr; }
 
-    // Windows async-DNS state (vestigial off-Windows; referenced by the
-    // shared connection lifecycle — always NULL here)
-    HANDLE m_hNameLookup             = nullptr;
-    char*  m_pGetHostStruct          = nullptr;
 
     // ── Traffic counters ──────────────────────────────────────────────────
     long m_nBytesOut                 = 0;

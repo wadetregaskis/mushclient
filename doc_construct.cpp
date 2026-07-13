@@ -245,7 +245,6 @@ int i;
 
   // we will defer initialising zlib until we really have to
 
-	m_pSocket = NULL;
   m_pChatListenSocket = NULL;    // no listening socket
   m_logfile = NULL;
   m_match_width = 30;
@@ -354,8 +353,6 @@ int i;
 
   ZeroMemory (&m_sockAddr, sizeof m_sockAddr);
   ZeroMemory (&m_ProxyAddr, sizeof m_ProxyAddr);
-  m_hNameLookup = NULL;
-  m_pGetHostStruct = NULL;
   m_pLinePositions = NULL;
 
   m_pCurrentLine = NULL;
@@ -520,27 +517,11 @@ int i;
     delete m_font [i];
   delete m_input_font;
 
-  if (m_hNameLookup)
-    WSACancelAsyncRequest (m_hNameLookup);  // cancel host name lookup in progress
-
-  delete [] m_pGetHostStruct;   // delete buffer used by host name lookup
-
   delete m_MapFailureRegexp;    // delete regexp structure for mapping failures
 
-	if (m_pSocket)
-	{
-
-    ShutDownSocket (*m_pSocket);
-
-    delete m_pSocket;
-    m_pSocket = NULL;
-
-    }
-
-#ifndef _WIN32
-  // T2d: destroy the PAL transport (the port's socket) + its events bridge
+  // destroy the PAL transport (the socket, every platform since T5) + its
+  // events bridge — the transport cancels any DNS lookup still in flight
   TeardownTransport ();
-#endif
 
 	if (m_pChatListenSocket)
 	{

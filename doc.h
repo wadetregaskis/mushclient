@@ -4,7 +4,6 @@
 
 #pragma once
 
-#include "worldsock.h"
 #include "chatsock.h"
 #include "chatlistensock.h"
 #ifdef _WIN32   // ColourComboBox and prefspropertypages pull in Windows-only
@@ -35,10 +34,8 @@ extern bool g_debug;
 #include "pal/iworldview.h"   // pal::IWorldView — the typed output seam (no-op on _WIN32)
 #include <functional>
 
-#ifndef _WIN32
 namespace pal { class ITransport; }   // pal/itransport.h — the byte-transport seam
 class CDocTransportEvents;            // doc_shared.cpp — the ITransportEvents → engine bridge
-#endif
 // The world-prefs property-page classes (full defs in prefspropertypages.h,
 // which is Windows-only in this header).  CMUSHclientDoc's Load/Changed/Save
 // prefs methods take these by reference, so forward declarations suffice here;
@@ -625,7 +622,6 @@ class CMUSHclientDoc : public CDocument
 {
   friend class CActivityView;
   friend class CMapDlg;
-  friend class CWorldSocket;
   friend class CPluginsDlg;
   friend class CSendView;
   friend class CMUSHView;
@@ -647,19 +643,22 @@ class CMUSHclientDoc : public CDocument
 
 // Attributes
 public:
-	CWorldSocket* m_pSocket;
+  // ── PAL: the byte-transport seam (every platform since T5) ────────────
+  // The connection object — pal::ITransport replaced CWorldSocket
+  // everywhere.  The transport owns the fd, the event source, async DNS,
+  // and the WHOLE TLS session; the engine keeps the connect-phase machine,
+  // SOCKS negotiation, MCCP, and all disconnect UX.  m_pTransportEvents is
+  // the doc-side ITransportEvents bridge (created on first ConnectSocket,
+  // destroyed with the doc — the transport holds a reference to it, so it
+  // outlives every transport).  See docs/PAL.md.
+  pal::ITransport* m_pTransport = NULL;
+  CDocTransportEvents* m_pTransportEvents = NULL;
 
   // The "socket exists" half of the classic connectivity test
-  // (m_iConnectPhase == eConnectConnectedToMud && m_pSocket): the
-  // CWorldSocket on Windows, the PAL transport on the port (where
-  // m_pSocket stays NULL — ITransport migration step T2d).
+  // (m_iConnectPhase == eConnectConnectedToMud && the connection object).
   bool ConnectionOpen (void) const
     {
-#ifdef _WIN32
-    return m_pSocket != NULL;
-#else
-    return m_pTransport != nullptr;
-#endif
+    return m_pTransport != NULL;
     }
 
   // SSL/TLS runtime state (not saved to disk)
@@ -1261,8 +1260,6 @@ public:
 	SOCKADDR_IN m_sockAddr;       // MUD address/port
 	SOCKADDR_IN m_ProxyAddr;      // Proxy address/port
 
-  HANDLE      m_hNameLookup;
-  char *      m_pGetHostStruct;
   int         m_iConnectPhase;    // see enum above
 
 
@@ -1717,17 +1714,6 @@ public:
 
 
 
-
-  // ── PAL: the byte-transport seam (ITransport T2d) ─────────────────────────
-  // The port's connection object — replaces CWorldSocket off-Windows (which
-  // stays NULL here).  The transport owns the fd, the event source, async
-  // DNS, and the WHOLE TLS session; the engine keeps the connect-phase
-  // machine, SOCKS negotiation, MCCP, and all disconnect UX.
-  // m_pTransportEvents is the doc-side ITransportEvents bridge (created on
-  // first ConnectSocket, destroyed with the doc — the transport holds a
-  // reference to it, so it outlives every transport).  See docs/PAL.md.
-  pal::ITransport* m_pTransport = nullptr;
-  CDocTransportEvents* m_pTransportEvents = nullptr;
 #endif
 
   protected:
@@ -1742,7 +1728,6 @@ public:
                const bool bEchoIt,
                const bool bQueueIt,
                const bool bLogIt);
-	void ReceiveMsg();
 	void OnBytesReceived(char* buff, int count);   // post-receive: proxy/MCCP/DisplayMsg (T2b)
 	void DisplayMsg(LPCTSTR lpszText, int size, const int flags, const bool fake = false);
   void AddToLine (LPCTSTR lpszText, const int flags);
@@ -2171,16 +2156,14 @@ public:
   const COLORREF TranslateColour (const COLORREF & source, const double opacity) const;
 
   void OnConnect(int nErrorCode);
-  void HostNameResolved (WPARAM wParam, LPARAM lParam);
   CString GetSocketError (int nError);
   bool LookupHostName (LPCTSTR sName);
-#ifndef _WIN32
   // Called (on the main thread) when an async DNS lookup launched via the
   // transport completes.  addr is the resolved address; ok is false if
   // resolution failed.  phase is the m_iConnectPhase value at lookup start.
   void LookupHostNameComplete (struct in_addr addr, int phase, bool ok);
 
-  // ITransport TLS outcomes (T2d) — the engine-policy halves of the old
+  // ITransport TLS outcomes — the engine-policy halves of the old
   // ContinueSSLHandshake (Notes, phase, the deferred fallback prompt); the
   // handshake itself runs inside the transport adapter.  verifyFailure is
   // empty when the certificate verified clean.
@@ -2194,6 +2177,7 @@ public:
   void CreateTransport (void);
   void TeardownTransport (void);
 
+#ifndef _WIN32
   // Non-Windows equivalents of the OnSetFocus / OnKillFocus Lua callbacks
   // fired by the Windows mushview.cpp (CSendView::OnSetFocus / OnKillFocus).
   // Used by wx_world_child.cpp::OnActivate to fire the world-level callbacks.
@@ -2214,7 +2198,6 @@ public:
   bool SendProxyUserNameAndPassword (void);
 
   void StartSSLHandshake (void);
-  void ContinueSSLHandshake (void);
   void SSLCleanup (void);
 
   BOOL FixUpOutputBuffer (int nNewBufferSize);

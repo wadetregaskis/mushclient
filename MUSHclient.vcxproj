@@ -1418,6 +1418,7 @@
     </ClCompile>
     <ClCompile Include="pal\surface_bridge.cpp" />
     <ClCompile Include="pal\gdi_surface.cpp" />
+    <ClCompile Include="pal\win_transport.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Midl Include="MUSHclient.odl">
@@ -1462,6 +1463,7 @@
     <ClInclude Include="pal\surface_bridge.h" />
     <ClInclude Include="pal\gdi_surface.h" />
     <ClInclude Include="pal\itransport.h" />
+    <ClInclude Include="pal\win_transport.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="version.h" />
   </ItemGroup>

@@ -22,6 +22,10 @@ CString Replace (const CString strSource, const CString strTarget,
 
 #include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
 
+#ifndef _WIN32
+#include "platform/posix_transport.h"   // pal::ITransport + events (T3a bridge below)
+#endif
+
 #if defined(OPENSSL_FOUND)
 #include <openssl/ssl.h>
 #endif
@@ -861,3 +865,444 @@ CString str;
   UpdateAllViews  (NULL);     // force window title to be redrawn
 
   } // end of CMUSHclientDoc::ConnectionClosed
+
+
+// we come here when we know (both) IP addresses (mud and proxy)
+// and are ready to try to connect  
+
+void CMUSHclientDoc::InitiateConnection (void)
+  {
+
+#ifndef _WIN32
+
+  // T2d: connect through the PAL transport.  Every outcome arrives via the
+  // events bridge → OnConnect: immediate success is deferred to the next
+  // pump tick (never re-entrant), an immediate LOCAL failure is delivered
+  // synchronously from connect() and lands in OnConnect's failure path —
+  // the same UX the inline error handling below produces.
+
+  // just so we don't get ridiculous times shown if we don't connect
+  m_tConnectTime = CTime::GetCurrentTime();
+
+  if (m_pTransport == NULL)
+    return;     // no transport — ConnectSocket was never run
+
+  pal::TransportOptions options;
+  options.keepalives = m_bSendKeepAlives != 0;
+
+  if (m_iSocksProcessing == eProxyServerNone)
+    {
+    m_iConnectPhase = eConnectConnectingToMud;
+    m_pTransport->connect (m_sockAddr.sin_addr.s_addr,
+                           (unsigned short) m_port, options);
+    }
+  else
+    {
+    m_iConnectPhase = eConnectConnectingToProxy;
+    m_pTransport->connect (m_ProxyAddr.sin_addr.s_addr,
+                           (unsigned short) m_iProxyServerPort, options);
+    }
+
+  return;
+
+#else
+
+  BOOL connected;
+
+  // just so we don't get ridiculous times shown if we don't connect
+  m_tConnectTime = CTime::GetCurrentTime();
+
+// initiate asynchronous connect
+
+  if (m_iSocksProcessing == eProxyServerNone)
+    {
+    m_iConnectPhase = eConnectConnectingToMud;
+    connected = m_pSocket->Connect((SOCKADDR*)&m_sockAddr, sizeof(m_sockAddr));
+    }
+  else
+    {
+    m_iConnectPhase = eConnectConnectingToProxy;
+    connected = m_pSocket->Connect((SOCKADDR*)&m_ProxyAddr, sizeof(m_ProxyAddr));
+    }
+
+  if (connected)
+    {
+    OnConnect (0);    // we have connected already! Do logon of character etc.
+    return;
+    }
+
+// if error code is "would block" then it will finish later
+
+  int iStatus = GetLastError ();
+
+  if (iStatus == WSAEWOULDBLOCK)
+    return;
+
+// tell them connect failed
+
+  if (App.m_bNotifyIfCannotConnect)
+    {
+    CString strMsg;
+
+    strMsg = TFormat ("Unable to connect to \"%s\", code = %i (%s)\n\n"
+                    "Error occurred during phase: %s",
+                    (const char *) m_mush_name,
+                    iStatus,
+                    (LPCTSTR) GetSocketError (iStatus),
+                    (const char *) GetConnectionStatus (m_iConnectPhase));
+
+    // i18n TODO - fix this:
+    switch (m_iConnectPhase)
+      {
+      case eConnectConnectingToMud:      
+        strMsg += ": ";
+        strMsg += inet_ntoa (m_sockAddr.sin_addr);
+        strMsg += CFormat (", port %d", m_port);
+        break; 
+      case eConnectConnectingToProxy:    
+        strMsg += ": ";
+        strMsg += inet_ntoa (m_ProxyAddr.sin_addr);
+        strMsg += CFormat (", port %d", m_iProxyServerPort);
+        break; 
+      } // end of switch
+
+    if (App.m_bErrorNotificationToOutputWindow)
+      Note (strMsg);
+    else
+      UMessageBox (strMsg);
+    }     // end of notification wanted
+
+  TRACE ("CCMUSHclientDoc::InitiateConnection - cannot connect\n");
+
+  m_bDisconnectOK = true;     // don't want reconnect
+  m_iConnectPhase = eConnectNotConnected;
+
+  App.m_bUpdateActivity = TRUE;   // new activity!
+
+#endif // _WIN32
+
+  } // end of CMUSHclientDoc::InitiateConnection
+
+
+// ── Async DNS (single-sourced, T3a) ─────────────────────────────────────────
+// Windows resolves via WSAAsyncGetHostByName (HostNameResolved, doc.cpp);
+// the port resolves through the transport (LookupHostNameComplete below).
+
+bool CMUSHclientDoc::LookupHostName (LPCTSTR sName)
+  {
+  delete [] m_pGetHostStruct;   // delete buffer just in case
+  m_pGetHostStruct = new char [MAXGETHOSTSTRUCT];
+
+  if (!m_pGetHostStruct)
+    {
+    TMessageBox ("Unable to allocate memory for host name lookup");
+    return true;
+    }
+
+#ifdef _WIN32
+  if (Frame.GetSafeHwnd ())   // forget it if we don't have a window yet
+    m_hNameLookup = WSAAsyncGetHostByName (Frame.GetSafeHwnd (),
+                                           WM_USER_HOST_NAME_RESOLVED,
+                                           sName,
+                                           m_pGetHostStruct,
+                                           MAXGETHOSTSTRUCT);
+
+  if (!m_hNameLookup)
+    {
+    CString strMsg;
+
+    strMsg = TFormat ("Unable to initiate host name lookup for \"%s\"",
+                   sName);
+    UMessageBox (strMsg);
+    delete [] m_pGetHostStruct;
+    m_pGetHostStruct = NULL;
+    m_iConnectPhase = eConnectNotConnected;
+
+    App.m_bUpdateActivity = TRUE;   // new activity!
+
+    }
+
+  return false;    // we are waiting for host name lookup to finish
+
+#else  // !_WIN32
+
+  // Non-Windows: async DNS through the PAL transport (T2d) — its getaddrinfo
+  // thread posts the completion back to the main thread, where the events
+  // bridge calls LookupHostNameComplete().  The connect phase is the resolve
+  // token: the shipping staleness guard drops superseded completions.
+  {
+    delete [] m_pGetHostStruct;
+    m_pGetHostStruct = NULL;
+
+    if (m_pTransport)
+      {
+      m_pTransport->resolve ((const char *) sName, m_iConnectPhase);
+      return false;
+      }
+
+    // Synchronous fallback (defensive — ConnectSocket creates the transport
+    // before any lookup can happen).
+    struct addrinfo hints{}, *res = nullptr;
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct in_addr resolved{};
+    bool ok = (::getaddrinfo (sName, nullptr, &hints, &res) == 0 && res);
+    if (ok)
+      {
+      resolved = ((struct sockaddr_in *) res->ai_addr)->sin_addr;
+      ::freeaddrinfo (res);
+      }
+
+    LookupHostNameComplete (resolved, m_iConnectPhase, ok);
+    return !ok;   // true = error, caller should abort
+  }
+
+#endif  // _WIN32
+
+
+  } // end of CMUSHclientDoc::LookupHostName
+
+
+#ifndef _WIN32
+// Called on the main thread when an async (or synchronous fallback) DNS
+// lookup finishes.  addr is the resolved address; phase is the connect phase
+// that was active when LookupHostName was called; ok is false on failure.
+void CMUSHclientDoc::LookupHostNameComplete (struct in_addr addr, int phase, bool ok)
+  {
+  // Guard: the user may have disconnected while the DNS thread was running.
+  if (m_iConnectPhase != phase)
+    return;
+
+  if (!ok)
+    {
+    m_bDisconnectOK = true;
+    m_iConnectPhase = eConnectNotConnected;
+    App.m_bUpdateActivity = TRUE;
+    UpdateAllViews (NULL);
+
+    if (App.m_bNotifyIfCannotConnect)
+      {
+      CString strWhich = (phase == eConnectProxyNameLookup)
+                         ? m_strProxyServerName
+                         : m_server;
+      CString strMsg = TFormat ("Unable to resolve host name for \"%s\"",
+                                (LPCTSTR) strWhich);
+      if (App.m_bErrorNotificationToOutputWindow)
+        Note (strMsg);
+      else
+        UMessageBox (strMsg);
+      }
+    return;
+    }
+
+  if (phase == eConnectMudNameLookup)
+    m_sockAddr.sin_addr = addr;
+  else if (phase == eConnectProxyNameLookup)
+    m_ProxyAddr.sin_addr = addr;
+  else
+    {
+    TMessageBox ("Unexpected phase in LookupHostNameComplete");
+    return;
+    }
+
+  // If we just resolved the MUD address and a proxy is configured,
+  // check whether the proxy address also needs resolving.
+  if (phase == eConnectMudNameLookup &&
+      m_iSocksProcessing != eProxyServerNone)
+    {
+    if (m_ProxyAddr.sin_family != AF_INET ||
+        m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
+      {
+      m_ProxyAddr.sin_family         = AF_INET;
+      m_ProxyAddr.sin_addr.s_addr    = inet_addr (m_strProxyServerName);
+      if (m_ProxyAddr.sin_addr.s_addr == INADDR_NONE)
+        {
+        m_iConnectPhase = eConnectProxyNameLookup;
+        LookupHostName (m_strProxyServerName);
+        return;
+        }
+      }
+    }
+
+  InitiateConnection ();
+  } // end of CMUSHclientDoc::LookupHostNameComplete
+#endif  // !_WIN32
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// ITransport (T3a): the transport events bridge + engine TLS policy — the
+// port's single connection substrate, compiled into BOTH builds so mushcore
+// drives the same transport code the product ships.  Windows keeps
+// CWorldSocket (doc.cpp) until T5.
+// ═════════════════════════════════════════════════════════════════════════
+#ifndef _WIN32
+
+// ── CDocTransportEvents ──────────────────────────────────────────────────────
+// The doc-side pal::ITransportEvents bridge (ITransport migration step T2d):
+// maps transport events onto the engine's connect-phase machine.  Delivery
+// contract (pal/itransport.h): main thread, never re-entrant, and any handler
+// may destroy the transport mid-event — so handlers that run scripts (which
+// can Disconnect and even reconnect) are safe.  One bridge per doc, created
+// on first ConnectSocket and destroyed with the doc; it must outlive every
+// transport, which holds a reference to it.
+
+class CDocTransportEvents : public pal::ITransportEvents
+  {
+  public:
+    explicit CDocTransportEvents (CMUSHclientDoc * pDoc) : m_pDoc (pDoc) {}
+
+    void onResolved (pal::ResolveToken token, unsigned int addrIPv4, bool ok) override
+      {
+      // token is the connect phase at resolve time — the staleness guard
+      // inside LookupHostNameComplete drops superseded completions
+      struct in_addr addr;
+      addr.s_addr = addrIPv4;
+      m_pDoc->LookupHostNameComplete (addr, token, ok);
+      }
+
+    void onConnect (int err) override
+      {
+      m_pDoc->OnConnect (err);
+      }
+
+    void onBytes (const char * data, size_t n) override
+      {
+      CMUSHclientDoc * pDoc = m_pDoc;
+      // the adapter's scratch buffer is ours to mutate in place (the proxy
+      // parser memmoves consumed bytes down) — same as ReceiveMsg's stack
+      // buffer on the Windows path
+      pDoc->OnBytesReceived (const_cast<char *> (data), (int) n);
+      // push new lines to the GUI output pane (the CWorldSocket::OnReceive
+      // parity call — the MFC invalidation mechanism is absent off-Windows)
+      pDoc->UpdateAllViews (NULL);
+      }
+
+    void onWritable () override
+      {
+      // nothing to do: the adapter owns the buffered send queue (the old
+      // FD_WRITE flush) and the TLS handshake stepping
+      }
+
+    void onClosed (int err) override
+      {
+      CMUSHclientDoc * pDoc = m_pDoc;
+      // the closed transport is done: destroy it BEFORE the bookkeeping so a
+      // disconnect-script reconnect (ConnectSocket) cannot collide with it
+      // (destroying the transport inside its own event is contract-supported)
+      delete pDoc->m_pTransport;
+      pDoc->m_pTransport = NULL;
+      pDoc->ConnectionClosed (err);
+      }
+
+    void onTlsEstablished (std::string_view version, std::string_view cipher,
+                           std::string_view verifyFailure) override
+      {
+      std::string v (version), c (cipher), f (verifyFailure);
+      m_pDoc->OnTlsEstablished (v.c_str (), c.c_str (), f.c_str ());
+      }
+
+    void onTlsFailed (pal::TlsFailure kind, std::string_view reason) override
+      {
+      std::string r (reason);
+      m_pDoc->OnTlsFailed (kind == pal::TlsFailure::CertVerify, r.c_str ());
+      }
+
+  private:
+    CMUSHclientDoc * m_pDoc;
+  };
+
+// Create a fresh transport for a new connection attempt (destroying any old
+// one), lazily creating the per-doc events bridge on first use.  This is the
+// single place the concrete adapter is chosen (T5: Windows picks its native
+// adapter here).
+void CMUSHclientDoc::CreateTransport (void)
+  {
+  delete m_pTransport;
+  m_pTransport = NULL;
+
+  if (!m_pTransportEvents)
+    m_pTransportEvents = new CDocTransportEvents (this);
+
+  m_pTransport = pal::CreatePosixTransport (*m_pTransportEvents);
+  }
+
+// Destroy the transport + its events bridge (doc destructor path; here
+// because both types are complete in this TU).
+void CMUSHclientDoc::TeardownTransport (void)
+  {
+  if (m_pTransport)
+    {
+    m_pTransport->close ();
+    delete m_pTransport;
+    m_pTransport = NULL;
+    }
+  delete m_pTransportEvents;
+  m_pTransportEvents = NULL;
+  }
+
+
+// ── ITransport TLS outcomes (T2d) ────────────────────────────────────────────
+// The transport adapter owns the TLS session on the port; these are the
+// engine-policy halves of ContinueSSLHandshake above: the Notes, the phase
+// change, and the deferred consent/fallback prompt
+// (WM_USER_SSL_FALLBACK_PROMPT — handled by the frame, which reconnects on
+// user consent).
+
+void CMUSHclientDoc::OnTlsEstablished (const char * version, const char * cipher,
+                                       const char * verifyFailure)
+  {
+
+  if (verifyFailure && *verifyFailure)
+    {
+    // user already opted to proceed despite the failure — connect, but warn
+    CString strMsg;
+    strMsg.Format ("--- WARNING: proceeding with UNVERIFIED TLS certificate for \"%s\": %s ---",
+                   (LPCTSTR) m_server, verifyFailure);
+    Note (strMsg);
+    }
+
+  // the OpenSSL objects live inside the adapter now, but "TLS is up" is
+  // engine state (MTTS advertises it — telnet_phases.cpp); SSLCleanup
+  // (via ConnectionClosed / OnConnectionDisconnect) resets it
+  m_bSSL_Connected = true;
+
+  CString strInfo;
+  strInfo.Format ("--- Connected via %s (%s) ---", version, cipher);
+  Note (strInfo);
+
+  m_iConnectPhase = eConnectConnectedToMud;
+  ConnectionEstablished ();
+
+  }   // end of CMUSHclientDoc::OnTlsEstablished
+
+
+void CMUSHclientDoc::OnTlsFailed (bool bCertFailure, const char * reason)
+  {
+
+  CString strMsg;
+  if (bCertFailure)
+    // Block: the certificate could not be verified and the user has not
+    // (yet) chosen to accept it.  The deferred prompt offers "connect
+    // anyway" — still over TLS, but accepting this unverifiable certificate
+    // for the session (m_bSSLAllowInvalidCert) — and reconnects.
+    strMsg.Format ("--- TLS certificate for \"%s\" could NOT be verified: %s ---",
+                   (LPCTSTR) m_server, reason);
+  else
+    strMsg.Format ("--- TLS handshake failed: %s ---", reason);
+  Note (strMsg);
+
+  // save error for deferred prompt
+  m_strSSLLastError = reason;
+
+  // the adapter has already torn the TLS session down; this closes the
+  // transport and runs the disconnect bookkeeping
+  OnConnectionDisconnect ();
+
+  // defer the prompt via PostMessage so we're not inside a transport event
+  Frame.PostMessage (WM_USER_SSL_FALLBACK_PROMPT, (WPARAM) this,
+                     (LPARAM) (bCertFailure ? 1 : 0));
+
+  }   // end of CMUSHclientDoc::OnTlsFailed
+
+#endif // !_WIN32

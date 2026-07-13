@@ -37,7 +37,7 @@ extern bool g_debug;
 
 #ifndef _WIN32
 namespace pal { class ITransport; }   // pal/itransport.h — the byte-transport seam
-class CDocTransportEvents;            // doc.cpp — the ITransportEvents → engine bridge
+class CDocTransportEvents;            // doc_shared.cpp — the ITransportEvents → engine bridge
 #endif
 // The world-prefs property-page classes (full defs in prefspropertypages.h,
 // which is Windows-only in this header).  CMUSHclientDoc's Load/Changed/Save
@@ -2188,8 +2188,10 @@ public:
                          const char * verifyFailure);
   void OnTlsFailed (bool bCertFailure, const char * reason);
 
-  // Destroy the transport + its events bridge (doc destructor; defined in
-  // doc.cpp where both types are complete).
+  // Create a fresh transport (+ the events bridge, lazily) for a connection
+  // attempt / destroy both at doc teardown.  Defined in doc_shared.cpp where
+  // the bridge type is complete.
+  void CreateTransport (void);
   void TeardownTransport (void);
 
   // Non-Windows equivalents of the OnSetFocus / OnKillFocus Lua callbacks

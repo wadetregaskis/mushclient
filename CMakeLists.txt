@@ -447,6 +447,10 @@ if(NOT WIN32)
 
         # Networking (Phase 3)
         worldsock.cpp
+        # pal::ITransport POSIX adapter (T3a): mushcore drives the SAME
+        # transport code the product ships — the connection lifecycle is
+        # single-sourced in doc_shared.cpp on top of it.
+        platform/posix_transport.cpp
 
         # Core document logic (triggers, aliases, timers, line buffer)
         Line.cpp

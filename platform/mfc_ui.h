@@ -5436,6 +5436,8 @@ inline int MulDiv(int n, int m, int d) {
 // High-resolution performance counter using POSIX clock_gettime(CLOCK_MONOTONIC).
 // Frequency is 1 GHz (nanoseconds).  Both functions always succeed.
 #include <time.h>
+#ifndef MC_QPC_SHIMS_DEFINED   // doc_stub.h defines the same pair (mixed-include TUs)
+#define MC_QPC_SHIMS_DEFINED
 inline BOOL QueryPerformanceFrequency(LARGE_INTEGER* li) {
     if (li) { li->QuadPart = 1000000000LL; }  // 1 ns resolution
     return TRUE;
@@ -5448,6 +5450,7 @@ inline BOOL QueryPerformanceCounter(LARGE_INTEGER* li) {
     }
     return TRUE;
 }
+#endif // MC_QPC_SHIMS_DEFINED
 
 // ── WM_SETFONT / more window messages ─────────────────────────────────────
 #ifndef WM_SETFONT
@@ -5533,7 +5536,10 @@ inline BOOL QueryPerformanceCounter(LARGE_INTEGER* li) {
 typedef struct in_addr* LPIN_ADDR;
 
 // WSACancelAsyncRequest stub
+#ifndef MC_WSACANCEL_SHIM_DEFINED   // doc_stub.h defines the same (mixed-include TUs)
+#define MC_WSACANCEL_SHIM_DEFINED
 inline int WSACancelAsyncRequest(HANDLE) { return 0; }
+#endif // MC_WSACANCEL_SHIM_DEFINED
 inline int WSAIoctl(unsigned int, DWORD, void*, DWORD, void*, DWORD, DWORD*, void*, void*) { return -1; }
 
 // SSL/X509 stubs come from <openssl/ssl.h> and <openssl/x509.h> (included via

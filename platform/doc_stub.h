@@ -23,6 +23,45 @@
 #include <functional>
 #include <zlib.h>              // z_stream, Bytef — for compression fields
 #include <netinet/in.h>        // sockaddr_in / SOCKADDR_IN for proxy fields
+
+// ── PAL byte-transport seam (ITransport; mirrors doc.h) ───────────────────
+namespace pal { class ITransport; }   // pal/itransport.h
+class CDocTransportEvents;            // doc_shared.cpp — ITransportEvents → engine bridge
+class CMUSHclientDoc;
+
+// Deferred TLS consent/fallback prompt message id (stdafx.h owns it in the
+// full build: WM_USER + 1004).  Headless there is no message pump, so posts
+// go nowhere — TLS failures fail closed, the portable policy.
+#ifndef WM_USER_SSL_FALLBACK_PROMPT
+#define WM_USER_SSL_FALLBACK_PROMPT (0x0400 + 1004)
+#endif
+
+// High-resolution counter + async-DNS-cancel shims (mirror mfc_ui.h — some
+// mushgui TUs include BOTH headers, hence the shared sentinels; LARGE_INTEGER
+// itself comes from windows_types.h).
+#include <time.h>
+#ifndef MC_QPC_SHIMS_DEFINED
+#define MC_QPC_SHIMS_DEFINED
+inline BOOL QueryPerformanceFrequency(LARGE_INTEGER* li) {
+    if (li) { li->QuadPart = 1000000000LL; }  // 1 ns resolution
+    return TRUE;
+}
+inline BOOL QueryPerformanceCounter(LARGE_INTEGER* li) {
+    if (li) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        li->QuadPart = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    }
+    return TRUE;
+}
+#endif // MC_QPC_SHIMS_DEFINED
+#ifndef MC_WSACANCEL_SHIM_DEFINED
+#define MC_WSACANCEL_SHIM_DEFINED
+inline int WSACancelAsyncRequest(HANDLE) { return 0; }
+#endif // MC_WSACANCEL_SHIM_DEFINED
+#ifndef MAXGETHOSTSTRUCT
+#define MAXGETHOSTSTRUCT 1024
+#endif
 typedef struct sockaddr_in SOCKADDR_IN;
 
 using std::string;
@@ -1039,6 +1078,11 @@ public:
     void OnUpdateBtnWorlds   (int, void*)     {}
     void FixUpTitleBar       ()               {}
     bool IsFullScreen        () const         { return false; }
+    // Deferred main-loop posts (e.g. the TLS consent prompt): headless has
+    // no message pump, so posts go nowhere — TLS failures fail closed.
+    BOOL PostMessage         (UINT, WPARAM = 0, LPARAM = 0) { return TRUE; }
+    // Timer fallback (real impl drives WM_TIMER-less timers in the GUI)
+    void CheckTimerFallback  ()               {}
 
     // Layout query (returns empty rects on non-Windows)
     void ReturnStatusRect (CRect& r) const { r = CRect(); }
@@ -1497,11 +1541,29 @@ public:
     CWorldSocket* m_pSocket          = nullptr;
     int           m_iConnectPhase    = eConnectNotConnected;
 
+    // ── PAL: the byte-transport seam (ITransport T3a; mirrors doc.h) ──────
+    // mushcore drives the SAME POSIX transport adapter as the mac product.
+    // m_pTransportEvents outlives every transport (destroyed with the doc
+    // via TeardownTransport).
+    pal::ITransport*     m_pTransport       = nullptr;
+    CDocTransportEvents* m_pTransportEvents = nullptr;
+    // The "socket exists" half of the classic connectivity test (doc.h twin;
+    // this header is never compiled for Windows, so no #ifdef fork).
+    bool ConnectionOpen (void) const { return m_pTransport != nullptr; }
+
+    // Windows async-DNS state (vestigial off-Windows; referenced by the
+    // shared connection lifecycle — always NULL here)
+    HANDLE m_hNameLookup             = nullptr;
+    char*  m_pGetHostStruct          = nullptr;
+
     // ── Traffic counters ──────────────────────────────────────────────────
     long m_nBytesOut                 = 0;
     long m_nBytesIn                  = 0;
     long m_nTotalLinesReceived       = 0;
     long m_iInputPacketCount         = 0;
+    __int64 m_iOutputPacketCount     = 0;    // count of packets sent (doc.h twin)
+    bool m_bDebugIncomingPackets     = false; // packet-debug notepad wanted
+    LONGLONG m_iCompressionTimeTaken = 0;    // time spent in MCCP inflate
     long m_nTotalCompressed          = 0;
     long m_nTotalUncompressed        = 0;
 
@@ -1517,6 +1579,7 @@ public:
 
     // ── Connect/disconnect timestamps ────────────────────────────────────
     CTime   m_tConnectTime;
+    CTimeSpan m_tsConnectDuration;   // timespan we have been connected (doc.h twin)
     time_t  m_tWorldOpenTime = 0;  // when this world document was constructed
 
     // ── Disconnect behaviour ──────────────────────────────────────────────
@@ -2162,6 +2225,15 @@ public:
     int  ProcessProxyResponse2(char* buff, int count);
     int  ProcessProxyResponse3(char* buff, int count);
     void OnConnect(int nErrorCode);
+    bool LookupHostName(LPCTSTR sName);                 // doc_shared.cpp (T3a)
+    void LookupHostNameComplete(struct in_addr addr, int phase, bool ok);
+    void InitiateConnection(void);                       // doc_shared.cpp (T3c)
+    // ITransport TLS outcomes + teardown (doc_shared.cpp; mirror doc.h)
+    void OnTlsEstablished(const char* version, const char* cipher,
+                          const char* verifyFailure);
+    void OnTlsFailed(bool bCertFailure, const char* reason);
+    void CreateTransport(void);
+    void TeardownTransport(void);
     void Note(const CString& s);
     void Note(const char* s);
     void UpdateAllViews(void* hint);

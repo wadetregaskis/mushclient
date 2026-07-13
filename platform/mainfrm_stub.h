@@ -180,6 +180,9 @@ public:
     void DoFixMenus(CCmdUI*);
     void CheckTimerFallback();
     void ProcessTimers();
+    // Deferred main-loop posts (e.g. the TLS consent prompt): headless has no
+    // message pump, so posts go nowhere — TLS failures fail closed.
+    BOOL PostMessage(UINT, WPARAM = 0, LPARAM = 0) { return TRUE; }
 
     // MFC overridables
     virtual BOOL PreTranslateMessage(MSG*);

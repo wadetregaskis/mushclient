@@ -10,6 +10,9 @@
 #include "dialogs/QuickConnectDlg.h"
 #include "dialogs/world_prefs/prefspropertypages.h"
 #include "UDPsocket.h"
+#ifdef _WIN32
+#include "pal/win_worldview.h"   // the native IWorldView adapter (WV-2)
+#endif
 
 extern int gdoccount;
 
@@ -200,6 +203,15 @@ int i;
   // On non-Windows, WM_TIMER-based speed-walk timing is not used.
   // All m_pTimerWnd call sites already null-check, so nullptr is safe.
   m_pTimerWnd = nullptr;
+#endif
+
+#ifdef _WIN32
+  // The native pal::IWorldView adapter (WV-2).  On the wx build the adapter
+  // is the CWorldChildFrame, which registers itself at frame creation; here
+  // it is doc-owned.  Its methods look views up per call (the original site
+  // code's own pattern), so creating it before any view exists is safe —
+  // the loops simply find none.
+  m_pWorldView = pal::CreateWinWorldView (this);
 #endif
 
 
@@ -522,6 +534,12 @@ int i;
   // destroy the PAL transport (the socket, every platform since T5) + its
   // events bridge — the transport cancels any DNS lookup still in flight
   TeardownTransport ();
+
+#ifdef _WIN32
+  // the native IWorldView adapter is doc-owned on Windows (WV-2)
+  delete m_pWorldView;
+  m_pWorldView = NULL;
+#endif
 
 	if (m_pChatListenSocket)
 	{

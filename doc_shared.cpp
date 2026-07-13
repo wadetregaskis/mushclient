@@ -13,6 +13,10 @@
 #include "doc.h"
 #include "scripting/errors.h"   // eOK / eBadParameter (full build; doc_stub.h defines them for mushcore)
 #include "dialogs/password.h"   // CPasswordDialog (ConnectionEstablished, full build)
+#ifdef _WIN32
+#include <ws2tcpip.h>           // getaddrinfo (LookupHostName's sync fallback —
+                                // newly MSVC-compiled at T5; stdafx has only winsock2)
+#endif
 #else
 #include "platform/doc_stub.h"
 // add ::Replace's default for the stub-only build (stdafx.h owns it in the

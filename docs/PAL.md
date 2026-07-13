@@ -559,13 +559,33 @@ behaviour, GUI and headless alike).
     T4) folded in here — `m_fn_lookup_host` deleted, the wx poll timer calls
     `pal::PumpTransportCompletions()`. Live-verified through the real GUI
     (connect / ANSI receive / keyboard send / server-close disconnect).
-- **T3** single-source the doc-level twins (SendPacket, ReceiveMsg, OnConnect,
-  ConnectionEstablished, CheckConnected, ConnectSocket,
-  OnConnectionDisconnect) — the de-drift payoff this seam exists to unlock;
-  the portable SSL_write-no-retry bug dies here by construction. **Open
-  decision:** whether `mushcore`/`doc_portable.cpp` adopts a null/loopback
-  transport fake too, or keeps its own `m_pSocket` path (the proxy-ordering +
-  fail-closed-TLS divergence is real for the portable twin).
+- **T3 — DONE** (decision: mushcore adopts the REAL POSIX transport).  In
+  five steps, each green:
+  - **T3a** (`fbea7a2`) substrate: posix_transport.cpp joins mushcore; the
+    events bridge + TLS policy + `CreateTransport()` (the single
+    adapter-choice point — T5 hooks Windows in here) + the DNS pair move to
+    doc_shared.cpp; stub Frame gains no-op PostMessage (headless TLS
+    failures keep failing closed — the prompt posts to nobody).
+  - **T3b** (`864b4e3`) SendPacket/OnConnect/GetSocketError/
+    GetConnectionStatus single-sourced; the portable SSL_write-no-retry bug
+    dies; the SOCKS characterization tests capture bytes via a FakeTransport
+    on the seam itself.
+  - **T3c** (`6c19b8b`) ConnectSocket/OnBytesReceived/OnConnectionDisconnect
+    single-sourced; StartSSLHandshake splits (port body shared, native body
+    doc.cpp `#ifdef _WIN32` until T5); the remaining portable twins die;
+    mushcore is socket-free (worldsock.cpp + m_pSocket removed from it).
+  - **T3d** (`abbc8b9`) ConnectionEstablished + OpenLog single-sourced; the
+    modal password prompt is full-build-only (headless behaves like a
+    cancelled prompt).
+  - **T3e** an end-to-end headless test drives the REAL lifecycle over a
+    real loopback socket (resolve thread → connect → established → bytes →
+    display → send → server close → bookkeeping + teardown) — coverage the
+    twins never had.
+
+  NOT single-sourced, deliberately: CheckConnected (3-line portable twin;
+  prompt-UX policy, not socket drift), SendMsg/DoSendMsg + the display
+  pipeline (the P2/P4 output territory), ReceiveMsg/ContinueSSLHandshake
+  (Windows-only mechanics — they die at T5 with CWorldSocket).
 - **T4 — DONE** as part of T2d (DNS folded in; `m_fn_lookup_host` deleted).
 - **T5** Windows adapter lands in MUSHclient.vcxproj alongside (cannot be
   compiled here — by-reasoning parity, same discipline as the GDI adapter).

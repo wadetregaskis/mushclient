@@ -306,4 +306,94 @@ TEST(PalTransport, Socks5ConnectRefusedAborts)
     delete doc;
 }
 
+// ── End-to-end headless lifecycle (T3e) ─────────────────────────────────────
+// Drives the REAL single-sourced connection path over a real loopback socket:
+// ConnectSocket() → async DNS (getaddrinfo thread + completion mailbox) →
+// connect → OnConnect → ConnectionEstablished → server bytes →
+// OnBytesReceived → DisplayMsg → server close → ConnectionClosed → phase
+// reset + transport destroyed.  This is the coverage the twins never had.
+
+#include "platform/posix_socket.h"      // CAsyncSocket::Poll (the pump)
+#include "platform/posix_transport.h"   // pal::PumpTransportCompletions
+#include <sys/socket.h>
+#include <unistd.h>
+
+template <typename Pred>
+static bool pump_until(Pred pred, int maxTicks = 2500)
+{
+    for (int i = 0; i < maxTicks; ++i) {
+        if (pred()) return true;
+        CAsyncSocket::Poll(10);
+        pal::PumpTransportCompletions();
+        ::usleep(2000);
+    }
+    return pred();
+}
+
+TEST(PalTransport, EndToEndLoopbackLifecycle)
+{
+    // in-process server on an ephemeral loopback port
+    int srv = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_TRUE(srv >= 0);
+    sockaddr_in sa{};
+    sa.sin_family      = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sa.sin_port        = 0;
+    ASSERT_TRUE(::bind(srv, (sockaddr*)&sa, sizeof sa) == 0);
+    ASSERT_TRUE(::listen(srv, 1) == 0);
+    socklen_t salen = sizeof sa;
+    ASSERT_TRUE(::getsockname(srv, (sockaddr*)&sa, &salen) == 0);
+
+    CMUSHclientDoc* doc = new CMUSHclientDoc();
+    doc->m_mush_name   = "e2e";
+    doc->m_server      = "localhost";            // exercises the resolver thread
+    doc->m_port        = ntohs(sa.sin_port);
+    doc->m_iFlags      = COLOUR_ANSI;            // display-pipeline setup
+    doc->m_iForeColour = WHITE;
+    doc->m_iBackColour = BLACK;
+    doc->m_pCurrentLine = new CLine();
+    doc->AddStyle(COLOUR_ANSI, WHITE, BLACK, 0, static_cast<CAction*>(nullptr));
+
+    EXPECT_TRUE(doc->ConnectSocket());
+
+    // resolve + connect + ConnectionEstablished
+    EXPECT_TRUE(pump_until([&] {
+        return doc->m_iConnectPhase == eConnectConnectedToMud;
+    }));
+    EXPECT_TRUE(doc->ConnectionOpen());
+
+    int client = ::accept(srv, nullptr, nullptr);
+    ASSERT_TRUE(client >= 0);
+
+    // server line → transport onBytes → OnBytesReceived → DisplayMsg
+    long linesBefore = (long)doc->m_LineList.GetCount();
+    const char kLine[] = "welcome-e2e\r\n";
+    ASSERT_TRUE(::send(client, kLine, sizeof kLine - 1, 0) == (long)sizeof kLine - 1);
+    EXPECT_TRUE(pump_until([&] {
+        return (long)doc->m_LineList.GetCount() > linesBefore;
+    }));
+    EXPECT_TRUE(doc->m_nBytesIn >= (long)(sizeof kLine - 1));
+
+    // typed-side send: through the shared SendPacket into the real socket
+    doc->SendPacket("ping\r\n", 6);
+    char buf[64] = {};
+    long got = 0;
+    EXPECT_TRUE(pump_until([&] {
+        long n = ::recv(client, buf + got, sizeof buf - 1 - got, MSG_DONTWAIT);
+        if (n > 0) got += n;
+        return got >= 6;
+    }));
+    EXPECT_TRUE(memcmp(buf, "ping\r\n", 6) == 0);
+
+    // server closes → onClosed → ConnectionClosed bookkeeping + teardown
+    ::close(client);
+    EXPECT_TRUE(pump_until([&] {
+        return doc->m_iConnectPhase == eConnectNotConnected;
+    }));
+    EXPECT_TRUE(doc->m_pTransport == nullptr);   // bridge destroyed it
+
+    ::close(srv);
+    delete doc;
+}
+
 MC_TEST_MAIN()

@@ -203,6 +203,8 @@ CMUSHclientDoc::~CMUSHclientDoc()
         m_pSocket = nullptr;
     }
 
+    TeardownTransport();   // PAL transport + events bridge (doc_shared.cpp)
+
     // Delete plugins (CPlugin::~CPlugin() fires OnPluginClose for each).
     // Erase from list during iteration so re-entrant PluginList queries see a
     // consistent list (mirrors the Windows destructor in doc_construct.cpp).
@@ -552,24 +554,17 @@ void CMUSHclientDoc::SendToAllPluginCallbacksRtn(const string& callbackName,
     m_CurrentPlugin = pSavedPlugin;
 }
 
-void CMUSHclientDoc::SendPacket(const char* lpBuf, const int nBufLen)
-{
-    if (!m_pSocket || nBufLen <= 0) return;
+// SendPacket: single-sourced in doc_shared.cpp (T3b) — the old portable
+// twin wrote SSL bytes with no WANT_* retry; the shared transport path buffers.
 
-#ifdef OPENSSL_FOUND
-    if (m_pSSL && m_bSSL_Connected) {
-        SSL_write(m_pSSL, lpBuf, nBufLen);
-        return;
-    }
-#endif
-    m_pSocket->m_outstanding_data.append(lpBuf, nBufLen);
-    // Trigger send attempt — fire OnSend(0) if there's data queued
-    m_nBytesOut += nBufLen;
-}
 
-void CMUSHclientDoc::SendPacket(const unsigned char* lpBuf, const int nBufLen)
+// ── Debug_Packets — no-op off the full build ────────────────────────────────
+// The real implementation (doc.cpp) pretty-prints packets into a notepad
+// window via SendToFirstPluginCallbacks/AppendToTheNotepad — GUI tooling the
+// headless engine does not link.  The shared SendPacket/OnBytesReceived call
+// it only when m_bDebugIncomingPackets is set.
+void CMUSHclientDoc::Debug_Packets(LPCTSTR, LPCTSTR, int, const __int64)
 {
-    SendPacket(reinterpret_cast<const char*>(lpBuf), nBufLen);
 }
 
 // ── AddToLine ────────────────────────────────────────────────────────────────
@@ -1308,79 +1303,7 @@ void CMUSHclientDoc::OnBytesReceived(char* buff, int count)
     }
 }
 
-// ── OnConnect — called by CWorldSocket when TCP connection completes ──────────
-
-void CMUSHclientDoc::OnConnect(int nErrorCode)
-{
-    if (nErrorCode != 0) {
-        fprintf(stderr, "MUSHclient: connection failed, error %d\n", nErrorCode);
-        m_iConnectPhase = eConnectNotConnected;
-        return;
-    }
-
-    // Initialise per-session counters immediately (before any SSL handshake).
-    m_bCompress      = false;
-    m_nTotalLinesSent   = 0;
-    m_nTotalLinesReceived = 0;
-    m_iTriggersMatchedThisSessionCount = 0;
-    m_iAliasesMatchedThisSessionCount  = 0;
-    m_iTimersFiredThisSessionCount     = 0;
-    m_iInputPacketCount = 0;
-    m_nBytesIn  = 0;
-    m_nBytesOut = 0;
-    m_iNoteStyle = NORMAL;
-    m_ttype_sequence = 0;
-
-    ZeroMemory(m_bClient_sent_IAC_DO,   sizeof m_bClient_sent_IAC_DO);
-    ZeroMemory(m_bClient_sent_IAC_DONT, sizeof m_bClient_sent_IAC_DONT);
-    ZeroMemory(m_bClient_sent_IAC_WILL, sizeof m_bClient_sent_IAC_WILL);
-    ZeroMemory(m_bClient_sent_IAC_WONT, sizeof m_bClient_sent_IAC_WONT);
-    ZeroMemory(m_bClient_got_IAC_DO,    sizeof m_bClient_got_IAC_DO);
-    ZeroMemory(m_bClient_got_IAC_DONT,  sizeof m_bClient_got_IAC_DONT);
-    ZeroMemory(m_bClient_got_IAC_WILL,  sizeof m_bClient_got_IAC_WILL);
-    ZeroMemory(m_bClient_got_IAC_WONT,  sizeof m_bClient_got_IAC_WONT);
-
-    // SOCKS proxy: TCP is connected to the proxy; send the CONNECT request.
-    if (m_iSocksProcessing != eProxyServerNone) {
-        if (m_iSocksProcessing == eProxyServerSocks4) {
-            // SOCKS4: send version + CONNECT + port + address + username + NUL
-            m_iConnectPhase = eConnectAwaitingProxyResponse3;
-            uint32_t       address = m_sockAddr.sin_addr.s_addr;  // exactly 4 bytes (LP64: long is 8)
-            unsigned short port    = m_sockAddr.sin_port;
-            unsigned char  pkt[3 + 255 + sizeof address + sizeof port] = { 4, 1 };
-            int len = 2;
-            memcpy(&pkt[len], &port,    sizeof port);    len += (int)sizeof port;
-            memcpy(&pkt[len], &address, sizeof address); len += (int)sizeof address;
-            if (m_strProxyUserName.GetLength() <= 255) {
-                memcpy(&pkt[len], (const char*)m_strProxyUserName,
-                       m_strProxyUserName.GetLength());
-                len += m_strProxyUserName.GetLength();
-            }
-            pkt[len++] = 0;  // NUL terminator
-            SendPacket(pkt, len);
-        } else {
-            // SOCKS5: send version + method list
-            m_iConnectPhase = eConnectAwaitingProxyResponse1;
-            if (m_strProxyUserName.IsEmpty()) {
-                unsigned char pkt[3] = { 5, 1, 0 };   // no-auth only
-                SendPacket(pkt, sizeof pkt);
-            } else {
-                unsigned char pkt[4] = { 5, 2, 0, 2 };  // no-auth + user/pass
-                SendPacket(pkt, sizeof pkt);
-            }
-        }
-        return;
-    }
-
-    // If SSL requested, hand off to the handshake path; ConnectionEstablished()
-    // will be called once the handshake succeeds.
-    if (m_bUseSSL) {
-        StartSSLHandshake();
-        return;
-    }
-
-    ConnectionEstablished();
-}
+// OnConnect: single-sourced in doc_shared.cpp (T3b).
 
 // ── ConnectionEstablished ─────────────────────────────────────────────────────
 // Called once the TCP connection (and SSL handshake, if any) is complete.

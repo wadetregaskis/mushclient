@@ -32,6 +32,10 @@ class CMUSHclientDoc;
 // Deferred TLS consent/fallback prompt message id (stdafx.h owns it in the
 // full build: WM_USER + 1004).  Headless there is no message pump, so posts
 // go nowhere — TLS failures fail closed, the portable policy.
+#ifndef FORUM_URL
+#define FORUM_URL "http://www.gammon.com.au/forum/"
+#endif
+
 #ifndef WM_USER_SSL_FALLBACK_PROMPT
 #define WM_USER_SSL_FALLBACK_PROMPT (0x0400 + 1004)
 #endif
@@ -700,6 +704,7 @@ const char* telopt_name(unsigned char opt);
 #define MB_ICONEXCLAMATION 0x00000030L
 #endif
 CString TFormat(const char* sFormat, ...);
+CString GetConnectionStatus (const int iStatus);   // doc_shared.cpp (T3b)
 CString TranslateGeneric(const char* sText, const char* sSection);
 // Don't define Translate as a macro when building with wxWidgets — wx/textbuf.h
 // declares wxString::Translate(const wxString& text, const wxString& domain) as a
@@ -2225,6 +2230,9 @@ public:
     int  ProcessProxyResponse2(char* buff, int count);
     int  ProcessProxyResponse3(char* buff, int count);
     void OnConnect(int nErrorCode);
+    CString GetSocketError(int nError);                             // doc_shared.cpp (T3b)
+    void Debug_Packets(LPCTSTR sCaption, LPCTSTR lpszText, int size,
+                       const __int64 iNumber);                      // no-op (doc_portable.cpp)
     bool LookupHostName(LPCTSTR sName);                 // doc_shared.cpp (T3a)
     void LookupHostNameComplete(struct in_addr addr, int phase, bool ok);
     void InitiateConnection(void);                       // doc_shared.cpp (T3c)

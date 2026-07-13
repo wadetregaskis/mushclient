@@ -814,27 +814,7 @@ CString FixUpGerman (const CString strMessage)
 
   } // end of FixUpGerman
 
-CString GetConnectionStatus (const int iStatus)
-  {
-  CString strResult = Translate ("<unknown>");
-
-  switch (iStatus)
-    {
-    case eConnectNotConnected:          strResult = Translate ("Closed"); break;
-    case eConnectMudNameLookup:         strResult = Translate ("Look up world name"); break;
-    case eConnectProxyNameLookup:       strResult = Translate ("Look up proxy name"); break;
-    case eConnectConnectingToMud:       strResult = Translate ("Connecting to world"); break;
-    case eConnectConnectingToProxy:     strResult = Translate ("Connecting to proxy"); break;
-    case eConnectAwaitingProxyResponse1:strResult = Translate ("Awaiting proxy response (1)"); break;
-    case eConnectAwaitingProxyResponse2:strResult = Translate ("Awaiting proxy response (2)"); break;
-    case eConnectAwaitingProxyResponse3:strResult = Translate ("Awaiting proxy response (3)"); break;
-    case eConnectAwaitingSSLHandshake:  strResult = Translate ("Performing TLS handshake"); break;
-    case eConnectConnectedToMud:        strResult = Translate ("Open"); break;
-    case eConnectDisconnecting:         strResult = Translate ("Disconnecting"); break;
-    } // end of switch
-
-  return strResult;
-  }    // end of GetConnectionStatus
+// GetConnectionStatus: single-sourced in doc_shared.cpp (ITransport T3b)
 
 
 void GetHostNameAndAddresses (CString & strHostName, CString & strAddresses)

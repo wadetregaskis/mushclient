@@ -5,7 +5,7 @@
 //
 // The tests drive the engine's real entry points (OnConnect, the
 // ProcessProxyResponse* parsers in doc_shared.cpp) and inspect the bytes the
-// engine queued into CWorldSocket::m_outstanding_data — SendPacket appends
+// engine queued into the transport seam — SendPacket sends via m_pTransport
 // there and, headless, nothing drains it, so the queue IS the wire capture.
 //
 // Byte-width pins matter: the SOCKS4 and SOCKS5 CONNECT packets carry the
@@ -63,13 +63,16 @@ static CMUSHclientDoc* make_proxy_doc(int socksType,
     // MUD endpoint 10.11.12.13:4000 (values chosen so every byte is distinct)
     doc->m_sockAddr.sin_addr.s_addr = htonl(0x0A0B0C0Du);
     doc->m_sockAddr.sin_port        = htons(4000);
-    doc->m_pSocket = new CWorldSocket(doc);
+    // The doc sends through the PAL transport seam (T3b single-sourced
+    // SendPacket); a FakeTransport captures the bytes.  The doc destructor's
+    // TeardownTransport() frees it.
+    doc->m_pTransport = new FakeTransport();
     return doc;
 }
 
 static std::string& queued(CMUSHclientDoc* doc)
 {
-    return doc->m_pSocket->m_outstanding_data;
+    return static_cast<FakeTransport*>(doc->m_pTransport)->sent;
 }
 
 // The SOCKS5 CONNECT request SendProxyConnectSequence must emit:

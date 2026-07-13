@@ -16,44 +16,7 @@
 //    WriteLog
 
 
-long CMUSHclientDoc::OpenLog(LPCTSTR LogFileName, BOOL Append) 
-{
-
-  if (m_logfile)
-  	return eLogFileAlreadyOpen;
-
-  m_logfile_name = LogFileName;
-
-  // if no log file name, use auto-log file name if we can
-
-  if (m_logfile_name.IsEmpty ())
-    {
-    CTime theTime;
-    theTime = CTime::GetCurrentTime();
-
-    m_logfile_name = FormatTime (theTime, m_strAutoLogFileName, false);
-
-    }
-
-  // no file name? can't open it then
-  if (m_logfile_name.IsEmpty ())
-    return eCouldNotOpenFile;
-
-  m_logfile = fopen (m_logfile_name, Append ? "a+" : "w");
-	
-  // close and re-open to make sure it is in the disk directory
-  if (m_logfile)
-    {
-    fclose (m_logfile);
-    m_logfile = fopen (m_logfile_name, Append ? "a+" : "w");
-    }
-
-	if (m_logfile)
-    return eOK;
-  else
-    return eCouldNotOpenFile;
-
-}   // end of CMUSHclientDoc::OpenLog
+// OpenLog: single-sourced in doc_shared.cpp (ITransport T3d)
 
 
 

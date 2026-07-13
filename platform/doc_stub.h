@@ -1771,6 +1771,7 @@ public:
 
     // ── Log file ──────────────────────────────────────────────────────
     FILE*          m_logfile                  = nullptr;
+    BOOL           m_bWriteWorldNameToLog     = FALSE;  // doc.h twin (T3d)
     CString        m_logfile_name;
     short          m_bLogOutput               = 0;
     short          m_bLogNotes                = 0;
@@ -2026,6 +2027,7 @@ public:
     // ── Connection helpers ─────────────────────────────────────────────
     BOOL CheckConnected();   // returns FALSE (0) if connected; non-zero if not
     BOOL ConnectSocket(void);   // single-sourced in doc_shared.cpp (T3c)
+    long OpenLog(LPCTSTR LogFileName, BOOL Append);   // doc_shared.cpp (T3d)
 
     // ── Trigger execution (stub — scripting not wired yet) ────────────
     void ExecuteTriggerScript(CTrigger* pTrigger, CString strLine,

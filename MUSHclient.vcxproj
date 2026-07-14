@@ -1412,7 +1412,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
       </PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="pal\surface_bridge.cpp" />
+    <ClCompile Include="surface_bridge.cpp" />
     <ClCompile Include="pal\gdi_surface.cpp" />
     <ClCompile Include="pal\win_transport.cpp" />
     <ClCompile Include="pal\win_worldview.cpp" />

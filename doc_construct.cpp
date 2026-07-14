@@ -535,12 +535,6 @@ int i;
   // events bridge — the transport cancels any DNS lookup still in flight
   TeardownTransport ();
 
-#ifdef _WIN32
-  // the native IWorldView adapter is doc-owned on Windows (WV-2)
-  delete m_pWorldView;
-  m_pWorldView = NULL;
-#endif
-
 	if (m_pChatListenSocket)
 	{
 
@@ -622,6 +616,16 @@ int i;
 // ****************** release scripting stuff
 
   DisableScripting ();
+
+#ifdef _WIN32
+  // The native IWorldView adapter is doc-owned on Windows (WV-2).  It has to
+  // outlive the plugins: CPlugin's destructor runs OnPluginClose, and those
+  // scripts reach the title, info bar and window families through this seam.
+  // Freeing it earlier makes their pushes inert and their pulls answer with
+  // zeros, so it is destroyed here, once no script can run again.
+  delete m_pWorldView;
+  m_pWorldView = NULL;
+#endif
 
   if (!bWine)
   	AfxOleUnlockApp();        // not needed?

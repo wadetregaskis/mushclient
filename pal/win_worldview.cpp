@@ -405,17 +405,24 @@ public:
             {
                 CSendView* pmyView = (CSendView*)pView;
 
-                if (!pmyView->m_msgList.IsEmpty())
+                if (!pmyView->m_msgList.IsEmpty())    // cannot create empty dimension
                 {
-                    long n = count;
-                    if (n <= 0)
-                        n = pmyView->m_msgList.GetCount();     // zero means all
+                    // Count is mutated across views, exactly as the original
+                    // did — with more than one command window that clamps each
+                    // view to the narrowest list seen so far.
+                    if (count <= 0)
+                        count = pmyView->m_msgList.GetCount();     // zero means all
                     else
-                        n = MIN(n, pmyView->m_msgList.GetCount());
+                        count = MIN(count, pmyView->m_msgList.GetCount());  // don't exceed what we have
+
+                    // the original re-created the safe array here, discarding
+                    // whatever an earlier command window had put in it, so the
+                    // last one wins rather than the views concatenating
+                    result.clear();
 
                     long iCount = 0;
                     for (POSITION pos = pmyView->m_msgList.GetTailPosition();
-                         pos && iCount < n; iCount++)
+                         pos && iCount < count; iCount++)
                     {
                         CString strLine = pmyView->m_msgList.GetPrev(pos);
                         result.push_back(std::string((const char*)strLine));

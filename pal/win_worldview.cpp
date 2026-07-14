@@ -57,6 +57,7 @@
 #include "MUSHview.h"
 #include "sendvw.h"
 #include "mainfrm.h"
+#include "winplace.h"   // CWindowPlacement — outputRect/mainRect GetWindowPlacement
 
 #include "pal/win_worldview.h"
 

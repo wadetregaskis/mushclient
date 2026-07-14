@@ -713,8 +713,10 @@ public:
 
     bool saveWorld() override
     {
-        // Save with no name (methods_utilities.cpp): !DoSave == success
-        return !m_pDoc->DoSave(m_pDoc->m_strPathName, TRUE);
+        // Save with no name (methods_utilities.cpp): !DoSave == success.
+        // GetPathName() is CDocument's public accessor for m_strPathName,
+        // which the original reached directly as a member of the doc.
+        return !m_pDoc->DoSave(m_pDoc->GetPathName(), TRUE);
     }
 
     Rect mainRect() const override

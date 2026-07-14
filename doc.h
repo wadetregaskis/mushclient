@@ -20,6 +20,15 @@
 #define COMPRESS_BUFFER_LENGTH 10000   // size of decompression buffer
 extern CString MUSHCLIENT_VERSION;
 
+// ── PAL seams — unconditional on every platform (docs/PAL.md) ─────────────
+// The CMUSHclientDoc body below refers to pal::IWorldView, pal::ITransport,
+// SOutputLine and CDocTransportEvents regardless of platform, so these
+// declarations must not sit behind a platform guard.  (pal/iworldview.h
+// pulls in platform/output_types.h for SOutputLine/SOutputRun.)
+#include "pal/iworldview.h"   // pal::IWorldView — the typed per-world view seam
+namespace pal { class ITransport; }   // pal/itransport.h — the byte-transport seam
+class CDocTransportEvents;            // doc_shared.cpp — the ITransportEvents → engine bridge
+
 #ifndef _WIN32
 // Verbose protocol tracing flag — defined in mushapp_globals.cpp / doc_portable.cpp.
 extern bool g_debug;
@@ -31,11 +40,8 @@ extern bool g_debug;
 #include "OtherTypes.h"
 // Shared styled-line types and GUI output callbacks.
 #include "platform/output_types.h"
-#include "pal/iworldview.h"   // pal::IWorldView — the typed output seam (no-op on _WIN32)
 #include <functional>
 
-namespace pal { class ITransport; }   // pal/itransport.h — the byte-transport seam
-class CDocTransportEvents;            // doc_shared.cpp — the ITransportEvents → engine bridge
 // The world-prefs property-page classes (full defs in prefspropertypages.h,
 // which is Windows-only in this header).  CMUSHclientDoc's Load/Changed/Save
 // prefs methods take these by reference, so forward declarations suffice here;

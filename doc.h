@@ -1876,9 +1876,16 @@ public:
 
   void RememberStyle (const CStyle * pStyle);
 
-  // Non-MFC view/zlib helpers used by portable .cpp files via doc_stub.h
+  // Non-MFC view/zlib helpers used by portable .cpp files via doc_stub.h.
+  // Both MUST stay off Windows: as members they hide the real Windows
+  // equivalents — MFC's CDocument::UpdateAllViews(CView*, LPARAM, CObject*),
+  // and the global ::InitZlib declared in stdafx.h (MUSHclient.cpp), which
+  // unlike the portable member reports failures via zLibError().  Declaring
+  // them here rebinds every call site to a shim with no Windows definition.
+#ifndef _WIN32
   void UpdateAllViews (void * hint = nullptr);
   bool InitZlib (z_stream & zs);
+#endif
 
   void StartNewLine (const bool hard_break, const int flags);
   bool ProcessPreviousLine (void);

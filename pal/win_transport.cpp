@@ -292,8 +292,10 @@ private:
         {
             if (m_owner) m_owner->handleConnect(nErrorCode);
         }
-        virtual void OnSend(int /*nErrorCode*/)
+        virtual void OnSend(int nErrorCode)
         {
+            if (nErrorCode)    // had an error, give up!
+                return;
             if (m_owner) m_owner->handleWritable();
         }
         virtual void OnReceive(int /*nErrorCode*/)

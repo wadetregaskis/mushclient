@@ -119,7 +119,7 @@ void CTextDocument::Serialize(CArchive& ar)
 {
 	// CEditView contains an edit control which handles all serialization
 #ifdef _WIN32
-	((CTextView*)(m_viewList.empty() ? nullptr : m_viewList.front()))->SerializeRaw(ar);
+	((CTextView*)m_viewList.GetHead())->SerializeRaw(ar);
 #else
 	if (!m_viewList.empty()) ((CTextView*)m_viewList.front())->SerializeRaw(ar);
 #endif
@@ -541,7 +541,7 @@ BOOL CTextDocument::SaveModified()
   return TRUE;  // no callback — assume OK
 #else
 // don't bother asking if they want to save an empty document
-CTextView* pView = (CTextView*) (m_viewList.empty() ? nullptr : m_viewList.front());
+CTextView* pView = (CTextView*) m_viewList.GetHead();
 
 	if (GetText (pView->GetEditCtrl ()).IsEmpty ())
     return TRUE;
@@ -601,7 +601,7 @@ void CTextDocument::SetReadOnly (BOOL bReadOnly)
   if (m_fn_set_read_only)
     m_fn_set_read_only(bReadOnly != FALSE);
 #else
-  CTextView* pView = (CTextView*) (m_viewList.empty() ? nullptr : m_viewList.front());
+  CTextView* pView = (CTextView*) m_viewList.GetHead();
 
   if (pView)
     pView->GetEditCtrl ().SetReadOnly (bReadOnly);

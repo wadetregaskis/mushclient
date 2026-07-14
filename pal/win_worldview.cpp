@@ -326,11 +326,13 @@ public:
                 int nStartChar;
                 int nEndChar;
 
-                // find where cursor is
+                // find where cursor is.  The seam contract is the raw
+                // CEdit::GetSel offsets (pal/iworldview.h: "endpoints, in
+                // characters" — the wx adapter returns them untouched).  The
+                // GetInfo 236/237 engine sites own the 1-based / zero-if-empty
+                // transform, so applying it here as well would run it twice.
                 pmyView->GetEditCtrl().GetSel(nStartChar, nEndChar);
-                if (nEndChar <= nStartChar)
-                    nEndChar = 0;  // zero indicates no text selected
-                r.start = nStartChar + 1;
+                r.start = nStartChar;
                 r.end   = nEndChar;
                 break;
             }

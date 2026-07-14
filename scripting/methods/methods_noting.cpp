@@ -629,10 +629,18 @@ void CMUSHclientDoc::ColourNote(LPCTSTR TextColour,
   SetNewLineColour(0);
 }  // end of CMUSHclientDoc::ColourNote
 
+#ifndef _WIN32
+// Port-only convenience overload (declaration guarded in doc.h — it would make
+// &CMUSHclientDoc::ColourNote ambiguous for MFC's DISP_FUNCTION on Windows).
+#ifndef _WIN32
+// Port-only convenience overload (declaration guarded in doc.h — it would make
+// &CMUSHclientDoc::ColourNote ambiguous for MFC's DISP_FUNCTION on Windows).
 void CMUSHclientDoc::ColourNote(LPCTSTR TextColour, LPCTSTR BackgroundColour, const CString & Text)
 {
   ColourNote(TextColour, BackgroundColour, (LPCTSTR) Text);
 }  // end of CMUSHclientDoc::ColourNote (CString overload)
+#endif // _WIN32
+#endif // _WIN32
 
 void CMUSHclientDoc::ColourTell(LPCTSTR TextColour, LPCTSTR BackgroundColour, LPCTSTR Text) 
 {

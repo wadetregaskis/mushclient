@@ -2817,7 +2817,13 @@ public:
 	afx_msg BOOL IsConnected();
 	afx_msg BSTR WorldName();
 	afx_msg void Note(LPCTSTR Message);
+#ifndef _WIN32
+	// Port-only convenience overload (the portable engines pass CString).
+	// It must not exist on Windows: MFC's DISP_FUNCTION takes the address of
+	// &CMUSHclientDoc::Note, and an overload set cannot be cast to the
+	// dispatch-map's member-function type (C2440).
 	void Note(const CString & s);
+#endif
 	afx_msg long Send(LPCTSTR Message);
 	afx_msg long Sound(LPCTSTR SoundFileName);
 	afx_msg long DeleteTrigger(LPCTSTR TriggerName);
@@ -2931,7 +2937,12 @@ public:
 	afx_msg VARIANT GetDefaultValue(LPCTSTR OptionName);
 	afx_msg VARIANT GetCurrentValue(LPCTSTR OptionName);
 	afx_msg void ColourNote(LPCTSTR TextColour, LPCTSTR BackgroundColour, LPCTSTR Text);
+#ifndef _WIN32
+	// Port-only convenience overload — see the Note(CString) note above.
+	// On Windows callers reach the LPCTSTR overload via CString's conversion,
+	// which is exactly what this forwarder does anyway.
 	void ColourNote(LPCTSTR TextColour, LPCTSTR BackgroundColour, const CString & Text);
+#endif
 	afx_msg void ColourTell(LPCTSTR TextColour, LPCTSTR BackgroundColour, LPCTSTR Text);
 	afx_msg BSTR CreateGUID();
 	afx_msg BSTR Hash(LPCTSTR Text);

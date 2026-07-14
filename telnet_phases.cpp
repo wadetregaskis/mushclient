@@ -8,6 +8,12 @@
 // No-op stubs for the debug helpers used below — not needed in the full build.
 #define dbg(...)          ((void)0)
 #define telopt_name(opt)  ""
+#ifdef _WIN32
+// g_debug is a portable-build global (doc.h declares it only off-Windows).
+// The dbg() stub above already makes every use of it below dead code, so a
+// false constant keeps Windows byte-for-byte as it was.
+static const bool g_debug = false;
+#endif
 #else
 // mushcore portable build: use the minimal stub header.
 #include "platform/doc_stub.h"

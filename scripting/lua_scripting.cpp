@@ -470,7 +470,7 @@ void LuaError (lua_State *L,
   // if option "log_script_errors" is active, append to the error log file
   if (pDoc && pDoc->m_bLogScriptErrors)
     {
-    string fileName = App.m_strDefaultLogFileDirectory.c_str();
+    string fileName = (LPCTSTR) App.m_strDefaultLogFileDirectory;
     fileName += "script_error_log.txt";
 
     FILE * errorLogFile = fopen (fileName.c_str(), "a+");

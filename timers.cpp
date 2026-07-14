@@ -423,4 +423,30 @@ void CMUSHclientDoc::OnUpdateGameResetalltimers(CCmdUI* pCmdUI)
 }
 #endif
 
+// Rebuild the timer reverse map (timer pointer -> name).  Off-Windows this is
+// a no-op supplied by platform/mushapp_stubs.cpp (the timer map is iterated
+// directly there), so only Windows needs the real body here.
+#ifdef _WIN32
+
+void  CMUSHclientDoc::SortTimers (void)
+  {
+
+int i;
+CString strTimerName;
+CTimer * pTimer;
+POSITION pos;
+
+  GetTimerRevMap ().clear ();
+
+  // extract pointers into a simple array
+  for (i = 0, pos = GetTimerMap ().GetStartPosition(); pos; i++)
+    {
+     GetTimerMap ().GetNextAssoc (pos, strTimerName, pTimer);
+     GetTimerRevMap () [pTimer] = strTimerName;
+    }
+
+  } // end of CMUSHclientDoc::SortTimers
+
+#endif // _WIN32
+
 

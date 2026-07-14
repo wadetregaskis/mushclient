@@ -454,8 +454,10 @@ public:
                     pmyView->m_msgList.AddTail(text);
                     pmyView->m_last_command = text;
                 } // end of different from last one
-            }
-        }
+
+                break;
+            }	  // end of being a CSendView
+        }   // end of loop through views
     }
 
     void deleteCommandHistory() override

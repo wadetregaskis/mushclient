@@ -1,9 +1,10 @@
 #include "stdafx.h"
 #include "resource.h"
 
-// Real DDX/DDV implementations — only compiled in the full mushapp build.
-// In mushcore (no MUSHCLIENT_FULL_BUILD) mfc_ui.h already provides inline stubs.
-#ifdef MUSHCLIENT_FULL_BUILD
+// Real DDX/DDV implementations — compiled in every full build: Windows native
+// (which does not define MUSHCLIENT_FULL_BUILD) and mushapp on macOS/Linux.
+// In mushcore (neither) mfc_ui.h already provides inline stubs.
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

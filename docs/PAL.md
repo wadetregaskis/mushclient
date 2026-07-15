@@ -616,6 +616,69 @@ at T2d** — bytes are counted once at `SendPacket`. Windows keeps the upstream
 double-count until T5 unifies it. The engine synthesizing `OnClose(0)` during
 teardown is now an explicit `ConnectionClosed` call.
 
+## IWorldView — display-family rendering: pull vs push (decision)
+
+**Status: accepted 2026-07-15.** Revisitable — see the trigger below.
+
+Five of `IWorldView`'s six families (title, info bar, command input, window,
+output) are single-sourced on every platform: the engine calls the seam, the
+adapter runs the native code. The **display family** (`appendLine` / `note` /
+`beginBatch` / `endBatch` / `requestRepaint`) is deliberately *not* single-
+sourced, because the two frontends consume output through fundamentally
+different data flows.
+
+**The two flows.** Both platforms build the same engine data model —
+`m_LineList`, a list of `CLine`s (each a `styleList` of coloured runs); it is
+engine state, not a toolkit type, and it backs selection, find/recall,
+bookmarks, print, and much of the ~400-method scripting line API (roughly two
+dozen files index into it).
+
+- *Windows (pull):* `CMUSHView::OnDraw` reads `m_LineList` directly and
+  rasterizes the `CLine`s live. The engine only invalidates.
+- *Port (push):* `mushapp_stubs.cpp::UpdateAllViews` translates each newly
+  finished `CLine` into a toolkit-neutral `SOutputLine` and pushes it through
+  `appendLine`; the wx pane keeps its own `SOutputLine` buffer and rasterizes
+  from that. `EmitOutputLine` is called only from port-only TUs, so a Windows
+  adapter's `appendLine` is currently unreachable.
+
+**Decision (Option A): the seam contract is "consume-or-pull," and the display
+family is complete-by-design.** `appendLine` means "a finished line is now in
+the engine's line model"; an adapter may either render the pushed `SOutputLine`
+(the port) or ignore the payload and invalidate so its view pulls `m_LineList`
+(Windows). This is a legitimate *adapter* difference — a SwiftUI adapter might
+push, a TUI adapter might pull — not drift. Cost: display is the one family
+that is not an identical channel across platforms; the pushed payload is
+port-only.
+
+**Options considered and declined:**
+
+- *Option B — full push everywhere* (the port model becomes universal: Windows
+  `DisplayMsg` pushes `SOutputLine`s and the Windows pane renders from a pushed
+  buffer). This is the *purest* end state and matches the original design intent
+  (see *ISurface — design*: "the engine ships styled lines through `appendLine`;
+  each view rasterizes them"). **Declined for now:** enormous and high-risk —
+  `m_LineList` underpins selection/find/bookmarks/print/the scripting line API,
+  so it means either keeping `m_LineList` and a pane buffer in lockstep (double
+  bookkeeping) or rewriting ~two dozen files of consumers; it touches the sacred
+  Windows paint path and is validatable only via a Windows round-trip. This is
+  P5-scale work, sensible only alongside a deliberate `CMUSHView` rework.
+
+- *Option C — full pull everywhere* (the Windows model becomes universal: the wx
+  pane rasterizes directly from `m_LineList`/`CLine`, the `CLine`→`SOutputLine`
+  translation and the pane's private buffer are deleted, `appendLine` shrinks to
+  a data-light "repaint" signal). Bounded and fully mac-verifiable, and it would
+  delete real translation code. **Declined:** it cuts against the documented
+  push intent and re-couples the clean wx pane to the legacy `CLine`/`CStyle`
+  types that `SOutputLine` exists to replace — unifying at the cost of the
+  clean-core direction.
+
+**Revisit trigger.** Re-open this (toward Option B) if/when `CMUSHView` is being
+reworked for another reason, or if `m_LineList`/`CLine` is promoted to a clean
+cross-platform line model — at which point the double-bookkeeping objection to B
+largely dissolves and the display family can join the other five on the seam.
+If instead the goal is simply to delete the port's translation layer with no
+Windows change, Option C is the bounded, mac-only path.
+
 ## Migration (incremental, always-green; Windows never perturbed)
 
 - **P0** guardrails: coverage + golden characterization tests capturing the

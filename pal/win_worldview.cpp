@@ -39,12 +39,16 @@
 //                       InfoColour/InfoBackground/InfoFont
 //   flash               methods_output.cpp  FlashIcon (Frame.FlashWindow)
 //
-// DISPLAY FAMILY (dormant until its flip, which comes LAST): Windows paints
-// by pull — DisplayMsg fills the doc's line list and UpdateAllViews
-// invalidates CMUSHView, which re-reads the list in OnDraw.  appendLine /
-// requestRepaint therefore reduce to the invalidation the old flow
-// performed; note() is engine-side lines on Windows; beginBatch/endBatch
-// have no Windows counterpart (paint coalescing already batches).
+// DISPLAY FAMILY — deliberately NOT single-sourced (decision accepted
+// 2026-07-15; full rationale + declined options in docs/PAL.md, "IWorldView —
+// display-family rendering: pull vs push").  Windows paints by PULL: DisplayMsg
+// fills the doc's line list and UpdateAllViews invalidates CMUSHView, which
+// re-reads the list in OnDraw.  So these bodies stay as the invalidation the
+// old flow performed (appendLine / requestRepaint), engine-side lines (note),
+// or no-ops where paint coalescing already batches (beginBatch/endBatch) — and
+// on Windows they are in fact unreachable today (EmitOutputLine is called only
+// from the port's DisplayMsg path).  They exist so the adapter satisfies the
+// interface; the port's push flow is the one that carries the SOutputLine.
 //
 // CANNOT be compiled here (no MSVC) — by-reasoning parity, reviewed as a
 // diff against the site forks named above.

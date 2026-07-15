@@ -37,6 +37,13 @@ public:
     // ── core → frontend: display ──────────────────────────────────────────
     // A finished output line (one '\n'). `pending` lines are the live
     // typing-indicator row and replace, not append.
+    //
+    // Contract is "consume-or-pull": an adapter may render the pushed line
+    // (the wx pane) OR ignore the payload and invalidate so its view pulls
+    // the engine's m_LineList (Windows CMUSHView).  This is why the display
+    // family is deliberately NOT single-sourced across platforms — the full
+    // rationale + declined alternatives are in docs/PAL.md, "IWorldView —
+    // display-family rendering: pull vs push (decision)".
     virtual void appendLine(SOutputLine&& line) = 0;
     virtual void note(const char* text) = 0;        // out-of-band note
     virtual void setTitle(const char* title) = 0;   // world/window title

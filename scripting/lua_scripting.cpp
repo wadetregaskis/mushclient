@@ -470,7 +470,15 @@ void LuaError (lua_State *L,
   // if option "log_script_errors" is active, append to the error log file
   if (pDoc && pDoc->m_bLogScriptErrors)
     {
+    // m_strDefaultLogFileDirectory is an MFC CString on Windows (LPCTSTR cast,
+    // no c_str()), but on the port it is the shim CString (mushapp) or a real
+    // std::string (mushcore) — both of which expose c_str().  So Windows casts,
+    // everywhere else uses c_str(); a plain assign would fail on the shim CString.
+#ifdef _WIN32
     string fileName = (LPCTSTR) App.m_strDefaultLogFileDirectory;
+#else
+    string fileName = App.m_strDefaultLogFileDirectory.c_str();
+#endif
     fileName += "script_error_log.txt";
 
     FILE * errorLogFile = fopen (fileName.c_str(), "a+");

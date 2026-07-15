@@ -625,7 +625,7 @@ teardown is now an explicit `ConnectionClosed` call.
   shipped path).
 - **P2** formalise the seam: promote the `m_fn_*` bundle into `IWorldView` (and the
   rest of the PAL); every frontend implements every method (no silent nulls).
-  *Progress (2026-07-12): IWorldView is COMPLETE and typed-only end to end.*
+  *COMPLETE (2026-07-12): IWorldView is typed-only end to end on the port.*
   All families are promoted — display/state (lines, note, paused, title, status,
   clear, background colour, max-lines, repaint, batching), the pulls
   (currentCommand/scrollPos/outputSelection/outputAreaChars/outputRect/mainRect/
@@ -635,11 +635,29 @@ teardown is now an explicit `ConnectionClosed` call.
   headless stdout output still flows via the doc_portable DisplayMsg/Note
   fallbacks, which key off the view pointer). Main-frame ops ride on IWorldView
   deliberately: every engine call site is doc-scoped; re-partition onto
-  `IAppShell` later if it gains real non-doc-scoped needs. The one surviving
-  loose callback is `m_fn_lookup_host` (async DNS — `ITransport` territory,
-  deferred to the socket seam). Clipboard: the headless stubs return empty/OK;
-  the real path is the `GetClipboardContents`/`putontoclipboard` globals
-  (`IHostUi`, P5).
+  `IAppShell` later if it gains real non-doc-scoped needs. Clipboard: the
+  headless stubs return empty/OK; the real path is the `GetClipboardContents`/
+  `putontoclipboard` globals (`IHostUi`, P5).
+
+  *Windows adapter + flips (2026-07, WV-1…WV-5; Windows-validated 2026-07-15):*
+  after P4b unguarded the seam, a **native Windows adapter**
+  (`pal/win_worldview.cpp`, doc-owned, `CWinWorldView`) landed, then the engine
+  sites had their `#ifdef _WIN32` forks deleted **family by family** so the
+  seam call is the only path on every platform: title, info bar, command-input,
+  window, and output families are all unconditional now (the deleted Windows
+  halves live verbatim in the adapter).  Each flip is behaviour-identical by
+  construction (helper body == adapter body == the original code); a Windows
+  VM instance built + validated the result against MUSHclient 5.06 and its
+  fixes are merged.  **The display family (`appendLine`/`note`/batch/repaint)
+  is deliberately NOT flipped and stays platform-split**: Windows renders by
+  *pulling* finished lines from the doc's `m_LineList` in `CMUSHView::OnDraw`,
+  while the port *pushes* completed `SOutputLine`s to its own pane buffer via
+  `EmitOutputLine` (in port-only TUs).  That is an inherent pull-vs-push data-
+  model difference, not drift — unifying it means a shared output-pane
+  rendering path, which is P5 rendering work.  A handful of other sites stay
+  guarded as genuine platform-capability differences (multi-view `Which>1`,
+  the `SetScroll` scrollbar-visibility flag, `Activate`'s child-frame vs
+  main-frame semantics) — documented per-site in the WV commit messages.
 - **P3** value types out of the shim into L0.
 - **P4** demote `CMUSHclientDoc` → `WorldEngine` + `WorldModel` behind the PAL.
 - **P5** unify the build into one core lib + per-platform adapters; delete the stubs.
@@ -652,5 +670,8 @@ teardown is now an explicit `ConnectionClosed` call.
 - `ISurface`: see *Decisions taken + open decisions* in the ISurface design above
   (DPI parity, legacy charsets, `ON_PLUGIN_DRAW_OUTPUT_WINDOW`). Handles question
   resolved: opaque adapter-owned ids.
-- `SOutputLine` currently `#ifndef _WIN32`; promote to the canonical cross-platform
-  line type as part of P4.
+- `SOutputLine` promoted to a cross-platform canonical type at P4b (2026-07-12);
+  `platform/output_types.h` is now unconditional. The remaining P5 rendering
+  question is whether Windows' output pane switches from pulling `m_LineList`
+  to consuming pushed `SOutputLine`s (which would let the display family flip
+  onto the seam like the other five).

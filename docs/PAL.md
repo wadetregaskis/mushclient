@@ -1,13 +1,15 @@
 # MUSHclient Platform Abstraction Layer (PAL) — spec
 
-**Status:** living document.  Three of the eight interfaces are LIVE on every
+**Status:** living document.  Four of the eight interfaces are LIVE on every
 platform: `IWorldView` (typed-only, P2 complete; **unconditional since P4** —
-SOutputLine promoted, so MSVC compiles the seam too, though no native Windows
-adapter emits through it yet), `ISurface` (S1–S4 complete incl. the native GDI
-adapter), and `ITransport` (T1–T5 complete — CWorldSocket is gone; Windows,
-macOS and the headless engine all connect through the seam).  Every seam the
-engine calls is now compiled on every platform.  Windows-side correctness of
-the native adapters is by-reasoning until Windows CI exists.
+SOutputLine promoted, and a native Windows adapter now backs five of six
+families, Windows-validated), `ISurface` (S1–S4 complete incl. the native GDI
+adapter), `ITransport` (T1–T5 complete — CWorldSocket is gone; Windows, macOS
+and the headless engine all connect through the seam), and `IClock` (the
+injectable time source; production reads the real clock, tests drive a fake).
+Every seam the engine calls is compiled on every platform.  Windows-side
+correctness of the native adapters is by-reasoning, now spot-validated by a
+2026-07 Windows-VM round-trip (16 fixes merged).
 
 ## Goal
 
@@ -51,8 +53,9 @@ Only frontends know a toolkit. Everything below the PAL is pure and testable.
 ## Types that cross the seam
 
 POD / std only. No toolkit types. Scripting stays on the existing `VARIANT`
-boundary; the styled line is `SOutputLine`/`SOutputRun` (`platform/output_types.h`
-— to be promoted to a cross-platform canonical type).
+boundary; the styled line is `SOutputLine`/`SOutputRun` (`platform/output_types.h`,
+promoted to a cross-platform canonical type at P4b — unconditional on every
+platform).
 
 ```cpp
 namespace pal {

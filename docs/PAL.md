@@ -37,7 +37,7 @@ may be fixed; correct behaviour must be reproduced exactly.
 ```
 frontends:   native Win32/MFC  |  wx (mac/Linux)  |  headless test fakes  |  (future: SwiftUI, TUI)
              ────────────────────────── implement ──────────────────────────
-PAL (L2):    IWorldView · ISurface · ITransport · IClock/ITimers · ISound
+PAL (L2):    IWorldView · ISurface · ITransport · IClock · ISound
              · IHostUi · IAppShell · IFileSystem                (POD/std types only)
              ──────────────────────────── used by ────────────────────────────
 engine (L1): WorldEngine + WorldModel — protocol parse, triggers/aliases/timers,
@@ -86,8 +86,19 @@ each is implemented.
    `IWorldView`). Full evidence-grounded design: *ISurface — design* below.
 3. **`ITransport`** — async byte IO; the adapter owns sockets, TLS and DNS so the
    core sees only plaintext bytes + events.
-4. **`IClock` + `ITimers`** — monotonic + wall-clock time; schedule/cancel.
-   Fakeable virtual time → deterministic timer tests.
+4. **`IClock`** — the injectable time source. *Landed 2026-07-15
+   (`pal/iclock.h`, wall-clock `nowOle()`).* MUSHclient's timer/uptime/duration
+   logic all funnels through `CmcDateTime::GetTimeNow()`, so `IClock` simply
+   overrides that one read (`pal::g_clock`, null-default = the real system
+   clock, so production is unchanged) → deterministic timer tests without
+   wall-clock sleeps. **No separate `ITimers` (schedule/cancel) interface:**
+   MUSHclient timers are *check-based* — the engine owns the `CTimerMap` and
+   `CheckTimerList` compares each timer's fire time against "now"; the only
+   platform dependency is the periodic "check now" pulse, already delivered by
+   the native timer (`WM_TIMER` on Windows, a `wxTimer` on the port) calling
+   `CheckTimers`. So the time *source* is the meaningful seam; scheduling stays
+   engine-internal. (Monotonic/perf-counter time — `QueryPerformanceCounter`
+   for `m_iCounterFrequency` — is a separate concern, not part of v1.)
 5. **`ISound`** — load/play/stop/status, volume/pan.
 6. **`IHostUi`** — native modal UI + clipboard: messageBox, file/folder/font/
    colour/input pickers, popup menu, `editSettings(model)`. The core owns the

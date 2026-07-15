@@ -1455,6 +1455,7 @@
     <ClInclude Include="luacom\tLuaVector.h" />
     <ClInclude Include="luacom\tStringBuffer.h" />
     <ClInclude Include="luacom\tUtil.h" />
+    <ClInclude Include="pal\iclock.h" />
     <ClInclude Include="pal\iworldview.h" />
     <ClInclude Include="pal\pal_types.h" />
     <ClInclude Include="platform\output_types.h" />

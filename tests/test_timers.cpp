@@ -10,6 +10,7 @@
 #include "platform/doc_stub.h"
 #include "OtherTypes.h"     // CTimer, CmcDateTime
 #include "mcdatetime.h"
+#include "pal/iclock.h"     // pal::IClock / pal::g_clock — deterministic time
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -200,6 +201,116 @@ TEST(TimerTest, InactiveTimerDoesNotFireWhenDisconnected)
     tick(doc);
 
     EXPECT_EQ(0L, t->nMatched);
+}
+
+// ── Deterministic clock (pal::IClock) ───────────────────────────────────────
+// Installing a fake clock makes CmcDateTime::GetTimeNow() — and therefore the
+// whole timer-fire decision in CheckTimerList — read a controlled "now",
+// so we can drive time forward exactly and assert firing without any
+// wall-clock sleeps.
+
+namespace {
+
+struct FakeClock : pal::IClock {
+    CmcDateTime m_now;
+    explicit FakeClock(CmcDateTime t) : m_now(t) {}
+    double nowOle() const override { return m_now.GetTime(); }
+    void advance(double seconds) { m_now = m_now + CmcDateTimeSpan(0, 0, 0, seconds); }
+};
+
+// RAII: installs the fake clock and guarantees it is uninstalled (so a later
+// test never dereferences this stack object through a dangling pal::g_clock).
+struct ScopedClock {
+    FakeClock clock;
+    explicit ScopedClock(CmcDateTime t) : clock(t) { pal::g_clock = &clock; }
+    ~ScopedClock() { pal::g_clock = nullptr; }
+    void advance(double s) { clock.advance(s); }
+    CmcDateTime now() const { return clock.m_now; }
+};
+
+// A fixed, arbitrary starting instant (no dependence on the real wall clock).
+static CmcDateTime start_instant() { return CmcDateTime(2026, 1, 1, 12, 0, 0); }
+
+} // namespace
+
+
+TEST(TimerClockTest, InstalledClockControlsGetTimeNow)
+{
+    ScopedClock clk(start_instant());
+    EXPECT_TRUE(CmcDateTime::GetTimeNow().GetTime() == start_instant().GetTime());
+    clk.advance(90);   // 90 seconds later
+    CmcDateTimeSpan elapsed = CmcDateTime::GetTimeNow() - start_instant();
+    EXPECT_TRUE(elapsed.GetTotalSeconds() > 89.9 && elapsed.GetTotalSeconds() < 90.1);
+}
+
+TEST(TimerClockTest, UninstallRestoresTheRealClock)
+{
+    { ScopedClock clk(start_instant()); }   // installed then dropped
+    EXPECT_TRUE(pal::g_clock == nullptr);
+    // GetTimeNow now reads the real clock again — just prove it is not frozen
+    // at the fake instant (the real 'now' is well after 2026-01-01).
+    EXPECT_TRUE(CmcDateTime::GetTimeNow().GetTime() != start_instant().GetTime());
+}
+
+TEST(TimerClockTest, TimerFiresOnlyWhenClockReachesFireTime)
+{
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc = make_doc();
+
+    // A timer due 10 s from the start instant.
+    CTimer* t = add_timer(doc, "t1", 10.0);
+    t->tFireTime = start_instant() + CmcDateTimeSpan(0, 0, 0, 10);
+
+    tick(doc);                 // now == start: not due
+    EXPECT_EQ(0L, t->nMatched);
+
+    clk.advance(9);            // now == start+9: still not due
+    tick(doc);
+    EXPECT_EQ(0L, t->nMatched);
+
+    clk.advance(1);            // now == start+10: exactly due
+    tick(doc);
+    EXPECT_EQ(1L, t->nMatched);
+}
+
+TEST(TimerClockTest, IntervalTimerRefiresEachInterval)
+{
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc = make_doc();
+
+    // every-2-second interval timer, first due at the start instant
+    CTimer* t = add_timer(doc, "iv", 2.0);
+    t->tFireTime = start_instant();
+
+    tick(doc);                 // due now → fires, reschedules to +2 s
+    EXPECT_EQ(1L, t->nMatched);
+
+    clk.advance(1); tick(doc); // +1 s: next fire is at +2 s → not yet
+    EXPECT_EQ(1L, t->nMatched);
+
+    clk.advance(1); tick(doc); // +2 s: due again → fires
+    EXPECT_EQ(2L, t->nMatched);
+
+    clk.advance(2); tick(doc); // +4 s: due again → fires
+    EXPECT_EQ(3L, t->nMatched);
+}
+
+TEST(TimerClockTest, LongJumpFiresOnceNotEveryMissedInterval)
+{
+    // Drift correction: if the clock leaps far past several missed intervals
+    // (sleep/wake, clock change), the timer fires once and reschedules — it
+    // does not "catch up" with one fire per missed interval.
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc = make_doc();
+
+    CTimer* t = add_timer(doc, "iv", 2.0);   // every 2 s
+    t->tFireTime = start_instant();
+
+    clk.advance(100);          // 100 s / 50 missed intervals in one tick
+    tick(doc);
+
+    EXPECT_EQ(1L, t->nMatched);                       // exactly one fire
+    EXPECT_TRUE(t->tFireTime > CmcDateTime::GetTimeNow());  // rescheduled into the future
 }
 
 MC_TEST_MAIN()

@@ -15,6 +15,15 @@ typedef double DATE;
 #include <ctime>
 #include <cmath>
 
+#include "pal/iclock.h"
+
+namespace pal {
+// The installed clock; nullptr = the real system clock (the production
+// default — see pal/iclock.h).  Lives here so every build with the datetime
+// foundation links exactly one definition.
+IClock* g_clock = nullptr;
+}
+
 // Offset in days between OLE epoch (Dec 30, 1899) and Unix epoch (Jan 1, 1970)
 static const double OLE_UNIX_EPOCH_DIFF = 25569.0;
 
@@ -321,6 +330,12 @@ int CmcDateTime::SetDateTime(int nYear, int nMonth, int nDay,
 
 CmcDateTime CmcDateTime::GetTimeNow ()
   {
+  // Injectable time source (pal::IClock): when a clock is installed (tests /
+  // a virtual-time frontend) it is the authority; otherwise fall through to
+  // the real system clock below, unchanged.
+  if (pal::g_clock)
+    return CmcDateTime (pal::g_clock->nowOle ());
+
 #ifdef _WIN32
 static bool bFirstTime = true;
 

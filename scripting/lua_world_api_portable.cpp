@@ -167,7 +167,9 @@ static int L_Tell(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
     string s = concat_args(L);
-    pDoc->ColourTell("", "", s.c_str());
+    // real Tell, like Windows L_Tell (ColourTell would side-effect the
+    // note-colour state via NoteColourName)
+    pDoc->Tell(s.c_str());
     return 0;
 }
 
@@ -830,7 +832,8 @@ static int L_WorldName(lua_State* L) { return L_GetWorldName(L); }
 static int L_AnsiNote(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    pDoc->Note(concat_args(L).c_str());
+    // the real AnsiNote (interprets embedded ANSI codes), like Windows
+    pDoc->AnsiNote(concat_args(L).c_str());
     return 0;
 }
 

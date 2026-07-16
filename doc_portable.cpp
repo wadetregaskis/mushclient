@@ -1007,152 +1007,21 @@ void CMUSHclientDoc::StartNewLine(const bool hard_break, const int flags)
 // Writes the log-file postamble (if any) and closes m_logfile.
 // Mirrors the implementation in scripting/methods/methods_logging.cpp.
 
-// ── Note / ColourNote / ColourTell ───────────────────────────────────────────
+// Note/ColourNote/ColourTell/AnsiNote/Hyperlink and friends: the REAL
+// scripting/methods/methods_noting.cpp is compiled into mushcore now
+// (display step 6); the GUI note-buffer twins that lived here are gone.
 
-// ── GUI helper: flush m_gui_note_buf via the IWorldView seam ──────────────
-// Called before any Note() or ColourNote() emits its line so that pending
-// ColourTell segments land in the output pane.
-static void flush_gui_note_buf(CMUSHclientDoc* doc)
-{
-    if (!doc->HaveOutputSink()) return;
-    if (doc->m_gui_note_buf.empty()) return;
-    doc->EmitOutputLine(std::move(doc->m_gui_note_buf));
-    doc->m_gui_note_buf.clear();
-}
 
-// ── GUI helper: resolve a colour-name or #RRGGBB string to COLORREF ──────
-// Returns defColour when name is null/empty or unrecognised.
-static COLORREF resolve_colour(const char* name, COLORREF defColour)
-{
-    if (!name || !*name) return defColour;
-    COLORREF c = defColour;
-    SetColour(CString(name), c);
-    return c;
-}
 
-// ── CLI helper: map a colour name to an ANSI SGR escape string ────────────
-// Returns "" for empty / unknown (lets the terminal keep its default).
-static const char* colour_to_ansi(const char* name, bool bg)
-{
-    if (!name || !*name) return "";
-    struct { const char* name; int fg; int bg; } table[] = {
-        { "black",       30,  40 },
-        { "darkblue",    34,  44 },
-        { "darkgreen",   32,  42 },
-        { "darkcyan",    36,  46 },
-        { "darkred",     31,  41 },
-        { "darkmagenta", 35,  45 },
-        { "darkyellow",  33,  43 },
-        { "brown",       33,  43 },
-        { "gray",        37,  47 },
-        { "grey",        37,  47 },
-        { "darkgray",    90, 100 },
-        { "darkgrey",    90, 100 },
-        { "blue",        94, 104 },
-        { "green",       92, 102 },
-        { "cyan",        96, 106 },
-        { "red",         91, 101 },
-        { "magenta",     95, 105 },
-        { "yellow",      93, 103 },
-        { "white",       97, 107 },
-        { nullptr, 0, 0 }
-    };
-    CString lc(name);
-    lc.MakeLower();
-    for (int i = 0; table[i].name; ++i) {
-        if (lc == table[i].name) {
-            static char buf[16];
-            snprintf(buf, sizeof(buf), "\033[%dm", bg ? table[i].bg : table[i].fg);
-            return buf;
-        }
-    }
-    return "";
-}
 
-static void colour_print(const char* fg, const char* bg, const char* text, bool newline)
-{
-    const char* fc = colour_to_ansi(fg, false);
-    const char* bc = colour_to_ansi(bg, true);
-    bool coloured = (*fc || *bc);
-    if (coloured) fprintf(stdout, "%s%s", fc, bc);
-    fputs(text ? text : "", stdout);
-    if (coloured) fputs("\033[0m", stdout);
-    if (newline)  fputc('\n', stdout);
-    fflush(stdout);
-}
 
-// ── Note ─────────────────────────────────────────────────────────────────────
-void CMUSHclientDoc::Note(const CString& s)
-{
-    if (m_pWorldView) {
-        // Flush any in-progress ColourTell segments as a separate line first.
-        flush_gui_note_buf(this);
-        EmitNote(std::string((const char*)s));
-        return;
-    }
-    if (g_before_output) g_before_output();
-    puts((const char*)s);
-    fflush(stdout);
-    if (g_after_output) g_after_output();
-}
 
-void CMUSHclientDoc::Note(const char* s)
-{
-    if (m_pWorldView) {
-        flush_gui_note_buf(this);
-        EmitNote(s ? std::string(s) : std::string());
-        return;
-    }
-    if (g_before_output) g_before_output();
-    puts(s ? s : "");
-    fflush(stdout);
-    if (g_after_output) g_after_output();
-}
 
 // ── ColourNote / ColourTell ───────────────────────────────────────────────────
 
-// ── GUI implementation: append a run to the note line buffer ─────────────
-static void gui_colour_segment(CMUSHclientDoc* doc,
-                               const char* fg, const char* bg,
-                               const char* text, bool flush)
-{
-    if (!doc->HaveOutputSink()) return;
-    if (text && *text) {
-        SOutputRun run;
-        run.text = text;
-        run.fg   = resolve_colour(fg, doc->m_iNoteColourFore);
-        run.bg   = resolve_colour(bg, doc->m_iNoteColourBack);
-        doc->m_gui_note_buf.push_back(std::move(run));
-    }
-    if (flush) {
-        // Emit even if empty (produces a blank line, matching Note() behaviour).
-        doc->EmitOutputLine(std::move(doc->m_gui_note_buf));
-        doc->m_gui_note_buf.clear();
-    }
-}
 
-void CMUSHclientDoc::ColourNote(const char* fg, const char* bg, const CString& text)
-{
-    ColourNote(fg, bg, static_cast<const char*>(text));
-}
 
-void CMUSHclientDoc::ColourNote(const char* fg, const char* bg, const char* text)
-{
-    if (HaveOutputSink()) {
-        gui_colour_segment(this, fg, bg, text, /*flush=*/true);
-    } else {
-        colour_print(fg, bg, text, /*newline=*/true);
-    }
-}
 
-void CMUSHclientDoc::ColourTell(const char* fg, const char* bg, const char* text)
-{
-    if (HaveOutputSink()) {
-        gui_colour_segment(this, fg, bg, text, /*flush=*/false);
-    } else {
-        colour_print(fg, bg, text, /*newline=*/false);
-    }
-}
 
 // ── UpdateAllViews ────────────────────────────────────────────────────────────
 void CMUSHclientDoc::UpdateAllViews(void*) {}
@@ -1433,55 +1302,6 @@ void CMUSHclientDoc::Trace(const char* fmt, ...)
 // Logs a command sent to the MUD when input logging is active.
 // Mirrors the implementation in doc.cpp, minus the Windows-only UI calls.
 
-// ── CMUSHclientDoc::OutputOutstandingLines ────────────────────────────────
-// Re-outputs note/tell lines that were deferred while a trigger was
-// processing (e.g. when a trigger omits an incoming MUD line).
-// Mirrors the doc.cpp implementation, adapted for the headless/GUI paths:
-// instead of calling Tell() (which is in methods_noting.cpp / mushapp only),
-// we write directly through DisplayMsg() using the COLOUR_RGB style flag so
-// that GetStyleRGB() treats m_iForeColour/m_iBackColour as raw COLOREFs.
-// For the GUI path (a view attached) each item becomes a styled run;
-// for the CLI path it becomes an ANSI-coloured terminal line.
-void CMUSHclientDoc::OutputOutstandingLines()
-{
-    if (m_OutstandingLines.empty())
-        return;
-
-    // Save and restore the current MUD-stream style so that the note lines
-    // don't pollute the style state used for subsequent MUD output.
-    unsigned short savedFlags  = m_iFlags;
-    COLORREF       savedFore   = m_iForeColour;
-    COLORREF       savedBack   = m_iBackColour;
-
-    for (const CPaneStyle& item : m_OutstandingLines) {
-        // Set COLOUR_RGB so GetStyleRGB() treats iForeColour/iBackColour as
-        // raw COLOREFs — exactly what CPaneStyle stores.
-        m_iFlags      = (unsigned short)((item.m_iStyle & ~COLOURTYPE) | COLOUR_RGB);
-        m_iForeColour = item.m_cText;
-        m_iBackColour = item.m_cBack;
-
-        const char* text = item.m_sText.c_str();
-        int         len  = (int)item.m_sText.size();
-
-        if (len > 0)
-            DisplayMsg(text, len, NOTE_OR_COMMAND);
-
-        // Each pending item represents one logical line; append a newline
-        // (unless the text already ends with one, e.g. ENDLINE entries).
-        if (len == 0 || item.m_sText.back() != '\n')
-            DisplayMsg("\n", 1, NOTE_OR_COMMAND);
-    }
-
-    m_OutstandingLines.clear();
-
-    m_iFlags      = savedFlags;
-    m_iForeColour = savedFore;
-    m_iBackColour = savedBack;
-
-    // Re-sync terminal colours after restoring the stream state.
-    if (!HaveOutputSink())
-        TermResetStyle();
-}
 
 // ── CMUSHclientDoc::PlaySoundFile / CancelSound — MSP audio ─────────────
 // On non-Windows, delegate to the wxWidgets sound hook so that trigger

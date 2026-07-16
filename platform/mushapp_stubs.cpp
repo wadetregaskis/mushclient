@@ -106,11 +106,7 @@ bool SendToFront(const char* name)
 }
 
 
-// ── CMUSHclientDoc::Note (CString overload) ───────────────────────────────────
-void CMUSHclientDoc::Note(const CString& s)
-{
-    Note((LPCTSTR) s);
-}
+// Note(const CString&) delegator: single-sourced in doc_shared.cpp.
 
 // CMUSHclientDoc::UpdateAllViews (the push-side display drain) is in
 // doc_display_shared.cpp — relocated so mushcore can share it at the

@@ -83,6 +83,9 @@ enum { BLACK = 0, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE };
 #define MAX_CUSTOM 16   // maximum custom colours
 
 // ── ANSI codes (from stdafx.h) ────────────────────────────────────────────
+#ifndef ESC
+#  define ESC '\x1B'   // from doc.h — AnsiNote's escape parser
+#endif
 #define ANSI_RESET              0
 #define ANSI_BOLD               1
 #define ANSI_BLINK              3
@@ -1551,11 +1554,6 @@ public:
     COLORREF    m_current_style_fg = 0x00C0C0C0u;  // fg from most recent AddStyle (light grey)
     COLORREF    m_current_style_bg = 0x00000000u;  // bg from most recent AddStyle (black)
 
-    // ── GUI ColourNote/ColourTell line buffer ──────────────────────────────
-    // ColourTell segments accumulate here until ColourNote (or Note) flushes.
-    // Enables multi-segment colour lines (ColourTell…ColourTell…ColourNote)
-    // to arrive at the output pane as a single SOutputLine with multiple runs.
-    SOutputLine m_gui_note_buf;
 
     int     m_connect_now      = 0;
     long    m_nTotalLinesSent  = 0;
@@ -2022,7 +2020,7 @@ public:
     // ── Line / display helpers ────────────────────────────────────────
     // StartNewLine is implemented in doc_portable.cpp (fires triggers).
     void StartNewLine(bool hard_break, int flags);
-    void SetNewLineColour(int)      {}
+    void SetNewLineColour(const int flags);   // real body in doc_shared.cpp (display step 6)
 
     // ── Option access stubs ───────────────────────────────────────────
     long GetOptionItem(int)                         { return 0; }
@@ -2069,6 +2067,23 @@ public:
     //    real bodies are single-sourced — campaign-b display steps 5-7) ─────
     void Tell(LPCTSTR Message);
     void NoteColourName(LPCTSTR Foreground, LPCTSTR Background);
+    // the rest of the methods_noting.cpp surface (doc.h signatures, afx_msg dropped)
+    short GetNoteColour();
+    void SetNoteColour(short nNewValue);
+    long GetNoteColourFore();
+    void SetNoteColourFore(long nNewValue);
+    long GetNoteColourBack();
+    void SetNoteColourBack(long nNewValue);
+    void NoteColourRGB(long Foreground, long Background);
+    void AnsiNote(LPCTSTR Text);
+    void Hyperlink_Helper(LPCTSTR Action, LPCTSTR Text, LPCTSTR Hint,
+                          LPCTSTR TextColour, LPCTSTR BackColour,
+                          BOOL URL, BOOL NoUnderline);
+    void Hyperlink(LPCTSTR Action, LPCTSTR Text, LPCTSTR Hint,
+                   LPCTSTR TextColour, LPCTSTR BackColour, BOOL URL);
+    void NoteStyle(short Style);
+    short GetNoteStyle();
+    void NoteHr();
     void DoSendMsg(const CString& strText, const bool bEchoIt, const bool bLogIt);
     void StartNewLine_KeepPreviousStyle(const int flags);
     void SendLineToPlugin(void);

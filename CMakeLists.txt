@@ -419,6 +419,7 @@ if(NOT WIN32)
         doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
         utilities_shared.cpp   # shared pure-logic free functions (myAtoF/encodeBase64/EditDistance)
         doc_scripting_shared.cpp   # port-only FireWorld* callbacks (shared mushcore+mushapp)
+        scripting/methods/methods_noting.cpp   # the REAL note family (display step 6)
         doc_portable.cpp
 
         # PAL: headless CPU reference adapter for pal::ISurface (docs/PAL.md S1)

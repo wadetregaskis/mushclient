@@ -2520,3 +2520,141 @@ void CMUSHclientDoc::ShowQueuedCommands (void)
   m_tStatusDisplayed = CTime::GetCurrentTime ();
   }    // end of CMUSHclientDoc::ShowQueuedCommands
 
+
+
+// ═══ The note family's shared pieces (campaign-b display step 6) ════════════
+// SetNewLineColour + OutputOutstandingLines relocated verbatim from doc.cpp;
+// the note methods themselves live in scripting/methods/methods_noting.cpp,
+// which mushcore now compiles too.  The Note(CString) delegator is declared
+// only off-Windows (doc.h guards it #ifndef _WIN32).
+
+#ifndef _WIN32
+void CMUSHclientDoc::Note(const CString& s)
+{
+    Note((LPCTSTR) s);
+}
+#endif // !_WIN32
+
+void CMUSHclientDoc::OutputOutstandingLines (void)
+  {
+
+  // minimal work ...
+  if (m_OutstandingLines.empty ())
+    return;
+
+  // save old colours
+  bool bOldNotesInRGB = m_bNotesInRGB;
+  COLORREF iOldNoteColourFore = m_iNoteColourFore;
+  COLORREF iOldNoteColourBack = m_iNoteColourBack;
+  unsigned short  iOldNoteStyle = m_iNoteStyle;
+
+  m_bNotesInRGB = true;
+
+  // output saved lines
+
+  list<CPaneStyle>::iterator it;
+  
+  for (it = m_OutstandingLines.begin (); it != m_OutstandingLines.end (); it++)
+    {
+    m_iNoteColourFore = it->m_cText;
+    m_iNoteColourBack = it->m_cBack;
+    m_iNoteStyle = it->m_iStyle;
+    Tell (it->m_sText.c_str ());
+    }
+
+  m_OutstandingLines.clear ();
+
+  // put the colours back
+  if (bOldNotesInRGB)
+    {
+    m_iNoteColourFore = iOldNoteColourFore;
+    m_iNoteColourBack = iOldNoteColourBack;
+    }
+  else  
+    m_bNotesInRGB = false;
+
+  m_iNoteStyle = iOldNoteStyle;
+
+
+  } // end of CMUSHclientDoc::OutputOutstandingLines
+
+
+void CMUSHclientDoc::SetNewLineColour (const int flags)
+  {
+
+  // just in case we call this before the output window exists
+  if (m_pCurrentLine == NULL)
+    return;
+
+  // find current style
+  CStyle * pStyle = m_pCurrentLine->styleList.GetTail ();
+
+  // if non-zero for some reason, better make another one
+  if (pStyle->iLength)
+    pStyle = AddStyle (m_iFlags, m_iForeColour, m_iBackColour, 0, NULL);
+
+  // start with default from previous line
+  pStyle->iFlags = m_iFlags;
+  pStyle->iForeColour = m_iForeColour;
+  pStyle->iBackColour = m_iBackColour;
+
+  if ((flags & USER_INPUT) && m_echo_colour != SAMECOLOUR)
+    { // user input and (same colour not wanted)
+    pStyle->iFlags = COLOUR_CUSTOM;  
+    pStyle->iForeColour = m_echo_colour;
+    pStyle->iBackColour = BLACK;
+    } // end of user input 
+  else
+    if (flags & COMMENT)
+      { // user input and (same colour not wanted)
+      if (m_bNotesInRGB)
+        {
+        pStyle->iFlags = COLOUR_RGB | m_iNoteStyle;  
+        pStyle->iForeColour = m_iNoteColourFore;
+        pStyle->iBackColour = m_iNoteColourBack;
+        } // end of RGB notes
+      else
+        if (m_iNoteTextColour == SAMECOLOUR)
+          {
+          if (m_bCustom16isDefaultColour)
+            {
+            pStyle->iFlags = COLOUR_CUSTOM | m_iNoteStyle;  
+            pStyle->iForeColour = 15;
+            pStyle->iBackColour = 0;
+            }
+          else
+            {
+            pStyle->iFlags = COLOUR_ANSI | m_iNoteStyle;  
+            pStyle->iForeColour = WHITE;
+            pStyle->iBackColour = BLACK;
+            }
+          } // end of "same colour"
+        else
+          {
+          pStyle->iFlags = COLOUR_CUSTOM | m_iNoteStyle;  
+          pStyle->iForeColour = m_iNoteTextColour;
+          pStyle->iBackColour = BLACK;
+          }
+      } // end of note 
+
+/*
+  finally I think I will get this right! :)
+  ... and *now* record the type of line (from flags)
+  previously I recorded it when the line was created but this was
+  really the type of the end of the previous line, eg.
+
+  (user line) \n
+
+  The \n triggered another user line. OR
+  Recording the line type of the current line when we changed lines, which
+  meant that an output line would carry over into a user line.
+
+  *This* is the logical spot to do it - on the first character for the new line.
+  (I think).
+
+*/
+
+  m_pCurrentLine->flags = flags;    // mark line as user input or comment as required
+
+  } // end of CMUSHclientDoc::SetNewLineColour
+

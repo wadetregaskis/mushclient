@@ -372,18 +372,35 @@ TEST(PalWorldView, CommandFamilyNullHostIsInert)
     doc.EmitInputFont("Menlo", 14, true, false);
 }
 
-// The output-pane family drives the view through its typed-only helpers,
-// including Note()'s routing (view attached → note(), no stdout).
+// The output-pane family drives the view through its typed-only helpers.
+// Note() routing changed at display step 6 (the REAL methods_noting.cpp runs
+// headless now): on a fresh doc m_pLinePositions is still NULL, so Tell DEFERS
+// the note into m_OutstandingLines — exactly the Windows before-the-output-
+// window-exists behaviour — and a completed MUD line flushes it, after which
+// the note text reaches the view as ordinary appendLine content (via the
+// pre-flip per-'\n' push).  IWorldView::note() no longer fires from Note().
 TEST(PalWorldView, OutputFamilyDrivesTheView)
 {
     FakeWorldView view;
     CMUSHclientDoc doc = make_doc();
     doc.m_pWorldView = &view;
 
-    // Note() goes to the view (the doc_portable path flushes + emits).
+    // 1) fresh doc: the note defers (Windows deferral semantics)
     doc.Note("a wild note appears");
-    ASSERT_EQ(1u, (unsigned)view.notes.size());
-    EXPECT_STREQ("a wild note appears", view.notes[0].c_str());
+    EXPECT_EQ(0u, (unsigned)view.notes.size());          // note() seam is dormant
+    ASSERT_EQ(1u, (unsigned)doc.m_OutstandingLines.size());
+
+    // 2) a completed MUD line flushes the deferred note into the output flow
+    const char* mud = "hello from the mud\n";
+    doc.DisplayMsg(mud, (int)strlen(mud), 0);
+    EXPECT_EQ(0u, (unsigned)doc.m_OutstandingLines.size());
+    bool noteArrived = false;
+    for (const auto& line : view.lines)
+        for (const auto& run : line)
+            if (run.text.find("a wild note appears") != std::string::npos)
+                noteArrived = true;
+    EXPECT_TRUE(noteArrived);
+    EXPECT_EQ(0u, (unsigned)view.notes.size());          // still nothing via note()
 
     doc.BeginOutputBatch();
     doc.EndOutputBatch();

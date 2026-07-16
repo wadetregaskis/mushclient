@@ -1963,8 +1963,9 @@ static int L_SetStatus(lua_State* L)
 static int L_NoteColourRGB(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    pDoc->m_NoteColourFore = (COLORREF)(long)luaL_checknumber(L, 1);
-    pDoc->m_NoteColourBack = (COLORREF)(long)luaL_checknumber(L, 2);
+    pDoc->m_bNotesInRGB = true;   // matches the real NoteColourRGB semantics
+    pDoc->m_iNoteColourFore = (COLORREF)(long)luaL_checknumber(L, 1);
+    pDoc->m_iNoteColourBack = (COLORREF)(long)luaL_checknumber(L, 2);
     return 0;
 }
 
@@ -1972,7 +1973,8 @@ static int L_NoteColourRGB(lua_State* L)
 static int L_NoteColourFore(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    pDoc->m_NoteColourFore = (COLORREF)(long)luaL_checknumber(L, 1);
+    pDoc->m_bNotesInRGB = true;   // real NoteColourFore/SetNoteColourFore set this
+    pDoc->m_iNoteColourFore = (COLORREF)(long)luaL_checknumber(L, 1);
     return 0;
 }
 
@@ -1980,7 +1982,8 @@ static int L_NoteColourFore(lua_State* L)
 static int L_NoteColourBack(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    pDoc->m_NoteColourBack = (COLORREF)(long)luaL_checknumber(L, 1);
+    pDoc->m_bNotesInRGB = true;   // real NoteColourBack/SetNoteColourBack set this
+    pDoc->m_iNoteColourBack = (COLORREF)(long)luaL_checknumber(L, 1);
     return 0;
 }
 
@@ -1988,8 +1991,9 @@ static int L_NoteColourBack(lua_State* L)
 static int L_NormalColour(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    pDoc->m_NoteColourFore = RGB(192, 192, 192);
-    pDoc->m_NoteColourBack = RGB(0,   0,   0);
+    pDoc->m_bNotesInRGB = true;   // resets to RGB defaults, so RGB mode
+    pDoc->m_iNoteColourFore = RGB(192, 192, 192);
+    pDoc->m_iNoteColourBack = RGB(0,   0,   0);
     return 0;
 }
 
@@ -2876,28 +2880,30 @@ static int L_GetNoteStyleLua(lua_State* L)
 static int L_GetNoteColourFore(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    lua_pushnumber(L, (lua_Number)(long)pDoc->m_NoteColourFore);
+    lua_pushnumber(L, (lua_Number)(long)pDoc->m_iNoteColourFore);
     return 1;
 }
 
 static int L_GetNoteColourBack(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    lua_pushnumber(L, (lua_Number)(long)pDoc->m_NoteColourBack);
+    lua_pushnumber(L, (lua_Number)(long)pDoc->m_iNoteColourBack);
     return 1;
 }
 
 static int L_SetNoteColourFore(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    pDoc->m_NoteColourFore = (COLORREF)(long)luaL_checknumber(L, 1);
+    pDoc->m_bNotesInRGB = true;   // real SetNoteColourFore sets this
+    pDoc->m_iNoteColourFore = (COLORREF)(long)luaL_checknumber(L, 1);
     return 0;
 }
 
 static int L_SetNoteColourBack(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    pDoc->m_NoteColourBack = (COLORREF)(long)luaL_checknumber(L, 1);
+    pDoc->m_bNotesInRGB = true;   // real SetNoteColourBack sets this
+    pDoc->m_iNoteColourBack = (COLORREF)(long)luaL_checknumber(L, 1);
     return 0;
 }
 
@@ -3650,7 +3656,7 @@ static int L_Hyperlink(lua_State* L)
     pDoc->AddToLine(text, COMMENT);
 
     // Restore normal note style — clears m_current_action/hint.
-    pDoc->AddStyle(COLOUR_RGB, pDoc->m_NoteColourFore, pDoc->m_NoteColourBack, 0,
+    pDoc->AddStyle(COLOUR_RGB, pDoc->m_iNoteColourFore, pDoc->m_iNoteColourBack, 0,
                    static_cast<CAction*>(nullptr));
     return 0;
 }
@@ -4621,10 +4627,11 @@ static int L_SetEchoInput(lua_State* L)
 static int L_SetNoteColour(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
+    pDoc->m_bNotesInRGB = true;   // real path is RGB (NoteColourRGB-alike)
     COLORREF fg = (COLORREF)luaL_checkinteger(L, 1);
     COLORREF bg = (COLORREF)luaL_checkinteger(L, 2);
-    pDoc->m_NoteColourFore = fg & 0x00FFFFFF;
-    pDoc->m_NoteColourBack = bg & 0x00FFFFFF;
+    pDoc->m_iNoteColourFore = fg & 0x00FFFFFF;
+    pDoc->m_iNoteColourBack = bg & 0x00FFFFFF;
     lua_pushnumber(L, eOK);
     return 1;
 }
@@ -5650,9 +5657,9 @@ static int L_GetNoteColour(lua_State* L)
     string w(which);
     for (auto& c : w) c = (char)tolower((unsigned char)c);
     if (w == "back")
-        lua_pushnumber(L, (lua_Number)(long)pDoc->m_NoteColourBack);
+        lua_pushnumber(L, (lua_Number)(long)pDoc->m_iNoteColourBack);
     else
-        lua_pushnumber(L, (lua_Number)(long)pDoc->m_NoteColourFore);
+        lua_pushnumber(L, (lua_Number)(long)pDoc->m_iNoteColourFore);
     return 1;
 }
 

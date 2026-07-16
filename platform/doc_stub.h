@@ -1623,9 +1623,16 @@ public:
     CString        m_strWorldID;   // unique UUID-style ID for this world
     CString        m_strSpeedWalkFiller;  // filler direction (default empty)
 
-    // Note colour overrides (set by NoteColourRGB / NoteColourFore / Back)
-    COLORREF       m_NoteColourFore = RGB(192, 192, 192);
-    COLORREF       m_NoteColourBack = RGB(0,   0,   0);
+    // Note-colour state — the doc.h model (member names + types match doc.h so
+    // the real note bodies can be single-sourced; campaign-b display step 1).
+    // Port-preserving defaults: the headless twin always behaved as "notes in
+    // RGB" with silver-on-black, so m_bNotesInRGB starts true here (doc.h's
+    // Windows ctor starts false = palette mode; that ctor is not used headless).
+    bool           m_bNotesInRGB = true;      // RGB mode vs custom-palette mode
+    COLORREF       m_iNoteColourFore = RGB(192, 192, 192);  // RGB note text
+    COLORREF       m_iNoteColourBack = RGB(0,   0,   0);    // RGB note background
+    unsigned short m_iNoteTextColour = SAMECOLOUR;  // custom-palette index (unused while m_bNotesInRGB)
+    bool           m_bNotesNotWantedNow = false;    // defer notes (telnet-negotiation callbacks)
 
     // ── Scripting callbacks (all DISPID_UNKNOWN → never fires) ────────
     DISPID m_dispidOnMXP_Start      = DISPID_UNKNOWN;

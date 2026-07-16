@@ -1104,8 +1104,8 @@ static void gui_colour_segment(CMUSHclientDoc* doc,
     if (text && *text) {
         SOutputRun run;
         run.text = text;
-        run.fg   = resolve_colour(fg, doc->m_NoteColourFore);
-        run.bg   = resolve_colour(bg, doc->m_NoteColourBack);
+        run.fg   = resolve_colour(fg, doc->m_iNoteColourFore);
+        run.bg   = resolve_colour(bg, doc->m_iNoteColourBack);
         doc->m_gui_note_buf.push_back(std::move(run));
     }
     if (flush) {

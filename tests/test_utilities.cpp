@@ -163,4 +163,43 @@ TEST(Utilities, IsStringNumber_HonoursBSigned)
     EXPECT_FALSE(IsStringNumber("5-3", true));    // sign only allowed at the front
 }
 
+// ── Free-function twins single-sourced from doc_portable.cpp ──────────────────
+
+extern COLORREF xterm_256_colours[256];
+
+TEST(Utilities, Generate256Colours)
+{
+    Generate256colours();
+    EXPECT_EQ(RGB(0, 0, 0),       xterm_256_colours[0]);
+    EXPECT_EQ(RGB(255, 255, 255), xterm_256_colours[15]);
+    EXPECT_EQ(RGB(0, 0, 0),       xterm_256_colours[16]);    // 6x6x6 cube start (0,0,0)
+    EXPECT_EQ(RGB(255, 255, 255), xterm_256_colours[231]);   // cube end (5,5,5)
+    EXPECT_EQ(RGB(8, 8, 8),       xterm_256_colours[232]);   // grey ramp start
+    EXPECT_EQ(RGB(238, 238, 238), xterm_256_colours[255]);   // grey ramp end (8+23*10)
+}
+
+TEST(Utilities, AnsiCode_EscSequence)
+{
+    EXPECT_STREQ("\033[0m",  (const char*)AnsiCode(0));
+    EXPECT_STREQ("\033[1m",  (const char*)AnsiCode(1));
+    EXPECT_STREQ("\033[31m", (const char*)AnsiCode(31));
+}
+
+TEST(Utilities, FixHTMLString_Escapes)
+{
+    EXPECT_STREQ("plain",                (const char*)FixHTMLString("plain"));
+    EXPECT_STREQ("&lt;a&gt;&amp;&quot;", (const char*)FixHTMLString("<a>&\""));
+    EXPECT_STREQ("x &amp; y",            (const char*)FixHTMLString("x & y"));
+}
+
+TEST(Utilities, ConvertToRegularExpression_Wildcards)
+{
+    // plain text: escaped, anchored only when bWholeLine
+    EXPECT_STREQ("^abc$", (const char*)ConvertToRegularExpression("abc", true, true));
+    EXPECT_STREQ("abc",   (const char*)ConvertToRegularExpression("abc", false, true));
+    // '*' → capturing wildcard when enabled, escaped literal when not
+    EXPECT_STREQ("^a(.*?)b$", (const char*)ConvertToRegularExpression("a*b", true, true));
+    EXPECT_STREQ("\\*",       (const char*)ConvertToRegularExpression("*", false, false));
+}
+
 MC_TEST_MAIN()

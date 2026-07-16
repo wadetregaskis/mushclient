@@ -45,87 +45,6 @@ CString GetText (const CWnd & theWindow)
 
 
 
-CString ConvertToRegularExpression (const CString & strMatchString,
-                                    const bool bWholeLine,
-                                    const bool bMakeAsterisksWildcards)
-  {
-CString strRegexp;
-
-int iSize = 0;
-const char * p;
-char * pOut;
-
-  // count places where the size will get larger
-  for (p = strMatchString; *p; p++)
-    if ((unsigned char) *p < ' ')
-      iSize += 3;   // non-printable 01 to 1F become \xhh
-    else if (isalnum ((unsigned char) *p) ||
-             *p == ' ' ||
-             (unsigned char) *p >= 0x80)
-      continue; // A-Z, 0-9, space, hi-order bits set do not increase the size
-    else if (*p == '*')
-      iSize += 4;  // * becomes .*?  (non-greedy wildcard)
-    else
-      iSize++;     // others are escaped, eg. ( becomes \(
-
-  // work out new buffer size
-  pOut = strRegexp.GetBuffer (strMatchString.GetLength () +
-                              iSize +   // escaped sequences
-                              2 +       // ^ at start, and $ at end
-                              10);       // 1 for null, plus 9 just in case
-
-
-  // now copy across non-regexp, turning it into a regexp
-  if (bWholeLine)
-    *pOut++ = '^';    // start of buffer marker
-
-  for (p = strMatchString; *p; p++)
-    {
-    if (*p == '\n')   // newlines become \n
-      {
-      *pOut++ = '\\';
-      *pOut++ = 'n';
-      }
-    else if ((unsigned char) *p < ' ')
-      {
-      *pOut++ = '\\';
-      *pOut++ = 'x';
-      char buf [20];
-      _itoa ((unsigned char) *p, buf, 16);
-      if (buf [1] == 0)   // add leading zero
-        *pOut++ = '0';
-      *pOut++ = buf [0];
-      if (buf [1])        // 2 digits
-        *pOut++ = buf [1];
-      }
-    else if (isalnum ((unsigned char) *p) ||
-             *p == ' ' ||
-             (unsigned char) *p >= 0x80)
-      *pOut++ = *p;   // copy alphanumeric, spaces, across
-    else if (*p == '*' && bMakeAsterisksWildcards)   // wildcard
-      {
-      *pOut++ = '(';
-      *pOut++ = '.';
-      *pOut++ = '*';
-      *pOut++ = '?';
-      *pOut++ = ')';
-      }
-    else
-      {     // non-alphanumeric are escaped out
-      *pOut++ = '\\';
-      *pOut++ = *p;
-      }
-    } // end of scanning input buffer
-
-  if (bWholeLine)
-    *pOut++ = '$';    // end of buffer marker
-
-  *pOut++ = 0;    // trailing null
-
-  strRegexp.ReleaseBuffer (-1);
-
-  return strRegexp;
-  }   // end of ConvertToRegularExpression
 
 
 
@@ -349,34 +268,6 @@ bool CreateTextWindow (const char * sText,
 #endif // _WIN32
 
 
-CString FixHTMLString (const CString strToFix)
-  {
-  CString strOldString = strToFix;
-  CString strNewString;
-
-  int i;
-
-  while ((i = strOldString.FindOneOf ("<>&\"")) != -1)
-    {
-    strNewString += strOldString.Left (i);
-
-    switch (strOldString [i])
-      {
-      case '<': strNewString += "&lt;"; break;
-      case '>': strNewString += "&gt;"; break;
-      case '&': strNewString += "&amp;"; break;
-      case '\"': strNewString += "&quot;"; break;
-      }
-
-    strOldString = strOldString.Mid (i + 1);
-    }
-
-  strNewString += strOldString;
-
-
-  return strNewString;
-
-  } // end of FixHTMLString
 
 // same as above, except quotes are left alone, and tabs are fixed up
 CString FixHTMLMultilineString (const CString strToFix)

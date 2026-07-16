@@ -64,10 +64,6 @@ extern bool bNamesRead;
 extern set<string> LuaFunctionsSet;
 
 
-CString AnsiCode (short Code) 
-{
-return CFormat ("%c[%dm", ESC, Code); 
-}   // end of AnsiCode
 
 CString StripAnsi (const CString strMessage)
   {

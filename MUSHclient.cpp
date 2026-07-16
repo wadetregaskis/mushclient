@@ -1692,53 +1692,6 @@ STDMETHODIMP CMUSHclientApp::XLocalClass::ShowWindow()
   */
 
 
-void Generate256colours (void)
-  {
-  int red, green, blue;
-  const BYTE values [6] = { 
-      0, 
-     95, 
-     95 + 40, 
-     95 + 40 + 40, 
-     95 + 40 + 40 + 40, 
-     95 + 40 + 40 + 40 + 40
-      };
-
-  xterm_256_colours   [0] = RGB (0, 0, 0);         // (black)       
-  xterm_256_colours   [1] = RGB (128, 0, 0);       // (maroon)      
-  xterm_256_colours   [2] = RGB (0, 128, 0);       // (green)       
-  xterm_256_colours   [3] = RGB (128, 128, 0);     // (olive)       
-  xterm_256_colours   [4] = RGB (0, 0, 128);       // (navy)        
-  xterm_256_colours   [5] = RGB (128, 0, 128);     // (purple)      
-  xterm_256_colours   [6] = RGB (0, 128, 128);     // (teal)        
-  xterm_256_colours   [7] = RGB (192, 192, 192);   // (silver)      
-                       
-  xterm_256_colours   [8]  = RGB (128, 128, 128);  // (gray)                 
-  xterm_256_colours   [9]  = RGB (255, 0, 0);      // (red)               
-  xterm_256_colours   [10] = RGB (0, 255, 0);      // (lime)              
-  xterm_256_colours   [11] = RGB (255, 255, 0);    // (yellow)            
-  xterm_256_colours   [12] = RGB (0, 0, 255);      // (blue)              
-  xterm_256_colours   [13] = RGB (255, 0, 255);    // (magenta)  
-  xterm_256_colours   [14] = RGB (0, 255, 255);    // (cyan)        
-  xterm_256_colours   [15] = RGB (255, 255, 255);  // (white)             
-
-  for (red = 0; red < 6; red++)
-    for (green = 0; green < 6; green++)
-      for (blue = 0; blue < 6; blue++)
-         xterm_256_colours [16 + (red * 36) + (green * 6) + blue] =
-            RGB (values [red], values [green], values [blue]);
-
-  // see: utils.colourcube in scripting/lua_utils.cpp
-  // That lets you change from the xterm colour cube to the Netscape colour cube
-
-  int grey;
-  for (grey = 0; grey < 24; grey++)
-    {
-    BYTE value = 8 + (grey * 10);
-    xterm_256_colours [232 + grey] = RGB (value, value, value);
-    }
-
-  } // end of Generate256colours
 
 
 // file names might be: (MUSHclient executable)\locale\EN.dll  - resources

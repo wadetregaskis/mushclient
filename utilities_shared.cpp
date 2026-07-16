@@ -28,6 +28,7 @@
 #endif
 
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -325,4 +326,138 @@ int EditDistance(const string source, const string target)
         }
     }
     return matrix[n][m];
+}
+
+// ── Free-function twins single-sourced from doc_portable.cpp (Campaign B) ─────
+// Hand-reimplemented in doc_portable.cpp (mushcore) as twins of the Windows
+// originals in MUSHclient.cpp / Utilities.cpp / methods_utilities.cpp; verified
+// byte-identical in behaviour (audit workflow), so single-sourced here.
+
+// Generate256colours fills the xterm-256 palette.  The table is defined
+// per-build (MUSHclient.cpp for Windows/mushapp, doc_portable.cpp for mushcore);
+// this function only writes it.  Declared in MUSHclient.cpp / platform/doc_stub.h.
+extern COLORREF xterm_256_colours[256];
+
+void Generate256colours(void)
+{
+    const unsigned char values[6] = { 0, 95, 135, 175, 215, 255 };
+
+    xterm_256_colours[ 0] = RGB(  0,   0,   0);
+    xterm_256_colours[ 1] = RGB(128,   0,   0);
+    xterm_256_colours[ 2] = RGB(  0, 128,   0);
+    xterm_256_colours[ 3] = RGB(128, 128,   0);
+    xterm_256_colours[ 4] = RGB(  0,   0, 128);
+    xterm_256_colours[ 5] = RGB(128,   0, 128);
+    xterm_256_colours[ 6] = RGB(  0, 128, 128);
+    xterm_256_colours[ 7] = RGB(192, 192, 192);
+    xterm_256_colours[ 8] = RGB(128, 128, 128);
+    xterm_256_colours[ 9] = RGB(255,   0,   0);
+    xterm_256_colours[10] = RGB(  0, 255,   0);
+    xterm_256_colours[11] = RGB(255, 255,   0);
+    xterm_256_colours[12] = RGB(  0,   0, 255);
+    xterm_256_colours[13] = RGB(255,   0, 255);
+    xterm_256_colours[14] = RGB(  0, 255, 255);
+    xterm_256_colours[15] = RGB(255, 255, 255);
+
+    for (int r = 0; r < 6; r++)
+        for (int g = 0; g < 6; g++)
+            for (int b = 0; b < 6; b++)
+                xterm_256_colours[16 + r*36 + g*6 + b] =
+                    RGB(values[r], values[g], values[b]);
+
+    for (int grey = 0; grey < 24; grey++) {
+        unsigned char v = (unsigned char)(8 + grey * 10);
+        xterm_256_colours[232 + grey] = RGB(v, v, v);
+    }
+}
+
+// convert an ANSI attribute number to its ESC sequence (e.g. 1 → "\033[1m").
+// Declared in stdafx.h / platform/doc_stub.h.
+CString AnsiCode(short iCode)
+{
+    char buf[16];
+    snprintf(buf, sizeof buf, "\033[%dm", (int)iCode);
+    return CString(buf);
+}
+
+// escape HTML special characters: < > & " → &lt; &gt; &amp; &quot;
+// Declared in stdafx.h / platform/doc_stub.h.
+CString FixHTMLString(CString strToFix)
+{
+    CString strOld = strToFix;
+    CString strNew;
+    int i;
+    while ((i = strOld.FindOneOf("<>&\"")) != -1) {
+        strNew += strOld.Left(i);
+        switch (strOld[i]) {
+        case '<':  strNew += "&lt;";   break;
+        case '>':  strNew += "&gt;";   break;
+        case '&':  strNew += "&amp;";  break;
+        case '"':  strNew += "&quot;"; break;
+        }
+        strOld = strOld.Mid(i + 1);
+    }
+    strNew += strOld;
+    return strNew;
+}
+
+// wildcard → regular expression.  Behaviourally identical to the Windows
+// Utilities.cpp form; the only difference is the control-char (<0x20) hex escape
+// uses snprintf("%02x") instead of the Windows-only _itoa (same two-digit
+// lowercase output).  Declared in stdafx.h / platform/doc_stub.h.
+CString ConvertToRegularExpression(const CString& strMatchString,
+                                   bool bWholeLine,
+                                   bool bMakeAsterisksWildcards)
+{
+    CString strRegexp;
+    int iSize = 0;
+
+    // Count how many extra bytes the output needs vs. the input.
+    for (const char* p = strMatchString; *p; p++)
+    {
+        unsigned char c = (unsigned char)*p;
+        if (c < ' ')
+            iSize += 3;          // \xhh
+        else if (isalnum(c) || *p == ' ' || c >= 0x80)
+            /* no change */;
+        else if (*p == '*')
+            iSize += 4;          // '*' → "(.*?)" (5 chars vs 1 → +4)
+        else
+            iSize++;             // escape prefix '\'
+    }
+
+    char* pOut = strRegexp.GetBuffer(strMatchString.GetLength() +
+                                     iSize +
+                                     2 +    // ^ and $
+                                     10);   // null + padding
+
+    if (bWholeLine)
+        *pOut++ = '^';
+
+    for (const char* p = strMatchString; *p; p++)
+    {
+        unsigned char c = (unsigned char)*p;
+        if (*p == '\n')
+            { *pOut++ = '\\'; *pOut++ = 'n'; }
+        else if (c < ' ')
+        {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%02x", (unsigned)c);
+            *pOut++ = '\\'; *pOut++ = 'x';
+            *pOut++ = buf[0]; *pOut++ = buf[1];
+        }
+        else if (isalnum(c) || *p == ' ' || c >= 0x80)
+            *pOut++ = *p;
+        else if (*p == '*' && bMakeAsterisksWildcards)
+            { *pOut++ = '('; *pOut++ = '.'; *pOut++ = '*'; *pOut++ = '?'; *pOut++ = ')'; }
+        else
+            { *pOut++ = '\\'; *pOut++ = *p; }
+    }
+
+    if (bWholeLine)
+        *pOut++ = '$';
+
+    *pOut++ = '\0';
+    strRegexp.ReleaseBuffer(-1);
+    return strRegexp;
 }

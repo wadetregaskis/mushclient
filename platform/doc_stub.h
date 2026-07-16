@@ -1200,6 +1200,7 @@ int myAtoF(const char* z, double* pResult);
 int EditDistance(const std::string source, const std::string target);
 // no default arg here (stdafx.h owns the `= false` default for the full build)
 bool IsStringNumber(const std::string& s, bool bSigned);
+void Generate256colours(void);   // fills xterm_256_colours[] (defined in doc_portable.cpp)
 
 // ── Mersenne Twister RNG (scripting/mt19937ar.c) ──────────────────────
 extern "C" {

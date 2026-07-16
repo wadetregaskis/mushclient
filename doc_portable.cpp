@@ -1270,10 +1270,6 @@ CScriptEngine* CMUSHclientDoc::GetScriptEngine()
     return m_ScriptEngine;
 }
 
-bool CMUSHclientDoc::ExecuteScript(DISPID&, const char*, const unsigned short,
-                                    const char*, const char*,
-                                    DISPPARAMS&, long&, COleVariant*)
-{ return false; }
 
 // MXP_StartTagScript is defined in mxpStart.cpp (real implementation).
 

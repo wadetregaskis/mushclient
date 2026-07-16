@@ -487,27 +487,6 @@ DISPID CMUSHclientDoc::GetProcedureDispidHelper (const CString & strName,
 
   }
 
-bool CMUSHclientDoc::ExecuteScript (DISPID & dispid,  // dispatch ID, will be zeroed on an error
-                                    LPCTSTR szProcedure,  // eg. ON_TRIGGER_XYZ
-                                    const unsigned short iReason,  // value for m_iCurrentActionSource
-                                    LPCTSTR szType,   // eg. trigger, alias
-                                    LPCTSTR szReason, // eg. trigger subroutine XXX
-                                    DISPPARAMS & params,  // parameters
-                                    long & nInvocationCount,  // count of invocations
-                                    COleVariant * result    // result of call
-                                    )
-  {
-
-  if (GetScriptEngine () && dispid != DISPID_UNKNOWN)
-    {
-
-    return GetScriptEngine ()->Execute (dispid, szProcedure, iReason, szType, szReason, 
-                                                params, nInvocationCount, result);
-    }
-  else
-    return false;
-
-  } // end of CMUSHclientDoc::ExecuteScript 
 
 
 

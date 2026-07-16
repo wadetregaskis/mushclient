@@ -26,6 +26,7 @@ CString Replace (const CString strSource, const CString strTarget,
 #endif
 
 #include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
+#include "scripting/scripting.h"   // CScriptEngine (ExecuteScript delegates to it)
 
 // The transport adapter — the ONE per-platform choice this TU makes (T5).
 #ifdef _WIN32
@@ -2228,3 +2229,29 @@ void CMUSHclientDoc::OnTlsFailed (bool bCertFailure, const char * reason)
                      (LPARAM) (bCertFailure ? 1 : 0));
 
   }   // end of CMUSHclientDoc::OnTlsFailed
+
+
+// ── ExecuteScript — invoke a resolved dispatch ID on the script engine ────────
+// Single-sourced (was: scripting/scripting.cpp on Windows/mushapp, and a
+// `return false` STUB in doc_portable.cpp for mushcore).  The stub meant the
+// headless test engine silently no-op'd every world callback (connect/disconnect,
+// etc.) and send-to-script alias/timer — even though CScriptEngine::Execute is
+// fully functional in mushcore (scripting/scriptengine.cpp delegates to
+// ExecuteLua for the embedded engines).  Adopting the real body brings mushcore
+// to parity with the product; behaviour is unchanged where the dispid is
+// unresolved (DISPID_UNKNOWN → false, exactly as the stub returned).
+bool CMUSHclientDoc::ExecuteScript (DISPID & dispid,
+                                    LPCTSTR szProcedure,
+                                    const unsigned short iReason,
+                                    LPCTSTR szType,
+                                    LPCTSTR szReason,
+                                    DISPPARAMS & params,
+                                    long & nInvocationCount,
+                                    COleVariant * result)
+  {
+  if (GetScriptEngine () && dispid != DISPID_UNKNOWN)
+    return GetScriptEngine ()->Execute (dispid, szProcedure, iReason, szType, szReason,
+                                        params, nInvocationCount, result);
+  else
+    return false;
+  }   // end of CMUSHclientDoc::ExecuteScript

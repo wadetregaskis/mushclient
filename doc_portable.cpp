@@ -972,41 +972,9 @@ void CMUSHclientDoc::SendTo(const unsigned short iWhere,
 // ── CMUSHclientDoc::ExecuteTriggerScript ─────────────────────────────────
 // Fires the Lua script callback for a trigger match.
 #include "paneline.h"
-void CMUSHclientDoc::ExecuteTriggerScript(CTrigger* trigger_item,
-                                           CString   strLine,
-                                           CPaneLine& StyledLine)
-{
-    if (trigger_item->strProcedure.IsEmpty())
-        return;
-
-    CScriptEngine* engine = GetScriptEngine();
-    if (!engine || !engine->IsLua())
-        return;
-
-    // Get the label (name) for this trigger — used as argument 1 to the callback.
-    const char* pLabel = trigger_item->strLabel;
-    if (pLabel[0] == 0)
-        pLabel = GetTriggerRevMap()[trigger_item].c_str();
-
-    list<double> nparams;
-    list<string> sparams;
-    sparams.push_back(pLabel);
-    sparams.push_back((LPCTSTR)strLine);
-
-    trigger_item->bExecutingScript = true;
-    engine->ExecuteLua(trigger_item->dispid,
-                       trigger_item->strProcedure,
-                       eTriggerFired,
-                       "trigger",
-                       TFormat("trigger \"%s\" matched: \"%s\"",
-                               pLabel, (LPCTSTR)strLine),
-                       nparams, sparams,
-                       trigger_item->nInvocationCount,
-                       trigger_item->regexp,
-                       nullptr,   // no extra string table
-                       &StyledLine);
-    trigger_item->bExecutingScript = false;
-}
+// ExecuteTriggerScript: single-sourced in doc_shared.cpp (the real body —
+// all-engine UsesEmbeddedCallback guard + scripting-inactive warning — replaced
+// the Lua-only twin here).
 
 void CMUSHclientDoc::TriggerToPane(CTrigger* /*pTrigger*/,
                                     CPaneLine& /*StyledLine*/)

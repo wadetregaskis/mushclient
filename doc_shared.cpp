@@ -3810,3 +3810,101 @@ void CMUSHclientDoc::SendLineToPlugin (void)
 
   } // end of CMUSHclientDoc::SendLineToPlugin
 
+
+
+// ═══ ExecuteTriggerScript (the approved scripting reconcile, part 2) ═════════
+// Relocated verbatim from doc.cpp.  The old mushcore twin fired Lua only and
+// skipped CheckScriptingAvailable; the real body guards on
+// UsesEmbeddedCallback() (all six engines) and warns when scripting is
+// disabled — the COM fallback path is unreachable off-Windows (inert stubs).
+
+void CMUSHclientDoc::ExecuteTriggerScript (CTrigger * trigger_item,
+                                            const CString strCurrentLine,
+                                            CPaneLine & StyledLine)
+  {
+
+  if (CheckScriptingAvailable ("Trigger", trigger_item->dispid, trigger_item->strProcedure))
+     return;
+
+  CString strType = "trigger";
+  CString strReason =  TFormat ("processing trigger \"%s\" when matching line: \"%s\"", 
+                            (LPCTSTR) trigger_item->strLabel, (LPCTSTR) strCurrentLine);
+
+  // get unlabelled trigger's internal name
+  const char * pLabel = trigger_item->strLabel;
+  if (pLabel [0] == 0)
+     pLabel = GetTriggerRevMap () [trigger_item].c_str ();
+
+  if (GetScriptEngine () && GetScriptEngine ()->UsesEmbeddedCallback ())
+    {
+    list<double> nparams;
+    list<string> sparams;
+    sparams.push_back (pLabel);
+    sparams.push_back ((LPCTSTR) strCurrentLine);
+    trigger_item->bExecutingScript = true;     // cannot be deleted now
+    GetScriptEngine ()->ExecuteLua (trigger_item->dispid, 
+                                   trigger_item->strProcedure, 
+                                   eTriggerFired,
+                                   strType, 
+                                   strReason, 
+                                   nparams,
+                                   sparams, 
+                                   trigger_item->nInvocationCount,
+                                   trigger_item->regexp,
+                                   NULL,        // no map of strings
+                                   &StyledLine);  // but we *do* have a styled line
+    trigger_item->bExecutingScript = false;     // can be deleted now
+    return;
+    }   // end of Lua
+
+long i = 1;
+
+  // prepare for the arguments:
+  //   1. Trigger name
+  //   2. Line that triggered the trigger
+  //   3. The 10 wildcards (1-relative array)
+
+  // WARNING - arguments should appear in REVERSE order to what the sub expects them!
+  
+  enum
+    {
+    eWildcards,
+    eCurrentLine,
+    eTriggerName,
+    eArgCount,     // this MUST be last
+    };    
+
+  COleSafeArray sa;   // for wildcard list
+  COleVariant args [eArgCount]; // arguments to script
+  DISPPARAMS params = { args, NULL, eArgCount, 0 };
+
+//    ::AfxMessageBox (trigger_item->trigger);
+
+  args [eTriggerName] = pLabel;
+  args [eCurrentLine] = strCurrentLine;
+
+  // --------------- set up wildcards array ---------------------------
+  sa.Clear ();
+  // nb - to be consistent with %1, %2 etc. we will make array 1-relative
+  sa.CreateOneDim (VT_VARIANT, MAX_WILDCARDS, NULL, 1);
+  for (i = 1; i < MAX_WILDCARDS; i++)
+    {
+    COleVariant v (trigger_item->wildcards [i].c_str ());
+    sa.PutElement (&i, &v);
+    }
+  // i should be MAX_WILDCARDS (10) now ;)
+  COleVariant v (trigger_item->wildcards [0].c_str ()); // the whole matching line
+  sa.PutElement (&i, &v);
+  args [eWildcards] = sa;
+
+  trigger_item->bExecutingScript = true;     // cannot be deleted now
+  ExecuteScript (trigger_item->dispid,  
+                 trigger_item->strProcedure,
+                 eTriggerFired,
+                 strType, 
+                 strReason,
+                 params, 
+                 trigger_item->nInvocationCount); 
+  trigger_item->bExecutingScript = false;     // can be deleted now
+
+  } // end of CMUSHclientDoc::ExecuteTriggerScript 

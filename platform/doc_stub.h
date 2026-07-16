@@ -2131,7 +2131,7 @@ public:
                         bool bExpandWildcards, bool bFixRegexps,
                         bool bIsRegexp, bool bThrowExceptions,
                         const char* sName);
-    void PlaySoundFile(CString strFile);
+    bool PlaySoundFile(CString strFile);   // doc.h signature (bool: did it play)
     void CancelSound();
     void Redraw() {}
     void DoFixMenus(void*) {}

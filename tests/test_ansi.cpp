@@ -456,34 +456,11 @@ TEST(ANSITest, BrightForegroundInCustomModeConvertsToRGB)
 // class of bug where the ESC phase was silently reset to NONE instead of
 // transitioning to HAVE_ESC, causing sequences like "[31m" to be emitted
 // literally to stdout.
-//
-// DisplayMsg writes to stdout; redirect it to /dev/null for the test.
-
-#include <cstdio>
-
-// RAII helper: redirect stdout to /dev/null for the duration of the object.
-// The original stdout fd is dup'd first so it can be restored cleanly even
-// in headless / CI environments where /dev/tty is unavailable.
-#include <unistd.h>
-struct SilenceStdout {
-    int saved_fd = -1;
-    SilenceStdout() {
-        fflush(stdout);
-        saved_fd = dup(STDOUT_FILENO);
-        freopen("/dev/null", "w", stdout);
-    }
-    ~SilenceStdout() {
-        if (saved_fd >= 0) {
-            fflush(stdout);
-            dup2(saved_fd, STDOUT_FILENO);
-            close(saved_fd);
-        }
-    }
-};
+// (The old stdout-silencing RAII is gone: the display flip removed the
+// twin's stdout ANSI emission, so DisplayMsg no longer writes to stdout.)
 
 TEST(ANSITest, DisplayMsg_ANSIRedSetsStyle)
 {
-    SilenceStdout _s;
     CMUSHclientDoc doc = make_doc();
     // "\033[31m" — ESC [ 3 1 m → foreground red
     const char seq[] = "\033[31mHello";
@@ -493,7 +470,6 @@ TEST(ANSITest, DisplayMsg_ANSIRedSetsStyle)
 
 TEST(ANSITest, DisplayMsg_BrightGreenSetsIndex10)
 {
-    SilenceStdout _s;
     CMUSHclientDoc doc = make_doc();
     const char seq[] = "\033[92mHello";
     doc.DisplayMsg(seq, (int)strlen(seq), 0, false);
@@ -502,7 +478,6 @@ TEST(ANSITest, DisplayMsg_BrightGreenSetsIndex10)
 
 TEST(ANSITest, DisplayMsg_ResetRestoresDefaults)
 {
-    SilenceStdout _s;
     CMUSHclientDoc doc = make_doc();
     const char seq[] = "\033[31m\033[0mHello";
     doc.DisplayMsg(seq, (int)strlen(seq), 0, false);
@@ -512,7 +487,6 @@ TEST(ANSITest, DisplayMsg_ResetRestoresDefaults)
 
 TEST(ANSITest, DisplayMsg_MultiParamSequence)
 {
-    SilenceStdout _s;
     CMUSHclientDoc doc = make_doc();
     // "\033[1;34m" — bold + blue
     const char seq[] = "\033[1;34mHello";
@@ -527,7 +501,6 @@ TEST(ANSITest, DisplayMsg_ESCInterruptsMXPStateCleanly)
     // a partial MXP tag was started), the phase must transition to HAVE_ESC
     // not stay stuck or go to NONE, and the subsequent ANSI sequence must
     // parse correctly.
-    SilenceStdout _s;
     CMUSHclientDoc doc = make_doc();
     // Force a non-NONE phase then deliver an ESC sequence.
     doc.m_phase = HAVE_ESC;   // simulate being mid-other-sequence

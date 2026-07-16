@@ -798,10 +798,11 @@ void CMUSHclientDoc::Trace(const char* fmt, ...)
 // On non-Windows, delegate to the wxWidgets sound hook so that trigger
 // sounds and MSP audio actually play in mushgui.  A headless build silently drops
 // sound requests (no hook installed → nullptr check is sufficient).
-void CMUSHclientDoc::PlaySoundFile(CString strFile)
+bool CMUSHclientDoc::PlaySoundFile(CString strFile)
 {
     if (g_wxhook_play_sound)
-        g_wxhook_play_sound((const char*)strFile, false);
+        return g_wxhook_play_sound((const char*)strFile, false);
+    return false;   // headless: no audio backend
 }
 
 void CMUSHclientDoc::CancelSound()

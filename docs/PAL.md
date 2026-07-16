@@ -693,6 +693,23 @@ largely dissolves and the display family can join the other five on the seam.
 If instead the goal is simply to delete the port's translation layer with no
 Windows change, Option C is the bounded, mac-only path.
 
+**Status update (2026-07-15, campaign-b display steps 1–7).**  The decision
+above governs *rendering* (pull vs push) and is unchanged.  The **engine side**
+of the display family has since been single-sourced: `DisplayMsg`,
+`StartNewLine` (+`_KeepPreviousStyle`), `AddToLine`, `AddStyle` (both
+overloads), `RemoveChunk`, `SendLineToPlugin`, `SetNewLineColour`,
+`OutputOutstandingLines`, the send family and the whole note family
+(`methods_noting.cpp`) now compile identically into all three builds
+(doc_shared.cpp / methods_noting.cpp), and mushcore emits through the same
+`UpdateAllViews` drain as the mac product (doc_display_shared.cpp) — its
+hand-written display twin is gone.  Windows keeps the CMUSHView pull verbatim.
+One seam-surface consequence: **`IWorldView::note()` (and the doc's `EmitNote`
+helper) is now dormant** — notes flow through the real `Tell → DisplayMsg →
+m_LineList → appendLine` path on every build, so nothing calls `note()` any
+more.  The method stays on the interface for now (removing it would churn the
+Windows adapter, the wx adapter and the test fake for no behavioural gain);
+revisit at the next IWorldView contract change.
+
 ## Migration (incremental, always-green; Windows never perturbed)
 
 - **P0** guardrails: coverage + golden characterization tests capturing the

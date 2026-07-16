@@ -179,6 +179,26 @@ TEST(Utilities, OmitFromOutputAcrossJumpBoundaryDoesNotCrash)
     EXPECT_GT((long)doc.m_LineList.GetCount(), 0L);
 }
 
+// ── OSC consumption ──────────────────────────────────────────────────────────
+// ESC ] <payload> BEL (OSC — e.g. window-title strings) must be swallowed, not
+// rendered.  Phase_ESC enters HAVE_OSC on every platform; the real DisplayMsg
+// historically had no HAVE_OSC case, so the payload leaked into the output on
+// Windows and the mac product (fixed 2026-07).  This locks the contract.
+
+TEST(Utilities, OscSequencePayloadIsConsumed)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+
+    const char* s = "before\033]0;window title\007after";
+    doc.DisplayMsg(s, (int)strlen(s), 0);
+
+    EXPECT_TRUE(doc.m_pCurrentLine != NULL);
+    // the visible line must be exactly "beforeafter" — no OSC payload bytes
+    std::string visible(doc.m_pCurrentLine->text, doc.m_pCurrentLine->len);
+    EXPECT_STREQ("beforeafter", visible.c_str());
+}
+
 // ── IsStringNumber ──────────────────────────────────────────────────────────
 
 TEST(Utilities, IsStringNumber_Unsigned)

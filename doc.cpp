@@ -1207,6 +1207,7 @@ CString strLine (lpszText, size);
       switch (m_phase)
         {
         case HAVE_ESC:            Phase_ESC (c); continue;
+        case HAVE_OSC:            Phase_OSC (c); continue;
         case HAVE_UTF8_CHARACTER: Phase_UTF8 (c); continue;
 
         case HAVE_FOREGROUND_256_START:    // these 12 are similar to Phase_ANSI

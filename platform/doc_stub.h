@@ -1933,7 +1933,7 @@ public:
     void Phase_ESC   (const unsigned char c);
     void Phase_ANSI  (const unsigned char c);
 #ifndef _WIN32
-    void Phase_OSC   (const unsigned char c);  // OSC discard — CLI only
+    void Phase_OSC   (const unsigned char c);  // OSC discard (all platforms)
 #endif
     void Phase_IAC   (unsigned char& c);
     void Phase_WILL  (const unsigned char c);

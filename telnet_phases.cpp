@@ -75,9 +75,11 @@ void CMUSHclientDoc::Phase_ESC (const unsigned char c)
   } // end of Phase_ESC
 
 // OSC - we have ESC ] and are swallowing until BEL or ST (ESC \)
-// This is only needed on non-Windows (the CLI); the Windows build never
-// enters HAVE_OSC because the full GUI handles OSC differently.
-#ifndef _WIN32
+// Compiled on ALL platforms: Phase_ESC above enters HAVE_OSC unconditionally,
+// so every build must be able to consume the payload.  (This was historically
+// #ifndef _WIN32 on the mistaken belief that Windows never entered HAVE_OSC —
+// in fact DisplayMsg simply had no HAVE_OSC case, so OSC payloads leaked into
+// the visible output on Windows and the mac product.)
 void CMUSHclientDoc::Phase_OSC (const unsigned char c)
   {
   if (c == '\007')          // BEL terminates OSC
@@ -88,7 +90,6 @@ void CMUSHclientDoc::Phase_OSC (const unsigned char c)
     m_phase = HAVE_ESC;     // if next char is '\', Phase_ESC→NONE; harmless either way
   // else: still inside the OSC payload — stay in HAVE_OSC and keep discarding
   }
-#endif // !_WIN32
 
 // ANSI - we have ESC [ x
 

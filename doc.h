@@ -121,7 +121,7 @@ enum { NONE,          // normal text
        HAVE_SUBNEGOTIATION_IAC,  // received TELNET IAC SB c  <data> IAC  (awaiting IAC or SE)
        HAVE_COMPRESS,  // received TELNET IAC COMPRESS
        HAVE_COMPRESS_WILL, // received TELNET IAC COMPRESS WILL
-       HAVE_OSC,           // ESC ] ... BEL/ST — discard on non-Windows
+       HAVE_OSC,           // ESC ] ... BEL/ST — payload consumed on all platforms
 
        // see: https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit
        HAVE_FOREGROUND_256_START,   // received ESC[38;
@@ -1743,7 +1743,7 @@ public:
   void Phase_ANSI (const unsigned char c);
   void Phase_IAC (unsigned char & c);
 #ifndef _WIN32
-  void Phase_OSC (const unsigned char c);  // OSC discard — non-Windows only
+  void Phase_OSC (const unsigned char c);  // OSC discard (all platforms)
 #endif            
   void Phase_WILL (const unsigned char c);           
   void Phase_WONT (const unsigned char c);           

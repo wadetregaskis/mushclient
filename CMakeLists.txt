@@ -417,6 +417,7 @@ if(NOT WIN32)
         # ANSI colour parser + supporting doc helpers (Phase 2)
         ansi.cpp
         doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
+        utilities_shared.cpp   # shared pure-logic free functions (myAtoF/encodeBase64/EditDistance)
         doc_portable.cpp
 
         # PAL: headless CPU reference adapter for pal::ISurface (docs/PAL.md S1)
@@ -611,6 +612,7 @@ if(NOT WIN32)
         Dmetaph.cpp
         ansi.cpp
         doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
+        utilities_shared.cpp   # shared pure-logic free functions (myAtoF/encodeBase64/EditDistance)
         telnet_phases.cpp
         Line.cpp
         ProcessPreviousLine.cpp

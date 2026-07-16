@@ -1191,9 +1191,13 @@ inline string FindAndReplace(const string& source,
 long    AdjustColour(long Colour, short Method);
 CString ColourToName(COLORREF colour);
 
-// ── Base64 (utilities_portable.cpp) ─────────────────────────────────────
+// ── Base64 (decodeBase64 in utilities_portable.cpp; encodeBase64 shared) ──
 CString decodeBase64(const char* coded);
 CString encodeBase64(const char* plaintext, bool bMultiLine);
+
+// ── Shared pure-logic free functions (utilities_shared.cpp) ──────────────
+int myAtoF(const char* z, double* pResult);
+int EditDistance(const std::string source, const std::string target);
 
 // ── Mersenne Twister RNG (scripting/mt19937ar.c) ──────────────────────
 extern "C" {

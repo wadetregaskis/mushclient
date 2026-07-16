@@ -539,14 +539,6 @@ CColours * colour_item;
   }
 
 /**************************************************************************/
-static char base64code[64]=
-{
-  'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P',
-  'Q','R','S','T','U','V','W','X','Y','Z','a','b','c','d','e','f',
-  'g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v',
-  'w','x','y','z','0','1','2','3','4','5','6','7','8','9','+','/'
-};
-/**************************************************************************/
 // takes a base64 character, returns its value
 // from RFC 2045 Table 1 - The Base64 Alphabet
 int getBase64Value(char code){
@@ -630,75 +622,6 @@ CString decodeBase64(const char *coded)
 }
 
 
-// to wrap at column 76 we actually add a linefeed after doing 57 bytes
-#define WRAP_COLUMN 76
-#define WRAP_POINT ((WRAP_COLUMN / 4) * 3)
-
-/**************************************************************************/
-CString encodeBase64(const char * plaintext, const bool bMultiLine)
-{
-  unsigned char *pt=(unsigned char *)plaintext;
-  int i;
-  int j=0;
-  int bytes;
-
-  int len = strlen (plaintext);
-
-  CString strResult;
-
-  // result will be 4/3 size of original
-  char * result = strResult.GetBuffer (
-        ((len / 3) * 4) +  // goes up in size by 4/3
-        4 +   // padding for final couple of bytes, plus null at end
-        (((len / WRAP_POINT) + 1) * 2)  // (allow 2 bytes for cr/lfs)
-        );
-
-  // go thru converting each 3 bytes into 4 base64 bytes
-  for (i=0; i < (len - 2); i+=3)
-    {
-    bytes= (pt[i]<<16)
-         + (pt[i+1]<<8)
-         + (pt[i+2]);
-    result[j++] = base64code[(bytes>>18) & 0x3F];
-    result[j++] = base64code[(bytes>>12) & 0x3F];
-    result[j++] = base64code[(bytes>>6) & 0x3F];
-    result[j++] = base64code[(bytes) & 0x3F];
-
-  // Add linefeeds every WRAP_POINT characters
-
-    if(bMultiLine && ((i % WRAP_POINT) == (WRAP_POINT - 3)))
-      {
-      result[j++]='\r';
-      result[j++]='\n';
-      }
-    }
-
-  // pad the remaining characters
-  switch(len - i){
-    case 0: // exact fit
-      break;
-    case 1: // need one more character
-      bytes= pt[i]<<16;
-      result[j++] = base64code[(bytes>>18) & 0x3F];
-      result[j++] = base64code[(bytes>>12) & 0x3F];
-      result[j++] = '=';
-      result[j++] = '=';
-      break;
-    case 2: // need two more characters
-      bytes= (pt[i]<<16) + (pt[i+1]<<8);
-      result[j++] = base64code[(bytes>>18) & 0x3F];
-      result[j++] = base64code[(bytes>>12) & 0x3F];
-      result[j++] = base64code[(bytes>>6) & 0x3F];
-      result[j++] = '=';
-      break;
-
-  }
-  result[j]='\0';
-
-
-  strResult.ReleaseBuffer (-1);
-  return (strResult);
-}
 
 
 CString ColourToName (const COLORREF colour)
@@ -2360,104 +2283,6 @@ int iChanges = 0;
   }  // end of QuoteForumCodes
 
 
-// Levenshtein Distance Algorithm
-// see: http://www.merriampark.com/ldcpp.htm
-
-int EditDistance (const std::string source, const std::string target)
-  {
-
-// keep maximum down in case they feed in a ridiculously long word
-// runtime is proportional to O(mn)
-
-const int MAX_LENGTH = 20;
-
-  // Step 1
-
-  const int n = minimum<int> (source.length(), MAX_LENGTH);
-  const int m = minimum<int> (target.length(), MAX_LENGTH);
-
-  int i, j;
-
-  if (n == 0)
-      return m;
-
-  if (m == 0)
-      return n;
-
-  // Good form to declare a TYPEDEF
-
-  typedef std::vector< std::vector<int> > Tmatrix;
-
-  Tmatrix matrix(n+1);
-
-  // Size the vectors in the 2.nd dimension. Unfortunately C++ doesn't
-  // allow for allocation on declaration of 2.nd dimension of vec of vec
-
-  for (i = 0; i <= n; i++) {
-    matrix[i].resize(m+1);
-  }
-
-  // Step 2
-
-  for (i = 0; i <= n; i++) {
-    matrix[i][0]=i;
-  }
-
-  for (j = 0; j <= m; j++) {
-    matrix[0][j]=j;
-  }
-
-  // Step 3
-
-  for (i = 1; i <= n; i++) {
-
-    const char s_i = source[i-1];
-
-    // Step 4
-
-    for (j = 1; j <= m; j++) {
-
-      const char t_j = target[j-1];
-
-      // Step 5
-
-      int cost;
-      if (s_i == t_j) {
-        cost = 0;
-      }
-      else {
-        cost = 1;
-      }
-
-      // Step 6
-
-      const int above = matrix[i-1][j];
-      const int left = matrix[i][j-1];
-      const int diag = matrix[i-1][j-1];
-      int cell = min( above + 1, min(left + 1, diag + cost));
-
-      // Step 6A: Cover transposition, in addition to deletion,
-      // insertion and substitution. This step is taken from:
-      // Berghel, Hal ; Roach, David : "An Extension of Ukkonen's
-      // Enhanced Dynamic Programming ASM Algorithm"
-      // (http://www.acm.org/~hlb/publications/asm/asm.html)
-
-      if (i>2 && j>2) {
-        int trans=matrix[i-2][j-2]+1;
-        if (source[i-2]!=t_j) trans++;
-        if (s_i!=target[j-2]) trans++;
-        if (cell>trans) cell=trans;
-      }
-
-      matrix[i][j]=cell;
-    }
-  }
-
-  // Step 7
-
-  return matrix[n][m];
-
-}   // end of edit_distance
 
 
 
@@ -3301,80 +3126,6 @@ long LoadPngMemory (unsigned char * Buffer, const size_t Length, HBITMAP & hbmp,
   }     // end of  LoadPngMemory
 
 
-#define LONGDOUBLE_TYPE long double
-#define u8 unsigned char
-
-
-// based on sqlite3AtoF - converts string to double, regardless of locale
-
-int myAtoF(const char *z, double *pResult)
-  {
-  int sign = 1;
-  const char *zBegin = z;
-  LONGDOUBLE_TYPE v1 = 0.0;
-  int nSignificant = 0;
-  while( isspace(*(u8*)z) ) z++;
-  if( *z=='-' ){
-    sign = -1;
-    z++;
-  }else if( *z=='+' ){
-    z++;
-  }
-  while( z[0]=='0' ){
-    z++;
-  }
-  while( isdigit(*(u8*)z) ){
-    v1 = v1*10.0 + (*z - '0');
-    z++;
-    nSignificant++;
-  }
-  if( *z=='.' ){
-    LONGDOUBLE_TYPE divisor = 1.0;
-    z++;
-    if( nSignificant==0 ){
-      while( z[0]=='0' ){
-        divisor *= 10.0;
-        z++;
-      }
-    }
-    while( isdigit(*(u8*)z) ){
-      if( nSignificant<18 ){
-        v1 = v1*10.0 + (*z - '0');
-        divisor *= 10.0;
-        nSignificant++;
-      }
-      z++;
-    }
-    v1 /= divisor;
-  }
-  if( *z=='e' || *z=='E' ){
-    int esign = 1;
-    int eval = 0;
-    LONGDOUBLE_TYPE scale = 1.0;
-    z++;
-    if( *z=='-' ){
-      esign = -1;
-      z++;
-    }else if( *z=='+' ){
-      z++;
-    }
-    while( isdigit(*(u8*)z) ){
-      eval = eval*10 + *z - '0';
-      z++;
-    }
-    while( eval>=64 ){ scale *= 1.0e+64; eval -= 64; }
-    while( eval>=16 ){ scale *= 1.0e+16; eval -= 16; }
-    while( eval>=4 ){ scale *= 1.0e+4; eval -= 4; }
-    while( eval>=1 ){ scale *= 1.0e+1; eval -= 1; }
-    if( esign<0 ){
-      v1 /= scale;
-    }else{
-      v1 *= scale;
-    }
-  }
-  *pResult = (double)(sign<0 ? -v1 : v1);
-  return (int)(z - zBegin);
-}  // end of myAtoF
 
 
 #ifdef _WIN32

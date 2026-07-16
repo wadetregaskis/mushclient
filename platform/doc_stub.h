@@ -1198,6 +1198,8 @@ CString encodeBase64(const char* plaintext, bool bMultiLine);
 // ── Shared pure-logic free functions (utilities_shared.cpp) ──────────────
 int myAtoF(const char* z, double* pResult);
 int EditDistance(const std::string source, const std::string target);
+// no default arg here (stdafx.h owns the `= false` default for the full build)
+bool IsStringNumber(const std::string& s, bool bSigned);
 
 // ── Mersenne Twister RNG (scripting/mt19937ar.c) ──────────────────────
 extern "C" {

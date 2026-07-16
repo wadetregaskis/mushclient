@@ -24,26 +24,6 @@
 #include <cstring>
 using std::string;
 
-// Declared in stdafx.h for all platforms:
-//   bool IsStringNumber(const string & s, const bool bSigned = false);
-
-bool IsStringNumber(const string & s, const bool bSigned)
-{
-    string::size_type pos = 0;
-
-    if (s.empty())
-        return false;  // empty? can't be a number
-
-    if (bSigned && (s[0] == '+' || s[0] == '-'))
-    {
-        pos++;
-        if (s.size() == 1)
-            return false;  // can't just have the sign
-    }
-
-    return s.find_first_not_of("0123456789", pos) == string::npos;
-}
-
 // ── ShutDownSocket ────────────────────────────────────────────────────────────
 // Gracefully shuts down and closes a socket.  On Windows this lives in
 // Utilities.cpp; on macOS we provide the equivalent here.

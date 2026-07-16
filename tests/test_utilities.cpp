@@ -118,4 +118,28 @@ TEST(Utilities, EditDistance_CapsAt20)
     EXPECT_EQ(20, EditDistance(a, b));
 }
 
+// ── IsStringNumber ──────────────────────────────────────────────────────────
+
+TEST(Utilities, IsStringNumber_Unsigned)
+{
+    EXPECT_TRUE(IsStringNumber("0", false));
+    EXPECT_TRUE(IsStringNumber("12345", false));
+    EXPECT_FALSE(IsStringNumber("", false));      // empty is not a number
+    EXPECT_FALSE(IsStringNumber("12a", false));   // trailing non-digit
+    EXPECT_FALSE(IsStringNumber("1.5", false));   // '.' is not a digit
+}
+
+TEST(Utilities, IsStringNumber_HonoursBSigned)
+{
+    // A leading sign is accepted ONLY when bSigned is true.
+    EXPECT_FALSE(IsStringNumber("-5", false));    // sign rejected when unsigned
+    EXPECT_FALSE(IsStringNumber("+5", false));
+    EXPECT_TRUE(IsStringNumber("-5", true));      // sign accepted when signed
+    EXPECT_TRUE(IsStringNumber("+5", true));
+    EXPECT_TRUE(IsStringNumber("42", true));      // no sign, still fine
+    EXPECT_FALSE(IsStringNumber("-", true));      // just a sign is not a number
+    EXPECT_FALSE(IsStringNumber("+", true));
+    EXPECT_FALSE(IsStringNumber("5-3", true));    // sign only allowed at the front
+}
+
 MC_TEST_MAIN()

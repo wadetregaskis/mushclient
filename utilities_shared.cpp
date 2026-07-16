@@ -32,6 +32,33 @@
 using std::string;
 using std::vector;
 
+// ── IsStringNumber ──────────────────────────────────────────────────────────
+// True if `s` is a run of decimal digits.  A leading '+'/'-' is accepted ONLY
+// when bSigned is true (bSigned defaults to false — see the stdafx.h prototype).
+// Declared in stdafx.h / platform/doc_stub.h.
+//
+// This honours bSigned; the pre-2026-07 Windows copy ignored the argument and
+// always stripped a leading sign — a latent defect reconciled here (the port
+// already behaved correctly).  All callers that must accept negatives pass
+// bSigned=true (array_less, miniwindow point-parsing); the only bSigned=false
+// caller (regexp wildcard-name test) is unaffected for realistic input.
+bool IsStringNumber(const string & s, const bool bSigned)
+{
+    string::size_type pos = 0;
+
+    if (s.empty())
+        return false;  // empty? can't be a number
+
+    if (bSigned && (s[0] == '+' || s[0] == '-'))
+    {
+        pos++;
+        if (s.size() == 1)
+            return false;  // can't just have the sign
+    }
+
+    return s.find_first_not_of("0123456789", pos) == string::npos;
+}
+
 // ── myAtoF ──────────────────────────────────────────────────────────────────
 // Locale-independent string→double conversion (sqlite3AtoF-derived); also
 // underpins SQLite's text-to-float path.  Returns the number of characters

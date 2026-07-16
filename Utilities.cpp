@@ -1123,23 +1123,8 @@ string VectorToString (const vector<string> & v,
 
   } // end of VectorToString
 
-// tests a string to see if it is numeric
-bool IsStringNumber (const string & s, const bool bSigned)
-  {
-  string::size_type pos = 0;
-
-  if (s.empty ())
-    return false;  // empty? can't be a number
-
-  if (s [0] == '+' || s [0] == '-')
-    {
-    pos++;
-    if (s.size () == 1)
-      return false;   // can't just have the sign
-    }
-
-  return s.find_first_not_of ("0123456789", pos) == string::npos;
-  }   // end of IsNumber
+// IsStringNumber is single-sourced in utilities_shared.cpp (it honours bSigned;
+// the old copy here ignored it and always stripped a leading sign).
 
 
 #define DELIMS "{[()]}"

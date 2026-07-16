@@ -3,13 +3,29 @@
 //
 // Aliases intercept typed commands before they go to the MUD and can
 // substitute, suppress, or expand them.  m_nTotalLinesSent is the observable:
-// SendMsg increments it for every line actually written to the socket.
-// (SendPacket is a no-op when m_pTransport == nullptr, so no transport needed.)
+// DoSendMsg increments it for every line actually written to the socket.
+// The real (single-sourced) DoSendMsg gates on ConnectionOpen(), i.e.
+// m_pTransport != nullptr — so each test doc gets a FakeTransport that just
+// swallows the bytes (same shape as tests/test_pal_transport.cpp).
 
 #include "mc_test.h"
 #include "platform/doc_stub.h"
+#include "pal/itransport.h"
 
 // ── helpers ───────────────────────────────────────────────────────────────
+
+namespace {
+struct FakeTransport : pal::ITransport {
+    std::string sent;
+    void resolve(const char*, pal::ResolveToken) override {}
+    void cancelResolve() override {}
+    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void send(const char* data, size_t n) override { sent.append(data, n); }
+    void startTls(const pal::TlsParams&) override {}
+    void close() override {}
+    std::string lastErrorString() const override { return "fake"; }
+};
+} // namespace
 
 static CMUSHclientDoc make_doc()
 {
@@ -18,6 +34,8 @@ static CMUSHclientDoc make_doc()
     doc.m_enable_triggers  = TRUE;
     doc.m_display_my_input = FALSE;   // don't echo — keeps output clean
     doc.m_iConnectPhase    = eConnectConnectedToMud;  // simulate live connection
+    // the doc destructor tears the transport down (TeardownTransport)
+    doc.m_pTransport = new FakeTransport();
     return doc;
 }
 

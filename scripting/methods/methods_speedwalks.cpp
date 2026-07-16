@@ -97,70 +97,7 @@ void CMUSHclientDoc::OnUpdateInputDiscardqueuedcommands(CCmdUI* pCmdUI)
 }   // end of CMUSHclientDoc::OnUpdateInputDiscardqueuedcommands
 
 
-void CMUSHclientDoc::ShowQueuedCommands (void)
-  {
-
-  // show previous status line
-  if (m_QueuedCommandsList.IsEmpty ())
-    {
-    ShowStatusLine (true);    // show it now
-    return;    
-    }
-
-  CString strQueued = "Queued: ";
-  const int MAX_SHOWN = 50;
-
-  CString str;
-  CString strLastDir;
-
-  int iCount = 0;
-  POSITION pos;
-
-  for (pos = m_QueuedCommandsList.GetHeadPosition (); 
-      pos && strQueued.GetLength () < MAX_SHOWN; )
-    {
-    // get next direction from list
-    str = m_QueuedCommandsList.GetNext (pos).Mid (1);
-    
-    // empty lines look a bit silly
-    if (str.IsEmpty ())
-      continue;
-
-    // if same as before, count them
-    if (str == strLastDir)
-      iCount++;
-    else
-      {
-      // add to string
-      // if direction is not a single char (eg. ne) then we must put it in brackets
-      if (strLastDir.GetLength () > 1)
-        strLastDir = "(" + strLastDir + ")";
-      if (iCount == 1)
-        strQueued += strLastDir + " ";
-      else if (iCount > 1)
-        strQueued += CFormat ("%i%s ", iCount, (LPCTSTR) strLastDir);
-
-      strLastDir = str;
-      iCount = 1;
-      }   // end of a direction change                                
-
-    }   // end of processing each command
-
-  // output final command
-  // if direction is not a single char (eg. ne) then we must put it in brackets
-  if (strLastDir.GetLength () > 1)
-    strLastDir = "(" + strLastDir + ")";
-  if (iCount == 1)
-    strQueued += strLastDir + " ";
-  else if (iCount > 1)
-    strQueued += CFormat ("%i%s ", iCount, (LPCTSTR) strLastDir);
-
-  if (pos)
-    strQueued += " ...";
-
-  Frame.SetStatusMessageNow (strQueued);
-  m_tStatusDisplayed = CTime::GetCurrentTime ();
-  }    // end of CMUSHclientDoc::ShowQueuedCommands
+// ShowQueuedCommands is single-sourced in doc_shared.cpp (send family).
 
 
 // remove backtracks from a speedwalk string

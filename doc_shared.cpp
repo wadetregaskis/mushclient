@@ -2255,3 +2255,268 @@ bool CMUSHclientDoc::ExecuteScript (DISPID & dispid,
   else
     return false;
   }   // end of CMUSHclientDoc::ExecuteScript
+
+
+// ═══ The send family (campaign-b display step 5) ═══════════════════════════
+// SendMsg / DoSendMsg (from doc.cpp) and ShowQueuedCommands (from
+// scripting/methods/methods_speedwalks.cpp), relocated verbatim so all three
+// builds share one send path.  Replaces the simplified doc_portable.cpp twin
+// (which had no queueing, no spam prevention, no logging/mapper hooks, no IAC
+// doubling, and echoed before OnPluginSent instead of after).
+//
+// Headless caveat: with m_iSpeedWalkDelay > 0, queued commands never drain in
+// mushcore (the queue is emptied by CTimerWnd on Windows / the wx timer in the
+// GUI, neither of which exists headless).  Benign at the default delay of 0 —
+// everything sends immediately — but a test that sets a delay must drain
+// m_QueuedCommandsList itself.
+
+// SendMsg sends a message (command) to the MUD.
+// If there is already a queue (for speedwalking etc.) it is placed 
+// at the end of the queue. The message is marked to indicate whether
+// a delay is needed after it, based on the bQueueIt flag.
+
+void CMUSHclientDoc::SendMsg(CString strText, 
+                             const bool bEchoIt,
+                             const bool bQueueIt,
+                             const bool bLogIt)
+  {
+
+  // cannot change what we are sending in OnPluginSent
+  if (m_bPluginProcessingSent)
+    return;
+
+  bool bEcho = bEchoIt;
+
+  // test to see if world has suppressed echoing
+
+  if (m_bNoEcho)
+     bEcho = false;
+
+  // strip trailing endline - that would trigger an extra blank line
+  if (strText.Right (2) == ENDLINE)
+       strText = strText.Left (strText.GetLength () - 2);
+
+  // fix up German umlauts
+  if (m_bTranslateGerman)
+    strText = FixUpGerman (strText);
+
+  // to make sure each individual line ends up on the output window marked as user
+  // input (and in the right colour) break up the string into individual lines
+  CStringList strList;
+  StringToList (strText, ENDLINE, strList);
+
+  // if list is empty, make sure we send at least one empty line
+  if (strList.IsEmpty ())
+    strList.AddTail (""); 
+
+  for (POSITION pos = strList.GetHeadPosition (); pos; )
+    {
+    CString strLine = strList.GetNext (pos);
+
+    // it needs to be queued if queuing is requested
+    // it also needs to be queued regardless if there is already something in the queue
+
+    if (m_iSpeedWalkDelay &&
+        (bQueueIt || !m_QueuedCommandsList.IsEmpty ()) )
+      {
+      CString strEchoFlag;
+
+        // work out how it is to be queued
+
+      if (bQueueIt)
+        if (bEcho)
+           strEchoFlag = QUEUE_WITH_ECHO;
+        else
+           strEchoFlag = QUEUE_WITHOUT_ECHO;
+      else
+        if (bEcho)
+           strEchoFlag = IMMEDIATE_WITH_ECHO;
+        else
+           strEchoFlag = IMMEDIATE_WITHOUT_ECHO;
+
+       // nolog is the lower-case version of the flag
+      if (!bLogIt)
+        strEchoFlag.MakeLower ();
+
+      // queue it
+      m_QueuedCommandsList.AddTail (strEchoFlag + strLine);
+
+      }    // end of having a speedwalk delay
+    else
+      DoSendMsg (strLine, bEcho, bLogIt);  // just send it
+    } // end of breaking it into lines
+
+  if (!m_QueuedCommandsList.IsEmpty ())
+    ShowQueuedCommands ();    // update status line
+  }
+
+
+// DoSendMsg is the actual command (message) sender - it should not
+// be called directly, except from SendMsg or from CTimerWnd as it empties
+// the command queue.
+
+void CMUSHclientDoc::DoSendMsg(const CString & strText, 
+                               const bool bEchoIt,
+                               const bool bLogIt)
+{
+CString str = strText;
+
+  // cannot change what we are sending in OnPluginSent
+  if (m_bPluginProcessingSent)
+    return;
+
+  if (!ConnectionOpen ())
+    return;
+
+// append an end-of-line if there isn't one already
+
+  if (str.Right (2) != ENDLINE)
+    str += ENDLINE;
+
+  // "OnPluginSend" - script can cancel send
+
+  if (!m_bPluginProcessingSend)
+    {
+    m_bPluginProcessingSend = true;  // so we don't go into a loop
+    if (!SendToAllPluginCallbacks (ON_PLUGIN_SEND, str.Left (str.GetLength () - 2)))
+      {
+      m_bPluginProcessingSend = false;
+      return;     // plugin declines to send this line
+      }
+    m_bPluginProcessingSend = false;
+    }
+
+// count number of times we sent this
+
+  if (str == m_strLastCommandSent)
+    m_iLastCommandCount++;    // same one - count them
+  else
+    {
+    m_strLastCommandSent = str;   // new one - remember it
+    m_iLastCommandCount = 1;
+    }
+
+  if (m_bEnableSpamPrevention &&  // provided they want it
+      m_iSpamLineCount > 2 &&   // otherwise we might loop
+      !m_strSpamMessage.IsEmpty ())   // not much point without something to send
+    {
+    if (m_iLastCommandCount > m_iSpamLineCount)
+      {
+      m_iLastCommandCount = 0;      // so we don't recurse again
+      DoSendMsg (m_strSpamMessage, m_display_my_input, LoggingInput ()); // recursive call
+      m_strLastCommandSent = str;   // remember it for next time
+      m_iLastCommandCount = 1;
+      }   // end of time to do it
+
+    } // end of spam prevention active
+
+
+  // "OnPluginSent" - we are definitely sending this
+  // See: http://www.gammon.com.au/forum/bbshowpost.php?bbsubject_id=7244
+
+  if (!m_bPluginProcessingSent)
+    {
+    m_bPluginProcessingSent = true;  // so we don't go into a loop
+    SendToAllPluginCallbacks (ON_PLUGIN_SENT, str.Left (str.GetLength () - 2));
+    m_bPluginProcessingSent = false;
+    }
+
+// echo sent text if required
+
+  if (bEchoIt)
+    DisplayMsg (str, str.GetLength (), USER_INPUT | (bLogIt ? LOG_LINE : 0));
+
+// log sent text if required
+
+  if (bLogIt)
+    LogCommand (str);
+
+// add to mapper if required
+
+  if (m_bMapping)
+    AddToMap (str);
+
+  // for MXP debugging
+#ifdef SHOW_ALL_COMMS
+   Debug_MUD (_T("++Sending to MUD   : "), str);
+#endif
+
+   m_nTotalLinesSent++;   // count lines sent
+
+// double IAC to IAC IAC
+
+   if (!m_bDoNotTranslateIACtoIACIAC)
+     str.Replace (_T("\xFF"), _T("\xFF\xFF"));
+
+// send it
+
+   SendPacket (str, str.GetLength ());
+
+} // end of CMUSHclientDoc::DoSendMsg
+
+
+void CMUSHclientDoc::ShowQueuedCommands (void)
+  {
+
+  // show previous status line
+  if (m_QueuedCommandsList.IsEmpty ())
+    {
+    ShowStatusLine (true);    // show it now
+    return;    
+    }
+
+  CString strQueued = "Queued: ";
+  const int MAX_SHOWN = 50;
+
+  CString str;
+  CString strLastDir;
+
+  int iCount = 0;
+  POSITION pos;
+
+  for (pos = m_QueuedCommandsList.GetHeadPosition (); 
+      pos && strQueued.GetLength () < MAX_SHOWN; )
+    {
+    // get next direction from list
+    str = m_QueuedCommandsList.GetNext (pos).Mid (1);
+    
+    // empty lines look a bit silly
+    if (str.IsEmpty ())
+      continue;
+
+    // if same as before, count them
+    if (str == strLastDir)
+      iCount++;
+    else
+      {
+      // add to string
+      // if direction is not a single char (eg. ne) then we must put it in brackets
+      if (strLastDir.GetLength () > 1)
+        strLastDir = "(" + strLastDir + ")";
+      if (iCount == 1)
+        strQueued += strLastDir + " ";
+      else if (iCount > 1)
+        strQueued += CFormat ("%i%s ", iCount, (LPCTSTR) strLastDir);
+
+      strLastDir = str;
+      iCount = 1;
+      }   // end of a direction change                                
+
+    }   // end of processing each command
+
+  // output final command
+  // if direction is not a single char (eg. ne) then we must put it in brackets
+  if (strLastDir.GetLength () > 1)
+    strLastDir = "(" + strLastDir + ")";
+  if (iCount == 1)
+    strQueued += strLastDir + " ";
+  else if (iCount > 1)
+    strQueued += CFormat ("%i%s ", iCount, (LPCTSTR) strLastDir);
+
+  if (pos)
+    strQueued += " ...";
+
+  Frame.SetStatusMessageNow (strQueued);
+  m_tStatusDisplayed = CTime::GetCurrentTime ();
+  }    // end of CMUSHclientDoc::ShowQueuedCommands
+

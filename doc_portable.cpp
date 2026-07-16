@@ -1526,49 +1526,9 @@ BOOL CMUSHclientDoc::CheckConnected()
     return (m_iConnectPhase != eConnectConnectedToMud) ? TRUE : FALSE;
 }
 
-// ── CMUSHclientDoc::SendMsg ────────────────────────────────────────────────
-// Sends a command line to the MUD.  bEchoIt → echo to output window.
-// bQueueIt is ignored (no speedwalk queue on non-Windows).
-void CMUSHclientDoc::SendMsg(CString strText,
-                              const bool bEchoIt,
-                              const bool /*bQueueIt*/,
-                              const bool /*bLogIt*/)
-{
-    if (m_bPluginProcessingSent) return;
-
-    // Strip trailing \r\n so we add exactly one
-    while (strText.GetLength() >= 2 &&
-           strText.Right(2) == CString(ENDLINE))
-        strText = strText.Left(strText.GetLength() - 2);
-
-    // "OnPluginSend" — plugins can cancel the send by returning false.
-    // Guard with m_bPluginProcessingSend to prevent infinite recursion
-    // (a plugin calling world.Send() inside OnPluginSend).
-    if (!m_bPluginProcessingSend) {
-        m_bPluginProcessingSend = true;
-        bool ok = SendToAllPluginCallbacks(ON_PLUGIN_SEND, strText);
-        m_bPluginProcessingSend = false;
-        if (!ok) return;  // plugin vetoed the send
-    }
-
-    // Echo sent text to the output window
-    if (bEchoIt && !m_bNoEcho)
-        DisplayMsg(((const char*)strText + string("\n")).c_str(),
-                   (int)strlen((const char*)strText) + 1, NOTE_OR_COMMAND);
-
-    // Send to MUD
-    CString toSend = strText + CString(ENDLINE);
-    SendPacket((const char*)toSend, toSend.GetLength());
-
-    ++m_nTotalLinesSent;
-
-    // "OnPluginSent" — notify plugins that the line was sent.
-    if (!m_bPluginProcessingSent) {
-        m_bPluginProcessingSent = true;
-        SendToAllPluginCallbacks(ON_PLUGIN_SENT, strText);
-        m_bPluginProcessingSent = false;
-    }
-}
+// SendMsg / DoSendMsg are single-sourced in doc_shared.cpp — the real send
+// family (queueing, spam prevention, OnPluginSend/Sent ordering, IAC
+// doubling, logging) replaced the simplified twin here.
 
 // ── CMUSHclientDoc::SendTo ────────────────────────────────────────────────
 // Routes a trigger/alias response to the appropriate destination.

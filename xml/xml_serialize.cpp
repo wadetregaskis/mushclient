@@ -142,44 +142,7 @@ bool IsArchiveXML (CArchive& ar)
 
   } // end of IsArchiveXML
 
-void SeeIfBase64 (CString & strText)
-  {
-  const char * p = strText;
-  char c;
-  bool bBase64 = true;
-  int iCount;
-
-  // locale-independent tests (see decodeBase64)
-  for (iCount = 0 ; c = *p; p++)
-    if (c == ' '  || 
-        c == '\t' || 
-        c == '\n' || 
-        c == '\r' || 
-        c == '\f' || 
-        c == '\v' 
-       )
-      continue;
-    else
-    if ((c >= 'A' && c <= 'Z') ||        
-        (c >= 'a' && c <= 'z') ||
-        (c >= '0' && c <= '9') ||
-         c == '+' || 
-         c == '/' || 
-         c == '=')
-      iCount++;
-    else
-      {
-      bBase64 = false;
-      break;
-      }
-  
-  // might be base 64 if only base64 characters, and mod 4 non-space length
-  // (if base64 can't be plain XML because plain XML will have < in it)
-
-  if (bBase64 && (iCount % 4 == 0))
-    strText = decodeBase64 (strText);
-
-  } // end of SeeIfBase64
+// SeeIfBase64 is single-sourced in utilities_shared.cpp (declared in stdafx.h).
 
 // returns true if clipboard turns out to be XML
 bool IsClipboardXML (void)

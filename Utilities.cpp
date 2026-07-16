@@ -538,88 +538,9 @@ CColours * colour_item;
 
   }
 
-/**************************************************************************/
-// takes a base64 character, returns its value
-// from RFC 2045 Table 1 - The Base64 Alphabet
-int getBase64Value(char code){
-
-    int val= (int)code;
-    int result = 0;
-
-    if (val >= 'A' && val <= 'Z')
-        result= val - 65;
-    else if (val >= 'a' && val <= 'z')
-        result= val - 71;
-    else if (val >= '0' && val <= '9')
-        result= val + 4;
-    else if (val == '+')
-        result = 62;
-    else if (val == '/')
-        result = 63;
-    else if (val == '=')
-        result = 0;
-    else
-        ThrowErrorException ("Invalid non base64 character %c (%d)", code, code);
-    return result;
-}
-/**************************************************************************/
-CString decodeBase64(const char *coded)
-{
-  int j = 0;
-
-  CString strResult;
-  CString strEncoded = coded;
-
-  // remove whitespace
-  strEncoded.Remove (' ');
-  strEncoded.Remove ('\t');
-  strEncoded.Remove ('\n');
-  strEncoded.Remove ('\r');
-  strEncoded.Remove ('\f');
-  strEncoded.Remove ('\v');
-
-  const char * p = strEncoded;
-
-  int i = strlen(p);
-
-  // result will be 3/4 size of original
-  char * d = strResult.GetBuffer (((i / 4) * 3) + 1);
-
-  if (i % 4 != 0)
-    ThrowErrorException("Not a valid base64 string - incorrect length (not mod 4).");
-
-  // go thru converting each 4 base64 bytes into 3 8bit bytes
-    for (; *p; p +=4 )
-      {
-      d [j++] = (char)(getBase64Value(p[0])<<2
-                | getBase64Value(p[1])>>4);
-      d [j++] = (char)(getBase64Value(p[1])<<4
-                | getBase64Value(p[2])>>2);
-      d [j++] = (char)(getBase64Value(p[2])<<6
-                | getBase64Value(p[3]));
-      }
-
-
-  d[j] = 0;
-
-  if (*(--p) == '=')
-    {
-    if (j>0)
-      {
-      if (*(--p)=='=')
-        {
-        d[j-2]='\0';
-        }
-      else
-        {
-        d[j-1]='\0';
-        }
-      }
-    }
-
-  strResult.ReleaseBuffer (-1);
-  return (strResult);
-}
+// getBase64Value + decodeBase64 are single-sourced in utilities_shared.cpp
+// (they throw on invalid input; the world.Base64Decode try/catch turns that
+// into a nil return).
 
 
 

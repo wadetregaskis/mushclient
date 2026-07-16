@@ -65,6 +65,27 @@ TEST(Utilities, EncodeBase64_MultiLineWrapsAt76)
     EXPECT_TRUE(strstr(p, "\r\n") != NULL);
 }
 
+TEST(Utilities, DecodeBase64_EmptyInputNoOverread)
+{
+    // Over-read fix: empty / all-whitespace input must not walk before the
+    // buffer; it decodes to the empty string (length is 0, i.e. mod-4, no throw).
+    EXPECT_STREQ("", (const char*)decodeBase64(""));
+    EXPECT_STREQ("", (const char*)decodeBase64("    "));
+    EXPECT_STREQ("", (const char*)decodeBase64("\r\n\t"));
+}
+
+TEST(Utilities, DecodeBase64_ThrowsOnInvalid)
+{
+    // Restored contract: invalid input throws, which world.Base64Decode catches
+    // and turns into a nil return.  mushcore's ThrowErrorException throws by
+    // value, so catch(...) covers whatever the build throws.
+    bool threwLen = false, threwChar = false;
+    try { decodeBase64("abc"); }  catch (...) { threwLen  = true; }  // not mod-4
+    try { decodeBase64("@@@@"); } catch (...) { threwChar = true; }  // invalid chars
+    EXPECT_TRUE(threwLen);
+    EXPECT_TRUE(threwChar);
+}
+
 // ── myAtoF ──────────────────────────────────────────────────────────────────
 
 static double atof_val(const char* s) { double d = -999.0; myAtoF(s, &d); return d; }

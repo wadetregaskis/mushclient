@@ -6,17 +6,20 @@
 //  copies can no longer drift.  Precedent: ansi.cpp, doc_shared.cpp,
 //  speedwalk.cpp.
 //
-//  These three functions were verified byte-for-byte behaviourally identical
-//  between the old Windows Utilities.cpp copies and the portable
-//  utilities_portable.cpp copies (only cosmetic macro / typedef / min-helper
-//  differences) before being merged here — so Windows behaviour is unchanged.
+//  myAtoF, encodeBase64 and EditDistance were verified byte-for-byte
+//  behaviourally identical between the old Windows Utilities.cpp copies and the
+//  portable utilities_portable.cpp copies before being merged (cosmetic
+//  macro/typedef/min-helper differences only) — Windows behaviour unchanged.
 //
-//  Functions that had genuinely DRIFTED between the two (IsStringNumber,
-//  decodeBase64 + its getBase64Value helper) or that drive platform state
-//  (ShutDownSocket) are deliberately NOT here — they still live in Utilities.cpp
-//  (Windows/mushapp) and utilities_portable.cpp (mushcore) pending a
-//  reconciliation decision, because merging them would change observable
-//  Windows behaviour.
+//  IsStringNumber, getBase64Value, decodeBase64 and SeeIfBase64 had DRIFTED
+//  between the two builds; each was reconciled to a single canonical behaviour
+//  before being merged here (see the per-function notes below): IsStringNumber
+//  now honours bSigned (the old Windows copy ignored it); the base64 decoders
+//  keep Windows' throw-on-invalid contract (the port had dropped it) plus a
+//  fix for a 1-byte over-read on empty input.
+//
+//  Only ShutDownSocket stays out (in utilities_portable.cpp) — it drives a
+//  CAsyncSocket and is genuinely platform-specific.
 
 #if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
   #include "stdafx.h"
@@ -172,6 +175,115 @@ CString encodeBase64(const char* plaintext, const bool bMultiLine)
 }
 
 #undef BASE64_WRAP_POINT
+
+// ── Base64 decode (getBase64Value + decodeBase64) ────────────────────────────
+// Throws ThrowErrorException on invalid input — the intended contract: the
+// world.Base64Decode script API wraps decode in try/catch and returns nil on the
+// throw (and the notepad path try/catches it too).  The port had silently
+// dropped the throw and returned garbage; restored here so the mac product and
+// Windows agree.  getBase64Value stays file-static (used only by decodeBase64).
+// Declared in stdafx.h / platform/doc_stub.h.
+
+// takes a base64 character, returns its value (RFC 2045 Table 1)
+static int getBase64Value(char code)
+{
+    int val = (int)code;
+    int result = 0;
+
+    if      (val >= 'A' && val <= 'Z') result = val - 65;
+    else if (val >= 'a' && val <= 'z') result = val - 71;
+    else if (val >= '0' && val <= '9') result = val + 4;
+    else if (val == '+')               result = 62;
+    else if (val == '/')               result = 63;
+    else if (val == '=')               result = 0;
+    else
+        ThrowErrorException("Invalid non base64 character %c (%d)", code, code);
+    return result;
+}
+
+CString decodeBase64(const char* coded)
+{
+    int j = 0;
+
+    CString strResult;
+    CString strEncoded = coded;
+
+    // remove whitespace
+    strEncoded.Remove(' ');
+    strEncoded.Remove('\t');
+    strEncoded.Remove('\n');
+    strEncoded.Remove('\r');
+    strEncoded.Remove('\f');
+    strEncoded.Remove('\v');
+
+    const char* p = static_cast<const char*>(strEncoded);
+    int i = (int)strlen(p);
+
+    // result will be 3/4 the size of the original
+    char* d = strResult.GetBuffer(((i / 4) * 3) + 1);
+
+    if (i % 4 != 0)
+        ThrowErrorException("Not a valid base64 string - incorrect length (not mod 4).");
+
+    // convert each 4 base64 bytes into 3 8-bit bytes
+    for (; *p; p += 4)
+    {
+        d[j++] = (char)(getBase64Value(p[0]) << 2 | getBase64Value(p[1]) >> 4);
+        d[j++] = (char)(getBase64Value(p[1]) << 4 | getBase64Value(p[2]) >> 2);
+        d[j++] = (char)(getBase64Value(p[2]) << 6 | getBase64Value(p[3]));
+    }
+
+    d[j] = 0;
+
+    // Trim the '=' padding of the final group.  Guard on i > 0: on empty (or
+    // all-whitespace) input the loop never advanced p, so the original
+    // unconditional *(--p) read one byte BEFORE the buffer.
+    if (i > 0 && *(--p) == '=')
+    {
+        if (j > 0)
+        {
+            if (*(--p) == '=') d[j - 2] = '\0';
+            else               d[j - 1] = '\0';
+        }
+    }
+
+    strResult.ReleaseBuffer(-1);
+    return strResult;
+}
+
+// ── SeeIfBase64 ──────────────────────────────────────────────────────────────
+// If every non-whitespace byte is base64 and the count is a multiple of 4,
+// decode in place (used when reading clipboard/XML that may be base64).  It only
+// calls decodeBase64 on already-validated input, so the throw path above is
+// unreachable from here.  On Windows this lived in xml/xml_serialize.cpp.
+// Declared in stdafx.h.
+void SeeIfBase64(CString& strText)
+{
+    const char* p = static_cast<const char*>(strText);
+    char c;
+    bool bBase64 = true;
+    int iCount = 0;
+
+    // locale-independent tests (see decodeBase64)
+    for (iCount = 0; (c = *p) != 0; p++)
+    {
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v')
+            continue;
+        else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                 (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=')
+            iCount++;
+        else
+        {
+            bBase64 = false;
+            break;
+        }
+    }
+
+    // might be base64 if only base64 characters and mod-4 non-space length
+    // (if base64 it can't be plain XML, because plain XML would contain '<')
+    if (bBase64 && (iCount % 4 == 0))
+        strText = decodeBase64(strText);
+}
 
 // ── EditDistance ────────────────────────────────────────────────────────────
 // Levenshtein/Damerau edit distance between two strings (each capped at 20

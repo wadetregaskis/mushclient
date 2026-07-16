@@ -2040,47 +2040,7 @@ Basically the idea here is, that if the user has specified:
 
   */
 
-const char * Make_Absolute_Path (CString strFileName)
-  {
-
-// if the path does *not* start with one of:
-//    x:  (ie. a drive);
-//    /something (ie. a top level directory) ; or
-//    \something (ie. a top level directory)
-//  then we prepend the MUSHclient working directory
-
-  if (!(
-      isalpha ((unsigned char) strFileName [0]) &&
-      strFileName [1] == ':'               // eg. c: blah
-      ) &&
-      strFileName [0] != '\\' &&           // eg. \mydir\blah or \\server\blah
-      strFileName [0] != '/'            // eg. /mydir/blah or //server/blah
-     )
-    {
-    // if the filename starts with ./ or .\ then drop it, otherwise
-    //   we get junk like:  c:\mushclient\.\logs\filename
-
-    if (strFileName.Left (2) == "./" ||
-        strFileName.Left (2) == ".\\")
-      strFileName = strFileName.Mid (2);
-
-    strFileName = working_dir +  strFileName;
-    }
-
-// this is declared static for a very good reason - some of the places this is used
-// the *pointer* is copied into a structure (for CFileDialog) and thus it must persist
-// long enough for the dialog to run.
-static char sPathName [_MAX_PATH];
-
-  // ensure not too long
-  strFileName = strFileName.Left (sizeof (sPathName) - 1);
-
-  // copy to retain
-  strcpy (sPathName, (const char *) strFileName);
-
-  return sPathName;
-
-  } // end of Make_Absolute_Path
+// Make_Absolute_Path is single-sourced in utilities_shared.cpp.
 
 
 const CString Convert_PCRE_Runtime_Error (const int iError)

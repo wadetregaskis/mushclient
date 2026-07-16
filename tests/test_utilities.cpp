@@ -199,6 +199,20 @@ TEST(Utilities, OscSequencePayloadIsConsumed)
     EXPECT_STREQ("beforeafter", visible.c_str());
 }
 
+// ── FormatTime ────────────────────────────────────────────────────────────────
+// The real FormatTime substitutes %N (world name) / %P (player name) / %E/%F/%L
+// (directories) before strftime.  The old headless twin skipped all of them —
+// log-file names and preambles silently lost the world/player names.
+
+TEST(Utilities, FormatTimeSubstitutesWorldTokens)
+{
+    CMUSHclientDoc doc;
+    doc.m_mush_name = "TestWorld";
+    doc.m_name      = "Alice";
+    CString s = doc.FormatTime(CTime::GetCurrentTime(), "%N-%P", false);
+    EXPECT_STREQ("TestWorld-Alice", (const char*)s);
+}
+
 // ── IsStringNumber ──────────────────────────────────────────────────────────
 
 TEST(Utilities, IsStringNumber_Unsigned)

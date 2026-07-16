@@ -1002,6 +1002,7 @@ public:
     // Scripting / sandboxing
     CString m_strLuaScript;              // sandbox script (empty on macOS — no sandbox)
     string  m_strDefaultLogFileDirectory;// prefix for log files
+    string  m_strDefaultWorldFileDirectory;  // prefix for world files (FormatTime %F)
 
     // Performance counter frequency in ticks/second (nanoseconds on POSIX).
     // Non-zero once initialised; zero keeps all timing guards inactive.
@@ -1231,6 +1232,7 @@ void Generate256colours(void);   // fills xterm_256_colours[] (defined in doc_po
 // would be a redefinition in TUs that see both headers)
 BOOL CheckLabel(const CString& strLabel, bool bScript);
 CString FixUpGerman(const CString strMessage);   // umlaut → ue/ae/oe transliteration
+const char* Make_Absolute_Path(CString strFileName);   // prefix working_dir if relative
 const char* strnrchr(const char* s, const char c, size_t count);   // last c within count
 
 // ── Mersenne Twister RNG (scripting/mt19937ar.c) ──────────────────────
@@ -2148,8 +2150,8 @@ public:
     void SortTriggers() {}
     void SortTimers()   {}
 
-    // ── FormatTime ────────────────────────────────────────────────────
-    CString FormatTime(CTime t, const char* fmt, bool bUTC);
+    // ── FormatTime (doc.h semantics: %E/%N/%P/%F/%L + bFixHTML) ────────
+    CString FormatTime(const CTime theTime, LPCTSTR pFormat, const bool bFixHTML);
 
     // ── Speedwalk ─────────────────────────────────────────────────────
     CString DoEvaluateSpeedwalk(const char* strInput);

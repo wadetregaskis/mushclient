@@ -3908,3 +3908,60 @@ long i = 1;
   trigger_item->bExecutingScript = false;     // can be deleted now
 
   } // end of CMUSHclientDoc::ExecuteTriggerScript 
+
+
+// ═══ FormatTime (quick-win: real %E/%N/%P/%F/%L substitution headless) ═══════
+// Relocated verbatim from doc.cpp.  The old mushcore twin was a bare strftime
+// wrapper that ignored the substitutions (log names/preambles lost the world/
+// player names) and misnamed the third parameter bUTC — the doc_shared.cpp
+// callers always passed m_bLogHTML, i.e. the real bFixHTML semantics.
+extern char working_dir [_MAX_PATH];   // MUSHclient.cpp (GUI) / doc_portable.cpp (headless)
+
+// CTime:Format only allows for a total field size of 128 bytes
+CString CMUSHclientDoc::FormatTime (const CTime theTime, 
+                                    LPCTSTR pFormat, 
+                                    const bool bFixHTML)   
+  {
+CString strText;
+CString strFormat = pFormat;
+
+  if (bFixHTML)
+    {
+    // %E becomes startup directory
+    strFormat.Replace ("%E", ::Replace (FixHTMLString (working_dir), "%", "%%"));
+    // %N becomes world name
+    strFormat.Replace ("%N", ::Replace (FixHTMLString (m_mush_name), "%", "%%"));
+    // %P becomes player name
+    strFormat.Replace ("%P", ::Replace (FixHTMLString (m_name), "%", "%%"));
+    // %F becomes default world files directory
+    strFormat.Replace ("%F", ::Replace (FixHTMLString (Make_Absolute_Path (App.m_strDefaultWorldFileDirectory)), "%", "%%"));
+    // %L becomes default log files directory
+    strFormat.Replace ("%L", ::Replace (FixHTMLString (Make_Absolute_Path (App.m_strDefaultLogFileDirectory)), "%", "%%"));
+    }   // end of HTML fixup needed
+  else
+    {
+    // %E becomes startup directory
+    strFormat.Replace ("%E", ::Replace (working_dir, "%", "%%"));
+    // %N becomes world name
+    strFormat.Replace ("%N", ::Replace (m_mush_name, "%", "%%"));
+    // %P becomes player name
+    strFormat.Replace ("%P", ::Replace (m_name, "%", "%%"));
+    // %F becomes default world files directory
+    strFormat.Replace ("%F", ::Replace (Make_Absolute_Path (App.m_strDefaultWorldFileDirectory), "%", "%%"));
+    // %L becomes default log files directory
+    strFormat.Replace ("%L", ::Replace (Make_Absolute_Path (App.m_strDefaultLogFileDirectory), "%", "%%"));
+    }  // end of not HTML
+
+int iLen = strFormat.GetLength () + 1000;
+
+  // allow for their original buffer plus another 1000
+	TCHAR * szBuffer = strText.GetBuffer (iLen);
+  time_t tTime = theTime.GetTime ();
+
+	struct tm* ptmTemp = localtime(&tTime);
+	if (ptmTemp == NULL ||
+		!_tcsftime(szBuffer, iLen, strFormat, ptmTemp))
+		szBuffer[0] = '\0';
+  strText.ReleaseBuffer (-1);
+	return strText;
+}  // end of CMUSHclientDoc::FormatTime

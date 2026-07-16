@@ -263,6 +263,10 @@ long CheckObjectName(CString& strName, const bool bConform)
 }
 
 // ── Plugin callback string constants ─────────────────────────────────────
+// The MUSHclient working directory (defined in MUSHclient.cpp for the GUI
+// builds; empty headless, so %E expands to "" and relative paths stay relative).
+char working_dir [_MAX_PATH] = "";
+
 const string ON_PLUGIN_TICK                  = "OnPluginTick";
 const string ON_PLUGIN_DRAW_OUTPUT_WINDOW    = "OnPluginDrawOutputWindow";
 const string ON_PLUGIN_IAC_GA                = "OnPlugin_IAC_GA";
@@ -811,18 +815,9 @@ void CMUSHclientDoc::CancelSound()
         g_wxhook_stop_sound();
 }
 
-// ── CMUSHclientDoc::FormatTime ─────────────────────────────────────────────
-// Converts a CTime to a formatted string.  Used for log line timestamps.
-CString CMUSHclientDoc::FormatTime(CTime t, const char* fmt, bool /*bUTC*/)
-{
-    if (!fmt || !*fmt) return CString("");
-    time_t tt = (time_t)t.GetTime();
-    struct tm* tm_info = localtime(&tt);
-    if (!tm_info) return CString("");
-    char buf[256];
-    strftime(buf, sizeof buf, fmt, tm_info);
-    return CString(buf);
-}
+// FormatTime: single-sourced in doc_shared.cpp (the real body — %E/%N/%P/%F/%L
+// substitutions + bFixHTML semantics — replaced the plain-strftime twin whose
+// third parameter was misnamed bUTC).
 
 // ── Speedwalk (shared) ─────────────────────────────────────────────────────
 // The speedwalk parser lives in the shared speedwalk.cpp (compiled into both

@@ -578,88 +578,9 @@ bool CMUSHclientDoc::InitZlib(z_stream& zs)
 
 // OnConnectionDisconnect: single-sourced in doc_shared.cpp (T3c).
 
-// ── FireWorldClose — fire the on_world_close Lua callback ────────────────────
-// Mirrors the on_world_disconnect path in OnConnectionDisconnect().
-// Fired on world/document teardown so that scripts can do any final cleanup
-// (e.g. saving state, logging).
-void CMUSHclientDoc::FireWorldClose()
-{
-    if (m_dispidWorldClose == DISPID_UNKNOWN) return;
-    CScriptEngine* engine = GetScriptEngine();
-    if (!engine || !engine->IsLua()) return;
-    list<double> nparams;
-    list<string> sparams;
-    long nInvocations = 0;
-    engine->ExecuteLua(m_dispidWorldClose,
-                       m_strWorldClose,
-                       eWorldAction,
-                       "world", "close",
-                       nparams, sparams,
-                       nInvocations);
-}
+// FireWorld{Close,Save,GetFocus,LoseFocus} are single-sourced in
+// doc_scripting_shared.cpp (shared with mushapp; was a duplicate here).
 
-// ── FireWorldSave — fire the on_world_save Lua callback ──────────────────────
-// Called from OnSaveDocument (doc_stub.h) before the file is written.
-// Mirrors the ExecuteScript(m_dispidWorldSave,...) call in doc.cpp DoSave().
-void CMUSHclientDoc::FireWorldSave()
-{
-    if (m_dispidWorldSave == DISPID_UNKNOWN) return;
-    CScriptEngine* engine = GetScriptEngine();
-    if (!engine || !engine->IsLua()) return;
-    list<double> nparams;
-    list<string> sparams;
-    long nInvocations = 0;
-    engine->ExecuteLua(m_dispidWorldSave,
-                       m_strWorldSave,
-                       eWorldAction,
-                       "world", "save",
-                       nparams, sparams,
-                       nInvocations);
-}
-
-// ── PluginListChanged — fire OnPluginListChanged with re-entrancy guard ──────
-// Mirrors CMUSHclientDoc::PluginListChanged() in plugins.cpp.
-// Called after InternalLoadPlugin / L_UnloadPlugin so every loaded plugin
-// is notified that the plugin roster has changed.
-
-// ── FireWorldGetFocus / FireWorldLoseFocus ────────────────────────────────────
-// Fire the on_world_get_focus / on_world_lose_focus Lua callbacks.
-// Called from wx_world_child.cpp OnActivate() — mirrors mushview.cpp OnSetFocus /
-// OnKillFocus which call ExecuteScript(m_dispidWorldGetFocus/LoseFocus, ...) and
-// then SendToAllPluginCallbacks(ON_PLUGIN_GETFOCUS/LOSEFOCUS).
-// Note: plugin callbacks are fired in wx_world_child.cpp (where m_bWorldClosing is
-// accessible) rather than here.
-void CMUSHclientDoc::FireWorldGetFocus()
-{
-    if (m_dispidWorldGetFocus == DISPID_UNKNOWN) return;
-    CScriptEngine* engine = GetScriptEngine();
-    if (!engine || !engine->IsLua()) return;
-    list<double> nparams;
-    list<string> sparams;
-    long nInvocations = 0;
-    engine->ExecuteLua(m_dispidWorldGetFocus,
-                       m_strWorldGetFocus,
-                       eWorldAction,
-                       "world", "get focus",
-                       nparams, sparams,
-                       nInvocations);
-}
-
-void CMUSHclientDoc::FireWorldLoseFocus()
-{
-    if (m_dispidWorldLoseFocus == DISPID_UNKNOWN) return;
-    CScriptEngine* engine = GetScriptEngine();
-    if (!engine || !engine->IsLua()) return;
-    list<double> nparams;
-    list<string> sparams;
-    long nInvocations = 0;
-    engine->ExecuteLua(m_dispidWorldLoseFocus,
-                       m_strWorldLoseFocus,
-                       eWorldAction,
-                       "world", "lose focus",
-                       nparams, sparams,
-                       nInvocations);
-}
 
 // ── TermSyncStyle / TermResetStyle — emit ANSI escapes to the real terminal ───
 //

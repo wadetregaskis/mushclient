@@ -418,6 +418,7 @@ if(NOT WIN32)
         ansi.cpp
         doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
         utilities_shared.cpp   # shared pure-logic free functions (myAtoF/encodeBase64/EditDistance)
+        doc_scripting_shared.cpp   # port-only FireWorld* callbacks (shared mushcore+mushapp)
         doc_portable.cpp
 
         # PAL: headless CPU reference adapter for pal::ISurface (docs/PAL.md S1)
@@ -632,6 +633,9 @@ if(NOT WIN32)
         platform/mushapp_globals.cpp
         # Non-Windows stubs/forwarders needed by mushapp but not by mushcore
         platform/mushapp_stubs.cpp
+        # port-only FireWorld* callbacks — single-sourced with mushcore (was a
+        # duplicate of the doc_portable.cpp copy)
+        doc_scripting_shared.cpp
         # Port-only lightweight CTreePropertySheet (World Properties container):
         # records the canonical pages + tree structure, DoModal -> wxTreebook.
         # Replaces the heavy GDI TreePropertySheet.cpp (excluded below).

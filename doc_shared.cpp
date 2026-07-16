@@ -4080,3 +4080,57 @@ void CMUSHclientDoc::OnGameTrace()
 
 	
 }
+
+
+// ═══ SetUpVariant* (Campaign C substrate) ════════════════════════════════════
+// The six VARIANT out-parameter helpers every scripting/methods file uses,
+// relocated verbatim from doc.cpp so the world.* API surface can compile
+// headless (the portable VARIANT/COleDateTime/AllocSysString shims live in
+// platform/mfc_ui.h and platform/mfc_string.h).
+
+void CMUSHclientDoc::SetUpVariantString (VARIANT & tVariant, const CString & strContents)
+  {
+  VariantClear (&tVariant);
+  tVariant.vt = VT_BSTR;
+  tVariant.bstrVal = strContents.AllocSysString (); 
+  }   // end of CMUSHclientDoc::SetUpVariantString
+
+
+void CMUSHclientDoc::SetUpVariantShort (VARIANT & tVariant, const short iContents)
+  {
+  VariantClear (&tVariant);
+  tVariant.vt = VT_I2;
+  tVariant.iVal = iContents; 
+  }   // end of CMUSHclientDoc::SetUpVariantShort
+
+
+void CMUSHclientDoc::SetUpVariantBool (VARIANT & tVariant, const BOOL iContents)
+  {
+  VariantClear (&tVariant);
+  tVariant.vt = VT_BOOL;
+  tVariant.boolVal = iContents; 
+  }   // end of CMUSHclientDoc::SetUpVariantBool
+
+
+void CMUSHclientDoc::SetUpVariantLong (VARIANT & tVariant, const long iContents)
+  {
+  VariantClear (&tVariant);
+  tVariant.vt = VT_I4;
+  tVariant.lVal = iContents; 
+  }   // end of CMUSHclientDoc::SetUpVariantLong
+
+
+void CMUSHclientDoc::SetUpVariantDate (VARIANT & tVariant, const COleDateTime iContents)
+  {
+  VariantClear (&tVariant);
+  tVariant.vt = VT_DATE;
+  tVariant.date = iContents; 
+  }   // end of CMUSHclientDoc::SetUpVariantDate
+
+
+void CMUSHclientDoc::SetUpVariantDouble (VARIANT & tVariant, const double dContents)
+  {
+  VariantClear (&tVariant);
+  tVariant.vt = VT_R8;
+  tVariant.dblVal = dContents; 
+  }   // end of CMUSHclientDoc::SetUpVariantDouble

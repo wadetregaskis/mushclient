@@ -2236,47 +2236,13 @@ pCmdUI->SetCheck (m_bEnableAutoSay);
 
 // GetSocketError: single-sourced in doc_shared.cpp (ITransport T3b)
 
-void CMUSHclientDoc::SetUpVariantString (VARIANT & tVariant, const CString & strContents)
-  {
-  VariantClear (&tVariant);
-  tVariant.vt = VT_BSTR;
-  tVariant.bstrVal = strContents.AllocSysString (); 
-  }   // end of CMUSHclientDoc::SetUpVariantString
+// SetUpVariant{String,Short,Bool,Long,Date,Double}: single-sourced in doc_shared.cpp.
 
-void CMUSHclientDoc::SetUpVariantShort (VARIANT & tVariant, const short iContents)
-  {
-  VariantClear (&tVariant);
-  tVariant.vt = VT_I2;
-  tVariant.iVal = iContents; 
-  }   // end of CMUSHclientDoc::SetUpVariantShort
 
-void CMUSHclientDoc::SetUpVariantBool (VARIANT & tVariant, const BOOL iContents)
-  {
-  VariantClear (&tVariant);
-  tVariant.vt = VT_BOOL;
-  tVariant.boolVal = iContents; 
-  }   // end of CMUSHclientDoc::SetUpVariantBool
 
-void CMUSHclientDoc::SetUpVariantLong (VARIANT & tVariant, const long iContents)
-  {
-  VariantClear (&tVariant);
-  tVariant.vt = VT_I4;
-  tVariant.lVal = iContents; 
-  }   // end of CMUSHclientDoc::SetUpVariantLong
 
-void CMUSHclientDoc::SetUpVariantDate (VARIANT & tVariant, const COleDateTime iContents)
-  {
-  VariantClear (&tVariant);
-  tVariant.vt = VT_DATE;
-  tVariant.date = iContents; 
-  }   // end of CMUSHclientDoc::SetUpVariantDate
 
-void CMUSHclientDoc::SetUpVariantDouble (VARIANT & tVariant, const double dContents)
-  {
-  VariantClear (&tVariant);
-  tVariant.vt = VT_R8;
-  tVariant.dblVal = dContents; 
-  }   // end of CMUSHclientDoc::SetUpVariantDouble
+
 
 long CMUSHclientDoc::CheckObjectName (CString & strObjectName,
                                       const bool bConform)

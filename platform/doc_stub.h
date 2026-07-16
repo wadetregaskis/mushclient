@@ -65,6 +65,8 @@ inline BOOL QueryPerformanceCounter(LARGE_INTEGER* li) {
 typedef struct sockaddr_in SOCKADDR_IN;
 
 using std::string;
+using std::pair;        // methods_arrays.cpp (stdafx.h has `using namespace std`)
+using std::make_pair;
 using std::vector;
 using std::list;
 using std::map;
@@ -2067,6 +2069,12 @@ public:
     // ── Display-family decls (doc.h signatures; definitions arrive when the
     //    real bodies are single-sourced — campaign-b display steps 5-7) ─────
     void Tell(LPCTSTR Message);
+    void SetUpVariantString (VARIANT& tVariant, const CString& strContents);
+    void SetUpVariantShort  (VARIANT& tVariant, const short iContents);
+    void SetUpVariantBool   (VARIANT& tVariant, const BOOL iContents);
+    void SetUpVariantLong   (VARIANT& tVariant, const long iContents);
+    void SetUpVariantDate   (VARIANT& tVariant, const COleDateTime iContents);
+    void SetUpVariantDouble (VARIANT& tVariant, const double dContents);
     void TraceOut(LPCTSTR Message);
     BOOL GetTrace();
     void SetTrace(BOOL bNewValue);

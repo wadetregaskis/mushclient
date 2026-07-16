@@ -311,6 +311,7 @@ long FindBaseOption(const char* OptionName,
 // call sites in doc_portable.cpp (and the trigger/alias/timer evaluation
 // paths) don't need to be touched.
 
+
 // Overload 1 — fire callback, ignore return value.
 void CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName)
 {
@@ -471,46 +472,7 @@ void CMUSHclientDoc::Debug_Packets(LPCTSTR, LPCTSTR, int, const __int64)
 }
 
 
-// SendWindowSizes — send IAC SB NAWS w_hi w_lo h_hi h_lo IAC SE to the MUD.
-// iNewWidth is the new column count (already stored in m_nWrapColumn by caller).
-// We read the actual terminal size from the OS; fall back to iNewWidth x 24.
-void CMUSHclientDoc::SendWindowSizes(const int iNewWidth)
-{
-    if (!ConnectionOpen()) return;
 
-    unsigned short cols = (unsigned short)iNewWidth;
-    unsigned short rows = 24;
-
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) {
-        cols = ws.ws_col;
-        rows = ws.ws_row > 0 ? ws.ws_row : 24;
-    }
-
-    dbg("NAWS: sending %dx%d", (int)cols, (int)rows);
-
-    unsigned char pkt[9];
-    pkt[0] = (unsigned char)IAC;
-    pkt[1] = (unsigned char)SB;
-    pkt[2] = (unsigned char)TELOPT_NAWS;
-    pkt[3] = HIBYTE(cols);
-    pkt[4] = LOBYTE(cols);
-    pkt[5] = HIBYTE(rows);
-    pkt[6] = LOBYTE(rows);
-    pkt[7] = (unsigned char)IAC;
-    pkt[8] = (unsigned char)SE;
-    SendPacket(pkt, sizeof(pkt));
-}
-
-bool CMUSHclientDoc::InitZlib(z_stream& zs)
-{
-    zs.zalloc = Z_NULL;
-    zs.zfree  = Z_NULL;
-    zs.opaque = Z_NULL;
-    zs.avail_in  = 0;
-    zs.next_in   = Z_NULL;
-    return (inflateInit(&zs) == Z_OK);
-}
 
 // OnConnectionDisconnect: single-sourced in doc_shared.cpp (T3c).
 

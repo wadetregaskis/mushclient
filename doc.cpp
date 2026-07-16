@@ -2980,69 +2980,7 @@ COleDateTime tNow = COleDateTime::GetCurrentTime();
   }  // end of CMUSHclientDoc::Debug_Packets 
 
 
-void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
-  {
-
-  // connection closed - can't do it
-
-  if (m_iConnectPhase != eConnectConnectedToMud ||
-      !ConnectionOpen () ||
-      !m_bNAWS_wanted)
-    return;
-
-  // see RFC 1073
-
-#ifndef _WIN32
-  // Non-Windows: the MFC view list is empty, so use the col/row dimensions
-  // maintained by the wxWidgets frame (m_gui_rows updated by OnSize/SendNAWS).
-  // m_nWrapColumn holds the current column count (updated by scriptingoptions).
-  {
-    int cols = std::max(1, (int)m_nWrapColumn);
-    int rows = std::max(1, m_gui_rows);
-    unsigned char p[] = {
-        (unsigned char)IAC, (unsigned char)SB, (unsigned char)TELOPT_NAWS,
-        (unsigned char)HIBYTE(cols), (unsigned char)LOBYTE(cols),
-        (unsigned char)HIBYTE(rows), (unsigned char)LOBYTE(rows),
-        (unsigned char)IAC, (unsigned char)SE
-    };
-    SendPacket(p, sizeof p);
-  }
-#else
-  // Windows: derive dimensions from the MFC view geometry.
-
-  if (!m_FontHeight)
-    return;
-
-  // send size of first view we find
-
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-
-	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
-  	  {
-		  CMUSHView* pmyView = (CMUSHView*)pView;
-
-      RECT r;
-
-      pmyView->GetTextRect (&r);
-
-      WORD height = (r.bottom - r.top - m_iPixelOffset) / m_FontHeight;
-
-      // now tell them our size
-      unsigned char p [] = { IAC, SB, TELOPT_NAWS,
-                              HIBYTE (iNewWidth), LOBYTE (iNewWidth),
-                              HIBYTE (height), LOBYTE (height),
-                              IAC, SE };
-      SendPacket (p, sizeof p);
-
-      break;    // found one
-      }
-    } // end of looping through views
-#endif
-
-
-  }  // end of CMUSHclientDoc::SendWindowSizes 
+// SendWindowSizes: single-sourced in doc_shared.cpp.
 
 
 // SendPacket (both overloads): single-sourced in doc_shared.cpp (ITransport T3b)

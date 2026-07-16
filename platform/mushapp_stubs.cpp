@@ -112,17 +112,7 @@ bool SendToFront(const char* name)
 // doc_display_shared.cpp — relocated so mushcore can share it at the
 // display-family flip.
 
-// ── CMUSHclientDoc::InitZlib ──────────────────────────────────────────────────
-// Initialises a zlib inflate stream for MCCP decompression.
-bool CMUSHclientDoc::InitZlib(z_stream& zs)
-{
-    zs.zalloc   = Z_NULL;
-    zs.zfree    = Z_NULL;
-    zs.opaque   = Z_NULL;
-    zs.avail_in = 0;
-    zs.next_in  = Z_NULL;
-    return (inflateInit(&zs) == Z_OK);
-}
+// InitZlib: single-sourced in doc_shared.cpp (#ifndef _WIN32).
 
 // ── CMUSHclientDoc::SendNAWS ──────────────────────────────────────────────────
 // Sends a NAWS (Negotiate About Window Size) subnegotiation packet directly,

@@ -2,12 +2,16 @@
 
 // Stuff for sending things to the MUD
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
 #include "../../MUSHview.h"
 #include "../../sendvw.h"
 #include "../errors.h"
+#else
+#include "platform/doc_stub.h"
+#endif
 
 // Implements:
 

@@ -2075,6 +2075,30 @@ public:
     void SetUpVariantLong   (VARIANT& tVariant, const long iContents);
     void SetUpVariantDate   (VARIANT& tVariant, const COleDateTime iContents);
     void SetUpVariantDouble (VARIANT& tVariant, const double dContents);
+    // world.* clipboard/infobar/logging/sending/worlds families (Campaign C)
+    BSTR GetClipboard();
+    void SetClipboard(LPCTSTR Text);
+    void ShowInfoBar(BOOL Visible);
+    void InfoClear();
+    void Info(LPCTSTR Message);
+    void InfoFont(LPCTSTR FontName, short Size, short Style);
+    void InfoColour(LPCTSTR Name);
+    void InfoBackground(LPCTSTR Name);
+    long WriteLog(LPCTSTR Message);
+    BOOL IsLogOpen();
+    long FlushLog();
+    long Send(LPCTSTR Message);
+    long SendImmediate(LPCTSTR Message);
+    long SendNoEcho(LPCTSTR Message);
+    void AddToCommandHistory(LPCTSTR Message);   // LPCTSTR overload (doc.h); the
+                                                 // CString inline above is a port helper
+    long SendPush(LPCTSTR Message);
+    long SendSpecial(LPCTSTR Message, BOOL Echo, BOOL Queue, BOOL Log, BOOL History);
+    long LogSend(LPCTSTR Message);
+    LPDISPATCH GetWorld(LPCTSTR WorldName);
+    VARIANT GetWorldList();
+    VARIANT GetWorldIdList();
+    LPDISPATCH GetWorldById(LPCTSTR WorldID);
     // world.Database* (scripting/methods/methods_database.cpp — doc.h sigs)
     long DatabaseOpen(LPCTSTR Name, LPCTSTR Filename, long Flags);
     long DatabaseClose(LPCTSTR Name);

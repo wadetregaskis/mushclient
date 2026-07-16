@@ -2,11 +2,15 @@
 
 // Stuff for drawing in the "info" bar
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
 #include "../../mainfrm.h"
 #include "../errors.h"
+#else
+#include "platform/doc_stub.h"
+#endif
 
 // Implements:
 

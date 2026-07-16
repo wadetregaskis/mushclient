@@ -1670,6 +1670,7 @@ static int L_SetOption(lua_State* L)
     else if (!strcmp(opt, "max_output_lines")) {
         if (val >= 200 && val <= 500000) {
             pDoc->m_maxlines = val;
+            pDoc->AllocateLinePositions();   // re-size the JUMP_SIZE index
             pDoc->EmitMaxLines((int)val);
         }
     }
@@ -2928,27 +2929,49 @@ static int L_DeleteLines(lua_State* L)
     CMUSHclientDoc* pDoc = world_doc(L);
     long n = (long)luaL_checknumber(L, 1);
     if (n <= 0) return 0;
-    long count = pDoc->m_LineList.GetCount();
-    long toDelete = (n > count) ? count : n;
-    for (long i = 0; i < toDelete; ++i) {
+    // Display step 7: the in-progress line is the list TAIL — deleting it
+    // would leave m_pCurrentLine dangling (use-after-free on the next output).
+    // Delete up to n COMPLETED lines from just before it.
+    for (long i = 0; i < n; ++i) {
         POSITION pos = pDoc->m_LineList.GetTailPosition();
         if (!pos) break;
         CLine* pLine = pDoc->m_LineList.GetAt(pos);
+        if (pLine == pDoc->m_pCurrentLine) {
+            pDoc->m_LineList.GetPrev(pos);       // step past the in-progress tail
+            if (!pos) break;                     // nothing completed left
+            pLine = pDoc->m_LineList.GetAt(pos);
+        }
+        pDoc->m_LineList.RemoveAt(pos);
         delete pLine;
-        pDoc->m_LineList.RemoveTail();
     }
+    // Invalidate index slots beyond the shrunken count and clamp the drain
+    // cursor so already-emitted accounting can't point past the list.
+    long count = pDoc->m_LineList.GetCount();
+    for (long s = (count / JUMP_SIZE) + 1; s <= pDoc->m_maxlines / JUMP_SIZE; ++s)
+        pDoc->m_pLinePositions[s] = NULL;
+    if (pDoc->m_gui_lines_emitted > count - 1)
+        pDoc->m_gui_lines_emitted = (count > 0) ? count - 1 : 0;
     return 0;
 }
 
 static int L_DeleteOutput(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
+    // free every line INCLUDING the in-progress tail...
     POSITION pos = pDoc->m_LineList.GetHeadPosition();
     while (pos) {
         CLine* pLine = pDoc->m_LineList.GetNext(pos);
         delete pLine;
     }
     pDoc->m_LineList.RemoveAll();
+    // ...then re-seed a fresh in-list current line and re-prime the index,
+    // mirroring the real doc.cpp ClearOutput (display step 7 lifecycle).
+    pDoc->m_total_lines = 0;
+    pDoc->m_pCurrentLine = new CLine(++pDoc->m_total_lines, pDoc->m_nWrapColumn,
+                                     0, WHITE, BLACK, pDoc->m_bUTF_8);
+    pDoc->m_LineList.AddTail(pDoc->m_pCurrentLine);
+    pDoc->AllocateLinePositions();
+    pDoc->m_gui_lines_emitted = 0;
     return 0;
 }
 
@@ -3645,7 +3668,7 @@ static int L_Hyperlink(lua_State* L)
     if (fore_str && fore_str[0]) SetColour(CString(fore_str), fg);
     if (back_str && back_str[0]) SetColour(CString(back_str), bg);
 
-    // Push a note-line style with the action — this sets m_current_action/hint.
+    // Push a note-line style carrying the action (the drain reads pStyle->pAction).
     unsigned short flags = COLOUR_RGB |
                            (url ? ACTION_HYPERLINK : ACTION_SEND) |
                            (no_underline ? 0 : UNDERLINE);
@@ -3658,7 +3681,7 @@ static int L_Hyperlink(lua_State* L)
     // Output the link text so it gets picked up by DisplayMsg.
     pDoc->AddToLine(text, COMMENT);
 
-    // Restore normal note style — clears m_current_action/hint.
+    // Restore the normal note style.
     pDoc->AddStyle(COLOUR_RGB, pDoc->m_iNoteColourFore, pDoc->m_iNoteColourBack, 0,
                    static_cast<CAction*>(nullptr));
     return 0;

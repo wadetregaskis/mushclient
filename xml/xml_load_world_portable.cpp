@@ -571,8 +571,13 @@ static void apply_numeric_option(CMUSHclientDoc& doc, const char* opt, long val)
             doc.m_nWrapColumn = (unsigned short)val;
     }
     else if (!strcmp(opt, "max_output_lines")) {
-        if (val >= 200 && val <= 500000)
+        if (val >= 200 && val <= 500000) {
             doc.m_maxlines = val;
+            // re-size the JUMP_SIZE line-position index (allocated at
+            // construction from the default m_maxlines; an under-sized index
+            // is an out-of-bounds write in ProcessPreviousLine's omit branch)
+            doc.AllocateLinePositions();
+        }
     }
     else if (!strcmp(opt, "port")) {
         if (val >= 1 && val <= USHRT_MAX)

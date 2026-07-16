@@ -420,6 +420,7 @@ if(NOT WIN32)
         utilities_shared.cpp   # shared pure-logic free functions (myAtoF/encodeBase64/EditDistance)
         doc_scripting_shared.cpp   # port-only FireWorld* callbacks (shared mushcore+mushapp)
         scripting/methods/methods_noting.cpp   # the REAL note family (display step 6)
+        doc_display_shared.cpp   # the push-side UpdateAllViews drain (display step 7)
         doc_portable.cpp
 
         # PAL: headless CPU reference adapter for pal::ISurface (docs/PAL.md S1)

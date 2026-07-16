@@ -134,20 +134,16 @@ CMUSHclientDoc::CMUSHclientDoc()
     m_strLanguage = "lua";
     m_tWorldOpenTime = time(nullptr);
 
-    // ── Scratch line for ANSI style state ─────────────────────────────────
-    // InterpretANSIcode / Interpret256ANSIcode always call
-    //   m_pCurrentLine->styleList.GetTail()
-    // to read the current running style.  In the CLI build there is no real
-    // output line; we keep a single heap-allocated CLine with one zero-length
-    // CStyle whose values track the current ANSI state.
-    m_pScratchLine = new CLine();
-    CStyle* pInitStyle = new CStyle();
-    pInitStyle->iFlags      = NORMAL;
-    pInitStyle->iForeColour = WHITE;
-    pInitStyle->iBackColour = BLACK;
-    pInitStyle->iLength     = 0;
-    m_pScratchLine->styleList.AddTail(pInitStyle);
-    m_pCurrentLine = m_pScratchLine;
+    // ── The real line lifecycle (display step 7) ──────────────────
+    // Mirror doc.cpp SetUpOutputWindow: the current line lives IN m_LineList
+    // from creation, and m_pLinePositions indexes every JUMP_SIZE'th line.
+    // Windows defers both until the world file is read; headless we seed at
+    // construction with the defaults, and AllocateLinePositions() re-sizes the
+    // index if a loaded world later raises m_maxlines.
+    m_total_lines = 0;
+    m_pCurrentLine = new CLine(++m_total_lines, m_nWrapColumn, 0, WHITE, BLACK, m_bUTF_8);
+    m_LineList.AddTail(m_pCurrentLine);
+    AllocateLinePositions();
 
     // Register with the global world-document list so that
     // world.GetWorld() / GetWorldList() etc. can find this doc.
@@ -158,6 +154,28 @@ CMUSHclientDoc::CMUSHclientDoc()
 // On non-Windows, doc_construct.cpp is not compiled into mushcore.  This
 // portable destructor — mirrors doc_construct.cpp's ~CMUSHclientDoc for the
 // resources that mushcore owns.
+// ── AllocateLinePositions ──────────────────────────────
+// (Re)build the JUMP_SIZE line-position index from m_maxlines -- the headless
+// equivalent of the deferred allocation in doc.cpp SetUpOutputWindow.  Called
+// at construction and again by the world loader when m_maxlines changes
+// (an under-sized index would let the ProcessPreviousLine omit-branch write
+// past the end).  Zeroed entries are tolerated by every reader.
+void CMUSHclientDoc::AllocateLinePositions()
+{
+    // Trim FIRST so the index can never be smaller than the list it indexes
+    // (mirrors doc.cpp ChangeBufferSize; the loader min of 200 > JUMP_SIZE
+    // guarantees RemoveChunk never reaches the in-progress tail).
+    if (m_pLinePositions)
+        while ((long)m_LineList.GetCount() > m_maxlines)
+            RemoveChunk();
+
+    delete [] m_pLinePositions;
+    m_pLinePositions = new POSITION[(m_maxlines / JUMP_SIZE) + 1];
+    for (long i = 0; i <= m_maxlines / JUMP_SIZE; i++)
+        m_pLinePositions[i] = NULL;
+    m_pLinePositions[0] = m_LineList.GetHeadPosition();
+}
+
 CMUSHclientDoc::~CMUSHclientDoc()
 {
     // Unregister from the global world-document list first, so no stale
@@ -178,7 +196,7 @@ CMUSHclientDoc::~CMUSHclientDoc()
     delete m_ScriptEngine;
     m_ScriptEngine = nullptr;
 
-    // Free the line-positions index (lazily allocated in StartNewLine).
+    // Free the line-positions index (allocated by AllocateLinePositions).
     delete [] m_pLinePositions;
     m_pLinePositions = nullptr;
 
@@ -212,73 +230,14 @@ CMUSHclientDoc::~CMUSHclientDoc()
     // text buffer + a style list.
     DELETE_LIST(m_LineList);
 
-    // Free the in-progress MUD output line. After StartNewLine() this is a fresh
-    // CLine NOT in m_LineList, so the DELETE_LIST above can't double-free it.
-    // (Its text is new[]'d to match CLine::~CLine's delete[], USE_REALLOC off.)
-    if (m_pScratchLine) {
-        delete m_pScratchLine;
-        m_pScratchLine = nullptr;
-        m_pCurrentLine = nullptr;
-    }
+    // The in-progress line lives IN m_LineList (display step 7), so the
+    // DELETE_LIST above owns and frees it.
+    m_pCurrentLine = nullptr;
 }
 
 
 
-// ── AddStyle (action-pointer overload) ───────────────────────────────────
-CStyle* CMUSHclientDoc::AddStyle(const unsigned short iFlags,
-                                  const COLORREF iForeColour,
-                                  const COLORREF iBackColour,
-                                  const int iLength,
-                                  CAction* pAction,
-                                  CLine* pLine)
-{
-    if (!pLine) pLine = m_pCurrentLine;
-    if (!pLine) return nullptr;
 
-    if (pAction) pAction->AddRef();
-
-    if (!pLine->styleList.IsEmpty()) {
-        CStyle* pOld = pLine->styleList.GetTail();
-        if (pOld->iLength == 0 && (pOld->iFlags & START_TAG) == 0) {
-            DELETESTYLE(pOld);
-            pLine->styleList.RemoveTail();
-        }
-    }
-
-    CStyle* p     = NEWSTYLE;
-    p->iFlags      = iFlags;
-    p->iForeColour = iForeColour;
-    p->iBackColour = iBackColour;
-    p->iLength     = (unsigned short)iLength;
-    p->pAction     = pAction;
-    pLine->styleList.AddTail(p);
-
-    // Keep m_current_action/hint/fg/bg in sync so DisplayMsg and AddToLine
-    // can populate SOutputRun correctly.
-    m_current_style_fg = iForeColour;
-    m_current_style_bg = iBackColour;
-    if (pAction && (iFlags & (ACTION_HYPERLINK | ACTION_SEND))) {
-        m_current_action = static_cast<const char*>(pAction->m_strAction);
-        m_current_hint   = static_cast<const char*>(pAction->m_strHint);
-    } else if (!(iFlags & (ACTION_HYPERLINK | ACTION_SEND))) {
-        m_current_action.clear();
-        m_current_hint.clear();
-    }
-
-    return p;
-}
-
-// ── AddStyle (7-arg string overload: action + hint + variable) ───────────
-CStyle* CMUSHclientDoc::AddStyle(const unsigned short iFlags,
-                                  const COLORREF iForeColour,
-                                  const COLORREF iBackColour,
-                                  const int iLength,
-                                  CString, CString, CString,
-                                  CLine* pLine)
-{
-    return AddStyle(iFlags, iForeColour, iBackColour, iLength,
-                    static_cast<CAction*>(nullptr), pLine);
-}
 
 // ── CheckObjectName ───────────────────────────────────────────────────────
 // Mirrors CMUSHclientDoc::CheckObjectName in doc.cpp:
@@ -507,37 +466,6 @@ void CMUSHclientDoc::Debug_Packets(LPCTSTR, LPCTSTR, int, const __int64)
 {
 }
 
-// ── AddToLine ────────────────────────────────────────────────────────────────
-// Called by Lua Hyperlink() to inject a styled run into the output stream.
-// On Windows, this appends to the current line being assembled by DisplayMsg.
-// On non-Windows, there is no global "current line"; we flush text immediately.
-//
-// GUI path: build a single SOutputRun with the colour/action from the most
-//   recent AddStyle() call and deliver it as a complete line.
-// CLI path: print the text to stdout (styled output) followed by a newline.
-void CMUSHclientDoc::AddToLine(const char* text, const int /*flags*/)
-{
-    if (!text || !*text) return;
-
-    if (HaveOutputSink()) {
-        // GUI path: emit as a one-run styled line so the output pane can
-        // render the link with the correct colour and click action.
-        SOutputRun run;
-        run.text      = text;
-        run.fg        = m_current_style_fg;
-        run.bg        = m_current_style_bg;
-        run.underline = !m_current_action.empty();  // underline links by default
-        run.action    = m_current_action;
-        run.hint      = m_current_hint;
-        SOutputLine line;
-        line.push_back(std::move(run));
-        EmitOutputLine(std::move(line));
-    } else {
-        // CLI path: plain text with newline.
-        puts(text);
-        fflush(stdout);
-    }
-}
 
 // SendWindowSizes — send IAC SB NAWS w_hi w_lo h_hi h_lo IAC SE to the MUD.
 // iNewWidth is the new column count (already stored in m_nWrapColumn by caller).
@@ -586,445 +514,8 @@ bool CMUSHclientDoc::InitZlib(z_stream& zs)
 // doc_scripting_shared.cpp (shared with mushapp; was a duplicate here).
 
 
-// ── TermSyncStyle / TermResetStyle — emit ANSI escapes to the real terminal ───
-//
-// The ANSI/256/24-bit colour state machine in ansi.cpp updates m_iFlags,
-// m_iForeColour, m_iBackColour via RememberStyle() after each ANSI sequence.
-// TermSyncStyle() converts that state to terminal escape codes using
-// GetStyleRGB() and emits them only when the style has actually changed.
-// TermResetStyle() emits SGR 0 (reset) and clears the tracking state.
-
-// Map an RGB COLORREF to the nearest index in the xterm 256-colour palette.
-// Uses minimum squared Euclidean distance in RGB space.
-// Called only when the style changes (not per-character), so cost is trivial.
-static int colorref_to_xterm256(COLORREF c)
-{
-    int r = (int)GetRValue(c);
-    int g = (int)GetGValue(c);
-    int b = (int)GetBValue(c);
-    int best_idx  = 0;
-    int best_dist = INT_MAX;
-    for (int i = 0; i < 256; i++) {
-        int dr = r - (int)GetRValue(xterm_256_colours[i]);
-        int dg = g - (int)GetGValue(xterm_256_colours[i]);
-        int db = b - (int)GetBValue(xterm_256_colours[i]);
-        int dist = dr*dr + dg*dg + db*db;
-        if (dist < best_dist) {
-            best_dist = dist;
-            best_idx  = i;
-            if (dist == 0) break;  // exact match — stop early
-        }
-    }
-    return best_idx;
-}
-
-void CMUSHclientDoc::TermSyncStyle()
-{
-    // Build a temporary CStyle from the remembered state and resolve to RGB.
-    CStyle tmp;
-    tmp.iFlags      = m_iFlags;
-    tmp.iForeColour = m_iForeColour;
-    tmp.iBackColour = m_iBackColour;
-
-    COLORREF fg, bg;
-    GetStyleRGB(&tmp, fg, bg);
-
-    bool bold      = (m_iFlags & HILITE)    != 0;
-    bool underline = (m_iFlags & UNDERLINE) != 0;
-
-    if (fg        == m_term_last_fg        &&
-        bg        == m_term_last_bg        &&
-        bold      == m_term_last_bold      &&
-        underline == m_term_last_underline)
-        return;  // nothing changed
-
-    // Map to the nearest xterm 256-colour palette entries.
-    int fg256 = colorref_to_xterm256(fg);
-    int bg256 = colorref_to_xterm256(bg);
-
-    // Emit a single combined SGR sequence: reset + attributes + fg + bg.
-    printf("\033[0");
-    if (bold)      printf(";1");
-    if (underline) printf(";4");
-    printf(";38;5;%d;48;5;%dm", fg256, bg256);
-
-    m_term_last_fg        = fg;
-    m_term_last_bg        = bg;
-    m_term_last_bold      = bold;
-    m_term_last_underline = underline;
-}
-
-void CMUSHclientDoc::TermResetStyle()
-{
-    // Emit SGR 0 (reset all attributes) and invalidate tracking so the next
-    // TermSyncStyle() call re-emits even if the style didn't change.
-    printf("\033[0m");
-    m_term_last_fg        = (COLORREF)-1;
-    m_term_last_bg        = (COLORREF)-1;
-    m_term_last_bold      = false;
-    m_term_last_underline = false;
-}
-
-// ── DisplayMsg — portable telnet/ANSI/MXP parser driving stdout ──────────────
-//
-// Mirrors the per-character dispatch loop from doc.cpp DisplayMsg.
-// GUI-rendering concerns (line buffers, style lists, triggers) are omitted;
-// visible characters are written straight to stdout.
-
-void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
-                                 const int flags, const bool /*fake*/)
-{
-    if (size <= 0 || !lpszText) return;
-    if (g_before_output) g_before_output();
-
-    for (const char* p = lpszText; size > 0; ++p, --size) {
-        unsigned char c = (unsigned char)*p;
-
-        // ── Phase reset on line-terminator / ESC / IAC ────────────────────
-        // ESC and IAC can interrupt any in-progress state (e.g. a partial
-        // MXP tag).  Clean up the old state first, then transition:
-        //   ESC → HAVE_ESC    (start of an ANSI sequence)
-        //   IAC → HAVE_IAC    (start of a telnet command)
-        //   \n/\r → NONE      (fall through to output)
-        if (!(flags & NOTE_OR_COMMAND) &&
-            m_phase != HAVE_SB &&
-            m_phase != HAVE_SUBNEGOTIATION &&
-            m_phase != HAVE_SUBNEGOTIATION_IAC &&
-            !(m_phase == HAVE_IAC && c == IAC))
-        {
-            if (c == 0x1B || (c == 0xFF && m_phase != HAVE_IAC) ||
-                c == '\n' || c == '\r')
-            {
-                // clean up any interrupted MXP state
-                switch (m_phase) {
-                case HAVE_MXP_ELEMENT:
-                case HAVE_MXP_COMMENT:
-                case HAVE_MXP_QUOTE:
-                case HAVE_MXP_ENTITY:
-                    MXP_unterminated_element("got <NEWLINE/ESC/IAC>");
-                    break;
-                case HAVE_MXP_ROOM_NAME:
-                case HAVE_MXP_ROOM_DESCRIPTION:
-                case HAVE_MXP_ROOM_EXITS:
-                case HAVE_MXP_WELCOME:
-                    MXP_mode_change(-1);
-                    break;
-                default:
-                    break;
-                }
-                // transition to the appropriate new phase
-                if (c == 0x1B) {
-                    m_phase = HAVE_ESC;
-                    continue;   // ESC byte itself is not output
-                } else if (c == 0xFF) {
-                    m_phase = HAVE_IAC;
-                    continue;   // IAC byte itself is not output
-                } else {
-                    m_phase = NONE; // \n or \r — fall through to output
-                }
-            }
-        }
-
-        // ── Per-phase dispatch (MUD data only) ────────────────────────────
-        if (!(flags & NOTE_OR_COMMAND)) {
-            switch (m_phase) {
-            case HAVE_ESC:            Phase_ESC(c);  continue;
-            case HAVE_OSC:            Phase_OSC(c);  continue;
-            case HAVE_UTF8_CHARACTER: Phase_UTF8(c); continue;
-
-            case HAVE_FOREGROUND_256_START:   case HAVE_FOREGROUND_256_FINISH:
-            case HAVE_BACKGROUND_256_START:   case HAVE_BACKGROUND_256_FINISH:
-            case HAVE_FOREGROUND_24B_FINISH:  case HAVE_FOREGROUND_24BR_FINISH:
-            case HAVE_FOREGROUND_24BG_FINISH: case HAVE_FOREGROUND_24BB_FINISH:
-            case HAVE_BACKGROUND_24B_FINISH:  case HAVE_BACKGROUND_24BR_FINISH:
-            case HAVE_BACKGROUND_24BG_FINISH: case HAVE_BACKGROUND_24BB_FINISH:
-            case DOING_CODE:
-                Phase_ANSI(c); continue;
-
-            case HAVE_IAC:
-                if (c != IAC)
-                    Phase_IAC(c);   // modifies c: GA->\n or 0, others->0
-                if (c)
-                    break;          // c == '\n' or IAC itself — fall through to output
-                else
-                    continue;       // c == 0 — consumed, skip
-
-            case HAVE_WILL:      Phase_WILL(c); continue;
-            case HAVE_WONT:      Phase_WONT(c); continue;
-            case HAVE_DO:        Phase_DO(c);   continue;
-            case HAVE_DONT:      Phase_DONT(c); continue;
-            case HAVE_SB:        Phase_SB(c);   continue;
-            case HAVE_SUBNEGOTIATION:     Phase_SUBNEGOTIATION(c); continue;
-            case HAVE_SUBNEGOTIATION_IAC: {
-                bool bWasCompressing = m_bCompress;
-                Phase_SUBNEGOTIATION_IAC(c);
-                if (!bWasCompressing && m_bCompress) {
-                    dbg("MCCP compression ACTIVE (stream now zlib-compressed)");
-                    ++p; --size;  // skip SE byte consumed by transition
-                    if (size > 0) memmove(m_CompressInput, p, size);
-                    m_zCompress.next_in   = m_CompressInput;
-                    m_zCompress.avail_in  = size;
-                    m_zCompress.next_out  = m_CompressOutput;
-                    m_zCompress.avail_out = (uInt)m_nCompressionOutputBufferSize;
-                    return;
-                }
-                continue;
-            }
-            case HAVE_COMPRESS:       Phase_COMPRESS(c); continue;
-            case HAVE_COMPRESS_WILL: {
-                bool bWasCompressing = m_bCompress;
-                Phase_COMPRESS_WILL(c);
-                if (!bWasCompressing && m_bCompress) {
-                    dbg("MCCP1 compression ACTIVE (stream now zlib-compressed)");
-                    ++p; --size;
-                    if (size > 0) memmove(m_CompressInput, p, size);
-                    m_zCompress.next_in   = m_CompressInput;
-                    m_zCompress.avail_in  = size;
-                    m_zCompress.next_out  = m_CompressOutput;
-                    m_zCompress.avail_out = (uInt)m_nCompressionOutputBufferSize;
-                    return;
-                }
-                continue;
-            }
-            case HAVE_MXP_ELEMENT:  Phase_MXP_ELEMENT(c); continue;
-            case HAVE_MXP_COMMENT:  Phase_MXP_COMMENT(c); continue;
-            case HAVE_MXP_QUOTE:    Phase_MXP_QUOTE(c);   continue;
-            case HAVE_MXP_ENTITY:   Phase_MXP_ENTITY(c);  continue;
-            case HAVE_MXP_ROOM_NAME:
-            case HAVE_MXP_ROOM_DESCRIPTION:
-            case HAVE_MXP_ROOM_EXITS:
-            case HAVE_MXP_WELCOME:
-                Phase_MXP_COLLECT_SPECIAL(c); continue;
-            default: break;  // NONE — fall through to output
-            }
-
-            // ── MXP guard: discard characters inside server-side scripts ──
-            if (m_bMXP) {
-                if (m_bMXP_script && !MXP_Secure())
-                    continue;
-                if (c != '<') {
-                    if (m_iMXP_mode == eMXP_secure_once)
-                        MXP_Restore_Mode();
-                    if (m_bMXP_script)
-                        continue;
-                }
-            }
-        } // end of MUD-data-only block
-
-        // ── Phase NONE: output visible characters ─────────────────────────
-        if (c == '\n') {
-            if (HaveOutputSink()) {
-                // GUI path: deliver the assembled styled line and clear buffer.
-                EmitOutputLine(std::move(m_gui_line_buf));
-                m_gui_line_buf.clear();
-            } else {
-                // CLI path: reset colours at line end (avoids bg bleeding).
-                TermResetStyle();
-                putchar('\n');
-            }
-            // Finalise the current CLine, fire triggers, start fresh line.
-            StartNewLine(/*hard_break=*/true, flags);
-        } else if (c == '\r') {
-            /* suppress CR in CR-LF sequences */
-        } else if (c >= 0x20 || (c >= 0x80)) {
-            // UTF-8 passthrough: handle all bytes ≥ 0x20 or continuation bytes.
-
-            // ── Accumulate into m_pCurrentLine for trigger matching ────────
-            // iLength and len are byte counts (not Unicode character counts).
-            if (m_pCurrentLine) {
-                if (m_pCurrentLine->len >= m_pCurrentLine->iMemoryAllocated) {
-                    int newSize = (m_pCurrentLine->iMemoryAllocated < 64)
-                                  ? 128
-                                  : m_pCurrentLine->iMemoryAllocated * 2;
-                    // new[]/delete[] (NOT realloc) so the buffer matches how
-                    // CLine::~CLine frees it (delete[], since USE_REALLOC is off).
-                    char* nt = new char[newSize];
-                    if (m_pCurrentLine->text) {
-                        memcpy(nt, m_pCurrentLine->text, m_pCurrentLine->len);
-                        delete[] m_pCurrentLine->text;
-                    }
-                    m_pCurrentLine->text = nt;
-                    m_pCurrentLine->iMemoryAllocated = newSize;
-                }
-                m_pCurrentLine->text[m_pCurrentLine->len++] = (char)c;
-                if (!m_pCurrentLine->styleList.IsEmpty())
-                    m_pCurrentLine->styleList.GetTail()->iLength++;
-            }
-
-            if (HaveOutputSink()) {
-                // GUI path: accumulate into styled run buffer.
-                // On lead bytes (not 0x80–0xBF), resolve current style.
-                if ((c & 0xC0) != 0x80) {
-                    CStyle tmp;
-                    tmp.iFlags      = m_iFlags;
-                    tmp.iForeColour = m_iForeColour;
-                    tmp.iBackColour = m_iBackColour;
-                    COLORREF fg, bg;
-                    GetStyleRGB(&tmp, fg, bg);
-                    bool bold          = (m_iFlags & HILITE)    != 0;
-                    bool underline     = (m_iFlags & UNDERLINE) != 0;
-                    bool italic        = (m_iFlags & BLINK)     != 0;  // MUSHclient maps BLINK → italic
-                    bool strikethrough = (m_iFlags & STRIKEOUT) != 0;
-                    const std::string& cur_action = m_current_action;
-                    const std::string& cur_hint   = m_current_hint;
-                    // Append to current run if style unchanged, else start new run.
-                    if (m_gui_line_buf.empty()                               ||
-                        m_gui_line_buf.back().fg            != fg            ||
-                        m_gui_line_buf.back().bg            != bg            ||
-                        m_gui_line_buf.back().bold          != bold          ||
-                        m_gui_line_buf.back().underline     != underline     ||
-                        m_gui_line_buf.back().italic        != italic        ||
-                        m_gui_line_buf.back().strikethrough != strikethrough ||
-                        m_gui_line_buf.back().action        != cur_action    ||
-                        m_gui_line_buf.back().hint          != cur_hint)
-                    {
-                        SOutputRun run;
-                        run.text          = std::string(1, (char)c);
-                        run.fg            = fg;
-                        run.bg            = bg;
-                        run.bold          = bold;
-                        run.underline     = underline;
-                        run.italic        = italic;
-                        run.strikethrough = strikethrough;
-                        run.action        = cur_action;
-                        run.hint          = cur_hint;
-                        m_gui_line_buf.push_back(std::move(run));
-                    } else {
-                        m_gui_line_buf.back().text += (char)c;
-                    }
-                } else {
-                    // Continuation byte: append to last run (same style).
-                    if (!m_gui_line_buf.empty())
-                        m_gui_line_buf.back().text += (char)c;
-                    else
-                        m_gui_line_buf.push_back(SOutputRun{std::string(1, (char)c)});
-                }
-            } else {
-                // CLI path: emit ANSI escapes to the real terminal.
-                // Only call TermSyncStyle() on lead bytes, not continuation bytes.
-                if ((c & 0xC0) != 0x80)
-                    TermSyncStyle();
-                putchar((int)c);
-            }
-        }
-
-    } // end of per-character loop
-
-    if (!HaveOutputSink()) {
-        fflush(stdout);
-        if (g_after_output) g_after_output();
-    }
-}
-
-// ── StartNewLine — finalise current line, fire triggers, begin a new one ─────
-//
-// This is the portable equivalent of doc.cpp's StartNewLine(bool, int).
-// Called from DisplayMsg on every \n.
-//
-// Flow:
-//   1. Timestamp and move m_pCurrentLine into m_LineList (transfers ownership).
-//   2. For real MUD lines (not notes/commands), call ProcessPreviousLine() so
-//      triggers, plugins, and logging all see the new line.
-//   3. Trim m_LineList to m_maxlines by deleting from the head.
-//   4. Allocate a fresh m_pCurrentLine and seed it with the current ANSI style
-//      so the next line inherits the running colour state.
-void CMUSHclientDoc::StartNewLine(const bool hard_break, const int flags)
-{
-    if (!m_pCurrentLine) return;
-
-    // Deferred m_pLinePositions allocation — mirrors doc.cpp SetUpOutputWindow
-    // (m_maxlines is read from the world file, so allocate on first use, before
-    // ProcessPreviousLine below can reach its omit-from-output branch, which
-    // writes m_pLinePositions slots unguarded — a latent NULL-deref headless).
-    if (!m_pLinePositions)
-    {
-        m_pLinePositions = new POSITION[(m_maxlines / JUMP_SIZE) + 1];
-        for (long i = 0; i <= m_maxlines / JUMP_SIZE; i++)
-            m_pLinePositions[i] = NULL;
-        m_pLinePositions[0] = m_LineList.GetHeadPosition();
-    }
-
-    // Re-entrancy guard: ProcessPreviousLine() below fires triggers, and a trigger
-    // that world.Send/<send>s echoes back through DisplayMsg → StartNewLine while
-    // m_pCurrentLine still points at the line we just AddTail'd. Bail so we don't
-    // add (and later double-free) that same CLine twice. The echo's text still
-    // streams to the display via m_gui_line_buf, which is handled separately.
-    if (m_bInStartNewLine) return;
-    m_bInStartNewLine = true;
-
-    // Timestamp the finished line
-    m_pCurrentLine->m_theTime = CTime::GetCurrentTime();
-    m_pCurrentLine->m_lineHighPerformanceTime.QuadPart = 0;
-    m_pCurrentLine->flags = (unsigned char)flags;
-
-    // Transfer to line buffer
-    m_LineList.AddTail(m_pCurrentLine);
-    if (!(flags & NOTE_OR_COMMAND))
-        ++m_nTotalLinesReceived;
-
-    // Fire triggers on real MUD data lines (not notes, not echoed commands)
-    if (hard_break && !(flags & NOTE_OR_COMMAND))
-        ProcessPreviousLine();
-
-    // Trim line buffer to configured maximum
-    while ((long)m_LineList.GetCount() > m_maxlines) {
-        CLine* pOld = m_LineList.RemoveHead();
-        delete pOld;
-    }
-
-    // Fresh line — inherits current ANSI colour/style state
-    m_pCurrentLine = new CLine();
-    m_pScratchLine = m_pCurrentLine;   // keep alias in sync
-    AddStyle(m_iFlags, m_iForeColour, m_iBackColour, 0,
-             static_cast<CAction*>(nullptr));
-
-    m_bInStartNewLine = false;
-}
-
-// ReceiveMsg: gone — bytes arrive via the transport bridge
-// (CDocTransportEvents::onBytes -> OnBytesReceived, doc_shared.cpp; T3c/T5).
-// OnBytesReceived: single-sourced in doc_shared.cpp (T3c).
-// OnConnect: single-sourced in doc_shared.cpp (T3b).
-
-// ConnectionEstablished: single-sourced in doc_shared.cpp (T3d).
-
-// ── SOCKS proxy helpers ───────────────────────────────────────────────────────
-
-
-
-
-
-
-
-// ── SSL implementation ────────────────────────────────────────────────────────
-
-
-// StartSSLHandshake: single-sourced in doc_shared.cpp (T3c); the TLS
-// session itself lives inside the transport adapter (no doc-level
-// handshake stepping off-Windows — ContinueSSLHandshake is gone).
-
-// ── CloseLog ─────────────────────────────────────────────────────────────────
-// Writes the log-file postamble (if any) and closes m_logfile.
-// Mirrors the implementation in scripting/methods/methods_logging.cpp.
-
-// Note/ColourNote/ColourTell/AnsiNote/Hyperlink and friends: the REAL
-// scripting/methods/methods_noting.cpp is compiled into mushcore now
-// (display step 6); the GUI note-buffer twins that lived here are gone.
-
-
-
-
-
-
-
-// ── ColourNote / ColourTell ───────────────────────────────────────────────────
-
-
-
-
-
-// ── UpdateAllViews ────────────────────────────────────────────────────────────
-void CMUSHclientDoc::UpdateAllViews(void*) {}
+// The Term*/stdout ANSI emission died at the display flip (step 7) — the
+// drain in doc_display_shared.cpp is the only output path now.
 
 bool CMUSHclientDoc::AppendToTheNotepad(const CString strTitle,
                                          const CString strText,

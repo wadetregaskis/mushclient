@@ -211,8 +211,14 @@ TEST(TriggerTest, LineAccumulatedCorrectly)
     // After the \n, StartNewLine moved the line to m_LineList and started a new one.
     EXPECT_GT((long)doc.m_LineList.GetCount(), 0L);
 
-    // The most recently completed line is the tail of m_LineList.
-    CLine* pLine = doc.m_LineList.GetTail();
+    // Display step 7 (real lifecycle): the tail of m_LineList is the fresh
+    // in-progress line; the most recently COMPLETED line sits just before it.
+    POSITION pos = doc.m_LineList.GetTailPosition();
+    CLine* pTail = doc.m_LineList.GetPrev(pos);   // tail (in-progress)
+    ASSERT_NE(nullptr, pTail);
+    EXPECT_TRUE(pTail == doc.m_pCurrentLine);
+    ASSERT_TRUE(pos != NULL);
+    CLine* pLine = doc.m_LineList.GetPrev(pos);   // last completed line
     ASSERT_NE(nullptr, pLine);
     CString text(pLine->text, pLine->len);
     EXPECT_STREQ("hello world", (const char*)text);

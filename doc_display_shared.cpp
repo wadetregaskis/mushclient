@@ -9,10 +9,9 @@
 // NOT in MUSHclient.vcxproj.
 //
 // Relocated verbatim from platform/mushapp_stubs.cpp (campaign-b display
-// step 4) so it can be shared with mushcore at the display-family flip: today
-// it is compiled by mushapp ONLY (mushcore still has its own per-'\n' push
-// inside the twin DisplayMsg plus a no-op UpdateAllViews in doc_portable.cpp —
-// compiling this TU there before the flip would double-emit every line).
+// step 4) and shared with mushcore since the display flip (step 7): both
+// non-Windows builds emit through this one drain — the twin per-'\n' push
+// and the no-op UpdateAllViews are gone.
 
 #ifndef _WIN32
 

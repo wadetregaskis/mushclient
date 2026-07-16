@@ -671,6 +671,8 @@ extern const string ON_PLUGIN_CONNECT;
 extern const string ON_PLUGIN_DISCONNECT;
 extern const string ON_PLUGIN_LINE_RECEIVED;
 extern const string ON_PLUGIN_SEND;
+extern const string ON_PLUGIN_PARTIAL_LINE;
+extern const string ON_PLUGIN_PACKET_RECEIVED;
 extern const string ON_PLUGIN_SENT;
 extern const string ON_PLUGIN_COMMAND_ENTERED;
 extern const string ON_PLUGIN_COMMAND_CHANGED;
@@ -1549,10 +1551,6 @@ public:
     // ── Current hyperlink state (set by AddStyle, consumed by DisplayMsg) ─
     // Cleared automatically when the style with ACTION_HYPERLINK/ACTION_SEND
     // is replaced by one without an action.
-    std::string m_current_action;       // action string for current MXP/Lua link
-    std::string m_current_hint;         // hint/tooltip for current link
-    COLORREF    m_current_style_fg = 0x00C0C0C0u;  // fg from most recent AddStyle (light grey)
-    COLORREF    m_current_style_bg = 0x00000000u;  // bg from most recent AddStyle (black)
 
 
     int     m_connect_now      = 0;
@@ -2018,7 +2016,7 @@ public:
     void DrawMappingStatusLine() {}
 
     // ── Line / display helpers ────────────────────────────────────────
-    // StartNewLine is implemented in doc_portable.cpp (fires triggers).
+    // StartNewLine: the real body, single-sourced in doc_shared.cpp (step 7).
     void StartNewLine(bool hard_break, int flags);
     void SetNewLineColour(const int flags);   // real body in doc_shared.cpp (display step 6)
 
@@ -2495,9 +2493,6 @@ public:
       }
   }
 
-    // Pending styled spans for the line currently being assembled.
-    // Flushed (via EmitOutputLine) on each '\n'.
-    SOutputLine m_gui_line_buf;
 
     // ── Output pane metrics (updated by CWorldChildFrame on font/size change) ─
     // Exposed to Lua via GetInfo(212), GetInfo(213), etc.
@@ -2520,34 +2515,17 @@ public:
 
 
 
-    // ── Scratch line for ANSI style state ────────────────────────────────
-    // InterpretANSIcode and Interpret256ANSIcode always dereference
-    // m_pCurrentLine->styleList.GetTail() to read the current style.
-    // In the CLI build there is no real line; m_pScratchLine is a single
-    // heap-allocated CLine whose style list holds exactly one zero-length
-    // CStyle at all times, acting as the style accumulator.
-    // Initialised (with one default CStyle) by the CMUSHclientDoc constructor.
-    CLine* m_pScratchLine = nullptr;
+    // ── Display step 7: the real line lifecycle ───────────────────────────
+    // The current line lives IN m_LineList from creation (real doc.cpp
+    // semantics); the old m_pScratchLine / m_bInStartNewLine / Term* stdout
+    // machinery is gone.  AllocateLinePositions (doc_portable.cpp) builds the
+    // JUMP_SIZE index at construction and on m_maxlines changes.
+    void AllocateLinePositions();
 
-    // Re-entrancy guard for StartNewLine: a trigger firing in ProcessPreviousLine
-    // can world.Send/<send>, whose echo re-enters DisplayMsg → StartNewLine while
-    // m_pCurrentLine is still the just-added line. Without this guard that line is
-    // added to (and later double-freed from) m_LineList a second time.
-    bool   m_bInStartNewLine = false;
-
-    // ── Terminal colour state (for ANSI output on the real terminal) ──────
-    // Tracks what colour/attribute codes have already been emitted so we
-    // only re-emit when the style actually changes.
-    COLORREF m_term_last_fg        = (COLORREF)-1; // sentinel "never emitted"
-    COLORREF m_term_last_bg        = (COLORREF)-1;
-    bool     m_term_last_bold      = false;
-    bool     m_term_last_underline = false;
-
-    // Emit (or skip) ANSI escape sequences to sync the terminal's colour state
-    // with the current parsed style (m_iFlags, m_iForeColour, m_iBackColour).
-    void TermSyncStyle();
-    // Reset terminal colours to default (emitted at start of each new line).
-    void TermResetStyle();
+    // Minimal stand-in for doc.h's CFindInfo m_DisplayFindInfo (stdafx.h owns
+    // the full class; RemoveChunk only adjusts the current-line cursor).
+    struct SDisplayFindInfoStub { long m_nCurrentLine = 0; };
+    SDisplayFindInfoStub m_DisplayFindInfo;
 };
 
 // ── t_regexp — needed by scripting/scripting.h ────────────────────────────

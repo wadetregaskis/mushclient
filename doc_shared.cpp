@@ -11,6 +11,7 @@
 #include "MUSHclient.h"
 #include "mainfrm.h"            // Frame (ConnectionClosed's status/button updates)
 #include "doc.h"
+#include "MUSHview.h"           // CMUSHView (DisplayMsg/StartNewLine view-notify loops)
 #include "scripting/errors.h"   // eOK / eBadParameter (full build; doc_stub.h defines them for mushcore)
 #include "dialogs/password.h"   // CPasswordDialog (ConnectionEstablished, full build)
 #ifdef _WIN32
@@ -2657,4 +2658,1155 @@ void CMUSHclientDoc::SetNewLineColour (const int flags)
   m_pCurrentLine->flags = flags;    // mark line as user input or comment as required
 
   } // end of CMUSHclientDoc::SetNewLineColour
+
+
+
+// ═══ The core display pipeline (campaign-b display step 7 — THE FLIP) ═══════
+// DisplayMsg / StartNewLine (+_KeepPreviousStyle) / AddToLine / AddStyle (both
+// overloads) / RemoveChunk / SendLineToPlugin, relocated verbatim from doc.cpp.
+// One engine on every build now: mushcore's hand-written display twins (the
+// out-of-list line lifecycle, per-'\n' push, stdout ANSI emission) are gone —
+// the headless build shares the real m_LineList lifecycle and emits through
+// the same UpdateAllViews drain as the mac product (doc_display_shared.cpp).
+
+void CMUSHclientDoc::StartNewLine_KeepPreviousStyle (const int flags)
+  {
+  CStyle * pPreviousStyle,
+         * pThisStyle;
+  CLine * pPreviousLine = m_pCurrentLine; // remember this line
+
+  // if saved_count is indeed zero we better start a new line anyway
+   StartNewLine (false, flags);
+   // get old style
+   pPreviousStyle = pPreviousLine->styleList.GetTail ();
+   // get new style
+   pThisStyle = m_pCurrentLine->styleList.GetTail ();
+
+   if (pThisStyle && pPreviousStyle)    // sanity check
+     {
+     // copy style across so new line has same style as old one
+     pThisStyle->iFlags = pPreviousStyle->iFlags & STYLE_BITS;
+     pThisStyle->iForeColour = pPreviousStyle->iForeColour;
+     pThisStyle->iBackColour = pPreviousStyle->iBackColour;
+     pThisStyle->pAction = pPreviousStyle->pAction;
+     if (pThisStyle->pAction)
+       pThisStyle->pAction->AddRef ();    // we are using it again
+     }  // end of valid pointers
+  }  // end of CMUSHclientDoc::StartNewLine_KeepPreviousStyle
+
+
+// called from DisplayMsg to actually add to the current line
+// and also from the MXP routines to put stuff there
+void CMUSHclientDoc::AddToLine (LPCTSTR lpszText, const int flags)
+  {
+const char * p ;
+unsigned char c;
+int saved_count;
+
+  // incoming text from the MUD (only) is remembered also in m_strCurrentLine for triggers
+//  if (flags == 0)
+//    m_strCurrentLine += lpszText;
+
+  for (p = lpszText; *p; p++)
+    {
+    c = *p;
+    int iLineLength = m_pCurrentLine->len;
+
+    // for Unicode the width of the line is characters, not stored bytes
+    if (m_bUTF_8)
+       iLineLength = MultiByteToWideChar (CP_UTF8, 0, m_pCurrentLine->text, m_pCurrentLine->len, NULL, 0);
+
+/*
+Unicode range              UTF-8 bytes
+
+0x00000000 - 0x0000007F    0 xxxxxxx
+0x00000080 - 0x000007FF    110 xxxxx 10 xxxxxx
+0x00000800 - 0x0000FFFF    1110 xxxx 10 xxxxxx 10 xxxxxx
+0x00010000 - 0x001FFFFF    11110 xxx 10 xxxxxx 10 xxxxxx 10 xxxxxx
+
+  From above table, any character starting 10xxxxxx will *not* be the start 
+  of a character (ie. it is the middle of a Unicode sequence) and thus we
+  do *not* want to split it by putting it onto a new line.
+
+*/
+  
+    int bNewCharacter = true;    // normally each character is a new one
+
+    // but UTF-8 characters which have the high-order 2 bits == 80 are not
+    if (m_bUTF_8 && ((c & 0xC0) == 0x80))
+       bNewCharacter = false;
+
+  // in the Unicode case we are allocating 4 bytes per character so we shouldn't
+  // overshoot the allocated memory, but just in case, we test that we don't
+
+    if (((iLineLength >= m_nWrapColumn) && bNewCharacter) ||  // usual case
+        (m_pCurrentLine->len >= m_pCurrentLine->iMemoryAllocated))  // emergency bail-out
+      {
+
+      int last_space = -1;
+
+      // do auto line wrapping here
+
+      // see if we can split at a multibyte character or a space (whichever comes last)
+
+      if (m_pCurrentLine->len >= m_nWrapColumn &&
+          m_pCurrentLine->len >= 2)
+        {
+        for (int i = 0; i < m_pCurrentLine->len - 1; i++)
+          {
+          unsigned char c1 = m_pCurrentLine->text [i];
+          unsigned char c2 = m_pCurrentLine->text [i + 1];
+          // don't test for Big5 if output buffer is UTF-8 (the tests would be wrong)
+          if (c1 >= 0x81 && c1 <= 0xFE &&                               // first  Big5 character
+            ((c2 >= 0x40 && c2 <= 0x7E) || (c2 >= 0xA1 && c2 <= 0xFE))  // second Big5 character
+              && !m_bUTF_8) // not for UTF-8
+            last_space = i++;  // remember position, skip the second byte
+          else if (c1 >= 0xA1 && c1 <= 0xF7 && // first  GB2132 character
+                   c2 >= 0xA1 && c2 <= 0xFE && // second GB2132 character
+                   !m_bUTF_8)  // // not for UTF-8
+            last_space = i++;  // remember position, skip the second byte
+          else if (c1 == ' ' && m_wrap)
+            last_space = i;    // or split at a space
+          }
+
+        // allow for space being the final thing on the line
+        if (m_pCurrentLine->text [m_pCurrentLine->len - 1] == ' ' && m_wrap)
+          last_space = m_pCurrentLine->len - 1;
+
+        } // end of checking for a space, Big5 or GB2132 break point
+
+      if (last_space < 0 ||   // if no break point found, break anyway at end of line
+        (m_pCurrentLine->len - last_space) >= m_nWrapColumn)
+          StartNewLine_KeepPreviousStyle (flags);
+      else
+        {
+        saved_count = m_pCurrentLine->len - last_space;
+
+        // note - saved_count should not be zero because length is 1-relative
+        // (eg. 1) and last_space is zero-relative (eg. 0)
+        if (!m_indent_paras)
+          {
+          saved_count--;    // one less to copy
+          last_space++;  // one more on this line (the space)
+          m_pCurrentLine->len = last_space; // this line is longer
+          }   // end of indenting not wanted
+
+        // saved_count might be zero now, because of no indenting
+        if (saved_count > 0)
+          {
+          // save portion of text destined for new line
+          CString strText = CString (&m_pCurrentLine->text [last_space],
+                                     saved_count); 
+          m_pCurrentLine->len = last_space;
+
+          CLine * pPreviousLine = m_pCurrentLine; // remember this line
+
+          StartNewLine (false, flags);
+
+          CStyle * pStyle;
+
+          // delete empty style item new line already has
+          pStyle = m_pCurrentLine->styleList.GetTail ();
+          DELETESTYLE (pStyle);
+          m_pCurrentLine->styleList.RemoveTail ();
+        
+          memcpy (m_pCurrentLine->text, (LPCTSTR) strText, saved_count);
+          m_pCurrentLine->len = saved_count;
+
+          // now move the styles over to the new line
+
+          int iCount = 0,
+              iOldLength = 0,
+              iLength = 0;
+          POSITION pos;
+
+          // find number that have to move
+          for (pos = pPreviousLine->styleList.GetHeadPosition(); pos; )
+            {
+            pStyle = pPreviousLine->styleList.GetNext (pos);
+            iLength += pStyle->iLength;
+            if (iLength > pPreviousLine->len)
+              iCount++;   // this one has to move
+            else 
+              iOldLength += pStyle->iLength;
+            }   // end of counting number to move
+
+          // move them  - copy from tail of old to head of new (going backwards)
+          for (pos = pPreviousLine->styleList.GetTailPosition(); iCount > 0 && pos; iCount--)
+            {
+            pStyle = pPreviousLine->styleList.RemoveTail ();
+            m_pCurrentLine->styleList.AddHead (pStyle);
+            }   // end of moving them
+
+          // if one style is shared we have to make a copy and adjust lengths
+          if (iOldLength < pPreviousLine->len)
+            {
+            int iDiff = pPreviousLine->len - iOldLength;  // amount we are short
+            // was copied - find out its details
+
+            pStyle =  m_pCurrentLine->styleList.GetHead ();
+            pStyle->iLength -= iDiff;  // this line is that much smaller
+            CAction * pAction = pStyle->pAction;
+          
+            AddStyle (pStyle->iFlags & STYLE_BITS, 
+                      pStyle->iForeColour, 
+                      pStyle->iBackColour, 
+                      iDiff,  // old line has this much
+                      pAction,
+                      pPreviousLine);  // add to end of previous line
+
+            } // end of shared style
+          }  // end of having something to move to the next line
+        else  
+          {   // saved_count == 0
+          StartNewLine_KeepPreviousStyle (flags);
+          }  // end saved_count == 0
+
+        } // end of line wrapping wanted and possible
+      }   // end of line being full
+
+    ASSERT (m_pCurrentLine->text);
+
+    // add character to line
+    m_pCurrentLine->text [m_pCurrentLine->len] = c;
+    m_pCurrentLine->len++;    // line has one more character
+//BUG    m_pCurrentLine->flags = flags;  // ensure we retain existing flags
+
+    // style spans one more character now
+    m_pCurrentLine->styleList.GetTail ()->iLength++; 
+
+    } // end of processing each character
+  } // end of AddToLine
+
+
+void CMUSHclientDoc::DisplayMsg(LPCTSTR lpszText, int size, const int flags, const bool fake)
+{
+const char * p ;
+unsigned char c;
+int spaces,
+    i;
+char cOneCharacterLine [2] = {0, 0};
+
+CLine * pOriginalLine = m_pCurrentLine;
+CString strOriginalText;
+CString strLine (lpszText, size);
+
+  // cannot go very far without this - must be called at world loadup from a plugin OnPluginInstall
+  if (m_pLinePositions == NULL)
+    return;
+
+  // decompressed data has a size, not a null terminator.
+  // Also, compressed data may have imbedded nulls.
+
+
+  if (!(flags & NOTE_OR_COMMAND))  // input from MUD
+    {
+
+      // for MXP debugging
+    #ifdef SHOW_ALL_COMMS
+      Debug_MUD ("++Received from MUD: ", strLine);
+    #endif
+
+    // hex debug  (debug packets) - unless we have faked an input line from MXP processing or similar
+    if (m_bDebugIncomingPackets && !fake)
+      Debug_Packets ("Incoming", lpszText, size, m_iInputPacketCount);
+
+    m_iCurrentActionSource = eInputFromServer;
+
+    // let plugin change the input packet unless we have faked an input line from MXP processing or similar
+    if (!fake)
+      SendToAllPluginCallbacksRtn (ON_PLUGIN_PACKET_RECEIVED, strLine);
+
+    m_iCurrentActionSource = eUnknownActionSource;
+
+    // change line to what the plugin(s) left it at
+    lpszText = strLine;
+    size = strLine.GetLength ();
+    if (size <= 0)
+      return;   // plugin discarded it
+    
+    m_iNoteStyle = NORMAL;  // MUD input cancels style flags
+    }   // end of input from MUD
+
+  // at the very start we may not have a current line
+  if (m_pCurrentLine)
+    {
+    strOriginalText = CString (m_pCurrentLine->text, m_pCurrentLine->len);
+
+    // If we get user input at the end of a "normal" line then the normal line
+    // should really be terminated and scanned for triggers etc.
+
+    // make sure notes start on a new line
+    if ((flags & COMMENT) != (m_pCurrentLine->flags & COMMENT) && 
+        m_pCurrentLine->len > 0)
+      StartNewLine (true, flags);
+    else
+      {
+      if (m_bKeepCommandsOnSameLine)  // for Simen Brekken
+        {   // switch to command colour
+
+// warning (bug?) triggers will not match if the command is on the same line
+
+        if ((flags & USER_INPUT) && m_echo_colour != SAMECOLOUR)
+          { // user input and (same colour not wanted)
+          // create new style item
+          AddStyle (COLOUR_CUSTOM, m_echo_colour, BLACK, 0, NULL);
+          } // end of user input 
+        } // end of commands on the same line
+      else
+        {
+        if ((flags & NOTE_OR_COMMAND) != (m_pCurrentLine->flags & NOTE_OR_COMMAND) && 
+            m_pCurrentLine->len > 0)
+            StartNewLine (true, flags);
+        } // end of commands going onto a new line
+      }   // end of not changing to/from a note
+    }
+  else
+    StartNewLine (true, 0);
+
+// if line length is currently zero (ie. we are starting a new one)
+// then we will set the default style depending on the flags, this will
+// affect the rest of the line
+
+  if (m_pCurrentLine->len == 0)
+    SetNewLineColour (flags | (m_pCurrentLine->flags & BOOKMARK));
+
+  for (p = lpszText; size > 0; p++, size--)
+    {
+
+    c = *p;
+
+    // bail out of UTF-8 collection if a non-high order bit is found in the incoming stream
+    if (!(flags & NOTE_OR_COMMAND) && 
+        m_phase == HAVE_UTF8_CHARACTER && 
+        (c & 0x80) == 0)
+        OutputBadUTF8characters ();
+
+    // note that CR, LF, ESC and IAC can appear inside telnet negotiation now (version 4.48)
+    if (m_phase != HAVE_SB &&
+        m_phase != HAVE_SUBNEGOTIATION && 
+        m_phase != HAVE_SUBNEGOTIATION_IAC &&
+        ! (m_phase == HAVE_IAC && c == IAC) )
+      {
+      // the following characters will terminate any collection/negotiation phases
+      //  newline, carriage-return, escape, IAC
+      if (!(flags & NOTE_OR_COMMAND) && strchr ("\n\r\x1B\xFF", c))
+        {
+        const char * pReason = "unknown";
+
+        // we may need to get our MXP processing to deal with it
+        switch (m_phase)
+          {
+          case HAVE_MXP_ELEMENT:
+          case HAVE_MXP_COMMENT:
+          case HAVE_MXP_QUOTE:
+          case HAVE_MXP_ENTITY:
+              switch (c)
+                {
+                case '\r':
+                case '\n':   pReason = "got <NEWLINE>"; break;
+                case '\x1B': pReason = "got <ESC>"; break;
+                case '\xFF': pReason = "got <IAC>"; break;
+
+                } // end of switch
+              MXP_unterminated_element (pReason);
+              break;
+          case HAVE_MXP_ROOM_NAME:
+          case HAVE_MXP_ROOM_DESCRIPTION:
+          case HAVE_MXP_ROOM_EXITS:
+          case HAVE_MXP_WELCOME:
+              MXP_mode_change (-1);
+              break;
+          } // end of switch
+
+        m_phase = NONE;   // cannot be in middle of escape sequence
+        }
+
+      } // end of not collecting telnet subnegotiation
+    
+// my own input won't interfere with incoming escape sequences
+
+    if (!(flags & NOTE_OR_COMMAND))
+      {
+
+      switch (m_phase)
+        {
+        case HAVE_ESC:            Phase_ESC (c); continue;
+        case HAVE_OSC:            Phase_OSC (c); continue;
+        case HAVE_UTF8_CHARACTER: Phase_UTF8 (c); continue;
+
+        case HAVE_FOREGROUND_256_START:    // these 12 are similar to Phase_ANSI
+        case HAVE_FOREGROUND_256_FINISH:
+        case HAVE_BACKGROUND_256_START:
+        case HAVE_BACKGROUND_256_FINISH:
+        case HAVE_FOREGROUND_24B_FINISH:
+        case HAVE_FOREGROUND_24BR_FINISH:
+        case HAVE_FOREGROUND_24BG_FINISH:
+        case HAVE_FOREGROUND_24BB_FINISH:
+        case HAVE_BACKGROUND_24B_FINISH:
+        case HAVE_BACKGROUND_24BR_FINISH:
+        case HAVE_BACKGROUND_24BG_FINISH:
+        case HAVE_BACKGROUND_24BB_FINISH:
+        case DOING_CODE:          
+          Phase_ANSI (c); continue;
+
+        case HAVE_IAC: 
+          
+          if (c != IAC)
+            Phase_IAC (c);      // not IAC IAC? Process single IAC
+
+          if (c)                // eg. IAC GA becomes \n, and IAC IAC becomes IAC
+            break;
+          else
+            continue;
+
+        case HAVE_WILL:           Phase_WILL (c); continue;
+        case HAVE_WONT:           Phase_WONT (c); continue;
+        case HAVE_DO:             Phase_DO (c); continue;
+        case HAVE_DONT:           Phase_DONT (c); continue;
+        case HAVE_SB:             Phase_SB (c); continue;
+        case HAVE_SUBNEGOTIATION: Phase_SUBNEGOTIATION (c); continue;
+        case HAVE_COMPRESS:       Phase_COMPRESS (c); continue;
+        
+        case HAVE_COMPRESS_WILL:  
+            {
+            bool bWasCompressing = m_bCompress;
+            Phase_COMPRESS_WILL (c); 
+            // just turned on compression?  special case, can't keep treating the
+            // data as it it was not compressed
+            if (!bWasCompressing && m_bCompress)
+              {
+              p++;    // skip SE  (normally done at end of loop)
+              size--; // one less of these
+              if (size)  // copy compressed data to compression buffer
+                memmove (m_CompressInput, p, size);
+              m_zCompress.next_in = m_CompressInput;
+              m_zCompress.avail_in = size;
+              m_zCompress.next_out = m_CompressOutput;
+              m_zCompress.avail_out = m_nCompressionOutputBufferSize;
+              m_nTotalCompressed += size;
+              return;  // done with this loop, now it needs to be decompressed
+              }
+            }
+            continue;
+            
+        case HAVE_SUBNEGOTIATION_IAC: 
+          {
+            bool bWasCompressing = m_bCompress;
+            Phase_SUBNEGOTIATION_IAC (c); 
+            // just turned on compression?  special case, can't keep treating the
+            // data as it it was not compressed
+            if (!bWasCompressing && m_bCompress)
+              {
+              p++;    // skip SE  (normally done at end of loop)
+              size--; // one less of these
+              if (size)  // copy compressed data to compression buffer
+                memmove (m_CompressInput, p, size);
+              m_zCompress.next_in = m_CompressInput;
+              m_zCompress.avail_in = size;
+              m_zCompress.next_out = m_CompressOutput;
+              m_zCompress.avail_out = m_nCompressionOutputBufferSize;
+              m_nTotalCompressed += size;
+              return;  // done with this loop, now it needs to be decompressed
+              }
+
+            continue;
+
+          }   // end of HAVE_SUBNEGOTIATION_IAC
+
+        // MXP phases             
+        case HAVE_MXP_ELEMENT:     Phase_MXP_ELEMENT (c); continue;
+        case HAVE_MXP_COMMENT:     Phase_MXP_COMMENT (c); continue;
+        case HAVE_MXP_QUOTE:       Phase_MXP_QUOTE (c); continue;
+        case HAVE_MXP_ENTITY:      Phase_MXP_ENTITY (c); continue;
+
+        case HAVE_MXP_ROOM_NAME:
+        case HAVE_MXP_ROOM_DESCRIPTION:
+        case HAVE_MXP_ROOM_EXITS:
+        case HAVE_MXP_WELCOME:
+              Phase_MXP_COLLECT_SPECIAL (c); continue;
+
+        default: 
+          break; // keep going (phase NONE)
+        }   // end of switch on phase
+
+      }   // end of not being my own input
+
+// special test for MXP
+
+//  1. Cancel once-only secure mode unless we get a <
+//  2. Throw away incoming text if we are in script collection mode
+//     unless it seems likely that script collection will be cancelled.
+
+    if (m_bMXP && !(flags & NOTE_OR_COMMAND))
+      {
+
+      if (m_bMXP_script && !MXP_Secure ())
+        continue;   // discard incoming script
+      
+      if (c != '<')
+        {
+        // in secure-once mode we *must* get an opening tag right away
+        if (m_iMXP_mode == eMXP_secure_once)
+          MXP_Restore_Mode ();  // back to what it was
+
+        if (m_bMXP_script)
+          continue;   // discard incoming script
+        } // end of not having an opening tag
+
+      // in <p> mode treat tabs as spaces
+      if (c == '\t' && m_bInParagraph)
+        c = ' ';
+
+      } // end of special MXP tests on incoming data
+
+// kludgy test for Pueblo - assumes it is all in one packet - bleech!
+
+    // work out the length once to save time
+    static int iPuebloStartLength = 0;
+
+    if (iPuebloStartLength == 0)
+      iPuebloStartLength = strlen (PUEBLO_START);
+
+    // quick initial tests
+    if (!(flags & NOTE_OR_COMMAND) &&   // only on incoming stuff
+        c == '<' &&           // might be it
+        !m_bMXP &&            // and not MXP 
+        m_bPueblo &&          // Pueblo wanted
+        !m_bPuebloActive &&   // and not active yet
+        size >= iPuebloStartLength)
+      if (memcmp (p, PUEBLO_START, iPuebloStartLength) == 0)
+        {
+        MXP_On (true);  // turn Pueblo on
+        m_iMXP_defaultMode = m_iMXP_mode = eMXP_perm_secure;  // assume secure mode
+        TRACE ("Pueblo on.\n");
+        p += iPuebloStartLength - 1;     // one is added at end of loop
+        size -= iPuebloStartLength - 1;  // ditto
+        continue;   // back to main loop
+        } // end of Pueblo startup
+
+// here when phase is NONE
+
+    // do not display UTF-8 characters until they have completely arrived
+    // check if high-order bit is set
+    if (!(flags & NOTE_OR_COMMAND) && m_bUTF_8 && (c & 0x80) && (c != IAC || m_phase == HAVE_IAC))
+      {
+      m_UTF8Sequence [0] = c;
+      m_UTF8Sequence [1] = 0;  // null terminator
+      m_phase = HAVE_UTF8_CHARACTER;
+
+      // 0x00000080 - 0x000007FF    110 xxxxx 10 xxxxxx
+      if ((c & 0xE0) == 0xC0)
+        m_iUTF8BytesLeft = 1;
+      // 0x00000800 - 0x0000FFFF    1110 xxxx 10 xxxxxx 10 xxxxxx
+      else if ((c & 0xF0) == 0xE0)
+        m_iUTF8BytesLeft = 2;
+      // 0x00010000 - 0x001FFFFF    11110 xxx 10 xxxxxx 10 xxxxxx 10 xxxxxx
+      else if ((c & 0xF8) == 0xF0)
+        m_iUTF8BytesLeft = 3;
+      else
+      // some bogus byte with the high-order bit set
+        OutputBadUTF8characters ();
+      continue;  // we are done for now with this byte
+      }  // end of high-order bit set with UTF-8 enabled
+
+    cOneCharacterLine [0] = c;    // in case we need to use it as a string
+
+    switch (c)
+      {
+      case '\n':      // start a new line
+            m_iNoteStyle = NORMAL;  // new line cancels style flags
+            m_nTotalLinesReceived++;
+
+            if (m_bMXP && !(flags & NOTE_OR_COMMAND) && !m_bPuebloActive)
+              {
+              if (!MXP_Open ())
+                MXP_CloseOpenTags (); // close all open tags
+              MXP_mode_change (-1);  // switch to default mode
+              }   // end of MXP stuff
+            if (m_bInParagraph && !(flags & NOTE_OR_COMMAND))  // for <P>
+              {
+              if (m_cLastChar == c)
+                {  // two newlines in a row - start a real new line
+                // we'll do two because the original text had a blank line.
+                StartNewLine (true, flags);
+                m_pCurrentLine->flags = flags;    // remember flags for this line
+                StartNewLine (true, flags);   // and another
+                m_pCurrentLine->flags = flags;    // remember flags for this line
+                }  // end of \n\n
+              else
+                {
+                // work out where the last space is
+                const char * space = strnrchr(m_pCurrentLine->text, ' ', m_pCurrentLine->len);
+                int last_space = -1;
+                if (space)
+                  last_space = space - m_pCurrentLine->text;
+
+                // don't run words together - if a newline follows a word,
+                // insert a space
+                if (last_space != (m_pCurrentLine->len - 1))
+                  {
+                  if (m_cLastChar == '.' && m_pCurrentLine->len < m_nWrapColumn)
+                    AddToLine ("  ", flags);  // two spaces after period
+                  else
+                    AddToLine (" ", flags);  // convert newline to space
+                  }   // end of newline which does not follow a space
+                }  // end of not two newlines in a row
+              m_cLastChar = c;  // remember it was a newline
+              }  // end of <p> mode 
+            else
+              if (!(m_bSuppressNewline && m_bMXP) ||    //   -  unless told not to
+                  (!m_bSuppressNewline && m_bPreMode) || // <PRE> mode honours newlines
+                  (flags & NOTE_OR_COMMAND)           // input/note mode honours newlines
+                  )
+                {
+                StartNewLine (true, flags);
+                SetNewLineColour (flags);
+                }
+            break;  // end of newline
+
+      case '\r':      // return - ignore, or clear line content
+
+            if (m_bCarriageReturnClearsLine && !(flags & NOTE_OR_COMMAND) && p [1] != '\n')
+              {
+
+              // delete existing styles list
+
+              for (POSITION pos = m_pCurrentLine->styleList.GetHeadPosition(); pos; )
+                  DELETESTYLE (m_pCurrentLine->styleList.GetNext (pos));
+
+              m_pCurrentLine->styleList.RemoveAll();
+
+              // add back one default style
+
+              CStyle * pStyle; 
+
+              // have at least one style item in the list
+              m_pCurrentLine->styleList.AddTail (pStyle = NEWSTYLE);
+
+              pStyle->iFlags = 0;
+              pStyle->iForeColour = WHITE;
+              pStyle->iBackColour = BLACK;
+
+              m_pCurrentLine->hard_return = false;
+              m_pCurrentLine->len = 0;
+
+              }   // end of letting a \r delete line contents
+
+            break;
+            
+      case '\a':      // beep
+            if (m_enable_beeps)
+               {
+               if (m_strBeepSound.IsEmpty ())
+                 ::MessageBeep (MB_ICONEXCLAMATION);
+               else
+                 PlaySoundFile (m_strBeepSound);
+               }
+            break;    // end of beep
+
+      case ' ':     // space
+            if (m_bInParagraph && !(flags & NOTE_OR_COMMAND))  // for <P>
+              {
+              // work out where the last space is
+              const char * space = strnrchr(m_pCurrentLine->text, ' ', m_pCurrentLine->len);
+              int last_space = -1;
+              if (space)
+                last_space = space - m_pCurrentLine->text;
+
+              // multiple consecutive spaces - discard extras
+              if (last_space == (m_pCurrentLine->len - 1))
+                {
+                if (m_cLastChar != '\n')
+                    m_cLastChar = c;  // remember it
+                break;
+                }
+
+              // if you have period-space, make it period-space-space
+              if ((m_cLastChar == '.' || m_cLastChar == '!' || m_cLastChar == '?')
+                  && m_pCurrentLine->len < m_nWrapColumn)
+                {
+                AddToLine ("  ", flags);
+                m_cLastChar = c;  // remember it
+                break;
+                }
+
+              }   // end of <p> mode            
+
+            AddToLine (" ", flags);
+
+            // a newline followed by only a space still counts as a newline
+            if (m_cLastChar != '\n' && !(flags & NOTE_OR_COMMAND))
+              m_cLastChar = c;  // remember it
+            break;  // end of space
+
+      case '\t':  i = ((m_pCurrentLine->len + 8) & 0xFFF8);
+                  if (m_pCurrentLine->len >= m_nWrapColumn)
+                    StartNewLine (false, flags);
+                  else
+                    {
+                    spaces = i - m_pCurrentLine->len;  // no. of spaces
+                    for (i = 0; i < spaces; i++)
+                        AddToLine (" ", flags);
+
+                    }   // end of being inside wrap column
+                  break;    // end of tab
+
+      case ESC:   if (!(flags & NOTE_OR_COMMAND))
+                    m_phase = HAVE_ESC;   // start of ANSI escape sequence
+                  break;
+
+      case IAC:   // Interpret As Command (however IAC IAC is just IAC)
+                
+                  if (!(flags & NOTE_OR_COMMAND)) 
+                    {
+                    if (m_phase == HAVE_IAC)
+                      {
+                      AddToLine (cOneCharacterLine, flags);
+                      m_cLastChar = c;  // remember it
+                      m_phase = NONE;
+                      }
+                    else
+                      m_phase = HAVE_IAC;   // start of telnet protocol
+                    break;    
+                    }
+                  // note NO break here, if not input from MUD we FALL THROUGH
+
+      case '<':   if (!(flags & NOTE_OR_COMMAND) && 
+                      m_bMXP && 
+                      (MXP_Open () || MXP_Secure ())
+                     )
+                  {
+                  m_strMXPstring.Empty ();    // no string yet
+                  m_phase = HAVE_MXP_ELEMENT;
+//                  TRACE ("\nStarting MXP element collection.\n");
+                  break;
+                  } // end of starting an MXP element
+                  // note NO break here, if not in MXP mode we FALL THROUGH
+
+      case '&':   if (!(flags & NOTE_OR_COMMAND) && 
+                      m_bMXP && 
+                      (MXP_Open () || MXP_Secure ())
+                     )
+                  {
+                  m_strMXPstring.Empty ();    // no string yet
+                  m_phase = HAVE_MXP_ENTITY;
+//                  TRACE ("\nStarting MXP entity collection.\n");
+                  break;
+                  } // end of starting an MXP entity
+                  // note NO break here, if not in MXP mode we FALL THROUGH
+
+      default:
+                  AddToLine (cOneCharacterLine, flags);
+                  if (!(flags & NOTE_OR_COMMAND))
+                    m_cLastChar = c;  // remember it
+                  break;
+      } // end of switch    
+
+  } // end of processing input
+      
+
+  // to avoid flicker, only update the line if:
+  //   a) It is MUD output (eg. a prompt line); or
+  //   b) The line has changed
+
+  if (!(flags & NOTE_OR_COMMAND) || pOriginalLine != m_pCurrentLine)
+
+    // don't update views if no change to current line (some nulls maybe?)
+    if (pOriginalLine != m_pCurrentLine ||
+        strOriginalText != CString (m_pCurrentLine->text, m_pCurrentLine->len))
+      {
+      // get the view to refresh
+
+      for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
+	      {
+	      CView* pView = GetNextView(pos);
+	      
+	      if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
+  	      {
+		      CMUSHView* pmyView = (CMUSHView*)pView;
+
+		      pmyView->addedstuff();
+	        }	
+        }
+
+      // new - for people on the forum who insist on getting lines without a \n at
+      // the end - tell plugins about this line
+
+      SendLineToPlugin ();
+
+      }   // end of this line changing
+
+}
+
+
+void CMUSHclientDoc::StartNewLine (const bool hard_break, const int flags)
+  {
+POSITION pos;
+
+  // we may not have a current line
+  if (m_pCurrentLine)
+    {
+    // the time for the line is the time it finished arriving
+    m_pCurrentLine->m_theTime = CTime::GetCurrentTime();
+    QueryPerformanceCounter (&(m_pCurrentLine->m_lineHighPerformanceTime));
+
+    // new - for people on the forum who insist on getting lines without a \n at
+    // the end - tell plugins about this line
+
+    if (!(flags & NOTE_OR_COMMAND))
+      SendLineToPlugin ();
+
+  //  TRACE1 ("Received line: %s\n", (LPCTSTR) CString (m_pCurrentLine->text, m_pCurrentLine->len));
+
+    if (hard_break)
+      {
+      CLine * pSavedLine = m_pCurrentLine;
+      LARGE_INTEGER saved_time = m_pCurrentLine->m_lineHighPerformanceTime;
+      if (ProcessPreviousLine () &&
+          m_pCurrentLine->len == 0)
+        return;   // return if omit from output (no need to add another line)
+
+      // if the line has changed then the trigger or script added a new one,
+      // so we don't need to add a second.
+      // Version 3.33 - provided the new line is empty :)
+      // (see forum subject 2320 - a script might have done a world.colourtell
+      // which would leave a line which was not terminated).
+
+      // added in version 4.41, also check timestamp, due to problem with lines being deleted
+      // by DeleteLines in a trigger script.
+      if ((pSavedLine != m_pCurrentLine || 
+          saved_time.QuadPart != m_pCurrentLine->m_lineHighPerformanceTime.QuadPart) &&
+          m_pCurrentLine->len == 0)
+        return;
+
+      }
+    }
+
+
+  // if our buffer is full, remove the JUMP_SIZE items
+
+  if (m_LineList.GetCount () >= m_maxlines)
+    {
+
+    RemoveChunk ();   // get rid of JUMP_SIZE lines
+
+  // notify view to update their selection ranges
+
+  	for(pos = GetFirstViewPosition(); pos != NULL; )
+    	{
+  		CView* pView = GetNextView(pos);
+		
+  		if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
+  	  	{
+  			CMUSHView* pmyView = (CMUSHView*)pView;
+
+  			pmyView->did_jump ();
+  		  }	  // end of being an output view
+  	  }   // end of doing each view
+  
+    }     // end of buffer full
+
+// try, oh try, to allocate a new line
+
+  try
+    {
+
+  // we may not have a current line
+    if (m_pCurrentLine)
+      {
+
+  // We are about to move onto a new line. For space reasons, reallocate them
+  // memory used by the pointers. However to keep from getting a null pointer,
+  // keep at least a single character
+
+    // save current line text
+     CString strLine = CString (m_pCurrentLine->text, m_pCurrentLine->len);
+
+     m_pCurrentLine->iMemoryAllocated = MAX (m_pCurrentLine->len, 1);
+
+#ifdef USE_REALLOC
+      m_pCurrentLine->text  = (char *) realloc (m_pCurrentLine->text, 
+                                               m_pCurrentLine->iMemoryAllocated);
+
+#else
+
+    delete [] m_pCurrentLine->text;
+    m_pCurrentLine->text = new char [m_pCurrentLine->iMemoryAllocated];
+
+
+#endif
+      
+    ASSERT (m_pCurrentLine->text);
+
+    // put text back
+    memcpy (m_pCurrentLine->text, (LPCTSTR) strLine, m_pCurrentLine->len);
+
+      // if we have more than one style, and the last one is empty, get rid of it
+      // unless it is a start tag marker
+      /*
+
+  // Commented out because of bug #418 - a style change at the very end
+  // of the line was being discarded.    Changed in version 3.18.
+
+      if (m_pCurrentLine->styleList.GetCount () > 1)
+        {
+        // find current style
+        CStyle * pStyle = m_pCurrentLine->styleList.GetTail ();
+
+        if (pStyle->iLength == 0 && (pStyle->iFlags & START_TAG) == 0)
+          {
+          DELETESTYLE (pStyle);
+          m_pCurrentLine->styleList.RemoveTail ();
+          }
+        }   // end of having more than one style
+        */
+
+      } // end of having a current line
+
+// start a new line
+
+    int      iFlags = m_iFlags;             
+    COLORREF iForeColour = m_iForeColour;  
+    COLORREF iBackColour = m_iBackColour;  
+
+    if ((flags & USER_INPUT) && m_echo_colour != SAMECOLOUR)
+      { // user input and (same colour not wanted)
+      iFlags = COLOUR_CUSTOM;  
+      iForeColour = m_echo_colour;
+      iBackColour = BLACK;
+      } // end of user input 
+    else
+      if (flags & COMMENT) 
+        {
+        if (m_iNoteTextColour == SAMECOLOUR)
+          {
+          if (m_bCustom16isDefaultColour)
+            {
+            iFlags = COLOUR_CUSTOM;  
+            iForeColour = 15;
+            iBackColour = 0;
+            }
+          else
+            {
+            iFlags = COLOUR_ANSI;  
+            iForeColour = WHITE;
+            iBackColour = BLACK;
+            }
+          } // end of "same colour"
+        else
+          {
+          iFlags = COLOUR_CUSTOM;  
+          iForeColour = m_iNoteTextColour;
+          iBackColour = BLACK;
+          }
+        } // end of note 
+
+    m_pCurrentLine = new CLine (++m_total_lines, 
+                                m_nWrapColumn,
+                                iFlags,       // style flags
+                                iForeColour,  
+                                iBackColour,
+                                m_bUTF_8);
+
+    m_pCurrentLine->flags = flags;
+    pos = m_LineList.AddTail (m_pCurrentLine);
+
+// add every "JUMP_SIZE" line positions to the positions array
+
+// we match the modulus on 1, not zero, because by this time the line has already been
+// added to the line count, so the line count is 1-relative, not 0-relative, however
+// we want to place the line in the line positions array zero relative.
+
+    if (m_LineList.GetCount () % JUMP_SIZE == 1)
+      m_pLinePositions [m_LineList.GetCount () / JUMP_SIZE] = pos;
+
+    }   // end of try block
+
+// here for memory exception - free up some memory, warn the user and close the world
+
+  catch (CMemoryException * e)
+    {
+
+    RemoveChunk ();   // get rid of JUMP_SIZE lines
+    OnConnectionDisconnect ();    // close the world
+    TMessageBox ("Ran out of memory. The world has been closed.");
+
+    e->Delete ();
+
+    } // end of catch block
+
+      
+// if this document does not have an active view, note we have a new message for it
+
+  if (m_pActiveCommandView == NULL && m_pActiveOutputView == NULL)
+    {
+    if (0 == m_new_lines)
+      {
+
+// play the new activity sound if requested
+
+      if (!m_new_activity_sound.IsEmpty () && m_new_activity_sound != NOSOUNDLIT)
+        PlaySoundFile (m_new_activity_sound);
+
+      }   // end of being first new stuff
+
+    m_new_lines++;    // count unseen lines
+
+    }   // end of not having an active view
+
+// amend activity dialog if we have one (regardless, because we want to count total lines)
+
+  App.m_bUpdateActivity = TRUE;
+
+  }   // end of CMUSHclientDoc::StartNewLine
+
+
+// adds a new style to the current line
+CStyle * CMUSHclientDoc::AddStyle (const unsigned short iFlags,
+                                      const COLORREF       iForeColour,
+                                      const COLORREF       iBackColour,
+                                      const int            iLength ,
+                                      CString              strAction,
+                                      CString              strHint,
+                                      CString              strVariable,
+                                      CLine *              pLine)
+  {
+  // defaults to current line
+  if (!pLine)
+    pLine = m_pCurrentLine;
+
+  // can't do it without a line
+  if (!pLine)
+     return NULL;
+
+  if (!pLine->styleList.IsEmpty ())
+    {
+    // find current style
+    CStyle * pOldStyle = pLine->styleList.GetTail ();
+
+    // We want the new style, but did the old one have a text run?
+    // if not, we don't really need that
+
+    if (pOldStyle->iLength == 0 && (pOldStyle->iFlags & START_TAG) == 0)
+      {
+      DELETESTYLE (pOldStyle);
+      pLine->styleList.RemoveTail ();
+      }   // end of redundant style
+    } // end of having at least one style
+
+// create new style item
+CStyle * pNewStyle = NEWSTYLE;
+
+// use new styles
+   pNewStyle->iFlags      = iFlags;
+   pNewStyle->iForeColour = iForeColour;
+   pNewStyle->iBackColour = iBackColour;
+   pNewStyle->iLength     = iLength;
+   pNewStyle->pAction = GetAction (strAction, strHint, strVariable);
+
+// add to line style list
+   pLine->styleList.AddTail (pNewStyle); 
+
+
+   return pNewStyle;
+
+  } // end of CMUSHclientDoc::AddStyle 
+
+
+// adds a new style to the current line
+CStyle * CMUSHclientDoc::AddStyle (const unsigned short iFlags,
+                                      const COLORREF       iForeColour,
+                                      const COLORREF       iBackColour,
+                                      const int            iLength ,
+                                      CAction *            pAction,
+                                      CLine *              pLine)
+  {
+  // defaults to current line
+  if (!pLine)
+    pLine = m_pCurrentLine;
+
+  // can't do it without a line
+  if (!pLine)
+     return NULL;
+
+  // we are using this action once more
+  if (pAction)
+    pAction->AddRef ();
+
+  if (!pLine->styleList.IsEmpty ())
+    {
+    // find current style
+    CStyle * pOldStyle = pLine->styleList.GetTail ();
+
+    // We want the new style, but did the old one have a text run?
+    // if not, we don't really need that
+
+    if (pOldStyle->iLength == 0 && (pOldStyle->iFlags & START_TAG) == 0)
+      {
+      DELETESTYLE (pOldStyle);
+      pLine->styleList.RemoveTail ();
+      }   // end of redundant style
+    } // end of having at least one style
+
+// create new style item
+CStyle * pNewStyle = NEWSTYLE;
+
+// use new styles
+   pNewStyle->iFlags      = iFlags;
+   pNewStyle->iForeColour = iForeColour;
+   pNewStyle->iBackColour = iBackColour;
+   pNewStyle->iLength     = iLength;
+   pNewStyle->pAction = pAction;
+
+// add to line style list
+   pLine->styleList.AddTail (pNewStyle); 
+
+   return pNewStyle;
+
+  } // end of CMUSHclientDoc::AddStyle 
+
+
+ void CMUSHclientDoc::RemoveChunk (void)
+   {
+  int i;
+
+// remove JUMP_SIZE lines
+
+  for (i = 0; i < JUMP_SIZE; i++)
+    {
+    delete m_LineList.GetHead ();   // delete contents of head iten
+    m_LineList.RemoveHead ();
+    }
+
+#ifndef _WIN32
+  // Keep the GUI emission counter in sync with lines removed from the head.
+  m_gui_lines_emitted = std::max (0L, m_gui_lines_emitted - JUMP_SIZE);
+#endif
+
+// shuffle positions backwards
+
+  for (i = 0; i < (m_maxlines / JUMP_SIZE); i++)
+    m_pLinePositions [i] = m_pLinePositions [i + 1];
+
+  m_pLinePositions [i] = NULL;    // last one is now empty
+
+// our "last found" line needs adjusting
+
+  m_DisplayFindInfo.m_nCurrentLine -= JUMP_SIZE;
+
+  // has last found line has disappeared off the front of the buffer?
+  if (m_DisplayFindInfo.m_nCurrentLine < 0)
+    m_DisplayFindInfo.m_nCurrentLine = 0;
+
+   }  // end of CMUSHclientDoc::RemoveChunk
+
+
+void CMUSHclientDoc::SendLineToPlugin (void)
+  {
+
+  CString strPartialLine = CString (m_pCurrentLine->text, m_pCurrentLine->len);
+  SendToAllPluginCallbacks (ON_PLUGIN_PARTIAL_LINE, strPartialLine);
+
+  } // end of CMUSHclientDoc::SendLineToPlugin
 

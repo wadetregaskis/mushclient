@@ -120,6 +120,31 @@ TEST(LuaScripting, WorldVersion)
     lua_close(L);
 }
 
+// Display step 7 regression: the in-progress line is the m_LineList TAIL.
+// The old portable DeleteLines/DeleteOutput freed it, leaving m_pCurrentLine
+// dangling — the next Note dereferenced freed memory (SIGSEGV).
+TEST(LuaScripting, DeleteLinesThenOutputDoesNotUseAfterFree)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    run_ret(L, "world.Note('one') world.Note('two') world.Note('three')");
+    run_ret(L, "world.DeleteLines(2)");
+    run_ret(L, "world.Note('after delete')");     // crashed pre-fix
+    EXPECT_TRUE(doc.m_pCurrentLine != NULL);
+    EXPECT_GT((long)doc.m_LineList.GetCount(), 0L);
+    EXPECT_TRUE(doc.m_LineList.GetTail() == doc.m_pCurrentLine);
+
+    run_ret(L, "world.DeleteOutput()");
+    run_ret(L, "world.Note('after clear')");      // crashed pre-fix
+    EXPECT_TRUE(doc.m_pCurrentLine != NULL);
+    EXPECT_TRUE(doc.m_LineList.GetTail() == doc.m_pCurrentLine);
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
 // ── Variable get/set ─────────────────────────────────────────────────────
 
 TEST(LuaScripting, SetAndGetVariable)

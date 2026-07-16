@@ -159,8 +159,8 @@ static CMUSHclientDoc make_doc()
     doc.m_iFlags        = COLOUR_ANSI;
     doc.m_iForeColour   = WHITE;
     doc.m_iBackColour   = BLACK;
-    doc.m_pCurrentLine  = new CLine();
-    doc.AddStyle(COLOUR_ANSI, WHITE, BLACK, 0, static_cast<CAction*>(nullptr));
+    // display step 7: the ctor seeds the in-list first line + its style and
+    // the line-position index — no hand-rolled current line here any more
     return doc;
 }
 
@@ -183,6 +183,9 @@ static std::vector<SOutputLine> committed(const FakeWorldView& v)
 static void feed(CMUSHclientDoc& doc, const char* bytes)
 {
     doc.DisplayMsg(bytes, (int)strlen(bytes), 0);
+    // display step 7: the real engine builds m_LineList and a drain emits —
+    // feed-then-drain is the contract (the GUI drains after each packet).
+    doc.UpdateAllViews(nullptr);
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────
@@ -373,27 +376,20 @@ TEST(PalWorldView, CommandFamilyNullHostIsInert)
 }
 
 // The output-pane family drives the view through its typed-only helpers.
-// Note() routing changed at display step 6 (the REAL methods_noting.cpp runs
-// headless now): on a fresh doc m_pLinePositions is still NULL, so Tell DEFERS
-// the note into m_OutstandingLines — exactly the Windows before-the-output-
-// window-exists behaviour — and a completed MUD line flushes it, after which
-// the note text reaches the view as ordinary appendLine content (via the
-// pre-flip per-'\n' push).  IWorldView::note() no longer fires from Note().
+// Note() routes through the REAL Tell → DisplayMsg → m_LineList (display
+// steps 6+7).  The ctor seeds the in-list first line and the line-position
+// index, so notes are IMMEDIATE (no deferral), and they reach the view as
+// appendLine content when the drain runs.  IWorldView::note() never fires.
 TEST(PalWorldView, OutputFamilyDrivesTheView)
 {
     FakeWorldView view;
     CMUSHclientDoc doc = make_doc();
     doc.m_pWorldView = &view;
 
-    // 1) fresh doc: the note defers (Windows deferral semantics)
     doc.Note("a wild note appears");
     EXPECT_EQ(0u, (unsigned)view.notes.size());          // note() seam is dormant
-    ASSERT_EQ(1u, (unsigned)doc.m_OutstandingLines.size());
-
-    // 2) a completed MUD line flushes the deferred note into the output flow
-    const char* mud = "hello from the mud\n";
-    doc.DisplayMsg(mud, (int)strlen(mud), 0);
-    EXPECT_EQ(0u, (unsigned)doc.m_OutstandingLines.size());
+    EXPECT_EQ(0u, (unsigned)doc.m_OutstandingLines.size());  // no deferral post-flip
+    doc.UpdateAllViews(nullptr);                         // drain
     bool noteArrived = false;
     for (const auto& line : view.lines)
         for (const auto& run : line)
@@ -402,9 +398,11 @@ TEST(PalWorldView, OutputFamilyDrivesTheView)
     EXPECT_TRUE(noteArrived);
     EXPECT_EQ(0u, (unsigned)view.notes.size());          // still nothing via note()
 
+    // the drain above already opened/closed one batch while emitting
+    int b0 = view.batchBegins, e0 = view.batchEnds;
     doc.BeginOutputBatch();
     doc.EndOutputBatch();
-    EXPECT_TRUE(view.batchBegins == 1 && view.batchEnds == 1);
+    EXPECT_TRUE(view.batchBegins == b0 + 1 && view.batchEnds == e0 + 1);
 
     doc.DeleteOutputLines(7);
     EXPECT_TRUE(view.deletedLines == 7);

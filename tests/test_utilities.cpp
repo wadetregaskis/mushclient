@@ -139,6 +139,46 @@ TEST(Utilities, EditDistance_CapsAt20)
     EXPECT_EQ(20, EditDistance(a, b));
 }
 
+// ── m_pLinePositions regression ──────────────────────────────────────────────
+// The shared ProcessPreviousLine omit-from-output branch writes m_pLinePositions
+// slots unguarded whenever the line count passes a JUMP_SIZE boundary during
+// tail deletion.  mushcore historically never allocated the array — a latent
+// NULL-deref.  StartNewLine now lazily allocates it (mirroring the deferred
+// allocation in doc.cpp SetUpOutputWindow); this test crosses the boundary with
+// an omitted line to prove the branch is safe.
+
+TEST(Utilities, OmitFromOutputAcrossJumpBoundaryDoesNotCrash)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+
+    // an omit-from-output trigger
+    CTrigger* t = new CTrigger();
+    t->trigger         = CString("spamline");
+    t->strLabel        = CString("spamline");
+    t->bEnabled        = TRUE;
+    t->bRegexp         = false;
+    t->iSendTo         = eSendToOutput;
+    t->iSequence       = DEFAULT_TRIGGER_SEQUENCE;
+    t->bOmitFromOutput = TRUE;
+    doc.m_TriggerMap.SetAt(t->strLabel, t);
+    doc.m_TriggerArray.Add(t);
+
+    // Exactly 100 fillers put the omitted line at in-list position 101, so the
+    // omit branch's tail-deletion (and the fresh-line re-add) crosses the
+    // ≡1 (mod JUMP_SIZE=100) boundary, which writes an m_pLinePositions slot.
+    // Unallocated → SIGSEGV; allocated → harmless.
+    char buf[64];
+    for (int i = 0; i < 100; i++) {
+        snprintf(buf, sizeof buf, "filler line %d\n", i);
+        doc.DisplayMsg(buf, (int)strlen(buf), 0);
+    }
+    doc.DisplayMsg("spamline\n", 9, 0);
+
+    EXPECT_TRUE(doc.m_pLinePositions != NULL);   // lazily allocated
+    EXPECT_GT((long)doc.m_LineList.GetCount(), 0L);
+}
+
 // ── IsStringNumber ──────────────────────────────────────────────────────────
 
 TEST(Utilities, IsStringNumber_Unsigned)

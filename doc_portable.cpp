@@ -178,6 +178,10 @@ CMUSHclientDoc::~CMUSHclientDoc()
     delete m_ScriptEngine;
     m_ScriptEngine = nullptr;
 
+    // Free the line-positions index (lazily allocated in StartNewLine).
+    delete [] m_pLinePositions;
+    m_pLinePositions = nullptr;
+
     // Free the doc's own trigger/alias/timer/variable maps.
     DELETE_MAP(m_TriggerMap,  CTrigger);
     DELETE_MAP(m_AliasMap,    CAlias);
@@ -927,6 +931,18 @@ void CMUSHclientDoc::DisplayMsg(const char* lpszText, int size,
 void CMUSHclientDoc::StartNewLine(const bool hard_break, const int flags)
 {
     if (!m_pCurrentLine) return;
+
+    // Deferred m_pLinePositions allocation — mirrors doc.cpp SetUpOutputWindow
+    // (m_maxlines is read from the world file, so allocate on first use, before
+    // ProcessPreviousLine below can reach its omit-from-output branch, which
+    // writes m_pLinePositions slots unguarded — a latent NULL-deref headless).
+    if (!m_pLinePositions)
+    {
+        m_pLinePositions = new POSITION[(m_maxlines / JUMP_SIZE) + 1];
+        for (long i = 0; i <= m_maxlines / JUMP_SIZE; i++)
+            m_pLinePositions[i] = NULL;
+        m_pLinePositions[0] = m_LineList.GetHeadPosition();
+    }
 
     // Re-entrancy guard: ProcessPreviousLine() below fires triggers, and a trigger
     // that world.Send/<send>s echoes back through DisplayMsg → StartNewLine while

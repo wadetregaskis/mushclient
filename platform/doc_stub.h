@@ -545,6 +545,23 @@ enum {
 #  define SAMECOLOUR 65535
 #endif
 
+// ── Pueblo start-of-HTML marker (from doc.h) ──────────────────────────────
+#ifndef PUEBLO_START
+#  define PUEBLO_START "</xch_mudtext>"
+#endif
+
+// ── Command queue/echo flags (from doc.h) — used by SendMsg/DoSendMsg ─────
+#ifndef QUEUE_WITH_ECHO
+#  define QUEUE_WITH_ECHO               'E'
+#  define QUEUE_WITHOUT_ECHO            'N'
+#  define IMMEDIATE_WITH_ECHO           'I'
+#  define IMMEDIATE_WITHOUT_ECHO        'W'
+#  define QUEUE_WITH_ECHO_NOLOG         'e'
+#  define QUEUE_WITHOUT_ECHO_NOLOG      'n'
+#  define IMMEDIATE_WITH_ECHO_NOLOG     'i'
+#  define IMMEDIATE_WITHOUT_ECHO_NOLOG  'w'
+#endif
+
 // ── Line-scrolling jump size (from doc.h) ─────────────────────────────────
 #ifndef JUMP_SIZE
 #  define JUMP_SIZE 100
@@ -836,6 +853,10 @@ public:
     void Invalidate() {}
     RECT GetTextRectangle() const { RECT r = {0,0,0,0}; return r; }
     CPoint GetScrollPosition() const { return CPoint(0, 0); }
+    // no-ops for the real display bodies' view-notify loops (dead headless:
+    // GetFirstViewPosition returns nullptr so these are never reached)
+    void addedstuff() {}
+    void did_jump() {}
 };
 
 class CSendView : public CView {
@@ -1204,6 +1225,8 @@ void Generate256colours(void);   // fills xterm_256_colours[] (defined in doc_po
 // no default arg (stdafx.h owns the `= false` default; declaring one here too
 // would be a redefinition in TUs that see both headers)
 BOOL CheckLabel(const CString& strLabel, bool bScript);
+CString FixUpGerman(const CString strMessage);   // umlaut → ue/ae/oe transliteration
+const char* strnrchr(const char* s, const char c, size_t count);   // last c within count
 
 // ── Mersenne Twister RNG (scripting/mt19937ar.c) ──────────────────────
 extern "C" {
@@ -1634,6 +1657,20 @@ public:
     unsigned short m_iNoteTextColour = SAMECOLOUR;  // custom-palette index (unused while m_bNotesInRGB)
     bool           m_bNotesNotWantedNow = false;    // defer notes (telnet-negotiation callbacks)
 
+    // ── Display-family surface (doc.h names/types; inert until the real
+    //    display bodies are single-sourced — campaign-b display step 2) ────
+    // Defaults chosen to preserve current headless behaviour when the real
+    // bodies land: wrap/indent off, commands on their own line.  The flip
+    // step must wire these to the loaded world options (like m_nWrapColumn).
+    unsigned short m_bKeepCommandsOnSameLine = 0;   // commands share the prompt line
+    unsigned short m_wrap = 0;                      // wrap long lines at m_nWrapColumn
+    unsigned short m_indent_paras = 0;              // indent wrapped continuation lines
+    unsigned short m_bDoNotTranslateIACtoIACIAC = 0; // don't double outgoing IAC
+    long           m_gui_lines_emitted = 0;         // drain cursor (mushapp UpdateAllViews walk)
+    CTime          m_tStatusDisplayed;              // when the status line was last shown
+    // (m_DisplayFindInfo deferred to the flip commit — CFindInfo lives in
+    //  stdafx.h, which this standalone header does not include)
+
     // ── Scripting callbacks (all DISPID_UNKNOWN → never fires) ────────
     DISPID m_dispidOnMXP_Start      = DISPID_UNKNOWN;
     DISPID m_dispidOnMXP_Stop       = DISPID_UNKNOWN;
@@ -2027,6 +2064,17 @@ public:
 
     // ── SendMsg / SendTo — real implementations in doc_portable.cpp ──────
     void SendMsg(CString strText, bool bEchoIt, bool bQueueIt, bool bLogIt);
+
+    // ── Display-family decls (doc.h signatures; definitions arrive when the
+    //    real bodies are single-sourced — campaign-b display steps 5-7) ─────
+    void Tell(LPCTSTR Message);
+    void NoteColourName(LPCTSTR Foreground, LPCTSTR Background);
+    void DoSendMsg(const CString& strText, const bool bEchoIt, const bool bLogIt);
+    void StartNewLine_KeepPreviousStyle(const int flags);
+    void SendLineToPlugin(void);
+    void RemoveChunk(void);
+    void ShowQueuedCommands(void);
+    void AddToMap(CString /*str*/) {}   // auto-mapper accumulation: no-op headless
     void SendTo(unsigned short iWhere, CString strSendText,
                 bool bOmitFromOutput, bool bOmitFromLog,
                 CString strDescription, CString strVariable,

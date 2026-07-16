@@ -561,3 +561,40 @@ BOOL CheckLabel(const CString& strLabel, const bool bScript)
 
     return FALSE;   // ok
 }
+
+// ── strnrchr ─────────────────────────────────────────────────────────────────
+// Find the last occurrence of c in the string s, maximum length count.
+// (Relocated verbatim from Utilities.cpp — needed by the display family in
+// every build.)  Declared in stdafx.h / platform/doc_stub.h.
+const char *strnrchr(const char *s, const char c, size_t count)
+{
+  const char * ret = NULL;
+  size_t n = 0;
+  while (*s && n < count++)
+    {
+    if( *s == c )
+        ret = s;  // remember where character is, keep searching
+    s++;
+    }
+  return ret;
+} // end of strnrchr
+
+// ── FixUpGerman ──────────────────────────────────────────────────────────────
+// Replace German umlaut sequences if required — see bug request 240.
+// (Relocated verbatim from Utilities.cpp — needed by DoSendMsg in every build.)
+// Declared in stdafx.h / platform/doc_stub.h.
+CString FixUpGerman (const CString strMessage)
+  {
+  CString strResult = strMessage;
+
+  strResult.Replace ("\xFC", "ue");    // u with 2 dots
+  strResult.Replace ("\xDC", "Ue");    // U with 2 dots
+  strResult.Replace ("\xE4", "ae");    // a with 2 dots
+  strResult.Replace ("\xC4", "Ae");    // A with 2 dots
+  strResult.Replace ("\xF6", "oe");    // o with 2 dots
+  strResult.Replace ("\xD6", "Oe");    // O with 2 dots
+  strResult.Replace ("\xDF", "ss");    // B
+
+  return strResult;
+
+  } // end of FixUpGerman

@@ -1321,6 +1321,8 @@ const string ON_PLUGIN_ENABLE          = "OnPluginEnable";
 const string ON_PLUGIN_DISABLE         = "OnPluginDisable";
 const string ON_PLUGIN_LIST_CHANGED    = "OnPluginListChanged";
 const string ON_PLUGIN_TABCOMPLETE     = "OnPluginTabComplete";
+const string ON_PLUGIN_PARTIAL_LINE    = "OnPluginPartialLine";
+const string ON_PLUGIN_PACKET_RECEIVED = "OnPluginPacketReceived";
 
 // AlphaOptionsTable[] is defined in scriptingoptions_portable.cpp (real table).
 

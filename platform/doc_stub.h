@@ -2075,6 +2075,28 @@ public:
     void SetUpVariantLong   (VARIANT& tVariant, const long iContents);
     void SetUpVariantDate   (VARIANT& tVariant, const COleDateTime iContents);
     void SetUpVariantDouble (VARIANT& tVariant, const double dContents);
+    // world.Database* (scripting/methods/methods_database.cpp — doc.h sigs)
+    long DatabaseOpen(LPCTSTR Name, LPCTSTR Filename, long Flags);
+    long DatabaseClose(LPCTSTR Name);
+    long DatabasePrepare(LPCTSTR Name, LPCTSTR Sql);
+    long DatabaseFinalize(LPCTSTR Name);
+    long DatabaseColumns(LPCTSTR Name);
+    long DatabaseStep(LPCTSTR Name);
+    BSTR DatabaseError(LPCTSTR Name);
+    BSTR DatabaseColumnName(LPCTSTR Name, long Column);
+    long DatabaseColumnType(LPCTSTR Name, long Column);
+    BSTR DatabaseColumnText(LPCTSTR Name, long Column);
+    VARIANT DatabaseColumnValue(LPCTSTR Name, long Column);
+    long DatabaseTotalChanges(LPCTSTR Name);
+    long DatabaseChanges(LPCTSTR Name);
+    BSTR DatabaseLastInsertRowid(LPCTSTR Name);
+    VARIANT DatabaseList();
+    VARIANT DatabaseInfo(LPCTSTR Name, long InfoType);
+    long DatabaseExec(LPCTSTR Name, LPCTSTR Sql);
+    VARIANT DatabaseColumnNames(LPCTSTR Name);
+    VARIANT DatabaseColumnValues(LPCTSTR Name);
+    long DatabaseReset(LPCTSTR Name);
+    VARIANT DatabaseGetField(LPCTSTR Name, LPCTSTR Sql);
     long SetVariable(LPCTSTR VariableName, LPCTSTR Contents);
     VARIANT GetVariable(LPCTSTR VariableName);
     VARIANT GetVariableList();

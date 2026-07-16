@@ -422,6 +422,7 @@ if(NOT WIN32)
         scripting/methods/methods_noting.cpp   # the REAL note family (display step 6)
         scripting/methods/methods_tracing.cpp  # the REAL trace family (Campaign C)
         scripting/methods/methods_variables.cpp # the REAL variable family (Campaign C)
+        scripting/methods/methods_database.cpp  # the REAL world.Database* family (Campaign C)
         doc_display_shared.cpp   # the push-side UpdateAllViews drain (display step 7)
         doc_portable.cpp
 

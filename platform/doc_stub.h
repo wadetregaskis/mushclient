@@ -2075,6 +2075,10 @@ public:
     void SetUpVariantLong   (VARIANT& tVariant, const long iContents);
     void SetUpVariantDate   (VARIANT& tVariant, const COleDateTime iContents);
     void SetUpVariantDouble (VARIANT& tVariant, const double dContents);
+    long SetVariable(LPCTSTR VariableName, LPCTSTR Contents);
+    VARIANT GetVariable(LPCTSTR VariableName);
+    VARIANT GetVariableList();
+    long DeleteVariable(LPCTSTR VariableName);
     void TraceOut(LPCTSTR Message);
     BOOL GetTrace();
     void SetTrace(BOOL bNewValue);

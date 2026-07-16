@@ -335,6 +335,36 @@ void CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName)
     m_CurrentPlugin = pSaved;
 }
 
+// First-plugin dispatch — the FIRST enabled plugin that implements the
+// callback receives it and the call returns true (used by Trace: a tracing
+// plugin can swallow trace lines).  Mirrors plugins.cpp
+// SendToFirstPluginCallbacks with the Lua-dispatch idiom of the overloads here.
+bool CMUSHclientDoc::SendToFirstPluginCallbacks(const string& callbackName,
+                                                 const char* sText)
+{
+    CPlugin* pSaved = m_CurrentPlugin;
+    for (CPlugin* p : m_PluginList) {
+        if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
+        CString strName(callbackName.c_str());
+        DISPID dispid = p->m_ScriptEngine->GetLuaDispid(strName);
+        if (dispid == DISPID_UNKNOWN) continue;
+        list<double> nparams;
+        list<string> sparams;
+        sparams.push_back(string(sText ? sText : ""));
+        long nInvocations = 0;
+        m_CurrentPlugin = p;
+        p->m_ScriptEngine->ExecuteLua(dispid, strName,
+                                       eInputFromServer,
+                                       "plugin", callbackName.c_str(),
+                                       nparams, sparams,
+                                       nInvocations);
+        m_CurrentPlugin = pSaved;
+        return true;   // first plugin that implements it wins
+    }
+    m_CurrentPlugin = pSaved;
+    return false;
+}
+
 // Overload 2 — fire callback with one integer and one string param;
 // returns bDefaultReturn unless a plugin returns a different bool.
 bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
@@ -665,6 +695,7 @@ const string ON_PLUGIN_LIST_CHANGED    = "OnPluginListChanged";
 const string ON_PLUGIN_TABCOMPLETE     = "OnPluginTabComplete";
 const string ON_PLUGIN_PARTIAL_LINE    = "OnPluginPartialLine";
 const string ON_PLUGIN_PACKET_RECEIVED = "OnPluginPacketReceived";
+const string ON_PLUGIN_TRACE           = "OnPluginTrace";
 
 // AlphaOptionsTable[] is defined in scriptingoptions_portable.cpp (real table).
 
@@ -734,20 +765,8 @@ void MakeRandomNumber(CMUSHclientDoc* pDoc, SHS_INFO& shsInfo)
     shsFinal(&shsInfo);
 }
 
-// ── CMUSHclientDoc::Trace — debug trace with printf format ───────────────
-void CMUSHclientDoc::Trace(const char* fmt, ...)
-{
-    if (!g_debug) return;
-    if (g_before_output) g_before_output();
-    fprintf(stderr, "\033[2m[trace] ");
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
-    fprintf(stderr, "\033[0m\n");
-    fflush(stderr);
-    if (g_after_output) g_after_output();
-}
+// Trace/TraceOut/Get,SetTrace: the REAL scripting/methods/methods_tracing.cpp
+// is compiled into mushcore now (Campaign C file #2 after methods_noting).
 
 // ── CMUSHclientDoc::WriteToLog ────────────────────────────────────────────
 // Writes raw bytes to the open log file.  On write error the file is closed

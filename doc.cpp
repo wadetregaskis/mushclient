@@ -4342,25 +4342,7 @@ void CMUSHclientDoc::OnRemoveMapReversesChanged()
 }  // end of CMUSHclientDoc::OnRemoveMapReversesChanged
 
 
-void CMUSHclientDoc::OnGameTrace() 
-{
-
-  if (m_bTrace)
-    {
-    Trace ("Trace off");
-    m_bTrace = false;
-    }
-  else
-    {
-    // if half-filled line, flush it out
-    if (m_pCurrentLine && m_pCurrentLine->len > 0)
-       StartNewLine (true, m_pCurrentLine->flags);
-    m_bTrace = true;
-    Trace ("Trace on");
-    }
-
-	
-}
+// OnGameTrace: single-sourced in doc_shared.cpp.
 
 void CMUSHclientDoc::OnUpdateGameTrace(CCmdUI* pCmdUI) 
 {	

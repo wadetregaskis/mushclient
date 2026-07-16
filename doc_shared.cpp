@@ -4055,3 +4055,28 @@ bool CMUSHclientDoc::InitZlib(z_stream& zs)
     return (inflateInit(&zs) == Z_OK);
 }
 #endif // !_WIN32
+
+
+// ═══ OnGameTrace (with the methods_tracing.cpp adoption) ═════════════════════
+// Pure engine logic (m_bTrace toggle + Trace notes); relocated verbatim from
+// doc.cpp so SetTrace resolves in mushcore too.
+
+void CMUSHclientDoc::OnGameTrace() 
+{
+
+  if (m_bTrace)
+    {
+    Trace ("Trace off");
+    m_bTrace = false;
+    }
+  else
+    {
+    // if half-filled line, flush it out
+    if (m_pCurrentLine && m_pCurrentLine->len > 0)
+       StartNewLine (true, m_pCurrentLine->flags);
+    m_bTrace = true;
+    Trace ("Trace on");
+    }
+
+	
+}

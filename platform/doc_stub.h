@@ -673,6 +673,7 @@ extern const string ON_PLUGIN_LINE_RECEIVED;
 extern const string ON_PLUGIN_SEND;
 extern const string ON_PLUGIN_PARTIAL_LINE;
 extern const string ON_PLUGIN_PACKET_RECEIVED;
+extern const string ON_PLUGIN_TRACE;
 extern const string ON_PLUGIN_SENT;
 extern const string ON_PLUGIN_COMMAND_ENTERED;
 extern const string ON_PLUGIN_COMMAND_CHANGED;
@@ -2066,6 +2067,11 @@ public:
     // ── Display-family decls (doc.h signatures; definitions arrive when the
     //    real bodies are single-sourced — campaign-b display steps 5-7) ─────
     void Tell(LPCTSTR Message);
+    void TraceOut(LPCTSTR Message);
+    BOOL GetTrace();
+    void SetTrace(BOOL bNewValue);
+    void OnGameTrace();
+    bool SendToFirstPluginCallbacks(const std::string& sName, const char* sText);
     void NoteColourName(LPCTSTR Foreground, LPCTSTR Background);
     // the rest of the methods_noting.cpp surface (doc.h signatures, afx_msg dropped)
     short GetNoteColour();

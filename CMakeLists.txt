@@ -636,6 +636,11 @@ if(NOT WIN32)
         # port-only FireWorld* callbacks — single-sourced with mushcore (was a
         # duplicate of the doc_portable.cpp copy)
         doc_scripting_shared.cpp
+        # the push-side display drain (UpdateAllViews walk).  mushapp-ONLY until
+        # the display-family flip: mushcore still pushes per-'\n' inside its twin
+        # DisplayMsg + has a no-op UpdateAllViews in doc_portable.cpp — compiling
+        # this TU there before the flip would double-emit every line.
+        doc_display_shared.cpp
         # Port-only lightweight CTreePropertySheet (World Properties container):
         # records the canonical pages + tree structure, DoModal -> wxTreebook.
         # Replaces the heavy GDI TreePropertySheet.cpp (excluded below).

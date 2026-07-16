@@ -104,61 +104,6 @@ void FixFont (ptrCFont & pFont,
   }   // end of FixFont
 
 
-CString FixupEscapeSequences (const CString & strSource)
-{
-CString strDest = strSource;
-char * p = strDest.GetBuffer (strSource.GetLength () + 1);
-char * pNew = p;
-char c;
-int i;
-
-  for ( ; *p; p++)
-    {
-    c = *p;
-
-    // look for escape sequences ...
-    if (c == '\\')
-      {
-      c = *(++p);
-      switch (c)
-        {
-        case 'a'  : c = '\a'; break; // alert
-        case 'b'  : c = '\b'; break; // backspace
-        case 'f'  : c = '\f'; break; // formfeed
-        case 'n'  : c = '\n'; break; // newline
-        case 'r'  : c = '\r'; break; // carriage return
-        case 't'  : c = '\t'; break; // horizontal tab
-        case 'v'  : c = '\v'; break; // vertical tab
-        case '\'' : c = '\''; break; // single quote
-        case '\"' : c = '\"'; break; // double quote
-        case '\\' : c = '\\'; break; // backslash
-        case '?'  : c = '\?'; break; // question mark
-        case 'x'  : c = 0;  // hex sequence
-                  p++;
-
-                  for (i = 0; *p && isxdigit (*p) && i < 2 ; p++, i++)
-                    {
-                    int  iNewDigit = toupper (*p);
-                    if (iNewDigit >= 'A')
-                      iNewDigit -= 7;
-                    c = (c << 4) + iNewDigit - '0';
-                    } // end of building up hex literal
-                  p--;  // backtrack over trailing non-hex character
-                  break; // end of hex sequence
-
-        } // end of switch
-      } // end of escape sequence
-    *pNew++ = c;
-    }
-
-  *pNew++ = 0;   // null terminator
-
-  // we have finished with it - release it
-  strDest.ReleaseBuffer (-1);
-
-  return strDest;
-
-} // end of FixupEscapeSequences
 
 
 
@@ -320,24 +265,6 @@ CString ConvertSetTypeToString (const int set_type)
   return strType;
   }
 
-unsigned long MakeActionHash (const CString & strAction,
-                              const CString & strHint,
-                              const CString & strVariable)
-  {
-  SHS_INFO shsInfo;
-  // produce the hash for quick lookups of actions
-  CString strHash = strAction;
-
-  strHash += strHint;
-  strHash += strVariable;
-
-  shsInit   (&shsInfo);
-  shsUpdate (&shsInfo, (unsigned char *) (const char *) strHash,
-              strHash.GetLength ());
-  shsFinal  (&shsInfo);
-  return shsInfo.digest [0];
-
-  } // end of MakeActionHash
 
 
 // returns TRUE if the clipboard contains a colour in the format:

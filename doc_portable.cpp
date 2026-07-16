@@ -285,19 +285,6 @@ CStyle* CMUSHclientDoc::AddStyle(const unsigned short iFlags,
 
 // CheckLabel: first char must be alpha; remaining chars alpha/digit/underscore.
 // Returns TRUE if the label is INVALID (matching doc.cpp convention).
-static BOOL CheckLabel(const CString& strLabel)
-{
-    if (strLabel.IsEmpty())
-        return TRUE;  // empty = invalid
-    if (!isalpha((unsigned char)strLabel[0]))
-        return TRUE;
-    for (int i = 1; i < strLabel.GetLength(); i++) {
-        char c = strLabel[i];
-        if (!isalpha((unsigned char)c) && !isdigit((unsigned char)c) && c != '_')
-            return TRUE;
-    }
-    return FALSE;  // valid
-}
 
 long CheckObjectName(CString& strName, const bool bConform)
 {
@@ -305,7 +292,7 @@ long CheckObjectName(CString& strName, const bool bConform)
     strName.TrimRight();
 
     if (bConform)
-        if (CheckLabel(strName))
+        if (CheckLabel(strName, false))
             return eInvalidObjectLabel;
 
     strName.MakeLower();
@@ -332,19 +319,6 @@ const string ON_PLUGIN_WORLD_SAVE            = "OnPluginWorldSave";
 const string ON_PLUGIN_CLOSE                 = "OnPluginClose";
 const string ON_PLUGIN_INSTALL               = "OnPluginInstall";
 
-// ── MakeActionHash ────────────────────────────────────────────────────────
-// Simple FNV-1a-like hash of the three action strings.
-unsigned long MakeActionHash(const CString& a, const CString& b, const CString& c)
-{
-    unsigned long h = 2166136261UL;
-    auto mix = [&](const char* p) {
-        for (; *p; p++) { h ^= (unsigned char)*p; h *= 16777619UL; }
-    };
-    mix((const char*)a);
-    mix((const char*)b);
-    mix((const char*)c);
-    return h;
-}
 
 // ── FindBaseOption stub ───────────────────────────────────────────────────
 // OptionsTable[] is empty (sentinel at index 0), so always returns -1.
@@ -1454,46 +1428,6 @@ void ThrowErrorException(const char* fmt, ...)
 }
 
 
-// ── FixupEscapeSequences — convert C-style escape sequences ──────────────
-// Mirrors Utilities.cpp::FixupEscapeSequences.
-// Converts \n \t \r \a \b \f \v \' \" \\ \? \x## in the source string.
-CString FixupEscapeSequences(const CString& strSource)
-{
-    CString strDest;
-    const char* p = static_cast<const char*>(strSource);
-    for (; *p; ++p) {
-        if (*p != '\\') { strDest += *p; continue; }
-        char c = *++p;
-        if (!c) break;
-        switch (c) {
-        case 'a':  strDest += '\a'; break;
-        case 'b':  strDest += '\b'; break;
-        case 'f':  strDest += '\f'; break;
-        case 'n':  strDest += '\n'; break;
-        case 'r':  strDest += '\r'; break;
-        case 't':  strDest += '\t'; break;
-        case 'v':  strDest += '\v'; break;
-        case '\'': strDest += '\''; break;
-        case '"':  strDest += '"';  break;
-        case '\\': strDest += '\\'; break;
-        case '?':  strDest += '?';  break;
-        case 'x': {
-            // hex escape: up to 2 hex digits
-            unsigned char val = 0;
-            int digits = 0;
-            for (++p; *p && isxdigit((unsigned char)*p) && digits < 2; ++p, ++digits) {
-                int d = toupper((unsigned char)*p);
-                val = (unsigned char)((val << 4) + (d >= 'A' ? d - 'A' + 10 : d - '0'));
-            }
-            --p;  // will be incremented by the outer for loop
-            strDest += (char)val;
-            break;
-        }
-        default:   strDest += c; break;
-        }
-    }
-    return strDest;
-}
 
 
 // ── GetClipboardContents — clipboard read (no-op on non-Windows) ──────────

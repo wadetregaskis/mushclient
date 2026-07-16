@@ -3198,31 +3198,9 @@ BOOL putontoclipboard (const CString & data, const bool bUnicode)
 #endif // !_WIN32
   } // end of putontoclipboard
 
-// returns TRUE if bad label
+// CheckLabel is single-sourced in utilities_shared.cpp (declared in stdafx.h).
 
-BOOL CheckLabel (const CString & strLabel, const bool bScript)
-  {
-
-  if (strLabel.IsEmpty ())
-    return TRUE;
-
-// first character must be letter
-
-  if (!isalpha (strLabel [0]))
-    return TRUE;
-
-  for (int i = 1; i < strLabel.GetLength (); i++)
-    if (!isalpha (strLabel [i]) &&
-        !isdigit (strLabel [i]) &&
-        strLabel [i] != '_' &&
-        (strLabel [i] != '.' || !bScript))
-        return TRUE;
-
-  return FALSE;   // ok exit
-
-  } // end of CheckLabel
-
-void CMUSHclientDoc::OnEditPastetomush() 
+void CMUSHclientDoc::OnEditPastetomush()
 {
 
 CString strClipboard;

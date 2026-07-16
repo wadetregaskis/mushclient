@@ -461,3 +461,103 @@ CString ConvertToRegularExpression(const CString& strMatchString,
     strRegexp.ReleaseBuffer(-1);
     return strRegexp;
 }
+
+// ── Reconcile-first twins: adopted the Windows body (the port had drifted) ────
+// Each differed between the port and Windows; single-sourced by taking the
+// Windows body verbatim, so Windows is byte-for-byte unchanged and the port
+// gains parity (drift-audit workflow).  (AdjustColour is deferred — its CColor /
+// ADJUST_COLOUR_* dependencies aren't cleanly reachable from a standalone TU.)
+
+// MXP-action lookup hash (SHS/SHA over action+hint+variable).  The value is an
+// ephemeral in-memory bucket key, never persisted; the port had drifted to an
+// FNV-1a hash.  Declared in stdafx.h / platform/doc_stub.h.
+unsigned long MakeActionHash(const CString& strAction,
+                             const CString& strHint,
+                             const CString& strVariable)
+{
+    SHS_INFO shsInfo;
+    CString strHash = strAction;
+    strHash += strHint;
+    strHash += strVariable;
+
+    shsInit(&shsInfo);
+    shsUpdate(&shsInfo, (unsigned char*)(const char*)strHash, strHash.GetLength());
+    shsFinal(&shsInfo);
+    return shsInfo.digest[0];
+}
+
+// convert C-style escape sequences (\n \t \xNN ...).  Builds into a CString
+// buffer, and ReleaseBuffer(-1) re-measures with strlen, so an embedded NUL
+// (from \x00, or a bare \x) TRUNCATES the string — matching Windows.  The port
+// had preserved the embedded NUL.  Declared in stdafx.h / platform/doc_stub.h.
+CString FixupEscapeSequences(const CString& strSource)
+{
+    CString strDest = strSource;
+    char* p = strDest.GetBuffer(strSource.GetLength() + 1);
+    char* pNew = p;
+    char c;
+    int i;
+
+    for (; *p; p++)
+    {
+        c = *p;
+        if (c == '\\')
+        {
+            c = *(++p);
+            switch (c)
+            {
+            case 'a':  c = '\a'; break;
+            case 'b':  c = '\b'; break;
+            case 'f':  c = '\f'; break;
+            case 'n':  c = '\n'; break;
+            case 'r':  c = '\r'; break;
+            case 't':  c = '\t'; break;
+            case 'v':  c = '\v'; break;
+            case '\'': c = '\''; break;
+            case '\"': c = '\"'; break;
+            case '\\': c = '\\'; break;
+            case '?':  c = '\?'; break;
+            case 'x':
+                c = 0;
+                p++;
+                for (i = 0; *p && isxdigit(*p) && i < 2; p++, i++)
+                {
+                    int iNewDigit = toupper(*p);
+                    if (iNewDigit >= 'A')
+                        iNewDigit -= 7;
+                    c = (c << 4) + iNewDigit - '0';
+                }
+                p--;  // backtrack over trailing non-hex character
+                break;
+            }
+        }
+        *pNew++ = c;
+    }
+
+    *pNew++ = 0;
+    strDest.ReleaseBuffer(-1);
+    return strDest;
+}
+
+// TRUE if `strLabel` is NOT a valid label: first char must be alpha; the rest
+// alpha/digit/underscore, plus '.' when bScript is true.  The port had dropped
+// the bScript parameter (and the '.' rule).  Declared (with the default arg) in
+// stdafx.h, which the mushcore build also sees via doc_stub.h.
+BOOL CheckLabel(const CString& strLabel, const bool bScript)
+{
+    if (strLabel.IsEmpty())
+        return TRUE;
+
+    // first character must be a letter
+    if (!isalpha(strLabel[0]))
+        return TRUE;
+
+    for (int i = 1; i < strLabel.GetLength(); i++)
+        if (!isalpha(strLabel[i]) &&
+            !isdigit(strLabel[i]) &&
+            strLabel[i] != '_' &&
+            (strLabel[i] != '.' || !bScript))
+            return TRUE;
+
+    return FALSE;   // ok
+}

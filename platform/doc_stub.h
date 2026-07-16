@@ -1201,6 +1201,9 @@ int EditDistance(const std::string source, const std::string target);
 // no default arg here (stdafx.h owns the `= false` default for the full build)
 bool IsStringNumber(const std::string& s, bool bSigned);
 void Generate256colours(void);   // fills xterm_256_colours[] (defined in doc_portable.cpp)
+// no default arg (stdafx.h owns the `= false` default; declaring one here too
+// would be a redefinition in TUs that see both headers)
+BOOL CheckLabel(const CString& strLabel, bool bScript);
 
 // ── Mersenne Twister RNG (scripting/mt19937ar.c) ──────────────────────
 extern "C" {

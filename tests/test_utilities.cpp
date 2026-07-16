@@ -202,4 +202,35 @@ TEST(Utilities, ConvertToRegularExpression_Wildcards)
     EXPECT_STREQ("\\*",       (const char*)ConvertToRegularExpression("*", false, false));
 }
 
+// ── Reconcile-first twins (adopted the Windows body) ─────────────────────────
+
+TEST(Utilities, MakeActionHash_Deterministic)
+{
+    // Same inputs → same hash; different inputs → (almost certainly) different.
+    EXPECT_EQ(MakeActionHash("act", "hint", "var"),
+              MakeActionHash("act", "hint", "var"));
+    EXPECT_NE(MakeActionHash("act", "hint", "var"),
+              MakeActionHash("other", "hint", "var"));
+}
+
+TEST(Utilities, FixupEscapeSequences_Escapes)
+{
+    EXPECT_STREQ("\n\t",  (const char*)FixupEscapeSequences("\\n\\t"));
+    EXPECT_STREQ("aAb",   (const char*)FixupEscapeSequences("a\\x41b"));  // \x41 == 'A'
+    EXPECT_STREQ("q\"q",  (const char*)FixupEscapeSequences("q\\\"q"));
+    // parity with Windows: an embedded NUL from \x00 truncates the string
+    EXPECT_STREQ("a",     (const char*)FixupEscapeSequences("a\\x00b"));
+}
+
+TEST(Utilities, CheckLabel_HonoursBScript)
+{
+    EXPECT_FALSE(CheckLabel("valid_1", false));  // ok label → not-bad
+    EXPECT_TRUE(CheckLabel("", false));          // empty → bad
+    EXPECT_TRUE(CheckLabel("1abc", false));      // must start with a letter
+    EXPECT_TRUE(CheckLabel("a b", false));       // space not allowed
+    // '.' allowed only when bScript (the param the port had dropped)
+    EXPECT_TRUE(CheckLabel("a.b", false));       // bad when not a script name
+    EXPECT_FALSE(CheckLabel("a.b", true));       // ok when a script name
+}
+
 MC_TEST_MAIN()

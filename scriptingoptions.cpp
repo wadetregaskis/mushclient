@@ -1,11 +1,22 @@
 // scriptingoptions.cpp - turn world options on/off from a script
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
 
 #include "doc.h"
 #include "MUSHview.h"
 #include "scripting/errors.h"
+#else
+// mushcore (headless test engine): the stub CMUSHclientDoc carries every
+// member the option tables name with doc.h-exact types, so the offsetof-based
+// machinery below works unchanged (Campaign B option convergence).
+#include "platform/doc_stub.h"   // includes scripting/errors.h
+#include "OtherTypes.h"
+#include <stddef.h>              // offsetof
+#include <climits>               // USHRT_MAX etc. (ranges in the .inc tables)
+#include <ctype.h>               // isprint/isspace/isxdigit
+#endif
 
 #define NL "\r\n"
 

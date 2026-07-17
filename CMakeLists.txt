@@ -497,8 +497,10 @@ if(NOT WIN32)
         # can resolve the same symbols without linking both libraries.
         platform/wx_mfc_hooks_storage.cpp
 
-        # World options tables (numeric + alpha option name→default mappings)
-        scriptingoptions_portable.cpp
+        # Campaign B: real option machinery (option convergence) — the REAL
+        # OptionsTable[]/AlphaOptionsTable[] + Get/SetOption(Item) family,
+        # compiled against doc_stub.h (which has doc.h-exact option members).
+        scriptingoptions.cpp
 
         # XML parser (world-file deserialisation)
         xml/xmlparse.cpp
@@ -639,10 +641,9 @@ if(NOT WIN32)
         timers.cpp
         serialize.cpp
         paneline.cpp
-        # scriptingoptions_portable.cpp is intentionally OMITTED here:
-        # scriptingoptions.cpp (in the app-level section below) provides the full
-        # OptionsTable[] and AlphaOptionsTable[], which are a superset.
-        # Including both causes duplicate symbol errors at link time.
+        # scriptingoptions.cpp is compiled in the app-level section below
+        # (full-build include path); mushcore compiles the SAME file against
+        # doc_stub.h — one canonical option machinery, no twin (Campaign B).
         xml/xmlparse.cpp
 
         # ── Full implementations replacing portable stubs ─────────────────

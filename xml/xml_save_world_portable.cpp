@@ -3,10 +3,12 @@
 // Portable (non-Windows) implementation of CMUSHclientDoc::Serialize_World_XML.
 //
 // Saves a world file in the same XML format as the Windows xml_save_world.cpp,
-// reading world settings via live doc members and the option caches rather than
-// via the offsetof-based GetOptionItem / GetAlphaOptionItem path used by the
-// Windows build (which requires AllocateConfigurationArrays() / scriptingoptions.cpp,
-// neither of which is compiled into mushcore).
+// reading world settings through the REAL offsetof-based GetOptionItem /
+// GetAlphaOptionItem machinery (scriptingoptions.cpp, compiled into mushcore
+// since the option convergence).  Unlike Windows this saver omits options that
+// equal their table default; because the loader keeps defaults for absent
+// attributes, every non-default value is written EXPLICITLY (booleans as y/n,
+// zeros verbatim, empty strings as name="").
 //
 // The resulting files are fully interchangeable with those written by the Windows
 // build and can be loaded by xml_load_world.cpp or xml_load_world_portable.cpp.
@@ -120,162 +122,14 @@ static void wMulti(CArchive& ar, const char* name, const CString& val)
                    name));
 }
 
-// ── Option value retrieval ────────────────────────────────────────────────────
-// Three-tier lookup (live member → cache → LONG_MIN) mirroring L_GetOption
-// in lua_world_api_portable.cpp.  Callers must substitute the OptionsTable
-// default when LONG_MIN is returned.
-
-static long get_numeric_value(const CMUSHclientDoc* doc, const char* opt)
-{
-    // Font options: height == 0 means "not configured" — return LONG_MIN so the
-    // save loop substitutes the OptionsTable default and skips writing the
-    // attribute (matches Windows behaviour for default-valued options).
-    if (!strcmp(opt, "output_font_height"))    return doc->m_font_height  ? doc->m_font_height  : LONG_MIN;
-    if (!strcmp(opt, "output_font_weight"))    return doc->m_font_weight;
-    if (!strcmp(opt, "output_font_charset"))   return (long)doc->m_font_charset;
-    if (!strcmp(opt, "input_font_height"))     return doc->m_input_font_height ? doc->m_input_font_height : LONG_MIN;
-    if (!strcmp(opt, "input_font_italic"))     return doc->m_input_font_italic;
-    if (!strcmp(opt, "input_font_weight"))     return doc->m_input_font_weight;
-    if (!strcmp(opt, "input_font_charset"))    return (long)doc->m_input_font_charset;
-    if (!strcmp(opt, "connect_method"))        return doc->m_connect_now;
-    if (!strcmp(opt, "detect_pueblo"))         return doc->m_bPueblo              ? 1 : 0;
-    if (!strcmp(opt, "disable_compression"))   return doc->m_bDisableCompression  ? 1 : 0;
-    if (!strcmp(opt, "display_my_input"))      return doc->m_display_my_input     ? 1 : 0;
-    if (!strcmp(opt, "enable_aliases"))        return doc->m_enable_aliases       ? 1 : 0;
-    if (!strcmp(opt, "enable_speed_walk"))     return doc->m_enable_speed_walk    ? 1 : 0;
-    if (!strcmp(opt, "enable_timers"))         return doc->m_bEnableTimers        ? 1 : 0;
-    if (!strcmp(opt, "enable_trigger_sounds")) return doc->m_enable_trigger_sounds? 1 : 0;
-    if (!strcmp(opt, "enable_triggers"))       return doc->m_enable_triggers      ? 1 : 0;
-    if (!strcmp(opt, "log_html"))              return doc->m_bLogHTML             ? 1 : 0;
-    if (!strcmp(opt, "log_in_colour"))         return doc->m_bLogInColour         ? 1 : 0;
-    if (!strcmp(opt, "log_input"))             return doc->m_log_input;
-    if (!strcmp(opt, "log_notes"))             return doc->m_bLogNotes;
-    if (!strcmp(opt, "log_output"))            return doc->m_bLogOutput;
-    if (!strcmp(opt, "log_raw"))               return doc->m_bLogRaw              ? 1 : 0;
-    if (!strcmp(opt, "max_output_lines"))      return doc->m_maxlines;
-    if (!strcmp(opt, "naws"))                  return doc->m_bNAWS                ? 1 : 0;
-    if (!strcmp(opt, "port"))                  return doc->m_port;
-    if (!strcmp(opt, "trace"))                 return doc->m_bTrace               ? 1 : 0;
-    if (!strcmp(opt, "use_mxp"))               return doc->m_iUseMXP;
-    if (!strcmp(opt, "utf_8"))                 return doc->m_bUTF_8               ? 1 : 0;
-    if (!strcmp(opt, "wrap_column"))           return doc->m_nWrapColumn;
-    if (!strcmp(opt, "use_ssl"))              return doc->m_bUseSSL;
-    if (!strcmp(opt, "proxy_type"))           return doc->m_iSocksProcessing;
-    if (!strcmp(opt, "proxy_port"))           return doc->m_iProxyServerPort;
-    if (!strcmp(opt, "send_keep_alives"))     return doc->m_bSendKeepAlives;
-    if (!strcmp(opt, "save_world_automatically")) return doc->m_bSaveWorldAutomatically;
-    // Behaviour options
-    if (!strcmp(opt, "enable_scripts"))             return doc->m_bEnableScripts            ? 1 : 0;
-    if (!strcmp(opt, "auto_pause"))                 return doc->m_bAutoFreeze               ? 1 : 0;
-    if (!strcmp(opt, "enable_beeps"))               return doc->m_enable_beeps              ? 1 : 0;
-    if (!strcmp(opt, "carriage_return_clears_line"))return doc->m_bCarriageReturnClearsLine ? 1 : 0;
-    if (!strcmp(opt, "send_echo"))                  return doc->m_bSendEcho                 ? 1 : 0;
-    // Command / history options
-    if (!strcmp(opt, "enable_command_stack"))   return doc->m_enable_command_stack      ? 1 : 0;
-    if (!strcmp(opt, "history_lines"))          return doc->m_nHistoryLines;
-    if (!strcmp(opt, "escape_deletes_input"))   return doc->m_bEscapeDeletesInput       ? 1 : 0;
-    if (!strcmp(opt, "copy_selection_to_clipboard")) return doc->m_bCopySelectionToClipboard ? 1 : 0;
-    if (!strcmp(opt, "unpause_on_send"))        return doc->m_bUnpauseOnSend            ? 1 : 0;
-    if (!strcmp(opt, "auto_wrap_window_width")) return doc->m_bAutoWrapWindowWidth      ? 1 : 0;
-    if (!strcmp(opt, "speed_walk_delay"))       return (long)doc->m_iSpeedWalkDelay;
-    // Spam prevention
-    if (!strcmp(opt, "enable_spam_prevention")) return doc->m_bEnableSpamPrevention     ? 1 : 0;
-    if (!strcmp(opt, "spam_line_count"))        return (long)doc->m_iSpamLineCount;
-    // Telnet / echo
-    if (!strcmp(opt, "no_echo_off"))            return doc->m_bNoEchoOff                ? 1 : 0;
-    // Hyperlink / display
-    if (!strcmp(opt, "use_custom_link_colour")) return doc->m_bUseCustomLinkColour      ? 1 : 0;
-    if (!strcmp(opt, "hyperlink_colour"))       return (long)doc->m_iHyperlinkColour;
-    if (!strcmp(opt, "show_connect_disconnect"))return doc->m_bShowConnectDisconnect    ? 1 : 0;
-    if (!strcmp(opt, "send_mxp_afk_response"))  return doc->m_bSendMXP_AFK_Response    ? 1 : 0;
-    // Script logging
-    if (!strcmp(opt, "script_errors_to_output_window")) return doc->m_bScriptErrorsToOutputWindow ? 1 : 0;
-    if (!strcmp(opt, "log_script_errors"))      return doc->m_bLogScriptErrors          ? 1 : 0;
-
-    auto it = doc->m_numericOptionCache.find(opt);
-    if (it != doc->m_numericOptionCache.end()) return it->second;
-
-    return LONG_MIN;
-}
-
-// Same for string options, mirroring L_GetAlphaOption.
-// Returns empty CString when the name is not a known live member and not in
-// the cache; callers use AlphaOptionsTable[i].sDefault as the default.
-
-static CString get_alpha_value(const CMUSHclientDoc* doc, const char* opt)
-{
-    // Font name options: return the live member (empty string == use default).
-    if (!strcmp(opt, "output_font_name"))      return doc->m_font_name;
-    if (!strcmp(opt, "input_font_name"))       return doc->m_input_font_name;
-    if (!strcmp(opt, "auto_log_file_name"))      return doc->m_strAutoLogFileName;
-    if (!strcmp(opt, "connect_text"))            return doc->m_connect_text;
-    if (!strcmp(opt, "id"))                      return doc->m_strWorldID;
-    if (!strcmp(opt, "log_file_postamble"))      return doc->m_strLogFilePostamble;
-    if (!strcmp(opt, "log_file_preamble"))       return doc->m_strLogFilePreamble;
-    if (!strcmp(opt, "log_line_postamble_input"))   return doc->m_strLogLinePostambleInput;
-    if (!strcmp(opt, "log_line_postamble_notes"))   return doc->m_strLogLinePostambleNotes;
-    if (!strcmp(opt, "log_line_postamble_output"))  return doc->m_strLogLinePostambleOutput;
-    if (!strcmp(opt, "log_line_preamble_input"))    return doc->m_strLogLinePreambleInput;
-    if (!strcmp(opt, "log_line_preamble_notes"))    return doc->m_strLogLinePreambleNotes;
-    if (!strcmp(opt, "log_line_preamble_output"))   return doc->m_strLogLinePreambleOutput;
-    if (!strcmp(opt, "mapping_failure"))         return doc->m_strMappingFailure;
-    if (!strcmp(opt, "name"))                    return doc->m_mush_name;
-    if (!strcmp(opt, "notes"))                   return doc->m_notes;
-    if (!strcmp(opt, "on_mxp_close_tag"))        return doc->m_strOnMXP_CloseTag;
-    if (!strcmp(opt, "on_mxp_error"))            return doc->m_strOnMXP_Error;
-    if (!strcmp(opt, "on_mxp_open_tag"))         return doc->m_strOnMXP_OpenTag;
-    if (!strcmp(opt, "on_mxp_set_variable"))     return doc->m_strOnMXP_SetVariable;
-    if (!strcmp(opt, "on_mxp_start"))            return doc->m_strOnMXP_Start;
-    if (!strcmp(opt, "on_mxp_stop"))             return doc->m_strOnMXP_Stop;
-    if (!strcmp(opt, "on_world_close"))          return doc->m_strWorldClose;
-    if (!strcmp(opt, "on_world_connect"))        return doc->m_strWorldConnect;
-    if (!strcmp(opt, "on_world_disconnect"))     return doc->m_strWorldDisconnect;
-    if (!strcmp(opt, "on_world_get_focus"))      return doc->m_strWorldGetFocus;
-    if (!strcmp(opt, "on_world_lose_focus"))     return doc->m_strWorldLoseFocus;
-    if (!strcmp(opt, "on_world_open"))           return doc->m_strWorldOpen;
-    if (!strcmp(opt, "on_world_save"))           return doc->m_strWorldSave;
-    if (!strcmp(opt, "password"))                return doc->m_password;
-    if (!strcmp(opt, "player"))                  return doc->m_name;
-    if (!strcmp(opt, "script_filename"))         return doc->m_strScriptFilename;
-    if (!strcmp(opt, "script_language"))         return doc->m_strLanguage;
-    if (!strcmp(opt, "script_prefix"))           return doc->m_strScriptPrefix;
-    if (!strcmp(opt, "site"))                    return doc->m_server;
-    if (!strcmp(opt, "speed_walk_filler"))       return doc->m_strSpeedWalkFiller;
-    if (!strcmp(opt, "speed_walk_prefix"))       return doc->m_speed_walk_prefix;
-    if (!strcmp(opt, "terminal_identification")) return doc->m_strTerminalIdentification;
-    if (!strcmp(opt, "proxy_server"))          return doc->m_strProxyServerName;
-    if (!strcmp(opt, "proxy_username"))        return doc->m_strProxyUserName;
-    if (!strcmp(opt, "proxy_password"))        return doc->m_strProxyPassword;
-    // Auto-say
-    if (!strcmp(opt, "auto_say_string"))           return doc->m_strAutoSayString;
-    if (!strcmp(opt, "auto_say_override_prefix"))  return doc->m_strOverridePrefix;
-    // Command stacking / spam
-    if (!strcmp(opt, "command_stack_character"))   return doc->m_strCommandStackCharacter;
-    if (!strcmp(opt, "spam_message"))              return doc->m_strSpamMessage;
-    // Tab completion / recall
-    if (!strcmp(opt, "tab_completion_defaults"))   return doc->m_strTabCompletionDefaults;
-    if (!strcmp(opt, "recall_line_preamble"))      return doc->m_strRecallLinePreamble;
-    // Script editor
-    if (!strcmp(opt, "script_editor"))             return doc->m_strScriptEditor;
-    // Sound files
-    if (!strcmp(opt, "beep_sound"))                return doc->m_strBeepSound;
-    if (!strcmp(opt, "new_activity_sound"))        return doc->m_new_activity_sound;
-    // Paste strings
-    if (!strcmp(opt, "paste_preamble"))            return doc->m_paste_preamble;
-    if (!strcmp(opt, "paste_postamble"))           return doc->m_paste_postamble;
-    if (!strcmp(opt, "paste_line_preamble"))       return doc->m_pasteline_preamble;
-    if (!strcmp(opt, "paste_line_postamble"))      return doc->m_pasteline_postamble;
-
-    auto it = doc->m_alphaOptionCache.find(opt);
-    if (it != doc->m_alphaOptionCache.end()) return CString(it->second.c_str());
-
-    return CString();
-}
-
 // ── Section writers ───────────────────────────────────────────────────────────
 
 static void save_general(CArchive& ar, const CMUSHclientDoc& doc)
 {
+    // GetOptionItem / GetAlphaOptionItem are non-const on Windows (doc.h);
+    // cast the const away rather than fork the canonical signatures.
+    CMUSHclientDoc& ncDoc = const_cast<CMUSHclientDoc&>(doc);
+
     ar.WriteString("<world" NL);
     ar.WriteString(CFormat("   muclient_version=\"%s\"" NL, MUSHCLIENT_VERSION));
     ar.WriteString("   world_file_version=\"1\"" NL NL);
@@ -284,7 +138,7 @@ static void save_general(CArchive& ar, const CMUSHclientDoc& doc)
     for (int i = 0; AlphaOptionsTable[i].pName; i++) {
         if (AlphaOptionsTable[i].iFlags & OPT_MULTLINE)  continue;
 
-        CString val = get_alpha_value(&doc, AlphaOptionsTable[i].pName);
+        CString val = ncDoc.GetAlphaOptionItem(i);
         const char* def = AlphaOptionsTable[i].sDefault ? AlphaOptionsTable[i].sDefault : "";
         if (val == CString(def)) continue;
 
@@ -298,27 +152,42 @@ static void save_general(CArchive& ar, const CMUSHclientDoc& doc)
             val = encodeBase64(val, false);
         }
 
-        wStr(ar, AlphaOptionsTable[i].pName, val);
+        // Written explicitly even when empty: the value differs from the table
+        // default and the loader keeps defaults for absent attributes, so an
+        // empty non-default value must still appear (wStr would omit it).
+        {
+            CString v = val;
+            v.Replace("\r\n", " ");
+            v.Replace("\n",   " ");
+            ar.WriteString(CFormat("   %s=\"%s\"" NL,
+                           AlphaOptionsTable[i].pName,
+                           (LPCTSTR)FixHTMLString(v)));
+        }
     }
 
     ar.WriteString(NL);
 
     // ── numeric options ───────────────────────────────────────────────────
     for (int i = 0; OptionsTable[i].pName; i++) {
-        long val = get_numeric_value(&doc, OptionsTable[i].pName);
-        if (val == LONG_MIN) val = (long)OptionsTable[i].iDefault;
+        long val = ncDoc.GetOptionItem(i);
 
         if (val == (long)OptionsTable[i].iDefault) continue;
 
         bool is_bool   = (OptionsTable[i].iMinimum == 0 && OptionsTable[i].iMaximum == 0);
         bool is_colour = (OptionsTable[i].iFlags & OPT_RGB_COLOUR) != 0;
 
+        // Written explicitly even for false/zero (wBool/wNum would omit them
+        // and the loader would then restore the default): booleans as y/n,
+        // numbers verbatim.  ColourToName never returns empty portably
+        // ("#RRGGBB" fallback), so wColour never omits.
         if (is_bool)
-            wBool  (ar, OptionsTable[i].pName, val);
+            ar.WriteString(CFormat("   %s=\"%s\"" NL,
+                           OptionsTable[i].pName, val ? "y" : "n"));
         else if (is_colour)
             wColour(ar, OptionsTable[i].pName, (COLORREF)val);
         else
-            wNum   (ar, OptionsTable[i].pName, val);
+            ar.WriteString(CFormat("   %s=\"%ld\"" NL,
+                           OptionsTable[i].pName, val));
     }
 
     ar.WriteString("   > <!-- end of general world attributes -->" NL);
@@ -327,11 +196,15 @@ static void save_general(CArchive& ar, const CMUSHclientDoc& doc)
     for (int i = 0; AlphaOptionsTable[i].pName; i++) {
         if (!(AlphaOptionsTable[i].iFlags & OPT_MULTLINE)) continue;
 
-        CString val = get_alpha_value(&doc, AlphaOptionsTable[i].pName);
+        CString val = ncDoc.GetAlphaOptionItem(i);
         const char* def = AlphaOptionsTable[i].sDefault ? AlphaOptionsTable[i].sDefault : "";
         if (val == CString(def)) continue;
 
-        wMulti(ar, AlphaOptionsTable[i].pName, val);
+        // Explicit empty element for an empty non-default value (see above).
+        ar.WriteString(CFormat("  <%s>%s</%s>" NL,
+                       AlphaOptionsTable[i].pName,
+                       (LPCTSTR)FixMulti(val),
+                       AlphaOptionsTable[i].pName));
     }
 
     ar.WriteString(NL "</world>" NL);

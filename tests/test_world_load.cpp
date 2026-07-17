@@ -1067,11 +1067,11 @@ TEST(WorldLoad, WorldSettingsNumericOptions)
     EXPECT_STREQ("user1",             (const char*)doc.m_strProxyUserName);
 }
 
-TEST(WorldLoad, WorldSettingsInOptionCache)
+TEST(WorldLoad, WorldSettingsVisibleViaOptionAPI)
 {
-    // Values loaded from XML must also be visible via the option caches so
-    // that GetOption / GetAlphaOption return correct values without a live
-    // struct member for every option.
+    // Values loaded from XML must be visible through the real option API
+    // (GetOption / GetAlphaOptionItem over the OptionsTable machinery —
+    // the old hand-mirrored option caches are gone).
     const char* xml = R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
@@ -1085,15 +1085,14 @@ TEST(WorldLoad, WorldSettingsInOptionCache)
     CMUSHclientDoc doc;
     ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
 
-    // Numeric cache
-    auto nit = doc.m_numericOptionCache.find("wrap_column");
-    ASSERT_NE(doc.m_numericOptionCache.end(), nit);
-    EXPECT_EQ(100L, nit->second);
+    // Numeric — the loader's SetOptionItem wrote the real member
+    EXPECT_EQ(100L, doc.GetOption("wrap_column"));
+    EXPECT_EQ(9999L, doc.GetOption("port"));
 
-    // Alpha cache
-    auto ait = doc.m_alphaOptionCache.find("proxy_server");
-    ASSERT_NE(doc.m_alphaOptionCache.end(), ait);
-    EXPECT_EQ("myproxy", ait->second);
+    // Alpha — same through the alpha table
+    long idx = doc.GetAlphaOptionIndex("proxy_server");
+    ASSERT_NE(-1L, idx);
+    EXPECT_STREQ("myproxy", (const char*)doc.GetAlphaOptionItem(idx));
 }
 
 MC_TEST_MAIN()

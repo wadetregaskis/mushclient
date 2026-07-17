@@ -1470,221 +1470,40 @@ static int L_GetInfo(lua_State* L)
 }
 
 // ── GetOption / SetOption ─────────────────────────────────────────────────────
-// GetOption returns a numeric value for a named option.
-// SetOption sets a named option and returns eOK or an error code.
-//
-// Strategy (portable build):
-//   1. Hand-coded members  — the few fields that exist in CMUSHclientDoc and are
-//      actively used by the engine; these are read/written directly for accuracy.
-//   2. Option cache        — m_numericOptionCache / m_alphaOptionCache hold values
-//      for any option ever written via SetOption / SetAlphaOption.
-//   3. OptionsTable default — fallback default value for valid options not yet set.
-//   Unknown option names return -1 (Get) or eUnknownOption (Set).
+// Thin wrappers over the REAL CMUSHclientDoc::GetOption / SetOption
+// (scriptingoptions.cpp, compiled into mushcore since the option
+// convergence), mirroring lua_methods.cpp L_GetOption / L_SetOption
+// marshalling exactly.  The former hand-mirrored live-member switches and
+// the m_numericOptionCache / m_alphaOptionCache backing store are gone.
 
-extern tConfigurationNumericOption OptionsTable[];
-extern tConfigurationAlphaOption   AlphaOptionsTable[];
-
-// Return OptionsTable default for a numeric option, or LONG_MIN if not found.
-static long opt_numeric_default(const char* name)
-{
-    for (int i = 0; OptionsTable[i].pName; ++i)
-        if (strcmp(OptionsTable[i].pName, name) == 0)
-            return (long)OptionsTable[i].iDefault;
-    return LONG_MIN;   // sentinel: not a valid option name
-}
-
-// Return AlphaOptionsTable default for an alpha option, or nullptr if not found.
-static const char* opt_alpha_default(const char* name)
-{
-    for (int i = 0; AlphaOptionsTable[i].pName; ++i)
-        if (strcmp(AlphaOptionsTable[i].pName, name) == 0)
-            return AlphaOptionsTable[i].sDefault ? AlphaOptionsTable[i].sDefault : "";
-    return nullptr;    // sentinel: not a valid option name
-}
-
-// Macro: emit a live-member read and return immediately.
-#define OPT_GET_MEMBER(field) do { lua_pushnumber(L, (lua_Number)(field)); return 1; } while(0)
+// push_option_variant is defined further down (Get/Set{Trigger,...}Option
+// wrappers); L_GetAlphaOption below needs it earlier.
+static int push_option_variant(lua_State* L, VARIANT& v);
 
 static int L_GetOption(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* opt = luaL_checkstring(L, 1);
-
-    // 1. Known live members (read from the real field).
-    if      (!strcmp(opt, "enable_triggers"))   OPT_GET_MEMBER(pDoc->m_enable_triggers  ? 1 : 0);
-    else if (!strcmp(opt, "enable_aliases"))    OPT_GET_MEMBER(pDoc->m_enable_aliases   ? 1 : 0);
-    else if (!strcmp(opt, "enable_timers"))     OPT_GET_MEMBER(pDoc->m_bEnableTimers    ? 1 : 0);
-    else if (!strcmp(opt, "enable_trigger_sounds")) OPT_GET_MEMBER(pDoc->m_enable_trigger_sounds ? 1 : 0);
-    else if (!strcmp(opt, "enable_speed_walk")) OPT_GET_MEMBER(pDoc->m_enable_speed_walk? 1 : 0);
-    else if (!strcmp(opt, "display_my_input"))  OPT_GET_MEMBER(pDoc->m_display_my_input ? 1 : 0);
-    else if (!strcmp(opt, "log_output"))        OPT_GET_MEMBER(pDoc->m_bLogOutput);
-    else if (!strcmp(opt, "log_notes"))         OPT_GET_MEMBER(pDoc->m_bLogNotes);
-    else if (!strcmp(opt, "log_input"))         OPT_GET_MEMBER(pDoc->m_log_input);
-    else if (!strcmp(opt, "log_html"))          OPT_GET_MEMBER(pDoc->m_bLogHTML);
-    else if (!strcmp(opt, "log_raw"))           OPT_GET_MEMBER(pDoc->m_bLogRaw ? 1 : 0);
-    else if (!strcmp(opt, "log_in_colour"))     OPT_GET_MEMBER(pDoc->m_bLogInColour ? 1 : 0);
-    else if (!strcmp(opt, "port"))              OPT_GET_MEMBER(pDoc->m_port);
-    else if (!strcmp(opt, "trace"))             OPT_GET_MEMBER(pDoc->m_bTrace ? 1 : 0);
-    else if (!strcmp(opt, "wrap_column"))       OPT_GET_MEMBER(pDoc->m_nWrapColumn);
-    else if (!strcmp(opt, "max_output_lines"))  OPT_GET_MEMBER(pDoc->m_maxlines);
-    else if (!strcmp(opt, "utf_8"))             OPT_GET_MEMBER(pDoc->m_bUTF_8 ? 1 : 0);
-    else if (!strcmp(opt, "use_mxp"))           OPT_GET_MEMBER(pDoc->m_iUseMXP);
-    else if (!strcmp(opt, "detect_pueblo"))     OPT_GET_MEMBER(pDoc->m_bPueblo ? 1 : 0);
-    else if (!strcmp(opt, "naws"))              OPT_GET_MEMBER(pDoc->m_bNAWS ? 1 : 0);
-    else if (!strcmp(opt, "disable_compression")) OPT_GET_MEMBER(pDoc->m_bDisableCompression ? 1 : 0);
-    else if (!strcmp(opt, "convert_ga_to_newline")) OPT_GET_MEMBER(pDoc->m_bConvertGAtoNewline ? 1 : 0);
-    else if (!strcmp(opt, "connect_method"))    OPT_GET_MEMBER(pDoc->m_connect_now);
-    else if (!strcmp(opt, "use_ssl"))              OPT_GET_MEMBER(pDoc->m_bUseSSL);
-    else if (!strcmp(opt, "proxy_type"))           OPT_GET_MEMBER(pDoc->m_iSocksProcessing);
-    else if (!strcmp(opt, "proxy_port"))           OPT_GET_MEMBER(pDoc->m_iProxyServerPort);
-    else if (!strcmp(opt, "send_keep_alives"))     OPT_GET_MEMBER(pDoc->m_bSendKeepAlives);
-    else if (!strcmp(opt, "save_world_automatically")) OPT_GET_MEMBER(pDoc->m_bSaveWorldAutomatically);
-    // Font numeric options
-    else if (!strcmp(opt, "output_font_height"))   OPT_GET_MEMBER(pDoc->m_font_height);
-    else if (!strcmp(opt, "output_font_weight"))   OPT_GET_MEMBER(pDoc->m_font_weight);
-    else if (!strcmp(opt, "output_font_charset"))  OPT_GET_MEMBER((long)pDoc->m_font_charset);
-    else if (!strcmp(opt, "input_font_height"))    OPT_GET_MEMBER(pDoc->m_input_font_height);
-    else if (!strcmp(opt, "input_font_italic"))    OPT_GET_MEMBER((long)pDoc->m_input_font_italic);
-    else if (!strcmp(opt, "input_font_weight"))    OPT_GET_MEMBER(pDoc->m_input_font_weight);
-    else if (!strcmp(opt, "input_font_charset"))   OPT_GET_MEMBER((long)pDoc->m_input_font_charset);
-    // Behaviour options with live members added to doc_stub.h
-    else if (!strcmp(opt, "enable_scripts"))             OPT_GET_MEMBER(pDoc->m_bEnableScripts ? 1 : 0);
-    else if (!strcmp(opt, "auto_pause"))                 OPT_GET_MEMBER(pDoc->m_bAutoFreeze ? 1 : 0);
-    else if (!strcmp(opt, "enable_beeps"))               OPT_GET_MEMBER(pDoc->m_enable_beeps ? 1 : 0);
-    else if (!strcmp(opt, "carriage_return_clears_line"))OPT_GET_MEMBER(pDoc->m_bCarriageReturnClearsLine ? 1 : 0);
-    else if (!strcmp(opt, "send_echo"))                  OPT_GET_MEMBER(pDoc->m_bSendEcho ? 1 : 0);
-    // Command / history options
-    else if (!strcmp(opt, "enable_command_stack"))   OPT_GET_MEMBER(pDoc->m_enable_command_stack ? 1 : 0);
-    else if (!strcmp(opt, "history_lines"))          OPT_GET_MEMBER(pDoc->m_nHistoryLines);
-    else if (!strcmp(opt, "escape_deletes_input"))   OPT_GET_MEMBER(pDoc->m_bEscapeDeletesInput ? 1 : 0);
-    else if (!strcmp(opt, "copy_selection_to_clipboard")) OPT_GET_MEMBER(pDoc->m_bCopySelectionToClipboard ? 1 : 0);
-    else if (!strcmp(opt, "unpause_on_send"))        OPT_GET_MEMBER(pDoc->m_bUnpauseOnSend ? 1 : 0);
-    else if (!strcmp(opt, "auto_wrap_window_width")) OPT_GET_MEMBER(pDoc->m_bAutoWrapWindowWidth ? 1 : 0);
-    else if (!strcmp(opt, "speed_walk_delay"))       OPT_GET_MEMBER(pDoc->m_iSpeedWalkDelay);
-    // Spam prevention
-    else if (!strcmp(opt, "enable_spam_prevention")) OPT_GET_MEMBER(pDoc->m_bEnableSpamPrevention ? 1 : 0);
-    else if (!strcmp(opt, "spam_line_count"))        OPT_GET_MEMBER(pDoc->m_iSpamLineCount);
-    // Telnet / echo
-    else if (!strcmp(opt, "no_echo_off"))            OPT_GET_MEMBER(pDoc->m_bNoEchoOff ? 1 : 0);
-    // Hyperlink / display
-    else if (!strcmp(opt, "use_custom_link_colour")) OPT_GET_MEMBER(pDoc->m_bUseCustomLinkColour ? 1 : 0);
-    else if (!strcmp(opt, "hyperlink_colour"))       OPT_GET_MEMBER((long)pDoc->m_iHyperlinkColour);
-    else if (!strcmp(opt, "show_connect_disconnect"))OPT_GET_MEMBER(pDoc->m_bShowConnectDisconnect ? 1 : 0);
-    else if (!strcmp(opt, "send_mxp_afk_response"))  OPT_GET_MEMBER(pDoc->m_bSendMXP_AFK_Response ? 1 : 0);
-    // Script logging
-    else if (!strcmp(opt, "script_errors_to_output_window")) OPT_GET_MEMBER(pDoc->m_bScriptErrorsToOutputWindow ? 1 : 0);
-    else if (!strcmp(opt, "log_script_errors"))      OPT_GET_MEMBER(pDoc->m_bLogScriptErrors ? 1 : 0);
-
-    // 2. Cache — value previously written by SetOption.
-    {
-        auto it = pDoc->m_numericOptionCache.find(opt);
-        if (it != pDoc->m_numericOptionCache.end()) {
-            lua_pushnumber(L, (lua_Number)it->second);
-            return 1;
-        }
-    }
-
-    // 3. OptionsTable default (returns LONG_MIN for unknown names).
-    long def = opt_numeric_default(opt);
-    lua_pushnumber(L, (lua_Number)(def == LONG_MIN ? -1L : def));
+    lua_pushnumber(L, pDoc->GetOption(luaL_checkstring(L, 1)));
     return 1;
 }
-
-#undef OPT_GET_MEMBER
 
 static int L_SetOption(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* opt = luaL_checkstring(L, 1);
-    long val = (long)luaL_checknumber(L, 2);
+    lua_Number option;
 
-    // 1. Known live members — update the real field.
-    // These are kept symmetric with the live-member reads in L_GetOption.
-    bool is_member = true;
-    if      (!strcmp(opt, "enable_triggers"))      pDoc->m_enable_triggers        = (val != 0);
-    else if (!strcmp(opt, "enable_aliases"))       pDoc->m_enable_aliases         = (val != 0);
-    else if (!strcmp(opt, "enable_timers"))        pDoc->m_bEnableTimers          = (val != 0);
-    else if (!strcmp(opt, "display_my_input"))     pDoc->m_display_my_input       = (val != 0);
-    else if (!strcmp(opt, "log_output"))           pDoc->m_bLogOutput             = (short)val;
-    else if (!strcmp(opt, "log_notes"))            pDoc->m_bLogNotes              = (short)val;
-    else if (!strcmp(opt, "log_input"))            pDoc->m_log_input              = (short)val;
-    else if (!strcmp(opt, "trace"))                pDoc->m_bTrace                 = (val != 0);
-    else if (!strcmp(opt, "enable_trigger_sounds"))pDoc->m_enable_trigger_sounds  = (val != 0);
-    else if (!strcmp(opt, "enable_speed_walk"))    pDoc->m_enable_speed_walk      = (val != 0);
-    else if (!strcmp(opt, "log_html"))             pDoc->m_bLogHTML               = (val != 0);
-    else if (!strcmp(opt, "log_raw"))              pDoc->m_bLogRaw                = (val != 0);
-    else if (!strcmp(opt, "log_in_colour"))        pDoc->m_bLogInColour           = (val != 0);
-    else if (!strcmp(opt, "utf_8"))                pDoc->m_bUTF_8                 = (val != 0);
-    else if (!strcmp(opt, "use_mxp"))              pDoc->m_iUseMXP                = (short)val;
-    else if (!strcmp(opt, "detect_pueblo"))        pDoc->m_bPueblo                = (val != 0);
-    else if (!strcmp(opt, "naws"))                 pDoc->m_bNAWS                  = (val != 0);
-    else if (!strcmp(opt, "disable_compression"))  pDoc->m_bDisableCompression    = (val != 0);
-    else if (!strcmp(opt, "convert_ga_to_newline"))pDoc->m_bConvertGAtoNewline    = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "connect_method"))       pDoc->m_connect_now            = (short)val;
-    else if (!strcmp(opt, "use_ssl"))              pDoc->m_bUseSSL                = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "proxy_type"))           pDoc->m_iSocksProcessing       = (unsigned short)val;
-    else if (!strcmp(opt, "proxy_port"))           pDoc->m_iProxyServerPort       = (unsigned short)val;
-    else if (!strcmp(opt, "send_keep_alives"))     pDoc->m_bSendKeepAlives        = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "save_world_automatically")) pDoc->m_bSaveWorldAutomatically = (unsigned short)(val != 0);
-    // Font numeric options — update live members; GUI callback (world.SetFont)
-    // is the preferred way to change the displayed font interactively.
-    else if (!strcmp(opt, "output_font_height"))   pDoc->m_font_height         = val;
-    else if (!strcmp(opt, "output_font_weight"))   pDoc->m_font_weight         = val;
-    else if (!strcmp(opt, "output_font_charset"))  pDoc->m_font_charset        = (DWORD)val;
-    else if (!strcmp(opt, "input_font_height"))    pDoc->m_input_font_height   = val;
-    else if (!strcmp(opt, "input_font_italic"))    pDoc->m_input_font_italic   = (BYTE)(val != 0);
-    else if (!strcmp(opt, "input_font_weight"))    pDoc->m_input_font_weight   = val;
-    else if (!strcmp(opt, "input_font_charset"))   pDoc->m_input_font_charset  = (DWORD)val;
-    // Behaviour options with live members added to doc_stub.h
-    else if (!strcmp(opt, "enable_scripts"))             pDoc->m_bEnableScripts            = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "auto_pause"))                 pDoc->m_bAutoFreeze               = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "enable_beeps"))               pDoc->m_enable_beeps              = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "carriage_return_clears_line"))pDoc->m_bCarriageReturnClearsLine = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "send_echo"))                  pDoc->m_bSendEcho                 = (unsigned short)(val != 0);
-    // Command / history options
-    else if (!strcmp(opt, "enable_command_stack"))   pDoc->m_enable_command_stack      = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "history_lines"))          pDoc->m_nHistoryLines             = val;
-    else if (!strcmp(opt, "escape_deletes_input"))   pDoc->m_bEscapeDeletesInput       = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "copy_selection_to_clipboard")) pDoc->m_bCopySelectionToClipboard = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "unpause_on_send"))        pDoc->m_bUnpauseOnSend            = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "auto_wrap_window_width")) pDoc->m_bAutoWrapWindowWidth      = (BOOL)(val != 0);
-    else if (!strcmp(opt, "speed_walk_delay"))       pDoc->m_iSpeedWalkDelay           = (unsigned short)val;
-    // Spam prevention
-    else if (!strcmp(opt, "enable_spam_prevention")) pDoc->m_bEnableSpamPrevention     = (val != 0);
-    else if (!strcmp(opt, "spam_line_count"))        pDoc->m_iSpamLineCount            = (int)val;
-    // Telnet / echo
-    else if (!strcmp(opt, "no_echo_off"))            pDoc->m_bNoEchoOff                = (unsigned short)(val != 0);
-    // Hyperlink / display
-    else if (!strcmp(opt, "use_custom_link_colour")) pDoc->m_bUseCustomLinkColour      = (val != 0);
-    else if (!strcmp(opt, "hyperlink_colour"))       pDoc->m_iHyperlinkColour          = (COLORREF)val;
-    else if (!strcmp(opt, "show_connect_disconnect"))pDoc->m_bShowConnectDisconnect    = (val != 0);
-    else if (!strcmp(opt, "send_mxp_afk_response"))  pDoc->m_bSendMXP_AFK_Response    = (val != 0);
-    // Script logging
-    else if (!strcmp(opt, "script_errors_to_output_window")) pDoc->m_bScriptErrorsToOutputWindow = (val != 0);
-    else if (!strcmp(opt, "log_script_errors"))      pDoc->m_bLogScriptErrors          = (val != 0);
-    else if (!strcmp(opt, "wrap_column")) {
-        if (val >= 20 && val <= MAX_LINE_WIDTH) {
-            pDoc->m_nWrapColumn = (unsigned short)val;
-        }
-    }
-    else if (!strcmp(opt, "max_output_lines")) {
-        if (val >= 200 && val <= 500000) {
-            pDoc->m_maxlines = val;
-            pDoc->AllocateLinePositions();   // re-size the JUMP_SIZE index
-            pDoc->EmitMaxLines((int)val);
-        }
-    }
-    else                                           is_member = false;
+    // if boolean convert to 0 or 1 (lua_methods.cpp L_SetOption)
+    if (lua_isboolean(L, 2))
+        option = lua_toboolean(L, 2) ? 1 : 0;
+    else if (lua_isnil(L, 2))
+        option = 0;
+    else
+        option = luaL_checknumber(L, 2);
 
-    // 2. Validate: reject completely unknown option names.
-    if (!is_member && opt_numeric_default(opt) == LONG_MIN) {
-        lua_pushnumber(L, eUnknownOption);
-        return 1;
-    }
-
-    // 3. Store in cache (always, so GetOption sees the updated value).
-    pDoc->m_numericOptionCache[opt] = val;
-    lua_pushnumber(L, eOK);
+    lua_pushnumber(L, pDoc->SetOption(
+        luaL_checkstring(L, 1),   // OptionName
+        option                    // Value
+        ));
     return 1;
 }
 
@@ -2597,204 +2416,28 @@ static int L_GetPluginID(lua_State* L)
 }
 
 // ── String-valued option access ───────────────────────────────────────────────
-// Same three-tier strategy as L_GetOption / L_SetOption (see above).
+// Thin wrappers over the REAL CMUSHclientDoc::GetAlphaOption /
+// SetAlphaOption (scriptingoptions.cpp), mirroring lua_methods.cpp
+// L_GetAlphaOption / L_SetAlphaOption marshalling exactly: Get returns the
+// VARIANT (string, or nil/VT_EMPTY for an unknown or plugin-forbidden
+// option), Set returns the error code.
 
-// Macro: push a live CString member and return.
-#define OPT_GET_STR(field) do { lua_pushstring(L, (const char*)(field)); return 1; } while(0)
-
-// world.GetAlphaOption(option_name) → string value or ""
+// world.GetAlphaOption(option_name) → string value (nil if unknown)
 static int L_GetAlphaOption(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* opt = luaL_checkstring(L, 1);
-
-    // 1. Known live members.
-    if      (!strcmp(opt, "name"))             OPT_GET_STR(pDoc->m_mush_name);
-    else if (!strcmp(opt, "world_name"))       OPT_GET_STR(pDoc->m_mush_name);
-    else if (!strcmp(opt, "site"))             OPT_GET_STR(pDoc->m_server);
-    else if (!strcmp(opt, "player"))           OPT_GET_STR(pDoc->m_name);
-    else if (!strcmp(opt, "password"))         OPT_GET_STR(pDoc->m_password);
-    else if (!strcmp(opt, "script_filename"))  OPT_GET_STR(pDoc->m_strScriptFilename);
-    else if (!strcmp(opt, "script_language"))  OPT_GET_STR(pDoc->m_strLanguage);
-    else if (!strcmp(opt, "script_prefix"))    OPT_GET_STR(pDoc->m_strScriptPrefix);
-    else if (!strcmp(opt, "notes"))            OPT_GET_STR(pDoc->m_notes);
-    else if (!strcmp(opt, "terminal_identification")) OPT_GET_STR(pDoc->m_strTerminalIdentification);
-    else if (!strcmp(opt, "mapping_failure"))  OPT_GET_STR(pDoc->m_strMappingFailure);
-    // Connection text
-    else if (!strcmp(opt, "connect_text"))     OPT_GET_STR(pDoc->m_connect_text);
-    else if (!strcmp(opt, "auto_log_file_name")) OPT_GET_STR(pDoc->m_strAutoLogFileName);
-    // Proxy
-    else if (!strcmp(opt, "proxy_server"))       OPT_GET_STR(pDoc->m_strProxyServerName);
-    else if (!strcmp(opt, "proxy_username"))     OPT_GET_STR(pDoc->m_strProxyUserName);
-    else if (!strcmp(opt, "proxy_password"))     OPT_GET_STR(pDoc->m_strProxyPassword);
-    // Speed walk
-    else if (!strcmp(opt, "speed_walk_prefix"))  OPT_GET_STR(pDoc->m_speed_walk_prefix);
-    else if (!strcmp(opt, "speed_walk_filler"))  OPT_GET_STR(pDoc->m_strSpeedWalkFiller);
-    // World ID
-    else if (!strcmp(opt, "id"))               OPT_GET_STR(pDoc->m_strWorldID);
-    // World callbacks
-    else if (!strcmp(opt, "on_world_open"))       OPT_GET_STR(pDoc->m_strWorldOpen);
-    else if (!strcmp(opt, "on_world_close"))      OPT_GET_STR(pDoc->m_strWorldClose);
-    else if (!strcmp(opt, "on_world_save"))       OPT_GET_STR(pDoc->m_strWorldSave);
-    else if (!strcmp(opt, "on_world_connect"))    OPT_GET_STR(pDoc->m_strWorldConnect);
-    else if (!strcmp(opt, "on_world_disconnect")) OPT_GET_STR(pDoc->m_strWorldDisconnect);
-    else if (!strcmp(opt, "on_world_get_focus"))  OPT_GET_STR(pDoc->m_strWorldGetFocus);
-    else if (!strcmp(opt, "on_world_lose_focus")) OPT_GET_STR(pDoc->m_strWorldLoseFocus);
-    // MXP callbacks
-    else if (!strcmp(opt, "on_mxp_start"))        OPT_GET_STR(pDoc->m_strOnMXP_Start);
-    else if (!strcmp(opt, "on_mxp_stop"))         OPT_GET_STR(pDoc->m_strOnMXP_Stop);
-    else if (!strcmp(opt, "on_mxp_error"))        OPT_GET_STR(pDoc->m_strOnMXP_Error);
-    else if (!strcmp(opt, "on_mxp_open_tag"))     OPT_GET_STR(pDoc->m_strOnMXP_OpenTag);
-    else if (!strcmp(opt, "on_mxp_close_tag"))    OPT_GET_STR(pDoc->m_strOnMXP_CloseTag);
-    else if (!strcmp(opt, "on_mxp_set_variable")) OPT_GET_STR(pDoc->m_strOnMXP_SetVariable);
-    // Font names
-    else if (!strcmp(opt, "output_font_name"))    OPT_GET_STR(pDoc->m_font_name);
-    else if (!strcmp(opt, "input_font_name"))     OPT_GET_STR(pDoc->m_input_font_name);
-    // Log preambles/postambles
-    else if (!strcmp(opt, "log_file_preamble"))         OPT_GET_STR(pDoc->m_strLogFilePreamble);
-    else if (!strcmp(opt, "log_file_postamble"))        OPT_GET_STR(pDoc->m_strLogFilePostamble);
-    else if (!strcmp(opt, "log_line_preamble_input"))   OPT_GET_STR(pDoc->m_strLogLinePreambleInput);
-    else if (!strcmp(opt, "log_line_preamble_notes"))   OPT_GET_STR(pDoc->m_strLogLinePreambleNotes);
-    else if (!strcmp(opt, "log_line_preamble_output"))  OPT_GET_STR(pDoc->m_strLogLinePreambleOutput);
-    else if (!strcmp(opt, "log_line_postamble_input"))  OPT_GET_STR(pDoc->m_strLogLinePostambleInput);
-    else if (!strcmp(opt, "log_line_postamble_notes"))  OPT_GET_STR(pDoc->m_strLogLinePostambleNotes);
-    else if (!strcmp(opt, "log_line_postamble_output")) OPT_GET_STR(pDoc->m_strLogLinePostambleOutput);
-    // Auto-say
-    else if (!strcmp(opt, "auto_say_string"))           OPT_GET_STR(pDoc->m_strAutoSayString);
-    else if (!strcmp(opt, "auto_say_override_prefix"))  OPT_GET_STR(pDoc->m_strOverridePrefix);
-    // Command stacking / spam
-    else if (!strcmp(opt, "command_stack_character"))   OPT_GET_STR(pDoc->m_strCommandStackCharacter);
-    else if (!strcmp(opt, "spam_message"))              OPT_GET_STR(pDoc->m_strSpamMessage);
-    // Tab completion / recall
-    else if (!strcmp(opt, "tab_completion_defaults"))   OPT_GET_STR(pDoc->m_strTabCompletionDefaults);
-    else if (!strcmp(opt, "recall_line_preamble"))      OPT_GET_STR(pDoc->m_strRecallLinePreamble);
-    // Script editor
-    else if (!strcmp(opt, "script_editor"))             OPT_GET_STR(pDoc->m_strScriptEditor);
-    // Sound files
-    else if (!strcmp(opt, "beep_sound"))                OPT_GET_STR(pDoc->m_strBeepSound);
-    else if (!strcmp(opt, "new_activity_sound"))        OPT_GET_STR(pDoc->m_new_activity_sound);
-    // Paste strings
-    else if (!strcmp(opt, "paste_preamble"))            OPT_GET_STR(pDoc->m_paste_preamble);
-    else if (!strcmp(opt, "paste_postamble"))           OPT_GET_STR(pDoc->m_paste_postamble);
-    else if (!strcmp(opt, "paste_line_preamble"))       OPT_GET_STR(pDoc->m_pasteline_preamble);
-    else if (!strcmp(opt, "paste_line_postamble"))      OPT_GET_STR(pDoc->m_pasteline_postamble);
-
-    // 2. Cache — value previously written by SetAlphaOption.
-    {
-        auto it = pDoc->m_alphaOptionCache.find(opt);
-        if (it != pDoc->m_alphaOptionCache.end()) {
-            lua_pushstring(L, it->second.c_str());
-            return 1;
-        }
-    }
-
-    // 3. AlphaOptionsTable default (nullptr means unknown option → return "").
-    const char* def = opt_alpha_default(opt);
-    lua_pushstring(L, def ? def : "");
-    return 1;
+    VARIANT v = pDoc->GetAlphaOption(luaL_checkstring(L, 1));
+    return push_option_variant(L, v);
 }
-
-#undef OPT_GET_STR
 
 // world.SetAlphaOption(option_name, value) → error_code
 static int L_SetAlphaOption(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* opt = luaL_checkstring(L, 1);
-    const char* val = luaL_checkstring(L, 2);
-
-    // 1. Known live members — update the real field.
-    bool is_member = true;
-    if      (!strcmp(opt, "name") || !strcmp(opt, "world_name"))
-                                               pDoc->m_mush_name            = CString(val);
-    else if (!strcmp(opt, "site"))             pDoc->m_server               = CString(val);
-    else if (!strcmp(opt, "player"))           pDoc->m_name                 = CString(val);
-    else if (!strcmp(opt, "password"))         pDoc->m_password             = CString(val);
-    else if (!strcmp(opt, "script_filename"))  pDoc->m_strScriptFilename    = CString(val);
-    else if (!strcmp(opt, "script_language"))  pDoc->m_strLanguage          = CString(val);
-    else if (!strcmp(opt, "script_prefix"))    pDoc->m_strScriptPrefix      = CString(val);
-    else if (!strcmp(opt, "notes"))            pDoc->m_notes                = CString(val);
-    else if (!strcmp(opt, "terminal_identification"))
-                                               pDoc->m_strTerminalIdentification = CString(val);
-    else if (!strcmp(opt, "mapping_failure"))  pDoc->m_strMappingFailure    = CString(val);
-    // Connection text
-    else if (!strcmp(opt, "connect_text"))     pDoc->m_connect_text         = CString(val);
-    else if (!strcmp(opt, "auto_log_file_name")) pDoc->m_strAutoLogFileName = CString(val);
-    // Proxy
-    else if (!strcmp(opt, "proxy_server"))       pDoc->m_strProxyServerName = CString(val);
-    else if (!strcmp(opt, "proxy_username"))     pDoc->m_strProxyUserName   = CString(val);
-    else if (!strcmp(opt, "proxy_password"))     pDoc->m_strProxyPassword   = CString(val);
-    // Speed walk
-    else if (!strcmp(opt, "speed_walk_prefix"))  pDoc->m_speed_walk_prefix  = CString(val);
-    else if (!strcmp(opt, "speed_walk_filler"))  pDoc->m_strSpeedWalkFiller = CString(val);
-    // World ID
-    else if (!strcmp(opt, "id"))               pDoc->m_strWorldID           = CString(val);
-    // World callbacks
-    else if (!strcmp(opt, "on_world_open"))       pDoc->m_strWorldOpen       = CString(val);
-    else if (!strcmp(opt, "on_world_close"))      pDoc->m_strWorldClose      = CString(val);
-    else if (!strcmp(opt, "on_world_save"))       pDoc->m_strWorldSave       = CString(val);
-    else if (!strcmp(opt, "on_world_connect"))    pDoc->m_strWorldConnect    = CString(val);
-    else if (!strcmp(opt, "on_world_disconnect")) pDoc->m_strWorldDisconnect = CString(val);
-    else if (!strcmp(opt, "on_world_get_focus"))  pDoc->m_strWorldGetFocus   = CString(val);
-    else if (!strcmp(opt, "on_world_lose_focus")) pDoc->m_strWorldLoseFocus  = CString(val);
-    // MXP callbacks
-    else if (!strcmp(opt, "on_mxp_start"))        pDoc->m_strOnMXP_Start       = CString(val);
-    else if (!strcmp(opt, "on_mxp_stop"))         pDoc->m_strOnMXP_Stop        = CString(val);
-    else if (!strcmp(opt, "on_mxp_error"))        pDoc->m_strOnMXP_Error       = CString(val);
-    else if (!strcmp(opt, "on_mxp_open_tag"))     pDoc->m_strOnMXP_OpenTag     = CString(val);
-    else if (!strcmp(opt, "on_mxp_close_tag"))    pDoc->m_strOnMXP_CloseTag    = CString(val);
-    else if (!strcmp(opt, "on_mxp_set_variable")) pDoc->m_strOnMXP_SetVariable = CString(val);
-    // Log preambles/postambles
-    else if (!strcmp(opt, "log_file_preamble"))         pDoc->m_strLogFilePreamble        = CString(val);
-    else if (!strcmp(opt, "log_file_postamble"))        pDoc->m_strLogFilePostamble       = CString(val);
-    else if (!strcmp(opt, "log_line_preamble_input"))   pDoc->m_strLogLinePreambleInput   = CString(val);
-    else if (!strcmp(opt, "log_line_preamble_notes"))   pDoc->m_strLogLinePreambleNotes   = CString(val);
-    else if (!strcmp(opt, "log_line_preamble_output"))  pDoc->m_strLogLinePreambleOutput  = CString(val);
-    else if (!strcmp(opt, "log_line_postamble_input"))  pDoc->m_strLogLinePostambleInput  = CString(val);
-    else if (!strcmp(opt, "log_line_postamble_notes"))  pDoc->m_strLogLinePostambleNotes  = CString(val);
-    else if (!strcmp(opt, "log_line_postamble_output")) pDoc->m_strLogLinePostambleOutput = CString(val);
-    else if (!strcmp(opt, "output_font_name")) {
-        // Update live member and, if a GUI is attached, apply the font
-        // immediately so the change takes effect without a world restart.
-        pDoc->m_font_name = CString(val);
-        if (val && *val)
-            pDoc->EmitOutputFont(std::string(val), 0, false, false);
-    }
-    else if (!strcmp(opt, "input_font_name")) {
-        pDoc->m_input_font_name = CString(val);
-        if (val && *val)
-            pDoc->EmitInputFont(std::string(val), 0, false, false);
-    }
-    // Auto-say
-    else if (!strcmp(opt, "auto_say_string"))           pDoc->m_strAutoSayString         = CString(val);
-    else if (!strcmp(opt, "auto_say_override_prefix"))  pDoc->m_strOverridePrefix        = CString(val);
-    // Command stacking / spam
-    else if (!strcmp(opt, "command_stack_character"))   pDoc->m_strCommandStackCharacter = CString(val);
-    else if (!strcmp(opt, "spam_message"))              pDoc->m_strSpamMessage           = CString(val);
-    // Tab completion / recall
-    else if (!strcmp(opt, "tab_completion_defaults"))   pDoc->m_strTabCompletionDefaults = CString(val);
-    else if (!strcmp(opt, "recall_line_preamble"))      pDoc->m_strRecallLinePreamble    = CString(val);
-    // Script editor
-    else if (!strcmp(opt, "script_editor"))             pDoc->m_strScriptEditor          = CString(val);
-    // Sound files
-    else if (!strcmp(opt, "beep_sound"))                pDoc->m_strBeepSound             = CString(val);
-    else if (!strcmp(opt, "new_activity_sound"))        pDoc->m_new_activity_sound       = CString(val);
-    // Paste strings
-    else if (!strcmp(opt, "paste_preamble"))            pDoc->m_paste_preamble           = CString(val);
-    else if (!strcmp(opt, "paste_postamble"))           pDoc->m_paste_postamble          = CString(val);
-    else if (!strcmp(opt, "paste_line_preamble"))       pDoc->m_pasteline_preamble       = CString(val);
-    else if (!strcmp(opt, "paste_line_postamble"))      pDoc->m_pasteline_postamble      = CString(val);
-    else                                       is_member = false;
-
-    // 2. Validate: reject completely unknown option names.
-    if (!is_member && opt_alpha_default(opt) == nullptr) {
-        lua_pushnumber(L, eUnknownOption);
-        return 1;
-    }
-
-    // 3. Store in cache.
-    pDoc->m_alphaOptionCache[opt] = val;
-    lua_pushnumber(L, eOK);
+    lua_pushnumber(L, pDoc->SetAlphaOption(
+        luaL_checkstring(L, 1),   // OptionName
+        luaL_checkstring(L, 2)    // Value
+        ));
     return 1;
 }
 

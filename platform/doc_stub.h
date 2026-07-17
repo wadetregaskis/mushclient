@@ -447,7 +447,6 @@ struct tConfigurationAlphaOption {
 #  define OPT_PASSWORD      0x000004
 #  define OPT_COMMAND_STACK 0x000008
 #  define OPT_WORLD_ID      0x000010
-#  define OPT_PLUGIN_CANNOT_READ  0x000020
 #endif
 
 // ── Numeric option flags (from doc.h) ─────────────────────────────────────
@@ -462,6 +461,7 @@ struct tConfigurationAlphaOption {
 #  define OPT_FIX_WRAP_COLUMN      0x001000
 #  define OPT_FIX_SPEEDWALK_DELAY  0x002000
 #  define OPT_USE_MXP              0x004000
+#  define OPT_PLUGIN_CANNOT_READ   0x100000
 #  define OPT_PLUGIN_CANNOT_WRITE  0x200000
 #  define OPT_PLUGIN_CANNOT_RW     0x300000
 #  define OPT_CANNOT_WRITE         0x400000
@@ -524,7 +524,7 @@ enum {
 
 // ── MXP debug level enum additions (from doc.h) ──────────────────────────
 // DBG_NONE is the zero level — already implied by the MXP debug enum but
-// spelled out here for scriptingoptions_portable.cpp.
+// spelled out here for scriptingoptions.cpp (stub build).
 #ifndef DBG_NONE
 #  define DBG_NONE 0
 #endif
@@ -939,6 +939,8 @@ class CMUSHclientDoc;
 class CMUSHView : public CView {
 public:
     DECLARE_DYNCREATE(CMUSHView)
+    CToolTipCtrl m_ToolTip;   // scriptingoptions.cpp tooltip specials (dead headless:
+                              // GetFirstViewPosition() is nullptr, loop never runs)
     void Invalidate() {}
     RECT GetTextRectangle() const { RECT r = {0,0,0,0}; return r; }
     CPoint GetScrollPosition() const { return CPoint(0, 0); }
@@ -1095,6 +1097,16 @@ public:
     void MXP_LoadColours();
     void MXP_LoadEntities();
     void MXP_LoadElements();
+
+    // Windows InitInstance (MUSHclient.cpp:742-744) loads the MXP tables at
+    // startup; mirror that here so colour NAMES resolve headless too
+    // (SetColour / Get_XML_colour / world.ColourNameToRGB all consult
+    // App.m_ColoursMap).
+    CMUSHclientApp() {
+        MXP_LoadElements();
+        MXP_LoadEntities();
+        MXP_LoadColours();
+    }
 
     // Unique number generator — used for concurrency checks on variable updates.
     long GetUniqueNumber() {
@@ -1282,6 +1294,12 @@ long FindBaseAlphaOption(LPCTSTR OptionName,
                          tConfigurationAlphaOption BaseAlphaOptionsTable[],
                          int& iItem);
 
+// ── GetUniqueID (stdafx.h:525; Windows body Utilities.cpp:412) ────────────
+// 24 lowercase hex chars — SHA-1 of a fresh GUID, PLUGIN_UNIQUE_ID_LENGTH/8
+// digest words.  Portable body in doc_portable.cpp; SetAlphaDefaults uses it
+// for the OPT_WORLD_ID option, the ctor for m_strWorldID.
+CString GetUniqueID(void);
+
 bool GetWord(CString& strResult, CString& str);
 CString GetArgument(const CArgumentList& ArgumentList,
                     CString strName,
@@ -1296,7 +1314,7 @@ void StringToList(const CString str, const char* delim,
 void ListToString(const CStringList& thelist, const char delim,
                   CString& str);
 
-// ── OptionsTable (empty stub) ─────────────────────────────────────────────
+// ── OptionsTable (REAL — defined in scriptingoptions.cpp) ─────────────────
 extern tConfigurationNumericOption OptionsTable[];
 
 // ── FindAndReplace (from stdafx.h) ────────────────────────────────────────
@@ -1489,8 +1507,9 @@ public:
     // ── doc-option members (option-machinery convergence step: every member
     // named by scriptingoptions_numeric.inc / scriptingoptions_alpha.inc now
     // exists with doc.h's exact type, so the real OptionsTable offsets are
-    // valid against this class.  Declarations copied from doc.h; zero/empty
-    // initialised until the ctor runs SetDefaults over the real tables.) ──
+    // valid against this class.  Declarations copied from doc.h; the ctor
+    // (doc_portable.cpp) runs SetDefaults/SetAlphaDefaults over the real
+    // tables, exactly like doc_construct.cpp on Windows.) ──
     CString m_file_postamble;
     CString m_file_preamble ;
     CString m_line_postamble;
@@ -2015,8 +2034,8 @@ public:
     bool            m_bTrace               = false;
 
     // ── Behaviour options not in doc.h subset above ───────────────────
-    // Kept in sync with GetOption/SetOption live-member lists in
-    // lua_world_api_portable.cpp and with xml_load/save_world_portable.cpp.
+    // Reached through the real OptionsTable machinery (scriptingoptions.cpp)
+    // by offset — types must stay doc.h-exact.
     unsigned short  m_bEnableScripts            = 1;    // enable scripting
     unsigned short  m_bAutoFreeze               = 1;    // freeze when not at bottom
     unsigned short  m_enable_beeps              = 1;    // play BEL character
@@ -2122,14 +2141,6 @@ public:
     BOOL    IsModified()   const { return FALSE; }  // not tracked portably
     void    SetPathName(const CString& path) { m_strWorldFilePath = path; }
     void    SetTitle(const CString& title)   { m_mush_name = title; }
-
-    // ── Option caches (portable GetOption / SetOption backing store) ──
-    // Stores values for numeric/alpha options that don't have a dedicated
-    // CMUSHclientDoc member in the portable build.  Pre-populated from
-    // OptionsTable defaults by the constructor; updated by SetOption /
-    // SetAlphaOption so that subsequent GetOption reads are consistent.
-    unordered_map<string, long>   m_numericOptionCache;
-    unordered_map<string, string> m_alphaOptionCache;
 
     // ── Constructor / destructor / move ──────────────────────────────
     CMUSHclientDoc();
@@ -2254,10 +2265,52 @@ public:
     void StartNewLine(bool hard_break, int flags);
     void SetNewLineColour(const int flags);   // real body in doc_shared.cpp (display step 6)
 
-    // ── Option access stubs ───────────────────────────────────────────
-    long GetOptionItem(int)                         { return 0; }
-    long GetOption(const CString&)                  { return 0; }
-    bool SetOptionItem(int, long, bool, bool)        { return false; }
+    // ── Option machinery — the REAL bodies (scriptingoptions.cpp, option
+    // convergence).  Signatures mirror doc.h:2507-2525 + 2906/2908/2929-2931
+    // exactly (no default arguments there, none here).
+    long GetOptionIndex(LPCTSTR OptionName);
+    long GetOptionItem(const int iItem);
+    long SetOptionItem(const int iItem, long Value,
+                       const bool bDoSpecial, const bool bInclude);
+    void SetDefaults(const bool bDoSpecial);
+    long GetOption(LPCTSTR OptionName);
+    long SetOption(LPCTSTR OptionName, long Value);
+    VARIANT GetOptionList();
+
+    long GetAlphaOptionIndex(LPCTSTR OptionName);
+    CString GetAlphaOptionItem(const int iItem);
+    long SetAlphaOptionItem(const int iItem, LPCTSTR sValue,
+                            const bool bDoSpecial, const bool bInclude);
+    void SetAlphaDefaults(const bool bDoSpecial);
+    VARIANT GetAlphaOption(LPCTSTR OptionName);
+    long SetAlphaOption(LPCTSTR OptionName, LPCTSTR Value);
+    VARIANT GetAlphaOptionList();
+
+    void AllocateConfigurationArrays(void);
+    void DeleteConfigurationArrays(void);
+    void ResetConfigurationArrays(void);
+
+    // ── View fix-ups reached from Set(Alpha)OptionItem's bDoSpecial path.
+    // View-side; no-op headless — except FixUpOutputBuffer, whose Windows
+    // body (doc.cpp:1891) is doc-side work: trim m_LineList and rebuild
+    // m_pLinePositions.  Headless that is exactly AllocateLinePositions()
+    // (SetBaseOptionItem already stored the new m_maxlines before the
+    // special runs).
+    BOOL FixUpOutputBuffer(int /*nNewBufferSize*/) {
+        if (!m_pCurrentLine)
+            return FALSE;             // too early for this crap (doc.cpp)
+        AllocateLinePositions();
+        return TRUE;
+    }
+    void FixInputWrap() {}            // view-side; no-op headless
+    void ChangeFont(const int /*nHeight*/, const char* /*lpszFacename*/,
+                    const int /*nWeight*/, const DWORD /*iFontCharset*/,
+                    const BOOL /*bShowBold*/, const BOOL /*bShowItalic*/,
+                    const BOOL /*bShowUnderline*/,
+                    const unsigned short /*iLineSpacing*/) {}  // view-side; no-op headless
+    void ChangeInputFont(const int /*nHeight*/, const char* /*lpszFacename*/,
+                         const int /*nWeight*/, const DWORD /*iCharset*/,
+                         const BYTE /*bItalic*/) {}            // view-side; no-op headless
 
     // ── MXP argument helpers (mxputils.cpp) ──────────────────────────
     bool BuildArgumentList(CArgumentList& ArgumentList, CString strTag);
@@ -2640,7 +2693,6 @@ public:
     }
 
     void OnFileReloaddefaults() {}
-    CString GetAlphaOptionItem(int) { return ""; }
 
     // ── New plugin callback overload ──────────────────────────────────
     bool SendToAllPluginCallbacks(const string& sName, const char* sData,

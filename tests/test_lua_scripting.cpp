@@ -12,7 +12,7 @@
 // KNOWN PORTABLE-SUBSET FAILURES (deferred — low priority):
 // Several tests below (AddAndGetTrigger, DeleteTrigger, EnableDisableTrigger,
 // AddAndGetAlias, AddAndGetTimer, GuiStubsReturnValues,
-// SetAlphaOptionCacheRoundTrip, ArrayCreateSetGet, MD5, SHA256, WorldAddress)
+// SetAlphaOptionRoundTrip, ArrayCreateSetGet, MD5, SHA256, WorldAddress)
 // assert the FULL world API.  lua_world_api_portable.cpp (used by mushcore /
 // these tests) implements only a subset; the product, mushgui, uses
 // the complete scripting/lua_methods.cpp where these work.  Bringing the
@@ -405,6 +405,60 @@ TEST(LuaScripting, AliasAndTimerOptionRoundTrip)
     lua_close(L);
 }
 
+// ── GOLDEN world-file option round trip ──────────────────────────────────────
+// The safety net for the option-machinery convergence: set a deliberate mix of
+// options through the scripting API (numeric bool/ushort/long, an RGB colour
+// that has NO hand-written live-member path, plus single-line / multiline /
+// password alphas), save the world, load it into a FRESH doc, and assert every
+// value through the scripting API again.  This test must keep passing
+// unchanged when the zero-offset portable tables are replaced by the real
+// scriptingoptions.cpp machinery.
+TEST(LuaScripting, GoldenWorldOptionRoundTrip)
+{
+    const char* path = "/tmp/mc_golden_option_roundtrip.mcl";
+    remove(path);
+
+    {
+        CMUSHclientDoc doc;
+        lua_State* L = make_lua(&doc);
+        ASSERT_NE(nullptr, L);
+        EXPECT_TRUE(run(L,
+            "assert(world.SetOption('enable_triggers', 0) == 0)\n"
+            "assert(world.SetOption('auto_wrap_window_width', 1) == 0)\n"
+            "assert(world.SetOption('wrap_column', 100) == 0)\n"
+            "assert(world.SetOption('speed_walk_delay', 25) == 0)\n"
+            "assert(world.SetOption('max_output_lines', 2000) == 0)\n"
+            "assert(world.SetOption('hyperlink_colour', 0x123456) == 0)\n"
+            "assert(world.SetAlphaOption('player', 'wizard') == 0)\n"
+            "assert(world.SetAlphaOption('notes', 'line one\\nline two') == 0)\n"
+            "assert(world.SetAlphaOption('password', 'secret') == 0)\n"));
+        EXPECT_TRUE(doc.OnSaveDocument(path));
+        lua_close(L);
+    }
+
+    {
+        CMUSHclientDoc doc2;
+        ASSERT_TRUE(doc2.LoadWorldFromFile(path));
+        lua_State* L2 = make_lua(&doc2);
+        ASSERT_NE(nullptr, L2);
+        EXPECT_TRUE(run(L2,
+            "assert(world.GetOption('enable_triggers') == 0, 'enable_triggers')\n"
+            "assert(world.GetOption('auto_wrap_window_width') == 1, 'auto_wrap')\n"
+            "assert(world.GetOption('wrap_column') == 100, 'wrap_column')\n"
+            "assert(world.GetOption('speed_walk_delay') == 25, 'speed_walk_delay')\n"
+            "assert(world.GetOption('max_output_lines') == 2000, 'max_output_lines')\n"
+            "assert(world.GetOption('hyperlink_colour') == 0x123456, 'hyperlink_colour')\n"
+            "assert(world.GetAlphaOption('player') == 'wizard', 'player')\n"
+            // xmlparse.cpp normalises element content: LF becomes CRLF on
+            // load (identical on Windows — same parser TU), so the reloaded
+            // multiline value carries \r\n.
+            "assert(world.GetAlphaOption('notes') == 'line one\\r\\nline two', 'notes')\n"
+            "assert(world.GetAlphaOption('password') == 'secret', 'password')\n"));
+        lua_close(L2);
+    }
+    remove(path);
+}
+
 // ── Alias CRUD via Lua ────────────────────────────────────────────────────
 
 TEST(LuaScripting, AddAndGetAlias)
@@ -693,21 +747,23 @@ TEST(LuaScripting, GetOptionLiveMember)
     lua_close(L);
 }
 
-TEST(LuaScripting, GetOptionCacheRoundTrip)
+TEST(LuaScripting, GetOptionRoundTrip)
 {
-    // A non-member option (max_output_lines) should round-trip through the cache.
+    // max_output_lines round-trips through the REAL OptionsTable machinery
+    // (offset write into m_maxlines; the old option cache is gone).
     CMUSHclientDoc doc;
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    // Default value from OptionsTable before any Set.
+    // Default value applied by the ctor's SetDefaults before any Set.
     int n = run_ret(L, "return world.GetOption('max_output_lines')");
     EXPECT_EQ(1, n);
     EXPECT_EQ(5000.0, lua_tonumber(L, -1));
     lua_settop(L, 0);
 
-    // Set a custom value and read it back.
+    // Set a custom value and read it back through the real member.
     EXPECT_TRUE(run(L, "world.SetOption('max_output_lines', 2000)"));
+    EXPECT_EQ(2000L, (long)doc.m_maxlines);   // offset write hit the member
     n = run_ret(L, "return world.GetOption('max_output_lines')");
     EXPECT_EQ(1, n);
     EXPECT_EQ(2000.0, lua_tonumber(L, -1));
@@ -753,20 +809,21 @@ TEST(LuaScripting, GetAlphaOptionLiveMember)
     lua_close(L);
 }
 
-TEST(LuaScripting, SetAlphaOptionCacheRoundTrip)
+TEST(LuaScripting, SetAlphaOptionRoundTrip)
 {
-    // A non-member alpha option should round-trip through the cache.
+    // An alpha option round-trips through the REAL AlphaOptionsTable
+    // machinery (offset write into m_strLanguage; the old cache is gone).
     CMUSHclientDoc doc;
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    // Default from AlphaOptionsTable.
+    // Default from AlphaOptionsTable (applied by the ctor's SetAlphaDefaults).
     int n = run_ret(L, "return world.GetAlphaOption('script_language')");
     EXPECT_EQ(1, n);
     EXPECT_STREQ("lua", lua_tostring(L, -1));
     lua_settop(L, 0);
 
-    // Overwrite via SetAlphaOption — live member + cache updated.
+    // Overwrite via SetAlphaOption — the real member is updated.
     EXPECT_TRUE(run(L, "world.SetAlphaOption('script_language', 'python')"));
     EXPECT_STREQ("python", (const char*)doc.m_strLanguage);
 

@@ -498,165 +498,6 @@ static unsigned int Load_Timers(CXMLelement& parent, CMUSHclientDoc& doc)
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Option dispatch helpers — mirror L_SetOption / L_SetAlphaOption in
-// lua_world_api_portable.cpp so OptionsTable-driven loading can set real
-// struct members rather than only writing to the option caches.
-// ══════════════════════════════════════════════════════════════════════════
-
-static void apply_numeric_option(CMUSHclientDoc& doc, const char* opt, long val)
-{
-    // Live members — kept in sync with L_SetOption in lua_world_api_portable.cpp
-    // Font options
-    if      (!strcmp(opt, "output_font_height"))   doc.m_font_height         = val;
-    else if (!strcmp(opt, "output_font_weight"))   doc.m_font_weight         = val;
-    else if (!strcmp(opt, "output_font_charset"))  doc.m_font_charset        = (DWORD)val;
-    else if (!strcmp(opt, "input_font_height"))    doc.m_input_font_height   = val;
-    else if (!strcmp(opt, "input_font_italic"))    doc.m_input_font_italic   = (BYTE)(val != 0);
-    else if (!strcmp(opt, "input_font_weight"))    doc.m_input_font_weight   = val;
-    else if (!strcmp(opt, "input_font_charset"))   doc.m_input_font_charset  = (DWORD)val;
-    // World behaviour options
-    else if (!strcmp(opt, "enable_triggers"))      doc.m_enable_triggers        = (val != 0);
-    else if (!strcmp(opt, "enable_aliases"))       doc.m_enable_aliases         = (val != 0);
-    else if (!strcmp(opt, "enable_timers"))        doc.m_bEnableTimers          = (val != 0);
-    else if (!strcmp(opt, "display_my_input"))     doc.m_display_my_input       = (val != 0);
-    else if (!strcmp(opt, "log_output"))           doc.m_bLogOutput             = (short)val;
-    else if (!strcmp(opt, "log_notes"))            doc.m_bLogNotes              = (short)val;
-    else if (!strcmp(opt, "log_input"))            doc.m_log_input              = (short)val;
-    else if (!strcmp(opt, "trace"))                doc.m_bTrace                 = (val != 0);
-    else if (!strcmp(opt, "enable_trigger_sounds"))doc.m_enable_trigger_sounds  = (val != 0);
-    else if (!strcmp(opt, "enable_speed_walk"))    doc.m_enable_speed_walk      = (val != 0);
-    else if (!strcmp(opt, "log_html"))             doc.m_bLogHTML               = (val != 0);
-    else if (!strcmp(opt, "log_raw"))              doc.m_bLogRaw                = (val != 0);
-    else if (!strcmp(opt, "log_in_colour"))        doc.m_bLogInColour           = (val != 0);
-    else if (!strcmp(opt, "utf_8"))                doc.m_bUTF_8                 = (val != 0);
-    else if (!strcmp(opt, "use_mxp"))              doc.m_iUseMXP                = (short)val;
-    else if (!strcmp(opt, "detect_pueblo"))        doc.m_bPueblo                = (val != 0);
-    else if (!strcmp(opt, "naws"))                 doc.m_bNAWS                  = (val != 0);
-    else if (!strcmp(opt, "disable_compression"))  doc.m_bDisableCompression    = (val != 0);
-    else if (!strcmp(opt, "connect_method"))       doc.m_connect_now            = (short)val;
-    else if (!strcmp(opt, "use_ssl"))              doc.m_bUseSSL                = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "proxy_type"))           doc.m_iSocksProcessing       = (unsigned short)val;
-    else if (!strcmp(opt, "proxy_port"))           doc.m_iProxyServerPort       = (unsigned short)val;
-    else if (!strcmp(opt, "send_keep_alives"))     doc.m_bSendKeepAlives        = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "save_world_automatically")) doc.m_bSaveWorldAutomatically = (unsigned short)(val != 0);
-    // Behaviour options
-    else if (!strcmp(opt, "enable_scripts"))             doc.m_bEnableScripts            = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "auto_pause"))                 doc.m_bAutoFreeze               = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "enable_beeps"))               doc.m_enable_beeps              = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "carriage_return_clears_line"))doc.m_bCarriageReturnClearsLine = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "send_echo"))                  doc.m_bSendEcho                 = (unsigned short)(val != 0);
-    // Command / history options
-    else if (!strcmp(opt, "enable_command_stack"))   doc.m_enable_command_stack      = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "history_lines"))          doc.m_nHistoryLines             = val;
-    else if (!strcmp(opt, "escape_deletes_input"))   doc.m_bEscapeDeletesInput       = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "copy_selection_to_clipboard")) doc.m_bCopySelectionToClipboard = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "unpause_on_send"))        doc.m_bUnpauseOnSend            = (unsigned short)(val != 0);
-    else if (!strcmp(opt, "auto_wrap_window_width")) doc.m_bAutoWrapWindowWidth      = (BOOL)(val != 0);
-    else if (!strcmp(opt, "speed_walk_delay"))       doc.m_iSpeedWalkDelay           = (unsigned short)val;
-    // Spam prevention
-    else if (!strcmp(opt, "enable_spam_prevention")) doc.m_bEnableSpamPrevention     = (val != 0);
-    else if (!strcmp(opt, "spam_line_count"))        doc.m_iSpamLineCount            = (int)val;
-    // Telnet / echo
-    else if (!strcmp(opt, "no_echo_off"))            doc.m_bNoEchoOff                = (unsigned short)(val != 0);
-    // Hyperlink / display
-    else if (!strcmp(opt, "use_custom_link_colour")) doc.m_bUseCustomLinkColour      = (val != 0);
-    else if (!strcmp(opt, "hyperlink_colour"))       doc.m_iHyperlinkColour          = (COLORREF)val;
-    else if (!strcmp(opt, "show_connect_disconnect"))doc.m_bShowConnectDisconnect    = (val != 0);
-    else if (!strcmp(opt, "send_mxp_afk_response"))  doc.m_bSendMXP_AFK_Response    = (val != 0);
-    // Script logging
-    else if (!strcmp(opt, "script_errors_to_output_window")) doc.m_bScriptErrorsToOutputWindow = (val != 0);
-    else if (!strcmp(opt, "log_script_errors"))      doc.m_bLogScriptErrors          = (val != 0);
-    else if (!strcmp(opt, "wrap_column")) {
-        if (val >= 20 && val <= MAX_LINE_WIDTH)
-            doc.m_nWrapColumn = (unsigned short)val;
-    }
-    else if (!strcmp(opt, "max_output_lines")) {
-        if (val >= 200 && val <= 500000) {
-            doc.m_maxlines = val;
-            // re-size the JUMP_SIZE line-position index (allocated at
-            // construction from the default m_maxlines; an under-sized index
-            // is an out-of-bounds write in ProcessPreviousLine's omit branch)
-            doc.AllocateLinePositions();
-        }
-    }
-    else if (!strcmp(opt, "port")) {
-        if (val >= 1 && val <= USHRT_MAX)
-            doc.m_port = (unsigned short)val;
-    }
-    // Unknown options fall through to the cache (set by the caller's loop)
-}
-
-static void apply_alpha_option(CMUSHclientDoc& doc, const char* opt, const CString& val)
-{
-    // Live members — kept in sync with L_SetAlphaOption in lua_world_api_portable.cpp
-    // Font name options
-    if      (!strcmp(opt, "output_font_name")) doc.m_font_name              = val;
-    else if (!strcmp(opt, "input_font_name"))  doc.m_input_font_name        = val;
-    // site = host (canonical, matching the saver + Windows AlphaOptionsTable);
-    // name = world display name. The connect path keys on m_server.
-    else if (!strcmp(opt, "site"))             doc.m_server                 = val;
-    else if (!strcmp(opt, "name"))             doc.m_mush_name              = val;
-    else if (!strcmp(opt, "password"))         doc.m_password               = val;
-    else if (!strcmp(opt, "proxy_password"))   doc.m_strProxyPassword       = val;
-    else if (!strcmp(opt, "player"))           doc.m_name                   = val;
-    else if (!strcmp(opt, "script_filename"))  doc.m_strScriptFilename      = val;
-    else if (!strcmp(opt, "script_language"))  doc.m_strLanguage            = val;
-    else if (!strcmp(opt, "script_prefix"))    doc.m_strScriptPrefix        = val;
-    else if (!strcmp(opt, "notes"))            doc.m_notes                  = val;
-    else if (!strcmp(opt, "terminal_identification"))
-                                               doc.m_strTerminalIdentification = val;
-    else if (!strcmp(opt, "mapping_failure"))  doc.m_strMappingFailure      = val;
-    else if (!strcmp(opt, "connect_text"))     doc.m_connect_text           = val;
-    else if (!strcmp(opt, "auto_log_file_name")) doc.m_strAutoLogFileName   = val;
-    else if (!strcmp(opt, "speed_walk_prefix"))  doc.m_speed_walk_prefix    = val;
-    else if (!strcmp(opt, "speed_walk_filler"))  doc.m_strSpeedWalkFiller   = val;
-    else if (!strcmp(opt, "id"))               doc.m_strWorldID             = val;
-    else if (!strcmp(opt, "on_world_open"))       doc.m_strWorldOpen        = val;
-    else if (!strcmp(opt, "on_world_close"))      doc.m_strWorldClose       = val;
-    else if (!strcmp(opt, "on_world_save"))       doc.m_strWorldSave        = val;
-    else if (!strcmp(opt, "on_world_connect"))    doc.m_strWorldConnect     = val;
-    else if (!strcmp(opt, "on_world_disconnect")) doc.m_strWorldDisconnect  = val;
-    else if (!strcmp(opt, "on_world_get_focus"))  doc.m_strWorldGetFocus    = val;
-    else if (!strcmp(opt, "on_world_lose_focus")) doc.m_strWorldLoseFocus   = val;
-    else if (!strcmp(opt, "on_mxp_start"))        doc.m_strOnMXP_Start      = val;
-    else if (!strcmp(opt, "on_mxp_stop"))         doc.m_strOnMXP_Stop       = val;
-    else if (!strcmp(opt, "on_mxp_error"))        doc.m_strOnMXP_Error      = val;
-    else if (!strcmp(opt, "on_mxp_open_tag"))     doc.m_strOnMXP_OpenTag    = val;
-    else if (!strcmp(opt, "on_mxp_close_tag"))    doc.m_strOnMXP_CloseTag   = val;
-    else if (!strcmp(opt, "on_mxp_set_variable")) doc.m_strOnMXP_SetVariable= val;
-    else if (!strcmp(opt, "log_file_preamble"))         doc.m_strLogFilePreamble        = val;
-    else if (!strcmp(opt, "log_file_postamble"))        doc.m_strLogFilePostamble       = val;
-    else if (!strcmp(opt, "log_line_preamble_input"))   doc.m_strLogLinePreambleInput   = val;
-    else if (!strcmp(opt, "log_line_preamble_notes"))   doc.m_strLogLinePreambleNotes   = val;
-    else if (!strcmp(opt, "log_line_preamble_output"))  doc.m_strLogLinePreambleOutput  = val;
-    else if (!strcmp(opt, "log_line_postamble_input"))  doc.m_strLogLinePostambleInput  = val;
-    else if (!strcmp(opt, "log_line_postamble_notes"))  doc.m_strLogLinePostambleNotes  = val;
-    else if (!strcmp(opt, "log_line_postamble_output")) doc.m_strLogLinePostambleOutput = val;
-    else if (!strcmp(opt, "proxy_server"))       doc.m_strProxyServerName    = val;
-    else if (!strcmp(opt, "proxy_username"))     doc.m_strProxyUserName      = val;
-    // Auto-say
-    else if (!strcmp(opt, "auto_say_string"))           doc.m_strAutoSayString         = val;
-    else if (!strcmp(opt, "auto_say_override_prefix"))  doc.m_strOverridePrefix        = val;
-    // Command stacking / spam
-    else if (!strcmp(opt, "command_stack_character"))   doc.m_strCommandStackCharacter = val;
-    else if (!strcmp(opt, "spam_message"))              doc.m_strSpamMessage           = val;
-    // Tab completion / recall
-    else if (!strcmp(opt, "tab_completion_defaults"))   doc.m_strTabCompletionDefaults = val;
-    else if (!strcmp(opt, "recall_line_preamble"))      doc.m_strRecallLinePreamble    = val;
-    // Script editor
-    else if (!strcmp(opt, "script_editor"))             doc.m_strScriptEditor          = val;
-    // Sound files
-    else if (!strcmp(opt, "beep_sound"))                doc.m_strBeepSound             = val;
-    else if (!strcmp(opt, "new_activity_sound"))        doc.m_new_activity_sound       = val;
-    // Paste strings
-    else if (!strcmp(opt, "paste_preamble"))            doc.m_paste_preamble           = val;
-    else if (!strcmp(opt, "paste_postamble"))           doc.m_paste_postamble          = val;
-    else if (!strcmp(opt, "paste_line_preamble"))       doc.m_pasteline_preamble       = val;
-    else if (!strcmp(opt, "paste_line_postamble"))      doc.m_pasteline_postamble      = val;
-    // Unknown options: caller stores in cache
-}
-
-// ══════════════════════════════════════════════════════════════════════════
 // Colour table loading (<colours>)
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -753,9 +594,10 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
             }
             if (!got) continue;
 
-            apply_numeric_option(doc, optName, val);
-            // Also update the cache so GetOption always sees the correct value
-            doc.m_numericOptionCache[optName] = val;
+            // The REAL machinery (mirrors xml_load_world.cpp
+            // Load_World_Numeric_Options_XML: SetOptionItem(i, value, true,
+            // LOAD_INCLUDE) — a plain world load is not an include, so false).
+            doc.SetOptionItem(i, val, true, false);
         }
 
         // ── Single-line alpha options via AlphaOptionsTable ──────────────────
@@ -765,21 +607,12 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
             const char* optName = AlphaOptionsTable[i].pName;
             CAttribute* a;
             if (!pWorld->AttributeMap.Lookup(optName, a) || !a) {
-                // Attribute absent. The saver (xml_save_world_portable.cpp) omits
-                // any option whose value equals its table default, so an absent
-                // option must be RESTORED to that default here. The Windows build
-                // gets these from the constructor (doc_construct.cpp); the
-                // portable constructor (doc_portable.cpp) does not seed them, so
-                // without this a non-empty default such as command_stack_character
-                // (";"), speed_walk_prefix ("#"), spam_message ("look") or
-                // auto_say_string ("say ") would load as empty — breaking command
-                // stacking, speedwalk recognition, etc., and silently corrupting
-                // a save→reload round-trip.
-                const char* def = AlphaOptionsTable[i].sDefault;
-                if (def && *def) {
-                    apply_alpha_option(doc, optName, CString(def));
-                    doc.m_alphaOptionCache[optName] = std::string(def);
-                }
+                // Attribute absent: keep the table default the constructor's
+                // SetAlphaDefaults already applied.  (The saver omits options
+                // that equal their default, so absent == default here.  This
+                // deliberately deviates from Windows, which blanks absent
+                // single-line alphas — Windows can, because its saver writes
+                // every option.)
                 continue;
             }
             a->bUsed = true;
@@ -796,8 +629,11 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
                 }
             }
 
-            apply_alpha_option(doc, optName, val);
-            doc.m_alphaOptionCache[optName] = std::string((const char*)val);
+            // The REAL machinery (mirrors Load_World_Single_Line_Alpha_Options_XML:
+            // SetAlphaOptionItem(i, value, true, LOAD_INCLUDE) — plain load →
+            // false).  It also enforces the OPT_WORLD_ID 24-hex/lowercase and
+            // OPT_COMMAND_STACK invariants that the old hand-switch skipped.
+            doc.SetAlphaOptionItem(i, val, true, false);
         }
 
         // ── Multi-line alpha options (child elements, not attributes) ─────────
@@ -809,8 +645,7 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
             CString val;
             if (!FindNodeContents(*pWorld, optName, val, false)) continue;
 
-            apply_alpha_option(doc, optName, val);
-            doc.m_alphaOptionCache[optName] = std::string((const char*)val);
+            doc.SetAlphaOptionItem(i, val, true, false);
         }
 
         // ── Fields handled separately (port, connect_text, script_prefix) ────

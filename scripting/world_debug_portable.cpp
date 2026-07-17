@@ -408,21 +408,27 @@ void CMUSHclientDoc::DebugShowD(const char* sTitle, const double fNumber)
 }
 
 // ── ShowOptions / ShowAlphaOptions ────────────────────────────────────────
+// Bodies mirror world_debug.cpp:1754-1773 exactly: iterate the REAL option
+// tables (scriptingoptions.cpp) through GetOptionItem / GetAlphaOptionItem.
 void CMUSHclientDoc::ShowOptions()
 {
-    // Full OptionsTable not available in mushcore — list option cache instead.
-    ColourNote(SCRIPTERRORCONTEXTFORECOLOUR, "",
-               "------ World Numeric Options ------");
-    for (auto& kv : m_numericOptionCache)
-        Note(CFormat("%-40s = %ld", kv.first.c_str(), kv.second));
+    for (long i = 0; OptionsTable[i].pName; i++)
+        if (!m_CurrentPlugin ||
+            ((OptionsTable[i].iFlags & OPT_PLUGIN_CANNOT_READ) == 0))
+            Note(CFormat("%35s = %ld",
+                         (LPCTSTR) OptionsTable[i].pName,
+                         GetOptionItem(i)));
 }
 
 void CMUSHclientDoc::ShowAlphaOptions()
 {
-    ColourNote(SCRIPTERRORCONTEXTFORECOLOUR, "",
-               "------ World Alpha Options ------");
-    for (auto& kv : m_alphaOptionCache)
-        Note(CFormat("%-40s = %s", kv.first.c_str(), kv.second.c_str()));
+    for (long i = 0; AlphaOptionsTable[i].pName; i++)
+        if (!(AlphaOptionsTable[i].iFlags & OPT_PASSWORD)) // except the password <eg>
+            if (!m_CurrentPlugin ||
+                ((AlphaOptionsTable[i].iFlags & OPT_PLUGIN_CANNOT_READ) == 0))
+                Note(CFormat("%35s = %s",
+                             (LPCTSTR) AlphaOptionsTable[i].pName,
+                             (LPCTSTR) GetAlphaOptionItem(i)));
 }
 
 #endif // !_WIN32

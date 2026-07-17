@@ -12,6 +12,7 @@
 #include "platform/wx_mfc_hooks.h"
 #include "Color.h"
 #include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
+#include "scripting/shs.h"   // SHA-1 (GetUniqueID)
 #ifdef OPENSSL_FOUND
 #  include <openssl/ssl.h>
 #  include <openssl/err.h>
@@ -92,10 +93,53 @@ CMainFrame g_stub_frame;
 // ── ENDLINE constant ──────────────────────────────────────────────────────
 const char ENDLINE[] = "\r\n";
 
-// OptionsTable[] is defined in scriptingoptions_portable.cpp (real table).
+// OptionsTable[] is defined in scriptingoptions.cpp (the REAL table; option convergence).
 
 // ── xterm 256-colour table ────────────────────────────────────────────────
 COLORREF xterm_256_colours[256];
+
+// ── GetUniqueID (Windows body: Utilities.cpp:412) ─────────────────────────
+// SHA-1 a fresh GUID (32 uppercase hex chars, dashes removed — the exact
+// input shape of Windows' ::Replace(GetGUID(), "-", "")) and keep the first
+// PLUGIN_UNIQUE_ID_LENGTH/8 32-bit digest words → 24 lowercase hex chars,
+// byte-for-byte the output shape of the CoCreateGuid-based original.
+// Randomness from /dev/urandom (same source the portable utils.CreateGUID
+// uses), with a time/counter fallback so two IDs can never collide even if
+// the device is unreadable.
+CString GetUniqueID (void)
+{
+    unsigned char r[16] = {};
+    FILE* u = fopen("/dev/urandom", "rb");
+    bool ok = false;
+    if (u) {
+        ok = fread(r, 1, sizeof r, u) == sizeof r;
+        fclose(u);
+    }
+    if (!ok) {
+        static unsigned long s_counter = 0;
+        unsigned long t = (unsigned long) time(nullptr);
+        unsigned long c = ++s_counter;
+        memcpy(r, &t, sizeof t);
+        memcpy(r + sizeof t, &c, sizeof c);
+    }
+
+    char raw[33];
+    snprintf(raw, sizeof raw,
+             "%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+             r[0], r[1], r[2],  r[3],  r[4],  r[5],  r[6],  r[7],
+             r[8], r[9], r[10], r[11], r[12], r[13], r[14], r[15]);
+
+    SHS_INFO shsInfo;
+    shsInit   (&shsInfo);
+    shsUpdate (&shsInfo, (unsigned char *) raw, 32);
+    shsFinal  (&shsInfo);
+
+    CString strResult;
+    for (int i = 0; i < (PLUGIN_UNIQUE_ID_LENGTH / 8); i++)
+        strResult += CFormat ("%08x", shsInfo.digest [i]);
+
+    return strResult;
+} // end of GetUniqueID
 
 
 // ── CMUSHclientDoc constructor ────────────────────────────────────────────
@@ -103,6 +147,17 @@ CMUSHclientDoc::CMUSHclientDoc()
 {
     static bool s_tableReady = false;
     if (!s_tableReady) { Generate256colours(); s_tableReady = true; }
+
+    // ── Option machinery (mirrors doc_construct.cpp:35-51 order exactly:
+    // AllocateConfigurationArrays → SetDefaults → SetAlphaDefaults →
+    // m_strWorldID = GetUniqueID()).  bDoSpecial=false as on Windows: no
+    // view fix-ups during construction.
+    AllocateConfigurationArrays ();
+
+    SetDefaults (false);        // set up numeric/boolean defaults
+    SetAlphaDefaults (false);   // set up alpha defaults
+
+    m_strWorldID = GetUniqueID ();      // default world ID
 
     m_normalcolour[BLACK]   = RGB(  0,   0,   0);
     m_normalcolour[RED]     = RGB(128,   0,   0);
@@ -127,11 +182,10 @@ CMUSHclientDoc::CMUSHclientDoc()
         m_customback[i] = RGB(0, 0, 0);
     }
 
-    m_strTerminalIdentification = "MUSHCLIENT";
-    // Default scripting language (AlphaOptionsTable default for "script_language").
-    // The GUI applies the options-table defaults at construction; mirror the key
-    // one here so a freshly-constructed doc reports "lua" like Windows does.
-    m_strLanguage = "lua";
+    // m_strTerminalIdentification ("mushclient") and m_strLanguage ("lua")
+    // now come from SetAlphaDefaults above — the same table defaults Windows
+    // applies.  (The old hand-set "MUSHCLIENT" was twin drift: Windows sends
+    // the lowercase table default in TTYPE negotiation.)
     m_tWorldOpenTime = time(nullptr);
 
     // ── The real line lifecycle (display step 7) ──────────────────
@@ -195,6 +249,10 @@ CMUSHclientDoc::~CMUSHclientDoc()
     // Tear down the world's own Lua script engine.
     delete m_ScriptEngine;
     m_ScriptEngine = nullptr;
+
+    // Don't need to know what the configuration was any more
+    // (mirrors doc_construct.cpp:645).
+    DeleteConfigurationArrays ();
 
     // Free the line-positions index (allocated by AllocateLinePositions).
     delete [] m_pLinePositions;
@@ -672,7 +730,7 @@ const string ON_PLUGIN_PARTIAL_LINE    = "OnPluginPartialLine";
 const string ON_PLUGIN_PACKET_RECEIVED = "OnPluginPacketReceived";
 const string ON_PLUGIN_TRACE           = "OnPluginTrace";
 
-// AlphaOptionsTable[] is defined in scriptingoptions_portable.cpp (real table).
+// AlphaOptionsTable[] is defined in scriptingoptions.cpp (the REAL table; option convergence).
 
 // tolower(string) is single-sourced in utilities_shared.cpp.
 

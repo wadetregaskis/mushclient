@@ -182,7 +182,8 @@ void CMUSHclientDoc::ShowStatusLine(bool) {}
 
 void CMUSHclientDoc::OnFileReloaddefaults() {}
 
-CString CMUSHclientDoc::GetAlphaOptionItem(int) { return CString(""); }
+// GetAlphaOptionItem: REAL body now compiled into mushcore (scriptingoptions.cpp,
+// option convergence) — the old empty stub here would be a duplicate symbol.
 
 // doc.h: bool SendToAllPluginCallbacks(const string&, const char*, const bool = false)
 bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& /*sName*/,

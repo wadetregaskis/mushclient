@@ -768,6 +768,39 @@ const char* telopt_name(unsigned char opt);
 #endif
 CString TFormat(const char* sFormat, ...);
 CString GetConnectionStatus (const int iStatus);   // doc_shared.cpp (T3b)
+
+// ── Command-ID name mapping (from stdafx.h; guarded because a few TUs
+// include stdafx.h before doc_stub.h and the anonymous-struct typedefs may
+// be defined only once per TU).  The tables live in accelerators.cpp and
+// the lookups in utilities_shared.cpp — both compiled into mushcore. ──
+#ifndef _STDAFX_INCLUDED_
+typedef struct
+  {
+  int						iCommandID;			 // eg. ID_EDIT_SELECT_ALL
+  const char *	sCommandName;    // eg. "SelectAll"
+  } tCommandIDMapping;
+
+typedef struct
+  {
+  int						iVirtualKey;     // eg. VK_ESCAPE
+  const char *	sKeyName;		     // eg. "Esc"
+  } tVirtualKeyMapping;
+#endif // _STDAFX_INCLUDED_
+
+CString CommandIDToString (const int ID);   // utilities_shared.cpp
+int StringToCommandID (const CString str);  // utilities_shared.cpp
+CString ExtractDirectory (CString str);     // utilities_shared.cpp
+
+// Splitter pane indexes (stdafx.h; no USE_EXTRA_PANE on the port)
+#ifndef OUTPUT_PANE
+#  define OUTPUT_PANE 0
+#  define COMMAND_PANE 1
+#endif
+
+// MUSHclient.h:29 — sound-buffer count (methods_sounds.cpp)
+#ifndef MAX_SOUND_BUFFERS
+#  define MAX_SOUND_BUFFERS 10
+#endif
 CString TranslateGeneric(const char* sText, const char* sSection);
 // Don't define Translate as a macro when building with wxWidgets — wx/textbuf.h
 // declares wxString::Translate(const wxString& text, const wxString& domain) as a
@@ -1052,6 +1085,7 @@ public:
 
     // Scripting / sandboxing
     CString m_strLuaScript;              // sandbox script (empty on macOS — no sandbox)
+    CString m_strMUSHclientFileName;     // full path of the executable (PlaySound relative-path base; empty headless)
     string  m_strDefaultLogFileDirectory;// prefix for log files
     string  m_strDefaultWorldFileDirectory;  // prefix for world files (FormatTime %F)
     // Plugin state-file directory + plugins directory (plugins.cpp SaveState;
@@ -1200,6 +1234,18 @@ public:
     operator HWND() const { return nullptr; }
 };
 #endif // CMainFrame_defined
+// ── CChildFrame stub (childfrm.h) — the per-world MDI child.  Headless
+// there are no views, so CMUSHclientDoc::GetChildFrame() always returns
+// nullptr and SetCommandWindowHeight → eBadParameter (the CSplitterWnd
+// members are the inert mfc_ui.h stubs; nothing constructs this class). ──
+#ifndef CChildFrame_defined
+#define CChildFrame_defined
+class CChildFrame : public CWnd {
+public:
+    CSplitterWnd m_wndSplitter;
+};
+#endif // CChildFrame_defined
+
 // Redefine Frame to return a static stub instance.
 extern CMainFrame g_stub_frame;
 #ifndef Frame
@@ -2081,6 +2127,8 @@ public:
     bool                   m_bInSendToScript         = false;
     int                    m_iExecutionDepth         = 0;
     bool                   m_bDoingSimulate          = false;
+    bool                   m_bPluginProcessingCommand = false; // plugin is doing ON_PLUGIN_COMMAND (doc.h:1390)
+    __int64                m_iUniqueDocumentNumber   = 0;   // doc.h:1372 (SendTo eSendToNotepad)
 #ifndef MAX_EXECUTION_DEPTH
 #  define MAX_EXECUTION_DEPTH 20
 #endif
@@ -2348,7 +2396,7 @@ public:
     BOOL EvaluateCommand(const CString& full_input,
                          bool bCountThem,
                          bool& bOmitFromLog,
-                         bool bTest);
+                         bool bTest = false);   // default converged to doc.h:2134
     bool ProcessPreviousLine();
     void ProcessOneTriggerSequence(CString& strCurrentLine,
                                    CPaneLine& StyledLine,
@@ -2630,6 +2678,37 @@ public:
                         const char* sName);
     bool PlaySoundFile(CString strFile);   // doc.h signature (bool: did it play)
     void CancelSound();
+
+    // ── Sound methods ── the REAL scripting/methods/methods_sounds.cpp is
+    // compiled into mushcore (_NOSOUND fork: drives the g_wxhook_sound_*
+    // miniaudio hooks; null hooks headless → eCannotPlaySound / -3).
+    long Sound(LPCTSTR SoundFileName);
+    long PlaySoundHelper(short Buffer, LPCTSTR FileName, BOOL Loop, double Volume, double Pan, LPCTSTR MemoryBuffer, size_t MemLen);
+    long PlaySound(short Buffer, LPCTSTR FileName, BOOL Loop, double Volume, double Pan);
+    long StopSound(short Buffer);
+    long GetSoundStatus(short Buffer);
+
+    // ── Command window / command handling ── the REAL
+    // scripting/methods/methods_commands.cpp is compiled into mushcore.
+    // The view-facing ones route through the IWorldView seam helpers
+    // (GetCommandText & co) and no-op gracefully with no view attached.
+    VARIANT GetCommandList(long Count);
+    BSTR PushCommand();
+    void SelectCommand();
+    BSTR GetCommand();
+    long SetCommand(LPCTSTR Message);
+    BSTR PasteCommand(LPCTSTR Text);
+    void DeleteCommandHistory();
+    long Execute(LPCTSTR Command);
+    long DoCommand(LPCTSTR Command);
+    VARIANT GetInternalCommandsList();
+    BOOL GetEchoInput();
+    void SetEchoInput(BOOL bNewValue);
+    VARIANT GetQueue();
+    void SetInputFont(LPCTSTR FontName, short PointSize, short Weight, BOOL Italic);
+    long SetCommandWindowHeight(short Height);
+    long SetCommandSelection(long First, long Last);
+    CChildFrame* GetChildFrame(void);   // stub def in doc_portable.cpp: no views → nullptr
     void Redraw() {}
     void DoFixMenus(void*) {}
     void ShowStatusLine(bool) {}

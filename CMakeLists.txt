@@ -436,6 +436,9 @@ if(NOT WIN32)
         scripting/methods/methods_arrays.cpp    # Campaign C
         scripting/methods/methods_colours.cpp   # Campaign C
         scripting/methods/methods_defaults.cpp  # Campaign C (post option-convergence)
+        scripting/methods/methods_sounds.cpp    # Campaign C (_NOSOUND fork: g_wxhook_sound_* / no-op headless)
+        scripting/methods/methods_commands.cpp  # Campaign C (Execute + command window via the IWorldView seam)
+        accelerators.cpp                        # CommandIDs[]/VirtualKeys tables (DoCommand / GetInternalCommandsList)
         doc_display_shared.cpp   # the push-side UpdateAllViews drain (display step 7)
         doc_portable.cpp
 

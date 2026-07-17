@@ -506,46 +506,9 @@ void GetHostNameAndAddresses (CString & strHostName, CString & strAddresses)
   } // end of GetHostNameAndAddresses
 
 
-extern tCommandIDMapping CommandIDs [];
+// CommandIDToString / StringToCommandID: single-sourced in utilities_shared.cpp
+// (mushcore needs them for the real methods_commands.cpp DoCommand/GetInternalCommandsList).
 
-CString CommandIDToString (const int ID)
-  {
-CString strFunction;
-
-  // scan functions in the hope we find it :)
-
-  if (ID)
-    for (int i = 0; CommandIDs [i].iCommandID; i++)
-      {
-      if (ID == CommandIDs [i].iCommandID)
-        {
-        strFunction = CommandIDs [i].sCommandName;
-        break;
-        }
-      } // end of finding which one
-
-  return strFunction;
-  }  // end of CommandIDToString
-
-
-int StringToCommandID (const CString str)
-  {
-int ID = 0;
-
-  // scan functions in the hope we find it :)
-
-  for (int i = 0; CommandIDs [i].iCommandID; i++)
-    {
-    if (str.CompareNoCase (CommandIDs [i].sCommandName) == 0)
-      {
-      ID = CommandIDs [i].iCommandID;
-      break;
-      }
-    } // end of finding which one
-
-  return ID;
-
-  } // end of StringToCommandID
 
 void MakeRandomNumber (CMUSHclientDoc * pDoc, SHS_INFO & shsInfo)
   {
@@ -1327,27 +1290,8 @@ bool FindLuaFunction (lua_State * L, const char * sName)
   } // end of FindLuaFunction
 
 
-// get a pathname and extract the directory from it
-CString ExtractDirectory (CString str)
-  {
-#ifdef _WIN32
-  int iSlash = str.ReverseFind ('\\');
-  if (iSlash == -1)
-     str = ".\\";
-  else
-    str = str.Left (iSlash + 1);
-#else
-  // On POSIX paths use '/' but also accept '\' in case of cross-platform world files.
-  int iSlashF = str.ReverseFind ('/');
-  int iSlashB = str.ReverseFind ('\\');
-  int iSlash  = (iSlashF > iSlashB) ? iSlashF : iSlashB;
-  if (iSlash == -1)
-     str = "./";
-  else
-    str = str.Left (iSlash + 1);
-#endif
-  return str;
-  } // end of ExtractDirectory
+// ExtractDirectory: single-sourced in utilities_shared.cpp (mushcore needs it
+// for the real methods_sounds.cpp relative-path resolution).
 
 // if string ends in a path separator, get rid of it
 CString RemoveFinalSlash (CString str)

@@ -423,6 +423,17 @@ bool CMUSHclientDoc::AppendToTheNotepad(const CString strTitle,
 bool CMUSHclientDoc::SeeIfHandlerCanExecute(const CString&)
 { return false; }
 
+// ── CMUSHclientDoc::GetChildFrame ────────────────────────────────────────
+// The real body (scripting/methods/methods_output.cpp, not yet adopted)
+// iterates the doc's views for a CSendView and returns its owning
+// CChildFrame.  Headless GetFirstViewPosition() is always null, so the walk
+// would find nothing — return what it would compute.  Used by the real
+// methods_commands.cpp SetCommandWindowHeight (null → eBadParameter).
+CChildFrame * CMUSHclientDoc::GetChildFrame (void)
+{
+    return nullptr;
+}
+
 // ── CMUSHclientDoc::ResolveAllEntryPoints ────────────────────────────────
 // Portable equivalent of CMUSHclientDoc::FindAllEntryPoints() (scripting.cpp).
 //
@@ -691,132 +702,10 @@ BOOL CMUSHclientDoc::CheckConnected()
 // family (queueing, spam prevention, OnPluginSend/Sent ordering, IAC
 // doubling, logging) replaced the simplified twin here.
 
-// ── CMUSHclientDoc::SendTo ────────────────────────────────────────────────
-// Routes a trigger/alias response to the appropriate destination.
-// Enum values from OtherTypes.h (included via doc_stub.h):
-//   0=World,  1=Command,   2=Output,     3=Status,   4=Notepad,
-//   5=Append, 6=LogFile,   7=Replace,    8=CmdQueue, 9=Variable,
-//  10=Execute,11=Speedwalk,12=Script,   13=Immediate,14=ScriptAfterOmit,
-//  15=Pane
-void CMUSHclientDoc::SendTo(const unsigned short iWhere,
-                             const CString strSendText,
-                             const bool bOmitFromOutput,
-                             const bool bOmitFromLog,
-                             const CString strDescription,
-                             const CString strVariable,
-                             CString& /*strOutput*/)
-{
-    switch (iWhere) {
-    case eSendToWorld:        // 0 — send to MUD socket
-    case eSendToCommandQueue: // 8 — queue then send
-        SendMsg(strSendText,
-                bOmitFromOutput ? false : (bool)m_display_my_input,
-                (iWhere == eSendToCommandQueue),
-                !bOmitFromLog);
-        break;
-
-    case eSendToCommand:      // 1 — put text in command bar (only if empty)
-        // SetCommandText returns false without overwriting if the bar is
-        // non-empty, matching the Windows CSendView iteration behaviour.
-        SetCommandText(std::string((const char*)strSendText));
-        break;
-
-    case eSendToOutput:       // 2 — display in output window without sending
-        if (!bOmitFromOutput)
-            Note(strSendText);
-        break;
-
-    case eSendToStatus:       // 3 — update status message
-        m_strStatusMessage = strSendText;
-        break;
-
-    case eSendToNotepad:      // 4 — open new notepad (create or append)
-    case eAppendToNotepad:    // 5 — append to existing notepad with this title
-    case eReplaceNotepad:     // 7 — replace contents of notepad with this title
-        {
-            // strDescription is the notepad title.
-            // AppendToTheNotepad() will create a new window if one with that
-            // title doesn't exist yet, so all three variants work through it.
-            bool bReplace = (iWhere == eReplaceNotepad);
-            AppendToTheNotepad(strDescription,
-                               strSendText + ENDLINE,
-                               bReplace,
-                               eNotepadTrigger);
-        }
-        break;
-
-    case eSendToLogFile:      // 6 — append text to the open log file
-        if (m_logfile && !m_bLogRaw) {
-            WriteToLog(strSendText);
-            WriteToLog("\n", 1);
-        }
-        break;
-
-    case eSendToVariable:     // 9 — set a world variable by name
-        if (!strVariable.IsEmpty()) {
-            CVariable* var = nullptr;
-            if (GetVariableMap().Lookup(strVariable, var))
-                delete var;
-            var = new CVariable();
-            var->strLabel    = strVariable;
-            var->strContents = strSendText;
-            m_bVariablesChanged = true;
-            GetVariableMap().SetAt(strVariable, var);
-        }
-        break;
-
-    case eSendToExecute:      // 10 — execute as a MUSHclient command
-        {
-            bool bOmit = bOmitFromLog;
-            EvaluateCommand(strSendText, /*countThem=*/false,
-                            bOmit, /*test=*/false);
-        }
-        break;
-
-    case eSendToSpeedwalk:    // 11 — evaluate and send as speedwalk sequence
-        {
-            CString strEvaluated = DoEvaluateSpeedwalk(strSendText);
-            if (!strEvaluated.IsEmpty()) {
-                if (strEvaluated[0] == '*') {
-                    // Error message from DoEvaluateSpeedwalk — display it.
-                    Note(strEvaluated.Mid(1));
-                } else {
-                    SendMsg(strEvaluated,
-                            bOmitFromOutput ? false : (bool)m_display_my_input,
-                            /*bQueueIt=*/true,
-                            bOmitFromLog ? false : (bool)LoggingInput());
-                }
-            }
-        }
-        break;
-
-    case eSendToScript:           // 12 — pass text to the script engine
-    case eSendToScriptAfterOmit:  // 14 — same but after omit processing
-        {
-            CScriptEngine* engine = GetScriptEngine();
-            if (engine)
-                engine->Parse(strSendText, strDescription);
-            else
-                ColourNote("white", "red",
-                    "Send-to-script cannot execute because scripting is not enabled.");
-        }
-        break;
-
-    case eSendImmediate:      // 13 — send directly (bypasses spam prevention)
-        // On Windows this calls DoSendMsg() which additionally runs plugin
-        // hooks and spam-prevention.  In the portable build those aren't
-        // available, so we fall back to SendMsg() with no queuing.
-        SendMsg(strSendText,
-                bOmitFromOutput ? false : (bool)m_display_my_input,
-                /*bQueueIt=*/false,
-                !bOmitFromLog);
-        break;
-
-    default:
-        // eSendToPane(15) and any future destinations — not implemented.
-        break;
-    }
-}
+// SendTo: single-sourced in doc_shared.cpp (the real doc.cpp body — empty-
+// text early-return, caller-displayed eSendToOutput accumulation, Execute-
+// based eSendToExecute with log-flag save/restore, DoSendMsg eSendImmediate —
+// replaced the simplified twin here).
 
 // ── CMUSHclientDoc::ExecuteTriggerScript ─────────────────────────────────
 // Fires the Lua script callback for a trigger match.

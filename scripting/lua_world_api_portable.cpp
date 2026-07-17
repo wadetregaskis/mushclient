@@ -303,23 +303,13 @@ static int L_Send(lua_State* L)
 }
 
 // world.Execute(command) → error code
-// Evaluates a command as if the user typed it (runs aliases, triggers, etc.)
+// The REAL command processor (methods_commands.cpp, adopted into mushcore):
+// script prefix, command stacking, per-line split, ON_PLUGIN_COMMAND and
+// EvaluateCommand — marshalled exactly as lua_methods.cpp.
 static int L_Execute(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* cmd = luaL_checkstring(L, 1);
-
-    if (++pDoc->m_iExecutionDepth > MAX_EXECUTION_DEPTH) {
-        --pDoc->m_iExecutionDepth;
-        lua_pushnumber(L, eCommandsNestedTooDeeply);
-        return 1;
-    }
-
-    bool bOmit = false;
-    pDoc->EvaluateCommand(CString(cmd), /*count=*/false, bOmit, /*test=*/false);
-
-    --pDoc->m_iExecutionDepth;
-    lua_pushnumber(L, eOK);
+    lua_pushnumber(L, pDoc->Execute(luaL_checkstring(L, 1)));
     return 1;
 }
 
@@ -3416,24 +3406,15 @@ static int L_SetCustomColourName(lua_State* L)
 }
 
 // ── GetQueue ──────────────────────────────────────────────────────────────────
-// Returns a table of queued commands (strings), ordered head-to-tail.
+// The REAL GetQueue (methods_commands.cpp): a 1-based array of queued
+// commands (echo flag stripped), or nil when the queue is empty — exactly
+// the Windows shape via push_option_variant's VT_ARRAY branch.
 
 static int L_GetQueue(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    lua_newtable(L);
-    int i = 1;
-    POSITION pos = pDoc->m_QueuedCommandsList.GetHeadPosition();
-    while (pos)
-    {
-        CString cmd = pDoc->m_QueuedCommandsList.GetNext(pos);
-        // Each entry has a leading echo-flag character; strip it (match Windows)
-        const char* s = static_cast<const char*>(cmd);
-        if (s && *s) s++;  // skip echo flag byte
-        lua_pushstring(L, s ? s : "");
-        lua_rawseti(L, -2, i++);
-    }
-    return 1;
+    VARIANT v = pDoc->GetQueue();
+    return push_option_variant(L, v);
 }
 
 // ── SendImmediate ─────────────────────────────────────────────────────────────
@@ -3877,15 +3858,15 @@ static int L_ChangeDir(lua_State* L)
 
 static int L_GetEchoInput(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    lua_pushboolean(L, pDoc->m_display_my_input ? 1 : 0);
+    lua_pushboolean(L, world_doc(L)->GetEchoInput());
     return 1;
 }
 
 static int L_SetEchoInput(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    pDoc->m_display_my_input = lua_toboolean(L, 1) ? 1 : 0;
+    // Windows optboolean(L, 1, 1): missing/nil defaults to yes
+    pDoc->SetEchoInput(lua_isnoneornil(L, 1) ? 1 : lua_toboolean(L, 1));
     return 0;
 }
 
@@ -4780,9 +4761,12 @@ static int L_SendPkt(lua_State* L)
 
 static int L_DoCommand(lua_State* L)
 {
-    world_doc(L);
-    luaL_checkstring(L, 1);   // consume the arg
-    lua_pushnumber(L, eNoSuchCommand);
+    // The REAL DoCommand (methods_commands.cpp): looks the name up in the
+    // real CommandIDs[] table (accelerators.cpp) — unknown → eNoSuchCommand,
+    // known → eOK after posting WM_COMMAND (the stub Frame drops the post
+    // headless; the GUI build dispatches it).
+    CMUSHclientDoc* pDoc = world_doc(L);
+    lua_pushnumber(L, pDoc->DoCommand(luaL_checkstring(L, 1)));
     return 1;
 }
 
@@ -4796,48 +4780,39 @@ static int L_Reset(lua_State* L)
     return 1;
 }
 
-// ── Sound stubs ───────────────────────────────────────────────────────────────
+// ── Sound functions ───────────────────────────────────────────────────────────
+// Thin wrappers over the REAL CMUSHclientDoc sound methods (methods_sounds.cpp
+// _NOSOUND fork, adopted into mushcore: full buffer/volume/pan semantics over
+// the g_wxhook_sound_* miniaudio hooks), marshalled exactly as lua_methods.cpp.
+// Headless the hooks are null → eCannotPlaySound / GetSoundStatus -3.
 
 static int L_Sound(lua_State* L)
 {
-    world_doc(L);
-    const char* filename = luaL_checkstring(L, 1);
-    if (g_wxhook_play_sound && filename && *filename) {
-        bool ok = g_wxhook_play_sound(filename, false);
-        lua_pushnumber(L, ok ? eOK : eCannotPlaySound);
-    } else {
-        lua_pushnumber(L, eCannotPlaySound);
-    }
+    CMUSHclientDoc* pDoc = world_doc(L);
+    lua_pushnumber(L, pDoc->Sound(luaL_checkstring(L, 1)));
     return 1;
 }
 static int L_StopSound(lua_State* L)
 {
-    world_doc(L);
-    // Buffer arg (1) ignored — we have a single sound slot portably.
-    if (g_wxhook_stop_sound) g_wxhook_stop_sound();
-    lua_pushnumber(L, eOK); return 1;
+    CMUSHclientDoc* pDoc = world_doc(L);
+    lua_pushnumber(L, pDoc->StopSound((short)luaL_optnumber(L, 1, 0)));   // Buffer
+    return 1;
 }
 static int L_GetSoundStatus(lua_State* L)
 {
-    world_doc(L); luaL_optnumber(L, 1, 0);
-    lua_pushnumber(L, 0); return 1;   // 0 = not playing
+    CMUSHclientDoc* pDoc = world_doc(L);
+    lua_pushnumber(L, pDoc->GetSoundStatus((short)luaL_checknumber(L, 1)));
+    return 1;
 }
 static int L_PlaySound(lua_State* L)
 {
-    world_doc(L);
-    // Args: Buffer (1, ignored portably), Filename (2), Loop (3), Volume (4), Pan (5).
-    // Buffer-slot management and volume/pan are DirectSound-only; we play the
-    // file once via the wxWidgets sound hook and return eOK on success.
-    const char* filename = luaL_optstring(L, 2, "");
-    if (!filename || !*filename) {
-        lua_pushnumber(L, eOK); return 1;
-    }
-    if (g_wxhook_play_sound) {
-        bool ok = g_wxhook_play_sound(filename, false);
-        lua_pushnumber(L, ok ? eOK : eCannotPlaySound);
-    } else {
-        lua_pushnumber(L, eCannotPlaySound);
-    }
+    CMUSHclientDoc* pDoc = world_doc(L);
+    lua_pushnumber(L, pDoc->PlaySound(
+        (short)luaL_checknumber(L, 1),                       // Buffer
+        luaL_optstring(L, 2, ""),                            // Filename
+        lua_isnoneornil(L, 3) ? 0 : lua_toboolean(L, 3),     // Repeat
+        luaL_optnumber(L, 4, 0),                             // Volume
+        luaL_optnumber(L, 5, 0)));                           // Pan
     return 1;
 }
 
@@ -4902,33 +4877,29 @@ static int L_GetNoteColour(lua_State* L)
     return 1;
 }
 
-// ── Command history ───────────────────────────────────────────────────────────
-// On portable we maintain a simple CStringList on the doc as the history.
+// ── Command history / command window ──────────────────────────────────────────
+// Thin wrappers over the REAL methods_commands.cpp methods (adopted into
+// mushcore), marshalled exactly as lua_methods.cpp.  Off-Windows BSTR is a
+// heap char* (CString::AllocSysString) that the caller frees — the pushBstr
+// equivalent here is push-then-delete[].
 
 static int L_GetCommand(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    // world.GetCommand() — returns the current text in the command input bar.
-    // The n-th-from-tail history argument is accepted but ignored on
-    // non-Windows since command history is kept in the frame, not the doc.
-    lua_pushstring(L, pDoc->GetCommandText().c_str());
+    // world.GetCommand() — the current text in the command input bar (empty
+    // with no view attached, e.g. headless).
+    BSTR str = world_doc(L)->GetCommand();
+    lua_pushstring(L, str ? str : "");
+    delete[] str;
     return 1;
 }
 
 static int L_GetCommandList(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    int count = (int)luaL_optnumber(L, 1, 0);
-    int total = (int)pDoc->m_CommandHistory.GetCount();
-    if (count <= 0 || count > total) count = total;
-    lua_newtable(L);
-    POSITION pos = pDoc->m_CommandHistory.GetTailPosition();
-    for (int i = 1; i <= count && pos; ++i) {
-        CString cmd = pDoc->m_CommandHistory.GetPrev(pos);
-        lua_pushstring(L, (const char*)cmd);
-        lua_rawseti(L, -2, i);
-    }
-    return 1;
+    VARIANT v = pDoc->GetCommandList(
+        (long)luaL_checknumber(L, 1)   // Count (0 = all), required as on Windows
+      );
+    return push_option_variant(L, v);
 }
 
 static int L_AddToCommandHistory(lua_State* L)
@@ -4942,54 +4913,34 @@ static int L_AddToCommandHistory(lua_State* L)
 
 static int L_DeleteCommandHistory(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    pDoc->m_CommandHistory.RemoveAll();
-    lua_pushnumber(L, eOK);
-    return 1;
+    world_doc(L)->DeleteCommandHistory();
+    return 0;   // Windows returns no result fields
 }
 
-// PushCommand / PasteCommand / SelectCommand / SetCommand / GetQueue are
-// command-window concepts.
 static int L_PushCommand(lua_State* L) {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    std::string s = pDoc->PushCommandText();
-    lua_pushstring(L, s.c_str()); return 1;
+    BSTR str = world_doc(L)->PushCommand();
+    lua_pushstring(L, str ? str : "");
+    delete[] str;
+    return 1;
 }
 static int L_SelectCommand(lua_State* L) {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    pDoc->SelectCommandText();
-    lua_pushnumber(L, eOK); return 1;
+    world_doc(L)->SelectCommand();
+    return 0;   // Windows returns no result fields
 }
 
 static int L_PasteCommand(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* text = luaL_checkstring(L, 1);
-    // Append text to the current input bar and return previously selected text
-    // (empty on non-Windows since selection state is not tracked here).
-    if (pDoc->HaveCommandSink()) {
-        std::string current = pDoc->GetCommandText();
-        std::string appended = current + std::string(text);
-        // setCommand requires an empty bar; force-set via get+set.
-        // Since PasteCommand replaces selection, we model it as append.
-        // This is an approximation: we don't have selection tracking.
-        pDoc->SetCommandText(appended);   // may fail if bar is non-empty; ignore
-    }
-    lua_pushstring(L, "");   // return empty string (no selection on non-Windows)
+    BSTR str = pDoc->PasteCommand(luaL_checkstring(L, 1));
+    lua_pushstring(L, str ? str : "");
+    delete[] str;
     return 1;
 }
 
 static int L_SetCommand(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* cmd = luaL_checkstring(L, 1);
-    if (pDoc->m_pWorldView) {
-        bool ok = pDoc->SetCommandText(std::string(cmd));
-        lua_pushnumber(L, ok ? eOK : eCommandNotEmpty);
-    } else {
-        pDoc->m_CurrentCommand = CString(cmd);
-        lua_pushnumber(L, eOK);
-    }
+    lua_pushnumber(L, pDoc->SetCommand(luaL_checkstring(L, 1)));
     return 1;
 }
 static int L_GetCommandListFunc(lua_State* L) { return L_GetCommandList(L); }
@@ -5622,13 +5573,13 @@ static int L_ExpandVariablesStr(lua_State* L)
 }
 
 // ── GetInternalCommandsList ───────────────────────────────────────────────────
-// Returns a table listing the recognised internal slash-commands.
-// Full list lives in mushclient's command infrastructure; return empty table.
+// The REAL method (methods_commands.cpp) over the real CommandIDs[] table
+// (accelerators.cpp) — the full 1-based list of internal command names,
+// marshalled through push_option_variant exactly as lua_methods.cpp.
 static int L_GetInternalCommandsList(lua_State* L)
 {
-    world_doc(L);
-    lua_newtable(L);
-    return 1;
+    VARIANT v = world_doc(L)->GetInternalCommandsList();
+    return push_option_variant(L, v);
 }
 
 // ── ArrayList ─────────────────────────────────────────────────────────────────

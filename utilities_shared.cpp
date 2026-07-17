@@ -727,3 +727,74 @@ void StringToVector (const string s,
   // add final element
   v.push_back (s1);
   } // end of StringToVector
+
+// ── Command-ID name mapping ──────────────────────────────────────
+// Relocated VERBATIM from Utilities.cpp (2026-07, methods_commands adoption):
+// mushcore compiles the real methods_commands.cpp (DoCommand /
+// GetInternalCommandsList) and the real methods_sounds.cpp (relative sound
+// paths), which need these pure-logic lookups; Utilities.cpp is
+// mushapp/Windows-only.  The CommandIDs table itself is accelerators.cpp
+// (also compiled into mushcore now).
+
+extern tCommandIDMapping CommandIDs [];
+
+CString CommandIDToString (const int ID)
+  {
+CString strFunction;
+
+  // scan functions in the hope we find it :)
+
+  if (ID)
+    for (int i = 0; CommandIDs [i].iCommandID; i++)
+      {
+      if (ID == CommandIDs [i].iCommandID)
+        {
+        strFunction = CommandIDs [i].sCommandName;
+        break;
+        }
+      } // end of finding which one
+
+  return strFunction;
+  }  // end of CommandIDToString
+
+
+int StringToCommandID (const CString str)
+  {
+int ID = 0;
+
+  // scan functions in the hope we find it :)
+
+  for (int i = 0; CommandIDs [i].iCommandID; i++)
+    {
+    if (str.CompareNoCase (CommandIDs [i].sCommandName) == 0)
+      {
+      ID = CommandIDs [i].iCommandID;
+      break;
+      }
+    } // end of finding which one
+
+  return ID;
+
+  } // end of StringToCommandID
+
+// get a pathname and extract the directory from it
+CString ExtractDirectory (CString str)
+  {
+#ifdef _WIN32
+  int iSlash = str.ReverseFind ('\\');
+  if (iSlash == -1)
+     str = ".\\";
+  else
+    str = str.Left (iSlash + 1);
+#else
+  // On POSIX paths use '/' but also accept '\' in case of cross-platform world files.
+  int iSlashF = str.ReverseFind ('/');
+  int iSlashB = str.ReverseFind ('\\');
+  int iSlash  = (iSlashF > iSlashB) ? iSlashF : iSlashB;
+  if (iSlash == -1)
+     str = "./";
+  else
+    str = str.Left (iSlash + 1);
+#endif
+  return str;
+  } // end of ExtractDirectory

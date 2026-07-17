@@ -1,9 +1,14 @@
 // doc.cpp : implementation of the CMUSHclientDoc class
 //
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#else
+#include "platform/doc_stub.h"
+#include "resource.h"   // ID_* command ids (the full build gets these via MUSHclient.h)
+#endif
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

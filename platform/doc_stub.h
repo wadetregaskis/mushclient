@@ -1178,9 +1178,28 @@ unsigned long MakeActionHash(const CString& strAction,
                              const CString& strHint,
                              const CString& strVariable);
 
-long FindBaseOption(const char* OptionName,
+// ── The six table-generic option-machinery functions (doc_shared.cpp;
+//    doc.h:557-590 signatures) ──────────────────────────────────────────
+double GetBaseOptionItem(const int iItem,
+                         tConfigurationNumericOption BaseOptionsTable[],
+                         const int iItemCount, char* pBase);
+CString GetBaseAlphaOptionItem(const int iItem,
+                               tConfigurationAlphaOption BaseAlphaOptionsTable[],
+                               const int iItemCount, char* pBase);
+long SetBaseOptionItem(const int iItem,
+                       tConfigurationNumericOption BaseOptionsTable[],
+                       const int iItemCount, char* pBase,
+                       double Value, bool& bChanged);
+long SetBaseAlphaOptionItem(const int iItem,
+                            tConfigurationAlphaOption BaseAlphaOptionsTable[],
+                            const int iItemCount, char* pBase,
+                            CString& strValue, bool& bChanged);
+long FindBaseOption(LPCTSTR OptionName,
                     tConfigurationNumericOption BaseOptionsTable[],
                     int& iItem);
+long FindBaseAlphaOption(LPCTSTR OptionName,
+                         tConfigurationAlphaOption BaseAlphaOptionsTable[],
+                         int& iItem);
 
 bool GetWord(CString& strResult, CString& str);
 CString GetArgument(const CArgumentList& ArgumentList,

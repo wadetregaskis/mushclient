@@ -4134,3 +4134,243 @@ void CMUSHclientDoc::SetUpVariantDouble (VARIANT & tVariant, const double dConte
   tVariant.vt = VT_R8;
   tVariant.dblVal = dContents; 
   }   // end of CMUSHclientDoc::SetUpVariantDouble
+
+
+// ═══ The table-generic option machinery (option-machinery step 1) ════════════
+// The six base functions every tConfiguration*Option table user shares —
+// relocated verbatim from scriptingoptions.cpp so the alias/timer/trigger
+// option families (whose tables target the SHARED CAlias/CTrigger/CTimer
+// classes) can compile headless.  Pure logic over (table, count, pBase);
+// the LP64 (int*) width fixes are already in these bodies.
+
+long SetBaseOptionItem (const int iItem,
+                        tConfigurationNumericOption BaseOptionsTable [],
+                        const int iItemCount,
+                        char * pBase,
+                        double Value,
+                        bool & bChanged)
+
+  {
+
+  bChanged = false;
+
+    // ensure in range
+  if (iItem < 0 || iItem >= iItemCount)
+    return eUnknownOption;
+
+int iMinimum = BaseOptionsTable [iItem].iMinimum;
+int iMaximum = BaseOptionsTable [iItem].iMaximum;
+
+  // fix up default 0, 0 to be 0, 1
+  if (iMinimum == 0 && iMaximum == 0)
+      iMaximum = 1;
+
+  if (Value < iMinimum || Value > iMaximum)
+      return eOptionOutOfRange;
+
+  // for custom colours, subtract 1 when we set it (-1 = no change (was 0) )
+  //                                               (0 = colour 1 (was 1)   )
+  if (BaseOptionsTable [iItem].iFlags & OPT_CUSTOM_COLOUR)
+     Value--;
+
+  // get variable address
+  char * p = pBase + BaseOptionsTable [iItem].iOffset;
+
+  if (BaseOptionsTable [iItem].iFlags & OPT_DOUBLE)
+    {
+    if (* (double *) p != Value)
+      bChanged = true;
+    * (double *) p = Value;
+    }
+  else
+    {    // not double
+
+    switch (BaseOptionsTable [iItem].iLength)
+      {
+
+      case 1:
+        if (*p != (char) Value)
+          bChanged = true;
+        * p = (char) Value;
+        break;
+
+      case 2:
+        if (* (short *) p != (short) Value)
+          bChanged = true;
+        * (short *) p = (short) Value;
+        break;
+
+      case 4:
+        // iLength == 4 means a 4-byte member; use int (4 bytes on every target).
+        // NOT long — long is 8 bytes on LP64 (macOS/Linux), which would write
+        // past the member and clobber the next field (and the matching read in
+        // GetBaseOptionItem would read 8 bytes → garbage in the high 32 bits).
+        if (* (int *) p != Value)
+          bChanged = true;
+        * (int *) p = Value;
+        break;
+
+      case 8:
+        if (* (__int64 *) p != Value)
+          bChanged = true;
+        * (__int64 *) p = Value;
+        break;
+
+      default:
+        return eUnknownOption;     // size unknown
+      } // end of switch
+    }   // not double
+
+  return eOK;
+
+  } // end of SetBaseOptionItem
+
+
+double GetBaseOptionItem (const int iItem,
+                        tConfigurationNumericOption BaseOptionsTable [],
+                        const int iItemCount,
+                        char * pBase)
+  {
+
+  // ensure in range
+  if (iItem < 0 || iItem >= iItemCount)
+    return -1;
+
+  // get variable address
+  char * p = pBase + BaseOptionsTable [iItem].iOffset;
+  double Value = -1;
+
+  if (BaseOptionsTable [iItem].iFlags & OPT_DOUBLE)
+    {
+    Value =  * (double *) p;
+    }
+  else
+    {   // not double
+
+    switch (BaseOptionsTable [iItem].iLength)
+      {
+
+      case 1:
+        Value = * p;
+        break;
+
+      case 2:
+        Value =  * (unsigned short *) p;
+        break;
+
+      case 4:
+        Value =  * (int *) p;       // 4-byte member — NOT long (8 bytes on LP64)
+        break;
+
+      case 8:
+        Value =  * (__int64 *) p;   // warning - possible truncation!!!!
+        break;
+
+      } // end of switch
+    } // not double
+
+  // for custom colours, add 1 when we get it (-1 = no change (becomes 0) )
+  //                                          (0 = colour 1 (becomes 1)   )
+  if (BaseOptionsTable [iItem].iFlags & OPT_CUSTOM_COLOUR)
+    {
+    Value++;
+    // however -1 was really 65535 so adding one made 65536, fix that up!
+    if (Value == 65536)
+      Value = 0;
+    }
+
+  // for booleans - make sure in range 0 to 1
+  if (BaseOptionsTable [iItem].iMinimum == 0 &&
+      BaseOptionsTable [iItem].iMaximum == 0)
+      Value = Value != 0; // make sure true or false
+
+  return Value;
+
+  }  // end of CMUSHclientDoc::GetBaseOptionItem
+
+
+long FindBaseOption (LPCTSTR OptionName, 
+                    tConfigurationNumericOption BaseOptionsTable [],
+                    int & iItem)
+  {
+CString strName = OptionName;
+
+  strName.MakeLower();
+  strName.TrimLeft ();
+  strName.TrimRight ();
+
+  for (iItem = 0; BaseOptionsTable [iItem].pName; iItem++)
+    if (strName == BaseOptionsTable [iItem].pName)
+      return eOK;   // found it
+
+  return eUnknownOption;
+
+
+  } // end of FindBaseOption
+
+
+long FindBaseAlphaOption (LPCTSTR OptionName, 
+                    tConfigurationAlphaOption BaseAlphaOptionsTable [],
+                    int & iItem)
+  {
+CString strName = OptionName;
+
+  strName.MakeLower();
+  strName.TrimLeft ();
+  strName.TrimRight ();
+
+  for (iItem = 0; BaseAlphaOptionsTable [iItem].pName; iItem++)
+    if (strName == BaseAlphaOptionsTable [iItem].pName)
+      return eOK;   // found it
+
+  return eUnknownOption;
+
+  } // end of FindBaseAlphaOption
+
+
+long SetBaseAlphaOptionItem (const int iItem,
+                        tConfigurationAlphaOption BaseAlphaOptionsTable [],
+                        const int iItemCount,
+                        char * pBase,
+                        CString & strValue,
+                        bool & bChanged)
+
+  {
+  bChanged = false;
+
+  // ensure in range
+  if (iItem < 0 || iItem >= iItemCount)
+    return eUnknownOption;
+
+  // ensure they don't slip multi lines into single-line options
+  if (!(BaseAlphaOptionsTable [iItem].iFlags & OPT_MULTLINE))
+    {
+    strValue.Replace ("\n", "");
+    strValue.Replace ("\r", "");
+    }
+
+  // see if it is changing
+  bChanged = * (CString *) (pBase + BaseAlphaOptionsTable [iItem].iOffset) != strValue;
+
+  // set value
+  * (CString *) (pBase + BaseAlphaOptionsTable [iItem].iOffset) = strValue;
+
+
+  return eOK;
+
+  } // end of SetBaseAlphaOptionItem
+
+
+CString GetBaseAlphaOptionItem (const int iItem,
+                                tConfigurationAlphaOption BaseAlphaOptionsTable [],
+                                const int iItemCount,
+                                char * pBase)
+  {
+
+  // ensure in range
+  if (iItem < 0 || iItem >= iItemCount)
+    return "";
+
+  return * (CString *) (pBase + BaseAlphaOptionsTable [iItem].iOffset);
+
+  }

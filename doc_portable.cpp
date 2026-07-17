@@ -287,21 +287,9 @@ const string ON_PLUGIN_CLOSE                 = "OnPluginClose";
 const string ON_PLUGIN_INSTALL               = "OnPluginInstall";
 
 
-// ── FindBaseOption stub ───────────────────────────────────────────────────
-// OptionsTable[] is empty (sentinel at index 0), so always returns -1.
-long FindBaseOption(const char* OptionName,
-                    tConfigurationNumericOption BaseOptionsTable[],
-                    int& iItem)
-{
-    iItem = -1;
-    for (int i = 0; BaseOptionsTable[i].pName; i++) {
-        if (strcasecmp(BaseOptionsTable[i].pName, OptionName) == 0) {
-            iItem = i;
-            return 0; // eOK
-        }
-    }
-    return -1; // not found
-}
+// FindBaseOption (and the other five table-generic base-option functions):
+// single-sourced in doc_shared.cpp — the real bodies (trim+lowercase name
+// matching, eOK/eUnknownOption returns) replaced the sentinel-drifted stub.
 
 // ── Plugin callback dispatch ──────────────────────────────────────────────
 //

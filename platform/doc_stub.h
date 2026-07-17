@@ -2175,6 +2175,23 @@ public:
     long DeleteTimerGroup(LPCTSTR GroupName);
     VARIANT GetTimerOption(LPCTSTR TimerName, LPCTSTR OptionName);
     long SetTimerOption(LPCTSTR TimerName, LPCTSTR OptionName, LPCTSTR Value);
+    // world.*Alias* family (methods_aliases.cpp — doc.h signatures)
+    long DeleteAlias(LPCTSTR AliasName);
+    long EnableAlias(LPCTSTR AliasName, BOOL Enabled);
+    long GetAlias(LPCTSTR AliasName, VARIANT FAR* MatchText,
+                  VARIANT FAR* ResponseText, VARIANT FAR* Parameter,
+                  VARIANT FAR* Flags, VARIANT FAR* ScriptName);
+    VARIANT GetAliasList();
+    long IsAlias(LPCTSTR AliasName);
+    long AddAlias(LPCTSTR AliasName, LPCTSTR MatchText, LPCTSTR ResponseText,
+                  long Flags, LPCTSTR ScriptName);
+    VARIANT GetAliasInfo(LPCTSTR AliasName, short InfoType);
+    long DeleteTemporaryAliases();
+    long EnableAliasGroup(LPCTSTR GroupName, BOOL Enabled);
+    long DeleteAliasGroup(LPCTSTR GroupName);
+    VARIANT GetAliasOption(LPCTSTR AliasName, LPCTSTR OptionName);
+    long SetAliasOption(LPCTSTR AliasName, LPCTSTR OptionName, LPCTSTR Value);
+    VARIANT GetAliasWildcard(LPCTSTR AliasName, LPCTSTR WildcardName);
     DISPID GetProcedureDispid(const CString& strName, const CString& strType,
                               const CString& strLabel, CString& strErrorMessage);
     void TraceOut(LPCTSTR Message);

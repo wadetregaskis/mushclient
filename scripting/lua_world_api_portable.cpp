@@ -250,10 +250,17 @@ static int L_DeleteVariable(lua_State* L)
     return 1;
 }
 
+// push_option_variant (defined with the Get*Option wrappers further down)
+// marshals VARIANT results — incl. VT_ARRAY safearrays — exactly as
+// lua_methods.cpp pushVariant does; the list functions below need it early.
+static int push_option_variant(lua_State* L, VARIANT& v);
+
 // world.GetVariableList() → table { name → value }
-static int L_GetVariableList(lua_State* L)
+// Mirrors lua_methods.cpp GetVariableListHelper: the Lua binding is an
+// extension returning name *and* value (the raw doc method returns a
+// safearray of names only); shared with L_GetPluginVariableList.
+static void GetVariableListHelper(lua_State* L, CMUSHclientDoc* pDoc)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
     lua_newtable(L);
 
     CString strName;
@@ -264,6 +271,11 @@ static int L_GetVariableList(lua_State* L)
         lua_pushstring(L, static_cast<const char*>(var->strContents));
         lua_rawset(L, -3);
     }
+}
+
+static int L_GetVariableList(lua_State* L)
+{
+    GetVariableListHelper(L, world_doc(L));
     return 1;
 }
 
@@ -846,53 +858,35 @@ static int L_StopEvaluatingTriggers(lua_State* L)
 }
 
 // ── List functions ────────────────────────────────────────────────────────────
-// Return a Lua table (array) of labels for all triggers/aliases/timers.
+// Thin wrappers over the REAL CMUSHclientDoc list methods (methods_triggers/
+// aliases/timers.cpp, adopted into mushcore), marshalled through
+// push_option_variant's VT_ARRAY branch exactly as lua_methods.cpp does.
+// Windows shape: a 1-based array of labels, or nil when the list is empty.
 
 static int L_GetTriggerList(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    lua_newtable(L);
-    int idx = 1;
-    CString strLabel;
-    CTrigger* pt;
-    for (POSITION pos = pDoc->GetTriggerMap().GetStartPosition(); pos; ) {
-        pDoc->GetTriggerMap().GetNextAssoc(pos, strLabel, pt);
-        lua_pushstring(L, (const char*)strLabel);
-        lua_rawseti(L, -2, idx++);
-    }
-    return 1;
+    VARIANT v = pDoc->GetTriggerList();
+    return push_option_variant(L, v);
 }
 
 static int L_GetAliasList(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    lua_newtable(L);
-    int idx = 1;
-    CString strLabel;
-    CAlias* pa;
-    for (POSITION pos = pDoc->GetAliasMap().GetStartPosition(); pos; ) {
-        pDoc->GetAliasMap().GetNextAssoc(pos, strLabel, pa);
-        lua_pushstring(L, (const char*)strLabel);
-        lua_rawseti(L, -2, idx++);
-    }
-    return 1;
+    VARIANT v = pDoc->GetAliasList();
+    return push_option_variant(L, v);
 }
 
 static int L_GetTimerList(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    lua_newtable(L);
-    int idx = 1;
-    CString strLabel;
-    CTimer* pt;
-    for (POSITION pos = pDoc->GetTimerMap().GetStartPosition(); pos; ) {
-        pDoc->GetTimerMap().GetNextAssoc(pos, strLabel, pt);
-        lua_pushstring(L, (const char*)strLabel);
-        lua_rawseti(L, -2, idx++);
-    }
-    return 1;
+    VARIANT v = pDoc->GetTimerList();
+    return push_option_variant(L, v);
 }
 
+// Portable-only extra — Windows lua_methods.cpp has no GetVariableNameList
+// (scripts get names as the keys of GetVariableList).  Kept for the headless
+// test surface; always returns a table (possibly empty).
 static int L_GetVariableNameList(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
@@ -1476,9 +1470,8 @@ static int L_GetInfo(lua_State* L)
 // marshalling exactly.  The former hand-mirrored live-member switches and
 // the m_numericOptionCache / m_alphaOptionCache backing store are gone.
 
-// push_option_variant is defined further down (Get/Set{Trigger,...}Option
-// wrappers); L_GetAlphaOption below needs it earlier.
-static int push_option_variant(lua_State* L, VARIANT& v);
+// push_option_variant (forward-declared near the top of this file) is defined
+// further down with the Get/Set{Trigger,...}Option wrappers.
 
 static int L_GetOption(lua_State* L)
 {
@@ -2109,17 +2102,14 @@ static int L_IsPlugin(lua_State* L)
     return 1;
 }
 
-// world.GetPluginList() → table of plugin IDs (1-based array)
+// world.GetPluginList() → table of plugin IDs (1-based array), nil when none.
+// Thin wrapper over the REAL CMUSHclientDoc::GetPluginList (methods_plugins.cpp)
+// mirroring lua_methods.cpp L_GetPluginList.
 static int L_GetPluginList(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    lua_newtable(L);
-    int i = 1;
-    for (auto* p : pDoc->m_PluginList) {
-        lua_pushstring(L, (const char*)p->m_strID);
-        lua_rawseti(L, -2, i++);
-    }
-    return 1;
+    VARIANT v = pDoc->GetPluginList();
+    return push_option_variant(L, v);
 }
 
 // world.GetPluginInfo(pluginID, infoType) → value or nil
@@ -2776,8 +2766,47 @@ static int push_option_variant(lua_State* L, VARIANT& v)
     case VT_BSTR: lua_pushstring(L, v.bstrVal ? v.bstrVal : ""); VariantClear(&v); break;
     case VT_I2:   lua_pushnumber(L, v.iVal);   break;
     case VT_I4:   lua_pushnumber(L, v.lVal);   break;
+    case VT_R4:   lua_pushnumber(L, v.fltVal); break;
     case VT_R8:   lua_pushnumber(L, v.dblVal); break;
     case VT_BOOL: lua_pushboolean(L, v.boolVal ? 1 : 0); break;
+
+    // VT_DATE deliberately falls to the default nil case: lua_methods.cpp
+    // converts via COleDateTime::GetAsSystemTime → CTime::GetTime, but the
+    // port COleDateTime (mfc_ui.h) zero-stubs GetAsSystemTime, so a faithful
+    // conversion is not available yet (affects e.g. GetPluginInfo 13/14/22).
+
+    case (VT_ARRAY | VT_VARIANT):   // array of variants (Get*List/ArrayList*/…)
+    {
+        // A Windows COleSafeArray that was never CreateOneDim'd detaches as
+        // VT_EMPTY (→ nil); the port COleSafeArray::Detach leaves a null
+        // parray instead — map it to the same Windows result.
+        if (!v.parray) { VariantClear(&v); lua_pushnil(L); break; }
+
+        lua_newtable(L);
+
+        SAFEARRAY* psa = v.parray;
+        long lLBound = 0, lUBound = -1;
+
+        SafeArrayGetLBound(psa, 1, &lLBound);
+        SafeArrayGetUBound(psa, 1, &lUBound);
+
+        VARIANT val;
+        int extra = 0;
+        if (lLBound == 0)
+            extra = 1;
+        for (long i = lLBound; i <= lUBound; i++) {
+            long index[2];
+            index[0] = i;
+            index[1] = 0;
+            SafeArrayGetElement(psa, index, &val);
+
+            push_option_variant(L, val);          // recurse to push the element value
+            lua_rawseti(L, -2, (int)(i + extra)); // make 1-relative
+        }   // end of doing each row
+        VariantClear(&v);   // frees the SafeArray + the element strings it owns
+        break;
+    }   // end of VT_ARRAY
+
     default:      lua_pushnil(L);              break;
     }
     return 1;
@@ -3527,77 +3556,61 @@ static int L_GetPluginVariable(lua_State* L)
     return 1;
 }
 
+// Mirrors lua_methods.cpp L_GetPluginVariableList: a Lua extension that swaps
+// m_CurrentPlugin and reuses GetVariableListHelper, so the result is the same
+// { name → value } table GetVariableList returns (empty ID = the world itself;
+// unknown non-empty ID = no results).  The raw doc method is names-only and
+// is NOT what the Windows Lua binding uses.
 static int L_GetPluginVariableList(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* id = luaL_checkstring(L, 1);
-    lua_newtable(L);
-    CPlugin* p = FindPlugin(pDoc, id);
-    if (!p) return 1;
-    POSITION pos = p->m_VariableMap.GetStartPosition();
-    while (pos) {
-        CString k; CVariable* v;
-        p->m_VariableMap.GetNextAssoc(pos, k, v);
-        if (v) {
-            lua_pushstring(L, static_cast<const char*>(v->strContents));
-            lua_setfield(L, -2, static_cast<const char*>(k));
-        }
+
+    // plugin name
+    const char* PluginID = luaL_checkstring(L, 1);
+
+    // lookup plugin
+    CPlugin* pPlugin = NULL;
+    if (strlen(PluginID) > 0) {
+        pPlugin = pDoc->GetPlugin(PluginID);
+        if (!pPlugin)
+            return 0;   // no results - non-empty plugin not found
     }
-    return 1;
+    // save current plugin
+    CPlugin* pOldPlugin = pDoc->m_CurrentPlugin;
+    pDoc->m_CurrentPlugin = pPlugin;
+
+    // now get the variable list
+    GetVariableListHelper(L, pDoc);
+
+    // restore current plugin
+    pDoc->m_CurrentPlugin = pOldPlugin;
+
+    return 1;     // one result (one table)
 }
 
+// The remaining GetPluginXxxList are thin wrappers over the REAL doc methods
+// (methods_plugins.cpp GET_PLUGIN_STUFF), mirroring lua_methods.cpp: a 1-based
+// array of labels; nil when the plugin is unknown or its list is empty; empty
+// ID = the world's own list.
 static int L_GetPluginTriggerList(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* id = luaL_checkstring(L, 1);
-    lua_newtable(L);
-    CPlugin* p = FindPlugin(pDoc, id);
-    if (!p) return 1;
-    int i = 1;
-    POSITION pos = p->m_TriggerMap.GetStartPosition();
-    while (pos) {
-        CString k; CTrigger* v;
-        p->m_TriggerMap.GetNextAssoc(pos, k, v);
-        lua_pushstring(L, static_cast<const char*>(k));
-        lua_rawseti(L, -2, i++);
-    }
-    return 1;
+    VARIANT v = pDoc->GetPluginTriggerList(luaL_checkstring(L, 1));
+    return push_option_variant(L, v);
 }
 
 static int L_GetPluginAliasList(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* id = luaL_checkstring(L, 1);
-    lua_newtable(L);
-    CPlugin* p = FindPlugin(pDoc, id);
-    if (!p) return 1;
-    int i = 1;
-    POSITION pos = p->m_AliasMap.GetStartPosition();
-    while (pos) {
-        CString k; CAlias* v;
-        p->m_AliasMap.GetNextAssoc(pos, k, v);
-        lua_pushstring(L, static_cast<const char*>(k));
-        lua_rawseti(L, -2, i++);
-    }
-    return 1;
+    VARIANT v = pDoc->GetPluginAliasList(luaL_checkstring(L, 1));
+    return push_option_variant(L, v);
 }
 
 static int L_GetPluginTimerList(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* id = luaL_checkstring(L, 1);
-    lua_newtable(L);
-    CPlugin* p = FindPlugin(pDoc, id);
-    if (!p) return 1;
-    int i = 1;
-    POSITION pos = p->m_TimerMap.GetStartPosition();
-    while (pos) {
-        CString k; CTimer* v;
-        p->m_TimerMap.GetNextAssoc(pos, k, v);
-        lua_pushstring(L, static_cast<const char*>(k));
-        lua_rawseti(L, -2, i++);
-    }
-    return 1;
+    VARIANT v = pDoc->GetPluginTimerList(luaL_checkstring(L, 1));
+    return push_option_variant(L, v);
 }
 
 // ── Plugin GetXxxInfo / GetXxxOption ─────────────────────────────────────────
@@ -4041,49 +4054,28 @@ static int L_ArrayClear(lua_State* L)
     return 1;
 }
 
+// ArrayListAll/Keys/Values: thin wrappers over the REAL doc methods
+// (methods_arrays.cpp), mirroring lua_methods.cpp — a 1-based array, or nil
+// when there is nothing to list (no arrays / unknown array / empty array).
 static int L_ArrayListAll(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    lua_newtable(L);
-    int i = 1;
-    for (auto& kv : pDoc->GetArrayMap())
-    {
-        lua_pushstring(L, kv.first.c_str());
-        lua_rawseti(L, -2, i++);
-    }
-    return 1;
+    VARIANT v = pDoc->ArrayListAll();
+    return push_option_variant(L, v);
 }
 
 static int L_ArrayListKeys(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* name = luaL_checkstring(L, 1);
-    lua_newtable(L);
-    auto it = pDoc->GetArrayMap().find(name);
-    if (it == pDoc->GetArrayMap().end()) return 1;
-    int i = 1;
-    for (auto& kv : *it->second)
-    {
-        lua_pushstring(L, kv.first.c_str());
-        lua_rawseti(L, -2, i++);
-    }
-    return 1;
+    VARIANT v = pDoc->ArrayListKeys(luaL_checkstring(L, 1));
+    return push_option_variant(L, v);
 }
 
 static int L_ArrayListValues(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* name = luaL_checkstring(L, 1);
-    lua_newtable(L);
-    auto it = pDoc->GetArrayMap().find(name);
-    if (it == pDoc->GetArrayMap().end()) return 1;
-    int i = 1;
-    for (auto& kv : *it->second)
-    {
-        lua_pushstring(L, kv.second.c_str());
-        lua_rawseti(L, -2, i++);
-    }
-    return 1;
+    VARIANT v = pDoc->ArrayListValues(luaL_checkstring(L, 1));
+    return push_option_variant(L, v);
 }
 
 static int L_ArrayGetFirstKey(lua_State* L)
@@ -5399,40 +5391,25 @@ static int L_GetStyleInfo(lua_State* L)
 }
 
 // ── GetOptionList / GetAlphaOptionList ────────────────────────────────────────
-// On portable builds OptionsTable[] and AlphaOptionsTable[] are stubs (empty),
-// so these return empty tables rather than crashing.
-extern tConfigurationNumericOption OptionsTable[];
-extern tConfigurationAlphaOption   AlphaOptionsTable[];
+// Thin wrappers over the REAL doc methods (scriptingoptions.cpp, the full
+// 174/70-row option tables), mirroring lua_methods.cpp: a 1-based array of
+// option names via push_option_variant's VT_ARRAY branch.
 
 static int L_GetOptionList(lua_State* L)
 {
-    world_doc(L);
-    lua_newtable(L);
-    int i = 0, n = 1;
-    while (OptionsTable[i].pName) {
-        lua_pushstring(L, OptionsTable[i].pName);
-        lua_rawseti(L, -2, n++);
-        i++;
-    }
-    return 1;
+    VARIANT v = world_doc(L)->GetOptionList();
+    return push_option_variant(L, v);
 }
 
 static int L_GetAlphaOptionList(lua_State* L)
 {
-    world_doc(L);
-    lua_newtable(L);
-    int i = 0, n = 1;
-    while (AlphaOptionsTable[i].pName) {
-        lua_pushstring(L, AlphaOptionsTable[i].pName);
-        lua_rawseti(L, -2, n++);
-        i++;
-    }
-    return 1;
+    VARIANT v = world_doc(L)->GetAlphaOptionList();
+    return push_option_variant(L, v);
 }
 
 // ── GetDefaultValue / GetLoadedValue ─────────────────────────────────────────
-// Looks up the option in OptionsTable[] (numeric) or AlphaOptionsTable[] (string).
-// Returns nil if not found (stub tables are empty, so always nil for now).
+// Looks up the option in OptionsTable[] (numeric) or AlphaOptionsTable[] (string)
+// via the real doc methods.  Returns nil if not found.
 static int L_GetDefaultValue(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);

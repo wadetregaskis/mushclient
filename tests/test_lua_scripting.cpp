@@ -671,6 +671,45 @@ TEST(LuaScripting, GetAlphaOptionListNonEmpty)
     lua_close(L);
 }
 
+// ── VT_ARRAY marshalling ──────────────────────────────────────────────────
+// GetTimerList / GetOptionList are now thin wrappers over the REAL doc
+// methods, whose safearray VARIANTs are marshalled by push_option_variant's
+// (VT_ARRAY|VT_VARIANT) branch.  Lock the shape: a 1-based, ipairs-iterable
+// Lua array of names.
+
+TEST(LuaScripting, SafeArrayListMarshalling)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "assert(world.AddTimer('tlist_a', 0, 0, 5, 'x', 0, '') == 0)\n"
+        "assert(world.AddTimer('tlist_b', 0, 0, 7, 'y', 0, '') == 0)\n"
+    ));
+
+    // Exactly two entries, 1-based, both names present, ipairs-iterable
+    EXPECT_TRUE(run(L,
+        "local t = world.GetTimerList()\n"
+        "assert(type(t) == 'table', 'expected a table, got ' .. type(t))\n"
+        "assert(t[0] == nil, 'expected a 1-based array')\n"
+        "local n, seen = 0, {}\n"
+        "for i, name in ipairs(t) do n = i; seen[name] = true end\n"
+        "assert(n == 2, 'expected exactly 2 entries, got ' .. n)\n"
+        "assert(seen['tlist_a'], 'missing tlist_a')\n"
+        "assert(seen['tlist_b'], 'missing tlist_b')\n"
+    ));
+
+    // GetOptionList marshals the real 174-row OptionsTable the same way
+    EXPECT_TRUE(run(L,
+        "local o = world.GetOptionList()\n"
+        "assert(type(o) == 'table', 'expected a table, got ' .. type(o))\n"
+        "assert(#o > 100, 'expected >100 options, got ' .. #o)\n"
+    ));
+
+    lua_close(L);
+}
+
 TEST(LuaScripting, GetDefaultValueNumeric)
 {
     CMUSHclientDoc doc;

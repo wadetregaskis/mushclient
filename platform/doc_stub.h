@@ -2267,6 +2267,16 @@ public:
     void OnInputDiscardqueuedcommands();
     void OnUpdateInputDiscardqueuedcommands(CCmdUI* pCmdUI);
     BSTR RemoveBacktracks(LPCTSTR Path);
+    // auto-mapper family (methods_mapping.cpp — doc.h signatures)
+    CString CalculateSpeedWalkString(const bool bOmitComments = false);
+    long AddToMapper(LPCTSTR Direction, LPCTSTR Reverse);
+    long AddMapperComment(LPCTSTR Comment);
+    long GetMappingCount();
+    VARIANT GetMappingItem(long Item);
+    VARIANT GetMappingString();
+    long DeleteLastMapItem();
+    long DeleteAllMapItems();
+    void EnableMapping(BOOL Enabled);
     DISPID GetProcedureDispid(const CString& strName, const CString& strType,
                               const CString& strLabel, CString& strErrorMessage);
     void TraceOut(LPCTSTR Message);

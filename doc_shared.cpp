@@ -4426,3 +4426,67 @@ DISPID CMUSHclientDoc::GetProcedureDispid (const CString & strName,
 
   return DISPID_UNKNOWN;
   } // end of CMUSHclientDoc::GetProcedureDispid  
+
+
+// ── CalculateSpeedWalkString ────────────────────────────────────────────────
+// Relocated verbatim from Mapping.cpp so the auto-mapper string composition
+// (used by world.GetMappingString in methods_mapping.cpp) is available in
+// every build; the rest of Mapping.cpp is GUI-facing and stays out of
+// mushcore.
+
+#define OUTPUT_PREVIOUS_ONE  \
+do { \
+  if (strLastDir.GetLength () > 1)  \
+    strLastDir = "(" + strLastDir + ")";  \
+  if (iCount == 1)  \
+    strForwards += strLastDir + " ";  \
+  else if (iCount > 1)  \
+    strForwards += CFormat ("%i%s ", iCount, (LPCTSTR) strLastDir);  \
+  strLastDir = str;  \
+  iCount = 1;  \
+  } while (false)
+
+CString CMUSHclientDoc::CalculateSpeedWalkString (const bool bOmitComments)
+  {
+
+  CString str;
+  CString strLastDir;
+  CString strForwards;
+
+  int iCount = 0;
+
+  for (POSITION pos = m_strMapList.GetHeadPosition (); pos; )
+    {
+    // get next direction from list
+    str = m_strMapList.GetNext (pos);
+
+    if (str.GetLength () > 2 &&
+        str.Left (1) == "{" &&
+        str.Right (1) == "}")
+      {
+      OUTPUT_PREVIOUS_ONE;    // output directions up to comment
+      if (!bOmitComments)
+        {
+        if (!strForwards.IsEmpty ())
+          strForwards += ENDLINE;  // put comments on their own lines
+        strForwards += str;
+        strForwards += ENDLINE;
+        }
+      strLastDir.Empty ();
+      iCount = 0;
+      }
+    else    // not comment
+      // if same as before, count them
+      if (str == strLastDir && iCount <= 98)
+        iCount++;
+      else
+        OUTPUT_PREVIOUS_ONE;
+
+
+    }   // end of processing each direction
+
+  // output final one
+  OUTPUT_PREVIOUS_ONE;
+
+  return strForwards;
+  }  // end of CMUSHclientDoc::CalculateSpeedWalkString 

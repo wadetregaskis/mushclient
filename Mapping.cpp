@@ -251,62 +251,8 @@ void CMUSHclientDoc::OnUpdateGameDomappercomment(CCmdUI* pCmdUI)
   pCmdUI->Enable (m_bMapping);	
 }
 
-#define OUTPUT_PREVIOUS_ONE  \
-do { \
-  if (strLastDir.GetLength () > 1)  \
-    strLastDir = "(" + strLastDir + ")";  \
-  if (iCount == 1)  \
-    strForwards += strLastDir + " ";  \
-  else if (iCount > 1)  \
-    strForwards += CFormat ("%i%s ", iCount, (LPCTSTR) strLastDir);  \
-  strLastDir = str;  \
-  iCount = 1;  \
-  } while (false)
-
-CString CMUSHclientDoc::CalculateSpeedWalkString (const bool bOmitComments)
-  {
-
-  CString str;
-  CString strLastDir;
-  CString strForwards;
-
-  int iCount = 0;
-
-  for (POSITION pos = m_strMapList.GetHeadPosition (); pos; )
-    {
-    // get next direction from list
-    str = m_strMapList.GetNext (pos);
-
-    if (str.GetLength () > 2 &&
-        str.Left (1) == "{" &&
-        str.Right (1) == "}")
-      {
-      OUTPUT_PREVIOUS_ONE;    // output directions up to comment
-      if (!bOmitComments)
-        {
-        if (!strForwards.IsEmpty ())
-          strForwards += ENDLINE;  // put comments on their own lines
-        strForwards += str;
-        strForwards += ENDLINE;
-        }
-      strLastDir.Empty ();
-      iCount = 0;
-      }
-    else    // not comment
-      // if same as before, count them
-      if (str == strLastDir && iCount <= 98)
-        iCount++;
-      else
-        OUTPUT_PREVIOUS_ONE;
-
-
-    }   // end of processing each direction
-
-  // output final one
-  OUTPUT_PREVIOUS_ONE;
-
-  return strForwards;
-  }  // end of CMUSHclientDoc::CalculateSpeedWalkString 
+// OUTPUT_PREVIOUS_ONE + CalculateSpeedWalkString are single-sourced in
+// doc_shared.cpp (compiled into every build).
 
 
 void CMUSHclientDoc::DrawMappingStatusLine (void)

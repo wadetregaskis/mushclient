@@ -431,6 +431,7 @@ if(NOT WIN32)
         scripting/methods/methods_timers.cpp    # Campaign C (trio 1/3)
         scripting/methods/methods_aliases.cpp   # Campaign C (trio 2/3)
         scripting/methods/methods_triggers.cpp  # Campaign C (trio 3/3)
+        scripting/methods/methods_speedwalks.cpp # Campaign C
         doc_display_shared.cpp   # the push-side UpdateAllViews drain (display step 7)
         doc_portable.cpp
 

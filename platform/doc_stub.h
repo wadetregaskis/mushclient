@@ -1809,6 +1809,7 @@ public:
     unsigned short m_enable_speed_walk  = 0;
     CString        m_speed_walk_prefix;
     unsigned short m_iSpeedWalkDelay    = 0;
+    CTimerWnd*     m_pTimerWnd          = nullptr;  // doc.h:1379 — speed-walk delay timer (inert headless)
     unsigned short m_enable_command_stack   = 0;
     CString        m_strCommandStackCharacter;
 
@@ -2256,6 +2257,16 @@ public:
     long SetTriggerOption(LPCTSTR TriggerName, LPCTSTR OptionName, LPCTSTR Value);
     VARIANT GetTriggerWildcard(LPCTSTR TriggerName, LPCTSTR WildcardName);
     void StopEvaluatingTriggers(BOOL AllPlugins);
+    // world.*Speedwalk*/Queue family (methods_speedwalks.cpp — doc.h signatures)
+    BSTR EvaluateSpeedwalk(LPCTSTR SpeedWalkString);
+    BSTR ReverseSpeedwalk(LPCTSTR SpeedWalkString);
+    long Queue(LPCTSTR Message, BOOL Echo);
+    long DiscardQueue();
+    short GetSpeedWalkDelay();
+    void SetSpeedWalkDelay(short nNewValue);
+    void OnInputDiscardqueuedcommands();
+    void OnUpdateInputDiscardqueuedcommands(CCmdUI* pCmdUI);
+    BSTR RemoveBacktracks(LPCTSTR Path);
     DISPID GetProcedureDispid(const CString& strName, const CString& strType,
                               const CString& strLabel, CString& strErrorMessage);
     void TraceOut(LPCTSTR Message);

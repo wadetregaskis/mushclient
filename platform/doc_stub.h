@@ -2277,6 +2277,25 @@ public:
     long DeleteLastMapItem();
     long DeleteAllMapItems();
     void EnableMapping(BOOL Enabled);
+    // world.Array* family (methods_arrays.cpp — doc.h signatures)
+    long ArrayCreate(LPCTSTR Name);
+    long ArrayDelete(LPCTSTR Name);
+    VARIANT ArrayListAll();
+    long ArrayImport(LPCTSTR Name, LPCTSTR Values, LPCTSTR Delimiter);
+    VARIANT ArrayGet(LPCTSTR Name, LPCTSTR Key);
+    long ArraySet(LPCTSTR Name, LPCTSTR Key, LPCTSTR Value);
+    VARIANT ArrayExport(LPCTSTR Name, LPCTSTR Delimiter);
+    VARIANT ArrayListKeys(LPCTSTR Name);
+    long ArrayClear(LPCTSTR Name);
+    long ArrayDeleteKey(LPCTSTR Name, LPCTSTR Key);
+    BOOL ArrayExists(LPCTSTR Name);
+    BOOL ArrayKeyExists(LPCTSTR Name, LPCTSTR Key);
+    VARIANT ArrayExportKeys(LPCTSTR Name, LPCTSTR Delimiter);
+    long ArrayCount();
+    long ArraySize(LPCTSTR Name);
+    VARIANT ArrayGetFirstKey(LPCTSTR Name);
+    VARIANT ArrayGetLastKey(LPCTSTR Name);
+    VARIANT ArrayListValues(LPCTSTR Name);
     DISPID GetProcedureDispid(const CString& strName, const CString& strType,
                               const CString& strLabel, CString& strErrorMessage);
     void TraceOut(LPCTSTR Message);

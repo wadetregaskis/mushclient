@@ -69,6 +69,7 @@ using std::pair;        // methods_arrays.cpp (stdafx.h has `using namespace std
 using std::make_pair;
 using std::vector;
 using std::list;
+using std::deque;       // methods_speedwalks.cpp RemoveBacktracks
 using std::map;
 using std::unordered_map;
 using std::set;
@@ -747,11 +748,50 @@ inline int TMessageBox(const char* sText, UINT = 0)
   { fprintf(stderr, "MUSHclient: %s\n", sText ? sText : ""); return 0; }
 #endif
 
-// ── StringToVector (from stdafx.h) ────────────────────────────────────────
+// ── SPACES / trim family + GetWord/StringToVector (from stdafx.h) ─────────
+// A few TUs (e.g. regexp.cpp) include stdafx.h AND doc_stub.h; stdafx.h
+// always comes first and already provides all of these (SPACES is its
+// sentinel), so skip the duplicates — default arguments may be declared
+// only once per TU.
+#ifndef SPACES
+#define SPACES " \t\r\n"
+inline string trim_right(const string& s, const string& t = SPACES)
+  {
+  string d (s);
+  string::size_type i (d.find_last_not_of (t));
+  if (i == string::npos)
+    return "";
+  else if ((i + 1) >= s.size ())
+    return s;
+  else
+   return d.erase (i + 1) ;
+  }  // end of trim_right
+
+inline string trim_left(const string& s, const string& t = SPACES)
+  {
+  string d (s);
+  return d.erase (0, s.find_first_not_of (t)) ;
+  }  // end of trim_left
+
+inline string trim(const string& s, const string& t = SPACES)
+  {
+  string d (s);
+  return trim_left (trim_right (d, t), t) ;
+  }  // end of trim
+
+// ── GetWord / StringToVector (from stdafx.h — Windows signatures) ─────────
+// Single-sourced in utilities_shared.cpp.  NB: the 4th argument is
+// trim_spaces, matching Windows; the old portable include_delim variant is
+// gone.
+string GetWord(string& s,
+               const string delim = " ",
+               const bool trim_spaces = true);
+
 void StringToVector(const string s,
                     vector<string>& v,
-                    const string delim,
-                    bool include_delim);
+                    const string delim = " ",
+                    const bool trim_spaces = true);
+#endif // !SPACES (stdafx.h not previously included)
 
 #ifndef MFC_UI_H_INCLUDED
 // ── CStringList — value-based list of CStrings ────────────────────────────

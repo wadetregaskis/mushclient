@@ -652,21 +652,8 @@ CString TranslateGeneric(const char* sText, const char*)
 
 // UMessageBox is provided as an inline in stdafx.h's non-Windows branch.
 
-// ── StringToVector ────────────────────────────────────────────────────────
-void StringToVector(const string s, vector<string>& v,
-                    const string delim, bool include_delim)
-{
-    v.clear();
-    if (delim.empty()) { v.push_back(s); return; }
-    size_t start = 0, pos;
-    while ((pos = s.find(delim, start)) != string::npos) {
-        string token = s.substr(start, pos - start);
-        if (include_delim) token += delim;
-        v.push_back(token);
-        start = pos + delim.size();
-    }
-    if (start <= s.size()) v.push_back(s.substr(start));
-}
+// StringToVector is single-sourced in utilities_shared.cpp (Windows body;
+// the old twin's include_delim semantics are gone).
 
 // ── CVariable IMPLEMENT_DYNAMIC (needed by DECLARE_DYNAMIC) ──────────────
 IMPLEMENT_DYNAMIC(CVariable, CObject)
@@ -687,13 +674,7 @@ const string ON_PLUGIN_TRACE           = "OnPluginTrace";
 
 // AlphaOptionsTable[] is defined in scriptingoptions_portable.cpp (real table).
 
-// ── tolower(string) — locale-independent ASCII lowercase ──────────────────
-string tolower(const string& s)
-{
-    string d(s);
-    for (char& c : d) c = (char)::tolower((unsigned char)c);
-    return d;
-}
+// tolower(string) is single-sourced in utilities_shared.cpp.
 
 
 // ── ThrowErrorException ───────────────────────────────────────────────────

@@ -751,77 +751,8 @@ void ShutDownSocket (CAsyncSocket & s)
   }  // end of ShutDownSocket
 
 
-// returns a lower case version of the string
-string tolower (const string & s)
-  {
-string d (s);
-
-  transform (d.begin (), d.end (), d.begin (), (int(*)(int)) tolower);
-  return d;
-  }  // end of tolower
-
-// split a line into the first word, and rest-of-the-line
-string GetWord (string & s,
-                const string delim,
-                const bool trim_spaces)
-  {
-
-  // find delimiter
-  string::size_type i (s.find (delim));
-
-  // split into before and after delimiter
-  string w (s.substr (0, i));
-
-  // if no delimiter, remainder is empty
-  if (i == string::npos)
-    s.erase ();
-  else
-    // erase up to the delimiter
-    s.erase (0, i + delim.size ());
-
-  // trim spaces if required
-  if (trim_spaces)
-    {
-    w = trim (w);
-    s = trim (s);
-    }
-
-  // return first word in line
-  return w;
-
-  } // end of GetWord
-
-// To be symmetric, we assume an empty string (after trimming spaces)
-// will give an empty vector.
-// However, a non-empty string (with no delimiter) will give one item
-// After that, you get an item per delimiter, plus 1.
-// eg.  ""      => empty
-//      "a"     => 1 item
-//      "a,b"   => 2 items
-//      "a,b,"  => 3 items (last one empty)
-
-void StringToVector (const string s,
-                     vector<string> & v,
-                     const string delim,
-                     const bool trim_spaces)
-  {
-
-  // start with initial string, trimmed of leading/trailing spaces if required
-  string s1 (trim_spaces ? trim (s) : s);
-
-  v.clear (); // ensure vector empty
-
-  // no string? no elements
-  if (s1.empty ())
-    return;
-
-  // add to vector while we have a delimiter
-  while (!s1.empty () && s1.find (delim) != string::npos)
-    v.push_back (GetWord (s1, delim, trim_spaces));
-
-  // add final element
-  v.push_back (s1);
-  } // end of StringToVector
+// tolower(string), GetWord and StringToVector are single-sourced in
+// utilities_shared.cpp (compiled into every build).
 
 // Takes a vector of strings and converts it to a string
 // like "apples,peaches,pears"

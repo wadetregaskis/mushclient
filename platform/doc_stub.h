@@ -1261,6 +1261,8 @@ void Generate256colours(void);   // fills xterm_256_colours[] (defined in doc_po
 // would be a redefinition in TUs that see both headers)
 BOOL CheckLabel(const CString& strLabel, bool bScript);
 CString FixUpGerman(const CString strMessage);   // umlaut → ue/ae/oe transliteration
+// no default arg (stdafx.h owns `= false`); defined in xml/xmlparse.cpp
+bool IsNumber(const CString& str, bool bAllowSign);
 const char* Make_Absolute_Path(CString strFileName);   // prefix working_dir if relative
 const char* strnrchr(const char* s, const char c, size_t count);   // last c within count
 
@@ -2151,6 +2153,28 @@ public:
     VARIANT GetVariable(LPCTSTR VariableName);
     VARIANT GetVariableList();
     long DeleteVariable(LPCTSTR VariableName);
+    // world.*Timer* family (methods_timers.cpp — doc.h signatures)
+    long EnableTimer(LPCTSTR TimerName, BOOL Enabled);
+    void ResetTimers();
+    long ResetTimer(LPCTSTR TimerName);
+    long AddTimer(LPCTSTR TimerName, short Hour, short Minute, double Second,
+                  LPCTSTR ResponseText, long Flags, LPCTSTR ScriptName);
+    long DeleteTimer(LPCTSTR TimerName);
+    long IsTimer(LPCTSTR TimerName);
+    VARIANT GetTimerList();
+    long GetTimer(LPCTSTR TimerName, VARIANT FAR* Hour, VARIANT FAR* Minute,
+                  VARIANT FAR* Second, VARIANT FAR* ResponseText,
+                  VARIANT FAR* Flags, VARIANT FAR* ScriptName);
+    VARIANT GetTimerInfo(LPCTSTR TimerName, short InfoType);
+    long DoAfterSpecial(double Seconds, LPCTSTR SendText, short SendTo);
+    long DoAfter(double Seconds, LPCTSTR SendText);
+    long DoAfterSpeedWalk(double Seconds, LPCTSTR SendText);
+    long DoAfterNote(double Seconds, LPCTSTR NoteText);
+    long DeleteTemporaryTimers();
+    long EnableTimerGroup(LPCTSTR GroupName, BOOL Enabled);
+    long DeleteTimerGroup(LPCTSTR GroupName);
+    VARIANT GetTimerOption(LPCTSTR TimerName, LPCTSTR OptionName);
+    long SetTimerOption(LPCTSTR TimerName, LPCTSTR OptionName, LPCTSTR Value);
     DISPID GetProcedureDispid(const CString& strName, const CString& strType,
                               const CString& strLabel, CString& strErrorMessage);
     void TraceOut(LPCTSTR Message);

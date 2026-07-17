@@ -1450,6 +1450,7 @@ public:
     COLORREF m_boldcolour[8];
     COLORREF       m_customtext[MAX_CUSTOM];
     COLORREF       m_customback[MAX_CUSTOM];
+    map<COLORREF, COLORREF> m_ColourTranslationMap;   // doc.h:1461 — world.MapColour
     CString        m_strCustomColourName[MAX_CUSTOM];
     unsigned short m_echo_colour = SAMECOLOUR; // colour for echoed input in logs
 
@@ -2296,6 +2297,26 @@ public:
     VARIANT ArrayGetFirstKey(LPCTSTR Name);
     VARIANT ArrayGetLastKey(LPCTSTR Name);
     VARIANT ArrayListValues(LPCTSTR Name);
+    // colour family (methods_colours.cpp — doc.h signatures)
+    long ColourNameToRGB(LPCTSTR Name);
+    BSTR RGBColourToName(long Colour);
+    BSTR ANSI(short Code);
+    long AdjustColour(long Colour, short Method);
+    void MapColour(long Original, long Replacement);
+    long GetMapColour(long Which);
+    VARIANT MapColourList();
+    long PickColour(long Suggested);
+    BSTR GetCustomColourName(short WhichColour);
+    long SetCustomColourName(short WhichColour, LPCTSTR Name);
+    long GetNormalColour(short WhichColour);
+    void SetNormalColour(short WhichColour, long nNewValue);
+    long GetBoldColour(short WhichColour);
+    void SetBoldColour(short WhichColour, long nNewValue);
+    long GetCustomColourText(short WhichColour);
+    void SetCustomColourText(short WhichColour, long nNewValue);
+    long GetCustomColourBackground(short WhichColour);
+    void SetCustomColourBackground(short WhichColour, long nNewValue);
+    const COLORREF TranslateColour(const COLORREF& source, const double opacity) const;
     DISPID GetProcedureDispid(const CString& strName, const CString& strType,
                               const CString& strLabel, CString& strErrorMessage);
     void TraceOut(LPCTSTR Message);

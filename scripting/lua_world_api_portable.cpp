@@ -3245,313 +3245,81 @@ static int L_DeleteGroup(lua_State* L)
     return 1;
 }
 
-// ── GetTriggerOption / SetTriggerOption ───────────────────────────────────────
+// ── Get/Set{Trigger,Alias,Timer}Option ────────────────────────────────────────
+// Thin wrappers over the REAL CMUSHclientDoc methods (methods_triggers.cpp /
+// methods_aliases.cpp / methods_timers.cpp, adopted into mushcore) using the
+// same marshalling as Windows lua_methods.cpp (pushVariant / get_option_value).
+// The former hand-mirrored twins drifted from the Windows option tables (e.g.
+// boolean options came back as Lua booleans where Windows returns numbers).
 
-static void push_trigger_option(lua_State* L, CTrigger* t, const char* option)
+// push a VARIANT option result exactly as lua_methods.cpp pushVariant does
+static int push_option_variant(lua_State* L, VARIANT& v)
 {
-    string opt(option);
-    for (auto& c : opt) c = (char)tolower((unsigned char)c);
-    // boolean options
-    if (opt=="enabled")              { lua_pushboolean(L, t->bEnabled);          return; }
-    if (opt=="expand_variables")     { lua_pushboolean(L, t->bExpandVariables);  return; }
-    if (opt=="ignore_case")          { lua_pushboolean(L, t->ignore_case);       return; }
-    if (opt=="keep_evaluating")      { lua_pushboolean(L, t->bKeepEvaluating);   return; }
-    if (opt=="multi_line")           { lua_pushboolean(L, t->bMultiLine);        return; }
-    if (opt=="omit_from_log")        { lua_pushboolean(L, t->omit_from_log);     return; }
-    if (opt=="omit_from_output")     { lua_pushboolean(L, t->bOmitFromOutput);   return; }
-    if (opt=="regexp")               { lua_pushboolean(L, t->bRegexp);           return; }
-    if (opt=="repeat")               { lua_pushboolean(L, t->bRepeat);           return; }
-    if (opt=="sound_if_inactive")    { lua_pushboolean(L, t->bSoundIfInactive);  return; }
-    if (opt=="lowercase_wildcard")   { lua_pushboolean(L, t->bLowercaseWildcard);return; }
-    if (opt=="temporary")            { lua_pushboolean(L, t->bTemporary);        return; }
-    if (opt=="one_shot")             { lua_pushboolean(L, t->bOneShot);          return; }
-    // numeric options
-    if (opt=="clipboard_arg")        { lua_pushnumber(L, t->iClipboardArg);      return; }
-    if (opt=="colour_change_type")   { lua_pushnumber(L, t->iColourChangeType);  return; }
-    if (opt=="custom_colour")        { lua_pushnumber(L, t->colour);             return; }
-    if (opt=="lines_to_match")       { lua_pushnumber(L, t->iLinesToMatch);      return; }
-    if (opt=="match_style")          { lua_pushnumber(L, t->iMatch);             return; }
-    if (opt=="new_style")            { lua_pushnumber(L, t->iStyle);             return; }
-    if (opt=="other_text_colour")    { lua_pushnumber(L, t->iOtherForeground);   return; }
-    if (opt=="other_back_colour")    { lua_pushnumber(L, t->iOtherBackground);   return; }
-    if (opt=="send_to")              { lua_pushnumber(L, t->iSendTo);            return; }
-    if (opt=="sequence")             { lua_pushnumber(L, t->iSequence);          return; }
-    if (opt=="user")                 { lua_pushnumber(L, t->iUserOption);        return; }
-    // string options
-    if (opt=="group")    { lua_pushstring(L, (const char*)t->strGroup);    return; }
-    if (opt=="match")    { lua_pushstring(L, (const char*)t->trigger);     return; }
-    if (opt=="script")   { lua_pushstring(L, (const char*)t->strProcedure);return; }
-    if (opt=="sound")    { lua_pushstring(L, (const char*)t->sound_to_play);return; }
-    if (opt=="send")     { lua_pushstring(L, (const char*)t->contents);    return; }
-    if (opt=="variable") { lua_pushstring(L, (const char*)t->strVariable); return; }
-    lua_pushnil(L);
+    switch (v.vt) {
+    case VT_BSTR: lua_pushstring(L, v.bstrVal ? v.bstrVal : ""); VariantClear(&v); break;
+    case VT_I2:   lua_pushnumber(L, v.iVal);   break;
+    case VT_I4:   lua_pushnumber(L, v.lVal);   break;
+    case VT_R8:   lua_pushnumber(L, v.dblVal); break;
+    case VT_BOOL: lua_pushboolean(L, v.boolVal ? 1 : 0); break;
+    default:      lua_pushnil(L);              break;
+    }
+    return 1;
+}
+
+// Lua arg → option-value string, as lua_methods.cpp get_option_value:
+// booleans become "1"/"0", nil becomes "0", numbers/strings via tostring.
+static const char* option_value_string(lua_State* L, int narg)
+{
+    if (lua_isboolean(L, narg)) return lua_toboolean(L, narg) ? "1" : "0";
+    if (lua_isnil(L, narg))     return "0";
+    return luaL_checkstring(L, narg);
 }
 
 static int L_GetTriggerOption(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* name   = luaL_checkstring(L, 1);
-    const char* option = luaL_checkstring(L, 2);
-    CTrigger* t = nullptr;
-    CString key(name);
-    key.MakeLower(); key.TrimLeft(); key.TrimRight();
-    if (!pDoc->GetTriggerMap().Lookup(key, t) || !t) { lua_pushnil(L); return 1; }
-    push_trigger_option(L, t, option);
-    return 1;
+    VARIANT v = pDoc->GetTriggerOption(luaL_checkstring(L, 1), luaL_checkstring(L, 2));
+    return push_option_variant(L, v);
 }
 
 static int L_SetTriggerOption(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* name   = luaL_checkstring(L, 1);
-    const char* option = luaL_checkstring(L, 2);
-    const char* value  = luaL_checkstring(L, 3);
-    CTrigger* t = nullptr;
-    CString key(name);
-    key.MakeLower(); key.TrimLeft(); key.TrimRight();
-    if (!pDoc->GetTriggerMap().Lookup(key, t) || !t) {
-        lua_pushnumber(L, eTriggerNotFound); return 1;
-    }
-    string opt(option), val(value);
-    for (auto& c : opt) c = (char)tolower((unsigned char)c);
-    bool bval = (val == "1" || val == "y" || val == "Y");
-    // read-only options (OPT_CANNOT_WRITE in Windows) → ePluginCannotSetOption
-    if (opt=="ignore_case" || opt=="regexp")
-        { lua_pushnumber(L, ePluginCannotSetOption); return 1; }
-    // boolean options
-    if (opt=="enabled")             { t->bEnabled = bval; }
-    else if (opt=="expand_variables")  { t->bExpandVariables = bval; }
-    else if (opt=="keep_evaluating")   { t->bKeepEvaluating = bval; }
-    else if (opt=="multi_line")        { t->bMultiLine = bval; }
-    else if (opt=="omit_from_log")     { t->omit_from_log = bval; }
-    else if (opt=="omit_from_output")  { t->bOmitFromOutput = bval; }
-    else if (opt=="repeat")            { t->bRepeat = bval; }
-    else if (opt=="sound_if_inactive") { t->bSoundIfInactive = bval; }
-    else if (opt=="lowercase_wildcard"){ t->bLowercaseWildcard = bval; }
-    else if (opt=="temporary")         { t->bTemporary = bval; }
-    else if (opt=="one_shot")          { t->bOneShot = bval; }
-    // numeric options
-    else if (opt=="clipboard_arg")     { t->iClipboardArg = (unsigned short)atoi(value); }
-    else if (opt=="colour_change_type"){ t->iColourChangeType = (unsigned short)atoi(value); }
-    else if (opt=="custom_colour")     { t->colour = (unsigned short)atoi(value); }
-    else if (opt=="lines_to_match")    { t->iLinesToMatch = (unsigned short)atoi(value); }
-    else if (opt=="match_style")       { t->iMatch = (unsigned short)atoi(value); }
-    else if (opt=="new_style")         { t->iStyle = (unsigned short)atoi(value); }
-    else if (opt=="other_text_colour") { t->iOtherForeground = (COLORREF)atol(value); }
-    else if (opt=="other_back_colour") { t->iOtherBackground = (COLORREF)atol(value); }
-    else if (opt=="send_to")           { t->iSendTo = (unsigned short)atoi(value); }
-    else if (opt=="sequence")          { t->iSequence = atoi(value); }
-    else if (opt=="user")              { t->iUserOption = atol(value); }
-    // string options
-    else if (opt=="group")             { t->strGroup = CString(value); }
-    else if (opt=="script") {
-        // Mirrors methods_triggers.cpp: resolve new DISPID, reject if not found.
-        if (*value) {
-            DISPID d = resolve_dispid(pDoc, value);
-            if (d == DISPID_UNKNOWN) {
-                lua_pushnumber(L, eScriptNameNotLocated); return 1;
-            }
-            t->dispid = d;
-        } else {
-            t->dispid = DISPID_UNKNOWN;
-        }
-        t->strProcedure = CString(value);
-    }
-    else if (opt=="sound")             { t->sound_to_play = CString(value); }
-    else if (opt=="send")              { t->contents = CString(value); }
-    else if (opt=="variable")          { t->strVariable = CString(value); }
-    else { lua_pushnumber(L, eUnknownOption); return 1; }
-    lua_pushnumber(L, eOK);
+    lua_pushnumber(L, pDoc->SetTriggerOption(luaL_checkstring(L, 1),
+                                             luaL_checkstring(L, 2),
+                                             option_value_string(L, 3)));
     return 1;
-}
-
-// ── GetAliasOption / SetAliasOption ───────────────────────────────────────────
-
-static void push_alias_option(lua_State* L, CAlias* a, const char* option)
-{
-    string opt(option);
-    for (auto& c : opt) c = (char)tolower((unsigned char)c);
-    if (opt=="enabled")                   { lua_pushboolean(L, a->bEnabled);                  return; }
-    if (opt=="expand_variables")          { lua_pushboolean(L, a->bExpandVariables);           return; }
-    if (opt=="ignore_case")               { lua_pushboolean(L, a->bIgnoreCase);                return; }
-    if (opt=="keep_evaluating")           { lua_pushboolean(L, a->bKeepEvaluating);            return; }
-    if (opt=="omit_from_log")             { lua_pushboolean(L, a->bOmitFromLog);               return; }
-    if (opt=="omit_from_command_history") { lua_pushboolean(L, a->bOmitFromCommandHistory);    return; }
-    if (opt=="omit_from_output")          { lua_pushboolean(L, a->bOmitFromOutput);            return; }
-    if (opt=="regexp")                    { lua_pushboolean(L, a->bRegexp);                    return; }
-    if (opt=="echo_alias")                { lua_pushboolean(L, a->bEchoAlias);                 return; }
-    if (opt=="temporary")                 { lua_pushboolean(L, a->bTemporary);                 return; }
-    if (opt=="one_shot")                  { lua_pushboolean(L, a->bOneShot);                   return; }
-    if (opt=="menu")                      { lua_pushboolean(L, a->bMenu);                      return; }
-    if (opt=="send_to")                   { lua_pushnumber(L, a->iSendTo);                     return; }
-    if (opt=="sequence")                  { lua_pushnumber(L, a->iSequence);                   return; }
-    if (opt=="user")                      { lua_pushnumber(L, a->iUserOption);                 return; }
-    if (opt=="group")    { lua_pushstring(L, (const char*)a->strGroup);    return; }
-    if (opt=="match")    { lua_pushstring(L, (const char*)a->name);        return; }
-    if (opt=="script")   { lua_pushstring(L, (const char*)a->strProcedure);return; }
-    if (opt=="send")     { lua_pushstring(L, (const char*)a->contents);    return; }
-    if (opt=="variable") { lua_pushstring(L, (const char*)a->strVariable); return; }
-    lua_pushnil(L);
 }
 
 static int L_GetAliasOption(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* name   = luaL_checkstring(L, 1);
-    const char* option = luaL_checkstring(L, 2);
-    CAlias* a = nullptr;
-    CString key(name);
-    key.MakeLower(); key.TrimLeft(); key.TrimRight();
-    if (!pDoc->GetAliasMap().Lookup(key, a) || !a) { lua_pushnil(L); return 1; }
-    push_alias_option(L, a, option);
-    return 1;
+    VARIANT v = pDoc->GetAliasOption(luaL_checkstring(L, 1), luaL_checkstring(L, 2));
+    return push_option_variant(L, v);
 }
 
 static int L_SetAliasOption(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* name   = luaL_checkstring(L, 1);
-    const char* option = luaL_checkstring(L, 2);
-    const char* value  = luaL_checkstring(L, 3);
-    CAlias* a = nullptr;
-    CString key(name);
-    key.MakeLower(); key.TrimLeft(); key.TrimRight();
-    if (!pDoc->GetAliasMap().Lookup(key, a) || !a) {
-        lua_pushnumber(L, eAliasNotFound); return 1;
-    }
-    string opt(option);
-    for (auto& c : opt) c = (char)tolower((unsigned char)c);
-    bool bval = (strcmp(value,"1")==0 || strcmp(value,"y")==0 || strcmp(value,"Y")==0);
-    // read-only options
-    if (opt=="ignore_case" || opt=="regexp")
-        { lua_pushnumber(L, ePluginCannotSetOption); return 1; }
-    // boolean options
-    if (opt=="enabled")                    { a->bEnabled = bval; }
-    else if (opt=="expand_variables")          { a->bExpandVariables = bval; }
-    else if (opt=="keep_evaluating")           { a->bKeepEvaluating = bval; }
-    else if (opt=="omit_from_log")             { a->bOmitFromLog = bval; }
-    else if (opt=="omit_from_command_history") { a->bOmitFromCommandHistory = bval; }
-    else if (opt=="omit_from_output")          { a->bOmitFromOutput = bval; }
-    else if (opt=="echo_alias")                { a->bEchoAlias = bval; }
-    else if (opt=="temporary")                 { a->bTemporary = bval; }
-    else if (opt=="one_shot")                  { a->bOneShot = bval; }
-    else if (opt=="menu")                      { a->bMenu = bval; }
-    // numeric options
-    else if (opt=="send_to")                   { a->iSendTo = (unsigned short)atoi(value); }
-    else if (opt=="sequence")                  { a->iSequence = atoi(value); }
-    else if (opt=="user")                      { a->iUserOption = atol(value); }
-    // string options
-    else if (opt=="group")                     { a->strGroup = CString(value); }
-    else if (opt=="script") {
-        // Mirrors methods_aliases.cpp: resolve new DISPID, reject if not found.
-        if (*value) {
-            DISPID d = resolve_dispid(pDoc, value);
-            if (d == DISPID_UNKNOWN) {
-                lua_pushnumber(L, eScriptNameNotLocated); return 1;
-            }
-            a->dispid = d;
-        } else {
-            a->dispid = DISPID_UNKNOWN;
-        }
-        a->strProcedure = CString(value);
-    }
-    else if (opt=="send")                      { a->contents = CString(value); }
-    else if (opt=="variable")                  { a->strVariable = CString(value); }
-    else { lua_pushnumber(L, eUnknownOption); return 1; }
-    lua_pushnumber(L, eOK);
+    lua_pushnumber(L, pDoc->SetAliasOption(luaL_checkstring(L, 1),
+                                           luaL_checkstring(L, 2),
+                                           option_value_string(L, 3)));
     return 1;
-}
-
-// ── GetTimerOption / SetTimerOption ───────────────────────────────────────────
-
-static void push_timer_option(lua_State* L, CTimer* t, const char* option)
-{
-    string opt(option);
-    for (auto& c : opt) c = (char)tolower((unsigned char)c);
-    bool atTime = (t->iType == CTimer::eAtTime);
-    if (opt=="enabled")          { lua_pushboolean(L, t->bEnabled);         return; }
-    if (opt=="at_time")          { lua_pushboolean(L, atTime);              return; }
-    if (opt=="one_shot")         { lua_pushboolean(L, t->bOneShot);         return; }
-    if (opt=="omit_from_output") { lua_pushboolean(L, t->bOmitFromOutput);  return; }
-    if (opt=="omit_from_log")    { lua_pushboolean(L, t->bOmitFromLog);     return; }
-    if (opt=="active_closed")    { lua_pushboolean(L, t->bActiveWhenClosed);return; }
-    if (opt=="temporary")        { lua_pushboolean(L, t->bTemporary);       return; }
-    if (opt=="send_to")          { lua_pushnumber(L, t->iSendTo);           return; }
-    if (opt=="user")             { lua_pushnumber(L, t->iUserOption);       return; }
-    if (opt=="hour")          { lua_pushnumber(L, atTime ? t->iAtHour    : t->iEveryHour);    return; }
-    if (opt=="minute")        { lua_pushnumber(L, atTime ? t->iAtMinute  : t->iEveryMinute);  return; }
-    if (opt=="second")        { lua_pushnumber(L, atTime ? t->fAtSecond  : t->fEverySecond);  return; }
-    if (opt=="offset_hour")   { lua_pushnumber(L, t->iOffsetHour);          return; }
-    if (opt=="offset_minute") { lua_pushnumber(L, t->iOffsetMinute);        return; }
-    if (opt=="offset_second") { lua_pushnumber(L, t->fOffsetSecond);        return; }
-    if (opt=="group")    { lua_pushstring(L, (const char*)t->strGroup);     return; }
-    if (opt=="script")   { lua_pushstring(L, (const char*)t->strProcedure); return; }
-    if (opt=="send")     { lua_pushstring(L, (const char*)t->strContents);  return; }
-    if (opt=="variable") { lua_pushstring(L, (const char*)t->strVariable);  return; }
-    lua_pushnil(L);
 }
 
 static int L_GetTimerOption(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* name   = luaL_checkstring(L, 1);
-    const char* option = luaL_checkstring(L, 2);
-    CTimer* t = nullptr;
-    CString key(name);
-    key.MakeLower(); key.TrimLeft(); key.TrimRight();
-    if (!pDoc->GetTimerMap().Lookup(key, t) || !t) { lua_pushnil(L); return 1; }
-    push_timer_option(L, t, option);
-    return 1;
+    VARIANT v = pDoc->GetTimerOption(luaL_checkstring(L, 1), luaL_checkstring(L, 2));
+    return push_option_variant(L, v);
 }
 
 static int L_SetTimerOption(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* name   = luaL_checkstring(L, 1);
-    const char* option = luaL_checkstring(L, 2);
-    const char* value  = luaL_checkstring(L, 3);
-    CTimer* t = nullptr;
-    CString key(name);
-    key.MakeLower(); key.TrimLeft(); key.TrimRight();
-    if (!pDoc->GetTimerMap().Lookup(key, t) || !t) {
-        lua_pushnumber(L, eTimerNotFound); return 1;
-    }
-    string opt(option);
-    for (auto& c : opt) c = (char)tolower((unsigned char)c);
-    bool bval = (strcmp(value,"1")==0 || strcmp(value,"y")==0 || strcmp(value,"Y")==0);
-    bool atTime = (t->iType == CTimer::eAtTime);
-    if (opt=="enabled")            { t->bEnabled = bval; }
-    else if (opt=="one_shot")      { t->bOneShot = bval; }
-    else if (opt=="omit_from_output"){ t->bOmitFromOutput = bval; }
-    else if (opt=="omit_from_log") { t->bOmitFromLog = bval; }
-    else if (opt=="active_closed") { t->bActiveWhenClosed = bval; }
-    else if (opt=="temporary")     { t->bTemporary = bval; }
-    else if (opt=="send_to")       { t->iSendTo = (unsigned short)atoi(value); }
-    else if (opt=="user")          { t->iUserOption = atol(value); }
-    else if (opt=="hour")          { if (atTime) t->iAtHour    = atoi(value); else t->iEveryHour    = atoi(value); }
-    else if (opt=="minute")        { if (atTime) t->iAtMinute  = atoi(value); else t->iEveryMinute  = atoi(value); }
-    else if (opt=="second")        { if (atTime) t->fAtSecond  = atof(value); else t->fEverySecond  = atof(value); }
-    else if (opt=="offset_hour")   { t->iOffsetHour   = atoi(value); }
-    else if (opt=="offset_minute") { t->iOffsetMinute = atoi(value); }
-    else if (opt=="offset_second") { t->fOffsetSecond = atof(value); }
-    else if (opt=="group")         { t->strGroup     = CString(value); }
-    else if (opt=="script") {
-        // Mirrors methods_timers.cpp: resolve new DISPID, reject if not found.
-        if (*value) {
-            DISPID d = resolve_dispid(pDoc, value);
-            if (d == DISPID_UNKNOWN) {
-                lua_pushnumber(L, eScriptNameNotLocated); return 1;
-            }
-            t->dispid = d;
-        } else {
-            t->dispid = DISPID_UNKNOWN;
-        }
-        t->strProcedure = CString(value);
-    }
-    else if (opt=="send")          { t->strContents  = CString(value); }
-    else if (opt=="variable")      { t->strVariable  = CString(value); }
-    else { lua_pushnumber(L, eUnknownOption); return 1; }
-    lua_pushnumber(L, eOK);
+    lua_pushnumber(L, pDoc->SetTimerOption(luaL_checkstring(L, 1),
+                                           luaL_checkstring(L, 2),
+                                           option_value_string(L, 3)));
     return 1;
 }
 
@@ -4364,49 +4132,46 @@ static int L_GetPluginTimerInfo(lua_State* L)
     return 1;
 }
 
-static int L_GetPluginTriggerOption(lua_State* L)
+// The GetPlugin*Option trio mirrors the Windows GET_PLUGIN_STUFF idiom
+// (methods_plugins.cpp): swap m_CurrentPlugin to the target plugin (empty ID
+// = the world itself), call the REAL Get*Option, restore.  Replaces the old
+// hand-mirrored map lookups, which also missed the empty-ID = global case and
+// the lower-cased name lookup.
+template <typename GetOptionFn>
+static int push_plugin_option(lua_State* L, GetOptionFn get_option)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* pluginID = luaL_checkstring(L, 1);
     const char* itemName = luaL_checkstring(L, 2);
     const char* optName  = luaL_checkstring(L, 3);
-    CPlugin* p = FindPlugin(pDoc, pluginID);
-    if (!p) { lua_pushnil(L); return 1; }
-    CTrigger* t = nullptr;
-    if (!p->m_TriggerMap.Lookup(CString(itemName), t) || !t)
-        { lua_pushnil(L); return 1; }
-    push_trigger_option(L, t, optName);
-    return 1;
+    CPlugin* pPlugin = NULL;
+    if (pluginID[0]) {
+        pPlugin = FindPlugin(pDoc, pluginID);
+        if (!pPlugin) { lua_pushnil(L); return 1; }
+    }
+    CPlugin* pOldPlugin = pDoc->m_CurrentPlugin;
+    pDoc->m_CurrentPlugin = pPlugin;
+    VARIANT v = get_option(pDoc, itemName, optName);
+    pDoc->m_CurrentPlugin = pOldPlugin;
+    return push_option_variant(L, v);
+}
+
+static int L_GetPluginTriggerOption(lua_State* L)
+{
+    return push_plugin_option(L, [](CMUSHclientDoc* d, const char* n, const char* o)
+                                 { return d->GetTriggerOption(n, o); });
 }
 
 static int L_GetPluginAliasOption(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    const char* pluginID = luaL_checkstring(L, 1);
-    const char* itemName = luaL_checkstring(L, 2);
-    const char* optName  = luaL_checkstring(L, 3);
-    CPlugin* p = FindPlugin(pDoc, pluginID);
-    if (!p) { lua_pushnil(L); return 1; }
-    CAlias* a = nullptr;
-    if (!p->m_AliasMap.Lookup(CString(itemName), a) || !a)
-        { lua_pushnil(L); return 1; }
-    push_alias_option(L, a, optName);
-    return 1;
+    return push_plugin_option(L, [](CMUSHclientDoc* d, const char* n, const char* o)
+                                 { return d->GetAliasOption(n, o); });
 }
 
 static int L_GetPluginTimerOption(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    const char* pluginID = luaL_checkstring(L, 1);
-    const char* itemName = luaL_checkstring(L, 2);
-    const char* optName  = luaL_checkstring(L, 3);
-    CPlugin* p = FindPlugin(pDoc, pluginID);
-    if (!p) { lua_pushnil(L); return 1; }
-    CTimer* t = nullptr;
-    if (!p->m_TimerMap.Lookup(CString(itemName), t) || !t)
-        { lua_pushnil(L); return 1; }
-    push_timer_option(L, t, optName);
-    return 1;
+    return push_plugin_option(L, [](CMUSHclientDoc* d, const char* n, const char* o)
+                                 { return d->GetTimerOption(n, o); });
 }
 
 // ── UnloadPlugin / ReloadPlugin ───────────────────────────────────────────────

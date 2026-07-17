@@ -304,6 +304,107 @@ TEST(LuaScripting, EnableDisableTrigger)
     lua_close(L);
 }
 
+// ── Get/Set*Option round trips (the REAL doc methods via the thin wrappers) ──
+// Locks the Windows marshalling semantics: boolean options come back as
+// NUMBERS (0/1) exactly as on Windows, read-only options refuse writes with
+// ePluginCannotSetOption, unknown options return eUnknownOption, and the
+// GetPlugin*Option empty-ID form reads the world's own items.
+
+TEST(LuaScripting, TriggerOptionRoundTrip)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L, "world.AddTrigger('t3', 'pat', 'resp', 0, 0)"));
+
+    // numeric option round trip
+    run_ret(L, "return world.SetTriggerOption('t3', 'sequence', 42)");
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+    run_ret(L, "return world.GetTriggerOption('t3', 'sequence')");
+    EXPECT_EQ(42.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // Windows parity: boolean options are numbers, not Lua booleans
+    run_ret(L, "return type(world.GetTriggerOption('t3', 'enabled'))");
+    EXPECT_STREQ("number", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    // Lua boolean value coerces via the "1"/"0" convention (get_option_value)
+    run_ret(L, "return world.SetTriggerOption('t3', 'enabled', true)");
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("t3", t));
+    EXPECT_TRUE(t->bEnabled);
+
+    // alpha option round trip
+    run_ret(L, "return world.SetTriggerOption('t3', 'group', 'grp')");
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+    run_ret(L, "return world.GetTriggerOption('t3', 'group')");
+    EXPECT_STREQ("grp", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    // read-only (OPT_CANNOT_WRITE) and unknown options
+    run_ret(L, "return world.SetTriggerOption('t3', 'regexp', '1')");
+    EXPECT_EQ((double)ePluginCannotSetOption, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+    run_ret(L, "return world.SetTriggerOption('t3', 'bogus', '1')");
+    EXPECT_EQ((double)eUnknownOption, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // missing trigger: get → nil, set → eTriggerNotFound
+    run_ret(L, "return world.GetTriggerOption('nosuch', 'enabled')");
+    EXPECT_TRUE(lua_isnil(L, -1));
+    lua_settop(L, 0);
+    run_ret(L, "return world.SetTriggerOption('nosuch', 'enabled', '1')");
+    EXPECT_EQ((double)eTriggerNotFound, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // GetPluginTriggerOption with an empty ID reads the world's own trigger
+    run_ret(L, "return world.GetPluginTriggerOption('', 't3', 'sequence')");
+    EXPECT_EQ(42.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+TEST(LuaScripting, AliasAndTimerOptionRoundTrip)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L, "world.AddAlias('a2', 'shortcut', 'expansion', 1)"));
+    run_ret(L, "return world.SetAliasOption('a2', 'send_to', '2')");
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+    run_ret(L, "return world.GetAliasOption('a2', 'send_to')");
+    EXPECT_EQ(2.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // empty match text is rejected with the canonical error
+    run_ret(L, "return world.SetAliasOption('a2', 'match', '')");
+    EXPECT_EQ((double)eAliasCannotBeEmpty, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // timer: the double-valued 'second' option round-trips through VT_R8
+    EXPECT_TRUE(run(L, "world.AddTimer('tmr2', 0, 0, 30, 'ping', 1)"));
+    run_ret(L, "return world.GetTimerOption('tmr2', 'second')");
+    EXPECT_EQ(30.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+    run_ret(L, "return world.SetTimerOption('tmr2', 'second', '12.5')");
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+    run_ret(L, "return world.GetTimerOption('tmr2', 'second')");
+    EXPECT_EQ(12.5, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
 // ── Alias CRUD via Lua ────────────────────────────────────────────────────
 
 TEST(LuaScripting, AddAndGetAlias)

@@ -2192,6 +2192,30 @@ public:
     VARIANT GetAliasOption(LPCTSTR AliasName, LPCTSTR OptionName);
     long SetAliasOption(LPCTSTR AliasName, LPCTSTR OptionName, LPCTSTR Value);
     VARIANT GetAliasWildcard(LPCTSTR AliasName, LPCTSTR WildcardName);
+    // world.*Trigger* family (methods_triggers.cpp — doc.h signatures)
+    long DeleteTrigger(LPCTSTR TriggerName);
+    long AddTrigger(LPCTSTR TriggerName, LPCTSTR MatchText, LPCTSTR ResponseText,
+                    long Flags, short Colour, short Wildcard,
+                    LPCTSTR SoundFileName, LPCTSTR ScriptName);
+    long AddTriggerEx(LPCTSTR TriggerName, LPCTSTR MatchText, LPCTSTR ResponseText,
+                      long Flags, short Colour, short Wildcard,
+                      LPCTSTR SoundFileName, LPCTSTR ScriptName,
+                      short SendTo, short Sequence);
+    long EnableTrigger(LPCTSTR TriggerName, BOOL Enabled);
+    long GetTrigger(LPCTSTR TriggerName, VARIANT FAR* MatchText,
+                    VARIANT FAR* ResponseText, VARIANT FAR* Flags,
+                    VARIANT FAR* Colour, VARIANT FAR* Wildcard,
+                    VARIANT FAR* SoundFileName, VARIANT FAR* ScriptName);
+    long IsTrigger(LPCTSTR TriggerName);
+    VARIANT GetTriggerList();
+    VARIANT GetTriggerInfo(LPCTSTR TriggerName, short InfoType);
+    long DeleteTemporaryTriggers();
+    long EnableTriggerGroup(LPCTSTR GroupName, BOOL Enabled);
+    long DeleteTriggerGroup(LPCTSTR GroupName);
+    VARIANT GetTriggerOption(LPCTSTR TriggerName, LPCTSTR OptionName);
+    long SetTriggerOption(LPCTSTR TriggerName, LPCTSTR OptionName, LPCTSTR Value);
+    VARIANT GetTriggerWildcard(LPCTSTR TriggerName, LPCTSTR WildcardName);
+    void StopEvaluatingTriggers(BOOL AllPlugins);
     DISPID GetProcedureDispid(const CString& strName, const CString& strType,
                               const CString& strLabel, CString& strErrorMessage);
     void TraceOut(LPCTSTR Message);

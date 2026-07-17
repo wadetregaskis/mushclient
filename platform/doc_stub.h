@@ -27,6 +27,40 @@
 // ── PAL byte-transport seam (ITransport; mirrors doc.h) ───────────────────
 namespace pal { class ITransport; }   // pal/itransport.h
 class CDocTransportEvents;            // doc_shared.cpp — ITransportEvents → engine bridge
+
+// ── loaded-configuration snapshot classes (doc.h:593-620, verbatim) ────────
+class CNumericConfiguration : public CObject
+  {
+  public:
+
+    long iValue;    // loaded value
+    bool bInclude;  // true if from include file
+
+    void Reset (void)  { iValue = 0; bInclude = false; }
+    CNumericConfiguration () { Reset (); }
+
+  }; // end of  CConfiguration
+
+typedef CTypedPtrArray <CPtrArray, CNumericConfiguration*> CNumericConfigurationArray;
+
+class CAlphaConfiguration : public CObject
+  {
+  public:
+
+    CString sValue;   // loaded value
+    bool bInclude;    // true if from include file
+
+    void Reset (void)  { sValue.Empty (); bInclude = false; }
+    CAlphaConfiguration () { Reset (); }
+
+  }; // end of  CAlphaConfiguration
+
+typedef CTypedPtrArray <CPtrArray, CAlphaConfiguration*> CAlphaConfigurationArray;
+
+#ifndef PLUGIN_UNIQUE_ID_LENGTH
+#define PLUGIN_UNIQUE_ID_LENGTH 24    // stdafx.h:532
+#endif
+
 class CMUSHclientDoc;
 
 // Deferred TLS consent/fallback prompt message id (stdafx.h owns it in the
@@ -1451,6 +1485,131 @@ public:
     COLORREF       m_customtext[MAX_CUSTOM];
     COLORREF       m_customback[MAX_CUSTOM];
     map<COLORREF, COLORREF> m_ColourTranslationMap;   // doc.h:1461 — world.MapColour
+
+    // ── doc-option members (option-machinery convergence step: every member
+    // named by scriptingoptions_numeric.inc / scriptingoptions_alpha.inc now
+    // exists with doc.h's exact type, so the real OptionsTable offsets are
+    // valid against this class.  Declarations copied from doc.h; zero/empty
+    // initialised until the ctor runs SetDefaults over the real tables.) ──
+    CString m_file_postamble;
+    CString m_file_preamble ;
+    CString m_line_postamble;
+    CString m_line_preamble ;
+    CString m_strScriptEditorArgument;
+    unsigned short m_bArrowsChangeHistory = 0;
+    unsigned short m_bConfirmOnPaste = 0;
+    COLORREF m_input_background_colour = 0;
+    unsigned short  m_bExcludeMacros = 0;
+    unsigned short  m_bExcludeNonAlpha = 0;
+    unsigned short  m_bConfirmBeforeReplacingTyping = 0;
+    unsigned short  m_bAltArrowRecallsPartial = 0;     // alt+up arrow recalls partially entered command
+    unsigned short  m_bKeepFreezeAtBottom = 0; // don't automatically unfreeze after returning to bottom of buffer
+    unsigned short  m_bAutoRepeat = 0;    // auto repeat last command
+    unsigned short  m_bDoubleClickInserts = 0;      // double-click inserts word into command buffer
+    unsigned short  m_bConfirmOnSend = 0;        // confirm preamble, postamble on file send
+    unsigned short  m_bFlashIcon = 0;     // flash icon on taskbar for new activity?
+    unsigned short  m_bArrowKeysWrap = 0;     // arrow keys wrap command history?
+    LONG  m_bEditScriptWithNotepad = 0;            // use inbuilt notepad for editing scripts
+    unsigned short m_bDoubleClickSends = 0;   // double-click sends to MUD
+    unsigned short m_bAlwaysRecordCommandHistory = 0; // record command history even if echo off
+    unsigned short m_bDoNotShowOutstandingLines = 0;  // don't show outstanding lines in tabbed windows
+    unsigned short m_bAutoCopyInHTML = 0;     // auto-copy to clipboard in HTML
+    unsigned short m_bAutoResizeCommandWindow = 0;   // change command window height automatically
+    unsigned short m_iAutoResizeMinimumLines = 0;    // command window minimum number of lines
+    unsigned short m_iAutoResizeMaximumLines = 0;    // command window maximum number of lines
+    unsigned short m_bDoNotAddMacrosToCommandHistory = 0;    // macros not into command history
+    unsigned short m_iDefaultTriggerSendTo = 0;            // default send-to location for triggers
+    unsigned short m_iDefaultTriggerSequence = 0;          // default sequence for triggers
+    unsigned short m_bDefaultTriggerRegexp = 0;            // default regular expression flag for triggers
+    unsigned short m_bDefaultTriggerExpandVariables = 0;   // default expand-variables flag for triggers
+    unsigned short m_bDefaultTriggerKeepEvaluating = 0;    // default keep-evaluating flag for triggers
+    unsigned short m_bDefaultTriggerIgnoreCase = 0;        // default ignore-case flag for triggers
+    unsigned short m_iDefaultAliasSendTo = 0;              // default send-to location for aliases
+    unsigned short m_iDefaultAliasSequence = 0;            // default sequence for aliases
+    unsigned short m_bDefaultAliasRegexp = 0;              // default regular expression flag for aliases
+    unsigned short m_bDefaultAliasExpandVariables = 0;     // default expand-variables flag for aliases
+    unsigned short m_bDefaultAliasKeepEvaluating = 0;      // default keep-evaluating flag for aliases
+    unsigned short m_bDefaultAliasIgnoreCase = 0;          // default ignore-case flag for aliases
+    unsigned short m_iDefaultTimerSendTo = 0;              // default send-to location for timers
+    CString m_strOutputLinePreambleOutput;         // put at start of each output line - MUD output
+    CString m_strOutputLinePreambleInput;          // put at start of each output line - input
+    CString m_strOutputLinePreambleNotes;          // put at start of each output line - world.Note
+    unsigned short m_iFadeOutputBufferAfterSeconds = 0; // fade output buffer after these many seconds (0 = disable)
+    unsigned short m_FadeOutputOpacityPercent = 0;      // what opacity to fade to (0 to 100 percent)
+    unsigned short m_FadeOutputSeconds = 0;             // how many seconds to fade over
+    unsigned short m_bCtrlBackspaceDeletesLastWord = 0; // Ctrl+Backspace deletes last word in command window
+    BOOL m_bArrowRecallsPartial = 0;    // arrow key (without ALT) recalls partial command
+    BOOL m_bCtrlZGoesToEndOfBuffer = 0;       // Ctrl+Z goes to end of output buffer
+    BOOL m_bCtrlPGoesToPreviousCommand = 0;   // Ctrl+P gets previous command
+    BOOL m_bCtrlNGoesToNextCommand = 0;       // Ctrl+N gets next command
+    BOOL m_bHyperlinkAddsToCommandHistory = 0;  // MXP hyperlink goes into history
+    BOOL m_bEchoHyperlinkInOutputWindow = 0;    // MXP hyperlink is echoed
+    unsigned  short m_IncomingChatPort = 0;   // default 4050
+    unsigned  short m_bAcceptIncomingChatConnections = 0;   // do we listen for incoming chats?
+    unsigned  short m_bIgnoreChatColours = 0;   // throw away incoming ANSI colours
+    unsigned  short m_bValidateIncomingCalls = 0; // ask before accepting chat connections
+    unsigned  short m_bAutoAllowSnooping = 0;   // once snooping is permitted don't ask again
+    unsigned  short m_bAutoAllowFiles = 0;      // don't query if we can send a particular file
+    COLORREF        m_cChatForegroundColour = 0;  // default colour for chats
+    COLORREF        m_cChatBackgroundColour = 0;  //  - background for above
+    long            m_iMaxChatLinesPerMessage = 0;   // max lines per chat message
+    long            m_iMaxChatBytesPerMessage = 0;   // max bytes per chat message
+    COLORREF m_OutputLinePreambleInputBackColour = 0;  // back colour - input preamble
+    COLORREF m_OutputLinePreambleInputTextColour = 0;  // text colour - input preamble
+    COLORREF m_OutputLinePreambleNotesBackColour = 0;  // back colour - Note preamble
+    COLORREF m_OutputLinePreambleNotesTextColour = 0;  // text colour - Note preamble
+    COLORREF m_OutputLinePreambleOutputBackColour = 0; // back colour - MUD output preamble
+    COLORREF m_OutputLinePreambleOutputTextColour = 0; // text colour - MUD output preamble
+    COLORREF m_input_text_colour = 0;
+    CString         m_strChatMessagePrefix;   // <CHAT> or whatever
+    CString         m_strChatSaveDirectory;     // where to save files
+    CString         m_strOurChatName;     // who we are on chat lists
+    CString m_strAliasesFilter;           // Lua code to filter aliases
+    CString m_strEditorWindowName;               // What window to bring to the front after editing a text file
+    CString m_strTimersFilter;            // Lua code to filter timers
+    CString m_strTriggersFilter;          // Lua code to filter triggers
+    CString m_strVariablesFilter;         // Lua code to filter variables
+    LONG  m_bSaveDeletedCommand = 0;            // save deleted command in command history on <esc>
+    LONG  m_bTranslateBackslashSequences = 0;            // interpret \n \r etc. on a send
+    LONG  m_bUseDefaultOutputFont = 0;            // Default output font overrides
+    LONG  m_bWarnIfScriptingInactive = 0;       // warn if we can't invoke a script
+    LONG  m_nFileDelay = 0;            // delay in milliseconds before sending each line
+    LONG  m_nFileDelayPerLines = 0;            // how many lines to send before the delay
+    LONG  m_nPasteDelay = 0;           // delay in milliseconds before pasting each line
+    LONG  m_nPasteDelayPerLines = 0;            // how many lines to send before the delay
+    LONG  m_nReloadOption = 0;      // option for reloading changed script file
+    unsigned int m_iTabCompletionLines = 0;          // lines to search
+    unsigned int m_iToolTipStartTime = 0;           // Time before tooltip appears (milliseconds)
+    unsigned int m_iToolTipVisibleTime = 0;         // Time tooltip stays visible (milliseconds)
+    unsigned short  m_bFileCommentedSoftcode = 0;    // are we sending commented softcode?
+    unsigned short  m_bLowerCaseTabCompletion = 0;  // tab complete words in lower case
+    unsigned short  m_bPasteCommentedSoftcode = 0;   // are we pasting commented softcode?
+    unsigned short  m_bReEvaluateAutoSay = 0; // send auto-say through command interpreter
+    unsigned short  m_bShowBold = 0;   // show bold, italic, underline in fonts
+    unsigned short  m_bShowItalic = 0;     // italic text to be shown in italic?
+    unsigned short  m_bShowUnderline = 0;     // underlined text to be underlined?
+    unsigned short  m_bSpellCheckOnSend = 0;        // spell check when you send something
+    unsigned short  m_iPixelOffset = 0;     // pixel offset of text from side of window
+    unsigned short m_bAutoWrapInput = 0;			      // Match input wrap to output?
+    unsigned short m_bLineInformation = 0;
+    unsigned short m_bOmitSavedDateFromSaveFiles = 0; // if set, do not write the date saved to save files
+    unsigned short m_bPasteEcho = 0;
+    unsigned short m_bPlaySoundsInBackground = 0;   // if true, PlaySound uses a global sound buffer
+    unsigned short m_bStartPaused = 0;
+    unsigned short m_bTabCompletionSpace = 0;        // insert space after word?
+    unsigned short m_bTreeviewAliases = 0;          // show aliases in tree view?
+    unsigned short m_bTreeviewTimers = 0;           // show timers in tree view?
+    unsigned short m_bTreeviewTriggers = 0;         // show triggers in tree view?
+    unsigned short m_bUseDefaultAliases = 0;
+    unsigned short m_bUseDefaultColours = 0;
+    unsigned short m_bUseDefaultInputFont = 0;
+    unsigned short m_bUseDefaultMacros = 0;
+    unsigned short m_bUseDefaultTimers = 0;
+    unsigned short m_bUseDefaultTriggers = 0;
+    unsigned short m_iLineSpacing = 0;        // line spacing, 0 to use font height
+    unsigned short m_keypad_enable = 0;
+    CNumericConfigurationArray m_NumericConfiguration;   // doc.h:1385 — loaded-value snapshots
+    CAlphaConfigurationArray   m_AlphaConfiguration;      // doc.h:1386
     CString        m_strCustomColourName[MAX_CUSTOM];
     unsigned short m_echo_colour = SAMECOLOUR; // colour for echoed input in logs
 
@@ -1491,7 +1650,7 @@ public:
 
     // ── Echo / NAWS ────────────────────────────────────────────────────
     bool           m_bNoEcho    = false;
-    unsigned short m_bNoEchoOff = 0;
+    BOOL m_bNoEchoOff = FALSE;  // type converged to doc.h
     BOOL           m_bNAWS        = FALSE;
     BOOL           m_bNAWS_wanted = FALSE;
     unsigned short m_nWrapColumn  = 80;
@@ -1578,19 +1737,19 @@ public:
     CStringList m_strMapList;
 
     // ── Hyperlink display options ──────────────────────────────────────────
-    bool     m_bUseCustomLinkColour    = false;
-    bool     m_bMudCanChangeLinkColour = false;
-    bool     m_bUnderlineHyperlinks    = false;
-    bool     m_bMudCanRemoveUnderline  = false;
+    BOOL m_bUseCustomLinkColour = FALSE;  // type converged to doc.h
+    BOOL m_bMudCanChangeLinkColour = FALSE;  // type converged to doc.h
+    BOOL m_bUnderlineHyperlinks = FALSE;  // type converged to doc.h
+    BOOL m_bMudCanRemoveUnderline = FALSE;  // type converged to doc.h
     COLORREF m_iHyperlinkColour        = 0;
 
     // ── Colour / display options ──────────────────────────────────────────
-    bool m_bIgnoreMXPcolourChanges     = false;
+    BOOL m_bIgnoreMXPcolourChanges = FALSE;  // type converged to doc.h
     bool m_bSuppressNewline            = false;
 
     // ── AFK / options ─────────────────────────────────────────────────────
-    bool m_bSendMXP_AFK_Response       = false;
-    bool m_bMudCanChangeOptions        = false;
+    unsigned short m_bSendMXP_AFK_Response = 0;  // type converged to doc.h
+    unsigned short m_bMudCanChangeOptions = 0;  // type converged to doc.h
     CTime m_tLastPlayerInput;
 
     // ── Connection / world identity ───────────────────────────────────────
@@ -1627,7 +1786,7 @@ public:
     // is replaced by one without an action.
 
 
-    int     m_connect_now      = 0;
+    unsigned short m_connect_now = 0;  // type converged to doc.h
     long    m_nTotalLinesSent  = 0;
 
     // ── Proxy / SSL / keep-alives (mirrored from doc.h) ──────────────────────
@@ -1673,7 +1832,7 @@ public:
     long m_iAliasesMatchedThisSessionCount  = 0;
     long m_iTimersFiredCount                = 0;  // total timers fired (all sessions)
     long m_iTimersFiredThisSessionCount     = 0;
-    long m_maxlines                         = 5000;
+    LONG m_maxlines = 5000;  // type converged to doc.h
 
     // ── Connect/disconnect timestamps ────────────────────────────────────
     CTime   m_tConnectTime;
@@ -1681,7 +1840,7 @@ public:
     time_t  m_tWorldOpenTime = 0;  // when this world document was constructed
 
     // ── Disconnect behaviour ──────────────────────────────────────────────
-    bool    m_bShowConnectDisconnect = false;
+    BOOL m_bShowConnectDisconnect = FALSE;  // type converged to doc.h
     bool    m_bDisconnectOK          = false;
 
     // ── Log file ──────────────────────────────────────────────────────────
@@ -1784,7 +1943,7 @@ public:
     SSL_CTX* m_pSSL_CTX       = nullptr;
     CString  m_strSSLLastError;
     bool     m_bSSLAllowInvalidCert  = false;  // user consent, session only
-    BOOL     m_bEnableAutoSay        = FALSE;  // auto-say off at connect (doc.h twin)
+    unsigned short m_bEnableAutoSay = 0;  // type converged to doc.h
 
     // ── UTF-8 ──────────────────────────────────────────────────────────
     unsigned short m_bUTF_8          = 0;
@@ -1818,7 +1977,7 @@ public:
     unsigned short m_display_my_input   = 1;  // echo typed commands
     CStringList    m_QueuedCommandsList;       // speed-walk queue
     short          m_log_input          = 0;
-    bool           m_bTranslateGerman   = false;
+    unsigned short m_bTranslateGerman = 0;  // type converged to doc.h
     long           m_new_lines          = 0;  // unseen line count
     CStringList    m_CommandHistory;           // typed-command history
     CString        m_CurrentCommand;           // command being typed
@@ -1839,8 +1998,8 @@ public:
     }
 
     // ── Spam prevention ───────────────────────────────────────────────
-    bool    m_bEnableSpamPrevention = false;
-    int     m_iSpamLineCount        = 0;
+    unsigned short m_bEnableSpamPrevention = 0;  // type converged to doc.h
+    unsigned short m_iSpamLineCount = 0;  // type converged to doc.h
     CString m_strSpamMessage;
     CString m_strLastCommandSent;
     int     m_iLastCommandCount     = 0;
@@ -1868,8 +2027,8 @@ public:
     unsigned short  m_iCurrentActionSource = eUnknownActionSource;
     unsigned short  m_iNoteStyle           = NORMAL;
     LONGLONG        m_iScriptTimeTaken     = 0;
-    bool            m_bScriptErrorsToOutputWindow = false;
-    bool            m_bLogScriptErrors     = false;
+    unsigned short m_bScriptErrorsToOutputWindow = 0;  // type converged to doc.h
+    unsigned short m_bLogScriptErrors = 0;  // type converged to doc.h
     CScriptEngine*  m_ScriptEngine         = nullptr;
 
     // ── Trigger evaluation control ────────────────────────────────────
@@ -1887,7 +2046,7 @@ public:
 
     // ── Log file ──────────────────────────────────────────────────────
     FILE*          m_logfile                  = nullptr;
-    BOOL           m_bWriteWorldNameToLog     = FALSE;  // doc.h twin (T3d)
+    unsigned short m_bWriteWorldNameToLog = 0;  // type converged to doc.h
     CString        m_logfile_name;
     short          m_bLogOutput               = 0;
     short          m_bLogNotes                = 0;
@@ -1911,7 +2070,7 @@ public:
 
     // ── Map failure regexp ────────────────────────────────────────────
     t_regexp*      m_MapFailureRegexp          = nullptr;
-    bool           m_bMapFailureRegexp         = false;
+    unsigned short m_bMapFailureRegexp = 0;  // type converged to doc.h
     CString        m_strMappingFailure;
 
     // ── Sound / active views ──────────────────────────────────────────

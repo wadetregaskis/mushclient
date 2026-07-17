@@ -88,6 +88,13 @@ enum { BLACK = 0, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE };
 #ifndef ESC
 #  define ESC '\x1B'   // from doc.h — AnsiNote's escape parser
 #endif
+
+// ── Translate* macros (from stdafx.h) — route through TranslateGeneric ────
+#ifndef Translate
+#  define Translate(string)        TranslateGeneric (string, "messages")
+#  define TranslateTime(string)    TranslateGeneric (string, "times")
+#  define TranslateHeading(string) TranslateGeneric (string, "headings")
+#endif
 #define ANSI_RESET              0
 #define ANSI_BOLD               1
 #define ANSI_BLINK              3
@@ -2144,6 +2151,8 @@ public:
     VARIANT GetVariable(LPCTSTR VariableName);
     VARIANT GetVariableList();
     long DeleteVariable(LPCTSTR VariableName);
+    DISPID GetProcedureDispid(const CString& strName, const CString& strType,
+                              const CString& strLabel, CString& strErrorMessage);
     void TraceOut(LPCTSTR Message);
     BOOL GetTrace();
     void SetTrace(BOOL bNewValue);

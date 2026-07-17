@@ -4374,3 +4374,55 @@ CString GetBaseAlphaOptionItem (const int iItem,
   return * (CString *) (pBase + BaseAlphaOptionsTable [iItem].iOffset);
 
   }
+
+
+// ═══ GetProcedureDispid (option-machinery step 2) ════════════════════════════
+// Resolves a script subroutine name to a dispid via the engine's language-
+// agnostic GetDispid, appending the not-found diagnostics.  Relocated verbatim
+// from scripting/scripting.cpp so the alias/timer/trigger trio (whose option
+// setters resolve script names) can compile headless.
+
+DISPID CMUSHclientDoc::GetProcedureDispid (const CString & strName, 
+                                           const CString & strType,
+                                           const CString & strLabel,
+                                           CString & strErrorMessage) 
+  {
+  // ignore if no script name
+  if (strName.IsEmpty () || (GetScriptEngine () == NULL))
+    return DISPID_UNKNOWN;
+
+  DISPID dispid = GetScriptEngine ()->GetDispid (strName);
+
+  if (dispid != DISPID_UNKNOWN)
+    return dispid;
+
+  // append error message to supplied error message string
+
+  CString strMsg;
+  if (strLabel.IsEmpty ())
+    strMsg = TFormat ("The %s subroutine named \"%s\" could not be found.",
+      (LPCTSTR) strType,
+      (LPCTSTR) strName);
+  else
+    strMsg = TFormat ("The %s (%s) subroutine named \"%s\" could not be found.",
+      (LPCTSTR) strType,
+      (LPCTSTR) strLabel,
+      (LPCTSTR) strName);
+
+  // put in error message preamble
+  if (strErrorMessage.IsEmpty ())
+    {
+    if (m_strScriptFilename.IsEmpty ())
+      strErrorMessage = Translate ("You have not specified a script file name:");
+    else
+      strErrorMessage = TFormat ("There was a problem in script file \"%s\":",
+      (LPCTSTR) m_strScriptFilename);
+    strErrorMessage += ENDLINE;
+    }
+
+  strErrorMessage += ENDLINE;
+
+  strErrorMessage += strMsg;
+
+  return DISPID_UNKNOWN;
+  } // end of CMUSHclientDoc::GetProcedureDispid  

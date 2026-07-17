@@ -10,6 +10,7 @@
 
 #include "platform/doc_stub.h"
 #include "platform/wx_mfc_hooks.h"
+#include "UDPsocket.h"   // ~CMUSHclientDoc frees m_UDPsocketMap (doc_construct.cpp:549)
 #include "Color.h"
 #include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
 #include "scripting/shs.h"   // SHA-1 (GetUniqueID)
@@ -250,12 +251,20 @@ CMUSHclientDoc::~CMUSHclientDoc()
     // Close socket first so no callbacks fire into a partially-destroyed doc.
     TeardownTransport();   // PAL transport + events bridge (doc_shared.cpp)
 
-    // Delete plugins (CPlugin::~CPlugin() fires OnPluginClose for each).
+    // Delete plugins (the REAL CPlugin::~CPlugin() — plugins.cpp — fires
+    // OnPluginClose and SaveState for each; nothing here pre-fires them).
     // Erase from list during iteration so re-entrant PluginList queries see a
     // consistent list (mirrors the Windows destructor in doc_construct.cpp).
     for (auto it = m_PluginList.begin(); it != m_PluginList.end();
          it = m_PluginList.erase(it))
         delete *it;
+
+    // UDP listening sockets (mirrors doc_construct.cpp:549).
+    for (map<int, UDPsocket *>::iterator udpSocketIterator = m_UDPsocketMap.begin ();
+         udpSocketIterator != m_UDPsocketMap.end ();
+         udpSocketIterator++)
+        delete udpSocketIterator->second;
+    m_UDPsocketMap.clear ();
 
     // Tear down the world's own Lua script engine.
     delete m_ScriptEngine;
@@ -336,24 +345,9 @@ long CheckObjectName(CString& strName, const bool bConform)
 // builds; empty headless, so %E expands to "" and relative paths stay relative).
 char working_dir [_MAX_PATH] = "";
 
-const string ON_PLUGIN_TICK                  = "OnPluginTick";
-const string ON_PLUGIN_DRAW_OUTPUT_WINDOW    = "OnPluginDrawOutputWindow";
-const string ON_PLUGIN_IAC_GA                = "OnPlugin_IAC_GA";
-const string ON_PLUGIN_TELNET_REQUEST        = "OnPluginTelnetRequest";
-const string ON_PLUGIN_TELNET_OPTION         = "OnPluginTelnetOption";
-const string ON_PLUGIN_TELNET_SUBNEGOTIATION = "OnPluginTelnetSubnegotiation";
-const string ON_PLUGIN_MXP_START             = "OnPluginMXPstart";
-const string ON_PLUGIN_MXP_STOP              = "OnPluginMXPstop";
-const string ON_PLUGIN_MXP_OPENTAG           = "OnPluginMXPopenTag";
-const string ON_PLUGIN_MXP_CLOSETAG          = "OnPluginMXPcloseTag";
-const string ON_PLUGIN_MXP_SETVARIABLE       = "OnPluginMXPsetVariable";
-const string ON_PLUGIN_MXP_SETENTITY         = "OnPluginMXPsetEntity";
-const string ON_PLUGIN_MXP_ERROR             = "OnPluginMXPerror";
-const string ON_PLUGIN_CONNECT               = "OnPluginConnect";
-const string ON_PLUGIN_DISCONNECT            = "OnPluginDisconnect";
-const string ON_PLUGIN_WORLD_SAVE            = "OnPluginWorldSave";
-const string ON_PLUGIN_CLOSE                 = "OnPluginClose";
-const string ON_PLUGIN_INSTALL               = "OnPluginInstall";
+// The ON_PLUGIN_* callback-name constants are now defined in plugins.cpp
+// (compiled into mushcore since the CPlugin convergence) — the partial
+// duplicate set that used to live here is gone.
 
 
 // FindBaseOption (and the other five table-generic base-option functions):
@@ -361,189 +355,12 @@ const string ON_PLUGIN_INSTALL               = "OnPluginInstall";
 // matching, eOK/eUnknownOption returns) replaced the sentinel-drifted stub.
 
 // ── Plugin callback dispatch ──────────────────────────────────────────────
-//
-// Walk m_PluginList and invoke `callbackName` on every enabled plugin that
-// has a Lua engine and has that function defined.  Each overload matches one
-// of the Windows CMUSHclientDoc::SendToAllPluginCallbacks signatures so the
-// call sites in doc_portable.cpp (and the trigger/alias/timer evaluation
-// paths) don't need to be touched.
-
-
-// Overload 1 — fire callback, ignore return value.
-void CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName)
-{
-    CPlugin* pSaved = m_CurrentPlugin;
-    for (CPlugin* p : m_PluginList) {
-        if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
-        CString strName(callbackName.c_str());
-        DISPID dispid = p->m_ScriptEngine->GetLuaDispid(strName);
-        if (dispid == DISPID_UNKNOWN) continue;
-        list<double> nparams;
-        list<string> sparams;
-        long nInvocations = 0;
-        m_CurrentPlugin = p;
-        p->m_ScriptEngine->ExecuteLua(dispid, strName,
-                                       eInputFromServer,
-                                       "plugin", callbackName.c_str(),
-                                       nparams, sparams,
-                                       nInvocations);
-        m_CurrentPlugin = pSaved;
-    }
-    m_CurrentPlugin = pSaved;
-}
-
-// First-plugin dispatch — the FIRST enabled plugin that implements the
-// callback receives it and the call returns true (used by Trace: a tracing
-// plugin can swallow trace lines).  Mirrors plugins.cpp
-// SendToFirstPluginCallbacks with the Lua-dispatch idiom of the overloads here.
-bool CMUSHclientDoc::SendToFirstPluginCallbacks(const string& callbackName,
-                                                 const char* sText)
-{
-    CPlugin* pSaved = m_CurrentPlugin;
-    for (CPlugin* p : m_PluginList) {
-        if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
-        CString strName(callbackName.c_str());
-        DISPID dispid = p->m_ScriptEngine->GetLuaDispid(strName);
-        if (dispid == DISPID_UNKNOWN) continue;
-        list<double> nparams;
-        list<string> sparams;
-        sparams.push_back(string(sText ? sText : ""));
-        long nInvocations = 0;
-        m_CurrentPlugin = p;
-        p->m_ScriptEngine->ExecuteLua(dispid, strName,
-                                       eInputFromServer,
-                                       "plugin", callbackName.c_str(),
-                                       nparams, sparams,
-                                       nInvocations);
-        m_CurrentPlugin = pSaved;
-        return true;   // first plugin that implements it wins
-    }
-    m_CurrentPlugin = pSaved;
-    return false;
-}
-
-// Overload 2 — fire callback with one integer and one string param;
-// returns bDefaultReturn unless a plugin returns a different bool.
-bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
-                                               long nParam,
-                                               const string& sParam,
-                                               bool /*bStop*/,
-                                               bool bDefaultReturn)
-{
-    CPlugin* pSaved = m_CurrentPlugin;
-    bool result = bDefaultReturn;
-    for (CPlugin* p : m_PluginList) {
-        if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
-        CString strName(callbackName.c_str());
-        DISPID dispid = p->m_ScriptEngine->GetLuaDispid(strName);
-        if (dispid == DISPID_UNKNOWN) continue;
-        list<double> nparams = { (double)nParam };
-        list<string> sparams = { sParam };
-        bool pluginResult = bDefaultReturn;
-        long nInvocations = 0;
-        m_CurrentPlugin = p;
-        p->m_ScriptEngine->ExecuteLua(dispid, strName,
-                                       eInputFromServer,
-                                       "plugin", callbackName.c_str(),
-                                       nparams, sparams,
-                                       nInvocations,
-                                       nullptr, nullptr, nullptr,
-                                       &pluginResult);
-        m_CurrentPlugin = pSaved;
-        result = pluginResult;
-    }
-    m_CurrentPlugin = pSaved;
-    return result;
-}
-
-// Overload 3 — fire callback with one CString param; returns true if
-// no plugin intercepted (all returned true / didn't intercept).
-bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
-                                               const CString& sParam)
-{
-    CPlugin* pSaved = m_CurrentPlugin;
-    for (CPlugin* p : m_PluginList) {
-        if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
-        CString strName(callbackName.c_str());
-        DISPID dispid = p->m_ScriptEngine->GetLuaDispid(strName);
-        if (dispid == DISPID_UNKNOWN) continue;
-        list<double> nparams;
-        list<string> sparams = { string((const char*)sParam) };
-        bool intercepted = false;
-        long nInvocations = 0;
-        m_CurrentPlugin = p;
-        p->m_ScriptEngine->ExecuteLua(dispid, strName,
-                                       eInputFromServer,
-                                       "plugin", callbackName.c_str(),
-                                       nparams, sparams,
-                                       nInvocations,
-                                       nullptr, nullptr, nullptr,
-                                       &intercepted);
-        m_CurrentPlugin = pSaved;
-        if (intercepted) return false;  // plugin intercepted — stop
-    }
-    m_CurrentPlugin = pSaved;
-    return true;  // no interception
-}
-
-// Overload 4 — fire callback with one CString param; returns true if
-// any plugin handled the event.
-bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& callbackName,
-                                               const CString& sParam,
-                                               bool /*bStop*/)
-{
-    CPlugin* pSaved = m_CurrentPlugin;
-    for (CPlugin* p : m_PluginList) {
-        if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
-        CString strName(callbackName.c_str());
-        DISPID dispid = p->m_ScriptEngine->GetLuaDispid(strName);
-        if (dispid == DISPID_UNKNOWN) continue;
-        list<double> nparams;
-        list<string> sparams = { string((const char*)sParam) };
-        bool handled = false;
-        long nInvocations = 0;
-        m_CurrentPlugin = p;
-        p->m_ScriptEngine->ExecuteLua(dispid, strName,
-                                       eInputFromServer,
-                                       "plugin", callbackName.c_str(),
-                                       nparams, sparams,
-                                       nInvocations,
-                                       nullptr, nullptr, nullptr,
-                                       &handled);
-        m_CurrentPlugin = pSaved;
-        if (handled) return true;
-    }
-    m_CurrentPlugin = pSaved;
-    return false;
-}
-
-// Rtn variant — string in/out: each plugin may transform strResult.
-// Used by OnPluginCommandEntered: plugins can modify, discard ("\t"), or
-// silently ignore ("\r") the command the user typed.
-// Mirrors plugins.cpp CMUSHclientDoc::SendToAllPluginCallbacksRtn.
-void CMUSHclientDoc::SendToAllPluginCallbacksRtn(const string& callbackName,
-                                                  CString& strResult)
-{
-    CPlugin* pSavedPlugin = m_CurrentPlugin;
-    for (CPlugin* p : m_PluginList) {
-        if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
-        CString strName(callbackName.c_str());
-        DISPID dispid = p->m_ScriptEngine->GetLuaDispid(strName);
-        if (dispid == DISPID_UNKNOWN) continue;
-        long nInvocations = 0;
-        m_CurrentPlugin = p;
-        p->m_ScriptEngine->ExecuteLua(dispid, (LPCTSTR)strName,
-                                       eDontChangeAction,
-                                       "plugin", callbackName.c_str(),
-                                       strResult,
-                                       nInvocations,
-                                       strResult);
-        m_CurrentPlugin = pSavedPlugin;
-        // "\t" = discard command, "\r" = ignore silently — stop on either
-        if (strResult == "\t" || strResult == "\r") break;
-    }
-    m_CurrentPlugin = pSavedPlugin;
-}
+// The SendToAllPluginCallbacks family, SendToFirstPluginCallbacks and
+// SendToAllPluginCallbacksRtn are now the REAL bodies in plugins.cpp
+// (CPlugin convergence) — the hand-written GetLuaDispid/ExecuteLua twins that
+// lived here are deleted.  Dispatch now goes through each plugin's
+// m_PluginCallbacks map (populated by the portable loader, mirroring
+// xml/xml_load_world.cpp:534) and CPlugin::ExecutePluginScript.
 
 // SendPacket: single-sourced in doc_shared.cpp (T3b) — the old portable
 // twin wrote SSL bytes with no WANT_* retry; the shared transport path buffers.
@@ -727,19 +544,8 @@ CString TranslateGeneric(const char* sText, const char*)
 // ── CVariable IMPLEMENT_DYNAMIC (needed by DECLARE_DYNAMIC) ──────────────
 IMPLEMENT_DYNAMIC(CVariable, CObject)
 
-// ── Additional plugin callback string constants ───────────────────────────
-const string ON_PLUGIN_LINE_RECEIVED   = "OnPluginLineReceived";
-const string ON_PLUGIN_SEND            = "OnPluginSend";
-const string ON_PLUGIN_SENT            = "OnPluginSent";
-const string ON_PLUGIN_COMMAND_ENTERED = "OnPluginCommandEntered";
-const string ON_PLUGIN_COMMAND_CHANGED = "OnPluginCommandChanged";
-const string ON_PLUGIN_ENABLE          = "OnPluginEnable";
-const string ON_PLUGIN_DISABLE         = "OnPluginDisable";
-const string ON_PLUGIN_LIST_CHANGED    = "OnPluginListChanged";
-const string ON_PLUGIN_TABCOMPLETE     = "OnPluginTabComplete";
-const string ON_PLUGIN_PARTIAL_LINE    = "OnPluginPartialLine";
-const string ON_PLUGIN_PACKET_RECEIVED = "OnPluginPacketReceived";
-const string ON_PLUGIN_TRACE           = "OnPluginTrace";
+// The remaining ON_PLUGIN_* callback-name constants also come from plugins.cpp
+// now (CPlugin convergence) — the second partial duplicate set is gone too.
 
 // AlphaOptionsTable[] is defined in scriptingoptions.cpp (the REAL table; option convergence).
 
@@ -777,6 +583,35 @@ BOOL putontoclipboard(const CString& /*str*/, bool /*bAppend*/)
 // ── Directory navigation (no-ops on non-Windows) ──────────────────────────
 void ChangeToFileBrowsingDirectory() {}
 void ChangeToStartupDirectory()      {}
+
+// ── RemoveTrailingBackslash — real body (mirrors mushapp_stubs.cpp; the
+// Windows original is inside #ifdef _WIN32 in dialogs/global_prefs/
+// GlobalPrefs.cpp).  Reachable headless via CPlugin::SaveState (plugins.cpp).
+void RemoveTrailingBackslash(CString& str)
+{
+    str.TrimLeft();
+    str.TrimRight();
+    if (!str.IsEmpty()) {
+        char last = str[str.GetLength() - 1];
+        if (last == '\\' || last == '/')
+            str = str.Left(str.GetLength() - 1);
+    }
+}
+
+// ── Inert XML-save helpers ────────────────────────────────────────────────
+// Referenced only by CMUSHclientDoc::OnFilePluginwizard (plugins.cpp), whose
+// wizard sheet is stubbed headless to return IDCANCEL — these can never run.
+// They exist so ld64 can resolve the (dead) references; the real bodies live
+// in xml/xml_save_world.cpp (mushapp) until that file adopts.
+void Save_XML_boolean (CArchive&, const char *, const long, const bool) {}
+void Save_XML_string  (CArchive&, const char *, const CString &, const bool) {}
+void Save_XML_double  (CArchive&, const char *, const double &, const bool) {}
+void CMUSHclientDoc::Save_Header_XML (CArchive&, const char *, const bool) {}
+void CMUSHclientDoc::Save_Footer_XML (CArchive&, const char *) {}
+void CMUSHclientDoc::Save_One_Trigger_XML (CArchive&, CTrigger *) {}
+void CMUSHclientDoc::Save_One_Alias_XML (CArchive&, CAlias *) {}
+void CMUSHclientDoc::Save_One_Variable_XML (CArchive&, CVariable *) {}
+void CMUSHclientDoc::Save_One_Timer_XML (CArchive&, CTimer *) {}
 
 // ── IsArchiveXML — always false (CArchive not implemented) ────────────────
 bool IsArchiveXML(class CArchive& /*ar*/)

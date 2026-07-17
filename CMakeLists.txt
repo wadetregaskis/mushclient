@@ -488,10 +488,15 @@ if(NOT WIN32)
         # CMUSHView::classCMUSHView, CSendView, CChatSocket, CPaneLine, etc.)
         platform/windows_stubs.cpp
 
-        # CPlugin destructor — separate file so it includes only doc_stub.h
-        # (windows_stubs.cpp sees the full plugins.h layout via doc.h, which
-        # would cause a struct-size mismatch with the stub CPlugin).
-        platform/plugin_portable.cpp
+        # Campaign B CPlugin convergence: the REAL CPlugin (ctor/dtor,
+        # ExecutePluginScript family, SendToAllPluginCallbacks family,
+        # PluginCallbacksNames, ON_PLUGIN_* names) + the real plugin/UDP
+        # world.* methods.  doc_stub.h includes the real plugins.h now;
+        # the old stub CPlugin + platform/plugin_portable.cpp are gone.
+        plugins.cpp
+        scripting/methods/methods_plugins.cpp
+        scripting/methods/methods_udp.cpp
+        UDPsocket.cpp
 
         # Hook function pointer storage (definitions for wx_mfc_hooks.h externs).
         # Also compiled into mushapp so mushgui (which links mushapp, not mushcore)

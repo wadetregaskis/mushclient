@@ -2051,50 +2051,26 @@ static int L_GetPluginName(lua_State* L)
 
 static int L_IsPlugin(lua_State* L);  // forward declaration
 
-// world.IsPluginInstalled(pluginID) → bool  (alias for IsPlugin)
+// world.IsPluginInstalled(pluginID) → bool
+// Thin wrapper over the REAL CMUSHclientDoc::IsPluginInstalled — mirrors
+// lua_methods.cpp L_IsPluginInstalled.
 static int L_IsPluginInstalled(lua_State* L)
 {
-    return L_IsPlugin(L);
+    CMUSHclientDoc* pDoc = world_doc(L);
+    lua_pushboolean(L, pDoc->IsPluginInstalled(luaL_checkstring(L, 1)));
+    return 1;
 }
 
 // world.EnablePlugin(pluginID [, enabled]) → error_code
+// Thin wrapper over the REAL CMUSHclientDoc::EnablePlugin (methods_plugins.cpp,
+// adopted into mushcore) — mirrors lua_methods.cpp L_EnablePlugin marshalling
+// (enabled flag defaults to true).
 static int L_EnablePlugin(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* id = luaL_checkstring(L, 1);
-    bool enable = lua_toboolean(L, 2) || lua_isnone(L, 2);  // defaults to true
-
-    for (auto* p : pDoc->m_PluginList) {
-        if (strcmp((const char*)p->m_strID, id) == 0) {
-            if (p->m_bEnabled != (enable ? TRUE : FALSE)) {
-                p->m_bEnabled = enable ? TRUE : FALSE;
-                // Fire OnPluginEnable / OnPluginDisable — mirrors EnablePlugin()
-                // in scripting/methods/methods_plugins.cpp.
-                if (p->m_ScriptEngine) {
-                    const string& cbName = enable ? ON_PLUGIN_ENABLE : ON_PLUGIN_DISABLE;
-                    CString strName(cbName.c_str());
-                    DISPID dispid = p->m_ScriptEngine->GetLuaDispid(strName);
-                    if (dispid != DISPID_UNKNOWN) {
-                        list<double> nparams;
-                        list<string> sparams;
-                        long nInvocations = 0;
-                        CPlugin* pSaved = pDoc->m_CurrentPlugin;
-                        pDoc->m_CurrentPlugin = p;
-                        p->m_ScriptEngine->ExecuteLua(dispid, strName,
-                                                       eInputFromServer,
-                                                       "plugin",
-                                                       enable ? "enable" : "disable",
-                                                       nparams, sparams,
-                                                       nInvocations);
-                        pDoc->m_CurrentPlugin = pSaved;
-                    }
-                }
-            }
-            lua_pushnumber(L, eOK);
-            return 1;
-        }
-    }
-    lua_pushnumber(L, eNoSuchPlugin);
+    BOOL enable = (lua_isnoneornil(L, 2)) ? TRUE : (lua_toboolean(L, 2) ? TRUE : FALSE);
+    lua_pushnumber(L, pDoc->EnablePlugin(id, enable));
     return 1;
 }
 
@@ -2103,6 +2079,11 @@ static int L_EnablePlugin(lua_State* L)
 // world.LoadPlugin(path) → error_code
 // Loads a plugin from the given file path.  Returns eOK on success,
 // ePluginFileNotFound (or a generic non-zero code) on failure.
+// NOT rewired to the real CMUSHclientDoc::LoadPlugin (methods_plugins.cpp):
+// that body reports failure only via the CFileException the Windows
+// InternalLoadPlugin throws, but the portable InternalLoadPlugin returns
+// bool — going through the real method would turn every load failure into
+// eOK.  Revisit when the real xml_load_world.cpp loader adopts (Campaign B).
 static int L_LoadPlugin(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
@@ -2147,39 +2128,15 @@ static int L_GetPluginList(lua_State* L)
 //   7=id    8=purpose 9=triggerCount 10=aliasCount 11=timerCount
 //   12=variableCount  16=scriptingEnabled  17=enabled
 //   18=requiredVersion  19=version  20=directory
+// Thin wrapper over the REAL CMUSHclientDoc::GetPluginInfo — mirrors
+// lua_methods.cpp L_GetPluginInfo (pushVariant).  Date-valued infotypes
+// (13/14/22) come back nil pending VT_DATE support in push_option_variant.
 static int L_GetPluginInfo(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* id   = luaL_checkstring(L, 1);
-    int         info = (int)luaL_checknumber(L, 2);
-
-    CPlugin* found = nullptr;
-    for (auto* p : pDoc->m_PluginList) {
-        if (strcmp((const char*)p->m_strID, id) == 0) { found = p; break; }
-    }
-    if (!found) { lua_pushnil(L); return 1; }
-
-    switch (info) {
-        case  1: lua_pushstring(L,  (const char*)found->m_strName);        break;
-        case  2: lua_pushstring(L,  (const char*)found->m_strAuthor);      break;
-        case  3: lua_pushstring(L,  (const char*)found->m_strDescription); break;
-        case  4: lua_pushstring(L,  (const char*)found->m_strScript);      break;
-        case  5: lua_pushstring(L,  (const char*)found->m_strLanguage);    break;
-        case  6: lua_pushstring(L,  (const char*)found->m_strSource);      break;
-        case  7: lua_pushstring(L,  (const char*)found->m_strID);          break;
-        case  8: lua_pushstring(L,  (const char*)found->m_strPurpose);     break;
-        case  9: lua_pushnumber(L,  (double)found->m_TriggerMap.GetCount()); break;
-        case 10: lua_pushnumber(L,  (double)found->m_AliasMap.GetCount());   break;
-        case 11: lua_pushnumber(L,  (double)found->m_TimerMap.GetCount());   break;
-        case 12: lua_pushnumber(L,  (double)found->m_VariableMap.GetCount()); break;
-        case 16: lua_pushboolean(L, found->m_ScriptEngine != nullptr ? 1 : 0); break;
-        case 17: lua_pushboolean(L, found->m_bEnabled ? 1 : 0);            break;
-        case 18: lua_pushnumber(L,  found->m_dRequiredVersion);             break;
-        case 19: lua_pushnumber(L,  found->m_dVersion);                    break;
-        case 20: lua_pushstring(L,  (const char*)found->m_strDirectory);   break;
-        default: lua_pushnil(L); break;
-    }
-    return 1;
+    VARIANT v = pDoc->GetPluginInfo(luaL_checkstring(L, 1),
+                                    (short)luaL_checknumber(L, 2));
+    return push_option_variant(L, v);
 }
 
 // world.SetPluginInfo(pluginID, infoType, value) → error_code
@@ -2281,111 +2238,43 @@ static int L_DoAfterNote(lua_State* L)
 // world.CallPlugin(pluginID, routineName [, argument]) → error_code
 // Calls a named Lua function in another plugin, passing an optional string
 // argument.  Sets m_CurrentPlugin so the callee's GetPluginID() etc. work.
+// Thin wrapper over the REAL CMUSHclientDoc::CallPlugin (methods_plugins.cpp):
+// one optional string argument, proper eNoSuchPlugin/ePluginDisabled/
+// eNoSuchRoutine codes, m_strCallingPluginID maintained.  The rich multi-
+// argument / multi-return marshalling of lua_methods.cpp L_CallPlugin stays a
+// Campaign C item (it copies values across lua_States).
 static int L_CallPlugin(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* id      = luaL_checkstring(L, 1);
-    const char* routine = luaL_checkstring(L, 2);
-    const char* arg     = luaL_optstring(L, 3, "");
-
-    // Find the target plugin
-    CPlugin* found = nullptr;
-    for (auto* p : pDoc->m_PluginList) {
-        if (strcmp((const char*)p->m_strID, id) == 0) { found = p; break; }
-    }
-    if (!found) { lua_pushnumber(L, eNoSuchPlugin);  return 1; }
-    if (!found->m_bEnabled)   { lua_pushnumber(L, ePluginDisabled); return 1; }
-    if (!found->m_ScriptEngine) { lua_pushnumber(L, eNoSuchRoutine); return 1; }
-
-    CString strRoutine(routine);
-    DISPID dispid = found->m_ScriptEngine->GetLuaDispid(strRoutine);
-    if (dispid == DISPID_UNKNOWN) { lua_pushnumber(L, eNoSuchRoutine); return 1; }
-
-    // Switch current-plugin context so the callee can introspect itself
-    CPlugin* pSaved = pDoc->m_CurrentPlugin;
-    pDoc->m_CurrentPlugin = found;
-
-    list<double> nparams;
-    list<string> sparams = { string(arg) };
-    long nInvocations = 0;
-    found->m_ScriptEngine->ExecuteLua(dispid, strRoutine,
-                                       eDontChangeAction,
-                                       CString("Plugin ") + found->m_strName,
-                                       CString("CallPlugin -> ") + strRoutine,
-                                       nparams, sparams,
-                                       nInvocations);
-
-    pDoc->m_CurrentPlugin = pSaved;
-    lua_pushnumber(L, eOK);
+    lua_pushnumber(L, pDoc->CallPlugin(luaL_checkstring(L, 1),
+                                       luaL_checkstring(L, 2),
+                                       luaL_optstring(L, 3, "")));
     return 1;
 }
 
 // world.BroadcastPlugin(message, text) → count of plugins that handled it
 // Fires OnPluginBroadcast(message, senderID, senderName, text) in every
 // enabled plugin *except* the caller.
+// Thin wrapper over the REAL CMUSHclientDoc::BroadcastPlugin — mirrors
+// lua_methods.cpp L_BroadcastPlugin (returns the handled-count).
 static int L_BroadcastPlugin(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    long        message = (long)luaL_checknumber(L, 1);
-    const char* text    = luaL_optstring(L, 2, "");
-
-    CPlugin* pCaller = pDoc->m_CurrentPlugin;  // nullptr if called from world script
-    CString  callerID, callerName;
-    if (pCaller) {
-        callerID   = pCaller->m_strID;
-        callerName = pCaller->m_strName;
-    }
-
-    // ON_PLUGIN_BROADCAST constant
-    static const CString kBroadcast("OnPluginBroadcast");
-    long count = 0;
-
-    CPlugin* pSaved = pDoc->m_CurrentPlugin;
-    for (auto* p : pDoc->m_PluginList) {
-        if (!p->m_bEnabled || !p->m_ScriptEngine) continue;
-        if (p == pCaller) continue;  // don't broadcast to self
-
-        DISPID dispid = p->m_ScriptEngine->GetLuaDispid(kBroadcast);
-        if (dispid == DISPID_UNKNOWN) continue;
-
-        pDoc->m_CurrentPlugin = p;
-        list<double> nparams = { (double)message };
-        list<string> sparams = { string((const char*)callerID),
-                                  string((const char*)callerName),
-                                  string(text) };
-        long nInvocations = 0;
-        p->m_ScriptEngine->ExecuteLua(dispid, kBroadcast,
-                                       eDontChangeAction,
-                                       CString("Plugin ") + p->m_strName,
-                                       "BroadcastPlugin",
-                                       nparams, sparams,
-                                       nInvocations);
-        ++count;
-    }
-    pDoc->m_CurrentPlugin = pSaved;
-
-    lua_pushnumber(L, count);
+    lua_pushnumber(L, pDoc->BroadcastPlugin((long)luaL_checknumber(L, 1),
+                                            luaL_optstring(L, 2, "")));
     return 1;
 }
 
 // world.PluginSupports(pluginID, routineName) → true/false
 // Returns true if the named plugin has a function with the given name.
+// Thin wrapper over the REAL CMUSHclientDoc::PluginSupports — mirrors
+// lua_methods.cpp L_PluginSupports: returns the error CODE (eOK /
+// eNoSuchPlugin / eNoSuchRoutine), the Windows behaviour, not a boolean.
 static int L_PluginSupports(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* id      = luaL_checkstring(L, 1);
-    const char* routine = luaL_checkstring(L, 2);
-
-    for (auto* p : pDoc->m_PluginList) {
-        if (strcmp((const char*)p->m_strID, id) != 0) continue;
-        if (!p->m_bEnabled || !p->m_ScriptEngine) {
-            lua_pushboolean(L, 0); return 1;
-        }
-        DISPID d = p->m_ScriptEngine->GetLuaDispid(CString(routine));
-        lua_pushboolean(L, d != DISPID_UNKNOWN ? 1 : 0);
-        return 1;
-    }
-    lua_pushboolean(L, 0);
+    lua_pushnumber(L, pDoc->PluginSupports(luaL_checkstring(L, 1),
+                                           luaL_checkstring(L, 2)));
     return 1;
 }
 
@@ -3804,75 +3693,22 @@ static int L_GetPluginTimerOption(lua_State* L)
 
 // ── UnloadPlugin / ReloadPlugin ───────────────────────────────────────────────
 
+// Thin wrapper over the REAL CMUSHclientDoc::UnloadPlugin — mirrors
+// lua_methods.cpp L_UnloadPlugin (falls back to lookup by name, fires the
+// real OnPluginClose/SaveState via the CPlugin destructor).
 static int L_UnloadPlugin(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* id = luaL_checkstring(L, 1);
-    // Find by ID
-    CPlugin* pPlugin = nullptr;
-    PluginListIterator pit = pDoc->m_PluginList.begin();
-    for (; pit != pDoc->m_PluginList.end(); ++pit)
-    {
-        CPlugin* p = *pit;
-        if (p && (string)(const char*)p->m_strID == id)
-            { pPlugin = p; break; }
-    }
-    // Try by name if not found
-    if (!pPlugin && *id)
-    {
-        for (pit = pDoc->m_PluginList.begin(); pit != pDoc->m_PluginList.end(); ++pit)
-        {
-            CPlugin* p = *pit;
-            if (p && (string)(const char*)p->m_strName == id)
-                { pPlugin = p; break; }
-        }
-    }
-    if (!pPlugin)          { lua_pushnumber(L, eNoSuchPlugin); return 1; }
-    if (pPlugin == pDoc->m_CurrentPlugin)
-                           { lua_pushnumber(L, eBadParameter); return 1; }
-
-    pDoc->m_PluginList.erase(pit);
-    delete pPlugin;
-    pDoc->PluginListChanged();
-    lua_pushnumber(L, eOK);
+    lua_pushnumber(L, pDoc->UnloadPlugin(luaL_checkstring(L, 1)));
     return 1;
 }
 
+// Thin wrapper over the REAL CMUSHclientDoc::ReloadPlugin — mirrors
+// lua_methods.cpp L_ReloadPlugin.
 static int L_ReloadPlugin(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* id = luaL_checkstring(L, 1);
-    CPlugin* pPlugin = nullptr;
-    PluginListIterator pit = pDoc->m_PluginList.begin();
-    for (; pit != pDoc->m_PluginList.end(); ++pit)
-    {
-        CPlugin* p = *pit;
-        if (p && (string)(const char*)p->m_strID == id)
-            { pPlugin = p; break; }
-    }
-    if (!pPlugin && *id)
-    {
-        for (pit = pDoc->m_PluginList.begin(); pit != pDoc->m_PluginList.end(); ++pit)
-        {
-            CPlugin* p = *pit;
-            if (p && (string)(const char*)p->m_strName == id)
-                { pPlugin = p; break; }
-        }
-    }
-    if (!pPlugin)        { lua_pushnumber(L, eNoSuchPlugin); return 1; }
-    if (pPlugin == pDoc->m_CurrentPlugin)
-                         { lua_pushnumber(L, eBadParameter); return 1; }
-
-    CString strSource = pPlugin->m_strSource;
-    pDoc->m_PluginList.erase(pit);
-    delete pPlugin;
-
-    CPlugin* pSave = pDoc->m_CurrentPlugin;
-    pDoc->m_CurrentPlugin = nullptr;
-    bool ok = pDoc->InternalLoadPlugin(strSource);
-    pDoc->m_CurrentPlugin = pSave;
-
-    lua_pushnumber(L, ok ? eOK : ePluginFileNotFound);
+    lua_pushnumber(L, pDoc->ReloadPlugin(luaL_checkstring(L, 1)));
     return 1;
 }
 
@@ -5018,42 +4854,34 @@ static int L_PlaySound(lua_State* L)
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+// Thin wrappers over the REAL CMUSHclientDoc::UdpSend / UdpListen /
+// GetUdpPort (methods_udp.cpp, adopted into mushcore) — mirror
+// lua_methods.cpp L_UdpSend / L_UdpListen / L_GetUdpPort.  UdpListen now
+// actually creates a listener (UDPsocket over the POSIX CAsyncSocket) rather
+// than faking eOK.
 static int L_UdpSend(lua_State* L)
 {
-    world_doc(L);
-    const char* ip   = luaL_checkstring(L, 1);
-    int          port = (int)luaL_checknumber(L, 2);
-    const char* text = luaL_checkstring(L, 3);
-
-    struct sockaddr_in sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sin_family = AF_INET;
-    sa.sin_port   = htons((unsigned short)port);
-    if ((sa.sin_addr.s_addr = inet_addr(ip)) == INADDR_NONE)
-        { lua_pushnumber(L, -1); return 1; }
-
-    int s = socket(AF_INET, SOCK_DGRAM, 0);
-    if (s < 0) { lua_pushnumber(L, -1); return 1; }
-
-    ssize_t sent = sendto(s, text, strlen(text), 0,
-                          (struct sockaddr*)&sa, sizeof(sa));
-    close(s);
-    lua_pushnumber(L, sent >= 0 ? eOK : -1);
+    CMUSHclientDoc* pDoc = world_doc(L);
+    lua_pushnumber(L, pDoc->UdpSend(luaL_checkstring(L, 1),
+                                    (short)luaL_checknumber(L, 2),
+                                    luaL_checkstring(L, 3)));
     return 1;
 }
 
 static int L_UdpListen(lua_State* L)
 {
-    // Full async UDP listener requires platform integration — stub.
-    world_doc(L);
-    lua_pushnumber(L, eOK);
+    CMUSHclientDoc* pDoc = world_doc(L);
+    lua_pushnumber(L, pDoc->UdpListen(luaL_checkstring(L, 1),
+                                      (short)luaL_checknumber(L, 2),
+                                      luaL_checkstring(L, 3)));
     return 1;
 }
 
 static int L_GetUdpPort(lua_State* L)
 {
-    world_doc(L);
-    lua_pushnumber(L, 0);   // no UDP listener active
+    CMUSHclientDoc* pDoc = world_doc(L);
+    lua_pushnumber(L, pDoc->GetUdpPort((long)luaL_checknumber(L, 1),
+                                       (long)luaL_checknumber(L, 2)));
     return 1;
 }
 
@@ -5449,7 +5277,7 @@ static int L_ImportXML(lua_State* L)
 // ── ResetIP / ResetStatusTime / SaveState / OnFileReloaddefaults ──────────────
 static int L_ResetIP(lua_State* L)           { world_doc(L); lua_pushnumber(L, eOK); return 1; }
 static int L_ResetStatusTime(lua_State* L)   { world_doc(L); lua_pushnumber(L, eOK); return 1; }
-static int L_SaveState(lua_State* L)         { world_doc(L); lua_pushnumber(L, eOK); return 1; }
+static int L_SaveState(lua_State* L)         { lua_pushnumber(L, world_doc(L)->SaveState()); return 1; }  // real method (Windows semantics: eNotAPlugin outside a plugin)
 
 // ── GetStyleInfo ──────────────────────────────────────────────────────────────
 // Returns info about a style run within a specific output line.

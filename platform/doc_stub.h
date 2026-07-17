@@ -998,50 +998,15 @@ typedef map<string, string, array_less>              tStringToStringMap;
 typedef map<string, tStringToStringMap*, array_less> tStringMapOfMaps;
 #endif // ARRAY_LESS_DEFINED
 
-// ── CPlugin stub ─────────────────────────────────────────────────────────
-// Fields accessed from lua_scripting.cpp, ProcessPreviousLine.cpp,
-// evaluate.cpp, and the portable plugin loader.
-struct CPlugin {
-    // Identity
-    CString        m_strName;
-    CString        m_strAuthor;
-    CString        m_strPurpose;
-    CString        m_strDescription;
-    CString        m_strID;              // 20-char hex unique ID
-    CString        m_strSource;          // path to the plugin .xml file
-    CString        m_strDirectory;       // directory of m_strSource
-    // Scripting
-    CString        m_strLanguage;        // "lua", "vbscript", etc.
-    CString        m_strScript;          // accumulated inline <script> content
-    CScriptEngine* m_ScriptEngine        = nullptr;
-    // Version
-    double         m_dVersion            = 0.0;
-    double         m_dRequiredVersion    = 0.0;
-    // Runtime state
-    int            m_iSequence           = 0;
-    BOOL           m_bEnabled            = TRUE;
-    bool           m_bSendToScriptUsed   = false;
-    bool           m_bSaveState          = false;
-    LONGLONG       m_iScriptTimeTaken    = 0;
-    // Per-plugin trigger/alias/timer/variable collections
-    CTriggerMap    m_TriggerMap;
-    CTriggerArray  m_TriggerArray;
-    CTriggerRevMap m_TriggerRevMap;
-    CAliasMap      m_AliasMap;
-    CAliasArray    m_AliasArray;
-    CAliasRevMap   m_AliasRevMap;
-    CTimerMap      m_TimerMap;
-    CTimerRevMap   m_TimerRevMap;
-    CVariableMap   m_VariableMap;
-    tStringMapOfMaps m_Arrays;           // scripting arrays (world.ArrayCreate etc.)
-    // Back-pointer
-    CMUSHclientDoc* m_pDoc               = nullptr;
-    // Constructor / destructor
-    explicit CPlugin(CMUSHclientDoc* pDoc = nullptr) : m_pDoc(pDoc) {}
-    // Destructor declared here; defined in platform/plugin_portable.cpp so it
-    // sees only the stub CPlugin layout (not the full plugins.h version).
-    ~CPlugin();
-};
+// ── CPlugin — CONVERGED onto the REAL plugins.h (Campaign B CPlugin
+// convergence).  Everything plugins.h needs is already defined above:
+// CObject/CString/CTime (compat.h), DISPID/DISPID_UNKNOWN/__int64/LONGLONG,
+// the CTrigger/CAlias/CTimer/CVariable map+array types (OtherTypes.h),
+// tStringMapOfMaps (array_less block above), and the CScriptEngine /
+// CMUSHclientDoc forward declarations.  The real CPlugin ctor/dtor and the
+// ExecutePluginScript family live in plugins.cpp, which mushcore now
+// compiles (the old stub CPlugin + platform/plugin_portable.cpp are gone).
+#include "plugins.h"
 
 // ── CWorldDocTemplate ─────────────────────────────────────────────────────
 // Portable equivalent of MFC CDocTemplate for iterating open world docs.
@@ -1089,6 +1054,11 @@ public:
     CString m_strLuaScript;              // sandbox script (empty on macOS — no sandbox)
     string  m_strDefaultLogFileDirectory;// prefix for log files
     string  m_strDefaultWorldFileDirectory;  // prefix for world files (FormatTime %F)
+    // Plugin state-file directory + plugins directory (plugins.cpp SaveState;
+    // empty headless, so CPlugin::SaveState returns without writing).
+    CString m_strDefaultStateFilesDirectory;
+    CString m_strPluginsDirectory;
+    void SaveGlobalsToDatabase() {}   // GUI persists global prefs; no-op headless
     // Default-set files (GUI global prefs; empty headless, so
     // OnFileReloaddefaults' Load_Set calls are all short-circuited)
     CString m_strDefaultColoursFile;
@@ -1444,13 +1414,8 @@ public:
 typedef CTypedPtrList<CPtrList, CChatSocket*> CChatSocketList;
 #endif // CChatSocket_stub_defined
 
-// CPluginList — list of CPlugin pointers (normally in plugins.h)
-// CPlugin is defined above this point in doc_stub.h.
-#ifndef CPluginList_defined
-#define CPluginList_defined
-typedef list<CPlugin*> CPluginList;
-typedef CPluginList::iterator PluginListIterator;
-#endif // CPluginList_defined
+// CPluginList / PluginListIterator now come from the real plugins.h
+// (included above — CPlugin convergence).
 
 #ifndef CTimerWnd_stub_defined
 #define CTimerWnd_stub_defined
@@ -1509,6 +1474,50 @@ typedef struct {
 
 typedef map<string, tDatabase*> tDatabaseMap;
 typedef tDatabaseMap::iterator   tDatabaseMapIterator;
+
+// ── XML load/save mask bits (doc.h:1950-1964, verbatim) ───────────────────
+// plugins.cpp (CPlugin::SaveState → Save_World_XML (ar, XML_VARIABLES, …))
+// needs these headless.
+#ifndef XML_GENERAL
+#define XML_GENERAL    0x0001
+#define XML_TRIGGERS   0x0002
+#define XML_ALIASES    0x0004
+#define XML_TIMERS     0x0008
+#define XML_MACROS     0x0010
+#define XML_VARIABLES  0x0020
+#define XML_COLOURS    0x0040
+#define XML_KEYPAD     0x0080
+#define XML_PRINTING   0x0100
+#define XML_INCLUDES   0x0200
+#define XML_PLUGINS    0x0400
+#define XML_NO_PLUGINS 0x0800
+#define XML_OVERWRITE  0x1000
+#define XML_PASTE_DUPLICATE 0x2000
+#define XML_IMPORT_MAIN_FILE_ONLY 0x4000
+#endif // XML_GENERAL
+
+// ── Save_XML_* free-function decls (stdafx.h:491-517 signatures) ──────────
+// Referenced by plugins.cpp OnFilePluginwizard (dead headless — the stub
+// wizard sheet's DoModal returns IDCANCEL); inert bodies in doc_portable.cpp.
+// Guard matches the other stdafx.h-owned declarations above (default args may
+// be declared only once per TU).
+#ifndef _STDAFX_INCLUDED_
+void Save_XML_boolean (class CArchive& ar,
+                       const char * sName,
+                       const long iNumber,
+                       const bool sameline = false);
+void Save_XML_string  (class CArchive& ar,
+                       const char * sName,
+                       const CString & str,
+                       const bool sameline = false);
+void Save_XML_double  (class CArchive& ar,
+                       const char * sName,
+                       const double & fNumber,
+                       const bool sameline = false);
+#endif // !_STDAFX_INCLUDED_
+
+// ── Forward declaration for the UDP listener map (doc.h uses UDPsocket*) ──
+class UDPsocket;
 
 // ── Minimal CMUSHclientDoc ────────────────────────────────────────────────
 class CMUSHclientDoc {
@@ -2716,26 +2725,93 @@ public:
     VARIANT GetCurrentValue(LPCTSTR OptionName);
     BOOL Load_Set(const int set_type, CString strFileName, CWnd* parent_window);
 
-    // ── New plugin callback overload ──────────────────────────────────
-    bool SendToAllPluginCallbacks(const string& sName, const char* sData,
-                                  bool bDefaultReturn) { return bDefaultReturn; }
-
     // ── Logging helpers ───────────────────────────────────────────────
     bool LoggingInput() const { return m_log_input != 0; }
 
-    // ── Stub methods (doc_portable.cpp) ──────────────────────────────
-    void SendToAllPluginCallbacks(const string& sName);
-    bool SendToAllPluginCallbacks(const string& sName, long iArg,
-                                  const string& sArg,
-                                  bool bStopOnTrue, bool bDefaultReturn);
-    // Returns true = "continue processing" (no plugin intercepted).
-    // ProcessPreviousLine.cpp uses: if (!SendToAllPluginCallbacks(...)) return;
-    bool SendToAllPluginCallbacks(const string& sName, const CString& sData);
-    bool SendToAllPluginCallbacks(const string& sName, const CString& sData,
-                                  bool bStopOnTrue);
-    // Rtn variant: each plugin may transform strResult in place.
-    // "\t" return = discard command; "\r" = ignore silently.
-    void SendToAllPluginCallbacksRtn(const string& sName, CString& strResult);
+    // ── Plugin callback dispatch — the REAL bodies in plugins.cpp (CPlugin
+    // convergence).  Signatures copied from doc.h:2340-2378 (the old
+    // doc_portable.cpp twins are deleted).
+    void SendToAllPluginCallbacks (const string & sName);   // no arguments
+    bool SendToAllPluginCallbacks (const string & sName,
+                                   const char * sText,   // one argument
+                                   const bool bStopOnFalse = false);
+    // CString overloads — delegate to the const char* version
+    bool SendToAllPluginCallbacks (const string & sName,
+                                   const CString & sText);   // 2-arg form
+    bool SendToAllPluginCallbacks (const string & sName,
+                                   const CString & sText,
+                                   const bool bStopOnFalse);
+    bool SendToAllPluginCallbacks (const string & sName,
+                                   const CString & sText,
+                                   const bool bStopOnTrue,
+                                   const bool bStopOnFalse);
+    // send a number and a string to all plugins, optionally stopping when one
+    // returns true or false
+    bool SendToAllPluginCallbacks (const string & sName,
+                                   const long arg1,      // 2 arguments
+                                   const string sText,
+                                   const bool bStopOnTrue,
+                                   const bool bStopOnFalse);
+    // send two numbers and a string to all plugins
+    bool SendToAllPluginCallbacks (const string & sName,
+                                   const long arg1,      // 3 arguments
+                                   const long arg2,
+                                   const string sText,
+                                   const bool bStopOnTrue,
+                                   const bool bStopOnFalse);
+    // send strResult to all plugins, allow them to modify it
+    void SendToAllPluginCallbacksRtn (const string & sName, CString & strResult);
+
+    // ── world.*Plugin* family (methods_plugins.cpp — doc.h:2950-3224
+    // signatures, afx_msg dropped) + GetPlugin (doc.h:2336) ──────────────
+    CPlugin * GetPlugin (LPCTSTR PluginID);
+    VARIANT GetPluginVariable(LPCTSTR PluginID, LPCTSTR VariableName);
+    BSTR GetPluginID();
+    VARIANT GetPluginList();
+    VARIANT GetPluginInfo(LPCTSTR PluginID, short InfoType);
+    long LoadPlugin(LPCTSTR FileName);
+    VARIANT GetPluginVariableList(LPCTSTR PluginID);
+    VARIANT GetPluginTriggerList(LPCTSTR PluginID);
+    VARIANT GetPluginAliasList(LPCTSTR PluginID);
+    VARIANT GetPluginTimerList(LPCTSTR PluginID);
+    VARIANT GetPluginTriggerInfo(LPCTSTR PluginID, LPCTSTR TriggerName, short InfoType);
+    VARIANT GetPluginAliasInfo(LPCTSTR PluginID, LPCTSTR AliasName, short InfoType);
+    VARIANT GetPluginTimerInfo(LPCTSTR PluginID, LPCTSTR TimerName, short InfoType);
+    BOOL IsPluginInstalled(LPCTSTR PluginID);
+    long SaveState();
+    long CallPlugin(LPCTSTR PluginID, LPCTSTR Routine, LPCTSTR Argument);
+    long PluginSupports(LPCTSTR PluginID, LPCTSTR Routine);
+    long EnablePlugin(LPCTSTR PluginID, BOOL Enabled);
+    BSTR GetPluginName();
+    long ReloadPlugin(LPCTSTR PluginID);
+    long BroadcastPlugin(long Message, LPCTSTR Text);
+    VARIANT GetPluginTriggerOption(LPCTSTR PluginID, LPCTSTR TriggerName, LPCTSTR OptionName);
+    VARIANT GetPluginAliasOption(LPCTSTR PluginID, LPCTSTR AliasName, LPCTSTR OptionName);
+    VARIANT GetPluginTimerOption(LPCTSTR PluginID, LPCTSTR TimerName, LPCTSTR OptionName);
+    long UnloadPlugin(LPCTSTR PluginID);
+
+    // Plugin wizard (plugins.cpp:899).  Headless the stub CPluginWizardSheet's
+    // DoModal returns IDCANCEL, so the body behaves as dialog-cancelled.
+    void OnFilePluginwizard();
+
+    // ── world.Udp* family (methods_udp.cpp — doc.h:3085-3103 signatures) ──
+    long UdpSend(LPCTSTR IP, short Port, LPCTSTR Text);
+    long UdpListen(LPCTSTR IP, short Port, LPCTSTR Script);
+    VARIANT UdpPortList();
+    long GetUdpPort(long First, long Last);
+
+    // listening for UDP packets (doc.h:1351)
+    map<int, UDPsocket *> m_UDPsocketMap;
+
+    // ── XML-save helpers used by OnFilePluginwizard (doc.h:1971-1981
+    // signatures; dead headless).  Inert bodies in doc_portable.cpp until
+    // xml/xml_save_world.cpp adopts.
+    void Save_Header_XML (class CArchive& ar, const char * sName, const bool bShowVersion = true);
+    void Save_Footer_XML (class CArchive& ar, const char * sName);
+    void Save_One_Trigger_XML (class CArchive& ar, CTrigger * t);
+    void Save_One_Alias_XML (class CArchive& ar, CAlias * a);
+    void Save_One_Variable_XML (class CArchive& ar, CVariable * v);
+    void Save_One_Timer_XML (class CArchive& ar, CTimer * t);
 
     void SendPacket    (const char* lpBuf, const int nBufLen);
     void SendPacket    (const unsigned char* lpBuf, const int nBufLen);

@@ -187,11 +187,9 @@ void CMUSHclientDoc::ShowStatusLine(bool) {}
 // GetAlphaOptionItem: REAL body now compiled into mushcore (scriptingoptions.cpp,
 // option convergence) — the old empty stub here would be a duplicate symbol.
 
-// doc.h: bool SendToAllPluginCallbacks(const string&, const char*, const bool = false)
-bool CMUSHclientDoc::SendToAllPluginCallbacks(const string& /*sName*/,
-                                              const char*   /*sText*/,
-                                              const bool    bStopOnFalse)
-{ return bStopOnFalse; }
+// SendToAllPluginCallbacks (all overloads): REAL bodies now compiled into
+// mushcore (plugins.cpp, CPlugin convergence) — the old return-the-flag stub
+// here would be a duplicate symbol.
 
 // doc.h: UINT Load_World_XML(CArchive&, unsigned long, unsigned long, UINT*×8)
 UINT CMUSHclientDoc::Load_World_XML(CArchive& /*ar*/,
@@ -269,11 +267,11 @@ int TMessageBox(const char* sText, UINT nType) {
     return UMessageBox(sText, nType, "MUSHclient");
 }
 
-// ── CPlugin destructor ────────────────────────────────────────────────────
-// Moved to platform/plugin_portable.cpp — that file includes only doc_stub.h
-// and therefore sees the stub CPlugin layout that matches InternalLoadPlugin's
-// `new CPlugin(this)` allocation.  Defining it here (which sees the full
-// plugins.h CPlugin via doc.h) would cause a struct-size mismatch and crash.
+// ── CPlugin ───────────────────────────────────────────────────────────────
+// doc_stub.h now includes the real plugins.h (CPlugin convergence), so every
+// mushcore TU sees the one true CPlugin layout; the ctor/dtor and the
+// ExecutePluginScript family come from plugins.cpp (also in mushcore).
+// platform/plugin_portable.cpp (the old stub destructor) is deleted.
 
 // ── Stubs for lua_utils_portable.cpp ─────────────────────────────────────
 // These symbols are defined in mushapp-only files (mainfrm.cpp,
@@ -288,59 +286,8 @@ bool bShowDebugStatus = false;                              // mainfrm.cpp owns 
 tInfoTypeMapping           InfoTypes[]              = { {0, nullptr} };
 tInternalFunctionsTable    InternalFunctionsTable[] = { {"", ""} };
 
-// ── PluginCallbacksNames — full list of valid plugin callback names ────────
-// On Windows this is defined in plugins.cpp.  mushcore needs it so that
-// utils.PluginCallbacks() returns the correct set to plugin authors.
-// Keep in sync with plugins.cpp.  Sentinel: empty string at end.
-std::string PluginCallbacksNames[] = {
-    "OnPluginBroadcast",
-    "OnPluginChatAccept",
-    "OnPluginChatDisplay",
-    "OnPluginChatMessage",
-    "OnPluginChatMessageOut",
-    "OnPluginChatNewUser",
-    "OnPluginChatUserDisconnect",
-    "OnPluginClose",
-    "OnPluginCommand",
-    "OnPluginCommandChanged",
-    "OnPluginCommandEntered",
-    "OnPluginConnect",
-    "OnPluginDisable",
-    "OnPluginDisconnect",
-    "OnPluginDrawOutputWindow",
-    "OnPluginEnable",
-    "OnPluginGetFocus",
-    "OnPlugin_IAC_GA",
-    "OnPluginInstall",
-    "OnPluginLineReceived",
-    "OnPluginListChanged",
-    "OnPluginLoseFocus",
-    "OnPluginMouseMoved",
-    "OnPluginMXPcloseTag",
-    "OnPluginMXPerror",
-    "OnPluginMXPopenTag",
-    "OnPluginMXPsetEntity",
-    "OnPluginMXPsetVariable",
-    "OnPluginMXPstart",
-    "OnPluginMXPstop",
-    "OnPluginPacketReceived",
-    "OnPluginPartialLine",
-    "OnPluginPlaySound",
-    "OnPluginSaveState",
-    "OnPluginScreendraw",
-    "OnPluginSelectionChanged",
-    "OnPluginSend",
-    "OnPluginSent",
-    "OnPluginTabComplete",
-    "OnPluginTelnetOption",
-    "OnPluginTelnetRequest",
-    "OnPluginTelnetSubnegotiation",
-    "OnPluginTick",
-    "OnPluginTrace",
-    "OnPluginPacketDebug",
-    "OnPluginWorldOutputResized",
-    "OnPluginWorldSave",
-    ""   // sentinel
-};
+// PluginCallbacksNames[] now comes from plugins.cpp (compiled into mushcore
+// since the CPlugin convergence) — the keep-in-sync duplicate that lived here
+// is gone.
 
 #endif // !_WIN32

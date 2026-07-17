@@ -855,6 +855,14 @@ bool CMUSHclientDoc::InternalLoadPlugin(const CString& strPluginPath)
     plugin->m_dRequiredVersion = ver;
     FindNodeContents(*pPluginMeta, "description", plugin->m_strDescription, false);
 
+    // Remaining plugin attributes, mirroring xml_load_world.cpp:2435-2438.
+    // save_state in particular MUST be read: the real CPlugin ctor (plugins.cpp)
+    // leaves m_bSaveState untouched, and the real dtor calls SaveState().
+    Get_XML_date   (*pPluginMeta, "date_written",  plugin->m_tDateWritten,  false);
+    Get_XML_date   (*pPluginMeta, "date_modified", plugin->m_tDateModified, false);
+    Get_XML_short  (*pPluginMeta, "sequence",   plugin->m_iSequence, true, -10000, 10000);
+    Get_XML_boolean(*pPluginMeta, "save_state", plugin->m_bSaveState, false);
+
     if (plugin->m_strName.IsEmpty()) {
         fprintf(stderr, "[plugin load] plugin in \"%s\" has no name — skipping\n", path);
         delete plugin;
@@ -905,33 +913,53 @@ bool CMUSHclientDoc::InternalLoadPlugin(const CString& strPluginPath)
     // Initialise the plugin's Lua engine
     Init_Plugin_Script_Engine(*this, *plugin);
 
-    // Add to plugin list
-    m_PluginList.push_back(plugin);
+    // Resolve all plugin callback DISPIDs into m_PluginCallbacks, and note the
+    // MXP-relevant ones — mirrors xml_load_world.cpp:534-556.  The real
+    // CPlugin::ExecutePluginScript / SendToAllPluginCallbacks (plugins.cpp)
+    // dispatch through this map, so without it no callback would ever fire.
+    if (plugin->m_ScriptEngine) {
+        for (int i = 0; PluginCallbacksNames[i] != ""; i++)
+            plugin->m_PluginCallbacks[PluginCallbacksNames[i]]._dispid =
+                plugin->GetPluginDispid(PluginCallbacksNames[i].c_str());
+
+        if (plugin->m_PluginCallbacks[ON_PLUGIN_MXP_OPENTAG].isvalid())
+            m_bPluginProcessesOpenTag = true;
+        if (plugin->m_PluginCallbacks[ON_PLUGIN_MXP_CLOSETAG].isvalid())
+            m_bPluginProcessesCloseTag = true;
+        if (plugin->m_PluginCallbacks[ON_PLUGIN_MXP_SETVARIABLE].isvalid())
+            m_bPluginProcessesSetVariable = true;
+        if (plugin->m_PluginCallbacks[ON_PLUGIN_MXP_SETENTITY].isvalid())
+            m_bPluginProcessesSetEntity = true;
+        if (plugin->m_PluginCallbacks[ON_PLUGIN_MXP_ERROR].isvalid())
+            m_bPluginProcessesError = true;
+    }
+
+    // Add to world plugins in sequence order (mirrors xml_load_world.cpp:560-567).
+    {
+        PluginListIterator pit;
+        for (pit = m_PluginList.begin();
+             pit != m_PluginList.end() &&
+                 plugin->m_iSequence >= (*pit)->m_iSequence;
+             ++pit)
+            { }
+        m_PluginList.insert(pit, plugin);
+    }
 
     fprintf(stderr, "[plugin load] \"%s\" (%s): %u trigger(s), %u alias(es), "
                     "%u variable(s), %u timer(s)\n",
             (const char*)plugin->m_strName, path,
             nTriggers, nAliases, nVariables, nTimers);
 
-    // Fire OnPluginInstall on the newly-loaded plugin.
-    // Must be done after push_back so the plugin is in the list before its
-    // own install handler runs (mirrors xml_load_world.cpp line 573).
-    if (plugin->m_ScriptEngine) {
-        CString strInstall("OnPluginInstall");
-        DISPID dispid = plugin->m_ScriptEngine->GetLuaDispid(strInstall);
-        if (dispid != DISPID_UNKNOWN) {
-            list<double> nparams;
-            list<string> sparams;
-            long nInvocations = 0;
-            CPlugin* pSaved = m_CurrentPlugin;
-            m_CurrentPlugin = plugin;
-            plugin->m_ScriptEngine->ExecuteLua(dispid, strInstall,
-                                               eInputFromServer,
-                                               "plugin", "install",
-                                               nparams, sparams,
-                                               nInvocations);
-            m_CurrentPlugin = pSaved;
-        }
+    // Fire OnPluginInstall on the newly-loaded plugin through the real
+    // dispatch (mirrors xml_load_world.cpp:571-574, which runs with
+    // m_CurrentPlugin still set to the new plugin).
+    {
+        CPlugin* pSaved = m_CurrentPlugin;
+        m_CurrentPlugin = plugin;
+        CScriptCallInfo callinfo(ON_PLUGIN_INSTALL,
+                                 plugin->m_PluginCallbacks[ON_PLUGIN_INSTALL]);
+        plugin->ExecutePluginScript(callinfo);
+        m_CurrentPlugin = pSaved;
     }
 
     // Notify all other plugins that the plugin list has changed.

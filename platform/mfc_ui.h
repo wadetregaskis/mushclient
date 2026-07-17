@@ -1894,8 +1894,7 @@ typedef const IID*   REFIID;
 #  define VT_ARRAY    0x2000
 #endif
 
-#if defined(MUSHCLIENT_FULL_BUILD)
-// ── Real SafeArray implementation (full / GUI build) ────────────────────────
+// ── Real SafeArray implementation (all non-Windows builds) ──────────────────
 // MUSHclient's GetPluginList/GetVariableList/GetTriggerList/... build a
 // one-dimensional COleSafeArray of VARIANTs and hand it back as a VT_ARRAY
 // VARIANT; pushVariant() (lua_methods.cpp) walks it via these functions to make
@@ -1937,7 +1936,6 @@ inline HRESULT SafeArrayDestroy(SAFEARRAY* psa) {
     delete psa;
     return S_OK;
 }
-#endif // MUSHCLIENT_FULL_BUILD
 
 // VTS_* string-encoded type tags for DISP_FUNCTION — these are only
 // consumed by the DISP_* macros which are no-ops on non-Windows.
@@ -5747,7 +5745,6 @@ public:
 };
 
 // COleSafeArray — Windows-specific safe array; no-op stub
-#if defined(MUSHCLIENT_FULL_BUILD)
 // Real one-dimensional safe array of VARIANTs, backed by the SAFEARRAY/VARIANT
 // machinery above.  Used by CMUSHclientDoc::GetPluginList/GetVariableList/etc.
 // to return arrays to Lua.  Owns its SAFEARRAY until Detach()/Attach() transfer
@@ -5804,23 +5801,9 @@ public:
         COleVariant v; v.vt = (unsigned short)(VT_ARRAY | VT_VARIANT); v.parray = m_psa; return v;
     }
 };
-#else
-class COleSafeArray {
-public:
-    VARIANT* m_pvariant = nullptr;
-    void CreateOneDim(UINT, UINT, const void* = nullptr, LONG = 0) {}
-    void AccessData(void**) {}
-    void UnaccessData() {}
-    void         Attach(VARIANT&) {}
-    void         Detach(VARIANT&) {}
-    COleVariant  Detach()         { return COleVariant(); }  // no-arg variant returns COleVariant
-    void         Clear() {}
-    long GetOneDimSize() const { return 0; }
-    void GetElement(long*, void*) {}
-    void PutElement(long*, void*) {}
-    operator COleVariant() const { return COleVariant(); }
-};
-#endif // MUSHCLIENT_FULL_BUILD
+// (The former non-full inert COleSafeArray is gone: mushcore uses the real one
+// too, so the adopted Get*List/Array* methods return real VT_ARRAY variants
+// headless.)
 
 // ── Clipboard format IDs ────────────────────────────────────────────────────
 #ifndef CF_TEXT

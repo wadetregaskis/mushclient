@@ -313,4 +313,39 @@ TEST(TimerClockTest, LongJumpFiresOnceNotEveryMissedInterval)
     EXPECT_TRUE(t->tFireTime > CmcDateTime::GetTimeNow());  // rescheduled into the future
 }
 
+// ── GetTimerList returns a REAL safe-array headless ─────────────────────────
+// The adopted methods_timers.cpp GetTimerList goes through COleSafeArray; with
+// the SafeArray machinery un-gated for mushcore this returns a genuine
+// VT_ARRAY|VT_VARIANT whose elements are the timer names (VT_BSTR).
+TEST(TimerTest, GetTimerListReturnsRealArray)
+{
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc = make_doc();
+    add_timer(doc, "alpha", 5.0);
+    add_timer(doc, "beta",  7.0);
+
+    VARIANT v = doc.GetTimerList();
+    ASSERT_EQ((unsigned short)(VT_ARRAY | VT_VARIANT), v.vt);
+    ASSERT_NE(nullptr, v.parray);
+
+    long lb = 0, ub = -1;
+    SafeArrayGetLBound(v.parray, 1, &lb);
+    SafeArrayGetUBound(v.parray, 1, &ub);
+    EXPECT_EQ(0L, lb);
+    EXPECT_EQ(1L, ub);   // two timers
+
+    bool sawAlpha = false, sawBeta = false;
+    for (long i = lb; i <= ub; ++i) {
+        VARIANT el; VariantInit(&el);
+        ASSERT_EQ(S_OK, SafeArrayGetElement(v.parray, &i, &el));
+        ASSERT_EQ((unsigned short)VT_BSTR, el.vt);
+        if (CString(el.bstrVal) == "alpha") sawAlpha = true;
+        if (CString(el.bstrVal) == "beta")  sawBeta  = true;
+    }
+    EXPECT_TRUE(sawAlpha);
+    EXPECT_TRUE(sawBeta);
+
+    VariantClear(&v);   // frees the array + its BSTR copies
+}
+
 MC_TEST_MAIN()

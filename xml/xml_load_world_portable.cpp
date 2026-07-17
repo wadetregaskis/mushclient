@@ -1171,6 +1171,18 @@ bool CMUSHclientDoc::LoadWorldFromFile(const char* path)
         Load_World_Settings(top, *this);
         Load_Colours       (top, *this);
 
+        // Remember loaded option values (serialize.cpp:100-108 verbatim
+        // semantics) — GetLoadedValue reads these snapshots.
+        {
+        long i;
+        for (i = 0; OptionsTable [i].pName; i++)
+          if (!m_NumericConfiguration [i]->bInclude)
+            m_NumericConfiguration [i]->iValue = GetOptionItem (i);
+        for (i = 0; AlphaOptionsTable [i].pName; i++)
+          if (!m_AlphaConfiguration [i]->bInclude)
+            m_AlphaConfiguration [i]->sValue = GetAlphaOptionItem (i);
+        }
+
         unsigned int nTriggers  = Load_Triggers (top, *this);
         unsigned int nAliases   = Load_Aliases  (top, *this);
         unsigned int nVariables = Load_Variables(top, *this);

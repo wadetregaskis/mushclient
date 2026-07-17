@@ -180,7 +180,9 @@ void CMUSHclientDoc::ShowStatusLine(bool) {}
 // ColourNote(LPCTSTR, LPCTSTR, LPCTSTR) is now implemented in doc_portable.cpp
 // with real terminal ANSI colour output (replaces the old no-op stub here).
 
-void CMUSHclientDoc::OnFileReloaddefaults() {}
+// OnFileReloaddefaults: REAL body now compiled into mushcore
+// (methods_defaults.cpp adoption) — the old empty stub here would be a
+// duplicate symbol.
 
 // GetAlphaOptionItem: REAL body now compiled into mushcore (scriptingoptions.cpp,
 // option convergence) — the old empty stub here would be a duplicate symbol.

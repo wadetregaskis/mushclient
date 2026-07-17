@@ -453,7 +453,11 @@ TEST(LuaScripting, GoldenWorldOptionRoundTrip)
             // load (identical on Windows — same parser TU), so the reloaded
             // multiline value carries \r\n.
             "assert(world.GetAlphaOption('notes') == 'line one\\r\\nline two', 'notes')\n"
-            "assert(world.GetAlphaOption('password') == 'secret', 'password')\n"));
+            "assert(world.GetAlphaOption('password') == 'secret', 'password')\n"
+            // the loaded-value snapshot reflects the file, the default the table
+            "assert(world.GetLoadedValue('wrap_column') == 100, 'loaded wrap_column')\n"
+            "assert(world.GetDefaultValue('wrap_column') == 80, 'default wrap_column')\n"
+            "assert(world.GetCurrentValue('wrap_column') == 100, 'current wrap_column')\n"));
         lua_close(L2);
     }
     remove(path);

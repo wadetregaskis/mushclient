@@ -1089,6 +1089,22 @@ public:
     CString m_strLuaScript;              // sandbox script (empty on macOS — no sandbox)
     string  m_strDefaultLogFileDirectory;// prefix for log files
     string  m_strDefaultWorldFileDirectory;  // prefix for world files (FormatTime %F)
+    // Default-set files (GUI global prefs; empty headless, so
+    // OnFileReloaddefaults' Load_Set calls are all short-circuited)
+    CString m_strDefaultColoursFile;
+    CString m_strDefaultTriggersFile;
+    CString m_strDefaultAliasesFile;
+    CString m_strDefaultTimersFile;
+    CString m_strDefaultMacrosFile;
+    // Default-font overrides (GUI global prefs; unset headless)
+    CString m_strDefaultInputFont;
+    CString m_strDefaultOutputFont;
+    int m_iDefaultInputFontHeight  = 0;
+    int m_iDefaultInputFontWeight  = 0;
+    int m_iDefaultInputFontCharset = 0;
+    int m_iDefaultOutputFontHeight = 0;
+    int m_iDefaultOutputFontCharset = 0;
+    unsigned int m_iDefaultInputFontItalic = 0;
 
     // Performance counter frequency in ticks/second (nanoseconds on POSIX).
     // Non-zero once initialised; zero keeps all timing guards inactive.
@@ -1179,7 +1195,7 @@ public:
 
 #ifndef CMainFrame_defined
 #define CMainFrame_defined
-class CMainFrame {
+class CMainFrame : public CWnd {   // CWnd base as in MFC (Load_Set takes CWnd*)
 public:
     // Status bar
     CStatusBarStub  m_wndStatusBar;
@@ -2692,7 +2708,13 @@ public:
         return ok;
     }
 
-    void OnFileReloaddefaults() {}
+    void OnFileReloaddefaults();
+    void OnUpdateFileReloaddefaults(CCmdUI* pCmdUI);
+    // world.Get{Loaded,Default,Current}Value (methods_defaults.cpp — doc.h signatures)
+    VARIANT GetLoadedValue(LPCTSTR OptionName);
+    VARIANT GetDefaultValue(LPCTSTR OptionName);
+    VARIANT GetCurrentValue(LPCTSTR OptionName);
+    BOOL Load_Set(const int set_type, CString strFileName, CWnd* parent_window);
 
     // ── New plugin callback overload ──────────────────────────────────
     bool SendToAllPluginCallbacks(const string& sName, const char* sData,

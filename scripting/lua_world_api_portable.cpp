@@ -1961,26 +1961,11 @@ static int L_GetLineInfo(lua_State* L)
 // Bridges to GetOption / GetAlphaOption depending on what the option is.
 static int L_GetCurrentValue(lua_State* L)
 {
-    // Delegate to GetOption first (numeric), fall back to alpha
-    const char* opt = luaL_checkstring(L, 1);
-    // Try numeric options
-    lua_getglobal(L, WORLD_LIBRARY);
-    lua_getfield(L, -1, "GetOption");
-    lua_remove(L, -2);
-    if (!lua_isnil(L, -1)) {
-        lua_pushvalue(L, 1);   // option name
-        lua_call(L, 1, 1);
-        // If result is -1 (unknown), try alpha
-        if (lua_isnumber(L, -1) && lua_tonumber(L, -1) == -1.0) {
-            lua_pop(L, 1);
-            lua_getglobal(L, WORLD_LIBRARY);
-            lua_getfield(L, -1, "GetAlphaOption");
-            lua_remove(L, -2);
-            lua_pushvalue(L, 1);
-            lua_call(L, 1, 1);
-        }
-    }
-    return 1;
+    // Thin wrapper over the real doc method (methods_defaults.cpp), the same
+    // marshalling as Windows lua_methods.cpp.
+    CMUSHclientDoc* pDoc = world_doc(L);
+    VARIANT v = pDoc->GetCurrentValue(luaL_checkstring(L, 1));
+    return push_option_variant(L, v);
 }
 
 // ── Speedwalk ────────────────────────────────────────────────────────────────
@@ -5623,48 +5608,19 @@ static int L_GetAlphaOptionList(lua_State* L)
 static int L_GetDefaultValue(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* name = luaL_checkstring(L, 1);
-    for (int i = 0; OptionsTable[i].pName; i++) {
-        if (strcasecmp(OptionsTable[i].pName, name) == 0) {
-            lua_pushnumber(L, OptionsTable[i].iDefault);
-            return 1;
-        }
-    }
-    for (int i = 0; AlphaOptionsTable[i].pName; i++) {
-        if (strcasecmp(AlphaOptionsTable[i].pName, name) == 0) {
-            lua_pushstring(L, AlphaOptionsTable[i].sDefault
-                           ? AlphaOptionsTable[i].sDefault : "");
-            return 1;
-        }
-    }
-    lua_pushnil(L);
-    return 1;
+    VARIANT v = pDoc->GetDefaultValue(luaL_checkstring(L, 1));
+    return push_option_variant(L, v);
 }
 
 static int L_GetLoadedValue(lua_State* L)
 {
-    // GetLoadedValue returns the value as loaded from the world file
-    // (before any script changes).  In the portable build OptionsTable is a
-    // stub, so this mirrors GetDefaultValue — look up the option by name.
-    world_doc(L);
-    const char* name = luaL_checkstring(L, 1);
-    for (int i = 0; OptionsTable[i].pName; i++) {
-        if (strcasecmp(OptionsTable[i].pName, name) == 0) {
-            lua_pushnumber(L, OptionsTable[i].iDefault);
-            return 1;
-        }
-    }
-    for (int i = 0; AlphaOptionsTable[i].pName; i++) {
-        if (strcasecmp(AlphaOptionsTable[i].pName, name) == 0) {
-            lua_pushstring(L, AlphaOptionsTable[i].sDefault
-                           ? AlphaOptionsTable[i].sDefault : "");
-            return 1;
-        }
-    }
-    lua_pushnil(L);
-    return 1;
+    // Real Windows semantics at last: reads the m_NumericConfiguration /
+    // m_AlphaConfiguration snapshots the loader now populates (the old twin
+    // admitted it wrongly mirrored GetDefaultValue).
+    CMUSHclientDoc* pDoc = world_doc(L);
+    VARIANT v = pDoc->GetLoadedValue(luaL_checkstring(L, 1));
+    return push_option_variant(L, v);
 }
-
 // ── GetGlobalOption / GetGlobalOptionList ─────────────────────────────────────
 // Global options are app-wide (not per-world).  The portable CMUSHclientApp
 // (doc_stub.h) carries a subset of the Windows App fields; we surface those here

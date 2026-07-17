@@ -435,6 +435,7 @@ if(NOT WIN32)
         scripting/methods/methods_mapping.cpp   # Campaign C
         scripting/methods/methods_arrays.cpp    # Campaign C
         scripting/methods/methods_colours.cpp   # Campaign C
+        scripting/methods/methods_defaults.cpp  # Campaign C (post option-convergence)
         doc_display_shared.cpp   # the push-side UpdateAllViews drain (display step 7)
         doc_portable.cpp
 

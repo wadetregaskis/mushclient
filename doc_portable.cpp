@@ -84,6 +84,17 @@ const char* telopt_name(unsigned char opt)
     }
 }
 
+// ── CMUSHclientDoc::Load_Set ──────────────────────────────────────────────
+// Headless: there is no file dialog, and default-set files are a GUI global
+// preference (the stub App's m_strDefault*File members are always empty, so
+// OnFileReloaddefaults never reaches this).  Behave like the dialog-cancel
+// path of the real versions (evaluate.cpp / mushapp_stubs.cpp).
+BOOL CMUSHclientDoc::Load_Set(const int /*set_type*/, CString /*strFileName*/,
+                              CWnd* /*parent_window*/)
+{
+    return TRUE;   // TRUE = cancelled/failed, matching the GUI cancel path
+}
+
 // ── App global (CMUSHclientApp) ───────────────────────────────────────────
 CMUSHclientApp App;
 

@@ -1241,7 +1241,7 @@ bool CMUSHclientDoc::LoadWorldFromFile(const char* path)
         if (nTimers > 0)
             ResetAllTimers(GetTimerMap());
 
-        m_strWorldFilePath = CString(path);
+        m_strPathName = CString(path);
         return true;
 
     } catch (const std::runtime_error& ex) {

@@ -158,11 +158,10 @@ void MakeTableItemBool (lua_State * L, const char * name, const bool b)
 // Forward declarations for symbols defined elsewhere in mushcore
 int EditDistance(const std::string source, const std::string target);
 
-struct tInfoTypeMapping { int iInfoType; const char* sDescription; };
+// tInfoTypeMapping / tInternalFunctionsTable now come from doc_stub.h
+// (methods_info.cpp adoption); InfoTypes[] is the REAL table from
+// methods_info.cpp, InternalFunctionsTable[] the windows_stubs.cpp sentinel.
 extern tInfoTypeMapping InfoTypes[];
-
-// tInternalFunctionsTable: matches the typedef in stdafx.h (const char* fields).
-struct tInternalFunctionsTable { const char* sFunction; const char* sArgs; };
 extern tInternalFunctionsTable InternalFunctionsTable[];
 
 extern std::string PluginCallbacksNames[];

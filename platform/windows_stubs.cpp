@@ -275,16 +275,44 @@ int TMessageBox(const char* sText, UINT nType) {
 
 // ── Stubs for lua_utils_portable.cpp ─────────────────────────────────────
 // These symbols are defined in mushapp-only files (mainfrm.cpp,
-// scripting/methods/methods_info.cpp, scripting/functionlist.cpp, plugins.cpp).
-// Provide empty sentinel-terminated tables so mushcore links and the
-// corresponding utils.* Lua functions return empty tables rather than crashing.
+// scripting/functionlist.cpp, plugins.cpp).  Provide empty
+// sentinel-terminated tables so mushcore links and the corresponding
+// utils.* Lua functions return empty tables rather than crashing.
 bool bShowDebugStatus = false;                              // mainfrm.cpp owns the real one
 
-// tInfoTypeMapping and tInternalFunctionsTable are typedef'd in doc.h / stdafx.h
-// (both included above via stdafx.h → doc.h).  Sentinel for InfoTypes: iInfoType==0.
-// Sentinel for InternalFunctionsTable: sFunction[0]=='\0' (empty string literal).
-tInfoTypeMapping           InfoTypes[]              = { {0, nullptr} };
+// InfoTypes[]: the REAL table now comes from methods_info.cpp (adopted into
+// mushcore) — the old {0,nullptr} sentinel here would be a duplicate symbol.
+
+// tInternalFunctionsTable is typedef'd in stdafx.h (included above).
+// Sentinel: sFunction[0]=='\0' (empty string literal).  The real table is in
+// scripting/functionlist.cpp (mushapp-only: it drives the GUI function-list
+// dialog); headless world.Help's function-name lookup just finds nothing.
 tInternalFunctionsTable    InternalFunctionsTable[] = { {"", ""} };
+
+// error_descriptions[]: the real table is lua_methods.cpp:7418 (mushapp-only,
+// Campaign C target).  Sentinel here means the adopted methods_info.cpp
+// ErrorDesc falls through its loop and returns the code formatted as a
+// string; the Lua-facing world.ErrorDesc keeps its full portable table in
+// lua_world_api_portable.cpp until lua_methods.cpp adopts.
+int_flags_pair             error_descriptions[]     = { {0, NULL} };
+
+// ── os_version (stdafx.h:406; MUSHclient.cpp:77 owns the GUI one) ─────────
+// Zeroed headless: GetInfo(77) → "", GetInfo(265-268) → 0.
+OSVERSIONINFO os_version;
+
+// ── Name generation (stdafx.h:395-396; NameGeneration.cpp owns the real
+// bodies — mushapp-only, they read the names files with progress UI).
+// Headless: bNamesRead stays false so world.GenerateName returns VT_NULL,
+// and ReadNames throws so world.ReadNamesFile returns eCouldNotOpenFile.
+bool bNamesRead = false;
+void ReadNames (const LPCTSTR /*sName*/, const bool /*bNoDialog*/)
+{
+    throw new CFileException();   // caught (and Delete()d) by ReadNamesFile
+}
+CString GenerateName (void)
+{
+    return "";   // unreachable via world.GenerateName (bNamesRead is false)
+}
 
 // PluginCallbacksNames[] now comes from plugins.cpp (compiled into mushcore
 // since the CPlugin convergence) — the keep-in-sync duplicate that lived here

@@ -200,6 +200,11 @@ CMUSHclientDoc::CMUSHclientDoc()
     // the lowercase table default in TTYPE negotiation.)
     m_tWorldOpenTime = time(nullptr);
 
+    // World-start clocks (doc_construct.cpp:32-33) — GetInfo(306) and
+    // GetLineInfo(13) read these.
+    m_whenWorldStarted = CTime::GetCurrentTime();
+    QueryPerformanceCounter (&m_whenWorldStartedHighPrecision);
+
     // ── The real line lifecycle (display step 7) ──────────────────
     // Mirror doc.cpp SetUpOutputWindow: the current line lives IN m_LineList
     // from creation, and m_pLinePositions indexes every JUMP_SIZE'th line.
@@ -345,6 +350,42 @@ long CheckObjectName(CString& strName, const bool bConform)
 // builds; empty headless, so %E expands to "" and relative paths stay relative).
 char working_dir [_MAX_PATH] = "";
 
+// The file-browsing directory (MUSHclient.cpp:71 on the GUI builds; tracked
+// by the file dialogs there).  Headless nothing browses, so it stays empty —
+// GetInfo(84) returns "".
+char file_browsing_dir [_MAX_PATH] = "";
+
+// ── GetGUID (Windows body: Utilities.cpp:396, CoCreateGuid-based) ─────────
+// Same output shape: "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX", uppercase hex.
+// Randomness from /dev/urandom with a time/counter fallback (the same
+// scheme GetUniqueID above uses); version/variant bits set as a v4 GUID,
+// which is what CoCreateGuid produces.
+CString GetGUID (void)
+{
+    unsigned char r[16] = {};
+    FILE* u = fopen("/dev/urandom", "rb");
+    bool ok = false;
+    if (u) {
+        ok = fread(r, 1, sizeof r, u) == sizeof r;
+        fclose(u);
+    }
+    if (!ok) {
+        static unsigned long s_counter = 0;
+        unsigned long t = (unsigned long) time(nullptr);
+        unsigned long c = ++s_counter;
+        memcpy(r, &t, sizeof t);
+        memcpy(r + sizeof t, &c, sizeof c);
+    }
+    r[6] = (unsigned char)((r[6] & 0x0F) | 0x40);   // version 4
+    r[8] = (unsigned char)((r[8] & 0x3F) | 0x80);   // RFC 4122 variant
+
+    CString strResult;
+    strResult.Format ("%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+                      r[0], r[1], r[2],  r[3],  r[4],  r[5],  r[6],  r[7],
+                      r[8], r[9], r[10], r[11], r[12], r[13], r[14], r[15]);
+    return strResult;
+}   // end of GetGUID
+
 // The ON_PLUGIN_* callback-name constants are now defined in plugins.cpp
 // (compiled into mushcore since the CPlugin convergence) — the partial
 // duplicate set that used to live here is gone.
@@ -432,6 +473,123 @@ bool CMUSHclientDoc::SeeIfHandlerCanExecute(const CString&)
 CChildFrame * CMUSHclientDoc::GetChildFrame (void)
 {
     return nullptr;
+}
+
+// ── CMUSHclientDoc::GetLinePosition ──────────────────────────────────────
+// BYTE-COPY of doc.cpp:1974-2027 (the JUMP_SIZE line-position lookup used
+// by GetLineInfo/GetStyleInfo/Bookmark).  Remove when doc.cpp adopts.
+POSITION CMUSHclientDoc::GetLinePosition (long nLine)
+  {
+POSITION pos = NULL;
+
+  // sanity check  (Santa Claus)
+  if (nLine > m_LineList.GetCount ())
+    nLine = m_LineList.GetCount ();
+
+  if (nLine < 0)
+    nLine = 0;
+
+static long iCount = 0;
+int nIndex = nLine / JUMP_SIZE,
+    nItem = nIndex * JUMP_SIZE;
+
+  if (m_pLinePositions)
+    {
+    pos = m_pLinePositions [nIndex];
+
+  // not there, try previous item
+
+    if (!pos && nIndex > 0)
+      {
+      pos = m_pLinePositions [nIndex - 1];
+      nItem -= JUMP_SIZE;
+      }
+    }   // end of having a positions array
+
+// as a last resort, use the start of the list
+
+  if (!pos)
+    {
+    pos = m_LineList.GetHeadPosition ();
+    nItem = 0;
+    }
+
+// now count forwards until we hit the actual one we want
+
+  for (long i = nItem; i < nLine && pos; i++)
+    {
+    iCount++;
+    m_LineList.GetNext (pos);
+    }
+
+// not there? assume last one in the list
+
+  if (!pos)
+    pos = m_LineList.GetTailPosition ();
+
+// return the desired position
+
+  return pos;
+
+  } // end of CMUSHclientDoc::GetLinePosition
+
+// ── windowPositionHelper ─────────────────────────────────────────────────
+// BYTE-COPY of scripting/methods/methods_output.cpp:802-810.  Remove when
+// methods_output.cpp adopts.
+void windowPositionHelper (CString & str, const RECT & r)
+  {
+  str.Format ("%ld,%ld,%ld,%ld",
+              r.left,
+              r.top,
+              r.right - r.left,  // Width
+              r.bottom - r.top);  // Height
+  } // end of windowPositionHelper
+
+// ── CMUSHclientDoc::GetWorldWindowPositionX ──────────────────────────────
+// COPY of the non-Windows arm of methods_output.cpp:175-212 (pure IWorldView
+// seam: the world's one child frame rect, Which is always 1).  Remove when
+// methods_output.cpp adopts.
+BSTR CMUSHclientDoc::GetWorldWindowPositionX(short Which)
+{
+CString strResult;
+
+  // each world has exactly one MDI child frame here; Which is always 1
+  int x = 0, y = 0, w = 800, h = 600;
+  if (Which == 1 && GetOutputRect (x, y, w, h))
+    strResult.Format ("%d,%d,%d,%d", x, y, w, h);
+
+	return strResult.AllocSysString();
+}   // end of CMUSHclientDoc::GetWorldWindowPositionX
+
+// ── CMUSHclientApp::GetGlobalOption / GetGlobalOptionList ────────────────
+// Windows bodies live in MUSHclient.cpp (they read the global-preferences
+// tables).  Headless there is no global-preferences store: every name is
+// unknown (VT_NULL → Lua nil, matching the Windows bad-name result) and the
+// list is empty (never-created safearray detaches with a null parray → nil).
+VARIANT CMUSHclientApp::GetGlobalOption(LPCTSTR /*Name*/)
+{
+    VARIANT vaResult;
+    VariantInit(&vaResult);
+    vaResult.vt = VT_NULL;
+    return vaResult;
+}
+
+VARIANT CMUSHclientApp::GetGlobalOptionList()
+{
+    COleSafeArray sa;
+    return sa.Detach();
+}
+
+// ── GetSelection (stdafx.h:484; Windows body Utilities.cpp) ──────────────
+// Returns the selected text of a command-window CEdit (true = whole text).
+// Headless there is never a CEdit (SpellCheckCommand's view walk finds
+// nothing and bails before this), so the body is unreachable — an inert
+// definition satisfies the linker for the adopted methods_spellchecker.cpp.
+class CEdit;
+bool GetSelection (CEdit * /*pEdit*/, CString & strSelection)
+{
+    strSelection.Empty();
+    return true;
 }
 
 // ── CMUSHclientDoc::ResolveAllEntryPoints ────────────────────────────────

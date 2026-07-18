@@ -541,10 +541,29 @@ TEST(LuaScripting, GuiStubsReturnValues)
     EXPECT_EQ(30044.0, lua_tonumber(L, -1));
     lua_settop(L, 0);
 
-    // SpellCheck → eSpellCheckNotActive (30064)
+    // SpellCheck with the spell checker inactive → nil, as on Windows:
+    // methods_spellchecker.cpp:30-31 returns an EMPTY VARIANT when
+    // App.m_bSpellCheckOK is false, and lua_methods.cpp L_SpellCheck
+    // (5675-5680) marshals that through pushVariant's default → nil.
+    // (The old portable L_SpellStub returned eSpellCheckNotActive for every
+    // spellcheck entry point — twin-only behaviour.)
     n = run_ret(L, "return world.SpellCheck('hello')");
     EXPECT_EQ(1, n);
+    EXPECT_TRUE(lua_isnil(L, -1));
+    lua_settop(L, 0);
+
+    // AddSpellCheckWord is the entry point that DOES surface the canonical
+    // code: eSpellCheckNotActive (30064) — methods_spellchecker.cpp:252-253.
+    n = run_ret(L, "return world.AddSpellCheckWord('helo', 'a', 'hello')");
+    EXPECT_EQ(1, n);
     EXPECT_EQ(30064.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // SpellCheckCommand with no command window / no spell checker → -1
+    // (methods_spellchecker.cpp:110-111).
+    n = run_ret(L, "return world.SpellCheckCommand()");
+    EXPECT_EQ(1, n);
+    EXPECT_EQ(-1.0, lua_tonumber(L, -1));
     lua_settop(L, 0);
 
     // ActivateNotepad on a title that doesn't exist → eNoSuchWindow (30073),
@@ -974,6 +993,63 @@ TEST(LuaScripting, Replace)
     int n = run_ret(L, "return world.Replace('hello world', 'world', 'Lua')");
     EXPECT_EQ(1, n);
     EXPECT_STREQ("hello Lua", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// Locks the methods_info/methods_utilities adoption: the Lua bindings now
+// route through the REAL CMUSHclientDoc methods with lua_methods.cpp
+// marshalling (GetInfo via push_option_variant incl. VT_DATE→Unix-seconds,
+// Windows argument defaults).
+TEST(LuaScripting, RealInfoFamilyWiring)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // GetInfo(72) is the real switch (methods_info.cpp:533) — identical to
+    // world.Version() (methods_info.cpp:85-90).
+    int n = run_ret(L, "return world.GetInfo(72) == world.Version()");
+    EXPECT_EQ(1, n);
+    EXPECT_TRUE(lua_toboolean(L, -1));
+    lua_settop(L, 0);
+
+    // Date info types marshal as Unix seconds (Windows pushVariant VT_DATE →
+    // COleDateTime → CTime::GetTime), not nil: GetInfo(304) = time now.
+    n = run_ret(L, "return world.GetInfo(304)");
+    EXPECT_EQ(1, n);
+    ASSERT_TRUE(lua_isnumber(L, -1));
+    EXPECT_GT(lua_tonumber(L, -1), 1.0e9);
+    lua_settop(L, 0);
+
+    // Unassigned info types → VT_NULL → nil.  141 was a twin-only alias for
+    // 201; Windows GetInfo(141) hits the default case (methods_info.cpp:1168).
+    n = run_ret(L, "return world.GetInfo(141)");
+    EXPECT_EQ(1, n);
+    EXPECT_TRUE(lua_isnil(L, -1));
+    lua_settop(L, 0);
+
+    // GetLineCount is the real method — lines received, m_total_lines
+    // (methods_info.cpp:57-60; the ctor seeds line 1).  The old twin
+    // returned m_newlines_received (0 here).
+    n = run_ret(L, "return world.GetLineCount()");
+    EXPECT_EQ(1, n);
+    EXPECT_EQ(1.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // Trim through the real method (methods_utilities.cpp:168-175).
+    n = run_ret(L, "return world.Trim('  padded  ')");
+    EXPECT_EQ(1, n);
+    EXPECT_STREQ("padded", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    // Replace's Multiple parameter defaults TRUE as on Windows
+    // (lua_methods.cpp L_Replace: optboolean(L, 4, 1)); the old twin
+    // defaulted it false and only replaced the first occurrence.
+    n = run_ret(L, "return world.Replace('aaa', 'a', 'b')");
+    EXPECT_EQ(1, n);
+    EXPECT_STREQ("bbb", lua_tostring(L, -1));
     lua_settop(L, 0);
 
     lua_close(L);

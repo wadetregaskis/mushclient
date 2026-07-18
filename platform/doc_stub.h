@@ -639,6 +639,64 @@ enum {
 #  define MXP_VERSION "0.4"
 #endif
 
+// ── Spell-checker Lua entry point (stdafx.h:720) ──────────────────────────
+#ifndef SPELLCHECKFUNCTION
+#  define SPELLCHECKFUNCTION "spellcheck"
+#endif
+
+// ── Info / function / error table row types (doc.h:475-481, stdafx.h:965-972)
+// The REAL InfoTypes[] table arrives with methods_info.cpp; the sentinel
+// InternalFunctionsTable[] / error_descriptions[] stubs live in
+// platform/windows_stubs.cpp (functionlist.cpp / lua_methods.cpp own the
+// real ones — both are mushapp-only).
+typedef struct { int key; const char * val; } int_flags_pair;
+typedef struct
+  {
+  int           iInfoType;       // which info number it is
+  const char *  sDescription;    // eg. "Server name"
+  } tInfoTypeMapping;
+// stdafx.h owns tInternalFunctionsTable (stdafx.h:965-972); several portable
+// TUs (regexp.cpp, Line.cpp, …) include stdafx.h AND doc_stub.h, and two
+// typedefs of distinct anonymous structs to one name do not compile.
+#ifndef _STDAFX_INCLUDED_
+typedef struct
+  {
+  const char *  sFunction;       // name of function (eg. "WindowShow")
+  const char *  sArgs;           // arguments (eg. "(Window, Showflag)")
+  } tInternalFunctionsTable;
+#endif
+
+// ── ci_less / ci_set (doc.h:499-520) — case-insensitive string set ────────
+struct ci_less
+  {
+  // case-independent (ci) compare_less binary function
+  struct nocase_compare
+    {
+    bool operator() (const unsigned char& c1, const unsigned char& c2) const
+      { return tolower (c1) < tolower (c2); }
+    };
+
+  bool operator() (const std::string & s1, const std::string & s2) const
+    {
+    return std::lexicographical_compare
+          (s1.begin (), s1.end (),   // source range
+           s2.begin (), s2.end (),   // dest range
+                nocase_compare ());  // comparison
+    }
+  }; // end of ci_less
+
+typedef std::set<std::string, ci_less> ci_set;
+
+// ── os_version (stdafx.h:406) ─────────────────────────────────────────────
+// GetKeyState / GetACP / GetSysColor / ShellExecute / LPHOSTENT / the
+// OSVERSIONINFO type & co all come from platform/mfc_ui.h (included via
+// compat.h above) — the SAME hook-based shims the mac product uses, inert
+// while the g_wxhook_* pointers are null (headless).  Only the os_version
+// GLOBAL needs a mushcore home: MUSHclient.cpp (mushapp) owns the real one,
+// platform/windows_stubs.cpp defines the zeroed headless one
+// (GetInfo(77) → "", GetInfo(265-268) → 0).
+extern OSVERSIONINFO os_version;
+
 // ── Full type definitions from OtherTypes.h ───────────────────────────────
 // OtherTypes.h has its own non-Windows preamble; including it here gives us
 // the real CAction, CStyle, CLine, CAlias, CTrigger, CTimer, CVariable, etc.
@@ -987,6 +1045,9 @@ class CSendView : public CView {
 public:
     DECLARE_DYNCREATE(CSendView)
     void CheckForSelectionChange() {}
+    // methods_spellchecker.cpp SpellCheckCommand's command-window edit
+    // accessor (dead headless: the view walk never finds a CSendView).
+    CEdit& GetEditCtrl() { static CEdit e; return e; }
 };
 #endif // CMUSHView_stub_defined
 
@@ -1075,10 +1136,48 @@ public:
 
 // ── CMUSHclientApp ────────────────────────────────────────────────────────
 // Stub for the global App object; holds shared MXP lookup tables.
+struct lua_State;   // <lua.h> arrives later (scripting/scripting.h)
 #ifndef CMUSHclientApp_defined
 #define CMUSHclientApp_defined
 class CMUSHclientApp {
 public:
+    // ── Spell checker (MUSHclient.h:96-102) ───────────────────────────────
+    // Never initialised headless (InitSpellCheck is GUI-side), so the
+    // adopted methods_spellchecker.cpp bodies short-circuit to the canonical
+    // not-active results: SpellCheck/SpellCheckDlg → empty VARIANT (nil),
+    // SpellCheckCommand → -1, AddSpellCheckWord → eSpellCheckNotActive.
+    bool        m_bSpellCheckOK    = false;
+    lua_State * m_SpellChecker_Lua = nullptr;
+
+    // ── Translator (MUSHclient.h:103-105) — no localisation headless ──────
+    lua_State * m_Translator_Lua   = nullptr;
+    CString     m_strTranslatorFile;   // GetInfo(69)
+    CString     m_strLocale;           // GetInfo(70)
+
+    // ── Fixed-pitch font (MUSHclient.h:172/202) — GetInfo(71/243) ─────────
+    CString      m_strFixedPitchFont;
+    unsigned int m_iFixedPitchFontSize = 0;
+
+    // ── Global preferences database (MUSHclient.h:117) — none headless ────
+    string      m_PreferencesDatabaseName;   // GetInfo(82) → ""
+
+    // ── When the client started executing (MUSHclient.h:61) — GetInfo(305)
+    CTime       m_whenClientStarted;
+
+    // ── Global options (MUSHclient.h:272-273).  Headless there is no
+    // global-preferences store, so every name is "unknown" (VT_NULL → Lua
+    // nil, exactly what the Windows App returns for a bad name) and the
+    // list is empty (a never-created safearray → nil).  Bodies in
+    // doc_portable.cpp.
+    VARIANT GetGlobalOption(LPCTSTR Name);
+    VARIANT GetGlobalOptionList();
+
+    // ── CWinApp::OpenDocumentFile (world.Open).  Headless there is no doc
+    // template/GUI wiring to open a world through, so opening by path is
+    // unsupported → NULL (world.Open returns a null world object, exactly
+    // as Windows does when the open fails).
+    class CDocument* OpenDocumentFile(LPCTSTR) { return nullptr; }
+
     CAtomicElementMap  m_ElementMap;
     CMapStringToString m_EntityMap;
     CColoursMap        m_ColoursMap;
@@ -1126,6 +1225,7 @@ public:
         MXP_LoadElements();
         MXP_LoadEntities();
         MXP_LoadColours();
+        m_whenClientStarted = CTime::GetCurrentTime();   // MUSHclient.cpp:240
     }
 
     // Unique number generator — used for concurrency checks on variable updates.
@@ -1204,6 +1304,11 @@ public:
     // Status bar
     CStatusBarStub  m_wndStatusBar;
     int             m_nPauseItem     = 0;
+
+    // MDI frame background colour (mainfrm.h:132; 0xFFFFFFFF = default).
+    // Written by world.SetFrameBackgroundColour — headless nothing repaints,
+    // but the value round-trips.
+    COLORREF        m_backgroundColour = 0xFFFFFFFF;
 
     // MDI tabs
     CMDITabsStub    m_wndMDITabs;
@@ -1331,6 +1436,32 @@ long FindBaseAlphaOption(LPCTSTR OptionName,
 // digest words.  Portable body in doc_portable.cpp; SetAlphaDefaults uses it
 // for the OPT_WORLD_ID option, the ctor for m_strWorldID.
 CString GetUniqueID(void);
+
+// ── GetGUID (stdafx.h; Windows body Utilities.cpp) — a fresh GUID string.
+// Portable body in doc_portable.cpp; world.CreateGUID wraps it.
+CString GetGUID(void);
+
+// ── Name generation (stdafx.h:395-396; Windows body NameGeneration.cpp) ───
+// Headless stubs in platform/windows_stubs.cpp: the names files are a GUI
+// feature, so ReadNames throws (world.ReadNamesFile → eCouldNotOpenFile) and
+// bNamesRead stays false (world.GenerateName → VT_NULL, as on Windows before
+// any names file is read).  No default arg here (stdafx.h owns `= false`).
+void ReadNames (const LPCTSTR sName, const bool bNoDialog);
+CString GenerateName (void);
+
+// ── windowPositionHelper (stdafx.h:946; Windows body methods_output.cpp:802)
+// "left,top,width,height" formatting for Get*WindowPosition.  Portable copy
+// in doc_portable.cpp until methods_output.cpp adopts.
+void windowPositionHelper (CString & str, const RECT & r);
+
+// ── GetSelection (stdafx.h:484; Windows body Utilities.cpp) ───────────────
+// Selected text of a command-window CEdit (true = whole text).  Headless the
+// only caller (SpellCheckCommand) bails before reaching it — inert definition
+// in doc_portable.cpp.
+bool GetSelection (CEdit * pEdit, CString & strSelection);
+
+// ── StripAnsi (stdafx.h:944; body methods_utilities.cpp, now in mushcore) ─
+CString StripAnsi (const CString strMessage);
 
 bool GetWord(CString& strResult, CString& str);
 CString GetArgument(const CArgumentList& ArgumentList,
@@ -1847,7 +1978,9 @@ public:
     CString m_password;
     CString m_connect_text;       // text sent on connect
     CString m_strScriptPrefix;    // prefix to invoke scripts from command window
-    CString m_strWorldFilePath;   // path to the loaded world file
+    CString m_strPathName;   // path to the loaded world file (CDocument's name
+                             // for it, so world.Save's `strName = m_strPathName`
+                             // compiles untouched)
 
     // ── World properties (absent from original stub; added for GetInfo parity) ─
     CString m_new_activity_sound;       // GetInfo(9):  new-activity beep file
@@ -1870,6 +2003,36 @@ public:
     CString m_strTabCompletionDefaults; // GetInfo(39): default tab-completion words
     CString m_strRecallLinePreamble;    // GetInfo(41): recall-window line preamble
     CString m_strBeepSound;             // GetInfo(50): beep sound file
+
+    // ── GetInfo backing state, second tranche (methods_info.cpp adoption).
+    // Types and defaults mirror doc.h / doc_construct.cpp:54-64,133,451.
+    long     m_iOutputWindowRedrawCount = 0;   // doc.h:1084, GetInfo(295)
+    CPoint   m_lastMousePosition;              // doc.h:1142, GetInfo(283/284)
+    ci_set   m_strSpecialFontName;             // doc.h:1404, GetInfo(76) — empty headless
+    CString  m_strBackgroundImageName;         // doc.h:1410, GetInfo(79)
+    int      m_iBackgroundMode = 0;            // doc.h:1412, GetInfo(270)
+    COLORREF m_iBackgroundColour = NO_COLOUR;  // doc.h:1414, GetInfo(271)
+    CString  m_strForegroundImageName;         // doc.h:1417, GetInfo(78)
+    int      m_iForegroundMode = 0;            // doc.h:1419, GetInfo(269)
+    CRect    m_TextRectangle = CRect(0,0,0,0); // doc.h:1438, GetInfo(272-275)
+    long     m_TextRectangleBorderOffset = 0,  // doc.h:1439-1443, GetInfo(276-282)
+             m_TextRectangleBorderColour = 0,
+             m_TextRectangleBorderWidth = 0,
+             m_TextRectangleOutsideFillColour = 0,
+             m_TextRectangleOutsideFillStyle = 0;
+    BOOL     m_bScrollBarWanted = TRUE;        // doc.h:1468, GetInfo(120)
+    CString  m_strWordUnderMenu;               // doc.h:1476, GetInfo(86)
+    // Font metrics (doc.h:1254-1259, GetInfo 212-215/240/241).  The GUI keeps
+    // these updated from the real output/input fonts; headless they stay at
+    // the same defaults as the m_gui_font_* pane metrics above.
+    int      m_FontHeight = 18,
+             m_FontWidth  = 10;
+    int      m_InputFontHeight = 18,
+             m_InputFontWidth  = 10;
+    CString  m_strLastImmediateExpression;     // doc.h:1313, GetInfo(52)
+    CTime    m_timeScriptFileMod;              // doc.h:1318, GetInfo(303)
+    CTime    m_whenWorldStarted;               // doc.h:1137, GetInfo(306)
+    LARGE_INTEGER m_whenWorldStartedHighPrecision = {}; // doc.h:1138, GetLineInfo(13)
 
     // ── Current hyperlink state (set by AddStyle, consumed by DisplayMsg) ─
     // Cleared automatically when the style with ACTION_HYPERLINK/ACTION_SEND
@@ -2209,10 +2372,10 @@ public:
     // The Windows CMUSHclientDoc inherits GetPathName/GetTitle/IsModified
     // from CDocument.  In the portable stub we provide them as inline
     // methods over existing fields.
-    CString GetPathName()  const { return m_strWorldFilePath; }
+    CString GetPathName()  const { return m_strPathName; }
     CString GetTitle()     const { return m_mush_name; }
     BOOL    IsModified()   const { return FALSE; }  // not tracked portably
-    void    SetPathName(const CString& path) { m_strWorldFilePath = path; }
+    void    SetPathName(const CString& path) { m_strPathName = path; }
     void    SetTitle(const CString& title)   { m_mush_name = title; }
 
     // ── Constructor / destructor / move ──────────────────────────────
@@ -2709,6 +2872,121 @@ public:
     long SetCommandWindowHeight(short Height);
     long SetCommandSelection(long First, long Last);
     CChildFrame* GetChildFrame(void);   // stub def in doc_portable.cpp: no views → nullptr
+
+    // ── Spellchecker family ── the REAL scripting/methods/methods_spellchecker.cpp
+    // is compiled into mushcore (doc.h:3072-3123 signatures).  App.m_bSpellCheckOK
+    // is never set headless, so the spellcheck ones return the canonical
+    // not-active results; Metaphone/EditDistance are pure.
+    VARIANT SpellCheck(LPCTSTR Text);
+    long SpellCheckCommand(long StartCol, long EndCol);
+    VARIANT SpellCheckDlg(LPCTSTR Text);
+    long AddSpellCheckWord(LPCTSTR OriginalWord, LPCTSTR ActionCode, LPCTSTR ReplacementWord);
+    BSTR Metaphone(LPCTSTR Word, short Length);
+    long EditDistance(LPCTSTR Source, LPCTSTR Target);
+
+    // ── Utilities family ── the REAL scripting/methods/methods_utilities.cpp
+    // is compiled into mushcore (doc.h signatures; afx_msg dropped).  GUI
+    // corners headless: Activate → IWorldView activateClient (no-op with no
+    // view); Menu → g_wxhook_menu_dialog (null headless → ""); OpenBrowser →
+    // ShellExecute stub → eCouldNotOpenFile; Help → inert ShowHelp/
+    // ShowFunctionslist; SetFrameBackgroundColour → g_stub_frame only.
+    BSTR StripANSI(LPCTSTR Message);
+    void Activate();
+    BSTR Replace(LPCTSTR Source, LPCTSTR SearchFor, LPCTSTR ReplaceWith, BOOL Multiple);
+    BSTR FixupEscapeSequences(LPCTSTR Source);
+    BSTR Trim(LPCTSTR Source);
+    BSTR FixupHTML(LPCTSTR StringToConvert);
+    VARIANT GenerateName();
+    long ReadNamesFile(LPCTSTR FileName);
+    VARIANT Base64Decode(LPCTSTR Text);
+    VARIANT Base64Encode(LPCTSTR Text, BOOL MultiLine);
+    BSTR CreateGUID();
+    BSTR Hash(LPCTSTR Text);
+    BSTR GetUniqueID();
+    BSTR TranslateGerman(LPCTSTR Text);
+    BSTR MakeRegularExpression(LPCTSTR Text);
+    void MtSrand(long Seed);
+    double MtRand();
+    long ChangeDir(LPCTSTR Path);
+    void SetStatus(LPCTSTR Message);
+    LPDISPATCH Open(LPCTSTR FileName);
+    long EnableGroup(LPCTSTR GroupName, BOOL Enabled);
+    long DeleteGroup(LPCTSTR GroupName);
+    void SetChanged(BOOL ChangedFlag);
+    void Simulate(LPCTSTR Text);
+    void ResetIP();
+    long OpenBrowser(LPCTSTR URL);
+    long SendPkt(LPCTSTR Packet);
+    long TranslateDebug(LPCTSTR Message);
+    void SetNotes(LPCTSTR Message);
+    long Connect();
+    long Disconnect();
+    BOOL Save(LPCTSTR Name);
+    void Help(LPCTSTR Name);
+    BSTR Menu(LPCTSTR Items, LPCTSTR Default);
+    void SetSelection(long StartLine, long EndLine, long StartColumn, long EndColumn);
+    void SetFrameBackgroundColour(long Colour);
+
+    // Save support (doc.h:2240 / doc.cpp:2152).  Headless there is no
+    // Save-As dialog: an empty path fails, otherwise the portable XML
+    // writer runs via OnSaveDocument.
+    BOOL DoSave(LPCTSTR lpszPathName, BOOL /*bReplace*/) {
+        CString strName(lpszPathName ? lpszPathName : "");
+        if (strName.IsEmpty())
+            return FALSE;                  // no dialog to prompt with
+        if (!OnSaveDocument(strName))
+            return FALSE;
+        m_strPathName = strName;      // CDocument::DoSave keeps the new path
+        return TRUE;
+    }
+    // doc.h:2695 / doc.cpp:1871 — the menu handler is just ConnectSocket().
+    void OnConnectionConnect() { ConnectSocket(); }
+    // Help display (doc.h; bodies in mushview.cpp / functionlist.cpp — GUI
+    // only).  Headless world.Help shows nothing.
+    void ShowHelp(LPCTSTR, LPCTSTR) {}
+    void ShowFunctionslist(CString, bool) {}
+
+    // ── Info family ── the REAL scripting/methods/methods_info.cpp is
+    // compiled into mushcore (doc.h:2816-3161 signatures).  View-backed
+    // GetInfo types use the file's own #ifndef _WIN32 arms (m_gui_* metrics,
+    // IWorldView seams); toolbar/frame metrics are 0 headless.
+    long GetLineCount();
+    BOOL IsConnected();
+    BSTR WorldName();
+    BSTR Version();
+    VARIANT GetInfo(long InfoType);
+    long GetSentBytes();
+    long GetReceivedBytes();
+    long GetConnectDuration();
+    double GetScriptTime();
+    BSTR WorldAddress();
+    long WorldPort();
+    VARIANT GetLineInfo(long LineNumber, short InfoType);
+    long GetLinesInBufferCount();
+    VARIANT GetStyleInfo(long LineNumber, long StyleNumber, short InfoType);
+    long GetSelectionStartLine();
+    long GetSelectionEndLine();
+    long GetSelectionStartColumn();
+    long GetSelectionEndColumn();
+    VARIANT GetHostAddress(LPCTSTR HostName);
+    BSTR GetHostName(LPCTSTR IPaddress);
+    BSTR GetWorldID();
+    long GetSysColor(long Index);
+    long GetSystemMetrics(long Index);
+    long GetDeviceCaps(long Index);
+    BSTR GetNotes();
+    BSTR ErrorDesc(long Code);
+    BSTR GetMainWindowPosition();
+    BSTR GetWorldWindowPosition();
+    VARIANT GetGlobalOption(LPCTSTR Name);
+    VARIANT GetGlobalOptionList();
+    class CMUSHView* GetFirstOutputWindow();   // no views headless → NULL
+    // doc.h:2228 / doc.cpp:1974 — JUMP_SIZE line-position lookup.  Portable
+    // body (byte-copy) in doc_portable.cpp until doc.cpp itself adopts.
+    POSITION GetLinePosition(long nLine);
+    // methods_output.cpp:175 — the non-Windows arm is pure IWorldView seam;
+    // portable copy in doc_portable.cpp until methods_output.cpp adopts.
+    BSTR GetWorldWindowPositionX(short Which);
     void Redraw() {}
     void DoFixMenus(void*) {}
     void ShowStatusLine(bool) {}

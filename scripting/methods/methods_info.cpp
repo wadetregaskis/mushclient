@@ -2,6 +2,7 @@
 
 // General "information" methods
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
@@ -14,6 +15,23 @@
 #include "../errors.h"
 #ifdef _WIN32
 #include <direct.h>
+#endif
+#else
+#include "platform/doc_stub.h"
+#include "../../png/png.h"   // PNG_LIBPNG_VER_STRING (GetInfo 80/81)
+// Minimal file-local stand-in for CWindowPlacement (winplace.h) so
+// GetMainWindowPosition compiles untouched headless — it only touches
+// rcNormalPosition (filled from the IWorldView main-frame rect; zeros with
+// no view attached).  The real class's profile/archive machinery lives in
+// winplace.cpp, which is GUI-only.
+struct CWindowPlacement : public WINDOWPLACEMENT { };
+// GUI corners headless: the view-metric GetInfo types use this file's own
+// #ifndef _WIN32 arms (m_gui_* metrics + the IWorldView seams); the
+// Windows-only toolbar/child-frame cases 251-264 already fork to
+// 0 / infobar / m_gui_* equivalents; GetFirstOutputWindow's view walk is
+// dead (GetFirstViewPosition() is NULL) so it returns NULL as on Windows
+// with no output window.  os_version is the zeroed windows_stubs.cpp
+// global -> GetInfo(77) "" and 265-268 = 0.
 #endif
 
 // Implements:

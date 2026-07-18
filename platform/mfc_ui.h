@@ -5718,8 +5718,35 @@ public:
     int    GetSecond() const { return 0; }
     CString Format(LPCTSTR) const { return {}; }
     CString Format(UINT)    const { return {}; }
-    CString Format(DWORD /*dwFlags*/, LCID /*lcid*/) const { return {}; }
-    void GetAsSystemTime(SYSTEMTIME& st) const { memset(&st, 0, sizeof(st)); }
+    // Windows: locale-default date+time.  Port rendering decision (locked by
+    // the old portable GetLineInfo "timestr"): "%m/%d/%Y %I:%M:%S %p" of the
+    // same instant in local time.  Port convention: m_dt stores raw Unix
+    // seconds (CTime::GetTime()), not an OLE DATE.
+    CString Format(DWORD /*dwFlags*/, LCID /*lcid*/) const {
+        time_t t = (time_t) m_dt;
+        struct tm tmv = {};
+        char buf[40] = "";
+        if (localtime_r(&t, &tmv))
+            strftime(buf, sizeof buf, "%m/%d/%Y %I:%M:%S %p", &tmv);
+        return CString(buf);
+    }
+    // Fill a local-time SYSTEMTIME from the stored Unix seconds so
+    // CTime(SYSTEMTIME) (local-time mktime) round-trips the instant —
+    // pushVariant's VT_DATE arm (lua_methods.cpp) depends on this.
+    void GetAsSystemTime(SYSTEMTIME& st) const {
+        memset(&st, 0, sizeof(st));
+        time_t t = (time_t) m_dt;
+        struct tm tmv = {};
+        if (localtime_r(&t, &tmv)) {
+            st.wYear      = (WORD) (tmv.tm_year + 1900);
+            st.wMonth     = (WORD) (tmv.tm_mon + 1);
+            st.wDayOfWeek = (WORD) tmv.tm_wday;
+            st.wDay       = (WORD) tmv.tm_mday;
+            st.wHour      = (WORD) tmv.tm_hour;
+            st.wMinute    = (WORD) tmv.tm_min;
+            st.wSecond    = (WORD) tmv.tm_sec;
+        }
+    }
     bool   operator==(const COleDateTime& o) const { return m_dt==o.m_dt; }
     bool   operator!=(const COleDateTime& o) const { return m_dt!=o.m_dt; }
     bool   operator< (const COleDateTime& o) const { return m_dt< o.m_dt; }

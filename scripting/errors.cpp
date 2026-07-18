@@ -8,7 +8,7 @@
 //   * headless (mushcore): the SAME adopted ErrorDesc resolves here — the old
 //     windows_stubs.cpp {0,NULL} sentinel (code-as-string fallback) is gone.
 // The matching eOK/e* code names live in scripting/errors.h; the Lua-name
-// table ("error_code") stays in lua_methods.cpp / lua_world_api_portable.cpp.
+// table ("error_code") stays in lua_methods.cpp.
 
 #if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"

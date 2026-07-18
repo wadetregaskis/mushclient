@@ -138,6 +138,18 @@ void MakeTableItem (lua_State * L, const char * name, const double n)
     lua_rawset(L, -3);
 }
 
+// Date item (lua_helpers.h:7; Utilities.cpp:1022 on Windows).  Windows
+// renders via COleDateTime::Format(0,0); the port's Format(DWORD,LCID)
+// (platform/mfc_ui.h) renders the same instant as a local-time
+// "%m/%d/%Y %I:%M:%S %p" string — the rendering the old portable
+// GetLineInfo "timestr" locked in.  Used by lua_methods.cpp:2990 (GetLineInfo).
+void MakeTableItem (lua_State * L, const char * name, const COleDateTime d)
+{
+    lua_pushstring(L, name);
+    lua_pushstring(L, d.Format((DWORD) 0, (LCID) 0));
+    lua_rawset(L, -3);
+}
+
 void MakeTableItemBool (lua_State * L, const char * name, const bool b)
 {
     lua_pushstring(L, name);
@@ -219,7 +231,7 @@ static int valid_utf8(const unsigned char* s, int len)
     return 0;
 }
 
-// xterm 256-colour table (initialised by lua_world_api_portable.cpp at load)
+// xterm 256-colour table (defined + initialised in doc_portable.cpp)
 extern COLORREF xterm_256_colours[256];
 
 // ── UTF-8 encode: codepoints → UTF-8 string ──────────────────────────────────
@@ -805,394 +817,64 @@ static const luaL_Reg utils_lib[] = {
     { nullptr, nullptr }
 };
 
-static void RegisterUtilsLib(lua_State* L)
-{
-    luaL_register(L, "utils", utils_lib);
-    lua_pop(L, 1);
-}
+// The real RegisterLuaRoutines (lua_methods.cpp) finishes with
+//     luaL_register (L, "utils", ptr_xmllib);
+// On Windows ptr_xmllib points at lua_utils.cpp's "utils" grab-bag list
+// (xmlread, pickers, msgbox, ...).  Exporting it here, pointing at the FULL
+// portable utils_lib, makes that one call register the entire portable utils
+// library — no lua_methods.cpp edits needed.
+const struct luaL_Reg * ptr_xmllib = utils_lib;
 
-// ── RegisterLuaRoutines ───────────────────────────────────────────────────────
-// On Windows this (in lua_methods.cpp) registers the full MUSHclient Lua API
-// ("world" library, trigger/alias/timer flag tables, colour name tables, etc.).
-// On macOS we register the portable world library plus standard extension
-// modules (rex, compress, bits, bc, lpeg).
+// ── RegisterLuaRoutines / DisableDLLs ────────────────────────────────────────
+// GONE (Campaign C flip): the REAL lua_methods.cpp is compiled into mushcore
+// now and owns RegisterLuaRoutines (world library + _G metatable + all
+// constants tables + luaL_register(L, "utils", ptr_xmllib) → the utils_lib
+// above) and DisableDLLs (which also honours App.m_bEnablePackageLibrary and
+// installs the debug.debug / os.exit / io.popen replacements the portable
+// copy lacked).  The portable world library twin
+// (scripting/lua_world_api_portable.cpp) is deleted.
 
-// Forward declaration — implemented in lua_world_api_portable.cpp.
-void RegisterWorldLib(lua_State* L);
+// ── Portable-only Lua extras ─────────────────────────────────────────────────
+// The pre-flip portable world library exposed 20 names the Windows Lua API
+// does not register.  All are dropped for Windows parity EXCEPT
+// ExpandVariables — a port-only convenience that exercises real doc variable
+// state and is locked by tests/test_lua_scripting.cpp (ExpandVariables).
+// Registered AFTER RegisterLuaRoutines, from OpenLuaDelayed
+// (mushcore builds only) and the test fixture — never from lua_methods.cpp.
 
-extern "C" {
-    int luaopen_rex    (lua_State *);
-    int luaopen_compress (lua_State *);
-    int luaopen_bits   (lua_State *);
-    int luaopen_bc     (lua_State *);
-    int luaopen_lpeg   (lua_State *);
-}
-
-// Override for Lua print(): routes through world.Note() so output appears in
-// the MUSHclient output window rather than stdout.
-// Mirrors l_print() in lua_methods.cpp.
-static int l_print_via_note(lua_State* L)
+static int L_ExpandVariablesStr(lua_State* L)
 {
     lua_getfield(L, LUA_REGISTRYINDEX, DOCUMENT_STATE);
     CMUSHclientDoc* pDoc = static_cast<CMUSHclientDoc*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     if (!pDoc) return 0;
 
-    int n = lua_gettop(L);
-    string out;
-    lua_getglobal(L, "tostring");
-    for (int i = 1; i <= n; ++i) {
-        lua_pushvalue(L, -1);    // tostring
-        lua_pushvalue(L, i);     // arg
-        lua_call(L, 1, 1);
-        const char* s = lua_tostring(L, -1);
-        if (!s) luaL_error(L, "'tostring' must return a string");
-        if (i > 1) out += '\t';
-        out += s;
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);  // pop tostring
+    const char* raw = luaL_checkstring(L, 1);
+    CString result(raw);
 
-    pDoc->Note(out.c_str());
-    return 0;
+    // Walk the variable map; replace each @varname occurrence
+    POSITION pos = pDoc->GetVariableMap().GetStartPosition();
+    while (pos) {
+        CString key;
+        CVariable* pVar;
+        pDoc->GetVariableMap().GetNextAssoc(pos, key, pVar);
+        if (!pVar) continue;
+        CString token("@");
+        token += key;
+        result.Replace(token, pVar->strContents);
+    }
+    lua_pushstring(L, static_cast<const char*>(result));
+    return 1;
 }
 
-int RegisterLuaRoutines (lua_State * L)
+void RegisterPortableLuaExtras (lua_State * L)
 {
-    // Open all standard Lua libraries (io, os, string, table, math, package …)
-    luaL_openlibs(L);
-
-    // Register the "world" library (Note, SetVariable, Send, Execute, …).
-    // Also sets up: the _G metatable (bare Note() calls) and the mushclient.world
-    // named metatable (w:Note() OOP-style calls from GetWorld()).
-    RegisterWorldLib(L);
-    RegisterUtilsLib(L);
-
-    // Override print() to route through world.Note() — mirrors l_print in
-    // lua_methods.cpp so scripts calling print() see output in the world window.
-    lua_pushcfunction(L, l_print_via_note);
-    lua_setglobal(L, "print");
-
-    // ── Flag/constant tables (mirror lua_methods.cpp MakeFlagsTable calls) ──
-    // trigger_flag table
-    lua_newtable(L);
-    lua_pushstring(L,"Enabled");          lua_pushnumber(L,    1); lua_rawset(L,-3);
-    lua_pushstring(L,"OmitFromLog");      lua_pushnumber(L,    2); lua_rawset(L,-3);
-    lua_pushstring(L,"OmitFromOutput");   lua_pushnumber(L,    4); lua_rawset(L,-3);
-    lua_pushstring(L,"KeepEvaluating");   lua_pushnumber(L,    8); lua_rawset(L,-3);
-    lua_pushstring(L,"IgnoreCase");       lua_pushnumber(L,   16); lua_rawset(L,-3);
-    lua_pushstring(L,"RegularExpression");lua_pushnumber(L,   32); lua_rawset(L,-3);
-    lua_pushstring(L,"ExpandVariables");  lua_pushnumber(L,  512); lua_rawset(L,-3);
-    lua_pushstring(L,"Replace");          lua_pushnumber(L, 1024); lua_rawset(L,-3);
-    lua_pushstring(L,"LowercaseWildcard");lua_pushnumber(L, 2048); lua_rawset(L,-3);
-    lua_pushstring(L,"Temporary");        lua_pushnumber(L,16384); lua_rawset(L,-3);
-    lua_pushstring(L,"OneShot");          lua_pushnumber(L,32768); lua_rawset(L,-3);
-    lua_setglobal(L, "trigger_flag");
-
-    // alias_flag table
-    lua_newtable(L);
-    lua_pushstring(L,"Enabled");          lua_pushnumber(L,    1); lua_rawset(L,-3);
-    lua_pushstring(L,"KeepEvaluating");   lua_pushnumber(L,    8); lua_rawset(L,-3);
-    lua_pushstring(L,"IgnoreAliasCase");  lua_pushnumber(L,   32); lua_rawset(L,-3);
-    lua_pushstring(L,"OmitFromLogFile");  lua_pushnumber(L,   64); lua_rawset(L,-3);
-    lua_pushstring(L,"RegularExpression");lua_pushnumber(L,  128); lua_rawset(L,-3);
-    lua_pushstring(L,"ExpandVariables");  lua_pushnumber(L,  512); lua_rawset(L,-3);
-    lua_pushstring(L,"Replace");          lua_pushnumber(L, 1024); lua_rawset(L,-3);
-    lua_pushstring(L,"AliasSpeedWalk");   lua_pushnumber(L, 2048); lua_rawset(L,-3);
-    lua_pushstring(L,"AliasQueue");       lua_pushnumber(L, 4096); lua_rawset(L,-3);
-    lua_pushstring(L,"AliasMenu");        lua_pushnumber(L, 8192); lua_rawset(L,-3);
-    lua_pushstring(L,"Temporary");        lua_pushnumber(L,16384); lua_rawset(L,-3);
-    lua_pushstring(L,"OneShot");          lua_pushnumber(L,32768); lua_rawset(L,-3);
-    lua_setglobal(L, "alias_flag");
-
-    // timer_flag table
-    lua_newtable(L);
-    lua_pushstring(L,"Enabled");          lua_pushnumber(L,    1); lua_rawset(L,-3);
-    lua_pushstring(L,"AtTime");           lua_pushnumber(L,    2); lua_rawset(L,-3);
-    lua_pushstring(L,"OneShot");          lua_pushnumber(L,    4); lua_rawset(L,-3);
-    lua_pushstring(L,"TimerSpeedWalk");   lua_pushnumber(L,    8); lua_rawset(L,-3);
-    lua_pushstring(L,"TimerNote");        lua_pushnumber(L,   16); lua_rawset(L,-3);
-    lua_pushstring(L,"ActiveWhenClosed"); lua_pushnumber(L,   32); lua_rawset(L,-3);
-    lua_pushstring(L,"Replace");          lua_pushnumber(L, 1024); lua_rawset(L,-3);
-    lua_pushstring(L,"Temporary");        lua_pushnumber(L,16384); lua_rawset(L,-3);
-    lua_setglobal(L, "timer_flag");
-
-    // custom_colour table
-    lua_newtable(L);
-    lua_pushstring(L,"NoChange");  lua_pushnumber(L,-1); lua_rawset(L,-3);
-    for (int i = 0; i < 16; ++i) {
-        char buf[12]; snprintf(buf,sizeof(buf),"Custom%d",i+1);
-        lua_pushstring(L,buf); lua_pushnumber(L,i); lua_rawset(L,-3);
-    }
-    lua_pushstring(L,"CustomOther"); lua_pushnumber(L,16); lua_rawset(L,-3);
-    lua_setglobal(L, "custom_colour");
-
-    // sendto table
-    lua_newtable(L);
-    lua_pushstring(L,"world");            lua_pushnumber(L, 0); lua_rawset(L,-3);
-    lua_pushstring(L,"command");          lua_pushnumber(L, 1); lua_rawset(L,-3);
-    lua_pushstring(L,"output");           lua_pushnumber(L, 2); lua_rawset(L,-3);
-    lua_pushstring(L,"status");           lua_pushnumber(L, 3); lua_rawset(L,-3);
-    lua_pushstring(L,"notepad");          lua_pushnumber(L, 4); lua_rawset(L,-3);
-    lua_pushstring(L,"notepadappend");    lua_pushnumber(L, 5); lua_rawset(L,-3);
-    lua_pushstring(L,"logfile");          lua_pushnumber(L, 6); lua_rawset(L,-3);
-    lua_pushstring(L,"notepadreplace");   lua_pushnumber(L, 7); lua_rawset(L,-3);
-    lua_pushstring(L,"commandqueue");     lua_pushnumber(L, 8); lua_rawset(L,-3);
-    lua_pushstring(L,"variable");         lua_pushnumber(L, 9); lua_rawset(L,-3);
-    lua_pushstring(L,"execute");          lua_pushnumber(L,10); lua_rawset(L,-3);
-    lua_pushstring(L,"speedwalk");        lua_pushnumber(L,11); lua_rawset(L,-3);
-    lua_pushstring(L,"script");           lua_pushnumber(L,12); lua_rawset(L,-3);
-    lua_pushstring(L,"immediate");        lua_pushnumber(L,13); lua_rawset(L,-3);
-    lua_pushstring(L,"scriptafteromit"); lua_pushnumber(L,14); lua_rawset(L,-3);
-    lua_setglobal(L, "sendto");
-
-    // error_code table — mirrors error_codes[] in lua_methods.cpp
-    // Allows scripts to write: if rc == error_code.eOK then ...
-    lua_newtable(L);
-    #define EC(name) lua_pushstring(L,#name); lua_pushnumber(L,name); lua_rawset(L,-3);
-    EC(eOK)
-    EC(eWorldOpen)           EC(eWorldClosed)          EC(eNoNameSpecified)
-    EC(eCannotPlaySound)     EC(eTriggerNotFound)       EC(eTriggerAlreadyExists)
-    EC(eTriggerCannotBeEmpty)EC(eInvalidObjectLabel)    EC(eScriptNameNotLocated)
-    EC(eAliasNotFound)       EC(eAliasAlreadyExists)    EC(eAliasCannotBeEmpty)
-    EC(eCouldNotOpenFile)    EC(eLogFileNotOpen)        EC(eLogFileAlreadyOpen)
-    EC(eLogFileBadWrite)     EC(eTimerNotFound)         EC(eTimerAlreadyExists)
-    EC(eVariableNotFound)    EC(eCommandNotEmpty)       EC(eBadRegularExpression)
-    EC(eTimeInvalid)         EC(eBadMapItem)            EC(eNoMapItems)
-    EC(eUnknownOption)       EC(eOptionOutOfRange)
-    EC(eTriggerSequenceOutOfRange)                      EC(eTriggerSendToInvalid)
-    EC(eTriggerLabelNotSpecified)
-    EC(ePluginFileNotFound)  EC(eProblemsLoadingPlugin) EC(ePluginCannotSetOption)
-    EC(ePluginCannotGetOption) EC(eNoSuchPlugin)        EC(eNotAPlugin)
-    EC(eNoSuchRoutine)       EC(ePluginDoesNotSaveState)EC(ePluginCouldNotSaveState)
-    EC(ePluginDisabled)      EC(eErrorCallingPluginRoutine)
-    EC(eCommandsNestedTooDeeply)
-    EC(eCannotCreateChatSocket) EC(eCannotLookupDomainName) EC(eNoChatConnections)
-    EC(eChatPersonNotFound)  EC(eBadParameter)          EC(eChatAlreadyListening)
-    EC(eChatIDNotFound)      EC(eChatAlreadyConnected)  EC(eClipboardEmpty)
-    EC(eFileNotFound)        EC(eAlreadyTransferringFile) EC(eNotTransferringFile)
-    EC(eNoSuchCommand)       EC(eArrayAlreadyExists)    EC(eArrayDoesNotExist)
-    EC(eArrayNotEvenNumberOfValues) EC(eImportedWithDuplicates) EC(eBadDelimiter)
-    EC(eSetReplacingExistingValue)  EC(eKeyDoesNotExist) EC(eCannotImport)
-    EC(eItemInUse)           EC(eSpellCheckNotActive)
-    EC(eCannotAddFont)       EC(ePenStyleNotValid)      EC(eUnableToLoadImage)
-    EC(eImageNotInstalled)   EC(eInvalidNumberOfPoints) EC(eInvalidPoint)
-    EC(eHotspotPluginChanged)EC(eHotspotNotInstalled)   EC(eNoSuchWindow)
-    EC(eBrushStyleNotValid)
-    #undef EC
-    lua_setglobal(L, "error_code");
-
-    // error_desc table — maps error code number → description string.
-    // Walks the REAL error_descriptions[] (single-sourced in scripting/errors.cpp,
-    // relocated from lua_methods.cpp), mirroring MakeIntFlagsTable(L,"error_desc",...)
-    // exactly — including the Windows-visible duplicate-key behaviour (the second
-    // 30037 entry wins).
-    {
-        extern int_flags_pair error_descriptions [];
-        lua_newtable(L);
-        for (const int_flags_pair * p = error_descriptions; p->val != NULL; p++) {
-            lua_pushnumber(L, p->key);
-            lua_pushstring(L, Translate (p->val));
-            lua_rawset(L, -3);
-        }
-        lua_setglobal(L, "error_desc");
-    }
-
-    // colour_names table — mirrors the App.m_ColoursMap iteration in lua_methods.cpp.
-    // On non-Windows the map is populated by MXP_LoadColours() via mxpcolours.cpp
-    // which stores entries in App.m_ColoursMap.  Iterate it here.
-    {
-        lua_newtable(L);
-        POSITION pos = App.m_ColoursMap.GetStartPosition();
-        while (pos) {
-            CColours* pColour = nullptr;
-            CString   strName;
-            App.m_ColoursMap.GetNextAssoc(pos, strName, pColour);
-            if (pColour) {
-                lua_pushstring(L, static_cast<const char*>(strName));
-                lua_pushnumber(L, static_cast<double>(pColour->iColour));
-                lua_rawset(L, -3);
-            }
-        }
-        lua_setglobal(L, "colour_names");
-    }
-
-    // miniwin table — complete mirror of miniwindow_flags[] in lua_methods.cpp.
-    // Window* functions are not implemented in the portable build, but the
-    // constants table must exist so plugins/scripts that reference miniwin.*
-    // at load time do not raise a nil-index error.
-    lua_newtable(L);
-    #define MW(name,val) lua_pushstring(L,name); lua_pushnumber(L,val); lua_rawset(L,-3);
-    // Window position / stretch modes
-    MW("pos_stretch_to_view",              0) MW("pos_stretch_to_view_with_aspect", 1)
-    MW("pos_stretch_to_owner",             2) MW("pos_stretch_to_owner_with_aspect",3)
-    MW("pos_top_left",    4)  MW("pos_top_center",    5)  MW("pos_top_right",    6)
-    MW("pos_center_right",7)  MW("pos_bottom_right",  8)  MW("pos_bottom_center",9)
-    MW("pos_bottom_left",10)  MW("pos_center_left",  11)  MW("pos_center_all",  12)
-    MW("pos_tile",       13)
-    // WindowCreate flags
-    MW("create_underneath",        0x01) MW("create_absolute_location", 0x02)
-    MW("create_transparent",       0x04) MW("create_ignore_mouse",      0x08)
-    MW("create_keep_hotspots",     0x10)
-    // Pen styles
-    MW("pen_solid",        PS_SOLID)      MW("pen_dash",         PS_DASH)
-    MW("pen_dot",          PS_DOT)        MW("pen_dash_dot",     PS_DASHDOT)
-    MW("pen_dash_dot_dot", PS_DASHDOTDOT) MW("pen_null",         PS_NULL)
-    MW("pen_inside_frame", PS_INSIDEFRAME)
-    MW("pen_endcap_round", PS_ENDCAP_ROUND)  MW("pen_endcap_square", PS_ENDCAP_SQUARE)
-    MW("pen_endcap_flat",  PS_ENDCAP_FLAT)
-    MW("pen_join_round",   PS_JOIN_ROUND)    MW("pen_join_bevel",    PS_JOIN_BEVEL)
-    MW("pen_join_miter",   PS_JOIN_MITER)
-    // Rect op actions
-    MW("rect_frame",1) MW("rect_fill",2) MW("rect_invert",3) MW("rect_3d_rect",4)
-    MW("rect_draw_edge",5) MW("rect_flood_fill_border",6) MW("rect_flood_fill_surface",7)
-    // Rect edge styles (for rect_draw_edge colour1 arg)
-    MW("rect_edge_raised", EDGE_RAISED)  MW("rect_edge_etched", EDGE_ETCHED)
-    MW("rect_edge_bump",   EDGE_BUMP)    MW("rect_edge_sunken", EDGE_SUNKEN)
-    // Rect edge sides (for rect_draw_edge colour2 arg — OR together)
-    MW("rect_edge_at_top_left",     BF_TOPLEFT)     MW("rect_edge_at_top_right",    BF_TOPRIGHT)
-    MW("rect_edge_at_bottom_left",  BF_BOTTOMLEFT)  MW("rect_edge_at_bottom_right", BF_BOTTOMRIGHT)
-    MW("rect_edge_at_all",          BF_RECT)
-    MW("rect_diagonal_end_top_left",      BF_DIAGONAL_ENDTOPLEFT)
-    MW("rect_diagonal_end_top_right",     BF_DIAGONAL_ENDTOPRIGHT)
-    MW("rect_diagonal_end_bottom_left",   BF_DIAGONAL_ENDBOTTOMLEFT)
-    MW("rect_diagonal_end_bottom_right",  BF_DIAGONAL_ENDBOTTOMRIGHT)
-    MW("rect_option_fill_middle",       BF_MIDDLE)
-    MW("rect_option_softer_buttons",    BF_SOFT)
-    MW("rect_option_flat_borders",      BF_FLAT)
-    MW("rect_option_monochrom_borders", BF_MONO)
-    // Circle op actions
-    MW("circle_ellipse",1) MW("circle_rectangle",2) MW("circle_round_rectangle",3)
-    MW("circle_chord",4)   MW("circle_pie",5)
-    // Gradient modes
-    MW("gradient_horizontal",1) MW("gradient_vertical",2) MW("gradient_texture",3)
-    // Font charset
-    MW("font_charset_ansi",    ANSI_CHARSET)
-    MW("font_charset_default", DEFAULT_CHARSET)
-    MW("font_charset_symbol",  SYMBOL_CHARSET)
-    // Font family
-    MW("font_family_any",     FF_DONTCARE)  MW("font_family_roman",    FF_ROMAN)
-    MW("font_family_swiss",   FF_SWISS)     MW("font_family_modern",   FF_MODERN)
-    MW("font_family_script",  FF_SCRIPT)    MW("font_family_decorative",FF_DECORATIVE)
-    // Font pitch
-    MW("font_pitch_default",    DEFAULT_PITCH)  MW("font_pitch_fixed",     FIXED_PITCH)
-    MW("font_pitch_variable",   VARIABLE_PITCH) MW("font_pitch_monospaced", MONO_FONT)
-    MW("font_truetype",         TRUETYPE_FONTTYPE)
-    // DrawImage modes
-    MW("image_copy",1) MW("image_stretch",2) MW("image_transparent_copy",3)
-    // ImageOp actions
-    MW("image_fill_ellipse",1) MW("image_fill_rectangle",2)
-    MW("image_fill_round_fill_rectangle",3)
-    // Brush styles
-    MW("brush_solid",0)  MW("brush_null",1)
-    MW("brush_hatch_horizontal",2)        MW("brush_hatch_vertical",3)
-    MW("brush_hatch_forwards_diagonal",4) MW("brush_hatch_backwards_diagonal",5)
-    MW("brush_hatch_cross",6)             MW("brush_hatch_cross_diagonal",7)
-    MW("brush_fine_pattern",8)            MW("brush_medium_pattern",9)
-    MW("brush_coarse_pattern",10)         MW("brush_waves_horizontal",11)
-    MW("brush_waves_vertical",12)
-    // Blend modes (all 64)
-    MW("blend_normal",1)       MW("blend_average",2)               MW("blend_interpolate",3)
-    MW("blend_dissolve",4)     MW("blend_darken",5)                MW("blend_multiply",6)
-    MW("blend_colour_burn",7)  MW("blend_linear_burn",8)           MW("blend_inverse_colour_burn",9)
-    MW("blend_subtract",10)    MW("blend_lighten",11)              MW("blend_screen",12)
-    MW("blend_colour_dodge",13)MW("blend_linear_dodge",14)         MW("blend_inverse_colour_dodge",15)
-    MW("blend_add",16)         MW("blend_overlay",17)              MW("blend_soft_light",18)
-    MW("blend_hard_light",19)  MW("blend_vivid_light",20)          MW("blend_linear_light",21)
-    MW("blend_pin_light",22)   MW("blend_hard_mix",23)             MW("blend_difference",24)
-    MW("blend_exclusion",25)   MW("blend_reflect",26)              MW("blend_glow",27)
-    MW("blend_freeze",28)      MW("blend_heat",29)                 MW("blend_negation",30)
-    MW("blend_phoenix",31)     MW("blend_stamp",32)                MW("blend_xor",33)
-    MW("blend_and",34)         MW("blend_or",35)
-    MW("blend_red",36)         MW("blend_green",37)                MW("blend_blue",38)
-    MW("blend_yellow",39)      MW("blend_cyan",40)                 MW("blend_magenta",41)
-    MW("blend_green_limited_by_red",42)
-    MW("blend_green_limited_by_blue",43)
-    MW("blend_green_limited_by_average_of_red_and_blue",44)
-    MW("blend_blue_limited_by_red",45)
-    MW("blend_blue_limited_by_green",46)
-    MW("blend_blue_limited_by_average_of_red_and_green",47)
-    MW("blend_red_limited_by_green",48)
-    MW("blend_red_limited_by_blue",49)
-    MW("blend_red_limited_by_average_of_green_and_blue",50)
-    MW("blend_red_only",51)    MW("blend_green_only",52)           MW("blend_blue_only",53)
-    MW("blend_discard_red",54) MW("blend_discard_green",55)        MW("blend_discard_blue",56)
-    MW("blend_all_red",57)     MW("blend_all_green",58)            MW("blend_all_blue",59)
-    MW("blend_hue_mode",60)    MW("blend_saturation_mode",61)      MW("blend_colour_mode",62)
-    MW("blend_luminance_mode",63) MW("blend_hsl",64)
-    // Filter operations (all 27)
-    MW("filter_noise",1)              MW("filter_monochrome_noise",2)  MW("filter_blur",3)
-    MW("filter_sharpen",4)            MW("filter_find_edges",5)        MW("filter_emboss",6)
-    MW("filter_brightness",7)         MW("filter_contrast",8)          MW("filter_gamma",9)
-    MW("filter_red_brightness",10)    MW("filter_red_contrast",11)     MW("filter_red_gamma",12)
-    MW("filter_green_brightness",13)  MW("filter_green_contrast",14)   MW("filter_green_gamma",15)
-    MW("filter_blue_brightness",16)   MW("filter_blue_contrast",17)    MW("filter_blue_gamma",18)
-    MW("filter_grayscale",19)         MW("filter_normal_grayscale",20)
-    MW("filter_brightness_multiply",21)
-    MW("filter_red_brightness_multiply",22)
-    MW("filter_green_brightness_multiply",23)
-    MW("filter_blue_brightness_multiply",24)
-    MW("filter_lesser_blur",25)       MW("filter_minor_blur",26)       MW("filter_average",27)
-    // Cursor modes for WindowAddHotspot
-    MW("cursor_none",-1)       MW("cursor_arrow",0)        MW("cursor_hand",1)
-    MW("cursor_ibeam",2)       MW("cursor_plus",3)         MW("cursor_wait",4)
-    MW("cursor_up",5)          MW("cursor_nw_se_arrow",6)  MW("cursor_ne_sw_arrow",7)
-    MW("cursor_ew_arrow",8)    MW("cursor_ns_arrow",9)     MW("cursor_both_arrow",10)
-    MW("cursor_x",11)          MW("cursor_help",12)
-    // Hotspot flags
-    MW("hotspot_report_all_mouseovers", 0x01)
-    MW("hotspot_got_shift",    0x01)   MW("hotspot_got_control",  0x02)
-    MW("hotspot_got_alt",      0x04)   MW("hotspot_got_lh_mouse", 0x10)
-    MW("hotspot_got_rh_mouse", 0x20)   MW("hotspot_got_dbl_click",0x40)
-    MW("hotspot_got_not_first",0x80)   MW("hotspot_got_middle_mouse",0x200)
-    // MergeImageAlpha modes
-    MW("merge_straight",0)     MW("merge_transparent",1)
-    // Drag handler callback flags
-    MW("drag_got_shift",0x01)  MW("drag_got_control",0x02) MW("drag_got_alt",0x04)
-    // Mouse wheel handler callback flags
-    MW("wheel_got_shift",0x01) MW("wheel_got_control",0x02) MW("wheel_got_alt",0x04)
-    MW("wheel_scroll_back",0x100)
-    #undef MW
-    lua_setglobal(L, "miniwin");
-
-    // Register vendored C extension modules
-    lua_pushcfunction(L, luaopen_rex);      lua_call(L, 0, 0);
-    lua_pushcfunction(L, luaopen_compress); lua_call(L, 0, 0);
-    lua_pushcfunction(L, luaopen_bits);     lua_call(L, 0, 0);
-    lua_pushcfunction(L, luaopen_bc);       lua_call(L, 0, 0);
-    lua_pushcfunction(L, luaopen_lpeg);     lua_call(L, 0, 0);
-
-    // xterm 256-colour table (used by scripts that call extended_colours[n])
-    lua_newtable(L);
-    for (int i = 0; i < 256; i++) {
-        lua_pushnumber(L, xterm_256_colours[i]);
-        lua_rawseti(L, -2, i);
-    }
-    lua_setglobal(L, "extended_colours");
-
-    return 0;
-}
-
-// ── DisableDLLs ───────────────────────────────────────────────────────────────
-// On Windows this removes package.loadlib and the C-extension loaders so scripts
-// cannot load arbitrary DLLs.  On macOS we do the same to keep security parity.
-
-int DisableDLLs (lua_State * L)
-{
-    // Remove package.loadlib and DLL/C-extension loaders (indices 3 & 4)
-    lua_getglobal(L, "package");
+    lua_getglobal(L, "world");
     if (lua_istable(L, -1)) {
-        lua_pushnil(L); lua_setfield(L, -2, "loadlib");
-
-        lua_getfield(L, -1, "loaders");
-        if (lua_istable(L, -1)) {
-            lua_pushnil(L); lua_rawseti(L, -2, 4);
-            lua_pushnil(L); lua_rawseti(L, -2, 3);
-        }
-        lua_pop(L, 1);  // pop loaders table
+        lua_pushcfunction(L, L_ExpandVariablesStr);
+        lua_setfield(L, -2, "ExpandVariables");
     }
-    lua_settop(L, 0);
-    return 0;
+    lua_pop(L, 1);
 }
 
 #endif  // LUA_VERSION

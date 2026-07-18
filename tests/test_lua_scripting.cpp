@@ -9,14 +9,12 @@
 //   - Hashing functions
 //   - String utilities (Replace, EditDistance, Metaphone, TranslateGerman)
 //
-// KNOWN PORTABLE-SUBSET FAILURES (deferred — low priority):
-// Several tests below (AddAndGetTrigger, DeleteTrigger, EnableDisableTrigger,
-// AddAndGetAlias, AddAndGetTimer, GuiStubsReturnValues,
-// SetAlphaOptionRoundTrip, ArrayCreateSetGet, MD5, SHA256, WorldAddress)
-// assert the FULL world API.  lua_world_api_portable.cpp (used by mushcore /
-// these tests) implements only a subset; the product, mushgui, uses
-// the complete scripting/lua_methods.cpp where these work.  Bringing the
-// portable layer to parity is deferred — the GUI is the product.
+// Since the Campaign C flip, mushcore compiles the REAL
+// scripting/lua_methods.cpp (the same 434-entry world library the Windows
+// build and mushgui use); the portable twin (lua_world_api_portable.cpp) is
+// gone.  These tests therefore assert the full Windows Lua API + marshalling.
+// GUI-only method families resolve to the inert headless bodies in
+// platform/doc_gui_method_stubs.cpp (see GuiStubsReturnValues).
 
 #ifdef MUSHCLIENT_LUA_SCRIPTING
 
@@ -39,6 +37,7 @@ extern "C" {
 
 lua_State* MakeLuaState();
 int RegisterLuaRoutines(lua_State*);
+extern "C" int luaopen_compress(lua_State*);   // utils.md5/sha256/tohex/... (lua_compress.c)
 
 static lua_State* make_lua(CMUSHclientDoc* pDoc)
 {
@@ -49,6 +48,8 @@ static lua_State* make_lua(CMUSHclientDoc* pDoc)
     lua_pushlightuserdata(L, static_cast<void*>(pDoc));
     lua_setfield(L, LUA_REGISTRYINDEX, DOCUMENT_STATE);
     RegisterLuaRoutines(L);
+    luaopen_compress(L);            // mirrors OpenLuaDelayed (lua_scripting.cpp:203)
+    RegisterPortableLuaExtras(L);   // port-only world.ExpandVariables
     lua_settop(L, 0);
     return L;
 }
@@ -243,9 +244,12 @@ TEST(LuaScripting, AddAndGetTrigger)
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    // AddTrigger(name, match, send, flags, sendto, group, sounds, script, sequence)
+    // AddTrigger(name, match, response, flags, colour, wildcard, sound[, script])
+    // — the Windows shape: L_AddTrigger (lua_methods.cpp:516-530) my_checks
+    // args 1-7 (script optional).  The old portable twin accepted 4-5 args —
+    // twin-only laxness.
     int n = run_ret(L,
-        "return world.AddTrigger('trig1', 'you have died', 'say I died!', 0, 0)"
+        "return world.AddTrigger('trig1', 'you have died', 'say I died!', 0, 0, 0, '')"
     );
     EXPECT_EQ(1, n);
     EXPECT_EQ(0.0, lua_tonumber(L, -1));   // eOK == 0
@@ -273,7 +277,7 @@ TEST(LuaScripting, DeleteTrigger)
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    EXPECT_TRUE(run(L, "world.AddTrigger('t1', 'pat', 'resp', 0, 0)"));
+    EXPECT_TRUE(run(L, "world.AddTrigger('t1', 'pat', 'resp', 0, 0, 0, '')"));
     EXPECT_TRUE(run(L, "world.DeleteTrigger('t1')"));
 
     CTrigger* t = nullptr;
@@ -288,7 +292,7 @@ TEST(LuaScripting, EnableDisableTrigger)
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    EXPECT_TRUE(run(L, "world.AddTrigger('t2', 'match', 'send', 1, 0)"));  // flags=1=Enabled
+    EXPECT_TRUE(run(L, "world.AddTrigger('t2', 'match', 'send', 1, 0, 0, '')"));  // flags=1=Enabled
 
     // Disable it
     EXPECT_TRUE(run(L, "world.EnableTrigger('t2', false)"));
@@ -316,7 +320,7 @@ TEST(LuaScripting, TriggerOptionRoundTrip)
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    EXPECT_TRUE(run(L, "world.AddTrigger('t3', 'pat', 'resp', 0, 0)"));
+    EXPECT_TRUE(run(L, "world.AddTrigger('t3', 'pat', 'resp', 0, 0, 0, '')"));
 
     // numeric option round trip
     run_ret(L, "return world.SetTriggerOption('t3', 'sequence', 42)");
@@ -474,7 +478,7 @@ TEST(LuaScripting, ExportImportXMLRoundTrip)
     ASSERT_NE(nullptr, L);
 
     EXPECT_TRUE(run(L,
-        "assert(world.AddTrigger('extrig', 'xyzzy plugh', 'say hello', 1, 0) == 0)\n"
+        "assert(world.AddTrigger('extrig', 'xyzzy plugh', 'say hello', 1, 0, 0, '') == 0)\n"
         "local xml = world.ExportXML(0, 'extrig')\n"
         "assert(type(xml) == 'string' and #xml > 0, 'export came back empty')\n"
         "assert(xml:find('<trigger', 1, true), 'no <trigger element')\n"
@@ -548,8 +552,10 @@ TEST(LuaScripting, GuiStubsReturnValues)
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    // WindowCreate → eNoSuchWindow (30073)
-    int n = run_ret(L, "return world.WindowCreate('w','',0,0,100,100,0,0)");
+    // WindowCreate → eNoSuchWindow (30073).  Argument shape is the Windows
+    // one — L_WindowCreate (lua_methods.cpp:6060-6075): (Name, Left, Top,
+    // Width, Height, Position, Flags, BackgroundColour), all my_check'd.
+    int n = run_ret(L, "return world.WindowCreate('w',0,0,100,100,0,0,0)");
     EXPECT_EQ(1, n);
     EXPECT_EQ(30073.0, lua_tonumber(L, -1));
     lua_settop(L, 0);
@@ -591,11 +597,16 @@ TEST(LuaScripting, GuiStubsReturnValues)
     EXPECT_EQ(-1.0, lua_tonumber(L, -1));
     lua_settop(L, 0);
 
-    // ActivateNotepad on a title that doesn't exist → eNoSuchWindow (30073),
-    // exactly as on Windows (no 'test' notepad was created here).
+    // ActivateNotepad marshals as a BOOLEAN on Windows — L_ActivateNotepad
+    // (lua_methods.cpp:419-424) does lua_pushboolean of the doc method's
+    // BOOL, and CMUSHclientDoc::ActivateNotepad (methods_notepad.cpp:210-241)
+    // returns false when FindNotepad comes back NULL.  No 'test' notepad
+    // exists here → false.  (The old portable twin returned the number
+    // 30073 — twin-only marshalling.)
     n = run_ret(L, "return world.ActivateNotepad('test')");
     EXPECT_EQ(1, n);
-    EXPECT_EQ(30073.0, lua_tonumber(L, -1));
+    EXPECT_TRUE(lua_isboolean(L, -1));
+    EXPECT_FALSE(lua_toboolean(L, -1));
     lua_settop(L, 0);
 
     lua_close(L);
@@ -717,9 +728,9 @@ TEST(LuaScripting, GetAlphaOptionListNonEmpty)
 
 // ── VT_ARRAY marshalling ──────────────────────────────────────────────────
 // GetTimerList / GetOptionList are now thin wrappers over the REAL doc
-// methods, whose safearray VARIANTs are marshalled by push_option_variant's
-// (VT_ARRAY|VT_VARIANT) branch.  Lock the shape: a 1-based, ipairs-iterable
-// Lua array of names.
+// methods, whose safearray VARIANTs are marshalled by pushVariant's
+// (VT_ARRAY|VT_VARIANT) branch (lua_methods.cpp:178-204).  Lock the shape:
+// a 1-based, ipairs-iterable Lua array of names.
 
 TEST(LuaScripting, SafeArrayListMarshalling)
 {
@@ -1025,8 +1036,8 @@ TEST(LuaScripting, Replace)
 
 // Locks the methods_info/methods_utilities adoption: the Lua bindings now
 // route through the REAL CMUSHclientDoc methods with lua_methods.cpp
-// marshalling (GetInfo via push_option_variant incl. VT_DATE→Unix-seconds,
-// Windows argument defaults).
+// marshalling (GetInfo via pushVariant incl. the VT_DATE→local-SYSTEMTIME→
+// CTime seconds round-trip, Windows argument defaults).
 TEST(LuaScripting, RealInfoFamilyWiring)
 {
     CMUSHclientDoc doc;
@@ -1144,6 +1155,12 @@ TEST(LuaScripting, ExpandVariables)
 }
 
 // ── Hashing functions ─────────────────────────────────────────────────────
+// world.MD5/world.SHA256 were port-only inventions (never Windows Lua names);
+// the canonical surface is utils.md5/utils.sha256 (lua_compress.c, opened by
+// OpenLuaDelayed on both platforms).  They return RAW digest bytes
+// (lua_pushlstring of the digest); utils.tohex renders uppercase hex
+// (lua_compress.c:261 "%02X") — lowercase it to compare against the
+// canonical test vectors.
 
 TEST(LuaScripting, MD5)
 {
@@ -1151,7 +1168,7 @@ TEST(LuaScripting, MD5)
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    int n = run_ret(L, "return world.MD5('hello')");
+    int n = run_ret(L, "return utils.tohex(utils.md5('hello')):lower()");
     EXPECT_EQ(1, n);
     EXPECT_STREQ("5d41402abc4b2a76b9719d911017c592", lua_tostring(L, -1));
     lua_settop(L, 0);
@@ -1165,7 +1182,7 @@ TEST(LuaScripting, SHA256)
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    int n = run_ret(L, "return world.SHA256('hello')");
+    int n = run_ret(L, "return utils.tohex(utils.sha256('hello')):lower()");
     EXPECT_EQ(1, n);
     // SHA-256 of "hello"
     EXPECT_STREQ("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",

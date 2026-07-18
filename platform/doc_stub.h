@@ -656,6 +656,19 @@ enum {
 // platform/windows_stubs.cpp (functionlist.cpp / lua_methods.cpp own the
 // real ones — both are mushapp-only).
 typedef struct { int key; const char * val; } int_flags_pair;
+// flags_pair (doc.h:474) — name → value rows for MakeFlagsTable (lua_methods.cpp)
+typedef struct { const char* key; int val; } flags_pair;
+
+// ── Miniwindow creation flags (miniwindow.h:79-83) ───────────────────────
+// Needed by the miniwin constants table in lua_methods.cpp (mushcore compiles
+// the real file post-flip; the CMiniWindow engine itself stays mushapp-only).
+#ifndef MINIWINDOW_DRAW_UNDERNEATH
+#  define MINIWINDOW_DRAW_UNDERNEATH   0x01   // draw underneath scrolling text
+#  define MINIWINDOW_ABSOLUTE_LOCATION 0x02   // use m_iLeft, m_iTop to position
+#  define MINIWINDOW_TRANSPARENT       0x04   // draw transparently
+#  define MINIWINDOW_IGNORE_MOUSE      0x08   // ignore mouse-down, mouse-over etc.
+#  define MINIWINDOW_KEEP_HOTSPOTS     0x10   // retain existing hotspots
+#endif
 typedef struct
   {
   int           iInfoType;       // which info number it is
@@ -1252,6 +1265,18 @@ public:
     // as Windows does when the open fails).
     class CDocument* OpenDocumentFile(LPCTSTR) { return nullptr; }
 
+    // ── App-level notepad surface (MUSHclient.h:279-285).  Used by the Lua
+    // debugger fallback (lua_methods.cpp our_lua_debug_colournote).  Headless
+    // there are no app-owned notepad windows: append fails, activate fails —
+    // the same results the Windows bodies produce with no notepad open.
+    bool AppendToTheNotepad (const CString /*strTitle*/, const CString /*strText*/,
+                             const bool /*bReplace*/, const int /*iNotepadType*/)
+        { return false; }
+    BOOL ActivateNotepad (LPCTSTR /*Title*/) { return FALSE; }
+    // Last debug.debug() command (MUSHclient.h:212) — preloaded into the
+    // debugger dialog; headless it just round-trips through the stand-in.
+    CString m_strLastDebugCommand;
+
     CAtomicElementMap  m_ElementMap;
     CMapStringToString m_EntityMap;
     CColoursMap        m_ColoursMap;
@@ -1669,6 +1694,7 @@ const char* strnrchr(const char* s, const char c, size_t count);   // last c wit
 extern "C" {
     void   init_genrand(unsigned long seed);
     double genrand(void);
+    void   init_by_array(unsigned long init_key[], int key_length);  // MtSrand table form (stdafx.h:875)
 }
 
 // ── Free function stubs ──────────────────────────────────────────────────
@@ -1907,6 +1933,11 @@ const int VERSION = 15;                  // version number written to world file
 
 // ── Forward declaration for the UDP listener map (doc.h uses UDPsocket*) ──
 class UDPsocket;
+
+// ── Forward declaration for the notepad document (TextDocument.h) ─────────
+// Headless FindNotepad always returns NULL; lua_methods.cpp's headless arm
+// carries a minimal file-local definition for the (unreachable) deref paths.
+class CTextDocument;
 
 // ── Minimal CMUSHclientDoc ────────────────────────────────────────────────
 class CMUSHclientDoc {
@@ -2170,6 +2201,7 @@ public:
     bool        m_bVariablesChanged = false;
     CString     m_strCurrentLine;           // line currently received from MUD (set during trigger processing)
     bool        m_bMapping          = false;
+    BOOL        m_bRemoveMapReverses = FALSE;   // doc.h:2802 — world.SetRemoveMapReverses
     CStringList m_strMapList;
 
     // ── Hyperlink display options ──────────────────────────────────────────
@@ -2609,7 +2641,10 @@ public:
     CString GetPathName()  const { return m_strPathName; }
     CString GetTitle()     const { return m_mush_name; }
     BOOL    IsModified()   const { return FALSE; }  // not tracked portably
-    void    SetPathName(const CString& path) { m_strPathName = path; }
+    // Second parameter mirrors CDocument::SetPathName(LPCTSTR, BOOL bAddToMRU);
+    // there is no MRU headless, so it is accepted and ignored
+    // (world.Save → lua_methods.cpp SetPathName (strOldName, FALSE)).
+    void    SetPathName(const CString& path, BOOL /*bAddToMRU*/ = TRUE) { m_strPathName = path; }
     void    SetTitle(const CString& title)   { m_mush_name = title; }
 
     // ── Constructor / destructor / move ──────────────────────────────
@@ -3405,9 +3440,162 @@ public:
     // doc_portable.cpp routes to ResolveAllEntryPoints (Lua-only; no
     // CMissingEntryPoints dialog) and returns false (= no errors).
     bool FindAllEntryPoints (void);
-    // Notepad activation (doc.h:2864): headless there are no notepad
-    // windows to raise — the text itself lands via AppendToTheNotepad.
-    BOOL ActivateNotepad (LPCTSTR /*Title*/) { return TRUE; }
+    // Notepad activation (doc.h:2864): raise a notepad window via the GUI
+    // hook; headless there are none, so this is FALSE — exactly what the
+    // Windows body (methods_notepad.cpp:210-241) computes when FindNotepad
+    // comes back NULL.
+    BOOL ActivateNotepad (LPCTSTR Title) {
+        return g_wxhook_activate_notepad && g_wxhook_activate_notepad (Title);
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // The five GUI method families (campaign C flip): declarations are
+    // doc.h-exact; the inert headless bodies live in
+    // platform/doc_gui_method_stubs.cpp.  Each returns the canonical
+    // no-GUI result; delete family-by-family as the real TUs adopt.
+    // ═════════════════════════════════════════════════════════════════
+
+    // ── Miniwindow family — 49 methods (methods_miniwindows.cpp, mushapp-only) ──
+    // Inert headless: ops → eNoSuchWindow; *List → empty safearray (empty table);
+    // *Info → VT_NULL (nil); WindowMenu → empty BSTR.  Bodies in
+    // platform/doc_gui_method_stubs.cpp; delete family-by-family as the real
+    // TUs are adopted (Phase 2 of the campaign endgame).
+    long BlendPixel(long Blend, long Base, short Mode, double Opacity);
+    long FilterPixel(long Pixel, short Operation, double Options);
+    long WindowAddHotspot(LPCTSTR Name, LPCTSTR HotspotId, long Left, long Top, long Right, long Bottom, LPCTSTR MouseOver, LPCTSTR CancelMouseOver, LPCTSTR MouseDown, LPCTSTR CancelMouseDown, LPCTSTR MouseUp, LPCTSTR TooltipText, long Cursor, long Flags);
+    long WindowArc(LPCTSTR Name, long Left, long Top, long Right, long Bottom, long x1, long y1, long x2, long y2, long PenColour, long PenStyle, long PenWidth);
+    long WindowBezier(LPCTSTR Name, LPCTSTR Points, long PenColour, long PenStyle, long PenWidth);
+    long WindowBlendImage(LPCTSTR Name, LPCTSTR ImageId, long Left, long Top, long Right, long Bottom, short Mode, double Opacity, long SrcLeft, long SrcTop, long SrcRight, long SrcBottom);
+    long WindowCircleOp(LPCTSTR Name, short Action, long Left, long Top, long Right, long Bottom, long PenColour, long PenStyle, long PenWidth, long BrushColour, long BrushStyle, long Extra1, long Extra2, long Extra3, long Extra4);
+    long WindowCreate(LPCTSTR Name, long Left, long Top, long Width, long Height, short Position, long Flags, long BackgroundColour);
+    long WindowCreateImage(LPCTSTR Name, LPCTSTR ImageId, long Row1, long Row2, long Row3, long Row4, long Row5, long Row6, long Row7, long Row8);
+    long WindowDelete(LPCTSTR Name);
+    long WindowDeleteAllHotspots(LPCTSTR Name);
+    long WindowDeleteHotspot(LPCTSTR Name, LPCTSTR HotspotId);
+    long WindowDragHandler(LPCTSTR Name, LPCTSTR HotspotId, LPCTSTR MoveCallback, LPCTSTR ReleaseCallback, long Flags);
+    long WindowDrawImage(LPCTSTR Name, LPCTSTR ImageId, long Left, long Top, long Right, long Bottom, short Mode, long SrcLeft, long SrcTop, long SrcRight, long SrcBottom);
+    long WindowDrawImageAlpha(LPCTSTR Name, LPCTSTR ImageId, long Left, long Top, long Right, long Bottom, double Opacity, long SrcLeft, long SrcTop);
+    long WindowFilter(LPCTSTR Name, long Left, long Top, long Right, long Bottom, short Operation, double Options);
+    long WindowFont(LPCTSTR Name, LPCTSTR FontId, LPCTSTR FontName, double Size, BOOL Bold, BOOL Italic, BOOL Underline, BOOL Strikeout, short Charset, short PitchAndFamily);
+    VARIANT WindowFontInfo(LPCTSTR Name, LPCTSTR FontId, long InfoType);
+    VARIANT WindowFontList(LPCTSTR Name);
+    long WindowGetImageAlpha(LPCTSTR Name, LPCTSTR ImageId, long Left, long Top, long Right, long Bottom, long SrcLeft, long SrcTop);
+    long WindowGetPixel(LPCTSTR Name, long x, long y);
+    long WindowGradient(LPCTSTR Name, long Left, long Top, long Right, long Bottom, long StartColour, long EndColour, short Mode);
+    VARIANT WindowHotspotInfo(LPCTSTR Name, LPCTSTR HotspotId, long InfoType);
+    VARIANT WindowHotspotList(LPCTSTR Name);
+    long WindowHotspotTooltip(LPCTSTR Name, LPCTSTR HotspotId, LPCTSTR TooltipText);
+    long WindowImageFromWindow(LPCTSTR Name, LPCTSTR ImageId, LPCTSTR SourceWindow);
+    VARIANT WindowImageInfo(LPCTSTR Name, LPCTSTR ImageId, long InfoType);
+    VARIANT WindowImageList(LPCTSTR Name);
+    long WindowImageOp(LPCTSTR Name, short Action, long Left, long Top, long Right, long Bottom, long PenColour, long PenStyle, long PenWidth, long BrushColour, LPCTSTR ImageId, long EllipseWidth, long EllipseHeight);
+    VARIANT WindowInfo(LPCTSTR Name, long InfoType);
+    long WindowLine(LPCTSTR Name, long x1, long y1, long x2, long y2, long PenColour, long PenStyle, long PenWidth);
+    VARIANT WindowList();
+    long WindowLoadImage(LPCTSTR Name, LPCTSTR ImageId, LPCTSTR FileName);
+    long WindowLoadImageMemory(LPCTSTR Name, LPCTSTR ImageId, unsigned char * Buffer, const size_t Length, const bool bAlpha);
+    BSTR WindowMenu(LPCTSTR Name, long Left, long Top, LPCTSTR Items);
+    long WindowMergeImageAlpha(LPCTSTR Name, LPCTSTR ImageId, LPCTSTR MaskId, long Left, long Top, long Right, long Bottom, short Mode, double Opacity, long SrcLeft, long SrcTop, long SrcRight, long SrcBottom);
+    long WindowMoveHotspot(LPCTSTR Name, LPCTSTR HotspotId, long Left, long Top, long Right, long Bottom);
+    long WindowPolygon(LPCTSTR Name, LPCTSTR Points, long PenColour, long PenStyle, long PenWidth, long BrushColour, long BrushStyle, BOOL Close, BOOL Winding);
+    long WindowPosition(LPCTSTR Name, long Left, long Top, short Position, long Flags);
+    long WindowRectOp(LPCTSTR Name, short Action, long Left, long Top, long Right, long Bottom, long Colour1, long Colour2);
+    long WindowResize(LPCTSTR Name, long Width, long Height, long BackgroundColour);
+    long WindowScrollwheelHandler(LPCTSTR Name, LPCTSTR HotspotId, LPCTSTR MoveCallback);
+    long WindowSetPixel(LPCTSTR Name, long x, long y, long Colour);
+    long WindowSetZOrder(LPCTSTR Name, long Order);
+    long WindowShow(LPCTSTR Name, BOOL Show);
+    long WindowText(LPCTSTR Name, LPCTSTR FontId, LPCTSTR Text, long Left, long Top, long Right, long Bottom, long Colour, BOOL Unicode);
+    long WindowTextWidth(LPCTSTR Name, LPCTSTR FontId, LPCTSTR Text, BOOL Unicode);
+    long WindowTransformImage(LPCTSTR Name, LPCTSTR ImageId, float Left, float Top, short Mode, float Mxx, float Mxy, float Myx, float Myy);
+    long WindowWrite(LPCTSTR Name, LPCTSTR FileName);
+
+    // ── Notepad family — 14 methods (methods_notepad.cpp, mushapp-only) ──────
+    // Headless: FindNotepad → NULL; ops route through the g_wxhook_notepad_*
+    // table (always null headless → the same FALSE/0/empty results the Windows
+    // bodies compute when FindNotepad returns NULL).
+    BOOL AppendToNotepad(LPCTSTR Title, LPCTSTR Contents);
+    long CloseNotepad(LPCTSTR Title, BOOL QuerySave);
+    CTextDocument * FindNotepad (const CString strTitle);
+    long GetNotepadLength(LPCTSTR Title);
+    VARIANT GetNotepadList(BOOL All);
+    BSTR GetNotepadText(LPCTSTR Title);
+    long MoveNotepadWindow(LPCTSTR Title, long Left, long Top, long Width, long Height);
+    long NotepadColour(LPCTSTR Title, LPCTSTR TextColour, LPCTSTR BackgroundColour);
+    long NotepadFont(LPCTSTR Title, LPCTSTR FontName, short Size, short Style, short Charset);
+    long NotepadReadOnly(LPCTSTR Title, BOOL ReadOnly);
+    BOOL NotepadSaveMethod(LPCTSTR Title, short Method);
+    BOOL ReplaceNotepad(LPCTSTR Title, LPCTSTR Contents);
+    long SaveNotepad(LPCTSTR Title, LPCTSTR FileName, BOOL ReplaceExisting);
+    BOOL SendToNotepad(LPCTSTR Title, LPCTSTR Contents);
+
+    // ── Chat family — 25 methods (methods_chat.cpp / chatsock.cpp, mushapp-only)
+    // Headless: no CChatSocket — error-code ops → eNoChatConnections; GetChatList
+    // → VT_EMPTY (the Windows zero-connection result); GetChatInfo/GetChatOption
+    // → VT_NULL (the Windows missing-socket result).
+    long ChatAcceptCalls(short Port);
+    long ChatCall(LPCTSTR Server, long Port);
+    long ChatCallzChat(LPCTSTR Server, long Port);
+    long ChatDisconnect(long ID);
+    long ChatDisconnectAll();
+    long ChatEverybody(LPCTSTR Message, BOOL Emote);
+    long ChatGetID(LPCTSTR Who);
+    long ChatGroup(LPCTSTR Group, LPCTSTR Message, BOOL Emote);
+    long ChatID(long ID, LPCTSTR Message, BOOL Emote);
+    long ChatMessage(long ID, short Message, LPCTSTR Text);
+    long ChatNameChange(LPCTSTR NewName);
+    void ChatNote(short NoteType, LPCTSTR Message);
+    long ChatPasteEverybody();
+    long ChatPasteText(long ID);
+    long ChatPeekConnections(long ID);
+    long ChatPersonal(LPCTSTR Who, LPCTSTR Message, BOOL Emote);
+    long ChatPing(long ID);
+    long ChatRequestConnections(long ID);
+    long ChatSendFile(long ID, LPCTSTR FileName);
+    void ChatStopAcceptingCalls();
+    long ChatStopFileTransfer(long ID);
+    VARIANT GetChatInfo(long ChatID, short InfoType);
+    VARIANT GetChatList();
+    VARIANT GetChatOption(long ID, LPCTSTR OptionName);
+    long SetChatOption(long ID, LPCTSTR OptionName, LPCTSTR Value);
+
+    // ── Output/view family — 25 methods (methods_output.cpp, mushapp-only) ───
+    // Headless: GUI ops → silent no-op / eOK; DeleteLines/DeleteOutput carry the
+    // old portable line-list semantics (crash-safe delete, display step 7);
+    // Pause/SetScroll/SetOutputFont drive the IWorldView seams as the portable
+    // twins did; GetRecentLines joins m_sRecentLines; GetFrame → 0.
+    void ActivateClient();
+    long AddFont(LPCTSTR PathName);
+    void Bookmark(long LineNumber, BOOL Set);
+    void DeleteLines(long Count);
+    void DeleteOutput();
+    void FlashIcon();
+    long GetFrame();
+    BSTR GetRecentLines(long Count);
+    void MoveMainWindow(long Left, long Top, long Width, long Height);
+    void MoveWorldWindowX(long Left, long Top, long Width, long Height, short Which);
+    void Pause(BOOL Flag);
+    void Repaint();
+    void ResetStatusTime();
+    long SetBackgroundColour(long Colour);
+    long SetBackgroundImage(LPCTSTR FileName, short Mode);
+    long SetCursor(long Cursor);
+    long SetForegroundImage(LPCTSTR FileName, short Mode);
+    void SetMainTitle(LPCTSTR Title);
+    void SetOutputFont(LPCTSTR FontName, short PointSize);
+    long SetScroll(long Position, BOOL Visible);
+    long SetToolBarPosition(short Which, BOOL Float, short Side, long Top, long Left);
+    void SetUnseenLines(long Counter);
+    void SetWorldWindowStatus(short Parameter);
+    long TextRectangle(long Left, long Top, long Right, long Bottom, long BorderOffset, long BorderColour, long BorderWidth, long OutsideFillColour, long OutsideFillStyle);
+    BOOL Transparency(long Key, short Amount);
+
+    // ── Accelerator family — 3 methods (methods_accelerators.cpp, mushapp-only)
+    // Headless: no key events — Accelerator/AcceleratorTo → eOK (accepted,
+    // inert); AcceleratorList → empty safearray.
+    long Accelerator(LPCTSTR Key, LPCTSTR Send);
+    long AcceleratorTo(LPCTSTR Key, LPCTSTR Send, short SendTo);
+    VARIANT AcceleratorList();
 
     // (ImportXMLFromString is gone — world.ImportXML now goes through the
     // REAL ImportXML (methods_xml.cpp) over the real archive-based loader.)

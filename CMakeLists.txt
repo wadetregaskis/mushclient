@@ -495,6 +495,11 @@ if(NOT WIN32)
         # CMUSHView::classCMUSHView, CSendView, CChatSocket, CPaneLine, etc.)
         platform/windows_stubs.cpp
 
+        # Campaign C flip: inert headless bodies of the five GUI method
+        # families (miniwindow/notepad/chat/output-view/accelerator) that the
+        # real scripting/lua_methods.cpp binds; the real TUs are mushapp-only.
+        platform/doc_gui_method_stubs.cpp
+
         # Campaign B CPlugin convergence: the REAL CPlugin (ctor/dtor,
         # ExecutePluginScript family, SendToAllPluginCallbacks family,
         # PluginCallbacksNames, ON_PLUGIN_* names) + the real plugin/UDP
@@ -577,13 +582,17 @@ if(NOT WIN32)
             # SQLite3 Lua binding (vendored)
             lsqlite/lsqlite3.c
 
-            # Portable Lua utilities (MakeLuaState, MakeTableItem, etc.)
-            # On Windows these come from Utilities.cpp / lua_methods.cpp.
+            # Portable Lua utilities (MakeLuaState, MakeTableItem, the full
+            # portable utils_lib exported as ptr_xmllib, port-only extras).
+            # On Windows these come from Utilities.cpp / lua_utils.cpp.
             scripting/lua_utils_portable.cpp
 
-            # Portable "world" Lua library (Note, SetVariable, Send, Execute, …)
-            # On Windows the full ~8000-line lua_methods.cpp is used instead.
-            scripting/lua_world_api_portable.cpp
+            # The REAL "world" Lua library (Campaign C flip) — the same
+            # ~8000-line lua_methods.cpp the Windows build and mushapp
+            # compile, built against doc_stub.h via its head-switch.  The
+            # GUI method families it binds resolve to the inert bodies in
+            # platform/doc_gui_method_stubs.cpp.
+            scripting/lua_methods.cpp
 
             # Portable world.Debug() — trigger/alias/timer/variable/telnet listings.
             # On Windows the full implementation is in world_debug.cpp (mushapp only).
@@ -934,7 +943,8 @@ if(NOT WIN32)
             # Full Lua utilities (replaces lua_utils_portable.cpp)
             scripting/lua_utils.cpp
 
-            # Full Lua method implementations (replaces lua_world_api_portable.cpp)
+            # Full Lua method implementations (shared with mushcore since the
+            # Campaign C flip; here it compiles against the real GUI headers)
             scripting/lua_methods.cpp
 
             # Progress dialog for Lua (Windows-style, no-op with stubs)

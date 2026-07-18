@@ -542,4 +542,75 @@ TEST(PalWorldView, InfobarFamilyNullHostIsInert)
     EXPECT_TRUE(w == 0 && h == 0);
 }
 
+// ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
+
+// doc_display_shared.cpp: "MUDs often send a prompt without a newline (e.g.
+// '> ') — we emit it as a pending SOutputLine so the output pane can display
+// it as a dim trailing row even before the '\n' arrives."
+TEST(PalWorldView, PromptWithoutNewlineEmittedAsPendingRow)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pWorldView = &view;
+
+    feed(doc, "> ");                              // prompt, no newline
+    EXPECT_EQ(0u, (unsigned)committed(view).size());   // not committed
+    ASSERT_TRUE(!view.lines.empty());
+    const SOutputLine& last = view.lines.back();
+    EXPECT_TRUE(last.pending);                    // emitted as pending row
+    EXPECT_STREQ("> ", line_text(last).c_str());
+
+    feed(doc, "\n");                              // now the newline arrives
+    auto done = committed(view);
+    ASSERT_EQ(1u, (unsigned)done.size());
+    EXPECT_STREQ("> ", line_text(done[0]).c_str());   // same text, committed
+}
+
+// doc_display_shared.cpp: "MUSHclient maps BLINK → italic [run.italic =
+// (pStyle->iFlags & BLINK) != 0]" — ANSI SGR 5 comes out the seam as italic.
+TEST(PalWorldView, BlinkFlagEmitsItalicRun)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pWorldView = &view;
+
+    feed(doc, "\033[5mblinky\033[0m plain\n");
+
+    auto lines = committed(view);
+    ASSERT_EQ(1u, (unsigned)lines.size());
+    ASSERT_TRUE(lines[0].size() >= 2);
+    EXPECT_TRUE(lines[0].front().italic);         // BLINK run → italic
+    EXPECT_FALSE(lines[0].back().italic);         // plain run stays plain
+}
+
+// doc_shared.cpp RemoveChunk: "Keep the GUI emission counter in sync with
+// lines removed from the head" — across a buffer eviction the drain neither
+// re-emits already-forwarded lines nor skips new ones.
+TEST(PalWorldView, EmissionCursorStaysAlignedAcrossBufferEviction)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pWorldView = &view;
+    doc.m_maxlines = 200;                 // low ceiling → eviction kicks in
+    doc.AllocateLinePositions();
+
+    char buf[32];
+    for (int i = 1; i <= 350; i++) {      // several RemoveChunk evictions
+        snprintf(buf, sizeof buf, "line %d\n", i);
+        feed(doc, buf);
+    }
+
+    // the committed sequence must be exactly line 1..350: contiguous, no
+    // duplicates, none skipped
+    auto lines = committed(view);
+    ASSERT_EQ(350u, (unsigned)lines.size());
+    for (int i = 1; i <= 350; i++) {
+        snprintf(buf, sizeof buf, "line %d", i);
+        EXPECT_STREQ(buf, line_text(lines[(size_t)(i - 1)]).c_str());
+        if (line_text(lines[(size_t)(i - 1)]) != buf) break;   // don't spam
+    }
+    // and the buffer itself really was evicted (the point of the test)
+    EXPECT_LE((long)doc.m_LineList.GetCount(), 200L);
+}
+
 MC_TEST_MAIN()

@@ -136,4 +136,65 @@ TEST(RegexpTest, RuntimeErrorIsNotReportedAsMatch) {
     delete r;
 }
 
+// ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
+
+// regexp.cpp GetWildcard: "this code is to ensure that we don't find a match
+// (eg. mob = Kobold) and then if duplicates were allowed, replace Kobold
+// with false." — with (?J) duplicate names, a later empty/unset duplicate
+// must not overwrite an earlier non-empty capture.
+TEST(RegexpTest, DuplicateNamedGroupKeepsNonEmptyCapture) {
+    t_regexp* r = regcomp("(?J)(?P<mob>\\w+) attacks(?: (?P<mob>\\w+))?");
+    ASSERT_NE(nullptr, r);
+
+    // second <mob> group does not participate: keep the first capture
+    EXPECT_GT(regexec(r, "Kobold attacks"), 0);
+    EXPECT_STREQ("Kobold", r->GetWildcard("mob").c_str());
+
+    // control: when the later duplicate IS set, it wins
+    EXPECT_GT(regexec(r, "Kobold attacks Dragon"), 0);
+    EXPECT_STREQ("Dragon", r->GetWildcard("mob").c_str());
+    delete r;
+}
+
+// regexp.cpp regexec: "int options = PCRE_NOTEMPTY; // don't match on an
+// empty string" — a pattern that can only match empty is reported as a
+// non-match, so triggers/aliases can never fire on zero-length matches.
+TEST(RegexpTest, EmptyOnlyMatchSuppressedByNotEmpty) {
+    t_regexp* r = regcomp("z*");
+    ASSERT_NE(nullptr, r);
+    EXPECT_EQ(0, regexec(r, "abc"));      // would match "" at offset 0
+    EXPECT_GT(regexec(r, "azzb"), 0);     // control: a real match still works
+    delete r;
+}
+
+// regexp.cpp: "if, and only if, we match, we will save the matching string,
+// the count and offsets" (and on NOMATCH "don't save matching string etc.")
+// — a failed match leaves the previous match's state intact.
+TEST(RegexpTest, NoMatchPreservesPreviousMatchState) {
+    t_regexp* r = regcomp("(\\w+)");
+    ASSERT_NE(nullptr, r);
+    EXPECT_GT(regexec(r, "hello"), 0);
+    EXPECT_STREQ("hello", r->GetWildcard(1).c_str());
+    int savedCount = r->m_iCount;
+
+    EXPECT_EQ(0, regexec(r, "!!!"));      // no word characters: no match
+    EXPECT_EQ(savedCount, r->m_iCount);   // state untouched
+    EXPECT_STREQ("hello", r->GetWildcard(1).c_str());
+    EXPECT_STREQ("hello", r->m_sTarget.c_str());
+    delete r;
+}
+
+// regexp.cpp: "inspired by a suggestion by Twisol (to remove a hard-coded
+// limit on the number of wildcards)" — offsets are sized from
+// PCRE_INFO_CAPTURECOUNT, so more than 10 groups extract fine.
+TEST(RegexpTest, MoreThanTenCaptureGroupsExtractable) {
+    t_regexp* r = regcomp("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)");
+    ASSERT_NE(nullptr, r);
+    EXPECT_GT(regexec(r, "abcdefghijkl"), 0);
+    EXPECT_EQ(13, r->m_iCount);           // 12 groups + whole match
+    EXPECT_STREQ("k", r->GetWildcard(11).c_str());
+    EXPECT_STREQ("l", r->GetWildcard(12).c_str());
+    delete r;
+}
+
 MC_TEST_MAIN()

@@ -207,4 +207,227 @@ TEST(AliasTest, SendToOutputDoesNotIncreaseSentCount)
     EXPECT_EQ(before, doc.m_nTotalLinesSent);
 }
 
+// ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
+
+// evaluate.cpp: "now that we have run all scripts etc., delete one-shot
+// aliases" — a one-shot alias fires exactly once and is then removed; the
+// same command afterwards passes through unmatched.
+TEST(AliasTest, OneShotAliasDeletedAfterFirstMatch)
+{
+    CMUSHclientDoc doc = make_doc();
+    CAlias* a = add_alias(doc, "once", "hi there");
+    a->bOneShot = TRUE;
+    a->strInternalName = CString("once");   // the key one-shot deletion uses
+
+    long before = doc.m_nTotalLinesSent;
+    type_command(doc, "once");
+    EXPECT_EQ(before + 1, doc.m_nTotalLinesSent);   // alias contents sent
+
+    // the alias is gone from the map (do NOT touch `a` — it was freed)
+    CAlias* gone = nullptr;
+    EXPECT_FALSE(doc.GetAliasMap().Lookup("once", gone));
+
+    before = doc.m_nTotalLinesSent;
+    type_command(doc, "once");                      // now unmatched: raw send
+    EXPECT_EQ(before + 1, doc.m_nTotalLinesSent);
+}
+
+// evaluate.cpp EvaluateCommand: "get rid of any carriage returns" — CRs are
+// stripped from the typed command before alias matching.
+TEST(AliasTest, CarriageReturnsStrippedBeforeAliasMatch)
+{
+    CMUSHclientDoc doc = make_doc();
+    CAlias* a = add_alias(doc, "north", "go north");
+
+    type_command(doc, "north\r");
+    EXPECT_EQ(1L, a->nMatched);       // "\r" did not defeat the match
+}
+
+// evaluate.cpp FixSendText: "If bThrowExceptions is set certain conditions
+// (such as variable not existing) cause an exception to be thrown" — an
+// alias send referencing an undefined @variable aborts the send: the
+// exception is caught, the command consumed, nothing written to the MUD.
+TEST(AliasTest, UndefinedVariableInAliasSendAbortsSend)
+{
+    CMUSHclientDoc doc = make_doc();
+    CAlias* a = add_alias(doc, "n", "kill @undefined_variable");
+    a->bExpandVariables = TRUE;
+
+    long before = doc.m_nTotalLinesSent;
+    type_command(doc, "n");
+    EXPECT_EQ(1L, a->nMatched);                    // it did match...
+    EXPECT_EQ(before, doc.m_nTotalLinesSent);      // ...but nothing was sent
+    EXPECT_TRUE(static_cast<FakeTransport*>(doc.m_pTransport)->sent.empty());
+}
+
+// evaluate.cpp: "Do only negative sequence number plugins at this point.
+// Suggested by Fiendish. Added in version 4.97." — a negative-sequence
+// plugin's aliases are evaluated before the world's, so its response is
+// sent first (matching aliases in both scopes each fire; order is the
+// observable).
+static CAlias* add_plugin_alias(CPlugin* p, const char* match, const char* send)
+{
+    CAlias* pa    = new CAlias();
+    pa->name      = CString(match);
+    pa->contents  = CString(send);
+    pa->bEnabled  = TRUE;
+    pa->iSendTo   = eSendToWorld;
+    pa->iSequence = DEFAULT_ALIAS_SEQUENCE;
+    pa->strLabel  = CString(match);
+    pa->strInternalName = CString(match);
+    pa->regexp    = regcomp(ConvertToRegularExpression(pa->name, true, true), 0);
+    p->m_AliasMap.SetAt(pa->strLabel, pa);
+    p->m_AliasArray.Add(pa);
+    return pa;
+}
+
+TEST(AliasTest, NegativeSequencePluginAliasEvaluatedBeforeWorld)
+{
+    {   // negative sequence: plugin alias evaluated (and sent) first
+        CMUSHclientDoc doc = make_doc();
+        CAlias* wa = add_alias(doc, "n", "world north");
+        CPlugin* p = new CPlugin(&doc);
+        p->m_bSaveState = false;
+        p->m_iSequence  = -100;
+        CAlias* pa = add_plugin_alias(p, "n", "plugin north");
+        doc.m_PluginList.push_back(p);
+
+        type_command(doc, "n");
+        EXPECT_EQ(1L, pa->nMatched);
+        EXPECT_EQ(1L, wa->nMatched);
+        EXPECT_STREQ("plugin north\r\nworld north\r\n",
+                     static_cast<FakeTransport*>(doc.m_pTransport)->sent.c_str());
+    }
+    {   // positive sequence: the world's alias runs (and sends) first
+        CMUSHclientDoc doc = make_doc();
+        add_alias(doc, "n", "world north");
+        CPlugin* p = new CPlugin(&doc);
+        p->m_bSaveState = false;
+        p->m_iSequence  = 100;
+        add_plugin_alias(p, "n", "plugin north");
+        doc.m_PluginList.push_back(p);
+
+        type_command(doc, "n");
+        EXPECT_STREQ("world north\r\nplugin north\r\n",
+                     static_cast<FakeTransport*>(doc.m_pTransport)->sent.c_str());
+    }
+}
+
+// ── Command stacking / execution depth (methods_commands.cpp) ─────────────
+
+static FakeTransport* wire(CMUSHclientDoc& doc)
+{
+    return static_cast<FakeTransport*>(doc.m_pTransport);
+}
+
+// methods_commands.cpp: "new in version 3.74 - command stack character at
+// start of line disables command stacking (the leading stack character
+// itself is deleted)".
+TEST(CommandTest, LeadingStackCharDisablesStacking)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_enable_command_stack = TRUE;
+    doc.m_strCommandStackCharacter = ";";
+
+    doc.Execute(";a;b");                     // leading ';' disables stacking
+    EXPECT_STREQ("a;b\r\n", wire(doc)->sent.c_str());
+
+    wire(doc)->sent.clear();
+    doc.Execute("a;b");                      // normal stacking: two lines
+    EXPECT_STREQ("a\r\nb\r\n", wire(doc)->sent.c_str());
+}
+
+// methods_commands.cpp: "convert two command stacks in a row to 0x01 ...
+// replace any 0x01 with one command stack character" — ';;' escapes to a
+// literal ';'.
+TEST(CommandTest, DoubledStackCharSendsLiteralStackChar)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_enable_command_stack = TRUE;
+    doc.m_strCommandStackCharacter = ";";
+
+    doc.Execute("say a;;b");
+    EXPECT_STREQ("say a;b\r\n", wire(doc)->sent.c_str());
+}
+
+// methods_commands.cpp: "do command stacking first, so that other things
+// (like aliases) work within command-stack".
+TEST(CommandTest, AliasesMatchWithinCommandStack)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_enable_command_stack = TRUE;
+    doc.m_strCommandStackCharacter = ";";
+    CAlias* a = add_alias(doc, "n", "go north");
+
+    doc.Execute("look;n");                   // 'n' is the second segment
+    EXPECT_EQ(1L, a->nMatched);              // alias fired on its segment
+    EXPECT_STREQ("look\r\ngo north\r\n", wire(doc)->sent.c_str());
+}
+
+// methods_commands.cpp: "if list is empty, make sure we send at least one
+// empty line" — Execute("") sends exactly one blank line.
+TEST(CommandTest, EmptyCommandSendsOneBlankLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.Execute("");
+    EXPECT_STREQ("\r\n", wire(doc)->sent.c_str());
+    EXPECT_EQ(1L, doc.m_nTotalLinesSent);
+}
+
+// methods_commands.cpp: "stop an alias from recalling itself indefinitely:
+// if (++m_iExecutionDepth > MAX_EXECUTION_DEPTH) return
+// eCommandsNestedTooDeeply" — a self-recursing send-to-Execute alias
+// terminates instead of looping forever.
+TEST(CommandTest, ExecutionDepthCapStopsRecursiveAliases)
+{
+    CMUSHclientDoc doc = make_doc();
+    CAlias* a = add_alias(doc, "loop", "loop", eSendToExecute);
+
+    doc.Execute("loop");                     // must terminate, not recurse forever
+
+    EXPECT_GT(a->nMatched, 0L);                        // it did fire...
+    EXPECT_LE(a->nMatched, (long)MAX_EXECUTION_DEPTH); // ...boundedly
+    EXPECT_EQ(0, doc.m_iExecutionDepth);               // depth fully unwound
+}
+
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+#include "scripting/scripting.h"
+
+// methods_aliases.cpp DeleteAlias: "can't if executing a script (returns
+// eItemInUse)" — an alias deleting itself from its own script survives.
+TEST(AliasScript, DeleteAliasFromOwnScriptReturnsItemInUse)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function OnAlias(name, line, wildcards)\n"
+        "  world.SetVariable('rc', tostring(world.DeleteAlias('myalias')))\n"
+        "end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+
+    // an alias labelled "myalias" matching the command "n"
+    CAlias* a = add_alias(doc, "n", "");
+    doc.GetAliasMap().RemoveKey("n");
+    a->strLabel        = CString("myalias");
+    a->strInternalName = CString("myalias");
+    a->strProcedure    = CString("OnAlias");
+    doc.GetAliasMap().SetAt("myalias", a);
+    doc.ResolveAllEntryPoints();
+
+    type_command(doc, "n");
+
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.m_VariableMap.Lookup("rc", v));
+    ASSERT_NE(nullptr, v);
+    EXPECT_STREQ((const char*)CFormat("%d", (int)eItemInUse),
+                 (const char*)v->strContents);
+    // no use-after-free: the alias is still in the map
+    CAlias* still = nullptr;
+    EXPECT_TRUE(doc.GetAliasMap().Lookup("myalias", still));
+    EXPECT_TRUE(still == a);
+}
+#endif // MUSHCLIENT_LUA_SCRIPTING
+
 MC_TEST_MAIN()

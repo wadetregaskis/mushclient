@@ -509,4 +509,54 @@ TEST(ANSITest, DisplayMsg_ESCInterruptsMXPStateCleanly)
     EXPECT_EQ((COLORREF)GREEN, doc.m_iForeColour);
 }
 
+// ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
+
+// ansi.cpp Interpret256ANSIcode: "code out of range, give up" — a 256-colour
+// index outside 0..255 abandons the colour (m_phase = DOING_CODE) without
+// indexing xterm_256_colours out of bounds; the existing style is unchanged.
+TEST(ANSITest, Colour256IndexOutOfRangeAbandonsSequence)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.InterpretANSIcode(ANSI_TEXT_256_COLOUR);   // ESC[38;
+    doc.Interpret256ANSIcode(5);                   // 8-bit colour selector
+    doc.Interpret256ANSIcode(300);                 // out of range: abandoned
+    EXPECT_EQ(DOING_CODE, doc.m_phase);
+    CStyle* s = tail(doc);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ((COLORREF)WHITE, s->iForeColour);    // style left unchanged
+    EXPECT_EQ((unsigned short)COLOUR_ANSI, s->iFlags & COLOURTYPE);
+}
+
+// doc_shared.cpp StartNewLine: "Commented out because of bug #418 - a style
+// change at the very end of the line was being discarded" — a colour change
+// immediately before the newline survives: the finished line keeps the
+// zero-length style and the next line begins in the new colour.
+TEST(ANSITest, ColourChangeAtLineEndCarriesToNextLine)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    const char seq[] = "abc\033[31m\ndef\n";
+    doc.DisplayMsg(seq, (int)strlen(seq), 0, false);
+
+    // find the two completed lines
+    POSITION pos = doc.m_LineList.GetHeadPosition();
+    CLine* l0 = doc.m_LineList.GetNext(pos);
+    CLine* l1 = doc.m_LineList.GetNext(pos);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+    EXPECT_STREQ("abc", (const char*)CString(l0->text, l0->len));
+    EXPECT_STREQ("def", (const char*)CString(l1->text, l1->len));
+
+    // the end-of-line style change was NOT discarded from the finished line
+    CStyle* sTail = l0->styleList.GetTail();
+    ASSERT_NE(nullptr, sTail);
+    EXPECT_EQ((COLORREF)RED, sTail->iForeColour);
+    EXPECT_EQ(0, sTail->iLength);
+
+    // and the next line starts in the newly-set colour
+    CStyle* sHead = l1->styleList.GetHead();
+    ASSERT_NE(nullptr, sHead);
+    EXPECT_EQ((COLORREF)RED, sHead->iForeColour);
+}
+
 MC_TEST_MAIN()

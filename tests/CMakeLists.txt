@@ -37,6 +37,7 @@ mc_test(test_mcdatetime)
 mc_test(test_colour)
 mc_test(test_hashing)
 mc_test(test_ansi)
+mc_test(test_display)
 mc_test(test_telnet)
 mc_test(test_mxp)
 mc_test(test_triggers)
@@ -48,7 +49,9 @@ mc_test(test_utilities)
 mc_test(test_pal_worldview)
 mc_test(test_pal_transport)
 mc_test(test_pal_surface)
+mc_test(test_posix_socket)
 mc_test(test_lua_scripting)
+mc_test(test_plugins)
 
 # ── In-app conformance selftests ────────────────────────────────────────────
 # The hidden --pal-*-selftest flags run inside the real app binary (real wx

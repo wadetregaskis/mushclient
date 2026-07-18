@@ -1,0 +1,220 @@
+// tests/test_posix_socket.cpp
+// Intent-comment tests for the POSIX CAsyncSocket shim
+// (platform/posix_socket.h): the Poll() snapshot/IsLive machinery, EOF
+// close-once semantics, listening-socket OnAccept routing, non-blocking
+// connect errno normalisation, and SIGPIPE suppression.
+//
+// These use real loopback sockets (bind to 127.0.0.1 port 0).
+
+#include "mc_test.h"
+#include "platform/windows_types.h"
+#include "platform/posix_socket.h"
+
+#include <string>
+
+// ── helpers ───────────────────────────────────────────────────────────────
+
+// A socket that records its callbacks.
+struct Recorder : CAsyncSocket {
+    int receives = 0, closes = 0, accepts = 0, connects = 0;
+    void OnReceive(int) override { ++receives; }
+    void OnClose(int) override   { ++closes; }
+    void OnAccept(int) override  { ++accepts; }
+    void OnConnect(int) override { ++connects; }
+};
+
+// A listening socket on 127.0.0.1:<ephemeral>; port() reports the port.
+struct Listener : Recorder {
+    UINT port_ = 0;
+    bool open()
+    {
+        if (!Create()) return false;
+        if (!Bind(0, "127.0.0.1")) return false;
+        SOCKADDR_IN addr{}; int len = sizeof addr;
+        if (!GetSockName((SOCKADDR*)&addr, &len)) return false;
+        port_ = ntohs(addr.sin_port);
+        return Listen(5) != FALSE;
+    }
+};
+
+// Poll until pred() or ~2 s passes.
+template <typename F>
+static bool poll_until(F pred)
+{
+    for (int i = 0; i < 200 && !pred(); i++)
+        CAsyncSocket::Poll(10);
+    return pred();
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────
+
+// posix_socket.h Connect: "errno = EWOULDBLOCK; // normalise to
+// WSAEWOULDBLOCK for callers — Non-blocking connect. Returns FALSE with
+// WSAEWOULDBLOCK when in progress (which is normal)".
+TEST(PosixSocket, InProgressConnectNormalisesErrnoToWouldBlock)
+{
+    Listener lis;
+    ASSERT_TRUE(lis.open());
+
+    Recorder client;
+    ASSERT_TRUE(client.Create());
+    BOOL rc = client.Connect("127.0.0.1", lis.port_);
+    if (rc) {
+        // Immediate loopback connect: nothing to normalise on this kernel.
+        fprintf(stderr, "  (connect completed immediately; skipping)\n");
+    } else {
+        EXPECT_EQ(WSAEWOULDBLOCK, CAsyncSocket::GetLastError());
+        // and the connect genuinely completes afterwards
+        EXPECT_TRUE(poll_until([&] { return client.connects > 0; }));
+    }
+    client.Close();
+    lis.Close();
+}
+
+// posix_socket.h Poll: "A pending inbound connection makes a listening
+// socket readable — hand off to OnAccept (which calls Accept())" — never
+// OnReceive/OnClose on the listen fd, and Accept() yields a usable socket.
+TEST(PosixSocket, PendingConnectionFiresOnAcceptNotOnReceive)
+{
+    Listener lis;
+    ASSERT_TRUE(lis.open());
+
+    Recorder client;
+    ASSERT_TRUE(client.Create());
+    client.Connect("127.0.0.1", lis.port_);
+
+    ASSERT_TRUE(poll_until([&] { return lis.accepts > 0; }));
+    EXPECT_EQ(0, lis.receives);              // listen fd never recv()'d
+    EXPECT_EQ(0, lis.closes);
+
+    Recorder server;
+    EXPECT_TRUE(lis.Accept(server));         // yields a connected socket
+    ASSERT_TRUE(server.m_hSocket != INVALID_SOCKET);
+
+    // the accepted socket really is wired to the client
+    ASSERT_TRUE(poll_until([&] { return client.connects > 0 ||
+                                        client.m_hSocket != INVALID_SOCKET; }));
+    EXPECT_EQ(4, client.Send("ping", 4));
+    ASSERT_TRUE(poll_until([&] { return server.receives > 0; }));
+    char buf[8] = {};
+    EXPECT_EQ(4, server.Receive(buf, sizeof buf));
+    EXPECT_STREQ("ping", buf);
+
+    server.Close();
+    client.Close();
+    lis.Close();
+}
+
+// posix_socket.h Poll: "EOF — notify and close. Without Close() the fd
+// stays readable-with-EOF on every subsequent poll, firing OnClose again
+// and again until the fd is actually closed."
+TEST(PosixSocket, EofFiresOnCloseOnceThenSocketIsClosed)
+{
+    Listener lis;
+    ASSERT_TRUE(lis.open());
+    Recorder client;
+    ASSERT_TRUE(client.Create());
+    client.Connect("127.0.0.1", lis.port_);
+    ASSERT_TRUE(poll_until([&] { return lis.accepts > 0; }));
+    Recorder server;
+    ASSERT_TRUE(lis.Accept(server));
+
+    client.Close();                          // peer EOF for `server`
+
+    ASSERT_TRUE(poll_until([&] { return server.closes > 0; }));
+    EXPECT_EQ(1, server.closes);             // exactly one OnClose
+    EXPECT_TRUE(server.m_hSocket == INVALID_SOCKET);   // auto-closed
+
+    for (int i = 0; i < 10; i++) CAsyncSocket::Poll(1);
+    EXPECT_EQ(1, server.closes);             // never fires again
+
+    lis.Close();
+}
+
+// posix_socket.h Poll: "callbacks may modify s_sockets — and may even
+// DELETE a socket ... Re-check IsLive(s) after every callback so we never
+// dereference a pointer in the snapshot that a callback has since freed."
+namespace {
+bool g_victim_fired = false;
+struct Victim : CAsyncSocket {
+    void OnReceive(int) override { g_victim_fired = true; }
+    void OnClose(int) override   { g_victim_fired = true; }
+};
+struct Killer : CAsyncSocket {
+    CAsyncSocket** ppVictim = nullptr;
+    void OnReceive(int) override
+    {
+        char buf[16];
+        Receive(buf, sizeof buf);
+        if (ppVictim && *ppVictim) { delete *ppVictim; *ppVictim = nullptr; }
+    }
+    void OnClose(int) override {}
+};
+} // namespace
+
+TEST(PosixSocket, CallbackDeletingSocketDuringPollDoesNotFireFreedSocket)
+{
+    Listener lis;
+    ASSERT_TRUE(lis.open());
+
+    // two client connections; the server side of the FIRST (registered
+    // earlier, so processed earlier in Poll's snapshot) deletes the second.
+    Recorder c1, c2;
+    ASSERT_TRUE(c1.Create());
+    c1.Connect("127.0.0.1", lis.port_);
+    ASSERT_TRUE(poll_until([&] { return lis.accepts >= 1; }));
+    Killer* killer = new Killer();
+    ASSERT_TRUE(lis.Accept(*killer));
+
+    ASSERT_TRUE(c2.Create());
+    c2.Connect("127.0.0.1", lis.port_);
+    ASSERT_TRUE(poll_until([&] { return lis.accepts >= 2; }));
+    CAsyncSocket* victim = new Victim();
+    ASSERT_TRUE(lis.Accept(*victim));
+    killer->ppVictim = &victim;
+
+    g_victim_fired = false;
+    // make BOTH server sockets readable in the same Poll pass
+    EXPECT_EQ(1, c1.Send("a", 1));
+    EXPECT_EQ(1, c2.Send("b", 1));
+    for (int i = 0; i < 50 && victim != nullptr; i++)
+        CAsyncSocket::Poll(10);
+
+    EXPECT_TRUE(victim == nullptr);          // the killer really ran
+    EXPECT_FALSE(g_victim_fired);            // freed socket never fired
+
+    delete killer;
+    c1.Close();
+    c2.Close();
+    lis.Close();
+}
+
+// posix_socket.h Create: "Don't let a write to a peer-closed socket raise
+// SIGPIPE and kill the process" — send() reports an error instead.
+TEST(PosixSocket, SendAfterPeerCloseReturnsErrorNotSigpipe)
+{
+    Listener lis;
+    ASSERT_TRUE(lis.open());
+    Recorder client;
+    ASSERT_TRUE(client.Create());
+    client.Connect("127.0.0.1", lis.port_);
+    ASSERT_TRUE(poll_until([&] { return lis.accepts > 0; }));
+    Recorder server;
+    ASSERT_TRUE(lis.Accept(server));
+
+    server.Close();                          // peer side goes away
+
+    // keep writing until the failure surfaces; the process must survive
+    int rc = 0;
+    for (int i = 0; i < 50; i++) {
+        rc = client.Send("xxxx", 4);
+        if (rc < 0) break;
+        CAsyncSocket::Poll(1);
+    }
+    EXPECT_LT(rc, 0);                        // an error, not a dead process
+
+    client.Close();
+    lis.Close();
+}
+
+MC_TEST_MAIN()

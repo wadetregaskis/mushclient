@@ -348,4 +348,183 @@ TEST(TimerTest, GetTimerListReturnsRealArray)
     VariantClear(&v);   // frees the array + its BSTR copies
 }
 
+#include "flags.h"   // eEnabled / eAtTime timer flags
+
+// ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
+
+// timers.cpp ResetOneTimer: "if this time has passed, go onto tomorrow" —
+// an at-time timer whose time-of-day already passed today is scheduled for
+// tomorrow, never in the past.
+TEST(TimerClockTest, AtTimeTimerInPastSchedulesForTomorrow)
+{
+    ScopedClock clk(start_instant());        // 2026-01-01 12:00:00
+    CMUSHclientDoc doc = make_doc();
+
+    CTimer* t = new CTimer();
+    t->strLabel  = CString("at");
+    t->bEnabled  = TRUE;
+    t->iType     = CTimer::eAtTime;
+    t->iAtHour   = 6;                        // 06:00 — already passed
+    t->iAtMinute = 0;
+    t->fAtSecond = 0.0;
+    doc.GetTimerMap().SetAt(t->strLabel, t);
+
+    doc.ResetOneTimer(t);
+    EXPECT_TRUE(t->tFireTime == CmcDateTime(2026, 1, 2, 6, 0, 0));  // tomorrow
+    EXPECT_TRUE(t->tFireTime > CmcDateTime::GetTimeNow());
+
+    t->iAtHour = 18;                         // 18:00 — still ahead today
+    doc.ResetOneTimer(t);
+    EXPECT_TRUE(t->tFireTime == CmcDateTime(2026, 1, 1, 18, 0, 0)); // today
+}
+
+// timers.cpp ResetOneTimer: "now plus the interval ... minus the offset" —
+// a periodic timer's next fire time subtracts the offset fields.
+TEST(TimerClockTest, PeriodicTimerOffsetSubtractsFromFireTime)
+{
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc = make_doc();
+
+    CTimer* t = add_timer(doc, "iv", 10.0);  // every 10 s ...
+    t->fOffsetSecond = 3.0;                  // ... with a 3 s offset
+    doc.ResetOneTimer(t);
+    // due 7 s from now
+    EXPECT_TRUE(t->tFireTime == start_instant() + CmcDateTimeSpan(0, 0, 0, 7));
+}
+
+// timers.cpp: "update fire time - before calling the script, in case it
+// takes a long time" (at-time branch adds tsOneDay) — an at-time timer,
+// once fired, is rescheduled exactly one day later.
+TEST(TimerClockTest, AtTimeTimerRefiresOneDayLater)
+{
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc = make_doc();
+
+    CTimer* t = new CTimer();
+    t->strLabel  = CString("at");
+    t->bEnabled  = TRUE;
+    t->iType     = CTimer::eAtTime;
+    t->iAtHour   = 12; t->iAtMinute = 0; t->fAtSecond = 0.0;
+    t->iSendTo   = eSendToOutput;
+    t->tFireTime = start_instant();          // due right now
+    doc.GetTimerMap().SetAt(t->strLabel, t);
+
+    tick(doc);
+    EXPECT_EQ(1L, t->nMatched);              // fired once
+    EXPECT_TRUE(t->tFireTime == start_instant() + CmcDateTimeSpan(1, 0, 0, 0));
+
+    tick(doc);                               // same day again: not due
+    clk.advance(3600);
+    tick(doc);
+    EXPECT_EQ(1L, t->nMatched);              // does not re-fire today
+}
+
+// methods_timers.cpp AddTimer: "can't have a zero time for 'every' timers"
+// — hour==minute==0, second==0.0 without eAtTime is eTimeInvalid; the same
+// zero time WITH eAtTime is a valid midnight timer.
+TEST(TimerTest, AddTimerZeroIntervalRejected)
+{
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc = make_doc();
+
+    EXPECT_EQ((long)eTimeInvalid,
+              doc.AddTimer("z", 0, 0, 0.0, "x", eEnabled, ""));
+    CTimer* t = nullptr;
+    EXPECT_FALSE(doc.GetTimerMap().Lookup("z", t));   // nothing added
+
+    // control: the same zero time as an AT timer is valid (fires at midnight)
+    EXPECT_EQ((long)eOK,
+              doc.AddTimer("mid", 0, 0, 0.0, "x", eEnabled | eAtTime, ""));
+    EXPECT_TRUE(doc.GetTimerMap().Lookup("mid", t));
+}
+
+// methods_timers.cpp DoAfterSpecial: "sanity check: if (Seconds < 0.1)
+// return eTimeInvalid" (and "a really big number would make hours > 23").
+TEST(TimerTest, DoAfterRejectsLessThanTenthSecond)
+{
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc = make_doc();
+
+    EXPECT_EQ((long)eTimeInvalid, doc.DoAfter(0.05, "hello"));
+    EXPECT_EQ((long)eTimeInvalid, doc.DoAfterSpecial(0.0, "hello", eSendToOutput));
+    EXPECT_EQ(0, (int)doc.GetTimerMap().GetCount());  // no timer created
+
+    // the huge-number guard from the same comment block
+    EXPECT_EQ((long)eTimeInvalid, doc.DoAfter(90000.0, "hello"));  // > 24 h
+    EXPECT_EQ(0, (int)doc.GetTimerMap().GetCount());
+}
+
+// methods_timers.cpp DoAfterSpecial: "this is a temporary unlabelled timer,
+// make up a name (created enabled, one-shot, temporary, active-when-closed)"
+// — it sends its text exactly once when due and is then removed.
+TEST(TimerClockTest, DoAfterFiresOnceThenTimerIsRemoved)
+{
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc = make_doc();
+
+    EXPECT_EQ((long)eOK, doc.DoAfterSpecial(1.0, "did it", eSendToOutput));
+    ASSERT_EQ(1, (int)doc.GetTimerMap().GetCount());
+
+    // inspect the created timer's promised properties
+    POSITION pos = doc.GetTimerMap().GetStartPosition();
+    CString name; CTimer* t = nullptr;
+    doc.GetTimerMap().GetNextAssoc(pos, name, t);
+    ASSERT_NE(nullptr, t);
+    EXPECT_TRUE(name.Left(6) == "*timer");   // made-up internal name
+    EXPECT_TRUE(t->bEnabled);
+    EXPECT_TRUE(t->bOneShot != 0);
+    EXPECT_TRUE(t->bTemporary);
+    EXPECT_TRUE(t->bActiveWhenClosed);
+
+    tick(doc);                               // not yet due
+    ASSERT_EQ(1, (int)doc.GetTimerMap().GetCount());
+
+    clk.advance(1.5);
+    tick(doc);                               // due: fires and is removed
+    EXPECT_EQ(0, (int)doc.GetTimerMap().GetCount());
+
+    clk.advance(5);
+    tick(doc);                               // harmless no-op afterwards
+    EXPECT_EQ(0, (int)doc.GetTimerMap().GetCount());
+}
+
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+#include "scripting/scripting.h"
+
+// timers.cpp CheckTimerList: "now process list, checking timer still exists
+// in case a script deleted one. see forum ?id=10358" — when two timers are
+// due in one pass and the first one's script deletes the second, the second
+// neither fires nor causes a use-after-free.
+TEST(TimerScript, ScriptDeletingOtherDueTimerPreventsItsFiring)
+{
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc = make_doc();
+
+    // a live Lua engine whose function deletes the OTHER due timer
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function DeleteOther(name)\n"
+        "  world.DeleteTimer('b_second')\n"
+        "end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+
+    // two timers due in the same pass; set<string> order runs a_ before b_
+    CTimer* t1 = add_timer(doc, "a_first", 5.0);
+    t1->strProcedure = CString("DeleteOther");
+    CTimer* t2 = add_timer(doc, "b_second", 5.0);
+    make_overdue(t1);
+    make_overdue(t2);
+    doc.ResolveAllEntryPoints();
+
+    long fired_before = doc.m_iTimersFiredCount;
+    tick(doc);                               // must not crash (no UAF)
+
+    EXPECT_EQ(1L, t1->nMatched);             // first timer fired...
+    EXPECT_EQ(fired_before + 1, doc.m_iTimersFiredCount);  // ...and only it
+    CTimer* gone = nullptr;
+    EXPECT_FALSE(doc.GetTimerMap().Lookup("b_second", gone));  // deleted
+}
+#endif // MUSHCLIENT_LUA_SCRIPTING
+
 MC_TEST_MAIN()

@@ -111,4 +111,78 @@ TEST(Speedwalk, ReverseCustomParenWord)
     EXPECT_STREQ("(sw)", (const char*)doc.DoReverseSpeedwalk("(ne)"));
 }
 
+// ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
+
+// speedwalk.cpp: "int iSlash = str.Find ("/");   // only use up to the slash"
+// — expanding "(ne/sw)" emits only the part before the slash; the part after
+// it is reserved for the reverse walk.
+TEST(Speedwalk, ParenPairExpandsUsingTextBeforeSlash)
+{
+    CMUSHclientDoc doc;
+    EXPECT_STREQ("ne\r\n", (const char*)doc.DoEvaluateSpeedwalk("(ne/sw)"));
+}
+
+// speedwalk.cpp: "str = strRightPart + "/" + strLeftPart;   // swap parts"
+// — reversing "(ne/sw)" swaps the halves so the reverse walk uses the
+// second direction.
+TEST(Speedwalk, ReverseParenSlashPairSwapsSides)
+{
+    CMUSHclientDoc doc;
+    EXPECT_STREQ("(sw/ne)", (const char*)doc.DoReverseSpeedwalk("(ne/sw)"));
+}
+
+// speedwalk.cpp: "Error strings all start with '*' (callers detect an error
+// by testing [0])" — and the invalid-direction message itself begins with
+// '*' via TFormat, so that particular error carries a doubled asterisk.
+TEST(Speedwalk, InvalidDirectionYieldsStarErrorString)
+{
+    CMUSHclientDoc doc;
+    CString r = doc.DoEvaluateSpeedwalk("x");
+    ASSERT_TRUE(r.GetLength() >= 2);
+    EXPECT_EQ('*', ((const char*)r)[0]);
+    EXPECT_EQ('*', ((const char*)r)[1]);          // the doubled asterisk
+    EXPECT_TRUE(r.Find("Invalid direction") != -1);
+}
+
+// speedwalk.cpp: "a '{' must be closed before end of input".
+TEST(Speedwalk, UnterminatedCommentIsError)
+{
+    CMUSHclientDoc doc;
+    EXPECT_STREQ("*Comment code of '{' not terminated by a '}'",
+                 (const char*)doc.DoEvaluateSpeedwalk("{oops"));
+    // a terminated comment is simply skipped
+    EXPECT_STREQ("north\r\n", (const char*)doc.DoEvaluateSpeedwalk("{oops}n"));
+}
+
+// speedwalk.cpp: "Speed walk counter may not be followed by a comment"
+// (and a counter at end of string: "not followed by an action").
+TEST(Speedwalk, CounterFollowedByCommentIsError)
+{
+    CMUSHclientDoc doc;
+    EXPECT_STREQ("*Speed walk counter may not be followed by a comment",
+                 (const char*)doc.DoEvaluateSpeedwalk("3{note}n"));
+    EXPECT_STREQ("*Speed walk counter not followed by an action",
+                 (const char*)doc.DoEvaluateSpeedwalk("3"));
+}
+
+// speedwalk.cpp ReverseSpeedwalkString: "preserve comments" (result built by
+// prepending, so overall order reverses) and "'\r': break; // discard
+// carriage returns".
+TEST(Speedwalk, ReversePreservesCommentBlocks)
+{
+    CMUSHclientDoc doc;
+    EXPECT_STREQ("3w{note}2s", (const char*)doc.DoReverseSpeedwalk("2n{note}3e"));
+    // carriage returns in the input are discarded
+    EXPECT_STREQ("ns", (const char*)doc.DoReverseSpeedwalk("n\rs"));
+}
+
+// speedwalk.cpp: "action prefix C/O/L/K (remembered, re-emitted before the
+// reversed direction)" — reverse of "on" (open north) is "os" (open south).
+TEST(Speedwalk, ReverseKeepsActionPrefixOnReversedDirection)
+{
+    CMUSHclientDoc doc;
+    EXPECT_STREQ("os", (const char*)doc.DoReverseSpeedwalk("on"));
+    EXPECT_STREQ("ku", (const char*)doc.DoReverseSpeedwalk("kd"));  // unlock
+}
+
 MC_TEST_MAIN()

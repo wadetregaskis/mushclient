@@ -286,4 +286,318 @@ TEST(GetWordTest, UnclosedQuoteEmptyContentLeavesEmptyRemainder)
     EXPECT_STREQ("", (const char*)remainder);
 }
 
+// ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
+// End-to-end MXP: feed real MUD bytes through DisplayMsg and inspect the
+// resulting line/style/tag state.
+
+#include "pal/itransport.h"
+#include <string>
+
+namespace {
+struct MxpFakeTransport : pal::ITransport {
+    std::string sent;
+    void resolve(const char*, pal::ResolveToken) override {}
+    void cancelResolve() override {}
+    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void send(const char* data, size_t n) override { sent.append(data, n); }
+    void startTls(const pal::TlsParams&) override {}
+    void close() override {}
+    std::string lastErrorString() const override { return "fake"; }
+};
+} // namespace
+
+// A doc whose current line is created by DisplayMsg itself (and is therefore
+// the tail of m_LineList, which MXP_CloseTag walks).
+static CMUSHclientDoc make_doc_e2e()
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_bMXP      = true;
+    doc.m_iUseMXP   = eUseMXP;
+    doc.m_iMXP_mode = eMXP_open;
+    return doc;
+}
+
+static void feed(CMUSHclientDoc& doc, const char* s)
+{
+    doc.DisplayMsg(s, (int)strlen(s), 0);
+}
+
+// The style covering the (0-based) character index of a line.
+static CStyle* style_at(CLine* line, int idx)
+{
+    int off = 0;
+    for (POSITION pos = line->styleList.GetHeadPosition(); pos; ) {
+        CStyle* s = line->styleList.GetNext(pos);
+        if (s->iLength > 0 && idx < off + s->iLength) return s;
+        off += s->iLength;
+    }
+    return nullptr;
+}
+
+// mxpStart.cpp SECURE_ELEMENT_CHECK: a secure-only tag (<send> has no
+// TAG_OPEN) arriving in open mode is rejected with an error, leaves no
+// active tag, and its text carries no action.
+TEST(MXPSecurity, SecureOnlyTagIgnoredInOpenMode)
+{
+    CMUSHclientDoc doc = make_doc_e2e();     // open mode
+    long long errs = doc.m_iMXPerrors;
+    feed(doc, "<send>north</send>");
+    EXPECT_GT(doc.m_iMXPerrors, errs);                  // ElementWhenNotSecure
+    EXPECT_EQ(0, (int)doc.m_ActiveTagList.GetCount());  // no active tag
+    for (POSITION pos = doc.m_pCurrentLine->styleList.GetHeadPosition(); pos; ) {
+        CStyle* s = doc.m_pCurrentLine->styleList.GetNext(pos);
+        EXPECT_TRUE(s->pAction == NULL);                // no action style
+    }
+}
+
+// mxpStart.cpp: "get old action ... so that <send href="nick"> <b> blah </b>
+// </send> will work — we want the href (action) to persist through the <b>".
+TEST(MXPTag, SendHrefPersistsThroughNestedOpenTag)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    feed(doc, "<send href=\"nick\"><b>blah</b></send>");
+
+    CLine* line = doc.m_pCurrentLine;
+    std::string text(line->text, line->len);
+    ASSERT_TRUE(text == "blah");
+    int covered = 0;
+    for (POSITION pos = line->styleList.GetHeadPosition(); pos; ) {
+        CStyle* s = line->styleList.GetNext(pos);
+        if (s->iLength > 0) {
+            ASSERT_TRUE(s->pAction != NULL);
+            EXPECT_STREQ("nick", (const char*)s->pAction->m_strAction);
+            covered += s->iLength;
+        }
+    }
+    EXPECT_EQ(4, covered);   // every character of "blah" carries the action
+}
+
+// mxpStart.cpp (port guard): after a command tag the current line's style
+// list must never be left empty — the next GetTail() (e.g. from an ANSI
+// code) would be undefined behaviour.
+TEST(MXPTag, CommandTagLeavesStyleListNonEmpty)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    long long errs = doc.m_iMXPerrors;
+    feed(doc, "<version>");                  // TAG_COMMAND, at line start
+    EXPECT_EQ(errs, doc.m_iMXPerrors);       // tag processed, not rejected
+    ASSERT_TRUE(doc.m_pCurrentLine != NULL);
+    EXPECT_FALSE(doc.m_pCurrentLine->styleList.IsEmpty());
+
+    feed(doc, "\033[31mx");                  // ANSI code must not crash
+    ASSERT_TRUE(doc.m_pCurrentLine != NULL);
+    EXPECT_FALSE(doc.m_pCurrentLine->styleList.IsEmpty());
+}
+
+// mxpEnd.cpp: "<b> <i> </b> — the </b> will also close the <i>" (with a
+// closing-out-of-sequence warning); afterwards neither is active.
+TEST(MXPTag, OutOfSequenceClosePopsIntermediateTags)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    feed(doc, "<b><i>");
+    EXPECT_EQ(2, (int)doc.m_ActiveTagList.GetCount());
+    feed(doc, "</b>");                       // also closes the nested <i>
+    EXPECT_EQ(0, (int)doc.m_ActiveTagList.GetCount());
+}
+
+// mxpEnd.cpp: "Cannot close open MXP tag <%s> - it was opened in secure
+// mode" — a closing tag received in open mode cannot pop a secure-opened tag.
+TEST(MXPSecurity, OpenModeCannotCloseSecureOpenedTag)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    feed(doc, "<b>");                        // opened in secure mode
+    EXPECT_EQ(1, (int)doc.m_ActiveTagList.GetCount());
+    doc.MXP_mode_change(eMXP_open);          // back to open mode
+    feed(doc, "</b>");                       // must NOT close it
+    EXPECT_EQ(1, (int)doc.m_ActiveTagList.GetCount());
+}
+
+// mxpClose.cpp: the opening style tag "remembers the style at the moment it
+// was made [so] it will make a good way of restoring existing styles" —
+// text after </b> is no longer bold.
+TEST(MXPTag, CloseTagRestoresStyleAtOpenPoint)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    feed(doc, "x<b>bold</b>y");
+
+    CLine* line = doc.m_pCurrentLine;
+    std::string text(line->text, line->len);
+    ASSERT_TRUE(text == "xboldy");
+
+    CStyle* sBold = style_at(line, 2);       // inside "bold"
+    CStyle* sAfter = style_at(line, 5);      // the trailing 'y'
+    ASSERT_NE(nullptr, sBold);
+    ASSERT_NE(nullptr, sAfter);
+    EXPECT_TRUE((sBold->iFlags  & HILITE) != 0);   // bold applied
+    EXPECT_TRUE((sAfter->iFlags & HILITE) == 0);   // restored after </b>
+}
+
+// mxpClose.cpp: a user element defined with FLAG=name sets world variable
+// mxp_<name> to the enclosed text (Quow's mapper reads mxp_roomname).
+TEST(MXPTag, FlagDirectiveSetsMxpPrefixedVariable)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    feed(doc, "<!ELEMENT rname FLAG=\"RoomName\">");
+    feed(doc, "<rname>The Square</rname>");
+
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.m_VariableMap.Lookup("mxp_roomname", v));
+    ASSERT_NE(nullptr, v);
+    EXPECT_STREQ("The Square", (const char*)v->strContents);
+}
+
+// mxpMode.cpp: eMXP_secure makes open the default, so the implied mode change
+// at newline (-1) reverts to open; eMXP_perm_secure makes secure permanent.
+TEST(MXPMode, ImpliedNewlineModeChangeRevertsToDefaultOpen)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.MXP_mode_change(eMXP_secure);
+    EXPECT_EQ(eMXP_secure, doc.m_iMXP_mode);
+    doc.MXP_mode_change(-1);                 // implied change (newline)
+    EXPECT_EQ(eMXP_open, doc.m_iMXP_mode);
+
+    doc.MXP_mode_change(eMXP_perm_secure);
+    doc.MXP_mode_change(-1);
+    EXPECT_EQ(eMXP_perm_secure, doc.m_iMXP_mode);   // permanent: stays
+}
+
+// mxpStart.cpp MXP_Restore_Mode: secure-once applies to exactly one tag —
+// the first tag restores the previous mode, so a second secure-only tag is
+// rejected.
+TEST(MXPMode, SecureOnceAppliesToExactlyOneTag)
+{
+    CMUSHclientDoc doc = make_doc_e2e();     // open mode
+    doc.MXP_mode_change(eMXP_secure_once);
+    feed(doc, "<send>");
+    EXPECT_EQ(1, (int)doc.m_ActiveTagList.GetCount());  // accepted
+    EXPECT_EQ(eMXP_open, doc.m_iMXP_mode);              // mode restored
+
+    long long errs = doc.m_iMXPerrors;
+    feed(doc, "<send>");                     // second secure-only tag
+    EXPECT_EQ(1, (int)doc.m_ActiveTagList.GetCount());  // rejected
+    EXPECT_GT(doc.m_iMXPerrors, errs);
+}
+
+// mxpEntities.cpp: numeric entities resolve only for 9/10/13 and 32..255;
+// &#7; and &#256; produce an error and an empty expansion.
+TEST(MXPEntity, NumericEntityRejectsNonPrintableAndMultibyte)
+{
+    CMUSHclientDoc doc = make_doc();
+    long long errs = doc.m_iMXPerrors;
+    CString e7("#7"), e256("#256"), e65("#65"), e9("#9");
+    EXPECT_STREQ("", (const char*)doc.MXP_GetEntity(e7));
+    EXPECT_STREQ("", (const char*)doc.MXP_GetEntity(e256));
+    EXPECT_EQ(errs + 2, doc.m_iMXPerrors);
+    // accept side of the same rule
+    EXPECT_STREQ("A",  (const char*)doc.MXP_GetEntity(e65));
+    EXPECT_STREQ("\t", (const char*)doc.MXP_GetEntity(e9));
+}
+
+// mxpEntities.cpp: "if the entity happens to be < & > etc. don't reprocess
+// it" — &lt; expands to a literal '<' and does not start element collection.
+TEST(MXPEntity, EntityExpansionNotReparsedAsMxp)
+{
+    CMUSHclientDoc doc = make_doc_e2e();     // open mode, MXP on
+    feed(doc, "&lt;b&gt;");
+    EXPECT_EQ(NONE, doc.m_phase);            // no element collection started
+    EXPECT_EQ(0, (int)doc.m_ActiveTagList.GetCount());
+    std::string text(doc.m_pCurrentLine->text, doc.m_pCurrentLine->len);
+    EXPECT_STREQ("<b>", text.c_str());       // literal characters on the line
+    EXPECT_TRUE(doc.m_bMXP);                 // MXP re-enabled afterwards
+}
+
+// mxpOpenAtomic.cpp MXP_ACTION_PASSWORD: "if (m_nTotalLinesSent > 10) ...
+// Too many lines sent to MUD - password not sent" — the stored password goes
+// out only near the start of a session.
+TEST(MXPSecurity, PasswordNotSentAfterTenLinesSent)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    MxpFakeTransport* t = new MxpFakeTransport();
+    doc.m_pTransport = t;
+    doc.m_iMXP_mode = eMXP_secure;
+    doc.m_password = "sekrit";
+    doc.m_connect_now = eConnectMXP;
+
+    doc.m_nTotalLinesSent = 11;              // beyond the security threshold
+    feed(doc, "<password>");
+    EXPECT_EQ((size_t)0, t->sent.size());    // nothing transmitted
+
+    doc.m_nTotalLinesSent = 0;               // fresh session: allowed
+    feed(doc, "<password>");
+    EXPECT_STREQ("sekrit\r\n", t->sent.c_str());
+}
+
+// mxpCloseAtomic.cpp: "no action defined - use &text; as the action" —
+// <send>north</send> without href sends its enclosed text.
+TEST(MXPTag, SendWithoutHrefUsesEnclosedTextAsAction)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    feed(doc, "<send>north</send>");
+    CStyle* s = style_at(doc.m_pCurrentLine, 0);   // covers "north"
+    ASSERT_NE(nullptr, s);
+    ASSERT_TRUE(s->pAction != NULL);
+    EXPECT_STREQ("north", (const char*)s->pAction->m_strAction);
+}
+
+// mxpCloseAtomic.cpp: "otherwise replace the &text; sequence in action and
+// hint" — an href containing &text; has the enclosed text substituted.
+TEST(MXPTag, SendHrefTextEntitySubstitutedAtClose)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    feed(doc, "<send href=\"go &text;\">north</send>");
+    CStyle* s = style_at(doc.m_pCurrentLine, 0);
+    ASSERT_NE(nullptr, s);
+    ASSERT_TRUE(s->pAction != NULL);
+    EXPECT_STREQ("go north", (const char*)s->pAction->m_strAction);
+}
+
+// mxputils.cpp GetKeyword: consuming a keyword renumbers later positional
+// arguments down by one — "and don't do it twice".
+TEST(MXPArgs, KeywordConsumptionRenumbersPositionalArguments)
+{
+    CMUSHclientDoc doc = make_doc();
+    CArgumentList args;
+    // "open" is a keyword; "12" and "34" are positional values after it
+    ASSERT_TRUE(!doc.BuildArgumentList(args, CString("open 12 34")));
+
+    // before consumption: open=1, 12=2, 34=3
+    EXPECT_STREQ("12", (const char*)GetArgument(args, "", 2, false));
+
+    EXPECT_TRUE(GetKeyword(args, "open"));   // consume the keyword
+    // positions renumbered: 12=1, 34=2
+    EXPECT_STREQ("12", (const char*)GetArgument(args, "", 1, false));
+    EXPECT_STREQ("34", (const char*)GetArgument(args, "", 2, false));
+
+    EXPECT_TRUE(GetKeyword(args, "open"));   // second lookup must NOT renumber
+    EXPECT_STREQ("12", (const char*)GetArgument(args, "", 1, false));
+    EXPECT_STREQ("34", (const char*)GetArgument(args, "", 2, false));
+
+    DELETE_LIST(args);
+}
+
+// mxpDefs.cpp DEFINITIONS_MUST_BE_SECURE: <!ELEMENT> in open mode is
+// rejected and does not enter the custom element map; in secure mode it does.
+TEST(MXPSecurity, DefinitionsRequireSecureMode)
+{
+    CMUSHclientDoc doc = make_doc_e2e();     // open mode
+    long long errs = doc.m_iMXPerrors;
+    feed(doc, "<!ELEMENT foo '<b>'>");
+    EXPECT_GT(doc.m_iMXPerrors, errs);
+    CElement* e = nullptr;
+    EXPECT_FALSE(doc.m_CustomElementMap.Lookup("foo", e));
+
+    doc.m_iMXP_mode = eMXP_secure;           // control: secure mode works
+    feed(doc, "<!ELEMENT foo '<b>'>");
+    EXPECT_TRUE(doc.m_CustomElementMap.Lookup("foo", e));
+}
+
 MC_TEST_MAIN()

@@ -451,4 +451,133 @@ TEST(TelnetTest, Phase_DO_TerminalTypeResetsSequence)
     EXPECT_TRUE(doc.m_bClient_sent_IAC_WILL[TELOPT_TERMINAL_TYPE]);
 }
 
+// ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
+
+#include "pal/itransport.h"
+#include <string>
+
+namespace {
+// Captures everything SendPacket puts on the wire (the doc dtor frees it).
+struct TelnetFakeTransport : pal::ITransport {
+    std::string sent;
+    void resolve(const char*, pal::ResolveToken) override {}
+    void cancelResolve() override {}
+    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void send(const char* data, size_t n) override { sent.append(data, n); }
+    void startTls(const pal::TlsParams&) override {}
+    void close() override {}
+    std::string lastErrorString() const override { return "fake"; }
+};
+} // namespace
+
+// forum ?id=10043: inside HAVE_SUBNEGOTIATION_IAC, any byte other than IAC is
+// treated as if it were SE (the spec is silent) — the subnegotiation still
+// completes: phase returns to NONE and the handler dispatch is counted.
+TEST(TelnetTest, SubnegotiationIacNonSeByteTreatedAsSe)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_subnegotiation_type = 99;          // unknown type → plugin no-op
+    doc.m_IAC_subnegotiation_data = "abc";
+    doc.m_phase = HAVE_SUBNEGOTIATION_IAC;
+    doc.Phase_SUBNEGOTIATION_IAC('X');       // not IAC, not SE
+    EXPECT_EQ(NONE, doc.m_phase);            // negotiation is over
+    EXPECT_EQ(1, doc.m_nCount_IAC_SB);       // handler was dispatched
+}
+
+// telnet_phases.cpp Phase_WILL: "don't agree to MCCP1 and MCCP2" — once
+// COMPRESS2 has been agreed, a later IAC WILL COMPRESS (v1) is answered DONT.
+TEST(TelnetTest, Mccp1RefusedAfterMccp2Agreed)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.Phase_WILL(TELOPT_COMPRESS2);        // agree to MCCP2
+    EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[TELOPT_COMPRESS2]);
+    EXPECT_TRUE(doc.m_bSupports_MCCP_2);
+
+    doc.Phase_WILL(TELOPT_COMPRESS);         // MCCP1 offered afterwards
+    EXPECT_TRUE (doc.m_bClient_sent_IAC_DONT[TELOPT_COMPRESS]);  // refused
+    EXPECT_FALSE(doc.m_bClient_sent_IAC_DO  [TELOPT_COMPRESS]);  // never DO
+}
+
+// RFC 2066: a CHARSET REQUEST naming no charset the client uses is answered
+// with exactly IAC SB CHARSET REJECTED(0x03) IAC SE.
+TEST(TelnetTest, CharsetRequestUnmatchedSendsRejected)
+{
+    CMUSHclientDoc doc = make_doc();
+    TelnetFakeTransport* t = new TelnetFakeTransport();
+    doc.m_pTransport = t;
+    doc.m_bUTF_8 = FALSE;                    // client charset is "US-ASCII"
+
+    // REQUEST(0x01) DELIM(';') "UTF-8" — not the charset in use
+    doc.m_IAC_subnegotiation_data = std::string("\x01;UTF-8", 7);
+    doc.Handle_TELOPT_CHARSET();
+
+    const char expected[] = { (char)IAC, (char)SB, (char)TELOPT_CHARSET,
+                              3, (char)IAC, (char)SE };
+    ASSERT_EQ((size_t)6, t->sent.size());
+    EXPECT_TRUE(memcmp(t->sent.data(), expected, 6) == 0);
+}
+
+// The accept side of the same RFC 2066 contract block: a REQUEST naming the
+// charset in use is answered IAC SB CHARSET ACCEPTED(0x02) NAME IAC SE.
+TEST(TelnetTest, CharsetRequestMatchedSendsAccepted)
+{
+    CMUSHclientDoc doc = make_doc();
+    TelnetFakeTransport* t = new TelnetFakeTransport();
+    doc.m_pTransport = t;
+    doc.m_bUTF_8 = TRUE;                     // client charset is "UTF-8"
+
+    doc.m_IAC_subnegotiation_data = std::string("\x01;UTF-8", 7);
+    doc.Handle_TELOPT_CHARSET();
+
+    const char expected[] = { (char)IAC, (char)SB, (char)TELOPT_CHARSET, 2,
+                              'U', 'T', 'F', '-', '8', (char)IAC, (char)SE };
+    ASSERT_EQ(sizeof expected, t->sent.size());
+    EXPECT_TRUE(memcmp(t->sent.data(), expected, sizeof expected) == 0);
+}
+
+// telnet_phases.cpp: "ensure max of 20 so we don't overflow the field" — a
+// long terminal identification is truncated to 20 chars in the TTYPE IS reply
+// (the response buffer is only 40 bytes).
+TEST(TelnetTest, TerminalTypeReplyTruncatedToTwentyChars)
+{
+    CMUSHclientDoc doc = make_doc();
+    TelnetFakeTransport* t = new TelnetFakeTransport();
+    doc.m_pTransport = t;
+    doc.m_strTerminalIdentification = "abcdefghijklmnopqrstuvwxyz";  // 26
+    doc.m_ttype_sequence = 0;
+    doc.m_IAC_subnegotiation_data = std::string("\x01", 1);   // TTYPE SEND
+
+    doc.Handle_TELOPT_TERMINAL_TYPE();
+
+    // IAC SB TERMINAL-TYPE IS <ident, capped at 20> IAC SE
+    ASSERT_EQ((size_t)(4 + 20 + 2), t->sent.size());
+    EXPECT_TRUE(memcmp(t->sent.data() + 4, "abcdefghijklmnopqrst", 20) == 0);
+    EXPECT_EQ((char)IAC, t->sent[24]);
+    EXPECT_EQ((char)SE,  t->sent[25]);
+}
+
+// telnet_phases.cpp OutputBadUTF8characters: a bad UTF-8 sequence is flushed
+// to the line as raw bytes (non-Windows path), never silently dropped, and
+// the phase machine returns to NONE.
+TEST(TelnetTest, BadUtf8SequenceOutputsRawBytesNotDropped)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bUTF_8 = TRUE;
+    const char seq[] = "ab\xC3Xcd";   // 0xC3 lead byte, 'X' bad continuation
+    doc.DisplayMsg(seq, (int)strlen(seq), 0);
+    EXPECT_EQ(NONE, doc.m_phase);
+    std::string visible(doc.m_pCurrentLine->text, doc.m_pCurrentLine->len);
+    EXPECT_STREQ("ab\xC3Xcd", visible.c_str());
+}
+
+// doc_portable.cpp: the ctor's SetAlphaDefaults applies the Windows table
+// defaults — lowercase "mushclient" (the old hand-set "MUSHCLIENT" was twin
+// drift) and language "lua".
+TEST(TelnetTest, DefaultTerminalIdentificationIsLowercaseMushclient)
+{
+    CMUSHclientDoc doc;
+    EXPECT_STREQ("mushclient", (const char*)doc.m_strTerminalIdentification);
+    EXPECT_STREQ("lua",        (const char*)doc.m_strLanguage);
+}
+
 MC_TEST_MAIN()

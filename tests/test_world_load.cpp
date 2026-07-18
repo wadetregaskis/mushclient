@@ -1158,4 +1158,524 @@ TEST(WorldLoad, WorldSettingsVisibleViaOptionAPI)
     EXPECT_STREQ("myproxy", (const char*)doc.GetAlphaOptionItem(idx));
 }
 
+// ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
+
+#include <clocale>
+
+// Read a whole file into a std::string.
+static std::string slurp(const char* path)
+{
+    std::string content;
+    FILE* f = fopen(path, "rb");
+    if (!f) return content;
+    char buf[4096]; size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) content.append(buf, n);
+    fclose(f);
+    return content;
+}
+
+// xml_load_world.cpp: "even if they say 'don't take default', the absence
+// of a colour gives the default behaviour of 'no change'" — and colour 17
+// (MAX_CUSTOM + 1) is the "other" slot, stored zero-relative as 16.
+TEST(WorldLoad, AbsentTriggerCustomColourMeansNoChange)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<triggers>
+  <trigger match="a" name="nocolour" enabled="y"><send>x</send></trigger>
+  <trigger match="b" name="zerocolour" enabled="y" custom_colour="0"><send>x</send></trigger>
+  <trigger match="c" name="othercolour" enabled="y" custom_colour="17"><send>x</send></trigger>
+</triggers>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("nocolour", t));
+    EXPECT_EQ((unsigned short)SAMECOLOUR, t->colour);   // absent → no change
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("zerocolour", t));
+    EXPECT_EQ((unsigned short)SAMECOLOUR, t->colour);   // "0" → no change
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("othercolour", t));
+    EXPECT_EQ(16, (int)t->colour);                      // 17 → "other" slot
+}
+
+// xml_load_world.cpp: "Timer for 'every' time cannot have zero interval" —
+// such a timer draws a load warning and is not added to the map.
+TEST(WorldLoad, EveryTimerZeroIntervalRejected)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<timers>
+  <timer name="tz" enabled="y"><send>x</send></timer>
+  <timer name="tok" enabled="y" second="5"><send>x</send></timer>
+</timers>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    CTimer* t = nullptr;
+    EXPECT_FALSE(doc.GetTimerMap().Lookup("tz", t));    // zero interval: rejected
+    EXPECT_TRUE(doc.GetTimerMap().Lookup("tok", t));    // control: added
+}
+
+// xml_load_world.cpp: "check if this exact trigger already exists (suggested
+// by Fiendish 12 Dec 2011) — version: 4.81" — an identical unnamed trigger
+// is deleted and not added again.
+TEST(WorldLoad, UnnamedDuplicateTriggerNotAddedTwice)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<triggers>
+  <trigger match="dupe me" enabled="y" sequence="100"><send>hi</send></trigger>
+  <trigger match="dupe me" enabled="y" sequence="100"><send>hi</send></trigger>
+</triggers>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    EXPECT_EQ(1, (int)doc.GetTriggerArray().GetSize());   // only one copy
+}
+
+// xmlparse.cpp Get_XML_Entity: "we will accept tabs, newlines and
+// carriage-returns ;) — don't allow nonprintable characters; don't allow
+// characters more than 1 byte" — &#7; / &#256; fail the whole load.
+TEST(WorldLoad, NumericEntityOutsideByteRangeRejected)
+{
+    const char* bad7 = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<triggers>
+  <trigger match="a&#7;b" name="t1" enabled="y"><send>x</send></trigger>
+</triggers>
+</muclient>)";
+    CMUSHclientDoc doc;
+    EXPECT_FALSE(doc.LoadWorldFromFile(write_temp(bad7).c_str()));
+
+    const char* bad256 = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<triggers>
+  <trigger match="a&#256;b" name="t1" enabled="y"><send>x</send></trigger>
+</triggers>
+</muclient>)";
+    CMUSHclientDoc doc2;
+    EXPECT_FALSE(doc2.LoadWorldFromFile(write_temp(bad256).c_str()));
+
+    // control: &#65; ('A') is accepted
+    const char* ok = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<triggers>
+  <trigger match="a&#65;b" name="t1" enabled="y"><send>x</send></trigger>
+</triggers>
+</muclient>)";
+    CMUSHclientDoc doc3;
+    ASSERT_TRUE(doc3.LoadWorldFromFile(write_temp(ok).c_str()));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc3.GetTriggerMap().Lookup("t1", t));
+    EXPECT_STREQ("aAb", (const char*)t->trigger);
+}
+
+// xmlparse.cpp: "special treatment for ampersands, so they don't get
+// converted into entities" — CDATA content is copied literally.
+TEST(WorldLoad, CdataKeepsAmpersandTextLiteral)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<triggers>
+  <trigger match="x" name="t1" enabled="y"><send><![CDATA[&lt; & stays]]></send></trigger>
+</triggers>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("t1", t));
+    // "&lt;" is five^H^H four literal characters — NOT expanded to '<'
+    EXPECT_STREQ("&lt; & stays", (const char*)t->contents);
+}
+
+// xml_save_world.cpp Save_XML_double: "don't want any blasted commas!" — a
+// timer's fractional second is saved with '.' even under a comma-decimal
+// locale (the setlocale approach DIDN'T WORK — forum 7953/8077).
+TEST(WorldLoad, TimerSecondSavedWithDotUnderCommaLocale)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_locale_%d.mcl", (int)getpid());
+
+    const char* prev = setlocale(LC_NUMERIC, NULL);
+    std::string saved(prev ? prev : "C");
+    if (!setlocale(LC_NUMERIC, "de_DE.UTF-8") && !setlocale(LC_NUMERIC, "de_DE")) {
+        fprintf(stderr, "  (no comma-decimal locale available; skipping)\n");
+        return;
+    }
+    ASSERT_TRUE(localeconv()->decimal_point[0] == ',');   // locale is live
+
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        CTimer* t = new CTimer();
+        t->strLabel = CString("frac");
+        t->bEnabled = TRUE;
+        t->iType = CTimer::eInterval;
+        t->fEverySecond = 7.5;
+        doc.GetTimerMap().SetAt(t->strLabel, t);
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+    setlocale(LC_NUMERIC, saved.c_str());
+
+    std::string content = slurp(path);
+    EXPECT_NE(content.find("second=\"7.50\""), std::string::npos);  // "%.2f"
+    EXPECT_EQ(content.find("7,5"), std::string::npos);    // no blasted commas
+
+    // and it reloads correctly
+    CMUSHclientDoc doc2;
+    ASSERT_TRUE(doc2.LoadWorldFromFile(path));
+    CTimer* t2 = nullptr;
+    ASSERT_TRUE(doc2.GetTimerMap().Lookup("frac", t2));
+    EXPECT_NEAR(7.5, t2->fEverySecond, 1e-9);
+}
+
+// xml_save_world.cpp: "don't write 65536 to world file (colour !=
+// SAMECOLOUR guard); + 1, to match custom colours" — SAMECOLOUR omits the
+// attribute; a real colour c is written as c+1 and round-trips.
+TEST(WorldLoad, TriggerSameColourOmittedFromSavedFile)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_colour_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        CTrigger* t1 = new CTrigger();
+        t1->trigger = CString("same"); t1->strLabel = CString("tsame");
+        t1->bEnabled = TRUE; t1->colour = SAMECOLOUR;
+        doc.GetTriggerMap().SetAt(t1->strLabel, t1);
+        CTrigger* t2 = new CTrigger();
+        t2->trigger = CString("real"); t2->strLabel = CString("treal");
+        t2->bEnabled = TRUE; t2->colour = 3;
+        doc.GetTriggerMap().SetAt(t2->strLabel, t2);
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+    std::string content = slurp(path);
+    EXPECT_EQ(content.find("custom_colour=\"65536\""), std::string::npos);
+    EXPECT_NE(content.find("custom_colour=\"4\""), std::string::npos);  // 3+1
+    // exactly one custom_colour attribute in the file (tsame omitted it)
+    size_t first = content.find("custom_colour=");
+    ASSERT_TRUE(first != std::string::npos);
+    EXPECT_EQ(content.find("custom_colour=", first + 1), std::string::npos);
+
+    // round-trip: colour 3 comes back as 3, SAMECOLOUR as SAMECOLOUR
+    CMUSHclientDoc doc2;
+    ASSERT_TRUE(doc2.LoadWorldFromFile(path));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc2.GetTriggerMap().Lookup("treal", t));
+    EXPECT_EQ(3, (int)t->colour);
+    ASSERT_TRUE(doc2.GetTriggerMap().Lookup("tsame", t));
+    EXPECT_EQ((unsigned short)SAMECOLOUR, t->colour);
+}
+
+// xml_save_world.cpp: "don't save temporary triggers (bTemporary ||
+// bIncluded skipped)" — a temporary trigger is absent from the saved file.
+TEST(WorldLoad, TemporaryTriggerOmittedFromSave)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_temp_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        CTrigger* t1 = new CTrigger();
+        t1->trigger = CString("temporary_trigger_match");
+        t1->strLabel = CString("ttemp");
+        t1->bEnabled = TRUE; t1->bTemporary = true;
+        doc.GetTriggerMap().SetAt(t1->strLabel, t1);
+        CTrigger* t2 = new CTrigger();
+        t2->trigger = CString("permanent_trigger_match");
+        t2->strLabel = CString("tperm");
+        t2->bEnabled = TRUE;
+        doc.GetTriggerMap().SetAt(t2->strLabel, t2);
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+    std::string content = slurp(path);
+    EXPECT_EQ(content.find("temporary_trigger_match"), std::string::npos);
+    EXPECT_NE(content.find("permanent_trigger_match"), std::string::npos);
+}
+
+// xml_serialize.cpp: "m_CurrentPlugin = NULL; // make sure we save main
+// triggers etc." — a save issued while a plugin is current still writes the
+// WORLD's items and restores m_CurrentPlugin afterwards.
+TEST(WorldLoad, SaveWithCurrentPluginStillSavesWorldTriggers)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_curpl_%d.mcl", (int)getpid());
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+    CTrigger* t = new CTrigger();
+    t->trigger = CString("world_trigger_match");
+    t->strLabel = CString("wt");
+    t->bEnabled = TRUE;
+    doc.GetTriggerMap().SetAt(t->strLabel, t);
+
+    CPlugin* p = new CPlugin(&doc);
+    p->m_bSaveState = false;
+    p->m_strID = "eeeeeeeeeeeeeeeeeeeeeee5";
+    doc.m_PluginList.push_back(p);
+    doc.m_CurrentPlugin = p;                   // save happens "inside" a plugin
+
+    ASSERT_TRUE(doc.OnSaveDocument(path));
+    EXPECT_TRUE(doc.m_CurrentPlugin == p);     // restored afterwards
+    doc.m_CurrentPlugin = NULL;
+
+    std::string content = slurp(path);
+    EXPECT_NE(content.find("world_trigger_match"), std::string::npos);
+}
+
+// xml_serialize.cpp: "ensure world has an ID (if m_strWorldID empty,
+// GetUniqueID() before Save_World_XML)".
+TEST(WorldLoad, SaveGeneratesWorldIdWhenMissing)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_id_%d.mcl", (int)getpid());
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+    doc.m_strWorldID.Empty();                  // wipe the ID
+    ASSERT_TRUE(doc.OnSaveDocument(path));
+
+    ASSERT_EQ(24, doc.m_strWorldID.GetLength());   // fresh 24-hex ID in doc
+    std::string content = slurp(path);
+    std::string expect = std::string("id=\"") +
+                         (const char*)doc.m_strWorldID + "\"";
+    EXPECT_NE(content.find(expect), std::string::npos);   // and in the file
+}
+
+// xmlparse.cpp Get_XML_boolean: "be nice and let them slip in Y or y ...
+// '1'/'-1'/yes/y/true/t are true — anything else throws 'unrecognised
+// value'" — the failing element draws a warning and is dropped.
+TEST(WorldLoad, BooleanAttributeLexicon)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<triggers>
+  <trigger match="a" name="tminus" enabled="-1"><send>x</send></trigger>
+  <trigger match="b" name="tfalse" enabled="F"><send>x</send></trigger>
+  <trigger match="c" name="tbad" enabled="maybe"><send>x</send></trigger>
+</triggers>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("tminus", t));
+    EXPECT_TRUE(t->bEnabled != 0);                        // "-1" is true
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("tfalse", t));
+    EXPECT_TRUE(t->bEnabled == 0);                        // "F" is false
+    EXPECT_FALSE(doc.GetTriggerMap().Lookup("tbad", t));  // "maybe": rejected
+}
+
+// xmlparse.cpp ProcessEntity: "entities might have entities in them, so
+// replace them" — a DTD entity referencing an earlier entity expands
+// transitively.
+TEST(WorldLoad, CustomEntityExpandsNestedEntity)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient [
+  <!ENTITY a "x">
+  <!ENTITY b "&a;y">
+]>
+<muclient>
+<triggers>
+  <trigger match="&b;z" name="t1" enabled="y"><send>go</send></trigger>
+</triggers>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("t1", t));
+    EXPECT_STREQ("xyz", (const char*)t->trigger);   // &b; → "&a;y" → "xy"
+}
+
+// xmlparse.cpp: "convert tabs to spaces, we don't want tabs in our data
+// (whole XML buffer, before parsing — a literal tab can only be embedded
+// via &#9;)".
+TEST(WorldLoad, LiteralTabsBecomeSpacesOnLoad)
+{
+    const char* xml = "<?xml version=\"1.0\"?>\n"
+        "<!DOCTYPE muclient>\n"
+        "<muclient>\n"
+        "<triggers>\n"
+        "  <trigger match=\"a&#9;b\" name=\"t1\" enabled=\"y\">\n"
+        "    <send>x\ty</send>\n"                    // literal TAB
+        "  </trigger>\n"
+        "</triggers>\n"
+        "</muclient>\n";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("t1", t));
+    EXPECT_STREQ("a\tb", (const char*)t->trigger);    // &#9; → real tab
+    EXPECT_STREQ("x y",  (const char*)t->contents);   // literal tab → space
+}
+
+// xml_load_world.cpp: "note - in 3.35 onwards these are incorporated into
+// iSendTo" — legacy speed_walk="y" maps to eSendToSpeedwalk; combining it
+// with a conflicting explicit send_to throws and drops the alias.
+TEST(WorldLoad, LegacySpeedWalkFlagMapsToSendTo)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<aliases>
+  <alias match="sw" name="aok" enabled="y" speed_walk="y"><send>3n</send></alias>
+  <alias match="bad" name="abad" enabled="y" speed_walk="y" send_to="2"><send>x</send></alias>
+</aliases>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    CAlias* a = nullptr;
+    ASSERT_TRUE(doc.GetAliasMap().Lookup("aok", a));
+    EXPECT_EQ((int)eSendToSpeedwalk, (int)a->iSendTo);
+    EXPECT_FALSE(doc.GetAliasMap().Lookup("abad", a));    // conflict: rejected
+}
+
+// xml_load_world.cpp: "conversion from older versions - make variable name
+// same as label if necessary" — send-to-variable with no variable copies
+// the label; with neither it is rejected.
+TEST(WorldLoad, SendToVariableFallsBackToLabel)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<triggers>
+  <trigger match="a" name="lbl" enabled="y" send_to="9"><send>x</send></trigger>
+  <trigger match="b" enabled="y" send_to="9"><send>x</send></trigger>
+</triggers>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("lbl", t));
+    EXPECT_STREQ("lbl", (const char*)t->strVariable);   // label copied in
+    EXPECT_EQ(1, (int)doc.GetTriggerArray().GetSize()); // unnamed one rejected
+}
+
+// xml_load_world.cpp: "don't include it twice (m_strCurrentIncludeFileList
+// membership → 'has already been included')" — the second include of the
+// same file warns; the world still loads and the item exists exactly once.
+TEST(WorldLoad, DuplicateIncludeRejectedOnce)
+{
+    const char* incXml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<triggers>
+  <trigger match="from include" name="tinc" enabled="y"><send>x</send></trigger>
+</triggers>
+</muclient>)";
+    std::string incPath = write_temp_named("dup_include.xml", incXml);
+    ASSERT_TRUE(!incPath.empty());
+
+    char main_xml[1024];
+    snprintf(main_xml, sizeof main_xml, R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<include name="%s" plugin="n" />
+<include name="%s" plugin="n" />
+<world site="test.mud" port="4000">
+</world>
+</muclient>)", incPath.c_str(), incPath.c_str());
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(main_xml).c_str()));
+    CTrigger* t = nullptr;
+    EXPECT_TRUE(doc.GetTriggerMap().Lookup("tinc", t)); // included once
+    EXPECT_EQ(1, (int)doc.GetTriggerArray().GetSize()); // not twice
+}
+
+// doc_portable.cpp Load_Set: "TRUE = cancelled, matching the GUI cancel
+// path ... FALSE = OK (matches Windows convention)" — the inverted return.
+TEST(WorldLoad, LoadSetEmptyNameReturnsCancelledTrue)
+{
+    CMUSHclientDoc doc;
+    CTrigger* t = new CTrigger();
+    t->trigger = CString("keepme"); t->strLabel = CString("keepme");
+    t->bEnabled = TRUE;
+    doc.GetTriggerMap().SetAt(t->strLabel, t);
+
+    EXPECT_TRUE(doc.Load_Set(TRIGGER, CString(""), NULL));   // cancelled
+    CTrigger* still = nullptr;
+    EXPECT_TRUE(doc.GetTriggerMap().Lookup("keepme", still)); // untouched
+}
+
+// doc_portable.cpp Load_Set: "replace=TRUE: with no prompt possible we take
+// the dialogs' default answer — case TRIGGER: if (replace)
+// DELETE_MAP(m_TriggerMap, CTrigger)" — the set REPLACES existing triggers.
+TEST(WorldLoad, LoadSetTriggersReplaceExistingMap)
+{
+    const char* setXml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<triggers>
+  <trigger match="from set" name="tset" enabled="y"><send>x</send></trigger>
+</triggers>
+</muclient>)";
+    std::string setPath = write_temp_named("trigger_set.xml", setXml);
+    ASSERT_TRUE(!setPath.empty());
+
+    CMUSHclientDoc doc;
+    CTrigger* old = new CTrigger();
+    old->trigger = CString("old"); old->strLabel = CString("oldtrig");
+    old->bEnabled = TRUE;
+    doc.GetTriggerMap().SetAt(old->strLabel, old);
+
+    EXPECT_FALSE(doc.Load_Set(TRIGGER, CString(setPath.c_str()), NULL)); // OK
+    CTrigger* t = nullptr;
+    EXPECT_FALSE(doc.GetTriggerMap().Lookup("oldtrig", t));  // replaced...
+    EXPECT_TRUE(doc.GetTriggerMap().Lookup("tset", t));      // ...by the set
+}
+
 MC_TEST_MAIN()

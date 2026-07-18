@@ -307,4 +307,198 @@ TEST(Utilities, CheckLabel_HonoursBScript)
     EXPECT_FALSE(CheckLabel("a.b", true));       // ok when a script name
 }
 
+// ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
+
+#include <string>
+#include <vector>
+using std::string;
+using std::vector;
+
+// utilities_shared.cpp SeeIfBase64: "If every non-whitespace byte is base64
+// and the count is a multiple of 4, decode in place ... might be base64 if
+// only base64 characters and mod-4 [length]".
+TEST(Utilities, SeeIfBase64_DecodesOnlyMod4Base64)
+{
+    CString s1("Zm9vYmFy");           // valid base64, mod-4 → decoded
+    SeeIfBase64(s1);
+    EXPECT_STREQ("foobar", (const char*)s1);
+
+    CString s2("<world>");            // contains '<': plain XML, untouched
+    SeeIfBase64(s2);
+    EXPECT_STREQ("<world>", (const char*)s2);
+
+    CString s3("Zm9vY");              // base64 chars but not mod-4: untouched
+    SeeIfBase64(s3);
+    EXPECT_STREQ("Zm9vY", (const char*)s3);
+
+    CString s4("Zm9v YmFy");          // whitespace ignored when counting
+    SeeIfBase64(s4);
+    EXPECT_STREQ("foobar", (const char*)s4);
+}
+
+// utilities_shared.cpp StringToVector: "an empty string ... will give an
+// empty vector. However, a non-empty string (with no delimiter) will give
+// one item. After that, you get an item per delimiter" — the old portable
+// twin drifted to [""] for empty input.
+TEST(Utilities, StringToVector_ElementCountContract)
+{
+    vector<string> v;
+
+    StringToVector("", v, ",", true);
+    EXPECT_EQ((size_t)0, v.size());               // empty → []
+
+    StringToVector("a", v, ",", true);
+    EXPECT_EQ((size_t)1, v.size());               // no delimiter → ["a"]
+    EXPECT_STREQ("a", v[0].c_str());
+
+    StringToVector("a,b", v, ",", true);
+    EXPECT_EQ((size_t)2, v.size());               // ["a","b"]
+    EXPECT_STREQ("a", v[0].c_str());
+    EXPECT_STREQ("b", v[1].c_str());
+
+    StringToVector("a,b,", v, ",", true);
+    EXPECT_EQ((size_t)3, v.size());               // trailing delim → ["a","b",""]
+    EXPECT_STREQ("", v[2].c_str());
+}
+
+// utilities_shared.cpp FixHTMLMultilineString: escapes < > & and tab but
+// passes double quotes and newlines through unchanged (unlike FixHTMLString,
+// which escapes quotes) — the world-file save format contract.
+TEST(Utilities, FixHTMLMultilineString_PreservesQuotesAndNewlines)
+{
+    EXPECT_STREQ("&lt;a&gt; &amp; b&#9;c",
+                 (const char*)FixHTMLMultilineString("<a> & b\tc"));
+    // quotes and newlines survive verbatim
+    EXPECT_STREQ("say \"hi\"\nline2",
+                 (const char*)FixHTMLMultilineString("say \"hi\"\nline2"));
+    // contrast: FixHTMLString escapes the quotes
+    EXPECT_STREQ("say &quot;hi&quot;",
+                 (const char*)FixHTMLString("say \"hi\""));
+}
+
+// utilities_shared.cpp ColourToName: the full HTML colour table resolves
+// names headless (the old twin knew only 16 names and wrote #RRGGBB).
+TEST(Utilities, ColourToNameUsesFullNameTableElseHex)
+{
+    EXPECT_STREQ("dodgerblue", (const char*)ColourToName(RGB(30, 144, 255)));
+    // an off-palette colour falls back to uppercase hex
+    EXPECT_STREQ("#010203", (const char*)ColourToName(RGB(1, 2, 3)));
+}
+
+// doc_portable.cpp GetUniqueID: "24 lowercase hex chars, byte-for-byte the
+// output shape of the CoCreateGuid-based original" — and consecutive calls
+// differ.
+TEST(Utilities, GetUniqueIDIsTwentyFourLowercaseHexAndUnique)
+{
+    CString a = GetUniqueID();
+    CString b = GetUniqueID();
+    ASSERT_EQ(24, a.GetLength());
+    ASSERT_EQ(24, b.GetLength());
+    for (int i = 0; i < 24; i++) {
+        char c = ((const char*)a)[i];
+        EXPECT_TRUE((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+    }
+    EXPECT_TRUE(a != b);
+}
+
+// utilities_shared.cpp Make_Absolute_Path: "if the filename starts with ./
+// or .\ then drop it, otherwise we get junk like c:\mushclient\.\logs\..."
+// (headless working_dir is empty, so relative stays relative).
+TEST(Utilities, MakeAbsolutePathStripsLeadingDotSlash)
+{
+    EXPECT_STREQ("logs/x.txt", Make_Absolute_Path("./logs/x.txt"));
+    EXPECT_STREQ("logs\\x.txt", Make_Absolute_Path(".\\logs\\x.txt"));
+    // absolute paths are untouched
+    EXPECT_STREQ("/a/b", Make_Absolute_Path("/a/b"));
+    EXPECT_STREQ("c:x",  Make_Absolute_Path("c:x"));
+}
+
+// utilities_shared.cpp ExtractDirectory: "On POSIX paths use '/' but also
+// accept '\' in case of cross-platform world files ... if no slash: './'".
+TEST(Utilities, ExtractDirectoryAcceptsBackslashSeparators)
+{
+    EXPECT_STREQ("plugins\\images\\",
+                 (const char*)ExtractDirectory("plugins\\images\\x.png"));
+    EXPECT_STREQ("plugins/images/",
+                 (const char*)ExtractDirectory("plugins/images/x.png"));
+    // the LATER of the two separator kinds wins in a mixed path
+    EXPECT_STREQ("a\\b/", (const char*)ExtractDirectory("a\\b/c.png"));
+    EXPECT_STREQ("./", (const char*)ExtractDirectory("noslash.png"));
+}
+
+// utilities_shared.cpp: the CommandIDs[] lookups are case-insensitive and
+// round-trip; unknown name → 0, ID 0 → "".
+extern tCommandIDMapping CommandIDs[];
+
+TEST(Utilities, CommandIDLookupIsCaseInsensitiveRoundTrip)
+{
+    int checked = 0, roundtripped = 0;
+    for (int i = 0; CommandIDs[i].iCommandID; i++) {
+        const int id = CommandIDs[i].iCommandID;
+        CString name = CommandIDs[i].sCommandName;
+        // round-trip (first table entry with this ID wins)
+        if (CommandIDToString(id) == name) {
+            EXPECT_EQ(id, StringToCommandID(name));
+            roundtripped++;
+        }
+        // case-insensitive
+        CString upper = name; upper.MakeUpper();
+        EXPECT_EQ(StringToCommandID(name), StringToCommandID(upper));
+        checked++;
+    }
+    EXPECT_GT(checked, 100);                       // the table is substantial
+    EXPECT_GT(roundtripped, 100);                  // round-trips actually ran
+    EXPECT_EQ(0, StringToCommandID("NoSuchCommandName"));
+    EXPECT_STREQ("", (const char*)CommandIDToString(0));
+}
+
+// doc_portable.cpp AllocateLinePositions: "Trim FIRST so the index can never
+// be smaller than the list it indexes" — after lowering m_maxlines the list
+// is trimmed before the new index is built, so entries never point past it.
+TEST(Utilities, AllocateLinePositionsTrimsListBeforeRebuildingIndex)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    char buf[32];
+    for (int i = 1; i <= 350; i++) {
+        snprintf(buf, sizeof buf, "line %d\n", i);
+        doc.DisplayMsg(buf, (int)strlen(buf), 0);
+    }
+    ASSERT_EQ(351, (int)doc.m_LineList.GetCount());   // 350 done + 1 pending
+
+    doc.m_maxlines = 200;
+    doc.AllocateLinePositions();
+
+    // trimmed in JUMP_SIZE chunks until <= m_maxlines: 351 → 251 → 151
+    EXPECT_EQ(151, (int)doc.m_LineList.GetCount());
+
+    // the rebuilt index resolves lines correctly (head is now "line 201")
+    VARIANT v = doc.GetLineInfo(1, 1);
+    ASSERT_EQ((unsigned short)VT_BSTR, v.vt);
+    EXPECT_STREQ("line 201", (const char*)CString(v.bstrVal));
+    VariantClear(&v);
+    v = doc.GetLineInfo(150, 1);
+    ASSERT_EQ((unsigned short)VT_BSTR, v.vt);
+    EXPECT_STREQ("line 350", (const char*)CString(v.bstrVal));
+    VariantClear(&v);
+}
+
+// doc_portable.cpp GetLinePosition: "sanity check (Santa Claus): nLine >
+// count → clamped, nLine < 0 → 0; ... not there? assume last one in the
+// list" — out-of-range line numbers always yield a valid POSITION.
+TEST(Utilities, GetLinePositionClampsOutOfRangeLineNumbers)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.DisplayMsg("one\ntwo\nthree\n", 14, 0);
+
+    POSITION head = doc.GetLinePosition(-5);       // negative → head
+    ASSERT_TRUE(head != NULL);
+    EXPECT_TRUE(doc.m_LineList.GetAt(head) == doc.m_LineList.GetHead());
+
+    POSITION tail = doc.GetLinePosition(9999);     // beyond count → tail
+    ASSERT_TRUE(tail != NULL);
+    EXPECT_TRUE(doc.m_LineList.GetAt(tail) == doc.m_LineList.GetTail());
+}
+
 MC_TEST_MAIN()

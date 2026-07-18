@@ -396,4 +396,64 @@ TEST(PalTransport, EndToEndLoopbackLifecycle)
     delete doc;
 }
 
+// ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
+
+// doc_shared.cpp DoSendMsg: "double IAC to IAC IAC (unless
+// m_bDoNotTranslateIACtoIACIAC)" — telnet escaping of 0xFF in outgoing
+// commands, observable on the fake wire.
+TEST(PalTransport, SentCommandDoublesIacBytes)
+{
+    CMUSHclientDoc* doc = new CMUSHclientDoc();
+    doc->m_iConnectPhase = eConnectConnectedToMud;
+    doc->m_display_my_input = FALSE;
+    doc->m_pTransport = new FakeTransport();
+
+    doc->SendMsg(CString("cmd\xFFx"), false, false, false);
+    const char expected[] = { 'c','m','d', (char)0xFF, (char)0xFF, 'x', '\r', '\n' };
+    ASSERT_EQ(sizeof expected, queued(doc).size());
+    EXPECT_TRUE(memcmp(queued(doc).data(), expected, sizeof expected) == 0);
+
+    // the doubling can be suppressed
+    queued(doc).clear();
+    doc->m_bDoNotTranslateIACtoIACIAC = 1;
+    doc->SendMsg(CString("cmd\xFFx"), false, false, false);
+    const char raw[] = { 'c','m','d', (char)0xFF, 'x', '\r', '\n' };
+    ASSERT_EQ(sizeof raw, queued(doc).size());
+    EXPECT_TRUE(memcmp(queued(doc).data(), raw, sizeof raw) == 0);
+
+    delete doc;
+}
+
+// doc_shared.cpp SendMsg: "strip trailing endline - that would trigger an
+// extra blank line" — a command ending in CRLF transmits exactly one line.
+TEST(PalTransport, TrailingEndlineDoesNotSendExtraBlankLine)
+{
+    CMUSHclientDoc* doc = new CMUSHclientDoc();
+    doc->m_iConnectPhase = eConnectConnectedToMud;
+    doc->m_display_my_input = FALSE;
+    doc->m_pTransport = new FakeTransport();
+
+    doc->SendMsg(CString("hello\r\n"), false, false, false);
+    EXPECT_STREQ("hello\r\n", queued(doc).c_str());   // one line, not two
+    EXPECT_EQ(1L, doc->m_nTotalLinesSent);
+
+    delete doc;
+}
+
+// doc_portable.cpp CheckConnected: "MUSHclient convention: returns 0 (FALSE)
+// if connected, non-zero if not" — the inverted convention callers rely on
+// ("if (CheckConnected()) return true;" bails early when NOT connected).
+TEST(PalTransport, CheckConnectedReturnsNonzeroWhenDisconnected)
+{
+    CMUSHclientDoc* doc = new CMUSHclientDoc();
+
+    doc->m_iConnectPhase = eConnectNotConnected;
+    EXPECT_TRUE(doc->CheckConnected() != 0);        // not connected → non-zero
+
+    doc->m_iConnectPhase = eConnectConnectedToMud;
+    EXPECT_EQ((BOOL)0, doc->CheckConnected());      // connected → 0
+
+    delete doc;
+}
+
 MC_TEST_MAIN()

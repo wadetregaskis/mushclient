@@ -5,11 +5,9 @@
 // LoadWorldFromFile, then inspects the resulting trigger/alias/variable/timer
 // maps.
 //
-// KNOWN PORTABLE-SUBSET FAILURES (deferred — low priority):
-// PluginLoad.MultipleDistinctPlugins and PluginLoad.ViaIncludeInWorldFile
-// exercise plugin loading/flattening that the portable mushcore loader only
-// partially implements; the product, mushgui, loads plugins through the full
-// engine.  Closing this gap is deferred — the GUI is the product.
+// The loader under test is the REAL Windows loader (xml/xml_load_world.cpp,
+// adopted into mushcore); LoadWorldFromFile (doc_portable.cpp) drives it the
+// way the Windows Serialize loading branch does (serialize.cpp:44-110).
 
 #include "mc_test.h"
 #include "platform/doc_stub.h"
@@ -38,6 +36,17 @@ static std::string write_temp(const char* xml)
     fwrite(xml, 1, strlen(xml), f);
     fclose(f);
     return path;
+}
+
+// Load a plugin through the REAL (void, throwing) InternalLoadPlugin
+// (xml/xml_load_world.cpp:2657) and report success as a bool, wrapping the
+// exceptions exactly like the product caller (methods_plugins.cpp
+// LoadPlugin: catch CFileException*/CArchiveException*).
+static bool TryLoadPlugin(CMUSHclientDoc& doc, const char* path)
+{
+    try { doc.InternalLoadPlugin(CString(path)); return true; }
+    catch (CException* e) { e->Delete(); return false; }
+    catch (...)           { return false; }
 }
 
 // Write text to a temp file with an explicit suffix/name, e.g. for
@@ -522,22 +531,31 @@ TEST(WorldLoad, TriggerWithNoMatchSkipped)
 #ifdef MUSHCLIENT_LUA_SCRIPTING
 #include "scripting/scripting.h"
 
-TEST(WorldLoad, InlineScriptCreatesEngine)
+// NOTE: worlds script via an external script FILE (script_filename,
+// scriptingoptions_alpha.inc:59) — the REAL loader has no world-level inline
+// <script> support (Load_Scripts_XML runs only for plugins,
+// xml_load_world.cpp:457-462).  enable_scripts="y" is required because the
+// Windows absent-boolean rule zeroes it for a minimal <world> tag, and
+// engine creation is gated on m_bEnableScripts (doc.cpp:475).
+TEST(WorldLoad, ScriptFileCreatesEngine)
 {
-    // A world with an inline <script> block should end up with a live
-    // Lua engine after LoadWorldFromFile.
-    const char* xml = R"(<?xml version="1.0"?>
-<!DOCTYPE muclient>
-<muclient>
-<world site="test.mud" port="4000" script_language="lua">
-</world>
-<script>
+    // A world with a script file should end up with a live Lua engine
+    // after LoadWorldFromFile.
+    const char* lua = R"(
 -- trivial Lua so the parser has something to chew on
 function OnWorldOpen()
   return true
 end
-</script>
-</muclient>)";
+)";
+    std::string luaPath = write_temp_named("engine.lua", lua);
+    char xml[1024];
+    snprintf(xml, sizeof(xml), R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000" script_language="lua" enable_scripts="y"
+       script_filename="%s">
+</world>
+</muclient>)", luaPath.c_str());
 
     CMUSHclientDoc doc;
     ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
@@ -545,20 +563,22 @@ end
     EXPECT_TRUE(doc.m_ScriptEngine->IsLua());
 }
 
-TEST(WorldLoad, InlineScriptDispidResolvable)
+TEST(WorldLoad, ScriptFileDispidResolvable)
 {
     // After loading, GetDispid should find a function defined in the script.
-    const char* xml = R"(<?xml version="1.0"?>
-<!DOCTYPE muclient>
-<muclient>
-<world script_language="lua">
-</world>
-<script>
+    const char* lua = R"(
 function MyHandler()
   return 42
 end
-</script>
-</muclient>)";
+)";
+    std::string luaPath = write_temp_named("dispid.lua", lua);
+    char xml[1024];
+    snprintf(xml, sizeof(xml), R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world script_language="lua" enable_scripts="y" script_filename="%s">
+</world>
+</muclient>)", luaPath.c_str());
 
     CMUSHclientDoc doc;
     ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
@@ -570,15 +590,21 @@ end
 
 TEST(WorldLoad, ScriptLanguageDefaultsToLua)
 {
-    // A world with a <script> block but no explicit script_language
-    // should still initialise a Lua engine (default language is Lua).
-    const char* xml = R"(<?xml version="1.0"?>
+    // A world with a script file but no explicit script_language should
+    // still initialise a Lua engine (the table default is "lua",
+    // scriptingoptions_alpha.inc:60; defaults="y" keeps table defaults for
+    // this minimal hand-written <world> tag, as on Windows).
+    const char* lua = R"(
+function Ping() return "pong" end
+)";
+    std::string luaPath = write_temp_named("deflang.lua", lua);
+    char xml[1024];
+    snprintf(xml, sizeof(xml), R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
-<script>
-function Ping() return "pong" end
-</script>
-</muclient>)";
+<world script_filename="%s" defaults="y">
+</world>
+</muclient>)", luaPath.c_str());
 
     CMUSHclientDoc doc;
     ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
@@ -588,7 +614,7 @@ function Ping() return "pong" end
 
 TEST(WorldLoad, NoScriptNoEngine)
 {
-    // A world with no <script> block should have no script engine.
+    // A world with no script file should have no script engine.
     const char* xml = R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
@@ -606,10 +632,17 @@ TEST(WorldLoad, TriggerWithScriptProcedure)
 {
     // A trigger with a script= attribute should have its dispid resolved
     // after the world is loaded (GetLuaDispid on the named function).
-    const char* xml = R"xml(<?xml version="1.0"?>
+    const char* lua = R"(
+function OnHealth(name, line, wildcards)
+  -- would update HP display
+end
+)";
+    std::string luaPath = write_temp_named("onhealth.lua", lua);
+    char xml[1024];
+    snprintf(xml, sizeof(xml), R"xml(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
-<world script_language="lua">
+<world script_language="lua" enable_scripts="y" script_filename="%s">
 </world>
 <triggers>
   <trigger match="^health: (\d+)" name="hp_trigger" regexp="y"
@@ -617,12 +650,7 @@ TEST(WorldLoad, TriggerWithScriptProcedure)
     <send></send>
   </trigger>
 </triggers>
-<script>
-function OnHealth(name, line, wildcards)
-  -- would update HP display
-end
-</script>
-</muclient>)xml";
+</muclient>)xml", luaPath.c_str());
 
     CMUSHclientDoc doc;
     ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
@@ -657,20 +685,22 @@ TEST(WorldLoad, TriggerColourSplitDoesNotEatTrailingChar)
     // (defaults="y" keeps enable_triggers at its table default for this
     // hand-written minimal <world> tag — Windows semantics zero an absent
     // boolean otherwise, since the saver omits false booleans.)
-    const char* xml = R"xml(<?xml version="1.0"?>
+    const char* lua = R"(
+function Noop() end
+)";
+    std::string luaPath = write_temp_named("noop.lua", lua);
+    char xml[1024];
+    snprintf(xml, sizeof(xml), R"xml(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
-<world script_language="lua" defaults="y">
+<world script_language="lua" defaults="y" script_filename="%s">
 </world>
 <triggers>
   <trigger match="^fooba" name="t1" regexp="y" enabled="y" custom_colour="1" send_to="14">
     <send></send>
   </trigger>
 </triggers>
-<script>
-function Noop() end
-</script>
-</muclient>)xml";
+</muclient>)xml", luaPath.c_str());
 
     CMUSHclientDoc doc;
     ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
@@ -753,7 +783,7 @@ TEST(WorldLoad, TimersResetAfterLoad)
 static const char* PLUGIN_BASIC = R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
-<plugin name="TestPlugin" author="TestAuthor" id="test-plugin-0001"
+<plugin name="TestPlugin" author="TestAuthor" id="aaaaaaaaaaaaaaaaaaaa0001"
         version="2.5" />
 </muclient>)";
 
@@ -761,7 +791,7 @@ static const char* PLUGIN_BASIC = R"(<?xml version="1.0"?>
 static const char* PLUGIN_WITH_TRIGGER = R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
-<plugin name="TrigPlugin" author="A" id="trig-plugin-0001" version="1.0" />
+<plugin name="TrigPlugin" author="A" id="bbbbbbbbbbbbbbbbbbbb0001" version="1.0" />
 <triggers>
   <trigger match="plugin fires" name="ptrig" enabled="y" sequence="100">
     <send>yes it does</send>
@@ -773,7 +803,7 @@ static const char* PLUGIN_WITH_TRIGGER = R"(<?xml version="1.0"?>
 static const char* PLUGIN_WITH_VARIABLE = R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
-<plugin name="VarPlugin" author="A" id="var-plugin-0001" version="1.0" />
+<plugin name="VarPlugin" author="A" id="cccccccccccccccccccc0001" version="1.0" />
 <variables>
   <variable name="plugin_var">plugin_value</variable>
 </variables>
@@ -785,13 +815,13 @@ TEST(PluginLoad, BasicMetadataStored)
     ASSERT_TRUE(!path.empty());
 
     CMUSHclientDoc doc;
-    EXPECT_TRUE(doc.InternalLoadPlugin(CString(path.c_str())));
+    EXPECT_TRUE(TryLoadPlugin(doc, path.c_str()));
 
     ASSERT_EQ(1u, doc.m_PluginList.size());
     CPlugin* p = doc.m_PluginList.front();
     EXPECT_STREQ("TestPlugin",        (const char*)p->m_strName);
     EXPECT_STREQ("TestAuthor",        (const char*)p->m_strAuthor);
-    EXPECT_STREQ("test-plugin-0001",  (const char*)p->m_strID);
+    EXPECT_STREQ("aaaaaaaaaaaaaaaaaaaa0001",  (const char*)p->m_strID);
     EXPECT_NEAR(2.5, p->m_dVersion, 0.001);
 }
 
@@ -799,7 +829,7 @@ TEST(PluginLoad, SourcePathRecorded)
 {
     std::string path = write_temp_named("srcpath.xml", PLUGIN_BASIC);
     CMUSHclientDoc doc;
-    ASSERT_TRUE(doc.InternalLoadPlugin(CString(path.c_str())));
+    ASSERT_TRUE(TryLoadPlugin(doc, path.c_str()));
 
     CPlugin* p = doc.m_PluginList.front();
     // m_strSource should equal the path we passed in
@@ -817,7 +847,7 @@ TEST(PluginLoad, TriggersLandInPluginMap)
     ASSERT_TRUE(!path.empty());
 
     CMUSHclientDoc doc;
-    ASSERT_TRUE(doc.InternalLoadPlugin(CString(path.c_str())));
+    ASSERT_TRUE(TryLoadPlugin(doc, path.c_str()));
 
     ASSERT_EQ(1u, doc.m_PluginList.size());
     CPlugin* p = doc.m_PluginList.front();
@@ -842,7 +872,7 @@ TEST(PluginLoad, VariablesLandInPluginMap)
     ASSERT_TRUE(!path.empty());
 
     CMUSHclientDoc doc;
-    ASSERT_TRUE(doc.InternalLoadPlugin(CString(path.c_str())));
+    ASSERT_TRUE(TryLoadPlugin(doc, path.c_str()));
 
     ASSERT_EQ(1u, doc.m_PluginList.size());
     CPlugin* p = doc.m_PluginList.front();
@@ -860,7 +890,7 @@ TEST(PluginLoad, VariablesLandInPluginMap)
 TEST(PluginLoad, MissingFileReturnsFalse)
 {
     CMUSHclientDoc doc;
-    EXPECT_FALSE(doc.InternalLoadPlugin(CString("/nonexistent/plugin.xml")));
+    EXPECT_FALSE(TryLoadPlugin(doc, "/nonexistent/plugin.xml"));
     EXPECT_EQ(0u, doc.m_PluginList.size());
 }
 
@@ -901,7 +931,7 @@ TEST(PluginLoad, TriggerArraySortedBySequence)
     static const char* xml = R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
-<plugin name="SortPlugin" author="A" id="sort-plugin-0001" version="1.0" />
+<plugin name="SortPlugin" author="A" id="dddddddddddddddddddd0001" version="1.0" />
 <triggers>
   <trigger match="high" name="hi" enabled="y" sequence="200">
     <send>hi</send>
@@ -916,7 +946,7 @@ TEST(PluginLoad, TriggerArraySortedBySequence)
     ASSERT_TRUE(!path.empty());
 
     CMUSHclientDoc doc;
-    ASSERT_TRUE(doc.InternalLoadPlugin(CString(path.c_str())));
+    ASSERT_TRUE(TryLoadPlugin(doc, path.c_str()));
 
     ASSERT_EQ(1u, doc.m_PluginList.size());
     CPlugin* p = doc.m_PluginList.front();
@@ -939,12 +969,12 @@ TEST(PluginLoad, NoNameRejected)
     const char* xml = R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
-<plugin author="A" id="no-name-0001" version="1.0" />
+<plugin author="A" id="eeeeeeeeeeeeeeeeeeee0001" version="1.0" />
 </muclient>)";
 
     std::string path = write_temp_named("noname.xml", xml);
     CMUSHclientDoc doc;
-    EXPECT_FALSE(doc.InternalLoadPlugin(CString(path.c_str())));
+    EXPECT_FALSE(TryLoadPlugin(doc, path.c_str()));
     EXPECT_EQ(0u, doc.m_PluginList.size());
 }
 
@@ -958,7 +988,7 @@ TEST(PluginLoad, NoIDRejected)
 
     std::string path = write_temp_named("noid.xml", xml);
     CMUSHclientDoc doc;
-    EXPECT_FALSE(doc.InternalLoadPlugin(CString(path.c_str())));
+    EXPECT_FALSE(TryLoadPlugin(doc, path.c_str()));
     EXPECT_EQ(0u, doc.m_PluginList.size());
 }
 
@@ -967,11 +997,11 @@ TEST(PluginLoad, DuplicateIDRejected)
     std::string path = write_temp_named("dup.xml", PLUGIN_BASIC);
     CMUSHclientDoc doc;
 
-    EXPECT_TRUE(doc.InternalLoadPlugin(CString(path.c_str())));
+    EXPECT_TRUE(TryLoadPlugin(doc, path.c_str()));
     EXPECT_EQ(1u, doc.m_PluginList.size());
 
     // Second load of same ID should be silently rejected
-    EXPECT_FALSE(doc.InternalLoadPlugin(CString(path.c_str())));
+    EXPECT_FALSE(TryLoadPlugin(doc, path.c_str()));
     EXPECT_EQ(1u, doc.m_PluginList.size());   // still only one
 }
 
@@ -982,8 +1012,8 @@ TEST(PluginLoad, MultipleDistinctPlugins)
     ASSERT_TRUE(!p1.empty()); ASSERT_TRUE(!p2.empty());
 
     CMUSHclientDoc doc;
-    EXPECT_TRUE(doc.InternalLoadPlugin(CString(p1.c_str())));
-    EXPECT_TRUE(doc.InternalLoadPlugin(CString(p2.c_str())));
+    EXPECT_TRUE(TryLoadPlugin(doc, p1.c_str()));
+    EXPECT_TRUE(TryLoadPlugin(doc, p2.c_str()));
     EXPECT_EQ(2u, doc.m_PluginList.size());
 
     // Each plugin's items live in that plugin's own maps (plugin isolation),
@@ -1043,7 +1073,7 @@ TEST(PluginLoad, NoPluginElementReturnsFalse)
 
     std::string path = write_temp_named("nopluginelem.xml", xml);
     CMUSHclientDoc doc;
-    EXPECT_FALSE(doc.InternalLoadPlugin(CString(path.c_str())));
+    EXPECT_FALSE(TryLoadPlugin(doc, path.c_str()));
 }
 
 // ── World settings — OptionsTable-driven loading ─────────────────────────

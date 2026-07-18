@@ -310,7 +310,10 @@ enum {
     eNotepadRecall      = 3,
     eNotepadScript      = 4,
     eNotepadPacketDebug = 5,
-    eNotepadLineInfo    = 6
+    eNotepadLineInfo    = 6,
+    eNotepadWorldLoadError = 7,
+    eNotepadXMLcomments    = 8,
+    eNotepadPluginInfo     = 9
 };
 
 // ── eWorldAction (from doc.h) ─────────────────────────────────────────────
@@ -848,6 +851,7 @@ typedef struct
 CString CommandIDToString (const int ID);   // utilities_shared.cpp
 int StringToCommandID (const CString str);  // utilities_shared.cpp
 CString ExtractDirectory (CString str);     // utilities_shared.cpp
+CString RemoveFinalSlash (CString str);     // utilities_shared.cpp (stdafx.h:530)
 
 // Splitter pane indexes (stdafx.h; no USE_EXTRA_PANE on the port)
 #ifndef OUTPUT_PANE
@@ -1107,6 +1111,7 @@ typedef map<string, tStringToStringMap*, array_less> tStringMapOfMaps;
 // Mirrors the App.m_pWorldDocTemplate->GetFirstDocPosition() /
 // GetNextDoc() pattern used throughout the codebase.
 class CMUSHclientDoc;   // forward declaration
+class CXMLelement;      // xml/xmlparse.h — XML-loading family signatures
 class CWorldDocTemplate {
 public:
     std::vector<CMUSHclientDoc*> m_docs;
@@ -1187,10 +1192,14 @@ public:
     CString m_strMUSHclientFileName;     // full path of the executable (PlaySound relative-path base; empty headless)
     string  m_strDefaultLogFileDirectory;// prefix for log files
     string  m_strDefaultWorldFileDirectory;  // prefix for world files (FormatTime %F)
-    // Plugin state-file directory + plugins directory (plugins.cpp SaveState;
-    // empty headless, so CPlugin::SaveState returns without writing).
+    // Plugin state-file directory (plugins.cpp SaveState; empty headless, so
+    // CPlugin::SaveState returns without writing).
     CString m_strDefaultStateFilesDirectory;
-    CString m_strPluginsDirectory;
+    // Plugins directory: must be NON-empty — the real loader refuses any
+    // plugin load otherwise (xml_load_world.cpp:2540-2541 "No plugins
+    // directory specified"); Windows InitInstance always sets it.  "." keeps
+    // relative plugin paths relative (working_dir is empty headless).
+    CString m_strPluginsDirectory = ".";
     void SaveGlobalsToDatabase() {}   // GUI persists global prefs; no-op headless
     // Default-set files (GUI global prefs; empty headless, so
     // OnFileReloaddefaults' Load_Set calls are all short-circuited)
@@ -1383,6 +1392,7 @@ enum {
 // ── Script error colours (from stdafx.h) ─────────────────────────────────
 #define SCRIPTERRORFORECOLOUR "orangered"
 #define SCRIPTERRORBACKCOLOUR "black"
+#define SCRIPTERRORCONTEXTFORECOLOUR "burlywood"   // stdafx.h:954 — LoadError detail lines
 
 // ── Plugin-tick / draw-output-window callback names ───────────────────────
 extern const string ON_PLUGIN_TICK;
@@ -1675,6 +1685,14 @@ typedef tDatabaseMap::iterator   tDatabaseMapIterator;
 #define XML_PASTE_DUPLICATE 0x2000
 #define XML_IMPORT_MAIN_FILE_ONLY 0x4000
 #endif // XML_GENERAL
+
+// ── XML load flags (doc.h:1996-1999, verbatim) ────────────────────────────
+#ifndef LOAD_INCLUDE
+#define LOAD_INCLUDE        0x01    // loading an include file
+#define LOAD_OVERWRITE      0x02    // overwrites existing values (triggers, etc.)
+#define LOAD_KEEP           0x04    // use include file in preference to non-include
+#define LOAD_WARN           0x08    // warn if clash
+#endif // LOAD_INCLUDE
 
 // ── Save_XML_* free-function decls (stdafx.h:491-517 signatures) ──────────
 // The REAL bodies are compiled into mushcore from xml/xml_save_world.cpp
@@ -2006,7 +2024,10 @@ public:
     tDatabaseMap      m_Databases;
 
     bool LoadWorldFromFile(const char* path);
-    bool InternalLoadPlugin(const CString& strPluginPath);
+    // REAL loader entry (xml/xml_load_world.cpp:2657; doc.h:2116 signature).
+    // Throws CFileException*/CArchiveException* on failure — callers wrap in
+    // try/catch (methods_plugins.cpp LoadPlugin/ReloadPlugin).
+    void InternalLoadPlugin (const CString & strName);
 
     // ── Mud list (MUD type database) ───────────────────────────────────
     CMudMap            m_MudMap;
@@ -2422,6 +2443,9 @@ public:
 
     // root-level include files (doc.h:1382) — saved by Save_Includes_XML
     CStringList m_strIncludeFileList;
+    // include files currently being nested into (doc.h:1384) — the loader
+    // (xml/xml_load_world.cpp Load_Includes_XML) tracks the include tree here
+    CStringList m_strCurrentIncludeFileList;
 
     // true if we have loaded from disk (doc.h:1073) — set by the
     // Serialize_World_XML loading branch (dead headless; LoadWorldFromFile
@@ -3073,9 +3097,16 @@ public:
     void CheckTimerList(CTimerMap& TimerMap);
     void CheckTimers   ();
 
-    // ── Sorting (no-ops) ──────────────────────────────────────────────
-    void SortAliases()  {}
-    void SortTriggers() {}
+    // ── Sorting ──────────────────────────────────────────────
+    // SortTriggers/SortAliases: REAL rebuild-array-from-map + qsort bodies
+    // (mirrors doc.cpp:3287-3387) live in windows_stubs.cpp — the loader
+    // (xml/xml_load_world.cpp Load_Triggers_XML/Load_Aliases_XML) depends on
+    // them to populate the arrays.  Declarations only, so every call site
+    // binds to the strong definitions.
+    void SortAliases();
+    void SortTriggers();
+    // SortTimers: no-op off-Windows on BOTH builds (mushapp_stubs.cpp has
+    // the same empty body) — the timer map is iterated directly here.
     void SortTimers()   {}
 
     // ── FormatTime (doc.h semantics: %E/%N/%P/%F/%L + bFixHTML) ────────
@@ -3107,9 +3138,11 @@ public:
 
     // ── World load/save ───────────────────────────────────────────────
     // Load_World_XML: doc.h:2001-2012 signature.  The REAL loader
-    // (xml/xml_load_world.cpp) is NOT adopted yet — a strong no-op body
-    // (returns 0) lives in windows_stubs.cpp; headless world loading goes
-    // through LoadWorldFromFile (xml/xml_load_world_portable.cpp).
+    // (xml/xml_load_world.cpp) is compiled into mushcore — world files,
+    // plugins, includes, plugin state files and ImportXML all load the
+    // canonical Windows way.  LoadWorldFromFile (doc_portable.cpp) is the
+    // thin headless entry that drives it like the Windows Serialize
+    // loading branch (serialize.cpp:44-110).
     UINT Load_World_XML(class CArchive& ar,
                         const unsigned long iMask,
                         const unsigned long iFlags = 0,
@@ -3132,11 +3165,118 @@ public:
     // ensure world ID + Save_World_XML (ar, ~0) + per-plugin SaveState.
     void Serialize_World_XML(class CArchive&);
 
-    // ImportXMLFromString parses xml and adds items to this world
-    // (xml/xml_load_world_portable.cpp).  Returns total items added, or -1
-    // on parse error.  (The twin ExportXML_* helpers are gone — the real
-    // ExportXML from scripting/methods/methods_xml.cpp replaced them.)
-    long    ImportXMLFromString(const char* xml);
+    // ── XML-loading family (doc.h:2014-2113 signatures, verbatim) ──────
+    // Bodies: xml/xml_load_world.cpp (the REAL loader).
+    void LoadError (const char * sType, const char * sMessage, UINT iLine = 0);
+    void CheckUsed (CXMLelement & node);
+    void HandleLoadException (const char * sComment, CException* e);
+    void Load_Includes_XML (CXMLelement & parent,
+                        const unsigned long iMask,
+                        const unsigned long iFlags,
+                        const bool bPlugins,  // only if plugin="y"
+                        UINT * piTriggers,
+                        UINT * piAliases,
+                        UINT * piTimers,
+                        UINT * piMacros,
+                        UINT * piVariables,
+                        UINT * piColours,
+                        UINT * piKeypad,
+                        UINT * piPrinting);
+    void Load_One_Include_XML (CXMLelement & node,
+                        const unsigned long iMask,
+                        const unsigned long iFlags,
+                        const bool bPlugins,  // only if plugin="y"
+                        UINT * piTriggers,
+                        UINT * piAliases,
+                        UINT * piTimers,
+                        UINT * piMacros,
+                        UINT * piVariables,
+                        UINT * piColours,
+                        UINT * piKeypad,
+                        UINT * piPrinting);
+    void Load_General_XML (CXMLelement & parent,
+      const unsigned long iFlags);
+    UINT Load_Triggers_XML (CXMLelement & parent,
+      const unsigned long iMask,
+      const unsigned long iFlags);
+    bool Load_One_Trigger_XML (CXMLelement & node,
+      const unsigned long iMask,
+      const long iVersion,
+      bool bUseDefault,
+      const unsigned long iFlags);
+    UINT Load_Aliases_XML (CXMLelement & parent,
+      const unsigned long iMask,
+      const unsigned long iFlags);
+    bool Load_One_Alias_XML (CXMLelement & node,
+      const unsigned long iMask,
+      const long iVersion,
+      bool bUseDefault,
+      const unsigned long iFlags);
+    UINT Load_Variables_XML (CXMLelement & parent,
+      const unsigned long iMask,
+      const unsigned long iFlags);
+    void Load_One_Variable_XML (CXMLelement & node,
+      const unsigned long iMask,
+      const long iVersion,
+      bool bUseDefault,
+      const unsigned long iFlags);
+    UINT Load_Timers_XML (CXMLelement & parent,
+      const unsigned long iMask,
+      const unsigned long iFlags);
+    bool Load_One_Timer_XML (CXMLelement & node,
+      const unsigned long iMask,
+      const long iVersion,
+      bool bUseDefault,
+      const unsigned long iFlags);
+    UINT Load_Macros_XML (CXMLelement & parent,
+      const unsigned long iFlags);
+    void Load_One_Macro_XML (CXMLelement & node,
+      const long iVersion,
+      bool bUseDefault,
+      const unsigned long iFlags);
+    UINT Load_Colours_XML (CXMLelement & parent,
+      const unsigned long iFlags);
+    void Load_One_Colour_XML (CXMLelement & node,
+      const long iVersion,
+      const int iGroup,
+      bool bUseDefault,
+      const unsigned long iFlags);
+    UINT Load_Keypad_XML (CXMLelement & parent,
+      const unsigned long iFlags);
+    void Load_One_Key_XML (CXMLelement & node,
+      const long iVersion,
+      bool bUseDefault,
+      const unsigned long iFlags);
+    UINT Load_Printing_XML (CXMLelement & parent,
+      const unsigned long iFlags);
+    void Load_One_Print_Colour_XML (CXMLelement & node,
+      const long iVersion,
+      const int iGroup,
+      bool bUseDefault,
+      const unsigned long iFlags);
+    void Load_Comments_XML (CXMLelement & parent);
+    void Load_Plugin_XML (CXMLelement & parent);
+    void Load_Scripts_XML (CXMLelement & parent);
+    void Load_World_Numeric_Options_XML (CXMLelement & parent,
+                                bool bUseDefault,
+                                const unsigned long iFlags);
+    void Load_World_Single_Line_Alpha_Options_XML (CXMLelement & parent,
+                                bool bUseDefault,
+                                const unsigned long iFlags);
+    void Load_World_Multi_Line_Alpha_Options_XML (CXMLelement & parent,
+                                bool bUseDefault,
+                                const unsigned long iFlags);
+    // FindAllEntryPoints (doc.h:2290): the loader resolves plugin entry
+    // points through it (xml_load_world.cpp:527).  Headless body in
+    // doc_portable.cpp routes to ResolveAllEntryPoints (Lua-only; no
+    // CMissingEntryPoints dialog) and returns false (= no errors).
+    bool FindAllEntryPoints (void);
+    // Notepad activation (doc.h:2864): headless there are no notepad
+    // windows to raise — the text itself lands via AppendToTheNotepad.
+    BOOL ActivateNotepad (LPCTSTR /*Title*/) { return TRUE; }
+
+    // (ImportXMLFromString is gone — world.ImportXML now goes through the
+    // REAL ImportXML (methods_xml.cpp) over the real archive-based loader.)
 
     // Portable world-file save.  Opens lpszPathName for writing, runs the
     // REAL Serialize_World_XML → Save_World_XML (ar, ~0) chain (exactly what

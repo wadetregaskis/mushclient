@@ -1239,20 +1239,8 @@ bool FindLuaFunction (lua_State * L, const char * sName)
 // ExtractDirectory: single-sourced in utilities_shared.cpp (mushcore needs it
 // for the real methods_sounds.cpp relative-path resolution).
 
-// if string ends in a path separator, get rid of it
-CString RemoveFinalSlash (CString str)
-  {
-
-  if (!str.IsEmpty ())
-    {
-    char last = str [str.GetLength () - 1];
-    if (last == '\\' || last == '/')
-      str = str.Left (str.GetLength () - 1);
-    }
-
-  return str;
-
-  } // end of RemoveFinalSlash
+// RemoveFinalSlash: single-sourced in utilities_shared.cpp (the real loader
+// xml/xml_load_world.cpp needs it for $-variable path substitution headless).
 
 
 /***************************************************************

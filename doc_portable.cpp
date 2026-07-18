@@ -86,14 +86,60 @@ const char* telopt_name(unsigned char opt)
 }
 
 // ── CMUSHclientDoc::Load_Set ──────────────────────────────────────────────
-// Headless: there is no file dialog, and default-set files are a GUI global
-// preference (the stub App's m_strDefault*File members are always empty, so
-// OnFileReloaddefaults never reaches this).  Behave like the dialog-cancel
-// path of the real versions (evaluate.cpp / mushapp_stubs.cpp).
-BOOL CMUSHclientDoc::Load_Set(const int /*set_type*/, CString /*strFileName*/,
+// Headless: there is no file dialog, so an EMPTY name behaves like the GUI
+// dialog-cancel path (evaluate.cpp:586-660 / mushapp_stubs.cpp Load_Set both
+// return TRUE on cancel).  A SUPPLIED name loads the set directly through the
+// REAL archive-based loader — the post-dialog half of mushapp_stubs.cpp
+// Load_Set verbatim-in-spirit (replace=TRUE: with no prompt possible we take
+// the dialogs' default answer).  Reachable via OnFileReloaddefaults when the
+// stub App's m_strDefault*File members are set (empty by default).
+BOOL CMUSHclientDoc::Load_Set(const int set_type, CString strFileName,
                               CWnd* /*parent_window*/)
 {
-    return TRUE;   // TRUE = cancelled/failed, matching the GUI cancel path
+    if (strFileName.IsEmpty())
+        return TRUE;   // TRUE = cancelled, matching the GUI cancel path
+
+    const BOOL replace = TRUE;
+    CFile*    f  = nullptr;
+    CArchive* ar = nullptr;
+    try {
+        f  = new CFile(strFileName, CFile::modeRead | CFile::shareDenyWrite);
+        ar = new CArchive(f, CArchive::load);
+
+        if (IsArchiveXML(*ar)) {
+            switch (set_type) {
+            case TRIGGER:
+                if (replace) DELETE_MAP(m_TriggerMap, CTrigger);
+                Load_World_XML(*ar, XML_TRIGGERS | XML_NO_PLUGINS | XML_IMPORT_MAIN_FILE_ONLY);
+                break;
+            case ALIAS:
+                if (replace) DELETE_MAP(m_AliasMap, CAlias);
+                Load_World_XML(*ar, XML_ALIASES  | XML_NO_PLUGINS | XML_IMPORT_MAIN_FILE_ONLY);
+                break;
+            case COLOUR:
+                Load_World_XML(*ar, XML_COLOURS  | XML_NO_PLUGINS | XML_IMPORT_MAIN_FILE_ONLY);
+                break;
+            case MACRO:
+                Load_World_XML(*ar, XML_MACROS   | XML_NO_PLUGINS | XML_IMPORT_MAIN_FILE_ONLY);
+                break;
+            case TIMER:
+                if (replace) DELETE_MAP(m_TimerMap, CTimer);
+                Load_World_XML(*ar, XML_TIMERS   | XML_NO_PLUGINS | XML_IMPORT_MAIN_FILE_ONLY);
+                break;
+            }
+        } else {
+            fprintf(stderr, "[set load] \"%s\" does not have a valid MUSHclient XML signature\n",
+                    (const char*)strFileName);
+            AfxThrowArchiveException(CArchiveException::badSchema);
+        }
+    }
+    catch (CException* e) { e->Delete(); }
+    catch (...)           { }
+
+    delete ar;
+    delete f;
+    SetModifiedFlag(TRUE);
+    return FALSE;   // FALSE = OK (matches Windows convention)
 }
 
 // ── App global (CMUSHclientApp) ───────────────────────────────────────────
@@ -685,6 +731,204 @@ CScriptEngine* CMUSHclientDoc::GetScriptEngine()
     return m_ScriptEngine;
 }
 
+// ── CMUSHclientDoc::FindAllEntryPoints ───────────────────────────────────
+// Real body: scripting/scripting.cpp:169-234 — GetProcedureDispid over the
+// current trigger/alias/timer maps plus FindGlobalEntryPoints (world +
+// MXP callbacks) when not inside a plugin, then a CMissingEntryPoints
+// dialog if anything was unresolved.  The REAL loader calls it after
+// parsing a plugin's script (xml/xml_load_world.cpp:527).  Headless the
+// Lua-only ResolveAllEntryPoints covers the same ground (same plugin/world
+// split, same maps); there is no dialog, and false = "no errors" so the
+// loader never throws "Could not find all required script routines".
+bool CMUSHclientDoc::FindAllEntryPoints(void)
+{
+    ResolveAllEntryPoints();
+    return false;
+}
+
+// ── CMUSHclientDoc::LoadWorldFromFile ────────────────────────────────────
+// Port-only public entry (the test suite's world-load path).  Thin driver
+// over the REAL loader (xml/xml_load_world.cpp): it does exactly what the
+// Windows Serialize loading branch does (serialize.cpp:44-110), then the
+// OpenSession scripting steps (doc.cpp:473-497) that the GUI performs right
+// after a world opens.  Returns true on success.
+
+extern tConfigurationNumericOption OptionsTable [];   // scriptingoptions.cpp
+
+// Port equivalent of CMUSHclientDoc::CreateScriptEngine (scripting/
+// scripting.cpp:20-105): create the world's script engine, read the external
+// script file (script_filename) into m_strScript, parse it, and resolve all
+// entry points.  Headless deviations, both deliberate:
+//   - Lua only (the other five engines are embedded on the mushgui side);
+//   - the engine is only created when a script FILE is configured — Windows
+//     creates one whenever m_bEnableScripts is on, but headless consumers
+//     (tests) treat engine-presence as script-presence.
+static void PortCreateWorldScriptEngine(CMUSHclientDoc& doc)
+{
+    if (doc.m_strScriptFilename.IsEmpty())
+        return;                      // nothing to run (see deviation note)
+
+    CString strLanguage = doc.m_strLanguage;
+    strLanguage.MakeLower();
+    if (strLanguage.IsEmpty())
+        strLanguage = "lua";         // table default (scriptingoptions_alpha.inc:60)
+    if (strLanguage != "lua") {
+        fprintf(stderr, "[world load] scripting language \"%s\" is not supported "
+                        "headless — script not loaded\n",
+                (const char*)doc.m_strLanguage);
+        return;
+    }
+
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    if (engine->CreateScriptEngine()) {
+        fprintf(stderr, "[world load] could not initialise Lua engine\n");
+        delete engine;
+        return;
+    }
+    doc.m_ScriptEngine = engine;     // scripting.cpp:33 (set before parsing)
+
+    // Read the script file (scripting.cpp:40-76) and remember its mtime so
+    // OnScriptFileChanged doesn't immediately see a "change".
+    FILE* f = fopen((const char*)doc.m_strScriptFilename, "rb");
+    if (!f) {
+        fprintf(stderr, "[world load] cannot open script file \"%s\": %s\n",
+                (const char*)doc.m_strScriptFilename, strerror(errno));
+        // Windows shows "unable to open" and disables scripting; keep the
+        // (empty) engine so the failure is visible but harmless.
+    } else {
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        std::string buf;
+        if (sz > 0) {
+            buf.resize((size_t)sz);
+            size_t got = fread(&buf[0], 1, (size_t)sz, f);
+            buf.resize(got);
+        }
+        fclose(f);
+        doc.m_strScript = CString(buf.c_str());
+
+        struct stat st;
+        if (::stat((const char*)doc.m_strScriptFilename, &st) == 0)
+            doc.m_scriptFileMtime = st.st_mtime;
+
+        if (engine->Parse(doc.m_strScript, "Script file")) {     // scripting.cpp:78
+            fprintf(stderr, "[world load] error parsing script \"%s\"\n",
+                    (const char*)doc.m_strScriptFilename);
+            delete engine;                       // DisableScripting equivalent
+            doc.m_ScriptEngine = nullptr;
+            return;
+        }
+    }
+
+    doc.FindAllEntryPoints();                    // scripting.cpp:102
+}
+
+bool CMUSHclientDoc::LoadWorldFromFile(const char* path)
+{
+    CFile f;
+    if (!f.Open(path, CFile::modeRead | CFile::shareDenyWrite)) {
+        fprintf(stderr, "[world load] cannot open \"%s\"\n", path);
+        return false;
+    }
+    CArchive ar(&f, CArchive::load);
+
+    // serialize.cpp:47-52 — status message + remember the document path
+    Frame.SetStatusMessageNow(TFormat("Opening world \"%s\"", path));
+    SetPathName(ar.GetFile()->GetFilePath());
+
+    // serialize.cpp:54-61 — XML signature check (TMessageBox + throw there)
+    if (!IsArchiveXML(ar)) {
+        fprintf(stderr, "[world load] \"%s\" does not have a valid MUSHclient "
+                        "XML signature\n", path);
+        return false;
+    }
+
+    try {
+        // The Serialize_World_XML loading branch (xml/xml_serialize.cpp:52-55):
+        // load everything except plugins-as-main-content
+        Load_World_XML(ar, (unsigned long) ~(XML_PLUGINS | XML_NO_PLUGINS |
+                                             XML_PASTE_DUPLICATE |
+                                             XML_IMPORT_MAIN_FILE_ONLY));
+        m_bLoaded = true;   // this world has been loaded from disk
+    }
+    catch (CException* e) {   // CArchiveException from Load_World_XML's handler
+        e->Delete();
+        return false;
+    }
+    catch (...) {
+        return false;
+    }
+
+    // serialize.cpp:63-68 — custom-16-as-default-colour
+    if (m_bCustom16isDefaultColour) {
+        m_iForeColour = 15;   // use custom colour 16
+        m_iBackColour = 15;
+        m_iFlags |= COLOUR_CUSTOM;
+    }
+
+    // serialize.cpp:70-72 — if defaults are wanted, overwrite with them
+    OnFileReloaddefaults();
+
+    // serialize.cpp:74-92 — recompile the mapping-failure regexp
+    if (m_bMapFailureRegexp && !m_strMappingFailure.IsEmpty()) {
+        try {
+            m_MapFailureRegexp = regcomp(m_strMappingFailure,
+                                         (m_bUTF_8 ? PCRE_UTF8 : 0));
+        }
+        catch (CException* e) {
+            char sMessage[1000];
+            e->GetErrorMessage(sMessage, sizeof sMessage);
+            fprintf(stderr, "[world load] error \"%s\" processing mapping "
+                            "failure regular expression \"%s\"\n",
+                    sMessage, (const char*)m_strMappingFailure);
+            e->Delete();
+            m_bMapFailureRegexp = FALSE;
+            m_MapFailureRegexp = NULL;
+        }
+    }
+
+    // serialize.cpp:94-96 — kick off the speed-walk timer
+    if (m_pTimerWnd)
+        m_pTimerWnd->ChangeTimerRate(m_iSpeedWalkDelay);
+
+    // serialize.cpp:98-108 — remember loaded option values (GetLoadedValue)
+    {
+        long i;
+        for (i = 0; OptionsTable[i].pName; i++)
+            if (!m_NumericConfiguration[i]->bInclude)
+                m_NumericConfiguration[i]->iValue = GetOptionItem(i);
+        for (i = 0; AlphaOptionsTable[i].pName; i++)
+            if (!m_AlphaConfiguration[i]->bInclude)
+                m_AlphaConfiguration[i]->sValue = GetAlphaOptionItem(i);
+    }
+
+    // ── OpenSession scripting steps (doc.cpp:473-497) ──────────────────
+    // On Windows the view-creation path runs OpenSession right after the
+    // document loads; headless there is no view, so do it here.
+    if (m_bEnableScripts &&      // provided wanted (doc.cpp:475)
+        !m_ScriptEngine)         // and not already going
+        PortCreateWorldScriptEngine(*this);
+
+    // execute "open" script (doc.cpp:480-497)
+    if (m_ScriptEngine) {
+        if (SeeIfHandlerCanExecute(m_strWorldOpen)) {
+            DISPPARAMS params = { NULL, NULL, 0, 0 };
+            long nInvocationCount = 0;
+            ExecuteScript(m_dispidWorldOpen,
+                          m_strWorldOpen,
+                          eWorldAction,
+                          "world open",
+                          "opening world",
+                          params,
+                          nInvocationCount);
+        }
+    }
+    // (doc.cpp:493-495 auto-connect is a GUI concern — not done here)
+
+    return true;
+}
+
 
 // MXP_StartTagScript is defined in mxpStart.cpp (real implementation).
 
@@ -722,15 +966,12 @@ IMPLEMENT_DYNAMIC(CVariable, CObject)
 
 
 // ── ThrowErrorException ───────────────────────────────────────────────────
-void ThrowErrorException(const char* fmt, ...)
-{
-    char buf[512];
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(buf, sizeof buf, fmt, ap);
-    va_end(ap);
-    throw std::runtime_error(buf);
-}
+// REAL body now compiled into mushcore (exceptions.cpp): it throws a
+// CErrorException* (a CException*), which the real loader's per-item
+// catch (CException*) handlers (xml/xml_load_world.cpp) rely on to turn a
+// bad trigger/alias/timer into a warning instead of aborting the whole
+// load.  The old twin here threw std::runtime_error — invisible to every
+// catch (CException*) site (regexp errors, xmlparse entity errors, ...).
 
 
 

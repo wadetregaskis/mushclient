@@ -517,8 +517,17 @@ if(NOT WIN32)
         # XML parser (world-file deserialisation)
         xml/xmlparse.cpp
 
-        # Portable world-file loader (triggers, aliases, variables, timers)
-        xml/xml_load_world_portable.cpp
+        # Campaign B world-file LOADER adoption: the REAL Windows loader
+        # (worlds, plugins, includes, plugin state, ImportXML, Load_Set),
+        # compiled against doc_stub.h — the portable loader twin
+        # (xml/xml_load_world_portable.cpp) is deleted.  LoadWorldFromFile
+        # (doc_portable.cpp) is the thin Serialize-loading-branch driver.
+        xml/xml_load_world.cpp
+
+        # The real exception classes (CErrorException/CSystemException) +
+        # ThrowErrorException: the loader's per-item catch (CException*)
+        # error tolerance depends on the real throw types.
+        exceptions.cpp
 
         # Campaign B world-file saver adoption: the REAL Windows saver +
         # serialize entry (Serialize_World_XML → Save_World_XML(ar, ~0) +
@@ -528,7 +537,7 @@ if(NOT WIN32)
         xml/xml_serialize.cpp
 
         # XML import/export + custom entities (ExportXML over the real saver;
-        # ImportXML inert headless until the real loader adopts)
+        # ImportXML over the real loader)
         scripting/methods/methods_xml.cpp
     )
 
@@ -694,7 +703,7 @@ if(NOT WIN32)
         # (doc_portable.cpp → doc.cpp + doc_construct.cpp)
         doc.cpp
         doc_construct.cpp
-        # (xml/xml_load_world_portable.cpp → xml/xml_load_world.cpp)
+        # (the world-file XML load/save/serialize trio)
         xml/xml_load_world.cpp
         xml/xml_save_world.cpp
         xml/xml_serialize.cpp

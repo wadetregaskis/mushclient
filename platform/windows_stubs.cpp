@@ -38,8 +38,8 @@ CRuntimeClass CSendView::classCSendView = { "CSendView" };
 
 // ── CAlias / CTrigger / CTimer static CRuntimeClass members ──────────────
 // Normally defined by IMPLEMENT_DYNAMIC in doc.cpp (mushapp only).
-// xml_load_world_portable.cpp calls GetRuntimeClass() on these types to do
-// IsKindOf checks; the static members must exist in mushcore too.
+// DECLARE_DYNAMIC on these types generates GetRuntimeClass() returning
+// &classCXxx (IsKindOf checks), so the statics must exist in mushcore too.
 CRuntimeClass CAlias::classCAlias           = { "CAlias" };
 CRuntimeClass CTrigger::classCTrigger       = { "CTrigger" };
 CRuntimeClass CTimer::classCTimer           = { "CTimer" };
@@ -191,23 +191,9 @@ void CMUSHclientDoc::ShowStatusLine(bool) {}
 // mushcore (plugins.cpp, CPlugin convergence) — the old return-the-flag stub
 // here would be a duplicate symbol.
 
-// doc.h: UINT Load_World_XML(CArchive&, unsigned long, unsigned long, UINT*×8)
-// The REAL loader (xml/xml_load_world.cpp) is not adopted yet — headless
-// loading goes through LoadWorldFromFile (xml/xml_load_world_portable.cpp),
-// so this archive-driven entry point (world.ImportXML, Serialize loading)
-// stays a no-op.  (Save_World_XML is REAL now: xml/xml_save_world.cpp is
-// compiled into mushcore — the old no-op here would be a duplicate symbol.)
-UINT CMUSHclientDoc::Load_World_XML(CArchive& /*ar*/,
-                                    const unsigned long /*iMask*/,
-                                    const unsigned long /*iFlags*/,
-                                    UINT* /*piTriggers*/,
-                                    UINT* /*piAliases*/,
-                                    UINT* /*piTimers*/,
-                                    UINT* /*piMacros*/,
-                                    UINT* /*piVariables*/,
-                                    UINT* /*piColours*/,
-                                    UINT* /*piKeypad*/,
-                                    UINT* /*piPrinting*/) { return 0; }
+// Load_World_XML: REAL loader now compiled into mushcore
+// (xml/xml_load_world.cpp adoption) — the old no-op body here would be a
+// duplicate symbol.  (Save_World_XML has been REAL since the saver adoption.)
 
 // ── Macro / keypad display-name tables ────────────────────────────────────
 // On Windows (and mushapp) these live in dialogs/world_prefs/

@@ -6,6 +6,7 @@
 #pragma GCC diagnostic ignored "-Wdangling-else"
 #endif
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../MUSHclient.h"
 #include "../doc.h"
@@ -13,6 +14,31 @@
 #include "../genprint.h"
 #include "../mainfrm.h"
 #include "../dialogs/ProgDlg.h"
+#else
+#include "platform/doc_stub.h"
+#include "xmlparse.h"      // CXMLparser / CXMLelement / Get_XML_* helpers
+#include "../genprint.h"   // FONT_BOLD/FONT_ITALIC/FONT_UNDERLINE (print styles)
+// doc_stub.h declares Replace without the default (stdafx.h owns it there);
+// this stub-only TU restates it (legal: a redeclaration may add a default).
+CString Replace (const CString strSource,
+                 const CString strTarget,
+                 const CString strReplacement,
+                 const bool bAll = true);
+// Minimal file-local stand-in for CProgressDlg (dialogs/ProgDlg.h) so
+// Load_Includes_XML compiles untouched headless.  The dialog is only ever
+// CREATED inside the preprocessed-out IT_GET_GOATS_BLOOD_OUT block, so pDlg
+// stays NULL and every member call is dead; `delete pDlg` still needs the
+// complete type.  Precedent: the CPluginWizardSheet stand-in in plugins.cpp.
+struct CProgressDlg {
+    bool m_bHideCancel = false;
+    void Create() {}
+    void SetRange(int, int) {}
+    void SetStep(int) {}
+    void SetWindowText(LPCTSTR) {}
+    void SetStatus(LPCTSTR) {}
+    void StepIt() {}
+};
+#endif
 
 /*
 

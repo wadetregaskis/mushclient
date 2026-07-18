@@ -681,6 +681,26 @@ static char sPathName [_MAX_PATH];
 
   } // end of Make_Absolute_Path
 
+// ── RemoveFinalSlash ─────────────────────────────────────────────────────────
+// Relocated verbatim from Utilities.cpp (the real loader xml/xml_load_world.cpp
+// uses it in $PLUGINSDEFAULTDIR/$PROGRAMDIR/$WORLDDIR substitution, and
+// mushcore compiles that loader now).
+
+// if string ends in a path separator, get rid of it
+CString RemoveFinalSlash (CString str)
+  {
+
+  if (!str.IsEmpty ())
+    {
+    char last = str [str.GetLength () - 1];
+    if (last == '\\' || last == '/')
+      str = str.Left (str.GetLength () - 1);
+    }
+
+  return str;
+
+  } // end of RemoveFinalSlash
+
 
 // ── tolower(string) / GetWord / StringToVector ─────────────────────────────
 // Relocated verbatim from the Windows Utilities.cpp.  The old portable twin

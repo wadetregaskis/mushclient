@@ -315,21 +315,18 @@ inline BOOL AfxIsValidString(LPCTSTR /*psz*/, int /*nLength*/ = -1) { return TRU
 // AfxThrowArchiveException: MFC throws this on a bad serialize/schema, and the
 // callers (LoadPlugin, Serialize, the XML import paths) all "catch
 // (CArchiveException*)".  So we MUST throw a CArchiveException* — but that class
-// is not defined this early, so in the full (GUI) build forward-declare the
-// thrower here and define it in mfc_ui.h (after CArchiveException).  Throwing the
-// wrong type (a std::runtime_error) slips past those catch handlers and
-// terminates the app — e.g. when loading an unsupported VBScript plugin.  The
-// headless build keeps the placeholder (its load paths don't depend on the type).
+// is not defined this early, so forward-declare the thrower here and define it
+// in mfc_ui.h (after CArchiveException).  Throwing the wrong type (a
+// std::runtime_error) slips past those catch handlers and terminates the app —
+// e.g. when loading an unsupported VBScript plugin.
 #ifndef AfxThrowArchiveException
-#  if defined(MUSHCLIENT_FULL_BUILD)
+// BOTH builds: forward-declare here, real inline thrower in mfc_ui.h (after
+// CArchiveException).  The headless build used to throw a std::runtime_error
+// placeholder, but with the REAL loader (xml/xml_load_world.cpp) in mushcore
+// the catch (CArchiveException*) handlers (LoadPlugin, ImportXML, Load_Set,
+// LoadWorldFromFile) must actually catch it — mfc_ui.h is included by every
+// mushcore TU via compat.h, so the real thrower is always available.
 void AfxThrowArchiveException(int cause, LPCTSTR name = nullptr);
-#  else
-#    include <stdexcept>
-inline void AfxThrowArchiveException(int /*cause*/, LPCTSTR = nullptr)
-{
-    throw std::runtime_error("CArchiveException");
-}
-#  endif
 #endif
 
 // ── Windows geometry structs ───────────────────────────────────────────────

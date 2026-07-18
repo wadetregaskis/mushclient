@@ -1716,19 +1716,14 @@ static int L_EnablePlugin(lua_State* L)
 // ── Plugin API ────────────────────────────────────────────────────────────────
 
 // world.LoadPlugin(path) → error_code
-// Loads a plugin from the given file path.  Returns eOK on success,
-// ePluginFileNotFound (or a generic non-zero code) on failure.
-// NOT rewired to the real CMUSHclientDoc::LoadPlugin (methods_plugins.cpp):
-// that body reports failure only via the CFileException the Windows
-// InternalLoadPlugin throws, but the portable InternalLoadPlugin returns
-// bool — going through the real method would turn every load failure into
-// eOK.  Revisit when the real xml_load_world.cpp loader adopts (Campaign B).
+// Thin wrapper over the REAL CMUSHclientDoc::LoadPlugin (methods_plugins.cpp)
+// — mirrors lua_methods.cpp L_LoadPlugin.  The real loader's throwing
+// contract is available now (xml/xml_load_world.cpp InternalLoadPlugin), so
+// failures surface as ePluginFileNotFound / eProblemsLoadingPlugin.
 static int L_LoadPlugin(lua_State* L)
 {
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* path = luaL_checkstring(L, 1);
-    bool ok = pDoc->InternalLoadPlugin(CString(path));
-    lua_pushnumber(L, ok ? eOK : ePluginFileNotFound);
+    lua_pushnumber(L, pDoc->LoadPlugin(luaL_checkstring(L, 1)));
     return 1;
 }
 
@@ -4704,15 +4699,11 @@ static int L_ExportXML(lua_State* L)
 }
 static int L_ImportXML(lua_State* L)
 {
-    // Deliberately NOT the real CMUSHclientDoc::ImportXML (methods_xml.cpp):
-    // that drives the archive-based Load_World_XML, which is still a no-op
-    // headless (the real xml/xml_load_world.cpp is not adopted yet).  The
-    // portable ImportXMLFromString (xml/xml_load_world_portable.cpp) does
-    // the actual import; rewire when the real loader adopts.
+    // Real CMUSHclientDoc::ImportXML (methods_xml.cpp) over the REAL
+    // archive-based loader (xml/xml_load_world.cpp) — mirrors lua_methods.cpp
+    // L_ImportXML.  (The portable ImportXMLFromString twin is gone.)
     CMUSHclientDoc* pDoc = world_doc(L);
-    const char* xml = luaL_checkstring(L, 1);
-    long count = pDoc->ImportXMLFromString(xml);
-    lua_pushnumber(L, (lua_Number)count);
+    lua_pushnumber(L, (lua_Number)pDoc->ImportXML(luaL_checkstring(L, 1)));
     return 1;
 }
 

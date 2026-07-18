@@ -2549,18 +2549,18 @@ public:
 };
 #endif
 
-#if defined(MUSHCLIENT_FULL_BUILD)
 // Real thrower (forward-declared in windows_types.h): throw a CArchiveException*
 // so the catch (CArchiveException*) handlers in LoadPlugin / Serialize / the XML
 // import paths actually catch it, instead of an unhandled std::runtime_error
 // terminating the whole application (e.g. when a world or plugin has a bad schema
-// or uses an unsupported script language).
+// or uses an unsupported script language).  Both builds: mushcore drives the
+// REAL loader (xml/xml_load_world.cpp) now, so its archive-exception contract
+// must hold headless too.
 inline void AfxThrowArchiveException(int cause, LPCTSTR /*name*/) {
     CArchiveException* e = new CArchiveException();
     e->m_cause = cause;
     throw e;
 }
-#endif
 
 // ── CFileStatus ────────────────────────────────────────────────────────────
 // Defined here (before CFile) so CFile::GetStatus can populate it inline.

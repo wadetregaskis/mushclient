@@ -553,7 +553,17 @@ if(NOT WIN32)
         scripting/methods/methods_xml.cpp
     )
 
+    # ── Coverage instrumentation (opt-in) ────────────────────────────────
+    # -DMUSHCLIENT_COVERAGE=ON adds LLVM source-based coverage to mushcore and
+    # every test executable (tests/CMakeLists.txt picks the flags up from the
+    # target property).  Use tests/coverage.sh to build, run, and report.
+    option(MUSHCLIENT_COVERAGE "Instrument mushcore + tests for llvm-cov" OFF)
+
     add_library(mushcore STATIC ${MUSHCORE_SOURCES})
+    if(MUSHCLIENT_COVERAGE)
+        target_compile_options(mushcore PRIVATE -fprofile-instr-generate -fcoverage-mapping)
+        target_link_options(mushcore PUBLIC -fprofile-instr-generate)
+    endif()
 
     target_compile_definitions(mushcore PRIVATE
         _NOSOUND    # DirectSound not available on macOS/Linux

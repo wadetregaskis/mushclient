@@ -9,6 +9,9 @@ set(MC_TEST_COMPILE_OPTIONS
 # Helper macro: create a self-contained test executable
 macro(mc_test name)
     add_executable(${name} ${name}.cpp)
+    if(MUSHCLIENT_COVERAGE)
+        target_compile_options(${name} PRIVATE -fprofile-instr-generate -fcoverage-mapping)
+    endif()
     target_include_directories(${name} PRIVATE
         ${CMAKE_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/platform

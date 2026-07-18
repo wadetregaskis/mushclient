@@ -78,9 +78,9 @@ Signatures below are indicative; the authoritative form lives in `pal/*.h` as
 each is implemented.
 
 1. **`IWorldView`** — the per-world window (output + input + status). The cleaned
-   form of the ~39 `m_fn_*` callbacks already in `doc_stub.h` (a de-facto,
-   untyped version of this interface is *already injected* by the headless
-   build). Core→frontend pushes + a few pulls (`currentCommand`, `outputSelection`,
+   form of the ~39 `m_fn_*` callbacks that used to live in `doc_stub.h` (all
+   deleted at P2 — `m_pWorldView` is the only channel now). Core→frontend
+   pushes + a few pulls (`currentCommand`, `outputSelection`,
    `scrollPos`). See `pal/iworldview.h`.
 2. **`ISurface`** — the 2-D raster surface behind miniwindows (~20 primitives:
    shapes/lines/gradient/flood/invert, text + measure + metrics, fonts, blit with
@@ -649,11 +649,12 @@ dozen files index into it).
 
 - *Windows (pull):* `CMUSHView::OnDraw` reads `m_LineList` directly and
   rasterizes the `CLine`s live. The engine only invalidates.
-- *Port (push):* `mushapp_stubs.cpp::UpdateAllViews` translates each newly
-  finished `CLine` into a toolkit-neutral `SOutputLine` and pushes it through
-  `appendLine`; the wx pane keeps its own `SOutputLine` buffer and rasterizes
-  from that. `EmitOutputLine` is called only from port-only TUs, so a Windows
-  adapter's `appendLine` is currently unreachable.
+- *Port (push):* the `UpdateAllViews` drain in `doc_display_shared.cpp`
+  (compiled into both non-Windows builds; not in `MUSHclient.vcxproj`)
+  translates each newly finished `CLine` into a toolkit-neutral `SOutputLine`
+  and pushes it through `appendLine`; the wx pane keeps its own `SOutputLine`
+  buffer and rasterizes from that. `EmitOutputLine` is called only from
+  non-Windows TUs, so a Windows adapter's `appendLine` is currently unreachable.
 
 **Decision (Option A): the seam contract is "consume-or-pull," and the display
 family is complete-by-design.** `appendLine` means "a finished line is now in
@@ -717,6 +718,14 @@ revisit at the next IWorldView contract change.
 - **P1** kill the `*_portable` shadow: single-source the ~30 dual doc methods and
   the second Lua API so the core has one body per method (the tests then guard the
   shipped path).
+  *COMPLETE (2026-07, campaigns B+C): mushcore compiles the real
+  method/option/plugin/XML-world-file/`lua_methods.cpp` TUs against
+  `doc_stub.h`; the portable twins — including the 248 KB second Lua API
+  (`lua_world_api_portable.cpp`) and the XML saver/loader twins — are deleted.
+  Residual stub surface: `doc_stub.h` itself plus the 116 inert GUI-family
+  method bodies in `platform/doc_gui_method_stubs.cpp` (miniwindow / notepad /
+  chat / output-view / accelerator), to be deleted family-by-family as those
+  TUs are adopted; `doc_portable.cpp` survives as genuine platform glue only.*
 - **P2** formalise the seam: promote the `m_fn_*` bundle into `IWorldView` (and the
   rest of the PAL); every frontend implements every method (no silent nulls).
   *COMPLETE (2026-07-12): IWorldView is typed-only end to end on the port.*
@@ -726,8 +735,9 @@ revisit at the next IWorldView contract change.
   infobarSize), the command-input family, the output-pane family, the window
   family, and the infobar family — and every `m_fn_*` fallback is deleted:
   `m_pWorldView` is the only channel (no view → pushes inert, pulls empty/zero;
-  headless stdout output still flows via the doc_portable DisplayMsg/Note
-  fallbacks, which key off the view pointer). Main-frame ops ride on IWorldView
+  the old headless stdout DisplayMsg/Note fallbacks died at the campaign-b
+  display flip — the `doc_display_shared.cpp` drain is the only output path
+  on every non-Windows build). Main-frame ops ride on IWorldView
   deliberately: every engine call site is doc-scoped; re-partition onto
   `IAppShell` later if it gains real non-doc-scoped needs. Clipboard: the
   headless stubs return empty/OK; the real path is the `GetClipboardContents`/

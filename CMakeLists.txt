@@ -661,7 +661,7 @@ if(NOT WIN32)
     # It replaces the portable_*.cpp stubs with the real implementations and
     # adds all dialogs, scripting methods, views, and app-level code.
     # mushgui links mushapp (not mushcore) to avoid duplicate symbols.
-    # mushcore remains the portable layer for mushcli and the test suite.
+    # mushcore remains the headless engine for the test suite.
 
     set(MUSHAPP_SOURCES
         # ── Vendored C libraries (same as mushcore) ───────────────────────
@@ -709,7 +709,7 @@ if(NOT WIN32)
         # records the canonical pages + tree structure, DoModal -> wxTreebook.
         # Replaces the heavy GDI TreePropertySheet.cpp (excluded below).
         platform/wx_tree_property_sheet.cpp
-        # Hook pointer definitions (also in mushcore for mushcli; no ODR conflict
+        # Hook pointer definitions (also in mushcore for the tests; no ODR conflict
         # because no target links both mushapp and mushcore simultaneously).
         platform/wx_mfc_hooks_storage.cpp
         # Phase 3 scripting: portable IDispatch::Invoke over the doc dispatch map

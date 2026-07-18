@@ -3824,9 +3824,9 @@ public:
     // ── PAL: typed output view ────────────────────────────────────────────
     // pal::IWorldView is the engine's typed per-world view seam.  All
     // display/state/pull traffic is typed-only (P2 complete): no view
-    // attached → pushes are inert, pulls report empty/zero.  Headless output
-    // still reaches stdout via the DisplayMsg/Note fallbacks in
-    // doc_portable.cpp.  See docs/PAL.md.
+    // attached → pushes are inert, pulls report empty/zero.  The one display
+    // engine (doc_shared.cpp DisplayMsg) feeds the doc_display_shared.cpp
+    // drain, which emits through this seam.  See docs/PAL.md.
     pal::IWorldView* m_pWorldView = nullptr;
     bool HaveOutputSink() const { return m_pWorldView != nullptr; }
     void EmitOutputLine(SOutputLine&& line) {

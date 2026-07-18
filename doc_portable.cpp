@@ -1,8 +1,10 @@
-// doc_portable.cpp — non-Windows implementations of CMUSHclientDoc helpers.
+// doc_portable.cpp — genuine platform glue for the headless (mushcore) build.
 //
-// On Windows these methods live in the monolithic doc.cpp / MXP files.
-// We provide stubs here so the protocol files and test suite can link
-// without dragging in MFC or the scripting engine.
+// The hand-maintained reimplementations that once lived here are gone
+// (campaigns B+C): mushcore compiles the real shipping TUs.  What remains is
+// code with no Windows counterpart — the App/Frame globals, the portable
+// world-load/save entry points over the real XML machinery, POSIX-side
+// helpers, and small inert hooks for view-side effects.
 //
 // Guard: excluded from the Windows build entirely.
 

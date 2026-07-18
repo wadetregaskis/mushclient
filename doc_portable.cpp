@@ -608,23 +608,10 @@ CString strResult;
 }   // end of CMUSHclientDoc::GetWorldWindowPositionX
 
 // ── CMUSHclientApp::GetGlobalOption / GetGlobalOptionList ────────────────
-// Windows bodies live in MUSHclient.cpp (they read the global-preferences
-// tables).  Headless there is no global-preferences store: every name is
-// unknown (VT_NULL → Lua nil, matching the Windows bad-name result) and the
-// list is empty (never-created safearray detaches with a null parray → nil).
-VARIANT CMUSHclientApp::GetGlobalOption(LPCTSTR /*Name*/)
-{
-    VARIANT vaResult;
-    VariantInit(&vaResult);
-    vaResult.vt = VT_NULL;
-    return vaResult;
-}
-
-VARIANT CMUSHclientApp::GetGlobalOptionList()
-{
-    COleSafeArray sa;
-    return sa.Detach();
-}
+// REAL bodies in globalregistryoptions.cpp (adopted into mushcore): the
+// offsetof-driven global-option tables walk the stub App's
+// MUSHclient.h-exact members, so headless returns real values for the full
+// Windows option-name surface.
 
 // ── GetSelection (stdafx.h:484; Windows body Utilities.cpp) ──────────────
 // Returns the selected text of a command-window CEdit (true = whole text).

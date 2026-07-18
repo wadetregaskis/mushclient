@@ -130,6 +130,9 @@ enum { BLACK = 0, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE };
 #  define TranslateTime(string)    TranslateGeneric (string, "times")
 #  define TranslateHeading(string) TranslateGeneric (string, "headings")
 #endif
+#ifndef Translate_NoOp
+#  define Translate_NoOp(string) (string)   // stdafx.h:920 (errors.cpp table)
+#endif
 #define ANSI_RESET              0
 #define ANSI_BOLD               1
 #define ANSI_BLINK              3
@@ -1144,8 +1147,51 @@ public:
 struct lua_State;   // <lua.h> arrives later (scripting/scripting.h)
 #ifndef CMUSHclientApp_defined
 #define CMUSHclientApp_defined
+// sqlite3 handle type for the App's global-preferences database member; the
+// full API comes from the "sqlite3/sqlite3.h" include further down (its
+// identical typedef makes this forward declaration legal).
+typedef struct sqlite3 sqlite3;
+
+// ── Global-prefs constants used by the adopted globalregistryoptions.cpp ──
+// (values from MUSHclient.h:31-40 and doc.h:69)
+#ifndef PAREN_NEST_BRACES
+#  define PAREN_NEST_BRACES       0x0001    // do braces nest? eg. ( [)] )
+#  define PAREN_BACKSLASH_ESCAPES 0x0020    // \ escapes next character
+#  define PAREN_PERCENT_ESCAPES   0x0040    // % escapes next character
+#endif
+#ifndef ICON_PLACEMENT_TASKBAR
+#  define ICON_PLACEMENT_TASKBAR  0
+#endif
+#ifndef SECURITY_URL
+#  define SECURITY_URL "http://www.gammon.com.au/security"
+#endif
+
+// ── Global-option table row types (MUSHclient.h:350-364, exact) ───────────
+// for global numeric options
+typedef struct
+  {
+  int         iOffset;    // offset in CMUSHclientApp
+  const char* pName;      // name, eg. "ActivityButtonBarStyle"
+  int         iDefault;   // original (default) value
+  }  tGlobalConfigurationNumericOption;
+
+// for global alpha options
+typedef struct
+  {
+  int         iOffset;    // offset in CMUSHclientApp
+  const char* pName;      // name, eg. "AsciiArtFont"
+  const char* sDefault;   // original (default) value
+  }  tGlobalConfigurationAlphaOption;
+
 class CMUSHclientApp {
 public:
+    // ── Activity-window refresh types (MUSHclient.h:89-93) ────────────────
+    enum {
+        eRefreshOnActivity,
+        eRefreshPeriodically,
+        eRefreshBoth,
+    };    // activity world refresh types
+
     // ── Spell checker (MUSHclient.h:96-102) ───────────────────────────────
     // Never initialised headless (InitSpellCheck is GUI-side), so the
     // adopted methods_spellchecker.cpp bodies short-circuit to the canonical
@@ -1163,17 +1209,40 @@ public:
     CString      m_strFixedPitchFont;
     unsigned int m_iFixedPitchFontSize = 0;
 
-    // ── Global preferences database (MUSHclient.h:117) — none headless ────
+    // ── Global preferences database (MUSHclient.h:114-117) ───────────────
+    // Headless the name stays empty (GetInfo(82) → "") and no database is
+    // ever opened; the handle exists so the adopted globalregistryoptions.cpp
+    // (SaveGlobalsToDatabase) compiles unchanged.
+    sqlite3 *   db = nullptr;
     string      m_PreferencesDatabaseName;   // GetInfo(82) → ""
+
+    // ── Registry/profile + prefs-database access (CWinApp/MUSHclient.h) ──
+    // Headless there is no registry and no prefs database: profile reads
+    // return the caller's default and database access no-ops SQLITE_OK (0),
+    // so the adopted globalregistryoptions.cpp machinery runs — reads
+    // resolve to the Windows table defaults, writes go nowhere.
+    void SetRegistryKey (LPCTSTR) {}
+    UINT GetProfileInt (LPCTSTR, LPCTSTR, int nDefault) { return nDefault; }
+    CString GetProfileString (LPCTSTR, LPCTSTR, LPCTSTR lpszDefault = NULL)
+        { return CString (lpszDefault ? lpszDefault : ""); }
+    int db_simple_query (const char * /*sql*/, string & result,
+                         const bool /*bShowError*/ = false,
+                         const char * default_value = "")
+        { result = default_value; return 0; /* SQLITE_OK */ }
+    int db_execute (const char * /*sql*/, const bool /*bShowError*/ = false)
+        { return 0; /* SQLITE_OK */ }
+    int db_write_string (LPCTSTR, LPCTSTR, LPCTSTR) { return 0; }
+    int db_write_int (LPCTSTR, LPCTSTR, int) { return 0; }
 
     // ── When the client started executing (MUSHclient.h:61) — GetInfo(305)
     CTime       m_whenClientStarted;
 
-    // ── Global options (MUSHclient.h:272-273).  Headless there is no
-    // global-preferences store, so every name is "unknown" (VT_NULL → Lua
-    // nil, exactly what the Windows App returns for a bad name) and the
-    // list is empty (a never-created safearray → nil).  Bodies in
-    // doc_portable.cpp.
+    // ── Global options (MUSHclient.h:272-273).  The REAL bodies — the
+    // offsetof-driven GlobalOptionsTable[]/AlphaGlobalOptionsTable[] walk in
+    // globalregistryoptions.cpp, adopted into mushcore (Campaign C prep) —
+    // compile against this class, so every member those tables name below
+    // has MUSHclient.h-EXACT types (the machinery reads *(int*)p over
+    // 4-byte members and *(CString*)p over CString members).
     VARIANT GetGlobalOption(LPCTSTR Name);
     VARIANT GetGlobalOptionList();
 
@@ -1190,8 +1259,11 @@ public:
     // Scripting / sandboxing
     CString m_strLuaScript;              // sandbox script (empty on macOS — no sandbox)
     CString m_strMUSHclientFileName;     // full path of the executable (PlaySound relative-path base; empty headless)
-    string  m_strDefaultLogFileDirectory;// prefix for log files
-    string  m_strDefaultWorldFileDirectory;  // prefix for world files (FormatTime %F)
+    // MUSHclient.h-exact CString (the alpha global-option table reinterprets
+    // through *(CString*)p) — were std::string; every portable use goes
+    // through c_str()/implicit conversion, which the shim CString provides.
+    CString m_strDefaultLogFileDirectory;    // prefix for log files
+    CString m_strDefaultWorldFileDirectory;  // prefix for world files (FormatTime %F)
     // Plugin state-file directory (plugins.cpp SaveState; empty headless, so
     // CPlugin::SaveState returns without writing).
     CString m_strDefaultStateFilesDirectory;
@@ -1200,7 +1272,17 @@ public:
     // directory specified"); Windows InitInstance always sets it.  "." keeps
     // relative plugin paths relative (working_dir is empty headless).
     CString m_strPluginsDirectory = ".";
-    void SaveGlobalsToDatabase() {}   // GUI persists global prefs; no-op headless
+    // REAL bodies in globalregistryoptions.cpp (adopted): headless the
+    // GetProfile*/db_* stubs above make PopulateDatabase/SaveGlobalsToDatabase
+    // structured no-ops (an empty db name opens a sqlite temporary database;
+    // the writes are swallowed), while LoadGlobalsFromDatabase resolves every
+    // option to its table default (POSIX-adjusted).  Nothing headless calls
+    // them at startup — the member initialisers above already carry the
+    // defaults — but the machinery is the real one.
+    int  PopulateDatabase (void);
+    void LoadGlobalsFromDatabase (void);
+    void SaveGlobalsToDatabase (void);
+    void ShowGlobalOptions (CMUSHclientDoc * pDoc);
     // Default-set files (GUI global prefs; empty headless, so
     // OnFileReloaddefaults' Load_Set calls are all short-circuited)
     CString m_strDefaultColoursFile;
@@ -1243,16 +1325,18 @@ public:
         return ++s_counter;
     }
 
-    // Notification flags (used by worldsock.cpp OnClose and proxy error handling)
-    bool m_bNotifyOnDisconnect              = false;
-    bool m_bNotifyIfCannotConnect           = false;
-    bool m_bErrorNotificationToOutputWindow = false;
-    bool m_bReconnectOnLinkFailure          = false;
+    // Notification flags (used by worldsock.cpp OnClose and proxy error
+    // handling).  unsigned int (MUSHclient.h-exact — global-option table
+    // members); values keep the established headless defaults.
+    unsigned int m_bNotifyOnDisconnect              = 0;
+    unsigned int m_bNotifyIfCannotConnect           = 0;
+    unsigned int m_bErrorNotificationToOutputWindow = 0;
+    unsigned int m_bReconnectOnLinkFailure          = 0;
 
-    // Display / scrolling
-    bool    m_bBleedBackground           = false;
-    bool    m_bSmoothScrolling           = false;
-    bool    m_bSmootherScrolling         = false;
+    // Display / scrolling (MUSHclient.h-exact types)
+    unsigned int m_bBleedBackground           = 0;
+    unsigned int m_bSmoothScrolling           = 0;
+    unsigned int m_bSmootherScrolling         = 0;
 
     // Word-delimiter sets (double-click selection)
     CString m_strWordDelimitersDblClick;
@@ -1262,17 +1346,67 @@ public:
     void*   m_pActivityView              = nullptr;
     bool    m_bUpdateActivity            = false;
 
-    // Input routing
-    bool    m_bAllTypingToCommandWindow  = false;
-    bool    m_bF1macro                   = false;
-    bool    m_bDisableKeyboardMenuActivation = false;
+    // Input routing (MUSHclient.h-exact types)
+    unsigned int m_bAllTypingToCommandWindow  = 0;
+    unsigned int m_bF1macro                   = 0;
+    unsigned int m_bDisableKeyboardMenuActivation = 0;
 
-    // Printer settings
-    int     m_nPrinterLinesPerPage       = 60;
-    int     m_nPrinterLeftMargin         = 1;
-    int     m_nPrinterTopMargin          = 1;
-    int     m_nPrinterFontSize           = 10;
+    // Printer settings (MUSHclient.h-exact types; established headless values)
+    unsigned int m_nPrinterLinesPerPage       = 60;
+    unsigned int m_nPrinterLeftMargin         = 1;
+    unsigned int m_nPrinterTopMargin          = 1;
+    unsigned int m_nPrinterFontSize           = 10;
     CString m_strPrinterFont;
+
+    // ── Remaining global-preferences members (MUSHclient.h:126-202) ───────
+    // Named by GlobalOptionsTable[]/AlphaGlobalOptionsTable[]
+    // (globalregistryoptions.cpp, adopted) — MUSHclient.h-exact types so the
+    // offsetof machinery works.  Nothing else headless reads them yet, so
+    // they initialise to the Windows table defaults (the state Windows
+    // reaches via LoadGlobalsFromDatabase over an empty prefs database).
+    unsigned int m_bAlwaysOnTop                   = 0;
+    unsigned int m_bAppendToLogFiles              = 0;
+    unsigned int m_bAutoConnectWorlds             = 1;
+    unsigned int m_bAutoExpand                    = 1;
+    unsigned int m_bFlatToolbars                  = 1;
+    unsigned int m_bAutoLogWorld                  = 0;
+    unsigned int m_bColourGradient                = 1;
+    unsigned int m_bConfirmBeforeClosingMXPdebug  = 0;
+    unsigned int m_bConfirmBeforeClosingMushclient = 0;
+    unsigned int m_bConfirmBeforeClosingWorld     = 1;
+    unsigned int m_bConfirmBeforeSavingVariables  = 1;
+    unsigned int m_bConfirmLogFileClose           = 1;
+    unsigned int m_bEnableSpellCheck              = 1;
+    unsigned int m_bEnablePackageLibrary          = 1;
+    unsigned int m_bFixedFontForEditing           = 1;
+    unsigned int m_bNotepadWordWrap               = 1;
+    unsigned int m_bOpenActivityWindow            = 0;
+    unsigned int m_bOpenWorldsMaximised           = 0;
+    unsigned int m_iWindowTabsStyle               = 0;
+    unsigned int m_bRegexpMatchEmpty              = 1;
+    unsigned int m_bShowGridLinesInListViews      = 1;
+    unsigned int m_bTriggerRemoveCheck            = 1;
+    unsigned int m_iActivityButtonBarStyle        = 0;
+    unsigned int m_iAsciiArtLayout                = 0;
+    unsigned int m_iIconPlacement                 = 0;   // ICON_PLACEMENT_TASKBAR
+    unsigned int m_iTrayIcon                      = 0;
+    unsigned int m_nActivityWindowRefreshInterval = 15;
+    unsigned int m_nActivityWindowRefreshType     = eRefreshBoth;
+    unsigned int m_nParenMatchFlags               =
+        0x0001 | 0x0020 | 0x0040;   // PAREN_NEST_BRACES|BACKSLASH|PERCENT (MUSHclient.h:32-38)
+    unsigned int m_nTimerInterval                 = 0;
+    unsigned int m_iNotepadFontSize               = 9;
+    unsigned int m_bTabInsertsTab                 = 0;
+    COLORREF     m_cNotepadBackColour             = 0;
+    COLORREF     m_cNotepadTextColour             = 0;
+    CString m_strAsciiArtFont;
+    CString m_strDefaultNameGenerationFile;
+    CString m_strNotepadQuoteString = "> ";
+    CString m_strPluginList;
+    CString m_strNotepadFont;
+    CString m_strTrayIconFileName;
+    CString m_strWordDelimiters = ".,()[]\"'";
+    CString m_strWorldList;
 
     // String used to make trigger/alias names unique
     CString GetUniqueString() {

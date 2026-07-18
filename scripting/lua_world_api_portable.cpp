@@ -333,26 +333,17 @@ static int L_IsConnected(lua_State* L)
 // ── Error code helpers ────────────────────────────────────────────────────────
 
 // world.ErrorDesc(code) → string description
-// NOT rewired to the real CMUSHclientDoc::ErrorDesc: the real body walks
-// error_descriptions[], whose full table lives in lua_methods.cpp:7418
-// (mushapp-only, a Campaign C target) — mushcore links only the
-// windows_stubs.cpp sentinel, so the real method headless would return the
-// code formatted as a string.  This twin keeps the common descriptions
-// until lua_methods.cpp adopts (then delete both the twin and the sentinel).
+// Thin wrapper over the REAL CMUSHclientDoc::ErrorDesc (methods_info.cpp),
+// which walks the full error_descriptions[] table — single-sourced in
+// scripting/errors.cpp (relocated from lua_methods.cpp), so headless returns
+// the same Windows descriptions.  Marshalled exactly as lua_methods.cpp
+// L_ErrorDesc (off-Windows BSTR is a heap char* — push then delete[]).
 static int L_ErrorDesc(lua_State* L)
 {
-    long code = (long)luaL_checknumber(L, 1);
-    // Basic mapping for the most common codes
-    const char* desc = "Unknown error";
-    switch (code) {
-        case eOK:                       desc = "OK";                           break;
-        case eWorldClosed:              desc = "World is closed";              break;
-        case eItemInUse:                desc = "Item is in use";               break;
-        case eCommandsNestedTooDeeply:  desc = "Commands nested too deeply";   break;
-        case eVariableNotFound:         desc = "Variable not found";           break;
-        default: break;
-    }
-    lua_pushstring(L, desc);
+    CMUSHclientDoc* pDoc = world_doc(L);
+    BSTR str = pDoc->ErrorDesc((long)luaL_checknumber(L, 1));
+    lua_pushstring(L, str ? str : "");
+    delete[] str;
     return 1;
 }
 
@@ -1866,22 +1857,288 @@ static int L_DoAfterNote(lua_State* L)
 
 // ── Inter-plugin communication ────────────────────────────────────────────────
 
-// world.CallPlugin(pluginID, routineName [, argument]) → error_code
-// Calls a named Lua function in another plugin, passing an optional string
-// argument.  Sets m_CurrentPlugin so the callee's GetPluginID() etc. work.
-// Thin wrapper over the REAL CMUSHclientDoc::CallPlugin (methods_plugins.cpp):
-// one optional string argument, proper eNoSuchPlugin/ePluginDisabled/
-// eNoSuchRoutine codes, m_strCallingPluginID maintained.  The rich multi-
-// argument / multi-return marshalling of lua_methods.cpp L_CallPlugin stays a
-// Campaign C item (it copies values across lua_States).
-static int L_CallPlugin(lua_State* L)
-{
-    CMUSHclientDoc* pDoc = world_doc(L);
-    lua_pushnumber(L, pDoc->CallPlugin(luaL_checkstring(L, 1),
-                                       luaL_checkstring(L, 2),
-                                       luaL_optstring(L, 3, "")));
-    return 1;
-}
+// world.CallPlugin(pluginID, routineName [, args...]) → error_code [, results...]
+// The FULL lua_methods.cpp L_CallPlugin body (Windows-complete before the
+// flip): Lua-to-Lua calls marshal multiple nil/boolean/number/string
+// arguments and return values across the two lua_States (4.55 semantics);
+// anything else falls back to the classic single-string
+// CMUSHclientDoc::CallPlugin.  Only the doc()/my_checkstring/my_optstring
+// idioms are renamed to this file's world_doc()/luaL_* equivalents.
+static int L_CallPlugin (lua_State *L)
+  {
+  CMUSHclientDoc *pDoc = world_doc (L);
+
+  const char * sPluginID = luaL_checkstring (L, 1);
+  const char * sRoutine = luaL_checkstring (L, 2);
+
+  // remove plugin ID and function name
+  // this is so, after the lua_pcall the stack should be empty
+  // so, if the called function does a CallPlugin back to us, it won't matter
+  // if we do a lua_settop (pL, 0) (below) to clear the stack
+
+  lua_remove (L, 1);  // remove plugin ID
+  lua_remove (L, 1);  // remove function name
+
+  int i;    // for iterating through arguments / return values
+
+  // preliminary checks ...
+
+  // function name given?
+  if (sRoutine [0] == 0)
+    {
+    lua_pushnumber (L, eNoSuchRoutine);
+    lua_pushstring (L, "No function name supplied");
+    return 2;     // eNoSuchRoutine, explanation
+    }
+
+  // plugin exists?
+  CPlugin * pPlugin = pDoc->GetPlugin (sPluginID); 
+  if (!pPlugin)
+    {
+    lua_pushnumber (L, eNoSuchPlugin);
+    CString strError = TFormat ("Plugin ID (%s) is not installed",
+                                sPluginID);
+    lua_pushstring (L, strError);
+    return 2;    // eNoSuchPlugin, explanation
+    }
+
+  // plugin is enabled?
+  if (!pPlugin->m_bEnabled)
+    {
+    lua_pushnumber (L, ePluginDisabled);
+    CString strError = TFormat ("Plugin '%s' (%s) disabled",
+                      (LPCTSTR) pPlugin->m_strName, 
+                      sPluginID);
+    lua_pushstring (L, strError);
+    return 2;     // ePluginDisabled, explanation
+
+    }
+
+  // plugin has a script engine?
+  if (pPlugin->m_ScriptEngine == NULL)
+    {
+    lua_pushnumber (L, eNoSuchRoutine);
+    CString strError = TFormat ("Scripting not enabled in plugin '%s' (%s)",
+                                (LPCTSTR) pPlugin->m_strName, 
+                                sPluginID);
+    lua_pushstring (L, strError);
+    return 2;     // eNoSuchRoutine, explanation
+
+    }
+
+  // new in 4.55 - Lua to Lua calls can handle multiple arguments and multiple return values
+
+  // don't need to check *our* scripting language, we must be Lua, duh, or we wouldn't be here.
+
+  if (pPlugin->m_ScriptEngine->IsLua ())
+    {
+    int n = lua_gettop(L);  // number of arguments in calling script (we removed plugin ID and function name already)
+
+    lua_State *pL = pPlugin->m_ScriptEngine->L;  // plugin's Lua state
+
+    // don't clear if we are calling ourselves
+    if (pL != L)
+      lua_settop (pL, 0);   // clear stack in target plugin
+
+    // get wanted function onto stack
+    if (!GetNestedFunction (pL, sRoutine, false))    // don't raise error
+      {
+      lua_pushnumber (L, eNoSuchRoutine);
+      CString strError = TFormat ("No function '%s' in plugin '%s' (%s)",
+                        sRoutine, 
+                        (LPCTSTR) pPlugin->m_strName, 
+                        sPluginID);
+      lua_pushstring (L, strError);
+      return 2;    // eNoSuchRoutine, explanation
+      }
+   
+    // if we are calling ourselves, don't make a copy of everything
+    if (pL == L)
+      lua_insert (pL, 1);    // move function to be called as first item 
+    else
+      {   // calling a different plugin
+
+      // copy all our arguments to destination script space
+      // we can handle: nil, boolean, number, string
+      // but NOT: table, function, userdata, thread
+
+      // check we can push our arguments.
+      // we need room for the function itself and at least room for the return value
+      lua_checkstack (pL, n + 2);
+
+      for (i = 1; i <= n; i++) 
+        {
+      
+        switch (lua_type (L, i))
+          {
+          case LUA_TNIL:
+            lua_pushnil (pL);
+            break;
+
+          case LUA_TBOOLEAN:
+            lua_pushboolean (pL, lua_toboolean (L, i));
+            break;
+
+          case LUA_TNUMBER:
+            lua_pushnumber (pL, lua_tonumber (L, i));
+            break;
+
+          case LUA_TSTRING:
+            {
+            size_t len;
+            const char * s = lua_tolstring (L, i, &len);
+            lua_pushlstring (pL, s, len);
+            }
+            break;
+
+          // not one of those? can't handle it
+          default:
+            lua_settop (pL, 0);     // clear target plugin's stack to remove whatever we pushed onto it
+            lua_pushnumber (L, eBadParameter);
+            CString strError = TFormat ("Cannot pass argument #%i (%s type) to CallPlugin",
+                                        i + 2,  // add two because we deleted plugin ID and function name
+                                        luaL_typename (L, i));
+            lua_pushstring (L, strError);
+            return 2;    // eBadParameter, explanation
+
+          } // end of switch on type of argument
+
+        } // end of for each argument
+      }   // end of not calling ourselves
+
+    unsigned short iOldStyle = pDoc->m_iNoteStyle;
+    pDoc->m_iNoteStyle = NORMAL;    // back to default style
+
+    CString strOldCallingPluginID = pPlugin->m_strCallingPluginID;
+
+    pPlugin->m_strCallingPluginID.Empty ();
+    
+    if (pDoc->m_CurrentPlugin)
+      pPlugin->m_strCallingPluginID = pDoc->m_CurrentPlugin->m_strID;
+
+    // do this so plugin can find its own state (eg. with GetPluginID)
+    CPlugin * pSavedPlugin = pDoc->m_CurrentPlugin; 
+    pDoc->m_CurrentPlugin = pPlugin;  
+    
+    // now call the routine in the plugin
+
+    if (CallLuaWithTraceBack (pL, n, LUA_MULTRET))   // true on error
+      {
+
+      // here for execution error in plugin function ...
+
+      CString strType = TFormat ("Plugin %s", (LPCTSTR) pPlugin->m_strName); 
+      CString strReason = TFormat ("Executing plugin %s sub %s", 
+                                   (LPCTSTR) pPlugin->m_strName,
+                                   sRoutine ); 
+
+      // grab the Lua error from the stack before we clear it
+      CString strLuaError (lua_tostring(pL, -1));
+
+      // this will display the error, and the error context
+      LuaError (pL, "Run-time error", sRoutine, strType, strReason, pDoc);
+
+      // back to who *we* are (had to wait until after LuaError)
+      pDoc->m_CurrentPlugin = pSavedPlugin;
+      pDoc->m_iNoteStyle = iOldStyle;
+
+      lua_settop (pL, 0);     // clean stack up
+
+      // the error code for the caller (result value 1)
+      lua_pushnumber (L, eErrorCallingPluginRoutine);
+
+      // a nice error message (result value 2)
+      CString strError = TFormat ("Runtime error in function '%s', plugin '%s' (%s)",
+                                  sRoutine,
+                                  (LPCTSTR) pPlugin->m_strName, sPluginID);
+      
+      lua_pushstring (L, strError);
+
+      // what the exact Lua error message was (result value 3)
+      lua_pushstring (L, strLuaError);
+
+      pPlugin->m_strCallingPluginID = strOldCallingPluginID;
+
+      return 3;  // ie. eErrorCallingPluginRoutine, explanation, Lua error message
+      }
+
+    // back to who *we* are (if no error)
+    pDoc->m_CurrentPlugin = pSavedPlugin;
+    pDoc->m_iNoteStyle = iOldStyle;
+    pPlugin->m_strCallingPluginID = strOldCallingPluginID;
+
+    int ret_n = lua_gettop(pL);  // number of returned values (might be zero)
+
+    lua_pushnumber (L, eOK);   // expected behaviour prior to 4.55 (just a single value)
+
+    // if we are calling ourselves, don't make a copy of everything
+    if (pL == L)
+      {
+      lua_insert (L, 1);    // put return code as first item pushing others up
+      return 1 + ret_n;     // eOK plus all returned values
+      }
+
+    lua_checkstack (L, ret_n + 1);  // check we can push eOK plus all the return results
+
+    // copy return results back to original script space
+    // we can handle: nil, boolean, number, string
+    // but NOT: table, function, userdata, thread
+
+    for (i = 1; i <= ret_n; i++) 
+      {
+      
+      switch (lua_type (pL, i))
+        {
+        case LUA_TNIL:
+          lua_pushnil (L);
+          break;
+
+        case LUA_TBOOLEAN:
+          lua_pushboolean (L, lua_toboolean (pL, i));
+          break;
+
+        case LUA_TNUMBER:
+          lua_pushnumber (L, lua_tonumber (pL, i));
+          break;
+
+        case LUA_TSTRING:
+          {
+          size_t len;
+          const char * s = lua_tolstring (pL, i, &len);
+          lua_pushlstring (L, s, len);
+          }
+          break;
+
+        // not one of those? can't handle it
+        default:
+          lua_pushnumber (L, eErrorCallingPluginRoutine);
+          CString strError = CFormat ("Cannot handle return value #%i (%s type) from function '%s' in plugin '%s' (%s)",
+                                      i, 
+                                      luaL_typename (pL, i), 
+                                      sRoutine,
+                                      (LPCTSTR) pPlugin->m_strName, 
+                                      sPluginID);
+          lua_pushstring (L, strError);
+          lua_settop (pL, 0);     // clean stack in plugin
+          return 2;   // eErrorCallingPluginRoutine, explanation
+
+        } // end of switch on type of argument
+
+      } // end of for each argument
+
+      return ret_n + 1;  // eOK plus all returned values
+    }  // end if Lua calling Lua
+
+  // ------------- end stuff added for version 4.55 -------------------
+
+  // old fashioned way ...
+  lua_pushnumber (L, pDoc->CallPlugin (
+                  sPluginID,  // PluginID     - was argument 1 earlier on
+                  sRoutine,   // Routine      - was argument 2 earlier on
+                  luaL_optstring (L, 1, "")   // Argument - optional (originally argument 3)
+                  ));
+  return 1;  // number of result fields
+  } // end of L_CallPlugin
 
 // world.BroadcastPlugin(message, text) → count of plugins that handled it
 // Fires OnPluginBroadcast(message, senderID, senderName, text) in every
@@ -4875,101 +5132,20 @@ static int L_GetLoadedValue(lua_State* L)
     return push_option_variant(L, v);
 }
 // ── GetGlobalOption / GetGlobalOptionList ─────────────────────────────────────
-// Global options are app-wide (not per-world).  The portable CMUSHclientApp
-// (doc_stub.h) carries a subset of the Windows App fields; we surface those here
-// with the same camel-case names the Windows registry table uses (_stricmp match).
-// NOT rewired to the real doc methods (methods_info.cpp → App.GetGlobalOption):
-// the stub App has no global-preferences store, so the real path returns
-// VT_NULL/empty for everything — these twins keep the richer App-member
-// surface until a real global-option table exists headless.
-//
-// Numeric options (long/bool):
-//   AllTypingToCommandWindow, BleedBackground, DisableKeyboardMenuActivation,
-//   ErrorNotificationToOutputWindow, F1macro, NotifyOnDisconnect,
-//   PrinterFontSize, PrinterLeftMargin, PrinterLinesPerPage, PrinterTopMargin,
-//   ReconnectOnLinkFailure, SmoothScrolling, SmootherScrolling
-//
-// Alpha options (string):
-//   DefaultLogFileDirectory, LuaScript, PrinterFont, WordDelimitersDblClick
+// Thin wrappers over the REAL doc methods (methods_info.cpp → App.GetGlobalOption
+// / App.GetGlobalOptionList, whose bodies — the offsetof-driven global-option
+// tables in globalregistryoptions.cpp — are adopted into mushcore), marshalled
+// exactly as lua_methods.cpp: the full Windows option-name surface headless.
 static int L_GetGlobalOption(lua_State* L)
 {
-    world_doc(L);
-    const char* name = luaL_checkstring(L, 1);
-
-    // ── numeric (bool/int) options ──────────────────────────────────────────
-    struct { const char* nm; long val; } nums[] = {
-        { "AllTypingToCommandWindow",        App.m_bAllTypingToCommandWindow        },
-        { "BleedBackground",                 App.m_bBleedBackground                 },
-        { "DisableKeyboardMenuActivation",   App.m_bDisableKeyboardMenuActivation   },
-        { "ErrorNotificationToOutputWindow", App.m_bErrorNotificationToOutputWindow },
-        { "F1macro",                         App.m_bF1macro                         },
-        { "NotifyOnDisconnect",              App.m_bNotifyOnDisconnect              },
-        { "PrinterFontSize",                 App.m_nPrinterFontSize                 },
-        { "PrinterLeftMargin",               App.m_nPrinterLeftMargin               },
-        { "PrinterLinesPerPage",             App.m_nPrinterLinesPerPage             },
-        { "PrinterTopMargin",                App.m_nPrinterTopMargin                },
-        { "ReconnectOnLinkFailure",          App.m_bReconnectOnLinkFailure          },
-        { "SmoothScrolling",                 App.m_bSmoothScrolling                 },
-        { "SmootherScrolling",               App.m_bSmootherScrolling               },
-        { nullptr, 0 }
-    };
-    for (int i = 0; nums[i].nm; ++i) {
-        if (strcasecmp(name, nums[i].nm) == 0) {
-            lua_pushnumber(L, nums[i].val);
-            return 1;
-        }
-    }
-
-    // ── alpha (string) options ──────────────────────────────────────────────
-    struct { const char* nm; const char* val; } strs[] = {
-        { "DefaultLogFileDirectory", App.m_strDefaultLogFileDirectory.c_str() },
-        { "LuaScript",               static_cast<const char*>(App.m_strLuaScript) },
-        { "PrinterFont",             static_cast<const char*>(App.m_strPrinterFont) },
-        { "WordDelimitersDblClick",  static_cast<const char*>(App.m_strWordDelimitersDblClick) },
-        { nullptr, nullptr }
-    };
-    for (int i = 0; strs[i].nm; ++i) {
-        if (strcasecmp(name, strs[i].nm) == 0) {
-            lua_pushstring(L, strs[i].val ? strs[i].val : "");
-            return 1;
-        }
-    }
-
-    lua_pushnil(L);   // unknown option
-    return 1;
+    VARIANT v = world_doc(L)->GetGlobalOption(luaL_checkstring(L, 1));
+    return push_option_variant(L, v);
 }
 
 static int L_GetGlobalOptionList(lua_State* L)
 {
-    world_doc(L);
-    static const char* const kNames[] = {
-        // numeric
-        "AllTypingToCommandWindow",
-        "BleedBackground",
-        "DisableKeyboardMenuActivation",
-        "ErrorNotificationToOutputWindow",
-        "F1macro",
-        "NotifyOnDisconnect",
-        "PrinterFontSize",
-        "PrinterLeftMargin",
-        "PrinterLinesPerPage",
-        "PrinterTopMargin",
-        "ReconnectOnLinkFailure",
-        "SmoothScrolling",
-        "SmootherScrolling",
-        // alpha
-        "DefaultLogFileDirectory",
-        "LuaScript",
-        "PrinterFont",
-        "WordDelimitersDblClick",
-        nullptr
-    };
-    lua_newtable(L);
-    for (int i = 0; kNames[i]; ++i) {
-        lua_pushstring(L, kNames[i]);
-        lua_rawseti(L, -2, i + 1);
-    }
-    return 1;
+    VARIANT v = world_doc(L)->GetGlobalOptionList();
+    return push_option_variant(L, v);
 }
 
 // ── GetWorld / GetWorldById / GetWorldIdList / GetWorldList ───────────────────

@@ -418,6 +418,7 @@ if(NOT WIN32)
         ansi.cpp
         doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
         utilities_shared.cpp   # shared pure-logic free functions (myAtoF/encodeBase64/EditDistance)
+        scripting/errors.cpp   # error_descriptions[] (ErrorDesc; single-sourced from lua_methods.cpp)
         doc_scripting_shared.cpp   # port-only FireWorld* callbacks (shared mushcore+mushapp)
         scripting/methods/methods_noting.cpp   # the REAL note family (display step 6)
         scripting/methods/methods_tracing.cpp  # the REAL trace family (Campaign C)
@@ -513,6 +514,12 @@ if(NOT WIN32)
         # OptionsTable[]/AlphaOptionsTable[] + Get/SetOption(Item) family,
         # compiled against doc_stub.h (which has doc.h-exact option members).
         scriptingoptions.cpp
+
+        # Campaign C prep: the REAL global-option machinery —
+        # GlobalOptionsTable[]/AlphaGlobalOptionsTable[] +
+        # App.GetGlobalOption(List) — compiled against the stub App
+        # (MUSHclient.h-exact members; inert GetProfile*/db_* accessors).
+        globalregistryoptions.cpp
 
         # XML parser (world-file deserialisation)
         xml/xmlparse.cpp
@@ -662,6 +669,7 @@ if(NOT WIN32)
         ansi.cpp
         doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
         utilities_shared.cpp   # shared pure-logic free functions (myAtoF/encodeBase64/EditDistance)
+        scripting/errors.cpp   # error_descriptions[] (ErrorDesc; single-sourced from lua_methods.cpp)
         telnet_phases.cpp
         Line.cpp
         ProcessPreviousLine.cpp

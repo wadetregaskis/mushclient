@@ -983,85 +983,20 @@ int RegisterLuaRoutines (lua_State * L)
     lua_setglobal(L, "error_code");
 
     // error_desc table — maps error code number → description string.
-    // Mirrors error_descriptions[] / MakeIntFlagsTable(L,"error_desc",...) in lua_methods.cpp.
-    lua_newtable(L);
-    #define ED(code,desc) lua_pushnumber(L,code); lua_pushstring(L,desc); lua_rawset(L,-3);
-    ED(0,      "No error")
-    ED(30001,  "The world is already open")
-    ED(30002,  "The world is closed, this action cannot be performed")
-    ED(30003,  "No name has been specified where one is required")
-    ED(30004,  "The sound file could not be played")
-    ED(30005,  "The specified trigger name does not exist")
-    ED(30006,  "Attempt to add a trigger that already exists")
-    ED(30007,  "The trigger \"match\" string cannot be empty")
-    ED(30008,  "The name of this object is invalid")
-    ED(30009,  "Script name is not in the script file")
-    ED(30010,  "The specified alias name does not exist")
-    ED(30011,  "Attempt to add a alias that already exists")
-    ED(30012,  "The alias \"match\" string cannot be empty")
-    ED(30013,  "Unable to open requested file")
-    ED(30014,  "Log file was not open")
-    ED(30015,  "Log file was already open")
-    ED(30016,  "Bad write to log file")
-    ED(30017,  "The specified timer name does not exist")
-    ED(30018,  "Attempt to add a timer that already exists")
-    ED(30019,  "Attempt to delete a variable that does not exist")
-    ED(30020,  "Attempt to use SetCommand with a non-empty command window")
-    ED(30021,  "Bad regular expression syntax")
-    ED(30022,  "Time given to AddTimer is invalid")
-    ED(30023,  "Direction given to AddToMapper is invalid")
-    ED(30024,  "No items in mapper")
-    ED(30025,  "Option name not found")
-    ED(30026,  "New value for option is out of range")
-    ED(30027,  "Trigger sequence value invalid")
-    ED(30028,  "Where to send trigger text to is invalid")
-    ED(30029,  "Trigger label not specified/invalid for 'send to variable'")
-    ED(30030,  "File name specified for plugin not found")
-    ED(30031,  "There was a parsing or other problem loading the plugin")
-    ED(30032,  "Plugin is not allowed to set this option")
-    ED(30033,  "Plugin is not allowed to get this option")
-    ED(30034,  "Requested plugin is not installed")
-    ED(30035,  "Only a plugin can do this")
-    ED(30036,  "Plugin does not support that subroutine (subroutine not in script)")
-    ED(30037,  "Plugin does not support saving state")
-    ED(30039,  "Plugin is currently disabled")
-    ED(30040,  "Could not call plugin routine")
-    ED(30041,  "Calls to \"Execute\" nested too deeply")
-    ED(30042,  "Unable to create socket for chat connection")
-    ED(30043,  "Unable to do DNS (domain name) lookup for chat connection")
-    ED(30044,  "No chat connections open")
-    ED(30045,  "Requested chat person not connected")
-    ED(30046,  "General problem with a parameter to a script call")
-    ED(30047,  "Already listening for incoming chats")
-    ED(30048,  "Chat session with that ID not found")
-    ED(30049,  "Already connected to that server/port")
-    ED(30050,  "Cannot get (text from the) clipboard")
-    ED(30051,  "Cannot open the specified file")
-    ED(30052,  "Already transferring a file")
-    ED(30053,  "Not transferring a file")
-    ED(30054,  "There is not a command of that name")
-    ED(30055,  "That array already exists")
-    ED(30056,  "That array does not exist")
-    ED(30057,  "Values to be imported into array are not in pairs")
-    ED(30058,  "Import succeeded, however some values were overwritten")
-    ED(30059,  "Import/export delimiter must be a single character, other than backslash")
-    ED(30060,  "Array element set, existing value overwritten")
-    ED(30061,  "Array key does not exist")
-    ED(30062,  "Cannot import because cannot find unused temporary character")
-    ED(30063,  "Cannot delete trigger/alias/timer because it is executing a script")
-    ED(30064,  "Spell checker is not active")
-    ED(30065,  "Cannot create requested font")
-    ED(30066,  "Invalid settings for pen parameter")
-    ED(30067,  "Bitmap image could not be loaded")
-    ED(30068,  "Image has not been loaded into window")
-    ED(30069,  "Number of points supplied is incorrect")
-    ED(30070,  "Point is not numeric")
-    ED(30071,  "Hotspot processing must all be in same plugin")
-    ED(30072,  "Hotspot has not been defined for this window")
-    ED(30073,  "Requested miniwindow does not exist")
-    ED(30074,  "Invalid settings for brush parameter")
-    #undef ED
-    lua_setglobal(L, "error_desc");
+    // Walks the REAL error_descriptions[] (single-sourced in scripting/errors.cpp,
+    // relocated from lua_methods.cpp), mirroring MakeIntFlagsTable(L,"error_desc",...)
+    // exactly — including the Windows-visible duplicate-key behaviour (the second
+    // 30037 entry wins).
+    {
+        extern int_flags_pair error_descriptions [];
+        lua_newtable(L);
+        for (const int_flags_pair * p = error_descriptions; p->val != NULL; p++) {
+            lua_pushnumber(L, p->key);
+            lua_pushstring(L, Translate (p->val));
+            lua_rawset(L, -3);
+        }
+        lua_setglobal(L, "error_desc");
+    }
 
     // colour_names table — mirrors the App.m_ColoursMap iteration in lua_methods.cpp.
     // On non-Windows the map is populated by MXP_LoadColours() via mxpcolours.cpp

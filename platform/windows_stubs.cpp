@@ -395,12 +395,10 @@ bool bShowDebugStatus = false;                              // mainfrm.cpp owns 
 // dialog); headless world.Help's function-name lookup just finds nothing.
 tInternalFunctionsTable    InternalFunctionsTable[] = { {"", ""} };
 
-// error_descriptions[]: the real table is lua_methods.cpp:7418 (mushapp-only,
-// Campaign C target).  Sentinel here means the adopted methods_info.cpp
-// ErrorDesc falls through its loop and returns the code formatted as a
-// string; the Lua-facing world.ErrorDesc keeps its full portable table in
-// lua_world_api_portable.cpp until lua_methods.cpp adopts.
-int_flags_pair             error_descriptions[]     = { {0, NULL} };
+// error_descriptions[]: the REAL table now comes from scripting/errors.cpp
+// (single-sourced, compiled into every build) — the old {0,NULL} sentinel
+// here would be a duplicate symbol.  The adopted methods_info.cpp ErrorDesc
+// returns the full Windows descriptions headless.
 
 // ── os_version (stdafx.h:406; MUSHclient.cpp:77 owns the GUI one) ─────────
 // Zeroed headless: GetInfo(77) → "", GetInfo(265-268) → 0.

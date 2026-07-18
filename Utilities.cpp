@@ -214,35 +214,8 @@ bool CreateTextWindow (const char * sText,
 
 
 
-// same as above, except quotes are left alone, and tabs are fixed up
-CString FixHTMLMultilineString (const CString strToFix)
-  {
-  CString strOldString = strToFix;
-  CString strNewString;
-
-  int i;
-
-  while ((i = strOldString.FindOneOf ("<>&\t")) != -1)
-    {
-    strNewString += strOldString.Left (i);
-
-    switch (strOldString [i])
-      {
-      case '<': strNewString += "&lt;"; break;
-      case '>': strNewString += "&gt;"; break;
-      case '&': strNewString += "&amp;"; break;
-      case '\t': strNewString += "&#9;"; break;
-      }
-
-    strOldString = strOldString.Mid (i + 1);
-    }
-
-  strNewString += strOldString;
-
-
-  return strNewString;
-
-  } // end of FixHTMLMultilineString
+// FixHTMLMultilineString (quotes left alone, tabs fixed up) is single-sourced
+// in utilities_shared.cpp now — xml/xml_save_world.cpp needs it in mushcore too.
 
 CString ConvertSetTypeToString (const int set_type)
   {

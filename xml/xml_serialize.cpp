@@ -1,10 +1,14 @@
 // xml_serialize.cpp : XML world serialization (load/save)
 //
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../MUSHclient.h"
 #include "../doc.h"
 #include "../MUSHview.h"
+#else
+#include "platform/doc_stub.h"
+#endif
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

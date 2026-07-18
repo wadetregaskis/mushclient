@@ -1530,6 +1530,9 @@ extern "C" {
 // ── Free function stubs ──────────────────────────────────────────────────
 // These are defined in Utilities.cpp on Windows; stubs live in doc_portable.cpp.
 CString FixHTMLString(CString s);
+// Element-content escaping (&/</>/tab; newlines preserved) — single-sourced
+// in utilities_shared.cpp (stdafx.h:452 signature).
+CString FixHTMLMultilineString (const CString strToFix);
 
 // find-and-replace for strings (Replace.cpp, compiled into mushcore too).
 // No default argument here: stdafx.h declares the same function WITH the
@@ -1674,11 +1677,15 @@ typedef tDatabaseMap::iterator   tDatabaseMapIterator;
 #endif // XML_GENERAL
 
 // ── Save_XML_* free-function decls (stdafx.h:491-517 signatures) ──────────
-// Referenced by plugins.cpp OnFilePluginwizard (dead headless — the stub
-// wizard sheet's DoModal returns IDCANCEL); inert bodies in doc_portable.cpp.
+// The REAL bodies are compiled into mushcore from xml/xml_save_world.cpp
+// (world-file saver adoption); the old inert doc_portable.cpp no-ops are gone.
 // Guard matches the other stdafx.h-owned declarations above (default args may
 // be declared only once per TU).
 #ifndef _STDAFX_INCLUDED_
+void Save_XML_number  (class CArchive& ar,
+                       const char * sName,
+                       const long iNumber,
+                       const bool sameline = false);
 void Save_XML_boolean (class CArchive& ar,
                        const char * sName,
                        const long iNumber,
@@ -1687,11 +1694,64 @@ void Save_XML_string  (class CArchive& ar,
                        const char * sName,
                        const CString & str,
                        const bool sameline = false);
+void Save_XML_multi   (class CArchive& ar,
+                       const char * sName,
+                       const CString & str);
+void Save_XML_date    (class CArchive& ar,
+                       const char * sName,
+                       const CTime & date,
+                       const bool sameline = false);
+void Save_XML_colour  (class CArchive& ar,
+                       const char * sName,
+                       const COLORREF & colour,
+                       const bool sameline = false);
 void Save_XML_double  (class CArchive& ar,
                        const char * sName,
                        const double & fNumber,
                        const bool sameline = false);
+void SeeIfBase64 (CString & strText);   // stdafx.h:519 (utilities_shared.cpp)
+
+// keypad indexes (stdafx.h:660-696, verbatim) — m_keypad[] / strKeypadNames[]
+enum
+  {
+  eKeypad_0            ,
+  eKeypad_1            ,
+  eKeypad_2            ,
+  eKeypad_3            ,
+  eKeypad_4            ,
+  eKeypad_5            ,
+  eKeypad_6            ,
+  eKeypad_7            ,
+  eKeypad_8            ,
+  eKeypad_9            ,
+  eKeypad_Dot          ,
+  eKeypad_Slash        ,
+  eKeypad_Star         ,
+  eKeypad_Dash         ,
+  eKeypad_Plus         ,
+  eCtrl_Keypad_0       ,
+  eCtrl_Keypad_1       ,
+  eCtrl_Keypad_2       ,
+  eCtrl_Keypad_3       ,
+  eCtrl_Keypad_4       ,
+  eCtrl_Keypad_5       ,
+  eCtrl_Keypad_6       ,
+  eCtrl_Keypad_7       ,
+  eCtrl_Keypad_8       ,
+  eCtrl_Keypad_9       ,
+  eCtrl_Keypad_Dot     ,
+  eCtrl_Keypad_Slash   ,
+  eCtrl_Keypad_Star    ,
+  eCtrl_Keypad_Dash    ,
+  eCtrl_Keypad_Plus    ,
+
+  eKeypad_Max_Items   // this must be last   !!!
+  };
 #endif // !_STDAFX_INCLUDED_
+
+// ── world-file format version (doc.h:81, verbatim) ────────────────────────
+// Written by Save_Version_And_Date_XML as world_file_version.
+const int VERSION = 15;                  // version number written to world file
 
 // ── Forward declaration for the UDP listener map (doc.h uses UDPsocket*) ──
 class UDPsocket;
@@ -2352,6 +2412,22 @@ public:
     unsigned short m_macro_type [MACRO_COUNT] = {};
     CString        m_macro_name [MACRO_COUNT];
 
+    // numeric keypad sends (doc.h:740) — saved by Save_Keypad_XML
+    CString        m_keypad [eKeypad_Max_Items];
+
+    // print styles (doc.h:812-813) — saved by Save_Printing_XML.
+    // FONT_NORMAL (0) everywhere headless, as after the Windows ctor.
+    int m_nNormalPrintStyle [8] = {};
+    int m_nBoldPrintStyle [8] = {};
+
+    // root-level include files (doc.h:1382) — saved by Save_Includes_XML
+    CStringList m_strIncludeFileList;
+
+    // true if we have loaded from disk (doc.h:1073) — set by the
+    // Serialize_World_XML loading branch (dead headless; LoadWorldFromFile
+    // is the portable load path)
+    bool m_bLoaded = false;
+
     // ── Script language / file / inline text ──────────────────────────
     CString        m_strLanguage;
     CString        m_strScriptFilename;  // external .lua file (world attribute)
@@ -2928,8 +3004,8 @@ public:
     void SetFrameBackgroundColour(long Colour);
 
     // Save support (doc.h:2240 / doc.cpp:2152).  Headless there is no
-    // Save-As dialog: an empty path fails, otherwise the portable XML
-    // writer runs via OnSaveDocument.
+    // Save-As dialog: an empty path fails, otherwise the canonical XML
+    // saver (xml/xml_save_world.cpp) runs via OnSaveDocument.
     BOOL DoSave(LPCTSTR lpszPathName, BOOL /*bReplace*/) {
         CString strName(lpszPathName ? lpszPathName : "");
         if (strName.IsEmpty())
@@ -3030,27 +3106,42 @@ public:
     void    ShowAlphaOptions();
 
     // ── World load/save ───────────────────────────────────────────────
-    void Load_World_XML(class CArchive&, unsigned long, unsigned long,
-                        unsigned int*, unsigned int*, unsigned int*,
-                        unsigned int*, unsigned int*, unsigned int*,
-                        unsigned int*, unsigned int*) {}
-    void Save_World_XML(class CArchive&, unsigned long, CString) {}
+    // Load_World_XML: doc.h:2001-2012 signature.  The REAL loader
+    // (xml/xml_load_world.cpp) is NOT adopted yet — a strong no-op body
+    // (returns 0) lives in windows_stubs.cpp; headless world loading goes
+    // through LoadWorldFromFile (xml/xml_load_world_portable.cpp).
+    UINT Load_World_XML(class CArchive& ar,
+                        const unsigned long iMask,
+                        const unsigned long iFlags = 0,
+                        UINT * piTriggers = NULL,
+                        UINT * piAliases = NULL,
+                        UINT * piTimers = NULL,
+                        UINT * piMacros = NULL,
+                        UINT * piVariables = NULL,
+                        UINT * piColours = NULL,
+                        UINT * piKeypad = NULL,
+                        UINT * piPrinting = NULL);
+    // Save_World_XML: doc.h:1966-1968 signature.  The REAL saver
+    // (xml/xml_save_world.cpp) is compiled into mushcore — world files,
+    // plugin state files (CPlugin::SaveState) and ExportXML all write the
+    // canonical Windows format.
+    void Save_World_XML(class CArchive& ar,
+                        const unsigned long iMask,
+                        CString strComment = "");
+    // The REAL Serialize_World_XML (xml/xml_serialize.cpp): storing →
+    // ensure world ID + Save_World_XML (ar, ~0) + per-plugin SaveState.
     void Serialize_World_XML(class CArchive&);
 
-    // XML import/export (portable implementations in xml_save/load_world_portable.cpp).
-    // ExportXML_* returns the full XML string for the named item, or "" if not found.
-    CString ExportXML_Trigger (const CString& name);
-    CString ExportXML_Alias   (const CString& name);
-    CString ExportXML_Timer   (const CString& name);
-    CString ExportXML_Variable(const CString& name);
-    // ImportXMLFromString parses xml and adds items to this world.
-    // Returns total items added, or -1 on parse error.
+    // ImportXMLFromString parses xml and adds items to this world
+    // (xml/xml_load_world_portable.cpp).  Returns total items added, or -1
+    // on parse error.  (The twin ExportXML_* helpers are gone — the real
+    // ExportXML from scripting/methods/methods_xml.cpp replaced them.)
     long    ImportXMLFromString(const char* xml);
 
-    // Portable world-file save.  Opens lpszPathName for writing, calls
-    // Serialize_World_XML, and returns TRUE on success.  Mirrors the
-    // CDocument::OnSaveDocument → Serialize chain that the Windows / mushapp
-    // build uses via CDocument inheritance.
+    // Portable world-file save.  Opens lpszPathName for writing, runs the
+    // REAL Serialize_World_XML → Save_World_XML (ar, ~0) chain (exactly what
+    // CDocument::OnSaveDocument → Serialize does on Windows / mushapp), and
+    // returns TRUE on success.
     BOOL OnSaveDocument(LPCTSTR lpszPathName) {
         // Fire the on_world_save Lua callback and plugin callbacks before writing,
         // mirroring the DoSave() path in the Windows doc.cpp.
@@ -3160,15 +3251,40 @@ public:
     // listening for UDP packets (doc.h:1351)
     map<int, UDPsocket *> m_UDPsocketMap;
 
-    // ── XML-save helpers used by OnFilePluginwizard (doc.h:1971-1981
-    // signatures; dead headless).  Inert bodies in doc_portable.cpp until
-    // xml/xml_save_world.cpp adopts.
+    // ── XML-save family (doc.h:1970-1993 signatures) — the REAL bodies are
+    // compiled into mushcore from xml/xml_save_world.cpp.
     void Save_Header_XML (class CArchive& ar, const char * sName, const bool bShowVersion = true);
     void Save_Footer_XML (class CArchive& ar, const char * sName);
+    void Save_General_XML (class CArchive& ar);
+    void Save_Triggers_XML (class CArchive& ar);
     void Save_One_Trigger_XML (class CArchive& ar, CTrigger * t);
+    void Save_Aliases_XML (class CArchive& ar);
     void Save_One_Alias_XML (class CArchive& ar, CAlias * a);
+    void Save_Variables_XML (class CArchive& ar);
     void Save_One_Variable_XML (class CArchive& ar, CVariable * v);
+    void Save_Timers_XML (class CArchive& ar);
     void Save_One_Timer_XML (class CArchive& ar, CTimer * t);
+    void Save_Macros_XML (class CArchive& ar);
+    void Save_One_Macro_XML (class CArchive& ar, const int iIndex);
+    void Save_Colours_XML (class CArchive& ar);
+    void Save_Keypad_XML (class CArchive& ar);
+    void Save_One_Keypad_XML (class CArchive& ar, const int iIndex);
+    void Save_Printing_XML (class CArchive& ar);
+    void Save_Version_And_Date_XML (class CArchive& ar);
+    void Save_Includes_XML (class CArchive& ar);
+    void Save_Plugins_XML (class CArchive& ar);
+    void Save_World_Numeric_Options_XML (class CArchive& ar);
+    void Save_World_Single_Line_Alpha_Options_XML (class CArchive& ar);
+    void Save_World_Multi_Line_Alpha_Options_XML (class CArchive& ar);
+
+    // ── XML import/export + entities (scripting/methods/methods_xml.cpp —
+    // doc.h:2905/2993/3027/3036/3101-3102 signatures, afx_msg dropped) ────
+    BSTR GetEntity(LPCTSTR Name);
+    long ImportXML(LPCTSTR XML);
+    BSTR ExportXML(short Type, LPCTSTR Name);
+    void SetEntity(LPCTSTR Name, LPCTSTR Contents);
+    BSTR GetXMLEntity(LPCTSTR Entity);
+    void Reset();   // reset MXP (MXP_Off)
 
     void SendPacket    (const char* lpBuf, const int nBufLen);
     void SendPacket    (const unsigned char* lpBuf, const int nBufLen);

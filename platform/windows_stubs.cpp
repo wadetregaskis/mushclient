@@ -192,6 +192,11 @@ void CMUSHclientDoc::ShowStatusLine(bool) {}
 // here would be a duplicate symbol.
 
 // doc.h: UINT Load_World_XML(CArchive&, unsigned long, unsigned long, UINT*×8)
+// The REAL loader (xml/xml_load_world.cpp) is not adopted yet — headless
+// loading goes through LoadWorldFromFile (xml/xml_load_world_portable.cpp),
+// so this archive-driven entry point (world.ImportXML, Serialize loading)
+// stays a no-op.  (Save_World_XML is REAL now: xml/xml_save_world.cpp is
+// compiled into mushcore — the old no-op here would be a duplicate symbol.)
 UINT CMUSHclientDoc::Load_World_XML(CArchive& /*ar*/,
                                     const unsigned long /*iMask*/,
                                     const unsigned long /*iFlags*/,
@@ -204,10 +209,125 @@ UINT CMUSHclientDoc::Load_World_XML(CArchive& /*ar*/,
                                     UINT* /*piKeypad*/,
                                     UINT* /*piPrinting*/) { return 0; }
 
-// doc.h: void Save_World_XML(CArchive&, unsigned long, CString = "")
-void CMUSHclientDoc::Save_World_XML(CArchive& /*ar*/,
-                                    const unsigned long /*iMask*/,
-                                    CString /*strComment*/) {}
+// ── Macro / keypad display-name tables ────────────────────────────────────
+// On Windows (and mushapp) these live in dialogs/world_prefs/
+// prefspropertypages.cpp:1955/2034 — a GUI TU mushcore doesn't compile.
+// Save_Macros_XML / Save_Keypad_XML (xml/xml_save_world.cpp) and ExportXML
+// (scripting/methods/methods_xml.cpp) need them headless; the initializers
+// are copied verbatim so saved world files carry identical names.
+CString strMacroDescriptions [MACRO_COUNT] = {
+     "up",
+     "down",
+     "north",
+     "south",
+     "east",
+     "west",
+     "examine",
+     "look",
+     "page",
+     "say",
+     "whisper",
+     "doing",
+     "who",
+     "drop",
+     "take",
+     "F2",
+     "F3",
+     "F4",
+     "F5",
+     "F7",
+     "F8",
+     "F9",
+     "F10",
+     "F11",
+     "F12",
+     "F2+Shift",
+     "F3+Shift",
+     "F4+Shift",
+     "F5+Shift",
+     "F6+Shift",
+     "F7+Shift",
+     "F8+Shift",
+     "F9+Shift",
+     "F10+Shift",
+     "F11+Shift",
+     "F12+Shift",
+     "F2+Ctrl",
+     "F3+Ctrl",
+     "F5+Ctrl",
+     "F7+Ctrl",
+     "F8+Ctrl",
+     "F9+Ctrl",
+     "F10+Ctrl",
+     "F11+Ctrl",
+     "F12+Ctrl",
+     "logout",
+     "quit",
+
+     // new ones in v 3.42
+     "Alt+A",
+     "Alt+B",
+     "Alt+J",
+     "Alt+K",
+     "Alt+L",
+     "Alt+M",
+     "Alt+N",
+     "Alt+O",
+     "Alt+P",
+     "Alt+Q",
+     "Alt+R",
+     "Alt+S",
+     "Alt+T",
+     "Alt+U",
+     "Alt+X",
+     "Alt+Y",
+     "Alt+Z",
+
+     // new ones in v 3.44
+
+     "F1",
+     "F1+Ctrl",
+     "F1+Shift",
+     "F6",
+     "F6+Ctrl"
+
+     };
+
+CString strKeypadNames [eKeypad_Max_Items] =
+  {
+  // normal
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  ".",
+  "/",
+  "*",
+  "-",
+  "+",
+  // ctrl
+  "Ctrl+0",
+  "Ctrl+1",
+  "Ctrl+2",
+  "Ctrl+3",
+  "Ctrl+4",
+  "Ctrl+5",
+  "Ctrl+6",
+  "Ctrl+7",
+  "Ctrl+8",
+  "Ctrl+9",
+  "Ctrl+.",
+  "Ctrl+/",
+  "Ctrl+*",
+  "Ctrl+-",
+  "Ctrl++"
+  };
 
 // ── CMainFrame virtual-override stubs ─────────────────────────────────────
 // mainfrm_stub.h declares these as overrides of CMDIFrameWnd virtuals but

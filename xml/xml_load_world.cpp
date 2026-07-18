@@ -1022,23 +1022,25 @@ void CMUSHclientDoc::Load_World_Numeric_Options_XML (CXMLelement & parent,
           OptionsTable [i].iMaximum == 0)
         {
         bool bValue;
-        if (Get_XML_boolean (parent, 
-                            OptionsTable [i].pName, 
+        if (Get_XML_boolean (parent,
+                            OptionsTable [i].pName,
                             bValue,
- //                         bUseDefault || m_NumericConfiguration [i]->bInclude
-                            TRUE  //  keep program default for an omitted boolean,
-                                  //  as the colour (v3.83) and number (v4.30) branches already do
+                            bUseDefault || m_NumericConfiguration [i]->bInclude
                             ))
           SetOptionItem (i, bValue, true, (iFlags & LOAD_INCLUDE) != 0);
-        /*  An omitted boolean now keeps the default set by SetDefaults() in the
-            ctor, instead of being forced to 0.  This finishes the v3.83/v4.30
-            migration (colours, then numbers) that never reached the boolean case.
         else // not found, use default?
           if (!(bUseDefault || m_NumericConfiguration [i]->bInclude))
             SetOptionItem (i, 0, true, false);        // then take zero
-        */
-  
-        }   // end of boolean 
+
+        }   // end of boolean
+        /*  NOTE: an omitted boolean must stay ZERO (stock Windows behaviour),
+            unlike the colour (v3.83) and number (v4.30) branches: the saver
+            (xml_save_world.cpp Save_XML_boolean) omits FALSE booleans, so
+            "keep the ctor default when omitted" would silently re-enable any
+            true-by-default option the user turned off (enable_triggers,
+            enable_aliases, ...) on every save/load round trip.  Hand-written
+            minimal world files that want table defaults for omitted booleans
+            can say defaults="y" on the <world> tag, as always.  */
       else
         {   // not RGB colour or boolean
         long iValue;

@@ -520,8 +520,16 @@ if(NOT WIN32)
         # Portable world-file loader (triggers, aliases, variables, timers)
         xml/xml_load_world_portable.cpp
 
-        # Portable world-file writer (mushcli save)
-        xml/xml_save_world_portable.cpp
+        # Campaign B world-file saver adoption: the REAL Windows saver +
+        # serialize entry (Serialize_World_XML → Save_World_XML(ar, ~0) +
+        # IsArchiveXML), compiled against doc_stub.h — the portable saver twin
+        # (xml/xml_save_world_portable.cpp) is deleted.
+        xml/xml_save_world.cpp
+        xml/xml_serialize.cpp
+
+        # XML import/export + custom entities (ExportXML over the real saver;
+        # ImportXML inert headless until the real loader adopts)
+        scripting/methods/methods_xml.cpp
     )
 
     add_library(mushcore STATIC ${MUSHCORE_SOURCES})

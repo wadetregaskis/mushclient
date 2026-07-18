@@ -463,6 +463,31 @@ TEST(LuaScripting, GoldenWorldOptionRoundTrip)
     remove(path);
 }
 
+// ── ExportXML / ImportXML round trip ─────────────────────────────────────────
+// world.ExportXML runs the REAL Windows machinery now (methods_xml.cpp over
+// the canonical Save_One_Trigger_XML in xml/xml_save_world.cpp); ImportXML
+// re-parses the produced XML.  Export a trigger, delete it, reimport it.
+TEST(LuaScripting, ExportImportXMLRoundTrip)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "assert(world.AddTrigger('extrig', 'xyzzy plugh', 'say hello', 1, 0) == 0)\n"
+        "local xml = world.ExportXML(0, 'extrig')\n"
+        "assert(type(xml) == 'string' and #xml > 0, 'export came back empty')\n"
+        "assert(xml:find('<trigger', 1, true), 'no <trigger element')\n"
+        "assert(xml:find('match=\"xyzzy plugh\"', 1, true), 'match attribute missing')\n"
+        "assert(world.DeleteTrigger('extrig') == 0)\n"
+        "assert(world.IsTrigger('extrig') ~= 0, 'delete did not remove trigger')\n"
+        "assert(world.ImportXML(xml) == 1, 'import count ~= 1')\n"
+        "assert(world.IsTrigger('extrig') == 0, 'trigger not reimported')\n"
+        "assert(world.GetTriggerOption('extrig', 'match') == 'xyzzy plugh', 'match lost')\n"));
+
+    lua_close(L);
+}
+
 // ── Alias CRUD via Lua ────────────────────────────────────────────────────
 
 TEST(LuaScripting, AddAndGetAlias)

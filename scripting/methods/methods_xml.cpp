@@ -2,9 +2,14 @@
 
 // XML load/save stuff
 
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
+#else
+#include "platform/doc_stub.h"
+#include "../../xml/xmlparse.h"   // CXMLparser (GetXMLEntity)
+#endif
 
 // Implements:
 

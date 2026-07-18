@@ -4213,45 +4213,31 @@ static int L_Metaphone(lua_State* L)
 }
 
 // ── GetEntity / SetEntity / GetXMLEntity ─────────────────────────────────────
+// Thin wrappers over the REAL scripting/methods/methods_xml.cpp methods
+// (adopted into mushcore), marshalled exactly as lua_methods.cpp.
 
 static int L_GetEntity(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    const char* name = luaL_checkstring(L, 1);
-    CString result;
-    pDoc->m_CustomEntityMap.Lookup(CString(name), result);
-    lua_pushstring(L, (const char*)result);
+    BSTR str = world_doc(L)->GetEntity(luaL_checkstring(L, 1));
+    lua_pushstring(L, str ? str : "");
+    delete[] str;
     return 1;
 }
 
 static int L_SetEntity(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    const char* name  = luaL_checkstring(L, 1);
-    const char* value = luaL_checkstring(L, 2);
-    if (value[0])
-        pDoc->m_CustomEntityMap.SetAt(CString(name), CString(value));
-    else
-        pDoc->m_CustomEntityMap.RemoveKey(CString(name));
-    lua_pushnumber(L, eOK);
-    return 1;
+    // lua_methods.cpp L_SetEntity: optional second arg (default ""), no result.
+    world_doc(L)->SetEntity(luaL_checkstring(L, 1), luaL_optstring(L, 2, ""));
+    return 0;
 }
 
 static int L_GetXMLEntity(lua_State* L)
 {
-    world_doc(L);
-    const char* entity = luaL_checkstring(L, 1);
-    // Resolve standard XML named entities
-    static const struct { const char* name; const char* val; } kEntities[] = {
-        { "amp",  "&"  }, { "lt",   "<"  }, { "gt",   ">"  },
-        { "apos", "'"  }, { "quot", "\"" }, { nullptr, nullptr }
-    };
-    for (int i = 0; kEntities[i].name; ++i)
-        if (strcmp(entity, kEntities[i].name) == 0) {
-            lua_pushstring(L, kEntities[i].val);
-            return 1;
-        }
-    lua_pushnil(L);
+    // Real CXMLparser::Get_XML_Entity resolution (standard + numeric
+    // entities), replacing the old 5-entity local table.
+    BSTR str = world_doc(L)->GetXMLEntity(luaL_checkstring(L, 1));
+    lua_pushstring(L, str ? str : "");
+    delete[] str;
     return 1;
 }
 
@@ -4309,10 +4295,10 @@ static int L_DoCommand(lua_State* L)
 
 static int L_Reset(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    pDoc->MXP_Off();
-    lua_pushnumber(L, eOK);
-    return 1;
+    // Real CMUSHclientDoc::Reset (methods_xml.cpp: MXP_Off); Windows
+    // lua_methods.cpp L_Reset returns no result fields.
+    world_doc(L)->Reset();
+    return 0;
 }
 
 // ── Sound functions ───────────────────────────────────────────────────────────
@@ -4701,28 +4687,28 @@ static int L_DoAfterSpeedWalk(lua_State* L)  { world_doc(L); lua_pushnumber(L, e
 
 // ── ExportXML / ImportXML ─────────────────────────────────────────────────────
 // ExportXML(type, name) → XML string or ""
-//   type: 0=trigger, 1=alias, 2=timer, 3=macro (unsupported), 4=variable, 5=keypad (unsupported)
+//   type: 0=trigger, 1=alias, 2=timer, 3=macro, 4=variable, 5=keypad
 // ImportXML(xml) → count of items imported (or -1 on error)
 static int L_ExportXML(lua_State* L)
 {
-    CMUSHclientDoc* pDoc = world_doc(L);
-    int type = (int)luaL_checknumber(L, 1);
-    const char* name = luaL_checkstring(L, 2);
-    CString result;
-    CString strName(name);
-    switch (type) {
-        case 0: result = pDoc->ExportXML_Trigger (strName); break;
-        case 1: result = pDoc->ExportXML_Alias   (strName); break;
-        case 2: result = pDoc->ExportXML_Timer   (strName); break;
-        case 4: result = pDoc->ExportXML_Variable(strName); break;
-        // case 3 (macro) and case 5 (keypad) are not supported in the portable build
-        default: break;
-    }
-    lua_pushstring(L, static_cast<const char*>(result));
+    // Real CMUSHclientDoc::ExportXML (methods_xml.cpp) over the canonical
+    // Save_One_*_XML writers (xml/xml_save_world.cpp) — all six item types,
+    // byte-identical to the Windows output.  (The twin ExportXML_* helpers
+    // in the deleted xml/xml_save_world_portable.cpp are gone.)
+    BSTR str = world_doc(L)->ExportXML(
+        (short)luaL_checknumber(L, 1),   // Type
+        luaL_checkstring(L, 2));         // Name
+    lua_pushstring(L, str ? str : "");
+    delete[] str;
     return 1;
 }
 static int L_ImportXML(lua_State* L)
 {
+    // Deliberately NOT the real CMUSHclientDoc::ImportXML (methods_xml.cpp):
+    // that drives the archive-based Load_World_XML, which is still a no-op
+    // headless (the real xml/xml_load_world.cpp is not adopted yet).  The
+    // portable ImportXMLFromString (xml/xml_load_world_portable.cpp) does
+    // the actual import; rewire when the real loader adopts.
     CMUSHclientDoc* pDoc = world_doc(L);
     const char* xml = luaL_checkstring(L, 1);
     long count = pDoc->ImportXMLFromString(xml);

@@ -767,26 +767,10 @@ void RemoveTrailingBackslash(CString& str)
     }
 }
 
-// ── Inert XML-save helpers ────────────────────────────────────────────────
-// Referenced only by CMUSHclientDoc::OnFilePluginwizard (plugins.cpp), whose
-// wizard sheet is stubbed headless to return IDCANCEL — these can never run.
-// They exist so ld64 can resolve the (dead) references; the real bodies live
-// in xml/xml_save_world.cpp (mushapp) until that file adopts.
-void Save_XML_boolean (CArchive&, const char *, const long, const bool) {}
-void Save_XML_string  (CArchive&, const char *, const CString &, const bool) {}
-void Save_XML_double  (CArchive&, const char *, const double &, const bool) {}
-void CMUSHclientDoc::Save_Header_XML (CArchive&, const char *, const bool) {}
-void CMUSHclientDoc::Save_Footer_XML (CArchive&, const char *) {}
-void CMUSHclientDoc::Save_One_Trigger_XML (CArchive&, CTrigger *) {}
-void CMUSHclientDoc::Save_One_Alias_XML (CArchive&, CAlias *) {}
-void CMUSHclientDoc::Save_One_Variable_XML (CArchive&, CVariable *) {}
-void CMUSHclientDoc::Save_One_Timer_XML (CArchive&, CTimer *) {}
-
-// ── IsArchiveXML — always false (CArchive not implemented) ────────────────
-bool IsArchiveXML(class CArchive& /*ar*/)
-{
-    return false;
-}
+// The old inert Save_XML_* / Save_*_XML no-ops and the always-false
+// IsArchiveXML stub are gone: the REAL bodies are compiled into mushcore
+// from xml/xml_save_world.cpp and xml/xml_serialize.cpp (world-file saver
+// adoption) — the stubs here would be duplicate symbols.
 
 // ── MakeRandomNumber — SHS-based random seed ──────────────────────────────
 // Mirrors Utilities.cpp::MakeRandomNumber on Windows: hash together the

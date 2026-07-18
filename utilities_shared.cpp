@@ -401,6 +401,39 @@ CString FixHTMLString(CString strToFix)
     return strNew;
 }
 
+// escape HTML special characters for multi-line element content: < > & tab →
+// &lt; &gt; &amp; &#9; (newlines and quotes preserved).  Body verbatim from the
+// Windows Utilities.cpp (relocated here when xml/xml_save_world.cpp was adopted
+// into mushcore).  Declared in stdafx.h / platform/doc_stub.h.
+CString FixHTMLMultilineString (const CString strToFix)
+  {
+  CString strOldString = strToFix;
+  CString strNewString;
+
+  int i;
+
+  while ((i = strOldString.FindOneOf ("<>&\t")) != -1)
+    {
+    strNewString += strOldString.Left (i);
+
+    switch (strOldString [i])
+      {
+      case '<': strNewString += "&lt;"; break;
+      case '>': strNewString += "&gt;"; break;
+      case '&': strNewString += "&amp;"; break;
+      case '\t': strNewString += "&#9;"; break;
+      }
+
+    strOldString = strOldString.Mid (i + 1);
+    }
+
+  strNewString += strOldString;
+
+
+  return strNewString;
+
+  } // end of FixHTMLMultilineString
+
 // wildcard → regular expression.  Behaviourally identical to the Windows
 // Utilities.cpp form; the only difference is the control-char (<0x20) hex escape
 // uses snprintf("%02x") instead of the Windows-only _itoa (same two-digit

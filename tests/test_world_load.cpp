@@ -83,14 +83,17 @@ TEST(WorldLoad, LoadOneTrigger)
     EXPECT_EQ(1,  (int)doc.GetTriggerArray().GetSize());
 }
 
-TEST(WorldLoad, AbsentAlphaOptionsLoadTheirNonEmptyDefaults)
+TEST(WorldLoad, AbsentAlphaOptionsFollowWindowsSemantics)
 {
-    // The saver omits any alpha option equal to its table default, so the loader
-    // must restore non-empty defaults for absent attributes. Without this, a
-    // world that doesn't list command_stack_character / speed_walk_prefix /
-    // spam_message / auto_say_string loads them as empty — breaking command
-    // stacking, speedwalk recognition, etc. (The portable constructor, unlike
-    // the Windows one, doesn't seed these.)
+    // Windows semantics (xml_load_world.cpp Load_World_Single_Line_Alpha_
+    // Options_XML): an alpha option absent from the <world> tag is BLANKED —
+    // the canonical saver (xml_save_world.cpp, adopted into mushcore) writes
+    // every non-empty value, so absent means empty.  Hand-written minimal
+    // world files keep the table defaults by saying defaults="y", as on
+    // Windows (the ctor's SetAlphaDefaults seeds them; the loader then leaves
+    // absent options alone).  (This replaces the twin-saver-era test that
+    // asserted absent alphas keep their defaults unconditionally — that
+    // matched the deleted omitting saver, not Windows.)
     const char* xml = R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
@@ -98,13 +101,40 @@ TEST(WorldLoad, AbsentAlphaOptionsLoadTheirNonEmptyDefaults)
 </world>
 </muclient>)";
 
-    CMUSHclientDoc doc;
-    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
 
-    EXPECT_STREQ(";",     (const char*)doc.m_strCommandStackCharacter);
-    EXPECT_STREQ("#",     (const char*)doc.m_speed_walk_prefix);
-    EXPECT_STREQ("look",  (const char*)doc.m_strSpamMessage);
-    EXPECT_STREQ("say ",  (const char*)doc.m_strAutoSayString);
+        // command_stack_character: the canonical setter refuses an empty
+        // value (OPT_COMMAND_STACK, scriptingoptions.cpp:363-373 — returns
+        // eOptionOutOfRange and forces command stacking OFF), so the ctor's
+        // ";" survives the blanking attempt — identical on Windows.
+        EXPECT_STREQ(";", (const char*)doc.m_strCommandStackCharacter);
+        EXPECT_FALSE(doc.m_enable_command_stack);
+        EXPECT_STREQ("", (const char*)doc.m_speed_walk_prefix);
+        EXPECT_STREQ("", (const char*)doc.m_strSpamMessage);
+        EXPECT_STREQ("", (const char*)doc.m_strAutoSayString);
+        // OPT_WORLD_ID is the exception: absent → a fresh 24-hex unique ID,
+        // never blank (xml_load_world.cpp:1128-1129).
+        EXPECT_EQ(24, doc.m_strWorldID.GetLength());
+    }
+
+    const char* xmlDefaults = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000" defaults="y">
+</world>
+</muclient>)";
+
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xmlDefaults).c_str()));
+
+        EXPECT_STREQ(";",     (const char*)doc.m_strCommandStackCharacter);
+        EXPECT_STREQ("#",     (const char*)doc.m_speed_walk_prefix);
+        EXPECT_STREQ("look",  (const char*)doc.m_strSpamMessage);
+        EXPECT_STREQ("say ",  (const char*)doc.m_strAutoSayString);
+    }
 }
 
 TEST(WorldLoad, NumericEntityAllowsLineFeedAndCarriageReturn)
@@ -624,10 +654,13 @@ TEST(WorldLoad, TriggerColourSplitDoesNotEatTrailingChar)
     // (Uses regexp="y" with an unterminated ^fooba so the match ends BEFORE the
     // line end; a plain non-regexp trigger is whole-line-anchored and would
     // match all of "foobar", leaving no trailing char to split.)
+    // (defaults="y" keeps enable_triggers at its table default for this
+    // hand-written minimal <world> tag — Windows semantics zero an absent
+    // boolean otherwise, since the saver omits false booleans.)
     const char* xml = R"xml(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
-<world script_language="lua">
+<world script_language="lua" defaults="y">
 </world>
 <triggers>
   <trigger match="^fooba" name="t1" regexp="y" enabled="y" custom_colour="1" send_to="14">

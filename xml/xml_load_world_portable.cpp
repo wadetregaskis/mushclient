@@ -552,7 +552,11 @@ static unsigned int Load_Colours(CXMLelement& parent, CMUSHclientDoc& doc)
 static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
 {
     LOAD_LOOP(root, "world", pWorld)
+        // Honour defaults="y" on the <world> tag, as the Windows loader does
+        // (xml_load_world.cpp BEGIN_LOAD_LOOP reads DEFAULTS_LIT per node):
+        // with it, absent options keep the ctor's table defaults.
         bool bUseDefault = false;
+        Get_XML_boolean(*pWorld, DEFAULTS_LIT, bUseDefault, false);
 
         // ── Numeric options via OptionsTable ─────────────────────────────────
         // Iterates all registered options; for each whose attribute appears in
@@ -565,17 +569,24 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
             bool is_colour = (OptionsTable[i].iFlags & OPT_RGB_COLOUR) != 0;
             long val = (long)OptionsTable[i].iDefault;
 
-            // Skip entirely if the attribute is not present in the XML.
-            // Get_XML_number substitutes "0" for absent attributes when
-            // bUseDefault=false, which throws a range error for options
-            // whose minimum > 0 (e.g. auto_resize_minimum_lines, range 1-100).
-            // Checking attribute presence first avoids that false rejection.
-            // Colours and booleans are typically safe (default 0 is valid), but
-            // we skip them consistently for correctness.
+            // Absent attribute — mirror the Windows semantics exactly
+            // (xml_load_world.cpp Load_World_Numeric_Options_XML):
+            //   - booleans take ZERO (unless defaults="y" or an include set
+            //     them): the saver omits false booleans, so absent == off;
+            //   - colours (v3.83) and numbers (v4.30) keep the ctor's table
+            //     default (the saver omits zero values for those).
+            // The presence check also keeps Get_XML_number from substituting
+            // "0" for absent attributes with bUseDefault=false, which would
+            // throw a range error for options whose minimum > 0 (e.g.
+            // auto_resize_minimum_lines, range 1-100).
             {
                 CAttribute* attr = nullptr;
-                if (!pWorld->AttributeMap.Lookup(optName, attr) || !attr)
+                if (!pWorld->AttributeMap.Lookup(optName, attr) || !attr) {
+                    if (is_bool &&
+                        !(bUseDefault || doc.m_NumericConfiguration[i]->bInclude))
+                        doc.SetOptionItem(i, 0, true, false);   // then take zero
                     continue;
+                }
             }
 
             bool got;
@@ -607,12 +618,20 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
             const char* optName = AlphaOptionsTable[i].pName;
             CAttribute* a;
             if (!pWorld->AttributeMap.Lookup(optName, a) || !a) {
-                // Attribute absent: keep the table default the constructor's
-                // SetAlphaDefaults already applied.  (The saver omits options
-                // that equal their default, so absent == default here.  This
-                // deliberately deviates from Windows, which blanks absent
-                // single-line alphas — Windows can, because its saver writes
-                // every option.)
+                // Attribute absent: BLANK it, exactly as the Windows loader
+                // does (xml_load_world.cpp Load_World_Single_Line_Alpha_
+                // Options_XML: absent → SetAlphaOptionItem(i, "", ...), or a
+                // fresh unique ID for the OPT_WORLD_ID field).  The canonical
+                // saver (xml_save_world.cpp, adopted into mushcore) omits
+                // only EMPTY values, so absent == blank.  (The old deviation
+                // — keep the ctor's table default — matched the deleted
+                // omitting twin saver and is gone with it.)
+                if (!(bUseDefault || doc.m_AlphaConfiguration[i]->bInclude)) {
+                    if (AlphaOptionsTable[i].iFlags & OPT_WORLD_ID)
+                        doc.SetAlphaOptionItem(i, GetUniqueID(), true, false);
+                    else
+                        doc.SetAlphaOptionItem(i, "", true, false);
+                }
                 continue;
             }
             a->bUsed = true;
@@ -643,7 +662,14 @@ static void Load_World_Settings(CXMLelement& root, CMUSHclientDoc& doc)
 
             const char* optName = AlphaOptionsTable[i].pName;
             CString val;
-            if (!FindNodeContents(*pWorld, optName, val, false)) continue;
+            if (!FindNodeContents(*pWorld, optName, val, false)) {
+                // Element absent → blank, as the Windows loader does
+                // (Load_World_Multi_Line_Alpha_Options_XML); the saver omits
+                // only empty values.
+                if (!(bUseDefault || doc.m_AlphaConfiguration[i]->bInclude))
+                    doc.SetAlphaOptionItem(i, "", true, false);
+                continue;
+            }
 
             doc.SetAlphaOptionItem(i, val, true, false);
         }

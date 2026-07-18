@@ -904,34 +904,8 @@ long AdjustColour(long Colour, short Method)
     }
 }
 
-// Standard 16 CSS/X11 colour names for reverse lookup
-CString ColourToName(COLORREF colour)
-{
-    static const struct { COLORREF rgb; const char* name; } kNames[] = {
-        { RGB(  0,   0,   0), "black"   },
-        { RGB(128,   0,   0), "maroon"  },
-        { RGB(  0, 128,   0), "green"   },
-        { RGB(128, 128,   0), "olive"   },
-        { RGB(  0,   0, 128), "navy"    },
-        { RGB(128,   0, 128), "purple"  },
-        { RGB(  0, 128, 128), "teal"    },
-        { RGB(192, 192, 192), "silver"  },
-        { RGB(128, 128, 128), "gray"    },
-        { RGB(255,   0,   0), "red"     },
-        { RGB(  0, 255,   0), "lime"    },
-        { RGB(255, 255,   0), "yellow"  },
-        { RGB(  0,   0, 255), "blue"    },
-        { RGB(255,   0, 255), "fuchsia" },
-        { RGB(  0, 255, 255), "aqua"    },
-        { RGB(255, 255, 255), "white"   },
-    };
-    for (auto& e : kNames)
-        if (e.rgb == colour) return CString(e.name);
-    char buf[8];
-    snprintf(buf, sizeof(buf), "#%02X%02X%02X",
-             GetRValue(colour), GetGValue(colour), GetBValue(colour));
-    return CString(buf);
-}
+// ColourToName is single-sourced in utilities_shared.cpp (the real
+// App.m_ColoursMap reverse lookup; the 16-name twin is gone).
 
 // ProcessPreviousLine.cpp calls these to build the Lua table that is passed
 // to OnPluginLineReceived.  When Lua is not compiled in (no liblua5.1), the

@@ -336,34 +336,7 @@ CColours * colour_item;
 
 
 
-CString ColourToName (const COLORREF colour)
-  {
-int iRed    = GetRValue (colour);
-int iGreen  = GetGValue (colour);
-int iBlue   = GetBValue (colour);
-
-CString strName;
-
-// see if we can find colour name in list
-  for (POSITION pos = App.m_ColoursMap.GetStartPosition(); pos; )
-    {
-
-    CColours * pColour;
-    CString strColourName;
-
-    App.m_ColoursMap.GetNextAssoc (pos, strColourName, pColour);
-
-    // note - colour might match more than one name
-    if (pColour->iColour == colour)
-      return strColourName;
-    } // end of loop
-
- return CFormat ("#%02X%02X%02X",
-                           iRed,
-                           iGreen,
-                           iBlue);
-
-  } // end of ColourToName
+// ColourToName is single-sourced in utilities_shared.cpp (compiled into every build).
 
 
 CString GetGUID (void)

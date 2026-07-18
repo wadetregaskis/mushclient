@@ -23,6 +23,7 @@
 
 #if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
   #include "stdafx.h"
+  #include "MUSHclient.h"   // App / CColours (ColourToName's reverse lookup)
 #else
   #include "platform/doc_stub.h"   // CString, std::string
 #endif
@@ -831,3 +832,40 @@ CString ExtractDirectory (CString str)
 #endif
   return str;
   } // end of ExtractDirectory
+
+
+// ── ColourToName ────────────────────────────────────────────────────────────
+// Relocated verbatim from Utilities.cpp.  The old doc_portable.cpp twin only
+// knew 16 colour names, so headless world saves wrote #RRGGBB where Windows
+// writes names like "dodgerblue"; App.m_ColoursMap is populated headless
+// (stub App ctor runs MXP_LoadColours), so the real reverse lookup works
+// everywhere.
+
+CString ColourToName (const COLORREF colour)
+  {
+int iRed    = GetRValue (colour);
+int iGreen  = GetGValue (colour);
+int iBlue   = GetBValue (colour);
+
+CString strName;
+
+// see if we can find colour name in list
+  for (POSITION pos = App.m_ColoursMap.GetStartPosition(); pos; )
+    {
+
+    CColours * pColour;
+    CString strColourName;
+
+    App.m_ColoursMap.GetNextAssoc (pos, strColourName, pColour);
+
+    // note - colour might match more than one name
+    if (pColour->iColour == colour)
+      return strColourName;
+    } // end of loop
+
+ return CFormat ("#%02X%02X%02X",
+                           iRed,
+                           iGreen,
+                           iBlue);
+
+  } // end of ColourToName

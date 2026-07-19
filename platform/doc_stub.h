@@ -3763,7 +3763,12 @@ public:
                           COleVariant* result = nullptr);
 
     // ── Scripting / error-reporting stubs ─────────────────────────────
-    void Trace(const CString&) {}
+    // (No Trace(const CString&) overload: doc.h has only Trace(LPCTSTR,...)
+    // — a stub-only no-op overload here won resolution for the CString
+    // "Executing %s script" calls (lua_scripting.cpp:564/795,
+    // scriptengine.cpp:79) and silently dropped them headless; deleted in
+    // Phase 2 Stage 1 so CString→LPCTSTR binds the real methods_tracing.cpp
+    // body, as on Windows.)
     // ColourNote / ColourTell — real implementations in doc_portable.cpp
     // (output to terminal with optional ANSI colour codes).
     void ColourNote(const char* fg, const char* bg, const CString& text);

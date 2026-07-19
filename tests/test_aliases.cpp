@@ -783,6 +783,40 @@ TEST(EvaluateArms, AliasScriptReceivesNameLineAndWildcards)
     EXPECT_STREQ("sword", (LPCTSTR)v->strContents);
 }
 
+// Trace + scripted alias: ExecuteLua's "Executing %s script" trace line
+// reaches the output headless.  Until Phase 2 Stage 1 this was a live parity
+// bug (docs/PHASE2-PLAN.md Stage 1 item 2): a stub-only Trace(const CString&){}
+// no-op overload won resolution over the real Trace(LPCTSTR,...)
+// (methods_tracing.cpp) for lua_scripting.cpp:564/795 + scriptengine.cpp:79,
+// which pass a TFormat CString — silently dropping the line.  Deleting the
+// overload lets CString->LPCTSTR bind the real body, as on Windows.
+TEST(EvaluateArms, TraceNotesExecutingAliasScript)
+{
+    CMUSHclientDoc doc = make_doc();
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString("function OnAlias() end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+    doc.m_bTrace = TRUE;
+
+    CAlias* a = add_alias(doc, "jig", "");
+    a->strProcedure = "OnAlias";
+    a->dispid = engine->GetDispid("OnAlias");
+    ASSERT_TRUE(a->dispid != DISPID_UNKNOWN);
+
+    type_command(doc, "jig");
+
+    // evaluate.cpp ExecuteAliasScript passes strType "alias", so the real
+    // Trace body emits: TRACE: Executing alias script "OnAlias"
+    bool sawExec = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("Executing alias script") != std::string::npos)
+            sawExec = true;
+    }
+    EXPECT_TRUE(sawExec);
+}
+
 // Unlabelled alias script: the internal name (rev-map arm) is passed instead.
 TEST(EvaluateArms, UnlabelledAliasScriptGetsInternalName)
 {

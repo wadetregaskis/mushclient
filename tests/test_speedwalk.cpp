@@ -185,4 +185,38 @@ TEST(Speedwalk, ReverseKeepsActionPrefixOnReversedDirection)
     EXPECT_STREQ("ku", (const char*)doc.DoReverseSpeedwalk("kd"));  // unlock
 }
 
+// ── Mapper: typed-direction auto-mapping (Mapping.cpp AddToMap, single-sourced
+// into doc_shared.cpp so both builds share one body).  The old headless stub was
+// `void AddToMap(CString){}`, silently dropping every tracked move; these assert
+// the real m_strMapList accumulation through the same MapDirectionsMap the GUI
+// uses.  Falsification: all three FAIL against the no-op stub (list stays empty).
+TEST(Mapper, TypedDirectionIsRecorded)
+{
+    CMUSHclientDoc doc;
+    doc.AddToMap("north\r\n");                       // "north" -> logged as "n"
+    ASSERT_EQ(1, doc.m_strMapList.GetCount());
+    EXPECT_STREQ("n", (const char*)doc.m_strMapList.GetHead());
+}
+
+TEST(Mapper, MultipleDirectionsAccumulate)
+{
+    CMUSHclientDoc doc;
+    doc.AddToMap("north\r\n");
+    doc.AddToMap("east\r\n");
+    ASSERT_EQ(2, doc.m_strMapList.GetCount());
+    EXPECT_STREQ("n", (const char*)doc.m_strMapList.GetHead());
+    EXPECT_STREQ("e", (const char*)doc.m_strMapList.GetTail());
+}
+
+// m_bRemoveMapReverses: N then S is a net no-move, so the earlier "n" is removed
+// rather than "s" appended (Mapping.cpp:162-163).
+TEST(Mapper, RemoveReversesCancelsBacktrack)
+{
+    CMUSHclientDoc doc;
+    doc.m_bRemoveMapReverses = TRUE;
+    doc.AddToMap("north\r\n");                       // -> ["n"]
+    doc.AddToMap("south\r\n");                       // reverse of north cancels -> []
+    EXPECT_EQ(0, doc.m_strMapList.GetCount());
+}
+
 MC_TEST_MAIN()

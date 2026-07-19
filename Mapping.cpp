@@ -96,91 +96,9 @@ void CMUSHclientDoc::OnUpdateGameMapper(CCmdUI* pCmdUI)
 }   // end of CMUSHclientDoc::OnUpdateGameMapper
 
 
-void CMUSHclientDoc::AddToMap (CString str)
-  {
-  MapDirectionsIterator i;
-
-  str.MakeLower ();
-  str.TrimLeft ();
-
-  int iNewline;
-
-  while ((iNewline = str.Find (ENDLINE)) != -1)
-    {
-    CString strDirection = str.Left (iNewline);
-
-    // see if they have sent a "direction"
-    i = MapDirectionsMap.find ((LPCTSTR) strDirection);
-
-    // if not, give up
-    if (i != MapDirectionsMap.end ())
-      {
-
-      // Remove reverses ...
-
-      // If they have gone, for example, N then S, then the net result 
-      // is that they haven't gone anywhere, so remove the N rather than adding the S
-      
-      // We let them disable this because sometimes rooms are not symmetrical, and
-      // you might go North, and then South, and *not* end up where you were.
-
-
-      if (m_bRemoveMapReverses &&
-          !m_strMapList.IsEmpty ())
-        {
-        CString strComment = m_strMapList.GetTail ();
-
-        // if last thing was comment get it and try second last thing
-        if (strComment.GetLength () >= 2 &&
-            strComment.Left (1) == "{" &&
-            strComment.Right (1) == "}" &&
-            m_strMapList.GetCount () > 1)
-              m_strMapList.RemoveTail ();
-        else
-          strComment.Empty ();
-        
-        // if this direction had a non-standard reverse, extract that
-        CString strLast = m_strMapList.GetTail ();
-
-        int iSlashPos = strLast.Find ("/");
-        if (iSlashPos != -1)
-          {
-          strLast = strLast.Mid (iSlashPos + 1);  // this is the reverse direction
-        
-          MapDirectionsIterator i2;
-
-          i2 = MapDirectionsMap.find ((LPCTSTR) strLast);   // convert "west" to "w"
-
-          // if this is the reverse direction, remove the earlier one rather than
-          // adding this one
-          if (i2 != MapDirectionsMap.end () && 
-              i2->second.m_sDirectionToLog == i->second.m_sDirectionToLog)
-           m_strMapList.RemoveTail ();
-          else
-            m_strMapList.AddTail (i->second.m_sDirectionToLog.c_str ());
-          }
-         else if (m_strMapList.GetTail () == i->second.m_sReverseDirection.c_str ())
-             m_strMapList.RemoveTail ();
-         else
-           {
-           // different direction? Put comment back if we had one
-           if (!strComment.IsEmpty ())
-            m_strMapList.AddTail (strComment);
-           // and add the new direction
-           m_strMapList.AddTail (i->second.m_sDirectionToLog.c_str ());
-           }
-        }
-      else
-        m_strMapList.AddTail (i->second.m_sDirectionToLog.c_str ());
-
-      // update status line
-      DrawMappingStatusLine ();
-      } // end of finding the direction
-
-    str = str.Mid (iNewline + strlen (ENDLINE));
-    }   // end of breaking the text into lines
-
-  }   // end of CMUSHclientDoc::AddToMap
+// CMUSHclientDoc::AddToMap moved to doc_shared.cpp (compiled into both builds)
+// so the doc-side auto-mapper logic is single-sourced; the headless stub used
+// to disable it entirely.  DrawMappingStatusLine (the view half) stays below.
 
 
 

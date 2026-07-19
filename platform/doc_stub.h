@@ -3054,7 +3054,7 @@ public:
     void SendLineToPlugin(void);
     void RemoveChunk(void);
     void ShowQueuedCommands(void);
-    void AddToMap(CString /*str*/) {}   // auto-mapper accumulation: no-op headless
+    void AddToMap (CString str);   // real doc-side body single-sourced in doc_shared.cpp (both builds)
     void SendTo(unsigned short iWhere, CString strSendText,
                 bool bOmitFromOutput, bool bOmitFromLog,
                 CString strDescription, CString strVariable,

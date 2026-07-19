@@ -768,4 +768,172 @@ TEST(Metaphone, LoopStopsOncePrimaryAndSecondaryReachMaxlength)
     EXPECT_STREQ("KT", (const char*)cath.s);
 }
 
+// ═══ world.Sound / PlaySound / StopSound / GetSoundStatus ══════════════════
+// The _NOSOUND fork of methods_sounds.cpp: the Lua sound API drives the
+// g_wxhook_sound_* seam (miniaudio in the product).  Fakes here record the
+// calls and simulate buffer status, exercising the same parameter clamping
+// and buffer contract Windows DirectSound had.
+
+namespace fakesound {
+    inline int  lastBuffer = -99;
+    inline std::string lastPath;
+    inline int  lastLoop = -1;
+    inline double lastVolume = 99, lastPan = 99;
+    inline int  playResult = 1;
+    inline int  statusResult = 1;
+    inline int  adjustResult = 1;
+    inline int  stoppedBuffer = -99;
+
+    inline int hk_play(int buffer, const char* path, int loop,
+                       double volume, double pan) {
+        lastBuffer = buffer; lastPath = path ? path : "";
+        lastLoop = loop; lastVolume = volume; lastPan = pan;
+        return playResult;
+    }
+    inline int hk_play_memory(int buffer, const void*, size_t len,
+                              int loop, double volume, double pan) {
+        lastBuffer = buffer; lastLoop = loop;
+        lastVolume = volume; lastPan = pan;
+        lastPath = "<memory:" + std::to_string(len) + ">";
+        return playResult;
+    }
+    inline int  hk_status(int) { return statusResult; }
+    inline int  hk_adjust(int buffer, int loop, double volume, double pan) {
+        lastBuffer = buffer; lastLoop = loop;
+        lastVolume = volume; lastPan = pan;
+        return adjustResult;
+    }
+    inline void hk_stop(int buffer) { stoppedBuffer = buffer; }
+
+    struct Install {
+        Install() {
+            lastBuffer = -99; lastPath.clear(); lastLoop = -1;
+            lastVolume = 99; lastPan = 99;
+            playResult = 1; statusResult = 1; adjustResult = 1;
+            stoppedBuffer = -99;
+            g_wxhook_sound_play        = hk_play;
+            g_wxhook_sound_play_memory = hk_play_memory;
+            g_wxhook_sound_status      = hk_status;
+            g_wxhook_sound_adjust      = hk_adjust;
+            g_wxhook_sound_stop_buffer = hk_stop;
+        }
+        ~Install() {
+            g_wxhook_sound_play        = nullptr;
+            g_wxhook_sound_play_memory = nullptr;
+            g_wxhook_sound_status      = nullptr;
+            g_wxhook_sound_adjust      = nullptr;
+            g_wxhook_sound_stop_buffer = nullptr;
+        }
+    };
+}
+
+TEST(Sounds, NoBackendReturnsCannotPlayAndUnavailableStatus)
+{
+    CMUSHclientDoc doc;
+    EXPECT_EQ((long)eCannotPlaySound, doc.PlaySound(0, "/x.wav", FALSE, 0, 0));
+    EXPECT_EQ(-3L, doc.GetSoundStatus(1));      // sound system unavailable
+    EXPECT_EQ((long)eOK, doc.StopSound(0));     // stop is always happy
+    EXPECT_EQ((long)eNoNameSpecified, doc.Sound(""));
+}
+
+TEST(Sounds, PlaySoundClampsVolumeAndPan)
+{
+    fakesound::Install fake;
+    CMUSHclientDoc doc;
+    EXPECT_EQ((long)eOK, doc.PlaySound(2, "/abs/sound.wav", TRUE, 50 /*>0*/, 200 /*>100*/));
+    EXPECT_EQ(2, fakesound::lastBuffer);
+    EXPECT_STREQ("/abs/sound.wav", fakesound::lastPath.c_str());
+    EXPECT_EQ(1, fakesound::lastLoop);
+    EXPECT_NEAR(0.0, fakesound::lastVolume, 1e-12);   // out-of-range -> 0
+    EXPECT_NEAR(0.0, fakesound::lastPan, 1e-12);
+    EXPECT_EQ((long)eOK, doc.PlaySound(1, "/abs/s.wav", FALSE, -6, -50));
+    EXPECT_NEAR(-6.0, fakesound::lastVolume, 1e-12);  // in-range passes through
+    EXPECT_NEAR(-50.0, fakesound::lastPan, 1e-12);
+}
+
+TEST(Sounds, RelativePathResolvesUnderSoundsDirectory)
+{
+    fakesound::Install fake;
+    CMUSHclientDoc doc;
+    CString savedExe = App.m_strMUSHclientFileName;
+    App.m_strMUSHclientFileName = "/opt/mc/MUSHclient";
+    EXPECT_EQ((long)eOK, doc.PlaySound(0, "beep.wav", FALSE, 0, 0));
+    EXPECT_STREQ("/opt/mc/sounds/beep.wav", fakesound::lastPath.c_str());
+    App.m_strMUSHclientFileName = savedExe;
+}
+
+TEST(Sounds, PlaySoundParameterValidation)
+{
+    fakesound::Install fake;
+    CMUSHclientDoc doc;
+    EXPECT_EQ((long)eBadParameter, doc.PlaySound(0, "x", FALSE, 0, 0));   // name < 2 chars
+    EXPECT_EQ((long)eBadParameter,
+              doc.PlaySound(MAX_SOUND_BUFFERS + 1, "/s.wav", FALSE, 0, 0));
+    EXPECT_EQ((long)eBadParameter, doc.PlaySound(-1, "/s.wav", FALSE, 0, 0));
+    fakesound::playResult = 0;   // backend failure
+    EXPECT_EQ((long)eCannotPlaySound, doc.PlaySound(0, "/s.wav", FALSE, 0, 0));
+}
+
+TEST(Sounds, EmptyFilenameAdjustsPlayingBuffer)
+{
+    fakesound::Install fake;
+    CMUSHclientDoc doc;
+    fakesound::statusResult = 1;   // playing
+    EXPECT_EQ((long)eOK, doc.PlaySound(3, "", TRUE, -3, 25));
+    EXPECT_EQ(3, fakesound::lastBuffer);
+    EXPECT_EQ(1, fakesound::lastLoop);
+    EXPECT_NEAR(-3.0, fakesound::lastVolume, 1e-12);
+    fakesound::statusResult = -2;  // free buffer: nothing to adjust
+    EXPECT_EQ((long)eBadParameter, doc.PlaySound(3, "", FALSE, 0, 0));
+    fakesound::statusResult = 0;   // loaded but not playing
+    EXPECT_EQ((long)eCannotPlaySound, doc.PlaySound(3, "", FALSE, 0, 0));
+    fakesound::statusResult = 1;
+    fakesound::adjustResult = 0;   // retune refused
+    EXPECT_EQ((long)eCannotPlaySound, doc.PlaySound(3, "", FALSE, 0, 0));
+}
+
+TEST(Sounds, MemoryImagePlayback)
+{
+    fakesound::Install fake;
+    CMUSHclientDoc doc;
+    static const char wav[] = "RIFFdata";
+    EXPECT_EQ((long)eOK,
+              doc.PlaySoundHelper(0, "", FALSE, 0, 0, wav, sizeof wav));
+    EXPECT_STREQ("<memory:9>", fakesound::lastPath.c_str());
+    EXPECT_EQ((long)eBadParameter,
+              doc.PlaySoundHelper(-1, "", FALSE, 0, 0, wav, sizeof wav));
+    fakesound::playResult = 0;
+    EXPECT_EQ((long)eCannotPlaySound,
+              doc.PlaySoundHelper(0, "", FALSE, 0, 0, wav, sizeof wav));
+}
+
+TEST(Sounds, StopAndStatusContract)
+{
+    fakesound::Install fake;
+    CMUSHclientDoc doc;
+    EXPECT_EQ((long)eOK, doc.StopSound(4));
+    EXPECT_EQ(4, fakesound::stoppedBuffer);
+    EXPECT_EQ((long)eOK, doc.StopSound(0));    // 0 = all
+    EXPECT_EQ(0, fakesound::stoppedBuffer);
+    EXPECT_EQ(-1L, doc.GetSoundStatus(0));     // out of range
+    EXPECT_EQ(-1L, doc.GetSoundStatus(MAX_SOUND_BUFFERS + 1));
+    fakesound::statusResult = 2;               // playing + looping
+    EXPECT_EQ(2L, doc.GetSoundStatus(1));
+}
+
+TEST(Sounds, SoundRoutesThroughPlaySoundFile)
+{
+    static int s_plays;
+    static bool s_result;
+    s_plays = 0;
+    s_result = true;
+    g_wxhook_play_sound = [](const char*, bool) -> bool { ++s_plays; return s_result; };
+    CMUSHclientDoc doc;
+    EXPECT_EQ((long)eOK, doc.Sound("/tmp/beep.wav"));
+    EXPECT_EQ(1, s_plays);
+    s_result = false;
+    EXPECT_EQ((long)eCannotPlaySound, doc.Sound("/tmp/beep.wav"));
+    g_wxhook_play_sound = nullptr;
+}
+
 MC_TEST_MAIN()

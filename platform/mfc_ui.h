@@ -5430,11 +5430,15 @@ inline int MulDiv(int n, int m, int d) {
     // Win32 MulDiv rounds to nearest (ties away from zero) and returns -1 on
     // divide-by-zero — not truncation. Font-height math (-MulDiv(pts,dpi,72))
     // relies on the rounding, so truncating yielded fonts 1px short of Windows.
+    // Computed on magnitudes with the sign reapplied: the previous
+    // half-adjustment picked the wrong direction for negative divisors
+    // (MulDiv(3, 3, -2) gave -4, not the documented -5).
     if (d == 0) return -1;
-    long long num  = (long long)n * m;
-    long long half = (d > 0) ? (long long)d / 2 : -((long long)d / 2);
-    return ((num >= 0) == (d > 0)) ? (int)((num + half) / d)
-                                   : (int)((num - half) / d);
+    long long num = (long long)n * m;
+    long long an  = (num >= 0) ? num : -num;
+    long long ad  = (d > 0) ? d : -(long long)d;
+    long long q   = (an + ad / 2) / ad;
+    return (int)(((num < 0) != (d < 0)) ? -q : q);
 }
 // High-resolution performance counter using POSIX clock_gettime(CLOCK_MONOTONIC).
 // Frequency is 1 GHz (nanoseconds).  Both functions always succeed.
@@ -5652,13 +5656,17 @@ public:
         return m_list.empty() ? nullptr : (POSITION)(uintptr_t)1;
     }
     POSITION GetTailPosition() const { return GetHeadPosition(); }
-    mutable typename std::list<TYPE>::const_iterator m_iter;
+    // POSITION encodes a 1-based element index.  (The previous iterator-cached
+    // implementation reset to begin() on every call — pos was always 1 — so
+    // iterating any list with 2+ elements spun forever on the first element.)
     TYPE& GetNext(POSITION& pos) const {
         static TYPE dummy{};
-        if (pos == (POSITION)(uintptr_t)1) m_iter = m_list.begin();
-        if (m_iter == m_list.end()) { pos = nullptr; return dummy; }
-        TYPE& r = const_cast<TYPE&>(*m_iter++);
-        pos = (m_iter == m_list.end()) ? nullptr : (POSITION)(uintptr_t)1;
+        size_t idx = (size_t)(uintptr_t)pos;   // 1-based
+        if (idx == 0 || idx > m_list.size()) { pos = nullptr; return dummy; }
+        auto it = m_list.begin();
+        std::advance(it, idx - 1);
+        TYPE& r = const_cast<TYPE&>(*it);
+        pos = (idx == m_list.size()) ? nullptr : (POSITION)(uintptr_t)(idx + 1);
         return r;
     }
     TYPE& GetPrev(POSITION& pos) const { return GetNext(pos); }

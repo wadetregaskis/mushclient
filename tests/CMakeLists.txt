@@ -59,6 +59,8 @@ mc_test(test_plugins)
 mc_test(test_database)
 mc_test(test_info)
 mc_test(test_xmlparse)
+mc_test(test_mfc_ui)
+mc_test(test_connection)
 
 # ── In-app conformance selftests ────────────────────────────────────────────
 # The hidden --pal-*-selftest flags run inside the real app binary (real wx

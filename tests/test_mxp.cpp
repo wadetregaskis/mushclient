@@ -1038,4 +1038,321 @@ TEST(MXPOpenAtomic, SecureTagRejectedInOpenMode)
     EXPECT_EQ(0, s->iFlags & ACTIONTYPE);    // no action attached
 }
 
+// ═══ MXP definitions (<!ELEMENT> / <!ENTITY> / <!ATTLIST>) ═════════════════
+// Driven through the REAL stream path: DisplayMsg parses "<!...>" into
+// MXP_Definition -> MXP_Element / MXP_Entity / MXP_Attlist (mxpDefs.cpp),
+// and "<custom>" through MXP_StartTag / MXP_OpenAtomicTag (mxpStart.cpp).
+// The MXP debug/error channel (mxpError.cpp) is observed via a fake
+// append-to-notepad hook (that is exactly where MXP_error writes).
+
+#include <string>
+
+static std::string g_mxp_notepad;
+static bool hk_mxp_notepad(const char*, const char* text, bool)
+{
+    g_mxp_notepad += text;
+    return true;
+}
+
+struct MxpDebugCapture {
+    MxpDebugCapture() { g_mxp_notepad.clear(); g_wxhook_append_to_notepad = hk_mxp_notepad; }
+    ~MxpDebugCapture() { g_wxhook_append_to_notepad = nullptr; }
+    bool contains(const char* s) const
+        { return g_mxp_notepad.find(s) != std::string::npos; }
+};
+
+// A doc wired for full-stream MXP: secure mode, all debug levels captured.
+static CMUSHclientDoc make_stream_doc()
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iConnectPhase  = eConnectConnectedToMud;
+    doc.m_iMXP_mode      = eMXP_secure;
+    doc.m_iMXPdebugLevel = DBG_ALL;
+    return doc;
+}
+
+static void stream(CMUSHclientDoc& doc, const char* s)
+{
+    doc.DisplayMsg(s, (int)strlen(s), 0);
+}
+
+static std::string current_line(CMUSHclientDoc& doc)
+{
+    return doc.m_pCurrentLine
+        ? std::string(doc.m_pCurrentLine->text, doc.m_pCurrentLine->len)
+        : std::string();
+}
+
+TEST(MXPDefs, ElementDefinitionRegistersCustomElement)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT boldish '<B>' ATT='col=red' TAG=20 OPEN>");
+    CElement* el = nullptr;
+    ASSERT_TRUE(doc.m_CustomElementMap.Lookup("boldish", el));
+    ASSERT_NE(nullptr, el);
+    EXPECT_TRUE(el->bOpen);
+    EXPECT_FALSE(el->bCommand);
+    EXPECT_EQ(20, el->iTag);
+    EXPECT_EQ(1, (int)el->ElementItemList.GetCount());   // one atomic: <B>
+    EXPECT_EQ(1, (int)el->AttributeList.GetCount());     // col=red
+    EXPECT_TRUE(dbg.contains("Got Definition"));
+    EXPECT_EQ(0LL, (long long)doc.m_iMXPerrors);
+}
+
+TEST(MXPDefs, EmptyKeywordMakesCommandElement)
+{
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT prompter '<B>' EMPTY>");
+    CElement* el = nullptr;
+    ASSERT_TRUE(doc.m_CustomElementMap.Lookup("prompter", el));
+    EXPECT_TRUE(el->bCommand);
+    EXPECT_FALSE(el->bOpen);
+}
+
+TEST(MXPDefs, TagNumberOutOfRangeIsIgnored)
+{
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT overtag '<B>' TAG=150>");
+    CElement* el = nullptr;
+    ASSERT_TRUE(doc.m_CustomElementMap.Lookup("overtag", el));
+    EXPECT_EQ(0, el->iTag);   // 150 outside 20..99
+}
+
+TEST(MXPDefs, FlagKeywordSetPrefixAndValidation)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT flagel '<B>' FLAG='set myvar'>");
+    CElement* el = nullptr;
+    ASSERT_TRUE(doc.m_CustomElementMap.Lookup("flagel", el));
+    EXPECT_STREQ("myvar", (LPCTSTR)el->strFlag);   // "set " prefix stripped
+
+    stream(doc, "<!ELEMENT flagbad '<B>' FLAG='no!good'>");
+    ASSERT_TRUE(doc.m_CustomElementMap.Lookup("flagbad", el));
+    EXPECT_TRUE(el->strFlag.IsEmpty());            // rejected by name check
+    EXPECT_TRUE(dbg.contains("Bad variable name"));
+}
+
+TEST(MXPDefs, DeleteRemovesCustomElement)
+{
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT deleteme '<B>'>");
+    CElement* el = nullptr;
+    ASSERT_TRUE(doc.m_CustomElementMap.Lookup("deleteme", el));
+    stream(doc, "<!ELEMENT deleteme DELETE>");
+    EXPECT_FALSE(doc.m_CustomElementMap.Lookup("deleteme", el));
+}
+
+TEST(MXPDefs, CannotRedefineBuiltinElement)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    long long errBefore = doc.m_iMXPerrors;
+    stream(doc, "<!ELEMENT b '<I>'>");
+    EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
+    EXPECT_TRUE(dbg.contains("Cannot redefine built-in MXP element"));
+}
+
+TEST(MXPDefs, DefinitionRefusedOutsideSecureMode)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    doc.m_iMXP_mode = eMXP_open;
+    stream(doc, "<!ELEMENT sneaky '<B>'>");
+    CElement* el = nullptr;
+    EXPECT_FALSE(doc.m_CustomElementMap.Lookup("sneaky", el));
+    EXPECT_TRUE(dbg.contains("MXP definition ignored when not in secure mode"));
+}
+
+TEST(MXPDefs, UnknownDefinitionTypeAndBadNames)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!WOTSIT thing>");
+    EXPECT_TRUE(dbg.contains("Unknown definition type"));
+    stream(doc, "<!ELEMENT 1bad '<B>'>");
+    EXPECT_TRUE(dbg.contains("Invalid MXP element/entity name"));
+}
+
+TEST(MXPDefs, EntityDefinitionAndEmbeddedEntities)
+{
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ENTITY greeting 'hello'>");
+    CString v;
+    ASSERT_TRUE(doc.m_CustomEntityMap.Lookup("greeting", v));
+    EXPECT_STREQ("hello", (LPCTSTR)v);
+    // embedded standard entities are resolved at definition time
+    stream(doc, "<!ENTITY glyph '&lt;x&gt;'>");
+    ASSERT_TRUE(doc.m_CustomEntityMap.Lookup("glyph", v));
+    EXPECT_STREQ("<x>", (LPCTSTR)v);
+}
+
+TEST(MXPDefs, EntityErrorsAndDeletion)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ENTITY nosemi '&lt'>");
+    EXPECT_TRUE(dbg.contains("No closing \";\""));
+    stream(doc, "<!ENTITY lt 'clobber'>");   // built-in (App map): refused
+    EXPECT_TRUE(dbg.contains("Cannot redefine entity"));
+    stream(doc, "<!ENTITY gone 'temp'>");
+    CString v;
+    ASSERT_TRUE(doc.m_CustomEntityMap.Lookup("gone", v));
+    stream(doc, "<!ENTITY gone>");           // blank contents deletes
+    EXPECT_FALSE(doc.m_CustomEntityMap.Lookup("gone", v));
+}
+
+TEST(MXPDefs, CustomEntityExpandsInStreamText)
+{
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ENTITY who 'Gandalf'>");
+    stream(doc, "greet &who;!");
+    EXPECT_TRUE(current_line(doc).find("greet Gandalf!") != std::string::npos);
+}
+
+TEST(MXPDefs, AttlistAppendsToExistingElementOnly)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT attel '<B>' ATT='one=1'>");
+    CElement* el = nullptr;
+    ASSERT_TRUE(doc.m_CustomElementMap.Lookup("attel", el));
+    int before = (int)el->AttributeList.GetCount();
+    stream(doc, "<!ATTLIST attel two=2>");
+    EXPECT_EQ(before + 1, (int)el->AttributeList.GetCount());
+    stream(doc, "<!ATTLIST missingel x=1>");
+    EXPECT_TRUE(dbg.contains("Cannot add attributes to undefined MXP element"));
+}
+
+TEST(MXPDefs, SecureOnceModeRestoredAfterDefinition)
+{
+    CMUSHclientDoc doc = make_stream_doc();
+    doc.m_iMXP_mode = eMXP_secure_once;
+    doc.m_iMXP_previousMode = eMXP_open;
+    stream(doc, "<!ELEMENT onceonly '<B>'>");
+    CElement* el = nullptr;
+    EXPECT_TRUE(doc.m_CustomElementMap.Lookup("onceonly", el));   // was secure
+    EXPECT_EQ(eMXP_open, doc.m_iMXP_mode);                        // restored
+}
+
+// ═══ Custom element open/close through the stream (mxpStart / mxpClose) ════
+
+// The style that covers the LAST character currently on the pending line.
+static CStyle* last_style(CMUSHclientDoc& doc)
+{
+    if (!doc.m_pCurrentLine || doc.m_pCurrentLine->styleList.IsEmpty())
+        return nullptr;
+    return doc.m_pCurrentLine->styleList.GetTail();
+}
+
+TEST(MXPCustom, OpenCustomElementAppliesAtomicDefinition)
+{
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT shout '<B>' OPEN>");
+    stream(doc, "plain");
+    CStyle* before = last_style(doc);
+    ASSERT_NE(nullptr, before);
+    EXPECT_EQ(0, (int)(before->iFlags & HILITE));
+    stream(doc, "<shout>loud");
+    CStyle* inTag = last_style(doc);
+    ASSERT_NE(nullptr, inTag);
+    EXPECT_EQ(HILITE, (int)(inTag->iFlags & HILITE));   // the <B> arm ran
+    stream(doc, "</shout>quiet");
+    CStyle* after = last_style(doc);
+    ASSERT_NE(nullptr, after);
+    EXPECT_EQ(0, (int)(after->iFlags & HILITE));        // closed again
+    EXPECT_TRUE(current_line(doc).find("loud") != std::string::npos);
+    EXPECT_TRUE(current_line(doc).find("quiet") != std::string::npos);
+}
+
+TEST(MXPCustom, CloseWithoutOpenWarns)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "</b>");
+    EXPECT_TRUE(dbg.contains(
+        "Closing MXP tag </b> does not have corresponding opening tag"));
+}
+
+TEST(MXPCustom, UnterminatedElementAtNewlineIsAnError)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    long long errBefore = doc.m_iMXPerrors;
+    stream(doc, "<neverclosed\n");
+    EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
+    EXPECT_TRUE(dbg.contains("Unterminated MXP element"));
+}
+
+TEST(MXPCustom, UnknownTagIsAnError)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    long long errBefore = doc.m_iMXPerrors;
+    stream(doc, "<nosuchtag>");
+    EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
+}
+
+TEST(MXPCustom, AttributeSubstitutionSuppliedNamed)
+{
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT fancy '<COLOR &col;>' ATT='col=#FF0000' OPEN>");
+    stream(doc, "<fancy col=#0000FF>x");
+    CStyle* s = last_style(doc);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_RGB, (int)(s->iFlags & COLOURTYPE));
+    EXPECT_EQ(RGB(0, 0, 255), s->iForeColour);   // supplied value substituted
+}
+
+TEST(MXPCustom, AttributeSubstitutionPositional)
+{
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT fancy '<COLOR &col;>' ATT='col=#FF0000' OPEN>");
+    stream(doc, "<fancy #00FF00>x");
+    CStyle* s = last_style(doc);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(RGB(0, 255, 0), s->iForeColour);   // positional argument
+}
+
+TEST(MXPCustom, AttributeSubstitutionDefault)
+{
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT fancy '<COLOR &col;>' ATT='col=#FF0000' OPEN>");
+    stream(doc, "<fancy>x");
+    CStyle* s = last_style(doc);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(RGB(255, 0, 0), s->iForeColour);   // ATT default used
+}
+
+TEST(MXPCustom, MissingNonDefaultArgumentWarns)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT needy '<COLOR &c;>' ATT='c' OPEN>");   // no default
+    stream(doc, "<needy>x");
+    EXPECT_TRUE(dbg.contains("Non-default argument \"c\" not supplied to <needy>"));
+}
+
+TEST(MXPCustom, UnterminatedEntityInElementArgument)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    stream(doc, "<!ELEMENT brokearg '<COLOR &col>' OPEN>");   // &col missing ;
+    stream(doc, "<brokearg>x");
+    EXPECT_TRUE(dbg.contains("No closing \";\" in MXP element argument"));
+}
+
+TEST(MXPCustom, DebugLevelFiltersNotepadOutput)
+{
+    // Info-level messages are suppressed when the level only admits errors.
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc = make_stream_doc();
+    doc.m_iMXPdebugLevel = DBG_ERROR;
+    stream(doc, "<!ELEMENT quietdef '<B>'>");
+    EXPECT_FALSE(dbg.contains("Got Definition"));     // info filtered
+    stream(doc, "<!WOTSIT bad>");
+    EXPECT_TRUE(dbg.contains("Unknown definition type"));   // errors shown
+}
+
 MC_TEST_MAIN()

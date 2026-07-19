@@ -969,6 +969,10 @@ void CMUSHclientDoc::Phase_COMPRESS_WILL (const unsigned char c)
         {
         m_bCompress  = true;
         TRACE ("Compression on\n");
+        // Windows parity (doc.cpp Phase_COMPRESSION): leave the telnet phase
+        // machine in NONE.  Without this the first DECOMPRESSED byte of an
+        // MCCP v1 stream was consumed by the stale HAVE_COMPRESS_WILL phase.
+        m_phase = NONE;
         return;
         }
 

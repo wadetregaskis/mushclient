@@ -2548,6 +2548,77 @@ TEST(LuaScripting, MtRandIsSeededAndDeterministic)
     lua_close(L);
 }
 
+// ═══ bundled Lua C libraries: bc (bignum) + bits ═══════════════════════════
+// Every world/plugin Lua state gets these (lua_scripting.cpp OpenLua); the
+// engine normally calls bc_init_numbers() once at app start (MUSHclient.cpp),
+// mirrored here.
+
+extern "C" int luaopen_bc(lua_State*);
+extern "C" int luaopen_bits(lua_State*);
+extern "C" void bc_init_numbers(void);
+
+TEST(LuaLibs, BcBignumArithmetic)
+{
+    bc_init_numbers();
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_TRUE(L != nullptr);
+    luaopen_bc(L);
+    lua_settop(L, 0);
+    EXPECT_TRUE(run(L,
+        "local a = bc.number('123456789012345678901234567890')\n"
+        "assert(bc.tostring(a + a) == '246913578024691357802469135780')\n"
+        "assert(tostring(a - a) == '0')\n"
+        "assert(bc.iszero(a - a))\n"
+        "assert(bc.isneg(-a))\n"
+        "assert(not bc.isneg(a))\n"
+        "assert(a == bc.number('123456789012345678901234567890'))\n"
+        "assert(bc.number(2) < bc.number(3))\n"
+        "assert(bc.compare(bc.number(5), bc.number(4)) > 0)\n"
+        "assert(tostring(bc.number(2) ^ 64) == '18446744073709551616')\n"
+        "assert(tostring(bc.mul(bc.number(1000000007), bc.number(998244353)))"
+        "       == '998244359987710471')\n"
+        "assert(tostring(bc.mod(bc.number(10), bc.number(3))) == '1')\n"
+        "assert(tostring(bc.div(bc.number(10), bc.number(2))) == '5')\n"
+        "local q, r = bc.divmod(bc.number(17), bc.number(5))\n"
+        "assert(tostring(q) == '3' and tostring(r) == '2')\n"
+        "assert(tostring(bc.sqrt(bc.number(144))) == '12')\n"
+        "assert(tostring(bc.powmod(bc.number(4), bc.number(13), bc.number(497)))"
+        "       == '445')\n"
+        "assert(bc.tonumber(bc.number(42)) == 42)\n"
+        "assert(bc.digits(0) == 0)\n"
+        "assert(tostring(bc.trunc(bc.number('7'))) == '7')\n"
+        "assert(tostring(bc.neg(bc.number(6))) == '-6')\n"));
+    lua_close(L);
+}
+
+TEST(LuaLibs, BitsLibraryOperations)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_TRUE(L != nullptr);
+    luaopen_bits(L);
+    lua_settop(L, 0);
+    EXPECT_TRUE(run(L,
+        "assert(bit.band(6, 3) == 2)\n"
+        "assert(bit.bor(4, 1) == 5)\n"
+        "assert(bit.xor(6, 3) == 5)\n"
+        "assert(bit.shl(1, 4) == 16)\n"
+        "assert(bit.shr(16, 4) == 1)\n"
+        "assert(bit.ashr(-16, 2) == -4)\n"
+        "assert(bit.mod(10, 3) == 1)\n"
+        "assert(bit.test(18, 16))\n"
+        "assert(not bit.test(18, 1))\n"
+        "assert(bit.clear(7, 1) == 6)\n"
+        "assert(bit.neg(0) ~= 0)\n"
+        "assert(bit.tonumber('ff', 16) == 255)\n"
+        "assert(bit.tonumber(' -42') == -42)\n"
+        "assert(bit.tostring(255, 16) == 'FF')\n"
+        "assert(bit.tostring(-255, 16) == '-FF')\n"
+        "assert(bit.tostring(1000) == '1000')\n"));
+    lua_close(L);
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

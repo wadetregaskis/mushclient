@@ -1845,4 +1845,144 @@ TEST(XmlParseEdge, TabsInDocumentBecomeSpaces)
     EXPECT_STREQ("a b", (const char*)v->strContents);
 }
 
+// ═══ duplicate suppression (CTrigger/CAlias/CTimer operator==) ═════════════
+// xml_load_world.cpp (Fiendish, 4.81): an UNLABELLED item identical in every
+// field to one already loaded is silently dropped.
+
+TEST(WorldLoad, DuplicateUnnamedTriggerDropped)
+{
+    const char* xml =
+        "<?xml version=\"1.0\"?><!DOCTYPE muclient><muclient>\n"
+        "<triggers>\n"
+        "  <trigger enabled=\"y\" match=\"twin\" send_to=\"0\" sequence=\"100\">"
+        "<send>hi</send></trigger>\n"
+        "  <trigger enabled=\"y\" match=\"twin\" send_to=\"0\" sequence=\"100\">"
+        "<send>hi</send></trigger>\n"
+        "  <trigger enabled=\"y\" match=\"other\" send_to=\"0\" sequence=\"100\">"
+        "<send>hi</send></trigger>\n"
+        "</triggers>\n"
+        "</muclient>\n";
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    EXPECT_EQ(2, (int)doc.GetTriggerMap().GetCount());   // twin loaded once
+}
+
+TEST(WorldLoad, DuplicateUnnamedAliasDropped)
+{
+    const char* xml =
+        "<?xml version=\"1.0\"?><!DOCTYPE muclient><muclient>\n"
+        "<aliases>\n"
+        "  <alias enabled=\"y\" match=\"^dupe$\" send_to=\"0\" sequence=\"100\">"
+        "<send>x</send></alias>\n"
+        "  <alias enabled=\"y\" match=\"^dupe$\" send_to=\"0\" sequence=\"100\">"
+        "<send>x</send></alias>\n"
+        "</aliases>\n"
+        "</muclient>\n";
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    EXPECT_EQ(1, (int)doc.GetAliasMap().GetCount());
+}
+
+TEST(WorldLoad, DuplicateUnnamedTimerDropped)
+{
+    const char* xml =
+        "<?xml version=\"1.0\"?><!DOCTYPE muclient><muclient>\n"
+        "<timers>\n"
+        "  <timer enabled=\"y\" second=\"30\" send_to=\"0\">"
+        "<send>tick</send></timer>\n"
+        "  <timer enabled=\"y\" second=\"30\" send_to=\"0\">"
+        "<send>tick</send></timer>\n"
+        "</timers>\n"
+        "</muclient>\n";
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    EXPECT_EQ(1, (int)doc.GetTimerMap().GetCount());
+}
+
+// ═══ macros ════════════════════════════════════════════════════════════════
+
+extern CString strMacroDescriptions[MACRO_COUNT];
+
+static int macro_index(const char* name)
+{
+    for (int i = 0; i < MACRO_COUNT; i++)
+        if (strMacroDescriptions[i] == name) return i;
+    return -1;
+}
+
+TEST(WorldLoad, MacrosLoadWithEachSendType)
+{
+    const char* xml =
+        "<?xml version=\"1.0\"?><!DOCTYPE muclient><muclient>\n"
+        "<macros>\n"
+        "  <macro name=\"F2\" type=\"send_now\"><send>north</send></macro>\n"
+        "  <macro name=\"F3\" type=\"replace\"><send>south</send></macro>\n"
+        "  <macro name=\"F4\" type=\"insert\"><send>east</send></macro>\n"
+        "</macros>\n"
+        "</muclient>\n";
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    int f2 = macro_index("F2"), f3 = macro_index("F3"), f4 = macro_index("F4");
+    ASSERT_TRUE(f2 >= 0 && f3 >= 0 && f4 >= 0);
+    EXPECT_STREQ("north", (const char*)doc.m_macros[f2]);
+    EXPECT_EQ((int)SEND_NOW, (int)doc.m_macro_type[f2]);
+    EXPECT_STREQ("south", (const char*)doc.m_macros[f3]);
+    EXPECT_EQ((int)REPLACE_COMMAND, (int)doc.m_macro_type[f3]);
+    EXPECT_STREQ("east", (const char*)doc.m_macros[f4]);
+    EXPECT_EQ((int)ADD_TO_COMMAND, (int)doc.m_macro_type[f4]);
+}
+
+TEST(WorldLoad, MacroErrorsAreTolerated)
+{
+    // Unknown macro name / missing type / bad type each throw inside the
+    // loader, are caught per-item ("macro not loaded"), and the world still
+    // loads with the valid macro applied.
+    const char* xml =
+        "<?xml version=\"1.0\"?><!DOCTYPE muclient><muclient>\n"
+        "<macros>\n"
+        "  <macro name=\"NotAMacro\" type=\"send_now\"><send>x</send></macro>\n"
+        "  <macro name=\"F5\"><send>x</send></macro>\n"
+        "  <macro name=\"F7\" type=\"warp\"><send>x</send></macro>\n"
+        "  <macro name=\"F8\" type=\"send_now\"><send>ok</send></macro>\n"
+        "</macros>\n"
+        "</muclient>\n";
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    int f8 = macro_index("F8");
+    ASSERT_TRUE(f8 >= 0);
+    EXPECT_STREQ("ok", (const char*)doc.m_macros[f8]);
+    int f5 = macro_index("F5");
+    EXPECT_TRUE(doc.m_macros[f5].IsEmpty());   // failed item left untouched
+}
+
+// ═══ printing styles (<printing><ansi>) ════════════════════════════════════
+
+// Values pinned from genprint.h (not included here: it drags the print block).
+#ifndef FONT_ITALIC
+#  define FONT_ITALIC    0x01
+#  define FONT_UNDERLINE 0x02
+#  define FONT_BOLD      0x04
+#endif
+
+TEST(WorldLoad, PrintingAnsiStylesLoad)
+{
+    const char* xml =
+        "<?xml version=\"1.0\"?><!DOCTYPE muclient><muclient>\n"
+        "<printing>\n"
+        "  <ansi>\n"
+        "    <normal>\n"
+        "      <style seq=\"1\" bold=\"y\" italic=\"n\" underline=\"y\" />\n"
+        "    </normal>\n"
+        "    <bold>\n"
+        "      <style seq=\"2\" italic=\"y\" />\n"
+        "    </bold>\n"
+        "  </ansi>\n"
+        "</printing>\n"
+        "</muclient>\n";
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    EXPECT_EQ(FONT_BOLD | FONT_UNDERLINE, doc.m_nNormalPrintStyle[0]);
+    EXPECT_EQ(FONT_ITALIC, doc.m_nBoldPrintStyle[1]);
+}
+
 MC_TEST_MAIN()

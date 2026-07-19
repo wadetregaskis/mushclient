@@ -9,6 +9,7 @@
 
 #include "mc_test.h"
 #include "platform/doc_stub.h"
+#include "scripting/scripting.h"
 
 #include <cstdio>
 #include <cstring>
@@ -834,6 +835,296 @@ TEST(PluginLifecycle, PluginArrayLivesInPluginScope)
     EXPECT_EQ((size_t)1, p->m_Arrays.size());              // plugin-scoped
     EXPECT_EQ((size_t)0, doc.m_Arrays.size());             // not world-scoped
     // doc teardown at end of test runs ~CPlugin, freeing the array map
+}
+
+// ═══ ExecutePluginScript argument-marshalling variants ═════════════════════
+// The non-embedded (dispatch) arms: a plugin whose engine is a COM-style
+// language (here "vbscript", which has no embedded engine on this platform)
+// routes through CScriptEngine::Execute.  Headless, Execute's non-embedded
+// arm consumes the dispid (sets DISPID_UNKNOWN, returns true) — so these pin
+// the argument-packing paths and the "assume they OK'd it" default.
+
+static CPlugin* add_dispatch_plugin(CMUSHclientDoc& doc, const char* id)
+{
+    CPlugin* p = new CPlugin(&doc);
+    p->m_bSaveState = false;
+    p->m_strID = id;
+    p->m_strName = "DispatchPlugin";
+    p->m_ScriptEngine = new CScriptEngine(&doc, "vbscript");
+    doc.m_PluginList.push_back(p);
+    return p;
+}
+
+TEST(PluginDispatch, NoArgVariantConsumesDispid)
+{
+    CMUSHclientDoc doc = make_doc();
+    CPlugin* p = add_dispatch_plugin(doc, IDA);
+    CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_TICK];
+    d._dispid = 1;   // pretend the routine resolved
+    CScriptCallInfo ci(ON_PLUGIN_TICK, d);
+    p->ExecutePluginScript(ci);
+    EXPECT_EQ((DISPID)DISPID_UNKNOWN, d._dispid);   // headless Execute consumed it
+    EXPECT_EQ(1, (int)d._count);
+}
+
+TEST(PluginDispatch, TextVariantDefaultsToApproval)
+{
+    CMUSHclientDoc doc = make_doc();
+    CPlugin* p = add_dispatch_plugin(doc, IDA);
+    CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_SEND];
+    d._dispid = 1;
+    CScriptCallInfo ci(ON_PLUGIN_SEND, d);
+    EXPECT_TRUE(p->ExecutePluginScript(ci, "the line"));
+    EXPECT_EQ(1, (int)d._count);
+}
+
+TEST(PluginDispatch, NumberTextVariantPacksEmbeddedNuls)
+{
+    CMUSHclientDoc doc = make_doc();
+    CPlugin* p = add_dispatch_plugin(doc, IDA);
+    CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_TELNET_SUBNEGOTIATION];
+    d._dispid = 1;
+    CScriptCallInfo ci(ON_PLUGIN_TELNET_SUBNEGOTIATION, d);
+    // the "crazy code" path: a std::string payload with embedded NULs
+    EXPECT_TRUE(p->ExecutePluginScript(ci, 201L, std::string("a\0b", 3)));
+    EXPECT_EQ(1, (int)d._count);
+}
+
+TEST(PluginDispatch, TwoNumbersTextVariant)
+{
+    CMUSHclientDoc doc = make_doc();
+    CPlugin* p = add_dispatch_plugin(doc, IDA);
+    CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_MXP_SETENTITY];
+    d._dispid = 1;
+    CScriptCallInfo ci(ON_PLUGIN_MXP_SETENTITY, d);
+    EXPECT_TRUE(p->ExecutePluginScript(ci, 3L, 4L, std::string("txt")));
+    EXPECT_EQ(1, (int)d._count);
+}
+
+TEST(PluginDispatch, NumberAndThreeStringsVariant)
+{
+    CMUSHclientDoc doc = make_doc();
+    CPlugin* p = add_dispatch_plugin(doc, IDA);
+    CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_CHAT_ACCEPT];
+    d._dispid = 1;
+    CScriptCallInfo ci(ON_PLUGIN_CHAT_ACCEPT, d);
+    EXPECT_TRUE(p->ExecutePluginScript(ci, 7L, "one", "two", "three"));
+    EXPECT_EQ(1, (int)d._count);
+}
+
+TEST(PluginDispatch, RtnVariantLeavesTextWhenNoResult)
+{
+    CMUSHclientDoc doc = make_doc();
+    CPlugin* p = add_dispatch_plugin(doc, IDA);
+    CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_PARTIAL_LINE];
+    d._dispid = 1;
+    CScriptCallInfo ci(ON_PLUGIN_PARTIAL_LINE, d);
+    CString text = "unchanged";
+    p->ExecutePluginScriptRtn(ci, text);
+    EXPECT_STREQ("unchanged", (const char*)text);   // no VT_BSTR result headless
+    EXPECT_EQ(1, (int)d._count);
+}
+
+TEST(PluginDispatch, UnknownDispidShortCircuitsAsApproval)
+{
+    CMUSHclientDoc doc = make_doc();
+    CPlugin* p = add_dispatch_plugin(doc, IDA);
+    CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_SEND];
+    ASSERT_EQ((DISPID)DISPID_UNKNOWN, d._dispid);   // never resolved
+    CScriptCallInfo ci(ON_PLUGIN_SEND, d);
+    EXPECT_TRUE(p->ExecutePluginScript(ci, "line"));
+    EXPECT_EQ(0, (int)d._count);                    // not invoked at all
+}
+
+// ═══ Lua arms of the argument variants ═════════════════════════════════════
+
+// Bind `fn` (already parsed in the plugin's Lua engine) as callback `name`.
+static CScriptDispatchID& bind_callback(CPlugin* p, const char* fn)
+{
+    CScriptDispatchID& d = p->m_PluginCallbacks[fn];
+    d._dispid = p->m_ScriptEngine->GetDispid(fn);
+    return d;
+}
+
+TEST(PluginLuaArgs, ArgVariantsReachLuaWithArguments)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("args", IDA, "ArgsPlugin",
+        "function fNumText(n, text)\n"
+        "  world.SetVariable('numtext', tostring(n) .. ':' .. text)\n"
+        "  return true\n"
+        "end\n"
+        "function fTwoNums(a, b, text)\n"
+        "  world.SetVariable('twonums', tostring(a+b) .. ':' .. text)\n"
+        "  return true\n"
+        "end\n"
+        "function fStrings(n, s1, s2, s3)\n"
+        "  world.SetVariable('strings', tostring(n) .. s1 .. s2 .. s3)\n"
+        "  return true\n"
+        "end\n"
+        "function fRtn(text)\n"
+        "  return text .. '-modified'\n"
+        "end\n")));
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+    CPlugin* was = doc.m_CurrentPlugin;
+    doc.m_CurrentPlugin = p;   // variables land in the plugin's own scope
+
+    CScriptDispatchID& d1 = bind_callback(p, "fNumText");
+    ASSERT_NE((DISPID)DISPID_UNKNOWN, d1._dispid);
+    CScriptCallInfo c1("fNumText", d1);
+    EXPECT_TRUE(p->ExecutePluginScript(c1, 42L, std::string("payload")));
+    EXPECT_STREQ("42:payload", (const char*)plugin_var(p, "numtext"));
+
+    CScriptDispatchID& d2 = bind_callback(p, "fTwoNums");
+    CScriptCallInfo c2("fTwoNums", d2);
+    EXPECT_TRUE(p->ExecutePluginScript(c2, 30L, 12L, std::string("t")));
+    EXPECT_STREQ("42:t", (const char*)plugin_var(p, "twonums"));
+
+    CScriptDispatchID& d3 = bind_callback(p, "fStrings");
+    CScriptCallInfo c3("fStrings", d3);
+    EXPECT_TRUE(p->ExecutePluginScript(c3, 9L, "a", "b", "c"));
+    EXPECT_STREQ("9abc", (const char*)plugin_var(p, "strings"));
+
+    CScriptDispatchID& d4 = bind_callback(p, "fRtn");
+    CScriptCallInfo c4("fRtn", d4);
+    CString text = "base";
+    p->ExecutePluginScriptRtn(c4, text);
+    EXPECT_STREQ("base-modified", (const char*)text);
+
+    doc.m_CurrentPlugin = was;
+}
+
+// ═══ MXP plugin callbacks (mxpStart / mxpClose / mxpDefs / mxpError) ═══════
+
+TEST(PluginCallback, MxpTagAndEntityCallbacksReachPlugins)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bMXP = true;
+    doc.m_iUseMXP = eUseMXP;
+    doc.m_iMXP_mode = eMXP_secure;
+    ASSERT_TRUE(load_plugin(doc, write_plugin("mxpcb", IDA, "MxpCb",
+        "function OnPluginMXPopenTag(text) world.SetVariable('open', text) end\n"
+        "function OnPluginMXPcloseTag(text) world.SetVariable('close', text) end\n"
+        "function OnPluginMXPsetEntity(text) world.SetVariable('ent', text) end\n"
+        "function OnPluginMXPerror(text) world.SetVariable('err', text) end\n")));
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+    doc.m_bPluginProcessesOpenTag = true;
+    doc.m_bPluginProcessesCloseTag = true;
+    doc.m_bPluginProcessesSetEntity = true;
+    doc.m_bPluginProcessesError = true;
+
+    const char* text1 = "<b>bold</b>";
+    doc.DisplayMsg(text1, (int)strlen(text1), 0);
+    EXPECT_STREQ("b,", (const char*)plugin_var(p, "open"));
+    EXPECT_TRUE(CString(plugin_var(p, "close")).Find("b,") == 0);
+
+    const char* text2 = "<!ENTITY pver '4'>";
+    doc.DisplayMsg(text2, (int)strlen(text2), 0);
+    EXPECT_STREQ("pver=4", (const char*)plugin_var(p, "ent"));
+
+    const char* text3 = "<nosuchtag>";
+    doc.DisplayMsg(text3, (int)strlen(text3), 0);
+    EXPECT_TRUE(CString(plugin_var(p, "err")).Find("E,") == 0);
+}
+
+// ═══ CPlugin::SaveState ════════════════════════════════════════════════════
+
+TEST(PluginState, SaveStateWritesVariablesToStateFile)
+{
+    char dir[128];
+    snprintf(dir, sizeof dir, "/tmp/mc_test_state_%d", (int)getpid());
+    mkdir(dir, 0755);
+    CString savedDir = App.m_strDefaultStateFilesDirectory;
+    App.m_strDefaultStateFilesDirectory = CString(dir) + "/";
+
+    {
+        CMUSHclientDoc doc = make_doc();
+        doc.m_strWorldID = "worldid0123456789abcdef0";
+        ASSERT_TRUE(load_plugin(doc, write_plugin("save", IDA, "SavePlugin",
+            "world.SetVariable('persisted', 'yes')\n"
+            "function OnPluginSaveState()\n"
+            "  world.SetVariable('saved_from_callback', 'indeed')\n"
+            "end\n")));
+        CPlugin* p = doc.GetPlugin(IDA);
+        ASSERT_NE(nullptr, p);
+        p->m_bSaveState = true;
+        p->SaveState(true);
+
+        char path[256];
+        snprintf(path, sizeof path, "%s/%s-%s-state.xml", dir,
+                 "worldid0123456789abcdef0", IDA);
+        FILE* f = fopen(path, "rb");
+        ASSERT_NE(nullptr, f);
+        char buf[8192] = {};
+        fread(buf, 1, sizeof buf - 1, f);
+        fclose(f);
+        std::string xml = buf;
+        EXPECT_TRUE(xml.find("persisted") != std::string::npos);
+        EXPECT_TRUE(xml.find("yes") != std::string::npos);
+        // the ON_PLUGIN_SAVE_STATE callback ran BEFORE the write
+        EXPECT_TRUE(xml.find("saved_from_callback") != std::string::npos);
+        unlink(path);
+    }
+    App.m_strDefaultStateFilesDirectory = savedDir;
+    rmdir(dir);
+}
+
+TEST(PluginState, SaveStateSkippedWithoutStateFolderOrWorldId)
+{
+    CString savedDir = App.m_strDefaultStateFilesDirectory;
+    CMUSHclientDoc doc = make_doc();
+    CPlugin* p = add_bare_plugin(doc, IDA, "NoState");
+    p->m_bSaveState = true;
+
+    App.m_strDefaultStateFilesDirectory = "";
+    EXPECT_TRUE(p->SaveState(true));    // no folder configured -> "not needed"
+
+    App.m_strDefaultStateFilesDirectory = "/tmp/";
+    doc.m_strWorldID = "";
+    EXPECT_TRUE(p->SaveState(true));    // no world id -> nothing to key on
+
+    p->m_bSaveState = false;
+    EXPECT_TRUE(p->SaveState(false));   // not scripted, not wanted
+    App.m_strDefaultStateFilesDirectory = savedDir;
+}
+
+static char* s_pickedDir;
+
+TEST(PluginState, MissingStateFolderFallsBackToDirectoryPicker)
+{
+    char dir[128];
+    snprintf(dir, sizeof dir, "/tmp/mc_test_state_pick_%d", (int)getpid());
+    mkdir(dir, 0755);
+    s_pickedDir = dir;
+    CString savedDir = App.m_strDefaultStateFilesDirectory;
+    // A folder that cannot be auto-created (mkdir at "/" fails headless)
+    App.m_strDefaultStateFilesDirectory = "/mc-no-such-root-xyz/state/";
+    g_wxhook_directorypicker = [](const char* title, const char*) -> char* {
+        EXPECT_TRUE(strstr(title, "state files") != nullptr);
+        return strdup(s_pickedDir);
+    };
+    {
+        CMUSHclientDoc doc = make_doc();
+        doc.m_strWorldID = "worldid0123456789abcdef0";
+        CPlugin* p = add_bare_plugin(doc, IDA, "PickState");
+        p->m_bSaveState = true;
+        p->SaveState(true);
+        // picker result adopted (with a trailing slash appended)
+        CString expect = CString(dir) + "/";
+        EXPECT_STREQ((const char*)expect,
+                     (const char*)App.m_strDefaultStateFilesDirectory);
+        char path[256];
+        snprintf(path, sizeof path, "%s/%s-%s-state.xml", dir,
+                 "worldid0123456789abcdef0", IDA);
+        FILE* f = fopen(path, "rb");
+        EXPECT_NE(nullptr, f);   // state written into the picked folder
+        if (f) { fclose(f); unlink(path); }
+    }
+    g_wxhook_directorypicker = nullptr;
+    App.m_strDefaultStateFilesDirectory = savedDir;
+    rmdir(dir);
 }
 
 #endif // MUSHCLIENT_LUA_SCRIPTING

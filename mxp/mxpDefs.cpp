@@ -144,12 +144,16 @@ bool bDelete = GetKeyword (ArgumentList, "delete");
   if (m_CustomElementMap.Lookup (strName, pElement))
     {
     if (!bDelete)
-      MXP_error (DBG_WARNING, wrnMXP_ReplacingElement, 
-                 TFormat ("Replacing previously-defined MXP element: <%s>", 
-                (LPCTSTR) strName)); 
+      MXP_error (DBG_WARNING, wrnMXP_ReplacingElement,
+                 TFormat ("Replacing previously-defined MXP element: <%s>",
+                (LPCTSTR) strName));
     DELETE_LIST (pElement->ElementItemList);
     DELETE_LIST (pElement->AttributeList);
     delete pElement;
+    // remove the map entry too — without this a <!ELEMENT x DELETE> left the
+    // key mapped to the freed CElement (any later <x> or redefinition then
+    // dereferenced/deleted freed memory)
+    m_CustomElementMap.RemoveKey (strName);
     } // end of existing element
 
   if (bDelete)

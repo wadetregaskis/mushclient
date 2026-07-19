@@ -889,3 +889,36 @@ CString strName;
                            iBlue);
 
   } // end of ColourToName
+
+#ifndef _WIN32
+// ── WidenUTF16LE (port-only) ────────────────────────────────────────────────
+// Widen a raw UTF-16LE byte stream (BOM already stripped) into wchar_t code
+// points, combining surrogate pairs.  Off-Windows wchar_t is 4 bytes, so the
+// Windows idiom of casting the byte stream to LPCWSTR mis-reads it (two UTF-16
+// units per wchar_t).  The UTF-16 file readers — CXMLparser::BuildStructure
+// (xml/xmlparse.cpp) and IsArchiveXML (xml/xml_serialize.cpp) — widen through
+// here first, then share the normal WideCharToMultiByte UTF-8 encoding.
+// An odd trailing byte is ignored; an unpaired surrogate passes through as its
+// own code point (matching the permissive Windows conversion).
+void WidenUTF16LE (const unsigned char * pBytes, int nBytes,
+                   std::vector<wchar_t> & vWide)
+  {
+  int nUnits = nBytes / 2;
+  vWide.clear ();
+  vWide.reserve (nUnits);
+  for (int iUnit = 0; iUnit < nUnits; iUnit++)
+    {
+    unsigned long cp = pBytes [iUnit * 2] | (pBytes [iUnit * 2 + 1] << 8);
+    if (cp >= 0xD800 && cp <= 0xDBFF && iUnit + 1 < nUnits)
+      {
+      unsigned long low = pBytes [(iUnit + 1) * 2] | (pBytes [(iUnit + 1) * 2 + 1] << 8);
+      if (low >= 0xDC00 && low <= 0xDFFF)
+        {
+        cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+        iUnit++;
+        }
+      }
+    vWide.push_back ((wchar_t) cp);
+    }
+  } // end of WidenUTF16LE
+#endif // !_WIN32

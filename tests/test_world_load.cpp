@@ -14,6 +14,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <unistd.h>   // getpid/unlink (temp world files)
 
 #ifdef MUSHCLIENT_LUA_SCRIPTING
 extern "C" {
@@ -2273,6 +2275,42 @@ TEST(WorldLoadR4, BangHandlerExecutesInsteadOfScript)
     // plain names allow the normal dispid dispatch
     EXPECT_TRUE(doc.SeeIfHandlerCanExecute(CString("OnConnect")));
     EXPECT_TRUE(doc.SeeIfHandlerCanExecute(CString("")));
+}
+
+// A UTF-16LE world file (FF FE BOM) must be RECOGNISED as XML by the
+// IsArchiveXML sniff (xml/xml_serialize.cpp — its FF FE arm used to cast the
+// byte stream to LPCWSTR, which mis-reads on 4-byte-wchar_t platforms, so a
+// Unicode world file was rejected as "not XML") and then load end-to-end
+// through BuildStructure's round-4 UTF-16 conversion arm (xml/xmlparse.cpp).
+TEST(WorldLoadR5, Utf16FileRecognisedAsXmlAndLoads)
+{
+    const char* xml8 =
+        "<?xml version=\"1.0\"?>\n"
+        "<!DOCTYPE muclient>\n"
+        "<muclient>\n"
+        "<variables>\n"
+        "  <variable name=\"greeting\">hello unicode</variable>\n"
+        "</variables>\n"
+        "</muclient>\n";
+
+    // encode as UTF-16LE with BOM (ASCII content: one unit per byte)
+    std::string doc16 = "\xFF\xFE";
+    for (const char* c = xml8; *c; ++c) { doc16 += *c; doc16 += '\0'; }
+
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_u16_%d.mcl", (int)getpid());
+    FILE* f = fopen(path, "wb");
+    ASSERT_TRUE(f != nullptr);
+    fwrite(doc16.data(), 1, doc16.size(), f);
+    fclose(f);
+
+    CMUSHclientDoc doc;
+    EXPECT_TRUE(doc.LoadWorldFromFile(path));
+
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("greeting", v));
+    EXPECT_STREQ("hello unicode", (const char*)v->strContents);
+    unlink(path);
 }
 
 MC_TEST_MAIN()

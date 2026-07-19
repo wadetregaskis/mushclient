@@ -1396,10 +1396,11 @@ TEST(PluginInfoR4, AllInfoCasesAnswerTheirTypes)
 TEST(PluginInfoR4, LoadAndReloadErrorArms)
 {
     CMUSHclientDoc doc;
-    // NOTE (parity divergence, documented): the headless CFile constructor
-    // cannot throw CFileException, so a missing file surfaces as the generic
-    // archive failure rather than ePluginFileNotFound (Windows).
-    EXPECT_EQ((long)eProblemsLoadingPlugin, doc.LoadPlugin("/nonexistent-r4/p.xml"));
+    // Windows parity (round 5): the shim CFile constructor now throws
+    // CFileException* on open failure, so a missing plugin file surfaces as
+    // ePluginFileNotFound exactly as on Windows (previously the round-3/4
+    // documented divergence answered the generic eProblemsLoadingPlugin).
+    EXPECT_EQ((long)ePluginFileNotFound, doc.LoadPlugin("/nonexistent-r4/p.xml"));
 
     // a file that exists but is not valid plugin XML
     char bad[128];
@@ -1418,8 +1419,52 @@ TEST(PluginInfoR4, LoadAndReloadErrorArms)
         "world.SetVariable('n', '1')\n");
     ASSERT_TRUE(load_plugin(doc, p));
     EXPECT_EQ((long)eOK, doc.ReloadPlugin(IDA));
-    unlink(p.c_str());
     EXPECT_TRUE(doc.GetPlugin(IDA) != nullptr);
+
+    // reload after the source file vanished: ePluginFileNotFound, and (as on
+    // Windows) the plugin was already deleted before the reload was attempted
+    unlink(p.c_str());
+    EXPECT_EQ((long)ePluginFileNotFound, doc.ReloadPlugin(IDA));
+    EXPECT_TRUE(doc.GetPlugin(IDA) == nullptr);
+}
+
+// CPlugin::SaveState error arm (plugins.cpp catch CFileException*): the state
+// file cannot be created -> the catch reports it and SaveState answers "not
+// saved" (true), which world.SaveState maps to ePluginCouldNotSaveState.
+// Dead until round 5 (the old shim CFile ctor could not throw).
+TEST(PluginInfoR5, SaveStateFileErrorArm)
+{
+    CMUSHclientDoc doc;
+    doc.m_strWorldID = "b1b1b1b1b1b1b1b1b1b1b1b1";
+
+    std::string p = write_plugin("ss", IDA, "Saver",
+        "world.SetVariable('keep', '1')\n");
+    ASSERT_TRUE(load_plugin(doc, p));
+    CPlugin* pl = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, pl);
+
+    char dir[128];
+    snprintf(dir, sizeof dir, "/tmp/mc_test_state_%d", (int)getpid());
+    mkdir(dir, 0755);
+    App.m_strDefaultStateFilesDirectory = (std::string(dir) + "/").c_str();
+
+    // success arm: the state file is created
+    EXPECT_FALSE(pl->SaveState(true));
+    std::string state = std::string(dir) + "/" +
+        (const char*)doc.m_strWorldID + "-" + IDA + "-state.xml";
+    struct stat st;
+    ASSERT_EQ(0, stat(state.c_str(), &st));
+
+    // failure arm: an unwritable state file -> CFile ctor throws
+    // CFileException* -> the catch arm answers "not saved"
+    chmod(state.c_str(), 0444);
+    EXPECT_TRUE(pl->SaveState(true));
+
+    chmod(state.c_str(), 0644);
+    unlink(state.c_str());
+    rmdir(dir);
+    unlink(p.c_str());
+    App.m_strDefaultStateFilesDirectory.Empty();
 }
 
 TEST(PluginInfoR4, DocLevelCallPluginArms)

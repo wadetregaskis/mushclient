@@ -1888,6 +1888,10 @@ void Save_XML_double  (class CArchive& ar,
                        const double & fNumber,
                        const bool sameline = false);
 void SeeIfBase64 (CString & strText);   // stdafx.h:519 (utilities_shared.cpp)
+// utilities_shared.cpp — surrogate-aware UTF-16LE widening (4-byte wchar_t);
+// used by the xmlparse.cpp / xml_serialize.cpp BOM-handling port arms
+void WidenUTF16LE (const unsigned char * pBytes, int nBytes,
+                   std::vector<wchar_t> & vWide);
 
 // keypad indexes (stdafx.h:660-696, verbatim) — m_keypad[] / strKeypadNames[]
 enum

@@ -518,6 +518,12 @@ void Save_XML_double    (CArchive& ar,
 bool IsArchiveXML (CArchive& ar); // returns true if archive turns out to be XML
 bool IsClipboardXML (void); // returns true if clipboard turns out to be XML
 void SeeIfBase64 (CString & strText);
+#ifndef _WIN32
+// utilities_shared.cpp — surrogate-aware UTF-16LE widening for the 4-byte
+// wchar_t platforms (used by xmlparse.cpp / xml_serialize.cpp BOM handling)
+void WidenUTF16LE (const unsigned char * pBytes, int nBytes,
+                   std::vector<wchar_t> & vWide);
+#endif
 CString decodeBase64(const char *coded);
 CString encodeBase64(const char * plaintext, const bool bMultiLine);
 CString ColourToName (const COLORREF colour);

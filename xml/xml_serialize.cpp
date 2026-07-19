@@ -117,7 +117,23 @@ bool IsArchiveXML (CArchive& ar)
   // look for Unicode (FF FE)
   if ((unsigned char) buf [0] == 0xFF &&
       (unsigned char) buf [1] == 0xFE)
+#ifdef _WIN32
     WideCharToMultiByte (CP_UTF8, 0, (LPCWSTR) &buf [2], -1, buf2, sizeof buf2, NULL, NULL);
+#else
+    {
+    // wchar_t is 4 bytes off-Windows: casting the UTF-16LE byte stream to
+    // LPCWSTR mis-read it, so a UTF-16 world file with a BOM was never
+    // recognised as XML here.  Widen the 2-byte units first (WidenUTF16LE,
+    // utilities_shared.cpp — the same fix as CXMLparser::BuildStructure,
+    // xml/xmlparse.cpp:207) and keep the original "-1" NUL-terminated
+    // conversion semantics: buf's zero-fill guarantees a 00 00 unit.
+    std::vector<wchar_t> vWide;
+    WidenUTF16LE ((const unsigned char *) &buf [2], (int) sizeof buf - 2, vWide);
+    vWide.push_back (0);   // belt-and-braces terminator for the -1 form
+    memset (buf2, 0, sizeof buf2);
+    WideCharToMultiByte (CP_UTF8, 0, &vWide [0], -1, buf2, sizeof buf2 - 1, NULL, NULL);
+    }
+#endif
   else
     // look for UTF-8 indicator bytes (EF BB BF)
     if ((unsigned char) buf [0] == 0xEF &&

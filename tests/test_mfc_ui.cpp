@@ -21,6 +21,7 @@
 #include "platform/doc_stub.h"
 
 #include <algorithm>
+#include <cerrno>     // ENOENT — CFile open-failure cause checks
 #include <cstring>
 #include <cstdlib>
 #include <map>
@@ -637,9 +638,34 @@ TEST(Files, CFileOpenMissingFails) {
     CFile f;
     EXPECT_FALSE(f.Open("/nonexistent/dir/nope.txt", CFile::modeRead));
     EXPECT_FALSE(f.IsOpen());
-    // Constructor form is silent: leaves the file unopened
-    CFile g("/nonexistent/dir/nope.txt", CFile::modeRead);
-    EXPECT_FALSE(g.IsOpen());
+    // 3-arg Open (MFC): returns FALSE and FILLS the caller's CFileException
+    // (does not throw)
+    CFileException fe;
+    EXPECT_FALSE(f.Open("/nonexistent/dir/nope.txt", CFile::modeRead, &fe));
+    EXPECT_EQ((int)CFileException::fileNotFound, fe.m_cause);
+    EXPECT_EQ((LONG)ENOENT, fe.m_lOsError);
+    EXPECT_STREQ("/nonexistent/dir/nope.txt", (LPCTSTR)fe.m_strFileName);
+    // Constructor form is MFC-faithful: THROWS a heap CFileException* on
+    // failure (round 5; it used to silently leave the file unopened)
+    bool threw = false;
+    try {
+        CFile g("/nonexistent/dir/nope.txt", CFile::modeRead);
+    } catch (CFileException* e) {
+        threw = true;
+        EXPECT_EQ((int)CFileException::fileNotFound, e->m_cause);
+        EXPECT_EQ((LONG)ENOENT, e->m_lOsError);
+        char msg[256] = "";
+        EXPECT_TRUE(e->GetErrorMessage(msg, sizeof msg));
+        EXPECT_TRUE(strstr(msg, "nope.txt") != nullptr);   // names the file
+        e->Delete();
+    }
+    EXPECT_TRUE(threw);
+    // CStdioFile's path constructor inherits the throw
+    threw = false;
+    try {
+        CStdioFile s("/nonexistent/dir/nope.txt", CFile::modeRead);
+    } catch (CFileException* e) { threw = true; e->Delete(); }
+    EXPECT_TRUE(threw);
     // plain modeWrite (no modeCreate) opens EXISTING files only ("r+b")
     CFile h;
     EXPECT_FALSE(h.Open(temp_path("never-created.bin").c_str(), CFile::modeWrite));

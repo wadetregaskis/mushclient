@@ -29,6 +29,7 @@
 #include <functional>
 #include <cstring>
 #include <cstdio>
+#include <cerrno>     // errno — CFile::Open failure cause (CFileException)
 #include <algorithm>
 #include <unistd.h>   // readlink, ssize_t, realpath
 #include <stdlib.h>   // realpath, free()
@@ -2638,15 +2639,15 @@ protected:
 public:
     CFile() = default;
 
-    // Open file by path + flags (mirrors MFC CFile constructor that throws on error).
+    // Open file by path + flags.  MFC-faithful: THROWS a heap CFileException*
+    // on failure (m_cause/m_lOsError/m_strFileName populated) — every canonical
+    // construction site wraps this in try/catch (CFileException*/CException*),
+    // so files no longer just silently fail to open.  Callers that want the
+    // non-throwing form use the default ctor + Open(), which returns FALSE.
     CFile(LPCTSTR path, UINT flags) {
-        const char* mode = FlagsToMode(flags);
-        m_fp = fopen(PosixPath(path).c_str(), mode);
-        if (m_fp)
-            m_strPath = path;
-        // On failure m_fp == nullptr; callers that check Open() return value should
-        // use Open() instead; this constructor silently leaves m_fp null (like MFC
-        // throws CFileException, but we have no MFC exception infrastructure here).
+        CFileException e;
+        if (!Open(path, flags, &e))
+            AfxThrowFileException(e.m_cause, e.m_lOsError, path);
     }
 
     virtual ~CFile() { if (m_fp) { fclose(m_fp); m_fp = nullptr; } }
@@ -2655,12 +2656,19 @@ public:
     CFile(const CFile&)            = delete;
     CFile& operator=(const CFile&) = delete;
 
-    virtual bool Open(LPCTSTR path, UINT flags, void* /*pError*/ = nullptr) {
+    // MFC signature: returns FALSE on failure (never throws); fills *pError
+    // (a caller-owned CFileException, NOT thrown) when supplied.
+    virtual BOOL Open(LPCTSTR path, UINT flags, CFileException* pError = nullptr) {
         if (m_fp) { fclose(m_fp); m_fp = nullptr; }
         const char* mode = FlagsToMode(flags);
         m_fp = fopen(PosixPath(path).c_str(), mode);
-        if (m_fp) { m_strPath = path; return true; }
-        return false;
+        if (m_fp) { m_strPath = path; return TRUE; }
+        if (pError) {
+            pError->m_cause    = CFileException::ErrnoToException(errno);
+            pError->m_lOsError = errno;
+            pError->m_strFileName = path;
+        }
+        return FALSE;
     }
     virtual void Close() { if (m_fp) { fclose(m_fp); m_fp = nullptr; } }
     virtual UINT Read(void* buf, UINT count) {

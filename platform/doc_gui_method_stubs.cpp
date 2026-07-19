@@ -25,15 +25,17 @@ bool SetColour (const CString & strName, COLORREF & iColour);
 
 // ── VARIANT helpers ──────────────────────────────────────────────────────
 
-// A zero-element VT_ARRAY|VT_VARIANT — pushVariant walks it into an empty
-// Lua table (lLBound 0, lUBound -1: the loop never runs).
+// VT_EMPTY — what every real Window*/Accelerator List method answers when
+// there is nothing to list: they either stamp VT_EMPTY explicitly
+// (WindowFontList/WindowImageList/WindowHotspotList when the window doesn't
+// exist) or never CreateOneDim ("cannot create empty array dimension":
+// WindowList/AcceleratorList) so COleSafeArray::Detach hands back VT_EMPTY.
+// pushVariant turns it into Lua nil, matching Windows.
 static VARIANT EmptySafeArray (void)
   {
-  COleSafeArray sa;
-  sa.CreateOneDim (VT_VARIANT, 0);
   VARIANT v;
   VariantInit (&v);
-  sa.Detach (v);
+  v.vt = VT_EMPTY;
   return v;
   }
 

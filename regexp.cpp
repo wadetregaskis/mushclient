@@ -32,12 +32,11 @@ pcre_extra * extra;
 
   if (!program)
     {
-#ifdef _WIN32
-    ThrowErrorException("Failed: %s at offset %d", Translate (error), erroroffset);
-#else
-    fprintf(stderr, "Regexp compile failed: %s at offset %d\n", error, erroroffset);
-    return nullptr;
-#endif // _WIN32
+    // Windows contract (all platforms): a malformed pattern THROWS a
+    // CErrorException*, so callers answer eBadRegularExpression / show the
+    // error instead of silently storing a null regexp.  Every shipping
+    // caller already carries the Windows catch(CException*) pattern.
+    ThrowErrorException("Failed: %s at offset %d", (LPCTSTR) Translate (error), erroroffset);
     }
 
   // study it for speed purposes
@@ -46,12 +45,7 @@ pcre_extra * extra;
   if (error)
     {
     pcre_free (program);
-#ifdef _WIN32
     ThrowErrorException("Regexp study failed: %s", error);
-#else
-    fprintf(stderr, "Regexp study failed: %s\n", error);
-    return nullptr;
-#endif // _WIN32
     }
 
   // we need to allocate memory for the substring offsets

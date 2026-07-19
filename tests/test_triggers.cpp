@@ -617,13 +617,13 @@ TEST(TriggerApi, AddTriggerExValidatesInput)
     EXPECT_EQ((long)eTriggerSendToInvalid,
               doc.AddTriggerEx("t4", "m", "", eEnabled, -1, 0, "", "",
                                99, 100));
-    // PORT DEVIATION (reported): Windows regcomp throws -> AddTriggerEx
-    // answers eBadRegularExpression; the port's regcomp returns nullptr and
-    // the trigger is accepted with a null compiled regexp.
-    EXPECT_EQ((long)eOK,
+    // Windows parity: regcomp throws on a malformed pattern -> AddTriggerEx
+    // answers eBadRegularExpression and does NOT store the trigger.
+    EXPECT_EQ((long)eBadRegularExpression,
               doc.AddTriggerEx("t5", "(unclosed", "",
                                eEnabled | eTriggerRegularExpression,
                                -1, 0, "", "", eSendToWorld, 100));
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetTriggerInfo("t5", 1).vt);   // not created
 }
 
 // GetTrigger round trip and GetTriggerList enumeration.

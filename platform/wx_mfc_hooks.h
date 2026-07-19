@@ -94,6 +94,13 @@ extern void  (*g_wxhook_open_default_world)();
 // macOS quit: prompt to save modified worlds + persist plugin layout before the
 // process terminates.  Returns 1 to allow the quit, 0 to cancel it.
 extern int   (*g_wxhook_query_quit_save)();
+// MFC-parity top-level exception net (CWinApp::ProcessWndProcException).
+// Called from wxApp::OnExceptionInMainLoop's implicit catch block: rethrows the
+// in-flight exception, and if it is an MFC CException* (e.g. ThrowErrorException
+// from a bad regexp in the Find/Recall dialogs), reports it in a message box,
+// frees it, and returns 1 (keep running — Windows behaviour).  Any other
+// exception type propagates back out (unchanged wx termination behaviour).
+extern int   (*g_wxhook_report_mfc_exception)();
 
 // (Quick Connect is no longer a hook: the canonical CQuickConnectDlg renders via
 // the MFC-dialog bridge from IDD_QUICK_CONNECT — see dialogs/QuickConnectDlg.cpp.)

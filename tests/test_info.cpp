@@ -459,16 +459,10 @@ TEST(InfoGetters, HostLookups)
 {
     CMUSHclientDoc doc = make_doc();
 
-    // NOTE port deviation: the COleSafeArray shim's Detach() always stamps
-    // VT_ARRAY|VT_VARIANT (with a null array when nothing was created);
-    // MFC's COleSafeArray would hand back VT_EMPTY for a blank host name.
+    // MFC parity: a never-created COleSafeArray detaches as VT_EMPTY, so a
+    // blank host name answers an empty VARIANT (nil in Lua).
     VARIANT v = doc.GetHostAddress("");
-    EXPECT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);
-    {
-        COleSafeArray blank;
-        blank.Attach(v);
-        EXPECT_EQ(0L, blank.GetOneDimSize());    // and it holds nothing
-    }
+    EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
 
     v = doc.GetHostAddress("localhost");
     ASSERT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);

@@ -374,12 +374,10 @@ TEST(DatabaseTest, ColumnNamesWithoutStatementReturnsNoNames)
     DbFixture f;
     ASSERT_NE(nullptr, f.L);
     // Windows contract: a never-created COleSafeArray detaches as VT_EMPTY →
-    // Lua nil.  The port's COleSafeArray::Detach (platform/mfc_ui.h) instead
-    // stamps VT_ARRAY|VT_VARIANT with a null parray → Lua {} (reported as a
-    // parity bug).  Accept either encoding of "no names".
+    // Lua nil (the shim's Detach now matches MFC).
     int n = run_ret(f.L,
         "local t = world.DatabaseColumnNames('db')\n"
-        "return t == nil or next(t) == nil");
+        "return t == nil");
     ASSERT_EQ(1, n);
     EXPECT_TRUE(lua_toboolean(f.L, -1));
     lua_settop(f.L, 0);
@@ -573,11 +571,10 @@ TEST(DatabaseTest, ListEmptyReturnsNoEntries)
     CMUSHclientDoc doc;
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
-    // nil on Windows (VT_EMPTY); {} on the port (Detach parity bug, see
-    // ColumnNamesWithoutStatementReturnsNoNames).  Either way: no entries.
+    // nil on Windows: no databases → never-created safe array → VT_EMPTY.
     int n = run_ret(L,
         "local t = world.DatabaseList()\n"
-        "return t == nil or next(t) == nil");
+        "return t == nil");
     ASSERT_EQ(1, n);
     EXPECT_TRUE(lua_toboolean(L, -1));
     lua_close(L);
@@ -777,10 +774,8 @@ TEST(DatabaseTest, CppColumnValuesSafearrayTypes)
     EXPECT_STREQ("alpha", (const char*)elems[1].bstrVal);
     EXPECT_EQ(VT_R8, (int)elems[2].vt);
     EXPECT_NEAR(1.5, elems[2].dblVal, 1e-9);
-    // SQL NULL element: VT_NULL on Windows (ChangeType(VT_NULL)); the port's
-    // COleVariant::ChangeType has no VT_NULL arm, so it stays VT_EMPTY
-    // (reported as a minor shim parity gap — both encode "no value").
-    EXPECT_TRUE(elems[3].vt == VT_NULL || elems[3].vt == VT_EMPTY);
+    // SQL NULL element: ChangeType(VT_NULL) stamps VT_NULL (Windows parity)
+    EXPECT_EQ(VT_NULL, (int)elems[3].vt);
     VariantClear(&v);
 }
 

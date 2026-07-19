@@ -560,10 +560,11 @@ TEST(LuaScripting, GuiStubsReturnValues)
     EXPECT_EQ(30073.0, lua_tonumber(L, -1));
     lua_settop(L, 0);
 
-    // WindowList → empty table (not nil)
+    // WindowList with no miniwindows → nil (Windows: the safe array is never
+    // created — "cannot create empty dimension" — so Detach hands back VT_EMPTY)
     n = run_ret(L, "return world.WindowList()");
     EXPECT_EQ(1, n);
-    EXPECT_TRUE(lua_istable(L, -1));
+    EXPECT_TRUE(lua_isnil(L, -1));
     lua_settop(L, 0);
 
     // ChatCall → eNoChatConnections (30044)

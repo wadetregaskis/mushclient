@@ -19,10 +19,21 @@ TEST(RegexpTest, CompilePatternWithCapture) {
     delete r;
 }
 
-TEST(RegexpTest, CompileInvalidPatternReturnsNull) {
-    // An unmatched bracket is an invalid PCRE pattern
-    t_regexp* r = regcomp("[unclosed");
-    EXPECT_EQ(nullptr, r);
+TEST(RegexpTest, CompileInvalidPatternThrows) {
+    // An unmatched bracket is an invalid PCRE pattern.  Windows contract
+    // (regexp.cpp): regcomp THROWS a CException* (ThrowErrorException) so
+    // callers surface eBadRegularExpression instead of storing a null regexp.
+    bool threw = false;
+    try {
+        regcomp("[unclosed");
+    } catch (CException* e) {
+        char msg[500] = "";
+        e->GetErrorMessage(msg, sizeof msg);
+        EXPECT_NE(nullptr, strstr(msg, "Failed"));   // "Failed: <pcre error> at offset N"
+        e->Delete();
+        threw = true;
+    }
+    EXPECT_TRUE(threw);
 }
 
 // ── Matching ──────────────────────────────────────────────────────────────

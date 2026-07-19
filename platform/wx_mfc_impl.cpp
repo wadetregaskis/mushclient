@@ -2250,6 +2250,30 @@ static void SaveMainWindowGeometry(wxTopLevelWindow* frame)
 // close/save flow, so without this a quit silently discards unsaved world edits
 // and loses plugin layout (Quow's miniwindow positions).  Returns 1 to allow the
 // quit, 0 to cancel it (the user picked Cancel at a save prompt).
+// MFC-parity top-level exception net (mirrors CWinApp::ProcessWndProcException):
+// on Windows a CException* escaping a command handler — e.g. ThrowErrorException
+// from regcomp on a bad user-typed regexp in the Find/Recall dialogs — is caught
+// by the framework, reported in a message box, and the app keeps running.  wx has
+// no such net, so wxApp::OnExceptionInMainLoop calls this from its catch block.
+// Rethrows the in-flight exception; returns 1 if it was an MFC exception
+// (reported + freed).  Anything else propagates back out unchanged.
+static int hook_report_mfc_exception()
+{
+    try
+    {
+        throw;   // rethrow the exception OnExceptionInMainLoop caught
+    }
+    catch (CException* e)
+    {
+        char sMessage[500] = "";
+        e->GetErrorMessage(sMessage, sizeof sMessage);
+        e->Delete();
+        ::UMessageBox(sMessage[0] ? sMessage : "An unexpected error occurred.",
+                      MB_ICONEXCLAMATION);
+        return 1;   // handled — keep the app running (Windows behaviour)
+    }
+}
+
 static int hook_query_quit_save()
 {
     // Persist the main window geometry on every quit — [NSApp terminate:] does
@@ -4164,6 +4188,7 @@ void wx_mfc_install_hooks()
     g_wxhook_open_world_file    = hook_open_world_file;
     g_wxhook_open_default_world = hook_open_default_world;
     g_wxhook_query_quit_save    = hook_query_quit_save;
+    g_wxhook_report_mfc_exception = hook_report_mfc_exception;
     g_wxhook_set_status         = hook_set_status;
     g_wxhook_save_world         = hook_save_world;
     g_wxhook_file_dialog        = hook_file_dialog;

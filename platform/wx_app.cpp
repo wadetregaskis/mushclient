@@ -134,6 +134,19 @@ public:
         return wxApp::OnExit();
     }
 
+    // MFC-parity top-level exception net.  On Windows, a CException* escaping a
+    // command handler (e.g. ThrowErrorException from a bad regexp typed into the
+    // Find/Recall dialogs) is caught by CWinApp::ProcessWndProcException, shown
+    // in a message box, and the app keeps running.  Route the same cases through
+    // the bridge hook (which rethrows and catches MFC exceptions); any other
+    // exception type rethrows into wx's default termination path, unchanged.
+    bool OnExceptionInMainLoop() override
+    {
+        if (g_wxhook_report_mfc_exception && g_wxhook_report_mfc_exception())
+            return true;   // reported — keep the main loop running
+        throw;             // not an MFC exception — default wx behaviour
+    }
+
 #ifdef __APPLE__
     // Every quit on macOS — Cmd-Q, the app menu, and the Dock's Quit — funnels
     // through Cocoa's applicationShouldTerminate:, which wx forwards here.  Run

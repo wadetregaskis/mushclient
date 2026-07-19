@@ -10,7 +10,11 @@
 #include "platform/doc_stub.h"
 
 #include <cstring>
+#include <cstdio>
 #include <string>
+#include <unistd.h>
+
+#include "flags.h"   // eEnabled / eOmitFromOutput / ... (AddTriggerEx flags)
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -907,6 +911,437 @@ TEST(AnsiNoteTest, StateAndColoursRestoredAfterCall)
     EXPECT_TRUE(doc.m_bNotesInRGB);              // was RGB before, still RGB
     EXPECT_EQ(old_fore, doc.m_iNoteColourFore);
     EXPECT_EQ(old_back, doc.m_iNoteColourBack);
+}
+
+// ═══ Trigger pipeline: ProcessPreviousLine / ProcessOneTriggerSequence /
+//     SendTo — triggers fired by lines arriving through DisplayMsg ══════════
+
+static bool any_line_contains(CMUSHclientDoc& doc, const char* text)
+{
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find(text) != std::string::npos)
+            return true;
+    }
+    return false;
+}
+
+static int line_occurrences(CMUSHclientDoc& doc, const char* text)
+{
+    int n = 0;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find(text) != std::string::npos)
+            n++;
+    }
+    return n;
+}
+
+// A matched trigger with send-to-output writes its (wildcard-expanded)
+// response into the output buffer.
+TEST(TriggerPipeline, SendToOutputWritesExpandedResponse)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("t1", "* says *", "reply-to-%1",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToOutput, 100));
+    feed(doc, "bob says hi\n");
+    EXPECT_TRUE(any_line_contains(doc, "reply-to-bob"));
+}
+
+// omit_from_output removes the matched line from the buffer entirely.
+TEST(TriggerPipeline, OmitFromOutputRemovesMatchedLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("om", "secret*", "",
+                                          eEnabled | eOmitFromOutput,
+                                          -1, 0, "", "", eSendToWorld, 100));
+    feed(doc, "before\n");
+    feed(doc, "secret stuff\n");
+    feed(doc, "after\n");
+    EXPECT_TRUE(any_line_contains(doc, "before"));
+    EXPECT_TRUE(any_line_contains(doc, "after"));
+    EXPECT_FALSE(any_line_contains(doc, "secret"));
+}
+
+// send-to-variable stores the expanded response in the variable named by the
+// trigger's label (methods: SendTo eSendToVariable).
+TEST(TriggerPipeline, SendToVariableStoresWildcard)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("capture", "* says *", "%2",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToVariable, 100));
+    feed(doc, "bob says hello-there\n");
+    VARIANT v = doc.GetVariable("capture");
+    ASSERT_EQ(VT_BSTR, (int)v.vt);
+    EXPECT_STREQ("hello-there", (const char*)CString(v.bstrVal));
+}
+
+// lowercase_wildcard lowers the expansion before it is used.
+TEST(TriggerPipeline, LowercaseWildcardLowersExpansion)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("lower", "shout *", "%1",
+                                          eEnabled | eLowercaseWildcard,
+                                          -1, 0, "", "", eSendToVariable, 100));
+    feed(doc, "shout LOUD-WORDS\n");
+    VARIANT v = doc.GetVariable("lower");
+    ASSERT_EQ(VT_BSTR, (int)v.vt);
+    EXPECT_STREQ("loud-words", (const char*)CString(v.bstrVal));
+}
+
+// keep_evaluating lets a later trigger (higher sequence) also fire; without it
+// evaluation stops at the first match.
+TEST(TriggerPipeline, KeepEvaluatingRunsLaterTriggerToo)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("first", "combo*", "first-fired",
+                                          eEnabled | eKeepEvaluating,
+                                          -1, 0, "", "", eSendToOutput, 10));
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("second", "combo*", "second-fired",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToOutput, 20));
+    feed(doc, "combo attack\n");
+    EXPECT_TRUE(any_line_contains(doc, "first-fired"));
+    EXPECT_TRUE(any_line_contains(doc, "second-fired"));
+}
+
+TEST(TriggerPipeline, WithoutKeepEvaluatingLaterTriggerSkipped)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("first", "combo*", "first-fired",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToOutput, 10));
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("second", "combo*", "second-fired",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToOutput, 20));
+    feed(doc, "combo attack\n");
+    EXPECT_TRUE(any_line_contains(doc, "first-fired"));
+    EXPECT_FALSE(any_line_contains(doc, "second-fired"));
+}
+
+// A one-shot trigger fires once and deletes itself.
+TEST(TriggerPipeline, OneShotTriggerDeletedAfterFiring)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("os", "onceonly*", "once-fired",
+                                          eEnabled | eTriggerOneShot,
+                                          -1, 0, "", "", eSendToOutput, 100));
+    feed(doc, "onceonly now\n");
+    EXPECT_TRUE(any_line_contains(doc, "once-fired"));
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetTriggerInfo("os", 1).vt);  // gone
+    feed(doc, "onceonly again\n");
+    EXPECT_EQ(1, line_occurrences(doc, "once-fired"));
+}
+
+// repeat applies the trigger's COLOUR CHANGE to every match on the line
+// (ProcessPreviousLine: "repeating only applies to regular expressions, with
+// repeat requested" — it rescans from the previous match's end column).
+TEST(TriggerPipeline, RepeatColoursEveryMatchOnTheLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("rep", "ding", "",
+                                          eEnabled | eTriggerRegularExpression,
+                                          -1, 0, "", "", eSendToWorld, 100));
+    ASSERT_EQ((long)eOK, doc.SetTriggerOption("rep", "repeat", "1"));
+    // custom colour 17 → OTHER_CUSTOM (option subtracts 1), i.e. RGB "other"
+    ASSERT_EQ((long)eOK, doc.SetTriggerOption("rep", "custom_colour", "17"));
+    ASSERT_EQ((long)eOK, doc.SetTriggerOption("rep", "other_text_colour",
+                                              "1193046"));   // 0x123456
+    feed(doc, "ding x ding y ding\n");
+
+    CLine* l = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l);
+    int recoloured = 0;
+    for (POSITION pos = l->styleList.GetHeadPosition(); pos; ) {
+        CStyle* s = l->styleList.GetNext(pos);
+        if ((s->iFlags & COLOUR_RGB) && s->iForeColour == 0x123456)
+            recoloured++;
+    }
+    EXPECT_EQ(3, recoloured);    // all three "ding"s recoloured
+}
+
+// match_style: a trigger restricted to ANSI-red text only fires on text whose
+// style carries the required foreground palette index (ProcessPreviousLine's
+// get_foreground / iMatch block).
+TEST(TriggerPipeline, ColourMatchTriggerNeedsMatchingAnsiColour)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("cm", "alarm*", "colour-fired",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToOutput, 100));
+    // require foreground = ANSI red (palette index 1)
+    char match[16];
+    snprintf(match, sizeof match, "%d", TRIGGER_MATCH_TEXT | (1 << 4));
+    ASSERT_EQ((long)eOK, doc.SetTriggerOption("cm", "match_style", match));
+
+    feed(doc, "alarm plain\n");                       // default white text
+    EXPECT_FALSE(any_line_contains(doc, "colour-fired"));
+
+    feed(doc, "\x1b[31malarm red\x1b[0m\n");          // ANSI red
+    EXPECT_TRUE(any_line_contains(doc, "colour-fired"));
+}
+
+// send-to-status routes the response into the status-line message.
+TEST(TriggerPipeline, SendToStatusSetsStatusMessage)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("st", "status*", "the status text",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToStatus, 100));
+    feed(doc, "status update\n");
+    EXPECT_STREQ("the status text", (const char*)doc.m_strStatusMessage);
+}
+
+// send-to-command-queue routes through SendMsg(queue=true).  Offline, SendMsg
+// bails before queuing (world closed) so the queue stays empty — the arm runs
+// but nothing is enqueued.
+TEST(TriggerPipeline, SendToQueueArmOfflineLeavesQueueEmpty)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("q", "enqueue*", "queued-cmd",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToCommandQueue, 100));
+    feed(doc, "enqueue this\n");
+    EXPECT_EQ(1L, doc.GetTriggerInfo("q", 21).lVal);   // matched
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetQueue().vt);       // nothing queued offline
+    doc.DiscardQueue();
+}
+
+// send-to-log writes the response into the open log file.
+TEST(TriggerPipeline, SendToLogWritesToLogFile)
+{
+    CMUSHclientDoc doc = make_doc();
+    char logpath[256];
+    snprintf(logpath, sizeof logpath, "/tmp/mc_trig_log_%d.txt", (int)getpid());
+    ASSERT_EQ((long)eOK, doc.OpenLog(logpath, FALSE));
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("lg", "logthis*", "logged-response",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToLogFile, 100));
+    feed(doc, "logthis now\n");
+    doc.CloseLog();
+    FILE* f = fopen(logpath, "rb");
+    ASSERT_NE(nullptr, f);
+    char buf[4096] = {0};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    EXPECT_NE(nullptr, strstr(buf, "logged-response"));
+    unlink(logpath);
+}
+
+// omit_from_log keeps the matched line out of the log while it stays in the
+// output buffer.
+TEST(TriggerPipeline, OmitFromLogSuppressesLineInLogOnly)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bLogOutput = TRUE;                     // log incoming lines
+    char logpath[256];
+    snprintf(logpath, sizeof logpath, "/tmp/mc_trig_log2_%d.txt", (int)getpid());
+    ASSERT_EQ((long)eOK, doc.OpenLog(logpath, FALSE));
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("ol", "hidden*", "",
+                                          eEnabled | eOmitFromLog,
+                                          -1, 0, "", "", eSendToWorld, 100));
+    feed(doc, "visible line\n");
+    feed(doc, "hidden line\n");
+    doc.CloseLog();
+    FILE* f = fopen(logpath, "rb");
+    ASSERT_NE(nullptr, f);
+    char buf[4096] = {0};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    EXPECT_NE(nullptr, strstr(buf, "visible line"));
+    EXPECT_EQ(nullptr, strstr(buf, "hidden line"));
+    EXPECT_TRUE(any_line_contains(doc, "hidden line"));   // still displayed
+    unlink(logpath);
+}
+
+// A multi-line regexp trigger (lines_to_match = 2) matches across the joined
+// recent lines.
+TEST(TriggerPipeline, MultiLineTriggerMatchesAcrossTwoLines)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("ml", "first-part\\nsecond-part",
+                                          "multi-fired",
+                                          eEnabled | eTriggerRegularExpression,
+                                          -1, 0, "", "", eSendToOutput, 100));
+    ASSERT_EQ((long)eOK, doc.SetTriggerOption("ml", "multi_line", "1"));
+    ASSERT_EQ((long)eOK, doc.SetTriggerOption("ml", "lines_to_match", "2"));
+    feed(doc, "first-part\n");
+    EXPECT_FALSE(any_line_contains(doc, "multi-fired"));
+    feed(doc, "second-part\n");
+    EXPECT_TRUE(any_line_contains(doc, "multi-fired"));
+}
+
+// send-to-speedwalk / send-to-execute / send-immediate arms run without a
+// connection (the world-closed branches of SendTo).
+TEST(TriggerPipeline, SpeedwalkExecuteImmediateArmsOffline)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("sw", "walknow*", "2n",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToSpeedwalk, 100));
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("ex", "execnow*", "some command",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToExecute, 100));
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("im", "sendnow*", "immediate cmd",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendImmediate, 100));
+    feed(doc, "walknow\n");
+    feed(doc, "execnow\n");
+    feed(doc, "sendnow\n");
+    // all three matched (info 21 = nMatched); no crash, no world connection
+    EXPECT_EQ(1L, doc.GetTriggerInfo("sw", 21).lVal);
+    EXPECT_EQ(1L, doc.GetTriggerInfo("ex", 21).lVal);
+    EXPECT_EQ(1L, doc.GetTriggerInfo("im", 21).lVal);
+}
+
+// The trigger sound arm: a configured sound file is attempted (and fails
+// headless) without disturbing the rest of the pipeline.
+TEST(TriggerPipeline, TriggerSoundArmHeadless)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("snd", "noise*", "sound-fired",
+                                          eEnabled, -1, 0,
+                                          "/no/such/beep.wav", "",
+                                          eSendToOutput, 100));
+    feed(doc, "noise here\n");
+    EXPECT_TRUE(any_line_contains(doc, "sound-fired"));
+}
+
+// ═══ MXP feed + extended ANSI colours through DisplayMsg ═════════════════
+
+// With MXP on, tags are consumed and their effects applied: <B> bolds the
+// enclosed text (HILITE style bit), entities are decoded.
+TEST(MxpDisplay, BoldTagConsumedAndStyleApplied)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.MXP_On();
+    feed(doc, "pre <B>bolded</B> post\n");
+    CLine* l = nth_line(doc, doc.m_LineList.GetCount() > 1 ? 1 : 0);
+    // find the line that carries the text (MXP_On may note a message first)
+    CLine* target = nullptr;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* cand = doc.m_LineList.GetNext(pos);
+        if (line_text(cand).find("bolded") != std::string::npos) { target = cand; break; }
+    }
+    ASSERT_NE(nullptr, target);
+    EXPECT_TRUE(line_text(target).find("<B>") == std::string::npos);  // tag consumed
+    size_t at = line_text(target).find("bolded");
+    CStyle* s = style_at(target, (int)at);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & HILITE) != 0);
+    (void)l;
+}
+
+TEST(MxpDisplay, EntityDecodedAndUnknownTagSkipped)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.MXP_On();
+    feed(doc, "a &lt;tag&gt; &amp; more\n");
+    bool found = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (line_text(l).find("a <tag> & more") != std::string::npos) found = true;
+    }
+    EXPECT_TRUE(found);
+
+    // an unknown element reports an MXP error but the surrounding text lives on
+    feed(doc, "x <NOSUCHTAG> y\n");
+    bool kept = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (line_text(l).find("y") != std::string::npos) kept = true;
+    }
+    EXPECT_TRUE(kept);
+}
+
+TEST(MxpDisplay, ColourTagAppliesRgbForeground)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.MXP_On();
+    feed(doc, "<COLOR RED>tinted</COLOR>\n");
+    CLine* target = nullptr;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* cand = doc.m_LineList.GetNext(pos);
+        if (line_text(cand).find("tinted") != std::string::npos) { target = cand; break; }
+    }
+    ASSERT_NE(nullptr, target);
+    size_t at = line_text(target).find("tinted");
+    CStyle* s = style_at(target, (int)at);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & COLOURTYPE) == COLOUR_RGB);
+    EXPECT_EQ((COLORREF)RGB(255, 0, 0), s->iForeColour);
+}
+
+// xterm-256 (38;5;n) and truecolor (38;2;r;g;b) ANSI arms.  In ANSI colour
+// mode the 256-index is stored raw (translation to RGB is deferred to display
+// time); truecolor switches the style to RGB immediately.
+TEST(AnsiDisplay, Xterm256ForegroundColour)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "\x1b[38;5;196mX\x1b[0m\n");        // 196 = pure red in the cube
+    CLine* l = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l);
+    CStyle* s = style_at(l, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & COLOURTYPE) == COLOUR_ANSI);
+    EXPECT_EQ((COLORREF)196, s->iForeColour);     // raw index, deferred lookup
+}
+
+TEST(AnsiDisplay, TruecolorForegroundColour)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "\x1b[38;2;1;2;3mY\x1b[0m\n");
+    CLine* l = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l);
+    CStyle* s = style_at(l, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & COLOURTYPE) == COLOUR_RGB);
+    EXPECT_EQ((COLORREF)RGB(1, 2, 3), s->iForeColour);
+}
+
+TEST(AnsiDisplay, Xterm256BackgroundColour)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "\x1b[48;5;21mZ\x1b[0m\n");         // 21 = pure blue in the cube
+    CLine* l = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l);
+    CStyle* s = style_at(l, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & COLOURTYPE) == COLOUR_ANSI);
+    EXPECT_EQ((COLORREF)21, s->iBackColour);      // raw index, deferred lookup
+}
+
+// ═══ doc_shared.cpp direct arms ══════════════════════════════════════════
+
+// ShiftTabCompleteItem populates the extra Shift+Tab completion set.
+TEST(DocSharedArms, ShiftTabCompleteItemAccumulates)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_EQ((long)eOK, doc.ShiftTabCompleteItem("alpha"));
+    EXPECT_EQ((long)eOK, doc.ShiftTabCompleteItem("beta"));
+    EXPECT_EQ(2u, (unsigned)doc.m_ExtraShiftTabCompleteItems.size());
+}
+
+// OnGameTrace toggles tracing and notes "Trace on/off" into the output.
+TEST(DocSharedArms, OnGameTraceTogglesAndNotes)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_FALSE(doc.m_bTrace);
+    doc.OnGameTrace();
+    EXPECT_TRUE(doc.m_bTrace);
+    doc.OnGameTrace();
+    EXPECT_FALSE(doc.m_bTrace);
+}
+
+// FormatTime substitutes %N (world name) and strftime codes.
+TEST(DocSharedArms, FormatTimeSubstitutesWorldName)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_mush_name = "MyWorld";
+    CString s = doc.FormatTime(CTime(2026, 7, 16, 12, 34, 56), "%N-%Y", false);
+    EXPECT_STREQ("MyWorld-2026", (const char*)s);
 }
 
 MC_TEST_MAIN()

@@ -461,13 +461,11 @@ TEST(AliasApi, AddAliasValidatesInput)
     EXPECT_EQ((long)eAliasCannotBeEmpty, doc.AddAlias("empty", "", "x", 0, ""));
     // label must be a valid object name
     EXPECT_EQ((long)eInvalidObjectLabel, doc.AddAlias("1bad", "m", "x", 0, ""));
-    // PORT DEVIATION (reported): Windows regcomp throws, so AddAlias answers
-    // eBadRegularExpression there.  The port's regcomp (regexp.cpp #else arm)
-    // prints and returns nullptr, so the alias is accepted with a null
-    // compiled regexp.  Flip this to eBadRegularExpression when parity is
-    // restored.
-    EXPECT_EQ((long)eOK,
+    // Windows parity: regcomp throws on a malformed pattern, so AddAlias
+    // answers eBadRegularExpression and does NOT store the alias.
+    EXPECT_EQ((long)eBadRegularExpression,
               doc.AddAlias("rx", "(unclosed", "x", eAliasRegularExpression, ""));
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetAliasInfo("rx", 1).vt);   // not created
 
     // a blank label is auto-assigned (alias still created)
     long before = 0;

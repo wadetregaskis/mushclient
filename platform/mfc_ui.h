@@ -5238,6 +5238,11 @@ public:
     void ChangeType(VARTYPE newvt, const COleVariant* = nullptr) {
         if (vt == newvt) return;
         switch (newvt) {
+        case 1: {  // VT_NULL — MFC/OLE: VariantChangeType to VT_NULL yields a
+                   // NULL variant (DatabaseColumnValues marks SQL NULLs this way;
+                   // pushVariant then answers Lua nil for the element).
+            vt = 1; lVal = 0; break;
+        }
         case 3: {  // VT_I4
             long v = 0;
             switch (vt) {
@@ -5809,13 +5814,24 @@ public:
     void AccessData(void** pp) { if (pp) *pp = m_psa ? m_psa->pvData : nullptr; }
     void UnaccessData() {}
     // Detach: hand the array to a VARIANT and give up ownership.
+    // MFC contract: COleSafeArray IS a VARIANT that starts VT_EMPTY; only
+    // Create/CreateOneDim stamp VT_ARRAY.  So a never-created array detaches
+    // as VT_EMPTY (→ nil in Lua), NOT as VT_ARRAY with a null parray.
     COleVariant Detach() {
-        COleVariant v; v.vt = (unsigned short)(VT_ARRAY | VT_VARIANT);
-        v.parray = m_psa; m_psa = nullptr; return v;
+        COleVariant v;
+        if (m_psa) {
+            v.vt = (unsigned short)(VT_ARRAY | VT_VARIANT);
+            v.parray = m_psa; m_psa = nullptr;
+        }
+        return v;   // default-constructed: VT_EMPTY
     }
     void Detach(VARIANT& out) {
-        out.vt = (unsigned short)(VT_ARRAY | VT_VARIANT);
-        out.parray = m_psa; m_psa = nullptr;
+        if (m_psa) {
+            out.vt = (unsigned short)(VT_ARRAY | VT_VARIANT);
+            out.parray = m_psa; m_psa = nullptr;
+        } else {
+            out.vt = VT_EMPTY; out.parray = nullptr;
+        }
     }
     void Attach(VARIANT& v) {
         if (m_psa) SafeArrayDestroy(m_psa);
@@ -5824,8 +5840,13 @@ public:
     void Clear() { if (m_psa) { SafeArrayDestroy(m_psa); m_psa = nullptr; } }
     // Implicit conversion: shares the array WITHOUT detaching, so use only when
     // the COleSafeArray outlives the result (GetXxxList uses Detach() instead).
+    // Same MFC contract as Detach: never-created converts as VT_EMPTY.
     operator COleVariant() const {
-        COleVariant v; v.vt = (unsigned short)(VT_ARRAY | VT_VARIANT); v.parray = m_psa; return v;
+        COleVariant v;
+        if (m_psa) {
+            v.vt = (unsigned short)(VT_ARRAY | VT_VARIANT); v.parray = m_psa;
+        }
+        return v;
     }
 };
 // (The former non-full inert COleSafeArray is gone: mushcore uses the real one

@@ -100,11 +100,31 @@ void CChatSocket::SendChatMessage (int, CString, long) {}
 
 // ConnectSocket() is implemented in doc_portable.cpp.
 
-bool CMUSHclientDoc::FindStyle(const CLine* /*pLine*/,
-                               int /*iWantedCol*/,
-                               int& /*iCol*/,
-                               CStyle*& /*pStyle*/,
-                               POSITION& /*foundpos*/) const { return false; }
+// BYTE-COPY of doc.cpp:2662 FindStyle — pure style-list logic, no GUI.  The
+// old `return false` stub silently disabled every FindStyle consumer headless
+// (notably ProcessPreviousLine's trigger colour-change block, which starts by
+// locating the style run at the match column).  Remove when doc.cpp adopts.
+bool CMUSHclientDoc::FindStyle (const CLine * pLine,         // which line
+                                const int iWantedCol,  // which column we want
+                                int & iCol,            // which column style goes up to
+                                CStyle * & pStyle,     // return style pointer
+                                POSITION & foundpos) const  // and its position
+  {
+   foundpos = NULL;   // none initially
+   iCol = 0;
+
+   // find first style to change
+   for (POSITION pos = pLine->styleList.GetHeadPosition(); pos; )
+     {
+     foundpos = pos;  // position to insert after
+     pStyle = pLine->styleList.GetNext (pos);
+     iCol += pStyle->iLength;
+     if (iCol >= iWantedCol)      // NJG - version 3.73
+        break;    // found first style
+      }
+
+  return foundpos != NULL;
+  }   // end of CMUSHclientDoc::FindStyle
 
 const bool CMUSHclientDoc::CheckScriptingAvailable(const char* /*sWhat*/,
                                                    const DISPID /*dispid*/,

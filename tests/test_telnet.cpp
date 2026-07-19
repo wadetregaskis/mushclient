@@ -580,4 +580,112 @@ TEST(TelnetTest, DefaultTerminalIdentificationIsLowercaseMushclient)
     EXPECT_STREQ("lua",        (const char*)doc.m_strLanguage);
 }
 
+// ── MCCP negotiation + decompression switch-on (round-2 additions) ────────
+
+// IAC WILL COMPRESS2 initialises zlib + buffers and agrees (Send_IAC_DO);
+// the following IAC SB COMPRESS2 IAC SE then turns decompression on.
+TEST(TelnetTest, WillCompress2ThenSubnegEnablesDecompression)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.Phase_WILL(TELOPT_COMPRESS2);
+    EXPECT_TRUE(doc.m_bSupports_MCCP_2);
+    EXPECT_TRUE(doc.m_bCompressInitOK);
+    EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[TELOPT_COMPRESS2]);
+
+    doc.Phase_SB(TELOPT_COMPRESS2);
+    EXPECT_EQ(HAVE_SUBNEGOTIATION, doc.m_phase);
+    doc.Phase_SUBNEGOTIATION_IAC(SE);          // Handle_TELOPT_COMPRESS2
+    EXPECT_TRUE(doc.m_bCompress);
+    EXPECT_EQ(2, doc.m_iMCCP_type);
+    EXPECT_EQ(NONE, doc.m_phase);
+}
+
+// MCCP v1: IAC WILL COMPRESS, then the odd IAC SB COMPRESS WILL SE sequence
+// (no IAC before SE) drives Phase_COMPRESS → Phase_COMPRESS_WILL, which
+// resets zlib and turns decompression on with type 1.
+TEST(TelnetTest, CompressV1FullSequenceEnablesDecompression)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.Phase_WILL(TELOPT_COMPRESS);           // agrees, allocates buffers
+    EXPECT_TRUE(doc.m_bCompressInitOK);
+    EXPECT_FALSE(doc.m_bSupports_MCCP_2);      // v1, not v2
+
+    doc.Phase_SB(TELOPT_COMPRESS);
+    EXPECT_EQ(HAVE_COMPRESS, doc.m_phase);
+    doc.Phase_COMPRESS(WILL);
+    EXPECT_EQ(HAVE_COMPRESS_WILL, doc.m_phase);
+    doc.Phase_COMPRESS_WILL(SE);
+    EXPECT_TRUE(doc.m_bCompress);
+    EXPECT_EQ(1, doc.m_iMCCP_type);
+}
+
+// disable_compression refuses the offer outright (Send_IAC_DONT arm).
+TEST(TelnetTest, WillCompress2RefusedWhenCompressionDisabled)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bDisableCompression = TRUE;
+    doc.Phase_WILL(TELOPT_COMPRESS2);
+    EXPECT_FALSE(doc.m_bSupports_MCCP_2);
+    EXPECT_TRUE(doc.m_bClient_sent_IAC_DONT[TELOPT_COMPRESS2]);
+}
+
+// The MXP subnegotiation turns MXP on when the world wants it "on command"
+// (Handle_TELOPT_MXP: eOnCommandMXP → MXP_On).
+TEST(TelnetTest, MxpSubnegotiationTurnsMxpOnInCommandMode)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iUseMXP = eOnCommandMXP;
+    EXPECT_FALSE(doc.m_bMXP);
+    doc.Phase_SB(TELOPT_MXP);
+    doc.Phase_SUBNEGOTIATION_IAC(SE);          // Handle_TELOPT_MXP
+    EXPECT_TRUE(doc.m_bMXP);
+}
+
+// IAC WILL MXP in query mode turns MXP on immediately.
+TEST(TelnetTest, WillMxpQueryModeTurnsMxpOnImmediately)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iUseMXP = eQueryMXP;
+    doc.Phase_WILL(TELOPT_MXP);
+    EXPECT_TRUE(doc.m_bMXP);
+    EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[TELOPT_MXP]);
+
+    // and DONT turns it back off (Phase_DONT's MXP arm)
+    doc.Phase_DONT(TELOPT_MXP);
+    EXPECT_FALSE(doc.m_bMXP);
+}
+
+// Aardwolf-style option 102: WILL is agreed to, and its subnegotiation
+// dispatches Handle_TELOPT_MUD_SPECIFIC (plugin callback; no plugins → no-op)
+// then falls through to the generic subnegotiation callback.
+TEST(TelnetTest, MudSpecificWillAndSubnegotiation)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.Phase_WILL(TELOPT_MUD_SPECIFIC);
+    EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[TELOPT_MUD_SPECIFIC]);
+
+    doc.Phase_SB(TELOPT_MUD_SPECIFIC);
+    doc.Phase_SUBNEGOTIATION('h');
+    doc.Phase_SUBNEGOTIATION('i');
+    doc.Phase_SUBNEGOTIATION(IAC);
+    doc.Phase_SUBNEGOTIATION_IAC(SE);
+    EXPECT_EQ(NONE, doc.m_phase);
+    EXPECT_EQ(1, doc.m_nCount_IAC_SB);
+}
+
+// TERMINAL-TYPE SEND advances the MTTS sequence: name → terminal → MTTS
+// bitvector (which stays at step 2 for later requests).
+TEST(TelnetTest, TerminalTypeSendAdvancesMttsSequence)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_ttype_sequence = 0;
+
+    for (int expected : {1, 2, 2}) {
+        doc.Phase_SB(TELOPT_TERMINAL_TYPE);
+        doc.Phase_SUBNEGOTIATION(1);           // TTYPE_SEND
+        doc.Phase_SUBNEGOTIATION_IAC(SE);
+        EXPECT_EQ(expected, doc.m_ttype_sequence);
+    }
+}
+
 MC_TEST_MAIN()

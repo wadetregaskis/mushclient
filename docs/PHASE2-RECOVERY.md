@@ -261,3 +261,40 @@ doing only if a one-day scratch-link probe proves the link closure is small. Do 
 "finish the diagram" pull the project into a 12-20-day, 100+-file big-bang whose payoff
 is tidiness plus the last 10% of test fidelity — unless that closure number comes back
 cheap.
+
+---
+
+## 5. Link-closure probe result (the §4 measurement, executed 2026-07-19)
+
+Ground-truth `ld -force_load` probe (layout-independent; net of the 116+48 already-staged
+stubs): a "frankenlib" mushcore with `doc.cpp`+`doc_construct.cpp`+`Utilities.cpp` (real,
+`MUSHCLIENT_FULL_BUILD`) swapped in for the portable twins.
+
+**NET GUI-only undefined symbols: 78** (≈69 distinct entities) for the doc-only swap;
+**93** for the full faithful flip (also flipping lua_utils/world_debug). Plus 18
+relocation artifacts = `doc_portable.cpp`'s own glue moving to the staged
+`doc_headless_stubs.cpp`/`headless_app.cpp` landing pads (existing code, not new work).
+
+Disposition of the 78:
+- **~66 pure no-op stubs** — extend `doc_gui_method_stubs.cpp`'s existing pattern. The
+  memo's feared "~70-method world-prefs family" is really **26 address-only command
+  handlers** (message-map takes their pointer; never invoked headless) + 11 dialog
+  ctor/vtable pairs.
+- **~2 tiny real headless bodies** (`CreateScriptEngine`/`DisableScripting`, ~10 lines).
+- **~10 GDI shim entries** (`CDC`/`CFont`/`CBitmap`/`CreateDIBSection` — used by
+  `LoadPng`/font metrics) → a bounded headless GDI shim over the existing
+  `pal::ISurface`/`cpu_raster` CPU path. This is the memo's GDI-ODR risk #2, now scoped
+  to ~10 entries with an existing CPU backend.
+- **Zero genuinely un-seamable symbols.** No live-GUI-object dependency.
+
+**VERDICT: B's link closure is SMALL and stub-resolvable — the §4 greenlight condition
+is MET.** Confidence HIGH (ground-truth linker output, verified net of staged stubs, zero
+scripting-engine contamination). Caveats: `-force_load` is an upper bound (real link pulls
+a subset); the count does NOT de-risk the two *runtime* Stage-7 concerns — GDI-shape ODR
+correctness and the ctor/dtor re-baseline (~8 headless behaviours shift when adopting the
+real ctor) — which remain, bounded, whatever path is chosen.
+
+**Net decision inputs:** A dead; Stop fully defensible (both goals met, 0 incremental
+cost); B viable with its dominant unknown now quantified-cheap, remaining cost ≈ a large
+atomic ~100-file landing + ctor re-baseline + a ~10-entry GDI shim, for one-library
+tidiness + the last ~10% of test fidelity. The choice is now a clean value judgment.

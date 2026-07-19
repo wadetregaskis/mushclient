@@ -506,6 +506,17 @@ if(NOT WIN32)
         # doc_stub.h weak inlines during the flip so mushcore keeps linking.
         platform/doc_headless_stubs.cpp
 
+        # Phase 2 Unit B-1 (docs/PHASE2-RECOVERY.md §5/§6): the FIRST pre-flip
+        # additive step of the Option-B big-bang.  Strong out-of-line defs (real
+        # headers, windows_stubs.cpp pattern) for the ~66 no-op GUI symbols + 2
+        # tiny-real scripting bodies that the real doc.cpp/doc_construct.cpp/
+        # Utilities.cpp reference but that live only in mushapp-only GUI TUs
+        # (world-prefs command handlers, dialog ctor/vtable pairs, view/notepad
+        # no-ops, CreateScriptEngine/DisableScripting, DoGlobalPrefs/SendToFront,
+        # bWine/MUSHCLIENT_VERSION).  Unreferenced until B-3 flips the TUs; the
+        # ~10 GDI shim entries are deferred to B-2.
+        platform/doc_flip_gui_stubs.cpp
+
         # Campaign B Stage-3 App landing pad.  INACTIVE until Stage 5 (guarded by
         # MUSHCLIENT_HEADLESS_APP) — the App global cannot move off doc_portable.cpp
         # until the App-accessing TUs flip to the real MUSHclient.h layout.  Wired

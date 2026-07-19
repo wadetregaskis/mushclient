@@ -1,5 +1,23 @@
 # Phase 2 Staged Flip Plan — mushcore onto the real `doc.h`, one library at the end
 
+> **⚠ CORRECTION (2026-07-19, Stage 4 attempt): the central premise below is FALSE.**
+> doc_stub.h's `CMUSHclientDoc` is NOT layout-compatible with doc.h's — verified
+> independently: doc.h is `: public CDocument` (vtable + base subobject),
+> doc_stub.h:1944 is `class CMUSHclientDoc {` (no base); member ORDER is entirely
+> different (doc.h: m_pTransport…; stub: m_normalcolour…). Flipping xml/ (batch 1)
+> alone built clean but SIGSEGV'd 4 test binaries — a doc constructed at stub layout,
+> written at doc.h offset (m_strCurrentIncludeFileList 1424B past the allocation).
+> The 'serialize.cpp tolerated mixed-layout precedent' is illusory: serialize.cpp
+> compiles against doc.h but no test invokes CMUSHclientDoc::Serialize, so its
+> cross-layout access never runs. There is NO offsetof/static_assert guardrail.
+> The incremental Stages 4–8 are therefore UNSAFE as written. Two recovery paths
+> under discussion (see docs/memory): (A) genuine layout convergence first —
+> reorder doc_stub.h onto doc.h's base+order, add an offset-parity guardrail, THEN
+> the incremental flip is safe; (B) big-bang — flip every doc TU to doc.h atomically
+> so no mixed-layout window ever exists. Stages 1–3 (hygiene, decls, support TUs)
+> remain valid and are committed.
+
+
 **Goal.** Retire `platform/doc_stub.h` (4,046 lines) and `doc_portable.cpp` (1,274 lines):
 every TU in the tree compiles against the real Windows headers
 (`stdafx.h` → `MUSHclient.h` → `doc.h`), `mushcore` adopts the real `doc.cpp` /

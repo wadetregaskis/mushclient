@@ -500,6 +500,18 @@ if(NOT WIN32)
         # real scripting/lua_methods.cpp binds; the real TUs are mushapp-only.
         platform/doc_gui_method_stubs.cpp
 
+        # Campaign B Stage-3 safety net: strong out-of-line defs (compiled
+        # against the REAL headers like windows_stubs.cpp) for the doc.h/mainfrm.h
+        # methods whose real bodies live in mushapp-only TUs — they win over the
+        # doc_stub.h weak inlines during the flip so mushcore keeps linking.
+        platform/doc_headless_stubs.cpp
+
+        # Campaign B Stage-3 App landing pad.  INACTIVE until Stage 5 (guarded by
+        # MUSHCLIENT_HEADLESS_APP) — the App global cannot move off doc_portable.cpp
+        # until the App-accessing TUs flip to the real MUSHclient.h layout.  Wired
+        # here now so Stage 5 is a one-line guard flip; compiles to an empty TU.
+        platform/headless_app.cpp
+
         # Campaign B CPlugin convergence: the REAL CPlugin (ctor/dtor,
         # ExecutePluginScript family, SendToAllPluginCallbacks family,
         # PluginCallbacksNames, ON_PLUGIN_* names) + the real plugin/UDP

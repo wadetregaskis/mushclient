@@ -55,6 +55,7 @@ mc_test(test_pal_surface)
 mc_test(test_posix_socket)
 mc_test(test_lua_scripting)
 mc_test(test_plugins)
+mc_test(test_database)
 
 # ── In-app conformance selftests ────────────────────────────────────────────
 # The hidden --pal-*-selftest flags run inside the real app binary (real wx

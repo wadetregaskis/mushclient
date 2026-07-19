@@ -1946,6 +1946,78 @@ TEST(LuaScripting, ScriptFileChangeReloadsOnlyWhenMtimeDiffers)
     EXPECT_NE(DISPID_UNKNOWN, doc.m_ScriptEngine->GetDispid("fn2"));
 }
 
+// ── world.Metaphone ──────────────────────────────────────────────────────
+// CMUSHclientDoc::Metaphone joins primary+","+secondary; the BSTR→Lua
+// conversion (pushBstr → CString(char*)) stops at the first NUL, which is
+// exactly where SetAt(maxlength,'\0') truncates over-long codes — same
+// visible behaviour as Windows (CString-from-BSTR also stops at NUL).
+
+TEST(LuaScripting, MetaphoneJoinsPrimaryAndSecondaryWithComma)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    int n = run_ret(L, "return world.Metaphone('smith', 4)");
+    ASSERT_EQ(1, n);
+    EXPECT_STREQ("SM0,XMT", lua_tostring(L, -1));
+    lua_settop(L, 0);
+    lua_close(L);
+}
+
+TEST(LuaScripting, MetaphoneOmitsCommaWhenNoAlternate)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    int n = run_ret(L, "return world.Metaphone('thomas', 4)");
+    ASSERT_EQ(1, n);
+    EXPECT_STREQ("TMS", lua_tostring(L, -1));
+    lua_settop(L, 0);
+    lua_close(L);
+}
+
+TEST(LuaScripting, MetaphoneShortLengthStopsLoopAtLength)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    // catherine → K0RN/KTRN at length 4; at Length 2 the main loop exits as
+    // soon as both codes reach 2 chars — no overshoot, so both codes survive.
+    int n = run_ret(L, "return world.Metaphone('catherine', 2)");
+    ASSERT_EQ(1, n);
+    EXPECT_STREQ("K0,KT", lua_tostring(L, -1));
+    lua_settop(L, 0);
+    lua_close(L);
+}
+
+TEST(LuaScripting, MetaphoneOvershootTruncatesAtEmbeddedNul)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    // filipowicz: the final WICZ adds two chars at once (TS/FX), overshooting
+    // Length 4 → codes are "FLPTS"/"FLPFX" and SetAt(4,'\0') embeds a NUL.
+    // The BSTR→Lua conversion stops at the first NUL, so the ",FLPF" tail is
+    // swallowed — longstanding Windows behaviour, preserved by the port.
+    int n = run_ret(L, "return world.Metaphone('filipowicz', 4)");
+    ASSERT_EQ(1, n);
+    EXPECT_STREQ("FLPT", lua_tostring(L, -1));
+    lua_settop(L, 0);
+    lua_close(L);
+}
+
+TEST(LuaScripting, MetaphoneEmptyWordReturnsEmptyString)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    int n = run_ret(L, "return world.Metaphone('', 4)");
+    ASSERT_EQ(1, n);
+    EXPECT_STREQ("", lua_tostring(L, -1));
+    lua_settop(L, 0);
+    lua_close(L);
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

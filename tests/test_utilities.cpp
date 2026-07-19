@@ -501,4 +501,271 @@ TEST(Utilities, GetLinePositionClampsOutOfRangeLineNumbers)
     EXPECT_TRUE(doc.m_LineList.GetAt(tail) == doc.m_LineList.GetTail());
 }
 
+// ── Double Metaphone (Dmetaph.cpp) ──────────────────────────────────────────
+// MString::DoubleMetaphone is the canonical Lawrence Philips implementation;
+// expected codes below are hand-derived from the branch logic in Dmetaph.cpp
+// (cited per test).  maxlength is 4 unless a test says otherwise (matching the
+// classic usage).  metaph2 is only assigned when an alternate pronunciation
+// was recorded, so a sentinel detects "no alternate".
+
+#include "dmetaph.h"
+
+struct DM {
+    CString p, s;
+    bool alt;           // true if an alternate (secondary) code was produced
+    explicit DM(const char* word, int max = 4)
+        : p("<unset>"), s("<unset>")
+    {
+        MString m(word, max);
+        m.DoubleMetaphone(p, s);
+        alt = !(s == "<unset>");
+        if (!alt) s = "";
+    }
+};
+
+TEST(Metaphone, EmptyWordLeavesOutputsUntouched)
+{
+    // DoubleMetaphone returns before assigning anything for a 0-length input.
+    DM d("");
+    EXPECT_STREQ("<unset>", (const char*)d.p);
+    EXPECT_FALSE(d.alt);
+}
+
+TEST(Metaphone, InputIsUppercasedFirst)
+{
+    // MakeUpper() runs before the main loop: case must not matter.
+    DM lower("smith"), upper("SMITH");
+    EXPECT_STREQ((const char*)upper.p, (const char*)lower.p);
+    EXPECT_STREQ((const char*)upper.s, (const char*)lower.s);
+}
+
+TEST(Metaphone, InitialSilentClustersAreSkipped)
+{
+    // GN/KN/PN/WR/PS at position 0 advance past the first letter.
+    EXPECT_STREQ("NT", (const char*)DM("KNIGHT").p);   // silent K, silent GH after I
+    EXPECT_STREQ("RT", (const char*)DM("WRIGHT").p);   // silent W
+    EXPECT_STREQ("NX", (const char*)DM("GNOCCHI").p);  // silent G; CCH → X (Italian)
+}
+
+TEST(Metaphone, InitialXSoundsAsS)
+{
+    DM d("XAVIER");
+    EXPECT_STREQ("SF", (const char*)d.p);
+    EXPECT_STREQ("SFR", (const char*)d.s);   // French -IER final R alternate
+}
+
+TEST(Metaphone, InitialVowelsMapToA_LaterVowelsDropped)
+{
+    EXPECT_STREQ("AT", (const char*)DM("OTTO").p);
+    EXPECT_FALSE(DM("OTTO").alt);
+}
+
+TEST(Metaphone, AnglicisedSVariants)
+{
+    // initial S before M/N/L/W → S with X alternate ('smith' matches 'schmidt')
+    DM smith("SMITH");
+    EXPECT_STREQ("SM0", (const char*)smith.p);
+    EXPECT_STREQ("XMT", (const char*)smith.s);
+    DM snider("SNIDER");
+    EXPECT_STREQ("SNTR", (const char*)snider.p);
+    EXPECT_STREQ("XNTR", (const char*)snider.s);
+    // SCH- + consonant at word start → X primary, S secondary
+    DM schmidt("SCHMIDT");
+    EXPECT_STREQ("XMT", (const char*)schmidt.p);
+    EXPECT_STREQ("SMT", (const char*)schmidt.s);
+}
+
+TEST(Metaphone, CFamilyBranches)
+{
+    EXPECT_STREQ("SSR",  (const char*)DM("CAESAR").p);    // special-cased caesar
+    EXPECT_STREQ("KNT",  (const char*)DM("CHIANTI").p);   // Italian CHIA → K
+    EXPECT_STREQ("KMST", (const char*)DM("CHEMISTRY").p); // Greek root CHEM → K
+    EXPECT_STREQ("XR",   (const char*)DM("CHORE").p);     // CHORE excluded from Greek rule
+    EXPECT_STREQ("MK",   (const char*)DM("MCHUGH").p);    // McX → K; Parker's rule eats GH
+    EXPECT_STREQ("FKX",  (const char*)DM("FOCACCIA").p);  // -CIA → X
+    EXPECT_STREQ("SNS",  (const char*)DM("SCIENCE").p);   // SC+I → S, CE → S
+    DM michael("MICHAEL");                                // -CHAE- → K/X
+    EXPECT_STREQ("MKL", (const char*)michael.p);
+    EXPECT_STREQ("MXL", (const char*)michael.s);
+    DM arch("ARCH");                                      // plain arch → X/K
+    EXPECT_STREQ("ARX", (const char*)arch.p);
+    EXPECT_STREQ("ARK", (const char*)arch.s);
+    EXPECT_STREQ("ARKT", (const char*)DM("ARCHITECT").p); // ARCHIT- exception → K
+    EXPECT_STREQ("ARKS", (const char*)DM("ORCHESTRA").p); // ORCHES- exception → K
+    DM czerny("CZERNY");                                  // CZ → S/X
+    EXPECT_STREQ("SRN", (const char*)czerny.p);
+    EXPECT_STREQ("XRN", (const char*)czerny.s);
+    EXPECT_STREQ("AKST", (const char*)DM("ACCIDENT").p);  // A+CC+I → KS
+    EXPECT_STREQ("MKLL", (const char*)DM("MCCLELLAN").p); // McC exception: plain K
+}
+
+TEST(Metaphone, DFamilyBranches)
+{
+    EXPECT_STREQ("AJ",   (const char*)DM("EDGE").p);   // DG+E → J
+    EXPECT_STREQ("ATKR", (const char*)DM("EDGAR").p);  // DG+consonant → TK
+    EXPECT_STREQ("TM",   (const char*)DM("DUMB").p);   // -UMB final: silent B
+}
+
+TEST(Metaphone, GFamilyBranches)
+{
+    EXPECT_STREQ("H",  (const char*)DM("HUGH").p);     // Parker's rule: silent GH
+    EXPECT_STREQ("LF", (const char*)DM("LAUGH").p);    // -UGH after L → F
+    EXPECT_STREQ("KF", (const char*)DM("COUGH").p);    // -UGH after C → F
+    EXPECT_STREQ("JRTL", (const char*)DM("GHIRADELLI").p); // initial GHI → J
+    DM agnes("AGNES");                                 // vowel+GN → KN/N
+    EXPECT_STREQ("AKNS", (const char*)agnes.p);
+    EXPECT_STREQ("ANS",  (const char*)agnes.s);
+    EXPECT_STREQ("KKN", (const char*)DM("CAGNEY").p);  // -GNEY keeps the G
+    DM signed_("SIGNED");                              // medial GN → N/KN
+    EXPECT_STREQ("SNT",  (const char*)signed_.p);
+    EXPECT_STREQ("SKNT", (const char*)signed_.s);
+    DM tagliaro("TAGLIARO");                           // -GLI- Italian → KL/L
+    EXPECT_STREQ("TKLR", (const char*)tagliaro.p);
+    EXPECT_STREQ("TLR",  (const char*)tagliaro.s);
+    DM german("GERMAN");                               // initial G+ER → K/J
+    EXPECT_STREQ("KRMN", (const char*)german.p);
+    EXPECT_STREQ("JRMN", (const char*)german.s);
+    DM danger("DANGER");                               // DANGER excluded from -GER rule → J/K
+    EXPECT_STREQ("TNJR", (const char*)danger.p);
+    EXPECT_STREQ("TNKR", (const char*)danger.s);
+    DM biaggi("BIAGGI");                               // Italian -AGGI → J/K
+    EXPECT_STREQ("PJ", (const char*)biaggi.p);
+    EXPECT_STREQ("PK", (const char*)biaggi.s);
+}
+
+TEST(Metaphone, JFamilyBranches)
+{
+    EXPECT_STREQ("HS", (const char*)DM("JOSE").p);     // Spanish José → H
+    EXPECT_FALSE(DM("JOSE").alt);
+    EXPECT_STREQ("SNHS", (const char*)DM("SAN JACINTO").p); // SAN + J → H
+    DM jumble("JUMBLE");                               // initial J → J/A
+    EXPECT_STREQ("JMPL", (const char*)jumble.p);
+    EXPECT_STREQ("AMPL", (const char*)jumble.s);
+    DM bajador("BAJADOR");                             // vowel+J+A Spanish → J/H
+    EXPECT_STREQ("PJTR", (const char*)bajador.p);
+    EXPECT_STREQ("PHTR", (const char*)bajador.s);
+    DM raj("RAJ");                                     // final J → J / silent
+    EXPECT_STREQ("RJ", (const char*)raj.p);
+    EXPECT_STREQ("R",  (const char*)raj.s);
+}
+
+TEST(Metaphone, LFamilySpanishLL)
+{
+    DM cabrillo("CABRILLO");                           // -ILLO: L / silent
+    EXPECT_STREQ("KPRL", (const char*)cabrillo.p);
+    EXPECT_STREQ("KPR",  (const char*)cabrillo.s);
+    DM gallegos("GALLEGOS");                           // -ALLE- + -OS: L / silent
+    EXPECT_STREQ("KLKS", (const char*)gallegos.p);
+    EXPECT_STREQ("KKS",  (const char*)gallegos.s);
+}
+
+TEST(Metaphone, MFamilySilentBAfterUM)
+{
+    DM thumb("THUMB");                                 // TH → 0/T; silent B
+    EXPECT_STREQ("0M", (const char*)thumb.p);
+    EXPECT_STREQ("TM", (const char*)thumb.s);
+}
+
+TEST(Metaphone, PFamilyBranches)
+{
+    EXPECT_STREQ("FN",   (const char*)DM("PHONE").p);      // PH → F
+    EXPECT_STREQ("KMPL", (const char*)DM("CAMPBELL").p);   // -PB- collapses
+    EXPECT_STREQ("RSPR", (const char*)DM("RASPBERRY").p);
+    EXPECT_STREQ("KN",   (const char*)DM("QUEEN").p);      // Q → K
+}
+
+TEST(Metaphone, RFamilyFrenchFinal)
+{
+    DM rogier("ROGIER");                               // French -IER: silent R primary
+    EXPECT_STREQ("RJ",  (const char*)rogier.p);
+    EXPECT_STREQ("RJR", (const char*)rogier.s);
+    // 'hochmeier' explicitly excluded (ME before -IER)
+    DM hochmeier("HOCHMEIER");
+    EXPECT_STREQ("HKMR", (const char*)hochmeier.p);
+    EXPECT_FALSE(hochmeier.alt);
+}
+
+TEST(Metaphone, SFamilyBranches)
+{
+    EXPECT_STREQ("ALNT", (const char*)DM("ISLAND").p);   // -ISL-: silent S
+    DM sugar("SUGAR");                                   // SUGAR- → X/S
+    EXPECT_STREQ("XKR", (const char*)sugar.p);
+    EXPECT_STREQ("SKR", (const char*)sugar.s);
+    EXPECT_STREQ("SKL", (const char*)DM("SCHOOL").p);    // SCH+OO Dutch → SK
+    EXPECT_STREQ("SKT", (const char*)DM("SCAT").p);      // SC+consonant → SK
+    DM resnais("RESNAIS");                               // French final -AIS: S / silent
+    EXPECT_STREQ("RSN",  (const char*)resnais.p);
+    EXPECT_STREQ("RSNS", (const char*)resnais.s);
+    DM wasserman("WASSERMAN");                           // initial W+vowel → A/F
+    EXPECT_STREQ("ASRM", (const char*)wasserman.p);
+    EXPECT_STREQ("FSRM", (const char*)wasserman.s);
+}
+
+TEST(Metaphone, TFamilyBranches)
+{
+    EXPECT_STREQ("NXN", (const char*)DM("NATION").p);    // -TION → X
+    EXPECT_STREQ("TMS", (const char*)DM("THOMAS").p);    // TH+OM special → T
+    EXPECT_FALSE(DM("THOMAS").alt);
+    DM thatch("THATCH");                                 // TH → 0/T; TCH → X
+    EXPECT_STREQ("0X", (const char*)thatch.p);
+    EXPECT_STREQ("TX", (const char*)thatch.s);
+    DM matthews("MATTHEWS");                             // TTH treated as TH
+    EXPECT_STREQ("M0S", (const char*)matthews.p);
+    EXPECT_STREQ("MTS", (const char*)matthews.s);
+    DM catherine("CATHERINE");
+    EXPECT_STREQ("K0RN", (const char*)catherine.p);
+    EXPECT_STREQ("KTRN", (const char*)catherine.s);
+}
+
+TEST(Metaphone, WFamilyBranches)
+{
+    DM arnow("ARNOW");                                   // final W after vowel → alt F
+    EXPECT_STREQ("ARN",  (const char*)arnow.p);
+    EXPECT_STREQ("ARNF", (const char*)arnow.s);
+    DM wachtler("WACHTLER");                             // W+vowel start → A/F; ACH → K
+    EXPECT_STREQ("AKTL", (const char*)wachtler.p);
+    EXPECT_STREQ("FKTL", (const char*)wachtler.s);
+    DM filipowicz("FILIPOWICZ", 5);                      // Polish -WICZ → TS/FX
+    EXPECT_STREQ("FLPTS", (const char*)filipowicz.p);
+    EXPECT_STREQ("FLPFX", (const char*)filipowicz.s);
+}
+
+TEST(Metaphone, XAndZFamilies)
+{
+    EXPECT_STREQ("PR", (const char*)DM("BREAUX").p);     // French -EAUX: silent X
+    EXPECT_STREQ("AKS", (const char*)DM("AX").p);        // short word: negative StringAt start
+    EXPECT_STREQ("J", (const char*)DM("ZHAO").p);        // ZH → J
+    DM pizza("PIZZA");                                   // Z+ZA → S/TS
+    EXPECT_STREQ("PS",  (const char*)pizza.p);
+    EXPECT_STREQ("PTS", (const char*)pizza.s);
+}
+
+TEST(Metaphone, Latin1CedillaAndEnye)
+{
+    // '\xC7' (Ç) → S and '\xD1' (Ñ) → N (already-uppercase Latin-1 input).
+    EXPECT_STREQ("KRSN", (const char*)DM("GAR\xC7ON").p);
+    EXPECT_STREQ("SNR",  (const char*)DM("SE\xD1OR").p);
+}
+
+TEST(Metaphone, MaxlengthTruncationEmbedsNulWithoutShortening)
+{
+    // The tail truncation is SetAt(maxlength, '\0'): the CString keeps its
+    // full length with an embedded NUL (MFC semantics) — the C-string view
+    // stops at maxlength.  SCHENKER's secondary runs to 5 chars (SKNKR).
+    DM schenker("SCHENKER");
+    EXPECT_STREQ("XNKR", (const char*)schenker.p);
+    ASSERT_TRUE(schenker.alt);
+    EXPECT_EQ(5, schenker.s.GetLength());        // length NOT shortened
+    EXPECT_STREQ("SKNK", (const char*)schenker.s); // C-string view truncated
+}
+
+TEST(Metaphone, LoopStopsOncePrimaryAndSecondaryReachMaxlength)
+{
+    // With maxlength 2 the main loop exits as soon as both codes have 2
+    // chars, so CATHERINE never gets past K0/KT (plus NUL-truncation).
+    DM cath("CATHERINE", 2);
+    EXPECT_STREQ("K0", (const char*)cath.p);
+    EXPECT_STREQ("KT", (const char*)cath.s);
+}
+
 MC_TEST_MAIN()

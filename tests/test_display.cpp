@@ -345,4 +345,434 @@ TEST(LineTest, NewLineSeededWithOneStyleAndUtf8SizedBuffer)
     EXPECT_EQ(320, utf8.iMemoryAllocated);   // 4 bytes per character
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// methods_noting.cpp — Note/Tell/ColourNote/AnsiNote/Hyperlink/NoteHr and the
+// note-colour accessor family.  Headless the doc starts in RGB-notes mode
+// with silver-on-black (doc_stub.h), matching a fresh Windows world.
+
+// last (0-based) closed line index — count-2 because the tail is the
+// in-progress current line.
+static CLine* closed_tail(CMUSHclientDoc& doc)
+{
+    int n = (int)doc.m_LineList.GetCount();
+    return n >= 2 ? nth_line(doc, n - 2) : nullptr;
+}
+
+TEST(NotingTest, NoteClosesLineAndStampsCommentFlag)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.Note("hello");
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "hello");
+    EXPECT_EQ(COMMENT, l0->flags & NOTE_OR_COMMAND);
+    // the newline was appended: a fresh current line is now the tail
+    EXPECT_TRUE(doc.m_pCurrentLine != l0);
+    EXPECT_EQ(0, doc.m_pCurrentLine->len);
+}
+
+TEST(NotingTest, TellAppendsWithoutClosingLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.Tell("abc");
+    doc.Tell("def");
+    EXPECT_TRUE(doc.m_pCurrentLine != nullptr);
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "abcdef");
+    EXPECT_EQ(COMMENT, doc.m_pCurrentLine->flags & NOTE_OR_COMMAND);
+    EXPECT_EQ(1, (int)doc.m_LineList.GetCount());   // still the one open line
+}
+
+TEST(NotingTest, TellOnPartialMudLineForcesLineChange)
+{
+    // a note must not continue the pending MUD-output line (colour bleed)
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "mud");                    // partial output line, flags 0
+    doc.Tell("note");
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "mud");     // closed early
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "note");
+    EXPECT_EQ(COMMENT, doc.m_pCurrentLine->flags & NOTE_OR_COMMAND);
+}
+
+TEST(NotingTest, TellEmptyMessageIsNoop)
+{
+    CMUSHclientDoc doc = make_doc();
+    int before = (int)doc.m_LineList.GetCount();
+    doc.Tell("");
+    EXPECT_EQ(before, (int)doc.m_LineList.GetCount());
+    EXPECT_EQ(0, doc.m_pCurrentLine->len);
+}
+
+TEST(NotingTest, NoteDeferredWhileNotesNotWantedThenDrained)
+{
+    // mid-telnet-negotiation (m_bNotesNotWantedNow) a note may not be stuck
+    // inside the partial MUD line: it is queued with its colours...
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "partial");
+    doc.m_bNotesNotWantedNow = true;
+    doc.NoteColourRGB(0x123456, 0x654321);
+    doc.Note("deferred");
+    ASSERT_EQ((size_t)1, doc.m_OutstandingLines.size());
+    EXPECT_EQ((COLORREF)0x123456, doc.m_OutstandingLines.front().m_cText);
+    EXPECT_EQ((COLORREF)0x654321, doc.m_OutstandingLines.front().m_cBack);
+    EXPECT_EQ(0, strncmp(doc.m_OutstandingLines.front().m_sText.c_str(),
+                         "deferred", 8));
+
+    // ...and replayed verbatim by OutputOutstandingLines
+    doc.m_bNotesNotWantedNow = false;
+    doc.OutputOutstandingLines();
+    EXPECT_TRUE(doc.m_OutstandingLines.empty());
+    CLine* note_line = closed_tail(doc);
+    ASSERT_NE(nullptr, note_line);
+    EXPECT_TRUE(line_text(note_line) == "deferred");
+    CStyle* s = style_at(note_line, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_EQ((COLORREF)0x123456, s->iForeColour);
+    EXPECT_EQ((COLORREF)0x654321, s->iBackColour);
+}
+
+TEST(NotingTest, NoteRgbStampsRgbStyle)
+{
+    CMUSHclientDoc doc = make_doc();
+    // NoteColourRGB masks off the high byte (COLORREF is 24-bit)
+    doc.NoteColourRGB(0xFF123456, 0x00654321);
+    doc.Note("x");
+    CStyle* s = style_at(nth_line(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_EQ((COLORREF)0x123456, s->iForeColour);
+    EXPECT_EQ((COLORREF)0x654321, s->iBackColour);
+}
+
+TEST(NotingTest, NoteCustomPaletteStampsIndexOnBlack)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.SetNoteColour(5);                    // one-based → palette index 4
+    EXPECT_EQ(5, doc.GetNoteColour());
+    doc.Note("x");
+    CStyle* s = style_at(nth_line(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_CUSTOM, s->iFlags & COLOURTYPE);
+    EXPECT_EQ((COLORREF)4, s->iForeColour);  // palette INDEX, not RGB
+    EXPECT_EQ((COLORREF)BLACK, s->iBackColour);
+}
+
+TEST(NotingTest, NoteSameColourStampsAnsiWhiteOnBlack)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.SetNoteColour(0);                    // 0 = "same colour" sentinel
+    EXPECT_EQ(0, doc.GetNoteColour());
+    doc.Note("x");
+    CStyle* s = style_at(nth_line(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_ANSI, s->iFlags & COLOURTYPE);
+    EXPECT_EQ((COLORREF)WHITE, s->iForeColour);
+    EXPECT_EQ((COLORREF)BLACK, s->iBackColour);
+}
+
+TEST(NotingTest, SetNoteColourRejectsOutOfRange)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.SetNoteColour(5);
+    doc.SetNoteColour(-1);                   // below range: ignored
+    EXPECT_EQ(5, doc.GetNoteColour());
+    doc.SetNoteColour(MAX_CUSTOM + 1);       // above range: ignored
+    EXPECT_EQ(5, doc.GetNoteColour());
+}
+
+TEST(NotingTest, GetNoteColourForeBackPerMode)
+{
+    CMUSHclientDoc doc = make_doc();
+    // RGB mode: the stored RGB values
+    doc.NoteColourRGB(0x00000A, 0x00000B);
+    EXPECT_EQ(0x0AL, doc.GetNoteColourFore());
+    EXPECT_EQ(0x0BL, doc.GetNoteColourBack());
+    // custom palette mode: that palette entry's text/back
+    doc.m_customtext[2] = 0x111111; doc.m_customback[2] = 0x222222;
+    doc.SetNoteColour(3);
+    EXPECT_EQ(0x111111L, doc.GetNoteColourFore());
+    EXPECT_EQ(0x222222L, doc.GetNoteColourBack());
+    // "same colour": ANSI white-on-black palette...
+    doc.SetNoteColour(0);
+    doc.m_bCustom16isDefaultColour = FALSE;
+    doc.m_normalcolour[WHITE] = 0x333333; doc.m_normalcolour[BLACK] = 0x444444;
+    EXPECT_EQ(0x333333L, doc.GetNoteColourFore());
+    EXPECT_EQ(0x444444L, doc.GetNoteColourBack());
+    // ...unless custom-16 is the default colour
+    doc.m_bCustom16isDefaultColour = TRUE;
+    doc.m_customtext[15] = 0x555555; doc.m_customback[15] = 0x666666;
+    EXPECT_EQ(0x555555L, doc.GetNoteColourFore());
+    EXPECT_EQ(0x666666L, doc.GetNoteColourBack());
+}
+
+TEST(NotingTest, SetNoteColourForeConvertsPaletteBackgroundFirst)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_customback[2] = 0x445566;
+    doc.SetNoteColour(3);                    // palette mode, index 2
+    doc.SetNoteColourFore(0xABCDEF12);       // masked to 24 bits
+    EXPECT_TRUE(doc.m_bNotesInRGB);
+    EXPECT_EQ(0xCDEF12L, doc.GetNoteColourFore());
+    EXPECT_EQ(0x445566L, doc.GetNoteColourBack());  // palette back preserved
+}
+
+TEST(NotingTest, SetNoteColourBackConvertsSameColourForegroundFirst)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.SetNoteColour(0);                    // "same colour"
+    doc.m_bCustom16isDefaultColour = FALSE;
+    doc.m_normalcolour[WHITE] = 0x777777;
+    doc.SetNoteColourBack(0x000123);
+    EXPECT_TRUE(doc.m_bNotesInRGB);
+    EXPECT_EQ(0x777777L, doc.GetNoteColourFore());  // white carried over
+    EXPECT_EQ(0x000123L, doc.GetNoteColourBack());
+}
+
+TEST(NotingTest, NoteColourNameSetsRgbFromNamesAndHex)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.NoteColourName("red", "blue");
+    EXPECT_TRUE(doc.m_bNotesInRGB);
+    EXPECT_EQ((long)RGB(255, 0, 0), doc.GetNoteColourFore());
+    EXPECT_EQ((long)RGB(0, 0, 255), doc.GetNoteColourBack());
+    doc.NoteColourName("#102030", "#405060");
+    EXPECT_EQ((long)RGB(0x10, 0x20, 0x30), doc.GetNoteColourFore());
+    EXPECT_EQ((long)RGB(0x40, 0x50, 0x60), doc.GetNoteColourBack());
+    // empty/unknown names leave the colour untouched
+    doc.NoteColourName("", "no-such-colour-name");
+    EXPECT_EQ((long)RGB(0x10, 0x20, 0x30), doc.GetNoteColourFore());
+    EXPECT_EQ((long)RGB(0x40, 0x50, 0x60), doc.GetNoteColourBack());
+}
+
+TEST(NotingTest, ColourTellStampsRequestedColoursAndRestores)
+{
+    CMUSHclientDoc doc = make_doc();
+    COLORREF old_fore = doc.m_iNoteColourFore, old_back = doc.m_iNoteColourBack;
+    doc.ColourTell("red", "blue", "hi");
+    CStyle* s = style_at(doc.m_pCurrentLine, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_EQ(RGB(255, 0, 0), s->iForeColour);
+    EXPECT_EQ(RGB(0, 0, 255), s->iBackColour);
+    // colours restored afterwards (was RGB mode already)
+    EXPECT_EQ(old_fore, doc.m_iNoteColourFore);
+    EXPECT_EQ(old_back, doc.m_iNoteColourBack);
+}
+
+TEST(NotingTest, ColourTellFromPaletteModeRestoresPaletteMode)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.SetNoteColour(2);
+    EXPECT_FALSE(doc.m_bNotesInRGB);
+    doc.ColourTell("red", "blue", "hi");
+    EXPECT_FALSE(doc.m_bNotesInRGB);        // back to palette mode
+    EXPECT_EQ(2, doc.GetNoteColour());
+}
+
+TEST(NotingTest, ColourNoteClosesTheLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.ColourNote("red", "blue", "x");
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "x");
+    EXPECT_EQ(COMMENT, l0->flags & NOTE_OR_COMMAND);
+    EXPECT_EQ(0, doc.m_pCurrentLine->len);   // newline appended
+}
+
+TEST(NotingTest, NoteStyleMasksToTextStyleBits)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.NoteStyle(HILITE | UNDERLINE);
+    EXPECT_EQ(HILITE | UNDERLINE, doc.GetNoteStyle());
+    doc.NoteStyle((short)0xFF);              // out-of-range bits dropped
+    EXPECT_EQ(0xFF & TEXT_STYLE, doc.GetNoteStyle());
+    // and the style bits land on the note's style run
+    doc.NoteStyle(UNDERLINE | INVERSE);
+    doc.Note("x");
+    CStyle* s = style_at(nth_line(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(UNDERLINE | INVERSE, s->iFlags & TEXT_STYLE);
+}
+
+TEST(NotingTest, HyperlinkSendStampsActionAndUnderline)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iHyperlinkColour = 0x0000EE;
+    doc.Hyperlink("do this", "click", "a hint", "", "", FALSE);
+    CLine* l = doc.m_pCurrentLine;
+    ASSERT_NE(nullptr, l);
+    EXPECT_TRUE(line_text(l) == "click");
+    CStyle* s = style_at(l, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_TRUE((s->iFlags & ACTION_SEND) != 0);
+    EXPECT_FALSE((s->iFlags & ACTION_HYPERLINK) != 0);
+    EXPECT_TRUE((s->iFlags & UNDERLINE) != 0);
+    EXPECT_EQ((COLORREF)0x0000EE, s->iForeColour);  // empty colour → hyperlink colour
+    ASSERT_TRUE(s->pAction != NULL);
+    EXPECT_STREQ("do this", (const char*)s->pAction->m_strAction);
+    EXPECT_STREQ("a hint",  (const char*)s->pAction->m_strHint);
+}
+
+TEST(NotingTest, HyperlinkUrlUsesActionAsTextAndHintFallback)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.Hyperlink("http://x", "", "", "", "", TRUE);
+    CLine* l = doc.m_pCurrentLine;
+    ASSERT_NE(nullptr, l);
+    EXPECT_TRUE(line_text(l) == "http://x");   // empty Text → Action shown
+    CStyle* s = style_at(l, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & ACTION_HYPERLINK) != 0);
+    EXPECT_FALSE((s->iFlags & ACTION_SEND) != 0);
+    ASSERT_TRUE(s->pAction != NULL);
+    EXPECT_STREQ("http://x", (const char*)s->pAction->m_strHint);  // hint falls back to action
+}
+
+TEST(NotingTest, HyperlinkEmptyActionIsNoop)
+{
+    CMUSHclientDoc doc = make_doc();
+    int lines_before = (int)doc.m_LineList.GetCount();
+    doc.Hyperlink("", "text", "hint", "", "", FALSE);
+    EXPECT_EQ(lines_before, (int)doc.m_LineList.GetCount());
+    EXPECT_EQ(0, doc.m_pCurrentLine->len);
+}
+
+TEST(NotingTest, NoteHrEmitsHorizRuleLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "abc");                        // pending partial line
+    doc.NoteHr();
+    // line 0 = "abc" (wrapped up), line 1 = the HR, line 2 = new current
+    CLine* l0 = nth_line(doc, 0);
+    CLine* l1 = nth_line(doc, 1);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+    EXPECT_TRUE(line_text(l0) == "abc");
+    EXPECT_EQ(HORIZ_RULE, l1->flags);
+    EXPECT_TRUE(doc.m_pCurrentLine != l1);
+}
+
+// ── AnsiNote: the ESC[...m state machine over Tell ───────────────────────
+
+TEST(AnsiNoteTest, PlainTextBecomesCommentLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    unsigned short old_style = doc.GetNoteStyle();
+    doc.AnsiNote("hello");
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "hello");
+    EXPECT_EQ(COMMENT, l0->flags & NOTE_OR_COMMAND);
+    EXPECT_EQ(old_style, doc.GetNoteStyle());    // style restored
+}
+
+TEST(AnsiNoteTest, ForegroundCodeColoursFollowingTextOnly)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_normalcolour[1] = 0x0000CC;            // ANSI red slot
+    COLORREF plain_fore = doc.m_iNoteColourFore;
+    doc.AnsiNote("pre\x1b[31mred");
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    // the ESC byte is swallowed by DisplayMsg (NOTE_OR_COMMAND lines drop ESC)
+    EXPECT_TRUE(line_text(l0) == "prered");
+    CStyle* before = style_at(l0, 0);
+    CStyle* after  = style_at(l0, 3);
+    ASSERT_NE(nullptr, before);
+    ASSERT_NE(nullptr, after);
+    EXPECT_EQ(plain_fore, before->iForeColour);  // block before ESC keeps old colour
+    EXPECT_EQ((COLORREF)0x0000CC, after->iForeColour);
+    EXPECT_EQ(COLOUR_RGB, after->iFlags & COLOURTYPE);
+}
+
+TEST(AnsiNoteTest, BoldUsesBoldPaletteAndHiliteBit)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_boldcolour[2] = 0x00CC00;              // ANSI green (bold) slot
+    doc.AnsiNote("\x1b[1;32mX");
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "X");
+    CStyle* s = style_at(l0, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & HILITE) != 0);
+    EXPECT_EQ((COLORREF)0x00CC00, s->iForeColour);
+}
+
+TEST(AnsiNoteTest, Xterm256ForegroundAndBackground)
+{
+    Generate256colours();
+    CMUSHclientDoc doc = make_doc();
+    doc.AnsiNote("\x1b[38;5;196m\x1b[48;5;21mX");
+    CStyle* s = style_at(nth_line(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(xterm_256_colours[196], s->iForeColour);
+    EXPECT_EQ(xterm_256_colours[21],  s->iBackColour);
+}
+
+TEST(AnsiNoteTest, TwentyFourBitColourCollectsRGBComponents)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.AnsiNote("\x1b[38;2;10;20;30m\x1b[48;2;40;50;60mX");
+    CStyle* s = style_at(nth_line(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(RGB(10, 20, 30), s->iForeColour);
+    EXPECT_EQ(RGB(40, 50, 60), s->iBackColour);
+}
+
+TEST(AnsiNoteTest, UnderlineAndInverseBitsApply)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.AnsiNote("\x1b[4;7mX");
+    CStyle* s = style_at(nth_line(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & UNDERLINE) != 0);
+    EXPECT_TRUE((s->iFlags & INVERSE) != 0);
+}
+
+TEST(AnsiNoteTest, CancelBoldDropsHiliteMidLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.AnsiNote("\x1b[1mAB\x1b[22mCD");
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "ABCD");
+    CStyle* bold_part  = style_at(l0, 0);
+    CStyle* plain_part = style_at(l0, 2);
+    ASSERT_NE(nullptr, bold_part);
+    ASSERT_NE(nullptr, plain_part);
+    EXPECT_TRUE((bold_part->iFlags & HILITE) != 0);
+    EXPECT_FALSE((plain_part->iFlags & HILITE) != 0);
+}
+
+TEST(AnsiNoteTest, ResetRestoresNormalWhiteOnBlack)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_normalcolour[WHITE] = 0x00ABCD;
+    doc.m_normalcolour[1]     = 0x0000CC;
+    doc.AnsiNote("\x1b[31mred\x1b[0mplain");
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "redplain");
+    CStyle* plain = style_at(l0, 3);
+    ASSERT_NE(nullptr, plain);
+    EXPECT_EQ((COLORREF)0x00ABCD, plain->iForeColour);
+}
+
+TEST(AnsiNoteTest, StateAndColoursRestoredAfterCall)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.NoteStyle(UNDERLINE);
+    COLORREF old_fore = doc.m_iNoteColourFore, old_back = doc.m_iNoteColourBack;
+    doc.AnsiNote("\x1b[1;31;42mX");
+    EXPECT_EQ(UNDERLINE, doc.GetNoteStyle());
+    EXPECT_TRUE(doc.m_bNotesInRGB);              // was RGB before, still RGB
+    EXPECT_EQ(old_fore, doc.m_iNoteColourFore);
+    EXPECT_EQ(old_back, doc.m_iNoteColourBack);
+}
+
 MC_TEST_MAIN()

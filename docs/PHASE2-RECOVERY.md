@@ -298,3 +298,26 @@ real ctor) — which remain, bounded, whatever path is chosen.
 cost); B viable with its dominant unknown now quantified-cheap, remaining cost ≈ a large
 atomic ~100-file landing + ctor re-baseline + a ~10-entry GDI shim, for one-library
 tidiness + the last ~10% of test fidelity. The choice is now a clean value judgment.
+
+---
+
+## 6. DECISION: Option B, incrementally staged (2026-07-19)
+
+Chosen path. The mixed-layout SIGSEGV constraint forces the header+ctor flip to be ONE
+atomic commit (no partial-flip window), but everything additive is pre-staged as green
+checkpoints to shrink it:
+
+- **B-1 (pre-flip, additive, green on the current stub build):** extend
+  `doc_gui_method_stubs.cpp` / `doc_headless_stubs.cpp` with the ~66 no-op GUI stubs +
+  the 2 tiny real bodies from §5. Strong defs coexist with the stub's weak inlines
+  (harmless now, load-bearing post-flip). Identify what CANNOT pre-stage (GDI shape fork)
+  and defer to the flip.
+- **B-2 (pre-flip):** the ~10-entry headless GDI shim over `pal::ISurface`/`cpu_raster`,
+  IF separable from the GDI-shape ODR fork; else folded into the flip.
+- **B-3 (THE FLIP — one atomic commit):** `MUSHCLIENT_FULL_BUILD` for core; flip all 63
+  shared + 4 port-only TUs; `regexp.cpp` FULL_BUILD arm; activate `headless_app.cpp`;
+  retype `g_stub_frame`; adopt real `doc.cpp` + `doc_construct.cpp`; delete `doc_stub.h`
+  + `doc_portable.cpp`; collapse the GDI shape fork. Verified `ctest` ×2 + GUI smoke on a
+  scratch branch before merge. The ~8 ctor/dtor behaviour re-baselines land here.
+- **B-4+ (post-flip cleanup):** test re-baselines (cited), docs (CLAUDE.md/PAL.md/
+  COVERAGE denominator shrinks/PHASE2-PLAN done), optional one-library CMake restructure.

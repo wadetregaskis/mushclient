@@ -567,6 +567,36 @@ TEST(GlobalOptions, HeadlessDatabaseRoundTripRestoresDefaults)
 }
 
 // ShowGlobalOptions notes every option (name = value) into the world.
+// The one candidate skipped in the intent-comment sweep, now testable: the
+// prefs-DB path is injectable via App.m_PreferencesDatabaseName, so we can
+// seed a FRESH database in the scratch area and prove the comment at
+// globalregistryoptions.cpp:132 — the POSIX directory defaults are shared by
+// PopulateDatabase (seed) and the read path, so a freshly-populated DB can
+// never diverge from what a re-read resolves (the historical bug was a
+// CWD-relative ".\worlds\plugins" surviving in a fresh DB).
+TEST(GlobalOptions, FreshDatabaseSeedAndReadShareDirectoryDefaults)
+{
+    const char* dbPath = "/tmp/mc_test_prefs_seed.sqlite";
+    remove(dbPath);
+    std::string savedDb = App.m_PreferencesDatabaseName;
+    CString savedPlugins = App.m_strPluginsDirectory;
+
+    App.m_PreferencesDatabaseName = dbPath;
+    App.PopulateDatabase();            // seed a fresh DB via the shared defaults
+    App.m_strPluginsDirectory = "@@clobbered@@";
+    App.LoadGlobalsFromDatabase();     // read path must restore the same value
+
+    EXPECT_TRUE(App.m_strPluginsDirectory == savedPlugins);
+    // never a CWD-relative Windows path
+    EXPECT_TRUE(App.m_strPluginsDirectory.GetLength() > 0);
+    EXPECT_NE('.', App.m_strPluginsDirectory[0]);
+    EXPECT_EQ(-1, App.m_strPluginsDirectory.Find("\\"));
+
+    App.m_PreferencesDatabaseName = savedDb;
+    App.m_strPluginsDirectory     = savedPlugins;
+    remove(dbPath);
+}
+
 TEST(GlobalOptions, ShowGlobalOptionsNotesEveryOption)
 {
     CMUSHclientDoc doc = make_doc();

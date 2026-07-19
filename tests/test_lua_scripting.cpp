@@ -2619,6 +2619,1054 @@ TEST(LuaLibs, BitsLibraryOperations)
     lua_close(L);
 }
 
+// ═══ Round-4 coverage: marshalling error arms + method-family gaps ═════════
+
+#include "pal/itransport.h"
+
+namespace {
+struct LuaFakeTransport : pal::ITransport {
+    std::string sent;
+    void resolve(const char*, pal::ResolveToken) override {}
+    void cancelResolve() override {}
+    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void send(const char* data, size_t n) override { sent.append(data, n); }
+    void startTls(const pal::TlsParams&) override {}
+    void close() override {}
+    std::string lastErrorString() const override { return "fake"; }
+};
+} // namespace
+
+// my_checknumber / my_checkstring type errors carry the argument number and
+// the calling function's name (my_argerror / my_typerror / my_tag_error).
+TEST(LuaMarshal, TypeErrorsNameArgumentAndFunction)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    int n = run_ret(L,
+        "local ok, err = pcall(function() return world.GetLineInfo({}) end)\n"
+        "return ok, err");
+    ASSERT_EQ(2, n);
+    EXPECT_TRUE(!lua_toboolean(L, -2));
+    const char* err = lua_tostring(L, -1);
+    ASSERT_TRUE(err != nullptr);
+    EXPECT_TRUE(strstr(err, "bad argument #1") != nullptr);
+    EXPECT_TRUE(strstr(err, "number expected, got table") != nullptr);
+    lua_settop(L, 0);
+
+    // string expected
+    n = run_ret(L,
+        "local ok, err = pcall(function() return world.SetVariable({}, 'v') end)\n"
+        "return ok, err");
+    ASSERT_EQ(2, n);
+    EXPECT_TRUE(!lua_toboolean(L, -2));
+    err = lua_tostring(L, -1);
+    ASSERT_TRUE(err != nullptr);
+    EXPECT_TRUE(strstr(err, "string expected, got table") != nullptr);
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// concatArgs: a value whose __tostring metamethod returns a non-string is
+// rejected; multiple print args are joined with a space.
+TEST(LuaMarshal, ConcatArgsToStringContractAndPrint)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L, "print('alpha', 'beta')"));   // l_print → Note
+    bool sawJoined = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("alpha beta") != std::string::npos)
+            sawJoined = true;
+    }
+    EXPECT_TRUE(sawJoined);
+
+    int n = run_ret(L,
+        "local bad = setmetatable({}, { __tostring = function() return {} end })\n"
+        "local ok, err = pcall(function() world.Note(bad) end)\n"
+        "return ok, tostring(err)");
+    ASSERT_EQ(2, n);
+    EXPECT_TRUE(!lua_toboolean(L, -2));
+    const char* err = lua_tostring(L, -1);
+    ASSERT_TRUE(err != nullptr);
+    EXPECT_TRUE(strstr(err, "'tostring' must return a string") != nullptr);
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// ArrayImport with a TABLE second argument (Lua extension): import, dup
+// detection, missing array, and non-string-key rejection.
+TEST(LuaMarshal, ArrayImportTableVariantArms)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // missing array
+    int n = run_ret(L, "return world.ArrayImport('nosuch', {a='1'})");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eArrayDoesNotExist, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    EXPECT_TRUE(run(L, "world.ArrayCreate('t')"));
+    n = run_ret(L, "return world.ArrayImport('t', {a='1', b='2'})");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // duplicate keys → eImportedWithDuplicates and the value is replaced
+    n = run_ret(L, "return world.ArrayImport('t', {a='9'}), world.ArrayGet('t','a')");
+    ASSERT_EQ(2, n);
+    EXPECT_EQ((double)eImportedWithDuplicates, lua_tonumber(L, -2));
+    EXPECT_STREQ("9", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    // non-string key → error
+    n = run_ret(L,
+        "local ok, err = pcall(function() return world.ArrayImport('t', {[1]='x'}) end)\n"
+        "return ok, tostring(err)");
+    ASSERT_EQ(2, n);
+    EXPECT_TRUE(!lua_toboolean(L, -2));
+    EXPECT_TRUE(strstr(lua_tostring(L, -1), "string keys") != nullptr);
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// ColourTell with multiple colour/colour/text triplets consumes them all.
+TEST(LuaMarshal, ColourTellMultipleTriplets)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "world.ColourTell('red', 'blue', 'one', 'green', 'black', 'two')\n"
+        "world.Note('')"));
+    bool sawBoth = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("onetwo") != std::string::npos)
+            sawBoth = true;
+    }
+    EXPECT_TRUE(sawBoth);
+    lua_close(L);
+}
+
+// MtSrand table arms: empty table and non-number entries are rejected.
+TEST(LuaMarshal, MtSrandTableValidation)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    int n = run_ret(L,
+        "local ok, err = pcall(function() world.MtSrand({}) end)\n"
+        "return ok, tostring(err)");
+    ASSERT_EQ(2, n);
+    EXPECT_TRUE(!lua_toboolean(L, -2));
+    EXPECT_TRUE(strstr(lua_tostring(L, -1), "must not be empty") != nullptr);
+    lua_settop(L, 0);
+
+    n = run_ret(L,
+        "local ok, err = pcall(function() world.MtSrand({'x'}) end)\n"
+        "return ok, tostring(err)");
+    ASSERT_EQ(2, n);
+    EXPECT_TRUE(!lua_toboolean(L, -2));
+    EXPECT_TRUE(strstr(lua_tostring(L, -1), "consist of numbers") != nullptr);
+    lua_settop(L, 0);
+
+    // valid table seed works and produces deterministic output
+    n = run_ret(L, "world.MtSrand({1, 2, 3}) return world.MtRand()");
+    ASSERT_EQ(1, n);
+    EXPECT_TRUE(lua_isnumber(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// GetStyleInfo Lua extension: StyleNumber 0 → table of all styles with the
+// full DoStyle field set (colours, action, flags); explicit style → one
+// table; out-of-range → nothing.
+TEST(LuaMarshal, GetStyleInfoFullTableExtension)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // a line with two styled runs and a hyperlink
+    EXPECT_TRUE(run(L,
+        "world.ColourTell('red', 'black', 'plain')\n"
+        "world.Hyperlink('go north', 'CLICK', 'a hint', 'cyan', 'black', 1)\n"
+        "world.Note('')"));
+
+    int n = run_ret(L,
+        "local t = world.GetStyleInfo(1)\n"
+        "return #t, t[1].text, t[1].textcolour, t[2].actiontype, t[2].action, t[2].hint");
+    ASSERT_EQ(6, n);
+    EXPECT_TRUE(lua_tonumber(L, -6) >= 2);
+    EXPECT_STREQ("plain", lua_tostring(L, -5));
+    EXPECT_TRUE(lua_isnumber(L, -4));
+    EXPECT_EQ(2.0, lua_tonumber(L, -3));           // ACTION_HYPERLINK
+    EXPECT_STREQ("go north", lua_tostring(L, -2));
+    EXPECT_STREQ("a hint", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    // single style table
+    n = run_ret(L, "local t = world.GetStyleInfo(1, 1) return t.text, t.length");
+    ASSERT_EQ(2, n);
+    EXPECT_STREQ("plain", lua_tostring(L, -2));
+    EXPECT_EQ(5.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // out-of-range style / line → no results
+    n = run_ret(L, "return world.GetStyleInfo(1, 99)");
+    EXPECT_EQ(0, n);
+    n = run_ret(L, "return world.GetStyleInfo(999)");
+    EXPECT_EQ(0, n);
+    lua_settop(L, 0);
+
+    // type-specific VARIANT path for one style (InfoType 1 = text)
+    n = run_ret(L, "return world.GetStyleInfo(1, 1, 1)");
+    ASSERT_EQ(1, n);
+    EXPECT_STREQ("plain", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// GetLineInfo: line 0 / out-of-range → no result; with a performance-counter
+// frequency published the elapsed-time fields appear.
+TEST(LuaMarshal, GetLineInfoBoundsAndTiming)
+{
+    LONGLONG saved = App.m_iCounterFrequency;
+    App.m_iCounterFrequency = 1000000;
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L, "world.Note('timed line')"));
+    int n = run_ret(L, "return world.GetLineInfo(0)");
+    EXPECT_EQ(0, n);
+    n = run_ret(L, "local t = world.GetLineInfo(1) return type(t.time)");
+    ASSERT_EQ(1, n);
+    lua_settop(L, 0);
+
+    App.m_iCounterFrequency = saved;
+    lua_close(L);
+}
+
+// world.Save writes the world file; Save-As mode restores the doc path.
+TEST(LuaMarshal, SaveWritesWorldFile)
+{
+    CMUSHclientDoc doc;
+    doc.m_mush_name = "SaveTest";
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_r4_%d_save.mcl", (int)getpid());
+    char code[256];
+    snprintf(code, sizeof code, "return world.Save('%s', true)", path);
+    int n = run_ret(L, code);
+    ASSERT_EQ(1, n);
+    // Save() returns !DoSave() — i.e. FALSE on success (Windows parity);
+    // the written file below is the real success observable
+    EXPECT_TRUE(!lua_toboolean(L, -1));
+    lua_settop(L, 0);
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[128] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    EXPECT_TRUE(strstr(buf, "muclient") != nullptr);
+    lua_close(L);
+}
+
+// world.SendPkt sends raw bytes (no telnet doubling, no line ending).
+TEST(LuaMarshal, SendPktSendsRawBytes)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    LuaFakeTransport* t = new LuaFakeTransport();
+    doc.m_pTransport = t;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    int n = run_ret(L, "return world.SendPkt('raw\\255bytes')");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -1));
+    EXPECT_TRUE(t->sent.find("raw" "\xFF" "bytes") != std::string::npos);
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// Clipboard round trip headless: SetClipboard is a no-op sink and
+// GetClipboard returns the empty string (no window server).
+TEST(LuaMarshal, ClipboardHeadlessBehaviour)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_TRUE(run(L, "world.SetClipboard('some text')"));
+    int n = run_ret(L, "return world.GetClipboard()");
+    ASSERT_EQ(1, n);
+    lua_settop(L, 0);
+    lua_close(L);
+}
+
+// world.IsConnected reflects the connect phase.
+TEST(LuaMarshal, IsConnectedReflectsPhase)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    int n = run_ret(L, "return world.IsConnected()");
+    ASSERT_EQ(1, n);
+    EXPECT_TRUE(lua_toboolean(L, -1));
+    doc.m_iConnectPhase = eConnectNotConnected;
+    n = run_ret(L, "return world.IsConnected()");
+    EXPECT_TRUE(!lua_toboolean(L, -1));
+    lua_settop(L, 0);
+    lua_close(L);
+}
+
+// tostring(world-userdatum) uses the __tostring metamethod ("world").
+TEST(LuaMarshal, WorldUserdatumToString)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    CMUSHclientDoc* pOther = new CMUSHclientDoc();
+    pOther->m_mush_name = "tsworld";
+    int n = run_ret(L, "local w = world.GetWorld('tsworld') return tostring(w)");
+    ASSERT_EQ(1, n);
+    EXPECT_STREQ("world", lua_tostring(L, -1));
+    lua_settop(L, 0);
+    delete pOther;
+    lua_close(L);
+}
+
+// Database marshalling: NULL and FLOAT column values arrive as nil / number.
+TEST(LuaMarshal, DatabaseNullAndFloatColumns)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    int rc = run_ret(L,
+        "local a = world.DatabaseOpen('db', ':memory:', 6)\n"
+        "local b = world.DatabasePrepare('db', 'SELECT 3.5 AS f, NULL AS n')\n"
+        "local c = world.DatabaseStep('db')\n"
+        "return a, b, c");
+    ASSERT_EQ(3, rc);
+    EXPECT_EQ(0.0,   lua_tonumber(L, -3));
+    EXPECT_EQ(0.0,   lua_tonumber(L, -2));
+    EXPECT_EQ(100.0, lua_tonumber(L, -1));   // SQLITE_ROW
+    lua_settop(L, 0);
+    int n = run_ret(L,
+        "local f = world.DatabaseColumnValue('db', 1)\n"
+        "local nl = world.DatabaseColumnValue('db', 2)\n"
+        "return f, nl == nil");
+    ASSERT_EQ(2, n);
+    EXPECT_EQ(3.5, lua_tonumber(L, -2));
+    EXPECT_TRUE(lua_toboolean(L, -1));
+    lua_settop(L, 0);
+
+    // the ColumnValues (plural) variant returns a fresh table of the row
+    n = run_ret(L,
+        "local t = world.DatabaseColumnValues('db')\n"
+        "return t[1], t[2] == nil");
+    ASSERT_EQ(2, n);
+    EXPECT_EQ(3.5, lua_tonumber(L, -2));
+    EXPECT_TRUE(lua_toboolean(L, -1));
+    lua_settop(L, 0);
+
+    EXPECT_TRUE(run(L, "world.DatabaseFinalize('db') world.DatabaseClose('db')"));
+    lua_close(L);
+}
+
+// ═══ Spellchecker family (Lua-backed; active when the app publishes a
+//     spellchecker state) ══════════════════════════════════════════════════
+
+struct SpellFixture {
+    lua_State* SL = nullptr;
+    BOOL savedOK;
+    lua_State* savedLua;
+    SpellFixture(const char* body) {
+        savedOK  = App.m_bSpellCheckOK;
+        savedLua = App.m_SpellChecker_Lua;
+        SL = luaL_newstate();
+        luaL_openlibs(SL);
+        luaL_loadstring(SL, body);
+        lua_pcall(SL, 0, 0, 0);
+        App.m_SpellChecker_Lua = SL;
+        App.m_bSpellCheckOK = TRUE;
+    }
+    ~SpellFixture() {
+        App.m_bSpellCheckOK = savedOK;
+        App.m_SpellChecker_Lua = savedLua;
+        if (SL) lua_close(SL);
+    }
+};
+
+// SpellCheck: number result → error count; table result → SAFEARRAY of the
+// misspelled words; empty table → 0.
+TEST(SpellCheckTest, SpellCheckResultShapes)
+{
+    SpellFixture fx(
+        "function spellcheck_string(text)\n"
+        "  if text == 'clean' then return 0 end\n"
+        "  if text == 'empty' then return {} end\n"
+        "  return { 'wrng', 'agn' }\n"
+        "end\n");
+
+    CMUSHclientDoc doc;
+    VARIANT v = doc.SpellCheck("clean");
+    EXPECT_EQ((int)VT_I4, (int)v.vt);
+    EXPECT_EQ(0, (int)v.lVal);
+
+    v = doc.SpellCheck("empty");
+    EXPECT_EQ((int)VT_I4, (int)v.vt);
+    EXPECT_EQ(0, (int)v.lVal);
+
+    v = doc.SpellCheck("has wrng words agn");
+    EXPECT_TRUE((v.vt & VT_ARRAY) != 0);
+    VariantClear(&v);
+}
+
+// SpellCheckDlg: the "spellcheck" function's string result is returned; a
+// missing function or non-string result → empty VARIANT.
+TEST(SpellCheckTest, SpellCheckDlgArms)
+{
+    {
+        SpellFixture fx("function spellcheck(text) return 'corrected' end\n");
+        CMUSHclientDoc doc;
+        VARIANT v = doc.SpellCheckDlg("orig");
+        EXPECT_EQ((int)VT_BSTR, (int)v.vt);
+        VariantClear(&v);
+    }
+    {
+        SpellFixture fx("spellcheck = nil");   // no function
+        CMUSHclientDoc doc;
+        VARIANT v = doc.SpellCheckDlg("orig");
+        EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
+    }
+    {
+        SpellFixture fx("function spellcheck(text) error('boom') end\n");
+        CMUSHclientDoc doc;
+        VARIANT v = doc.SpellCheckDlg("orig");
+        EXPECT_EQ((int)VT_EMPTY, (int)v.vt);   // runtime-error arm
+    }
+}
+
+// AddSpellCheckWord: validation arms then the Lua add-word call.
+TEST(SpellCheckTest, AddSpellCheckWordValidationAndCall)
+{
+    SpellFixture fx(
+        "added = {}\n"
+        "function spellcheck_add_word(orig, action, repl)\n"
+        "  added[#added+1] = orig .. '/' .. action .. '/' .. (repl or '')\n"
+        "  return true\n"
+        "end\n");
+
+    CMUSHclientDoc doc;
+    EXPECT_EQ((long)eBadParameter, doc.AddSpellCheckWord("", "i", ""));
+    CString longWord('x', 70);
+    EXPECT_EQ((long)eBadParameter, doc.AddSpellCheckWord(longWord, "i", ""));
+    EXPECT_EQ((long)eBadParameter, doc.AddSpellCheckWord("word", "i", longWord));
+    EXPECT_EQ((long)eUnknownOption, doc.AddSpellCheckWord("word", "zz", ""));
+    EXPECT_EQ((long)eUnknownOption, doc.AddSpellCheckWord("word", "q", ""));
+    EXPECT_EQ((long)eOK, doc.AddSpellCheckWord("word", "i", ""));
+
+    // spell-check inactive arm
+    App.m_bSpellCheckOK = FALSE;
+    EXPECT_EQ((long)eSpellCheckNotActive, doc.AddSpellCheckWord("word", "i", ""));
+}
+
+// SpellCheckCommand headless: no command view exists → -1.
+TEST(SpellCheckTest, SpellCheckCommandNoViewReturnsMinusOne)
+{
+    SpellFixture fx("function spellcheck(text, all) return text end\n");
+    CMUSHclientDoc doc;
+    EXPECT_EQ(-1L, doc.SpellCheckCommand(0, 0));
+}
+
+// ═══ Round-4 final sweep: utils compress/hex/base64, Debug() listings,
+//     method-family arms, Metaphone battery ═════════════════════════════════
+
+TEST(SweepR4, UtilsCompressRoundTripAndHexArms)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "local plain = string.rep('squeeze me thoroughly ', 200)\n"
+        "local z = utils.compress(plain)\n"
+        "assert(#z < #plain)\n"
+        "assert(utils.decompress(z) == plain)\n"));
+
+    // fromhex: lowercase digits and the bad-digit error
+    int n = run_ret(L, "return utils.fromhex('48690a')");
+    ASSERT_EQ(1, n);
+    EXPECT_STREQ("Hi\n", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    n = run_ret(L,
+        "local ok, err = pcall(function() return utils.fromhex('4z') end)\n"
+        "return ok, tostring(err)");
+    ASSERT_EQ(2, n);
+    EXPECT_TRUE(!lua_toboolean(L, -2));
+    EXPECT_TRUE(strstr(lua_tostring(L, -1), "Not a hex digit") != nullptr);
+    lua_settop(L, 0);
+
+    // base64encode long enough to hit the wrap arm, decode restores it
+    EXPECT_TRUE(run(L,
+        "local text = string.rep('x', 200)\n"
+        "local b = utils.base64encode(text, true)\n"     // multi-line
+        "assert(b:find('\\r\\n'))\n"
+        "assert(utils.base64decode(b) == text)\n"));
+
+    lua_close(L);
+}
+
+TEST(SweepR4, DebugListingsCoverEachAction)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "world.AddTriggerEx('dt', 'match', 'resp', 1, -1, 0, '', '', 0, 100)\n"
+        "world.AddAlias('da', 'match', 'resp', 1, '')\n"
+        "world.AddTimer('dm', 0, 1, 0, 'resp', 1, '')\n"
+        "world.SetVariable('dv', 'val')\n"
+        "world.Debug('')\n"                // help arm
+        "world.Debug('triggerlist')\n"
+        "world.Debug('aliaslist')\n"
+        "world.Debug('timerlist')\n"
+        "world.Debug('variablelist')\n"
+        "world.Debug('telnetlist')\n"
+        "world.Debug('pluginlist')\n"
+        "world.Debug('info')\n"));
+
+    // the listings noted things into the output
+    bool sawTrigger = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("dt") != std::string::npos)
+            sawTrigger = true;
+    }
+    EXPECT_TRUE(sawTrigger);
+
+    // plugin-scoped debug with an unknown plugin id notes the failure
+    EXPECT_TRUE(run(L, "world.Debug('@ffffffffffffffffffffffff triggerlist')"));
+    lua_close(L);
+}
+
+TEST(SweepR4, UtilityMethodArms)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // StripANSI removes escape sequences
+    int n = run_ret(L, "return world.StripANSI('a\\27[31mred\\27[0mb')");
+    ASSERT_EQ(1, n);
+    EXPECT_STREQ("aredb", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    // GenerateName needs the names file — missing file arm first
+    n = run_ret(L, "return world.ReadNamesFile('/nonexistent-r4/names.txt')");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eCouldNotOpenFile, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+TEST(SweepR4, NoteColourCustomArms)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // custom note colour: Tell in custom palette mode
+    doc.m_bNotesInRGB = false;
+    doc.m_iNoteTextColour = 3;             // custom palette index
+    doc.m_customtext[3] = RGB(1, 2, 3);
+    doc.m_customback[3] = RGB(4, 5, 6);
+    EXPECT_TRUE(run(L, "world.Tell('custom-coloured')"));
+
+    // GetNoteColourFore/Back through the custom arm
+    int n = run_ret(L, "return world.GetNoteColourFore(), world.GetNoteColourBack()");
+    ASSERT_EQ(2, n);
+    EXPECT_EQ((double)RGB(1, 2, 3), lua_tonumber(L, -2));
+    EXPECT_EQ((double)RGB(4, 5, 6), lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // same-colour mode with custom-16-as-default
+    doc.m_iNoteTextColour = SAMECOLOUR;
+    doc.m_bCustom16isDefaultColour = TRUE;
+    doc.m_customtext[15] = RGB(7, 8, 9);
+    doc.m_customback[15] = RGB(10, 11, 12);
+    n = run_ret(L, "return world.GetNoteColourFore(), world.GetNoteColourBack()");
+    ASSERT_EQ(2, n);
+    EXPECT_EQ((double)RGB(7, 8, 9),    lua_tonumber(L, -2));
+    EXPECT_EQ((double)RGB(10, 11, 12), lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+TEST(SweepR4, ExportXmlPerTypeAndImportErrors)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "world.AddTriggerEx('xt', 'm', 'r', 1, -1, 0, '', '', 0, 100)\n"
+        "world.AddAlias('xa', 'm', 'r', 1, '')\n"
+        "world.AddTimer('xm', 0, 1, 0, 'r', 1, '')\n"
+        "world.SetVariable('xv', 'val')\n"));
+
+    int n = run_ret(L,
+        "return world.ExportXML(0, 'xt'), world.ExportXML(1, 'xa'),\n"
+        "       world.ExportXML(2, 'xm'), world.ExportXML(4, 'xv')");
+    ASSERT_EQ(4, n);
+    EXPECT_TRUE(strstr(lua_tostring(L, -4), "<triggers>")  != nullptr);
+    EXPECT_TRUE(strstr(lua_tostring(L, -3), "<aliases>")   != nullptr);
+    EXPECT_TRUE(strstr(lua_tostring(L, -2), "<timers>")    != nullptr);
+    EXPECT_TRUE(strstr(lua_tostring(L, -1), "<variables>") != nullptr);
+    lua_settop(L, 0);
+
+    // ImportXML error arms: not XML at all, and malformed XML
+    n = run_ret(L, "return world.ImportXML('just some text'), "
+                   "world.ImportXML('<triggers><trigger broken></triggers>')");
+    ASSERT_EQ(2, n);
+    EXPECT_EQ(-1.0, lua_tonumber(L, -2));
+    EXPECT_EQ(-1.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+TEST(SweepR4, DefaultAndCurrentAlphaOptions)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // alpha option reads through GetCurrentValue / GetDefaultValue
+    int n = run_ret(L,
+        "world.SetAlphaOption('terminal_identification', 'r4-terminal')\n"
+        "return world.GetCurrentValue('terminal_identification'),\n"
+        "       world.GetDefaultValue('terminal_identification'),\n"
+        "       world.GetCurrentValue('wrap_column')");
+    ASSERT_EQ(3, n);
+    EXPECT_STREQ("r4-terminal", lua_tostring(L, -3));
+    EXPECT_TRUE(lua_isstring(L, -2));
+    EXPECT_TRUE(lua_isnumber(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// Double Metaphone battery: words chosen to walk the consonant special
+// cases (silent letters, gh/ch/sch, x, z, tia, etc.).
+TEST(SweepR4, MetaphoneConsonantBattery)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    static const char* words[] = {
+        "Xavier", "gnome", "knight", "pneumonia", "wrangle", "aegis",
+        "school", "cheese", "chianti", "michael", "czar", "edge",
+        "judge", "ghost", "laugh", "cough", "philosophy", "psalm",
+        "queen", "island", "sugar", "tion", "nation", "thomas",
+        "through", "wagner", "xylophone", "zhivago", "jose", "caesar",
+        "chorus", "witch", "watch", "science", "scene", "wholly",
+        "acceptance", "success", "bacchus", "orchestra", "architect",
+    };
+    for (const char* w : words) {
+        char code[256];
+        snprintf(code, sizeof code, "return world.Metaphone('%s', 10)", w);
+        int n = run_ret(L, code);
+        if (n != 1 || !lua_isstring(L, -1)) {
+            char msg[128];
+            snprintf(msg, sizeof msg, "Metaphone('%s') gave no string", w);
+            mc_test::fail_msg(__FILE__, __LINE__, msg);
+        }
+        lua_settop(L, 0);
+    }
+
+    // a pinned value: silent K — the primary code starts with N
+    int n = run_ret(L, "return world.Metaphone('knight', 10)");
+    ASSERT_EQ(1, n);
+    const char* mp = lua_tostring(L, -1);
+    ASSERT_TRUE(mp != nullptr);
+    EXPECT_EQ('N', mp[0]);
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// ═══ Round-4 sweep 2: trigger/alias/timer API arms ══════════════════════════
+
+TEST(SweepR4, TriggerApiArms)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // flags: ignore-case(1)+omit-output(4)+regexp(8)+lowercase(2048? use enum)…
+    // eIgnoreCase=2, eOmitFromOutput=4, eTriggerRegularExpression=8? — use the
+    // canonical literals: eEnabled|eIgnoreCase|eTriggerRegularExpression|
+    // eTriggerOneShot|eLowercaseWildcard via GetTrigger reconstruction.
+    // eEnabled(1) | eIgnoreCase(0x10) | eTriggerRegularExpression(0x20) |
+    // eLowercaseWildcard(0x800) | eTriggerOneShot(0x8000)
+    int n = run_ret(L,
+        "rc = world.AddTriggerEx('tf', '^x(.*)$', 'resp', "
+        "1 + 16 + 32 + 2048 + 32768, -1, 0, '', '', 0, 100)\n"
+        "return rc");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // GetTriggerInfo boolean/short cases
+    n = run_ret(L,
+        "return world.GetTriggerInfo('tf', 5), world.GetTriggerInfo('tf', 6),\n"
+        "       world.GetTriggerInfo('tf', 7), world.GetTriggerInfo('tf', 10),\n"
+        "       world.GetTriggerInfo('tf', 11), world.GetTriggerInfo('tf', 12),\n"
+        "       world.GetTriggerInfo('tf', 13), world.GetTriggerInfo('tf', 14),\n"
+        "       world.GetTriggerInfo('tf', 17), world.GetTriggerInfo('tf', 18),\n"
+        "       world.GetTriggerInfo('tf', 19), world.GetTriggerInfo('tf', 22)");
+    ASSERT_EQ(12, n);
+    EXPECT_TRUE(lua_toboolean(L, -3));           // ignore_case (case 10 → slot -9… case 19 at -2)
+    lua_settop(L, 0);
+
+    // GetTrigger reconstructs the flag word
+    n = run_ret(L,
+        "local mt, rt, fl = world.GetTrigger('tf')\n"
+        "return mt, fl");
+    ASSERT_EQ(2, n);
+    lua_settop(L, 0);
+
+    // Enable idempotency arms
+    n = run_ret(L, "return world.EnableTrigger('tf', true), world.EnableTrigger('tf', true)");
+    ASSERT_EQ(2, n);
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+    n = run_ret(L, "return world.EnableTrigger('tf', false), world.EnableTrigger('tf', false)");
+    ASSERT_EQ(2, n);
+    EXPECT_EQ((double)eOK, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // delete arms: missing name
+    n = run_ret(L, "return world.DeleteTrigger('nosuch')");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eTriggerNotFound, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+TEST(SweepR4, TriggerScriptNameNotLocated)
+{
+    CMUSHclientDoc doc;
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    doc.m_ScriptEngine = engine;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    int n = run_ret(L,
+        "return world.AddTriggerEx('ts', 'm', '', 1, -1, 0, '', 'no_such_fn', 0, 100)");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eScriptNameNotLocated, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    n = run_ret(L, "return world.AddAlias('as', 'm', 'r', 1, 'no_such_fn')");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eScriptNameNotLocated, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    n = run_ret(L, "return world.AddTimer('tm', 0, 1, 0, 'r', 1, 'no_such_fn')");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eScriptNameNotLocated, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+TEST(SweepR4, AliasApiArms)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // speedwalk / queue flag coercion (eAliasSpeedWalk=0x800, eAliasQueue=0x1000)
+    EXPECT_TRUE(run(L, "assert(world.AddAlias('asw', 'w1', 'n', 1 + 2048, '') == 0)"));
+    EXPECT_TRUE(run(L, "assert(world.AddAlias('aq',  'w2', 'n', 1 + 4096, '') == 0)"));
+    int n = run_ret(L,
+        "return world.GetAliasInfo('asw', 18), world.GetAliasInfo('aq', 18)");
+    ASSERT_EQ(2, n);
+    EXPECT_EQ((double)eSendToSpeedwalk,    lua_tonumber(L, -2));
+    EXPECT_EQ((double)eSendToCommandQueue, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // idempotent enable/disable + delete-missing
+    EXPECT_TRUE(run(L,
+        "assert(world.EnableAlias('asw', true) == 0)\n"
+        "assert(world.EnableAlias('asw', true) == 0)\n"
+        "assert(world.EnableAlias('asw', false) == 0)\n"
+        "assert(world.EnableAlias('asw', false) == 0)\n"));
+    n = run_ret(L, "return world.DeleteAlias('nosuch')");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eAliasNotFound, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // GetAlias reconstruction: rc first, then the by-ref outputs
+    n = run_ret(L, "local rc, m = world.GetAlias('asw') return rc, m");
+    ASSERT_EQ(2, n);
+    EXPECT_EQ(0.0, lua_tonumber(L, -2));
+    EXPECT_STREQ("w1", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+TEST(SweepR4, TimerApiArms)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L, "assert(world.AddTimer('t1', 0, 5, 0, 'ping', 1, '') == 0)"));
+    EXPECT_TRUE(run(L,
+        "assert(world.EnableTimer('t1', true) == 0)\n"
+        "assert(world.EnableTimer('t1', true) == 0)\n"
+        "assert(world.EnableTimer('t1', false) == 0)\n"
+        "assert(world.EnableTimer('t1', false) == 0)\n"
+        "assert(world.ResetTimer('t1') == 0)\n"));
+
+    // GetTimerInfo type sweep
+    int n = run_ret(L,
+        "local vals = {}\n"
+        "for i = 1, 24 do vals[i] = world.GetTimerInfo('t1', i) end\n"
+        "return type(vals[1]), type(vals[13])");
+    ASSERT_EQ(2, n);
+    lua_settop(L, 0);
+
+    n = run_ret(L, "return world.DeleteTimer('nosuch')");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eTimerNotFound, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// ═══ Round-4 sweep 3: utils utf8 family, colourcube, timer, misc arms ═══════
+
+TEST(SweepR4, Utf8FamilyEncodeDecodeSubValid)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // encode: 2-, 3- and 4-byte code points
+    EXPECT_TRUE(run(L,
+        "assert(utils.utf8encode(0xE9) == '\\195\\169')\n"          // é
+        "assert(utils.utf8encode(0x20AC) == '\\226\\130\\172')\n"   // €
+        "assert(utils.utf8encode(0x1F600) == '\\240\\159\\152\\128')\n"));
+
+    // decode round trips
+    EXPECT_TRUE(run(L,
+        "local t = utils.utf8decode('a\\226\\130\\172b')\n"
+        "assert(type(t) == 'table')\n"));
+
+    // utf8valid: a good string and the position of a bad byte
+    EXPECT_TRUE(run(L,
+        "assert(utils.utf8valid('ok\\226\\130\\172') == true or "
+        "       utils.utf8valid('ok\\226\\130\\172') ~= nil)\n"));
+    int n = run_ret(L,
+        "local r = utils.utf8valid('ab\\255cd')\n"
+        "return r == true, tostring(r)");
+    ASSERT_EQ(2, n);
+    EXPECT_TRUE(!lua_toboolean(L, -2));   // not valid — position or false
+    lua_settop(L, 0);
+
+    // utf8sub walks characters not bytes
+    n = run_ret(L, "return utils.utf8sub('a\\226\\130\\172b', 2, 2)");
+    ASSERT_EQ(1, n);
+    EXPECT_STREQ("\xE2\x82\xAC", lua_tostring(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+TEST(SweepR4, ColourCubeTimerAndInfoUtils)
+{
+    LONGLONG saved = App.m_iCounterFrequency;
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // both colour-cube variants, plus the unknown-option error
+    EXPECT_TRUE(run(L, "utils.colourcube(1)"));
+    EXPECT_TRUE(run(L, "utils.colourcube(2)"));
+    int n = run_ret(L,
+        "local ok, err = pcall(function() utils.colourcube(9) end)\n"
+        "return ok, tostring(err)");
+    ASSERT_EQ(2, n);
+    EXPECT_TRUE(!lua_toboolean(L, -2));
+    EXPECT_TRUE(strstr(lua_tostring(L, -1), "Unknown option") != nullptr);
+    lua_settop(L, 0);
+
+    // timer: both the QPC arm and the wall-clock arm
+    App.m_iCounterFrequency = 1000000;
+    EXPECT_TRUE(run(L, "assert(type(utils.timer()) == 'number')"));
+    App.m_iCounterFrequency = 0;
+    EXPECT_TRUE(run(L, "assert(type(utils.timer()) == 'number')"));
+
+    // info + infotypes + functionlist return tables headless
+    EXPECT_TRUE(run(L,
+        "assert(type(utils.info()) == 'table')\n"
+        "assert(type(utils.infotypes()) == 'table')\n"
+        "assert(type(utils.functionlist()) == 'table')\n"
+        "assert(type(utils.callbackslist()) == 'table')\n"));
+
+    // edit_distance + metaphone through utils
+    EXPECT_TRUE(run(L,
+        "assert(utils.edit_distance('kitten', 'sitting') == 3)\n"
+        "assert(type(utils.metaphone('orange')) == 'string')\n"));
+
+    App.m_iCounterFrequency = saved;
+    lua_close(L);
+}
+
+// A fully-populated world survives a save/reload round trip (macros, colour
+// table, temporary-alias skip, comment mangling).
+TEST(SweepR4, WorldSaveRoundTripWithEverything)
+{
+    CMUSHclientDoc doc;
+    doc.m_mush_name = "RoundTrip";
+    doc.m_notes = "notes -- with double hyphens --";
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "world.AddTriggerEx('rt', 'm', 'r', 1, 7, 0, '', '', 0, 100)\n"
+        "world.AddAlias('ra', 'am', 'ar', 1, '')\n"
+        "world.AddTimer('rm', 0, 2, 0, 'tick', 1, '')\n"
+        "world.SetVariable('rv', 'val')\n"));
+    doc.m_macros[0] = "macro-zero";
+
+    // one temporary alias that must NOT be saved
+    EXPECT_TRUE(run(L, "world.AddAlias('tmpa', 'tm', 'tr', 1 + 16384, '')"));  // eTemporary
+
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_rt_%d.mcl", (int)getpid());
+    char code[192];
+    snprintf(code, sizeof code, "return world.Save('%s', true)", path);
+    int n = run_ret(L, code);
+    ASSERT_EQ(1, n);
+    lua_settop(L, 0);
+
+    CMUSHclientDoc doc2;
+    ASSERT_TRUE(doc2.LoadWorldFromFile(path));
+    unlink(path);
+
+    CTrigger* t = nullptr;
+    EXPECT_TRUE(doc2.GetTriggerMap().Lookup("rt", t));
+    CAlias* a = nullptr;
+    EXPECT_TRUE(doc2.GetAliasMap().Lookup("ra", a));
+    EXPECT_TRUE(!doc2.GetAliasMap().Lookup("tmpa", a));   // temporary skipped
+    CTimer* tm = nullptr;
+    EXPECT_TRUE(doc2.GetTimerMap().Lookup("rm", tm));
+    CVariable* v = nullptr;
+    EXPECT_TRUE(doc2.GetVariableMap().Lookup("rv", v));
+    EXPECT_STREQ("macro-zero", (LPCTSTR)doc2.m_macros[0]);
+}
+
+// ═══ Round-4 sweep 4: engine Parse error arms + script-error logging ════════
+
+TEST(SweepR4, EngineParseCompileAndRuntimeErrors)
+{
+    LONGLONG saved = App.m_iCounterFrequency;
+    App.m_iCounterFrequency = 1000000;   // exercise the timing arms too
+
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    doc.m_ScriptEngine = engine;
+
+    // compile error → true, and the error is noted
+    EXPECT_TRUE(engine->Parse(CString("this is not lua"), "<compile>"));
+    // runtime error at parse time → true
+    EXPECT_TRUE(engine->Parse(CString("error('parse-time boom')"), "<runtime>"));
+    // clean parse → false
+    EXPECT_TRUE(!engine->Parse(CString("x = 1"), "<ok>"));
+
+    // the errors were reported into the output window
+    bool sawError = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("boom") != std::string::npos)
+            sawError = true;
+    }
+    EXPECT_TRUE(sawError);
+    App.m_iCounterFrequency = saved;
+}
+
+TEST(SweepR4, ScriptErrorLogFileAppended)
+{
+    char dir[128];
+    snprintf(dir, sizeof dir, "/tmp/mc_test_r4_errlog_%d/", (int)getpid());
+    mkdir(dir, 0755);
+    std::string savedDir = (const char*)App.m_strDefaultLogFileDirectory.c_str();
+    App.m_strDefaultLogFileDirectory = dir;
+
+    CMUSHclientDoc doc;
+    doc.m_bLogScriptErrors = TRUE;
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    doc.m_ScriptEngine = engine;
+    EXPECT_TRUE(engine->Parse(CString("error('logged-error')"), "<logged>"));
+
+    std::string logPath = std::string(dir) + "script_error_log.txt";
+    FILE* f = fopen(logPath.c_str(), "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[2048] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    EXPECT_TRUE(strstr(buf, "logged-error") != nullptr);
+    unlink(logPath.c_str());
+    rmdir(dir);
+    App.m_strDefaultLogFileDirectory = savedDir.c_str();
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

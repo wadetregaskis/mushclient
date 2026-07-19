@@ -204,13 +204,43 @@ void CXMLparser::BuildStructure (CFile * file)
     CString buf2;
     const char * q =  m_strxmlBuffer;
     q += 2; // skip indicator bytes
+#ifndef _WIN32
+    // wchar_t is 4 bytes off-Windows: casting the UTF-16LE byte stream to
+    // LPCWSTR mis-reads it (two UTF-16 units per wchar_t), so a Unicode
+    // world/plugin file that loads fine on Windows came out as garbage.
+    // Widen the 2-byte units (combining surrogate pairs) first, then let
+    // the shared WideCharToMultiByte do the UTF-8 encoding.
+    int nUnits = (m_xmlLength - 2) / 2;
+    vector<wchar_t> vWide;
+    vWide.reserve (nUnits);
+    const unsigned char * qb = (const unsigned char *) q;
+    for (int iUnit = 0; iUnit < nUnits; iUnit++)
+      {
+      unsigned long cp = qb [iUnit * 2] | (qb [iUnit * 2 + 1] << 8);
+      if (cp >= 0xD800 && cp <= 0xDBFF && iUnit + 1 < nUnits)
+        {
+        unsigned long low = qb [(iUnit + 1) * 2] | (qb [(iUnit + 1) * 2 + 1] << 8);
+        if (low >= 0xDC00 && low <= 0xDFFF)
+          {
+          cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+          iUnit++;
+          }
+        }
+      vWide.push_back ((wchar_t) cp);
+      }
+    const wchar_t * pWide = vWide.empty () ? L"" : &vWide [0];
+    int nWide = (int) vWide.size ();
+#else
+    const wchar_t * pWide = (LPCWSTR) q;        // 2-byte wchar_t: in place
+    int nWide = (m_xmlLength - 2) / 2;
+#endif
     // find required buffer length
-    int length = WideCharToMultiByte (CP_UTF8, 0, (LPCWSTR) q, (m_xmlLength - 2) / 2, 
+    int length = WideCharToMultiByte (CP_UTF8, 0, pWide, nWide,
                     NULL, 0, NULL, NULL);
     // make a new string with enough length to hold it
     char * p = buf2.GetBuffer (length);
     // convert it
-    WideCharToMultiByte (CP_UTF8, 0, (LPCWSTR) q, (m_xmlLength - 2) / 2, 
+    WideCharToMultiByte (CP_UTF8, 0, pWide, nWide,
               p, length, NULL, NULL);
     buf2.ReleaseBuffer (length);
     // copy to our buffer

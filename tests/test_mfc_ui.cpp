@@ -3482,4 +3482,102 @@ TEST(Wnd, InertStubSurface) {
     ev.ResetEvent();
 }
 
+// ═══ Round-4 coverage: command-UI dispatch, CDocument base serialize,
+//     SafeArray LONG shims, FindResource, misc real-logic arms ══════════════
+
+TEST(MessageMap, UpdateUiDispatchRunsHandler) {
+    MapTarget t;
+    CCmdUI ui;
+    ui.m_nID = 400;
+    EXPECT_TRUE(AfxDispatchUpdateUI(&t, &ui));    // handler disables + checks
+
+    CCmdUI miss;
+    miss.m_nID = 999;
+    EXPECT_FALSE(AfxDispatchUpdateUI(&t, &miss)); // no matching entry
+
+    EXPECT_FALSE(AfxDispatchUpdateUI(nullptr, &ui));
+    EXPECT_FALSE(AfxDispatchUpdateUI(&t, nullptr));
+
+    // a derived target walks up to the base map for the entry
+    DerivedTarget d;
+    CCmdUI ui2;
+    ui2.m_nID = 400;
+    EXPECT_TRUE(AfxDispatchUpdateUI(&d, &ui2));
+}
+
+namespace {
+// Minimal document with real Serialize both ways.
+class SerDoc : public CDocument {
+public:
+    CString m_payload;
+    void Serialize(CArchive& ar) override {
+        if (ar.IsStoring())
+            ar.WriteString(m_payload + "\n");
+        else
+            ar.ReadString(m_payload);
+    }
+};
+} // namespace
+
+TEST(DocBase, OnSaveThenOnOpenRoundTrip) {
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_mfc_%d_doc.txt", (int)getpid());
+
+    SerDoc out;
+    out.m_payload = "round trip payload";
+    EXPECT_TRUE(out.OnSaveDocument(path));
+
+    SerDoc in;
+    EXPECT_TRUE(in.OnOpenDocument(path));
+    EXPECT_STREQ("round trip payload", (LPCTSTR)in.m_payload);
+    unlink(path);
+
+    // missing file: the open-failure arm
+    SerDoc miss;
+    EXPECT_FALSE(miss.OnOpenDocument("/nonexistent-r4/doc.txt"));
+    // unwritable path: the save-failure arm
+    SerDoc bad;
+    EXPECT_FALSE(bad.OnSaveDocument("/nonexistent-r4/doc.txt"));
+}
+
+TEST(MiscShims, SafeArrayLongPointerOverloads) {
+    COleSafeArray sa;
+    sa.CreateOneDim(VT_VARIANT, 3, NULL, 0);
+
+    LONG lo = 99, hi = -99;
+    EXPECT_EQ(S_OK, SafeArrayGetLBound(sa.m_psa, 1, &lo));
+    EXPECT_EQ(S_OK, SafeArrayGetUBound(sa.m_psa, 1, &hi));
+    EXPECT_EQ(0L, lo);
+    EXPECT_EQ(2L, hi);
+
+    long putIx = 1;
+    COleVariant v("x");
+    sa.PutElement(&putIx, &v);
+    LONG getIx[1] = { 1 };
+    VARIANT out;
+    VariantInit(&out);
+    EXPECT_EQ(S_OK, SafeArrayGetElement(sa.m_psa, getIx, &out));
+    EXPECT_EQ((int)VT_BSTR, (int)out.vt);
+    VariantClear(&out);
+}
+
+TEST(MiscShims, FindResourceTextByNumericId) {
+    // TEXT + numeric id → the id itself is the handle
+    HRSRC h = FindResource(nullptr, (LPCTSTR)(uintptr_t)42, "TEXT");
+    EXPECT_EQ((void*)(uintptr_t)42, (void*)h);
+    // non-TEXT type → null
+    EXPECT_EQ((void*)nullptr, (void*)FindResource(nullptr, (LPCTSTR)(uintptr_t)42, "BITMAP"));
+}
+
+TEST(MiscShims, GlobalMemoryStatusZeroesAndSmallStubs) {
+    MEMORYSTATUS ms;
+    ms.dwMemoryLoad = 55;
+    GlobalMemoryStatus(&ms);
+    EXPECT_EQ(0u, (unsigned)ms.dwMemoryLoad);
+    GlobalMemoryStatus(nullptr);   // null-safe
+
+    CDC dc;
+    EXPECT_FALSE(dc.TextOut(0, 0, CString("s")));   // CString overload
+}
+
 MC_TEST_MAIN()

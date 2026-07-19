@@ -583,4 +583,137 @@ TEST(GlobalOptions, ShowGlobalOptionsNotesEveryOption)
     EXPECT_TRUE(found);
 }
 
+// ═══ Round-4 coverage: timing/selection/scroll/key-state GetInfo arms ═══════
+
+#include "fake_worldview.h"
+
+// Timing-family codes with a performance-counter frequency published.
+TEST(GetInfoR4, TimingCodesWithCounterFrequency)
+{
+    LONGLONG saved = App.m_iCounterFrequency;
+    App.m_iCounterFrequency = 1000000;
+    CMUSHclientDoc doc = make_doc();
+
+    // give a trigger and an alias a compiled regexp so the sum loops run
+    doc.AddTrigger("t1", "match this", "", 1, -1, 0, "", "");
+    doc.AddAlias("a1", "match that", "", 1, "");
+
+    VARIANT v = doc.GetInfo(232);      // high-resolution timer
+    EXPECT_EQ((int)VT_R8, (int)v.vt);
+    v = doc.GetInfo(233);              // time taken doing triggers
+    EXPECT_EQ((int)VT_R8, (int)v.vt);
+    v = doc.GetInfo(234);              // time taken doing aliases
+    EXPECT_EQ((int)VT_R8, (int)v.vt);
+
+    App.m_iCounterFrequency = saved;
+}
+
+// Log-file size arm (231) with a live log.
+TEST(GetInfoR4, LogFileSizeWhileOpen)
+{
+    CMUSHclientDoc doc = make_doc();
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_info_%d.log", (int)getpid());
+    ASSERT_EQ((long)eOK, doc.OpenLog(path, FALSE));
+    doc.WriteToLog("0123456789", 10);
+    VARIANT v = doc.GetInfo(231);
+    EXPECT_EQ((int)VT_I4, (int)v.vt);
+    EXPECT_EQ(10, (int)v.lVal);
+    doc.CloseLog();
+    unlink(path);
+}
+
+// Command-selection (236/237) and scroll-position (296) arms answer through
+// the world-view seam.
+TEST(GetInfoR4, SelectionAndScrollThroughWorldView)
+{
+    CMUSHclientDoc doc = make_doc();
+    FakeWorldView view;
+    view.cmd = "hello world";
+    view.cmdSel.start = 2;
+    view.cmdSel.end = 7;
+    view.scroll = 42;
+    doc.m_pWorldView = &view;
+
+    VARIANT v = doc.GetInfo(236);
+    EXPECT_EQ((int)VT_I4, (int)v.vt);
+    EXPECT_EQ(3, (int)v.lVal);         // 1-based start
+    v = doc.GetInfo(237);
+    EXPECT_EQ(7, (int)v.lVal);
+    v = doc.GetInfo(296);
+    EXPECT_EQ(42, (int)v.lVal);
+
+    doc.m_pWorldView = nullptr;
+}
+
+// Virtual-key state bitmask (294) through the key-state hook.
+TEST(GetInfoR4, KeyStateBitmaskThroughHook)
+{
+    g_wxhook_get_key_state = [](int vk) -> short {
+        switch (vk) {
+            case VK_SHIFT: case VK_CONTROL: case VK_MENU:
+            case VK_LSHIFT: case VK_RSHIFT: case VK_LCONTROL: case VK_RCONTROL:
+            case VK_LMENU: case VK_RMENU:
+            case VK_LBUTTON: case VK_RBUTTON: case VK_MBUTTON:
+                return 0x8000;                    // held down
+            case VK_CAPITAL: case VK_NUMLOCK: case VK_SCROLL:
+                return 0x8001;                    // held AND toggled
+            default: return 0;
+        }
+    };
+    CMUSHclientDoc doc = make_doc();
+    VARIANT v = doc.GetInfo(294);
+    EXPECT_EQ((int)VT_I4, (int)v.vt);
+    EXPECT_EQ(0x7EFFF & ~0x1000, (int)(v.lVal & 0x7FFFF));
+    g_wxhook_get_key_state = nullptr;
+}
+
+// Date codes 302/303 answer VT_DATE once the timestamps are non-zero.
+TEST(GetInfoR4, FlushAndScriptModDates)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_LastFlushTime = CTime::GetCurrentTime();
+    doc.m_timeScriptFileMod = CTime::GetCurrentTime();
+    VARIANT v = doc.GetInfo(302);
+    EXPECT_EQ((int)VT_DATE, (int)v.vt);
+    v = doc.GetInfo(303);
+    EXPECT_EQ((int)VT_DATE, (int)v.vt);
+}
+
+// GetLineInfo flag codes 6/7/8 and the timing codes 12/13.
+TEST(GetInfoR4, LineInfoFlagAndTimingCodes)
+{
+    LONGLONG saved = App.m_iCounterFrequency;
+    App.m_iCounterFrequency = 1000000;
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "plain line\r\n");
+
+    VARIANT v = doc.GetLineInfo(1, 6);   // LOG_LINE flag
+    EXPECT_EQ((int)VT_BOOL, (int)v.vt);
+    v = doc.GetLineInfo(1, 7);           // BOOKMARK flag
+    EXPECT_EQ((int)VT_BOOL, (int)v.vt);
+    v = doc.GetLineInfo(1, 8);           // HORIZ_RULE flag
+    EXPECT_EQ((int)VT_BOOL, (int)v.vt);
+    v = doc.GetLineInfo(1, 12);          // high-precision timestamp
+    EXPECT_EQ((int)VT_R8, (int)v.vt);
+    v = doc.GetLineInfo(1, 13);          // seconds since world start
+    EXPECT_EQ((int)VT_R8, (int)v.vt);
+
+    // without a counter frequency, code 13 takes the wall-clock arm
+    App.m_iCounterFrequency = 0;
+    v = doc.GetLineInfo(1, 13);
+    EXPECT_EQ((int)VT_R8, (int)v.vt);
+
+    App.m_iCounterFrequency = saved;
+}
+
+// GetStyleInfo with a style number beyond the end answers empty.
+TEST(GetInfoR4, StyleInfoBeyondLastStyleEmpty)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "styled\r\n");
+    VARIANT v = doc.GetStyleInfo(1, 99, 1);
+    EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
+}
+
 MC_TEST_MAIN()

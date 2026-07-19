@@ -634,4 +634,408 @@ TEST(AliasApi, EnableAliasToggleAndMissing)
     EXPECT_EQ((long)eAliasNotFound, doc.EnableAlias("nope", TRUE));
 }
 
+// ═══ Round-4 coverage: speedwalk prefix, quit macro, alias script dispatch,
+//     FixSendText expansion arms, trigger regexp-compile failure arms ═══════
+
+#include "exceptions.h"
+
+// EvaluateCommand speedwalk prefix: "#2n" expands and queues "north" twice.
+TEST(EvaluateArms, SpeedwalkPrefixExpandsAndSends)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_enable_speed_walk = TRUE;
+    doc.m_speed_walk_prefix = "#";
+    type_command(doc, "#2n");
+    std::string& sent = static_cast<FakeTransport*>(doc.m_pTransport)->sent;
+    // two norths went out (queued with default 0 delay → drained immediately)
+    size_t first = sent.find("north");
+    ASSERT_TRUE(first != std::string::npos);
+    EXPECT_TRUE(sent.find("north", first + 1) != std::string::npos);
+}
+
+// EvaluateCommand speedwalk prefix with a malformed walk takes the error arm
+// (nothing is sent).
+TEST(EvaluateArms, SpeedwalkPrefixErrorSendsNothing)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_enable_speed_walk = TRUE;
+    doc.m_speed_walk_prefix = "#";
+    type_command(doc, "#3(unclosed");
+    EXPECT_TRUE(static_cast<FakeTransport*>(doc.m_pTransport)->sent.empty());
+}
+
+// EvaluateCommand speedwalk while disconnected: CheckConnected consumes the
+// command.
+TEST(EvaluateArms, SpeedwalkWhileDisconnectedConsumed)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_enable_speed_walk = TRUE;
+    doc.m_speed_walk_prefix = "#";
+    doc.m_iConnectPhase = eConnectNotConnected;
+    type_command(doc, "#2n");
+    EXPECT_TRUE(static_cast<FakeTransport*>(doc.m_pTransport)->sent.empty());
+}
+
+// Typing the QUIT macro sets m_bDisconnectOK (no auto-reconnect on quit).
+TEST(EvaluateArms, QuitMacroSetsDisconnectOk)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_macros[MAC_QUIT] = "quit";
+    EXPECT_TRUE(!doc.m_bDisconnectOK);
+    type_command(doc, "QUIT");             // CompareNoCase arm
+    EXPECT_TRUE(doc.m_bDisconnectOK);
+}
+
+// Alias echo: with display-my-input on and the alias asking to be echoed,
+// the typed line is displayed as user input and logged.
+TEST(EvaluateArms, AliasEchoDisplaysAndLogsTypedLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_display_my_input = TRUE;
+    doc.m_log_input = TRUE;
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_alias_%d.log", (int)getpid());
+    doc.OpenLog(path, FALSE);
+
+    CAlias* a = add_alias(doc, "salute", "wave");
+    a->bEchoAlias = TRUE;
+    type_command(doc, "salute");
+    doc.CloseLog();
+
+    // the typed line landed in the output as user input
+    bool sawTyped = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("salute") != std::string::npos &&
+            (l->flags & USER_INPUT))
+            sawTyped = true;
+    }
+    EXPECT_TRUE(sawTyped);
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[512] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    EXPECT_TRUE(strstr(buf, "salute") != nullptr);   // command logged
+}
+
+// Trace: a matched alias without a label is traced by its match text.
+TEST(EvaluateArms, TraceNotesMatchedAliasName)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bTrace = TRUE;
+    add_alias(doc, "dance", "boogie");
+    type_command(doc, "dance");
+    bool sawTrace = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("Matched alias") != std::string::npos)
+            sawTrace = true;
+    }
+    EXPECT_TRUE(sawTrace);
+}
+
+// Alias with bOmitFromCommandHistory sets the doc-wide omit flag.
+TEST(EvaluateArms, AliasOmitFromCommandHistoryFlag)
+{
+    CMUSHclientDoc doc = make_doc();
+    CAlias* a = add_alias(doc, "secret", "hush");
+    a->bOmitFromCommandHistory = TRUE;
+    doc.m_bOmitFromCommandHistory = false;
+    type_command(doc, "secret");
+    EXPECT_TRUE(doc.m_bOmitFromCommandHistory);
+}
+
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+#include "scripting/scripting.h"
+
+// Alias script dispatch: the matched alias calls its Lua procedure with
+// (name, line, wildcards) — the embedded-callback path.
+TEST(EvaluateArms, AliasScriptReceivesNameLineAndWildcards)
+{
+    CMUSHclientDoc doc = make_doc();
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function OnAlias(name, line, wildcards)\n"
+        "  world.SetVariable('a_name', name)\n"
+        "  world.SetVariable('a_line', line)\n"
+        "  world.SetVariable('a_w1', wildcards[1])\n"
+        "end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+
+    CAlias* a = add_alias(doc, "get *", "");
+    a->strLabel = "getter";
+    a->strProcedure = "OnAlias";
+    a->dispid = engine->GetDispid("OnAlias");
+    ASSERT_TRUE(a->dispid != DISPID_UNKNOWN);
+
+    type_command(doc, "get sword");
+
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("a_name", v));
+    EXPECT_STREQ("getter", (LPCTSTR)v->strContents);
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("a_line", v));
+    EXPECT_STREQ("get sword", (LPCTSTR)v->strContents);
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("a_w1", v));
+    EXPECT_STREQ("sword", (LPCTSTR)v->strContents);
+}
+
+// Unlabelled alias script: the internal name (rev-map arm) is passed instead.
+TEST(EvaluateArms, UnlabelledAliasScriptGetsInternalName)
+{
+    CMUSHclientDoc doc = make_doc();
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function OnAlias2(name, line, wildcards)\n"
+        "  world.SetVariable('a2_name', name)\n"
+        "end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+
+    CAlias* a = add_alias(doc, "jump", "");
+    a->strLabel = "";                       // unlabelled → rev-map lookup
+    a->strProcedure = "OnAlias2";
+    a->dispid = engine->GetDispid("OnAlias2");
+
+    type_command(doc, "jump");
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("a2_name", v));
+    EXPECT_STREQ("jump", (LPCTSTR)v->strContents);   // rev-map key
+}
+
+// Trigger script dispatch: the matched trigger calls its Lua procedure with
+// (name, line, wildcards) — the ExecuteTriggerScript Lua path.
+TEST(EvaluateArms, TriggerScriptReceivesNameLineAndWildcards)
+{
+    CMUSHclientDoc doc = make_doc();
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function OnTrig(name, line, wildcards)\n"
+        "  world.SetVariable('t_name', name)\n"
+        "  world.SetVariable('t_line', line)\n"
+        "  world.SetVariable('t_w1', wildcards[1])\n"
+        "end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("attacked", "* attacks you", "",
+                                          1 /*eEnabled*/, -1, 0, "", "OnTrig",
+                                          eSendToWorld, 100));
+
+    doc.DisplayMsg("A goblin attacks you\r\n", 22, 0);
+
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("t_name", v));
+    EXPECT_STREQ("attacked", (LPCTSTR)v->strContents);
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("t_line", v));
+    EXPECT_STREQ("A goblin attacks you", (LPCTSTR)v->strContents);
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("t_w1", v));
+    EXPECT_STREQ("A goblin", (LPCTSTR)v->strContents);
+}
+#endif // MUSHCLIENT_LUA_SCRIPTING
+
+// ═══ FixSendText — the %/@ expansion engine ════════════════════════════════
+
+TEST(FixSendTextArms, DoubledEscapesAndDisabledExpansion)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.SetVariable("who", "Bob");
+
+    // @@ → literal @; %% → literal %
+    CString r = doc.FixSendText("mail @@home %%50", eSendToWorld, nullptr, "lua",
+                                false, true, true, false, false, false, "nm");
+    EXPECT_STREQ("mail @home %50", (LPCTSTR)r);
+
+    // expansion disabled: @who and %1 pass through untouched
+    r = doc.FixSendText("tell @who %1", eSendToWorld, nullptr, "lua",
+                        false, false, false, false, false, false, "nm");
+    EXPECT_STREQ("tell @who %1", (LPCTSTR)r);
+    delete doc.m_pTransport; doc.m_pTransport = nullptr;
+}
+
+TEST(FixSendTextArms, VariableExpansionAndEscapingArms)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.SetVariable("target", "a[b]*c");
+
+    // regexp context (bFixRegexps + bIsRegexp): specials are escaped
+    CString r = doc.FixSendText("@target", eSendToWorld, nullptr, "lua",
+                                false, true, true, true, true, false, "nm");
+    EXPECT_STREQ("a\\[b\\]\\*c", (LPCTSTR)r);
+
+    // non-regexp escape context: asterisks are dropped
+    r = doc.FixSendText("@target", eSendToWorld, nullptr, "lua",
+                        false, true, true, true, false, false, "nm");
+    EXPECT_STREQ("a[b]c", (LPCTSTR)r);
+
+    // @! defeats the escaping entirely
+    r = doc.FixSendText("@!target", eSendToWorld, nullptr, "lua",
+                        false, true, true, true, true, false, "nm");
+    EXPECT_STREQ("a[b]*c", (LPCTSTR)r);
+    delete doc.m_pTransport; doc.m_pTransport = nullptr;
+}
+
+TEST(FixSendTextArms, VariableToScriptQuotingPerLanguage)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.SetVariable("v", "say \"hi\\there\" $5");
+
+    // lua/script destination: backslashes then quotes escaped
+    CString r = doc.FixSendText("@v", eSendToScript, nullptr, "lua",
+                                false, true, true, false, false, false, "nm");
+    EXPECT_STREQ("say \\\"hi\\\\there\\\" $5", (LPCTSTR)r);
+
+    // perlscript also escapes $
+    r = doc.FixSendText("@v", eSendToScript, nullptr, "perlscript",
+                        false, true, true, false, false, false, "nm");
+    EXPECT_STREQ("say \\\"hi\\\\there\\\" \\$5", (LPCTSTR)r);
+
+    // vbscript doubles quotes instead
+    r = doc.FixSendText("@v", eSendToScript, nullptr, "vbscript",
+                        false, true, true, false, false, false, "nm");
+    EXPECT_STREQ("say \"\"hi\\there\"\" $5", (LPCTSTR)r);
+    delete doc.m_pTransport; doc.m_pTransport = nullptr;
+}
+
+TEST(FixSendTextArms, VariableToHtmlLogFixed)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bLogHTML = TRUE;
+    doc.SetVariable("h", "a<b>&c");
+    CString r = doc.FixSendText("@h", eSendToLogFile, nullptr, "lua",
+                                false, true, true, false, false, false, "nm");
+    EXPECT_STREQ("a&lt;b&gt;&amp;c", (LPCTSTR)r);
+    delete doc.m_pTransport; doc.m_pTransport = nullptr;
+}
+
+TEST(FixSendTextArms, ExceptionArmsForBadVariables)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    // "@" with no name throws when exceptions are enabled
+    bool threw = false;
+    try {
+        doc.FixSendText("hello @ there", eSendToWorld, nullptr, "lua",
+                        false, true, true, false, false, true, "nm");
+    } catch (CException* e) { e->Delete(); threw = true; }
+    EXPECT_TRUE(threw);
+
+    // undefined variable throws too
+    threw = false;
+    try {
+        doc.FixSendText("@nosuchvar", eSendToWorld, nullptr, "lua",
+                        false, true, true, false, false, true, "nm");
+    } catch (CException* e) { e->Delete(); threw = true; }
+    EXPECT_TRUE(threw);
+
+    // without exceptions both silently expand to nothing
+    CString r = doc.FixSendText("@nosuchvar", eSendToWorld, nullptr, "lua",
+                                false, true, true, false, false, false, "nm");
+    EXPECT_STREQ("", (LPCTSTR)r);
+    delete doc.m_pTransport; doc.m_pTransport = nullptr;
+}
+
+TEST(FixSendTextArms, WildcardDigitNamedAndUnknownPercent)
+{
+    CMUSHclientDoc doc = make_doc();
+    t_regexp* re = regcomp("get (\\w+) from (\\w+)", 0);
+    ASSERT_TRUE(regexec(re, "get sword from chest"));
+
+    CString r = doc.FixSendText("take %1 out of %2", eSendToWorld, re, "lua",
+                                false, true, true, false, false, false, "nm");
+    EXPECT_STREQ("take sword out of chest", (LPCTSTR)r);
+
+    // unknown %x sequence is copied through
+    r = doc.FixSendText("100%x", eSendToWorld, re, "lua",
+                        false, true, true, false, false, false, "nm");
+    EXPECT_STREQ("100%x", (LPCTSTR)r);
+
+    // %N expands the item name
+    r = doc.FixSendText("by %N", eSendToWorld, re, "lua",
+                        false, true, true, false, false, false, "myname");
+    EXPECT_STREQ("by myname", (LPCTSTR)r);
+    delete re;
+    delete doc.m_pTransport; doc.m_pTransport = nullptr;
+}
+
+TEST(FixSendTextArms, NamedWildcardExpansion)
+{
+    CMUSHclientDoc doc = make_doc();
+    t_regexp* re = regcomp("get (?<item>\\w+)", 0);
+    ASSERT_TRUE(regexec(re, "get lantern"));
+    CString r = doc.FixSendText("drop %<item> now", eSendToWorld, re, "lua",
+                                false, true, true, false, false, false, "nm");
+    EXPECT_STREQ("drop lantern now", (LPCTSTR)r);
+    delete re;
+    delete doc.m_pTransport; doc.m_pTransport = nullptr;
+}
+
+// ═══ Trigger regexp-compile failure arms in EvaluateTrigger ════════════════
+
+// Variable-expanding triggers recompile their regexp on every evaluation:
+// an invalid recompiled pattern takes the report-and-skip catch arm, while a
+// valid one matches; a trigger with NO regexp at all is skipped outright.
+TEST(EvaluateArms, VariableExpandingTriggerRecompileArms)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    // recompiles to "(unclosed" → regcomp throws → catch arm → skipped
+    CTrigger* bad = new CTrigger();
+    bad->trigger = "(unclosed@novar";
+    bad->bRegexp = TRUE;
+    bad->bExpandVariables = TRUE;
+    bad->bEnabled = TRUE;
+    bad->iSendTo = eSendToVariable;
+    bad->strVariable = "badv";
+    bad->contents = "no";
+    bad->regexp = nullptr;
+    bad->iSequence = 1;
+    doc.GetTriggerMap().SetAt("bad", bad);
+    doc.GetTriggerRevMap()[bad] = "bad";
+    doc.GetTriggerArray().Add(bad);
+
+    // recompiles to plain "hello" (undefined @novar drops silently) → fires
+    CTrigger* good = new CTrigger();
+    good->trigger = "hello@novar";
+    good->bRegexp = FALSE;
+    good->bExpandVariables = TRUE;
+    good->bEnabled = TRUE;
+    good->iSendTo = eSendToVariable;
+    good->strVariable = "goodv";
+    good->contents = "yes";
+    good->regexp = nullptr;
+    good->iSequence = 2;
+    doc.GetTriggerMap().SetAt("good", good);
+    doc.GetTriggerRevMap()[good] = "good";
+    doc.GetTriggerArray().Add(good);
+
+    // no regexp and no variable expansion → the no-regexp skip arm
+    CTrigger* inert = new CTrigger();
+    inert->trigger = "hello";
+    inert->bRegexp = FALSE;
+    inert->bExpandVariables = FALSE;
+    inert->bEnabled = TRUE;
+    inert->iSendTo = eSendToVariable;
+    inert->strVariable = "inertv";
+    inert->contents = "nope";
+    inert->regexp = nullptr;
+    inert->iSequence = 3;
+    doc.GetTriggerMap().SetAt("inert", inert);
+    doc.GetTriggerRevMap()[inert] = "inert";
+    doc.GetTriggerArray().Add(inert);
+
+    doc.DisplayMsg("hello\r\n", 7, 0);
+
+    CVariable* v = nullptr;
+    EXPECT_TRUE(!doc.GetVariableMap().Lookup("badv", v));
+    EXPECT_TRUE(!doc.GetVariableMap().Lookup("inertv", v));
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("goodv", v));
+    EXPECT_STREQ("yes", (LPCTSTR)v->strContents);
+    // the bad trigger still has no compiled regexp
+    EXPECT_TRUE(bad->regexp == nullptr);
+}
+
 MC_TEST_MAIN()

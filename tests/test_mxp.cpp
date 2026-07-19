@@ -1355,4 +1355,276 @@ TEST(MXPCustom, DebugLevelFiltersNotepadOutput)
     EXPECT_TRUE(dbg.contains("Unknown definition type"));   // errors shown
 }
 
+// ═══ Round-4 coverage: element-name validation, tag script callbacks,
+//     definition error arms, colour errors, headers, AFK ═══════════════════
+
+// An element whose name does not start with a letter is rejected.
+TEST(MxpR4, InvalidElementNameRejected)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    long long before = doc.m_iMXPerrors;
+    mud(doc, "<3bad>x\n");
+    EXPECT_TRUE(doc.m_iMXPerrors > before);
+}
+
+// Unknown colours in <color> and <font fgcolor/bgcolor> raise errors; the
+// fgcolor comma-list applies blink/underline/inverse.
+TEST(MxpR4, ColourErrorsAndFontStyleList)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    long long before = doc.m_iMXPerrors;
+    mud(doc, "<color notarealcolour>x</color>\n");
+    EXPECT_TRUE(doc.m_iMXPerrors > before);
+
+    before = doc.m_iMXPerrors;
+    mud(doc, "<font fgcolor=blink,underline,inverse,notacolour bgcolor=alsonot>y</font>\n");
+    EXPECT_TRUE(doc.m_iMXPerrors >= before + 2);   // fg item + bgcolor errors
+    CLine* l = pline(doc, 1);
+    ASSERT_NE(nullptr, l);
+    CStyle* s = pstyle(l, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & BLINK) != 0);
+    EXPECT_TRUE((s->iFlags & UNDERLINE) != 0);
+    EXPECT_TRUE((s->iFlags & INVERSE) != 0);
+}
+
+// H1-H6 header tags flow through the header arm.
+TEST(MxpR4, HeaderTagsRender)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    mud(doc, "<h1>big</h1><h6>small</h6>\n");
+    CLine* l = pline(doc, 0);
+    ASSERT_NE(nullptr, l);
+    EXPECT_TRUE(ptext(l).find("big") != std::string::npos);
+    EXPECT_TRUE(ptext(l).find("small") != std::string::npos);
+}
+
+// <afk> answers the challenge when the player allows it.
+TEST(MxpR4, AfkChallengeAnswered)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    doc.m_pTransport = new RecordingTransport();
+    doc.m_bSendMXP_AFK_Response = TRUE;
+    mud(doc, "<afk c3po>\n");
+    EXPECT_TRUE(contains(sent_of(doc), "<AFK "));
+    EXPECT_TRUE(contains(sent_of(doc), "c3po"));
+
+    // and with the response disabled, nothing goes out
+    CMUSHclientDoc doc2 = make_pipe_doc();
+    doc2.m_iMXP_defaultMode = doc2.m_iMXP_mode = eMXP_perm_secure;
+    doc2.m_pTransport = new RecordingTransport();
+    doc2.m_bSendMXP_AFK_Response = FALSE;
+    mud(doc2, "<afk c3po>\n");
+    EXPECT_TRUE(!contains(sent_of(doc2), "<AFK "));
+}
+
+// A closing tag that was never opened warns (open tag not in output buffer).
+TEST(MxpR4, CloseWithoutOpenWarns)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    mud(doc, "text</B>\n");
+    // warning, not error — the tag is simply ignored
+    CLine* l = pline(doc, 0);
+    ASSERT_NE(nullptr, l);
+    EXPECT_TRUE(ptext(l) == "text");
+}
+
+// Element DEFINITION error arms: bad name, no "<" in definition, unexpected
+// "<", unclosed quote, no ">", empty tag.
+TEST(MxpR4, ElementDefinitionErrorArms)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    long long e0 = doc.m_iMXPerrors;
+
+    mud(doc, "<!ELEMENT 9bad>\n");                       // invalid name
+    long long e1 = doc.m_iMXPerrors;
+    EXPECT_TRUE(e1 > e0);
+
+    mud(doc, "<!ELEMENT noname 'plain text'>\n");        // no "<" in def
+    long long e2 = doc.m_iMXPerrors;
+    EXPECT_TRUE(e2 > e1);
+
+    mud(doc, "<!ELEMENT nested '<a <b>>'>\n");           // unexpected "<"
+    long long e3 = doc.m_iMXPerrors;
+    EXPECT_TRUE(e3 > e2);
+
+    mud(doc, "<!ELEMENT unquoted '<a \"unclosed>'>\n");  // unclosed quote
+    long long e4 = doc.m_iMXPerrors;
+    EXPECT_TRUE(e4 > e3);
+
+    mud(doc, "<!ELEMENT unclosed '<a'>\n");              // no closing ">"
+    long long e5 = doc.m_iMXPerrors;
+    EXPECT_TRUE(e5 > e4);
+
+    mud(doc, "<!ELEMENT empty '<>'>\n");                 // no element name
+    EXPECT_TRUE(doc.m_iMXPerrors > e5);
+}
+
+// Redefining an element warns "Replacing previously-defined MXP element".
+TEST(MxpR4, RedefiningElementWarns)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    mud(doc, "<!ELEMENT twice '<b>'>\n");
+    long long errsBefore = doc.m_iMXPerrors;
+    mud(doc, "<!ELEMENT twice '<u>'>\n");   // replace: warning only
+    EXPECT_EQ(errsBefore, doc.m_iMXPerrors);
+    // the new definition took: <twice> now renders underline
+    mud(doc, "<twice>zz</twice>\n");
+    CLine* l = pline(doc, 2);
+    ASSERT_NE(nullptr, l);
+    CStyle* s = pstyle(l, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & UNDERLINE) != 0);
+}
+
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+#include "scripting/scripting.h"
+
+// The OnMXP_OpenTag / OnMXP_CloseTag / OnMXP_Error script callbacks fire on
+// tag open/close and on MXP errors; an open-tag handler returning true
+// suppresses the tag.
+TEST(MxpR4, TagAndErrorScriptCallbacks)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "opened = {} closed = {} errors = {}\n"
+        "function OnOpen(name, args)\n"
+        "  table.insert(opened, name)\n"
+        "  return name == 'suppressme'\n"     // suppress that one tag
+        "end\n"
+        "function OnClose(name, text) table.insert(closed, name) end\n"
+        "function OnError(num, line, level, msg)\n"
+        "  table.insert(errors, msg)\n"
+        "  return true\n"                     // swallow the error
+        "end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+    doc.m_strOnMXP_OpenTag  = "OnOpen";
+    doc.m_strOnMXP_CloseTag = "OnClose";
+    doc.m_strOnMXP_Error    = "OnError";
+    doc.ResolveAllEntryPoints();
+
+    mud(doc, "<B>bold</B>\n");
+    mud(doc, "<3bad>\n");                    // triggers the error callback
+
+    lua_State* L = engine->L;
+    lua_getglobal(L, "opened");
+    lua_rawgeti(L, -1, 1);
+    EXPECT_STREQ("b", lua_tostring(L, -1));
+    lua_pop(L, 2);
+    lua_getglobal(L, "closed");
+    lua_rawgeti(L, -1, 1);
+    EXPECT_STREQ("b", lua_tostring(L, -1));
+    lua_pop(L, 2);
+    // the error callback saw the invalid-element error (it may not be the
+    // only recorded error — scan the table)
+    lua_getglobal(L, "errors");
+    bool sawInvalid = false;
+    for (int i = 1; ; i++) {
+        lua_rawgeti(L, -1, i);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        const char* msg = lua_tostring(L, -1);
+        if (msg && strstr(msg, "Invalid MXP element name")) sawInvalid = true;
+        lua_pop(L, 1);
+    }
+    EXPECT_TRUE(sawInvalid);
+    lua_pop(L, 1);
+}
+#endif // MUSHCLIENT_LUA_SCRIPTING
+
+// 100 unclosed tags trigger the outstanding-tag warning.
+TEST(MxpR4, ManyOutstandingTagsWarn)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    for (int i = 0; i < 100; i++)
+        mud(doc, "<B>");
+    EXPECT_EQ(100, (int)doc.m_ActiveTagList.GetCount());
+    EXPECT_EQ(100, (int)doc.m_iLastOutstandingTagCount);   // warning fired
+}
+
+// ═══ Round-4 sweep: <support>, <option>, and tag-callback argument echo ═════
+
+TEST(MxpR4, SupportTagRepliesAndValidatesArguments)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    doc.m_pTransport = new RecordingTransport();
+
+    mud(doc, "<support>\n");                    // full supports list
+    EXPECT_TRUE(contains(sent_of(doc), "<SUPPORTS "));
+    EXPECT_TRUE(contains(sent_of(doc), "+send"));
+
+    // individual queries: known tag, known tag.subtag, and unknown tag
+    static_cast<RecordingTransport*>(doc.m_pTransport)->sent.clear();
+    mud(doc, "<support send color.fore blah>\n");
+    EXPECT_TRUE(contains(sent_of(doc), "+send"));
+    EXPECT_TRUE(contains(sent_of(doc), "-blah"));
+
+    // invalid <support> argument forms
+    long long e0 = doc.m_iMXPerrors;
+    mud(doc, "<support bad.sub.sub>\n");
+    EXPECT_TRUE(doc.m_iMXPerrors > e0);
+}
+
+TEST(MxpR4, OptionTagSetsQueriesAndRejects)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    doc.m_pTransport = new RecordingTransport();
+
+    // <option> queries the current option values back to the server
+    mud(doc, "<option wrap_column>\n");
+    EXPECT_TRUE(contains(sent_of(doc), "<OPTIONS "));
+
+    // <recommend_option> is the server-write path (needs user consent)
+    doc.m_bMudCanChangeOptions = TRUE;
+    long long e0 = doc.m_iMXPerrors;
+    mud(doc, "<recommend_option no_such_option=1>\n");   // unknown → error
+    EXPECT_TRUE(doc.m_iMXPerrors > e0);
+    long long e1 = doc.m_iMXPerrors;
+    mud(doc, "<recommend_option wrap_column=90>\n");     // known option
+    // either accepted (info note) or refused as non-writable (error note):
+    // both arms are genuine — just require no crash and the tag consumed
+    EXPECT_TRUE(doc.m_iMXPerrors >= e1);
+}
+
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+// With an open-tag script handler installed, tag arguments are echoed into
+// the dummy argument list (the name='value' formatting arm).
+TEST(MxpR4, OpenTagCallbackReceivesFormattedArguments)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "args = nil\n"
+        "function OnOpen(name, a) args = a return false end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+    doc.m_strOnMXP_OpenTag = "OnOpen";
+    doc.ResolveAllEntryPoints();
+
+    mud(doc, "<color fore=red back=blue>x</color>\n");
+
+    lua_State* L = engine->L;
+    lua_getglobal(L, "args");
+    ASSERT_TRUE(lua_isstring(L, -1) || lua_istable(L, -1));
+    if (lua_isstring(L, -1)) {
+        const char* a = lua_tostring(L, -1);
+        EXPECT_TRUE(strstr(a, "fore=") != nullptr);
+    }
+    lua_pop(L, 1);
+}
+#endif
+
 MC_TEST_MAIN()

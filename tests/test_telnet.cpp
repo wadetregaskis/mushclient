@@ -688,4 +688,231 @@ TEST(TelnetTest, TerminalTypeSendAdvancesMttsSequence)
     }
 }
 
+// ═══ Round-4 coverage: OSC terminators, MXP-z modes, IAC single commands,
+//     WILL/DO option arms, TTYPE MTTS bits, charset edge arms ═══════════════
+
+TEST(TelnetR4, OscPayloadTerminatorVariants)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    doc.m_phase = HAVE_OSC;
+    doc.Phase_OSC('x');                 // payload byte — stays in OSC
+    EXPECT_EQ(HAVE_OSC, doc.m_phase);
+    doc.Phase_OSC('\007');              // BEL terminates
+    EXPECT_EQ(NONE, doc.m_phase);
+
+    doc.m_phase = HAVE_OSC;
+    doc.Phase_OSC((unsigned char)0x9C); // C1 ST terminates
+    EXPECT_EQ(NONE, doc.m_phase);
+
+    doc.m_phase = HAVE_OSC;
+    doc.Phase_OSC('\033');              // ESC begins ESC-\ terminator
+    EXPECT_EQ(HAVE_ESC, doc.m_phase);
+    doc.Phase_ESC('\\');
+    EXPECT_EQ(NONE, doc.m_phase);
+}
+
+// ESC[<n>z — MXP line-security mode change; ESC[3z resets MXP entirely.
+TEST(TelnetR4, AnsiZChangesMxpModeAndReset)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iUseMXP = eOnCommandMXP;
+    doc.MXP_On();
+    ASSERT_TRUE(doc.m_bMXP);
+
+    doc.m_phase = DOING_CODE;
+    doc.m_code = eMXP_open;             // mode 0 = open line
+    doc.Phase_ANSI('z');
+    EXPECT_EQ(NONE, doc.m_phase);
+    EXPECT_EQ((int)eMXP_open, (int)doc.m_iMXP_mode);
+
+    doc.m_phase = DOING_CODE;
+    doc.m_code = eMXP_reset;            // mode 3 = reset (not a full off)
+    doc.m_bInParagraph = true;
+    doc.m_bPreMode = true;
+    doc.Phase_ANSI('z');
+    EXPECT_TRUE(doc.m_bMXP);            // still on…
+    EXPECT_TRUE(!doc.m_bInParagraph);   // …but the modes were reset
+    EXPECT_TRUE(!doc.m_bPreMode);
+}
+
+// IAC EOR behaves like GA (newline conversion + prompt handling); the other
+// single-byte commands are consumed silently; unknown commands too.
+TEST(TelnetR4, IacSingleByteCommands)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_bConvertGAtoNewline = TRUE;
+
+    int linesBefore = (int)doc.m_LineList.GetCount();
+    const unsigned char eor[] = { 'h', 'i', IAC, EOR };
+    doc.DisplayMsg((LPCTSTR)eor, 4, 0);
+    // EOR became a newline: the "hi" line was finished
+    EXPECT_TRUE((int)doc.m_LineList.GetCount() > linesBefore ||
+                (doc.m_pCurrentLine && doc.m_pCurrentLine->len == 0));
+
+    // DM BRK IP AO AYT EC EL and an unknown command: all consumed
+    const unsigned char cmds[] = { IAC, DATA_MARK, IAC, BREAK,
+                                   IAC, INTERRUPT_PROCESS, IAC, ABORT_OUTPUT,
+                                   IAC, ARE_YOU_THERE, IAC, ERASE_CHARACTER,
+                                   IAC, ERASE_LINE, IAC, 200 };
+    doc.DisplayMsg((LPCTSTR)cmds, sizeof cmds, 0);
+    EXPECT_EQ(NONE, doc.m_phase);
+    EXPECT_TRUE(doc.m_pCurrentLine == NULL || doc.m_pCurrentLine->len == 0);
+}
+
+// WILL END_OF_RECORD: DO when converting GA to newline, DONT otherwise.
+TEST(TelnetR4, WillEndOfRecordFollowsConvertSetting)
+{
+    {
+        CMUSHclientDoc doc = make_doc();
+        doc.m_bConvertGAtoNewline = TRUE;
+        doc.Phase_WILL(WILL_END_OF_RECORD);
+        EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[WILL_END_OF_RECORD]);
+    }
+    {
+        CMUSHclientDoc doc = make_doc();
+        doc.m_bConvertGAtoNewline = FALSE;
+        doc.Phase_WILL(WILL_END_OF_RECORD);
+        EXPECT_TRUE(doc.m_bClient_sent_IAC_DONT[WILL_END_OF_RECORD]);
+    }
+}
+
+// WILL CHARSET is answered DO.
+TEST(TelnetR4, WillCharsetAnsweredDo)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.Phase_WILL(TELOPT_CHARSET);
+    EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[TELOPT_CHARSET]);
+}
+
+// DO MXP: refused when MXP is off; agreed (and MXP turned on) for query-mode.
+TEST(TelnetR4, DoMxpArms)
+{
+    {
+        CMUSHclientDoc doc = make_doc();
+        doc.m_iUseMXP = eNoMXP;
+        doc.Phase_DO(TELOPT_MXP);
+        EXPECT_TRUE(doc.m_bClient_sent_IAC_WONT[TELOPT_MXP]);
+        EXPECT_TRUE(!doc.m_bMXP);
+    }
+    {
+        CMUSHclientDoc doc = make_doc();
+        doc.m_iUseMXP = eQueryMXP;
+        doc.Phase_DO(TELOPT_MXP);
+        EXPECT_TRUE(doc.m_bClient_sent_IAC_WILL[TELOPT_MXP]);
+        EXPECT_TRUE(doc.m_bMXP);
+    }
+}
+
+// DONT TERMINAL_TYPE resets the terminal-type reply sequence.
+TEST(TelnetR4, DontTerminalTypeResetsSequence)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_ttype_sequence = 2;
+    doc.Phase_DONT(TELOPT_TERMINAL_TYPE);
+    EXPECT_EQ(0, doc.m_ttype_sequence);
+}
+
+// CHARSET REQUEST edge arms: too-short payload and non-REQUEST type are
+// ignored (no reply at all); a matching charset (UTF-8) is ACCEPTED.
+TEST(TelnetR4, CharsetRequestEdgeAndAcceptArms)
+{
+    CMUSHclientDoc doc = make_doc();
+    TelnetFakeTransport* t = new TelnetFakeTransport();
+    doc.m_pTransport = t;
+
+    doc.m_IAC_subnegotiation_data = std::string("\x01;", 2);   // too short
+    doc.Handle_TELOPT_CHARSET();
+    EXPECT_TRUE(t->sent.empty());
+
+    doc.m_IAC_subnegotiation_data = std::string("\x02;UTF-8", 7);  // not REQUEST
+    doc.Handle_TELOPT_CHARSET();
+    EXPECT_TRUE(t->sent.empty());
+
+    doc.m_bUTF_8 = TRUE;
+    doc.m_IAC_subnegotiation_data = std::string("\x01;UTF-8", 7);
+    doc.Handle_TELOPT_CHARSET();
+    // IAC SB CHARSET ACCEPTED(2) "UTF-8" IAC SE
+    const char expected[] = { (char)IAC, (char)SB, (char)TELOPT_CHARSET, 2,
+                              'U', 'T', 'F', '-', '8', (char)IAC, (char)SE };
+    ASSERT_EQ(sizeof expected, t->sent.size());
+    EXPECT_TRUE(memcmp(t->sent.data(), expected, sizeof expected) == 0);
+
+    // and the SB dispatch arm routes CHARSET subnegotiations here
+    t->sent.clear();
+    doc.m_subnegotiation_type = TELOPT_CHARSET;
+    doc.m_IAC_subnegotiation_data = std::string("\x01;UTF-8", 7);
+    doc.m_phase = HAVE_SUBNEGOTIATION_IAC;
+    doc.Phase_SUBNEGOTIATION_IAC(SE);
+    EXPECT_TRUE(t->sent.size() > 0);
+}
+
+// TTYPE SEND sequence: name, then XTERM-256COLOR, then MTTS with the UTF-8
+// and SSL bits; a TTYPE IS (not SEND) is ignored.
+TEST(TelnetR4, TerminalTypeSequenceAndMttsBits)
+{
+    CMUSHclientDoc doc = make_doc();
+    TelnetFakeTransport* t = new TelnetFakeTransport();
+    doc.m_pTransport = t;
+    doc.m_strTerminalIdentification = "mushclient";
+    doc.m_bUTF_8 = TRUE;
+    doc.m_bSSL_Connected = true;
+
+    doc.m_IAC_subnegotiation_data = std::string("\x00", 1);   // TTYPE IS
+    doc.Handle_TELOPT_TERMINAL_TYPE();
+    EXPECT_TRUE(t->sent.empty());                             // ignored
+
+    doc.m_ttype_sequence = 0;
+    doc.m_IAC_subnegotiation_data = std::string("\x01", 1);   // SEND
+    doc.Handle_TELOPT_TERMINAL_TYPE();
+    EXPECT_TRUE(t->sent.find("mushclient") != std::string::npos);
+
+    doc.Handle_TELOPT_TERMINAL_TYPE();
+    EXPECT_TRUE(t->sent.find("XTERM-256COLOR") != std::string::npos);
+
+    doc.Handle_TELOPT_TERMINAL_TYPE();
+    // 9 (ANSI + 256 colours) | 4 (UTF-8) | 2048 (SSL) = 2061
+    EXPECT_TRUE(t->sent.find("MTTS 2061") != std::string::npos);
+}
+
+// Phase_UTF8: a byte with the high bits wrong mid-sequence flushes the
+// collected bytes as bad UTF-8.
+TEST(TelnetR4, Utf8BadContinuationFlushes)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_bUTF_8 = TRUE;
+
+    // E2 82 expects one more continuation; C3 is a LEAD byte → flush
+    const char bad[] = "\xE2\x82\xC3";
+    doc.DisplayMsg(bad, 3, 0);
+    // the sequence was abandoned rather than swallowed
+    EXPECT_TRUE(doc.m_pCurrentLine && doc.m_pCurrentLine->len > 0);
+}
+
+// ═══ Round-4: telopt_name table + the g_debug tracing arms ══════════════════
+
+TEST(TelnetR4, TeloptNameTableAndDebugTracing)
+{
+    // spot-check the name table (declared in doc_stub.h, defined in
+    // doc_portable.cpp)
+    EXPECT_STREQ("BINARY",         telopt_name(0));
+    EXPECT_STREQ("TERMINAL-SPEED", telopt_name(32));
+    EXPECT_STREQ("LINEMODE",       telopt_name(34));
+    EXPECT_STREQ("ENVIRON",        telopt_name(36));
+    EXPECT_STREQ("NEW-ENVIRON",    telopt_name(39));
+    EXPECT_STREQ("MSP",            telopt_name(90));
+    EXPECT_STREQ("ZMP",            telopt_name(93));
+    EXPECT_STREQ("GMCP",           telopt_name(201));
+
+    // with g_debug on, the negotiation dbg() lines print (stderr)
+    bool saved = g_debug;
+    g_debug = true;
+    CMUSHclientDoc doc = make_doc();
+    doc.Phase_WILL(TELOPT_MXP);
+    doc.Phase_DO(1 /* echo */);
+    g_debug = saved;
+}
+
 MC_TEST_MAIN()

@@ -1127,6 +1127,365 @@ TEST(PluginState, MissingStateFolderFallsBackToDirectoryPicker)
     rmdir(dir);
 }
 
+// ═══ Round-4 coverage: CallPlugin marshalling arms, disabled-plugin skip
+//     arms, SaveState folder errors, the wizard's headless prefix ═══════════
+
+// L_CallPlugin argument arms: missing routine name; calling a routine in a
+// plugin that has no script engine.
+TEST(CallPluginArms, MissingRoutineAndNonScriptingTarget)
+{
+    CMUSHclientDoc doc;
+
+    // a scriptless plugin (no <script> block, no language engine)
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_plugin_%d_noscript.xml", (int)getpid());
+    FILE* f = fopen(path, "wb");
+    ASSERT_TRUE(f != nullptr);
+    fprintf(f,
+        "<?xml version=\"1.0\"?>\n"
+        "<!DOCTYPE muclient>\n"
+        "<muclient>\n"
+        "<plugin name=\"NoScript\" author=\"T\" id=\"" IDB "\" language=\"Lua\" "
+        "version=\"1.0\" />\n"
+        "</muclient>\n");
+    fclose(f);
+    ASSERT_TRUE(load_plugin(doc, path));
+    unlink(path);
+
+    // caller plugin runs CallPlugin at load time and records the results
+    std::string body =
+        "rc1, err1 = world.CallPlugin('" IDB "', '')\n"           // no routine
+        "world.SetVariable('rc1', tostring(rc1))\n"
+        "world.SetVariable('err1', tostring(err1))\n"
+        "rc2, err2 = world.CallPlugin('" IDB "', 'anyfn')\n"      // no engine
+        "world.SetVariable('rc2', tostring(rc2))\n"
+        "world.SetVariable('err2', tostring(err2))\n";
+    std::string caller = write_plugin("caller1", IDA, "Caller1", body.c_str());
+    ASSERT_TRUE(load_plugin(doc, caller));
+    unlink(caller.c_str());
+
+    CPlugin* pA = doc.GetPlugin(IDA);
+    ASSERT_TRUE(pA != nullptr);
+    EXPECT_STREQ("30036", (LPCTSTR)plugin_var(pA, "rc1"));   // eNoSuchRoutine
+    EXPECT_TRUE(plugin_var(pA, "err1").Find("No function name") != -1);
+    EXPECT_STREQ("30036", (LPCTSTR)plugin_var(pA, "rc2"));
+    EXPECT_TRUE(plugin_var(pA, "err2").Find("Scripting not enabled") != -1);
+}
+
+// CallPlugin marshalling: arguments cross into the target state, multiple
+// return values come back with eOK first; a runtime error in the target
+// yields the three-value error shape; unsupported return types are refused.
+TEST(CallPluginArms, ReturnValuesRuntimeErrorAndBadReturnType)
+{
+    CMUSHclientDoc doc;
+
+    std::string target =
+        "function greet(a, b, flag)\n"
+        "  return a .. '/' .. b, 42, flag == nil and 'nilflag' or 'flag'\n"
+        "end\n"
+        "function boom() error('kapow') end\n"
+        "function badret() return function() end end\n";
+    std::string tpath = write_plugin("target2", IDB, "Target2", target.c_str());
+    ASSERT_TRUE(load_plugin(doc, tpath));
+    unlink(tpath.c_str());
+
+    std::string body =
+        "local rc, s, n, f = world.CallPlugin('" IDB "', 'greet', 'x', 'y', nil)\n"
+        "world.SetVariable('rc', tostring(rc))\n"
+        "world.SetVariable('s', tostring(s))\n"
+        "world.SetVariable('n', tostring(n))\n"
+        "world.SetVariable('f', tostring(f))\n"
+        "local erc, emsg, elua = world.CallPlugin('" IDB "', 'boom')\n"
+        "world.SetVariable('erc', tostring(erc))\n"
+        "world.SetVariable('emsg', tostring(emsg))\n"
+        "world.SetVariable('elua', tostring(elua))\n"
+        "local brc, bmsg = world.CallPlugin('" IDB "', 'badret')\n"
+        "world.SetVariable('brc', tostring(brc))\n"
+        "world.SetVariable('bmsg', tostring(bmsg))\n";
+    std::string caller = write_plugin("caller2", IDA, "Caller2", body.c_str());
+    ASSERT_TRUE(load_plugin(doc, caller));
+    unlink(caller.c_str());
+
+    CPlugin* pA = doc.GetPlugin(IDA);
+    ASSERT_TRUE(pA != nullptr);
+    EXPECT_STREQ("0",       (LPCTSTR)plugin_var(pA, "rc"));   // eOK
+    EXPECT_STREQ("x/y",     (LPCTSTR)plugin_var(pA, "s"));
+    EXPECT_STREQ("42",      (LPCTSTR)plugin_var(pA, "n"));
+    EXPECT_STREQ("nilflag", (LPCTSTR)plugin_var(pA, "f"));    // nil crossed over
+
+    EXPECT_STREQ("30040", (LPCTSTR)plugin_var(pA, "erc"));    // eErrorCallingPluginRoutine
+    EXPECT_TRUE(plugin_var(pA, "emsg").Find("Runtime error") != -1);
+    EXPECT_TRUE(plugin_var(pA, "elua").Find("kapow") != -1);
+
+    EXPECT_STREQ("30040", (LPCTSTR)plugin_var(pA, "brc"));
+    EXPECT_TRUE(plugin_var(pA, "bmsg").Find("Cannot handle return value") != -1);
+}
+
+// The deprecated 3-argument CallPlugin form (string argument) still works.
+TEST(CallPluginArms, LegacyThreeArgumentForm)
+{
+    CMUSHclientDoc doc;
+    std::string target =
+        "function legacy(arg)\n"
+        "  world.SetVariable('got', tostring(arg))\n"
+        "  return 0\n"
+        "end\n";
+    std::string tpath = write_plugin("target3", IDB, "Target3", target.c_str());
+    ASSERT_TRUE(load_plugin(doc, tpath));
+    unlink(tpath.c_str());
+
+    std::string body =
+        "world.SetVariable('rc', tostring(world.CallPlugin('" IDB "', 'legacy', 'payload')))\n";
+    std::string caller = write_plugin("caller3", IDA, "Caller3", body.c_str());
+    ASSERT_TRUE(load_plugin(doc, caller));
+    unlink(caller.c_str());
+
+    CPlugin* pB = doc.GetPlugin(IDB);
+    ASSERT_TRUE(pB != nullptr);
+    EXPECT_STREQ("payload", (LPCTSTR)plugin_var(pB, "got"));
+}
+
+// Disabled plugins are skipped by the 2- and 3-numeric-argument callback
+// broadcast overloads.
+TEST(CallPluginArms, DisabledPluginSkippedByNumericCallbacks)
+{
+    CMUSHclientDoc doc;
+    std::string body =
+        "count = 0\n"
+        "function OnPluginMXPSetEntity(a) count = count + 1 end\n";
+    std::string p = write_plugin("dis", IDA, "Disabled", body.c_str());
+    ASSERT_TRUE(load_plugin(doc, p));
+    unlink(p.c_str());
+    CPlugin* pA = doc.GetPlugin(IDA);
+    ASSERT_TRUE(pA != nullptr);
+    pA->m_bEnabled = false;
+
+    // 2-arg (long, string) and 3-arg (long, long, string) overloads; with
+    // stop-on-true and no enabled handler the broadcast reports false
+    EXPECT_TRUE(!doc.SendToAllPluginCallbacks(ON_PLUGIN_MXP_SETENTITY, 1L,
+                                              std::string("x"), true, false));
+    doc.SendToAllPluginCallbacks(ON_PLUGIN_TELNET_SUBNEGOTIATION, 1L, 2L,
+                                 std::string("x"), false, false);
+}
+
+// CPlugin::SaveState folder checks: a state "directory" that is actually a
+// file trips the is-not-a-directory arm; save fails.
+TEST(PluginState, StateFolderIsAFileFails)
+{
+    CMUSHclientDoc doc;
+    doc.m_strWorldID = "0123456789abcdef0123456";
+
+    char filePath[256];
+    snprintf(filePath, sizeof filePath, "/tmp/mc_test_plugstate_%d", (int)getpid());
+    FILE* f = fopen(filePath, "wb");
+    ASSERT_TRUE(f != nullptr);
+    fputs("not a dir", f);
+    fclose(f);
+
+    CString savedDir = App.m_strDefaultStateFilesDirectory;
+    App.m_strDefaultStateFilesDirectory = filePath;
+
+    std::string p = write_plugin("state", IDA, "Stateful",
+                                 "world.SetVariable('v', '1')\n");
+    ASSERT_TRUE(load_plugin(doc, p));
+    unlink(p.c_str());
+    CPlugin* pA = doc.GetPlugin(IDA);
+    ASSERT_TRUE(pA != nullptr);
+    pA->m_bSaveState = true;
+
+    EXPECT_TRUE(!pA->SaveState(true));
+
+    App.m_strDefaultStateFilesDirectory = savedDir;
+    unlink(filePath);
+}
+
+// The plugin wizard headless: DoModal cancels, but the preparation runs —
+// everything gets pre-selected and the script file is loaded.
+TEST(WizardTest, HeadlessWizardSelectsEverythingThenCancels)
+{
+    CMUSHclientDoc doc;
+
+    ASSERT_EQ((long)eOK, doc.AddTrigger("wt", "match", "resp", 1, -1, 0, "", ""));
+    ASSERT_EQ((long)eOK, doc.AddAlias("wa", "match", "resp", 1, ""));
+    ASSERT_EQ((long)eOK, doc.AddTimer("wm", 0, 1, 0, "resp", 1, ""));
+    doc.SetVariable("wv", "val");
+
+    char spath[256];
+    snprintf(spath, sizeof spath, "/tmp/mc_test_wiz_%d.lua", (int)getpid());
+    FILE* f = fopen(spath, "wb");
+    ASSERT_TRUE(f != nullptr);
+    fputs("-- wizard script\n", f);
+    fclose(f);
+    doc.m_strScriptFilename = spath;
+
+    doc.OnFilePluginwizard();     // headless: prepares, then cancels
+    unlink(spath);
+
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("wt", t));
+    EXPECT_TRUE(t->bSelected);
+    CAlias* a = nullptr;
+    ASSERT_TRUE(doc.GetAliasMap().Lookup("wa", a));
+    EXPECT_TRUE(a->bSelected);
+    CTimer* tm = nullptr;
+    ASSERT_TRUE(doc.GetTimerMap().Lookup("wm", tm));
+    EXPECT_TRUE(tm->bSelected);
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("wv", v));
+    EXPECT_TRUE(v->bSelected);
+}
+
+// ═══ Round-4 sweep: GetPluginInfo cases, load/reload error arms, the
+//     doc-level CallPlugin ═══════════════════════════════════════════════════
+
+TEST(PluginInfoR4, AllInfoCasesAnswerTheirTypes)
+{
+    CMUSHclientDoc doc;
+    std::string p = write_plugin("info", IDA, "InfoPlugin",
+        "world.SetVariable('x', '1')\n");
+    ASSERT_TRUE(load_plugin(doc, p));
+    unlink(p.c_str());
+
+    // string cases
+    static const int strCases[] = { 1, 2, 3, 4, 5, 6, 7, 8, 20, 23 };
+    for (int c : strCases) {
+        VARIANT v = doc.GetPluginInfo(IDA, c);
+        if ((int)v.vt != VT_BSTR) {
+            char msg[64];
+            snprintf(msg, sizeof msg, "GetPluginInfo(%d) vt=%d != BSTR", c, (int)v.vt);
+            mc_test::fail_msg(__FILE__, __LINE__, msg);
+        }
+        VariantClear(&v);
+    }
+    EXPECT_EQ((int)VT_BSTR, (int)doc.GetPluginInfo(IDA, 7).vt);
+
+    // numeric counts
+    EXPECT_EQ((int)VT_I4, (int)doc.GetPluginInfo(IDA, 9).vt);
+    EXPECT_EQ((int)VT_I4, (int)doc.GetPluginInfo(IDA, 10).vt);
+    EXPECT_EQ((int)VT_I4, (int)doc.GetPluginInfo(IDA, 11).vt);
+    VARIANT v = doc.GetPluginInfo(IDA, 12);
+    EXPECT_EQ((int)VT_I4, (int)v.vt);
+    EXPECT_EQ(1, (int)v.lVal);                       // the one variable we set
+
+    // booleans / doubles / dates / order / sequence
+    EXPECT_EQ((int)VT_BOOL, (int)doc.GetPluginInfo(IDA, 15).vt);
+    EXPECT_EQ((int)VT_BOOL, (int)doc.GetPluginInfo(IDA, 16).vt);
+    EXPECT_EQ((int)VT_BOOL, (int)doc.GetPluginInfo(IDA, 17).vt);
+    EXPECT_EQ((int)VT_R8,   (int)doc.GetPluginInfo(IDA, 18).vt);
+    EXPECT_EQ((int)VT_R8,   (int)doc.GetPluginInfo(IDA, 19).vt);
+    EXPECT_EQ((int)VT_I4,   (int)doc.GetPluginInfo(IDA, 21).vt);   // load order
+    EXPECT_EQ((int)VT_DATE, (int)doc.GetPluginInfo(IDA, 22).vt);
+    EXPECT_EQ((int)VT_R8,   (int)doc.GetPluginInfo(IDA, 24).vt);   // script time
+    EXPECT_EQ((int)VT_I2,   (int)doc.GetPluginInfo(IDA, 25).vt);   // sequence
+
+    // 13/14: date-written / date-modified — either DATE (stamped) or EMPTY
+    // (zero time); both sides of the guard are legal, just probe the arms
+    {
+        // unset dates leave the NULL default in place
+        VARIANT d13 = doc.GetPluginInfo(IDA, 13);
+        EXPECT_TRUE((int)d13.vt == VT_DATE || (int)d13.vt == VT_NULL);
+        VARIANT d14 = doc.GetPluginInfo(IDA, 14);
+        EXPECT_TRUE((int)d14.vt == VT_DATE || (int)d14.vt == VT_NULL);
+    }
+
+    // unknown case answers VT_NULL; unknown plugin answers VT_NULL too
+    EXPECT_EQ((int)VT_NULL, (int)doc.GetPluginInfo(IDA, 999).vt);
+    EXPECT_EQ((int)VT_NULL, (int)doc.GetPluginInfo("ffffffffffffffffffffffff", 1).vt);
+}
+
+TEST(PluginInfoR4, LoadAndReloadErrorArms)
+{
+    CMUSHclientDoc doc;
+    // NOTE (parity divergence, documented): the headless CFile constructor
+    // cannot throw CFileException, so a missing file surfaces as the generic
+    // archive failure rather than ePluginFileNotFound (Windows).
+    EXPECT_EQ((long)eProblemsLoadingPlugin, doc.LoadPlugin("/nonexistent-r4/p.xml"));
+
+    // a file that exists but is not valid plugin XML
+    char bad[128];
+    snprintf(bad, sizeof bad, "/tmp/mc_test_badplug_%d.xml", (int)getpid());
+    FILE* f = fopen(bad, "wb");
+    ASSERT_TRUE(f != nullptr);
+    fputs("<?xml version=\"1.0\"?><!DOCTYPE muclient><muclient><plugin/></muclient>", f);
+    fclose(f);
+    EXPECT_EQ((long)eProblemsLoadingPlugin, doc.LoadPlugin(bad));
+    unlink(bad);
+
+    // reload arms
+    EXPECT_EQ((long)eNoSuchPlugin, doc.ReloadPlugin("ffffffffffffffffffffffff"));
+
+    std::string p = write_plugin("rl", IDA, "Reloadable",
+        "world.SetVariable('n', '1')\n");
+    ASSERT_TRUE(load_plugin(doc, p));
+    EXPECT_EQ((long)eOK, doc.ReloadPlugin(IDA));
+    unlink(p.c_str());
+    EXPECT_TRUE(doc.GetPlugin(IDA) != nullptr);
+}
+
+TEST(PluginInfoR4, DocLevelCallPluginArms)
+{
+    CMUSHclientDoc doc;
+    std::string p = write_plugin("dc", IDA, "DocCall",
+        "function hello(arg) world.SetVariable('arg', tostring(arg)) end\n");
+    ASSERT_TRUE(load_plugin(doc, p));
+    unlink(p.c_str());
+
+    EXPECT_EQ((long)eNoSuchPlugin,  doc.CallPlugin("ffffffffffffffffffffffff", "hello", "x"));
+    EXPECT_EQ((long)eNoSuchRoutine, doc.CallPlugin(IDA, "", "x"));
+    EXPECT_EQ((long)eNoSuchRoutine, doc.CallPlugin(IDA, "nosuch", "x"));
+
+    CPlugin* pA = doc.GetPlugin(IDA);
+    ASSERT_TRUE(pA != nullptr);
+    pA->m_bEnabled = false;
+    EXPECT_EQ((long)ePluginDisabled, doc.CallPlugin(IDA, "hello", "x"));
+    pA->m_bEnabled = true;
+
+    EXPECT_EQ((long)eOK, doc.CallPlugin(IDA, "hello", "payload!"));
+    EXPECT_STREQ("payload!", (LPCTSTR)plugin_var(pA, "arg"));
+}
+
+TEST(PluginInfoR4, PluginListGetters)
+{
+    CMUSHclientDoc doc;
+    std::string p = write_plugin("lst", IDA, "Lister",
+        "world.SetVariable('v1', 'a')\nworld.SetVariable('v2', 'b')\n");
+    ASSERT_TRUE(load_plugin(doc, p));
+    unlink(p.c_str());
+
+    VARIANT v = doc.GetPluginVariableList(IDA);
+    EXPECT_TRUE((v.vt & VT_ARRAY) != 0);
+    VariantClear(&v);
+
+    // and the current-plugin name from inside a callback
+    std::string p2 = write_plugin("nm", IDB, "Namer",
+        "world.SetVariable('myname', world.GetPluginName())\n");
+    ASSERT_TRUE(load_plugin(doc, p2));
+    unlink(p2.c_str());
+    CPlugin* pB = doc.GetPlugin(IDB);
+    EXPECT_STREQ("Namer", (LPCTSTR)plugin_var(pB, "myname"));
+}
+
+// A plugin's OnPluginLineReceived returning false omits the line from output.
+TEST(PluginInfoR4, LineReceivedFalseOmitsLineFromOutput)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    std::string p = write_plugin("omit", IDA, "Omitter",
+        "function OnPluginLineReceived(line)\n"
+        "  return line:find('secret') == nil\n"
+        "end\n");
+    ASSERT_TRUE(load_plugin(doc, p));
+    unlink(p.c_str());
+
+    doc.DisplayMsg("public line\r\n", 13, 0);
+    doc.DisplayMsg("secret line\r\n", 13, 0);
+    doc.DisplayMsg("another public\r\n", 16, 0);
+
+    EXPECT_TRUE(output_contains(doc, "public line"));
+    EXPECT_TRUE(output_contains(doc, "another public"));
+    EXPECT_TRUE(!output_contains(doc, "secret line"));   // omitted
+}
+
 #endif // MUSHCLIENT_LUA_SCRIPTING
 
 MC_TEST_MAIN()

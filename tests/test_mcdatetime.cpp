@@ -110,4 +110,58 @@ TEST(CmcDateTimeTest, InvalidStatus) {
     EXPECT_EQ(CmcDateTime::invalid, dt.GetStatus());
 }
 
+// ═══ Round-4 coverage: status-propagation arms + component getters ═════════
+
+TEST(CmcDateTimeR4, NullAndInvalidStatusPropagation)
+{
+    CmcDateTime good(2026, 7, 16, 12, 0, 0);
+    CmcDateTime nul;  nul.SetStatus(CmcDateTime::null);
+    CmcDateTime bad;  bad.SetStatus(CmcDateTime::invalid);
+    CmcDateTimeSpan day(1, 0, 0, 0);
+
+    // adding to a NULL date stays null; to an INVALID date stays invalid
+    CmcDateTime r1 = nul + day;
+    EXPECT_EQ((int)CmcDateTime::null, (int)r1.GetStatus());
+    CmcDateTime r2 = bad + day;
+    EXPECT_EQ((int)CmcDateTime::invalid, (int)r2.GetStatus());
+    CmcDateTime r3 = nul - day;
+    EXPECT_EQ((int)CmcDateTime::null, (int)r3.GetStatus());
+    CmcDateTime r4 = bad - day;
+    EXPECT_EQ((int)CmcDateTime::invalid, (int)r4.GetStatus());
+
+    // date-minus-date span inherits null/invalid too
+    CmcDateTimeSpan s1 = nul - good;
+    EXPECT_EQ((int)CmcDateTimeSpan::null, (int)s1.GetStatus());
+    CmcDateTimeSpan s2 = bad - good;
+    EXPECT_EQ((int)CmcDateTimeSpan::invalid, (int)s2.GetStatus());
+}
+
+TEST(CmcDateTimeR4, MinusEqualsAndCheckRange)
+{
+    CmcDateTime d(2026, 7, 16, 12, 0, 0);
+    CmcDateTimeSpan day(1, 0, 0, 0);
+    d -= day;
+    EXPECT_EQ(15, d.GetDay());
+    EXPECT_EQ(7, d.GetMonth());
+
+    // CheckRange flags out-of-range dates invalid; it is protected and its
+    // operator call-sites are commented out upstream, so reach it through a
+    // test subclass
+    struct RangeProbe : CmcDateTime {
+        void Probe() { m_dt = -50000.0; CheckRange(); }
+    } oor;
+    oor.Probe();
+    EXPECT_EQ((int)CmcDateTime::invalid, (int)oor.GetStatus());
+}
+
+TEST(CmcDateTimeR4, ComponentGetters)
+{
+    // 2026-07-16 is a Thursday (wday 4 → GetDayOfWeek 5, 1-based Sunday)
+    CmcDateTime d(2026, 7, 16, 13, 45, 57);
+    EXPECT_EQ(57, d.GetSecond());
+    EXPECT_EQ(45, d.GetMinute());
+    EXPECT_EQ(13, d.GetHour());
+    EXPECT_EQ(5, d.GetDayOfWeek());
+}
+
 MC_TEST_MAIN()

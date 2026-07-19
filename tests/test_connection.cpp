@@ -1223,4 +1223,686 @@ TEST(StreamArms, BeepCharacterIsConsumed)
     delete doc;
 }
 
+// ═══ Round-4 coverage: ConnectSocket / proxy dispatch / MCCP growth /
+//      DNS / scripts-at-connect / SendTo tail arms ═══════════════════════════
+
+#include "fake_worldview.h"
+
+// ── ConnectSocket validation + proxy address arms ──────────────────────────
+
+TEST(ConnectSocketTest, UnknownProxyTypeRefused)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iSocksProcessing = 99;
+    EXPECT_FALSE(doc->ConnectSocket());
+    delete doc;
+}
+
+TEST(ConnectSocketTest, Socks4RequiresProxyNameAndPort)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iSocksProcessing = eProxyServerSocks4;
+    doc->m_strProxyServerName = "";
+    EXPECT_FALSE(doc->ConnectSocket());
+
+    doc->m_strProxyServerName = "proxy.example.com";
+    doc->m_iProxyServerPort = 0;
+    EXPECT_FALSE(doc->ConnectSocket());
+    delete doc;
+}
+
+// world IP known, proxy given as dotted IP: the proxy conversion arm runs and
+// the connection is initiated to the PROXY address/port.
+TEST(ConnectSocketTest, ProxyByIpInitiatesConnectionToProxy)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_server = "10.1.2.3";
+    doc->m_iSocksProcessing = eProxyServerSocks5;
+    doc->m_strProxyServerName = "10.9.9.9";
+    doc->m_iProxyServerPort = 1080;
+    EXPECT_TRUE(doc->ConnectSocket());
+    // ConnectSocket replaced the transport with the real POSIX adapter and
+    // pointed the connect at the proxy
+    EXPECT_EQ((int)eConnectConnectingToProxy, (int)doc->m_iConnectPhase);
+    EXPECT_EQ(inet_addr("10.9.9.9"), (unsigned int)doc->m_ProxyAddr.sin_addr.s_addr);
+    delete doc;
+}
+
+// proxy given as a NAME: ConnectSocket parks in the proxy name-lookup phase
+// (resolution is async through the transport) and reports "waiting".
+TEST(ConnectSocketTest, ProxyNameParksInProxyLookupPhase)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_server = "10.1.2.3";
+    doc->m_iSocksProcessing = eProxyServerSocks5;
+    doc->m_strProxyServerName = "localhost";
+    doc->m_iProxyServerPort = 1080;
+    EXPECT_TRUE(doc->ConnectSocket());
+    EXPECT_EQ((int)eConnectProxyNameLookup, (int)doc->m_iConnectPhase);
+    delete doc;
+}
+
+// world given as a NAME that cannot resolve: with no transport the
+// synchronous-fallback resolver runs, fails, and notes the failure.
+TEST(ConnectSocketTest, UnresolvableWorldNameNotesFailure)
+{
+    NotifyToOutput toOutput;
+    CMUSHclientDoc* doc = make_doc();
+    doc->TeardownTransport();               // force the sync-fallback arm
+    doc->m_server = "no-such-host.invalid";
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    EXPECT_TRUE(doc->LookupHostName("no-such-host.invalid"));   // true = error
+    EXPECT_TRUE(saw(doc, "Unable to resolve"));
+    EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+    delete doc;
+}
+
+// world given as a resolvable NAME: the sync-fallback resolver fills in the
+// MUD address and initiates the connection.
+TEST(ConnectSocketTest, ResolvableWorldNameProceedsToConnect)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->TeardownTransport();               // force the sync-fallback arm
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    EXPECT_FALSE(doc->LookupHostName("localhost"));   // false = resolved
+    EXPECT_EQ(inet_addr("127.0.0.1"), (unsigned int)doc->m_sockAddr.sin_addr.s_addr);
+    delete doc;
+}
+
+// MUD address resolved with a named proxy still pending: the completion
+// chains straight into the proxy lookup.
+TEST(ConnectSocketTest, MudLookupChainsIntoProxyLookup)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->TeardownTransport();
+    doc->m_iSocksProcessing = eProxyServerSocks5;
+    doc->m_strProxyServerName = "localhost";
+    doc->m_iProxyServerPort = 1080;
+    doc->m_ProxyAddr.sin_family = AF_UNSPEC;    // proxy not resolved yet
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    struct in_addr a; a.s_addr = inet_addr("10.4.5.6");
+    doc->LookupHostNameComplete(a, eConnectMudNameLookup, true);
+    // both addresses now known
+    EXPECT_EQ(inet_addr("10.4.5.6"),  (unsigned int)doc->m_sockAddr.sin_addr.s_addr);
+    EXPECT_EQ(inet_addr("127.0.0.1"), (unsigned int)doc->m_ProxyAddr.sin_addr.s_addr);
+    delete doc;
+}
+
+// LookupHostNameComplete called in a phase that is not a name-lookup phase:
+// the unexpected-phase arm.
+TEST(ConnectSocketTest, LookupCompleteInWrongPhaseIsRejected)
+{
+    CMUSHclientDoc* doc = make_doc();
+    struct in_addr a; a.s_addr = inet_addr("127.0.0.1");
+    doc->LookupHostNameComplete(a, eConnectConnectedToMud, true);
+    // phase untouched — the arm bails out
+    EXPECT_EQ((int)eConnectConnectedToMud, (int)doc->m_iConnectPhase);
+    delete doc;
+}
+
+// ── OnBytesReceived proxy-phase dispatch ───────────────────────────────────
+
+// A packet arriving in AwaitingProxyResponse1 is routed to
+// ProcessProxyResponse1; an error result discards the packet.
+TEST(ProxyDispatch, Response1ErrorConsumesPacket)
+{
+    NotifyToOutput toOutput;
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iConnectPhase = eConnectAwaitingProxyResponse1;
+    char buff[] = { 5, 1, 'x', 'y' };   // GSSAPI refusal + trailing bytes
+    doc->OnBytesReceived(buff, 4);
+    EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+    delete doc;
+}
+
+// A successful response1 with NO trailing data takes the exact-size return.
+TEST(ProxyDispatch, Response1SuccessExactPacket)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iConnectPhase = eConnectAwaitingProxyResponse1;
+    char buff[] = { 5, 0 };   // no-auth accepted
+    doc->OnBytesReceived(buff, 2);
+    // moved on to phase 3 (connect request sent to the proxy)
+    EXPECT_EQ((int)eConnectAwaitingProxyResponse3, (int)doc->m_iConnectPhase);
+    EXPECT_TRUE(wire(doc).sent.size() >= 4);   // the CONNECT request went out
+    delete doc;
+}
+
+// A successful response1 WITH trailing data: the response bytes are consumed
+// and the residue is shifted down (memmove arm) — then discarded because we
+// are not yet connected-to-mud.
+TEST(ProxyDispatch, Response1SuccessWithResidueShiftsBuffer)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iConnectPhase = eConnectAwaitingProxyResponse1;
+    char buff[] = { 5, 0, 'A', 'B', 'C' };
+    doc->OnBytesReceived(buff, 5);
+    EXPECT_EQ((int)eConnectAwaitingProxyResponse3, (int)doc->m_iConnectPhase);
+    // residue was shifted to the front of the buffer by the memmove
+    EXPECT_EQ('A', buff[0]);
+    EXPECT_EQ('C', buff[2]);
+    delete doc;
+}
+
+// Response2 and response3 dispatch arms.
+TEST(ProxyDispatch, Response2And3Dispatch)
+{
+    NotifyToOutput toOutput;
+    {
+        CMUSHclientDoc* doc = make_doc();
+        doc->m_iConnectPhase = eConnectAwaitingProxyResponse2;
+        char buff[] = { 1, 1 };   // auth refused
+        doc->OnBytesReceived(buff, 2);
+        EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+        delete doc;
+    }
+    {
+        CMUSHclientDoc* doc = make_doc();
+        doc->m_iConnectPhase = eConnectAwaitingProxyResponse3;
+        char buff[] = { 5, 1, 0, 1, 0,0,0,0, 0,0 };   // general SOCKS failure
+        doc->OnBytesReceived(buff, 10);
+        EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+        delete doc;
+    }
+}
+
+// ── MCCP: output-buffer growth (Z_BUF_ERROR) and input-buffer overflow ─────
+
+// When inflate reports Z_BUF_ERROR (output buffer full, no progress), the
+// buffer is grown by COMPRESS_BUFFER_LENGTH and decompression continues —
+// and next_out must survive the realloc.
+TEST(MccpArms, OutputBufferGrowsOnZBufError)
+{
+    CMUSHclientDoc* doc = make_doc();
+    start_mccp2(doc);
+    ASSERT_TRUE(doc->m_bCompress);
+
+    // ONE persistent deflate stream, delivered in two sync-flushed chunks
+    // (the MCCP contract: the whole session is a single zlib stream)
+    z_stream dz{};
+    deflateInit(&dz, Z_DEFAULT_COMPRESSION);
+    auto chunk = [&](const std::string& plain) {
+        std::string out;
+        char buf[4096];
+        dz.next_in = (Bytef*)plain.data();
+        dz.avail_in = (uInt)plain.size();
+        do {
+            dz.next_out = (Bytef*)buf;
+            dz.avail_out = sizeof buf;
+            deflate(&dz, Z_SYNC_FLUSH);
+            out.append(buf, sizeof buf - dz.avail_out);
+        } while (dz.avail_out == 0);
+        return out;
+    };
+
+    // chunk 1 flows through normally (consumes the zlib header)
+    std::string c1 = chunk("first chunk\r\n");
+    doc->OnBytesReceived(&c1[0], (int)c1.size());
+    EXPECT_TRUE(saw(doc, "first chunk"));
+
+    // now manufacture the documented Z_BUF_ERROR state — output buffer full,
+    // mid-stream.  Delivery A (2 bytes) lets inflate consume the block-header
+    // bits (Z_OK, no output); delivery B arrives with the output buffer full
+    // again and ONLY mid-block literal data pending → no progress possible →
+    // Z_BUF_ERROR → the grow-and-retry arm.
+    std::string c2 = chunk("grown-buffer payload\r\n");
+    auto fill_output = [&]() {
+        memset(doc->m_CompressOutput, 'x', doc->m_nCompressionOutputBufferSize);
+        doc->m_zCompress.next_out =
+            doc->m_CompressOutput + doc->m_nCompressionOutputBufferSize;
+        doc->m_zCompress.avail_out = 0;
+    };
+    fill_output();
+    std::string a = c2.substr(0, 2);
+    doc->OnBytesReceived(&a[0], (int)a.size());
+
+    fill_output();
+    long sizeBefore = doc->m_nCompressionOutputBufferSize;
+    std::string b = c2.substr(2);
+    doc->OnBytesReceived(&b[0], (int)b.size());
+    deflateEnd(&dz);
+
+    EXPECT_TRUE((long)doc->m_nCompressionOutputBufferSize >= sizeBefore + COMPRESS_BUFFER_LENGTH);
+    EXPECT_TRUE(saw(doc, "grown-buffer payload"));
+    delete doc;
+}
+
+// A packet larger than the remaining compression input buffer disconnects
+// with the insufficient-memory message.
+TEST(MccpArms, InputBufferOverflowDisconnects)
+{
+    CMUSHclientDoc* doc = make_doc();
+    start_mccp2(doc);
+    ASSERT_TRUE(doc->m_bCompress);
+
+    // pretend the input buffer is nearly full
+    doc->m_zCompress.next_in = doc->m_CompressInput;
+    doc->m_zCompress.avail_in = COMPRESS_BUFFER_LENGTH - 2;
+
+    char packet[16] = { 0 };
+    doc->OnBytesReceived(packet, 16);   // 16 > 2 remaining
+    EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+    delete doc;
+}
+
+// The performance-counter timing arms run when the app publishes a counter
+// frequency.
+TEST(MccpArms, CompressionTimingCountedWhenFrequencyKnown)
+{
+    LONGLONG saved = App.m_iCounterFrequency;
+    App.m_iCounterFrequency = 1000000;
+    CMUSHclientDoc* doc = make_doc();
+    start_mccp2(doc);
+    std::string z = deflate_bytes("timed payload\r\n", false);
+    doc->OnBytesReceived(&z[0], (int)z.size());
+    EXPECT_TRUE(saw(doc, "timed payload"));
+    App.m_iCounterFrequency = saved;
+    delete doc;
+}
+
+// Existing compressed input is shuffled to the buffer start when a new
+// packet arrives (the avail_in memmove arm).
+TEST(MccpArms, PendingInputShuffledToBufferStart)
+{
+    CMUSHclientDoc* doc = make_doc();
+    start_mccp2(doc);
+
+    // split one deflate stream into two 1-byte-overlapping deliveries so the
+    // second OnBytesReceived call finds avail_in != 0 pending
+    std::string z = deflate_bytes("split delivery text\r\n", false);
+    ASSERT_TRUE(z.size() > 4);
+    std::string first = z.substr(0, 3);       // too short to decompress fully
+    std::string rest  = z.substr(3);
+    doc->OnBytesReceived(&first[0], (int)first.size());
+    // some input is still pending in the zlib buffer
+    doc->OnBytesReceived(&rest[0], (int)rest.size());
+    EXPECT_TRUE(saw(doc, "split delivery text"));
+    delete doc;
+}
+
+// ── Logging arms ───────────────────────────────────────────────────────────
+
+// CloseLog writes a formatted postamble (%n newline + strftime codes).
+TEST(LoggingArms, ClosePostambleFormatted)
+{
+    CMUSHclientDoc* doc = make_doc();
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_r4_%d_post.log", (int)getpid());
+    ASSERT_EQ((long)eOK, doc->OpenLog(path, FALSE));
+    doc->m_strLogFilePostamble = "end%nyear=%Y";
+    EXPECT_EQ((long)eOK, doc->CloseLog());
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[512] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    EXPECT_TRUE(strstr(buf, "end\nyear=2") != nullptr);   // %n and %Y expanded
+    delete doc;
+}
+
+// LogCommand: '%' in the input preamble/postamble goes through FormatTime;
+// HTML colour mode wraps the command in a <font> pair.
+TEST(LoggingArms, LogCommandPreambleAndHtmlColour)
+{
+    CMUSHclientDoc* doc = make_doc();
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_r4_%d_cmd.log", (int)getpid());
+    ASSERT_EQ((long)eOK, doc->OpenLog(path, FALSE));
+    doc->m_log_input = TRUE;
+    doc->m_bLogHTML = TRUE;
+    doc->m_bLogInColour = TRUE;
+    doc->m_echo_colour = 1;              // not SAMECOLOUR → colour arm
+    doc->m_strLogLinePreambleInput = "[%Y] ";
+    doc->m_strLogLinePostambleInput = " <done>";
+    doc->LogCommand("kill rat\r\n");
+    doc->CloseLog();
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[512] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    EXPECT_TRUE(strstr(buf, "[2") != nullptr);            // %Y expanded
+    EXPECT_TRUE(strstr(buf, "<font color=") != nullptr);  // colour arm
+    EXPECT_TRUE(strstr(buf, "</font>") != nullptr);
+    EXPECT_TRUE(strstr(buf, "kill rat") != nullptr);
+    EXPECT_TRUE(strstr(buf, "&lt;done&gt;") == nullptr);  // postamble not escaped
+    delete doc;
+}
+
+// WriteToLog on an unwritable stream closes the log and clears m_logfile.
+TEST(LoggingArms, WriteFailureClosesLog)
+{
+    CMUSHclientDoc* doc = make_doc();
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_r4_%d_ro.log", (int)getpid());
+    FILE* mk = fopen(path, "w"); ASSERT_TRUE(mk != nullptr); fclose(mk);
+    doc->m_logfile = fopen(path, "r");   // READ-only stream: fwrite must fail
+    ASSERT_TRUE(doc->m_logfile != nullptr);
+    doc->m_logfile_name = path;
+    doc->WriteToLog("this cannot be written", 22);
+    EXPECT_TRUE(doc->m_logfile == NULL);
+    unlink(path);
+    delete doc;
+}
+
+// OpenLog with an empty name derives the file name from the auto-log format
+// (FormatTime arm); with no auto-log name either, it fails.
+TEST(LoggingArms, OpenLogAutoNameAndEmptyFailure)
+{
+    CMUSHclientDoc* doc = make_doc();
+    EXPECT_EQ((long)eCouldNotOpenFile, doc->OpenLog("", FALSE));
+
+    char pattern[128];
+    snprintf(pattern, sizeof pattern, "/tmp/mc_test_r4_%d_auto_%%Y.log", (int)getpid());
+    doc->m_strAutoLogFileName = pattern;
+    EXPECT_EQ((long)eOK, doc->OpenLog("", FALSE));
+    CString name = doc->m_logfile_name;
+    EXPECT_TRUE(name.Find("%Y") == -1);          // year was substituted
+    doc->CloseLog();
+    unlink(name);
+    delete doc;
+}
+
+// ── Connection lifecycle arms ──────────────────────────────────────────────
+
+// ConnectionEstablished with "use MXP always" turns MXP on at connect.
+TEST(LifecycleArms, EstablishTurnsOnMxpWhenAlways)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iUseMXP = eUseMXP;
+    doc->ConnectionEstablished();
+    EXPECT_TRUE(doc->m_bMXP);
+    delete doc;
+}
+
+// ConnectionEstablished with an auto-log name that cannot be opened takes
+// the could-not-open arm (no log file afterwards).
+TEST(LifecycleArms, EstablishAutoLogFailureLeavesNoLog)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_strAutoLogFileName = "/nonexistent-dir-r4/x.log";
+    doc->ConnectionEstablished();
+    EXPECT_TRUE(doc->m_logfile == NULL);
+    delete doc;
+}
+
+// ConnectionEstablished auto-log success writes the file preamble and the
+// world-name banner (plain and HTML arms).
+TEST(LifecycleArms, EstablishAutoLogWritesPreambleAndBanner)
+{
+    CMUSHclientDoc* doc = make_doc();
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_r4_%d_autolog.log", (int)getpid());
+    doc->m_strAutoLogFileName = path;
+    doc->m_strLogFilePreamble = "PRE%nAMBLE";
+    doc->m_bWriteWorldNameToLog = TRUE;
+    doc->m_mush_name = "BannerWorld";
+    doc->ConnectionEstablished();
+    ASSERT_TRUE(doc->m_logfile != NULL);
+    doc->CloseLog();
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[1024] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    EXPECT_TRUE(strstr(buf, "PRE\nAMBLE") != nullptr);
+    EXPECT_TRUE(strstr(buf, "BannerWorld - ") != nullptr);
+    EXPECT_TRUE(strstr(buf, "----") != nullptr);   // hyphen banner line
+    delete doc;
+}
+
+// Diku-style auto-login with an empty password: name is sent, the headless
+// no-password-prompt arm leaves the password blank so nothing else goes out.
+TEST(LifecycleArms, DikuLoginEmptyPasswordSendsNameOnly)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_connect_now = eConnectDiku;
+    doc->m_name = "Conan";
+    doc->m_password = "";
+    doc->ConnectionEstablished();
+    EXPECT_TRUE(wire(doc).sent.find("Conan") != std::string::npos);
+    delete doc;
+}
+
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+// The world-connect script handler runs at ConnectionEstablished (the
+// ExecuteScript dispid path), and the world-disconnect handler runs at
+// ConnectionClosed.
+TEST(LifecycleArms, WorldConnectAndDisconnectScriptsRun)
+{
+    CMUSHclientDoc* doc = make_doc();
+    CScriptEngine* engine = new CScriptEngine(doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function OnWorldConnect() world.SetVariable('conn', 'yes') end\n"
+        "function OnWorldDisconnect() world.SetVariable('disc', 'yes') end\n"),
+        "<test>"));
+    doc->m_ScriptEngine = engine;
+    doc->m_strWorldConnect = "OnWorldConnect";
+    doc->m_strWorldDisconnect = "OnWorldDisconnect";
+    doc->ResolveAllEntryPoints();      // resolve the handler dispids
+
+    doc->ConnectionEstablished();
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc->GetVariableMap().Lookup("conn", v));
+    EXPECT_STREQ("yes", (LPCTSTR)v->strContents);
+
+    doc->ConnectionClosed(0);
+    ASSERT_TRUE(doc->GetVariableMap().Lookup("disc", v));
+    EXPECT_STREQ("yes", (LPCTSTR)v->strContents);
+    EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+    delete doc;
+}
+
+// GetProcedureDispid: found → dispid; missing sub appends the script-file
+// diagnostics to the error string.
+TEST(LifecycleArms, GetProcedureDispidDiagnostics)
+{
+    CMUSHclientDoc* doc = make_doc();
+    CScriptEngine* engine = new CScriptEngine(doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString("function known() end\n"), "<test>"));
+    doc->m_ScriptEngine = engine;
+
+    CString err;
+    EXPECT_NE(DISPID_UNKNOWN, doc->GetProcedureDispid("known", "alias", "lbl", err));
+    EXPECT_TRUE(err.IsEmpty());
+
+    EXPECT_EQ(DISPID_UNKNOWN, doc->GetProcedureDispid("missing_sub", "alias", "lbl", err));
+    EXPECT_TRUE(err.Find("missing_sub") != -1);
+    EXPECT_TRUE(err.Find("You have not specified a script file name") != -1);
+
+    // with a script file name the other preamble arm is used
+    CString err2;
+    doc->m_strScriptFilename = "myscript.lua";
+    EXPECT_EQ(DISPID_UNKNOWN, doc->GetProcedureDispid("missing_sub", "trigger", "", err2));
+    EXPECT_TRUE(err2.Find("myscript.lua") != -1);
+    delete doc;
+}
+
+// SendTo eSendToScript parses the text through the engine (and the after-omit
+// variant does too).
+TEST(SendToTest, ScriptDestinationsParseThroughEngine)
+{
+    CMUSHclientDoc* doc = make_doc();
+    CScriptEngine* engine = new CScriptEngine(doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    doc->m_ScriptEngine = engine;
+
+    CString out;
+    doc->SendTo(eSendToScript, "world.SetVariable('sts', 'ran')", false, false,
+                "trigger: t", "", out);
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc->GetVariableMap().Lookup("sts", v));
+    EXPECT_TRUE(doc->m_bInSendToScript);
+    doc->m_bInSendToScript = false;
+
+    doc->SendTo(eSendToScriptAfterOmit, "world.SetVariable('stao', 'ran')",
+                false, false, "trigger: t", "", out);
+    ASSERT_TRUE(doc->GetVariableMap().Lookup("stao", v));
+    delete doc;
+}
+#endif // MUSHCLIENT_LUA_SCRIPTING
+
+// SendTo eSendToScript with NO engine notes the cannot-execute message.
+TEST(SendToTest, ScriptDestinationWithoutEngineNotes)
+{
+    CMUSHclientDoc* doc = make_doc();
+    CString out;
+    doc->SendTo(eSendToScript, "print(1)", false, false, "d", "", out);
+    EXPECT_TRUE(saw(doc, "scripting is not enabled"));
+    delete doc;
+}
+
+// SendTo eSendToCommand fills the command bar through the world-view seam —
+// but only when the bar is empty.
+TEST(SendToTest, CommandDestinationFillsEmptyBarOnly)
+{
+    CMUSHclientDoc* doc = make_doc();
+    FakeWorldView view;
+    doc->m_pWorldView = &view;
+    CString out;
+    doc->SendTo(eSendToCommand, "go north", false, false, "d", "", out);
+    EXPECT_STREQ("go north", view.cmd.c_str());
+    doc->SendTo(eSendToCommand, "go south", false, false, "d", "", out);
+    EXPECT_STREQ("go north", view.cmd.c_str());   // bar not empty: unchanged
+    doc->m_pWorldView = nullptr;
+    delete doc;
+}
+
+// SendTo eSendToStatus keeps only the first line of a multi-line status.
+TEST(SendToTest, StatusDestinationTruncatesAtNewline)
+{
+    CMUSHclientDoc* doc = make_doc();
+    CString out;
+    doc->SendTo(eSendToStatus, "first line\r\nsecond line", false, false, "d", "", out);
+    EXPECT_STREQ("first line", (LPCTSTR)doc->m_strStatusMessage);
+    delete doc;
+}
+
+// SendTo eSendToSpeedwalk with a malformed speedwalk takes the error arm.
+TEST(SendToTest, SpeedwalkErrorArm)
+{
+    CMUSHclientDoc* doc = make_doc();
+    CString out;
+    doc->SendTo(eSendToSpeedwalk, "3(unclosed", false, false, "d", "", out);
+    EXPECT_TRUE(wire(doc).sent.empty());   // nothing was sent
+    delete doc;
+}
+
+// SendTo eSendImmediate bypasses the queue and hits the wire directly.
+TEST(SendToTest, ImmediateDestinationSendsDirectly)
+{
+    CMUSHclientDoc* doc = make_doc();
+    CString out;
+    doc->SendTo(eSendImmediate, "now!", false, false, "d", "", out);
+    EXPECT_TRUE(wire(doc).sent.find("now!") != std::string::npos);
+    delete doc;
+}
+
+// SendTo with an unknown destination takes the default (do-nothing) arm.
+TEST(SendToTest, UnknownDestinationDoesNothing)
+{
+    CMUSHclientDoc* doc = make_doc();
+    CString out;
+    doc->SendTo(200, "text", false, false, "d", "", out);
+    EXPECT_TRUE(wire(doc).sent.empty());
+    EXPECT_TRUE(out.IsEmpty());
+    delete doc;
+}
+
+// ── Assorted small arms ────────────────────────────────────────────────────
+
+TEST(SmallArms, GetSocketErrorUnknownCode)
+{
+    // non-Windows: strerror() supplies the text, even for unknown codes
+    CMUSHclientDoc* doc = make_doc();
+    CString s = doc->GetSocketError(999999);
+    EXPECT_TRUE(!s.IsEmpty());
+    EXPECT_TRUE(s.Find("nknown error") != -1);
+    delete doc;
+}
+
+// SendPacket with packet-debugging enabled takes the Debug_Packets arm.
+TEST(SmallArms, SendPacketDebugArm)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bDebugIncomingPackets = true;
+    doc->SendPacket("ping", 4);
+    EXPECT_TRUE(wire(doc).sent.find("ping") != std::string::npos);
+    delete doc;
+}
+
+// Incoming packet-debug arm in DisplayMsg.
+TEST(SmallArms, IncomingPacketDebugArm)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bDebugIncomingPackets = true;
+    char text[] = "debugged\r\n";
+    doc->OnBytesReceived(text, (int)sizeof text - 1);
+    EXPECT_TRUE(saw(doc, "debugged"));
+    delete doc;
+}
+
+// SendWindowSizes emits the NAWS subnegotiation from the port's cols/rows.
+TEST(SmallArms, SendWindowSizesEmitsNaws)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bNAWS_wanted = TRUE;
+    doc->m_nWrapColumn = 80;
+    doc->m_gui_rows = 30;
+    doc->SendWindowSizes(80);
+    const std::string& s = wire(doc).sent;
+    // IAC SB NAWS 0 80 0 30 IAC SE
+    std::string expect = { '\xFF', '\xFA', '\x1F', 0, 80, 0, 30, '\xFF', '\xF0' };
+    EXPECT_TRUE(s.find(expect) != std::string::npos);
+
+    // and without NAWS negotiated, nothing goes out
+    wire(doc).sent.clear();
+    doc->m_bNAWS_wanted = FALSE;
+    doc->SendWindowSizes(80);
+    EXPECT_TRUE(wire(doc).sent.empty());
+    delete doc;
+}
+
+// TranslateColour: opacity scaling with and without a translation map.
+TEST(SmallArms, TranslateColourOpacityArms)
+{
+    CMUSHclientDoc* doc = make_doc();
+    COLORREF c = RGB(100, 200, 50);
+    // empty map, opacity 1.0: identity
+    EXPECT_EQ(c, doc->TranslateColour(c, 1.0));
+    // empty map, half opacity: scaled
+    EXPECT_EQ(RGB(50, 100, 25), doc->TranslateColour(c, 0.5));
+
+    // mapped colour
+    doc->m_ColourTranslationMap[c] = RGB(10, 20, 30);
+    EXPECT_EQ(RGB(10, 20, 30), doc->TranslateColour(c, 1.0));
+    EXPECT_EQ(RGB(5, 10, 15), doc->TranslateColour(c, 0.5));
+    // unmapped colour with a non-empty map
+    COLORREF other = RGB(1, 2, 3);
+    EXPECT_EQ(other, doc->TranslateColour(other, 1.0));
+    EXPECT_EQ(RGB(0, 1, 1), doc->TranslateColour(other, 0.5));
+    delete doc;
+}
+
+// OnGameTrace with a partially-built line pushes the pending text onto a new
+// line first.
+TEST(SmallArms, GameTraceOnPartialLine)
+{
+    CMUSHclientDoc* doc = make_doc();
+    char text[] = "partial-prompt> ";
+    doc->OnBytesReceived(text, (int)sizeof text - 1);
+    doc->OnGameTrace();
+    EXPECT_TRUE(doc->m_bTrace);
+    EXPECT_TRUE(saw(doc, "partial-prompt>"));
+    delete doc;
+}
+
 MC_TEST_MAIN()

@@ -509,8 +509,21 @@ bool CMUSHclientDoc::AppendToTheNotepad(const CString strTitle,
         iNotepadType);
 }
 
-bool CMUSHclientDoc::SeeIfHandlerCanExecute(const CString&)
-{ return false; }
+// Parity with doc.cpp:459 SeeIfHandlerCanExecute: a handler name starting
+// with '!' is executed as a command instead (and does not call the script);
+// any other (or empty) name lets the normal dispid dispatch proceed.  The
+// old stub returned false unconditionally, so the world connect/disconnect/
+// open/close script handlers never ran headless (twin drift).
+bool CMUSHclientDoc::SeeIfHandlerCanExecute (const CString & strName)
+  {
+  if (!strName.IsEmpty () && strName [0] == '!')
+    {
+    Execute (strName.Mid (1));
+    return false;
+    }
+
+  return true;  // go ahead and call normal script
+  } // end of SeeIfHandlerCanExecute
 
 // ── CMUSHclientDoc::GetChildFrame ────────────────────────────────────────
 // The real body (scripting/methods/methods_output.cpp, not yet adopted)

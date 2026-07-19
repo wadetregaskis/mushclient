@@ -1344,4 +1344,550 @@ TEST(DocSharedArms, FormatTimeSubstitutesWorldName)
     EXPECT_STREQ("MyWorld-2026", (const char*)s);
 }
 
+// ═══ Round-4 coverage: DisplayMsg paragraph/Pueblo/UTF-8/telnet arms ═══════
+
+#include "pal/itransport.h"
+
+namespace {
+struct DispFakeTransport : pal::ITransport {
+    std::string sent;
+    void resolve(const char*, pal::ResolveToken) override {}
+    void cancelResolve() override {}
+    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void send(const char* data, size_t n) override { sent.append(data, n); }
+    void startTls(const pal::TlsParams&) override {}
+    void close() override {}
+    std::string lastErrorString() const override { return "fake"; }
+};
+} // namespace
+
+// <P> mode: a single newline inside a paragraph is converted to a space, so
+// the paragraph keeps flowing on one line.
+TEST(ParagraphMode, NewlineBecomesSpace)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bInParagraph = true;
+    feed(doc, "word1\nword2");
+    ASSERT_TRUE(doc.m_pCurrentLine != NULL);
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "word1 word2");
+}
+
+// <P> mode: a newline after a period gets TWO spaces (sentence spacing).
+TEST(ParagraphMode, NewlineAfterPeriodBecomesTwoSpaces)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bInParagraph = true;
+    feed(doc, "end.\nNext");
+    ASSERT_TRUE(doc.m_pCurrentLine != NULL);
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "end.  Next");
+}
+
+// <P> mode: a blank line (two newlines in a row) really does break the
+// paragraph — two hard new lines are started.
+TEST(ParagraphMode, DoubleNewlineBreaksParagraph)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bInParagraph = true;
+    feed(doc, "para");
+    int before = (int)doc.m_LineList.GetCount();
+    feed(doc, "\n\n");
+    EXPECT_EQ(before + 2, (int)doc.m_LineList.GetCount());
+}
+
+// <P> mode: consecutive spaces collapse (extras are discarded), and a
+// newline that follows a space is NOT converted to another space.
+TEST(ParagraphMode, ConsecutiveSpacesCollapse)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bInParagraph = true;
+    feed(doc, "a    b");
+    ASSERT_TRUE(doc.m_pCurrentLine != NULL);
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "a b");
+}
+
+// <P> mode: "sentence. next" typed with ONE space gets sentence spacing —
+// the space after . ! or ? is doubled.
+TEST(ParagraphMode, SpaceAfterSentencePunctuationDoubled)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bInParagraph = true;
+    feed(doc, "Stop! go");
+    ASSERT_TRUE(doc.m_pCurrentLine != NULL);
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "Stop!  go");
+}
+
+// <P> mode under MXP: tabs are treated as spaces.
+TEST(ParagraphMode, TabTreatedAsSpaceUnderMxp)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iUseMXP = eOnCommandMXP;
+    doc.MXP_On();
+    doc.m_bInParagraph = true;
+    feed(doc, "a\tb");
+    ASSERT_TRUE(doc.m_pCurrentLine != NULL);
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "a b");
+}
+
+// Pueblo startup: "</xch_mudtext>" arriving mid-stream (Pueblo enabled, MXP
+// off) flips Pueblo active in permanently-secure MXP mode and swallows the
+// tag itself.
+TEST(PuebloTest, StartTagActivatesPuebloSecureMode)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bPueblo = TRUE;
+    ASSERT_TRUE(!doc.m_bPuebloActive);
+    feed(doc, "before</xch_mudtext>after");
+    EXPECT_TRUE(doc.m_bPuebloActive);
+    EXPECT_EQ((int)eMXP_perm_secure, (int)doc.m_iMXP_defaultMode);
+    ASSERT_TRUE(doc.m_pCurrentLine != NULL);
+    // the tag bytes never reach the line
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine).find("xch_mudtext") == std::string::npos);
+}
+
+// ProcessPreviousLine: the Pueblo announce line activates Pueblo level 1.10
+// and replies to the server (PUEBLO_REPLY1).
+TEST(PuebloTest, AnnounceLineNegotiatesLevel110)
+{
+    CMUSHclientDoc doc = make_doc();
+    DispFakeTransport* t = new DispFakeTransport();
+    doc.m_pTransport = t;
+    doc.m_bPueblo = TRUE;
+    feed(doc, "This world is Pueblo 1.10 enhanced.\n");
+    EXPECT_STREQ("1.10", (LPCTSTR)doc.m_iPuebloLevel);
+    EXPECT_TRUE(t->sent.find("PUEBLOCLIENT") != std::string::npos);
+}
+
+// ProcessPreviousLine: Pueblo 1.0 announce takes the plain-reply arm.
+TEST(PuebloTest, AnnounceLineLevel10UsesPlainReply)
+{
+    CMUSHclientDoc doc = make_doc();
+    DispFakeTransport* t = new DispFakeTransport();
+    doc.m_pTransport = t;
+    doc.m_bPueblo = TRUE;
+    feed(doc, "This world is Pueblo 1.0 Enhanced\n");
+    EXPECT_STREQ("1.0", (LPCTSTR)doc.m_iPuebloLevel);
+    EXPECT_TRUE(t->sent.find("PUEBLOCLIENT") != std::string::npos);
+}
+
+// ProcessPreviousLine: the announce line with Pueblo detection disabled does
+// NOT activate Pueblo (warning arm), same when it is already active.
+TEST(PuebloTest, AnnounceIgnoredWhenDetectionOffOrAlreadyActive)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bPueblo = FALSE;
+    feed(doc, "This world is Pueblo 1.10 enhanced.\n");
+    EXPECT_FALSE(doc.m_bPuebloActive);
+
+    // now with detection on but already active: level must not change
+    CMUSHclientDoc doc2 = make_doc();
+    doc2.m_bPueblo = TRUE;
+    doc2.m_bPuebloActive = true;
+    doc2.m_iPuebloLevel = "9.9";
+    feed(doc2, "This world is Pueblo 1.10 enhanced.\n");
+    EXPECT_STREQ("9.9", (LPCTSTR)doc2.m_iPuebloLevel);
+}
+
+// UTF-8 collection: 3-byte (E2 82 AC = €) and 4-byte (F0 9F 98 80) leads set
+// the right byte counters and render once complete.
+TEST(Utf8Phase, ThreeAndFourByteSequencesCollect)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bUTF_8 = TRUE;
+
+    feed(doc, "\xE2");
+    EXPECT_EQ(HAVE_UTF8_CHARACTER, doc.m_phase);
+    EXPECT_EQ(2, doc.m_iUTF8BytesLeft);
+    feed(doc, "\x82\xAC");
+    EXPECT_EQ(NONE, doc.m_phase);
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "\xE2\x82\xAC");
+
+    feed(doc, "\xF0");
+    EXPECT_EQ(3, doc.m_iUTF8BytesLeft);
+    feed(doc, "\x9F\x98\x80");
+    EXPECT_EQ(NONE, doc.m_phase);
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "\xE2\x82\xAC\xF0\x9F\x98\x80");
+}
+
+// UTF-8: a lone continuation byte (0x85) used as a lead byte is bogus — the
+// raw byte is flushed to the line instead of being swallowed.
+TEST(Utf8Phase, BogusLeadByteFlushedRaw)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bUTF_8 = TRUE;
+    feed(doc, "a\x85z");
+    EXPECT_EQ(NONE, doc.m_phase);
+    std::string text = line_text(doc.m_pCurrentLine);
+    EXPECT_TRUE(text.find('a') != std::string::npos);
+    EXPECT_TRUE(text.find('\x85') != std::string::npos);
+    EXPECT_TRUE(text.find('z') != std::string::npos);
+}
+
+// UTF-8: an ASCII byte arriving mid-sequence aborts collection; the partial
+// bytes are flushed and the ASCII byte displays normally.
+TEST(Utf8Phase, AsciiMidSequenceAbortsCollection)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bUTF_8 = TRUE;
+    feed(doc, "\xC3");
+    EXPECT_EQ(HAVE_UTF8_CHARACTER, doc.m_phase);
+    feed(doc, "A");
+    EXPECT_EQ(NONE, doc.m_phase);
+    std::string text = line_text(doc.m_pCurrentLine);
+    EXPECT_TRUE(text.find('\xC3') != std::string::npos);
+    EXPECT_TRUE(text.find('A') != std::string::npos);
+}
+
+// Telnet dispatch through the DisplayMsg loop: IAC WONT/DO/DONT reach their
+// phase handlers (the refusal responses land on the wire).
+TEST(TelnetDispatch, WontDoDontPhasesAnswered)
+{
+    CMUSHclientDoc doc = make_doc();
+    DispFakeTransport* t = new DispFakeTransport();
+    doc.m_pTransport = t;
+
+    // IAC DO <200> (unknown option): client must refuse with IAC WONT <200>
+    const char do_unknown[] = { '\xFF', '\xFD', '\xC8' };
+    doc.DisplayMsg(do_unknown, 3, 0);
+    EXPECT_TRUE(t->sent.find("\xFF\xFC\xC8") != std::string::npos);
+
+    // IAC DONT <200>: acknowledged silently (phase machine consumes it)
+    t->sent.clear();
+    const char dont_unknown[] = { '\xFF', '\xFE', '\xC8' };
+    doc.DisplayMsg(dont_unknown, 3, 0);
+    EXPECT_EQ(NONE, doc.m_phase);
+
+    // IAC WONT <1> (echo): phase machine consumes it without output text
+    const char wont_echo[] = { '\xFF', '\xFC', '\x01' };
+    doc.DisplayMsg(wont_echo, 3, 0);
+    EXPECT_EQ(NONE, doc.m_phase);
+    EXPECT_TRUE(doc.m_pCurrentLine == NULL || doc.m_pCurrentLine->len == 0);
+}
+
+// IAC IAC is data, not command: exactly one 0xFF byte lands on the line.
+TEST(TelnetDispatch, DoubledIacIsLiteralByte)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "\xFF\xFF");
+    ASSERT_TRUE(doc.m_pCurrentLine != NULL);
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "\xFF");
+    EXPECT_EQ(NONE, doc.m_phase);
+}
+
+// Beep: BEL with beeps enabled takes the MessageBeep arm (no sound file) and
+// the PlaySoundFile arm (file configured); neither corrupts the line.
+TEST(DisplayArms, BeepArmsDoNotAffectLineText)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_enable_beeps = 1;
+    feed(doc, "a\ab");
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "ab");
+
+    doc.m_strBeepSound = "/nonexistent-beep.wav";
+    feed(doc, "c\ad");
+    EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "abcd");
+}
+
+// Tab at or past the wrap column starts a soft new line instead of padding.
+TEST(DisplayArms, TabAtWrapColumnSoftWraps)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 20;
+    feed(doc, "12345678901234567890");   // exactly at the wrap column
+    int lines = (int)doc.m_LineList.GetCount();
+    feed(doc, "\t");
+    EXPECT_EQ(lines + 1, (int)doc.m_LineList.GetCount());
+    // soft wrap: previous line has NO hard return
+    CLine* prev = nth_line(doc, lines - 1);
+    ASSERT_NE(nullptr, prev);
+    EXPECT_FALSE(prev->hard_return);
+}
+
+// m_bKeepCommandsOnSameLine: user input appends to the pending MUD prompt
+// line, switching to the echo colour mid-line.
+TEST(DisplayArms, KeepCommandsOnSameLineUsesEchoColour)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bKeepCommandsOnSameLine = TRUE;
+    doc.m_echo_colour = 11;              // custom palette index, not SAMECOLOUR
+    feed(doc, "prompt> ");               // partial MUD line
+    doc.DisplayMsg("look\n", 5, USER_INPUT);
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "prompt> look");
+    CStyle* s = style_at(l0, 8);         // style covering 'l' of "look"
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ((int)COLOUR_CUSTOM, (int)(s->iFlags & COLOURTYPE));
+    EXPECT_EQ(11, (int)s->iForeColour);
+}
+
+// SetNewLineColour: user input on a FRESH line stamps the echo colour as the
+// line's opening style.
+TEST(DisplayArms, UserInputFreshLineStampsEchoColour)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_echo_colour = 3;
+    doc.DisplayMsg("north\n", 6, USER_INPUT);
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    CStyle* s = style_at(l0, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ((int)COLOUR_CUSTOM, (int)(s->iFlags & COLOURTYPE));
+    EXPECT_EQ(3, (int)s->iForeColour);
+    EXPECT_TRUE((l0->flags & USER_INPUT) != 0);
+}
+
+// SetNewLineColour: notes with "same colour" + custom-16-is-default take the
+// custom 15-on-0 arm.
+TEST(DisplayArms, NoteSameColourCustom16DefaultArm)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bNotesInRGB = false;
+    doc.m_iNoteTextColour = SAMECOLOUR;
+    doc.m_bCustom16isDefaultColour = TRUE;
+    doc.Note("hello");
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    CStyle* s = style_at(l0, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ((int)COLOUR_CUSTOM, (int)(s->iFlags & COLOURTYPE));
+    EXPECT_EQ(15, (int)s->iForeColour);
+    EXPECT_EQ(0,  (int)s->iBackColour);
+}
+
+// MXP room-name collection phase: a newline in HAVE_MXP_ROOM_NAME phase
+// reverts the MXP mode (mode_change -1) and resets the phase.
+TEST(MxpSpecialPhase, NewlineEndsRoomNameCollection)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iUseMXP = eOnCommandMXP;
+    doc.MXP_On();
+    doc.m_phase = HAVE_MXP_ROOM_NAME;
+    feed(doc, "The Great Hall\n");
+    EXPECT_EQ(NONE, doc.m_phase);
+    // collected specially — the room name is NOT displayed as line text
+    if (doc.m_pCurrentLine)
+        EXPECT_TRUE(line_text(doc.m_pCurrentLine).find("Great Hall") == std::string::npos);
+}
+
+// MXP script mode: incoming text while m_bMXP_script (not secure) is
+// discarded wholesale.
+TEST(MxpSpecialPhase, ScriptModeDiscardsIncomingText)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iUseMXP = eOnCommandMXP;
+    doc.MXP_On();
+    doc.m_bMXP_script = true;
+    feed(doc, "discard me");
+    EXPECT_TRUE(doc.m_pCurrentLine == NULL || doc.m_pCurrentLine->len == 0);
+}
+
+// MXP secure-once mode: any character other than '<' restores the previous
+// mode immediately.
+TEST(MxpSpecialPhase, SecureOnceRevertsOnNonTag)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iUseMXP = eOnCommandMXP;
+    doc.MXP_On();
+    doc.m_iMXP_mode = eMXP_secure_once;
+    doc.m_iMXP_previousMode = eMXP_open;
+    feed(doc, "x");
+    EXPECT_EQ((int)eMXP_open, (int)doc.m_iMXP_mode);
+}
+
+// ═══ Round-4 coverage: ProcessPreviousLine arms ═════════════════════════════
+
+// Mapping: a line that equals the mapping-failure string removes the last
+// queued direction from the map list.
+TEST(PrevLineArms, MappingFailureLineRemovesLastDirection)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bMapping = TRUE;
+    doc.m_strMappingFailure = "Alas, you cannot go that way.";
+    doc.m_strMapList.AddTail("north");
+    doc.m_strMapList.AddTail("east");
+    feed(doc, "Alas, you cannot go that way.\n");
+    EXPECT_EQ(1, (int)doc.m_strMapList.GetCount());
+    EXPECT_STREQ("north", (LPCTSTR)doc.m_strMapList.GetHead());
+}
+
+// Mapping: the regexp variant of the failure matcher.
+TEST(PrevLineArms, MappingFailureRegexpVariant)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bMapping = TRUE;
+    doc.m_bMapFailureRegexp = 1;
+    doc.m_strMappingFailure = "cannot go";
+    doc.m_MapFailureRegexp = regcomp("cannot go", 0);
+    doc.m_strMapList.AddTail("west");
+    feed(doc, "You cannot go there\n");
+    EXPECT_EQ(0, (int)doc.m_strMapList.GetCount());
+}
+
+// Chat snoop: a connected, snooping chat peer walks the ANSI reconstruction
+// path (bold/underline/blink/inverse + colour-change arms) without
+// disturbing the line list.
+TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
+{
+    CMUSHclientDoc doc = make_doc();
+    CChatSocket* snooper = new CChatSocket();
+    snooper->m_iChatStatus = eChatConnected;
+    snooper->m_bCanSnoop = true;
+    snooper->m_bHeIsSnooping = true;
+    doc.m_ChatList.AddTail(snooper);
+
+    // bold red on blue, underline+blink+inverse transitions, then reset
+    feed(doc, "\x1B[1;31;44mhot\x1B[0;4;5;7mweird\x1B[0mplain\n");
+    ASSERT_TRUE(nth_line(doc, 0) != nullptr);
+    EXPECT_TRUE(line_text(nth_line(doc, 0)).find("hot") != std::string::npos);
+
+    // snoop-permission revoked: the stop-snooping arm
+    snooper->m_bCanSnoop = false;
+    feed(doc, "another line\n");
+    EXPECT_TRUE(line_text(nth_line(doc, 1)).find("another") != std::string::npos);
+
+    doc.m_ChatList.RemoveAll();
+    delete snooper;
+}
+
+// LogLineInHTMLcolour: colour changes emit <font>, non-black backgrounds
+// open <span>, underline wraps in <u>, and spans/fonts are closed at the end.
+TEST(PrevLineArms, HtmlColourLogEmitsFontSpanUnderline)
+{
+    CMUSHclientDoc doc = make_doc();
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_disp_%d.html", (int)getpid());
+    ASSERT_EQ((long)eOK, doc.OpenLog(path, FALSE));
+
+    feed(doc, "\x1B[31;44mred-on-blue\x1B[0m \x1B[4munder\x1B[0m\n");
+    POSITION headpos = doc.m_LineList.GetHeadPosition();
+    doc.LogLineInHTMLcolour(headpos);
+    doc.CloseLog();
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[2048] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    EXPECT_TRUE(strstr(buf, "<font color=") != nullptr);
+    EXPECT_TRUE(strstr(buf, "<span style=")  != nullptr);
+    EXPECT_TRUE(strstr(buf, "</span>") != nullptr);
+    EXPECT_TRUE(strstr(buf, "</font>") != nullptr);
+    EXPECT_TRUE(strstr(buf, "<u>under</u>") != nullptr);
+}
+
+// Output-line logging: a '%'-bearing preamble/postamble goes through
+// FormatTime substitution before being written.
+TEST(PrevLineArms, OutputLogPreambleFormatsTimeCodes)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bLogOutput = TRUE;
+    doc.m_strLogLinePreambleOutput = "[%Y] ";
+    doc.m_strLogLinePostambleOutput = " {%Y}";
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_disp_pre_%d.log", (int)getpid());
+    ASSERT_EQ((long)eOK, doc.OpenLog(path, FALSE));
+    feed(doc, "logged output line\n");
+    doc.CloseLog();
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[512] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    // the year expanded (e.g. "[2026]"), no literal "%Y" left behind
+    EXPECT_TRUE(strstr(buf, "[%Y]") == nullptr);
+    EXPECT_TRUE(strstr(buf, "logged output line") != nullptr);
+    EXPECT_TRUE(strstr(buf, "[2") != nullptr);
+    EXPECT_TRUE(strstr(buf, "{2") != nullptr);
+}
+
+// ═══ Round-4 tail: HTML-colour output logging, note-log preambles,
+//     Pueblo variants ═════════════════════════════════════════════════════
+
+// MUD output logged in HTML-colour mode goes through LogLineInHTMLcolour
+// from the pipeline itself; plain-HTML mode escapes the markup instead.
+TEST(PrevLineArms, HtmlColourOutputLoggingFromPipeline)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bLogOutput = TRUE;
+    doc.m_bLogHTML = TRUE;
+    doc.m_bLogInColour = TRUE;
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_disp_html_%d.html", (int)getpid());
+    ASSERT_EQ((long)eOK, doc.OpenLog(path, FALSE));
+    feed(doc, "\x1B[31mred output line\x1B[0m\r\n");
+    doc.CloseLog();
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[1024] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    EXPECT_TRUE(strstr(buf, "<font color=") != nullptr);
+    EXPECT_TRUE(strstr(buf, "red output line") != nullptr);
+
+    // plain-HTML (no colour) escapes markup characters
+    CMUSHclientDoc doc2 = make_doc();
+    doc2.m_bLogOutput = TRUE;
+    doc2.m_bLogHTML = TRUE;
+    doc2.m_bLogInColour = FALSE;
+    snprintf(path, sizeof path, "/tmp/mc_test_disp_html2_%d.html", (int)getpid());
+    ASSERT_EQ((long)eOK, doc2.OpenLog(path, FALSE));
+    feed(doc2, "a <b> & c\r\n");
+    doc2.CloseLog();
+    f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    memset(buf, 0, sizeof buf);
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    EXPECT_TRUE(strstr(buf, "&lt;b&gt;") != nullptr);
+}
+
+// Notes logged with '%'-bearing note preamble/postamble format the time.
+TEST(PrevLineArms, NoteLogPreambleFormatsTimeCodes)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bLogNotes = TRUE;
+    doc.m_strLogLinePreambleNotes = "[N%Y] ";
+    doc.m_strLogLinePostambleNotes = " {N%Y}";
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_test_disp_note_%d.log", (int)getpid());
+    ASSERT_EQ((long)eOK, doc.OpenLog(path, FALSE));
+    doc.Note("a logged note");
+    doc.CloseLog();
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[512] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    EXPECT_TRUE(strstr(buf, "[N2") != nullptr);   // %Y expanded
+    EXPECT_TRUE(strstr(buf, "a logged note") != nullptr);
+    EXPECT_TRUE(strstr(buf, "{N2") != nullptr);
+}
+
+// Pueblo announce variants: detection off via "no MXP", and level 2.50.
+TEST(PuebloTest, NoMxpSettingAndLevel250)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bPueblo = TRUE;
+    doc.m_iUseMXP = eNoMXP;
+    feed(doc, "This world is Pueblo 1.10 enhanced.\n");
+    EXPECT_TRUE(!doc.m_bPuebloActive);        // refused: MXP set to "No"
+
+    CMUSHclientDoc doc2 = make_doc();
+    DispFakeTransport* t = new DispFakeTransport();
+    doc2.m_pTransport = t;
+    doc2.m_bPueblo = TRUE;
+    feed(doc2, "This world is Pueblo 2.50 enhanced.\n");
+    EXPECT_STREQ("2.50", (LPCTSTR)doc2.m_iPuebloLevel);
+    EXPECT_TRUE(t->sent.find("PUEBLOCLIENT") != std::string::npos);
+}
+
 MC_TEST_MAIN()

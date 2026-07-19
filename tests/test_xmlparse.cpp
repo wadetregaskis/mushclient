@@ -328,4 +328,61 @@ TEST(XmlParse, CustomEntityMapConsultedAfterGlobal)
     EXPECT_STREQ("&", (const char*)p.Get_XML_Entity(amp));
 }
 
+// ═══ Round-4 coverage: more malformed-input arms ═══════════════════════════
+
+TEST(XmlParseR4, DoubleHyphenInsideComment)
+{
+    expect_error("<!DOCTYPE muclient><muclient><!-- bad -- comment --></muclient>",
+                 "Invalid '--' inside comment");
+}
+
+TEST(XmlParseR4, EofAndCommentPlacementArms)
+{
+    // EOF while looking for an attribute value
+    expect_error("<!DOCTYPE muclient><muclient><x attr=",
+                 "Unexpected end-of-file");
+    // comment where a value was expected
+    expect_error("<!DOCTYPE muclient><muclient><x attr=<!-- c -->/></muclient>",
+                 "Comment not valid here");
+    // EOF after a closing-tag name
+    expect_error("<!DOCTYPE muclient><muclient><x>text</x",
+                 "Unexpected end-of-file");
+}
+
+TEST(XmlParseR4, DoctypeDeclarationArms)
+{
+    // EOF inside DOCTYPE
+    expect_error("<!DOCTYPE muclient [", "end-of-file");
+    // unsupported declaration type inside DOCTYPE
+    expect_error("<!DOCTYPE muclient [ <!WEIRD foo> ]><muclient/>",
+                 "Unsupported declaration");
+    // missing '>' after entity definition
+    expect_error("<!DOCTYPE muclient [ <!ENTITY a \"b\" extra> ]><muclient/>",
+                 "Expected '>'");
+}
+
+TEST(XmlParseR4, EntityMissingSemicolonInContent)
+{
+    expect_error("<!DOCTYPE muclient><muclient><x>text &unterminated</x></muclient>",
+                 "No closing \";\"");
+}
+
+// UTF-16LE input (FF FE BOM) goes through the wide-char conversion arm.
+TEST(XmlParseR4, Utf16LittleEndianInputConverted)
+{
+    std::string doc8 = "<!DOCTYPE muclient><muclient><w name=\"A\"/></muclient>";
+    std::string doc16 = "\xFF\xFE";
+    for (char c : doc8) { doc16 += c; doc16 += '\0'; }
+
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, doc16);
+    ASSERT_TRUE(r.ok);
+    EXPECT_STREQ("muclient", (const char*)p.m_strDocumentName);
+    CXMLelement* mu = find_child(p.m_xmlRoot, "muclient");
+    ASSERT_NE(nullptr, mu);
+    CXMLelement* w = find_child(*mu, "w");
+    ASSERT_NE(nullptr, w);
+    EXPECT_STREQ("A", attr(*w, "name").c_str());
+}
+
 MC_TEST_MAIN()

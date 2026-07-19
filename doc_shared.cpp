@@ -1495,6 +1495,10 @@ void CMUSHclientDoc::OnBytesReceived (char * buff, int count)
        // See: http://www.gammon.com.au/forum/?id=11160 
        if (iCompressResult == Z_BUF_ERROR)
          {
+         // next_out points into the buffer being reallocated — remember the
+         // offset and re-point it afterwards (realloc may move the block;
+         // leaving next_out at the old address writes into freed memory)
+         size_t iOutputOffset = m_zCompress.next_out - m_CompressOutput;
          m_nCompressionOutputBufferSize += COMPRESS_BUFFER_LENGTH;
          m_zCompress.avail_out += COMPRESS_BUFFER_LENGTH;
          m_CompressOutput = (Bytef *) realloc (m_CompressOutput, m_nCompressionOutputBufferSize);
@@ -1507,6 +1511,8 @@ void CMUSHclientDoc::OnBytesReceived (char * buff, int count)
             TMessageBox ("Insufficient memory to decompress MCCP text.", MB_ICONEXCLAMATION);
             return;
            }  // end of cannot get more memory
+
+         m_zCompress.next_out = m_CompressOutput + iOutputOffset;
          }  // end of Z_BUF_ERROR
 
       } while (iCompressResult == Z_BUF_ERROR);

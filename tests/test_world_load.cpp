@@ -1985,4 +1985,294 @@ TEST(WorldLoad, PrintingAnsiStylesLoad)
     EXPECT_EQ(FONT_ITALIC, doc.m_nBoldPrintStyle[1]);
 }
 
+// ═══ Round-4 coverage: loader error/edge arms ═══════════════════════════════
+
+// World "id" validation: wrong length and non-hex characters both throw.
+TEST(WorldLoadR4, WorldIdValidationArms)
+{
+    // per-option errors are warn-and-continue (HandleLoadException): the
+    // load succeeds but the bad id is NOT adopted
+    {
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world name="W" id="tooshort" />
+</muclient>)";
+        std::string path = write_temp(xml);
+        CMUSHclientDoc doc;
+        EXPECT_TRUE(doc.LoadWorldFromFile(path.c_str()));
+        EXPECT_TRUE(doc.m_strWorldID != "tooshort");
+    }
+    {
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world name="W" id="zzzzzzzzzzzzzzzzzzzzzzzz" />
+</muclient>)";
+        std::string path = write_temp(xml);
+        CMUSHclientDoc doc;
+        EXPECT_TRUE(doc.LoadWorldFromFile(path.c_str()));
+        EXPECT_TRUE(doc.m_strWorldID != "zzzzzzzzzzzzzzzzzzzzzzzz");
+    }
+}
+
+// Loading a world whose ID collides with an already-open world generates a
+// fresh unique ID (and marks the document modified).
+TEST(WorldLoadR4, DuplicateWorldIdRegenerated)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world name="W" id="0123456789abcdef01234567" />
+</muclient>)";
+
+    CMUSHclientDoc* other = new CMUSHclientDoc();
+    other->m_strWorldID = "0123456789abcdef01234567";
+
+    std::string path = write_temp(xml);
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(path.c_str()));
+    EXPECT_TRUE(doc.m_strWorldID != other->m_strWorldID);
+    EXPECT_EQ(24, doc.m_strWorldID.GetLength());
+    delete other;
+}
+
+// Trigger validation arms: invalid variable name, invalid label, duplicate
+// labels (rejected without XML_OVERWRITE), and a bad regexp.  Each bad
+// trigger is reported and skipped (HandleLoadException) — the load succeeds
+// but the offender is NOT added.
+TEST(WorldLoadR4, TriggerValidationArms)
+{
+    {   // invalid send-to-variable name
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><triggers>
+  <trigger match="x" variable="9bad" send_to="9" sequence="100"><send>y</send></trigger>
+</triggers></muclient>)";
+        std::string path = write_temp(xml);
+        CMUSHclientDoc doc;
+        EXPECT_TRUE(doc.LoadWorldFromFile(path.c_str()));
+        EXPECT_EQ(0, (int)doc.GetTriggerMap().GetCount());
+    }
+    {   // invalid label
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><triggers>
+  <trigger match="x" name="9label" sequence="100"><send>y</send></trigger>
+</triggers></muclient>)";
+        std::string path = write_temp(xml);
+        CMUSHclientDoc doc;
+        EXPECT_TRUE(doc.LoadWorldFromFile(path.c_str()));
+        EXPECT_EQ(0, (int)doc.GetTriggerMap().GetCount());
+    }
+    {   // duplicate label: the second one is refused
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><triggers>
+  <trigger match="x" name="dup" sequence="100"><send>y</send></trigger>
+  <trigger match="z" name="dup" sequence="100"><send>y</send></trigger>
+</triggers></muclient>)";
+        std::string path = write_temp(xml);
+        CMUSHclientDoc doc;
+        EXPECT_TRUE(doc.LoadWorldFromFile(path.c_str()));
+        EXPECT_EQ(1, (int)doc.GetTriggerMap().GetCount());
+        CTrigger* t = nullptr;
+        ASSERT_TRUE(doc.GetTriggerMap().Lookup("dup", t));
+        // world loads carry XML_OVERWRITE: the SECOND definition replaces
+        // the first (the delete-old arm)
+        EXPECT_STREQ("z", (LPCTSTR)t->trigger);
+    }
+    {   // the same duplicate via Load_Set (no XML_OVERWRITE): the second
+        // definition is refused instead
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><triggers>
+  <trigger match="x" name="dup" sequence="100"><send>y</send></trigger>
+  <trigger match="z" name="dup" sequence="100"><send>y</send></trigger>
+</triggers></muclient>)";
+        std::string path = write_temp_named("dupset.xml", xml);
+        CMUSHclientDoc doc;
+        doc.Load_Set(TRIGGER, CString(path.c_str()), nullptr);
+        EXPECT_EQ(1, (int)doc.GetTriggerMap().GetCount());
+        CTrigger* t = nullptr;
+        ASSERT_TRUE(doc.GetTriggerMap().Lookup("dup", t));
+        EXPECT_STREQ("x", (LPCTSTR)t->trigger);   // the FIRST one won
+    }
+    {   // regexp that does not compile
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><triggers>
+  <trigger match="(unclosed" regexp="y" sequence="100"><send>y</send></trigger>
+</triggers></muclient>)";
+        std::string path = write_temp(xml);
+        CMUSHclientDoc doc;
+        EXPECT_TRUE(doc.LoadWorldFromFile(path.c_str()));
+        EXPECT_EQ(0, (int)doc.GetTriggerMap().GetCount());
+    }
+}
+
+// Alias 'set_variable' interplay with send_to: incompatible destination
+// throws; compatible one coerces to send-to-variable.
+TEST(WorldLoadR4, AliasSetVariableArms)
+{
+    {
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><aliases>
+  <alias match="a" set_variable="y" variable="v" send_to="2" sequence="100"><send>y</send></alias>
+</aliases></muclient>)";
+        std::string path = write_temp(xml);
+        CMUSHclientDoc doc;
+        EXPECT_TRUE(doc.LoadWorldFromFile(path.c_str()));   // warn-and-skip
+        EXPECT_EQ(0, (int)doc.GetAliasMap().GetCount());
+    }
+    {
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><aliases>
+  <alias match="a" name="al" set_variable="y" variable="v" send_to="0" sequence="100"><send>y</send></alias>
+</aliases></muclient>)";
+        std::string path = write_temp(xml);
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(path.c_str()));
+        CAlias* a = nullptr;
+        ASSERT_TRUE(doc.GetAliasMap().Lookup("al", a));
+        EXPECT_EQ((int)eSendToVariable, (int)a->iSendTo);
+    }
+}
+
+// Include files: no name → error; clipboard pseudo-name → error; a real
+// include is loaded relative to the world-file directory.
+TEST(WorldLoadR4, IncludeFileArms)
+{
+    {
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><include /></muclient>)";
+        std::string path = write_temp(xml);
+        CMUSHclientDoc doc;
+        EXPECT_TRUE(doc.LoadWorldFromFile(path.c_str()));   // warn-and-skip
+        EXPECT_EQ(0, (int)doc.GetVariableMap().GetCount());
+    }
+    {
+        // a real include: the included file defines a variable
+        std::string inc = write_temp_named("included.xml",
+            R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><variables>
+  <variable name="from_include">yes</variable>
+</variables></muclient>)");
+
+        char xml[512];
+        snprintf(xml, sizeof xml,
+            "<?xml version=\"1.0\"?>\n"
+            "<!DOCTYPE muclient>\n"
+            "<muclient><include name=\"%s\" /></muclient>", inc.c_str());
+        std::string path = write_temp(xml);
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(path.c_str()));
+        CVariable* v = nullptr;
+        ASSERT_TRUE(doc.GetVariableMap().Lookup("from_include", v));
+        EXPECT_STREQ("yes", (LPCTSTR)v->strContents);
+    }
+}
+
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+// A PLUGIN whose script fails to parse aborts the plugin load (and the
+// half-built plugin is thrown away).
+TEST(WorldLoadR4, PluginScriptParseErrorAborts)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<plugin name="Broken" author="x" id="0123456789abcdef0123456e" language="Lua" version="1.0" />
+<script><![CDATA[
+this is not valid lua !!!
+]]></script>
+</muclient>)";
+    std::string path = write_temp_named("brokenscript.xml", xml);
+    CMUSHclientDoc doc;
+    EXPECT_TRUE(!TryLoadPlugin(doc, path.c_str()));
+    EXPECT_TRUE(doc.m_PluginList.empty());
+}
+#endif
+
+// ═══ Round-4: Load_Set family arms + the '!' handler prefix ═════════════════
+
+TEST(WorldLoadR4, LoadSetPerTypeArms)
+{
+    // aliases
+    {
+        std::string p = write_temp_named("set_alias.xml",
+            R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><aliases>
+  <alias match="sa" name="sa" send_to="0" sequence="100"><send>x</send></alias>
+</aliases></muclient>)");
+        CMUSHclientDoc doc;
+        doc.Load_Set(ALIAS, CString(p.c_str()), nullptr);
+        CAlias* a = nullptr;
+        EXPECT_TRUE(doc.GetAliasMap().Lookup("sa", a));
+    }
+    // timers
+    {
+        std::string p = write_temp_named("set_timer.xml",
+            R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><timers>
+  <timer name="st" minute="5" enabled="y" send_to="0"><send>x</send></timer>
+</timers></muclient>)");
+        CMUSHclientDoc doc;
+        doc.Load_Set(TIMER, CString(p.c_str()), nullptr);
+        CTimer* t = nullptr;
+        EXPECT_TRUE(doc.GetTimerMap().Lookup("st", t));
+    }
+    // macros
+    {
+        std::string p = write_temp_named("set_macro.xml",
+            R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><macros>
+  <macro name="F2" send="macro-two" type="0" />
+</macros></muclient>)");
+        CMUSHclientDoc doc;
+        doc.Load_Set(MACRO, CString(p.c_str()), nullptr);
+    }
+    // colours
+    {
+        std::string p = write_temp_named("set_colour.xml",
+            R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><colours>
+  <ansi>
+    <colour name="NormalColour1" colour="123456" />
+  </ansi>
+</colours></muclient>)");
+        CMUSHclientDoc doc;
+        doc.Load_Set(COLOUR, CString(p.c_str()), nullptr);
+    }
+    // not-XML input takes the bad-signature arm (throws internally, caught)
+    {
+        std::string p = write_temp_named("set_bad.txt", "definitely not xml at all here");
+        CMUSHclientDoc doc;
+        doc.Load_Set(TRIGGER, CString(p.c_str()), nullptr);
+        EXPECT_EQ(0, (int)doc.GetTriggerMap().GetCount());
+    }
+    // empty name = the GUI cancel path
+    {
+        CMUSHclientDoc doc;
+        EXPECT_TRUE(doc.Load_Set(TRIGGER, CString(""), nullptr));
+    }
+}
+
+TEST(WorldLoadR4, BangHandlerExecutesInsteadOfScript)
+{
+    CMUSHclientDoc doc;
+    // '!' prefix: the rest is Executed as a command and the script is vetoed
+    EXPECT_TRUE(!doc.SeeIfHandlerCanExecute(CString("!look")));
+    // plain names allow the normal dispid dispatch
+    EXPECT_TRUE(doc.SeeIfHandlerCanExecute(CString("OnConnect")));
+    EXPECT_TRUE(doc.SeeIfHandlerCanExecute(CString("")));
+}
+
 MC_TEST_MAIN()

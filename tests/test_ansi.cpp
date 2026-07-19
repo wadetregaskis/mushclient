@@ -559,4 +559,217 @@ TEST(ANSITest, ColourChangeAtLineEndCarriesToNextLine)
     EXPECT_EQ((COLORREF)RED, sHead->iForeColour);
 }
 
+// ═══ Round-4 coverage: the RGB-mode colour arms of InterpretANSIcode ═══════
+
+// These put the style into COLOUR_RGB mode directly, then feed plain ANSI
+// codes, which must resolve against the palettes immediately (not at
+// display time).
+
+TEST(AnsiRgbMode, ForegroundCodesResolveAgainstPalettes)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pCurrentLine->styleList.GetTail()->iFlags =
+        (doc.m_pCurrentLine->styleList.GetTail()->iFlags & ~COLOURTYPE) | COLOUR_RGB;
+
+    doc.InterpretANSIcode(ANSI_TEXT_RED);          // 31 → normal red
+    CStyle* s = tail(doc);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ((unsigned short)COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_EQ(doc.m_normalcolour[1], s->iForeColour);
+
+    doc.InterpretANSIcode(ANSI_BOLD);
+    doc.InterpretANSIcode(ANSI_TEXT_GREEN);        // bold green
+    s = tail(doc);
+    EXPECT_EQ(doc.m_boldcolour[2], s->iForeColour);
+
+    doc.InterpretANSIcode(ANSI_SET_FOREGROUND_DEFAULT);   // 39 → bold white
+    s = tail(doc);
+    EXPECT_EQ(doc.m_boldcolour[7], s->iForeColour);
+
+    doc.InterpretANSIcode(ANSI_CANCEL_BOLD);
+    doc.InterpretANSIcode(ANSI_BACK_MAGENTA);      // 45 → normal magenta bg
+    s = tail(doc);
+    EXPECT_EQ(doc.m_normalcolour[5], s->iBackColour);
+
+    doc.InterpretANSIcode(ANSI_SET_BACKGROUND_DEFAULT);   // 49 → black bg
+    s = tail(doc);
+    EXPECT_EQ(doc.m_normalcolour[0], s->iBackColour);
+}
+
+TEST(AnsiRgbMode, InverseSwapsColourTargets)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pCurrentLine->styleList.GetTail()->iFlags =
+        (doc.m_pCurrentLine->styleList.GetTail()->iFlags & ~COLOURTYPE) | COLOUR_RGB;
+
+    doc.InterpretANSIcode(ANSI_INVERSE);
+    doc.InterpretANSIcode(ANSI_TEXT_CYAN);         // fore code lands on BACK
+    CStyle* s = tail(doc);
+    EXPECT_EQ(doc.m_normalcolour[6], s->iBackColour);
+
+    doc.InterpretANSIcode(ANSI_BACK_RED);          // back code lands on FORE
+    s = tail(doc);
+    EXPECT_EQ(doc.m_normalcolour[1], s->iForeColour);
+
+    // alternative-inverse honours bold for the swapped colour
+    doc.m_bAlternativeInverse = TRUE;
+    doc.InterpretANSIcode(ANSI_BOLD);
+    doc.InterpretANSIcode(ANSI_TEXT_BLUE);
+    s = tail(doc);
+    EXPECT_EQ(doc.m_boldcolour[4], s->iBackColour);
+    doc.InterpretANSIcode(ANSI_BACK_GREEN);
+    s = tail(doc);
+    EXPECT_EQ(doc.m_boldcolour[2], s->iForeColour);
+}
+
+TEST(AnsiRgbMode, BrightBackgroundAndInverseArm)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pCurrentLine->styleList.GetTail()->iFlags =
+        (doc.m_pCurrentLine->styleList.GetTail()->iFlags & ~COLOURTYPE) | COLOUR_RGB;
+
+    doc.InterpretANSIcode(104);                    // bright blue background
+    CStyle* s = tail(doc);
+    EXPECT_EQ(doc.m_boldcolour[4], s->iBackColour);
+
+    doc.InterpretANSIcode(ANSI_INVERSE);
+    doc.InterpretANSIcode(105);                    // inverse: goes to FORE
+    s = tail(doc);
+    EXPECT_EQ(doc.m_boldcolour[5], s->iForeColour);
+}
+
+TEST(AnsiRgbMode, Custom16DefaultColourArm)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bCustom16isDefaultColour = TRUE;
+    doc.m_customtext[15] = RGB(11, 22, 33);
+    doc.m_customback[15] = RGB(44, 55, 66);
+    doc.m_pCurrentLine->styleList.GetTail()->iFlags =
+        (doc.m_pCurrentLine->styleList.GetTail()->iFlags & ~COLOURTYPE) | COLOUR_RGB;
+
+    doc.InterpretANSIcode(ANSI_SET_FOREGROUND_DEFAULT);
+    CStyle* s = tail(doc);
+    EXPECT_EQ(RGB(11, 22, 33), s->iForeColour);
+    doc.InterpretANSIcode(ANSI_SET_BACKGROUND_DEFAULT);
+    s = tail(doc);
+    EXPECT_EQ(RGB(44, 55, 66), s->iBackColour);
+}
+
+// In ANSI mode with custom-16-default, codes 39/49 switch to CUSTOM colour 15;
+// a subsequent palette code converts the style to RGB (the custom→RGB arm).
+TEST(AnsiRgbMode, AnsiCustomDefaultThenPaletteConvertsToRgb)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bCustom16isDefaultColour = TRUE;
+
+    doc.InterpretANSIcode(ANSI_SET_FOREGROUND_DEFAULT);   // → COLOUR_CUSTOM 15
+    CStyle* s = tail(doc);
+    EXPECT_EQ((unsigned short)COLOUR_CUSTOM, s->iFlags & COLOURTYPE);
+    EXPECT_EQ((COLORREF)15, s->iForeColour);
+
+    // the NEXT palette-family code converts custom → RGB, then resolves
+    // itself against the custom-16 default backgrounds
+    doc.m_customback[15] = RGB(9, 8, 7);
+    doc.InterpretANSIcode(ANSI_SET_BACKGROUND_DEFAULT);
+    s = tail(doc);
+    EXPECT_EQ((unsigned short)COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_EQ(RGB(9, 8, 7), s->iBackColour);
+
+    doc.InterpretANSIcode(ANSI_TEXT_RED);                 // plain palette code
+    s = tail(doc);
+    EXPECT_EQ(doc.m_normalcolour[1], s->iForeColour);
+}
+
+// ANSI_RESET in ANSI mode with custom-16-default: both colours to custom 15.
+TEST(AnsiRgbMode, ResetWithCustom16Default)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bCustom16isDefaultColour = TRUE;
+    doc.InterpretANSIcode(ANSI_TEXT_RED);
+    doc.InterpretANSIcode(ANSI_RESET);
+    CStyle* s = tail(doc);
+    EXPECT_EQ((unsigned short)COLOUR_CUSTOM, s->iFlags & COLOURTYPE);
+    EXPECT_EQ((COLORREF)15, s->iForeColour);
+    EXPECT_EQ((COLORREF)15, s->iBackColour);
+}
+
+// RGB-mode bold upgrade/downgrade: BOLD re-maps a normal palette colour to
+// its bold twin, CANCEL_BOLD maps it back.
+TEST(AnsiRgbMode, BoldUpgradeAndDowngradeScanPalette)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bCustom16isDefaultColour = TRUE;   // the scans are gated on this
+    doc.m_pCurrentLine->styleList.GetTail()->iFlags =
+        (doc.m_pCurrentLine->styleList.GetTail()->iFlags & ~COLOURTYPE) | COLOUR_RGB;
+
+    doc.InterpretANSIcode(ANSI_TEXT_RED);          // normalcolour[1]
+    doc.InterpretANSIcode(ANSI_BOLD);              // upgrade scan
+    CStyle* s = tail(doc);
+    EXPECT_EQ(doc.m_boldcolour[1], s->iForeColour);
+
+    doc.InterpretANSIcode(ANSI_CANCEL_BOLD);       // downgrade scan
+    s = tail(doc);
+    EXPECT_EQ(doc.m_normalcolour[1], s->iForeColour);
+}
+
+// Blink family + cancel codes.
+TEST(AnsiRgbMode, BlinkAndCancelCodes)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.InterpretANSIcode(ANSI_BLINK);
+    EXPECT_TRUE((tail(doc)->iFlags & BLINK) != 0);
+    doc.InterpretANSIcode(ANSI_CANCEL_BLINK);
+    EXPECT_TRUE((tail(doc)->iFlags & BLINK) == 0);
+    doc.InterpretANSIcode(ANSI_FAST_BLINK);
+    EXPECT_TRUE((tail(doc)->iFlags & BLINK) != 0);
+    doc.InterpretANSIcode(ANSI_CANCEL_SLOW_BLINK);
+    EXPECT_TRUE((tail(doc)->iFlags & BLINK) == 0);
+    doc.InterpretANSIcode(ANSI_UNDERLINE);
+    EXPECT_TRUE((tail(doc)->iFlags & UNDERLINE) != 0);
+    doc.InterpretANSIcode(ANSI_CANCEL_UNDERLINE);
+    EXPECT_TRUE((tail(doc)->iFlags & UNDERLINE) == 0);
+    doc.InterpretANSIcode(ANSI_INVERSE);
+    EXPECT_TRUE((tail(doc)->iFlags & INVERSE) != 0);
+    doc.InterpretANSIcode(ANSI_CANCEL_INVERSE);
+    EXPECT_TRUE((tail(doc)->iFlags & INVERSE) == 0);
+}
+
+// 24-bit BACKGROUND collection through the stream phases, and the abandoned
+// 38/48 sequence (neither ;2 nor ;5) arm.
+TEST(AnsiRgbMode, TwentyFourBitBackgroundAndAbandonedSequence)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    const char seq[] = "\x1B[48;2;12;34;56mX";
+    doc.DisplayMsg(seq, (int)sizeof seq - 1, 0);
+    CStyle* s = tail(doc);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ((unsigned short)COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_EQ(RGB(12, 34, 56), s->iBackColour);
+
+    // ESC[48;9m — invalid second parameter abandons the sequence
+    const char bad[] = "\x1B[48;9mY";
+    doc.DisplayMsg(bad, (int)sizeof bad - 1, 0);
+    EXPECT_EQ(NONE, doc.m_phase);
+
+    // ESC[38;9m — same for foreground
+    const char bad2[] = "\x1B[38;9mZ";
+    doc.DisplayMsg(bad2, (int)sizeof bad2 - 1, 0);
+    EXPECT_EQ(NONE, doc.m_phase);
+}
+
+// 256-colour codes with INVERSE active swap their target.
+TEST(AnsiRgbMode, Xterm256WithInverseSwapsTarget)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    // enter RGB mode first (24-bit fore), then inverse + 256-colour codes
+    const char seq[] = "\x1B[38;2;1;2;3m\x1B[7m\x1B[38;5;196m\x1B[48;5;21mX";
+    doc.DisplayMsg(seq, (int)sizeof seq - 1, 0);
+    CStyle* s = tail(doc);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(xterm_256_colours[196], s->iBackColour);   // fore code → back
+    EXPECT_EQ(xterm_256_colours[21],  s->iForeColour);   // back code → fore
+}
+
 MC_TEST_MAIN()

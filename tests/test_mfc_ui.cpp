@@ -950,17 +950,17 @@ TEST(Document, MultiDocTemplateRegistryAndIteration) {
     CMultiDocTemplate t(0, nullptr, nullptr, nullptr);
     EXPECT_EQ((POSITION)nullptr, t.GetFirstDocPosition());
     CDocument d1, d2;
-    t.RegisterDoc(&d1);
-    t.RegisterDoc(&d2);
+    t.AddDocument(&d1);
+    t.AddDocument(&d2);
     POSITION pos = t.GetFirstDocPosition();
     EXPECT_EQ(&d1, t.GetNextDoc(pos));
     EXPECT_EQ(&d2, t.GetNextDoc(pos));
     EXPECT_EQ((POSITION)nullptr, pos);
     EXPECT_EQ((CDocument*)nullptr, t.GetNextDoc(pos));
-    t.UnregisterDoc(&d1);
+    t.RemoveDocument(&d1);
     pos = t.GetFirstDocPosition();
     EXPECT_EQ(&d2, t.GetNextDoc(pos));
-    t.UnregisterDoc(&d1);   // absent: no-op
+    t.RemoveDocument(&d1);   // absent: no-op
 }
 
 static void* s_openedWorldFile;

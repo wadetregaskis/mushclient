@@ -1132,10 +1132,13 @@ class CWorldDocTemplate {
 public:
     std::vector<CMUSHclientDoc*> m_docs;
 
-    void AddDoc(CMUSHclientDoc* doc) {
+    // MFC-real registry names (CDocTemplate::AddDocument/RemoveDocument;
+    // same names as the mfc_ui.h CMultiDocTemplate shim, so the
+    // doc_portable.cpp call sites compile unchanged across the flip).
+    void AddDocument(CMUSHclientDoc* doc) {
         m_docs.push_back(doc);
     }
-    void RemoveDoc(CMUSHclientDoc* doc) {
+    void RemoveDocument(CMUSHclientDoc* doc) {
         m_docs.erase(std::remove(m_docs.begin(), m_docs.end(), doc),
                      m_docs.end());
     }
@@ -1672,7 +1675,9 @@ int myAtoF(const char* z, double* pResult);
 int EditDistance(const std::string source, const std::string target);
 // no default arg here (stdafx.h owns the `= false` default for the full build)
 bool IsStringNumber(const std::string& s, bool bSigned);
-void Generate256colours(void);   // fills xterm_256_colours[] (defined in doc_portable.cpp)
+void Generate256colours(void);   // fills xterm_256_colours[] (defined in
+                                 // utilities_shared.cpp; doc.h port section
+                                 // is the real-header twin of this decl)
 // no default arg (stdafx.h owns the `= false` default; declaring one here too
 // would be a redefinition in TUs that see both headers)
 BOOL CheckLabel(const CString& strLabel, bool bScript);
@@ -2182,7 +2187,8 @@ public:
     // ── SQLite databases (world.DatabaseOpen / etc.) ───────────────────
     tDatabaseMap      m_Databases;
 
-    bool LoadWorldFromFile(const char* path);
+    // (doc.h port-section twin — keep in lockstep)
+    BOOL LoadWorldFromFile(const char* path);
     // REAL loader entry (xml/xml_load_world.cpp:2657; doc.h:2116 signature).
     // Throws CFileException*/CArchiveException* on failure — callers wrap in
     // try/catch (methods_plugins.cpp LoadPlugin/ReloadPlugin).
@@ -2326,9 +2332,10 @@ public:
     LONG m_maxlines = 5000;  // type converged to doc.h
 
     // ── Connect/disconnect timestamps ────────────────────────────────────
+    // (m_tWorldOpenTime retired at Phase 2 Stage 2: one writer, zero
+    // readers — m_whenWorldStarted already records world-start time.)
     CTime   m_tConnectTime;
     CTimeSpan m_tsConnectDuration;   // timespan we have been connected (doc.h twin)
-    time_t  m_tWorldOpenTime = 0;  // when this world document was constructed
 
     // ── Disconnect behaviour ──────────────────────────────────────────────
     BOOL m_bShowConnectDisconnect = FALSE;  // type converged to doc.h
@@ -2603,6 +2610,7 @@ public:
     CString        m_strScript;          // accumulated inline <script> content
 
     // ── Script file auto-reload (non-Windows mtime polling) ───────────
+    // (doc.h port-section twin — keep in lockstep)
     time_t         m_scriptFileMtime        = 0;     // mtime recorded at last load
     bool           m_bInScriptFileChanged   = false; // re-entrancy guard
 
@@ -3273,6 +3281,7 @@ public:
     // After the Lua engine is created and script parsed, walk all
     // triggers/aliases/timers and resolve their strProcedure names to
     // Lua dispids so ExecuteLua can call them.
+    // (doc.h port-section twin — keep in lockstep)
     void ResolveAllEntryPoints();
     bool CheckScriptingAvailable(const char*, int, const char*) { return false; }
     void OnScriptFileChanged(bool bForce = false);
@@ -4013,6 +4022,7 @@ public:
     // semantics); the old m_pScratchLine / m_bInStartNewLine / Term* stdout
     // machinery is gone.  AllocateLinePositions (doc_portable.cpp) builds the
     // JUMP_SIZE index at construction and on m_maxlines changes.
+    // (doc.h port-section twin — keep in lockstep)
     void AllocateLinePositions();
 
     // Minimal stand-in for doc.h's CFindInfo m_DisplayFindInfo (stdafx.h owns

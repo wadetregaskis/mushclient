@@ -32,6 +32,11 @@ class CDocTransportEvents;            // doc_shared.cpp — the ITransportEvents
 #ifndef _WIN32
 // Verbose protocol tracing flag — defined in mushapp_globals.cpp / doc_portable.cpp.
 extern bool g_debug;
+// Fills the shared xterm_256_colours[] palette (defined in
+// utilities_shared.cpp).  On Windows MUSHclient.cpp carries its own local
+// declaration (:90); this is the port's declaration home for TUs compiled
+// against the real headers (doc_portable.cpp ctor, tests).
+void Generate256colours (void);
 // doc.h uses MACRO_COUNT, CAliasMap, CTriggerMap, CTimerMap etc. which are
 // defined in OtherTypes.h.  On Windows they arrive via the PCH / MUSHclient.h;
 // on non-Windows we must include OtherTypes.h explicitly here so that
@@ -1885,6 +1890,26 @@ public:
 #ifndef _WIN32
   void UpdateAllViews (void * hint = nullptr);
   bool InitZlib (z_stream & zs);
+
+  // Port-only members with NO Windows counterpart (bodies in
+  // doc_portable.cpp), declared here so TUs compiled against the real
+  // doc.h see them (docs/PHASE2-PLAN.md Stage 2).  Mirror of the
+  // doc_stub.h twins — keep both in lockstep.
+  //
+  // Headless world-load entry: drives the real XML machinery over `path`
+  // (the test suite's canonical loader until the Stage-7 Serialize rewire).
+  BOOL LoadWorldFromFile (const char * path);
+  // (Re)build the JUMP_SIZE m_pLinePositions index from m_maxlines — the
+  // headless equivalent of the allocation SetUpOutputWindow defers.
+  void AllocateLinePositions ();
+  // After the script engine is created and the file parsed, resolve all
+  // trigger/alias/timer strProcedure names to dispids (Lua-only headless).
+  void ResolveAllEntryPoints ();
+  // Script-file auto-reload, port style: OnScriptFileChanged polls this
+  // mtime.  Coexists with the Windows auto-reload machinery above
+  // (m_pThread / m_eventScriptFileChanged / m_timeScriptFileMod), which
+  // the port never starts.
+  time_t m_scriptFileMtime = 0;
 #endif
 
   void StartNewLine (const bool hard_break, const int flags);

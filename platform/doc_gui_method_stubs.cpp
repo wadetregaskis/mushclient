@@ -16,6 +16,9 @@
 #ifndef _WIN32
 
 #include "platform/doc_stub.h"
+#include "scripting/errors.h"   // eOK / eNoSuchWindow / eNoChatConnections
+                                // (self-sufficiency for the real-header flip;
+                                // no-op today — doc_stub.h already includes it)
 
 #include <cstring>   // strlen
 #include <cstdlib>   // free

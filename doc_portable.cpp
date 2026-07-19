@@ -12,6 +12,9 @@
 
 #include "platform/doc_stub.h"
 #include "platform/wx_mfc_hooks.h"
+#include "scripting/errors.h"   // eOK / eInvalidObjectLabel (self-sufficiency
+                                // for the real-header flip; no-op today —
+                                // doc_stub.h already includes it)
 #include "UDPsocket.h"   // ~CMUSHclientDoc frees m_UDPsocketMap (doc_construct.cpp:549)
 #include "Color.h"
 #include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString
@@ -246,7 +249,6 @@ CMUSHclientDoc::CMUSHclientDoc()
     // now come from SetAlphaDefaults above — the same table defaults Windows
     // applies.  (The old hand-set "MUSHCLIENT" was twin drift: Windows sends
     // the lowercase table default in TTYPE negotiation.)
-    m_tWorldOpenTime = time(nullptr);
 
     // World-start clocks (doc_construct.cpp:32-33) — GetInfo(306) and
     // GetLineInfo(13) read these.
@@ -266,7 +268,7 @@ CMUSHclientDoc::CMUSHclientDoc()
 
     // Register with the global world-document list so that
     // world.GetWorld() / GetWorldList() etc. can find this doc.
-    App.m_pWorldDocTemplate->AddDoc(this);
+    App.m_pWorldDocTemplate->AddDocument(this);
 }
 
 // ── CMUSHclientDoc destructor ─────────────────────────────────────────────
@@ -299,7 +301,7 @@ CMUSHclientDoc::~CMUSHclientDoc()
 {
     // Unregister from the global world-document list first, so no stale
     // pointer remains visible to GetWorld()/GetWorldList() during teardown.
-    App.m_pWorldDocTemplate->RemoveDoc(this);
+    App.m_pWorldDocTemplate->RemoveDocument(this);
 
     // Close socket first so no callbacks fire into a partially-destroyed doc.
     TeardownTransport();   // PAL transport + events bridge (doc_shared.cpp)
@@ -757,6 +759,9 @@ bool CMUSHclientDoc::FindAllEntryPoints(void)
 // after a world opens.  Returns true on success.
 
 extern tConfigurationNumericOption OptionsTable [];   // scriptingoptions.cpp
+extern tConfigurationAlphaOption AlphaOptionsTable [];   // scriptingoptions.cpp
+                                 // (per-TU externs — the Windows convention,
+                                 // cf. world_debug.cpp:24-25, serialize.cpp:26-27)
 
 // Port equivalent of CMUSHclientDoc::CreateScriptEngine (scripting/
 // scripting.cpp:20-105): create the world's script engine, read the external
@@ -827,7 +832,7 @@ static void PortCreateWorldScriptEngine(CMUSHclientDoc& doc)
     doc.FindAllEntryPoints();                    // scripting.cpp:102
 }
 
-bool CMUSHclientDoc::LoadWorldFromFile(const char* path)
+BOOL CMUSHclientDoc::LoadWorldFromFile(const char* path)
 {
     CFile f;
     if (!f.Open(path, CFile::modeRead | CFile::shareDenyWrite)) {

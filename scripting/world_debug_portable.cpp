@@ -25,6 +25,12 @@
 using std::map;
 using std::string;
 
+// ── option tables (scriptingoptions.cpp) ──────────────────────────────────
+// Per-TU externs — the Windows convention (cf. world_debug.cpp:24-25,
+// serialize.cpp:26-27); self-sufficiency for the real-header flip.
+extern tConfigurationNumericOption OptionsTable [];
+extern tConfigurationAlphaOption AlphaOptionsTable [];
+
 // ── constants (mirrors stdafx.h) ──────────────────────────────────────────
 #ifndef PLUGIN_UNIQUE_ID_LENGTH
 #  define PLUGIN_UNIQUE_ID_LENGTH 24

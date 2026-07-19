@@ -304,7 +304,7 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
 
     // ── Register with the document template ──────────────────────────────
     if (App.m_pNormalDocTemplate)
-        App.m_pNormalDocTemplate->RegisterDoc(pDoc);
+        App.m_pNormalDocTemplate->AddDocument(pDoc);
 
     // ── Register in the static title registry ─────────────────────────────
     {
@@ -450,7 +450,7 @@ void CWxNotepadFrame::OnClose(wxCloseEvent& evt)
     if (m_pDoc) {
         // Unregister from the doc template and static registry.
         if (App.m_pNormalDocTemplate)
-            App.m_pNormalDocTemplate->UnregisterDoc(m_pDoc);
+            App.m_pNormalDocTemplate->RemoveDocument(m_pDoc);
         // Erase by the key we inserted with, NOT GetTitle(): the Save path
         // renames the frame (SetTitle to the saved file's basename), so the
         // current title no longer matches the registry key — using it would

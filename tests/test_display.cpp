@@ -8,6 +8,8 @@
 
 #include "mc_test.h"
 #include "platform/doc_stub.h"
+#include "scripting/errors.h"   // eOK etc. (self-sufficiency for the
+                                // real-header flip; no-op today)
 
 #include <cstring>
 #include <cstdio>

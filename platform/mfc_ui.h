@@ -2958,8 +2958,12 @@ public:
     // Real document list so FindNotepad / GetNotepadList can iterate.
     std::vector<CDocument*> m_docs;
 
-    void RegisterDoc(CDocument* d)   { m_docs.push_back(d); }
-    void UnregisterDoc(CDocument* d) {
+    // MFC-real registry names (CDocTemplate::AddDocument/RemoveDocument on
+    // Windows; the invented RegisterDoc/UnregisterDoc are gone — Phase 2
+    // Stage 2).  Docs register here so the GetFirstDocPosition/GetNextDoc
+    // iteration below finds them.
+    virtual void AddDocument(CDocument* d) { m_docs.push_back(d); }
+    virtual void RemoveDocument(CDocument* d) {
         auto it = std::find(m_docs.begin(), m_docs.end(), d);
         if (it != m_docs.end()) m_docs.erase(it);
     }

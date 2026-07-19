@@ -1627,4 +1627,119 @@ TEST(MxpR4, OpenTagCallbackReceivesFormattedArguments)
 }
 #endif
 
+// ── round 5: phase-machine abort arms, script discard, wrapped links ──────
+
+// A carriage return inside an MXP element aborts it: "got <NEWLINE>".
+TEST(MXPPhaseR5, ElementAbortedByCarriageReturn)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    long long errs = doc.m_iMXPerrors;
+    feed(doc, "<send\rmore text\n");
+    EXPECT_GT(doc.m_iMXPerrors, errs);
+}
+
+// An ESC inside an MXP element aborts it: "got <ESC>".
+TEST(MXPPhaseR5, ElementAbortedByEscape)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    long long errs = doc.m_iMXPerrors;
+    feed(doc, "<send\x1B[0mtext\n");
+    EXPECT_GT(doc.m_iMXPerrors, errs);
+}
+
+// An MXP comment consumed character by character through the comment phase.
+TEST(MXPPhaseR5, CommentPhaseDispatch)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    feed(doc, "<!-- a comment -->visible\n");
+    // the comment is swallowed; the visible text survives
+    CLine* line = doc.m_LineList.GetHead();
+    std::string text(line->text, line->len);
+    EXPECT_EQ(std::string::npos, text.find("comment"));
+    EXPECT_NE(std::string::npos, text.find("visible"));
+}
+
+// Incoming <script> content is discarded even in secure mode (the
+// m_bMXP_script arm inside MXP_Secure).
+TEST(MXPPhaseR5, ScriptContentDiscardedInSecureMode)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    feed(doc, "<script>evil();</script>after\n");
+    std::string all;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        all.append(l->text, l->len);
+    }
+    EXPECT_EQ(std::string::npos, all.find("evil"));
+}
+
+// In paragraph mode a newline after a word (with an earlier space on the
+// line) inserts a joining space rather than running words together.
+TEST(MXPPhaseR5, ParagraphNewlineJoinsWithSpace)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    feed(doc, "<p>alpha beta\ngamma</p>\n");
+    std::string all;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        all.append(l->text, l->len);
+    }
+    EXPECT_NE(std::string::npos, all.find("beta gamma"));
+}
+
+// A hyperlink whose text hard-wraps: the continuation line keeps the action
+// (StartNewLine_KeepPreviousStyle AddRefs it).
+TEST(MXPPhaseR5, WrappedHyperlinkKeepsActionOnNextLine)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 20;
+    feed(doc, "<send>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</send>\n");
+
+    // both physical lines carry a style with the same action
+    ASSERT_TRUE(doc.m_LineList.GetCount() >= 2);
+    CLine* l0 = doc.m_LineList.GetHead();
+    POSITION p2 = doc.m_LineList.GetHeadPosition();
+    doc.m_LineList.GetNext(p2);
+    CLine* l1 = doc.m_LineList.GetAt(p2);
+    CAction* a0 = nullptr;
+    CAction* a1 = nullptr;
+    for (POSITION pos = l0->styleList.GetHeadPosition(); pos; ) {
+        CStyle* s = l0->styleList.GetNext(pos);
+        if (s->pAction) a0 = s->pAction;
+    }
+    for (POSITION pos = l1->styleList.GetHeadPosition(); pos; ) {
+        CStyle* s = l1->styleList.GetNext(pos);
+        if (s->pAction) a1 = s->pAction;
+    }
+    EXPECT_NE(nullptr, a0);
+    EXPECT_NE(nullptr, a1);
+    EXPECT_EQ(a0, a1);   // the SAME action, reference-counted across the wrap
+}
+
+// A colour-change trigger whose match splits an MXP action style AddRefs the
+// action into the split-off runs.
+TEST(MXPPhaseR5, TriggerColouringSplitsActionStyle)
+{
+    CMUSHclientDoc doc = make_doc_e2e();
+    doc.m_iMXP_mode = eMXP_secure;
+
+    CTrigger* t  = new CTrigger();
+    t->trigger   = CString("*iddl*");
+    t->bEnabled  = TRUE;
+    t->colour    = 2;
+    t->iSequence = DEFAULT_TRIGGER_SEQUENCE;
+    t->strLabel  = CString("mid");
+    doc.m_TriggerMap.SetAt(t->strLabel, t);
+    doc.m_TriggerArray.Add(t);
+
+    feed(doc, "<send>middleman</send>\n");
+    EXPECT_EQ(1L, t->nMatched);
+}
+
 MC_TEST_MAIN()

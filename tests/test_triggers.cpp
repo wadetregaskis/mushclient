@@ -761,4 +761,388 @@ TEST(TriggerApi, EnableTriggerToggleAndMissing)
     EXPECT_EQ((long)eTriggerNotFound, doc.EnableTrigger("nope", TRUE));
 }
 
+// ── round 5: colour-match conditions, colouring arms, omitted-note replay ──
+
+// Triggers can require the matched text's colours/styles: each unmet
+// condition rejects the match.
+TEST(TriggerR5, ColourAndStyleMatchConditions)
+{
+    // text colour: line is WHITE (7) on BLACK (0), not hilited
+    {   // background condition met (BLACK == 0)
+        CMUSHclientDoc doc = make_doc();
+        CTrigger* t = add_trigger(doc, "colours");
+        t->iMatch = TRIGGER_MATCH_BACK | (BLACK << 8);
+        feed_line(doc, "colours");
+        EXPECT_EQ(1L, t->nMatched);
+    }
+    {   // background condition unmet
+        CMUSHclientDoc doc = make_doc();
+        CTrigger* t = add_trigger(doc, "colours");
+        t->iMatch = TRIGGER_MATCH_BACK | (RED << 8);
+        feed_line(doc, "colours");
+        EXPECT_EQ(0L, t->nMatched);
+    }
+    {   // hilite requested but line is not hilited
+        CMUSHclientDoc doc = make_doc();
+        CTrigger* t = add_trigger(doc, "colours");
+        t->iMatch = TRIGGER_MATCH_HILITE | HILITE;
+        feed_line(doc, "colours");
+        EXPECT_EQ(0L, t->nMatched);
+    }
+    {   // blink requested but line does not blink
+        CMUSHclientDoc doc = make_doc();
+        CTrigger* t = add_trigger(doc, "colours");
+        t->iMatch = TRIGGER_MATCH_BLINK | BLINK;
+        feed_line(doc, "colours");
+        EXPECT_EQ(0L, t->nMatched);
+    }
+    {   // inverse requested but line is not inverse
+        CMUSHclientDoc doc = make_doc();
+        CTrigger* t = add_trigger(doc, "colours");
+        t->iMatch = TRIGGER_MATCH_INVERSE | INVERSE;
+        feed_line(doc, "colours");
+        EXPECT_EQ(0L, t->nMatched);
+    }
+}
+
+// clipboard_arg copies the selected wildcard to the clipboard on match.
+TEST(TriggerR5, ClipboardArgCopiesWildcard)
+{
+    CMUSHclientDoc doc = make_doc();
+    CTrigger* t = add_trigger(doc, "*gold*");
+    t->iClipboardArg = 1;
+    feed_line(doc, "50 gold coins");
+    EXPECT_EQ(1L, t->nMatched);
+}
+
+// Foreground-only colour change forces the style to RGB and keeps the
+// original background (TRIGGER_COLOUR_CHANGE_FOREGROUND arm).
+TEST(TriggerR5, ForegroundOnlyColourChange)
+{
+    CMUSHclientDoc doc = make_doc();
+    CTrigger* t = add_trigger(doc, "*shiny*");
+    t->colour = 1;                    // custom colour 1 (not SAMECOLOUR)
+    t->iColourChangeType = TRIGGER_COLOUR_CHANGE_FOREGROUND;
+    feed_line(doc, "a shiny thing");
+    EXPECT_EQ(1L, t->nMatched);
+
+    // the matched span's style is now RGB with the custom text colour and
+    // the ORIGINAL (ANSI black) background
+    bool sawRgb = false;
+    for (POSITION lp = doc.m_LineList.GetHeadPosition(); lp; ) {
+        CLine* line = doc.m_LineList.GetNext(lp);
+        for (POSITION pos = line->styleList.GetHeadPosition(); pos; ) {
+            CStyle* s = line->styleList.GetNext(pos);
+            if ((s->iFlags & COLOURTYPE) == COLOUR_RGB &&
+                s->iForeColour == doc.m_customtext[1])
+                sawRgb = true;   // the recoloured match span
+        }
+    }
+    EXPECT_TRUE(sawRgb);
+}
+
+// A repeating regexp trigger recolours every occurrence on the line.
+TEST(TriggerR5, RepeatingRegexpColoursAllMatches)
+{
+    CMUSHclientDoc doc = make_doc();
+    CTrigger* t  = new CTrigger();
+    t->trigger   = CString("ha");
+    t->bEnabled  = TRUE;
+    t->bRegexp   = TRUE;
+    t->bRepeat   = TRUE;
+    t->colour    = 2;
+    t->iSequence = DEFAULT_TRIGGER_SEQUENCE;
+    t->strLabel  = CString("rep");
+    doc.m_TriggerMap.SetAt(t->strLabel, t);
+    doc.m_TriggerArray.Add(t);
+
+    feed_line(doc, "ha ha ha");
+    EXPECT_EQ(1L, t->nMatched);
+}
+
+// A match that starts on the SECOND physical line of a soft-wrapped
+// paragraph walks the line list to find its start column.
+TEST(TriggerR5, MatchOnSecondWrappedLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 20;
+    CTrigger* t = add_trigger(doc, "*NEEDLE*");
+    t->colour = 1;   // force the colouring walk
+    feed_line(doc, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa NEEDLE tail");
+    EXPECT_EQ(1L, t->nMatched);
+}
+
+// An omitted line's paragraph can contain an open note (world.Tell); the
+// note text is preserved via m_OutstandingLines and re-emitted.
+TEST(TriggerR5, OmittedLineReplaysInterleavedNote)
+{
+    CMUSHclientDoc doc = make_doc();
+    CTrigger* t = add_trigger(doc, "*secret*");
+    t->bOmitFromOutput = TRUE;
+
+    doc.DisplayMsg("abc", 3, 0);      // partial MUD line
+    doc.Tell("interleaved");          // note forces the line change
+    feed_line(doc, "the secret text");
+
+    EXPECT_EQ(1L, t->nMatched);
+    // the omitted MUD text is gone; the note text survived
+    std::string all;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        all.append(l->text, l->len);
+        all += '\n';
+    }
+    EXPECT_EQ(std::string::npos, all.find("secret"));
+    EXPECT_NE(std::string::npos, all.find("interleaved"));
+}
+
+// Omit-from-output with trigger evaluation stopped in all plugins pops the
+// recent-lines entry (the Fiendish 5.06 arm).
+TEST(TriggerR5, OmitWithStoppedEvaluationPopsRecentLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    CTrigger* t = add_trigger(doc, "*hideme*");
+    t->bOmitFromOutput = TRUE;
+    t->bKeepEvaluating = TRUE;
+
+    doc.m_iStopTriggerEvaluation = eStopEvaluatingTriggersInAllPlugins;
+    feed_line(doc, "please hideme now");
+    doc.m_iStopTriggerEvaluation = eKeepEvaluatingTriggers;
+    EXPECT_EQ(1L, t->nMatched);
+}
+
+// ── round 5: scripted-trigger arms ────────────────────────────────────────
+
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+
+// An unlabelled scripted trigger reports itself under its internal name
+// (the GetTriggerRevMap arm).
+TEST(TriggerScriptR5, UnlabelledScriptedTriggerUsesInternalName)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(setup_lua(doc,
+        "function OnAnon(name, line, wildcards)\n"
+        "  world.SetVariable('anon_fired', 'yes')\n"
+        "end\n"));
+
+    CTrigger* t  = new CTrigger();
+    t->trigger   = CString("anonline");
+    t->bEnabled  = TRUE;
+    t->iSequence = DEFAULT_TRIGGER_SEQUENCE;
+    t->strProcedure = CString("OnAnon");
+    // no label: registered under a generated internal name
+    CString internalName = "*trigger_internal_r5";
+    doc.m_TriggerMap.SetAt(internalName, t);
+    doc.m_TriggerArray.Add(t);
+    doc.GetTriggerRevMap()[t] = (LPCTSTR)internalName;
+    doc.ResolveAllEntryPoints();
+
+    feed_line(doc, "anonline");
+    EXPECT_EQ(1L, t->nMatched);
+    CVariable* v = nullptr;
+    EXPECT_TRUE(doc.GetVariableMap().Lookup("anon_fired", v));
+}
+
+// A keep-evaluating trigger whose send-to-script stops trigger evaluation
+// breaks out of the sequence loop (the m_iStopTriggerEvaluation arm).
+TEST(TriggerScriptR5, SendToScriptStopsEvaluation)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(setup_lua(doc, "-- world script\n"));
+
+    CTrigger* t1 = add_trigger(doc, "*stopper*",
+                               "world.StopEvaluatingTriggers(true)",
+                               eSendToScript);
+    t1->bKeepEvaluating = TRUE;
+    t1->iSequence = 10;
+    CTrigger* t2 = add_trigger(doc, "*stopper here*", "never", eSendToOutput);
+    t2->iSequence = 200;
+
+    feed_line(doc, "a stopper here");
+    EXPECT_EQ(1L, t1->nMatched);
+    EXPECT_EQ(0L, t2->nMatched);   // evaluation was stopped
+    doc.m_iStopTriggerEvaluation = eKeepEvaluatingTriggers;
+}
+
+// send-to-script-after-omit with NO script engine prints the "cannot
+// execute" colour note instead.
+TEST(TriggerScriptR5, ScriptAfterOmitWithoutEngineNotes)
+{
+    CMUSHclientDoc doc = make_doc();
+    CTrigger* t = add_trigger(doc, "*noengine*", "x = 1", eSendToScriptAfterOmit);
+    feed_line(doc, "a noengine line");
+    EXPECT_EQ(1L, t->nMatched);
+    // the error note landed in the output
+    bool sawNote = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("cannot execute") != std::string::npos)
+            sawNote = true;
+    }
+    EXPECT_TRUE(sawNote);
+}
+
+// send-to-execute honours omit_from_log (the m_log_input save/restore arm).
+TEST(TriggerScriptR5, SendToExecuteOmitFromLog)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_log_input = true;
+    CTrigger* t = add_trigger(doc, "*runit*", "innercmd", eSendToExecute);
+    t->omit_from_log = TRUE;
+    feed_line(doc, "please runit now");
+    EXPECT_EQ(1L, t->nMatched);
+    EXPECT_TRUE(doc.m_log_input);   // restored afterwards
+}
+
+// A trigger whose match text embeds a variable holding control characters:
+// the expansion drops the non-printables.
+TEST(TriggerScriptR5, VariableExpansionDropsControlCharacters)
+{
+    CMUSHclientDoc doc = make_doc();
+    CVariable* v = new CVariable();
+    v->strLabel    = "vword";
+    v->strContents = CString("wo\x01rd");   // control char inside
+    doc.GetVariableMap().SetAt("vword", v);
+
+    CTrigger* t  = new CTrigger();
+    t->trigger   = CString("@vword");   // expands at match time
+    t->bRegexp   = TRUE;
+    t->bExpandVariables = TRUE;
+    t->bEnabled  = TRUE;
+    t->iSequence = DEFAULT_TRIGGER_SEQUENCE;
+    t->strLabel  = CString("varexp");
+    doc.m_TriggerMap.SetAt(t->strLabel, t);
+    doc.m_TriggerArray.Add(t);
+
+    feed_line(doc, "word");   // the control char was dropped from the regexp
+    EXPECT_EQ(1L, t->nMatched);
+}
+
+// The same variable path with contents that break the recompiled regexp:
+// the compile-error arm reports and skips the trigger.
+TEST(TriggerScriptR5, VariableExpansionBadRegexpSkipsTrigger)
+{
+    CMUSHclientDoc doc = make_doc();
+    CVariable* v = new CVariable();
+    v->strLabel    = "vbroke";
+    v->strContents = CString("(");         // unbalanced when raw
+    doc.GetVariableMap().SetAt("vbroke", v);
+
+    CTrigger* t  = new CTrigger();
+    t->trigger   = CString("x@vbroke(");   // recompiles to "x\((" → unbalanced
+    t->bRegexp   = TRUE;
+    t->bExpandVariables = TRUE;
+    t->bEnabled  = TRUE;
+    t->iSequence = DEFAULT_TRIGGER_SEQUENCE;
+    t->strLabel  = CString("varbroke");
+    doc.m_TriggerMap.SetAt(t->strLabel, t);
+    doc.m_TriggerArray.Add(t);
+
+    feed_line(doc, "x(");                  // must not crash; trigger skipped
+    EXPECT_EQ(0L, t->nMatched);
+}
+
+#endif // MUSHCLIENT_LUA_SCRIPTING
+
+// ── round 5: send-text substitution arms (evaluate.cpp FixSendText) ───────
+
+// %0 in a send is the whole match (the '0' digit case).
+TEST(SendTextR5, WildcardZeroIsWholeMatch)
+{
+    CMUSHclientDoc doc = make_doc();
+    CTrigger* t  = new CTrigger();
+    t->trigger   = CString("hail (\\w+)");
+    t->bRegexp   = TRUE;
+    t->bEnabled  = TRUE;
+    t->iSendTo   = eSendToOutput;
+    t->contents  = CString("saw: %0 and %1");
+    t->iSequence = DEFAULT_TRIGGER_SEQUENCE;
+    t->strLabel  = CString("wc0");
+    doc.m_TriggerMap.SetAt(t->strLabel, t);
+    doc.m_TriggerArray.Add(t);
+
+    feed_line(doc, "hail bob");
+    EXPECT_EQ(1L, t->nMatched);
+    bool sawWhole = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("saw: hail bob and bob")
+                != std::string::npos)
+            sawWhole = true;
+    }
+    EXPECT_TRUE(sawWhole);
+}
+
+// %C expands to the clipboard contents (empty clipboard: nothing inserted).
+TEST(SendTextR5, ClipboardSubstitution)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.SetClipboard("from-clipboard");
+    CTrigger* t = add_trigger(doc, "*paste*", "got [%C]", eSendToOutput);
+    feed_line(doc, "please paste this");
+    EXPECT_EQ(1L, t->nMatched);
+
+    // empty-clipboard arm (no throw from trigger context)
+    CMUSHclientDoc doc2 = make_doc();
+    doc2.SetClipboard("");
+    CTrigger* t2 = add_trigger(doc2, "*clip2*", "got [%c]", eSendToOutput);
+    feed_line(doc2, "please clip2 this");
+    EXPECT_EQ(1L, t2->nMatched);
+}
+
+// A send routed to the log file with HTML logging on runs wildcards through
+// FixHTMLString.
+TEST(SendTextR5, LogFileSendFixesHtmlWildcards)
+{
+    CMUSHclientDoc doc = make_doc();
+    char logpath[128];
+    snprintf(logpath, sizeof logpath, "/tmp/mc_r5_trig_log_%d.html", (int)getpid());
+    doc.m_logfile = fopen(logpath, "w");
+    ASSERT_NE(nullptr, doc.m_logfile);
+    doc.m_logfile_name = logpath;
+    doc.m_bLogHTML = TRUE;
+
+    CTrigger* t  = new CTrigger();
+    t->trigger   = CString("say <(\\w+)> and <(?<word>\\w+)>");
+    t->bRegexp   = TRUE;
+    t->bEnabled  = TRUE;
+    t->iSendTo   = eSendToLogFile;
+    t->contents  = CString("heard %1 then %<word>");
+    t->iSequence = DEFAULT_TRIGGER_SEQUENCE;
+    t->strLabel  = CString("loghtml");
+    doc.m_TriggerMap.SetAt(t->strLabel, t);
+    doc.m_TriggerArray.Add(t);
+
+    feed_line(doc, "say <hello> and <bye>");
+    EXPECT_EQ(1L, t->nMatched);
+
+    fclose(doc.m_logfile);
+    doc.m_logfile = nullptr;
+    unlink(logpath);
+}
+
+// @variable in the SEND text (expand-variables option) goes through the
+// '@' substitution case.
+TEST(SendTextR5, VariableSubstitutionInSend)
+{
+    CMUSHclientDoc doc = make_doc();
+    CVariable* v = new CVariable();
+    v->strLabel    = "target";
+    v->strContents = "the dragon";
+    doc.GetVariableMap().SetAt("target", v);
+
+    CTrigger* t = add_trigger(doc, "*attack*", "kill @target", eSendToOutput);
+    t->bExpandVariables = TRUE;
+    feed_line(doc, "attack now");
+    EXPECT_EQ(1L, t->nMatched);
+    bool sawExpanded = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("kill the dragon") != std::string::npos)
+            sawExpanded = true;
+    }
+    EXPECT_TRUE(sawExpanded);
+}
+
 MC_TEST_MAIN()

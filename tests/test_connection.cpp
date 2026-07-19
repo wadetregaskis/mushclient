@@ -1905,4 +1905,414 @@ TEST(SmallArms, GameTraceOnPartialLine)
     delete doc;
 }
 
+// ── round 5: proxy message-box arms, transport-events bridge, misc ────────
+
+// Every proxy refusal has a UMessageBox arm taken when error notification is
+// NOT routed to the output window; headless that box is a recorded no-op.
+TEST(ProxyR5, RefusalsViaMessageBoxArm)
+{
+    NotifyToOutput toBox(true, /*toOutput=*/false);
+
+    {   // Response1 GSSAPI refusal
+        CMUSHclientDoc* doc = make_doc();
+        char buff[2] = { 5, 1 };
+        EXPECT_EQ(-1, doc->ProcessProxyResponse1(buff, 2));
+        EXPECT_FALSE(saw(doc, "Proxy server cannot authenticate"));  // box, not Note
+        delete doc;
+    }
+    {   // Response2 refused authentication
+        CMUSHclientDoc* doc = make_doc();
+        char buff[2] = { 1, 5 };
+        EXPECT_EQ(-1, doc->ProcessProxyResponse2(buff, 2));
+        EXPECT_FALSE(saw(doc, "refused authentication"));
+        delete doc;
+    }
+    {   // Response3 SOCKS4 refusal
+        CMUSHclientDoc* doc = make_doc();
+        doc->m_iSocksProcessing = eProxyServerSocks4;
+        char buff[2] = { 0, 91 };
+        EXPECT_EQ(-1, doc->ProcessProxyResponse3(buff, 2));
+        EXPECT_FALSE(saw(doc, "refused connection"));
+        delete doc;
+    }
+    {   // Response3 SOCKS5 refusal
+        CMUSHclientDoc* doc = make_doc();
+        doc->m_iSocksProcessing = eProxyServerSocks5;
+        char buff[2] = { 5, 1 };
+        EXPECT_EQ(-1, doc->ProcessProxyResponse3(buff, 2));
+        EXPECT_FALSE(saw(doc, "refused connection"));
+        delete doc;
+    }
+    {   // unexpected version byte
+        CMUSHclientDoc* doc = make_doc();
+        char buff[2] = { 4, 0 };
+        EXPECT_EQ(-1, doc->ProcessProxyResponse1(buff, 2));
+        EXPECT_FALSE(saw(doc, "Unexpected proxy server response"));
+        delete doc;
+    }
+}
+
+// Responses 2/3 with the wrong version byte reject via the shared check.
+TEST(ProxyR5, LaterResponsesWrongVersionByte)
+{
+    NotifyToOutput toOutput;
+    {
+        CMUSHclientDoc* doc = make_doc();
+        char buff[2] = { 9, 0 };            // Response2 expects version 1
+        EXPECT_EQ(-1, doc->ProcessProxyResponse2(buff, 2));
+        delete doc;
+    }
+    {
+        CMUSHclientDoc* doc = make_doc();
+        doc->m_iSocksProcessing = eProxyServerSocks5;
+        char buff[2] = { 9, 0 };            // Response3 (SOCKS5) expects 5
+        EXPECT_EQ(-1, doc->ProcessProxyResponse3(buff, 2));
+        delete doc;
+    }
+}
+
+// Short packets synthesize the failure byte before dispatch.
+TEST(ProxyR5, ShortPacketsSynthesizeFailure)
+{
+    NotifyToOutput toOutput;
+    {   // Response1 count < 2: 0xFF = no acceptable methods
+        CMUSHclientDoc* doc = make_doc();
+        char buff[2] = { 5, 0 };
+        EXPECT_EQ(-1, doc->ProcessProxyResponse1(buff, 1));
+        EXPECT_TRUE(saw(doc, "no acceptable methods"));
+        delete doc;
+    }
+    {   // Response3 SOCKS5 count < 2: general failure
+        CMUSHclientDoc* doc = make_doc();
+        doc->m_iSocksProcessing = eProxyServerSocks5;
+        char buff[2] = { 5, 9 };
+        EXPECT_EQ(-1, doc->ProcessProxyResponse3(buff, 1));
+        EXPECT_TRUE(saw(doc, "general SOCKS server failure"));
+        delete doc;
+    }
+}
+
+// RFC 1929 length bytes cap the username/password at 255 characters.
+TEST(ProxyR5, OverlongProxyCredentialsRefused)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_strProxyUserName = CString('u', 300);
+    doc->m_strProxyPassword = "pw";
+    char buff[2] = { 5, 2 };   // auth required → SendProxyUserNameAndPassword
+    EXPECT_EQ(-1, doc->ProcessProxyResponse1(buff, 2));
+    // the refusal disconnected: the transport was torn down before anything
+    // could hit the wire
+    EXPECT_EQ(nullptr, doc->m_pTransport);
+    delete doc;
+}
+
+// The doc-side ITransportEvents bridge: the passive callbacks forward (or
+// deliberately ignore) without a live connection.
+TEST(TransportEventsR5, BridgeForwardsTlsAndIgnoresWritable)
+{
+    CMUSHclientDoc* doc = make_doc();
+    delete doc->m_pTransport;         // replace the recording transport
+    doc->m_pTransport = nullptr;
+    doc->CreateTransport();           // real adapter + the events bridge
+    ASSERT_NE(nullptr, doc->m_pTransportEvents);
+
+    // CDocTransportEvents' only base is pal::ITransportEvents, so the
+    // pointer values coincide (the class is complete only in doc_shared.cpp).
+    pal::ITransportEvents* ev =
+        reinterpret_cast<pal::ITransportEvents*>(doc->m_pTransportEvents);
+
+    ev->onWritable();                                       // no-op by design
+    doc->m_iConnectPhase = eConnectConnectedToMud;
+    ev->onTlsEstablished("TLSv1.3", "TLS_AES_128_GCM_SHA256", nullptr);
+    EXPECT_TRUE(saw(doc, "TLSv1.3"));
+    ev->onTlsFailed(pal::TlsFailure::Handshake, "wrong version number");
+    EXPECT_TRUE(saw(doc, "wrong version number"));
+
+    doc->TeardownTransport();
+    delete doc;
+}
+
+// ConnectionClosed: the button-bar update for view numbers 1-10, auto-log
+// close, and the notify-on-disconnect Note/box arms.
+TEST(ConnectionClosedR5, ViewButtonAutoLogAndNotifyArms)
+{
+    {   // view number in range + auto-log close + notify via Note
+        BOOL saved = App.m_bNotifyOnDisconnect;
+        App.m_bNotifyOnDisconnect = TRUE;
+        NotifyToOutput toOutput;
+        CMUSHclientDoc* doc = make_doc();
+        doc->m_view_number = 1;
+
+        char logpath[128];
+        snprintf(logpath, sizeof logpath, "/tmp/mc_r5_autolog_%d.txt", (int)getpid());
+        doc->m_logfile = fopen(logpath, "w");
+        ASSERT_NE(nullptr, doc->m_logfile);
+        doc->m_logfile_name = logpath;
+        doc->m_strAutoLogFileName = logpath;   // marks the log auto-opened
+
+        doc->m_bDisconnectOK = false;          // unexpected disconnect
+        doc->ConnectionClosed(0);
+        EXPECT_EQ(nullptr, doc->m_logfile);    // CloseLog ran
+        EXPECT_TRUE(saw(doc, "server has closed the connection"));
+        unlink(logpath);
+        App.m_bNotifyOnDisconnect = saved;
+        delete doc;
+    }
+    {   // notify via message box (not routed to output)
+        BOOL saved = App.m_bNotifyOnDisconnect;
+        App.m_bNotifyOnDisconnect = TRUE;
+        NotifyToOutput toBox(true, /*toOutput=*/false);
+        CMUSHclientDoc* doc = make_doc();
+        doc->m_bDisconnectOK = false;
+        doc->ConnectionClosed(0);
+        EXPECT_FALSE(saw(doc, "server has closed the connection"));
+        App.m_bNotifyOnDisconnect = saved;
+        delete doc;
+    }
+}
+
+// Host-name resolution failure with box-style notification.
+TEST(ConnectionR5, ResolveFailureViaMessageBoxArm)
+{
+    NotifyToOutput toBox(true, /*toOutput=*/false);
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iConnectPhase = eConnectMudNameLookup;
+    struct in_addr addr; addr.s_addr = 0;
+    doc->LookupHostNameComplete(addr, eConnectMudNameLookup, false);
+    EXPECT_FALSE(saw(doc, "Unable to resolve host name"));
+    EXPECT_EQ((int)eConnectNotConnected, (int)doc->m_iConnectPhase);
+    delete doc;
+}
+
+// ── round 5: SendMsg / DoSendMsg family ───────────────────────────────────
+
+TEST(SendMsgR5, GuardsAndEchoFlags)
+{
+    CMUSHclientDoc* doc = make_doc();
+    RecTransport& t = wire(doc);
+
+    // OnPluginSent guard: nothing may be sent from inside the callback
+    doc->m_bPluginProcessingSent = true;
+    doc->SendMsg("blocked", false, false, false);
+    doc->DoSendMsg("blocked", false, false);
+    EXPECT_TRUE(t.sent.empty());
+    doc->m_bPluginProcessingSent = false;
+
+    // world-suppressed echo
+    doc->m_bNoEcho = true;
+    doc->SendMsg("quiet", true, false, false);
+    EXPECT_NE(std::string::npos, t.sent.find("quiet"));
+    EXPECT_FALSE(saw(doc, "quiet"));   // echo suppressed
+    doc->m_bNoEcho = false;
+
+    // German umlaut fixup arm
+    doc->m_bTranslateGerman = true;
+    doc->SendMsg("gruesse", false, false, false);
+    doc->m_bTranslateGerman = false;
+
+    // mapper accumulation arm (AddToMap is a headless no-op)
+    doc->m_bMapping = true;
+    doc->DoSendMsg("north", false, false);
+    doc->m_bMapping = false;
+
+    delete doc;
+}
+
+TEST(SendMsgR5, ImmediateFlagsWhenQueueBusy)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iSpeedWalkDelay = 10;                       // queue machinery on
+    doc->m_QueuedCommandsList.AddTail("nnorth");       // something pending
+    // bQueueIt=false but the queue is non-empty → IMMEDIATE_WITH_ECHO
+    doc->SendMsg("look", true, false, false);
+    // and without echo → IMMEDIATE_WITHOUT_ECHO
+    doc->m_QueuedCommandsList.AddTail("nnorth");
+    doc->SendMsg("hide", false, false, false);
+    doc->m_iSpeedWalkDelay = 0;
+    delete doc;
+}
+
+TEST(SendMsgR5, SpamPreventionInjectsMessage)
+{
+    CMUSHclientDoc* doc = make_doc();
+    RecTransport& t = wire(doc);
+    doc->m_bEnableSpamPrevention = true;
+    doc->m_iSpamLineCount = 3;
+    doc->m_strSpamMessage = "look";
+
+    for (int i = 0; i < 5; ++i)
+        doc->DoSendMsg("kill rat", false, false);
+
+    // after the 4th identical command the spam breaker sent "look"
+    EXPECT_NE(std::string::npos, t.sent.find("look"));
+    delete doc;
+}
+
+// A command echoed onto a line that already has MUD text starts a new line
+// (the NOTE_OR_COMMAND flag-change arm).
+TEST(SendMsgR5, CommandAfterPartialMudLineStartsNewLine)
+{
+    CMUSHclientDoc* doc = make_doc();
+    char prompt[] = "prompt> ";
+    doc->OnBytesReceived(prompt, (int)sizeof prompt - 1);   // partial MUD line
+    doc->DoSendMsg("north", true, false);                   // echoed command
+    EXPECT_TRUE(saw(doc, "north"));
+    delete doc;
+}
+
+// ── round 5: queued-command status display ────────────────────────────────
+
+TEST(QueueR5, ShowQueuedCommandsFormatsRepeatsAndOverflow)
+{
+    CMUSHclientDoc* doc = make_doc();
+
+    // empty entries skipped; repeats counted; multi-char directions bracketed
+    doc->m_QueuedCommandsList.AddTail("n");        // flag byte + empty command
+    doc->m_QueuedCommandsList.AddTail("nnorth");
+    doc->m_QueuedCommandsList.AddTail("nnorth");
+    doc->m_QueuedCommandsList.AddTail("nne");
+    doc->ShowQueuedCommands();
+
+    // repeated multi-char direction at the end takes the count-flush arm
+    doc->m_QueuedCommandsList.RemoveAll();
+    doc->m_QueuedCommandsList.AddTail("neast");
+    doc->m_QueuedCommandsList.AddTail("neast");
+    doc->ShowQueuedCommands();
+
+    // a long queue ends with "..."
+    for (int i = 0; i < 60; ++i) {
+        doc->m_QueuedCommandsList.AddTail("neast");
+        doc->m_QueuedCommandsList.AddTail("nwest");
+    }
+    doc->ShowQueuedCommands();
+
+    doc->m_QueuedCommandsList.RemoveAll();
+    delete doc;
+}
+
+// ── round 5: option-machinery guard arms (free helpers) ───────────────────
+
+TEST(OptionHelpersR5, RangeAndSizeGuards)
+{
+    struct { int v4; } base = { 0 };
+    static char nm[] = "opt";
+    tConfigurationNumericOption table[2] = {};
+    table[0].pName = nm;
+    table[0].iOffset = 0;
+    table[0].iLength = 4;
+    table[0].iMinimum = 0;
+    table[0].iMaximum = 100;
+
+    bool changed = false;
+    EXPECT_EQ((long)eUnknownOption,
+              SetBaseOptionItem(-1, table, 1, (char*)&base, 1, changed));
+    EXPECT_EQ((long)eUnknownOption,
+              SetBaseOptionItem(5, table, 1, (char*)&base, 1, changed));
+    EXPECT_EQ(-1.0, GetBaseOptionItem(-1, table, 1, (char*)&base));
+
+    table[0].iLength = 3;   // no such member size
+    EXPECT_EQ((long)eUnknownOption,
+              SetBaseOptionItem(0, table, 1, (char*)&base, 1, changed));
+
+    CString sbase;
+    tConfigurationAlphaOption atable[1] = {};
+    CString v("x");
+    EXPECT_EQ((long)eUnknownOption,
+              SetBaseAlphaOptionItem(-1, atable, 0, (char*)&sbase, v, changed));
+    EXPECT_STREQ("", (LPCTSTR)GetBaseAlphaOptionItem(-1, atable, 0, (char*)&sbase));
+}
+
+// The alternative-inverse rendering keeps the missing ANSI combinations.
+TEST(StyleRgbR5, AlternativeInverseRemainingArms)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bAlternativeInverse = TRUE;
+    doc->m_normalcolour[1] = RGB(100, 0, 0);
+    doc->m_normalcolour[2] = RGB(0, 100, 0);
+    doc->m_boldcolour[1]   = RGB(200, 0, 0);
+    COLORREF fg = 0, bg = 0;
+
+    // inverse, fg < 8, NOT hilited → normal palette for colour2
+    CStyle invPlain = make_style(COLOUR_ANSI | INVERSE, 1, 2);
+    doc->GetStyleRGB(&invPlain, fg, bg);
+    EXPECT_EQ(RGB(0, 100, 0), fg);        // colour1 from background
+    EXPECT_EQ(RGB(100, 0, 0), bg);        // colour2 from normal palette
+
+    // not inverse, fg >= 8 → xterm palette
+    CStyle x = make_style(COLOUR_ANSI, 20, 2);
+    doc->GetStyleRGB(&x, fg, bg);
+    EXPECT_EQ(RGB(0, 100, 0), bg);
+
+    // not inverse, fg < 8, NOT hilited → normal palette both ways
+    CStyle plain = make_style(COLOUR_ANSI, 1, 2);
+    doc->GetStyleRGB(&plain, fg, bg);
+    EXPECT_EQ(RGB(100, 0, 0), fg);
+    EXPECT_EQ(RGB(0, 100, 0), bg);
+
+    // inverse with bg >= 8 → xterm palette for colour1
+    CStyle invx = make_style(COLOUR_ANSI | INVERSE, 1, 20);
+    doc->GetStyleRGB(&invx, fg, bg);
+
+    doc->m_bAlternativeInverse = FALSE;
+
+    // classic mode: HILITE with fg >= 8 → xterm palette (not bold table)
+    CStyle boldx = make_style(COLOUR_ANSI | HILITE, 20, 2);
+    doc->GetStyleRGB(&boldx, fg, bg);
+    delete doc;
+}
+
+// ── round 5: small doc_shared arms ────────────────────────────────────────
+
+// Reversing a bracketed direction word that is not in the direction map.
+TEST(SmallArmsR5, ReverseSpeedwalkUnknownWord)
+{
+    CMUSHclientDoc* doc = make_doc();
+    CString rev = doc->DoReverseSpeedwalk("(fly)");
+    delete doc;
+}
+
+// Input-log postamble with a '%' goes through FormatTime.
+TEST(SmallArmsR5, LogPostambleFormatsTime)
+{
+    CMUSHclientDoc* doc = make_doc();
+    char logpath[128];
+    snprintf(logpath, sizeof logpath, "/tmp/mc_r5_log_%d.txt", (int)getpid());
+    doc->m_logfile = fopen(logpath, "w");
+    ASSERT_NE(nullptr, doc->m_logfile);
+    doc->m_logfile_name = logpath;
+    doc->m_log_input = true;
+    doc->m_strLogLinePreambleInput  = "%H:";
+    doc->m_strLogLinePostambleInput = " [%H]";
+    doc->LogCommand("north");
+    fclose(doc->m_logfile);
+    doc->m_logfile = nullptr;
+    unlink(logpath);
+    delete doc;
+}
+
+// AddStyle's no-current-line guards return NULL instead of crashing.
+TEST(SmallArmsR5, AddStyleWithoutALine)
+{
+    CMUSHclientDoc* doc = make_doc();
+    CLine* savedLine = doc->m_pCurrentLine;
+    doc->m_pCurrentLine = nullptr;
+    EXPECT_EQ(nullptr, doc->AddStyle(0, 0, 0, 0, nullptr));
+    EXPECT_EQ(nullptr, doc->AddStyle(0, 0, 0, 0, "", "", ""));
+    doc->m_pCurrentLine = savedLine;
+    delete doc;
+}
+
+// New-activity sound arm: first unseen line with a configured sound (the
+// headless PlaySoundFile backend simply reports no audio).
+TEST(SmallArmsR5, NewActivitySoundRequested)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_new_activity_sound = "beep.wav";
+    doc->m_new_lines = 0;
+    char line[] = "something happened\r\n";
+    doc->OnBytesReceived(line, (int)sizeof line - 1);
+    EXPECT_TRUE(doc->m_new_lines > 0);
+    delete doc;
+}
+
 MC_TEST_MAIN()

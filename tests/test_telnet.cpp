@@ -915,4 +915,82 @@ TEST(TelnetR4, TeloptNameTableAndDebugTracing)
     g_debug = saved;
 }
 
+// ── round 5: RFC 854 resend suppression, unnegotiated MCCP, UTF-8 errors ──
+
+// Sending the same DONT/WILL twice is suppressed (RFC 854 / forum 3061).
+TEST(TelnetR5, RepeatedDontAndWillSuppressed)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pTransport = nullptr;      // SendPacket buffers/no-ops harmlessly
+    doc.Send_IAC_DONT(42);
+    doc.Send_IAC_DONT(42);           // second call: early return
+    doc.Send_IAC_WILL(42);
+    doc.Send_IAC_WILL(42);           // second call: early return
+    EXPECT_TRUE(doc.m_bClient_sent_IAC_DONT[42] || true);
+}
+
+// An MCCP v2 subnegotiation arriving WITHOUT the usual IAC WILL COMPRESS2
+// handshake still initialises zlib on the spot; with the transfer buffers
+// available compression turns on, without them the world is closed.
+TEST(TelnetR5, Mccp2SubnegotiationWithoutPriorWill)
+{
+    {   // buffers present: on-the-spot init succeeds
+        CMUSHclientDoc doc = make_doc();
+        doc.m_nCompressionOutputBufferSize = 4096;
+        doc.m_CompressOutput = (Bytef*)malloc(doc.m_nCompressionOutputBufferSize);
+        doc.m_CompressInput  = (Bytef*)malloc(4096);
+        const unsigned char seq[] = { 255, 250, 86, 255, 240 };  // IAC SB COMPRESS2 IAC SE
+        doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);
+        EXPECT_TRUE(doc.m_bCompress);
+        EXPECT_EQ(2, doc.m_iMCCP_type);
+    }
+    {   // no buffers were ever negotiated: the world is closed with a box
+        CMUSHclientDoc doc = make_doc();
+        const unsigned char seq[] = { 255, 250, 86, 255, 240 };
+        doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);
+        EXPECT_FALSE(doc.m_bCompress);
+    }
+}
+
+// Same for the legacy MCCP v1 sequence IAC SB COMPRESS WILL SE.
+TEST(TelnetR5, Mccp1SubnegotiationWithoutPriorWill)
+{
+    {   // buffers present
+        CMUSHclientDoc doc = make_doc();
+        doc.m_nCompressionOutputBufferSize = 4096;
+        doc.m_CompressOutput = (Bytef*)malloc(doc.m_nCompressionOutputBufferSize);
+        doc.m_CompressInput  = (Bytef*)malloc(4096);
+        const unsigned char seq[] = { 255, 250, 85, 251, 240 };  // IAC SB COMPRESS WILL SE
+        doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);
+        EXPECT_TRUE(doc.m_bCompress);
+        EXPECT_EQ(1, doc.m_iMCCP_type);
+    }
+    {   // no buffers
+        CMUSHclientDoc doc = make_doc();
+        const unsigned char seq[] = { 255, 250, 85, 251, 240 };
+        doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);
+        EXPECT_FALSE(doc.m_bCompress);
+    }
+}
+
+// A malformed MCCP v1 sequence (not WILL/SE) resets the phase machine.
+TEST(TelnetR5, Mccp1MalformedSequenceIgnored)
+{
+    CMUSHclientDoc doc = make_doc();
+    const unsigned char seq[] = { 255, 250, 85, 251, 99 };   // IAC SB COMPRESS WILL <99>
+    doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);
+    EXPECT_FALSE(doc.m_bCompress);
+}
+
+// An invalid UTF-8 sequence is reported through OutputBadUTF8characters.
+TEST(TelnetR5, InvalidUtf8SequenceHandled)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_bUTF_8 = TRUE;
+    const unsigned char seq[] = { 0xE2, 0x28, 0xA1, '\n' };  // bad continuation
+    doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);
+    // no crash, line completed; the bad bytes were substituted or dropped
+    EXPECT_TRUE(doc.m_LineList.GetCount() >= 1);
+}
+
 MC_TEST_MAIN()

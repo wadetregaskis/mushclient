@@ -16,6 +16,7 @@
 #include <cstring>
 #include <string>
 #include <unistd.h>   // getpid/unlink (temp world files)
+#include <sys/stat.h> // mkdir (plugin state dir)
 
 #ifdef MUSHCLIENT_LUA_SCRIPTING
 extern "C" {
@@ -2311,6 +2312,418 @@ TEST(WorldLoadR5, Utf16FileRecognisedAsXmlAndLoads)
     ASSERT_TRUE(doc.GetVariableMap().Lookup("greeting", v));
     EXPECT_STREQ("hello unicode", (const char*)v->strContents);
     unlink(path);
+}
+
+// ── round 5: loader validation and tolerated-error arms ───────────────────
+
+// A world load swallows per-item errors (HandleLoadException) and still
+// succeeds; the bad item is simply not loaded.
+TEST(WorldLoadR5, BadItemsAreToleratedAndSkipped)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<variables>
+  <variable name="9bad">nope</variable>
+  <variable name="good">yes</variable>
+</variables>
+<colours>
+  <ansi>
+    <normal>
+      <colour seq="99" rgb="#000000"/>
+      <colour seq="1" rgb="#010203"/>
+    </normal>
+  </ansi>
+</colours>
+<keypad>
+  <key name="NoSuchKey">north</key>
+  <key name="Numpad0">look</key>
+</keypad>
+<printing>
+  <ansi>
+    <normal>
+      <style seq="99" bold="y"/>
+      <style seq="1" bold="y"/>
+    </normal>
+  </ansi>
+</printing>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    CVariable* v = nullptr;
+    EXPECT_FALSE(doc.GetVariableMap().Lookup("9bad", v));   // invalid name arm
+    EXPECT_TRUE(doc.GetVariableMap().Lookup("good", v));
+    EXPECT_EQ((COLORREF)RGB(1, 2, 3), doc.m_normalcolour[0]);
+}
+
+// Reloading a variable with different contents: the overwrite warning arm
+// (no XML_OVERWRITE on a plain load) fires, and the old variable is replaced.
+TEST(WorldLoadR5, VariableOverwriteWarnsAndReplaces)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<variables>
+  <variable name="v">first</variable>
+  <variable name="v">second</variable>
+</variables>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("v", v));
+    EXPECT_STREQ("second", (const char*)v->strContents);
+}
+
+// Alias validation error arms: on a world load each bad alias is tolerated
+// (HandleLoadException) and skipped; the duplicate-label THROW arm needs a
+// no-overwrite Load_Set.
+TEST(WorldLoadR5, AliasValidationArms)
+{
+    struct { const char* aliasXml; bool loads; } cases[] = {
+        // legacy 'queue' flag maps onto send-to-command-queue
+        { "<alias match=\"q\" name=\"qf\" queue=\"y\" send_to=\"0\"><send>x</send></alias>", true },
+        // 'queue' + incompatible send_to: skipped
+        { "<alias match=\"q\" name=\"qb\" queue=\"y\" send_to=\"12\"><send>x</send></alias>", false },
+        // send-to-variable without a variable name: skipped
+        { "<alias match=\"q\" name=\"nv\" send_to=\"9\"><send>x</send></alias>", false },
+        // invalid variable name: skipped
+        { "<alias match=\"q\" name=\"bv\" send_to=\"9\" variable=\"9bad\"><send>x</send></alias>", false },
+        // invalid label: skipped
+        { "<alias match=\"q\" name=\"9bad\"><send>x</send></alias>", false },
+        // no match text at all: skipped
+        { "<alias name=\"nm\"><send>x</send></alias>", false },
+        // regexp that does not compile: skipped
+        { "<alias match=\"(unclosed\" name=\"br\" regexp=\"y\"/>", false },
+    };
+
+    for (auto& c : cases) {
+        std::string xml =
+            "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+            "<aliases>\n" + std::string(c.aliasXml) + "\n</aliases>\n</muclient>\n";
+        CMUSHclientDoc doc;
+        EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml.c_str()).c_str()));
+        EXPECT_EQ(c.loads ? 1 : 0, (int)doc.GetAliasMap().GetCount());
+    }
+
+    {   // duplicate label via Load_Set (no XML_OVERWRITE): second refused
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><aliases>
+  <alias match="a" name="same"/>
+  <alias match="b" name="same"/>
+</aliases></muclient>)";
+        std::string path = write_temp_named("aliasdupset.xml", xml);
+        CMUSHclientDoc doc;
+        doc.Load_Set(ALIAS, CString(path.c_str()), nullptr);
+        EXPECT_EQ(1, (int)doc.GetAliasMap().GetCount());
+        CAlias* a = nullptr;
+        ASSERT_TRUE(doc.GetAliasMap().Lookup("same", a));
+        EXPECT_STREQ("a", (LPCTSTR)a->name);   // the FIRST one won
+    }
+}
+
+// Timer arms: at_time timers read hour/minute/second into the At fields;
+// legacy speed_walk/note flags map onto send_to; validation errors throw.
+TEST(WorldLoadR5, TimerAtTimeAndLegacyFlagArms)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<timers>
+  <timer name="att" at_time="y" hour="3" minute="4" second="5" enabled="y">
+    <send>tick</send>
+  </timer>
+  <timer name="sw" speed_walk="y" hour="0" minute="1" second="0"><send>4n</send></timer>
+  <timer name="nt" note="y" hour="0" minute="1" second="0"><send>hi</send></timer>
+</timers>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    CTimer* t = nullptr;
+    ASSERT_TRUE(doc.GetTimerMap().Lookup("att", t));
+    EXPECT_EQ((int)CTimer::eAtTime, (int)t->iType);
+    EXPECT_EQ(3, t->iAtHour);
+    EXPECT_EQ(4, t->iAtMinute);
+
+    ASSERT_TRUE(doc.GetTimerMap().Lookup("sw", t));
+    EXPECT_EQ((int)eSendToSpeedwalk, (int)t->iSendTo);
+    ASSERT_TRUE(doc.GetTimerMap().Lookup("nt", t));
+    EXPECT_EQ((int)eSendToOutput, (int)t->iSendTo);
+}
+
+TEST(WorldLoadR5, TimerValidationArms)
+{
+    struct { const char* timerXml; } cases[] = {
+        // speed_walk + incompatible send_to: skipped
+        { "<timer name=\"t1\" speed_walk=\"y\" send_to=\"12\" minute=\"1\"><send>x</send></timer>" },
+        // note + incompatible send_to: skipped
+        { "<timer name=\"t2\" note=\"y\" send_to=\"12\" minute=\"1\"><send>x</send></timer>" },
+        // send-to-variable without variable: skipped
+        { "<timer name=\"t3\" send_to=\"9\" minute=\"1\"><send>x</send></timer>" },
+        // invalid variable name: skipped
+        { "<timer name=\"t4\" send_to=\"9\" variable=\"9bad\" minute=\"1\"><send>x</send></timer>" },
+        // invalid label: skipped
+        { "<timer name=\"9bad\" minute=\"1\"><send>x</send></timer>" },
+    };
+
+    for (auto& c : cases) {
+        std::string xml =
+            "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+            "<timers>\n" + std::string(c.timerXml) + "\n</timers>\n</muclient>\n";
+        CMUSHclientDoc doc;
+        EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml.c_str()).c_str()));
+        EXPECT_EQ(0, (int)doc.GetTimerMap().GetCount());
+    }
+
+    {   // duplicate label via Load_Set (no XML_OVERWRITE): second refused
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><timers>
+  <timer name="same" minute="1"/>
+  <timer name="same" minute="2"/>
+</timers></muclient>)";
+        std::string path = write_temp_named("timerdupset.xml", xml);
+        CMUSHclientDoc doc;
+        doc.Load_Set(TIMER, CString(path.c_str()), nullptr);
+        EXPECT_EQ(1, (int)doc.GetTimerMap().GetCount());
+        CTimer* t = nullptr;
+        ASSERT_TRUE(doc.GetTimerMap().Lookup("same", t));
+        EXPECT_EQ(1, t->iEveryMinute);         // the FIRST one won
+    }
+}
+
+// Structural tags that are world-only: while a plugin is current (as with a
+// plugin script calling ImportXML), each throws "... cannot be used inside a
+// plugin".  Driven through Load_World_XML directly with a full section mask.
+TEST(WorldLoadR5, WorldOnlyTagsRejectedInsidePlugin)
+{
+    // a real plugin so m_CurrentPlugin is a live CPlugin
+    const char* pxml =
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+        "<plugin name=\"P\" id=\"0123456789abcdef012345cc\" language=\"lua\">\n"
+        "</plugin>\n</muclient>\n";
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(TryLoadPlugin(doc, write_temp_named("worldonly.xml", pxml).c_str()));
+    doc.m_CurrentPlugin = doc.m_PluginList.back();
+
+    const char* tags[] = {
+        "<world site=\"x\"/>",
+        "<macros><macro name=\"F2\" send_to=\"0\"/></macros>",
+        "<colours><ansi/></colours>",
+        "<keypad><key name=\"Numpad0\">x</key></keypad>",
+        "<printing><ansi/></printing>",
+    };
+    for (const char* tag : tags) {
+        std::string xml =
+            "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n" +
+            std::string(tag) + "\n</muclient>\n";
+        CMemFile f((unsigned char*)xml.data(), xml.size());
+        CArchive ar(&f, CArchive::load);
+        bool threw = false;
+        try {
+            doc.Load_World_XML(ar,
+                (unsigned long)~(XML_PLUGINS | XML_NO_PLUGINS |
+                                 XML_PASTE_DUPLICATE | XML_IMPORT_MAIN_FILE_ONLY),
+                0);
+        }
+        catch (CException* e) { e->Delete(); threw = true; }
+        EXPECT_TRUE(threw);
+    }
+    doc.m_CurrentPlugin = nullptr;
+}
+
+// Plugin header validation arms, one throw each.
+TEST(WorldLoadR5, PluginHeaderValidationArms)
+{
+    struct { const char* name; const char* header; } cases[] = {
+        { "p_req.xml",     "name=\"P\" id=\"0123456789abcdef012345dd\" requires=\"99.99\"" },
+        { "p_badname.xml", "name=\"9bad\" id=\"0123456789abcdef012345dd\"" },
+        { "p_longname.xml",
+          "name=\"a123456789012345678901234567890123\" id=\"0123456789abcdef012345dd\"" },
+        { "p_author.xml",
+          "name=\"P\" author=\"a123456789012345678901234567890123\" id=\"0123456789abcdef012345dd\"" },
+        { "p_purpose.xml",
+          "name=\"P\" purpose=\"a123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789x\" id=\"0123456789abcdef012345dd\"" },
+        { "p_shortid.xml", "name=\"P\" id=\"abc\"" },
+        { "p_hexid.xml",   "name=\"P\" id=\"zzzzzzzzzzzzzzzzzzzzzzzz\"" },
+        { "p_lang.xml",    "name=\"P\" id=\"0123456789abcdef012345dd\" language=\"rubyscript\"" },
+    };
+
+    for (auto& c : cases) {
+        std::string xml =
+            "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+            "<plugin " + std::string(c.header) + ">\n</plugin>\n</muclient>\n";
+        CMUSHclientDoc doc;
+        EXPECT_FALSE(TryLoadPlugin(doc, write_temp_named(c.name, xml.c_str()).c_str()));
+    }
+}
+
+// A whitelisted-but-unbuildable language ("python" is accepted off-Windows)
+// reaches CreateScriptEngine, which fails headless: "Could not initialise
+// script engine".
+TEST(WorldLoadR5, PluginNonLuaEngineFailsToInitialise)
+{
+    const char* xml =
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+        "<plugin name=\"P\" id=\"0123456789abcdef012345ee\" language=\"python\">\n"
+        "</plugin>\n"
+        "<script>print('hi')</script>\n"
+        "</muclient>\n";
+    CMUSHclientDoc doc;
+    EXPECT_FALSE(TryLoadPlugin(doc, write_temp_named("p_python.xml", xml).c_str()));
+}
+
+// A <script> tag with no language: the throw is tolerated per-item
+// (HandleLoadException) — the plugin loads, but the script text is dropped.
+TEST(WorldLoadR5, PluginScriptWithoutLanguageDropped)
+{
+    const char* xml =
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+        "<plugin name=\"P\" id=\"0123456789abcdef012345ef\">\n</plugin>\n"
+        "<script>whatever</script>\n"
+        "</muclient>\n";
+    CMUSHclientDoc doc;
+    EXPECT_TRUE(TryLoadPlugin(doc, write_temp_named("p_nolang.xml", xml).c_str()));
+    EXPECT_TRUE(doc.m_PluginList.back()->m_strScript.IsEmpty());
+}
+
+// Loading the same plugin id twice: "The plugin '%s' is already loaded."
+TEST(WorldLoadR5, PluginDuplicateIdRejected)
+{
+    const char* xml =
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+        "<plugin name=\"P\" id=\"0123456789abcdef012345f0\" language=\"lua\">\n"
+        "</plugin>\n</muclient>\n";
+    std::string path = write_temp_named("p_dup.xml", xml);
+    CMUSHclientDoc doc;
+    EXPECT_TRUE(TryLoadPlugin(doc, path.c_str()));
+    EXPECT_FALSE(TryLoadPlugin(doc, path.c_str()));
+}
+
+// Plugin state files: an XML state file's variables are merged in (with
+// XML_OVERWRITE), a state file containing a <plugin> tag aborts the load,
+// and a non-XML non-empty state file is rejected.
+TEST(WorldLoadR5, PluginStateFileArms)
+{
+    char dir[128];
+    snprintf(dir, sizeof dir, "/tmp/mc_state_%d/", (int)getpid());
+    mkdir(dir, 0755);
+
+    CString savedState = App.m_strDefaultStateFilesDirectory;
+    App.m_strDefaultStateFilesDirectory = dir;
+
+    const char* pid = "0123456789abcdef012345f1";
+    std::string plugin =
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+        "<plugin name=\"P\" id=\"" + std::string(pid) + "\" language=\"lua\" save_state=\"y\">\n"
+        "</plugin>\n</muclient>\n";
+    std::string ppath = write_temp_named("p_state.xml", plugin.c_str());
+
+    // 1. good state: a variable, loaded with overwrite semantics
+    {
+        CMUSHclientDoc doc;
+        doc.m_strWorldID = "0123456789abcdef01234567";
+        std::string state = std::string(dir) + (const char*)doc.m_strWorldID +
+                            "-" + pid + "-state.xml";
+        FILE* f = fopen(state.c_str(), "wb");
+        ASSERT_NE(nullptr, f);
+        fputs("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+              "<variables>\n<variable name=\"sv\">persisted</variable>\n"
+              "</variables>\n</muclient>\n", f);
+        fclose(f);
+
+        ASSERT_TRUE(TryLoadPlugin(doc, ppath.c_str()));
+        CPlugin* p = doc.m_PluginList.back();
+        CVariable* v = nullptr;
+        ASSERT_TRUE(p->m_VariableMap.Lookup("sv", v));
+        EXPECT_STREQ("persisted", (const char*)v->strContents);
+        unlink(state.c_str());
+    }
+
+    // 2. state file containing a plugin tag: "Plugin not expected here"
+    {
+        CMUSHclientDoc doc;
+        doc.m_strWorldID = "0123456789abcdef01234567";
+        std::string state = std::string(dir) + (const char*)doc.m_strWorldID +
+                            "-" + pid + "-state.xml";
+        FILE* f = fopen(state.c_str(), "wb");
+        ASSERT_NE(nullptr, f);
+        fputs("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+              "<plugin name=\"Q\" id=\"0123456789abcdef012345f2\"/>\n"
+              "</muclient>\n", f);
+        fclose(f);
+        EXPECT_FALSE(TryLoadPlugin(doc, ppath.c_str()));
+        unlink(state.c_str());
+    }
+
+    // 3. non-XML, non-empty state file: "is not an XML file"
+    {
+        CMUSHclientDoc doc;
+        doc.m_strWorldID = "0123456789abcdef01234567";
+        std::string state = std::string(dir) + (const char*)doc.m_strWorldID +
+                            "-" + pid + "-state.xml";
+        FILE* f = fopen(state.c_str(), "wb");
+        ASSERT_NE(nullptr, f);
+        fputs("this is not xml at all", f);
+        fclose(f);
+        EXPECT_FALSE(TryLoadPlugin(doc, ppath.c_str()));
+        unlink(state.c_str());
+    }
+
+    App.m_strDefaultStateFilesDirectory = savedState;
+}
+
+// <comment> content lands on the "XML import notes" notepad.
+TEST(WorldLoadR5, CommentsGoToTheNotepad)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<comment>Imported from somewhere.</comment>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+}
+
+// An include file whose name is the reserved clipboard pseudo-name throws.
+TEST(WorldLoadR5, IncludeFileReservedNameRejected)
+{
+    const char* xml =
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+        "<include name=\"(clipboard)\"/>\n"
+        "</muclient>\n";
+    CMUSHclientDoc doc;
+    // world loads (include errors are tolerated) but the include is refused
+    EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+}
+
+// <send trim="y"> strips leading/trailing whitespace from the send text.
+TEST(WorldLoadR5, SendTextTrimAttribute)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<triggers>
+  <trigger match="x" name="tr" send_to="0">
+    <send trim="y">
+       say hi
+    </send>
+  </trigger>
+</triggers>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("tr", t));
+    EXPECT_STREQ("say hi", (const char*)t->contents);
 }
 
 MC_TEST_MAIN()

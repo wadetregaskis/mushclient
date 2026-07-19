@@ -1890,4 +1890,67 @@ TEST(PuebloTest, NoMxpSettingAndLevel250)
     EXPECT_TRUE(t->sent.find("PUEBLOCLIENT") != std::string::npos);
 }
 
+// ── round 5: outstanding-note drain (non-RGB), wrap splits, guards ────────
+
+// Draining deferred notes when the note colours were NOT in RGB mode: the
+// restore path clears m_bNotesInRGB instead of putting colours back.
+TEST(NotingR5, DeferredNoteDrainWithoutRgbColours)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "partial");
+    doc.m_bNotesNotWantedNow = true;
+    doc.m_bNotesInRGB = false;     // plain palette notes
+    doc.Note("plain deferred");
+    ASSERT_EQ((size_t)1, doc.m_OutstandingLines.size());
+    doc.m_bNotesNotWantedNow = false;
+    feed(doc, " done\n");
+    EXPECT_TRUE(doc.m_OutstandingLines.empty());
+    EXPECT_FALSE(doc.m_bNotesInRGB);
+    CLine* note_line = nth_line(doc, 1);
+    ASSERT_NE(nullptr, note_line);
+    EXPECT_TRUE(line_text(note_line) == "plain deferred");
+}
+
+// A long line of Big5 double-byte characters wraps at a character boundary
+// (the DBCS split-point arm), not mid-character.
+TEST(WrapR5, Big5DoubleByteSplitPoint)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 20;
+    doc.m_bUTF_8 = FALSE;
+
+    std::string big5;
+    for (int i = 0; i < 15; ++i) { big5 += (char)0xA4; big5 += (char)0x40; }
+    big5 += '\n';
+    doc.DisplayMsg(big5.c_str(), (int)big5.size(), 0);
+
+    // wrapped: two lines, split on an even (character) boundary
+    ASSERT_TRUE(doc.m_LineList.GetCount() >= 2);
+    CLine* l0 = nth_line(doc, 0);
+    EXPECT_EQ(0, l0->len % 2);
+}
+
+// DisplayMsg / SetNewLineColour guards when no line exists yet.
+TEST(GuardsR5, NoCurrentLineAndNoLinePositions)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "seed\n");
+
+    // SetNewLineColour with no current line: silently returns.  (The saved
+    // line stays owned by m_LineList; DisplayMsg simply opens another.)
+    doc.m_pCurrentLine = nullptr;
+    doc.SetNewLineColour(0);
+
+    // DisplayMsg with no current line starts one
+    doc.DisplayMsg("x", 1, 0);
+    EXPECT_NE(nullptr, doc.m_pCurrentLine);
+
+    // DisplayMsg before the line-positions array exists: early return
+    POSITION* savedPos = doc.m_pLinePositions;
+    doc.m_pLinePositions = nullptr;
+    doc.DisplayMsg("y", 1, 0);
+    doc.m_pLinePositions = savedPos;
+}
+
 MC_TEST_MAIN()

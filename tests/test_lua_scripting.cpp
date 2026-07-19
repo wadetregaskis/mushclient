@@ -3667,6 +3667,328 @@ TEST(SweepR4, ScriptErrorLogFileAppended)
     App.m_strDefaultLogFileDirectory = savedDir.c_str();
 }
 
+// ── round 5: lua_methods / methods_info / spellchecker corners ────────────
+
+#include "tests/fake_worldview.h"
+
+extern int DisableDLLs(lua_State* L);
+
+// The MUSHclient Lua-state hardening: debug.debug is replaced with the
+// info-gathering (dialog-cancelling headless) version, ColourNote gets a
+// notepad-backed stand-in when unattached, os.exit and io.popen error out.
+TEST(LuaR5, HardenedStateDebugAndStandins)
+{
+    lua_State* L = luaL_newstate();
+    luaL_openlibs(L);
+    DisableDLLs(L);
+
+    // debug.debug gathers getinfo fields and returns (DoModal cancels)
+    EXPECT_EQ(0, luaL_dostring(L,
+        "local function f() debug.debug() end\n"
+        "f()\n"));
+
+    // the stand-in ColourNote goes to the "Lua Debugging" notepad
+    EXPECT_EQ(0, luaL_dostring(L, "ColourNote('white', 'black', 'hi there')"));
+
+    // os.exit and io.popen are disabled with errors
+    EXPECT_NE(0, luaL_dostring(L, "os.exit()"));
+    EXPECT_NE(0, luaL_dostring(L, "io.popen('ls')"));
+
+    lua_close(L);
+}
+
+// The package library is stripped when disabled by policy.
+TEST(LuaR5, PackageLibraryStrippedWhenDisabled)
+{
+    BOOL saved = App.m_bEnablePackageLibrary;
+    App.m_bEnablePackageLibrary = FALSE;
+    lua_State* L = luaL_newstate();
+    luaL_openlibs(L);
+    DisableDLLs(L);
+    EXPECT_EQ(0, luaL_dostring(L,
+        "assert(package.loadlib == nil)\n"
+        "assert(package.loaders[3] == nil)\n"
+        "assert(package.loaders[4] == nil)\n"));
+    lua_close(L);
+    App.m_bEnablePackageLibrary = saved;
+}
+
+TEST(LuaR5, GetWorldByIdAndUnknownWorld)
+{
+    CMUSHclientDoc doc;
+    doc.m_mush_name  = "R5World";
+    doc.m_strWorldID = "0123456789abcdef0123ffff";
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    int n = run_ret(L, "return world.GetWorldById('0123456789abcdef0123ffff')");
+    ASSERT_EQ(1, n);
+    EXPECT_TRUE(lua_isuserdata(L, -1));
+    lua_settop(L, 0);
+
+    n = run_ret(L, "return world.GetWorld('no-such-world-name-r5')");
+    EXPECT_EQ(0, n);   // not found: no results
+    lua_settop(L, 0);
+    lua_close(L);
+}
+
+TEST(LuaR5, ColourNoteWithMultipleTriples)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    // two triples: the first goes through ColourTell, the last ColourNote
+    EXPECT_TRUE(run(L,
+        "world.ColourNote('red', 'black', 'part1', 'green', 'black', 'part2')"));
+    lua_close(L);
+}
+
+TEST(LuaR5, DatabaseColumnTextOfNullIsNil)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_TRUE(run(L,
+        "world.DatabaseOpen('db', ':memory:', 6)\n"
+        "world.DatabasePrepare('db', 'SELECT NULL AS n')\n"
+        "world.DatabaseStep('db')\n"));
+    int n = run_ret(L, "return world.DatabaseColumnText('db', 1)");
+    ASSERT_EQ(1, n);
+    EXPECT_TRUE(lua_isnil(L, -1));
+    lua_settop(L, 0);
+    EXPECT_TRUE(run(L, "world.DatabaseFinalize('db') world.DatabaseClose('db')"));
+    lua_close(L);
+}
+
+// Window-position family with a live worldview attached (main + output
+// rects) — the Lua extensions and the canonical BSTR methods.
+TEST(LuaR5, WindowPositionsWithWorldView)
+{
+    CMUSHclientDoc doc;
+    FakeWorldView view;
+    doc.m_pWorldView = &view;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    int n = run_ret(L, "local t = world.GetMainWindowPosition() "
+                       "return type(t)");
+    ASSERT_EQ(1, n);
+    lua_settop(L, 0);
+    n = run_ret(L, "local t = world.GetWorldWindowPosition() "
+                   "return type(t)");
+    ASSERT_EQ(1, n);
+    lua_settop(L, 0);
+
+    // canonical (string) variants
+    BSTR b1 = doc.GetMainWindowPosition();
+    CString s1(b1);
+    EXPECT_NE(-1, s1.Find("1024"));   // width from FakeWorldView mainRect
+    SysFreeString(b1);
+    BSTR b2 = doc.GetWorldWindowPosition();
+    CString s2(b2);
+    EXPECT_NE(-1, s2.Find("640"));    // width from FakeWorldView outputRect
+    SysFreeString(b2);
+
+    doc.m_pWorldView = nullptr;
+    lua_close(L);
+}
+
+TEST(LuaR5, GetScriptTimeWithCounter)
+{
+    CMUSHclientDoc doc;
+    LONGLONG saved = App.m_iCounterFrequency;
+    App.m_iCounterFrequency = 1000;
+    doc.m_iScriptTimeTaken = 500;
+    EXPECT_EQ(0.5, doc.GetScriptTime());
+    App.m_iCounterFrequency = saved;
+}
+
+// GetStyleInfo: the styling booleans (9-13), the RGB colours (14/15), the
+// prompt action code, and the style-out-of-range guard.
+TEST(LuaR5, GetStyleInfoRemainingSelectors)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+
+    // build one completed line: underline+blink+inverse styled text with a
+    // prompt-type action
+    const char* seq = "\x1B[4;5;7mstyled\x1B[0m\n";
+    doc.DisplayMsg(seq, (int)strlen(seq), 0);
+
+    // decorate the first style with a prompt action
+    CLine* line = doc.m_LineList.GetHead();
+    ASSERT_TRUE(line->styleList.GetCount() >= 1);
+    CStyle* s0 = line->styleList.GetHead();
+    s0->iFlags = (unsigned short)((s0->iFlags & ~ACTIONTYPE) | ACTION_PROMPT);
+
+    VARIANT v;
+    v = doc.GetStyleInfo(1, 1, 4);    // action type = 3 (prompt)
+    EXPECT_EQ((int)VT_I2, (int)v.vt);
+    EXPECT_EQ(3, (int)v.iVal);
+    v = doc.GetStyleInfo(1, 1, 9);    // underline
+    EXPECT_EQ((int)VT_BOOL, (int)v.vt);
+    v = doc.GetStyleInfo(1, 1, 10);   // blink
+    EXPECT_EQ((int)VT_BOOL, (int)v.vt);
+    v = doc.GetStyleInfo(1, 1, 11);   // inverse
+    EXPECT_EQ((int)VT_BOOL, (int)v.vt);
+    v = doc.GetStyleInfo(1, 1, 12);   // changed
+    EXPECT_EQ((int)VT_BOOL, (int)v.vt);
+    v = doc.GetStyleInfo(1, 1, 13);   // start tag
+    EXPECT_EQ((int)VT_BOOL, (int)v.vt);
+    v = doc.GetStyleInfo(1, 1, 14);   // text RGB
+    EXPECT_EQ((int)VT_I4, (int)v.vt);
+    v = doc.GetStyleInfo(1, 1, 15);   // back RGB
+    EXPECT_EQ((int)VT_I4, (int)v.vt);
+
+    // a style number beyond the list: empty result (the walk guard)
+    v = doc.GetStyleInfo(1, 99, 1);
+    EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
+}
+
+// The Lua world.GetStyleInfo walker has its own action-code switch.
+TEST(LuaR5, LuaGetStyleInfoActionCodes)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    const char* seq = "plain\n";
+    doc.DisplayMsg(seq, (int)strlen(seq), 0);
+    CLine* line = doc.m_LineList.GetHead();
+    CStyle* s0 = line->styleList.GetHead();
+
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    s0->iFlags = (unsigned short)((s0->iFlags & ~ACTIONTYPE) | ACTION_SEND);
+    int n = run_ret(L, "return world.GetStyleInfo(1, 1, 4)");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ(1.0, lua_tonumber(L, -1));   // ACTION_SEND = 1
+    lua_settop(L, 0);
+
+    s0->iFlags = (unsigned short)((s0->iFlags & ~ACTIONTYPE) | ACTION_PROMPT);
+    n = run_ret(L, "return world.GetStyleInfo(1, 1, 4)");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ(3.0, lua_tonumber(L, -1));   // ACTION_PROMPT = 3
+    lua_settop(L, 0);
+    lua_close(L);
+}
+
+// Save (non-save-as) writes the world file through the else arm.
+TEST(LuaR5, SaveWithoutSaveAsFlag)
+{
+    CMUSHclientDoc doc;
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_r5_save_%d.mcl", (int)getpid());
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    char code[256];
+    snprintf(code, sizeof code, "return world.Save('%s')", path);
+    int n = run_ret(L, code);
+    ASSERT_EQ(1, n);
+    lua_settop(L, 0);
+    unlink(path);
+    lua_close(L);
+}
+
+// GetPluginVariableList with a non-empty unknown plugin id: no results.
+TEST(LuaR5, PluginVariableListUnknownPluginNoResults)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    int n = run_ret(L,
+        "return world.GetPluginVariableList('999999999999999999999999')");
+    EXPECT_EQ(0, n);   // non-empty plugin not found: zero results
+    lua_settop(L, 0);
+    lua_close(L);
+}
+
+// ── spellchecker remaining arms ───────────────────────────────────────────
+
+TEST(SpellCheckR5, SpellCheckErrorAndShapeArms)
+{
+    {   // function missing entirely
+        SpellFixture fx("spellcheck_string = nil");
+        CMUSHclientDoc doc;
+        VARIANT v = doc.SpellCheck("word");
+        EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
+    }
+    {   // function raises
+        SpellFixture fx("function spellcheck_string(t) error('kapow') end");
+        CMUSHclientDoc doc;
+        VARIANT v = doc.SpellCheck("word");
+        EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
+    }
+    {   // non-table, non-number result
+        SpellFixture fx("function spellcheck_string(t) return 'nope' end");
+        CMUSHclientDoc doc;
+        VARIANT v = doc.SpellCheck("word");
+        EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
+    }
+    {   // spellcheck marked OK but no Lua state at all
+        BOOL savedOK = App.m_bSpellCheckOK;
+        lua_State* savedLua = App.m_SpellChecker_Lua;
+        App.m_bSpellCheckOK = TRUE;
+        App.m_SpellChecker_Lua = nullptr;
+        CMUSHclientDoc doc;
+        VARIANT v = doc.SpellCheck("word");
+        EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
+        EXPECT_EQ((long)eSpellCheckNotActive, doc.AddSpellCheckWord("w", "i", ""));
+        App.m_bSpellCheckOK = savedOK;
+        App.m_SpellChecker_Lua = savedLua;
+    }
+}
+
+TEST(SpellCheckR5, SpellCheckDlgInactiveAndNonString)
+{
+    {   // inactive
+        BOOL savedOK = App.m_bSpellCheckOK;
+        App.m_bSpellCheckOK = FALSE;
+        CMUSHclientDoc doc;
+        VARIANT v = doc.SpellCheckDlg("word");
+        EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
+        App.m_bSpellCheckOK = savedOK;
+    }
+    {   // non-string result (dialog cancelled analogue)
+        SpellFixture fx("function spellcheck(t) return nil end");
+        CMUSHclientDoc doc;
+        VARIANT v = doc.SpellCheckDlg("word");
+        EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
+    }
+    {   // the Lua wrapper world.SpellCheckDlg
+        SpellFixture fx("function spellcheck(t) return 'fixed' end");
+        CMUSHclientDoc doc;
+        lua_State* L = make_lua(&doc);
+        ASSERT_NE(nullptr, L);
+        int n = run_ret(L, "return world.SpellCheckDlg('orig')");
+        ASSERT_EQ(1, n);
+        EXPECT_STREQ("fixed", lua_tostring(L, -1));
+        lua_settop(L, 0);
+        lua_close(L);
+    }
+}
+
+TEST(SpellCheckR5, AddSpellCheckWordRemainingArms)
+{
+    {   // action 'a' accepted; add-word function missing; raising; false
+        SpellFixture fx("spellcheck_add_word = nil");
+        CMUSHclientDoc doc;
+        EXPECT_EQ((long)eSpellCheckNotActive,
+                  doc.AddSpellCheckWord("word", "a", ""));
+    }
+    {
+        SpellFixture fx("function spellcheck_add_word(o, a, r) error('x') end");
+        CMUSHclientDoc doc;
+        EXPECT_EQ((long)eSpellCheckNotActive,
+                  doc.AddSpellCheckWord("word", "A", ""));
+    }
+    {
+        SpellFixture fx("function spellcheck_add_word(o, a, r) return false end");
+        CMUSHclientDoc doc;
+        EXPECT_EQ((long)eBadParameter, doc.AddSpellCheckWord("word", "c", ""));
+    }
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

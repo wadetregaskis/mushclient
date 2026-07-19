@@ -9,6 +9,7 @@
 
 #include "mc_test.h"
 #include "platform/doc_stub.h"
+#include "pal/itransport.h"
 #include "scripting/scripting.h"
 
 #include <cstdio>
@@ -1532,5 +1533,112 @@ TEST(PluginInfoR4, LineReceivedFalseOmitsLineFromOutput)
 }
 
 #endif // MUSHCLIENT_LUA_SCRIPTING
+
+
+// ── round 5: plugin-driven engine arms ────────────────────────────────────
+
+// A plugin approving an unknown telnet WILL option makes the client send
+// IAC DO and the SENT_DO notification (telnet_phases default arms).
+TEST(PluginR5, TelnetRequestApprovalSendsDoAndWill)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("tr_ok", IDA, "ReqOk",
+        "function OnPluginTelnetRequest(t, s)\n"
+        "  world.SetVariable('last', tostring(t) .. '|' .. s)\n"
+        "  return true\n"
+        "end\n")));
+
+    doc.Phase_WILL(201);   // unknown option, plugin approves → IAC DO
+    EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[201]);
+    doc.Phase_DO(202);     // unknown option, plugin approves → IAC WILL
+    EXPECT_TRUE(doc.m_bClient_sent_IAC_WILL[202]);
+}
+
+// OnPluginSend returning false vetoes the outgoing command entirely
+// (the DoSendMsg decline arm needs a live transport to get that far).
+namespace {
+struct NullTransport : pal::ITransport {
+    void resolve(const char*, pal::ResolveToken) override {}
+    void cancelResolve() override {}
+    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void send(const char*, size_t) override {}
+    void startTls(const pal::TlsParams&) override {}
+    void close() override {}
+    std::string lastErrorString() const override { return "null"; }
+};
+} // namespace
+
+TEST(PluginR5, SendCallbackCanVetoOutgoingCommand)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_pTransport = new NullTransport();   // doc dtor tears it down
+    ASSERT_TRUE(load_plugin(doc, write_plugin("send_no", IDA, "SendVeto",
+        "function OnPluginSend(s) return false end\n")));
+    long before = doc.m_nTotalLinesSent;
+    doc.DoSendMsg("blocked command", false, false);
+    EXPECT_EQ(before, doc.m_nTotalLinesSent);   // vetoed: nothing went out
+}
+
+// OnPluginPacketReceived returning an empty string discards the packet.
+TEST(PluginR5, PacketReceivedCallbackCanDiscardPacket)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("pk_zap", IDA, "PacketZap",
+        "function OnPluginPacketReceived(s)\n"
+        "  return ''\n"
+        "end\n")));
+
+    int linesBefore = (int)doc.m_LineList.GetCount();
+    doc.DisplayMsg("swallowed\n", 10, 0);
+    // nothing was added: the plugin ate the whole packet
+    EXPECT_EQ(linesBefore, (int)doc.m_LineList.GetCount());
+}
+
+// A scripted trigger living in a PLUGIN dispatches through the plugin loop
+// of the deferred trigger-script pass.
+TEST(PluginR5, PluginScriptedTriggerExecutes)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("trig", IDA, "TrigPlugin",
+        "function got_line(name, line, wildcards)\n"
+        "  world.SetVariable('plugin_saw', line)\n"
+        "end\n"
+        "world.AddTrigger('ptrig', '*needle*', '', 1, -1, 0, '',"
+        " 'got_line')\n")));   // flags: 1 = enabled
+
+    doc.DisplayMsg("the needle line\n", 16, 0);
+
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+    EXPECT_STREQ("the needle line",
+                 (const char*)plugin_var(p, "plugin_saw"));
+}
+
+// PluginListChanged from inside ON_PLUGIN_LIST_CHANGED does not recurse
+// (the bInPluginListChanged guard): the callback loads ANOTHER plugin,
+// whose own PluginListChanged is swallowed by the guard.
+TEST(PluginR5, ListChangedCallbackDoesNotRecurse)
+{
+    CMUSHclientDoc doc = make_doc();
+    std::string third = write_plugin("lc3", "ccccccccccccccccccccccc3",
+                                     "Third", "-- nothing\n");
+    std::string body =
+        "function OnPluginListChanged()\n"
+        "  if not loaded_once then\n"
+        "    loaded_once = true\n"
+        "    world.SetVariable('rc', tostring(world.LoadPlugin('" + third + "')))\n"
+        "  end\n"
+        "end\n";
+    ASSERT_TRUE(load_plugin(doc, write_plugin("lc1", IDA, "ListWatcher",
+                                              body.c_str())));
+    // InternalLoadPlugin does not fire the event; the doc-level LoadPlugin does
+    std::string other = write_plugin("lc2", IDB, "Other", "-- nothing\n");
+    EXPECT_EQ((long)eOK, doc.LoadPlugin(CString(other.c_str())));
+
+    CPlugin* watcher = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, watcher);
+    EXPECT_STREQ("0", (const char*)plugin_var(watcher, "rc"));  // eOK
+    EXPECT_NE(nullptr, doc.GetPlugin("ccccccccccccccccccccccc3"));
+}
 
 MC_TEST_MAIN()

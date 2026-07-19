@@ -1038,4 +1038,18 @@ TEST(EvaluateArms, VariableExpandingTriggerRecompileArms)
     EXPECT_TRUE(bad->regexp == nullptr);
 }
 
+// ── round 5 ───────────────────────────────────────────────────────────────
+
+// A send-to-world alias while the world is disconnected aborts the alias
+// sequence (the CheckConnected arm).
+TEST(AliasR5, SendToWorldWhileDisconnectedAborts)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_iConnectPhase = eConnectNotConnected;
+    CAlias* a = add_alias(doc, "n", "go north", eSendToWorld);
+    bool omit = false;
+    doc.EvaluateCommand(CString("n"), true, omit, false);
+    EXPECT_EQ(1L, a->nMatched);   // matched, but the send was refused
+}
+
 MC_TEST_MAIN()

@@ -164,4 +164,75 @@ TEST(CmcDateTimeR4, ComponentGetters)
     EXPECT_EQ(5, d.GetDayOfWeek());
 }
 
+// ── round 5: span arithmetic status arms and inline member sweep ──────────
+
+TEST(CmcDateTimeSpanR5, ArithmeticPropagatesNullAndInvalid)
+{
+    CmcDateTimeSpan good(1, 2, 3, 4);
+    CmcDateTimeSpan nul;   nul.SetStatus(CmcDateTimeSpan::null);
+    CmcDateTimeSpan bad;   bad.SetStatus(CmcDateTimeSpan::invalid);
+
+    EXPECT_EQ(CmcDateTimeSpan::null,    (good + nul).GetStatus());
+    EXPECT_EQ(CmcDateTimeSpan::null,    (nul  + good).GetStatus());
+    EXPECT_EQ(CmcDateTimeSpan::invalid, (good + bad).GetStatus());
+    EXPECT_EQ(CmcDateTimeSpan::null,    (good - nul).GetStatus());
+    EXPECT_EQ(CmcDateTimeSpan::invalid, (good - bad).GetStatus());
+
+    CmcDateTimeSpan two(2, 0, 0, 0);
+    CmcDateTimeSpan sum = good + two;
+    EXPECT_EQ(CmcDateTimeSpan::valid, sum.GetStatus());
+    EXPECT_EQ(3L, sum.GetDays());
+    CmcDateTimeSpan diff = two - good;
+    EXPECT_EQ(CmcDateTimeSpan::valid, diff.GetStatus());
+    EXPECT_TRUE(diff.GetTotalDays() < 1.0);
+}
+
+TEST(CmcDateTimeSpanR5, TotalsAndComparisons)
+{
+    CmcDateTimeSpan day(1, 0, 0, 0);
+    CmcDateTimeSpan more(1, 6, 0, 0);
+
+    EXPECT_EQ(24.0,   day.GetTotalHours());
+    EXPECT_EQ(1440.0, day.GetTotalMinutes());
+    EXPECT_EQ(1L,     day.GetDays());
+
+    EXPECT_TRUE(day <= more);
+    EXPECT_TRUE(day <= day);
+    EXPECT_TRUE(more >= day);
+    EXPECT_FALSE(day >= more);
+}
+
+TEST(CmcDateTimeR5, InequalityAndOrderingOperators)
+{
+    CmcDateTime a(2024, 6, 15, 10, 0, 0.0);
+    CmcDateTime b(2024, 6, 15, 11, 0, 0.0);
+    EXPECT_TRUE(a != b);
+    EXPECT_FALSE(a != a);
+    EXPECT_TRUE(b >= a);
+    EXPECT_TRUE(a >= a);
+    EXPECT_FALSE(a >= b);
+}
+
+TEST(CmcDateTimeR5, DayOfYearAndFormat)
+{
+    CmcDateTime feb2(2024, 2, 2, 3, 4, 5.0);
+    EXPECT_EQ(33, feb2.GetDayOfYear());   // Jan (31) + 2
+
+    CString s = feb2.Format("%Y-%m-%d %H:%M:%S");
+    EXPECT_STREQ("2024-02-02 03:04:05", (LPCTSTR)s);
+}
+
+TEST(CmcDateTimeR5, InvalidComponentDatesAreRejected)
+{
+    // year out of range
+    CmcDateTime bad1(10000, 1, 1, 0, 0, 0.0);
+    EXPECT_EQ(CmcDateTime::invalid, bad1.GetStatus());
+    // day out of range for the month
+    CmcDateTime bad2(2023, 2, 29, 0, 0, 0.0);
+    EXPECT_EQ(CmcDateTime::invalid, bad2.GetStatus());
+    // leap-year Feb 29 is fine
+    CmcDateTime ok(2024, 2, 29, 0, 0, 0.0);
+    EXPECT_EQ(CmcDateTime::valid, ok.GetStatus());
+}
+
 MC_TEST_MAIN()

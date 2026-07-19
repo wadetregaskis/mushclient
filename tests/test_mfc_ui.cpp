@@ -3606,4 +3606,118 @@ TEST(MiscShims, GlobalMemoryStatusZeroesAndSmallStubs) {
     EXPECT_FALSE(dc.TextOut(0, 0, CString("s")));   // CString overload
 }
 
+// ── round 5: document open/save shims, stdio strings, shell, clipboard ────
+
+#include "platform/doc_stub.h"
+#include "platform/wx_mfc_hooks.h"
+
+// OnSaveDocument/OnOpenDocument: the CDocument shim opens the file, wraps
+// it in a CArchive, and round-trips through Serialize (mushcore's doc is
+// not CDocument-derived, so a small serialising document stands in).
+namespace {
+class SerialDoc : public CDocument {
+public:
+    CString payload;      // stored on save, replaced on load
+    bool    boom = false; // throw from Serialize to hit the catch arms
+    void Serialize(CArchive& ar) override {
+        if (boom) ThrowErrorException("serialize boom");
+        if (ar.IsStoring()) {
+            ar.WriteString(payload);
+        } else {
+            CString line;
+            payload.Empty();
+            while (ar.ReadString(line)) payload += line;
+        }
+    }
+};
+} // namespace
+
+TEST(DocFileR5, SaveAndReopenRoundTrip)
+{
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_r5_docfile_%d.txt", (int)getpid());
+
+    {
+        SerialDoc doc;
+        doc.payload = "hello shim";
+        EXPECT_TRUE(doc.OnSaveDocument(path));
+    }
+    {
+        SerialDoc doc;
+        EXPECT_TRUE(doc.OnOpenDocument(path));
+        EXPECT_STREQ("hello shim", (LPCTSTR)doc.payload);
+    }
+    {   // failure arms: unopenable paths
+        SerialDoc doc;
+        EXPECT_FALSE(doc.OnOpenDocument("/no/such/dir/x.txt"));
+        EXPECT_FALSE(doc.OnSaveDocument("/no/such/dir/x.txt"));
+    }
+    {   // Serialize throwing exercises the CException catch arms
+        SerialDoc doc;
+        doc.boom = true;
+        EXPECT_FALSE(doc.OnSaveDocument(path));
+        EXPECT_FALSE(doc.OnOpenDocument(path));
+    }
+    unlink(path);
+}
+
+TEST(StdioFileR5, ReadStringBufferVariant)
+{
+    char path[128];
+    snprintf(path, sizeof path, "/tmp/mc_r5_stdio_%d.txt", (int)getpid());
+    FILE* f = fopen(path, "wb");
+    ASSERT_NE(nullptr, f);
+    fputs("first line\nsecond\n", f);
+    fclose(f);
+
+    f = fopen(path, "rb");
+    ASSERT_NE(nullptr, f);
+    CStdioFile sf(f);
+    char buf[64];
+    EXPECT_TRUE(sf.ReadString(buf, sizeof buf));
+    EXPECT_EQ(0, strncmp(buf, "first line", 10));
+    CString s;
+    EXPECT_TRUE(sf.ReadString(s));
+    EXPECT_STREQ("second", (LPCTSTR)s);
+    EXPECT_FALSE(sf.ReadString(buf, sizeof buf));   // EOF
+    fclose(f);
+    unlink(path);
+
+    CStdioFile closed;
+    EXPECT_FALSE(closed.ReadString(buf, sizeof buf));
+}
+
+// ShellExecute's editor-launch form runs the quoted command; exercised with
+// a harmless no-op binary.  The quote-escaping arm is exercised with a
+// nonexistent name containing a quote (the command fails, nothing runs).
+TEST(ShellR5, ShellExecuteEditorFormAndQuoting)
+{
+    EXPECT_EQ(nullptr, ShellExecute(nullptr, "open", "", nullptr, nullptr, 0));
+
+    HINSTANCE h = ShellExecute(nullptr, "open", "/usr/bin/true", "--noop",
+                               nullptr, 0);
+    EXPECT_NE(nullptr, h);   // command ran (exit 0)
+
+    // embedded quote goes through the escape arm; the file does not exist,
+    // so the shell reports failure and nothing is executed
+    ShellExecute(nullptr, "open", "/nonexistent/it's-not-here", "--x",
+                 nullptr, 0);
+}
+
+TEST(ClipboardR5, FormatAvailabilityViaHook)
+{
+    char* (*saved)() = g_wxhook_get_clipboard_text;
+
+    g_wxhook_get_clipboard_text = []() -> char* { return strdup("clip"); };
+    EXPECT_TRUE(IsClipboardFormatAvailable(1));    // CF_TEXT
+    EXPECT_TRUE(IsClipboardFormatAvailable(13));   // CF_UNICODETEXT
+    EXPECT_FALSE(IsClipboardFormatAvailable(2));   // unbridged format
+
+    g_wxhook_get_clipboard_text = []() -> char* { return nullptr; };
+    EXPECT_FALSE(IsClipboardFormatAvailable(1));   // no text on clipboard
+
+    g_wxhook_get_clipboard_text = saved;
+    EXPECT_FALSE(IsClipboardFormatAvailable(1));   // no hook at all
+}
+
 MC_TEST_MAIN()

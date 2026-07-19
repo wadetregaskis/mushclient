@@ -385,4 +385,310 @@ TEST(XmlParseR4, Utf16LittleEndianInputConverted)
     EXPECT_STREQ("A", attr(*w, "name").c_str());
 }
 
+// ── round 5: the typed attribute getters (Get_XML_*) ──────────────────────
+// These free functions (xmlparse.h) are the loader's whole attribute type
+// system; every error arm below is an exact product message.
+
+// Parse a one-element document and hand back the element the getters read.
+static CXMLelement* one_element(CXMLparser& p, const std::string& attrs)
+{
+    ParseOutcome r = parse_xml(p, "<a " + attrs + "/>");
+    if (!r.ok) return nullptr;
+    return find_child(p.m_xmlRoot, "a");
+}
+
+// Run fn and capture the CException message it throws ("" = no throw).
+template <typename F>
+static std::string thrown(F fn)
+{
+    try { fn(); }
+    catch (CException* e) {
+        char buf[512] = "";
+        e->GetErrorMessage(buf, sizeof buf);
+        e->Delete();
+        return buf;
+    }
+    return "";
+}
+
+TEST(XmlAttrR5, NumberSignsAndDigits)
+{
+    CXMLparser p;
+    CXMLelement* a = one_element(p,
+        "neg=\"-5\" pos=\"+5\" bare=\"-\" alpha=\"x\" mid=\"1x\" "
+        "huge=\"99999999999999999999\"");
+    ASSERT_NE(nullptr, a);
+    long v = 0;
+
+    EXPECT_TRUE(Get_XML_number(*a, "neg", v, false, -10, 10));
+    EXPECT_EQ(-5, v);                                    // '-' arm + negate
+    EXPECT_TRUE(Get_XML_number(*a, "pos", v, false, -10, 10));
+    EXPECT_EQ(5, v);                                     // '+' arm
+
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_number(*a, "bare", v, false); })
+        .find("No number suppied"));                     // (sic) sign then EOF
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_number(*a, "alpha", v, false); })
+        .find("Invalid number"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_number(*a, "mid", v, false); })
+        .find("Invalid character"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_number(*a, "huge", v, false); })
+        .find("too large"));
+}
+
+TEST(XmlAttrR5, NumberRangeChecks)
+{
+    CXMLparser p;
+    CXMLelement* a = one_element(p, "twelve=\"12\" neg=\"-5\"");
+    ASSERT_NE(nullptr, a);
+    long v = 0;
+
+    // the (0, 0) default range is fixed up to (0, 1) before the check
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_number(*a, "twelve", v, false, 0, 0); })
+        .find("too large"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_number(*a, "neg", v, false, 0, 100); })
+        .find("too small"));
+}
+
+TEST(XmlAttrR5, ShortAndIntConversions)
+{
+    CXMLparser p;
+    CXMLelement* a = one_element(p, "sh=\"7\"");
+    ASSERT_NE(nullptr, a);
+
+    short s = 0;
+    EXPECT_TRUE(Get_XML_short(*a, "sh", s, false));
+    EXPECT_EQ(7, s);
+
+    int i = 99;
+    EXPECT_FALSE(Get_XML_int(*a, "absent", i, true));    // default kept
+    EXPECT_EQ(99, i);
+}
+
+TEST(XmlAttrR5, DoubleParseArms)
+{
+    CXMLparser p;
+    CXMLelement* a = one_element(p,
+        "ok=\"-1.5\" bare=\"-\" alpha=\"x\" dots=\"1.2.3\" "
+        "twoe=\"1E5E5\" expsign=\"1E-5\" exp=\"2E2\"");
+    ASSERT_NE(nullptr, a);
+    double d = 0;
+
+    EXPECT_TRUE(Get_XML_double(*a, "ok", d, false));
+    EXPECT_EQ(-1.5, d);
+    EXPECT_TRUE(Get_XML_double(*a, "exp", d, false));
+    EXPECT_EQ(200.0, d);
+
+    EXPECT_FALSE(Get_XML_double(*a, "absent", d, true)); // default kept
+
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_double(*a, "bare", d, false); })
+        .find("No number suppied"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_double(*a, "alpha", d, false); })
+        .find("Invalid number"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_double(*a, "dots", d, false); })
+        .find("Too many decimal places"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_double(*a, "twoe", d, false); })
+        .find("Too many 'E' characters"));
+    // Windows-faithful quirk: the exponent-sign check tests the 'E' itself,
+    // so a signed exponent ("1E-5") is REJECTED as an invalid character.
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_double(*a, "expsign", d, false); })
+        .find("Invalid character"));
+
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_double(*a, "ok", d, false, 0.0, 100.0); })
+        .find("too small"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_double(*a, "exp", d, false, 0.0, 100.0); })
+        .find("too large"));
+}
+
+TEST(XmlAttrR5, ColourArms)
+{
+    CXMLparser p;
+    CXMLelement* a = one_element(p, "empty=\"\" bad=\"bogusname\" good=\"#010203\"");
+    ASSERT_NE(nullptr, a);
+    COLORREF c = 0;
+
+    EXPECT_TRUE(Get_XML_colour(*a, "good", c, false));
+    EXPECT_EQ((COLORREF)RGB(1, 2, 3), c);
+
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_colour(*a, "empty", c, false); })
+        .find("No colour supplied"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_colour(*a, "bad", c, false); })
+        .find("Invalid colour code"));
+}
+
+TEST(XmlAttrR5, IsNumberEdges)
+{
+    EXPECT_FALSE(IsNumber(CString(""), true));            // empty
+    // LP64: long == __int64, and _atoi64 (strtoll) clamps on overflow, so
+    // the "> LONG_MAX" reject arm can never fire here (it is Win32-only).
+    EXPECT_TRUE(IsNumber(CString("99999999999999999999"), false));
+    EXPECT_TRUE(IsNumber(CString("-3"), true));
+    EXPECT_FALSE(IsNumber(CString("3x"), false));
+}
+
+TEST(XmlAttrR5, DateParseArms)
+{
+    CXMLparser p;
+    CXMLelement* a = one_element(p,
+        "ok=\"2020-05-06 07:08:09\" dateonly=\"2020-05-06\" "
+        "parts=\"a b c\" short=\"2020-05\" year=\"x-05-06\" "
+        "badyear=\"1200-05-06\" badmonth=\"2020-13-06\" badday=\"2020-05-40\" "
+        "manytime=\"2020-05-06 1:2:3:4\" badhour=\"2020-05-06 x:02\" "
+        "hour25=\"2020-05-06 25:00:00\" badmin=\"2020-05-06 01:99:00\" "
+        "badsec=\"2020-05-06 01:02:99\" minonly=\"2020-05-06 01\"");
+    ASSERT_NE(nullptr, a);
+    CTime t(0);
+
+    EXPECT_TRUE(Get_XML_date(*a, "ok", t, false));
+    EXPECT_EQ(2020, t.GetYear());
+    EXPECT_EQ(5,    t.GetMonth());
+    EXPECT_EQ(6,    t.GetDay());
+    EXPECT_EQ(7,    t.GetHour());
+
+    EXPECT_TRUE(Get_XML_date(*a, "dateonly", t, false)); // no-time arm
+    EXPECT_EQ(0, t.GetHour());
+    EXPECT_TRUE(Get_XML_date(*a, "minonly", t, false));  // hour, no minute
+    EXPECT_EQ(1, t.GetHour());
+
+    // absent attribute: bUseDefault leaves tValue alone, else zeroes it
+    EXPECT_FALSE(Get_XML_date(*a, "absent", t, true));
+    EXPECT_FALSE(Get_XML_date(*a, "absent", t, false));
+    EXPECT_EQ(CTime(0).GetTime(), t.GetTime());
+
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "parts", t, false); })
+        .find("Date/time must consist of"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "short", t, false); })
+        .find("Date must consist of"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "year", t, false); })
+        .find("Year is not numeric"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "badyear", t, false); })
+        .find("Year"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "badmonth", t, false); })
+        .find("Month"));
+    // Windows-faithful copy-paste typo: the Day range check's message reads
+    // "Month must be in range 1 to 31" (xml/xmlparse.cpp Get_XML_date).
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "badday", t, false); })
+        .find("Month must be in range 1 to 31"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "manytime", t, false); })
+        .find("Time must consist of"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "badhour", t, false); })
+        .find("Hour"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "hour25", t, false); })
+        .find("Hour"));
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "badmin", t, false); })
+        .find("Minute"));
+    // Windows-faithful copy-paste typo: the Second range check's message
+    // reads "Minute must be in range 0 to 59".
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "badsec", t, false); })
+        .find("Minute must be in range 0 to 59"));
+}
+
+TEST(XmlAttrR5, BooleanMaskArms)
+{
+    CXMLparser p;
+    CXMLelement* a = one_element(p, "on=\"y\" off=\"n\"");
+    ASSERT_NE(nullptr, a);
+
+    unsigned short us = 0;
+    EXPECT_TRUE(Get_XML_boolean_ushort_mask(*a, "on", us, 0x4, false));
+    EXPECT_EQ(0x4, us);                                  // set-bit arm
+    EXPECT_TRUE(Get_XML_boolean_ushort_mask(*a, "off", us, 0x4, false));
+    EXPECT_EQ(0x0, us);
+
+    int i = 0;
+    EXPECT_FALSE(Get_XML_boolean_int_mask(*a, "absent", i, 0x2, true));
+    EXPECT_EQ(0, i);
+}
+
+// ── round 5: parser structural error arms ─────────────────────────────────
+
+// GetName's leading-character check rejects every non-name first character
+// up front, which makes its later "name not supplied" / "Comment not valid
+// here" arms logically dead — these pin the check that shadows them.
+TEST(XmlParseR5, EmptyElementNameRejectedByLeadCharCheck)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "<>");
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(std::string::npos, r.error.find("must start with letter or underscore"));
+}
+
+TEST(XmlParseR5, NameStartingWithBadCharacter)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "<%bad/>");
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(std::string::npos, r.error.find("must start with letter or underscore"));
+}
+
+TEST(XmlParseR5, DoctypeUnsupportedDeclaration)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "<!DOCTYPE muclient junk>\n<a/>");
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(std::string::npos, r.error.find("Unsupported declaration"));
+}
+
+TEST(XmlParseR5, DoctypeEofBeforeClose)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "<!DOCTYPE muclient");
+    EXPECT_FALSE(r.ok);
+    // either the dedicated EOF message or the general truncation error
+    EXPECT_FALSE(r.error.empty());
+}
+
+TEST(XmlParseR5, CdataInsideElementDefinition)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "<a <![CDATA[x]]> b=\"c\"/>");
+    EXPECT_FALSE(r.ok);
+    EXPECT_FALSE(r.error.empty());
+}
+
+TEST(XmlParseR5, EmptyTagCloseAtTopLevelClampsDepth)
+{
+    // "/>" before any element drives the pre-scan depth negative; the parser
+    // clamps it to zero and reports the stray content instead of crashing.
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "/><a/>");
+    EXPECT_FALSE(r.ok);
+    EXPECT_FALSE(r.error.empty());
+}
+
+TEST(XmlParseR5, NewlinesInRootWhitespaceAreCounted)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "<a x=\"1\"></a>\n \n<b y=\"1\"></b>");
+    ASSERT_TRUE(r.ok);
+    CXMLelement* b = find_child(p.m_xmlRoot, "b");
+    ASSERT_NE(nullptr, b);
+    EXPECT_EQ(3U, b->iLine);   // the blank lines were counted
+}
+
+TEST(XmlParseR5, OversizeFileRejectedUpFront)
+{
+    // A sparse file > MAX_XML_DOCUMENT_SIZE (100 MB): the length check throws
+    // before any read, so this costs no real I/O.
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/mc_test_xml_huge_%d.xml", (int)getpid());
+    FILE* f = fopen(path, "wb");
+    ASSERT_NE(nullptr, f);
+    fseek(f, MAX_XML_DOCUMENT_SIZE + 1, SEEK_SET);
+    fputc('x', f);
+    fclose(f);
+
+    CXMLparser p;
+    std::string err;
+    CFile file(path, CFile::modeRead);
+    try { p.BuildStructure(&file); }
+    catch (CException* e) {
+        char buf[512] = "";
+        e->GetErrorMessage(buf, sizeof buf);
+        err = buf;
+        e->Delete();
+    }
+    unlink(path);
+    EXPECT_NE(std::string::npos, err.find("too large"));
+}
+
 MC_TEST_MAIN()

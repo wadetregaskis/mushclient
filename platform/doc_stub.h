@@ -1491,7 +1491,7 @@ public:
     void SetStatusMessageNow(const CString&) {}
     void SetStatusMessage    (const CString&) {}
     void SetStatusNormal     ()               {}
-    void OnUpdateBtnWorlds   (int, void*)     {}
+    void OnUpdateBtnWorlds   (int, CCmdUI*)   {}   // mainfrm.h signature
     void FixUpTitleBar       ()               {}
     bool IsFullScreen        () const         { return false; }
     // Deferred main-loop posts (e.g. the TLS consent prompt): headless has
@@ -1563,14 +1563,6 @@ extern const string ON_PLUGIN_IAC_GA;
 extern const string ON_PLUGIN_TELNET_REQUEST;
 extern const string ON_PLUGIN_TELNET_OPTION;
 extern const string ON_PLUGIN_TELNET_SUBNEGOTIATION;
-
-// ── Object name validation (from utilities) ───────────────────────────────
-// Trims whitespace, optionally validates the label, then lowercases the name
-// (matching CMUSHclientDoc::CheckObjectName in doc.cpp).  Returns eOK if the
-// name is valid, otherwise a non-zero error code.
-// NOTE: takes a non-const ref so the caller's CString is lowercased in place,
-// exactly as the Windows member-method version does.
-long CheckObjectName(CString& strName, const bool bConform = true);
 
 // ── Free function declarations ────────────────────────────────────────────
 unsigned long MakeActionHash(const CString& strAction,
@@ -2078,7 +2070,7 @@ public:
     unsigned short m_keypad_enable = 0;
     CNumericConfigurationArray m_NumericConfiguration;   // doc.h:1385 — loaded-value snapshots
     CAlphaConfigurationArray   m_AlphaConfiguration;      // doc.h:1386
-    CString        m_strCustomColourName[MAX_CUSTOM];
+    CString        m_strCustomColourName[255];   // doc.h:877 — 255, NOT MAX_CUSTOM (16)
     unsigned short m_echo_colour = SAMECOLOUR; // colour for echoed input in logs
 
     // ── ANSI parse state ───────────────────────────────────────────────
@@ -2161,10 +2153,8 @@ public:
     CTriggerMap        m_TriggerMap;
     CTriggerRevMap     m_TriggerRevMap;
     CTriggerArray      m_TriggerArray;   // sorted array for ProcessOneTriggerSequence
-    CTriggerList       m_TriggerList;
     CAliasMap          m_AliasMap;
     CAliasRevMap       m_AliasRevMap;
-    CAliasList         m_AliasList;
     CAliasArray        m_AliasArray;
     CTimerMap          m_TimerMap;
     CTimerRevMap       m_TimerRevMap;
@@ -2198,13 +2188,10 @@ public:
     // try/catch (methods_plugins.cpp LoadPlugin/ReloadPlugin).
     void InternalLoadPlugin (const CString & strName);
 
-    // ── Mud list (MUD type database) ───────────────────────────────────
-    CMudMap            m_MudMap;
-
     // ── Variable / mapping state ───────────────────────────────────────────
     bool        m_bVariablesChanged = false;
     CString     m_strCurrentLine;           // line currently received from MUD (set during trigger processing)
-    bool        m_bMapping          = false;
+    BOOL        m_bMapping          = FALSE;   // doc.h:2800 — BOOL
     BOOL        m_bRemoveMapReverses = FALSE;   // doc.h:2802 — world.SetRemoveMapReverses
     CStringList m_strMapList;
 
@@ -2318,15 +2305,15 @@ public:
 
 
     // ── Traffic counters ──────────────────────────────────────────────────
-    long m_nBytesOut                 = 0;
-    long m_nBytesIn                  = 0;
+    __int64 m_nBytesOut              = 0;    // doc.h:1261 — __int64
+    __int64 m_nBytesIn               = 0;    // doc.h:1260 — __int64
     long m_nTotalLinesReceived       = 0;
-    long m_iInputPacketCount         = 0;
+    __int64 m_iInputPacketCount      = 0;    // doc.h:1081 — __int64
     __int64 m_iOutputPacketCount     = 0;    // count of packets sent (doc.h twin)
     bool m_bDebugIncomingPackets     = false; // packet-debug notepad wanted
     LONGLONG m_iCompressionTimeTaken = 0;    // time spent in MCCP inflate
-    long m_nTotalCompressed          = 0;
-    long m_nTotalUncompressed        = 0;
+    __int64 m_nTotalCompressed       = 0;    // doc.h:1156 — __int64
+    __int64 m_nTotalUncompressed     = 0;    // doc.h:1155 — __int64
 
     // ── View / window number (1–10; 0 = not shown) ───────────────────────
     int  m_view_number               = 0;
@@ -2483,23 +2470,11 @@ public:
     short          m_log_input          = 0;
     unsigned short m_bTranslateGerman = 0;  // type converged to doc.h
     long           m_new_lines          = 0;  // unseen line count
-    CStringList    m_CommandHistory;           // typed-command history
-    CString        m_CurrentCommand;           // command being typed
     LONG           m_nHistoryLines      = 500; // max command-history entries
     unsigned short m_bEscapeDeletesInput = 0;  // Esc clears the input bar
     unsigned short m_bCopySelectionToClipboard = 0;  // auto-copy selection
     unsigned short m_bUnpauseOnSend     = 1;   // cancel pause on send
     BOOL           m_bAutoWrapWindowWidth = FALSE; // wrap to window width
-
-    void AddToCommandHistory(const CString& cmd) {
-        if (!cmd.IsEmpty()) {
-            m_CommandHistory.AddTail(cmd);
-            // cap history at m_nHistoryLines entries (min 50)
-            long cap = m_nHistoryLines > 50 ? m_nHistoryLines : 500;
-            while (m_CommandHistory.GetCount() > (size_t)cap)
-                m_CommandHistory.RemoveHead();
-        }
-    }
 
     // ── Spam prevention ───────────────────────────────────────────────
     unsigned short m_bEnableSpamPrevention = 0;  // type converged to doc.h
@@ -2866,6 +2841,9 @@ public:
     void SetUpVariantLong   (VARIANT& tVariant, const long iContents);
     void SetUpVariantDate   (VARIANT& tVariant, const COleDateTime iContents);
     void SetUpVariantDouble (VARIANT& tVariant, const double dContents);
+    // Object-name validation (trim → optional CheckLabel → lowercase); the
+    // doc.h:2299 member (body: doc_portable.cpp; Windows body: doc.cpp).
+    long CheckObjectName    (CString& strObjectName, const bool bConform = true);
     // world.* clipboard/infobar/logging/sending/worlds families (Campaign C)
     BSTR GetClipboard();
     void SetClipboard(LPCTSTR Text);
@@ -3075,14 +3053,16 @@ public:
                 CString& strOutput);
 
     // ── Connection helpers ─────────────────────────────────────────────
-    BOOL CheckConnected();   // returns FALSE (0) if connected; non-zero if not
+    bool CheckConnected();   // doc.h:1852 bool — returns false if connected; true if not
     BOOL ConnectSocket(void);   // single-sourced in doc_shared.cpp (T3c)
     long OpenLog(LPCTSTR LogFileName, BOOL Append);   // doc_shared.cpp (T3d)
 
     // ── Trigger execution (stub — scripting not wired yet) ────────────
     void ExecuteTriggerScript(CTrigger* pTrigger, CString strLine,
                               CPaneLine& StyledLine);
-    void TriggerToPane       (CTrigger* pTrigger, CPaneLine& StyledLine);
+    // TriggerToPane: no decl — doc.h:2154-2167 guards it under #ifdef PANE,
+    // which no build here defines (its only caller + body in
+    // ProcessPreviousLine.cpp are likewise PANE-guarded).
 
     // ── Style-run finder (GUI-only) ──────────────────────────────────────
     bool FindStyle(const CLine* pLine, int iWanted, int& iCol,
@@ -3261,8 +3241,8 @@ public:
     // portable copy in doc_portable.cpp until methods_output.cpp adopts.
     BSTR GetWorldWindowPositionX(short Which);
     void Redraw() {}
-    void DoFixMenus(void*) {}
-    void ShowStatusLine(bool) {}
+    void DoFixMenus(CCmdUI*);          // doc.h:2636; strong no-op body: windows_stubs.cpp
+    void ShowStatusLine(bool = false) {}   // doc.h:2331 default
 
     // ── Timer methods (timers.cpp) ────────────────────────────────────
     void ResetOneTimer (CTimer* timer_item);
@@ -3283,7 +3263,7 @@ public:
     void SortTimers()   {}
 
     // ── FormatTime (doc.h semantics: %E/%N/%P/%F/%L + bFixHTML) ────────
-    CString FormatTime(const CTime theTime, LPCTSTR pFormat, const bool bFixHTML);
+    CString FormatTime(const CTime theTime, LPCTSTR pFormat, const bool bFixHTML = false);   // doc.h:2505 default
 
     // ── Speedwalk ─────────────────────────────────────────────────────
     CString DoEvaluateSpeedwalk(const char* strInput);
@@ -3640,7 +3620,7 @@ public:
     BOOL Load_Set(const int set_type, CString strFileName, CWnd* parent_window);
 
     // ── Logging helpers ───────────────────────────────────────────────
-    bool LoggingInput() const { return m_log_input != 0; }
+    bool LoggingInput() { return m_log_input != 0; }   // doc.h:2463 — non-const
 
     // ── Plugin callback dispatch — the REAL bodies in plugins.cpp (CPlugin
     // convergence).  Signatures copied from doc.h:2340-2378 (the old

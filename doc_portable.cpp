@@ -371,7 +371,8 @@ CMUSHclientDoc::~CMUSHclientDoc()
 
 
 // ── CheckObjectName ───────────────────────────────────────────────────────
-// Mirrors CMUSHclientDoc::CheckObjectName in doc.cpp:
+// The doc.h:2299 MEMBER (portable body of CMUSHclientDoc::CheckObjectName,
+// doc.cpp:2247 — was a free-function twin until Stage 1 pre-flip hygiene):
 //   1. Trim leading/trailing whitespace.
 //   2. If bConform: validate with CheckLabel — return eInvalidObjectLabel on fail.
 //   3. Lowercase the name (keys in the trigger/alias/timer maps are lowercase).
@@ -380,7 +381,7 @@ CMUSHclientDoc::~CMUSHclientDoc()
 // CheckLabel: first char must be alpha; remaining chars alpha/digit/underscore.
 // Returns TRUE if the label is INVALID (matching doc.cpp convention).
 
-long CheckObjectName(CString& strName, const bool bConform)
+long CMUSHclientDoc::CheckObjectName(CString& strName, const bool bConform)
 {
     strName.TrimLeft();
     strName.TrimRight();
@@ -1076,11 +1077,11 @@ void CMUSHclientDoc::CancelSound()
 // GUI-only MapDirectionsMap is not populated in the portable/CLI build. The line
 
 // ── CMUSHclientDoc::CheckConnected ────────────────────────────────────────
-// MUSHclient convention: returns 0 (FALSE) if connected, non-zero if not.
-// evaluate.cpp checks "if (CheckConnected()) return true;" to bail early.
-BOOL CMUSHclientDoc::CheckConnected()
+// MUSHclient convention: returns false if connected, true if not (doc.h:1852
+// bool).  evaluate.cpp checks "if (CheckConnected()) return true;" to bail early.
+bool CMUSHclientDoc::CheckConnected()
 {
-    return (m_iConnectPhase != eConnectConnectedToMud) ? TRUE : FALSE;
+    return m_iConnectPhase != eConnectConnectedToMud;
 }
 
 // SendMsg / DoSendMsg are single-sourced in doc_shared.cpp — the real send
@@ -1099,10 +1100,9 @@ BOOL CMUSHclientDoc::CheckConnected()
 // all-engine UsesEmbeddedCallback guard + scripting-inactive warning — replaced
 // the Lua-only twin here).
 
-void CMUSHclientDoc::TriggerToPane(CTrigger* /*pTrigger*/,
-                                    CPaneLine& /*StyledLine*/)
-{
-}
+// TriggerToPane: gone — doc.h:2154-2167 guards it under #ifdef PANE (defined
+// in no build here); its only caller and body in ProcessPreviousLine.cpp are
+// likewise PANE-guarded, so no stub body is needed.
 
 // ── Lua function stubs ────────────────────────────────────────────────────
 // ── AdjustColour / ColourToName (portable, mirror Utilities.cpp) ─────────

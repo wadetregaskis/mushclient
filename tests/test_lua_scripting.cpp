@@ -2018,6 +2018,535 @@ TEST(LuaScripting, MetaphoneEmptyWordReturnsEmptyString)
     lua_close(L);
 }
 
+// ── Timer/alias/trigger option families ──────────────────────────────────
+// Each Get/SetXxxOption pair funnels through the per-class option tables at
+// the top of methods_timers/aliases/triggers.cpp.  These tests round-trip
+// every documented option and pin the error codes for the rejection arms.
+
+// Run a chunk that ends in `return true`; any embedded assert() failure
+// surfaces as a Lua error (run_ret returns -1).
+#define EXPECT_LUA_OK(L, code) \
+    do { \
+        int n_ = run_ret((L), (code)); \
+        EXPECT_EQ(1, n_); \
+        if (n_ == 1) EXPECT_TRUE(lua_toboolean((L), -1)); \
+        lua_settop((L), 0); \
+    } while (0)
+
+TEST(LuaScripting, TimerOptionsRoundTripEveryOption)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.AddTimer("t1", 0, 0, 10, "hi", 1, "") == error_code.eOK)
+        local num = {
+          {"hour", 5}, {"minute", 6}, {"second", 7.5},
+          {"offset_hour", 1}, {"offset_minute", 2}, {"offset_second", 3},
+          {"send_to", 1}, {"user", 42},
+          {"enabled", 1}, {"at_time", 1}, {"one_shot", 1},
+          {"omit_from_output", 1}, {"omit_from_log", 1},
+          {"active_closed", 1}, {"temporary", 1},
+        }
+        for _, o in ipairs(num) do
+          assert(world.SetTimerOption("t1", o[1], o[2]) == error_code.eOK, o[1])
+          local got = world.GetTimerOption("t1", o[1])
+          assert(got == o[2], o[1] .. " got " .. tostring(got))
+        end
+        local alpha = { {"group", "grp"}, {"script", "myproc"},
+                        {"send", "do this"}, {"variable", "myvar"} }
+        for _, o in ipairs(alpha) do
+          assert(world.SetTimerOption("t1", o[1], o[2]) == error_code.eOK, o[1])
+          assert(world.GetTimerOption("t1", o[1]) == o[2], o[1])
+        end
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, TimerOptionsAcceptYAndNForBooleans)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.AddTimer("t1", 0, 0, 10, "hi", 0, "") == error_code.eOK)
+        assert(world.SetTimerOption("t1", "enabled", "y") == error_code.eOK)
+        assert(world.GetTimerOption("t1", "enabled") == 1)
+        assert(world.SetTimerOption("t1", "enabled", "n") == error_code.eOK)
+        assert(world.GetTimerOption("t1", "enabled") == 0)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, TimerOptionRejectionArms)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.AddTimer("t1", 0, 0, 10, "hi", 1, "") == error_code.eOK)
+        assert(world.SetTimerOption("t1", "hour", 24)    == error_code.eOptionOutOfRange)
+        -- only "second" is float-parsed; other numeric options are
+        -- integer-only (IsNumber has no decimal support), so a fractional
+        -- offset_second is rejected even though the field is a double
+        assert(world.SetTimerOption("t1", "second", 7.5)         == error_code.eOK)
+        assert(world.SetTimerOption("t1", "offset_second", 3.25) == error_code.eOptionOutOfRange)
+        assert(world.SetTimerOption("t1", "second", 60)  == error_code.eOptionOutOfRange)
+        assert(world.SetTimerOption("t1", "send_to", 99) == error_code.eOptionOutOfRange)
+        assert(world.SetTimerOption("t1", "hour", "abc") == error_code.eOptionOutOfRange)
+        assert(world.SetTimerOption("t1", "nosuch", 1)   == error_code.eUnknownOption)
+        assert(world.SetTimerOption("zz", "hour", 1)     == error_code.eTimerNotFound)
+        -- Get: unknown timer yields nil (VT_EMPTY); unknown option nil (VT_NULL)
+        assert(world.GetTimerOption("zz", "hour") == nil)
+        assert(world.GetTimerOption("t1", "nosuch") == nil)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, TimerInfoSelectors)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.AddTimer("t1", 1, 2, 3, "the send text", 1, "the_proc") == error_code.eOK)
+        assert(world.SetTimerOption("t1", "group", "grp") == error_code.eOK)
+        assert(world.SetTimerOption("t1", "user", 21)     == error_code.eOK)
+        assert(world.SetTimerOption("t1", "send_to", 2)   == error_code.eOK)
+        assert(world.GetTimerInfo("t1", 1) == 1)              -- hour (every)
+        assert(world.GetTimerInfo("t1", 2) == 2)              -- minute
+        assert(world.GetTimerInfo("t1", 3) == 3)              -- second
+        assert(world.GetTimerInfo("t1", 4) == "the send text")
+        assert(world.GetTimerInfo("t1", 5) == "the_proc")
+        assert(world.GetTimerInfo("t1", 6) == true)           -- enabled
+        assert(world.GetTimerInfo("t1", 7) == false)          -- one-shot
+        assert(world.GetTimerInfo("t1", 8) == false)          -- at-time
+        assert(world.GetTimerInfo("t1", 9) == 0)              -- invocations
+        assert(world.GetTimerInfo("t1", 10) == 0)             -- times fired
+        assert(world.GetTimerInfo("t1", 13) >= 0)             -- seconds until due
+        assert(world.GetTimerInfo("t1", 14) == false)         -- temporary
+        assert(world.GetTimerInfo("t1", 17) == false)         -- active when closed
+        assert(world.GetTimerInfo("t1", 19) == "grp")
+        assert(world.GetTimerInfo("t1", 20) == 2)             -- send-to
+        assert(world.GetTimerInfo("t1", 21) == 21)            -- user option
+        assert(world.GetTimerInfo("t1", 22) == "t1")          -- label
+        assert(world.GetTimerInfo("t1", 26) == false)         -- script resolved
+        assert(world.GetTimerInfo("t1", 99) == nil)           -- unknown selector
+        assert(world.GetTimerInfo("zz", 1) == nil)            -- unknown timer
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, TimerGroupAndLifecycleOps)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        for i = 1, 3 do
+          assert(world.AddTimer("g" .. i, 0, 0, 10, "x", 1, "") == error_code.eOK)
+          assert(world.SetTimerOption("g" .. i, "group", "grp") == error_code.eOK)
+        end
+        assert(world.EnableTimerGroup("grp", 0) == 3)     -- 3 affected
+        assert(world.GetTimerOption("g2", "enabled") == 0)
+        assert(world.EnableTimer("g2", 1) == error_code.eOK)
+        assert(world.EnableTimer("zz", 1) == error_code.eTimerNotFound)
+        assert(world.ResetTimer("g1") == error_code.eOK)
+        assert(world.ResetTimer("zz") == error_code.eTimerNotFound)
+        assert(world.IsTimer("g1") == error_code.eOK)
+        assert(world.IsTimer("zz") == error_code.eTimerNotFound)
+        assert(world.DeleteTimerGroup("grp") == 3)
+        assert(world.IsTimer("g1") == error_code.eTimerNotFound)
+        -- temporaries
+        assert(world.AddTimer("tmp1", 0, 0, 5, "x", 1, "") == error_code.eOK)
+        assert(world.SetTimerOption("tmp1", "temporary", 1) == error_code.eOK)
+        assert(world.DeleteTemporaryTimers() == 1)
+        assert(world.IsTimer("tmp1") == error_code.eTimerNotFound)
+        world.ResetTimers()   -- all-timers reset: just must not error
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, DoAfterFamilyCreatesTemporaryTimers)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.DoAfter(5, "north") == error_code.eOK)
+        assert(world.DoAfterNote(5, "a note") == error_code.eOK)
+        assert(world.DoAfterSpeedWalk(5, "4n") == error_code.eOK)
+        assert(world.DoAfterSpecial(5, "beep", 2) == error_code.eOK)
+        -- all four are one-shot temporary timers
+        assert(world.DeleteTemporaryTimers() == 4)
+        -- rejection arms: bad sendto, bad seconds
+        assert(world.DoAfterSpecial(5, "x", 99) ~= error_code.eOK)
+        assert(world.DoAfterSpecial(0, "x", 2) == error_code.eTimeInvalid)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, AliasOptionsRoundTripEveryOption)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.AddAlias("a1", "matchme", "send this", 1, "") == error_code.eOK)
+        local num = {
+          {"send_to", 1}, {"sequence", 200}, {"user", -5},
+          {"enabled", 1}, {"expand_variables", 1}, {"omit_from_log", 1},
+          {"omit_from_command_history", 1}, {"omit_from_output", 1},
+          {"menu", 1}, {"keep_evaluating", 1}, {"echo_alias", 1},
+          {"temporary", 1}, {"one_shot", 1},
+        }
+        for _, o in ipairs(num) do
+          assert(world.SetAliasOption("a1", o[1], o[2]) == error_code.eOK, o[1])
+          local got = world.GetAliasOption("a1", o[1])
+          assert(got == o[2], o[1] .. " got " .. tostring(got))
+        end
+        local alpha = { {"group", "grp"}, {"match", "newmatch"},
+                        {"script", "proc"}, {"send", "text"}, {"variable", "vv"} }
+        for _, o in ipairs(alpha) do
+          assert(world.SetAliasOption("a1", o[1], o[2]) == error_code.eOK, o[1])
+          assert(world.GetAliasOption("a1", o[1]) == o[2], o[1])
+        end
+        -- read-only options refuse writes but still read back
+        assert(world.SetAliasOption("a1", "regexp", 1) == error_code.ePluginCannotSetOption)
+        assert(world.SetAliasOption("a1", "ignore_case", 1) == error_code.ePluginCannotSetOption)
+        assert(world.GetAliasOption("a1", "regexp") == 0)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, AliasInfoSelectorsAndErrors)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.AddAlias("a1", "matchme", "send this", 1, "the_proc") == error_code.eOK)
+        assert(world.SetAliasOption("a1", "group", "grp") == error_code.eOK)
+        assert(world.SetAliasOption("a1", "sequence", 321) == error_code.eOK)
+        assert(world.GetAliasInfo("a1", 1) == "matchme")
+        assert(world.GetAliasInfo("a1", 2) == "send this")
+        assert(world.GetAliasInfo("a1", 3) == "the_proc")
+        assert(world.GetAliasInfo("a1", 6) == true)          -- enabled
+        assert(world.GetAliasInfo("a1", 7) == false)         -- regexp
+        assert(world.GetAliasInfo("a1", 10) == 0)            -- invocation count
+        assert(world.GetAliasInfo("a1", 16) == "grp")
+        assert(world.GetAliasInfo("a1", 20) == 321)          -- sequence
+        assert(world.GetAliasInfo("a1", 99) == nil)
+        assert(world.GetAliasInfo("zz", 1) == nil)
+        assert(world.IsAlias("a1") == error_code.eOK)
+        assert(world.IsAlias("zz") == error_code.eAliasNotFound)
+        assert(world.SetAliasOption("zz", "enabled", 1) == error_code.eAliasNotFound)
+        assert(world.GetAliasOption("zz", "enabled") == nil)
+        assert(world.SetAliasOption("a1", "nosuch", 1) == error_code.eUnknownOption)
+        assert(world.SetAliasOption("a1", "sequence", 99999) == error_code.eOptionOutOfRange)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, AliasGroupAndLifecycleOps)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        for i = 1, 2 do
+          assert(world.AddAlias("g" .. i, "m" .. i, "s", 1, "") == error_code.eOK)
+          assert(world.SetAliasOption("g" .. i, "group", "grp") == error_code.eOK)
+        end
+        assert(world.EnableAliasGroup("grp", 0) == 2)
+        assert(world.GetAliasOption("g1", "enabled") == 0)
+        assert(world.EnableAlias("g1", 1) == error_code.eOK)
+        assert(world.EnableAlias("zz", 1) == error_code.eAliasNotFound)
+        assert(world.DeleteAliasGroup("grp") == 2)
+        assert(world.IsAlias("g1") == error_code.eAliasNotFound)
+        assert(world.AddAlias("tmp", "m", "s", 1, "") == error_code.eOK)
+        assert(world.SetAliasOption("tmp", "temporary", 1) == error_code.eOK)
+        assert(world.DeleteTemporaryAliases() == 1)
+        assert(world.DeleteAlias("nosuch") == error_code.eAliasNotFound)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, TriggerOptionsRoundTripEveryOption)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.AddTrigger("t1", "matchtext", "send", 1, -1, 0, "", "") == error_code.eOK)
+        local num = {
+          {"clipboard_arg", 3}, {"lines_to_match", 5},
+          {"match_style", 31}, {"new_style", 3},
+          {"other_text_colour", 0x123456}, {"other_back_colour", 0x654321},
+          {"send_to", 1}, {"sequence", 200}, {"user", 7},
+          {"enabled", 1}, {"expand_variables", 1}, {"keep_evaluating", 1},
+          {"multi_line", 1}, {"omit_from_log", 1}, {"omit_from_output", 1},
+          {"repeat", 1}, {"sound_if_inactive", 1}, {"lowercase_wildcard", 1},
+          {"temporary", 1}, {"one_shot", 1},
+        }
+        for _, o in ipairs(num) do
+          assert(world.SetTriggerOption("t1", o[1], o[2]) == error_code.eOK, o[1])
+          local got = world.GetTriggerOption("t1", o[1])
+          assert(got == o[2], o[1] .. " got " .. tostring(got))
+        end
+        local alpha = { {"group", "grp"}, {"match", "newmatch"}, {"script", "proc"},
+                        {"sound", "ding.wav"}, {"send", "text"}, {"variable", "vv"} }
+        for _, o in ipairs(alpha) do
+          assert(world.SetTriggerOption("t1", o[1], o[2]) == error_code.eOK, o[1])
+          assert(world.GetTriggerOption("t1", o[1]) == o[2], o[1])
+        end
+        -- read-only for everyone: regexp, ignore_case
+        assert(world.SetTriggerOption("t1", "regexp", 1) == error_code.ePluginCannotSetOption)
+        assert(world.SetTriggerOption("t1", "ignore_case", 1) == error_code.ePluginCannotSetOption)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, TriggerInfoSelectorsAndErrors)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.AddTrigger("t1", "matchtext", "send text", 1, -1, 0, "", "the_proc")
+               == error_code.eOK)
+        assert(world.SetTriggerOption("t1", "group", "grp") == error_code.eOK)
+        assert(world.SetTriggerOption("t1", "sequence", 456) == error_code.eOK)
+        assert(world.SetTriggerOption("t1", "user", 13) == error_code.eOK)
+        assert(world.GetTriggerInfo("t1", 1) == "matchtext")
+        assert(world.GetTriggerInfo("t1", 2) == "send text")
+        assert(world.GetTriggerInfo("t1", 4) == "the_proc")
+        assert(world.GetTriggerInfo("t1", 8) == true)          -- enabled
+        assert(world.GetTriggerInfo("t1", 9) == false)         -- regexp
+        assert(world.GetTriggerInfo("t1", 16) == 456)          -- sequence
+        assert(world.GetTriggerInfo("t1", 20) == 0)            -- invocation count
+        assert(world.GetTriggerInfo("t1", 23) == false)        -- temporary
+        assert(world.GetTriggerInfo("t1", 26) == "grp")
+        assert(world.GetTriggerInfo("t1", 28) == 13)           -- user option
+        assert(world.GetTriggerInfo("t1", 99) == nil)
+        assert(world.GetTriggerInfo("zz", 1) == nil)
+        assert(world.IsTrigger("t1") == error_code.eOK)
+        assert(world.IsTrigger("zz") == error_code.eTriggerNotFound)
+        assert(world.SetTriggerOption("zz", "enabled", 1) == error_code.eTriggerNotFound)
+        assert(world.GetTriggerOption("zz", "enabled") == nil)
+        assert(world.SetTriggerOption("t1", "nosuch", 1) == error_code.eUnknownOption)
+        assert(world.SetTriggerOption("t1", "sequence", -1) == error_code.eOptionOutOfRange)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, TriggerGroupAndLifecycleOps)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        for i = 1, 2 do
+          assert(world.AddTrigger("g" .. i, "m" .. i, "s", 1, -1, 0, "", "")
+                 == error_code.eOK)
+          assert(world.SetTriggerOption("g" .. i, "group", "grp") == error_code.eOK)
+        end
+        assert(world.EnableTriggerGroup("grp", 0) == 2)
+        assert(world.GetTriggerOption("g1", "enabled") == 0)
+        assert(world.EnableTrigger("g1", 1) == error_code.eOK)
+        assert(world.EnableTrigger("zz", 1) == error_code.eTriggerNotFound)
+        assert(world.DeleteTriggerGroup("grp") == 2)
+        assert(world.IsTrigger("g1") == error_code.eTriggerNotFound)
+        assert(world.AddTrigger("tmp", "m", "s", 1, -1, 0, "", "") == error_code.eOK)
+        assert(world.SetTriggerOption("tmp", "temporary", 1) == error_code.eOK)
+        assert(world.DeleteTemporaryTriggers() == 1)
+        assert(world.DeleteTrigger("nosuch") == error_code.eTriggerNotFound)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+// ── Colour management methods (methods_colours.cpp) ──────────────────────
+
+TEST(LuaScripting, ColourNameAndRgbConversions)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.ColourNameToRGB("red") == 255)          -- COLORREF 0x0000FF
+        assert(world.ColourNameToRGB("#102030") == 0x302010) -- byte-swapped to COLORREF
+        assert(world.ColourNameToRGB("nosuchcolour") == -1)
+        assert(world.RGBColourToName(255) == "red")
+        -- an unnamed colour comes back as #RRGGBB (uppercase hex)
+        assert(world.RGBColourToName(0x0102A3) == "#A30201")
+        -- ANSI() builds the raw escape sequence
+        assert(world.ANSI(31) == string.char(27) .. "[31m")
+        -- AdjustColour method 1 = invert
+        assert(world.AdjustColour(0x000000, 1) == 0xFFFFFF)
+        assert(world.AdjustColour(0x123456, 0) == 0x123456)  -- 0 = no change
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, PaletteAccessorsRoundTripAndRejectOutOfRange)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        world.SetNormalColour(3, 0xFF123456)      -- masked to 24 bits
+        assert(world.GetNormalColour(3) == 0x123456)
+        world.SetBoldColour(8, 0x0000FF)
+        assert(world.GetBoldColour(8) == 0x0000FF)
+        world.SetCustomColourText(16, 0x111111)
+        world.SetCustomColourBackground(16, 0x222222)
+        assert(world.GetCustomColourText(16) == 0x111111)
+        assert(world.GetCustomColourBackground(16) == 0x222222)
+        -- out-of-range indexes read as 0 and ignore writes
+        assert(world.GetNormalColour(0) == 0)
+        assert(world.GetNormalColour(9) == 0)
+        world.SetNormalColour(9, 0x777777)        -- must not corrupt anything
+        assert(world.GetCustomColourText(17) == 0)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, CustomColourNames)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.SetCustomColourName(2, "MyColour") == error_code.eOK)
+        assert(world.GetCustomColourName(2) == "MyColour")
+        assert(world.SetCustomColourName(0, "x")  == error_code.eOptionOutOfRange)
+        assert(world.SetCustomColourName(17, "x") == error_code.eOptionOutOfRange)
+        assert(world.SetCustomColourName(2, "")   == error_code.eNoNameSpecified)
+        assert(world.SetCustomColourName(2, string.rep("x", 31))
+               == error_code.eInvalidObjectLabel)
+        assert(world.GetCustomColourName(0) == "")   -- out of range reads empty
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, MapColourTranslation)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        -- unmapped colours translate to themselves
+        assert(world.GetMapColour(0x123456) == 0x123456)
+        world.MapColour(0x123456, 0x654321)
+        assert(world.GetMapColour(0x123456) == 0x654321)
+        -- the Lua glue returns a keyed map {original = replacement}
+        -- (not an array like the COM-dispatch variant)
+        local t = world.MapColourList()
+        assert(type(t) == "table")
+        assert(t[0x123456] == 0x654321)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, PickColourIsHeadlessNoop)
+{
+    // no GUI hook installed headless → always -1 (cancelled)
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, "return world.PickColour(255) == -1");
+    lua_close(L);
+}
+
+// ── Mapper methods (methods_mapping.cpp) ─────────────────────────────────
+
+TEST(LuaScripting, MapperAddListAndDelete)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.GetMappingCount() == 0)
+        assert(world.AddToMapper("n", "s") == error_code.eOK)
+        assert(world.AddToMapper("e", "w") == error_code.eOK)
+        assert(world.AddMapperComment("the shop") == error_code.eOK)
+        assert(world.GetMappingCount() == 3)
+        -- items are stored as dir/reverse and {comment}
+        assert(world.GetMappingItem(0) == "n/s")
+        assert(world.GetMappingItem(2) == "{the shop}")
+        assert(world.GetMappingItem(3) == nil)     -- out of range
+        assert(world.GetMappingItem(-1) == nil)
+        assert(world.DeleteLastMapItem() == error_code.eOK)
+        assert(world.GetMappingCount() == 2)
+        assert(world.DeleteAllMapItems() == error_code.eOK)
+        assert(world.GetMappingCount() == 0)
+        assert(world.DeleteLastMapItem() == error_code.eNoMapItems)
+        assert(world.DeleteAllMapItems() == error_code.eNoMapItems)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+TEST(LuaScripting, MapperRejectsSpecialCharactersAndEmptyPairs)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        assert(world.AddToMapper("n{", "s")  == error_code.eBadMapItem)
+        assert(world.AddToMapper("n", "s\\") == error_code.eBadMapItem)
+        assert(world.AddToMapper("", "")     == error_code.eBadMapItem)
+        assert(world.AddMapperComment("a/b") == error_code.eBadMapItem)
+        assert(world.GetMappingCount() == 0)
+        return true
+    )lua");
+    lua_close(L);
+}
+
+// ── Mersenne Twister (world.MtSrand / world.MtRand → mt19937ar.c) ────────
+
+TEST(LuaScripting, MtRandIsSeededAndDeterministic)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+    EXPECT_LUA_OK(L, R"lua(
+        world.MtSrand(12345)
+        local a1, a2, a3 = world.MtRand(), world.MtRand(), world.MtRand()
+        world.MtSrand(12345)
+        local b1, b2, b3 = world.MtRand(), world.MtRand(), world.MtRand()
+        assert(a1 == b1 and a2 == b2 and a3 == b3)      -- same seed, same stream
+        for _, v in ipairs({a1, a2, a3}) do
+          assert(v >= 0 and v < 1)                       -- [0, 1) reals
+        end
+        world.MtSrand(54321)
+        assert(world.MtRand() ~= a1)                     -- different seed diverges
+        -- array-seeded form (init_by_array)
+        world.MtSrand({1, 2, 3})
+        local c1 = world.MtRand()
+        world.MtSrand({1, 2, 3})
+        assert(world.MtRand() == c1)
+        return true
+    )lua");
+    lua_close(L);
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

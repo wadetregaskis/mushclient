@@ -1,0 +1,592 @@
+// tests/test_info.cpp
+// Behaviour tests for scripting/methods/methods_info.cpp: the world.GetInfo
+// selector (per-code type contract + representative value arms), GetLineInfo,
+// GetStyleInfo, host lookups, ErrorDesc and the small info getters.
+//
+// GetInfo is the scripting API's grab-bag introspection call: each InfoType
+// code has a FIXED VARIANT type (string / bool / long / double / date), and
+// unknown codes answer VT_NULL.  That per-code type contract is what plugins
+// key off, so it is codified here wholesale, plus precise value checks where
+// the value is deducible headless.
+
+#include "mc_test.h"
+#include "platform/doc_stub.h"
+
+#include <cstring>
+#include <cstdio>
+#include <string>
+#include <unistd.h>
+
+static CMUSHclientDoc make_doc()
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    return doc;
+}
+
+static void feed(CMUSHclientDoc& doc, const char* s)
+{
+    doc.DisplayMsg(s, (int)strlen(s), 0);
+}
+
+static std::string vstr(const VARIANT& v)
+{
+    if (v.vt != VT_BSTR) return "<not-a-string>";
+    return std::string((const char*)CString(v.bstrVal));
+}
+
+// ── GetInfo type contract ─────────────────────────────────────────────────
+
+// methods_info.cpp GetInfo: codes 1-89 are the string group.
+TEST(GetInfo, StringCodesAnswerVtBstr)
+{
+    CMUSHclientDoc doc = make_doc();
+    static const int codes[] = {
+        1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
+        21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+        41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,
+        61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,
+        81,82,83,84,85,86,87,88,89 };
+    for (int c : codes) {
+        VARIANT v = doc.GetInfo(c);
+        if ((int)v.vt != VT_BSTR) {
+            char msg[64];
+            snprintf(msg, sizeof msg, "GetInfo(%d) vt=%d, wanted VT_BSTR", c, (int)v.vt);
+            mc_test::fail_msg(__FILE__, __LINE__, msg);
+        }
+    }
+}
+
+// methods_info.cpp GetInfo: codes 101-125 (as implemented) are booleans.
+TEST(GetInfo, BooleanCodesAnswerVtBool)
+{
+    CMUSHclientDoc doc = make_doc();
+    static const int codes[] = {
+        101,102,103,104,105,106,107,108,109,110,111,112,113,114,
+        115,118,119,120,121,122,123,124,125 };
+    for (int c : codes) {
+        VARIANT v = doc.GetInfo(c);
+        if ((int)v.vt != VT_BOOL) {
+            char msg[64];
+            snprintf(msg, sizeof msg, "GetInfo(%d) vt=%d, wanted VT_BOOL", c, (int)v.vt);
+            mc_test::fail_msg(__FILE__, __LINE__, msg);
+        }
+    }
+    // 116/117 were never allocated: they fall to the VT_NULL default
+    EXPECT_EQ(VT_NULL, (int)doc.GetInfo(116).vt);
+    EXPECT_EQ(VT_NULL, (int)doc.GetInfo(117).vt);
+}
+
+// methods_info.cpp GetInfo: the numeric group answers VT_I4 (a few arms are
+// VT_I2 / VT_R8 — codified separately below).
+TEST(GetInfo, NumericCodesAnswerVtI4)
+{
+    CMUSHclientDoc doc = make_doc();
+    static const int codes[] = {
+        201,202,203,204,205,206,207,208,209,210,
+        211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,
+        226,227,228,229,230,231,235,238,240,241,242,243,244,
+        245,246,247,248,249,250,251,252,253,254,255,256,257,258,259,
+        260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,
+        275,276,277,278,279,280,281,282,283,284,286,287,288,289,290,
+        291,292,293,294,295,298,299,300,310 };
+    for (int c : codes) {
+        VARIANT v = doc.GetInfo(c);
+        if ((int)v.vt != VT_I4) {
+            char msg[64];
+            snprintf(msg, sizeof msg, "GetInfo(%d) vt=%d, wanted VT_I4", c, (int)v.vt);
+            mc_test::fail_msg(__FILE__, __LINE__, msg);
+        }
+    }
+    EXPECT_EQ(VT_I2,   (int)doc.GetInfo(239).vt);   // action source is a short
+    EXPECT_EQ(VT_BOOL, (int)doc.GetInfo(285).vt);   // output-window-available
+    EXPECT_EQ(VT_R8,   (int)doc.GetInfo(232).vt);   // timer (epoch fallback)
+    EXPECT_EQ(VT_R8,   (int)doc.GetInfo(297).vt);   // counter frequency
+    // no high-performance counter headless (App.m_iCounterFrequency == 0):
+    // the trigger/alias time arms have no fallback and stay VT_EMPTY
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(233).vt);
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(234).vt);
+    // no world view attached: the command-selection arms stay VT_EMPTY
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(236).vt);
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(237).vt);
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(296).vt);  // scroll position, no sink
+}
+
+// methods_info.cpp GetInfo: unknown codes answer VT_NULL (not VT_EMPTY) —
+// scripts can distinguish "no such code" from "no value yet".
+TEST(GetInfo, UnknownCodeAnswersVtNull)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_EQ(VT_NULL, (int)doc.GetInfo(0).vt);
+    EXPECT_EQ(VT_NULL, (int)doc.GetInfo(90).vt);      // hole after string block
+    EXPECT_EQ(VT_NULL, (int)doc.GetInfo(311).vt);
+    EXPECT_EQ(VT_NULL, (int)doc.GetInfo(9999).vt);
+    EXPECT_EQ(VT_NULL, (int)doc.GetInfo(-1).vt);
+}
+
+// ── GetInfo value arms ────────────────────────────────────────────────────
+
+// The string arms reflect the live document fields verbatim.
+TEST(GetInfo, StringArmsReflectDocumentFields)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_server    = "mud.example.com";
+    doc.m_mush_name = "Example World";
+    doc.m_notes     = "some world notes";
+    doc.m_strTerminalIdentification = "mushclient-test";
+
+    EXPECT_STREQ("mud.example.com",  vstr(doc.GetInfo(1)).c_str());
+    EXPECT_STREQ("Example World",    vstr(doc.GetInfo(2)).c_str());
+    EXPECT_STREQ("some world notes", vstr(doc.GetInfo(8)).c_str());
+    EXPECT_STREQ("mushclient-test",  vstr(doc.GetInfo(42)).c_str());
+
+    // 72 is the client version constant
+    EXPECT_STREQ(MUSHCLIENT_VERSION, vstr(doc.GetInfo(72)).c_str());
+    // 83 is the sqlite3 runtime version
+    EXPECT_STREQ(sqlite3_libversion(), vstr(doc.GetInfo(83)).c_str());
+}
+
+// GetInfo(64) is the current working directory WITH a trailing slash.
+TEST(GetInfo, CurrentDirectoryHasTrailingSlash)
+{
+    CMUSHclientDoc doc = make_doc();
+    std::string dir = vstr(doc.GetInfo(64));
+    ASSERT_TRUE(!dir.empty());
+    EXPECT_EQ('/', dir[dir.size() - 1]);
+
+    char cwd[1024];
+    ASSERT_NE(nullptr, (void*)getcwd(cwd, sizeof cwd));
+    EXPECT_EQ(0, strncmp(cwd, dir.c_str(), strlen(cwd)));
+}
+
+// headless: os_version is a zeroed stub — GetInfo(77) "" and 265-268 = 0
+// (codifies the comment at the top of methods_info.cpp).
+TEST(GetInfo, OsVersionStubIsZeroHeadless)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_STREQ("", vstr(doc.GetInfo(77)).c_str());
+    EXPECT_EQ(0L, doc.GetInfo(265).lVal);
+    EXPECT_EQ(0L, doc.GetInfo(266).lVal);
+    EXPECT_EQ(0L, doc.GetInfo(267).lVal);
+    EXPECT_EQ(0L, doc.GetInfo(268).lVal);
+}
+
+// GetInfo(106)/(107): "world is disconnected" vs "world is connecting" are
+// derived from m_iConnectPhase, not stored flags.
+TEST(GetInfo, ConnectPhaseBooleansTrackPhase)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    EXPECT_FALSE(doc.GetInfo(106).boolVal);   // not disconnected
+    EXPECT_FALSE(doc.GetInfo(107).boolVal);   // not connecting
+
+    doc.m_iConnectPhase = eConnectNotConnected;
+    EXPECT_TRUE(doc.GetInfo(106).boolVal);   // disconnected
+    EXPECT_FALSE(doc.GetInfo(107).boolVal);   // but not connecting
+
+    doc.m_iConnectPhase = eConnectConnectingToMud;
+    EXPECT_TRUE(doc.GetInfo(106).boolVal);    // not yet connected
+    EXPECT_TRUE(doc.GetInfo(107).boolVal);    // mid-handshake
+
+    // 227 exposes the raw phase number itself
+    EXPECT_EQ((long)eConnectConnectingToMud, doc.GetInfo(227).lVal);
+}
+
+// GetInfo(218) counts variables; 224 counts output-buffer lines.
+TEST(GetInfo, CountsTrackVariableAndLineStores)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_EQ(0L, doc.GetInfo(218).lVal);
+    doc.SetVariable("alpha", "1");
+    doc.SetVariable("beta",  "2");
+    EXPECT_EQ(2L, doc.GetInfo(218).lVal);
+
+    long before = doc.GetInfo(224).lVal;
+    EXPECT_EQ((long)doc.m_LineList.GetCount(), before);
+    feed(doc, "one\ntwo\n");
+    EXPECT_EQ((long)doc.m_LineList.GetCount(), doc.GetInfo(224).lVal);
+    EXPECT_GT(doc.GetInfo(224).lVal, before);
+}
+
+// GetInfo(285): "is output window available?" — true once the line buffer
+// exists (which the constructor guarantees).
+TEST(GetInfo, OutputAvailableMirrorsCurrentLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_EQ((BOOL)(doc.m_pCurrentLine != NULL), doc.GetInfo(285).boolVal);
+    feed(doc, "line\n");
+    EXPECT_TRUE(doc.GetInfo(285).boolVal);
+}
+
+// headless GUI metric arms: toolbars don't exist (0), world-frame metrics
+// derive from the m_gui_* fields, and the text rectangle answers its fields.
+TEST(GetInfo, HeadlessGuiMetricsDeriveFromGuiFields)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_gui_rows = 25;
+    doc.m_gui_cols = 80;
+    doc.m_gui_font_height = 10;
+    doc.m_gui_font_width  = 6;
+
+    EXPECT_EQ(0L, doc.GetInfo(251).lVal);            // toolbar height: none
+    EXPECT_EQ(0L, doc.GetInfo(256).lVal);            // toolbar width: none
+    EXPECT_EQ(0L, doc.GetInfo(259).lVal);            // status bar: none
+    EXPECT_EQ(25L * 10L, doc.GetInfo(261).lVal);     // frame height
+    EXPECT_EQ(80L * 6L,  doc.GetInfo(262).lVal);     // frame width
+    EXPECT_EQ(27L * 10L, doc.GetInfo(249).lVal);     // main client height (+2 rows)
+    EXPECT_EQ(80L * 6L,  doc.GetInfo(250).lVal);     // main client width
+    EXPECT_EQ(25L * 10L, doc.GetInfo(280).lVal);     // output window height
+    EXPECT_EQ(80L * 6L,  doc.GetInfo(281).lVal);     // output window width
+    EXPECT_EQ(0L, doc.GetInfo(290).lVal);            // text rect left @ origin
+    EXPECT_EQ(0L, doc.GetInfo(291).lVal);            // text rect top @ origin
+    EXPECT_EQ(80L * 6L,  doc.GetInfo(292).lVal);     // text rect right
+    EXPECT_EQ(25L * 10L, doc.GetInfo(293).lVal);     // text rect bottom
+
+    doc.m_TextRectangle.left = 3;
+    doc.m_TextRectangle.top = 4;
+    doc.m_TextRectangle.right = 5;
+    doc.m_TextRectangle.bottom = 6;
+    EXPECT_EQ(3L, doc.GetInfo(272).lVal);
+    EXPECT_EQ(4L, doc.GetInfo(273).lVal);
+    EXPECT_EQ(5L, doc.GetInfo(274).lVal);
+    EXPECT_EQ(6L, doc.GetInfo(275).lVal);
+}
+
+// GetInfo(294): headless there is no keyboard hook, so no modifier bits.
+// GetInfo(299)/(300): the shim code pages are the classic Windows defaults.
+TEST(GetInfo, KeyStateAndCodePagesHeadless)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_EQ(0L,    doc.GetInfo(294).lVal);
+    EXPECT_EQ(1252L, doc.GetInfo(299).lVal);   // ANSI: Western European
+    EXPECT_EQ(437L,  doc.GetInfo(300).lVal);   // OEM: US
+}
+
+// date arms: zero times answer VT_EMPTY ("in case dates are zero"), the
+// current-time arms always answer VT_DATE.
+TEST(GetInfo, ZeroDatesAnswerEmptyLiveDatesAnswerDate)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(301).vt);   // never connected
+    EXPECT_EQ(VT_DATE,  (int)doc.GetInfo(304).vt);   // now
+    EXPECT_EQ(VT_DATE,  (int)doc.GetInfo(305).vt);   // client start
+    EXPECT_EQ(VT_DATE,  (int)doc.GetInfo(306).vt);   // world start
+
+    doc.m_tConnectTime = CTime::GetCurrentTime();
+    EXPECT_EQ(VT_DATE, (int)doc.GetInfo(301).vt);    // now it has a value
+}
+
+// ── GetLineInfo ───────────────────────────────────────────────────────────
+
+// GetLineInfo: line numbers are 1-based; out-of-range answers VT_EMPTY and
+// a bad InfoType answers VT_NULL (same convention as GetStyleInfo).
+TEST(GetLineInfo, RangeAndTypeConventions)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "hello world\n");
+
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetLineInfo(0, 1).vt);      // 0: below range
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetLineInfo(-5, 1).vt);
+    EXPECT_EQ(VT_EMPTY,
+              (int)doc.GetLineInfo(doc.m_LineList.GetCount() + 1, 1).vt);
+    EXPECT_EQ(VT_NULL,  (int)doc.GetLineInfo(1, 99).vt);     // bad info type
+    EXPECT_EQ(VT_NULL,  (int)doc.GetLineInfo(1, 0).vt);
+}
+
+// GetLineInfo type 1..11: text, length, hard-return flag, note flag, line
+// number and style count of a real received line.
+TEST(GetLineInfo, DescribesReceivedLine)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "hello world\n");
+
+    VARIANT v = doc.GetLineInfo(1, 1);                   // text
+    ASSERT_EQ(VT_BSTR, (int)v.vt);
+    EXPECT_STREQ("hello world", vstr(v).c_str());
+
+    EXPECT_EQ((short)11, doc.GetLineInfo(1, 2).iVal);    // length
+    EXPECT_TRUE(doc.GetLineInfo(1, 3).boolVal);   // hard return
+    EXPECT_FALSE(doc.GetLineInfo(1, 4).boolVal);  // not a note
+    EXPECT_FALSE(doc.GetLineInfo(1, 5).boolVal);  // not user input
+    EXPECT_EQ(1L, doc.GetLineInfo(1, 10).lVal);          // line number, 1-based
+    EXPECT_GE(doc.GetLineInfo(1, 11).lVal, 1L);          // has style runs
+    EXPECT_EQ(VT_DATE, (int)doc.GetLineInfo(1, 9).vt);   // arrival time
+}
+
+// GetLineInfo type 4: a world.Note line reports the COMMENT flag.
+TEST(GetLineInfo, NoteLineReportsCommentFlag)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.Note("a note");
+    EXPECT_TRUE(doc.GetLineInfo(1, 4).boolVal);
+    EXPECT_STREQ("a note", vstr(doc.GetLineInfo(1, 1)).c_str());
+}
+
+// ── GetStyleInfo ──────────────────────────────────────────────────────────
+
+// GetStyleInfo range conventions mirror GetLineInfo: bad line OR bad style
+// answer VT_EMPTY, bad info type answers VT_NULL.
+TEST(GetStyleInfo, RangeAndTypeConventions)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "styled\n");
+
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetStyleInfo(0, 1, 1).vt);
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetStyleInfo(999, 1, 1).vt);
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetStyleInfo(1, 0, 1).vt);
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetStyleInfo(1, 99, 1).vt);
+    EXPECT_EQ(VT_NULL,  (int)doc.GetStyleInfo(1, 1, 99).vt);
+}
+
+// GetStyleInfo 1-4 on a plain MUD line: full text in one non-action run
+// starting at column 1.
+TEST(GetStyleInfo, PlainRunTextColumnAndAction)
+{
+    CMUSHclientDoc doc = make_doc();
+    feed(doc, "plain text\n");
+
+    EXPECT_STREQ("plain text", vstr(doc.GetStyleInfo(1, 1, 1)).c_str());
+    EXPECT_EQ((short)10, doc.GetStyleInfo(1, 1, 2).iVal);   // run length
+    EXPECT_EQ((short)1,  doc.GetStyleInfo(1, 1, 3).iVal);   // 1-based column
+    EXPECT_EQ((short)0,  doc.GetStyleInfo(1, 1, 4).iVal);   // ACTION_NONE
+    EXPECT_STREQ("", vstr(doc.GetStyleInfo(1, 1, 5)).c_str());  // no action
+    EXPECT_STREQ("", vstr(doc.GetStyleInfo(1, 1, 6)).c_str());  // no hint
+    EXPECT_STREQ("", vstr(doc.GetStyleInfo(1, 1, 7)).c_str());  // no variable
+}
+
+// GetStyleInfo 4-7 on a Hyperlink note: action type 2 with the action and
+// hint recorded on the style's CAction.
+TEST(GetStyleInfo, HyperlinkRunCarriesActionAndHint)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.Hyperlink("http://example.com/", "click here", "the hint",
+                  "white", "black", FALSE);
+    doc.Note("");    // close the hyperlink line
+
+    // find the style run holding the link text
+    long styles = doc.GetLineInfo(1, 11).lVal;
+    ASSERT_TRUE(styles >= 1L);
+    long link = -1;
+    for (long s = 1; s <= styles; s++)
+        if (vstr(doc.GetStyleInfo(1, s, 1)) == "click here") { link = s; break; }
+    ASSERT_NE(-1L, link);
+
+    EXPECT_EQ((short)1, doc.GetStyleInfo(1, link, 4).iVal);   // ACTION_SEND (URL=FALSE)
+    EXPECT_STREQ("http://example.com/",
+                 vstr(doc.GetStyleInfo(1, link, 5)).c_str()); // action
+    EXPECT_STREQ("the hint",
+                 vstr(doc.GetStyleInfo(1, link, 6)).c_str()); // hint
+    EXPECT_EQ(VT_BOOL, (int)doc.GetStyleInfo(1, link, 8).vt); // bold flag typed
+
+    // with URL=TRUE the same call makes a real hyperlink action (type 2)
+    CMUSHclientDoc doc2 = make_doc();
+    doc2.Hyperlink("http://example.com/", "web link", "", "white", "black", TRUE);
+    doc2.Note("");
+    long styles2 = doc2.GetLineInfo(1, 11).lVal;
+    long link2 = -1;
+    for (long s = 1; s <= styles2; s++)
+        if (vstr(doc2.GetStyleInfo(1, s, 1)) == "web link") { link2 = s; break; }
+    ASSERT_NE(-1L, link2);
+    EXPECT_EQ((short)2, doc2.GetStyleInfo(1, link2, 4).iVal); // ACTION_HYPERLINK
+}
+
+// ── the small info getters ────────────────────────────────────────────────
+
+// GetSelection*: no output pane attached headless — all zeros (the
+// "no selection" contract).
+TEST(InfoGetters, NoSelectionWithoutView)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_EQ(0L, doc.GetSelectionStartLine());
+    EXPECT_EQ(0L, doc.GetSelectionEndLine());
+    EXPECT_EQ(0L, doc.GetSelectionStartColumn());
+    EXPECT_EQ(0L, doc.GetSelectionEndColumn());
+}
+
+// GetSentBytes/GetReceivedBytes mirror the byte counters; GetConnectDuration
+// is zero when never connected.
+TEST(InfoGetters, ByteCountersAndDuration)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_nBytesOut = 123;
+    doc.m_nBytesIn  = 456;
+    EXPECT_EQ(123L, doc.GetSentBytes());
+    EXPECT_EQ(456L, doc.GetReceivedBytes());
+
+    // duration is 0 while not connected; once connected it is measured from
+    // m_tConnectTime
+    doc.m_iConnectPhase = eConnectNotConnected;
+    EXPECT_EQ(0L, doc.GetConnectDuration());
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_tConnectTime = CTime::GetCurrentTime();
+    EXPECT_LE(0L, doc.GetConnectDuration());
+    EXPECT_GT(5L, doc.GetConnectDuration());     // just connected: < 5s
+}
+
+// WorldName/WorldAddress/WorldPort/GetWorldID reflect the document.
+TEST(InfoGetters, WorldIdentityGetters)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_mush_name = "My World";
+    doc.m_server    = "mud.host.org";
+    doc.m_port      = 4000;
+
+    EXPECT_STREQ("My World",     (const char*)CString(doc.WorldName()));
+    EXPECT_STREQ("mud.host.org", (const char*)CString(doc.WorldAddress()));
+    EXPECT_EQ(4000L, doc.WorldPort());
+    EXPECT_STREQ((const char*)doc.m_strWorldID,
+                 (const char*)CString(doc.GetWorldID()));
+    EXPECT_EQ(24, (int)strlen((const char*)CString(doc.GetWorldID())));
+}
+
+// ErrorDesc: known codes translate to their message; unknown codes echo the
+// number itself as a string.
+TEST(InfoGetters, ErrorDescKnownAndUnknown)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_STREQ("No error", (const char*)CString(doc.ErrorDesc(0)));
+    EXPECT_STREQ("The world is already open",
+                 (const char*)CString(doc.ErrorDesc(30001)));
+    EXPECT_STREQ("12345", (const char*)CString(doc.ErrorDesc(12345)));
+    EXPECT_STREQ("-7",    (const char*)CString(doc.ErrorDesc(-7)));
+}
+
+// GetHostAddress: blank name gives an empty VARIANT; "localhost" resolves to
+// an array containing 127.0.0.1.  GetHostName: blank or invalid input gives
+// "" (never an error).
+TEST(InfoGetters, HostLookups)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    // NOTE port deviation: the COleSafeArray shim's Detach() always stamps
+    // VT_ARRAY|VT_VARIANT (with a null array when nothing was created);
+    // MFC's COleSafeArray would hand back VT_EMPTY for a blank host name.
+    VARIANT v = doc.GetHostAddress("");
+    EXPECT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);
+    {
+        COleSafeArray blank;
+        blank.Attach(v);
+        EXPECT_EQ(0L, blank.GetOneDimSize());    // and it holds nothing
+    }
+
+    v = doc.GetHostAddress("localhost");
+    ASSERT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);
+    // one of the returned addresses must be the loopback
+    COleSafeArray sa;
+    sa.Attach(v);
+    long n = sa.GetOneDimSize();
+    ASSERT_TRUE(n >= 1);
+    bool found = false;
+    for (long i = 0; i < n; i++) {
+        VARIANT e;
+        VariantInit(&e);
+        sa.GetElement(&i, &e);
+        if (e.vt == VT_BSTR && vstr(e) == "127.0.0.1") found = true;
+    }
+    EXPECT_TRUE(found);
+
+    EXPECT_STREQ("", (const char*)CString(doc.GetHostName("")));
+    EXPECT_STREQ("", (const char*)CString(doc.GetHostName("not.an.ip")));
+    // reverse lookup of loopback answers the canonical local name
+    CString rev(doc.GetHostName("127.0.0.1"));
+    EXPECT_TRUE(rev.GetLength() > 0);
+}
+
+// IsConnected/GetLineCount plain getters.
+TEST(InfoGetters, ConnectionAndLineCount)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_TRUE(doc.IsConnected());
+    doc.m_iConnectPhase = eConnectNotConnected;
+    EXPECT_FALSE(doc.IsConnected());
+
+    long before = doc.GetLinesInBufferCount();
+    feed(doc, "a\nb\n");
+    EXPECT_EQ((long)doc.m_LineList.GetCount(), doc.GetLinesInBufferCount());
+    EXPECT_GT(doc.GetLinesInBufferCount(), before);
+}
+
+// ── global options (globalregistryoptions.cpp) ────────────────────────────
+
+// GetGlobalOption resolves numeric options as VT_I4, alpha options as
+// VT_BSTR, matches names case-insensitively, and answers VT_EMPTY for
+// unknown names.
+TEST(GlobalOptions, LookupNumericAlphaAndUnknown)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    App.m_bAutoConnectWorlds = 1;
+    VARIANT v = App.GetGlobalOption("AutoConnectWorlds");
+    ASSERT_EQ(VT_I4, (int)v.vt);
+    EXPECT_EQ(1L, v.lVal);
+    App.m_bAutoConnectWorlds = 0;
+    EXPECT_EQ(0L, App.GetGlobalOption("AutoConnectWorlds").lVal);
+    // case-insensitive name match
+    EXPECT_EQ(0L, App.GetGlobalOption("autoconnectworlds").lVal);
+
+    App.m_strDefaultInputFont = "SomeFont";
+    v = App.GetGlobalOption("DefaultInputFont");
+    ASSERT_EQ(VT_BSTR, (int)v.vt);
+    EXPECT_STREQ("SomeFont", vstr(v).c_str());
+
+    EXPECT_EQ(VT_EMPTY, (int)App.GetGlobalOption("NoSuchOption").vt);
+
+    // the doc-level method is a straight forwarder to App
+    EXPECT_EQ(0L, doc.GetGlobalOption("AutoConnectWorlds").lVal);
+    App.m_bAutoConnectWorlds = 1;
+}
+
+// GetGlobalOptionList enumerates the name of every numeric and alpha option.
+TEST(GlobalOptions, ListEnumeratesEveryOptionName)
+{
+    CMUSHclientDoc doc = make_doc();
+    VARIANT v = doc.GetGlobalOptionList();
+    ASSERT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);
+    COleSafeArray sa;
+    sa.Attach(v);
+    long n = sa.GetOneDimSize();
+    EXPECT_GT(n, 50L);                 // dozens of options, both families
+    bool numeric = false, alpha = false;
+    for (long i = 0; i < n; i++) {
+        VARIANT e; VariantInit(&e);
+        sa.GetElement(&i, &e);
+        std::string name = vstr(e);
+        if (name == "AutoConnectWorlds") numeric = true;
+        if (name == "DefaultInputFont")  alpha = true;
+    }
+    EXPECT_TRUE(numeric);
+    EXPECT_TRUE(alpha);
+}
+
+// headless database plumbing: PopulateDatabase / SaveGlobalsToDatabase are
+// inert (writes swallowed, SQLITE_OK), and LoadGlobalsFromDatabase resolves
+// every option back to its table default.
+TEST(GlobalOptions, HeadlessDatabaseRoundTripRestoresDefaults)
+{
+    EXPECT_EQ(SQLITE_OK, App.PopulateDatabase());
+    App.SaveGlobalsToDatabase();       // must not crash / throw
+
+    App.m_bAutoConnectWorlds = 0;      // perturb away from the default (1)
+    App.LoadGlobalsFromDatabase();
+    EXPECT_EQ(1L, App.GetGlobalOption("AutoConnectWorlds").lVal);
+}
+
+// ShowGlobalOptions notes every option (name = value) into the world.
+TEST(GlobalOptions, ShowGlobalOptionsNotesEveryOption)
+{
+    CMUSHclientDoc doc = make_doc();
+    long before = (long)doc.m_LineList.GetCount();
+    App.ShowGlobalOptions(&doc);
+    EXPECT_GT((long)doc.m_LineList.GetCount(), before + 50);
+
+    bool found = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (CString(l->text, l->len).Find("AutoConnectWorlds") != -1)
+            { found = true; break; }
+    }
+    EXPECT_TRUE(found);
+}
+
+MC_TEST_MAIN()

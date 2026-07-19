@@ -491,6 +491,351 @@ TEST(PluginState, SaveStateAutoCreatesFolderAndNamesFile)
     App.m_strDefaultStateFilesDirectory.Empty();
 }
 
+// plugins.cpp SendToAll/SendToFirst dispatchers: "ignore disabled plugins" —
+// every dispatch variant must skip a disabled plugin, and run it again once
+// it is re-enabled.
+TEST(PluginCallback, DisabledPluginSkippedByAllDispatchVariants)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("dis", IDA, "DisPlugin",
+        "function OnPluginWorldSave() world.SetVariable('ws', 'ran') end\n"
+        "function OnPluginTrace(m)   world.SetVariable('tr', m)     end\n"
+        "function OnPluginSend(t)    world.SetVariable('sd', t)     return true end\n"
+        "function OnPluginCommandEntered(t) return t .. '!' end\n")));
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+
+    p->m_bEnabled = false;
+    CString cmd("go");
+    doc.SendToAllPluginCallbacks(ON_PLUGIN_WORLD_SAVE);              // no-arg
+    EXPECT_FALSE(doc.SendToFirstPluginCallbacks(ON_PLUGIN_TRACE, "t"));
+    EXPECT_TRUE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, "x", true));
+    doc.SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, cmd); // string rtn
+    EXPECT_STREQ("<unset>", (const char*)plugin_var(p, "ws"));
+    EXPECT_STREQ("<unset>", (const char*)plugin_var(p, "tr"));
+    EXPECT_STREQ("<unset>", (const char*)plugin_var(p, "sd"));
+    EXPECT_STREQ("go", (const char*)cmd);                            // untouched
+
+    p->m_bEnabled = true;
+    doc.SendToAllPluginCallbacks(ON_PLUGIN_WORLD_SAVE);
+    EXPECT_STREQ("ran", (const char*)plugin_var(p, "ws"));
+}
+
+// plugins.cpp SendToAllPluginCallbacksRtn: "this sends a string to all
+// plugins and allows them to modify it" — each plugin in load order sees the
+// previous plugin's rewrite (a pipeline, not fan-out of the original).
+TEST(PluginCallback, RtnCallbackChainPipesRewrittenString)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("rtn_a", IDA, "RtnA",
+        "function OnPluginCommandEntered(t) return t .. '+A' end\n")));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("rtn_b", IDB, "RtnB",
+        "function OnPluginCommandEntered(t) return t .. '+B' end\n")));
+
+    CString cmd("cmd");
+    doc.SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, cmd);
+    EXPECT_STREQ("cmd+A+B", (const char*)cmd);   // B saw A's output
+}
+
+// lua_scripting.cpp ExecuteLua (string in/out): the result is only replaced
+// when the function returns a string — no return leaves the text untouched,
+// while a returned number is coerced to its decimal string (lua_isstring
+// accepts numbers).
+TEST(PluginCallback, RtnCallbackNoReturnKeepsTextNumberIsCoerced)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("rtn_keep", IDA, "RtnKeep",
+        "function OnPluginCommandEntered(t) world.SetVariable('saw', t) end\n")));
+    CString cmd("keepme");
+    doc.SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, cmd);
+    EXPECT_STREQ("keepme", (const char*)cmd);    // nil return: unchanged
+    EXPECT_STREQ("keepme",
+                 (const char*)plugin_var(doc.GetPlugin(IDA), "saw"));
+
+    CMUSHclientDoc doc2 = make_doc();
+    ASSERT_TRUE(load_plugin(doc2, write_plugin("rtn_num", IDA, "RtnNum",
+        "function OnPluginCommandEntered(t) return 42 end\n")));
+    CString cmd2("original");
+    doc2.SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, cmd2);
+    EXPECT_STREQ("42", (const char*)cmd2);       // number coerced to string
+}
+
+// plugins.cpp ExecutePluginScript(long, long, string): both numbers and the
+// string reach the Lua callback in declaration order (numbers first).
+TEST(PluginCallback, TwoNumbersOneStringCallbackReceivesAllArgs)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("sd", IDA, "ScreendrawPlugin",
+        "function OnPluginScreendraw(t, l, s)\n"
+        "  world.SetVariable('args',\n"
+        "      tostring(t) .. '|' .. tostring(l) .. '|' .. s)\n"
+        "end\n")));
+
+    EXPECT_TRUE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SCREENDRAW,
+                                             (long)5, (long)1, "drawn",
+                                             false, false));
+    EXPECT_STREQ("5|1|drawn",
+                 (const char*)plugin_var(doc.GetPlugin(IDA), "args"));
+}
+
+// plugins.cpp 3-argument SendToAllPluginCallbacks: bStopOnTrue returns as
+// soon as a plugin with the callback answers true (later plugins unasked);
+// with NO handler at all the tail inverts: "if they wanted to stop on true,
+// assume false and vice-versa".
+TEST(PluginCallback, TwoNumbersOneStringStopOnTrueSemantics)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("sd_yes", IDA, "SaysTrue",
+        "function OnPluginScreendraw(t, l, s) return true end\n")));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("sd_after", IDB, "AfterTrue",
+        "function OnPluginScreendraw(t, l, s)\n"
+        "  world.SetVariable('ran', 'yes')\n"
+        "end\n")));
+
+    EXPECT_TRUE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SCREENDRAW,
+                                             (long)1, (long)2, "x",
+                                             true, false));   // stop on true
+    EXPECT_STREQ("<unset>",
+                 (const char*)plugin_var(doc.GetPlugin(IDB), "ran"));
+
+    // no plugin defines the callback: stop-on-true assumes false...
+    CMUSHclientDoc doc2 = make_doc();
+    ASSERT_TRUE(load_plugin(doc2, write_plugin("sd_none", IDA, "NoHandler",
+        "-- nothing\n")));
+    EXPECT_FALSE(doc2.SendToAllPluginCallbacks(ON_PLUGIN_SCREENDRAW,
+                                               (long)1, (long)2, "x",
+                                               true, false));
+    // ...and stop-on-false assumes true
+    EXPECT_TRUE(doc2.SendToAllPluginCallbacks(ON_PLUGIN_SCREENDRAW,
+                                              (long)1, (long)2, "x",
+                                              false, true));
+}
+
+// plugins.cpp 3-argument SendToAllPluginCallbacks: bStopOnFalse returns
+// false at the first handler that vetoes.
+TEST(PluginCallback, TwoNumbersOneStringStopOnFalseVetoes)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("sd_no", IDA, "SaysFalse",
+        "function OnPluginScreendraw(t, l, s) return false end\n")));
+
+    EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SCREENDRAW,
+                                              (long)1, (long)2, "x",
+                                              false, true));
+}
+
+// plugins.cpp 2-argument (number + string) SendToAllPluginCallbacks: the
+// same early-stop arms as the 3-argument form.
+TEST(PluginCallback, OneNumberOneStringStopSemantics)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("tr_yes", IDA, "ReqTrue",
+        "function OnPluginTelnetRequest(t, s)\n"
+        "  world.SetVariable('args', tostring(t) .. '|' .. s)\n"
+        "  return true\n"
+        "end\n")));
+    ASSERT_TRUE(load_plugin(doc, write_plugin("tr_after", IDB, "ReqAfter",
+        "function OnPluginTelnetRequest(t, s)\n"
+        "  world.SetVariable('ran', 'yes')\n"
+        "end\n")));
+
+    // stop-on-true: first true wins, B never asked
+    EXPECT_TRUE(doc.SendToAllPluginCallbacks(ON_PLUGIN_TELNET_REQUEST,
+                                             (long)201, string("do"),
+                                             true, false));
+    EXPECT_STREQ("201|do",
+                 (const char*)plugin_var(doc.GetPlugin(IDA), "args"));
+    EXPECT_STREQ("<unset>",
+                 (const char*)plugin_var(doc.GetPlugin(IDB), "ran"));
+
+    // stop-on-false with a vetoing handler
+    CMUSHclientDoc doc2 = make_doc();
+    ASSERT_TRUE(load_plugin(doc2, write_plugin("tr_no", IDA, "ReqFalse",
+        "function OnPluginTelnetRequest(t, s) return false end\n")));
+    EXPECT_FALSE(doc2.SendToAllPluginCallbacks(ON_PLUGIN_TELNET_REQUEST,
+                                               (long)1, string("x"),
+                                               false, true));
+
+    // no handler anywhere: tail inversion (same rule as 3-argument form)
+    CMUSHclientDoc doc3 = make_doc();
+    ASSERT_TRUE(load_plugin(doc3, write_plugin("tr_none", IDA, "ReqNone",
+        "-- nothing\n")));
+    EXPECT_FALSE(doc3.SendToAllPluginCallbacks(ON_PLUGIN_TELNET_REQUEST,
+                                               (long)1, string("x"),
+                                               true, false));
+    EXPECT_TRUE(doc3.SendToAllPluginCallbacks(ON_PLUGIN_TELNET_REQUEST,
+                                              (long)1, string("x"),
+                                              false, true));
+}
+
+// plugins.cpp CString convenience overloads "forward to the const char*
+// implementation" — including the 4-argument form, whose bStopOnTrue flag
+// is documented as ignored.
+TEST(PluginCallback, CStringOverloadsForwardToCharImplementation)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("cs", IDA, "CsPlugin",
+        "function OnPluginSend(t)\n"
+        "  world.SetVariable('saw', t)\n"
+        "  return false\n"
+        "end\n")));
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+
+    // 2-arg CString form: bStopOnFalse defaults off, veto still aggregates
+    EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, CString("one")));
+    EXPECT_STREQ("one", (const char*)plugin_var(p, "saw"));
+
+    // 3-arg CString form forwards the stop flag
+    EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, CString("two"),
+                                              true));
+    EXPECT_STREQ("two", (const char*)plugin_var(p, "saw"));
+
+    // 4-arg CString form: bStopOnTrue ignored, behaves as the 2-arg form
+    EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, CString("three"),
+                                              true, true));
+    EXPECT_STREQ("three", (const char*)plugin_var(p, "saw"));
+}
+
+// plugins.cpp GetPluginDispid: "else return DISPID_UNKNOWN" — a plugin with
+// no script engine can never resolve a callback.
+TEST(PluginCallback, EnginelessPluginDispidIsUnknown)
+{
+    CMUSHclientDoc doc = make_doc();
+    CPlugin* p = add_bare_plugin(doc, IDA, "NoEngine");
+    EXPECT_EQ(DISPID_UNKNOWN, p->GetPluginDispid("OnPluginSend"));
+}
+
+// plugins.cpp SaveState: "need a directory" — with no state directory
+// configured the save is skipped entirely: no OnPluginSaveState callback,
+// reported as 'not needed' (true).
+TEST(PluginState, SaveStateSkippedWhenNoStateDirConfigured)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_strWorldID = "0123456789abcdef01234567";
+    App.m_strDefaultStateFilesDirectory.Empty();
+
+    ASSERT_TRUE(load_plugin(doc, write_plugin("nodir", IDA, "NoDirPlugin",
+        "function OnPluginSaveState() world.SetVariable('cb', 'ran') end\n")));
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+
+    EXPECT_TRUE(p->SaveState(true));   // skipped, not an error
+    EXPECT_STREQ("<unset>", (const char*)plugin_var(p, "cb"));
+}
+
+// plugins.cpp SaveState: "need a world id" — an unsaved world (empty
+// m_strWorldID) cannot name a state file, so the save is skipped before the
+// OnPluginSaveState callback.
+TEST(PluginState, SaveStateSkippedWithoutWorldID)
+{
+    CMUSHclientDoc doc = make_doc();
+    // (the ctor seeds a world ID — plugin LOADING requires one, so clear it
+    // only after the load)
+    ASSERT_TRUE(load_plugin(doc, write_plugin("noworld", IDA, "NoWorldPlugin",
+        "function OnPluginSaveState() world.SetVariable('cb', 'ran') end\n")));
+    doc.m_strWorldID.Empty();
+
+    char dir[256];
+    snprintf(dir, sizeof dir, "/tmp/mc_test_noworld_%d/", (int)getpid());
+    App.m_strDefaultStateFilesDirectory = dir;
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+
+    EXPECT_TRUE(p->SaveState(true));
+    EXPECT_STREQ("<unset>", (const char*)plugin_var(p, "cb"));
+
+    App.m_strDefaultStateFilesDirectory.Empty();
+}
+
+// plugins.cpp SaveState: OnPluginSaveState runs BEFORE the variables are
+// serialized — a variable set inside the callback appears in the state file.
+TEST(PluginState, OnPluginSaveStateRunsBeforeSerialization)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_strWorldID = "0123456789abcdef01234567";
+    char dir[256];
+    snprintf(dir, sizeof dir, "/tmp/mc_test_cborder_%d/", (int)getpid());
+    App.m_strDefaultStateFilesDirectory = dir;
+
+    ASSERT_TRUE(load_plugin(doc, write_plugin("cborder", IDA, "CbOrderPlugin",
+        "function OnPluginSaveState()\n"
+        "  world.SetVariable('set_inside_callback', 'sentinel_value_xyzzy')\n"
+        "end\n")));
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+
+    EXPECT_FALSE(p->SaveState(true));   // false == saved OK (returns bError)
+
+    char statefile[512];
+    snprintf(statefile, sizeof statefile, "%s%s-%s-state.xml",
+             dir, "0123456789abcdef01234567", IDA);
+    FILE* f = fopen(statefile, "rb");
+    ASSERT_NE(nullptr, (void*)f);
+    std::string contents;
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0)
+        contents.append(buf, n);
+    fclose(f);
+    EXPECT_NE(std::string::npos, contents.find("set_inside_callback"));
+    EXPECT_NE(std::string::npos, contents.find("sentinel_value_xyzzy"));
+
+    App.m_strDefaultStateFilesDirectory.Empty();
+}
+
+// plugins.cpp SaveState: a state "folder" that exists but is NOT a
+// directory raises the error path; headless there is no directory picker,
+// so the save proceeds with the unchanged (file) prefix — the state file
+// lands beside it with the concatenated name.
+TEST(PluginState, SaveStateFolderNotADirectoryStillSavesBesideIt)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.m_strWorldID = "0123456789abcdef01234567";
+
+    char base[256], blocker[256];
+    snprintf(base, sizeof base, "/tmp/mc_test_notdir_%d", (int)getpid());
+    ::mkdir(base, 0755);
+    snprintf(blocker, sizeof blocker, "%s/blocker", base);
+    FILE* bf = fopen(blocker, "wb");
+    ASSERT_NE(nullptr, (void*)bf);
+    fputs("x", bf);
+    fclose(bf);
+    App.m_strDefaultStateFilesDirectory = blocker;    // a FILE, not a folder
+
+    ASSERT_TRUE(load_plugin(doc, write_plugin("notdir", IDA, "NotDirPlugin",
+        "-- nothing\n")));
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+
+    EXPECT_FALSE(p->SaveState(true));   // still "succeeds"
+
+    char statefile[512];
+    snprintf(statefile, sizeof statefile, "%s%s-%s-state.xml",
+             blocker, "0123456789abcdef01234567", IDA);
+    struct stat st;
+    EXPECT_EQ(0, stat(statefile, &st)); // beside the blocker, glued name
+
+    App.m_strDefaultStateFilesDirectory.Empty();
+}
+
+// plugins.cpp ~CPlugin: "delete our arrays" — an array created inside a
+// plugin lives in that plugin's own m_Arrays map (not the world's), and is
+// reclaimed when the plugin closes.
+TEST(PluginLifecycle, PluginArrayLivesInPluginScope)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_TRUE(load_plugin(doc, write_plugin("arr", IDA, "ArrPlugin",
+        "world.SetVariable('rc', tostring(world.ArrayCreate('a1')))\n"
+        "world.ArraySet('a1', 'k', 'v')\n")));
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+    EXPECT_STREQ("0", (const char*)plugin_var(p, "rc"));   // eOK
+    EXPECT_EQ((size_t)1, p->m_Arrays.size());              // plugin-scoped
+    EXPECT_EQ((size_t)0, doc.m_Arrays.size());             // not world-scoped
+    // doc teardown at end of test runs ~CPlugin, freeing the array map
+}
+
 #endif // MUSHCLIENT_LUA_SCRIPTING
 
 MC_TEST_MAIN()

@@ -714,6 +714,108 @@ TEST(DatabaseTest, GetFieldBadSqlReturnsNilAndLeavesNoStatement)
     EXPECT_LUA_NUM(f.L, -4, "return world.DatabaseFinalize('db')");
 }
 
+// ── Direct C++ (BSTR/VARIANT) variants ───────────────────────────────────
+// Lua has its own column glue, so the COM-shaped methods (used by the
+// dispatch-based engines) are exercised directly here.  On the port a BSTR
+// is a char* copy and VARIANTs use the mfc_ui.h shim.
+
+TEST(DatabaseTest, CppColumnTextReturnsTextAndEmptyOutOfRange)
+{
+    DbFixture f;
+    ASSERT_NE(nullptr, f.L);
+    f.doc.DatabasePrepare("db", "SELECT name FROM t ORDER BY id");
+    f.doc.DatabaseStep("db");
+    BSTR s = f.doc.DatabaseColumnText("db", 1);
+    EXPECT_STREQ("alpha", (const char*)s);
+    SysFreeString(s);
+    s = f.doc.DatabaseColumnText("db", 9);      // out of range → empty
+    EXPECT_STREQ("", (const char*)s);
+    SysFreeString(s);
+}
+
+TEST(DatabaseTest, CppColumnValueVariantTypes)
+{
+    DbFixture f;
+    ASSERT_NE(nullptr, f.L);
+    f.doc.DatabasePrepare("db", "SELECT id, name, weight, notes FROM t ORDER BY id");
+    f.doc.DatabaseStep("db");
+
+    VARIANT v = f.doc.DatabaseColumnValue("db", 1);   // INTEGER → VT_I4
+    EXPECT_EQ(VT_I4, (int)v.vt);
+    EXPECT_EQ(1L, (long)v.lVal);
+
+    v = f.doc.DatabaseColumnValue("db", 2);           // TEXT → VT_BSTR
+    EXPECT_EQ(VT_BSTR, (int)v.vt);
+    EXPECT_STREQ("alpha", (const char*)v.bstrVal);
+    VariantClear(&v);
+
+    v = f.doc.DatabaseColumnValue("db", 3);           // REAL → VT_R8
+    EXPECT_EQ(VT_R8, (int)v.vt);
+    EXPECT_NEAR(1.5, v.dblVal, 1e-9);
+
+    v = f.doc.DatabaseColumnValue("db", 4);           // SQL NULL → VT_EMPTY
+    EXPECT_EQ(VT_EMPTY, (int)v.vt);
+
+    v = f.doc.DatabaseColumnValue("db", 9);           // out of range → VT_NULL
+    EXPECT_EQ(VT_NULL, (int)v.vt);
+}
+
+TEST(DatabaseTest, CppColumnValuesSafearrayTypes)
+{
+    DbFixture f;
+    ASSERT_NE(nullptr, f.L);
+    f.doc.DatabasePrepare("db", "SELECT id, name, weight, notes FROM t ORDER BY id");
+    f.doc.DatabaseStep("db");
+    VARIANT v = f.doc.DatabaseColumnValues("db");
+    ASSERT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);
+    ASSERT_TRUE(v.parray != NULL);
+    VARIANT* elems = (VARIANT*)v.parray->pvData;
+    ASSERT_TRUE(elems != NULL);
+    EXPECT_EQ(VT_I4, (int)elems[0].vt);
+    EXPECT_EQ(1L, (long)elems[0].lVal);
+    EXPECT_EQ(VT_BSTR, (int)elems[1].vt);
+    EXPECT_STREQ("alpha", (const char*)elems[1].bstrVal);
+    EXPECT_EQ(VT_R8, (int)elems[2].vt);
+    EXPECT_NEAR(1.5, elems[2].dblVal, 1e-9);
+    // SQL NULL element: VT_NULL on Windows (ChangeType(VT_NULL)); the port's
+    // COleVariant::ChangeType has no VT_NULL arm, so it stays VT_EMPTY
+    // (reported as a minor shim parity gap — both encode "no value").
+    EXPECT_TRUE(elems[3].vt == VT_NULL || elems[3].vt == VT_EMPTY);
+    VariantClear(&v);
+}
+
+TEST(DatabaseTest, CppColumnValuesWithoutRowIsNotAnArray)
+{
+    DbFixture f;
+    ASSERT_NE(nullptr, f.L);
+    f.doc.DatabasePrepare("db", "SELECT id FROM t");
+    VARIANT v = f.doc.DatabaseColumnValues("db");   // no step yet
+    EXPECT_TRUE(v.parray == NULL);                  // empty detach
+    VariantClear(&v);
+}
+
+TEST(DatabaseTest, CppGetFieldReturnsFirstFieldVariant)
+{
+    DbFixture f;
+    ASSERT_NE(nullptr, f.L);
+    VARIANT v = f.doc.DatabaseGetField("db", "SELECT name FROM t ORDER BY id DESC");
+    EXPECT_EQ(VT_BSTR, (int)v.vt);
+    EXPECT_STREQ("beta", (const char*)v.bstrVal);
+    VariantClear(&v);
+    // statement finalized: fresh prepare allowed
+    EXPECT_EQ(0L, f.doc.DatabasePrepare("db", "SELECT 1"));
+}
+
+TEST(DatabaseTest, CppGetFieldBadSqlOrNoRowsIsEmptyVariant)
+{
+    DbFixture f;
+    ASSERT_NE(nullptr, f.L);
+    VARIANT v = f.doc.DatabaseGetField("db", "NOT REAL SQL");
+    EXPECT_EQ(VT_EMPTY, (int)v.vt);
+    v = f.doc.DatabaseGetField("db", "SELECT id FROM t WHERE id > 90");
+    EXPECT_EQ(VT_EMPTY, (int)v.vt);
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

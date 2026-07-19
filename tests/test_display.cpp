@@ -419,13 +419,22 @@ TEST(NotingTest, NoteDeferredWhileNotesNotWantedThenDrained)
     EXPECT_EQ(0, strncmp(doc.m_OutstandingLines.front().m_sText.c_str(),
                          "deferred", 8));
 
-    // ...and replayed verbatim by OutputOutstandingLines
+    // ...and replayed when the MUD line completes (ProcessPreviousLine's
+    // trailing OutputOutstandingLines).  NOTE: calling OutputOutstandingLines
+    // directly with a partial MUD line pending would re-enter itself via
+    // Tell→DisplayMsg→ProcessPreviousLine and clear the list mid-iteration
+    // (latent hazard — unreachable from the shipping call sites, which only
+    // drain when the current line is empty/fresh).
     doc.m_bNotesNotWantedNow = false;
-    doc.OutputOutstandingLines();
+    feed(doc, " done\n");
     EXPECT_TRUE(doc.m_OutstandingLines.empty());
-    CLine* note_line = closed_tail(doc);
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "partial done");
+    CLine* note_line = nth_line(doc, 1);
     ASSERT_NE(nullptr, note_line);
     EXPECT_TRUE(line_text(note_line) == "deferred");
+    EXPECT_EQ(COMMENT, note_line->flags & NOTE_OR_COMMAND);
     CStyle* s = style_at(note_line, 0);
     ASSERT_NE(nullptr, s);
     EXPECT_EQ(COLOUR_RGB, s->iFlags & COLOURTYPE);
@@ -654,6 +663,131 @@ TEST(NotingTest, NoteHrEmitsHorizRuleLine)
     EXPECT_TRUE(line_text(l0) == "abc");
     EXPECT_EQ(HORIZ_RULE, l1->flags);
     EXPECT_TRUE(doc.m_pCurrentLine != l1);
+}
+
+// ── Logging: OpenLog/WriteLog/CloseLog + the note-logging pipeline ───────
+// (methods_logging.cpp, doc_shared OpenLog/CloseLog, and the
+// ProcessPreviousLine note-logging / LogLineInHTMLcolour paths.)
+
+#include <cstdio>
+#include <cstdlib>
+
+static std::string fresh_log_path()
+{
+    static int counter = 0;
+    const char* tmp = getenv("TMPDIR");
+    char buf[512];
+    snprintf(buf, sizeof buf, "%s/mc_test_log_%d_%d.txt",
+             tmp ? tmp : "/tmp", (int)getpid(), ++counter);
+    remove(buf);
+    return buf;
+}
+
+static std::string slurp(const std::string& path)
+{
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return "<no file>";
+    std::string s;
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, n);
+    fclose(f);
+    return s;
+}
+
+static bool log_contains(const std::string& hay, const char* needle)
+{
+    return hay.find(needle) != std::string::npos;
+}
+
+TEST(LoggingTest, OpenWriteFlushCloseLifecycle)
+{
+    CMUSHclientDoc doc = make_doc();
+    std::string path = fresh_log_path();
+    EXPECT_EQ(0L, doc.OpenLog(path.c_str(), FALSE));       // eOK
+    EXPECT_TRUE(doc.IsLogOpen());
+    EXPECT_EQ(30015L, doc.OpenLog(path.c_str(), FALSE));   // eLogFileAlreadyOpen
+    EXPECT_EQ(0L, doc.WriteLog("hello"));                  // newline appended
+    EXPECT_EQ(0L, doc.FlushLog());
+    EXPECT_TRUE(log_contains(slurp(path), "hello\n"));
+    EXPECT_EQ(0L, doc.CloseLog());
+    EXPECT_FALSE(doc.IsLogOpen());
+    EXPECT_EQ(30014L, doc.CloseLog());                     // eLogFileNotOpen
+    EXPECT_EQ(30014L, doc.WriteLog("x"));
+    EXPECT_EQ(30014L, doc.FlushLog());
+    remove(path.c_str());
+}
+
+TEST(LoggingTest, OpenLogBadPathReturnsCouldNotOpenFile)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_EQ(30013L, doc.OpenLog("/nonexistent_mc_dir/x.log", FALSE));  // eCouldNotOpenFile
+    EXPECT_FALSE(doc.IsLogOpen());
+}
+
+TEST(LoggingTest, NoteLoggedWithPreambleAndPostamble)
+{
+    CMUSHclientDoc doc = make_doc();
+    std::string path = fresh_log_path();
+    ASSERT_EQ(0L, doc.OpenLog(path.c_str(), FALSE));
+    doc.m_bLogNotes = TRUE;
+    doc.m_strLogLinePreambleNotes  = "PRE:";
+    doc.m_strLogLinePostambleNotes = ":POST";
+    doc.Note("logged note");
+    doc.CloseLog();
+    std::string log = slurp(path);
+    EXPECT_TRUE(log_contains(log, "PRE:logged note:POST\n"));
+    remove(path.c_str());
+}
+
+TEST(LoggingTest, NoteLoggedAsHtmlEscapesMarkup)
+{
+    CMUSHclientDoc doc = make_doc();
+    std::string path = fresh_log_path();
+    ASSERT_EQ(0L, doc.OpenLog(path.c_str(), FALSE));
+    doc.m_bLogNotes = TRUE;
+    doc.m_bLogHTML  = TRUE;
+    doc.Note("a<b>&c");
+    doc.CloseLog();
+    std::string log = slurp(path);
+    EXPECT_TRUE(log_contains(log, "a&lt;b&gt;&amp;c"));
+    remove(path.c_str());
+}
+
+TEST(LoggingTest, NoteLoggedInHtmlColourEmitsFontSpanAndUnderline)
+{
+    CMUSHclientDoc doc = make_doc();
+    std::string path = fresh_log_path();
+    ASSERT_EQ(0L, doc.OpenLog(path.c_str(), FALSE));
+    doc.m_bLogNotes    = TRUE;
+    doc.m_bLogHTML     = TRUE;
+    doc.m_bLogInColour = TRUE;
+    doc.NoteColourRGB(RGB(0xAB, 0xCD, 0xEF), RGB(0x11, 0x22, 0x33));
+    doc.NoteStyle(UNDERLINE);
+    doc.Note("shiny");
+    doc.CloseLog();
+    std::string log = slurp(path);
+    EXPECT_TRUE(log_contains(log, "<font color=\"#ABCDEF\">"));
+    // non-black background → span with both colours
+    EXPECT_TRUE(log_contains(log, "background: #112233"));
+    EXPECT_TRUE(log_contains(log, "<u>shiny</u>"));
+    EXPECT_TRUE(log_contains(log, "</font>"));
+    remove(path.c_str());
+}
+
+TEST(LoggingTest, LogRawSuppressesNotePreambleFormatting)
+{
+    CMUSHclientDoc doc = make_doc();
+    std::string path = fresh_log_path();
+    ASSERT_EQ(0L, doc.OpenLog(path.c_str(), FALSE));
+    doc.m_bLogNotes = TRUE;
+    doc.m_bLogRaw   = TRUE;      // raw mode: PPL's cooked note logging skipped
+    doc.m_strLogLinePreambleNotes = "PRE:";
+    doc.Note("raw note");
+    doc.CloseLog();
+    std::string log = slurp(path);
+    EXPECT_FALSE(log_contains(log, "PRE:"));
+    remove(path.c_str());
 }
 
 // ── AnsiNote: the ESC[...m state machine over Tell ───────────────────────

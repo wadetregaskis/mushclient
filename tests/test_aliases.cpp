@@ -430,4 +430,210 @@ TEST(AliasScript, DeleteAliasFromOwnScriptReturnsItemInUse)
 }
 #endif // MUSHCLIENT_LUA_SCRIPTING
 
+// ═══ world.* alias API (methods_aliases.cpp) ══════════════════════════════
+
+#include "flags.h"   // eEnabled / eReplace / eTemporary alias-flags
+
+static std::string vs(const VARIANT& v)
+{
+    if (v.vt != VT_BSTR) return "<not-a-string>";
+    return std::string((const char*)CString(v.bstrVal));
+}
+
+// AddAlias validation: every reject path answers its own error code, and
+// eReplace converts the duplicate error into an overwrite.
+TEST(AliasApi, AddAliasValidatesInput)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    EXPECT_EQ((long)eOK, doc.AddAlias("good", "north", "go north", eEnabled, ""));
+    EXPECT_EQ((long)eOK, doc.IsAlias("good"));
+    EXPECT_EQ((long)eAliasNotFound, doc.IsAlias("missing"));
+
+    // duplicate label rejected unless eReplace
+    EXPECT_EQ((long)eAliasAlreadyExists,
+              doc.AddAlias("good", "south", "go south", eEnabled, ""));
+    EXPECT_EQ((long)eOK,
+              doc.AddAlias("good", "south", "go south", eEnabled | eReplace, ""));
+    EXPECT_STREQ("south", vs(doc.GetAliasInfo("good", 1)).c_str());  // replaced
+
+    // empty match text
+    EXPECT_EQ((long)eAliasCannotBeEmpty, doc.AddAlias("empty", "", "x", 0, ""));
+    // label must be a valid object name
+    EXPECT_EQ((long)eInvalidObjectLabel, doc.AddAlias("1bad", "m", "x", 0, ""));
+    // PORT DEVIATION (reported): Windows regcomp throws, so AddAlias answers
+    // eBadRegularExpression there.  The port's regcomp (regexp.cpp #else arm)
+    // prints and returns nullptr, so the alias is accepted with a null
+    // compiled regexp.  Flip this to eBadRegularExpression when parity is
+    // restored.
+    EXPECT_EQ((long)eOK,
+              doc.AddAlias("rx", "(unclosed", "x", eAliasRegularExpression, ""));
+
+    // a blank label is auto-assigned (alias still created)
+    long before = 0;
+    { VARIANT v = doc.GetInfo(221); before = v.lVal; }
+    EXPECT_EQ((long)eOK, doc.AddAlias("", "autoname", "x", eEnabled, ""));
+    { VARIANT v = doc.GetInfo(221); EXPECT_EQ(before + 1, v.lVal); }
+}
+
+// GetAlias hands back match/response/flags through VARIANT out-params.
+TEST(AliasApi, GetAliasRoundTrip)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddAlias("rt", "tell * *", "say %1",
+                                      eEnabled | eKeepEvaluating, ""));
+
+    VARIANT m, r, p, f, s;
+    VariantInit(&m); VariantInit(&r); VariantInit(&p);
+    VariantInit(&f); VariantInit(&s);
+    EXPECT_EQ((long)eOK, doc.GetAlias("rt", &m, &r, &p, &f, &s));
+    EXPECT_STREQ("tell * *", vs(m).c_str());
+    EXPECT_STREQ("say %1",   vs(r).c_str());
+    // Flags come back as a VT_I2 short...
+    ASSERT_EQ(VT_I2, (int)f.vt);
+    EXPECT_TRUE((f.iVal & eEnabled) != 0);
+    // ...and keep_evaluating is NOT part of the reconstruction (a canonical
+    // Windows asymmetry: AddAlias consumes eKeepEvaluating, GetAlias never
+    // reports it) — scripts must read it via GetAliasInfo(19) instead.
+    EXPECT_FALSE((f.iVal & eKeepEvaluating) != 0);
+    EXPECT_TRUE(doc.GetAliasInfo("rt", 19).boolVal);
+
+    EXPECT_EQ((long)eAliasNotFound, doc.GetAlias("nope", &m, &r, &p, &f, &s));
+}
+
+// GetAliasList enumerates the labels of every alias.
+TEST(AliasApi, GetAliasListEnumeratesLabels)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.AddAlias("one", "m1", "", eEnabled, "");
+    doc.AddAlias("two", "m2", "", eEnabled, "");
+
+    VARIANT v = doc.GetAliasList();
+    ASSERT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);
+    COleSafeArray sa;
+    sa.Attach(v);
+    EXPECT_EQ(2L, sa.GetOneDimSize());
+    bool one = false, two = false;
+    for (long i = 0; i < sa.GetOneDimSize(); i++) {
+        VARIANT e; VariantInit(&e);
+        sa.GetElement(&i, &e);
+        if (vs(e) == "one") one = true;
+        if (vs(e) == "two") two = true;
+    }
+    EXPECT_TRUE(one);
+    EXPECT_TRUE(two);
+}
+
+// GetAliasInfo conventions: missing alias VT_EMPTY, bad code VT_NULL, and
+// the representative arms answer live alias state.
+TEST(AliasApi, GetAliasInfoArms)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddAlias("ai", "match*", "send this",
+                                      eEnabled | eTemporary, ""));
+
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetAliasInfo("missing", 1).vt);
+    EXPECT_EQ(VT_NULL,  (int)doc.GetAliasInfo("ai", 999).vt);
+
+    EXPECT_STREQ("match*",    vs(doc.GetAliasInfo("ai", 1)).c_str());
+    EXPECT_STREQ("send this", vs(doc.GetAliasInfo("ai", 2)).c_str());
+    EXPECT_TRUE(doc.GetAliasInfo("ai", 6).boolVal);        // enabled
+    EXPECT_FALSE(doc.GetAliasInfo("ai", 7).boolVal);       // not regexp
+    EXPECT_TRUE(doc.GetAliasInfo("ai", 14).boolVal);       // temporary
+    EXPECT_EQ(0L, doc.GetAliasInfo("ai", 11).lVal);        // never matched
+    EXPECT_EQ((long)DEFAULT_ALIAS_SEQUENCE,
+              doc.GetAliasInfo("ai", 20).lVal);            // default sequence
+    EXPECT_FALSE(doc.GetAliasInfo("ai", 29).boolVal);      // not one-shot
+}
+
+// Alias options: boolean options accept y/n, numeric options are validated,
+// unknown names and unknown aliases each answer their own code.
+TEST(AliasApi, AliasOptionRoundTripAndErrors)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddAlias("oa", "m", "x", eEnabled, ""));
+
+    EXPECT_EQ((long)eAliasNotFound, doc.SetAliasOption("zz", "enabled", "n"));
+    EXPECT_EQ((long)eUnknownOption, doc.SetAliasOption("oa", "no_such", "1"));
+
+    // boolean via y/n
+    EXPECT_EQ((long)eOK, doc.SetAliasOption("oa", "enabled", "n"));
+    EXPECT_EQ(0L, doc.GetAliasOption("oa", "enabled").lVal);
+    EXPECT_EQ((long)eOK, doc.SetAliasOption("oa", "enabled", "y"));
+    EXPECT_EQ(1L, doc.GetAliasOption("oa", "enabled").lVal);
+
+    // numeric with validation
+    EXPECT_EQ((long)eOK, doc.SetAliasOption("oa", "sequence", "50"));
+    EXPECT_EQ(50L, doc.GetAliasInfo("oa", 20).lVal);
+    EXPECT_EQ((long)eOptionOutOfRange,
+              doc.SetAliasOption("oa", "sequence", "not-a-number"));
+
+    // alpha option
+    EXPECT_EQ((long)eOK, doc.SetAliasOption("oa", "group", "mygroup"));
+    EXPECT_STREQ("mygroup", vs(doc.GetAliasOption("oa", "group")).c_str());
+
+    // unknown option on read is indistinguishable from a missing alias: EMPTY
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetAliasOption("oa", "no_such").vt);
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetAliasOption("zz", "enabled").vt);
+}
+
+// Wildcards captured by the last match are retrievable by number — %0 is
+// the whole matching text.
+TEST(AliasApi, WildcardsCapturedOnMatch)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddAlias("wc", "tell * *", "", eEnabled, ""));
+
+    type_command(doc, "tell bob hello");
+
+    EXPECT_STREQ("bob",   vs(doc.GetAliasWildcard("wc", "1")).c_str());
+    EXPECT_STREQ("hello", vs(doc.GetAliasWildcard("wc", "2")).c_str());
+    EXPECT_STREQ("tell bob hello", vs(doc.GetAliasWildcard("wc", "0")).c_str());
+    EXPECT_STREQ("bob",   vs(doc.GetAliasInfo("wc", 101)).c_str());
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetAliasWildcard("missing", "1").vt);
+}
+
+// Group operations count only members of the named group; temporaries are
+// swept by DeleteTemporaryAliases.
+TEST(AliasApi, GroupsAndTemporarySweep)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.AddAlias("g1", "m1", "", eEnabled, "");
+    doc.AddAlias("g2", "m2", "", eEnabled, "");
+    doc.AddAlias("solo", "m3", "", eEnabled, "");
+    doc.SetAliasOption("g1", "group", "grp");
+    doc.SetAliasOption("g2", "group", "grp");
+
+    EXPECT_EQ(2L, doc.EnableAliasGroup("grp", FALSE));
+    EXPECT_FALSE(doc.GetAliasInfo("g1", 6).boolVal);
+    EXPECT_FALSE(doc.GetAliasInfo("g2", 6).boolVal);
+    EXPECT_TRUE(doc.GetAliasInfo("solo", 6).boolVal);      // untouched
+
+    EXPECT_EQ(0L, doc.EnableAliasGroup("nogroup", TRUE));  // no members
+
+    EXPECT_EQ(2L, doc.DeleteAliasGroup("grp"));
+    EXPECT_EQ((long)eAliasNotFound, doc.IsAlias("g1"));
+    EXPECT_EQ((long)eOK, doc.IsAlias("solo"));
+
+    doc.AddAlias("tmp", "mt", "", eEnabled | eTemporary, "");
+    EXPECT_EQ(1L, doc.DeleteTemporaryAliases());
+    EXPECT_EQ((long)eAliasNotFound, doc.IsAlias("tmp"));
+    EXPECT_EQ((long)eOK, doc.IsAlias("solo"));
+
+    EXPECT_EQ((long)eOK, doc.DeleteAlias("solo"));
+    EXPECT_EQ((long)eAliasNotFound, doc.DeleteAlias("solo"));
+}
+
+// EnableAlias toggles one alias and reports a missing one.
+TEST(AliasApi, EnableAliasToggleAndMissing)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.AddAlias("ea", "m", "", eEnabled, "");
+    EXPECT_EQ((long)eOK, doc.EnableAlias("ea", FALSE));
+    EXPECT_FALSE(doc.GetAliasInfo("ea", 6).boolVal);
+    EXPECT_EQ((long)eOK, doc.EnableAlias("ea", TRUE));
+    EXPECT_TRUE(doc.GetAliasInfo("ea", 6).boolVal);
+    EXPECT_EQ((long)eAliasNotFound, doc.EnableAlias("nope", TRUE));
+}
+
 MC_TEST_MAIN()

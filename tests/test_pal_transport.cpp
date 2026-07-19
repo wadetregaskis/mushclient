@@ -456,4 +456,14 @@ TEST(PalTransport, CheckConnectedReturnsNonzeroWhenDisconnected)
     delete doc;
 }
 
+// platform/posix_transport.cpp: the full ITransport conformance selftest —
+// async DNS (+cancel), a real loopback TCP round trip, TLS establish/refuse
+// against an in-process self-signed server, and destroy-inside-onBytes
+// safety.  The same suite the app runs under --pal-transport-selftest;
+// here it exercises the REAL POSIX adapter inside the unit binary.
+TEST(PalTransport, PosixAdapterConformanceSelftest)
+{
+    EXPECT_EQ(0, RunPalTransportSelfTest());   // returns the failure count
+}
+
 MC_TEST_MAIN()

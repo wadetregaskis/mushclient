@@ -527,4 +527,196 @@ TEST(TimerScript, ScriptDeletingOtherDueTimerPreventsItsFiring)
 }
 #endif // MUSHCLIENT_LUA_SCRIPTING
 
+// ═══ world.* timer API (methods_timers.cpp) ═══════════════════════════════
+
+// (the eEnabled / eAtTime / eOneShot flag enums come via doc_stub.h)
+#include <string>
+
+static std::string vs(const VARIANT& v)
+{
+    if (v.vt != VT_BSTR) return "<not-a-string>";
+    return std::string((const char*)CString(v.bstrVal));
+}
+
+// AddTimer validation: out-of-range time parts, the zero-interval rule and
+// duplicate labels each answer their own error code.
+TEST(TimerApi, AddTimerValidatesTime)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    EXPECT_EQ((long)eOK, doc.AddTimer("t1", 0, 1, 0, "hello", eEnabled, ""));
+    EXPECT_EQ((long)eOK, doc.IsTimer("t1"));
+
+    EXPECT_EQ((long)eTimerAlreadyExists,
+              doc.AddTimer("t1", 0, 2, 0, "x", eEnabled, ""));
+    EXPECT_EQ((long)eOK,
+              doc.AddTimer("t1", 0, 2, 0, "x", eEnabled | eReplace, ""));
+
+    EXPECT_EQ((long)eTimeInvalid, doc.AddTimer("h", 24, 0, 0,  "", eEnabled, ""));
+    EXPECT_EQ((long)eTimeInvalid, doc.AddTimer("m", 0, 60, 0,  "", eEnabled, ""));
+    EXPECT_EQ((long)eTimeInvalid, doc.AddTimer("s", 0, 0, 60.0, "", eEnabled, ""));
+    EXPECT_EQ((long)eTimeInvalid, doc.AddTimer("n", 0, 0, -1.0, "", eEnabled, ""));
+    // an "every" timer may not be every-zero...
+    EXPECT_EQ((long)eTimeInvalid, doc.AddTimer("z", 0, 0, 0, "", eEnabled, ""));
+    // ...but AT midnight is a perfectly good moment
+    EXPECT_EQ((long)eOK, doc.AddTimer("at0", 0, 0, 0, "", eEnabled | eAtTime, ""));
+
+    EXPECT_EQ((long)eInvalidObjectLabel,
+              doc.AddTimer("8bad", 0, 1, 0, "", eEnabled, ""));
+}
+
+// GetTimer hands the schedule back; at-time timers answer their parts too.
+TEST(TimerApi, GetTimerRoundTripAndList)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTimer("rt", 1, 2, 3.5, "the send",
+                                      eEnabled, ""));
+
+    VARIANT h, m, s, r, f, sc;
+    VariantInit(&h); VariantInit(&m); VariantInit(&s);
+    VariantInit(&r); VariantInit(&f); VariantInit(&sc);
+    EXPECT_EQ((long)eOK, doc.GetTimer("rt", &h, &m, &s, &r, &f, &sc));
+    EXPECT_EQ((short)1, h.iVal);
+    EXPECT_EQ((short)2, m.iVal);
+    EXPECT_NEAR(3.5, s.dblVal, 0.0001);
+    EXPECT_STREQ("the send", vs(r).c_str());
+    EXPECT_TRUE((f.lVal & eEnabled) != 0);
+    EXPECT_EQ((long)eTimerNotFound, doc.GetTimer("no", &h, &m, &s, &r, &f, &sc));
+
+    VARIANT v = doc.GetTimerList();
+    ASSERT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);
+    COleSafeArray sa;
+    sa.Attach(v);
+    EXPECT_EQ(1L, sa.GetOneDimSize());
+    long i0 = 0;
+    VARIANT e; VariantInit(&e);
+    sa.GetElement(&i0, &e);
+    EXPECT_STREQ("rt", vs(e).c_str());
+}
+
+// Timer options: y/n booleans, numeric range validation, group as alpha.
+TEST(TimerApi, TimerOptionRoundTripAndErrors)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTimer("to", 0, 5, 0, "", eEnabled, ""));
+
+    EXPECT_EQ((long)eTimerNotFound, doc.SetTimerOption("zz", "enabled", "n"));
+    EXPECT_EQ((long)eUnknownOption, doc.SetTimerOption("to", "no_such", "1"));
+
+    // numeric timer options come back as VT_R8 doubles (seconds can be
+    // fractional, so the whole numeric family answers doubles)
+    EXPECT_EQ((long)eOK, doc.SetTimerOption("to", "enabled", "n"));
+    EXPECT_NEAR(0.0, doc.GetTimerOption("to", "enabled").dblVal, 0.0001);
+    EXPECT_EQ((long)eOK, doc.SetTimerOption("to", "enabled", "y"));
+    EXPECT_NEAR(1.0, doc.GetTimerOption("to", "enabled").dblVal, 0.0001);
+
+    EXPECT_EQ((long)eOK, doc.SetTimerOption("to", "minute", "30"));
+    EXPECT_NEAR(30.0, doc.GetTimerOption("to", "minute").dblVal, 0.0001);
+    EXPECT_EQ((long)eOptionOutOfRange, doc.SetTimerOption("to", "minute", "99"));
+    EXPECT_EQ((long)eOptionOutOfRange, doc.SetTimerOption("to", "minute", "abc"));
+
+    EXPECT_EQ((long)eOK, doc.SetTimerOption("to", "group", "grp"));
+    EXPECT_STREQ("grp", vs(doc.GetTimerOption("to", "group")).c_str());
+}
+
+// The DoAfter family plants temporary one-shot timers with the right
+// destination; sub-0.1-second and >24h requests are refused.
+TEST(TimerApi, DoAfterFamilyPlantsTemporaryOneShots)
+{
+    CMUSHclientDoc doc = make_doc();
+    EXPECT_EQ(0, (int)doc.GetTimerMap().GetCount());
+
+    EXPECT_EQ((long)eOK, doc.DoAfter(5, "go north"));
+    EXPECT_EQ((long)eOK, doc.DoAfterNote(6, "a note"));
+    EXPECT_EQ((long)eOK, doc.DoAfterSpeedWalk(7, "4n"));
+    EXPECT_EQ(3, (int)doc.GetTimerMap().GetCount());
+
+    int oneshot = 0, temp = 0, toWorld = 0, toOutput = 0, toSpeedwalk = 0;
+    for (POSITION pos = doc.GetTimerMap().GetStartPosition(); pos; ) {
+        CString label;
+        CTimer* t = nullptr;
+        doc.GetTimerMap().GetNextAssoc(pos, label, t);
+        if (t->bOneShot) oneshot++;
+        if (t->bTemporary) temp++;
+        if (t->iSendTo == eSendToWorld) toWorld++;
+        if (t->iSendTo == eSendToOutput) toOutput++;
+        if (t->iSendTo == eSendToSpeedwalk) toSpeedwalk++;
+    }
+    EXPECT_EQ(3, oneshot);
+    EXPECT_EQ(3, temp);
+    EXPECT_EQ(1, toWorld);      // DoAfter
+    EXPECT_EQ(1, toOutput);     // DoAfterNote
+    EXPECT_EQ(1, toSpeedwalk);  // DoAfterSpeedWalk
+
+    EXPECT_EQ((long)eTimeInvalid,     doc.DoAfter(0.05, "x"));      // < 0.1s
+    EXPECT_EQ((long)eTimeInvalid,     doc.DoAfter(86400.0, "x"));   // >= 24h
+    EXPECT_EQ((long)eOptionOutOfRange, doc.DoAfterSpecial(1, "x", 99));
+
+    EXPECT_EQ(3L, doc.DeleteTemporaryTimers());
+    EXPECT_EQ(0, (int)doc.GetTimerMap().GetCount());
+}
+
+// ResetTimer pushes the next fire time forward from now; a missing name
+// answers eTimerNotFound.
+TEST(TimerApi, ResetTimerRecomputesFireTime)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTimer("rt", 0, 0, 30, "", eEnabled, ""));
+    CTimer* t = nullptr;
+    ASSERT_TRUE(doc.GetTimerMap().Lookup(CString("rt"), t));
+
+    make_overdue(t);
+    CmcDateTime overdue = t->tFireTime;
+    EXPECT_EQ((long)eOK, doc.ResetTimer("rt"));
+    EXPECT_TRUE(t->tFireTime > overdue);                    // moved forward
+    EXPECT_TRUE(t->tFireTime > CmcDateTime::GetTimeNow());  // into the future
+
+    EXPECT_EQ((long)eTimerNotFound, doc.ResetTimer("missing"));
+
+    // ResetTimers() sweeps every timer the same way
+    make_overdue(t);
+    doc.ResetTimers();
+    EXPECT_TRUE(t->tFireTime > CmcDateTime::GetTimeNow());
+}
+
+// Group enable/delete counts only members; EnableTimer toggles one.
+TEST(TimerApi, GroupsAndEnableToggle)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.AddTimer("g1", 0, 1, 0, "", eEnabled, "");
+    doc.AddTimer("g2", 0, 1, 0, "", eEnabled, "");
+    doc.AddTimer("solo", 0, 1, 0, "", eEnabled, "");
+    doc.SetTimerOption("g1", "group", "grp");
+    doc.SetTimerOption("g2", "group", "grp");
+
+    EXPECT_EQ(2L, doc.EnableTimerGroup("grp", FALSE));
+    EXPECT_NEAR(0.0, doc.GetTimerOption("g1", "enabled").dblVal, 0.0001);
+    EXPECT_NEAR(1.0, doc.GetTimerOption("solo", "enabled").dblVal, 0.0001);
+    EXPECT_EQ(0L, doc.EnableTimerGroup("nogroup", TRUE));
+
+    EXPECT_EQ(2L, doc.DeleteTimerGroup("grp"));
+    EXPECT_EQ((long)eTimerNotFound, doc.IsTimer("g1"));
+    EXPECT_EQ((long)eOK, doc.IsTimer("solo"));
+
+    EXPECT_EQ((long)eOK, doc.EnableTimer("solo", FALSE));
+    EXPECT_NEAR(0.0, doc.GetTimerOption("solo", "enabled").dblVal, 0.0001);
+    EXPECT_EQ((long)eTimerNotFound, doc.EnableTimer("nope", TRUE));
+
+    EXPECT_EQ((long)eOK, doc.DeleteTimer("solo"));
+    EXPECT_EQ((long)eTimerNotFound, doc.DeleteTimer("solo"));
+}
+
+// GetTimerInfo conventions: missing timer VT_EMPTY, unknown code VT_NULL.
+TEST(TimerApi, GetTimerInfoConventions)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTimer("ti", 0, 0, 15, "send me",
+                                      eEnabled | eTemporary, ""));
+
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetTimerInfo("missing", 1).vt);
+    EXPECT_EQ(VT_NULL,  (int)doc.GetTimerInfo("ti", 999).vt);
+    // arm 4 is the response text on every MUSHclient version
+    EXPECT_STREQ("send me", vs(doc.GetTimerInfo("ti", 4)).c_str());
+}
+
 MC_TEST_MAIN()

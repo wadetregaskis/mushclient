@@ -577,4 +577,188 @@ TEST(TriggerScript, DuplicateNamedWildcardKeepsNonEmptyCapture)
 }
 #endif // MUSHCLIENT_LUA_SCRIPTING
 
+// ═══ world.* trigger API (methods_triggers.cpp) ═══════════════════════════
+
+#include "flags.h"   // eEnabled / eReplace / eTemporary alias-flags
+
+static std::string vs(const VARIANT& v)
+{
+    if (v.vt != VT_BSTR) return "<not-a-string>";
+    return std::string((const char*)CString(v.bstrVal));
+}
+
+// AddTriggerEx validation: each reject path answers its own error code.
+TEST(TriggerApi, AddTriggerExValidatesInput)
+{
+    CMUSHclientDoc doc = make_doc();
+
+    EXPECT_EQ((long)eOK, doc.AddTriggerEx("t1", "You are hungry", "eat bread",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToWorld, 100));
+    EXPECT_EQ((long)eOK, doc.IsTrigger("t1"));
+
+    EXPECT_EQ((long)eTriggerAlreadyExists,
+              doc.AddTriggerEx("t1", "x", "", eEnabled, -1, 0, "", "",
+                               eSendToWorld, 100));
+    EXPECT_EQ((long)eOK,
+              doc.AddTriggerEx("t1", "replaced", "", eEnabled | eReplace,
+                               -1, 0, "", "", eSendToWorld, 100));
+    EXPECT_STREQ("replaced", vs(doc.GetTriggerInfo("t1", 1)).c_str());
+
+    EXPECT_EQ((long)eTriggerCannotBeEmpty,
+              doc.AddTriggerEx("t2", "", "", eEnabled, -1, 0, "", "",
+                               eSendToWorld, 100));
+    EXPECT_EQ((long)eInvalidObjectLabel,
+              doc.AddTriggerEx("9bad", "m", "", eEnabled, -1, 0, "", "",
+                               eSendToWorld, 100));
+    EXPECT_EQ((long)eTriggerSequenceOutOfRange,
+              doc.AddTriggerEx("t3", "m", "", eEnabled, -1, 0, "", "",
+                               eSendToWorld, 10001));
+    EXPECT_EQ((long)eTriggerSendToInvalid,
+              doc.AddTriggerEx("t4", "m", "", eEnabled, -1, 0, "", "",
+                               99, 100));
+    // PORT DEVIATION (reported): Windows regcomp throws -> AddTriggerEx
+    // answers eBadRegularExpression; the port's regcomp returns nullptr and
+    // the trigger is accepted with a null compiled regexp.
+    EXPECT_EQ((long)eOK,
+              doc.AddTriggerEx("t5", "(unclosed", "",
+                               eEnabled | eTriggerRegularExpression,
+                               -1, 0, "", "", eSendToWorld, 100));
+}
+
+// GetTrigger round trip and GetTriggerList enumeration.
+TEST(TriggerApi, GetTriggerRoundTripAndList)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("rt", "* hits you", "flee",
+                                          eEnabled | eKeepEvaluating,
+                                          -1, 0, "", "", eSendToWorld, 100));
+
+    VARIANT m, r, f, c, w, snd, scr;
+    VariantInit(&m); VariantInit(&r); VariantInit(&f); VariantInit(&c);
+    VariantInit(&w); VariantInit(&snd); VariantInit(&scr);
+    EXPECT_EQ((long)eOK, doc.GetTrigger("rt", &m, &r, &f, &c, &w, &snd, &scr));
+    EXPECT_STREQ("* hits you", vs(m).c_str());
+    EXPECT_STREQ("flee",       vs(r).c_str());
+    ASSERT_EQ(VT_I2, (int)f.vt);
+    EXPECT_TRUE((f.iVal & eEnabled) != 0);
+    EXPECT_EQ((long)eTriggerNotFound,
+              doc.GetTrigger("nope", &m, &r, &f, &c, &w, &snd, &scr));
+
+    VARIANT v = doc.GetTriggerList();
+    ASSERT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);
+    COleSafeArray sa;
+    sa.Attach(v);
+    EXPECT_EQ(1L, sa.GetOneDimSize());
+    long i0 = 0;
+    VARIANT e; VariantInit(&e);
+    sa.GetElement(&i0, &e);
+    EXPECT_STREQ("rt", vs(e).c_str());
+}
+
+// GetTriggerInfo conventions and representative arms.
+TEST(TriggerApi, GetTriggerInfoArms)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("ti", "the match", "the send",
+                                          eEnabled | eTemporary,
+                                          -1, 0, "beep.wav", "",
+                                          eSendToOutput, 42));
+
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetTriggerInfo("missing", 1).vt);
+    EXPECT_EQ(VT_NULL,  (int)doc.GetTriggerInfo("ti", 999).vt);
+
+    EXPECT_STREQ("the match", vs(doc.GetTriggerInfo("ti", 1)).c_str());
+    EXPECT_STREQ("the send",  vs(doc.GetTriggerInfo("ti", 2)).c_str());
+    EXPECT_STREQ("beep.wav",  vs(doc.GetTriggerInfo("ti", 3)).c_str());
+    EXPECT_TRUE(doc.GetTriggerInfo("ti", 8).boolVal);           // enabled
+    EXPECT_FALSE(doc.GetTriggerInfo("ti", 9).boolVal);          // not regexp
+    EXPECT_EQ((short)eSendToOutput, doc.GetTriggerInfo("ti", 15).iVal);
+    EXPECT_EQ((short)42, doc.GetTriggerInfo("ti", 16).iVal);    // sequence
+    EXPECT_EQ(0L, doc.GetTriggerInfo("ti", 21).lVal);           // never matched
+    EXPECT_TRUE(doc.GetTriggerInfo("ti", 23).boolVal);          // temporary
+}
+
+// Trigger options: y/n booleans, numeric validation, and the two error codes.
+TEST(TriggerApi, TriggerOptionRoundTripAndErrors)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("to", "m", "", eEnabled,
+                                          -1, 0, "", "", eSendToWorld, 100));
+
+    EXPECT_EQ((long)eTriggerNotFound, doc.SetTriggerOption("zz", "enabled", "n"));
+    EXPECT_EQ((long)eUnknownOption,   doc.SetTriggerOption("to", "no_such", "1"));
+
+    EXPECT_EQ((long)eOK, doc.SetTriggerOption("to", "enabled", "n"));
+    EXPECT_EQ(0L, doc.GetTriggerOption("to", "enabled").lVal);
+    EXPECT_EQ((long)eOK, doc.SetTriggerOption("to", "enabled", "y"));
+    EXPECT_EQ(1L, doc.GetTriggerOption("to", "enabled").lVal);
+
+    EXPECT_EQ((long)eOK, doc.SetTriggerOption("to", "sequence", "77"));
+    EXPECT_EQ((short)77, doc.GetTriggerInfo("to", 16).iVal);
+    EXPECT_EQ((long)eOptionOutOfRange,
+              doc.SetTriggerOption("to", "sequence", "junk"));
+
+    EXPECT_EQ((long)eOK, doc.SetTriggerOption("to", "group", "grp"));
+    EXPECT_STREQ("grp", vs(doc.GetTriggerOption("to", "group")).c_str());
+}
+
+// Wildcards captured when a MUD line matches an API-added trigger.
+TEST(TriggerApi, WildcardsCapturedOnLineMatch)
+{
+    CMUSHclientDoc doc = make_doc();
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("wc", "* tells you *", "",
+                                          eEnabled, -1, 0, "", "",
+                                          eSendToWorld, 100));
+
+    feed_line(doc, "Gandalf tells you run");
+
+    EXPECT_STREQ("Gandalf", vs(doc.GetTriggerWildcard("wc", "1")).c_str());
+    EXPECT_STREQ("run",     vs(doc.GetTriggerWildcard("wc", "2")).c_str());
+    EXPECT_STREQ("Gandalf tells you run",
+                 vs(doc.GetTriggerWildcard("wc", "0")).c_str());
+    EXPECT_EQ(1L, doc.GetTriggerInfo("wc", 21).lVal);          // matched once
+    EXPECT_EQ(VT_EMPTY, (int)doc.GetTriggerWildcard("missing", "1").vt);
+}
+
+// Group enable/delete counts only members; temporaries are swept.
+TEST(TriggerApi, GroupsAndTemporarySweep)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.AddTriggerEx("g1", "m1", "", eEnabled, -1, 0, "", "", eSendToWorld, 100);
+    doc.AddTriggerEx("g2", "m2", "", eEnabled, -1, 0, "", "", eSendToWorld, 100);
+    doc.AddTriggerEx("solo", "m3", "", eEnabled, -1, 0, "", "", eSendToWorld, 100);
+    doc.SetTriggerOption("g1", "group", "grp");
+    doc.SetTriggerOption("g2", "group", "grp");
+
+    EXPECT_EQ(2L, doc.EnableTriggerGroup("grp", FALSE));
+    EXPECT_FALSE(doc.GetTriggerInfo("g1", 8).boolVal);
+    EXPECT_TRUE(doc.GetTriggerInfo("solo", 8).boolVal);
+    EXPECT_EQ(0L, doc.EnableTriggerGroup("nogroup", TRUE));
+
+    EXPECT_EQ(2L, doc.DeleteTriggerGroup("grp"));
+    EXPECT_EQ((long)eTriggerNotFound, doc.IsTrigger("g1"));
+
+    doc.AddTriggerEx("tmp", "mt", "", eEnabled | eTemporary,
+                     -1, 0, "", "", eSendToWorld, 100);
+    EXPECT_EQ(1L, doc.DeleteTemporaryTriggers());
+    EXPECT_EQ((long)eTriggerNotFound, doc.IsTrigger("tmp"));
+    EXPECT_EQ((long)eOK, doc.IsTrigger("solo"));
+
+    EXPECT_EQ((long)eOK, doc.DeleteTrigger("solo"));
+    EXPECT_EQ((long)eTriggerNotFound, doc.DeleteTrigger("solo"));
+}
+
+// EnableTrigger toggling and the missing-name code.
+TEST(TriggerApi, EnableTriggerToggleAndMissing)
+{
+    CMUSHclientDoc doc = make_doc();
+    doc.AddTriggerEx("et", "m", "", eEnabled, -1, 0, "", "", eSendToWorld, 100);
+    EXPECT_EQ((long)eOK, doc.EnableTrigger("et", FALSE));
+    EXPECT_FALSE(doc.GetTriggerInfo("et", 8).boolVal);
+    EXPECT_EQ((long)eOK, doc.EnableTrigger("et", TRUE));
+    EXPECT_TRUE(doc.GetTriggerInfo("et", 8).boolVal);
+    EXPECT_EQ((long)eTriggerNotFound, doc.EnableTrigger("nope", TRUE));
+}
+
 MC_TEST_MAIN()

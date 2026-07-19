@@ -600,4 +600,442 @@ TEST(MXPSecurity, DefinitionsRequireSecureMode)
     EXPECT_TRUE(doc.m_CustomElementMap.Lookup("foo", e));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// mxpOpenAtomic.cpp — MXP_OpenAtomicTag actions, driven end-to-end: MUD bytes
+// through DisplayMsg with MXP active (covers the '<' interception, element
+// collection, MXP_StartTag security and the per-action behaviour).
+
+#include "pal/itransport.h"
+#include <string>
+
+namespace {
+
+struct RecordingTransport : pal::ITransport {
+    std::string sent;
+    void resolve(const char*, pal::ResolveToken) override {}
+    void cancelResolve() override {}
+    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void send(const char* data, size_t n) override { sent.append(data, n); }
+    void startTls(const pal::TlsParams&) override {}
+    void close() override {}
+    std::string lastErrorString() const override { return "recording"; }
+};
+
+CMUSHclientDoc make_pipe_doc()
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_bMXP      = true;
+    doc.m_iUseMXP   = eUseMXP;
+    doc.m_iMXP_mode = eMXP_secure;    // persistent secure: all tags allowed
+    return doc;
+}
+
+void mud(CMUSHclientDoc& doc, const char* s)
+{
+    doc.DisplayMsg(s, (int)strlen(s), 0);
+}
+
+CLine* pline(CMUSHclientDoc& doc, int idx)
+{
+    POSITION pos = doc.m_LineList.GetHeadPosition();
+    for (int i = 0; pos; i++) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (i == idx) return l;
+    }
+    return nullptr;
+}
+
+std::string ptext(CLine* l) { return std::string(l->text, l->len); }
+
+CStyle* pstyle(CLine* line, int idx)
+{
+    int off = 0;
+    for (POSITION pos = line->styleList.GetHeadPosition(); pos; ) {
+        CStyle* s = line->styleList.GetNext(pos);
+        if (s->iLength > 0 && idx < off + s->iLength) return s;
+        off += s->iLength;
+    }
+    return nullptr;
+}
+
+std::string sent_of(CMUSHclientDoc& doc)
+{
+    return static_cast<RecordingTransport*>(doc.m_pTransport)->sent;
+}
+
+bool contains(const std::string& hay, const char* needle)
+{
+    return hay.find(needle) != std::string::npos;
+}
+
+} // namespace
+
+TEST(MXPOpenAtomic, BoldItalicUnderlineNestAndClose)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "a<B>b<I>c</I></B>d\n");
+    CLine* l = pline(doc, 0);
+    ASSERT_NE(nullptr, l);
+    EXPECT_TRUE(ptext(l) == "abcd");
+    EXPECT_EQ(0, pstyle(l, 0)->iFlags & TEXT_STYLE);            // a: plain
+    EXPECT_EQ(HILITE, pstyle(l, 1)->iFlags & TEXT_STYLE);       // b: bold
+    EXPECT_EQ(HILITE | BLINK, pstyle(l, 2)->iFlags & TEXT_STYLE); // c: bold+italic
+    EXPECT_EQ(0, pstyle(l, 3)->iFlags & TEXT_STYLE);            // d: closed again
+}
+
+TEST(MXPOpenAtomic, UnderlineTagSetsUnderlineBit)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<U>u</U>\n");
+    CStyle* s = pstyle(pline(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & UNDERLINE) != 0);
+}
+
+TEST(MXPOpenAtomic, ColorTagNamedArgumentsSetRgb)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<COLOR fore=red back=blue>x</COLOR>\n");
+    CStyle* s = pstyle(pline(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_EQ(RGB(255, 0, 0), s->iForeColour);
+    EXPECT_EQ(RGB(0, 0, 255), s->iBackColour);
+}
+
+TEST(MXPOpenAtomic, ColorTagPositionalArgument)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<C green>x\n");
+    CStyle* s = pstyle(pline(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_EQ(RGB(0, 128, 0), s->iForeColour);   // HTML green
+}
+
+TEST(MXPOpenAtomic, ColorTagUnknownColourRaisesMxpError)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    long long errs = doc.m_iMXPerrors;
+    mud(doc, "<COLOR fore=nosuchcolour>x\n");
+    EXPECT_GT(doc.m_iMXPerrors, errs);
+}
+
+TEST(MXPOpenAtomic, HighTagBrightensForegroundToRgb)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_normalcolour[WHITE] = RGB(100, 100, 100);
+    mud(doc, "<HIGH>x\n");
+    CStyle* s = pstyle(pline(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_NE(RGB(100, 100, 100), s->iForeColour);   // luminance raised
+}
+
+TEST(MXPOpenAtomic, SendTagAttachesSendActionWithHint)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_bUnderlineHyperlinks = TRUE;
+    mud(doc, "<SEND href='look here' hint='peek'>here</SEND>\n");
+    CLine* l = pline(doc, 0);
+    ASSERT_NE(nullptr, l);
+    EXPECT_TRUE(ptext(l) == "here");
+    CStyle* s = pstyle(l, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(ACTION_SEND, s->iFlags & ACTIONTYPE);
+    EXPECT_TRUE((s->iFlags & UNDERLINE) != 0);
+    ASSERT_TRUE(s->pAction != NULL);
+    EXPECT_STREQ("look here", (const char*)s->pAction->m_strAction);
+    EXPECT_STREQ("peek",      (const char*)s->pAction->m_strHint);
+}
+
+TEST(MXPOpenAtomic, SendTagPromptKeywordMakesPromptAction)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<SEND 'buy bread' PROMPT>bread</SEND>\n");
+    CStyle* s = pstyle(pline(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(ACTION_PROMPT, s->iFlags & ACTIONTYPE);
+    ASSERT_TRUE(s->pAction != NULL);
+    EXPECT_STREQ("buy bread", (const char*)s->pAction->m_strAction);
+}
+
+TEST(MXPOpenAtomic, AnchorTagIsHyperlink)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<A href='http://example.net'>link</A>\n");
+    CStyle* s = pstyle(pline(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(ACTION_HYPERLINK, s->iFlags & ACTIONTYPE);
+    EXPECT_TRUE((s->iFlags & UNDERLINE) != 0);       // hyperlinks always underline
+    ASSERT_TRUE(s->pAction != NULL);
+    EXPECT_STREQ("http://example.net", (const char*)s->pAction->m_strAction);
+}
+
+TEST(MXPOpenAtomic, PuebloXchCmdConvertsAnchorToSend)
+{
+    // <A XCH_CMD="examine #1"> is Pueblo syntax for a send-to-mud link
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<A xch_cmd='examine me'>thing</A>\n");
+    CStyle* s = pstyle(pline(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(ACTION_SEND, s->iFlags & ACTIONTYPE);
+    EXPECT_TRUE(doc.m_bPuebloActive);
+    ASSERT_TRUE(s->pAction != NULL);
+    EXPECT_STREQ("examine me", (const char*)s->pAction->m_strAction);
+}
+
+TEST(MXPOpenAtomic, FontTagColourListAndBackground)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<FONT color=red,blink,bold back=blue>x\n");
+    CStyle* s = pstyle(pline(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(COLOUR_RGB, s->iFlags & COLOURTYPE);
+    EXPECT_EQ(RGB(255, 0, 0), s->iForeColour);
+    EXPECT_EQ(RGB(0, 0, 255), s->iBackColour);
+    EXPECT_TRUE((s->iFlags & BLINK) != 0);
+    EXPECT_TRUE((s->iFlags & HILITE) != 0);
+}
+
+TEST(MXPOpenAtomic, VersionTagSendsVersionResponse)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_pTransport = new RecordingTransport();
+    mud(doc, "<VERSION>\n");
+    EXPECT_TRUE(contains(sent_of(doc), "<VERSION MXP=\"0.5\" CLIENT=MUSHclient"));
+    EXPECT_TRUE(contains(sent_of(doc), "REGISTERED=YES"));
+}
+
+TEST(MXPOpenAtomic, SupportTagListsImplementedTagsAndSubOptions)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_pTransport = new RecordingTransport();
+    mud(doc, "<SUPPORT>\n");
+    std::string sent = sent_of(doc);
+    EXPECT_TRUE(contains(sent, "\x1B[1z<SUPPORTS "));
+    EXPECT_TRUE(contains(sent, "+send "));
+    EXPECT_TRUE(contains(sent, "+send.href "));
+    EXPECT_TRUE(contains(sent, "+color.fore "));
+}
+
+TEST(MXPOpenAtomic, SupportTagAnswersSpecificQueries)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_pTransport = new RecordingTransport();
+    // color implemented → +color; image flagged NOT_IMP → -image
+    mud(doc, "<SUPPORT color image>\n");
+    std::string sent = sent_of(doc);
+    EXPECT_TRUE(contains(sent, "+color "));
+    EXPECT_TRUE(contains(sent, "-image "));
+}
+
+TEST(MXPOpenAtomic, SupportTagSubOptionAndWildcardQueries)
+{
+    // '*' is not a bare-word character for the tag argument tokenizer, so a
+    // wildcard query must be quoted: <SUPPORT 'color.*'>
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_pTransport = new RecordingTransport();
+    mud(doc, "<SUPPORT send.prompt send.nosuch 'color.*'>\n");
+    std::string sent = sent_of(doc);
+    EXPECT_TRUE(contains(sent, "+send.prompt "));
+    EXPECT_TRUE(contains(sent, "-send.nosuch "));
+    EXPECT_TRUE(contains(sent, "+color.fore "));     // wildcard expansion
+    EXPECT_TRUE(contains(sent, "+color.back "));
+}
+
+TEST(MXPOpenAtomic, SupportTagUnquotedWildcardAbortsTheTag)
+{
+    // ...whereas an unquoted '*' is a tag-parse error: no response is sent
+    // and the MXP error count rises.
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_pTransport = new RecordingTransport();
+    long long errs = doc.m_iMXPerrors;
+    mud(doc, "<SUPPORT color.*>\n");
+    EXPECT_GT(doc.m_iMXPerrors, errs);
+    EXPECT_TRUE(sent_of(doc).empty());
+}
+
+TEST(MXPOpenAtomic, OptionTagSendsOptionsList)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_pTransport = new RecordingTransport();
+    mud(doc, "<OPTION>\n");
+    EXPECT_TRUE(contains(sent_of(doc), "\x1B[1z<OPTIONS "));
+}
+
+TEST(MXPOpenAtomic, RecommendOptionUnknownNameRaisesError)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_bMudCanChangeOptions = TRUE;
+    long long errs = doc.m_iMXPerrors;
+    mud(doc, "<RECOMMEND_OPTION nosuchoption=1>\n");
+    EXPECT_GT(doc.m_iMXPerrors, errs);
+}
+
+TEST(MXPOpenAtomic, UserTagSendsCharacterNameWhenAutoconnectMxp)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_pTransport = new RecordingTransport();
+    doc.m_name = "bob";
+    doc.m_connect_now = eConnectMXP;
+    mud(doc, "<USER>\n");
+    EXPECT_TRUE(contains(sent_of(doc), "bob"));
+}
+
+TEST(MXPOpenAtomic, UserTagWithoutMxpAutoconnectSendsNothing)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_pTransport = new RecordingTransport();
+    doc.m_name = "bob";
+    doc.m_connect_now = eConnectNormal;
+    mud(doc, "<USER>\n");
+    EXPECT_FALSE(contains(sent_of(doc), "bob"));
+}
+
+TEST(MXPOpenAtomic, PasswordTagSendsPasswordWhenSafe)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_pTransport = new RecordingTransport();
+    doc.m_password = "sesame";
+    doc.m_connect_now = eConnectMXP;
+    doc.m_nTotalLinesSent = 0;
+    mud(doc, "<PASSWORD>\n");
+    EXPECT_TRUE(contains(sent_of(doc), "sesame"));
+}
+
+TEST(MXPOpenAtomic, PasswordTagRefusedAfterTenLinesSent)
+{
+    // security check: a late <PASSWORD> could be a spoof — refuse it
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_pTransport = new RecordingTransport();
+    doc.m_password = "sesame";
+    doc.m_connect_now = eConnectMXP;
+    doc.m_nTotalLinesSent = 11;
+    mud(doc, "<PASSWORD>\n");
+    EXPECT_FALSE(contains(sent_of(doc), "sesame"));
+}
+
+TEST(MXPOpenAtomic, BrTagBreaksTheLine)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "ab<BR>cd\n");
+    CLine* l0 = pline(doc, 0);
+    CLine* l1 = pline(doc, 1);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+    EXPECT_TRUE(ptext(l0) == "ab");
+    EXPECT_TRUE(ptext(l1) == "cd");
+}
+
+TEST(MXPOpenAtomic, HrTagEmitsHorizRuleLine)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "x<HR>y\n");
+    CLine* l0 = pline(doc, 0);
+    CLine* l1 = pline(doc, 1);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+    EXPECT_TRUE(ptext(l0) == "x");
+    EXPECT_EQ(HORIZ_RULE, l1->flags);
+}
+
+TEST(MXPOpenAtomic, PTagEntersParagraphMode)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    EXPECT_FALSE(doc.m_bInParagraph);
+    mud(doc, "<P>");
+    EXPECT_TRUE(doc.m_bInParagraph);
+}
+
+TEST(MXPOpenAtomic, UnorderedListItemsGetBullets)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<UL><LI>one<LI>two\n");
+    CLine* l0 = pline(doc, 0);
+    CLine* l1 = pline(doc, 1);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+    EXPECT_TRUE(ptext(l0) == " * one");
+    EXPECT_TRUE(ptext(l1) == " * two");
+}
+
+TEST(MXPOpenAtomic, OrderedListItemsAreNumbered)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<OL><LI>alpha<LI>beta\n");
+    CLine* l0 = pline(doc, 0);
+    CLine* l1 = pline(doc, 1);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+    EXPECT_TRUE(ptext(l0) == " 1. alpha");
+    EXPECT_TRUE(ptext(l1) == " 2. beta");
+}
+
+TEST(MXPOpenAtomic, ImgTagRendersBracketedHyperlink)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_bUnderlineHyperlinks = TRUE;
+    mud(doc, "<IMG src='http://x/' fname='pic.png'>\n");
+    // image renders as [url] on its own line, hyperlinked
+    CLine* l0 = pline(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(ptext(l0) == "[http://x/pic.png]");
+    CStyle* s = pstyle(l0, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(ACTION_HYPERLINK, s->iFlags & ACTIONTYPE);
+    ASSERT_TRUE(s->pAction != NULL);
+    EXPECT_STREQ("http://x/pic.png", (const char*)s->pAction->m_strAction);
+}
+
+TEST(MXPOpenAtomic, MxpOffTagDisablesMxp)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<MXP OFF>");
+    EXPECT_FALSE(doc.m_bMXP);
+}
+
+TEST(MXPOpenAtomic, ResetTagClearsModesButKeepsMxpOn)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<UL><P>");
+    EXPECT_TRUE(doc.m_bInParagraph);
+    doc.m_iMXP_mode = eMXP_secure;    // <RESET> is itself a secure tag
+    mud(doc, "<RESET>");
+    EXPECT_TRUE(doc.m_bMXP);                 // not a full shutdown
+    EXPECT_FALSE(doc.m_bInParagraph);
+    EXPECT_EQ(eNoList, doc.m_iListMode);
+}
+
+TEST(MXPOpenAtomic, VarTagSetsMxpPrefixedVariableOnClose)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    mud(doc, "<VAR foo>hello</VAR>\n");
+    CVariable* var = nullptr;
+    ASSERT_TRUE(doc.m_VariableMap.Lookup("mxp_foo", var));
+    ASSERT_TRUE(var != nullptr);
+    EXPECT_STREQ("hello", (const char*)var->strContents);
+}
+
+TEST(MXPOpenAtomic, VarTagInvalidNameRaisesError)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    long long errs = doc.m_iMXPerrors;
+    mud(doc, "<VAR 9bad>x</VAR>\n");
+    EXPECT_GT(doc.m_iMXPerrors, errs);
+}
+
+TEST(MXPOpenAtomic, SecureTagRejectedInOpenMode)
+{
+    CMUSHclientDoc doc = make_pipe_doc();
+    doc.m_iMXP_mode = eMXP_open;
+    long long errs = doc.m_iMXPerrors;
+    mud(doc, "<SEND 'go'>x</SEND>\n");
+    EXPECT_GT(doc.m_iMXPerrors, errs);
+    CStyle* s = pstyle(pline(doc, 0), 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ(0, s->iFlags & ACTIONTYPE);    // no action attached
+}
+
 MC_TEST_MAIN()

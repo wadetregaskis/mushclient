@@ -305,4 +305,137 @@ TEST(PalSurface, HatchAndPatternBrushes)
     EXPECT_TRUE(ad.getPixel(s, { 1, 1 }) == YELLOW);     // x=1 odd → yellow
 }
 
+
+TEST(PalSurface, SetPixelRoundTripAndOobNoop)
+{
+    PAL_FIXTURE();
+    pal::SurfaceId s = ad.createSurface({ 8, 6 }, BLACK);
+    ad.setPixel(s, { 3, 2 }, RED);                          // WindowSetPixel path
+    EXPECT_TRUE(ad.getPixel(s, { 3, 2 }) == RED);           // exact round-trip
+    EXPECT_TRUE(ad.getPixel(s, { 2, 2 }) == BLACK);         // neighbour untouched
+    // Out-of-bounds writes are rejected (line 114) — no corruption, no crash.
+    ad.setPixel(s, { 8, 0 }, WHITE);                        // x == w
+    ad.setPixel(s, { 0, 6 }, WHITE);                        // y == h
+    ad.setPixel(s, { -1, 2 }, WHITE);                       // x < 0
+    EXPECT_TRUE(ad.getPixel(s, { 3, 2 }) == RED);           // still the only set pixel
+    EXPECT_TRUE(ad.getPixel(s, { 0, 0 }) == BLACK);
+    EXPECT_TRUE(ad.getPixel(s, { 7, 5 }) == BLACK);
+}
+
+TEST(PalSurface, HatchVerticalBitFormula)
+{
+    PAL_FIXTURE();
+    pal::SurfaceId s = ad.createSurface({ 16, 16 }, BLACK);
+    ad.fillRect(s, { 0, 0, 16, 16 },
+                { pal::BrushStyle::Hatch, WHITE, BLUE, pal::HatchKind::Vertical });
+    EXPECT_TRUE(ad.getPixel(s, { 0, 3 }) == WHITE);        // x=0  → (x&7)==0 line
+    EXPECT_TRUE(ad.getPixel(s, { 8, 3 }) == WHITE);        // x=8  → (x&7)==0 line
+    EXPECT_TRUE(ad.getPixel(s, { 3, 3 }) == BLUE);         // x=3  → gap
+    EXPECT_TRUE(ad.getPixel(s, { 0, 9 }) == WHITE);        // column, not row: y-agnostic
+}
+
+TEST(PalSurface, HatchFDiagonalBitFormula)
+{
+    PAL_FIXTURE();
+    pal::SurfaceId s = ad.createSurface({ 16, 16 }, BLACK);
+    ad.fillRect(s, { 0, 0, 16, 16 },
+                { pal::BrushStyle::Hatch, WHITE, BLUE, pal::HatchKind::FDiagonal });
+    EXPECT_TRUE(ad.getPixel(s, { 0, 0 }) == WHITE);        // x-y=0
+    EXPECT_TRUE(ad.getPixel(s, { 5, 5 }) == WHITE);        // x-y=0
+    EXPECT_TRUE(ad.getPixel(s, { 8, 0 }) == WHITE);        // x-y=8 → (8&7)==0
+    EXPECT_TRUE(ad.getPixel(s, { 6, 5 }) == BLUE);         // x-y=1 → gap
+}
+
+TEST(PalSurface, HatchBDiagonalBitFormula)
+{
+    PAL_FIXTURE();
+    pal::SurfaceId s = ad.createSurface({ 16, 16 }, BLACK);
+    ad.fillRect(s, { 0, 0, 16, 16 },
+                { pal::BrushStyle::Hatch, WHITE, BLUE, pal::HatchKind::BDiagonal });
+    EXPECT_TRUE(ad.getPixel(s, { 0, 0 }) == WHITE);        // x+y=0
+    EXPECT_TRUE(ad.getPixel(s, { 3, 5 }) == WHITE);        // x+y=8 → (8&7)==0
+    EXPECT_TRUE(ad.getPixel(s, { 5, 3 }) == WHITE);        // x+y=8
+    EXPECT_TRUE(ad.getPixel(s, { 4, 5 }) == BLUE);         // x+y=9 → gap
+}
+
+TEST(PalSurface, HatchCrossBitFormula)
+{
+    PAL_FIXTURE();
+    pal::SurfaceId s = ad.createSurface({ 16, 16 }, BLACK);
+    ad.fillRect(s, { 0, 0, 16, 16 },
+                { pal::BrushStyle::Hatch, WHITE, BLUE, pal::HatchKind::Cross });
+    EXPECT_TRUE(ad.getPixel(s, { 0, 3 }) == WHITE);        // x=0 → column line
+    EXPECT_TRUE(ad.getPixel(s, { 3, 0 }) == WHITE);        // y=0 → row line
+    EXPECT_TRUE(ad.getPixel(s, { 3, 3 }) == BLUE);         // neither → gap
+    EXPECT_TRUE(ad.getPixel(s, { 5, 5 }) == BLUE);         // neither → gap
+}
+
+TEST(PalSurface, HatchDiagCrossBitFormula)
+{
+    PAL_FIXTURE();
+    pal::SurfaceId s = ad.createSurface({ 16, 16 }, BLACK);
+    ad.fillRect(s, { 0, 0, 16, 16 },
+                { pal::BrushStyle::Hatch, WHITE, BLUE, pal::HatchKind::DiagCross });
+    EXPECT_TRUE(ad.getPixel(s, { 5, 5 }) == WHITE);        // x-y=0 → '\\' diagonal
+    EXPECT_TRUE(ad.getPixel(s, { 3, 5 }) == WHITE);        // x+y=8 → '/' diagonal
+    EXPECT_TRUE(ad.getPixel(s, { 1, 0 }) == BLUE);         // x-y=1, x+y=1 → gap
+    EXPECT_TRUE(ad.getPixel(s, { 2, 3 }) == BLUE);         // x-y=-1, x+y=5 → gap
+}
+
+TEST(PalSurface, GradientVerticalInterpolates)
+{
+    PAL_FIXTURE();
+    pal::SurfaceId s = ad.createSurface({ 3, 10 }, BLACK);
+    ad.gradient(s, { 0, 0, 3, 10 }, BLACK, WHITE, false);  // vertical branch
+    // Rows are uniform across x; distinguishes from a horizontal gradient,
+    // where the left column (x=0) would stay 'from' for every row.
+    EXPECT_TRUE(ad.getPixel(s, { 0, 0 }) == BLACK);        // top row = from
+    EXPECT_TRUE(ad.getPixel(s, { 2, 0 }) == BLACK);
+    EXPECT_TRUE(ad.getPixel(s, { 0, 9 }) == WHITE);        // bottom row = to
+    EXPECT_TRUE(ad.getPixel(s, { 2, 9 }) == WHITE);
+    // Midrow y=5: t=5/9 → (unsigned char)(255*5/9+0.5)=142 → 0x8E8E8E grey.
+    EXPECT_TRUE(ad.getPixel(s, { 1, 5 }) == 0x8E8E8E);
+}
+
+TEST(PalSurface, TransformBlitDegenerateDetIsNoop)
+{
+    PAL_FIXTURE();
+    pal::SurfaceId src = ad.createSurface({ 2, 2 }, RED);  // src(0,0) = RED
+    pal::SurfaceId dst = ad.createSurface({ 8, 8 }, BLACK);
+    // Zero linear part (det = 0*0 - 0*0 = 0) + translate (3,3). Its dest
+    // bounding box is the 2x2 block at (2,2)..(3,3); with the det==0 guard the
+    // blit must draw NOTHING there. (If the guard were removed the block fills
+    // with src(0,0)=RED, since every inverse-map numerator is 0 → sx=sy=0.)
+    pal::Matrix2x3 m{ 0, 0, 0, 0, 3, 3 };
+    ad.blit(dst, { 0, 0, 2, 2 }, src, { 0, 0, 2, 2 },
+            pal::BlitMode::Copy, 0, pal::BlitQuality::Fast, &m);
+    EXPECT_TRUE(ad.getPixel(dst, { 2, 2 }) == BLACK);      // bbox pixel, not written
+    EXPECT_TRUE(ad.getPixel(dst, { 3, 3 }) == BLACK);
+    EXPECT_TRUE(ad.getPixel(dst, { 0, 0 }) == BLACK);
+}
+
+TEST(PalSurface, TransformBlitScalesAndSamples)
+{
+    PAL_FIXTURE();
+    pal::SurfaceId src = ad.createSurface({ 2, 2 }, BLACK);
+    ad.setPixel(src, { 0, 0 }, RED);
+    ad.setPixel(src, { 1, 0 }, GREEN);
+    ad.setPixel(src, { 0, 1 }, BLUE);
+    ad.setPixel(src, { 1, 1 }, YELLOW);
+    pal::SurfaceId dst = ad.createSurface({ 8, 8 }, BLACK);
+    // 2x horizontal stretch (x scaled by 2, y unchanged): device = M*src.
+    // Inverse map sx=floor((X+0.5)/2), sy=floor(Y+0.5)=Y.
+    pal::Matrix2x3 m{ 2, 0, 0, 1, 0, 0 };                  // det = 2*1 - 0*0 = 2
+    ad.blit(dst, { 0, 0, 2, 2 }, src, { 0, 0, 2, 2 },
+            pal::BlitMode::Copy, 0, pal::BlitQuality::Fast, &m);
+    EXPECT_TRUE(ad.getPixel(dst, { 0, 0 }) == RED);        // sx=0,sy=0
+    EXPECT_TRUE(ad.getPixel(dst, { 1, 0 }) == RED);        // sx=0,sy=0
+    EXPECT_TRUE(ad.getPixel(dst, { 2, 0 }) == GREEN);      // sx=1,sy=0
+    EXPECT_TRUE(ad.getPixel(dst, { 3, 0 }) == GREEN);      // sx=1,sy=0
+    EXPECT_TRUE(ad.getPixel(dst, { 0, 1 }) == BLUE);       // sx=0,sy=1
+    EXPECT_TRUE(ad.getPixel(dst, { 3, 1 }) == YELLOW);     // sx=1,sy=1
+    EXPECT_TRUE(ad.getPixel(dst, { 4, 0 }) == BLACK);      // sx=2 → out of source
+    EXPECT_TRUE(ad.getPixel(dst, { 0, 2 }) == BLACK);      // sy=2 → out of source
+}
+
 MC_TEST_MAIN()

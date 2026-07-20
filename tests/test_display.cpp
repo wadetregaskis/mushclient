@@ -1995,4 +1995,41 @@ TEST(GuardsR5, NoCurrentLineAndNoLinePositions)
     doc.m_pLinePositions = savedPos;
 }
 
+
+// methods_noting.cpp AnsiNote (~395): SGR 3 (ANSI_BLINK) shares the blink-set
+// body with SGR 5/6 (m_iNoteStyle |= BLINK) but is its OWN case label. The
+// StyleBitsSetAndCancel table only feeds SGR 5/6, so this pins the ANSI_BLINK
+// case at line 395 → the BLINK style bit lands on the note's style run.
+TEST(AnsiNoteTest, BlinkCode3SetsBlinkBit)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.AnsiNote("\x1b[3mX");
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "X");        // ESC swallowed on note lines
+    CStyle* s = style_at(l0, 0);
+    ASSERT_NE(nullptr, s);
+    EXPECT_TRUE((s->iFlags & BLINK) != 0);    // ANSI_BLINK (SGR 3) → m_iNoteStyle |= BLINK
+}
+
+// methods_noting.cpp AnsiNote (~418): SGR 23 (ANSI_CANCEL_BLINK) shares the
+// blink-cancel body with SGR 25 (m_iNoteStyle &= ~BLINK) but is its OWN case
+// label. StyleBitsSetAndCancel only feeds SGR 25 (which hits line 419,
+// ANSI_CANCEL_SLOW_BLINK), so this pins the ANSI_CANCEL_BLINK case at line 418:
+// SGR 5 sets BLINK on "AB", SGR 23 must clear it for "CD".
+TEST(AnsiNoteTest, CancelBlinkCode23ClearsBlinkBit)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.AnsiNote("\x1b[5mAB\x1b[23mCD");
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "ABCD");
+    CStyle* blink_part = style_at(l0, 0);     // "AB" under SGR 5 (blink)
+    CStyle* plain_part = style_at(l0, 2);     // "CD" after SGR 23
+    ASSERT_NE(nullptr, blink_part);
+    ASSERT_NE(nullptr, plain_part);
+    EXPECT_TRUE((blink_part->iFlags & BLINK) != 0);
+    EXPECT_FALSE((plain_part->iFlags & BLINK) != 0);  // ANSI_CANCEL_BLINK (23) cleared it
+}
+
 MC_TEST_MAIN()

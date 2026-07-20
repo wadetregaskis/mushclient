@@ -200,7 +200,7 @@ if(NOT WIN32)
         endif()
     endif()
 
-    # ── Python 3 (embedded alternate scripting engine — mushapp/GUI only) ──
+    # ── Python 3 (embedded alternate scripting engine — mushgui only) ──────
     # Optional: when present, a world whose language is "Python" runs on real
     # CPython via platform/py_engine.cpp.  Absent → scriptengine.cpp link stubs.
     #
@@ -227,7 +227,7 @@ if(NOT WIN32)
         message(STATUS "Python3 (Development.Embed) not found — Python scripting disabled")
     endif()
 
-    # ── Perl (embedded, via ExtUtils::Embed) — mushapp/GUI only ────────────────
+    # ── Perl (embedded, via ExtUtils::Embed) — mushgui only ────────────────────
     # ccopts carry -iwithsysroot for the SDK's CORE headers; ldopts carry -lperl.
     set(PERL_EMBED_FOUND FALSE)
     find_program(PERL_EXECUTABLE perl)
@@ -394,79 +394,67 @@ endif()
 
 if(NOT WIN32)
 
-    set(MUSHCORE_SOURCES
-        # Date/time
+    # ══ Phase 2 Stage 9 — ONE core library ═══════════════════════════════════
+    # The engine source is compiled ONCE into `mushcore` (linked by BOTH the test
+    # suite AND mushgui).  The old mushcore/mushapp twin libraries — which
+    # double-compiled ~60 shared engine TUs under two include heads — are dissolved.
+    # Each consumer adds only its own thin adapter set:
+    #     tests   → mushcore + mushcore_testsupport   (headless fakes / portable twins)
+    #     mushgui → mushcore + mushgui_adapters        (wx views/dialogs + 5 engines)
+    # mushcore carries UNDEFINED GUI/view/App symbols that resolve at final link —
+    # from the fakes for tests, from the adapters for mushgui.  The two adapter sets
+    # are mutually exclusive (they define the same doc-method/GDI/App symbols) and
+    # never co-link, so mushcore itself must define NEITHER set.
+    #
+    # THREE shared TUs are FORKED by compile flag and so live in BOTH adapter sets
+    # (never in mushcore): doc_construct.cpp (MUSHCLIENT_HEADLESS_APP seeds the first
+    # output line + registers the world-doc headless, but must NOT for the GUI) and
+    # scripting/scriptengine.cpp + xml/xml_load_world.cpp (the engine-language defs
+    # select stub-vs-real dispatch / supported-language sets).  CScriptEngine's
+    # layout is def-independent (scripting.h:175 members are unconditional) and no
+    # mushcore TU constructs one, so this fork is link-only, not an ODR hazard.
+
+    # Shared engine — compiled once; the sole CMUSHclientDoc/engine provider.
+    set(CORE_SOURCES
         mcdatetime.cpp
-
-        # Regex wrapper (wraps PCRE)
         regexp.cpp
-
-        # Colour utilities
         Color.cpp
-
-        # Portable string utilities extracted from Utilities.cpp
-        utilities_portable.cpp
         Replace.cpp
         Dmetaph.cpp
-
-        # Hashing / crypto (vendored, pure C, no Windows deps)
         scripting/md5.c
         scripting/sha256.c
         scripting/shs.c
-
-        # ANSI colour parser + supporting doc helpers (Phase 2)
         ansi.cpp
-        doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
-        utilities_shared.cpp   # shared pure-logic free functions (myAtoF/encodeBase64/EditDistance)
-        scripting/errors.cpp   # error_descriptions[] (ErrorDesc; single-sourced from lua_methods.cpp)
-        doc_scripting_shared.cpp   # port-only FireWorld* callbacks (shared mushcore+mushapp)
-        scripting/methods/methods_noting.cpp   # the REAL note family (display step 6)
-        scripting/methods/methods_tracing.cpp  # the REAL trace family (Campaign C)
-        scripting/methods/methods_variables.cpp # the REAL variable family (Campaign C)
-        scripting/methods/methods_database.cpp  # the REAL world.Database* family (Campaign C)
-        scripting/methods/methods_clipboard.cpp # Campaign C
-        scripting/methods/methods_infobar.cpp   # Campaign C
-        scripting/methods/methods_logging.cpp   # Campaign C
-        scripting/methods/methods_sending.cpp   # Campaign C
-        scripting/methods/methods_worlds.cpp    # Campaign C
-        scripting/methods/methods_timers.cpp    # Campaign C (trio 1/3)
-        scripting/methods/methods_aliases.cpp   # Campaign C (trio 2/3)
-        scripting/methods/methods_triggers.cpp  # Campaign C (trio 3/3)
-        scripting/methods/methods_speedwalks.cpp # Campaign C
-        scripting/methods/methods_mapping.cpp   # Campaign C
-        scripting/methods/methods_arrays.cpp    # Campaign C
-        scripting/methods/methods_colours.cpp   # Campaign C
-        scripting/methods/methods_defaults.cpp  # Campaign C (post option-convergence)
-        scripting/methods/methods_sounds.cpp    # Campaign C (_NOSOUND fork: g_wxhook_sound_* / no-op headless)
-        scripting/methods/methods_commands.cpp  # Campaign C (Execute + command window via the IWorldView seam)
-        scripting/methods/methods_spellchecker.cpp # Campaign C (spellcheck inert headless: App.m_bSpellCheckOK false)
-        scripting/methods/methods_utilities.cpp # Campaign C (GUI corners via wx hooks / IWorldView; null headless)
-        scripting/methods/methods_info.cpp      # Campaign C (the REAL InfoTypes[] + GetInfo; view metrics via m_gui_*)
-        accelerators.cpp                        # CommandIDs[]/VirtualKeys tables (DoCommand / GetInternalCommandsList)
-        doc_display_shared.cpp   # the push-side UpdateAllViews drain (display step 7)
-
-        # Phase 2 B-3 (THE ATOMIC FLIP): the REAL Windows document ctor/dtor +
-        # doc.cpp, adopted headless in place of the retired doc_portable.cpp.
-        # Both already compile FULL_BUILD off-Windows for mushapp daily; here
-        # they are the sole CMUSHclientDoc provider in the flipped mushcore.
+        doc_shared.cpp
+        utilities_shared.cpp
+        scripting/errors.cpp
+        doc_scripting_shared.cpp
+        scripting/methods/methods_noting.cpp
+        scripting/methods/methods_tracing.cpp
+        scripting/methods/methods_variables.cpp
+        scripting/methods/methods_database.cpp
+        scripting/methods/methods_clipboard.cpp
+        scripting/methods/methods_infobar.cpp
+        scripting/methods/methods_logging.cpp
+        scripting/methods/methods_sending.cpp
+        scripting/methods/methods_worlds.cpp
+        scripting/methods/methods_timers.cpp
+        scripting/methods/methods_aliases.cpp
+        scripting/methods/methods_triggers.cpp
+        scripting/methods/methods_speedwalks.cpp
+        scripting/methods/methods_mapping.cpp
+        scripting/methods/methods_arrays.cpp
+        scripting/methods/methods_colours.cpp
+        scripting/methods/methods_defaults.cpp
+        scripting/methods/methods_sounds.cpp
+        scripting/methods/methods_commands.cpp
+        scripting/methods/methods_spellchecker.cpp
+        scripting/methods/methods_utilities.cpp
+        scripting/methods/methods_info.cpp
+        accelerators.cpp
+        doc_display_shared.cpp
         doc.cpp
-        doc_construct.cpp
-        # The genuine port glue that has no Windows counterpart — the survivors
-        # of the deleted doc_portable.cpp (port-only entry points over the real
-        # XML/scripting machinery + POSIX helpers + Utilities.cpp free functions
-        # mushcore never compiles).  Real headers, windows_stubs.cpp pattern.
-        platform/doc_port_glue.cpp
-        # Phase 2 B-2 headless GDI shim, folded in now the whole lib is
-        # FULL_BUILD (the CDC/CFont/CBitmap shape no longer forks).
-        platform/gdi_headless.cpp
-
-        # PAL: headless CPU reference adapter for pal::ISurface (docs/PAL.md S1)
-        pal/cpu_raster.cpp
-
-        # Telnet protocol parser (Phase 2)
         telnet_phases.cpp
-
-        # MXP protocol parser (Phase 2)
         mxp/mxp.cpp
         mxp/mxp_phases.cpp
         mxp/mxpMode.cpp
@@ -481,358 +469,62 @@ if(NOT WIN32)
         mxp/mxpOpenAtomic.cpp
         mxp/mxpDefs.cpp
         mxp/mxpEntities.cpp
-
-        # scriptengine.cpp is always compiled — provides COM→Lua dispatch and,
-        # when Lua is absent, stubs for all CScriptEngine Lua methods.
-        scripting/scriptengine.cpp
-
-        # Networking (Phase 3)
-        # (worldsock.cpp left the mushcore build at T3c: off-Windows the
-        # engine connects through pal::ITransport, never CWorldSocket)
-        # pal::ITransport POSIX adapter (T3a): mushcore drives the SAME
-        # transport code the product ships — the connection lifecycle is
-        # single-sourced in doc_shared.cpp on top of it.
         platform/posix_transport.cpp
-
-        # Core document logic (triggers, aliases, timers, line buffer)
         Line.cpp
         ProcessPreviousLine.cpp
         evaluate.cpp
-        speedwalk.cpp   # shared with mushapp; portable + full builds share one parser
+        speedwalk.cpp
         timers.cpp
         serialize.cpp
-
-        # Output-window line/style types (CPaneLine, CPaneStyle, utf8_strlen)
         paneline.cpp
-
-        # Non-Windows stubs for Windows-only classes (CMainFrame Frame,
-        # CMUSHView::classCMUSHView, CSendView, CChatSocket, CPaneLine, etc.)
-        platform/windows_stubs.cpp
-
-        # Campaign C flip: inert headless bodies of the five GUI method
-        # families (miniwindow/notepad/chat/output-view/accelerator) that the
-        # real scripting/lua_methods.cpp binds; the real TUs are mushapp-only.
-        platform/doc_gui_method_stubs.cpp
-
-        # Campaign B Stage-3 safety net: strong out-of-line defs (compiled
-        # against the REAL headers like windows_stubs.cpp) for the doc.h/mainfrm.h
-        # methods whose real bodies live in mushapp-only TUs — they win over the
-        # doc_stub.h weak inlines during the flip so mushcore keeps linking.
-        platform/doc_headless_stubs.cpp
-
-        # Phase 2 Unit B-1 (docs/PHASE2-RECOVERY.md §5/§6): the FIRST pre-flip
-        # additive step of the Option-B big-bang.  Strong out-of-line defs (real
-        # headers, windows_stubs.cpp pattern) for the ~66 no-op GUI symbols + 2
-        # tiny-real scripting bodies that the real doc.cpp/doc_construct.cpp/
-        # Utilities.cpp reference but that live only in mushapp-only GUI TUs
-        # (world-prefs command handlers, dialog ctor/vtable pairs, view/notepad
-        # no-ops, CreateScriptEngine/DisableScripting, DoGlobalPrefs/SendToFront,
-        # bWine/MUSHCLIENT_VERSION).  Unreferenced until B-3 flips the TUs; the
-        # ~10 GDI shim entries are deferred to B-2.
-        platform/doc_flip_gui_stubs.cpp
-
-        # Campaign B Stage-3 App landing pad.  INACTIVE until Stage 5 (guarded by
-        # MUSHCLIENT_HEADLESS_APP) — the App global cannot move off doc_portable.cpp
-        # until the App-accessing TUs flip to the real MUSHclient.h layout.  Wired
-        # here now so Stage 5 is a one-line guard flip; compiles to an empty TU.
-        platform/headless_app.cpp
-
-        # Campaign B CPlugin convergence: the REAL CPlugin (ctor/dtor,
-        # ExecutePluginScript family, SendToAllPluginCallbacks family,
-        # PluginCallbacksNames, ON_PLUGIN_* names) + the real plugin/UDP
-        # world.* methods.  doc_stub.h includes the real plugins.h now;
-        # the old stub CPlugin + platform/plugin_portable.cpp are gone.
         plugins.cpp
         scripting/methods/methods_plugins.cpp
         scripting/methods/methods_udp.cpp
         UDPsocket.cpp
-
-        # B-3: plugins.cpp (OnFilePluginwizard) constructs the REAL
-        # CPluginWizardSheet under FULL_BUILD (its non-full file-local stand-in
-        # is gone), which aggregates 8 CPluginWizardPageN members.  Adopt the
-        # real dialog TUs (they compile headless over the mfc_ui.h shims — mushapp
-        # proves it; the wizard is a dead menu path headless) rather than
-        # hand-stub 8 property pages.
         dialogs/plugins/PluginWizardSheet.cpp
         dialogs/plugins/PluginWizard.cpp
-        # PluginWizard's DoDataExchange calls the real DDX_/DDV_MinMaxString (the
-        # mfc_ui.h inline stubs are #ifndef MUSHCLIENT_FULL_BUILD, now off) —
-        # adopt the tiny self-contained validator (its intended mushapp home).
         DDV_validation.cpp
-
-        # Hook function pointer storage (definitions for wx_mfc_hooks.h externs).
-        # Also compiled into mushapp so mushgui (which links mushapp, not mushcore)
-        # can resolve the same symbols without linking both libraries.
         platform/wx_mfc_hooks_storage.cpp
-
-        # Campaign B: real option machinery (option convergence) — the REAL
-        # OptionsTable[]/AlphaOptionsTable[] + Get/SetOption(Item) family,
-        # compiled against doc_stub.h (which has doc.h-exact option members).
         scriptingoptions.cpp
-
-        # Campaign C prep: the REAL global-option machinery —
-        # GlobalOptionsTable[]/AlphaGlobalOptionsTable[] +
-        # App.GetGlobalOption(List) — compiled against the stub App
-        # (MUSHclient.h-exact members; inert GetProfile*/db_* accessors).
         globalregistryoptions.cpp
-
-        # XML parser (world-file deserialisation)
         xml/xmlparse.cpp
-
-        # Campaign B world-file LOADER adoption: the REAL Windows loader
-        # (worlds, plugins, includes, plugin state, ImportXML, Load_Set),
-        # compiled against doc_stub.h — the portable loader twin
-        # (xml/xml_load_world_portable.cpp) is deleted.  LoadWorldFromFile
-        # (doc_portable.cpp) is the thin Serialize-loading-branch driver.
-        xml/xml_load_world.cpp
-
-        # The real exception classes (CErrorException/CSystemException) +
-        # ThrowErrorException: the loader's per-item catch (CException*)
-        # error tolerance depends on the real throw types.
         exceptions.cpp
-
-        # Campaign B world-file saver adoption: the REAL Windows saver +
-        # serialize entry (Serialize_World_XML → Save_World_XML(ar, ~0) +
-        # IsArchiveXML), compiled against doc_stub.h — the portable saver twin
-        # (xml/xml_save_world_portable.cpp) is deleted.
         xml/xml_save_world.cpp
         xml/xml_serialize.cpp
-
-        # XML import/export + custom entities (ExportXML over the real saver;
-        # ImportXML over the real loader)
         scripting/methods/methods_xml.cpp
-    )
-
-    # ── Coverage instrumentation (opt-in) ────────────────────────────────
-    # -DMUSHCLIENT_COVERAGE=ON adds LLVM source-based coverage to mushcore and
-    # every test executable (tests/CMakeLists.txt picks the flags up from the
-    # target property).  Use tests/coverage.sh to build, run, and report.
-    option(MUSHCLIENT_COVERAGE "Instrument mushcore + tests for llvm-cov" OFF)
-
-    add_library(mushcore STATIC ${MUSHCORE_SOURCES})
-    if(MUSHCLIENT_COVERAGE)
-        target_compile_options(mushcore PRIVATE -fprofile-instr-generate -fcoverage-mapping)
-        target_link_options(mushcore PUBLIC -fprofile-instr-generate)
-    endif()
-
-    target_compile_definitions(mushcore PRIVATE
-        _NOSOUND    # DirectSound not available on macOS/Linux
-        WIN32       # MUSHclient uses WIN32 guards for Windows-specific feature paths
-        # Phase 2 B-3 (THE ATOMIC FLIP): mushcore now compiles the REAL doc.h
-        # (via the shared include-switch heads' real arm) — one set of headers
-        # everywhere.  This auto-flips the 63 include-switched shared TUs off the
-        # deleted platform/doc_stub.h and onto stdafx.h/MUSHclient.h/doc.h, and
-        # activates gdi_headless.cpp's full-build GDI shape.
-        MUSHCLIENT_FULL_BUILD
-        # Activates platform/headless_app.cpp's real-type `CMUSHclientApp App`
-        # (was inert since Stage 3) and the mushcore-only line-seeding + doc-
-        # registration arms in doc_construct.cpp — the work Windows/wx do in
-        # SetUpOutputWindow / the MFC framework, which never run headless.
-        MUSHCLIENT_HEADLESS_APP
-    )
-
-    if(LUA_FOUND)
-        target_sources(mushcore PRIVATE
-            # Lua C extensions
-            scripting/bits.c
-            scripting/lrexlib.c
-            scripting/lua_compress.c
-            scripting/lbc.c
-            scripting/mt19937ar.c
-            scripting/number.c
-
-            # Lua scripting engine
-            scripting/lua_scripting.cpp
-
-            # LPeg pattern-matching library (vendored, pure C)
-            scripting/lpeg/lptree.c
-            scripting/lpeg/lpvm.c
-            scripting/lpeg/lpcap.c
-            scripting/lpeg/lpcode.c
-
-            # SQLite3 Lua binding (vendored)
-            lsqlite/lsqlite3.c
-
-            # Portable Lua utilities (MakeLuaState, MakeTableItem, the full
-            # portable utils_lib exported as ptr_xmllib, port-only extras).
-            # On Windows these come from Utilities.cpp / lua_utils.cpp.
-            scripting/lua_utils_portable.cpp
-
-            # The REAL "world" Lua library (Campaign C flip) — the same
-            # ~8000-line lua_methods.cpp the Windows build and mushapp
-            # compile, built against doc_stub.h via its head-switch.  The
-            # GUI method families it binds resolve to the inert bodies in
-            # platform/doc_gui_method_stubs.cpp.
-            scripting/lua_methods.cpp
-
-            # Portable world.Debug() — trigger/alias/timer/variable/telnet listings.
-            # On Windows the full implementation is in world_debug.cpp (mushapp only).
-            scripting/world_debug_portable.cpp
-        )
-        # Signal to scriptengine.cpp that the real Lua impl is compiled in
-        target_compile_definitions(mushcore PRIVATE MUSHCLIENT_LUA_SCRIPTING)
-    endif()
-
-    # Note: md5.h / sha256.h / shs.h have been patched to use 'unsigned int'
-    # instead of 'unsigned long' for their 32-bit word types, ensuring correct
-    # behaviour on LP64 platforms (Linux/macOS 64-bit) where 'unsigned long'
-    # is 8 bytes.  See scripting/md5.h, sha256.h, shs.h.
-
-    target_include_directories(mushcore PUBLIC
-        ${CMAKE_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/platform
-        ${CMAKE_SOURCE_DIR}/pcre
-        ${CMAKE_SOURCE_DIR}/scripting
-        ${CMAKE_SOURCE_DIR}/scripting/lpeg
-        ${CMAKE_SOURCE_DIR}/sqlite3
-        ${CMAKE_SOURCE_DIR}/lsqlite
-        # B-3: doc_construct.cpp includes dialogs/world_prefs/prefspropertypages.h
-        # (for CPrefsP*::eColumnCount) whose own headers use relative includes —
-        # mushapp already carries this dir; mushcore needs it now it compiles the
-        # real ctor.
-        ${CMAKE_SOURCE_DIR}/dialogs
-    )
-
-    target_compile_options(mushcore PRIVATE
-        -Wall
-        -Wno-deprecated-declarations
-        -Wno-unused-variable
-        -Wno-sign-compare
-        -Wno-missing-field-initializers
-        # A non-trivially-copyable CString (it holds a std::string) CANNOT be
-        # passed through a C variadic ("...") on clang: despite operator const
-        # char*, clang emits a runtime TRAP (SIGTRAP) at the call site, which
-        # silently crashes the app on otherwise-rare paths (error reporting,
-        # world/plugin-state save, …).  Every such call site is cast to
-        # (LPCTSTR); keep this a hard error so the latent-crash class can't
-        # return.  (On Windows CString is a thin pointer wrapper, so the cast is
-        # a harmless no-op there.)
-        -Werror=non-pod-varargs
-        # Windows source initialises double struct fields with LONG_MAX; MSVC
-        # accepts this silently.  Suppress the GCC/Clang narrowing error.
-        -Wno-narrowing
-    )
-
-    target_link_libraries(mushcore PUBLIC
-        mcpcre
-        mcsqlite3
-        mczlib
-        PNG::PNG
-    )
-
-    if(LUA_FOUND)
-        target_include_directories(mushcore PUBLIC ${LUA_INCLUDE_DIR})
-        target_link_libraries(mushcore PUBLIC ${LUA_LIBRARIES})
-    endif()
-
-    if(OpenSSL_FOUND OR OPENSSL_FOUND)
-        target_include_directories(mushcore PUBLIC ${OPENSSL_INCLUDE_DIR})
-        target_link_libraries(mushcore PUBLIC OpenSSL::SSL OpenSSL::Crypto)
-        # Signal to worldsock.cpp / doc_stub.h that real OpenSSL headers are available
-        target_compile_definitions(mushcore PRIVATE OPENSSL_FOUND)
-    endif()
-
-    # ── mushapp — full-application static library ─────────────────────────────
-    # This library contains the complete MUSHclient source (non-portable).
-    # It replaces the portable_*.cpp stubs with the real implementations and
-    # adds all dialogs, scripting methods, views, and app-level code.
-    # mushgui links mushapp (not mushcore) to avoid duplicate symbols.
-    # mushcore remains the headless engine for the test suite.
-
-    set(MUSHAPP_SOURCES
-        # ── Vendored C libraries (same as mushcore) ───────────────────────
-        scripting/md5.c
-        scripting/sha256.c
-        scripting/shs.c
-
-        # ── Core portable logic (non-conflicting subset from mushcore) ────
-        mcdatetime.cpp
-        regexp.cpp
-        Color.cpp
-        Replace.cpp
-        Dmetaph.cpp
-        ansi.cpp
-        doc_shared.cpp   # shared pure-logic CMUSHclientDoc methods (both builds; no drift)
-        utilities_shared.cpp   # shared pure-logic free functions (myAtoF/encodeBase64/EditDistance)
-        scripting/errors.cpp   # error_descriptions[] (ErrorDesc; single-sourced from lua_methods.cpp)
-        telnet_phases.cpp
-        Line.cpp
-        ProcessPreviousLine.cpp
-        evaluate.cpp
-        speedwalk.cpp   # shared with mushapp; portable + full builds share one parser
-        timers.cpp
-        serialize.cpp
-        paneline.cpp
-        # scriptingoptions.cpp is compiled in the app-level section below
-        # (full-build include path); mushcore compiles the SAME file against
-        # doc_stub.h — one canonical option machinery, no twin (Campaign B).
-        xml/xmlparse.cpp
-
-        # ── Full implementations replacing portable stubs ─────────────────
-        # Global singletons (App, Frame, g_debug) — replaces doc_portable.cpp
-        platform/mushapp_globals.cpp
-        # Non-Windows stubs/forwarders needed by mushapp but not by mushcore
-        platform/mushapp_stubs.cpp
-        # port-only FireWorld* callbacks — single-sourced with mushcore (was a
-        # duplicate of the doc_portable.cpp copy)
-        doc_scripting_shared.cpp
-        # the push-side display drain (UpdateAllViews walk).  mushapp-ONLY until
-        # the display-family flip: mushcore still pushes per-'\n' inside its twin
-        # DisplayMsg + has a no-op UpdateAllViews in doc_portable.cpp — compiling
-        # this TU there before the flip would double-emit every line.
-        doc_display_shared.cpp
-        # Port-only lightweight CTreePropertySheet (World Properties container):
-        # records the canonical pages + tree structure, DoModal -> wxTreebook.
-        # Replaces the heavy GDI TreePropertySheet.cpp (excluded below).
-        platform/wx_tree_property_sheet.cpp
-        # Hook pointer definitions (also in mushcore for the tests; no ODR conflict
-        # because no target links both mushapp and mushcore simultaneously).
-        platform/wx_mfc_hooks_storage.cpp
-        # Phase 3 scripting: portable IDispatch::Invoke over the doc dispatch map
-        # (shared substrate for the non-Lua engines — see platform/mc_dispatch.h).
         platform/mc_dispatch.cpp
-        # (utilities_portable.cpp → Utilities.cpp)
-        Utilities.cpp
-        # (doc_portable.cpp → doc.cpp + doc_construct.cpp)
-        doc.cpp
+        scripting/mt19937ar.c
+    )
+
+    # Headless test fakes, the portable twins (utilities/lua_utils/world_debug), and
+    # the HEADLESS variant of the three forked TUs.  Test link only — never mushgui.
+    set(MUSHCORE_TESTSUPPORT_SOURCES
+        utilities_portable.cpp
+        pal/cpu_raster.cpp
+        platform/doc_flip_gui_stubs.cpp
+        platform/doc_gui_method_stubs.cpp
+        platform/doc_headless_stubs.cpp
+        platform/doc_port_glue.cpp
+        platform/gdi_headless.cpp
+        platform/headless_app.cpp
+        platform/windows_stubs.cpp
         doc_construct.cpp
-        # (the world-file XML load/save/serialize trio)
-        xml/xml_load_world.cpp
-        xml/xml_save_world.cpp
-        xml/xml_serialize.cpp
-        # windows_stubs.cpp is deliberately OMITTED — real implementations below
-
-        # ── MXP protocol parser ───────────────────────────────────────────
-        mxp/mxp.cpp
-        mxp/mxp_phases.cpp
-        mxp/mxpMode.cpp
-        mxp/mxpError.cpp
-        mxp/mxpOnOff.cpp
-        mxp/mxpinit.cpp
-        mxp/mxputils.cpp
-        mxp/mxpStart.cpp
-        mxp/mxpEnd.cpp
-        mxp/mxpClose.cpp
-        mxp/mxpCloseAtomic.cpp
-        mxp/mxpOpenAtomic.cpp
-        mxp/mxpDefs.cpp
-        mxp/mxpEntities.cpp
-
-        # ── XML world I/O (full) ──────────────────────────────────────────
-        # (already listed above under "Full implementations")
-
-        # ── Scripting engine ──────────────────────────────────────────────
         scripting/scriptengine.cpp
+        xml/xml_load_world.cpp
+    )
+
+    # wx views/frames/dialogs, the real twins (Utilities/lua_utils/world_debug), the
+    # scripting infra (scripting.cpp/functionlist.cpp), and the GUI variant of the
+    # three forked TUs.  mushgui link only — MUST NOT enter the test executables.
+    set(MUSHGUI_ADAPTERS_SOURCES
+        platform/mushapp_globals.cpp
+        platform/mushapp_stubs.cpp
+        platform/wx_tree_property_sheet.cpp
+        Utilities.cpp
         scripting/scripting.cpp
         scripting/functionlist.cpp
-        # Mersenne Twister RNG — used widely (miniwindow, dialogs, etc.), not Lua-only
-        scripting/mt19937ar.c
-
-        # ── App-level source files ────────────────────────────────────────
         ActivityDoc.cpp
         ActivityView.cpp
-        DDV_validation.cpp
-        exceptions.cpp
         Finding.cpp
         HyprLink.cpp
         MDIClientWnd.cpp
@@ -847,8 +539,6 @@ if(NOT WIN32)
         TextDocument.cpp
         TextView.cpp
         TimerWnd.cpp
-        UDPsocket.cpp
-        accelerators.cpp
         activitychildfrm.cpp
         art.cpp
         chatlistensock.cpp
@@ -856,56 +546,23 @@ if(NOT WIN32)
         childfrm.cpp
         format.cpp
         genprint.cpp
-        globalregistryoptions.cpp
         mainfrm.cpp
         miniwindow.cpp
-        miniwindow_compose.cpp   # engine-owned placement, shared with the Windows view (docs/PAL.md S4)
-        surface_bridge.cpp   # pal::ISurface migration bridge globals (docs/PAL.md S3)
-        platform/posix_transport.cpp   # pal::ITransport POSIX adapter + selftest (docs/PAL.md ITransport T2c)
-        platform/miniwindow_selftest.cpp  # world.Window* engine conformance (--pal-miniwindow-selftest; Phase 4)
+        miniwindow_compose.cpp
+        surface_bridge.cpp
+        platform/miniwindow_selftest.cpp
         mushview.cpp
-        plugins.cpp
-        scriptingoptions.cpp
         sendvw.cpp
         textchildfrm.cpp
         winplace.cpp
         world_debug.cpp
-
-        # ── Scripting method implementations (Lua API) ────────────────────
         scripting/methods/methods.cpp
         scripting/methods/methods_accelerators.cpp
-        scripting/methods/methods_aliases.cpp
-        scripting/methods/methods_arrays.cpp
         scripting/methods/methods_chat.cpp
-        scripting/methods/methods_clipboard.cpp
-        scripting/methods/methods_colours.cpp
-        scripting/methods/methods_commands.cpp
-        scripting/methods/methods_database.cpp
-        scripting/methods/methods_defaults.cpp
-        scripting/methods/methods_info.cpp
-        scripting/methods/methods_infobar.cpp
-        scripting/methods/methods_logging.cpp
-        scripting/methods/methods_mapping.cpp
         scripting/methods/methods_miniwindows.cpp
         scripting/methods/methods_notepad.cpp
-        scripting/methods/methods_noting.cpp
         scripting/methods/methods_output.cpp
         scripting/methods/methods_panes.cpp
-        scripting/methods/methods_plugins.cpp
-        scripting/methods/methods_sending.cpp
-        scripting/methods/methods_sounds.cpp
-        scripting/methods/methods_speedwalks.cpp
-        scripting/methods/methods_spellchecker.cpp
-        scripting/methods/methods_timers.cpp
-        scripting/methods/methods_tracing.cpp
-        scripting/methods/methods_triggers.cpp
-        scripting/methods/methods_udp.cpp
-        scripting/methods/methods_utilities.cpp
-        scripting/methods/methods_variables.cpp
-        scripting/methods/methods_worlds.cpp
-        scripting/methods/methods_xml.cpp
-
-        # ── Dialogs — world preferences ───────────────────────────────────
         dialogs/world_prefs/ButtonColour.cpp
         dialogs/world_prefs/CommandOptionsDlg.cpp
         dialogs/world_prefs/EditVariable.cpp
@@ -913,32 +570,20 @@ if(NOT WIN32)
         dialogs/world_prefs/PrefsPropertySheet.cpp
         dialogs/world_prefs/TabDefaultsDlg.cpp
         dialogs/world_prefs/TimerDlg.cpp
-        # TreePropertySheet.cpp (heavy GDI custom-draw) is Windows-only; the port
-        # uses platform/wx_tree_property_sheet.cpp + a wxTreebook instead.
         dialogs/world_prefs/aliasdlg.cpp
         dialogs/world_prefs/configuration.cpp
         dialogs/world_prefs/editmac.cpp
         dialogs/world_prefs/genpropertypage.cpp
         dialogs/world_prefs/prefspropertypages.cpp
         dialogs/world_prefs/triggdlg.cpp
-
-        # ── Dialogs — global preferences ─────────────────────────────────
         dialogs/global_prefs/GlobalPrefs.cpp
         dialogs/global_prefs/GlobalPrefsSheet.cpp
-
-        # ── Dialogs — plugins ─────────────────────────────────────────────
-        dialogs/plugins/PluginWizard.cpp
-        dialogs/plugins/PluginWizardSheet.cpp
         dialogs/plugins/PluginsDlg.cpp
-
-        # ── Dialogs — chat ────────────────────────────────────────────────
         dialogs/chat/ChatCallDlg.cpp
         dialogs/chat/ChatDetailsDlg.cpp
         dialogs/chat/ChatListDlg.cpp
         dialogs/chat/ChatToAllDlg.cpp
         dialogs/chat/EmoteToAllDlg.cpp
-
-        # ── Dialogs — general ─────────────────────────────────────────────
         dialogs/AsciiArtDlg.cpp
         dialogs/ChooseNotepadDlg.cpp
         dialogs/ColourComboBox.cpp
@@ -990,164 +635,178 @@ if(NOT WIN32)
         dialogs/password.cpp
         dialogs/welcome.cpp
         dialogs/welcome1.cpp
+        doc_construct.cpp
+        scripting/scriptengine.cpp
+        xml/xml_load_world.cpp
     )
 
-    add_library(mushapp STATIC ${MUSHAPP_SOURCES})
+    # ── Coverage instrumentation (opt-in) ─────────────────────────────────────
+    # -DMUSHCLIENT_COVERAGE=ON instruments mushcore + mushcore_testsupport (together
+    # they carry every shipping object the test suite runs).  tests/coverage.sh
+    # builds, runs, and reports.
+    option(MUSHCLIENT_COVERAGE "Instrument mushcore + testsupport for llvm-cov" OFF)
 
+    add_library(mushcore             STATIC ${CORE_SOURCES})
+    add_library(mushcore_testsupport STATIC ${MUSHCORE_TESTSUPPORT_SOURCES})
+    add_library(mushgui_adapters     STATIC ${MUSHGUI_ADAPTERS_SOURCES})
+
+    # Common settings for all three engine libraries.  The layout-affecting define
+    # trio (_NOSOUND / WIN32 / MUSHCLIENT_FULL_BUILD) MUST be identical across the
+    # three — otherwise CMUSHclientDoc's layout would differ between objects linked
+    # into one executable (the historical destructor SIGSEGV).  Per-library extras
+    # (HEADLESS_APP, engine-language defs) are added afterwards.
+    macro(mc_engine_common tgt)
+        target_include_directories(${tgt} PUBLIC
+            ${CMAKE_SOURCE_DIR}
+            ${CMAKE_SOURCE_DIR}/platform
+            ${CMAKE_SOURCE_DIR}/pcre
+            ${CMAKE_SOURCE_DIR}/scripting
+            ${CMAKE_SOURCE_DIR}/scripting/lpeg
+            ${CMAKE_SOURCE_DIR}/sqlite3
+            ${CMAKE_SOURCE_DIR}/lsqlite
+            ${CMAKE_SOURCE_DIR}/dialogs
+        )
+        target_compile_definitions(${tgt} PRIVATE _NOSOUND WIN32 MUSHCLIENT_FULL_BUILD)
+        target_compile_options(${tgt} PRIVATE
+            -Wall
+            -Wno-deprecated-declarations
+            -Wno-unused-variable
+            -Wno-sign-compare
+            -Wno-missing-field-initializers
+            -Werror=non-pod-varargs
+            -Wno-narrowing
+            -Wno-unused-function
+        )
+        if(LUA_FOUND)
+            target_include_directories(${tgt} PUBLIC ${LUA_INCLUDE_DIR})
+            target_compile_definitions(${tgt} PRIVATE MUSHCLIENT_LUA_SCRIPTING)
+        endif()
+        if(OpenSSL_FOUND OR OPENSSL_FOUND)
+            target_include_directories(${tgt} PUBLIC ${OPENSSL_INCLUDE_DIR})
+            target_compile_definitions(${tgt} PRIVATE OPENSSL_FOUND)
+        endif()
+    endmacro()
+
+    mc_engine_common(mushcore)
+    mc_engine_common(mushcore_testsupport)
+    mc_engine_common(mushgui_adapters)
+
+    # mushcore owns the vendored-library link edges; the adapter sets inherit them
+    # by PUBLIC-linking mushcore.  (No target links two vendored copies now, so the
+    # deliberate md5/sha256/shs/mt19937/lpeg/lsqlite double-compile is gone.)
+    target_link_libraries(mushcore PUBLIC mcpcre mcsqlite3 mczlib PNG::PNG)
     if(LUA_FOUND)
-        target_sources(mushapp PRIVATE
-            # Lua C extensions (same as mushcore)
+        target_link_libraries(mushcore PUBLIC ${LUA_LIBRARIES})
+    endif()
+    if(OpenSSL_FOUND OR OPENSSL_FOUND)
+        target_link_libraries(mushcore PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+    endif()
+
+    # testsupport reproduces old mushcore's headless behaviour: MUSHCLIENT_HEADLESS_APP
+    # activates the line-seeding + world-doc registration arms of its private copy of
+    # doc_construct.cpp and the real-typed App in headless_app.cpp.  With no engine
+    # defs its scriptengine.cpp / xml_load_world.cpp copies take the all-stub /
+    # unsupported-language arms (correct headless).
+    target_compile_definitions(mushcore_testsupport PRIVATE MUSHCLIENT_HEADLESS_APP)
+    target_link_libraries(mushcore_testsupport PUBLIC mushcore)
+
+    # adapters reproduce old mushapp: no HEADLESS_APP; the engine-language defs are
+    # attached per-engine below (they select the real dispatch in scriptengine.cpp).
+    target_link_libraries(mushgui_adapters PUBLIC mushcore)
+
+    if(MUSHCLIENT_COVERAGE)
+        foreach(_covt mushcore mushcore_testsupport)
+            target_compile_options(${_covt} PRIVATE -fprofile-instr-generate -fcoverage-mapping)
+            target_link_options(${_covt} PUBLIC -fprofile-instr-generate)
+        endforeach()
+    endif()
+
+    # ── Per-library Lua sources ───────────────────────────────────────────────
+    if(LUA_FOUND)
+        # Vendored Lua C extensions + LPeg + lsqlite3 + the real world library.
+        target_sources(mushcore PRIVATE
             scripting/bits.c
             scripting/lrexlib.c
             scripting/lua_compress.c
             scripting/lbc.c
-            # mt19937ar.c is in unconditional MUSHAPP_SOURCES (used by miniwindow, dialogs, etc.)
             scripting/number.c
-
-            # Full Lua scripting engine (replaces lua_scripting.cpp portable subset)
             scripting/lua_scripting.cpp
-
-            # LPeg pattern-matching library
             scripting/lpeg/lptree.c
             scripting/lpeg/lpvm.c
             scripting/lpeg/lpcap.c
             scripting/lpeg/lpcode.c
-
-            # SQLite3 Lua binding
             lsqlite/lsqlite3.c
-
-            # Full Lua utilities (replaces lua_utils_portable.cpp)
-            scripting/lua_utils.cpp
-
-            # Full Lua method implementations (shared with mushcore since the
-            # Campaign C flip; here it compiles against the real GUI headers)
             scripting/lua_methods.cpp
-
-            # Progress dialog for Lua (Windows-style, no-op with stubs)
+        )
+        # Portable Lua utils + portable world.Debug (the GUI twins live adapter-side).
+        target_sources(mushcore_testsupport PRIVATE
+            scripting/lua_utils_portable.cpp
+            scripting/world_debug_portable.cpp
+        )
+        # Real Lua utils + the Lua progress dialog.
+        target_sources(mushgui_adapters PRIVATE
+            scripting/lua_utils.cpp
             scripting/lua_progressdlg.cpp
         )
-        target_compile_definitions(mushapp PRIVATE MUSHCLIENT_LUA_SCRIPTING)
     endif()
 
+    # ── Embedded scripting engines (mushgui_adapters only — MUST NOT leak into the
+    #    18 test executables).  Each routes the world API through the portable
+    #    dispatch-map Invoke in platform/mc_dispatch.cpp (now a mushcore TU). ──────
     if(Python3_FOUND)
-        # Embedded CPython scripting engine (routes the world API through the
-        # portable dispatch-map Invoke in platform/mc_dispatch.cpp).
-        target_sources(mushapp PRIVATE platform/py_engine.cpp)
-        target_compile_definitions(mushapp PRIVATE MUSHCLIENT_PYTHON_SCRIPTING)
-        target_link_libraries(mushapp PUBLIC Python3::Python)
+        target_sources(mushgui_adapters PRIVATE platform/py_engine.cpp)
+        target_compile_definitions(mushgui_adapters PRIVATE MUSHCLIENT_PYTHON_SCRIPTING)
+        target_link_libraries(mushgui_adapters PUBLIC Python3::Python)
     endif()
 
     if(PERL_EMBED_FOUND)
-        # Embedded Perl engine (same dispatch substrate as Python).  The perl
-        # CORE headers come via -iwithsysroot in PERL_CCOPTS, so apply those flags
-        # to just this source file; link the libperl ldopts.
-        target_sources(mushapp PRIVATE platform/perl_engine.cpp)
-        target_compile_definitions(mushapp PRIVATE MUSHCLIENT_PERL_SCRIPTING)
+        # The perl CORE headers come via -iwithsysroot in PERL_CCOPTS, applied to
+        # just this source file; link the libperl ldopts.
+        target_sources(mushgui_adapters PRIVATE platform/perl_engine.cpp)
+        target_compile_definitions(mushgui_adapters PRIVATE MUSHCLIENT_PERL_SCRIPTING)
         set_source_files_properties(platform/perl_engine.cpp PROPERTIES
                                     COMPILE_FLAGS "${PERL_CCOPTS}")
         separate_arguments(PERL_LDOPTS_LIST UNIX_COMMAND "${PERL_LDOPTS}")
-        target_link_libraries(mushapp PUBLIC ${PERL_LDOPTS_LIST})
+        target_link_libraries(mushgui_adapters PUBLIC ${PERL_LDOPTS_LIST})
     endif()
 
     if(JS_ENGINE_FOUND)
-        # Embedded JavaScript engine via JavaScriptCore (same dispatch substrate).
-        target_sources(mushapp PRIVATE platform/js_engine.cpp)
-        target_compile_definitions(mushapp PRIVATE MUSHCLIENT_JS_SCRIPTING)
-        target_link_libraries(mushapp PUBLIC ${JAVASCRIPTCORE_FRAMEWORK})
+        target_sources(mushgui_adapters PRIVATE platform/js_engine.cpp)
+        target_compile_definitions(mushgui_adapters PRIVATE MUSHCLIENT_JS_SCRIPTING)
+        target_link_libraries(mushgui_adapters PUBLIC ${JAVASCRIPTCORE_FRAMEWORK})
     endif()
 
     if(TCL_ENGINE_FOUND)
-        # Embedded Tcl engine (same dispatch substrate).
-        target_sources(mushapp PRIVATE platform/tcl_engine.cpp)
-        target_compile_definitions(mushapp PRIVATE MUSHCLIENT_TCL_SCRIPTING)
+        target_sources(mushgui_adapters PRIVATE platform/tcl_engine.cpp)
+        target_compile_definitions(mushgui_adapters PRIVATE MUSHCLIENT_TCL_SCRIPTING)
         if(TCL_VENDORED)
-            # Static libtcl + its system deps (tclConfig.sh TCL_LIBS = -lz -lpthread
-            # -framework CoreFoundation; pthread is in libSystem).  No dylib to ship.
             set_source_files_properties(platform/tcl_engine.cpp PROPERTIES
                                         INCLUDE_DIRECTORIES "${TCL_VENDORED}/include")
-            target_link_libraries(mushapp PUBLIC
+            target_link_libraries(mushgui_adapters PUBLIC
                 "${TCL_VENDORED}/lib/libtcl8.6.a" z "-framework CoreFoundation")
         else()
-            target_link_libraries(mushapp PUBLIC ${TCL_FRAMEWORK})
+            target_link_libraries(mushgui_adapters PUBLIC ${TCL_FRAMEWORK})
         endif()
     endif()
 
     if(RUBY_ENGINE_FOUND)
-        # Embedded Ruby engine on the same dispatch substrate.  ruby.h's headers
-        # are applied only to this TU (its macros must not leak) — the vendored
-        # build needs both the API dir and the arch config.h dir.
-        target_sources(mushapp PRIVATE platform/ruby_engine.cpp)
-        target_compile_definitions(mushapp PRIVATE MUSHCLIENT_RUBY_SCRIPTING)
-        # Some Ruby headers use the 'register' keyword (removed in C++17).
+        # ruby.h's headers are applied only to this TU (its macros must not leak).
+        target_sources(mushgui_adapters PRIVATE platform/ruby_engine.cpp)
+        target_compile_definitions(mushgui_adapters PRIVATE MUSHCLIENT_RUBY_SCRIPTING)
         set_source_files_properties(platform/ruby_engine.cpp PROPERTIES
                                     INCLUDE_DIRECTORIES "${RUBY_INCLUDE_DIRS}"
                                     COMPILE_FLAGS "-Wno-register")
         if(RUBY_VENDORED)
-            # libruby's id is @rpath/libruby.<ver>.dylib; mushgui adds the rpath
-            # (@executable_path/../lib) and copies the tree to Contents/lib, so
-            # --enable-load-relative finds the stdlib with no env vars.
-            target_link_libraries(mushapp PUBLIC "${RUBY_VENDORED_DYLIB}")
+            target_link_libraries(mushgui_adapters PUBLIC "${RUBY_VENDORED_DYLIB}")
         else()
-            # System libruby: link against the SDK .tbd via -L/-l (a full dylib path
-            # would make `make` treat the shared-cache symlink as an unbuildable
-            # file prerequisite).
-            target_link_directories(mushapp PUBLIC "${RUBY_LIBDIR}")
-            target_link_libraries(mushapp PUBLIC "${RUBY_LIBNAME}")
+            target_link_directories(mushgui_adapters PUBLIC "${RUBY_LIBDIR}")
+            target_link_libraries(mushgui_adapters PUBLIC "${RUBY_LIBNAME}")
         endif()
     endif()
 
-    target_include_directories(mushapp PUBLIC
-        ${CMAKE_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/platform
-        ${CMAKE_SOURCE_DIR}/pcre
-        ${CMAKE_SOURCE_DIR}/scripting
-        ${CMAKE_SOURCE_DIR}/scripting/lpeg
-        ${CMAKE_SOURCE_DIR}/sqlite3
-        ${CMAKE_SOURCE_DIR}/lsqlite
-        ${CMAKE_SOURCE_DIR}/dialogs
-    )
-
-    target_compile_definitions(mushapp PRIVATE
-        _NOSOUND              # DirectSound not available on macOS/Linux
-        WIN32                 # MUSHclient uses WIN32 guards for Windows-specific paths
-        MUSHCLIENT_FULL_BUILD # suppress portable stubs where real impls are compiled
-        # MUSHCLIENT_LUA_SCRIPTING is added below only when Lua is found
-    )
-
-    target_compile_options(mushapp PRIVATE
-        -Wall
-        -Wno-deprecated-declarations
-        -Wno-unused-variable
-        -Wno-sign-compare
-        -Wno-missing-field-initializers
-        -Werror=non-pod-varargs
-        -Wno-narrowing
-        -Wno-unused-function
-    )
-
-    # mushapp vendors its own copies of the C libraries to avoid duplicate
-    # symbols with mushcore (which also links mcpcre/mcsqlite3/mczlib).
-    # mushgui links mushapp only — not mushcore — to prevent duplicate symbols.
-    target_link_libraries(mushapp PUBLIC
-        mcpcre
-        mcsqlite3
-        mczlib
-        PNG::PNG
-    )
-
-    if(LUA_FOUND)
-        target_include_directories(mushapp PUBLIC ${LUA_INCLUDE_DIR})
-        target_link_libraries(mushapp PUBLIC ${LUA_LIBRARIES})
-    endif()
-
-    if(OpenSSL_FOUND OR OPENSSL_FOUND)
-        target_include_directories(mushapp PUBLIC ${OPENSSL_INCLUDE_DIR})
-        target_link_libraries(mushapp PUBLIC OpenSSL::SSL OpenSSL::Crypto)
-        target_compile_definitions(mushapp PRIVATE OPENSSL_FOUND)
-    endif()
 
     # ── mushgui — wxWidgets GUI client (Phase 5) ─────────────────────────────
-    # Requires wxWidgets 3.x AND Lua 5.1 (mushapp links both).
+    # Requires wxWidgets 3.x AND Lua 5.1 (mushcore + mushgui_adapters need both).
     # On macOS: brew install wxwidgets lua@5.1
     # On Linux: apt install libwxgtk3.0-gtk3-dev liblua5.1-dev
     find_package(wxWidgets QUIET COMPONENTS core base html)
@@ -1194,7 +853,7 @@ if(NOT WIN32)
             # bridge: includes BOTH wx and MUSHclient headers; implements hooks
             platform/wx_mfc_impl.cpp
             # GDI compatibility layer: wx-backed CDC/CBitmap/CPen/CBrush/CFont
-            # Resolves the GDI symbols left undefined by mushapp's miniwindow.cpp
+            # Resolves the GDI symbols left undefined by mushgui_adapters' miniwindow.cpp
             platform/wx_gdi_compat.cpp
             # PAL: wx adapter for pal::ISurface + conformance selftest (S2)
             platform/wx_surface.cpp
@@ -1212,10 +871,12 @@ if(NOT WIN32)
             # (backs world.PlaySound / MSP / trigger sounds)
             platform/ma_sound.cpp
         )
-        # mushgui links mushapp (full MUSHclient engine with doc.cpp, dialogs,
-        # scripting, etc.) rather than the portable mushcore stub.
-        # wx_mfc_impl.cpp bridges the MFC compatibility layer to real wxWidgets.
-        target_link_libraries(mushgui PRIVATE mushapp ${wxWidgets_LIBRARIES})
+        # mushgui links the shared engine (mushcore) + the wx/GUI adapter set
+        # (mushgui_adapters, which PUBLIC-links mushcore).  Both are listed so the
+        # linker sees the full mushcore↔adapters symbol cycle (ld64 resolves it by
+        # iterative archive rescan).  wx_mfc_impl.cpp bridges the MFC compatibility
+        # layer to real wxWidgets.
+        target_link_libraries(mushgui PRIVATE mushgui_adapters mushcore ${wxWidgets_LIBRARIES})
         # so @rpath/Python.framework (the embedded libpython) resolves at dev
         # runtime; build-app.sh strips this absolute rpath and bundles the
         # framework under Contents/Frameworks for the released app.
@@ -1271,7 +932,7 @@ if(NOT WIN32)
             # substitution so typed/pasted Lua isn't corrupted in script edits.
             target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/platform/wx_osx_text.mm)
             set_target_properties(mushgui PROPERTIES
-                # The CMake target stays "mushgui" (mushcore/mushcli/mushapp/mushgui
+                # The CMake target stays "mushgui" (mushcore/mushgui_adapters/mushgui
                 # build-target convention), but the bundle + executable are named
                 # "MUSHclient" to match the canonical Windows app — so it is
                 # MUSHclient.app/Contents/MacOS/MUSHclient, and wxWidgets' default

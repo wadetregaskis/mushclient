@@ -22,11 +22,12 @@ macro(mc_test name)
         HAVE_CONFIG_H
         WIN32       # must match mushcore's compile flags to keep CMUSHclientDoc layout identical
         _NOSOUND    # DirectSound not available on macOS/Linux
-        # Phase 2 B-3 (THE ATOMIC FLIP): tests now see the REAL doc.h layout,
-        # matching the flipped mushcore they link.  CRITICAL — a test compiled on
-        # the old doc_stub.h layout against a FULL_BUILD mushcore = the historical
-        # destructor SIGSEGV.  (MUSHCLIENT_HEADLESS_APP is NOT set here: it only
-        # gates definitions inside mushcore TUs, never header layout.)
+        # The tests see the REAL doc.h layout, matching the mushcore /
+        # mushcore_testsupport they link.  CRITICAL — the layout-affecting define
+        # trio (WIN32 / _NOSOUND / MUSHCLIENT_FULL_BUILD) MUST match the engine libs
+        # or CMUSHclientDoc's layout differs across the linked objects → the
+        # historical destructor SIGSEGV.  (MUSHCLIENT_HEADLESS_APP is NOT set here:
+        # it only gates definitions inside the testsupport TUs, never header layout.)
         MUSHCLIENT_FULL_BUILD
     )
     # Propagate Lua scripting flag so tests can use #ifdef MUSHCLIENT_LUA_SCRIPTING
@@ -34,7 +35,12 @@ macro(mc_test name)
         target_compile_definitions(${name} PRIVATE MUSHCLIENT_LUA_SCRIPTING)
     endif()
     target_compile_options(${name} PRIVATE ${MC_TEST_COMPILE_OPTIONS})
-    target_link_libraries(${name} PRIVATE mushcore)
+    # Stage 9: the engine is the shared `mushcore`; the headless fakes / portable
+    # twins live in `mushcore_testsupport` (which PUBLIC-links mushcore).  Both are
+    # listed so ld64 resolves the mushcore↔testsupport symbol cycle by rescan.
+    # (mushgui_adapters — the wx/GUI + engine set — is deliberately NOT linked, so
+    # no view/dialog/embedded-engine weight enters the test executables.)
+    target_link_libraries(${name} PRIVATE mushcore_testsupport mushcore)
     add_test(NAME ${name} COMMAND ${name})
 endmacro()
 

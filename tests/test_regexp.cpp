@@ -198,4 +198,33 @@ TEST(RegexpTest, MoreThanTenCaptureGroupsExtractable) {
     EXPECT_STREQ("l", r->GetWildcard(12).c_str());
 }
 
+
+
+// regexp.cpp regexec (lines 69-71): "exit if no regexp program to process
+// (possibly because of previous error)". This EXTENDS RuntimeErrorIsNotReportedAsMatch:
+// once a runtime error frees+nulls m_program, a SECOND regexec on the SAME t_regexp
+// must hit the null-program guard and early-out with false -- never crash, and never
+// advance past the guard into another pcre_exec attempt.
+TEST(RegexpTest, ExecOnErroredProgramEarlyOutsFalse) {
+    Regexp r("(a+)+$");
+    ASSERT_NE(nullptr, r.get());
+    std::string s(50, 'a');
+    s += '!';                                    // forces the overall match to fail
+
+    // First exec: catastrophic backtracking -> a PCRE runtime error, which frees
+    // and NULLs m_program (regexp.cpp:104-105) and records the error code.
+    EXPECT_EQ(0, regexec(r.get(), s.c_str()));
+    ASSERT_TRUE(r->m_program == nullptr);        // program was nulled on the error
+    EXPECT_LT(r->m_iExecutionError, 0);
+    const long attemptsAfterError = r->m_iMatchAttempts;
+
+    // Second exec on the SAME errored program: the null-program guard returns
+    // false BEFORE the m_iMatchAttempts++ at regexp.cpp:96. Drop the guard and the
+    // return value is still 0 (pcre_exec(NULL) -> PCRE_ERROR_NULL, no crash), but the
+    // attempt counter advances -- so the counter, not the return value, catches it.
+    EXPECT_EQ(0, regexec(r.get(), "anything"));
+    EXPECT_EQ(attemptsAfterError, r->m_iMatchAttempts);
+}
+
+
 MC_TEST_MAIN()

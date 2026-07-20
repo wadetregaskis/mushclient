@@ -260,4 +260,41 @@ TEST(CmcDateTimeR5, PreEpochNegativeSerialSign)
     EXPECT_NEAR(1.25, after.m_dt, 1e-9);
 }
 
+
+// ── round 6: the hand-written span assignment operators (never exercised) ──
+// Prior tests only copy-CONSTRUCT spans; operator=(double) (mcdatetime.cpp:423)
+// and operator=(const CmcDateTimeSpan&) (mcdatetime.cpp:430) had zero callers.
+
+TEST(CmcDateTimeSpanR6, AssignFromDoubleSetsSpanAndForcesValidStatus)
+{
+    // operator=(double) (mcdatetime.cpp:423-428): m_span := the double (in
+    // days), status forced to valid.  Pre-poison the status to non-valid so the
+    // SetStatus(valid) arm is load-bearing (not merely already-valid).
+    CmcDateTimeSpan span;
+    span.SetStatus(CmcDateTimeSpan::invalid);
+    span = 2.5;                                    // 2.5 days -> operator=(double)
+    EXPECT_EQ(CmcDateTimeSpan::valid, span.GetStatus());
+    EXPECT_NEAR(2.5, span.GetTotalDays(), 1e-9);          // GetTotalDays == m_span
+    EXPECT_NEAR(216000.0, span.GetTotalSeconds(), 1e-6);  // 2.5 * 86400
+}
+
+TEST(CmcDateTimeSpanR6, AssignFromSpanCopiesBothSpanAndStatus)
+{
+    // operator=(const CmcDateTimeSpan&) (mcdatetime.cpp:430-435) copies m_span
+    // AND m_status field-by-field (hand-written, NOT defaulted).
+    // (A) span field: a distinctive valid source must transfer its value.
+    CmcDateTimeSpan src(3, 6, 0, 0);               // 3d 6h == 3.25 days
+    CmcDateTimeSpan dst;
+    dst = src;                                      // operator=(const&)
+    EXPECT_EQ(CmcDateTimeSpan::valid, dst.GetStatus());
+    EXPECT_NEAR(3.25, dst.GetTotalDays(), 1e-9);
+    EXPECT_NEAR(280800.0, dst.GetTotalSeconds(), 1e-6);   // 3.25 * 86400
+    // (B) status field: a NON-valid source must overwrite a valid dest's status
+    //     (unlike operator=(double), which always forces valid).
+    CmcDateTimeSpan nul;  nul.SetStatus(CmcDateTimeSpan::null);
+    CmcDateTimeSpan dst2;                           // default-constructed -> valid
+    dst2 = nul;                                     // operator=(const&)
+    EXPECT_EQ(CmcDateTimeSpan::null, dst2.GetStatus());
+}
+
 MC_TEST_MAIN()

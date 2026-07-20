@@ -472,4 +472,269 @@ TEST(PalTransport, PosixAdapterConformanceSelftest)
     EXPECT_EQ(0, RunPalTransportSelfTest());   // returns the failure count
 }
 
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TLS encrypted-path coverage (gaps in platform/posix_transport.cpp):
+//   (1) flushSend() SSL_write — an encrypted send round-trips (server decrypts).
+//   (2) handleReadable() SSL_read<=0 clean shutdown → teardownTls + onClosed(0).
+//   (3) stepTls() protocol failure → onTlsFailed(TlsFailure::Handshake).
+// These drive the REAL PosixTransport (mushcore, built with OPENSSL_FOUND)
+// against tiny in-process OpenSSL servers spun up here — no posix_transport.cpp
+// or CMake change: OpenSSL's include dir + libs already propagate PUBLIC from
+// mushcore, and OPENSSL_VERSION_TEXT (defined only by the REAL <openssl/*.h>,
+// per the fallback stub's own `#if !defined(OPENSSL_VERSION_TEXT)` guard) gates
+// the whole block, so a no-OpenSSL build — which ships only stub
+// ssl.h/err.h/x509.h and whose PosixTransport::startTls fails immediately —
+// compiles it out.  (Registration is by static init, so defining these after
+// MC_TEST_MAIN() is fine — same TU as main().)
+#include <openssl/ssl.h>            // real header → defines OPENSSL_VERSION_TEXT
+#if defined(OPENSSL_VERSION_TEXT)
+#include <openssl/x509.h>
+#include <openssl/evp.h>
+#include <thread>
+
+namespace {
+
+// Records the TLS-relevant events the file's FakeTransportEvents ignores.
+struct TlsRecorder : pal::ITransportEvents {
+    int  connects = 0, closes = 0;
+    int  firstCloseErr = -999;                // captured once, on the first close
+    bool tlsEstablished = false, tlsFailed = false;
+    pal::TlsFailure tlsFailKind = pal::TlsFailure::CertVerify;  // != expected Handshake
+    std::string bytes, verifyFailure;
+
+    void onResolved(pal::ResolveToken, unsigned int, bool) override {}
+    void onConnect(int) override { ++connects; }
+    void onBytes(const char* d, size_t n) override { bytes.append(d, n); }
+    void onWritable() override {}
+    void onClosed(int err) override {
+        if (firstCloseErr == -999) firstCloseErr = err;
+        ++closes;
+    }
+    void onTlsEstablished(const char*, const char*, const char* vf) override {
+        tlsEstablished = true; verifyFailure.assign(vf ? vf : "");
+    }
+    void onTlsFailed(pal::TlsFailure kind, const char*) override {
+        tlsFailed = true; tlsFailKind = kind;
+    }
+};
+
+// A throwaway self-signed "localhost" identity + server SSL_CTX (the
+// StartTlsServer recipe in posix_transport.cpp).  Caller frees the out params.
+static SSL_CTX* make_tls_server_ctx(EVP_PKEY*& pkey, X509*& x)
+{
+    pkey = EVP_RSA_gen(2048);
+    x = X509_new();
+    X509_set_version(x, 2);
+    ASN1_INTEGER_set(X509_get_serialNumber(x), 1);
+    X509_gmtime_adj(X509_getm_notBefore(x), 0);
+    X509_gmtime_adj(X509_getm_notAfter(x), 3600);
+    X509_set_pubkey(x, pkey);
+    X509_NAME* name = X509_get_subject_name(x);
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                               (const unsigned char*)"localhost", -1, -1, 0);
+    X509_set_issuer_name(x, name);
+    X509_sign(x, pkey, EVP_sha256());
+    SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
+    SSL_CTX_use_certificate(ctx, x);
+    SSL_CTX_use_PrivateKey(ctx, pkey);
+    return ctx;
+}
+
+static int make_loopback_listener(sockaddr_in& sa)
+{
+    int srv = ::socket(AF_INET, SOCK_STREAM, 0);
+    sa = sockaddr_in{};
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sa.sin_port = 0;
+    ::bind(srv, (sockaddr*)&sa, sizeof sa);
+    socklen_t len = sizeof sa;
+    ::getsockname(srv, (sockaddr*)&sa, &len);
+    ::listen(srv, 1);
+    return srv;
+}
+
+// TLS server: handshake, greet "TLSHELLO", then DECRYPT one client packet and
+// echo it back as "ECHO:<plaintext>" through the encrypted channel.
+static unsigned short start_tls_echo_server(std::thread& out)
+{
+    sockaddr_in sa;
+    int srv = make_loopback_listener(sa);
+    out = std::thread([srv]() {
+        EVP_PKEY* pkey = nullptr; X509* x = nullptr;
+        SSL_CTX* ctx = make_tls_server_ctx(pkey, x);
+        int c = ::accept(srv, nullptr, nullptr);
+        if (c >= 0) {
+            SSL* ssl = SSL_new(ctx);
+            SSL_set_fd(ssl, c);
+            if (SSL_accept(ssl) == 1) {
+                SSL_write(ssl, "TLSHELLO", 8);
+                char buf[128];
+                int n = SSL_read(ssl, buf, (int)sizeof buf);
+                if (n > 0) {
+                    std::string reply = "ECHO:" + std::string(buf, (size_t)n);
+                    SSL_write(ssl, reply.data(), (int)reply.size());
+                }
+                SSL_read(ssl, buf, (int)sizeof buf);   // block until client closes
+                SSL_shutdown(ssl);
+            }
+            SSL_free(ssl);
+            ::close(c);
+        }
+        SSL_CTX_free(ctx); X509_free(x); EVP_PKEY_free(pkey);
+        ::close(srv);
+    });
+    return ntohs(sa.sin_port);
+}
+
+// TLS server: handshake, greet, then a CLEAN one-way SSL_shutdown (close_notify)
+// while lingering with TCP open — so the client sees the close via SSL_read (the
+// gap-2 path), not a TCP FIN.
+static unsigned short start_tls_shutdown_server(std::thread& out)
+{
+    sockaddr_in sa;
+    int srv = make_loopback_listener(sa);
+    out = std::thread([srv]() {
+        EVP_PKEY* pkey = nullptr; X509* x = nullptr;
+        SSL_CTX* ctx = make_tls_server_ctx(pkey, x);
+        int c = ::accept(srv, nullptr, nullptr);
+        if (c >= 0) {
+            SSL* ssl = SSL_new(ctx);
+            SSL_set_fd(ssl, c);
+            if (SSL_accept(ssl) == 1) {
+                SSL_write(ssl, "TLSHELLO", 8);
+                SSL_shutdown(ssl);          // send close_notify (clean TLS shutdown)
+                ::usleep(400000);           // linger: keep TCP open (SSL_read, not FIN)
+            }
+            SSL_free(ssl);
+            ::close(c);
+        }
+        SSL_CTX_free(ctx); X509_free(x); EVP_PKEY_free(pkey);
+        ::close(srv);
+    });
+    return ntohs(sa.sin_port);
+}
+
+// Plain (non-TLS) server: wait for the ClientHello, answer with garbage, so the
+// client's handshake fails at the protocol level (wrong version number) —
+// distinct from a completed-handshake CertVerify failure.
+static unsigned short start_garbage_server(std::thread& out)
+{
+    sockaddr_in sa;
+    int srv = make_loopback_listener(sa);
+    out = std::thread([srv]() {
+        int c = ::accept(srv, nullptr, nullptr);
+        if (c >= 0) {
+            char drain[512];
+            ::recv(c, drain, sizeof drain, 0);       // wait for the ClientHello
+            const char junk[] =
+                "NOT-A-TLS-SERVER wrong version number, this is plain text\r\n\r\n";
+            ::send(c, junk, sizeof junk - 1, 0);
+            ::usleep(100000);                         // let the client read it first
+            ::shutdown(c, 2);
+            ::close(c);
+        }
+        ::close(srv);
+    });
+    return ntohs(sa.sin_port);
+}
+
+} // namespace
+
+// (1) encrypted send: plaintext handed to send() is SSL_write-encrypted, the
+// server decrypts it, and the round-trip echo returns — exercising flushSend()'s
+// SSL_write arm (lines ~358-376), never reached by the existing selftest.
+TEST(PalTransport, TlsEncryptedSendRoundTrips)
+{
+    std::thread server;
+    unsigned short port = start_tls_echo_server(server);
+
+    TlsRecorder ev;
+    pal::ITransport* t = pal::CreatePosixTransport(ev);
+    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
+
+    pal::TlsParams params;
+    params.serverName = "localhost";
+    params.allowInvalidCert = true;             // self-signed: consent to proceed
+    t->startTls(params);
+    EXPECT_TRUE(pump_until([&]{ return ev.tlsEstablished || ev.tlsFailed; }));
+    ASSERT_TRUE(ev.tlsEstablished);
+    ASSERT_TRUE(!ev.tlsFailed);
+
+    t->send("PINGTLS\n", 8);
+    EXPECT_TRUE(pump_until([&]{
+        return ev.bytes.find("ECHO:PINGTLS") != std::string::npos;
+    }));
+    EXPECT_TRUE(ev.bytes.find("ECHO:PINGTLS") != std::string::npos);
+
+    delete t;
+    server.join();
+}
+#endif // OPENSSL_VERSION_TEXT
+
+
+#if defined(OPENSSL_VERSION_TEXT)
+// (2) server-initiated CLEAN TLS shutdown: SSL_read returns 0 (ZERO_RETURN) →
+// handleReadable tears the session down and reports onClosed(0) (lines ~311-323).
+TEST(PalTransport, TlsServerCleanShutdownReportsClosedZero)
+{
+    std::thread server;
+    unsigned short port = start_tls_shutdown_server(server);
+
+    TlsRecorder ev;
+    pal::ITransport* t = pal::CreatePosixTransport(ev);
+    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
+
+    pal::TlsParams params;
+    params.serverName = "localhost";
+    params.allowInvalidCert = true;
+    t->startTls(params);
+    EXPECT_TRUE(pump_until([&]{ return ev.tlsEstablished || ev.tlsFailed; }));
+    ASSERT_TRUE(ev.tlsEstablished);
+    EXPECT_TRUE(pump_until([&]{ return ev.bytes.find("TLSHELLO") != std::string::npos; }));
+
+    EXPECT_TRUE(pump_until([&]{ return ev.closes > 0; }));
+    EXPECT_TRUE(ev.closes >= 1);
+    EXPECT_EQ(0, ev.firstCloseErr);             // clean shutdown → onClosed(0)
+
+    delete t;
+    server.join();
+}
+#endif // OPENSSL_VERSION_TEXT
+
+
+#if defined(OPENSSL_VERSION_TEXT)
+// (3) handshake HARD failure: a protocol-level error (garbage instead of a
+// ServerHello) surfaces as TlsFailure::Handshake — NOT CertVerify (which needs a
+// COMPLETED handshake with an unverifiable chain, already covered by the
+// selftest).  Exercises stepTls()'s error tail (lines ~423-432).
+TEST(PalTransport, TlsHandshakeProtocolFailure)
+{
+    std::thread server;
+    unsigned short port = start_garbage_server(server);
+
+    TlsRecorder ev;
+    pal::ITransport* t = pal::CreatePosixTransport(ev);
+    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
+
+    pal::TlsParams params;
+    params.serverName = "localhost";
+    params.allowInvalidCert = true;             // consent is irrelevant here
+    t->startTls(params);
+    EXPECT_TRUE(pump_until([&]{ return ev.tlsFailed || ev.tlsEstablished; }));
+
+    EXPECT_TRUE(ev.tlsFailed);
+    EXPECT_TRUE(!ev.tlsEstablished);
+    EXPECT_TRUE(ev.tlsFailKind == pal::TlsFailure::Handshake);
+
+    delete t;
+    server.join();
+}
+#endif // OPENSSL_VERSION_TEXT
+
 MC_TEST_MAIN()

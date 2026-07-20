@@ -482,4 +482,85 @@ TEST(PalWorldView, EmissionCursorStaysAlignedAcrossBufferEviction)
     EXPECT_LE((long)doc.m_LineList.GetCount(), 200L);
 }
 
+
+// doc_display_shared.cpp UpdateAllViews (~68-77): a committed line flagged
+// HORIZ_RULE is emitted as a single sentinel SOutputRun (horiz_rule=true, no
+// text) rather than as styled text.  world.NoteHr sets the flag, commits the
+// line via StartNewLine, and drains through the seam (ProcessPreviousLine
+// returns false for HORIZ_RULE, so the line commits and m_pCurrentLine moves on)
+// -- with a view attached the sentinel must reach it.  The existing NoteHr/
+// hyperlink display tests attach NO view, so this branch was never exercised.
+TEST(PalWorldView, NoteHrEmitsHorizRuleSentinelRun)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;   // typed seam attached
+
+    doc.NoteHr();               // flags the line HORIZ_RULE, commits it, drains
+
+    bool hrFound = false;
+    for (const auto& line : view.lines)
+        for (const auto& run : line)
+            if (run.horiz_rule) {
+                hrFound = true;
+                EXPECT_STREQ("", run.text.c_str());   // sentinel carries no text
+            }
+    EXPECT_TRUE(hrFound);
+}
+
+// doc_display_shared.cpp UpdateAllViews (~95-99): for a COMMITTED (non-current)
+// line, a style carrying a CAction copies pAction->m_strAction/m_strHint into
+// SOutputRun.action/hint.  Hyperlink() builds a send-link run ("click", action
+// "do this", hint "a hint" -- same values pinned by test_display's
+// HyperlinkSendStampsActionAndUnderline) on the current note line; a MUD newline
+// forces the note line closed (COMMENT->MUD transition commits it before the
+// '\n' char is added, so the text stays exactly "click") and the committed run
+// must carry the action + hint strings.
+TEST(PalWorldView, CommittedLineCarriesHyperlinkActionAndHint)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    doc.Hyperlink("do this", "click", "a hint", "", "", FALSE);  // send-link on current line
+    feed(doc, "\n");    // MUD newline commits the note line, then drains
+
+    bool found = false;
+    for (const auto& line : committed(view))
+        for (const auto& run : line)
+            if (run.text == "click") {
+                found = true;
+                EXPECT_STREQ("do this", run.action.c_str());
+                EXPECT_STREQ("a hint",  run.hint.c_str());
+            }
+    EXPECT_TRUE(found);
+}
+
+// doc_display_shared.cpp UpdateAllViews (~135-138): the in-progress (pending)
+// line copies a style's CAction m_strAction/m_strHint into the run identically.
+// Hyperlink() leaves the send-link on the CURRENT line (it does not close it),
+// so with no newline the committed-line loop breaks immediately and the drain
+// emits the link through the pending arm -- carrying the action + hint.
+TEST(PalWorldView, PendingLineCarriesHyperlinkActionAndHint)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    doc.Hyperlink("do this", "click", "a hint", "", "", FALSE);  // stays on the current line
+    doc.UpdateAllViews(nullptr);                                 // drain (no newline)
+
+    ASSERT_TRUE(!view.lines.empty());
+    const SOutputLine& last = view.lines.back();
+    EXPECT_TRUE(last.pending);         // emitted through the pending arm
+    bool found = false;
+    for (const auto& run : last)
+        if (run.text == "click") {
+            found = true;
+            EXPECT_STREQ("do this", run.action.c_str());
+            EXPECT_STREQ("a hint",  run.hint.c_str());
+        }
+    EXPECT_TRUE(found);
+}
+
 MC_TEST_MAIN()

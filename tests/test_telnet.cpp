@@ -1000,4 +1000,53 @@ TEST(TelnetR5, InvalidUtf8SequenceHandled)
     EXPECT_TRUE(doc.m_LineList.GetCount() >= 1);
 }
 
+
+// Phase_UTF8 pcre validity gate (telnet_phases.cpp ~1046-1048): a COMPLETE
+// multibyte sequence whose continuation bytes ALL carry the 10xxxxxx high bits
+// -- so the earlier (c & 0xC0) != 0x80 check at ~1030 never fires -- but which
+// is SEMANTICALLY invalid is caught only by _pcre_valid_utf.  Here ED A0 80
+// encodes the UTF-16 surrogate U+D800, which _pcre_valid_utf rejects
+// (PCRE_UTF8_ERR14 > 0) -> OutputBadUTF8characters.  Distinguishing observable:
+// OutputBadUTF8characters walks the collected bytes setting m_cLastChar to each
+// (ending on the last byte, 0x80); the valid-sequence arm (plain AddToLine)
+// never touches m_cLastChar.  A pre-set sentinel proves which arm ran, so a
+// mutation of the pcre gate flips the assertion (and NOT the ~1030 path, whose
+// bad-continuation tests all trip earlier).
+TEST(TelnetR5, Utf8SurrogateRejectedByPcreValidityGate)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bUTF_8    = TRUE;
+    doc.m_cLastChar = 0x7E;   // '~' sentinel -- survives ONLY the valid arm
+
+    // ED A0 80 = U+D800: 0xA0 and 0x80 are both 10xxxxxx (they pass the ~1030
+    // high-bits check); the sequence completes, then the pcre gate rejects it.
+    const unsigned char seq[] = { 0xED, 0xA0, 0x80 };
+    doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);
+
+    EXPECT_EQ(NONE, doc.m_phase);
+    // reject arm ran: OutputBadUTF8characters advanced m_cLastChar to the final
+    // raw byte (0x80); the valid arm would have left the 0x7E sentinel intact.
+    EXPECT_EQ((char)0x80, doc.m_cLastChar);
+}
+
+// Same pcre gate, exercised via the 4-byte collection path (m_iUTF8BytesLeft=3)
+// and a different _pcre_valid_utf arm: F4 90 80 80 encodes U+110000 (> the
+// U+10FFFF maximum).  Its three continuation bytes are all 10xxxxxx (the ~1030
+// check passes); the completed sequence is rejected by the pcre gate
+// (PCRE_UTF8_ERR13 > 0) -> OutputBadUTF8characters, which sets m_cLastChar to
+// the last raw byte (0x80).  The plain-AddToLine valid arm would leave the
+// sentinel intact, so this flips on the same gate mutation.
+TEST(TelnetR5, Utf8AboveMaxCodepointRejectedByPcreValidityGate)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bUTF_8    = TRUE;
+    doc.m_cLastChar = 0x7E;   // sentinel -- survives ONLY the valid arm
+
+    const unsigned char seq[] = { 0xF4, 0x90, 0x80, 0x80 };  // U+110000 (> U+10FFFF)
+    doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);
+
+    EXPECT_EQ(NONE, doc.m_phase);
+    EXPECT_EQ((char)0x80, doc.m_cLastChar);
+}
+
 MC_TEST_MAIN()

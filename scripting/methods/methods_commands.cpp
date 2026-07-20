@@ -2,7 +2,6 @@
 
 // Command window  /  command handling
 
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
@@ -10,13 +9,6 @@
 #include "../../sendvw.h"
 #include "../../childfrm.h"
 #include "../errors.h"
-#else
-#include "platform/doc_stub.h"
-// add ::Replace's default for the stub-only build (stdafx.h owns it in the
-// full build; doc_stub.h deliberately declares without it - see there)
-CString Replace (const CString strSource, const CString strTarget,
-                 const CString strReplacement, const bool bAll = true);
-#endif
 
 // Implements:
 

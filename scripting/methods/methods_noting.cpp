@@ -2,15 +2,11 @@
 
 // Stuff for writing to the output window (notes, colour notes etc.)
 
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
 #include "../../MUSHview.h"   // NoteHr's _WIN32 view-notify fork only
 #include "../errors.h"
-#else
-#include "platform/doc_stub.h"
-#endif
 
 // Implements:
 

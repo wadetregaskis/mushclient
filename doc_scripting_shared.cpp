@@ -14,13 +14,9 @@
 
 #ifndef _WIN32
 
-#if defined(MUSHCLIENT_FULL_BUILD)
   #include "stdafx.h"
   #include "MUSHclient.h"
   #include "doc.h"
-#else
-  #include "platform/doc_stub.h"
-#endif
 
 #include "scripting/scripting.h"   // CScriptEngine
 

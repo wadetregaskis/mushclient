@@ -1,15 +1,10 @@
 // ProcessPreviousLine.cpp : called when a line ends with a newline
 //
 
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
 #include "MUSHview.h"
-#else
-#include "platform/doc_stub.h"
-#define dbg(...) ((void)0)
-#endif
 #include "mxp/mxp.h"
 #include "scripting/errors.h"
 

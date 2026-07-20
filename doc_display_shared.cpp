@@ -15,14 +15,10 @@
 
 #ifndef _WIN32
 
-#if defined(MUSHCLIENT_FULL_BUILD)
   #include "stdafx.h"
   #include "MUSHclient.h"
   #include "doc.h"
   #include "OtherTypes.h"   // CLine, CStyle, HILITE, UNDERLINE
-#else
-  #include "platform/doc_stub.h"
-#endif
 
 #include <string>
 #include <utility>

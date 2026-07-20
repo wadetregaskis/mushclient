@@ -21,12 +21,8 @@
 //  Only ShutDownSocket stays out (in utilities_portable.cpp) — it drives a
 //  CAsyncSocket and is genuinely platform-specific.
 
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
   #include "stdafx.h"
   #include "MUSHclient.h"   // App / CColours (ColourToName's reverse lookup)
-#else
-  #include "platform/doc_stub.h"   // CString, std::string
-#endif
 
 #include <cctype>
 #include <cstdio>

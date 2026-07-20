@@ -5,13 +5,9 @@
 // scripting/methods/methods_speedwalks.cpp; direction resolution is injected so
 // neither build depends on the GUI-only MapDirectionsMap.
 
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
-#else
-#include "platform/doc_stub.h"
-#endif
 
 #include "speedwalk.h"
 

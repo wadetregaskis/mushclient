@@ -1,16 +1,6 @@
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
-#else
-// mushcore (headless test engine): the stub CMUSHclientApp carries every
-// member the global-option tables name with MUSHclient.h-exact types, so the
-// offsetof-based machinery below works unchanged (Campaign C prep).  The
-// registry/database accessors (GetProfile*, db_*) are inert stubs there:
-// reads resolve to the table defaults, writes are swallowed.
-#include "platform/doc_stub.h"   // includes sqlite3/sqlite3.h (SQLITE_OK etc.)
-#include <stddef.h>              // offsetof
-#endif
 
 // CMUSHclientApp has virtual functions so is technically non-standard-layout,
 // but offsetof() works correctly with our compiler for plain data members.

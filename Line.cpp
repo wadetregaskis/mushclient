@@ -1,12 +1,6 @@
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
-#else
-#include "platform/doc_stub.h"
-#include <new>
-#include <cstdlib>
-#endif
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

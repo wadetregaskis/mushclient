@@ -10,13 +10,9 @@
 // The matching eOK/e* code names live in scripting/errors.h; the Lua-name
 // table ("error_code") stays in lua_methods.cpp.
 
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../MUSHclient.h"
 #include "../doc.h"
-#else
-#include "platform/doc_stub.h"
-#endif
 
 int_flags_pair error_descriptions[] =
 {

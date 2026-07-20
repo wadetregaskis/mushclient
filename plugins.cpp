@@ -2,33 +2,11 @@
 
 // Plugins management
 
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
 
 #include "doc.h"
 #include "dialogs/plugins/PluginWizardSheet.h"
-#else
-#include "platform/doc_stub.h"
-
-// Minimal file-local stand-in for CPluginWizardSheet so OnFilePluginwizard
-// compiles untouched headless.  DoModal() returns IDCANCEL, so the body
-// behaves exactly as if the user cancelled the wizard.
-struct CPluginWizardPageStub {
-    CMUSHclientDoc * m_doc = nullptr;
-    CString m_strID, m_strDateWritten, m_strVersion, m_strName, m_strAuthor,
-            m_strPurpose, m_strLanguage, m_strScript, m_strDescription,
-            m_strComments, m_strHelpAlias;
-    BOOL m_bRemoveItems = FALSE, m_bGenerateHelp = FALSE, m_bSaveState = FALSE,
-         m_bStandardConstants = FALSE;
-    double m_fRequires = 0.0;
-};
-struct CPluginWizardSheet {
-    CPluginWizardPageStub m_Page1, m_Page2, m_Page3, m_Page4,
-                          m_Page5, m_Page6, m_Page7, m_Page8;
-    int DoModal() { return IDCANCEL; }
-};
-#endif
 
 #ifdef _DEBUG
 #define new DEBUG_NEW

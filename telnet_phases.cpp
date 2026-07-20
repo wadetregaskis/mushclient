@@ -1,6 +1,5 @@
 // telnet_phases.cpp - handle telnet phases in incoming text stream
 
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 // Full build (Windows native or mushapp on macOS/Linux): use the real headers.
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -13,10 +12,6 @@
 // The dbg() stub above already makes every use of it below dead code, so a
 // false constant keeps Windows byte-for-byte as it was.
 static const bool g_debug = false;
-#endif
-#else
-// mushcore portable build: use the minimal stub header.
-#include "platform/doc_stub.h"
 #endif
 
 /* Phases for processing input stream ...

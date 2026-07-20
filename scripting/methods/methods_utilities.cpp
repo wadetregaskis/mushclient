@@ -2,7 +2,6 @@
 
 // Various utility functions
 
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
@@ -14,20 +13,6 @@
 #include "../../MUSHview.h"
 #ifdef _WIN32
 #include <direct.h>
-#endif
-#else
-#include "platform/doc_stub.h"
-// GUI corners headless (all already fork on _WIN32 inside the bodies):
-//   Activate                  -> IWorldView activateClient (no view -> no-op)
-//   Menu                      -> g_wxhook_menu_dialog (null headless -> "")
-//   SetSelection              -> IWorldView setOutputSelection (no view -> no-op)
-//   SetFrameBackgroundColour  -> writes g_stub_frame + null hook (inert)
-//   OpenBrowser               -> mfc_ui.h ShellExecute (`open`), as the mac GUI
-//   Help                      -> inert ShowHelp/ShowFunctionslist (doc_stub.h)
-//   Open                      -> stub App.OpenDocumentFile -> always NULL
-//   ReadNamesFile/GenerateName-> windows_stubs.cpp name stubs (throw / VT_NULL)
-// The CompleteWordDlg include stays full-build-only: the dialog is only
-// touched inside Menu's #ifdef _WIN32 arm.
 #endif
 
 // Implements:

@@ -2,23 +2,12 @@
 
 // Spellchecker and related helper functions
 
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
 #include "../errors.h"
 #include "../../sendvw.h"
 #include "../../dmetaph.h"
-#else
-#include "platform/doc_stub.h"
-#include "../../dmetaph.h"   // MString/DoubleMetaphone (pure; Dmetaph.cpp is in mushcore)
-// Headless: App.m_bSpellCheckOK is never set (InitSpellCheck is GUI-side),
-// so SpellCheck/SpellCheckDlg return an empty VARIANT (-> nil),
-// AddSpellCheckWord returns eSpellCheckNotActive and SpellCheckCommand
-// returns -1 - the canonical "spell check not active" results.  The
-// CSendView/CEdit walk in SpellCheckCommand compiles against the
-// doc_stub.h view stubs and is dead code (GetFirstViewPosition() is NULL).
-#endif
 
 // Implements:
 

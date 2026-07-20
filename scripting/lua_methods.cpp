@@ -2,7 +2,6 @@
 // GUI headers) AND mushcore (headless - platform/doc_stub.h).  HEAD-ONLY
 // switch, per the campaign pattern (methods_info.cpp precedent): the body
 // below is byte-identical to the Windows source.
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "../mainfrm.h"
 #include "../MUSHclient.h"
@@ -13,34 +12,6 @@
 #include "../TextView.h"
 #include "../sendvw.h"
 #include "../dialogs/DebugLuaDlg.h"
-#else
-#include "platform/doc_stub.h"   // brings scripting/errors.h + scripting.h (lua.h/lauxlib.h)
-extern "C" {
-#include "lualib.h"              // LUA_DBLIBNAME/IOLIBNAME/OSLIBNAME (DisableDLLs)
-}
-#include <functional>
-#include <string>
-// Minimal file-local stand-ins for the two GUI types the body names
-// (the methods_info.cpp CWindowPlacement pattern).
-// CTextDocument (TextDocument.h): headless FindNotepad always returns NULL
-// (platform/doc_gui_method_stubs.cpp), so the deref paths are unreachable;
-// only the port callback seam used by the #ifndef _WIN32 fork in
-// L_GetNotepadWindowPosition must exist to compile.
-class CTextDocument {
-public:
-  std::function<std::string()> m_fn_get_rect;   // TextDocument.h:84
-};
-// CDebugLuaDlg (dialogs/DebugLuaDlg.h): headless there is no debugger UI;
-// DoModal is an inert cancel, so debug.debug() gathers its info and returns.
-class CDebugLuaDlg {
-public:
-  lua_State * L = NULL;
-  CString m_strCommand, m_strFunctionName, m_strLines, m_strCurrentLine,
-          m_strSource, m_strWhat, m_strNups, m_strFunction;
-  bool m_bAbort = false;
-  int DoModal () { return IDCANCEL; }
-};
-#endif
 
 const char mushclient_typename[] = "mushclient.world";
 

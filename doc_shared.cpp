@@ -6,7 +6,6 @@
 // of an inverse pair, speedwalk lost its C/O/L/K codes). Mirrors ansi.cpp /
 // speedwalk.cpp, which likewise define shared CMUSHclientDoc methods.
 
-#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "mainfrm.h"            // Frame (ConnectionClosed's status/button updates)
@@ -17,13 +16,6 @@
 #ifdef _WIN32
 #include <ws2tcpip.h>           // getaddrinfo (LookupHostName's sync fallback —
                                 // newly MSVC-compiled at T5; stdafx has only winsock2)
-#endif
-#else
-#include "platform/doc_stub.h"
-// add ::Replace's default for the stub-only build (stdafx.h owns it in the
-// full build; doc_stub.h deliberately declares without it - see there)
-CString Replace (const CString strSource, const CString strTarget,
-                 const CString strReplacement, const bool bAll = true);
 #endif
 
 #include "speedwalk.h"   // shared ExpandSpeedwalk / ReverseSpeedwalkString

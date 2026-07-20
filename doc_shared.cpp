@@ -2854,13 +2854,12 @@ Unicode range              UTF-8 bytes
           unsigned char c1 = m_pCurrentLine->text [i];
           unsigned char c2 = m_pCurrentLine->text [i + 1];
           // don't test for Big5 if output buffer is UTF-8 (the tests would be wrong)
-          if (c1 >= 0x81 && c1 <= 0xFE &&                               // first  Big5 character
-            ((c2 >= 0x40 && c2 <= 0x7E) || (c2 >= 0xA1 && c2 <= 0xFE))  // second Big5 character
+          // This first-byte range 0x81-0xFE also covers GB2312 (0xA1-0xF7) with
+          // the second-byte 0xA1-0xFE disjunct, and the split action is identical,
+          // so a separate GB2312 arm here was dead (unreachable) and was removed.
+          if (c1 >= 0x81 && c1 <= 0xFE &&                               // first  DBCS (Big5 / GB2312) character
+            ((c2 >= 0x40 && c2 <= 0x7E) || (c2 >= 0xA1 && c2 <= 0xFE))  // second DBCS character
               && !m_bUTF_8) // not for UTF-8
-            last_space = i++;  // remember position, skip the second byte
-          else if (c1 >= 0xA1 && c1 <= 0xF7 && // first  GB2132 character
-                   c2 >= 0xA1 && c2 <= 0xFE && // second GB2132 character
-                   !m_bUTF_8)  // // not for UTF-8
             last_space = i++;  // remember position, skip the second byte
           else if (c1 == ' ' && m_wrap)
             last_space = i;    // or split at a space

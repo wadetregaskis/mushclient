@@ -2727,4 +2727,205 @@ TEST(WorldLoadR5, SendTextTrimAttribute)
     EXPECT_STREQ("say hi", (const char*)t->contents);
 }
 
+
+
+// xml_save_world.cpp Save_One_Macro_XML (~607-633): the macro send-type maps
+// to a string via a switch -- ADD_TO_COMMAND -> "insert", and any value that
+// is not REPLACE_COMMAND/SEND_NOW/ADD_TO_COMMAND falls to default -> "unknown".
+// Macros live in the fixed m_macros[]/m_macro_type[] arrays (function-key
+// sends); the saver writes name= (from strMacroDescriptions[i]) then type= on
+// the <macro> line, skipping entries whose send text is empty.
+TEST(WorldLoad, MacroTypeSavedInsertAndUnknown)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_macro_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        // strMacroDescriptions[0]=="up", [1]=="down" (windows_stubs.cpp table).
+        doc.m_macros[0]     = "into the command line";
+        doc.m_macro_type[0] = ADD_TO_COMMAND;          // -> "insert"
+        doc.m_macros[1]     = "bogus send-type macro";
+        doc.m_macro_type[1] = 99;                      // out of range -> "unknown"
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+    std::string c = slurp(path);
+    // Save_One_Macro_XML writes name= then type= on the same <macro> line.
+    EXPECT_NE(c.find("name=\"up\" type=\"insert\""),    std::string::npos);
+    EXPECT_NE(c.find("name=\"down\" type=\"unknown\""), std::string::npos);
+}
+
+
+// xml_save_world.cpp Save_Includes_XML (~764-776): every entry in the doc's
+// m_strIncludeFileList is written as <include name="..." /> (part of the
+// XML_INCLUDES mask, which OnSaveDocument's ~0 save includes).  No plugins are
+// loaded, so this is the only <include element in the file.
+TEST(WorldLoad, IncludeFileListWritten)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_incsave_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        doc.m_strIncludeFileList.AddTail("my_included_file.xml");
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+    std::string c = slurp(path);
+    EXPECT_NE(c.find("<include name=\"my_included_file.xml\""), std::string::npos);
+}
+
+
+// xml_save_world.cpp Save_Printing_XML (~723-737): a normal-print style entry
+// that is not FONT_NORMAL is written as <style seq="N" bold=.. italic=..
+// underline=.. />, seq being 1-relative (i+1).  Seed exactly FONT_BOLD (0x04)
+// at index 0 so only the bold attribute is emitted.
+TEST(WorldLoad, NormalPrintStyleBoldWritten)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_pstyle_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        doc.m_nNormalPrintStyle[0] = 0x04;   // FONT_BOLD (genprint.h) -> bold="y"
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+    std::string c = slurp(path);
+    // Only the bold bit is set, so italic/underline are omitted; seq is i+1 = 1.
+    EXPECT_NE(c.find("<style seq=\"1\" bold=\"y\""), std::string::npos);
+}
+
+
+// xml_save_world.cpp Save_One_Trigger_XML (~433-438): a trigger's "other"
+// custom-colour slot (iOtherForeground/iOtherBackground) is written as
+// other_text_colour / other_back_colour whenever non-zero (black is the omitted
+// default).  ColourToName renders an RGB with no named match as #RRGGBB, and
+// RGB(1,2,3)/RGB(4,5,6) are not named MXP colours, so they serialise to
+// #010203 / #040506 and read back exactly.
+TEST(WorldLoad, TriggerOtherCustomColourWrittenAndRoundTrips)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_othercol_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        CTrigger* t = new CTrigger();
+        t->trigger  = CString("other colour match");
+        t->strLabel = CString("otherc");
+        t->bEnabled = TRUE;
+        t->colour   = OTHER_CUSTOM;                 // the "other" custom slot
+        t->iOtherForeground = RGB(1, 2, 3);
+        t->iOtherBackground = RGB(4, 5, 6);
+        doc.GetTriggerMap().SetAt(t->strLabel, t);
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+    std::string c = slurp(path);
+    EXPECT_NE(c.find("other_text_colour=\"#010203\""), std::string::npos);
+    EXPECT_NE(c.find("other_back_colour=\"#040506\""), std::string::npos);
+
+    // round-trip: the "other" colours are read back onto the reloaded trigger.
+    CMUSHclientDoc doc2;
+    ASSERT_TRUE(doc2.LoadWorldFromFile(path));
+    CTrigger* r = nullptr;
+    ASSERT_TRUE(doc2.GetTriggerMap().Lookup("otherc", r));
+    ASSERT_NE(nullptr, r);
+    EXPECT_EQ((int)RGB(1, 2, 3), (int)r->iOtherForeground);
+    EXPECT_EQ((int)RGB(4, 5, 6), (int)r->iOtherBackground);
+}
+
+
+// xml_save_world.cpp Save_World_XML (~66-70): an XML comment cannot contain
+// "--", so a supplied save-comment has every "--" collapsed to "-" before it is
+// written as <!-- ... -->.  OnSaveDocument passes an empty comment, so drive the
+// writer directly with a CArchive (the same public entry the plugin save-state
+// path uses, plugins.cpp:855).
+TEST(WorldLoad, SavedCommentDoubleHyphenCollapsed)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_comment_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        CFile f;
+        ASSERT_TRUE(f.Open(path,
+            CFile::modeWrite | CFile::modeCreate | CFile::shareDenyWrite));
+        {
+            CArchive ar(&f, CArchive::store);
+            doc.Save_World_XML(ar, (unsigned long)~0, CString("before--after"));
+            ar.Close();
+        }
+        f.Flush();
+        f.Close();
+    }
+    std::string c = slurp(path);
+    EXPECT_NE(c.find("<!-- before-after -->"), std::string::npos);   // collapsed
+    EXPECT_EQ(c.find("before--after"),         std::string::npos);   // no "--"
+}
+
+
+// xml_load_world.cpp: world loads carry XML_OVERWRITE, so a second alias
+// (alias_check, ~1577-1584) or timer (timer_check, ~1817-1824) that shares an
+// explicit name deletes the first and the SECOND definition wins -- mirroring
+// the duplicate-label trigger arm proven in WorldLoadR4.TriggerValidationArms.
+TEST(WorldLoadR5, DuplicateExplicitLabelReplacedOnLoad)
+{
+    {   // two aliases, same explicit name="dup": second replaces first
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><aliases>
+  <alias match="firstmatch"  name="dup" enabled="y" sequence="100"><send>x</send></alias>
+  <alias match="secondmatch" name="dup" enabled="y" sequence="100"><send>y</send></alias>
+</aliases></muclient>)";
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+        EXPECT_EQ(1, (int)doc.GetAliasMap().GetCount());
+        CAlias* a = nullptr;
+        ASSERT_TRUE(doc.GetAliasMap().Lookup("dup", a));
+        EXPECT_STREQ("secondmatch", (const char*)a->name);   // second wins
+    }
+    {   // two timers, same explicit name="dup" (non-zero interval each)
+        const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient><timers>
+  <timer name="dup" enabled="y" second="5"><send>one</send></timer>
+  <timer name="dup" enabled="y" second="5"><send>two</send></timer>
+</timers></muclient>)";
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+        EXPECT_EQ(1, (int)doc.GetTimerMap().GetCount());
+        CTimer* t = nullptr;
+        ASSERT_TRUE(doc.GetTimerMap().Lookup("dup", t));
+        EXPECT_STREQ("two", (const char*)t->strContents);   // second wins
+    }
+}
+
 MC_TEST_MAIN()

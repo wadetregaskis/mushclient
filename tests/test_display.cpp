@@ -2161,4 +2161,96 @@ TEST(AnsiNoteTest, PaletteModeRestoredAfterCall)
     EXPECT_TRUE(line_text(l0) == "X");           // ANSI consumed, only text emitted
 }
 
+
+
+// methods_noting.cpp Tell (~125-126): the custom-palette AddStyle fires when the
+// current line's tail style is NOT already the current custom colour.  Two Tell()s
+// with a DIFFERENT SetNoteColour between them (on one open comment line) force the
+// second Tell to lay down a NEW custom-colour style run.
+TEST(NotingTest, TellNewCustomColourMidLineAddsNewStyle)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.SetNoteColour(3);                     // palette index 2, RGB mode off
+    doc.Tell("aa");
+    doc.SetNoteColour(5);                     // palette index 4 (different)
+    doc.Tell("bb");
+    CLine* l = doc.m_pCurrentLine;
+    ASSERT_NE(nullptr, l);
+    EXPECT_TRUE(line_text(l) == "aabb");       // one open comment line, no newline
+    EXPECT_EQ(1, (int)doc.m_LineList.GetCount());
+    // "aa" keeps custom index 2; the second Tell added a NEW run at custom index 4
+    CStyle* s0 = style_at(l, 0);
+    CStyle* s1 = style_at(l, 2);
+    ASSERT_NE(nullptr, s0);
+    ASSERT_NE(nullptr, s1);
+    EXPECT_EQ(COLOUR_CUSTOM, s0->iFlags & COLOURTYPE);
+    EXPECT_EQ((COLORREF)2, s0->iForeColour);
+    EXPECT_EQ(COLOUR_CUSTOM, s1->iFlags & COLOURTYPE);
+    EXPECT_EQ((COLORREF)4, s1->iForeColour);   // new custom colour on the second Tell
+    EXPECT_TRUE(s0 != s1);                     // a distinct new style run
+}
+
+
+
+// methods_noting.cpp Hyperlink_Helper palette-mode arms (~712-723 back colour,
+// ~748-758 closing style): with SetNoteColour(n) (palette mode) the link's back
+// colour comes from m_customback[index] and the trailing "finish" style is a
+// COLOUR_CUSTOM run, not the RGB defaults the other Hyperlink tests exercise.
+TEST(NotingTest, HyperlinkPaletteModeUsesCustomBackAndClosesCustom)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_iHyperlinkColour = 0x0000EE;
+    doc.m_customback[2] = 0x334455;          // palette slot 3's background
+    doc.SetNoteColour(3);                    // palette mode, index 2
+    ASSERT_TRUE(!doc.m_bNotesInRGB);
+    doc.Hyperlink("do this", "click", "a hint", "", "", FALSE);
+    CLine* l = doc.m_pCurrentLine;
+    ASSERT_NE(nullptr, l);
+    EXPECT_TRUE(line_text(l) == "click");
+    // (712-723) palette back colour flows from m_customback[index] into the link style
+    CStyle* link = style_at(l, 0);
+    ASSERT_NE(nullptr, link);
+    EXPECT_EQ(COLOUR_RGB, link->iFlags & COLOURTYPE);
+    EXPECT_TRUE((link->iFlags & ACTION_SEND) != 0);
+    EXPECT_EQ((COLORREF)0x0000EE, link->iForeColour);   // empty colour -> hyperlink colour
+    EXPECT_EQ((COLORREF)0x334455, link->iBackColour);   // palette-mode back colour
+    // (748-758) the trailing "finish" style restores the custom palette colour
+    CStyle* closing = l->styleList.GetTail();
+    ASSERT_NE(nullptr, closing);
+    EXPECT_EQ(COLOUR_CUSTOM, closing->iFlags & COLOURTYPE);
+    EXPECT_EQ((COLORREF)2, closing->iForeColour);
+    EXPECT_EQ((COLORREF)BLACK, closing->iBackColour);
+    EXPECT_EQ(0, closing->iLength);
+}
+
+
+
+// doc_shared.cpp AddToLine saved_count==0 wrap branch (~2957-2960): when the break
+// lands on a trailing space that exactly fills the wrap column and m_indent_paras is
+// FALSE, the !m_indent_paras block drops saved_count to 0, so the split is handled
+// by StartNewLine_KeepPreviousStyle -- the whole full line (space included) stays put
+// and the wrap-triggering char opens the next line.
+TEST(WrapTest, TrailingSpaceAtWrapColumnSavedCountZeroSplit)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_wrap = 1;
+    doc.m_indent_paras = 0;
+    doc.m_nWrapColumn = 8;
+
+    // 7 non-spaces + a space fill the wrap column exactly; 'b' triggers the wrap
+    // with the last char (the space) as the only break point.
+    feed(doc, "aaaaaaa b\n");
+
+    CLine* l0 = nth_line(doc, 0);
+    CLine* l1 = nth_line(doc, 1);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+    EXPECT_TRUE(line_text(l0) == "aaaaaaa ");   // full line kept, trailing space and all
+    EXPECT_EQ(8, l0->len);
+    EXPECT_TRUE(line_text(l1) == "b");          // wrap-triggering char on the next line
+    EXPECT_FALSE(l0->hard_return);              // soft (wrap) break
+    EXPECT_TRUE(l1->hard_return);               // real newline
+}
+
+
 MC_TEST_MAIN()

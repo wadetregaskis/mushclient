@@ -639,22 +639,35 @@ TEST(XmlParseR5, DoctypeEofBeforeClose)
     EXPECT_FALSE(r.error.empty());
 }
 
-TEST(XmlParseR5, CdataInsideElementDefinition)
+// NOTE: the arm xmlparse.cpp:653 ("Unexpected '<![CDATA[' inside element
+// definition") is unreachable defensive code — ProcessAttributes → GetName
+// rejects an unquoted '<' *before* AssembleContent's second pass runs, and
+// CDATA markers inside quoted values / at content level are handled without it.
+// So a CDATA marker sitting where an attribute name is expected is caught by
+// GetName's leading-character check (the "Attribute" variant); pin THAT, with
+// the exact message, rather than only asserting "some error".
+TEST(XmlParseR5, CdataMarkerWhereAttributeNameExpectedRejected)
 {
     CXMLparser p;
     ParseOutcome r = parse_xml(p, "<a <![CDATA[x]]> b=\"c\"/>");
     EXPECT_FALSE(r.ok);
-    EXPECT_FALSE(r.error.empty());
+    EXPECT_NE(std::string::npos, r.error.find("Attribute name must start with"));
+    EXPECT_NE(std::string::npos, r.error.find("\"<\""));   // offending char is '<'
 }
 
 TEST(XmlParseR5, EmptyTagCloseAtTopLevelClampsDepth)
 {
-    // "/>" before any element drives the pre-scan depth negative; the parser
-    // clamps it to zero and reports the stray content instead of crashing.
+    // "<?x/>" is an empty PI-form child; the pi[1]=='?' exclusion in
+    // AssembleContent skips its iDepth++, so the trailing "/>" drives iDepth to
+    // -1 and the clamp at xmlparse.cpp:715 resets it to 0.  With the clamp the
+    // following "hello" content is retained; without the iDepth--/clamp iDepth
+    // stays -1 and the content-copy guard drops it (strContent comes out empty).
     CXMLparser p;
-    ParseOutcome r = parse_xml(p, "/><a/>");
-    EXPECT_FALSE(r.ok);
-    EXPECT_FALSE(r.error.empty());
+    ParseOutcome r = parse_xml(p, "<r><?x/>hello</r>");
+    ASSERT_TRUE(r.ok);
+    CXMLelement* e = find_child(p.m_xmlRoot, "r");
+    ASSERT_NE(nullptr, e);
+    EXPECT_STREQ("hello", (const char*)e->strContent);
 }
 
 TEST(XmlParseR5, NewlinesInRootWhitespaceAreCounted)

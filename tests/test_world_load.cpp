@@ -15,6 +15,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "scripting/errors.h"
+#include "platform/wx_mfc_hooks.h"   // g_wxhook_append_to_notepad (XML-import notes seam)
 
 #include <cstdio>
 #include <cstring>
@@ -2692,20 +2693,55 @@ TEST(WorldLoadR5, CommentsGoToTheNotepad)
 <comment>Imported from somewhere.</comment>
 </muclient>)";
 
+    // The XML-import-notes notepad is a no-op headless unless the append seam is
+    // installed; install it (returning true = "handled", so the fallback
+    // CreateTextWindow is skipped) and capture what would be appended.
+    static std::string s_padTitle, s_padText;
+    s_padTitle.clear(); s_padText.clear();
+    auto* saved = g_wxhook_append_to_notepad;
+    g_wxhook_append_to_notepad =
+        [](const char* title, const char* text, bool) -> bool {
+            s_padTitle = title ? title : "";
+            s_padText  = text  ? text  : "";
+            return true;
+        };
+
     CMUSHclientDoc doc;
     EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+
+    g_wxhook_append_to_notepad = saved;
+
+    // the <comment> body lands on the "XML import notes ..." notepad
+    EXPECT_NE(std::string::npos, s_padText.find("Imported from somewhere."));
+    EXPECT_NE(std::string::npos, s_padTitle.find("XML import notes"));
 }
 
-// An include file whose name is the reserved clipboard pseudo-name throws.
+// An include file whose name is the reserved clipboard pseudo-name is refused
+// BEFORE it is recorded (the check at xml_load_world.cpp:836 throws before the
+// AddTail at :884), so m_strIncludeFileList stays empty — while a plain missing
+// include IS recorded first and only then fails to open.
 TEST(WorldLoadR5, IncludeFileReservedNameRejected)
 {
-    const char* xml =
+    // CLIPBOARD_NAME is "Clipboard" (CompareNoCase), so the reserved name must
+    // be exactly that to trip the guard.
+    const char* reserved =
         "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
-        "<include name=\"(clipboard)\"/>\n"
+        "<include name=\"Clipboard\"/>\n"
         "</muclient>\n";
     CMUSHclientDoc doc;
-    // world loads (include errors are tolerated) but the include is refused
-    EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(reserved).c_str()));
+    EXPECT_TRUE(doc.m_strIncludeFileList.IsEmpty());   // never recorded
+
+    // Control: a non-reserved include that merely fails to open IS recorded
+    // (AddTail runs before the open throws) — proving a reserved include would
+    // show up in the list too if the guard didn't short-circuit it first.
+    const char* missing =
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n"
+        "<include name=\"nonexistent_include_file.xml\"/>\n"
+        "</muclient>\n";
+    CMUSHclientDoc doc2;
+    EXPECT_TRUE(doc2.LoadWorldFromFile(write_temp(missing).c_str()));
+    EXPECT_EQ(1, (int)doc2.m_strIncludeFileList.GetCount());
 }
 
 // <send trim="y"> strips leading/trailing whitespace from the send text.

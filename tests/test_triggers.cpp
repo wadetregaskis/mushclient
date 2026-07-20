@@ -13,6 +13,8 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "scripting/errors.h"
+#include "platform/wx_mfc_hooks.h"   // g_wxhook_set_clipboard_text / _get_ (clipboard seam)
+#include <cstring>                   // strdup
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -810,11 +812,25 @@ TEST(TriggerR5, ColourAndStyleMatchConditions)
 // clipboard_arg copies the selected wildcard to the clipboard on match.
 TEST(TriggerR5, ClipboardArgCopiesWildcard)
 {
+    // The clipboard is a no-op headless unless we install the seam hook; do so
+    // over a static buffer (restoring the process-global pointer afterwards) so
+    // the copy is actually observable.
+    static std::string s_clip;
+    s_clip = "<unset>";
+    auto* saved_set = g_wxhook_set_clipboard_text;
+    g_wxhook_set_clipboard_text = [](const char* t){ s_clip = t ? t : ""; };
+
     CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "*gold*");
     t->iClipboardArg = 1;
     feed_line(doc, "50 gold coins");
     EXPECT_EQ(1L, t->nMatched);
+    // wildcard 1 (text before "gold", incl. trailing space) reaches the clipboard.
+    ASSERT_TRUE(t->wildcards.size() > 1);
+    EXPECT_EQ(t->wildcards[1], s_clip);       // exactly the captured wildcard
+    EXPECT_STREQ("50 ", s_clip.c_str());       // ... which is "50 "
+
+    g_wxhook_set_clipboard_text = saved_set;
 }
 
 // Foreground-only colour change forces the style to RGB and keeps the
@@ -860,6 +876,20 @@ TEST(TriggerR5, RepeatingRegexpColoursAllMatches)
 
     feed_line(doc, "ha ha ha");
     EXPECT_EQ(1L, t->nMatched);
+
+    // bRepeat recolours EVERY occurrence: each of the three "ha" spans gets the
+    // CHANGED flag (the spaces between stay unchanged).  Without the re-scan
+    // loop only the first would carry it.
+    int changed = 0;
+    for (POSITION lp = doc.m_LineList.GetHeadPosition(); lp; ) {
+        CLine* line = doc.m_LineList.GetNext(lp);
+        for (POSITION pos = line->styleList.GetHeadPosition(); pos; ) {
+            CStyle* s = line->styleList.GetNext(pos);
+            if (s->iFlags & CHANGED)
+                changed++;
+        }
+    }
+    EXPECT_EQ(3, changed);
 }
 
 // A match that starts on the SECOND physical line of a soft-wrapped
@@ -1077,20 +1107,43 @@ TEST(SendTextR5, WildcardZeroIsWholeMatch)
 }
 
 // %C expands to the clipboard contents (empty clipboard: nothing inserted).
+// GetClipboardContents is a no-op headless unless the seam hook is installed,
+// so seed it via g_wxhook_get_clipboard_text and assert the substituted output.
+static bool any_line_has(CMUSHclientDoc& doc, const char* needle)
+{
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find(needle) != std::string::npos)
+            return true;
+    }
+    return false;
+}
+
 TEST(SendTextR5, ClipboardSubstitution)
 {
-    CMUSHclientDoc doc; make_doc(doc);
-    doc.SetClipboard("from-clipboard");
-    CTrigger* t = add_trigger(doc, "*paste*", "got [%C]", eSendToOutput);
-    feed_line(doc, "please paste this");
-    EXPECT_EQ(1L, t->nMatched);
+    auto* saved_get = g_wxhook_get_clipboard_text;
 
-    // empty-clipboard arm (no throw from trigger context)
-    CMUSHclientDoc doc2; make_doc(doc2);
-    doc2.SetClipboard("");
-    CTrigger* t2 = add_trigger(doc2, "*clip2*", "got [%c]", eSendToOutput);
-    feed_line(doc2, "please clip2 this");
-    EXPECT_EQ(1L, t2->nMatched);
+    // %C expands to the seeded clipboard text.
+    {
+        g_wxhook_get_clipboard_text = []() -> char* { return strdup("from-clipboard"); };
+        CMUSHclientDoc doc; make_doc(doc);
+        CTrigger* t = add_trigger(doc, "*paste*", "got [%C]", eSendToOutput);
+        feed_line(doc, "please paste this");
+        EXPECT_EQ(1L, t->nMatched);
+        EXPECT_TRUE(any_line_has(doc, "got [from-clipboard]"));  // substitution fired
+    }
+
+    // Empty-clipboard arm: %c expands to nothing → "got []" (no throw).
+    {
+        g_wxhook_get_clipboard_text = []() -> char* { return strdup(""); };
+        CMUSHclientDoc doc2; make_doc(doc2);
+        CTrigger* t2 = add_trigger(doc2, "*clip2*", "got [%c]", eSendToOutput);
+        feed_line(doc2, "please clip2 this");
+        EXPECT_EQ(1L, t2->nMatched);
+        EXPECT_TRUE(any_line_has(doc2, "got []"));
+    }
+
+    g_wxhook_get_clipboard_text = saved_get;
 }
 
 // A send routed to the log file with HTML logging on runs wildcards through

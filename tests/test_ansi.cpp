@@ -270,12 +270,25 @@ TEST(ANSITest, BoldAndColourCombine)
 TEST(ANSITest, MultipleCodesCreateMultipleStyles)
 {
     CMUSHclientDoc doc; make_doc(doc);
-    // Each InterpretANSIcode that changes anything appends a new style.
     int before = style_count(doc);
+
+    // First code: foreground → red.  AddStyle coalesces onto the (empty) seed
+    // style, so the count is unchanged, but the run now carries red.
     doc.InterpretANSIcode(ANSI_TEXT_RED);
+    ASSERT_NE(nullptr, tail(doc));
+    EXPECT_EQ((COLORREF)RED, tail(doc)->iForeColour);
+    // Simulate text written under the red run so the next code cannot coalesce
+    // it away (AddStyle only drops a zero-length tail style).
+    tail(doc)->iLength = 3;
+
+    // Second code: background → blue.  A genuinely new style is appended,
+    // inheriting the red foreground.
     doc.InterpretANSIcode(ANSI_BACK_BLUE);
-    // At least as many styles as before + 2 changes
-    EXPECT_GE(style_count(doc), before);
+    EXPECT_EQ(before + 1, style_count(doc));
+    CStyle* s = tail(doc);
+    ASSERT_NE(nullptr, s);
+    EXPECT_EQ((COLORREF)RED,  s->iForeColour);   // foreground persists
+    EXPECT_EQ((COLORREF)BLUE, s->iBackColour);   // background from the 2nd code
 }
 
 // ── GetStyleRGB ───────────────────────────────────────────────────────────

@@ -91,12 +91,14 @@ TEST(GdiHeadless, ImagePathDegradesToNullBitmap)
 // missing dtor here is a link failure or a crash.
 TEST(GdiHeadless, ObjectsConstructAndDestructCleanly)
 {
-    { CDC dc; (void)dc.GetSafeHdc(); }       // stack CDC → ~CDC
-    { CFont f; (void)f.GetSafeHandle(); }    // stack CFont → ~CFont → ~CGdiObject
-    { CBitmap b; }                           // stack CBitmap → ~CBitmap → ~CGdiObject
+    // A freshly-constructed GDI object owns no handle, so the accessors return
+    // null.  This is both the no-crash smoke test AND a real assertion on the
+    // handle accessors — a stub returning a bogus non-null handle is caught.
+    { CDC dc;    EXPECT_EQ((HDC)nullptr,     dc.GetSafeHdc()); }     // ~CDC
+    { CFont f;   EXPECT_EQ((HGDIOBJ)nullptr, f.GetSafeHandle()); }  // ~CFont → ~CGdiObject
+    { CBitmap b; (void)b; }                                          // ~CBitmap → ~CGdiObject (no GetSafeHandle shim)
     CGdiObject* obj = new CFont;             // delete-through-base → virtual dispatch
     delete obj;
-    EXPECT_TRUE(true);                        // reached here = no crash
 }
 
 MC_TEST_MAIN()

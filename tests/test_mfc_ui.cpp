@@ -985,7 +985,9 @@ TEST(Document, TemplateOpenDocumentFileRoutesThroughHooks) {
     };
     g_wxhook_new_world = []() -> void* { ++s_newWorldCalls; return &fakeDoc; };
     EXPECT_EQ(&fakeDoc, t.OpenDocumentFile("/b.mcl"));
-    EXPECT_TRUE(s_openedWorldFile != nullptr);
+    // Pin the forwarded path VALUE, not just non-null — a mangled/empty path
+    // handed to the hook would otherwise pass unnoticed.
+    EXPECT_STREQ("/b.mcl", (const char*)s_openedWorldFile);
     EXPECT_EQ(&fakeDoc, t.OpenDocumentFile(""));   // empty path -> Quick Connect
     EXPECT_EQ(1, s_newWorldCalls);
     g_wxhook_open_world_file = nullptr;

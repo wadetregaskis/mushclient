@@ -227,27 +227,44 @@ TEST(MXPCollected, EmptyStringLogsError)
 
 TEST(MXPCollected, SlashPrefixCallsEndTag)
 {
-    // "/bold" should invoke MXP_EndTag without crashing.
+    // Open <bold>, then "/bold" must invoke MXP_EndTag and pop it: the active
+    // tag count goes 1 → 0.  ("bold" is TAG_OPEN, so it opens in the fixture's
+    // default open mode.)  If the end-tag dispatch is skipped the count stays 1.
     CMUSHclientDoc doc; make_doc(doc);
+    doc.m_strMXPstring = "bold";
+    doc.MXP_collected_element();                       // open the tag
+    ASSERT_EQ(1, (int)doc.m_ActiveTagList.GetCount());
     doc.m_strMXPstring = "/bold";
-    doc.MXP_collected_element();   // must not throw/assert
+    doc.MXP_collected_element();                       // close via MXP_EndTag
+    EXPECT_EQ(0, (int)doc.m_ActiveTagList.GetCount());
 }
 
 TEST(MXPCollected, BangPrefixCallsDefinition)
 {
-    // "!--comment" is a definition; should not crash.
+    // "!--comment" routes to MXP_Definition.  In non-secure mode that records
+    // an error (m_iMXPerrors increments) and defines nothing.  Skipping the
+    // definition dispatch would leave m_iMXPerrors unchanged.
     CMUSHclientDoc doc; make_doc(doc);
+    long long errs_before = doc.m_iMXPerrors;
     doc.m_strMXPstring = "!--comment";
     doc.MXP_collected_element();
+    EXPECT_EQ(errs_before + 1, doc.m_iMXPerrors);
+    EXPECT_EQ(0, (int)doc.m_CustomElementMap.GetCount());  // defines nothing
+    EXPECT_EQ(0, (int)doc.m_CustomEntityMap.GetCount());
 }
 
 TEST(MXPCollected, NormalTagCallsStartTag)
 {
-    // "b" (bold) — a built-in MXP atomic tag.
+    // "b" (bold) — a built-in MXP atomic tag.  MXP_StartTag increments
+    // m_iMXPtags and pushes onto m_ActiveTagList; both flip back to 0 if the
+    // start-tag dispatch is skipped.
     CMUSHclientDoc doc; make_doc(doc);
     doc.m_iMXP_mode    = eMXP_secure;  // built-in tags need secure mode
     doc.m_strMXPstring = "b";
-    doc.MXP_collected_element();   // must not crash
+    long long tags_before = doc.m_iMXPtags;
+    doc.MXP_collected_element();
+    EXPECT_EQ(tags_before + 1, doc.m_iMXPtags);
+    EXPECT_EQ(1, (int)doc.m_ActiveTagList.GetCount());
 }
 
 // ── GetWord (mxp/mxputils.cpp) ────────────────────────────────────────────

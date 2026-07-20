@@ -20,8 +20,24 @@
 #include <unistd.h>
 
 #include "flags.h"   // eEnabled / eOmitFromOutput / ... (AddTriggerEx flags)
+#include "pal/itransport.h"
 
 // ── helpers ───────────────────────────────────────────────────────────────
+
+// A transport that just records the bytes the doc sends to the "MUD".  Used by
+// the send-side tests (speedwalk/execute/immediate arms, Pueblo negotiation).
+namespace {
+struct DispFakeTransport : pal::ITransport {
+    std::string sent;
+    void resolve(const char*, pal::ResolveToken) override {}
+    void cancelResolve() override {}
+    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void send(const char* data, size_t n) override { sent.append(data, n); }
+    void startTls(const pal::TlsParams&) override {}
+    void close() override {}
+    std::string lastErrorString() const override { return "fake"; }
+};
+} // namespace
 
 static void make_doc(CMUSHclientDoc& doc)
 {
@@ -1181,6 +1197,14 @@ TEST(TriggerPipeline, MultiLineTriggerMatchesAcrossTwoLines)
 TEST(TriggerPipeline, SpeedwalkExecuteImmediateArmsOffline)
 {
     CMUSHclientDoc doc; make_doc(doc);
+    // Attach a recording transport so the three SendTo arms have an observable
+    // sink — without it every send is swallowed (ConnectionOpen() == false) and
+    // the test could only re-check that the triggers matched.  Speedwalk delay
+    // stays at its default 0 so the speedwalk bytes send immediately rather than
+    // queueing onto m_QueuedCommandsList (which never drains headless).
+    DispFakeTransport* t = new DispFakeTransport();
+    doc.m_pTransport = t;                       // doc destructor tears it down
+
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("sw", "walknow*", "2n",
                                           eEnabled, -1, 0, "", "",
                                           eSendToSpeedwalk, 100));
@@ -1193,10 +1217,17 @@ TEST(TriggerPipeline, SpeedwalkExecuteImmediateArmsOffline)
     feed(doc, "walknow\n");
     feed(doc, "execnow\n");
     feed(doc, "sendnow\n");
-    // all three matched (info 21 = nMatched); no crash, no world connection
+
+    // all three matched (info 21 = nMatched) ...
     EXPECT_EQ(1L, doc.GetTriggerInfo("sw", 21).lVal);
     EXPECT_EQ(1L, doc.GetTriggerInfo("ex", 21).lVal);
     EXPECT_EQ(1L, doc.GetTriggerInfo("im", 21).lVal);
+    // ... AND each arm actually put its expanded command on the wire.  The
+    // speedwalk "2n" expands its single-letter directions to the full words, so
+    // it sends "north\r\nnorth\r\n".
+    EXPECT_NE(std::string::npos, t->sent.find("north\r\nnorth"));  // speedwalk 2n
+    EXPECT_NE(std::string::npos, t->sent.find("some command"));    // execute
+    EXPECT_NE(std::string::npos, t->sent.find("immediate cmd"));   // immediate
 }
 
 // The trigger sound arm: a configured sound file is attempted (and fails
@@ -1356,21 +1387,6 @@ TEST(DocSharedArms, FormatTimeSubstitutesWorldName)
 }
 
 // ═══ Round-4 coverage: DisplayMsg paragraph/Pueblo/UTF-8/telnet arms ═══════
-
-#include "pal/itransport.h"
-
-namespace {
-struct DispFakeTransport : pal::ITransport {
-    std::string sent;
-    void resolve(const char*, pal::ResolveToken) override {}
-    void cancelResolve() override {}
-    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
-    void send(const char* data, size_t n) override { sent.append(data, n); }
-    void startTls(const pal::TlsParams&) override {}
-    void close() override {}
-    std::string lastErrorString() const override { return "fake"; }
-};
-} // namespace
 
 // <P> mode: a single newline inside a paragraph is converted to a space, so
 // the paragraph keeps flowing on one line.
@@ -1735,9 +1751,19 @@ TEST(PrevLineArms, MappingFailureRegexpVariant)
     EXPECT_EQ(0, (int)doc.m_strMapList.GetCount());
 }
 
-// Chat snoop: a connected, snooping chat peer walks the ANSI reconstruction
-// path (bold/underline/blink/inverse + colour-change arms) without
-// disturbing the line list.
+// Chat snoop: a connected, snooping chat peer drives the ANSI-reconstruction
+// path (bold/underline/blink/inverse + colour-change arms,
+// ProcessPreviousLine.cpp:320-431), then the stop-snooping arm when permission
+// is revoked, without disturbing the line list.
+//
+// COVERAGE-ONLY for the reconstruction *content*: the bytes the reconstruction
+// sends to the snoop socket are not observable in this headless harness — the
+// chat socket's CChatSocket::OnSend consumes m_outstanding_output but never
+// reaches a readable descriptor (verified: even a real socketpair fd assigned to
+// m_hSocket yields no peer bytes, because the port's chat send path does not go
+// through ::send here).  What IS asserted is the load-bearing invariant that the
+// snoop pass leaves the normal output pipeline intact (both fed lines still land
+// in the line list, before and after the snoop-permission change).
 TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
 {
     CMUSHclientDoc doc; make_doc(doc);
@@ -1747,12 +1773,13 @@ TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
     snooper->m_bHeIsSnooping = true;
     doc.m_ChatList.AddTail(snooper);
 
-    // bold red on blue, underline+blink+inverse transitions, then reset
+    // bold red on blue, underline+blink+inverse transitions, then reset — walks
+    // every reconstruction arm.
     feed(doc, "\x1B[1;31;44mhot\x1B[0;4;5;7mweird\x1B[0mplain\n");
     ASSERT_TRUE(nth_line(doc, 0) != nullptr);
     EXPECT_TRUE(line_text(nth_line(doc, 0)).find("hot") != std::string::npos);
 
-    // snoop-permission revoked: the stop-snooping arm
+    // snoop-permission revoked: the stop-snooping arm still leaves output intact
     snooper->m_bCanSnoop = false;
     feed(doc, "another line\n");
     EXPECT_TRUE(line_text(nth_line(doc, 1)).find("another") != std::string::npos);
@@ -1936,10 +1963,15 @@ TEST(WrapR5, Big5DoubleByteSplitPoint)
     big5 += '\n';
     doc.DisplayMsg(big5.c_str(), (int)big5.size(), 0);
 
-    // wrapped: two lines, split on an even (character) boundary
+    // Big5 detection splits at the last whole-character boundary BEFORE the
+    // wrap column (len 18 < 20, even).  Without the DBCS arm the line would be
+    // hard-broken at the wrap column (len == 20): still even, so the old
+    // len%2==0 check alone was vacuous.  Pin "split earlier than the column, on
+    // a character boundary" — the mutation that disables detection breaks it.
     ASSERT_TRUE(doc.m_LineList.GetCount() >= 2);
     CLine* l0 = nth_line(doc, 0);
-    EXPECT_EQ(0, l0->len % 2);
+    EXPECT_EQ(0, l0->len % 2);                 // whole-character boundary
+    EXPECT_LT(l0->len, (int)doc.m_nWrapColumn); // detection split before the column
 }
 
 // DisplayMsg / SetNewLineColour guards when no line exists yet.

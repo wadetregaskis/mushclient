@@ -19,6 +19,7 @@
 #include "scripting/errors.h"
 #include "pal/itransport.h"
 #include "scripting/scripting.h"
+#include "platform/wx_mfc_hooks.h"   // g_wxhook_set_status (queued-command status seam)
 
 #include <zlib.h>
 
@@ -2135,11 +2136,25 @@ TEST(SendMsgR5, ImmediateFlagsWhenQueueBusy)
     CMUSHclientDoc* doc = make_doc();
     doc->m_iSpeedWalkDelay = 10;                       // queue machinery on
     doc->m_QueuedCommandsList.AddTail("nnorth");       // something pending
-    // bQueueIt=false but the queue is non-empty → IMMEDIATE_WITH_ECHO
+    // bQueueIt=false but the queue is non-empty → IMMEDIATE_WITH_ECHO ('I'),
+    // lowercased to 'i' because bLogIt=false.
     doc->SendMsg("look", true, false, false);
-    // and without echo → IMMEDIATE_WITHOUT_ECHO
     doc->m_QueuedCommandsList.AddTail("nnorth");
+    // bEcho=false → IMMEDIATE_WITHOUT_ECHO ('W') → 'w'.
     doc->SendMsg("hide", false, false, false);
+
+    // Each immediate command is queued as <flag-byte><command>; assert the
+    // exact flag byte, not merely that a command was queued.  (Swapping the
+    // WITH/WITHOUT_ECHO flag would flip 'i'→'w' on "look".)
+    bool sawLook = false, sawHide = false;
+    for (POSITION pos = doc->m_QueuedCommandsList.GetHeadPosition(); pos; ) {
+        CString e = doc->m_QueuedCommandsList.GetNext(pos);
+        if (e == "ilook") sawLook = true;   // IMMEDIATE_WITH_ECHO, no-log
+        if (e == "whide") sawHide = true;   // IMMEDIATE_WITHOUT_ECHO, no-log
+    }
+    EXPECT_TRUE(sawLook);
+    EXPECT_TRUE(sawHide);
+
     doc->m_iSpeedWalkDelay = 0;
     delete doc;
 }
@@ -2176,30 +2191,41 @@ TEST(SendMsgR5, CommandAfterPartialMudLineStartsNewLine)
 
 TEST(QueueR5, ShowQueuedCommandsFormatsRepeatsAndOverflow)
 {
+    // ShowQueuedCommands publishes the formatted queue via SetStatusMessageNow,
+    // which forwards to g_wxhook_set_status (a no-op headless).  Capture it so
+    // the formatting is actually observable.
+    static std::string s_status;
+    auto* saved = g_wxhook_set_status;
+    g_wxhook_set_status = [](const char* s){ s_status = s ? s : ""; };
+
     CMUSHclientDoc* doc = make_doc();
 
-    // empty entries skipped; repeats counted; multi-char directions bracketed
-    doc->m_QueuedCommandsList.AddTail("n");        // flag byte + empty command
+    // empty entries skipped; repeats counted (2×); multi-char directions
+    // bracketed.  Each entry is <flag-byte><command>; ShowQueuedCommands strips
+    // the leading flag with Mid(1), so "n"→"" (skipped), "nnorth"→"north", etc.
+    doc->m_QueuedCommandsList.AddTail("n");        // empty command → skipped
     doc->m_QueuedCommandsList.AddTail("nnorth");
-    doc->m_QueuedCommandsList.AddTail("nnorth");
+    doc->m_QueuedCommandsList.AddTail("nnorth");   // repeated
     doc->m_QueuedCommandsList.AddTail("nne");
+    s_status.clear();
     doc->ShowQueuedCommands();
+    EXPECT_EQ(std::string("Queued: 2(north) (ne) "), s_status);
 
-    // repeated multi-char direction at the end takes the count-flush arm
+    // a long queue overflows MAX_SHOWN and ends with " ..."
     doc->m_QueuedCommandsList.RemoveAll();
-    doc->m_QueuedCommandsList.AddTail("neast");
-    doc->m_QueuedCommandsList.AddTail("neast");
-    doc->ShowQueuedCommands();
-
-    // a long queue ends with "..."
     for (int i = 0; i < 60; ++i) {
         doc->m_QueuedCommandsList.AddTail("neast");
         doc->m_QueuedCommandsList.AddTail("nwest");
     }
+    s_status.clear();
     doc->ShowQueuedCommands();
+    EXPECT_EQ(0u, s_status.find("Queued: "));
+    EXPECT_NE(std::string::npos, s_status.find("..."));
 
     doc->m_QueuedCommandsList.RemoveAll();
     delete doc;
+
+    g_wxhook_set_status = saved;
 }
 
 // ── round 5: option-machinery guard arms (free helpers) ───────────────────

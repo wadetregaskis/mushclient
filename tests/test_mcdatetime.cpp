@@ -184,7 +184,9 @@ TEST(CmcDateTimeSpanR5, ArithmeticPropagatesNullAndInvalid)
     EXPECT_EQ(3L, sum.GetDays());
     CmcDateTimeSpan diff = two - good;
     EXPECT_EQ(CmcDateTimeSpan::valid, diff.GetStatus());
-    EXPECT_TRUE(diff.GetTotalDays() < 1.0);
+    // two(2d) - good(1d 2h 3m 4s = 1.0854630d) = 0.9145370d.  Pin the exact
+    // value (not merely < 1.0) so a sign-flipped subtraction is caught.
+    EXPECT_NEAR(0.9145370, diff.GetTotalDays(), 1e-6);
 }
 
 TEST(CmcDateTimeSpanR5, TotalsAndComparisons)

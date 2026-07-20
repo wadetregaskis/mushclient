@@ -182,10 +182,12 @@ TEST(LuaScripting, GetVariableMissing)
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    int n = run_ret(L, "return world.GetVariable('does_not_exist')");
-    EXPECT_EQ(1, n);
-    // Missing variable returns nil or empty string depending on implementation
-    // (portable: returns "" for missing)
+    // A valid-but-missing variable marshals to nil/empty in Lua (VT_EMPTY),
+    // never a bogus non-empty string — pin the value, not just the arity.
+    int n = run_ret(L,
+        "local v = world.GetVariable('does_not_exist'); return v == nil or v == ''");
+    ASSERT_EQ(1, n);
+    EXPECT_TRUE(lua_toboolean(L, -1));
     lua_settop(L, 0);
 
     lua_close(L);
@@ -200,10 +202,12 @@ TEST(LuaScripting, DeleteVariable)
     EXPECT_TRUE(run(L, "world.SetVariable('tmp', 'x')"));
     EXPECT_TRUE(run(L, "world.DeleteVariable('tmp')"));
 
-    // Should be gone now
-    int n = run_ret(L, "return world.GetVariable('tmp')");
-    EXPECT_EQ(1, n);
-    // After delete, variable should not exist — returns "" or nil
+    // After delete the variable must be gone: GetVariable returns nil/empty,
+    // NOT the old value 'x'.  (A no-op DeleteVariable would still answer 'x'.)
+    int n = run_ret(L,
+        "local v = world.GetVariable('tmp'); return v == nil or v == ''");
+    ASSERT_EQ(1, n);
+    EXPECT_TRUE(lua_toboolean(L, -1));
     lua_settop(L, 0);
 
     lua_close(L);

@@ -14,6 +14,23 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "scripting/errors.h"
+#include "pal/itransport.h"
+#include <cstring>
+
+// A transport that records the raw negotiation bytes the doc puts on the wire,
+// so Send_IAC_* suppression is observable.
+namespace {
+struct RecordingTransport : pal::ITransport {
+    std::string sent;
+    void resolve(const char*, pal::ResolveToken) override {}
+    void cancelResolve() override {}
+    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void send(const char* data, size_t n) override { sent.append(data, n); }
+    void startTls(const pal::TlsParams&) override {}
+    void close() override {}
+    std::string lastErrorString() const override { return "fake"; }
+};
+} // namespace
 
 // telopt_name — the telnet-option name table.  Was doc_portable.cpp (deleted
 // at the B-3 flip); production code uses telnet_phases.cpp's own no-op macro,
@@ -952,12 +969,22 @@ TEST(TelnetR4, TeloptNameTableAndDebugTracing)
 TEST(TelnetR5, RepeatedDontAndWillSuppressed)
 {
     CMUSHclientDoc doc; make_doc(doc);
-    doc.m_pTransport = nullptr;      // SendPacket buffers/no-ops harmlessly
+    RecordingTransport* t = new RecordingTransport();
+    doc.m_pTransport = t;            // doc destructor tears it down
+
     doc.Send_IAC_DONT(42);
-    doc.Send_IAC_DONT(42);           // second call: early return
+    doc.Send_IAC_DONT(42);           // suppressed (RFC 854 / forum 3061)
     doc.Send_IAC_WILL(42);
-    doc.Send_IAC_WILL(42);           // second call: early return
-    EXPECT_TRUE(doc.m_bClient_sent_IAC_DONT[42] || true);
+    doc.Send_IAC_WILL(42);           // suppressed
+
+    // Exactly ONE DONT and ONE WILL sequence reach the wire — the repeats are
+    // dropped by the m_bClient_sent_IAC_* guards.  (SendPacket writes the 3
+    // negotiation bytes raw, no IAC escaping.)
+    const unsigned char expected[] = { IAC, DONT, 42, IAC, WILL, 42 };
+    ASSERT_EQ(sizeof expected, t->sent.size());
+    EXPECT_EQ(0, memcmp(expected, t->sent.data(), sizeof expected));
+    EXPECT_TRUE(doc.m_bClient_sent_IAC_DONT[42]);
+    EXPECT_TRUE(doc.m_bClient_sent_IAC_WILL[42]);
 }
 
 // An MCCP v2 subnegotiation arriving WITHOUT the usual IAC WILL COMPRESS2

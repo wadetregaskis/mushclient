@@ -84,25 +84,21 @@ TEST(AliasTest, NoAliasPassesCommandThrough)
     EXPECT_EQ(before + 1, doc.m_nTotalLinesSent);
 }
 
-TEST(AliasTest, MatchingAliasIncreasesMatchCount)
+TEST(AliasTest, MatchingAliasFiresAndSendsContents)
 {
+    // Alias "n" → "go north": typing "n" both increments the match count AND
+    // sends the *substituted* contents (not the raw "n") to the world.  The
+    // substituted-text check is what distinguishes a fired alias from a raw
+    // passthrough (which would also send exactly one line).
     CMUSHclientDoc doc; make_doc(doc);
     CAlias* a = add_alias(doc, "n", "go north");
 
-    type_command(doc, "n");
-    EXPECT_EQ(1L, a->nMatched);
-}
-
-TEST(AliasTest, MatchingAliasSendsContents)
-{
-    // Alias "n" → "go north": typing "n" should result in "go north" being sent.
-    CMUSHclientDoc doc; make_doc(doc);
-    add_alias(doc, "n", "go north");
-
     long before = doc.m_nTotalLinesSent;
     type_command(doc, "n");
-    // The alias fires and sends its contents — one line out.
+    EXPECT_EQ(1L, a->nMatched);
     EXPECT_EQ(before + 1, doc.m_nTotalLinesSent);
+    EXPECT_STREQ("go north\r\n",
+                 static_cast<FakeTransport*>(doc.m_pTransport)->sent.c_str());
 }
 
 TEST(AliasTest, NonMatchingCommandPassesThrough)

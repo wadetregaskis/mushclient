@@ -169,14 +169,22 @@ TEST(TimerTest, DeletedTimerNoLongerFires)
 
 TEST(TimerTest, TimersDisabledGlobally)
 {
+    // The global m_bEnableTimers guard lives in CheckTimers() (timers.cpp:336),
+    // NOT in CheckTimerList — so drive CheckTimers() directly and prove the
+    // guard actually gates firing.  make_doc leaves us connected with no
+    // plugins and no log file, so CheckTimers reduces to the guard + the
+    // world-scope CheckTimerList.
     CMUSHclientDoc doc; make_doc(doc);
-    doc.m_bEnableTimers = FALSE;
     CTimer* t = add_timer(doc, "t1");
     make_overdue(t);
 
-    // CheckTimerList is guarded by m_bEnableTimers in the CLI event loop,
-    // not inside CheckTimerList itself.  Simulate by not calling tick().
-    EXPECT_EQ(0L, t->nMatched);
+    doc.m_bEnableTimers = FALSE;
+    doc.CheckTimers();
+    EXPECT_EQ(0L, t->nMatched);   // disabled → overdue timer must NOT fire
+
+    doc.m_bEnableTimers = TRUE;
+    doc.CheckTimers();
+    EXPECT_EQ(1L, t->nMatched);   // enabled → the same overdue timer fires
 }
 
 TEST(TimerTest, ActiveWhenClosedFiresWhileDisconnected)

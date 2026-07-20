@@ -61,12 +61,15 @@ TEST(Utilities, Base64RoundTrip)
 
 TEST(Utilities, EncodeBase64_MultiLineWrapsAt76)
 {
-    // 60 input bytes → 80 base64 chars; multi-line inserts a CRLF after the
-    // first 76 output chars (i.e. after 57 input bytes).
+    // 70 input bytes → 96 base64 chars; multi-line inserts a CRLF after the
+    // first 76 output chars (i.e. after 57 input bytes = 19 quartets).  Pin the
+    // wrap *position*, not merely that some CRLF exists.
     CString enc = encodeBase64(
         "0123456789012345678901234567890123456789012345678901234567890123456789", true);
-    const char* p = (const char*)enc;
-    EXPECT_TRUE(strstr(p, "\r\n") != NULL);
+    const char* p  = (const char*)enc;
+    const char* nl = strstr(p, "\r\n");
+    ASSERT_NE((const char*)NULL, nl);
+    EXPECT_EQ(76, (int)(nl - p));   // first line is exactly 76 base64 chars
 }
 
 TEST(Utilities, DecodeBase64_EmptyInputNoOverread)

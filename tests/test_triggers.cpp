@@ -1178,4 +1178,94 @@ TEST(SendTextR5, VariableSubstitutionInSend)
     EXPECT_TRUE(sawExpanded);
 }
 
+
+// SetTriggerOption("match", ...) recompiles the trigger regexp
+// (methods_triggers.cpp ~833-862): an empty match is rejected (~836), a
+// malformed pattern throws in regcomp and is caught (~858), and a valid new
+// pattern is compiled from the NEW text (~843) and swapped in (~862) so
+// subsequent lines match the new pattern and not the old one.
+TEST(TriggerApi, SetTriggerOptionMatchRecompilePaths)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    // a regexp trigger, so a raw "(unclosed" reaches regcomp un-escaped
+    // (a non-regexp match would be ConvertToRegularExpression'd, escaping the '(')
+    ASSERT_EQ((long)eOK,
+              doc.AddTriggerEx("m", "^alpha$", "",
+                               eEnabled | eTriggerRegularExpression,
+                               -1, 0, "", "", eSendToWorld, 100));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("m", t));
+
+    // empty match text is rejected before anything is changed (~836)
+    EXPECT_EQ((long)eTriggerCannotBeEmpty, doc.SetTriggerOption("m", "match", ""));
+    // malformed pattern throws in regcomp -> caught -> eBadRegularExpression (~858)
+    EXPECT_EQ((long)eBadRegularExpression,
+              doc.SetTriggerOption("m", "match", "(unclosed"));
+    // neither rejected set altered the stored match text (both return before it)
+    EXPECT_STREQ("^alpha$", vs(doc.GetTriggerInfo("m", 1)).c_str());
+    feed_line(doc, "alpha");                 // the original pattern still matches
+    EXPECT_EQ(1L, t->nMatched);
+
+    // a valid new pattern is accepted, stored, and its recompiled regexp takes effect
+    EXPECT_EQ((long)eOK, doc.SetTriggerOption("m", "match", "^beta$"));
+    EXPECT_STREQ("^beta$", vs(doc.GetTriggerInfo("m", 1)).c_str());
+    feed_line(doc, "alpha");                 // old pattern no longer matches
+    EXPECT_EQ(1L, t->nMatched);
+    feed_line(doc, "beta");                  // new pattern matches
+    EXPECT_EQ(2L, t->nMatched);
+}
+
+// SetAliasOption("match", ...) mirrors the trigger path
+// (methods_aliases.cpp ~732-762): empty match -> eAliasCannotBeEmpty (~735),
+// a malformed regexp throws in regcomp and is caught -> eBadRegularExpression
+// (~758), and a valid new pattern -> eOK with the stored match text updated.
+TEST(TriggerApi, SetAliasOptionMatchRecompilePaths)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    // regexp alias, so a raw "(unclosed" reaches regcomp un-escaped
+    ASSERT_EQ((long)eOK,
+              doc.AddAlias("am", "^north$", "go north",
+                           eEnabled | eAliasRegularExpression, ""));
+
+    EXPECT_EQ((long)eAliasCannotBeEmpty, doc.SetAliasOption("am", "match", ""));
+    EXPECT_EQ((long)eBadRegularExpression,
+              doc.SetAliasOption("am", "match", "(unclosed"));
+    // both rejected sets left the stored match text untouched (they return early)
+    EXPECT_STREQ("^north$", vs(doc.GetAliasInfo("am", 1)).c_str());
+
+    // a valid new pattern is accepted and stored
+    EXPECT_EQ((long)eOK, doc.SetAliasOption("am", "match", "^south$"));
+    EXPECT_STREQ("^south$", vs(doc.GetAliasInfo("am", 1)).c_str());
+}
+
+// Symmetric case to TriggerR5.ForegroundOnlyColourChange: a
+// TRIGGER_COLOUR_CHANGE_BACKGROUND trigger recolours the matched span to RGB
+// but keeps the ORIGINAL foreground (ProcessPreviousLine.cpp ~1352-1353:
+// else -> pStyle->iForeColour = cOldText); only the background is changed.
+TEST(TriggerR5, BackgroundOnlyColourChange)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    CTrigger* t = add_trigger(doc, "*shiny*");
+    t->colour = 1;                    // custom colour 1 (not SAMECOLOUR)
+    t->iColourChangeType = TRIGGER_COLOUR_CHANGE_BACKGROUND;
+    feed_line(doc, "a shiny thing");
+    EXPECT_EQ(1L, t->nMatched);
+
+    // the matched span's style is now RGB, but its foreground is the ORIGINAL
+    // ANSI white (m_normalcolour[WHITE]) restored from cOldText -- the custom
+    // text colour (m_customtext[1]) did NOT stick as the foreground, because
+    // this is the background-change arm.
+    bool sawOriginalFore = false;
+    for (POSITION lp = doc.m_LineList.GetHeadPosition(); lp; ) {
+        CLine* line = doc.m_LineList.GetNext(lp);
+        for (POSITION pos = line->styleList.GetHeadPosition(); pos; ) {
+            CStyle* s = line->styleList.GetNext(pos);
+            if ((s->iFlags & COLOURTYPE) == COLOUR_RGB &&
+                s->iForeColour == doc.m_normalcolour[WHITE])
+                sawOriginalFore = true;   // background arm kept the original foreground
+        }
+    }
+    EXPECT_TRUE(sawOriginalFore);
+}
+
 MC_TEST_MAIN()

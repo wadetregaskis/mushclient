@@ -769,4 +769,77 @@ TEST(AnsiRgbMode, Xterm256WithInverseSwapsTarget)
     EXPECT_EQ(xterm_256_colours[21],  s->iForeColour);   // back code → fore
 }
 
+
+// Interpret256ANSIcode, ANSI (index-storage) branch, foreground + INVERSE:
+// with the style still in COLOUR_ANSI mode and INVERSE set, a foreground 256
+// code (ESC[38;5;N) stores the raw index in iBackColour (the swapped target)
+// — ansi.cpp line 483 `iBackColour = iCode;`. The RGB-mode counterpart is
+// covered by AnsiRgbMode.Xterm256WithInverseSwapsTarget; this pins the ANSI arm.
+TEST(ANSITest, Interpret256AnsiForegroundInverseStoresIndexInBackground)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.InterpretANSIcode(ANSI_INVERSE);            // COLOUR_ANSI | INVERSE
+    doc.InterpretANSIcode(ANSI_TEXT_256_COLOUR);    // -> HAVE_FOREGROUND_256_START
+    doc.Interpret256ANSIcode(5);                    // 8-bit selector -> *_FINISH
+    doc.Interpret256ANSIcode(196);                  // apply: fg-256 + INVERSE
+    CStyle* s = tail(doc);
+    ASSERT_NE(nullptr, s);
+    // index-storage branch: the raw index lands in the BACKGROUND (swapped)
+    EXPECT_EQ((COLORREF)196, s->iBackColour);
+    // foreground index left untouched (it would become 196 if the arm swapped)
+    EXPECT_EQ((COLORREF)WHITE, s->iForeColour);
+    // still ANSI index mode, not RGB (proves the else-if ANSI branch ran)
+    EXPECT_EQ((unsigned short)COLOUR_ANSI, s->iFlags & COLOURTYPE);
+    EXPECT_TRUE((s->iFlags & INVERSE) != 0);
+}
+
+// Interpret256ANSIcode, ANSI (index-storage) branch, background + INVERSE:
+// a background 256 code (ESC[48;5;N) with INVERSE set stores the raw index in
+// iForeColour (the swapped target) — ansi.cpp line 490 `iForeColour = iCode;`.
+TEST(ANSITest, Interpret256AnsiBackgroundInverseStoresIndexInForeground)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.InterpretANSIcode(ANSI_INVERSE);            // COLOUR_ANSI | INVERSE
+    doc.InterpretANSIcode(ANSI_BACK_256_COLOUR);    // -> HAVE_BACKGROUND_256_START
+    doc.Interpret256ANSIcode(5);                    // 8-bit selector -> *_FINISH
+    doc.Interpret256ANSIcode(46);                   // apply: bg-256 + INVERSE
+    CStyle* s = tail(doc);
+    ASSERT_NE(nullptr, s);
+    // index-storage branch: the raw index lands in the FOREGROUND (swapped)
+    EXPECT_EQ((COLORREF)46, s->iForeColour);
+    // background index left untouched (it would become 46 if the arm swapped)
+    EXPECT_EQ((COLORREF)BLACK, s->iBackColour);
+    EXPECT_EQ((unsigned short)COLOUR_ANSI, s->iFlags & COLOURTYPE);
+    EXPECT_TRUE((s->iFlags & INVERSE) != 0);
+}
+
+// Interpret256ANSIcode, custom->RGB conversion (ansi.cpp lines 399-404):
+// a 256-colour code arriving while the current style is COLOUR_CUSTOM first
+// resolves the custom entry to RGB (GetStyleRGB) and flips the style to
+// COLOUR_RGB, so the xterm colour is applied through the RGB apply-path and the
+// resolved custom background is preserved.
+TEST(ANSITest, Interpret256FromCustomModeConvertsStyleToRgb)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    // distinctive custom-palette entries so the assertion is deterministic
+    doc.m_customtext[15] = RGB(11, 22, 33);
+    doc.m_customback[15] = RGB(44, 55, 66);
+    // seed a COLOUR_CUSTOM style (fore/back custom index 15)
+    doc.AddStyle(COLOUR_CUSTOM, 15, 15, 0, static_cast<CAction*>(nullptr));
+    ASSERT_EQ((unsigned short)COLOUR_CUSTOM, tail(doc)->iFlags & COLOURTYPE);
+
+    doc.InterpretANSIcode(ANSI_TEXT_256_COLOUR);    // -> HAVE_FOREGROUND_256_START
+    doc.Interpret256ANSIcode(5);                    // 8-bit selector -> *_FINISH
+    doc.Interpret256ANSIcode(196);                  // apply foreground xterm 196
+
+    CStyle* s = tail(doc);
+    ASSERT_NE(nullptr, s);
+    // custom -> RGB conversion happened (line 402-403 cleared custom, set RGB)
+    EXPECT_EQ((unsigned short)COLOUR_RGB, s->iFlags & COLOURTYPE);
+    // foreground resolved through the RGB apply-path (xterm palette)
+    EXPECT_EQ(xterm_256_colours[196], s->iForeColour);
+    // background carried across from the resolved custom entry (GetStyleRGB ran)
+    EXPECT_EQ(RGB(44, 55, 66), s->iBackColour);
+}
+
 MC_TEST_MAIN()

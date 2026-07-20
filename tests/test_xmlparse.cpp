@@ -761,4 +761,53 @@ TEST(XmlParseR5, OversizeFileRejectedUpFront)
     EXPECT_NE(std::string::npos, err.find("too large"));
 }
 
+
+// Date fields that are present but NON-NUMERIC (as opposed to the numeric-but-
+// out-of-range cases DateParseArms already covers) take the IsNumber() reject
+// arms for Month/Day/Minute/Second; an empty-but-present value takes the
+// IsEmpty() "No time supplied" arm.  These are the exact gaps DateParseArms
+// left open: badmonth/badday/badmin/badsec there are all numeric so they hit
+// the range checks, and year=/badhour= only cover Year/Hour non-numeric.
+// (xmlparse.cpp:1491-1493, 1521-1522, 1523-1524, 1567-1568, 1569-1570)
+TEST(XmlAttrR5, DateNonNumericFieldArms)
+{
+    CXMLparser p;
+    CXMLelement* a = one_element(p,
+        "emptytime=\"\" monthx=\"2020-x-06\" dayx=\"2020-05-x\" "
+        "minx=\"2020-05-06 01:x:00\" secx=\"2020-05-06 01:02:x\"");
+    ASSERT_NE(nullptr, a);
+    CTime t(0);
+
+    // present but empty value -> IsEmpty() arm (xmlparse.cpp:1492)
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "emptytime", t, false); })
+        .find("No time supplied"));
+    // non-numeric month -> xmlparse.cpp:1522 (not the 1..12 range arm)
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "monthx", t, false); })
+        .find("Month is not numeric"));
+    // non-numeric day -> xmlparse.cpp:1524 (not the 1..31 range arm)
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "dayx", t, false); })
+        .find("Day is not numeric"));
+    // non-numeric minute -> xmlparse.cpp:1568 (not the 0..59 range arm)
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "minx", t, false); })
+        .find("Minute is not numeric"));
+    // non-numeric second -> xmlparse.cpp:1570 (not the 0..59 range arm)
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "secx", t, false); })
+        .find("Second is not numeric"));
+}
+
+// A double whose first char is a digit (so it passes the leading isdigit gate
+// at xmlparse.cpp:1250) but which then contains a non-digit / non-'.' / non-'E'
+// char takes the interior "Invalid character" arm.  This is distinct from
+// DoubleParseArms's alpha="x" (leading char -> "Invalid number", line 1251).
+// (xmlparse.cpp:1275-1278)
+TEST(XmlAttrR5, DoubleInteriorNonDigitChar)
+{
+    CXMLparser p;
+    CXMLelement* a = one_element(p, "mid=\"1x\"");
+    ASSERT_NE(nullptr, a);
+    double d = 0;
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_double(*a, "mid", d, false); })
+        .find("Invalid character"));
+}
+
 MC_TEST_MAIN()

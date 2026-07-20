@@ -1738,4 +1738,64 @@ TEST(MXPPhaseR5, TriggerColouringSplitsActionStyle)
     EXPECT_EQ(1L, t->nMatched);
 }
 
+
+// mxpEntities.cpp MXP_GetEntity: hex numeric entities (&#xNN;) go through the
+// strName[1]=='x' arm — the shift-accumulate (iResult<<4) plus the A-F fold
+// (iNewDigit -= 7).  0x41 -> 'A'; 0x4A -> 'J' (the 'A' digit exercises the fold).
+TEST(MXPEntity, HexNumericEntityDecodesToChar)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    long long errs = doc.m_iMXPerrors;
+    CString eA("#x41");   // 0x41 = 65 = 'A'
+    CString eJ("#x4A");   // 0x4A = 74 = 'J' — the 'A' digit folds via -= 7
+    EXPECT_STREQ("A", (const char*)doc.MXP_GetEntity(eA));
+    EXPECT_STREQ("J", (const char*)doc.MXP_GetEntity(eJ));
+    EXPECT_EQ(errs, doc.m_iMXPerrors);   // valid decodes raise no error
+}
+
+// mxpEntities.cpp MXP_GetEntity: a non-hex character after &#x fails the
+// isxdigit() guard -> "Invalid hex number" error and an empty expansion.
+TEST(MXPEntity, HexNumericEntityInvalidDigitRejected)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    long long errs = doc.m_iMXPerrors;
+    CString bad("#xZ");   // 'Z' is not a hex digit
+    EXPECT_STREQ("", (const char*)doc.MXP_GetEntity(bad));
+    EXPECT_EQ(errs + 1, doc.m_iMXPerrors);   // one hex-validation error
+}
+
+// mxpEntities.cpp MXP_GetEntity: the decimal arm rejects a trailing non-digit
+// (&#12x;) via its isdigit() guard -> error and an empty expansion.
+TEST(MXPEntity, DecimalNumericEntityInvalidDigitRejected)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    long long errs = doc.m_iMXPerrors;
+    CString bad("#12x");   // 'x' after the digits is invalid
+    EXPECT_STREQ("", (const char*)doc.MXP_GetEntity(bad));
+    EXPECT_EQ(errs + 1, doc.m_iMXPerrors);   // one decimal-validation error
+}
+
+// mxpEntities.cpp MXP_GetEntity: a name found in neither App.m_EntityMap nor
+// m_CustomEntityMap is an "Unknown MXP entity" -> error and empty expansion.
+TEST(MXPEntity, UnknownEntityRejected)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    long long errs = doc.m_iMXPerrors;
+    CString unknown("nosuchentity");   // not a standard or custom entity
+    EXPECT_STREQ("", (const char*)doc.MXP_GetEntity(unknown));
+    EXPECT_EQ(errs + 1, doc.m_iMXPerrors);   // one unknown-entity error
+}
+
+// mxpEntities.cpp MXP_GetEntity: the hex arm's 'iResult & 0xF0' guard rejects a
+// third hex digit with the distinctive "maximum of 2 hex digits" message (which
+// separates this arm from the later "Disallowed number" > 255 check).
+TEST(MXPEntity, HexNumericEntityTooManyDigitsRejected)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc; make_stream_doc(doc);   // m_iMXPdebugLevel = DBG_ALL
+    CString big("#xFFF");   // 3 hex digits — more than one byte
+    EXPECT_STREQ("", (const char*)doc.MXP_GetEntity(big));
+    EXPECT_TRUE(dbg.contains("maximum of 2 hex digits"));
+}
+
 MC_TEST_MAIN()

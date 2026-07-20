@@ -36,13 +36,9 @@ CRuntimeClass CMUSHView::classCMUSHView = { "CMUSHView" };
 // Normally defined in sendvw.cpp.
 CRuntimeClass CSendView::classCSendView = { "CSendView" };
 
-// ── CAlias / CTrigger / CTimer static CRuntimeClass members ──────────────
-// Normally defined by IMPLEMENT_DYNAMIC in doc.cpp (mushapp only).
-// DECLARE_DYNAMIC on these types generates GetRuntimeClass() returning
-// &classCXxx (IsKindOf checks), so the statics must exist in mushcore too.
-CRuntimeClass CAlias::classCAlias           = { "CAlias" };
-CRuntimeClass CTrigger::classCTrigger       = { "CTrigger" };
-CRuntimeClass CTimer::classCTimer           = { "CTimer" };
+// B-3: CAlias/CTrigger/CTimer classCXxx CRuntimeClass members now come from
+// doc.cpp's IMPLEMENT_DYNAMIC (adopted into mushcore) — the stub copies here
+// would be duplicate symbols, so they are gone.
 
 // ── CMDIClientWnd / CMainFrame static CRuntimeClass members ──────────────
 // Normally defined by IMPLEMENT_DYNAMIC in Windows-only MFC source files.
@@ -88,6 +84,18 @@ void CTimerWnd::ChangeTimerRate(int) {}
 // chatsock.cpp (Windows-only).
 void CChatSocket::Process_Snoop   (CString) {}
 void CChatSocket::SendChatMessage (int, CString, long) {}
+// B-3: the ctor/dtor (chatsock.cpp, mushapp-only) — the flipped test_display
+// constructs a snooper CChatSocket(doc).  Inert: remember the doc; the snoop
+// path reads only the flags the test sets (m_iChatStatus/m_bCanSnoop/…).
+CChatSocket::CChatSocket (CMUSHclientDoc * pDoc) : m_pDoc (pDoc) {}
+CChatSocket::~CChatSocket () {}
+// CAsyncSocket virtual overrides (vtable slots) + the DECLARE_DYNAMIC runtime
+// class — inert headless (no live chat socket).
+CRuntimeClass CChatSocket::classCChatSocket = { "CChatSocket" };
+void CChatSocket::OnReceive (int) {}
+void CChatSocket::OnSend    (int) {}
+void CChatSocket::OnClose   (int) {}
+void CChatSocket::OnConnect (int) {}
 
 // ── CMUSHclientDoc method stubs (compiled against doc.h) ──────────────────
 // All methods listed below are declared in doc.h (the full Windows class)
@@ -98,104 +106,14 @@ void CChatSocket::SendChatMessage (int, CString, long) {}
 // the TUs that include doc.h (evaluate.cpp, ProcessPreviousLine.cpp,
 // timers.cpp, serialize.cpp).
 
-// ConnectSocket() is implemented in doc_portable.cpp.
+// ConnectSocket() is implemented in doc_port_glue.cpp.
 
-// BYTE-COPY of doc.cpp:2662 FindStyle — pure style-list logic, no GUI.  The
-// old `return false` stub silently disabled every FindStyle consumer headless
-// (notably ProcessPreviousLine's trigger colour-change block, which starts by
-// locating the style run at the match column).  Remove when doc.cpp adopts.
-bool CMUSHclientDoc::FindStyle (const CLine * pLine,         // which line
-                                const int iWantedCol,  // which column we want
-                                int & iCol,            // which column style goes up to
-                                CStyle * & pStyle,     // return style pointer
-                                POSITION & foundpos) const  // and its position
-  {
-   foundpos = NULL;   // none initially
-   iCol = 0;
-
-   // find first style to change
-   for (POSITION pos = pLine->styleList.GetHeadPosition(); pos; )
-     {
-     foundpos = pos;  // position to insert after
-     pStyle = pLine->styleList.GetNext (pos);
-     iCol += pStyle->iLength;
-     if (iCol >= iWantedCol)      // NJG - version 3.73
-        break;    // found first style
-      }
-
-  return foundpos != NULL;
-  }   // end of CMUSHclientDoc::FindStyle
-
-const bool CMUSHclientDoc::CheckScriptingAvailable(const char* /*sWhat*/,
-                                                   const DISPID /*dispid*/,
-                                                   const char* /*sScript*/)
-{ return false; }
-
-// Comparison functions — mirrors doc.cpp exactly (duplicated here because
-// doc.cpp is not compiled into mushcore, only into mushapp).
-static int CompareTrigger(const void* elem1, const void* elem2)
-{
-    CTrigger* t1 = *((CTrigger**)elem1);
-    CTrigger* t2 = *((CTrigger**)elem2);
-    if (t1->iSequence < t2->iSequence) return -1;
-    if (t1->iSequence > t2->iSequence) return  1;
-    // identical sequence → stable order by match text
-    if (t1->trigger < t2->trigger) return -1;
-    if (t1->trigger > t2->trigger) return  1;
-    return 0;
-}
-
-static int CompareAlias(const void* elem1, const void* elem2)
-{
-    CAlias* a1 = *((CAlias**)elem1);
-    CAlias* a2 = *((CAlias**)elem2);
-    if (a1->iSequence < a2->iSequence) return -1;
-    if (a1->iSequence > a2->iSequence) return  1;
-    if (a1->name < a2->name) return -1;
-    if (a1->name > a2->name) return  1;
-    return 0;
-}
-
-// Rebuild the sorted arrays from the maps and update the reverse map.
-// Called from methods_triggers.cpp / methods_aliases.cpp after every add/
-// delete/change so that evaluate.cpp sees triggers and aliases in the
-// correct priority order.
-void CMUSHclientDoc::SortTriggers()
-{
-    int iCount = GetTriggerMap().GetCount();
-    GetTriggerArray().SetSize(iCount);
-    GetTriggerRevMap().clear();
-    CString name;
-    CTrigger* pt;
-    int i = 0;
-    for (POSITION pos = GetTriggerMap().GetStartPosition(); pos; ++i) {
-        GetTriggerMap().GetNextAssoc(pos, name, pt);
-        GetTriggerArray().SetAt(i, pt);
-        GetTriggerRevMap()[pt] = std::string((const char*)name);
-    }
-    qsort(GetTriggerArray().GetData(), iCount, sizeof(CTrigger*), CompareTrigger);
-}
-
-void CMUSHclientDoc::SortAliases()
-{
-    int iCount = GetAliasMap().GetCount();
-    GetAliasArray().SetSize(iCount);
-    GetAliasRevMap().clear();
-    CString name;
-    CAlias* pa;
-    int i = 0;
-    for (POSITION pos = GetAliasMap().GetStartPosition(); pos; ++i) {
-        GetAliasMap().GetNextAssoc(pos, name, pa);
-        GetAliasArray().SetAt(i, pa);
-        GetAliasRevMap()[pa] = std::string((const char*)name);
-    }
-    qsort(GetAliasArray().GetData(), iCount, sizeof(CAlias*), CompareAlias);
-}
-
+// B-3: FindStyle, CheckScriptingAvailable, SortTriggers, SortAliases (+ their
+// CompareTrigger/CompareAlias helpers), DoFixMenus, ShowStatusLine are now the
+// REAL bodies in the adopted doc.cpp — the stub copies here were duplicate
+// symbols, so they are gone.  Redraw() stays: its real body is mushview.cpp
+// (mushapp-only), so it is still mushcore's provider.
 void CMUSHclientDoc::Redraw()       {}
-
-void CMUSHclientDoc::DoFixMenus(CCmdUI* /*pCmdUI*/) {}
-void CMUSHclientDoc::ShowStatusLine(bool) {}
 
 // ColourNote(LPCTSTR, LPCTSTR, LPCTSTR) is now implemented in doc_portable.cpp
 // with real terminal ANSI colour output (replaces the old no-op stub here).

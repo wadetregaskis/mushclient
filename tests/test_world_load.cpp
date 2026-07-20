@@ -10,7 +10,11 @@
 // way the Windows Serialize loading branch does (serialize.cpp:44-110).
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
 
 #include <cstdio>
 #include <cstring>

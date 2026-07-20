@@ -9,27 +9,58 @@
 // counters, etc.).
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
+
+// telopt_name — the telnet-option name table.  Was doc_portable.cpp (deleted
+// at the B-3 flip); production code uses telnet_phases.cpp's own no-op macro,
+// so this table now lives with its only consumer, this test.
+static const char* telopt_name(unsigned char opt)
+{
+    switch (opt) {
+    case   0: return "BINARY";
+    case   1: return "ECHO";
+    case   3: return "SGA";
+    case  24: return "TERMINAL-TYPE";
+    case  25: return "EOR";
+    case  31: return "NAWS";
+    case  32: return "TERMINAL-SPEED";
+    case  34: return "LINEMODE";
+    case  36: return "ENVIRON";
+    case  39: return "NEW-ENVIRON";
+    case  42: return "CHARSET";
+    case  85: return "COMPRESS(MCCP1)";
+    case  86: return "COMPRESS2(MCCP2)";
+    case  90: return "MSP";
+    case  91: return "MXP";
+    case  93: return "ZMP";
+    case 102: return "MUD-SPECIFIC(ATCP)";
+    case 200: return "ATCP";
+    case 201: return "GMCP";
+    default:  return "?";
+    }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-static CMUSHclientDoc make_doc()
+static void make_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_pCurrentLine = new CLine();
     doc.m_iFlags       = COLOUR_ANSI;
     doc.m_iForeColour  = WHITE;
     doc.m_iBackColour  = BLACK;
     doc.AddStyle(COLOUR_ANSI, WHITE, BLACK, 0,
                  static_cast<CAction*>(nullptr));
-    return doc;
 }
 
 // ── Phase_ESC ────────────────────────────────────────────────────────────
 
 TEST(TelnetTest, Phase_ESC_BracketTransitionsToDOING_CODE)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase = HAVE_ESC;
     doc.Phase_ESC('[');
     EXPECT_EQ(DOING_CODE, doc.m_phase);
@@ -38,7 +69,7 @@ TEST(TelnetTest, Phase_ESC_BracketTransitionsToDOING_CODE)
 
 TEST(TelnetTest, Phase_ESC_OtherCharReturnsToNONE)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase = HAVE_ESC;
     doc.Phase_ESC('A');
     EXPECT_EQ(NONE, doc.m_phase);
@@ -48,7 +79,7 @@ TEST(TelnetTest, Phase_ESC_OtherCharReturnsToNONE)
 
 TEST(TelnetTest, Phase_ANSI_DigitAccumulates)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase = DOING_CODE;
     doc.m_code  = 0;
     doc.Phase_ANSI('3');
@@ -59,7 +90,7 @@ TEST(TelnetTest, Phase_ANSI_DigitAccumulates)
 
 TEST(TelnetTest, Phase_ANSI_mFinalisesDOING_CODE)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase = DOING_CODE;
     doc.m_code  = ANSI_TEXT_RED;     // code 31
     doc.Phase_ANSI('m');
@@ -71,7 +102,7 @@ TEST(TelnetTest, Phase_ANSI_mFinalisesDOING_CODE)
 
 TEST(TelnetTest, Phase_ANSI_SemicolonSeparatorCallsInterpret)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase = DOING_CODE;
     doc.m_code  = ANSI_BOLD;   // code 1
     // ';' dispatches the current code and resets m_code to 0
@@ -82,7 +113,7 @@ TEST(TelnetTest, Phase_ANSI_SemicolonSeparatorCallsInterpret)
 
 TEST(TelnetTest, Phase_ANSI_UnknownCharReturnsNONE)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase = DOING_CODE;
     doc.m_code  = 0;
     doc.Phase_ANSI('X');
@@ -93,7 +124,7 @@ TEST(TelnetTest, Phase_ANSI_UnknownCharReturnsNONE)
 
 TEST(TelnetTest, Phase_IAC_WILL_SetsHAVE_WILL)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     unsigned char c = WILL;
     doc.Phase_IAC(c);
     EXPECT_EQ(HAVE_WILL, doc.m_phase);
@@ -102,7 +133,7 @@ TEST(TelnetTest, Phase_IAC_WILL_SetsHAVE_WILL)
 
 TEST(TelnetTest, Phase_IAC_WONT_SetsHAVE_WONT)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     unsigned char c = WONT;
     doc.Phase_IAC(c);
     EXPECT_EQ(HAVE_WONT, doc.m_phase);
@@ -110,7 +141,7 @@ TEST(TelnetTest, Phase_IAC_WONT_SetsHAVE_WONT)
 
 TEST(TelnetTest, Phase_IAC_DO_SetsHAVE_DO)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     unsigned char c = DO;
     doc.Phase_IAC(c);
     EXPECT_EQ(HAVE_DO, doc.m_phase);
@@ -118,7 +149,7 @@ TEST(TelnetTest, Phase_IAC_DO_SetsHAVE_DO)
 
 TEST(TelnetTest, Phase_IAC_DONT_SetsHAVE_DONT)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     unsigned char c = DONT;
     doc.Phase_IAC(c);
     EXPECT_EQ(HAVE_DONT, doc.m_phase);
@@ -126,7 +157,7 @@ TEST(TelnetTest, Phase_IAC_DONT_SetsHAVE_DONT)
 
 TEST(TelnetTest, Phase_IAC_SB_SetsHAVE_SB)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     unsigned char c = SB;
     doc.Phase_IAC(c);
     EXPECT_EQ(HAVE_SB, doc.m_phase);
@@ -134,7 +165,7 @@ TEST(TelnetTest, Phase_IAC_SB_SetsHAVE_SB)
 
 TEST(TelnetTest, Phase_IAC_SE_SetsNONE)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     unsigned char c = SE;
     doc.Phase_IAC(c);
     EXPECT_EQ(NONE, doc.m_phase);
@@ -142,7 +173,7 @@ TEST(TelnetTest, Phase_IAC_SE_SetsNONE)
 
 TEST(TelnetTest, Phase_IAC_NOP_SetsNONE)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     unsigned char c = NOP;
     doc.Phase_IAC(c);
     EXPECT_EQ(NONE, doc.m_phase);
@@ -150,7 +181,7 @@ TEST(TelnetTest, Phase_IAC_NOP_SetsNONE)
 
 TEST(TelnetTest, Phase_IAC_GA_ConvertsToNewlineWhenEnabled)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bConvertGAtoNewline = 1;
     unsigned char c = GO_AHEAD;
     doc.Phase_IAC(c);
@@ -160,7 +191,7 @@ TEST(TelnetTest, Phase_IAC_GA_ConvertsToNewlineWhenEnabled)
 
 TEST(TelnetTest, Phase_IAC_GA_NoConversionWhenDisabled)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bConvertGAtoNewline = 0;
     unsigned char c = GO_AHEAD;
     doc.Phase_IAC(c);
@@ -172,7 +203,7 @@ TEST(TelnetTest, Phase_IAC_GA_NoConversionWhenDisabled)
 
 TEST(TelnetTest, Phase_WILL_SGAAgrees)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_WILL(SGA);
     EXPECT_EQ(NONE, doc.m_phase);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[SGA]);
@@ -181,7 +212,7 @@ TEST(TelnetTest, Phase_WILL_SGAAgrees)
 
 TEST(TelnetTest, Phase_WILL_UnknownRefuses)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // With no plugins, Handle_Telnet_Request returns false → sends DONT
     doc.Phase_WILL(99);
     EXPECT_EQ(NONE, doc.m_phase);
@@ -190,7 +221,7 @@ TEST(TelnetTest, Phase_WILL_UnknownRefuses)
 
 TEST(TelnetTest, Phase_WILL_EchoAgrees)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bNoEchoOff = 0;
     doc.Phase_WILL(TELOPT_ECHO);
     EXPECT_TRUE(doc.m_bNoEcho);
@@ -199,7 +230,7 @@ TEST(TelnetTest, Phase_WILL_EchoAgrees)
 
 TEST(TelnetTest, Phase_WILL_EchoRefusedWhenNoEchoOff)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bNoEchoOff = 1;
     doc.Phase_WILL(TELOPT_ECHO);
     EXPECT_FALSE(doc.m_bNoEcho);
@@ -210,7 +241,7 @@ TEST(TelnetTest, Phase_WILL_EchoRefusedWhenNoEchoOff)
 
 TEST(TelnetTest, Phase_WONT_EchoRestoresEcho)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bNoEcho    = true;
     doc.m_bNoEchoOff = 0;
     doc.Phase_WONT(TELOPT_ECHO);
@@ -221,7 +252,7 @@ TEST(TelnetTest, Phase_WONT_EchoRestoresEcho)
 
 TEST(TelnetTest, Phase_WONT_UnknownSendsDONT)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_WONT(50);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_DONT[50]);
 }
@@ -230,7 +261,7 @@ TEST(TelnetTest, Phase_WONT_UnknownSendsDONT)
 
 TEST(TelnetTest, Phase_DO_SGAAgrees)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_DO(SGA);
     EXPECT_EQ(NONE, doc.m_phase);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_WILL[SGA]);
@@ -239,7 +270,7 @@ TEST(TelnetTest, Phase_DO_SGAAgrees)
 
 TEST(TelnetTest, Phase_DO_TerminalTypeAgrees)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_DO(TELOPT_TERMINAL_TYPE);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_WILL[TELOPT_TERMINAL_TYPE]);
     EXPECT_EQ(0, doc.m_ttype_sequence);   // reset to 0
@@ -247,7 +278,7 @@ TEST(TelnetTest, Phase_DO_TerminalTypeAgrees)
 
 TEST(TelnetTest, Phase_DO_UnknownSendsWONT)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_DO(77);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_WONT[77]);
 }
@@ -256,7 +287,7 @@ TEST(TelnetTest, Phase_DO_UnknownSendsWONT)
 
 TEST(TelnetTest, Phase_DONT_SendsWONT)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_DONT(SGA);
     EXPECT_EQ(NONE, doc.m_phase);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_WONT[SGA]);
@@ -267,7 +298,7 @@ TEST(TelnetTest, Phase_DONT_SendsWONT)
 
 TEST(TelnetTest, Phase_SB_NormalTypeTransitionsToHAVE_SUBNEG)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_SB(TELOPT_TERMINAL_TYPE);
     EXPECT_EQ(HAVE_SUBNEGOTIATION, doc.m_phase);
     EXPECT_EQ(TELOPT_TERMINAL_TYPE, doc.m_subnegotiation_type);
@@ -276,7 +307,7 @@ TEST(TelnetTest, Phase_SB_NormalTypeTransitionsToHAVE_SUBNEG)
 
 TEST(TelnetTest, Phase_SB_COMPRESSTransitionsToHAVE_COMPRESS)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_SB(TELOPT_COMPRESS);
     EXPECT_EQ(HAVE_COMPRESS, doc.m_phase);
 }
@@ -285,7 +316,7 @@ TEST(TelnetTest, Phase_SB_COMPRESSTransitionsToHAVE_COMPRESS)
 
 TEST(TelnetTest, Phase_SUBNEG_CollectsData)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase = HAVE_SUBNEGOTIATION;
     doc.Phase_SUBNEGOTIATION('A');
     doc.Phase_SUBNEGOTIATION('B');
@@ -295,7 +326,7 @@ TEST(TelnetTest, Phase_SUBNEG_CollectsData)
 
 TEST(TelnetTest, Phase_SUBNEG_IACTransitionsToHAVE_SUBNEG_IAC)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase = HAVE_SUBNEGOTIATION;
     doc.Phase_SUBNEGOTIATION(IAC);
     EXPECT_EQ(HAVE_SUBNEGOTIATION_IAC, doc.m_phase);
@@ -305,7 +336,7 @@ TEST(TelnetTest, Phase_SUBNEG_IACTransitionsToHAVE_SUBNEG_IAC)
 
 TEST(TelnetTest, Phase_SUBNEG_IAC_IACIACStoresOneIAC)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase = HAVE_SUBNEGOTIATION_IAC;
     doc.m_IAC_subnegotiation_data = "AB";
     doc.Phase_SUBNEGOTIATION_IAC(IAC);   // IAC IAC → store single IAC
@@ -316,7 +347,7 @@ TEST(TelnetTest, Phase_SUBNEG_IAC_IACIACStoresOneIAC)
 
 TEST(TelnetTest, Phase_SUBNEG_IAC_SEEndsSubnegotiation)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_subnegotiation_type = 99;   // unknown type → plugin call (no-op stub)
     doc.m_IAC_subnegotiation_data = "hello";
     doc.m_phase = HAVE_SUBNEGOTIATION_IAC;
@@ -329,7 +360,7 @@ TEST(TelnetTest, Phase_SUBNEG_IAC_SEEndsSubnegotiation)
 
 TEST(TelnetTest, Phase_COMPRESS_WILLTransitions)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase = HAVE_COMPRESS;
     doc.Phase_COMPRESS(WILL);
     EXPECT_EQ(HAVE_COMPRESS_WILL, doc.m_phase);
@@ -337,7 +368,7 @@ TEST(TelnetTest, Phase_COMPRESS_WILLTransitions)
 
 TEST(TelnetTest, Phase_COMPRESS_NonWILLReturnsNONE)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase = HAVE_COMPRESS;
     doc.Phase_COMPRESS(0x42);
     EXPECT_EQ(NONE, doc.m_phase);
@@ -347,7 +378,7 @@ TEST(TelnetTest, Phase_COMPRESS_NonWILLReturnsNONE)
 
 TEST(TelnetTest, Send_IAC_DO_NoDoubleNegotiate)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // First call should record the send
     doc.Send_IAC_DO(SGA);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[SGA]);
@@ -363,7 +394,7 @@ TEST(TelnetTest, Send_IAC_DO_NoDoubleNegotiate)
 
 TEST(TelnetTest, Send_IAC_WILL_DONT_ClearsCrossFlag)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Send_IAC_WILL(TELOPT_ECHO);
     EXPECT_TRUE (doc.m_bClient_sent_IAC_WILL[TELOPT_ECHO]);
     EXPECT_FALSE(doc.m_bClient_sent_IAC_WONT[TELOPT_ECHO]);
@@ -373,7 +404,7 @@ TEST(TelnetTest, Send_IAC_WILL_DONT_ClearsCrossFlag)
 
 TEST(TelnetTest, Handle_Telnet_Request_ReturnsFalseWithNoPlugins)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // Stub always returns bDefaultReturn = false
     EXPECT_FALSE(doc.Handle_Telnet_Request(200, "WILL"));
 }
@@ -382,7 +413,7 @@ TEST(TelnetTest, Handle_Telnet_Request_ReturnsFalseWithNoPlugins)
 
 TEST(TelnetTest, Counters_WILL_DO_WONT_DONT_SB)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     doc.Phase_WILL(SGA);
     EXPECT_EQ(1, doc.m_nCount_IAC_WILL);
@@ -405,7 +436,7 @@ TEST(TelnetTest, Counters_WILL_DO_WONT_DONT_SB)
 
 TEST(TelnetTest, Phase_DO_NAWS_SendsWILL_When_bNAWS_Set)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bNAWS       = TRUE;
     doc.m_nWrapColumn = 80;
     doc.Phase_DO(TELOPT_NAWS);
@@ -415,7 +446,7 @@ TEST(TelnetTest, Phase_DO_NAWS_SendsWILL_When_bNAWS_Set)
 
 TEST(TelnetTest, Phase_DO_NAWS_SendsWONT_When_bNAWS_Clear)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bNAWS = FALSE;
     doc.Phase_DO(TELOPT_NAWS);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_WONT[TELOPT_NAWS]);
@@ -426,7 +457,7 @@ TEST(TelnetTest, Phase_DO_NAWS_SendsWONT_When_bNAWS_Clear)
 
 TEST(TelnetTest, Phase_WILL_MXP_AgreesWhenEnabled)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iUseMXP = eQueryMXP;
     doc.Phase_WILL(TELOPT_MXP);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[TELOPT_MXP]);
@@ -434,7 +465,7 @@ TEST(TelnetTest, Phase_WILL_MXP_AgreesWhenEnabled)
 
 TEST(TelnetTest, Phase_WILL_MXP_RefusesWhenDisabled)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iUseMXP = eNoMXP;
     doc.Phase_WILL(TELOPT_MXP);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_DONT[TELOPT_MXP]);
@@ -444,7 +475,7 @@ TEST(TelnetTest, Phase_WILL_MXP_RefusesWhenDisabled)
 
 TEST(TelnetTest, Phase_DO_TerminalTypeResetsSequence)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_ttype_sequence = 2;   // pretend we are mid-sequence
     doc.Phase_DO(TELOPT_TERMINAL_TYPE);
     EXPECT_EQ(0, doc.m_ttype_sequence);
@@ -475,7 +506,7 @@ struct TelnetFakeTransport : pal::ITransport {
 // completes: phase returns to NONE and the handler dispatch is counted.
 TEST(TelnetTest, SubnegotiationIacNonSeByteTreatedAsSe)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_subnegotiation_type = 99;          // unknown type → plugin no-op
     doc.m_IAC_subnegotiation_data = "abc";
     doc.m_phase = HAVE_SUBNEGOTIATION_IAC;
@@ -488,7 +519,7 @@ TEST(TelnetTest, SubnegotiationIacNonSeByteTreatedAsSe)
 // COMPRESS2 has been agreed, a later IAC WILL COMPRESS (v1) is answered DONT.
 TEST(TelnetTest, Mccp1RefusedAfterMccp2Agreed)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_WILL(TELOPT_COMPRESS2);        // agree to MCCP2
     EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[TELOPT_COMPRESS2]);
     EXPECT_TRUE(doc.m_bSupports_MCCP_2);
@@ -502,7 +533,7 @@ TEST(TelnetTest, Mccp1RefusedAfterMccp2Agreed)
 // with exactly IAC SB CHARSET REJECTED(0x03) IAC SE.
 TEST(TelnetTest, CharsetRequestUnmatchedSendsRejected)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     TelnetFakeTransport* t = new TelnetFakeTransport();
     doc.m_pTransport = t;
     doc.m_bUTF_8 = FALSE;                    // client charset is "US-ASCII"
@@ -521,7 +552,7 @@ TEST(TelnetTest, CharsetRequestUnmatchedSendsRejected)
 // charset in use is answered IAC SB CHARSET ACCEPTED(0x02) NAME IAC SE.
 TEST(TelnetTest, CharsetRequestMatchedSendsAccepted)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     TelnetFakeTransport* t = new TelnetFakeTransport();
     doc.m_pTransport = t;
     doc.m_bUTF_8 = TRUE;                     // client charset is "UTF-8"
@@ -540,7 +571,7 @@ TEST(TelnetTest, CharsetRequestMatchedSendsAccepted)
 // (the response buffer is only 40 bytes).
 TEST(TelnetTest, TerminalTypeReplyTruncatedToTwentyChars)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     TelnetFakeTransport* t = new TelnetFakeTransport();
     doc.m_pTransport = t;
     doc.m_strTerminalIdentification = "abcdefghijklmnopqrstuvwxyz";  // 26
@@ -561,7 +592,7 @@ TEST(TelnetTest, TerminalTypeReplyTruncatedToTwentyChars)
 // the phase machine returns to NONE.
 TEST(TelnetTest, BadUtf8SequenceOutputsRawBytesNotDropped)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
     const char seq[] = "ab\xC3Xcd";   // 0xC3 lead byte, 'X' bad continuation
     doc.DisplayMsg(seq, (int)strlen(seq), 0);
@@ -586,7 +617,7 @@ TEST(TelnetTest, DefaultTerminalIdentificationIsLowercaseMushclient)
 // the following IAC SB COMPRESS2 IAC SE then turns decompression on.
 TEST(TelnetTest, WillCompress2ThenSubnegEnablesDecompression)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_WILL(TELOPT_COMPRESS2);
     EXPECT_TRUE(doc.m_bSupports_MCCP_2);
     EXPECT_TRUE(doc.m_bCompressInitOK);
@@ -605,7 +636,7 @@ TEST(TelnetTest, WillCompress2ThenSubnegEnablesDecompression)
 // resets zlib and turns decompression on with type 1.
 TEST(TelnetTest, CompressV1FullSequenceEnablesDecompression)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_WILL(TELOPT_COMPRESS);           // agrees, allocates buffers
     EXPECT_TRUE(doc.m_bCompressInitOK);
     EXPECT_FALSE(doc.m_bSupports_MCCP_2);      // v1, not v2
@@ -622,7 +653,7 @@ TEST(TelnetTest, CompressV1FullSequenceEnablesDecompression)
 // disable_compression refuses the offer outright (Send_IAC_DONT arm).
 TEST(TelnetTest, WillCompress2RefusedWhenCompressionDisabled)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bDisableCompression = TRUE;
     doc.Phase_WILL(TELOPT_COMPRESS2);
     EXPECT_FALSE(doc.m_bSupports_MCCP_2);
@@ -633,7 +664,7 @@ TEST(TelnetTest, WillCompress2RefusedWhenCompressionDisabled)
 // (Handle_TELOPT_MXP: eOnCommandMXP → MXP_On).
 TEST(TelnetTest, MxpSubnegotiationTurnsMxpOnInCommandMode)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iUseMXP = eOnCommandMXP;
     EXPECT_FALSE(doc.m_bMXP);
     doc.Phase_SB(TELOPT_MXP);
@@ -644,7 +675,7 @@ TEST(TelnetTest, MxpSubnegotiationTurnsMxpOnInCommandMode)
 // IAC WILL MXP in query mode turns MXP on immediately.
 TEST(TelnetTest, WillMxpQueryModeTurnsMxpOnImmediately)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iUseMXP = eQueryMXP;
     doc.Phase_WILL(TELOPT_MXP);
     EXPECT_TRUE(doc.m_bMXP);
@@ -660,7 +691,7 @@ TEST(TelnetTest, WillMxpQueryModeTurnsMxpOnImmediately)
 // then falls through to the generic subnegotiation callback.
 TEST(TelnetTest, MudSpecificWillAndSubnegotiation)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_WILL(TELOPT_MUD_SPECIFIC);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[TELOPT_MUD_SPECIFIC]);
 
@@ -677,7 +708,7 @@ TEST(TelnetTest, MudSpecificWillAndSubnegotiation)
 // bitvector (which stays at step 2 for later requests).
 TEST(TelnetTest, TerminalTypeSendAdvancesMttsSequence)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_ttype_sequence = 0;
 
     for (int expected : {1, 2, 2}) {
@@ -693,7 +724,7 @@ TEST(TelnetTest, TerminalTypeSendAdvancesMttsSequence)
 
 TEST(TelnetR4, OscPayloadTerminatorVariants)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     doc.m_phase = HAVE_OSC;
     doc.Phase_OSC('x');                 // payload byte — stays in OSC
@@ -715,7 +746,7 @@ TEST(TelnetR4, OscPayloadTerminatorVariants)
 // ESC[<n>z — MXP line-security mode change; ESC[3z resets MXP entirely.
 TEST(TelnetR4, AnsiZChangesMxpModeAndReset)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iUseMXP = eOnCommandMXP;
     doc.MXP_On();
     ASSERT_TRUE(doc.m_bMXP);
@@ -740,7 +771,7 @@ TEST(TelnetR4, AnsiZChangesMxpModeAndReset)
 // single-byte commands are consumed silently; unknown commands too.
 TEST(TelnetR4, IacSingleByteCommands)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iConnectPhase = eConnectConnectedToMud;
     doc.m_bConvertGAtoNewline = TRUE;
 
@@ -765,13 +796,13 @@ TEST(TelnetR4, IacSingleByteCommands)
 TEST(TelnetR4, WillEndOfRecordFollowsConvertSetting)
 {
     {
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         doc.m_bConvertGAtoNewline = TRUE;
         doc.Phase_WILL(WILL_END_OF_RECORD);
         EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[WILL_END_OF_RECORD]);
     }
     {
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         doc.m_bConvertGAtoNewline = FALSE;
         doc.Phase_WILL(WILL_END_OF_RECORD);
         EXPECT_TRUE(doc.m_bClient_sent_IAC_DONT[WILL_END_OF_RECORD]);
@@ -781,7 +812,7 @@ TEST(TelnetR4, WillEndOfRecordFollowsConvertSetting)
 // WILL CHARSET is answered DO.
 TEST(TelnetR4, WillCharsetAnsweredDo)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_WILL(TELOPT_CHARSET);
     EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[TELOPT_CHARSET]);
 }
@@ -790,14 +821,14 @@ TEST(TelnetR4, WillCharsetAnsweredDo)
 TEST(TelnetR4, DoMxpArms)
 {
     {
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         doc.m_iUseMXP = eNoMXP;
         doc.Phase_DO(TELOPT_MXP);
         EXPECT_TRUE(doc.m_bClient_sent_IAC_WONT[TELOPT_MXP]);
         EXPECT_TRUE(!doc.m_bMXP);
     }
     {
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         doc.m_iUseMXP = eQueryMXP;
         doc.Phase_DO(TELOPT_MXP);
         EXPECT_TRUE(doc.m_bClient_sent_IAC_WILL[TELOPT_MXP]);
@@ -808,7 +839,7 @@ TEST(TelnetR4, DoMxpArms)
 // DONT TERMINAL_TYPE resets the terminal-type reply sequence.
 TEST(TelnetR4, DontTerminalTypeResetsSequence)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_ttype_sequence = 2;
     doc.Phase_DONT(TELOPT_TERMINAL_TYPE);
     EXPECT_EQ(0, doc.m_ttype_sequence);
@@ -818,7 +849,7 @@ TEST(TelnetR4, DontTerminalTypeResetsSequence)
 // ignored (no reply at all); a matching charset (UTF-8) is ACCEPTED.
 TEST(TelnetR4, CharsetRequestEdgeAndAcceptArms)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     TelnetFakeTransport* t = new TelnetFakeTransport();
     doc.m_pTransport = t;
 
@@ -852,7 +883,7 @@ TEST(TelnetR4, CharsetRequestEdgeAndAcceptArms)
 // and SSL bits; a TTYPE IS (not SEND) is ignored.
 TEST(TelnetR4, TerminalTypeSequenceAndMttsBits)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     TelnetFakeTransport* t = new TelnetFakeTransport();
     doc.m_pTransport = t;
     doc.m_strTerminalIdentification = "mushclient";
@@ -880,7 +911,7 @@ TEST(TelnetR4, TerminalTypeSequenceAndMttsBits)
 // collected bytes as bad UTF-8.
 TEST(TelnetR4, Utf8BadContinuationFlushes)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iConnectPhase = eConnectConnectedToMud;
     doc.m_bUTF_8 = TRUE;
 
@@ -909,7 +940,7 @@ TEST(TelnetR4, TeloptNameTableAndDebugTracing)
     // with g_debug on, the negotiation dbg() lines print (stderr)
     bool saved = g_debug;
     g_debug = true;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Phase_WILL(TELOPT_MXP);
     doc.Phase_DO(1 /* echo */);
     g_debug = saved;
@@ -920,7 +951,7 @@ TEST(TelnetR4, TeloptNameTableAndDebugTracing)
 // Sending the same DONT/WILL twice is suppressed (RFC 854 / forum 3061).
 TEST(TelnetR5, RepeatedDontAndWillSuppressed)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pTransport = nullptr;      // SendPacket buffers/no-ops harmlessly
     doc.Send_IAC_DONT(42);
     doc.Send_IAC_DONT(42);           // second call: early return
@@ -935,7 +966,7 @@ TEST(TelnetR5, RepeatedDontAndWillSuppressed)
 TEST(TelnetR5, Mccp2SubnegotiationWithoutPriorWill)
 {
     {   // buffers present: on-the-spot init succeeds
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         doc.m_nCompressionOutputBufferSize = 4096;
         doc.m_CompressOutput = (Bytef*)malloc(doc.m_nCompressionOutputBufferSize);
         doc.m_CompressInput  = (Bytef*)malloc(4096);
@@ -945,7 +976,7 @@ TEST(TelnetR5, Mccp2SubnegotiationWithoutPriorWill)
         EXPECT_EQ(2, doc.m_iMCCP_type);
     }
     {   // no buffers were ever negotiated: the world is closed with a box
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         const unsigned char seq[] = { 255, 250, 86, 255, 240 };
         doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);
         EXPECT_FALSE(doc.m_bCompress);
@@ -956,7 +987,7 @@ TEST(TelnetR5, Mccp2SubnegotiationWithoutPriorWill)
 TEST(TelnetR5, Mccp1SubnegotiationWithoutPriorWill)
 {
     {   // buffers present
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         doc.m_nCompressionOutputBufferSize = 4096;
         doc.m_CompressOutput = (Bytef*)malloc(doc.m_nCompressionOutputBufferSize);
         doc.m_CompressInput  = (Bytef*)malloc(4096);
@@ -966,7 +997,7 @@ TEST(TelnetR5, Mccp1SubnegotiationWithoutPriorWill)
         EXPECT_EQ(1, doc.m_iMCCP_type);
     }
     {   // no buffers
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         const unsigned char seq[] = { 255, 250, 85, 251, 240 };
         doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);
         EXPECT_FALSE(doc.m_bCompress);
@@ -976,7 +1007,7 @@ TEST(TelnetR5, Mccp1SubnegotiationWithoutPriorWill)
 // A malformed MCCP v1 sequence (not WILL/SE) resets the phase machine.
 TEST(TelnetR5, Mccp1MalformedSequenceIgnored)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     const unsigned char seq[] = { 255, 250, 85, 251, 99 };   // IAC SB COMPRESS WILL <99>
     doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);
     EXPECT_FALSE(doc.m_bCompress);
@@ -985,7 +1016,7 @@ TEST(TelnetR5, Mccp1MalformedSequenceIgnored)
 // An invalid UTF-8 sequence is reported through OutputBadUTF8characters.
 TEST(TelnetR5, InvalidUtf8SequenceHandled)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
     const unsigned char seq[] = { 0xE2, 0x28, 0xA1, '\n' };  // bad continuation
     doc.DisplayMsg((LPCTSTR)seq, sizeof seq, 0);

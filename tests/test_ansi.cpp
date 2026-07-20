@@ -6,16 +6,19 @@
 // then inspect the style(s) appended to the line's styleList.
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (doc_stub.h deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
 
 #include <cstring>
 
 // ── Test fixture helpers ───────────────────────────────────────────────────
 
 // Build a doc with a current line ready to receive styles.
-static CMUSHclientDoc make_doc()
+static void make_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_pCurrentLine = new CLine();
     // Seed the line with a plain-text style (mimics normal operation).
     doc.m_iFlags      = COLOUR_ANSI;
@@ -24,7 +27,6 @@ static CMUSHclientDoc make_doc()
     // AddStyle creates the initial style on the line.
     doc.AddStyle(COLOUR_ANSI, WHITE, BLACK, 0,
                  static_cast<CAction*>(nullptr));
-    return doc;
 }
 
 // Shorthand: get the last (tail) style from the current line.
@@ -46,7 +48,7 @@ static int style_count(CMUSHclientDoc& doc)
 
 TEST(ANSITest, DefaultStyleIsWhiteOnBlack)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CStyle* s = tail(doc);
     ASSERT_NE(nullptr, s);
     EXPECT_EQ((unsigned short)COLOUR_ANSI, s->iFlags & COLOURTYPE);
@@ -56,7 +58,7 @@ TEST(ANSITest, DefaultStyleIsWhiteOnBlack)
 
 TEST(ANSITest, BoldSetsHiliteFlag)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_BOLD);
     CStyle* s = tail(doc);
     ASSERT_NE(nullptr, s);
@@ -65,7 +67,7 @@ TEST(ANSITest, BoldSetsHiliteFlag)
 
 TEST(ANSITest, CancelBoldClearsHiliteFlag)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_BOLD);
     doc.InterpretANSIcode(ANSI_CANCEL_BOLD);
     CStyle* s = tail(doc);
@@ -80,7 +82,7 @@ TEST(ANSITest, CancelStrikeoutClearsOnlyStrikeoutFlag)
     // codes (see CancelBoldClearsHiliteFlag above). Regression test: the
     // implementation used `iFlags &= STRIKEOUT` (missing the `~`), which wipes
     // every OTHER flag and perversely *keeps* strikeout if it was set.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_BOLD);
     doc.InterpretANSIcode(ANSI_UNDERLINE);
     doc.InterpretANSIcode(ANSI_STRIKEOUT);
@@ -94,7 +96,7 @@ TEST(ANSITest, CancelStrikeoutClearsOnlyStrikeoutFlag)
 
 TEST(ANSITest, UnderlineSetsUnderlineFlag)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_UNDERLINE);
     CStyle* s = tail(doc);
     ASSERT_NE(nullptr, s);
@@ -103,7 +105,7 @@ TEST(ANSITest, UnderlineSetsUnderlineFlag)
 
 TEST(ANSITest, InverseSetsInverseFlag)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_INVERSE);
     CStyle* s = tail(doc);
     ASSERT_NE(nullptr, s);
@@ -112,7 +114,7 @@ TEST(ANSITest, InverseSetsInverseFlag)
 
 TEST(ANSITest, ResetClearsAllFlags)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_BOLD);
     doc.InterpretANSIcode(ANSI_UNDERLINE);
     doc.InterpretANSIcode(ANSI_INVERSE);
@@ -130,7 +132,7 @@ TEST(ANSITest, ResetClearsAllFlags)
 
 TEST(ANSITest, ForegroundRedSetsColourIndex)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_TEXT_RED);
     CStyle* s = tail(doc);
     ASSERT_NE(nullptr, s);
@@ -141,7 +143,7 @@ TEST(ANSITest, ForegroundRedSetsColourIndex)
 
 TEST(ANSITest, ForegroundGreenSetsColourIndex)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_TEXT_GREEN);
     CStyle* s = tail(doc);
     ASSERT_NE(nullptr, s);
@@ -150,7 +152,7 @@ TEST(ANSITest, ForegroundGreenSetsColourIndex)
 
 TEST(ANSITest, ForegroundBlueSetsColourIndex)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_TEXT_BLUE);
     CStyle* s = tail(doc);
     ASSERT_NE(nullptr, s);
@@ -159,7 +161,7 @@ TEST(ANSITest, ForegroundBlueSetsColourIndex)
 
 TEST(ANSITest, ForegroundDefaultRestoresWhite)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_TEXT_RED);
     doc.InterpretANSIcode(ANSI_SET_FOREGROUND_DEFAULT);
     CStyle* s = tail(doc);
@@ -171,7 +173,7 @@ TEST(ANSITest, ForegroundDefaultRestoresWhite)
 
 TEST(ANSITest, BackgroundRedSetsColourIndex)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_BACK_RED);
     CStyle* s = tail(doc);
     ASSERT_NE(nullptr, s);
@@ -180,7 +182,7 @@ TEST(ANSITest, BackgroundRedSetsColourIndex)
 
 TEST(ANSITest, BackgroundDefaultRestoresBlack)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_BACK_RED);
     doc.InterpretANSIcode(ANSI_SET_BACKGROUND_DEFAULT);
     CStyle* s = tail(doc);
@@ -192,7 +194,7 @@ TEST(ANSITest, BackgroundDefaultRestoresBlack)
 
 TEST(ANSITest, ForegroundEnter256Mode)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // ESC[38;... → should transition to HAVE_FOREGROUND_256_START
     doc.InterpretANSIcode(ANSI_TEXT_256_COLOUR);
     EXPECT_EQ(HAVE_FOREGROUND_256_START, doc.m_phase);
@@ -200,14 +202,14 @@ TEST(ANSITest, ForegroundEnter256Mode)
 
 TEST(ANSITest, BackgroundEnter256Mode)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_BACK_256_COLOUR);
     EXPECT_EQ(HAVE_BACKGROUND_256_START, doc.m_phase);
 }
 
 TEST(ANSITest, Foreground256ColourApplied)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // ESC[38;5;196m — bright red in xterm palette (index 196).
     // When the current style is COLOUR_ANSI, the implementation stores the
     // raw index in iForeColour and keeps COLOUR_ANSI; GetStyleRGB then uses
@@ -226,7 +228,7 @@ TEST(ANSITest, Foreground256ColourApplied)
 
 TEST(ANSITest, Background256ColourApplied)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // ESC[48;5;46m — xterm green (index 46), same ANSI-mode index storage rule.
     doc.InterpretANSIcode(ANSI_BACK_256_COLOUR);
     doc.Interpret256ANSIcode(5);
@@ -241,7 +243,7 @@ TEST(ANSITest, Foreground256ColourRgbLookup)
 {
     // When GetStyleRGB is called on a style with COLOUR_ANSI and iForeColour >= 8,
     // it should resolve to xterm_256_colours[iForeColour].
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_TEXT_256_COLOUR);
     doc.Interpret256ANSIcode(5);
     doc.Interpret256ANSIcode(196);   // index 196 → bright red
@@ -256,7 +258,7 @@ TEST(ANSITest, Foreground256ColourRgbLookup)
 
 TEST(ANSITest, BoldAndColourCombine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_BOLD);
     doc.InterpretANSIcode(ANSI_TEXT_CYAN);
     CStyle* s = tail(doc);
@@ -267,7 +269,7 @@ TEST(ANSITest, BoldAndColourCombine)
 
 TEST(ANSITest, MultipleCodesCreateMultipleStyles)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // Each InterpretANSIcode that changes anything appends a new style.
     int before = style_count(doc);
     doc.InterpretANSIcode(ANSI_TEXT_RED);
@@ -280,7 +282,7 @@ TEST(ANSITest, MultipleCodesCreateMultipleStyles)
 
 TEST(ANSITest, GetStyleRGBAnsiNormal)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CStyle s;
     s.iFlags      = COLOUR_ANSI;
     s.iForeColour = RED;
@@ -295,7 +297,7 @@ TEST(ANSITest, GetStyleRGBAnsiNormal)
 
 TEST(ANSITest, GetStyleRGBAnsiHilite)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CStyle s;
     s.iFlags      = COLOUR_ANSI | HILITE;
     s.iForeColour = GREEN;
@@ -310,7 +312,7 @@ TEST(ANSITest, GetStyleRGBAnsiHilite)
 
 TEST(ANSITest, GetStyleRGBRgbPassthrough)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CStyle s;
     s.iFlags      = COLOUR_RGB;
     s.iForeColour = RGB(10, 20, 30);
@@ -332,7 +334,7 @@ TEST(ANSITest, GetStyleRGBHiliteInverseBoldsPostSwapForeground)
     // Pre-fix the portable code bolded the ORIGINAL foreground then swapped, so
     // it lightened the wrong half: it produced colour1=normal-blue,
     // colour2=bold-red instead of colour1=bold-blue, colour2=normal-red.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CStyle s;
     s.iFlags      = COLOUR_ANSI | HILITE | INVERSE;
     s.iForeColour = 1;   // RED
@@ -347,7 +349,7 @@ TEST(ANSITest, GetStyleRGBHiliteInverseBoldsPostSwapForeground)
 
 TEST(ANSITest, GetStyleRGBInverseSwapsFgBg)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CStyle s;
     s.iFlags      = COLOUR_RGB | INVERSE;
     s.iForeColour = RGB(10, 20, 30);
@@ -372,7 +374,7 @@ TEST(ANSITest, BrightForegroundMapsToXtermIndex8Plus)
         {  94, 12 }, {  95, 13 }, {  96, 14 }, {  97, 15 },
     };
     for (auto& tc : cases) {
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         doc.InterpretANSIcode(tc.code);
         CStyle* s = tail(doc);
         ASSERT_NE(nullptr, s);
@@ -389,7 +391,7 @@ TEST(ANSITest, BrightBackgroundMapsToXtermIndex8Plus)
         { 104, 12 }, { 105, 13 }, { 106, 14 }, { 107, 15 },
     };
     for (auto& tc : cases) {
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         doc.InterpretANSIcode(tc.code);
         CStyle* s = tail(doc);
         ASSERT_NE(nullptr, s);
@@ -401,7 +403,7 @@ TEST(ANSITest, BrightForegroundGetStyleRGBResolvesToBrightPalette)
 {
     // After ESC[92m (bright green, index 10), GetStyleRGB should resolve to
     // xterm_256_colours[10] — not m_normalcolour[2].
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(92);   // bright green
     CStyle* s = tail(doc);
     ASSERT_NE(nullptr, s);
@@ -414,7 +416,7 @@ TEST(ANSITest, BrightForegroundGetStyleRGBResolvesToBrightPalette)
 TEST(ANSITest, BrightForegroundAfterResetIsNormal)
 {
     // ESC[92m then ESC[0m should restore normal (white on black).
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(92);
     doc.InterpretANSIcode(ANSI_RESET);
     CStyle* s = tail(doc);
@@ -434,7 +436,7 @@ TEST(ANSITest, BrightForegroundInCustomModeConvertsToRGB)
     // COLOUR_CUSTOM flag set — at display the style was then read as
     // m_customtext[8] (a custom-palette entry) instead of the intended bright
     // colour.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // Seed a custom-palette style. Use fore index 15 (not the 8 the buggy path
     // writes) so the buggy path actually commits a visible style instead of
     // hitting the "nothing changed" early-return.
@@ -461,7 +463,7 @@ TEST(ANSITest, BrightForegroundInCustomModeConvertsToRGB)
 
 TEST(ANSITest, DisplayMsg_ANSIRedSetsStyle)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // "\033[31m" — ESC [ 3 1 m → foreground red
     const char seq[] = "\033[31mHello";
     doc.DisplayMsg(seq, (int)strlen(seq), 0, false);
@@ -470,7 +472,7 @@ TEST(ANSITest, DisplayMsg_ANSIRedSetsStyle)
 
 TEST(ANSITest, DisplayMsg_BrightGreenSetsIndex10)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     const char seq[] = "\033[92mHello";
     doc.DisplayMsg(seq, (int)strlen(seq), 0, false);
     EXPECT_EQ((COLORREF)10, doc.m_iForeColour);
@@ -478,7 +480,7 @@ TEST(ANSITest, DisplayMsg_BrightGreenSetsIndex10)
 
 TEST(ANSITest, DisplayMsg_ResetRestoresDefaults)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     const char seq[] = "\033[31m\033[0mHello";
     doc.DisplayMsg(seq, (int)strlen(seq), 0, false);
     EXPECT_EQ((COLORREF)WHITE, doc.m_iForeColour);
@@ -487,7 +489,7 @@ TEST(ANSITest, DisplayMsg_ResetRestoresDefaults)
 
 TEST(ANSITest, DisplayMsg_MultiParamSequence)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // "\033[1;34m" — bold + blue
     const char seq[] = "\033[1;34mHello";
     doc.DisplayMsg(seq, (int)strlen(seq), 0, false);
@@ -501,7 +503,7 @@ TEST(ANSITest, DisplayMsg_ESCInterruptsMXPStateCleanly)
     // a partial MXP tag was started), the phase must transition to HAVE_ESC
     // not stay stuck or go to NONE, and the subsequent ANSI sequence must
     // parse correctly.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // Force a non-NONE phase then deliver an ESC sequence.
     doc.m_phase = HAVE_ESC;   // simulate being mid-other-sequence
     const char seq[] = "\033[32mHello";
@@ -516,7 +518,7 @@ TEST(ANSITest, DisplayMsg_ESCInterruptsMXPStateCleanly)
 // indexing xterm_256_colours out of bounds; the existing style is unchanged.
 TEST(ANSITest, Colour256IndexOutOfRangeAbandonsSequence)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_TEXT_256_COLOUR);   // ESC[38;
     doc.Interpret256ANSIcode(5);                   // 8-bit colour selector
     doc.Interpret256ANSIcode(300);                 // out of range: abandoned
@@ -567,7 +569,7 @@ TEST(ANSITest, ColourChangeAtLineEndCarriesToNextLine)
 
 TEST(AnsiRgbMode, ForegroundCodesResolveAgainstPalettes)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pCurrentLine->styleList.GetTail()->iFlags =
         (doc.m_pCurrentLine->styleList.GetTail()->iFlags & ~COLOURTYPE) | COLOUR_RGB;
 
@@ -598,7 +600,7 @@ TEST(AnsiRgbMode, ForegroundCodesResolveAgainstPalettes)
 
 TEST(AnsiRgbMode, InverseSwapsColourTargets)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pCurrentLine->styleList.GetTail()->iFlags =
         (doc.m_pCurrentLine->styleList.GetTail()->iFlags & ~COLOURTYPE) | COLOUR_RGB;
 
@@ -624,7 +626,7 @@ TEST(AnsiRgbMode, InverseSwapsColourTargets)
 
 TEST(AnsiRgbMode, BrightBackgroundAndInverseArm)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pCurrentLine->styleList.GetTail()->iFlags =
         (doc.m_pCurrentLine->styleList.GetTail()->iFlags & ~COLOURTYPE) | COLOUR_RGB;
 
@@ -640,7 +642,7 @@ TEST(AnsiRgbMode, BrightBackgroundAndInverseArm)
 
 TEST(AnsiRgbMode, Custom16DefaultColourArm)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bCustom16isDefaultColour = TRUE;
     doc.m_customtext[15] = RGB(11, 22, 33);
     doc.m_customback[15] = RGB(44, 55, 66);
@@ -659,7 +661,7 @@ TEST(AnsiRgbMode, Custom16DefaultColourArm)
 // a subsequent palette code converts the style to RGB (the custom→RGB arm).
 TEST(AnsiRgbMode, AnsiCustomDefaultThenPaletteConvertsToRgb)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bCustom16isDefaultColour = TRUE;
 
     doc.InterpretANSIcode(ANSI_SET_FOREGROUND_DEFAULT);   // → COLOUR_CUSTOM 15
@@ -683,7 +685,7 @@ TEST(AnsiRgbMode, AnsiCustomDefaultThenPaletteConvertsToRgb)
 // ANSI_RESET in ANSI mode with custom-16-default: both colours to custom 15.
 TEST(AnsiRgbMode, ResetWithCustom16Default)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bCustom16isDefaultColour = TRUE;
     doc.InterpretANSIcode(ANSI_TEXT_RED);
     doc.InterpretANSIcode(ANSI_RESET);
@@ -697,7 +699,7 @@ TEST(AnsiRgbMode, ResetWithCustom16Default)
 // its bold twin, CANCEL_BOLD maps it back.
 TEST(AnsiRgbMode, BoldUpgradeAndDowngradeScanPalette)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bCustom16isDefaultColour = TRUE;   // the scans are gated on this
     doc.m_pCurrentLine->styleList.GetTail()->iFlags =
         (doc.m_pCurrentLine->styleList.GetTail()->iFlags & ~COLOURTYPE) | COLOUR_RGB;
@@ -715,7 +717,7 @@ TEST(AnsiRgbMode, BoldUpgradeAndDowngradeScanPalette)
 // Blink family + cancel codes.
 TEST(AnsiRgbMode, BlinkAndCancelCodes)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.InterpretANSIcode(ANSI_BLINK);
     EXPECT_TRUE((tail(doc)->iFlags & BLINK) != 0);
     doc.InterpretANSIcode(ANSI_CANCEL_BLINK);
@@ -738,7 +740,7 @@ TEST(AnsiRgbMode, BlinkAndCancelCodes)
 // 38/48 sequence (neither ;2 nor ;5) arm.
 TEST(AnsiRgbMode, TwentyFourBitBackgroundAndAbandonedSequence)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iConnectPhase = eConnectConnectedToMud;
     const char seq[] = "\x1B[48;2;12;34;56mX";
     doc.DisplayMsg(seq, (int)sizeof seq - 1, 0);
@@ -761,7 +763,7 @@ TEST(AnsiRgbMode, TwentyFourBitBackgroundAndAbandonedSequence)
 // 256-colour codes with INVERSE active swap their target.
 TEST(AnsiRgbMode, Xterm256WithInverseSwapsTarget)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iConnectPhase = eConnectConnectedToMud;
     // enter RGB mode first (24-bit fore), then inverse + 256-colour codes
     const char seq[] = "\x1B[38;2;1;2;3m\x1B[7m\x1B[38;5;196m\x1B[48;5;21mX";

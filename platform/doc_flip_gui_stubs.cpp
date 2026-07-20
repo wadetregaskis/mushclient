@@ -63,6 +63,11 @@
 #include "dialogs/RecallSearchDlg.h"
 #include "dialogs/chat/ChatListDlg.h"
 #include "dialogs/plugins/PluginsDlg.h"
+// B-3 flip: the extra stragglers the full-lib link surfaced (§5 "+15").
+#include "dialogs/DebugLuaDlg.h"
+#include "dialogs/password.h"
+#include "dialogs/EditMultiLine.h"   // PluginWizard.cpp opens a CEditMultiLine
+#include "winplace.h"
 
 #include <cstdio>
 #include <cerrno>
@@ -109,7 +114,8 @@ void CMUSHclientDoc::OnGameConfigureMxppueblo       () {}
 void CMUSHclientDoc::OnGameConfigureChat            () {}
 
 void CMUSHclientDoc::OnUpdateGameImmediate       (CCmdUI* /*pCmdUI*/) {}
-void CMUSHclientDoc::OnUpdateGameResetalltimers  (CCmdUI* /*pCmdUI*/) {}
+// OnUpdateGameResetalltimers: real body is timers.cpp (mushcore compiles it
+// under FULL_BUILD now) — a stub here would be a duplicate symbol.
 void CMUSHclientDoc::OnUpdateGameMapper          (CCmdUI* /*pCmdUI*/) {}
 void CMUSHclientDoc::OnUpdateGameDomapperspecial (CCmdUI* /*pCmdUI*/) {}
 void CMUSHclientDoc::OnUpdateGameDomappercomment (CCmdUI* /*pCmdUI*/) {}
@@ -350,6 +356,108 @@ bool SendToFront (const char* /*name*/) { return false; }
 // ════════════════════════════════════════════════════════════════════════════
 
 bool bWine = false;
-CString MUSHCLIENT_VERSION;
+// Windows sets this in MUSHclient.cpp InitInstance (= VERSION_STRING); headless
+// there is no InitInstance, so seed it at static-init with the same value so
+// world.Version() / the world-open banner report the real version (doc_stub.h
+// pre-flip defined it as a #define "5.07"; doc.h:21 now makes it a global).
+CString MUSHCLIENT_VERSION = VERSION_STRING;
+
+// ════════════════════════════════════════════════════════════════════════════
+// 8. B-3 stragglers — the extra GUI/view symbols the FULL-LIBRARY link surfaced
+//    (the §5 "+15 full faithful flip").  All address-only / DoModal-via-null-hook
+//    headless.  Real bodies live in mushapp-only TUs.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Free functions doc.cpp reaches (stdafx.h decls) ─────────────────────────
+// QuoteForumCodes (OnEditConvertclipboardforumcodes) — headless never runs the
+// menu handler; identity is the safe no-op.
+CString QuoteForumCodes (const CString & strText) { return strText; }
+
+// StringToKeyCode (DoFixMenus / accelerator display) — no keyboard headless.
+void StringToKeyCode (const CString /*strKey*/, BYTE & fVirt, WORD & key)
+{
+  fVirt = 0;
+  key   = 0;
+}
+
+// ── CMUSHView view methods (MUSHview.cpp, mushapp-only) ─────────────────────
+void CMUSHView::addedstuff (void) {}
+void CMUSHView::did_jump   (void) {}
+
+// ── Missing virtual overrides on the already-stubbed dialogs (§8) ───────────
+// OnSize/OnDestroy are virtual in the wx CWnd shim, so the dialog vtables above
+// reference them; empty bodies satisfy the vtable (never fire headless).
+void CPluginsDlg::OnDestroy () {}
+void CPluginsDlg::OnSize (UINT /*nType*/, int /*cx*/, int /*cy*/) {}
+void CChatListDlg::OnDestroy () {}
+
+// CProgressDlg (world-load progress) — the loader also pokes these non-virtual
+// drivers; inert headless (no window).
+void CProgressDlg::SetStatus (LPCTSTR /*lpszMessage*/) {}
+int  CProgressDlg::StepIt () { return 0; }
+
+// ── Additional dialog classes the flip instantiates (ctor + vtable) ─────────
+// CDebugLuaDlg (lua_methods.cpp our_lua_debug_function): DoModal via the null
+// g_run_mfc_dialog hook → IDCANCEL.  The dtor (inline) deletes m_font, so the
+// ctor must null it (and L / m_bAbort).
+CDebugLuaDlg::CDebugLuaDlg (CWnd* pParent)
+  : CDialog (CDebugLuaDlg::IDD, pParent)
+{
+  L        = nullptr;
+  m_bAbort = false;
+  m_font   = nullptr;
+}
+void CDebugLuaDlg::DoDataExchange (CDataExchange* /*pDX*/) {}
+void CDebugLuaDlg::OnCancel () {}
+BEGIN_MESSAGE_MAP(CDebugLuaDlg, CCmdTarget)
+END_MESSAGE_MAP()
+
+// CPasswordDialog (doc_shared.cpp password prompt): the port declares an
+// out-of-line DoModal (#ifndef _WIN32); headless it returns IDCANCEL, which the
+// caller reads as "empty password" (the documented headless arm).
+CPasswordDialog::CPasswordDialog (CWnd* pParent)
+  : CDialog (CPasswordDialog::IDD, pParent) {}
+void CPasswordDialog::DoDataExchange (CDataExchange* /*pDX*/) {}
+INT_PTR CPasswordDialog::DoModal () { return IDCANCEL; }
+BEGIN_MESSAGE_MAP(CPasswordDialog, CCmdTarget)
+END_MESSAGE_MAP()
+
+// CPluginWizardSheet is NOT stubbed here: plugins.cpp (OnFilePluginwizard) uses
+// the REAL class under FULL_BUILD, and it aggregates 8 CPluginWizardPageN members
+// — impractical to hand-stub.  Per "adopt, don't stub", the real
+// dialogs/plugins/PluginWizardSheet.cpp + PluginWizard.cpp are compiled into
+// mushcore (CMakeLists.txt), providing the sheet + 8 pages headless.
+
+// CPropertySheet::DoModal — the base sheet's runner (real body in
+// wx_tree_property_sheet.cpp, mushapp-only).  No sheet headless → IDCANCEL.
+INT_PTR CPropertySheet::DoModal () { return IDCANCEL; }
+
+// CWindowPlacement (winplace.cpp, mushapp-only) — zero the WINDOWPLACEMENT so a
+// headless read sees a defined (empty) placement.
+CWindowPlacement::CWindowPlacement ()  { memset (this, 0, sizeof (*this)); length = sizeof (WINDOWPLACEMENT); }
+CWindowPlacement::~CWindowPlacement () {}
+
+// GetText (Utilities.cpp, mushapp-only) — the text of a window/control; no
+// windows headless, so empty.  Reached by the adopted PluginWizard.cpp.
+CString GetText (const CWnd & /*theWindow*/) { return CString (); }
+
+// CEditMultiLine (EditMultiLine.cpp, mushapp-only) — the multi-line editor the
+// adopted PluginWizard.cpp opens for the description/script.  DoModal via the
+// null hook → IDCANCEL (CDialog base).  m_font is a raw pointer (no user dtor),
+// so null it; the two virtual overrides emit the vtable.
+CEditMultiLine::CEditMultiLine (CWnd* pParent)
+  : CDialog (CEditMultiLine::IDD, pParent)
+{
+  m_font    = nullptr;
+  m_bScript = false;
+  m_bLua    = false;
+}
+void CEditMultiLine::DoDataExchange (CDataExchange* /*pDX*/) {}
+BOOL CEditMultiLine::PreTranslateMessage (MSG* /*pMsg*/) { return FALSE; }
+BOOL CEditMultiLine::OnInitDialog () { return TRUE; }
+void CEditMultiLine::OnSize (UINT /*nType*/, int /*cx*/, int /*cy*/) {}
+void CEditMultiLine::OnDestroy () {}
+BEGIN_MESSAGE_MAP(CEditMultiLine, CCmdTarget)
+END_MESSAGE_MAP()
 
 #endif // !_WIN32

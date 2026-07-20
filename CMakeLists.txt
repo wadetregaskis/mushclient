@@ -444,7 +444,21 @@ if(NOT WIN32)
         scripting/methods/methods_info.cpp      # Campaign C (the REAL InfoTypes[] + GetInfo; view metrics via m_gui_*)
         accelerators.cpp                        # CommandIDs[]/VirtualKeys tables (DoCommand / GetInternalCommandsList)
         doc_display_shared.cpp   # the push-side UpdateAllViews drain (display step 7)
-        doc_portable.cpp
+
+        # Phase 2 B-3 (THE ATOMIC FLIP): the REAL Windows document ctor/dtor +
+        # doc.cpp, adopted headless in place of the retired doc_portable.cpp.
+        # Both already compile FULL_BUILD off-Windows for mushapp daily; here
+        # they are the sole CMUSHclientDoc provider in the flipped mushcore.
+        doc.cpp
+        doc_construct.cpp
+        # The genuine port glue that has no Windows counterpart — the survivors
+        # of the deleted doc_portable.cpp (port-only entry points over the real
+        # XML/scripting machinery + POSIX helpers + Utilities.cpp free functions
+        # mushcore never compiles).  Real headers, windows_stubs.cpp pattern.
+        platform/doc_port_glue.cpp
+        # Phase 2 B-2 headless GDI shim, folded in now the whole lib is
+        # FULL_BUILD (the CDC/CFont/CBitmap shape no longer forks).
+        platform/gdi_headless.cpp
 
         # PAL: headless CPU reference adapter for pal::ISurface (docs/PAL.md S1)
         pal/cpu_raster.cpp
@@ -533,6 +547,19 @@ if(NOT WIN32)
         scripting/methods/methods_udp.cpp
         UDPsocket.cpp
 
+        # B-3: plugins.cpp (OnFilePluginwizard) constructs the REAL
+        # CPluginWizardSheet under FULL_BUILD (its non-full file-local stand-in
+        # is gone), which aggregates 8 CPluginWizardPageN members.  Adopt the
+        # real dialog TUs (they compile headless over the mfc_ui.h shims — mushapp
+        # proves it; the wizard is a dead menu path headless) rather than
+        # hand-stub 8 property pages.
+        dialogs/plugins/PluginWizardSheet.cpp
+        dialogs/plugins/PluginWizard.cpp
+        # PluginWizard's DoDataExchange calls the real DDX_/DDV_MinMaxString (the
+        # mfc_ui.h inline stubs are #ifndef MUSHCLIENT_FULL_BUILD, now off) —
+        # adopt the tiny self-contained validator (its intended mushapp home).
+        DDV_validation.cpp
+
         # Hook function pointer storage (definitions for wx_mfc_hooks.h externs).
         # Also compiled into mushapp so mushgui (which links mushapp, not mushcore)
         # can resolve the same symbols without linking both libraries.
@@ -591,6 +618,17 @@ if(NOT WIN32)
     target_compile_definitions(mushcore PRIVATE
         _NOSOUND    # DirectSound not available on macOS/Linux
         WIN32       # MUSHclient uses WIN32 guards for Windows-specific feature paths
+        # Phase 2 B-3 (THE ATOMIC FLIP): mushcore now compiles the REAL doc.h
+        # (via the shared include-switch heads' real arm) — one set of headers
+        # everywhere.  This auto-flips the 63 include-switched shared TUs off the
+        # deleted platform/doc_stub.h and onto stdafx.h/MUSHclient.h/doc.h, and
+        # activates gdi_headless.cpp's full-build GDI shape.
+        MUSHCLIENT_FULL_BUILD
+        # Activates platform/headless_app.cpp's real-type `CMUSHclientApp App`
+        # (was inert since Stage 3) and the mushcore-only line-seeding + doc-
+        # registration arms in doc_construct.cpp — the work Windows/wx do in
+        # SetUpOutputWindow / the MFC framework, which never run headless.
+        MUSHCLIENT_HEADLESS_APP
     )
 
     if(LUA_FOUND)
@@ -648,6 +686,11 @@ if(NOT WIN32)
         ${CMAKE_SOURCE_DIR}/scripting/lpeg
         ${CMAKE_SOURCE_DIR}/sqlite3
         ${CMAKE_SOURCE_DIR}/lsqlite
+        # B-3: doc_construct.cpp includes dialogs/world_prefs/prefspropertypages.h
+        # (for CPrefsP*::eColumnCount) whose own headers use relative includes —
+        # mushapp already carries this dir; mushcore needs it now it compiles the
+        # real ctor.
+        ${CMAKE_SOURCE_DIR}/dialogs
     )
 
     target_compile_options(mushcore PRIVATE

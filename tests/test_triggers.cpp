@@ -8,14 +8,17 @@
 // for any match.
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 // Build a minimal doc ready for trigger testing.
-static CMUSHclientDoc make_doc()
+static void make_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_iConnectPhase = eConnectConnectedToMud;
     doc.m_iFlags        = COLOUR_ANSI;
     doc.m_iForeColour   = WHITE;
@@ -23,7 +26,6 @@ static CMUSHclientDoc make_doc()
     doc.m_pCurrentLine  = new CLine();
     doc.AddStyle(COLOUR_ANSI, WHITE, BLACK, 0,
                  static_cast<CAction*>(nullptr));
-    return doc;
 }
 
 // Add a simple plain-text trigger (no regex) to doc.
@@ -61,7 +63,7 @@ static void feed_line(CMUSHclientDoc& doc, const char* text)
 
 TEST(TriggerTest, NonMatchingLineDoesNotFire)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "you have died");
 
     feed_line(doc, "Welcome to the MUD!");
@@ -71,7 +73,7 @@ TEST(TriggerTest, NonMatchingLineDoesNotFire)
 
 TEST(TriggerTest, ExactMatchFires)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "you have died");
 
     feed_line(doc, "you have died");
@@ -86,7 +88,7 @@ TEST(TriggerTest, PlainTriggerDoesNotMatchSubstring)
     // a line that merely contains it. (The port previously compiled plain
     // triggers unanchored, so this wrongly fired — the same bug made the
     // automap alias "cc" fire on "accept".)
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "health");
 
     feed_line(doc, "Your health is low.");
@@ -98,7 +100,7 @@ TEST(TriggerTest, WildcardWrappedTriggerMatchesSubstring)
 {
     // To match a substring you wrap the pattern in wildcards, exactly as on
     // Windows: "*health*" -> ^(.*?)health(.*?)$.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "*health*");
 
     feed_line(doc, "Your health is low.");
@@ -109,7 +111,7 @@ TEST(TriggerTest, WildcardWrappedTriggerMatchesSubstring)
 TEST(TriggerTest, PlainTriggerMatchesExactLine)
 {
     // Counterpart to the above: the plain pattern fires when the line equals it.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "north");
 
     feed_line(doc, "go north now");   // contains but != "north"
@@ -121,7 +123,7 @@ TEST(TriggerTest, PlainTriggerMatchesExactLine)
 
 TEST(TriggerTest, CaseInsensitiveMatch)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "YOU HAVE DIED");
     t->ignore_case = TRUE;
 
@@ -132,7 +134,7 @@ TEST(TriggerTest, CaseInsensitiveMatch)
 
 TEST(TriggerTest, CaseSensitiveNoMatch)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "YOU HAVE DIED");
     t->ignore_case = FALSE;
 
@@ -143,7 +145,7 @@ TEST(TriggerTest, CaseSensitiveNoMatch)
 
 TEST(TriggerTest, RegexpWildcardMatch)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "^You have (\\d+) gold");
     t->bRegexp = true;
 
@@ -156,7 +158,7 @@ TEST(TriggerTest, RegexpWildcardMatch)
 
 TEST(TriggerTest, RegexpNoMatchOnWrongLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "^You have (\\d+) gold");
     t->bRegexp = true;
 
@@ -167,7 +169,7 @@ TEST(TriggerTest, RegexpNoMatchOnWrongLine)
 
 TEST(TriggerTest, FiresOncePerLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // "*ping*" (wildcard-wrapped) whole-line-matches a line containing "ping".
     CTrigger* t = add_trigger(doc, "*ping*");
 
@@ -179,7 +181,7 @@ TEST(TriggerTest, FiresOncePerLine)
 
 TEST(TriggerTest, MultipleLinesMultipleMatches)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "*score*");   // wildcard-wrapped: matches lines containing "score"
 
     feed_line(doc, "Your score is 100.");
@@ -191,7 +193,7 @@ TEST(TriggerTest, MultipleLinesMultipleMatches)
 
 TEST(TriggerTest, DisabledTriggerDoesNotFire)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "you have died");
     t->bEnabled = FALSE;
 
@@ -203,7 +205,7 @@ TEST(TriggerTest, DisabledTriggerDoesNotFire)
 TEST(TriggerTest, LineAccumulatedCorrectly)
 {
     // Verify that m_LineList contains the line after processing.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     add_trigger(doc, "hello");
 
     feed_line(doc, "hello world");
@@ -246,7 +248,7 @@ TEST(TriggerScript, LuaCallbackFiresOnMatch)
 {
     // A trigger with script="OnPing" should call the Lua function when
     // a matching line arrives.  The function sets a variable we can check.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     // The Lua function stores its argument in a world variable
     const char* lua =
@@ -275,7 +277,7 @@ TEST(TriggerScript, LuaCallbackReceivesWildcard)
 {
     // A regexp trigger with a wildcard: the Lua function receives wildcards
     // as a table parameter.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     const char* lua =
         "function OnHP(name, line, wildcards)\n"
@@ -315,7 +317,7 @@ TEST(TriggerScript, MissingLuaFunctionDoesNotCrash)
     // A trigger whose Lua function does not exist should fail gracefully —
     // no crash, and nMatched is still incremented (the trigger matched the
     // line; only the script call failed).
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     const char* lua = "-- intentionally empty script\n";
     ASSERT_TRUE(setup_lua(doc, lua));
@@ -339,7 +341,7 @@ TEST(TriggerScript, MissingLuaFunctionDoesNotCrash)
 // when a trigger does a world.note".
 TEST(TriggerTest, NoteLinesDoNotFireTriggers)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "you have died");
 
     doc.Note("you have died");            // a note line — must NOT fire
@@ -357,7 +359,7 @@ TEST(TriggerTest, NoteLinesDoNotFireTriggers)
 // trigger evaluation entirely and the error counter increments.
 TEST(TriggerTest, BadUtf8LineSkipsTriggerEvaluation)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
     CTrigger* t = add_trigger(doc, "*gold*");
 
@@ -374,7 +376,7 @@ TEST(TriggerTest, BadUtf8LineSkipsTriggerEvaluation)
 // to carry the wanted foreground.
 TEST(TriggerTest, ColourMatchTriggerRequiresMatchingStyle)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "alert");
     // require red (ANSI index 1) foreground: BFS nibbles, F at bits 4-6
     t->iMatch = TRIGGER_MATCH_TEXT | (1 << 4);
@@ -392,7 +394,7 @@ TEST(TriggerTest, ColourMatchTriggerRequiresMatchingStyle)
 // '\n', so a regexp can span two received lines.
 TEST(TriggerTest, MultiLineTriggerMatchesAcrossNewlineJoinedLines)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = new CTrigger();
     t->trigger      = CString("first\\nsecond");
     t->strLabel     = CString("ml");
@@ -417,7 +419,7 @@ TEST(TriggerTest, MultiLineTriggerMatchesAcrossNewlineJoinedLines)
 // recompile the regexp with substituted variables" (feature added in 3.18).
 TEST(TriggerTest, ExpandVariablesSubstitutesIntoMatchText)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "@target arrives");
     t->bExpandVariables = TRUE;
 
@@ -443,7 +445,7 @@ TEST(TriggerTest, ExpandVariablesSubstitutesIntoMatchText)
 // removed without error and the remainder still matches.
 TEST(TriggerTest, MissingVariableInMatchTextSilentlyDropped)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "@missing arrives");
     t->bExpandVariables = TRUE;
 
@@ -500,7 +502,7 @@ static int find_line_index(CMUSHclientDoc& doc, const char* text)
 TEST(TriggerTest, NegativeSequencePluginTriggersEvaluateBeforeWorld)
 {
     {   // negative sequence: plugin's output precedes the world's
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         CTrigger* wt = add_trigger(doc, "hello", "FROM WORLD", eSendToOutput);
         CPlugin* p = new CPlugin(&doc);
         p->m_bSaveState = false;
@@ -517,7 +519,7 @@ TEST(TriggerTest, NegativeSequencePluginTriggersEvaluateBeforeWorld)
         EXPECT_LT(ip, iw);                 // plugin evaluated first
     }
     {   // default (positive) sequence: the world's triggers run first
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         add_trigger(doc, "hello", "FROM WORLD", eSendToOutput);
         CPlugin* p = new CPlugin(&doc);
         p->m_bSaveState = false;
@@ -542,7 +544,7 @@ TEST(TriggerTest, NegativeSequencePluginTriggersEvaluateBeforeWorld)
 // Lua trigger keeps the non-empty capture for a (?J) duplicate name.
 TEST(TriggerScript, DuplicateNamedWildcardKeepsNonEmptyCapture)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     const char* lua =
         "function OnMob(name, line, wildcards)\n"
@@ -590,7 +592,7 @@ static std::string vs(const VARIANT& v)
 // AddTriggerEx validation: each reject path answers its own error code.
 TEST(TriggerApi, AddTriggerExValidatesInput)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     EXPECT_EQ((long)eOK, doc.AddTriggerEx("t1", "You are hungry", "eat bread",
                                           eEnabled, -1, 0, "", "",
@@ -629,7 +631,7 @@ TEST(TriggerApi, AddTriggerExValidatesInput)
 // GetTrigger round trip and GetTriggerList enumeration.
 TEST(TriggerApi, GetTriggerRoundTripAndList)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("rt", "* hits you", "flee",
                                           eEnabled | eKeepEvaluating,
                                           -1, 0, "", "", eSendToWorld, 100));
@@ -659,7 +661,7 @@ TEST(TriggerApi, GetTriggerRoundTripAndList)
 // GetTriggerInfo conventions and representative arms.
 TEST(TriggerApi, GetTriggerInfoArms)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("ti", "the match", "the send",
                                           eEnabled | eTemporary,
                                           -1, 0, "beep.wav", "",
@@ -682,7 +684,7 @@ TEST(TriggerApi, GetTriggerInfoArms)
 // Trigger options: y/n booleans, numeric validation, and the two error codes.
 TEST(TriggerApi, TriggerOptionRoundTripAndErrors)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("to", "m", "", eEnabled,
                                           -1, 0, "", "", eSendToWorld, 100));
 
@@ -706,7 +708,7 @@ TEST(TriggerApi, TriggerOptionRoundTripAndErrors)
 // Wildcards captured when a MUD line matches an API-added trigger.
 TEST(TriggerApi, WildcardsCapturedOnLineMatch)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("wc", "* tells you *", "",
                                           eEnabled, -1, 0, "", "",
                                           eSendToWorld, 100));
@@ -724,7 +726,7 @@ TEST(TriggerApi, WildcardsCapturedOnLineMatch)
 // Group enable/delete counts only members; temporaries are swept.
 TEST(TriggerApi, GroupsAndTemporarySweep)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.AddTriggerEx("g1", "m1", "", eEnabled, -1, 0, "", "", eSendToWorld, 100);
     doc.AddTriggerEx("g2", "m2", "", eEnabled, -1, 0, "", "", eSendToWorld, 100);
     doc.AddTriggerEx("solo", "m3", "", eEnabled, -1, 0, "", "", eSendToWorld, 100);
@@ -752,7 +754,7 @@ TEST(TriggerApi, GroupsAndTemporarySweep)
 // EnableTrigger toggling and the missing-name code.
 TEST(TriggerApi, EnableTriggerToggleAndMissing)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.AddTriggerEx("et", "m", "", eEnabled, -1, 0, "", "", eSendToWorld, 100);
     EXPECT_EQ((long)eOK, doc.EnableTrigger("et", FALSE));
     EXPECT_FALSE(doc.GetTriggerInfo("et", 8).boolVal);
@@ -769,35 +771,35 @@ TEST(TriggerR5, ColourAndStyleMatchConditions)
 {
     // text colour: line is WHITE (7) on BLACK (0), not hilited
     {   // background condition met (BLACK == 0)
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         CTrigger* t = add_trigger(doc, "colours");
         t->iMatch = TRIGGER_MATCH_BACK | (BLACK << 8);
         feed_line(doc, "colours");
         EXPECT_EQ(1L, t->nMatched);
     }
     {   // background condition unmet
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         CTrigger* t = add_trigger(doc, "colours");
         t->iMatch = TRIGGER_MATCH_BACK | (RED << 8);
         feed_line(doc, "colours");
         EXPECT_EQ(0L, t->nMatched);
     }
     {   // hilite requested but line is not hilited
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         CTrigger* t = add_trigger(doc, "colours");
         t->iMatch = TRIGGER_MATCH_HILITE | HILITE;
         feed_line(doc, "colours");
         EXPECT_EQ(0L, t->nMatched);
     }
     {   // blink requested but line does not blink
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         CTrigger* t = add_trigger(doc, "colours");
         t->iMatch = TRIGGER_MATCH_BLINK | BLINK;
         feed_line(doc, "colours");
         EXPECT_EQ(0L, t->nMatched);
     }
     {   // inverse requested but line is not inverse
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         CTrigger* t = add_trigger(doc, "colours");
         t->iMatch = TRIGGER_MATCH_INVERSE | INVERSE;
         feed_line(doc, "colours");
@@ -808,7 +810,7 @@ TEST(TriggerR5, ColourAndStyleMatchConditions)
 // clipboard_arg copies the selected wildcard to the clipboard on match.
 TEST(TriggerR5, ClipboardArgCopiesWildcard)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "*gold*");
     t->iClipboardArg = 1;
     feed_line(doc, "50 gold coins");
@@ -819,7 +821,7 @@ TEST(TriggerR5, ClipboardArgCopiesWildcard)
 // original background (TRIGGER_COLOUR_CHANGE_FOREGROUND arm).
 TEST(TriggerR5, ForegroundOnlyColourChange)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "*shiny*");
     t->colour = 1;                    // custom colour 1 (not SAMECOLOUR)
     t->iColourChangeType = TRIGGER_COLOUR_CHANGE_FOREGROUND;
@@ -844,7 +846,7 @@ TEST(TriggerR5, ForegroundOnlyColourChange)
 // A repeating regexp trigger recolours every occurrence on the line.
 TEST(TriggerR5, RepeatingRegexpColoursAllMatches)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t  = new CTrigger();
     t->trigger   = CString("ha");
     t->bEnabled  = TRUE;
@@ -864,7 +866,7 @@ TEST(TriggerR5, RepeatingRegexpColoursAllMatches)
 // paragraph walks the line list to find its start column.
 TEST(TriggerR5, MatchOnSecondWrappedLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_wrap = TRUE;
     doc.m_nWrapColumn = 20;
     CTrigger* t = add_trigger(doc, "*NEEDLE*");
@@ -877,7 +879,7 @@ TEST(TriggerR5, MatchOnSecondWrappedLine)
 // note text is preserved via m_OutstandingLines and re-emitted.
 TEST(TriggerR5, OmittedLineReplaysInterleavedNote)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "*secret*");
     t->bOmitFromOutput = TRUE;
 
@@ -901,7 +903,7 @@ TEST(TriggerR5, OmittedLineReplaysInterleavedNote)
 // recent-lines entry (the Fiendish 5.06 arm).
 TEST(TriggerR5, OmitWithStoppedEvaluationPopsRecentLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "*hideme*");
     t->bOmitFromOutput = TRUE;
     t->bKeepEvaluating = TRUE;
@@ -920,7 +922,7 @@ TEST(TriggerR5, OmitWithStoppedEvaluationPopsRecentLine)
 // (the GetTriggerRevMap arm).
 TEST(TriggerScriptR5, UnlabelledScriptedTriggerUsesInternalName)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(setup_lua(doc,
         "function OnAnon(name, line, wildcards)\n"
         "  world.SetVariable('anon_fired', 'yes')\n"
@@ -948,7 +950,7 @@ TEST(TriggerScriptR5, UnlabelledScriptedTriggerUsesInternalName)
 // breaks out of the sequence loop (the m_iStopTriggerEvaluation arm).
 TEST(TriggerScriptR5, SendToScriptStopsEvaluation)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(setup_lua(doc, "-- world script\n"));
 
     CTrigger* t1 = add_trigger(doc, "*stopper*",
@@ -969,7 +971,7 @@ TEST(TriggerScriptR5, SendToScriptStopsEvaluation)
 // execute" colour note instead.
 TEST(TriggerScriptR5, ScriptAfterOmitWithoutEngineNotes)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t = add_trigger(doc, "*noengine*", "x = 1", eSendToScriptAfterOmit);
     feed_line(doc, "a noengine line");
     EXPECT_EQ(1L, t->nMatched);
@@ -986,7 +988,7 @@ TEST(TriggerScriptR5, ScriptAfterOmitWithoutEngineNotes)
 // send-to-execute honours omit_from_log (the m_log_input save/restore arm).
 TEST(TriggerScriptR5, SendToExecuteOmitFromLog)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_log_input = true;
     CTrigger* t = add_trigger(doc, "*runit*", "innercmd", eSendToExecute);
     t->omit_from_log = TRUE;
@@ -999,7 +1001,7 @@ TEST(TriggerScriptR5, SendToExecuteOmitFromLog)
 // the expansion drops the non-printables.
 TEST(TriggerScriptR5, VariableExpansionDropsControlCharacters)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CVariable* v = new CVariable();
     v->strLabel    = "vword";
     v->strContents = CString("wo\x01rd");   // control char inside
@@ -1023,7 +1025,7 @@ TEST(TriggerScriptR5, VariableExpansionDropsControlCharacters)
 // the compile-error arm reports and skips the trigger.
 TEST(TriggerScriptR5, VariableExpansionBadRegexpSkipsTrigger)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CVariable* v = new CVariable();
     v->strLabel    = "vbroke";
     v->strContents = CString("(");         // unbalanced when raw
@@ -1050,7 +1052,7 @@ TEST(TriggerScriptR5, VariableExpansionBadRegexpSkipsTrigger)
 // %0 in a send is the whole match (the '0' digit case).
 TEST(SendTextR5, WildcardZeroIsWholeMatch)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTrigger* t  = new CTrigger();
     t->trigger   = CString("hail (\\w+)");
     t->bRegexp   = TRUE;
@@ -1077,14 +1079,14 @@ TEST(SendTextR5, WildcardZeroIsWholeMatch)
 // %C expands to the clipboard contents (empty clipboard: nothing inserted).
 TEST(SendTextR5, ClipboardSubstitution)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.SetClipboard("from-clipboard");
     CTrigger* t = add_trigger(doc, "*paste*", "got [%C]", eSendToOutput);
     feed_line(doc, "please paste this");
     EXPECT_EQ(1L, t->nMatched);
 
     // empty-clipboard arm (no throw from trigger context)
-    CMUSHclientDoc doc2 = make_doc();
+    CMUSHclientDoc doc2; make_doc(doc2);
     doc2.SetClipboard("");
     CTrigger* t2 = add_trigger(doc2, "*clip2*", "got [%c]", eSendToOutput);
     feed_line(doc2, "please clip2 this");
@@ -1095,7 +1097,7 @@ TEST(SendTextR5, ClipboardSubstitution)
 // FixHTMLString.
 TEST(SendTextR5, LogFileSendFixesHtmlWildcards)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     char logpath[128];
     snprintf(logpath, sizeof logpath, "/tmp/mc_r5_trig_log_%d.html", (int)getpid());
     doc.m_logfile = fopen(logpath, "w");
@@ -1126,7 +1128,7 @@ TEST(SendTextR5, LogFileSendFixesHtmlWildcards)
 // '@' substitution case.
 TEST(SendTextR5, VariableSubstitutionInSend)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CVariable* v = new CVariable();
     v->strLabel    = "target";
     v->strContents = "the dragon";

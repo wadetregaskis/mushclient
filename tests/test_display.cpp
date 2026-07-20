@@ -7,7 +7,10 @@
 // word wrap), and style-run splitting across a wrap.
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
 #include "scripting/errors.h"   // eOK etc. (self-sufficiency for the
                                 // real-header flip; no-op today)
 
@@ -20,11 +23,9 @@
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-static CMUSHclientDoc make_doc()
+static void make_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_iConnectPhase = eConnectConnectedToMud;
-    return doc;
 }
 
 static void feed(CMUSHclientDoc& doc, const char* s)
@@ -75,7 +76,7 @@ static int style_length_sum(CLine* line)
 // one default style; a normal CRLF pair does not clear.
 TEST(DisplayTest, CarriageReturnClearsPendingLineWhenEnabled)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bCarriageReturnClearsLine = TRUE;
 
     feed(doc, "abc\rdef\n");
@@ -91,7 +92,7 @@ TEST(DisplayTest, CarriageReturnClearsPendingLineWhenEnabled)
 
 TEST(DisplayTest, CarriageReturnIgnoredWhenOptionOff)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bCarriageReturnClearsLine = FALSE;
     feed(doc, "abc\rdef\n");
     CLine* l0 = nth_line(doc, 0);
@@ -104,7 +105,7 @@ TEST(DisplayTest, CarriageReturnIgnoredWhenOptionOff)
 // and rendered exactly once when its last byte arrives.
 TEST(DisplayTest, Utf8CharacterSplitAcrossPacketsRendersOnce)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
 
     feed(doc, "a\xC3");                          // lead byte only
@@ -122,7 +123,7 @@ TEST(DisplayTest, Utf8CharacterSplitAcrossPacketsRendersOnce)
 // exactly `size` bytes; text after an embedded NUL is still displayed.
 TEST(DisplayTest, BytesAfterEmbeddedNulStillDisplayed)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     const char pkt[] = { 'a', 'b', '\0', 'c', 'd', '\n' };
     doc.DisplayMsg(pkt, 6, 0);
     CLine* l0 = nth_line(doc, 0);
@@ -135,7 +136,7 @@ TEST(DisplayTest, BytesAfterEmbeddedNulStillDisplayed)
 // prompt line and starts its own fresh line.
 TEST(DisplayTest, NoteStartsOnFreshLineAfterPartialMudLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "prompt> ");                   // partial MUD line, no '\n'
     doc.Note("hello");
 
@@ -155,7 +156,7 @@ TEST(DisplayTest, NoteStartsOnFreshLineAfterPartialMudLine)
 // command is not mis-flagged as user input.
 TEST(DisplayTest, LineTypeStampedOnFirstCharacterNotAtCreation)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.DisplayMsg("look\n", 5, USER_INPUT);   // echoed user command
     feed(doc, "You see nothing.\n");           // MUD output follows
 
@@ -175,7 +176,7 @@ TEST(DisplayTest, LineTypeStampedOnFirstCharacterNotAtCreation)
 // returns the right text for lines beyond the first JUMP_SIZE (=100).
 TEST(DisplayTest, GetLineInfoCorrectAcrossJumpIndexBoundary)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     char buf[32];
     for (int i = 1; i <= 150; i++) {
         snprintf(buf, sizeof buf, "line %d\n", i);
@@ -201,7 +202,7 @@ TEST(DisplayTest, GetLineInfoCorrectAcrossJumpIndexBoundary)
 // notes/user input with mud-set styles."
 TEST(DisplayTest, RememberedMudStyleUnaffectedByNoteColours)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "\033[31mred");                  // MUD sets red
     EXPECT_EQ((COLORREF)RED, doc.m_iForeColour);
 
@@ -227,7 +228,7 @@ TEST(DisplayTest, RememberedMudStyleUnaffectedByNoteColours)
 // CHARACTERS, so multi-byte text wraps at the same visual width as ASCII.
 TEST(WrapTest, Utf8WrapColumnCountsCharactersNotBytes)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
     doc.m_nWrapColumn = 10;
 
@@ -252,7 +253,7 @@ TEST(WrapTest, Utf8WrapColumnCountsCharactersNotBytes)
 // to the new line intact.
 TEST(WrapTest, WrapNeverSplitsUtf8Sequence)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
     doc.m_nWrapColumn = 10;
 
@@ -277,7 +278,7 @@ TEST(WrapTest, WrapNeverSplitsUtf8Sequence)
 // lost or duplicated.
 TEST(WrapTest, WordMovesIntactToContinuationLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_wrap = 1;
     doc.m_indent_paras = 0;
     doc.m_nWrapColumn = 10;
@@ -299,7 +300,7 @@ TEST(WrapTest, WordMovesIntactToContinuationLine)
 // keeps the run's colour.
 TEST(WrapTest, StyleRunSplitAcrossWrapKeepsLengthsAndColours)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_wrap = 1;
     doc.m_indent_paras = 0;
     doc.m_nWrapColumn = 10;
@@ -366,7 +367,7 @@ static CLine* closed_tail(CMUSHclientDoc& doc)
 
 TEST(NotingTest, NoteClosesLineAndStampsCommentFlag)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Note("hello");
     CLine* l0 = nth_line(doc, 0);
     ASSERT_NE(nullptr, l0);
@@ -379,7 +380,7 @@ TEST(NotingTest, NoteClosesLineAndStampsCommentFlag)
 
 TEST(NotingTest, TellAppendsWithoutClosingLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Tell("abc");
     doc.Tell("def");
     EXPECT_TRUE(doc.m_pCurrentLine != nullptr);
@@ -391,7 +392,7 @@ TEST(NotingTest, TellAppendsWithoutClosingLine)
 TEST(NotingTest, TellOnPartialMudLineForcesLineChange)
 {
     // a note must not continue the pending MUD-output line (colour bleed)
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "mud");                    // partial output line, flags 0
     doc.Tell("note");
     CLine* l0 = nth_line(doc, 0);
@@ -403,7 +404,7 @@ TEST(NotingTest, TellOnPartialMudLineForcesLineChange)
 
 TEST(NotingTest, TellEmptyMessageIsNoop)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     int before = (int)doc.m_LineList.GetCount();
     doc.Tell("");
     EXPECT_EQ(before, (int)doc.m_LineList.GetCount());
@@ -414,7 +415,7 @@ TEST(NotingTest, NoteDeferredWhileNotesNotWantedThenDrained)
 {
     // mid-telnet-negotiation (m_bNotesNotWantedNow) a note may not be stuck
     // inside the partial MUD line: it is queued with its colours...
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "partial");
     doc.m_bNotesNotWantedNow = true;
     doc.NoteColourRGB(0x123456, 0x654321);
@@ -450,7 +451,7 @@ TEST(NotingTest, NoteDeferredWhileNotesNotWantedThenDrained)
 
 TEST(NotingTest, NoteRgbStampsRgbStyle)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // NoteColourRGB masks off the high byte (COLORREF is 24-bit)
     doc.NoteColourRGB(0xFF123456, 0x00654321);
     doc.Note("x");
@@ -463,7 +464,7 @@ TEST(NotingTest, NoteRgbStampsRgbStyle)
 
 TEST(NotingTest, NoteCustomPaletteStampsIndexOnBlack)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.SetNoteColour(5);                    // one-based → palette index 4
     EXPECT_EQ(5, doc.GetNoteColour());
     doc.Note("x");
@@ -476,7 +477,7 @@ TEST(NotingTest, NoteCustomPaletteStampsIndexOnBlack)
 
 TEST(NotingTest, NoteSameColourStampsAnsiWhiteOnBlack)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.SetNoteColour(0);                    // 0 = "same colour" sentinel
     EXPECT_EQ(0, doc.GetNoteColour());
     doc.Note("x");
@@ -489,7 +490,7 @@ TEST(NotingTest, NoteSameColourStampsAnsiWhiteOnBlack)
 
 TEST(NotingTest, SetNoteColourRejectsOutOfRange)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.SetNoteColour(5);
     doc.SetNoteColour(-1);                   // below range: ignored
     EXPECT_EQ(5, doc.GetNoteColour());
@@ -499,7 +500,7 @@ TEST(NotingTest, SetNoteColourRejectsOutOfRange)
 
 TEST(NotingTest, GetNoteColourForeBackPerMode)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // RGB mode: the stored RGB values
     doc.NoteColourRGB(0x00000A, 0x00000B);
     EXPECT_EQ(0x0AL, doc.GetNoteColourFore());
@@ -524,7 +525,7 @@ TEST(NotingTest, GetNoteColourForeBackPerMode)
 
 TEST(NotingTest, SetNoteColourForeConvertsPaletteBackgroundFirst)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_customback[2] = 0x445566;
     doc.SetNoteColour(3);                    // palette mode, index 2
     doc.SetNoteColourFore(0xABCDEF12);       // masked to 24 bits
@@ -535,7 +536,7 @@ TEST(NotingTest, SetNoteColourForeConvertsPaletteBackgroundFirst)
 
 TEST(NotingTest, SetNoteColourBackConvertsSameColourForegroundFirst)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.SetNoteColour(0);                    // "same colour"
     doc.m_bCustom16isDefaultColour = FALSE;
     doc.m_normalcolour[WHITE] = 0x777777;
@@ -547,7 +548,7 @@ TEST(NotingTest, SetNoteColourBackConvertsSameColourForegroundFirst)
 
 TEST(NotingTest, NoteColourNameSetsRgbFromNamesAndHex)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.NoteColourName("red", "blue");
     EXPECT_TRUE(doc.m_bNotesInRGB);
     EXPECT_EQ((long)RGB(255, 0, 0), doc.GetNoteColourFore());
@@ -563,7 +564,7 @@ TEST(NotingTest, NoteColourNameSetsRgbFromNamesAndHex)
 
 TEST(NotingTest, ColourTellStampsRequestedColoursAndRestores)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     COLORREF old_fore = doc.m_iNoteColourFore, old_back = doc.m_iNoteColourBack;
     doc.ColourTell("red", "blue", "hi");
     CStyle* s = style_at(doc.m_pCurrentLine, 0);
@@ -578,7 +579,7 @@ TEST(NotingTest, ColourTellStampsRequestedColoursAndRestores)
 
 TEST(NotingTest, ColourTellFromPaletteModeRestoresPaletteMode)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.SetNoteColour(2);
     EXPECT_FALSE(doc.m_bNotesInRGB);
     doc.ColourTell("red", "blue", "hi");
@@ -588,7 +589,7 @@ TEST(NotingTest, ColourTellFromPaletteModeRestoresPaletteMode)
 
 TEST(NotingTest, ColourNoteClosesTheLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.ColourNote("red", "blue", "x");
     CLine* l0 = nth_line(doc, 0);
     ASSERT_NE(nullptr, l0);
@@ -599,7 +600,7 @@ TEST(NotingTest, ColourNoteClosesTheLine)
 
 TEST(NotingTest, NoteStyleMasksToTextStyleBits)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.NoteStyle(HILITE | UNDERLINE);
     EXPECT_EQ(HILITE | UNDERLINE, doc.GetNoteStyle());
     doc.NoteStyle((short)0xFF);              // out-of-range bits dropped
@@ -614,7 +615,7 @@ TEST(NotingTest, NoteStyleMasksToTextStyleBits)
 
 TEST(NotingTest, HyperlinkSendStampsActionAndUnderline)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iHyperlinkColour = 0x0000EE;
     doc.Hyperlink("do this", "click", "a hint", "", "", FALSE);
     CLine* l = doc.m_pCurrentLine;
@@ -634,7 +635,7 @@ TEST(NotingTest, HyperlinkSendStampsActionAndUnderline)
 
 TEST(NotingTest, HyperlinkUrlUsesActionAsTextAndHintFallback)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Hyperlink("http://x", "", "", "", "", TRUE);
     CLine* l = doc.m_pCurrentLine;
     ASSERT_NE(nullptr, l);
@@ -649,7 +650,7 @@ TEST(NotingTest, HyperlinkUrlUsesActionAsTextAndHintFallback)
 
 TEST(NotingTest, HyperlinkEmptyActionIsNoop)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     int lines_before = (int)doc.m_LineList.GetCount();
     doc.Hyperlink("", "text", "hint", "", "", FALSE);
     EXPECT_EQ(lines_before, (int)doc.m_LineList.GetCount());
@@ -658,7 +659,7 @@ TEST(NotingTest, HyperlinkEmptyActionIsNoop)
 
 TEST(NotingTest, NoteHrEmitsHorizRuleLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "abc");                        // pending partial line
     doc.NoteHr();
     // line 0 = "abc" (wrapped up), line 1 = the HR, line 2 = new current
@@ -708,7 +709,7 @@ static bool log_contains(const std::string& hay, const char* needle)
 
 TEST(LoggingTest, OpenWriteFlushCloseLifecycle)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     std::string path = fresh_log_path();
     EXPECT_EQ(0L, doc.OpenLog(path.c_str(), FALSE));       // eOK
     EXPECT_TRUE(doc.IsLogOpen());
@@ -726,14 +727,14 @@ TEST(LoggingTest, OpenWriteFlushCloseLifecycle)
 
 TEST(LoggingTest, OpenLogBadPathReturnsCouldNotOpenFile)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_EQ(30013L, doc.OpenLog("/nonexistent_mc_dir/x.log", FALSE));  // eCouldNotOpenFile
     EXPECT_FALSE(doc.IsLogOpen());
 }
 
 TEST(LoggingTest, NoteLoggedWithPreambleAndPostamble)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     std::string path = fresh_log_path();
     ASSERT_EQ(0L, doc.OpenLog(path.c_str(), FALSE));
     doc.m_bLogNotes = TRUE;
@@ -748,7 +749,7 @@ TEST(LoggingTest, NoteLoggedWithPreambleAndPostamble)
 
 TEST(LoggingTest, NoteLoggedAsHtmlEscapesMarkup)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     std::string path = fresh_log_path();
     ASSERT_EQ(0L, doc.OpenLog(path.c_str(), FALSE));
     doc.m_bLogNotes = TRUE;
@@ -762,7 +763,7 @@ TEST(LoggingTest, NoteLoggedAsHtmlEscapesMarkup)
 
 TEST(LoggingTest, NoteLoggedInHtmlColourEmitsFontSpanAndUnderline)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     std::string path = fresh_log_path();
     ASSERT_EQ(0L, doc.OpenLog(path.c_str(), FALSE));
     doc.m_bLogNotes    = TRUE;
@@ -783,7 +784,7 @@ TEST(LoggingTest, NoteLoggedInHtmlColourEmitsFontSpanAndUnderline)
 
 TEST(LoggingTest, LogRawSuppressesNotePreambleFormatting)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     std::string path = fresh_log_path();
     ASSERT_EQ(0L, doc.OpenLog(path.c_str(), FALSE));
     doc.m_bLogNotes = TRUE;
@@ -800,7 +801,7 @@ TEST(LoggingTest, LogRawSuppressesNotePreambleFormatting)
 
 TEST(AnsiNoteTest, PlainTextBecomesCommentLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     unsigned short old_style = doc.GetNoteStyle();
     doc.AnsiNote("hello");
     CLine* l0 = nth_line(doc, 0);
@@ -812,7 +813,7 @@ TEST(AnsiNoteTest, PlainTextBecomesCommentLine)
 
 TEST(AnsiNoteTest, ForegroundCodeColoursFollowingTextOnly)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_normalcolour[1] = 0x0000CC;            // ANSI red slot
     COLORREF plain_fore = doc.m_iNoteColourFore;
     doc.AnsiNote("pre\x1b[31mred");
@@ -831,7 +832,7 @@ TEST(AnsiNoteTest, ForegroundCodeColoursFollowingTextOnly)
 
 TEST(AnsiNoteTest, BoldUsesBoldPaletteAndHiliteBit)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_boldcolour[2] = 0x00CC00;              // ANSI green (bold) slot
     doc.AnsiNote("\x1b[1;32mX");
     CLine* l0 = nth_line(doc, 0);
@@ -846,7 +847,7 @@ TEST(AnsiNoteTest, BoldUsesBoldPaletteAndHiliteBit)
 TEST(AnsiNoteTest, Xterm256ForegroundAndBackground)
 {
     Generate256colours();
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.AnsiNote("\x1b[38;5;196m\x1b[48;5;21mX");
     CStyle* s = style_at(nth_line(doc, 0), 0);
     ASSERT_NE(nullptr, s);
@@ -856,7 +857,7 @@ TEST(AnsiNoteTest, Xterm256ForegroundAndBackground)
 
 TEST(AnsiNoteTest, TwentyFourBitColourCollectsRGBComponents)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.AnsiNote("\x1b[38;2;10;20;30m\x1b[48;2;40;50;60mX");
     CStyle* s = style_at(nth_line(doc, 0), 0);
     ASSERT_NE(nullptr, s);
@@ -866,7 +867,7 @@ TEST(AnsiNoteTest, TwentyFourBitColourCollectsRGBComponents)
 
 TEST(AnsiNoteTest, UnderlineAndInverseBitsApply)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.AnsiNote("\x1b[4;7mX");
     CStyle* s = style_at(nth_line(doc, 0), 0);
     ASSERT_NE(nullptr, s);
@@ -876,7 +877,7 @@ TEST(AnsiNoteTest, UnderlineAndInverseBitsApply)
 
 TEST(AnsiNoteTest, CancelBoldDropsHiliteMidLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.AnsiNote("\x1b[1mAB\x1b[22mCD");
     CLine* l0 = nth_line(doc, 0);
     ASSERT_NE(nullptr, l0);
@@ -891,7 +892,7 @@ TEST(AnsiNoteTest, CancelBoldDropsHiliteMidLine)
 
 TEST(AnsiNoteTest, ResetRestoresNormalWhiteOnBlack)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_normalcolour[WHITE] = 0x00ABCD;
     doc.m_normalcolour[1]     = 0x0000CC;
     doc.AnsiNote("\x1b[31mred\x1b[0mplain");
@@ -905,7 +906,7 @@ TEST(AnsiNoteTest, ResetRestoresNormalWhiteOnBlack)
 
 TEST(AnsiNoteTest, StateAndColoursRestoredAfterCall)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.NoteStyle(UNDERLINE);
     COLORREF old_fore = doc.m_iNoteColourFore, old_back = doc.m_iNoteColourBack;
     doc.AnsiNote("\x1b[1;31;42mX");
@@ -943,7 +944,7 @@ static int line_occurrences(CMUSHclientDoc& doc, const char* text)
 // response into the output buffer.
 TEST(TriggerPipeline, SendToOutputWritesExpandedResponse)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("t1", "* says *", "reply-to-%1",
                                           eEnabled, -1, 0, "", "",
                                           eSendToOutput, 100));
@@ -954,7 +955,7 @@ TEST(TriggerPipeline, SendToOutputWritesExpandedResponse)
 // omit_from_output removes the matched line from the buffer entirely.
 TEST(TriggerPipeline, OmitFromOutputRemovesMatchedLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("om", "secret*", "",
                                           eEnabled | eOmitFromOutput,
                                           -1, 0, "", "", eSendToWorld, 100));
@@ -970,7 +971,7 @@ TEST(TriggerPipeline, OmitFromOutputRemovesMatchedLine)
 // trigger's label (methods: SendTo eSendToVariable).
 TEST(TriggerPipeline, SendToVariableStoresWildcard)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("capture", "* says *", "%2",
                                           eEnabled, -1, 0, "", "",
                                           eSendToVariable, 100));
@@ -983,7 +984,7 @@ TEST(TriggerPipeline, SendToVariableStoresWildcard)
 // lowercase_wildcard lowers the expansion before it is used.
 TEST(TriggerPipeline, LowercaseWildcardLowersExpansion)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("lower", "shout *", "%1",
                                           eEnabled | eLowercaseWildcard,
                                           -1, 0, "", "", eSendToVariable, 100));
@@ -997,7 +998,7 @@ TEST(TriggerPipeline, LowercaseWildcardLowersExpansion)
 // evaluation stops at the first match.
 TEST(TriggerPipeline, KeepEvaluatingRunsLaterTriggerToo)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("first", "combo*", "first-fired",
                                           eEnabled | eKeepEvaluating,
                                           -1, 0, "", "", eSendToOutput, 10));
@@ -1011,7 +1012,7 @@ TEST(TriggerPipeline, KeepEvaluatingRunsLaterTriggerToo)
 
 TEST(TriggerPipeline, WithoutKeepEvaluatingLaterTriggerSkipped)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("first", "combo*", "first-fired",
                                           eEnabled, -1, 0, "", "",
                                           eSendToOutput, 10));
@@ -1026,7 +1027,7 @@ TEST(TriggerPipeline, WithoutKeepEvaluatingLaterTriggerSkipped)
 // A one-shot trigger fires once and deletes itself.
 TEST(TriggerPipeline, OneShotTriggerDeletedAfterFiring)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("os", "onceonly*", "once-fired",
                                           eEnabled | eTriggerOneShot,
                                           -1, 0, "", "", eSendToOutput, 100));
@@ -1042,7 +1043,7 @@ TEST(TriggerPipeline, OneShotTriggerDeletedAfterFiring)
 // repeat requested" — it rescans from the previous match's end column).
 TEST(TriggerPipeline, RepeatColoursEveryMatchOnTheLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("rep", "ding", "",
                                           eEnabled | eTriggerRegularExpression,
                                           -1, 0, "", "", eSendToWorld, 100));
@@ -1069,7 +1070,7 @@ TEST(TriggerPipeline, RepeatColoursEveryMatchOnTheLine)
 // get_foreground / iMatch block).
 TEST(TriggerPipeline, ColourMatchTriggerNeedsMatchingAnsiColour)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("cm", "alarm*", "colour-fired",
                                           eEnabled, -1, 0, "", "",
                                           eSendToOutput, 100));
@@ -1088,7 +1089,7 @@ TEST(TriggerPipeline, ColourMatchTriggerNeedsMatchingAnsiColour)
 // send-to-status routes the response into the status-line message.
 TEST(TriggerPipeline, SendToStatusSetsStatusMessage)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("st", "status*", "the status text",
                                           eEnabled, -1, 0, "", "",
                                           eSendToStatus, 100));
@@ -1101,7 +1102,7 @@ TEST(TriggerPipeline, SendToStatusSetsStatusMessage)
 // but nothing is enqueued.
 TEST(TriggerPipeline, SendToQueueArmOfflineLeavesQueueEmpty)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("q", "enqueue*", "queued-cmd",
                                           eEnabled, -1, 0, "", "",
                                           eSendToCommandQueue, 100));
@@ -1114,7 +1115,7 @@ TEST(TriggerPipeline, SendToQueueArmOfflineLeavesQueueEmpty)
 // send-to-log writes the response into the open log file.
 TEST(TriggerPipeline, SendToLogWritesToLogFile)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     char logpath[256];
     snprintf(logpath, sizeof logpath, "/tmp/mc_trig_log_%d.txt", (int)getpid());
     ASSERT_EQ((long)eOK, doc.OpenLog(logpath, FALSE));
@@ -1136,7 +1137,7 @@ TEST(TriggerPipeline, SendToLogWritesToLogFile)
 // output buffer.
 TEST(TriggerPipeline, OmitFromLogSuppressesLineInLogOnly)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bLogOutput = TRUE;                     // log incoming lines
     char logpath[256];
     snprintf(logpath, sizeof logpath, "/tmp/mc_trig_log2_%d.txt", (int)getpid());
@@ -1162,7 +1163,7 @@ TEST(TriggerPipeline, OmitFromLogSuppressesLineInLogOnly)
 // recent lines.
 TEST(TriggerPipeline, MultiLineTriggerMatchesAcrossTwoLines)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("ml", "first-part\\nsecond-part",
                                           "multi-fired",
                                           eEnabled | eTriggerRegularExpression,
@@ -1179,7 +1180,7 @@ TEST(TriggerPipeline, MultiLineTriggerMatchesAcrossTwoLines)
 // connection (the world-closed branches of SendTo).
 TEST(TriggerPipeline, SpeedwalkExecuteImmediateArmsOffline)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("sw", "walknow*", "2n",
                                           eEnabled, -1, 0, "", "",
                                           eSendToSpeedwalk, 100));
@@ -1202,7 +1203,7 @@ TEST(TriggerPipeline, SpeedwalkExecuteImmediateArmsOffline)
 // headless) without disturbing the rest of the pipeline.
 TEST(TriggerPipeline, TriggerSoundArmHeadless)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("snd", "noise*", "sound-fired",
                                           eEnabled, -1, 0,
                                           "/no/such/beep.wav", "",
@@ -1217,7 +1218,7 @@ TEST(TriggerPipeline, TriggerSoundArmHeadless)
 // enclosed text (HILITE style bit), entities are decoded.
 TEST(MxpDisplay, BoldTagConsumedAndStyleApplied)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.MXP_On();
     feed(doc, "pre <B>bolded</B> post\n");
     CLine* l = nth_line(doc, doc.m_LineList.GetCount() > 1 ? 1 : 0);
@@ -1238,7 +1239,7 @@ TEST(MxpDisplay, BoldTagConsumedAndStyleApplied)
 
 TEST(MxpDisplay, EntityDecodedAndUnknownTagSkipped)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.MXP_On();
     feed(doc, "a &lt;tag&gt; &amp; more\n");
     bool found = false;
@@ -1260,7 +1261,7 @@ TEST(MxpDisplay, EntityDecodedAndUnknownTagSkipped)
 
 TEST(MxpDisplay, ColourTagAppliesRgbForeground)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.MXP_On();
     feed(doc, "<COLOR RED>tinted</COLOR>\n");
     CLine* target = nullptr;
@@ -1281,7 +1282,7 @@ TEST(MxpDisplay, ColourTagAppliesRgbForeground)
 // time); truecolor switches the style to RGB immediately.
 TEST(AnsiDisplay, Xterm256ForegroundColour)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "\x1b[38;5;196mX\x1b[0m\n");        // 196 = pure red in the cube
     CLine* l = nth_line(doc, 0);
     ASSERT_NE(nullptr, l);
@@ -1293,7 +1294,7 @@ TEST(AnsiDisplay, Xterm256ForegroundColour)
 
 TEST(AnsiDisplay, TruecolorForegroundColour)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "\x1b[38;2;1;2;3mY\x1b[0m\n");
     CLine* l = nth_line(doc, 0);
     ASSERT_NE(nullptr, l);
@@ -1305,7 +1306,7 @@ TEST(AnsiDisplay, TruecolorForegroundColour)
 
 TEST(AnsiDisplay, Xterm256BackgroundColour)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "\x1b[48;5;21mZ\x1b[0m\n");         // 21 = pure blue in the cube
     CLine* l = nth_line(doc, 0);
     ASSERT_NE(nullptr, l);
@@ -1320,27 +1321,35 @@ TEST(AnsiDisplay, Xterm256BackgroundColour)
 // ShiftTabCompleteItem populates the extra Shift+Tab completion set.
 TEST(DocSharedArms, ShiftTabCompleteItemAccumulates)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_EQ((long)eOK, doc.ShiftTabCompleteItem("alpha"));
     EXPECT_EQ((long)eOK, doc.ShiftTabCompleteItem("beta"));
     EXPECT_EQ(2u, (unsigned)doc.m_ExtraShiftTabCompleteItems.size());
 }
 
+// OnGameTrace is a protected afx_msg handler; reach it for tests via a derived
+// using-declaration (legal member-pointer access, no doc.h change).
+static void call_OnGameTrace(CMUSHclientDoc& d)
+{
+    struct Access : CMUSHclientDoc { using CMUSHclientDoc::OnGameTrace; };
+    (d.*(&Access::OnGameTrace))();
+}
+
 // OnGameTrace toggles tracing and notes "Trace on/off" into the output.
 TEST(DocSharedArms, OnGameTraceTogglesAndNotes)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_FALSE(doc.m_bTrace);
-    doc.OnGameTrace();
+    call_OnGameTrace(doc);
     EXPECT_TRUE(doc.m_bTrace);
-    doc.OnGameTrace();
+    call_OnGameTrace(doc);
     EXPECT_FALSE(doc.m_bTrace);
 }
 
 // FormatTime substitutes %N (world name) and strftime codes.
 TEST(DocSharedArms, FormatTimeSubstitutesWorldName)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_mush_name = "MyWorld";
     CString s = doc.FormatTime(CTime(2026, 7, 16, 12, 34, 56), "%N-%Y", false);
     EXPECT_STREQ("MyWorld-2026", (const char*)s);
@@ -1367,7 +1376,7 @@ struct DispFakeTransport : pal::ITransport {
 // the paragraph keeps flowing on one line.
 TEST(ParagraphMode, NewlineBecomesSpace)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bInParagraph = true;
     feed(doc, "word1\nword2");
     ASSERT_TRUE(doc.m_pCurrentLine != NULL);
@@ -1377,7 +1386,7 @@ TEST(ParagraphMode, NewlineBecomesSpace)
 // <P> mode: a newline after a period gets TWO spaces (sentence spacing).
 TEST(ParagraphMode, NewlineAfterPeriodBecomesTwoSpaces)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bInParagraph = true;
     feed(doc, "end.\nNext");
     ASSERT_TRUE(doc.m_pCurrentLine != NULL);
@@ -1388,7 +1397,7 @@ TEST(ParagraphMode, NewlineAfterPeriodBecomesTwoSpaces)
 // paragraph — two hard new lines are started.
 TEST(ParagraphMode, DoubleNewlineBreaksParagraph)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bInParagraph = true;
     feed(doc, "para");
     int before = (int)doc.m_LineList.GetCount();
@@ -1400,7 +1409,7 @@ TEST(ParagraphMode, DoubleNewlineBreaksParagraph)
 // newline that follows a space is NOT converted to another space.
 TEST(ParagraphMode, ConsecutiveSpacesCollapse)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bInParagraph = true;
     feed(doc, "a    b");
     ASSERT_TRUE(doc.m_pCurrentLine != NULL);
@@ -1411,7 +1420,7 @@ TEST(ParagraphMode, ConsecutiveSpacesCollapse)
 // the space after . ! or ? is doubled.
 TEST(ParagraphMode, SpaceAfterSentencePunctuationDoubled)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bInParagraph = true;
     feed(doc, "Stop! go");
     ASSERT_TRUE(doc.m_pCurrentLine != NULL);
@@ -1421,7 +1430,7 @@ TEST(ParagraphMode, SpaceAfterSentencePunctuationDoubled)
 // <P> mode under MXP: tabs are treated as spaces.
 TEST(ParagraphMode, TabTreatedAsSpaceUnderMxp)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iUseMXP = eOnCommandMXP;
     doc.MXP_On();
     doc.m_bInParagraph = true;
@@ -1435,7 +1444,7 @@ TEST(ParagraphMode, TabTreatedAsSpaceUnderMxp)
 // tag itself.
 TEST(PuebloTest, StartTagActivatesPuebloSecureMode)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bPueblo = TRUE;
     ASSERT_TRUE(!doc.m_bPuebloActive);
     feed(doc, "before</xch_mudtext>after");
@@ -1450,7 +1459,7 @@ TEST(PuebloTest, StartTagActivatesPuebloSecureMode)
 // and replies to the server (PUEBLO_REPLY1).
 TEST(PuebloTest, AnnounceLineNegotiatesLevel110)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     DispFakeTransport* t = new DispFakeTransport();
     doc.m_pTransport = t;
     doc.m_bPueblo = TRUE;
@@ -1462,7 +1471,7 @@ TEST(PuebloTest, AnnounceLineNegotiatesLevel110)
 // ProcessPreviousLine: Pueblo 1.0 announce takes the plain-reply arm.
 TEST(PuebloTest, AnnounceLineLevel10UsesPlainReply)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     DispFakeTransport* t = new DispFakeTransport();
     doc.m_pTransport = t;
     doc.m_bPueblo = TRUE;
@@ -1475,13 +1484,13 @@ TEST(PuebloTest, AnnounceLineLevel10UsesPlainReply)
 // NOT activate Pueblo (warning arm), same when it is already active.
 TEST(PuebloTest, AnnounceIgnoredWhenDetectionOffOrAlreadyActive)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bPueblo = FALSE;
     feed(doc, "This world is Pueblo 1.10 enhanced.\n");
     EXPECT_FALSE(doc.m_bPuebloActive);
 
     // now with detection on but already active: level must not change
-    CMUSHclientDoc doc2 = make_doc();
+    CMUSHclientDoc doc2; make_doc(doc2);
     doc2.m_bPueblo = TRUE;
     doc2.m_bPuebloActive = true;
     doc2.m_iPuebloLevel = "9.9";
@@ -1493,7 +1502,7 @@ TEST(PuebloTest, AnnounceIgnoredWhenDetectionOffOrAlreadyActive)
 // the right byte counters and render once complete.
 TEST(Utf8Phase, ThreeAndFourByteSequencesCollect)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
 
     feed(doc, "\xE2");
@@ -1514,7 +1523,7 @@ TEST(Utf8Phase, ThreeAndFourByteSequencesCollect)
 // raw byte is flushed to the line instead of being swallowed.
 TEST(Utf8Phase, BogusLeadByteFlushedRaw)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
     feed(doc, "a\x85z");
     EXPECT_EQ(NONE, doc.m_phase);
@@ -1528,7 +1537,7 @@ TEST(Utf8Phase, BogusLeadByteFlushedRaw)
 // bytes are flushed and the ASCII byte displays normally.
 TEST(Utf8Phase, AsciiMidSequenceAbortsCollection)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
     feed(doc, "\xC3");
     EXPECT_EQ(HAVE_UTF8_CHARACTER, doc.m_phase);
@@ -1543,7 +1552,7 @@ TEST(Utf8Phase, AsciiMidSequenceAbortsCollection)
 // phase handlers (the refusal responses land on the wire).
 TEST(TelnetDispatch, WontDoDontPhasesAnswered)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     DispFakeTransport* t = new DispFakeTransport();
     doc.m_pTransport = t;
 
@@ -1568,7 +1577,7 @@ TEST(TelnetDispatch, WontDoDontPhasesAnswered)
 // IAC IAC is data, not command: exactly one 0xFF byte lands on the line.
 TEST(TelnetDispatch, DoubledIacIsLiteralByte)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "\xFF\xFF");
     ASSERT_TRUE(doc.m_pCurrentLine != NULL);
     EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "\xFF");
@@ -1579,7 +1588,7 @@ TEST(TelnetDispatch, DoubledIacIsLiteralByte)
 // the PlaySoundFile arm (file configured); neither corrupts the line.
 TEST(DisplayArms, BeepArmsDoNotAffectLineText)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_enable_beeps = 1;
     feed(doc, "a\ab");
     EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "ab");
@@ -1592,7 +1601,7 @@ TEST(DisplayArms, BeepArmsDoNotAffectLineText)
 // Tab at or past the wrap column starts a soft new line instead of padding.
 TEST(DisplayArms, TabAtWrapColumnSoftWraps)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_wrap = TRUE;
     doc.m_nWrapColumn = 20;
     feed(doc, "12345678901234567890");   // exactly at the wrap column
@@ -1609,7 +1618,7 @@ TEST(DisplayArms, TabAtWrapColumnSoftWraps)
 // line, switching to the echo colour mid-line.
 TEST(DisplayArms, KeepCommandsOnSameLineUsesEchoColour)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bKeepCommandsOnSameLine = TRUE;
     doc.m_echo_colour = 11;              // custom palette index, not SAMECOLOUR
     feed(doc, "prompt> ");               // partial MUD line
@@ -1627,7 +1636,7 @@ TEST(DisplayArms, KeepCommandsOnSameLineUsesEchoColour)
 // line's opening style.
 TEST(DisplayArms, UserInputFreshLineStampsEchoColour)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_echo_colour = 3;
     doc.DisplayMsg("north\n", 6, USER_INPUT);
     CLine* l0 = nth_line(doc, 0);
@@ -1643,7 +1652,7 @@ TEST(DisplayArms, UserInputFreshLineStampsEchoColour)
 // custom 15-on-0 arm.
 TEST(DisplayArms, NoteSameColourCustom16DefaultArm)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bNotesInRGB = false;
     doc.m_iNoteTextColour = SAMECOLOUR;
     doc.m_bCustom16isDefaultColour = TRUE;
@@ -1661,7 +1670,7 @@ TEST(DisplayArms, NoteSameColourCustom16DefaultArm)
 // reverts the MXP mode (mode_change -1) and resets the phase.
 TEST(MxpSpecialPhase, NewlineEndsRoomNameCollection)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iUseMXP = eOnCommandMXP;
     doc.MXP_On();
     doc.m_phase = HAVE_MXP_ROOM_NAME;
@@ -1676,7 +1685,7 @@ TEST(MxpSpecialPhase, NewlineEndsRoomNameCollection)
 // discarded wholesale.
 TEST(MxpSpecialPhase, ScriptModeDiscardsIncomingText)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iUseMXP = eOnCommandMXP;
     doc.MXP_On();
     doc.m_bMXP_script = true;
@@ -1688,7 +1697,7 @@ TEST(MxpSpecialPhase, ScriptModeDiscardsIncomingText)
 // mode immediately.
 TEST(MxpSpecialPhase, SecureOnceRevertsOnNonTag)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iUseMXP = eOnCommandMXP;
     doc.MXP_On();
     doc.m_iMXP_mode = eMXP_secure_once;
@@ -1703,7 +1712,7 @@ TEST(MxpSpecialPhase, SecureOnceRevertsOnNonTag)
 // queued direction from the map list.
 TEST(PrevLineArms, MappingFailureLineRemovesLastDirection)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bMapping = TRUE;
     doc.m_strMappingFailure = "Alas, you cannot go that way.";
     doc.m_strMapList.AddTail("north");
@@ -1716,7 +1725,7 @@ TEST(PrevLineArms, MappingFailureLineRemovesLastDirection)
 // Mapping: the regexp variant of the failure matcher.
 TEST(PrevLineArms, MappingFailureRegexpVariant)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bMapping = TRUE;
     doc.m_bMapFailureRegexp = 1;
     doc.m_strMappingFailure = "cannot go";
@@ -1731,8 +1740,8 @@ TEST(PrevLineArms, MappingFailureRegexpVariant)
 // disturbing the line list.
 TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
 {
-    CMUSHclientDoc doc = make_doc();
-    CChatSocket* snooper = new CChatSocket();
+    CMUSHclientDoc doc; make_doc(doc);
+    CChatSocket* snooper = new CChatSocket(&doc);
     snooper->m_iChatStatus = eChatConnected;
     snooper->m_bCanSnoop = true;
     snooper->m_bHeIsSnooping = true;
@@ -1756,7 +1765,7 @@ TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
 // open <span>, underline wraps in <u>, and spans/fonts are closed at the end.
 TEST(PrevLineArms, HtmlColourLogEmitsFontSpanUnderline)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     char path[128];
     snprintf(path, sizeof path, "/tmp/mc_test_disp_%d.html", (int)getpid());
     ASSERT_EQ((long)eOK, doc.OpenLog(path, FALSE));
@@ -1783,7 +1792,7 @@ TEST(PrevLineArms, HtmlColourLogEmitsFontSpanUnderline)
 // FormatTime substitution before being written.
 TEST(PrevLineArms, OutputLogPreambleFormatsTimeCodes)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bLogOutput = TRUE;
     doc.m_strLogLinePreambleOutput = "[%Y] ";
     doc.m_strLogLinePostambleOutput = " {%Y}";
@@ -1813,7 +1822,7 @@ TEST(PrevLineArms, OutputLogPreambleFormatsTimeCodes)
 // from the pipeline itself; plain-HTML mode escapes the markup instead.
 TEST(PrevLineArms, HtmlColourOutputLoggingFromPipeline)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bLogOutput = TRUE;
     doc.m_bLogHTML = TRUE;
     doc.m_bLogInColour = TRUE;
@@ -1833,7 +1842,7 @@ TEST(PrevLineArms, HtmlColourOutputLoggingFromPipeline)
     EXPECT_TRUE(strstr(buf, "red output line") != nullptr);
 
     // plain-HTML (no colour) escapes markup characters
-    CMUSHclientDoc doc2 = make_doc();
+    CMUSHclientDoc doc2; make_doc(doc2);
     doc2.m_bLogOutput = TRUE;
     doc2.m_bLogHTML = TRUE;
     doc2.m_bLogInColour = FALSE;
@@ -1853,7 +1862,7 @@ TEST(PrevLineArms, HtmlColourOutputLoggingFromPipeline)
 // Notes logged with '%'-bearing note preamble/postamble format the time.
 TEST(PrevLineArms, NoteLogPreambleFormatsTimeCodes)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bLogNotes = TRUE;
     doc.m_strLogLinePreambleNotes = "[N%Y] ";
     doc.m_strLogLinePostambleNotes = " {N%Y}";
@@ -1877,13 +1886,13 @@ TEST(PrevLineArms, NoteLogPreambleFormatsTimeCodes)
 // Pueblo announce variants: detection off via "no MXP", and level 2.50.
 TEST(PuebloTest, NoMxpSettingAndLevel250)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bPueblo = TRUE;
     doc.m_iUseMXP = eNoMXP;
     feed(doc, "This world is Pueblo 1.10 enhanced.\n");
     EXPECT_TRUE(!doc.m_bPuebloActive);        // refused: MXP set to "No"
 
-    CMUSHclientDoc doc2 = make_doc();
+    CMUSHclientDoc doc2; make_doc(doc2);
     DispFakeTransport* t = new DispFakeTransport();
     doc2.m_pTransport = t;
     doc2.m_bPueblo = TRUE;
@@ -1898,7 +1907,7 @@ TEST(PuebloTest, NoMxpSettingAndLevel250)
 // restore path clears m_bNotesInRGB instead of putting colours back.
 TEST(NotingR5, DeferredNoteDrainWithoutRgbColours)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "partial");
     doc.m_bNotesNotWantedNow = true;
     doc.m_bNotesInRGB = false;     // plain palette notes
@@ -1917,7 +1926,7 @@ TEST(NotingR5, DeferredNoteDrainWithoutRgbColours)
 // (the DBCS split-point arm), not mid-character.
 TEST(WrapR5, Big5DoubleByteSplitPoint)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_wrap = TRUE;
     doc.m_nWrapColumn = 20;
     doc.m_bUTF_8 = FALSE;
@@ -1936,7 +1945,7 @@ TEST(WrapR5, Big5DoubleByteSplitPoint)
 // DisplayMsg / SetNewLineColour guards when no line exists yet.
 TEST(GuardsR5, NoCurrentLineAndNoLinePositions)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "seed\n");
 
     // SetNewLineColour with no current line: silently returns.  (The saved

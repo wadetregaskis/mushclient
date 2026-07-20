@@ -10,7 +10,10 @@
 // the value is deducible headless.
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (doc_stub.h deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
 #include "scripting/errors.h"   // eOK etc. (self-sufficiency for the
                                 // real-header flip; no-op today)
 
@@ -19,11 +22,9 @@
 #include <string>
 #include <unistd.h>
 
-static CMUSHclientDoc make_doc()
+static void make_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_iConnectPhase = eConnectConnectedToMud;
-    return doc;
 }
 
 static void feed(CMUSHclientDoc& doc, const char* s)
@@ -42,7 +43,7 @@ static std::string vstr(const VARIANT& v)
 // methods_info.cpp GetInfo: codes 1-89 are the string group.
 TEST(GetInfo, StringCodesAnswerVtBstr)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     static const int codes[] = {
         1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
         21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
@@ -62,7 +63,7 @@ TEST(GetInfo, StringCodesAnswerVtBstr)
 // methods_info.cpp GetInfo: codes 101-125 (as implemented) are booleans.
 TEST(GetInfo, BooleanCodesAnswerVtBool)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     static const int codes[] = {
         101,102,103,104,105,106,107,108,109,110,111,112,113,114,
         115,118,119,120,121,122,123,124,125 };
@@ -83,7 +84,7 @@ TEST(GetInfo, BooleanCodesAnswerVtBool)
 // VT_I2 / VT_R8 — codified separately below).
 TEST(GetInfo, NumericCodesAnswerVtI4)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     static const int codes[] = {
         201,202,203,204,205,206,207,208,209,210,
         211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,
@@ -118,7 +119,7 @@ TEST(GetInfo, NumericCodesAnswerVtI4)
 // scripts can distinguish "no such code" from "no value yet".
 TEST(GetInfo, UnknownCodeAnswersVtNull)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_EQ(VT_NULL, (int)doc.GetInfo(0).vt);
     EXPECT_EQ(VT_NULL, (int)doc.GetInfo(90).vt);      // hole after string block
     EXPECT_EQ(VT_NULL, (int)doc.GetInfo(311).vt);
@@ -131,7 +132,7 @@ TEST(GetInfo, UnknownCodeAnswersVtNull)
 // The string arms reflect the live document fields verbatim.
 TEST(GetInfo, StringArmsReflectDocumentFields)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_server    = "mud.example.com";
     doc.m_mush_name = "Example World";
     doc.m_notes     = "some world notes";
@@ -151,7 +152,7 @@ TEST(GetInfo, StringArmsReflectDocumentFields)
 // GetInfo(64) is the current working directory WITH a trailing slash.
 TEST(GetInfo, CurrentDirectoryHasTrailingSlash)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     std::string dir = vstr(doc.GetInfo(64));
     ASSERT_TRUE(!dir.empty());
     EXPECT_EQ('/', dir[dir.size() - 1]);
@@ -165,7 +166,7 @@ TEST(GetInfo, CurrentDirectoryHasTrailingSlash)
 // (codifies the comment at the top of methods_info.cpp).
 TEST(GetInfo, OsVersionStubIsZeroHeadless)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_STREQ("", vstr(doc.GetInfo(77)).c_str());
     EXPECT_EQ(0L, doc.GetInfo(265).lVal);
     EXPECT_EQ(0L, doc.GetInfo(266).lVal);
@@ -177,7 +178,7 @@ TEST(GetInfo, OsVersionStubIsZeroHeadless)
 // derived from m_iConnectPhase, not stored flags.
 TEST(GetInfo, ConnectPhaseBooleansTrackPhase)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     doc.m_iConnectPhase = eConnectConnectedToMud;
     EXPECT_FALSE(doc.GetInfo(106).boolVal);   // not disconnected
@@ -198,7 +199,7 @@ TEST(GetInfo, ConnectPhaseBooleansTrackPhase)
 // GetInfo(218) counts variables; 224 counts output-buffer lines.
 TEST(GetInfo, CountsTrackVariableAndLineStores)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_EQ(0L, doc.GetInfo(218).lVal);
     doc.SetVariable("alpha", "1");
     doc.SetVariable("beta",  "2");
@@ -215,7 +216,7 @@ TEST(GetInfo, CountsTrackVariableAndLineStores)
 // exists (which the constructor guarantees).
 TEST(GetInfo, OutputAvailableMirrorsCurrentLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_EQ((BOOL)(doc.m_pCurrentLine != NULL), doc.GetInfo(285).boolVal);
     feed(doc, "line\n");
     EXPECT_TRUE(doc.GetInfo(285).boolVal);
@@ -225,7 +226,7 @@ TEST(GetInfo, OutputAvailableMirrorsCurrentLine)
 // derive from the m_gui_* fields, and the text rectangle answers its fields.
 TEST(GetInfo, HeadlessGuiMetricsDeriveFromGuiFields)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_gui_rows = 25;
     doc.m_gui_cols = 80;
     doc.m_gui_font_height = 10;
@@ -259,7 +260,7 @@ TEST(GetInfo, HeadlessGuiMetricsDeriveFromGuiFields)
 // GetInfo(299)/(300): the shim code pages are the classic Windows defaults.
 TEST(GetInfo, KeyStateAndCodePagesHeadless)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_EQ(0L,    doc.GetInfo(294).lVal);
     EXPECT_EQ(1252L, doc.GetInfo(299).lVal);   // ANSI: Western European
     EXPECT_EQ(437L,  doc.GetInfo(300).lVal);   // OEM: US
@@ -269,8 +270,9 @@ TEST(GetInfo, KeyStateAndCodePagesHeadless)
 // current-time arms always answer VT_DATE.
 TEST(GetInfo, ZeroDatesAnswerEmptyLiveDatesAnswerDate)
 {
-    CMUSHclientDoc doc = make_doc();
-    EXPECT_EQ(VT_EMPTY, (int)doc.GetInfo(301).vt);   // never connected
+    CMUSHclientDoc doc; make_doc(doc);
+    EXPECT_EQ(VT_DATE, (int)doc.GetInfo(301).vt);    // B-3: real ctor sets
+                                                     // m_tConnectTime=now (doc_construct.cpp:345)
     EXPECT_EQ(VT_DATE,  (int)doc.GetInfo(304).vt);   // now
     EXPECT_EQ(VT_DATE,  (int)doc.GetInfo(305).vt);   // client start
     EXPECT_EQ(VT_DATE,  (int)doc.GetInfo(306).vt);   // world start
@@ -285,7 +287,7 @@ TEST(GetInfo, ZeroDatesAnswerEmptyLiveDatesAnswerDate)
 // a bad InfoType answers VT_NULL (same convention as GetStyleInfo).
 TEST(GetLineInfo, RangeAndTypeConventions)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "hello world\n");
 
     EXPECT_EQ(VT_EMPTY, (int)doc.GetLineInfo(0, 1).vt);      // 0: below range
@@ -300,7 +302,7 @@ TEST(GetLineInfo, RangeAndTypeConventions)
 // number and style count of a real received line.
 TEST(GetLineInfo, DescribesReceivedLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "hello world\n");
 
     VARIANT v = doc.GetLineInfo(1, 1);                   // text
@@ -319,7 +321,7 @@ TEST(GetLineInfo, DescribesReceivedLine)
 // GetLineInfo type 4: a world.Note line reports the COMMENT flag.
 TEST(GetLineInfo, NoteLineReportsCommentFlag)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Note("a note");
     EXPECT_TRUE(doc.GetLineInfo(1, 4).boolVal);
     EXPECT_STREQ("a note", vstr(doc.GetLineInfo(1, 1)).c_str());
@@ -331,7 +333,7 @@ TEST(GetLineInfo, NoteLineReportsCommentFlag)
 // answer VT_EMPTY, bad info type answers VT_NULL.
 TEST(GetStyleInfo, RangeAndTypeConventions)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "styled\n");
 
     EXPECT_EQ(VT_EMPTY, (int)doc.GetStyleInfo(0, 1, 1).vt);
@@ -345,7 +347,7 @@ TEST(GetStyleInfo, RangeAndTypeConventions)
 // starting at column 1.
 TEST(GetStyleInfo, PlainRunTextColumnAndAction)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "plain text\n");
 
     EXPECT_STREQ("plain text", vstr(doc.GetStyleInfo(1, 1, 1)).c_str());
@@ -361,7 +363,7 @@ TEST(GetStyleInfo, PlainRunTextColumnAndAction)
 // hint recorded on the style's CAction.
 TEST(GetStyleInfo, HyperlinkRunCarriesActionAndHint)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Hyperlink("http://example.com/", "click here", "the hint",
                   "white", "black", FALSE);
     doc.Note("");    // close the hyperlink line
@@ -382,7 +384,7 @@ TEST(GetStyleInfo, HyperlinkRunCarriesActionAndHint)
     EXPECT_EQ(VT_BOOL, (int)doc.GetStyleInfo(1, link, 8).vt); // bold flag typed
 
     // with URL=TRUE the same call makes a real hyperlink action (type 2)
-    CMUSHclientDoc doc2 = make_doc();
+    CMUSHclientDoc doc2; make_doc(doc2);
     doc2.Hyperlink("http://example.com/", "web link", "", "white", "black", TRUE);
     doc2.Note("");
     long styles2 = doc2.GetLineInfo(1, 11).lVal;
@@ -399,7 +401,7 @@ TEST(GetStyleInfo, HyperlinkRunCarriesActionAndHint)
 // "no selection" contract).
 TEST(InfoGetters, NoSelectionWithoutView)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_EQ(0L, doc.GetSelectionStartLine());
     EXPECT_EQ(0L, doc.GetSelectionEndLine());
     EXPECT_EQ(0L, doc.GetSelectionStartColumn());
@@ -410,7 +412,7 @@ TEST(InfoGetters, NoSelectionWithoutView)
 // is zero when never connected.
 TEST(InfoGetters, ByteCountersAndDuration)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_nBytesOut = 123;
     doc.m_nBytesIn  = 456;
     EXPECT_EQ(123L, doc.GetSentBytes());
@@ -429,7 +431,7 @@ TEST(InfoGetters, ByteCountersAndDuration)
 // WorldName/WorldAddress/WorldPort/GetWorldID reflect the document.
 TEST(InfoGetters, WorldIdentityGetters)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_mush_name = "My World";
     doc.m_server    = "mud.host.org";
     doc.m_port      = 4000;
@@ -446,7 +448,7 @@ TEST(InfoGetters, WorldIdentityGetters)
 // number itself as a string.
 TEST(InfoGetters, ErrorDescKnownAndUnknown)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_STREQ("No error", (const char*)CString(doc.ErrorDesc(0)));
     EXPECT_STREQ("The world is already open",
                  (const char*)CString(doc.ErrorDesc(30001)));
@@ -459,7 +461,7 @@ TEST(InfoGetters, ErrorDescKnownAndUnknown)
 // "" (never an error).
 TEST(InfoGetters, HostLookups)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     // MFC parity: a never-created COleSafeArray detaches as VT_EMPTY, so a
     // blank host name answers an empty VARIANT (nil in Lua).
@@ -492,7 +494,7 @@ TEST(InfoGetters, HostLookups)
 // IsConnected/GetLineCount plain getters.
 TEST(InfoGetters, ConnectionAndLineCount)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_TRUE(doc.IsConnected());
     doc.m_iConnectPhase = eConnectNotConnected;
     EXPECT_FALSE(doc.IsConnected());
@@ -510,7 +512,7 @@ TEST(InfoGetters, ConnectionAndLineCount)
 // unknown names.
 TEST(GlobalOptions, LookupNumericAlphaAndUnknown)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     App.m_bAutoConnectWorlds = 1;
     VARIANT v = App.GetGlobalOption("AutoConnectWorlds");
@@ -536,7 +538,7 @@ TEST(GlobalOptions, LookupNumericAlphaAndUnknown)
 // GetGlobalOptionList enumerates the name of every numeric and alpha option.
 TEST(GlobalOptions, ListEnumeratesEveryOptionName)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     VARIANT v = doc.GetGlobalOptionList();
     ASSERT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);
     COleSafeArray sa;
@@ -601,7 +603,7 @@ TEST(GlobalOptions, FreshDatabaseSeedAndReadShareDirectoryDefaults)
 
 TEST(GlobalOptions, ShowGlobalOptionsNotesEveryOption)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     long before = (long)doc.m_LineList.GetCount();
     App.ShowGlobalOptions(&doc);
     EXPECT_GT((long)doc.m_LineList.GetCount(), before + 50);
@@ -624,7 +626,7 @@ TEST(GetInfoR4, TimingCodesWithCounterFrequency)
 {
     LONGLONG saved = App.m_iCounterFrequency;
     App.m_iCounterFrequency = 1000000;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     // give a trigger and an alias a compiled regexp so the sum loops run
     doc.AddTrigger("t1", "match this", "", 1, -1, 0, "", "");
@@ -643,7 +645,7 @@ TEST(GetInfoR4, TimingCodesWithCounterFrequency)
 // Log-file size arm (231) with a live log.
 TEST(GetInfoR4, LogFileSizeWhileOpen)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     char path[128];
     snprintf(path, sizeof path, "/tmp/mc_test_info_%d.log", (int)getpid());
     ASSERT_EQ((long)eOK, doc.OpenLog(path, FALSE));
@@ -659,7 +661,7 @@ TEST(GetInfoR4, LogFileSizeWhileOpen)
 // the world-view seam.
 TEST(GetInfoR4, SelectionAndScrollThroughWorldView)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     FakeWorldView view;
     view.cmd = "hello world";
     view.cmdSel.start = 2;
@@ -693,7 +695,7 @@ TEST(GetInfoR4, KeyStateBitmaskThroughHook)
             default: return 0;
         }
     };
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     VARIANT v = doc.GetInfo(294);
     EXPECT_EQ((int)VT_I4, (int)v.vt);
     EXPECT_EQ(0x7EFFF & ~0x1000, (int)(v.lVal & 0x7FFFF));
@@ -703,7 +705,7 @@ TEST(GetInfoR4, KeyStateBitmaskThroughHook)
 // Date codes 302/303 answer VT_DATE once the timestamps are non-zero.
 TEST(GetInfoR4, FlushAndScriptModDates)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_LastFlushTime = CTime::GetCurrentTime();
     doc.m_timeScriptFileMod = CTime::GetCurrentTime();
     VARIANT v = doc.GetInfo(302);
@@ -717,7 +719,7 @@ TEST(GetInfoR4, LineInfoFlagAndTimingCodes)
 {
     LONGLONG saved = App.m_iCounterFrequency;
     App.m_iCounterFrequency = 1000000;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "plain line\r\n");
 
     VARIANT v = doc.GetLineInfo(1, 6);   // LOG_LINE flag
@@ -742,7 +744,7 @@ TEST(GetInfoR4, LineInfoFlagAndTimingCodes)
 // GetStyleInfo with a style number beyond the end answers empty.
 TEST(GetInfoR4, StyleInfoBeyondLastStyleEmpty)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     feed(doc, "styled\r\n");
     VARIANT v = doc.GetStyleInfo(1, 99, 1);
     EXPECT_EQ((int)VT_EMPTY, (int)v.vt);

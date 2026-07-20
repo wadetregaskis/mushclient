@@ -9,7 +9,11 @@
 // swallows the bytes (same shape as tests/test_pal_transport.cpp).
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
 #include "pal/itransport.h"
 
 // ── helpers ───────────────────────────────────────────────────────────────
@@ -27,16 +31,14 @@ struct FakeTransport : pal::ITransport {
 };
 } // namespace
 
-static CMUSHclientDoc make_doc()
+static void make_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_enable_aliases   = TRUE;
     doc.m_enable_triggers  = TRUE;
     doc.m_display_my_input = FALSE;   // don't echo — keeps output clean
     doc.m_iConnectPhase    = eConnectConnectedToMud;  // simulate live connection
     // the doc destructor tears the transport down (TeardownTransport)
     doc.m_pTransport = new FakeTransport();
-    return doc;
 }
 
 // Add a plain-text alias to doc.
@@ -76,7 +78,7 @@ static void type_command(CMUSHclientDoc& doc, const char* cmd)
 TEST(AliasTest, NoAliasPassesCommandThrough)
 {
     // With no aliases, the raw command is sent to the MUD.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     long before = doc.m_nTotalLinesSent;
     type_command(doc, "look");
     EXPECT_EQ(before + 1, doc.m_nTotalLinesSent);
@@ -84,7 +86,7 @@ TEST(AliasTest, NoAliasPassesCommandThrough)
 
 TEST(AliasTest, MatchingAliasIncreasesMatchCount)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CAlias* a = add_alias(doc, "n", "go north");
 
     type_command(doc, "n");
@@ -94,7 +96,7 @@ TEST(AliasTest, MatchingAliasIncreasesMatchCount)
 TEST(AliasTest, MatchingAliasSendsContents)
 {
     // Alias "n" → "go north": typing "n" should result in "go north" being sent.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     add_alias(doc, "n", "go north");
 
     long before = doc.m_nTotalLinesSent;
@@ -105,7 +107,7 @@ TEST(AliasTest, MatchingAliasSendsContents)
 
 TEST(AliasTest, NonMatchingCommandPassesThrough)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CAlias* a = add_alias(doc, "n", "go north");
 
     long before = doc.m_nTotalLinesSent;
@@ -117,7 +119,7 @@ TEST(AliasTest, NonMatchingCommandPassesThrough)
 
 TEST(AliasTest, DisabledAliasDoesNotFire)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CAlias* a = add_alias(doc, "n", "go north");
     a->bEnabled = FALSE;
 
@@ -127,7 +129,7 @@ TEST(AliasTest, DisabledAliasDoesNotFire)
 
 TEST(AliasTest, AliasesDisabledGlobally)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_enable_aliases = FALSE;
     CAlias* a = add_alias(doc, "n", "go north");
 
@@ -137,7 +139,7 @@ TEST(AliasTest, AliasesDisabledGlobally)
 
 TEST(AliasTest, CaseInsensitiveAlias)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CAlias* a = add_alias(doc, "NORTH");
     a->bIgnoreCase = TRUE;
     // Recompile with CASELESS flag
@@ -152,7 +154,7 @@ TEST(AliasTest, CaseInsensitiveAlias)
 TEST(AliasTest, RegexpAliasWildcard)
 {
     // Alias matching "^say (.+)" with regexp=true and send "%1"
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CAlias* a = new CAlias();
     a->name      = CString("^say (.+)$");
     a->contents  = CString("%1");
@@ -174,7 +176,7 @@ TEST(AliasTest, RegexpAliasWildcard)
 TEST(AliasTest, MultipleAliasesFirstMatchWins)
 {
     // By default bKeepEvaluating=FALSE, so only the first match fires.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CAlias* a1 = add_alias(doc, "n", "go north");
     CAlias* a2 = add_alias(doc, "n", "go south");  // same pattern, later sequence
 
@@ -188,7 +190,7 @@ TEST(AliasTest, MultipleAliasesFirstMatchWins)
 
 TEST(AliasTest, EmptyCommandIgnored)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     long before = doc.m_nTotalLinesSent;
     type_command(doc, "");
     // EvaluateCommand returns early for empty input — nothing sent.
@@ -199,7 +201,7 @@ TEST(AliasTest, SendToOutputDoesNotIncreaseSentCount)
 {
     // An alias that sends to output (eSendToOutput) should NOT increment
     // m_nTotalLinesSent, since nothing goes to the MUD.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     add_alias(doc, "status", "HP: 100", eSendToOutput);
 
     long before = doc.m_nTotalLinesSent;
@@ -214,7 +216,7 @@ TEST(AliasTest, SendToOutputDoesNotIncreaseSentCount)
 // same command afterwards passes through unmatched.
 TEST(AliasTest, OneShotAliasDeletedAfterFirstMatch)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CAlias* a = add_alias(doc, "once", "hi there");
     a->bOneShot = TRUE;
     a->strInternalName = CString("once");   // the key one-shot deletion uses
@@ -236,7 +238,7 @@ TEST(AliasTest, OneShotAliasDeletedAfterFirstMatch)
 // stripped from the typed command before alias matching.
 TEST(AliasTest, CarriageReturnsStrippedBeforeAliasMatch)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CAlias* a = add_alias(doc, "north", "go north");
 
     type_command(doc, "north\r");
@@ -249,7 +251,7 @@ TEST(AliasTest, CarriageReturnsStrippedBeforeAliasMatch)
 // exception is caught, the command consumed, nothing written to the MUD.
 TEST(AliasTest, UndefinedVariableInAliasSendAbortsSend)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CAlias* a = add_alias(doc, "n", "kill @undefined_variable");
     a->bExpandVariables = TRUE;
 
@@ -284,7 +286,7 @@ static CAlias* add_plugin_alias(CPlugin* p, const char* match, const char* send)
 TEST(AliasTest, NegativeSequencePluginAliasEvaluatedBeforeWorld)
 {
     {   // negative sequence: plugin alias evaluated (and sent) first
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         CAlias* wa = add_alias(doc, "n", "world north");
         CPlugin* p = new CPlugin(&doc);
         p->m_bSaveState = false;
@@ -299,7 +301,7 @@ TEST(AliasTest, NegativeSequencePluginAliasEvaluatedBeforeWorld)
                      static_cast<FakeTransport*>(doc.m_pTransport)->sent.c_str());
     }
     {   // positive sequence: the world's alias runs (and sends) first
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         add_alias(doc, "n", "world north");
         CPlugin* p = new CPlugin(&doc);
         p->m_bSaveState = false;
@@ -325,7 +327,7 @@ static FakeTransport* wire(CMUSHclientDoc& doc)
 // itself is deleted)".
 TEST(CommandTest, LeadingStackCharDisablesStacking)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_enable_command_stack = TRUE;
     doc.m_strCommandStackCharacter = ";";
 
@@ -342,7 +344,7 @@ TEST(CommandTest, LeadingStackCharDisablesStacking)
 // literal ';'.
 TEST(CommandTest, DoubledStackCharSendsLiteralStackChar)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_enable_command_stack = TRUE;
     doc.m_strCommandStackCharacter = ";";
 
@@ -354,7 +356,7 @@ TEST(CommandTest, DoubledStackCharSendsLiteralStackChar)
 // (like aliases) work within command-stack".
 TEST(CommandTest, AliasesMatchWithinCommandStack)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_enable_command_stack = TRUE;
     doc.m_strCommandStackCharacter = ";";
     CAlias* a = add_alias(doc, "n", "go north");
@@ -368,7 +370,7 @@ TEST(CommandTest, AliasesMatchWithinCommandStack)
 // empty line" — Execute("") sends exactly one blank line.
 TEST(CommandTest, EmptyCommandSendsOneBlankLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.Execute("");
     EXPECT_STREQ("\r\n", wire(doc)->sent.c_str());
     EXPECT_EQ(1L, doc.m_nTotalLinesSent);
@@ -380,7 +382,7 @@ TEST(CommandTest, EmptyCommandSendsOneBlankLine)
 // terminates instead of looping forever.
 TEST(CommandTest, ExecutionDepthCapStopsRecursiveAliases)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CAlias* a = add_alias(doc, "loop", "loop", eSendToExecute);
 
     doc.Execute("loop");                     // must terminate, not recurse forever
@@ -397,7 +399,7 @@ TEST(CommandTest, ExecutionDepthCapStopsRecursiveAliases)
 // eItemInUse)" — an alias deleting itself from its own script survives.
 TEST(AliasScript, DeleteAliasFromOwnScriptReturnsItemInUse)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     CScriptEngine* engine = new CScriptEngine(&doc, "lua");
     ASSERT_TRUE(!engine->CreateScriptEngine());
@@ -444,7 +446,7 @@ static std::string vs(const VARIANT& v)
 // eReplace converts the duplicate error into an overwrite.
 TEST(AliasApi, AddAliasValidatesInput)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     EXPECT_EQ((long)eOK, doc.AddAlias("good", "north", "go north", eEnabled, ""));
     EXPECT_EQ((long)eOK, doc.IsAlias("good"));
@@ -477,7 +479,7 @@ TEST(AliasApi, AddAliasValidatesInput)
 // GetAlias hands back match/response/flags through VARIANT out-params.
 TEST(AliasApi, GetAliasRoundTrip)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddAlias("rt", "tell * *", "say %1",
                                       eEnabled | eKeepEvaluating, ""));
 
@@ -502,7 +504,7 @@ TEST(AliasApi, GetAliasRoundTrip)
 // GetAliasList enumerates the labels of every alias.
 TEST(AliasApi, GetAliasListEnumeratesLabels)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.AddAlias("one", "m1", "", eEnabled, "");
     doc.AddAlias("two", "m2", "", eEnabled, "");
 
@@ -526,7 +528,7 @@ TEST(AliasApi, GetAliasListEnumeratesLabels)
 // the representative arms answer live alias state.
 TEST(AliasApi, GetAliasInfoArms)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddAlias("ai", "match*", "send this",
                                       eEnabled | eTemporary, ""));
 
@@ -548,7 +550,7 @@ TEST(AliasApi, GetAliasInfoArms)
 // unknown names and unknown aliases each answer their own code.
 TEST(AliasApi, AliasOptionRoundTripAndErrors)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddAlias("oa", "m", "x", eEnabled, ""));
 
     EXPECT_EQ((long)eAliasNotFound, doc.SetAliasOption("zz", "enabled", "n"));
@@ -579,7 +581,7 @@ TEST(AliasApi, AliasOptionRoundTripAndErrors)
 // the whole matching text.
 TEST(AliasApi, WildcardsCapturedOnMatch)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddAlias("wc", "tell * *", "", eEnabled, ""));
 
     type_command(doc, "tell bob hello");
@@ -595,7 +597,7 @@ TEST(AliasApi, WildcardsCapturedOnMatch)
 // swept by DeleteTemporaryAliases.
 TEST(AliasApi, GroupsAndTemporarySweep)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.AddAlias("g1", "m1", "", eEnabled, "");
     doc.AddAlias("g2", "m2", "", eEnabled, "");
     doc.AddAlias("solo", "m3", "", eEnabled, "");
@@ -625,7 +627,7 @@ TEST(AliasApi, GroupsAndTemporarySweep)
 // EnableAlias toggles one alias and reports a missing one.
 TEST(AliasApi, EnableAliasToggleAndMissing)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.AddAlias("ea", "m", "", eEnabled, "");
     EXPECT_EQ((long)eOK, doc.EnableAlias("ea", FALSE));
     EXPECT_FALSE(doc.GetAliasInfo("ea", 6).boolVal);
@@ -642,7 +644,7 @@ TEST(AliasApi, EnableAliasToggleAndMissing)
 // EvaluateCommand speedwalk prefix: "#2n" expands and queues "north" twice.
 TEST(EvaluateArms, SpeedwalkPrefixExpandsAndSends)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_enable_speed_walk = TRUE;
     doc.m_speed_walk_prefix = "#";
     type_command(doc, "#2n");
@@ -657,7 +659,7 @@ TEST(EvaluateArms, SpeedwalkPrefixExpandsAndSends)
 // (nothing is sent).
 TEST(EvaluateArms, SpeedwalkPrefixErrorSendsNothing)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_enable_speed_walk = TRUE;
     doc.m_speed_walk_prefix = "#";
     type_command(doc, "#3(unclosed");
@@ -668,7 +670,7 @@ TEST(EvaluateArms, SpeedwalkPrefixErrorSendsNothing)
 // command.
 TEST(EvaluateArms, SpeedwalkWhileDisconnectedConsumed)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_enable_speed_walk = TRUE;
     doc.m_speed_walk_prefix = "#";
     doc.m_iConnectPhase = eConnectNotConnected;
@@ -679,8 +681,11 @@ TEST(EvaluateArms, SpeedwalkWhileDisconnectedConsumed)
 // Typing the QUIT macro sets m_bDisconnectOK (no auto-reconnect on quit).
 TEST(EvaluateArms, QuitMacroSetsDisconnectOk)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_macros[MAC_QUIT] = "quit";
+    // B-3: the real ctor (doc_construct.cpp:394) starts m_bDisconnectOK true;
+    // establish the precondition so the QUIT-sets-it toggle is still observable.
+    doc.m_bDisconnectOK = false;
     EXPECT_TRUE(!doc.m_bDisconnectOK);
     type_command(doc, "QUIT");             // CompareNoCase arm
     EXPECT_TRUE(doc.m_bDisconnectOK);
@@ -690,7 +695,7 @@ TEST(EvaluateArms, QuitMacroSetsDisconnectOk)
 // the typed line is displayed as user input and logged.
 TEST(EvaluateArms, AliasEchoDisplaysAndLogsTypedLine)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_display_my_input = TRUE;
     doc.m_log_input = TRUE;
     char path[128];
@@ -724,7 +729,7 @@ TEST(EvaluateArms, AliasEchoDisplaysAndLogsTypedLine)
 // Trace: a matched alias without a label is traced by its match text.
 TEST(EvaluateArms, TraceNotesMatchedAliasName)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bTrace = TRUE;
     add_alias(doc, "dance", "boogie");
     type_command(doc, "dance");
@@ -740,7 +745,7 @@ TEST(EvaluateArms, TraceNotesMatchedAliasName)
 // Alias with bOmitFromCommandHistory sets the doc-wide omit flag.
 TEST(EvaluateArms, AliasOmitFromCommandHistoryFlag)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CAlias* a = add_alias(doc, "secret", "hush");
     a->bOmitFromCommandHistory = TRUE;
     doc.m_bOmitFromCommandHistory = false;
@@ -755,7 +760,7 @@ TEST(EvaluateArms, AliasOmitFromCommandHistoryFlag)
 // (name, line, wildcards) — the embedded-callback path.
 TEST(EvaluateArms, AliasScriptReceivesNameLineAndWildcards)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CScriptEngine* engine = new CScriptEngine(&doc, "lua");
     ASSERT_TRUE(!engine->CreateScriptEngine());
     ASSERT_TRUE(!engine->Parse(CString(
@@ -792,7 +797,7 @@ TEST(EvaluateArms, AliasScriptReceivesNameLineAndWildcards)
 // overload lets CString->LPCTSTR bind the real body, as on Windows.
 TEST(EvaluateArms, TraceNotesExecutingAliasScript)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CScriptEngine* engine = new CScriptEngine(&doc, "lua");
     ASSERT_TRUE(!engine->CreateScriptEngine());
     ASSERT_TRUE(!engine->Parse(CString("function OnAlias() end\n"), "<test>"));
@@ -820,7 +825,7 @@ TEST(EvaluateArms, TraceNotesExecutingAliasScript)
 // Unlabelled alias script: the internal name (rev-map arm) is passed instead.
 TEST(EvaluateArms, UnlabelledAliasScriptGetsInternalName)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CScriptEngine* engine = new CScriptEngine(&doc, "lua");
     ASSERT_TRUE(!engine->CreateScriptEngine());
     ASSERT_TRUE(!engine->Parse(CString(
@@ -844,7 +849,7 @@ TEST(EvaluateArms, UnlabelledAliasScriptGetsInternalName)
 // (name, line, wildcards) — the ExecuteTriggerScript Lua path.
 TEST(EvaluateArms, TriggerScriptReceivesNameLineAndWildcards)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CScriptEngine* engine = new CScriptEngine(&doc, "lua");
     ASSERT_TRUE(!engine->CreateScriptEngine());
     ASSERT_TRUE(!engine->Parse(CString(
@@ -875,7 +880,7 @@ TEST(EvaluateArms, TriggerScriptReceivesNameLineAndWildcards)
 
 TEST(FixSendTextArms, DoubledEscapesAndDisabledExpansion)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.SetVariable("who", "Bob");
 
     // @@ → literal @; %% → literal %
@@ -892,7 +897,7 @@ TEST(FixSendTextArms, DoubledEscapesAndDisabledExpansion)
 
 TEST(FixSendTextArms, VariableExpansionAndEscapingArms)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.SetVariable("target", "a[b]*c");
 
     // regexp context (bFixRegexps + bIsRegexp): specials are escaped
@@ -914,7 +919,7 @@ TEST(FixSendTextArms, VariableExpansionAndEscapingArms)
 
 TEST(FixSendTextArms, VariableToScriptQuotingPerLanguage)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.SetVariable("v", "say \"hi\\there\" $5");
 
     // lua/script destination: backslashes then quotes escaped
@@ -936,7 +941,7 @@ TEST(FixSendTextArms, VariableToScriptQuotingPerLanguage)
 
 TEST(FixSendTextArms, VariableToHtmlLogFixed)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bLogHTML = TRUE;
     doc.SetVariable("h", "a<b>&c");
     CString r = doc.FixSendText("@h", eSendToLogFile, nullptr, "lua",
@@ -947,7 +952,7 @@ TEST(FixSendTextArms, VariableToHtmlLogFixed)
 
 TEST(FixSendTextArms, ExceptionArmsForBadVariables)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     // "@" with no name throws when exceptions are enabled
     bool threw = false;
@@ -974,7 +979,7 @@ TEST(FixSendTextArms, ExceptionArmsForBadVariables)
 
 TEST(FixSendTextArms, WildcardDigitNamedAndUnknownPercent)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     t_regexp* re = regcomp("get (\\w+) from (\\w+)", 0);
     ASSERT_TRUE(regexec(re, "get sword from chest"));
 
@@ -997,7 +1002,7 @@ TEST(FixSendTextArms, WildcardDigitNamedAndUnknownPercent)
 
 TEST(FixSendTextArms, NamedWildcardExpansion)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     t_regexp* re = regcomp("get (?<item>\\w+)", 0);
     ASSERT_TRUE(regexec(re, "get lantern"));
     CString r = doc.FixSendText("drop %<item> now", eSendToWorld, re, "lua",
@@ -1014,7 +1019,7 @@ TEST(FixSendTextArms, NamedWildcardExpansion)
 // valid one matches; a trigger with NO regexp at all is skipped outright.
 TEST(EvaluateArms, VariableExpandingTriggerRecompileArms)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     // recompiles to "(unclosed" → regcomp throws → catch arm → skipped
     CTrigger* bad = new CTrigger();
@@ -1078,7 +1083,7 @@ TEST(EvaluateArms, VariableExpandingTriggerRecompileArms)
 // sequence (the CheckConnected arm).
 TEST(AliasR5, SendToWorldWhileDisconnectedAborts)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iConnectPhase = eConnectNotConnected;
     CAlias* a = add_alias(doc, "n", "go north", eSendToWorld);
     bool omit = false;

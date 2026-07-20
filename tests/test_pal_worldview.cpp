@@ -7,7 +7,11 @@
 // the safety net for the P2 seam migration (now typed-only end to end).
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (doc_stub.h deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
 #include "pal/iworldview.h"
 
 #include <algorithm>
@@ -19,16 +23,14 @@
 #include "fake_worldview.h"
 
 // ── helpers ─────────────────────────────────────────────────────────────────
-static CMUSHclientDoc make_doc()
+static void make_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_iConnectPhase = eConnectConnectedToMud;
     doc.m_iFlags        = COLOUR_ANSI;
     doc.m_iForeColour   = WHITE;
     doc.m_iBackColour   = BLACK;
     // display step 7: the ctor seeds the in-list first line + its style and
     // the line-position index — no hand-rolled current line here any more
-    return doc;
 }
 
 static std::string line_text(const SOutputLine& l)
@@ -59,7 +61,7 @@ static void feed(CMUSHclientDoc& doc, const char* bytes)
 TEST(PalWorldView, InterfaceRecordsStyledOutput)
 {
     FakeWorldView view;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;   // drive the engine's output through the typed seam
 
     feed(doc, "\x1b[1;32mgreen\x1b[0m normal\n");
@@ -77,7 +79,7 @@ TEST(PalWorldView, InterfaceRecordsStyledOutput)
 TEST(PalWorldView, OneCommittedLinePerNewline)
 {
     FakeWorldView view;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;   // drive the engine's output through the typed seam
 
     feed(doc, "alpha\nbeta\ngamma\n");
@@ -96,7 +98,7 @@ TEST(PalWorldView, OneCommittedLinePerNewline)
 TEST(PalWorldView, StateHelpersDriveTheView)
 {
     FakeWorldView view;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;
 
     doc.EmitPaused(true);
@@ -115,7 +117,7 @@ TEST(PalWorldView, StateHelpersDriveTheView)
 // old m_fn_* fallbacks are gone) and the pulls report empty/zero.
 TEST(PalWorldView, StateHelpersNullHostIsInert)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     doc.EmitPaused(true);
     doc.EmitTitle("t1");
@@ -140,7 +142,7 @@ TEST(PalWorldView, StateHelpersNullHostIsInert)
 TEST(PalWorldView, CanvasHelpersDriveTheView)
 {
     FakeWorldView view;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;
 
     doc.EmitBackgroundColour(0x00204060);
@@ -168,7 +170,7 @@ TEST(PalWorldView, PullsReadFromTheView)
     view.cmd    = "look north";
     view.scroll = 42;
     view.sel    = { 3, 5, 7, 9 };
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;
 
     EXPECT_STREQ("look north", doc.GetCommandText().c_str());
@@ -183,7 +185,7 @@ TEST(PalWorldView, PullsReadFromTheView)
 TEST(PalWorldView, CommandFamilyDrivesTheView)
 {
     FakeWorldView view;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;
 
     // SetCommand honours the only-if-empty contract.
@@ -227,7 +229,7 @@ TEST(PalWorldView, CommandFamilyDrivesTheView)
 // SetCommandText false, empty pulls, no crashes.
 TEST(PalWorldView, CommandFamilyNullHostIsInert)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     EXPECT_TRUE(!doc.SetCommandText("kill rat"));
     EXPECT_STREQ("", doc.PushCommandText().c_str());
@@ -250,7 +252,7 @@ TEST(PalWorldView, CommandFamilyNullHostIsInert)
 TEST(PalWorldView, OutputFamilyDrivesTheView)
 {
     FakeWorldView view;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;
 
     doc.Note("a wild note appears");
@@ -297,7 +299,7 @@ TEST(PalWorldView, OutputFamilyDrivesTheView)
 // (callers keep their own defaults), and the rest are inert.
 TEST(PalWorldView, OutputFamilyNullHostIsInert)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     int x = 1, y = 2, w = 3, h = 4;
     EXPECT_TRUE(!doc.GetOutputRect(x, y, w, h));
@@ -316,7 +318,7 @@ TEST(PalWorldView, OutputFamilyNullHostIsInert)
 TEST(PalWorldView, WindowFamilyDrivesTheView)
 {
     FakeWorldView view;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;
 
     doc.EmitMainTitle("MUSHclient - test");
@@ -348,7 +350,7 @@ TEST(PalWorldView, WindowFamilyDrivesTheView)
 // trivially successful (the old null-callback path), the rest inert.
 TEST(PalWorldView, WindowFamilyNullHostIsInert)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     doc.EmitMainTitle("t");
     doc.MoveWorldWindowRect(1, 2, 3, 4);
@@ -366,7 +368,7 @@ TEST(PalWorldView, WindowFamilyNullHostIsInert)
 TEST(PalWorldView, InfobarFamilyDrivesTheView)
 {
     FakeWorldView view;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;
 
     doc.EmitInfobarShow(true);
@@ -396,7 +398,7 @@ TEST(PalWorldView, InfobarFamilyDrivesTheView)
 // With no view every infobar helper is inert; size reads back (0,0).
 TEST(PalWorldView, InfobarFamilyNullHostIsInert)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     doc.EmitInfobarShow(true);
     doc.EmitInfobarClear();
@@ -417,7 +419,7 @@ TEST(PalWorldView, InfobarFamilyNullHostIsInert)
 TEST(PalWorldView, PromptWithoutNewlineEmittedAsPendingRow)
 {
     FakeWorldView view;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;
 
     feed(doc, "> ");                              // prompt, no newline
@@ -438,7 +440,7 @@ TEST(PalWorldView, PromptWithoutNewlineEmittedAsPendingRow)
 TEST(PalWorldView, BlinkFlagEmitsItalicRun)
 {
     FakeWorldView view;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;
 
     feed(doc, "\033[5mblinky\033[0m plain\n");
@@ -456,7 +458,7 @@ TEST(PalWorldView, BlinkFlagEmitsItalicRun)
 TEST(PalWorldView, EmissionCursorStaysAlignedAcrossBufferEviction)
 {
     FakeWorldView view;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = &view;
     doc.m_maxlines = 200;                 // low ceiling → eviction kicks in
     doc.AllocateLinePositions();

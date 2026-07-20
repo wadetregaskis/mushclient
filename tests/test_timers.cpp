@@ -7,19 +7,21 @@
 // "now - 1 second" makes CheckTimerList() see it as overdue and fire it.
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (doc_stub.h deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
 #include "OtherTypes.h"     // CTimer, CmcDateTime
 #include "mcdatetime.h"
 #include "pal/iclock.h"     // pal::IClock / pal::g_clock — deterministic time
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-static CMUSHclientDoc make_doc()
+static void make_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_iConnectPhase = eConnectConnectedToMud;
     doc.m_bEnableTimers = TRUE;
-    return doc;
 }
 
 // Add an interval timer to doc (fires every `seconds` seconds).
@@ -63,7 +65,7 @@ static void tick(CMUSHclientDoc& doc)
 
 TEST(TimerTest, OverdueTimerFires)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTimer* t = add_timer(doc, "t1");
     make_overdue(t);
 
@@ -74,7 +76,7 @@ TEST(TimerTest, OverdueTimerFires)
 
 TEST(TimerTest, FutureTimerDoesNotFire)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTimer* t = add_timer(doc, "t1", 60.0);
     // tFireTime was set to GetTimeNow() at add time — advance it 60 s into the future
     CmcDateTimeSpan sixty(0, 0, 1, 0);
@@ -87,7 +89,7 @@ TEST(TimerTest, FutureTimerDoesNotFire)
 
 TEST(TimerTest, DisabledTimerDoesNotFire)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTimer* t = add_timer(doc, "t1");
     make_overdue(t);
     t->bEnabled = FALSE;
@@ -99,7 +101,7 @@ TEST(TimerTest, DisabledTimerDoesNotFire)
 
 TEST(TimerTest, TimerFiresMultipleTimes)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTimer* t = add_timer(doc, "t1", 0.001);  // very short interval
     make_overdue(t);
 
@@ -114,7 +116,7 @@ TEST(TimerTest, TimerFiresMultipleTimes)
 
 TEST(TimerTest, OneShotTimerRemovedAfterFiring)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTimer* t = add_timer(doc, "t1");
     t->bOneShot = TRUE;
     make_overdue(t);
@@ -135,7 +137,7 @@ TEST(TimerTest, OneShotTimerRemovedAfterFiring)
 
 TEST(TimerTest, MultipleTimersBothFire)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CTimer* t1 = add_timer(doc, "t1");
     CTimer* t2 = add_timer(doc, "t2");
     make_overdue(t1);
@@ -149,7 +151,7 @@ TEST(TimerTest, MultipleTimersBothFire)
 
 TEST(TimerTest, DeletedTimerNoLongerFires)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     add_timer(doc, "t1");
     CTimer* t2 = add_timer(doc, "t2");
 
@@ -167,7 +169,7 @@ TEST(TimerTest, DeletedTimerNoLongerFires)
 
 TEST(TimerTest, TimersDisabledGlobally)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bEnableTimers = FALSE;
     CTimer* t = add_timer(doc, "t1");
     make_overdue(t);
@@ -179,7 +181,7 @@ TEST(TimerTest, TimersDisabledGlobally)
 
 TEST(TimerTest, ActiveWhenClosedFiresWhileDisconnected)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iConnectPhase = eConnectNotConnected;
     CTimer* t = add_timer(doc, "t1");
     t->bActiveWhenClosed = TRUE;
@@ -192,7 +194,7 @@ TEST(TimerTest, ActiveWhenClosedFiresWhileDisconnected)
 
 TEST(TimerTest, InactiveTimerDoesNotFireWhenDisconnected)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iConnectPhase = eConnectNotConnected;
     CTimer* t = add_timer(doc, "t1");
     t->bActiveWhenClosed = FALSE;
@@ -255,7 +257,7 @@ TEST(TimerClockTest, UninstallRestoresTheRealClock)
 TEST(TimerClockTest, TimerFiresOnlyWhenClockReachesFireTime)
 {
     ScopedClock clk(start_instant());
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     // A timer due 10 s from the start instant.
     CTimer* t = add_timer(doc, "t1", 10.0);
@@ -276,7 +278,7 @@ TEST(TimerClockTest, TimerFiresOnlyWhenClockReachesFireTime)
 TEST(TimerClockTest, IntervalTimerRefiresEachInterval)
 {
     ScopedClock clk(start_instant());
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     // every-2-second interval timer, first due at the start instant
     CTimer* t = add_timer(doc, "iv", 2.0);
@@ -301,7 +303,7 @@ TEST(TimerClockTest, LongJumpFiresOnceNotEveryMissedInterval)
     // (sleep/wake, clock change), the timer fires once and reschedules — it
     // does not "catch up" with one fire per missed interval.
     ScopedClock clk(start_instant());
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     CTimer* t = add_timer(doc, "iv", 2.0);   // every 2 s
     t->tFireTime = start_instant();
@@ -320,7 +322,7 @@ TEST(TimerClockTest, LongJumpFiresOnceNotEveryMissedInterval)
 TEST(TimerTest, GetTimerListReturnsRealArray)
 {
     ScopedClock clk(start_instant());
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     add_timer(doc, "alpha", 5.0);
     add_timer(doc, "beta",  7.0);
 
@@ -358,7 +360,7 @@ TEST(TimerTest, GetTimerListReturnsRealArray)
 TEST(TimerClockTest, AtTimeTimerInPastSchedulesForTomorrow)
 {
     ScopedClock clk(start_instant());        // 2026-01-01 12:00:00
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     CTimer* t = new CTimer();
     t->strLabel  = CString("at");
@@ -383,7 +385,7 @@ TEST(TimerClockTest, AtTimeTimerInPastSchedulesForTomorrow)
 TEST(TimerClockTest, PeriodicTimerOffsetSubtractsFromFireTime)
 {
     ScopedClock clk(start_instant());
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     CTimer* t = add_timer(doc, "iv", 10.0);  // every 10 s ...
     t->fOffsetSecond = 3.0;                  // ... with a 3 s offset
@@ -398,7 +400,7 @@ TEST(TimerClockTest, PeriodicTimerOffsetSubtractsFromFireTime)
 TEST(TimerClockTest, AtTimeTimerRefiresOneDayLater)
 {
     ScopedClock clk(start_instant());
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     CTimer* t = new CTimer();
     t->strLabel  = CString("at");
@@ -425,7 +427,7 @@ TEST(TimerClockTest, AtTimeTimerRefiresOneDayLater)
 TEST(TimerTest, AddTimerZeroIntervalRejected)
 {
     ScopedClock clk(start_instant());
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     EXPECT_EQ((long)eTimeInvalid,
               doc.AddTimer("z", 0, 0, 0.0, "x", eEnabled, ""));
@@ -443,7 +445,7 @@ TEST(TimerTest, AddTimerZeroIntervalRejected)
 TEST(TimerTest, DoAfterRejectsLessThanTenthSecond)
 {
     ScopedClock clk(start_instant());
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     EXPECT_EQ((long)eTimeInvalid, doc.DoAfter(0.05, "hello"));
     EXPECT_EQ((long)eTimeInvalid, doc.DoAfterSpecial(0.0, "hello", eSendToOutput));
@@ -460,7 +462,7 @@ TEST(TimerTest, DoAfterRejectsLessThanTenthSecond)
 TEST(TimerClockTest, DoAfterFiresOnceThenTimerIsRemoved)
 {
     ScopedClock clk(start_instant());
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     EXPECT_EQ((long)eOK, doc.DoAfterSpecial(1.0, "did it", eSendToOutput));
     ASSERT_EQ(1, (int)doc.GetTimerMap().GetCount());
@@ -498,7 +500,7 @@ TEST(TimerClockTest, DoAfterFiresOnceThenTimerIsRemoved)
 TEST(TimerScript, ScriptDeletingOtherDueTimerPreventsItsFiring)
 {
     ScopedClock clk(start_instant());
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     // a live Lua engine whose function deletes the OTHER due timer
     CScriptEngine* engine = new CScriptEngine(&doc, "lua");
@@ -542,7 +544,7 @@ static std::string vs(const VARIANT& v)
 // duplicate labels each answer their own error code.
 TEST(TimerApi, AddTimerValidatesTime)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
 
     EXPECT_EQ((long)eOK, doc.AddTimer("t1", 0, 1, 0, "hello", eEnabled, ""));
     EXPECT_EQ((long)eOK, doc.IsTimer("t1"));
@@ -568,7 +570,7 @@ TEST(TimerApi, AddTimerValidatesTime)
 // GetTimer hands the schedule back; at-time timers answer their parts too.
 TEST(TimerApi, GetTimerRoundTripAndList)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTimer("rt", 1, 2, 3.5, "the send",
                                       eEnabled, ""));
 
@@ -597,7 +599,7 @@ TEST(TimerApi, GetTimerRoundTripAndList)
 // Timer options: y/n booleans, numeric range validation, group as alpha.
 TEST(TimerApi, TimerOptionRoundTripAndErrors)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTimer("to", 0, 5, 0, "", eEnabled, ""));
 
     EXPECT_EQ((long)eTimerNotFound, doc.SetTimerOption("zz", "enabled", "n"));
@@ -623,7 +625,7 @@ TEST(TimerApi, TimerOptionRoundTripAndErrors)
 // destination; sub-0.1-second and >24h requests are refused.
 TEST(TimerApi, DoAfterFamilyPlantsTemporaryOneShots)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     EXPECT_EQ(0, (int)doc.GetTimerMap().GetCount());
 
     EXPECT_EQ((long)eOK, doc.DoAfter(5, "go north"));
@@ -660,7 +662,7 @@ TEST(TimerApi, DoAfterFamilyPlantsTemporaryOneShots)
 // answers eTimerNotFound.
 TEST(TimerApi, ResetTimerRecomputesFireTime)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTimer("rt", 0, 0, 30, "", eEnabled, ""));
     CTimer* t = nullptr;
     ASSERT_TRUE(doc.GetTimerMap().Lookup(CString("rt"), t));
@@ -682,7 +684,7 @@ TEST(TimerApi, ResetTimerRecomputesFireTime)
 // Group enable/delete counts only members; EnableTimer toggles one.
 TEST(TimerApi, GroupsAndEnableToggle)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.AddTimer("g1", 0, 1, 0, "", eEnabled, "");
     doc.AddTimer("g2", 0, 1, 0, "", eEnabled, "");
     doc.AddTimer("solo", 0, 1, 0, "", eEnabled, "");
@@ -709,7 +711,7 @@ TEST(TimerApi, GroupsAndEnableToggle)
 // GetTimerInfo conventions: missing timer VT_EMPTY, unknown code VT_NULL.
 TEST(TimerApi, GetTimerInfoConventions)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_EQ((long)eOK, doc.AddTimer("ti", 0, 0, 15, "send me",
                                       eEnabled | eTemporary, ""));
 

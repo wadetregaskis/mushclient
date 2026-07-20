@@ -11,7 +11,10 @@
 
 #ifndef _WIN32
 
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (doc_stub.h deleted; mushcore is FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
 #include "scripting/scripting.h"  // DOCUMENT_STATE, WORLD_LIBRARY
 
 #ifdef LUA_VERSION  // Lua headers available (always true here — file only compiled with LUA_FOUND)

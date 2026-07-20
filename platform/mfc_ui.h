@@ -3101,7 +3101,19 @@ public:
     virtual void Dump(CDumpContext&) const  {}
     virtual void AssertValid() const        {}
     virtual BOOL SaveModified()             { return TRUE; }
-    virtual BOOL DoSave(LPCTSTR, BOOL=TRUE) { return TRUE; }
+    // Real MFC's CDocument::DoSave writes via OnSaveDocument (which Serialises).
+    // The old no-op was fine while CMUSHclientDoc::DoSave was a doc_stub.h inline
+    // that called OnSaveDocument itself; the adopted doc.cpp::DoSave delegates to
+    // THIS base, so it must do the write (else world.Save produces no file).
+    virtual BOOL DoSave(LPCTSTR lpszPathName, BOOL /*bReplace*/=TRUE) {
+        CString strName(lpszPathName ? lpszPathName : "");
+        if (strName.IsEmpty())
+            return FALSE;                  // no dialog to prompt with headless
+        if (!OnSaveDocument(strName))
+            return FALSE;
+        SetPathName(strName);
+        return TRUE;
+    }
     virtual BOOL DoFileSave()               { return TRUE; }
 
     void SetChangedFlag(BOOL mod=TRUE) { SetModifiedFlag(mod); }

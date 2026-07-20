@@ -22,6 +22,12 @@ macro(mc_test name)
         HAVE_CONFIG_H
         WIN32       # must match mushcore's compile flags to keep CMUSHclientDoc layout identical
         _NOSOUND    # DirectSound not available on macOS/Linux
+        # Phase 2 B-3 (THE ATOMIC FLIP): tests now see the REAL doc.h layout,
+        # matching the flipped mushcore they link.  CRITICAL — a test compiled on
+        # the old doc_stub.h layout against a FULL_BUILD mushcore = the historical
+        # destructor SIGSEGV.  (MUSHCLIENT_HEADLESS_APP is NOT set here: it only
+        # gates definitions inside mushcore TUs, never header layout.)
+        MUSHCLIENT_FULL_BUILD
     )
     # Propagate Lua scripting flag so tests can use #ifdef MUSHCLIENT_LUA_SCRIPTING
     if(LUA_FOUND)
@@ -62,41 +68,13 @@ mc_test(test_xmlparse)
 mc_test(test_mfc_ui)
 mc_test(test_connection)
 
-# ── Phase 2 Unit B-2: headless GDI shim (docs/PHASE2-RECOVERY.md §5/§6) ──────
-# The ONE test target compiled WITH -DMUSHCLIENT_FULL_BUILD, so CDC/CFont/CBitmap/
-# CGdiObject take the mfc_ui.h *full-build* shape (declarations-only + out-of-line
-# virtual dtors → vtables) — the exact shape the real doc.cpp/doc_construct.cpp/
-# Utilities.cpp reference.  It links ONLY platform/gdi_headless.cpp (NOT mushcore,
-# whose non-full GDI shape would ODR-clash), proving the shim resolves + behaves in
-# isolation before B-3 folds gdi_headless.cpp into the full-build mushcore.  It does
-# NOT use the mc_test() macro (that links mushcore + the non-full defines).
-add_executable(test_gdi_headless
-    test_gdi_headless.cpp
-    ${CMAKE_SOURCE_DIR}/platform/gdi_headless.cpp)
-if(MUSHCLIENT_COVERAGE)
-    target_compile_options(test_gdi_headless PRIVATE -fprofile-instr-generate -fcoverage-mapping)
-    target_link_options(test_gdi_headless PRIVATE -fprofile-instr-generate)
-endif()
-target_include_directories(test_gdi_headless PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/platform
-    ${CMAKE_SOURCE_DIR}/scripting
-    ${CMAKE_SOURCE_DIR}/tests
-    ${CMAKE_SOURCE_DIR}/pcre
-    ${CMAKE_SOURCE_DIR}/sqlite3
-    ${CMAKE_SOURCE_DIR}/lsqlite
-    ${CMAKE_SOURCE_DIR}/dialogs
-    # OpenSSL / PNG / Lua real header dirs (mfc_ui.h pulls <openssl/ssl.h>); mirrors
-    # what mc_test() gets transitively via mushcore.  The openssl_fallback dir is
-    # inherited from the parent scope's include_directories() when OpenSSL is absent.
-    $<TARGET_PROPERTY:mushcore,INTERFACE_INCLUDE_DIRECTORIES>)
-target_compile_definitions(test_gdi_headless PRIVATE
-    HAVE_CONFIG_H WIN32 _NOSOUND MUSHCLIENT_FULL_BUILD)
-if(LUA_FOUND)
-    target_compile_definitions(test_gdi_headless PRIVATE MUSHCLIENT_LUA_SCRIPTING)
-endif()
-target_compile_options(test_gdi_headless PRIVATE ${MC_TEST_COMPILE_OPTIONS})
-add_test(NAME test_gdi_headless COMMAND test_gdi_headless)
+# ── Phase 2 Unit B-2 → B-3: headless GDI shim, now a normal mc_test ──────────
+# gdi_headless.cpp folded into the flipped (FULL_BUILD) mushcore at B-3, so the
+# CDC/CFont/CBitmap shape no longer forks: this is now an ordinary mc_test that
+# links mushcore and exercises the same font-metric/image call shapes.  (Pre-flip
+# it was a standalone full-build target so it wouldn't ODR-clash with the
+# non-full mushcore; that reason is gone.)
+mc_test(test_gdi_headless)
 
 # ── In-app conformance selftests ────────────────────────────────────────────
 # The hidden --pal-*-selftest flags run inside the real app binary (real wx

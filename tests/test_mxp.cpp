@@ -7,13 +7,16 @@
 // We also smoke-test MXP_collected_element dispatch and the entity collector.
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-static CMUSHclientDoc make_doc()
+static void make_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_pCurrentLine = new CLine();
     doc.m_iFlags       = COLOUR_ANSI;
     doc.m_iForeColour  = WHITE;
@@ -24,7 +27,6 @@ static CMUSHclientDoc make_doc()
     doc.m_bMXP      = true;
     doc.m_iUseMXP   = eUseMXP;   // always on
     doc.m_iMXP_mode = eMXP_open;
-    return doc;
 }
 
 // Feed a NUL-terminated string of bytes through Phase_MXP_ELEMENT one char
@@ -39,7 +41,7 @@ static void feed_element(CMUSHclientDoc& doc, const char* s)
 
 TEST(MXPElement, ClosingBraceDispatchesAndReturnsToNONE)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_ELEMENT;
     doc.m_strMXPstring.Empty();
     // Feed a minimal tag name then close it — MXP_collected_element fires.
@@ -51,7 +53,7 @@ TEST(MXPElement, ClosingBraceDispatchesAndReturnsToNONE)
 
 TEST(MXPElement, OpeningBraceInsideTagResetsAndStaysInElement)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_ELEMENT;
     doc.m_strMXPstring = "partial";
     // '<' inside a tag is an error but MXP string resets and phase stays ELEMENT.
@@ -62,7 +64,7 @@ TEST(MXPElement, OpeningBraceInsideTagResetsAndStaysInElement)
 
 TEST(MXPElement, SingleQuoteEntersQuotePhase)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_ELEMENT;
     doc.m_strMXPstring.Empty();
     doc.Phase_MXP_ELEMENT('\'');
@@ -74,7 +76,7 @@ TEST(MXPElement, SingleQuoteEntersQuotePhase)
 
 TEST(MXPElement, DoubleQuoteEntersQuotePhase)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_ELEMENT;
     doc.m_strMXPstring.Empty();
     doc.Phase_MXP_ELEMENT('"');
@@ -84,7 +86,7 @@ TEST(MXPElement, DoubleQuoteEntersQuotePhase)
 
 TEST(MXPElement, CommentPrefixEntersCommentPhase)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_ELEMENT;
     doc.m_strMXPstring = "!-";
     // Third hyphen completes "!--" prefix → comment phase
@@ -94,7 +96,7 @@ TEST(MXPElement, CommentPrefixEntersCommentPhase)
 
 TEST(MXPElement, OrdinaryCharsAccumulate)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_ELEMENT;
     doc.m_strMXPstring.Empty();
     feed_element(doc, "bold");
@@ -106,7 +108,7 @@ TEST(MXPElement, OrdinaryCharsAccumulate)
 
 TEST(MXPComment, NonCloseCharAccumulates)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_COMMENT;
     doc.m_strMXPstring = "!--";
     doc.Phase_MXP_COMMENT('x');
@@ -117,7 +119,7 @@ TEST(MXPComment, NonCloseCharAccumulates)
 TEST(MXPComment, CloseWithoutDashDashAccumulates)
 {
     // '>' without preceding "--" is not end of comment
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_COMMENT;
     doc.m_strMXPstring = "!--text";   // doesn't end with "--"
     doc.Phase_MXP_COMMENT('>');
@@ -127,7 +129,7 @@ TEST(MXPComment, CloseWithoutDashDashAccumulates)
 TEST(MXPComment, CloseWithDashDashTerminates)
 {
     // '>' after "--" ends the comment → NONE
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_COMMENT;
     doc.m_strMXPstring = "!--comment--";
     doc.Phase_MXP_COMMENT('>');
@@ -138,7 +140,7 @@ TEST(MXPComment, CloseWithDashDashTerminates)
 
 TEST(MXPQuote, NonTerminatorAccumulates)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase              = HAVE_MXP_QUOTE;
     doc.m_cMXPquoteTerminator = '"';
     doc.m_strMXPstring       = "\"";
@@ -149,7 +151,7 @@ TEST(MXPQuote, NonTerminatorAccumulates)
 
 TEST(MXPQuote, TerminatorReturnsToElement)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase              = HAVE_MXP_QUOTE;
     doc.m_cMXPquoteTerminator = '"';
     doc.m_strMXPstring       = "\"hello";
@@ -161,7 +163,7 @@ TEST(MXPQuote, TerminatorReturnsToElement)
 
 TEST(MXPQuote, SingleQuoteTerminates)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase              = HAVE_MXP_QUOTE;
     doc.m_cMXPquoteTerminator = '\'';
     doc.m_strMXPstring       = "'val";
@@ -173,7 +175,7 @@ TEST(MXPQuote, SingleQuoteTerminates)
 
 TEST(MXPEntity, SemicolonDispatchesAndReturnsToNONE)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_ENTITY;
     doc.m_strMXPstring = "amp";
     doc.Phase_MXP_ENTITY(';');
@@ -182,7 +184,7 @@ TEST(MXPEntity, SemicolonDispatchesAndReturnsToNONE)
 
 TEST(MXPEntity, AmpersandInsideResetsString)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_ENTITY;
     doc.m_strMXPstring = "partial";
     doc.Phase_MXP_ENTITY('&');
@@ -191,7 +193,7 @@ TEST(MXPEntity, AmpersandInsideResetsString)
 
 TEST(MXPEntity, OpenBraceInsideSwitchesToElement)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_ENTITY;
     doc.m_strMXPstring = "partial";
     doc.Phase_MXP_ENTITY('<');
@@ -201,7 +203,7 @@ TEST(MXPEntity, OpenBraceInsideSwitchesToElement)
 
 TEST(MXPEntity, OrdinaryCharsAccumulate)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_phase        = HAVE_MXP_ENTITY;
     doc.m_strMXPstring.Empty();
     doc.Phase_MXP_ENTITY('l');
@@ -216,7 +218,7 @@ TEST(MXPCollected, EmptyStringLogsError)
 {
     // Empty element string should record an error (m_iMXPerrors increments)
     // and not crash.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     long long errs_before = doc.m_iMXPerrors;
     doc.m_strMXPstring.Empty();
     doc.MXP_collected_element();
@@ -226,7 +228,7 @@ TEST(MXPCollected, EmptyStringLogsError)
 TEST(MXPCollected, SlashPrefixCallsEndTag)
 {
     // "/bold" should invoke MXP_EndTag without crashing.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_strMXPstring = "/bold";
     doc.MXP_collected_element();   // must not throw/assert
 }
@@ -234,7 +236,7 @@ TEST(MXPCollected, SlashPrefixCallsEndTag)
 TEST(MXPCollected, BangPrefixCallsDefinition)
 {
     // "!--comment" is a definition; should not crash.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_strMXPstring = "!--comment";
     doc.MXP_collected_element();
 }
@@ -242,7 +244,7 @@ TEST(MXPCollected, BangPrefixCallsDefinition)
 TEST(MXPCollected, NormalTagCallsStartTag)
 {
     // "b" (bold) — a built-in MXP atomic tag.
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_iMXP_mode    = eMXP_secure;  // built-in tags need secure mode
     doc.m_strMXPstring = "b";
     doc.MXP_collected_element();   // must not crash
@@ -308,14 +310,12 @@ struct MxpFakeTransport : pal::ITransport {
 
 // A doc whose current line is created by DisplayMsg itself (and is therefore
 // the tail of m_LineList, which MXP_CloseTag walks).
-static CMUSHclientDoc make_doc_e2e()
+static void make_doc_e2e(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_iConnectPhase = eConnectConnectedToMud;
     doc.m_bMXP      = true;
     doc.m_iUseMXP   = eUseMXP;
     doc.m_iMXP_mode = eMXP_open;
-    return doc;
 }
 
 static void feed(CMUSHclientDoc& doc, const char* s)
@@ -340,7 +340,7 @@ static CStyle* style_at(CLine* line, int idx)
 // active tag, and its text carries no action.
 TEST(MXPSecurity, SecureOnlyTagIgnoredInOpenMode)
 {
-    CMUSHclientDoc doc = make_doc_e2e();     // open mode
+    CMUSHclientDoc doc; make_doc_e2e(doc);     // open mode
     long long errs = doc.m_iMXPerrors;
     feed(doc, "<send>north</send>");
     EXPECT_GT(doc.m_iMXPerrors, errs);                  // ElementWhenNotSecure
@@ -355,7 +355,7 @@ TEST(MXPSecurity, SecureOnlyTagIgnoredInOpenMode)
 // </send> will work — we want the href (action) to persist through the <b>".
 TEST(MXPTag, SendHrefPersistsThroughNestedOpenTag)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     feed(doc, "<send href=\"nick\"><b>blah</b></send>");
 
@@ -379,7 +379,7 @@ TEST(MXPTag, SendHrefPersistsThroughNestedOpenTag)
 // code) would be undefined behaviour.
 TEST(MXPTag, CommandTagLeavesStyleListNonEmpty)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     long long errs = doc.m_iMXPerrors;
     feed(doc, "<version>");                  // TAG_COMMAND, at line start
@@ -396,7 +396,7 @@ TEST(MXPTag, CommandTagLeavesStyleListNonEmpty)
 // closing-out-of-sequence warning); afterwards neither is active.
 TEST(MXPTag, OutOfSequenceClosePopsIntermediateTags)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     feed(doc, "<b><i>");
     EXPECT_EQ(2, (int)doc.m_ActiveTagList.GetCount());
@@ -408,7 +408,7 @@ TEST(MXPTag, OutOfSequenceClosePopsIntermediateTags)
 // mode" — a closing tag received in open mode cannot pop a secure-opened tag.
 TEST(MXPSecurity, OpenModeCannotCloseSecureOpenedTag)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     feed(doc, "<b>");                        // opened in secure mode
     EXPECT_EQ(1, (int)doc.m_ActiveTagList.GetCount());
@@ -422,7 +422,7 @@ TEST(MXPSecurity, OpenModeCannotCloseSecureOpenedTag)
 // text after </b> is no longer bold.
 TEST(MXPTag, CloseTagRestoresStyleAtOpenPoint)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     feed(doc, "x<b>bold</b>y");
 
@@ -442,7 +442,7 @@ TEST(MXPTag, CloseTagRestoresStyleAtOpenPoint)
 // mxp_<name> to the enclosed text (Quow's mapper reads mxp_roomname).
 TEST(MXPTag, FlagDirectiveSetsMxpPrefixedVariable)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     feed(doc, "<!ELEMENT rname FLAG=\"RoomName\">");
     feed(doc, "<rname>The Square</rname>");
@@ -457,7 +457,7 @@ TEST(MXPTag, FlagDirectiveSetsMxpPrefixedVariable)
 // at newline (-1) reverts to open; eMXP_perm_secure makes secure permanent.
 TEST(MXPMode, ImpliedNewlineModeChangeRevertsToDefaultOpen)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.MXP_mode_change(eMXP_secure);
     EXPECT_EQ(eMXP_secure, doc.m_iMXP_mode);
     doc.MXP_mode_change(-1);                 // implied change (newline)
@@ -473,7 +473,7 @@ TEST(MXPMode, ImpliedNewlineModeChangeRevertsToDefaultOpen)
 // rejected.
 TEST(MXPMode, SecureOnceAppliesToExactlyOneTag)
 {
-    CMUSHclientDoc doc = make_doc_e2e();     // open mode
+    CMUSHclientDoc doc; make_doc_e2e(doc);     // open mode
     doc.MXP_mode_change(eMXP_secure_once);
     feed(doc, "<send>");
     EXPECT_EQ(1, (int)doc.m_ActiveTagList.GetCount());  // accepted
@@ -489,7 +489,7 @@ TEST(MXPMode, SecureOnceAppliesToExactlyOneTag)
 // &#7; and &#256; produce an error and an empty expansion.
 TEST(MXPEntity, NumericEntityRejectsNonPrintableAndMultibyte)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     long long errs = doc.m_iMXPerrors;
     CString e7("#7"), e256("#256"), e65("#65"), e9("#9");
     EXPECT_STREQ("", (const char*)doc.MXP_GetEntity(e7));
@@ -504,7 +504,7 @@ TEST(MXPEntity, NumericEntityRejectsNonPrintableAndMultibyte)
 // it" — &lt; expands to a literal '<' and does not start element collection.
 TEST(MXPEntity, EntityExpansionNotReparsedAsMxp)
 {
-    CMUSHclientDoc doc = make_doc_e2e();     // open mode, MXP on
+    CMUSHclientDoc doc; make_doc_e2e(doc);     // open mode, MXP on
     feed(doc, "&lt;b&gt;");
     EXPECT_EQ(NONE, doc.m_phase);            // no element collection started
     EXPECT_EQ(0, (int)doc.m_ActiveTagList.GetCount());
@@ -518,7 +518,7 @@ TEST(MXPEntity, EntityExpansionNotReparsedAsMxp)
 // out only near the start of a session.
 TEST(MXPSecurity, PasswordNotSentAfterTenLinesSent)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     MxpFakeTransport* t = new MxpFakeTransport();
     doc.m_pTransport = t;
     doc.m_iMXP_mode = eMXP_secure;
@@ -538,7 +538,7 @@ TEST(MXPSecurity, PasswordNotSentAfterTenLinesSent)
 // <send>north</send> without href sends its enclosed text.
 TEST(MXPTag, SendWithoutHrefUsesEnclosedTextAsAction)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     feed(doc, "<send>north</send>");
     CStyle* s = style_at(doc.m_pCurrentLine, 0);   // covers "north"
@@ -551,7 +551,7 @@ TEST(MXPTag, SendWithoutHrefUsesEnclosedTextAsAction)
 // hint" — an href containing &text; has the enclosed text substituted.
 TEST(MXPTag, SendHrefTextEntitySubstitutedAtClose)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     feed(doc, "<send href=\"go &text;\">north</send>");
     CStyle* s = style_at(doc.m_pCurrentLine, 0);
@@ -564,7 +564,7 @@ TEST(MXPTag, SendHrefTextEntitySubstitutedAtClose)
 // arguments down by one — "and don't do it twice".
 TEST(MXPArgs, KeywordConsumptionRenumbersPositionalArguments)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CArgumentList args;
     // "open" is a keyword; "12" and "34" are positional values after it
     ASSERT_TRUE(!doc.BuildArgumentList(args, CString("open 12 34")));
@@ -588,7 +588,7 @@ TEST(MXPArgs, KeywordConsumptionRenumbersPositionalArguments)
 // rejected and does not enter the custom element map; in secure mode it does.
 TEST(MXPSecurity, DefinitionsRequireSecureMode)
 {
-    CMUSHclientDoc doc = make_doc_e2e();     // open mode
+    CMUSHclientDoc doc; make_doc_e2e(doc);     // open mode
     long long errs = doc.m_iMXPerrors;
     feed(doc, "<!ELEMENT foo '<b>'>");
     EXPECT_GT(doc.m_iMXPerrors, errs);
@@ -621,14 +621,12 @@ struct RecordingTransport : pal::ITransport {
     std::string lastErrorString() const override { return "recording"; }
 };
 
-CMUSHclientDoc make_pipe_doc()
+void make_pipe_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_iConnectPhase = eConnectConnectedToMud;
     doc.m_bMXP      = true;
     doc.m_iUseMXP   = eUseMXP;
     doc.m_iMXP_mode = eMXP_secure;    // persistent secure: all tags allowed
-    return doc;
 }
 
 void mud(CMUSHclientDoc& doc, const char* s)
@@ -673,7 +671,7 @@ bool contains(const std::string& hay, const char* needle)
 
 TEST(MXPOpenAtomic, BoldItalicUnderlineNestAndClose)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "a<B>b<I>c</I></B>d\n");
     CLine* l = pline(doc, 0);
     ASSERT_NE(nullptr, l);
@@ -686,7 +684,7 @@ TEST(MXPOpenAtomic, BoldItalicUnderlineNestAndClose)
 
 TEST(MXPOpenAtomic, UnderlineTagSetsUnderlineBit)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<U>u</U>\n");
     CStyle* s = pstyle(pline(doc, 0), 0);
     ASSERT_NE(nullptr, s);
@@ -695,7 +693,7 @@ TEST(MXPOpenAtomic, UnderlineTagSetsUnderlineBit)
 
 TEST(MXPOpenAtomic, ColorTagNamedArgumentsSetRgb)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<COLOR fore=red back=blue>x</COLOR>\n");
     CStyle* s = pstyle(pline(doc, 0), 0);
     ASSERT_NE(nullptr, s);
@@ -706,7 +704,7 @@ TEST(MXPOpenAtomic, ColorTagNamedArgumentsSetRgb)
 
 TEST(MXPOpenAtomic, ColorTagPositionalArgument)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<C green>x\n");
     CStyle* s = pstyle(pline(doc, 0), 0);
     ASSERT_NE(nullptr, s);
@@ -716,7 +714,7 @@ TEST(MXPOpenAtomic, ColorTagPositionalArgument)
 
 TEST(MXPOpenAtomic, ColorTagUnknownColourRaisesMxpError)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     long long errs = doc.m_iMXPerrors;
     mud(doc, "<COLOR fore=nosuchcolour>x\n");
     EXPECT_GT(doc.m_iMXPerrors, errs);
@@ -724,7 +722,7 @@ TEST(MXPOpenAtomic, ColorTagUnknownColourRaisesMxpError)
 
 TEST(MXPOpenAtomic, HighTagBrightensForegroundToRgb)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_normalcolour[WHITE] = RGB(100, 100, 100);
     mud(doc, "<HIGH>x\n");
     CStyle* s = pstyle(pline(doc, 0), 0);
@@ -735,7 +733,7 @@ TEST(MXPOpenAtomic, HighTagBrightensForegroundToRgb)
 
 TEST(MXPOpenAtomic, SendTagAttachesSendActionWithHint)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_bUnderlineHyperlinks = TRUE;
     mud(doc, "<SEND href='look here' hint='peek'>here</SEND>\n");
     CLine* l = pline(doc, 0);
@@ -752,7 +750,7 @@ TEST(MXPOpenAtomic, SendTagAttachesSendActionWithHint)
 
 TEST(MXPOpenAtomic, SendTagPromptKeywordMakesPromptAction)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<SEND 'buy bread' PROMPT>bread</SEND>\n");
     CStyle* s = pstyle(pline(doc, 0), 0);
     ASSERT_NE(nullptr, s);
@@ -763,7 +761,7 @@ TEST(MXPOpenAtomic, SendTagPromptKeywordMakesPromptAction)
 
 TEST(MXPOpenAtomic, AnchorTagIsHyperlink)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<A href='http://example.net'>link</A>\n");
     CStyle* s = pstyle(pline(doc, 0), 0);
     ASSERT_NE(nullptr, s);
@@ -776,7 +774,7 @@ TEST(MXPOpenAtomic, AnchorTagIsHyperlink)
 TEST(MXPOpenAtomic, PuebloXchCmdConvertsAnchorToSend)
 {
     // <A XCH_CMD="examine #1"> is Pueblo syntax for a send-to-mud link
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<A xch_cmd='examine me'>thing</A>\n");
     CStyle* s = pstyle(pline(doc, 0), 0);
     ASSERT_NE(nullptr, s);
@@ -788,7 +786,7 @@ TEST(MXPOpenAtomic, PuebloXchCmdConvertsAnchorToSend)
 
 TEST(MXPOpenAtomic, FontTagColourListAndBackground)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<FONT color=red,blink,bold back=blue>x\n");
     CStyle* s = pstyle(pline(doc, 0), 0);
     ASSERT_NE(nullptr, s);
@@ -801,7 +799,7 @@ TEST(MXPOpenAtomic, FontTagColourListAndBackground)
 
 TEST(MXPOpenAtomic, VersionTagSendsVersionResponse)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     mud(doc, "<VERSION>\n");
     EXPECT_TRUE(contains(sent_of(doc), "<VERSION MXP=\"0.5\" CLIENT=MUSHclient"));
@@ -810,7 +808,7 @@ TEST(MXPOpenAtomic, VersionTagSendsVersionResponse)
 
 TEST(MXPOpenAtomic, SupportTagListsImplementedTagsAndSubOptions)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     mud(doc, "<SUPPORT>\n");
     std::string sent = sent_of(doc);
@@ -822,7 +820,7 @@ TEST(MXPOpenAtomic, SupportTagListsImplementedTagsAndSubOptions)
 
 TEST(MXPOpenAtomic, SupportTagAnswersSpecificQueries)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     // color implemented → +color; image flagged NOT_IMP → -image
     mud(doc, "<SUPPORT color image>\n");
@@ -835,7 +833,7 @@ TEST(MXPOpenAtomic, SupportTagSubOptionAndWildcardQueries)
 {
     // '*' is not a bare-word character for the tag argument tokenizer, so a
     // wildcard query must be quoted: <SUPPORT 'color.*'>
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     mud(doc, "<SUPPORT send.prompt send.nosuch 'color.*'>\n");
     std::string sent = sent_of(doc);
@@ -849,7 +847,7 @@ TEST(MXPOpenAtomic, SupportTagUnquotedWildcardAbortsTheTag)
 {
     // ...whereas an unquoted '*' is a tag-parse error: no response is sent
     // and the MXP error count rises.
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     long long errs = doc.m_iMXPerrors;
     mud(doc, "<SUPPORT color.*>\n");
@@ -859,7 +857,7 @@ TEST(MXPOpenAtomic, SupportTagUnquotedWildcardAbortsTheTag)
 
 TEST(MXPOpenAtomic, OptionTagSendsOptionsList)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     mud(doc, "<OPTION>\n");
     EXPECT_TRUE(contains(sent_of(doc), "\x1B[1z<OPTIONS "));
@@ -867,7 +865,7 @@ TEST(MXPOpenAtomic, OptionTagSendsOptionsList)
 
 TEST(MXPOpenAtomic, RecommendOptionUnknownNameRaisesError)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_bMudCanChangeOptions = TRUE;
     long long errs = doc.m_iMXPerrors;
     mud(doc, "<RECOMMEND_OPTION nosuchoption=1>\n");
@@ -876,7 +874,7 @@ TEST(MXPOpenAtomic, RecommendOptionUnknownNameRaisesError)
 
 TEST(MXPOpenAtomic, UserTagSendsCharacterNameWhenAutoconnectMxp)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     doc.m_name = "bob";
     doc.m_connect_now = eConnectMXP;
@@ -886,17 +884,17 @@ TEST(MXPOpenAtomic, UserTagSendsCharacterNameWhenAutoconnectMxp)
 
 TEST(MXPOpenAtomic, UserTagWithoutMxpAutoconnectSendsNothing)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     doc.m_name = "bob";
-    doc.m_connect_now = eConnectNormal;
+    doc.m_connect_now = eNoAutoConnect;  // B-3: stub eConnectNormal -> real doc.h enum (doc.h:337)
     mud(doc, "<USER>\n");
     EXPECT_FALSE(contains(sent_of(doc), "bob"));
 }
 
 TEST(MXPOpenAtomic, PasswordTagSendsPasswordWhenSafe)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     doc.m_password = "sesame";
     doc.m_connect_now = eConnectMXP;
@@ -908,7 +906,7 @@ TEST(MXPOpenAtomic, PasswordTagSendsPasswordWhenSafe)
 TEST(MXPOpenAtomic, PasswordTagRefusedAfterTenLinesSent)
 {
     // security check: a late <PASSWORD> could be a spoof — refuse it
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_pTransport = new RecordingTransport();
     doc.m_password = "sesame";
     doc.m_connect_now = eConnectMXP;
@@ -919,7 +917,7 @@ TEST(MXPOpenAtomic, PasswordTagRefusedAfterTenLinesSent)
 
 TEST(MXPOpenAtomic, BrTagBreaksTheLine)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "ab<BR>cd\n");
     CLine* l0 = pline(doc, 0);
     CLine* l1 = pline(doc, 1);
@@ -931,7 +929,7 @@ TEST(MXPOpenAtomic, BrTagBreaksTheLine)
 
 TEST(MXPOpenAtomic, HrTagEmitsHorizRuleLine)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "x<HR>y\n");
     CLine* l0 = pline(doc, 0);
     CLine* l1 = pline(doc, 1);
@@ -943,7 +941,7 @@ TEST(MXPOpenAtomic, HrTagEmitsHorizRuleLine)
 
 TEST(MXPOpenAtomic, PTagEntersParagraphMode)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     EXPECT_FALSE(doc.m_bInParagraph);
     mud(doc, "<P>");
     EXPECT_TRUE(doc.m_bInParagraph);
@@ -951,7 +949,7 @@ TEST(MXPOpenAtomic, PTagEntersParagraphMode)
 
 TEST(MXPOpenAtomic, UnorderedListItemsGetBullets)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<UL><LI>one<LI>two\n");
     CLine* l0 = pline(doc, 0);
     CLine* l1 = pline(doc, 1);
@@ -963,7 +961,7 @@ TEST(MXPOpenAtomic, UnorderedListItemsGetBullets)
 
 TEST(MXPOpenAtomic, OrderedListItemsAreNumbered)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<OL><LI>alpha<LI>beta\n");
     CLine* l0 = pline(doc, 0);
     CLine* l1 = pline(doc, 1);
@@ -975,7 +973,7 @@ TEST(MXPOpenAtomic, OrderedListItemsAreNumbered)
 
 TEST(MXPOpenAtomic, ImgTagRendersBracketedHyperlink)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_bUnderlineHyperlinks = TRUE;
     mud(doc, "<IMG src='http://x/' fname='pic.png'>\n");
     // image renders as [url] on its own line, hyperlinked
@@ -991,14 +989,14 @@ TEST(MXPOpenAtomic, ImgTagRendersBracketedHyperlink)
 
 TEST(MXPOpenAtomic, MxpOffTagDisablesMxp)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<MXP OFF>");
     EXPECT_FALSE(doc.m_bMXP);
 }
 
 TEST(MXPOpenAtomic, ResetTagClearsModesButKeepsMxpOn)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<UL><P>");
     EXPECT_TRUE(doc.m_bInParagraph);
     doc.m_iMXP_mode = eMXP_secure;    // <RESET> is itself a secure tag
@@ -1010,7 +1008,7 @@ TEST(MXPOpenAtomic, ResetTagClearsModesButKeepsMxpOn)
 
 TEST(MXPOpenAtomic, VarTagSetsMxpPrefixedVariableOnClose)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     mud(doc, "<VAR foo>hello</VAR>\n");
     CVariable* var = nullptr;
     ASSERT_TRUE(doc.m_VariableMap.Lookup("mxp_foo", var));
@@ -1020,7 +1018,7 @@ TEST(MXPOpenAtomic, VarTagSetsMxpPrefixedVariableOnClose)
 
 TEST(MXPOpenAtomic, VarTagInvalidNameRaisesError)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     long long errs = doc.m_iMXPerrors;
     mud(doc, "<VAR 9bad>x</VAR>\n");
     EXPECT_GT(doc.m_iMXPerrors, errs);
@@ -1028,7 +1026,7 @@ TEST(MXPOpenAtomic, VarTagInvalidNameRaisesError)
 
 TEST(MXPOpenAtomic, SecureTagRejectedInOpenMode)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_mode = eMXP_open;
     long long errs = doc.m_iMXPerrors;
     mud(doc, "<SEND 'go'>x</SEND>\n");
@@ -1062,13 +1060,12 @@ struct MxpDebugCapture {
 };
 
 // A doc wired for full-stream MXP: secure mode, all debug levels captured.
-static CMUSHclientDoc make_stream_doc()
+static void make_stream_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc = make_doc();
+    make_doc(doc);
     doc.m_iConnectPhase  = eConnectConnectedToMud;
     doc.m_iMXP_mode      = eMXP_secure;
     doc.m_iMXPdebugLevel = DBG_ALL;
-    return doc;
 }
 
 static void stream(CMUSHclientDoc& doc, const char* s)
@@ -1086,7 +1083,7 @@ static std::string current_line(CMUSHclientDoc& doc)
 TEST(MXPDefs, ElementDefinitionRegistersCustomElement)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT boldish '<B>' ATT='col=red' TAG=20 OPEN>");
     CElement* el = nullptr;
     ASSERT_TRUE(doc.m_CustomElementMap.Lookup("boldish", el));
@@ -1102,7 +1099,7 @@ TEST(MXPDefs, ElementDefinitionRegistersCustomElement)
 
 TEST(MXPDefs, EmptyKeywordMakesCommandElement)
 {
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT prompter '<B>' EMPTY>");
     CElement* el = nullptr;
     ASSERT_TRUE(doc.m_CustomElementMap.Lookup("prompter", el));
@@ -1112,7 +1109,7 @@ TEST(MXPDefs, EmptyKeywordMakesCommandElement)
 
 TEST(MXPDefs, TagNumberOutOfRangeIsIgnored)
 {
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT overtag '<B>' TAG=150>");
     CElement* el = nullptr;
     ASSERT_TRUE(doc.m_CustomElementMap.Lookup("overtag", el));
@@ -1122,7 +1119,7 @@ TEST(MXPDefs, TagNumberOutOfRangeIsIgnored)
 TEST(MXPDefs, FlagKeywordSetPrefixAndValidation)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT flagel '<B>' FLAG='set myvar'>");
     CElement* el = nullptr;
     ASSERT_TRUE(doc.m_CustomElementMap.Lookup("flagel", el));
@@ -1136,7 +1133,7 @@ TEST(MXPDefs, FlagKeywordSetPrefixAndValidation)
 
 TEST(MXPDefs, DeleteRemovesCustomElement)
 {
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT deleteme '<B>'>");
     CElement* el = nullptr;
     ASSERT_TRUE(doc.m_CustomElementMap.Lookup("deleteme", el));
@@ -1147,7 +1144,7 @@ TEST(MXPDefs, DeleteRemovesCustomElement)
 TEST(MXPDefs, CannotRedefineBuiltinElement)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     long long errBefore = doc.m_iMXPerrors;
     stream(doc, "<!ELEMENT b '<I>'>");
     EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
@@ -1157,7 +1154,7 @@ TEST(MXPDefs, CannotRedefineBuiltinElement)
 TEST(MXPDefs, DefinitionRefusedOutsideSecureMode)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     doc.m_iMXP_mode = eMXP_open;
     stream(doc, "<!ELEMENT sneaky '<B>'>");
     CElement* el = nullptr;
@@ -1168,7 +1165,7 @@ TEST(MXPDefs, DefinitionRefusedOutsideSecureMode)
 TEST(MXPDefs, UnknownDefinitionTypeAndBadNames)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!WOTSIT thing>");
     EXPECT_TRUE(dbg.contains("Unknown definition type"));
     stream(doc, "<!ELEMENT 1bad '<B>'>");
@@ -1177,7 +1174,7 @@ TEST(MXPDefs, UnknownDefinitionTypeAndBadNames)
 
 TEST(MXPDefs, EntityDefinitionAndEmbeddedEntities)
 {
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ENTITY greeting 'hello'>");
     CString v;
     ASSERT_TRUE(doc.m_CustomEntityMap.Lookup("greeting", v));
@@ -1191,7 +1188,7 @@ TEST(MXPDefs, EntityDefinitionAndEmbeddedEntities)
 TEST(MXPDefs, EntityErrorsAndDeletion)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ENTITY nosemi '&lt'>");
     EXPECT_TRUE(dbg.contains("No closing \";\""));
     stream(doc, "<!ENTITY lt 'clobber'>");   // built-in (App map): refused
@@ -1205,7 +1202,7 @@ TEST(MXPDefs, EntityErrorsAndDeletion)
 
 TEST(MXPDefs, CustomEntityExpandsInStreamText)
 {
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ENTITY who 'Gandalf'>");
     stream(doc, "greet &who;!");
     EXPECT_TRUE(current_line(doc).find("greet Gandalf!") != std::string::npos);
@@ -1214,7 +1211,7 @@ TEST(MXPDefs, CustomEntityExpandsInStreamText)
 TEST(MXPDefs, AttlistAppendsToExistingElementOnly)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT attel '<B>' ATT='one=1'>");
     CElement* el = nullptr;
     ASSERT_TRUE(doc.m_CustomElementMap.Lookup("attel", el));
@@ -1227,7 +1224,7 @@ TEST(MXPDefs, AttlistAppendsToExistingElementOnly)
 
 TEST(MXPDefs, SecureOnceModeRestoredAfterDefinition)
 {
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     doc.m_iMXP_mode = eMXP_secure_once;
     doc.m_iMXP_previousMode = eMXP_open;
     stream(doc, "<!ELEMENT onceonly '<B>'>");
@@ -1248,7 +1245,7 @@ static CStyle* last_style(CMUSHclientDoc& doc)
 
 TEST(MXPCustom, OpenCustomElementAppliesAtomicDefinition)
 {
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT shout '<B>' OPEN>");
     stream(doc, "plain");
     CStyle* before = last_style(doc);
@@ -1269,7 +1266,7 @@ TEST(MXPCustom, OpenCustomElementAppliesAtomicDefinition)
 TEST(MXPCustom, CloseWithoutOpenWarns)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "</b>");
     EXPECT_TRUE(dbg.contains(
         "Closing MXP tag </b> does not have corresponding opening tag"));
@@ -1278,7 +1275,7 @@ TEST(MXPCustom, CloseWithoutOpenWarns)
 TEST(MXPCustom, UnterminatedElementAtNewlineIsAnError)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     long long errBefore = doc.m_iMXPerrors;
     stream(doc, "<neverclosed\n");
     EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
@@ -1288,7 +1285,7 @@ TEST(MXPCustom, UnterminatedElementAtNewlineIsAnError)
 TEST(MXPCustom, UnknownTagIsAnError)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     long long errBefore = doc.m_iMXPerrors;
     stream(doc, "<nosuchtag>");
     EXPECT_GT((long long)doc.m_iMXPerrors, errBefore);
@@ -1296,7 +1293,7 @@ TEST(MXPCustom, UnknownTagIsAnError)
 
 TEST(MXPCustom, AttributeSubstitutionSuppliedNamed)
 {
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT fancy '<COLOR &col;>' ATT='col=#FF0000' OPEN>");
     stream(doc, "<fancy col=#0000FF>x");
     CStyle* s = last_style(doc);
@@ -1307,7 +1304,7 @@ TEST(MXPCustom, AttributeSubstitutionSuppliedNamed)
 
 TEST(MXPCustom, AttributeSubstitutionPositional)
 {
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT fancy '<COLOR &col;>' ATT='col=#FF0000' OPEN>");
     stream(doc, "<fancy #00FF00>x");
     CStyle* s = last_style(doc);
@@ -1317,7 +1314,7 @@ TEST(MXPCustom, AttributeSubstitutionPositional)
 
 TEST(MXPCustom, AttributeSubstitutionDefault)
 {
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT fancy '<COLOR &col;>' ATT='col=#FF0000' OPEN>");
     stream(doc, "<fancy>x");
     CStyle* s = last_style(doc);
@@ -1328,7 +1325,7 @@ TEST(MXPCustom, AttributeSubstitutionDefault)
 TEST(MXPCustom, MissingNonDefaultArgumentWarns)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT needy '<COLOR &c;>' ATT='c' OPEN>");   // no default
     stream(doc, "<needy>x");
     EXPECT_TRUE(dbg.contains("Non-default argument \"c\" not supplied to <needy>"));
@@ -1337,7 +1334,7 @@ TEST(MXPCustom, MissingNonDefaultArgumentWarns)
 TEST(MXPCustom, UnterminatedEntityInElementArgument)
 {
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     stream(doc, "<!ELEMENT brokearg '<COLOR &col>' OPEN>");   // &col missing ;
     stream(doc, "<brokearg>x");
     EXPECT_TRUE(dbg.contains("No closing \";\" in MXP element argument"));
@@ -1347,7 +1344,7 @@ TEST(MXPCustom, DebugLevelFiltersNotepadOutput)
 {
     // Info-level messages are suppressed when the level only admits errors.
     MxpDebugCapture dbg;
-    CMUSHclientDoc doc = make_stream_doc();
+    CMUSHclientDoc doc; make_stream_doc(doc);
     doc.m_iMXPdebugLevel = DBG_ERROR;
     stream(doc, "<!ELEMENT quietdef '<B>'>");
     EXPECT_FALSE(dbg.contains("Got Definition"));     // info filtered
@@ -1361,7 +1358,7 @@ TEST(MXPCustom, DebugLevelFiltersNotepadOutput)
 // An element whose name does not start with a letter is rejected.
 TEST(MxpR4, InvalidElementNameRejected)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     long long before = doc.m_iMXPerrors;
     mud(doc, "<3bad>x\n");
@@ -1372,7 +1369,7 @@ TEST(MxpR4, InvalidElementNameRejected)
 // fgcolor comma-list applies blink/underline/inverse.
 TEST(MxpR4, ColourErrorsAndFontStyleList)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     long long before = doc.m_iMXPerrors;
     mud(doc, "<color notarealcolour>x</color>\n");
@@ -1393,7 +1390,7 @@ TEST(MxpR4, ColourErrorsAndFontStyleList)
 // H1-H6 header tags flow through the header arm.
 TEST(MxpR4, HeaderTagsRender)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     mud(doc, "<h1>big</h1><h6>small</h6>\n");
     CLine* l = pline(doc, 0);
@@ -1405,7 +1402,7 @@ TEST(MxpR4, HeaderTagsRender)
 // <afk> answers the challenge when the player allows it.
 TEST(MxpR4, AfkChallengeAnswered)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     doc.m_pTransport = new RecordingTransport();
     doc.m_bSendMXP_AFK_Response = TRUE;
@@ -1414,7 +1411,7 @@ TEST(MxpR4, AfkChallengeAnswered)
     EXPECT_TRUE(contains(sent_of(doc), "c3po"));
 
     // and with the response disabled, nothing goes out
-    CMUSHclientDoc doc2 = make_pipe_doc();
+    CMUSHclientDoc doc2; make_pipe_doc(doc2);
     doc2.m_iMXP_defaultMode = doc2.m_iMXP_mode = eMXP_perm_secure;
     doc2.m_pTransport = new RecordingTransport();
     doc2.m_bSendMXP_AFK_Response = FALSE;
@@ -1425,7 +1422,7 @@ TEST(MxpR4, AfkChallengeAnswered)
 // A closing tag that was never opened warns (open tag not in output buffer).
 TEST(MxpR4, CloseWithoutOpenWarns)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     mud(doc, "text</B>\n");
     // warning, not error — the tag is simply ignored
@@ -1438,7 +1435,7 @@ TEST(MxpR4, CloseWithoutOpenWarns)
 // "<", unclosed quote, no ">", empty tag.
 TEST(MxpR4, ElementDefinitionErrorArms)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     long long e0 = doc.m_iMXPerrors;
 
@@ -1469,7 +1466,7 @@ TEST(MxpR4, ElementDefinitionErrorArms)
 // Redefining an element warns "Replacing previously-defined MXP element".
 TEST(MxpR4, RedefiningElementWarns)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     mud(doc, "<!ELEMENT twice '<b>'>\n");
     long long errsBefore = doc.m_iMXPerrors;
@@ -1492,7 +1489,7 @@ TEST(MxpR4, RedefiningElementWarns)
 // suppresses the tag.
 TEST(MxpR4, TagAndErrorScriptCallbacks)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     CScriptEngine* engine = new CScriptEngine(&doc, "lua");
     ASSERT_TRUE(!engine->CreateScriptEngine());
@@ -1544,7 +1541,7 @@ TEST(MxpR4, TagAndErrorScriptCallbacks)
 // 100 unclosed tags trigger the outstanding-tag warning.
 TEST(MxpR4, ManyOutstandingTagsWarn)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     for (int i = 0; i < 100; i++)
         mud(doc, "<B>");
@@ -1556,7 +1553,7 @@ TEST(MxpR4, ManyOutstandingTagsWarn)
 
 TEST(MxpR4, SupportTagRepliesAndValidatesArguments)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     doc.m_pTransport = new RecordingTransport();
 
@@ -1578,7 +1575,7 @@ TEST(MxpR4, SupportTagRepliesAndValidatesArguments)
 
 TEST(MxpR4, OptionTagSetsQueriesAndRejects)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     doc.m_pTransport = new RecordingTransport();
 
@@ -1603,7 +1600,7 @@ TEST(MxpR4, OptionTagSetsQueriesAndRejects)
 // the dummy argument list (the name='value' formatting arm).
 TEST(MxpR4, OpenTagCallbackReceivesFormattedArguments)
 {
-    CMUSHclientDoc doc = make_pipe_doc();
+    CMUSHclientDoc doc; make_pipe_doc(doc);
     doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
     CScriptEngine* engine = new CScriptEngine(&doc, "lua");
     ASSERT_TRUE(!engine->CreateScriptEngine());
@@ -1632,7 +1629,7 @@ TEST(MxpR4, OpenTagCallbackReceivesFormattedArguments)
 // A carriage return inside an MXP element aborts it: "got <NEWLINE>".
 TEST(MXPPhaseR5, ElementAbortedByCarriageReturn)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     long long errs = doc.m_iMXPerrors;
     feed(doc, "<send\rmore text\n");
@@ -1642,7 +1639,7 @@ TEST(MXPPhaseR5, ElementAbortedByCarriageReturn)
 // An ESC inside an MXP element aborts it: "got <ESC>".
 TEST(MXPPhaseR5, ElementAbortedByEscape)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     long long errs = doc.m_iMXPerrors;
     feed(doc, "<send\x1B[0mtext\n");
@@ -1652,7 +1649,7 @@ TEST(MXPPhaseR5, ElementAbortedByEscape)
 // An MXP comment consumed character by character through the comment phase.
 TEST(MXPPhaseR5, CommentPhaseDispatch)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     feed(doc, "<!-- a comment -->visible\n");
     // the comment is swallowed; the visible text survives
     CLine* line = doc.m_LineList.GetHead();
@@ -1665,7 +1662,7 @@ TEST(MXPPhaseR5, CommentPhaseDispatch)
 // m_bMXP_script arm inside MXP_Secure).
 TEST(MXPPhaseR5, ScriptContentDiscardedInSecureMode)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     feed(doc, "<script>evil();</script>after\n");
     std::string all;
@@ -1680,7 +1677,7 @@ TEST(MXPPhaseR5, ScriptContentDiscardedInSecureMode)
 // line) inserts a joining space rather than running words together.
 TEST(MXPPhaseR5, ParagraphNewlineJoinsWithSpace)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     feed(doc, "<p>alpha beta\ngamma</p>\n");
     std::string all;
@@ -1695,7 +1692,7 @@ TEST(MXPPhaseR5, ParagraphNewlineJoinsWithSpace)
 // (StartNewLine_KeepPreviousStyle AddRefs it).
 TEST(MXPPhaseR5, WrappedHyperlinkKeepsActionOnNextLine)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
     doc.m_wrap = TRUE;
     doc.m_nWrapColumn = 20;
@@ -1726,7 +1723,7 @@ TEST(MXPPhaseR5, WrappedHyperlinkKeepsActionOnNextLine)
 // action into the split-off runs.
 TEST(MXPPhaseR5, TriggerColouringSplitsActionStyle)
 {
-    CMUSHclientDoc doc = make_doc_e2e();
+    CMUSHclientDoc doc; make_doc_e2e(doc);
     doc.m_iMXP_mode = eMXP_secure;
 
     CTrigger* t  = new CTrigger();

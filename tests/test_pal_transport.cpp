@@ -17,7 +17,11 @@
 // implementing the full contract.
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (doc_stub.h deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
 #include "pal/itransport.h"
 
 #include <cstring>
@@ -450,8 +454,12 @@ TEST(PalTransport, CheckConnectedReturnsNonzeroWhenDisconnected)
     doc->m_iConnectPhase = eConnectNotConnected;
     EXPECT_TRUE(doc->CheckConnected() != 0);        // not connected → non-zero
 
+    // B-3: the adopted doc.cpp CheckConnected requires BOTH phase==connected AND
+    // ConnectionOpen() (m_pTransport != NULL); the old portable twin checked only
+    // the phase.  Give it an open transport (the dtor's TeardownTransport frees it).
     doc->m_iConnectPhase = eConnectConnectedToMud;
-    EXPECT_EQ((BOOL)0, doc->CheckConnected());      // connected → 0
+    doc->m_pTransport = new FakeTransport();
+    EXPECT_EQ((BOOL)0, doc->CheckConnected());      // connected + open → 0
 
     delete doc;
 }

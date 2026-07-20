@@ -167,13 +167,15 @@ TEST(RegexpTest, DuplicateNamedGroupKeepsNonEmptyCapture) {
     delete r;
 }
 
-// regexp.cpp regexec: "int options = PCRE_NOTEMPTY; // don't match on an
-// empty string" — a pattern that can only match empty is reported as a
-// non-match, so triggers/aliases can never fire on zero-length matches.
-TEST(RegexpTest, EmptyOnlyMatchSuppressedByNotEmpty) {
+// regexp.cpp regexec: options = App.m_bRegexpMatchEmpty ? 0 : PCRE_NOTEMPTY.
+// B-3 flip: the headless build now reads this global option (real regexp.cpp
+// FULL_BUILD arm) instead of the old portable always-PCRE_NOTEMPTY deviation.
+// The Windows default is RegexpMatchEmpty=1 (globalregistryoptions.cpp:56), so a
+// pattern that CAN match empty fires at offset 0 — matching Windows behaviour.
+TEST(RegexpTest, EmptyMatchAllowedByDefault) {
     t_regexp* r = regcomp("z*");
     ASSERT_NE(nullptr, r);
-    EXPECT_EQ(0, regexec(r, "abc"));      // would match "" at offset 0
+    EXPECT_GT(regexec(r, "abc"), 0);      // matches "" at offset 0 (RegexpMatchEmpty=1)
     EXPECT_GT(regexec(r, "azzb"), 0);     // control: a real match still works
     delete r;
 }

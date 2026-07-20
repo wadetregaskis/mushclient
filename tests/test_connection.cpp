@@ -12,7 +12,11 @@
 // notifications through Note()).
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
 #include "pal/itransport.h"
 #include "scripting/scripting.h"
 
@@ -1892,6 +1896,14 @@ TEST(SmallArms, TranslateColourOpacityArms)
     delete doc;
 }
 
+// OnGameTrace is a protected afx_msg handler; reach it for tests via a derived
+// using-declaration (legal member-pointer access, no doc.h change).
+static void call_OnGameTrace(CMUSHclientDoc& d)
+{
+    struct Access : CMUSHclientDoc { using CMUSHclientDoc::OnGameTrace; };
+    (d.*(&Access::OnGameTrace))();
+}
+
 // OnGameTrace with a partially-built line pushes the pending text onto a new
 // line first.
 TEST(SmallArms, GameTraceOnPartialLine)
@@ -1899,7 +1911,7 @@ TEST(SmallArms, GameTraceOnPartialLine)
     CMUSHclientDoc* doc = make_doc();
     char text[] = "partial-prompt> ";
     doc->OnBytesReceived(text, (int)sizeof text - 1);
-    doc->OnGameTrace();
+    call_OnGameTrace(*doc);
     EXPECT_TRUE(doc->m_bTrace);
     EXPECT_TRUE(saw(doc, "partial-prompt>"));
     delete doc;

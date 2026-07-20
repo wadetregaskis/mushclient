@@ -491,6 +491,33 @@ int i;
   m_nextAcceleratorCommand = ACCELERATOR_FIRST_COMMAND;
   m_accelerator = NULL;
 
+#if !defined(_WIN32) && defined(MUSHCLIENT_HEADLESS_APP)
+  // ── Headless (mushcore) only — B-3 atomic flip ──────────────────────────
+  // Windows/wx seed the first output line + the JUMP_SIZE position index in
+  // SetUpOutputWindow (run at view creation) and register the document with the
+  // world-doc template via the MFC framework.  Neither runs headless, so do
+  // both here — relocated verbatim-in-spirit from the retired doc_portable.cpp
+  // ctor (display step 7 + world-doc registration).  Guarded so it is invisible
+  // to Windows AND to the mushapp/mushgui build (which do run SetUpOutputWindow).
+  m_total_lines = 0;
+  m_pCurrentLine = new CLine (++m_total_lines, m_nWrapColumn, 0, WHITE, BLACK, m_bUTF_8);
+  m_LineList.AddTail (m_pCurrentLine);
+  AllocateLinePositions ();
+
+  // Register with the global world-document list so world.GetWorld() /
+  // GetWorldList() etc. can find this doc (Windows: the CMultiDocTemplate does
+  // this in the framework; headless the App owns the template — headless_app.cpp).
+  if (App.m_pWorldDocTemplate)
+    App.m_pWorldDocTemplate->AddDocument (this);
+
+  // Intentional headless default (was doc_stub.h:2387-2390 / the retired
+  // doc_portable.cpp ctor): notes are emitted in RGB, not palette-index colour —
+  // there is no palette to resolve against headless, so world.Note/ColourNote
+  // keep their literal RGB.  The Windows ctor sets this false (m_iNoteColourFore/
+  // Back start as palette indices); the port keeps it true (plan Stage 7.3).
+  m_bNotesInRGB = true;
+#endif
+
 }  // end of CMUSHclientDoc::CMUSHclientDoc()
 
 #ifdef PANE
@@ -503,6 +530,14 @@ void closepane (pair<string, CPaneView *> item)
 CMUSHclientDoc::~CMUSHclientDoc()
 {
 int i;
+
+#if !defined(_WIN32) && defined(MUSHCLIENT_HEADLESS_APP)
+  // Headless: unregister from the world-doc list FIRST, so no stale pointer is
+  // visible to GetWorld()/GetWorldList() during teardown (mirror of the ctor's
+  // AddDocument; Windows leaves this to the MFC framework).
+  if (App.m_pWorldDocTemplate)
+    App.m_pWorldDocTemplate->RemoveDocument (this);
+#endif
 
   // stop sounds playing, release sound buffers
 #ifdef _WIN32

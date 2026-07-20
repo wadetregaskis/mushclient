@@ -136,11 +136,16 @@ void CMainFrame::CancelSound ()
 {
 }
 
-// The headless engine plays sound via the doc-side miniaudio hooks
-// (methods_sounds.cpp); the Frame-level MCI path (mainfrm.cpp:1417) is inert.
-bool CMainFrame::PlaySoundFile (const CString & /*strSound*/)
+// The real doc.cpp PlaySoundFile routes through Frame.PlaySoundFile (the MCI
+// path on Windows).  Off-Windows this Frame stub is the sound seam: route it to
+// the wx sound hook (installed by mushgui / the test) so trigger + MSP + world.-
+// Sound audio still plays — the g_wxhook path the retired doc_portable.cpp
+// PlaySoundFile used (plan Stage 7.2: Frame-level no-op + g_wxhook_sound path).
+bool CMainFrame::PlaySoundFile (const CString & strSound)
 {
-    return false;
+    if (g_wxhook_play_sound)
+        return g_wxhook_play_sound (static_cast<const char*> (strSound), false);
+    return false;   // headless: no audio backend
 }
 
 void CMainFrame::CheckTimerFallback ()

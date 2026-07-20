@@ -18,7 +18,11 @@
 //    WideCharToMultiByte (wchar_t is 4 bytes on macOS/Linux).
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
 
 #include <algorithm>
 #include <cerrno>     // ENOENT — CFile open-failure cause checks
@@ -3608,7 +3612,10 @@ TEST(MiscShims, GlobalMemoryStatusZeroesAndSmallStubs) {
 
 // ── round 5: document open/save shims, stdio strings, shell, clipboard ────
 
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
 #include "platform/wx_mfc_hooks.h"
 
 // OnSaveDocument/OnOpenDocument: the CDocument shim opens the file, wraps

@@ -1,14 +1,17 @@
 // PCRE or regexp
 
 #include "stdafx.h"
-#ifdef _WIN32
+// B-3: switch was #ifdef _WIN32 (non-standard); add the FULL_BUILD arm so the
+// real headers compile headless (mushcore now, mushapp already) — doc_stub.h is
+// deleted.  This is the throw-on-bad-pattern parity path (round 2).
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 #include "MUSHclient.h"
 #include "doc.h"
 #include "dialogs/RegexpProblemDlg.h"
 #else
 // Needed for the full CMUSHclientApp definition (App.m_iCounterFrequency).
 #include "platform/doc_stub.h"
-#endif // _WIN32
+#endif // _WIN32 || MUSHCLIENT_FULL_BUILD
 #include "pcre/config.h"
 #include "pcre/pcre.h"
 #include "pcre/pcre_internal.h"
@@ -64,11 +67,11 @@ int regexec(t_regexp *prog,
             const char *string,
             const int start_offset)
   {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 int options = App.m_bRegexpMatchEmpty ? 0 : PCRE_NOTEMPTY;    // don't match on an empty string
 #else
 int options = PCRE_NOTEMPTY;    // don't match on an empty string
-#endif // _WIN32
+#endif // _WIN32 || MUSHCLIENT_FULL_BUILD
 int count;
 
   // exit if no regexp program to process (possibly because of previous error)

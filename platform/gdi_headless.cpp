@@ -152,4 +152,110 @@ HBITMAP CreateDIBSection (HDC /*hdc*/, const BITMAPINFO* /*pbmi*/, UINT /*iUsage
   return nullptr;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// B-3: the FULL remainder of the GDI shim.  Under MUSHCLIENT_FULL_BUILD the
+// mfc_ui.h GDI classes are declaration-only; test_mfc_ui.cpp (and, transitively,
+// the adopted dialog/view TUs) reference the whole no-op drawing surface.  These
+// out-of-line bodies mirror the mfc_ui.h non-full inline returns EXACTLY (so the
+// existing GDI assertions in test_mfc_ui stay green) — the B-2 handoff note #2
+// "re-run nm -u for GDI symbols beyond the 13 and add one-liners" realised.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── CBitmap ─────────────────────────────────────────────────────────────────
+HBITMAP CBitmap::CreateCompatibleBitmap (void*, int, int)       { return nullptr; }
+BOOL    CBitmap::GetBitmap (BITMAP* bm)         { if (bm) *bm = {}; return FALSE; }
+bool    CBitmap::CreateBitmap (int, int, UINT, UINT, const void*) { return false; }
+
+// ── CBrush (dtor is the vtable key function) ────────────────────────────────
+CBrush::~CBrush () {}
+bool CBrush::CreateSolidBrush (COLORREF)        { return false; }
+bool CBrush::CreateHatchBrush (int, COLORREF)   { return false; }
+bool CBrush::CreatePatternBrush (CBitmap*)      { return false; }
+bool CBrush::CreateBrushIndirect (const LOGBRUSH*) { return false; }
+
+// ── CPen (dtor is the vtable key function) ──────────────────────────────────
+CPen::~CPen () {}
+bool    CPen::CreatePen (int, int, COLORREF)    { return false; }
+BOOL    CPen::Attach (HGDIOBJ)                  { return FALSE; }
+HGDIOBJ CPen::Detach ()                         { return nullptr; }
+
+// ── CFont (~CFont / CreateFont already above) ───────────────────────────────
+bool CFont::CreateFontIndirect (const LOGFONT*)          { return false; }
+bool CFont::CreatePointFont (int, LPCTSTR, void*)        { return false; }
+int  CFont::GetLogFont (LOGFONT* lf)          { if (lf) *lf = {}; return 0; }
+int  CFont::GetObject (int, LOGFONT* lf) const { if (lf) *lf = {}; return 0; }
+
+// ── CDC drawing surface (all no-ops; the ~CDC / CreateCompatibleDC /
+//    GetDeviceCaps(int) / SelectObject(CFont*) / GetTextMetrics are above) ────
+CDC* CDC::FromHandle (HDC)                       { static CDC dc; return &dc; }
+
+CBitmap* CDC::SelectObject (CBitmap*)            { return nullptr; }
+CBrush*  CDC::SelectObject (CBrush*)             { return nullptr; }
+CPen*    CDC::SelectObject (CPen*)               { return nullptr; }
+CGdiObject* CDC::SelectStockObject (int)         { return nullptr; }
+
+bool CDC::Rectangle (int, int, int, int)         { return false; }
+bool CDC::Ellipse (int, int, int, int)           { return false; }
+bool CDC::Ellipse (const CRect& r)               { return Ellipse (r.left, r.top, r.right, r.bottom); }
+bool CDC::RoundRect (const CRect&, CPoint)       { return false; }
+bool CDC::LineTo (int, int)                      { return false; }
+bool CDC::MoveTo (int, int, POINT*)              { return false; }
+bool CDC::Polyline (const POINT*, int)           { return false; }
+bool CDC::Polygon (const POINT*, int)            { return false; }
+bool CDC::Chord (const CRect&, CPoint, CPoint)   { return false; }
+bool CDC::Pie (int, int, int, int, int, int, int, int) { return false; }
+bool CDC::Pie (const CRect&, CPoint, CPoint)     { return false; }
+bool CDC::FloodFill (int, int, COLORREF)         { return false; }
+bool CDC::ExtFloodFill (int, int, COLORREF, UINT) { return false; }
+bool CDC::InvertRect (const RECT*)               { return false; }
+bool CDC::InvertRect (const CRect*)              { return false; }
+void CDC::FillSolidRect (int, int, int, int, COLORREF) {}
+void CDC::Draw3dRect (int, int, int, int, COLORREF, COLORREF) {}
+bool CDC::PatBlt (int, int, int, int, DWORD)     { return false; }
+bool CDC::BitBlt (int, int, int, int, CDC*, int, int, DWORD) { return false; }
+bool CDC::StretchBlt (int, int, int, int, CDC*, int, int, int, int, DWORD) { return false; }
+BOOL CDC::SetPixelV (int, int, COLORREF)         { return FALSE; }
+COLORREF CDC::GetPixel (int, int) const          { return 0; }
+
+bool CDC::TextOut (int, int, LPCTSTR, int)       { return false; }
+bool CDC::TextOut (int, int, const CString&)     { return false; }
+bool CDC::ExtTextOut (int, int, UINT, LPCRECT, LPCTSTR, int, const int*) { return false; }
+int  CDC::DrawText (LPCTSTR, int, LPRECT, UINT)  { return 0; }
+
+COLORREF CDC::SetTextColor (COLORREF)            { return 0; }
+COLORREF CDC::GetTextColor () const              { return 0; }
+COLORREF CDC::SetBkColor (COLORREF)              { return 0; }
+COLORREF CDC::GetBkColor () const                { return 0; }
+int      CDC::SetBkMode (int)                    { return 0; }
+int      CDC::GetBkMode () const                 { return 0; }
+int      CDC::SetROP2 (int)                      { return 0; }
+int      CDC::GetROP2 () const                   { return 0; }
+UINT     CDC::SetTextAlign (UINT)                { return 0; }
+UINT     CDC::GetTextAlign () const              { return 0; }
+int      CDC::SetTextCharacterExtra (int)        { return 0; }
+int      CDC::SetPolyFillMode (int)              { return 0; }
+int      CDC::GetPolyFillMode () const           { return 0; }
+int      CDC::SetStretchBltMode (int)            { return 0; }
+int      CDC::GetStretchBltMode () const         { return 0; }
+int      CDC::GetTextFace (CString& s) const     { s = ""; return 0; }
+
+CSize  CDC::GetTextExtent (LPCTSTR, int)         { return {}; }
+CPoint CDC::SetViewportOrg (int, int)            { return {}; }
+CPoint CDC::SetWindowOrg (int, int)              { return {}; }
+
+bool CDC::DeleteDC ()                            { return true; }
+int  CDC::SaveDC ()                              { return 0; }
+bool CDC::RestoreDC (int)                        { return false; }
+
+CFont*   CDC::GetCurrentFont ()   const          { return nullptr; }
+CBrush*  CDC::GetCurrentBrush ()  const          { return nullptr; }
+CPen*    CDC::GetCurrentPen ()    const          { return nullptr; }
+CBitmap* CDC::GetCurrentBitmap () const          { return nullptr; }
+
+// ── Global GDI functions (full-build declares them; wx impls are mushgui) ────
+HGDIOBJ SelectObject (HDC, HGDIOBJ)              { return nullptr; }
+BOOL    DeleteObject (HGDIOBJ)                   { return FALSE; }
+int     GetDeviceCaps (HDC, int)                 { return 0; }
+HPEN    ExtCreatePen (DWORD, DWORD, const LOGBRUSH*, DWORD, const DWORD*) { return nullptr; }
+
 #endif // !_WIN32 && MUSHCLIENT_FULL_BUILD

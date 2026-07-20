@@ -8,7 +8,11 @@
 // files, exactly as the product does.
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "scripting/errors.h"
 #include "pal/itransport.h"
 #include "scripting/scripting.h"
 
@@ -20,11 +24,9 @@
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-static CMUSHclientDoc make_doc()
+static void make_doc(CMUSHclientDoc& doc)
 {
-    CMUSHclientDoc doc;
     doc.m_iConnectPhase = eConnectConnectedToMud;
-    return doc;
 }
 
 // A bare (engine-less) plugin registered with the doc.
@@ -41,9 +43,17 @@ static CPlugin* add_bare_plugin(CMUSHclientDoc& doc, const char* id,
 
 // methods_plugins.cpp GetPlugin: "return if id wrong length" — only IDs of
 // exactly PLUGIN_UNIQUE_ID_LENGTH (24) characters match.
+// OnFilePluginwizard is a protected afx_msg handler; reach it via a derived
+// using-declaration (legal member-pointer access, no doc.h change).
+static void call_OnFilePluginwizard(CMUSHclientDoc& d)
+{
+    struct Access : CMUSHclientDoc { using CMUSHclientDoc::OnFilePluginwizard; };
+    (d.*(&Access::OnFilePluginwizard))();
+}
+
 TEST(PluginCallback, PluginLookupRequiresExact24CharID)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     add_bare_plugin(doc, "abcdefabcdefabcdefabcdef", "P");   // 24 chars
 
     EXPECT_TRUE(doc.IsPluginInstalled("abcdefabcdefabcdefabcdef"));
@@ -56,7 +66,7 @@ TEST(PluginCallback, PluginLookupRequiresExact24CharID)
 // plugin that does not define the queried callback counts as approving.
 TEST(PluginCallback, MissingSendCallbackCountsAsApproval)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     add_bare_plugin(doc, "abcdefabcdefabcdefabcdef", "NoCallbacks");
 
     EXPECT_TRUE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, "a line", true));
@@ -119,7 +129,7 @@ static bool output_contains(CMUSHclientDoc& doc, const char* text)
 // embedded NULs intact to OnPluginTelnetSubnegotiation.
 TEST(PluginCallback, TelnetSubnegotiationStringPreservesEmbeddedNuls)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("nul", IDA, "NulPlugin",
         "function OnPluginTelnetSubnegotiation(msg, data)\n"
         "  world.SetVariable('len', tostring(#data))\n"
@@ -143,7 +153,7 @@ TEST(PluginCallback, TelnetSubnegotiationStringPreservesEmbeddedNuls)
 // considered true in Lua" — a callback returning the number 0 vetoes.
 TEST(PluginCallback, LuaZeroNumberResultVetoesLikeFalse)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("zero", IDA, "ZeroPlugin",
         "function OnPluginSend(text) return 0 end\n")));
 
@@ -154,7 +164,7 @@ TEST(PluginCallback, LuaZeroNumberResultVetoesLikeFalse)
 // if each plugin returned true" — any veto blackballs the action.
 TEST(PluginCallback, AnyPluginFalseVetoesSendCallback)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("ok", IDA, "OkPlugin",
         "function OnPluginSend(text) return true end\n")));
     EXPECT_TRUE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, "x", true));
@@ -169,7 +179,7 @@ TEST(PluginCallback, AnyPluginFalseVetoesSendCallback)
 // run-time error the callback is never re-invoked.
 TEST(PluginCallback, RuntimeErrorLatchesCallbackOff)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("err", IDA, "ErrPlugin",
         "count = 0\n"
         "function OnPluginSend(text)\n"
@@ -193,7 +203,7 @@ TEST(PluginCallback, RuntimeErrorLatchesCallbackOff)
 // when the script has clobbered the global debug table.
 TEST(PluginCallback, LuaErrorHandledWhenDebugTableClobbered)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("dbg", IDA, "DbgPlugin",
         "debug = 42\n"                       // clobber the debug table
         "count = 0\n"
@@ -215,7 +225,7 @@ TEST(PluginCallback, LuaErrorHandledWhenDebugTableClobbered)
 // with a valid OnPluginBroadcast.
 TEST(PluginCallback, BroadcastPluginSkipsSender)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // B: receives broadcasts
     ASSERT_TRUE(load_plugin(doc, write_plugin("bcastB", IDB, "BPlugin",
         "function OnPluginBroadcast(msg, id, name, text)\n"
@@ -243,7 +253,7 @@ TEST(PluginCallback, BroadcastPluginSkipsSender)
 // whose callback dispid is valid.
 TEST(PluginCallback, SendToFirstStopsAtFirstPluginWithCallback)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // A has no OnPluginTrace; B and C both do
     ASSERT_TRUE(load_plugin(doc, write_plugin("first_a", IDA, "FirstA",
         "-- no trace handler\n")));
@@ -257,7 +267,7 @@ TEST(PluginCallback, SendToFirstStopsAtFirstPluginWithCallback)
     EXPECT_STREQ("<unset>",     (const char*)plugin_var(doc.GetPlugin(IDC), "traced"));
 
     // and false when NO plugin defines the callback
-    CMUSHclientDoc doc2 = make_doc();
+    CMUSHclientDoc doc2; make_doc(doc2);
     ASSERT_TRUE(load_plugin(doc2, write_plugin("first_none", IDA, "NoTrace",
         "-- nothing\n")));
     EXPECT_FALSE(doc2.SendToFirstPluginCallbacks(ON_PLUGIN_TRACE, "msg"));
@@ -268,7 +278,7 @@ TEST(PluginCallback, SendToFirstStopsAtFirstPluginWithCallback)
 // reverted once the call returns.
 TEST(PluginCallback, CallPluginExposesCallerIDViaInfoType23)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("calleeB", IDB, "CalleeB",
         "function fn()\n"
         "  world.SetVariable('caller', tostring(\n"
@@ -291,7 +301,7 @@ TEST(PluginCallback, CallPluginExposesCallerIDViaInfoType23)
 // value the routine returned.
 TEST(LuaScripting, CallPluginReturnsOkThenAllRoutineValues)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("multiB", IDB, "MultiB",
         "function fn(x, y)\n"
         "  return 'r1', 2, x .. '!', y\n"
@@ -319,7 +329,7 @@ TEST(LuaScripting, CallPluginReturnsOkThenAllRoutineValues)
 // original position, and the target's stack is cleared for the next call.
 TEST(LuaScripting, CallPluginTableArgErrorReportsOriginalArgNumber)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("tblB", IDB, "TblB",
         "function fn(x) return x end\n")));
     ASSERT_TRUE(load_plugin(doc, write_plugin("tblA", IDA, "TblA",
@@ -347,7 +357,7 @@ TEST(LuaScripting, CallPluginTableArgErrorReportsOriginalArgNumber)
 // still find itself by ID via m_CurrentPlugin.
 TEST(PluginCallback, ClosingPluginStillFindableDuringOnPluginClose)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("close", IDA, "ClosingPlugin",
         "function OnPluginClose()\n"
         "  world.Note('close:' .. tostring(\n"
@@ -363,7 +373,7 @@ TEST(PluginCallback, ClosingPluginStillFindableDuringOnPluginClose)
 // unloading its own ID gets eBadParameter and stays installed.
 TEST(PluginCallback, PluginCannotUnloadItself)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("self", IDA, "SelfPlugin",
         "world.SetVariable('rc', tostring(world.UnloadPlugin(world.GetPluginID())))\n")));
 
@@ -377,7 +387,7 @@ TEST(PluginCallback, PluginCannotUnloadItself)
 // a case-insensitive NAME lookup when the argument is not a known ID.
 TEST(LuaScripting, UnloadPluginAcceptsNameWhenIDNotFound)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("named", IDA, "NamedPlugin",
         "-- nothing\n")));
     ASSERT_TRUE(doc.GetPlugin(IDA) != NULL);
@@ -391,7 +401,7 @@ TEST(LuaScripting, UnloadPluginAcceptsNameWhenIDNotFound)
 // plugin at world scope.
 TEST(PluginLoad, PluginCanLoadAnotherPlugin)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     std::string pathB = write_plugin("loadB", IDB, "LoadedB", "-- nothing\n");
     std::string body = "world.SetVariable('rc', tostring(world.LoadPlugin('" +
                        pathB + "')))\n";
@@ -418,7 +428,7 @@ TEST(PluginLoad, ScriptStateHasLoadlibRemovedWhenPackageLibraryDisabled)
     unsigned int saved = App.m_bEnablePackageLibrary;
 
     App.m_bEnablePackageLibrary = 0;             // sandboxed
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("sandbox", IDA, "SandboxPlugin",
         "world.SetVariable('ll', tostring(package.loadlib))\n"
         "world.SetVariable('ld3', tostring(package.loaders[3]))\n"
@@ -444,7 +454,7 @@ TEST(PluginLoad, ScriptStateHasLoadlibRemovedWhenPackageLibraryDisabled)
 // ePluginCouldNotSaveState instead of recursing.
 TEST(PluginState, ReentrantSaveStateRejected)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_strWorldID = "0123456789abcdef01234567";
     char dir[256];
     snprintf(dir, sizeof dir, "/tmp/mc_test_state_%d_reent/", (int)getpid());
@@ -470,7 +480,7 @@ TEST(PluginState, ReentrantSaveStateRejected)
 // exactly <worldID>-<pluginID>-state.xml (the ecosystem contract).
 TEST(PluginState, SaveStateAutoCreatesFolderAndNamesFile)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_strWorldID = "0123456789abcdef01234567";
     char dir[256];
     snprintf(dir, sizeof dir, "/tmp/mc_test_state_%d/nested/deeper/", (int)getpid());
@@ -498,7 +508,7 @@ TEST(PluginState, SaveStateAutoCreatesFolderAndNamesFile)
 // it is re-enabled.
 TEST(PluginCallback, DisabledPluginSkippedByAllDispatchVariants)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("dis", IDA, "DisPlugin",
         "function OnPluginWorldSave() world.SetVariable('ws', 'ran') end\n"
         "function OnPluginTrace(m)   world.SetVariable('tr', m)     end\n"
@@ -528,7 +538,7 @@ TEST(PluginCallback, DisabledPluginSkippedByAllDispatchVariants)
 // previous plugin's rewrite (a pipeline, not fan-out of the original).
 TEST(PluginCallback, RtnCallbackChainPipesRewrittenString)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("rtn_a", IDA, "RtnA",
         "function OnPluginCommandEntered(t) return t .. '+A' end\n")));
     ASSERT_TRUE(load_plugin(doc, write_plugin("rtn_b", IDB, "RtnB",
@@ -545,7 +555,7 @@ TEST(PluginCallback, RtnCallbackChainPipesRewrittenString)
 // accepts numbers).
 TEST(PluginCallback, RtnCallbackNoReturnKeepsTextNumberIsCoerced)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("rtn_keep", IDA, "RtnKeep",
         "function OnPluginCommandEntered(t) world.SetVariable('saw', t) end\n")));
     CString cmd("keepme");
@@ -554,7 +564,7 @@ TEST(PluginCallback, RtnCallbackNoReturnKeepsTextNumberIsCoerced)
     EXPECT_STREQ("keepme",
                  (const char*)plugin_var(doc.GetPlugin(IDA), "saw"));
 
-    CMUSHclientDoc doc2 = make_doc();
+    CMUSHclientDoc doc2; make_doc(doc2);
     ASSERT_TRUE(load_plugin(doc2, write_plugin("rtn_num", IDA, "RtnNum",
         "function OnPluginCommandEntered(t) return 42 end\n")));
     CString cmd2("original");
@@ -566,7 +576,7 @@ TEST(PluginCallback, RtnCallbackNoReturnKeepsTextNumberIsCoerced)
 // string reach the Lua callback in declaration order (numbers first).
 TEST(PluginCallback, TwoNumbersOneStringCallbackReceivesAllArgs)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("sd", IDA, "ScreendrawPlugin",
         "function OnPluginScreendraw(t, l, s)\n"
         "  world.SetVariable('args',\n"
@@ -586,7 +596,7 @@ TEST(PluginCallback, TwoNumbersOneStringCallbackReceivesAllArgs)
 // assume false and vice-versa".
 TEST(PluginCallback, TwoNumbersOneStringStopOnTrueSemantics)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("sd_yes", IDA, "SaysTrue",
         "function OnPluginScreendraw(t, l, s) return true end\n")));
     ASSERT_TRUE(load_plugin(doc, write_plugin("sd_after", IDB, "AfterTrue",
@@ -601,7 +611,7 @@ TEST(PluginCallback, TwoNumbersOneStringStopOnTrueSemantics)
                  (const char*)plugin_var(doc.GetPlugin(IDB), "ran"));
 
     // no plugin defines the callback: stop-on-true assumes false...
-    CMUSHclientDoc doc2 = make_doc();
+    CMUSHclientDoc doc2; make_doc(doc2);
     ASSERT_TRUE(load_plugin(doc2, write_plugin("sd_none", IDA, "NoHandler",
         "-- nothing\n")));
     EXPECT_FALSE(doc2.SendToAllPluginCallbacks(ON_PLUGIN_SCREENDRAW,
@@ -617,7 +627,7 @@ TEST(PluginCallback, TwoNumbersOneStringStopOnTrueSemantics)
 // false at the first handler that vetoes.
 TEST(PluginCallback, TwoNumbersOneStringStopOnFalseVetoes)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("sd_no", IDA, "SaysFalse",
         "function OnPluginScreendraw(t, l, s) return false end\n")));
 
@@ -630,7 +640,7 @@ TEST(PluginCallback, TwoNumbersOneStringStopOnFalseVetoes)
 // same early-stop arms as the 3-argument form.
 TEST(PluginCallback, OneNumberOneStringStopSemantics)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("tr_yes", IDA, "ReqTrue",
         "function OnPluginTelnetRequest(t, s)\n"
         "  world.SetVariable('args', tostring(t) .. '|' .. s)\n"
@@ -651,7 +661,7 @@ TEST(PluginCallback, OneNumberOneStringStopSemantics)
                  (const char*)plugin_var(doc.GetPlugin(IDB), "ran"));
 
     // stop-on-false with a vetoing handler
-    CMUSHclientDoc doc2 = make_doc();
+    CMUSHclientDoc doc2; make_doc(doc2);
     ASSERT_TRUE(load_plugin(doc2, write_plugin("tr_no", IDA, "ReqFalse",
         "function OnPluginTelnetRequest(t, s) return false end\n")));
     EXPECT_FALSE(doc2.SendToAllPluginCallbacks(ON_PLUGIN_TELNET_REQUEST,
@@ -659,7 +669,7 @@ TEST(PluginCallback, OneNumberOneStringStopSemantics)
                                                false, true));
 
     // no handler anywhere: tail inversion (same rule as 3-argument form)
-    CMUSHclientDoc doc3 = make_doc();
+    CMUSHclientDoc doc3; make_doc(doc3);
     ASSERT_TRUE(load_plugin(doc3, write_plugin("tr_none", IDA, "ReqNone",
         "-- nothing\n")));
     EXPECT_FALSE(doc3.SendToAllPluginCallbacks(ON_PLUGIN_TELNET_REQUEST,
@@ -675,7 +685,7 @@ TEST(PluginCallback, OneNumberOneStringStopSemantics)
 // is documented as ignored.
 TEST(PluginCallback, CStringOverloadsForwardToCharImplementation)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("cs", IDA, "CsPlugin",
         "function OnPluginSend(t)\n"
         "  world.SetVariable('saw', t)\n"
@@ -703,7 +713,7 @@ TEST(PluginCallback, CStringOverloadsForwardToCharImplementation)
 // no script engine can never resolve a callback.
 TEST(PluginCallback, EnginelessPluginDispidIsUnknown)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CPlugin* p = add_bare_plugin(doc, IDA, "NoEngine");
     EXPECT_EQ(DISPID_UNKNOWN, p->GetPluginDispid("OnPluginSend"));
 }
@@ -713,7 +723,7 @@ TEST(PluginCallback, EnginelessPluginDispidIsUnknown)
 // reported as 'not needed' (true).
 TEST(PluginState, SaveStateSkippedWhenNoStateDirConfigured)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_strWorldID = "0123456789abcdef01234567";
     App.m_strDefaultStateFilesDirectory.Empty();
 
@@ -731,7 +741,7 @@ TEST(PluginState, SaveStateSkippedWhenNoStateDirConfigured)
 // OnPluginSaveState callback.
 TEST(PluginState, SaveStateSkippedWithoutWorldID)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     // (the ctor seeds a world ID — plugin LOADING requires one, so clear it
     // only after the load)
     ASSERT_TRUE(load_plugin(doc, write_plugin("noworld", IDA, "NoWorldPlugin",
@@ -754,7 +764,7 @@ TEST(PluginState, SaveStateSkippedWithoutWorldID)
 // serialized — a variable set inside the callback appears in the state file.
 TEST(PluginState, OnPluginSaveStateRunsBeforeSerialization)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_strWorldID = "0123456789abcdef01234567";
     char dir[256];
     snprintf(dir, sizeof dir, "/tmp/mc_test_cborder_%d/", (int)getpid());
@@ -792,7 +802,7 @@ TEST(PluginState, OnPluginSaveStateRunsBeforeSerialization)
 // lands beside it with the concatenated name.
 TEST(PluginState, SaveStateFolderNotADirectoryStillSavesBesideIt)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_strWorldID = "0123456789abcdef01234567";
 
     char base[256], blocker[256];
@@ -826,7 +836,7 @@ TEST(PluginState, SaveStateFolderNotADirectoryStillSavesBesideIt)
 // reclaimed when the plugin closes.
 TEST(PluginLifecycle, PluginArrayLivesInPluginScope)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("arr", IDA, "ArrPlugin",
         "world.SetVariable('rc', tostring(world.ArrayCreate('a1')))\n"
         "world.ArraySet('a1', 'k', 'v')\n")));
@@ -858,7 +868,7 @@ static CPlugin* add_dispatch_plugin(CMUSHclientDoc& doc, const char* id)
 
 TEST(PluginDispatch, NoArgVariantConsumesDispid)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CPlugin* p = add_dispatch_plugin(doc, IDA);
     CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_TICK];
     d._dispid = 1;   // pretend the routine resolved
@@ -870,7 +880,7 @@ TEST(PluginDispatch, NoArgVariantConsumesDispid)
 
 TEST(PluginDispatch, TextVariantDefaultsToApproval)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CPlugin* p = add_dispatch_plugin(doc, IDA);
     CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_SEND];
     d._dispid = 1;
@@ -881,7 +891,7 @@ TEST(PluginDispatch, TextVariantDefaultsToApproval)
 
 TEST(PluginDispatch, NumberTextVariantPacksEmbeddedNuls)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CPlugin* p = add_dispatch_plugin(doc, IDA);
     CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_TELNET_SUBNEGOTIATION];
     d._dispid = 1;
@@ -893,7 +903,7 @@ TEST(PluginDispatch, NumberTextVariantPacksEmbeddedNuls)
 
 TEST(PluginDispatch, TwoNumbersTextVariant)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CPlugin* p = add_dispatch_plugin(doc, IDA);
     CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_MXP_SETENTITY];
     d._dispid = 1;
@@ -904,7 +914,7 @@ TEST(PluginDispatch, TwoNumbersTextVariant)
 
 TEST(PluginDispatch, NumberAndThreeStringsVariant)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CPlugin* p = add_dispatch_plugin(doc, IDA);
     CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_CHAT_ACCEPT];
     d._dispid = 1;
@@ -915,7 +925,7 @@ TEST(PluginDispatch, NumberAndThreeStringsVariant)
 
 TEST(PluginDispatch, RtnVariantLeavesTextWhenNoResult)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CPlugin* p = add_dispatch_plugin(doc, IDA);
     CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_PARTIAL_LINE];
     d._dispid = 1;
@@ -928,7 +938,7 @@ TEST(PluginDispatch, RtnVariantLeavesTextWhenNoResult)
 
 TEST(PluginDispatch, UnknownDispidShortCircuitsAsApproval)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CPlugin* p = add_dispatch_plugin(doc, IDA);
     CScriptDispatchID& d = p->m_PluginCallbacks[ON_PLUGIN_SEND];
     ASSERT_EQ((DISPID)DISPID_UNKNOWN, d._dispid);   // never resolved
@@ -949,7 +959,7 @@ static CScriptDispatchID& bind_callback(CPlugin* p, const char* fn)
 
 TEST(PluginLuaArgs, ArgVariantsReachLuaWithArguments)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("args", IDA, "ArgsPlugin",
         "function fNumText(n, text)\n"
         "  world.SetVariable('numtext', tostring(n) .. ':' .. text)\n"
@@ -1000,7 +1010,7 @@ TEST(PluginLuaArgs, ArgVariantsReachLuaWithArguments)
 
 TEST(PluginCallback, MxpTagAndEntityCallbacksReachPlugins)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_bMXP = true;
     doc.m_iUseMXP = eUseMXP;
     doc.m_iMXP_mode = eMXP_secure;
@@ -1041,7 +1051,7 @@ TEST(PluginState, SaveStateWritesVariablesToStateFile)
     App.m_strDefaultStateFilesDirectory = CString(dir) + "/";
 
     {
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         doc.m_strWorldID = "worldid0123456789abcdef0";
         ASSERT_TRUE(load_plugin(doc, write_plugin("save", IDA, "SavePlugin",
             "world.SetVariable('persisted', 'yes')\n"
@@ -1075,7 +1085,7 @@ TEST(PluginState, SaveStateWritesVariablesToStateFile)
 TEST(PluginState, SaveStateSkippedWithoutStateFolderOrWorldId)
 {
     CString savedDir = App.m_strDefaultStateFilesDirectory;
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     CPlugin* p = add_bare_plugin(doc, IDA, "NoState");
     p->m_bSaveState = true;
 
@@ -1107,7 +1117,7 @@ TEST(PluginState, MissingStateFolderFallsBackToDirectoryPicker)
         return strdup(s_pickedDir);
     };
     {
-        CMUSHclientDoc doc = make_doc();
+        CMUSHclientDoc doc; make_doc(doc);
         doc.m_strWorldID = "worldid0123456789abcdef0";
         CPlugin* p = add_bare_plugin(doc, IDA, "PickState");
         p->m_bSaveState = true;
@@ -1319,7 +1329,7 @@ TEST(WizardTest, HeadlessWizardSelectsEverythingThenCancels)
     fclose(f);
     doc.m_strScriptFilename = spath;
 
-    doc.OnFilePluginwizard();     // headless: prepares, then cancels
+    call_OnFilePluginwizard(doc);     // headless: prepares, then cancels
     unlink(spath);
 
     CTrigger* t = nullptr;
@@ -1541,7 +1551,7 @@ TEST(PluginInfoR4, LineReceivedFalseOmitsLineFromOutput)
 // IAC DO and the SENT_DO notification (telnet_phases default arms).
 TEST(PluginR5, TelnetRequestApprovalSendsDoAndWill)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("tr_ok", IDA, "ReqOk",
         "function OnPluginTelnetRequest(t, s)\n"
         "  world.SetVariable('last', tostring(t) .. '|' .. s)\n"
@@ -1570,7 +1580,7 @@ struct NullTransport : pal::ITransport {
 
 TEST(PluginR5, SendCallbackCanVetoOutgoingCommand)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     doc.m_pTransport = new NullTransport();   // doc dtor tears it down
     ASSERT_TRUE(load_plugin(doc, write_plugin("send_no", IDA, "SendVeto",
         "function OnPluginSend(s) return false end\n")));
@@ -1582,7 +1592,7 @@ TEST(PluginR5, SendCallbackCanVetoOutgoingCommand)
 // OnPluginPacketReceived returning an empty string discards the packet.
 TEST(PluginR5, PacketReceivedCallbackCanDiscardPacket)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("pk_zap", IDA, "PacketZap",
         "function OnPluginPacketReceived(s)\n"
         "  return ''\n"
@@ -1598,7 +1608,7 @@ TEST(PluginR5, PacketReceivedCallbackCanDiscardPacket)
 // of the deferred trigger-script pass.
 TEST(PluginR5, PluginScriptedTriggerExecutes)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     ASSERT_TRUE(load_plugin(doc, write_plugin("trig", IDA, "TrigPlugin",
         "function got_line(name, line, wildcards)\n"
         "  world.SetVariable('plugin_saw', line)\n"
@@ -1619,7 +1629,7 @@ TEST(PluginR5, PluginScriptedTriggerExecutes)
 // whose own PluginListChanged is swallowed by the guard.
 TEST(PluginR5, ListChangedCallbackDoesNotRecurse)
 {
-    CMUSHclientDoc doc = make_doc();
+    CMUSHclientDoc doc; make_doc(doc);
     std::string third = write_plugin("lc3", "ccccccccccccccccccccccc3",
                                      "Third", "-- nothing\n");
     std::string body =

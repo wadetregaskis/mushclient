@@ -16,7 +16,10 @@
 
 #ifndef _WIN32
 
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (doc_stub.h deleted; mushcore is FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
 #include "OtherTypes.h"
 
 #include <map>

@@ -15,10 +15,11 @@
 
 #ifndef _WIN32
 
-#include "platform/doc_stub.h"
+// B-3 atomic flip: real headers (portable stub deleted; mushcore is FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
 #include "scripting/errors.h"   // eOK / eNoSuchWindow / eNoChatConnections
-                                // (self-sufficiency for the real-header flip;
-                                // no-op today — doc_stub.h already includes it)
 
 #include <cstring>   // strlen
 #include <cstdlib>   // free

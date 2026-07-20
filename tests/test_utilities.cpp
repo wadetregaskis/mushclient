@@ -7,7 +7,11 @@
 // portable twins, these exercise the real shipping code, not a reimplementation.
 
 #include "mc_test.h"
-#include "platform/doc_stub.h"   // CString + prototypes: myAtoF, EditDistance,
+// B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"   // CString + prototypes: myAtoF, EditDistance,
+#include "scripting/errors.h"  // eOK / eBadParameter / eCannotPlaySound
                                  // encodeBase64, decodeBase64
 #include <cstring>
 

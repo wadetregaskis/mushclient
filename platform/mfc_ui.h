@@ -19,8 +19,7 @@
 
 #ifndef _WIN32
 
-// Sentinel: doc_stub.h checks this to avoid redefining types that
-// mfc_ui.h already provides authoritatively.
+// Marks mfc_ui.h as the authoritative provider of these MFC-compat types.
 #define MFC_UI_H_INCLUDED
 
 #include <string>
@@ -1857,7 +1856,7 @@ typedef const IID*   REFIID;
 
 // ── VT_ type tags ─────────────────────────────────────────────────────────
 // All VT_* constants defined here with individual guards so they can coexist
-// with any enum-based definitions in doc_stub.h or system headers.
+// with any enum-based definitions in system headers.
 #ifndef VT_EMPTY
 #  define VT_EMPTY    0
 #endif
@@ -3102,7 +3101,7 @@ public:
     virtual void AssertValid() const        {}
     virtual BOOL SaveModified()             { return TRUE; }
     // Real MFC's CDocument::DoSave writes via OnSaveDocument (which Serialises).
-    // The old no-op was fine while CMUSHclientDoc::DoSave was a doc_stub.h inline
+    // The old no-op was fine while CMUSHclientDoc::DoSave was a headless inline
     // that called OnSaveDocument itself; the adopted doc.cpp::DoSave delegates to
     // THIS base, so it must do the write (else world.Save produces no file).
     virtual BOOL DoSave(LPCTSTR lpszPathName, BOOL /*bReplace*/=TRUE) {
@@ -4134,10 +4133,8 @@ public:
 };
 
 // ── MFC string collection types ───────────────────────────────────────────
-// doc_stub.h provides these for the CLI build (always included when compiling
-// the protocol engine). mfc_ui.h provides them for the full GUI build (which
-// does not include doc_stub.h).  doc_stub.h's versions are guarded with
-// #ifndef MFC_UI_H_NOT_INCLUDED (i.e., these always win when mfc_ui.h is used).
+// mfc_ui.h is the sole provider of these MFC string-collection types on
+// non-Windows (every build sees them through this header).
 
 // CStringList — stable-pointer POSITION, compatible with MFC iteration idiom
 class CStringList : public CObject {
@@ -5467,8 +5464,6 @@ inline int MulDiv(int n, int m, int d) {
 // High-resolution performance counter using POSIX clock_gettime(CLOCK_MONOTONIC).
 // Frequency is 1 GHz (nanoseconds).  Both functions always succeed.
 #include <time.h>
-#ifndef MC_QPC_SHIMS_DEFINED   // doc_stub.h defines the same pair (mixed-include TUs)
-#define MC_QPC_SHIMS_DEFINED
 inline BOOL QueryPerformanceFrequency(LARGE_INTEGER* li) {
     if (li) { li->QuadPart = 1000000000LL; }  // 1 ns resolution
     return TRUE;
@@ -5481,7 +5476,6 @@ inline BOOL QueryPerformanceCounter(LARGE_INTEGER* li) {
     }
     return TRUE;
 }
-#endif // MC_QPC_SHIMS_DEFINED
 
 // ── WM_SETFONT / more window messages ─────────────────────────────────────
 #ifndef WM_SETFONT
@@ -5567,10 +5561,7 @@ inline BOOL QueryPerformanceCounter(LARGE_INTEGER* li) {
 typedef struct in_addr* LPIN_ADDR;
 
 // WSACancelAsyncRequest stub
-#ifndef MC_WSACANCEL_SHIM_DEFINED   // doc_stub.h defines the same (mixed-include TUs)
-#define MC_WSACANCEL_SHIM_DEFINED
 inline int WSACancelAsyncRequest(HANDLE) { return 0; }
-#endif // MC_WSACANCEL_SHIM_DEFINED
 inline int WSAIoctl(unsigned int, DWORD, void*, DWORD, void*, DWORD, DWORD*, void*, void*) { return -1; }
 
 // SSL/X509 stubs come from <openssl/ssl.h> and <openssl/x509.h> (included via

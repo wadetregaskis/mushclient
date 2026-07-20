@@ -926,7 +926,7 @@ TEST(TelnetR4, Utf8BadContinuationFlushes)
 
 TEST(TelnetR4, TeloptNameTableAndDebugTracing)
 {
-    // spot-check the name table (declared in doc_stub.h, defined in
+    // spot-check the name table (declared in doc.h, defined in
     // doc_portable.cpp)
     EXPECT_STREQ("BINARY",         telopt_name(0));
     EXPECT_STREQ("TERMINAL-SPEED", telopt_name(32));

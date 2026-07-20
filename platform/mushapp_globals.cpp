@@ -26,7 +26,7 @@ extern const char ENDLINE[] = "\r\n";
 
 // ── Application singleton ─────────────────────────────────────────────────────
 // Every non-Windows translation unit references App (declared extern in
-// platform/doc_stub.h and forwarded by stdafx.h).  MUSHclient.cpp defines a
+// stdafx.h).  MUSHclient.cpp defines a
 // separate `theApp` (MFC naming convention) that is effectively unused on
 // non-Windows; App is the object the rest of the code reaches for.
 CMUSHclientApp App;
@@ -34,15 +34,12 @@ CMUSHclientApp App;
 // ── Main-frame stubs ──────────────────────────────────────────────────────────
 // stdafx.h (non-Windows block) declares:
 //   extern CMainFrame Frame;      ← literal symbol "Frame"
-// platform/doc_stub.h also declares:
-//   extern CMainFrame g_stub_frame;
-//   #define Frame g_stub_frame    ← maps Frame to g_stub_frame in TUs that
-//                                    include doc_stub.h
+// the port layer also historically declared a `g_stub_frame` alias for Frame.
 //
 // To satisfy both, we define both as independent stub instances.  Since they
 // are pure stubs (no real window behind them), having two separate objects is
 // harmless.
 CMainFrame Frame;         // satisfies stdafx.h's extern declaration
-CMainFrame g_stub_frame;  // satisfies doc_stub.h's extern declaration
+CMainFrame g_stub_frame;  // satisfies the historical g_stub_frame extern
 
 #endif // !_WIN32

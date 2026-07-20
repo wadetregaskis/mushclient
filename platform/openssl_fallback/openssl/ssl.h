@@ -3,7 +3,7 @@
 // precedence via the build system's -I flags.
 #pragma once
 
-// Sentinel: doc_stub.h checks this to avoid redefining SSL functions we provide.
+// Sentinel: guards against redefining the SSL functions this stub provides.
 #define PLATFORM_OPENSSL_SSL_H_INCLUDED
 
 // If the real OpenSSL headers are already included (e.g., via -I/opt/homebrew/...),

@@ -19,8 +19,8 @@
 // never sees CMUSHclientDoc directly.  See platform/py_engine.cpp for the
 // Python side.
 //
-// Compiled only into mushapp (the full build) — it needs the real CMUSHclientDoc
-// from doc.h, not mushcore's doc_stub.h.
+// Compiled into mushcore (the shared engine, Stage 9) — it needs the real
+// CMUSHclientDoc from doc.h.
 
 #pragma once
 #if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD)

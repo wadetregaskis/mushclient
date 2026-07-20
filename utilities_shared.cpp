@@ -36,7 +36,7 @@ using std::vector;
 // ── IsStringNumber ──────────────────────────────────────────────────────────
 // True if `s` is a run of decimal digits.  A leading '+'/'-' is accepted ONLY
 // when bSigned is true (bSigned defaults to false — see the stdafx.h prototype).
-// Declared in stdafx.h / platform/doc_stub.h.
+// Declared in stdafx.h.
 //
 // This honours bSigned; the pre-2026-07 Windows copy ignored the argument and
 // always stripped a leading sign — a latent defect reconciled here (the port
@@ -63,7 +63,7 @@ bool IsStringNumber(const string & s, const bool bSigned)
 // ── myAtoF ──────────────────────────────────────────────────────────────────
 // Locale-independent string→double conversion (sqlite3AtoF-derived); also
 // underpins SQLite's text-to-float path.  Returns the number of characters
-// consumed.  Declared in stdafx.h / platform/doc_stub.h.
+// consumed.  Declared in stdafx.h.
 int myAtoF(const char* z, double* pResult)
 {
     typedef long double LONGDOUBLE_TYPE;
@@ -119,7 +119,7 @@ int myAtoF(const char* z, double* pResult)
 
 // ── encodeBase64 ────────────────────────────────────────────────────────────
 // RFC 2045 base64 encoder.  bMultiLine wraps at column 76 (a CRLF after every
-// 57 input bytes / 76 output chars).  Declared in stdafx.h / platform/doc_stub.h.
+// 57 input bytes / 76 output chars).  Declared in stdafx.h.
 static const char kBase64Code[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -180,7 +180,7 @@ CString encodeBase64(const char* plaintext, const bool bMultiLine)
 // throw (and the notepad path try/catches it too).  The port had silently
 // dropped the throw and returned garbage; restored here so the mac product and
 // Windows agree.  getBase64Value stays file-static (used only by decodeBase64).
-// Declared in stdafx.h / platform/doc_stub.h.
+// Declared in stdafx.h.
 
 // takes a base64 character, returns its value (RFC 2045 Table 1)
 static int getBase64Value(char code)
@@ -286,7 +286,7 @@ void SeeIfBase64(CString& strText)
 // ── EditDistance ────────────────────────────────────────────────────────────
 // Levenshtein/Damerau edit distance between two strings (each capped at 20
 // characters so a pathological word can't blow up the O(mn) matrix).
-// Declared in stdafx.h / platform/doc_stub.h.
+// Declared in stdafx.h.
 int EditDistance(const string source, const string target)
 {
     const int MAX_LENGTH = 20;
@@ -332,7 +332,7 @@ int EditDistance(const string source, const string target)
 
 // Generate256colours fills the xterm-256 palette.  The table is defined
 // per-build (MUSHclient.cpp for Windows/mushapp, doc_portable.cpp for mushcore);
-// this function only writes it.  Declared in MUSHclient.cpp / platform/doc_stub.h.
+// this function only writes it.  Declared in MUSHclient.cpp.
 extern COLORREF xterm_256_colours[256];
 
 void Generate256colours(void)
@@ -369,7 +369,7 @@ void Generate256colours(void)
 }
 
 // convert an ANSI attribute number to its ESC sequence (e.g. 1 → "\033[1m").
-// Declared in stdafx.h / platform/doc_stub.h.
+// Declared in stdafx.h.
 CString AnsiCode(short iCode)
 {
     char buf[16];
@@ -378,7 +378,7 @@ CString AnsiCode(short iCode)
 }
 
 // escape HTML special characters: < > & " → &lt; &gt; &amp; &quot;
-// Declared in stdafx.h / platform/doc_stub.h.
+// Declared in stdafx.h.
 CString FixHTMLString(CString strToFix)
 {
     CString strOld = strToFix;
@@ -401,7 +401,7 @@ CString FixHTMLString(CString strToFix)
 // escape HTML special characters for multi-line element content: < > & tab →
 // &lt; &gt; &amp; &#9; (newlines and quotes preserved).  Body verbatim from the
 // Windows Utilities.cpp (relocated here when xml/xml_save_world.cpp was adopted
-// into mushcore).  Declared in stdafx.h / platform/doc_stub.h.
+// into mushcore).  Declared in stdafx.h.
 CString FixHTMLMultilineString (const CString strToFix)
   {
   CString strOldString = strToFix;
@@ -434,7 +434,7 @@ CString FixHTMLMultilineString (const CString strToFix)
 // wildcard → regular expression.  Behaviourally identical to the Windows
 // Utilities.cpp form; the only difference is the control-char (<0x20) hex escape
 // uses snprintf("%02x") instead of the Windows-only _itoa (same two-digit
-// lowercase output).  Declared in stdafx.h / platform/doc_stub.h.
+// lowercase output).  Declared in stdafx.h.
 CString ConvertToRegularExpression(const CString& strMatchString,
                                    bool bWholeLine,
                                    bool bMakeAsterisksWildcards)
@@ -500,7 +500,7 @@ CString ConvertToRegularExpression(const CString& strMatchString,
 
 // MXP-action lookup hash (SHS/SHA over action+hint+variable).  The value is an
 // ephemeral in-memory bucket key, never persisted; the port had drifted to an
-// FNV-1a hash.  Declared in stdafx.h / platform/doc_stub.h.
+// FNV-1a hash.  Declared in stdafx.h.
 unsigned long MakeActionHash(const CString& strAction,
                              const CString& strHint,
                              const CString& strVariable)
@@ -519,7 +519,7 @@ unsigned long MakeActionHash(const CString& strAction,
 // convert C-style escape sequences (\n \t \xNN ...).  Builds into a CString
 // buffer, and ReleaseBuffer(-1) re-measures with strlen, so an embedded NUL
 // (from \x00, or a bare \x) TRUNCATES the string — matching Windows.  The port
-// had preserved the embedded NUL.  Declared in stdafx.h / platform/doc_stub.h.
+// had preserved the embedded NUL.  Declared in stdafx.h.
 CString FixupEscapeSequences(const CString& strSource)
 {
     CString strDest = strSource;
@@ -572,7 +572,7 @@ CString FixupEscapeSequences(const CString& strSource)
 // TRUE if `strLabel` is NOT a valid label: first char must be alpha; the rest
 // alpha/digit/underscore, plus '.' when bScript is true.  The port had dropped
 // the bScript parameter (and the '.' rule).  Declared (with the default arg) in
-// stdafx.h, which the mushcore build also sees via doc_stub.h.
+// stdafx.h (every build includes it).
 BOOL CheckLabel(const CString& strLabel, const bool bScript)
 {
     if (strLabel.IsEmpty())
@@ -595,7 +595,7 @@ BOOL CheckLabel(const CString& strLabel, const bool bScript)
 // ── strnrchr ─────────────────────────────────────────────────────────────────
 // Find the last occurrence of c in the string s, maximum length count.
 // (Relocated verbatim from Utilities.cpp — needed by the display family in
-// every build.)  Declared in stdafx.h / platform/doc_stub.h.
+// every build.)  Declared in stdafx.h.
 const char *strnrchr(const char *s, const char c, size_t count)
 {
   const char * ret = NULL;
@@ -612,7 +612,7 @@ const char *strnrchr(const char *s, const char c, size_t count)
 // ── FixUpGerman ──────────────────────────────────────────────────────────────
 // Replace German umlaut sequences if required — see bug request 240.
 // (Relocated verbatim from Utilities.cpp — needed by DoSendMsg in every build.)
-// Declared in stdafx.h / platform/doc_stub.h.
+// Declared in stdafx.h.
 CString FixUpGerman (const CString strMessage)
   {
   CString strResult = strMessage;

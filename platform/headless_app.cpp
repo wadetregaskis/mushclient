@@ -18,11 +18,11 @@
 //     Stage 5 (Stage 5 item 1) when doc_portable.cpp:151 is deleted in lockstep.
 //
 //  2. Layout incompatibility.  The App global is *constructed* by doc_portable.cpp,
-//     which sees the STUB CMUSHclientApp (platform/doc_stub.h:1202 — no base class,
+//     which sees the STUB CMUSHclientApp (the retired headless stub — no base class,
 //     no vtable).  The real CMUSHclientApp (MUSHclient.h:50) is `: public CWinApp`
 //     with `virtual PreTranslateMessage`, so it carries a vptr at offset 0 and a
 //     base subobject — a DIFFERENT object layout.  A strong out-of-line real ctor
-//     here would win over the stub's weak inline ctor (doc_stub.h:1343) and then
+//     here would win over the stub's weak inline ctor and then
 //     run on the stub-layout global → memory corruption.  Activation is safe only
 //     once the App-accessing mushcore TUs (doc_portable.cpp et al.) have flipped
 //     to the real MUSHclient.h layout in Stage 4-5.
@@ -52,7 +52,7 @@
 static CMultiDocTemplate s_worldDocTemplate (0, NULL, NULL, NULL);
 
 // Headless ctor — reproduces the retired stub CMUSHclientApp ctor
-// (doc_stub.h:1343) plus the stub's in-class global-option defaults, since the
+// plus the stub's in-class global-option defaults, since the
 // real MUSHclient.h members have NO in-class initialisers (Windows fills them
 // from the registry in InitInstance, which never runs headless).  These are the
 // Windows table defaults — the state Windows reaches via LoadGlobalsFromDatabase
@@ -69,7 +69,7 @@ CMUSHclientApp::CMUSHclientApp()
 
     m_pWorldDocTemplate = &s_worldDocTemplate;         // world registry (see above)
 
-    // ── Global-option defaults (was doc_stub.h:1359-1453) ────────────────────
+    // ── Global-option defaults (were the retired stub's in-class defaults) ───
     // Boolean/int global prefs whose Windows table default is non-zero.
     m_bAutoConnectWorlds            = 1;
     m_bAutoExpand                  = 1;

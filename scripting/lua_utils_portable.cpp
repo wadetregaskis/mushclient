@@ -11,7 +11,7 @@
 
 #ifndef _WIN32
 
-// B-3 atomic flip: real headers (doc_stub.h deleted; mushcore is FULL_BUILD).
+// B-3 atomic flip: real headers (the headless stub is gone; mushcore is FULL_BUILD).
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
@@ -173,7 +173,7 @@ void MakeTableItemBool (lua_State * L, const char * name, const bool b)
 // Forward declarations for symbols defined elsewhere in mushcore
 int EditDistance(const std::string source, const std::string target);
 
-// tInfoTypeMapping / tInternalFunctionsTable now come from doc_stub.h
+// tInfoTypeMapping / tInternalFunctionsTable now come from doc.h
 // (methods_info.cpp adoption); InfoTypes[] is the REAL table from
 // methods_info.cpp, InternalFunctionsTable[] the windows_stubs.cpp sentinel.
 extern tInfoTypeMapping InfoTypes[];

@@ -1517,7 +1517,6 @@ public:
   // typed-only (P2 complete): no view attached → pushes are inert, pulls
   // report empty/zero — which is Windows' permanent state until its native
   // adapter lands (CMUSHView, the real P4/P5 step).  See docs/PAL.md.
-  // (Mirror of the doc_stub.h twin.)
   pal::IWorldView* m_pWorldView = nullptr;
   bool HaveOutputSink() const { return m_pWorldView != nullptr; }
   void EmitOutputLine(SOutputLine&& line) {
@@ -1881,7 +1880,7 @@ public:
 
   void RememberStyle (const CStyle * pStyle);
 
-  // Non-MFC view/zlib helpers used by portable .cpp files via doc_stub.h.
+  // Non-MFC view/zlib helpers used by the port's .cpp files.
   // Both MUST stay off Windows: as members they hide the real Windows
   // equivalents — MFC's CDocument::UpdateAllViews(CView*, LPARAM, CObject*),
   // and the global ::InitZlib declared in stdafx.h (MUSHclient.cpp), which
@@ -1893,8 +1892,7 @@ public:
 
   // Port-only members with NO Windows counterpart (bodies in
   // doc_portable.cpp), declared here so TUs compiled against the real
-  // doc.h see them (docs/PHASE2-PLAN.md Stage 2).  Mirror of the
-  // doc_stub.h twins — keep both in lockstep.
+  // doc.h see them (docs/PHASE2-PLAN.md Stage 2).
   //
   // Headless world-load entry: drives the real XML machinery over `path`
   // (the test suite's canonical loader until the Stage-7 Serialize rewire).
@@ -2374,7 +2372,7 @@ public:
                                  const bool bStopOnFalse = false);
   // CString overloads — delegate to the const char* version
   bool SendToAllPluginCallbacks (const string & sName,
-                                 const CString & sText);   // 2-arg form (doc_stub.h compat)
+                                 const CString & sText);   // 2-arg form (port compat)
   bool SendToAllPluginCallbacks (const string & sName,
                                  const CString & sText,
                                  const bool bStopOnFalse);

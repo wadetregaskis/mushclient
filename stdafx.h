@@ -43,7 +43,7 @@
 #include <iterator>
 #include <sstream>
 
-// Sentinel so doc_stub.h knows stdafx.h's UMessageBox/TMessageBox are available.
+// Marks stdafx.h as included (its UMessageBox/TMessageBox are available).
 #define _STDAFX_INCLUDED_
 
 #ifdef _WIN32
@@ -128,7 +128,7 @@
 #include "format.h"    // CFormat : CString — declared here, defined in format.cpp
 
 // ── Colour constants — same values as Windows build ──────────────────────
-// Use #define (not enum) so doc_stub.h's #ifndef BLACK guard works.
+// Use #define (not enum) so the #ifndef BLACK guard below composes cleanly.
 #ifndef BLACK
 #  define BLACK   0
 #  define RED     1
@@ -240,7 +240,7 @@ class CMUSHclientDoc;
 //#define USE_REALLOC   // use malloc/realloc/free for line text
 
 // The define below gets the current app and casts it to the correct type
-// (on macOS, App and Frame are declared as extern globals in doc_stub.h)
+// (on macOS, App and Frame are extern globals provided by the platform layer)
 #ifdef _WIN32
 #define App (*((CMUSHclientApp*)AfxGetApp()))
 
@@ -249,7 +249,7 @@ class CMUSHclientDoc;
 #define Frame (*((CMainFrame*)App.m_pMainWnd))
 #endif // _WIN32
 
-// colours (on macOS these are defined in platform/doc_stub.h)
+// colours (on macOS these are the #defines above)
 #ifdef _WIN32
 enum { BLACK = 0, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE };
 #endif // _WIN32
@@ -1025,9 +1025,8 @@ extern bool bWine;
 #  include "StatLink.h"
 #endif
 
-// ── App / Frame global externs — declared in platform/doc_stub.h ───────────
-// mushview.cpp and other view files use App.m_xxx and Frame.xxx directly.
-// doc_stub.h is already included by ansi.cpp / doc_portable.cpp per-TU;
+// ── App / Frame global externs (provided by the platform layer) ────────────
+// mushview.cpp and other view files use App.m_xxx and Frame.xxx directly;
 // here we just expose the externs that every TU needs.
 class CMUSHclientApp;  // fully defined in MUSHclient.h (included before stdafx.h finishes)
 class CMainFrame;      // fully defined in mainfrm.h

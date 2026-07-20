@@ -2,7 +2,7 @@
 //
 // COutputPane is a wxScrolledWindow subclass that renders MUD output as a
 // sequence of styled lines.  Each line is a vector<SOutputRun> — the same
-// data produced by the ANSI/MXP parser (doc_stub.h).
+// data produced by the ANSI/MXP parser.
 //
 // Features:
 //   • Per-run fg/bg colour, bold, underline using wxDC primitives

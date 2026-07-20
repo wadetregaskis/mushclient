@@ -11,7 +11,7 @@
 #include "mainfrm.h"            // Frame (ConnectionClosed's status/button updates)
 #include "doc.h"
 #include "MUSHview.h"           // CMUSHView (DisplayMsg/StartNewLine view-notify loops)
-#include "scripting/errors.h"   // eOK / eBadParameter (full build; doc_stub.h defines them for mushcore)
+#include "scripting/errors.h"   // eOK / eBadParameter
 #include "dialogs/password.h"   // CPasswordDialog (ConnectionEstablished, full build)
 #ifdef _WIN32
 #include <ws2tcpip.h>           // getaddrinfo (LookupHostName's sync fallback —

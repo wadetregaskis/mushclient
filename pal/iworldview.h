@@ -4,7 +4,7 @@
 // finished output lines, notes, title/status, request repaints, and pull a few
 // pieces of frontend state (the current command text, the output selection, the
 // scroll position). It is the typed successor to the loose bundle of ~39 m_fn_*
-// std::function callbacks currently in doc_stub.h — a de-facto, untyped version
+// std::function callbacks the retired headless stub carried — a de-facto, untyped version
 // of this interface that the headless build already injects.
 //
 // Implemented by: the native Win32/MFC view (Windows), the wx output pane

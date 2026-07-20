@@ -11,8 +11,8 @@
 //     other source files (evaluate.cpp, timers.cpp, scripting/scripting.cpp,
 //     Utilities.cpp) but are called from code that compiles on all platforms.
 //
-//  3. Forwarding overloads for CMUSHclientDoc methods that doc_stub.h
-//     declares with a slightly different signature than doc.h.
+//  3. Forwarding overloads for CMUSHclientDoc methods that the retired headless
+//     stub declared with a slightly different signature than doc.h.
 //
 // Included in CMake target: mushapp (not mushcore).
 
@@ -29,12 +29,11 @@
 #include <cstdio>
 #include <algorithm>
 
-// g_debug is defined in mushapp_globals.cpp; doc_stub.h declares it extern
-// but can't be included here (conflicts with the full CMUSHclientDoc class).
+// g_debug is defined in mushapp_globals.cpp; stdafx.h declares it extern.
 extern bool g_debug;
 
 // ── g_before_output / g_after_output ─────────────────────────────────────────
-// Declared extern in platform/doc_stub.h; provided here for the full build.
+// Formerly declared by the headless layer; provided here for the full build.
 // These were set by the former CLI to manage readline output (CLI now removed).
 // In the GUI build they stay nullptr (the GUI handles its own output ordering).
 void (*g_before_output)() = nullptr;
@@ -357,7 +356,7 @@ BOOL CMUSHclientDoc::Save_Set(const int set_type,
 
 // ── CMUSHclientDoc::SortTimers ────────────────────────────────────────────────
 // On Windows this rebuilds a sorted timer display list.  On non-Windows the
-// timer map is iterated directly, so this is a no-op (matching doc_stub.h).
+// timer map is iterated directly, so this is a no-op (matching the headless build).
 void CMUSHclientDoc::SortTimers()
 {
 }

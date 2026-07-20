@@ -1,7 +1,6 @@
 // platform/output_types.h — shared styled-line types for GUI output.
 //
 // Defines SOutputRun and SOutputLine, used by:
-//   • doc_stub.h (mushcore portable layer)
 //   • doc.h      (mushapp full layer, non-Windows only)
 //   • wx_outputpane.h / wx_world_child.h (GUI rendering layer)
 //

@@ -100,8 +100,8 @@ void CChatSocket::OnConnect (int) {}
 // ── CMUSHclientDoc method stubs (compiled against doc.h) ──────────────────
 // All methods listed below are declared in doc.h (the full Windows class)
 // but only implemented in doc.cpp / other Windows-only files.  Compiled
-// against doc.h their signatures differ from the inline stubs in doc_stub.h,
-// which are only visible to TUs that include doc_stub.h.
+// against doc.h their signatures differ from the retired headless stub's inline
+// bodies (which were only visible to TUs that included that stub).
 // Providing out-of-line no-op definitions here satisfies the linker for
 // the TUs that include doc.h (evaluate.cpp, ProcessPreviousLine.cpp,
 // timers.cpp, serialize.cpp).
@@ -312,7 +312,7 @@ int TMessageBox(const char* sText, UINT nType) {
 }
 
 // ── CPlugin ───────────────────────────────────────────────────────────────
-// doc_stub.h now includes the real plugins.h (CPlugin convergence), so every
+// mushcore includes the real plugins.h (CPlugin convergence), so every
 // mushcore TU sees the one true CPlugin layout; the ctor/dtor and the
 // ExecutePluginScript family come from plugins.cpp (also in mushcore).
 // platform/plugin_portable.cpp (the old stub destructor) is deleted.

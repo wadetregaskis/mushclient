@@ -355,7 +355,7 @@ TEST(LineTest, NewLineSeededWithOneStyleAndUtf8SizedBuffer)
 // ═══════════════════════════════════════════════════════════════════════════
 // methods_noting.cpp — Note/Tell/ColourNote/AnsiNote/Hyperlink/NoteHr and the
 // note-colour accessor family.  Headless the doc starts in RGB-notes mode
-// with silver-on-black (doc_stub.h), matching a fresh Windows world.
+// with silver-on-black, matching a fresh Windows world.
 
 // last (0-based) closed line index — count-2 because the tail is the
 // in-progress current line.

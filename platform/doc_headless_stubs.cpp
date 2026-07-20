@@ -3,10 +3,10 @@
 //
 // Build: compiled into mushcore ONLY (MUSHCORE_SOURCES), never into mushapp/
 // mushgui.  Like platform/windows_stubs.cpp it is compiled against the REAL
-// headers (doc.h / mainfrm.h / MUSHclient.h), NOT platform/doc_stub.h — so the
+// headers (doc.h / mainfrm.h / MUSHclient.h), like windows_stubs.cpp — so the
 // out-of-line definitions here bind the doc.h-declared methods.  During Stages
-// 3-6 the stub's inline bodies (platform/doc_stub.h) still satisfy the TUs that
-// include doc_stub.h; these STRONG out-of-line defs coexist with, and win over,
+// 3-6 the retired headless stub's inline bodies still satisfied the TUs that
+// included it; these STRONG out-of-line defs coexisted with, and won over,
 // those WEAK inline defs (the proven windows_stubs.cpp pattern).  When Stage 4-7
 // flip those TUs onto the real headers the weak inlines vanish and these strong
 // defs become the sole providers — so mushcore keeps linking across the flip.
@@ -24,7 +24,7 @@
 //   GetWorldWindowPositionX → strong in doc_portable.cpp:616
 //   FindAllEntryPoints      → strong in doc_portable.cpp:748
 //
-// The remainder (below) are satisfied in mushcore today only by doc_stub.h weak
+// The remainder (below) were satisfied in mushcore pre-flip only by the stub's weak
 // inlines (or, for the free ShowHelp/ShowFunctionslist, not at all — they are
 // net-new), so a strong def here is safe and is the actual safety net.
 
@@ -50,7 +50,7 @@
 
 // ActivateNotepad — methods_notepad.cpp:210-241.  Headless there are no
 // app-owned notepad windows; route through the same g_wxhook_activate_notepad
-// hook the doc_stub.h inline (doc_stub.h:3440) uses, so the wx product path is
+// hook the retired headless-stub inline used, so the wx product path is
 // preserved and the headless path returns FALSE (FindNotepad → none).
 BOOL CMUSHclientDoc::ActivateNotepad (LPCTSTR Title)
 {
@@ -66,7 +66,7 @@ void CMUSHclientDoc::SortTimers ()
 
 // ShowErrorLines / WriteErrorLines — scripting/scripting.cpp:450 / :490 show the
 // script file around an error point.  Headless there is no script editor / error
-// window, so both are no-ops (matching the doc_stub.h:3787-3788 inlines).
+// window, so both are no-ops (matching the retired headless-stub inlines).
 void CMUSHclientDoc::ShowErrorLines (const int /*iLine*/)
 {
 }
@@ -77,8 +77,8 @@ void CMUSHclientDoc::WriteErrorLines (const int /*iLine*/, FILE * /*f*/)
 
 // DrawMappingStatusLine — the real body (Mapping.cpp:258) pushes the speedwalk
 // preview to Frame.SetStatusMessageNow().  Headless there is no status bar, so
-// this is a no-op (matching doc_stub.h:2753).  NB: the AddToMap adoption in
-// Unit B calls this; against the stub it resolves to the doc_stub.h weak inline,
+// this is a no-op (matching the retired headless-stub inline).  NB: the AddToMap
+// adoption in Unit B calls this; pre-flip it resolved to the stub's weak inline,
 // against a flipped TU it resolves here — both are the same no-op.
 void CMUSHclientDoc::DrawMappingStatusLine (void)
 {

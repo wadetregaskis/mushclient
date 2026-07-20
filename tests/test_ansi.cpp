@@ -6,7 +6,7 @@
 // then inspect the style(s) appended to the line's styleList.
 
 #include "mc_test.h"
-// B-3 atomic flip: real headers (doc_stub.h deleted; tests are FULL_BUILD).
+// B-3 atomic flip: real headers (the headless stub is gone; tests are FULL_BUILD).
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"

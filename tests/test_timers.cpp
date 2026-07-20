@@ -7,7 +7,7 @@
 // "now - 1 second" makes CheckTimerList() see it as overdue and fire it.
 
 #include "mc_test.h"
-// B-3 atomic flip: real headers (doc_stub.h deleted; tests are FULL_BUILD).
+// B-3 atomic flip: real headers (the headless stub is gone; tests are FULL_BUILD).
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
@@ -531,7 +531,7 @@ TEST(TimerScript, ScriptDeletingOtherDueTimerPreventsItsFiring)
 
 // ═══ world.* timer API (methods_timers.cpp) ═══════════════════════════════
 
-// (the eEnabled / eAtTime / eOneShot flag enums come via doc_stub.h)
+// (the eEnabled / eAtTime / eOneShot flag enums come via doc.h)
 #include <string>
 
 static std::string vs(const VARIANT& v)

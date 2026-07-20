@@ -1554,7 +1554,7 @@ bool CMUSHclientDoc::SendToAllPluginCallbacks (const string & sName,
                                                const bool bStopOnTrue,
                                                const bool bStopOnFalse)
   {
-  // This overload appears in doc_stub.h; the full build delegates to the two-arg form.
+  // This overload is a port convenience; the full build delegates to the two-arg form.
   // bStopOnTrue is not supported in the base overload, so we ignore it here.
   return SendToAllPluginCallbacks (sName, (const char *) sText, bStopOnFalse);
   }

@@ -510,7 +510,7 @@ int i;
   if (App.m_pWorldDocTemplate)
     App.m_pWorldDocTemplate->AddDocument (this);
 
-  // Intentional headless default (was doc_stub.h:2387-2390 / the retired
+  // Intentional headless default (was the retired
   // doc_portable.cpp ctor): notes are emitted in RGB, not palette-index colour —
   // there is no palette to resolve against headless, so world.Note/ColourNote
   // keep their literal RGB.  The Windows ctor sets this false (m_iNoteColourFore/

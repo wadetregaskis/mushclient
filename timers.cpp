@@ -410,7 +410,7 @@ void CMUSHclientDoc::OnGameResetalltimers()
 // Command-UI handler: portable (DoFixMenus is a no-op stub off-Windows, Enable
 // routes to the control), so compile it in the full app build (mushapp), whose
 // reactivated message map references it — not the mushcore/CLI stub build, where
-// CMUSHclientDoc (doc_stub.h) doesn't declare it.
+// the headless CMUSHclientDoc doesn't declare it.
 #if defined(_WIN32) || defined(MUSHCLIENT_FULL_BUILD)
 void CMUSHclientDoc::OnUpdateGameResetalltimers(CCmdUI* pCmdUI)
 {

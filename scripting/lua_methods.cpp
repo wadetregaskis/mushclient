@@ -1,5 +1,5 @@
 // Campaign C flip: this file compiles into BOTH mushapp (the product - real
-// GUI headers) AND mushcore (headless - platform/doc_stub.h).  HEAD-ONLY
+// GUI headers) AND mushcore (headless).  HEAD-ONLY
 // switch, per the campaign pattern (methods_info.cpp precedent): the body
 // below is byte-identical to the Windows source.
 #include "stdafx.h"

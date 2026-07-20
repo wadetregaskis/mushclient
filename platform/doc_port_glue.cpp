@@ -28,7 +28,8 @@
 //   • ENDLINE (doc.h:85), GetScriptEngine (doc.h:2637 inline)  → doc.h
 //   • the App global           → platform/headless_app.cpp
 //   • g_stub_frame / dbg / telopt_name / g_before/after_output → deleted with
-//     doc_stub.h (unreferenced post-flip; telnet_phases.cpp has its own locals).
+//     the retired headless stub (unreferenced post-flip; telnet_phases.cpp has
+//     its own locals).
 
 #ifndef _WIN32
 

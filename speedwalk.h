@@ -8,7 +8,7 @@
 // never depends on GUI-only globals: the full build passes MapDirectionsMap-
 // backed lookups; the portable build passes its built-in n/s/e/w/u/d tables.
 //
-// NB: include this AFTER the header that defines CString (doc.h / doc_stub.h).
+// NB: include this AFTER the header that defines CString (doc.h).
 
 #pragma once
 

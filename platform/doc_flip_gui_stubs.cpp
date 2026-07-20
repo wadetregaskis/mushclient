@@ -12,9 +12,9 @@
 // Build: compiled into mushcore ONLY (MUSHCORE_SOURCES), never mushapp/mushgui —
 // the real TUs own these symbols there.  Like platform/windows_stubs.cpp and
 // platform/doc_headless_stubs.cpp it compiles against the REAL headers (doc.h /
-// mainfrm.h / the dialog headers), NOT platform/doc_stub.h.  These STRONG defs
-// coexist with, and win over, doc_stub.h's WEAK inline defs in the TUs that still
-// include the stub header (the proven windows_stubs.cpp pattern); when B-3 flips
+// mainfrm.h / the dialog headers), like platform/windows_stubs.cpp.  These STRONG
+// defs are the sole providers of these GUI-only symbols in the headless link; the
+// pre-flip build resolved them through the retired headless stub's weak inlines;
 // those TUs onto the real headers the weak inlines vanish and these become the
 // sole providers.  Everything here is UNREFERENCED in the current stub build (no
 // mushcore TU calls a GUI command handler / dialog / DoGlobalPrefs), so the .o is
@@ -34,7 +34,7 @@
 // (they are the §5 residual, net of the already-staged 116+48 stubs); none carry
 // a pre-existing strong def, so no strong-vs-strong collision.  The afx_msg
 // command handlers, GamePreferences and CreateScriptEngine/DisableScripting are
-// not even declared by doc_stub.h's CMUSHclientDoc (they are GUI-only members),
+// not even declared by the headless CMUSHclientDoc (they are GUI-only members),
 // so they are net-new; SetTitle(LPCTSTR) differs in signature from the stub's
 // inline SetTitle(const CString&) (distinct mangled name).
 
@@ -358,8 +358,8 @@ bool SendToFront (const char* /*name*/) { return false; }
 bool bWine = false;
 // Windows sets this in MUSHclient.cpp InitInstance (= VERSION_STRING); headless
 // there is no InitInstance, so seed it at static-init with the same value so
-// world.Version() / the world-open banner report the real version (doc_stub.h
-// pre-flip defined it as a #define "5.07"; doc.h:21 now makes it a global).
+// world.Version() / the world-open banner report the real version (the retired
+// headless stub pre-flip defined it as a #define "5.07"; doc.h:21 now makes it a global).
 CString MUSHCLIENT_VERSION = VERSION_STRING;
 
 // ════════════════════════════════════════════════════════════════════════════

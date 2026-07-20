@@ -16,9 +16,6 @@ static char BASED_CODE THIS_FILE[] = __FILE__;
 extern tConfigurationNumericOption OptionsTable [];
 extern tConfigurationAlphaOption AlphaOptionsTable [];
 
-void SortAliases (CAliasMap & AliasMap,
-                  CAliasArray & AliasArray);
-
 void SortVariables (CVariableMap & VariableMap,
                     CVariableArray & VariableArray);
 

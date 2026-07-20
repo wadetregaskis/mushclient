@@ -17,9 +17,6 @@ static char BASED_CODE THIS_FILE[] = __FILE__;
 #define XML_LOAD 
 #define XML_SAVE 
 
-void SortAliases (CAliasMap & AliasMap,
-                  CAliasArray & AliasArray);
-
 void SortVariables (CVariableMap & VariableMap,
                     CVariableArray & VariableArray);
 

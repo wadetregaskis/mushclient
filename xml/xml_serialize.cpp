@@ -181,48 +181,9 @@ CString strContents;
   return false;
   } // end of IsClipboardXML
 
-static int CompareAlias (const void * elem1, const void * elem2)
-  {
-  CAlias * alias1 = (*((CAlias **) elem1));
-  CAlias * alias2 = (*((CAlias **) elem2));
-
-  if (alias1->name < alias2->name)
-    return -1;
-  else if (alias1->name > alias2->name)
-    return 1;
-  else
-    return 0;
-
-  }   // end of CompareAlias
-
-
-void SortAliases (CAliasMap & AliasMap,
-                  CAliasArray & AliasArray)
-  {
-int iCount = AliasMap.GetCount ();
-int i;
-CString strAliasName;
-CAlias * pAlias;
-POSITION pos;
-
-  AliasArray.SetSize (iCount);
-
-  // extract pointers into a simple array
-  for (i = 0, pos = AliasMap.GetStartPosition(); pos; i++)
-    {
-     AliasMap.GetNextAssoc (pos, strAliasName, pAlias);
-     AliasArray.SetAt (i, pAlias); 
-    }
-
-
-  // sort the array
-  qsort (AliasArray.GetData (), 
-         iCount,
-         sizeof (CAlias *),
-         CompareAlias);
-
-  } // end of SortAliases
-
+// (The free SortAliases/CompareAlias that lived here were dead duplicates of the
+// member CMUSHclientDoc::SortAliases (doc.cpp) that every caller actually uses;
+// removed.  SortVariables below has no member twin and IS used by the saver.)
 
 static int CompareVariable (const void * elem1, const void * elem2)
   {

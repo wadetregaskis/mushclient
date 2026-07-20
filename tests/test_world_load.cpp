@@ -1494,6 +1494,58 @@ TEST(WorldLoad, SaveGeneratesWorldIdWhenMissing)
     EXPECT_NE(content.find(expect), std::string::npos);   // and in the file
 }
 
+// The <aliases>/<variables> SAVE loops (Save_Aliases_XML / Save_One_Alias_XML /
+// Save_Variables_XML, and the SortAliases/SortVariables ordering pass they run)
+// had ZERO coverage: no save test ever contained an alias or a variable.  Add
+// three aliases and two variables, save, and pin that every one is written with
+// its fields and round-trips on reload.  (Save order is by (iSequence, match),
+// which depends on allocation for equal keys, so it is deliberately not asserted
+// — presence + round-trip is the robust, non-flaky observable.)
+TEST(WorldLoad, AliasesAndVariablesSaveAndRoundTrip)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_av_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        ASSERT_EQ((long)eOK, doc.AddAlias("la", "aaa", "go a", 0x01 /*eEnabled*/, ""));
+        ASSERT_EQ((long)eOK, doc.AddAlias("lz", "zzz", "go z", 0x01, ""));
+        ASSERT_EQ((long)eOK, doc.AddAlias("lm", "mmm", "go m", 0x01, ""));
+        ASSERT_EQ((long)eOK, doc.SetVariable("vzebra", "vz-val"));
+        ASSERT_EQ((long)eOK, doc.SetVariable("valpha", "va-val"));
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+
+    std::string c = slurp(path);
+    // all three aliases (with name label + match text + send) and both variables
+    // (with value) were written.
+    EXPECT_NE(c.find("name=\"la\""),      std::string::npos);
+    EXPECT_NE(c.find("match=\"aaa\""),    std::string::npos);
+    EXPECT_NE(c.find("match=\"mmm\""),    std::string::npos);
+    EXPECT_NE(c.find("match=\"zzz\""),    std::string::npos);
+    EXPECT_NE(c.find("go a"),             std::string::npos);   // alias contents present
+    EXPECT_NE(c.find("name=\"valpha\">va-val</variable>"), std::string::npos);
+    EXPECT_NE(c.find("name=\"vzebra\">vz-val</variable>"), std::string::npos);
+
+    // everything reloads with its data intact
+    CMUSHclientDoc doc2;
+    ASSERT_TRUE(doc2.LoadWorldFromFile(path));
+    CAlias* a = nullptr;
+    ASSERT_TRUE(doc2.GetAliasMap().Lookup("lm", a));
+    EXPECT_EQ(std::string("mmm"), std::string((const char*)a->name));
+    EXPECT_EQ(std::string("go m"), std::string((const char*)a->contents));
+    VARIANT vv = doc2.GetVariable("valpha");
+    ASSERT_EQ((unsigned short)VT_BSTR, vv.vt);
+    VariantClear(&vv);
+    EXPECT_EQ(3, (int)doc2.GetAliasMap().GetCount());
+}
+
 // xmlparse.cpp Get_XML_boolean: "be nice and let them slip in Y or y ...
 // '1'/'-1'/yes/y/true/t are true — anything else throws 'unrecognised
 // value'" — the failing element draws a warning and is dropped.

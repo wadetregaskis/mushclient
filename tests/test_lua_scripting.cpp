@@ -3894,6 +3894,183 @@ TEST(SpellCheckR5, AddSpellCheckWordRemainingArms)
     }
 }
 
+
+// world.Connect on an already-open world → eWorldOpen (30001).
+// L_Connect (lua_methods.cpp:1621) pushes doc->Connect() as a number;
+// CMUSHclientDoc::Connect (methods_utilities.cpp:528-539) returns eWorldOpen
+// from its else-branch when the phase is not eConnectNotConnected.  Forcing
+// eConnectConnectedToMud exercises that branch WITHOUT any network (the
+// eConnectNotConnected branch would call OnConnectionConnect).  world.Disconnect
+// is tested; Connect was 0% covered.
+TEST(LuaScripting, ConnectAlreadyOpenReturnsWorldOpen)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    doc.m_iConnectPhase = eConnectConnectedToMud;   // 9, != eConnectNotConnected
+
+    int n = run_ret(L, "return world.Connect()");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ((double)eWorldOpen, lua_tonumber(L, -1));   // 30001
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// The REAL C++ CMUSHclientDoc::ANSI (methods_colours.cpp:95-100) — called by
+// the dispatch engines — is untested: world.ANSI in Lua is a separate reimpl
+// (L_ANSI, lua_methods.cpp), so call ANSI() directly.  CFormat("%c[%dm", ESC,
+// Code) with ESC=='\x1B' (doc.h:112) yields "<ESC>[<code>m".
+TEST(LuaScripting, ANSIRealMethodBuildsEscapeSequence)
+{
+    CMUSHclientDoc doc;
+
+    BSTR b1 = doc.ANSI(1);
+    EXPECT_STREQ("\x1b[1m", (const char*)CString(b1));
+
+    BSTR b0 = doc.ANSI(0);
+    EXPECT_STREQ("\x1b[0m", (const char*)CString(b0));
+
+    BSTR b31 = doc.ANSI(31);
+    EXPECT_STREQ("\x1b[31m", (const char*)CString(b31));
+}
+
+// The REAL C++ CMUSHclientDoc::MapColourList (methods_colours.cpp:192-218):
+// empty translation map → iCount==0 → the CreateOneDim is skipped and the
+// never-created COleSafeArray detaches as VT_EMPTY.  (Lua's world.MapColourList
+// is a keyed-table reimpl, L_MapColourList, so this arm is otherwise untested.)
+TEST(LuaScripting, MapColourListEmptyIsVtEmpty)
+{
+    CMUSHclientDoc doc;   // fresh: m_ColourTranslationMap is empty
+
+    VARIANT v = doc.MapColourList();
+    EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
+}
+
+// The REAL C++ CMUSHclientDoc::MapColourList (methods_colours.cpp:192-218)
+// non-empty arm: one map entry → a 1-element (VT_ARRAY|VT_VARIANT) safearray
+// whose element is CFormat("%s = %s", ColourToName(original), ColourToName
+// (replacement)).  Assert against ColourToName so the expected string tracks
+// the actual naming (named or #RRGGBB) — only the format/ordering is pinned.
+TEST(LuaScripting, MapColourListNonEmptyBuildsNameEqualsNameArray)
+{
+    CMUSHclientDoc doc;
+    COLORREF a = RGB(1, 2, 3);
+    COLORREF b = RGB(4, 5, 6);
+    doc.MapColour(a, b);            // m_ColourTranslationMap[a] = b
+
+    VARIANT v = doc.MapColourList();
+    ASSERT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);
+
+    COleSafeArray sa;
+    sa.Attach(v);
+    ASSERT_EQ(1L, sa.GetOneDimSize());
+
+    long i = 0;
+    VARIANT e;
+    VariantInit(&e);
+    sa.GetElement(&i, &e);
+    ASSERT_EQ((int)VT_BSTR, (int)e.vt);
+
+    CString expected = ColourToName(a) + " = " + ColourToName(b);
+    EXPECT_STREQ((const char*)expected, (const char*)CString(e.bstrVal));
+}
+
+// utils.utf8decode 4-byte (astral) arm (lua_utils_portable.cpp:297): every
+// existing utf8decode test feeds at most a 3-byte codepoint, so the 4-byte
+// branch was dead.  U+1F600 GRINNING FACE encodes to F0 9F 98 80.
+TEST(LuaScripting, Utf8DecodeFourByteAstral)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "local s = utils.utf8encode(0x1F600)\n"
+        "assert(#s == 4, '4-byte encode len = ' .. #s)\n"
+        "local cp = utils.utf8decode(s)\n"
+        "assert(#cp == 1, 'expected 1 codepoint, got ' .. #cp)\n"
+        "assert(cp[1] == 0x1F600, 'decoded ' .. cp[1] .. ' not 0x1F600')\n"));
+
+    lua_close(L);
+}
+
+// utils.utf8valid 4-byte code-point-count arm (lua_utils_portable.cpp:327):
+// a single astral codepoint counts as ONE code point.  Existing utf8valid
+// tests only feed <=3-byte codepoints, so the i+=4 branch was dead.
+TEST(LuaScripting, Utf8ValidFourByteAstral)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    int n = run_ret(L, "return utils.utf8valid(utils.utf8encode(0x1F600))");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ(1.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    lua_close(L);
+}
+
+// utils.utf8sub 4-byte utf8_next arm (lua_utils_portable.cpp:341): sub must
+// walk astral codepoints as whole characters and never split a 4-byte
+// sequence.  Existing utf8sub tests only use <=3-byte codepoints.
+TEST(LuaScripting, Utf8SubFourByteAstral)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "local s = utils.utf8encode(0x1F600) .. utils.utf8encode(0x1F601)\n"
+        "local second = utils.utf8sub(s, 2, 2)\n"
+        "assert(second == utils.utf8encode(0x1F601), 'sub(2,2) wrong bytes')\n"
+        "assert(#second == 4, 'sub len = ' .. #second)\n"
+        "assert(utils.utf8sub(s, 1, 1) == utils.utf8encode(0x1F600), 'sub(1,1) wrong')\n"));
+
+    lua_close(L);
+}
+
+// utils.utf8decode error arm (lua_utils_portable.cpp:286-287): a lone 0xFF is
+// not a valid UTF-8 lead byte, so valid_utf8 returns 1 and utf8decode raises
+// "Bad UTF-8 string. Error at column 2".  No existing test drives utf8decode's
+// error path (they only decode well-formed strings).
+TEST(LuaScripting, Utf8DecodeBadStringErrors)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "local ok, err = pcall(utils.utf8decode, '\\255')\n"
+        "assert(not ok, 'utf8decode should reject 0xFF')\n"
+        "assert(type(err) == 'string', 'err not a string')\n"
+        "assert(err:find('Bad UTF-8', 1, true) ~= nil, 'msg: ' .. err)\n"
+        "assert(err:find('column 2', 1, true) ~= nil, 'col: ' .. err)\n"));
+
+    lua_close(L);
+}
+
+// utils.utf8encode table-element type check (lua_utils_portable.cpp:251-252):
+// a non-numeric element inside a table argument raises "Index [2] of table
+// arg #1 must be a number".  No existing test drives this error arm.
+TEST(LuaScripting, Utf8EncodeTableNonNumberErrors)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    EXPECT_TRUE(run(L,
+        "local ok, err = pcall(utils.utf8encode, {72, 'x'})\n"
+        "assert(not ok, 'utf8encode should reject non-number element')\n"
+        "assert(type(err) == 'string', 'err not a string')\n"
+        "assert(err:find('must be a number', 1, true) ~= nil, 'msg: ' .. err)\n"
+        "assert(err:find('Index [2]', 1, true) ~= nil, 'idx: ' .. err)\n"));
+
+    lua_close(L);
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

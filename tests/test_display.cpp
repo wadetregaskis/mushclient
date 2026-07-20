@@ -2032,4 +2032,133 @@ TEST(AnsiNoteTest, CancelBlinkCode23ClearsBlinkBit)
     EXPECT_FALSE((plain_part->iFlags & BLINK) != 0);  // ANSI_CANCEL_BLINK (23) cleared it
 }
 
+
+// methods_noting.cpp GetNoteColour ~137: in RGB-notes mode the palette-index
+// accessor is meaningless, so it returns -1.  The six existing GetNoteColour
+// callers are all palette mode; this pins the untested `if (m_bNotesInRGB)` arm.
+TEST(NotingTest, GetNoteColourReturnsMinusOneInRgbMode)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.NoteColourRGB(0x123456, 0x654321);   // leaves palette; note state -> RGB
+    EXPECT_TRUE(doc.m_bNotesInRGB);
+    EXPECT_EQ((short)-1, doc.GetNoteColour());
+}
+
+// methods_noting.cpp NoteColourName ~238-250: the non-RGB "same colour"
+// conversion block seeds m_iNoteColourFore/Back BEFORE flipping to RGB.  With
+// custom-16 NOT the default it copies m_normalcolour[WHITE/BLACK]; with custom-16
+// the default it copies m_customtext/back[15].  Existing coverage (default RGB
+// mode / palette-index) never enters the SAMECOLOUR sub-branch.  Empty colour
+// names make SetColour a no-op so the converted values survive to be asserted.
+TEST(NotingTest, NoteColourNameFromSameColourConvertsToRgb)
+{
+    // custom-16 is NOT the default colour -> normal WHITE/BLACK palette
+    {
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.SetNoteColour(0);                    // SAMECOLOUR, palette (non-RGB) mode
+        doc.m_bCustom16isDefaultColour = FALSE;
+        doc.m_normalcolour[WHITE] = 0x0A0B0C;
+        doc.m_normalcolour[BLACK] = 0x0D0E0F;
+        doc.NoteColourName("", "");              // empty -> SetColour leaves converted values
+        EXPECT_TRUE(doc.m_bNotesInRGB);
+        EXPECT_EQ((COLORREF)0x0A0B0C, doc.m_iNoteColourFore);
+        EXPECT_EQ((COLORREF)0x0D0E0F, doc.m_iNoteColourBack);
+    }
+    // custom-16 IS the default colour -> m_customtext/back[15]
+    {
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.SetNoteColour(0);                    // SAMECOLOUR, palette (non-RGB) mode
+        doc.m_bCustom16isDefaultColour = TRUE;
+        doc.m_customtext[15] = 0x112233;
+        doc.m_customback[15] = 0x445566;
+        doc.NoteColourName("", "");
+        EXPECT_TRUE(doc.m_bNotesInRGB);
+        EXPECT_EQ((COLORREF)0x112233, doc.m_iNoteColourFore);
+        EXPECT_EQ((COLORREF)0x445566, doc.m_iNoteColourBack);
+    }
+}
+
+// methods_noting.cpp SetNoteColourFore ~171-182: coming FROM palette mode it
+// first converts the *background* to RGB.  The sibling test
+// SetNoteColourForeConvertsPaletteBackgroundFirst drives only the custom-index
+// else arm (m_customback[index]); this pins the SAMECOLOUR block: custom-16
+// default -> m_customback[15], otherwise -> m_normalcolour[BLACK].  The new
+// foreground is masked to 24 bits.
+TEST(NotingTest, SetNoteColourForeFromSameColourConvertsBackground)
+{
+    // SAMECOLOUR + custom-16 NOT default -> background from m_normalcolour[BLACK]
+    {
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.SetNoteColour(0);                    // SAMECOLOUR, palette (non-RGB) mode
+        doc.m_bCustom16isDefaultColour = FALSE;
+        doc.m_normalcolour[BLACK] = 0x0C0D0E;
+        doc.SetNoteColourFore(0x11AABBCC);       // high byte masked off
+        EXPECT_TRUE(doc.m_bNotesInRGB);
+        EXPECT_EQ((COLORREF)0xAABBCC, doc.m_iNoteColourFore);
+        EXPECT_EQ((COLORREF)0x0C0D0E, doc.m_iNoteColourBack);
+    }
+    // SAMECOLOUR + custom-16 IS default -> background from m_customback[15]
+    {
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.SetNoteColour(0);                    // SAMECOLOUR, palette (non-RGB) mode
+        doc.m_bCustom16isDefaultColour = TRUE;
+        doc.m_customback[15] = 0x778899;
+        doc.SetNoteColourFore(0x00123456);
+        EXPECT_TRUE(doc.m_bNotesInRGB);
+        EXPECT_EQ((COLORREF)0x123456, doc.m_iNoteColourFore);
+        EXPECT_EQ((COLORREF)0x778899, doc.m_iNoteColourBack);
+    }
+}
+
+// methods_noting.cpp SetNoteColourBack ~208-219: coming FROM palette mode it
+// first converts the *foreground* to RGB.  The sibling test
+// SetNoteColourBackConvertsSameColourForegroundFirst drives only the SAMECOLOUR
+// / non-custom16 arm (m_normalcolour[WHITE]); this pins the two it never uses:
+// SAMECOLOUR + custom-16 default -> m_customtext[15], and a custom palette index
+// -> m_customtext[index].  The new background is masked to 24 bits.
+TEST(NotingTest, SetNoteColourBackFromCustom16AndIndexConvertsForeground)
+{
+    // SAMECOLOUR + custom-16 IS default -> foreground from m_customtext[15]
+    {
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.SetNoteColour(0);                    // SAMECOLOUR, palette (non-RGB) mode
+        doc.m_bCustom16isDefaultColour = TRUE;
+        doc.m_customtext[15] = 0x334455;
+        doc.SetNoteColourBack(0x00ABCDEF);
+        EXPECT_TRUE(doc.m_bNotesInRGB);
+        EXPECT_EQ((COLORREF)0x334455, doc.m_iNoteColourFore);
+        EXPECT_EQ((COLORREF)0xABCDEF, doc.m_iNoteColourBack);
+    }
+    // custom palette index (not SAMECOLOUR) -> foreground from m_customtext[index]
+    {
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.m_customtext[4] = 0x667788;
+        doc.SetNoteColour(5);                    // one-based -> index 4
+        doc.SetNoteColourBack(0x00112233);
+        EXPECT_TRUE(doc.m_bNotesInRGB);
+        EXPECT_EQ((COLORREF)0x667788, doc.m_iNoteColourFore);
+        EXPECT_EQ((COLORREF)0x112233, doc.m_iNoteColourBack);
+    }
+}
+
+// methods_noting.cpp AnsiNote ~602-612: the colour-restore epilogue has an
+// else arm for callers that started in PALETTE (non-RGB) notes mode - it forces
+// m_bNotesInRGB back to false and restores m_iNoteTextColour.  The existing
+// StateAndColoursRestoredAfterCall covers only the RGB (`if (bOldNotesInRGB)`)
+// branch.  AnsiNote's SGR processing flips into RGB mid-call (SetNoteColourFore
+// for bold), so the else arm has real work: drop back to palette mode after.
+TEST(AnsiNoteTest, PaletteModeRestoredAfterCall)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.SetNoteColour(5);                        // palette mode, index 4
+    EXPECT_FALSE(doc.m_bNotesInRGB);
+    doc.AnsiNote("\x1b[1;31;42mX");              // bold+colour -> goes RGB internally
+    // else-of-if(bOldNotesInRGB): palette mode + text-colour index restored
+    EXPECT_FALSE(doc.m_bNotesInRGB);
+    EXPECT_EQ((short)5, doc.GetNoteColour());    // m_iNoteTextColour restored to 4 -> 5
+    CLine* l0 = nth_line(doc, 0);
+    ASSERT_NE(nullptr, l0);
+    EXPECT_TRUE(line_text(l0) == "X");           // ANSI consumed, only text emitted
+}
+
 MC_TEST_MAIN()

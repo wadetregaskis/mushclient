@@ -1651,4 +1651,157 @@ TEST(PluginR5, ListChangedCallbackDoesNotRecurse)
     EXPECT_NE(nullptr, doc.GetPlugin("ccccccccccccccccccccccc3"));
 }
 
+
+// methods_plugins.cpp SaveState (world scope): "if (!m_CurrentPlugin) return
+// eNotAPlugin" — world.SaveState() called with no plugin scope (a bare doc,
+// no current plugin) is rejected: only a plugin may save state.
+TEST(PluginState, DocSaveStateNoCurrentPluginReturnsNotAPlugin)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_TRUE(doc.m_CurrentPlugin == NULL);        // no plugin scope
+    EXPECT_EQ((long)eNotAPlugin, doc.SaveState());   // "only a plugin can do this"
+}
+
+// methods_plugins.cpp SaveState (world scope) success arm (line 514-517): with
+// a current plugin whose CPlugin::SaveState(true) succeeds (returns false), the
+// doc-level SaveState returns eOK and the state file is written.
+TEST(PluginState, DocSaveStateWithCurrentPluginReturnsOk)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_strWorldID = "0123456789abcdef01234567";
+    char dir[256];
+    snprintf(dir, sizeof dir, "/tmp/mc_test_state_%d_docok/", (int)getpid());
+    App.m_strDefaultStateFilesDirectory = dir;
+
+    ASSERT_TRUE(load_plugin(doc, write_plugin("docok", IDA, "DocOkPlugin",
+        "-- nothing\n")));
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+
+    doc.m_CurrentPlugin = p;                        // "we are this plugin"
+    EXPECT_EQ((long)eOK, doc.SaveState());          // success arm
+    doc.m_CurrentPlugin = NULL;
+
+    char expected[512];
+    snprintf(expected, sizeof expected, "%s%s-%s-state.xml",
+             dir, "0123456789abcdef01234567", IDA);
+    struct stat st;
+    EXPECT_EQ(0, stat(expected, &st));              // state file was written
+
+    App.m_strDefaultStateFilesDirectory.Empty();
+}
+
+// methods_plugins.cpp GetPluginInfo cases 13/14: the SetUpVariantDate arm runs
+// only when m_tDateWritten / m_tDateModified is non-zero (line 121/125); a
+// stamped date yields VT_DATE.  AllInfoCasesAnswerTheirTypes only probes the
+// zero side (VT_NULL); this pins the stamped (VT_DATE) side.
+TEST(PluginInfoR4, DateWrittenAndModifiedReturnDateWhenStamped)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    std::string path = write_plugin("dates", IDA, "DatesPlugin", "-- nothing\n");
+    ASSERT_TRUE(load_plugin(doc, path));
+    unlink(path.c_str());
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+
+    // the loaded XML carried no date attributes → both stamps default to 0;
+    // stamp them non-zero so the guard passes.
+    p->m_tDateWritten  = CTime(2020, 1, 15, 10, 30, 0);
+    p->m_tDateModified = CTime(2021, 6, 20,  8, 15, 0);
+
+    VARIANT d13 = doc.GetPluginInfo(IDA, 13);
+    EXPECT_EQ((int)VT_DATE, (int)d13.vt);          // case 13 stamped → DATE
+    EXPECT_TRUE(d13.date > 0.0);
+    VariantClear(&d13);
+
+    VARIANT d14 = doc.GetPluginInfo(IDA, 14);
+    EXPECT_EQ((int)VT_DATE, (int)d14.vt);          // case 14 stamped → DATE
+    EXPECT_TRUE(d14.date > 0.0);
+    VariantClear(&d14);
+}
+
+// methods_plugins.cpp ReloadPlugin: "if not found, try to find by name" (line
+// 218-226) — a reload keyed on the plugin's case-insensitive NAME, not its
+// 24-char ID.  UnloadPlugin-by-name is tested; ReloadPlugin-by-name was not.
+TEST(PluginInfoR4, ReloadPluginByNameLookup)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    std::string path = write_plugin("rlname", IDA, "ReloadByName",
+        "world.SetVariable('n', '1')\n");
+    ASSERT_TRUE(load_plugin(doc, path));
+    ASSERT_TRUE(doc.GetPlugin(IDA) != NULL);
+
+    // "reloadbyname" is 12 chars → GetPlugin() rejects it on length; only the
+    // by-name arm can resolve it.  (Source file kept present so reload succeeds.)
+    EXPECT_EQ((long)eOK, doc.ReloadPlugin("reloadbyname"));
+    EXPECT_TRUE(doc.GetPlugin(IDA) != NULL);       // reinstalled
+
+    unlink(path.c_str());
+}
+
+// methods_plugins.cpp ReloadPlugin: "cannot reload ourselves" (line 232-233) —
+// a plugin reloading its own ID (m_CurrentPlugin == the target) gets
+// eBadParameter and is NOT deleted.
+TEST(PluginInfoR4, ReloadPluginCannotReloadItself)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    std::string path = write_plugin("rlself", IDA, "ReloadSelf", "-- nothing\n");
+    ASSERT_TRUE(load_plugin(doc, path));
+    unlink(path.c_str());                          // a real reload would now fail
+    CPlugin* p = doc.GetPlugin(IDA);
+    ASSERT_NE(nullptr, p);
+
+    doc.m_CurrentPlugin = p;                        // "we are this plugin"
+    EXPECT_EQ((long)eBadParameter, doc.ReloadPlugin(IDA));
+    doc.m_CurrentPlugin = NULL;
+    EXPECT_TRUE(doc.GetPlugin(IDA) != NULL);        // guarded before any delete
+}
+
+// methods_plugins.cpp BroadcastPlugin: the self-skip "don't broadcast to
+// ourselves" (line 596-597) and the disabled-skip "ignore disabled plugins"
+// (line 592-593).  Issued while m_CurrentPlugin is a plugin whose
+// ON_PLUGIN_BROADCAST is RESOLVED (so the sender WOULD fire without the skip),
+// with a disabled receiver present.  (The old BroadcastPluginSkipsSender
+// broadcasts from A's load body, when A's own dispid is not yet resolved, so it
+// never really exercised the self-skip.)
+TEST(PluginCallback, BroadcastSkipsSenderAndDisabledWhenCallbacksResolved)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    // A = sender; its handler must NOT run despite a resolved dispid
+    ASSERT_TRUE(load_plugin(doc, write_plugin("bsA", IDA, "SenderA",
+        "function OnPluginBroadcast(msg, id, name, text)\n"
+        "  world.SetVariable('self', 'WRONGLY INVOKED')\n"
+        "end\n")));
+    // B = enabled receiver
+    ASSERT_TRUE(load_plugin(doc, write_plugin("bsB", IDB, "RecvB",
+        "function OnPluginBroadcast(msg, id, name, text)\n"
+        "  world.SetVariable('got', text .. '/' .. tostring(msg))\n"
+        "end\n")));
+    // D = disabled receiver (valid handler, but disabled)
+    ASSERT_TRUE(load_plugin(doc, write_plugin("bsD", IDC, "RecvD",
+        "function OnPluginBroadcast(msg, id, name, text)\n"
+        "  world.SetVariable('dis', 'WRONGLY INVOKED')\n"
+        "end\n")));
+
+    CPlugin* pa = doc.GetPlugin(IDA);
+    CPlugin* pb = doc.GetPlugin(IDB);
+    CPlugin* pd = doc.GetPlugin(IDC);
+    ASSERT_NE(nullptr, pa);
+    ASSERT_NE(nullptr, pb);
+    ASSERT_NE(nullptr, pd);
+    // the sender's callback really IS resolved post-load (what the old test
+    // could not establish)
+    ASSERT_TRUE(pa->m_PluginCallbacks[ON_PLUGIN_BROADCAST].isvalid());
+    pd->m_bEnabled = false;                         // disabled receiver
+
+    doc.m_CurrentPlugin = pa;                        // we ARE the sender
+    long rc = doc.BroadcastPlugin(7, "hello");
+    doc.m_CurrentPlugin = NULL;
+
+    EXPECT_EQ(1L, rc);                                           // only B counted
+    EXPECT_STREQ("hello/7", (const char*)plugin_var(pb, "got")); // B received
+    EXPECT_STREQ("<unset>", (const char*)plugin_var(pa, "self"));// A self-skipped
+    EXPECT_STREQ("<unset>", (const char*)plugin_var(pd, "dis")); // D disabled-skipped
+}
+
 MC_TEST_MAIN()

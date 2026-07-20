@@ -2632,6 +2632,16 @@ void CMUSHclientDoc::OutputOutstandingLines (void)
   if (m_OutstandingLines.empty ())
     return;
 
+  // Move the list out BEFORE iterating.  Tell() below can re-enter this
+  // function (Tell -> forced line change -> StartNewLine ->
+  // ProcessPreviousLine -> OutputOutstandingLines); a re-entrant
+  // m_OutstandingLines.clear() would then invalidate this loop's iterator
+  // (use-after-free).  Swapping into a local empties the member up front, so
+  // any re-entrant call sees it empty and returns immediately, and the loop
+  // walks the detached copy — immune to re-entrant mutation.
+  list<CPaneStyle> outstanding;
+  outstanding.swap (m_OutstandingLines);
+
   // save old colours
   bool bOldNotesInRGB = m_bNotesInRGB;
   COLORREF iOldNoteColourFore = m_iNoteColourFore;
@@ -2643,16 +2653,14 @@ void CMUSHclientDoc::OutputOutstandingLines (void)
   // output saved lines
 
   list<CPaneStyle>::iterator it;
-  
-  for (it = m_OutstandingLines.begin (); it != m_OutstandingLines.end (); it++)
+
+  for (it = outstanding.begin (); it != outstanding.end (); it++)
     {
     m_iNoteColourFore = it->m_cText;
     m_iNoteColourBack = it->m_cBack;
     m_iNoteStyle = it->m_iStyle;
     Tell (it->m_sText.c_str ());
     }
-
-  m_OutstandingLines.clear ();
 
   // put the colours back
   if (bOldNotesInRGB)

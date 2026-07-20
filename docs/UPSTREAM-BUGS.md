@@ -15,6 +15,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 4 | XML double signed exponent | `49e5ba6` | xmlparse.cpp `Get_XML_double` |
 | 5 | XML date day-range message | `49e5ba6` | xmlparse.cpp `Get_XML_date` |
 | 6 | XML date second-range message | `49e5ba6` | xmlparse.cpp `Get_XML_date` |
+| 7 | Timer at_time toggle HOUR→MINUTE | `eea4a45` | methods_timers.cpp `CMUSHclientDoc::SetTimerOption` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -64,3 +65,14 @@ only; no behavioural change.)
 `"Minute must be in range 0 to 59"` — a copy-paste from the minute check.
 **Fix:** message corrected to `"Second must be in range 0 to 59"`. (Message text
 only; no behavioural change.)
+
+## 7 — `SetTimerOption("at_time")` copies HOUR into the MINUTE field (`eea4a45`)
+**Bug:** toggling a timer between interval (`every`) and at-time modes copies the
+component fields across, but the MINUTE copy takes the HOUR source on both arms —
+a duplicated-line typo: `iEveryMinute = iAtHour` (should be `iAtMinute`) and
+`iAtMinute = iEveryHour` (should be `iEveryMinute`). An "every 2h 30m 15s" timer
+flipped to at-time becomes "at 2:02:15" (minute forced to the hour value), and
+vice-versa; the hour and second fields copy correctly.
+**Fix:** copy the matching minute field (`iEveryMinute = iAtMinute`,
+`iAtMinute = iEveryMinute`). Behavioural change for any script/user that toggles a
+timer's `at_time` option on a timer whose hour and minute differ.

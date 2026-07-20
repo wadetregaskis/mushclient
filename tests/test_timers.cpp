@@ -734,4 +734,71 @@ TEST(TimerApi, GetTimerInfoConventions)
     EXPECT_STREQ("send me", vs(doc.GetTimerInfo("ti", 4)).c_str());
 }
 
+
+// DeleteTimer refuses to delete a timer that is mid-callback: the guard
+// `if (timer_item->bExecutingScript) return eItemInUse;` (methods_timers.cpp
+// ~255).  bExecutingScript is a plain CTimer bool, so this is reachable
+// headless without a live engine — the ALIAS twin (AliasScript.
+// DeleteAliasFromOwnScriptReturnsItemInUse) already covers the alias path.
+TEST(TimerApi, DeleteTimerExecutingScriptReturnsItemInUse)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_EQ((long)eOK, doc.AddTimer("busy", 0, 1, 0, "hi", eEnabled, ""));
+    CTimer* t = nullptr;
+    ASSERT_TRUE(doc.GetTimerMap().Lookup(CString("busy"), t));
+
+    t->bExecutingScript = true;                   // pretend we're inside its script
+    EXPECT_EQ((long)eItemInUse, doc.DeleteTimer("busy"));
+    EXPECT_EQ((long)eOK, doc.IsTimer("busy"));    // still present — NOT deleted
+
+    t->bExecutingScript = false;                  // control: now it deletes cleanly
+    EXPECT_EQ((long)eOK, doc.DeleteTimer("busy"));
+    EXPECT_EQ((long)eTimerNotFound, doc.IsTimer("busy"));
+}
+
+// AddTimer maps the eTimerSpeedWalk / eTimerNote flags onto iSendTo
+// (methods_timers.cpp ~231-234): eTimerSpeedWalk -> eSendToSpeedwalk,
+// eTimerNote -> eSendToOutput.  With neither flag, iSendTo keeps the CTimer
+// ctor default eSendToWorld (OtherTypes.h:646) — so all three are distinct.
+TEST(TimerApi, AddTimerFlagsMapToSendTo)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+
+    ASSERT_EQ((long)eOK,
+              doc.AddTimer("sw", 0, 1, 0, "4n", eEnabled | eTimerSpeedWalk, ""));
+    ASSERT_EQ((long)eOK,
+              doc.AddTimer("nt", 0, 1, 0, "tick", eEnabled | eTimerNote, ""));
+    ASSERT_EQ((long)eOK,
+              doc.AddTimer("pl", 0, 1, 0, "go", eEnabled, ""));   // no send flag
+
+    CTimer *tsw = nullptr, *tnt = nullptr, *tpl = nullptr;
+    ASSERT_TRUE(doc.GetTimerMap().Lookup(CString("sw"), tsw));
+    ASSERT_TRUE(doc.GetTimerMap().Lookup(CString("nt"), tnt));
+    ASSERT_TRUE(doc.GetTimerMap().Lookup(CString("pl"), tpl));
+
+    EXPECT_EQ((unsigned short)eSendToSpeedwalk, tsw->iSendTo);
+    EXPECT_EQ((unsigned short)eSendToOutput,    tnt->iSendTo);
+    EXPECT_EQ((unsigned short)eSendToWorld,     tpl->iSendTo);  // ctor default
+}
+
+// AddTimer("") auto-generates the internal label "*timer%010ld"
+// (methods_timers.cpp ~149-150) instead of rejecting the empty name; that
+// made-up name is the map KEY (strLabel is set from the empty TimerName arg).
+// Mirrors the DoAfterSpecial auto-name convention (name.Left(6)=="*timer").
+TEST(TimerApi, AddTimerEmptyLabelAutoGeneratesName)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    EXPECT_EQ(0, (int)doc.GetTimerMap().GetCount());
+
+    ASSERT_EQ((long)eOK, doc.AddTimer("", 0, 5, 0.0, "hi", eEnabled, ""));
+    ASSERT_EQ(1, (int)doc.GetTimerMap().GetCount());
+
+    POSITION pos = doc.GetTimerMap().GetStartPosition();
+    CString name; CTimer* t = nullptr;
+    doc.GetTimerMap().GetNextAssoc(pos, name, t);
+    ASSERT_NE(nullptr, t);
+    EXPECT_TRUE(name.Left(6) == "*timer");   // made-up internal name
+    EXPECT_EQ(16, name.GetLength());         // "*timer" (6) + %010ld (10 digits)
+}
+
 MC_TEST_MAIN()

@@ -744,4 +744,78 @@ TEST(GetInfoR4, StyleInfoBeyondLastStyleEmpty)
     EXPECT_EQ((int)VT_EMPTY, (int)v.vt);
 }
 
+
+// GetInfo date codes 301/302/303 take the zero-time FALSE branch of their
+// guards (methods_info.cpp:1138/1142/1146): when the underlying CTime reads 0,
+// the arm skips SetUpVariantDate and the VARIANT stays VT_EMPTY (set at :408).
+// The headless ctor seeds m_tConnectTime/m_LastFlushTime = now
+// (doc_construct.cpp:239/345) and m_timeScriptFileMod = 0 (:347), so the sibling
+// date tests only ever hit the non-zero TRUE branch; an explicit zero is the
+// only way to exercise the guard for all three.  CTime() default-constructs to
+// t_=0 so GetTime()==0 (platform/mfc_time.h:71,126).
+TEST(GetInfoR5, ZeroDateCodesTakeEmptyBranch)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_tConnectTime      = CTime();   // GetTime() == 0 -> guard 1138 false
+    doc.m_LastFlushTime     = CTime();   //                   guard 1142 false
+    doc.m_timeScriptFileMod = CTime();   //                   guard 1146 false
+
+    EXPECT_EQ((int)VT_EMPTY, (int)doc.GetInfo(301).vt);
+    EXPECT_EQ((int)VT_EMPTY, (int)doc.GetInfo(302).vt);
+    EXPECT_EQ((int)VT_EMPTY, (int)doc.GetInfo(303).vt);
+
+    // sanity: the TRUE branch still answers VT_DATE once the time is non-zero
+    doc.m_tConnectTime = CTime::GetCurrentTime();
+    EXPECT_EQ((int)VT_DATE, (int)doc.GetInfo(301).vt);
+}
+
+// GetStyleInfo reads a style run OTHER than the first: the sequential search
+// advances the column by each preceding run's length
+// (methods_info.cpp:1373  iCol += pStyle->iLength), so run 2 reports its true
+// start column (case 3 = iCol+1) and its text via Mid(iCol,len) (:1388).
+// Build the line by hand: AddStyle drops the seed line's empty tail style and
+// AddToLine grows the tail style one char per byte (doc_shared.cpp:2973), so the
+// two runs and their lengths are deterministic.
+TEST(GetInfoR5, StyleInfoSecondRunColumnAdvances)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.AddStyle(COLOUR_RGB, (COLORREF) 0x00FFFFFF, (COLORREF) 0x00000000,
+                 0, (CAction *) NULL);
+    doc.AddToLine("AAAA", COMMENT);          // run 1: 4 chars
+    doc.AddStyle(COLOUR_RGB, (COLORREF) 0x0000FF00, (COLORREF) 0x00000000,
+                 0, (CAction *) NULL);
+    doc.AddToLine("BBB", COMMENT);           // run 2: 3 chars
+
+    long ln = (long) doc.m_LineList.GetCount();   // current (last) line = the seed
+    EXPECT_STREQ("AAAABBB", vstr(doc.GetLineInfo(ln, 1)).c_str());
+    ASSERT_TRUE(doc.GetLineInfo(ln, 11).lVal >= 2L);   // two style runs
+
+    // run 2 starts one past run 1's length (iCol accumulated run1.iLength == 4)
+    EXPECT_EQ((short) 5, doc.GetStyleInfo(ln, 2, 3).iVal);   // 1-based start column
+    EXPECT_EQ((short) 3, doc.GetStyleInfo(ln, 2, 2).iVal);   // run length
+    EXPECT_STREQ("BBB", vstr(doc.GetStyleInfo(ln, 2, 1)).c_str());  // Mid(iCol,len)
+    // run 1 (loop breaks before the accumulate) still reports column 1
+    EXPECT_EQ((short) 1, doc.GetStyleInfo(ln, 1, 3).iVal);
+}
+
+// GetStyleInfo case 7 returns the run's CAction variable
+// (methods_info.cpp:1426  pAction->m_strVariable).  No existing test builds a
+// run whose action carries a variable; AddStyle's string overload feeds
+// (action,hint,variable) through GetAction (mxp/mxputils.cpp:433), which returns
+// a CAction populated with all three (non-null because they are non-empty).
+TEST(GetInfoR5, StyleInfoRunActionVariable)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.AddStyle(COLOUR_RGB | ACTION_SEND, (COLORREF) 0x00FFFFFF,
+                 (COLORREF) 0x00000000, 0,
+                 CString("go north"), CString("move"), CString("myflag"));
+    doc.AddToLine("link", COMMENT);
+
+    long ln = (long) doc.m_LineList.GetCount();
+    EXPECT_EQ((short) 1, doc.GetStyleInfo(ln, 1, 4).iVal);              // ACTION_SEND -> 1
+    EXPECT_STREQ("go north", vstr(doc.GetStyleInfo(ln, 1, 5)).c_str()); // case 5 action
+    EXPECT_STREQ("move",     vstr(doc.GetStyleInfo(ln, 1, 6)).c_str()); // case 6 hint
+    EXPECT_STREQ("myflag",   vstr(doc.GetStyleInfo(ln, 1, 7)).c_str()); // case 7 variable
+}
+
 MC_TEST_MAIN()

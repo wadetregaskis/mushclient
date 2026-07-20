@@ -862,13 +862,13 @@ bool bChanged;
       if (Timer_item->iType == CTimer::eInterval)
         {
         Timer_item->iEveryHour    = Timer_item->iAtHour;
-        Timer_item->iEveryMinute  = Timer_item->iAtHour;
+        Timer_item->iEveryMinute  = Timer_item->iAtMinute;
         Timer_item->fEverySecond  = Timer_item->fAtSecond;
         }
       else
         {
         Timer_item->iAtHour    = Timer_item->iEveryHour;
-        Timer_item->iAtMinute  = Timer_item->iEveryHour;
+        Timer_item->iAtMinute  = Timer_item->iEveryMinute;
         Timer_item->fAtSecond  = Timer_item->fEverySecond;
         }
        ResetOneTimer (Timer_item);

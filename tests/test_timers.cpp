@@ -197,6 +197,30 @@ TEST(TimerTest, InactiveTimerDoesNotFireWhenDisconnected)
     EXPECT_EQ(0L, t->nMatched);
 }
 
+// Regression (upstream bug): SetTimerOption("at_time") toggled a timer between
+// interval and at-time modes but copied the HOUR into the MINUTE field
+// (`iAtMinute = iEveryHour`, `iEveryMinute = iAtHour`).  Flipping an
+// "every 2h 30m 15s" timer to at-time must keep at-minute 30, not 2.  The
+// existing round-trip test missed this because it read "minute" BEFORE setting
+// at_time; this reads it AFTER the toggle.
+TEST(TimerTest, AtTimeToggleKeepsMinuteField)
+{
+    const long eEnabled = 0x01;   // flags.h AddTimer flag (flags.h has no guard)
+    CMUSHclientDoc doc;
+    ASSERT_EQ((long)eOK, doc.AddTimer("t1", 2, 30, 15.0, "hi", eEnabled, ""));
+    ASSERT_EQ((long)eOK, doc.SetTimerOption("t1", "at_time", "1"));  // interval → at-time
+
+    // GetTimerOption marshals hour/minute/second as VT_R8 (double).
+    VARIANT vh = doc.GetTimerOption("t1", "hour");
+    VARIANT vm = doc.GetTimerOption("t1", "minute");
+    ASSERT_EQ((unsigned short)VT_R8, vh.vt);
+    ASSERT_EQ((unsigned short)VT_R8, vm.vt);
+    EXPECT_EQ(2.0,  vh.dblVal);
+    EXPECT_EQ(30.0, vm.dblVal);   // was 2 with the HOUR→MINUTE copy bug
+    VariantClear(&vh);
+    VariantClear(&vm);
+}
+
 // ── Deterministic clock (pal::IClock) ───────────────────────────────────────
 // Installing a fake clock makes CmcDateTime::GetTimeNow() — and therefore the
 // whole timer-fire decision in CheckTimerList — read a controlled "now",

@@ -5,18 +5,32 @@
 #include "platform/compat.h"
 #include "regexp.h"
 
+// RAII compile+free wrapper (audit §4): compile in the ctor, delete in the dtor,
+// so the repeated `t_regexp* r = regcomp(...); ...; delete r;` boilerplate collapses
+// and an early ASSERT return no longer leaks the compiled program.  regcomp THROWS on
+// an invalid pattern, so r is non-null for every well-formed pattern here.
+namespace {
+struct Regexp {
+    t_regexp* r;
+    explicit Regexp(const char* pattern, int flags = 0) : r(regcomp(pattern, flags)) {}
+    ~Regexp() { delete r; }
+    Regexp(const Regexp&) = delete;
+    Regexp& operator=(const Regexp&) = delete;
+    t_regexp* get()      const { return r; }
+    t_regexp* operator->() const { return r; }
+};
+} // namespace
+
 // ── Compilation ───────────────────────────────────────────────────────────
 
 TEST(RegexpTest, CompileSimplePattern) {
-    t_regexp* r = regcomp("hello");
-    ASSERT_NE(nullptr, r);
-    delete r;
+    Regexp r("hello");
+    ASSERT_NE(nullptr, r.get());
 }
 
 TEST(RegexpTest, CompilePatternWithCapture) {
-    t_regexp* r = regcomp("(\\w+)\\s+(\\w+)");
-    ASSERT_NE(nullptr, r);
-    delete r;
+    Regexp r("(\\w+)\\s+(\\w+)");
+    ASSERT_NE(nullptr, r.get());
 }
 
 TEST(RegexpTest, CompileInvalidPatternThrows) {
@@ -38,65 +52,46 @@ TEST(RegexpTest, CompileInvalidPatternThrows) {
 
 // ── Matching ──────────────────────────────────────────────────────────────
 
-TEST(RegexpTest, SimpleMatch) {
-    t_regexp* r = regcomp("hello");
-    ASSERT_NE(nullptr, r);
-    int result = regexec(r, "say hello world");
-    EXPECT_GT(result, 0);
-    delete r;
-}
-
-TEST(RegexpTest, NoMatch) {
-    t_regexp* r = regcomp("goodbye");
-    ASSERT_NE(nullptr, r);
-    int result = regexec(r, "hello world");
-    EXPECT_EQ(0, result);
-    delete r;
+// Parameterised (audit §4): the pure {pattern, input, flags, offset, expect-match}
+// compile+match/no-match cases (formerly SimpleMatch / NoMatch / CaseInsensitiveFlag /
+// AnchoredMatchAtStart / MatchOffset) collapse into one table.  A fresh RAII Regexp
+// per row.  regexec > 0 on match, == 0 on no-match.
+TEST(RegexpTest, CompileAndMatchTable) {
+    struct Case { const char* pattern; const char* input; int flags; int offset; bool match; };
+    const Case cases[] = {
+        { "hello",   "say hello world", 0,             0, true  },  // SimpleMatch
+        { "goodbye", "hello world",     0,             0, false },  // NoMatch
+        { "hello",   "HELLO WORLD",     PCRE_CASELESS, 0, true  },  // CaseInsensitiveFlag
+        { "^hello",  "hello world",     0,             0, true  },  // AnchoredMatchAtStart (hit)
+        { "^hello",  "say hello",       0,             0, false },  // AnchoredMatchAtStart (miss)
+        { "world",   "hello world",     0,             0, true  },  // MatchOffset (offset 0)
+        { "world",   "hello world",     0,             7, false },  // MatchOffset (past the match)
+    };
+    for (const Case& c : cases) {
+        Regexp r(c.pattern, c.flags);
+        ASSERT_NE(nullptr, r.get());
+        int result = regexec(r.get(), c.input, c.offset);
+        if (c.match) EXPECT_GT(result, 0);
+        else         EXPECT_EQ(0, result);
+    }
 }
 
 TEST(RegexpTest, CaptureGroupExtraction) {
-    t_regexp* r = regcomp("(\\w+)\\s+(\\w+)");
-    ASSERT_NE(nullptr, r);
-    int result = regexec(r, "foo bar");
+    Regexp r("(\\w+)\\s+(\\w+)");
+    ASSERT_NE(nullptr, r.get());
+    int result = regexec(r.get(), "foo bar");
     EXPECT_GT(result, 0);
     EXPECT_STREQ("foo", r->GetWildcard(1).c_str());
     EXPECT_STREQ("bar", r->GetWildcard(2).c_str());
-    delete r;
 }
 
 TEST(RegexpTest, NamedCapture) {
-    t_regexp* r = regcomp("(?P<first>\\w+)\\s+(?P<second>\\w+)");
-    ASSERT_NE(nullptr, r);
-    int result = regexec(r, "alice bob");
+    Regexp r("(?P<first>\\w+)\\s+(?P<second>\\w+)");
+    ASSERT_NE(nullptr, r.get());
+    int result = regexec(r.get(), "alice bob");
     EXPECT_GT(result, 0);
     EXPECT_STREQ("alice", r->GetWildcard("first").c_str());
     EXPECT_STREQ("bob",   r->GetWildcard("second").c_str());
-    delete r;
-}
-
-TEST(RegexpTest, CaseInsensitiveFlag) {
-    t_regexp* r = regcomp("hello", PCRE_CASELESS);
-    ASSERT_NE(nullptr, r);
-    int result = regexec(r, "HELLO WORLD");
-    EXPECT_GT(result, 0);
-    delete r;
-}
-
-TEST(RegexpTest, AnchoredMatchAtStart) {
-    t_regexp* r = regcomp("^hello");
-    ASSERT_NE(nullptr, r);
-    EXPECT_GT(regexec(r, "hello world"), 0);
-    EXPECT_EQ(0, regexec(r, "say hello"));
-    delete r;
-}
-
-TEST(RegexpTest, MatchOffset) {
-    t_regexp* r = regcomp("world");
-    ASSERT_NE(nullptr, r);
-    EXPECT_GT(regexec(r, "hello world", 0), 0);
-    // Start offset past the match
-    EXPECT_EQ(0, regexec(r, "hello world", 7));
-    delete r;
 }
 
 // ── CheckRegularExpression ────────────────────────────────────────────────
@@ -114,20 +109,18 @@ TEST(RegexpTest, CheckInvalidExpression) {
 TEST(RegexpTest, WildcardCountSimple) {
     // pcre_exec returns total captured pairs including the whole match (pair 0),
     // so m_iCount == num_groups + 1.  Three explicit groups → m_iCount == 4.
-    t_regexp* r = regcomp("(a)(b)(c)");
-    ASSERT_NE(nullptr, r);
-    regexec(r, "abc");
+    Regexp r("(a)(b)(c)");
+    ASSERT_NE(nullptr, r.get());
+    regexec(r.get(), "abc");
     EXPECT_EQ(4, r->m_iCount);
-    delete r;
 }
 
 TEST(RegexpTest, WildcardCountNoGroups) {
     // No explicit groups: only the whole-match pair (pair 0) → m_iCount == 1.
-    t_regexp* r = regcomp("abc");
-    ASSERT_NE(nullptr, r);
-    regexec(r, "abc");
+    Regexp r("abc");
+    ASSERT_NE(nullptr, r.get());
+    regexec(r.get(), "abc");
     EXPECT_EQ(1, r->m_iCount);
-    delete r;
 }
 
 TEST(RegexpTest, RuntimeErrorIsNotReportedAsMatch) {
@@ -137,14 +130,13 @@ TEST(RegexpTest, RuntimeErrorIsNotReportedAsMatch) {
     // PCRE match limit (PCRE_ERROR_MATCHLIMIT). On Windows this throws; the
     // portable path used to fall through to `return true`, spuriously firing the
     // trigger/alias on a line it never matched.
-    t_regexp* r = regcomp("(a+)+$");
-    ASSERT_NE(nullptr, r);
+    Regexp r("(a+)+$");
+    ASSERT_NE(nullptr, r.get());
     std::string s(50, 'a');
     s += '!';                       // guarantees the overall match must fail
-    int result = regexec(r, s.c_str());
+    int result = regexec(r.get(), s.c_str());
     EXPECT_EQ(0, result);           // errored → NON-match, not a spurious match
     EXPECT_LT(r->m_iExecutionError, 0);  // a real runtime error code was recorded
-    delete r;
 }
 
 // ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────
@@ -154,17 +146,16 @@ TEST(RegexpTest, RuntimeErrorIsNotReportedAsMatch) {
 // with false." — with (?J) duplicate names, a later empty/unset duplicate
 // must not overwrite an earlier non-empty capture.
 TEST(RegexpTest, DuplicateNamedGroupKeepsNonEmptyCapture) {
-    t_regexp* r = regcomp("(?J)(?P<mob>\\w+) attacks(?: (?P<mob>\\w+))?");
-    ASSERT_NE(nullptr, r);
+    Regexp r("(?J)(?P<mob>\\w+) attacks(?: (?P<mob>\\w+))?");
+    ASSERT_NE(nullptr, r.get());
 
     // second <mob> group does not participate: keep the first capture
-    EXPECT_GT(regexec(r, "Kobold attacks"), 0);
+    EXPECT_GT(regexec(r.get(), "Kobold attacks"), 0);
     EXPECT_STREQ("Kobold", r->GetWildcard("mob").c_str());
 
     // control: when the later duplicate IS set, it wins
-    EXPECT_GT(regexec(r, "Kobold attacks Dragon"), 0);
+    EXPECT_GT(regexec(r.get(), "Kobold attacks Dragon"), 0);
     EXPECT_STREQ("Dragon", r->GetWildcard("mob").c_str());
-    delete r;
 }
 
 // regexp.cpp regexec: options = App.m_bRegexpMatchEmpty ? 0 : PCRE_NOTEMPTY.
@@ -173,41 +164,38 @@ TEST(RegexpTest, DuplicateNamedGroupKeepsNonEmptyCapture) {
 // The Windows default is RegexpMatchEmpty=1 (globalregistryoptions.cpp:56), so a
 // pattern that CAN match empty fires at offset 0 — matching Windows behaviour.
 TEST(RegexpTest, EmptyMatchAllowedByDefault) {
-    t_regexp* r = regcomp("z*");
-    ASSERT_NE(nullptr, r);
-    EXPECT_GT(regexec(r, "abc"), 0);      // matches "" at offset 0 (RegexpMatchEmpty=1)
-    EXPECT_GT(regexec(r, "azzb"), 0);     // control: a real match still works
-    delete r;
+    Regexp r("z*");
+    ASSERT_NE(nullptr, r.get());
+    EXPECT_GT(regexec(r.get(), "abc"), 0);      // matches "" at offset 0 (RegexpMatchEmpty=1)
+    EXPECT_GT(regexec(r.get(), "azzb"), 0);     // control: a real match still works
 }
 
 // regexp.cpp: "if, and only if, we match, we will save the matching string,
 // the count and offsets" (and on NOMATCH "don't save matching string etc.")
 // — a failed match leaves the previous match's state intact.
 TEST(RegexpTest, NoMatchPreservesPreviousMatchState) {
-    t_regexp* r = regcomp("(\\w+)");
-    ASSERT_NE(nullptr, r);
-    EXPECT_GT(regexec(r, "hello"), 0);
+    Regexp r("(\\w+)");
+    ASSERT_NE(nullptr, r.get());
+    EXPECT_GT(regexec(r.get(), "hello"), 0);
     EXPECT_STREQ("hello", r->GetWildcard(1).c_str());
     int savedCount = r->m_iCount;
 
-    EXPECT_EQ(0, regexec(r, "!!!"));      // no word characters: no match
-    EXPECT_EQ(savedCount, r->m_iCount);   // state untouched
+    EXPECT_EQ(0, regexec(r.get(), "!!!"));   // no word characters: no match
+    EXPECT_EQ(savedCount, r->m_iCount);      // state untouched
     EXPECT_STREQ("hello", r->GetWildcard(1).c_str());
     EXPECT_STREQ("hello", r->m_sTarget.c_str());
-    delete r;
 }
 
 // regexp.cpp: "inspired by a suggestion by Twisol (to remove a hard-coded
 // limit on the number of wildcards)" — offsets are sized from
 // PCRE_INFO_CAPTURECOUNT, so more than 10 groups extract fine.
 TEST(RegexpTest, MoreThanTenCaptureGroupsExtractable) {
-    t_regexp* r = regcomp("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)");
-    ASSERT_NE(nullptr, r);
-    EXPECT_GT(regexec(r, "abcdefghijkl"), 0);
+    Regexp r("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)");
+    ASSERT_NE(nullptr, r.get());
+    EXPECT_GT(regexec(r.get(), "abcdefghijkl"), 0);
     EXPECT_EQ(13, r->m_iCount);           // 12 groups + whole match
     EXPECT_STREQ("k", r->GetWildcard(11).c_str());
     EXPECT_STREQ("l", r->GetWildcard(12).c_str());
-    delete r;
 }
 
 MC_TEST_MAIN()

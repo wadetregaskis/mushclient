@@ -31,47 +31,9 @@ extern "C" {
 #include <string>
 #include <unistd.h>
 
-lua_State* MakeLuaState();
-int RegisterLuaRoutines(lua_State*);
-extern "C" int luaopen_compress(lua_State*);
-void RegisterPortableLuaExtras(lua_State*);
-
-static lua_State* make_lua(CMUSHclientDoc* pDoc)
-{
-    lua_State* L = MakeLuaState();
-    if (!L) return nullptr;
-    luaL_openlibs(L);
-    lua_pushlightuserdata(L, static_cast<void*>(pDoc));
-    lua_setfield(L, LUA_REGISTRYINDEX, DOCUMENT_STATE);
-    RegisterLuaRoutines(L);
-    luaopen_compress(L);
-    RegisterPortableLuaExtras(L);
-    lua_settop(L, 0);
-    return L;
-}
-
-// Run a Lua chunk; report the Lua error (with a marker) on failure.
-static bool run(lua_State* L, const char* code)
-{
-    if (luaL_loadstring(L, code) != 0) {
-        fprintf(stderr, "  Lua load error: %s\n", lua_tostring(L, -1));
-        lua_pop(L, 1);
-        return false;
-    }
-    if (lua_pcall(L, 0, LUA_MULTRET, 0) != 0) {
-        fprintf(stderr, "  Lua runtime error: %s\n", lua_tostring(L, -1));
-        lua_pop(L, 1);
-        return false;
-    }
-    return true;
-}
-
-struct LuaDoc {
-    CMUSHclientDoc doc;
-    lua_State* L;
-    LuaDoc() { L = make_lua(&doc); }
-    ~LuaDoc() { if (L) lua_close(L); }
-};
+// make_lua()/run()/run_ret()/LuaDoc/EXPECT_LUA_OK are shared with
+// test_lua_scripting.cpp (audit §2/§4).
+#include "lua_test_helpers.h"
 
 // ── methods_utilities.cpp: pure string helpers ────────────────────────────
 
@@ -806,28 +768,11 @@ TEST(LuaSurface, UtilsDialogsHeadlessInert)
 }
 
 // ── world.Debug (scripting/world_debug_portable.cpp) ─────────────────────
-
-TEST(LuaSurface, DebugCommandsWriteReports)
-{
-    LuaDoc f; ASSERT_NE(nullptr, f.L);
-    EXPECT_TRUE(run(f.L,
-        // populate one of everything so the lists have content
-        "assert(world.AddTrigger('dt', 'zzz', '', 1, -1, 0, '', '') == 0)\n"
-        "assert(world.AddAlias('da', 'yyy', '', 1, '') == 0)\n"
-        "assert(world.AddTimer('dm', 0, 1, 0, 'x', 0, '') == 0)\n"
-        "world.SetVariable('dv', '1')\n"
-        "local before = world.GetLinesInBufferCount()\n"
-        "world.Debug('triggerlist')\n"
-        "world.Debug('aliaslist')\n"
-        "world.Debug('timerlist')\n"
-        "world.Debug('variablelist')\n"
-        "world.Debug('telnetlist')\n"
-        "world.Debug('pluginlist')\n"
-        "world.Debug('info')\n"
-        "world.Debug('nosuchcommand')\n"     // help arm
-        "assert(world.GetLinesInBufferCount() > before)\n"
-    ));
-}
+// DebugCommandsWriteReports deleted (audit §3): SweepR4.DebugListingsCoverEachAction
+// (test_lua_scripting.cpp) is a strict superset — it drives the same
+// triggerlist/aliaslist/timerlist/variablelist/telnetlist/pluginlist/info listings
+// plus the '' help arm and the plugin-scoped '@id triggerlist' arm, and asserts the
+// listing content rather than only a buffer-grew count.
 
 // ── utils compress/hash library (scripting/lua_compress.c) ───────────────
 

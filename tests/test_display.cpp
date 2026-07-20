@@ -288,11 +288,12 @@ TEST(WrapTest, WrapNeverSplitsUtf8Sequence)
     EXPECT_TRUE(((unsigned char)l1->text[0] & 0xC0) != 0x80);
 }
 
-// doc_shared.cpp AddToLine word wrap: with !m_indent_paras the space stays
-// at the end of the first line ("one more on this line (the space)") and
-// the whole partial word moves to the continuation line — no characters
-// lost or duplicated.
-TEST(WrapTest, WordMovesIntactToContinuationLine)
+// doc_shared.cpp AddToLine word wrap (audit §3): retitled from
+// WordMovesIntactToContinuationLine — StyleRunSplitAcrossWrapKeepsLengthsAndColours
+// (below) already covers the space-kept / word-moved split, so this test's unique
+// value is the no-char-lost/duplicated invariant: on a plain uncoloured wrap the two
+// lines' text concatenates back to the exact original input.
+TEST(WrapTest, NoCharsLostOrDuplicatedAcrossWrap)
 {
     CMUSHclientDoc doc; make_doc(doc);
     doc.m_wrap = 1;
@@ -307,6 +308,7 @@ TEST(WrapTest, WordMovesIntactToContinuationLine)
     ASSERT_NE(nullptr, l1);
     EXPECT_TRUE(line_text(l0) == "aaa bbb ");   // space kept on first line
     EXPECT_TRUE(line_text(l1) == "cccc");       // word moved whole
+    // the load-bearing invariant: nothing lost or duplicated across the split
     EXPECT_TRUE(line_text(l0) + line_text(l1) == "aaa bbb cccc");
 }
 
@@ -881,14 +883,39 @@ TEST(AnsiNoteTest, TwentyFourBitColourCollectsRGBComponents)
     EXPECT_EQ(RGB(40, 50, 60), s->iBackColour);
 }
 
-TEST(AnsiNoteTest, UnderlineAndInverseBitsApply)
+// Parameterised (audit §4): the AnsiNote style-bit cases as a table of
+// {sequence, setMask@idxSet, clearMask@idxClear}.  Besides the original
+// underline+inverse case, this closes the previously-uncovered SGR 5/6 (blink) and
+// SGR 24/25/27 (cancel underline/blink/inverse) arms (gaps in methods_noting.cpp).
+// The cancel rows set the bit on "AB" then cancel it for "CD" (index 2).
+TEST(AnsiNoteTest, StyleBitsSetAndCancel)
 {
-    CMUSHclientDoc doc; make_doc(doc);
-    doc.AnsiNote("\x1b[4;7mX");
-    CStyle* s = style_at(nth_line(doc, 0), 0);
-    ASSERT_NE(nullptr, s);
-    EXPECT_TRUE((s->iFlags & UNDERLINE) != 0);
-    EXPECT_TRUE((s->iFlags & INVERSE) != 0);
+    struct Case {
+        const char* seq; int idxSet; unsigned setMask; int idxClear; unsigned clearMask;
+        const char* note;
+    };
+    const Case cases[] = {
+        { "\x1b[4;7mX",            0, UNDERLINE | INVERSE, -1, 0,         "SGR 4;7 underline+inverse" },
+        { "\x1b[5mX",              0, BLINK,               -1, 0,         "SGR 5 (slow blink) → BLINK" },
+        { "\x1b[6mX",              0, BLINK,               -1, 0,         "SGR 6 (fast blink) → BLINK" },
+        { "\x1b[4mAB\x1b[24mCD",   0, UNDERLINE,            2, UNDERLINE, "SGR 24 cancels underline" },
+        { "\x1b[5mAB\x1b[25mCD",   0, BLINK,                2, BLINK,     "SGR 25 cancels blink" },
+        { "\x1b[7mAB\x1b[27mCD",   0, INVERSE,              2, INVERSE,   "SGR 27 cancels inverse" },
+    };
+    for (const Case& c : cases) {
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.AnsiNote(c.seq);
+        CLine* l0 = nth_line(doc, 0);
+        ASSERT_NE(nullptr, l0);
+        CStyle* sSet = style_at(l0, c.idxSet);
+        ASSERT_NE(nullptr, sSet);
+        EXPECT_TRUE((sSet->iFlags & c.setMask) == c.setMask);   // c.note
+        if (c.idxClear >= 0) {
+            CStyle* sClear = style_at(l0, c.idxClear);
+            ASSERT_NE(nullptr, sClear);
+            EXPECT_TRUE((sClear->iFlags & c.clearMask) == 0);   // bit cancelled
+        }
+    }
 }
 
 TEST(AnsiNoteTest, CancelBoldDropsHiliteMidLine)
@@ -1132,21 +1159,16 @@ TEST(TriggerPipeline, SendToQueueArmOfflineLeavesQueueEmpty)
 TEST(TriggerPipeline, SendToLogWritesToLogFile)
 {
     CMUSHclientDoc doc; make_doc(doc);
-    char logpath[256];
-    snprintf(logpath, sizeof logpath, "/tmp/mc_trig_log_%d.txt", (int)getpid());
-    ASSERT_EQ((long)eOK, doc.OpenLog(logpath, FALSE));
+    std::string logpath = fresh_log_path();       // audit §4: use the shared helpers
+    ASSERT_EQ((long)eOK, doc.OpenLog(logpath.c_str(), FALSE));
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("lg", "logthis*", "logged-response",
                                           eEnabled, -1, 0, "", "",
                                           eSendToLogFile, 100));
     feed(doc, "logthis now\n");
     doc.CloseLog();
-    FILE* f = fopen(logpath, "rb");
-    ASSERT_NE(nullptr, f);
-    char buf[4096] = {0};
-    fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    EXPECT_NE(nullptr, strstr(buf, "logged-response"));
-    unlink(logpath);
+    std::string log = slurp(logpath);
+    remove(logpath.c_str());
+    EXPECT_TRUE(log_contains(log, "logged-response"));
 }
 
 // omit_from_log keeps the matched line out of the log while it stays in the
@@ -1154,25 +1176,20 @@ TEST(TriggerPipeline, SendToLogWritesToLogFile)
 TEST(TriggerPipeline, OmitFromLogSuppressesLineInLogOnly)
 {
     CMUSHclientDoc doc; make_doc(doc);
-    doc.m_bLogOutput = TRUE;                     // log incoming lines
-    char logpath[256];
-    snprintf(logpath, sizeof logpath, "/tmp/mc_trig_log2_%d.txt", (int)getpid());
-    ASSERT_EQ((long)eOK, doc.OpenLog(logpath, FALSE));
+    doc.m_bLogOutput = TRUE;                       // log incoming lines
+    std::string logpath = fresh_log_path();        // audit §4: use the shared helpers
+    ASSERT_EQ((long)eOK, doc.OpenLog(logpath.c_str(), FALSE));
     ASSERT_EQ((long)eOK, doc.AddTriggerEx("ol", "hidden*", "",
                                           eEnabled | eOmitFromLog,
                                           -1, 0, "", "", eSendToWorld, 100));
     feed(doc, "visible line\n");
     feed(doc, "hidden line\n");
     doc.CloseLog();
-    FILE* f = fopen(logpath, "rb");
-    ASSERT_NE(nullptr, f);
-    char buf[4096] = {0};
-    fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    EXPECT_NE(nullptr, strstr(buf, "visible line"));
-    EXPECT_EQ(nullptr, strstr(buf, "hidden line"));
+    std::string log = slurp(logpath);
+    remove(logpath.c_str());
+    EXPECT_TRUE(log_contains(log, "visible line"));
+    EXPECT_FALSE(log_contains(log, "hidden line"));
     EXPECT_TRUE(any_line_contains(doc, "hidden line"));   // still displayed
-    unlink(logpath);
 }
 
 // A multi-line regexp trigger (lines_to_match = 2) matches across the joined
@@ -1788,31 +1805,25 @@ TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
     delete snooper;
 }
 
-// LogLineInHTMLcolour: colour changes emit <font>, non-black backgrounds
-// open <span>, underline wraps in <u>, and spans/fonts are closed at the end.
+// LogLineInHTMLcolour called DIRECTLY on an explicit head POSITION (the public
+// entry point). Trimmed (audit §3): the full <font>/<span>/<u> golden now lives in
+// HtmlColourOutputLoggingFromPipeline below (which drives the same emitter through
+// the m_bLogOutput+m_bLogHTML+m_bLogInColour pipeline); this test only pins that the
+// direct-POSITION call reaches the emitter and produces HTML-colour output.
 TEST(PrevLineArms, HtmlColourLogEmitsFontSpanUnderline)
 {
     CMUSHclientDoc doc; make_doc(doc);
-    char path[128];
-    snprintf(path, sizeof path, "/tmp/mc_test_disp_%d.html", (int)getpid());
-    ASSERT_EQ((long)eOK, doc.OpenLog(path, FALSE));
+    std::string path = fresh_log_path();
+    ASSERT_EQ((long)eOK, doc.OpenLog(path.c_str(), FALSE));
 
     feed(doc, "\x1B[31;44mred-on-blue\x1B[0m \x1B[4munder\x1B[0m\n");
     POSITION headpos = doc.m_LineList.GetHeadPosition();
     doc.LogLineInHTMLcolour(headpos);
     doc.CloseLog();
 
-    FILE* f = fopen(path, "rb");
-    ASSERT_TRUE(f != nullptr);
-    char buf[2048] = {};
-    fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    unlink(path);
-    EXPECT_TRUE(strstr(buf, "<font color=") != nullptr);
-    EXPECT_TRUE(strstr(buf, "<span style=")  != nullptr);
-    EXPECT_TRUE(strstr(buf, "</span>") != nullptr);
-    EXPECT_TRUE(strstr(buf, "</font>") != nullptr);
-    EXPECT_TRUE(strstr(buf, "<u>under</u>") != nullptr);
+    std::string log = slurp(path);
+    remove(path.c_str());
+    EXPECT_TRUE(log_contains(log, "<font color="));
 }
 
 // Output-line logging: a '%'-bearing preamble/postamble goes through
@@ -1823,23 +1834,18 @@ TEST(PrevLineArms, OutputLogPreambleFormatsTimeCodes)
     doc.m_bLogOutput = TRUE;
     doc.m_strLogLinePreambleOutput = "[%Y] ";
     doc.m_strLogLinePostambleOutput = " {%Y}";
-    char path[128];
-    snprintf(path, sizeof path, "/tmp/mc_test_disp_pre_%d.log", (int)getpid());
-    ASSERT_EQ((long)eOK, doc.OpenLog(path, FALSE));
+    std::string path = fresh_log_path();          // audit §4: use the shared helpers
+    ASSERT_EQ((long)eOK, doc.OpenLog(path.c_str(), FALSE));
     feed(doc, "logged output line\n");
     doc.CloseLog();
 
-    FILE* f = fopen(path, "rb");
-    ASSERT_TRUE(f != nullptr);
-    char buf[512] = {};
-    fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    unlink(path);
+    std::string log = slurp(path);
+    remove(path.c_str());
     // the year expanded (e.g. "[2026]"), no literal "%Y" left behind
-    EXPECT_TRUE(strstr(buf, "[%Y]") == nullptr);
-    EXPECT_TRUE(strstr(buf, "logged output line") != nullptr);
-    EXPECT_TRUE(strstr(buf, "[2") != nullptr);
-    EXPECT_TRUE(strstr(buf, "{2") != nullptr);
+    EXPECT_FALSE(log_contains(log, "[%Y]"));
+    EXPECT_TRUE(log_contains(log, "logged output line"));
+    EXPECT_TRUE(log_contains(log, "[2"));
+    EXPECT_TRUE(log_contains(log, "{2"));
 }
 
 // ═══ Round-4 tail: HTML-colour output logging, note-log preambles,
@@ -1847,43 +1853,41 @@ TEST(PrevLineArms, OutputLogPreambleFormatsTimeCodes)
 
 // MUD output logged in HTML-colour mode goes through LogLineInHTMLcolour
 // from the pipeline itself; plain-HTML mode escapes the markup instead.
+// This test owns the full <font>/<span>/<u> golden (audit §3, folded in from the
+// trimmed HtmlColourLogEmitsFontSpanUnderline): colour changes emit <font>, a
+// non-black background opens <span>, underline wraps in <u>, and both close.
 TEST(PrevLineArms, HtmlColourOutputLoggingFromPipeline)
 {
     CMUSHclientDoc doc; make_doc(doc);
     doc.m_bLogOutput = TRUE;
     doc.m_bLogHTML = TRUE;
     doc.m_bLogInColour = TRUE;
-    char path[128];
-    snprintf(path, sizeof path, "/tmp/mc_test_disp_html_%d.html", (int)getpid());
-    ASSERT_EQ((long)eOK, doc.OpenLog(path, FALSE));
-    feed(doc, "\x1B[31mred output line\x1B[0m\r\n");
+    std::string path = fresh_log_path();
+    ASSERT_EQ((long)eOK, doc.OpenLog(path.c_str(), FALSE));
+    feed(doc, "\x1B[31;44mred-on-blue\x1B[0m \x1B[4munder\x1B[0m\r\n");
     doc.CloseLog();
 
-    FILE* f = fopen(path, "rb");
-    ASSERT_TRUE(f != nullptr);
-    char buf[1024] = {};
-    fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    unlink(path);
-    EXPECT_TRUE(strstr(buf, "<font color=") != nullptr);
-    EXPECT_TRUE(strstr(buf, "red output line") != nullptr);
+    std::string log = slurp(path);
+    remove(path.c_str());
+    EXPECT_TRUE(log_contains(log, "<font color="));
+    EXPECT_TRUE(log_contains(log, "red-on-blue"));
+    EXPECT_TRUE(log_contains(log, "<span style="));   // non-black background
+    EXPECT_TRUE(log_contains(log, "</span>"));
+    EXPECT_TRUE(log_contains(log, "<u>under</u>"));    // underline run
+    EXPECT_TRUE(log_contains(log, "</font>"));
 
     // plain-HTML (no colour) escapes markup characters
     CMUSHclientDoc doc2; make_doc(doc2);
     doc2.m_bLogOutput = TRUE;
     doc2.m_bLogHTML = TRUE;
     doc2.m_bLogInColour = FALSE;
-    snprintf(path, sizeof path, "/tmp/mc_test_disp_html2_%d.html", (int)getpid());
-    ASSERT_EQ((long)eOK, doc2.OpenLog(path, FALSE));
+    std::string path2 = fresh_log_path();
+    ASSERT_EQ((long)eOK, doc2.OpenLog(path2.c_str(), FALSE));
     feed(doc2, "a <b> & c\r\n");
     doc2.CloseLog();
-    f = fopen(path, "rb");
-    ASSERT_TRUE(f != nullptr);
-    memset(buf, 0, sizeof buf);
-    fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    unlink(path);
-    EXPECT_TRUE(strstr(buf, "&lt;b&gt;") != nullptr);
+    std::string log2 = slurp(path2);
+    remove(path2.c_str());
+    EXPECT_TRUE(log_contains(log2, "&lt;b&gt;"));
 }
 
 // Notes logged with '%'-bearing note preamble/postamble format the time.
@@ -1893,21 +1897,16 @@ TEST(PrevLineArms, NoteLogPreambleFormatsTimeCodes)
     doc.m_bLogNotes = TRUE;
     doc.m_strLogLinePreambleNotes = "[N%Y] ";
     doc.m_strLogLinePostambleNotes = " {N%Y}";
-    char path[128];
-    snprintf(path, sizeof path, "/tmp/mc_test_disp_note_%d.log", (int)getpid());
-    ASSERT_EQ((long)eOK, doc.OpenLog(path, FALSE));
+    std::string path = fresh_log_path();          // audit §4: use the shared helpers
+    ASSERT_EQ((long)eOK, doc.OpenLog(path.c_str(), FALSE));
     doc.Note("a logged note");
     doc.CloseLog();
 
-    FILE* f = fopen(path, "rb");
-    ASSERT_TRUE(f != nullptr);
-    char buf[512] = {};
-    fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    unlink(path);
-    EXPECT_TRUE(strstr(buf, "[N2") != nullptr);   // %Y expanded
-    EXPECT_TRUE(strstr(buf, "a logged note") != nullptr);
-    EXPECT_TRUE(strstr(buf, "{N2") != nullptr);
+    std::string log = slurp(path);
+    remove(path.c_str());
+    EXPECT_TRUE(log_contains(log, "[N2"));        // %Y expanded
+    EXPECT_TRUE(log_contains(log, "a logged note"));
+    EXPECT_TRUE(log_contains(log, "{N2"));
 }
 
 // Pueblo announce variants: detection off via "no MXP", and level 2.50.

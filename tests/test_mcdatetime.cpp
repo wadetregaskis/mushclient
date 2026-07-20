@@ -37,28 +37,21 @@ TEST(CmcDateTimeTest, CopyConstruct) {
 
 // ── CmcDateTimeSpan ───────────────────────────────────────────────────────
 
-TEST(CmcDateTimeSpanTest, SpanInSeconds) {
-    CmcDateTimeSpan span;
-    span.SetDateTimeSpan(0, 0, 0, 60.0);
-    EXPECT_NEAR(60.0, span.GetTotalSeconds(), 0.001);
-}
-
-TEST(CmcDateTimeSpanTest, SpanInMinutes) {
-    CmcDateTimeSpan span;
-    span.SetDateTimeSpan(0, 0, 5, 0.0);
-    EXPECT_NEAR(300.0, span.GetTotalSeconds(), 0.001);
-}
-
-TEST(CmcDateTimeSpanTest, SpanInHours) {
-    CmcDateTimeSpan span;
-    span.SetDateTimeSpan(0, 2, 0, 0.0);
-    EXPECT_NEAR(7200.0, span.GetTotalSeconds(), 0.001);
-}
-
-TEST(CmcDateTimeSpanTest, SpanInDays) {
-    CmcDateTimeSpan span;
-    span.SetDateTimeSpan(1, 0, 0, 0.0);
-    EXPECT_NEAR(86400.0, span.GetTotalSeconds(), 0.001);
+// Parameterised (audit §4): SpanInSeconds/Minutes/Hours/Days collapsed into one
+// table over {days, hours, minutes, seconds → expected total seconds}.
+TEST(CmcDateTimeSpanTest, SpanTotalSecondsFromComponents) {
+    struct Case { int d, h, m; double s; double expectSecs; const char* note; };
+    const Case cases[] = {
+        { 0, 0, 0, 60.0,     60.0, "seconds" },
+        { 0, 0, 5,  0.0,    300.0, "minutes" },
+        { 0, 2, 0,  0.0,   7200.0, "hours"   },
+        { 1, 0, 0,  0.0,  86400.0, "days"    },
+    };
+    for (const Case& c : cases) {
+        CmcDateTimeSpan span;
+        span.SetDateTimeSpan(c.d, c.h, c.m, c.s);
+        EXPECT_NEAR(c.expectSecs, span.GetTotalSeconds(), 0.001);   // c.note
+    }
 }
 
 TEST(CmcDateTimeSpanTest, SpanCompareLess) {

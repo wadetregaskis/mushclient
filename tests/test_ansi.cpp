@@ -130,33 +130,25 @@ TEST(ANSITest, ResetClearsAllFlags)
 
 // ── Foreground colour codes ───────────────────────────────────────────────
 
-TEST(ANSITest, ForegroundRedSetsColourIndex)
+// Parameterised (audit §4, mirrors the BrightForeground table style): every 30-37
+// foreground code stores its colour index in iForeColour and keeps COLOUR_ANSI.
+// Also closes the previously-untested BLACK/YELLOW/MAGENTA/CYAN/WHITE arms.
+TEST(ANSITest, ForegroundColourCodesSetColourIndex)
 {
-    CMUSHclientDoc doc; make_doc(doc);
-    doc.InterpretANSIcode(ANSI_TEXT_RED);
-    CStyle* s = tail(doc);
-    ASSERT_NE(nullptr, s);
-    // ANSI red = colour index 1
-    EXPECT_EQ((COLORREF)RED, s->iForeColour);
-    EXPECT_EQ((unsigned short)COLOUR_ANSI, s->iFlags & COLOURTYPE);
-}
-
-TEST(ANSITest, ForegroundGreenSetsColourIndex)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    doc.InterpretANSIcode(ANSI_TEXT_GREEN);
-    CStyle* s = tail(doc);
-    ASSERT_NE(nullptr, s);
-    EXPECT_EQ((COLORREF)GREEN, s->iForeColour);
-}
-
-TEST(ANSITest, ForegroundBlueSetsColourIndex)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    doc.InterpretANSIcode(ANSI_TEXT_BLUE);
-    CStyle* s = tail(doc);
-    ASSERT_NE(nullptr, s);
-    EXPECT_EQ((COLORREF)BLUE, s->iForeColour);
+    struct { int code; COLORREF expected; } cases[] = {
+        { ANSI_TEXT_BLACK,   BLACK   }, { ANSI_TEXT_RED,     RED     },
+        { ANSI_TEXT_GREEN,   GREEN   }, { ANSI_TEXT_YELLOW,  YELLOW  },
+        { ANSI_TEXT_BLUE,    BLUE    }, { ANSI_TEXT_MAGENTA, MAGENTA },
+        { ANSI_TEXT_CYAN,    CYAN    }, { ANSI_TEXT_WHITE,   WHITE   },
+    };
+    for (auto& tc : cases) {
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.InterpretANSIcode(tc.code);
+        CStyle* s = tail(doc);
+        ASSERT_NE(nullptr, s);
+        EXPECT_EQ(tc.expected, s->iForeColour);
+        EXPECT_EQ((unsigned short)COLOUR_ANSI, s->iFlags & COLOURTYPE);
+    }
 }
 
 TEST(ANSITest, ForegroundDefaultRestoresWhite)
@@ -171,13 +163,24 @@ TEST(ANSITest, ForegroundDefaultRestoresWhite)
 
 // ── Background colour codes ───────────────────────────────────────────────
 
-TEST(ANSITest, BackgroundRedSetsColourIndex)
+// Parameterised (audit §4): every 40-47 background code stores its colour index in
+// iBackColour.  Closes the previously-untested BLACK/GREEN/YELLOW/BLUE/MAGENTA/CYAN/
+// WHITE arms (only RED was tested before).
+TEST(ANSITest, BackgroundColourCodesSetColourIndex)
 {
-    CMUSHclientDoc doc; make_doc(doc);
-    doc.InterpretANSIcode(ANSI_BACK_RED);
-    CStyle* s = tail(doc);
-    ASSERT_NE(nullptr, s);
-    EXPECT_EQ((COLORREF)RED, s->iBackColour);
+    struct { int code; COLORREF expected; } cases[] = {
+        { ANSI_BACK_BLACK,   BLACK   }, { ANSI_BACK_RED,     RED     },
+        { ANSI_BACK_GREEN,   GREEN   }, { ANSI_BACK_YELLOW,  YELLOW  },
+        { ANSI_BACK_BLUE,    BLUE    }, { ANSI_BACK_MAGENTA, MAGENTA },
+        { ANSI_BACK_CYAN,    CYAN    }, { ANSI_BACK_WHITE,   WHITE   },
+    };
+    for (auto& tc : cases) {
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.InterpretANSIcode(tc.code);
+        CStyle* s = tail(doc);
+        ASSERT_NE(nullptr, s);
+        EXPECT_EQ(tc.expected, s->iBackColour);
+    }
 }
 
 TEST(ANSITest, BackgroundDefaultRestoresBlack)
@@ -207,36 +210,29 @@ TEST(ANSITest, BackgroundEnter256Mode)
     EXPECT_EQ(HAVE_BACKGROUND_256_START, doc.m_phase);
 }
 
-TEST(ANSITest, Foreground256ColourApplied)
+// Parameterised (audit §4): the 256-colour apply path for fg (ESC[38;5;N) and bg
+// (ESC[48;5;N).  When the current style is COLOUR_ANSI the raw index is stored in
+// iForeColour/iBackColour and COLOUR_ANSI is kept; GetStyleRGB later resolves via
+// xterm_256_colours[index] (index >= 8 path).  Only the fg arm advanced the phase to
+// DOING_CODE in the original tests, so checkPhase preserves that exact assertion.
+TEST(ANSITest, Colour256Applied)
 {
-    CMUSHclientDoc doc; make_doc(doc);
-    // ESC[38;5;196m — bright red in xterm palette (index 196).
-    // When the current style is COLOUR_ANSI, the implementation stores the
-    // raw index in iForeColour and keeps COLOUR_ANSI; GetStyleRGB then uses
-    // xterm_256_colours[iForeColour] at render time (index >= 8 path).
-    doc.InterpretANSIcode(ANSI_TEXT_256_COLOUR);   // → HAVE_FOREGROUND_256_START
-    doc.Interpret256ANSIcode(5);                    // → HAVE_FOREGROUND_256_FINISH
-    doc.Interpret256ANSIcode(196);                  // → apply colour, phase = DOING_CODE
-    CStyle* s = tail(doc);
-    ASSERT_NE(nullptr, s);
-    // Index stored in iForeColour, type stays COLOUR_ANSI
-    EXPECT_EQ((COLORREF)196, s->iForeColour);
-    EXPECT_EQ((unsigned short)COLOUR_ANSI, s->iFlags & COLOURTYPE);
-    // Phase advances to DOING_CODE (will be reset to NONE on next normal char)
-    EXPECT_EQ(DOING_CODE, doc.m_phase);
-}
-
-TEST(ANSITest, Background256ColourApplied)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    // ESC[48;5;46m — xterm green (index 46), same ANSI-mode index storage rule.
-    doc.InterpretANSIcode(ANSI_BACK_256_COLOUR);
-    doc.Interpret256ANSIcode(5);
-    doc.Interpret256ANSIcode(46);
-    CStyle* s = tail(doc);
-    ASSERT_NE(nullptr, s);
-    EXPECT_EQ((COLORREF)46, s->iBackColour);
-    EXPECT_EQ((unsigned short)COLOUR_ANSI, s->iFlags & COLOURTYPE);
+    struct { int enterCode; int index; bool foreground; bool checkPhase; } cases[] = {
+        { ANSI_TEXT_256_COLOUR, 196, true,  true  },  // fg xterm bright red (index 196)
+        { ANSI_BACK_256_COLOUR,  46, false, false },  // bg xterm green (index 46)
+    };
+    for (auto& tc : cases) {
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.InterpretANSIcode(tc.enterCode);   // → HAVE_*_256_START
+        doc.Interpret256ANSIcode(5);           // → HAVE_*_256_FINISH
+        doc.Interpret256ANSIcode(tc.index);    // → apply colour
+        CStyle* s = tail(doc);
+        ASSERT_NE(nullptr, s);
+        if (tc.foreground) EXPECT_EQ((COLORREF)tc.index, s->iForeColour);
+        else               EXPECT_EQ((COLORREF)tc.index, s->iBackColour);
+        EXPECT_EQ((unsigned short)COLOUR_ANSI, s->iFlags & COLOURTYPE);
+        if (tc.checkPhase) EXPECT_EQ(DOING_CODE, doc.m_phase);
+    }
 }
 
 TEST(ANSITest, Foreground256ColourRgbLookup)
@@ -474,40 +470,26 @@ TEST(ANSITest, BrightForegroundInCustomModeConvertsToRGB)
 // (The old stdout-silencing RAII is gone: the display flip removed the
 // twin's stdout ANSI emission, so DisplayMsg no longer writes to stdout.)
 
-TEST(ANSITest, DisplayMsg_ANSIRedSetsStyle)
+// Parameterised (audit §4): the DisplayMsg end-to-end ANSI cases feed a raw byte
+// string (ESC sequences included) and inspect the resulting doc style state.  They
+// differ only in the sequence and which of fore/back/hilite is checked.
+TEST(ANSITest, DisplayMsg_AnsiSequencesSetStyleState)
 {
-    CMUSHclientDoc doc; make_doc(doc);
-    // "\033[31m" — ESC [ 3 1 m → foreground red
-    const char seq[] = "\033[31mHello";
-    doc.DisplayMsg(seq, (int)strlen(seq), 0, false);
-    EXPECT_EQ((COLORREF)RED, doc.m_iForeColour);
-}
-
-TEST(ANSITest, DisplayMsg_BrightGreenSetsIndex10)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    const char seq[] = "\033[92mHello";
-    doc.DisplayMsg(seq, (int)strlen(seq), 0, false);
-    EXPECT_EQ((COLORREF)10, doc.m_iForeColour);
-}
-
-TEST(ANSITest, DisplayMsg_ResetRestoresDefaults)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    const char seq[] = "\033[31m\033[0mHello";
-    doc.DisplayMsg(seq, (int)strlen(seq), 0, false);
-    EXPECT_EQ((COLORREF)WHITE, doc.m_iForeColour);
-    EXPECT_EQ((COLORREF)BLACK, doc.m_iBackColour);
-}
-
-TEST(ANSITest, DisplayMsg_MultiParamSequence)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    // "\033[1;34m" — bold + blue
-    const char seq[] = "\033[1;34mHello";
-    doc.DisplayMsg(seq, (int)strlen(seq), 0, false);
-    EXPECT_EQ((COLORREF)BLUE, doc.m_iForeColour);
-    EXPECT_TRUE((doc.m_iFlags & HILITE) != 0);
+    struct {
+        const char* seq; COLORREF fore; bool checkBack; COLORREF back; bool wantHilite;
+    } cases[] = {
+        { "\033[31mHello",        RED,   false, 0,     false },  // foreground red
+        { "\033[92mHello",        10,    false, 0,     false },  // bright green → index 10
+        { "\033[31m\033[0mHello", WHITE, true,  BLACK, false },  // reset restores defaults
+        { "\033[1;34mHello",      BLUE,  false, 0,     true  },  // bold + blue
+    };
+    for (auto& tc : cases) {
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.DisplayMsg(tc.seq, (int)strlen(tc.seq), 0, false);
+        EXPECT_EQ(tc.fore, doc.m_iForeColour);
+        if (tc.checkBack)  EXPECT_EQ(tc.back, doc.m_iBackColour);
+        if (tc.wantHilite) EXPECT_TRUE((doc.m_iFlags & HILITE) != 0);
+    }
 }
 
 TEST(ANSITest, DisplayMsg_ESCInterruptsMXPStateCleanly)

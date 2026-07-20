@@ -630,6 +630,61 @@ TEST(XmlParseR5, DoctypeUnsupportedDeclaration)
     EXPECT_NE(std::string::npos, r.error.find("Unsupported declaration"));
 }
 
+// ── attribute-value & EOF error arms (xmlparse.cpp 145/275/350/371/382/388) ──
+// These arms are only reachable in specific lexical contexts (a `]]>`/non-
+// printable/newline INSIDE a quoted attribute value; a `<`/comment running to
+// EOF; an `attr=>` with no value).  They are NOT the same arms as the content /
+// lead-char cases exercised elsewhere in this file, so each needs its own input.
+
+TEST(XmlParseR5, UnterminatedCommentAtEof)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "<!-- never closed");   // no --> before EOF
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(std::string::npos, r.error.find("Unterminated comment"));
+}
+
+TEST(XmlParseR5, EofWhileLookingForElementName)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "<a><");   // '<' then EOF while seeking child name
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(std::string::npos, r.error.find("Unexpected end-of-file looking for"));
+}
+
+TEST(XmlParseR5, AttributeValueNotSuppliedBareGt)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "<world use_mxp=>");   // '=' then '>' (no value)
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(std::string::npos, r.error.find("not supplied"));
+    EXPECT_EQ(std::string::npos, r.error.find("in quotes"));  // arm 350, NOT 361
+}
+
+TEST(XmlParseR5, AttributeValueUnterminatedAtNewline)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "<world site=\"unclosed\n/>");   // newline before closing quote
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(std::string::npos, r.error.find("not terminated (no closing quote)"));
+}
+
+TEST(XmlParseR5, AttributeValueRejectsCdataTerminator)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, "<world site=\"a]]>b\" />");   // ]]> inside a value
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(std::string::npos, r.error.find("may not contain CDATA terminator"));
+}
+
+TEST(XmlParseR5, AttributeValueRejectsNonPrintable)
+{
+    CXMLparser p;
+    ParseOutcome r = parse_xml(p, std::string("<world site=\"a\x01z\" />"));  // ctrl char in value
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(std::string::npos, r.error.find("Non-printable character"));
+}
+
 TEST(XmlParseR5, DoctypeEofBeforeClose)
 {
     CXMLparser p;

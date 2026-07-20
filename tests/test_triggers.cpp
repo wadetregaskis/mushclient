@@ -585,11 +585,8 @@ TEST(TriggerScript, DuplicateNamedWildcardKeepsNonEmptyCapture)
 
 #include "flags.h"   // eEnabled / eReplace / eTemporary alias-flags
 
-static std::string vs(const VARIANT& v)
-{
-    if (v.vt != VT_BSTR) return "<not-a-string>";
-    return std::string((const char*)CString(v.bstrVal));
-}
+// vs(const VARIANT&) is shared with test_aliases/test_timers (audit §2/§4).
+#include "variant_test_helpers.h"
 
 // AddTriggerEx validation: each reject path answers its own error code.
 TEST(TriggerApi, AddTriggerExValidatesInput)
@@ -771,41 +768,22 @@ TEST(TriggerApi, EnableTriggerToggleAndMissing)
 // condition rejects the match.
 TEST(TriggerR5, ColourAndStyleMatchConditions)
 {
-    // text colour: line is WHITE (7) on BLACK (0), not hilited
-    {   // background condition met (BLACK == 0)
+    // The fed line is WHITE (7) on BLACK (0), not hilited/blinking/inverse.  Each row
+    // sets one iMatch condition and expects the corresponding match/reject (audit §4).
+    struct Case { long iMatch; long expected; const char* note; };
+    const Case cases[] = {
+        { TRIGGER_MATCH_BACK | (BLACK << 8), 1, "background condition met (BLACK==0)" },
+        { TRIGGER_MATCH_BACK | (RED   << 8), 0, "background condition unmet (RED)"    },
+        { TRIGGER_MATCH_HILITE  | HILITE,    0, "hilite requested, line not hilited"  },
+        { TRIGGER_MATCH_BLINK   | BLINK,     0, "blink requested, line does not blink"},
+        { TRIGGER_MATCH_INVERSE | INVERSE,   0, "inverse requested, line not inverse" },
+    };
+    for (const Case& c : cases) {
         CMUSHclientDoc doc; make_doc(doc);
         CTrigger* t = add_trigger(doc, "colours");
-        t->iMatch = TRIGGER_MATCH_BACK | (BLACK << 8);
+        t->iMatch = c.iMatch;
         feed_line(doc, "colours");
-        EXPECT_EQ(1L, t->nMatched);
-    }
-    {   // background condition unmet
-        CMUSHclientDoc doc; make_doc(doc);
-        CTrigger* t = add_trigger(doc, "colours");
-        t->iMatch = TRIGGER_MATCH_BACK | (RED << 8);
-        feed_line(doc, "colours");
-        EXPECT_EQ(0L, t->nMatched);
-    }
-    {   // hilite requested but line is not hilited
-        CMUSHclientDoc doc; make_doc(doc);
-        CTrigger* t = add_trigger(doc, "colours");
-        t->iMatch = TRIGGER_MATCH_HILITE | HILITE;
-        feed_line(doc, "colours");
-        EXPECT_EQ(0L, t->nMatched);
-    }
-    {   // blink requested but line does not blink
-        CMUSHclientDoc doc; make_doc(doc);
-        CTrigger* t = add_trigger(doc, "colours");
-        t->iMatch = TRIGGER_MATCH_BLINK | BLINK;
-        feed_line(doc, "colours");
-        EXPECT_EQ(0L, t->nMatched);
-    }
-    {   // inverse requested but line is not inverse
-        CMUSHclientDoc doc; make_doc(doc);
-        CTrigger* t = add_trigger(doc, "colours");
-        t->iMatch = TRIGGER_MATCH_INVERSE | INVERSE;
-        feed_line(doc, "colours");
-        EXPECT_EQ(0L, t->nMatched);
+        EXPECT_EQ(c.expected, t->nMatched);   // c.note
     }
 }
 

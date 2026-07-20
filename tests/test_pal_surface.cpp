@@ -29,10 +29,14 @@ struct Fixture {
     pal::ISurface& ad = impl;
 };
 
+// Audit §4: every test body opened with the identical two lines
+//   Fixture fx; pal::ISurface& ad = fx.ad;
+// Collapse that boilerplate into one macro that declares both `fx` and `ad`.
+#define PAL_FIXTURE() Fixture fx; pal::ISurface& ad = fx.ad
+
 TEST(PalSurface, CreateFillsBackgroundAndBoundsChecks)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId s = ad.createSurface({ 8, 6 }, BLUE);
     EXPECT_TRUE(ad.getPixel(s, { 0, 0 }) == BLUE);
     EXPECT_TRUE(ad.getPixel(s, { 7, 5 }) == BLUE);
@@ -46,8 +50,7 @@ TEST(PalSurface, CreateFillsBackgroundAndBoundsChecks)
 // B,G,R order, bottom-up rows, stride padded to 4 bytes.
 TEST(PalSurface, ReadPixelsIsExactDibLayout)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId s = ad.createSurface({ 2, 2 }, BLACK);
     ad.fillRect(s, { 0, 0, 1, 1 }, { pal::BrushStyle::Solid, RED });     // TL
     ad.fillRect(s, { 1, 0, 1, 1 }, { pal::BrushStyle::Solid, GREEN });   // TR
@@ -71,8 +74,7 @@ TEST(PalSurface, ReadPixelsIsExactDibLayout)
 
 TEST(PalSurface, WritePixelsRoundTripsBothFormats)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId a = ad.createSurface({ 5, 4 }, BLACK);
     ad.gradient(a, { 0, 0, 5, 4 }, RED, BLUE, true);
 
@@ -90,8 +92,7 @@ TEST(PalSurface, WritePixelsRoundTripsBothFormats)
 
 TEST(PalSurface, InvertRectIsExactNot)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId s = ad.createSurface({ 4, 4 }, RED);
     ad.invertRect(s, { 1, 1, 2, 2 });
     EXPECT_TRUE(ad.getPixel(s, { 1, 1 }) == 0xFFFF00);   // ~red = cyan (B,G on)
@@ -102,8 +103,7 @@ TEST(PalSurface, InvertRectIsExactNot)
 
 TEST(PalSurface, LineExcludesLastPixel)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId s = ad.createSurface({ 10, 10 }, BLACK);
     ad.line(s, { 2, 5 }, { 7, 5 }, { pal::PenStyle::Solid, 1, WHITE });
     for (int x = 2; x <= 6; ++x)
@@ -114,8 +114,7 @@ TEST(PalSurface, LineExcludesLastPixel)
 
 TEST(PalSurface, ShapeRectStrokesAndFills)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId s = ad.createSurface({ 10, 10 }, BLACK);
     ad.shape(s, pal::ShapeKind::Rect, { 2, 2, 6, 5 }, {}, {},
              { pal::PenStyle::Solid, 1, WHITE }, { pal::BrushStyle::Solid, GREEN });
@@ -136,8 +135,7 @@ TEST(PalSurface, ShapeRectStrokesAndFills)
 
 TEST(PalSurface, BlitCopyAndExactColourKey)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId src = ad.createSurface({ 4, 4 }, GREEN);
     ad.fillRect(src, { 1, 1, 2, 2 }, { pal::BrushStyle::Solid, RED });
     pal::SurfaceId dst = ad.createSurface({ 8, 8 }, BLACK);
@@ -160,8 +158,7 @@ TEST(PalSurface, BlitCopyAndExactColourKey)
 // rejected, not read out of bounds (writePixels / blit / pattern brush).
 TEST(PalSurface, HostilePixelBufferRejected)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId s = ad.createSurface({ 4, 4 }, GREEN);
 
     pal::PixelBuffer evil;
@@ -188,8 +185,7 @@ TEST(PalSurface, HostilePixelBufferRejected)
 // identically for surface and PixelBuffer sources.
 TEST(PalSurface, PartialOverlapBlitDrawsIntersection)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId src = ad.createSurface({ 4, 4 }, RED);
     pal::SurfaceId dst = ad.createSurface({ 8, 8 }, BLACK);
 
@@ -212,8 +208,7 @@ TEST(PalSurface, PartialOverlapBlitDrawsIntersection)
 
 TEST(PalSurface, GradientEndpointsExact)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId s = ad.createSurface({ 10, 3 }, BLACK);
     ad.gradient(s, { 0, 0, 10, 3 }, BLACK, WHITE, true);
     EXPECT_TRUE(ad.getPixel(s, { 0, 1 }) == BLACK);      // left column = from
@@ -224,8 +219,7 @@ TEST(PalSurface, GradientEndpointsExact)
 
 TEST(PalSurface, FloodFillBorderAndSurfaceModes)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId s = ad.createSurface({ 10, 10 }, BLACK);
     // A white 6x6 border box; border mode fills its inside only.
     ad.shape(s, pal::ShapeKind::Rect, { 2, 2, 6, 6 }, {}, {},
@@ -244,8 +238,7 @@ TEST(PalSurface, FloodFillBorderAndSurfaceModes)
 
 TEST(PalSurface, TextContractRoundTrips)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId s = ad.createSurface({ 60, 20 }, BLACK);
     pal::FontId f = ad.createFont({ "AnyFace", 10, 400, false, false, false, 0, 0 });
 
@@ -281,8 +274,7 @@ TEST(PalSurface, TextContractRoundTrips)
 
 TEST(PalSurface, HatchAndPatternBrushes)
 {
-    Fixture fx;
-    pal::ISurface& ad = fx.ad;
+    PAL_FIXTURE();
     pal::SurfaceId s = ad.createSurface({ 16, 16 }, BLACK);
     // Horizontal hatch: line rows get fg, gap rows get bg.
     ad.fillRect(s, { 0, 0, 16, 16 },

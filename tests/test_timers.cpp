@@ -63,16 +63,10 @@ static void tick(CMUSHclientDoc& doc)
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
-TEST(TimerTest, OverdueTimerFires)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    CTimer* t = add_timer(doc, "t1");
-    make_overdue(t);
-
-    tick(doc);
-
-    EXPECT_EQ(1L, t->nMatched);
-}
+// OverdueTimerFires deleted (audit §3): the deterministic-clock
+// TimerClockTest.TimerFiresOnlyWhenClockReachesFireTime dominates it — it verifies
+// the exact fire boundary (not-due at start/+9 s, due at +10 s) rather than a single
+// wall-clock make_overdue()+fire.
 
 TEST(TimerTest, FutureTimerDoesNotFire)
 {
@@ -99,20 +93,10 @@ TEST(TimerTest, DisabledTimerDoesNotFire)
     EXPECT_EQ(0L, t->nMatched);
 }
 
-TEST(TimerTest, TimerFiresMultipleTimes)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    CTimer* t = add_timer(doc, "t1", 0.001);  // very short interval
-    make_overdue(t);
-
-    tick(doc);
-    EXPECT_EQ(1L, t->nMatched);
-
-    // After firing, tFireTime should be advanced; make it overdue again.
-    make_overdue(t);
-    tick(doc);
-    EXPECT_EQ(2L, t->nMatched);
-}
+// TimerFiresMultipleTimes deleted (audit §3): the deterministic-clock
+// TimerClockTest.IntervalTimerRefiresEachInterval dominates it — it verifies the
+// correct reschedule (fires at +0/+2/+4 s, not at the intermediate +1/+3 s) rather
+// than a make_overdue()-forced refire.
 
 TEST(TimerTest, OneShotTimerRemovedAfterFiring)
 {
@@ -542,11 +526,8 @@ TEST(TimerScript, ScriptDeletingOtherDueTimerPreventsItsFiring)
 // (the eEnabled / eAtTime / eOneShot flag enums come via doc.h)
 #include <string>
 
-static std::string vs(const VARIANT& v)
-{
-    if (v.vt != VT_BSTR) return "<not-a-string>";
-    return std::string((const char*)CString(v.bstrVal));
-}
+// vs(const VARIANT&) is shared with test_triggers/test_aliases (audit §2/§4).
+#include "variant_test_helpers.h"
 
 // AddTimer validation: out-of-range time parts, the zero-interval rule and
 // duplicate labels each answer their own error code.

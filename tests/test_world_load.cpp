@@ -1696,21 +1696,33 @@ static bool loads(const char* xml)
     return doc.LoadWorldFromFile(write_temp(xml).c_str());
 }
 
-TEST(XmlParseErrors, ElementNameMustStartWithLetterOrUnderscore)
+// Collapsed (audit §3): the fine-grained XmlParseErrors arm-by-arm tests were
+// strictly weaker duplicates of test_xmlparse's XmlParse.StructuralErrorsDiagnosed /
+// AttributeErrorsDiagnosed / EntityErrorsDiagnosed / NonPrintableCharactersRejected,
+// which drive CXMLparser::BuildStructure directly and assert the EXACT thrown message
+// and the resulting tree. Here we keep just a couple of representative INTEGRATION
+// cases proving the loader converts a thrown parser CException into a `false` return
+// (structural, attribute, and entity malformations) while a well-formed control loads.
+TEST(XmlParseErrors, MalformedXmlConvertedToFalseLoad)
 {
+    // structural: elements terminated out of sequence
     EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<1bad />\n</muclient>"));
-    // underscore IS a legal first character
+                       "<muclient>\n<triggers>\n</muclient>\n</triggers>"));
+    // attribute: unquoted attribute value
+    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
+                       "<muclient>\n<world use_mxp=1 />\n</muclient>"));
+    // entity: unknown entity in content
+    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
+                       "<muclient>\n<variables>\n"
+                       "<variable name=\"v\">&nosuchentity;</variable>\n"
+                       "</variables>\n</muclient>"));
+    // control: a well-formed document loads (underscore is a legal first char)
     EXPECT_TRUE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
                       "<muclient>\n<_odd />\n</muclient>"));
 }
 
-TEST(XmlParseErrors, ElementNameNotSupplied)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<>\n</muclient>"));
-}
-
+// Kept (NOT in the §3 cluster): the MAX_XML_NAME_LENGTH (255) limit is not exercised
+// by any test_xmlparse case, so this remains the sole owner of that boundary.
 TEST(XmlParseErrors, ElementNameTooLong)
 {
     std::string name(256, 'x');           // MAX_XML_NAME_LENGTH is 255
@@ -1719,139 +1731,12 @@ TEST(XmlParseErrors, ElementNameTooLong)
     EXPECT_FALSE(loads(xml.c_str()));
 }
 
-TEST(XmlParseErrors, UnexpectedEofAfterOpenAngle)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n<muclient>\n<"));
-}
-
-TEST(XmlParseErrors, AttributeValueMustBeQuoted)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<world use_mxp=1 />\n</muclient>"));
-}
-
-TEST(XmlParseErrors, AttributeValueNotSupplied)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<world use_mxp=>\n</muclient>"));
-}
-
-TEST(XmlParseErrors, AttributeValueUnterminatedAtNewline)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<world site=\"unclosed\n/>\n</muclient>"));
-}
-
-TEST(XmlParseErrors, AttributeValueMayNotContainCdataTerminator)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<world site=\"a]]>b\" />\n</muclient>"));
-}
-
-TEST(XmlParseErrors, NonPrintableCharacterInValue)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<world site=\"a\x01z\" />\n</muclient>"));
-}
-
-TEST(XmlParseErrors, ClosingTagWithoutOpeningTag)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n</muclient>\n</muclient>"));
-}
-
-TEST(XmlParseErrors, ElementsTerminatedOutOfSequence)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<triggers>\n</muclient>\n</triggers>"));
-}
-
-TEST(XmlParseErrors, SurplusCharactersAfterClosingTagName)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<triggers>\n</triggers junk>\n</muclient>"));
-}
-
-TEST(XmlParseErrors, UnterminatedComment)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<!-- never closed\n</muclient>"));
-}
-
-TEST(XmlParseErrors, CdataInvalidAtRootLevel)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<![CDATA[stuff]]>\n<muclient>\n</muclient>"));
-}
-
-TEST(XmlParseErrors, UnterminatedCdata)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<variables>\n<variable name=\"v\">"
-                       "<![CDATA[abc\n</variable>\n</variables>\n</muclient>"));
-}
-
-TEST(XmlParseErrors, UnknownEntityRejected)
-{
-    EXPECT_FALSE(loads("<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                       "<muclient>\n<variables>\n"
-                       "<variable name=\"v\">&nosuchentity;</variable>\n"
-                       "</variables>\n</muclient>"));
-}
-
-// ── XML parser positive edge paths ───────────────────────────────────────
-
-TEST(XmlParseEdge, StandardAndNumericEntitiesExpandInContent)
-{
-    const char* xml = "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                      "<muclient>\n<variables>\n"
-                      "<variable name=\"v\">&lt;a&gt; &amp; &quot;b&quot; &#65;&#x42;</variable>\n"
-                      "</variables>\n</muclient>";
-    CMUSHclientDoc doc;
-    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
-    CVariable* v = nullptr;
-    ASSERT_TRUE(doc.GetVariableMap().Lookup("v", v));
-    EXPECT_STREQ("<a> & \"b\" AB", (const char*)v->strContents);
-}
-
-TEST(XmlParseEdge, CdataSectionPreservesMarkup)
-{
-    const char* xml = "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                      "<muclient>\n<variables>\n"
-                      "<variable name=\"v\"><![CDATA[a <b> & c]]></variable>\n"
-                      "</variables>\n</muclient>";
-    CMUSHclientDoc doc;
-    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
-    CVariable* v = nullptr;
-    ASSERT_TRUE(doc.GetVariableMap().Lookup("v", v));
-    EXPECT_STREQ("a <b> & c", (const char*)v->strContents);
-}
-
-TEST(XmlParseEdge, Utf8ByteOrderMarkIsSkipped)
-{
-    const char* xml = "\xEF\xBB\xBF<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                      "<muclient>\n<variables>\n"
-                      "<variable name=\"v\">bom</variable>\n"
-                      "</variables>\n</muclient>";
-    CMUSHclientDoc doc;
-    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
-    CVariable* v = nullptr;
-    ASSERT_TRUE(doc.GetVariableMap().Lookup("v", v));
-    EXPECT_STREQ("bom", (const char*)v->strContents);
-}
-
-TEST(XmlParseEdge, TabsInDocumentBecomeSpaces)
-{
-    const char* xml = "<?xml version=\"1.0\"?>\n<!DOCTYPE muclient>\n"
-                      "<muclient>\n<variables>\n"
-                      "<variable name=\"v\">a\tb</variable>\n"
-                      "</variables>\n</muclient>";
-    CMUSHclientDoc doc;
-    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
-    CVariable* v = nullptr;
-    ASSERT_TRUE(doc.GetVariableMap().Lookup("v", v));
-    EXPECT_STREQ("a b", (const char*)v->strContents);
-}
+// XmlParseEdge.* deleted (audit §3): the positive edge paths (standard+numeric entity
+// expansion, CDATA markup preservation, UTF-8 BOM skip, tab→space) are fully covered
+// by test_xmlparse's EntityReplacementInContent / NumericEntityWhitespaceAndHighBytes /
+// CdataPreservesMarkupCharacters / Utf8BomIsSkipped / TabsBecomeSpaces, which assert the
+// exact parsed content. WorldLoad.LiteralTabsBecomeSpacesOnLoad (above) is kept because
+// it additionally verifies &#9; → a real tab, a distinct behaviour.
 
 // ═══ duplicate suppression (CTrigger/CAlias/CTimer operator==) ═════════════
 // xml_load_world.cpp (Fiendish, 4.81): an UNLABELLED item identical in every

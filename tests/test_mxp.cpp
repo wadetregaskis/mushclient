@@ -909,28 +909,10 @@ TEST(MXPOpenAtomic, UserTagWithoutMxpAutoconnectSendsNothing)
     EXPECT_FALSE(contains(sent_of(doc), "bob"));
 }
 
-TEST(MXPOpenAtomic, PasswordTagSendsPasswordWhenSafe)
-{
-    CMUSHclientDoc doc; make_pipe_doc(doc);
-    doc.m_pTransport = new RecordingTransport();
-    doc.m_password = "sesame";
-    doc.m_connect_now = eConnectMXP;
-    doc.m_nTotalLinesSent = 0;
-    mud(doc, "<PASSWORD>\n");
-    EXPECT_TRUE(contains(sent_of(doc), "sesame"));
-}
-
-TEST(MXPOpenAtomic, PasswordTagRefusedAfterTenLinesSent)
-{
-    // security check: a late <PASSWORD> could be a spoof — refuse it
-    CMUSHclientDoc doc; make_pipe_doc(doc);
-    doc.m_pTransport = new RecordingTransport();
-    doc.m_password = "sesame";
-    doc.m_connect_now = eConnectMXP;
-    doc.m_nTotalLinesSent = 11;
-    mud(doc, "<PASSWORD>\n");
-    EXPECT_FALSE(contains(sent_of(doc), "sesame"));
-}
+// PasswordTagSendsPasswordWhenSafe + PasswordTagRefusedAfterTenLinesSent deleted
+// (audit §3): both re-cover the MXP_ACTION_PASSWORD m_nTotalLinesSent>10 threshold
+// that MXPSecurity.PasswordNotSentAfterTenLinesSent already exercises for BOTH the
+// allowed (0 lines → password sent) and refused (11 lines → nothing) branches.
 
 TEST(MXPOpenAtomic, BrTagBreaksTheLine)
 {
@@ -1280,13 +1262,21 @@ TEST(MXPCustom, OpenCustomElementAppliesAtomicDefinition)
     EXPECT_TRUE(current_line(doc).find("quiet") != std::string::npos);
 }
 
+// Merged (audit §3): a closing tag with no matching open both (a) warns to the
+// debug notepad and (b) leaves the surrounding literal text on the line untouched.
+// Formerly split across MXPCustom.CloseWithoutOpenWarns (warning text) and
+// MxpR4.CloseWithoutOpenWarns (text passthrough).
 TEST(MXPCustom, CloseWithoutOpenWarns)
 {
     MxpDebugCapture dbg;
     CMUSHclientDoc doc; make_stream_doc(doc);
-    stream(doc, "</b>");
+    stream(doc, "text</b>");
     EXPECT_TRUE(dbg.contains(
         "Closing MXP tag </b> does not have corresponding opening tag"));
+    // warning, not error — the tag is ignored and emits NO visible bytes, so the
+    // line is EXACTLY "text" (a substring check would pass even if </b> leaked
+    // raw onto the line, e.g. "text</b>").
+    EXPECT_EQ(std::string("text"), current_line(doc));
 }
 
 TEST(MXPCustom, UnterminatedElementAtNewlineIsAnError)
@@ -1436,17 +1426,9 @@ TEST(MxpR4, AfkChallengeAnswered)
     EXPECT_TRUE(!contains(sent_of(doc2), "<AFK "));
 }
 
-// A closing tag that was never opened warns (open tag not in output buffer).
-TEST(MxpR4, CloseWithoutOpenWarns)
-{
-    CMUSHclientDoc doc; make_pipe_doc(doc);
-    doc.m_iMXP_defaultMode = doc.m_iMXP_mode = eMXP_perm_secure;
-    mud(doc, "text</B>\n");
-    // warning, not error — the tag is simply ignored
-    CLine* l = pline(doc, 0);
-    ASSERT_NE(nullptr, l);
-    EXPECT_TRUE(ptext(l) == "text");
-}
+// MxpR4.CloseWithoutOpenWarns deleted (audit §3): merged into
+// MXPCustom.CloseWithoutOpenWarns, which now asserts both the warning text and the
+// literal-text passthrough for an unmatched closing tag.
 
 // Element DEFINITION error arms: bad name, no "<" in definition, unexpected
 // "<", unclosed quote, no ">", empty tag.

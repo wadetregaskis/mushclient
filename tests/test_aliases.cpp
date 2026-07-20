@@ -75,14 +75,9 @@ static void type_command(CMUSHclientDoc& doc, const char* cmd)
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 
-TEST(AliasTest, NoAliasPassesCommandThrough)
-{
-    // With no aliases, the raw command is sent to the MUD.
-    CMUSHclientDoc doc; make_doc(doc);
-    long before = doc.m_nTotalLinesSent;
-    type_command(doc, "look");
-    EXPECT_EQ(before + 1, doc.m_nTotalLinesSent);
-}
+// NoAliasPassesCommandThrough deleted (audit §3): its no-aliases-registered nuance
+// is folded into NonMatchingCommandPassesThrough below as a second segment; the
+// stronger test (which also asserts nMatched==0) subsumes the +1-line assertion.
 
 TEST(AliasTest, MatchingAliasFiresAndSendsContents)
 {
@@ -111,6 +106,13 @@ TEST(AliasTest, NonMatchingCommandPassesThrough)
     EXPECT_EQ(0L, a->nMatched);
     // "south" has no alias, so it's sent raw.
     EXPECT_EQ(before + 1, doc.m_nTotalLinesSent);
+
+    // Folded from the deleted NoAliasPassesCommandThrough: with NO aliases
+    // registered at all, a raw command still passes through (+1 line).
+    CMUSHclientDoc doc2; make_doc(doc2);
+    long before2 = doc2.m_nTotalLinesSent;
+    type_command(doc2, "look");
+    EXPECT_EQ(before2 + 1, doc2.m_nTotalLinesSent);
 }
 
 TEST(AliasTest, DisabledAliasDoesNotFire)
@@ -432,11 +434,8 @@ TEST(AliasScript, DeleteAliasFromOwnScriptReturnsItemInUse)
 
 #include "flags.h"   // eEnabled / eReplace / eTemporary alias-flags
 
-static std::string vs(const VARIANT& v)
-{
-    if (v.vt != VT_BSTR) return "<not-a-string>";
-    return std::string((const char*)CString(v.bstrVal));
-}
+// vs(const VARIANT&) is shared with test_triggers/test_timers (audit §2/§4).
+#include "variant_test_helpers.h"
 
 // AddAlias validation: every reject path answers its own error code, and
 // eReplace converts the duplicate error into an overwrite.

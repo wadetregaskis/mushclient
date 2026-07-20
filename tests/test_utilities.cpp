@@ -17,26 +17,31 @@
 
 // ── encodeBase64 / decodeBase64 ─────────────────────────────────────────────
 
-// RFC 4648 §10 test vectors — the canonical base64 encodings.
+// Single source of truth (audit §4): RFC 4648 §10 canonical vectors, shared by the
+// encode test, the decode test and Base64RoundTrip.  The last row (0xFB 0xFF 0xBF →
+// "+/+/") closes the '+'(62)/'/'(63) alphabet gap noted in the coverage audit; its
+// plaintext bytes are high but contain no NUL, so strlen/strcmp handle them.
+static const struct { const char* plain; const char* b64; } kRfc4648[] = {
+    { "",       ""         },
+    { "f",      "Zg=="     },
+    { "fo",     "Zm8="     },
+    { "foo",    "Zm9v"     },
+    { "foob",   "Zm9vYg==" },
+    { "fooba",  "Zm9vYmE=" },
+    { "foobar", "Zm9vYmFy" },
+    { "\xFB\xFF\xBF", "+/+/" },   // exercises '+' and '/' in the output alphabet
+};
+
 TEST(Utilities, EncodeBase64_Rfc4648Vectors)
 {
-    EXPECT_STREQ("",         (const char*)encodeBase64("", false));
-    EXPECT_STREQ("Zg==",     (const char*)encodeBase64("f", false));
-    EXPECT_STREQ("Zm8=",     (const char*)encodeBase64("fo", false));
-    EXPECT_STREQ("Zm9v",     (const char*)encodeBase64("foo", false));
-    EXPECT_STREQ("Zm9vYg==", (const char*)encodeBase64("foob", false));
-    EXPECT_STREQ("Zm9vYmE=", (const char*)encodeBase64("fooba", false));
-    EXPECT_STREQ("Zm9vYmFy", (const char*)encodeBase64("foobar", false));
+    for (const auto& v : kRfc4648)
+        EXPECT_STREQ(v.b64, (const char*)encodeBase64(v.plain, false));
 }
 
 TEST(Utilities, DecodeBase64_Rfc4648Vectors)
 {
-    EXPECT_STREQ("f",      (const char*)decodeBase64("Zg=="));
-    EXPECT_STREQ("fo",     (const char*)decodeBase64("Zm8="));
-    EXPECT_STREQ("foo",    (const char*)decodeBase64("Zm9v"));
-    EXPECT_STREQ("foob",   (const char*)decodeBase64("Zm9vYg=="));
-    EXPECT_STREQ("fooba",  (const char*)decodeBase64("Zm9vYmE="));
-    EXPECT_STREQ("foobar", (const char*)decodeBase64("Zm9vYmFy"));
+    for (const auto& v : kRfc4648)
+        EXPECT_STREQ(v.plain, (const char*)decodeBase64(v.b64));
 }
 
 TEST(Utilities, DecodeBase64_IgnoresWhitespace)
@@ -48,8 +53,15 @@ TEST(Utilities, DecodeBase64_IgnoresWhitespace)
 
 TEST(Utilities, Base64RoundTrip)
 {
+    // the canonical vectors (single source of truth) ...
+    for (const auto& v : kRfc4648)
+    {
+        CString enc = encodeBase64(v.plain, false);
+        EXPECT_STREQ(v.plain, (const char*)decodeBase64((const char*)enc));
+    }
+    // ... plus a few longer free-form samples for good measure
     const char* samples[] = {
-        "", "A", "AB", "ABC", "ABCD", "Hello, world!",
+        "A", "AB", "ABC", "ABCD", "Hello, world!",
         "The quick brown fox jumps over the lazy dog."
     };
     for (const char* s : samples)

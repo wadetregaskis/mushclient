@@ -14,42 +14,27 @@
 #include "doc.h"
 #include "scripting/errors.h"
 
-// ── Basic direction expansion ─────────────────────────────────────────────
-
-TEST(Speedwalk, SingleDirectionExpands)
+// ── Basic direction / count / C-O-L-K action expansion ────────────────────
+// Parameterised (audit §4): the happy-path forward expansions collapse into one
+// {input, expected} table (a fresh doc per row).  The action codes (open/close/
+// lock/unlock) are Windows parity that were missing on the port.  Boundary/error
+// and intent-comment cases below stay explicit.
+TEST(Speedwalk, ForwardExpansions)
 {
-    CMUSHclientDoc doc;
-    EXPECT_STREQ("north\r\n", (const char*)doc.DoEvaluateSpeedwalk("n"));
-}
-
-TEST(Speedwalk, RepeatCountExpands)
-{
-    CMUSHclientDoc doc;
-    EXPECT_STREQ("north\r\nnorth\r\nnorth\r\n", (const char*)doc.DoEvaluateSpeedwalk("3n"));
-}
-
-// ── C/O/L/K action codes (Windows parity — were missing on the port) ───────
-
-TEST(Speedwalk, OpenActionPrefixesDirection)
-{
-    // "on" -> open the door to the north, sent as one line "open north".
-    CMUSHclientDoc doc;
-    EXPECT_STREQ("open north\r\n", (const char*)doc.DoEvaluateSpeedwalk("on"));
-}
-
-TEST(Speedwalk, CloseLockUnlockActions)
-{
-    CMUSHclientDoc doc;
-    EXPECT_STREQ("close south\r\n", (const char*)doc.DoEvaluateSpeedwalk("cs"));
-    EXPECT_STREQ("lock east\r\n",   (const char*)doc.DoEvaluateSpeedwalk("le"));
-    EXPECT_STREQ("unlock west\r\n", (const char*)doc.DoEvaluateSpeedwalk("kw"));
-}
-
-TEST(Speedwalk, ActionCodeThenMovement)
-{
-    // "onn": open the north door, then walk north.
-    CMUSHclientDoc doc;
-    EXPECT_STREQ("open north\r\nnorth\r\n", (const char*)doc.DoEvaluateSpeedwalk("onn"));
+    struct Case { const char* in; const char* out; };
+    const Case cases[] = {
+        { "n",   "north\r\n" },
+        { "3n",  "north\r\nnorth\r\nnorth\r\n" },
+        { "on",  "open north\r\n" },              // open the north door
+        { "cs",  "close south\r\n" },
+        { "le",  "lock east\r\n" },
+        { "kw",  "unlock west\r\n" },
+        { "onn", "open north\r\nnorth\r\n" },     // open north, then walk north
+    };
+    for (const Case& c : cases) {
+        CMUSHclientDoc doc;
+        EXPECT_STREQ(c.out, (const char*)doc.DoEvaluateSpeedwalk(c.in));
+    }
 }
 
 TEST(Speedwalk, ActionCodeWithCountIsError)
@@ -93,26 +78,23 @@ TEST(Speedwalk, HugeCountDoesNotOverflowPastCap)
 }
 
 // ── Reverse speedwalk (also shared logic) ─────────────────────────────────
-
-TEST(Speedwalk, ReverseSimplePath)
+// Parameterised (audit §4): the happy-path reversals collapse into one
+// {input, expected} table (a fresh doc per row).  "3n2e" → "2w3s" reverses the
+// inverse steps in reverse order; "(ne)" → "(sw)" uses the reverse-word table.
+// Comment/action-prefix/paren-slash reversal semantics stay explicit below.
+TEST(Speedwalk, ReverseExpansions)
 {
-    // Reverse of "3n2e" is "2w3s": inverse steps, in reverse order.
-    CMUSHclientDoc doc;
-    EXPECT_STREQ("2w3s", (const char*)doc.DoReverseSpeedwalk("3n2e"));
-}
-
-TEST(Speedwalk, ReverseSingleStep)
-{
-    CMUSHclientDoc doc;
-    EXPECT_STREQ("s", (const char*)doc.DoReverseSpeedwalk("n"));
-    EXPECT_STREQ("d", (const char*)doc.DoReverseSpeedwalk("u"));
-}
-
-TEST(Speedwalk, ReverseCustomParenWord)
-{
-    // A built-in diagonal word reverses via the reverse-word table: (ne) -> (sw).
-    CMUSHclientDoc doc;
-    EXPECT_STREQ("(sw)", (const char*)doc.DoReverseSpeedwalk("(ne)"));
+    struct Case { const char* in; const char* out; };
+    const Case cases[] = {
+        { "3n2e", "2w3s" },   // inverse steps, reverse order
+        { "n",    "s"    },   // single step
+        { "u",    "d"    },   // single step (up → down)
+        { "(ne)", "(sw)" },   // built-in diagonal word via reverse-word table
+    };
+    for (const Case& c : cases) {
+        CMUSHclientDoc doc;
+        EXPECT_STREQ(c.out, (const char*)doc.DoReverseSpeedwalk(c.in));
+    }
 }
 
 // ── Intent-comment tests (candidate mining, 2026-07) ─────────────────────

@@ -40,6 +40,21 @@ static std::string vstr(const VARIANT& v)
 
 // ── GetInfo type contract ─────────────────────────────────────────────────
 
+// Shared loop (audit §4): assert every code in `codes` answers `wantVt`.
+template <size_t N>
+static void expect_all_vt(CMUSHclientDoc& doc, const int (&codes)[N],
+                          int wantVt, const char* label)
+{
+    for (int c : codes) {
+        VARIANT v = doc.GetInfo(c);
+        if ((int)v.vt != wantVt) {
+            char msg[96];
+            snprintf(msg, sizeof msg, "GetInfo(%d) vt=%d, wanted %s", c, (int)v.vt, label);
+            mc_test::fail_msg(__FILE__, __LINE__, msg);
+        }
+    }
+}
+
 // methods_info.cpp GetInfo: codes 1-89 are the string group.
 TEST(GetInfo, StringCodesAnswerVtBstr)
 {
@@ -50,14 +65,7 @@ TEST(GetInfo, StringCodesAnswerVtBstr)
         41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,
         61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,
         81,82,83,84,85,86,87,88,89 };
-    for (int c : codes) {
-        VARIANT v = doc.GetInfo(c);
-        if ((int)v.vt != VT_BSTR) {
-            char msg[64];
-            snprintf(msg, sizeof msg, "GetInfo(%d) vt=%d, wanted VT_BSTR", c, (int)v.vt);
-            mc_test::fail_msg(__FILE__, __LINE__, msg);
-        }
-    }
+    expect_all_vt(doc, codes, VT_BSTR, "VT_BSTR");
 }
 
 // methods_info.cpp GetInfo: codes 101-125 (as implemented) are booleans.
@@ -67,14 +75,7 @@ TEST(GetInfo, BooleanCodesAnswerVtBool)
     static const int codes[] = {
         101,102,103,104,105,106,107,108,109,110,111,112,113,114,
         115,118,119,120,121,122,123,124,125 };
-    for (int c : codes) {
-        VARIANT v = doc.GetInfo(c);
-        if ((int)v.vt != VT_BOOL) {
-            char msg[64];
-            snprintf(msg, sizeof msg, "GetInfo(%d) vt=%d, wanted VT_BOOL", c, (int)v.vt);
-            mc_test::fail_msg(__FILE__, __LINE__, msg);
-        }
-    }
+    expect_all_vt(doc, codes, VT_BOOL, "VT_BOOL");
     // 116/117 were never allocated: they fall to the VT_NULL default
     EXPECT_EQ(VT_NULL, (int)doc.GetInfo(116).vt);
     EXPECT_EQ(VT_NULL, (int)doc.GetInfo(117).vt);
@@ -93,14 +94,7 @@ TEST(GetInfo, NumericCodesAnswerVtI4)
         260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,
         275,276,277,278,279,280,281,282,283,284,286,287,288,289,290,
         291,292,293,294,295,298,299,300,310 };
-    for (int c : codes) {
-        VARIANT v = doc.GetInfo(c);
-        if ((int)v.vt != VT_I4) {
-            char msg[64];
-            snprintf(msg, sizeof msg, "GetInfo(%d) vt=%d, wanted VT_I4", c, (int)v.vt);
-            mc_test::fail_msg(__FILE__, __LINE__, msg);
-        }
-    }
+    expect_all_vt(doc, codes, VT_I4, "VT_I4");
     EXPECT_EQ(VT_I2,   (int)doc.GetInfo(239).vt);   // action source is a short
     EXPECT_EQ(VT_BOOL, (int)doc.GetInfo(285).vt);   // output-window-available
     EXPECT_EQ(VT_R8,   (int)doc.GetInfo(232).vt);   // timer (epoch fallback)

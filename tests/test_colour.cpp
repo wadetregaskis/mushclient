@@ -94,30 +94,28 @@ TEST(CColorTest, HLSRoundTrip) {
     EXPECT_NEAR(50.0,  c2.GetBlue(),  2.0);
 }
 
-TEST(CColorTest, PurpleRed) {
-    // RGB(255,0,0) = Hue 0 degrees
-    CColor c(RGB(255, 0, 0));
-    EXPECT_NEAR(0.0, c.GetHue(), 1.0);
-    EXPECT_NEAR(0.5, c.GetLuminance(), 0.01);
-    EXPECT_NEAR(1.0, c.GetSaturation(), 0.01);
-}
-
-TEST(CColorTest, White) {
-    CColor c(RGB(255, 255, 255));
-    EXPECT_EQ(255, c.GetRed());
-    EXPECT_EQ(255, c.GetGreen());
-    EXPECT_EQ(255, c.GetBlue());
-    EXPECT_NEAR(1.0, c.GetLuminance(), 0.01);
-    EXPECT_NEAR(0.0, c.GetSaturation(), 0.01);
-}
-
-TEST(CColorTest, Black) {
-    CColor c(RGB(0, 0, 0));
-    EXPECT_EQ(0, c.GetRed());
-    EXPECT_EQ(0, c.GetGreen());
-    EXPECT_EQ(0, c.GetBlue());
-    EXPECT_NEAR(0.0, c.GetLuminance(), 0.01);
-    EXPECT_NEAR(0.0, c.GetSaturation(), 0.01);
+// Parameterised (audit §4): PurpleRed/White/Black share the construct-from-RGB then
+// check luminance/saturation (+ hue for the chromatic case, + RGB readback) shape.
+// checkHue is false for the two greyscale rows (hue is undefined at saturation 0).
+TEST(CColorTest, ReferenceColoursHlsRoundTrip) {
+    struct Case {
+        COLORREF rgb; int r, g, b; double hue, lum, sat; bool checkHue;
+    };
+    const Case cases[] = {
+        { RGB(255,   0,   0), 255,   0,   0, 0.0, 0.5, 1.0, true  },  // PurpleRed
+        { RGB(255, 255, 255), 255, 255, 255, 0.0, 1.0, 0.0, false },  // White
+        { RGB(  0,   0,   0),   0,   0,   0, 0.0, 0.0, 0.0, false },  // Black
+    };
+    for (const Case& t : cases) {
+        CColor c(t.rgb);
+        EXPECT_EQ(t.r, c.GetRed());
+        EXPECT_EQ(t.g, c.GetGreen());
+        EXPECT_EQ(t.b, c.GetBlue());
+        EXPECT_NEAR(t.lum, c.GetLuminance(),  0.01);
+        EXPECT_NEAR(t.sat, c.GetSaturation(), 0.01);
+        if (t.checkHue)
+            EXPECT_NEAR(t.hue, c.GetHue(), 1.0);
+    }
 }
 
 MC_TEST_MAIN()

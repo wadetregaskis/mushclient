@@ -139,61 +139,31 @@ TEST(TelnetTest, Phase_ANSI_UnknownCharReturnsNONE)
 
 // ── Phase_IAC ────────────────────────────────────────────────────────────
 
-TEST(TelnetTest, Phase_IAC_WILL_SetsHAVE_WILL)
+// Parameterised (audit §4): the pure command-byte → phase transitions (WILL/WONT/DO/
+// DONT/SB/SE/NOP) via a {command, expectedPhase, checkNewC, expectedNewC} table.
+// Only WILL's original test asserted the consumed byte (c → 0), preserved via
+// checkNewC.  The GA newline-conversion cases stay named below because they need the
+// m_bConvertGAtoNewline precondition and check the c→'\n' conversion (special).
+TEST(TelnetTest, Phase_IAC_SetsPhaseForCommandByte)
 {
-    CMUSHclientDoc doc; make_doc(doc);
-    unsigned char c = WILL;
-    doc.Phase_IAC(c);
-    EXPECT_EQ(HAVE_WILL, doc.m_phase);
-    EXPECT_EQ('\0', c);   // new_c not set for WILL — c was set to 0
-}
-
-TEST(TelnetTest, Phase_IAC_WONT_SetsHAVE_WONT)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    unsigned char c = WONT;
-    doc.Phase_IAC(c);
-    EXPECT_EQ(HAVE_WONT, doc.m_phase);
-}
-
-TEST(TelnetTest, Phase_IAC_DO_SetsHAVE_DO)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    unsigned char c = DO;
-    doc.Phase_IAC(c);
-    EXPECT_EQ(HAVE_DO, doc.m_phase);
-}
-
-TEST(TelnetTest, Phase_IAC_DONT_SetsHAVE_DONT)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    unsigned char c = DONT;
-    doc.Phase_IAC(c);
-    EXPECT_EQ(HAVE_DONT, doc.m_phase);
-}
-
-TEST(TelnetTest, Phase_IAC_SB_SetsHAVE_SB)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    unsigned char c = SB;
-    doc.Phase_IAC(c);
-    EXPECT_EQ(HAVE_SB, doc.m_phase);
-}
-
-TEST(TelnetTest, Phase_IAC_SE_SetsNONE)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    unsigned char c = SE;
-    doc.Phase_IAC(c);
-    EXPECT_EQ(NONE, doc.m_phase);
-}
-
-TEST(TelnetTest, Phase_IAC_NOP_SetsNONE)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    unsigned char c = NOP;
-    doc.Phase_IAC(c);
-    EXPECT_EQ(NONE, doc.m_phase);
+    struct {
+        unsigned char cmd; int expectedPhase; bool checkNewC; unsigned char expectedNewC;
+    } cases[] = {
+        { (unsigned char)WILL, HAVE_WILL, true,  '\0' },  // byte consumed → c set to 0
+        { (unsigned char)WONT, HAVE_WONT, false, 0    },
+        { (unsigned char)DO,   HAVE_DO,   false, 0    },
+        { (unsigned char)DONT, HAVE_DONT, false, 0    },
+        { (unsigned char)SB,   HAVE_SB,   false, 0    },
+        { (unsigned char)SE,   NONE,      false, 0    },
+        { (unsigned char)NOP,  NONE,      false, 0    },
+    };
+    for (auto& tc : cases) {
+        CMUSHclientDoc doc; make_doc(doc);
+        unsigned char c = tc.cmd;
+        doc.Phase_IAC(c);
+        EXPECT_EQ(tc.expectedPhase, doc.m_phase);
+        if (tc.checkNewC) EXPECT_EQ(tc.expectedNewC, c);
+    }
 }
 
 TEST(TelnetTest, Phase_IAC_GA_ConvertsToNewlineWhenEnabled)
@@ -285,13 +255,9 @@ TEST(TelnetTest, Phase_DO_SGAAgrees)
     EXPECT_EQ(1, doc.m_nCount_IAC_DO);
 }
 
-TEST(TelnetTest, Phase_DO_TerminalTypeAgrees)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    doc.Phase_DO(TELOPT_TERMINAL_TYPE);
-    EXPECT_TRUE(doc.m_bClient_sent_IAC_WILL[TELOPT_TERMINAL_TYPE]);
-    EXPECT_EQ(0, doc.m_ttype_sequence);   // reset to 0
-}
+// Phase_DO_TerminalTypeAgrees deleted (audit §3): Phase_DO_TerminalTypeResetsSequence
+// subsumes it — it also asserts m_bClient_sent_IAC_WILL[TT] and the reset-to-0, while
+// pre-setting m_ttype_sequence=2 so the reset is a real observation.
 
 TEST(TelnetTest, Phase_DO_UnknownSendsWONT)
 {
@@ -472,13 +438,9 @@ TEST(TelnetTest, Phase_DO_NAWS_SendsWONT_When_bNAWS_Clear)
 
 // ── MXP negotiation ───────────────────────────────────────────────────────
 
-TEST(TelnetTest, Phase_WILL_MXP_AgreesWhenEnabled)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    doc.m_iUseMXP = eQueryMXP;
-    doc.Phase_WILL(TELOPT_MXP);
-    EXPECT_TRUE(doc.m_bClient_sent_IAC_DO[TELOPT_MXP]);
-}
+// Phase_WILL_MXP_AgreesWhenEnabled deleted (audit §3): WillMxpQueryModeTurnsMxpOnImmediately
+// fully contains it (same eQueryMXP + Phase_WILL(MXP) + IAC_DO[MXP] assert, plus m_bMXP on
+// and Phase_DONT off). The eNoMXP-refuses partner below is kept as the boundary counterpart.
 
 TEST(TelnetTest, Phase_WILL_MXP_RefusesWhenDisabled)
 {
@@ -565,23 +527,10 @@ TEST(TelnetTest, CharsetRequestUnmatchedSendsRejected)
     EXPECT_TRUE(memcmp(t->sent.data(), expected, 6) == 0);
 }
 
-// The accept side of the same RFC 2066 contract block: a REQUEST naming the
-// charset in use is answered IAC SB CHARSET ACCEPTED(0x02) NAME IAC SE.
-TEST(TelnetTest, CharsetRequestMatchedSendsAccepted)
-{
-    CMUSHclientDoc doc; make_doc(doc);
-    TelnetFakeTransport* t = new TelnetFakeTransport();
-    doc.m_pTransport = t;
-    doc.m_bUTF_8 = TRUE;                     // client charset is "UTF-8"
-
-    doc.m_IAC_subnegotiation_data = std::string("\x01;UTF-8", 7);
-    doc.Handle_TELOPT_CHARSET();
-
-    const char expected[] = { (char)IAC, (char)SB, (char)TELOPT_CHARSET, 2,
-                              'U', 'T', 'F', '-', '8', (char)IAC, (char)SE };
-    ASSERT_EQ(sizeof expected, t->sent.size());
-    EXPECT_TRUE(memcmp(t->sent.data(), expected, sizeof expected) == 0);
-}
+// CharsetRequestMatchedSendsAccepted deleted (audit §3): the accept case (matching
+// UTF-8 REQUEST → IAC SB CHARSET ACCEPTED(2) "UTF-8" IAC SE) is duplicated verbatim
+// inside TelnetR4.CharsetRequestEdgeAndAcceptArms, which also covers the too-short /
+// non-REQUEST edge cases and the SB-dispatch route.
 
 // telnet_phases.cpp: "ensure max of 20 so we don't overflow the field" — a
 // long terminal identification is truncated to 20 chars in the TTYPE IS reply

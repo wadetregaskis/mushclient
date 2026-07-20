@@ -83,6 +83,16 @@ static std::string& queued(CMUSHclientDoc* doc)
 static const char kSocks5Connect[] =
     { 5, 1, 0, 1, 0x0A, 0x0B, 0x0C, 0x0D, 0x0F, (char)0xA0 };
 
+// Audit §4: fold the repeated ASSERT_EQ(size)+memcmp pair (~6 SOCKS sites) that pins
+// the exact bytes queued on the wire.  The size check ASSERTs (returns from the helper
+// on mismatch) before memcmp, so a wrong-size buffer never over-reads.
+static void expect_queued(CMUSHclientDoc* doc, const char* bytes, size_t n)
+{
+    const std::string& q = queued(doc);
+    ASSERT_EQ((unsigned)n, (unsigned)q.size());
+    EXPECT_TRUE(memcmp(q.data(), bytes, n) == 0);
+}
+
 // ── tests ───────────────────────────────────────────────────────────────────
 
 TEST(PalTransport, FakeImplementsTheContract)
@@ -113,12 +123,10 @@ TEST(PalTransport, Socks4ConnectPacket)
     doc->OnConnect(0);
 
     EXPECT_TRUE(doc->m_iConnectPhase == eConnectAwaitingProxyResponse3);
-    const std::string& q = queued(doc);
-    ASSERT_EQ(13u, (unsigned)q.size());
     const char expected[] = { 4, 1, 0x0F, (char)0xA0,           // ver, connect, port 4000
                               0x0A, 0x0B, 0x0C, 0x0D,            // address, 4 bytes exactly
                               'f', 'r', 'e', 'd', 0 };           // user + NUL
-    EXPECT_TRUE(memcmp(q.data(), expected, sizeof expected) == 0);
+    expect_queued(doc, expected, sizeof expected);
     delete doc;
 }
 
@@ -129,10 +137,8 @@ TEST(PalTransport, Socks5OpenerNoAuth)
     doc->OnConnect(0);
 
     EXPECT_TRUE(doc->m_iConnectPhase == eConnectAwaitingProxyResponse1);
-    const std::string& q = queued(doc);
-    ASSERT_EQ(3u, (unsigned)q.size());
     const char expected[] = { 5, 1, 0 };
-    EXPECT_TRUE(memcmp(q.data(), expected, sizeof expected) == 0);
+    expect_queued(doc, expected, sizeof expected);
     delete doc;
 }
 
@@ -143,10 +149,8 @@ TEST(PalTransport, Socks5OpenerWithAuth)
     doc->OnConnect(0);
 
     EXPECT_TRUE(doc->m_iConnectPhase == eConnectAwaitingProxyResponse1);
-    const std::string& q = queued(doc);
-    ASSERT_EQ(4u, (unsigned)q.size());
     const char expected[] = { 5, 2, 0, 2 };
-    EXPECT_TRUE(memcmp(q.data(), expected, sizeof expected) == 0);
+    expect_queued(doc, expected, sizeof expected);
     delete doc;
 }
 
@@ -162,9 +166,7 @@ TEST(PalTransport, Socks5NoAuthAccepted)
     int consumed = doc->ProcessProxyResponse1(reply, 2);
     EXPECT_TRUE(consumed == 2);
     EXPECT_TRUE(doc->m_iConnectPhase == eConnectAwaitingProxyResponse3);
-    const std::string& q = queued(doc);
-    ASSERT_EQ(10u, (unsigned)q.size());
-    EXPECT_TRUE(memcmp(q.data(), kSocks5Connect, sizeof kSocks5Connect) == 0);
+    expect_queued(doc, kSocks5Connect, sizeof kSocks5Connect);
     delete doc;
 }
 
@@ -180,10 +182,8 @@ TEST(PalTransport, Socks5AuthRequested)
     int consumed = doc->ProcessProxyResponse1(reply, 2);
     EXPECT_TRUE(consumed == 2);
     EXPECT_TRUE(doc->m_iConnectPhase == eConnectAwaitingProxyResponse2);
-    const std::string& q = queued(doc);
-    ASSERT_EQ(9u, (unsigned)q.size());
     const char expected[] = { 1, 4, 'f', 'r', 'e', 'd', 2, 'p', 'w' };
-    EXPECT_TRUE(memcmp(q.data(), expected, sizeof expected) == 0);
+    expect_queued(doc, expected, sizeof expected);
     delete doc;
 }
 
@@ -200,9 +200,7 @@ TEST(PalTransport, Socks5AuthAccepted)
     int consumed = doc->ProcessProxyResponse2(reply2, 2);
     EXPECT_TRUE(consumed == 2);
     EXPECT_TRUE(doc->m_iConnectPhase == eConnectAwaitingProxyResponse3);
-    const std::string& q = queued(doc);
-    ASSERT_EQ(10u, (unsigned)q.size());
-    EXPECT_TRUE(memcmp(q.data(), kSocks5Connect, sizeof kSocks5Connect) == 0);
+    expect_queued(doc, kSocks5Connect, sizeof kSocks5Connect);
     delete doc;
 }
 

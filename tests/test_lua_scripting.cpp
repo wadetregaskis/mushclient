@@ -36,61 +36,9 @@ extern "C" {
 #include <cstdio>
 
 // ── Lua state fixture ─────────────────────────────────────────────────────
-// Each test that needs a Lua+Doc pair calls make_lua() and must call
-// lua_close(L) at the end.
-
-lua_State* MakeLuaState();
-int RegisterLuaRoutines(lua_State*);
-extern "C" int luaopen_compress(lua_State*);   // utils.md5/sha256/tohex/... (lua_compress.c)
-
-static lua_State* make_lua(CMUSHclientDoc* pDoc)
-{
-    lua_State* L = MakeLuaState();
-    if (!L) return nullptr;
-    luaL_openlibs(L);
-    // Bind the doc pointer into the Lua registry (mirrors OpenLuaDelayed)
-    lua_pushlightuserdata(L, static_cast<void*>(pDoc));
-    lua_setfield(L, LUA_REGISTRYINDEX, DOCUMENT_STATE);
-    RegisterLuaRoutines(L);
-    luaopen_compress(L);            // mirrors OpenLuaDelayed (lua_scripting.cpp:203)
-    RegisterPortableLuaExtras(L);   // port-only world.ExpandVariables
-    lua_settop(L, 0);
-    return L;
-}
-
-// Run a Lua chunk; return true on success.
-static bool run(lua_State* L, const char* code)
-{
-    if (luaL_loadstring(L, code) != 0) {
-        fprintf(stderr, "  Lua load error: %s\n", lua_tostring(L, -1));
-        lua_pop(L, 1);
-        return false;
-    }
-    if (lua_pcall(L, 0, LUA_MULTRET, 0) != 0) {
-        fprintf(stderr, "  Lua runtime error: %s\n", lua_tostring(L, -1));
-        lua_pop(L, 1);
-        return false;
-    }
-    return true;
-}
-
-// Run a Lua chunk that is expected to succeed, leaving results on stack.
-// Returns the number of results.
-static int run_ret(lua_State* L, const char* code)
-{
-    int top = lua_gettop(L);
-    if (luaL_loadstring(L, code) != 0) {
-        fprintf(stderr, "  Lua load error: %s\n", lua_tostring(L, -1));
-        lua_pop(L, 1);
-        return -1;
-    }
-    if (lua_pcall(L, 0, LUA_MULTRET, 0) != 0) {
-        fprintf(stderr, "  Lua runtime error: %s\n", lua_tostring(L, -1));
-        lua_pop(L, 1);
-        return -1;
-    }
-    return lua_gettop(L) - top;
-}
+// make_lua()/run()/run_ret()/LuaDoc/EXPECT_LUA_OK are shared with
+// test_lua_surface.cpp (audit §2/§4).
+#include "lua_test_helpers.h"
 
 // ── Basic world library ───────────────────────────────────────────────────
 
@@ -764,12 +712,9 @@ TEST(LuaScripting, SafeArrayListMarshalling)
         "assert(seen['tlist_b'], 'missing tlist_b')\n"
     ));
 
-    // GetOptionList marshals the real 174-row OptionsTable the same way
-    EXPECT_TRUE(run(L,
-        "local o = world.GetOptionList()\n"
-        "assert(type(o) == 'table', 'expected a table, got ' .. type(o))\n"
-        "assert(#o > 100, 'expected >100 options, got ' .. #o)\n"
-    ));
+    // (audit §3) the GetOptionList>100 block was dropped here — it duplicated
+    // LuaScripting.GetOptionListNonEmpty (same function, branch, assertion shape),
+    // which remains the single owner of the option-list-count assertion.
 
     lua_close(L);
 }
@@ -1961,70 +1906,33 @@ TEST(LuaScripting, ScriptFileChangeReloadsOnlyWhenMtimeDiffers)
 // exactly where SetAt(maxlength,'\0') truncates over-long codes — same
 // visible behaviour as Windows (CString-from-BSTR also stops at NUL).
 
-TEST(LuaScripting, MetaphoneJoinsPrimaryAndSecondaryWithComma)
+// Parameterised (audit §4): five byte-identical bodies differing only in
+// {word, length, expected}.  A fresh LuaDoc per row (RAII → no lua_close leak on
+// an early ASSERT return).  The per-case boundary notes live in the 'note' column.
+TEST(LuaScripting, MetaphoneCodesAndTruncation)
 {
-    CMUSHclientDoc doc;
-    lua_State* L = make_lua(&doc);
-    ASSERT_NE(nullptr, L);
-    int n = run_ret(L, "return world.Metaphone('smith', 4)");
-    ASSERT_EQ(1, n);
-    EXPECT_STREQ("SM0,XMT", lua_tostring(L, -1));
-    lua_settop(L, 0);
-    lua_close(L);
-}
-
-TEST(LuaScripting, MetaphoneOmitsCommaWhenNoAlternate)
-{
-    CMUSHclientDoc doc;
-    lua_State* L = make_lua(&doc);
-    ASSERT_NE(nullptr, L);
-    int n = run_ret(L, "return world.Metaphone('thomas', 4)");
-    ASSERT_EQ(1, n);
-    EXPECT_STREQ("TMS", lua_tostring(L, -1));
-    lua_settop(L, 0);
-    lua_close(L);
-}
-
-TEST(LuaScripting, MetaphoneShortLengthStopsLoopAtLength)
-{
-    CMUSHclientDoc doc;
-    lua_State* L = make_lua(&doc);
-    ASSERT_NE(nullptr, L);
-    // catherine → K0RN/KTRN at length 4; at Length 2 the main loop exits as
-    // soon as both codes reach 2 chars — no overshoot, so both codes survive.
-    int n = run_ret(L, "return world.Metaphone('catherine', 2)");
-    ASSERT_EQ(1, n);
-    EXPECT_STREQ("K0,KT", lua_tostring(L, -1));
-    lua_settop(L, 0);
-    lua_close(L);
-}
-
-TEST(LuaScripting, MetaphoneOvershootTruncatesAtEmbeddedNul)
-{
-    CMUSHclientDoc doc;
-    lua_State* L = make_lua(&doc);
-    ASSERT_NE(nullptr, L);
-    // filipowicz: the final WICZ adds two chars at once (TS/FX), overshooting
-    // Length 4 → codes are "FLPTS"/"FLPFX" and SetAt(4,'\0') embeds a NUL.
-    // The BSTR→Lua conversion stops at the first NUL, so the ",FLPF" tail is
-    // swallowed — longstanding Windows behaviour, preserved by the port.
-    int n = run_ret(L, "return world.Metaphone('filipowicz', 4)");
-    ASSERT_EQ(1, n);
-    EXPECT_STREQ("FLPT", lua_tostring(L, -1));
-    lua_settop(L, 0);
-    lua_close(L);
-}
-
-TEST(LuaScripting, MetaphoneEmptyWordReturnsEmptyString)
-{
-    CMUSHclientDoc doc;
-    lua_State* L = make_lua(&doc);
-    ASSERT_NE(nullptr, L);
-    int n = run_ret(L, "return world.Metaphone('', 4)");
-    ASSERT_EQ(1, n);
-    EXPECT_STREQ("", lua_tostring(L, -1));
-    lua_settop(L, 0);
-    lua_close(L);
+    struct Case { const char* word; int len; const char* expect; const char* note; };
+    const Case cases[] = {
+        { "smith",      4, "SM0,XMT", "joins primary+','+secondary" },
+        { "thomas",     4, "TMS",     "omits comma when there is no alternate" },
+        // catherine → K0RN/KTRN at length 4; at Length 2 the loop exits as soon as
+        // both codes reach 2 chars — no overshoot, so both codes survive.
+        { "catherine",  2, "K0,KT",   "short length stops the loop at length" },
+        // filipowicz: the final WICZ adds two chars at once (TS/FX), overshooting
+        // Length 4 → codes "FLPTS"/"FLPFX", SetAt(4,'\0') embeds a NUL.  The BSTR→Lua
+        // conversion stops at the first NUL, so ",FLPF" is swallowed (Windows parity).
+        { "filipowicz", 4, "FLPT",    "overshoot truncates at the embedded NUL" },
+        { "",           4, "",        "empty word returns empty string" },
+    };
+    for (const Case& c : cases) {
+        LuaDoc f; ASSERT_NE(nullptr, f.L);
+        char code[96];
+        snprintf(code, sizeof code, "return world.Metaphone('%s', %d)", c.word, c.len);
+        int n = run_ret(f.L, code);
+        ASSERT_EQ(1, n);
+        EXPECT_STREQ(c.expect, lua_tostring(f.L, -1));   // c.note
+        lua_settop(f.L, 0);
+    }
 }
 
 // ── Timer/alias/trigger option families ──────────────────────────────────
@@ -2032,15 +1940,7 @@ TEST(LuaScripting, MetaphoneEmptyWordReturnsEmptyString)
 // the top of methods_timers/aliases/triggers.cpp.  These tests round-trip
 // every documented option and pin the error codes for the rejection arms.
 
-// Run a chunk that ends in `return true`; any embedded assert() failure
-// surfaces as a Lua error (run_ret returns -1).
-#define EXPECT_LUA_OK(L, code) \
-    do { \
-        int n_ = run_ret((L), (code)); \
-        EXPECT_EQ(1, n_); \
-        if (n_ == 1) EXPECT_TRUE(lua_toboolean((L), -1)); \
-        lua_settop((L), 0); \
-    } while (0)
+// EXPECT_LUA_OK is defined in lua_test_helpers.h (included above).
 
 TEST(LuaScripting, TimerOptionsRoundTripEveryOption)
 {
@@ -3195,14 +3095,11 @@ TEST(SweepR4, UtilityMethodArms)
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    // StripANSI removes escape sequences
-    int n = run_ret(L, "return world.StripANSI('a\\27[31mred\\27[0mb')");
-    ASSERT_EQ(1, n);
-    EXPECT_STREQ("aredb", lua_tostring(L, -1));
-    lua_settop(L, 0);
+    // (audit §3) the duplicate StripANSI('a<ESC>[31mred<ESC>[0mb')=='aredb' line was
+    // removed here — LuaSurface.UtilityStringHelpers is the single owner of that vector.
 
     // GenerateName needs the names file — missing file arm first
-    n = run_ret(L, "return world.ReadNamesFile('/nonexistent-r4/names.txt')");
+    int n = run_ret(L, "return world.ReadNamesFile('/nonexistent-r4/names.txt')");
     ASSERT_EQ(1, n);
     EXPECT_EQ((double)eCouldNotOpenFile, lua_tonumber(L, -1));
     lua_settop(L, 0);

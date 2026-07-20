@@ -230,4 +230,34 @@ TEST(CmcDateTimeR5, InvalidComponentDatesAreRejected)
     EXPECT_EQ(CmcDateTime::valid, ok.GetStatus());
 }
 
+
+TEST(CmcDateTimeR5, CenturyLeapYearRule)
+{
+    // mcDateFromTm leap rule (mcdatetime.cpp:265-266):
+    //   bLeapYear = (wYear&3)==0 && ((wYear%100)!=0 || (wYear%400)==0)
+    // 1900: divisible by 100 but NOT by 400 -> NOT a leap year -> Feb 29 rejected.
+    CmcDateTime y1900(1900, 2, 29, 0, 0, 0.0);
+    EXPECT_EQ(CmcDateTime::invalid, y1900.GetStatus());
+    // 2000: divisible by 400 -> the century-leap exception fires -> leap year
+    //       -> Feb 29 accepted.
+    CmcDateTime y2000(2000, 2, 29, 0, 0, 0.0);
+    EXPECT_EQ(CmcDateTime::valid, y2000.GetStatus());
+}
+
+TEST(CmcDateTimeR5, PreEpochNegativeSerialSign)
+{
+    // mcDateFromTm (mcdatetime.cpp:299):
+    //   dtDest = (double)nDate + ((nDate >= 0) ? dblTime : -dblTime)
+    // The OLE epoch (Dec 30 1899) is serial 0, so Dec 29 1899 has nDate = -1.
+    // Because nDate < 0 the 06:00 time-of-day (0.25 day) is SUBTRACTED, giving
+    // m_dt = -1.25 (NOT -0.75).
+    CmcDateTime before(1899, 12, 29, 6, 0, 0.0);
+    EXPECT_EQ(CmcDateTime::valid, before.GetStatus());
+    EXPECT_NEAR(-1.25, before.m_dt, 1e-9);
+    // The mirror date one day AFTER the epoch takes the additive branch -> +1.25,
+    // confirming the sign convention flips exactly at the epoch.
+    CmcDateTime after(1899, 12, 31, 6, 0, 0.0);
+    EXPECT_NEAR(1.25, after.m_dt, 1e-9);
+}
+
 MC_TEST_MAIN()

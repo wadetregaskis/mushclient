@@ -205,4 +205,66 @@ TEST(Mapper, RemoveReversesCancelsBacktrack)
     EXPECT_EQ(0, doc.m_strMapList.GetCount());
 }
 
+
+TEST(Speedwalk, ReverseErrorFamily)
+{
+    // ReverseSpeedwalkString's error arms were untested while the forward twins
+    // ARE.  Each returns MakeSpeedWalkErrorString ("*" + Translate(msg)); headless
+    // Translate returns the English verbatim (doc_port_glue.cpp).  Values derived
+    // straight from speedwalk.cpp line-by-line.
+    struct Case { const char* in; const char* out; };
+    const Case cases[] = {
+        // counter > 99, checked per-digit (speedwalk.cpp:188-189)
+        { "100n",      "*Speed walk counter exceeds 99" },
+        // count > 1 then end of input (speedwalk.cpp:199-200)
+        { "2",         "*Speed walk counter not followed by an action" },
+        // count > 1 then a comment (speedwalk.cpp:201-202)
+        { "2{note}n",  "*Speed walk counter may not be followed by a comment" },
+        // action code C/O/L/K preceded by a count (speedwalk.cpp:210-212)
+        { "2on",       "*Action code of C, O, L or K must not follow a speed walk count (1-99)" },
+        // action code with no direction after it (speedwalk.cpp:218-220)
+        { "o",         "*Action code of C, O, L or K must be followed by a direction" },
+        // unterminated '(' group (speedwalk.cpp:237-238)
+        { "(unclosed", "*Action code of '(' not terminated by a ')'" },
+    };
+    for (const Case& c : cases) {
+        CMUSHclientDoc doc;
+        EXPECT_STREQ(c.out, (const char*)doc.DoReverseSpeedwalk(c.in));
+    }
+}
+
+TEST(Speedwalk, ReverseInvalidDirectionSingleStar)
+{
+    // The reverse default arm (speedwalk.cpp:258-261) formats its message with
+    // TFormat WITHOUT a leading '*' (unlike the forward arm at :131, which has
+    // one baked in), so MakeSpeedWalkErrorString produces a SINGLE asterisk here,
+    // not the doubled '**' the forward invalid-direction path emits.
+    CMUSHclientDoc doc;
+    CString r = doc.DoReverseSpeedwalk("x");
+    ASSERT_TRUE(r.GetLength() >= 2);
+    EXPECT_EQ('*', ((const char*)r)[0]);
+    EXPECT_NE('*', ((const char*)r)[1]);          // single '*' (contrast forward's **)
+    EXPECT_STREQ("*Invalid direction 'x' in speed walk, must be "
+                 "N, S, E, W, U, D, F, or (something)",
+                 (const char*)r);
+}
+
+TEST(Speedwalk, FillerExpandsToSpeedWalkFiller)
+{
+    // case 'F' (speedwalk.cpp:113-115): str = filler, i.e. m_strSpeedWalkFiller,
+    // emitted once per repeat-count and terminated by ENDLINE (\r\n).
+    CMUSHclientDoc doc;
+    doc.m_strSpeedWalkFiller = "look";
+    EXPECT_STREQ("look\r\n", (const char*)doc.DoEvaluateSpeedwalk("f"));
+}
+
+TEST(Speedwalk, ParenWithoutSlashKeepsWholeWord)
+{
+    // Forward '(' group with no '/': iSlash == -1, so the Left(iSlash) truncation
+    // is skipped and the whole parenthesised word is kept verbatim, un-folded
+    // (speedwalk.cpp:124-126).
+    CMUSHclientDoc doc;
+    EXPECT_STREQ("word\r\n", (const char*)doc.DoEvaluateSpeedwalk("(word)"));
+}
+
 MC_TEST_MAIN()

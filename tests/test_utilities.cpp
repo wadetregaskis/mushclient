@@ -955,4 +955,51 @@ TEST(Sounds, SoundRoutesThroughPlaySoundFile)
     g_wxhook_play_sound = nullptr;
 }
 
+
+TEST(Utilities, FixupEscapeSequences_SimpleAndHexLetter)
+{
+    // The simple escapes at the top of the switch (utilities_shared.cpp ~539-549),
+    // each decoding to its C control/literal byte.  (The existing
+    // FixupEscapeSequences_Escapes test covers only \n \t \x41 \" \x00.)
+    EXPECT_STREQ("\a", (const char*)FixupEscapeSequences("\\a"));   // 0x07
+    EXPECT_STREQ("\b", (const char*)FixupEscapeSequences("\\b"));   // 0x08
+    EXPECT_STREQ("\f", (const char*)FixupEscapeSequences("\\f"));   // 0x0C
+    EXPECT_STREQ("\r", (const char*)FixupEscapeSequences("\\r"));   // 0x0D
+    EXPECT_STREQ("\v", (const char*)FixupEscapeSequences("\\v"));   // 0x0B
+    EXPECT_STREQ("'",  (const char*)FixupEscapeSequences("\\'"));   // 0x27
+    EXPECT_STREQ("\\", (const char*)FixupEscapeSequences("\\\\"));  // 0x5C
+    EXPECT_STREQ("?",  (const char*)FixupEscapeSequences("\\?"));   // 0x3F
+    // hex path where a nibble is a LETTER (utilities_shared.cpp ~556: iNewDigit>='A'
+    // subtracts 7).  \x4A: 4 then A(=10) -> 0x4A == 'J'; \x6f exercises the
+    // lowercase (toupper) letter path -> 0x6F == 'o'.
+    EXPECT_STREQ("J", (const char*)FixupEscapeSequences("\\x4A"));
+    EXPECT_STREQ("o", (const char*)FixupEscapeSequences("\\x6f"));
+}
+
+TEST(Utilities, ConvertToRegularExpression_ControlNewlineHighByte)
+{
+    // a control char (<0x20, not newline) -> lowercase two-digit \xhh
+    // (utilities_shared.cpp ~472-478); bWholeLine=false so no ^/$ anchors.
+    EXPECT_STREQ("\\x03", (const char*)ConvertToRegularExpression("\x03", false, true));
+    // newline is special-cased FIRST to the literal escape "\n" (~470-471),
+    // NOT the generic \x0a control form.
+    EXPECT_STREQ("\\n", (const char*)ConvertToRegularExpression("\n", false, true));
+    // a >=0x80 byte (UTF-8 lead + continuation) passes straight through (~479).
+    EXPECT_STREQ("\xC3\xA9", (const char*)ConvertToRegularExpression("\xC3\xA9", false, true));
+}
+
+TEST(Utilities, MyAtoF_ExponentScalingAndPlusSigns)
+{
+    // a large exponent drives the >=64 loop then the >=16 loop
+    // (utilities_shared.cpp ~110-111): 1e64*1e16*1e16*1e4 == 1e100.
+    EXPECT_NEAR(1e100, atof_val("1e100"), 1e90);
+    // a negative exponent past 16 drives the >=16 loop twice + the esign<0
+    // division branch (line ~114).
+    EXPECT_NEAR(1e-40, atof_val("1e-40"), 1e-50);
+    // a leading '+' on the mantissa (line ~79) is consumed, not rejected.
+    EXPECT_NEAR(2.5, atof_val("+2.5"), 1e-12);
+    // an explicit '+' on the exponent (line ~108).
+    EXPECT_NEAR(1000.0, atof_val("1e+3"), 1e-9);
+}
+
 MC_TEST_MAIN()

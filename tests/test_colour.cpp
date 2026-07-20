@@ -118,4 +118,77 @@ TEST(CColorTest, ReferenceColoursHlsRoundTrip) {
     }
 }
 
+
+// ToHLS G==maxcolor arm (Color.cpp:189-190) — never hit by the existing red-dominant
+// cases. RGB(50,200,100): G is max, so min=50/255 max=200/255 diff=150/255,
+// L=125/255≈0.4902 (<0.5), S=diff/(max+min)=150/250=0.6,
+// hue = 60*(B-R)/diff + 120 = 60*(50/150)+120 = 140.
+TEST(CColorTest, HlsGreenDominantHue) {
+    CColor c(RGB(50, 200, 100));
+    double hue = c.GetHue();          // forces ToHLS via the G==maxcolor branch
+    double lum = c.GetLuminance();
+    double sat = c.GetSaturation();
+    EXPECT_NEAR(140.0, hue, 0.5);
+    EXPECT_NEAR(0.490196, lum, 0.001);
+    EXPECT_NEAR(0.6, sat, 0.001);
+    // round-trip back through ToRGB
+    EXPECT_EQ(50,  c.GetRed());
+    EXPECT_EQ(200, c.GetGreen());
+    EXPECT_EQ(100, c.GetBlue());
+}
+
+// ToHLS B==maxcolor arm (Color.cpp:191-192) — the else branch, never reached before.
+// RGB(50,100,200): B is max, min=50/255 max=200/255 diff=150/255, L=125/255≈0.4902,
+// S=0.6, hue = 60*(R-G)/diff + 240 = 60*(-50/150)+240 = 220.
+TEST(CColorTest, HlsBlueDominantHue) {
+    CColor c(RGB(50, 100, 200));
+    double hue = c.GetHue();          // forces ToHLS via the B==maxcolor (else) branch
+    double lum = c.GetLuminance();
+    double sat = c.GetSaturation();
+    EXPECT_NEAR(220.0, hue, 0.5);
+    EXPECT_NEAR(0.490196, lum, 0.001);
+    EXPECT_NEAR(0.6, sat, 0.001);
+    // round-trip back through ToRGB
+    EXPECT_EQ(50,  c.GetRed());
+    EXPECT_EQ(100, c.GetGreen());
+    EXPECT_EQ(200, c.GetBlue());
+}
+
+// ToHLS negative-hue wrap (Color.cpp:194-195): when R==maxcolor and B>G the raw hue is
+// negative, so `if (m_hue < 0.0) m_hue += 360.0` fires. RGB(200,50,100): R is max,
+// hue = 60*(G-B)/diff + 0 = 60*(-50/150) = -20 -> +360 = 340.
+TEST(CColorTest, HlsHueWrapNegative) {
+    CColor c(RGB(200, 50, 100));
+    double hue = c.GetHue();          // R==maxcolor, raw hue -20 -> wrapped to 340
+    double lum = c.GetLuminance();
+    double sat = c.GetSaturation();
+    EXPECT_NEAR(340.0, hue, 0.5);
+    EXPECT_NEAR(0.490196, lum, 0.001);
+    EXPECT_NEAR(0.6, sat, 0.001);
+    // round-trip back through ToRGB
+    EXPECT_EQ(200, c.GetRed());
+    EXPECT_EQ(50,  c.GetGreen());
+    EXPECT_EQ(100, c.GetBlue());
+}
+
+// ToRGB high-luminance q-formula (Color.cpp:228-229): the else branch
+// q = (L + S) - (L*S) runs only when luminance >= 0.5 (all prior tests are <0.5).
+// RGB(150,200,220): min=150/255 max=220/255 diff=70/255, L=185/255≈0.7255 (>0.5),
+// S=diff/(2-(max+min))=70/140=0.5, hue = 60*(R-G)/diff + 240 ≈ 197.14; q=0.862745.
+// Reading RGB back exercises the L>=0.5 q-formula and round-trips exactly.
+TEST(CColorTest, ToRgbHighLuminanceQ) {
+    CColor c(RGB(150, 200, 220));
+    double lum = c.GetLuminance();    // forces ToHLS; L>0.5 selects the high-lum q branch in ToRGB
+    double sat = c.GetSaturation();
+    double hue = c.GetHue();
+    EXPECT_NEAR(0.725490, lum, 0.001);
+    EXPECT_TRUE(lum > 0.5);           // documents that ToRGB will take the else (high-lum) q branch
+    EXPECT_NEAR(0.5, sat, 0.001);
+    EXPECT_NEAR(197.143, hue, 0.5);
+    // read RGB back -> ToRGB() runs the L>=0.5 q-formula (line 229)
+    EXPECT_EQ(150, c.GetRed());
+    EXPECT_EQ(200, c.GetGreen());
+    EXPECT_EQ(220, c.GetBlue());
+}
+
 MC_TEST_MAIN()

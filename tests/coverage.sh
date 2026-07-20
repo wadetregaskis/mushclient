@@ -21,12 +21,16 @@ PROFDIR="$BUILD/profraw"
 rm -rf "$PROFDIR"; mkdir -p "$PROFDIR"
 
 # Run every mushcore test executable with a distinct profile file.
-BINARIES=()
+# llvm-cov wants ONE positional binary (FIRST) plus the rest as -object (OBJS);
+# passing every binary as -object leaves no positional slot, so `show FILE`
+# mis-reads the source path as an object file.  Keep both forms.
+FIRST=""
+OBJS=()
 for t in "$BUILD"/tests/test_*; do
   [ -x "$t" ] || continue
   name=$(basename "$t")
   LLVM_PROFILE_FILE="$PROFDIR/$name.profraw" "$t" >/dev/null 2>&1 || echo "warn: $name failed"
-  BINARIES+=(-object "$t")
+  if [ -z "$FIRST" ]; then FIRST="$t"; else OBJS+=(-object "$t"); fi
 done
 
 xcrun llvm-profdata merge -sparse "$PROFDIR"/*.profraw -o "$BUILD/merged.profdata"
@@ -36,15 +40,16 @@ IGNORE='tests/|pcre/|sqlite|zlib|lua-5|miniaudio|luacom/|scripting/lpeg/|scripti
 
 case "$MODE" in
   export)
-    xcrun llvm-cov export "${BINARIES[@]}" -instr-profile="$BUILD/merged.profdata" \
+    xcrun llvm-cov export "$FIRST" "${OBJS[@]}" -instr-profile="$BUILD/merged.profdata" \
       -ignore-filename-regex="$IGNORE" -format=text > "$BUILD/coverage.json"
     echo "wrote $BUILD/coverage.json"
     ;;
   show)
-    xcrun llvm-cov show "${BINARIES[@]}" -instr-profile="$BUILD/merged.profdata" "$2"
+    # first binary positional, rest -object, THEN the source path (positional)
+    xcrun llvm-cov show "$FIRST" "${OBJS[@]}" -instr-profile="$BUILD/merged.profdata" "$2"
     ;;
   *)
-    xcrun llvm-cov report "${BINARIES[@]}" -instr-profile="$BUILD/merged.profdata" \
+    xcrun llvm-cov report "$FIRST" "${OBJS[@]}" -instr-profile="$BUILD/merged.profdata" \
       -ignore-filename-regex="$IGNORE"
     ;;
 esac

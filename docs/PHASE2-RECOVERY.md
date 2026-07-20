@@ -1,5 +1,15 @@
 # Phase 2 Recovery — Decision Memo
 
+> **✅ DONE / OUTCOME (`fce551f`).** The decision reached in §6 was executed and
+> **the flip landed**: Option B as a **staged big-bang** — B-1 pre-staged the
+> GUI-symbol stubs (`e64b2cf`), B-2 the headless GDI shim (`add4ba1`), B-3 the
+> one atomic commit (`fce551f`) that defined `MUSHCLIENT_FULL_BUILD` for mushcore,
+> flipped every include-switched TU onto the real headers, adopted the real
+> `doc.cpp`/`doc_construct.cpp` headless, and **deleted `doc_stub.h` +
+> `doc_portable.cpp`**. One set of headers everywhere; `ctest` 31/31 on both the
+> Debug and Release trees. B-4 (post-flip dead-arm cleanup + doc refreshes)
+> followed. The memo below is retained as the decision record.
+
 **Date:** 2026-07-19
 **Subject:** How (and whether) to finish putting `mushcore` on the real `doc.h`
 **Status:** the incremental staged flip stalled — Stage 4 (xml batch only) built clean

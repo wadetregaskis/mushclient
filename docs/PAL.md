@@ -718,14 +718,20 @@ revisit at the next IWorldView contract change.
 - **P1** kill the `*_portable` shadow: single-source the ~30 dual doc methods and
   the second Lua API so the core has one body per method (the tests then guard the
   shipped path).
-  *COMPLETE (2026-07, campaigns B+C): mushcore compiles the real
-  method/option/plugin/XML-world-file/`lua_methods.cpp` TUs against
-  `doc_stub.h`; the portable twins — including the 248 KB second Lua API
-  (`lua_world_api_portable.cpp`) and the XML saver/loader twins — are deleted.
-  Residual stub surface: `doc_stub.h` itself plus the 116 inert GUI-family
-  method bodies in `platform/doc_gui_method_stubs.cpp` (miniwindow / notepad /
-  chat / output-view / accelerator), to be deleted family-by-family as those
-  TUs are adopted; `doc_portable.cpp` survives as genuine platform glue only.*
+  *COMPLETE (2026-07, campaigns B+C then Phase 2): mushcore compiles the real
+  method/option/plugin/XML-world-file/`lua_methods.cpp` TUs — and, since the
+  Phase 2 B-3 atomic flip (`fce551f`), the real `doc.h` / `doc.cpp` /
+  `doc_construct.cpp` themselves — against **one set of headers**. The portable
+  twins are all deleted: the 248 KB second Lua API (`lua_world_api_portable.cpp`),
+  the XML saver/loader twins, **`doc_portable.cpp` (1,279 lines) and
+  `doc_stub.h` (4,046 lines)**. The include-switch (`#else → doc_stub.h`) is
+  retired; every build takes the real-header arm. Residual stub surface: the
+  inert GUI-family method + dialog/command bodies in
+  `platform/doc_gui_method_stubs.cpp` + `doc_flip_gui_stubs.cpp` (miniwindow /
+  notepad / chat / output-view / accelerator), plus the port-only glue
+  (`doc_port_glue.cpp` / `headless_app.cpp` / `doc_headless_stubs.cpp` /
+  `gdi_headless.cpp`) — to be retired family-by-family as those GUI TUs are
+  adopted.*
 - **P2** formalise the seam: promote the `m_fn_*` bundle into `IWorldView` (and the
   rest of the PAL); every frontend implements every method (no silent nulls).
   *COMPLETE (2026-07-12): IWorldView is typed-only end to end on the port.*
@@ -765,6 +771,11 @@ revisit at the next IWorldView contract change.
 - **P3** value types out of the shim into L0.
 - **P4** demote `CMUSHclientDoc` → `WorldEngine` + `WorldModel` behind the PAL.
 - **P5** unify the build into one core lib + per-platform adapters; delete the stubs.
+  *Partly landed: the Phase 2 B-3 flip (`fce551f`) deleted `doc_stub.h` +
+  `doc_portable.cpp` so `mushcore` and `mushapp` compile the real `doc.h` under
+  one set of headers (both are now full-build). What remains for P5 is folding
+  the two library **targets** into a single core lib + adapters and retiring the
+  inert GUI-method/dialog stubs.*
 - **P6** backfill tests to ~100%; coverage ratchet in CI.
 
 ## Open questions

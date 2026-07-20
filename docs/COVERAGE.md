@@ -1,22 +1,35 @@
 # Shipping-line coverage — the headless (mushcore) test suite
 
-**As of:** 2026-07 coverage campaign, round 5
-(rounds 1-4: 43.8% → 55.7% → 68.2% → 78.3% → 84.5%).
+**As of:** 2026-07-19, immediately after the Phase 2 B-3 atomic flip (`fce551f`).
+Earlier rounds (pre-flip, denominator 33,819 lines): 43.8% → 55.7% → 68.2% →
+78.3% → 84.5% → 86.83%.
 
 ## Headline numbers
 
 | Metric | Value |
 |---|---|
-| **Line coverage (raw)** | **86.83%** (29,366 / 33,819 shipping lines) |
-| Region coverage | 85.74% |
-| Function coverage | 84.09% |
-| Branch coverage | 74.87% |
-| **Reachable-adjusted line coverage** | **≈ 90.5%** (see denominator below) |
-| Test executables | 27 suites (1,426 tests) + 3 in-app PAL selftests, ctest 30/30 |
+| **Line coverage (raw)** | **81.46%** (30,294 / 37,190 shipping lines) |
+| Region coverage | 80.17% |
+| Function coverage | 80.48% |
+| Branch coverage | 70.69% |
+| Test executables | 28 suites + 3 in-app PAL selftests, ctest 31/31 |
 
 Measured by `tests/coverage.sh` (llvm-cov over every `test_*` executable in
 `build-cov`, third-party sources excluded — see the `IGNORE` regex in that
 script for the exact exclusion list).
+
+### Why the raw % moved (86.83% → 81.46%) — not a regression
+
+The B-3 flip made `mushcore` compile the **real** `doc.h` / `doc.cpp` /
+`doc_construct.cpp` and the plugin-wizard TUs in place of the deleted
+`doc_portable.cpp` / `doc_stub.h`. That grew the instrumented denominator by
+**+3,371 lines** (33,819 → 37,190) while covered lines *rose* by **+928**
+(29,366 → 30,294). The dip in the ratio is purely those newly-instrumented but
+not-yet-exercised lines — dominated by the real `doc.cpp` (2,091 lines, **19.94 %**
+covered), `dialogs/plugins/PluginWizard.cpp` (667 lines, 9.15 %) and
+`platform/doc_flip_gui_stubs.cpp` (205 lines, 8.78 %). No previously-covered line
+lost coverage; this is fresh surface to test — **future coverage work, not a
+regression**.
 
 ## What "reachable" means
 
@@ -33,6 +46,16 @@ audited are counted, so the true unreachable denominator is somewhat larger
 and the true reachable-adjusted coverage somewhat higher.
 
 ## Categorised unreachable-headless denominator
+
+> **⚠ Pre-flip (round 5) audit — pending re-audit.** The per-category line counts
+> and the 33,819-line denominator below **predate the B-3 flip** and cite files
+> that no longer exist (`doc_portable.cpp`, `doc_stub.h`); the reachable-adjusted
+> **≈ 90.5 %** figure is computed on that old denominator. It is retained as the
+> last completed audit. A fresh categorisation against the new 37,190-line
+> denominator is outstanding — it must additionally classify the real
+> `doc.cpp` / `doc_construct.cpp` GUI-only arms and the
+> `PluginWizard` / `doc_flip_gui_stubs.cpp` stub bodies the flip newly
+> instrumented.
 
 | Category | Missed lines | What it is |
 |---|---:|---|
@@ -59,50 +82,55 @@ Lines / missed / coverage per shipping source file (llvm-cov, coverage build):
 
 | File | Lines | Missed | Cover |
 |---|---:|---:|---:|
+| ansi.cpp | 376 | 30 | 92.02% |
+| chatsock.h | 0 | 0 | - |
 | Color.cpp | 161 | 21 | 86.96% |
+| DDV_validation.cpp | 29 | 14 | 51.72% |
+| dialogs/DebugLuaDlg.h | 1 | 0 | 100.00% |
+| dialogs/plugins/PluginWizard.cpp | 667 | 606 | 9.15% |
+| dialogs/plugins/PluginWizardSheet.cpp | 40 | 18 | 55.00% |
+| dialogs/ProgDlg.h | 1 | 1 | 0.00% |
+| dialogs/ScriptErrorDlg.h | 1 | 1 | 0.00% |
+| dialogs/world_prefs/genpropertypage.h | 2 | 2 | 0.00% |
+| dialogs/world_prefs/prefspropertypages.h | 7 | 7 | 0.00% |
 | Dmetaph.cpp | 652 | 73 | 88.80% |
-| HyprLink.h | 9 | 9 | 0.00% |
-| Line.cpp | 45 | 16 | 64.44% |
-| MUSHview.h | 6 | 6 | 0.00% |
-| OtherTypes.h | 150 | 9 | 94.00% |
-| ProcessPreviousLine.cpp | 922 | 48 | 94.79% |
-| Replace.cpp | 26 | 18 | 30.77% |
-| StatLink.h | 1 | 1 | 0.00% |
-| StdAfx.h | 56 | 56 | 0.00% |
-| UDPsocket.cpp | 13 | 13 | 0.00% |
-| ansi.cpp | 376 | 31 | 91.76% |
-| doc.h | 37 | 37 | 0.00% |
+| doc.cpp | 2091 | 1674 | 19.94% |
+| doc.h | 282 | 38 | 86.52% |
+| doc_construct.cpp | 482 | 130 | 73.03% |
 | doc_display_shared.cpp | 88 | 17 | 80.68% |
-| doc_portable.cpp | 655 | 118 | 81.98% |
-| doc_scripting_shared.cpp | 44 | 42 | 4.55% |
-| doc_shared.cpp | 2689 | 87 | 96.76% |
+| doc_shared.cpp | 2748 | 99 | 96.40% |
 | evaluate.cpp | 714 | 63 | 91.18% |
 | exceptions.cpp | 69 | 49 | 28.99% |
 | exceptions.h | 10 | 10 | 0.00% |
 | format.h | 7 | 0 | 100.00% |
 | genprint.h | 5 | 5 | 0.00% |
 | globalregistryoptions.cpp | 217 | 16 | 92.63% |
+| HyprLink.h | 9 | 9 | 0.00% |
 | lauxlib.h | 0 | 0 | - |
+| Line.cpp | 45 | 16 | 64.44% |
 | lua.h | 0 | 0 | - |
 | luaconf.h | 0 | 0 | - |
 | mcdatetime.cpp | 165 | 13 | 92.12% |
 | mcdatetime.h | 61 | 0 | 100.00% |
 | miniwindow.h | 19 | 19 | 0.00% |
+| MUSHclient.h | 1 | 0 | 100.00% |
+| MUSHview.h | 7 | 7 | 0.00% |
 | mxp/mxp.cpp | 32 | 6 | 81.25% |
 | mxp/mxp.h | 0 | 0 | - |
+| mxp/mxp_phases.cpp | 69 | 0 | 100.00% |
 | mxp/mxpClose.cpp | 270 | 100 | 62.96% |
 | mxp/mxpCloseAtomic.cpp | 99 | 19 | 80.81% |
 | mxp/mxpDefs.cpp | 317 | 81 | 74.45% |
 | mxp/mxpEnd.cpp | 67 | 18 | 73.13% |
 | mxp/mxpEntities.cpp | 88 | 40 | 54.55% |
 | mxp/mxpError.cpp | 118 | 35 | 70.34% |
+| mxp/mxpinit.cpp | 52 | 1 | 98.08% |
 | mxp/mxpMode.cpp | 61 | 5 | 91.80% |
 | mxp/mxpOnOff.cpp | 93 | 30 | 67.74% |
 | mxp/mxpOpenAtomic.cpp | 583 | 74 | 87.31% |
 | mxp/mxpStart.cpp | 403 | 90 | 77.67% |
-| mxp/mxp_phases.cpp | 69 | 0 | 100.00% |
-| mxp/mxpinit.cpp | 52 | 1 | 98.08% |
 | mxp/mxputils.cpp | 335 | 46 | 86.27% |
+| othertypes.h | 150 | 9 | 94.00% |
 | pal/cpu_raster.cpp | 375 | 58 | 84.53% |
 | pal/cpu_raster.h | 3 | 1 | 66.67% |
 | pal/iclock.h | 1 | 0 | 100.00% |
@@ -112,29 +140,36 @@ Lines / missed / coverage per shipping source file (llvm-cov, coverage build):
 | paneline.cpp | 47 | 33 | 29.79% |
 | paneline.h | 36 | 16 | 55.56% |
 | platform/compat.h | 208 | 26 | 87.50% |
+| platform/doc_flip_gui_stubs.cpp | 205 | 187 | 8.78% |
 | platform/doc_gui_method_stubs.cpp | 455 | 42 | 90.77% |
-| platform/doc_stub.h | 385 | 61 | 84.16% |
-| platform/mainfrm_stub.h | 13 | 13 | 0.00% |
+| platform/doc_headless_stubs.cpp | 34 | 12 | 64.71% |
+| platform/doc_port_glue.cpp | 506 | 106 | 79.05% |
+| platform/gdi_headless.cpp | 103 | 1 | 99.03% |
+| platform/headless_app.cpp | 67 | 9 | 86.57% |
+| platform/mainfrm_stub.h | 15 | 14 | 6.67% |
 | platform/mfc_collections.h | 158 | 3 | 98.10% |
 | platform/mfc_exceptions.h | 70 | 35 | 50.00% |
 | platform/mfc_object.h | 15 | 14 | 6.67% |
 | platform/mfc_string.h | 258 | 39 | 84.88% |
-| platform/mfc_time.h | 107 | 43 | 59.81% |
-| platform/mfc_ui.h | 2617 | 418 | 84.03% |
+| platform/mfc_time.h | 107 | 42 | 60.75% |
+| platform/mfc_ui.h | 2505 | 330 | 86.83% |
 | platform/posix_socket.h | 214 | 30 | 85.98% |
 | platform/posix_transport.cpp | 571 | 67 | 88.27% |
-| platform/windows_stubs.cpp | 80 | 30 | 62.50% |
+| platform/windows_stubs.cpp | 59 | 35 | 40.68% |
 | platform/windows_types.h | 26 | 14 | 46.15% |
-| plugins.cpp | 1053 | 385 | 63.44% |
+| plugins.cpp | 1052 | 385 | 63.40% |
 | plugins.h | 13 | 9 | 30.77% |
 | png/png.h | 0 | 0 | - |
+| ProcessPreviousLine.cpp | 922 | 48 | 94.79% |
 | regexp.cpp | 127 | 11 | 91.34% |
 | regexp.h | 21 | 0 | 100.00% |
+| Replace.cpp | 26 | 18 | 30.77% |
+| resource.h | 0 | 0 | - |
 | scripting/bcconfig.h | 0 | 0 | - |
 | scripting/lbc.c | 193 | 20 | 89.64% |
 | scripting/lua_compress.c | 324 | 61 | 81.17% |
-| scripting/lua_methods.cpp | 3759 | 67 | 98.22% |
-| scripting/lua_scripting.cpp | 504 | 59 | 88.29% |
+| scripting/lua_methods.cpp | 3758 | 67 | 98.22% |
+| scripting/lua_scripting.cpp | 517 | 70 | 86.46% |
 | scripting/lua_utils_portable.cpp | 568 | 86 | 84.86% |
 | scripting/md5.c | 159 | 6 | 96.23% |
 | scripting/md5.h | 0 | 0 | - |
@@ -169,18 +204,24 @@ Lines / missed / coverage per shipping source file (llvm-cov, coverage build):
 | scripting/scripting.h | 31 | 10 | 67.74% |
 | scripting/sha256.c | 182 | 6 | 96.70% |
 | scripting/sha256.h | 0 | 0 | - |
-| scripting/shs.c | 111 | 10 | 90.99% |
+| scripting/shs.c | 111 | 1 | 99.10% |
 | scripting/shs.h | 0 | 0 | - |
 | scripting/world_debug_portable.cpp | 321 | 83 | 74.14% |
 | scriptingoptions.cpp | 287 | 51 | 82.23% |
 | sendvw.h | 1 | 1 | 0.00% |
+| serialize.cpp | 55 | 49 | 10.91% |
 | speedwalk.cpp | 189 | 27 | 85.71% |
-| stdafx.h | 56 | 56 | 0.00% |
+| StatLink.h | 1 | 1 | 0.00% |
+| StdAfx.h | 12 | 12 | 0.00% |
+| stdafx.h | 59 | 7 | 88.14% |
 | telnet_phases.cpp | 607 | 36 | 94.07% |
-| timers.cpp | 164 | 36 | 78.05% |
+| TextDocument.h | 1 | 1 | 0.00% |
+| timers.cpp | 181 | 50 | 72.38% |
+| UDPsocket.cpp | 13 | 13 | 0.00% |
+| utilities_portable.cpp | 7 | 7 | 0.00% |
 | utilities_shared.cpp | 534 | 20 | 96.25% |
-| xml/xml_load_world.cpp | 1575 | 57 | 96.38% |
-| xml/xml_save_world.cpp | 468 | 34 | 92.74% |
+| xml/xml_load_world.cpp | 1569 | 51 | 96.75% |
+| xml/xml_save_world.cpp | 468 | 26 | 94.44% |
 | xml/xml_serialize.cpp | 126 | 51 | 59.52% |
 | xml/xmlparse.cpp | 994 | 32 | 96.78% |
 | xml/xmlparse.h | 22 | 0 | 100.00% |

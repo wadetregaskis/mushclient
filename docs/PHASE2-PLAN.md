@@ -1,5 +1,18 @@
 # Phase 2 Staged Flip Plan — mushcore onto the real `doc.h`, one library at the end
 
+> **✅ DONE / OUTCOME (2026-07-19, `fce551f`).** The flip **landed**. It was not
+> the incremental staged flip this document plans (that premise was proven unsafe
+> — see the CORRECTION below and docs/PHASE2-RECOVERY.md); instead it landed as
+> the **staged big-bang** decided in PHASE2-RECOVERY §6: **B-1** pre-staged the
+> ~66 GUI-symbol stubs (`e64b2cf`), **B-2** the headless GDI shim (`add4ba1`),
+> and **B-3** the atomic flip (`fce551f`) — `MUSHCLIENT_FULL_BUILD` for mushcore,
+> every include-switched TU onto the real headers, real `doc.cpp`/`doc_construct.cpp`
+> adopted headless, **`doc_stub.h` and `doc_portable.cpp` deleted**. There is now
+> **one set of headers** everywhere; `ctest` 31/31 on both the Debug and Release
+> trees. B-4 (post-flip: dead `#else`-arm cleanup + these doc refreshes) followed.
+> The plan below is retained as historical context; do not act on its incremental
+> stages.
+
 > **⚠ CORRECTION (2026-07-19, Stage 4 attempt): the central premise below is FALSE.**
 > doc_stub.h's `CMUSHclientDoc` is NOT layout-compatible with doc.h's — verified
 > independently: doc.h is `: public CDocument` (vtable + base subobject),

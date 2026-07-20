@@ -1546,6 +1546,30 @@ TEST(WorldLoad, AliasesAndVariablesSaveAndRoundTrip)
     EXPECT_EQ(3, (int)doc2.GetAliasMap().GetCount());
 }
 
+// scriptingoptions.cpp OPT_COMMAND_STACK validation: only the empty-value arm was
+// covered.  A value longer than one char, and a non-printable/whitespace char,
+// are also rejected with eOptionOutOfRange — and the latter forces command
+// stacking off (the length arm returns before touching the flag).
+TEST(WorldLoad, CommandStackCharacterValidation)
+{
+    CMUSHclientDoc doc;
+
+    // length > 1 → out of range, WITHOUT disabling command stacking
+    doc.m_enable_command_stack = TRUE;
+    EXPECT_EQ((long)eOptionOutOfRange,
+              doc.SetAlphaOption("command_stack_character", "ab"));
+    EXPECT_TRUE(doc.m_enable_command_stack);
+
+    // a single whitespace/non-printable char → out of range AND stacking forced off
+    doc.m_enable_command_stack = TRUE;
+    EXPECT_EQ((long)eOptionOutOfRange,
+              doc.SetAlphaOption("command_stack_character", "\t"));
+    EXPECT_FALSE(doc.m_enable_command_stack);
+
+    // a valid single printable char is accepted
+    EXPECT_EQ((long)eOK, doc.SetAlphaOption("command_stack_character", ";"));
+}
+
 // xmlparse.cpp Get_XML_boolean: "be nice and let them slip in Y or y ...
 // '1'/'-1'/yes/y/true/t are true — anything else throws 'unrecognised
 // value'" — the failing element draws a warning and is dropped.

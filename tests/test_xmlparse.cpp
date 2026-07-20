@@ -492,10 +492,10 @@ TEST(XmlAttrR5, DoubleParseArms)
         .find("Too many decimal places"));
     EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_double(*a, "twoe", d, false); })
         .find("Too many 'E' characters"));
-    // Windows-faithful quirk: the exponent-sign check tests the 'E' itself,
-    // so a signed exponent ("1E-5") is REJECTED as an invalid character.
-    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_double(*a, "expsign", d, false); })
-        .find("Invalid character"));
+    // Signed exponents now parse (upstream bug fixed: the exponent-sign check
+    // inspected the 'E' itself, wrongly rejecting "1E-5" — xml/xmlparse.cpp).
+    EXPECT_TRUE(Get_XML_double(*a, "expsign", d, false));
+    EXPECT_EQ(1e-5, d);
 
     EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_double(*a, "ok", d, false, 0.0, 100.0); })
         .find("too small"));
@@ -568,10 +568,9 @@ TEST(XmlAttrR5, DateParseArms)
         .find("Year"));
     EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "badmonth", t, false); })
         .find("Month"));
-    // Windows-faithful copy-paste typo: the Day range check's message reads
-    // "Month must be in range 1 to 31" (xml/xmlparse.cpp Get_XML_date).
+    // Day range check message corrected (upstream copy-paste typo said "Month").
     EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "badday", t, false); })
-        .find("Month must be in range 1 to 31"));
+        .find("Day must be in range 1 to 31"));
     EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "manytime", t, false); })
         .find("Time must consist of"));
     EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "badhour", t, false); })
@@ -580,10 +579,9 @@ TEST(XmlAttrR5, DateParseArms)
         .find("Hour"));
     EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "badmin", t, false); })
         .find("Minute"));
-    // Windows-faithful copy-paste typo: the Second range check's message
-    // reads "Minute must be in range 0 to 59".
+    // Second range check message corrected (upstream copy-paste typo said "Minute").
     EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_date(*a, "badsec", t, false); })
-        .find("Minute must be in range 0 to 59"));
+        .find("Second must be in range 0 to 59"));
 }
 
 TEST(XmlAttrR5, BooleanMaskArms)

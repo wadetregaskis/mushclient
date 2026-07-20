@@ -1265,8 +1265,11 @@ int iExponents = 0;
       if (++iExponents > 1)
         ThrowErrorException ("Too many 'E' characters for numeric attribute named '%s'" ,
                             sName);
-      // exponent may have sign
-      if (*p == '-' || *p == '+')
+      // exponent may have sign — inspect the char AFTER the 'E' (the loop's
+      // p++ has not run yet, so *p is still the 'E'); consuming the sign here
+      // lets the following p++ advance past it.  (Upstream checked *p, so a
+      // signed exponent like "1E-5" was wrongly rejected as an invalid char.)
+      if (p[1] == '-' || p[1] == '+')
         p++;
       } // end of exponent
     else if(!isdigit (*p))
@@ -1533,7 +1536,7 @@ CString strValue;
      ThrowErrorException ("Month must be in range 1 to 12");
   
   if (iDay < 1 || iDay > 31)
-     ThrowErrorException ("Month must be in range 1 to 31");
+     ThrowErrorException ("Day must be in range 1 to 31");
 
   int iHour = 0, iMinute = 0, iSecond = 0;
 
@@ -1577,7 +1580,7 @@ CString strValue;
        ThrowErrorException ("Minute must be in range 0 to 59");
   
     if (iSecond < 0 || iSecond > 59)
-       ThrowErrorException ("Minute must be in range 0 to 59");
+       ThrowErrorException ("Second must be in range 0 to 59");
 
     } // end of having a time
 

@@ -2067,10 +2067,14 @@ void CWorldChildFrame::FireAcceleratorCommand(WORD nID)
     m_doc->m_iCurrentActionSource = eUserAccelerator;
 
     if (m_doc->m_CommandToSendToMap[nID] == eSendToExecute) {
-        // Same path as CSendView::SendCommand: evaluate the string through
-        // aliases/scripting without adding it to command history.
-        bool bOmitAccelLog = false;
-        m_doc->EvaluateCommand(sCommand.c_str(), /*countThem=*/true, bOmitAccelLog);
+        // "Send to: Execute" means run it through the full command pipeline, so
+        // use the canonical Execute() rather than reaching past it straight to
+        // EvaluateCommand.  This is what the comment here always claimed ("same
+        // path as CSendView::SendCommand") but was not actually doing, so an
+        // accelerator whose text used the script prefix or contained the command
+        // stack character behaved differently from typing the same text.
+        m_doc->m_iExecutionDepth = 0;
+        m_doc->Execute(sCommand.c_str());
     } else {
         // Resolve the key name for the trace message (linear search — rare path).
         CString key = "unknown key";
@@ -3007,11 +3011,34 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     if (!cmd.IsEmpty() && m_doc->m_bTranslateBackslashSequences)
         cmd = ::FixupEscapeSequences(cmd);
 
-    if (cmd.IsEmpty()) {
-        // m_display_my_input: whether to echo the user's command back to the output window.
-        m_doc->DoSendMsg(cmd, m_doc->m_display_my_input, !bOmitFromLog);
+    if (isPassword) {
+        // A masked password is deliberately NOT routed through Execute().
+        // Execute() would apply command stacking -- splitting a password that
+        // contains the stack character (';' by default) into two commands and
+        // sending half of it as a separate line -- and would run a password that
+        // happens to start with the script prefix through the script engine.
+        // It also has no way to carry bOmitFromLog, so the password would be
+        // written to the session log.  Keep the direct path for this case.
+        if (cmd.IsEmpty())
+            m_doc->DoSendMsg(cmd, m_doc->m_display_my_input, !bOmitFromLog);
+        else
+            m_doc->EvaluateCommand(cmd, true /*countThem*/, bOmitFromLog);
     } else {
-        m_doc->EvaluateCommand(cmd, true /*countThem*/, bOmitFromLog);
+        // Everything else goes through the canonical engine entry point, which
+        // the port previously bypassed entirely by calling EvaluateCommand
+        // directly.  Execute() (scripting/methods/methods_commands.cpp:159) is a
+        // strict superset and restores four things that simply did not work
+        // here: the SCRIPT PREFIX (:180-213), COMMAND STACKING including the
+        // ";;" escape and the leading-";" disable (:220-239), the
+        // MAX_EXECUTION_DEPTH recursion guard (:167-171), and a per-sub-command
+        // ON_PLUGIN_COMMAND callback (:264-274).  It also owns the empty-line
+        // arm (CheckConnected + SendMsg(ENDLINE), :278-292), which is what the
+        // port used to hand-roll just above.
+        //
+        // Depth is reset first because this is a hand-typed line, matching
+        // sendvw.cpp:702 (Windows does the same before its Execute call).
+        m_doc->m_iExecutionDepth = 0;
+        m_doc->Execute(cmd);
     }
 
     // Flush any output produced by alias scripts / triggers to the pane.

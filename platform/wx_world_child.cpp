@@ -1002,13 +1002,29 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     });
 
     // ── Restore persistent font size ──────────────────────────────────────────
-    // Apply the user's last font size preference.  We do this after all
-    // callbacks are wired so m_fn_grid_changed fires and updates NAWS/wrapping.
+    // Apply the user's last font-size preference (written by Ctrl+scroll zoom),
+    // but ONLY for worlds that do not carry a font of their own.
+    //
+    // This is a single *global* value.  Applying it unconditionally overrode the
+    // per-world font that was just applied from the doc above, so a font chosen
+    // in World Properties > Appearance > Output was silently replaced by whatever
+    // size the user had last zoomed to in any other world — one of the reasons
+    // the font setting appeared to do nothing.  An explicit per-world font now
+    // wins; zooming such a world persists the new size into the world itself
+    // (see the m_fn_grid_changed writeback above), so zoom still survives a
+    // restart for those worlds via the world file rather than this global.
+    // Fontless worlds (e.g. quick-connect) keep the old global behaviour.
     {
+        const char* worldFace =
+            m_doc ? static_cast<const char*>(m_doc->m_font_name) : NULL;
+        const bool worldHasOwnFont =
+            m_doc && ((worldFace && *worldFace) || (int)m_doc->m_font_height != 0);
+
         wxConfig cfg(wxT("mushclient"));
         long savedSize = 0;
         cfg.Read(wxT("/display/font_size"), &savedSize, 0L);
-        if (savedSize >= COutputPane::kMinFontSize &&
+        if (!worldHasOwnFont &&
+            savedSize >= COutputPane::kMinFontSize &&
             savedSize <= COutputPane::kMaxFontSize &&
             savedSize != m_output->FontSize())
         {
@@ -3364,9 +3380,14 @@ void CWorldChildFrame::setOutputFont(const char* face, int pointSize,
     wxConfig cfg(wxT("mushclient"));
     cfg.Write(wxT("/display/font_name"), faceName);
     cfg.Write(wxT("/display/font_size"), (long)f.GetPointSize());
-    // Keep input bars in sync.
-    if (m_input)         { m_input->SetFont(f);         m_input->Refresh(); }
-    if (m_inputPassword) { m_inputPassword->SetFont(f); m_inputPassword->Refresh(); }
+    // NOTE: the input bars are deliberately NOT synced here.  The input font is
+    // a separate setting (World Properties > Input → ChangeInputFont →
+    // setInputFont), and on Windows changing the output font never touches it.
+    // Syncing here would clobber the user's configured input font every time the
+    // output font changed — configuration.cpp applies the input font first and
+    // the output font second, so the output font would always win.  The input
+    // bars are still seeded from the output font at construction, and Ctrl+scroll
+    // zoom still updates both on purpose (see m_fn_grid_changed).
     Layout();
 }
 

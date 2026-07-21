@@ -1189,7 +1189,32 @@ int i;
     else
       m_FontHeight = tm.tmHeight; 
 
-    m_FontWidth = tm.tmAveCharWidth; 
+    m_FontWidth = tm.tmAveCharWidth;
+
+#ifndef _WIN32
+    // Non-Windows: there is no CMUSHView to re-size — the visible output pane
+    // is the wx COutputPane owned by the world's pal::IWorldView.  Drive it so
+    // that a font change made in World Properties (which reaches us via
+    // configuration.cpp) actually shows up on screen instead of only rebuilding
+    // the 16 GDI fonts nobody paints with.  Mirrors ChangeInputFont below,
+    // which has always emitted its font this way.
+    {
+    // nHeight is the world's stored font height: negative = LOGFONT pixel
+    // height at 96 DPI (the form worlds saved on Windows use), positive = an
+    // actual point size.  Normalise to points, matching the conversion the
+    // CWorldChildFrame constructor applies when it first opens the world.
+    int points;
+    if (nHeight < 0)
+      points = (-nHeight * 72 + 48) / 96;   // pixels -> points, rounded
+    else if (nHeight > 0)
+      points = nHeight;
+    else
+      points = 10;                          // same fallback as CreateFont above
+
+    EmitOutputFont (std::string (lpszFacename ? lpszFacename : ""),
+                    points, nWeight >= FW_BOLD, false);
+    }
+#endif
 
     for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
     	{

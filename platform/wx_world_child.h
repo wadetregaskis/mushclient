@@ -178,6 +178,11 @@ public:
     // Execute the current find-bar search term, forward or backward.
     void DoFind(bool forward);
 
+    // Re-push the App-level (File > Preferences) settings that the output pane
+    // caches at construction.  Called for every open world after the global
+    // prefs sheet closes so they do not sit stale until the world is reopened.
+    void ApplyGlobalPrefs();
+
 private:
     COutputPane*         m_output         = nullptr; // scrolled styled-text widget
     wxTextCtrl*          m_input          = nullptr; // normal command input bar

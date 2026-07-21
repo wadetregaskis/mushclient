@@ -1733,6 +1733,13 @@ static void hook_file_preferences(wxWindow* /*parent*/)
 {
     DoGlobalPrefs(NULL);
     ApplyDockIconFromPrefs();   // the Tray/Taskbar page may have changed the icon
+    // Push the App-level settings that each world's output pane caches at
+    // construction (currently the double-click word delimiters).  Without this
+    // they were applied once per world open and a prefs change appeared to do
+    // nothing until the world was closed and reopened.
+    for (auto& kv : s_docFrameMap)
+        if (kv.second)
+            kv.second->ApplyGlobalPrefs();
 }
 
 // ── WorldPreferencesDlg ───────────────────────────────────────────────────
@@ -3422,8 +3429,13 @@ static intptr_t hook_run_property_sheet_flat(void* self)
     nb->Bind(wxEVT_NOTEBOOK_PAGE_CHANGING, [&pages](wxBookCtrlEvent& e) {
         int leaving = e.GetOldSelection();
         if (leaving >= 0 && leaving < (int) pages.size()
-            && pages[leaving] && !pages[leaving]->UpdateData(TRUE))
-            e.Veto();
+            && pages[leaving]) {
+            if (!pages[leaving]->UpdateData(TRUE)) {
+                e.Veto();
+                return;
+            }
+            pages[leaving]->OnKillActive();   // see the tree bridge above
+        }
     });
 
     wxStdDialogButtonSizer* btns = new wxStdDialogButtonSizer();
@@ -3447,9 +3459,19 @@ static intptr_t hook_run_property_sheet_flat(void* self)
     dlg.Bind(wxEVT_BUTTON, [&dlg, &pages, nb](wxCommandEvent& e) {
         if (e.GetId() != wxID_OK) { e.Skip(); return; }
         int active = nb->GetSelection();
-        if (active >= 0 && active < (int) pages.size()
-            && pages[active] && !pages[active]->UpdateData(TRUE))
-            return;   // validation failed (message shown); stay open
+        if (active >= 0 && active < (int) pages.size() && pages[active]) {
+            if (!pages[active]->UpdateData(TRUE))
+                return;   // validation failed (message shown); stay open
+            pages[active]->OnKillActive();
+        }
+        // …then OnOK every page, as CPropertySheet::OnOK does.  This bridge had
+        // the same gap as the tree bridge above: File > Preferences pages that
+        // commit their state in OnOK (CGlobalPrefsP1 startup-world list,
+        // CGlobalPrefsP10, CGlobalPrefsP12 notepad colours) were never asked to,
+        // so those settings could not be saved at all.
+        for (CPropertyPage* page : pages)
+            if (page)
+                page->OnOK();
         dlg.EndModal(wxID_OK);
     }, wxID_OK);
 

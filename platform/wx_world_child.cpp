@@ -1112,6 +1112,17 @@ void CWorldChildFrame::TriggerNAWS()
 // Derives input bar fg/bg from the output pane's current background colour
 // and applies them to both the normal and password input bars.
 // ITU-R BT.601 luma: white text on dark backgrounds, dark text on light.
+// ── ApplyGlobalPrefs ──────────────────────────────────────────────────────
+// Re-push the App-level settings the output pane caches at construction, so a
+// change made in File > Preferences takes effect on already-open worlds instead
+// of waiting for the next world open.
+void CWorldChildFrame::ApplyGlobalPrefs()
+{
+    if (!m_output) return;
+    m_output->SetWordDelimitersDblClick(
+        static_cast<const char*>(App.m_strWordDelimitersDblClick));
+}
+
 // Command-history depth: the world's own "Lines in command history" setting.
 // Read at trim time (not cached) so a prefs change takes effect immediately.
 int CWorldChildFrame::HistoryLimit() const

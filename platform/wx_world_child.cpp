@@ -62,8 +62,10 @@ static const int ID_FIND_INPUT   = wxID_HIGHEST + 202;
 static const int ID_FIND_NEXT    = wxID_HIGHEST + 203;
 static const int ID_FIND_PREV    = wxID_HIGHEST + 204;
 
-// Maximum commands kept in history (matches MUSHclient Windows default)
-static const int kMaxHistory = 200;
+// Fallback command-history depth, used only when the doc is unavailable.  The
+// real limit is the world's own "Lines in command history" setting
+// (m_nHistoryLines, default 1000, range 20-5000) — see HistoryLimit().
+static const int kMaxHistoryFallback = 1000;
 
 // ── History file path ─────────────────────────────────────────────────────────
 // Returns the path to the per-world persistent command-history file, creating
@@ -885,6 +887,27 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         m_input->SetFont(outFont);
         m_inputPassword->SetFont(outFont);
     }
+
+    // …but if the world configures its own input font (World Properties > Input
+    // > Commands), that wins.  Previously the output font was applied here
+    // unconditionally and nothing ever read m_input_font_*, so a configured
+    // input font was visible only until the next world open, and a new world
+    // seeded from App.m_strDefaultInputFont never showed it at all.  Same
+    // point-size normalisation as the output font: negative = LOGFONT pixel
+    // height at 96 DPI, positive = a point size.
+    if (m_doc) {
+        const char* face = static_cast<const char*>(m_doc->m_input_font_name);
+        const int   lfH  = (int) m_doc->m_input_font_height;
+        if ((face && *face) || lfH != 0) {
+            int points;
+            if (lfH < 0)       points = (-lfH * 72 + 48) / 96;
+            else if (lfH > 0)  points = lfH;
+            else               points = COutputPane::kDefaultFontSize;
+            setInputFont(face ? face : "", points,
+                         m_doc->m_input_font_weight >= 600,
+                         m_doc->m_input_font_italic != 0);
+        }
+    }
     // Wire the same send/key handlers directly to m_inputPassword.
     m_inputPassword->Bind(wxEVT_TEXT_ENTER,
         [this](wxCommandEvent& e) { OnInputEnter(e); });
@@ -962,7 +985,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 }
                 fclose(f);
                 // Trim to the maximum if the file was longer.
-                while ((int)m_history.size() > kMaxHistory)
+                while ((int)m_history.size() > HistoryLimit())
                     m_history.erase(m_history.begin());
             }
         }
@@ -1036,6 +1059,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // Fires every 100 ms to drive CheckTimers() (world/plugin timers) and
     // SendToAllPluginCallbacks(ON_PLUGIN_TICK) (every ~40 ms via accumulator).
     // Also flushes any output the timer callbacks may have produced.
+    // Style the input bars now that they exist.  ApplyPaneBackground() above ran
+    // before m_input/m_inputPassword were created, so without this the command
+    // bar kept wx's default white-on-black-text look and the world's configured
+    // input colours were not visible until something else happened to call
+    // UpdateInputBarColors (e.g. leaving Ctrl+R search).
+    UpdateInputBarColors();
+
     m_worldTimer.SetOwner(this, ID_WORLD_TIMER);
     m_worldTimer.Start(100);
 
@@ -1082,6 +1112,15 @@ void CWorldChildFrame::TriggerNAWS()
 // Derives input bar fg/bg from the output pane's current background colour
 // and applies them to both the normal and password input bars.
 // ITU-R BT.601 luma: white text on dark backgrounds, dark text on light.
+// Command-history depth: the world's own "Lines in command history" setting.
+// Read at trim time (not cached) so a prefs change takes effect immediately.
+int CWorldChildFrame::HistoryLimit() const
+{
+    if (m_doc && m_doc->m_nHistoryLines > 0)
+        return (int) m_doc->m_nHistoryLines;
+    return kMaxHistoryFallback;
+}
+
 void CWorldChildFrame::UpdateInputBarColors()
 {
     unsigned long col = m_output ? m_output->PaneBackground() : 0UL;
@@ -1090,8 +1129,28 @@ void CWorldChildFrame::UpdateInputBarColors()
     int b = static_cast<int>(GetBValue(col));
     int luma = (r * 299 + g * 587 + b * 114) / 1000;
 
+    // Default: derive a readable pair from the output-pane background.
     wxColour inputFg = (luma < 128) ? wxColour(220, 220, 220) : wxColour(20, 20, 20);
     wxColour inputBg = wxColour(r, g, b);
+
+    // But an explicitly configured input colour (World Properties > Input >
+    // Commands) wins.  Those two settings previously did nothing at all on the
+    // port because the pair was always derived from the pane background.  The
+    // option defaults are black-on-white (scriptingoptions_numeric.inc:86,91);
+    // treat those as "not set" so untouched worlds keep the readable
+    // auto-derived pair rather than snapping to literal black-on-white.
+    if (m_doc) {
+        const COLORREF fg = m_doc->m_input_text_colour;
+        const COLORREF bg = m_doc->m_input_background_colour;
+        const bool fgSet = (fg != RGB(0, 0, 0));
+        const bool bgSet = (bg != RGB(255, 255, 255));
+        if (fgSet || bgSet) {
+            if (fgSet)
+                inputFg = wxColour(GetRValue(fg), GetGValue(fg), GetBValue(fg));
+            if (bgSet)
+                inputBg = wxColour(GetRValue(bg), GetGValue(bg), GetBValue(bg));
+        }
+    }
     for (wxTextCtrl* inp : {m_input, m_inputPassword}) {
         if (!inp) continue;
         inp->SetForegroundColour(inputFg);
@@ -2052,7 +2111,20 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         if (m_output) m_output->ScrollToBottom();
         if (m_doc && m_doc->m_bEscapeDeletesInput) {
             wxTextCtrl* inp = ActiveInput();
-            if (inp) inp->Clear();
+            if (inp) {
+                // "Save deleted command in history" (m_bSaveDeletedCommand):
+                // keep what Escape throws away so it can still be recalled.
+                // Never for a masked password prompt.
+                wxString discarded = inp->GetValue();
+                if (m_doc->m_bSaveDeletedCommand && !discarded.empty() &&
+                    !m_doc->m_bNoEcho) {
+                    if (m_history.empty() || m_history.back() != discarded)
+                        m_history.push_back(discarded);
+                    if ((int) m_history.size() > HistoryLimit())
+                        m_history.erase(m_history.begin());
+                }
+                inp->Clear();
+            }
         }
         return;   // consume — don't close dialogs or deselect in the input bar
     }
@@ -2231,8 +2303,23 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // Re-map the key code so the existing Up/Down handlers below take over
     // without duplicating any logic.  These must be checked before the
     // Tab and Up/Down blocks so the re-mapped value is seen by them.
-    if (evt.RawControlDown() && code == 'P') code = WXK_UP;
-    else if (evt.RawControlDown() && code == 'N') code = WXK_DOWN;
+    // Both are user-settable (World Properties > Input > Commands); they were
+    // previously hardwired on, so a user who wanted Ctrl+P/Ctrl+N free for
+    // something else could not turn them off.
+    if (evt.RawControlDown() && code == 'P' &&
+        m_doc && m_doc->m_bCtrlPGoesToPreviousCommand)
+        code = WXK_UP;
+    else if (evt.RawControlDown() && code == 'N' &&
+             m_doc && m_doc->m_bCtrlNGoesToNextCommand)
+        code = WXK_DOWN;
+
+    // Ctrl+Z: jump the output pane to the end of the buffer (opt-in setting).
+    // Without this it fell through to the text control's native undo.
+    if (evt.RawControlDown() && code == 'Z' &&
+        m_doc && m_doc->m_bCtrlZGoesToEndOfBuffer && m_output) {
+        m_output->ScrollToBottom();
+        return;
+    }
 
     // Shift+Tab: show a popup list of script-defined completion items and/or
     // Lua global function names (mirroring Windows FunctionMenu behaviour).
@@ -2371,7 +2458,13 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 
         if (m_output) {
             std::set<wxString> seen;
-            int startLine = std::max(0, m_output->LineCount() - 300);
+            // How far back to scan is the world's "Tab completion lines"
+            // setting (m_iTabCompletionLines, default 200); the port used to
+            // hardcode 300 and ignore it.  Read live — no seam needed.
+            const int scanLines =
+                (m_doc && m_doc->m_iTabCompletionLines > 0)
+                    ? (int) m_doc->m_iTabCompletionLines : 200;
+            int startLine = std::max(0, m_output->LineCount() - scanLines);
             for (int li = m_output->LineCount() - 1; li >= startLine; --li) {
                 const SOutputLine* line = m_output->GetLine(li);
                 if (!line) continue;
@@ -2411,6 +2504,18 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         }
         m_input->SetValue(m_tabWords[0]);
         m_input->SetInsertionPointEnd();
+        return;
+    }
+
+    // "Arrow keys traverse command history" (m_bArrowsChangeHistory).  When the
+    // user turns this off they want Up/Down to move the caret instead, so fall
+    // through to the text control rather than browsing history.
+    if (code == WXK_UP && inp == m_input && m_doc && !m_doc->m_bArrowsChangeHistory) {
+        evt.Skip();
+        return;
+    }
+    if (code == WXK_DOWN && inp == m_input && m_doc && !m_doc->m_bArrowsChangeHistory) {
+        evt.Skip();
         return;
     }
 
@@ -2759,7 +2864,7 @@ void CWorldChildFrame::OnInputPaste(wxClipboardTextEvent& evt)
         if (!cmd.IsEmpty()) {
             if (m_history.empty() || m_history.back() != cmd)
                 m_history.push_back(cmd);
-            if ((int)m_history.size() > kMaxHistory)
+            if ((int)m_history.size() > HistoryLimit())
                 m_history.erase(m_history.begin());
         }
 
@@ -2785,6 +2890,15 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     wxTextCtrl* inp = ActiveInput();
     if (!inp) return;
 
+    // "Spell check on send" (m_bSpellCheckOnSend): check the line before it goes
+    // anywhere, then re-read the possibly-corrected text.  Mirrors sendvw.cpp:329.
+    // Collapse any selection first so SpellCheckInput checks the whole line, and
+    // never run it on a masked password prompt.
+    if (m_doc->m_bSpellCheckOnSend && !m_doc->m_bNoEcho) {
+        inp->SetSelection(0, 0);
+        SpellCheckInput();
+    }
+
     wxString text = inp->GetValue();
     inp->Clear();
     m_histIdx = -1; ApplyHistRSearch(false);   // exit history browsing on send
@@ -2795,7 +2909,7 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
         // Add to history (no duplicates at the tail; trim if over limit).
         if (m_history.empty() || m_history.back() != text)
             m_history.push_back(text);
-        if ((int)m_history.size() > kMaxHistory)
+        if ((int)m_history.size() > HistoryLimit())
             m_history.erase(m_history.begin());
     }
 
@@ -2826,6 +2940,17 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
             return;
         }
     }
+
+    // "Auto repeat last command" (m_bAutoRepeat): a blank Enter re-sends the
+    // previous command instead of sending a bare newline.  Mirrors sendvw.cpp:725.
+    if (cmd.IsEmpty() && m_doc->m_bAutoRepeat && !isPassword && !m_history.empty())
+        cmd = CString(m_history.back().ToUTF8().data());
+
+    // "Translate backslash sequences" (m_bTranslateBackslashSequences): turn \n,
+    // \t, \\ etc. in the typed line into the real characters, exactly as
+    // sendvw.cpp:678/707 does at its Execute() call.
+    if (!cmd.IsEmpty() && m_doc->m_bTranslateBackslashSequences)
+        cmd = ::FixupEscapeSequences(cmd);
 
     if (cmd.IsEmpty()) {
         // m_display_my_input: whether to echo the user's command back to the output window.
@@ -2867,6 +2992,21 @@ void CWorldChildFrame::NotifyPluginLayoutSettle()
 // output, updates UI on phase changes, and runs the auto-reconnect countdown.
 void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
 {
+    // Pick up a change to the world's input colours (World Properties > Input >
+    // Commands).  Those live on the doc with no notification seam, so poll them
+    // — but only repaint when they actually differ from what we last applied,
+    // so this costs two comparisons per tick in the normal case.
+    if (m_doc) {
+        const unsigned long fg = (unsigned long) m_doc->m_input_text_colour;
+        const unsigned long bg = (unsigned long) m_doc->m_input_background_colour;
+        if (fg != m_lastInputFg || bg != m_lastInputBg) {
+            m_lastInputFg = fg;
+            m_lastInputBg = bg;
+            if (!m_histRSearch)   // don't fight the Ctrl+R tint
+                UpdateInputBarColors();
+        }
+    }
+
     if (!m_doc) return;
 
     // ── Speed-walk / command queue draining ──────────────────────────────────
@@ -3239,7 +3379,7 @@ std::string CWorldChildFrame::pushCommand()
         wxString wxText = wxString::FromUTF8(text.c_str());
         if (m_history.empty() || m_history.back() != wxText)
             m_history.push_back(wxText);
-        if ((int)m_history.size() > kMaxHistory)
+        if ((int)m_history.size() > HistoryLimit())
             m_history.erase(m_history.begin());
     }
     inp->Clear();
@@ -3271,7 +3411,7 @@ void CWorldChildFrame::addToCommandHistory(const char* text)
     if (!m_history.empty() && m_history.back() == entry)
         return;   // same as last entry — don't add duplicate
     m_history.push_back(entry);
-    if ((int)m_history.size() > kMaxHistory)
+    if ((int)m_history.size() > HistoryLimit())
         m_history.erase(m_history.begin());
     m_histIdx = -1;  // reset browsing position
 }

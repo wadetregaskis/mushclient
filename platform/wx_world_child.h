@@ -257,6 +257,12 @@ private:
     // the output pane's background.  Factors out the luma logic so it can be
     // called from both ApplyPaneBackground and from the Ctrl+R mode exit path.
     void UpdateInputBarColors();
+    int  HistoryLimit() const;   // world's m_nHistoryLines, with a fallback
+    // Last input colours pushed to the controls, so OnWorldTimer can notice a
+    // prefs change and re-apply without repainting every tick.  0xFFFFFFFF =
+    // "nothing applied yet".
+    unsigned long m_lastInputFg = 0xFFFFFFFFUL;
+    unsigned long m_lastInputBg = 0xFFFFFFFFUL;
 
     // Enter or leave Ctrl+R reverse-history-search mode.  Sets m_histRSearch and
     // tints the input bar blue (on) or restores its normal colors (off).

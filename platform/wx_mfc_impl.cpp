@@ -1584,9 +1584,17 @@ static void* hook_open_world_file(const char* path)
     // it can be identified as already-open above, and so Save writes back here.
     doc->SetPathName(path);
 
-    // Patch custom-text colours to be visible (same as hook_new_world).
-    for (int i = 0; i < MAX_CUSTOM; ++i)
-        doc->m_customtext[i] = RGB(192, 192, 192);
+    // NOTE: do NOT patch m_customtext[] here.  hook_new_world sets every custom
+    // text slot to light grey so a brand-new world with no colours of its own
+    // still produces readable output — but that rationale ("when no world file
+    // has overridden them") does not hold on this path, which runs immediately
+    // AFTER OnOpenDocument() parsed the world's own custom colours out of the
+    // XML (xml/xml_load_world.cpp, GET_COLOUR("text", m_customtext[i])).
+    // Doing it here threw those colours away on every single world open, so a
+    // custom text colour could never survive a reload no matter how it was set.
+    // Worlds that specify no custom colours keep the constructor's defaults
+    // (SetDefaultCustomColours, doc_construct.cpp:316), which is also what
+    // Windows does.
 
     // Create and show the child frame.
     CWorldChildFrame* child = new CWorldChildFrame(mdiParent, doc);
@@ -3294,9 +3302,19 @@ static intptr_t hook_run_property_sheet(void* self)
     // validated and GamePreferences' SavePrefsP* then writes back unchanged.
     tb->Bind(wxEVT_TREEBOOK_PAGE_CHANGING, [&pages](wxBookCtrlEvent& e) {
         int leaving = e.GetOldSelection();
-        if (leaving >= 0 && leaving < (int) pages.size()
-            && pages[leaving] && !pages[leaving]->UpdateData(TRUE))
-            e.Veto();   // validation failed (message shown); stay on this page
+        if (leaving >= 0 && leaving < (int) pages.size() && pages[leaving]) {
+            if (!pages[leaving]->UpdateData(TRUE)) {
+                e.Veto();   // validation failed (message shown); stay on this page
+                return;
+            }
+            // Then run the page's own OnKillActive.  Some canonical pages harvest
+            // state that DDX cannot reach: CPrefsP3/CPrefsP5 capture their colour
+            // swatches here (SaveSwatches), because the swatch buttons hold the
+            // colour in the control and DoDataExchange only DDX_Control's them.
+            // Calling UpdateData alone -- as this bridge used to -- silently threw
+            // every colour pick away.
+            pages[leaving]->OnKillActive();
+        }
     });
 
     // Standard OK / Cancel.
@@ -3325,9 +3343,19 @@ static intptr_t hook_run_property_sheet(void* self)
     dlg.Bind(wxEVT_BUTTON, [&dlg, &pages, tb](wxCommandEvent& e) {
         if (e.GetId() != wxID_OK) { e.Skip(); return; }
         int active = tb->GetSelection();
-        if (active >= 0 && active < (int) pages.size()
-            && pages[active] && !pages[active]->UpdateData(TRUE))
-            return;   // validation failed (message shown); stay open
+        if (active >= 0 && active < (int) pages.size() && pages[active]) {
+            if (!pages[active]->UpdateData(TRUE))
+                return;   // validation failed (message shown); stay open
+            pages[active]->OnKillActive();   // capture what DDX cannot (see above)
+        }
+        // Then OnOK every page, as CPropertySheet::OnOK does.  Pages that do not
+        // override it get the base no-op, so this is only ever additive; the ones
+        // that DO override it (CPrefsP3/P5 colour swatches, CPrefsP9, CPrefsP17,
+        // CPrefsP22/P23, CGlobalPrefsP1/P10/P12) were previously never asked to
+        // commit their state at all, so their settings could not be saved.
+        for (CPropertyPage* page : pages)
+            if (page)
+                page->OnOK();
         dlg.EndModal(wxID_OK);
     }, wxID_OK);
 

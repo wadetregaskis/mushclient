@@ -19,7 +19,7 @@ BEGIN
     CONTROL "&License ...", IDC_LICENSE, "Button", 0x50010000, 195, 149, 50, 14
     CONTROL "", IDC_LOGO, "Static", 0x50000003, 9, 6, 20, 20
     CONTROL "MUSHclient", IDC_STATIC, "Static", 0x50020000, 43, 4, 39, 8
-    CONTROL "Copyright © 2007 - Gammon Software Solutions\nAll rights reserved worldwide by Gammon Software Solutions.", IDC_STATIC, "Static", 0x50020000, 43, 24, 196, 18
+    CONTROL "Copyright ï¿½ 2007 - Gammon Software Solutions\nAll rights reserved worldwide by Gammon Software Solutions.", IDC_STATIC, "Static", 0x50020000, 43, 24, 196, 18
     CONTROL "Version (entered at runtime)", IDC_VERSION_LABEL, "Static", 0x50020000, 89, 4, 105, 8
     CONTROL "Distributed as FreeWare.", IDC_STATIC, "Static", 0x50020000, 4, 106, 123, 10
     CONTROL "Support:", IDC_STATIC, "Static", 0x50020002, 7, 53, 28, 8
@@ -82,6 +82,7 @@ BEGIN
     CONTROL "", IDC_PROXY_PORT, "Edit", 0x50812080, 369, 128, 30, 13
     CONTROL "Proxy server pass&word...", IDC_BUTTON1, "Button", 0x50010000, 369, 151, 95, 14
     CONTROL "&Save World Automatically On Close", IDC_SAVE_AUTOMATICALLY, "Button", 0x50010003, 25, 179, 127, 10
+    CONTROL "&Use SSL/TLS for this connection", IDC_USE_SSL, "Button", 0x50010003, 25, 195, 160, 10
     CONTROL "Looking for a MUD to connect to? Click on the link below for some suggested lists of MUDs.", IDC_STATIC, "Static", 0x50020000, 53, 263, 301, 11
     CONTROL "MUD lists", IDC_MUD_LISTS, "Static", 0x50020000, 86, 279, 334, 8
     CONTROL "Found a bug? Have a suggestion? Report it here:", IDC_STATIC, "Static", 0x50020000, 53, 313, 157, 8

@@ -430,6 +430,18 @@ extern intptr_t (*g_run_mfc_property_sheet_flat)(void* self);
 // g_wxhook_get_dlg_item: the wxWindow* of `parent`'s child with control id `id`
 // (FindWindowById), or nullptr.  CWnd::GetDlgItem wraps it via FromHandle.
 extern void* (*g_wxhook_get_dlg_item)(void* parent, int id);
+
+// g_wxhook_subclass_dlg_item: called by CWnd::SubclassDlgItem so the wx adapter
+// can register the binding and, for control classes the port cannot drive by
+// message reflection, SUBSTITUTE a different widget.  Returns the wxWindow* the
+// CWnd should adopt as m_hWnd, or null to keep the child that is already there.
+//
+// The substitution exists because the port has no WM_ dispatch path at all:
+// ON_WM_LBUTTONDOWN / ON_WM_SETCURSOR / ON_WM_NCHITTEST / ON_WM_CTLCOLOR_REFLECT
+// are empty macros (mfc_ui.h), so a subclass's BEGIN_MESSAGE_MAP for those
+// expands to nothing and AfxDispatchCommand/Notify only ever match WM_COMMAND /
+// WM_NOTIFY.  Message delivery therefore has to be solved per control class.
+extern void* (*g_wxhook_subclass_dlg_item)(void* parent, int id, void* pWnd);
 // g_wxhook_get_window_text: the control's text, heap-allocated (caller free()s).
 extern char* (*g_wxhook_get_window_text)(void* hwnd);
 // Checkbox/radio state (BST_CHECKED=1 / BST_UNCHECKED=0 / BST_INDETERMINATE=2).

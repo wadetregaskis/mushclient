@@ -23,6 +23,7 @@
 #include <wx/dnd.h>        // wxFileDropTarget
 #include <wx/dirdlg.h>     // wxDirDialog
 #include <wx/notebook.h>   // wxNotebook (flat property-sheet bridge: hook_run_property_sheet_flat)
+#include <wx/hyperlink.h>  // wxHyperlinkCtrl (CStaticLink substitution)
 #include <wx/clipbrd.h>    // wxTheClipboard
 #include <wx/dataobj.h>    // wxTextDataObject
 #include <wx/colordlg.h>   // wxColourDialog
@@ -50,6 +51,7 @@
 #include "doc.h"           // CMUSHclientDoc (needed for hook_new_world)
 #include "TextDocument.h"             // CTextDocument (for hook_create_text_window)
 #include "platform/wx_world_child.h"  // CWorldChildFrame
+#include "StatLink.h"                 // CStaticLink — the only real SubclassDlgItem client
 #include "platform/wx_osx_text.h"     // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
 #include "platform/wx_activity.h"     // ShowActivityWindow (Game ▸ Activity List)
 #include "platform/ma_sound.h"        // miniaudio sound engine (volume/pan/buffers)
@@ -3491,6 +3493,75 @@ static void* hook_get_dlg_item(void* parent, int id)
     return parent ? ((wxWindow*) parent)->FindWindow(id) : nullptr;
 }
 
+// CStaticLink's handlers are protected, and the port's ON_WM_* macros are empty
+// so there is no message-map route to them.  Reach OnLButtonDown with the
+// standard derived-class member-pointer idiom: the access check passes inside
+// the derived class, and the resulting pointer-to-member is ordinary to call.
+// This needs no edit to the shared Windows source and no cast of the object.
+struct CStaticLinkPortGlue : public CStaticLink {
+    static void Click(CStaticLink* p) {
+        void (CStaticLink::*fn)(UINT, CPoint) = &CStaticLinkPortGlue::OnLButtonDown;
+        (p->*fn)(0, CPoint(0, 0));
+    }
+};
+
+// g_wxhook_subclass_dlg_item.  Generic part: nothing — returning null lets
+// SubclassDlgItem simply bind the existing child, which is right for any control
+// the port can already drive.  Special part: CStaticLink, the only real
+// SubclassDlgItem client in the tree (MUSHclient.cpp x3, welcome.cpp,
+// welcome1.cpp, prefspropertypages.cpp x2).  Those render as plain grey static
+// text today — not blue, not underlined, no hand cursor, click does nothing —
+// because their whole message map expands to nothing.
+//
+// Swap in a wxHyperlinkCtrl, which draws itself and owns its own mouse handling,
+// rather than styling the wxStaticText and binding wxEVT_LEFT_DOWN to it: on
+// wxOSX wxStaticText is peered on an NSTextField whose mouse delivery to wx is
+// unreliable.
+static void* hook_subclass_dlg_item(void* parent, int id, void* pwnd)
+{
+    wxWindow* child = parent ? ((wxWindow*) parent)->FindWindow(id) : nullptr;
+    CWnd*     w     = (CWnd*) pwnd;
+    if (!child || !w) return nullptr;
+    if (!w->IsKindOf(RUNTIME_CLASS(CStaticLink))) return nullptr;
+
+    wxStaticText* st = wxDynamicCast(child, wxStaticText);
+    if (!st) return nullptr;
+
+    CStaticLink* link      = (CStaticLink*) w;
+    wxWindow*    parentWin = st->GetParent();
+    wxPoint      pos       = st->GetPosition();
+    wxSize       size      = st->GetSize();
+    wxString     text      = st->GetLabel();
+    st->Destroy();          // safe: dialog setup, not inside this widget's event
+
+    // The URL is NOT known yet — DDX_Text for these controls runs later, in
+    // UpdateData(FALSE).  So leave wx's own URL empty and let the canonical
+    // handler re-read the control text at click time (StatLink.cpp:92).
+    wxHyperlinkCtrl* hl = new wxHyperlinkCtrl(parentWin, id, text, wxEmptyString,
+                                              pos, size,
+                                              wxHL_ALIGN_LEFT | wxNO_BORDER);
+    auto wxFromCOLORREF = [](COLORREF c) {
+        return wxColour(GetRValue(c), GetGValue(c), GetBValue(c));
+    };
+    hl->SetNormalColour (wxFromCOLORREF(CStaticLink::g_colorUnvisited));
+    hl->SetHoverColour  (wxFromCOLORREF(CStaticLink::g_colorUnvisited));  // Windows has no hover colour
+    hl->SetVisitedColour(wxFromCOLORREF(CStaticLink::g_colorVisited));
+    // Deliberately NO SetFont here: wxGenericHyperlinkCtrl::Create already
+    // underlines its font, and copying the plain static's font over it would
+    // strip the underline — i.e. undo half of what this fix is for.
+
+    hl->Bind(wxEVT_HYPERLINK, [link](wxHyperlinkEvent&) {
+        CStaticLinkPortGlue::Click(link);   // canonical Navigate() → ShellExecute
+        // Mirror MFC: go purple only when Navigate() actually succeeded, which
+        // is what CStaticLink signals by setting m_color to the visited colour.
+        if (wxHyperlinkCtrl* c = wxDynamicCast((wxWindow*) link->m_hWnd, wxHyperlinkCtrl)) {
+            c->SetVisited(link->m_color == CStaticLink::g_colorVisited);
+            c->Refresh();
+        }
+    });
+    return hl;
+}
+
 static char* hook_get_window_text(void* hwnd)
 {
     wxWindow* w = (wxWindow*) hwnd;
@@ -4164,6 +4235,7 @@ void wx_mfc_install_hooks()
     g_run_mfc_property_sheet  = hook_run_property_sheet;
     g_run_mfc_property_sheet_flat = hook_run_property_sheet_flat;
     g_wxhook_get_dlg_item     = hook_get_dlg_item;
+    g_wxhook_subclass_dlg_item = hook_subclass_dlg_item;
     g_wxhook_get_window_text  = hook_get_window_text;
     g_wxhook_button_set_check = hook_button_set_check;
     g_wxhook_button_get_check = hook_button_get_check;

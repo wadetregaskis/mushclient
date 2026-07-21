@@ -408,8 +408,30 @@ public:
     // IsDialogMessage — member variant (single-arg form used in dialog pump loops)
     BOOL IsDialogMessage(MSG*) { return FALSE; }
 
-    // Subclassing
-    BOOL SubclassDlgItem(UINT, CWnd*) { return FALSE; }
+    // Subclassing.  MFC makes `this` the C++ wrapper for the dialog's child
+    // control.  Resolve the child, let the wx adapter register it (and possibly
+    // hand back a substitute widget — see g_wxhook_subclass_dlg_item), then
+    // adopt the handle.  Until this had a body every subclassed control kept
+    // m_hWnd == nullptr, so GetWindowText / SetWindowText / Invalidate /
+    // MoveWindow / ShowWindow on the subclass object all silently no-opped.
+    //
+    // Returns FALSE for a null parent or an id the dialog does not have, which
+    // matches MFC and keeps the headless build (every hook null) inert.
+    BOOL SubclassDlgItem(UINT nID, CWnd* pParent) {
+        if (!pParent || !pParent->m_hWnd || !g_wxhook_get_dlg_item) return FALSE;
+        HWND h = (HWND) g_wxhook_get_dlg_item(pParent->m_hWnd, (int) nID);
+        if (!h) return FALSE;
+        if (g_wxhook_subclass_dlg_item)
+            if (void* sub = g_wxhook_subclass_dlg_item(pParent->m_hWnd, (int) nID, this))
+                h = (HWND) sub;
+        m_hWnd = h;
+        return TRUE;
+    }
+    // NOTE: SubclassWindow is still inert.  It has one real caller —
+    // mainfrm.cpp:294 (m_wndMDIClient), which returns -1 from OnCreate on
+    // failure — reached only on Windows because CMainFrame::OnCreate has an
+    // `#ifndef _WIN32` early return above it.  Any future implementation must
+    // not regress that path.
     BOOL SubclassWindow(HWND)         { return FALSE; }
 
     // Default message handling (no-op on non-Windows)

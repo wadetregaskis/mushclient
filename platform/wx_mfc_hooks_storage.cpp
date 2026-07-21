@@ -92,6 +92,7 @@ void  (*g_end_mfc_dialog)(void*, int)                            = nullptr;
 intptr_t (*g_run_mfc_property_sheet)(void*)                      = nullptr;
 intptr_t (*g_run_mfc_property_sheet_flat)(void*)                 = nullptr;
 void* (*g_wxhook_get_dlg_item)(void*, int)                       = nullptr;
+void* (*g_wxhook_subclass_dlg_item)(void*, int, void*)           = nullptr;
 char* (*g_wxhook_get_window_text)(void*)                         = nullptr;
 void  (*g_wxhook_button_set_check)(void*, int)                   = nullptr;
 int   (*g_wxhook_button_get_check)(void*)                        = nullptr;

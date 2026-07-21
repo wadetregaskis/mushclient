@@ -2228,7 +2228,8 @@ public:
   void FireWorldGetFocus();
   void FireWorldLoseFocus();
   void FireWorldClose();
-  void FireWorldSave();
+  // (no FireWorldSave: saves go through the canonical DoSave, which fires
+  // on_world_save and OnPluginWorldSave itself — see doc_scripting_shared.cpp)
 #endif
   void InitiateConnection (void);
   void ConnectionEstablished (void);

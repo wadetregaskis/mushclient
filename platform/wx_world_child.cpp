@@ -3725,7 +3725,9 @@ bool CWorldChildFrame::saveWorld()
     CString pathCStr = m_doc->GetPathName();
     std::string savePath = static_cast<const char*>(pathCStr);
     if (savePath.empty()) return false;
-    return m_doc->OnSaveDocument(savePath.c_str()) != FALSE;
+    // DoSave (not OnSaveDocument) so world.Save() from a script fires the
+    // on_world_save handler and the OnPluginWorldSave callback, as on Windows.
+    return m_doc->DoSave(savePath.c_str(), TRUE) != FALSE;
 }
 
 // world.GetMainWindowPosition(): screen rect of the MDI parent frame.

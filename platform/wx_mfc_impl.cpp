@@ -1674,13 +1674,21 @@ static void hook_save_active_world(wxMDIParentFrame* frame, bool saveAs)
     if (path.IsEmpty()) return;
 
     std::string savePath = path.ToUTF8().data();
-    if (!doc->OnSaveDocument(savePath.c_str())) {
+
+    // Capture the old path BEFORE saving: DoSave -> CDocument::DoSave calls
+    // SetPathName, so reading it afterwards would return the new path and the
+    // save-as world-list cleanup below would never fire.
+    std::string oldPath = static_cast<const char*>(doc->GetPathName());
+
+    // DoSave, not OnSaveDocument: the canonical doc.cpp::DoSave runs the
+    // on_world_save script handler and the OnPluginWorldSave callback before
+    // delegating to the base (which does the actual write).
+    if (!doc->DoSave(savePath.c_str(), TRUE)) {
         wxMessageBox(wxT("Failed to save world file."), wxT("Save Error"), wxICON_ERROR | wxOK);
         return;
     }
 
     // Remove the old path from the world list if save-as changed it.
-    std::string oldPath = static_cast<const char*>(doc->GetPathName());
     if (!oldPath.empty() && oldPath != savePath)
         world_list_remove(oldPath);
 
@@ -1965,14 +1973,18 @@ static bool hook_save_world(void* vdoc, bool saveAs, void* vparent)
     if (path.IsEmpty()) return false;
 
     std::string savePath = path.ToUTF8().data();
-    if (!doc->OnSaveDocument(savePath.c_str())) {
+
+    // Old path first — DoSave calls SetPathName (see the File > Save hook).
+    std::string oldPath = static_cast<const char*>(doc->GetPathName());
+
+    // DoSave runs on_world_save + OnPluginWorldSave, then writes.
+    if (!doc->DoSave(savePath.c_str(), TRUE)) {
         wxMessageBox(wxT("Failed to save world file."),
                      wxT("Save Error"), wxICON_ERROR | wxOK, parent);
         return false;
     }
 
     // Update path, clear modified flag, maintain world lists.
-    std::string oldPath = static_cast<const char*>(doc->GetPathName());
     if (!oldPath.empty() && oldPath != savePath)
         world_list_remove(oldPath);
     doc->SetPathName(savePath.c_str());

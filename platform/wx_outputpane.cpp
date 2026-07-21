@@ -287,6 +287,14 @@ static SOutputLine DetectURLs(SOutputLine line)
             SOutputRun urlRun  = run;
             urlRun.text        = text.substr(urlStart, urlEnd - urlStart);
             urlRun.action      = urlRun.text;
+            // These runs are synthesised by the port, not by MXP, so no engine
+            // option governs them and nothing else gives them a link look.  The
+            // painter no longer force-colours/underlines action-bearing runs (so
+            // that the world's link-colour and underline options are honoured),
+            // which means the affordance has to be baked in here or a bare
+            // http:// in MUD output would render as ordinary text.
+            urlRun.fg        = 0x00FFAA44;   // COLORREF 0x00BBGGRR = RGB(0x44,0xAA,0xFF)
+            urlRun.underline = true;
             result.push_back(std::move(urlRun));
 
             pos = urlEnd;
@@ -1086,7 +1094,10 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                 wxString wxText = DecodeRunText(run);
                 int runLen = (int)wxText.size();
 
-                bool drawUnderline = run.underline || !run.action.empty();
+                // Underline only when the run actually carries it.  It used to be
+                // forced on for any action-bearing run, which overrode the world's
+                // "Underline hyperlinks" setting (see DrawRunChunk below).
+                bool drawUnderline = run.underline;
                 if      (run.bold && run.italic && drawUnderline) dc.SetFont(m_fontBoldItalicUnderline);
                 else if (run.bold && run.italic)                  dc.SetFont(m_fontBoldItalic);
                 else if (run.italic && drawUnderline)             dc.SetFont(m_fontItalicUnderline);
@@ -1163,8 +1174,6 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
     wxColour fg(GetRValue(run.fg), GetGValue(run.fg), GetBValue(run.fg));
     wxColour bg(GetRValue(run.bg), GetGValue(run.bg), GetBValue(run.bg));
 
-    bool isLink = !run.action.empty();
-
     // ── Background fill ───────────────────────────────────────────────────────
     // For selected text, use the OS system selection colours (wxSYS_COLOUR_HIGHLIGHT
     // / wxSYS_COLOUR_HIGHLIGHTTEXT) rather than inverting the run's own fg/bg.
@@ -1175,9 +1184,6 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
     if (selected) {
         bgFill  = wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHT);
         textFg  = wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHTTEXT);
-    } else if (isLink) {
-        bgFill  = bg;
-        textFg  = wxColour(0x44, 0xAA, 0xFF);  // link blue
     } else {
         bgFill  = bg;
         textFg  = fg;
@@ -1191,8 +1197,16 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
     dc.SetBackgroundMode(wxTRANSPARENT);
 
     // Select the pre-built font variant to avoid per-run wxFont allocation.
-    // 8 variants: bold × italic × underline (link text is treated as underlined).
-    bool drawUnderline = run.underline || isLink;
+    // 8 variants: bold × italic × underline.
+    //
+    // Link runs are NOT force-underlined here any more.  The engine already
+    // decides: mxp/mxpOpenAtomic.cpp:180-181,773-774 set UNDERLINE only when the
+    // world's "Underline hyperlinks" option is on, and doc_display_shared.cpp
+    // carries that through as run.underline.  ORing isLink in overrode the
+    // setting so it could never be turned off.  (MXP_ACTION_HYPERLINK ORs
+    // UNDERLINE unconditionally at mxpOpenAtomic.cpp:213 — stock Windows
+    // behaviour, left alone; the option governs send-links and image links.)
+    bool drawUnderline = run.underline;
     if      (run.bold && run.italic && drawUnderline) dc.SetFont(m_fontBoldItalicUnderline);
     else if (run.bold && run.italic)                  dc.SetFont(m_fontBoldItalic);
     else if (run.italic && drawUnderline)             dc.SetFont(m_fontItalicUnderline);

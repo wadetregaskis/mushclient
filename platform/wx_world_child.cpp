@@ -2667,7 +2667,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // macros take priority over built-in bindings (e.g. F3 for Find).
     // All macros are processed on the input bar, not the output pane, because
     // we want them available while typing.
-    if (!evt.AltDown() && m_doc) {
+    if (m_doc) {
         // Helper: dispatch a macro by index.
         // REPLACE_COMMAND → set input bar; SEND_NOW → send via EvaluateCommand;
         // ADD_TO_COMMAND → insert at cursor.
@@ -2711,10 +2711,43 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 
         bool ctrl  = evt.RawControlDown();
         bool shift = evt.ShiftDown();
+        bool alt   = evt.AltDown();
         int macIdx  = -1;
         int kpIdx   = -1;
 
-        if (!ctrl && !shift) {
+        if (alt && !ctrl && !shift) {
+            // Alt+letter macros (MAC_ALT_A..MAC_ALT_Z, 17 slots).  This whole
+            // block used to be skipped outright when Alt was held, so none of
+            // them ever fired on the port.  wx delivers Option+K as KEY_DOWN
+            // code 'K' with AltDown() set before any macOS dead-key
+            // composition — the accelerator path (FireAcceleratorIfMatch) has
+            // relied on exactly that for FALT since it was written.
+            //
+            // Only slots the user has actually filled in are consumed: on macOS
+            // Option+letter is how you type ø, π, ∂ and friends, so fireMacro
+            // returns false for an empty macro and we fall through to
+            // evt.Skip() below, leaving normal text entry alone.
+            switch (code) {
+            case 'A': macIdx = MAC_ALT_A; break;
+            case 'B': macIdx = MAC_ALT_B; break;
+            case 'J': macIdx = MAC_ALT_J; break;
+            case 'K': macIdx = MAC_ALT_K; break;
+            case 'L': macIdx = MAC_ALT_L; break;
+            case 'M': macIdx = MAC_ALT_M; break;
+            case 'N': macIdx = MAC_ALT_N; break;
+            case 'O': macIdx = MAC_ALT_O; break;
+            case 'P': macIdx = MAC_ALT_P; break;
+            case 'Q': macIdx = MAC_ALT_Q; break;
+            case 'R': macIdx = MAC_ALT_R; break;
+            case 'S': macIdx = MAC_ALT_S; break;
+            case 'T': macIdx = MAC_ALT_T; break;
+            case 'U': macIdx = MAC_ALT_U; break;
+            case 'X': macIdx = MAC_ALT_X; break;
+            case 'Y': macIdx = MAC_ALT_Y; break;
+            case 'Z': macIdx = MAC_ALT_Z; break;
+            default: break;
+            }
+        } else if (!alt && !ctrl && !shift) {
             switch (code) {
             case WXK_F1:  macIdx = MAC_F1;  break;
             case WXK_F2:  macIdx = MAC_F2;  break;
@@ -2746,7 +2779,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
             case WXK_NUMPAD_ADD:     kpIdx = eKeypad_Plus; break;
             default: break;
             }
-        } else if (shift && !ctrl) {
+        } else if (!alt && shift && !ctrl) {
             switch (code) {
             case WXK_F1:  macIdx = MAC_SHIFT_F1;  break;
             case WXK_F2:  macIdx = MAC_SHIFT_F2;  break;
@@ -2762,7 +2795,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
             case WXK_F12: macIdx = MAC_SHIFT_F12; break;
             default: break;
             }
-        } else if (ctrl && !shift) {
+        } else if (!alt && ctrl && !shift) {
             switch (code) {
             case WXK_F1:  macIdx = MAC_CTRL_F1;  break;
             case WXK_F2:  macIdx = MAC_CTRL_F2;  break;
@@ -3835,6 +3868,23 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         // Capture the world file path before clearing the doc, so we can
         // remove it from the startup-reopen list below.
         std::string worldPath = static_cast<const char*>(m_doc->GetPathName());
+
+        // Run the world-close script teardown while the pane is STILL attached,
+        // so anything these handlers print can reach the screen.  Closing a
+        // single world previously skipped all of this — only Cmd+Q did it (see
+        // the identical block in platform/wx_mfc_impl.cpp hook_query_quit_save)
+        // — so Cmd+W and Cmd+Q behaved differently and, because Quow's plugins
+        // persist their miniwindow layout from OnPluginClose, closing one world
+        // silently threw that layout away.
+        //
+        // Deliberately NOT routed through SaveModified(): doc.cpp:2098-2144
+        // would re-ask the "this will end your session" and variables-changed
+        // prompts that OnClose already asked above, double-prompting the user.
+        m_doc->FireWorldClose();
+        m_doc->SendToAllPluginCallbacks(ON_PLUGIN_CLOSE);
+        for (PluginListIterator pit = m_doc->m_PluginList.begin();
+             pit != m_doc->m_PluginList.end(); ++pit)
+            if (*pit) (*pit)->SaveState();
 
         // Detach the view BEFORE deleting the doc so that any final output
         // flushed by the destructor doesn't call AppendLine on the dying pane

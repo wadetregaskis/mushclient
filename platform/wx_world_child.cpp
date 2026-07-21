@@ -2946,6 +2946,17 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     if (cmd.IsEmpty() && m_doc->m_bAutoRepeat && !isPassword && !m_history.empty())
         cmd = CString(m_history.back().ToUTF8().data());
 
+    // Auto-say (World Properties > Input > Auto Say).  Handles the override
+    // prefix, the three exclusions and the prepend+send itself — including its
+    // own backslash translation on the re-evaluate arm — so it runs BEFORE the
+    // plain-send translation below, mirroring sendvw.cpp's ordering.  Returns
+    // true when it consumed the command; it may also strip the override prefix
+    // and return false, in which case we send the stripped text normally.
+    if (!cmd.IsEmpty() && m_doc->ApplyAutoSay(cmd)) {
+        m_doc->UpdateAllViews(nullptr);
+        return;
+    }
+
     // "Translate backslash sequences" (m_bTranslateBackslashSequences): turn \n,
     // \t, \\ etc. in the typed line into the real characters, exactly as
     // sendvw.cpp:678/707 does at its Execute() call.

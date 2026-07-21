@@ -1951,7 +1951,15 @@ public:
 
   CChildFrame * GetChildFrame (void);
 
-  void ChangeFont ( const int nHeight, 
+  // Auto-say pre-processing for a hand-typed command (World Properties > Input
+  // > Auto Say): override prefix, the exclusions, and the prepend+send itself.
+  // Returns true when auto-say consumed the command (already sent/executed, or
+  // deliberately dropped because the world is not connected); false means the
+  // caller should send strFullCommand normally.  strFullCommand is modified in
+  // place when the override prefix is stripped.  Body in doc_shared.cpp.
+  bool ApplyAutoSay (CString & strFullCommand);
+
+  void ChangeFont ( const int nHeight,
                     const char * lpszFacename,
                     const int nWeight, 
                     const DWORD iFontCharset,

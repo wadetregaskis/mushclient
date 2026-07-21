@@ -4917,3 +4917,109 @@ void CMUSHclientDoc::SendTo (
 
 
   } // end of CMUSHclientDoc::SendTo
+
+// ── ApplyAutoSay ───────────────────────────────────────────────────────────
+// Auto-say pre-processing for a hand-typed command (World Properties > Input >
+// Auto Say).  Lifted from CSendView::SendCommand (sendvw.cpp:608-696) so that
+// view implementations other than the Windows CSendView can reach it: on the
+// port the command bar is CWorldChildFrame::OnInputEnter, CSendView is never
+// instantiated, and consequently NONE of the six auto-say settings did anything
+// at all — the page rendered and saved correctly, but the feature was inert.
+//
+// Returns true when auto-say consumed the command; false to let the caller send
+// strFullCommand normally.  strFullCommand is modified in place when the
+// override prefix is stripped (so the caller sends the stripped text).
+//
+// NOTE: sendvw.cpp still carries its own copy of this logic rather than calling
+// through here.  Collapsing the two is worthwhile but is deliberately NOT done
+// blind: in CSendView the "not connected" arm below is a bare `return` that
+// exits SendCommand *before* its command-history/cleanup tail (sendvw.cpp:713+),
+// so routing it through a bool return would quietly change Windows behaviour.
+// That reconciliation needs a Windows build to verify.
+bool CMUSHclientDoc::ApplyAutoSay (CString & strFullCommand)
+  {
+BOOL bAutoSay = m_bEnableAutoSay;
+
+  // if auto-say enabled, see if we can exclude this line, because of override prefix
+  if (bAutoSay && !m_strOverridePrefix.IsEmpty ())    // only if we have one
+    if (strFullCommand.Left (m_strOverridePrefix.GetLength ()) == m_strOverridePrefix)
+      {
+      bAutoSay = false;
+      strFullCommand = strFullCommand.Mid (m_strOverridePrefix.GetLength ());   // exclude prefix
+      }
+
+  // exclude special characters, if wanted
+
+  if (!strFullCommand.IsEmpty ())
+    if (bAutoSay && m_bExcludeNonAlpha &&
+        !(isalpha (strFullCommand [0]) || isdigit (strFullCommand [0])))
+        bAutoSay = false;
+
+  // exclude text of macros, if wanted
+
+  if (bAutoSay && m_bExcludeMacros)
+    {
+    for (int i = 0; bAutoSay && i < NUMITEMS (m_macro_type); i++)
+      if (m_macro_type [i] == REPLACE_COMMAND ||
+          m_macro_type [i] == SEND_NOW)
+        if ( !m_macros [i].IsEmpty ())    // ignore blank macros
+          if (strFullCommand.Left (m_macros [i].GetLength ()) == m_macros [i])
+            bAutoSay = false;
+    } // end of checking for macros
+
+  // exclude auto-say sequence itself. ie. don't have "page nick =page nick ="
+
+  if (bAutoSay && strFullCommand.Left (m_strAutoSayString.GetLength ()) ==
+      m_strAutoSayString)
+      bAutoSay = false;
+
+  if (!bAutoSay)
+    return false;     // caller sends strFullCommand normally
+
+  // let them know if they are foolishly trying to send to a closed connection
+
+  if (!m_bReEvaluateAutoSay && CheckConnected ())
+    return true;      // consumed: nothing to send
+
+  // break up auto-say string into a list, terminated by newlines
+  CStringList strList;
+  StringToList (strFullCommand, ENDLINE, strList);
+  m_bEnableAutoSay = false; // disable to prevent loop
+
+  // disable command stacking
+  unsigned short bSaveCommandStack = m_enable_command_stack;
+  m_enable_command_stack = false;
+
+  for (POSITION command_pos = strList.GetHeadPosition (); command_pos; )
+    {
+    CString str = strList.GetNext (command_pos);
+
+    if (m_bReEvaluateAutoSay)
+      {
+      // evaluate aliases, speed walking, command stacking etc.
+
+      m_iExecutionDepth = 0;    // hand-typed command, assume depth zero
+
+      str = m_strAutoSayString + str;   // prepend auto-say string
+
+      if (Execute (
+              m_bTranslateBackslashSequences ?
+                ::FixupEscapeSequences (str) : str
+          ) != eOK)
+        break;    // some obscure error? give up
+
+      }
+    else
+      {  // just send it
+      SendMsg (m_strAutoSayString + str,
+               m_display_my_input,
+               false,          // don't queue
+               LoggingInput ());
+      }
+    }
+
+  m_bEnableAutoSay = true; // re-enable it
+  m_enable_command_stack = bSaveCommandStack; // re-enable it
+
+  return true;      // consumed
+  } // end of CMUSHclientDoc::ApplyAutoSay

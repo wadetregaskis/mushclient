@@ -84,9 +84,16 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
             if (pStyle->iLength > 0) {
                 SOutputRun run;
                 GetStyleRGB(pStyle, run.fg, run.bg);
-                run.bold          = (pStyle->iFlags & HILITE)    != 0;
-                run.underline     = (pStyle->iFlags & UNDERLINE) != 0;
-                run.italic        = (pStyle->iFlags & BLINK)     != 0;  // MUSHclient maps BLINK → italic
+                // The three "Show" checkboxes (World Properties > Appearance >
+                // Output) decide whether the ANSI attribute is rendered at all.
+                // Windows honours them when it builds the 16 style fonts
+                // (doc.cpp ChangeFont, which takes bShowBold/Italic/Underline);
+                // these run flags are the equivalent choke point for a PAL view
+                // adapter, and were ungated — so on the port the checkboxes did
+                // nothing.  UpdateAllViews re-emits, so this is live.
+                run.bold          = m_bShowBold      && ((pStyle->iFlags & HILITE)    != 0);
+                run.underline     = m_bShowUnderline && ((pStyle->iFlags & UNDERLINE) != 0);
+                run.italic        = m_bShowItalic    && ((pStyle->iFlags & BLINK)     != 0);  // MUSHclient maps BLINK → italic
                 run.strikethrough = (pStyle->iFlags & STRIKEOUT) != 0;
                 run.text = std::string(pLine->text + charOff, pStyle->iLength);
                 run.utf8 = m_bUTF_8;                      // non-UTF-8 worlds: tag the
@@ -125,9 +132,10 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
             if (pStyle->iLength > 0) {
                 SOutputRun run;
                 GetStyleRGB(pStyle, run.fg, run.bg);
-                run.bold          = (pStyle->iFlags & HILITE)    != 0;
-                run.underline     = (pStyle->iFlags & UNDERLINE) != 0;
-                run.italic        = (pStyle->iFlags & BLINK)     != 0;
+                // Same "Show" gates as the finished-line emitter above.
+                run.bold          = m_bShowBold      && ((pStyle->iFlags & HILITE)    != 0);
+                run.underline     = m_bShowUnderline && ((pStyle->iFlags & UNDERLINE) != 0);
+                run.italic        = m_bShowItalic    && ((pStyle->iFlags & BLINK)     != 0);
                 run.strikethrough = (pStyle->iFlags & STRIKEOUT) != 0;
                 run.text = std::string(m_pCurrentLine->text + charOff, pStyle->iLength);
                 run.utf8 = m_bUTF_8;

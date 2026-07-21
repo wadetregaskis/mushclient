@@ -263,6 +263,12 @@ private:
     // "nothing applied yet".
     unsigned long m_lastInputFg = 0xFFFFFFFFUL;
     unsigned long m_lastInputBg = 0xFFFFFFFFUL;
+    // Likewise for the output-pane options the ctor applies once (-1/absurd
+    // sentinels so the first tick always pushes the real values).
+    long m_lastMaxLines   = -1;
+    bool m_lastAutoFreeze = false;
+    bool m_lastCopySel    = false;
+    bool m_lastCopyHtml   = false;
 
     // Enter or leave Ctrl+R reverse-history-search mode.  Sets m_histRSearch and
     // tints the input bar blue (on) or restores its normal colors (off).

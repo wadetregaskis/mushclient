@@ -1588,7 +1588,12 @@ void COutputPane::OnLeftUp(wxMouseEvent& evt)
                 wxString text = SelectedText();
                 if (!text.IsEmpty()) {
                     if (m_copySelToClip) {
-                        if (wxTheClipboard->Open()) {
+                        // "…in HTML" (m_bAutoCopyInHTML) was previously ignored
+                        // here: the auto-copy always put plain text on the
+                        // clipboard, so ticking the HTML box did nothing.
+                        if (m_autoCopyInHTML) {
+                            CopySelectionAsHTML(GetFont().GetFaceName());
+                        } else if (wxTheClipboard->Open()) {
                             wxTheClipboard->SetData(new wxTextDataObject(text));
                             wxTheClipboard->Close();
                         }

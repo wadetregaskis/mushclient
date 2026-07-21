@@ -205,6 +205,8 @@ public:
     // Whether to auto-copy text selection to the clipboard on mouse release.
     // Corresponds to world option copy_selection_to_clipboard.
     void SetCopySelectionToClipboard(bool v) { m_copySelToClip = v; }
+    // copy_selection_to_clipboard_in_html: auto-copy uses HTML instead of text.
+    void SetAutoCopyInHTML(bool v) { m_autoCopyInHTML = v; }
 
     // Word delimiters used for double-click word selection.
     // Characters in this string break words; defaults to ".,()[]\"\'" matching
@@ -460,6 +462,7 @@ private:
     // scrolling into view.  Mirrors the world's m_bAutoFreeze flag.
     bool        m_allowAutoFreeze    = true;
     bool        m_copySelToClip     = false;  // copy_selection_to_clipboard
+    bool        m_autoCopyInHTML    = false;  // …and do it as HTML
     std::string m_wordDelimitersDblClick = ".,()[]\"\'";
 
     // Triple-click detection: record the timestamp and line of the last

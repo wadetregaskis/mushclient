@@ -3007,6 +3007,30 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         }
     }
 
+    // Same treatment for the output-pane options that the constructor applies
+    // once and nothing ever re-applied, so changing them in World Properties >
+    // Appearance > Output only took effect after closing and reopening the
+    // world: scrollback limit, freeze-on-scrollback, auto-copy selection, and
+    // whether that auto-copy is HTML.  Cheap scalar compares; only touch the
+    // pane when something actually changed.
+    if (m_doc && m_output) {
+        const long maxl   = (long) m_doc->m_maxlines;
+        const bool freeze = m_doc->m_bAutoFreeze != 0;
+        const bool copySel= m_doc->m_bCopySelectionToClipboard != 0;
+        const bool asHtml = m_doc->m_bAutoCopyInHTML != 0;
+        if (maxl != m_lastMaxLines || freeze != m_lastAutoFreeze ||
+            copySel != m_lastCopySel || asHtml != m_lastCopyHtml) {
+            m_lastMaxLines  = maxl;
+            m_lastAutoFreeze= freeze;
+            m_lastCopySel   = copySel;
+            m_lastCopyHtml  = asHtml;
+            if (maxl > 0) m_output->SetMaxLines((int) maxl);
+            m_output->SetAllowAutoFreeze(freeze);
+            m_output->SetCopySelectionToClipboard(copySel);
+            m_output->SetAutoCopyInHTML(asHtml);
+        }
+    }
+
     if (!m_doc) return;
 
     // ── Speed-walk / command queue draining ──────────────────────────────────

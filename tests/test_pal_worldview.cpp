@@ -70,10 +70,58 @@ TEST(PalWorldView, InterfaceRecordsStyledOutput)
     ASSERT_EQ(1u, (unsigned)lines.size());
     EXPECT_STREQ("green normal", line_text(lines[0]).c_str());
     ASSERT_TRUE(lines[0].size() >= 2);      // bold-green run, then normal run
-    EXPECT_TRUE(lines[0].front().bold);     // first run is bold
-    // style genuinely changes between the runs (colour and/or weight)
-    EXPECT_TRUE(lines[0].front().fg   != lines[0].back().fg ||
-                lines[0].front().bold != lines[0].back().bold);
+    // "Show bold" (show_bold) defaults to FALSE, and it gates whether the ANSI
+    // HILITE attribute is rendered as a bold FACE.  With the default off, ANSI
+    // bold must show up as the bright colour only — matching Windows, where
+    // ChangeFont gives every style the world's base weight unless bShowBold is
+    // set (doc.cpp: `bShowBold ? ((i & HILITE) ? FW_BOLD : FW_NORMAL) : nWeight`).
+    EXPECT_FALSE(lines[0].front().bold);
+    // …but the two runs must still be visibly distinct, via the bold palette.
+    EXPECT_TRUE(lines[0].front().fg != lines[0].back().fg);
+}
+
+// The other half of the same gate: turning "Show bold" on must let HILITE reach
+// the view as a bold run.  Together these pin both directions of the option.
+TEST(PalWorldView, ShowBoldOptionGatesBoldRuns)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bShowBold  = 1;               // World Properties > Appearance > Output
+    doc.m_pWorldView = &view;
+
+    feed(doc, "\x1b[1;32mgreen\x1b[0m normal\n");
+
+    auto lines = committed(view);
+    ASSERT_EQ(1u, (unsigned)lines.size());
+    ASSERT_TRUE(lines[0].size() >= 2);
+    EXPECT_TRUE(lines[0].front().bold);    // HILITE now emitted as bold
+    EXPECT_FALSE(lines[0].back().bold);    // the normal run is unaffected
+}
+
+// Underline defaults ON, so clearing it must suppress the attribute.
+TEST(PalWorldView, ShowUnderlineOptionGatesUnderlineRuns)
+{
+    {
+        FakeWorldView view;
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.m_pWorldView = &view;
+        feed(doc, "\x1b[4munder\x1b[0m\n");
+        auto lines = committed(view);
+        ASSERT_EQ(1u, (unsigned)lines.size());
+        ASSERT_TRUE(lines[0].size() >= 1);
+        EXPECT_TRUE(lines[0].front().underline);   // default show_underline = true
+    }
+    {
+        FakeWorldView view;
+        CMUSHclientDoc doc; make_doc(doc);
+        doc.m_bShowUnderline = 0;                  // user cleared the checkbox
+        doc.m_pWorldView = &view;
+        feed(doc, "\x1b[4munder\x1b[0m\n");
+        auto lines = committed(view);
+        ASSERT_EQ(1u, (unsigned)lines.size());
+        ASSERT_TRUE(lines[0].size() >= 1);
+        EXPECT_FALSE(lines[0].front().underline);  // …and it is suppressed
+    }
 }
 
 TEST(PalWorldView, OneCommittedLinePerNewline)

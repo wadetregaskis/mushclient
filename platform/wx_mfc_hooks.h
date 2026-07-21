@@ -232,6 +232,9 @@ extern void (*g_wxhook_edit_replace_sel)(void* hwnd, const char* text); // repla
 // op: 0=line count, 1=char index of line `arg` (-1=current), 2=length of line
 // holding char `arg` (-1=current), 3=line of char `arg` (-1=current), 4=text length.
 extern int  (*g_wxhook_edit_line_info)(void* hwnd, int op, int arg);
+// CWnd::SetFont — `font` is the CFont's wxFont* (CGdiObject::m_impl).  The wx
+// side copies it, so the caller may destroy the CFont afterwards.
+extern void (*g_wxhook_set_font)(void* hwnd, void* font);
 // world.SetCursor(n): set the mouse cursor over the doc's output pane.  n is the
 // MUSHclient cursor index (-1 = hidden, 0 = arrow, 1 = hand, …, 12 = help).
 extern void (*g_wxhook_set_cursor)(void* doc, int cursorNum);

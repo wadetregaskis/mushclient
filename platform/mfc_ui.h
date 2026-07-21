@@ -3246,7 +3246,7 @@ public:
     void SetWindowText(LPCTSTR) {}
     void GetWindowText(CString&) const {}
     void SetReadOnly(BOOL=TRUE) {}
-    void SetFont(CFont*, BOOL=TRUE) {}
+    // SetFont is inherited from CWnd (real, via g_wxhook_set_font) — don't shadow.
     int  GetLineCount() const { return 0; }
     // Returns the embedded CEdit control (MFC API).
     // Defined inline after CEdit is fully declared.
@@ -3709,7 +3709,7 @@ public:
     void EmptyUndoBuffer() {}
     void SetMargins(UINT, UINT) {}
     DWORD GetMargins() const { return 0; }
-    void SetFont(CFont*, BOOL=TRUE) {}
+    // SetFont is inherited from CWnd (real, via g_wxhook_set_font) — don't shadow.
     // Additional CEdit methods used in dialog code
     void  SetTabStops(int) {}
     void  SetTabStops(int, const int*) {}
@@ -4076,7 +4076,7 @@ public:
     // Get/SetWindowText inherited from CWnd (wx hooks) — don't shadow.
     void AppendText(LPCTSTR) {}
     void SetReadOnly(BOOL=TRUE) {}
-    void SetFont(CFont*, BOOL=TRUE) {}
+    // SetFont is inherited from CWnd (real, via g_wxhook_set_font) — don't shadow.
     long StreamIn(int, void*) { return 0; }
     long StreamOut(int, void*) { return 0; }
     BOOL GetDefaultCharFormat(struct CHARFORMAT& cf) const { return FALSE; }
@@ -6175,10 +6175,13 @@ struct WSADATA {
 // ── Stubs for Windows-only declarations in stdafx.h ──────────────────────────
 // These are guarded by #ifdef _WIN32 in stdafx.h, so we provide them here.
 
-// ptrCFont / FixFont — used in dialogs for font setup; declaration is in stdafx.h
-// inside #ifdef _WIN32 so we provide a non-Windows stub here.
-typedef CFont* ptrCFont;
-inline void FixFont(ptrCFont&, CEdit&, const CString&, int, int, DWORD) {}
+// ptrCFont / FixFont used to be stubbed out here as an inline no-op, because
+// stdafx.h only declared them under #ifdef _WIN32.  That stub took its CString
+// by REFERENCE while the real Utilities.cpp body takes it by VALUE, so the two
+// were separate overloads rather than a declaration and its definition: every
+// dialog call site bound to the no-op and the real FixFont was dead code on the
+// port.  stdafx.h now declares FixFont unconditionally, so there is nothing to
+// stub here — do not reintroduce a stub.
 
 // IsArchiveXML is declared in stdafx.h (outside #ifdef _WIN32) and implemented
 // in xml/xml_serialize.cpp — no stub needed here.

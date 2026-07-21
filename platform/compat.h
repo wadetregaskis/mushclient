@@ -379,7 +379,11 @@ public:
         m_hWnd = nullptr;
     }
     void  CenterWindow(CWnd* = nullptr) {}
-    void  SetFont(CFont*, BOOL = TRUE) {}
+    // Real: pushes the CFont's wxFont onto the underlying wx control.  FixFont
+    // (Utilities.cpp) relies on this to give trigger/alias/script editors the
+    // fixed-pitch font; a no-op here silently disables that whole feature.
+    // Defined out-of-line after mfc_ui.h (CFont must be complete).
+    void  SetFont(CFont* pFont, BOOL = TRUE);
     CFont* GetFont() const { return nullptr; }
     void  DragAcceptFiles(BOOL = TRUE) {}
     BOOL  SetForegroundWindow() { return FALSE; }
@@ -491,7 +495,11 @@ public:
 // Must come AFTER CWnd (above) because it derives many classes from CWnd.
 #include "mfc_ui.h"
 
-// ── CWnd methods that need complete CRect — defined after mfc_ui.h ────────
+// ── CWnd methods that need complete CRect/CFont — defined after mfc_ui.h ──
+inline void CWnd::SetFont(CFont* pFont, BOOL) {
+    if (g_wxhook_set_font && pFont && pFont->m_impl)
+        g_wxhook_set_font(m_hWnd, pFont->m_impl);
+}
 inline void CWnd::GetClientRect(CRect& r) const { r.left=r.top=r.right=r.bottom=0; }
 inline void CWnd::ClientToScreen(CRect& r) const { (void)r; }
 inline void CWnd::ScreenToClient(CRect& r) const { (void)r; }

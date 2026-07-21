@@ -64,6 +64,7 @@ void          (*g_wxhook_edit_get_sel)(void*, int*, int*)       = nullptr;
 void          (*g_wxhook_edit_set_sel)(void*, int, int)         = nullptr;
 void          (*g_wxhook_edit_replace_sel)(void*, const char*)  = nullptr;
 int           (*g_wxhook_edit_line_info)(void*, int, int)       = nullptr;
+void          (*g_wxhook_set_font)(void*, void*)                = nullptr;
 void          (*g_wxhook_set_cursor)(void*, int)                = nullptr;
 void          (*g_wxhook_set_main_background)(unsigned long)    = nullptr;
 bool (*g_wxhook_append_to_notepad)(const char*, const char*, bool) = nullptr;

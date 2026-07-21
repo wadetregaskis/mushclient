@@ -500,7 +500,19 @@ bool CFont::CreateFont(int nHeight, int /*nWidth*/, int /*nEscapement*/,
     // nHeight > 0: cell height; nHeight == 0: default
     int pixH = (nHeight < 0) ? -nHeight : (nHeight > 0 ? nHeight : 12);
 
-    wxFontInfo fi(wxSize(0, pixH));
+    // Every caller derives that height the Win32 way — -MulDiv (points,
+    // GetDeviceCaps (LOGPIXELSY), 72) — see ChangeFont (doc.cpp), FixFont
+    // (Utilities.cpp) and WindowFont (miniwindow.cpp).  On Windows LOGPIXELSY is
+    // 96, so the number stays close to the point size; on the port it is the
+    // REAL display PPI, which is 144 on a Retina Mac.  A 9pt request therefore
+    // arrives here as 18, and wx measures fonts in logical points on macOS, so
+    // handing that to wxFontInfo(wxSize(0, pixH)) yields a ~15pt font.
+    // Undo the caller's conversion through the same PPI: the round-trip is
+    // exact and every caller gets the point size it actually asked for.
+    const int ppi    = wxGetDisplayPPI().y;
+    const int points = (ppi > 0) ? MulDiv(pixH, 72, ppi) : pixH;
+
+    wxFontInfo fi(points > 0 ? points : 1);
     if (lpszFaceName && *lpszFaceName)
         fi.FaceName(wxString::FromUTF8(lpszFaceName));
     if (nWeight >= FW_BOLD) fi.Bold();
@@ -546,7 +558,13 @@ int CFont::GetLogFont(LOGFONT* lf) {
     *lf = {};
     if (!m_impl) return 0;
     wxFont* f = static_cast<wxFont*>(m_impl);
-    lf->lfHeight = -f->GetPixelSize().GetHeight();
+    // Symmetric with CreateFont: report the logical-pixel height a caller would
+    // have passed in, i.e. -MulDiv (points, LOGPIXELSY, 72).  Reporting the raw
+    // wx pixel size instead would shrink the font on every
+    // GetLogFont → CreateFontIndirect round-trip (StatLink.cpp:74 does exactly
+    // that to derive its underlined variant).
+    const int ppi = wxGetDisplayPPI().y;
+    lf->lfHeight = -MulDiv(f->GetPointSize(), (ppi > 0 ? ppi : 72), 72);
     lf->lfWeight = f->GetWeight() == wxFONTWEIGHT_BOLD ? FW_BOLD : FW_NORMAL;
     lf->lfItalic = (f->GetStyle() != wxFONTSTYLE_NORMAL) ? 1 : 0;
     lf->lfUnderline = f->GetUnderlined() ? 1 : 0;

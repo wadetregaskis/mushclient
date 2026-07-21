@@ -812,7 +812,11 @@ FontMetrics WxSurface::fontMetrics(FontId fid) {
 }
 
 int WxSurface::dpi() {
-    return GetDeviceCaps((*measureDc()), LOGPIXELSY);   // Mac-native (~72), decided
+    // The real display PPI — 144 on a Retina Mac, NOT the ~72 this comment used
+    // to claim (the PAL surface selftest prints it).  Callers convert points to
+    // a pixel height with MulDiv(points, dpi(), 72); CFont::CreateFont converts
+    // straight back through the same PPI, so the round-trip is exact.
+    return GetDeviceCaps((*measureDc()), LOGPIXELSY);
 }
 
 } // namespace pal
@@ -928,6 +932,22 @@ int RunPalSurfaceSelfTest() {
         for (int x = 0; x < 100; ++x)
             if (ad.getPixel(ts, { x, y }) != kBlack) { inked = true; break; }
     stCheck(inked, "drawText actually inks pixels");
+
+    // 7b. point-size round-trip.  Callers (WindowFont, ChangeFont, FixFont) turn
+    // a point size into pixelHeight with MulDiv(points, dpi(), 72); CFont::
+    // CreateFont must undo that through the same PPI.  If it does not, a 10pt
+    // request realizes ~1.67x too large on a 144-PPI Retina display and every
+    // miniwindow's text overflows the box the plugin sized for it.  A correctly
+    // realized 10pt font has a line height around 12-13 logical units; the
+    // unconverted bug gives ~20+.
+    {
+        const int kPoints = 10;
+        FontId pf = ad.createFont({ "", MulDiv(kPoints, ad.dpi(), 72), 400,
+                                    false, false, false, 0, 0 });
+        FontMetrics pfm = ad.fontMetrics(pf);
+        stCheck(pfm.height >= kPoints - 2 && pfm.height <= kPoints + 6,
+                "createFont round-trips a point size through dpi()");
+    }
 
     // 8. line interior (endpoint inclusivity is the shim's documented deviation)
     SurfaceId ln = ad.createSurface({ 10, 10 }, kBlack);

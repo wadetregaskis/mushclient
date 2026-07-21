@@ -3620,6 +3620,21 @@ static int hook_edit_line_info(void* hwnd, int op, int arg) {
     return 0;
 }
 
+// CWnd::SetFont — used by FixFont (Utilities.cpp) to put the fixed-pitch font on
+// the trigger/alias/timer/script editors.  wxWindow::SetFont copies the font, so
+// the caller's CFont may be destroyed afterwards.
+static void hook_set_font(void* hwnd, void* font)
+{
+    // NOT resolveTarget(): that maps a null handle to the MDI parent frame, so an
+    // unbound control would restyle the whole main window.
+    if (!hwnd) return;
+    wxWindow* w = toWx(hwnd);
+    wxFont*   f = (wxFont*) font;
+    if (!w || !f || !f->IsOk()) return;
+    w->SetFont(*f);
+    w->Refresh();
+}
+
 static void hook_button_set_check(void* hwnd, int state)
 {
     wxWindow* w = (wxWindow*) hwnd;
@@ -4345,6 +4360,7 @@ void wx_mfc_install_hooks()
     g_wxhook_edit_set_sel         = hook_edit_set_sel;
     g_wxhook_edit_replace_sel     = hook_edit_replace_sel;
     g_wxhook_edit_line_info       = hook_edit_line_info;
+    g_wxhook_set_font             = hook_set_font;
     g_wxhook_get_pixel            = wxgdi_get_pixel;   // defined in wx_gdi_compat.cpp
     g_wxhook_set_cursor           = hook_set_cursor;
     g_wxhook_set_main_background  = hook_set_main_background;

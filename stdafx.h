@@ -419,7 +419,10 @@ CString ConvertToRegularExpression (const CString & strMatchString,
 
 // Helper routine for setting the font in certain description windows to a
 // fixed-pitch courier, to make editing easier.
-#ifdef _WIN32
+// Declared for every platform: the port compiles the real Utilities.cpp body,
+// and if this declaration is not visible at the call sites they silently bind
+// to some other overload instead (which is exactly what used to happen — see
+// the note in platform/mfc_ui.h where the old no-op stub lived).
 typedef CFont * ptrCFont;     // for changing fonts in edit windows
 
 void FixFont (ptrCFont & pFont,
@@ -428,7 +431,6 @@ void FixFont (ptrCFont & pFont,
               const int iSize,
               const int iWeight,
               const DWORD iCharset);
-#endif // _WIN32
 
 // for escaping out things like \r in a trigger
 CString FixupEscapeSequences (const CString & strSource);

@@ -26,10 +26,15 @@ struct Recorder : CAsyncSocket {
 // A listening socket on 127.0.0.1:<ephemeral>; port() reports the port.
 struct Listener : Recorder {
     UINT port_ = 0;
-    bool open()
+    bool open(UINT wantPort = 0)
     {
-        if (!Create()) return false;
-        if (!Bind(0, "127.0.0.1")) return false;
+        // MFC style: Create() itself binds, so do NOT call Bind() afterwards —
+        // a second bind(2) on the same socket fails with EINVAL.
+        if (!Create(wantPort, SOCK_STREAM,
+                    FD_READ | FD_WRITE | FD_OOB |
+                    FD_ACCEPT | FD_CONNECT | FD_CLOSE,
+                    "127.0.0.1"))
+            return false;
         SOCKADDR_IN addr{}; int len = sizeof addr;
         if (!GetSockName((SOCKADDR*)&addr, &len)) return false;
         port_ = ntohs(addr.sin_port);
@@ -47,6 +52,40 @@ static bool poll_until(F pred)
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────
+
+// posix_socket.h Create: "Creates a non-blocking socket and BINDS it,
+// exactly as MFC's CAsyncSocket::Create does".  Create() used to drop
+// nSocketPort entirely, so a server socket ended up on a kernel-assigned
+// ephemeral port -- world.ChatAcceptCalls announced the configured chat
+// port while listening somewhere else, and world.UdpListen sat on port 0.
+TEST(PosixSocket, CreateBindsTheRequestedPortAndAddress)
+{
+    // Take an ephemeral port, note it, then release it so we can ask for
+    // that exact number back.
+    UINT wanted = 0;
+    {
+        Listener probe;
+        ASSERT_TRUE(probe.open());
+        wanted = probe.port_;
+        probe.Close();
+    }
+    ASSERT_TRUE(wanted != 0);
+
+    Listener lis;
+    ASSERT_TRUE(lis.open(wanted));
+    // The whole point: the socket is on the port we asked for, not a
+    // kernel-chosen one.
+    EXPECT_EQ(wanted, lis.port_);
+
+    // And it is really reachable there -- an unbound listen() would have
+    // succeeded too, which is exactly why this bug was invisible.
+    Recorder client;
+    ASSERT_TRUE(client.Create());
+    client.Connect("127.0.0.1", wanted);
+    EXPECT_TRUE(poll_until([&] { return lis.accepts > 0; }));
+    client.Close();
+    lis.Close();
+}
 
 // posix_socket.h Connect: "errno = EWOULDBLOCK; // normalise to
 // WSAEWOULDBLOCK for callers — Non-blocking connect. Returns FALSE with

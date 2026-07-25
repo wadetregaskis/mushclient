@@ -82,14 +82,32 @@ public:
     virtual ~CAsyncSocket() { if (m_hSocket != INVALID_SOCKET) Close(); }
 
     // ── Creation ──────────────────────────────────────────────────────────────
-    // Creates a non-blocking TCP socket.  nSocketPort is ignored (bound by OS
-    // at connect time).  nSocketType is SOCK_STREAM or SOCK_DGRAM.
-    // lpszSocketAddress and lEvent are accepted for API compatibility.
-    BOOL Create(UINT /*nSocketPort*/ = 0,
+    // Creates a non-blocking socket and BINDS it, exactly as MFC's
+    // CAsyncSocket::Create does (Socket() then Bind(nSocketPort,
+    // lpszSocketAddress), returning FALSE if the bind fails).
+    // nSocketType is SOCK_STREAM or SOCK_DGRAM.
+    //
+    // The bind used to be missing here, with a comment claiming the port was
+    // "ignored (bound by OS at connect time)".  That is true for an OUTBOUND
+    // socket and false for a server one, and it silently broke both server
+    // paths:
+    //   * world.ChatAcceptCalls (scripting/methods/methods_chat.cpp) passes the
+    //     configured chat port to Create() and then calls Listen().  listen(2)
+    //     on an unbound TCP socket succeeds on BSD/macOS — the kernel just
+    //     auto-assigns an ephemeral port — so the world cheerfully reported
+    //     "Listening for chat connections on port 4050" and advertised 4050 in
+    //     the CHAT handshake while actually listening on a random high port.
+    //     Nothing could ever call in.
+    //   * world.UdpListen (methods_udp.cpp) passes both a port and a local IP,
+    //     and lost both, leaving the socket on port 0 where no datagram arrives.
+    //
+    // lEvent is still accepted and ignored: this shim is Poll()-driven and
+    // dispatches every event type regardless of the requested mask.
+    BOOL Create(UINT nSocketPort     = 0,
                 int  nSocketType     = SOCK_STREAM,
                 long /*lEvent*/      = FD_READ | FD_WRITE | FD_OOB |
                                        FD_ACCEPT | FD_CONNECT | FD_CLOSE,
-                LPCSTR /*lpszSocketAddress*/ = nullptr)
+                LPCSTR lpszSocketAddress = nullptr)
     {
         if (m_hSocket != INVALID_SOCKET) Close();
 
@@ -115,6 +133,16 @@ public:
             int opt = 1;
             ::setsockopt(m_hSocket, IPPROTO_TCP, TCP_NODELAY,
                          &opt, sizeof(opt));
+        }
+
+        // MFC binds unconditionally — port 0 with no address just asks the
+        // kernel for an ephemeral port, which is what an outbound socket wants
+        // anyway, so this is safe for the connect-side callers too.
+        if (!Bind(nSocketPort, lpszSocketAddress)) {
+            int saved = errno;
+            Close();
+            errno = saved;
+            return FALSE;
         }
 
         Register(this);

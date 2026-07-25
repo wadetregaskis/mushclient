@@ -2411,114 +2411,20 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
-    // Tab: complete the current partial command.
+    // Tab: complete the word under the cursor.
     //
-    // Phase 1 — history prefix search: scan backward through m_history for
-    // the most recent command that starts with the current input.  A second Tab
-    // cycles further back.  Not available in password mode.
-    //
-    // Phase 2 — output-word fallback: if history is exhausted (or there are no
-    // history matches at all), scan the last ~300 output lines for words that
-    // start with the partial input and cycle through them.  An extra Tab at the
-    // end of the output-word list restores the original partial input.
+    // The port used to reimplement this from scratch here, and got materially
+    // different behaviour: it completed against the COMMAND HISTORY rather
+    // than the output buffer, replaced the whole input line rather than the
+    // word at the cursor, tokenised on a hardcoded [A-Za-z0-9_-] instead of
+    // App.m_strWordDelimiters, cycled through candidates (Windows takes the
+    // first match), and never consulted m_strTabCompletionDefaults,
+    // m_bLowerCaseTabCompletion or m_bTabCompletionSpace -- which is exactly
+    // why those three world options read as dead settings.  The canonical body
+    // now lives in doc_tabcomplete_shared.cpp and drives the input bar through
+    // pal::IWorldView (replaceCommandSelection), so both frontends share it.
     if (code == WXK_TAB && inp == m_input) {
-        wxString partial = m_input->GetValue();
-        if (partial.IsEmpty()) return;  // consume Tab without action
-
-        // ── If we're already in an output-word cycle, just advance ───────────
-        if (m_tabWordIdx >= 0) {
-            ++m_tabWordIdx;
-            if (m_tabWordIdx >= (int)m_tabWords.size()) {
-                // Wrapped past the last candidate: restore the original partial.
-                m_tabWordIdx = -1;
-                m_tabWords.clear();
-                m_input->SetValue(m_tabPartial);
-                m_input->SetInsertionPointEnd();
-            } else {
-                m_input->SetValue(m_tabWords[m_tabWordIdx]);
-                m_input->SetInsertionPointEnd();
-            }
-            return;
-        }
-
-        // ── Phase 1: history prefix search ───────────────────────────────────
-        wxString lowerPartial = partial.Lower();
-        {
-            int searchFrom = (m_histIdx >= 0) ? m_histIdx - 1
-                                               : (int)m_history.size() - 1;
-            for (int i = searchFrom; i >= 0; --i) {
-                const wxString& hist = m_history[i];
-                // Match: history entry starts with partial (case-insensitive)
-                // and is strictly longer (to avoid completing to identical text).
-                if (hist.Lower().StartsWith(lowerPartial) &&
-                    hist.Len() > partial.Len()) {
-                    m_histIdx = i;
-                    CString sMatch(hist.ToUTF8().data());
-                    m_doc->SendToAllPluginCallbacksRtn(ON_PLUGIN_TABCOMPLETE, sMatch);
-                    if (sMatch == "\t") return;  // plugin cancelled
-                    m_input->SetValue(wxString::FromUTF8((const char*)sMatch));
-                    m_input->SetInsertionPointEnd();
-                    return;
-                }
-            }
-        }
-
-        // ── Phase 2: output-word completion fallback ──────────────────────────
-        // History exhausted.  Build a unique, most-recent-first list of words
-        // from the last ~300 output lines that start with the partial input.
-        // Tokens: runs of [A-Za-z0-9_-] characters.
-        m_tabPartial  = partial;
-        m_tabWords.clear();
-        m_tabWordIdx  = -1;
-
-        if (m_output) {
-            std::set<wxString> seen;
-            // How far back to scan is the world's "Tab completion lines"
-            // setting (m_iTabCompletionLines, default 200); the port used to
-            // hardcode 300 and ignore it.  Read live — no seam needed.
-            const int scanLines =
-                (m_doc && m_doc->m_iTabCompletionLines > 0)
-                    ? (int) m_doc->m_iTabCompletionLines : 200;
-            int startLine = std::max(0, m_output->LineCount() - scanLines);
-            for (int li = m_output->LineCount() - 1; li >= startLine; --li) {
-                const SOutputLine* line = m_output->GetLine(li);
-                if (!line) continue;
-                for (const auto& run : *line) {
-                    wxString text = wxString::FromUTF8(run.text.c_str());
-                    wxString word;
-                    for (size_t ci = 0; ci <= text.size(); ++ci) {
-                        wxChar ch = (ci < text.size()) ? text[ci] : wxChar('\0');
-                        bool wordChar = ci < text.size() &&
-                                        (wxIsalnum(ch) || ch == '_' || ch == '-');
-                        if (wordChar) {
-                            word += ch;
-                        } else if (!word.IsEmpty()) {
-                            wxString wl = word.Lower();
-                            if (wl.StartsWith(lowerPartial) &&
-                                word.Len() > partial.Len() &&
-                                seen.find(wl) == seen.end())
-                            {
-                                seen.insert(wl);
-                                m_tabWords.push_back(word);
-                            }
-                            word.clear();
-                        }
-                    }
-                }
-            }
-        }
-
-        if (m_tabWords.empty()) return;  // no candidates — consume Tab silently
-
-        m_tabWordIdx = 0;
-        {
-            CString sMatch(m_tabWords[0].ToUTF8().data());
-            m_doc->SendToAllPluginCallbacksRtn(ON_PLUGIN_TABCOMPLETE, sMatch);
-            if (sMatch == "\t") return;  // plugin cancelled
-            m_tabWords[0] = wxString::FromUTF8((const char*)sMatch);
-        }
-        m_input->SetValue(m_tabWords[0]);
-        m_input->SetInsertionPointEnd();
+        if (m_doc) m_doc->TabCompleteCommand();
         return;
     }
 
@@ -2535,9 +2441,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
 
     if (code == WXK_UP && inp == m_input) {
-        // Pressing Up exits any ongoing output-word tab cycle and Ctrl+R mode.
-        m_tabWordIdx  = -1;
-        m_tabWords.clear();
+        // Pressing Up exits Ctrl+R mode.
         ApplyHistRSearch(false);  // ↑ always uses prefix (startsWith) match
         if (m_history.empty()) return;
         if (m_histIdx < 0) {
@@ -2575,9 +2479,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
 
     if (code == WXK_DOWN && inp == m_input) {
-        // Pressing Down exits any ongoing output-word tab cycle and Ctrl+R mode.
-        m_tabWordIdx  = -1;
-        m_tabWords.clear();
+        // Pressing Down exits Ctrl+R mode.
         ApplyHistRSearch(false);  // ↓ always uses prefix (startsWith) match
         if (m_histIdx < 0) { evt.Skip(); return; }
         wxString lpfx = m_histSaved.Lower();
@@ -2606,8 +2508,6 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // whose text contains the current input as a substring (case-insensitive).
     // Not available in password mode.
     if (code == 'R' && evt.RawControlDown() && inp == m_input) {
-        m_tabWordIdx = -1;
-        m_tabWords.clear();
         ApplyHistRSearch(true);
 
         // Use the current input as the query on first press; on subsequent
@@ -2840,8 +2740,6 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     if (code != WXK_UP && code != WXK_DOWN) {
         m_histIdx    = -1;
         ApplyHistRSearch(false);
-        m_tabWordIdx = -1;
-        m_tabWords.clear();
     }
 
     // Return / Enter in an empty input field.
@@ -3473,6 +3371,20 @@ void CWorldChildFrame::setCommandSelection(long first, long last)
     // CEdit::SetSel(First - 1, Last): only the start is decremented.
     long l = (last   <= 0) ? len : last;
     inp->SetSelection(f, l);
+}
+
+// Replace [start, end) in the command bar as one undoable edit.  Offsets are
+// RAW (0-based), matching commandSelection() — not the 1-based scripting space
+// of setCommandSelection above.  Tab completion is the caller.
+void CWorldChildFrame::replaceCommandSelection(long start, long end,
+                                               const char* text)
+{
+    wxTextCtrl* inp = ActiveInput();
+    if (!inp) return;
+    // wxTextCtrl::Replace is a single undo record, like CEdit::ReplaceSel with
+    // bCanUndo=TRUE.  It leaves the caret after the inserted text.
+    inp->Replace(start, end, wxString::FromUTF8(text ? text : ""));
+    inp->SetInsertionPoint(start + (long) wxString::FromUTF8(text ? text : "").length());
 }
 
 // world.PushCommand(): save current bar text to history, clear bar.

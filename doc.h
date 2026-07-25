@@ -1580,6 +1580,11 @@ public:
   void SetCommandSelectionRange(long first, long last) {
       if (m_pWorldView) m_pWorldView->setCommandSelection(first, last);
   }
+  // Raw 0-based splice — NOT the 1-based scripting space above.  Tab
+  // completion is the caller; see pal/iworldview.h.
+  void ReplaceCommandSelectionRange(long start, long end, const char* text) {
+      if (m_pWorldView) m_pWorldView->replaceCommandSelection(start, end, text);
+  }
   std::string PushCommandText() {
       return m_pWorldView ? m_pWorldView->pushCommand() : std::string();
   }
@@ -2523,6 +2528,17 @@ public:
   CTextDocument * FindNotepad (const CString strTitle);
 
   void DoRecallText (void);
+
+  // ── Tab completion (doc_tabcomplete_shared.cpp — one body, every build) ──
+  // Was CSendView::OnKeysTab / TabCompleteOneLine.  Hoisted to the doc so the
+  // wx port runs the same algorithm instead of its own reimplementation; both
+  // frontends reach the input bar through pal::IWorldView.
+  bool TabCompleteOneLine (const int nStartChar,
+                           const int nEndChar,
+                           const CString & strWord,
+                           const CString & strLine);
+  void TabCompleteCommand (void);
+
   CString DoEvaluateSpeedwalk(LPCTSTR SpeedWalkString);
   static CString DoReverseSpeedwalk(LPCTSTR SpeedWalkString);
 

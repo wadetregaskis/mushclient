@@ -64,11 +64,8 @@ public:
   void SendMacro (int whichone);
   bool CheckTyping (CMUSHclientDoc* pDoc, CString strReplacement);
   void DoFind (bool bAgain);
-  bool TabCompleteOneLine (CMUSHclientDoc* pDoc,
-                           const int nStartChar,
-                           const int nEndChar,
-                           const CString & strWord, 
-                           const CString & strLine);
+  // TabCompleteOneLine moved to CMUSHclientDoc (doc_tabcomplete_shared.cpp)
+  // so the wx port, which never instantiates this view, runs the same body.
   void DoCommandHistory();
   void DoPreviousCommand ();
   void DoNextCommand ();

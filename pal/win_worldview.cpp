@@ -360,6 +360,32 @@ public:
         }
     }
 
+    void replaceCommandSelection(long start, long end, const char* text) override
+    {
+        // The exact sequence CSendView::TabCompleteOneLine used inline before
+        // the algorithm moved to doc_tabcomplete_shared.cpp — including the
+        // LockWindowUpdate/UnlockWindowUpdate pair that stops the select-then-
+        // replace from flickering.
+        for (POSITION pos = m_pDoc->GetFirstViewPosition(); pos != NULL; )
+        {
+            CView* pView = m_pDoc->GetNextView(pos);
+
+            if (pView->IsKindOf(RUNTIME_CLASS(CSendView)))
+            {
+                CSendView* pmyView = (CSendView*)pView;
+
+                // stop flicker
+                pmyView->LockWindowUpdate ();
+                // select the characters already typed
+                pmyView->GetEditCtrl().SetSel (start, end);
+                pmyView->UnlockWindowUpdate ();
+                // replace it, allow undos
+                pmyView->GetEditCtrl().ReplaceSel (text, TRUE);
+                break;
+            }
+        }
+    }
+
     std::string pushCommand() override
     {
         // PushCommand (methods_commands.cpp)

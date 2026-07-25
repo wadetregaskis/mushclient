@@ -71,6 +71,13 @@ public:
     // world.SetCommandSelection(first, last): 1-based; <= 0 means the end
     // (only First is decremented — CEdit::SetSel(First - 1, Last) semantics).
     virtual void        setCommandSelection(long first, long last) = 0;
+    // Replace the characters in [start, end) with `text`, as one undoable
+    // edit.  Offsets are RAW (0-based) — the same space commandSelection()
+    // reports, NOT the 1-based scripting space of setCommandSelection above.
+    // Used by tab completion (doc_tabcomplete_shared.cpp), which computes the
+    // word under the cursor itself.
+    virtual void        replaceCommandSelection(long start, long end,
+                                                const char* text) = 0;
     // world.PushCommand: save the bar's text to history, clear it, return it.
     virtual std::string pushCommand() = 0;
     // world.GetCommandList(n): up to n most-recent history entries, newest

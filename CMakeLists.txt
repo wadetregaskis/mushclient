@@ -429,6 +429,7 @@ if(NOT WIN32)
         utilities_shared.cpp
         scripting/errors.cpp
         doc_scripting_shared.cpp
+        doc_tabcomplete_shared.cpp
         scripting/methods/methods_noting.cpp
         scripting/methods/methods_tracing.cpp
         scripting/methods/methods_variables.cpp

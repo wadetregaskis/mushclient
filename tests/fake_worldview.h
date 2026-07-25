@@ -53,6 +53,17 @@ struct FakeWorldView : pal::IWorldView {
         cmdSel.start = (int)((first <= 0) ? len : first - 1);
         cmdSel.end   = (int)((last  <= 0) ? len : last);
     }
+    // Raw 0-based splice, as the real edit controls do.  Out-of-range offsets
+    // are clamped rather than asserted so a buggy caller shows up as a wrong
+    // string, not a crash.
+    void replaceCommandSelection(long start, long end, const char* text) override {
+        long len = (long)cmd.size();
+        long s = std::max(0L, std::min(start, len));
+        long e = std::max(s,   std::min(end,   len));
+        std::string ins(text ? text : "");
+        cmd = cmd.substr(0, (size_t)s) + ins + cmd.substr((size_t)e);
+        cmdSel.start = cmdSel.end = (int)(s + (long)ins.size());
+    }
     std::string pushCommand() override {
         std::string text = cmd;
         if (!text.empty() && (history.empty() || history.back() != text))

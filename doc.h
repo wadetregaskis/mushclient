@@ -1512,11 +1512,14 @@ public:
   long                                    m_gui_lines_emitted = 0;
 
   // ── PAL: typed output view (every platform since P4) ─────────────────────
-  // pal::IWorldView is the engine's typed per-world view seam; the wx
-  // CWorldChildFrame sets itself here.  All display/state/pull traffic is
-  // typed-only (P2 complete): no view attached → pushes are inert, pulls
-  // report empty/zero — which is Windows' permanent state until its native
-  // adapter lands (CMUSHView, the real P4/P5 step).  See docs/PAL.md.
+  // pal::IWorldView is the engine's typed per-world view seam.  On the wx
+  // build the adapter IS the CWorldChildFrame, which registers itself at frame
+  // creation; on Windows it is the doc-owned CWinWorldView, created in
+  // doc_construct.cpp (WV-2) and looking its views up per call.  So BOTH
+  // platforms have a live adapter — routing engine work through this seam is
+  // not a Windows regression.  All display/state/pull traffic is typed-only
+  // (P2 complete); with no view attached (headless tests) pushes are inert and
+  // pulls report empty/zero.  See docs/PAL.md.
   pal::IWorldView* m_pWorldView = nullptr;
   bool HaveOutputSink() const { return m_pWorldView != nullptr; }
   void EmitOutputLine(SOutputLine&& line) {

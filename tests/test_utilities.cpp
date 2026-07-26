@@ -1002,4 +1002,111 @@ TEST(Utilities, MyAtoF_ExponentScalingAndPlusSigns)
     EXPECT_NEAR(1000.0, atof_val("1e+3"), 1e-9);
 }
 
+// -- ScanMatchingBrace -------------------------------------------------------
+//
+// utilities_shared.cpp, moved out of Utilities.cpp::FindMatchingBrace.  It is
+// the only reader of the seven File > Preferences > Notepad brace options, and
+// it used to sit behind CSendView/CTextView -- views the wx port never
+// constructs -- so on the port those checkboxes did nothing.  Each case below
+// is run with the flag ON and OFF and lands somewhere different, which is what
+// makes the option observable.
+
+// Match from `caret`, no selection: on success both ends collapse to the index
+// of the matching delimiter.  Returns -1 where the scanner fails (Windows beeps).
+static int match_at(const char* buf, int caret, unsigned int flags)
+{
+    int s = caret, e = caret;
+    if (!ScanMatchingBrace(buf, (int) strlen(buf), s, e, false, flags))
+        return -1;
+    EXPECT_EQ(s, e);          // no-select collapses to a caret position
+    return e;
+}
+
+// "do braces nest? eg. ( [)] )" -- ON, the ) inside the brackets belongs to the
+// bracket group and is skipped; OFF, only the same delimiter counts, so the
+// first ) wins.  This one is ON by default, so the port was wrong out of the box.
+TEST(ScanMatchingBrace, NestBracesDecidesWhetherOtherDelimitersCount)
+{
+    //                 0123456
+    const char* buf = "( [)] )";
+    EXPECT_EQ(6, match_at(buf, 0, PAREN_NEST_BRACES));
+    EXPECT_EQ(3, match_at(buf, 0, 0));
+}
+
+// "\\ escapes next character, eg. (  \\)  )" -- also ON by default.
+TEST(ScanMatchingBrace, BackslashEscapesHideTheNextDelimiter)
+{
+    //                 01234567
+    const char* buf = "(a \\) b)";
+    EXPECT_EQ(7, match_at(buf, 0, PAREN_BACKSLASH_ESCAPES));
+    EXPECT_EQ(4, match_at(buf, 0, 0));
+}
+
+// "% escapes next character, eg. (  %)  )" -- the third default-ON option.
+TEST(ScanMatchingBrace, PercentEscapesHideTheNextDelimiter)
+{
+    //                 01234567
+    const char* buf = "(a %) b)";
+    EXPECT_EQ(7, match_at(buf, 0, PAREN_PERCENT_ESCAPES));
+    EXPECT_EQ(4, match_at(buf, 0, 0));
+}
+
+TEST(ScanMatchingBrace, QuoteOptionsHideDelimitersInsideQuotes)
+{
+    //                  0123456789
+    const char* dq   = "(a \"b) c\" d)";
+    EXPECT_EQ(11, match_at(dq, 0, PAREN_DOUBLE_QUOTES));
+    EXPECT_EQ(5,  match_at(dq, 0, 0));
+
+    const char* sq   = "(a 'b) c' d)";
+    EXPECT_EQ(11, match_at(sq, 0, PAREN_SINGLE_QUOTES));
+    EXPECT_EQ(5,  match_at(sq, 0, 0));
+}
+
+// "escape inside double quotes, eg. \"Press \\\"enter\\\" \"" -- with the option ON the
+// \\" does not close the quoted run, so the ) inside it stays hidden.
+TEST(ScanMatchingBrace, EscapedQuotesInsideQuotesKeepTheRunOpen)
+{
+    const char* buf = "(a \"b \\\" c) d\" e)";
+    const unsigned int base = PAREN_DOUBLE_QUOTES | PAREN_BACKSLASH_ESCAPES;
+    EXPECT_EQ((int) strlen(buf) - 1,
+              match_at(buf, 0, base | PAREN_ESCAPE_DOUBLE_QUOTES));
+    // Without it the quoted run ends at the escaped quote, so the next ) matches.
+    EXPECT_NE((int) strlen(buf) - 1, match_at(buf, 0, base));
+}
+
+// A closing delimiter under the caret searches BACKWARDS.
+TEST(ScanMatchingBrace, ClosingDelimiterSearchesBackwards)
+{
+    //                 0123456
+    const char* buf = "( [)] )";
+    EXPECT_EQ(0, match_at(buf, 6, PAREN_NEST_BRACES));
+}
+
+// bSelect keeps both ends and includes the closing delimiter.
+TEST(ScanMatchingBrace, SelectSpansBothDelimitersInclusive)
+{
+    const char* buf = "x(abc)y";
+    int s = 1, e = 1;
+    EXPECT_TRUE(ScanMatchingBrace(buf, (int) strlen(buf), s, e, true, 0));
+    EXPECT_EQ(1, s);
+    EXPECT_EQ(6, e);          // one past the ) at index 5
+}
+
+// The caret one PAST a delimiter still finds it (the scanner backs up one).
+TEST(ScanMatchingBrace, CaretJustAfterADelimiterStillMatches)
+{
+    const char* buf = "(abc)";
+    EXPECT_EQ(4, match_at(buf, 1, 0));     // caret after the ( at 0
+}
+
+TEST(ScanMatchingBrace, NoDelimiterOrNoMatchFails)
+{
+    EXPECT_EQ(-1, match_at("plain text", 3, 0));    // nothing to match
+    EXPECT_EQ(-1, match_at("(abc", 0, 0));          // never closed
+    EXPECT_EQ(-1, match_at("abc)", 3, 0));          // never opened
+    int s = 0, e = 0;
+    EXPECT_FALSE(ScanMatchingBrace("", 0, s, e, false, 0));   // empty buffer
+}
+
 MC_TEST_MAIN()

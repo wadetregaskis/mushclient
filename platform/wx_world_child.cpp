@@ -1641,45 +1641,47 @@ void CWorldChildFrame::MakeMultiLineTrigger()
 }
 
 // Edit ▸ Go To / Select To Matching Brace — operates on the command input bar.
-// (Canonical FindMatchingBrace works on a CEdit; the port input is a wxTextCtrl,
-// so the brace scan is reimplemented here.)
+//
+// The scan is the canonical one (ScanMatchingBrace, utilities_shared.cpp), so
+// all seven File ▸ Preferences ▸ Notepad brace options apply here as on
+// Windows.  The reimplementation this replaced counted only same-delimiter
+// nesting and had no quote or escape handling at all, so every one of those
+// checkboxes was inert — including the three that are ON by default
+// (nest braces, backslash escapes, percent escapes).
+//
+// What stays here is the only thing that genuinely differs: the canonical
+// scanner works in BYTE offsets while wxTextCtrl indexes CHARACTERS, so the
+// caret and the result are converted around the call.  (That is also why
+// wrapping the wxTextCtrl in a CEdit and calling FindMatchingBrace would be
+// wrong: mfc_ui.h's edit-selection hook passes byte offsets straight to
+// wxTextCtrl::SetSelection, which would mis-select any non-ASCII line.)
 void CWorldChildFrame::GotoMatchingBrace(bool select)
 {
     wxTextCtrl* inp = ActiveInput();
     if (!inp) return;
-    wxString text = inp->GetValue();
-    const long len = (long) text.length();
+
+    const wxString      text = inp->GetValue();
+    const wxScopedCharBuffer utf8 = text.utf8_str();
+    const int len = (int) utf8.length();
     if (len == 0) return;
 
-    static const wxString kOpen = wxT("([{"), kClose = wxT(")]}");
-    long pos = inp->GetInsertionPoint();
+    // caret: characters → bytes
+    int caret = (int) text.Mid(0, inp->GetInsertionPoint()).utf8_str().length();
 
-    // Find a brace at the cursor, else just before it.
-    long bracePos = -1; int dir = 0; wxUniChar want;
-    auto classify = [&](long p) -> bool {
-        if (p < 0 || p >= len) return false;
-        int oi = kOpen.Find(text[p]);
-        if (oi != wxNOT_FOUND)  { bracePos = p; dir = +1; want = kClose[oi]; return true; }
-        int ci = kClose.Find(text[p]);
-        if (ci != wxNOT_FOUND)  { bracePos = p; dir = -1; want = kOpen[ci];  return true; }
-        return false;
-    };
-    if (!classify(pos) && !classify(pos - 1)) return;
+    int startByte = caret, endByte = caret;
+    if (!ScanMatchingBrace(utf8.data(), len, startByte, endByte,
+                           select, App.m_nParenMatchFlags))
+        return;                       // no match (Windows beeps here)
 
-    const wxUniChar brace = text[bracePos];
-    int depth = 0;
-    long p = bracePos;
-    for (; p >= 0 && p < len; p += dir) {
-        if      (text[p] == brace) ++depth;
-        else if (text[p] == want)  { if (--depth == 0) break; }
-    }
-    if (depth != 0 || p < 0 || p >= len) return;   // no match
+    // result: bytes → characters
+    const long cs = (long) wxString::FromUTF8(utf8.data(), startByte).length();
+    const long ce = (long) wxString::FromUTF8(utf8.data(), endByte).length();
 
     if (select)
-        inp->SetSelection(wxMin(bracePos, p), wxMax(bracePos, p) + 1);
+        inp->SetSelection(cs, ce);
     else
-        inp->SetInsertionPoint(p);
-    inp->ShowPosition(p);
+        inp->SetInsertionPoint(ce);
+    inp->ShowPosition(ce);
     inp->SetFocus();
 }
 

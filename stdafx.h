@@ -806,6 +806,15 @@ void ShowHelp (const CString strPrefix, const CString strTopic);
 string tolower (const string & s);
 
 void FindMatchingBrace (CEdit & ctlEdit, const bool bSelect);
+// The scan behind it (utilities_shared.cpp) -- pure, so every frontend and the
+// tests can drive it.  nEndChar is the caret on the way in; on true both
+// nStartChar and nEndChar are the range to select (or the point to move to).
+bool ScanMatchingBrace (const char * pBuf,
+                        const int nLength,
+                        int & nStartChar,
+                        int & nEndChar,
+                        const bool bSelect,
+                        const unsigned int iFlags);
 
 void GetButtonSize (CWnd & ctlWnd, int & iHeight, int & iWidth);
 

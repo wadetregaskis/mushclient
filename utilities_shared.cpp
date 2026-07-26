@@ -954,3 +954,288 @@ const char * p = sName;
 
   return true;
   }  // end of IsSubName
+
+// - ScanMatchingBrace --------------------------------------------------------
+// The Edit > Go To / Select To Matching Brace scan, moved verbatim out of
+// Utilities.cpp::FindMatchingBrace (which is GUI-only) so every frontend runs
+// one algorithm.  It was the only reader of App.m_nParenMatchFlags, and it sat
+// behind CSendView/CTextView -- views the wx port never constructs -- so the
+// port had its own scan that honoured none of the seven checkboxes on the
+// global Notepad preferences page.
+//
+// Pure: takes the buffer and the caret (nEndChar in, both out), returns false
+// where the original beeped.  The caller keeps the control-specific parts --
+// reading the caret, applying the selection, and the beep.
+
+#define DELIMS "{[()]}"
+#define START_DELIMS "{[("
+#define END_DELIMS "}])"
+#define MAX_NEST 1000
+
+static char GetMatchingDelimiter (const char cDelim)
+  {
+  switch (cDelim)
+    {
+    case '[' : return ']';
+    case '(' : return ')';
+    case '{' : return '}';
+    case ']' : return '[';
+    case ')' : return '(';
+    case '}' : return '{';
+    }   // end of switch
+  return 0;   // shouldn't get here :)
+  } // end of GetMatchingDelimiter
+
+bool ScanMatchingBrace (const char * pBuf,
+                        const int nLength,
+                        int & nStartChar,
+                        int & nEndChar,
+                        const bool bSelect,
+                        const unsigned int iFlags)
+{
+char cStartDelim;    // start delimiter, eg. [
+char c;
+const char * p;
+const char * pStart;
+const char * pStartBuf;
+int iLevel = -1;
+bool bBackwards = false;
+char cNestArray [MAX_NEST];   // so we know when nested group ends
+
+  pStartBuf = pBuf;   // to stop us going too far backwards
+
+  // return if out of buffer
+  if (nLength == 0 || nEndChar < 0 || nEndChar > nLength)
+    {
+    return false;
+    }
+
+  // if at end of buffer, go back one character
+  if (nEndChar == nLength)
+    nEndChar--;
+  else
+    // if no delimiter on right, try going back one
+    if (strchr (DELIMS, pBuf [nEndChar]) == NULL &&
+        nEndChar > 0)
+      nEndChar--;
+
+  // character on right of cursor
+  cStartDelim = pBuf [nEndChar];
+
+   int iEscapeCount = 0;
+   p = pBuf;
+   p += nEndChar;    // p points to start of search
+
+
+   // if an odd number of escape characters, cannot use it
+   while ((iFlags & PAREN_BACKSLASH_ESCAPES) &&
+       p > pStartBuf &&
+       *(p - 1) == '\\')
+     {
+     p--;
+     iEscapeCount++;
+     }
+
+   if (iEscapeCount == 0)
+     while ((iFlags & PAREN_PERCENT_ESCAPES) &&
+         p > pStartBuf &&
+         *(p - 1) == '%')
+       {
+       p--;
+       iEscapeCount++;
+       }
+
+  // not on a delimiter, or delimiter preceded by an odd number of escapes? just exit
+  if ((iEscapeCount & 1) || strchr (DELIMS, cStartDelim) == NULL)
+    {
+    return false;
+    }
+
+  nStartChar = nEndChar;    // selection will start here
+  p = pBuf;
+  p += nEndChar;    // p points to start of search
+  pStart = p;       // where we started
+
+  if (strchr (START_DELIMS, cStartDelim))
+    {   // search forwards - work out end delimiter
+     cNestArray [++iLevel] = GetMatchingDelimiter (cStartDelim);
+     for (p ++ ; (c = *p) != 0; p++)
+       {
+       if (c == cNestArray [iLevel])    // reached end delimiter?
+         {
+         if (iLevel <= 0)
+           break;   // found it!
+         iLevel--;  // dropped back a level
+         }
+       else if (((iFlags & PAREN_NEST_BRACES) && (strchr (START_DELIMS, c))) ||
+                (!(iFlags & PAREN_NEST_BRACES) && (c == cStartDelim)))
+         {
+         iLevel++;   // up a level, need another closing delimiter
+         if (iLevel >= MAX_NEST)
+          {
+          return false;
+          }    // too many levels
+         cNestArray [iLevel] = GetMatchingDelimiter (c);
+         }
+       else if (c == '\\' && (iFlags & PAREN_BACKSLASH_ESCAPES))
+         {
+         if (*(++p) == 0) // skip next character, if end of buffer, stop
+           break;
+         }    // end of backslash escape
+       else if (c == '%' && (iFlags & PAREN_PERCENT_ESCAPES))
+         {
+         if (*(++p) == 0) // skip next character, if end of buffer, stop
+           break;
+         }    // end of percent escape
+       else if ((c == '\"' && (iFlags & PAREN_DOUBLE_QUOTES)) ||
+                (c == '\'' && (iFlags & PAREN_SINGLE_QUOTES)))
+         {  // in quotes, skip quoted part
+         for (p++; *p && *p != c; p++)
+           {  // quote skipper
+            if (*p == '\\' &&
+               (iFlags & PAREN_BACKSLASH_ESCAPES) &&
+             (((iFlags & PAREN_ESCAPE_SINGLE_QUOTES) && c == '\'') ||
+              ((iFlags & PAREN_ESCAPE_DOUBLE_QUOTES) && c == '\"'))
+               )   // can have escaped quotes inside quotes
+             {
+             if (*(++p) == 0) // skip next character, if end of buffer, stop
+               break;
+             }  // end of backslash escape
+            else if (*p == '%' &&
+               (iFlags & PAREN_PERCENT_ESCAPES) &&
+             (((iFlags & PAREN_ESCAPE_SINGLE_QUOTES) && c == '\'') ||
+              ((iFlags & PAREN_ESCAPE_DOUBLE_QUOTES) && c == '\"'))
+               )   // can have escaped quotes inside quotes
+             {
+             if (*(++p) == 0) // skip next character, if end of buffer, stop
+               break;
+             }  // end of percent escape
+           }    // end of skipping quotes
+         }  // end of having a quote
+       }  // end of searching for delimiter
+
+     if (*p == 0)
+        {
+        return false;
+        }    // no end delimiter found
+
+
+     // work out where end character is
+     nEndChar += p - pStart;
+
+    }  // end of searching forwards
+
+  else
+    {  // go backwards
+    bBackwards = true;
+    cNestArray [++iLevel] = GetMatchingDelimiter (cStartDelim);
+    for (p--; p >= pStartBuf; p--)
+       {
+       int iEscapeCount = 0;
+       c = *p;
+
+       // if an odd number of escape characters, ignore it
+       while ((iFlags & PAREN_BACKSLASH_ESCAPES) &&
+           p > pStartBuf &&
+           *(p - 1) == '\\')
+         {
+         p--;
+         iEscapeCount++;
+         }
+
+       if (iEscapeCount == 0)
+         while ((iFlags & PAREN_PERCENT_ESCAPES) &&
+             p > pStartBuf &&
+             *(p - 1) == '%')
+           {
+           p--;
+           iEscapeCount++;
+           }
+
+       if (iEscapeCount & 1)
+         continue;
+
+       if (c == cNestArray [iLevel])
+         {
+         if (iLevel <= 0)
+           {
+           p += iEscapeCount;
+           break;   // found it!
+           }
+         iLevel--;  // dropped back a level
+         }
+       else
+// ----- Begin Talek suggestion
+        if ((iFlags & PAREN_NEST_BRACES) && (strchr (START_DELIMS, c)))
+          {
+          // we must have had an unmatched closing paren - remove it from the stack
+         if (iLevel <= 0)  // no more levels - error in string
+            {
+            return false;
+            }    // too many levels
+         iLevel--;  // dropped back a level
+         p++;   // reconsider this character next time through the loop
+         }
+        else
+
+// ----- End Talek suggestion
+
+
+         if (((iFlags & PAREN_NEST_BRACES) && (strchr (END_DELIMS, c))) ||
+                (!(iFlags & PAREN_NEST_BRACES) && (c == cStartDelim)))
+         {
+         iLevel++;   // up a level, need another closing delimiter
+         if (iLevel >= MAX_NEST)
+          {
+          return false;
+          }    // too many levels
+         cNestArray [iLevel] = GetMatchingDelimiter (c);
+         }
+       else if ((c == '\"' && (iFlags & PAREN_DOUBLE_QUOTES)) ||
+                (c == '\'' && (iFlags & PAREN_SINGLE_QUOTES)))
+         {  // in quotes, skip quoted part
+         for (p--; p >= pStartBuf; p--)
+           {  // quote skipper
+           // if escaped character, ignore it
+            if ((p > pStartBuf && *(p - 1) == '\\') &&
+               (iFlags & PAREN_BACKSLASH_ESCAPES) &&
+             (((iFlags & PAREN_ESCAPE_SINGLE_QUOTES) && c == '\'') ||
+              ((iFlags & PAREN_ESCAPE_DOUBLE_QUOTES) && c == '\"'))
+               )   // can have escaped quotes inside quotes
+              p--;
+            else if ((p > pStartBuf && *(p - 1) == '%') &&
+               (iFlags & PAREN_PERCENT_ESCAPES) &&
+             (((iFlags & PAREN_ESCAPE_SINGLE_QUOTES) && c == '\'') ||
+              ((iFlags & PAREN_ESCAPE_DOUBLE_QUOTES) && c == '\"'))
+               )   // can have escaped quotes inside quotes
+              p--;
+           else
+             if (*p == c)
+               break;
+           }    // end of skipping quotes
+         }  // end of having a quote
+       }  // end of searching for delimiter
+
+     if (p < pStartBuf)
+        {
+        return false;
+        }    // no end delimiter found
+
+     // work out where end character is
+     nStartChar -= pStart - p;
+
+    }   // end of searching backwards
+
+  if (bSelect)
+    nEndChar++;   // select end character as well
+  else
+    if (bBackwards)
+      nEndChar = nStartChar;    // make insertion point only
+    else
+      nStartChar = nEndChar;    // make insertion point only
+
+  return true;
+
+  //  (aaa[bbb]ccc)[ddd{e']'ee}]
+  //  (aaaa "bb \" bb" aaaa)
+}  // end of ScanMatchingBrace

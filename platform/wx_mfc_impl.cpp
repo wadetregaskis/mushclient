@@ -392,6 +392,36 @@ static long hook_send_message(void* h, unsigned msg, uintptr_t wp, intptr_t lp)
             w->GetEventHandler()->ProcessEvent(evt);
         }
     }
+
+    // List-view extended styles.  This is the ONLY mechanism the canonical code
+    // has for the "Show grid lines in list views" global preference: every one
+    // of its call sites (MUSHclient.cpp RestoreColumnConfiguration, the colour
+    // picker, the plugin wizard, genpropertypage) applies it by sending
+    // LVM_SETEXTENDEDLISTVIEWSTYLE.  Swallowing the message made the option
+    // inert in every list in the app -- and it ships ON by default, so this was
+    // wrong for everyone, not just for people who changed it.
+    //
+    // MASK TO LVS_EX_GRIDLINES AND NOTHING ELSE.  The Win32 LVS_EX_* bits
+    // collide numerically with wx's VIEW-MODE bits:
+    //     0x01 LVS_EX_GRIDLINES      == wxLC_VRULES   (what we want)
+    //     0x10 LVS_EX_HEADERDRAGDROP == wxLC_LIST
+    //     0x20 LVS_EX_FULLROWSELECT  == wxLC_REPORT
+    // The canonical caller passes 0x31, so handing the raw value to wx would
+    // set wxLC_LIST|wxLC_REPORT and flip every entity list out of report mode,
+    // losing all its columns.
+    if (msg == LVM_SETEXTENDEDLISTVIEWSTYLE || msg == LVM_GETEXTENDEDLISTVIEWSTYLE) {
+        wxListCtrl* lc = wxDynamicCast((wxWindow*) h, wxListCtrl);
+        if (!lc) return 0;
+        const long kRules = wxLC_HRULES | wxLC_VRULES;
+        if (msg == LVM_GETEXTENDEDLISTVIEWSTYLE)
+            return (lc->GetWindowStyleFlag() & kRules) ? LVS_EX_GRIDLINES : 0;
+        // Report what we actually honour, so the canonical read-modify-write
+        // (GET | new bits -> SET) stays consistent instead of re-arming the
+        // "getter lies, and the value gets stored" trap.
+        lc->SetSingleStyle(kRules, (lp & LVS_EX_GRIDLINES) != 0);
+        return 0;
+    }
+
     (void)lp;
     return 0;
 }

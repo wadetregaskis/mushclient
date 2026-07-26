@@ -39,8 +39,15 @@ public:
     {
         s_instance = this;
 
+        // This list is the port's own widget, so it never reaches the canonical
+        // RestoreColumnConfiguration that applies LVS_EX_GRIDLINES to the
+        // bridged ones -- honour the same global preference here, as
+        // ActivityView.cpp does on Windows.
+        long listStyle = wxLC_REPORT | wxLC_SINGLE_SEL;
+        if (App.m_bShowGridLinesInListViews)
+            listStyle |= wxLC_HRULES | wxLC_VRULES;
         m_list = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
-                                wxLC_REPORT | wxLC_SINGLE_SEL);
+                                listStyle);
         m_list->InsertColumn(kColWorld,    wxT("World"),     wxLIST_FORMAT_LEFT,  150);
         m_list->InsertColumn(kColNew,      wxT("New"),       wxLIST_FORMAT_RIGHT,  60);
         m_list->InsertColumn(kColLines,    wxT("Lines"),     wxLIST_FORMAT_RIGHT,  80);

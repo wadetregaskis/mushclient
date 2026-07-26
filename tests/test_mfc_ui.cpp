@@ -3906,4 +3906,50 @@ TEST(DocPrompt, CancellingLeavesTheNameAloneAndReportsFailure)
     g_wxhook_file_dialog = saved;
 }
 
+
+// mfc_ui.h CWinApp::OpenDocumentFile used to `return nullptr`, silently
+// killing "File > Open Worlds In Startup List" and "Connection > Connect To
+// Worlds In Startup List" (mainfrm.cpp:1844/1848 null-check it, so no crash --
+// just two dead menu commands).  It is a NON-VIRTUAL CWinApp member, so it
+// never reached CMultiDocTemplate's working override.  Dispatch is narrow on
+// purpose: the other callers want a CTextDocument, so sending everything to
+// the world hook would try to open a plugin's XML as a world.
+
+TEST(AppOpenDocument, WorldFileRoutesToTheWorldHook)
+{
+    auto saved = g_wxhook_open_world_file;
+    static std::string s_asked;
+    static CDocument s_doc;
+    g_wxhook_open_world_file = [](const char* path) -> void* {
+        s_asked = path ? path : "";
+        return (void*)&s_doc;
+    };
+    s_asked.clear();
+    EXPECT_TRUE(App.OpenDocumentFile("/w/Discworld.mcl") == (CDocument*)&s_doc);
+    EXPECT_STREQ("/w/Discworld.mcl", s_asked.c_str());
+    // extension match is case-insensitive, as on Windows
+    s_asked.clear();
+    EXPECT_TRUE(App.OpenDocumentFile("/w/Other.MCL") != nullptr);
+    EXPECT_STREQ("/w/Other.MCL", s_asked.c_str());
+    g_wxhook_open_world_file = saved;
+}
+
+TEST(AppOpenDocument, NonWorldFileIsNotOpenedAsAWorld)
+{
+    auto saved = g_wxhook_open_world_file;
+    static bool s_called = false;
+    s_called = false;
+    g_wxhook_open_world_file = [](const char*) -> void* {
+        s_called = true; return nullptr;
+    };
+    // A plugin/script file must NOT be handed to the world opener -- those
+    // callers cast the result to CTextDocument*.
+    EXPECT_EQ((CDocument*)nullptr, App.OpenDocumentFile("/p/MyPlugin.xml"));
+    EXPECT_EQ((CDocument*)nullptr, App.OpenDocumentFile("/p/script.lua"));
+    EXPECT_EQ((CDocument*)nullptr, App.OpenDocumentFile("/p/noextension"));
+    EXPECT_EQ((CDocument*)nullptr, App.OpenDocumentFile(nullptr));
+    EXPECT_FALSE(s_called);
+    g_wxhook_open_world_file = saved;
+}
+
 MC_TEST_MAIN()

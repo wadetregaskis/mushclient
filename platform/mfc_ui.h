@@ -4911,7 +4911,38 @@ public:
 
     // Document templates
     void     AddDocTemplate(CDocTemplate*) {}
-    CDocument* OpenDocumentFile(LPCTSTR) { return nullptr; }
+    // Open a document by path.  This used to `return nullptr` unconditionally,
+    // which silently killed "File > Open Worlds In Startup List" and
+    // "Connection > Connect To Worlds In Startup List"
+    // (CMainFrame::OpenAndConnectToWorldsInStartupList, mainfrm.cpp:1844/1848 —
+    // both null-check the result, so no crash, just two menu commands that do
+    // nothing; also reachable as world.DoCommand("OpenWorldsInStartupList")).
+    //
+    // Note this is a NON-VIRTUAL CWinApp member, so `App.OpenDocumentFile(...)`
+    // binds here statically — it never reached CMultiDocTemplate's working
+    // override two hundred lines above, which is why the twin looked fine.
+    //
+    // MFC routes this through the doc manager, which picks a template by
+    // matching the file extension against each template's filter string. The
+    // port's CMultiDocTemplate ctor discards its filter, so dispatch explicitly
+    // on the extension instead — and dispatch NARROWLY: the other callers of
+    // this function want a CTextDocument, not a world (world_debug.cpp's
+    // "edit script with notepad" paths and the Plugins dialog's Edit button
+    // both cast the result to CTextDocument*), so routing everything to the
+    // world hook would try to open a plugin's XML as a world.
+    //
+    // Opening an arbitrary file into the port's notepad has no route yet
+    // (hook_create_text_window builds a notepad from CONTENT, not from a path),
+    // so those callers keep exactly today's behaviour: nullptr, and their own
+    // "Unable to edit the plugin file ..." message.
+    CDocument* OpenDocumentFile(LPCTSTR path) {
+        if (!path || !*path)
+            return nullptr;
+        const char* dot = strrchr(path, '.');
+        if (dot && strcasecmp(dot, ".mcl") == 0 && g_wxhook_open_world_file)
+            return static_cast<CDocument*>(g_wxhook_open_world_file(path));
+        return nullptr;   // not a world file — see the note above
+    }
 
     // MRU
     void     AddToRecentFileList(LPCTSTR) {}

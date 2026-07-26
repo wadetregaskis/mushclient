@@ -12,4 +12,14 @@ class wxWindow;
 class COutputPane;
 
 // Show a print-preview of the output pane's scrollback (with a Print button).
-void PrintOutputPane(wxWindow* parent, const wxString& title, COutputPane* pane);
+//
+// The font face/size and the margins come from Global Preferences ▸ Printing
+// (App.m_strPrinterFont / m_nPrinterFontSize / m_nPrinterLeftMargin /
+// m_nPrinterTopMargin) — the caller reads them, because this TU deliberately
+// includes no MFC-compat headers.  Margins are millimetres, as on the dialog.
+// NOT honoured here: "lines per page" (m_nPrinterLinesPerPage).  wxHTML
+// paginates by paper height and has no lines-per-page concept; that needs a
+// real wxPrintout subclass, which is tracked separately.
+void PrintOutputPane(wxWindow* parent, const wxString& title, COutputPane* pane,
+                     const wxString& fontFace, int fontPoints,
+                     int leftMarginMm, int topMarginMm);

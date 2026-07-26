@@ -1381,7 +1381,13 @@ void CWorldChildFrame::SpellCheckInput()
 // ── Print the world output buffer ──────────────────────────────────────────
 void CWorldChildFrame::PrintWorld()
 {
-    PrintOutputPane(this, GetTitle(), m_output);
+    // The printer face/size and margins are global preferences; wx_print.cpp
+    // keeps itself free of the MFC-compat headers, so read them here.
+    PrintOutputPane(this, GetTitle(), m_output,
+                    wxString::FromUTF8((const char*) App.m_strPrinterFont),
+                    (int) App.m_nPrinterFontSize,
+                    (int) App.m_nPrinterLeftMargin,
+                    (int) App.m_nPrinterTopMargin);
 }
 
 // ── View-level output/input commands ──────────────────────────────────────────

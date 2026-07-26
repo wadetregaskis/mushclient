@@ -2243,9 +2243,23 @@ Frame.DelayDebugStatus ("World config - loading pages");
   m_strLastSelectedVariable =  page18.m_strSelectedItem ;
 
   // remember whether they are using tree or list controls
+#ifdef _WIN32
   m_bTreeviewAliases = page7.m_bWantTreeControl;
   m_bTreeviewTriggers = page8.m_bWantTreeControl;
   m_bTreeviewTimers = page16.m_bWantTreeControl;
+#else
+  // NOT on the port, and note this runs BEFORE the "if (iResult != IDOK)" bail
+  // below -- so it fired even on Cancel.  CGenPropertyPage::OnInitDialog forces
+  // m_bWantTreeControl = false here (genpropertypage.cpp, "there is no native
+  // tree-view alternative yet"), so copying it back overwrote the world's own
+  // treeview_aliases / treeview_triggers / treeview_timers with 0.  Those are
+  // PERSISTED world options, and the saver omits false booleans while the
+  // loader reads an absent boolean as 0 -- so one glance at World Properties
+  // destroyed the setting permanently, with no way back through the UI because
+  // the checkbox that sets it does not exist on the port.  Measured on
+  // Discworld.mcl: GetOption("treeview_aliases") went 1 -> 0 across an
+  // open-and-Cancel.  The doc keeps whatever the world file loaded.
+#endif
 
   if (iResult != IDOK)
     {

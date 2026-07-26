@@ -4832,7 +4832,15 @@ void CPrefsP9::FixSwatch (CColourButton & m_ctlSwatch,
                           CColourButton & m_ctlSwatch2,
                           const int iNewColour)
   {
-  if (iNewColour == 0)
+  // iNewColour is a combo selection: 0 means "(no change)"/"(default)",
+  // 1..MAX_CUSTOM select a custom colour, and CB_ERR (-1) means NOTHING is
+  // selected -- which happens whenever the stored option is outside the
+  // combo's range, since CComboBox::SetCurSel rejects it.  The else arm
+  // indexes m_customtext [iNewColour - 1], so an unchecked CB_ERR reads
+  // index -2.  The OnSelchange* callers already guard with != CB_ERR; the
+  // OnSetActive callers do not, so guard here where every caller is covered.
+  // Upstream defect (Windows reads out of bounds too) -- docs/UPSTREAM-BUGS.md.
+  if (iNewColour <= 0 || iNewColour > MAX_CUSTOM)
     {
      m_ctlSwatch.ShowWindow (SW_HIDE);
      m_ctlSwatch2.ShowWindow (SW_HIDE);
@@ -7268,7 +7276,15 @@ void CPrefsP17::FixSwatch (CColourButton & m_ctlSwatch,
                            CColourButton & m_ctlSwatch2,
                            int iNewColour)
   {
-  if (iNewColour == 0)
+  // iNewColour is a combo selection: 0 means "(no change)"/"(default)",
+  // 1..MAX_CUSTOM select a custom colour, and CB_ERR (-1) means NOTHING is
+  // selected -- which happens whenever the stored option is outside the
+  // combo's range, since CComboBox::SetCurSel rejects it.  The else arm
+  // indexes m_customtext [iNewColour - 1], so an unchecked CB_ERR reads
+  // index -2.  The OnSelchange* callers already guard with != CB_ERR; the
+  // OnSetActive callers do not, so guard here where every caller is covered.
+  // Upstream defect (Windows reads out of bounds too) -- docs/UPSTREAM-BUGS.md.
+  if (iNewColour <= 0 || iNewColour > MAX_CUSTOM)
     {
      m_ctlSwatch.ShowWindow (SW_HIDE);
      m_ctlSwatch2.ShowWindow (SW_HIDE);

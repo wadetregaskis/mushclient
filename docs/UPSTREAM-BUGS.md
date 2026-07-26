@@ -16,6 +16,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 5 | XML date day-range message | `49e5ba6` | xmlparse.cpp `Get_XML_date` |
 | 6 | XML date second-range message | `49e5ba6` | xmlparse.cpp `Get_XML_date` |
 | 7 | Timer at_time toggle HOUR→MINUTE | `eea4a45` | methods_timers.cpp `CMUSHclientDoc::SetTimerOption` |
+| 8 | Colour-swatch FixSwatch reads index -2 on CB_ERR | `PENDING` | prefspropertypages.cpp `CPrefsP9::FixSwatch` / `CPrefsP17::FixSwatch` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -76,3 +77,45 @@ vice-versa; the hour and second fields copy correctly.
 **Fix:** copy the matching minute field (`iEveryMinute = iAtMinute`,
 `iAtMinute = iEveryMinute`). Behavioural change for any script/user that toggles a
 timer's `at_time` option on a timer whose hour and minute differ.
+
+
+## 8 — `FixSwatch` indexes `m_customtext [-2]` when the combo has no selection
+
+`CPrefsP9::FixSwatch` and `CPrefsP17::FixSwatch` (identical bodies) treat their
+`iNewColour` argument as "0 = none, otherwise a 1-based custom-colour index":
+
+```cpp
+if (iNewColour == 0)
+  { hide both swatches }
+else
+  {
+  m_ctlSwatch.m_colour  = m_prefsp3->m_customtext [iNewColour - 1];
+  m_ctlSwatch2.m_colour = m_prefsp3->m_customback [iNewColour - 1];
+  }
+```
+
+`iNewColour` is always a `CComboBox::GetCurSel()` result, which returns
+**`CB_ERR` (-1)** when nothing is selected — and nothing is selected whenever
+the stored world option is outside the combo's range, because `SetCurSel`
+rejects an out-of-range index. `note_text_colour` accepts anything up to
+`0xFFFFFF` (`scriptingoptions_numeric.inc`) while the page treats it as a
+0..`MAX_CUSTOM` index, so a world carrying e.g. `note_text_colour="255"` —
+or a script doing `SetOption("note_text_colour", 255)` — produces exactly that.
+`-1` fails the `== 0` test, so the else arm reads `m_customtext [-2]` and
+`m_customback [-2]`: an out-of-bounds read before the array, showing two
+swatch buttons filled with garbage instead of hiding them.
+
+The two `OnSelchange*` handlers next door already wrap the same call in
+`if (... GetCurSel () != CB_ERR)`, so the guard was known to be needed and was
+simply omitted at the `OnSetActive` call sites.
+
+Fixed here by moving the guard inside `FixSwatch` (`iNewColour <= 0 ||
+iNewColour > MAX_CUSTOM` takes the hide arm), which covers every caller
+including the two unguarded ones.
+
+Windows is affected identically — this is not a port artifact. It was latent on
+the port only because the bridge never invoked `OnSetActive` until `d762469`.
+
+Related, not fixed: the `note_text_colour` option's maximum of `0xFFFFFF` and
+`echo_colour`'s maximum of `MAX_CUSTOM` are both wrong for a value that must be
+a 0..`MAX_CUSTOM` combo index.

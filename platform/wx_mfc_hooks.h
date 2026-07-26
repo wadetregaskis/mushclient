@@ -578,6 +578,13 @@ extern void  (*g_wxhook_hotkey_get)(void* hwnd, unsigned short* vk, unsigned sho
 // get_client_rect (declared far above) gives the {0,0,w,h} client box; these add
 // the screen-coordinate bounds and point conversions used by a few CWnd callers.
 extern void (*g_wxhook_get_window_rect)(const void* hwnd, RECT* r);
+// get_placement_rect: the rectangle GetWindowPlacement reports as
+// rcNormalPosition — a child window's bounds in its PARENT's client
+// coordinates, a top-level window's in screen coordinates.  That is what the
+// canonical relayout code reads (e.g. CEditMultiLine::OnSize sizes the text box
+// to just above the Cancel button's top), so it must NOT be the {0,0,w,h}
+// client box: a control's top would always be 0.
+extern void (*g_wxhook_get_placement_rect)(const void* hwnd, RECT* r);
 extern void (*g_wxhook_client_to_screen)(const void* hwnd, int* x, int* y);
 extern void (*g_wxhook_screen_to_client)(const void* hwnd, int* x, int* y);
 

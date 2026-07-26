@@ -4494,6 +4494,23 @@ static void hook_get_window_rect(const void* hwnd, RECT* r)
     wxRect g = w->GetScreenRect();
     r->left = g.x; r->top = g.y; r->right = g.x + g.width; r->bottom = g.y + g.height;
 }
+// rcNormalPosition for GetWindowPlacement.  wxWindow::GetRect() is exactly the
+// Windows split: parent-client coordinates for a child, screen coordinates for
+// a top-level window.  Reporting the client box here instead (what this used to
+// do) pins every control's left/top at 0, which silently collapsed layouts that
+// position one control relative to another -- CEditMultiLine::OnSize sized its
+// text box to `Cancel.top - 10`, i.e. -10, so the "edit send text" dialog came
+// up with no visible text area at all.
+static void hook_get_placement_rect(const void* h, RECT* r)
+{
+    if (!r) return;
+    if (auto* w = toWxC(h)) {
+        wxRect g = w->GetRect();
+        r->left = g.x; r->top = g.y; r->right = g.x + g.width; r->bottom = g.y + g.height;
+    } else {
+        r->left = r->top = r->right = r->bottom = 0;
+    }
+}
 static void hook_client_to_screen(const void* hwnd, int* x, int* y)
 {
     wxWindow* w = (wxWindow*) hwnd;
@@ -4573,6 +4590,7 @@ void wx_mfc_install_hooks()
     g_wxhook_make_hotkey              = hook_make_hotkey;
     g_wxhook_hotkey_get               = hook_hotkey_get;
     g_wxhook_get_window_rect          = hook_get_window_rect;
+    g_wxhook_get_placement_rect       = hook_get_placement_rect;
     g_wxhook_client_to_screen         = hook_client_to_screen;
     g_wxhook_screen_to_client         = hook_screen_to_client;
     g_wxhook_invalidate       = hook_invalidate;

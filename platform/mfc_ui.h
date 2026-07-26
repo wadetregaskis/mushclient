@@ -1162,9 +1162,13 @@ struct WINDOWPLACEMENT {
 };
 
 // CWnd::GetWindowPlacement — out-of-line (WINDOWPLACEMENT is forward-declared in
-// compat.h).  Fills rcNormalPosition with the control's size (0,0,w,h); callers
-// like GetButtonSize() only use the width/height.  Enough for the canonical
-// OnSize relayout (e.g. CPluginsDlg) to compute correct button dimensions.
+// compat.h).  rcNormalPosition is the window's bounds the way Windows reports
+// them: parent-client coordinates for a child, screen coordinates for a
+// top-level window.  Callers use both halves — GetButtonSize() takes the
+// width/height, while relayout code takes the position (CEditMultiLine::OnSize
+// sizes its text box to the Cancel button's top).  The client-rect fallback is
+// for the headless build, which has no window geometry: it keeps the size
+// meaningful and leaves the origin at 0,0.
 inline BOOL CWnd::GetWindowPlacement(WINDOWPLACEMENT* wp) const {
     if (!wp) return FALSE;
     wp->length  = sizeof(WINDOWPLACEMENT);
@@ -1174,7 +1178,9 @@ inline BOOL CWnd::GetWindowPlacement(WINDOWPLACEMENT* wp) const {
     wp->ptMaxPosition.x = wp->ptMaxPosition.y = 0;
     wp->rcNormalPosition.left = wp->rcNormalPosition.top = 0;
     wp->rcNormalPosition.right = wp->rcNormalPosition.bottom = 0;
-    if (g_wxhook_get_client_rect)
+    if (g_wxhook_get_placement_rect)
+        g_wxhook_get_placement_rect(m_hWnd, &wp->rcNormalPosition);
+    else if (g_wxhook_get_client_rect)
         g_wxhook_get_client_rect(m_hWnd, &wp->rcNormalPosition);
     return TRUE;
 }

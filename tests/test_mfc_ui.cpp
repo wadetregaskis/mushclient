@@ -2210,19 +2210,42 @@ TEST(Wnd, GetWindowTextWithoutHookIsEmpty) {
     EXPECT_EQ(0, w.GetWindowTextLength());
 }
 
-TEST(Wnd, GetWindowPlacementUsesClientRect) {
-    static RECT s_rect;
-    s_rect.left = 0; s_rect.top = 0; s_rect.right = 120; s_rect.bottom = 40;
-    g_wxhook_get_client_rect = [](const void*, RECT* r) { *r = s_rect; };
+// mfc_ui.h CWnd::GetWindowPlacement: "rcNormalPosition is the window's bounds
+// the way Windows reports them: parent-client coordinates for a child".  The
+// position matters as much as the size — relayout code positions one control
+// against another (CEditMultiLine::OnSize sizes its text box to the Cancel
+// button's top), and this used to report the {0,0,w,h} client box, which pins
+// every control's top at 0 and collapsed that dialog's text area to nothing.
+TEST(Wnd, GetWindowPlacementReportsThePositionNotJustTheSize) {
+    static RECT s_placement;
+    s_placement.left = 5; s_placement.top = 217;
+    s_placement.right = 55; s_placement.bottom = 231;
+    g_wxhook_get_placement_rect = [](const void*, RECT* r) { *r = s_placement; };
     CWnd w;
     WINDOWPLACEMENT wp;
     EXPECT_TRUE(w.GetWindowPlacement(&wp));
+    EXPECT_EQ(5,   (int)wp.rcNormalPosition.left);
+    EXPECT_EQ(217, (int)wp.rcNormalPosition.top);      // NOT 0
+    EXPECT_EQ(55,  (int)wp.rcNormalPosition.right);
+    EXPECT_EQ(231, (int)wp.rcNormalPosition.bottom);
+    EXPECT_EQ(1u,  wp.showCmd);
+    // GetButtonSize() reads only the extent, which must survive the change.
+    EXPECT_EQ(50, (int)(wp.rcNormalPosition.right - wp.rcNormalPosition.left));
+    EXPECT_EQ(14, (int)(wp.rcNormalPosition.bottom - wp.rcNormalPosition.top));
+
+    // Headless has no window geometry: fall back to the client rect, so the
+    // size stays meaningful and the origin is 0,0.
+    static RECT s_client;
+    s_client.left = 0; s_client.top = 0; s_client.right = 120; s_client.bottom = 40;
+    g_wxhook_get_placement_rect = nullptr;
+    g_wxhook_get_client_rect = [](const void*, RECT* r) { *r = s_client; };
+    EXPECT_TRUE(w.GetWindowPlacement(&wp));
     EXPECT_EQ(120, (int)wp.rcNormalPosition.right);
-    EXPECT_EQ(40, (int)wp.rcNormalPosition.bottom);
-    EXPECT_EQ(1u, wp.showCmd);
+    EXPECT_EQ(40,  (int)wp.rcNormalPosition.bottom);
+
     g_wxhook_get_client_rect = nullptr;
     EXPECT_FALSE(w.GetWindowPlacement(nullptr));
-    EXPECT_TRUE(w.GetWindowPlacement(&wp));   // no hook: zero rect
+    EXPECT_TRUE(w.GetWindowPlacement(&wp));   // no hook at all: zero rect
     EXPECT_EQ(0, (int)wp.rcNormalPosition.right);
 }
 

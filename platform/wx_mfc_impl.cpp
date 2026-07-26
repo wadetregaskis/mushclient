@@ -1632,14 +1632,22 @@ static void* hook_open_world_file(const char* path)
     CWorldChildFrame* child = new CWorldChildFrame(mdiParent, doc);
     wx_register_world_frame(doc, child);  // keep the registry up-to-date
     child->UpdateTitle();
-    // Make the world fill the main window.  On macOS the MDI child becomes the
-    // single on-screen window, so size it to the main window's whole frame (in
-    // screen coords) — not Maximize() (which zooms to the full screen, defeating
-    // the ~200-column width) and not the client size at (0,0) (which would move
-    // the window to the screen corner and lose the title-bar height).
+    // "Open worlds Maximized" (File > Preferences > General).  Its canonical
+    // reader is CSendView::OnInitialUpdate (sendvw.cpp), which the port never
+    // constructs, so this used to fill the main window UNCONDITIONALLY -- the
+    // port always behaved as though the option were on, and the option's
+    // default is OFF.  When it is off we leave the size CWorldChildFrame's
+    // constructor restored (the last-used child size, defaulting to 800x600).
+    //
+    // Filling means sizing to the main window's whole frame in screen coords:
+    // on macOS the MDI child becomes the single on-screen window, so this is
+    // NOT Maximize() (which zooms to the full screen, defeating the ~200-column
+    // width) and NOT the client size at (0,0) (which would move the window to
+    // the screen corner and lose the title-bar height).
     const wxRect want = mdiParent->GetScreenRect();
     child->Show();
-    if (want.width > 100 && want.height > 100) child->SetSize(want);
+    if (App.m_bOpenWorldsMaximised && want.width > 100 && want.height > 100)
+        child->SetSize(want);
 
     // All output plumbing (the IWorldView seam) and initial pane state (font, scrollback,
     // background) are applied inside CWorldChildFrame's constructor.
@@ -2112,10 +2120,11 @@ static void* hook_new_world()
     CWorldChildFrame* child = new CWorldChildFrame(mdiParent, doc);
     wx_register_world_frame(doc, child);  // keep the registry up-to-date
     child->UpdateTitle();   // set title from m_mush_name
-    {   // fill the main window (see hook_open_world_file)
+    {   // fill the main window, but only if asked (see hook_open_world_file)
         const wxRect want = mdiParent->GetScreenRect();
         child->Show();
-        if (want.width > 100 && want.height > 100) child->SetSize(want);
+        if (App.m_bOpenWorldsMaximised && want.width > 100 && want.height > 100)
+            child->SetSize(want);
     }
 
     // All output plumbing (the IWorldView seam) and initial pane state (font, scrollback,
@@ -3417,19 +3426,36 @@ static intptr_t hook_run_property_sheet(void* self)
     std::vector<CPropertyPage*> pages;
     pages.reserve(sheet->m_portPages.size());
 
+    // Branches the canonical code asked to be shown expanded.  GamePreferences
+    // ORs tps_item_expanded into the branch's nType when the "Auto-expand config
+    // screens" global preference is on (configuration.cpp: `int iExpand =
+    // App.m_bAutoExpand ? tps_item_expanded : 0;`), which is the default.  The
+    // mask below is tps_item_type_mask == 3 and the expanded bit is 4, so this
+    // bridge used to drop it on the floor and every branch came up collapsed.
+    std::vector<size_t> expandNodes;
+
     for (const auto& pp : sheet->m_portPages)
     {
         CPropertyPage* page  = pp.pPage;
         wxPanel*       panel = build_canonical_sheet_page(tb, page);
 
         wxString label = wxString::FromUTF8((const char*) pp.caption);
-        if ((pp.nType & tps_item_type_mask) == tps_item_branch)
+        if ((pp.nType & tps_item_type_mask) == tps_item_branch) {
+            if (pp.nType & tps_item_expanded)
+                expandNodes.push_back(pages.size());   // == the treebook index
             tb->AddPage(panel, label);
+        }
         else
             tb->AddSubPage(panel, label);
 
         pages.push_back(page);
     }
+
+    // Expand the branches that asked for it.  After the build loop, because
+    // wxTreebook::ExpandNode does not stick on a branch that has no children
+    // yet, and before SetSelection so the opening page is already visible.
+    for (size_t n : expandNodes)
+        tb->ExpandNode(n, true);
 
     // Open at the wanted page (m_iWantedPage == add-order index; see
     // TreePropertySheet.cpp OnInitDialog `nPage == m_iWantedPage`).

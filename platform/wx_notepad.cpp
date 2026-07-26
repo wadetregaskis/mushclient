@@ -197,7 +197,17 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     SetMenuBar(mb);
 
     // ── Text control ────────────────────────────────────────────────────
-    long ctrlStyle = wxTE_MULTILINE | wxTE_RICH2 | wxHSCROLL | wxTE_NOHIDESEL;
+    // "Word Wrap" (File > Preferences > Notepad).  wxTE_DONTWRAP IS wxHSCROLL
+    // (wx/textctrl.h), so passing it unconditionally -- as this did -- made
+    // every notepad permanently no-wrap, against a default of wrap ON.
+    // Windows reads the same preference at creation time
+    // (TextView.cpp PreCreateWindow), so honouring it here and not on the fly
+    // matches: already-open notepads keep their mode, and wxOSX cannot change
+    // the wrap mode of a live wxTextCtrl anyway.
+    long ctrlStyle = wxTE_MULTILINE | wxTE_RICH2 | wxTE_NOHIDESEL;
+    if (!App.m_bNotepadWordWrap)
+        ctrlStyle |= wxHSCROLL;   // == wxTE_DONTWRAP, plus the scrollbar you
+                                  // then need -- nothing else here provides it
     if (pDoc->m_bReadOnly)
         ctrlStyle |= wxTE_READONLY;
 

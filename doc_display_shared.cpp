@@ -77,6 +77,8 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
         }
 
         SOutputLine outline;
+        // A note line: a send-link on it is executed, not sent.
+        outline.comment = (pLine->flags & COMMENT) != 0;
         POSITION spos = pLine->styleList.GetHeadPosition();
         int charOff = 0;
         while (spos) {
@@ -103,6 +105,11 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
                 if (pStyle->pAction) {
                     run.action = static_cast<const char*>(pStyle->pAction->m_strAction);
                     run.hint   = static_cast<const char*>(pStyle->pAction->m_strHint);
+                    // Windows branches on these when the link is clicked (a
+                    // prompt-link fills the command bar; a send-link on a note
+                    // line executes instead of sending), so carry them out to
+                    // the view with the action itself.
+                    run.action_type = pStyle->iFlags & ACTIONTYPE;
                 }
                 outline.push_back(std::move(run));
             }
@@ -125,6 +132,7 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
     // replaces m_pendingLine and schedules a single Refresh().
     if (m_pCurrentLine && m_pCurrentLine->len > 0) {
         SOutputLine pending;
+        pending.comment = (m_pCurrentLine->flags & COMMENT) != 0;
         POSITION spos = m_pCurrentLine->styleList.GetHeadPosition();
         int charOff = 0;
         while (spos) {
@@ -143,6 +151,11 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
                 if (pStyle->pAction) {
                     run.action = static_cast<const char*>(pStyle->pAction->m_strAction);
                     run.hint   = static_cast<const char*>(pStyle->pAction->m_strHint);
+                    // Windows branches on these when the link is clicked (a
+                    // prompt-link fills the command bar; a send-link on a note
+                    // line executes instead of sending), so carry them out to
+                    // the view with the action itself.
+                    run.action_type = pStyle->iFlags & ACTIONTYPE;
                 }
                 pending.push_back(std::move(run));
             }

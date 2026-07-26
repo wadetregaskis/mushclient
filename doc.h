@@ -629,6 +629,19 @@ typedef CTypedPtrArray <CPtrArray, CAlphaConfiguration*> CAlphaConfigurationArra
   typedef CPaneMap::iterator PaneMapIterator;
 #endif // PANE
 
+// What is left for the caller to do after CMUSHclientDoc::HyperlinkClicked
+// (doc_hyperlink_shared.cpp).  The decisions — note-line-executes, plugin-call
+// syntax, ACTION_PROMPT, the "echo hyperlink" and "add to command history"
+// world options — are all made in the shared body; what comes back is only the
+// part that has to touch this frontend's own command bar.
+enum eHyperlinkOutcome
+  {
+  eHyperlinkNothing,      // handled; just put the focus back in the command bar
+  eHyperlinkFillCommand,  // ACTION_PROMPT: put the action into the command bar
+  eHyperlinkAddHistory,   // sent, and the world wants it in the command history
+  eHyperlinkAbort,        // not connected: do nothing more, leave the focus alone
+  };
+
 class CMUSHclientDoc : public CDocument
 {
   friend class CActivityView;
@@ -2541,6 +2554,16 @@ public:
                            const CString & strWord,
                            const CString & strLine);
   void TabCompleteCommand (void);
+
+  // ── Hyperlink clicks (doc_hyperlink_shared.cpp — one body, every build) ──
+  // Was the ACTION_SEND / ACTION_PROMPT arm of CMUSHView::OnLButtonDown.  It is
+  // doc work: it decodes the !!pluginID:sub(arg) plugin-call form, runs
+  // Execute() on note lines, and otherwise SendMsg()s with the world's
+  // "echo hyperlink" option.  Only the last step is view-shaped, so the caller
+  // is told what remains rather than the doc guessing which frontend it has.
+  eHyperlinkOutcome HyperlinkClicked (const CString  strAction,
+                                      const long     iActionType,
+                                      const bool     bCommentLine);
 
   CString DoEvaluateSpeedwalk(LPCTSTR SpeedWalkString);
   static CString DoReverseSpeedwalk(LPCTSTR SpeedWalkString);

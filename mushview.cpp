@@ -2260,106 +2260,33 @@ int line,
           addedstuff ();
           }
 
-        if ((iStyle & ACTIONTYPE) == ACTION_SEND &&
-            (pLine->flags & COMMENT) == COMMENT)
+        // Everything that is not this view's own business — note lines execute
+        // rather than send, the !!pluginID:sub(arg) plugin-call decode, the
+        // connected check, and the send itself with the world's "echo
+        // hyperlink" option — lives in doc_hyperlink_shared.cpp so the wx port
+        // runs the same code instead of its own reimplementation.  What comes
+        // back is only what has to touch m_bottomview, and it happens here,
+        // exactly as it always did.
+        switch (pDoc->HyperlinkClicked (strAction,
+                                        iStyle & ACTIONTYPE,
+                                        (pLine->flags & COMMENT) == COMMENT))
           {
-          // action_send on a note line will be executed, not sent
-          //  (for the world.Hyperlink function)
-          // However an action in the form !!pluginID:script(arg)
-          // eg. !!753ba7e011f3c8943a885f18:mysub(1234)
-          // will be passed the nominted sub in the nominated plugin
-
-          // rather elaborate test ...
-
-          // a. Must start with !!
-          // b. Must end with )
-          // c. Must have a "(" in it
-          // d. After the !! there must be 24 hex characters
-          // e. After that must be a colon (:)
-          // f. After the colon must be a valid subroutine name
-          if (strAction.GetLength () >= PLUGIN_UNIQUE_ID_LENGTH + 5 &&
-              strAction.Left (2) == "!!" &&
-              strAction.Right (1) == ")" &&
-              strAction.Find ("(") != -1 &&
-              strAction.Mid (PLUGIN_UNIQUE_ID_LENGTH + 2, 1) == ":" &&
-              IsPluginID (strAction.Mid (2, PLUGIN_UNIQUE_ID_LENGTH)) &&
-              IsSubName (strAction.Mid (PLUGIN_UNIQUE_ID_LENGTH + 3)))
-            { // correct syntax for plugin call
-            CString strPluginID = strAction.Mid (2, PLUGIN_UNIQUE_ID_LENGTH);
-            strAction = strAction.Mid (PLUGIN_UNIQUE_ID_LENGTH + 3);
-            int iBracket = strAction.Find ("(");
-            if (iBracket != -1)
-              {
-              CString strScriptName = strAction.Left (iBracket);
-              strScriptName.TrimRight ();
-              CString strArg = strAction.Mid (iBracket + 1);
-              strArg = strArg.Left (strArg.GetLength () - 1); // drop trailing )
-              if (strPluginID == DEBUG_PLUGIN_ID)  // just made that up ;)
-                pDoc->DebugHelper (strScriptName, strArg);
-              else
-                {
-                long iResult = pDoc->CallPlugin (strPluginID, strScriptName, strArg);
-                CString strName = strPluginID;  // default to ID
-                if (iResult != eOK)
-                  {
-                  CPlugin * pPlugin = pDoc->GetPlugin (strPluginID);
-                  if (pPlugin)
-                    strName = pPlugin->m_strName;
-                  } // end of finding plugin's name
-                switch (iResult)
-                  {
-                  case eNoSuchPlugin:
-                    pDoc->ColourNote ("white", "red",
-                          TFormat ("Plugin \"%s\" is not installed",
-                                  (LPCTSTR) strName));
-                    break;
-                  case eNoSuchRoutine:
-                    pDoc->ColourNote ("white", "red",
-                          TFormat ("Script routine \"%s\" is not in plugin %s",
-                                  (LPCTSTR) strScriptName,
-                                  (LPCTSTR) strName));
-                    break;
-
-                  case eErrorCallingPluginRoutine:
-                    pDoc->ColourNote ("white", "red",
-                          TFormat ("An error occurred calling plugin %s",
-                                  (LPCTSTR) strName));
-                    break;
-
-                  } // end of switch on errors
-                }   // end of not debug helper ID
-              }  // end of ( found (this should occur, really)
-            }   // end of passing special syntax test
-          else
-            {  // plugin does not exist - just execute it
-            pDoc->m_iExecutionDepth = 0;
-            pDoc->Execute (strAction);
-            }
-          } // end of note hyperlink
-        else
-          {   // not note line
-
-          if (pDoc->CheckConnected ())
+          case eHyperlinkAbort:
             return;
 
-          // send to command window?
-          if ( (iStyle & ACTIONTYPE) == ACTION_PROMPT)
-            {
+          case eHyperlinkFillCommand:
             if (m_bottomview->CheckTyping (pDoc, strAction))
               return;
             m_bottomview->SetCommand (strAction);
-            }
-          else
-            {
-            // send it
-            pDoc->SendMsg (strAction,
-                           pDoc->m_bEchoHyperlinkInOutputWindow,
-                           false,           // don't queue
-                           pDoc->LoggingInput ());
-            if (pDoc->m_bHyperlinkAddsToCommandHistory)
-              m_bottomview->AddToCommandHistory (strAction);
-            }
-          }   // end of not execute wanted
+            break;
+
+          case eHyperlinkAddHistory:
+            m_bottomview->AddToCommandHistory (strAction);
+            break;
+
+          case eHyperlinkNothing:
+            break;
+          }
 
         // put the focus back in the send window
         OnKeysActivatecommandview ();

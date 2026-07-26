@@ -1555,7 +1555,9 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
                 if (!run.action.empty() &&
                     clickCol >= c && clickCol < c + runLen)
                 {
-                    m_linkAtDown = run.action;
+                    m_linkAtDown     = run.action;
+                    m_linkTypeAtDown = run.action_type;
+                    m_linkNoteAtDown = m_lines[lineIdx].comment;
                     break;
                 }
                 c += runLen;
@@ -1588,7 +1590,8 @@ void COutputPane::OnLeftUp(wxMouseEvent& evt)
         // This lets the user drag over link text to select/copy it.
         if (!m_linkAtDown.empty() && m_selAnchor == m_selFocus) {
             if (m_fn_link_clicked)
-                m_fn_link_clicked(m_linkAtDown);
+                m_fn_link_clicked(m_linkAtDown, m_linkTypeAtDown,
+                                  m_linkNoteAtDown);
         }
         m_linkAtDown.clear();
 
@@ -1856,6 +1859,8 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     // XToChar returns the absolute char column in the logical line,
     // correctly accounting for visual-row wrapping.
     std::string linkAtClick;
+    int  linkTypeAtClick = 0;
+    bool linkNoteAtClick = false;
     {
         int lineIdx = YToLine(evt.GetY());
         if (lineIdx >= 0 && lineIdx < (int)m_lines.size()) {
@@ -1866,7 +1871,9 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
                 if (!run.action.empty() &&
                     col >= c && col < c + runLen)
                 {
-                    linkAtClick = run.action;
+                    linkAtClick     = run.action;
+                    linkTypeAtClick = run.action_type;
+                    linkNoteAtClick = m_lines[lineIdx].comment;
                     break;
                 }
                 c += runLen;
@@ -1950,8 +1957,9 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
         if (isURL) {
             wxMenuItem* itemOpen = menu.Append(wxID_ANY, "Open URL in Browser");
             menu.Bind(wxEVT_MENU,
-                [this, linkAtClick](wxCommandEvent&) {
-                    if (m_fn_link_clicked) m_fn_link_clicked(linkAtClick);
+                [this, linkAtClick, linkTypeAtClick, linkNoteAtClick](wxCommandEvent&) {
+                    if (m_fn_link_clicked)
+                        m_fn_link_clicked(linkAtClick, linkTypeAtClick, linkNoteAtClick);
                 }, itemOpen->GetId());
 
             wxMenuItem* itemCopyURL = menu.Append(wxID_ANY, "Copy URL");
@@ -1983,8 +1991,9 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
                     wxString::FromUTF8(ch.c_str(), ch.size()));
                 wxMenuItem* item = menu.Append(wxID_ANY, label);
                 menu.Bind(wxEVT_MENU,
-                    [this, cmd = ch](wxCommandEvent&) {
-                        if (m_fn_link_clicked) m_fn_link_clicked(cmd);
+                    [this, cmd = ch, linkTypeAtClick, linkNoteAtClick](wxCommandEvent&) {
+                        if (m_fn_link_clicked)
+                            m_fn_link_clicked(cmd, linkTypeAtClick, linkNoteAtClick);
                     }, item->GetId());
             }
             if (choices.size() > 1) {
@@ -1992,8 +2001,9 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
                 wxMenuItem* itemAll = menu.Append(wxID_ANY,
                     wxT("Send All (in order)"));
                 menu.Bind(wxEVT_MENU,
-                    [this, linkAtClick](wxCommandEvent&) {
-                        if (m_fn_link_clicked) m_fn_link_clicked(linkAtClick);
+                    [this, linkAtClick, linkTypeAtClick, linkNoteAtClick](wxCommandEvent&) {
+                        if (m_fn_link_clicked)
+                            m_fn_link_clicked(linkAtClick, linkTypeAtClick, linkNoteAtClick);
                     }, itemAll->GetId());
             }
             wxMenuItem* itemCopy = menu.Append(wxID_ANY, "Copy Action");

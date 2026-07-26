@@ -279,7 +279,15 @@ public:
     std::function<bool(int x, int y, int delta)>   m_fn_miniwindow_mouse_wheel;
 
     // Called when the user clicks an MXP hyperlink run.
-    std::function<void(const std::string& action)> m_fn_link_clicked;
+    // action           the MXP/Lua link action (pipe-delimited alternatives)
+    // actionType       the style's ACTIONTYPE bits (SOutputRun::action_type)
+    // bCommentLine     the clicked line was a note, not MUD output
+    // The last two decide what the click MEANS -- a prompt-link fills the
+    // command bar, a send-link on a note line executes -- so they travel with
+    // the action rather than being re-derived (or ignored) by the handler.
+    std::function<void(const std::string& action,
+                       int actionType,
+                       bool bCommentLine)> m_fn_link_clicked;
 
     // Called from the right-click context menu "Put in Input Bar" action.
     // Receives the currently selected text; the frame wires this to set the
@@ -451,6 +459,8 @@ private:
     // Stored at mouse-down time when the cursor is over a link run.
     // Fired as a link click on mouse-up only if no drag occurred.
     std::string m_linkAtDown;
+    int         m_linkTypeAtDown = 0;      // its run.action_type
+    bool        m_linkNoteAtDown = false;  // its line was a note (COMMENT)
 
     bool m_autoScroll      = true;
     // True while OnPaint runs its mid-paint plugin callback

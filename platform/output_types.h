@@ -38,6 +38,12 @@ struct SOutputRun {
     bool        horiz_rule    = false;        // true → render as a horizontal separator
     std::string action;                       // MXP link action (empty = not a link)
     std::string hint;                         // MXP link tooltip hint
+    // The style's ACTIONTYPE bits (ACTION_SEND / ACTION_HYPERLINK /
+    // ACTION_PROMPT, OtherTypes.h) already masked with ACTIONTYPE.  Stored raw
+    // rather than as an enum because this header must not pull in compat.h.
+    // Windows branches on it when a link is clicked — a prompt-link fills the
+    // command bar instead of sending — so the view has to carry it to the click.
+    int         action_type   = 0;
     // Encoding of `text`.  utf8==true (the default, and the common modern case)
     // means `text` is UTF-8.  When false the world is in its native 8-bit charset
     // and `charset` is the Windows LOGFONT charset (the doc's m_font_charset) the
@@ -57,6 +63,11 @@ struct SOutputRun {
 struct SOutputLine : std::vector<SOutputRun> {
     bool pending  = false;
     bool bookmark = false;   // Display ▸ Bookmark Selection toggles this
+    // The line's COMMENT flag (a Note rather than MUD output).  A send-link on
+    // a note line is EXECUTED, not sent — that is how world.Hyperlink and the
+    // !!pluginID:sub(arg) plugin-call convention work — so the click handler
+    // needs it alongside the run's action_type.
+    bool comment  = false;
     // Inherit all std::vector constructors (default, initializer_list, etc.).
     using std::vector<SOutputRun>::vector;
 };

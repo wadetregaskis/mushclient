@@ -791,8 +791,18 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     //   • An http:// or https:// URL auto-detected from plain text
     //     → open in the system default browser via wxLaunchDefaultBrowser().
     //   • A pipe-delimited MXP command string from an <A href="..."> element
-    //     → sent to the MUD via EvaluateCommand() (popup for multi-choice).
-    m_output->m_fn_link_clicked = [this](const std::string& action) {
+    //     → each alternative goes to CMUSHclientDoc::HyperlinkClicked
+    //       (doc_hyperlink_shared.cpp), the same body Windows runs.
+    //
+    // This used to call EvaluateCommand(), which was wrong in four ways: it
+    // alias-expands (Windows deliberately does not for a link), it hardcodes
+    // m_display_my_input as the echo flag so the MXP page's "echo hyperlink"
+    // option did nothing, it never touched the command history, and it had no
+    // !!pluginID:sub(arg) decode — so a plugin's own callback links went to the
+    // MUD as literal text.  actionType/bCommentLine are the two facts the
+    // decision needs and they now travel with the action from the run.
+    m_output->m_fn_link_clicked = [this](const std::string& action,
+                                         int actionType, bool bCommentLine) {
         if (action.empty()) return;
 
         // Plain URL from auto-detection.
@@ -820,12 +830,42 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         }
         if (choices.empty()) return;
 
-        // Single action: send immediately without a menu.
-        if (choices.size() == 1) {
-            CString cCmd(choices[0].c_str());
-            bool bOmit = false;
-            m_doc->EvaluateCommand(cCmd, /*countThem=*/true, bOmit);
+        // One place that runs a chosen alternative through the shared handler
+        // and then does the parts that are this frontend's own business —
+        // exactly what mushview.cpp does with the same return value.
+        auto fire = [this, actionType, bCommentLine](const std::string& cmd) {
+            switch (m_doc->HyperlinkClicked(CString(cmd.c_str()),
+                                            actionType, bCommentLine))
+            {
+                case eHyperlinkAbort:
+                    return;                    // not connected; leave the focus
+
+                case eHyperlinkFillCommand:    // ACTION_PROMPT
+                    // CSendView::SetCommand: replace the bar, caret at the end.
+                    // Windows also runs CSendView::CheckTyping first (confirm
+                    // before replacing something already typed) — that prompt is
+                    // its own backlog item on the port and is not faked here.
+                    if (m_input) {
+                        m_input->SetValue(wxString::FromUTF8(cmd.c_str(), cmd.size()));
+                        m_input->SetInsertionPointEnd();
+                    }
+                    break;
+
+                case eHyperlinkAddHistory:
+                    addToCommandHistory(cmd.c_str());
+                    break;
+
+                case eHyperlinkNothing:
+                    break;
+            }
+            // put the focus back in the send window (OnKeysActivatecommandview)
+            if (m_input) m_input->SetFocus();
             m_doc->UpdateAllViews(nullptr);
+        };
+
+        // Single action: run it immediately without a menu.
+        if (choices.size() == 1) {
+            fire(choices[0]);
             return;
         }
 
@@ -838,11 +878,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         for (const std::string& ch : choices) {
             wxMenuItem* item = linkMenu.Append(
                 wxID_ANY, wxString::FromUTF8(ch.c_str(), ch.size()));
-            linkMenu.Bind(wxEVT_MENU, [this, cmd = ch](wxCommandEvent&) {
-                CString cCmd(cmd.c_str());
-                bool bOmit = false;
-                m_doc->EvaluateCommand(cCmd, /*countThem=*/true, bOmit);
-                m_doc->UpdateAllViews(nullptr);
+            linkMenu.Bind(wxEVT_MENU, [fire, cmd = ch](wxCommandEvent&) {
+                fire(cmd);
             }, item->GetId());
         }
         // PopupMenu() runs its own event loop and returns after the user

@@ -16,7 +16,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 5 | XML date day-range message | `49e5ba6` | xmlparse.cpp `Get_XML_date` |
 | 6 | XML date second-range message | `49e5ba6` | xmlparse.cpp `Get_XML_date` |
 | 7 | Timer at_time toggle HOUR→MINUTE | `eea4a45` | methods_timers.cpp `CMUSHclientDoc::SetTimerOption` |
-| 8 | Colour-swatch FixSwatch reads index -2 on CB_ERR | `PENDING` | prefspropertypages.cpp `CPrefsP9::FixSwatch` / `CPrefsP17::FixSwatch` |
+| 8 | Custom-colour index used unchecked (`note_text_colour`) | `36db6c1` (partial) | methods_noting.cpp note-colour getters; prefspropertypages.cpp `FixSwatch` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -79,43 +79,53 @@ vice-versa; the hour and second fields copy correctly.
 timer's `at_time` option on a timer whose hour and minute differ.
 
 
-## 8 — `FixSwatch` indexes `m_customtext [-2]` when the combo has no selection
+## 8 — an unvalidated `note_text_colour` is used as an array index
 
-`CPrefsP9::FixSwatch` and `CPrefsP17::FixSwatch` (identical bodies) treat their
-`iNewColour` argument as "0 = none, otherwise a 1-based custom-colour index":
+`m_iNoteTextColour` is meant to be a 0..`MAX_CUSTOM` custom-colour index, but
+its option-table row permits far more (`scriptingoptions_numeric.inc`):
 
-```cpp
-if (iNewColour == 0)
-  { hide both swatches }
-else
-  {
-  m_ctlSwatch.m_colour  = m_prefsp3->m_customtext [iNewColour - 1];
-  m_ctlSwatch2.m_colour = m_prefsp3->m_customback [iNewColour - 1];
-  }
+```
+{"note_text_colour", 4, O(m_iNoteTextColour), 0, 0xFFFFFF, OPT_RGB_COLOUR},
 ```
 
-`iNewColour` is always a `CComboBox::GetCurSel()` result, which returns
-**`CB_ERR` (-1)** when nothing is selected — and nothing is selected whenever
-the stored world option is outside the combo's range, because `SetCurSel`
-rejects an out-of-range index. `note_text_colour` accepts anything up to
-`0xFFFFFF` (`scriptingoptions_numeric.inc`) while the page treats it as a
-0..`MAX_CUSTOM` index, so a world carrying e.g. `note_text_colour="255"` —
-or a script doing `SetOption("note_text_colour", 255)` — produces exactly that.
-`-1` fails the `== 0` test, so the else arm reads `m_customtext [-2]` and
-`m_customback [-2]`: an out-of-bounds read before the array, showing two
-swatch buttons filled with garbage instead of hiding them.
+so `world.SetOption("note_text_colour", 300)` is accepted and stored. Nothing
+downstream range-checks it.
 
-The two `OnSelchange*` handlers next door already wrap the same call in
-`if (... GetCurSel () != CB_ERR)`, so the guard was known to be needed and was
-simply omitted at the `OnSetActive` call sites.
+**The serious instance — always live, both platforms.** `methods_noting.cpp`
+uses it as a bare subscript in roughly ten places, guarded only by an
+`== SAMECOLOUR` special case, e.g.:
 
-Fixed here by moving the guard inside `FixSwatch` (`iNewColour <= 0 ||
-iNewColour > MAX_CUSTOM` takes the hide arm), which covers every caller
-including the two unguarded ones.
+```cpp
+return m_customtext [m_iNoteTextColour];     // GetNoteColourFore
+m_iNoteColourBack = m_customback [m_iNoteTextColour];
+```
 
-Windows is affected identically — this is not a port artifact. It was latent on
-the port only because the bridge never invoked `OnSetActive` until `d762469`.
+`m_customtext` / `m_customback` hold `MAX_CUSTOM` (16) entries, so any value in
+16..65534 reads hundreds of elements past the array on ordinary `Note` /
+`NoteColourFore` / `NoteColourBack` calls — no dialog involved. NOT FIXED here:
+the root is the option row's maximum (and `echo_colour`'s, which is also wrong
+for an index), and tightening it changes what `SetOption` accepts on Windows,
+so it wants a deliberate decision rather than a drive-by patch.
 
-Related, not fixed: the `note_text_colour` option's maximum of `0xFFFFFF` and
-`echo_colour`'s maximum of `MAX_CUSTOM` are both wrong for a value that must be
-a 0..`MAX_CUSTOM` combo index.
+**The instance fixed in `36db6c1`.** The same bad value reaches
+`CPrefsP9::FixSwatch` / `CPrefsP17::FixSwatch`, which special-case only
+`iNewColour == 0` and otherwise index `m_customtext [iNewColour - 1]`. The
+argument is a `CComboBox::GetCurSel()`, which returns **`CB_ERR` (-1)** when the
+stored value is outside the combo's range (`SetCurSel` rejects it), so the else
+arm reads index **-2**. The two `OnSelchange*` handlers next door already wrap
+the identical call in `if (... != CB_ERR)`; the `OnSetActive` call sites did
+not. Fixed by moving the guard inside `FixSwatch` so every caller is covered.
+
+Scope, after an adversarial review of the original report:
+* The `CPrefsP17` path is real — reachable by `SetOption("note_text_colour", N)`
+  with N in 16..65534.
+* The `CPrefsP9` path is **not** reachable: `echo_colour` carries
+  `OPT_CUSTOM_COLOUR`, and `SetBaseOptionItem` decrements after the range check,
+  so its maximum lands on the last valid combo index. The guard there is
+  harmless belt-and-braces, not a fix.
+* Index -2 lands *inside* the same `CPrefsP3` object (about 46 `CColourButton`
+  members precede the array), so the consequence is two swatch buttons painted
+  with arbitrary colours — not a fault, and not something ASan detects by
+  default (it does not catch intra-object overflow).
+* Windows runs the same unguarded code. This was latent on the port only
+  because the dialog bridge never invoked `OnSetActive` until `d762469`.

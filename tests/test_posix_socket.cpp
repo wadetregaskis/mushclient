@@ -241,14 +241,38 @@ TEST(PosixSocket, SendAfterPeerCloseReturnsErrorNotSigpipe)
     Recorder server;
     ASSERT_TRUE(lis.Accept(server));
 
-    server.Close();                          // peer side goes away
+    // Make the peer go away with an RST, not a graceful FIN.  A plain close
+    // sends FIN, and writes after a FIN are still accepted into the local send
+    // buffer -- they only fail once the peer's stack answers with RST, which on
+    // loopback is not guaranteed to happen within any bounded number of small
+    // writes.  That is why this test used to fail about 14 runs in 25.
+    // SO_LINGER with a zero timeout makes close(2) send RST immediately, so the
+    // client's next write fails deterministically, which is what the test is
+    // actually about: an error return rather than a SIGPIPE death.
+    {
+        struct linger lg;
+        lg.l_onoff  = 1;
+        lg.l_linger = 0;
+        setsockopt(server.m_hSocket, SOL_SOCKET, SO_LINGER, &lg, sizeof lg);
+    }
+    server.Close();                          // peer side goes away (RST)
 
-    // keep writing until the failure surfaces; the process must survive
+    // Keep writing until the failure surfaces; the point of the test is that
+    // the process SURVIVES (an error return, not a SIGPIPE death).
+    //
+    // Timing note: closing the peer only sends FIN.  Writes after a FIN are
+    // still accepted into the local send buffer and only fail once the peer's
+    // stack answers with RST, so the error is not immediate.  This loop used
+    // to be 50 writes of 4 bytes with Poll(1) between them -- ~200 bytes and
+    // ~50ms, far short of both the socket buffer and the RST round trip, so on
+    // a loopback socket every write could succeed and the test failed roughly
+    // one run in three.  Give it the same budget as poll_until (200 x 10ms)
+    // and it fails only if the error genuinely never arrives.
     int rc = 0;
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < 200; i++) {
         rc = client.Send("xxxx", 4);
         if (rc < 0) break;
-        CAsyncSocket::Poll(1);
+        CAsyncSocket::Poll(10);
     }
     EXPECT_LT(rc, 0);                        // an error, not a dead process
 

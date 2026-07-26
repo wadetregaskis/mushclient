@@ -2647,35 +2647,8 @@ void ChangeToStartupDirectory ()
   } // end of ChangeToStartupDirectory
 
 
-// quick check to see if a string is a plugin ID
-bool IsPluginID (const char * sID)
-  {
-  // return if id wrong length
-  if (strlen (sID) != PLUGIN_UNIQUE_ID_LENGTH)
-    return false;
-
-  for (const char * p = sID; *p; p++)
-    if (!isxdigit (*p))
-      return false;
-
-  return true;
-  }  // end of IsPluginID
-
-// quick check to see if a string is a subroutine name
-bool IsSubName (const char * sName)
-  {
-const char * p = sName;
-
-  int i;
-// check for A-Z, 0-9 or underscore
-  for (i = 0; *p && *p != '('; p++, i++)
-    if (!isalnum (*p) && *p != '_' && *p != '.')
-      return false;
-
-// can't be zero length
-  if (i == 0)
-    return false;
-
-  return true;
-  }  // end of IsSubName
+// IsPluginID / IsSubName moved to utilities_shared.cpp - pure-logic helpers
+// that the headless engine needs too (the shared hyperlink handler validates
+// the !!pluginID:sub(arg) form with them).  Same bodies, same declarations in
+// stdafx.h; Windows behaviour unchanged.
 

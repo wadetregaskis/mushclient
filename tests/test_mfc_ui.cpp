@@ -23,6 +23,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "mainfrm.h"   // CMainFrame (platform/mainfrm_stub.h here) — FramePostMessage tests
 #include "scripting/errors.h"
 
 #include <algorithm>
@@ -3971,6 +3972,52 @@ TEST(AppOpenDocument, NonWorldFileGoesToTheNotepadNotTheWorldOpener)
 
     g_wxhook_open_world_file = savedW;
     g_wxhook_open_text_file  = savedT;
+}
+
+// ── CMainFrame::PostMessage must not shadow CWnd::PostMessage ───────────────
+// platform/mainfrm_stub.h is included by mainfrm.h for EVERY non-Windows build,
+// mushgui included, so an in-class PostMessage there name-hid the real
+// CWnd::PostMessage in the shipping GUI.  Both engine call sites went nowhere:
+// world.DoCommand (methods_commands.cpp, ~200 commands) and the TLS-failure
+// consent prompt (doc_shared.cpp).  This is the P6 signature/shadowing trap --
+// it compiles, links and reads as wired.  These tests pin the dispatch.
+TEST(FramePostMessage, ReachesTheHookRatherThanAStub)
+{
+    auto saved = g_wxhook_post_message;
+    static unsigned s_msg; static uintptr_t s_wp; static intptr_t s_lp;
+    static int s_calls;
+    s_msg = 0; s_wp = 0; s_lp = 0; s_calls = 0;
+    g_wxhook_post_message = [](void*, unsigned m, uintptr_t w, intptr_t l) -> int {
+        s_msg = m; s_wp = w; s_lp = l; ++s_calls; return TRUE;
+    };
+
+    // What world.DoCommand posts: WM_COMMAND carrying the command id.
+    EXPECT_TRUE(Frame.PostMessage(WM_COMMAND, 32332, 0));
+    EXPECT_EQ(1, s_calls);
+    EXPECT_EQ((unsigned) WM_COMMAND, s_msg);
+    EXPECT_EQ((uintptr_t) 32332, s_wp);
+
+    // What OnTlsFailed posts: the doc pointer as wParam, cert-vs-handshake as lParam.
+    EXPECT_TRUE(Frame.PostMessage(WM_USER_SSL_FALLBACK_PROMPT, (WPARAM) 0x1234, (LPARAM) 1));
+    EXPECT_EQ(2, s_calls);
+    EXPECT_EQ((unsigned) WM_USER_SSL_FALLBACK_PROMPT, s_msg);
+    EXPECT_EQ((uintptr_t) 0x1234, s_wp);
+    EXPECT_EQ((intptr_t) 1, s_lp);
+
+    g_wxhook_post_message = saved;
+}
+
+TEST(FramePostMessage, HeadlessStillFailsClosedWhenNoPumpIsInstalled)
+{
+    // The stub existed to make headless posts inert.  Inheriting CWnd::
+    // PostMessage preserves that by construction: a null hook means no pump,
+    // so the post reports failure and the TLS prompt never fires -- which is
+    // what "TLS failures fail closed" means for the headless build.
+    auto saved = g_wxhook_post_message;
+    g_wxhook_post_message = nullptr;
+    EXPECT_FALSE(Frame.PostMessage(WM_COMMAND, 32332, 0));
+    EXPECT_FALSE(Frame.PostMessage(WM_USER_SSL_FALLBACK_PROMPT, 0, 0));
+    g_wxhook_post_message = saved;
 }
 
 MC_TEST_MAIN()

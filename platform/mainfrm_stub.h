@@ -180,9 +180,19 @@ public:
     void DoFixMenus(CCmdUI*);
     void CheckTimerFallback();
     void ProcessTimers();
-    // Deferred main-loop posts (e.g. the TLS consent prompt): headless has no
-    // message pump, so posts go nowhere — TLS failures fail closed.
-    BOOL PostMessage(UINT, WPARAM = 0, LPARAM = 0) { return TRUE; }
+    // NO PostMessage OVERRIDE HERE.  This header is included by mainfrm.h for
+    // every non-Windows build — mushgui as well as headless — so an in-class
+    // PostMessage name-hides the real CWnd::PostMessage (platform/compat.h:253)
+    // in the GUI too, and the two Frame.PostMessage call sites in the engine
+    // both went nowhere: world.DoCommand (scripting/methods/methods_commands.cpp)
+    // for its whole ~200-command surface, and the TLS-failure consent prompt
+    // (doc_shared.cpp), whose handler in wx_mfc_impl.cpp had therefore never run
+    // — a failed handshake gave up silently instead of asking the user.
+    // Inheriting CWnd::PostMessage keeps the headless behaviour this stub was
+    // written for BY CONSTRUCTION: it forwards to g_wxhook_post_message and
+    // returns FALSE when that pointer is null, which is exactly the headless
+    // case (no message pump, so TLS failures still fail closed).  Neither call
+    // site inspects the return value.
 
     // MFC overridables
     virtual BOOL PreTranslateMessage(MSG*);

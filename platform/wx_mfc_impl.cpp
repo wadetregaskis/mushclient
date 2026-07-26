@@ -3257,6 +3257,15 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     dlg->Bind(wxEVT_RADIOBUTTON, [cdlg](wxCommandEvent& e) {
         if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) e.GetId())) e.Skip();
     });
+    // A dialog posting itself a command -- CWnd::PostMessage(WM_COMMAND, ...) --
+    // arrives here as a queued wxEVT_MENU on the dialog window (hook_post_message
+    // above).  The wxEVT_BUTTON bind only sees real button clicks, so without this
+    // such a command fell on the floor; CTimerDlg/CTriggerDlg/CAliasDlg post
+    // IDC_EDIT_SEND that way from their Alt+Return handlers.  Unhandled ids Skip()
+    // so menu commands raised while the dialog is frontmost still reach the frame.
+    dlg->Bind(wxEVT_MENU, [cdlg](wxCommandEvent& e) {
+        if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) e.GetId())) e.Skip();
+    });
     bind_list_notifications(dlg, cdlg);   // list column-sort / double-click (e.g. CPluginsDlg)
     // Closing the window (X / Esc) behaves like Cancel.
     dlg->Bind(wxEVT_CLOSE_WINDOW, [dlg](wxCloseEvent&) {
@@ -3269,6 +3278,41 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
         wxSize cs = dlg->GetClientSize();
         cdlg->OnSize(0 /*SIZE_RESTORED*/, cs.GetWidth(), cs.GetHeight());
         e.Skip();
+    });
+    // MFC's message pump offers every keystroke to the dialog's
+    // PreTranslateMessage BEFORE the focused control sees it.  The bridge went
+    // straight to ShowModal, so six canonical overrides were unreachable dead
+    // code.  wxEVT_CHAR_HOOK is the same position in wx: the top-level window
+    // gets it ahead of the focused child.
+    //   TAB        -> CEditMultiLine inserts a literal tab (the "Tab inserts tab
+    //                 in multi-line dialogs" global preference, default off)
+    //   RETURN     -> CLuaInputBox / CLuaInputEditDlg swallow <enter> when the
+    //                 dialog wants no default button
+    //   Alt+RETURN -> CTimerDlg / CTriggerDlg / CAliasDlg open the multi-line
+    //                 editor for the "send" text (MFC sees WM_SYSKEYDOWN)
+    // Translate only those two keys and Skip() everything else: a blanket hook
+    // would disturb wxDialog's own Esc->Cancel and Enter->default-button in every
+    // dialog in the app.  (Don't be tempted to add wxTE_PROCESS_TAB in the dialog
+    // builder as a shortcut for the tab case -- that hardcodes the preference ON
+    // for every ES_MULTILINE edit regardless of the flag.)
+    dlg->Bind(wxEVT_CHAR_HOOK, [cdlg](wxKeyEvent& e) {
+        MSG msg{};
+        msg.message = WM_KEYDOWN;
+        switch (e.GetKeyCode()) {
+            case WXK_TAB:
+                msg.wParam = VK_TAB;
+                break;
+            case WXK_RETURN:
+            case WXK_NUMPAD_ENTER:
+                msg.wParam = VK_RETURN;
+                if (e.AltDown()) msg.message = WM_SYSKEYDOWN;
+                break;
+            default:
+                e.Skip();
+                return;
+        }
+        // MFC's contract: TRUE means the override consumed the key.
+        if (!cdlg->PreTranslateMessage(&msg)) e.Skip();
     });
     // Command-UI: run each control's ON_UPDATE_COMMAND_UI handler on idle so
     // buttons enable/disable/check by state (e.g. after a list-selection change),

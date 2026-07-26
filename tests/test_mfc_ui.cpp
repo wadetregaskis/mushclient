@@ -3075,7 +3075,10 @@ TEST(StubSweep, FramesMenusAppRemainder) {
     EXPECT_EQ(0u, m.GetMenuState(0, 0));
     CString ms;
     EXPECT_EQ(0, m.GetMenuString(0, ms, 0));
-    EXPECT_EQ((CMenu*)nullptr, m.GetSubMenu(0));
+    // GetSubMenu no longer returns nullptr - it materialises the submenu on
+    // demand.  Returning nullptr crashed every canonical LoadMenu/GetSubMenu
+    // chain; see the CMenu::GetSubMenu comment and the tests below.
+    EXPECT_TRUE(m.GetSubMenu(0) != nullptr);
     EXPECT_EQ(0u, m.GetMenuItemID(0));
     EXPECT_FALSE(m.LoadMenu(1u));
     EXPECT_EQ((CMenu*)nullptr, CMenu::FromHandle(0));
@@ -3795,6 +3798,55 @@ TEST(ShellExecuteCmd, EmptyFileYieldsNoCommand)
 {
     EXPECT_TRUE(BuildShellExecuteCommand("open", nullptr, nullptr, nullptr).empty());
     EXPECT_TRUE(BuildShellExecuteCommand("open", "",      nullptr, nullptr).empty());
+}
+
+
+// mfc_ui.h CMenu::GetSubMenu: "This used to `return nullptr` unconditionally,
+// which CRASHED the app."  The canonical idiom is LoadMenu -> GetSubMenu(0) ->
+// ASSERT(pPopup) -> pPopup->GetSubMenu(n)->AppendMenu(...), and the port has no
+// menu-resource loader, so the whole chain used to walk into a null CMenu*.
+// Live repro: Configure > Triggers > Add > "..." > "->" killed the process.
+
+TEST(MenuSubMenus, CanonicalLoadMenuChainDoesNotYieldNull)
+{
+    CMenu menu;
+    EXPECT_FALSE(menu.LoadMenu(1u));        // still no resource loader...
+    CMenu* pPopup = menu.GetSubMenu(0);     // ...but the chain must survive it
+    ASSERT_TRUE(pPopup != nullptr);
+    // dialogs/EditDlg.cpp walks six submenus and appends into each.
+    for (int i = 0; i < 6; ++i) {
+        CMenu* sub = pPopup->GetSubMenu(i);
+        ASSERT_TRUE(sub != nullptr);
+        sub->AppendMenu(MF_STRING | MF_ENABLED, 5000 + i, "item");
+    }
+    EXPECT_EQ(6u, (unsigned)pPopup->m_subs.size());
+}
+
+TEST(MenuSubMenus, RepeatedGetIsStableAndItemsLandInTheRightSubmenu)
+{
+    CMenu menu;
+    CMenu* a1  = menu.GetSubMenu(1);
+    CMenu* a1b = menu.GetSubMenu(1);
+    EXPECT_TRUE(a1 == a1b);              // same object, not a fresh one
+    // Asking for index 1 first must have created index 0 too, so the MF_POPUP
+    // entries stay parallel to m_subs.
+    EXPECT_EQ(2u, (unsigned)menu.m_subs.size());
+    EXPECT_EQ(2u, (unsigned)menu.m_items.size());
+    EXPECT_TRUE((menu.m_items[0].flags & MF_POPUP) != 0);
+    EXPECT_TRUE(menu.m_items[0].text.empty());   // no resource = no title
+
+    menu.GetSubMenu(0)->AppendMenu(MF_STRING, 11, "zero");
+    a1->AppendMenu(MF_STRING, 22, "one");
+    EXPECT_EQ(1u, (unsigned)menu.GetSubMenu(0)->m_items.size());
+    EXPECT_EQ(1u, (unsigned)a1->m_items.size());
+    EXPECT_STREQ("zero", menu.GetSubMenu(0)->m_items[0].text.c_str());
+    EXPECT_STREQ("one",  a1->m_items[0].text.c_str());
+}
+
+TEST(MenuSubMenus, NegativeIndexStillYieldsNull)
+{
+    CMenu menu;
+    EXPECT_EQ((CMenu*)nullptr, menu.GetSubMenu(-1));
 }
 
 MC_TEST_MAIN()

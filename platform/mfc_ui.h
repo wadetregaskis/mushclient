@@ -5182,6 +5182,9 @@ public:
         std::string text;
     };
     std::vector<Item> m_items;
+    // Submenus materialised by GetSubMenu(), parallel to their MF_POPUP entries
+    // in m_items.  Arena-owned (stable addresses), never freed individually.
+    std::vector<CMenu*> m_subs;
 
     static std::deque<CMenu>& Arena()  { static std::deque<CMenu> a; return a; }
     static void   ResetArena()         { Arena().clear(); }
@@ -5216,7 +5219,49 @@ public:
     UINT  GetMenuItemCount() const   { return (UINT) m_items.size(); }
     UINT  GetMenuState(UINT, UINT) const { return 0; }
     int   GetMenuString(UINT, CString&, UINT) const { return 0; }
-    CMenu* GetSubMenu(int) const { return nullptr; }
+
+    // Lazily materialise submenu `i`, creating it (and the MF_POPUP entry that
+    // links it into this menu) on first ask.
+    //
+    // This used to `return nullptr` unconditionally, which CRASHED the app.
+    // The canonical idiom throughout the Windows source is
+    //     VERIFY(menu.LoadMenu(IDR_SOMETHING));
+    //     CMenu* pPopup = menu.GetSubMenu(0);
+    //     ASSERT(pPopup != NULL);
+    //     pPopup->GetSubMenu(0)->AppendMenu(...);
+    // and the port has no menu-resource loader, so LoadMenu returns FALSE and
+    // every one of those chains walked into a null CMenu*.  AppendMenu touches
+    // m_items, so the null `this` faults — and in a debug build the ASSERT
+    // aborts first.  Live repro before this change: Configure ▸ Triggers ▸ Add
+    // ▸ the "…" beside Trigger ▸ the "->" button (dialogs/EditDlg.cpp:212-320,
+    // six submenus) killed the process outright.
+    //
+    // Creating on demand is the right answer rather than merely not-crashing:
+    // these call sites all populate the menu THEMSELVES with AppendMenu (the
+    // resource only supplied a skeleton, whose dummy first item the code then
+    // deletes), so once the submenus exist the menu is fully built by canonical
+    // code and renders through wx_build_popup_menu.
+    //
+    // Safe against runaway growth: every caller in the tree indexes a fixed
+    // small constant (0..5), never `while (GetSubMenu(i++))`.
+    CMenu* GetSubMenu(int i) {
+        if (i < 0) return nullptr;
+        while ((int) m_subs.size() <= i) {
+            CMenu* child = NewPopup();
+            m_subs.push_back(child);
+            // Link it in with an EMPTY label: the real title lived in the menu
+            // resource, which the port does not have.  wx_build_popup_menu
+            // inlines an unlabelled popup's items rather than showing a
+            // nameless submenu — see platform/wx_mfc_impl.cpp.
+            Item it;
+            // MF_POPUP is #defined further down this header (after CMenu), so
+            // spell the value; it is fixed Win32 API numbering.
+            it.flags = 0x00000010 /* MF_POPUP */;
+            it.arg   = (UINT_PTR) child->m_hMenu;
+            m_items.push_back(it);
+        }
+        return m_subs[(size_t) i];
+    }
     UINT  GetMenuItemID(int) const { return 0; }
     UINT  TrackPopupMenu(UINT /*flags*/, int x, int y, CWnd* /*owner*/, LPCRECT=nullptr) {
         return g_wxhook_popup_menu ? (UINT) g_wxhook_popup_menu(this, x, y) : 0;

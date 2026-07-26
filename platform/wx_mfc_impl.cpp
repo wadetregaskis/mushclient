@@ -2987,9 +2987,30 @@ static wxMenu* wx_build_popup_menu(CMenu* m)
             wxm->AppendSeparator();
         else if (it.flags & MF_POPUP)
         {
-            CMenu*  child   = CMenu::FromMenuHandle((HMENU)(intptr_t) it.arg);
-            wxMenu* wxchild = child ? wx_build_popup_menu(child) : new wxMenu();
-            wxm->AppendSubMenu(wxchild, wxString::FromUTF8(it.text.c_str()));
+            CMenu* child = CMenu::FromMenuHandle((HMENU)(intptr_t) it.arg);
+            if (it.text.empty())
+            {
+                // An UNLABELLED popup: created on demand by CMenu::GetSubMenu
+                // because the port has no menu-resource loader, so the title
+                // the .rc would have supplied does not exist.  Rather than show
+                // a nameless submenu the user cannot read, inline its items,
+                // separated from the previous group.  The canonical code fills
+                // these groups itself (see dialogs/EditDlg.cpp's regexp menu).
+                if (child && !child->m_items.empty())
+                {
+                    if (wxm->GetMenuItemCount() > 0)
+                        wxm->AppendSeparator();
+                    wxMenu* inlined = wx_build_popup_menu(child);
+                    while (inlined->GetMenuItemCount() > 0)
+                        wxm->Append(inlined->Remove(inlined->FindItemByPosition(0)));
+                    delete inlined;
+                }
+            }
+            else
+            {
+                wxMenu* wxchild = child ? wx_build_popup_menu(child) : new wxMenu();
+                wxm->AppendSubMenu(wxchild, wxString::FromUTF8(it.text.c_str()));
+            }
         }
         else
         {

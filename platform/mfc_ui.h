@@ -2961,7 +2961,11 @@ public:
     // Windows; the invented RegisterDoc/UnregisterDoc are gone — Phase 2
     // Stage 2).  Docs register here so the GetFirstDocPosition/GetNextDoc
     // iteration below finds them.
-    virtual void AddDocument(CDocument* d) { m_docs.push_back(d); }
+    // Also records the owning template on the document, as MFC does, so
+    // CDocument::GetDocTemplate() can return it.  It used to return nullptr
+    // unconditionally, which made CMUSHclientDoc::DoSave's empty-path arm
+    // (doc.cpp:2204) trip its ASSERT.
+    virtual void AddDocument(CDocument* d);
     virtual void RemoveDocument(CDocument* d) {
         auto it = std::find(m_docs.begin(), m_docs.end(), d);
         if (it != m_docs.end()) m_docs.erase(it);
@@ -3011,6 +3015,9 @@ public:
     CString m_strTitle;
     CString m_strPathName;
     bool    m_bModified = false;
+    // Set by CDocTemplate::AddDocument (as MFC does).  GetDocTemplate() below
+    // returns it; canonical code ASSERTs it is non-null.
+    CDocTemplate* m_pDocTemplate = nullptr;
 
     // View list — backed by a std::vector; POSITION is void* index+1
     std::vector<CView*> m_viewList;
@@ -3041,7 +3048,7 @@ public:
     CString GetPathName() const     { return m_strPathName; }
     void    SetModifiedFlag(BOOL mod=TRUE) { m_bModified = (mod!=FALSE); }
     BOOL    IsModified() const      { return m_bModified ? TRUE : FALSE; }
-    CDocTemplate* GetDocTemplate() const { return nullptr; }
+    CDocTemplate* GetDocTemplate() const { return m_pDocTemplate; }
 
     virtual BOOL OnNewDocument()            { return TRUE; }
     // Open a world file: opens the CFile, wraps it in a CArchive (load mode),
@@ -4503,6 +4510,12 @@ public:
     int      GetCharset()   const { return m_resCharset; }
 };
 
+// Defined out-of-line: needs CDocument complete to touch m_pDocTemplate.
+inline void CMultiDocTemplate::AddDocument(CDocument* d) {
+    m_docs.push_back(d);
+    if (d) d->m_pDocTemplate = this;
+}
+
 class CFileDialog : public CDialog {
 public:
     OPENFILENAME m_ofn = {};   // MFC exposes the raw OPENFILENAME struct
@@ -4908,7 +4921,37 @@ public:
     BOOL     PumpMessage() { return FALSE; }
 
     // File dialog prompt (used by OnSaveDocument path)
-    BOOL DoPromptFileName(CString&, UINT, DWORD, BOOL, CDocTemplate*) { return FALSE; }
+    // Ask the user for a file name, seeded with `fileName`.  This used to be
+    // `{ return FALSE; }`, and the consequences were bad in both build types:
+    // CMUSHclientDoc::DoSave's empty-path arm (doc.cpp:2181-2211) computes a
+    // suggested name, calls this to confirm it, and `if (!bResult) return
+    // FALSE;` — so saving a world that has never been saved SILENTLY DID
+    // NOTHING.  Reachable from `world.Save()` with no argument, and from
+    // auto-save-on-close at quit for a File > New World that was never saved,
+    // where it meant quiet data loss.  (In a debug build the ASSERT on the line
+    // above aborted first; the shipped .app is Release, so it took the silent
+    // arm.)  Windows shows a Save As dialog here — so do that.
+    //
+    // MFC implements this with a CFileDialog too; pTemplate only supplied the
+    // filter/extension, which we spell out instead since the port's
+    // CDocTemplate carries no strings.
+    BOOL DoPromptFileName(CString& fileName, UINT /*nIDSTitle*/, DWORD lFlags,
+                          BOOL bOpenFileDialog, CDocTemplate* /*pTemplate*/)
+    {
+        CFileDialog dlg(bOpenFileDialog,
+                        "mcl",
+                        fileName.IsEmpty() ? nullptr : (LPCTSTR) fileName,
+                        lFlags | (bOpenFileDialog ? 0u : (DWORD) OFN_OVERWRITEPROMPT),
+                        "MUSHclient world files (*.mcl)|*.mcl|All files (*.*)|*.*");
+        dlg.m_ofn.lpstrTitle = bOpenFileDialog ? "Open World File" : "Save World File";
+        if (dlg.DoModal() != IDOK)
+            return FALSE;
+        CString chosen = dlg.GetPathName();
+        if (chosen.IsEmpty())
+            return FALSE;
+        fileName = chosen;
+        return TRUE;
+    }
 
     // Icon / cursor loading
     HICON   LoadIcon(UINT) const   { return nullptr; }

@@ -3849,4 +3849,61 @@ TEST(MenuSubMenus, NegativeIndexStillYieldsNull)
     EXPECT_EQ((CMenu*)nullptr, menu.GetSubMenu(-1));
 }
 
+
+// mfc_ui.h CDocument::GetDocTemplate used to `return nullptr`, and
+// CWinApp::DoPromptFileName used to `return FALSE`.  Together they made
+// CMUSHclientDoc::DoSave's empty-path arm (doc.cpp:2181-2211) abort in a
+// debug build (ASSERT(pTemplate != NULL)) and, in the shipped Release .app,
+// SILENTLY NOT SAVE -- `if (!bResult) return FALSE;`.  Reachable from
+// world.Save() with no argument and from auto-save-on-close at quit for a
+// never-saved File > New World.
+
+TEST(DocTemplate, AddDocumentRecordsTheOwningTemplate)
+{
+    CMultiDocTemplate tmpl(0, nullptr, nullptr, nullptr);
+    CDocument doc;
+    EXPECT_EQ((CDocTemplate*)nullptr, doc.GetDocTemplate());  // before
+    tmpl.AddDocument(&doc);
+    // The ASSERT in DoSave's empty-path arm needs this to be non-null.
+    EXPECT_TRUE(doc.GetDocTemplate() != nullptr);
+    EXPECT_TRUE(doc.GetDocTemplate() == (CDocTemplate*)&tmpl);
+    tmpl.RemoveDocument(&doc);
+}
+
+TEST(DocPrompt, DoPromptFileNameAsksAndReportsTheChosenPath)
+{
+    // Drive the file-dialog hook the same way the rest of this file drives
+    // the wx seam: install a fake, assert on what the shim asked for.
+    auto saved = g_wxhook_file_dialog;
+    static std::string s_seenLeaf, s_seenFilter;
+    static bool s_seenOpen = true;
+    g_wxhook_file_dialog = [](bool bOpen, const char* /*title*/,
+                              const char* /*dir*/, const char* leaf,
+                              const char* filter, bool /*overwrite*/) -> char* {
+        s_seenOpen   = bOpen;
+        s_seenLeaf   = leaf   ? leaf   : "";
+        s_seenFilter = filter ? filter : "";
+        return strdup("/tmp/chosen.mcl");
+    };
+    CString name = "/worlds/Suggested.mcl";
+    BOOL ok = App.DoPromptFileName(name, 0, 0, FALSE /*save*/, nullptr);
+    EXPECT_TRUE(ok);
+    EXPECT_STREQ("/tmp/chosen.mcl", (LPCTSTR)name);   // caller gets the choice
+    EXPECT_FALSE(s_seenOpen);                         // a SAVE dialog
+    EXPECT_STREQ("Suggested.mcl", s_seenLeaf.c_str());// seeded with the suggestion
+    EXPECT_TRUE(s_seenFilter.find(".mcl") != std::string::npos);
+    g_wxhook_file_dialog = saved;
+}
+
+TEST(DocPrompt, CancellingLeavesTheNameAloneAndReportsFailure)
+{
+    auto saved = g_wxhook_file_dialog;
+    g_wxhook_file_dialog = [](bool, const char*, const char*, const char*,
+                              const char*, bool) -> char* { return nullptr; };
+    CString name = "/worlds/Suggested.mcl";
+    EXPECT_FALSE(App.DoPromptFileName(name, 0, 0, FALSE, nullptr));
+    EXPECT_STREQ("/worlds/Suggested.mcl", (LPCTSTR)name);  // untouched
+    g_wxhook_file_dialog = saved;
+}
+
 MC_TEST_MAIN()

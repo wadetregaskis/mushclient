@@ -11,10 +11,19 @@
 // (mac/Linux), and a recording fake (tests). See docs/PAL.md.
 //
 // Cross-platform since P4 (SOutputLine promoted with it): MSVC compiles this
-// interface too.  No Windows adapter exists yet — the doc's m_pWorldView stays
-// NULL there, every push helper is inert and every pull reports empty/zero —
-// but the seam is ready for one (the real P4/P5 step: CMUSHView becomes the
-// native adapter and the Windows display path emits through it).
+// interface too, and BOTH platforms now have a live adapter — the wx
+// CWorldChildFrame on mac/Linux, and the doc-owned CWinWorldView on Windows
+// (created in doc_construct.cpp under #ifdef _WIN32, WV-2).  So engine code may
+// be routed through this seam without losing it on Windows; that is what
+// doc_tabcomplete_shared.cpp relies on.  (This comment claimed "no Windows
+// adapter exists yet" until 2026-07-25 — the third and last copy of that stale
+// claim; cf. eb48ce4 for doc.h.)
+//
+// NOTE for anyone adding a method here: the Windows adapter drives real MFC,
+// whose overload sets are WIDER than the port's shim.  A parameter type that is
+// unambiguous against platform/mfc_ui.h can be ambiguous against afxwin.h, and
+// the macOS build cannot see it — see the (int) casts and their comment in
+// CWinWorldView::replaceCommandSelection.
 
 #pragma once
 

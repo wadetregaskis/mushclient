@@ -30,6 +30,9 @@
 #include "MUSHclient.h"
 #include "doc.h"
 
+#include <ctype.h>    // isalnum / isspace / tolower
+#include <string.h>   // strchr
+
 /*
  * Compare strings, case insensitive, for prefix matching.
  * Return TRUE if astr not a prefix of bstr

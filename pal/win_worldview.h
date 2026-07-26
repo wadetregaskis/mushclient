@@ -8,10 +8,12 @@
 // can later become unconditional Emit*/Get* helper calls (the family-by-
 // family flips, mirroring the ISurface S3 / ITransport T5 migrations).
 //
-// UNWIRED as landed: nothing sets CMUSHclientDoc::m_pWorldView on Windows
-// yet, so no method here is reachable and Windows behaviour is unchanged.
-// Wiring + per-family site flips follow once Windows testing can validate
-// them.  The display family (appendLine/batch/repaint) flips LAST — Windows
+// WIRED (WV-2): doc_construct.cpp creates one of these per document under
+// #ifdef _WIN32, so m_pWorldView is live on Windows and the methods here ARE
+// reachable.  (This header said "UNWIRED as landed" until 2026-07-25; the same
+// stale claim in doc.h was corrected in eb48ce4.)  CMUSHclientDoc::
+// TabCompleteCommand now depends on this being wired.  Per-family site flips
+// still follow once Windows testing can validate them.  The display family (appendLine/batch/repaint) flips LAST — Windows
 // paints by pull (UpdateAllViews → CMUSHView::OnDraw), and those bodies are
 // the faithful invalidation equivalents until that design lands.
 //

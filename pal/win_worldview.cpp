@@ -376,8 +376,20 @@ public:
 
                 // stop flicker
                 pmyView->LockWindowUpdate ();
-                // select the characters already typed
-                pmyView->GetEditCtrl().SetSel (start, end);
+                // select the characters already typed.
+                //
+                // The (int) casts are LOAD-BEARING, not tidiness.  The seam
+                // passes longs, and real MFC's CEdit has TWO overloads —
+                // SetSel(DWORD, BOOL = FALSE) and SetSel(int, int, BOOL = FALSE).
+                // With two longs both are viable and neither is better, so MSVC
+                // rejects the call as ambiguous; and had it resolved, it would
+                // have picked the DWORD packed form and selected a garbage
+                // range.  The original code this was relocated from passed ints,
+                // which matched exactly.  This is invisible to the macOS build
+                // twice over: the port's shim CEdit declares only the (int, int)
+                // overload (platform/mfc_ui.h), and this whole file sits inside
+                // #ifdef _WIN32 so clang never parses it.
+                pmyView->GetEditCtrl().SetSel ((int) start, (int) end);
                 pmyView->UnlockWindowUpdate ();
                 // replace it, allow undos
                 pmyView->GetEditCtrl().ReplaceSel (text, TRUE);

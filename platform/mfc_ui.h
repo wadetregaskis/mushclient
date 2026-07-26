@@ -5014,40 +5014,99 @@ inline void   Sleep(DWORD ms) {
     ts.tv_nsec = (long)(ms % 1000) * 1000000L;
     ::nanosleep(&ts, nullptr);
 }
-inline HINSTANCE ShellExecute(HWND, LPCTSTR /*op*/, LPCTSTR file, LPCTSTR params, LPCTSTR /*dir*/, int /*show*/)
+// Single-quote a string for /bin/sh, escaping embedded quotes.
+inline std::string ShellQuoteArg(const char* s)
+{
+    std::string q;
+    q += '\'';
+    for (const char* p = s; p && *p; ++p) {
+        if (*p == '\'') q += "'\\''";
+        else            q += *p;
+    }
+    q += '\'';
+    return q;
+}
+
+// Build the /bin/sh command line for a ShellExecute request.
+//
+// Split out of ShellExecute so it can be unit-tested: ShellExecute itself calls
+// system() and is side-effectful by contract, so it was on test_mfc_ui.cpp's
+// skip list and the argument handling below was never covered.
+//
+// Returns an empty string when the request cannot be honoured — an empty file,
+// or a verb with no macOS/Linux equivalent.  The caller turns that into
+// SE_ERR_NOASSOC, which is what Windows returns when the verb is not registered
+// for the file type, and which utils.shellexecute already renders as "There is
+// no application associated with the given file name extension"
+// (scripting/lua_utils.cpp).  Failing loudly beats silently doing "open"
+// instead of what the script asked for.
+//
+// `op` and `dir` used to be accepted and thrown away here, which made
+// utils.shellexecute(file, params, defdir, operation) — a documented scripting
+// API whose own example is a "print" verb — quietly ignore two of its four
+// arguments.
+inline std::string BuildShellExecuteCommand(LPCTSTR op, LPCTSTR file,
+                                            LPCTSTR params, LPCTSTR dir)
 {
     if (!file || !file[0])
-        return nullptr;
-
-    // Helper: single-quote a string for the shell, escaping embedded quotes.
-    auto shellQuote = [](const char* s) -> std::string {
-        std::string q;
-        q += '\'';
-        for (const char* p = s; *p; ++p) {
-            if (*p == '\'') q += "'\\''";
-            else q += *p;
-        }
-        q += '\'';
-        return q;
-    };
+        return std::string();
 
     std::string cmd;
+
+    // Windows' lpDirectory: run in this working directory.
+    if (dir && dir[0]) {
+        cmd  = "cd ";
+        cmd += ShellQuoteArg(dir);
+        cmd += " && ";
+    }
+
     if (params && params[0]) {
-        // Editor-launch form: ShellExecute(hwnd, "open", editor, "file.lua", ...)
-        // Run the editor directly with the argument string.
-        cmd = shellQuote(file);
+        // Editor-launch form: ShellExecute(hwnd, "open", editor, "file.lua", …)
+        // — `file` is the executable, so run it directly with its arguments.
+        // The verb is not meaningful in this form (every in-tree caller passes
+        // "open"); doc.cpp's script-editor launch is the reason it exists.
+        cmd += ShellQuoteArg(file);
         cmd += ' ';
         cmd += params;          // already shell-quoted by EditFileWithEditor
-    } else {
-        // URL / file open form: use the platform default opener.
-#if defined(__APPLE__)
-        cmd = "open ";
-#else
-        cmd = "xdg-open ";
-#endif
-        cmd += shellQuote(file);
+        cmd += " &";
+        return cmd;
     }
+
+    // No parameters: `file` is a document or URL, so dispatch on the verb.
+    // Windows verbs are case-insensitive.
+    std::string verb = (op && op[0]) ? op : "open";
+    for (char& c : verb)
+        if (c >= 'A' && c <= 'Z') c += ('a' - 'A');
+
+    std::string opener;
+#if defined(__APPLE__)
+    if      (verb == "open")    opener = "open";
+    else if (verb == "edit")    opener = "open -t";   // default text editor
+    else if (verb == "explore") opener = "open -R";   // reveal in Finder
+    else if (verb == "print")   opener = "lpr";
+#else
+    if      (verb == "open")    opener = "xdg-open";
+    else if (verb == "edit")    opener = "xdg-open";  // no distinct edit verb
+    else if (verb == "explore") opener = "xdg-open";
+    else if (verb == "print")   opener = "lpr";
+#endif
+
+    if (opener.empty())
+        return std::string();          // unmapped verb — do NOT silently open
+
+    cmd += opener;
+    cmd += ' ';
+    cmd += ShellQuoteArg(file);
     cmd += " &";   // don't block the MUD connection
+    return cmd;
+}
+
+inline HINSTANCE ShellExecute(HWND, LPCTSTR op, LPCTSTR file, LPCTSTR params,
+                              LPCTSTR dir, int /*show*/)
+{
+    const std::string cmd = BuildShellExecuteCommand(op, file, params, dir);
+    if (cmd.empty())
+        return (HINSTANCE)(intptr_t)(file && file[0] ? SE_ERR_NOASSOC : 0);
     return (::system(cmd.c_str()) == 0) ? (HINSTANCE)33 : nullptr;
 }
 // MessageBox already defined earlier; avoid redefinition.

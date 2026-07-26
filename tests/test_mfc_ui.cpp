@@ -13,7 +13,8 @@
 // Unreachable-by-design in this build (skip list):
 //  * MUSHCLIENT_FULL_BUILD arms of CDC/CPen/CBrush/... (wx_gdi_compat.cpp
 //    bodies — mushgui only; the stub arms are what mushcore ships).
-//  * ShellExecute (runs system(); side-effectful by contract).
+//  * ShellExecute itself (runs system(); side-effectful by contract) --
+//    but its argument handling is now covered via BuildShellExecuteCommand.
 //  * sizeof(wchar_t)==2 surrogate arms of MultiByteToWideChar /
 //    WideCharToMultiByte (wchar_t is 4 bytes on macOS/Linux).
 
@@ -3727,6 +3728,73 @@ TEST(ClipboardR5, FormatAvailabilityViaHook)
 
     g_wxhook_get_clipboard_text = saved;
     EXPECT_FALSE(IsClipboardFormatAvailable(1));   // no hook at all
+}
+
+
+// ── ShellExecute argument handling ────────────────────
+// mfc_ui.h BuildShellExecuteCommand: "`op` and `dir` used to be accepted and
+// thrown away here, which made utils.shellexecute(file, params, defdir,
+// operation) quietly ignore two of its four arguments."  The verb and the
+// working directory are part of a documented scripting API
+// (scripting/lua_utils.cpp shell_execute).
+
+TEST(ShellExecuteCmd, DefaultVerbOpensTheFile)
+{
+    std::string c = BuildShellExecuteCommand(nullptr, "/tmp/a.txt", nullptr, nullptr);
+    EXPECT_TRUE(c.find("'/tmp/a.txt'") != std::string::npos);
+    EXPECT_TRUE(c.find("cd ") == std::string::npos);   // no defdir -> no cd
+    // backgrounded so a launch cannot block the MUD connection
+    EXPECT_TRUE(c.size() > 2 && c.compare(c.size() - 2, 2, " &") == 0);
+}
+
+TEST(ShellExecuteCmd, VerbSelectsADifferentOpenerAndIsCaseInsensitive)
+{
+    std::string open_  = BuildShellExecuteCommand("open",  "/tmp/a.txt", nullptr, nullptr);
+    std::string print_ = BuildShellExecuteCommand("print", "/tmp/a.txt", nullptr, nullptr);
+    std::string edit_  = BuildShellExecuteCommand("edit",  "/tmp/a.txt", nullptr, nullptr);
+    // The whole point: a different verb must not produce the same command.
+    EXPECT_TRUE(print_ != open_);
+    EXPECT_TRUE(print_.find("lpr") == 0);
+    EXPECT_TRUE(edit_ != print_);
+    // Windows verbs are case-insensitive.
+    EXPECT_EQ(print_, BuildShellExecuteCommand("PRINT", "/tmp/a.txt", nullptr, nullptr));
+}
+
+TEST(ShellExecuteCmd, UnmappedVerbIsRefusedRatherThanSilentlyOpening)
+{
+    // An unmapped verb must NOT fall back to "open" -- that is the silent
+    // wrong-behaviour this change exists to remove.  Empty => the caller
+    // returns SE_ERR_NOASSOC and the script gets nil + an error message.
+    EXPECT_TRUE(BuildShellExecuteCommand("runas", "/tmp/a.txt", nullptr, nullptr).empty());
+    EXPECT_TRUE(BuildShellExecuteCommand("frobnicate", "/tmp/a.txt", nullptr, nullptr).empty());
+}
+
+TEST(ShellExecuteCmd, WorkingDirectoryIsHonoured)
+{
+    std::string c = BuildShellExecuteCommand("open", "a.txt", nullptr, "/tmp/some dir");
+    EXPECT_TRUE(c.find("cd '/tmp/some dir' && ") == 0);
+}
+
+TEST(ShellExecuteCmd, EditorLaunchFormRunsTheExecutableWithItsArguments)
+{
+    // doc.cpp's script-editor launch: `file` is the editor, `params` its
+    // already-quoted argument string.  Must not be routed through "open".
+    std::string c = BuildShellExecuteCommand("open", "/usr/bin/vi", "'/tmp/s.lua'", nullptr);
+    EXPECT_TRUE(c.find("'/usr/bin/vi' '/tmp/s.lua'") == 0);
+    EXPECT_TRUE(c.find("open") == std::string::npos);
+}
+
+TEST(ShellExecuteCmd, SingleQuotesInPathsAreEscaped)
+{
+    // A file name containing a quote must not break out of the quoting.
+    std::string c = BuildShellExecuteCommand("open", "/tmp/it's here.txt", nullptr, nullptr);
+    EXPECT_TRUE(c.find("'/tmp/it'\\''s here.txt'") != std::string::npos);
+}
+
+TEST(ShellExecuteCmd, EmptyFileYieldsNoCommand)
+{
+    EXPECT_TRUE(BuildShellExecuteCommand("open", nullptr, nullptr, nullptr).empty());
+    EXPECT_TRUE(BuildShellExecuteCommand("open", "",      nullptr, nullptr).empty());
 }
 
 MC_TEST_MAIN()

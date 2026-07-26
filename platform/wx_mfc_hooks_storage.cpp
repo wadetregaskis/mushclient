@@ -29,6 +29,7 @@ int  (*g_wxhook_message_box)(const char*, const char*, unsigned) = nullptr;
 int  (*g_wxhook_load_mdi_frame)(void*, unsigned, unsigned long, void*) = nullptr;
 int  (*g_wxhook_init_instance)()                                 = nullptr;
 void* (*g_wxhook_new_world)()                                    = nullptr;
+void  (*g_wxhook_show_activity_window)()                         = nullptr;
 void* (*g_wxhook_open_world_file)(const char*)                   = nullptr;
 void  (*g_wxhook_open_default_world)()                           = nullptr;
 int   (*g_wxhook_query_quit_save)()                              = nullptr;

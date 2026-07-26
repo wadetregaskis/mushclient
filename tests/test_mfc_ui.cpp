@@ -3974,6 +3974,50 @@ TEST(AppOpenDocument, NonWorldFileGoesToTheNotepadNotTheWorldOpener)
     g_wxhook_open_text_file  = savedT;
 }
 
+// ── CMultiDocTemplate must keep its resource id ─────────────────────────────
+// App creates three templates; the shim discarded the id, so they were
+// indistinguishable and OpenDocumentFile(NULL) always meant "new world".
+// Ticking "Open activity window at startup" therefore popped Quick Connect
+// during startup and, on OK, made a junk untitled world.
+TEST(DocTemplate, ActivityTemplateOpensTheActivityWindowNotANewWorld)
+{
+    auto savedNew  = g_wxhook_new_world;
+    auto savedAct  = g_wxhook_show_activity_window;
+    static int s_newWorlds, s_activities;
+    s_newWorlds = 0; s_activities = 0;
+    g_wxhook_new_world = []() -> void* { ++s_newWorlds; return nullptr; };
+    g_wxhook_show_activity_window = []() { ++s_activities; };
+
+    // How both MUSHclient.cpp (the startup preference) and mainfrm.cpp (the
+    // Activity List command) ask for the activity window.
+    CMultiDocTemplate activity(131 /*IDR_ACTIVITYTYPE*/, nullptr, nullptr, nullptr);
+    EXPECT_EQ((CDocument*)nullptr, activity.OpenDocumentFile(nullptr));
+    EXPECT_EQ(1, s_activities);
+    EXPECT_EQ(0, s_newWorlds);
+
+    // A path does not turn it into a world open either.
+    activity.OpenDocumentFile("/w/Discworld.mcl");
+    EXPECT_EQ(2, s_activities);
+    EXPECT_EQ(0, s_newWorlds);
+
+    // The world template is unaffected: NULL still means "new world".
+    CMultiDocTemplate world(128 /*IDR_MUSHCLTYPE*/, nullptr, nullptr, nullptr);
+    world.OpenDocumentFile(nullptr);
+    EXPECT_EQ(1, s_newWorlds);
+    EXPECT_EQ(2, s_activities);
+
+    g_wxhook_new_world = savedNew;
+    g_wxhook_show_activity_window = savedAct;
+}
+
+TEST(DocTemplate, TheActivityResourceIdLiteralStillMatchesResourceH)
+{
+    // platform/mfc_ui.h cannot include resource.h, so it hardcodes 131.  If
+    // resource.h ever renumbers IDR_ACTIVITYTYPE, this fails instead of the
+    // activity window quietly turning back into Quick Connect.
+    EXPECT_EQ(131, IDR_ACTIVITYTYPE);
+}
+
 // ── CMainFrame::PostMessage must not shadow CWnd::PostMessage ───────────────
 // platform/mainfrm_stub.h is included by mainfrm.h for EVERY non-Windows build,
 // mushgui included, so an in-class PostMessage there name-hid the real

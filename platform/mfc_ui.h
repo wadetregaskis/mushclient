@@ -2971,7 +2971,15 @@ public:
         if (it != m_docs.end()) m_docs.erase(it);
     }
 
-    CMultiDocTemplate(UINT, const CRuntimeClass*, const CRuntimeClass*, const CRuntimeClass*) {}
+    // The document-type resource id this template was created with.  It is what
+    // tells the templates apart -- App makes three (IDR_MUSHCLTYPE for worlds,
+    // IDR_PANETYPE, IDR_ACTIVITYTYPE) -- and discarding it made them all behave
+    // as "the world template".
+    UINT m_nIDResource = 0;
+
+    CMultiDocTemplate(UINT nIDResource, const CRuntimeClass*, const CRuntimeClass*,
+                      const CRuntimeClass*)
+        : m_nIDResource(nIDResource) {}
 
     // Document iteration — backed by m_docs; returns nullptr when empty.
     POSITION GetFirstDocPosition() const {
@@ -2986,9 +2994,23 @@ public:
     }
 
     // Override OpenDocumentFile to route through the appropriate wxWidgets hook:
+    //   • the ACTIVITY template   → the Activity window
     //   • path == nullptr / empty → Quick Connect dialog (new world)
     //   • path provided           → open existing world file
     virtual CDocument* OpenDocumentFile(LPCTSTR path) override {
+        // App.m_pActivityDocTemplate->OpenDocumentFile(NULL) is how BOTH the
+        // "Open activity window at startup" preference (MUSHclient.cpp) and
+        // CMainFrame's Activity List command (mainfrm.cpp) ask for the activity
+        // window.  Without the id every template looked like the world one, so
+        // ticking that preference popped Quick Connect during startup and, on
+        // OK, created a junk untitled world -- active harm, not a no-op.
+        // 131 is IDR_ACTIVITYTYPE (resource.h); the shim cannot include
+        // resource.h, so tests/test_mfc_ui.cpp pins the value.
+        if (m_nIDResource == 131 /* IDR_ACTIVITYTYPE */) {
+            if (g_wxhook_show_activity_window) g_wxhook_show_activity_window();
+            // The port has no CActivityDoc; both call sites discard the return.
+            return nullptr;
+        }
         if (path && *path) {
             if (g_wxhook_open_world_file)
                 return static_cast<CDocument*>(g_wxhook_open_world_file(path));

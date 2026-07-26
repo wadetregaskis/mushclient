@@ -81,6 +81,9 @@ extern int  (*g_wxhook_init_instance)();
 // MDI frame with output pane, and calls OnNewDocument().
 // Returns the new CMUSHclientDoc* cast to void*, or nullptr on failure/cancel.
 extern void* (*g_wxhook_new_world)();
+// Show/raise the Activity window.  CMultiDocTemplate::OpenDocumentFile uses
+// this for the IDR_ACTIVITYTYPE template (mfc_ui.h); null in headless builds.
+extern void  (*g_wxhook_show_activity_window)();
 
 // ── Open-world-file hook ───────────────────────────────────────────────────
 // Called from CMultiDocTemplate::OpenDocumentFile(path) on non-Windows.

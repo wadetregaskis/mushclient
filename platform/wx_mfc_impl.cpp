@@ -4545,6 +4545,7 @@ void wx_mfc_install_hooks()
     g_wxhook_load_mdi_frame   = hook_load_mdi_frame;
     g_wxhook_init_instance    = hook_init_instance;
     g_wxhook_new_world          = hook_new_world;
+    g_wxhook_show_activity_window = []() { ShowActivityWindow(); };
     g_wxhook_open_world_file    = hook_open_world_file;
     g_wxhook_open_default_world = hook_open_default_world;
     g_wxhook_query_quit_save    = hook_query_quit_save;

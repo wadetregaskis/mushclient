@@ -480,6 +480,10 @@ extern void (*g_wxhook_listctrl_delete_item)(void* hwnd, int item);
 extern void (*g_wxhook_listctrl_delete_all_items)(void* hwnd);
 extern void (*g_wxhook_listctrl_ensure_visible)(void* hwnd, int item);
 extern void (*g_wxhook_listctrl_set_column_width)(void* hwnd, int col, int width);
+// Read side of the pair.  Needed because CMUSHclientApp::SaveColumnConfiguration
+// persists GetColumnWidth() -- without this it stored 0 for every column, and
+// RestoreColumnConfiguration turns a stored 0 into a 10-pixel column.
+extern int  (*g_wxhook_listctrl_get_column_width)(void* hwnd, int col);
 // SortItems: `cmp(lp1, lp2, lparam)` compares two rows' item data; we sort the
 // rows and reorder them, preserving per-row text + item data.
 extern void (*g_wxhook_listctrl_sort_items)(void* hwnd,

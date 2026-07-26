@@ -114,6 +114,7 @@ void (*g_wxhook_listctrl_delete_item)(void*, int)                = nullptr;
 void (*g_wxhook_listctrl_delete_all_items)(void*)                = nullptr;
 void (*g_wxhook_listctrl_ensure_visible)(void*, int)             = nullptr;
 void (*g_wxhook_listctrl_set_column_width)(void*, int, int)      = nullptr;
+int  (*g_wxhook_listctrl_get_column_width)(void*, int)           = nullptr;
 void (*g_wxhook_listctrl_sort_items)(void*,
         int (*)(intptr_t, intptr_t, intptr_t), intptr_t)         = nullptr;
 int   (*g_wxhook_listbox_add_string)(void*, const char*)         = nullptr;

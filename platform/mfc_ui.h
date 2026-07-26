@@ -3883,7 +3883,10 @@ public:
     void      SetTextColor(COLORREF) {}
     void      SetTextBkColor(COLORREF) {}
     BOOL      SetImageList(void*, int) { return FALSE; }
-    int       GetColumnWidth(int) const { return 0; }
+    int       GetColumnWidth(int col) const {
+        return g_wxhook_listctrl_get_column_width
+             ? g_wxhook_listctrl_get_column_width(m_hWnd, col) : 0;
+    }
     BOOL      SetColumnWidth(int col, int width) {
         if (g_wxhook_listctrl_set_column_width) g_wxhook_listctrl_set_column_width(m_hWnd, col, width);
         return TRUE;

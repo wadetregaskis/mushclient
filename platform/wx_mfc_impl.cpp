@@ -3247,6 +3247,16 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     int result = dlg->ShowModal();
     pop_bridged_dialog(wmItem);
 
+    // MFC sends WM_DESTROY on the way out, for OK and Cancel alike, and the
+    // canonical OnDestroy handlers are where per-dialog state is written back:
+    // App.SaveColumnConfiguration (list column widths + the sort column and
+    // direction) and CWindowPlacement::Save (the dialog's size/position).  The
+    // matching Restore* calls already run from OnInitDialog, so until now the
+    // port read that state but never wrote it -- which is why list columns and
+    // dialog geometry never persisted.  Run it while the wx window still
+    // exists, since the handlers read the live controls.
+    cdlg->OnDestroy();
+
     cdlg->m_hWnd = nullptr;
     s_mfcModalDialogs.erase(self);
     dlg->Destroy();
@@ -3503,6 +3513,17 @@ static intptr_t hook_run_property_sheet(void* self)
     int rc = dlg.ShowModal();
     pop_bridged_dialog(wmItem);
 
+    // Each page's OnDestroy, as MFC's WM_DESTROY does -- on Cancel too.  For the
+    // entity pages this is CGenPropertyPage::OnDestroy: it records the selected
+    // item, frees the per-row CString* it stored as item data (a leak until
+    // now), and calls App.SaveColumnConfiguration -- the write half of the
+    // RestoreColumnConfiguration that already runs in OnInitDialog, which is why
+    // list column widths and the sort column never persisted.  CPrefsP6 does the
+    // same for the macro list.  Must run before the panels die: the handlers
+    // read the live controls.
+    for (CPropertyPage* page : pages)
+        if (page) page->OnDestroy();
+
     for (CPropertyPage* page : pages)            // detach before panels die
         if (page) page->m_hWnd = nullptr;
 
@@ -3611,6 +3632,12 @@ static intptr_t hook_run_property_sheet_flat(void* self)
     wxMenuItem* wmItem = push_bridged_dialog(&dlg);  // nested pickers parent here + Window-menu entry
     int rc = dlg.ShowModal();
     pop_bridged_dialog(wmItem);
+
+    // Each page's OnDestroy, as MFC's WM_DESTROY does (see the tree sheet above).
+    // No global-prefs page overrides it today, so this is currently a base no-op
+    // -- it is here so a page that starts saving state on close works by itself.
+    for (CPropertyPage* page : pages)
+        if (page) page->OnDestroy();
 
     for (CPropertyPage* page : pages)            // detach before panels die
         if (page) page->m_hWnd = nullptr;
@@ -3898,6 +3925,14 @@ static void hook_listctrl_ensure_visible(void* hwnd, int item)
 static void hook_listctrl_set_column_width(void* hwnd, int col, int width)
 {
     if (wxListCtrl* lc = LC(hwnd)) lc->SetColumnWidth(col, width);
+}
+
+static int hook_listctrl_get_column_width(void* hwnd, int col)
+{
+    wxListCtrl* lc = LC(hwnd);
+    if (!lc || col < 0 || col >= lc->GetColumnCount())
+        return 0;
+    return lc->GetColumnWidth(col);
 }
 
 // CListCtrl::SortItems(cmp, lparam): cmp compares two rows by their item data
@@ -4400,6 +4435,7 @@ void wx_mfc_install_hooks()
     g_wxhook_listctrl_delete_all_items = hook_listctrl_delete_all_items;
     g_wxhook_listctrl_ensure_visible  = hook_listctrl_ensure_visible;
     g_wxhook_listctrl_set_column_width = hook_listctrl_set_column_width;
+    g_wxhook_listctrl_get_column_width = hook_listctrl_get_column_width;
     g_wxhook_listctrl_sort_items      = hook_listctrl_sort_items;
     g_wxhook_listbox_add_string       = hook_listbox_add_string;
     g_wxhook_listbox_reset_content    = hook_listbox_reset_content;

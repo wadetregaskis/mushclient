@@ -2661,6 +2661,16 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         bool ctrl  = evt.RawControlDown();
         bool shift = evt.ShiftDown();
         bool alt   = evt.AltDown();
+
+        // "Use F1 as a macro key" (File > Preferences > Macros).  Windows
+        // gates ONLY F1 -- plain, Shift and Ctrl -- on this flag
+        // (sendvw.cpp:1721, mushview.cpp:4252); the other function keys are
+        // always macros.  The port had no gate at all, so the checkbox did
+        // nothing and MAC_F1 fired even at its shipped default of OFF.
+        // Read it at key-press time, never cache it: configuration.cpp
+        // clears the flag around the World Properties sheet (so F1 works as
+        // Help inside the dialog) and restores it afterwards.
+        const bool bF1Macro = App.m_bF1macro != 0;
         int macIdx  = -1;
         int kpIdx   = -1;
 
@@ -2698,7 +2708,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
             }
         } else if (!alt && !ctrl && !shift) {
             switch (code) {
-            case WXK_F1:  macIdx = MAC_F1;  break;
+            case WXK_F1:  if (bF1Macro) macIdx = MAC_F1;  break;
             case WXK_F2:  macIdx = MAC_F2;  break;
             case WXK_F3:  macIdx = MAC_F3;  break;
             case WXK_F4:  macIdx = MAC_F4;  break;
@@ -2730,7 +2740,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
             }
         } else if (!alt && shift && !ctrl) {
             switch (code) {
-            case WXK_F1:  macIdx = MAC_SHIFT_F1;  break;
+            case WXK_F1:  if (bF1Macro) macIdx = MAC_SHIFT_F1;  break;
             case WXK_F2:  macIdx = MAC_SHIFT_F2;  break;
             case WXK_F3:  macIdx = MAC_SHIFT_F3;  break;
             case WXK_F4:  macIdx = MAC_SHIFT_F4;  break;
@@ -2746,7 +2756,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
             }
         } else if (!alt && ctrl && !shift) {
             switch (code) {
-            case WXK_F1:  macIdx = MAC_CTRL_F1;  break;
+            case WXK_F1:  if (bF1Macro) macIdx = MAC_CTRL_F1;  break;
             case WXK_F2:  macIdx = MAC_CTRL_F2;  break;
             case WXK_F3:  macIdx = MAC_CTRL_F3;  break;
             case WXK_F5:  macIdx = MAC_CTRL_F5;  break;

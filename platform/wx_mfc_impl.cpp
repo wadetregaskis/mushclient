@@ -3421,6 +3421,42 @@ static intptr_t hook_run_property_sheet(void* self)
         }
     });
 
+    // Arrival side, matching MFC's OnSetActive -- the counterpart of the leave
+    // handler above, and the other half of MFC's page-switch pair (OnKillActive
+    // on the old page, then OnSetActive on the new one).  Nothing on the port
+    // ever called it, so every canonical OnSetActive body was dead code, and
+    // with it:
+    //   * m_doc->m_last_prefs_page = m_page_number -- written by all 24
+    //     overrides, and the ONLY writer of the member that Game > World
+    //     Properties reads (configuration.cpp GamePreferences, iPage == -1) to
+    //     reopen on the page you last used.  With no writer it stayed at its
+    //     doc_construct.cpp seed, so the sheet always opened on General.
+    //   * CPrefsP3::LoadSwatches -- re-read the colour swatches on return, so
+    //     the custom-colour page reflects edits made since it was last shown.
+    //   * CPrefsP9 / CPrefsP17 -- rebuild their colour combos from CPrefsP3's
+    //     m_strCustomName, which is how a custom colour renamed on the Custom
+    //     Colours page shows up in the input/notes colour lists without
+    //     closing and reopening the sheet.
+    // (The ((CTreePropertySheet *) GetParent ())->PageHasChanged (this) in each
+    // body is the documented port no-op: the shim's GetParent returns NULL and
+    // the port's PageHasChanged has an empty body that touches no members --
+    // see TreePropertySheet.h.  The wxTreebook drives its own selection.)
+    // Bound after the initial SetSelection, like the leave handler.
+    tb->Bind(wxEVT_TREEBOOK_PAGE_CHANGED, [&pages](wxBookCtrlEvent& e) {
+        int arriving = e.GetSelection();
+        if (arriving >= 0 && arriving < (int) pages.size() && pages[arriving])
+            pages[arriving]->OnSetActive();
+        e.Skip();
+    });
+
+    // ... including the page the sheet opens on, which MFC activates too (so
+    // just opening the sheet and pressing OK records the page you were on).
+    {
+        int opening = tb->GetSelection();
+        if (opening >= 0 && opening < (int) pages.size() && pages[opening])
+            pages[opening]->OnSetActive();
+    }
+
     // Standard OK / Cancel.
     wxStdDialogButtonSizer* btns = new wxStdDialogButtonSizer();
     wxButton* ok = new wxButton(&dlg, wxID_OK);

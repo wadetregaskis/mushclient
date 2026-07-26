@@ -4931,17 +4931,20 @@ public:
     // both cast the result to CTextDocument*), so routing everything to the
     // world hook would try to open a plugin's XML as a world.
     //
-    // Opening an arbitrary file into the port's notepad has no route yet
-    // (hook_create_text_window builds a notepad from CONTENT, not from a path),
-    // so those callers keep exactly today's behaviour: nullptr, and their own
-    // "Unable to edit the plugin file ..." message.
+    // Anything else is a text document, opened into a notepad window with the
+    // file behind it (so File > Save writes back rather than prompting).
     CDocument* OpenDocumentFile(LPCTSTR path) {
         if (!path || !*path)
             return nullptr;
         const char* dot = strrchr(path, '.');
-        if (dot && strcasecmp(dot, ".mcl") == 0 && g_wxhook_open_world_file)
-            return static_cast<CDocument*>(g_wxhook_open_world_file(path));
-        return nullptr;   // not a world file — see the note above
+        if (dot && strcasecmp(dot, ".mcl") == 0) {
+            if (g_wxhook_open_world_file)
+                return static_cast<CDocument*>(g_wxhook_open_world_file(path));
+            return nullptr;
+        }
+        if (g_wxhook_open_text_file)
+            return static_cast<CDocument*>(g_wxhook_open_text_file(path));
+        return nullptr;
     }
 
     // MRU

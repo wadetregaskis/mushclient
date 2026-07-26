@@ -263,6 +263,14 @@ extern void (*g_wxhook_set_main_background)(unsigned long colour);
 // Returns a heap-allocated CTextDocument* (caller must not free directly;
 // the frame owns the doc lifetime).  Returns nullptr on failure.
 class CMUSHclientDoc;
+// Open an existing text file into a notepad window and return the
+// CTextDocument* (as void*), or nullptr if it cannot be read.  Backs
+// CWinApp::OpenDocumentFile for non-world files — the "edit script with
+// notepad" paths (world_debug.cpp) and the Plugins dialog's Edit button, which
+// cast the result to CTextDocument*.  Distinct from create_text_window below,
+// which builds a notepad from CONTENT and has no file on disk behind it.
+extern void* (*g_wxhook_open_text_file)(const char* path);
+
 extern void* (*g_wxhook_create_text_window)(
     const char* sText,
     const char* sTitle,

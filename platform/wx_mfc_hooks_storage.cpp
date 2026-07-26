@@ -40,6 +40,8 @@ char* (*g_wxhook_file_dialog)(bool, const char*, const char*,
 int   (*g_wxhook_font_dialog)(void*, struct WxFontChoice*)       = nullptr;
 char* (*g_wxhook_get_clipboard_text)()                           = nullptr;
 void  (*g_wxhook_set_clipboard_text)(const char*)                = nullptr;
+void* (*g_wxhook_open_text_file)(const char*) = nullptr;
+
 void* (*g_wxhook_create_text_window)(
     const char*, const char*, CMUSHclientDoc*, long long,
     const char*, long, long, unsigned int,

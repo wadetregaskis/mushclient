@@ -2455,6 +2455,68 @@ static void* hook_create_text_window(
     return static_cast<void*>(td);
 }
 
+// ── open_text_file ────────────────────────────────────────────────────────
+// Open an existing file into a notepad window, as MFC's document/template
+// machinery does for a non-world file.  Backs CWinApp::OpenDocumentFile for
+// anything that is not a *.mcl world — the "edit script with notepad" paths
+// (world_debug.cpp) and the Plugins dialog's Edit button, all of which cast the
+// result to CTextDocument*.  Before this they got nullptr and reported
+// "Unable to edit the plugin file ...".
+//
+// Unlike create_text_window above, the notepad this produces HAS A FILE behind
+// it: SetPathName makes File > Save write back to it rather than prompting.
+static void* hook_open_text_file(const char* path)
+{
+    if (!path || !*path)
+        return nullptr;
+
+    wxString wxPath = wxString::FromUTF8(path);
+    if (!wxFileName::FileExists(wxPath))
+        return nullptr;
+
+    // Read the whole file.  wxFile handles the binary read; the notepad is a
+    // text control, so anything unreadable as text simply displays oddly rather
+    // than failing — the same as the Windows notepad.
+    wxFile f;
+    if (!f.Open(wxPath, wxFile::read))
+        return nullptr;
+    wxFileOffset len = f.Length();
+    std::string  buf;
+    if (len > 0) {
+        buf.resize((size_t) len);
+        ssize_t got = f.Read(&buf[0], (size_t) len);
+        if (got < 0)
+            return nullptr;
+        buf.resize((size_t) got);
+    }
+    f.Close();
+
+    static long long s_openedFileDocNum = 0;
+
+    // Title is the leaf name, matching what MFC's doc template would title it.
+    wxString leaf = wxFileName(wxPath).GetFullName();
+
+    void* pv = hook_create_text_window(
+        buf.c_str(),
+        (const char*) leaf.ToUTF8(),
+        nullptr,                       // not tied to a world
+        --s_openedFileDocNum,          // negative: distinct from world-owned notepads
+        nullptr, 0, 0, 0,              // font: take the global notepad defaults
+        0, 0,                          // colours: ditto (0/0 -> defaults)
+        "", "",                        // no search string / recall preamble
+        false, false, false, false, false,
+        0,
+        eNotepadNormal);
+    if (!pv)
+        return nullptr;
+
+    CTextDocument* td = static_cast<CTextDocument*>(pv);
+    // The point of opening a FILE: saving writes back here instead of prompting.
+    td->SetPathName(path);
+    td->SetModifiedFlag(FALSE);
+    return pv;
+}
+
 // ── Install all hooks ─────────────────────────────────────────────────────
 // ── Sound hooks ───────────────────────────────────────────────────────────
 // CMainFrame::PlaySoundFile and CancelSound delegate here on non-Windows so
@@ -4366,6 +4428,7 @@ void wx_mfc_install_hooks()
     g_wxhook_get_clipboard_text   = hook_get_clipboard_text;
     g_wxhook_set_clipboard_text   = hook_set_clipboard_text;
     g_wxhook_create_text_window   = hook_create_text_window;
+    g_wxhook_open_text_file       = hook_open_text_file;
     g_wxhook_pick_colour          = hook_pick_colour;
     g_wxhook_menu_dialog          = hook_menu_dialog;
     g_wxhook_flash_icon           = hook_flash_icon;

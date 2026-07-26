@@ -3934,22 +3934,43 @@ TEST(AppOpenDocument, WorldFileRoutesToTheWorldHook)
     g_wxhook_open_world_file = saved;
 }
 
-TEST(AppOpenDocument, NonWorldFileIsNotOpenedAsAWorld)
+TEST(AppOpenDocument, NonWorldFileGoesToTheNotepadNotTheWorldOpener)
 {
-    auto saved = g_wxhook_open_world_file;
-    static bool s_called = false;
-    s_called = false;
+    auto savedW = g_wxhook_open_world_file;
+    auto savedT = g_wxhook_open_text_file;
+    static bool s_worldCalled = false;
+    static std::string s_textAsked;
+    static CDocument s_textDoc;
     g_wxhook_open_world_file = [](const char*) -> void* {
-        s_called = true; return nullptr;
+        s_worldCalled = true; return nullptr;
     };
+    g_wxhook_open_text_file = [](const char* p) -> void* {
+        s_textAsked = p ? p : ""; return (void*)&s_textDoc;
+    };
+
     // A plugin/script file must NOT be handed to the world opener -- those
-    // callers cast the result to CTextDocument*.
-    EXPECT_EQ((CDocument*)nullptr, App.OpenDocumentFile("/p/MyPlugin.xml"));
-    EXPECT_EQ((CDocument*)nullptr, App.OpenDocumentFile("/p/script.lua"));
-    EXPECT_EQ((CDocument*)nullptr, App.OpenDocumentFile("/p/noextension"));
+    // callers cast the result to CTextDocument*.  It goes to the notepad.
+    s_worldCalled = false; s_textAsked.clear();
+    EXPECT_TRUE(App.OpenDocumentFile("/p/MyPlugin.xml") == (CDocument*)&s_textDoc);
+    EXPECT_STREQ("/p/MyPlugin.xml", s_textAsked.c_str());
+    EXPECT_FALSE(s_worldCalled);
+
+    s_textAsked.clear();
+    EXPECT_TRUE(App.OpenDocumentFile("/p/script.lua") != nullptr);
+    EXPECT_STREQ("/p/script.lua", s_textAsked.c_str());
+    s_textAsked.clear();
+    EXPECT_TRUE(App.OpenDocumentFile("/p/noextension") != nullptr);
+    EXPECT_FALSE(s_worldCalled);
+
+    // An empty/null path reaches neither hook.
+    s_textAsked.clear();
     EXPECT_EQ((CDocument*)nullptr, App.OpenDocumentFile(nullptr));
-    EXPECT_FALSE(s_called);
-    g_wxhook_open_world_file = saved;
+    EXPECT_EQ((CDocument*)nullptr, App.OpenDocumentFile(""));
+    EXPECT_TRUE(s_textAsked.empty());
+    EXPECT_FALSE(s_worldCalled);
+
+    g_wxhook_open_world_file = savedW;
+    g_wxhook_open_text_file  = savedT;
 }
 
 MC_TEST_MAIN()

@@ -2593,18 +2593,39 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
+    // Two world options govern the two arrow blocks below, and BOTH were
+    // hardcoded here — their only readers are in CSendView, which the port never
+    // constructs (World Properties > Input > Commands).
+    //
+    // "Arrow key recalls partial command" (m_bArrowRecallsPartial, default OFF).
+    // The port applied a case-insensitive prefix filter unconditionally, i.e. it
+    // behaved as though the box were permanently ticked.  On Windows with it OFF
+    // — the shipped default — plain Up/Down walk the WHOLE history whatever you
+    // have typed; partial matching is what the ALT arrows are for.  With it ON,
+    // Windows diverts plain Up/Down into the Alt handlers (sendvw.cpp:393/475).
+    //
+    // "Arrow keys wrap around" (m_bArrowKeysWrap, default OFF).  Windows, on
+    // running past either end: clears the command bar and marks the history
+    // cursor as parked at that end; the NEXT press then either wraps to the far
+    // end (option on) or clears again (option off).  The port instead silently
+    // stayed on the oldest entry, so neither state was reachable.
+    const bool bRecallsPartial = m_doc && m_doc->m_bArrowRecallsPartial;
+    const bool bWrap           = m_doc && m_doc->m_bArrowKeysWrap;
+
     if (code == WXK_UP && inp == m_input) {
         // Pressing Up exits Ctrl+R mode.
         ApplyHistRSearch(false);  // ↑ always uses prefix (startsWith) match
         if (m_history.empty()) return;
+        // Prefix filter only when the option asks for it; otherwise every entry
+        // matches and the browse walks the full history, as on Windows.
         if (m_histIdx < 0) {
-            // Start browsing: save the current partial input as the prefix filter.
-            // If the user has typed "say ", ↑ will only cycle through "say …"
-            // entries — like zsh's up-line-or-beginning-search.  An empty input
-            // browses all entries from newest to oldest.
+            // Start browsing: save what the user had typed so ↓ can restore it.
+            // Starting fresh also clears any parked end left by a previous
+            // browse, so the park-then-wrap pair below always needs two presses.
+            m_histParked  = eHistNotParked;
             m_histSaved   = m_input->GetValue();
-            wxString lpfx = m_histSaved.Lower();
-            // Find the most recent entry that starts with the current input.
+            wxString lpfx = bRecallsPartial ? m_histSaved.Lower() : wxString();
+            // Find the most recent matching entry.
             m_histIdx = -1;
             for (int i = (int)m_history.size() - 1; i >= 0; --i) {
                 if (lpfx.IsEmpty() || m_history[i].Lower().StartsWith(lpfx)) {
@@ -2615,7 +2636,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
             if (m_histIdx < 0) return;  // no match — consume but don't change input
         } else {
             // Continue searching backward for the next older match.
-            wxString lpfx = m_histSaved.Lower();
+            wxString lpfx = bRecallsPartial ? m_histSaved.Lower() : wxString();
             int found = -1;
             for (int i = m_histIdx - 1; i >= 0; --i) {
                 if (lpfx.IsEmpty() || m_history[i].Lower().StartsWith(lpfx)) {
@@ -2623,8 +2644,23 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
                     break;
                 }
             }
-            if (found < 0) return;  // at oldest match — stay put
-            m_histIdx = found;
+            if (found < 0) {
+                // Ran off the oldest end.  Windows clears the bar and parks the
+                // cursor there (sendvw.cpp:527-530); a further press wraps to the
+                // newest entry if the option is on, or clears again if it is not.
+                if (m_histParked == eHistParkedOld && bWrap) {
+                    m_histIdx = (int) m_history.size() - 1;   // wrap to newest
+                    m_histParked = eHistNotParked;
+                } else {
+                    m_histParked = eHistParkedOld;
+                    m_input->SetValue(wxString());
+                    m_input->SetInsertionPointEnd();
+                    return;
+                }
+            } else {
+                m_histIdx = found;
+                m_histParked = eHistNotParked;
+            }
         }
         m_input->SetValue(m_history[m_histIdx]);
         m_input->SetInsertionPointEnd();
@@ -2635,7 +2671,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         // Pressing Down exits Ctrl+R mode.
         ApplyHistRSearch(false);  // ↓ always uses prefix (startsWith) match
         if (m_histIdx < 0) { evt.Skip(); return; }
-        wxString lpfx = m_histSaved.Lower();
+        wxString lpfx = bRecallsPartial ? m_histSaved.Lower() : wxString();
         // Search forward for the next newer match.
         int found = -1;
         for (int i = m_histIdx + 1; i < (int)m_history.size(); ++i) {
@@ -2645,11 +2681,23 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
             }
         }
         if (found < 0) {
-            // Past the newest match: restore the partial input the user was typing.
-            m_histIdx = -1;
-            m_input->SetValue(m_histSaved);
+            // Past the newest match.  The port's own behaviour here — restore
+            // what the user had been typing — is kept, because it is strictly
+            // more useful than Windows' bare clear and is what m_histSaved
+            // exists for.  Wrapping takes over on the press AFTER that, mirroring
+            // the Up side: park first, then wrap (or clear again).
+            if (m_histParked == eHistParkedNew && bWrap) {
+                m_histIdx = 0;                        // wrap to oldest
+                m_histParked = eHistNotParked;
+                m_input->SetValue(m_history[m_histIdx]);
+            } else {
+                m_histParked = eHistParkedNew;
+                m_histIdx = -1;
+                m_input->SetValue(m_histSaved);
+            }
         } else {
             m_histIdx = found;
+            m_histParked = eHistNotParked;
             m_input->SetValue(m_history[m_histIdx]);
         }
         m_input->SetInsertionPointEnd();
@@ -3011,6 +3059,7 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     wxString text = inp->GetValue();
     inp->Clear();
     m_histIdx = -1; ApplyHistRSearch(false);   // exit history browsing on send
+    m_histParked = eHistNotParked;             // ...and forget any parked end
 
     // Don't record passwords in history — m_bNoEcho signals a masked prompt.
     bool isPassword = m_doc->m_bNoEcho;

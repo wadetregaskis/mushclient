@@ -214,6 +214,14 @@ private:
     int                   m_histIdx = -1;       // -1 = not browsing; ≥0 = index into m_history
     wxString              m_histSaved;          // text in input when user started browsing
     bool                  m_histRSearch = false; // true = Ctrl+R substring mode (vs prefix)
+    // Which end of the history the browse cursor has run past, if any.  Windows
+    // keeps the same idea in CSendView::m_iHistoryStatus (eAtTop/eInMiddle/
+    // eAtBottom, sendvw.h) and needs it for World Properties > Input > Commands
+    // > "Arrow keys wrap around": running off an end parks there and clears the
+    // bar, and only the NEXT press wraps to the far end.  Without it the wrap
+    // option has nothing to test and the port could never wrap.
+    enum EHistPark { eHistNotParked, eHistParkedOld, eHistParkedNew };
+    EHistPark             m_histParked = eHistNotParked;
     std::string           m_historyFilePath;    // per-world history file, fixed at construction
 
     // ── Kill ring (emacs-style) ────────────────────────────────────────────

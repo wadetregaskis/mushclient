@@ -65,6 +65,7 @@
 #include "dialogs/plugins/PluginsDlg.h"
 // B-3 flip: the extra stragglers the full-lib link surfaced (§5 "+15").
 #include "dialogs/DebugLuaDlg.h"
+#include "dialogs/ScriptErrorDlg.h"
 #include "dialogs/password.h"
 #include "dialogs/EditMultiLine.h"   // PluginWizard.cpp opens a CEditMultiLine
 #include "winplace.h"
@@ -410,6 +411,28 @@ CDebugLuaDlg::CDebugLuaDlg (CWnd* pParent)
 void CDebugLuaDlg::DoDataExchange (CDataExchange* /*pDX*/) {}
 void CDebugLuaDlg::OnCancel () {}
 BEGIN_MESSAGE_MAP(CDebugLuaDlg, CCmdTarget)
+END_MESSAGE_MAP()
+
+// CScriptErrorDlg (scripting/lua_scripting.cpp LuaError): since LuaError became
+// one body for every build, a mushcore TU names this class, so the headless link
+// needs it.  DoModal goes through the null g_run_mfc_dialog hook → IDCANCEL, and
+// m_bUseOutputWindow stays FALSE, so a headless script error reports nothing —
+// which is what Windows does too when the world's "note errors" option is off
+// and the user just closes the dialog.  A test that wants the four ColourNotes
+// sets pDoc->m_bScriptErrorsToOutputWindow first.  The dtor (inline, in
+// dialogs/ScriptErrorDlg.h:19) deletes m_font, so the ctor must null it.
+CScriptErrorDlg::CScriptErrorDlg (CWnd* pParent)
+  : CDialog (CScriptErrorDlg::IDD, pParent)
+{
+  m_iError           = 0;
+  m_bUseOutputWindow = FALSE;
+  m_bHaveDoc         = false;
+  m_font             = nullptr;
+}
+void CScriptErrorDlg::DoDataExchange (CDataExchange* /*pDX*/) {}
+void CScriptErrorDlg::OnCopy () {}
+BOOL CScriptErrorDlg::OnInitDialog () { return TRUE; }
+BEGIN_MESSAGE_MAP(CScriptErrorDlg, CCmdTarget)
 END_MESSAGE_MAP()
 
 // CPasswordDialog (doc_shared.cpp password prompt): the port declares an

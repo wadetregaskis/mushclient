@@ -3523,6 +3523,11 @@ TEST(SweepR4, EngineParseCompileAndRuntimeErrors)
 
     CMUSHclientDoc doc;
     doc.m_iConnectPhase = eConnectConnectedToMud;
+    // World Properties > Scripting > "Note errors to the output window".  It has
+    // to be ON for the errors to reach m_LineList at all: with it off, LuaError
+    // raises CScriptErrorDlg instead (IDCANCEL headless, so nothing is noted).
+    // ScriptErrorsToOutputWindowOptionDecidesDialogVsNotes pins both arms.
+    doc.m_bScriptErrorsToOutputWindow = TRUE;
     CScriptEngine* engine = new CScriptEngine(&doc, "lua");
     ASSERT_TRUE(!engine->CreateScriptEngine());
     doc.m_ScriptEngine = engine;
@@ -3543,6 +3548,64 @@ TEST(SweepR4, EngineParseCompileAndRuntimeErrors)
     }
     EXPECT_TRUE(sawError);
     App.m_iCounterFrequency = saved;
+}
+
+// World Properties > Scripting > "Note errors to the output window"
+// (m_bScriptErrorsToOutputWindow).  LuaError's dialog-vs-notes choice used to
+// live inside `#ifdef _WIN32`, with the port's #else arm noting unconditionally,
+// so on the port this option did nothing at all — it behaved permanently as if
+// ticked.  One body now, so the flag decides on every build: ON notes the four
+// canonical lines (event / raised-by / called-by / description); OFF raises
+// CScriptErrorDlg, which headless returns IDCANCEL from, so nothing is noted.
+static int count_error_lines(CMUSHclientDoc& doc, const char* needle)
+{
+    int n = 0;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find(needle) != std::string::npos)
+            ++n;
+    }
+    return n;
+}
+
+TEST(SweepR4, ScriptErrorsToOutputWindowOptionDecidesDialogVsNotes)
+{
+    {
+        CMUSHclientDoc on;
+        on.m_iConnectPhase = eConnectConnectedToMud;
+        on.m_bScriptErrorsToOutputWindow = TRUE;
+        CScriptEngine* engine = new CScriptEngine(&on, "lua");
+        ASSERT_TRUE(!engine->CreateScriptEngine());
+        on.m_ScriptEngine = engine;
+        EXPECT_TRUE(engine->Parse(CString("error('option-boom')"), "<opt>"));
+        EXPECT_TRUE(count_error_lines(on, "option-boom") > 0);
+    }
+    {
+        CMUSHclientDoc off;
+        off.m_iConnectPhase = eConnectConnectedToMud;
+        off.m_bScriptErrorsToOutputWindow = FALSE;   // the shipped default
+        CScriptEngine* engine = new CScriptEngine(&off, "lua");
+        ASSERT_TRUE(!engine->CreateScriptEngine());
+        off.m_ScriptEngine = engine;
+        EXPECT_TRUE(engine->Parse(CString("error('option-boom')"), "<opt>"));
+        // Went to the dialog instead, so the output window stays clean.
+        EXPECT_EQ(0, count_error_lines(off, "option-boom"));
+    }
+}
+
+// The dialog's "show errors in output window next time" checkbox is how a user
+// ticks the option from the error itself.  Headless the dialog cancels, so the
+// flag must be left alone rather than silently turned on.
+TEST(SweepR4, CancellingTheScriptErrorDialogLeavesTheOptionOff)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_bScriptErrorsToOutputWindow = FALSE;
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    doc.m_ScriptEngine = engine;
+    EXPECT_TRUE(engine->Parse(CString("error('cancel-boom')"), "<cancel>"));
+    EXPECT_TRUE(!doc.m_bScriptErrorsToOutputWindow);
 }
 
 TEST(SweepR4, ScriptErrorLogFileAppended)

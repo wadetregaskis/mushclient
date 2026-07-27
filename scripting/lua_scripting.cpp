@@ -413,8 +413,38 @@ void LuaError (lua_State *L,
     nLine = atoi (strDescription.Mid (23));
     }
 
-#ifdef _WIN32
-  // Windows: show the GUI dialog or route to the output window
+  // ONE BODY, EVERY BUILD.  This used to be an #ifdef _WIN32 / #else pair, and
+  // the port's arm noted every error to the output window unconditionally.  So
+  // World Properties > Scripting > "Note errors to the output window"
+  // (m_bScriptErrorsToOutputWindow) did nothing on the port: it behaved
+  // permanently as if the box were ticked, and the Scripting Error dialog never
+  // appeared -- which also meant its "show errors in output window next time"
+  // checkbox, the way you TICK that box from the error itself, was unreachable.
+  // The flag's only other readers are in scripting/scriptengine.cpp, which is
+  // #ifdef _WIN32 from top to bottom, so nothing off Windows read it at all.
+  //
+  // The dialog is fully portable and already built into mushgui
+  // (dialogs/ScriptErrorDlg.cpp, template IDD_SCRIPT_ERROR in the recovered
+  // resources); the headless build gets an inert stub from
+  // platform/doc_flip_gui_stubs.cpp, whose DoModal returns IDCANCEL.
+  //
+  // Note this is the branch taken when there is no document at all -- several
+  // callers pass none (LuaError's pDoc defaults to NULL) -- so a doc-less error
+  // now raises the dialog on the port too, exactly as it always has on Windows.
+  // CScriptErrorDlg::OnInitDialog hides the "raised by" and "use output window"
+  // controls when m_bHaveDoc is false, which is what makes that case read
+  // sensibly.
+
+#ifndef _WIN32
+  // Console diagnostics.  Port-only, deliberately: Windows has no console and
+  // has never emitted these, so they must not leak into the Windows build.
+  fprintf (stderr, "[LuaError] %s\n", strEvent);
+  fprintf (stderr, "  %s\n", (const char *) strRaisedBy);
+  if (strlen (strCalledBy) > 0)
+    fprintf (stderr, "  %s\n", (const char *) strCalledBy);
+  fprintf (stderr, "  %s\n", (const char *) strDescription);
+#endif
+
   CScriptErrorDlg dlg;
   dlg.m_strCalledBy   = strCalledBy;
   dlg.m_strEvent       = strEvent;
@@ -441,28 +471,12 @@ void LuaError (lua_State *L,
     pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, strDescription);
     if (!bImmediate)
       pDoc->ShowErrorLines (nLine);
-    }
-
-#else
-  // macOS / non-Windows: route to doc output pane (same as
-  // m_bScriptErrorsToOutputWindow on Windows) and also log to stderr.
-  fprintf (stderr, "[LuaError] %s\n", strEvent);
-  fprintf (stderr, "  %s\n", (const char *) strRaisedBy);
-  if (strlen (strCalledBy) > 0)
-    fprintf (stderr, "  %s\n", (const char *) strCalledBy);
-  fprintf (stderr, "  %s\n", (const char *) strDescription);
-  if (pDoc) {
-    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR,
-                      CString("Script error: ") + strEvent);
-    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, strRaisedBy);
-    if (!strCalledBy.IsEmpty())
-      pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, strCalledBy);
-    pDoc->ColourNote (SCRIPTERRORFORECOLOUR, SCRIPTERRORBACKCOLOUR, strDescription);
-    // Flush the new notes to the output pane immediately.
-    pDoc->UpdateAllViews(nullptr);
-  }
-  (void) bImmediate; (void) nLine;
+#ifndef _WIN32
+    // Flush the new notes to the output pane immediately.  Port-only: on
+    // Windows this would be an extra forced repaint from inside script.
+    pDoc->UpdateAllViews (nullptr);
 #endif
+    }
 
   // if option "log_script_errors" is active, append to the error log file
   if (pDoc && pDoc->m_bLogScriptErrors)

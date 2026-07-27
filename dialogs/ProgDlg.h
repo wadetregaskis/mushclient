@@ -53,6 +53,14 @@ protected:
     BOOL m_bCancel;
     BOOL m_bParentDisabled;
 
+#ifndef _WIN32
+    // Port only.  Opaque wxProgressDialog, owned by the bridge — see the
+    // #ifndef _WIN32 arms in ProgDlg.cpp for why the port does not go through
+    // CDialog::Create here.  Null when no dialog is showing.
+    void * m_pPortProgress;
+    CString m_strPortStatus;   // last status text, re-sent on each update
+#endif
+
     void ReEnableParent();
 
     virtual void OnCancel();

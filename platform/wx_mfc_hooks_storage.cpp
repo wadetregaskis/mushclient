@@ -88,6 +88,10 @@ void (*g_wxhook_flash_icon)()                                    = nullptr;
 void (*g_wxhook_move_main_window)(long, long, long, long)        = nullptr;
 char* (*g_wxhook_inputbox)(const char*, const char*,
                             const char*, bool)                   = nullptr;
+void* (*g_wxhook_progress_open)(const char*, const char*, int)   = nullptr;
+void  (*g_wxhook_progress_set_range)(void*, int)                = nullptr;
+bool  (*g_wxhook_progress_update)(void*, int, const char*)      = nullptr;
+void  (*g_wxhook_progress_close)(void*)                         = nullptr;
 char* (*g_wxhook_directorypicker)(const char*, const char*)      = nullptr;
 int   (*g_wxhook_password_dialog)(const char*, char**)           = nullptr;
 int   (*g_wxhook_popup_menu)(CMenu*, int, int)                   = nullptr;

@@ -34,6 +34,7 @@
 #include <wx/fontenum.h>   // wxFontEnumerator (utils.getfontfamilies)
 #include <wx/settings.h>   // wxSystemSettings (world.GetSysColor / GetSystemMetrics)
 #include <wx/dcbuffer.h>   // wxAutoBufferedPaintDC (config sheet caption band)
+#include <wx/progdlg.h>    // wxProgressDialog (CProgressDlg's port backing)
 #include <wx/display.h>    // wxDisplay (screen-size system metrics)
 #include <algorithm>
 #include <unordered_map>
@@ -3158,6 +3159,76 @@ static char* hook_menu_dialog(const char* const* items, int count,
     return result;
 }
 
+// ── Progress dialog (CProgressDlg) ────────────────────────────────────────
+// See the hook declarations.  wxProgressDialog is used rather than a bridged
+// modeless dialog because it brings its own pump: Update() dispatches events,
+// which is what makes the window paint and the Cancel button clickable while
+// the caller's send loop is still running on this thread.
+//
+// wxPD_APP_MODAL matches what the canonical dialog does on Windows -- it
+// disables its parent for the duration (CProgressDlg::Create) -- and, more
+// importantly here, stops the user starting a second send from the menu while
+// one is in flight, which would re-enter the engine underneath us.
+
+struct PortProgress {
+    wxProgressDialog* dlg = nullptr;
+    int               max = 100;
+    bool              cancelled = false;
+};
+
+static void* hook_progress_open(const char* caption, const char* status, int maximum)
+{
+    if (maximum <= 0) maximum = 100;   // wx rejects a zero-length range
+    PortProgress* p = new PortProgress;
+    p->max = maximum;
+    p->dlg = new wxProgressDialog(
+        caption ? wxString::FromUTF8(caption) : wxString(wxT("Progress")),
+        status  ? wxString::FromUTF8(status)  : wxString(),
+        maximum,
+        wxTheApp ? wxTheApp->GetTopWindow() : nullptr,
+        wxPD_APP_MODAL | wxPD_CAN_ABORT | wxPD_AUTO_HIDE | wxPD_ELAPSED_TIME);
+    return p;
+}
+
+static void hook_progress_set_range(void* handle, int maximum)
+{
+    PortProgress* p = static_cast<PortProgress*>(handle);
+    if (!p || !p->dlg) return;
+    if (maximum <= 0) maximum = 100;
+    // wxProgressDialog has no SetRange, so re-make it at the right size.  The
+    // callers all do Create() then SetRange() before any real work, so this
+    // happens once, before anything is on screen worth preserving.
+    const wxString title = p->dlg->GetTitle();
+    const wxWindow* parent = p->dlg->GetParent();
+    p->dlg->Destroy();
+    p->max = maximum;
+    p->dlg = new wxProgressDialog(
+        title, wxString(), maximum,
+        const_cast<wxWindow*>(parent),
+        wxPD_APP_MODAL | wxPD_CAN_ABORT | wxPD_AUTO_HIDE | wxPD_ELAPSED_TIME);
+}
+
+static bool hook_progress_update(void* handle, int pos, const char* status)
+{
+    PortProgress* p = static_cast<PortProgress*>(handle);
+    if (!p || !p->dlg) return true;
+    if (p->cancelled) return false;          // stay cancelled once cancelled
+    if (pos < 0)      pos = 0;
+    if (pos > p->max) pos = p->max;          // wx asserts on an out-of-range pos
+    const bool keepGoing = p->dlg->Update(
+        pos, status ? wxString::FromUTF8(status) : wxString());
+    if (!keepGoing) p->cancelled = true;
+    return keepGoing;
+}
+
+static void hook_progress_close(void* handle)
+{
+    PortProgress* p = static_cast<PortProgress*>(handle);
+    if (!p) return;
+    if (p->dlg) p->dlg->Destroy();
+    delete p;
+}
+
 // ── Flash icon / request user attention ───────────────────────────────────
 // Requests user attention on the main application frame.  On macOS this
 // bounces the dock icon; on Linux it flashes the taskbar button.
@@ -4774,6 +4845,10 @@ static void hook_screen_to_client(const void* hwnd, int* x, int* y)
 
 void wx_mfc_install_hooks()
 {
+    g_wxhook_progress_open      = hook_progress_open;
+    g_wxhook_progress_set_range = hook_progress_set_range;
+    g_wxhook_progress_update    = hook_progress_update;
+    g_wxhook_progress_close     = hook_progress_close;
     g_run_mfc_dialog          = hook_run_dialog;
     g_end_mfc_dialog          = hook_end_dialog;
     g_run_mfc_property_sheet  = hook_run_property_sheet;

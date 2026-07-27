@@ -28,18 +28,35 @@ CProgressDlg::CProgressDlg(UINT nCaptionID)
     //}}AFX_DATA_INIT
     m_bParentDisabled = FALSE;
     m_bHideCancel = FALSE;
+#ifndef _WIN32
+    m_pPortProgress = NULL;
+#endif
 }
 
 CProgressDlg::~CProgressDlg()
 {
+#ifndef _WIN32
+    // m_hWnd is always null on the port (see Create), so the Windows test below
+    // would leak the wxProgressDialog and leave it on screen forever.
+    if (m_pPortProgress)
+      DestroyWindow();
+#endif
     if(m_hWnd!=NULL)
       DestroyWindow();
 }
 
 BOOL CProgressDlg::DestroyWindow()
 {
+#ifndef _WIN32
+    if (m_pPortProgress) {
+        if (g_wxhook_progress_close) g_wxhook_progress_close(m_pPortProgress);
+        m_pPortProgress = NULL;
+    }
+    return TRUE;
+#else
     ReEnableParent();
     return CDialog::DestroyWindow();
+#endif
 }
 
 void CProgressDlg::ReEnableParent()
@@ -51,6 +68,31 @@ void CProgressDlg::ReEnableParent()
 
 BOOL CProgressDlg::Create(CWnd *pParent)
 {
+#ifndef _WIN32
+    // PORT ARM.  This dialog is MODELESS, and the wx dialog bridge implements
+    // only the modal path (CDialog::Create is a `return FALSE` stub), so every
+    // method below self-disabled on the null m_hWnd: no progress, no status, and
+    // Cancel could never fire.  Worse, the pump this class relies on
+    // (PeekMessage/DispatchMessage) is a permanent FALSE here, so a large paste
+    // froze the whole app with no way to abort.
+    //
+    // Rather than build a general modeless bridge, the port backs this one class
+    // with wxProgressDialog, which provides the same four things natively --
+    // a bar, a status line, a Cancel button, and a pump that keeps the UI live.
+    // The canonical Windows bodies below are untouched.
+    //
+    // DELIBERATE DEVIATION from "no native-wx dialog reimplementations": this is
+    // a progress indicator, not one of the app's own resource-defined dialogs,
+    // and the canonical template's progress bar ("msctls_progress32") is not a
+    // control the bridge can build anyway.  A general modeless hook remains the
+    // better long-term answer -- it would also revive the four other call sites
+    // that use CDialog::Create directly -- see docs/UPSTREAM-DIVERGENCES.md.
+    m_bCancel = FALSE;
+    if (g_wxhook_progress_open)
+        m_pPortProgress = g_wxhook_progress_open(
+            (LPCTSTR) Translate ("Progress"), "", m_nUpper - m_nLower);
+    return m_pPortProgress != NULL;
+#else
     // Get the true parent of the dialog
     m_pParentWnd = CWnd::GetSafeOwner(pParent);
 
@@ -71,6 +113,7 @@ BOOL CProgressDlg::Create(CWnd *pParent)
     }
 
     return TRUE;
+#endif
 }
 
 void CProgressDlg::DoDataExchange(CDataExchange* pDX)
@@ -88,7 +131,13 @@ END_MESSAGE_MAP()
 
 void CProgressDlg::SetStatus(LPCTSTR lpszMessage)
 {
-    if (m_hWnd == NULL)   // no window (headless / wx port) — nothing to show
+#ifndef _WIN32
+    // Remembered rather than shown immediately: wxProgressDialog carries the
+    // message on its Update() call, so it lands with the next position change.
+    m_strPortStatus = lpszMessage ? lpszMessage : "";
+    return;
+#endif
+    if (m_hWnd == NULL)   // no window (headless) — nothing to show
         return;
     CWnd *pWndStatus = GetDlgItem(CG_IDC_PROGDLG_STATUS);
 
@@ -106,15 +155,38 @@ void CProgressDlg::SetRange(int nLower,int nUpper)
 {
     m_nLower = nLower;
     m_nUpper = nUpper;
+#ifndef _WIN32
+    // Callers do Create() then SetRange(), so the real maximum is only known
+    // now -- re-open at the correct size rather than showing a bar that fills
+    // long before the work is done.
+    if (m_pPortProgress && g_wxhook_progress_set_range)
+        g_wxhook_progress_set_range(m_pPortProgress, nUpper - nLower);
+    return;
+#endif
     m_Progress.SetRange32(nLower,nUpper);
 }
   
 int CProgressDlg::SetPos(int nPos)
 {
+#ifndef _WIN32
+    // wxProgressDialog::Update both advances the bar AND pumps the event loop,
+    // so this is the port's pump as well as its position setter -- it is what
+    // keeps the window painting and the Cancel button clickable during a long
+    // send.  It reports false once the user has hit Cancel; latch that for
+    // CheckCancelButton, which the send loops poll.
+    if (m_pPortProgress && g_wxhook_progress_update) {
+        if (!g_wxhook_progress_update(m_pPortProgress,
+                                      nPos - m_nLower,
+                                      (LPCTSTR) m_strPortStatus))
+            m_bCancel = TRUE;
+    }
+    return nPos;
+#else
     PumpMessages();
     int iResult = m_Progress.SetPos(nPos);
     UpdatePercent(nPos);
     return iResult;
+#endif
 }
 
 int CProgressDlg::SetStep(int nStep)

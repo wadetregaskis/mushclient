@@ -404,6 +404,20 @@ extern int (*g_wxhook_password_dialog)(const char* charName,
 //   defPath: directory to pre-select (may be "" for cwd)
 // Returns a heap-allocated path string that the caller must free(), or
 // nullptr if the user cancelled.
+// ── Progress dialog (CProgressDlg, port only) ─────────────────────────────
+// The canonical CProgressDlg is a MODELESS MFC dialog and the bridge builds
+// only modal ones, so it never had a window here.  These back it with a
+// wxProgressDialog, which supplies the bar, the status line, the Cancel button
+// AND the event-loop pumping that keeps the app responsive during a long send.
+// _update returns false once the user has cancelled.
+extern void* (*g_wxhook_progress_open)(const char* caption,
+                                       const char* status,
+                                       int maximum);
+extern void  (*g_wxhook_progress_set_range)(void* handle, int maximum);
+extern bool  (*g_wxhook_progress_update)(void* handle, int pos,
+                                         const char* status);
+extern void  (*g_wxhook_progress_close)(void* handle);
+
 extern char* (*g_wxhook_directorypicker)(const char* title,
                                          const char* defPath);
 

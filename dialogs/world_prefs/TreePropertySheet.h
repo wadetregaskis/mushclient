@@ -328,8 +328,14 @@ public:
 	// selection, so this is a no-op on the port.
 	void    PageHasChanged(CPropertyPage* /*pNewPage*/) {}
 
-	// Caption-gradient colours set by GamePreferences.  Unused by the wx chrome
-	// for now, but kept so the canonical setup code compiles unchanged.
+	// Caption-gradient colours set by GamePreferences.  The wx chrome DOES use
+	// these: hook_run_property_sheet builds a CSheetCaptionBar above the
+	// wxTreebook and fills it left-to-right from m_clrCaptionLeft to
+	// m_clrCaptionRight, which is what makes Global Preferences > General >
+	// "Use colour gradient in config" work (that option is the only thing that
+	// sets the two to different colours).  m_clrCaptionTextLeft is the caption
+	// text; the Border/TextRight members are still only here so the canonical
+	// setup code compiles unchanged.
 	COLORREF m_clrCaptionLeft = 0, m_clrCaptionRight = 0;
 	COLORREF m_clrCaptionTextLeft = 0, m_clrCaptionTextRight = 0;
 	COLORREF m_clrCaptionBorderTopLeft = 0, m_clrCaptionBorderBottomRight = 0;

@@ -245,8 +245,25 @@ increasing order of effort:
    (`IDB_ACTIVITY_TOOLBAR_0..5`), whose six 480×15 4-bit strips — 30 tiles of
    16×15 each — are `res/bitmap1.bmp` and `res/mc activity 0..4.bmp`. Note the
    mapping is not in step: `_0` is `bitmap1.bmp`, `_1`…`_5` are
-   `mc activity 0`…`4`. Retina still needs an @2x story; the assets exist, the
-   scaling does not.
+   `mc activity 0`…`4`.
+
+   **THE ART NEEDS REDOING BEFORE THIS BAR CAN BE BUILT — there is no plan for
+   that yet, and that is what blocks the feature, not the code.** These are
+   1990s Windows toolbar assets: 16×15 tiles at 4 bits per pixel (16 colours),
+   authored for a 96 dpi 1× display. On a Retina screen every button would be
+   point-doubled — soft edges, visible stair-stepping — and a 16-colour palette
+   next to the rest of the macOS UI looks like what it is. Upscaling will not
+   rescue them; 16×15 has no detail to recover, and the magenta-key transparency
+   convention of the era does not survive resampling cleanly.
+
+   What "redone" has to mean, whenever someone takes it on: vector or @2x/@3x
+   raster sources at the sizes macOS actually asks for, with the palette
+   reconsidered rather than sampled. Until then, the sensible options are to
+   leave the bar out (where it is today) or to draw it from SF Symbols and
+   accept that it will not look like the Windows original.
+
+   Tracked as settings-audit item 54 — "Activity button bar style (Style 1..6)"
+   — which cannot be honoured while there is no bar to style.
 
 2. **The canonical `.rc` itself.** `platform/mushclient_dialogs.rc` is
    *decompiled* from a shipped `en.dll` by `tools/decompile_dialogs.py`, with

@@ -1482,18 +1482,22 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         }
 
         // ── Edit ▸ New Notepad (port-local: always a fresh standalone pad) ───
-        // Not tied to any world; passing "" / 0 lets CreateTextWindow apply the
-        // Notepad-preferences font and colours (with a black-on-white fallback).
+        // Mirrors the canonical CMainFrame::OnEditNotesworkarea argument for
+        // argument (mainfrm.cpp), so a fresh pad picks up the default *input*
+        // font and black-on-white, which the Notepad-prefs colours then
+        // override in CreateTextWindow.  Only the title differs: the canonical
+        // passes "", which would leave the window unnamed here.
         if (id == 40001 /*port-local: New standalone Notepad*/) {
             CreateTextWindow("",                 // contents
                              "Notepad",          // title
                              nullptr,            // no related world (standalone)
                              0,                  // unique document number
-                             "",                 // font name → App.m_strNotepadFont
-                             0,                  // font size → App.m_iNotepadFontSize
-                             FW_NORMAL,          // weight
-                             DEFAULT_CHARSET,    // charset
-                             0, 0,               // colours → Notepad prefs / fallback
+                             App.m_strDefaultInputFont,
+                             App.m_iDefaultInputFontHeight,
+                             App.m_iDefaultInputFontWeight,
+                             App.m_iDefaultInputFontCharset,
+                             RGB (0, 0, 0),
+                             RGB (255, 255, 255),
                              "", "",             // search string / line preamble
                              false, false, false, false, false,
                              0, eNotepadNormal);
@@ -2628,13 +2632,14 @@ static void* hook_create_text_window(
     CTextDocument* td = CTextDocument::CreateInstance();
     td->m_pRelatedWorld         = pDoc;
     td->m_iUniqueDocumentNumber = iUniqueDocNum;
-    // Default to the global notepad font (Prefs ▸ Notepad ▸ Font…) when the
-    // caller didn't specify one.
-    td->m_strFontName           = (strFontName && *strFontName)
-                                      ? strFontName
-                                      : (LPCTSTR) App.m_strNotepadFont;
-    td->m_iFontSize             = iFontSize > 0 ? iFontSize
-                                               : (long) App.m_iNotepadFontSize;
+    // Take the caller's font verbatim, exactly as Utilities.cpp does.  An
+    // empty name is meaningful: MakeFont resolves it to the global fixed-pitch
+    // font, matching CTextView::SetTheFont.  Do NOT substitute
+    // App.m_strNotepadFont here — that global is read by nothing on Windows and
+    // its preference controls are hidden, so consuming it made notepads ignore
+    // the fixed-pitch font preference they follow there.
+    td->m_strFontName           = strFontName ? strFontName : "";
+    td->m_iFontSize             = iFontSize;
     td->m_iFontWeight           = iFontWeight;
     td->m_iFontCharset          = iFontCharset;
     td->m_textColour            = static_cast<COLORREF>(textColour);

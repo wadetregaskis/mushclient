@@ -64,9 +64,21 @@ std::map<std::string, CWxNotepadFrame*> CWxNotepadFrame::s_registry;
 // Build a wxFont from the fields stored in pDoc.
 static wxFont MakeFont(const CTextDocument* pDoc)
 {
+    // An empty face name means "use the global fixed-pitch font", not "use
+    // whatever wx defaults to" — see the canonical CTextView::SetTheFont.
+    // Without this, notepads created with no explicit font silently ignore the
+    // Fixed pitch font preference that governs them on Windows.
+    CString strFont = pDoc->m_strFontName;
+    long    lSize   = pDoc->m_iFontSize;
+    if (strFont.IsEmpty ())
+      {
+      strFont = App.m_strFixedPitchFont;
+      lSize   = App.m_iFixedPitchFontSize;
+      }
+
     const wxString face = wxString::FromUTF8(
-        static_cast<const char*>(pDoc->m_strFontName));
-    int ptSize = static_cast<int>(pDoc->m_iFontSize);
+        static_cast<const char*>(strFont));
+    int ptSize = static_cast<int>(lSize);
     if (ptSize <= 0) ptSize = 10;
     wxFontWeight weight = (pDoc->m_iFontWeight >= FW_BOLD)
                           ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL;

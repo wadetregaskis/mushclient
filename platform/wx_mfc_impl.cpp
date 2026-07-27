@@ -131,6 +131,31 @@ static const int ID_MENU_GAME_LUA_EVAL = wxID_HIGHEST + 411;
 // ran first, so Import/Export silently toggled View state and were unreachable).
 static const int ID_MENU_VIEW_ALWAYSONTOP = wxID_HIGHEST + 430;
 static const int ID_MENU_VIEW_FULLSCREEN  = wxID_HIGHEST + 431;
+
+// The window the user can actually see.  wxOSX hides the wxMDIParentFrame
+// while a child exists -- the active child IS the on-screen window -- so
+// window-level chrome commands must act on the child or they act on nothing.
+// The !IsShown() guard is load-bearing in both directions: with no world open
+// the parent is genuinely visible and is the right target, and on GTK/MSW the
+// child is not a top-level window at all.  Same reasoning as
+// SaveMainWindowGeometry, which already picks its target this way.
+static wxTopLevelWindow* wx_visible_frame(wxMDIParentFrame* frame)
+{
+    if (!frame) return nullptr;
+    if (!frame->IsShown())
+        if (auto* child = wxDynamicCast(frame->GetActiveChild(), wxTopLevelWindow))
+            if (child->IsShown())
+                return child;
+    return frame;
+}
+
+// The rect the visible window had before it went full screen.  macOS exits
+// full screen asynchronously, so at quit time GetRect() still reports the
+// full-screen bounds; without this, quitting while full screen would persist
+// an off-screen rect and the next launch would come up invisible.  Windows
+// avoids the same trap by un-full-screening before saving (mainfrm.cpp:549).
+static bool   s_hadPreFullScreenRect = false;
+static wxRect s_preFullScreenRect;
 static const int ID_MENU_VIEW_STATUSBAR   = wxID_HIGHEST + 432;
 
 static wxMenu*    s_recentMenu     = nullptr;
@@ -1078,7 +1103,9 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         } else if (id == ID_MENU_VIEW_ALWAYSONTOP) {
             evt.Check((frame->GetWindowStyleFlag() & wxSTAY_ON_TOP) != 0);
         } else if (id == ID_MENU_VIEW_FULLSCREEN) {
-            evt.Check(frame->IsFullScreen());
+            // Same target as the command arm, or the tick reports one window
+            // while the other is the one that moved.
+            evt.Check(wx_visible_frame(frame)->IsFullScreen());
         } else if (id == ID_MENU_VIEW_STATUSBAR) {
             auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
             evt.Enable(child != nullptr);
@@ -1136,7 +1163,15 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return;
         }
         if (id == ID_MENU_VIEW_FULLSCREEN) {
-            frame->ShowFullScreen(!frame->IsFullScreen());
+            wxTopLevelWindow* target = wx_visible_frame(frame);
+            const bool goingFull = !target->IsFullScreen();
+            if (goingFull) {
+                s_preFullScreenRect    = target->GetRect();
+                s_hadPreFullScreenRect = true;
+            } else {
+                s_hadPreFullScreenRect = false;
+            }
+            target->ShowFullScreen(goingFull);
             return;
         }
         if (id == ID_MENU_VIEW_STATUSBAR) {
@@ -2302,7 +2337,13 @@ static void SaveMainWindowGeometry(wxTopLevelWindow* frame)
     const bool maximized = geomWin->IsMaximized();
     cfg.Write(wxT("/geometry/main_maximized"), maximized);
     if (!maximized) {
-        const wxRect r = geomWin->GetRect();
+        // Full screen is not a size worth restoring, and on macOS the exit is
+        // animated so GetRect() here would still report the full-screen bounds
+        // even if we asked it to leave first.  Use the rect stashed when the
+        // user entered full screen.
+        const wxRect r = (geomWin->IsFullScreen() && s_hadPreFullScreenRect)
+                         ? s_preFullScreenRect
+                         : geomWin->GetRect();
         cfg.Write(wxT("/geometry/main_x"), (long)r.x);
         cfg.Write(wxT("/geometry/main_y"), (long)r.y);
         cfg.Write(wxT("/geometry/main_w"), (long)r.width);

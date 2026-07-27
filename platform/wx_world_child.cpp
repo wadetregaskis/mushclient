@@ -3680,6 +3680,14 @@ void CWorldChildFrame::activateClient()
 }
 
 // world.GetInfo(125): is this world's frame full-screen?
+//
+// Deliberately the CHILD, not the MDI parent: on macOS the child IS the
+// on-screen window, and View > Full Screen now acts on it (wx_visible_frame
+// in wx_mfc_impl.cpp).  While the menu full-screened the hidden parent this
+// was hard-wired false, which is what made GetInfo(125) a lie.  Do not
+// "fix" it back to Frame.IsFullScreen(); that is the Windows topology, where
+// there is one frame and full screen is global to it.  Documented divergence:
+// here full screen is per-world-window.
 bool CWorldChildFrame::isFullscreen() const
 {
     return IsFullScreen();

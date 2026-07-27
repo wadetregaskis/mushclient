@@ -62,11 +62,59 @@ public:
         m_list->Bind(wxEVT_LIST_ITEM_ACTIVATED, &CActivityFrame::OnActivateRow, this);
 
         Repopulate();
-        m_timer.Start(1000);   // refresh once a second while open
+        m_timer.Start(kTickMs);
     }
 
 private:
-    void OnTimer(wxTimerEvent&) { Repopulate(); }
+    // The refresh cadence is a preference, not a constant.  Global Preferences ▸
+    // Activity carries "Update activity window: On New Activity / Periodically,
+    // every N seconds / Both" (m_nActivityWindowRefreshType) and the interval
+    // (m_nActivityWindowRefreshInterval, default 15).  Both are read only by
+    // CMainFrame::OnTimer (mainfrm.cpp) and CMUSHclientApp::OnIdle
+    // (MUSHclient.cpp) — an MFC timer and an MFC idle pump, neither of which
+    // runs on the port — so this window used to refresh once a second no matter
+    // what was set, and all three settings were dead.
+    //
+    // One short tick drives both halves, exactly as Windows uses one timer plus
+    // the idle loop:
+    //   * periodic  (type != eRefreshOnActivity): repopulate when the interval
+    //     has elapsed.  Windows compares m_timeLastActivityUpdate + interval
+    //     against now (mainfrm.cpp); this counts the same seconds.
+    //   * on activity (type != eRefreshPeriodically): repopulate when the engine
+    //     has set App.m_bUpdateActivity, which the shared display code raises on
+    //     every new line (doc_shared.cpp "new activity!").
+    // The flag is cleared once consumed, so a burst coalesces into one refresh.
+    static const int kTickMs = 250;
+
+    void OnTimer(wxTimerEvent&)
+    {
+        const unsigned int type = App.m_nActivityWindowRefreshType;
+        bool bRefresh = false;
+
+        if (type != CMUSHclientApp::eRefreshPeriodically && App.m_bUpdateActivity)
+            bRefresh = true;                       // new activity arrived
+
+        if (type != CMUSHclientApp::eRefreshOnActivity) {
+            // Interval of 0 would busy-refresh; the dialog's DDV bounds it to
+            // 1..300, but the prefs DB is not validated, so guard it here.
+            const int secs = (App.m_nActivityWindowRefreshInterval > 0)
+                           ? (int) App.m_nActivityWindowRefreshInterval : 15;
+            m_msSinceRefresh += kTickMs;
+            if (m_msSinceRefresh >= secs * 1000) {
+                bRefresh = true;
+                m_msSinceRefresh = 0;
+            }
+        }
+
+        if (!bRefresh)
+            return;
+
+        App.m_bUpdateActivity = FALSE;   // consumed
+        m_msSinceRefresh = 0;
+        Repopulate();
+    }
+
+    int m_msSinceRefresh = 0;
 
     void OnClose(wxCloseEvent&)
     {

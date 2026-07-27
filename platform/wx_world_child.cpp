@@ -3288,7 +3288,23 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     }
 
     // ── World timers (triggers based on elapsed time, speed-walk queues, etc.)
-    m_doc->CheckTimers();
+    // File > Preferences > Timers > "Check timers every N seconds"
+    // (App.m_nTimerInterval, default 0).  Windows treats 0 as "a tenth of a
+    // second" and any other value as that many seconds, in
+    // CMainFrame::CheckTimerFallback (mainfrm.cpp:2432-2440):
+    //     double fInterval = 0.10;
+    //     if (App.m_nTimerInterval) fInterval = App.m_nTimerInterval;
+    //     if (fElapsedTime > fInterval) ProcessTimers ();
+    // That function is unreachable here (no MFC timer), so this tick drained
+    // the world's timers every 100 ms regardless and the setting did nothing.
+    // 100 ms IS the default cadence, so leaving 0 alone keeps today's
+    // behaviour; a non-zero value now spaces the checks out as asked.
+    m_timerCheckAccum += 100;
+    if (m_timerCheckAccum >= (App.m_nTimerInterval > 0
+                              ? (int) App.m_nTimerInterval * 1000 : 100)) {
+        m_timerCheckAccum = 0;
+        m_doc->CheckTimers();
+    }
 
     // ── Script file monitoring: poll mtime every 2 s ─────────────────────
     // Equivalent to the Windows FindFirstChangeNotification thread, but runs

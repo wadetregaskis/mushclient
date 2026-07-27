@@ -982,6 +982,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
 
     SetSizer(sizer);
 
+    // Seed the App-level output settings through the same seam File >
+    // Preferences uses, so opening a world and changing a preference share one
+    // code path rather than drifting.
+    ApplyGlobalPrefs();
+
     // View > Status Bar is app-wide (see s_statusBarVisible in wx_mfc_impl.cpp)
     // and persisted, so a world opened now must match it rather than always
     // showing its strip.  After SetSizer: ShowStatusBarStrip ends in Layout(),
@@ -1165,6 +1170,11 @@ void CWorldChildFrame::ApplyGlobalPrefs()
     if (!m_output) return;
     m_output->SetWordDelimitersDblClick(
         static_cast<const char*>(App.m_strWordDelimitersDblClick));
+    // File > Preferences > Output.  The only readers of these two were in
+    // CMUSHView::OnDraw / ScrollToPosition -- a view the port never constructs
+    // -- so both checkboxes were inert.
+    m_output->SetBleedBackground(App.m_bBleedBackground != 0);
+    m_output->SetSmootherScrolling(App.m_bSmootherScrolling != 0);
 }
 
 // Command-history depth: the world's own "Lines in command history" setting.

@@ -215,6 +215,16 @@ public:
         m_wordDelimitersDblClick = delims;
     }
 
+    // File > Preferences > Output.  "Bleed background colour to edge": the
+    // trailing space on a line takes the LAST RUN's background rather than the
+    // pane background, so a coloured line reaches the right margin
+    // (CMUSHView::OnDraw does this on Windows).  "Smoother scrolling": repaint
+    // synchronously after appending instead of waiting for the next idle paint
+    // (MFC: Invalidate(); if (App.m_bSmootherScrolling) UpdateWindow();).
+    void SetBleedBackground(bool v) { if (v != m_bleedBackground) { m_bleedBackground = v; Refresh(false); } }
+    void SetSmootherScrolling(bool v) { m_smootherScroll = v; }
+    bool BleedBackground() const { return m_bleedBackground; }
+
     // Set the pane's default background colour (COLORREF, 0 = black).
     void SetPaneBackground(unsigned long col);
     unsigned long PaneBackground() const { return m_bgColor; }
@@ -473,6 +483,8 @@ private:
     bool        m_allowAutoFreeze    = true;
     bool        m_copySelToClip     = false;  // copy_selection_to_clipboard
     bool        m_autoCopyInHTML    = false;  // …and do it as HTML
+    bool m_bleedBackground = false;   // App.m_bBleedBackground
+    bool m_smootherScroll  = false;   // App.m_bSmootherScrolling
     std::string m_wordDelimitersDblClick = ".,()[]\"\'";
 
     // Triple-click detection: record the timestamp and line of the last

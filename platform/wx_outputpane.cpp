@@ -399,6 +399,10 @@ void COutputPane::EndBatch()
     if (--m_batchDepth == 0) {
         UpdateScrollbars(m_autoScroll);
         Refresh(false);
+        // "Smoother scrolling": paint now rather than at the next idle, so a
+        // burst of MUD output scrolls in step instead of in jumps.  This is
+        // MFC's "Invalidate(); if (App.m_bSmootherScrolling) UpdateWindow();".
+        if (m_smootherScroll) Update();
     }
 }
 
@@ -944,6 +948,9 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
     // (PrepareDC has already set up the virtual coordinate system.)
     const int rightEdge = clientW;
     wxColour bgC(GetRValue(m_bgColor), GetGValue(m_bgColor), GetBValue(m_bgColor));
+    auto RunBg = [](const SOutputRun& r) {
+        return wxColour(GetRValue(r.bg), GetGValue(r.bg), GetBValue(r.bg));
+    };
     const int wrapCols = std::max(1, m_wrapCols);
 
     // ── Compute selection range for this line ─────────────────────────────────
@@ -1019,9 +1026,11 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
 
             // Wrap to next visual row when this row is full and more text follows.
             if (currentCol >= wrapCols && pos < runLen) {
-                // Fill remainder of this row with background.
+                // Fill remainder of this row with background.  With "bleed
+                // background colour to edge" the run that just wrapped owns the
+                // gap, so a coloured line stays coloured to the margin.
                 if (x < rightEdge) {
-                    dc.SetBrush(wxBrush(bgC));
+                    dc.SetBrush(wxBrush(m_bleedBackground ? RunBg(run) : bgC));
                     dc.SetPen(*wxTRANSPARENT_PEN);
                     dc.DrawRectangle(x, currentY, rightEdge - x, m_lineH);
                 }
@@ -1041,9 +1050,10 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
     // standard visual for multi-line selections.
     if (x < rightEdge) {
         bool trailSelected = lineInSel && (selColEnd == INT_MAX);
+        // Selection wins over bleed, so the selection band still looks like one.
         wxColour fillCol = trailSelected
             ? wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHT)
-            : bgC;
+            : ((m_bleedBackground && !line.empty()) ? RunBg(line.back()) : bgC);
         dc.SetBrush(wxBrush(fillCol));
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.DrawRectangle(x, currentY, rightEdge - x, m_lineH);

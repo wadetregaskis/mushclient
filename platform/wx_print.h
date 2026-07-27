@@ -33,19 +33,22 @@ struct SPrintRun
     bool     underline = false;
 };
 
-typedef std::vector<SPrintRun> SPrintLine;
+struct SPrintLine
+{
+    std::vector<SPrintRun> runs;
+    // The line's arrival time, already formatted.  Windows puts the time of the
+    // FIRST line on a page into that page's header (mushview.cpp), so every line
+    // carries its own rather than the whole job sharing one.
+    wxString               stamp;
+};
 
 // Show a print-preview of the world's scrollback (with a Print button).
 //
-// The font face/size and the margins come from Global Preferences ▸ Printing
-// (App.m_strPrinterFont / m_nPrinterFontSize / m_nPrinterLeftMargin /
-// m_nPrinterTopMargin) — the caller reads them, for the same reason.  Margins
-// are millimetres, as on the dialog.
-//
-// NOT honoured here: "lines per page" (m_nPrinterLinesPerPage).  wxHTML
-// paginates by paper height and has no lines-per-page concept; that needs a real
-// wxPrintout subclass, which is tracked separately.
+// Everything else comes from Global Preferences ▸ Printing —
+// App.m_strPrinterFont / m_nPrinterFontSize / m_nPrinterLeftMargin /
+// m_nPrinterTopMargin / m_nPrinterLinesPerPage — read by the caller, for the
+// same reason.  Margins are millimetres, as on the dialog.
 void PrintStyledDocument(wxWindow* parent, const wxString& title,
                          const std::vector<SPrintLine>& lines,
                          const wxString& fontFace, int fontPoints,
-                         int leftMarginMm, int topMarginMm);
+                         int leftMarginMm, int topMarginMm, int linesPerPage);

@@ -1495,8 +1495,13 @@ void CWorldChildFrame::PrintWorld()
                                               m_doc->m_bUTF_8 != 0,
                                               (int) m_doc->m_font_charset);
             charOff += pStyle->iLength;
-            out.push_back(std::move(run));
+            out.runs.push_back(std::move(run));
         }
+        // The page header carries the arrival time of the page's first line —
+        // same format string as mushview.cpp, including the Windows-only "%#"
+        // no-leading-zero flag, which the CTime shim maps to POSIX "%-".
+        out.stamp = wxString::FromUTF8((const char*)
+            pLine->m_theTime.Format(TranslateTime("%A, %B %d, %Y, %#I:%M %p")));
         lines.push_back(std::move(out));
     }
 
@@ -1509,7 +1514,8 @@ void CWorldChildFrame::PrintWorld()
                         wxString::FromUTF8((const char*) App.m_strPrinterFont),
                         (int) App.m_nPrinterFontSize,
                         (int) App.m_nPrinterLeftMargin,
-                        (int) App.m_nPrinterTopMargin);
+                        (int) App.m_nPrinterTopMargin,
+                        (int) App.m_nPrinterLinesPerPage);
 }
 
 // ── View-level output/input commands ──────────────────────────────────────────

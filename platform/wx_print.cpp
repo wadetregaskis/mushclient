@@ -1,24 +1,178 @@
 // wx_print.cpp — see wx_print.h.
 //
 // wx-only translation unit (NO MFC-compat headers), so the Windows-style macros
-// that stdafx.h/compat.h define can't clobber wxHTML's headers.
+// that stdafx.h/compat.h define can't clobber wx's own headers.
 
 #include <wx/wx.h>
-#include <wx/html/htmprint.h>
+#include <wx/print.h>
+#include <wx/printdlg.h>
 
 #include "platform/wx_print.h"
 
+#include <algorithm>
+
 namespace {
 
-// Make text HTML-safe (whole-string, so multibyte characters survive).
-// '&' must be replaced first.
-wxString EscapeHtml(const wxString& text)
+// ── CWorldPrintout ───────────────────────────────────────────────────────────
+//
+// A transcription of genprint.cpp's page model, which is what makes Global
+// Preferences ▸ Printing ▸ "lines per page" mean anything.  The port used to
+// render the scrollback as one HTML <pre> and hand it to wxHtmlEasyPrinting,
+// which paginates by paper height and has no lines-per-page concept at all — so
+// that setting was inert, and a large font or wide margin could make wxHTML
+// decide the <pre> did not fit horizontally and render the whole block as
+// nothing.  Both problems are the same missing piece: a real wxPrintout.
+//
+// The page layout follows mushview.cpp's PrintWorld accounting exactly:
+//
+//     row 0                    header, bold + underlined: "<world> - <time>"
+//     row 1                    blank
+//     rows 2 .. linesPerPage-2 body
+//     blank
+//     final row                footer, bold: "Page N"
+//
+// where the header's time is the arrival time of the first line ON THAT PAGE.
+class CWorldPrintout : public wxPrintout
 {
-    wxString s = text;
-    s.Replace("&", "&amp;");
-    s.Replace("<", "&lt;");
-    s.Replace(">", "&gt;");
-    return s;
+public:
+    CWorldPrintout(const wxString& title,
+                   const std::vector<SPrintLine>& lines,
+                   const wxString& fontFace, int fontPoints,
+                   int leftMarginMm, int topMarginMm, int linesPerPage)
+        : wxPrintout(title),
+          m_title(title), m_lines(lines), m_face(fontFace),
+          m_points(fontPoints > 0 ? fontPoints : 10),
+          m_leftMm(std::max(0, leftMarginMm)),
+          m_topMm(std::max(0, topMarginMm))
+    {
+        // Body rows per page.  Windows seeds current_line = 2 after the header
+        // and breaks when it exceeds linesPerPage - 2, so rows 2..linesPerPage-2
+        // carry text — linesPerPage - 3 of them.  Guard the degenerate settings
+        // (the prefs dialog allows small numbers) rather than dividing by zero.
+        m_bodyRows = linesPerPage - 3;
+        if (m_bodyRows < 1)
+            m_bodyRows = 1;
+
+        int n = (int) m_lines.size();
+        m_pages = (n + m_bodyRows - 1) / m_bodyRows;
+        if (m_pages < 1)
+            m_pages = 1;
+    }
+
+    bool HasPage(int page) override { return page >= 1 && page <= m_pages; }
+
+    void GetPageInfo(int* minPage, int* maxPage,
+                     int* selFrom, int* selTo) override
+    {
+        *minPage = 1;  *maxPage = m_pages;
+        *selFrom = 1;  *selTo   = m_pages;
+    }
+
+    bool OnPrintPage(int page) override;
+
+private:
+    wxFont MakeFont(bool bold, bool italic, bool underline, int pixelH) const
+    {
+        wxFont f(wxSize(0, pixelH), wxFONTFAMILY_TELETYPE,
+                 italic ? wxFONTSTYLE_ITALIC : wxFONTSTYLE_NORMAL,
+                 bold   ? wxFONTWEIGHT_BOLD  : wxFONTWEIGHT_NORMAL,
+                 underline, m_face);
+        return f;
+    }
+
+    wxString                      m_title;
+    const std::vector<SPrintLine>& m_lines;
+    wxString                      m_face;
+    int                           m_points;
+    int                           m_leftMm;
+    int                           m_topMm;
+    int                           m_bodyRows = 1;
+    int                           m_pages    = 1;
+};
+
+bool CWorldPrintout::OnPrintPage(int page)
+{
+    wxDC* dc = GetDC();
+    if (!dc)
+        return false;
+
+    int ppiX = 0, ppiY = 0;
+    GetPPIPrinter(&ppiX, &ppiY);
+    int pageW = 0, pageH = 0;
+    GetPageSizePixels(&pageW, &pageH);
+    if (ppiX <= 0 || ppiY <= 0 || pageW <= 0 || pageH <= 0)
+        return false;
+
+    // Draw in PRINTER pixels throughout, then scale the DC so the identical
+    // code renders into the (much smaller) preview DC as well.  This is the
+    // standard wx printing recipe and keeps one coordinate system.
+    int dcW = 0, dcH = 0;
+    dc->GetSize(&dcW, &dcH);
+    const double scale = (double) dcW / (double) pageW;
+    dc->SetUserScale(scale, scale);
+
+    // Line pitch from the point size, exactly as genprint.cpp does
+    // (pcb.point_size / 72.0 * logpelsY).  Deliberately NOT the font's own
+    // height: "lines per page" has to mean the number the user typed, and
+    // Windows lets a silly size/spacing combination run off the paper rather
+    // than quietly re-paginating.
+    const int lineH = std::max(1, (int) (m_points / 72.0 * ppiY));
+
+    // Margins are millimetres on the dialog and here.  genprint measures them
+    // from the PAPER edge and then subtracts the printer's non-printable
+    // margin, clamping at zero; GetPaperRectPixels() gives that offset as a
+    // negative origin, so this is the same arithmetic.
+    const wxRect paper = GetPaperRectPixels();
+    int left = paper.x + (int) (m_leftMm / 25.4 * ppiX);
+    int top  = paper.y + (int) (m_topMm  / 25.4 * ppiY);
+    if (left < 0) left = 0;
+    if (top  < 0) top  = 0;
+
+    const int fontPixels = std::max(1, (int) (m_points / 72.0 * ppiY));
+    const int first = (page - 1) * m_bodyRows;
+    const int last  = std::min((int) m_lines.size(), first + m_bodyRows);
+
+    dc->SetTextForeground(*wxBLACK);
+    dc->SetBackgroundMode(wxTRANSPARENT);
+
+    // ── Header: bold + underlined "<world> - <time of the page's first line>"
+    {
+        dc->SetFont(MakeFont(true, false, true, fontPixels));
+        wxString stamp;
+        if (first < (int) m_lines.size())
+            stamp = m_lines[first].stamp;
+        wxString header = stamp.IsEmpty() ? m_title
+                                          : (m_title + wxT(" - ") + stamp);
+        dc->DrawText(header, left, top);
+    }
+
+    // ── Body, one world line per row, each run in its own style ─────────────
+    int y = top + lineH * 2;      // header row + the blank row after it
+    for (int i = first; i < last; ++i, y += lineH)
+    {
+        int x = left;
+        for (const SPrintRun& run : m_lines[i].runs)
+        {
+            if (run.text.IsEmpty())
+                continue;
+            dc->SetFont(MakeFont(run.bold, run.italic, run.underline, fontPixels));
+            dc->DrawText(run.text, x, y);
+            // Advance by the measured width, as genprint's print_printline does
+            // for a same-line piece (skip == 0 → GetTextExtentPoint32 + add).
+            wxCoord tw = 0, th = 0;
+            dc->GetTextExtent(run.text, &tw, &th);
+            x += tw;
+        }
+    }
+
+    // ── Footer: bold "Page N", after a blank row ────────────────────────────
+    {
+        dc->SetFont(MakeFont(true, false, false, fontPixels));
+        const int footerY = top + lineH * (m_bodyRows + 3);
+        dc->DrawText(wxString::Format(wxT("Page %d"), page), left, footerY);
+    }
+
+    return true;
 }
 
 } // namespace
@@ -26,72 +180,44 @@ wxString EscapeHtml(const wxString& text)
 void PrintStyledDocument(wxWindow* parent, const wxString& title,
                          const std::vector<SPrintLine>& lines,
                          const wxString& fontFace, int fontPoints,
-                         int leftMarginMm, int topMarginMm)
+                         int leftMarginMm, int topMarginMm, int linesPerPage)
 {
-    // Build an HTML <pre> document from the scrollback.  <pre> keeps the MUD's
-    // column alignment and renders monospaced; plain dark text prints legibly
-    // on white (the on-screen grey-on-black palette would not).
-    wxString html;
-    html.reserve(64 * 1024);
-    html << wxT("<html><body><pre>");
+    const wxString name = title.IsEmpty() ? wxT("MUSHclient") : title;
 
-    for (const SPrintLine& line : lines)
+    // wxPrintPreview needs two printouts: one it renders with, one it hands to
+    // the printer if the user presses Print.  Both read `lines`, which the
+    // caller owns for the duration of this call only — so the preview must not
+    // outlive it... except a preview frame is non-modal.  Copy the data into
+    // the heap and let both printouts share it, released when the frame dies.
+    auto* owned = new std::vector<SPrintLine>(lines);
+
+    struct PreviewFrame : public wxPreviewFrame
     {
-        for (const SPrintRun& run : line)
-        {
-            // World Properties ▸ Appearance ▸ Printing.  The world's print
-            // styles say which of bold/italic/underline each of the 8 ANSI
-            // colours prints as; the caller has already resolved them, since
-            // the colours themselves are deliberately not printed.  Tags nest
-            // and close in reverse, so a bold-underline run is well-formed.
-            if (run.bold)      html << wxT("<b>");
-            if (run.italic)    html << wxT("<i>");
-            if (run.underline) html << wxT("<u>");
-            html << EscapeHtml(run.text);
-            if (run.underline) html << wxT("</u>");
-            if (run.italic)    html << wxT("</i>");
-            if (run.bold)      html << wxT("</b>");
-        }
-        html << wxT("\n");
+        PreviewFrame(wxPrintPreview* p, wxWindow* par, const wxString& t,
+                     std::vector<SPrintLine>* data)
+            : wxPreviewFrame(p, par, t), m_data(data) {}
+        ~PreviewFrame() override { delete m_data; }
+        std::vector<SPrintLine>* m_data;
+    };
+
+    auto* preview = new wxPrintPreview(
+        new CWorldPrintout(name, *owned, fontFace, fontPoints,
+                           leftMarginMm, topMarginMm, linesPerPage),
+        new CWorldPrintout(name, *owned, fontFace, fontPoints,
+                           leftMarginMm, topMarginMm, linesPerPage));
+
+    if (!preview->IsOk())
+    {
+        delete preview;
+        delete owned;
+        wxMessageBox(wxT("Could not start the print preview — check that a "
+                         "printer is configured."),
+                     wxT("Print World"), wxOK | wxICON_ERROR, parent);
+        return;
     }
 
-    html << wxT("</pre></body></html>");
-
-    // PreviewText() shows a NON-modal preview frame and returns immediately; that
-    // frame's wxPrintPreview holds a pointer to this object's print data.  A stack
-    // wxHtmlEasyPrinting would be destroyed here, leaving the live preview with a
-    // dangling pointer → use-after-free on scroll / zoom / Print.  Heap-allocate
-    // and intentionally leak it: one small object per Print invocation, far simpler
-    // and safer than threading the (internally-created) preview frame's lifetime.
-    auto* printer = new wxHtmlEasyPrinting(title.IsEmpty() ? wxT("MUSHclient") : title, parent);
-
-    // Global Preferences ▸ Printing.  These were hardcoded (9pt, default faces,
-    // default margins), so the printer font and margin settings did nothing.
-    // SetStandardFonts also rebuilds the relative size table, so it is the right
-    // entry point for the size as well as the face; pass the face for both the
-    // proportional and the fixed slot, since the document is one big <pre>.
-    // A proportional face will cost the MUD's column alignment — Windows does
-    // the same (genprint.cpp uses the chosen face verbatim), so that is parity.
-    printer->SetStandardFonts(fontPoints > 0 ? fontPoints : 10,
-                              fontFace, fontFace);
-
-    // Known wxHTML limitation, verified in the preview: <pre> never wraps, so a
-    // large font or a wide margin can make the widest line exceed the content
-    // width — and wxHTML then renders the whole block as NOTHING, with a
-    // "doesn't fit on the page horizontally" banner across the preview.  At the
-    // shipped defaults (10pt Courier, 15mm) it fits; ~14pt or ~40mm is where it
-    // tips over.  Windows truncates the over-long lines instead, and matching
-    // that needs the real wxPrintout that "lines per page" also wants — the two
-    // are one job, tracked together.  The preview always opens before printing,
-    // so the user does see the banner rather than discovering it on paper.
-
-    // Margins are millimetres on both sides of this boundary — the dialog
-    // labels them "mm." and wxPageSetupDialogData is mm too — so no conversion
-    // (Windows converts mm→device inside the printer DC; doing it here as well
-    // would double-convert).  wxPoint is (x = LEFT, y = TOP); swapping them is
-    // invisible at the defaults, which are 15 for both.
-    if (wxPageSetupDialogData* ps = printer->GetPageSetupData())
-        ps->SetMarginTopLeft(wxPoint(leftMarginMm, topMarginMm));
-
-    printer->PreviewText(html);
+    auto* frame = new PreviewFrame(preview, parent, name + wxT(" Preview"), owned);
+    frame->Centre();
+    frame->Initialize();
+    frame->Show();
 }

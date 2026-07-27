@@ -989,6 +989,16 @@ if(NOT WIN32)
                     "${CMAKE_SOURCE_DIR}/platform/dialog_text"
                     "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/text"
                 COMMENT "Bundling licence + credits text (About box)")
+            # FIGlet fonts for Notepad ▸ Edit ▸ ASCII Art.  The shipped default
+            # pref is the RELATIVE path "fonts/standard.flf" (Windows uses
+            # "fonts\\standard.flf"), which resolves against the app directory
+            # there; art.cpp falls back to ../Resources/ from the executable
+            # when that relative path misses, so this is where they must land.
+            add_custom_command(TARGET mushgui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_SOURCE_DIR}/fonts"
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/fonts"
+                COMMENT "Bundling FIGlet .flf fonts into Contents/Resources/fonts")
             # Vendored Tcl's script library (init.tcl, encodings, msgs) — the
             # statically-linked Tcl finds it via TCL_LIBRARY=Resources/tcl8.6,
             # set from the executable path in tcl_engine.cpp's OpenTcl.

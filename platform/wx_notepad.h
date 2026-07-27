@@ -68,6 +68,7 @@ private:
     void OnMenuSave(wxCommandEvent& evt);
     // Convert-menu text transforms (canonical CTextView::OnConvert* parity).
     void OnConvert (wxCommandEvent& evt);
+    void OnEditAsciiArt (wxCommandEvent& evt);
 
     // Static registry: lower-cased title → frame pointer.
     // Populated in constructor; erased in destructor.

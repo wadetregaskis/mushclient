@@ -42,6 +42,9 @@ enum {
     ID_NP_CONVERT_BASE64DEC,
     ID_NP_CONVERT_HTMLSPECIAL,
     ID_NP_CONVERT_LAST = ID_NP_CONVERT_HTMLSPECIAL,
+    // Edit ▸ ASCII Art (canonical ID_EDIT_ASCIIART).  Outside the Convert
+    // range: it is an Edit-menu command, and it inserts rather than transforms.
+    ID_NP_EDIT_ASCIIART,
 };
 
 // ── Event table ───────────────────────────────────────────────────────────
@@ -50,6 +53,7 @@ wxBEGIN_EVENT_TABLE(CWxNotepadFrame, wxFrame)
     EVT_MENU(ID_NP_FILE_SAVE,  CWxNotepadFrame::OnMenuSave)
     EVT_MENU(ID_NP_FILE_NEW,   CWxNotepadFrame::OnMenuNew)
     EVT_MENU_RANGE(ID_NP_CONVERT_FIRST, ID_NP_CONVERT_LAST, CWxNotepadFrame::OnConvert)
+    EVT_MENU(ID_NP_EDIT_ASCIIART, CWxNotepadFrame::OnEditAsciiArt)
 wxEND_EVENT_TABLE()
 
 // ── Static registry ────────────────────────────────────────────────────────
@@ -171,6 +175,11 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     edit->Append(wxID_PASTE,     wxT("&Paste\tCtrl+V"));
     edit->AppendSeparator();
     edit->Append(wxID_SELECTALL, wxT("Select &All\tCtrl+A"));
+    edit->AppendSeparator();
+    // Canonical label + accelerator, from the IDR_NORMALTYPE Edit popup in the
+    // recovered resources (mushclient_dialogs.rc: "ASCII Art...\tShift+Ctrl+A",
+    // ID_EDIT_ASCIIART).
+    edit->Append(ID_NP_EDIT_ASCIIART, wxT("ASCII &Art...\tShift+Ctrl+A"));
     mb->Append(edit, wxT("&Edit"));
 
     // Convert menu — text transforms (canonical CTextView ID_CONVERT_* parity).
@@ -527,6 +536,30 @@ void CWxNotepadFrame::OnMenuNew(wxCommandEvent& /*evt*/)
 }
 
 // ── Convert menu: text transforms (CTextView::OnConvert* parity) ─────────────
+// Edit ▸ ASCII Art.  The canonical command (CTextView::OnEditAsciiart, bound by
+// TextView.cpp's ON_COMMAND(ID_EDIT_ASCIIART)) lives in a view the port never
+// constructs, and this menu item did not exist here — so the feature, and the
+// two ASCII-art preferences whose only consumer it is, were absent on macOS.
+//
+// art.cpp's RunAsciiArtDialog does everything except the insertion: dialog,
+// preference write-backs, FIGlet generation.  Deliberately NOT routed through
+// CTextView, whose GetEditCtrl() is a process-wide static CEdit with a null
+// m_hWnd — that would run the generator, save the settings, and insert nothing.
+void CWxNotepadFrame::OnEditAsciiArt(wxCommandEvent&)
+{
+    if (!m_ctrl) return;
+
+    CStringArray straLines;
+    if (!RunAsciiArtDialog(straLines))
+        return;   // cancelled, or generation failed (it reported why)
+
+    // Inserted at the caret, replacing any selection — the same place
+    // ReplaceSel puts it on Windows.
+    for (int i = 0; i < straLines.GetSize(); i++)
+        m_ctrl->WriteText(wxString::FromUTF8(
+            static_cast<const char*>(straLines[i])) + wxT("\n"));
+}
+
 void CWxNotepadFrame::OnConvert(wxCommandEvent& evt)
 {
     if (!m_ctrl) return;

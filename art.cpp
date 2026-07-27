@@ -662,7 +662,25 @@ static int addchar(inchr c)
 }
 
 
-void CTextView::OnEditAsciiart() 
+// ONE BODY, EVERY BUILD.  This was all of CTextView::OnEditAsciiart, which is
+// bound only by TextView.cpp's ON_COMMAND(ID_EDIT_ASCIIART) — a view the port
+// never constructs, and a menu item the port's notepad did not carry.  So on
+// macOS the whole feature was absent, and with it World Properties' two ASCII
+// art settings (m_iAsciiArtLayout / m_strAsciiArtFont), whose ONLY consumer
+// this is.
+//
+// Everything except the text insertion lives here: the dialog, all four
+// preference write-backs, the smushmode/smushoverride switch and the FIGlet
+// generation.  The generated rows come back in straLines rather than being
+// emitted, because the two frontends insert text differently — and because
+// routing the port through CTextView would be a convincing false fix:
+// mfc_ui.h's CEditView::GetEditCtrl returns a process-wide static CEdit with a
+// null m_hWnd, so the generator would run, persist the settings, and insert
+// nothing at all.
+//
+// Returns false when the user cancelled or generation failed (in which case
+// nothing was inserted on Windows either, since the emit loop came last).
+bool RunAsciiArtDialog (CStringArray & straLines)
 {
 
 CAsciiArtDlg dlg;
@@ -672,7 +690,7 @@ CAsciiArtDlg dlg;
   dlg.m_strFont = App.m_strAsciiArtFont;
 
   if (dlg.DoModal () != IDOK)
-    return;
+    return false;
 
   // remember text but don't save in registry
   App.m_strAsciiArtText = dlg.m_strText;
@@ -723,7 +741,32 @@ int i;
 	try
 	  {
     getparams ();
-    readfont (dlg.m_strFont);	
+
+CString strFontPath = dlg.m_strFont;
+
+#ifndef _WIN32
+    // The shipped default is the RELATIVE path "fonts/standard.flf", which on
+    // Windows resolves against the app directory.  Off Windows the working
+    // directory is wherever the app was launched from, so fall back to the
+    // bundle's copy (Contents/Resources/fonts/), the same ../Resources/ hop
+    // the spell checker and the recovered dialog resources use.
+    //
+    // Resolve into a LOCAL and never write it back into dlg.m_strFont: the
+    // block above has already persisted that string to the prefs DB, and an
+    // absolute path inside the bundle would break the moment the app moves.
+    {
+    CFileStatus status;
+    if (!CFile::GetStatus (strFontPath, status))
+      {
+      CString strBundled = ExtractDirectory (App.m_strMUSHclientFileName)
+                         + "../Resources/" + strFontPath;
+      if (CFile::GetStatus (strBundled, status))
+        strFontPath = strBundled;
+      }
+    }
+#endif
+
+    readfont (strFontPath);
     linealloc();
 
     for (i = 0; i < str.GetLength (); i++) {
@@ -742,14 +785,12 @@ int i;
       } // end of processing each character
 
 
-    for (i=0;i<charheight;i++) {
-      CString strLine = Replace (outputline[i], hardblank, " ");
-      GetEditCtrl ().ReplaceSel (CFormat ("%s%s", (LPCTSTR) strLine, ENDLINE), true);
-      }
+    for (i=0;i<charheight;i++)
+      straLines.Add (Replace (outputline[i], hardblank, " "));
 
     linefree ();
     fontfree ();
-    
+
     }
 	catch (CException* e)
 	  {
@@ -757,5 +798,21 @@ int i;
 		e->Delete();
     linefree ();    // free memory used
     fontfree ();
+    return false;
 	  }
+
+  return true;
+}
+
+void CTextView::OnEditAsciiart()
+{
+CStringArray straLines;
+
+  if (!RunAsciiArtDialog (straLines))
+    return;
+
+  // One ReplaceSel per line, as before — each is its own undo step.
+  for (int i = 0; i < straLines.GetSize (); i++)
+    GetEditCtrl ().ReplaceSel (CFormat ("%s%s", (LPCTSTR) straLines [i], ENDLINE),
+                               true);
 }

@@ -816,6 +816,13 @@ bool ScanMatchingBrace (const char * pBuf,
                         const bool bSelect,
                         const unsigned int iFlags);
 
+// Edit ▸ ASCII Art (art.cpp): runs the dialog, persists the layout/font
+// preferences and generates the FIGlet rows, handing them back rather than
+// inserting them — the two frontends insert text differently.  False = the user
+// cancelled, or generation failed (nothing to insert either way).
+class CStringArray;
+bool RunAsciiArtDialog (CStringArray & straLines);
+
 void GetButtonSize (CWnd & ctlWnd, int & iHeight, int & iWidth);
 
 void metaphone (const char *name, char * metaph, int metalen);

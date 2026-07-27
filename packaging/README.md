@@ -207,6 +207,64 @@ Notes:
 
 ---
 
+## Upstream Windows resources (`fetch-resources.sh`)
+
+MUSHclient's dialog layouts, menus, bitmaps, icons and cursors are not in the
+main source tree. They live in a separate project that Visual Studio compiles
+into `locale/en.dll` — <https://github.com/nickgammon/mushclient_resources>,
+which this repo's `readme.md` points at under "Resources". Windows loads that
+DLL at runtime; the macOS port has no DLL resource loader, so it needs the
+underlying files.
+
+```bash
+packaging/fetch-resources.sh          # pinned checkout into packaging/resources/
+MC_RESOURCES_REV=master packaging/fetch-resources.sh
+```
+
+**This is not required to build.** Unlike the language runtimes, dialog art is
+not optional at runtime — the About box and the Tray/Taskbar page need it — so
+the files the port actually uses stay committed under `platform/dialog_art/`,
+and that is what CMake bundles. A plain `git clone && cmake && make` with no
+network must keep working. Run this script when you need art the port does not
+bundle yet.
+
+Pinned by commit, not by branch: an unpinned clone would make builds
+unreproducible, the same reason `fetch-tcl.sh` pins `TCL_VERSION`.
+
+**Licence.** This is Nick Gammon's artwork, redistributed inside the `.app`
+exactly as the Windows build redistributes it inside `en.dll`. Pinning the
+revision here makes that provenance explicit rather than implicit in git
+history.
+
+### Direction of travel
+
+Two things in that checkout are better than what the port uses today, in
+increasing order of effort:
+
+1. **Art the port has never had.** e.g. the activity button bar
+   (`IDB_ACTIVITY_TOOLBAR_0..5`), whose six 480×15 4-bit strips — 30 tiles of
+   16×15 each — are `res/bitmap1.bmp` and `res/mc activity 0..4.bmp`. Note the
+   mapping is not in step: `_0` is `bitmap1.bmp`, `_1`…`_5` are
+   `mc activity 0`…`4`. Retina still needs an @2x story; the assets exist, the
+   scaling does not.
+
+2. **The canonical `.rc` itself.** `platform/mushclient_dialogs.rc` is
+   *decompiled* from a shipped `en.dll` by `tools/decompile_dialogs.py`, with
+   numeric ids mapped back to `resource.h` symbols by inference. The
+   `MUSHclient.rc` in this checkout is the real source of those same templates —
+   true symbol names, real `DLGINIT`, no decompiler heuristics. Sourcing the
+   port from it directly is the long-term goal and would be strictly better
+   provenance. It is also a migration across all 116 dialogs, so it wants its
+   own diff-by-diff pass with GUI verification rather than being done as a side
+   effect. Nothing in the build reads this checkout yet.
+
+The port does **not** need to build `en.dll` or load resources from a library to
+get there — it parses `.rc` text directly (`wx_dialog_resource.cpp`), so
+"consume the upstream resource project" means "read its `.rc` and its `res/`",
+not "reproduce the Windows DLL".
+
+---
+
 ## What `build-app.sh` does, step by step
 
 1. **Build** the Release `mushgui` target into `build-release/`. The CMake build

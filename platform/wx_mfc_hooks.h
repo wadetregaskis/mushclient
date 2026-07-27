@@ -590,6 +590,11 @@ extern void (*g_wxhook_screen_to_client)(const void* hwnd, int* x, int* y);
 
 // ── Installer ─────────────────────────────────────────────────────────────
 // Called from wx_app.cpp::OnInit() before anything else.
+// View > Status Bar, app-wide (Windows has one bar on the frame; the port
+// gives each world its own because the MDI parent's is hidden).  Defined in
+// wx_mfc_impl.cpp; read by CWorldChildFrame's constructor.
+bool wx_status_bar_visible();
+
 void wx_mfc_install_hooks();
 
 #endif // !_WIN32

@@ -982,6 +982,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
 
     SetSizer(sizer);
 
+    // View > Status Bar is app-wide (see s_statusBarVisible in wx_mfc_impl.cpp)
+    // and persisted, so a world opened now must match it rather than always
+    // showing its strip.  After SetSizer: ShowStatusBarStrip ends in Layout(),
+    // which does nothing before the sizer is attached.
+    if (!wx_status_bar_visible())
+        ShowStatusBarStrip(false);
+
     // ── Restore child frame size from config ──────────────────────────────
     // We persist a single "last used" child frame size (not per-world, since
     // all worlds share the same MDI client area).  This prevents the window

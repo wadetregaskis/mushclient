@@ -130,7 +130,13 @@ static const int ID_MENU_GAME_LUA_EVAL = wxID_HIGHEST + 411;
 // must use a distinct range or wx can't tell the commands apart (the View branch
 // ran first, so Import/Export silently toggled View state and were unreachable).
 static const int ID_MENU_VIEW_ALWAYSONTOP = wxID_HIGHEST + 430;
-static const int ID_MENU_VIEW_FULLSCREEN  = wxID_HIGHEST + 431;
+// Canonical command ids, not private wxIDs: world.DoCommand("FullScreenMode")
+// and world.DoCommand("ViewStatusbar") post these through
+// Frame.PostMessage -> hook_post_message -> wxEVT_MENU, and accelerators.cpp
+// publishes both names to scripts.  With private ids those commands returned
+// eOK and did nothing.  (resource.h:1437 ID_VIEW_FULLSCREENMODE,
+// mfc_ui.h:861 ID_VIEW_STATUS_BAR.)
+static const int ID_MENU_VIEW_FULLSCREEN  = 32332;
 
 // The window the user can actually see.  wxOSX hides the wxMDIParentFrame
 // while a child exists -- the active child IS the on-screen window -- so
@@ -154,9 +160,27 @@ static wxTopLevelWindow* wx_visible_frame(wxMDIParentFrame* frame)
 // full-screen bounds; without this, quitting while full screen would persist
 // an off-screen rect and the next launch would come up invisible.  Windows
 // avoids the same trap by un-full-screening before saving (mainfrm.cpp:549).
+// Windows has ONE status bar, on CMainFrame, and MFC persists its visibility
+// with SaveBarState/LoadBarState (both inert shims here).  The port gives each
+// world frame its own bar because the parent's is hidden, so "show the status
+// bar" has to be an app-wide setting applied to every frame -- otherwise the
+// menu item toggles one window and the tick lies about the rest.
+static bool   s_statusBarVisible     = true;
 static bool   s_hadPreFullScreenRect = false;
 static wxRect s_preFullScreenRect;
-static const int ID_MENU_VIEW_STATUSBAR   = wxID_HIGHEST + 432;
+
+// Read by CWorldChildFrame's constructor so a world opened later comes up
+// matching the current setting instead of always showing its bar.
+bool wx_status_bar_visible() { return s_statusBarVisible; }
+
+static void apply_status_bar_visibility(wxMDIParentFrame* frame)
+{
+    if (!frame) return;
+    for (wxWindow* w : frame->GetChildren())
+        if (auto* child = dynamic_cast<CWorldChildFrame*>(w))
+            child->ShowStatusBarStrip(s_statusBarVisible);
+}
+static const int ID_MENU_VIEW_STATUSBAR   = 0xE801;
 
 static wxMenu*    s_recentMenu     = nullptr;
 static std::vector<std::string> s_recentWorlds;
@@ -785,6 +809,10 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         cfg.Read(wxT("/geometry/main_x"), &x, -1L);
         cfg.Read(wxT("/geometry/main_y"), &y, -1L);
         cfg.Read(wxT("/geometry/main_maximized"), &maximized, false);
+        // Windows persists this with SaveBarState/LoadBarState; those shims are
+        // inert here, so keep it beside the geometry.  Read before any world
+        // frame exists so the first one comes up right.
+        cfg.Read(wxT("/geometry/status_bar"), &s_statusBarVisible, true);
         // Clamp to sanity + the usable screen: never a tiny or oversized window.
         if (w < 400)        w = defW;
         if (h < 300)        h = defH;
@@ -1118,9 +1146,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             // while the other is the one that moved.
             evt.Check(wx_visible_frame(frame)->IsFullScreen());
         } else if (id == ID_MENU_VIEW_STATUSBAR) {
-            auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
-            evt.Enable(child != nullptr);
-            evt.Check(child && child->IsStatusBarStripShown());
+            evt.Enable(true);          // Windows' item is live with no world open
+            evt.Check(s_statusBarVisible);
         } else if (id == 32275 || id == 32276 || id == 32974 || id == 32272 ||
                    id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
                    id == 32946 || id == 32947 || id == 33046 ||
@@ -1186,10 +1213,9 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return;
         }
         if (id == ID_MENU_VIEW_STATUSBAR) {
-            // Toggle the active world's own status bar (the visible one on macOS;
-            // the MDI parent's bar is hidden behind the child).
-            if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
-                child->ShowStatusBarStrip(!child->IsStatusBarStripShown());
+            // One setting, applied to every world frame -- see s_statusBarVisible.
+            s_statusBarVisible = !s_statusBarVisible;
+            apply_status_bar_visibility(frame);
             return;
         }
 
@@ -2347,6 +2373,7 @@ static void SaveMainWindowGeometry(wxTopLevelWindow* frame)
     wxConfig cfg(wxT("mushclient"));
     const bool maximized = geomWin->IsMaximized();
     cfg.Write(wxT("/geometry/main_maximized"), maximized);
+    cfg.Write(wxT("/geometry/status_bar"), s_statusBarVisible);
     if (!maximized) {
         // Full screen is not a size worth restoring, and on macOS the exit is
         // animated so GetRect() here would still report the full-screen bounds

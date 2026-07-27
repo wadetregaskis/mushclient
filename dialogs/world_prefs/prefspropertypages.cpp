@@ -8892,8 +8892,26 @@ void CPrefsP23::OnChatBackSwatch()
 	
 }
 
-void CPrefsP23::OnFileDirBrowse() 
+void CPrefsP23::OnFileDirBrowse()
 {
+#ifndef _WIN32
+    // Portable folder picker (wxDirDialog via the bridge).  Without this the
+    // whole Windows body below is skipped -- it hangs off ::SHGetMalloc, which
+    // off Windows is the shim stub returning E_FAIL (platform/mfc_ui.h) -- so
+    // the button was a completely silent no-op.  Same arm as the three folder
+    // pickers in dialogs/global_prefs/GlobalPrefs.cpp.
+    {
+    CString strDir;
+    GetDlgItemText (IDC_CHAT_SAVE_DIRECTORY, strDir);
+    if (g_wxhook_directorypicker)
+        {
+        char * picked = g_wxhook_directorypicker ("Save chat files folder", (LPCTSTR) strDir);
+        if (picked) { SetDlgItemText (IDC_CHAT_SAVE_DIRECTORY, picked); free (picked); }
+        }
+    }
+    return;
+#endif
+#ifdef _WIN32
 	// Gets the Shell's default allocator
 	LPMALLOC pMalloc;
 	if (::SHGetMalloc(&pMalloc) == NOERROR)
@@ -8927,10 +8945,11 @@ void CPrefsP23::OnFileDirBrowse()
 		// Release the shell's allocator.
 		pMalloc->Release();
     }
-	
+#endif
+
 }
 
-void CPrefsP23::OnOK() 
+void CPrefsP23::OnOK()
 {
 // remember colours
   

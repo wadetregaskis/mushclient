@@ -2274,33 +2274,33 @@ void CWorldChildFrame::FireAcceleratorCommand(WORD nID)
 // START WITH what you have typed.  Returns false when Windows would decline and
 // run the ordinary walk instead, so the caller just falls through.
 //
-// Four things make this NOT the plain arrow walk:
-//   1. Entry gate is an OR of the two options and REQUIRES a non-empty partial
-//      (sendvw.cpp:1822-1828, :1901-1907).  With an empty command bar Windows
-//      runs the ordinary handler — which honours arrow_keys_wrap — so getting
-//      this wrong would silently regress the park-then-wrap landed in 86e3f6f
-//      on every Alt press.
-//   2. An entry IDENTICAL to what you typed is SKIPPED, not recalled
-//      (sendvw.cpp:1858-1861, :1942-1945; "don't accept an exact match").
-//   3. arrow_keys_wrap is never consulted on this path.
-//   4. Running off an end clears the bar and DISCARDS the partial
-//      (sendvw.cpp:1846-1851) "so an ordinary arrow will work now".
+// Three things make this NOT the ordinary walk:
+//   1. It REQUIRES a non-empty partial (sendvw.cpp:1822-1828, :1901-1907).
+//      With an empty command bar the ordinary handler runs instead — and that
+//      one DOES honour arrow_keys_wrap, so getting this wrong would silently
+//      disable the park-then-wrap landed in 86e3f6f on every press.
+//   2. arrow_keys_wrap is never consulted on this path.
+//   3. Running off an end DISCARDS the partial so the next press does an
+//      ordinary walk: past the oldest clears the bar, past the newest puts your
+//      typed text back.
 //
-// Alt+Up starts at the newest and walks older; Alt+Down starts at the OLDEST
-// and walks newer, and works from a cold start with no prior browsing — which
-// is why Alt+Down does something where the plain Down key does nothing.
+// Up starts at the newest and walks older; Down starts at the OLDEST and walks
+// newer, and works from a cold start with no prior browsing — which is why Down
+// does something here where the ordinary Down key does nothing.
 //
-// KNOWN, DELIBERATE DIVERGENCE: on Windows the PLAIN arrows are also diverted
-// into this body whenever arrow_recalls_partial is on and a partial exists
-// (sendvw.cpp:393-402, :473-482), so points 2-4 apply to them too.  The port's
-// plain arrows keep the park-then-wrap and typed-text restore from 86e3f6f
-// instead.  Aligning them would undo that behaviour for everyone with
-// arrow_recalls_partial ticked, so it is left as a separate decision.
+// The PLAIN arrows are diverted in here too whenever arrow_recalls_partial is
+// on and there is a partial (sendvw.cpp:393-402, :473-482); that is why the
+// caller, not this function, decides which options admit which key.  Both
+// builds share the behaviour — see docs/UPSTREAM-DIVERGENCES.md for the two
+// places it now departs from upstream MUSHclient (exact matches are recallable,
+// and Down restores your typing rather than blanking it).
 bool CWorldChildFrame::AltArrowRecall(bool bUp)
 {
     if (!m_doc || !m_input) return false;
-    if (!(m_doc->m_bAltArrowRecallsPartial || m_doc->m_bArrowRecallsPartial))
-        return false;
+    // The OPTION test lives in the caller, because it differs by key: Alt+Arrow
+    // enters on either option, a plain arrow only on arrow_recalls_partial
+    // (sendvw.cpp:393-402 / :473-482 vs :1822-1828 / :1901-1907).
+    //
     // Windows bails before touching anything when there is no history at all
     // (sendvw.cpp:1797-1798), leaving the typed text alone.
     if (m_history.empty()) return false;
@@ -2315,8 +2315,7 @@ bool CWorldChildFrame::AltArrowRecall(bool bUp)
 
     const wxString lpfx = partial.Lower();
     auto matches = [&lpfx](const wxString& entry) {
-        const wxString le = entry.Lower();
-        return le.StartsWith(lpfx) && le != lpfx;   // skip the exact match
+        return entry.Lower().StartsWith(lpfx);   // an exact match IS a match
     };
 
     int found = -1;
@@ -2332,8 +2331,11 @@ bool CWorldChildFrame::AltArrowRecall(bool bUp)
         m_histSaved = partial;              // so a continuing walk keeps matching
 
     if (found < 0) {
-        // Ran off the end: clear and discard, never wrap (point 4 above).
-        m_input->SetValue(wxString());
+        // Ran off the end: never wrap, and discard the partial so the next
+        // press does an ordinary walk (point 4 above).  Going forward past the
+        // newest match puts your typed text back; going back past the oldest
+        // clears, as upstream does at both ends.
+        m_input->SetValue(bUp ? wxString() : partial);
         m_input->SetInsertionPointEnd();
         m_histIdx    = -1;
         m_histParked = eHistNotParked;
@@ -2813,24 +2815,33 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // behaved as though the box were permanently ticked.  On Windows with it OFF
     // — the shipped default — plain Up/Down walk the WHOLE history whatever you
     // have typed; partial matching is what the ALT arrows are for.  With it ON,
-    // Windows diverts plain Up/Down into the Alt handlers (sendvw.cpp:393/475).
+    // Windows diverts plain Up/Down into the Alt handlers (sendvw.cpp:393/475)
+    // — which is what the bPartialArrow divert just below now does, so the
+    // ordinary blocks that follow it never filter.
     //
     // "Arrow keys wrap around" (m_bArrowKeysWrap, default OFF).  Windows, on
     // running past either end: clears the command bar and marks the history
     // cursor as parked at that end; the NEXT press then either wraps to the far
     // end (option on) or clears again (option off).  The port instead silently
-    // stayed on the oldest entry, so neither state was reachable.
-    const bool bRecallsPartial = m_doc && m_doc->m_bArrowRecallsPartial;
-    const bool bWrap           = m_doc && m_doc->m_bArrowKeysWrap;
+    // stayed on the oldest entry, so neither state was reachable.  Note the
+    // partial body deliberately does NOT wrap, exactly as upstream.
+    const bool bWrap = m_doc && m_doc->m_bArrowKeysWrap;
 
-    // Alt/Option+Arrow: partial-command recall (alt_arrow_recalls_partial).
-    // Windows nests this inside the same m_bArrowsChangeHistory and caret tests
-    // as the plain arrows, then branches on the Alt key (sendvw.cpp:1683-1686,
-    // :1707-1710) into OnAltUparrow / OnAltDownarrow.  If the gate inside those
-    // bodies fails they call the ORDINARY handler instead — which is what the
-    // plain blocks just below already are, so a false return here simply falls
-    // through.  `inp == m_input` keeps this off the masked password bar.
-    if ((code == WXK_UP || code == WXK_DOWN) && inp == m_input && evt.AltDown()) {
+    // Partial-command recall.  Windows has TWO history bodies and picks between
+    // them here: the ordinary walk (the two blocks just below) and the
+    // partial-matching walk (AltArrowRecall).  Which options admit which key
+    // differs, so the choice is made here rather than inside the body:
+    //   * Alt/Option+Arrow enters on EITHER option (sendvw.cpp:1683-1686 picks
+    //     OnAltUparrow, whose gate at :1901-1907 is the OR).
+    //   * a PLAIN arrow enters only on arrow_recalls_partial, and only when
+    //     there is something to match (sendvw.cpp:393-402, :473-482).
+    // If the partial body declines — no history, or nothing typed — Windows
+    // runs the ordinary handler, which is exactly what falling through does.
+    // `inp == m_input` keeps all of this off the masked password bar.
+    const bool bPartialArrow = m_doc &&
+        (evt.AltDown() ? (m_doc->m_bAltArrowRecallsPartial || m_doc->m_bArrowRecallsPartial)
+                       : m_doc->m_bArrowRecallsPartial);
+    if ((code == WXK_UP || code == WXK_DOWN) && inp == m_input && bPartialArrow) {
         if (AltArrowRecall(code == WXK_UP))
             return;
     }
@@ -2839,34 +2850,21 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         // Pressing Up exits Ctrl+R mode.
         ApplyHistRSearch(false);  // ↑ always uses prefix (startsWith) match
         if (m_history.empty()) return;
-        // Prefix filter only when the option asks for it; otherwise every entry
-        // matches and the browse walks the full history, as on Windows.
+        // THE ORDINARY WALK — no prefix filtering.  All partial matching now
+        // happens in AltArrowRecall above, exactly as Windows splits the two
+        // bodies; this block is only reached when there is nothing to match on,
+        // and Windows' ordinary handler does not filter either.  (It used to
+        // filter here as well, which left arrow_keys_wrap wrapping to the
+        // absolute newest/oldest entry rather than a matching one.)
         if (m_histIdx < 0) {
             // Start browsing: save what the user had typed so ↓ can restore it.
             // Starting fresh also clears any parked end left by a previous
             // browse, so the park-then-wrap pair below always needs two presses.
-            m_histParked  = eHistNotParked;
-            m_histSaved   = m_input->GetValue();
-            wxString lpfx = bRecallsPartial ? m_histSaved.Lower() : wxString();
-            // Find the most recent matching entry.
-            m_histIdx = -1;
-            for (int i = (int)m_history.size() - 1; i >= 0; --i) {
-                if (lpfx.IsEmpty() || m_history[i].Lower().StartsWith(lpfx)) {
-                    m_histIdx = i;
-                    break;
-                }
-            }
-            if (m_histIdx < 0) return;  // no match — consume but don't change input
+            m_histParked = eHistNotParked;
+            m_histSaved  = m_input->GetValue();
+            m_histIdx    = (int) m_history.size() - 1;   // newest
         } else {
-            // Continue searching backward for the next older match.
-            wxString lpfx = bRecallsPartial ? m_histSaved.Lower() : wxString();
-            int found = -1;
-            for (int i = m_histIdx - 1; i >= 0; --i) {
-                if (lpfx.IsEmpty() || m_history[i].Lower().StartsWith(lpfx)) {
-                    found = i;
-                    break;
-                }
-            }
+            const int found = m_histIdx - 1;             // next older
             if (found < 0) {
                 // Ran off the oldest end.  Windows clears the bar and parks the
                 // cursor there (sendvw.cpp:527-530); a further press wraps to the
@@ -2894,21 +2892,16 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         // Pressing Down exits Ctrl+R mode.
         ApplyHistRSearch(false);  // ↓ always uses prefix (startsWith) match
         if (m_histIdx < 0) { evt.Skip(); return; }
-        wxString lpfx = bRecallsPartial ? m_histSaved.Lower() : wxString();
-        // Search forward for the next newer match.
-        int found = -1;
-        for (int i = m_histIdx + 1; i < (int)m_history.size(); ++i) {
-            if (lpfx.IsEmpty() || m_history[i].Lower().StartsWith(lpfx)) {
-                found = i;
-                break;
-            }
-        }
+        // THE ORDINARY WALK — see the Up block; no prefix filtering here.
+        const int found = (m_histIdx + 1 < (int) m_history.size())
+                        ? m_histIdx + 1 : -1;            // next newer
         if (found < 0) {
-            // Past the newest match.  The port's own behaviour here — restore
-            // what the user had been typing — is kept, because it is strictly
-            // more useful than Windows' bare clear and is what m_histSaved
-            // exists for.  Wrapping takes over on the press AFTER that, mirroring
-            // the Up side: park first, then wrap (or clear again).
+            // Past the newest entry: put back what the user had been typing.
+            // Upstream blanks the bar here (sendvw.cpp OnKeysNextcommand); the
+            // restore is the same deliberate change now made to the partial
+            // path on both builds — see docs/UPSTREAM-DIVERGENCES.md.  Wrapping
+            // takes over on the press AFTER that, mirroring the Up side: park
+            // first, then wrap (or restore again).
             if (m_histParked == eHistParkedNew && bWrap) {
                 m_histIdx = 0;                        // wrap to oldest
                 m_histParked = eHistNotParked;

@@ -1841,11 +1841,17 @@ void CSendView::OnAltDownarrow()
       if (m_HistoryPosition)
         m_msgList.GetNext (m_HistoryPosition);
 
-    // if position is NULL, we have reached the bottom - echo a blank command
-    // and discard the partial command so an ordinary arrow will work now
-    if (!m_HistoryPosition) 
+    // If position is NULL we have reached the bottom.
+    //
+    // DELIBERATE DIVERGENCE FROM UPSTREAM (see docs/UPSTREAM-DIVERGENCES.md).
+    // Upstream echoed a BLANK command here, throwing away whatever you had been
+    // typing when you started recalling.  Put the typed text back instead: down
+    // -arrow walks forward to newer matches and then returns you to where you
+    // started, which is what the partial was saved for.  The partial is still
+    // discarded, so the next arrow does an ordinary walk exactly as before.
+    if (!m_HistoryPosition)
       {
-      strText.Empty ();
+      strText = m_strPartialCommand;
       m_strPartialCommand.Empty ();
       break;
       }
@@ -1853,11 +1859,14 @@ void CSendView::OnAltDownarrow()
     // get next command
     strText = m_msgList.GetAt (m_HistoryPosition);    
 
-    // don't accept an exact match (see forum subject 2313
-    // they won't want to recall exactly what they typed :)
-    } while (m_strPartialCommand.CompareNoCase 
-             (strText.Left (m_strPartialCommand.GetLength ())) != 0 ||
-             m_strPartialCommand.CompareNoCase (strText) == 0
+    // DELIBERATE DIVERGENCE FROM UPSTREAM (see docs/UPSTREAM-DIVERGENCES.md).
+    // Upstream also skipped an entry identical to what you typed, citing forum
+    // subject 2313 ("they won't want to recall exactly what they typed").  That
+    // makes a command you have run before unreachable by partial recall, which
+    // is surprising when you type a prefix precisely because you want the thing
+    // you ran last time.  Prefix match only; an exact match is a match.
+    } while (m_strPartialCommand.CompareNoCase
+             (strText.Left (m_strPartialCommand.GetLength ())) != 0
              );
 
   SetCommand (strText);
@@ -1932,11 +1941,14 @@ void CSendView::OnAltUparrow()
     // get previous command
     strText = m_msgList.GetAt (m_HistoryPosition);    
 
-    // don't accept an exact match (see forum subject 2313
-    // they won't want to recall exactly what they typed :)
-    } while (m_strPartialCommand.CompareNoCase 
-             (strText.Left (m_strPartialCommand.GetLength ())) != 0 ||
-             m_strPartialCommand.CompareNoCase (strText) == 0
+    // DELIBERATE DIVERGENCE FROM UPSTREAM (see docs/UPSTREAM-DIVERGENCES.md).
+    // Upstream also skipped an entry identical to what you typed, citing forum
+    // subject 2313 ("they won't want to recall exactly what they typed").  That
+    // makes a command you have run before unreachable by partial recall, which
+    // is surprising when you type a prefix precisely because you want the thing
+    // you ran last time.  Prefix match only; an exact match is a match.
+    } while (m_strPartialCommand.CompareNoCase
+             (strText.Left (m_strPartialCommand.GetLength ())) != 0
              );
 
   SetCommand (strText);

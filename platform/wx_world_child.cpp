@@ -1910,8 +1910,14 @@ void CWorldChildFrame::UpdateStatusBar()
     // ── Pane 0 (stretch): main status / connection state ───────────────────
     // Script status takes priority, then scrollback, reconnect countdown, the
     // connected server, otherwise the in-progress connection phase.
+    // The doc is constructed with m_strStatusMessage = "Ready" and nothing in
+    // the tree ever empties it, so treating it as a live script message pinned
+    // pane 0 to "Ready" forever and made every branch below dead code.  Treat
+    // it as the idle sentinel it is.
+    static const CString kIdleStatus = Translate("Ready");
     std::string msg;
-    if (!m_doc->m_strStatusMessage.IsEmpty()) {
+    if (!m_doc->m_strStatusMessage.IsEmpty() &&
+        m_doc->m_strStatusMessage != kIdleStatus) {
         msg = static_cast<const char*>(m_doc->m_strStatusMessage);
     } else if (m_output && !m_output->IsAutoScrolling()) {
         msg = "\xe2\x86\x91 Scrolled back \xe2\x80\x94 press Escape or scroll to bottom to resume";
@@ -1959,6 +1965,17 @@ void CWorldChildFrame::UpdateStatusBar()
 
     // ── Pane 4: log indicator ──────────────────────────────────────────────
     pane(4, IsLogging() ? "\xf0\x9f\x94\xb4 Log" : "");
+}
+
+bool CWorldChildFrame::SetTransientStatus(const wxString& text)
+{
+    if (!m_statusBar || !m_statusBar->IsShown()) return false;
+    // Pane 0 only -- the world name, duration, counts and log indicator stay
+    // put.  The next UpdateStatusBar() (world timer, activation, connection
+    // change) redraws pane 0 from the doc, which is the same transience the
+    // MDI parent bar had.
+    m_statusBar->SetStatusText(text, 0);
+    return true;
 }
 
 void CWorldChildFrame::ShowStatusBarStrip(bool show)
@@ -3305,13 +3322,18 @@ void CWorldChildFrame::setTitle(const char* title)
              : wxTitle);
 }
 
-void CWorldChildFrame::setStatus(const char* text)
+void CWorldChildFrame::setStatus(const char* /*text*/)
 {
-    // world.SetStatus(msg): show a message in the shared main-window status bar,
-    // but only for the active world (overrides the connection-state message
-    // until the next timer tick or the next SetStatus call replaces it).
-    if (g_wxhook_set_status && IsActiveWorld())
-        g_wxhook_set_status(std::string(text).c_str());
+    // world.SetStatus(msg) and every Frame.SetStatusMessage caller land here.
+    // The text is already in m_doc->m_strStatusMessage (ShowStatusLine sets it
+    // before emitting), and UpdateStatusBar reads it from there along with the
+    // world name, duration and line counts, so just repaint.
+    //
+    // This used to forward to g_wxhook_set_status, i.e. to the MDI PARENT's
+    // status bar -- which wxOSX hides behind the child -- so nothing was ever
+    // visible.  Each world owns its own bar, so there is also no reason to gate
+    // on IsActiveWorld() any more: a background world updates its own strip.
+    UpdateStatusBar();
 }
 
 void CWorldChildFrame::setBackgroundColour(pal::Colour c)

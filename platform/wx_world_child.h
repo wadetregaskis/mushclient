@@ -172,6 +172,10 @@ public:
 
     // Show/hide this world's status bar (View ▸ Status Bar).
     void ShowStatusBarStrip(bool show);
+    // Put a one-off message in pane 0 (the app-wide status messages that
+    // CMainFrame::SetStatusMessage sends).  Returns false when this frame has
+    // no visible strip, so the caller can fall back to the MDI parent's bar.
+    bool SetTransientStatus(const wxString& text);
     bool IsStatusBarStripShown() const;
 
     // Show/hide the inline find bar (Ctrl+F to show, Escape in find bar to hide).

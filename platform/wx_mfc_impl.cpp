@@ -554,8 +554,19 @@ static int hook_message_box(const char* text, const char* caption, unsigned flag
 
 static void hook_set_status(const char* msg)
 {
+    // CMainFrame::SetStatusMessage funnels a lot through here -- "Reconnecting",
+    // the queued-command counts, "Closing network connection", the mapper's
+    // speedwalk line, find results, the notepad messages.  s_statusBar belongs
+    // to the MDI parent, which wxOSX hides behind the active child, so all of
+    // that was invisible.  Prefer the visible world frame's own pane 0.
+    const wxString text = msg ? wxString::FromUTF8(msg) : wxString();
+    if (wxTheApp) {
+        if (auto* mdi = wxDynamicCast(wxTheApp->GetTopWindow(), wxMDIParentFrame))
+            if (auto* child = dynamic_cast<CWorldChildFrame*>(mdi->GetActiveChild()))
+                if (child->SetTransientStatus(text)) return;
+    }
     if (s_statusBar)
-        s_statusBar->SetStatusText(msg ? wxString::FromUTF8(msg) : wxString(), 0);
+        s_statusBar->SetStatusText(text, 0);
 }
 
 

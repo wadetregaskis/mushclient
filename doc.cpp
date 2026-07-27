@@ -2085,10 +2085,17 @@ void CMUSHclientDoc::ShowStatusLine (const bool bNow)
     else
       Frame.SetStatusMessage (m_strStatusMessage);
 #ifndef _WIN32
-  // On non-Windows there are no CMUSHView / CSendView instances; forward to
-  // the wxWidgets status bar so world.SetStatus() still updates the UI.
-  else if (g_wxhook_set_status)
-    g_wxhook_set_status (static_cast<const char*>(m_strStatusMessage));
+  // On non-Windows there are no CMUSHView / CSendView instances, so the arm
+  // above never runs; drive the typed view seam instead, which lands on the
+  // status bar the user can actually see (each world frame owns its own --
+  // the MDI parent's bar is hidden behind the child on macOS).
+  //
+  // The #ifndef MUST stay.  On Windows pal/win_worldview.cpp implements
+  // setStatus as "m_strStatusMessage = text; ShowStatusLine(true)", and the
+  // adapter is attached in doc_construct.cpp, so an unguarded EmitStatus here
+  // would recurse forever.
+  else
+    EmitStatus (static_cast<const char*>(m_strStatusMessage));
 #endif
   m_tStatusDisplayed = CTime::GetCurrentTime ();
   }

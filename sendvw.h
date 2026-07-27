@@ -49,6 +49,12 @@ public:
   bool m_bChanged;    // the user has typed something
   
   CString m_strPartialCommand;  // for Alt+UpArrow
+  // What the user had typed when they STARTED walking the history with the
+  // ordinary arrows, so down-arrow can put it back at the end of the walk
+  // instead of blanking the bar.  Deliberately NOT m_strPartialCommand: that
+  // one is the Alt handlers' prefix-match key, and writing it from here would
+  // change which entries they match.  See docs/UPSTREAM-DIVERGENCES.md.
+  CString m_strTypedBeforeRecall;
 
 // stuff for finding in the input buffer
 

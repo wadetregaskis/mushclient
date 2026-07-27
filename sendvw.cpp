@@ -401,6 +401,13 @@ void CSendView::OnKeysNextcommand()
     return;
     }
 
+  // Remember what they were typing before the walk starts, so the down-arrow
+  // can put it back when it runs off the newest end (sendvw.h).  Captured only
+  // when m_bChanged, i.e. only text the user PERSONALLY typed -- the same test
+  // the Alt handlers use for m_strPartialCommand.
+  if (m_bChanged)
+    m_strTypedBeforeRecall = strCommand;
+
 // check they want to wipe out their typing
 
   if (CheckTyping (pDoc, strText))
@@ -409,14 +416,19 @@ void CSendView::OnKeysNextcommand()
   // if they are at the bottom, and they don't want to wrap, give up
   if (m_iHistoryStatus == eAtBottom &&
      !pDoc->m_bArrowKeysWrap)
-    {   
+    {
 
     // check they want to wipe out their typing
 
-    if (CheckTyping (pDoc, ""))
+    if (CheckTyping (pDoc, m_strTypedBeforeRecall))
       return;
 
-    SetCommand ("");
+    // DELIBERATE DIVERGENCE FROM UPSTREAM (docs/UPSTREAM-DIVERGENCES.md #3):
+    // upstream blanked the bar here.  Put back whatever they had been typing
+    // when the walk started instead.  Empty once it has already been restored
+    // once, so a second press still clears, exactly as before.
+    SetCommand (m_strTypedBeforeRecall);
+    m_strTypedBeforeRecall.Empty ();
     return;
     }
 
@@ -438,10 +450,13 @@ void CSendView::OnKeysNextcommand()
     {   // otherwise, end of list old chap
     // check they want to wipe out their typing
 
-    if (CheckTyping (pDoc, ""))
+    if (CheckTyping (pDoc, m_strTypedBeforeRecall))
       return;
 
-    SetCommand ("");
+    // Same divergence as above: restore rather than blank.  This is the arm
+    // the user actually reaches by walking forward past the newest entry.
+    SetCommand (m_strTypedBeforeRecall);
+    m_strTypedBeforeRecall.Empty ();
     m_iHistoryStatus = eAtBottom;
     return;
     }
@@ -480,6 +495,13 @@ void CSendView::OnKeysPrevcommand()
     OnAltUparrow ();
     return;
     }
+
+  // Remember what they were typing before the walk starts, so the down-arrow
+  // can put it back when it runs off the newest end (sendvw.h).  Captured only
+  // when m_bChanged, i.e. only text the user PERSONALLY typed -- the same test
+  // the Alt handlers use for m_strPartialCommand.
+  if (m_bChanged)
+    m_strTypedBeforeRecall = strCommand;
 
 
   // if they are at the top, and they don't want to wrap, give up

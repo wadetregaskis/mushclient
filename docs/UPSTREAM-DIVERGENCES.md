@@ -48,17 +48,39 @@ before — only the text shown changes.
 thing the user cannot get back, and forces them to retype it. Up-arrow past the
 *oldest* entry still clears, as upstream does, so the two ends stay distinct.
 
-**Note:** the port's *ordinary* (non-partial) down-arrow has also restored the
-typed text since `86e3f6f`, where upstream's `OnKeysNextcommand` blanks it.
-Aligning that one would need `CSendView` to start remembering the typed text in
-its ordinary path, which it does not do today — it is **not** covered by this
-entry and remains an open difference between the two builds.
+**Note:** the *ordinary* (non-partial) down-arrow is covered separately by
+entry 3 below — the two paths now agree on both builds.
 
 ---
 
+## 3 — Ordinary down-arrow restores your typing too
+
+**Where:** `sendvw.cpp`, `CSendView::OnKeysNextcommand` — both of its
+end-of-walk arms; capture added to `OnKeysNextcommand` and
+`OnKeysPrevcommand`, with the new `m_strTypedBeforeRecall` in `sendvw.h`. The
+port has behaved this way since `86e3f6f`.
+
+**Upstream:** walking forward past the newest history entry called
+`SetCommand("")`, blanking the command bar.
+
+**Now:** it puts back whatever the user was typing when the walk began. Type
+`abc`, press Up twice to reach `abcd` then `abcde`, and pressing Down twice
+walks back to `abcd` and then to `abc` — instead of `abc` being lost.
+
+**Why a new member rather than `m_strPartialCommand`:** that one is the Alt
+handlers' prefix-match key. Writing it from the ordinary handlers would change
+which entries Alt+Arrow matches, which is a different behaviour change wearing
+this one's clothes. Captured under the same `m_bChanged` test the Alt handlers
+use, so only text the user personally typed is remembered — script- or
+macro-placed text is not.
+
+**Deliberately unchanged:** up-arrow past the *oldest* entry still blanks, on
+both builds. The two ends stay distinct, and only the direction the user can
+walk *back* from restores.
+
 ## Verification status
 
-Both changes are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)
+All three changes are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)
 but whose class `CSendView` is never instantiated on the port — so the macOS
 build type-checks them and cannot exercise them. The behaviour was verified
 live through the port's own equivalent in `AltArrowRecall`. **A Windows build

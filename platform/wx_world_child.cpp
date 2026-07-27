@@ -2268,6 +2268,86 @@ void CWorldChildFrame::FireAcceleratorCommand(WORD nID)
     m_doc->m_bEnableAutoSay = bSavedAutoSay;
 }
 
+// ── AltArrowRecall ─────────────────────────────────────────────────────────
+// The body of CSendView::OnAltUparrow / OnAltDownarrow (sendvw.cpp:1789-1945),
+// which the port never had: Alt/Option+Arrow recalls the history entries that
+// START WITH what you have typed.  Returns false when Windows would decline and
+// run the ordinary walk instead, so the caller just falls through.
+//
+// Four things make this NOT the plain arrow walk:
+//   1. Entry gate is an OR of the two options and REQUIRES a non-empty partial
+//      (sendvw.cpp:1822-1828, :1901-1907).  With an empty command bar Windows
+//      runs the ordinary handler — which honours arrow_keys_wrap — so getting
+//      this wrong would silently regress the park-then-wrap landed in 86e3f6f
+//      on every Alt press.
+//   2. An entry IDENTICAL to what you typed is SKIPPED, not recalled
+//      (sendvw.cpp:1858-1861, :1942-1945; "don't accept an exact match").
+//   3. arrow_keys_wrap is never consulted on this path.
+//   4. Running off an end clears the bar and DISCARDS the partial
+//      (sendvw.cpp:1846-1851) "so an ordinary arrow will work now".
+//
+// Alt+Up starts at the newest and walks older; Alt+Down starts at the OLDEST
+// and walks newer, and works from a cold start with no prior browsing — which
+// is why Alt+Down does something where the plain Down key does nothing.
+//
+// KNOWN, DELIBERATE DIVERGENCE: on Windows the PLAIN arrows are also diverted
+// into this body whenever arrow_recalls_partial is on and a partial exists
+// (sendvw.cpp:393-402, :473-482), so points 2-4 apply to them too.  The port's
+// plain arrows keep the park-then-wrap and typed-text restore from 86e3f6f
+// instead.  Aligning them would undo that behaviour for everyone with
+// arrow_recalls_partial ticked, so it is left as a separate decision.
+bool CWorldChildFrame::AltArrowRecall(bool bUp)
+{
+    if (!m_doc || !m_input) return false;
+    if (!(m_doc->m_bAltArrowRecallsPartial || m_doc->m_bArrowRecallsPartial))
+        return false;
+    // Windows bails before touching anything when there is no history at all
+    // (sendvw.cpp:1797-1798), leaving the typed text alone.
+    if (m_history.empty()) return false;
+
+    // The partial is what the user typed.  Windows refreshes it only when the
+    // user PERSONALLY typed since the last recall (m_bChanged, sendvw.cpp:1809
+    // and :1888); the port's analogue is "this is a fresh browse", because any
+    // non-navigation keystroke and every scripted setCommand reset m_histIdx.
+    const bool bFresh = (m_histIdx < 0);
+    const wxString partial = bFresh ? m_input->GetValue() : m_histSaved;
+    if (partial.empty()) return false;      // → ordinary walk, as on Windows
+
+    const wxString lpfx = partial.Lower();
+    auto matches = [&lpfx](const wxString& entry) {
+        const wxString le = entry.Lower();
+        return le.StartsWith(lpfx) && le != lpfx;   // skip the exact match
+    };
+
+    int found = -1;
+    if (bUp) {
+        for (int i = bFresh ? (int) m_history.size() - 1 : m_histIdx - 1; i >= 0; --i)
+            if (matches(m_history[i])) { found = i; break; }
+    } else {
+        for (int i = bFresh ? 0 : m_histIdx + 1; i < (int) m_history.size(); ++i)
+            if (matches(m_history[i])) { found = i; break; }
+    }
+
+    if (bFresh)
+        m_histSaved = partial;              // so a continuing walk keeps matching
+
+    if (found < 0) {
+        // Ran off the end: clear and discard, never wrap (point 4 above).
+        m_input->SetValue(wxString());
+        m_input->SetInsertionPointEnd();
+        m_histIdx    = -1;
+        m_histParked = eHistNotParked;
+        m_histSaved.Clear();
+        return true;
+    }
+
+    m_histIdx    = found;
+    m_histParked = eHistNotParked;
+    m_input->SetValue(m_history[m_histIdx]);
+    m_input->SetInsertionPointEnd();
+    return true;
+}
+
 // ── FireMacro ──────────────────────────────────────────────────────────────
 // Dispatch macro slot `idx`, the port's stand-in for CSendView::SendMacro
 // (sendvw.cpp:743-793).  Returns false when the slot is unusable, which lets a
@@ -2743,6 +2823,18 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     const bool bRecallsPartial = m_doc && m_doc->m_bArrowRecallsPartial;
     const bool bWrap           = m_doc && m_doc->m_bArrowKeysWrap;
 
+    // Alt/Option+Arrow: partial-command recall (alt_arrow_recalls_partial).
+    // Windows nests this inside the same m_bArrowsChangeHistory and caret tests
+    // as the plain arrows, then branches on the Alt key (sendvw.cpp:1683-1686,
+    // :1707-1710) into OnAltUparrow / OnAltDownarrow.  If the gate inside those
+    // bodies fails they call the ORDINARY handler instead — which is what the
+    // plain blocks just below already are, so a false return here simply falls
+    // through.  `inp == m_input` keeps this off the masked password bar.
+    if ((code == WXK_UP || code == WXK_DOWN) && inp == m_input && evt.AltDown()) {
+        if (AltArrowRecall(code == WXK_UP))
+            return;
+    }
+
     if (code == WXK_UP && inp == m_input) {
         // Pressing Up exits Ctrl+R mode.
         ApplyHistRSearch(false);  // ↑ always uses prefix (startsWith) match
@@ -3073,8 +3165,17 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         if (kpIdx  >= 0 && fireKeypad(kpIdx))  return;
     }
 
-    // Any non-navigation key cancels history browsing, Ctrl+R mode, and tab cycling.
-    if (code != WXK_UP && code != WXK_DOWN) {
+    // Any non-navigation key cancels history browsing, Ctrl+R mode, and tab
+    // cycling.  A bare MODIFIER press is not such a key: pressing Option to
+    // reach Alt+Arrow, or Control to reach Ctrl+R, delivers its own key-down
+    // event first, and counting that as "the user typed something" cancelled
+    // the browse before the combination even arrived.  Windows has no
+    // equivalent hazard — it refreshes its partial only on a real text change
+    // (m_bChanged, sendvw.cpp:1178) — so excluding the modifiers here is what
+    // makes a multi-press Alt+Arrow walk continue instead of restarting.
+    const bool bBareModifier = (code == WXK_ALT     || code == WXK_SHIFT ||
+                                code == WXK_CONTROL || code == WXK_RAW_CONTROL);
+    if (code != WXK_UP && code != WXK_DOWN && !bBareModifier) {
         m_histIdx    = -1;
         ApplyHistRSearch(false);
     }

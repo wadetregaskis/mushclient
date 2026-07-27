@@ -594,6 +594,27 @@ static int hook_message_box(const char* text, const char* caption, unsigned flag
         case 0x0040: style |= wxICON_INFORMATION; break;  // MB_ICONINFORMATION / ASTERISK
         default:     break;
     }
+    // The default-button field (MB_DEFBUTTON2 0x0100 / MB_DEFBUTTON3 0x0200) is
+    // a THIRD field, and it was silently dropped -- so every prompt that
+    // deliberately asks for a safe default got a dangerous one.  Return on
+    // "Delete the selected N items?" answered Yes, and on the log-file prompt it
+    // answered Overwrite.  The callers asking for it are the destructive ones:
+    // the six delete confirmations in world properties, genpropertypage.cpp,
+    // dialogs/logdlg.cpp, doc.cpp, CheckTyping in sendvw.cpp, and scripted
+    // utils.msgbox (scripting/lua_utils.cpp, which exposes buttons 1-3).
+    //
+    // Win32 numbers the buttons in the order the set declares them, so which
+    // button is "second" depends on the set -- for MB_YESNOCANCEL it is No, NOT
+    // Cancel.  wx can only express the two negative defaults it has names for.
+    const unsigned defBtn = flags & 0x0300;
+    if (defBtn == 0x0100) {                      // MB_DEFBUTTON2
+        if      (style & wxYES_NO) style |= wxNO_DEFAULT;      // [Yes, *No*, …]
+        else if (style & wxCANCEL) style |= wxCANCEL_DEFAULT;  // [OK, *Cancel*]
+    } else if (defBtn == 0x0200) {               // MB_DEFBUTTON3
+        // Only Yes/No/Cancel has a third button; anything else has no such
+        // button and Win32 falls back to the first, which is wx's default.
+        if ((style & wxYES_NO) && (style & wxCANCEL)) style |= wxCANCEL_DEFAULT;
+    }
 
     wxString wxText    = text    ? wxString::FromUTF8(text)    : wxString();
     wxString wxCaption = caption ? wxString::FromUTF8(caption) : wxString("MUSHclient");

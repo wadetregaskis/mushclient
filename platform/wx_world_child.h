@@ -132,6 +132,11 @@ public:
     // canonical GenerateName() + CGeneratedNameDlg.
     void GenerateCharacterName();
 
+    // Alt/Option+Arrow partial-command recall (alt_arrow_recalls_partial).
+    // False when Windows would decline and do an ordinary history walk instead,
+    // so the caller falls through to the plain arrow handling.
+    bool AltArrowRecall(bool bUp);
+
     // Fire macro slot idx (the port's CSendView::SendMacro).  False if the slot
     // is empty or out of range, so a key-driven caller can fall through.
     bool FireMacro(int idx);

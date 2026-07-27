@@ -138,3 +138,30 @@ void wxOSXTerminateApp()
 {
     [NSApp terminate:nil];
 }
+
+// ── Native window tabbing (Global Preferences ▸ "Window tabs") ─────────────
+// See wx_osx_text.h.  wx makes each wxMDIChildFrame a real NSWindow on macOS,
+// so the system's own tabbing is the natural fit — and the only one available,
+// since there is no in-parent client area to dock a Win32 tab strip into.
+//
+// KNOWN LIMIT, and the reason the port cannot honour all three settings: AppKit
+// draws window tabs along the TOP, always.  There is no supported way to put
+// them at the bottom, so "Bottom" behaves as "Top" rather than silently doing
+// nothing.  Windows honours both.
+void wxOSXSetWindowTabbing(wxWindow* win, bool bPreferTabs, const char* identifier)
+{
+    if (!win) return;
+    NSView* view = (NSView*) win->GetHandle();
+    if (!view) return;
+    NSWindow* window = [view window];
+    if (!window) return;
+
+    if (identifier && *identifier)
+        [window setTabbingIdentifier: [NSString stringWithUTF8String: identifier]];
+
+    // Automatic (not Disallowed) when off: the preference means "do not ask for
+    // tabs", and taking away the user's ability to make them by hand would be a
+    // bigger change than the setting describes.
+    [window setTabbingMode: bPreferTabs ? NSWindowTabbingModePreferred
+                                        : NSWindowTabbingModeAutomatic];
+}

@@ -29,6 +29,7 @@
 #include "scripting/scripting.h"      // CScriptEngine, lua_State* — for Shift+Tab globals
 #include "platform/wx_world_child.h"  // our own header (CWorldChildFrame, COutputPane)
 #include "platform/wx_print.h"        // PrintStyledDocument (File ▸ Print World)
+#include "platform/wx_osx_text.h"    // wxOSXSetWindowTabbing ("Window tabs" pref)
 #include "genprint.h"                 // FONT_BOLD / FONT_ITALIC / FONT_UNDERLINE
 #include <wx/numdlg.h>                // wxGetNumberFromUser (Display ▸ Go To Line)
 
@@ -1264,6 +1265,19 @@ void CWorldChildFrame::ApplyGlobalPrefs()
     m_output->SetBleedBackground(App.m_bBleedBackground != 0);
     m_output->SetSmootherScrolling(App.m_bSmootherScrolling != 0);
     m_output->SetSmoothScrolling(App.m_bSmoothScrolling != 0);
+
+    // Global Preferences ▸ "Window tabs".  Windows builds a CMDITabs strip from
+    // CMainFrame::OnCreate -- which returns early on the port -- into the MDI
+    // client area, which macOS wx does not have: each world frame here is a real
+    // top-level NSWindow.  Native window tabbing is the equivalent, and giving
+    // every world the same tabbing identifier is what lets them group.
+    //
+    // Top and Bottom BOTH map to "prefer tabs": AppKit only ever draws them
+    // along the top.  Better that Bottom does the useful thing than nothing at
+    // all, but it is not parity -- see wxOSXSetWindowTabbing.
+    wxOSXSetWindowTabbing(this,
+                          App.m_iWindowTabsStyle != WINDOW_TABS_NONE,
+                          "au.com.gammon.MUSHclient.world");
 }
 
 // Command-history depth: the world's own "Lines in command history" setting.

@@ -12,6 +12,7 @@
 
 class wxTextCtrl;
 class wxBitmap;
+class wxWindow;
 
 #ifdef __APPLE__
 void wxOSXDisableSmartSubstitutions(wxTextCtrl* ctrl);   // defined in wx_osx_text.mm
@@ -33,10 +34,21 @@ bool wxOSXActivateApp(const char* name);
 // (which, on some macOS versions, leaves the process running windowless).  Used
 // to make Cmd-Q / the app-menu "Quit" behave like the Dock's Quit.
 void wxOSXTerminateApp();
+// Global Preferences ▸ "Window tabs".  On macOS wx makes each wxMDIChildFrame a
+// real top-level NSWindow, so there is no in-parent client area for a Win32
+// tab strip to dock into — but that is exactly what the system's own window
+// tabbing wants.  Give every world window the same tabbing identifier and ask
+// AppKit to prefer tabs, and new worlds join one tabbed window.
+//
+// bPreferTabs false restores NSWindowTabbingModeAutomatic (the user's
+// System Settings "Prefer tabs" choice), NOT Disallowed: the Windows setting
+// means "don't ask for tabs", not "forbid the user from making them".
+void wxOSXSetWindowTabbing(wxWindow* win, bool bPreferTabs, const char* identifier);
 #else
 inline void wxOSXDisableSmartSubstitutions(wxTextCtrl*) {}
 inline void wxOSXSetDockIcon(const wxBitmap&) {}
 inline int  wxOSXFontHasGlyph(const char*, unsigned int) { return 0; }
 inline bool wxOSXActivateApp(const char*) { return false; }
 inline void wxOSXTerminateApp() {}
+inline void wxOSXSetWindowTabbing(wxWindow*, bool, const char*) {}
 #endif

@@ -472,6 +472,17 @@ static long hook_send_message(void* h, unsigned msg, uintptr_t wp, intptr_t lp)
         return 0;
     }
 
+    // NOT handled, deliberately: LVM_GET/SETCOLUMNORDERARRAY (saved column
+    // order).  They would map to wxListCtrl::Get/SetColumnsOrder, which on this
+    // platform are unimplemented stubs -- SetColumnsOrder disassembles to
+    // `mov w0,#0; ret`, GetColumnsOrder returns an empty array -- so a case here
+    // would report success and change nothing.  Worse than the gap: the
+    // canonical save path (MUSHclient.cpp SaveColumnConfiguration) pre-seeds the
+    // array with identity "in case our SendMessage doesn't work", so it already
+    // succeeds silently, and the backlog would read FIXED.
+    // See docs/LIST-CONTROL-DECISION.md for the full analysis, the control swap
+    // that WOULD fix it, and what that costs.
+
     (void)lp;
     return 0;
 }
@@ -3445,6 +3456,14 @@ static void bind_list_notifications(wxWindow* win, CCmdTarget* target)
         NMLISTVIEW nm{};
         nm.hdr.idFrom = (UINT) e.GetId();
         nm.hdr.code   = (UINT) LVN_COLUMNCLICK;
+        // DORMANT MISMATCH, live the day columns can be reordered: GetColumn()
+        // is the VISUAL index, and CGenPropertyPage::OnColumnclickItemList
+        // stores iSubItem as m_last_col -- a LOGICAL column, persisted as
+        // "<list> Sort Sequence".  The two coincide only because the column
+        // order is always identity on the port (see
+        // docs/LIST-CONTROL-DECISION.md §6).  Anyone making reordering work
+        // must map visual -> logical here first, or clicking a moved header
+        // sorts by the wrong field.
         nm.iSubItem   = e.GetColumn();
         LRESULT res = 0;
         if (!AfxDispatchNotify(target, (UINT) LVN_COLUMNCLICK, (UINT) e.GetId(), &nm.hdr, &res))

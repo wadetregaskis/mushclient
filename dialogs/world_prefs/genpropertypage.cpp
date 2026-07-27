@@ -1536,8 +1536,12 @@ BOOL CGenPropertyPage::OnInitDialog()
 
   // ── List columns (portable) ─────────────────────────────────────────────
   // Add the report-mode columns + restore saved widths/order.  On the port this
-  // drives the bridged wxListCtrl; RestoreColumnConfiguration's LVM_* SendMessage
-  // calls and the LVM_SETCOLUMNORDERARRAY below are harmless no-ops there.
+  // drives the bridged wxListCtrl.  Widths and the sort column round-trip
+  // there; the LVM_SETCOLUMNORDERARRAY below is a no-op, because the wx control
+  // macOS gets has no column-reordering implementation in either direction.
+  // That is a recorded decision, not an oversight — docs/LIST-CONTROL-DECISION.md
+  // has the evidence, the cost of the control swap that would fix it, and the
+  // conditions under which it is worth revisiting.
   CString strDescription = m_strObjectType;
   strDescription += " list";
 

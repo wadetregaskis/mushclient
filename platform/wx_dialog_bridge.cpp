@@ -308,6 +308,18 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         // The canonical pages drive it in report mode (LVS_REPORT == 0x1); they
         // add columns + items via the bridged CListCtrl methods.  Single-select
         // unless LVS_SINGLESEL (0x4) is absent → MFC default is multi-select.
+        //
+        // This ONE mapping decides the control class for all 15 SysListView32
+        // controls in the recovered resources — the five entity pages, the macro
+        // list, the Plugins manager, four Plugin Wizard pages, the chat list,
+        // the colour picker, the function list and both Lua choose-lists.
+        //
+        // It is deliberately wxListCtrl and NOT wxDataViewListCtrl, which is the
+        // only way to get saved column ORDER working on macOS (wxListCtrl here
+        // IS wxGenericListCtrl, whose Set/GetColumnsOrder are unimplemented
+        // stubs in the shipped library).  That trade-off, what it would cost and
+        // when to revisit it, is written up in docs/LIST-CONTROL-DECISION.md —
+        // read it before changing this line.
         long st = wxLC_REPORT;
         if (c.style & 0x4 /*LVS_SINGLESEL*/) st |= wxLC_SINGLE_SEL;
         if (c.style & 0x8000 /*LVS_NOSORTHEADER*/) st |= wxLC_NO_SORT_HEADER;

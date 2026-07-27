@@ -323,6 +323,14 @@ public:
                        int actionType,
                        bool bCommentLine)> m_fn_link_clicked;
 
+    // Double-clicked a word in the output ("Double-click Sends Word" /
+    // "…Pastes Word", both world options, both default OFF).  Fired ONLY when
+    // the click actually resolved a word -- see OnLeftDClick -- so the handler
+    // never has to distinguish a fresh word from a stale selection.  bShift is
+    // passed because Windows treats Shift+double-click as a whole-paragraph
+    // operation, which the port declines rather than approximating with a word.
+    std::function<void(const wxString& word, bool bShift)> m_fn_word_double_clicked;
+
     // Called from the right-click context menu "Put in Input Bar" action.
     // Receives the currently selected text; the frame wires this to set the
     // input bar's value and move focus there for review before sending.

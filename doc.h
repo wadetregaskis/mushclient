@@ -642,6 +642,19 @@ enum eHyperlinkOutcome
   eHyperlinkAbort,        // not connected: do nothing more, leave the focus alone
   };
 
+// What is left for the caller to do after CMUSHclientDoc::OutputWordDoubleClicked
+// (doc_dblclick_shared.cpp).  Same split as eHyperlinkOutcome above: the shared
+// body owns the decision — the empty-word test, the sends-beats-inserts
+// precedence and the not-connected prompt — and hands back only the step that
+// has to touch this frontend's own command bar or command history.
+enum eDoubleClickOutcome
+  {
+  eDblClickNothing,   // empty word, or neither option set: do nothing
+  eDblClickAbort,     // sends wanted but not connected (already prompted)
+  eDblClickInsert,    // caller splices the word in at the caret
+  eDblClickSend,      // caller records in history, THEN SendDoubleClickedWord
+  };
+
 class CMUSHclientDoc : public CDocument
 {
   friend class CActivityView;
@@ -2564,6 +2577,13 @@ public:
   eHyperlinkOutcome HyperlinkClicked (const CString  strAction,
                                       const long     iActionType,
                                       const bool     bCommentLine);
+
+  // Double-clicking a word in the output window (world options
+  // "double_click_sends" / "double_click_inserts").  The decision is shared
+  // (doc_dblclick_shared.cpp); the history add and the command-bar splice stay
+  // with the caller because each frontend's history has its own rules.
+  eDoubleClickOutcome OutputWordDoubleClicked (const CString & strWord);
+  void                SendDoubleClickedWord   (const CString & strWord);
 
   CString DoEvaluateSpeedwalk(LPCTSTR SpeedWalkString);
   static CString DoReverseSpeedwalk(LPCTSTR SpeedWalkString);

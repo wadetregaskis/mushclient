@@ -1810,6 +1810,25 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
                 m_selAnchor = SelPoint{lineIdx, wordStart};
                 m_selFocus  = SelPoint{lineIdx, wordEnd};
                 Refresh(false);
+
+                // "Double-click Sends Word" / "…Pastes Word".  Dispatch the word
+                // computed RIGHT HERE, not SelectedText(): the selection is only
+                // written inside this guard, so a double-click that lands on a
+                // space or a delimiter leaves the PREVIOUS selection in place --
+                // possibly a whole dragged paragraph -- and sending that would be
+                // badly wrong.  No word, no dispatch, which is also what Windows
+                // does (it computes an empty word and tests IsEmpty first).
+                if (m_fn_word_double_clicked) {
+                    // The handler can open a modal (the not-connected prompt).
+                    // On macOS a nested modal loop swallows the following
+                    // mouse-up, which would strand the pane mid-drag with the
+                    // mouse still captured, so let go before dispatching.
+                    m_dragging = false;
+                    if (HasCapture()) ReleaseMouse();
+                    m_fn_word_double_clicked(
+                        lineText.Mid(wordStart, wordEnd - wordStart),
+                        evt.ShiftDown());
+                }
             }
 
             // Record for triple-click line selection.

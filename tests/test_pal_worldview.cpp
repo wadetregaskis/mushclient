@@ -611,4 +611,70 @@ TEST(PalWorldView, PendingLineCarriesHyperlinkActionAndHint)
     EXPECT_TRUE(found);
 }
 
+// ── doc_dblclick_shared.cpp ────────────────────────────────────────────────
+// The decision half of "Double-click Sends Word" / "…Pastes Word".  Both
+// options' only Windows reader was CMUSHView::OnLButtonDblClk, a view the port
+// never constructs, so this is the seam that makes them testable at all.
+//
+// Only OutputWordDoubleClicked is exercised here: the send, the history add and
+// the command-bar splice are deliberately left to each frontend (see the TU
+// header), so there is nothing doc-side to assert about them.
+
+TEST(DoubleClick, EmptyWordDoesNothingEvenWithBothOptionsSet)
+{
+    CMUSHclientDoc doc;
+    make_doc(doc);
+    doc.m_bDoubleClickSends   = true;
+    doc.m_bDoubleClickInserts = true;
+    EXPECT_EQ((int) eDblClickNothing, (int) doc.OutputWordDoubleClicked(""));
+}
+
+TEST(DoubleClick, NeitherOptionSetDoesNothing)
+{
+    CMUSHclientDoc doc;
+    make_doc(doc);
+    doc.m_bDoubleClickSends   = false;
+    doc.m_bDoubleClickInserts = false;
+    EXPECT_EQ((int) eDblClickNothing, (int) doc.OutputWordDoubleClicked("orc"));
+}
+
+TEST(DoubleClick, InsertsWhenOnlyInsertsIsSet)
+{
+    CMUSHclientDoc doc;
+    make_doc(doc);
+    doc.m_bDoubleClickSends   = false;
+    doc.m_bDoubleClickInserts = true;
+    EXPECT_EQ((int) eDblClickInsert, (int) doc.OutputWordDoubleClicked("orc"));
+}
+
+TEST(DoubleClick, SendsBeatsInsertsWhenBothAreSet)
+{
+    // Windows' if / else-if: ticking both is not an error, sending just wins.
+    //
+    // Asserted as "never Insert" rather than "is Send", because the Send arm is
+    // not reachable headless: CheckConnected() requires m_iConnectPhase ==
+    // eConnectConnectedToMud AND ConnectionOpen() (doc.cpp:2729), and there is
+    // no real socket here, so it always reports not-connected.  What matters is
+    // that the inserts arm is never taken while sends is set -- which this and
+    // the abort case below pin between them.
+    CMUSHclientDoc doc;
+    make_doc(doc);
+    doc.m_bDoubleClickSends   = true;
+    doc.m_bDoubleClickInserts = true;
+    EXPECT_NE((int) eDblClickInsert, (int) doc.OutputWordDoubleClicked("orc"));
+}
+
+TEST(DoubleClick, NotConnectedAbortsRatherThanFallingBackToInsert)
+{
+    // CheckConnected() prompts and reports "not connected"; Windows returns
+    // outright, so the caller must do nothing -- in particular it must NOT
+    // quietly insert instead, which is why this is a distinct outcome.
+    CMUSHclientDoc doc;
+    make_doc(doc);
+    doc.m_iConnectPhase       = eConnectNotConnected;
+    doc.m_bDoubleClickSends   = true;
+    doc.m_bDoubleClickInserts = true;
+    EXPECT_EQ((int) eDblClickAbort, (int) doc.OutputWordDoubleClicked("orc"));
+}
+
 MC_TEST_MAIN()

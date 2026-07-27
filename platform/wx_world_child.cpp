@@ -232,7 +232,17 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // user can keep typing without clicking back in the input bar.
     m_output->m_fn_return_focus = [this]() {
         wxTextCtrl* inp = ActiveInput();
-        if (inp) inp->SetFocus();
+        if (!inp) return;
+        // Preserve the caret/selection across the focus change.  Focusing a text
+        // field on macOS SELECTS ALL of its text (standard NSTextField
+        // behaviour), so a bare SetFocus() here silently armed a select-all on
+        // the command bar every time the user clicked in the output pane: the
+        // next character typed replaced the whole half-typed command, and the
+        // double-click "paste word" splice overwrote it instead of inserting.
+        long from = 0, to = 0;
+        inp->GetSelection(&from, &to);
+        inp->SetFocus();
+        inp->SetSelection(from, to);
     };
 
     // world.Pause(bPause) now drives IWorldView::setPaused (this frame) via
@@ -327,6 +337,65 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             m_output->SetTextPixelOffset((int) m_doc->m_iPixelOffset);
         }
     }
+
+    // Double-clicking a word in the output: "Double-click Sends Word" /
+    // "…Pastes Word".  The decision is shared (doc_dblclick_shared.cpp); what is
+    // left here is this frontend's own history and command bar, which is exactly
+    // the split the hyperlink hoist uses.
+    m_output->m_fn_word_double_clicked = [this](const wxString& word, bool bShift) {
+        if (!m_doc) return;
+
+        // DIVERGENCE, deliberate: Windows treats Shift+double-click as "the
+        // whole PARAGRAPH" (mushview.cpp:4780/4812).  Reconstructing a paragraph
+        // across this pane's wrapped visual rows is a different job, and sending
+        // a single WORD where Windows sends a LINE is precisely the case a user
+        // would notice, so decline rather than approximate.
+        if (bShift) return;
+
+        const CString cword(word.utf8_str());
+        switch (m_doc->OutputWordDoubleClicked(cword)) {
+        case eDblClickAbort:
+            break;                       // not connected; already prompted
+
+        case eDblClickSend:
+            // The port's history gate is STRICTER than Windows' here, on
+            // purpose.  Windows uses !(m_bNoEcho && !m_bAlwaysRecordCommandHistory)
+            // (sendvw.cpp:2237), which it can afford because its history is
+            // RAM-only; this port persists m_history to a PLAINTEXT file at
+            // close, so honouring always_record_command_history would write a
+            // password-prompt reply to disk.  Never record while echo is off --
+            // the same rule the Return path uses.
+            if (!m_doc->m_bNoEcho)
+                addToCommandHistory(word.utf8_str());
+            // sendvw.cpp:2253-2254: history browsing starts at the bottom again.
+            m_histIdx = -1;
+            m_histParked = eHistNotParked;
+            ApplyHistRSearch(false);
+            m_doc->SendDoubleClickedWord(cword);
+            break;
+
+        case eDblClickInsert: {
+            // Gate on WHICH WIDGET the splice would land in, not on m_bNoEcho.
+            // The two disagree for up to one 100 ms tick: m_bNoEcho flips in the
+            // telnet parser, while the masked bar is shown/hidden later by the
+            // world timer, so testing the flag can still splice output text into
+            // a live password field.  ActiveInput() is the predicate that
+            // actually chooses the target, so ask it.
+            if (ActiveInput() != m_input) break;
+            // Windows uses ReplaceSel: insert AT THE CARET, keeping what is
+            // already typed ("kill " + double-click "orc" -> "kill orc").  The
+            // PAL command-selection pair is the equivalent; m_fn_put_in_input is
+            // NOT reusable here because it replaces the whole bar.
+            long selStart = 0, selEnd = 0;
+            m_doc->GetCommandSelection(selStart, selEnd);
+            m_doc->ReplaceCommandSelectionRange(selStart, selEnd, word.utf8_str());
+            break;
+        }
+
+        case eDblClickNothing:
+            break;
+        }
+    };
 
     // "Put in Input Bar" context-menu action: paste selected output text into
     // the command input for review/editing before the user presses Enter.

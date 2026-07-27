@@ -4860,20 +4860,28 @@ int line,
 
   SelectionChanged ();
 
-  // if they want, send word to MUD
-  if (!strCurrentLine.IsEmpty ())
-    if (pDoc->m_bDoubleClickSends)
-      {
-      if (pDoc->CheckConnected ())
-        return;
+  // if they want, send word to MUD.  The decision (empty word, sends-beats-
+  // inserts, the not-connected prompt) is now shared with the other frontend in
+  // doc_dblclick_shared.cpp; the history add and the ReplaceSel stay here
+  // because they are this view's own widgets.  Same calls, same order, and the
+  // eDblClickAbort return still skips the selection tidy-up and auto-copy below.
+  switch (pDoc->OutputWordDoubleClicked (strCurrentLine))
+    {
+    case eDblClickAbort:
+      return;
 
+    case eDblClickSend:
       m_bottomview->AddToCommandHistory (strCurrentLine);
-      pDoc->SendMsg (strCurrentLine, pDoc->m_display_my_input, false, pDoc->LoggingInput ());
-      }   // end of sending word to MUD
-    else if (pDoc->m_bDoubleClickInserts)
-      {
+      pDoc->SendDoubleClickedWord (strCurrentLine);
+      break;
+
+    case eDblClickInsert:
       m_bottomview->GetEditCtrl().ReplaceSel (strCurrentLine);
-      }   // end of copying word into command buffer
+      break;
+
+    case eDblClickNothing:
+      break;
+    }
 
   // make sure selection is meaningful
   if (m_selstart_line == m_selend_line && 

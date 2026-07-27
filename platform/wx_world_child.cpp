@@ -4370,6 +4370,45 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
     // If the document has been modified (triggers, aliases, properties changed)
     // since it was last saved, offer to save before closing.
     // Only when the close event can be vetoed (not a forced app shutdown).
+    // "Save world automatically on close" (world prefs ▸ General).  Mirrors
+    // CMUSHclientDoc::SaveModified (doc.cpp:2121-2122): save first, silently,
+    // which then leaves the document unmodified so the prompt below does not
+    // fire.  The port had no consumer for the option at all, so ticking it did
+    // nothing and the user was still asked on every close.
+    if (m_doc && m_doc->m_bSaveWorldAutomatically && m_doc->IsModified() &&
+        g_wxhook_save_world)
+    {
+        g_wxhook_save_world(m_doc, /*saveAs=*/false, this);
+        // Deliberately NOT an early return: Windows falls through to the
+        // variables check below, and if the save failed the document is still
+        // modified so the normal prompt still protects the user's work.
+    }
+
+    // "Offer to save world if only Variables have changed" (Global Prefs ▸
+    // Closing, default ON).  This ADDS a prompt rather than suppressing one:
+    // changing a script variable does not mark the document modified, so
+    // without this a variables-only change closes silently.  Windows asks when
+    // the option is on (doc.cpp:2125-2127); the port ignored it entirely.
+    if (evt.CanVeto() && m_doc && !m_doc->IsModified() &&
+        m_doc->m_bVariablesChanged && App.m_bConfirmBeforeSavingVariables)
+    {
+        wxString vname = wxString::FromUTF8(
+            static_cast<const char*>(m_doc->m_mush_name));
+        if (vname.IsEmpty()) vname = wxT("this world");
+        int vans = wxMessageBox(
+            wxT("Variables have changed in ") + vname +
+                wxT(".\n\nSave the world file before closing?"),
+            wxT("Variables Changed"),
+            wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_QUESTION, this);
+        if (vans == wxCANCEL) { evt.Veto(); return; }
+        if (vans == wxYES && g_wxhook_save_world) {
+            if (!g_wxhook_save_world(m_doc, /*saveAs=*/false, this)) {
+                evt.Veto();
+                return;
+            }
+        }
+    }
+
     if (evt.CanVeto() && m_doc && m_doc->IsModified()) {
         wxString name = wxString::FromUTF8(
             static_cast<const char*>(m_doc->m_mush_name));

@@ -137,6 +137,7 @@ void LoadMfcDialogResources()
 // ── Win32 control-style bits we key off when mapping to wx widgets ───────────
 namespace {
 enum {
+    WS_VISIBLE    = 0x10000000,
     WS_DISABLED   = 0x08000000,
     BS_TYPEMASK   = 0x0000000F,
     BS_DEFPUSHBUTTON = 1, BS_CHECKBOX = 2, BS_AUTOCHECKBOX = 3,
@@ -359,6 +360,17 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         if (wxStaticText* st = wxDynamicCast(w, wxStaticText))
             st->Wrap(size.GetWidth());
         if (c.style & WS_DISABLED) w->Enable(false);
+        // A template can omit WS_VISIBLE to ship a control the user never sees.
+        // Gammon uses that to RETIRE a feature without deleting its plumbing:
+        // the control, its DDX and its handler all survive, but Windows never
+        // draws it.  The bridge used to ignore the bit, so the port rendered
+        // four such controls -- users could tick "Auto Log when opening world"
+        // and watch it persist and do nothing, because it does nothing on
+        // Windows either.  Honour it, and they disappear on both platforms.
+        //
+        // Only 5 of the 1633 templated controls lack the bit, so this is a
+        // narrow change, but see the commit for the one it costs us.
+        if (!(c.style & WS_VISIBLE)) w->Hide();
     }
     return w;
 }

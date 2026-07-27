@@ -1825,6 +1825,31 @@ static void* hook_open_world_file(const char* path)
     return static_cast<void*>(doc);
 }
 
+// ── Default filename for a world that has never been saved ────────────────
+// Windows offers the WORLD NAME, scrubbed of the characters it forbids in a
+// filename (doc.cpp:2190-2202).  That branch is unreachable on the port -- both
+// save hooks compute the path themselves -- so they used to offer the literal
+// "world.mcl" for every world, and a user saving three worlds got three
+// identically-named suggestions.  Same scrub set as the canonical code.
+static wxString DefaultWorldFileName(CMUSHclientDoc* doc)
+{
+    wxString name;
+    if (doc)
+        name = wxString::FromUTF8(static_cast<const char*>(doc->m_mush_name));
+
+    wxString clean;
+    for (size_t i = 0; i < name.length(); ++i) {
+        const wxUniChar ch = name[i];
+        if (wxString(wxT("<>\"|?:#%;/\\")).Find(ch) == wxNOT_FOUND)
+            clean += ch;
+    }
+    clean.Trim(true).Trim(false);
+
+    if (clean.IsEmpty()) return wxT("world.mcl");          // unnamed world
+    if (!clean.Lower().EndsWith(wxT(".mcl"))) clean += wxT(".mcl");
+    return clean;
+}
+
 // ── Save Active World ─────────────────────────────────────────────────────
 // Saves the doc of the currently active MDI child frame.
 // If saveAs==true OR the doc has no path yet, shows a save-file dialog first.
@@ -1858,7 +1883,8 @@ static void hook_save_active_world(wxMDIParentFrame* frame, bool saveAs)
         wxFileDialog dlg(frame,
                          wxT("Save World File"),
                          saveDir,
-                         path.IsEmpty() ? wxT("world.mcl") : wxFileName(path).GetFullName(),
+                         path.IsEmpty() ? DefaultWorldFileName(doc)
+                                       : wxFileName(path).GetFullName(),
                          wxT("MUSHclient world files (*.mcl)|*.mcl|All files (*.*)|*.*"),
                          wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
         if (dlg.ShowModal() != wxID_OK) return;
@@ -2155,7 +2181,7 @@ static bool hook_save_world(void* vdoc, bool saveAs, void* vparent)
         wxFileDialog dlg(parent,
                          wxT("Save World File"),
                          saveDir,
-                         path.IsEmpty() ? wxT("world.mcl")
+                         path.IsEmpty() ? DefaultWorldFileName(doc)
                                         : wxFileName(path).GetFullName(),
                          wxT("MUSHclient world files (*.mcl)|*.mcl"
                              "|All files (*.*)|*.*"),

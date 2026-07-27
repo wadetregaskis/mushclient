@@ -280,4 +280,47 @@ TEST(PosixSocket, SendAfterPeerCloseReturnsErrorNotSigpipe)
     lis.Close();
 }
 
+#ifdef SO_NOSIGPIPE
+// posix_socket.h Accept: the accepted socket gets "the same per-socket setup
+// Create() does, because accept(2) does NOT inherit either of these from the
+// listening socket".
+//
+// SO_NOSIGPIPE is per-descriptor on macOS/BSD.  Accept() used to set only
+// O_NONBLOCK, so every accepted socket -- i.e. every incoming chat connection
+// via world.ChatAcceptCalls -- could kill the process with SIGPIPE on a write
+// to a departed peer.  The app masked it with a global signal(SIGPIPE, SIG_IGN)
+// in platform/wx_app.cpp, so this was invisible in the GUI and only showed up
+// as an intermittent test-runner death.
+//
+// Asserted with getsockopt rather than by provoking a real SIGPIPE, because
+// the test runner now ignores the signal (mc_test.h) and so could not observe
+// the difference.
+TEST(PosixSocket, AcceptedSocketGetsNoSigpipeLikeCreatedOne)
+{
+    Listener lis;
+    ASSERT_TRUE(lis.open());
+    Recorder client;
+    ASSERT_TRUE(client.Create());
+    client.Connect("127.0.0.1", lis.port_);
+    ASSERT_TRUE(poll_until([&] { return lis.accepts > 0; }));
+
+    Recorder server;
+    ASSERT_TRUE(lis.Accept(server));
+    ASSERT_TRUE(server.m_hSocket != INVALID_SOCKET);
+
+    int on = 0; socklen_t len = sizeof on;
+    EXPECT_EQ(0, ::getsockopt(server.m_hSocket, SOL_SOCKET, SO_NOSIGPIPE, &on, &len));
+    EXPECT_NE(0, on);                        // accepted socket is protected
+
+    // ...and the created socket still is, so the two paths agree.
+    on = 0; len = sizeof on;
+    EXPECT_EQ(0, ::getsockopt(client.m_hSocket, SOL_SOCKET, SO_NOSIGPIPE, &on, &len));
+    EXPECT_NE(0, on);
+
+    server.Close();
+    client.Close();
+    lis.Close();
+}
+#endif
+
 MC_TEST_MAIN()

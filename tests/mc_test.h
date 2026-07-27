@@ -174,6 +174,22 @@ inline bool cmp_eq(const char* a, const char* b) {
         return; \
     }} while(0)
 
-// Entry point — put in exactly one .cpp in each test executable
+// Entry point — put in exactly one .cpp in each test executable.
+//
+// Ignoring SIGPIPE mirrors what the product does at startup
+// (platform/wx_app.cpp): a write to a peer-closed socket must report EPIPE,
+// not kill the process.  Tests that drive raw sockets of their own build them
+// with plain ::socket/::accept and so get none of CAsyncSocket's per-socket
+// SO_NOSIGPIPE; without this, one of those writes losing a timing race takes
+// the whole runner down.  That was a real intermittent ctest failure
+// (test_pal_transport, SIGPIPE — roughly 1 run in 25 under `ctest -j8`, and
+// never reproducible when the binary was run on its own).
+#ifndef _WIN32
+#  include <csignal>
+#  define MC_TEST_IGNORE_SIGPIPE() ::signal(SIGPIPE, SIG_IGN)
+#else
+#  define MC_TEST_IGNORE_SIGPIPE() ((void)0)
+#endif
+
 #define MC_TEST_MAIN() \
-    int main(int, char**) { return mc_test::run_all(); }
+    int main(int, char**) { MC_TEST_IGNORE_SIGPIPE(); return mc_test::run_all(); }

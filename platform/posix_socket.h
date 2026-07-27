@@ -236,6 +236,20 @@ public:
         if (rConnectedSocket.m_hSocket != INVALID_SOCKET)
             ::close(rConnectedSocket.m_hSocket);
         rConnectedSocket.m_hSocket = s;
+        // Same per-socket setup Create() does, because accept(2) does NOT
+        // inherit either of these from the listening socket.
+        //
+        // SO_NOSIGPIPE is per-file-descriptor on macOS/BSD, so an accepted
+        // socket started out unprotected: writing to it after the peer went
+        // away raised SIGPIPE and killed the process.  The GUI app happened to
+        // survive that only because platform/wx_app.cpp installs a global
+        // signal(SIGPIPE, SIG_IGN) at startup -- anything embedding this shim
+        // without that (every test binary) was exposed, and the shim was
+        // internally inconsistent.  The reachable product path is
+        // world.ChatAcceptCalls, whose incoming connections all arrive here.
+#ifdef SO_NOSIGPIPE
+        { int on = 1; ::setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on)); }
+#endif
         // Set non-blocking on accepted socket
         int flags = ::fcntl(s, F_GETFL, 0);
         if (flags != -1) ::fcntl(s, F_SETFL, flags | O_NONBLOCK);

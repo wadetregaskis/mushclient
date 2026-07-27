@@ -34,7 +34,9 @@ void wx_world_remove_from_list(const char* path);
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <memory>
 #include "platform/wx_outputpane.h"   // COutputPane → output_types.h
+#include "platform/wx_toolbar.h"      // CWorldToolBars — Standard/World/Activity bars
 #include "pal/iworldview.h"           // pal::IWorldView — this frame is the wx adapter
 
 // ── CWorldChildFrame ──────────────────────────────────────────────────────────
@@ -57,6 +59,20 @@ public:
 
     // Give external code access to the output pane (e.g. to set the font).
     COutputPane* OutputPane() const { return m_output; }
+
+    // View ▸ Toolbar / World Toolbar / Activity Toolbar / Reset Toolbar
+    // Locations.  Driven from the View-menu handler in wx_mfc_impl.cpp, which
+    // applies the change to every world window so they do not drift apart.
+    void ShowToolBar(CWorldToolBars::Which which, bool show)
+        { if (m_toolbars) m_toolbars->SetBarVisible(which, show); }
+    bool AreToolBarsVisible(CWorldToolBars::Which which) const
+        { return m_toolbars && m_toolbars->IsBarVisible(which); }
+    void ResetToolBars()
+        { if (m_toolbars) m_toolbars->ResetLocations(); }
+
+    // Re-read App.m_iActivityButtonBarStyle after the prefs sheet closes.
+    void ReloadToolBarStyle()
+        { if (m_toolbars) m_toolbars->ReloadActivityStyle(); }
 
     // Give external code read-only access to the associated world document.
     CMUSHclientDoc* GetDoc() const { return m_doc; }
@@ -224,6 +240,11 @@ private:
     wxStatusBar*         m_statusBar      = nullptr; // per-world status bar (macOS: parent MDI status bar is hidden by the child)
     wxTextAttr           m_infobarStyle;             // current style applied to appended Info text
     CMUSHclientDoc*      m_doc            = nullptr; // non-owning reference to the world doc
+    // Standard/World/Activity bars (wxOSX: the MDI parent is hidden, so they
+    // live here — same reason as m_statusBar above).  Owned: the wxToolBars
+    // themselves are frame children and wx frees those, but this wrapper is
+    // ours.  unique_ptr because the frame has no destructor to hand-clean it.
+    std::unique_ptr<CWorldToolBars> m_toolbars;
     wxTimer              m_worldTimer;                // drives CheckTimers() / ON_PLUGIN_TICK.
                                                       // A value member so it is stopped when the
                                                       // frame is destroyed — even on Cmd+Q teardown,

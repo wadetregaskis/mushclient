@@ -863,6 +863,10 @@ if(NOT WIN32)
             # GUI widgets (wx headers first, then MUSHclient headers)
             platform/wx_outputpane.cpp
             platform/wx_world_child.cpp
+            # The three canonical toolbars (Standard/World/Activity) over
+            # wxToolBar, using the shipped Windows strips.  wxOSX hides the MDI
+            # parent, so these hang off each world window like the status bar.
+            platform/wx_toolbar.cpp
             platform/wx_notepad.cpp
             # MFC dialog bridge: parses the recovered dialog/menu resources so the
             # canonical dialogs/**/*.cpp render natively (vs hand-rebuilt in wx)
@@ -983,6 +987,16 @@ if(NOT WIN32)
                     "${CMAKE_SOURCE_DIR}/platform/dialog_art"
                     "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/dialog_art"
                 COMMENT "Bundling dialog art (image statics + Dock icons)")
+            # Toolbar art — the shipped 16x15 4bpp strips behind the Standard,
+            # World and Activity bars.  Renamed from their upstream filenames
+            # (res/toolbar1.bmp, res/game_too.bmp, res/bitmap1.bmp and
+            # "res/mc activity 0..4.bmp") to drop the spaces and to make the
+            # activity style order explicit; see platform/wx_toolbar.cpp.
+            add_custom_command(TARGET mushgui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_SOURCE_DIR}/platform/toolbar_art"
+                    "$<TARGET_BUNDLE_DIR:mushgui>/Contents/Resources/toolbar_art"
+                COMMENT "Bundling toolbar art (Standard/World/Activity bars)")
             # Licence + credits text (the About box's CCreditsDlg reads these as
             # "TEXT" resources via the bundled-resource bridge).
             add_custom_command(TARGET mushgui POST_BUILD

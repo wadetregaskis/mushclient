@@ -1063,6 +1063,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     }
     sizer->Add(m_statusBar, 0, wxEXPAND);
 
+    // Standard / World / Activity bars.  Built last so their Insert() calls put
+    // them above everything already added, and before SetSizer so the frame
+    // lays out once with them present.
+    m_toolbars.reset(new CWorldToolBars(this, sizer));
+
     SetSizer(sizer);
 
     // Seed the App-level output settings through the same seam File >
@@ -1265,6 +1270,12 @@ void CWorldChildFrame::ApplyGlobalPrefs()
     m_output->SetBleedBackground(App.m_bBleedBackground != 0);
     m_output->SetSmootherScrolling(App.m_bSmootherScrolling != 0);
     m_output->SetSmoothScrolling(App.m_bSmoothScrolling != 0);
+
+    // File > Preferences > "Activity button bar style" (Style 1..6).  Windows
+    // reloads the strip here too (GlobalPrefs.cpp, right after the prefs sheet
+    // closes) rather than waiting for a restart.
+    if (m_toolbars)
+        m_toolbars->ReloadActivityStyle();
 
     // Global Preferences ▸ "Window tabs".  Windows builds a CMDITabs strip from
     // CMainFrame::OnCreate -- which returns early on the port -- into the MDI
@@ -3537,6 +3548,13 @@ void CWorldChildFrame::NotifyPluginLayoutSettle()
 // output, updates UI on phase changes, and runs the auto-reconnect countdown.
 void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
 {
+    // Toolbar enable/check state and the activity bar's per-world colours.
+    // Windows drives these from MFC's idle-time ON_UPDATE_COMMAND_UI pump plus
+    // the frame's ACTIVITY_TIMER; the port has neither, so ride the world timer
+    // (UpdateState only touches wx state that actually changed).
+    if (m_toolbars)
+        m_toolbars->UpdateState(m_doc);
+
     // Pick up a change to the world's input colours (World Properties > Input >
     // Commands).  Those live on the doc with no notification seam, so poll them
     // — but only repaint when they actually differ from what we last applied,

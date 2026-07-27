@@ -1032,6 +1032,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     viewMenu->AppendCheckItem(ID_MENU_VIEW_FULLSCREEN,  wxT("&Full Screen\tCtrl+Alt+F"));
     viewMenu->AppendSeparator();
     viewMenu->AppendCheckItem(ID_MENU_VIEW_STATUSBAR,   wxT("&Status Bar"));
+    viewMenu->AppendSeparator();
+    // The three canonical toolbars, in the canonical View-menu order (see the
+    // IDR_MAINFRAME menu in MUSHclient.rc).  These live on the world window
+    // rather than the hidden MDI parent — platform/wx_toolbar.cpp explains why.
+    viewMenu->AppendCheckItem(0xE800 /*ID_VIEW_TOOLBAR*/,  wxT("&Toolbar"));
+    viewMenu->AppendCheckItem(ID_VIEW_GAME_TOOLBAR,        wxT("&World Toolbar"));
+    viewMenu->AppendCheckItem(ID_VIEW_ACTIVITYTOOLBAR,     wxT("&Activity Toolbar"));
+    viewMenu->Append(ID_VIEW_RESET_TOOLBARS,               wxT("&Reset Toolbar Locations"));
     mb->Append(viewMenu, wxT("&View"));
 
     // ── Configure menu ────────────────────────────────────────────────────
@@ -1225,6 +1233,22 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         } else if (id == ID_MENU_VIEW_STATUSBAR) {
             evt.Enable(true);          // Windows' item is live with no world open
             evt.Check(s_statusBarVisible);
+        } else if (id == 0xE800 /*ID_VIEW_TOOLBAR*/ || id == ID_VIEW_GAME_TOOLBAR ||
+                   id == ID_VIEW_ACTIVITYTOOLBAR) {
+            // The bars belong to world windows, so with none open there is
+            // nothing to toggle (Windows keeps them on the always-present main
+            // frame, where the item stays live).
+            auto* active = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
+            evt.Enable(active != nullptr);
+            if (active) {
+                CWorldToolBars::Which which =
+                    (id == ID_VIEW_GAME_TOOLBAR)    ? CWorldToolBars::eWorld    :
+                    (id == ID_VIEW_ACTIVITYTOOLBAR) ? CWorldToolBars::eActivity :
+                                                      CWorldToolBars::eStandard;
+                evt.Check(active->AreToolBarsVisible(which));
+            }
+        } else if (id == ID_VIEW_RESET_TOOLBARS) {
+            evt.Enable(frame->GetActiveChild() != nullptr);
         } else if (id == 32275 || id == 32276 || id == 32974 || id == 32272 ||
                    id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
                    id == 32946 || id == 32947 || id == 33046 ||
@@ -1297,6 +1321,28 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             // One setting, applied to every world frame -- see s_statusBarVisible.
             s_statusBarVisible = !s_statusBarVisible;
             apply_status_bar_visibility(frame);
+            return;
+        }
+        if (id == 0xE800 /*ID_VIEW_TOOLBAR*/ || id == ID_VIEW_GAME_TOOLBAR ||
+            id == ID_VIEW_ACTIVITYTOOLBAR   || id == ID_VIEW_RESET_TOOLBARS) {
+            // Windows has one set of bars on the main frame, so a toggle there
+            // is global.  Here every world window owns a set, so apply the
+            // toggle to all of them or they would drift apart.  Read the new
+            // state from the active window and push it to the rest.
+            CWorldToolBars::Which which =
+                (id == ID_VIEW_GAME_TOOLBAR)    ? CWorldToolBars::eWorld    :
+                (id == ID_VIEW_ACTIVITYTOOLBAR) ? CWorldToolBars::eActivity :
+                                                  CWorldToolBars::eStandard;
+            bool show = true;
+            if (id != ID_VIEW_RESET_TOOLBARS) {
+                auto* active = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
+                show = active ? !active->AreToolBarsVisible(which) : true;
+            }
+            for (wxWindow* w : frame->GetChildren())
+                if (auto* child = dynamic_cast<CWorldChildFrame*>(w)) {
+                    if (id == ID_VIEW_RESET_TOOLBARS) child->ResetToolBars();
+                    else                              child->ShowToolBar(which, show);
+                }
             return;
         }
 

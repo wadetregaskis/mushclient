@@ -1007,6 +1007,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     if (!wx_status_bar_visible())
         ShowStatusBarStrip(false);
 
+    // Same reasoning for View > Always On Top.  Windows pins the MDI PARENT and
+    // the worlds ride along inside it; here each world is its own top-level
+    // window, so one opened while the setting is on has to pin itself.
+    if (App.m_bAlwaysOnTop)
+        SetWindowStyleFlag(GetWindowStyleFlag() | wxSTAY_ON_TOP);
+
     // ── Restore child frame size from config ──────────────────────────────
     // We persist a single "last used" child frame size (not per-world, since
     // all worlds share the same MDI client area).  This prevents the window

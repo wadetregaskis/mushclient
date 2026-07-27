@@ -183,6 +183,28 @@ static void apply_status_bar_visibility(wxMDIParentFrame* frame)
 }
 static const int ID_MENU_VIEW_STATUSBAR   = 0xE801;
 
+// View ▸ Always On Top.  Windows pins the MAIN frame (mainfrm.cpp
+// OnViewAlwaysontop -> SetWindowPos(&wndTopMost)), which pins every world with
+// it because they are MDI children INSIDE that frame.  On macOS each world is a
+// real top-level window and the MDI parent is hidden while any child exists (see
+// the macOS MDI geometry note), so pinning only the parent pins nothing you can
+// see.  Pin the parent AND every world frame, which is the same user-visible
+// result Windows gets.
+static void apply_always_on_top(wxMDIParentFrame* frame, bool bOnTop)
+{
+    if (!frame) return;
+    auto pin = [bOnTop](wxTopLevelWindow* w) {
+        if (!w) return;
+        long style = w->GetWindowStyleFlag();
+        w->SetWindowStyleFlag(bOnTop ? (style |  wxSTAY_ON_TOP)
+                                     : (style & ~wxSTAY_ON_TOP));
+    };
+    pin(frame);
+    for (wxWindow* w : frame->GetChildren())
+        if (auto* tlw = dynamic_cast<wxTopLevelWindow*>(w))
+            pin(tlw);
+}
+
 static wxMenu*    s_recentMenu     = nullptr;
 static std::vector<std::string> s_recentWorlds;
 
@@ -840,6 +862,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             frame->Maximize(true);
     }
 
+    // View ▸ Always On Top, restored at startup.  Windows does this at
+    // MUSHclient.cpp:759-761 with SetWindowPos(&wndTopMost), a shim that is
+    // inert here, so the saved preference never took effect on the port.
+    // App.m_bAlwaysOnTop is already loaded by then (globalregistryoptions.cpp
+    // persists it as "AlwaysOnTop").
+    if (App.m_bAlwaysOnTop)
+        apply_always_on_top(frame, true);
+
     // ── Menu bar ─────────────────────────────────────────────────────────
     wxMenuBar* mb = new wxMenuBar();
 
@@ -1152,7 +1182,10 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 evt.SetText(logging ? wxT("Stop &Logging") : wxT("Start &Logging…"));
             }
         } else if (id == ID_MENU_VIEW_ALWAYSONTOP) {
-            evt.Check((frame->GetWindowStyleFlag() & wxSTAY_ON_TOP) != 0);
+            // Read the preference, as CMainFrame::OnUpdateViewAlwaysontop does;
+            // reading the parent's style flag reported the wrong thing once the
+            // pin started being applied to the world frames as well.
+            evt.Check(App.m_bAlwaysOnTop != 0);
         } else if (id == ID_MENU_VIEW_FULLSCREEN) {
             // Same target as the command arm, or the tick reports one window
             // while the other is the one that moved.
@@ -1206,10 +1239,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         // ── View menu (port-local; real wx, since the canonical Always-On-Top /
         // Full-Screen handlers bottom out in Windows-only SetWindowPos/ModifyStyle).
         if (id == ID_MENU_VIEW_ALWAYSONTOP) {
-            long style = frame->GetWindowStyleFlag();
-            frame->SetWindowStyleFlag((style & wxSTAY_ON_TOP)
-                                      ? (style & ~wxSTAY_ON_TOP)
-                                      : (style |  wxSTAY_ON_TOP));
+            // Drive App.m_bAlwaysOnTop, not the wx style flag, and persist it —
+            // the same two statements CMainFrame::OnViewAlwaysontop runs
+            // (mainfrm.cpp).  Toggling only the style, as this used to, left the
+            // global preference untouched, so the setting never survived a
+            // restart and MUSHclient.cpp's startup restore had nothing to read.
+            App.m_bAlwaysOnTop = !App.m_bAlwaysOnTop;
+            apply_always_on_top(frame, App.m_bAlwaysOnTop != 0);
+            App.db_write_int("prefs", "AlwaysOnTop", App.m_bAlwaysOnTop);
             return;
         }
         if (id == ID_MENU_VIEW_FULLSCREEN) {

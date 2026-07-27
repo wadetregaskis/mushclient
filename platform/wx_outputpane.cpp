@@ -647,6 +647,27 @@ void COutputPane::ScrollPage(int direction)
         m_fn_autoscroll_changed(m_autoScroll);
 }
 
+std::vector<int> COutputPane::BookmarkOffsetsFromEnd() const
+{
+    std::vector<int> out;
+    const int n = (int) m_lines.size();
+    for (int i = 0; i < n; ++i)
+        if (m_lines[i].bookmark)
+            out.push_back(n - 1 - i);
+    return out;
+}
+
+void COutputPane::RestoreBookmarkOffsetsFromEnd(const std::vector<int>& offsets)
+{
+    const int n = (int) m_lines.size();
+    bool any = false;
+    for (int off : offsets) {
+        const int idx = n - 1 - off;
+        if (idx >= 0 && idx < n) { m_lines[idx].bookmark = true; any = true; }
+    }
+    if (any) Refresh(false);
+}
+
 void COutputPane::ClearOutput()
 {
     m_lines.clear();

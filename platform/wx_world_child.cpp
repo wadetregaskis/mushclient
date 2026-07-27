@@ -1316,13 +1316,50 @@ void CWorldChildFrame::UpdateInputBarColors()
 // ── ApplyPaneBackground ───────────────────────────────────────────────────
 // Applies col as the output pane background and styles the input bar to match.
 // When col == 0xFFFFFFFF (NO_COLOUR) the default black background is kept.
+// See the header.  Snapshots on the first call and reports "unchanged", so a
+// freshly opened world never triggers a pointless rebuild of the lines it has
+// only just emitted.
+bool CWorldChildFrame::PaletteChanged()
+{
+    if (!m_doc) return false;
+
+    bool changed = !m_paletteSnapshotValid;
+    for (int i = 0; i < 8; ++i) {
+        if (m_doc->m_normalcolour[i] != m_lastNormalColour[i]) changed = true;
+        if (m_doc->m_boldcolour[i]   != m_lastBoldColour[i])   changed = true;
+        m_lastNormalColour[i] = m_doc->m_normalcolour[i];
+        m_lastBoldColour[i]   = m_doc->m_boldcolour[i];
+    }
+    // The pane background is derived from these too, so a change to any of them
+    // has to repaint even when the eight ANSI pairs are untouched.
+    if (m_doc->m_customback[15]          != m_lastCustomBack15)     changed = true;
+    if (m_doc->m_bCustom16isDefaultColour != m_lastCustom16Default) changed = true;
+    if (m_doc->m_iBackgroundColour        != m_lastBackgroundColour) changed = true;
+    m_lastCustomBack15      = m_doc->m_customback[15];
+    m_lastCustom16Default   = m_doc->m_bCustom16isDefaultColour;
+    m_lastBackgroundColour  = m_doc->m_iBackgroundColour;
+
+    const bool first = !m_paletteSnapshotValid;
+    m_paletteSnapshotValid = true;
+    return changed && !first;
+}
+
 void CWorldChildFrame::ApplyPaneBackground(unsigned long col)
 {
     if (!m_output) return;
 
-    // 0xFFFFFFFF is NO_COLOUR — world hasn't specified a custom background.
-    if (col == 0xFFFFFFFFUL)
-        col = 0;  // default black
+    // 0xFFFFFFFF is NO_COLOUR — world hasn't specified a custom background, so
+    // it comes from the PALETTE.  Windows derives it on every paint
+    // (mushview.cpp:909-915); this used to hard-code black, so changing ANSI
+    // "Black", or ticking "use custom colour 16 as the default", left the pane
+    // background untouched when on Windows it repaints the whole window.
+    if (col == 0xFFFFFFFFUL) {
+        col = 0;   // fallback if there is no doc yet (construction order)
+        if (m_doc)
+            col = m_doc->m_bCustom16isDefaultColour
+                    ? m_doc->TranslateColour(m_doc->m_customback[15], 1.0)
+                    : m_doc->TranslateColour(m_doc->m_normalcolour[BLACK], 1.0);
+    }
 
     m_output->SetPaneBackground(col);
     UpdateInputBarColors();
@@ -3742,6 +3779,48 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     // IAC WONT ECHO to restore it.  We swap the input bar for a masked one.
     if (m_doc->m_bNoEcho != m_lastNoEcho)
         ApplyNoEcho(m_doc->m_bNoEcho);
+
+    // ── ANSI palette changed → recolour what is already on screen ─────────
+    // Windows resolves each style through the palette on every paint, so its
+    // scrollback recolours itself; this port bakes the RGB once per line at
+    // emit time, so without this only NEW lines would pick up the change.
+    //
+    // Polled rather than hooked to the prefs dialog on purpose: the palette has
+    // several entry points -- World Properties ▸ ANSI Colour, Game ▸ Configure ▸
+    // ANSI Colours, the "use default colours" tick, and world.SetNormalColour /
+    // SetBoldColour from a script -- and one check here covers all of them.  It
+    // also sidesteps an ordering bug in the canonical dialog path, where
+    // GamePreferences refreshes the views BEFORE SavePrefsP5 writes the new
+    // colours (configuration.cpp:2364 vs :2383).  Comparing 16 COLORREFs every
+    // 100 ms is far cheaper than the repaint it guards.  Same shape as the
+    // no-echo poll immediately above.
+    if (PaletteChanged()) {
+        // Keep the reader where they were.  A rebuild re-emits every line, and
+        // the pane lands at the bottom when it does; that is right if they were
+        // already following the output, and wrong if they had scrolled up to
+        // read something -- which is exactly when a colour tweak is likely.
+        const bool wasFollowing = m_output && !m_output->IsPaused();
+        int viewX = 0, viewY = 0;
+        std::vector<int> marks;
+        if (m_output) {
+            m_output->GetViewStart(&viewX, &viewY);
+            // A rebuild clears and re-emits every line, and bookmarks are a
+            // per-line flag in the pane -- so without this, tweaking a colour
+            // would quietly throw the user's bookmarks away.
+            marks = m_output->BookmarkOffsetsFromEnd();
+        }
+
+        // The pane background follows the palette too when the world has no
+        // explicit background of its own (NO_COLOUR) -- see ApplyPaneBackground.
+        ApplyPaneBackground(m_doc->m_iBackgroundColour);
+        m_doc->RebuildOutputView();
+
+        if (m_output) {
+            m_output->RestoreBookmarkOffsetsFromEnd(marks);
+            if (!wasFollowing)
+                m_output->Scroll(viewX, viewY);
+        }
+    }
 
     // ── Auto-reconnect countdown ──────────────────────────────────────────
     if (m_reconnectCountdown > 0) {

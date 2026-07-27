@@ -185,6 +185,18 @@ public:
     // loaded so custom world backgrounds take effect on first display.
     void ApplyPaneBackground(unsigned long col);
 
+    // True when the world's ANSI palette (or anything else the pane background
+    // is derived from) has changed since the last call; snapshots the new state
+    // as a side effect, so it reports each change exactly once.  Polled from the
+    // world timer -- see the call site for why this is not hooked to the dialog.
+    bool PaletteChanged();
+    COLORREF m_lastNormalColour[8] = {0};
+    COLORREF m_lastBoldColour[8]   = {0};
+    COLORREF m_lastCustomBack15    = 0;
+    COLORREF m_lastBackgroundColour = 0;
+    BOOL     m_lastCustom16Default = 0;
+    bool     m_paletteSnapshotValid = false;
+
     // Show/hide this world's status bar (View ▸ Status Bar).
     void ShowStatusBarStrip(bool show);
     // Put a one-off message in pane 0 (the app-wide status messages that

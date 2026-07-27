@@ -1537,6 +1537,16 @@ public:
   // JUMP_SIZE when RemoveChunk() evicts the oldest lines.
   long                                    m_gui_lines_emitted = 0;
 
+  // Re-resolve every already-displayed line through the CURRENT palette.
+  //
+  // The push pipeline bakes each run's RGB at emit time and the cursor above
+  // only ever moves forward, so changing an ANSI colour otherwise affects only
+  // lines that arrive afterwards -- Windows repaints from the palette and so
+  // recolours its whole scrollback.  Defined in doc_display_shared.cpp, which
+  // is NOT in MUSHclient.vcxproj: this is a port/test concept and the Windows
+  // build neither compiles nor needs it.
+  void RebuildOutputView();
+
   // ── PAL: typed output view (every platform since P4) ─────────────────────
   // pal::IWorldView is the engine's typed per-world view seam.  On the wx
   // build the adapter IS the CWorldChildFrame, which registers itself at frame

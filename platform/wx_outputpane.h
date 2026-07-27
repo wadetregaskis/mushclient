@@ -240,6 +240,13 @@ public:
     // mean rescaling every scroll-unit calculation in this file.
     void SetSmoothScrolling(bool v) { m_smoothScroll = v; }
 
+    // Bookmarks are a per-line flag in m_lines, so anything that clears and
+    // re-emits the buffer (CMUSHclientDoc::RebuildOutputView, for a palette
+    // change) would silently drop them.  Keyed by distance from the NEWEST
+    // line, which survives trimming at the front -- an absolute index does not.
+    std::vector<int> BookmarkOffsetsFromEnd() const;
+    void RestoreBookmarkOffsetsFromEnd(const std::vector<int>& offsets);
+
     // World Properties > Appearance > Output > "Pixel offset" (m_iPixelOffset):
     // inset the text from the left edge of the window, and leave the same gap
     // below the last line when scrolled to the bottom.  Windows applies it in

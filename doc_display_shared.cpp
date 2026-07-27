@@ -31,6 +31,25 @@
 // Uses BeginOutputBatch / EndOutputBatch (BeginBatch / EndBatch on the pane) to
 // accumulate all new lines and trigger a single scrollbar update + repaint
 // rather than one per line.
+// Re-resolve the whole scrollback through the current palette.
+//
+// Rewind-and-re-drain, reusing exactly the mechanism ClearOutput already uses
+// (doc.cpp: EmitClearOutput() then m_gui_lines_emitted = 0), so there is only
+// one way to reset the emission cursor.  Every line then comes back through
+// GetStyleRGB against the live m_normalcolour / m_boldcolour.
+//
+// The caller owns preserving anything the view cares about across this -- the
+// wx frame snapshots the scroll position -- because what is worth keeping is a
+// frontend question, not a doc one.
+void CMUSHclientDoc::RebuildOutputView()
+{
+    if (!HaveOutputSink()) return;
+
+    EmitClearOutput();
+    m_gui_lines_emitted = 0;
+    UpdateAllViews(nullptr);
+}
+
 void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
 {
     if (!HaveOutputSink()) return;

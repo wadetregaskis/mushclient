@@ -17,6 +17,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 6 | XML date second-range message | `49e5ba6` | xmlparse.cpp `Get_XML_date` |
 | 7 | Timer at_time toggle HOUR→MINUTE | `eea4a45` | methods_timers.cpp `CMUSHclientDoc::SetTimerOption` |
 | 8 | Custom-colour index used unchecked (`note_text_colour`) | `36db6c1` (partial) | methods_noting.cpp note-colour getters; prefspropertypages.cpp `FixSwatch` |
+| 9 | xterm-256 colour index subscripts the 8-entry print-style arrays | port-guarded only | mushview.cpp `CMUSHView::PrintWorld` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -129,3 +130,40 @@ Scope, after an adversarial review of the original report:
   default (it does not catch intra-object overflow).
 * Windows runs the same unguarded code. This was latent on the port only
   because the dialog bridge never invoked `OnSetActive` until `d762469`.
+
+## 9 — an xterm-256 foreground index subscripts the 8-entry print-style arrays
+
+**Where:** `mushview.cpp:3952-3967`, inside `CMUSHView::PrintWorld`'s per-style
+loop.
+
+**Bug:** the world's print styles live in `int m_nNormalPrintStyle [8]` and
+`int m_nBoldPrintStyle [8]` (`doc.h:830-831`) — one entry per ANSI colour.
+`PrintWorld` subscripts them with `pStyle->iForeColour` whenever the style is
+`COLOUR_ANSI`:
+
+```
+    if (style & HILITE)
+      print_font (pcb, pDoc->m_nBoldPrintStyle [pStyle->iForeColour]);
+    else
+      print_font (pcb, pDoc->m_nNormalPrintStyle [pStyle->iForeColour]);
+```
+
+but for an xterm-256 style `iForeColour` holds 0..255, not 0..7 — the same
+field, in the same union of cases, that `CMUSHView::OnDraw` reads as
+`xterm_256_colours [iForeColour]` after testing `iForeColour >= 8`
+(`mushview.cpp:1365`), and that the drawing code asserts is `< 256`
+(`mushview.cpp:1361`). So printing a world whose output contains any 256-colour
+escape reads up to 248 ints past the end of an 8-int member array, and the
+resulting garbage is used as a `FONT_*` bitmask.
+
+**Consequence:** wrong bold/italic/underline on printed lines at best; the read
+stays inside the `CMUSHclientDoc` object (both arrays are members, with plenty
+following them), so it is an intra-object overflow — no fault, and not something
+ASan catches by default. Same class as bug 8.
+
+**Status:** not fixed upstream-style here, because the fix belongs in a Windows
+TU this port does not exercise. The port's own print path
+(`platform/wx_world_child.cpp` `CWorldChildFrame::PrintWorld`) declines to
+reproduce it: it treats an index outside 0..7 as `WHITE`, which is already what
+the non-ANSI arm of the same `if` does. A Windows fix would be the same clamp on
+those four lines.

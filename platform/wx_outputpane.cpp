@@ -73,17 +73,26 @@ wxFontEncoding WinCharsetToEncoding(int cs)
 // yields empty for non-empty input) we fall back to Latin-1 (From8BitData never
 // fails), so text is always visible rather than silently dropped — the bug this
 // fixes was FromUTF8() of non-UTF-8 bytes returning "" and the whole run vanishing.
+// Exposed (declared in wx_outputpane.h) because Print World decodes the doc's
+// raw style bytes with the same rule — it reads m_LineList rather than the pane,
+// and a bare FromUTF8 on legacy-charset bytes makes whole runs vanish.
+wxString DecodeOutputBytes(const char* bytes, size_t n, bool utf8, int charset)
+{
+    if (utf8)
+        return wxString::FromUTF8(bytes, n);
+    if (n == 0)
+        return wxString();
+    wxCSConv conv(WinCharsetToEncoding(charset));
+    wxString s(bytes, conv, n);
+    if (s.empty())
+        s = wxString::From8BitData(bytes, n);
+    return s;
+}
+
 static wxString DecodeRunText(const SOutputRun& run)
 {
-    if (run.utf8)
-        return wxString::FromUTF8(run.text.c_str(), run.text.size());
-    if (run.text.empty())
-        return wxString();
-    wxCSConv conv(WinCharsetToEncoding(run.charset));
-    wxString s(run.text.c_str(), conv, run.text.size());
-    if (s.empty())
-        s = wxString::From8BitData(run.text.c_str(), run.text.size());
-    return s;
+    return DecodeOutputBytes(run.text.c_str(), run.text.size(),
+                             run.utf8, run.charset);
 }
 
 // Rendered character count of a run — the metric DrawLine measures with, so all

@@ -7,15 +7,14 @@
 #include <wx/html/htmprint.h>
 
 #include "platform/wx_print.h"
-#include "platform/wx_outputpane.h"   // COutputPane, SOutputLine, SOutputRun
 
 namespace {
 
-// Convert a UTF-8 run string to HTML-safe text (whole-string, so multibyte
-// UTF-8 survives).  '&' must be replaced first.
-wxString EscapeHtml(const std::string& utf8)
+// Make text HTML-safe (whole-string, so multibyte characters survive).
+// '&' must be replaced first.
+wxString EscapeHtml(const wxString& text)
 {
-    wxString s = wxString::FromUTF8(utf8.c_str());
+    wxString s = text;
     s.Replace("&", "&amp;");
     s.Replace("<", "&lt;");
     s.Replace(">", "&gt;");
@@ -24,13 +23,11 @@ wxString EscapeHtml(const std::string& utf8)
 
 } // namespace
 
-void PrintOutputPane(wxWindow* parent, const wxString& title, COutputPane* pane,
-                     const wxString& fontFace, int fontPoints,
-                     int leftMarginMm, int topMarginMm)
+void PrintStyledDocument(wxWindow* parent, const wxString& title,
+                         const std::vector<SPrintLine>& lines,
+                         const wxString& fontFace, int fontPoints,
+                         int leftMarginMm, int topMarginMm)
 {
-    if (!pane)
-        return;
-
     // Build an HTML <pre> document from the scrollback.  <pre> keeps the MUD's
     // column alignment and renders monospaced; plain dark text prints legibly
     // on white (the on-screen grey-on-black palette would not).
@@ -38,14 +35,23 @@ void PrintOutputPane(wxWindow* parent, const wxString& title, COutputPane* pane,
     html.reserve(64 * 1024);
     html << wxT("<html><body><pre>");
 
-    const int n = pane->LineCount();
-    for (int i = 0; i < n; ++i)
+    for (const SPrintLine& line : lines)
     {
-        const SOutputLine* line = pane->GetLine(i);
-        if (!line)
-            continue;
-        for (const SOutputRun& run : *line)
+        for (const SPrintRun& run : line)
+        {
+            // World Properties ▸ Appearance ▸ Printing.  The world's print
+            // styles say which of bold/italic/underline each of the 8 ANSI
+            // colours prints as; the caller has already resolved them, since
+            // the colours themselves are deliberately not printed.  Tags nest
+            // and close in reverse, so a bold-underline run is well-formed.
+            if (run.bold)      html << wxT("<b>");
+            if (run.italic)    html << wxT("<i>");
+            if (run.underline) html << wxT("<u>");
             html << EscapeHtml(run.text);
+            if (run.underline) html << wxT("</u>");
+            if (run.italic)    html << wxT("</i>");
+            if (run.bold)      html << wxT("</b>");
+        }
         html << wxT("\n");
     }
 

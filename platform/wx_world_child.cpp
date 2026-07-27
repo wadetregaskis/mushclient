@@ -28,7 +28,8 @@
 #include "miniwindow.h"               // CMiniWindow, MiniWindowVector, MINIWINDOW_* flags
 #include "scripting/scripting.h"      // CScriptEngine, lua_State* — for Shift+Tab globals
 #include "platform/wx_world_child.h"  // our own header (CWorldChildFrame, COutputPane)
-#include "platform/wx_print.h"        // PrintOutputPane (File ▸ Print World)
+#include "platform/wx_print.h"        // PrintStyledDocument (File ▸ Print World)
+#include "genprint.h"                 // FONT_BOLD / FONT_ITALIC / FONT_UNDERLINE
 #include <wx/numdlg.h>                // wxGetNumberFromUser (Display ▸ Go To Line)
 
 // MW_MOUSE_* flag constants (from mushview.h — copied here to avoid pulling in
@@ -1447,13 +1448,68 @@ void CWorldChildFrame::SpellCheckInput()
 // ── Print the world output buffer ──────────────────────────────────────────
 void CWorldChildFrame::PrintWorld()
 {
+    if (!m_doc) return;
+
+    // Walk the DOC, not the output pane.  Two reasons, both of which rule the
+    // pane out entirely: SOutputRun's bold/italic/underline are already filtered
+    // through the Appearance ▸ Output "Show bold/italic/underline" checkboxes
+    // (doc_display_shared.cpp), which Windows printing deliberately ignores —
+    // mushview.cpp:3956 tests HILITE raw — and SOutputRun carries no ANSI colour
+    // index at all, which is exactly what the print styles are keyed on.
+    std::vector<SPrintLine> lines;
+    for (POSITION pos = m_doc->m_LineList.GetHeadPosition(); pos; )
+    {
+        CLine* pLine = m_doc->m_LineList.GetNext(pos);
+        if (!pLine) continue;
+
+        SPrintLine out;
+        int charOff = 0;
+        for (POSITION spos = pLine->styleList.GetHeadPosition(); spos; )
+        {
+            CStyle* pStyle = pLine->styleList.GetNext(spos);
+            if (!pStyle || pStyle->iLength <= 0) continue;
+
+            // World Properties ▸ Appearance ▸ Printing: eight "normal" and eight
+            // "bold" style words, one per ANSI colour, each a FONT_* bitmask.
+            // Mirrors mushview.cpp:3952-3967 — HILITE picks the bold table, and
+            // anything that is not an ANSI-coloured style prints as WHITE's.
+            const short style = pStyle->iFlags & STYLE_BITS;
+            const int   idx   = pStyle->iForeColour;
+            // ...but only when the index is really one of the eight.  Windows
+            // subscripts m_nBoldPrintStyle[8] with iForeColour directly, and an
+            // xterm-256 style carries 0..255 there, so on Windows this reads off
+            // the end of the array (see docs/UPSTREAM-BUGS.md).  Fall back to
+            // WHITE's entry, which is what the non-ANSI arm already does.
+            const bool  ansi  = ((style & COLOURTYPE) == COLOUR_ANSI) &&
+                                idx >= 0 && idx < 8;
+            const int   slot  = ansi ? idx : WHITE;
+            const int   f     = (style & HILITE) ? m_doc->m_nBoldPrintStyle[slot]
+                                                 : m_doc->m_nNormalPrintStyle[slot];
+
+            SPrintRun run;
+            run.bold      = (f & FONT_BOLD)      != 0;
+            run.italic    = (f & FONT_ITALIC)    != 0;
+            run.underline = (f & FONT_UNDERLINE) != 0;
+            run.text      = DecodeOutputBytes(pLine->text + charOff,
+                                              (size_t) pStyle->iLength,
+                                              m_doc->m_bUTF_8 != 0,
+                                              (int) m_doc->m_font_charset);
+            charOff += pStyle->iLength;
+            out.push_back(std::move(run));
+        }
+        lines.push_back(std::move(out));
+    }
+
     // The printer face/size and margins are global preferences; wx_print.cpp
-    // keeps itself free of the MFC-compat headers, so read them here.
-    PrintOutputPane(this, GetTitle(), m_output,
-                    wxString::FromUTF8((const char*) App.m_strPrinterFont),
-                    (int) App.m_nPrinterFontSize,
-                    (int) App.m_nPrinterLeftMargin,
-                    (int) App.m_nPrinterTopMargin);
+    // keeps itself free of the MFC-compat headers, so read them here.  The job
+    // title is the world's name, as on Windows (mushview.cpp), not the frame's.
+    PrintStyledDocument(this,
+                        wxString::FromUTF8((const char*) m_doc->m_mush_name),
+                        lines,
+                        wxString::FromUTF8((const char*) App.m_strPrinterFont),
+                        (int) App.m_nPrinterFontSize,
+                        (int) App.m_nPrinterLeftMargin,
+                        (int) App.m_nPrinterTopMargin);
 }
 
 // ── View-level output/input commands ──────────────────────────────────────────

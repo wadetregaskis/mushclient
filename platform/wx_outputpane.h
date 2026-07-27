@@ -47,6 +47,12 @@ struct SelPoint {
     bool operator<=(const SelPoint& o) const { return !(o < *this); }
 };
 
+// Decode engine output bytes to a wxString: UTF-8 worlds go straight through,
+// otherwise the world's font charset with a Latin-1 fallback (so a failed
+// conversion shows the text rather than dropping the run).  Shared with Print
+// World, which decodes the doc's style bytes directly.
+wxString DecodeOutputBytes(const char* bytes, size_t n, bool utf8, int charset);
+
 // ── COutputPane ───────────────────────────────────────────────────────────────
 
 class COutputPane : public wxScrolledWindow

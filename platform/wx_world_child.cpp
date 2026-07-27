@@ -1194,6 +1194,7 @@ void CWorldChildFrame::ApplyGlobalPrefs()
     // -- so both checkboxes were inert.
     m_output->SetBleedBackground(App.m_bBleedBackground != 0);
     m_output->SetSmootherScrolling(App.m_bSmootherScrolling != 0);
+    m_output->SetSmoothScrolling(App.m_bSmoothScrolling != 0);
 }
 
 // Command-history depth: the world's own "Lines in command history" setting.

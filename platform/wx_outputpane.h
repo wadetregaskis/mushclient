@@ -231,6 +231,15 @@ public:
     void SetSmootherScrolling(bool v) { m_smootherScroll = v; }
     bool BleedBackground() const { return m_bleedBackground; }
 
+    // "Very smooth scrolling" (App.m_bSmoothScrolling), the stronger sibling of
+    // the above: animate the scroll to the bottom a step at a time instead of
+    // jumping, so you can see which way the text moved.  Windows does this in
+    // CMUSHView::ScrollToPosition (mushview.cpp:4638-4653), one PIXEL per step;
+    // this pane's scroll unit is a whole text row (SetScrollRate(0, m_lineH)),
+    // so it steps by rows.  Same effect, coarser grain -- true per-pixel would
+    // mean rescaling every scroll-unit calculation in this file.
+    void SetSmoothScrolling(bool v) { m_smoothScroll = v; }
+
     // World Properties > Appearance > Output > "Pixel offset" (m_iPixelOffset):
     // inset the text from the left edge of the window, and leave the same gap
     // below the last line when scrolled to the bottom.  Windows applies it in
@@ -500,6 +509,8 @@ private:
     bool        m_autoCopyInHTML    = false;  // …and do it as HTML
     bool m_bleedBackground = false;   // App.m_bBleedBackground
     bool m_smootherScroll  = false;   // App.m_bSmootherScrolling
+    bool m_smoothScroll    = false;   // App.m_bSmoothScrolling ("very smooth")
+    bool m_animatingScroll = false;   // re-entrancy guard for the animation
     int  m_pixelOffset     = 0;       // doc->m_iPixelOffset (0..20)
     std::string m_wordDelimitersDblClick = ".,()[]\"\'";
 

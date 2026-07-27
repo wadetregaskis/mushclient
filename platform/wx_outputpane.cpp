@@ -1432,7 +1432,39 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
             // Scroll() clamps to (scrollRange - pageSize), which is the position
             // that shows the last line at the bottom.  Passing scrollRange directly
             // is equivalent to Scroll(-1, -1) but without the ambiguity.
-            Scroll(0, GetScrollRange(wxVERTICAL));
+            //
+            // "Very smooth scrolling" walks there instead of jumping.  Windows
+            // (mushview.cpp:4632-4653) animates only when the move is LESS THAN
+            // one screenful and steps one pixel at a time, repainting each step;
+            // a bigger jump is redrawn in one go.  Same rule here, in rows.
+            // m_animatingScroll keeps output arriving mid-animation -- Update()
+            // pumps paints, and a paint handler can append -- from starting a
+            // second one on top of this.
+            const int target = GetScrollRange(wxVERTICAL);
+            if (m_smoothScroll && !m_animatingScroll) {
+                int curY = 0;
+                GetViewStart(nullptr, &curY);
+                // Scroll() CLAMPS to (range - page), so the range is not where
+                // we actually land -- the real move is a page shorter.  Measure
+                // the destination, not the range, or the delta is overstated by
+                // a whole screenful and never qualifies as "less than one".
+                int pageRows = GetScrollThumb(wxVERTICAL);
+                if (pageRows <= 0) {
+                    GetClientSize(nullptr, &pageRows);
+                    pageRows = (m_lineH > 0) ? pageRows / m_lineH : 0;
+                }
+                const int dest  = (target > pageRows) ? target - pageRows : 0;
+                const int delta = dest - curY;
+                if (delta > 0 && pageRows > 0 && delta < pageRows) {
+                    m_animatingScroll = true;
+                    for (int row = 1; row <= delta; ++row) {
+                        Scroll(0, curY + row);
+                        Update();          // paint this step before the next
+                    }
+                    m_animatingScroll = false;
+                }
+            }
+            Scroll(0, target);   // land exactly on target either way
         }
         m_trimmedCount = 0;
     } else if (m_trimmedCount > 0 && !m_autoScroll) {

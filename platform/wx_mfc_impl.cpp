@@ -33,6 +33,7 @@
 #include <wx/stdpaths.h>   // wxStandardPaths (bundled text resources)
 #include <wx/fontenum.h>   // wxFontEnumerator (utils.getfontfamilies)
 #include <wx/settings.h>   // wxSystemSettings (world.GetSysColor / GetSystemMetrics)
+#include <wx/dcbuffer.h>   // wxAutoBufferedPaintDC (config sheet caption band)
 #include <wx/display.h>    // wxDisplay (screen-size system metrics)
 #include <algorithm>
 #include <unordered_map>
@@ -3529,6 +3530,68 @@ static wxPanel* build_canonical_sheet_page(wxWindow* bookParent, CPropertyPage* 
     return panel;
 }
 
+// ── The config sheet's caption band ──────────────────────────────────────────
+// Global Preferences ▸ General ▸ "Use colour gradient in &config"
+// (App.m_bColourGradient) has exactly one consumer: configuration.cpp sets
+// sheet.m_clrCaptionRight to yellow when it is on and to the same red as
+// m_clrCaptionLeft when it is off, i.e. gradient vs flat.  Windows paints that
+// pair across a band at the top of the sheet (CTreePropertySheet::
+// RenderCaptionBar, a per-column _interpolate loop) with the current page's
+// caption drawn into it.  The port's lightweight sheet recorded the colours so
+// the canonical setup code would compile, and TreePropertySheet.h says outright
+// that the wx chrome ignores them — so there was no band, and the checkbox did
+// nothing at all.
+//
+// wxDC::GradientFillLinear with wxEAST is the same left-to-right ramp the
+// Windows loop walks by hand, so a flat band (left == right) still comes out
+// flat and the setting reads exactly as it does on Windows.
+class CSheetCaptionBar : public wxPanel
+{
+public:
+    CSheetCaptionBar(wxWindow* parent, COLORREF left, COLORREF right,
+                     COLORREF textColour)
+        : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(-1, 30)),
+          m_left (GetRValue(left),  GetGValue(left),  GetBValue(left)),
+          m_right(GetRValue(right), GetGValue(right), GetBValue(right)),
+          m_text (GetRValue(textColour), GetGValue(textColour),
+                  GetBValue(textColour))
+    {
+        SetBackgroundStyle(wxBG_STYLE_PAINT);
+        Bind(wxEVT_PAINT, &CSheetCaptionBar::OnPaint, this);
+    }
+
+    void SetCaption(const wxString& s)
+    {
+        if (s == m_caption) return;
+        m_caption = s;
+        Refresh(false);
+    }
+
+private:
+    void OnPaint(wxPaintEvent&)
+    {
+        wxAutoBufferedPaintDC dc(this);
+        const wxRect r(GetClientSize());
+        dc.GradientFillLinear(r, m_left, m_right, wxEAST);
+
+        if (m_caption.IsEmpty()) return;
+        // Windows bottom-aligns the caption against the band; centring it reads
+        // better with macOS metrics and the band is chrome, not the setting.
+        wxFont f = GetFont();
+        f.SetWeight(wxFONTWEIGHT_BOLD);
+        f.SetPointSize(f.GetPointSize() + 2);
+        dc.SetFont(f);
+        dc.SetTextForeground(m_text);
+        dc.SetBackgroundMode(wxTRANSPARENT);
+        wxCoord tw = 0, th = 0;
+        dc.GetTextExtent(m_caption, &tw, &th);
+        dc.DrawText(m_caption, 8, (r.height - th) / 2);
+    }
+
+    wxColour m_left, m_right, m_text;
+    wxString m_caption;
+};
+
 static intptr_t hook_run_property_sheet(void* self)
 {
     CTreePropertySheet* sheet = static_cast<CTreePropertySheet*>(self);
@@ -3541,6 +3604,11 @@ static intptr_t hook_run_property_sheet(void* self)
 
     wxDialog dlg(parent, wxID_ANY, title, wxDefaultPosition, wxDefaultSize,
                  wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
+
+    CSheetCaptionBar* bar = new CSheetCaptionBar(&dlg,
+                                                 sheet->m_clrCaptionLeft,
+                                                 sheet->m_clrCaptionRight,
+                                                 sheet->m_clrCaptionTextLeft);
 
     wxTreebook* tb = new wxTreebook(&dlg, wxID_ANY);
 
@@ -3631,10 +3699,15 @@ static intptr_t hook_run_property_sheet(void* self)
     // the port's PageHasChanged has an empty body that touches no members --
     // see TreePropertySheet.h.  The wxTreebook drives its own selection.)
     // Bound after the initial SetSelection, like the leave handler.
-    tb->Bind(wxEVT_TREEBOOK_PAGE_CHANGED, [&pages](wxBookCtrlEvent& e) {
+    tb->Bind(wxEVT_TREEBOOK_PAGE_CHANGED, [&pages, sheet, bar](wxBookCtrlEvent& e) {
         int arriving = e.GetSelection();
         if (arriving >= 0 && arriving < (int) pages.size() && pages[arriving])
             pages[arriving]->OnSetActive();
+        // Keep the caption band on the page you are looking at, as Windows'
+        // OnPaint does (it draws m_acPropPages[GetActiveIndex()].sCaption).
+        if (arriving >= 0 && arriving < (int) sheet->m_portPages.size())
+            bar->SetCaption(wxString::FromUTF8(
+                (const char*) sheet->m_portPages[arriving].caption));
         e.Skip();
     });
 
@@ -3644,6 +3717,9 @@ static intptr_t hook_run_property_sheet(void* self)
         int opening = tb->GetSelection();
         if (opening >= 0 && opening < (int) pages.size() && pages[opening])
             pages[opening]->OnSetActive();
+        if (opening >= 0 && opening < (int) sheet->m_portPages.size())
+            bar->SetCaption(wxString::FromUTF8(
+                (const char*) sheet->m_portPages[opening].caption));
     }
 
     // Standard OK / Cancel.
@@ -3655,6 +3731,7 @@ static intptr_t hook_run_property_sheet(void* self)
     ok->SetDefault();
 
     wxBoxSizer* top = new wxBoxSizer(wxVERTICAL);
+    top->Add(bar,  0, wxEXPAND);
     top->Add(tb,   1, wxEXPAND | wxALL, 6);
     top->Add(btns, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
     dlg.SetSizer(top);

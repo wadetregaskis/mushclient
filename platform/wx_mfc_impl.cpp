@@ -984,6 +984,16 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     gameMenu->AppendSeparator();
     gameMenu->Append(32152 /*ID_GAME_COMMANDHISTORY*/,  wxT("Command &History…\tCtrl+H"));
     gameMenu->Append(32272 /*ID_REPEAT_LAST_COMMAND*/,  wxT("&Repeat Last Command"));
+    // "Quit From This World" sends the world's MAC_QUIT macro (default "QUIT")
+    // after confirming, and suppresses auto-reconnect.  Canonically it sits in
+    // the Input menu beside Repeat Last Command (mushclient_dialogs.rc:3008);
+    // the port folds that menu into Game, so it goes here.
+    //
+    // NO ACCELERATOR, deliberately: the canonical one is Shift+Ctrl+Q, and wx
+    // maps Ctrl to Command on macOS -- Shift+Cmd+Q is the system Log Out
+    // shortcut.  Shadowing that from inside the app to quit a MUD session is a
+    // trap worth avoiding; the menu item is reachable either way.
+    gameMenu->Append(32217 /*ID_ACTIONS_QUIT*/,         wxT("&Quit From This World…"));
     gameMenu->Append(33046 /*ID_GAME_FUNCTIONSLIST*/,   wxT("&Functions List…"));
     mb->Append(gameMenu, wxT("&Game"));
 

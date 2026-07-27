@@ -1499,7 +1499,27 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
     App.m_bSpellCheckOK = false;    // the user doesn't want the spell checker
 
   // load appropriate bitmap for activity buttons
-  
+
+  // Clamp BEFORE indexing.  The only other clamp in the tree is
+  // CMainFrame::OnCreate (mainfrm.cpp), which on Windows runs once at startup
+  // and keeps this index in range for the rest of the session — but that whole
+  // function returns early off Windows, so nothing bounds the value there and
+  // this line indexes a six-element array with whatever the prefs database
+  // holds.  Two ways it goes out of range:
+  //   * a stored value outside 0..5 (it is a plain int in the prefs DB, read
+  //     with atoi and never validated);
+  //   * that same stored value then fails CComboBox::SetCurSel on the six-item
+  //     combo, leaving no selection, so DDX_CBIndex hands back CB_ERR (-1) into
+  //     the page's int member and :1445 assigns it to an *unsigned* App member
+  //     (MUSHclient.h) — 0xFFFFFFFF.  Same shape as the FixSwatch bug in
+  //     docs/UPSTREAM-BUGS.md.
+  // Assigning 0 (rather than just clamping the subscript) matches what
+  // mainfrm.cpp does, so the repaired value is what gets persisted.
+  // Windows behaviour is unchanged: the startup clamp plus a six-item combo
+  // mean this condition is always false there.
+  if (App.m_iActivityButtonBarStyle >= NUMITEMS (ActivityToolBarResourceNames))
+    App.m_iActivityButtonBarStyle = 0;
+
   Frame.m_wndActivityToolBar.LoadBitmap (ActivityToolBarResourceNames [App.m_iActivityButtonBarStyle]);
   Frame.m_wndActivityToolBar.Invalidate ();  // redraw it
 

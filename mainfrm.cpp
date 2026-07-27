@@ -275,7 +275,19 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
   // On non-Windows the wxMDIParentFrame is already created by
   // hook_load_mdi_frame() in wx_mfc_impl.cpp before OnCreate is called.
   // All MFC toolbar/status-bar/MDI-client-subclassing machinery is skipped;
-  // the wx layer provides its own toolbar and status bar.
+  // the wx layer provides its own menu bar and status bar.  It provides NO
+  // toolbar of any kind — there is no wxToolBar anywhere in platform/ — so the
+  // activity button bar below (m_wndActivityToolBar) does not exist here, and
+  // Global Preferences' "Activity button style" setting has nothing to render.
+  //
+  // Do NOT "fix" that by deleting this early return: the rest of OnCreate would
+  // then run against shim Create()s that all return FALSE, and the first
+  // failure branch does TMessageBox("Failed to create toolbar") + return -1,
+  // which fails startup outright.
+  //
+  // Note the clamp further down (m_iActivityButtonBarStyle) is skipped with
+  // everything else, which is why the live indexing site in
+  // dialogs/global_prefs/GlobalPrefs.cpp has to clamp for itself.
   (void)lpCreateStruct;
   return 0;
 #endif // !_WIN32

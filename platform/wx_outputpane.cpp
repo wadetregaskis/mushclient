@@ -459,6 +459,24 @@ void COutputPane::SetPaneBackground(unsigned long col)
     Refresh(false);
 }
 
+// World Properties > Appearance > Output > "Pixel offset".  Changing it changes
+// how many characters fit on a row, so the wrap cache and the scrollbars have to
+// be rebuilt -- the same order the pane's deferred font-metrics path uses.
+void COutputPane::SetTextPixelOffset(int px)
+{
+    // The dialog and the scripting option both clamp to 0..20
+    // (DDV_MinMaxInt at prefspropertypages.cpp:5849, and the 0/20 bounds on
+    // "pixel_offset" in scriptingoptions_numeric.inc:122).  Clamp again here so
+    // a value written straight into the doc can't produce a negative width.
+    // No DPI scaling: wx logical pixels already are Windows' 100%-scale pixels.
+    px = std::max(0, std::min(20, px));
+    if (px == m_pixelOffset) return;
+    m_pixelOffset = px;
+    RebuildWrapCache();
+    UpdateScrollbars(m_autoScroll);
+    Refresh();
+}
+
 void COutputPane::ScrollToBottom()
 {
     bool wasAuto = m_autoScroll;
@@ -797,7 +815,17 @@ void COutputPane::OnPaint(wxPaintEvent&)
     // Shift the text-drawing origin to the text rectangle's top-left so output
     // (and its selection highlight, which DrawLine renders at the same origin)
     // avoids any docked miniwindows.  No-op when no rectangle is set.
-    dc.SetDeviceOrigin(trL - scrollX * unitW, trT - scrollY * unitH);
+    //
+    // m_pixelOffset ("pixel offset of text from side of window") is added here
+    // rather than to each DrawText x, so text, selection rectangles, search
+    // highlights and the pending line all stay in lockstep automatically.  Only
+    // the few things deliberately drawn against the TRUE window edge have to
+    // compensate; DrawLine names them.  Everything after the text pass resets
+    // the origin to (0,0), so background/foreground images, miniwindows and the
+    // hint bar are unaffected -- which matches Windows, where the offset applies
+    // to the text pass alone.
+    dc.SetDeviceOrigin(trL + m_pixelOffset - scrollX * unitW,
+                       trT - scrollY * unitH);
 
     // Clip output (and its selection highlight) to the text rectangle so nothing
     // spills past its edges — in particular below the bottom margin.  Device
@@ -924,12 +952,18 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
         GetViewStart(&scrollX, &scrollY);
         int unitW, unitH;
         GetScrollPixelsPerUnit(&unitW, &unitH);
-        int xLeft  = scrollX * unitW;
+        // The origin is shifted right by m_pixelOffset, so the true window edges
+        // are at -m_pixelOffset and clientW - m_pixelOffset in these coordinates.
+        // The row's background covers the full window width; the rule itself is
+        // inset from the text edges, as on Windows (mushview.cpp:1460-1464 insets
+        // it by m_iPixelOffset + 10 on both sides).
+        int xLeft  = scrollX * unitW - m_pixelOffset;
         int xRight = xLeft + clientW;
         int midY   = yOff + m_lineH / 2;
 
         dc.SetPen(wxPen(wxColour(96, 96, 96), 1));
-        dc.DrawLine(xLeft + 4, midY, xRight - 4, midY);
+        dc.DrawLine(xLeft + m_pixelOffset + 4, midY,
+                    xRight - m_pixelOffset - 4, midY);
 
         wxColour bgC(GetRValue(m_bgColor), GetGValue(m_bgColor), GetBValue(m_bgColor));
         dc.SetBrush(wxBrush(bgC));
@@ -944,14 +978,28 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
     // ── Shared geometry ───────────────────────────────────────────────────────
     int clientW;
     GetClientSize(&clientW, nullptr);
-    // Horizontal scrolling is disabled, so the right edge is always clientW.
-    // (PrepareDC has already set up the virtual coordinate system.)
-    const int rightEdge = clientW;
+    // Horizontal scrolling is disabled, so the right edge is always clientW —
+    // less m_pixelOffset, because OnPaint shifted the origin right by that much
+    // and Windows bleeds to the true client right edge (mushview.cpp:1439 uses
+    // cr.right, i.e. the offset insets the LEFT only, never the right).
+    const int rightEdge = clientW - m_pixelOffset;
     wxColour bgC(GetRValue(m_bgColor), GetGValue(m_bgColor), GetBValue(m_bgColor));
     auto RunBg = [](const SOutputRun& r) {
         return wxColour(GetRValue(r.bg), GetGValue(r.bg), GetBValue(r.bg));
     };
     const int wrapCols = std::max(1, m_wrapCols);
+
+    // ── Bleed to left ─────────────────────────────────────────────────────────
+    // With a pixel offset there is now a real left margin, and Windows fills it
+    // with the FIRST run's background when "bleed background colour to edge" is
+    // on (mushview.cpp:1335-1388, styleList.GetHead()).  Drawn before the text,
+    // across every visual row of this logical line.
+    if (m_bleedBackground && m_pixelOffset > 0 && !line.empty()) {
+        dc.SetBrush(wxBrush(RunBg(line.front())));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.DrawRectangle(-m_pixelOffset, yOff,
+                         m_pixelOffset, WrapCount(lineIdx) * m_lineH);
+    }
 
     // ── Compute selection range for this line ─────────────────────────────────
     SelPoint selStart, selEnd;
@@ -1086,12 +1134,15 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
         }
 
         if (!hits.empty()) {
-            // Left-margin bar: 3-pixel yellow stripe on each visual row of this line.
+            // Left-margin bar: 3-pixel yellow stripe on each visual row of this
+            // line, against the true window edge (-m_pixelOffset in the shifted
+            // coordinates) so it stays a margin marker instead of sliding in
+            // over the first character.
             dc.SetBrush(wxBrush(wxColour(255, 220, 0)));
             dc.SetPen(*wxTRANSPARENT_PEN);
             int wc = WrapCount(lineIdx);
             for (int vr = 0; vr < wc; ++vr)
-                dc.DrawRectangle(0, yOff + vr * m_lineH, 3, m_lineH);
+                dc.DrawRectangle(-m_pixelOffset, yOff + vr * m_lineH, 3, m_lineH);
 
             // In-line highlight: re-render each matching span with yellow bg + black text.
             // Pre-fill background rectangles (consistent with DrawRunChunk strategy).
@@ -1159,7 +1210,7 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
         dc.SetPen(*wxTRANSPARENT_PEN);
         int wc = WrapCount(lineIdx);
         for (int vr = 0; vr < wc; ++vr)
-            dc.DrawRectangle(0, yOff + vr * m_lineH, 4, m_lineH);
+            dc.DrawRectangle(-m_pixelOffset, yOff + vr * m_lineH, 4, m_lineH);
     }
 }
 
@@ -1295,7 +1346,15 @@ void COutputPane::RebuildWrapCache()
     // Narrow the wrap width to the text rectangle when a plugin has reserved
     // part of the output area (e.g. a docked miniwindow on the left/right).
     int trL, trT, trR, trB;
-    int wrapW = TextRect(trL, trT, trR, trB) ? (trR - trL) : clientW;
+    // ... and by the pixel offset, which insets the text from the left edge.
+    // Windows does exactly this in its own wrap computation:
+    //   mushview.cpp:3220  (GetOutputWindowWidth () - pDoc->m_iPixelOffset) / charW
+    // where GetOutputWindowWidth() is already the text rectangle's width.
+    // CWorldChildFrame::EffectiveTextCols computes the ENGINE's wrap column from
+    // the same two terms and the two must agree: if this one came out narrower,
+    // every full-width engine line would gain a one- or two-character orphan
+    // continuation row.
+    int wrapW = (TextRect(trL, trT, trR, trB) ? (trR - trL) : clientW) - m_pixelOffset;
     int newCols = (m_charW > 0 && wrapW > 0)
                   ? std::max(1, wrapW / m_charW)
                   : 80;
@@ -1341,7 +1400,21 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
     // visible band is shorter than the client; pad the virtual height by the
     // reserved amount so "scroll to bottom" lands the newest line at the
     // rectangle's bottom (not the window's, where the clip would hide it).
-    SetVirtualSize(clientW, totalH + (clientH - TextViewportH()));
+    //
+    // The pixel offset pads it further, which is what leaves a gap under the
+    // last line to match the one to the left of the text -- Windows calls this
+    // "text offset from bottom" (mushview.cpp:1747) and gets it by drawing the
+    // text -m_iPixelOffset up the document.  Padding the virtual height instead
+    // produces the same visible gap without Windows' side effect of clipping the
+    // top of the first line when you scroll all the way up, and it leaves every
+    // pixel-to-line mapping (YToLine, XToChar) untouched.
+    // Not pixel-exact: SetScrollRate quantises scrolling to whole rows, so the
+    // gap you actually see is the offset rounded UP to a multiple of m_lineH
+    // (20 px with a 15 px row = 30 px).  Windows scrolls by pixels and gets
+    // exactly 20.  Making it exact would mean scrolling this pane by pixels
+    // rather than rows, which is a much larger change than this setting is
+    // worth; the gap is a margin, and erring wide is the harmless direction.
+    SetVirtualSize(clientW, totalH + (clientH - TextViewportH()) + m_pixelOffset);
 
     if (scrollToBottom && !m_lines.empty()) {
         int unitH;
@@ -1430,6 +1503,10 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
     // Honor the text rectangle: text is drawn from its top-left, so hit-testing
     // must subtract that offset before mapping pixels to characters.
     { int l, t, r, b; if (TextRect(l, t, r, b)) { clientX -= l; clientY -= t; } }
+    // The pixel offset shifts the text right whether or not a rectangle is set,
+    // so it comes off unconditionally -- inside the block above it would leave
+    // click-to-char wrong by m_pixelOffset in the common no-rectangle case.
+    clientX -= m_pixelOffset;
 
     // Count total characters on the line (Unicode code points, not UTF-8 bytes).
     int totalChars = 0;

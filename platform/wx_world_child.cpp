@@ -120,6 +120,16 @@ static int EffectiveTextCols(CMUSHclientDoc* doc, int paneW, int charW)
             int rw = (int) (tr.right - tr.left);
             if (rw > 0 && rw < paneW) textW = rw;
         }
+        // ...and by the world's pixel offset, which insets the text from the
+        // left edge of the window.  This is the SAME formula the renderer uses
+        // in COutputPane::RebuildWrapCache, and the two must change together
+        // forever: this one sets m_nWrapColumn (the engine's hard wrap, read at
+        // doc_shared.cpp:2839), that one sets m_wrapCols (the visual wrap).  If
+        // the renderer's were the narrower of the two, every full-width engine
+        // line would spill a one- or two-character continuation row.
+        // Windows keeps them equal by construction -- it has one formula,
+        // mushview.cpp:3220: (GetOutputWindowWidth() - m_iPixelOffset) / charW.
+        textW -= (int) doc->m_iPixelOffset;
     }
     return std::max(1, textW / charW);
 }
@@ -312,6 +322,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             // Auto-copy selection to clipboard (world pref).
             m_output->SetCopySelectionToClipboard(
                 m_doc->m_bCopySelectionToClipboard != 0);
+            // Pixel offset of the text from the side of the window (world pref).
+            m_output->SetTextPixelOffset((int) m_doc->m_iPixelOffset);
         }
     }
 
@@ -3087,6 +3099,7 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         const bool freeze = m_doc->m_bAutoFreeze != 0;
         const bool copySel= m_doc->m_bCopySelectionToClipboard != 0;
         const bool asHtml = m_doc->m_bAutoCopyInHTML != 0;
+        const int  poff   = (int) m_doc->m_iPixelOffset;
         if (maxl != m_lastMaxLines || freeze != m_lastAutoFreeze ||
             copySel != m_lastCopySel || asHtml != m_lastCopyHtml) {
             m_lastMaxLines  = maxl;
@@ -3097,6 +3110,16 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
             m_output->SetAllowAutoFreeze(freeze);
             m_output->SetCopySelectionToClipboard(copySel);
             m_output->SetAutoCopyInHTML(asHtml);
+        }
+        // The pixel offset changes the usable width, so unlike its neighbours it
+        // also has to resync the engine's wrap column and NAWS -- otherwise the
+        // MUD keeps wrapping to the old width until the next window resize.
+        // Polled here because the option is reachable from World Properties AND
+        // from world.SetOption("pixel_offset"), neither of which has a seam.
+        if (poff != m_lastPixelOffset) {
+            m_lastPixelOffset = poff;
+            m_output->SetTextPixelOffset(poff);
+            textRectChanged();
         }
     }
 

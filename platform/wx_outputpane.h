@@ -225,6 +225,15 @@ public:
     void SetSmootherScrolling(bool v) { m_smootherScroll = v; }
     bool BleedBackground() const { return m_bleedBackground; }
 
+    // World Properties > Appearance > Output > "Pixel offset" (m_iPixelOffset):
+    // inset the text from the left edge of the window, and leave the same gap
+    // below the last line when scrolled to the bottom.  Windows applies it in
+    // the wrap computation as well as the drawing (mushview.cpp:3220), so the
+    // visible width shrinks by this many pixels -- see EffectiveTextCols in
+    // wx_world_child.cpp, which MUST stay in step with RebuildWrapCache.
+    void SetTextPixelOffset(int px);
+    int  TextPixelOffset() const { return m_pixelOffset; }
+
     // Set the pane's default background colour (COLORREF, 0 = black).
     void SetPaneBackground(unsigned long col);
     unsigned long PaneBackground() const { return m_bgColor; }
@@ -485,6 +494,7 @@ private:
     bool        m_autoCopyInHTML    = false;  // …and do it as HTML
     bool m_bleedBackground = false;   // App.m_bBleedBackground
     bool m_smootherScroll  = false;   // App.m_bSmootherScrolling
+    int  m_pixelOffset     = 0;       // doc->m_iPixelOffset (0..20)
     std::string m_wordDelimitersDblClick = ".,()[]\"\'";
 
     // Triple-click detection: record the timestamp and line of the last

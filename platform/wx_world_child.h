@@ -273,6 +273,7 @@ private:
     bool m_lastAutoFreeze = false;
     bool m_lastCopySel    = false;
     bool m_lastCopyHtml   = false;
+    int  m_lastPixelOffset = -1;
 
     // Enter or leave Ctrl+R reverse-history-search mode.  Sets m_histRSearch and
     // tints the input bar blue (on) or restores its normal colors (off).

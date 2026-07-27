@@ -2794,8 +2794,21 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
                 }
                 break;
             case SEND_NOW: {
-                bool bOmit = false;
-                m_doc->EvaluateCommand(mac, /*count=*/true, bOmit);
+                // Mirrors sendvw.cpp:775-777 (set eUserMacro, send, restore) plus
+                // SendCommand's non-auto-say arm at :702-711.  Both halves were
+                // missing: GetInfo(239) read 0 instead of eUserMacro, and going
+                // straight to EvaluateCommand skipped command stacking, the
+                // script prefix, the depth reset and the per-sub-command
+                // ON_PLUGIN_COMMAND callback that Execute() owns.
+                // (Windows also runs macros through auto-say; the port applies
+                // auto-say only to typed lines, which is a separate gap.)
+                CString cmd = mac;
+                if (m_doc->m_bTranslateBackslashSequences)
+                    cmd = ::FixupEscapeSequences(cmd);
+                m_doc->m_iCurrentActionSource = eUserMacro;
+                m_doc->m_iExecutionDepth = 0;
+                m_doc->Execute(cmd);
+                m_doc->m_iCurrentActionSource = eUnknownActionSource;
                 m_doc->UpdateAllViews(nullptr);
                 break;
             }
@@ -2812,10 +2825,29 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         auto fireKeypad = [this](int idx) -> bool {
             if (!m_doc->m_keypad_enable) return false;
             if (idx < 0 || idx >= eKeypad_Max_Items) return false;
-            const CString& kp = m_doc->m_keypad[idx];
+            // By value, not by reference: Execute() can run a script that
+            // rewrites m_keypad[idx] out from under us.
+            CString kp = m_doc->m_keypad[idx];
+            // DIVERGENCE FROM WINDOWS, deliberate — keep this guard.  Windows
+            // sends even a blank keypad slot (sendvw.cpp:1093) because its
+            // else-arm types the digit instead (:1099).  Here the early-out IS
+            // that else-arm: it lets an unbound numpad key fall through to
+            // evt.Skip() and type its digit.  Removing it would send a blank
+            // line to the MUD for every unconfigured numpad key.
             if (kp.IsEmpty()) return false;
-            bool bOmit = false;
-            m_doc->EvaluateCommand(kp, /*count=*/true, bOmit);
+            // Windows turns auto-say off for keypad commands — you don't want
+            // to *say* "west" (sendvw.cpp:1039-1041).  Inert on the port today
+            // (auto-say is applied only in OnInputEnter), included so this path
+            // stays correct if that changes.
+            BOOL bSavedAutoSay = m_doc->m_bEnableAutoSay;
+            m_doc->m_bEnableAutoSay = FALSE;
+            if (m_doc->m_bTranslateBackslashSequences)   // sendvw.cpp:707-709
+                kp = ::FixupEscapeSequences(kp);
+            m_doc->m_iCurrentActionSource = eUserKeypad;  // GetInfo(239) == 3
+            m_doc->m_iExecutionDepth = 0;                 // sendvw.cpp:702
+            m_doc->Execute(kp);                           // not EvaluateCommand
+            m_doc->m_iCurrentActionSource = eUnknownActionSource;
+            m_doc->m_bEnableAutoSay = bSavedAutoSay;
             m_doc->UpdateAllViews(nullptr);
             return true;
         };
@@ -3052,6 +3084,18 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
 
     wxTextCtrl* inp = ActiveInput();
     if (!inp) return;
+
+    // Windows sets the action source across the whole Return handler
+    // (sendvw.cpp:323) and clears it once the send is done (:371), so
+    // GetInfo(239) reads eUserTyping (1) inside any alias or plugin callback the
+    // line fires.  Nothing on the port set it at all, so a typed command
+    // reported 0 / eUnknownActionSource.  This handler has four exits, hence the
+    // scope guard rather than four assignments.
+    struct ActionSourceGuard {
+        CMUSHclientDoc* doc;
+        ~ActionSourceGuard() { doc->m_iCurrentActionSource = eUnknownActionSource; }
+    } asGuard { m_doc };
+    m_doc->m_iCurrentActionSource = eUserTyping;
 
     // "Spell check on send" (m_bSpellCheckOnSend): check the line before it goes
     // anywhere, then re-read the possibly-corrected text.  Mirrors sendvw.cpp:329.

@@ -132,6 +132,16 @@ public:
     // canonical GenerateName() + CGeneratedNameDlg.
     void GenerateCharacterName();
 
+    // Fire macro slot idx (the port's CSendView::SendMacro).  False if the slot
+    // is empty or out of range, so a key-driven caller can fall through.
+    bool FireMacro(int idx);
+
+    // Command-id entry point for the 17 NAMED macro slots (up/down/north/…/
+    // logout/quit), which have no key binding on any platform and are reached
+    // only by id — world.DoCommand, the Input menu, the world toolbar.  False
+    // if id is not one of them.
+    bool FireNamedMacroCommand(int id);
+
     // Spell-check the command-input text (Game ▸ Check Spelling) — runs the
     // canonical spell-check Lua (which shows the suggestion dialog per word).
     void SpellCheckInput();

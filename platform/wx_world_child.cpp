@@ -2268,6 +2268,131 @@ void CWorldChildFrame::FireAcceleratorCommand(WORD nID)
     m_doc->m_bEnableAutoSay = bSavedAutoSay;
 }
 
+// ── FireMacro ──────────────────────────────────────────────────────────────
+// Dispatch macro slot `idx`, the port's stand-in for CSendView::SendMacro
+// (sendvw.cpp:743-793).  Returns false when the slot is unusable, which lets a
+// key-driven caller fall through to typing the key normally.
+//
+// This lives here rather than inside OnInputKeyDown because it has TWO kinds of
+// caller.  The key-bound slots (F-keys, Alt+letter, numpad) come from the key
+// handler; the 17 NAMED slots -- up/down/north/…/logout/quit -- have no key
+// binding on Windows either and are reached only by COMMAND ID, from
+// world.DoCommand("North"), the Input menu and the world toolbar.  Every one of
+// those ids is handled solely by CSendView's message map, and CSendView is
+// never instantiated on the port, so before this they were silently unfirable:
+// DoCommand still returned eOK while nothing happened.  The command-id route
+// into here is in platform/wx_mfc_impl.cpp's frame menu handler.
+//
+// NOT reproduced from SendMacro, deliberately, both pending item 23:
+//   * REPLACE_COMMAND does not call CheckTyping (the
+//     confirm_before_replacing_typing prompt).  That option defaults TRUE and
+//     the port has no m_bChanged to tell user-typed text from script-placed
+//     text, so wiring it naively would pop a modal on nearly every macro.
+//   * SEND_NOW does not add to the command history.  Windows gates that on
+//     !m_bDoNotAddMacrosToCommandHistory; the port's history has different
+//     password rules and persists to a plaintext file, so that belongs with the
+//     rest of the history work, not here.
+bool CWorldChildFrame::FireMacro(int idx)
+{
+    if (!m_doc) return false;
+    if (idx < 0 || idx >= MACRO_COUNT) return false;
+    // By value: Execute() can run a script that rewrites m_macros[idx].
+    const CString mac = m_doc->m_macros[idx];
+    if (mac.IsEmpty()) return false;
+
+    wxTextCtrl* inp = ActiveInput();
+
+    switch (m_doc->m_macro_type[idx]) {
+    case REPLACE_COMMAND:
+        if (inp) {
+            inp->SetValue(wxString::FromUTF8(static_cast<const char*>(mac)));
+            inp->SetInsertionPointEnd();
+        }
+        break;
+    case SEND_NOW: {
+        // Mirrors sendvw.cpp:775-777 (set eUserMacro, send, restore) plus
+        // SendCommand's non-auto-say arm at :702-711.  Both halves were
+        // missing: GetInfo(239) read 0 instead of eUserMacro, and going
+        // straight to EvaluateCommand skipped command stacking, the
+        // script prefix, the depth reset and the per-sub-command
+        // ON_PLUGIN_COMMAND callback that Execute() owns.
+        // (Windows also runs macros through auto-say; the port applies
+        // auto-say only to typed lines, which is a separate gap.)
+        CString cmd = mac;
+        if (m_doc->m_bTranslateBackslashSequences)
+            cmd = ::FixupEscapeSequences(cmd);
+        m_doc->m_iCurrentActionSource = eUserMacro;
+        m_doc->m_iExecutionDepth = 0;
+        m_doc->Execute(cmd);
+        m_doc->m_iCurrentActionSource = eUnknownActionSource;
+        m_doc->UpdateAllViews(nullptr);
+        break;
+    }
+    case ADD_TO_COMMAND:
+        if (inp) inp->WriteText(wxString::FromUTF8(static_cast<const char*>(mac)));
+        break;
+    default:
+        break;
+    }
+    return true;
+}
+
+// ── FireNamedMacroCommand ──────────────────────────────────────────────────
+// The command-id entry point for the 17 named slots.  ID_ACTIONS_QUIT and
+// ID_ACTIONS_LOGOUT confirm first and QUIT suppresses auto-reconnect, exactly
+// as CSendView::OnActionsQuit / OnActionsLogout do (sendvw.cpp:999-1029).
+// Returns false if the id is not one of the 17, so the caller can keep looking.
+bool CWorldChildFrame::FireNamedMacroCommand(int id)
+{
+    if (!m_doc) return false;
+
+    struct Row { int id; int mac; };
+    static const Row kRows[] = {
+        { 32126 /*ID_GAME_NORTH*/,       MAC_NORTH   },
+        { 32128 /*ID_GAME_SOUTH*/,       MAC_SOUTH   },
+        { 32130 /*ID_GAME_EAST*/,        MAC_EAST    },
+        { 32132 /*ID_GAME_WEST*/,        MAC_WEST    },
+        { 32134 /*ID_GAME_UP*/,          MAC_UP      },
+        { 32136 /*ID_GAME_DOWN*/,        MAC_DOWN    },
+        { 32138 /*ID_GAME_EXAMINE*/,     MAC_EXAMINE },
+        { 32140 /*ID_GAME_LOOK*/,        MAC_LOOK    },
+        { 32143 /*ID_GAME_SAY*/,         MAC_SAY     },
+        { 32145 /*ID_GAME_WHISPER*/,     MAC_WHISPER },
+        { 32147 /*ID_GAME_PAGESOMEONE*/, MAC_PAGE    },
+        { 32154 /*ID_GAME_WHO*/,         MAC_WHO     },
+        { 32156 /*ID_GAME_DOING*/,       MAC_DOING   },
+        { 32160 /*ID_GAME_TAKE*/,        MAC_TAKE    },
+        { 32162 /*ID_GAME_DROP*/,        MAC_DROP    },
+    };
+
+    for (const Row& r : kRows)
+        if (r.id == id) { FireMacro(r.mac); return true; }
+
+    if (id == 32218 /*ID_ACTIONS_LOGOUT*/) {
+        wxString q = wxString::Format(
+            wxT("Logout from this character on %s?"),
+            wxString::FromUTF8((const char*) m_doc->m_mush_name));
+        if (wxMessageBox(q, wxT("Logout"),
+                         wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this) == wxYES)
+            FireMacro(MAC_LOGOUT);
+        return true;
+    }
+
+    if (id == 32217 /*ID_ACTIONS_QUIT*/) {
+        wxString q = wxString::Format(
+            wxT("Quit from %s?"),
+            wxString::FromUTF8((const char*) m_doc->m_mush_name));
+        if (wxMessageBox(q, wxT("Quit"),
+                         wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this) == wxYES) {
+            m_doc->m_bDisconnectOK = true;   // don't reconnect after a deliberate quit
+            FireMacro(MAC_QUIT);
+        }
+        return true;
+    }
+
+    return false;
+}
+
 // ── OnInputKeyDown ─────────────────────────────────────────────────────────
 // Up/Down arrows navigate command history; all other keys pass through normally.
 void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
@@ -2782,44 +2907,7 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         // Helper: dispatch a macro by index.
         // REPLACE_COMMAND → set input bar; SEND_NOW → send via EvaluateCommand;
         // ADD_TO_COMMAND → insert at cursor.
-        auto fireMacro = [this, inp](int idx) -> bool {
-            if (idx < 0 || idx >= MACRO_COUNT) return false;
-            const CString& mac = m_doc->m_macros[idx];
-            if (mac.IsEmpty()) return false;
-            switch (m_doc->m_macro_type[idx]) {
-            case REPLACE_COMMAND:
-                if (inp) {
-                    inp->SetValue(wxString::FromUTF8(static_cast<const char*>(mac)));
-                    inp->SetInsertionPointEnd();
-                }
-                break;
-            case SEND_NOW: {
-                // Mirrors sendvw.cpp:775-777 (set eUserMacro, send, restore) plus
-                // SendCommand's non-auto-say arm at :702-711.  Both halves were
-                // missing: GetInfo(239) read 0 instead of eUserMacro, and going
-                // straight to EvaluateCommand skipped command stacking, the
-                // script prefix, the depth reset and the per-sub-command
-                // ON_PLUGIN_COMMAND callback that Execute() owns.
-                // (Windows also runs macros through auto-say; the port applies
-                // auto-say only to typed lines, which is a separate gap.)
-                CString cmd = mac;
-                if (m_doc->m_bTranslateBackslashSequences)
-                    cmd = ::FixupEscapeSequences(cmd);
-                m_doc->m_iCurrentActionSource = eUserMacro;
-                m_doc->m_iExecutionDepth = 0;
-                m_doc->Execute(cmd);
-                m_doc->m_iCurrentActionSource = eUnknownActionSource;
-                m_doc->UpdateAllViews(nullptr);
-                break;
-            }
-            case ADD_TO_COMMAND:
-                if (inp) inp->WriteText(wxString::FromUTF8(static_cast<const char*>(mac)));
-                break;
-            default:
-                break;
-            }
-            return true;
-        };
+        auto fireMacro = [this](int idx) -> bool { return FireMacro(idx); };
 
         // Helper: send a keypad key by index.
         auto fireKeypad = [this](int idx) -> bool {

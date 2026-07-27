@@ -1361,6 +1361,19 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return;
         }
 
+        // ── The 17 named macro slots (up/down/north/…/logout/quit) ────────
+        // These have no key binding on any platform: Windows reaches them only
+        // by command id, through CSendView's message map — which is dead here,
+        // CSendView never being instantiated.  So world.DoCommand("North"), the
+        // Input menu and the world toolbar all posted a WM_COMMAND that arrived
+        // as this wxEVT_MENU and fell straight through to evt.Skip().  DoCommand
+        // returned eOK the whole time, making it a completely silent no-op.
+        // FireNamedMacroCommand owns the id→MAC_* table and returns false for
+        // anything that is not one of the 17, so ordering here is not delicate.
+        if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
+            if (child->FireNamedMacroCommand(id))
+                return;
+
         // ── Generate Character Name (random name → canonical dialog) ───────
         if (id == 32326 /*ID_EDIT_GENERATECHARACTERNAME*/) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))

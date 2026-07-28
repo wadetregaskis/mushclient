@@ -3358,11 +3358,24 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         ApplyHistRSearch(false);
     }
 
-    // Return / Enter ALWAYS sends, and never inserts a newline — including with
-    // Shift held.  That is precisely CSendView::OnChar (sendvw.cpp:315): it tests
-    // `nChar == VK_RETURN` and sends, with no modifier check and no path that
-    // lets a Return reach the multi-line edit control.  So on Windows, too, the
-    // only way to get a newline into the command window is to paste one.
+    // Shift+Return and Option+Return insert a line break instead of sending, so
+    // a multi-line command can be composed by hand rather than only pasted in.
+    // Applied to Windows too, where it is Alt+Return and lives in
+    // CSendView::PreTranslateMessage — see docs/UPSTREAM-DIVERGENCES.md.
+    // Command bar only: the password prompt stays a single-line control.
+    if ((code == WXK_RETURN || code == WXK_NUMPAD_ENTER) &&
+        inp == m_input && !evt.RawControlDown() && !evt.MetaDown() &&
+        (evt.ShiftDown() || evt.AltDown())) {
+        // Inserts at the caret, replacing any selection.  wxEVT_TEXT follows,
+        // so UpdateInputBarHeight grows the bar to show the new line.
+        m_input->WriteText(wxT("\n"));
+        return;   // consume — must not reach the send branch below
+    }
+
+    // Plain Return ALWAYS sends and never inserts a newline.  That is precisely
+    // CSendView::OnChar (sendvw.cpp:315): it tests `nChar == VK_RETURN` and
+    // sends, with no path that lets an unmodified Return reach the multi-line
+    // edit control.
     //
     // The command bar is multi-line here as well, so this must be handled at
     // key-down and consumed: letting it through to the control would insert a

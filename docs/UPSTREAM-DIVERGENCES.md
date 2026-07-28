@@ -115,6 +115,35 @@ now pins it.
 
 ---
 
+## 5 — Shift+Return / Alt+Return insert a line break instead of sending
+
+**Files:** `sendvw.cpp` (`CSendView::PreTranslateMessage`),
+`platform/wx_world_child.cpp` (`CWorldChildFrame::OnInputKeyDown`).
+
+**Was:** `CSendView::OnChar` tests `nChar == VK_RETURN` and sends, with no
+modifier check. The command window is `ES_MULTILINE` and can hold several
+lines, but no keystroke could ever *put* one there — the only way to get a
+newline into it was to paste one.
+
+**Now:** Shift+Return and Alt+Return (Option+Return on macOS) insert a line
+break at the caret. Plain Return still always sends, unchanged.
+
+**Why:** the multi-line command window is already there and already sends
+line-by-line on Return; the only thing missing was a way to compose those lines
+by hand. Shift+Return for "newline, don't submit" is also the near-universal
+convention in modern chat and message inputs, so the key most users will already
+try did nothing (Windows) or, before `265b1ac`, was unreachable.
+
+**Placement note.** On Windows this sits in the *view's*
+`PreTranslateMessage`, which `WalkPreTranslateTree` runs before the frame
+translates accelerators — so it wins over a script-bound Shift/Alt+Return. On
+macOS `FireAcceleratorIfMatch` is deliberately checked first (scripts override
+any key), so there the script would win. This differs only for someone who binds
+Shift+Return or Alt+Return through the Lua `Accelerator()` API; it was not worth
+reordering either platform's key dispatch to unify.
+
+---
+
 ## Verification status
 
 Entries 1-3 are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)
@@ -123,6 +152,17 @@ build type-checks them and cannot exercise them. The behaviour was verified
 live through the port's own equivalent in `AltArrowRecall`. **A Windows build
 run is still required to confirm them on that side.** See
 `docs/WINDOWS-VALIDATION.md`.
+
+Entry 5 is half and half. The macOS half is in `wx_world_child.cpp` and was
+verified live (Shift+Return and Option+Return insert a line break; plain Return
+still sends). The Windows half is another `sendvw.cpp` edit and carries the same
+caveat as 1-3 — **needs a Windows run.** Two things to check there specifically,
+neither observable here: that `ES_MULTILINE` + `ReplaceSel("\r\n")` puts a real
+line break in the control (rather than the edit control swallowing it), and that
+consuming `WM_SYSKEYDOWN` for Alt+Return does not leave the Alt key latched into
+menu-activation state — `CSendView` already carries an `ON_WM_SYSCOMMAND`
+handler whose comment is "suppress default ALT key behaviour", so that area has
+a history.
 
 Entry 4 is different: it lives in `GlobalPrefs.cpp` and
 `scripting/methods/methods_defaults.cpp`, both of which the port *does* execute,

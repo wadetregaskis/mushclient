@@ -1679,10 +1679,26 @@ ASSERT_VALID(pDoc);
 }
 
 
-BOOL CSendView::PreTranslateMessage(MSG* pMsg) 
+BOOL CSendView::PreTranslateMessage(MSG* pMsg)
 {
 CMUSHclientDoc* pDoc = GetDocument();
 ASSERT_VALID(pDoc);
+
+    // Shift+Return and Alt+Return insert a line break instead of sending, so a
+    // multi-line command can be composed by hand rather than only pasted in.
+    // The command window is already ES_MULTILINE (PreCreateWindow), so it is
+    // only OnChar's unconditional send-on-VK_RETURN that stands in the way:
+    // returning TRUE here consumes the key, so no WM_CHAR is ever generated and
+    // OnChar never sees it.  Alt+Return arrives as WM_SYSKEYDOWN, not WM_KEYDOWN.
+    // Deliberate departure from stock MUSHclient - see UPSTREAM-DIVERGENCES.md.
+    if ((pMsg->message == WM_KEYDOWN || pMsg->message == WM_SYSKEYDOWN) &&
+        pMsg->wParam == VK_RETURN &&
+        GetKeyState (VK_CONTROL) >= 0 &&   // ctrl+return is not ours
+        (GetKeyState (VK_SHIFT) < 0 || GetKeyState (VK_MENU) < 0))
+      {
+      GetEditCtrl().ReplaceSel ("\r\n", TRUE);  // at the caret, replacing the
+      return TRUE;                              //  selection; undoable
+      }
 
     if (pMsg->message == WM_KEYDOWN &&  // keydown message
         pMsg->wParam == VK_UP &&        // up-arrow key

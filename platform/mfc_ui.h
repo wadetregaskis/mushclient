@@ -2137,6 +2137,12 @@ public:
     BOOL GetBitmap(void*)      { return FALSE; }
     BOOL GetBitmap(BITMAP* bm);
     bool CreateBitmap(int nWidth, int nHeight, UINT nPlanes, UINT nBitCount, const void* lpBits);
+    // Port-only: a drawing canvas of nWidth x nHeight LOGICAL units, backed by
+    // however many physical pixels the display actually needs (2x on Retina).
+    // Callers keep addressing it in the same coordinates as on Windows; only
+    // the resolution it is rendered at changes.  Used for miniwindow canvases,
+    // which are otherwise drawn at 1x and stretched — see CMiniWindow::Create.
+    bool CreateCanvasBitmap(int nWidth, int nHeight);
     bool CreateBitmapIndirect(const BITMAP*) { return false; }
     int  GetObject(int nCount, void* lpObject) const;
     bool DeleteObject();

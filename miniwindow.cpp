@@ -235,7 +235,18 @@ void CMiniWindow::Create (long Left, long Top, long Width, long Height,
   m_Bitmap = new CBitmap;
 
   //  CreateBitmap with zero-dimensions creates a monochrome bitmap, so force to be at least 1x1
+#ifdef _WIN32
   m_Bitmap->CreateBitmap (MAX (m_iWidth, 1), MAX (m_iHeight, 1), 1, GetDeviceCaps((*pdc), BITSPIXEL), NULL);
+#else
+  // Same canvas, at the display's real resolution.  The miniwindow is still
+  // m_iWidth x m_iHeight in the coordinates every plugin draws with -- only the
+  // number of physical pixels behind them changes.  Previously this was a 1x
+  // bitmap that the compositor stretched to its logical size, so on a Retina
+  // panel every miniwindow was drawn at half resolution and blown up: blocky
+  // maps, and text that read as soft and undersized next to the output pane.
+  // On a 72 dpi display the scale is 1 and this is byte-for-byte the old path.
+  m_Bitmap->CreateCanvasBitmap (MAX (m_iWidth, 1), MAX (m_iHeight, 1));
+#endif
   m_oldBitmap = pdc->SelectObject (m_Bitmap);
   pdc->SetWindowOrg(0, 0);
 

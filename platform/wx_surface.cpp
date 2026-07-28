@@ -234,11 +234,19 @@ Colour WxSurface::getPixel(SurfaceId id, Point p) {
     Surf* s = surf(id);
     if (!s || p.x < 0 || p.y < 0 || p.x >= s->size.w || p.y >= s->size.h)
         return 0xFFFFFFFFu;                     // CLR_INVALID
-    // Answer from canonical bytes via the DIB round-trip: the shim's
-    // CDC::GetPixel sits on wxMemoryDC::GetPixel, which is unimplemented on
-    // wxOSX (returns false → black). The 1x1 read is exact everywhere.
+    // Answer from canonical bytes: the shim's CDC::GetPixel sits on
+    // wxMemoryDC::GetPixel, which is unimplemented on wxOSX (returns false →
+    // black).
+    //
+    // Read through the ALPHA path, not the BGR24 one.  BGR24 goes via a BitBlt
+    // into a temporary 1x DIB, and on a HiDPI canvas that resamples a 2x2 block
+    // of physical pixels down to one — so a probe on an antialiased edge, or
+    // one pixel in from a fill, comes back as a blend rather than the colour
+    // that was drawn.  The alpha path reads the backing bitmap directly and
+    // samples the logical cell's top-left pixel, which keeps WindowGetPixel
+    // exact.  Byte order matches: both give B,G,R in the first three bytes.
     PixelBuffer px;
-    readPixels(id, { p.x, p.y, 1, 1 }, px, PixelFormat::BGR24);
+    readPixels(id, { p.x, p.y, 1, 1 }, px, PixelFormat::BGRA32_Alpha);
     if (px.bytes.size() < 3) return 0xFFFFFFFFu;
     const unsigned char* b = px.row(0);
     return (Colour)b[2] | ((Colour)b[1] << 8) | ((Colour)b[0] << 16);

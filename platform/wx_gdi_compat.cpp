@@ -620,6 +620,36 @@ bool CBitmap::CreateBitmap(int nWidth, int nHeight, UINT nPlanes,
     return static_cast<wxBitmap*>(m_impl)->IsOk();
 }
 
+// The backing-store scale for drawing canvases: 2 on a Retina panel, 1 on an
+// ordinary one.  Derived from the same PPI everything else in this shim uses,
+// so a 72 dpi display gets scale 1 and behaves exactly as before.
+double wx_canvas_scale()
+{
+    const int ppi = wxGetDisplayPPI().y;
+    if (ppi <= 0) return 1.0;
+    const double s = ppi / 72.0;
+    return (s < 1.0) ? 1.0 : s;
+}
+
+bool CBitmap::CreateCanvasBitmap(int nWidth, int nHeight) {
+    if (m_impl) { delete static_cast<wxBitmap*>(m_impl); m_impl = nullptr; }
+    const int w = (nWidth  > 0) ? nWidth  : 1;
+    const int h = (nHeight > 0) ? nHeight : 1;
+
+    // CreateWithDIPSize allocates w*scale x h*scale physical pixels and records
+    // the scale on the bitmap, so a wxMemoryDC over it exposes a w x h LOGICAL
+    // coordinate space.  Every existing draw call keeps its coordinates; the
+    // difference is that glyphs and lines are rasterised at full device
+    // resolution instead of being drawn at 1x and stretched on the way out.
+    wxBitmap* bmp = new wxBitmap;
+    if (!bmp->CreateWithDIPSize(wxSize(w, h), wx_canvas_scale(), 32)) {
+        delete bmp;
+        return false;
+    }
+    m_impl = bmp;
+    return true;
+}
+
 HBITMAP CBitmap::CreateCompatibleBitmap(void* /*pDC*/, int nWidth, int nHeight) {
     CreateBitmap(nWidth, nHeight, 1, 32, nullptr);
     return static_cast<HBITMAP>(m_impl);   // opaque handle
@@ -1451,12 +1481,23 @@ bool wxgdi_read_bgra(CDC* dc, int x, int y, int w, int h,
     wxImage img = bmp.ConvertToImage();
     const bool hasA = img.HasAlpha();
     const int bw = img.GetWidth(), bh = img.GetHeight();
+
+    // The caller addresses the surface in LOGICAL units, but a HiDPI canvas
+    // (CBitmap::CreateCanvasBitmap) holds scale x that many physical pixels, and
+    // ConvertToImage hands back the physical grid.  Sample the top-left pixel of
+    // each logical cell — nearest-neighbour, NOT an average — so a solid fill
+    // still reads back its exact colour and WindowGetPixel keeps the exactness
+    // plugins rely on.  Scale is 1 on a non-Retina display, where this reduces
+    // to the original indexing.
+    const double sc  = bmp.GetScaleFactor();
+    const int    isc = (sc > 0) ? (int)(sc + 0.5) : 1;
+
     for (int j = 0; j < h; ++j) {
-        const int sy = y + j;
+        const int sy = (y + j) * isc;
         if (sy < 0 || sy >= bh) continue;
         unsigned char* out = dst + (size_t)(h - 1 - j) * strideBytes;
         for (int i = 0; i < w; ++i) {
-            const int sx = x + i;
+            const int sx = (x + i) * isc;
             if (sx < 0 || sx >= bw) continue;
             unsigned char* o = out + (size_t)i * 4;
             o[0] = img.GetBlue(sx, sy);

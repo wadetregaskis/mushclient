@@ -843,6 +843,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // 1024×768 centred on first run; subsequent runs restore the last size
     // and (on platforms that honour it) position.  Maximized state is also
     // preserved.  Iconized state is not (would be confusing on relaunch).
+    //
+    // NOTE: this is the MDI *parent*, which wxOSX never shows — on macOS the
+    // window the user actually sees is the world child frame, and its own
+    // first-run default (full usable height × half the width) is computed in
+    // CWorldChildFrame's constructor.  Changing the numbers here alone has no
+    // visible effect on macOS.
     {
         wxConfig cfg(wxT("mushclient"));
 

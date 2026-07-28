@@ -11,6 +11,7 @@
 #include <wx/mdi.h>
 #include <wx/config.h>
 #include <wx/clipbrd.h>   // wxTheClipboard, wxTextDataObject, wxDF_TEXT
+#include <wx/display.h>   // wxDisplay (usable screen area for the default size)
 #include <string>
 #include <netdb.h>  // getaddrinfo, freeaddrinfo
 
@@ -1139,17 +1140,55 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     if (App.m_bAlwaysOnTop)
         SetWindowStyleFlag(GetWindowStyleFlag() | wxSTAY_ON_TOP);
 
-    // ── Restore child frame size from config ──────────────────────────────
-    // We persist a single "last used" child frame size (not per-world, since
-    // all worlds share the same MDI client area).  This prevents the window
-    // from always defaulting to 800×600 after the user resizes it once.
+    // ── World window geometry ─────────────────────────────────────────────
+    // We persist a single "last used" size (not per-world, since all worlds
+    // share the same MDI client area on Windows).
+    //
+    // The first-run default is derived from the display: the full usable HEIGHT
+    // and HALF the usable width.  It has to be computed here, on the child,
+    // because on wxOSX the MDI *parent* is never shown — this frame IS the
+    // window the user sees.  hook_load_mdi_frame (wx_mfc_impl.cpp) does the
+    // same screen-aware sizing for the parent, which on macOS therefore sizes a
+    // window nobody looks at; the visible one was left on a hard-coded 800×600.
+    //
+    // wxDisplay::GetClientArea() is the *usable* area, so it already excludes
+    // the Dock and the menu bar when the menu bar is actually on screen.  With
+    // the menu bar set to auto-hide, macOS reports the full display height and
+    // the window correctly fills it — which is the behaviour we want in both
+    // cases, without having to ask about the auto-hide setting ourselves.
     {
         wxConfig cfg(wxT("mushclient"));
-        long w = 800, h = 600;
-        cfg.Read(wxT("/geometry/child_w"), &w, 800L);
-        cfg.Read(wxT("/geometry/child_h"), &h, 600L);
-        if (w >= 200 && h >= 100)
-            SetSize((int)w, (int)h);
+
+        int di = wxDisplay::GetFromWindow(this);
+        if (di < 0) di = 0;               // not mapped yet → primary display
+        const wxRect scr = wxDisplay(di).GetClientArea();
+
+        const long defW = std::max<long>(200, scr.width / 2);
+        const long defH = std::max<long>(100, scr.height);
+
+        long w = defW, h = defH;
+        // Two-arg Read leaves the value alone when the key is absent, and tells
+        // us whether it was there — which is how we know this is a first run.
+        const bool hadW = cfg.Read(wxT("/geometry/child_w"), &w);
+        const bool hadH = cfg.Read(wxT("/geometry/child_h"), &h);
+
+        // A restored size is clamped to the usable screen too: a window saved on
+        // a larger display must not come back bigger than this one.
+        if (w < 200 || w > scr.width)  w = defW;
+        if (h < 100 || h > scr.height) h = defH;
+
+        SetSize((int)w, (int)h);
+
+#ifdef __WXOSX__
+        // First run only, and only where the child is a real top-level window:
+        // place it, because a full-height frame left at the OS's cascade offset
+        // hangs off the bottom of the screen.  Horizontally centred, top of the
+        // usable area (i.e. immediately below the menu bar).
+        if (!hadW && !hadH)
+            SetPosition(wxPoint(scr.x + (scr.width - (int) w) / 2, scr.y));
+#else
+        (void) hadW; (void) hadH;
+#endif
     }
 
     m_input->SetFocus();

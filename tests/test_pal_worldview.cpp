@@ -677,4 +677,75 @@ TEST(DoubleClick, NotConnectedAbortsRatherThanFallingBackToInsert)
     EXPECT_EQ((int) eDblClickAbort, (int) doc.OutputWordDoubleClicked("orc"));
 }
 
+// ── ApplyDefaultFonts ─────────────────────────────────────────────────────
+// The global preferences dialog calls this for every open world when it
+// closes, so a default font chosen there reaches the screen at once instead of
+// waiting for File > Reload Defaults.  These pin the seam it depends on.
+
+TEST(DefaultFonts, PushesTheGlobalDefaultToTheView)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    FakeWorldView view;
+    doc.m_pWorldView = &view;
+
+    App.m_strDefaultOutputFont      = "Menlo";
+    App.m_iDefaultOutputFontHeight  = 18;
+    App.m_iDefaultOutputFontCharset = DEFAULT_CHARSET;
+    doc.m_bUseDefaultOutputFont     = TRUE;
+    doc.m_bUseDefaultInputFont      = FALSE;
+
+    doc.ApplyDefaultFonts();
+
+    EXPECT_STREQ("Menlo", view.outFontFace.c_str());
+    EXPECT_EQ(18, view.outFontPts);
+
+    doc.m_pWorldView = nullptr;
+}
+
+TEST(DefaultFonts, RepeatCallStillReachesTheView)
+{
+    // Regression: an earlier version skipped the work when the doc's font
+    // fields already matched the defaults.  That looks like a harmless
+    // optimisation and is not: ApplyDefaultFonts also runs during world open,
+    // BEFORE the view is attached, where the emit is silently dropped but the
+    // doc fields are still updated.  The later, view-attached call then saw
+    // "already correct" and the font never reached the screen.
+    CMUSHclientDoc doc; make_doc(doc);
+
+    App.m_strDefaultOutputFont      = "Menlo";
+    App.m_iDefaultOutputFontHeight  = 18;
+    App.m_iDefaultOutputFontCharset = DEFAULT_CHARSET;
+    doc.m_bUseDefaultOutputFont     = TRUE;
+    doc.m_bUseDefaultInputFont      = FALSE;
+
+    doc.ApplyDefaultFonts();          // no view yet: updates the doc, draws nothing
+
+    FakeWorldView view;
+    doc.m_pWorldView = &view;
+    doc.ApplyDefaultFonts();          // view attached: MUST still emit
+
+    EXPECT_STREQ("Menlo", view.outFontFace.c_str());
+    EXPECT_EQ(18, view.outFontPts);
+
+    doc.m_pWorldView = nullptr;
+}
+
+TEST(DefaultFonts, WorldThatOverridesTheFontIsLeftAlone)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    FakeWorldView view;
+    doc.m_pWorldView = &view;
+
+    App.m_strDefaultOutputFont     = "Menlo";
+    App.m_iDefaultOutputFontHeight = 18;
+    doc.m_bUseDefaultOutputFont    = FALSE;   // this world picked its own font
+    doc.m_bUseDefaultInputFont     = FALSE;
+
+    doc.ApplyDefaultFonts();
+
+    EXPECT_TRUE(view.outFontFace.empty());
+
+    doc.m_pWorldView = nullptr;
+}
+
 MC_TEST_MAIN()

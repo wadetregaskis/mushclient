@@ -78,11 +78,56 @@ macro-placed text is not.
 both builds. The two ends stay distinct, and only the direction the user can
 walk *back* from restores.
 
+## 4 — Default fonts apply when you press OK, not when you find a menu item
+
+**Where:** `dialogs/global_prefs/GlobalPrefs.cpp`, the per-document loop at the
+end of `DoGlobalPrefs`; the work itself is factored into
+`CMUSHclientDoc::ApplyDefaultFonts` (`scripting/methods/methods_defaults.cpp`),
+which `OnFileReloaddefaults` now calls too so the two cannot drift.
+
+**Upstream:** changing the default input or output font in global preferences
+updated `App.m_strDefaultOutputFont` and friends, and stopped there. Open worlds
+kept their current font — including worlds with "use default output font"
+ticked, which is precisely the set that ought to follow it. The new font only
+arrived on **File ▸ Reload Defaults**, or on the next world you opened.
+`m_bUseDefaultOutputFont` is a one-shot seed, never consulted while drawing.
+
+**Now:** dismissing the dialog with OK re-applies the default fonts to every
+open world that follows them.
+
+**Why:** a preference that visibly does nothing is indistinguishable from a
+broken one, and "there is a menu item elsewhere that makes your setting take
+effect" is not a thing a user should have to know.
+
+**Scope — fonts only.** `Reload Defaults` also *loads the default trigger,
+alias, timer, macro and colour files*. Those stay on the explicit command:
+re-importing entity sets silently on every OK could duplicate or overwrite live
+triggers, which is a far worse surprise than the one being fixed.
+
+**Do not add a "skip if unchanged" test** to `ApplyDefaultFonts`. It reads like
+a free optimisation and is a bug: the function also runs during world open,
+before the world's view exists, where the emit is dropped but the doc's font
+fields are still updated. A guard therefore makes the later, view-attached call
+conclude there is nothing to do, and the font never reaches the screen. This was
+written, shipped into a local build, and caught by instrumenting the live app;
+`tests/test_pal_worldview.cpp` (`DefaultFonts.RepeatCallStillReachesTheView`)
+now pins it.
+
+---
+
 ## Verification status
 
-All three changes are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)
+Entries 1-3 are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)
 but whose class `CSendView` is never instantiated on the port — so the macOS
 build type-checks them and cannot exercise them. The behaviour was verified
 live through the port's own equivalent in `AltArrowRecall`. **A Windows build
 run is still required to confirm them on that side.** See
 `docs/WINDOWS-VALIDATION.md`.
+
+Entry 4 is different: it lives in `GlobalPrefs.cpp` and
+`scripting/methods/methods_defaults.cpp`, both of which the port *does* execute,
+and its seam is covered headlessly by `DefaultFonts.*` in
+`tests/test_pal_worldview.cpp`.  The engine-side behaviour is therefore verified
+here; what a Windows run would still add is confirmation that `CMUSHView`
+repaints from the same `ChangeFont` call, which it already does for the
+World Properties font path.

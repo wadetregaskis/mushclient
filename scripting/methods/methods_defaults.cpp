@@ -134,16 +134,39 @@ void CMUSHclientDoc::OnFileReloaddefaults()
   if (m_bUseDefaultMacros && !App.m_strDefaultMacrosFile.IsEmpty ())
     Load_Set (MACRO, App.m_strDefaultMacrosFile, &Frame);
 
+  ApplyDefaultFonts ();
+
+  UpdateAllViews (NULL);
+
+}  // end of CMUSHclientDoc::OnFileReloaddefaults
+
+// Copy the global default fonts onto this world, for whichever of input/output
+// it follows.  Split out of OnFileReloaddefaults so the global preferences
+// dialog can run exactly the same code when it closes: a font chosen there used
+// to sit in the App members until the user happened to find File > Reload
+// Defaults, which is not a thing anyone should have to know about.
+//
+// Deliberately unconditional, as this code has always been: do NOT add a
+// "skip if the world already has this font" test.  A world's font fields are
+// updated by this very function during world open, BEFORE its view exists, so
+// the fields matching the defaults is no evidence that anything was ever drawn
+// at that size -- an emit to a null view is silently dropped.  Guarding on them
+// makes the later, view-attached call decide there is nothing to do, and the
+// font change never reaches the screen.  Rebuilding the fonts costs nothing at
+// the two points this runs (a dialog being dismissed, or an explicit reload).
+
+void CMUSHclientDoc::ApplyDefaultFonts (void)
+  {
   if (m_bUseDefaultInputFont && !App.m_strDefaultInputFont.IsEmpty ())
     {
-    m_input_font_height = App.m_iDefaultInputFontHeight; 
-    m_input_font_name = App.m_strDefaultInputFont;   
-    m_input_font_italic = App.m_iDefaultInputFontItalic; 
+    m_input_font_height = App.m_iDefaultInputFontHeight;
+    m_input_font_name = App.m_strDefaultInputFont;
+    m_input_font_italic = App.m_iDefaultInputFontItalic;
     m_input_font_weight = App.m_iDefaultInputFontWeight;
     m_input_font_charset = App.m_iDefaultInputFontCharset;
-    ChangeInputFont (m_input_font_height, 
-                    m_input_font_name, 
-                    m_input_font_weight, 
+    ChangeInputFont (m_input_font_height,
+                    m_input_font_name,
+                    m_input_font_weight,
                     m_input_font_charset,
                     m_input_font_italic);
 
@@ -151,13 +174,13 @@ void CMUSHclientDoc::OnFileReloaddefaults()
 
   if (m_bUseDefaultOutputFont && !App.m_strDefaultOutputFont.IsEmpty ())
     {
-    m_font_height = App.m_iDefaultOutputFontHeight; 
-    m_font_name = App.m_strDefaultOutputFont;   
+    m_font_height = App.m_iDefaultOutputFontHeight;
+    m_font_name = App.m_strDefaultOutputFont;
     m_font_weight = FW_NORMAL;
     m_font_charset = App.m_iDefaultOutputFontCharset;
-    ChangeFont (m_font_height, 
-                m_font_name, 
-                m_font_weight, 
+    ChangeFont (m_font_height,
+                m_font_name,
+                m_font_weight,
                 m_font_charset,
                 m_bShowBold,
                 m_bShowItalic,
@@ -165,9 +188,7 @@ void CMUSHclientDoc::OnFileReloaddefaults()
                 m_iLineSpacing);
     }   // end of output font override
 
-  UpdateAllViews (NULL);
-  
-}  // end of CMUSHclientDoc::OnFileReloaddefaults
+  }  // end of CMUSHclientDoc::ApplyDefaultFonts
 
 void CMUSHclientDoc::OnUpdateFileReloaddefaults(CCmdUI* pCmdUI) 
 {

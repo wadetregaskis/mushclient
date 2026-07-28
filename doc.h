@@ -2011,11 +2011,17 @@ public:
                     const BOOL bShowItalic,
                     const BOOL bShowUnderline,
                     const unsigned short iLineSpacing);
-  void ChangeInputFont ( const int nHeight, 
+  void ChangeInputFont ( const int nHeight,
                          const char * lpszFacename,
-                         const int nWeight, 
+                         const int nWeight,
                          const DWORD iCharset,
                          const BYTE bItalic);
+
+  // Copy the global default input/output fonts onto this world, for whichever
+  // of the two it is configured to follow, and repaint.  Called both by
+  // File > Reload Defaults and by the global preferences dialog when it closes,
+  // so the two cannot drift.  Does nothing for a world that overrides the font.
+  void ApplyDefaultFonts (void);
 
   void setupstrings (void);
 

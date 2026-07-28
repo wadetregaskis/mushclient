@@ -1528,6 +1528,20 @@ void DoGlobalPrefs (CMUSHclientDoc * pCurrentDoc)
       docPos != NULL; )
     {
     CMUSHclientDoc * pDoc = (CMUSHclientDoc *) App.m_pWorldDocTemplate->GetNextDoc(docPos);
+
+    // Push the default fonts to every world that follows them, so a font
+    // changed above takes effect now.  Previously the new font sat in the App
+    // members until the user found File > Reload Defaults; a world whose
+    // "use default font" box is ticked appeared simply to ignore the setting.
+    // This is the call that reaches an attached view -- the one during world
+    // open runs before the view exists; see ApplyDefaultFonts.
+    // Only the fonts are re-applied here, NOT the default trigger/alias/timer/
+    // macro/colour FILES that Reload Defaults also loads: re-importing entity
+    // sets behind the user's back on every OK could duplicate or overwrite live
+    // triggers.  Those stay on the explicit command.
+    // See docs/UPSTREAM-DIVERGENCES.md.
+    pDoc->ApplyDefaultFonts ();
+
     pDoc->UpdateAllViews (NULL);
     } // end of doing each document
 } // end of DoGlobalPrefs

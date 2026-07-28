@@ -4034,7 +4034,16 @@ long CMiniWindow::Resize(long Width, long Height, long BackgroundColour)
   m_Bitmap = new CBitmap;
 
   //  CreateBitmap with zero-dimensions creates a monochrome bitmap, so force to be at least 1x1
+#ifdef _WIN32
   m_Bitmap->CreateBitmap (MAX (Width, 1), MAX (Height, 1), 1, GetDeviceCaps((*pdc), BITSPIXEL), NULL);
+#else
+  // The RESIZE path needs the same HiDPI canvas as Create does, or a plugin
+  // that resizes a miniwindow silently drops it back to 1x — which is what
+  // happened to Quow's status panels, since they are created small and resized
+  // to fit their content.  Everything drawn after that was half-resolution and
+  // stretched, while windows that were never resized stayed sharp.
+  m_Bitmap->CreateCanvasBitmap (MAX (Width, 1), MAX (Height, 1));
+#endif
   pdc->SelectObject(m_Bitmap);
   pdc->SetWindowOrg(0, 0);
 

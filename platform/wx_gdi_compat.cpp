@@ -655,12 +655,27 @@ HBITMAP CBitmap::CreateCompatibleBitmap(void* /*pDC*/, int nWidth, int nHeight) 
     return static_cast<HBITMAP>(m_impl);   // opaque handle
 }
 
+// Bitmap dimensions are reported in LOGICAL units — physical pixels divided by
+// the bitmap's scale.  A HiDPI canvas or captured image holds 2x the pixels on a
+// Retina panel, but every caller above this shim (CMiniWindow::DrawImage's
+// source-rectangle arithmetic, WindowImageInfo, the plugins themselves) works in
+// the same pixel coordinates it does on Windows.  Keeping the extra resolution
+// invisible here is what lets those callers stay unchanged while the drawing
+// underneath happens at full device resolution.
+static inline int wx_logical_extent(int physical, double scale)
+{
+    if (scale <= 1.0) return physical;
+    const int s = (int)(scale + 0.5);
+    return (s > 0) ? physical / s : physical;
+}
+
 BOOL CBitmap::GetBitmap(BITMAP* pBitmap) {
     if (!pBitmap || !m_impl) return FALSE;
     wxBitmap* bmp = static_cast<wxBitmap*>(m_impl);
     *pBitmap = {};
-    pBitmap->bmWidth   = bmp->GetWidth();
-    pBitmap->bmHeight  = bmp->GetHeight();
+    const double sc = bmp->GetScaleFactor();
+    pBitmap->bmWidth   = wx_logical_extent(bmp->GetWidth(),  sc);
+    pBitmap->bmHeight  = wx_logical_extent(bmp->GetHeight(), sc);
     pBitmap->bmBitsPixel = bmp->GetDepth();
     pBitmap->bmPlanes  = 1;
     return TRUE;
@@ -671,8 +686,9 @@ int CBitmap::GetObject(int /*nCount*/, void* lpObject) const {
     wxBitmap* bmp = static_cast<wxBitmap*>(m_impl);
     BITMAP* pbm = static_cast<BITMAP*>(lpObject);
     *pbm = {};
-    pbm->bmWidth      = bmp->GetWidth();
-    pbm->bmHeight     = bmp->GetHeight();
+    const double sc = bmp->GetScaleFactor();
+    pbm->bmWidth      = wx_logical_extent(bmp->GetWidth(),  sc);
+    pbm->bmHeight     = wx_logical_extent(bmp->GetHeight(), sc);
     pbm->bmBitsPixel  = bmp->GetDepth();
     pbm->bmPlanes     = 1;
     return sizeof(BITMAP);

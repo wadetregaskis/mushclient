@@ -54,6 +54,11 @@
 #include <ctime>
 #include <sys/stat.h>
 
+// Defined in wx_gdi_compat.cpp (same convention as wxgdi_read_bgra in
+// wx_surface.cpp): the backing-store scale miniwindow canvases are created at —
+// 2 on a Retina panel, 1 on an ordinary one.
+double wx_canvas_scale();
+
 // App singleton — defined in platform/mushapp_globals.cpp for the mushapp build.
 extern CMUSHclientApp App;
 
@@ -755,15 +760,30 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 // port stretches these; Windows' Blit_Bitmap draws miniwindows
                 // 1:1 even in modes 0–3 — an existing, deliberate divergence.)
                 int destW = r.Width(), destH = r.Height();
-                if (destW > 0 && destH > 0)
-                    destDC.StretchBlit(destX, destY, destW, destH,
-                                       srcDC, 0, 0, iW, iH, wxCOPY);
+                if (destW > 0 && destH > 0) {
+                    if (destW == iW && destH == iH)
+                        // Same size: a plain Blit keeps the canvas 1:1 with the
+                        // screen.  StretchBlit resamples even at a 1:1 ratio,
+                        // which visibly softens text on a HiDPI canvas.
+                        destDC.Blit(destX, destY, iW, iH, srcDC, 0, 0, wxCOPY);
+                    else
+                        destDC.StretchBlit(destX, destY, destW, destH,
+                                           srcDC, 0, 0, iW, iH, wxCOPY);
+                }
             } else if (bTransparent) {
                 // Build a masked bitmap using the miniwindow's background colour
                 // as the transparency key, then draw it with the mask applied.
                 COLORREF bg = mw->GetBackgroundColour();
                 wxColour transCol(GetRValue(bg), GetGValue(bg), GetBValue(bg));
-                wxBitmap srcBmp(iW, iH);
+                // The intermediate MUST carry the canvas's scale.  A plain
+                // wxBitmap(iW, iH) is 1x, so copying a HiDPI canvas into it
+                // throws away three quarters of the pixels and hands the
+                // compositor a blurred image — which is exactly what made
+                // plugin text fuzzy while the maps drawn straight through the
+                // opaque path stayed sharp.
+                wxBitmap srcBmp;
+                if (!srcBmp.CreateWithDIPSize(wxSize(iW, iH), wx_canvas_scale(), 32))
+                    srcBmp = wxBitmap(iW, iH);
                 {
                     wxMemoryDC tmpDC(srcBmp);
                     tmpDC.Blit(0, 0, iW, iH, srcDC, 0, 0, wxCOPY);

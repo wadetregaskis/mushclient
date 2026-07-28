@@ -134,6 +134,23 @@ static const char * PortableFixedPitchFont ()
 #endif
 }
 
+// Platform default for the text sizes.  Upstream ships 9 point, which suits
+// Windows' 96 dpi logical inch; on a Mac the same nominal size renders visibly
+// smaller, so the shipped default is simply too small to read comfortably.
+// This changes the DEFAULT only — an existing preferences database keeps
+// whatever the user already chose.
+static int PosixNumericGlobalDefault (const char * name, int rawDefault)
+{
+  if (strcmp (name, "DefaultInputFontHeight")  == 0 ||
+      strcmp (name, "DefaultOutputFontHeight") == 0)
+    return 12;
+  // Deliberately NOT FixedPitchFontSize.  That one sizes the fixed-pitch text
+  // in dialogs (trigger/alias editors, the debug boxes) rather than the world
+  // views, and CMUSHclientApp::WorkOutFixedFont assigns it directly during
+  // startup anyway, so a default here would not survive.
+  return rawDefault;
+}
+
 static CString PosixAlphaGlobalDefault (const char * name, const CString & rawDefault)
 {
   if (strcmp (name, "PluginsDirectory") == 0)
@@ -170,9 +187,14 @@ int CMUSHclientApp::PopulateDatabase (void)
 
   for (i = 0; GlobalOptionsTable [i].pName; i++)
     {
-    const int Value = GetProfileInt ("Global prefs",  
-                                GlobalOptionsTable [i].pName, 
-                                GlobalOptionsTable [i].iDefault);
+    int iDefault = GlobalOptionsTable [i].iDefault;
+#ifndef _WIN32
+    iDefault = PosixNumericGlobalDefault (GlobalOptionsTable [i].pName, iDefault);
+#endif
+
+    const int Value = GetProfileInt ("Global prefs",
+                                GlobalOptionsTable [i].pName,
+                                iDefault);
 
     db_rc = db_execute ((LPCTSTR) CFormat ("INSERT INTO prefs (name, value) VALUES ('%s', %i)",
                         GlobalOptionsTable [i].pName, Value), true);
@@ -225,11 +247,16 @@ void CMUSHclientApp::LoadGlobalsFromDatabase (void)
     {
     const char * p = (const char *) this +  GlobalOptionsTable [i].iOffset;
 
+    int iDefault = GlobalOptionsTable [i].iDefault;
+#ifndef _WIN32
+    iDefault = PosixNumericGlobalDefault (GlobalOptionsTable [i].pName, iDefault);
+#endif
+
     db_simple_query ((LPCTSTR) CFormat (
-          "SELECT value FROM prefs WHERE name = '%s'", (LPCTSTR) GlobalOptionsTable [i].pName), 
-          db_value, 
+          "SELECT value FROM prefs WHERE name = '%s'", (LPCTSTR) GlobalOptionsTable [i].pName),
+          db_value,
           true,
-          (LPCTSTR) CFormat ("%i", GlobalOptionsTable [i].iDefault));
+          (LPCTSTR) CFormat ("%i", iDefault));
 
     // These are all ints (see the warning above).  Use int, NOT long: long is
     // 8 bytes on LP64 (macOS/Linux), so *(long*)p would write past the 4-byte

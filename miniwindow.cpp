@@ -701,7 +701,29 @@ long CMiniWindow::Font (LPCTSTR FontId,        // eg. "inventory"
   // it for the cell-height CreateFont convention). Default 10pt if Size == 0.
   pal::FontSpec spec;
   spec.face               = FontName;
-  spec.pixelHeight        = MulDiv (Size ? Size : 10.0, srf->dpi (), 72);
+  double dPoints = Size ? Size : 10.0;
+
+#ifndef _WIN32
+  // A miniwindow is a PIXEL canvas: the plugin gives WindowCreate a width and
+  // height in pixels and positions every WindowText call in pixels, all of it
+  // sized against what the font occupies on Windows.  There, 96 logical dpi
+  // means a 10-point font fills MulDiv(10, 96, 72) = 13 of those pixels.
+  //
+  // Off Windows the conversion below uses the display's real PPI, and
+  // CFont::CreateFont converts straight back through it, so a 10-point request
+  // renders at 10 points -- i.e. 10 canvas units where the plugin's layout
+  // expects 13.  Every plugin's text therefore comes out at 72/96 of the size
+  // its own geometry was designed around: Quow's minimap caption, the chat
+  // headers, the status counters.
+  //
+  // Restore the Windows relationship by asking for the point size that fills
+  // the same number of canvas pixels.  Deliberately NOT applied to the main
+  // output and input views: those are real text views, where a point size
+  // should mean a point size, and they look right already.
+  dPoints = dPoints * 96.0 / 72.0;
+#endif
+
+  spec.pixelHeight        = MulDiv (dPoints, srf->dpi (), 72);
   spec.weight             = Bold ? FW_BOLD : FW_NORMAL;
   spec.italic             = Italic    != 0;
   spec.underline          = Underline != 0;

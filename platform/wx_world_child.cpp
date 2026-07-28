@@ -543,7 +543,9 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                 m_inputPassword->InvalidateBestSize();
                 m_inputPassword->Refresh();
             }
-            Layout();  // re-measure input bar height for the new font size
+            // Re-measure the bar against the zoomed line height (see setInputFont).
+            m_inputBarLines = 0;
+            UpdateInputBarHeight();   // calls Layout()
         }
         CallAfter([this]() {
             if (!m_doc || !m_output) return;
@@ -1003,15 +1005,28 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // linkMenu destructs here, automatically cleaning up all Bind() handlers.
     };
 
+    // The command bar is MULTI-LINE, matching Windows: CSendView::PreCreateWindow
+    // (sendvw.cpp:310) creates the command window with ES_MULTILINE, so a paste
+    // containing newlines simply sits in the box until the user presses Return.
+    // A single-line control here had to do something with those newlines, and
+    // what it did was send them — see the OnInputKeyDown Return comment.
+    //
+    // wxTE_DONTWRAP keeps the old single-line feel for long commands: they scroll
+    // horizontally rather than wrapping onto a second visual row (which would
+    // also make GetNumberOfLines() count display rows, breaking the height
+    // calculation in UpdateInputBarHeight).
     m_input = new wxTextCtrl(this, ID_INPUT, wxEmptyString,
                              wxDefaultPosition, wxDefaultSize,
-                             wxTE_PROCESS_ENTER);
+                             wxTE_MULTILINE | wxTE_DONTWRAP | wxTE_PROCESS_ENTER);
     sizer->Add(m_input, 0, wxEXPAND);
 
     // Fire OnPluginCommandChanged per-keystroke — mirrors CSendView::OnChange()
     // in sendvw.cpp (line 1175).  Re-entrancy guard prevents recursion if a
     // plugin callback itself modifies the command bar.
     m_input->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
+        // Grow/shrink the bar to fit however many lines are now in it.  Runs
+        // even without a document so a paste is visible before connecting.
+        UpdateInputBarHeight();
         if (!m_doc) return;
         static thread_local bool s_firing = false;
         if (!s_firing) {
@@ -1059,6 +1074,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                          m_doc->m_input_font_italic != 0);
         }
     }
+
+    // Pin the bar to one line now.  A multi-line wxTextCtrl's default best size
+    // is several lines tall, so without this the command bar starts out as a
+    // large empty box and only snaps to one line at the first text change.
+    UpdateInputBarHeight();
     // Wire the same send/key handlers directly to m_inputPassword.
     m_inputPassword->Bind(wxEVT_TEXT_ENTER,
         [this](wxCommandEvent& e) { OnInputEnter(e); });
@@ -1169,10 +1189,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // Bind directly to m_input so we only see input-bar key events.
     m_input->Bind(wxEVT_KEY_DOWN, &CWorldChildFrame::OnInputKeyDown, this);
 
-    // ── Multi-line paste splitter ──────────────────────────────────────────
-    // If the clipboard contains newlines, send each complete line as a MUD
-    // command and leave the trailing fragment in the input bar for review.
-    m_input->Bind(wxEVT_TEXT_PASTE, &CWorldChildFrame::OnInputPaste, this);
+    // Paste is deliberately NOT intercepted.  wxTextCtrl's own paste inserts the
+    // clipboard text — newlines and all — which is exactly what Windows does.
+    // Sending a multi-line clipboard is a separate, explicit command:
+    // Edit ▸ Paste To World (ID_EDIT_PASTETOMUSH, Shift+Ctrl+V), which honours
+    // the world's Paste preferences (preamble/postamble, per-line wrappers,
+    // delay, echo and Confirm Before Pasting).
 
     // ── Output pane: redirect printable keys to the input bar ─────────────
     // When the user clicks in the output pane and then types, we want the
@@ -3336,14 +3358,20 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         ApplyHistRSearch(false);
     }
 
-    // Return / Enter in an empty input field.
-    // On macOS, wxEVT_TEXT_ENTER is not fired for empty wxTextCtrl, so pressing
-    // Return on a blank line never calls OnInputEnter — sending the empty line
-    // (which some MUDs use to keep the connection alive) becomes impossible.
-    // Detect it here and call OnInputEnter directly.
+    // Return / Enter ALWAYS sends, and never inserts a newline — including with
+    // Shift held.  That is precisely CSendView::OnChar (sendvw.cpp:315): it tests
+    // `nChar == VK_RETURN` and sends, with no modifier check and no path that
+    // lets a Return reach the multi-line edit control.  So on Windows, too, the
+    // only way to get a newline into the command window is to paste one.
+    //
+    // The command bar is multi-line here as well, so this must be handled at
+    // key-down and consumed: letting it through to the control would insert a
+    // line break instead of sending.  (It also covers the empty-field case,
+    // where wxOSX does not fire wxEVT_TEXT_ENTER at all, so a blank Return —
+    // which some MUDs use as a keep-alive — would otherwise be unsendable.)
     if ((code == WXK_RETURN || code == WXK_NUMPAD_ENTER) &&
         !evt.RawControlDown() && !evt.AltDown() && !evt.MetaDown()) {
-        if (inp && inp->GetValue().IsEmpty()) {
+        if (inp == m_input || (inp && inp->GetValue().IsEmpty())) {
             wxCommandEvent dummy(wxEVT_TEXT_ENTER);
             OnInputEnter(dummy);
             return;  // consume — don't insert a newline
@@ -3353,73 +3381,33 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     evt.Skip();
 }
 
-// ── OnInputPaste ──────────────────────────────────────────────────────────
-// Multi-line paste splitter.
+// ── UpdateInputBarHeight ──────────────────────────────────────────────────
+// The command bar holds multiple lines (Windows: ES_MULTILINE, sendvw.cpp:310)
+// but should still LOOK like a one-line bar until it actually has more than one
+// line in it.  Windows solves this by making the command window a splitter pane
+// the user drags; there is no such splitter here, so instead the bar grows to
+// fit its content and shrinks straight back when the content is sent.
 //
-// When the user pastes text that contains newlines, split it at each '\n'.
-// Every line except the last is sent as a MUD command (exactly as if the user
-// had typed it and pressed Enter); the last fragment is left in the input bar
-// so the user can review and edit it before sending.  Single-line pastes fall
-// through to the normal wxTextCtrl paste behaviour.
-//
-// Any text already in the input bar is prepended to the first pasted line:
-//   typed "say " + paste "hello\nworld"
-//   → sends "say hello", leaves "world" in the input bar.
-void CWorldChildFrame::OnInputPaste(wxClipboardTextEvent& evt)
+// Only a paste can put a newline in here — Return always sends (OnInputKeyDown),
+// exactly as CSendView::OnChar does — so in normal typing this never fires.
+void CWorldChildFrame::UpdateInputBarHeight()
 {
-    wxString clipText;
-    if (wxTheClipboard->Open()) {
-        if (wxTheClipboard->IsSupported(wxDF_UNICODETEXT) ||
-            wxTheClipboard->IsSupported(wxDF_TEXT)) {
-            wxTextDataObject data;
-            wxTheClipboard->GetData(data);
-            clipText = data.GetText();
-        }
-        wxTheClipboard->Close();
-    }
+    if (!m_input) return;
 
-    // Normalise CRLF / CR → LF.
-    clipText.Replace(wxT("\r\n"), wxT("\n"));
-    clipText.Replace(wxT("\r"),   wxT("\n"));
+    // wxTE_DONTWRAP means GetNumberOfLines() counts real lines, not display rows.
+    const int wanted = std::max(1, std::min(m_input->GetNumberOfLines(),
+                                            (int) kMaxInputBarLines));
+    if (wanted == m_inputBarLines) return;   // nothing to do — avoids relayout churn
+    m_inputBarLines = wanted;
 
-    if (!clipText.Contains('\n')) {
-        evt.Skip();   // single-line: let wxWidgets insert it normally
-        return;
-    }
+    // Derive the chrome (border + internal margins) from the control itself
+    // rather than hard-coding it, so it stays right across themes and DPI.
+    const int lineH  = std::max(1, m_input->GetCharHeight());
+    const int chrome = std::max(0, m_input->GetSize().y -
+                                   m_input->GetClientSize().y) + 4;
 
-    // Suppress the default paste — we handle the text ourselves.
-    // (Not calling evt.Skip() suppresses the default paste on wxTextCtrl.)
-
-    wxArrayString lines = wxSplit(clipText, '\n');
-
-    // Prepend whatever the user had already typed to the first pasted line.
-    wxString prefix = m_input->GetValue();
-    m_input->Clear();
-    m_histIdx = -1; ApplyHistRSearch(false);  // exit history browsing
-
-    for (size_t i = 0; i + 1 < lines.size(); ++i) {
-        wxString cmd = (i == 0) ? prefix + lines[i] : lines[i];
-
-        // Track in history (dedup consecutive identical entries).
-        if (!cmd.IsEmpty()) {
-            if (m_history.empty() || m_history.back() != cmd)
-                m_history.push_back(cmd);
-            if ((int)m_history.size() > HistoryLimit())
-                m_history.erase(m_history.begin());
-        }
-
-        if (!m_doc) continue;
-        CString cCmd(cmd.ToUTF8().data());
-        bool bOmit = false;
-        m_doc->EvaluateCommand(cCmd, /*countThem=*/true, bOmit);
-    }
-
-    // Flush output from alias callbacks / triggers before leaving.
-    if (m_doc) m_doc->UpdateAllViews(nullptr);
-
-    // Leave the trailing fragment in the input bar.
-    m_input->SetValue(lines.back());
-    m_input->SetInsertionPointEnd();
+    m_input->SetMinSize(wxSize(-1, wanted * lineH + chrome));
+    Layout();
 }
 
 // ── OnInputEnter ──────────────────────────────────────────────────────────
@@ -4166,7 +4154,11 @@ void CWorldChildFrame::setInputFont(const char* face, int pointSize,
         m_inputPassword->InvalidateBestSize();
         m_inputPassword->Refresh();
     }
-    Layout();
+    // The bar's height is a pinned min size (UpdateInputBarHeight), which wins
+    // over best size — so it has to be recomputed against the new line height,
+    // not just invalidated.  Clearing the cached line count forces that.
+    m_inputBarLines = 0;
+    UpdateInputBarHeight();   // calls Layout()
 }
 
 // ── output-pane management (P2 output family) ────────────────────────────────

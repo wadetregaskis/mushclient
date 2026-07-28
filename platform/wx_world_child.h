@@ -257,6 +257,14 @@ private:
     wxStaticText* m_findLabel    = nullptr;   // "N of M" match count label
     wxCheckBox*   m_findCaseBox  = nullptr;   // "Aa" case-sensitive toggle
 
+    // ── Command bar sizing ─────────────────────────────────────────────────
+    // The bar is multi-line (like Windows' ES_MULTILINE command window) and
+    // grows to fit pasted text, up to this many lines; past that it scrolls.
+    // enum, not `static const int`: std::min binds a const reference, which
+    // odr-uses the constant and would need an out-of-line definition.
+    enum { kMaxInputBarLines = 8 };
+    int                   m_inputBarLines = 0;  // 0 = height not yet applied
+
     // ── Command history ────────────────────────────────────────────────────
     std::vector<wxString> m_history;           // sent commands, oldest first
     int                   m_histIdx = -1;       // -1 = not browsing; ≥0 = index into m_history
@@ -353,8 +361,8 @@ private:
     // map and fire the command if it matches.  Returns true if matched.
     bool FireAcceleratorIfMatch(wxKeyEvent& evt);
     void FireAcceleratorCommand(WORD nID);
-    // Multi-line paste: split at newlines, send all but the last fragment.
-    void OnInputPaste(wxClipboardTextEvent& evt);
+    // Grow/shrink the multi-line command bar to fit its content (1..8 lines).
+    void UpdateInputBarHeight();
     // Frame is about to close — delete the doc (disconnects + frees memory).
     void OnClose(wxCloseEvent& evt);
     // 100 ms world timer: process MUSHclient timers and flush output.

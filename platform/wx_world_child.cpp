@@ -525,8 +525,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // zoom also updates the input bar typeface.
         {
             const wxFont& outFont = m_output->GetCurrentFont();
-            if (m_input)         { m_input->SetFont(outFont);         m_input->Refresh(); }
-            if (m_inputPassword) { m_inputPassword->SetFont(outFont); m_inputPassword->Refresh(); }
+            // InvalidateBestSize for the same reason as setOutputFont: wxOSX
+            // does not drop the cached best size on SetFont, so without it the
+            // bar keeps its old height and clips the zoomed text.
+            if (m_input) {
+                m_input->SetFont(outFont);
+                m_input->InvalidateBestSize();
+                m_input->Refresh();
+            }
+            if (m_inputPassword) {
+                m_inputPassword->SetFont(outFont);
+                m_inputPassword->InvalidateBestSize();
+                m_inputPassword->Refresh();
+            }
             Layout();  // re-measure input bar height for the new font size
         }
         CallAfter([this]() {
@@ -4119,8 +4130,22 @@ void CWorldChildFrame::setInputFont(const char* face, int pointSize,
     wxFont f(size, wxFONTFAMILY_TELETYPE, style, weight,
              /*underline=*/false, faceName);
     if (!f.IsOk()) return;
-    if (m_input)         { m_input->SetFont(f);         m_input->Refresh(); }
-    if (m_inputPassword) { m_inputPassword->SetFont(f); m_inputPassword->Refresh(); }
+    // InvalidateBestSize() is not optional.  These bars sit in the frame's
+    // vertical sizer at proportion 0, so their height comes from the control's
+    // cached best size -- and wxOSX does not invalidate that cache on SetFont.
+    // Without this the font changes but the bar keeps its old height, clipping
+    // the taller text to a sliver, and the next relayout (a window resize, say)
+    // restores the stale height even if this Layout() happened to look right.
+    if (m_input) {
+        m_input->SetFont(f);
+        m_input->InvalidateBestSize();
+        m_input->Refresh();
+    }
+    if (m_inputPassword) {
+        m_inputPassword->SetFont(f);
+        m_inputPassword->InvalidateBestSize();
+        m_inputPassword->Refresh();
+    }
     Layout();
 }
 

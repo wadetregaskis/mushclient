@@ -930,10 +930,22 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     mb->Append(fileMenu, wxT("&File"));
 
     // ── Edit menu ─────────────────────────────────────────────────────────
-    // Standard IDs (wxID_COPY etc.) are routed automatically by wxWidgets to
+    // Standard IDs (wxID_CUT etc.) are routed automatically by wxWidgets to
     // the focused window; no explicit handler is needed in our menu dispatcher.
+    //
+    // Copy is the exception, and deliberately uses the canonical MFC id instead.
+    // A menu item with a STANDARD id gets AppKit's native action (copy:), and
+    // AppKit then enables or disables it by asking the first responder whether it
+    // can copy — overriding whatever wx's update-UI handler decided.  The first
+    // responder here is always the command bar (nothing ever focuses the output
+    // pane), so with text selected in the OUTPUT window the item was validated
+    // against an empty command bar and greyed out, and clicking it would have
+    // gone to the command bar rather than to us.  A non-standard id keeps the
+    // item under wx's control, where CMUSHclientDoc::EditCopyTarget decides.
+    // Verified: with the standard id the item stays grey however the world's
+    // selection looks; with this one it enables and copies the selection.
     wxMenu* editMenu = new wxMenu();
-    editMenu->Append(wxID_COPY,      wxT("Copy\tCtrl+C"));
+    editMenu->Append(ID_EDIT_COPY,   wxT("Copy\tCtrl+C"));
     editMenu->Append(wxID_CUT,       wxT("Cut\tCtrl+X"));
     editMenu->Append(wxID_PASTE,     wxT("Paste\tCtrl+V"));
     editMenu->AppendSeparator();
@@ -1259,7 +1271,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             }
         } else if (id == ID_VIEW_RESET_TOOLBARS) {
             evt.Enable(frame->GetActiveChild() != nullptr);
-        } else if (id == wxID_COPY || id == 32974 /*ID_EDIT_COPYASHTML*/) {
+        } else if (id == ID_EDIT_COPY || id == 32974 /*ID_EDIT_COPYASHTML*/) {
             // Both share CMUSHView::OnUpdateNeedSelectionForCopy on Windows:
             // enabled when the output window has a selection, or failing that
             // the command bar does.  The same call decides what Copy acts on
@@ -1287,6 +1299,22 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     wxTheApp->Bind(wxEVT_MENU,
                    [](wxCommandEvent&) { wx_quit_application(); },
                    wxID_EXIT);
+
+    // Copy, same argument, for the same reason: it is on a non-standard id (see
+    // the Edit menu) so AppKit no longer routes it to the focused text control
+    // for us.  A modal bridged dialog is its own top-level window, and a menu
+    // event it does not handle need not reach the MDI frame at all — wxTheApp is
+    // the last link in the chain, so catch it here and copy from whatever field
+    // has the focus.  The frame's own handler runs first when it is frontmost, so
+    // this only fires for the windows the frame cannot speak for.
+    wxTheApp->Bind(wxEVT_MENU,
+                   [](wxCommandEvent& evt) {
+                       if (auto* te = dynamic_cast<wxTextCtrl*>(wxWindow::FindFocus()))
+                           te->Copy();
+                       else
+                           evt.Skip();
+                   },
+                   ID_EDIT_COPY);
 
     // ── Menu event routing via Bind() ─────────────────────────────────────
     frame->Bind(wxEVT_MENU, [frame](wxCommandEvent& evt) {
@@ -1399,8 +1427,23 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         // focus — but nothing ever calls SetFocus() on COutputPane, so the test
         // was permanently false and Copy always consulted the (unselected)
         // command bar and did nothing.
-        if (id == wxID_COPY) {
+        if (id == ID_EDIT_COPY) {
+            // Taking Copy off wxID_COPY (see the comment where the Edit menu is
+            // built) also gives up AppKit's free "copy from whatever text control
+            // has the focus", which is what made Cmd+C work inside a bridged
+            // dialog's fields.  Hand that case back: if the frontmost window is
+            // not this world's, the world has no selection to speak for.
+            wxWindow* activeTop = wxGetActiveWindow();
             auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
+            const bool worldIsFrontmost =
+                (activeTop == nullptr) || (activeTop == child) || (activeTop == frame);
+
+            if (!worldIsFrontmost) {
+                if (auto* te = dynamic_cast<wxTextCtrl*>(wxWindow::FindFocus()))
+                    te->Copy();
+                return;
+            }
+
             CMUSHclientDoc* doc = child ? child->GetDoc() : nullptr;
             switch (doc ? doc->EditCopyTarget() : eCopyNothing) {
             case eCopyOutputSelection:

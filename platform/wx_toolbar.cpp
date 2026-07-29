@@ -67,7 +67,8 @@ const TbButton kStandard[] = {
     { ID_EDIT_NOTESWORKAREA, eFwd, 40001,          false, "Notepad" },
     { 0,                    eFwd, 0,               false, nullptr },
     { 0xE401 /*ID_EDIT_CUT*/,   eFwd, wxID_CUT,    false, "Cut" },
-    { 0xE402 /*ID_EDIT_COPY*/,  eFwd, wxID_COPY,   false, "Copy" },
+    // Copy is deliberately NOT wxID_COPY — see the Edit menu in wx_mfc_impl.cpp.
+    { 0xE402 /*ID_EDIT_COPY*/,  eFwd, ID_EDIT_COPY, false, "Copy" },
     { 0xE403 /*ID_EDIT_PASTE*/, eFwd, wxID_PASTE,  false, "Paste" },
     { 0,                    eFwd, 0,               false, nullptr },
     { 0xE140 /*ID_APP_ABOUT*/, eFwd, wxID_ABOUT,   false, "About" },

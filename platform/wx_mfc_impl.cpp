@@ -1504,16 +1504,21 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                     // which makes the toggle look like it did nothing.  Confirm
                     // the new state in the output window and say where the real
                     // output will appear.
+                    //
+                    // ASCII only.  Note() takes bytes and the output window
+                    // decodes them with the *world's* encoding, so a UTF-8
+                    // em-dash in an app-generated string shows up as "â€”" in
+                    // any world that is not set to UTF-8.
                     if (id == 32971)
                         doc->Note(state
-                            ? "[Debug] Incoming/outgoing packet logging ON — once "
+                            ? "[Debug] Incoming/outgoing packet logging ON - once "
                               "connected, raw bytes (including telnet IAC "
                               "negotiation and other invisible protocol traffic) "
                               "appear in a \"Packet debug\" notepad window."
                             : "[Debug] Packet logging OFF.");
                     else
                         doc->Note(state
-                            ? "[Trace] ON — trigger, alias and timer matches will "
+                            ? "[Trace] ON - trigger, alias and timer matches will "
                               "be shown here as TRACE: lines."
                             : "[Trace] OFF.");
                 }

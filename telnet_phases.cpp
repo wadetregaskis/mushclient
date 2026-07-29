@@ -57,7 +57,7 @@ void CMUSHclientDoc::Phase_ESC (const unsigned char c)
     // (ESC]4;...).  In CLI mode we have no window title to set, so we simply
     // swallow the entire sequence.
 #ifndef _WIN32
-    dbg("OSC sequence started — will discard until BEL/ST");
+    dbg("OSC sequence started - will discard until BEL/ST");
 #endif
     m_phase = HAVE_OSC;
     }
@@ -310,10 +310,10 @@ void CMUSHclientDoc::Phase_WILL (const unsigned char c)
           if (c == TELOPT_COMPRESS2)
             {
             m_bSupports_MCCP_2 = true;
-            dbg("MCCP2 compression negotiated — stream will compress after SB");
+            dbg("MCCP2 compression negotiated - stream will compress after SB");
             }
           else
-            dbg("MCCP1 compression negotiated — stream will compress after SB");
+            dbg("MCCP1 compression negotiated - stream will compress after SB");
           }
         else
           {   // not enough memory or already agreed to MCCP 2 - no compression
@@ -609,7 +609,7 @@ void CMUSHclientDoc::Phase_SUBNEGOTIATION_IAC (const unsigned char c)
       {
       // Show up to 200 chars of the payload
       string preview = m_IAC_subnegotiation_data.substr(0, 200);
-      if (m_IAC_subnegotiation_data.size() > 200) preview += "…";
+      if (m_IAC_subnegotiation_data.size() > 200) preview += "...";
       dbg("SB %s  %s", telopt_name(m_subnegotiation_type), preview.c_str());
       }
     else

@@ -168,7 +168,7 @@ void CMUSHclientDoc::DebugHelper(const CString strAction, CString strArgument)
             ColourNote(SCRIPTERRORFORECOLOUR, "", "Warning: All timers disabled.");
         if (m_iConnectPhase != eConnectConnectedToMud)
             ColourNote(SCRIPTERRORFORECOLOUR, "",
-                       "Warning: Not connected — some timers may not fire.");
+                       "Warning: Not connected - some timers may not fire.");
         Note("");
 
         // Sort by fire time
@@ -199,7 +199,7 @@ void CMUSHclientDoc::DebugHelper(const CString strAction, CString strArgument)
                                    tm->fAtSecond + tm->fEverySecond);
             if (tm->tFireTime.GetTime() > 0) {
                 CmcDateTimeSpan ts = tm->tFireTime - now;
-                line += TFormat(" — fires in %8.1f s", ts.GetTotalSeconds());
+                line += TFormat(" - fires in %8.1f s", ts.GetTotalSeconds());
             }
             ColourNote(tm->bEnabled ? "white" : "gray", "", line);
         }
@@ -343,13 +343,13 @@ void CMUSHclientDoc::DebugHelper(const CString strAction, CString strArgument)
         ColourNote(SCRIPTERRORFORECOLOUR, "",
                    TFormat("Unknown debug command: \"%s\"", (LPCTSTR)strAction));
         Note("Available commands:");
-        Note("  triggerlist   — list triggers");
-        Note("  aliaslist     — list aliases");
-        Note("  timerlist     — list timers");
-        Note("  variablelist  — list variables");
-        Note("  telnetlist    — show telnet negotiation");
-        Note("  pluginlist    — list plugins");
-        Note("  info          — world summary");
+        Note("  triggerlist   - list triggers");
+        Note("  aliaslist     - list aliases");
+        Note("  timerlist     - list timers");
+        Note("  variablelist  - list variables");
+        Note("  telnetlist    - show telnet negotiation");
+        Note("  pluginlist    - list plugins");
+        Note("  info          - world summary");
     }
 
     m_CurrentPlugin = pSavedPlugin;

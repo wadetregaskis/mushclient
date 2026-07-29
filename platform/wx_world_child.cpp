@@ -2169,7 +2169,7 @@ bool CWorldChildFrame::StartLogging(const std::string& path)
     std::string worldName = m_doc
         ? static_cast<const char*>(m_doc->m_mush_name) : "Unknown";
     fprintf(m_logFile,
-            "===== Log started %s — World: %s =====\n",
+            "===== Log started %s - World: %s =====\n",
             ts, worldName.c_str());
     fflush(m_logFile);
     return true;

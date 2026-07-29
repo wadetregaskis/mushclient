@@ -467,7 +467,7 @@ static void PortCreateWorldScriptEngine(CMUSHclientDoc& doc)
         strLanguage = "lua";         // table default
     if (strLanguage != "lua") {
         fprintf(stderr, "[world load] scripting language \"%s\" is not supported "
-                        "headless — script not loaded\n",
+                        "headless - script not loaded\n",
                 (const char*)doc.m_strLanguage);
         return;
     }
@@ -685,7 +685,7 @@ void CMUSHclientDoc::OnScriptFileChanged(const bool /*bForce*/)
 
     m_bInScriptFileChanged = true;
 
-    fprintf(stderr, "[script] \"%s\" changed — reloading\n",
+    fprintf(stderr, "[script] \"%s\" changed - reloading\n",
             (const char*)m_strScriptFilename);
 
     delete m_ScriptEngine;

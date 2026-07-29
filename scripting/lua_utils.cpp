@@ -1753,7 +1753,7 @@ static int shell_execute (lua_State *L)
       err = "The specified path was not found."; 
       break;
     case ERROR_BAD_FORMAT : 
-      err = "The .exe file is invalid (non-Win32� .exe or error in .exe image)."; 
+      err = "The .exe file is invalid (non-Win32 .exe or error in .exe image).";
       break;
     case SE_ERR_ACCESSDENIED : 
       err = "The operating system denied access to the specified file."; 

@@ -84,6 +84,26 @@ mc_test(test_connection)
 # non-full mushcore; that reason is gone.)
 mc_test(test_gdi_headless)
 
+# ── Source lint: no non-ASCII in narrow string literals ─────────────────────
+# Note()/Tell()/DisplayMsg() take BYTES, decoded with the world's encoding — so
+# a UTF-8 em dash in an app-generated message renders as "â€”" in any world that
+# is not set to UTF-8 (the default).  Invisible in review; only visible in a
+# running app.  wxT()/wide literals are exempt, so UI text keeps real typography.
+# The second test is the checker's own fixture: it must still flag a planted
+# violation and still ignore every exempt shape, so the lint cannot rot into a
+# vacuous pass.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME lint_ascii_literals
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_ascii_literals.py
+                     ${CMAKE_SOURCE_DIR})
+    add_test(NAME lint_ascii_literals_selftest
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_ascii_literals.py
+                     --selftest)
+endif()
+
 # ── In-app conformance selftests ────────────────────────────────────────────
 # The hidden --pal-*-selftest flags run inside the real app binary (real wx
 # adapter, real transport, real world.Window* engine) and exit before the GUI

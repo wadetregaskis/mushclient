@@ -165,7 +165,7 @@ bool CMUSHclientDoc::CreateScriptEngine ()
   if (strLanguage != "lua")
     {
     fprintf (stderr, "[world load] scripting language \"%s\" is not supported "
-                     "headless — script not loaded\n",
+                     "headless - script not loaded\n",
              static_cast<const char*> (m_strLanguage));
     return false;
     }

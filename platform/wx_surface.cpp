@@ -1019,7 +1019,7 @@ int RunPalSurfaceSelfTest() {
         printf("    (border=%06x fill=%06x outside=%06x)\n",
                (unsigned)shBorder, (unsigned)shFill, (unsigned)shOut);
     stCheck(near(shBorder, kWhite) && shFill == kGreen && shOut == kBlack,
-            "shape(Rect) strokes and fills (stroke ±2/channel)");
+            "shape(Rect) strokes and fills (stroke +/-2/channel)");
 
     // 10. floodFill border + surface modes (review claim: wxDC::FloodFill is a
     // no-op on wxOSX — this check is the empirical arbiter).

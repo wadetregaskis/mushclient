@@ -13,6 +13,7 @@
 #include "doc.h"
 #include "scripting/errors.h"
 #include "pal/iworldview.h"
+#include "pal/scroll_geometry.h"
 
 #include <algorithm>
 #include <cstring>
@@ -863,6 +864,69 @@ TEST(EditCopy, NoViewAttachedMeansNothingToCopy)
     CMUSHclientDoc doc; make_doc(doc);
     doc.m_pWorldView = nullptr;
     EXPECT_EQ((int) eCopyNothing, (int) doc.EditCopyTarget());
+}
+
+// ── isScrolledToBottom ────────────────────────────────────────────────────
+// The output pane pins itself to the newest line while "at the bottom", and
+// the four hand-written copies of that test all carried a one-row tolerance to
+// paper over the fact that they reconstructed the document height instead of
+// asking the scrollbar.  The tolerance made a one-row scroll up read as "still
+// at the bottom", so auto-scroll stayed on and the next line of output yanked
+// the view back down — the wheel "resisting" unless you scrolled harder.
+//
+// Units: 15 px rows, a 300 px viewport (20 rows), so a 100-row document is
+// 1500 px and the bottom-most scroll position is (1500 - 300) / 15 = row 80.
+
+TEST(ScrollGeometry, BottomMostPositionIsAtTheBottom)
+{
+    EXPECT_TRUE(pal::isScrolledToBottom(80, 15, 300, 1500));
+}
+
+TEST(ScrollGeometry, OneRowUpIsNotAtTheBottom)
+{
+    // THE regression.  With the old "- one row" slack this answered true, which
+    // is what made the pane snap back.
+    EXPECT_FALSE(pal::isScrolledToBottom(79, 15, 300, 1500));
+}
+
+TEST(ScrollGeometry, WellBackInTheScrollbackIsNotAtTheBottom)
+{
+    EXPECT_FALSE(pal::isScrolledToBottom(0,  15, 300, 1500));
+    EXPECT_FALSE(pal::isScrolledToBottom(40, 15, 300, 1500));
+}
+
+TEST(ScrollGeometry, PastTheBottomStillCountsAsAtTheBottom)
+{
+    // Can happen transiently while the buffer is being trimmed: the position is
+    // clamped a moment later, and reporting "not at the bottom" in between
+    // would freeze the pane for no reason.
+    EXPECT_TRUE(pal::isScrolledToBottom(999, 15, 300, 1500));
+}
+
+TEST(ScrollGeometry, PartialLastRowIsReachableSoRoundsUp)
+{
+    // 1495 px of document, 300 px viewport: 1195 px hidden = 79.67 rows.  Row 80
+    // is a real position (it shows the tail, with the top row part-scrolled), so
+    // the maximum must round UP.  Truncating would leave the pane one row short
+    // of the bottom for ever, and auto-scroll would never re-engage.
+    EXPECT_EQ(80, pal::maxScrollUnit(15, 300, 1495));
+    EXPECT_TRUE (pal::isScrolledToBottom(80, 15, 300, 1495));
+    EXPECT_FALSE(pal::isScrolledToBottom(79, 15, 300, 1495));
+}
+
+TEST(ScrollGeometry, DocumentShorterThanTheViewportIsAlwaysAtTheBottom)
+{
+    // Nothing to scroll: a nearly-empty world must not come up frozen.
+    EXPECT_EQ(0, pal::maxScrollUnit(15, 300, 150));
+    EXPECT_TRUE(pal::isScrolledToBottom(0, 15, 300, 150));
+}
+
+TEST(ScrollGeometry, UnmeasuredPaneIsAtTheBottom)
+{
+    // Before the first font measurement the row height is 0.  Answer true, or a
+    // brand-new window would freeze before its first line ever arrived.
+    EXPECT_TRUE(pal::isScrolledToBottom(0, 0, 300, 1500));
+    EXPECT_EQ(0, pal::maxScrollUnit(0, 300, 1500));
 }
 
 MC_TEST_MAIN()

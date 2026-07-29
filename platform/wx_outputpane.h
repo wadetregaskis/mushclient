@@ -202,6 +202,13 @@ public:
     bool IsAutoScrolling() const { return m_autoScroll; }
     bool IsPaused()        const { return !m_autoScroll; }
 
+    // Recompute m_autoScroll from where the view actually is, and fire
+    // m_fn_autoscroll_changed if it flipped.  EVERY user-scroll path (wheel,
+    // scrollbar, keys, page up/down) funnels through here, so they cannot
+    // disagree about what counts as "at the bottom" — they used to, four ways.
+    // The predicate itself is pal::isScrolledToBottom (pal/scroll_geometry.h).
+    void RefreshAutoScrollFromPosition();
+
     // Controls whether scrolling up engages the freeze (stops auto-scroll).
     // When false the pane always keeps auto-scrolling; new output is always
     // visible regardless of where the user has scrolled.  Mirrors the world's

@@ -9,6 +9,7 @@
 #include <algorithm>
 // compat.h provides RGB(), GetRValue(), GetGValue(), GetBValue().
 #include "platform/compat.h"
+#include "pal/scroll_geometry.h"   // pal::isScrolledToBottom — the shared predicate
 
 // Forward declarations for font variant helpers defined after the constructor.
 static wxFont MakeFontVariant(const wxFont& base, bool bold, bool underline, bool italic = false);
@@ -639,10 +640,34 @@ void COutputPane::ScrollPage(int direction)
     Scroll(scrollX, newY);
 
     // Re-evaluate whether we're now at the bottom.
-    GetViewStart(nullptr, &newY);   // read back clamped position
-    int totalH = m_totalVisualRows * m_lineH;
-    bool wasAuto = m_autoScroll;
-    m_autoScroll = (unitH > 0) && (newY * unitH + viewH >= totalH - m_lineH);
+    RefreshAutoScrollFromPosition();
+}
+
+// ── RefreshAutoScrollFromPosition ─────────────────────────────────────────
+// The single answer to "should new output still drag the view down?", shared by
+// every path the user can scroll through.  See pal/scroll_geometry.h for why it
+// asks the scrollbar rather than recomputing the document height: the two used
+// to disagree by up to a row, and the fudge that hid that gave the pane a
+// one-row dead zone at the bottom where a gentle scroll up was ignored and the
+// next line of output snapped the view back down.
+void COutputPane::RefreshAutoScrollFromPosition()
+{
+    int scrollY = 0;
+    GetViewStart(nullptr, &scrollY);
+    int unitH = 0;
+    GetScrollPixelsPerUnit(nullptr, &unitH);
+    int clientH = 0;
+    GetClientSize(nullptr, &clientH);
+
+    const bool atBottom = pal::isScrolledToBottom(scrollY, unitH, clientH,
+                                                  GetVirtualSize().y);
+
+    const bool wasAuto = m_autoScroll;
+    // With auto-freeze disabled (world option m_bAutoFreeze) the pane never
+    // freezes: new output is always visible wherever the user has scrolled to.
+    // Only the scrollbar path used to honour that; wheel and keyboard scrolling
+    // froze the pane anyway.
+    m_autoScroll = atBottom || !m_allowAutoFreeze;
     if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
         m_fn_autoscroll_changed(m_autoScroll);
 }
@@ -1507,22 +1532,7 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
 void COutputPane::OnScrollWinUpdate(wxScrollWinEvent& evt)
 {
     evt.Skip();
-    CallAfter([this]() {
-        int scrollY;
-        GetViewStart(nullptr, &scrollY);
-        int unitH;
-        GetScrollPixelsPerUnit(nullptr, &unitH);
-        int viewH = TextViewportH();
-        int totalH = m_totalVisualRows * m_lineH;
-        bool wasAuto = m_autoScroll;
-        bool atBottom = (unitH > 0) &&
-                        (scrollY * unitH + viewH >= totalH - m_lineH);
-        // If auto-freeze is disabled the pane stays in auto-scroll mode
-        // regardless of scroll position; new output always scrolls into view.
-        m_autoScroll = atBottom || !m_allowAutoFreeze;
-        if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
-            m_fn_autoscroll_changed(m_autoScroll);
-    });
+    CallAfter([this]() { RefreshAutoScrollFromPosition(); });
 }
 
 void COutputPane::OnSize(wxSizeEvent& evt)
@@ -2203,19 +2213,7 @@ void COutputPane::OnMouseWheel(wxMouseEvent& evt)
     }
 
     evt.Skip();
-    CallAfter([this]() {
-        int scrollY;
-        GetViewStart(nullptr, &scrollY);
-        int unitH;
-        GetScrollPixelsPerUnit(nullptr, &unitH);
-        int viewH = TextViewportH();
-        int totalH = m_totalVisualRows * m_lineH;
-        bool wasAuto = m_autoScroll;
-        m_autoScroll = (unitH > 0) &&
-                       (scrollY * unitH + viewH >= totalH - m_lineH);
-        if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
-            m_fn_autoscroll_changed(m_autoScroll);
-    });
+    CallAfter([this]() { RefreshAutoScrollFromPosition(); });
 }
 
 void COutputPane::OnKeyDown(wxKeyEvent& evt)
@@ -2299,22 +2297,8 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
                         code == WXK_UP        || code == WXK_DOWN);
     evt.Skip();
 
-    if (isScrollKey) {
-        CallAfter([this]() {
-            int scrollY;
-            GetViewStart(nullptr, &scrollY);
-            int unitH;
-            GetScrollPixelsPerUnit(nullptr, &unitH);
-            int clientH;
-            GetClientSize(nullptr, &clientH);
-            int totalH = m_totalVisualRows * m_lineH;
-            bool wasAuto = m_autoScroll;
-            m_autoScroll = (unitH > 0) &&
-                           (scrollY * unitH + clientH >= totalH - m_lineH);
-            if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
-                m_fn_autoscroll_changed(m_autoScroll);
-        });
-    }
+    if (isScrollKey)
+        CallAfter([this]() { RefreshAutoScrollFromPosition(); });
 }
 
 // ── Context menu handlers ─────────────────────────────────────────────────────

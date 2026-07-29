@@ -391,6 +391,16 @@ private:
     // Returns the currently-visible input control (m_input or m_inputPassword).
     wxTextCtrl* ActiveInput() const;
 
+    // ── Wrap column + NAWS ─────────────────────────────────────────────────
+    // Recompute the engine's wrap column from the visible text width — but only
+    // when the world asked for that (world option auto_wrap_window_width), which
+    // is the gate Windows applies in CMUSHView::AutoWrapWindowWidth — then tell
+    // the MUD the size.  Every trigger (frame resize, font/zoom change, a plugin
+    // moving the text rectangle) goes through here so they cannot disagree.
+    // skipIfUnchanged suppresses a redundant NAWS packet when nothing moved.
+    // Returns false if the pane has no usable metrics yet.
+    bool ApplyWrapColumnAndNAWS(bool skipIfUnchanged = false);
+
     // Switch the input bar between normal and password (masked) mode.
     // Called whenever m_doc->m_bNoEcho changes.
     void ApplyNoEcho(bool noEcho);

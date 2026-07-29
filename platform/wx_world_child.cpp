@@ -558,8 +558,6 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (paneW <= 0 || paneH <= 0) return;
             int cols = paneW / charW;
             int rows = paneH / lineH;
-            int textCols = EffectiveTextCols(m_doc, paneW, charW);
-            m_doc->m_nWrapColumn    = (unsigned short)std::max(1, std::min(textCols, 65535));
             m_doc->m_gui_cols       = cols;
             m_doc->m_gui_rows       = rows;
             m_doc->m_gui_font_height = lineH;
@@ -570,7 +568,10 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             m_doc->m_FontWidth       = charW;
             m_doc->m_InputFontHeight = lineH;
             m_doc->m_InputFontWidth  = charW;
-            m_doc->SendNAWS(textCols, rows);
+            // A font change alters how many columns fit, so the wrap column has
+            // to be re-derived (when the world follows the window) and the MUD
+            // re-told.  Shared with the resize path.
+            ApplyWrapColumnAndNAWS();
             // Persist face name + LOGFONT height so font zoom survives save/reload.
             const wxFont& zf = m_output->GetCurrentFont();
             if (zf.IsOk()) {
@@ -1335,18 +1336,48 @@ void CWorldChildFrame::UpdateTitle()
 void CWorldChildFrame::TriggerNAWS()
 {
     if (!m_doc || !m_output) return;
-    CallAfter([this]() {
-        if (!m_doc || !m_output) return;
-        int charW = m_output->CharWidth();
-        int lineH = m_output->LineHeight();
-        if (charW <= 0 || lineH <= 0) return;
-        int paneW, paneH;
-        m_output->GetClientSize(&paneW, &paneH);
-        if (paneW <= 0 || paneH <= 0) return;
-        int textCols = EffectiveTextCols(m_doc, paneW, charW);
-        m_doc->m_nWrapColumn = (unsigned short)std::max(1, std::min(textCols, 65535));
-        m_doc->SendNAWS(textCols, paneH / lineH);
-    });
+    CallAfter([this]() { ApplyWrapColumnAndNAWS(); });
+}
+
+// ── ApplyWrapColumnAndNAWS ────────────────────────────────────────────────
+// The one place the visible text width turns into an engine wrap column and a
+// NAWS packet.  There were four near-copies of this, and all four differed from
+// Windows in the same two ways; see the header for the contract.
+bool CWorldChildFrame::ApplyWrapColumnAndNAWS(bool skipIfUnchanged)
+{
+    if (!m_doc || !m_output) return false;
+    const int charW = m_output->CharWidth();
+    const int lineH = m_output->LineHeight();
+    if (charW <= 0 || lineH <= 0) return false;
+    int paneW = 0, paneH = 0;
+    m_output->GetClientSize(&paneW, &paneH);
+    if (paneW <= 0 || paneH <= 0) return false;
+
+    // Windows only lets the window width drive the wrap column when the world
+    // asks for it: CMUSHView::OnSize calls AutoWrapWindowWidth, whose whole body
+    // is gated on m_bAutoWrapWindowWidth (world option auto_wrap_window_width,
+    // default off).  The port used to overwrite m_nWrapColumn unconditionally,
+    // which made "wrap output at column N" a setting with no effect — and worse,
+    // wrote the window-derived number back into the user's world file on the next
+    // save, so their chosen value was gone for good.  AutoWrapColumnFor owns
+    // that decision now (doc_shared.cpp) and returns 0 for "leave it alone".
+    const int wanted =
+        m_doc->AutoWrapColumnFor(EffectiveTextCols(m_doc, paneW, charW));
+
+    if (wanted == 0) {
+        if (skipIfUnchanged)
+            return true;   // wrap column does not follow the window: nothing moved
+    }
+    else {
+        if (skipIfUnchanged && wanted == (int) m_doc->m_nWrapColumn) return true;
+        m_doc->m_nWrapColumn = (unsigned short) wanted;
+    }
+
+    // Report the WRAP COLUMN, not the raw pane width — CMUSHView::OnSize ends
+    // with SendWindowSizes (pDoc->m_nWrapColumn), so with auto-wrap off the MUD
+    // is told the column the client will actually wrap at.
+    m_doc->SendNAWS(m_doc->m_nWrapColumn, paneH / lineH);
+    return true;
 }
 
 // ── UpdateInputBarColors ──────────────────────────────────────────────────
@@ -4309,18 +4340,7 @@ void CWorldChildFrame::setOutputFont(const char* face, int pointSize,
 // re-sends it; gated on an actual change to avoid NAWS spam.
 void CWorldChildFrame::textRectChanged()
 {
-    if (!m_doc || !m_output) return;
-    int charW = m_output->CharWidth();
-    int lineH = m_output->LineHeight();
-    if (charW <= 0 || lineH <= 0) return;
-    int paneW, paneH;
-    m_output->GetClientSize(&paneW, &paneH);
-    if (paneW <= 0 || paneH <= 0) return;
-    int textCols = EffectiveTextCols(m_doc, paneW, charW);
-    unsigned short newWrap = (unsigned short)std::max(1, std::min(textCols, 65535));
-    if (newWrap == m_doc->m_nWrapColumn) return;   // unchanged → no NAWS spam
-    m_doc->m_nWrapColumn = newWrap;
-    m_doc->SendNAWS(textCols, paneH / lineH);
+    ApplyWrapColumnAndNAWS(/*skipIfUnchanged=*/true);
 }
 
 // world.GetWorldWindowPosition(): screen rect of the output pane.
@@ -4679,12 +4699,7 @@ void CWorldChildFrame::OnSize(wxSizeEvent& evt)
 
         int cols = paneW / charW;
         int rows = paneH / lineH;
-        int textCols = EffectiveTextCols(m_doc, paneW, charW);
-        // Keep m_nWrapColumn in sync so the engine wraps output at the visible
-        // text width (full pane minus any plugin TextRectangle).  Matches what
-        // a CLI would do on SIGWINCH.
-        m_doc->m_nWrapColumn = (unsigned short)std::max(1, std::min(textCols, 65535));
-        // Keep the GUI geometry fields current too — GetInfo(280/281) report the
+        // Keep the GUI geometry fields current — GetInfo(280/281) report the
         // output pane's pixel height/width from these (rows*lineH, cols*charW), and
         // plugins (e.g. Quow's screen margins) compute their bottom/right margins
         // from them.  The font-change path sets these; without doing it here as
@@ -4699,7 +4714,7 @@ void CWorldChildFrame::OnSize(wxSizeEvent& evt)
         m_doc->m_FontWidth       = charW;
         m_doc->m_InputFontHeight = lineH;
         m_doc->m_InputFontWidth  = charW;
-        m_doc->SendNAWS(textCols, rows);
+        ApplyWrapColumnAndNAWS();
         // Fire OnPluginWorldOutputResized — mirrors mushview.cpp CMUSHView::OnSize().
         m_doc->SendToAllPluginCallbacks(ON_PLUGIN_WORLD_OUTPUT_RESIZED);
     });

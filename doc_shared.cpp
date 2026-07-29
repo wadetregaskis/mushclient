@@ -4072,6 +4072,36 @@ int iLen = strFormat.GetLength () + 1000;
 // SetVariable, which arrive with the methods_commands/methods_variables
 // Campaign-C adoptions.)
 
+// ── ClampWrapColumn ─────────────────────────────────────────────────────────
+// The legal range for m_nWrapColumn, in one place.  It is the range the option
+// table declares for "wrap_column" (scriptingoptions_numeric.inc: 20 ..
+// MAX_LINE_WIDTH), which SetOption enforces — but the auto-wrap path writes the
+// member directly and so has to clamp for itself.  Windows did that inline in
+// CMUSHView::AutoWrapWindowWidth; the wx port clamped to 1 .. 65535 instead,
+// which let a wide window or a small font store a wrap column outside the
+// option's own range and then save it into the world file.
+int CMUSHclientDoc::ClampWrapColumn (int iColumn)
+  {
+  if (iColumn < 20)              return 20;
+  if (iColumn > MAX_LINE_WIDTH)  return MAX_LINE_WIDTH;
+  return iColumn;
+  }
+
+// ── AutoWrapColumnFor ───────────────────────────────────────────────────────
+// The "does the window width drive the wrap column?" decision, so that both
+// frontends read the same option and neither has to remember the clamp.  0 means
+// no: keep whatever the user configured.  See doc.h for the contract.
+int CMUSHclientDoc::AutoWrapColumnFor (int iTextColumns) const
+  {
+  if (!m_bAutoWrapWindowWidth)
+    return 0;
+
+  if (iTextColumns <= 0)
+    return 0;      // pane not measured yet — nothing trustworthy to derive from
+
+  return ClampWrapColumn (iTextColumns);
+  }
+
 void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
   {
 

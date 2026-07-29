@@ -1876,6 +1876,76 @@ TEST(SmallArms, SendWindowSizesEmitsNaws)
     delete doc;
 }
 
+// ── Auto-wrap-to-window-width ────────────────────────────────────────────────
+// The wx port used to overwrite m_nWrapColumn from the window width on every
+// resize, font change and plugin text-rectangle change, with no regard for the
+// world's auto_wrap_window_width option — so "wrap output at column N" did
+// nothing, and the window-derived value was written back into the world file on
+// the next save, destroying the user's setting.  It also clamped to 1..65535
+// rather than the 20..MAX_LINE_WIDTH the option itself declares.
+
+TEST(AutoWrap, OptionOffLeavesTheConfiguredWrapColumnAlone)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bAutoWrapWindowWidth = FALSE;          // the default
+    EXPECT_EQ(0, doc->AutoWrapColumnFor(155));    // 0 == "don't touch it"
+    delete doc;
+}
+
+TEST(AutoWrap, OptionOnFollowsTheWindow)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bAutoWrapWindowWidth = TRUE;
+    EXPECT_EQ(155, doc->AutoWrapColumnFor(155));
+    delete doc;
+}
+
+TEST(AutoWrap, ResultIsClampedToTheOptionsOwnRange)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bAutoWrapWindowWidth = TRUE;
+    // A very narrow window, or a huge font: Windows floors at 20 columns.
+    EXPECT_EQ(20, doc->AutoWrapColumnFor(3));
+    // A 5K display with a small font: MAX_LINE_WIDTH is the ceiling, and it is
+    // also the maximum the wrap_column option accepts, so exceeding it would
+    // persist a value the loader rejects.
+    EXPECT_EQ(MAX_LINE_WIDTH, doc->AutoWrapColumnFor(MAX_LINE_WIDTH + 1));
+    EXPECT_EQ(MAX_LINE_WIDTH, doc->AutoWrapColumnFor(9999));
+    delete doc;
+}
+
+TEST(AutoWrap, UnmeasuredPaneIsNotAnExcuseToChangeTheWrapColumn)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bAutoWrapWindowWidth = TRUE;
+    EXPECT_EQ(0, doc->AutoWrapColumnFor(0));
+    EXPECT_EQ(0, doc->AutoWrapColumnFor(-4));
+    delete doc;
+}
+
+TEST(AutoWrap, ClampWrapColumnPassesLegalValuesThrough)
+{
+    EXPECT_EQ(20,  CMUSHclientDoc::ClampWrapColumn(20));
+    EXPECT_EQ(80,  CMUSHclientDoc::ClampWrapColumn(80));
+    EXPECT_EQ(MAX_LINE_WIDTH, CMUSHclientDoc::ClampWrapColumn(MAX_LINE_WIDTH));
+}
+
+// NAWS must report the wrap column the client will actually wrap at, which is
+// what CMUSHView::OnSize does (SendWindowSizes (pDoc->m_nWrapColumn)).  With
+// auto-wrap off that is the configured column, NOT the window width.
+TEST(AutoWrap, NawsReportsTheConfiguredColumnWhenAutoWrapIsOff)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bNAWS_wanted = TRUE;
+    doc->m_bAutoWrapWindowWidth = FALSE;
+    doc->m_nWrapColumn = 100;
+    doc->m_gui_rows = 40;
+    doc->SendWindowSizes(doc->m_nWrapColumn);
+    std::string expect = { '\xFF', '\xFA', '\x1F', 0, 100, 0, 40, '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(expect) != std::string::npos);
+    delete doc;
+}
+
 // TranslateColour: opacity scaling with and without a translation map.
 TEST(SmallArms, TranslateColourOpacityArms)
 {

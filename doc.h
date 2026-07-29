@@ -2336,6 +2336,20 @@ public:
   virtual HACCEL GetDefaultAccelerator();
 
   void SendWindowSizes (const int iNewWidth);
+
+  // Clamp a candidate wrap column to the range the "wrap_column" option
+  // declares (doc_shared.cpp — one body, every build).  Callers that assign
+  // m_nWrapColumn directly, i.e. the auto-wrap-to-window-width paths, must go
+  // through this; SetOption already enforces the same range.
+  static int ClampWrapColumn (int iColumn);
+
+  // The wrap column implied by an output window `iTextColumns` characters wide,
+  // or 0 when this world does not want the window width to drive it (world
+  // option "auto_wrap_window_width", default off).  Zero means "leave
+  // m_nWrapColumn alone" — it is never a legal wrap column, so it cannot be
+  // confused with one.  Windows applies the same gate in
+  // CMUSHView::AutoWrapWindowWidth; the wx port used to ignore it entirely.
+  int AutoWrapColumnFor (int iTextColumns) const;
 #ifndef _WIN32
   // Non-Windows: send a NAWS packet directly with explicit col/row counts
   // (bypasses the Windows view-iteration loop in SendWindowSizes).

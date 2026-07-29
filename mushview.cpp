@@ -3211,11 +3211,9 @@ void CMUSHView::AutoWrapWindowWidth (CMUSHclientDoc* pDoc)
 
     int iWidth = (GetOutputWindowWidth () - pDoc->m_iPixelOffset) / tm.tmAveCharWidth;
 
-    // ensure in range that we allow
-    if (iWidth < 20)
-      iWidth = 20;
-    if (iWidth > MAX_LINE_WIDTH)
-      iWidth = MAX_LINE_WIDTH;
+    // ensure in range that we allow (same clamp, now shared with the wx port's
+    // auto-wrap path — doc_shared.cpp)
+    iWidth = CMUSHclientDoc::ClampWrapColumn (iWidth);
 
   // We must adjust the current line to allow for the new wrap size
 

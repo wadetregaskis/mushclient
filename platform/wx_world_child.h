@@ -46,6 +46,16 @@ void wx_world_remove_from_list(const char* path);
 class CWorldChildFrame : public wxMDIChildFrame, public pal::IWorldView
 {
 public:
+    // ── First-run window width ─────────────────────────────────────────────
+    // Logical points (DIPs), not device pixels: 1000 here is 2000 physical
+    // pixels on a 2x Retina display.  The first-run default width is this, or
+    // the usable screen width if that is narrower.  Public because
+    // hook_load_mdi_frame sizes the MDI parent by the same rule, and the two
+    // drifting apart is exactly how the child ended up on a stale hard-coded
+    // default nobody noticed.  An enum rather than `static const int` so that
+    // binding it to std::min's const reference does not odr-use it.
+    enum { kMaxDefaultWidthDIP = 1000 };
+
     // parent  — the top-level MDI parent frame
     // doc     — the world document (non-owning pointer; do not delete here)
     // title   — initial window title (updated to world name after connect)

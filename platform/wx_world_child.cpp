@@ -1144,12 +1144,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // We persist a single "last used" size (not per-world, since all worlds
     // share the same MDI client area on Windows).
     //
-    // The first-run default is derived from the display: the full usable HEIGHT
-    // and HALF the usable width.  It has to be computed here, on the child,
-    // because on wxOSX the MDI *parent* is never shown — this frame IS the
-    // window the user sees.  hook_load_mdi_frame (wx_mfc_impl.cpp) does the
-    // same screen-aware sizing for the parent, which on macOS therefore sizes a
-    // window nobody looks at; the visible one was left on a hard-coded 800×600.
+    // The first-run default is derived from the display: the full usable HEIGHT,
+    // and kMaxDefaultWidthDIP wide unless the screen is narrower than that.  It
+    // has to be computed here, on the child, because on wxOSX the MDI *parent*
+    // is never shown — this frame IS the window the user sees.
+    // hook_load_mdi_frame (wx_mfc_impl.cpp) applies the same rule to the parent,
+    // which on macOS therefore sizes a window nobody looks at; the visible one
+    // was left on a hard-coded 800×600.
     //
     // wxDisplay::GetClientArea() is the *usable* area, so it already excludes
     // the Dock and the menu bar when the menu bar is actually on screen.  With
@@ -1163,7 +1164,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         if (di < 0) di = 0;               // not mapped yet → primary display
         const wxRect scr = wxDisplay(di).GetClientArea();
 
-        const long defW = std::max<long>(200, scr.width / 2);
+        // FromDIP because the width is specified in *points*, not device pixels:
+        // 1000 here means 2000 physical pixels on a 2x Retina display.  It is a
+        // no-op on macOS and GTK (both already work in logical units) and does
+        // the scaling on MSW — either way it documents which unit is meant.
+        const long defW = std::max<long>(200, std::min<long>(
+                              scr.width, FromDIP((int) kMaxDefaultWidthDIP)));
         const long defH = std::max<long>(100, scr.height);
 
         long w = defW, h = defH;

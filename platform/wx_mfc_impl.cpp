@@ -846,21 +846,25 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     //
     // NOTE: this is the MDI *parent*, which wxOSX never shows — on macOS the
     // window the user actually sees is the world child frame, and its own
-    // first-run default (full usable height × half the width) is computed in
-    // CWorldChildFrame's constructor.  Changing the numbers here alone has no
-    // visible effect on macOS.
+    // first-run default is computed in CWorldChildFrame's constructor.  Changing
+    // the numbers here alone has no visible effect on macOS.
     {
         wxConfig cfg(wxT("mushclient"));
 
-        // First-run default size: roughly 200 columns wide and the full usable
-        // screen height, but never larger than the screen's usable area (which
-        // already excludes the menu bar / Dock).  ~1280px is about 200 columns of
-        // a typical small monospace font; a fixed value because measuring the font
-        // at app-init proved unreliable.  Subsequent runs restore the saved size.
+        // First-run default size: the full usable screen height, and
+        // CWorldChildFrame::kMaxDefaultWidthDIP wide unless the screen's usable
+        // area (which already excludes the menu bar / Dock) is narrower.
+        // Deliberately the same rule as the child frame: on platforms where the
+        // MDI parent *is* visible this is the window being sized, and having the
+        // two disagree is what let the child sit on a stale hard-coded default
+        // unnoticed.  A fixed width rather than a column count because measuring
+        // the font at app-init proved unreliable.
         int di = wxDisplay::GetFromWindow(frame);
         if (di < 0) di = 0;
         const wxRect scr = wxDisplay(di).GetClientArea();
-        const long defW = std::min<long>(scr.width, 1280);
+        const long defW = std::min<long>(
+            scr.width,
+            frame->FromDIP((int) CWorldChildFrame::kMaxDefaultWidthDIP));
         const long defH = scr.height;
 
         long w = defW, h = defH;

@@ -3140,31 +3140,23 @@ long startcol,
 
 }
 
-void CMUSHView::OnUpdateNeedSelectionForCopy(CCmdUI* pCmdUI) 
+void CMUSHView::OnUpdateNeedSelectionForCopy(CCmdUI* pCmdUI)
 {
 CMUSHclientDoc* pDoc = GetDocument();
 ASSERT_VALID(pDoc);
 
-long startcol,
-     endcol;
+// Same rule as before, now stated once in doc_editcopy_shared.cpp: enable if
+// the output window has a non-degenerate selection (columns clamped to their
+// lines' lengths, which CWinWorldView::outputSelection does — it is this
+// function's own arithmetic, moved), else if the command window has one.
+// EditCopyTarget's command-window arm is the CEdit::GetSel test that
+// CEditView::OnUpdateNeedSel used to make from here.
+//
+// Hoisted because the wx port had reimplemented the enable test as "does the
+// output pane have the keyboard focus", which is never true there — so Copy was
+// permanently greyed with output text selected.
 
-  CLine * pStartLine,
-        * pEndLine;
-
-  pStartLine = pDoc->m_LineList.GetAt (pDoc->GetLinePosition (m_selstart_line));
-  pEndLine = pDoc->m_LineList.GetAt (pDoc->GetLinePosition (m_selend_line));
-  
-  startcol  = MIN (m_selstart_col, pStartLine->len);
-  endcol    = MIN (m_selend_col, pEndLine->len);
-
-  if (m_selend_line > m_selstart_line || 
-                (m_selend_line == m_selstart_line && 
-                 endcol > startcol))
-    pCmdUI->Enable (TRUE);
-  else
-    m_bottomview->CEditView::OnUpdateNeedSel (pCmdUI);
-
-
+  pCmdUI->Enable (pDoc->EditCopyTarget () != eCopyNothing);
 }
 
 

@@ -748,4 +748,121 @@ TEST(DefaultFonts, WorldThatOverridesTheFontIsLeftAlone)
     doc.m_pWorldView = nullptr;
 }
 
+// ── EditCopyTarget ────────────────────────────────────────────────────────
+// Edit > Copy.  On Windows this rule was written twice — once to enable the
+// menu item (CMUSHView::OnUpdateNeedSelectionForCopy) and once to decide what
+// to copy (the GetSelection test in CMUSHView::OnEditCopy) — and the wx port
+// had replaced it with a third, wrong test: "does the output pane have the
+// keyboard focus".  Nothing ever focuses COutputPane, so Copy was greyed out
+// and inert with output text selected.  These pin the one shared rule.
+//
+// Selection ranges here use the seam's documented conventions: outputSelection()
+// is 1-based line/col with all-zeros meaning "nothing selected"; commandSelection()
+// is the raw half-open [start, end) character range.
+
+TEST(EditCopy, NothingSelectedAnywhereMeansNothingToCopy)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    FakeWorldView view;
+    doc.m_pWorldView = &view;
+
+    EXPECT_EQ((int) eCopyNothing, (int) doc.EditCopyTarget());
+
+    doc.m_pWorldView = nullptr;
+}
+
+TEST(EditCopy, OutputSelectionIsCopiedRegardlessOfFocus)
+{
+    // The regression: a real output selection, no command-bar selection.  The
+    // old port test asked about focus and answered "nothing"; the rule asks
+    // about the selection and answers "the output window".
+    CMUSHclientDoc doc; make_doc(doc);
+    FakeWorldView view;
+    view.sel = { 3, 5, 3, 12 };        // line 3, columns 5..12
+    doc.m_pWorldView = &view;
+
+    EXPECT_EQ((int) eCopyOutputSelection, (int) doc.EditCopyTarget());
+
+    doc.m_pWorldView = nullptr;
+}
+
+TEST(EditCopy, MultiLineOutputSelectionCountsEvenWhenEndColIsSmaller)
+{
+    // endCol < startCol is normal when the selection spans lines, so the
+    // column comparison must only apply within a single line.
+    CMUSHclientDoc doc; make_doc(doc);
+    FakeWorldView view;
+    view.sel = { 3, 40, 7, 2 };
+    doc.m_pWorldView = &view;
+
+    EXPECT_EQ((int) eCopyOutputSelection, (int) doc.EditCopyTarget());
+
+    doc.m_pWorldView = nullptr;
+}
+
+TEST(EditCopy, CaretInTheOutputWindowIsNotASelection)
+{
+    // Same line, same column: a click, not a drag.  Windows' test is
+    // endcol > startcol, strictly.
+    CMUSHclientDoc doc; make_doc(doc);
+    FakeWorldView view;
+    view.sel = { 4, 9, 4, 9 };
+    doc.m_pWorldView = &view;
+
+    EXPECT_EQ((int) eCopyNothing, (int) doc.EditCopyTarget());
+
+    doc.m_pWorldView = nullptr;
+}
+
+TEST(EditCopy, FallsBackToTheCommandBarSelection)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    FakeWorldView view;
+    view.cmd    = "look at the sign";
+    view.cmdSel = { 8, 11 };           // "the" selected in the command bar
+    doc.m_pWorldView = &view;
+
+    EXPECT_EQ((int) eCopyCommandSelection, (int) doc.EditCopyTarget());
+
+    doc.m_pWorldView = nullptr;
+}
+
+TEST(EditCopy, CaretInTheCommandBarIsNotASelection)
+{
+    // Half-open range: start == end is an insertion point.
+    CMUSHclientDoc doc; make_doc(doc);
+    FakeWorldView view;
+    view.cmd    = "look at the sign";
+    view.cmdSel = { 8, 8 };
+    doc.m_pWorldView = &view;
+
+    EXPECT_EQ((int) eCopyNothing, (int) doc.EditCopyTarget());
+
+    doc.m_pWorldView = nullptr;
+}
+
+TEST(EditCopy, OutputSelectionBeatsTheCommandBarWhenBothHaveOne)
+{
+    // CMUSHView::OnEditCopy tries the output window first and only falls
+    // through to the command window when there is nothing there.
+    CMUSHclientDoc doc; make_doc(doc);
+    FakeWorldView view;
+    view.sel    = { 2, 1, 2, 6 };
+    view.cmd    = "look at the sign";
+    view.cmdSel = { 8, 11 };
+    doc.m_pWorldView = &view;
+
+    EXPECT_EQ((int) eCopyOutputSelection, (int) doc.EditCopyTarget());
+
+    doc.m_pWorldView = nullptr;
+}
+
+TEST(EditCopy, NoViewAttachedMeansNothingToCopy)
+{
+    // Headless, or a world tearing down: must answer, not dereference.
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = nullptr;
+    EXPECT_EQ((int) eCopyNothing, (int) doc.EditCopyTarget());
+}
+
 MC_TEST_MAIN()

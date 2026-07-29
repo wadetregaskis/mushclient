@@ -655,6 +655,18 @@ enum eDoubleClickOutcome
   eDblClickSend,      // caller records in history, THEN SendDoubleClickedWord
   };
 
+// Which selection Edit ▸ Copy (and Copy as HTML) should act on — the answer to
+// both "is the menu item enabled?" and "what does it copy?", which on Windows
+// were two separate hand-written tests (CMUSHView::OnUpdateNeedSelectionForCopy
+// and CMUSHView::OnEditCopy) that had to agree.  Shared body in
+// doc_editcopy_shared.cpp.
+enum eCopyTarget
+  {
+  eCopyNothing,           // nothing selected anywhere: the item is greyed
+  eCopyOutputSelection,   // the output window's selection wins if there is one
+  eCopyCommandSelection,  // otherwise fall back to the command bar's selection
+  };
+
 class CMUSHclientDoc : public CDocument
 {
   friend class CActivityView;
@@ -2600,6 +2612,15 @@ public:
   // with the caller because each frontend's history has its own rules.
   eDoubleClickOutcome OutputWordDoubleClicked (const CString & strWord);
   void                SendDoubleClickedWord   (const CString & strWord);
+
+  // Edit ▸ Copy / Copy as HTML: which selection to act on, if any
+  // (doc_editcopy_shared.cpp — one body, every build).  Was the pair
+  // CMUSHView::OnUpdateNeedSelectionForCopy + the GetSelection test at the top
+  // of CMUSHView::OnEditCopy.  Both frontends read the two selections through
+  // pal::IWorldView, so the enable state and the copy action can no longer
+  // disagree, and the port stops routing Copy by keyboard focus — which never
+  // lands on its output pane, so Copy could only ever see the command bar.
+  eCopyTarget EditCopyTarget (void);
 
   CString DoEvaluateSpeedwalk(LPCTSTR SpeedWalkString);
   static CString DoReverseSpeedwalk(LPCTSTR SpeedWalkString);

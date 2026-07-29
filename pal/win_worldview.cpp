@@ -315,9 +315,9 @@ public:
 
     Range commandSelection() const override
     {
-        // GetInfo 236/237 (methods_info.cpp): CEdit::GetSel semantics —
-        // start is nStartChar + 1; end is nEndChar, forced to 0 when the
-        // selection is empty (nEndChar <= nStartChar).
+        // Feeds GetInfo 236/237 (methods_info.cpp).  Raw CEdit::GetSel offsets —
+        // see the comment at the GetSel call for why the 1-based / zero-if-empty
+        // transform does NOT belong here.
         Range r{0, 0};
 
         for (POSITION pos = m_pDoc->GetFirstViewPosition(); pos != NULL; )

@@ -1259,7 +1259,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             }
         } else if (id == ID_VIEW_RESET_TOOLBARS) {
             evt.Enable(frame->GetActiveChild() != nullptr);
-        } else if (id == 32275 || id == 32276 || id == 32974 || id == 32272 ||
+        } else if (id == wxID_COPY || id == 32974 /*ID_EDIT_COPYASHTML*/) {
+            // Both share CMUSHView::OnUpdateNeedSelectionForCopy on Windows:
+            // enabled when the output window has a selection, or failing that
+            // the command bar does.  The same call decides what Copy acts on
+            // (see the command arm), so the two cannot drift.
+            evt.Enable(doc != nullptr && doc->EditCopyTarget() != eCopyNothing);
+        } else if (id == 32275 || id == 32276 || id == 32272 ||
                    id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
                    id == 32946 || id == 32947 || id == 33046 ||
                    id == 32318 || id == 32319) {
@@ -1382,20 +1388,50 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return;
         }
 
-        // ── Edit menu: Copy / Cut / Paste / Select All ─────────────────────
+        // ── Edit menu: Copy ────────────────────────────────────────────────
+        // Routed by SELECTION, not by keyboard focus, exactly as Windows does
+        // (CMUSHView::OnEditCopy prefers the output window's selection and
+        // falls back to the command window's).  The shared decision lives in
+        // CMUSHclientDoc::EditCopyTarget (doc_editcopy_shared.cpp) so it cannot
+        // disagree with the update-UI arm below.
+        //
+        // This used to ask wxWindow::FindFocus() whether the output pane had
+        // focus — but nothing ever calls SetFocus() on COutputPane, so the test
+        // was permanently false and Copy always consulted the (unselected)
+        // command bar and did nothing.
+        if (id == wxID_COPY) {
+            auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
+            CMUSHclientDoc* doc = child ? child->GetDoc() : nullptr;
+            switch (doc ? doc->EditCopyTarget() : eCopyNothing) {
+            case eCopyOutputSelection:
+                if (COutputPane* pane = child->OutputPane())
+                    pane->CopySelection();
+                break;
+            case eCopyCommandSelection:
+                if (wxTextCtrl* inp = child->ActiveInputPublic())
+                    inp->Copy();
+                break;
+            case eCopyNothing:
+                break;
+            }
+            return;   // consumed — do not call evt.Skip()
+        }
+
+        // ── Edit menu: Cut / Paste / Select All ────────────────────────────
         // The frame's Bind intercepts menu events before wxMDI can route them
-        // to the focused child control, so we dispatch explicitly here.
-        // For a wxTextCtrl (input bar), post a standard wxCommandEvent so the
-        // built-in edit handling fires.  For the output pane, call directly.
-        if (id == wxID_COPY || id == wxID_CUT ||
-            id == wxID_PASTE || id == wxID_SELECTALL)
+        // to the focused child control, so we dispatch explicitly here.  These
+        // three stay focus-routed, which is also what Windows does: Cut and
+        // Paste only ever apply to the command window, and ID_EDIT_SELECT_ALL is
+        // handled by BOTH CMUSHView and CSendView, so whichever has the focus
+        // wins.  (On the port that means Select All can only reach the command
+        // bar, since the output pane is never focused — a separate gap.)
+        if (id == wxID_CUT || id == wxID_PASTE || id == wxID_SELECTALL)
         {
             wxWindow* focused = wxWindow::FindFocus();
             if (focused) {
                 // Is it the output pane?
                 if (auto* pane = dynamic_cast<COutputPane*>(focused)) {
-                    if      (id == wxID_COPY)      pane->CopySelection();
-                    else if (id == wxID_SELECTALL) pane->SelectAll();
+                    if (id == wxID_SELECTALL) pane->SelectAll();
                     // Cut and Paste are no-ops on a read-only output pane.
                 } else {
                     // Forward to focused window (wxTextCtrl, etc.) via its

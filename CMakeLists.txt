@@ -432,6 +432,7 @@ if(NOT WIN32)
         doc_tabcomplete_shared.cpp
         doc_hyperlink_shared.cpp
         doc_dblclick_shared.cpp
+        doc_editcopy_shared.cpp
         scripting/methods/methods_noting.cpp
         scripting/methods/methods_tracing.cpp
         scripting/methods/methods_variables.cpp

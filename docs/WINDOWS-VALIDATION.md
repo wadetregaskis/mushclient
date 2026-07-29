@@ -167,6 +167,34 @@ Drive each through Lua (Immediate window) and the UI:
   `GetSelectionStartLine/EndLine/StartColumn/EndColumn`,
   `SetBackgroundColour`.
 
+### 4c-bis. Two small hoists out of `mushview.cpp` (2026-07-29)
+
+Both are meant to be behaviour-preserving refactors of code that the wx port
+had reimplemented differently; each replaced an inline body with a call into a
+shared TU, so a Windows run is what confirms "behaviour-preserving".
+
+- **`CMUSHView::OnUpdateNeedSelectionForCopy`** is now one line:
+  `pCmdUI->Enable (pDoc->EditCopyTarget () != eCopyNothing)`
+  (`doc_editcopy_shared.cpp`).  The old body clamped the selection columns to
+  their lines' lengths, enabled on a non-degenerate range, and otherwise
+  deferred to `m_bottomview->CEditView::OnUpdateNeedSel`.  The shared version
+  reads the same clamp from `CWinWorldView::outputSelection` (which is that
+  arithmetic, moved) and tests the command window with `CEdit::GetSel`.
+  **Check:** Edit ▸ Copy greys and ungreys exactly as before — no output
+  selection and no command-window selection → grey; either one → live; a
+  single-character output selection → live; a caret (click, no drag) → grey.
+  Also check Copy still copies the *output* selection in preference to the
+  command window's when both have one, and that Copy as HTML follows the same
+  enable state.
+- **`CMUSHView::AutoWrapWindowWidth`** now calls
+  `CMUSHclientDoc::ClampWrapColumn (iWidth)` in place of its two inline bounds
+  checks (`< 20 → 20`, `> MAX_LINE_WIDTH → MAX_LINE_WIDTH`).  Identical
+  arithmetic; the shared copy exists because the port's auto-wrap path was
+  clamping to a different range.  **Check:** with "auto wrap to window width"
+  ticked, resizing the window still re-wraps output and the wrap column still
+  saturates at both ends (a very narrow window, and a very wide one with a
+  small font).
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

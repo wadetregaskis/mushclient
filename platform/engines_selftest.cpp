@@ -230,6 +230,9 @@ const Dialect kDialects[] = {
   "function store(s) world.SetVariable('echoed', s) end\n"
   "function rettable(s) return {} end\n"
   "function rawnum(a, b, c, d) world.SetVariable('r', tostring(a)) end\n"
+  "function stylish()\n"
+  "  world.SetVariable('ns', world.GetNoteStyle() == 0 and 'normal' or 'inherited')\n"
+  "  world.NoteStyle(4) end\n"
   "function wc(n, l, w)\n"
   "  local t = {}\n"
   "  for i = 0, #w do t[#t+1] = w[i] end\n"
@@ -296,6 +299,9 @@ const Dialect kDialects[] = {
   "    return {}\n"
   "def rawnum(a, b, c, d):\n"
   "    world.SetVariable('r', str(a))\n"
+  "def stylish():\n"
+  "    world.SetVariable('ns', 'normal' if world.GetNoteStyle() == 0 else 'inherited')\n"
+  "    world.NoteStyle(4)\n"
   "def wc(n, l, w):\n"
   "    world.SetVariable('wc', '|'.join(w))\n"
   "def api():\n"
@@ -350,6 +356,9 @@ const Dialect kDialects[] = {
   "sub store { $world->SetVariable('echoed', $_[0]); }\n"
   "sub rettable { return {}; }\n"
   "sub rawnum { $world->SetVariable('r', \"$_[0]\"); }\n"
+  "sub stylish {\n"
+  "  $world->SetVariable('ns', $world->GetNoteStyle() == 0 ? 'normal' : 'inherited');\n"
+  "  $world->NoteStyle(4); }\n"
   "sub wc { my ($n, $l, $w) = @_;\n"
   "  $world->SetVariable('wc', join('|', @$w)); }\n"
   "sub api {\n"
@@ -406,6 +415,9 @@ const Dialect kDialects[] = {
   "function store(s) { world.SetVariable('echoed', s); }\n"
   "function rettable(s) { return {}; }\n"
   "function rawnum(a, b, c, d) { world.SetVariable('r', String(a)); }\n"
+  "function stylish() {\n"
+  "  world.SetVariable('ns', world.GetNoteStyle() == 0 ? 'normal' : 'inherited');\n"
+  "  world.NoteStyle(4); }\n"
   "function wc(n, l, w) { world.SetVariable('wc', w.join('|')); }\n"
   "function api() {\n"
   "  world.Note('a note');\n"
@@ -467,6 +479,9 @@ const Dialect kDialects[] = {
   "proc store {s} { world SetVariable echoed $s }\n"
   "proc rettable {s} { return [dict create a 1] }\n"
   "proc rawnum {a b c d} { world SetVariable r $a }\n"
+  "proc stylish {} {\n"
+  "  world SetVariable ns [expr {[world GetNoteStyle] == 0 ? \"normal\" : \"inherited\"}]\n"
+  "  world NoteStyle 4 }\n"
   "proc wc {n l w} { world SetVariable wc [join $w |] }\n"
   "proc api {} {\n"
   "  world Note {a note}\n"
@@ -522,6 +537,10 @@ const Dialect kDialects[] = {
   "def store(s); world.SetVariable('echoed', s); end\n"
   "def rettable(s); {}; end\n"
   "def rawnum(a, b, c, d); world.SetVariable('r', a.to_s); end\n"
+  "def stylish\n"
+  "  world.SetVariable('ns', world.GetNoteStyle() == 0 ? 'normal' : 'inherited')\n"
+  "  world.NoteStyle(4)\n"
+  "end\n"
   "def wc(n, l, w); world.SetVariable('wc', w.join('|')); end\n"
   "def api\n"
   "  world.Note('a note')\n"
@@ -799,6 +818,64 @@ void battery_parameters(Engine& e, const Dialect& d)
     e.callRich("tbl", &err, {}, { "line" }, &t);
     check(!err && e.var("t") == "value", L,
           "the optional table (named wildcards) arrives as a mapping");
+}
+
+// 3a-ter. The SURROUNDINGS a callback runs in.
+//
+// ExecuteLua does two things around the Lua call that the five embedded engines
+// were dispatched out BEFORE ever reaching:
+//
+//   * m_iNoteStyle is saved, reset to NORMAL for the callback, and restored
+//     unconditionally afterwards (lua_scripting.cpp:765).  Without it a style a
+//     handler sets with world.NoteStyle leaks back out and tints every later
+//     note in the world -- and the next callback starts in whatever style the
+//     previous one left.
+//   * the elapsed time is added to the world's total, and to the current
+//     plugin's, but only when the call did NOT error -- which is where Lua's
+//     `if (error) return true;` sits relative to its timing block.  Without it
+//     world.GetScriptTime and the Trace timings read zero for five of six
+//     languages.
+//
+// Both assertions are made from C++ rather than from the script, so they read
+// the same way in every language and cannot be confused by how each one
+// stringifies a number.
+void battery_call_surroundings(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    // The world's own note style before anything is called.
+    e.doc->m_iNoteStyle = HILITE;
+
+    bool err = false;
+    e.seed("ns", "handler never ran");
+    e.callRich("stylish", &err);
+    check(!err, L, "a callback may set the note style without erroring");
+    // The RESET: the handler must not inherit the style the world was left in.
+    check(e.var("ns") == "normal", L,
+          "a callback starts with the note style reset to NORMAL");
+    // The RESTORE: what the handler set must not survive the call.
+    check(e.doc->m_iNoteStyle == HILITE, L,
+          "a note style set inside a callback does not leak back to the world");
+
+    // GetScriptTime divides by App.m_iCounterFrequency, which InitInstance
+    // normally fills in -- and InitInstance has not run this early, so seed it
+    // or the whole timing path is skipped and the check is vacuous.
+    if (App.m_iCounterFrequency == 0) {
+        LARGE_INTEGER f;
+        if (QueryPerformanceFrequency(&f)) App.m_iCounterFrequency = f.QuadPart;
+    }
+    if (App.m_iCounterFrequency == 0) {
+        skip(L, "a successful callback accumulates script time",
+             "no performance counter on this machine");
+        return;
+    }
+
+    const double before = e.doc->GetScriptTime();
+    // rnothing, NOT bump: bump mutates a global that battery_state asserts on
+    // later, and this loop would leave it at the wrong value.
+    for (int i = 0; i < 50; i++) e.callRich("rnothing");
+    const double after = e.doc->GetScriptTime();
+    check(after > before, L, "a successful callback accumulates script time");
 }
 
 // 3a-bis. The POSITIONAL wildcards -- the parameter every trigger and alias
@@ -1124,6 +1201,7 @@ bool run_language(const Dialect& d)
     battery_keepgoing (e, d);
     battery_parameters(e, d);
     battery_wildcards (e, d);
+    battery_call_surroundings(e, d);
     battery_toworld   (e, d);
     battery_worldapi  (d);
     battery_state     (e, d);

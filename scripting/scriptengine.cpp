@@ -641,7 +641,8 @@ void CScriptEngine::DisableScripting (void)
 bool CScriptEngine::Execute (DISPID& dispid,
                               LPCTSTR szProcedure, const unsigned short iReason,
                               LPCTSTR szType, LPCTSTR szReason,
-                              DISPPARAMS&, long& nInvocationCount, COleVariant* result)
+                              DISPPARAMS& params, long& nInvocationCount,
+                              COleVariant* result)
   {
   // Delegate to Lua if active; otherwise signal "not found".  The procedure
   // NAME and reason/type/reason must be forwarded to ExecuteLua, which
@@ -658,6 +659,34 @@ bool CScriptEngine::Execute (DISPID& dispid,
     {
     list<double> nparams;
     list<string> sparams;
+
+    // Marshal the caller's arguments.  The DISPPARAMS parameter used to be
+    // UNNAMED here and these two lists went to ExecuteLua empty, so every
+    // argument packed by a caller was dropped on the floor: world.CallPlugin's
+    // argument for a non-Lua target (methods_plugins.cpp:435) and every MXP
+    // callback argument (mxpStart/mxpClose/mxpError) arrived as nil.  Windows
+    // hands rgvarg straight to m_pDispatch->Invoke, so it never lost them.
+    //
+    // MFC/COM packs rgvarg in REVERSE order — the callers say so in their own
+    // comments ("WARNING - arguments should appear in REVERSE order") — so walk
+    // it backwards to hand the callee declaration order.
+    for (int i = (int) params.cArgs - 1; i >= 0; i--)
+      {
+      const VARIANT & v = params.rgvarg [i];
+      switch (v.vt)
+        {
+        // BSTR is a plain char* on this platform (platform/mfc_ui.h); the
+        // dispatch substrate reads it the same way (mc_dispatch.cpp:104).
+        case VT_BSTR:  sparams.push_back (v.bstrVal ? v.bstrVal : "");  break;
+        case VT_I2:    nparams.push_back (v.iVal);              break;
+        case VT_I4:    nparams.push_back (v.lVal);              break;
+        case VT_R4:    nparams.push_back (v.fltVal);            break;
+        case VT_R8:    nparams.push_back (v.dblVal);            break;
+        case VT_BOOL:  nparams.push_back (v.boolVal ? 1 : 0);   break;
+        default: break;   // arrays/objects have no typed-list equivalent
+        }
+      }
+
     bool r = false;
     bool status = ExecuteLua (dispid, szProcedure, iReason, szType, szReason,
                               nparams, sparams, nInvocationCount,

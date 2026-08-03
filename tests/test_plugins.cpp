@@ -1542,6 +1542,41 @@ TEST(PluginInfoR4, LineReceivedFalseOmitsLineFromOutput)
     EXPECT_TRUE(!output_contains(doc, "secret line"));   // omitted
 }
 
+// The non-Windows CScriptEngine::Execute used to declare its DISPPARAMS
+// parameter WITHOUT A NAME and hand ExecuteLua two empty argument lists, so
+// every argument a caller packed was dropped: world.CallPlugin's argument for a
+// non-Lua target (methods_plugins.cpp:435) and every MXP callback argument
+// (mxpStart / mxpClose / mxpError) arrived as nil.  Windows passes rgvarg
+// straight to m_pDispatch->Invoke and never lost them.
+TEST(ScriptEngineExecute, DispparamsReachTheCallee)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());       // false == created OK
+    ASSERT_TRUE(!engine->Parse(CString(
+        "got = 'NOTCALLED'\n"
+        "function f(a) got = tostring(a) end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+
+    DISPID d = engine->GetDispid("f");
+    ASSERT_TRUE(d != DISPID_UNKNOWN);
+
+    COleVariant args[1];
+    args[0] = "hello";
+    DISPPARAMS params = { args, NULL, 1, 0 };
+    long n = 0;
+    engine->Execute(d, "f", eDontChangeAction, "test", "probe", params, n, NULL);
+
+    // Read the global back out of the same Lua state.
+    lua_getglobal(engine->L, "got");
+    const char* got = lua_tostring(engine->L, -1);
+    EXPECT_STREQ("hello", got ? got : "(nil)");
+    lua_pop(engine->L, 1);
+
+    doc.m_ScriptEngine = nullptr;
+    delete engine;
+}
+
 #endif // MUSHCLIENT_LUA_SCRIPTING
 
 

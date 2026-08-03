@@ -134,6 +134,7 @@ SV* variant_to_sv(const VARIANT& v)
       sv_bless(ref, gv_stashpv(WORLD_STASH, GV_ADD));
       return ref;
       }
+    case VT_DATE: return newSViv(MC_VariantDateToUnix(v));
     default:      return newSV(0);
     }
   }

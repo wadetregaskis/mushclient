@@ -36,6 +36,7 @@
 #include "doc.h"
 #include "scripting.h"
 #include "scripting/errors.h"
+#include "platform/mc_dispatch.h"   // MC_VariantDateToUnix
 #include "childfrm.h"
 #include "MUSHview.h"
 #include "resource.h"
@@ -230,6 +231,7 @@ const Dialect kDialects[] = {
   "function store(s) world.SetVariable('echoed', s) end\n"
   "function rettable(s) return {} end\n"
   "function rawnum(a, b, c, d) world.SetVariable('r', tostring(a)) end\n"
+  "function readdate() world.SetVariable('dt', tostring(world.GetInfo(301))) end\n"
   "function stylish()\n"
   "  world.SetVariable('ns', world.GetNoteStyle() == 0 and 'normal' or 'inherited')\n"
   "  world.NoteStyle(4) end\n"
@@ -299,6 +301,8 @@ const Dialect kDialects[] = {
   "    return {}\n"
   "def rawnum(a, b, c, d):\n"
   "    world.SetVariable('r', str(a))\n"
+  "def readdate():\n"
+  "    world.SetVariable('dt', str(world.GetInfo(301)))\n"
   "def stylish():\n"
   "    world.SetVariable('ns', 'normal' if world.GetNoteStyle() == 0 else 'inherited')\n"
   "    world.NoteStyle(4)\n"
@@ -356,6 +360,7 @@ const Dialect kDialects[] = {
   "sub store { $world->SetVariable('echoed', $_[0]); }\n"
   "sub rettable { return {}; }\n"
   "sub rawnum { $world->SetVariable('r', \"$_[0]\"); }\n"
+  "sub readdate { $world->SetVariable('dt', '' . $world->GetInfo(301)); }\n"
   "sub stylish {\n"
   "  $world->SetVariable('ns', $world->GetNoteStyle() == 0 ? 'normal' : 'inherited');\n"
   "  $world->NoteStyle(4); }\n"
@@ -415,6 +420,7 @@ const Dialect kDialects[] = {
   "function store(s) { world.SetVariable('echoed', s); }\n"
   "function rettable(s) { return {}; }\n"
   "function rawnum(a, b, c, d) { world.SetVariable('r', String(a)); }\n"
+  "function readdate() { world.SetVariable('dt', String(world.GetInfo(301))); }\n"
   "function stylish() {\n"
   "  world.SetVariable('ns', world.GetNoteStyle() == 0 ? 'normal' : 'inherited');\n"
   "  world.NoteStyle(4); }\n"
@@ -479,6 +485,7 @@ const Dialect kDialects[] = {
   "proc store {s} { world SetVariable echoed $s }\n"
   "proc rettable {s} { return [dict create a 1] }\n"
   "proc rawnum {a b c d} { world SetVariable r $a }\n"
+  "proc readdate {} { world SetVariable dt [world GetInfo 301] }\n"
   "proc stylish {} {\n"
   "  world SetVariable ns [expr {[world GetNoteStyle] == 0 ? \"normal\" : \"inherited\"}]\n"
   "  world NoteStyle 4 }\n"
@@ -537,6 +544,7 @@ const Dialect kDialects[] = {
   "def store(s); world.SetVariable('echoed', s); end\n"
   "def rettable(s); {}; end\n"
   "def rawnum(a, b, c, d); world.SetVariable('r', a.to_s); end\n"
+  "def readdate; world.SetVariable('dt', world.GetInfo(301).to_s); end\n"
   "def stylish\n"
   "  world.SetVariable('ns', world.GetNoteStyle() == 0 ? 'normal' : 'inherited')\n"
   "  world.NoteStyle(4)\n"
@@ -818,6 +826,39 @@ void battery_parameters(Engine& e, const Dialect& d)
     e.callRich("tbl", &err, {}, { "line" }, &t);
     check(!err && e.var("t") == "value", L,
           "the optional table (named wildcards) arrives as a mapping");
+}
+
+// 3a-quater. VT_DATE.
+//
+// The world API returns dates as VT_DATE -- GetInfo(301..306), GetLineInfo(9),
+// GetTimerInfo, GetPluginInfo(13/14/22).  Lua converts them to Unix seconds
+// (lua_methods.cpp:142-159); the five embedded engines had no VT_DATE arm in
+// their variant switches at all, so every one of those calls returned
+// nil/None/undefined and a script could not read a date in five of six
+// languages.
+void battery_dates(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    // A fixed instant, so the check does not drift with the clock.
+    const time_t kWhen = 1000000000;      // 2001-09-09T01:46:40Z
+    e.doc->m_tConnectTime = CTime(kWhen);
+
+    // What the conversion should yield, computed the same way the engines do.
+    // Comparing against a hard-coded 1000000000 instead would make this a test
+    // of the shim's COleDateTime/CTime timezone handling rather than of whether
+    // the engine marshals VT_DATE at all -- which is the actual bug.
+    VARIANT vd;
+    VariantInit(&vd);
+    vd.vt   = VT_DATE;
+    vd.date = COleDateTime(kWhen);
+    char expected[32];
+    snprintf(expected, sizeof expected, "%ld", MC_VariantDateToUnix(vd));
+
+    e.seed("dt", "handler never ran");
+    e.callRich("readdate");
+    check(e.var("dt") == expected, L,
+          "a VT_DATE result (GetInfo 301) arrives as a number, not nil");
 }
 
 // 3a-ter. The SURROUNDINGS a callback runs in.
@@ -1202,6 +1243,7 @@ bool run_language(const Dialect& d)
     battery_parameters(e, d);
     battery_wildcards (e, d);
     battery_call_surroundings(e, d);
+    battery_dates     (e, d);
     battery_toworld   (e, d);
     battery_worldapi  (d);
     battery_state     (e, d);

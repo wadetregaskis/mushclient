@@ -253,6 +253,7 @@ JSValueRef variant_to_js(JSContextRef ctx, const VARIANT& v)
       return r;
       }
     case VT_DISPATCH: return v.byref ? make_world(ctx, (CMUSHclientDoc*) v.byref) : JSValueMakeUndefined(ctx);
+    case VT_DATE: return JSValueMakeNumber(ctx, (double) MC_VariantDateToUnix(v));
     default:      return JSValueMakeUndefined(ctx);
     }
   }

@@ -389,4 +389,17 @@ bool MC_DispatchSetProperty(CMUSHclientDoc* doc, const char* name, const VARIANT
 void MC_VariantClear(VARIANT& v) { var_clear(v); }
 void MC_VariantCopy(VARIANT& dst, const VARIANT& src) { var_copy(dst, src); }
 
+
+// See the comment on the declaration.  The COleDateTime -> SYSTEMTIME -> CTime
+// route is the one lua_methods.cpp takes; going straight from the OLE double
+// would round differently.
+long MC_VariantDateToUnix(const VARIANT& v)
+{
+    COleDateTime dt(v.date);
+    SYSTEMTIME   sysTime;
+    dt.GetAsSystemTime(sysTime);
+    CTime        tm(sysTime);
+    return (long) tm.GetTime();
+}
+
 #endif // !_WIN32 && MUSHCLIENT_FULL_BUILD

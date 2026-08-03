@@ -104,6 +104,7 @@ VALUE variant_to_ruby (const VARIANT& v)
     case VT_BOOL: return v.boolVal ? Qtrue : Qfalse;
     case VT_BSTR: return rb_str_new_cstr (v.bstrVal ? v.bstrVal : "");
     case VT_DISPATCH: return v.byref ? make_world ((CMUSHclientDoc*) v.byref) : Qnil;
+    case VT_DATE: return LONG2NUM(MC_VariantDateToUnix(v));
     default:      return Qnil;
     }
   }

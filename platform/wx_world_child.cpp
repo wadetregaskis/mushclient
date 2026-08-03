@@ -4398,6 +4398,13 @@ void CWorldChildFrame::deleteLines(long n)
 // world.SetScroll(line): -1 = bottom (resume auto-scroll, matching Windows'
 // "-1 goes to the end"), 0 = top, > 0 = 1-based line number.
 // (-2 "no change" is filtered engine-side.)
+// world.SetScroll(Position, Visible).  Position is a device-pixel Y, NOT a line
+// number: Windows does `pt.y = Position; pmyView->ScrollToPosition(pt, false)`
+// (methods_output.cpp:766-786) and pal/win_worldview.cpp repeats it verbatim, so
+// pixels is the seam's contract.  The port treated it as a 1-based line, which
+// also contradicted its own GetInfo(296) — that returns scrollPos() in PIXELS,
+// so the obvious round-trip (read the position, scroll back to it) landed
+// roughly line-height times too far up.
 void CWorldChildFrame::setScroll(long pos)
 {
     if (!m_output) return;
@@ -4406,8 +4413,8 @@ void CWorldChildFrame::setScroll(long pos)
     } else if (pos <= 0) {
         m_output->ScrollToTop();
     } else {
-        // Convert 1-based → 0-based.
-        m_output->ScrollToLine((int)(pos - 1));
+        const int lineH = m_output->LineHeight();
+        m_output->ScrollToLine(lineH > 0 ? (int)(pos / lineH) : (int) pos);
     }
 }
 

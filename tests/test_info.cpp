@@ -818,4 +818,29 @@ TEST(GetInfoR5, StyleInfoRunActionVariable)
     EXPECT_STREQ("myflag",   vstr(doc.GetStyleInfo(ln, 1, 7)).c_str()); // case 7 variable
 }
 
+// methods_output.cpp SetScroll(Position, Visible): the port's pane always shows
+// its scrollbar, so the Visible argument used to be discarded outright -- but
+// m_bScrollBarWanted has no other writer besides its initialisation
+// (doc_construct.cpp:136) and GetInfo(120) reports it, so a script that turned
+// the scrollbar off still read back "true".  Windows records it
+// (methods_output.cpp:771) before touching the control.
+TEST(InfoTest, SetScrollRecordsTheScrollbarWantedFlag)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+
+    // doc_construct.cpp:136 starts it TRUE.
+    EXPECT_TRUE(doc.GetInfo(120).boolVal != 0);
+
+    // -2 is "do not move the view", so this isolates the visibility argument.
+    doc.SetScroll(-2, FALSE);
+    EXPECT_TRUE(doc.GetInfo(120).boolVal == 0);
+
+    doc.SetScroll(-2, TRUE);
+    EXPECT_TRUE(doc.GetInfo(120).boolVal != 0);
+
+    // ...and it is recorded on a scrolling call too, not only the -2 one.
+    doc.SetScroll(-1, FALSE);
+    EXPECT_TRUE(doc.GetInfo(120).boolVal == 0);
+}
+
 MC_TEST_MAIN()

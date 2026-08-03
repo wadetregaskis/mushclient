@@ -159,6 +159,7 @@ PyObject* variant_to_py(const VARIANT& v)
                                    : PyUnicode_FromString("");
     case VT_DISPATCH: if (v.byref) return make_world((CMUSHclientDoc*) v.byref);
                       Py_RETURN_NONE;
+    case VT_DATE: return PyLong_FromLong(MC_VariantDateToUnix(v));
     default:      Py_RETURN_NONE;
     }
   }

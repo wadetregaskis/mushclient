@@ -499,6 +499,33 @@ is GUI-only here. Please try to break them.
   most recent command is a no-op for the list. Confirm Windows does the same
   (`AddToCommandHistory` skips `strCommand == m_last_command`, so it should).
 
+### 4c-duodecies. world.SetScroll: pixels, and the Visible flag (2026-08-03)
+
+**Port-only.** Two defects in the same method:
+
+- `CWorldChildFrame::setScroll` treated its argument as a **1-based line**;
+  Windows treats it as a **device-pixel Y** (`methods_output.cpp:766-786`
+  `pt.y = Position; ScrollToPosition(pt, false)`, repeated verbatim in
+  `pal/win_worldview.cpp`). The port contradicted itself too — `GetInfo(296)`
+  returns `scrollPos()` in pixels, so reading the position and scrolling back to
+  it landed roughly line-height times too far up. Now divides by the line
+  height.
+- `SetScroll`'s `Visible` argument was discarded, and `m_bScrollBarWanted` has
+  no other writer besides `doc_construct.cpp:136`, so `GetInfo(120)` reported a
+  hard-coded `true`. It is recorded now. The port still does not *hide* the
+  scrollbar (a `wxScrolledWindow` that can scroll shows one) — a cosmetic
+  difference, but no longer a lie about the setting.
+
+**Worth checking on Windows:** that `world.SetScroll(world.GetInfo(296), true)`
+is a no-op — i.e. that 296 and SetScroll really are the same unit there. The
+whole fix rests on that reading.
+
+**Note for future work:** `platform/doc_gui_method_stubs.cpp` carries a
+**duplicate** `SetScroll` for the headless test link, and the two had drifted —
+the stub dropped `Visible`, so the test suite could not observe the product's
+behaviour. They are aligned now, but that file is a standing twin-drift hazard;
+CLAUDE.md's endgame is to retire the family.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

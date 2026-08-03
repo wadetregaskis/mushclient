@@ -744,8 +744,19 @@ Frame.FlashWindow (TRUE);
 long CMUSHclientDoc::SetScroll(long Position, BOOL Visible)
 {
 #ifndef _WIN32
-  // Position: -1 = scroll to bottom, -2 = no change, >= 0 = target line index.
-  // Visible (show/hide scrollbar) is ignored — scrollbar is always visible.
+  // Position is a device-pixel Y (-1 = bottom, -2 = no change), matching the
+  // Windows arm below and the seam contract in pal/win_worldview.cpp.
+  //
+  // Visible must be RECORDED even though the port's pane always shows its
+  // scrollbar: m_bScrollBarWanted has no other writer besides its
+  // initialisation (doc_construct.cpp:136), and GetInfo(120) reports it
+  // (methods_info.cpp:606) -- so without this the port answered a hard-coded
+  // "true" no matter what a script had set.  Windows also calls
+  // EnableScrollBarCtrl here; the port does not hide the bar (a wxScrolledWindow
+  // that can scroll shows one), which is a cosmetic difference, not a lie about
+  // the setting.
+  m_bScrollBarWanted = Visible;
+
   if (Position != -2)
     EmitScroll(Position);
   return eOK;

@@ -747,9 +747,17 @@ void CMUSHclientDoc::SetOutputFont (LPCTSTR FontName, short PointSize)
 
 long CMUSHclientDoc::SetScroll (long Position, BOOL Visible)
   {
-  // Visible is ignored off-Windows (the old portable twin's behaviour);
-  // -2 means "no change" on Windows.
-  (void) Visible;
+  // MUST match the real body in scripting/methods/methods_output.cpp, which is
+  // what mushgui links -- this file is test-link-only.  The two drifted once
+  // already: this twin dropped Visible on the floor, so GetInfo(120) reported a
+  // hard-coded "true" no matter what a script set, and the headless suite could
+  // not see the product's behaviour at all.
+  //
+  // Visible is RECORDED even though the port's pane always shows its scrollbar:
+  // m_bScrollBarWanted has no other writer besides doc_construct.cpp:136, and
+  // GetInfo(120) reports it.  -2 means "no change" to the position.
+  m_bScrollBarWanted = Visible;
+
   if (Position != -2)
     EmitScroll (Position);
   return eOK;

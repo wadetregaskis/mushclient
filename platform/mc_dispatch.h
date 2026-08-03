@@ -98,4 +98,11 @@ void MC_VariantClear(VARIANT& v);
 // Deep-copy src into dst (dst is cleared first).  Used to snapshot [out] params.
 void MC_VariantCopy(VARIANT& dst, const VARIANT& src);
 
+// A VT_DATE VARIANT as Unix seconds.  This is exactly what Lua's pushVariant
+// produces (scripting/lua_methods.cpp:142-159), so all six languages agree on
+// what GetInfo(301..306), GetLineInfo(9), GetTimerInfo and GetPluginInfo(13/14/22)
+// hand back.  Without it the five embedded engines dropped every date to
+// nil/None/undefined, because their variant switches had no VT_DATE arm.
+long MC_VariantDateToUnix(const VARIANT& v);
+
 #endif // !_WIN32 && MUSHCLIENT_FULL_BUILD

@@ -103,6 +103,7 @@ Tcl_Obj* variant_to_tcl (Tcl_Interp* interp, const VARIANT& v)
     case VT_R8:   return Tcl_NewDoubleObj (v.dblVal);
     case VT_BOOL: return Tcl_NewBooleanObj (v.boolVal != 0);
     case VT_BSTR: return Tcl_NewStringObj (v.bstrVal ? v.bstrVal : "", -1);
+    case VT_DATE: return Tcl_NewLongObj (MC_VariantDateToUnix(v));
     default:      return Tcl_NewObj ();
     }
   }

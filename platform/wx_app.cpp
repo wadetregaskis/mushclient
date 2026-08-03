@@ -39,7 +39,7 @@ int RunPalMiniWindowSelfTest();
 // (platform/engines_selftest.cpp), run via the hidden --engines-selftest flag.
 // They cannot be tested headlessly: each pulls in a whole interpreter, which the
 // 31 mushcore test executables must not link.
-int RunEmbeddedEnginesSelfTest();
+int RunEmbeddedEnginesSelfTest(const char* only);
 
 #include "pal/surface_bridge.h"   // pal::g_surface — checked before installing
                                   // the bridge for the miniwindow selftest
@@ -60,9 +60,17 @@ public:
                 const int failures = RunPalTransportSelfTest();
                 std::exit(failures == 0 ? 0 : 1);
             }
-            if (wxString(argv[i]) == wxT("--engines-selftest")) {
-                const int failures = RunEmbeddedEnginesSelfTest();
-                std::exit(failures == 0 ? 0 : 1);
+            // --engines-selftest runs every language; --engines-selftest=tcl
+            // runs one, so ctest can register a separate entry per language and
+            // report SKIPPED (exit 77) for interpreters this build lacks.
+            {
+                const wxString a(argv[i]);
+                if (a == wxT("--engines-selftest") || a.StartsWith(wxT("--engines-selftest="))) {
+                    const wxString which = a.AfterFirst(wxT('='));
+                    const wxScopedCharBuffer utf8 = which.utf8_str();
+                    std::exit(RunEmbeddedEnginesSelfTest(
+                        which.IsEmpty() ? nullptr : utf8.data()));
+                }
             }
             if (wxString(argv[i]) == wxT("--pal-miniwindow-selftest")) {
                 // CMiniWindow draws through the bridge unconditionally; the

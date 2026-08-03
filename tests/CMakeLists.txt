@@ -120,10 +120,18 @@ if(TARGET mushgui)
              COMMAND $<TARGET_FILE:mushgui> --pal-transport-selftest)
     add_test(NAME selftest_pal_miniwindow
              COMMAND $<TARGET_FILE:mushgui> --pal-miniwindow-selftest)
-    # The five embedded interpreters: the only place they can be exercised, since
-    # they are linked into the app and deliberately kept out of mushcore.
-    add_test(NAME selftest_engines
-             COMMAND $<TARGET_FILE:mushgui> --engines-selftest)
+    # The six scripting languages: the only place five of them can be exercised,
+    # since their interpreters are linked into the app and deliberately kept out
+    # of mushcore.  One ctest entry per language, so a build without (say) Ruby
+    # reports selftest_engine_ruby as SKIPPED rather than passing vacuously --
+    # scripting support is expected but not required.  Exit 77 is the skip.
+    foreach(_lang lua python perl js tcl ruby)
+        add_test(NAME selftest_engine_${_lang}
+                 COMMAND $<TARGET_FILE:mushgui> --engines-selftest=${_lang})
+        set_tests_properties(selftest_engine_${_lang} PROPERTIES
+                             SKIP_RETURN_CODE 77
+                             RUN_SERIAL TRUE)
+    endforeach()
     # RUN_SERIAL: each boots a real wx app instance; two at once race on the
     # window server (an occasional single-selftest flake under `ctest -j`).
     set_tests_properties(selftest_pal_surface selftest_pal_transport

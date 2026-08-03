@@ -380,7 +380,21 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   // nil (a callback with no meaningful return — Ruby yields the last expression,
   // usually nil) keeps processing, like Lua/Python/Perl/JS; only an explicit false
   // cancels. (RTEST(nil)==RTEST(false)==false, so nil must be special-cased.)
-  if (result) *result = (r == Qnil) ? true : RTEST (r);
+  if (result)
+    {
+    // "Keep processing?", and the MUSHclient rule is NOT Ruby truthiness: a
+    // handler returning numeric 0 stops, exactly as it does in Lua, Python,
+    // Perl, JavaScript and Tcl (and on the Windows COM path, where a returned 0
+    // becomes VARIANT_FALSE).  Ruby is the only language here where 0 is truthy,
+    // so RTEST alone made a Ruby plugin the only one that could not stop with a
+    // 0 -- the form MUSHclient's own documentation tells people to use.
+    // Returning nil still means "no explicit return", i.e. keep going.
+    if      (r == Qnil)             *result = true;
+    else if (RB_TYPE_P (r, T_FIXNUM) || RB_TYPE_P (r, T_BIGNUM))
+                                    *result = (rb_num2ll (r) != 0);
+    else if (RB_TYPE_P (r, T_FLOAT))*result = (rb_num2dbl (r) != 0.0);
+    else                            *result = RTEST (r);
+    }
   return false;
   }
 

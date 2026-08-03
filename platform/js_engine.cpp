@@ -493,7 +493,7 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
                                list<double> & nparams, list<string> & sparams,
                                long & nInvocationCount, const t_regexp * regexp,
                                map<string, string> * table, CPaneLine * paneline,
-                               bool * result)
+                               bool * result, const bool bLowercaseWildcards)
   {
   if (!m_jsEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
@@ -511,11 +511,11 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
 
   if (regexp)                            // wildcards as a JS array [whole, $1, …]
     {
-    int ncapt = 0;
-    pcre_fullinfo (regexp->m_program, regexp->m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
+    vector<string> wildcards;
+    regexp->GetCallbackWildcards (bLowercaseWildcards, wildcards);
     ProtectedValues wc (ctx);
-    for (int i = 0; i <= ncapt; i++)
-      { string w (regexp->GetWildcard (i)); JSStringRef js = js_string_from_bytes (w);
+    for (size_t i = 0; i < wildcards.size (); i++)
+      { JSStringRef js = js_string_from_bytes (wildcards [i]);
         wc.push_back (JSValueMakeString (ctx, js)); JSStringRelease (js); }
     args.push_back (JSObjectMakeArray (ctx, wc.size (), wc.empty () ? nullptr : wc.data (), nullptr));
     }

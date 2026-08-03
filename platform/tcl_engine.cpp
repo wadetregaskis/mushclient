@@ -305,7 +305,7 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
                                 list<double> & nparams, list<string> & sparams,
                                 long & nInvocationCount, const t_regexp * regexp,
                                 map<string, string> * table, CPaneLine * /*paneline*/,
-                                bool * result)
+                                bool * result, const bool bLowercaseWildcards)
   {
   if (!m_tclEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
@@ -332,11 +332,11 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
   for (const string & s : sparams)  av.push_back (Tcl_NewStringObj (s.c_str (), -1));
   if (regexp)                                   // wildcards as a Tcl list {whole $1 ...}
     {
-    int ncapt = 0;
-    pcre_fullinfo (regexp->m_program, regexp->m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
+    vector<string> wildcards;
+    regexp->GetCallbackWildcards (bLowercaseWildcards, wildcards);
     Tcl_Obj* wc = Tcl_NewListObj (0, nullptr);
-    for (int i = 0; i <= ncapt; i++)
-      { string w (regexp->GetWildcard (i));
+    for (size_t i = 0; i < wildcards.size (); i++)
+      { const string & w = wildcards [i];
         Tcl_ListObjAppendElement (interp, wc, Tcl_NewStringObj (w.c_str (), -1)); }
     av.push_back (wc);
     }

@@ -110,17 +110,26 @@ struct Engine {
                   std::list<double> nparams = {},
                   std::list<std::string> sparams = {},
                   std::map<std::string, std::string>* table = nullptr,
-                  unsigned short reason = eDontChangeAction)
+                  unsigned short reason = eDontChangeAction,
+                  const t_regexp* regexp = nullptr,
+                  bool lowercaseWildcards = false)
     {
         DISPID d = id(proc);
         long   count = 0;
         bool   keep  = false;
         const bool err = eng->ExecuteLua(d, proc, reason, "selftest", "selftest",
                                          nparams, sparams, count,
-                                         nullptr, table, nullptr, &keep);
+                                         regexp, table, nullptr, &keep,
+                                         lowercaseWildcards);
         if (errOut) *errOut = err;
         return keep;
     }
+
+    // Put a known sentinel in a variable, so a handler that silently does
+    // nothing is caught by the next var() read instead of passing on a stale
+    // value that happens to equal what we expected.
+    void seed(const char* name, const char* value)
+    { doc->SetVariable(CString (name), CString (value)); }
 
     // What the script left in a world variable.
     std::string var(const char* name)
@@ -221,6 +230,10 @@ const Dialect kDialects[] = {
   "function store(s) world.SetVariable('echoed', s) end\n"
   "function rettable(s) return {} end\n"
   "function rawnum(a, b, c, d) world.SetVariable('r', tostring(a)) end\n"
+  "function wc(n, l, w)\n"
+  "  local t = {}\n"
+  "  for i = 0, #w do t[#t+1] = w[i] end\n"
+  "  world.SetVariable('wc', table.concat(t, '|')) end\n"
   "function api()\n"
   "  world.Note('a note')\n"
   "  world.SetVariable('rt', 'value')\n"
@@ -283,6 +296,8 @@ const Dialect kDialects[] = {
   "    return {}\n"
   "def rawnum(a, b, c, d):\n"
   "    world.SetVariable('r', str(a))\n"
+  "def wc(n, l, w):\n"
+  "    world.SetVariable('wc', '|'.join(w))\n"
   "def api():\n"
   "    world.Note('a note')\n"
   "    world.SetVariable('rt', 'value')\n"
@@ -335,6 +350,8 @@ const Dialect kDialects[] = {
   "sub store { $world->SetVariable('echoed', $_[0]); }\n"
   "sub rettable { return {}; }\n"
   "sub rawnum { $world->SetVariable('r', \"$_[0]\"); }\n"
+  "sub wc { my ($n, $l, $w) = @_;\n"
+  "  $world->SetVariable('wc', join('|', @$w)); }\n"
   "sub api {\n"
   "  $world->Note('a note');\n"
   "  $world->SetVariable('rt', 'value');\n"
@@ -389,6 +406,7 @@ const Dialect kDialects[] = {
   "function store(s) { world.SetVariable('echoed', s); }\n"
   "function rettable(s) { return {}; }\n"
   "function rawnum(a, b, c, d) { world.SetVariable('r', String(a)); }\n"
+  "function wc(n, l, w) { world.SetVariable('wc', w.join('|')); }\n"
   "function api() {\n"
   "  world.Note('a note');\n"
   "  world.SetVariable('rt', 'value');\n"
@@ -449,6 +467,7 @@ const Dialect kDialects[] = {
   "proc store {s} { world SetVariable echoed $s }\n"
   "proc rettable {s} { return [dict create a 1] }\n"
   "proc rawnum {a b c d} { world SetVariable r $a }\n"
+  "proc wc {n l w} { world SetVariable wc [join $w |] }\n"
   "proc api {} {\n"
   "  world Note {a note}\n"
   "  world SetVariable rt value\n"
@@ -503,6 +522,7 @@ const Dialect kDialects[] = {
   "def store(s); world.SetVariable('echoed', s); end\n"
   "def rettable(s); {}; end\n"
   "def rawnum(a, b, c, d); world.SetVariable('r', a.to_s); end\n"
+  "def wc(n, l, w); world.SetVariable('wc', w.join('|')); end\n"
   "def api\n"
   "  world.Note('a note')\n"
   "  world.SetVariable('rt', 'value')\n"
@@ -590,6 +610,74 @@ void battery_mxp_callsite(const Dialect& d)
     const CString ttype (v.bstrVal ? v.bstrVal : "");
     check(ttype == d.mxpTableType, L,
           "...and with a mapping of the parsed arguments, which the COM path drops");
+}
+
+// The second real call site: a TRIGGER, matched off actual MUD output.
+//
+// battery_wildcards calls CScriptEngine directly, which proves each engine
+// honours the flag but not that anything ever SETS it -- the read of
+// trigger_item->bLowercaseWildcard lives in CMUSHclientDoc::ExecuteTriggerScript
+// (doc_shared.cpp), one layer above.  Drop that argument and every check in
+// battery_wildcards still passes.  So drive the whole chain: a real regexp
+// trigger with the box ticked, fed a real line.
+void battery_trigger_callsite(const Dialect& d)
+{
+    const char* L = d.display;
+
+    CMUSHclientDoc doc;
+    doc.m_bScriptErrorsToOutputWindow = TRUE;
+    doc.SetUpOutputWindow();
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_iFlags        = COLOUR_ANSI;
+    doc.m_iForeColour   = WHITE;
+    doc.m_iBackColour   = BLACK;
+    doc.AddStyle(COLOUR_ANSI, WHITE, BLACK, 0, static_cast<CAction*>(nullptr));
+
+    doc.m_ScriptEngine = new CScriptEngine(&doc, d.language);
+    doc.m_ScriptEngine->CreateScriptEngine();
+    if (doc.m_ScriptEngine->Parse(CString(d.source), "selftest-trigger")) {
+        skip(L, "a matched trigger delivers lower-cased wildcards", "the dialect failed to compile");
+        return;
+    }
+
+    CTrigger* t = new CTrigger;
+    t->trigger      = CString("^(\\w+) shouts (\\w+)$");
+    t->strLabel     = CString("shouter");
+    t->strProcedure = CString("wc");
+    t->bEnabled     = TRUE;
+    t->bRegexp      = TRUE;
+    t->bLowercaseWildcard = TRUE;       // the box the user ticks
+    t->iSendTo      = eSendToWorld;     // not eSendToScript: no escaping in play
+    t->iSequence    = DEFAULT_TRIGGER_SEQUENCE;
+    t->regexp       = regcomp(t->trigger, 0);
+
+    doc.GetTriggerMap().SetAt(t->strLabel, t);
+    doc.GetTriggerArray().Add(t);
+    doc.GetTriggerRevMap()[t] = "shouter";
+    // What FindAllEntryPoints does for each trigger.  (Its headless twin
+    // ResolveAllEntryPoints is test-link-only, and the real one wants a
+    // document template we do not have this early.)
+    t->dispid = doc.m_ScriptEngine->GetDispid(t->strProcedure);
+
+    if (t->dispid == DISPID_UNKNOWN) {
+        skip(L, "a matched trigger delivers lower-cased wildcards", "the handler did not resolve");
+        return;
+    }
+
+    doc.SetVariable(CString ("wc"), CString ("trigger never fired"));
+
+    const char* line = "GandalF shouts LOUDLY\n";
+    doc.DisplayMsg(line, (int) strlen(line), 0);
+
+    VARIANT v = doc.GetVariable("wc");
+    const std::string got (v.bstrVal ? v.bstrVal : "");
+
+    if (strcmp(d.key, "lua") == 0)
+        check(got == "GandalF shouts LOUDLY|GandalF|LOUDLY", L,
+              "a matched trigger delivers wildcards RAW to Lua, box ticked or not");
+    else
+        check(got == "gandalf shouts loudly|gandalf|loudly", L,
+              "a matched trigger delivers lower-cased wildcards when the box is ticked");
 }
 
 // ── the battery ───────────────────────────────────────────────────────────
@@ -703,6 +791,69 @@ void battery_parameters(Engine& e, const Dialect& d)
     e.callRich("tbl", &err, {}, { "line" }, &t);
     check(!err && e.var("t") == "value", L,
           "the optional table (named wildcards) arrives as a mapping");
+}
+
+// 3a-bis. The POSITIONAL wildcards -- the parameter every trigger and alias
+//         callback receives, and the only one whose content is language-policy
+//         rather than plumbing.
+//
+// Shape is Lua's, on both platforms: [0] is the whole match and [1..n] are the
+// numbered captures.  (The Windows COM arm builds a different array -- 1-based,
+// always 10 long, whole match LAST at index 10 -- but that is the shape its
+// ActiveScript hosts have always seen; the port's engines follow the shape its
+// own Lua sets, so a script ported between the six languages here indexes the
+// same way.)
+//
+// CONTENT is where the two arms genuinely differ, and this is the asymmetry the
+// battery exists to pin.  "Convert wildcards to lower case"
+// (CTrigger::bLowercaseWildcard) is applied by FixWildcard when evaluate.cpp
+// fills trigger_item->wildcards[] -- the array the COM callback and
+// GetTriggerInfo(101..110) read.  So:
+//
+//   * the five embedded engines stand in for ActiveScript hosts and MUST fold;
+//   * Lua MUST NOT -- its callback reads the regexp raw on Windows too, and
+//     tests/test_triggers.cpp pins that same split from the headless side.
+//
+// Before this existed, all five ignored the option entirely: a trigger with the
+// box ticked delivered mixed-case wildcards to Python/Perl/JS/Tcl/Ruby.
+void battery_wildcards(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+    const bool  isLua = strcmp(d.key, "lua") == 0;
+
+    // Two captures, so the join below proves ORDER as well as content: get the
+    // whole match and the captures the wrong way round and it cannot pass.
+    t_regexp* re = regcomp("^(\\w+) shouts (\\w+)$");
+    if (re == nullptr) {                       // regcomp throws rather than
+        skip(L, "wildcards reach the callback", "regexp would not compile");
+        return;                                // returns null, but be safe
+    }
+    if (regexec(re, "GandalF shouts LOUDLY") == 0) {
+        skip(L, "wildcards reach the callback", "the test regexp did not match");
+        delete re;
+        return;
+    }
+
+    const std::string raw    = "GandalF shouts LOUDLY|GandalF|LOUDLY";
+    const std::string folded = "gandalf shouts loudly|gandalf|loudly";
+
+    e.seed("wc", "handler never ran");
+    e.callRich("wc", nullptr, {}, { "tname", "GandalF shouts LOUDLY" },
+               nullptr, eDontChangeAction, re, false);
+    check(e.var("wc") == raw, L,
+          "wildcards arrive as [whole match, capture 1, capture 2], case intact");
+
+    e.seed("wc", "handler never ran");
+    e.callRich("wc", nullptr, {}, { "tname", "GandalF shouts LOUDLY" },
+               nullptr, eDontChangeAction, re, true);
+    if (isLua)
+        check(e.var("wc") == raw, L,
+              "\"lower case wildcards\" is IGNORED (Lua reads the regexp raw, as on Windows)");
+    else
+        check(e.var("wc") == folded, L,
+              "\"lower case wildcards\" folds every entry, whole match included");
+
+    delete re;
 }
 
 // 3b. The OTHER direction: a value the script hands BACK to the world API.
@@ -964,6 +1115,7 @@ bool run_language(const Dialect& d)
     battery_simple    (e, d);
     battery_keepgoing (e, d);
     battery_parameters(e, d);
+    battery_wildcards (e, d);
     battery_toworld   (e, d);
     battery_worldapi  (d);
     battery_state     (e, d);
@@ -972,6 +1124,7 @@ bool run_language(const Dialect& d)
     battery_stale_proxy  (d);
     battery_gc_pressure  (d);
     battery_mxp_callsite(d);
+    battery_trigger_callsite(d);
     battery_errors    (e, d);   // last: it disables handlers in this engine
     battery_compile   (d);
     return true;

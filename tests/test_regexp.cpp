@@ -226,5 +226,125 @@ TEST(RegexpTest, ExecOnErroredProgramEarlyOutsFalse) {
     EXPECT_EQ(attemptsAfterError, r->m_iMatchAttempts);
 }
 
+// ── GetCallbackWildcards ──────────────────────────────────────────────────
+//
+// The positional wildcard list a script callback is handed.  Shape is fixed by
+// what the six engines already do: [0] = whole match, [1..capture-count] = the
+// numbered captures, length = capture-count + 1 (NOT padded to MAX_WILDCARDS).
+
+TEST(RegexpWildcardsTest, WholeMatchFirstThenNumberedCaptures) {
+    Regexp r("(\\w+)\\s+(\\w+)");
+    ASSERT_NE(nullptr, r.get());
+    ASSERT_NE(0, regexec(r.get(), "Hello Big World"));
+
+    std::vector<std::string> wc;
+    r->GetCallbackWildcards(false, wc);
+
+    ASSERT_EQ(3u, wc.size());              // 2 captures + the whole match
+    EXPECT_EQ("Hello Big", wc[0]);         // [0] is the whole match, not %1
+    EXPECT_EQ("Hello",     wc[1]);
+    EXPECT_EQ("Big",       wc[2]);
+}
+
+// The list is sized from the pattern's capture COUNT, not from how many
+// captures happened to participate in the match -- so an unmatched optional
+// group still occupies its slot, as an empty string.
+TEST(RegexpWildcardsTest, UnparticipatingCaptureKeepsItsSlot) {
+    Regexp r("(a)(b)?(c)");
+    ASSERT_NE(nullptr, r.get());
+    ASSERT_NE(0, regexec(r.get(), "ac"));
+
+    std::vector<std::string> wc;
+    r->GetCallbackWildcards(false, wc);
+
+    ASSERT_EQ(4u, wc.size());
+    EXPECT_EQ("ac", wc[0]);
+    EXPECT_EQ("a",  wc[1]);
+    EXPECT_EQ("",   wc[2]);                // (b)? did not participate
+    EXPECT_EQ("c",  wc[3]);
+}
+
+// The trigger option "convert wildcards to lower case"
+// (CTrigger::bLowercaseWildcard).  FixWildcard applies it when it fills
+// trigger_item->wildcards[], which is what a Windows ActiveScript callback and
+// GetTriggerInfo(101..110) receive; the embedded engines stand in for those
+// hosts, so they ask for it here.
+TEST(RegexpWildcardsTest, LowerCasesEveryEntryIncludingTheWholeMatch) {
+    Regexp r("(\\w+)\\s+(\\w+)");
+    ASSERT_NE(nullptr, r.get());
+    ASSERT_NE(0, regexec(r.get(), "Hello BIG World"));
+
+    std::vector<std::string> wc;
+    r->GetCallbackWildcards(true, wc);
+
+    ASSERT_EQ(3u, wc.size());
+    EXPECT_EQ("hello big", wc[0]);         // the whole match is folded too...
+    EXPECT_EQ("hello",     wc[1]);         // ...and so is every capture
+    EXPECT_EQ("big",       wc[2]);
+}
+
+// The flag must be genuinely optional: with it clear, case survives untouched.
+// (Assert the negative as well as the positive, or a helper that always folds
+// would pass the test above.)
+TEST(RegexpWildcardsTest, PreservesCaseWhenNotAsked) {
+    Regexp r("(\\w+)");
+    ASSERT_NE(nullptr, r.get());
+    ASSERT_NE(0, regexec(r.get(), "MiXeD"));
+
+    std::vector<std::string> wc;
+    r->GetCallbackWildcards(false, wc);
+
+    ASSERT_EQ(2u, wc.size());
+    EXPECT_EQ("MiXeD", wc[0]);
+    EXPECT_EQ("MiXeD", wc[1]);
+}
+
+// A pattern with no captures still yields one entry: the whole match.
+TEST(RegexpWildcardsTest, NoCapturesStillYieldsTheWholeMatch) {
+    Regexp r("wor\\w+");
+    ASSERT_NE(nullptr, r.get());
+    ASSERT_NE(0, regexec(r.get(), "hello world"));
+
+    std::vector<std::string> wc;
+    r->GetCallbackWildcards(false, wc);
+
+    ASSERT_EQ(1u, wc.size());
+    EXPECT_EQ("world", wc[0]);
+}
+
+// The out-parameter is cleared, not appended to -- a caller reusing one vector
+// across matches must not accumulate.
+TEST(RegexpWildcardsTest, ClearsTheOutputVectorFirst) {
+    Regexp r("(\\w+)");
+    ASSERT_NE(nullptr, r.get());
+    ASSERT_NE(0, regexec(r.get(), "second"));
+
+    std::vector<std::string> wc;
+    wc.push_back("stale");
+    wc.push_back("also stale");
+    r->GetCallbackWildcards(false, wc);
+
+    ASSERT_EQ(2u, wc.size());
+    EXPECT_EQ("second", wc[0]);
+}
+
+// A regexp whose program pcre cannot be interrogated (catastrophic backtracking
+// NULLs m_program -- see ExecOnErroredProgramEarlyOutsFalse) must degrade to
+// "the whole match only", never loop over an uninitialised capture count.
+TEST(RegexpWildcardsTest, ErroredProgramDegradesToASingleEmptyEntry) {
+    Regexp r("(a+)+$");
+    ASSERT_NE(nullptr, r.get());
+    std::string s(50, 'a');
+    s += '!';
+    EXPECT_EQ(0, regexec(r.get(), s.c_str()));
+    ASSERT_TRUE(r->m_program == nullptr);
+
+    std::vector<std::string> wc;
+    r->GetCallbackWildcards(false, wc);
+
+    ASSERT_EQ(1u, wc.size());
+    EXPECT_EQ("", wc[0]);
+}
+
 
 MC_TEST_MAIN()

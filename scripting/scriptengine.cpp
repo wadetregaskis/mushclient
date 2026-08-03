@@ -788,7 +788,7 @@ bool CScriptEngine::ExecuteLua (DISPID& dispid,
                                  LPCTSTR, LPCTSTR,
                                  list<double>&, list<string>&, long&,
                                  const t_regexp*, map<string,string>*,
-                                 CPaneLine*, bool*)
+                                 CPaneLine*, bool*, const bool)
   { dispid = DISPID_UNKNOWN; return false; }
 
 bool CScriptEngine::ExecuteLua (DISPID& dispid,
@@ -808,7 +808,7 @@ bool CScriptEngine::ExecuteLua (DISPID& dispid,
   DISPID CScriptEngine::Get##Lang##Dispid (const CString&) { return DISPID_UNKNOWN; } \
   bool CScriptEngine::Execute##Lang (DISPID& dispid, LPCTSTR, const unsigned short,   \
               LPCTSTR, LPCTSTR, list<double>&, list<string>&, long&,                  \
-              const t_regexp*, map<string,string>*, CPaneLine*, bool*)               \
+              const t_regexp*, map<string,string>*, CPaneLine*, bool*, const bool)   \
     { dispid = DISPID_UNKNOWN; return false; }                                       \
   bool CScriptEngine::Execute##Lang (DISPID& dispid, LPCTSTR, const unsigned short,   \
               LPCTSTR, LPCTSTR, CString, long&, CString&)                             \

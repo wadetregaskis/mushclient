@@ -239,3 +239,28 @@ string t_regexp::GetWildcard (const string& sName) const
     }   // end of wanting a named wildcard
   return GetWildcard (iNumber);
   } // end of t_regexp::GetWildcard
+
+// The positional wildcards for a script callback -- see the comment on the
+// declaration in regexp.h for why bMakeLowerCase is the caller's business.
+void t_regexp::GetCallbackWildcards (const bool bMakeLowerCase,
+                                     vector<string> & vResult) const
+  {
+  vResult.clear ();
+
+  // Initialised: pcre_fullinfo returns an error WITHOUT writing its output
+  // (PCRE_ERROR_NULL / BADMAGIC), so a regexp we cannot interrogate has to
+  // degrade to "the whole match only" rather than loop over a garbage count.
+  int ncapt = 0;
+  pcre_fullinfo (m_program, m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
+
+  vResult.reserve (ncapt + 1);
+
+  for (int i = 0; i <= ncapt; i++)
+    {
+    string sWildcard (GetWildcard (i));
+    if (bMakeLowerCase)
+      sWildcard = tolower (sWildcard);
+    vResult.push_back (sWildcard);
+    }
+
+  } // end of t_regexp::GetCallbackWildcards

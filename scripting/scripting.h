@@ -114,7 +114,13 @@ class CScriptEngine : public CObject
                    const t_regexp * regexp = NULL,  // regular expression (for triggers, aliases)
                    map<string, string> * table = NULL, // map of other things
                    CPaneLine * paneline = NULL,        // and the line (for triggers)
-                   bool * result = NULL);              // where to put result
+                   bool * result = NULL,               // where to put result
+                   // The trigger's "convert wildcards to lower case" option.
+                   // IGNORED by Lua on purpose -- Windows' native Lua path reads
+                   // the raw regexp too (see t_regexp::GetCallbackWildcards).
+                   // Honoured by the five embedded engines, which stand in for
+                   // the ActiveScript hosts that get FixWildcard'ed wildcards.
+                   const bool bLowercaseWildcards = false);
 
   // returns true if script error
   bool ExecuteLua (DISPID & dispid,          // dispatch ID, will be set to DISPID_UNKNOWN on an error
@@ -178,7 +184,7 @@ class CScriptEngine : public CObject
                list<double> & nparams, list<string> & sparams,                     \
                long & nInvocationCount, const t_regexp * regexp = NULL,             \
                map<string, string> * table = NULL, CPaneLine * paneline = NULL,     \
-               bool * result = NULL);                                              \
+               bool * result = NULL, const bool bLowercaseWildcards = false);       \
     bool Name (DISPID & dispid, LPCTSTR szProcedure, const unsigned short iReason,  \
                LPCTSTR szType, LPCTSTR szReason, CString strParam,                  \
                long & nInvocationCount, CString & result);

@@ -428,7 +428,7 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
                                  list<double> & nparams, list<string> & sparams,
                                  long & nInvocationCount, const t_regexp * regexp,
                                  map<string, string> * table, CPaneLine * /*paneline*/,
-                                 bool * result)
+                                 bool * result, const bool bLowercaseWildcards)
   {
   if (!m_rubyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
@@ -445,11 +445,11 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   for (const string & s : sparams) rb_ary_push (av, rb_str_new_cstr (s.c_str ()));
   if (regexp)                                   // wildcards as an Array [whole, $1, ...]
     {
-    int ncapt = 0;
-    pcre_fullinfo (regexp->m_program, regexp->m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
+    vector<string> wildcards;
+    regexp->GetCallbackWildcards (bLowercaseWildcards, wildcards);
     VALUE wc = rb_ary_new ();
-    for (int i = 0; i <= ncapt; i++)
-      { string w (regexp->GetWildcard (i)); rb_ary_push (wc, rb_str_new_cstr (w.c_str ())); }
+    for (size_t i = 0; i < wildcards.size (); i++)
+      { const string & w = wildcards [i]; rb_ary_push (wc, rb_str_new_cstr (w.c_str ())); }
     rb_ary_push (av, wc);
     }
   if (table)                                    // as a Hash

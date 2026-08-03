@@ -562,7 +562,8 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
                                 const t_regexp * regexp,  // regular expression (for triggers, aliases)
                                 map<string, string> * table,   // map of other things
                                 CPaneLine * paneline,     // and the line (for triggers)
-                                bool * result)            // where to put result
+                                bool * result,            // where to put result
+                                const bool bLowercaseWildcards) // lower-case the wildcards?
 
 
   {
@@ -571,16 +572,20 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
   // Alt-language world (the call sites gate on UsesEmbeddedCallback(), so an
   // embedded Python/Perl/JS/Tcl engine lands here): forward with identical params.
   if (m_pyEngine)   return ExecutePython (dispid, szProcedure, iReason, szType, szReason,
-                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
+                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
   if (m_perlEngine) return ExecutePerl   (dispid, szProcedure, iReason, szType, szReason,
-                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
+                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
   if (m_jsEngine)   return ExecuteJS     (dispid, szProcedure, iReason, szType, szReason,
-                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
+                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
   if (m_tclEngine)  return ExecuteTcl    (dispid, szProcedure, iReason, szType, szReason,
-                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
+                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
   if (m_rubyEngine) return ExecuteRuby   (dispid, szProcedure, iReason, szType, szReason,
-                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result);
+                                          nparams, sparams, nInvocationCount, regexp, table, paneline, result, bLowercaseWildcards);
 #endif
+
+  // Deliberately unused past this point: Lua's callback gets the wildcards raw,
+  // on Windows too.  See t_regexp::GetCallbackWildcards.
+  (void) bLowercaseWildcards;
 
   // safety check ;)
   if (!L)

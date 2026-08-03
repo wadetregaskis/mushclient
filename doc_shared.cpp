@@ -3948,7 +3948,14 @@ void CMUSHclientDoc::ExecuteTriggerScript (CTrigger * trigger_item,
                                    trigger_item->nInvocationCount,
                                    trigger_item->regexp,
                                    NULL,        // no map of strings
-                                   &StyledLine);  // but we *do* have a styled line
+                                   &StyledLine, // but we *do* have a styled line
+                                   NULL,        // nowhere to put a result
+                                   // "Convert wildcards to lower case".  Lua
+                                   // ignores it (as on Windows); the embedded
+                                   // engines apply it, because the COM path
+                                   // below hands ActiveScript the already
+                                   // lower-cased trigger_item->wildcards[].
+                                   trigger_item->bLowercaseWildcard);
     trigger_item->bExecutingScript = false;     // can be deleted now
     return;
     }   // end of Lua

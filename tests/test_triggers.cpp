@@ -275,6 +275,104 @@ TEST(TriggerScript, LuaCallbackFiresOnMatch)
     EXPECT_STREQ("ping", (const char*)v->strContents);
 }
 
+// "Convert wildcards to lower case" (CTrigger::bLowercaseWildcard) reaches the
+// script by TWO routes that upstream deliberately does not keep in step, and
+// this test pins both so neither is "tidied up" into the other:
+//
+//   * GetTriggerInfo(101..110) reads trigger_item->wildcards[], which
+//     evaluate.cpp filled through FixWildcard -- so it IS folded.  That is also
+//     what a Windows ActiveScript (COM) callback is handed
+//     (doc_shared.cpp: the eWildcards SAFEARRAY), and therefore what the five
+//     embedded engines must reproduce.
+//   * The Lua callback's wildcards table is built from the regexp directly
+//     (lua_scripting.cpp), so it is NOT folded -- on Windows either.
+//
+// The embedded-engine half cannot be tested here (the interpreters live in
+// mushgui_adapters); it is covered by battery_wildcards in
+// platform/engines_selftest.cpp, which holds all six languages to this same
+// split.
+TEST(TriggerScript, LowercaseWildcardFoldsTheStoredArrayButNotTheLuaCallback)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+
+    const char* lua =
+        "function OnShout(name, line, wildcards)\n"
+        "  world.SetVariable('who', wildcards[1])\n"
+        "  world.SetVariable('whole', wildcards[0])\n"
+        "end\n";
+    ASSERT_TRUE(setup_lua(doc, lua));
+
+    CTrigger* t = new CTrigger;
+    t->trigger     = CString("^(\\w+) shouts");
+    t->strLabel    = CString("shout_trigger");
+    t->strProcedure= CString("OnShout");
+    t->bEnabled    = TRUE;
+    t->bRegexp     = TRUE;
+    t->bLowercaseWildcard = TRUE;            // the option under test
+    t->iSendTo     = eSendToWorld;           // NOT eSendToScript: no escaping
+    t->iSequence   = DEFAULT_TRIGGER_SEQUENCE;
+    t->regexp      = regcomp(t->trigger, 0);
+    ASSERT_NE(nullptr, t->regexp);
+
+    doc.GetTriggerMap().SetAt(t->strLabel, t);
+    doc.GetTriggerArray().Add(t);
+    doc.GetTriggerRevMap()[t] = "shout_trigger";
+    doc.ResolveAllEntryPoints();
+
+    feed_line(doc, "GandalF shouts loudly");
+    EXPECT_EQ(1L, t->nMatched);
+
+    // Route 1 -- the stored array, i.e. GetTriggerInfo(101): folded.
+    ASSERT_TRUE(t->wildcards.size() > 1);
+    EXPECT_EQ(std::string("gandalf"), t->wildcards[1]);
+    VARIANT vi = doc.GetTriggerInfo("shout_trigger", 101);
+    ASSERT_EQ(VT_BSTR, vi.vt);
+    EXPECT_EQ(std::string("gandalf"), std::string(vi.bstrVal ? vi.bstrVal : ""));
+
+    // Route 2 -- the Lua callback's table: NOT folded, on Windows either.
+    // Asserting the ORIGINAL case is the point: if someone "fixes" Lua to match
+    // the COM arm, this fails.
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("who", v));
+    ASSERT_NE(nullptr, v);
+    EXPECT_STREQ("GandalF", (const char*)v->strContents);
+
+    // ...and the whole match at [0] keeps its case too, so the difference is
+    // about the folding, not about which entry the engine happens to fill.
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("whole", v));
+    ASSERT_NE(nullptr, v);
+    EXPECT_STREQ("GandalF shouts", (const char*)v->strContents);
+}
+
+// The control for the test above: with the option OFF, the stored array keeps
+// its case as well -- so the fold there is the option's doing, not FixWildcard
+// folding unconditionally.
+TEST(TriggerScript, StoredWildcardsKeepCaseWhenLowercaseWildcardIsOff)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+
+    CTrigger* t = new CTrigger;
+    t->trigger     = CString("^(\\w+) shouts");
+    t->strLabel    = CString("shout2");
+    t->bEnabled    = TRUE;
+    t->bRegexp     = TRUE;
+    t->bLowercaseWildcard = FALSE;           // the control
+    t->iSendTo     = eSendToWorld;
+    t->iSequence   = DEFAULT_TRIGGER_SEQUENCE;
+    t->regexp      = regcomp(t->trigger, 0);
+    ASSERT_NE(nullptr, t->regexp);
+
+    doc.GetTriggerMap().SetAt(t->strLabel, t);
+    doc.GetTriggerArray().Add(t);
+    doc.GetTriggerRevMap()[t] = "shout2";
+
+    feed_line(doc, "GandalF shouts loudly");
+    EXPECT_EQ(1L, t->nMatched);
+
+    ASSERT_TRUE(t->wildcards.size() > 1);
+    EXPECT_EQ(std::string("GandalF"), t->wildcards[1]);
+}
+
 TEST(TriggerScript, LuaCallbackReceivesWildcard)
 {
     // A regexp trigger with a wildcard: the Lua function receives wildcards

@@ -82,6 +82,18 @@ class t_regexp
   // returns a named wildcard
   string GetWildcard (const string& sName) const;
 
+  // The positional wildcards a script callback receives:
+  //   [0] = the whole match, [1 .. capture-count] = the numbered captures.
+  // bMakeLowerCase mirrors the per-trigger "convert wildcards to lower case"
+  // option (CTrigger::bLowercaseWildcard).  FixWildcard applies it when it
+  // fills trigger_item->wildcards[], which is what a Windows ActiveScript (COM)
+  // callback and GetTriggerInfo(101..110) are handed -- so an embedded engine
+  // standing in for an ActiveScript host has to apply it too.  Lua does NOT:
+  // its callback reads this regexp raw on Windows as well, and that asymmetry
+  // is upstream behaviour, not an oversight.
+  void GetCallbackWildcards (const bool bMakeLowerCase,
+                             vector<string> & vResult) const;
+
   };
 
 t_regexp * regcomp(const char *exp, const int options = 0);

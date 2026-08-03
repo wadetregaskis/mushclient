@@ -309,6 +309,42 @@ inside the existing `#else` (non-Windows) arm, and its definition in
 `scripting/lua_scripting.cpp` is `#ifndef _WIN32`.  Nothing to check beyond a
 clean compile.
 
+### 4c-sexies. "Convert wildcards to lower case" reaches the embedded engines (2026-08-03)
+
+The per-trigger option `CTrigger::bLowercaseWildcard` was applied on Windows but
+did nothing in five of the port's six languages, because `FixWildcard` applies it
+when `evaluate.cpp` fills `trigger_item->wildcards[]` — the array the **COM**
+callback and `GetTriggerInfo(101..110)` read — while the embedded engines built
+their own list from the regexp, raw. Lua reads the regexp raw on Windows too, so
+Lua keeps ignoring the option; that asymmetry is upstream's and is now pinned by
+a test on both sides (`tests/test_triggers.cpp`,
+`platform/engines_selftest.cpp`).
+
+Shared-source edits, all intended as Windows no-ops:
+
+1. `regexp.h` / `regexp.cpp` gain `t_regexp::GetCallbackWildcards (bool, vector<string>&)`.
+   **New function, no Windows caller.** Check: it compiles.
+2. `scripting/scripting.h` — the rich `ExecuteLua` declaration and the
+   `MC_DECL_EXEC` macro gain a trailing `const bool bLowercaseWildcards = false`.
+   Every definition and link-stub was updated to match
+   (`scripting/lua_scripting.cpp`, `scripting/scriptengine.cpp`,
+   `platform/*_engine.cpp`). Check: MSVC accepts the defaulted argument and the
+   declaration/definition pairs agree.
+3. `scripting/lua_scripting.cpp` — the Lua body **ignores** the new parameter
+   (there is an explicit `(void)` cast and a comment saying why). The forwarding
+   block that passes it on is inside `#ifndef _WIN32`.
+4. `doc_shared.cpp` — `ExecuteTriggerScript`'s `UsesEmbeddedCallback()` arm now
+   passes `NULL` for `result` and `trigger_item->bLowercaseWildcard` after it. On
+   Windows `UsesEmbeddedCallback() == IsLua()`, and Lua ignores the flag, so this
+   is a compile-only change there.
+
+**Check:** in a Lua world, a regexp trigger with **Convert wildcards to lower
+case** ticked and a script function set — the function's `wildcards` table must
+still arrive with the ORIGINAL case, while `GetTriggerInfo(name, 101)` returns
+the folded one. Then the same trigger in a **VBScript or JScript** world: the
+`wildcards` array it receives must still be folded, and still 1-relative with the
+whole matching line at index 10. Neither should have changed.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

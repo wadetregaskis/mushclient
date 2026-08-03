@@ -362,7 +362,13 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
 
     if (m_ScriptEngine && (m_ScriptEngine->UsesEmbeddedCallback ()))
       {
-      bool bResult;
+      // Initialised: the rich Execute* overloads return early WITHOUT writing
+      // *result on the "function not found" and error arms, and this value is
+      // returned straight to the caller -- who reads it as "did the plugin veto
+      // this?".  An uninitialised read decided, at random, whether a line was
+      // sent, displayed or suppressed.  true is the right default: it is what
+      // ExecuteLua writes when a handler returns nothing.
+      bool bResult = true;
       list<double> nparams;
       list<string> sparams;
       nparams.push_back (arg1);
@@ -452,7 +458,13 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
 
     if (m_ScriptEngine && (m_ScriptEngine->UsesEmbeddedCallback ()))
       {
-      bool bResult;
+      // Initialised: the rich Execute* overloads return early WITHOUT writing
+      // *result on the "function not found" and error arms, and this value is
+      // returned straight to the caller -- who reads it as "did the plugin veto
+      // this?".  An uninitialised read decided, at random, whether a line was
+      // sent, displayed or suppressed.  true is the right default: it is what
+      // ExecuteLua writes when a handler returns nothing.
+      bool bResult = true;
       list<double> nparams;
       list<string> sparams;
       nparams.push_back (arg1);
@@ -540,7 +552,13 @@ bool CPlugin::ExecutePluginScript (CScriptCallInfo & callinfo,
 
     if (m_ScriptEngine && (m_ScriptEngine->UsesEmbeddedCallback ()))
       {
-      bool bResult;
+      // Initialised: the rich Execute* overloads return early WITHOUT writing
+      // *result on the "function not found" and error arms, and this value is
+      // returned straight to the caller -- who reads it as "did the plugin veto
+      // this?".  An uninitialised read decided, at random, whether a line was
+      // sent, displayed or suppressed.  true is the right default: it is what
+      // ExecuteLua writes when a handler returns nothing.
+      bool bResult = true;
       list<double> nparams;
       list<string> sparams;
       nparams.push_back (arg1);

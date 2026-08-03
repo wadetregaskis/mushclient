@@ -287,6 +287,23 @@ Two shared-source changes, both meant to be Windows no-ops:
    neither.  **Check:** nothing — this is invisible to the Windows build; listed
    only because the file is shared.
 
+5. Three shared-source fixes with Windows-visible edits:
+   - `stdafx.h` gains `#define VariantClearOwned(pv) VariantClear(pv)` inside
+     `#ifdef _WIN32`, and `scripting/lua_methods.cpp`'s `pushVariant` calls it
+     instead of `VariantClear` for a VARIANT it owns.  Identical on Windows.
+     `pushVariant` also gained a defaulted `bOwned` parameter, passed `false` for
+     SAFEARRAY elements -- on Windows `SafeArrayGetElement` COPIES the BSTR, so
+     the old code was already leaking each element copy there; this fixes that
+     too.  **Check:** `table.foreach(world.GetOptionList(), print)` still lists
+     the options, and repeated `world.GetVariable` in a loop does not grow the
+     process.
+   - `scripting/lua_methods.cpp` `VariantInit`s the eighteen out-parameters of
+     `L_GetTrigger` / `L_GetAlias` / `L_GetTimer`.  **Check:**
+     `world.GetTrigger("nosuch")` returns `eTriggerNotFound` and nils.
+   - `plugins.cpp` initialises three `bool bResult` to `true`.  **Check:** a
+     plugin implementing only `OnPluginConnect` does not suppress sends,
+     displays or commands.
+
 `scripting/scripting.h` also gained `CScriptEngine::TraceCallback`, declared
 inside the existing `#else` (non-Windows) arm, and its definition in
 `scripting/lua_scripting.cpp` is `#ifndef _WIN32`.  Nothing to check beyond a

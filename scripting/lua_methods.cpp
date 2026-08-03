@@ -103,13 +103,26 @@ CMUSHclientDoc **ud = (CMUSHclientDoc **) isudata (L, 1, mushclient_typename);
 // helper function for pushing results returned by normal MUSHclient methods
 // (stored in a variant)
 
-int pushVariant (lua_State *L, VARIANT & v)
+int pushVariant (lua_State *L, VARIANT & v, const bool bOwned = true);
+
+// bOwned: does the CALLER own v's BSTR?  A VARIANT a world method returned, yes
+// -- it allocated the string and handed it over.  A VARIANT pulled out of a
+// SAFEARRAY, NO: the port's SafeArrayGetElement is a shallow copy that borrows
+// bstrVal (platform/mfc_ui.h says so), and SafeArrayDestroy frees the originals.
+// Freeing an element here was a double free -- which is exactly what happened
+// the first time this leak was "fixed" unconditionally.
+int pushVariant (lua_State *L, VARIANT & v, const bool bOwned)
   {
   switch (v.vt)
     {
     case VT_BSTR:
       lua_pushstring (L, CString (v.bstrVal));
-      VariantClear (&v);
+      // Lua has its own copy now.  VariantClear frees a BSTR on Windows but must
+      // not on the port (its COleVariant borrows the caller's string), so every
+      // string a VARIANT-returning world method produced was leaking here --
+      // once per call, on the hottest scripting path there is.
+      if (bOwned) VariantClearOwned (&v);
+      else        VariantClear (&v);
       break;
     case VT_I2:
       lua_pushnumber (L, v.iVal);
@@ -167,7 +180,7 @@ int pushVariant (lua_State *L, VARIANT & v)
         index [1] = 0;
         SafeArrayGetElement(psa, index, &val);
 
-        pushVariant (L, val);   // recurse to push the element value
+        pushVariant (L, val, false);   // element: bstrVal is borrowed from the array
         lua_rawseti(L, -2, i + extra);  // make 1-relative
         }   // end of doing each row
       VariantClear (&v);
@@ -2635,6 +2648,16 @@ static int L_GetAlias (lua_State *L)
           Flags, 
           ScriptName;
 
+  // VariantInit every out-parameter first.  These getters return
+  // eTriggerNotFound / eAliasNotFound / eTimerNotFound WITHOUT writing them, so
+  // pushVariant would then switch on an uninitialised `vt` -- reading a random
+  // stack word as a type tag, and its payload as a pointer.
+  VariantInit (&MatchText);
+  VariantInit (&ResponseText);
+  VariantInit (&Parameter);
+  VariantInit (&Flags);
+  VariantInit (&ScriptName);
+
   long result = pDoc->GetAlias(my_checkstring (L, 1),  // name
                                   &MatchText, 
                                   &ResponseText, 
@@ -3863,6 +3886,17 @@ static int L_GetTimer (lua_State *L)
           Flags, 
           ScriptName;
 
+  // VariantInit every out-parameter first.  These getters return
+  // eTriggerNotFound / eAliasNotFound / eTimerNotFound WITHOUT writing them, so
+  // pushVariant would then switch on an uninitialised `vt` -- reading a random
+  // stack word as a type tag, and its payload as a pointer.
+  VariantInit (&Hour);
+  VariantInit (&Minute);
+  VariantInit (&Second);
+  VariantInit (&ResponseText);
+  VariantInit (&Flags);
+  VariantInit (&ScriptName);
+
   long result = pDoc->GetTimer(my_checkstring (L, 1),  // name
                                   &Hour, 
                                   &Minute, 
@@ -3935,6 +3969,18 @@ static int L_GetTrigger (lua_State *L)
           Wildcard, 
           SoundFileName, 
           ScriptName;
+
+  // VariantInit every out-parameter first.  These getters return
+  // eTriggerNotFound / eAliasNotFound / eTimerNotFound WITHOUT writing them, so
+  // pushVariant would then switch on an uninitialised `vt` -- reading a random
+  // stack word as a type tag, and its payload as a pointer.
+  VariantInit (&MatchText);
+  VariantInit (&ResponseText);
+  VariantInit (&Flags);
+  VariantInit (&Colour);
+  VariantInit (&Wildcard);
+  VariantInit (&SoundFileName);
+  VariantInit (&ScriptName);
 
   long result = pDoc->GetTrigger(my_checkstring (L, 1),  // name
                                   &MatchText, 

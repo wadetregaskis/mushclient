@@ -1837,6 +1837,24 @@ inline void VariantClear(VARIANT* pv) {
 }
 inline void VariantInit(VARIANT* pv)  { if (pv) { pv->vt = 0; pv->lVal = 0; } }
 
+// Free a VARIANT the caller OWNS -- including its BSTR.
+//
+// VariantClear above deliberately frees only SAFEARRAYs, and must keep doing so:
+// COleVariant on this platform BORROWS the caller's string (`bstrVal = (char*)s`,
+// no allocation), so a blanket free there would release memory it does not own.
+// That leaves no way to release a BSTR a world method really did allocate --
+// which is every VARIANT-returning method that yields a string -- so those sites
+// leaked one string per call.  This is the faithful clear for them; on Windows
+// it is what VariantClear already does, so the name maps straight onto it there
+// (see stdafx.h).
+inline void VariantClearOwned(VARIANT* pv) {
+    if (!pv) return;
+    if (pv->vt == 8 /*VT_BSTR*/ && pv->bstrVal) SysFreeString(pv->bstrVal);
+    else if ((pv->vt & 0x2000) && pv->parray) SafeArrayDestroy(pv->parray);
+    pv->vt = 0;
+    pv->lVal = 0;
+}
+
 // ── COleTemplateServer stub ────────────────────────────────────────────────
 // COM server object — Windows-only; no-op stub for compilation.
 class CDocTemplate;

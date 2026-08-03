@@ -1921,4 +1921,47 @@ TEST(PluginCallback, BroadcastSkipsSenderAndDisabledWhenCallbacksResolved)
     EXPECT_STREQ("<unset>", (const char*)plugin_var(pd, "dis")); // D disabled-skipped
 }
 
+// ── the plugin veto ───────────────────────────────────────────────────────
+
+// SendToAllPluginCallbacks asks every plugin "is this OK?" and the answer
+// decides whether a line is sent, displayed or suppressed.  The rich Execute*
+// overloads return early WITHOUT writing *result when the callback is not
+// implemented -- and CPlugin::ExecutePluginScript passed that value straight
+// back from an uninitialised `bool`.  So a plugin that simply does not
+// implement OnPluginSend voted at random.
+//
+// A CONTRACT test, not a reproducer: an uninitialised read is undefined, so it
+// could pass by luck before.  What it pins is that not implementing a callback
+// is not a veto -- which is what every plugin that implements only one or two
+// callbacks depends on.
+TEST(PluginVeto, APluginThatDoesNotImplementTheCallbackDoesNotVeto)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    // A plugin with a real engine, but no OnPluginSend anywhere in it.
+    ASSERT_TRUE(load_plugin(doc, write_plugin("noveto", IDA, "NoVeto",
+        "function OnPluginConnect() end\n")));
+    ASSERT_NE(nullptr, doc.GetPlugin(IDA));
+
+    for (int i = 0; i < 50; i++)
+        EXPECT_TRUE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, "a line", true));
+}
+
+// ...and one that DOES implement it is still obeyed, both ways -- otherwise the
+// assertion above would pass for an engine that always answers true.
+TEST(PluginVeto, APluginThatImplementsTheCallbackIsObeyed)
+{
+    {
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_TRUE(load_plugin(doc, write_plugin("yes", IDB, "SaysYes",
+        "function OnPluginSend(text) return true end\n")));
+    EXPECT_TRUE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, "a line", true));
+    }
+    {
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_TRUE(load_plugin(doc, write_plugin("no", IDC, "SaysNo",
+        "function OnPluginSend(text) return false end\n")));
+    EXPECT_FALSE(doc.SendToAllPluginCallbacks(ON_PLUGIN_SEND, "a line", true));
+    }
+}
+
 MC_TEST_MAIN()

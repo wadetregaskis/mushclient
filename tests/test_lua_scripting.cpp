@@ -19,6 +19,7 @@
 #ifdef MUSHCLIENT_LUA_SCRIPTING
 
 #include "mc_test.h"
+#include <sys/resource.h>
 // B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -4160,6 +4161,66 @@ TEST(LuaScripting, TraceOutTreatsPercentAsLiteralText)
     EXPECT_TRUE(sawLiteral);
 
     lua_close(L);
+}
+
+// ── VARIANT ownership on the way back to Lua ──────────────────────────────
+
+// Every world method declared VT_VARIANT that yields a string hands pushVariant
+// a BSTR it allocated.  The port's VariantClear frees only SAFEARRAYs -- it must,
+// because COleVariant here BORROWS the caller's string -- so that BSTR was
+// leaked, once per call, on the most-used path in the most-used language.
+//
+// The observable is memory.  Deliberately a large loop with a generous
+// threshold: the leak is ~40 bytes a call, so 200k calls is ~8 MB against a
+// 3 MB bar, comfortably clear of allocator noise.
+TEST(LuaScripting, StringReturningMethodsDoNotLeakTheirVariant)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    ASSERT_TRUE(run(f.L, "world.SetVariable('leaky', string.rep('x', 40))\n"));
+
+    auto rss = [] () -> long {
+        // ru_maxrss is a high-water mark, which is what we want: it cannot fall
+        // back and hide a leak that has already happened.
+        struct rusage ru;
+        getrusage(RUSAGE_SELF, &ru);
+        return (long) ru.ru_maxrss;      // bytes on macOS, KB on Linux
+    };
+
+    ASSERT_TRUE(run(f.L, "for i = 1, 20000 do local _ = world.GetVariable('leaky') end\n"));
+    const long before = rss();
+    ASSERT_TRUE(run(f.L, "for i = 1, 200000 do local _ = world.GetVariable('leaky') end\n"));
+    const long after = rss();
+
+#ifdef __APPLE__
+    const long budget = 3L * 1024 * 1024;      // bytes
+#else
+    const long budget = 3L * 1024;             // KB
+#endif
+    EXPECT_LT(after - before, budget);
+}
+
+// GetTrigger / GetAlias / GetTimer return *NotFound WITHOUT writing their
+// [out] parameters, so those VARIANTs must be initialised before the call --
+// otherwise pushVariant switches on a random stack word as a type tag and reads
+// its neighbour as a pointer.
+//
+// This is a CONTRACT test, not a reproducer: before the fix the behaviour was
+// undefined, so it could pass by luck.  What it pins is that a miss returns the
+// documented code and nils, which is what a script actually depends on.
+TEST(LuaScripting, ByRefGettersReturnNilsWhenTheObjectIsMissing)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        "local rc, a, b, c, d, e, g, h = world.GetTrigger('nosuchtrigger')\n"
+        "assert(rc == error_code.eTriggerNotFound, 'rc=' .. tostring(rc))\n"
+        "assert(a == nil and b == nil and c == nil and d == nil, 'trigger out-params not nil')\n"
+        "local rc2, m, r, p, fl, sn = world.GetAlias('nosuchalias')\n"
+        "assert(rc2 == error_code.eAliasNotFound, 'rc2=' .. tostring(rc2))\n"
+        "assert(m == nil and r == nil and p == nil, 'alias out-params not nil')\n"
+        "local rc3, hh, mm, ss = world.GetTimer('nosuchtimer')\n"
+        "assert(rc3 == error_code.eTimerNotFound, 'rc3=' .. tostring(rc3))\n"
+        "assert(hh == nil and mm == nil and ss == nil, 'timer out-params not nil')\n"
+    ));
 }
 
 MC_TEST_MAIN()

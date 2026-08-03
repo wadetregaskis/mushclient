@@ -18,6 +18,14 @@
 //
 #pragma once
 
+// Free a VARIANT the caller OWNS, including its BSTR.  On Windows that is
+// exactly VariantClear; the port needs a distinct name because its shim
+// VariantClear must not free BSTRs (COleVariant there borrows the caller's
+// string rather than allocating).  See platform/mfc_ui.h.
+#ifdef _WIN32
+  #define VariantClearOwned(pv) VariantClear(pv)
+#endif
+
 // disable some warnings (especially at warning level 4)
 #ifdef _MSC_VER
 #pragma warning (disable : 4018)  // '<' : signed/unsigned mismatch

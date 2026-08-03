@@ -1572,7 +1572,14 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
             }
             Scroll(0, target);   // land exactly on target either way
         }
-        m_trimmedCount = 0;
+        // Both counters, not just one.  While auto-scrolling there is nothing to
+        // compensate for -- the view is pinned to the bottom -- but the rows
+        // removed by each trim kept accumulating here.  The next time the user
+        // scrolled up and a trim landed, the arm below subtracted every row lost
+        // since the world opened and the view jumped to the top of the
+        // scrollback.
+        m_trimmedCount       = 0;
+        m_trimmedRowsRemoved = 0;
     } else if (m_trimmedCount > 0 && !m_autoScroll) {
         // The buffer trimmed lines from the front while the user was scrolled up.
         // Compensate: shift the view up by the number of visual rows removed so

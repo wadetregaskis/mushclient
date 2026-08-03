@@ -1624,7 +1624,18 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             wx_quit_application();   // see wx_quit_application above
         } else if (id == wxID_NEW || id == 0xE100 /*ID_FILE_NEW*/
                    || id == 32289 /*ID_CONNECTION_QUICK_CONNECT*/) {
+            // Which of the two flows OnNewDocument runs is decided HERE, by the
+            // command, exactly as on Windows (MUSHclient.cpp: OnFileNew leaves
+            // eNormalNewDocument, OnConnectionQuickconnect sets eQuickConnect and
+            // resets it after).  hook_new_world used to force eQuickConnect
+            // unconditionally, so File > New World (Ctrl+N) opened the Quick
+            // Connect box instead of the canonical new-world flow — which is
+            // World Properties on the General page (doc_construct.cpp:852).
+            App.m_TypeOfNewDocument = (id == 32289)
+                                      ? CMUSHclientApp::eQuickConnect
+                                      : CMUSHclientApp::eNormalNewDocument;
             App.OnFileNew();
+            App.m_TypeOfNewDocument = CMUSHclientApp::eNormalNewDocument;
         } else if (id == wxID_OPEN || id == 0xE101 /*ID_FILE_OPEN*/) {
             // Show a file-open dialog filtered to MUSHclient world files.
             // Start in the default world directory if one is configured.
@@ -2403,8 +2414,10 @@ static void* hook_new_world()
         doc->m_customback[i] = RGB(0, 0, 0);
     }
 
-    // eQuickConnect makes OnNewDocument show the Quick Connect dialog.
-    App.m_TypeOfNewDocument = CMUSHclientApp::eQuickConnect;
+    // NOT set here: App.m_TypeOfNewDocument is the CALLER's choice of flow
+    // (see the File > New World / Quick Connect arm of the menu dispatcher).
+    // Forcing eQuickConnect here made every route into this hook show the Quick
+    // Connect dialog.
 
     // Initialise display-critical fields that SetUpOutputWindow uses to size
     // the first CLine text buffer.  On Windows these come from the "default

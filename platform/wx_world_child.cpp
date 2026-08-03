@@ -883,8 +883,18 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         std::string sHotspotId, sMiniwindowId;
         CHotspot* pHotspot = nullptr;
         MouseOverMiniWindow(m_doc, CPoint(x, y), sHotspotId, pHotspot, sMiniwindowId);
-        if (pHotspot && !pHotspot->m_sTooltipText.empty())
-            return pHotspot->m_sTooltipText;
+        if (pHotspot && !pHotspot->m_sTooltipText.empty()) {
+            // "title\tbody" is a two-part tooltip: Windows puts the part before
+            // the tab in the tooltip's bold TITLE (TTM_SETTITLE) and the rest in
+            // the body, consuming the tab (mushview.cpp:6601-6620).  wxToolTip
+            // has no title concept, so join with a newline -- the tab itself must
+            // not survive, which is what the port used to show.
+            const std::string& tip = pHotspot->m_sTooltipText;
+            const std::string::size_type tab = tip.find('\t');
+            if (tab == std::string::npos)
+                return tip;
+            return tip.substr(0, tab) + "\n" + tip.substr(tab + 1);
+        }
 
         // 2. Check MXP hint text on the output line under the cursor.
         // Use PointToChar for wrap-aware hit-testing: it returns the absolute

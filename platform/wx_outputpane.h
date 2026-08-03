@@ -428,8 +428,11 @@ private:
     void OnLeftDown(wxMouseEvent& evt);
     void OnLeftUp(wxMouseEvent& evt);
     void OnLeftDClick(wxMouseEvent& evt);
+    void OnMiddleDown(wxMouseEvent& evt);
     void OnMiddleUp(wxMouseEvent& evt);
     void OnRightDown(wxMouseEvent& evt);
+    void OnRightDClick(wxMouseEvent& evt);
+    void OnLeaveWindow(wxMouseEvent& evt);
     void OnRightUp(wxMouseEvent& evt);
     void OnMotion(wxMouseEvent& evt);
     void OnMouseWheel(wxMouseEvent& evt);

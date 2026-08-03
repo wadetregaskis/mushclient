@@ -526,6 +526,49 @@ the stub dropped `Visible`, so the test suite could not observe the product's
 behaviour. They are aligned now, but that file is a standing twin-drift hazard;
 CLAUDE.md's endgame is to retire the family.
 
+### 4c-terdecies. Miniwindow mouse events + two drawing fixes (2026-08-03)
+
+**Port-only** (`platform/wx_outputpane.{h,cpp}`, `wx_world_child.cpp`). Quow's
+pack is the workload that exercises all of these — hotspots with mouse
+callbacks. Five gaps against `mushview.cpp`:
+
+- **Middle button never dispatched.** `MW_MOUSE_MIDDLE` (0x200) appeared nowhere
+  in `platform/`; there was no `EVT_MIDDLE_DOWN` binding at all, and middle-up
+  went straight to a clipboard paste. Windows dispatches both edges
+  (`mushview.cpp:2399`, `:2517`). Now dispatched on both.
+- **Ctrl+wheel tested the modifier first**, so it zoomed the output font and the
+  hotspot scrollwheel callback was unreachable while the pointer was over a
+  miniwindow. Windows dispatches to the hotspot first (`mushview.cpp:5160`) and
+  only falls back to the view at `:5165`; the flags a plugin receives include
+  `MW_MOUSE_CTRL`. Order reversed to match.
+- **Right double-click was swallowed** — wxOSX sends the second rapid click as
+  `EVT_RIGHT_DCLICK` and nothing bound it, so it reached neither the hotspot nor
+  the context menu. Windows has `OnRButtonDblClk` dispatching
+  `MW_MOUSE_RH | MW_MOUSE_DBL` (`mushview.cpp:4893`).
+- **No leave-window handler**, so `CancelMouseOver` never fired and a hotspot
+  stayed lit after the pointer left the pane. Windows arms `TME_LEAVE` and its
+  `WM_MOUSELEAVE` arm passes `CPoint(-1,-1)` (`mushview.cpp:6785`).
+- **Hotspot tooltips showed `"title\tbody"` raw**, tab and all. Windows splits
+  on the tab, putting the first part in the tooltip's bold title
+  (`mushview.cpp:6601-6620`). `wxToolTip` has no title, so the port joins with a
+  newline — the point is that the tab must not survive.
+
+Plus: search-highlight text was drawn with one batched `DrawText`, flowing at
+the font's natural advances while its background rectangle was laid out on the
+integer character grid, so highlighted text stepped out of its own highlight.
+Now per-cell, like `DrawRunChunk`.
+
+**Worth checking / deciding on Windows:**
+- Middle-click over the output window still pastes here when no hotspot claims
+  it. On GTK that is the primary-selection convention and deliberate; on macOS
+  it is neither a platform convention nor Windows behaviour (`CView`'s middle
+  handlers default to nothing). **Is the macOS paste wanted?** Pre-existing, not
+  changed here.
+- Ctrl+wheel now reaches hotspots first, so a plugin that claims the wheel takes
+  the font-zoom gesture with it while the pointer is over its window. That is
+  Windows behaviour, but confirm it does not feel broken with Quow's pack
+  loaded.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

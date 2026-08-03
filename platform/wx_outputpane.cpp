@@ -161,10 +161,13 @@ wxBEGIN_EVENT_TABLE(COutputPane, wxScrolledWindow)
     EVT_LEFT_DOWN(                  COutputPane::OnLeftDown)
     EVT_LEFT_UP(                    COutputPane::OnLeftUp)
     EVT_LEFT_DCLICK(                COutputPane::OnLeftDClick)
+    EVT_MIDDLE_DOWN(                COutputPane::OnMiddleDown)
     EVT_MIDDLE_UP(                  COutputPane::OnMiddleUp)
     EVT_RIGHT_DOWN(                 COutputPane::OnRightDown)
+    EVT_RIGHT_DCLICK(               COutputPane::OnRightDClick)
     EVT_RIGHT_UP(                   COutputPane::OnRightUp)
     EVT_MOTION(                     COutputPane::OnMotion)
+    EVT_LEAVE_WINDOW(               COutputPane::OnLeaveWindow)
     EVT_MOUSEWHEEL(                 COutputPane::OnMouseWheel)
     EVT_KEY_DOWN(                   COutputPane::OnKeyDown)
     EVT_MENU(ID_COPY,               COutputPane::OnMenuCopy)
@@ -1309,8 +1312,17 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                         dc.SetBrush(wxBrush(wxColour(255, 220, 0)));
                         dc.SetPen(*wxTRANSPARENT_PEN);
                         dc.DrawRectangle(px, py, nChars * m_charW, m_lineH);
+                        // Per CELL, not one batched DrawText: a monospace font's
+                        // natural advance can differ from the integer cell width
+                        // m_charW on macOS, so flowing the whole substring drifts
+                        // off the grid the rest of the pane draws on -- and the
+                        // highlighted text visibly stepped out of its own
+                        // background rectangle.  Same loop DrawRunChunk uses, and
+                        // for the same reason (see its comment).
                         // c - cx = offset of c within wxText.
-                        dc.DrawText(wxText.substr(c - cx, nChars), px, py);
+                        for (int k = 0; k < nChars; ++k)
+                            dc.DrawText(wxText.substr(c - cx + k, 1),
+                                        px + k * m_charW, py);
                         c = batchEnd;
                     }
                 }
@@ -1983,8 +1995,25 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
 // (macOS) into the command input bar — mirrors standard terminal behaviour.
 // The text is inserted verbatim without sending it to the MUD; the user can
 // review and edit it before pressing Enter.
+// Middle button.  MW_MOUSE_MIDDLE (0x200) was never dispatched at all, so a
+// plugin hotspot with a middle-click callback never fired and the click fell
+// through to the paste below -- which Windows never does over the output window
+// (CView::OnMButtonDown/Up default to nothing).  Windows dispatches both edges:
+// mushview.cpp:2399 and :2517.
+void COutputPane::OnMiddleDown(wxMouseEvent& evt)
+{
+    if (m_fn_miniwindow_mouse_down &&
+        m_fn_miniwindow_mouse_down(evt.GetX(), evt.GetY(), 0x200 /*MW_MOUSE_MIDDLE*/))
+        return;
+    evt.Skip();
+}
+
 void COutputPane::OnMiddleUp(wxMouseEvent& evt)
 {
+    if (m_fn_miniwindow_mouse_up &&
+        m_fn_miniwindow_mouse_up(evt.GetX(), evt.GetY(), 0x200 /*MW_MOUSE_MIDDLE*/))
+        return;
+
     wxString text;
 
 #ifdef __WXGTK__
@@ -2126,6 +2155,34 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
                                : wxCursor(wxCURSOR_IBEAM));
         }
     }
+    evt.Skip();
+}
+
+// Right DOUBLE-click.  wxOSX sends the second rapid right-click as
+// EVT_RIGHT_DCLICK, not a second EVT_RIGHT_DOWN, and nothing bound it -- so it
+// reached neither the hotspot nor the context menu.  Windows has the arm:
+// mushview.cpp:4893 OnRButtonDblClk dispatches MW_MOUSE_RH | MW_MOUSE_DBL.
+// Falling through to OnRightDown afterwards keeps the context menu reachable.
+void COutputPane::OnRightDClick(wxMouseEvent& evt)
+{
+    if (m_fn_miniwindow_mouse_down &&
+        m_fn_miniwindow_mouse_down(evt.GetX(), evt.GetY(),
+                                   0x60 /*MW_MOUSE_RH | MW_MOUSE_DBL*/))
+        return;
+    OnRightDown(evt);
+}
+
+// Pointer left the pane.  Windows arms TME_LEAVE for a hotspot that has a
+// CancelMouseOver handler (miniwindow_compose.cpp:624) and its WM_MOUSELEAVE
+// arm calls Mouse_Move_MiniWindow with CPoint(-1,-1) (mushview.cpp:6785) so the
+// hotspot un-highlights.  Nothing bound the wx equivalent, so a hotspot stayed
+// lit after the pointer left the window entirely.
+void COutputPane::OnLeaveWindow(wxMouseEvent& evt)
+{
+    // Not during a drag: wx delivers leave events while the button is held and
+    // the pane has capture, where Windows keeps tracking the same hotspot.
+    if (!HasCapture() && m_fn_miniwindow_mouse_move)
+        m_fn_miniwindow_mouse_move(-1, -1);
     evt.Skip();
 }
 
@@ -2308,15 +2365,22 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
 
 void COutputPane::OnMouseWheel(wxMouseEvent& evt)
 {
-    if (evt.RawControlDown()) {
-        AdjustFontSize((evt.GetWheelRotation() > 0) ? 1 : -1);
-        return;
-    }
-
+    // Hotspots get FIRST refusal, before the modifier is looked at.  Windows
+    // orders it that way (mushview.cpp:5160 dispatches to
+    // Mouse_Wheel_MiniWindow, and only returns to CView at :5165 for
+    // Ctrl/Shift), and the flags a plugin receives include MW_MOUSE_CTRL -- so
+    // Ctrl+wheel over a hotspot is a scrollwheel callback WITH the ctrl bit
+    // set, not a zoom.  Testing the modifier first, as this used to, made every
+    // Ctrl+wheel callback unreachable while the pointer was over a miniwindow.
     if (m_fn_miniwindow_mouse_wheel) {
         if (m_fn_miniwindow_mouse_wheel(evt.GetX(), evt.GetY(),
                                         evt.GetWheelRotation()))
             return;
+    }
+
+    if (evt.RawControlDown()) {
+        AdjustFontSize((evt.GetWheelRotation() > 0) ? 1 : -1);
+        return;
     }
 
     evt.Skip();

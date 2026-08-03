@@ -195,6 +195,36 @@ shared TU, so a Windows run is what confirms "behaviour-preserving".
   saturates at both ends (a very narrow window, and a very wide one with a
   small font).
 
+### 4c-ter. printf format attributes (2026-08-02, `73f30e7`)
+
+Windows-shared headers gained `MC_PRINTF_FORMAT(...)` on TFormat, CFormat,
+CString::Format, CMUSHclientDoc::Trace, ThrowErrorException and CErrorException.
+The macro expands to **nothing** under MSVC, so the only thing to confirm is that
+it compiles: `stdafx.h`, `format.h`, `doc.h` and `exceptions.h` each define the
+macro defensively with `#ifndef`, so include order cannot leave it undefined.
+**Check:** the Windows build compiles clean, with no new warnings.
+
+Four behaviour changes came with it, all of the same shape — a runtime string was
+being used as a printf FORMAT, so a literal `%` in it read a vararg that was never
+pushed.  Each now passes the text as an argument instead.  On Windows the old code
+misbehaves identically, so these are fixes on both sides, not divergences:
+
+- `CMUSHclientDoc::TraceOut` (`methods_tracing.cpp`) — script-supplied.
+  **Check:** with Trace on, `world.TraceOut("100% done: %s")` prints that text
+  literally rather than garbage.
+- `lua_scripting.cpp`, two `Trace(TFormat(...))` sites carrying a plugin-supplied
+  callback name.  **Check:** trace output for a plugin whose callback name
+  contains a `%` (rename one to test).
+- `exceptions.cpp` `throw new CErrorException(strText)`.  **Check:** an error whose
+  substituted text contains a `%` — e.g. open a world file named `50%.mcl` that
+  fails to parse — reports the name intact.
+- `MUSHclient.cpp` first-run welcome message, `Format(Translate(...))`.
+  **Check:** the first-run dialog still shows its text (delete the "seen it" flag).
+
+Also three casts deleted in `mxp/mxpOpenAtomic.cpp`: a `long` was cast to
+`LPCTSTR` and then read back by `%ld`.  Same printed value on both ABIs.
+**Check:** an MXP `<support>` reply still lists `option=value` pairs correctly.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

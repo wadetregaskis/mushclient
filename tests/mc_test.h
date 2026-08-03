@@ -191,5 +191,17 @@ inline bool cmp_eq(const char* a, const char* b) {
 #  define MC_TEST_IGNORE_SIGPIPE() ((void)0)
 #endif
 
+// The real app fills the xterm-256 palette in CMUSHclientApp::InitInstance
+// (MUSHclient.cpp), but the headless InitInstance is a stub, so under test
+// xterm_256_colours[] was all zeros.  Assertions of the shape
+// EXPECT_EQ(xterm_256_colours[196], style->iBackColour) were therefore comparing
+// 0 with 0 and passed no matter what the ANSI parser did.  Fill it once here so
+// every suite starts from the same state the product does.
+void Generate256colours(void);
+
 #define MC_TEST_MAIN() \
-    int main(int, char**) { MC_TEST_IGNORE_SIGPIPE(); return mc_test::run_all(); }
+    int main(int, char**) { \
+        MC_TEST_IGNORE_SIGPIPE(); \
+        Generate256colours(); \
+        return mc_test::run_all(); \
+    }

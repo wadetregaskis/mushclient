@@ -2444,11 +2444,39 @@ WORD WxKeyToWinVK(int wxCode)
         case WXK_NUMPAD7:    return VK_NUMPAD0 + 7;
         case WXK_NUMPAD8:    return VK_NUMPAD0 + 8;
         case WXK_NUMPAD9:    return VK_NUMPAD0 + 9;
-        case WXK_MULTIPLY:   return VK_MULTIPLY;
-        case WXK_ADD:        return VK_ADD;
-        case WXK_SUBTRACT:   return VK_SUBTRACT;
-        case WXK_DECIMAL:    return VK_DECIMAL;
-        case WXK_DIVIDE:     return VK_DIVIDE;
+        // The numpad operator keys come in TWO wx flavours and only the second
+        // is what a real numeric keypad produces: WXK_MULTIPLY et al are the
+        // symbolic "main keyboard" codes, WXK_NUMPAD_MULTIPLY et al the keypad
+        // ones.  Mapping only the first set meant every Lua Accelerator() bound
+        // to keypad * / + / - / . / Enter fell through to `return 0` and never
+        // fired.  (The keypad *command* path below already gets this right,
+        // which is what made the asymmetry easy to miss.)
+        case WXK_MULTIPLY:
+        case WXK_NUMPAD_MULTIPLY: return VK_MULTIPLY;
+        case WXK_ADD:
+        case WXK_NUMPAD_ADD:      return VK_ADD;
+        case WXK_SUBTRACT:
+        case WXK_NUMPAD_SUBTRACT: return VK_SUBTRACT;
+        case WXK_DECIMAL:
+        case WXK_NUMPAD_DECIMAL:  return VK_DECIMAL;
+        case WXK_DIVIDE:
+        case WXK_NUMPAD_DIVIDE:   return VK_DIVIDE;
+        // Windows reports keypad Enter as VK_RETURN (it differs only in the
+        // extended-key bit, which accelerator tables do not carry).
+        case WXK_NUMPAD_ENTER:    return VK_RETURN;
+        // The keypad navigation cluster likewise: Windows sends the same VKs as
+        // the main cluster when NumLock is off.
+        case WXK_NUMPAD_LEFT:     return VK_LEFT;
+        case WXK_NUMPAD_RIGHT:    return VK_RIGHT;
+        case WXK_NUMPAD_UP:       return VK_UP;
+        case WXK_NUMPAD_DOWN:     return VK_DOWN;
+        case WXK_NUMPAD_HOME:     return VK_HOME;
+        case WXK_NUMPAD_END:      return VK_END;
+        case WXK_NUMPAD_PAGEUP:   return VK_PRIOR;
+        case WXK_NUMPAD_PAGEDOWN: return VK_NEXT;
+        case WXK_NUMPAD_INSERT:   return VK_INSERT;
+        case WXK_NUMPAD_DELETE:   return VK_DELETE;
+        case WXK_NUMPAD_TAB:      return VK_TAB;
         default: return 0;
     }
 }

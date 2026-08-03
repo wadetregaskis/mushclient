@@ -579,13 +579,24 @@ static int hook_message_box(const char* text, const char* caption, unsigned flag
     // The MB_* button set is the low nibble — an ENUMERATION, not bit flags — and
     // the icon is the 0xF0 nibble.  Decode each as a field; the old bitwise tests
     // mis-read e.g. MB_OKCANCEL(1) as Yes/No (1 & 0x0003 != 0) and lost Cancel.
+    // Abort/Retry/Ignore and Retry/Cancel have no wx button set of their own, so
+    // they borrow one and RELABEL it (wxMessageDialog::SetYesNoCancelLabels /
+    // SetOKCancelLabels).  Without that the two sets used to collapse to plain
+    // OK and OK/Cancel: utils.msgbox(..., "abortretryignore") showed one button
+    // and could only ever return IDOK, so a script branching on abort vs retry
+    // vs ignore always took the same arm.
+    enum ERelabel { eNoRelabel, eAbortRetryIgnore, eRetryCancel };
+    ERelabel relabel = eNoRelabel;
+
     long style = wxOK;
     switch (flags & 0x000F) {
         case 0x0001: style = wxOK | wxCANCEL;     break;  // MB_OKCANCEL
-        case 0x0002: style = wxOK;                break;  // MB_ABORTRETRYIGNORE (approx)
+        case 0x0002: style = wxYES_NO | wxCANCEL;         // MB_ABORTRETRYIGNORE
+                     relabel = eAbortRetryIgnore; break;
         case 0x0003: style = wxYES_NO | wxCANCEL; break;  // MB_YESNOCANCEL
         case 0x0004: style = wxYES_NO;            break;  // MB_YESNO
-        case 0x0005: style = wxOK | wxCANCEL;     break;  // MB_RETRYCANCEL (approx)
+        case 0x0005: style = wxOK | wxCANCEL;             // MB_RETRYCANCEL
+                     relabel = eRetryCancel;      break;
         default:     style = wxOK;                break;  // MB_OK
     }
     switch (flags & 0x00F0) {
@@ -620,15 +631,37 @@ static int hook_message_box(const char* text, const char* caption, unsigned flag
     wxString wxText    = text    ? wxString::FromUTF8(text)    : wxString();
     wxString wxCaption = caption ? wxString::FromUTF8(caption) : wxString("MUSHclient");
 
-    int res = wxMessageBox(wxText, wxCaption, (int)style);
+    wxMessageDialog dlg(nullptr, wxText, wxCaption, (int)style);
+    if (relabel == eAbortRetryIgnore)
+        dlg.SetYesNoCancelLabels(wxT("Abort"), wxT("Retry"), wxT("Ignore"));
+    else if (relabel == eRetryCancel)
+        dlg.SetOKCancelLabels(wxT("Retry"), wxT("Cancel"));
 
-    // Map wx result to MB_* return codes.
+    const int res = dlg.ShowModal();
+
+    // Map wx result to MB_* return codes, honouring the relabelling above so the
+    // caller gets the code for the button it actually asked for.
+    if (relabel == eAbortRetryIgnore) {
+        switch (res) {
+        case wxID_YES:    return IDABORT;
+        case wxID_NO:     return IDRETRY;
+        case wxID_CANCEL: return IDIGNORE;
+        default:          return IDIGNORE;   // dialog dismissed: the no-op arm
+        }
+    }
+    if (relabel == eRetryCancel) {
+        switch (res) {
+        case wxID_OK:     return IDRETRY;
+        case wxID_CANCEL: return IDCANCEL;
+        default:          return IDCANCEL;
+        }
+    }
     switch (res) {
-    case wxOK:     return IDOK;
-    case wxCANCEL: return IDCANCEL;
-    case wxYES:    return IDYES;
-    case wxNO:     return IDNO;
-    default:       return IDOK;
+    case wxID_OK:     return IDOK;
+    case wxID_CANCEL: return IDCANCEL;
+    case wxID_YES:    return IDYES;
+    case wxID_NO:     return IDNO;
+    default:          return IDOK;
     }
 }
 

@@ -620,7 +620,7 @@ void battery_mxp_callsite(const Dialect& d)
 // (doc_shared.cpp), one layer above.  Drop that argument and every check in
 // battery_wildcards still passes.  So drive the whole chain: a real regexp
 // trigger with the box ticked, fed a real line.
-void battery_trigger_callsite(const Dialect& d)
+void battery_trigger_callsite(const Dialect& d, bool lowercase)
 {
     const char* L = d.display;
 
@@ -635,8 +635,12 @@ void battery_trigger_callsite(const Dialect& d)
 
     doc.m_ScriptEngine = new CScriptEngine(&doc, d.language);
     doc.m_ScriptEngine->CreateScriptEngine();
+    const char* what = lowercase
+        ? "a matched trigger delivers lower-cased wildcards when the box is ticked"
+        : "a matched trigger delivers wildcards unfolded when the box is CLEAR";
+
     if (doc.m_ScriptEngine->Parse(CString(d.source), "selftest-trigger")) {
-        skip(L, "a matched trigger delivers lower-cased wildcards", "the dialect failed to compile");
+        skip(L, what, "the dialect failed to compile");
         return;
     }
 
@@ -646,7 +650,7 @@ void battery_trigger_callsite(const Dialect& d)
     t->strProcedure = CString("wc");
     t->bEnabled     = TRUE;
     t->bRegexp      = TRUE;
-    t->bLowercaseWildcard = TRUE;       // the box the user ticks
+    t->bLowercaseWildcard = lowercase ? TRUE : FALSE;   // the box the user ticks
     t->iSendTo      = eSendToWorld;     // not eSendToScript: no escaping in play
     t->iSequence    = DEFAULT_TRIGGER_SEQUENCE;
     t->regexp       = regcomp(t->trigger, 0);
@@ -660,7 +664,7 @@ void battery_trigger_callsite(const Dialect& d)
     t->dispid = doc.m_ScriptEngine->GetDispid(t->strProcedure);
 
     if (t->dispid == DISPID_UNKNOWN) {
-        skip(L, "a matched trigger delivers lower-cased wildcards", "the handler did not resolve");
+        skip(L, what, "the handler did not resolve");
         return;
     }
 
@@ -672,12 +676,16 @@ void battery_trigger_callsite(const Dialect& d)
     VARIANT v = doc.GetVariable("wc");
     const std::string got (v.bstrVal ? v.bstrVal : "");
 
-    if (strcmp(d.key, "lua") == 0)
+    // Lua ignores the option entirely, so BOTH runs expect the raw text from it.
+    const bool wantFolded = lowercase && strcmp(d.key, "lua") != 0;
+
+    if (wantFolded)
+        check(got == "gandalf shouts loudly|gandalf|loudly", L, what);
+    else if (lowercase)
         check(got == "GandalF shouts LOUDLY|GandalF|LOUDLY", L,
               "a matched trigger delivers wildcards RAW to Lua, box ticked or not");
     else
-        check(got == "gandalf shouts loudly|gandalf|loudly", L,
-              "a matched trigger delivers lower-cased wildcards when the box is ticked");
+        check(got == "GandalF shouts LOUDLY|GandalF|LOUDLY", L, what);
 }
 
 // ── the battery ───────────────────────────────────────────────────────────
@@ -1124,7 +1132,10 @@ bool run_language(const Dialect& d)
     battery_stale_proxy  (d);
     battery_gc_pressure  (d);
     battery_mxp_callsite(d);
-    battery_trigger_callsite(d);
+    battery_trigger_callsite(d, true);    // box ticked
+    // The negative control at the SAME layer: without it, hard-coding the flag
+    // to `true` in ExecuteTriggerScript passes every other check in this file.
+    battery_trigger_callsite(d, false);   // box clear
     battery_errors    (e, d);   // last: it disables handlers in this engine
     battery_compile   (d);
     return true;

@@ -159,6 +159,35 @@ static JSStringRef js_string_from_bytes (const std::string & s)
 
 JSValueRef make_world(JSContextRef ctx, CMUSHclientDoc* doc);
 
+// ── ProtectedValues ─────────────────────────────────────────────────────────
+// JavaScriptCore's collector scans the C STACK conservatively, but not arbitrary
+// heap.  A std::vector<JSValueRef> lives on the heap, so a value whose only
+// reference is in one is invisible to the collector and can be freed while the
+// vector is still being filled -- most likely exactly when filling it allocates,
+// which is every iteration of these loops.  JSValueProtect is the documented
+// answer; this holds the protection for the vector's lifetime.
+class ProtectedValues
+  {
+  public:
+    explicit ProtectedValues (JSContextRef ctx) : m_ctx (ctx) {}
+    ~ProtectedValues () { for (JSValueRef v : m_v) if (v) JSValueUnprotect (m_ctx, v); }
+    ProtectedValues (const ProtectedValues&) = delete;
+    ProtectedValues& operator= (const ProtectedValues&) = delete;
+
+    void push_back (JSValueRef v)
+      { if (v) JSValueProtect (m_ctx, v); m_v.push_back (v); }
+
+    size_t             size  () const { return m_v.size (); }
+    bool               empty () const { return m_v.empty (); }
+    const JSValueRef * data  () const { return m_v.data (); }
+
+  private:
+    JSContextRef             m_ctx;
+    std::vector<JSValueRef>  m_v;
+  };
+
+
+
 // ── JSValue <-> VARIANT marshalling ─────────────────────────────────────────
 void js_to_variant(JSContextRef ctx, JSValueRef v, VARIANT& out)
   {
@@ -184,7 +213,7 @@ JSValueRef variant_to_js(JSContextRef ctx, const VARIANT& v)
   if (v.vt & VT_ARRAY)
     {
     SAFEARRAY* sa = v.parray;
-    std::vector<JSValueRef> items;
+    ProtectedValues items (ctx);
     if (sa && sa->cDims >= 1)
       {
       long count = (long) sa->rgsabound[0].cElements;
@@ -276,7 +305,7 @@ JSValueRef Method_call(JSContextRef ctx, JSObjectRef function, JSObjectRef /*thi
     ret = variant_to_js(ctx, result);
   else
     {
-    std::vector<JSValueRef> tup;
+    ProtectedValues tup (ctx);
     tup.push_back(variant_to_js(ctx, result));
     for (auto& o : outargs) { tup.push_back(variant_to_js(ctx, o)); MC_VariantClear(o); }
     ret = JSObjectMakeArray(ctx, tup.size(), tup.data(), nullptr);
@@ -474,7 +503,7 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
   JSObjectRef fn = resolve (ctx, szProcedure);
   if (!fn) { dispid = DISPID_UNKNOWN; return true; }
 
-  std::vector<JSValueRef> args;
+  ProtectedValues args (ctx);
   for (double d : nparams)
     args.push_back (JSValueMakeNumber (ctx, d));
   for (const string & s : sparams)
@@ -484,7 +513,7 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
     {
     int ncapt = 0;
     pcre_fullinfo (regexp->m_program, regexp->m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
-    std::vector<JSValueRef> wc;
+    ProtectedValues wc (ctx);
     for (int i = 0; i <= ncapt; i++)
       { string w (regexp->GetWildcard (i)); JSStringRef js = js_string_from_bytes (w);
         wc.push_back (JSValueMakeString (ctx, js)); JSStringRelease (js); }

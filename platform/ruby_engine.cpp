@@ -134,15 +134,23 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
   {
   CMUSHclientDoc* doc = (CMUSHclientDoc*) (intptr_t) NUM2LL (rb_iv_get (self, "@doc"));
 
-  // Both guards go BEFORE the first object with a destructor.  rb_raise longjmps
-  // to the enclosing rb_protect and does not unwind C++ frames, so anything
-  // constructed above it would leak; `name` and the VARIANT vectors below are
-  // exactly that.
-  //
-  // argc: method_missing is registered with arity -1 and a script may call it
-  // directly, in which case argv[0] is out of bounds and SYM2ID reads garbage.
+  // rb_raise longjmps to the enclosing rb_protect and does NOT unwind C++
+  // frames, so nothing with a destructor may be live when one fires.  Every such
+  // object lives in the inner scope below; an error is recorded in a plain char
+  // buffer (no destructor) and raised only once that scope has fully unwound.
+  // Three raises used to fire with `name`, `vargs` and `outargs` alive -- and
+  // outargs' VARIANTs had not even been cleared, so a failed [out] getter leaked
+  // whatever strings or arrays the method had already allocated.
+  char  errmsg[320] = "";
+  VALUE errclass    = Qnil;
+  VALUE ret         = Qnil;
+
+  // argc: method_missing has arity -1 and a script may call it directly, in
+  // which case argv[0] is out of bounds and SYM2ID would read garbage.  Checked
+  // before anything is constructed, so raising here is safe.
   if (argc < 1)
     rb_raise (rb_eArgError, "world: no method name given");
+
   // The proxy holds a bare CMUSHclientDoc*; there is no COM here, so nothing
   // AddRefs it the way pDoc->GetIDispatch(TRUE) does on Windows.  A script that
   // keeps what world.GetWorld returned and uses it after that world is closed
@@ -150,61 +158,78 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
   if (!MC_DispatchDocIsLive (doc))
     rb_raise (rb_eRuntimeError, "world: that world has been closed");
 
-  std::string name = rb_id2name (SYM2ID (argv[0]));
-  int    nargs = argc - 1;
-  VALUE* a     = argv + 1;
-
-  bool setter = (!name.empty () && name.back () == '=');
-  if (setter) name.pop_back ();
-
-  if (setter)                                   // world.Prop = value
     {
-    if (MC_DispatchHasProperty (name.c_str ()) && nargs >= 1)
-      {
-      VARIANT v; ruby_to_variant (a[0], v);
-      MC_DispatchSetProperty (doc, name.c_str (), v);
-      MC_VariantClear (v);
-      return nargs ? a[0] : Qnil;
-      }
-    rb_raise (rb_eNoMethodError, "world.%s= : unknown property", name.c_str ());
-    }
+    std::string name = rb_id2name (SYM2ID (argv[0]));
+    int    nargs = argc - 1;
+    VALUE* a     = argv + 1;
 
-  if (MC_DispatchHas (name.c_str ()))           // a method
-    {
-    std::vector<VARIANT> vargs (nargs);
-    for (int i = 0; i < nargs; i++) ruby_to_variant (a[i], vargs[i]);
-    VARIANT result; VariantInit (&result);
-    std::vector<VARIANT> outargs;
-    int rc = MC_DispatchInvoke (doc, name.c_str (),
-                                nargs ? vargs.data () : nullptr, nargs, result, &outargs);
-    for (auto& x : vargs) MC_VariantClear (x);
-    if (rc != MC_DISP_OK)
-      {
-      MC_VariantClear (result);
-      rb_raise (rb_eArgError, "world.%s : %s", name.c_str (),
-                rc == MC_DISP_UNKNOWN ? "unknown method" : "bad arguments");
-      }
-    VALUE ret;
-    if (outargs.empty ())
-      ret = variant_to_ruby (result);
-    else                                        // [out] getters -> [result, out1, ...]
-      {
-      ret = rb_ary_new ();
-      rb_ary_push (ret, variant_to_ruby (result));
-      for (auto& o : outargs) { rb_ary_push (ret, variant_to_ruby (o)); MC_VariantClear (o); }
-      }
-    MC_VariantClear (result);
-    return ret;
-    }
+    bool setter = (!name.empty () && name.back () == '=');
+    if (setter) name.pop_back ();
 
-  if (MC_DispatchHasProperty (name.c_str ()))   // a property read
-    {
-    VARIANT v;
-    if (MC_DispatchGetProperty (doc, name.c_str (), v))
-      { VALUE r = variant_to_ruby (v); MC_VariantClear (v); return r; }
-    }
+    if (setter)                                   // world.Prop = value
+      {
+      if (MC_DispatchHasProperty (name.c_str ()) && nargs >= 1)
+        {
+        VARIANT v; ruby_to_variant (a[0], v);
+        MC_DispatchSetProperty (doc, name.c_str (), v);
+        MC_VariantClear (v);
+        ret = nargs ? a[0] : Qnil;
+        }
+      else
+        {
+        snprintf (errmsg, sizeof errmsg, "world.%s= : unknown property", name.c_str ());
+        errclass = rb_eNoMethodError;
+        }
+      }
+    else if (MC_DispatchHas (name.c_str ()))      // a method
+      {
+      std::vector<VARIANT> vargs (nargs);
+      for (int i = 0; i < nargs; i++) ruby_to_variant (a[i], vargs[i]);
+      VARIANT result; VariantInit (&result);
+      std::vector<VARIANT> outargs;
+      int rc = MC_DispatchInvoke (doc, name.c_str (),
+                                  nargs ? vargs.data () : nullptr, nargs, result, &outargs);
+      for (auto& x : vargs) MC_VariantClear (x);
 
-  rb_raise (rb_eNoMethodError, "world.%s : unknown method or property", name.c_str ());
+      if (rc != MC_DISP_OK)
+        {
+        MC_VariantClear (result);
+        for (auto& o : outargs) MC_VariantClear (o);   // was leaked on this path
+        snprintf (errmsg, sizeof errmsg, "world.%s : %s", name.c_str (),
+                  rc == MC_DISP_UNKNOWN ? "unknown method" : "bad arguments");
+        errclass = rb_eArgError;
+        }
+      else if (outargs.empty ())
+        ret = variant_to_ruby (result);
+      else                                        // [out] getters -> [result, out1, ...]
+        {
+        ret = rb_ary_new ();
+        rb_ary_push (ret, variant_to_ruby (result));
+        for (auto& o : outargs) { rb_ary_push (ret, variant_to_ruby (o)); MC_VariantClear (o); }
+        }
+      if (rc == MC_DISP_OK) MC_VariantClear (result);
+      }
+    else if (MC_DispatchHasProperty (name.c_str ()))   // a property read
+      {
+      VARIANT v;
+      if (MC_DispatchGetProperty (doc, name.c_str (), v))
+        { ret = variant_to_ruby (v); MC_VariantClear (v); }
+      else
+        {
+        snprintf (errmsg, sizeof errmsg, "world.%s : property is not readable", name.c_str ());
+        errclass = rb_eNoMethodError;
+        }
+      }
+    else
+      {
+      snprintf (errmsg, sizeof errmsg, "world.%s : unknown method or property", name.c_str ());
+      errclass = rb_eNoMethodError;
+      }
+    }   // every destructor has run by here
+
+  if (!NIL_P (errclass))
+    rb_raise (errclass, "%s", errmsg);
+  return ret;
   }
 
 VALUE make_world (CMUSHclientDoc* doc)
@@ -350,10 +375,16 @@ void CScriptEngine::OpenRuby ()
   ensure_started ();
   CRubyEngine* e = new CRubyEngine ();
   e->doc   = m_pDoc;
-  e->obj   = rb_obj_alloc (rb_cObject);     // the per-engine isolation object
-  e->world = make_world (m_pDoc);
+  // Register the slots BEFORE filling them.  CRubyEngine lives on the C++ heap,
+  // which MRI's conservative collector does not scan, so between the allocation
+  // and the rb_gc_register_address that was to follow it the only reference was
+  // in unscanned memory -- a collection there would free an object still in use.
+  e->obj   = Qnil;
+  e->world = Qnil;
   rb_gc_register_address (&e->obj);
   rb_gc_register_address (&e->world);
+  e->obj   = rb_obj_alloc (rb_cObject);     // the per-engine isolation object
+  e->world = make_world (m_pDoc);
   // Singleton method `world` on the object returns its world, so the script can
   // simply say world.Note("hi") while its def's stay isolated to this object.
   rb_ivar_set (e->obj, rb_intern ("@__world"), e->world);
@@ -431,9 +462,15 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
 
   TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = iReason;
+  // RB_GC_GUARD after the call: ctx holds a raw INTERIOR pointer into `av`'s
+  // payload, which does not point at the object header, so the collector cannot
+  // see `av` from it.  Without the guard the compiler is free to treat `av` as
+  // dead the moment the pointer is taken, and a collection during the call would
+  // free the argument array out from under the callee.
   CallCtx ctx { m_rubyEngine->obj, mid, RARRAY_LENINT (av), RARRAY_CONST_PTR (av) };
   int state = 0;
   VALUE r = rb_protect (do_funcall, (VALUE) &ctx, &state);
+  RB_GC_GUARD (av);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = eUnknownActionSource;
 
   if (state) { dispid = DISPID_UNKNOWN; report_error (m_pDoc, szType, szProcedure); return true; }

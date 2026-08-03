@@ -191,7 +191,8 @@ struct Dialect {
     bool        intParams;      // ...does an integral number stringify without ".0"?
     const char* mxpHandler;     // defines OnMXPopenTag(name, args, table)
     const char* mxpTableType;   // what that language calls the table's type
-    const char* staleProxy;     // grab(), then use() a proxy to a closed world
+    const char* staleProxy;     // grab(), then useit() a proxy to a closed world
+    const char* gcChurn;        // allocate hard, then call the world API
 };
 
 const Dialect kDialects[] = {
@@ -244,6 +245,13 @@ const Dialect kDialects[] = {
   "  if other == nil then return 'noproxy' end\n"
   "  local ok = pcall(function() return other:GetWorldID() end)\n"
   "  return ok and 'used' or 'refused'\n"
+  "end\n",
+  "function churn(s)\n"
+  "  local acc = {}\n"
+  "  for i = 1, 2000 do acc[#acc+1] = tostring(i) .. s end\n"
+  "  collectgarbage('collect')\n"
+  "  world.SetVariable('gc', world.Trim('  ' .. s .. '  '))\n"
+  "  return 'ok'\n"
   "end\n" },
 
 // ── Python ────────────────────────────────────────────────────────────────
@@ -296,7 +304,13 @@ const Dialect kDialects[] = {
   "def useit(s):\n"
   "    if other is None: return 'noproxy'\n"
   "    try:\n        other.GetWorldID()\n        return 'used'\n"
-  "    except Exception:\n        return 'refused'\n" },
+  "    except Exception:\n        return 'refused'\n",
+  "import gc\n"
+  "def churn(s):\n"
+  "    acc = [str(i) + s for i in range(2000)]\n"
+  "    gc.collect()\n"
+  "    world.SetVariable('gc', world.Trim('  ' + s + '  '))\n"
+  "    return 'ok'\n" },
 
 // ── Perl ──────────────────────────────────────────────────────────────────
 { "perl", "Perl", "perl",
@@ -343,7 +357,12 @@ const Dialect kDialects[] = {
   "sub grab { $other = $world->GetWorld($_[0]); return 'ok'; }\n"
   "sub useit { return 'noproxy' unless defined $other;\n"
   "  my $r = eval { $other->GetWorldID(); 1 };\n"
-  "  return $r ? 'used' : 'refused'; }\n" },
+  "  return $r ? 'used' : 'refused'; }\n",
+  "sub churn {\n"
+  "  my @acc; push @acc, $_ . $_[0] for (1 .. 2000);\n"
+  "  $world->SetVariable('gc', $world->Trim('  ' . $_[0] . '  '));\n"
+  "  return 'ok';\n"
+  "}\n" },
 
 // ── JavaScript ────────────────────────────────────────────────────────────
 { "js", "JS", "javascript",
@@ -393,6 +412,12 @@ const Dialect kDialects[] = {
   "function useit(s) {\n"
   "  if (!other) return 'noproxy';\n"
   "  try { other.GetWorldID(); return 'used'; } catch (e) { return 'refused'; }\n"
+  "}\n",
+  "function churn(s) {\n"
+  "  var acc = [];\n"
+  "  for (var i = 0; i < 20000; i++) acc.push(String(i) + s);\n"
+  "  world.SetVariable('gc', world.Trim('  ' + s + '  '));\n"
+  "  return 'ok';\n"
   "}\n" },
 
 // ── Tcl ───────────────────────────────────────────────────────────────────
@@ -445,7 +470,13 @@ const Dialect kDialects[] = {
   "  world SetVariable mxptype [expr {[catch {dict size $t}] ? \"notadict\" : \"dict\"}]\n"
   "}\n", "dict",
   "proc grab {s} { return unsupported }\n"
-  "proc useit {s} { return unsupported }\n" },
+  "proc useit {s} { return unsupported }\n",
+  "proc churn {s} {\n"
+  "  set acc {}\n"
+  "  for {set i 0} {$i < 2000} {incr i} { lappend acc $i$s }\n"
+  "  world SetVariable gc [world Trim \"  $s  \"]\n"
+  "  return ok\n"
+  "}\n" },
 
 // ── Ruby ──────────────────────────────────────────────────────────────────
 { "ruby", "Ruby", "ruby",
@@ -493,6 +524,13 @@ const Dialect kDialects[] = {
   "def useit(s)\n"
   "  return 'noproxy' if @other.nil?\n"
   "  begin; @other.GetWorldID(); 'used'; rescue Exception; 'refused'; end\n"
+  "end\n",
+  "def churn(s)\n"
+  "  acc = []\n"
+  "  2000.times { |i| acc << i.to_s + s }\n"
+  "  GC.start\n"
+  "  world.SetVariable('gc', world.Trim('  ' + s + '  '))\n"
+  "  'ok'\n"
   "end\n" },
 };
 
@@ -832,6 +870,37 @@ void battery_stale_proxy(const Dialect& d)
           "a proxy to a CLOSED world is refused, not dereferenced");
 }
 
+// 5d. Under collector pressure.
+//     JavaScriptCore scans the C stack conservatively but not arbitrary heap, and
+//     MRI does not scan the C++ heap at all -- so a value whose only reference is
+//     in a std::vector, or an interior pointer taken out of a Ruby array, is
+//     invisible to the collector and can be freed mid-call.  Make the script
+//     allocate hard (and collect explicitly where the language lets it) around a
+//     world-API call, and check the call still produced the right answer.
+//
+//     HONEST LIMIT: this is a smoke check, not a proof.  Reverting the
+//     JSValueProtect / RB_GC_GUARD fixes does NOT fail it -- the collector has
+//     to fire at exactly the wrong instant, which no test can schedule.  What it
+//     does catch is a fix that BREAKS the call path (an over-eager unprotect, a
+//     double free), and it puts allocation pressure on paths that previously saw
+//     none at all.  The fixes themselves rest on the documented contracts:
+//     JavaScriptCore scans the C stack, not the heap; MRI cannot see a VALUE
+//     that only an interior pointer references.
+void battery_gc_pressure(const Dialect& d)
+{
+    const char* L = d.display;
+
+    std::string src(d.source);
+    src += d.gcChurn;
+    Engine e(d.language, src.c_str());
+    if (!e.ok) { skip(L, "a world call survives a collection", "engine failed to open"); return; }
+
+    check(e.callRtn("churn", "payload") == "ok", L,
+          "a handler that allocates hard around a world call still returns");
+    check(e.var("gc") == "payload", L,
+          "...and the world call's arguments and result survived the collection");
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -901,6 +970,7 @@ bool run_language(const Dialect& d)
     battery_trace     (d);
     battery_error_routing(d);
     battery_stale_proxy  (d);
+    battery_gc_pressure  (d);
     battery_mxp_callsite(d);
     battery_errors    (e, d);   // last: it disables handlers in this engine
     battery_compile   (d);

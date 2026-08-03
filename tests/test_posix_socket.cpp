@@ -16,11 +16,12 @@
 
 // A socket that records its callbacks.
 struct Recorder : CAsyncSocket {
-    int receives = 0, closes = 0, accepts = 0, connects = 0;
+    int receives = 0, closes = 0, accepts = 0, connects = 0, oobs = 0;
     void OnReceive(int) override { ++receives; }
     void OnClose(int) override   { ++closes; }
     void OnAccept(int) override  { ++accepts; }
     void OnConnect(int) override { ++connects; }
+    void OnOutOfBandData(int) override { ++oobs; }
 };
 
 // A listening socket on 127.0.0.1:<ephemeral>; port() reports the port.
@@ -322,5 +323,51 @@ TEST(PosixSocket, AcceptedSocketGetsNoSigpipeLikeCreatedOne)
     lis.Close();
 }
 #endif
+
+// ── out-of-band data ──────────────────────────────────────────────────────
+//
+// MFC routes urgent data to its own no-op virtual, OnOutOfBandData.  This shim
+// used to send it to OnReceive(MSG_OOB) instead, and the transport's OnReceive
+// ignores its argument -- so an ordinary recv() ran with nothing normal to
+// read, returned EWOULDBLOCK, which Receive reports as SOCKET_ERROR, which the
+// transport treats as the connection closing.  A MUD sending a telnet SYNCH
+// (IAC DM as urgent data, the standard reply to IP/AO/AYT) disconnected the
+// world mid-session.
+TEST(PosixSocket, UrgentDataGoesToOnOutOfBandDataNotOnReceive)
+{
+    Listener lis;
+    ASSERT_TRUE(lis.open());
+    Recorder client;
+    ASSERT_TRUE(client.Create());
+    client.Connect("127.0.0.1", lis.port_);
+    ASSERT_TRUE(poll_until([&] { return lis.accepts > 0; }));
+    Recorder server;
+    ASSERT_TRUE(lis.Accept(server));
+    ASSERT_TRUE(poll_until([&] { return client.connects > 0; }));
+
+    const int before = server.receives;
+
+    // One byte of TCP urgent data, and nothing in the normal stream — exactly
+    // the shape that made recv() return EWOULDBLOCK.
+    ASSERT_EQ(1, (int)::send(client.m_hSocket, "!", 1, MSG_OOB));
+
+    ASSERT_TRUE(poll_until([&] { return server.oobs > 0; }));
+    EXPECT_EQ(0, server.closes);              // the world stays connected
+    EXPECT_EQ(before, server.receives);       // and it is NOT a normal read
+
+    // The urgent byte is drained, so select() stops reporting the condition:
+    // without that, level-triggered select fires this callback on every poll.
+    const int settled = server.oobs;
+    for (int i = 0; i < 20; i++) CAsyncSocket::Poll(1);
+    EXPECT_EQ(settled, server.oobs);
+
+    // Normal traffic still flows afterwards.
+    ASSERT_EQ(2, (int)::send(client.m_hSocket, "hi", 2, 0));
+    EXPECT_TRUE(poll_until([&] { return server.receives > before; }));
+    EXPECT_EQ(0, server.closes);
+
+    client.Close();
+    lis.Close();
+}
 
 MC_TEST_MAIN()

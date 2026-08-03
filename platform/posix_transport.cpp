@@ -61,8 +61,21 @@ struct ResolveCompletion {
     bool         ok = false;
 };
 
-std::mutex g_mailboxLock;
-std::vector<ResolveCompletion> g_mailbox;
+// Deliberately IMMORTAL (leaked once, never destroyed).  The resolver thread is
+// detached and nothing waits for it, so a lookup still in flight at quit --
+// getaddrinfo can block for tens of seconds on bad DNS or a dropped VPN -- would
+// otherwise wake after static destruction, lock a destroyed mutex and push_back
+// into a freed vector.  The per-transport Gate protects the transport, not these
+// two objects.  An object that is never destroyed cannot be used after it is.
+struct Mailbox {
+    std::mutex lock;
+    std::vector<ResolveCompletion> items;
+};
+Mailbox& MB()
+{
+    static Mailbox* m = new Mailbox;   // never deleted, on purpose
+    return *m;
+}
 
 } // namespace
 
@@ -106,8 +119,8 @@ public:
                            ->sin_addr.s_addr;
                 ::freeaddrinfo(res);
             }
-            std::lock_guard<std::mutex> lk(g_mailboxLock);
-            g_mailbox.push_back({ gate, self, gen, token, addr, ok });
+            std::lock_guard<std::mutex> lk(MB().lock);
+            MB().items.push_back({ gate, self, gen, token, addr, ok });
         }).detach();
     }
 
@@ -257,6 +270,17 @@ private:
 
         void OnConnect(int nErrorCode) override
         {
+            // A connect that never completed must not go on to report a CLOSE.
+            // On a refused connect select() marks the fd BOTH writable and
+            // readable; getsockopt(SO_ERROR) consumes the error, so the peek in
+            // the read arm that follows sees EOF and fires OnClose -- and the
+            // doc then ran the whole disconnect sequence (disconnect script,
+            // ON_PLUGIN_DISCONNECT, the session-statistics Notes, auto-log
+            // close) for a session that never existed.  Winsock posts no
+            // FD_CLOSE for a connect that never succeeded; closing here gives
+            // the pump nothing left to report, and its post-callback
+            // INVALID_SOCKET guard skips the rest of this pass.
+            if (nErrorCode) Close();
             if (m_owner) m_owner->handleConnect(nErrorCode);
         }
         void OnSend(int) override
@@ -523,8 +547,8 @@ void PumpTransportCompletions()
 {
     std::vector<ResolveCompletion> pending;
     {
-        std::lock_guard<std::mutex> lk(g_mailboxLock);
-        pending.swap(g_mailbox);
+        std::lock_guard<std::mutex> lk(MB().lock);
+        pending.swap(MB().items);
     }
     for (const ResolveCompletion& rc : pending) {
         // Deliver only if the transport is alive AND this is still the

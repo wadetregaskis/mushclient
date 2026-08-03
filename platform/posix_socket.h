@@ -311,6 +311,14 @@ public:
     virtual void OnClose   (int /*nErrorCode*/) {}
     virtual void OnConnect (int /*nErrorCode*/) {}
     virtual void OnAccept  (int /*nErrorCode*/) {}
+    // MFC has this as a separate no-op virtual, and CWorldSocket never
+    // overrode it -- urgent data is simply ignored.  Routing it into
+    // OnReceive instead (what this shim used to do) turned a telnet SYNCH
+    // into a disconnect: with SO_OOBINLINE off the urgent byte is NOT in the
+    // normal stream, so the recv that followed returned EWOULDBLOCK, which
+    // Receive reports as SOCKET_ERROR, which the transport treats as the
+    // connection closing.
+    virtual void OnOutOfBandData (int /*nErrorCode*/) {}
 
     // ── Polling ───────────────────────────────────────────────────────────────
     // Call this from the application event loop.  It checks all registered
@@ -408,7 +416,19 @@ public:
             fd = s->m_hSocket;   // re-read: a callback may have closed/reopened this slot, so never reuse the stale fd
 
             if (FD_ISSET(fd, &ex)) {
-                s->OnReceive(MSG_OOB);  // out-of-band data
+                s->OnOutOfBandData(0);
+                // Then consume the urgent byte.  Winsock's FD_OOB is
+                // edge-triggered -- it fires once per arrival -- but select()
+                // is LEVEL-triggered, so an undrained urgent byte would mark
+                // this socket in exceptfds on every poll from now on, spinning
+                // the callback ~50x a second.  Discarding matches the effective
+                // Windows behaviour: with SO_OOBINLINE off the byte is not part
+                // of the normal stream there either, so the telnet phase
+                // machine never sees it on either platform.
+                if (IsLive(s, gen) && s->m_hSocket != INVALID_SOCKET) {
+                    char oob;
+                    (void) ::recv(s->m_hSocket, &oob, 1, MSG_OOB);
+                }
             }
         }
     }

@@ -737,6 +737,71 @@ TEST(PalTransport, TlsHandshakeProtocolFailure)
 }
 #endif // OPENSSL_VERSION_TEXT
 
+// ── connect failure must not masquerade as a disconnect ───────────────────
+//
+// On a refused connect select() marks the fd BOTH writable and readable.  The
+// write arm reads SO_ERROR -- which CONSUMES it -- so the peek in the read arm
+// that follows sees EOF and used to fire OnClose in the very same Poll pass.
+// The doc treats that as the connection dropping: it runs the world's
+// disconnect script, fires ON_PLUGIN_DISCONNECT at every plugin, closes an
+// auto-opened log and prints the session-statistics Notes -- for a session that
+// never existed.  Winsock posts no FD_CLOSE for a connect that never completed.
+namespace {
+struct ConnectRecorder : pal::ITransportEvents {
+    int connects = 0, closes = 0;
+    int firstConnectErr = -999;
+    void onResolved(pal::ResolveToken, unsigned int, bool) override {}
+    void onConnect(int err) override
+    { if (firstConnectErr == -999) firstConnectErr = err; ++connects; }
+    void onBytes(const char*, size_t) override {}
+    void onWritable() override {}
+    void onClosed(int) override { ++closes; }
+    void onTlsEstablished(const char*, const char*, const char*) override {}
+    void onTlsFailed(pal::TlsFailure, const char*) override {}
+};
+
+// A loopback port with nothing listening: bind an ephemeral port, learn it,
+// then give it back.  Connecting there gets ECONNREFUSED.
+unsigned short refused_loopback_port()
+{
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sa.sin_port = 0;
+    ::bind(fd, (sockaddr*)&sa, sizeof sa);
+    socklen_t len = sizeof sa;
+    ::getsockname(fd, (sockaddr*)&sa, &len);
+    ::close(fd);
+    return ntohs(sa.sin_port);
+}
+} // namespace
+
+TEST(PalTransport, RefusedConnectReportsAnErrorAndNoPhantomClose)
+{
+    ConnectRecorder ev;
+    pal::ITransport* t = pal::CreatePosixTransport(ev);
+    t->connect(htonl(INADDR_LOOPBACK), refused_loopback_port(),
+               pal::TransportOptions{ false });
+
+    ASSERT_TRUE(pump_until([&]{ return ev.connects > 0; }));
+    EXPECT_NE(0, ev.firstConnectErr);        // the refusal is reported...
+    EXPECT_EQ(0, ev.closes);                 // ...and NOT as a disconnect
+
+    // The phantom close arrived in the same pass as the failure, but keep
+    // pumping: an undrained EOF-readable fd would also re-fire on every later
+    // poll, so this catches both shapes.
+    for (int i = 0; i < 50; i++) {
+        CAsyncSocket::Poll(1);
+        pal::PumpTransportCompletions();
+    }
+    EXPECT_EQ(0, ev.closes);
+    EXPECT_EQ(1, ev.connects);               // reported exactly once
+
+    delete t;
+}
+
+
 MC_TEST_MAIN()
 
 // ── TLS trust anchors ─────────────────────────────────────────────────────

@@ -4067,7 +4067,21 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         // The pane background follows the palette too when the world has no
         // explicit background of its own (NO_COLOUR) -- see ApplyPaneBackground.
         ApplyPaneBackground(m_doc->m_iBackgroundColour);
+
+        // Detach the log hook across the rebuild.  RebuildOutputView clears the
+        // pane and RE-EMITS the whole scrollback, and every line the pane
+        // accepts is forwarded to LogLine -- so with a session log open, one
+        // colour tweak appended a verbatim second copy of the entire buffer to
+        // the log file, a third copy on the next tweak, and so on.  The lines
+        // are not new; only the presentation changed.  (OnClose uses the same
+        // detach-and-restore trick for m_fn_close_window.)
+        auto savedLogHook = m_output ? m_output->m_fn_on_line_appended
+                                     : std::function<void(const SOutputLine&)>();
+        if (m_output) m_output->m_fn_on_line_appended = nullptr;
+
         m_doc->RebuildOutputView();
+
+        if (m_output) m_output->m_fn_on_line_appended = savedLogHook;
 
         if (m_output) {
             m_output->RestoreBookmarkOffsetsFromEnd(marks);

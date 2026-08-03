@@ -597,6 +597,30 @@ closed the dialog cleanly**, with the world file byte-identical afterwards. So
 no stock setting trips a validator here. Still worth the same pass on Windows
 with a differently-configured world.
 
+### 4c-quindecies. Two display/log corruption fixes (2026-08-03)
+
+**Port-only.**
+
+1. **A palette change re-appended the whole scrollback to an open session log.**
+   `RebuildOutputView` clears the pane and re-emits every line, and the port
+   forwards every line the pane accepts to `LogLine` — so with logging on, one
+   ANSI-colour tweak (or a plugin calling `world.SetBoldColour`) appended a
+   verbatim second copy of the entire buffer to the log file, a third on the
+   next tweak, and so on. The log hook is now detached across the rebuild. The
+   engine's own File ▸ Log Session path was never affected.
+
+2. **Omit-from-output did not rewind `m_gui_lines_emitted`.** The non-Windows
+   drain derives what to paint from that counter, and every other deletion site
+   rewinds it (`DeleteLines`, `RemoveChunk`); the gag path was the outlier.
+   **Honest status: I could not reproduce a failure.** Two attempts at the
+   reported scenario — a gag on a wrapped paragraph arriving in two reads with a
+   drain between — did not produce a deficit, because in that flow the paragraph
+   is deleted before the drain paints it, and removing the fix does not fail the
+   test. So this is a **consistency fix against a latent hazard**, not a
+   confirmed bug: the counter can no longer exceed what the list justifies. If a
+   Windows session ever shows lines going missing after a gag, this is the first
+   place to look; equally, if it never does, the fix costs nothing.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

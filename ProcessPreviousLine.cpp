@@ -738,6 +738,17 @@ assemble the full text of the original line.
   if (m_bLineOmittedFromOutput)
     {
 
+#ifndef _WIN32
+    // How many of these lines the GUI has already been shown.  The drain
+    // (doc_display_shared.cpp) derives its cursor from m_gui_lines_emitted, so
+    // deleting lines out from under it without rewinding leaves the counter too
+    // high -- and the next lines the MUD sends are silently never painted.
+    // Every other deletion site already rewinds: DeleteLines
+    // (methods_output.cpp:288-302) and RemoveChunk (doc_shared.cpp:3880).  This
+    // one was the outlier.
+    const long guiEmittedBefore = m_gui_lines_emitted;
+#endif
+
   // delete all lines in this set
     for (pos = m_LineList.GetTailPosition (); pos; )
      {
@@ -799,6 +810,18 @@ assemble the full text of the original line.
         break;    
      m_LineList.GetPrev (pos);
      }
+
+#ifndef _WIN32
+    {
+    // Same clamp DeleteLines uses: never count the in-progress tail line, which
+    // UpdateAllViews does not emit until it is finished.
+    const long newEmitted = std::min (guiEmittedBefore,
+                                      std::max (0L, (long) m_LineList.GetCount () - 1));
+    if (guiEmittedBefore > newEmitted)
+      DeleteOutputLines (guiEmittedBefore - newEmitted);
+    m_gui_lines_emitted = newEmitted;
+    }
+#endif
 
     // try to allow world.tells to span omitted lines
     if (!m_LineList.IsEmpty ())

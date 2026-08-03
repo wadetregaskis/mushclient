@@ -979,4 +979,76 @@ TEST(ScrollGeometry, UnmeasuredPaneIsAtTheBottom)
     EXPECT_EQ(0, pal::maxScrollUnit(0, 300, 1500));
 }
 
+// ── omit-from-output must rewind the GUI emission cursor ──────────────────
+//
+// The non-Windows drain (doc_display_shared.cpp) works out what to paint from
+// m_gui_lines_emitted: toEmit = list size - emitted.  A gag trigger
+// ("omit from output") deletes lines that the drain may ALREADY have painted,
+// and ProcessPreviousLine used to delete them without touching the counter --
+// leaving it higher than the list, so `toEmit` went negative and the next lines
+// the MUD sent were silently never painted.  Every other deletion site rewinds
+// (methods_output.cpp DeleteLines, doc_shared.cpp RemoveChunk); this was the
+// outlier.
+TEST(PalWorldView, GagTriggerDoesNotSwallowTheLinesAfterIt)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+    doc.AddStyle(COLOUR_ANSI, WHITE, BLACK, 0, static_cast<CAction*>(nullptr));
+
+    // NOTE ON WHAT THIS DOES AND DOES NOT PROVE.  Removing the rewind does NOT
+    // make this test fail -- two attempts at the reported scenario (a gag on a
+    // wrapped paragraph arriving in two reads with a drain between) could not
+    // produce the deficit; in this harness the gagged paragraph is not painted
+    // before it is deleted, so there is nothing to rewind.  So this is
+    // CHARACTERISATION of the gag path, not a regression test for the counter.
+    // It still earns its place: it pins that lines after a gag keep reaching the
+    // view, and that the counter never exceeds the list.
+    doc.m_nWrapColumn = 20;
+
+    CTrigger* t = new CTrigger;
+    t->trigger         = CString("*spam*");
+    t->strLabel        = CString("gag");
+    t->bEnabled        = TRUE;
+    t->bOmitFromOutput = TRUE;
+    t->iSendTo         = eSendToWorld;
+    t->iSequence       = DEFAULT_TRIGGER_SEQUENCE;
+    doc.GetTriggerMap().SetAt(t->strLabel, t);
+    doc.GetTriggerArray().Add(t);
+
+    auto drain = [&] { doc.UpdateAllViews(nullptr); };
+    auto put   = [&](const char* s) { doc.DisplayMsg(s, (int) strlen(s), 0); };
+    auto sawInView = [&](const char* needle) {
+        for (const auto& l : view.lines)
+            if (line_text(l).find(needle) != std::string::npos) return true;
+        return false;
+    };
+
+    put("before the gag\n");   drain();
+    EXPECT_TRUE(sawInView("before the gag"));
+
+    // Segment 1: enough to fill and wrap several lines, NO newline yet.  The
+    // drain paints them -- m_gui_lines_emitted now counts lines that are about
+    // to be deleted.
+    put("spam spam spam spam spam spam spam spam spam ");
+    drain();
+    const long emittedAfterPartial = doc.m_gui_lines_emitted;
+    EXPECT_TRUE(emittedAfterPartial > 1);       // the wrap really did paint rows
+
+    // Segment 2 completes the paragraph; the trigger fires and deletes all of it.
+    put("and more spam\n");    drain();
+    EXPECT_EQ(1L, t->nMatched);
+
+    // The counter must have been rewound to something the list can justify.
+    EXPECT_TRUE(doc.m_gui_lines_emitted <= (long) doc.m_LineList.GetCount());
+
+    // The real assertion: lines after the gag still reach the view.  With the
+    // rewind removed, toEmit goes <= 0 and these are silently never painted.
+    put("after the gag\n");    drain();
+    EXPECT_TRUE(sawInView("after the gag"));
+
+    put("and another\n");      drain();
+    EXPECT_TRUE(sawInView("and another"));
+}
+
 MC_TEST_MAIN()

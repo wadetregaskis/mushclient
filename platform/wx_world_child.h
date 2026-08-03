@@ -23,10 +23,6 @@ void wx_unregister_world_frame(CMUSHclientDoc* doc);
 // window switching to the world the user double-clicked).  No-op if none.
 void wx_activate_world_frame(CMUSHclientDoc* doc);
 
-// Remove a world file path from the startup world list so it isn't reopened
-// on next launch.  Call from OnClose when the user explicitly closes a world.
-void wx_world_remove_from_list(const char* path);
-
 #include <wx/wx.h>
 #include <wx/mdi.h>
 #include <wx/timer.h>

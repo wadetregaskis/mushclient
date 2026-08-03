@@ -88,7 +88,6 @@ static wxStatusBar* s_statusBar = nullptr;
 static std::unordered_map<CMUSHclientDoc*, CWorldChildFrame*> s_docFrameMap;
 
 // Forward declaration — defined in the World-list persistence section below.
-static void world_list_remove(const std::string& path);
 
 // ── Recent Worlds list ────────────────────────────────────────────────────────
 // Tracks up to kMaxRecentWorlds file paths most recently opened or saved,
@@ -290,70 +289,14 @@ void wx_activate_world_frame(CMUSHclientDoc* doc)
     frame->Activate();                // make it the active MDI child
 }
 
-void wx_world_remove_from_list(const char* path)
-{
-    if (path && *path) world_list_remove(path);
-}
-
 // ── Helper: cast void* → wxWindow* ───────────────────────────────────────
 static inline wxWindow* toWx(void* h) { return static_cast<wxWindow*>(h); }
 static inline const wxWindow* toWxC(const void* h) { return static_cast<const wxWindow*>(h); }
 
 // ── Helper: apply world font settings to an output pane ──────────────────
-// ── World-list persistence ────────────────────────────────────────────────
-// App.m_strWorldList is a '*'-delimited list of world file paths that are
-// opened automatically on startup.  These helpers keep it up-to-date and
-// flush changes to the preferences SQLite DB so they survive app restarts.
-
-static void world_list_add(const std::string& path)
-{
-    if (path.empty()) return;
-
-    // Parse the current list; skip if already present.
-    std::string cur = static_cast<const char*>(App.m_strWorldList);
-    if (!cur.empty()) {
-        // Check for exact match of any '*'-separated entry.
-        std::string check = cur;
-        while (!check.empty()) {
-            size_t sep = check.find('*');
-            std::string entry = (sep == std::string::npos) ? check : check.substr(0, sep);
-            if (entry == path) return;  // already in list
-            if (sep == std::string::npos) break;
-            check = check.substr(sep + 1);
-        }
-        cur += '*';
-    }
-    cur += path;
-    App.m_strWorldList = CString(cur.c_str());
-    App.db_write_string("prefs", "WorldList",
-                        static_cast<const char*>(App.m_strWorldList));
-}
-
-static void world_list_remove(const std::string& path)
-{
-    if (path.empty()) return;
-
-    std::string cur = static_cast<const char*>(App.m_strWorldList);
-    if (cur.empty()) return;
-
-    // Rebuild the '*'-delimited list, skipping the given path.
-    std::string rebuilt;
-    std::string check = cur;
-    while (!check.empty()) {
-        size_t sep = check.find('*');
-        std::string entry = (sep == std::string::npos) ? check : check.substr(0, sep);
-        if (entry != path) {
-            if (!rebuilt.empty()) rebuilt += '*';
-            rebuilt += entry;
-        }
-        if (sep == std::string::npos) break;
-        check = check.substr(sep + 1);
-    }
-    if (rebuilt == cur) return;  // nothing changed
-    App.m_strWorldList = CString(rebuilt.c_str());
-    App.db_write_string("prefs", "WorldList",
-                        static_cast<const char*>(App.m_strWorldList));
-}
+// (The world-list add/remove helpers that used to live here are gone: nothing
+// in the port writes App.m_strWorldList any more.  Global Preferences does, via
+// the canonical page, exactly as on Windows.)
 
 // ── Hook implementations ──────────────────────────────────────────────────
 
@@ -1950,8 +1893,10 @@ static void* hook_open_world_file(const char* path)
     // which parses ip_address, port, triggers, aliases, timers, etc.
     if (!doc->OnOpenDocument(path)) {
         delete doc;
-        // Remove from the startup world list — the file is missing or unreadable.
-        world_list_remove(path);
+        // NOT removed from App.m_strWorldList: that list is the user's curated
+        // startup set, and a world being temporarily unreadable (a removable
+        // volume, a typo in a hand-edited path) is not consent to delete it.
+        // Windows leaves it alone too.
         return nullptr;
     }
 
@@ -1998,9 +1943,12 @@ static void* hook_open_world_file(const char* path)
     // Flush any notes produced during OnOpenDocument.
     doc->UpdateAllViews(nullptr);
 
-    // Remember this world file path so it reopens on next launch.
-    world_list_add(path);
-    // Also add to the File → Open Recent list.
+    // Deliberately NOT added to App.m_strWorldList.  That list means "open these
+    // at startup" and on Windows has exactly one writer, the Global Preferences
+    // page (dialogs/global_prefs/GlobalPrefs.cpp).  The port used to treat it as
+    // session state — add on open, drop on close — which restored your worlds but
+    // silently destroyed whatever set you had curated.  File > Open Recent is the
+    // right home for "where have I been", and it is maintained here.
     recent_worlds_add(path);
 
     // Auto-connect if the world file says to (m_connect_now != 0).
@@ -2095,17 +2043,12 @@ static void hook_save_active_world(wxMDIParentFrame* frame, bool saveAs)
         return;
     }
 
-    // Remove the old path from the world list if save-as changed it.
-    if (!oldPath.empty() && oldPath != savePath)
-        world_list_remove(oldPath);
-
     // Update the document's path so subsequent Ctrl+S uses the same file.
     doc->SetPathName(savePath.c_str());
     doc->SetModifiedFlag(FALSE);
 
-    // Add to the startup world list so this world reopens on next launch.
-    world_list_add(savePath);
-    // Also add to the File → Open Recent list.
+    // Saving a world does not change which worlds open at startup — see the
+    // note in hook_open_world_file.
     recent_worlds_add(savePath);
 }
 
@@ -2391,12 +2334,10 @@ static bool hook_save_world(void* vdoc, bool saveAs, void* vparent)
         return false;
     }
 
-    // Update path, clear modified flag, maintain world lists.
-    if (!oldPath.empty() && oldPath != savePath)
-        world_list_remove(oldPath);
+    // Update path and clear the modified flag.  The startup world list is not
+    // touched — see the note in hook_open_world_file.
     doc->SetPathName(savePath.c_str());
     doc->SetModifiedFlag(FALSE);
-    world_list_add(savePath);
     recent_worlds_add(savePath);
     return true;
 }

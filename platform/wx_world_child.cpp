@@ -4688,10 +4688,11 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         // can look up a dangling frame pointer during the destructor.
         wx_unregister_world_frame(m_doc);
 
-        // Remove from the startup world list so the world isn't automatically
-        // reopened next time — the user explicitly closed it.
-        if (!worldPath.empty())
-            wx_world_remove_from_list(worldPath.c_str());
+        // Closing a world deliberately does NOT remove it from
+        // App.m_strWorldList.  That list is the user's curated "open these at
+        // startup" set (its only writer on Windows is the Global Preferences
+        // page); treating a close as a request to edit it meant the set was
+        // whatever happened to be open when you last quit.
 
         // Disconnect and release the doc.  Deletes socket, triggers, timers, etc.
         CMUSHclientDoc* doc = m_doc;

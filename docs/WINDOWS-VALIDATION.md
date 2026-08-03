@@ -251,6 +251,31 @@ Three edits, all meant to leave Windows byte-for-byte unchanged:
    list into `mushcore` in `CMakeLists.txt`.  No effect on the `.vcxproj`, which
    always compiled it.
 
+### 4c-quinquies. Scripting-engine seam (2026-08-03)
+
+Two shared-source changes, both meant to be Windows no-ops:
+
+1. Four MXP hooks (`mxp/mxpStart.cpp`, `mxpClose.cpp` ×2, `mxpError.cpp`) and
+   `world.CallPlugin` (`scripting/methods/methods_plugins.cpp`) changed their
+   rich-callback gate from `IsLua()` to `UsesEmbeddedCallback()`.  On Windows
+   `IsPython/IsPerl/IsJS/IsTcl/IsRuby` are compile-time `false`
+   (`scripting/scripting.h`), so the two expressions are identical there.
+   **Check:** a Lua world with `OnMXP_OpenTag` configured still receives the tag
+   name, the argument text and the argument table; `world.CallPlugin` still
+   reaches a Lua plugin.  A VBScript/JScript world should be unchanged — it takes
+   the COM arm on both platforms.
+2. `xml/xml_load_world.cpp` — five conditions that derive
+   `m_bPluginProcessesOpenTag`/`CloseTag`/`SetVariable`/`SetEntity`/`Error` from a
+   plugin's callbacks were restored after being disabled by a contaminated
+   commit.  The Windows source is back to what it always was.
+   **Check:** install a plugin implementing `OnPluginMXPopenTag` and confirm it
+   fires on an MXP tag.
+
+`scripting/scripting.h` also gained `CScriptEngine::TraceCallback`, declared
+inside the existing `#else` (non-Windows) arm, and its definition in
+`scripting/lua_scripting.cpp` is `#ifndef _WIN32`.  Nothing to check beyond a
+clean compile.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

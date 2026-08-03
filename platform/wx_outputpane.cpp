@@ -588,6 +588,23 @@ void COutputPane::SetSelectionRange(int startLine, int endLine,
         return;
     }
 
+    // Nothing to select.  With an empty buffer both indices clamp to 0 and the
+    // lineLen lambda below indexes m_lines[0] on an empty deque — world.Note
+    // has not run yet, or world.DeleteOutput just emptied the pane, and a
+    // script calling world.SetSelection reads past the end.
+    //
+    // Windows cannot reach this state (ClearOutput re-seeds one CLine,
+    // doc.cpp:2358) and its setOutputSelection only stores the four indices
+    // without touching the line list, so a selection over a nonexistent line is
+    // simply not visible or copyable there.  Clearing the selection reproduces
+    // that observable result.
+    if (m_lines.empty()) {
+        m_selAnchor = SelPoint{};
+        m_selFocus  = SelPoint{};
+        Refresh(false);
+        return;
+    }
+
     int n = (int)m_lines.size();
     // Convert 1-based → 0-based; clamp to buffer.
     int sl = std::max(0, std::min(n - 1, startLine - 1));

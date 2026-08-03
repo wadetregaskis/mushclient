@@ -587,8 +587,15 @@ that *already* holds an out-of-range value can still open its property page.
 range will now block OK on that page, where before it sailed through. That is
 Windows behaviour, so a Windows build should reject the same values — but if a
 page here refuses to close on values Windows accepts, the range constant or the
-member's default is wrong and that is the real bug. Please try OK on each
-property page with stock settings.
+member's default is wrong and that is the real bug.
+
+**Smoke-checked on macOS (2026-08-03)** against a real, long-lived world
+(Discworld, Quow's plugin pack loaded): World Properties opened, six numeric
+pages were visited — Output, Paste, Send, Commands, Timers, Printing, and
+switching pages already runs `UpdateData(TRUE)` on the outgoing one — and **OK
+closed the dialog cleanly**, with the world file byte-identical afterwards. So
+no stock setting trips a validator here. Still worth the same pass on Windows
+with a differently-configured world.
 
 ### 4d. Everything else (smoke)
 

@@ -148,6 +148,14 @@ XS(mc_perl_invoke)
   CMUSHclientDoc* doc = (CMUSHclientDoc*) (intptr_t) SvIV(ST(0));
   STRLEN nl = 0;
   const char* name = SvPV(ST(1), nl);
+  // The proxy holds a bare CMUSHclientDoc* -- there is no COM here, so nothing
+  // AddRefs it the way pDoc->GetIDispatch(TRUE) does on Windows.  A script that
+  // keeps what world.GetWorld() returned and uses it after that world is closed
+  // would dereference freed memory; report it instead.
+  // Safe to croak here: nothing with a destructor is live yet.
+  if (!MC_DispatchDocIsLive(doc))
+    croak("world->%s: that world has been closed", name ? name : "?");
+
   int nargs = items - 2;
 
   // Every C++ object with a non-trivial destructor lives in this inner scope and

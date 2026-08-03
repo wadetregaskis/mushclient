@@ -133,6 +133,23 @@ void ruby_to_variant (VALUE r, VARIANT& out)
 VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
   {
   CMUSHclientDoc* doc = (CMUSHclientDoc*) (intptr_t) NUM2LL (rb_iv_get (self, "@doc"));
+
+  // Both guards go BEFORE the first object with a destructor.  rb_raise longjmps
+  // to the enclosing rb_protect and does not unwind C++ frames, so anything
+  // constructed above it would leak; `name` and the VARIANT vectors below are
+  // exactly that.
+  //
+  // argc: method_missing is registered with arity -1 and a script may call it
+  // directly, in which case argv[0] is out of bounds and SYM2ID reads garbage.
+  if (argc < 1)
+    rb_raise (rb_eArgError, "world: no method name given");
+  // The proxy holds a bare CMUSHclientDoc*; there is no COM here, so nothing
+  // AddRefs it the way pDoc->GetIDispatch(TRUE) does on Windows.  A script that
+  // keeps what world.GetWorld returned and uses it after that world is closed
+  // would dereference freed memory.
+  if (!MC_DispatchDocIsLive (doc))
+    rb_raise (rb_eRuntimeError, "world: that world has been closed");
+
   std::string name = rb_id2name (SYM2ID (argv[0]));
   int    nargs = argc - 1;
   VALUE* a     = argv + 1;

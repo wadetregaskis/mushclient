@@ -281,6 +281,12 @@ Two shared-source changes, both meant to be Windows no-ops:
    ColourNote lines still appear.  Also that `log_script_errors` still appends to
    `script_error_log.txt`.
 
+4. `doc_construct.cpp` gained two calls, both inside `#ifndef _WIN32`: the
+   constructor registers the document with the port's world-proxy liveness
+   registry and the destructor deregisters it, first thing.  Windows compiles
+   neither.  **Check:** nothing — this is invisible to the Windows build; listed
+   only because the file is shared.
+
 `scripting/scripting.h` also gained `CScriptEngine::TraceCallback`, declared
 inside the existing `#else` (non-Windows) arm, and its definition in
 `scripting/lua_scripting.cpp` is `#ifndef _WIN32`.  Nothing to check beyond a

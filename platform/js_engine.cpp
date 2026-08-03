@@ -242,6 +242,17 @@ JSValueRef Method_call(JSContextRef ctx, JSObjectRef function, JSObjectRef /*thi
   {
   MethodData* m = (MethodData*) JSObjectGetPrivate(function);
   if (!m) return JSValueMakeUndefined(ctx);
+  // The proxy holds a bare CMUSHclientDoc* -- there is no COM here, so nothing
+  // AddRefs it the way pDoc->GetIDispatch(TRUE) does on Windows.  A script that
+  // keeps what world.GetWorld() returned and uses it after that world is closed
+  // would dereference freed memory; report it instead.
+  if (!MC_DispatchDocIsLive(m->doc))
+    {
+    if (exception) *exception = make_js_error(ctx, "world." + m->name +
+                                              ": that world has been closed");
+    return JSValueMakeUndefined(ctx);
+    }
+
 
   std::vector<VARIANT> vargs(argc);
   for (size_t i = 0; i < argc; i++) js_to_variant(ctx, argv[i], vargs[i]);

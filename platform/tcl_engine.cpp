@@ -91,6 +91,9 @@ Tcl_Obj* variant_to_tcl (Tcl_Interp* interp, const VARIANT& v)
   switch (v.vt)
     {
     // VT_DISPATCH (a nested `world` object, e.g. GetWorld) has no Tcl object
+    // -- which also means a Tcl script cannot hold a proxy to another world and
+    // so cannot outlive one.  The other four engines mint a proxy here and need
+    // an MC_DispatchDocIsLive check on every call; Tcl is safe by construction.
     // form; return empty.  Cross-world scripting is the one gap vs the JS engine.
     case VT_EMPTY: case VT_NULL: case VT_ERROR: case VT_DISPATCH:
       return Tcl_NewObj ();

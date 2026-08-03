@@ -57,6 +57,24 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
 // True if `name` is a known automation method.
 bool MC_DispatchHas(const char* name);
 
+// Is `doc` still an OPEN world document?
+//
+// A VT_DISPATCH return (world.GetWorld / GetWorldById) is a bare
+// CMUSHclientDoc* on this platform -- there is no COM, so nothing AddRefs it the
+// way pDoc->GetIDispatch(TRUE) does on Windows.  A script that stores the proxy
+// ("other = world.GetWorld('Alt')") and uses it after that world is closed would
+// otherwise dereference freed memory.  Every engine's invoke path checks this
+// first and reports an error to the script instead.
+//
+// The authority is a registry the document maintains itself, in its constructor
+// and destructor -- NOT the App's doc template, because a document is usable
+// before the framework registers it (the engines' own world is exactly that).
+bool MC_DispatchDocIsLive(CMUSHclientDoc* doc);
+
+// Called by CMUSHclientDoc's constructor / destructor.
+void MC_DispatchDocRegister   (CMUSHclientDoc* doc);
+void MC_DispatchDocUnregister (CMUSHclientDoc* doc);
+
 // ── Properties (DISP_PROPERTY_NOTIFY / DISP_PROPERTY_EX) ────────────────────
 // The dispatch map's member- and accessor-backed properties (world.Trace,
 // world.NoteColour, world.LogNotes, …) surface to scripts as readable/writable

@@ -9,6 +9,7 @@
 #if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD)
 
 #include <unordered_map>
+#include <set>
 #include <functional>
 #include <string>
 #include <vector>
@@ -330,6 +331,28 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
   if (!it->second(doc, args, nargs, result, outargs))
     return MC_DISP_BADARGS;
   return MC_DISP_OK;
+  }
+
+// Live world documents, maintained by the doc's own constructor and destructor
+// (doc_construct.cpp, non-Windows only).  NOT "is it in the doc template": a doc
+// is usable before the framework registers it, and asking the template would
+// reject the engine's own world.  A freed pointer can also be reused by a later
+// allocation, so "known dead" would give false positives -- the set has to be
+// membership, maintained at both ends.
+namespace {
+std::set<CMUSHclientDoc*>& live_docs()
+  {
+  static std::set<CMUSHclientDoc*> s;
+  return s;
+  }
+}
+
+void MC_DispatchDocRegister   (CMUSHclientDoc* doc) { if (doc) live_docs().insert (doc); }
+void MC_DispatchDocUnregister (CMUSHclientDoc* doc) { if (doc) live_docs().erase  (doc); }
+
+bool MC_DispatchDocIsLive(CMUSHclientDoc* doc)
+  {
+  return doc && live_docs().find (doc) != live_docs().end ();
   }
 
 bool MC_DispatchHas(const char* name)

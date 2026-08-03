@@ -167,6 +167,14 @@ PyObject* variant_to_py(const VARIANT& v)
 PyObject* Method_call(PyObject* self, PyObject* args, PyObject* /*kw*/)
   {
   MethodObject* m = (MethodObject*) self;
+  // The proxy holds a bare CMUSHclientDoc* -- there is no COM here, so nothing
+  // AddRefs it the way pDoc->GetIDispatch(TRUE) does on Windows.  A script that
+  // keeps what world.GetWorld() returned and uses it after that world is closed
+  // would dereference freed memory; report it instead.
+  if (!MC_DispatchDocIsLive(m->doc))
+    { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
+      return nullptr; }
+
   Py_ssize_t n = PyTuple_GET_SIZE(args);
 
   std::vector<VARIANT> vargs((size_t) n);

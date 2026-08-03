@@ -191,6 +191,7 @@ struct Dialect {
     bool        intParams;      // ...does an integral number stringify without ".0"?
     const char* mxpHandler;     // defines OnMXPopenTag(name, args, table)
     const char* mxpTableType;   // what that language calls the table's type
+    const char* staleProxy;     // grab(), then use() a proxy to a closed world
 };
 
 const Dialect kDialects[] = {
@@ -237,7 +238,13 @@ const Dialect kDialects[] = {
   "  world.SetVariable('mxptag', tostring(name))\n"
   "  world.SetVariable('mxpargs', tostring(args))\n"
   "  world.SetVariable('mxptype', type(t))\n"
-  "end\n", "table" },
+  "end\n", "table",
+  "function grab(s) other = world.GetWorld(s) return 'ok' end\n"
+  "function useit(s)\n"
+  "  if other == nil then return 'noproxy' end\n"
+  "  local ok = pcall(function() return other:GetWorldID() end)\n"
+  "  return ok and 'used' or 'refused'\n"
+  "end\n" },
 
 // ── Python ────────────────────────────────────────────────────────────────
 { "python", "Python", "Python",
@@ -283,7 +290,13 @@ const Dialect kDialects[] = {
   "def OnMXPopenTag(name, args, t=None):\n"
   "    world.SetVariable('mxptag', str(name))\n"
   "    world.SetVariable('mxpargs', str(args))\n"
-  "    world.SetVariable('mxptype', type(t).__name__)\n", "dict" },
+  "    world.SetVariable('mxptype', type(t).__name__)\n", "dict",
+  "def grab(s):\n"
+  "    global other\n    other = world.GetWorld(s)\n    return 'ok'\n"
+  "def useit(s):\n"
+  "    if other is None: return 'noproxy'\n"
+  "    try:\n        other.GetWorldID()\n        return 'used'\n"
+  "    except Exception:\n        return 'refused'\n" },
 
 // ── Perl ──────────────────────────────────────────────────────────────────
 { "perl", "Perl", "perl",
@@ -325,7 +338,12 @@ const Dialect kDialects[] = {
   "  $world->SetVariable('mxptag', $name);\n"
   "  $world->SetVariable('mxpargs', $args);\n"
   "  $world->SetVariable('mxptype', ref($t) || 'undef');\n"
-  "}\n", "HASH" },
+  "}\n", "HASH",
+  "our $other;\n"
+  "sub grab { $other = $world->GetWorld($_[0]); return 'ok'; }\n"
+  "sub useit { return 'noproxy' unless defined $other;\n"
+  "  my $r = eval { $other->GetWorldID(); 1 };\n"
+  "  return $r ? 'used' : 'refused'; }\n" },
 
 // ── JavaScript ────────────────────────────────────────────────────────────
 { "js", "JS", "javascript",
@@ -369,7 +387,13 @@ const Dialect kDialects[] = {
   "  world.SetVariable('mxptag', String(name));\n"
   "  world.SetVariable('mxpargs', String(args));\n"
   "  world.SetVariable('mxptype', typeof t);\n"
-  "}\n", "object" },
+  "}\n", "object",
+  "var other = null;\n"
+  "function grab(s) { other = world.GetWorld(s); return 'ok'; }\n"
+  "function useit(s) {\n"
+  "  if (!other) return 'noproxy';\n"
+  "  try { other.GetWorldID(); return 'used'; } catch (e) { return 'refused'; }\n"
+  "}\n" },
 
 // ── Tcl ───────────────────────────────────────────────────────────────────
 { "tcl", "Tcl", "tcl",
@@ -419,7 +443,9 @@ const Dialect kDialects[] = {
   "  world SetVariable mxptag $name\n"
   "  world SetVariable mxpargs $a\n"
   "  world SetVariable mxptype [expr {[catch {dict size $t}] ? \"notadict\" : \"dict\"}]\n"
-  "}\n", "dict" },
+  "}\n", "dict",
+  "proc grab {s} { return unsupported }\n"
+  "proc useit {s} { return unsupported }\n" },
 
 // ── Ruby ──────────────────────────────────────────────────────────────────
 { "ruby", "Ruby", "ruby",
@@ -462,7 +488,12 @@ const Dialect kDialects[] = {
   "  world.SetVariable('mxptag', name.to_s)\n"
   "  world.SetVariable('mxpargs', args.to_s)\n"
   "  world.SetVariable('mxptype', t.class.to_s)\n"
-  "end\n", "Hash" },
+  "end\n", "Hash",
+  "def grab(s); @other = world.GetWorld(s); 'ok'; end\n"
+  "def useit(s)\n"
+  "  return 'noproxy' if @other.nil?\n"
+  "  begin; @other.GetWorldID(); 'used'; rescue Exception; 'refused'; end\n"
+  "end\n" },
 };
 
 const int kDialectCount = (int) (sizeof kDialects / sizeof kDialects[0]);
@@ -764,6 +795,43 @@ void battery_error_routing(const Dialect& d)
     }
 }
 
+// 5c. A world proxy must not outlive its world.
+//     world.GetWorld returns a bare CMUSHclientDoc* here -- no COM, so nothing
+//     AddRefs it the way pDoc->GetIDispatch(TRUE) does on Windows.  A script
+//     that stores the proxy and uses it after that world closes was reading
+//     freed memory; every engine now checks MC_DispatchDocIsLive first.
+void battery_stale_proxy(const Dialect& d)
+{
+    const char* L = d.display;
+
+    std::string src(d.source);
+    src += d.staleProxy;
+    Engine e(d.language, src.c_str());
+    if (!e.ok) { skip(L, "a proxy to a closed world is refused", "engine failed to open"); return; }
+
+    // A SECOND world, registered so GetWorld can find it by name.
+    CMUSHclientDoc* other = new CMUSHclientDoc();
+    other->m_mush_name  = "SelftestOtherWorld";
+    other->m_strWorldID = "cccccccccccccccccccccccc";
+    App.m_pWorldDocTemplate->AddDocument(other);
+
+    if (e.callRtn("grab", "SelftestOtherWorld") == "unsupported") {
+        App.m_pWorldDocTemplate->RemoveDocument(other);
+        delete other;
+        skip(L, "a proxy to a closed world is refused",
+             "this language has no representation for another world");
+        return;
+    }
+    check(e.callRtn("useit", "") == "used", L,
+          "a proxy to an OPEN world works");     // the positive control
+
+    App.m_pWorldDocTemplate->RemoveDocument(other);
+    delete other;                                 // the world closes
+
+    check(e.callRtn("useit", "") == "refused", L,
+          "a proxy to a CLOSED world is refused, not dereferenced");
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -832,6 +900,7 @@ bool run_language(const Dialect& d)
     battery_state     (e, d);
     battery_trace     (d);
     battery_error_routing(d);
+    battery_stale_proxy  (d);
     battery_mxp_callsite(d);
     battery_errors    (e, d);   // last: it disables handlers in this engine
     battery_compile   (d);

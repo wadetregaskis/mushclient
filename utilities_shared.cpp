@@ -707,6 +707,59 @@ CString RemoveFinalSlash (CString str)
 // (telnet_phases.cpp, scripting.cpp, methods_arrays.cpp) was written against
 // the Windows semantics, so the port now matches them.
 
+// Walk one UTF-8 character -- see the comment on the declaration in stdafx.h.
+// The caller supplies n = bytes remaining, so a truncated sequence at the end of
+// a buffer is reported rather than read past.
+size_t UTF8NextChar (const unsigned char * p, size_t n, unsigned int & cp)
+  {
+  if (n == 0)          // defensive: callers loop while i < size
+    {
+    cp = 0xFFFD;
+    return 1;
+    }
+
+  const unsigned char c = p [0];
+
+  int extra;
+  unsigned int v;
+
+  if (c < 0x80)                       // ASCII, the overwhelming majority
+    {
+    cp = c;
+    return 1;
+    }
+  else if (c >= 0xC2 && c <= 0xDF)  { extra = 1; v = c & 0x1Fu; }
+  else if (c >= 0xE0 && c <= 0xEF)  { extra = 2; v = c & 0x0Fu; }
+  else if (c >= 0xF0 && c <= 0xF4)  { extra = 3; v = c & 0x07u; }
+  else
+    {
+    // A stray continuation byte (0x80-0xBF), an always-overlong lead (0xC0 /
+    // 0xC1), or a lead beyond the Unicode range (0xF5-0xFF).
+    cp = 0xFFFD;
+    return 1;
+    }
+
+  for (int k = 1; k <= extra; k++)
+    {
+    if ((size_t) k >= n || (p [k] & 0xC0u) != 0x80u)
+      {
+      cp = 0xFFFD;      // truncated: consume only what actually belongs to it,
+      return (size_t) k;  // so the byte that ended it is judged on its own
+      }
+    v = (v << 6) | (p [k] & 0x3Fu);
+    }
+
+  // Right shape, wrong value: an overlong encoding, a surrogate half, or beyond
+  // U+10FFFF.  MultiByteToWideChar rejects all three as well.
+  if ((extra == 2 && v < 0x800) || (extra == 3 && v < 0x10000) ||
+      (v >= 0xD800 && v <= 0xDFFF) || v > 0x10FFFF)
+    cp = 0xFFFD;
+  else
+    cp = v;
+
+  return (size_t) extra + 1;
+  } // end of UTF8NextChar
+
 // returns a lower case version of the string
 string tolower (const string & s)
   {

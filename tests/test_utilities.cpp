@@ -1109,4 +1109,112 @@ TEST(ScanMatchingBrace, NoDelimiterOrNoMatchFails)
     EXPECT_FALSE(ScanMatchingBrace("", 0, s, e, false, 0));   // empty buffer
 }
 
+// ── UTF8NextChar ──────────────────────────────────────────────────────────
+//
+// The single walker behind both "how many characters is this run" and "what
+// characters are they" in the output pane.  Its contract is
+// MultiByteToWideChar(CP_UTF8, 0, ...): consume an ill-formed subpart and
+// substitute U+FFFD, so a bad byte costs one glyph and never the rest.
+
+namespace {
+// Walk a whole buffer; return the code points, so a test can assert both the
+// sequence AND (through .size()) the character count the pane will use.
+std::vector<unsigned int> utf8_walk(const std::string& s)
+{
+    std::vector<unsigned int> cps;
+    const unsigned char* p = (const unsigned char*) s.data();
+    for (size_t i = 0; i < s.size(); ) {
+        unsigned int cp = 0;
+        const size_t used = UTF8NextChar(p + i, s.size() - i, cp);
+        EXPECT_TRUE(used >= 1);         // never zero, or the caller spins
+        i += used;
+        cps.push_back(cp);
+    }
+    return cps;
+}
+} // namespace
+
+TEST(Utf8NextCharTest, AsciiIsOneByteOneCharacter) {
+    const std::vector<unsigned int> cps = utf8_walk("abc");
+    ASSERT_EQ(3u, cps.size());
+    EXPECT_EQ('a', (int) cps[0]);
+    EXPECT_EQ('c', (int) cps[2]);
+}
+
+TEST(Utf8NextCharTest, DecodesTwoThreeAndFourByteSequences) {
+    // U+00E9 e-acute, U+20AC euro, U+1F600 grinning face.
+    const std::vector<unsigned int> cps = utf8_walk("\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80");
+    ASSERT_EQ(3u, cps.size());
+    EXPECT_EQ(0x00E9u, cps[0]);
+    EXPECT_EQ(0x20ACu, cps[1]);
+    EXPECT_EQ(0x1F600u, cps[2]);
+}
+
+// The bug this exists for: a stray Latin-1 byte among valid text.  Everything
+// around it must survive — one glyph lost, not the run.
+TEST(Utf8NextCharTest, StrayContinuationByteCostsExactlyOneCharacter) {
+    const std::vector<unsigned int> cps = utf8_walk("a\xE9z");
+    ASSERT_EQ(3u, cps.size());
+    EXPECT_EQ('a',     (int) cps[0]);
+    EXPECT_EQ(0xFFFDu,       cps[1]);
+    EXPECT_EQ('z',     (int) cps[2]);
+}
+
+// A lead byte whose continuation never arrives must consume only itself, so the
+// byte that interrupted it is judged on its own merits rather than swallowed.
+TEST(Utf8NextCharTest, TruncatedSequenceDoesNotSwallowTheNextCharacter) {
+    const std::vector<unsigned int> cps = utf8_walk("\xE2\x82Z");
+    ASSERT_EQ(2u, cps.size());
+    EXPECT_EQ(0xFFFDu,       cps[0]);   // the E2 82 pair, cut short
+    EXPECT_EQ('Z',     (int) cps[1]);   // NOT eaten by the broken sequence
+}
+
+TEST(Utf8NextCharTest, TruncatedAtEndOfBufferTerminates) {
+    const std::vector<unsigned int> cps = utf8_walk("ok\xF0\x9F");
+    ASSERT_EQ(3u, cps.size());
+    EXPECT_EQ('o', (int) cps[0]);
+    EXPECT_EQ('k', (int) cps[1]);
+    EXPECT_EQ(0xFFFDu,   cps[2]);
+}
+
+// Right shape, wrong value.  These decode "successfully" in a naive walker and
+// are exactly what a security-minded decoder must reject.
+TEST(Utf8NextCharTest, RejectsOverlongEncodings) {
+    // C0 AF and E0 80 AF are both overlong encodings of '/'.
+    std::vector<unsigned int> cps = utf8_walk("\xC0\xAF");
+    ASSERT_EQ(2u, cps.size());               // C0 is never a valid lead...
+    EXPECT_EQ(0xFFFDu, cps[0]);
+    EXPECT_EQ(0xFFFDu, cps[1]);              // ...and AF is then a stray
+
+    cps = utf8_walk("\xE0\x80\xAF");
+    ASSERT_EQ(1u, cps.size());               // well-shaped 3-byte, overlong value
+    EXPECT_EQ(0xFFFDu, cps[0]);
+}
+
+TEST(Utf8NextCharTest, RejectsSurrogateHalves) {
+    // ED A0 80 is CESU-8 for U+D800, which is not a valid Unicode scalar.
+    const std::vector<unsigned int> cps = utf8_walk("\xED\xA0\x80");
+    ASSERT_EQ(1u, cps.size());
+    EXPECT_EQ(0xFFFDu, cps[0]);
+}
+
+TEST(Utf8NextCharTest, RejectsCodePointsBeyondUnicode) {
+    // F5 .. FF can only encode > U+10FFFF, so they are rejected as leads.
+    const std::vector<unsigned int> cps = utf8_walk("\xF5\x80\x80\x80");
+    ASSERT_EQ(4u, cps.size());               // lead rejected, then three strays
+    for (size_t i = 0; i < cps.size(); i++)
+        EXPECT_EQ(0xFFFDu, cps[i]);
+}
+
+// The invariant the output pane depends on: for WELL-FORMED input the walker's
+// character count equals the lead-byte count, which is what the pane's column
+// and wrap bookkeeping assumed before the walker existed.
+TEST(Utf8NextCharTest, CharacterCountMatchesLeadByteCountWhenWellFormed) {
+    const std::string s = "caf\xC3\xA9 \xE2\x82\xAC \xF0\x9F\x98\x80!";
+    int leadBytes = 0;
+    for (unsigned char c : s)
+        if ((c & 0xC0u) != 0x80u) ++leadBytes;
+    EXPECT_EQ((size_t) leadBytes, utf8_walk(s).size());
+}
+
 MC_TEST_MAIN()

@@ -1004,8 +1004,43 @@ void CMUSHclientDoc::OutputBadUTF8characters (void)
     WideCharToMultiByte (CP_UTF8, 0, sUnicode, 1, sOutput, sizeof sOutput, NULL, NULL);
     AddToLine (sOutput, 0);
 #else
-    // On non-Windows, pass the raw byte through as-is.
-    char sOutput [2] = { (char) m_UTF8Sequence [i], '\0' };
+    // Same conversion, without the Win32 codepage API.  Passing the raw byte
+    // through instead (what the port used to do) leaves INVALID UTF-8 in the
+    // line buffer, and every consumer downstream then has to cope: the wx
+    // output pane's decode is all-or-nothing, so one stray byte blanked the
+    // whole coloured run it landed in.  Windows never produces that state,
+    // because it re-encodes the byte here.
+    //
+    // CP_THREAD_ACP is the machine's ANSI codepage, which on the Western
+    // Windows this behaviour was written for is CP1252; that is what we
+    // reproduce.  0x80-0x9F are CP1252's own assignments (the five it leaves
+    // undefined map to the matching C1 control, as MultiByteToWideChar does);
+    // 0xA0-0xFF are Latin-1, i.e. the code point equals the byte.
+    static const unsigned short cp1252_80_9F [32] = {
+      0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+      0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+      0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+      0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+      };
+
+    const unsigned char c = m_UTF8Sequence [i];
+    unsigned int cp = (c >= 0x80 && c <= 0x9F) ? cp1252_80_9F [c - 0x80] : c;
+
+    char sOutput [5];
+    memset (sOutput, 0, sizeof sOutput);   // ensure trailing null
+    if (cp < 0x80)
+      sOutput [0] = (char) cp;
+    else if (cp < 0x800)
+      {
+      sOutput [0] = (char) (0xC0 | (cp >> 6));
+      sOutput [1] = (char) (0x80 | (cp & 0x3F));
+      }
+    else
+      {
+      sOutput [0] = (char) (0xE0 | (cp >> 12));
+      sOutput [1] = (char) (0x80 | ((cp >> 6) & 0x3F));
+      sOutput [2] = (char) (0x80 | (cp & 0x3F));
+      }
     AddToLine (sOutput, 0);
 #endif
     m_cLastChar = m_UTF8Sequence [i];

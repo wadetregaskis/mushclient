@@ -1552,18 +1552,23 @@ TEST(Utf8Phase, ThreeAndFourByteSequencesCollect)
     EXPECT_TRUE(line_text(doc.m_pCurrentLine) == "\xE2\x82\xAC\xF0\x9F\x98\x80");
 }
 
-// UTF-8: a lone continuation byte (0x85) used as a lead byte is bogus — the
-// raw byte is flushed to the line instead of being swallowed.
-TEST(Utf8Phase, BogusLeadByteFlushedRaw)
+// UTF-8: a lone continuation byte (0x85) used as a lead byte is bogus — it is
+// never swallowed, but it is not left raw either.  OutputBadUTF8characters
+// assumes such a byte is ANSI and re-encodes it AS UTF-8 (Windows:
+// MultiByteToWideChar(CP_THREAD_ACP) then WideCharToMultiByte(CP_UTF8)), so what
+// reaches the line buffer is well-formed.  0x85 is CP1252's horizontal ellipsis,
+// U+2026.
+TEST(Utf8Phase, BogusLeadByteIsReEncodedNotLeftRaw)
 {
     CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
     feed(doc, "a\x85z");
     EXPECT_EQ(NONE, doc.m_phase);
     std::string text = line_text(doc.m_pCurrentLine);
-    EXPECT_TRUE(text.find('a') != std::string::npos);
-    EXPECT_TRUE(text.find('\x85') != std::string::npos);
-    EXPECT_TRUE(text.find('z') != std::string::npos);
+    EXPECT_TRUE(text == "a\xE2\x80\xA6z");
+    // The byte must not survive raw — that is what left the line invalid, which
+    // in turn made ProcessPreviousLine skip the whole line for trigger matching.
+    EXPECT_TRUE(text.find('\x85') == std::string::npos);
 }
 
 // UTF-8: an ASCII byte arriving mid-sequence aborts collection; the partial

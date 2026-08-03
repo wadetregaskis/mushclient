@@ -827,6 +827,14 @@ void ShowHelp (const CString strPrefix, const CString strTopic);
 
 string tolower (const string & s);
 
+// Walk ONE character of a UTF-8 byte run.  Returns the bytes consumed (never
+// zero, so a loop always terminates) and sets cp to the code point -- or to
+// U+FFFD for an ill-formed subpart, which it consumes.  That substitution is
+// what MultiByteToWideChar(CP_UTF8, 0, ...) does on Windows, and it is why one
+// bad byte there costs a single glyph rather than the whole run.
+// Defined in utilities_shared.cpp.
+size_t UTF8NextChar (const unsigned char * p, size_t n, unsigned int & cp);
+
 void FindMatchingBrace (CEdit & ctlEdit, const bool bSelect);
 // The scan behind it (utilities_shared.cpp) -- pure, so every frontend and the
 // tests can drive it.  nEndChar is the caret on the way in; on true both

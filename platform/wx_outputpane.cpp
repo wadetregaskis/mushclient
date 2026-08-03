@@ -32,12 +32,40 @@ static const int ID_CLEAR      = wxID_HIGHEST + 100;
 // This is always <= s.size() (equal for ASCII, less for multi-byte sequences).
 // Used wherever we treat character positions as column indices for selection,
 // wrapping, and link hit-testing — byte counts are wrong for non-ASCII text.
+// Declared in stdafx.h, which this lean wx TU deliberately does not pull in.
+size_t UTF8NextChar (const unsigned char * p, size_t n, unsigned int & cp);
+
+// Both of these walk the run with UTF8NextChar (utilities_shared.cpp), so "how
+// many characters is this run" and "what characters are they" cannot drift
+// apart.  They used to be computed independently — a lead-byte scan here versus
+// wxString::FromUTF8 in the decoder — which agreed only while the bytes were
+// well-formed.
 static inline int UTF8CharLen(const std::string& s)
 {
-    int n = 0;
-    for (unsigned char c : s)
-        if ((c & 0xC0u) != 0x80u) ++n;   // count lead bytes; skip continuation bytes
+    const unsigned char* p = (const unsigned char*) s.data();
+    size_t i = 0;
+    int    n = 0;
+    while (i < s.size()) {
+        unsigned int cp;
+        i += UTF8NextChar(p + i, s.size() - i, cp);
+        ++n;
+    }
     return n;
+}
+
+// The tolerant decode.  Only reached when the run is NOT well-formed; a
+// well-formed run takes wxString::FromUTF8 in DecodeOutputBytes below.
+static wxString DecodeUTF8Lenient(const char* bytes, size_t n)
+{
+    const unsigned char* p = (const unsigned char*) bytes;
+    wxString out;
+    out.reserve(n);
+    for (size_t i = 0; i < n; ) {
+        unsigned int cp;
+        i += UTF8NextChar(p + i, n - i, cp);
+        out += wxUniChar(cp);
+    }
+    return out;
 }
 
 // ── Non-UTF-8 world text decoding ─────────────────────────────────────────────
@@ -79,8 +107,20 @@ wxFontEncoding WinCharsetToEncoding(int cs)
 // and a bare FromUTF8 on legacy-charset bytes makes whole runs vanish.
 wxString DecodeOutputBytes(const char* bytes, size_t n, bool utf8, int charset)
 {
-    if (utf8)
-        return wxString::FromUTF8(bytes, n);
+    if (utf8) {
+        if (n == 0)
+            return wxString();
+        // FromUTF8 is all-or-nothing: one bad byte and it yields "", blanking
+        // the whole run.  Windows draws through MultiByteToWideChar(CP_UTF8, 0,
+        // ...), which substitutes U+FFFD per ill-formed subpart and keeps the
+        // rest.  Network data is repaired upstream now (telnet_phases.cpp
+        // OutputBadUTF8characters), but a script can still hand world.Note
+        // arbitrary bytes, so match Windows here too.
+        const wxString s = wxString::FromUTF8(bytes, n);
+        if (!s.empty())
+            return s;
+        return DecodeUTF8Lenient(bytes, n);
+    }
     if (n == 0)
         return wxString();
     wxCSConv conv(WinCharsetToEncoding(charset));

@@ -553,18 +553,107 @@ TEST(TelnetTest, TerminalTypeReplyTruncatedToTwentyChars)
     EXPECT_EQ((char)SE,  t->sent[25]);
 }
 
-// telnet_phases.cpp OutputBadUTF8characters: a bad UTF-8 sequence is flushed
-// to the line as raw bytes (non-Windows path), never silently dropped, and
-// the phase machine returns to NONE.
-TEST(TelnetTest, BadUtf8SequenceOutputsRawBytesNotDropped)
+// telnet_phases.cpp OutputBadUTF8characters: in a UTF-8 world a byte that is not
+// valid UTF-8 is assumed to be ANSI and re-encoded AS UTF-8, so what lands in the
+// line buffer is still well-formed.  Windows does this with
+// MultiByteToWideChar(CP_THREAD_ACP) + WideCharToMultiByte(CP_UTF8); the port
+// reproduces CP1252, that codepage on the Western Windows this was written for.
+//
+// The port used to pass the raw byte through, which left INVALID UTF-8 in the
+// buffer for every downstream consumer to trip over -- the wx output pane
+// decodes a coloured run all-or-nothing, so one stray byte blanked the entire
+// run it landed in.
+static std::string visible_line(CMUSHclientDoc& doc)
+{
+    return std::string(doc.m_pCurrentLine->text, doc.m_pCurrentLine->len);
+}
+
+// Well-formedness is the property that matters, so check it directly rather than
+// only comparing bytes: a future change to the mapping still has to keep this.
+static bool is_valid_utf8(const std::string& s)
+{
+    size_t i = 0;
+    while (i < s.size()) {
+        const unsigned char c = (unsigned char) s[i];
+        int extra;
+        if      (c < 0x80)                  extra = 0;
+        else if (c >= 0xC2 && c <= 0xDF)    extra = 1;
+        else if (c >= 0xE0 && c <= 0xEF)    extra = 2;
+        else if (c >= 0xF0 && c <= 0xF4)    extra = 3;
+        else return false;                       // stray continuation / overlong
+        if (i + extra >= s.size() && extra > 0)
+            return false;                        // truncated
+        for (int k = 1; k <= extra; k++)
+            if (((unsigned char) s[i + k] & 0xC0) != 0x80) return false;
+        i += extra + 1;
+    }
+    return true;
+}
+
+TEST(TelnetTest, BadUtf8ByteIsReEncodedAsValidUtf8)
 {
     CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
-    const char seq[] = "ab\xC3Xcd";   // 0xC3 lead byte, 'X' bad continuation
+    const char seq[] = "ab\xC3Xcd";   // 0xC3 lead byte, 'X' is a bad continuation
     doc.DisplayMsg(seq, (int)strlen(seq), 0);
     EXPECT_EQ(NONE, doc.m_phase);
-    std::string visible(doc.m_pCurrentLine->text, doc.m_pCurrentLine->len);
-    EXPECT_STREQ("ab\xC3Xcd", visible.c_str());
+
+    const std::string visible = visible_line(doc);
+    // 0xC3 -> U+00C3 (LATIN CAPITAL A WITH TILDE) -> C3 83; 'X' passes through.
+    EXPECT_STREQ("ab\xC3\x83Xcd", visible.c_str());
+    EXPECT_TRUE(is_valid_utf8(visible));
+}
+
+// A byte in 0x80-0x9F is CP1252's own assignment, NOT Latin-1: 0x80 is the euro
+// sign, three bytes in UTF-8.  Getting this wrong is invisible in a byte-count
+// test, so assert the actual code point.
+TEST(TelnetTest, BadUtf8ByteInCp1252RangeUsesTheCp1252Assignment)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bUTF_8 = TRUE;
+    const char seq[] = "a\x80z";
+    doc.DisplayMsg(seq, (int)strlen(seq), 0);
+
+    const std::string visible = visible_line(doc);
+    EXPECT_STREQ("a\xE2\x82\xACz", visible.c_str());   // U+20AC EURO SIGN
+    EXPECT_TRUE(is_valid_utf8(visible));
+}
+
+// 0xA0-0xFF are Latin-1, i.e. the code point equals the byte.  This is the
+// common case: a server that says UTF-8 and emits a stray Latin-1 accent.
+TEST(TelnetTest, BadUtf8ByteAboveCp1252SpecialsIsLatin1)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bUTF_8 = TRUE;
+    const char seq[] = "caf\xE9!";
+    doc.DisplayMsg(seq, (int)strlen(seq), 0);
+
+    const std::string visible = visible_line(doc);
+    EXPECT_STREQ("caf\xC3\xA9!", visible.c_str());     // U+00E9 e-acute
+    EXPECT_TRUE(is_valid_utf8(visible));
+}
+
+// The control: a NON-UTF-8 world must not be touched.  Its bytes are decoded by
+// the font charset at draw time, so re-encoding them here would double-encode.
+TEST(TelnetTest, BadByteIsLeftAloneInANonUtf8World)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bUTF_8 = FALSE;
+    const char seq[] = "caf\xE9!";
+    doc.DisplayMsg(seq, (int)strlen(seq), 0);
+
+    EXPECT_STREQ("caf\xE9!", visible_line(doc).c_str());
+}
+
+// Valid UTF-8 must reach the buffer untouched -- the repair path must not fire.
+TEST(TelnetTest, ValidUtf8PassesThroughUnchanged)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bUTF_8 = TRUE;
+    const char seq[] = "caf\xC3\xA9!";
+    doc.DisplayMsg(seq, (int)strlen(seq), 0);
+
+    EXPECT_STREQ("caf\xC3\xA9!", visible_line(doc).c_str());
 }
 
 // doc_portable.cpp: the ctor's SetAlphaDefaults applies the Windows table

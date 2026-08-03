@@ -454,21 +454,27 @@ TEST(TriggerTest, NoteLinesDoNotFireTriggers)
     EXPECT_EQ(1L, t->nMatched);
 }
 
-// ProcessPreviousLine.cpp: "check for bad UTF8 in the line - otherwise all
-// triggers will fail" — a line with an invalid UTF-8 sequence is skipped for
-// trigger evaluation entirely and the error counter increments.
-TEST(TriggerTest, BadUtf8LineSkipsTriggerEvaluation)
+// ProcessPreviousLine.cpp gates trigger evaluation on _pcre_valid_utf, because
+// "otherwise all triggers will fail".  That gate is defence in depth, not the
+// normal path: OutputBadUTF8characters (telnet_phases.cpp) has already re-encoded
+// any bad byte as valid UTF-8 by the time the line is assembled, on Windows and
+// now on the port too.  So a stray byte costs one character, NOT the whole
+// line's trigger matching.
+//
+// The port used to pass the byte through raw, leaving the line invalid — so a
+// single stray byte from the MUD silently disabled every trigger for that line.
+TEST(TriggerTest, StrayUtf8ByteDoesNotDisableTriggerMatchingForTheLine)
 {
     CMUSHclientDoc doc; make_doc(doc);
     doc.m_bUTF_8 = TRUE;
     CTrigger* t = add_trigger(doc, "*gold*");
 
-    feed_line(doc, "gold\xC3X");          // 0xC3 with bad continuation
-    EXPECT_EQ(0L, t->nMatched);           // evaluation skipped
-    EXPECT_GE(doc.m_iUTF8ErrorCount, 1L);
+    feed_line(doc, "gold\xC3X");          // 0xC3 with a bad continuation
+    EXPECT_EQ(1L, t->nMatched);           // still evaluated, as on Windows
+    EXPECT_EQ(0L, doc.m_iUTF8ErrorCount); // the line reaching the gate is valid
 
-    feed_line(doc, "gold");               // control: clean line fires
-    EXPECT_EQ(1L, t->nMatched);
+    feed_line(doc, "gold");               // control: a clean line fires too
+    EXPECT_EQ(2L, t->nMatched);
 }
 
 // ProcessPreviousLine.cpp: "The text may have matched but do the *colours*?"

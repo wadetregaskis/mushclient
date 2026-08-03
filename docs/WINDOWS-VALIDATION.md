@@ -345,6 +345,30 @@ the folded one. Then the same trigger in a **VBScript or JScript** world: the
 `wildcards` array it receives must still be folded, and still 1-relative with the
 whole matching line at index 10. Neither should have changed.
 
+### 4c-septies. Bad UTF-8 bytes are repaired, as Windows already did (2026-08-03)
+
+`OutputBadUTF8characters` (`telnet_phases.cpp`) re-encodes a byte that is not
+valid UTF-8 as if it were ANSI — `MultiByteToWideChar(CP_THREAD_ACP)` then
+`WideCharToMultiByte(CP_UTF8)`. **The `#ifdef _WIN32` arm is untouched.** The
+port's `#else` arm used to pass the raw byte through, which left invalid UTF-8 in
+the line buffer and cost two things Windows never loses:
+
+- `ProcessPreviousLine.cpp`'s `_pcre_valid_utf` gate then skipped the line, so a
+  single stray byte silently disabled **every trigger** for that line;
+- the wx output pane's decode is all-or-nothing, so the stray byte blanked the
+  whole coloured run it landed in.
+
+The port now reproduces CP1252 (the ANSI codepage on the Western Windows this
+was written for). Also new: `UTF8NextChar` in `utilities_shared.cpp` — a shared
+tolerant UTF-8 walker with **no Windows caller**, used by the pane so its
+character count and its decoded text come from one place.
+
+**Check:** nothing should differ on Windows. Worth confirming only that a world
+in UTF-8 mode receiving a stray Latin-1 byte (e.g. `caf\xE9` from a server
+claiming UTF-8) still shows the accented character and still fires a trigger
+matching that line — that is the behaviour the port was missing, so it should
+already be true on Windows.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

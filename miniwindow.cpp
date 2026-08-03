@@ -3217,11 +3217,16 @@ long CMiniWindow::SetZOrder(long Order)
 
 long CMiniWindow::GetPixel(long x, long y)
   {
-  // getPixel returns 0xFFFFFFFF (CLR_INVALID) out of bounds — as a long that is
-  // -1 on Win32 and 4294967295 on LP64, matching the old pdc->GetPixel on each.
-  return pal::g_surface
-       ? (long) pal::g_surface->getPixel (m_surfaceId, { (int) x, (int) y })
-       : -1;
+  // getPixel returns 0xFFFFFFFF (CLR_INVALID) out of bounds.  Windows returns
+  // that through a 32-bit long, so a script sees -1 -- which is what
+  // WindowGetPixel is documented to give for a pixel outside the window.  A
+  // straight widening cast here yields 4294967295 instead, because long is
+  // 64-bit on LP64, so `if WindowGetPixel(...) == -1` silently never matched.
+  // Fold it at the doc boundary; the surface layer keeps returning 0xFFFFFFFF.
+  if (!pal::g_surface)
+    return -1;
+  const pal::Colour c = pal::g_surface->getPixel (m_surfaceId, { (int) x, (int) y });
+  return (c == 0xFFFFFFFFu) ? -1L : (long) c;
   } // end of CMiniWindow::GetPixel
 
 

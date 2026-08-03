@@ -56,10 +56,12 @@ int RunPalMiniWindowSelfTest()
     // background fill happened at create: probe a pixel
     mwCheck(doc->WindowGetPixel(W, 5, 5) == kBlue,
             "create's background fill is readable (WindowGetPixel)");
-    // out of bounds = CLR_INVALID (0xFFFFFFFF) — as a long that is -1 on
-    // Win32 and 4294967295 on LP64 (the CMiniWindow::GetPixel contract)
-    mwCheck(doc->WindowGetPixel(W, 9999, 5) == (long)0xFFFFFFFF,
-            "WindowGetPixel outside the window returns CLR_INVALID");
+    // -1, not 0xFFFFFFFF: Windows returns CLR_INVALID through a 32-bit long,
+    // so that is what a script sees there, and it is what WindowGetPixel is
+    // documented to return for a pixel outside the window.  This used to assert
+    // the LP64 widening (4294967295) as though it were the contract.
+    mwCheck(doc->WindowGetPixel(W, 9999, 5) == -1L,
+            "WindowGetPixel outside the window returns -1");
 
     // ── RectOp: solid fill (action 2) ──────────────────────────────────────
     mwCheck(doc->WindowRectOp(W, 2, 10, 10, 20, 20, kRed, 0) == eOK,

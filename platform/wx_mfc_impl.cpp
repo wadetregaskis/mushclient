@@ -1179,11 +1179,18 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         }
 
         if (id == 32239 /*ID_CONNECTION_CONNECT*/) {
-            // Enable only when disconnected and a world is open.
-            evt.Enable(doc && doc->m_iConnectPhase == eConnectNotConnected);
+            // doc.cpp:1904 OnUpdateConnectionConnect — disconnected AND the
+            // world actually has a server to connect to.
+            evt.Enable(doc && doc->m_iConnectPhase == eConnectNotConnected &&
+                       doc->m_server != "0.0.0.0");
         } else if (id == 0xE200 /*Disconnect*/) {
-            // Enable only when connected.
-            evt.Enable(doc && doc->m_iConnectPhase == eConnectConnectedToMud);
+            // doc.cpp:1913 OnUpdateConnectionDisconnect — enabled for EVERY
+            // non-zero phase, not just eConnectConnectedToMud.  Phases 1-8 are
+            // the name lookups, the connect itself, the three SOCKS waits and
+            // the SSL handshake: exactly the window in which a user wants to
+            // cancel, and exactly where the port used to grey the item out.  A
+            // connect to a host that does not answer left no way to stop it.
+            evt.Enable(doc && doc->m_iConnectPhase != eConnectNotConnected);
         } else if (id == 0xE201 /*Reconnect*/) {
             // Enable only when not connected.
             evt.Enable(doc && doc->m_iConnectPhase == eConnectNotConnected);

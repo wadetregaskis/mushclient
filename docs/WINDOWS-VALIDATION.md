@@ -435,6 +435,26 @@ did.
 area is not exposed to AX, so text cannot be placed in one without synthesising
 global keystrokes — see the notepad note in CLAUDE.md's verification debt.
 
+### 4c-decies. Connection menu update-UI now matches doc.cpp (2026-08-03)
+
+**Port-only** (`platform/wx_mfc_impl.cpp`), listed because the predicates were
+copied from `doc.cpp` and should stay in step:
+
+- **Disconnect** was enabled only at `eConnectConnectedToMud`; Windows enables it
+  for every non-zero phase (`doc.cpp:1913`). Phases 1-8 — the two name lookups,
+  the connect, the three SOCKS waits, the SSL handshake — are precisely when a
+  user wants to cancel, and the port greyed it out there. §4a's
+  "cancel-during-connect" scenario was unreachable from the menu.
+- **Connect** omitted Windows' `m_server != "0.0.0.0"` guard (`doc.cpp:1904`), so
+  it was offered on a world with no server configured.
+
+**Port verification debt:** the connecting-phase window is transient and the
+update-UI path is GUI-only, so this is verified by inspection against `doc.cpp`
+rather than by exercise. The structural fix would be to route these through the
+canonical `CMUSHclientDoc::OnUpdate*` handlers (as `kCanonCmds` already does for
+other commands) instead of restating the predicate — worth doing if a third
+divergence turns up here.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

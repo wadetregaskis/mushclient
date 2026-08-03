@@ -63,6 +63,63 @@ int RunPalMiniWindowSelfTest()
     mwCheck(doc->WindowGetPixel(W, 9999, 5) == -1L,
             "WindowGetPixel outside the window returns -1");
 
+    // ── CircleOp action 3 = RoundRect: right/bottom-EXCLUSIVE like Win32 ───
+    // Win32 RoundRect(x1,y1,x2,y2,...) occupies x1..x2-1.  The shim's polygon
+    // branch used to put its extreme points at x2/y2, one pixel past GDI's last
+    // pixel, while its own degenerate branch and Rectangle/Ellipse beside it were
+    // exclusive.  Probe both sides of the right edge on the vertical midline,
+    // where the corner rounding does not reach.
+    {
+        const long L = 2, T = 20, R = 22, B = 40;      // 20x20, midline y = 30
+        mwCheck(doc->WindowCircleOp(W, 3, L, T, R, B,
+                                    kGreen, 0, 1, kGreen, 0 /*solid*/,
+                                    6, 6, 0, 0) == eOK,
+                "WindowCircleOp (round rectangle) succeeds");
+        mwCheck(doc->WindowGetPixel(W, R - 1, 30) == kGreen,
+                "RoundRect fills up to x2-1 (Win32 is right-exclusive)");
+        mwCheck(doc->WindowGetPixel(W, R, 30) != kGreen,
+                "...and NOT x2 itself");
+        mwCheck(doc->WindowGetPixel(W, 12, B - 1) == kGreen,
+                "RoundRect fills up to y2-1 (bottom-exclusive too)");
+        mwCheck(doc->WindowGetPixel(W, 12, B) != kGreen,
+                "...and NOT y2 itself");
+    }
+
+    // ── CircleOp action 4 = Chord: a chord, not a pie ──────────────────────
+    // Win32 bounds the figure with the arc plus the straight line joining its
+    // endpoints.  wxDC::DrawEllipticArc draws the PIE when the brush is opaque,
+    // so the shim used to fill two radii back to the centre.  A shallow chord
+    // therefore fills near its arc but must leave the ellipse CENTRE alone --
+    // which is exactly what a pie would fill.
+    {
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlack, 0) == eOK,
+                "clear before the chord probe");
+        const long L = 4, T = 4, R = 44, B = 44;       // centre (24, 24)
+        // Order matters: the arc runs ANTICLOCKWISE from the start point to the
+        // end point, so (40,8) -> (8,8) is the short cap over the top.  Giving
+        // them the other way round sweeps 270 degrees the long way and the
+        // centre is legitimately inside the figure.
+        mwCheck(doc->WindowCircleOp(W, 4, L, T, R, B,
+                                    kRed, 0, 1, kRed, 0 /*solid*/,
+                                    40, 8, 8, 8) == eOK,
+                "WindowCircleOp (chord) succeeds");
+        // The endpoints given are projected onto the ellipse radially, so the
+        // real arc runs (38.1, 9.9) -> (24, 4) -> (9.9, 9.9): the cap is the
+        // sliver between y=4 and y~9.9.  Probe INSIDE that sliver, and then at a
+        // point that is inside the PIE's wedge but below the chord line -- the
+        // ellipse centre itself is a vertex of the wedge and so sits on the
+        // boundary, which makes it useless as a discriminator (it passed either
+        // way).
+        mwCheck(doc->WindowGetPixel(W, 24, 6) == kRed,
+                "the chord fills the cap between its arc and its chord line");
+        mwCheck(doc->WindowGetPixel(W, 24, 18) != kRed,
+                "...and NOT below the chord line, which a pie would fill");
+
+        // Leave the canvas as we found it for the assertions that follow.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the chord probe");
+    }
+
     // ── RectOp: solid fill (action 2) ──────────────────────────────────────
     mwCheck(doc->WindowRectOp(W, 2, 10, 10, 20, 20, kRed, 0) == eOK,
             "WindowRectOp fill succeeds");

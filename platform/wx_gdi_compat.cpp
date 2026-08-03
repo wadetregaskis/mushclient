@@ -1209,8 +1209,14 @@ bool CDC::RoundRect(int x1, int y1, int x2, int y2, int x3, int y3) {
     // honour non-square corners.
     if (x2 < x1) std::swap(x1, x2);
     if (y2 < y1) std::swap(y1, y2);
-    double rx = std::min(x3 / 2.0, (x2 - x1) / 2.0);
-    double ry = std::min(y3 / 2.0, (y2 - y1) / 2.0);
+    // Win32 RoundRect is right/bottom-EXCLUSIVE: the figure occupies x1..x2-1.
+    // Rectangle and Ellipse above honour that (DrawRectangle(x1, y1, w, h)), and
+    // so does the degenerate branch below -- but the polygon branch used to put
+    // its extreme points at x2 and y2, one pixel past GDI's last pixel on the
+    // right and bottom edges.  Trace over the exclusive extent instead.
+    const double xr = x2 - 1.0, yb = y2 - 1.0;
+    double rx = std::min(x3 / 2.0, (xr - x1) / 2.0);
+    double ry = std::min(y3 / 2.0, (yb - y1) / 2.0);
     p->ApplyPen(); p->ApplyBrush();
     if (rx <= 0.5 || ry <= 0.5) {            // degenerate corners → plain rectangle
         p->dc.DrawRectangle(x1, y1, x2 - x1, y2 - y1);
@@ -1218,9 +1224,9 @@ bool CDC::RoundRect(int x1, int y1, int x2, int y2, int x3, int y3) {
     }
     const int SEG = 8;                       // segments per corner
     struct Corner { double cx, cy, a0; } corners[4] = {
-        { x2 - rx, y1 + ry, -90.0 },         // top-right    (-90°→  0°)
-        { x2 - rx, y2 - ry,   0.0 },         // bottom-right (  0°→ 90°)
-        { x1 + rx, y2 - ry,  90.0 },         // bottom-left  ( 90°→180°)
+        { xr - rx, y1 + ry, -90.0 },         // top-right    (-90°→  0°)
+        { xr - rx, yb - ry,   0.0 },         // bottom-right (  0°→ 90°)
+        { x1 + rx, yb - ry,  90.0 },         // bottom-left  ( 90°→180°)
         { x1 + rx, y1 + ry, 180.0 },         // top-left     (180°→270°)
     };
     std::vector<wxPoint> pts;
@@ -1250,10 +1256,25 @@ bool CDC::Chord(int x1, int y1, int x2, int y2,
     if (rx <= 0 || ry <= 0) return false;
     double startDeg = atan2(-(double)(y3 - cy) / ry, (double)(x3 - cx) / rx) * 180.0 / M_PI;
     double endDeg   = atan2(-(double)(y4 - cy) / ry, (double)(x4 - cx) / rx) * 180.0 / M_PI;
-    // Approximate with polygon
-    wxPoint pts[3] = { wxPoint(x3, y3), wxPoint(cx, cy), wxPoint(x4, y4) };
-    p->dc.DrawEllipticArc(x1, y1, x2 - x1, y2 - y1, startDeg, endDeg);
-    (void)pts;
+
+    // A CHORD, not a pie.  Win32 bounds the region with the arc plus the
+    // straight line joining its two endpoints; wxDC::DrawEllipticArc draws the
+    // PIE when the brush is not transparent (wxGCDCImpl moves to the centre and
+    // closes back to it), so this used to produce a wedge with two radii and no
+    // chord line.  The three-point array beside it was computed and discarded --
+    // and went through the centre, so it was not a chord either.
+    //
+    // Sample the arc and let DrawPolygon close the figure: the closing edge IS
+    // the chord.  Same technique as RoundRect's corners above.
+    if (endDeg <= startDeg) endDeg += 360.0;      // wx sweeps anticlockwise
+    const int SEG = 32;
+    std::vector<wxPoint> pts;
+    pts.reserve(SEG + 1);
+    for (int i = 0; i <= SEG; ++i) {
+        const double a = wxDegToRad(startDeg + (endDeg - startDeg) * i / SEG);
+        pts.emplace_back(wxRound(cx + rx * cos(a)), wxRound(cy - ry * sin(a)));
+    }
+    p->dc.DrawPolygon((int) pts.size(), pts.data());
     return true;
 }
 

@@ -534,6 +534,12 @@ extern void (*g_wxhook_combo_set_cur_sel)(void* hwnd, int sel);
 extern int  (*g_wxhook_combo_find_string_exact)(void* hwnd, int after, const char* text);
 extern char* (*g_wxhook_combo_get_lb_text)(void* hwnd, int index);  // heap; caller free()s
 extern void (*g_wxhook_combo_reset_content)(void* hwnd);
+// Per-item payload.  CComboBox item data is not decoration: CLuaChooseBox binds
+// the caller's table index to each entry with it and reads it back in OnOK, so
+// utils.choose returns the wrong key without these (the combo is sorted, and
+// the position is not the index).
+extern void     (*g_wxhook_combo_set_item_data)(void* hwnd, int index, intptr_t data);
+extern intptr_t (*g_wxhook_combo_get_item_data)(void* hwnd, int index);
 
 // ── Radio-button group (DDX_Radio) ────────────────────────────────────────
 // `dlg` is the dialog/page wxWindow; `firstId` is the group's first radio (the

@@ -96,7 +96,15 @@ inline char* hk_combo_get_lb_text(void* h, int i) {
     auto& it = widgets()[h].items;
     return (i >= 0 && i < (int)it.size()) ? strdup(it[i].c_str()) : nullptr;
 }
-inline void hk_combo_reset_content(void* h) { widgets()[h].items.clear(); widgets()[h].cursel = -1; }
+inline void hk_combo_reset_content(void* h) {
+    widgets()[h].items.clear(); widgets()[h].cursel = -1; widgets()[h].itemData.clear();
+}
+// Range-checked, like the real wx hooks (hook_combo_set/get_item_data): wx
+// would assert on an out-of-range index, so the shim drops those calls, and the
+// fake has to do the same or the test proves nothing about the shipping path.
+inline bool in_range(void* h, int i) { return i >= 0 && i < (int) widgets()[h].items.size(); }
+inline void     hk_combo_set_item_data(void* h, int i, intptr_t d) { if (in_range(h, i)) widgets()[h].itemData[i] = d; }
+inline intptr_t hk_combo_get_item_data(void* h, int i)             { return (in_range(h, i) && widgets()[h].itemData.count(i)) ? widgets()[h].itemData[i] : 0; }
 
 // listbox
 inline int  hk_lb_add_string(void* h, const char* t) { widgets()[h].items.push_back(t); return (int)widgets()[h].items.size() - 1; }
@@ -108,8 +116,8 @@ inline char* hk_lb_get_text(void* h, int i) {
     auto& it = widgets()[h].items;
     return (i >= 0 && i < (int)it.size()) ? strdup(it[i].c_str()) : nullptr;
 }
-inline void     hk_lb_set_item_data(void* h, int i, intptr_t d) { widgets()[h].itemData[i] = d; }
-inline intptr_t hk_lb_get_item_data(void* h, int i)             { return widgets()[h].itemData.count(i) ? widgets()[h].itemData[i] : 0; }
+inline void     hk_lb_set_item_data(void* h, int i, intptr_t d) { if (in_range(h, i)) widgets()[h].itemData[i] = d; }
+inline intptr_t hk_lb_get_item_data(void* h, int i)             { return (in_range(h, i) && widgets()[h].itemData.count(i)) ? widgets()[h].itemData[i] : 0; }
 inline int      hk_lb_get_sel_count(void* h)                    { return (int)widgets()[h].sel.size(); }
 inline int      hk_lb_get_sel_items(void* h, int maxItems, int* buf) {
     int n = 0;
@@ -179,6 +187,8 @@ struct Install {
         g_wxhook_combo_find_string_exact = hk_combo_find_string_exact;
         g_wxhook_combo_get_lb_text       = hk_combo_get_lb_text;
         g_wxhook_combo_reset_content     = hk_combo_reset_content;
+        g_wxhook_combo_set_item_data     = hk_combo_set_item_data;
+        g_wxhook_combo_get_item_data     = hk_combo_get_item_data;
         g_wxhook_listbox_add_string      = hk_lb_add_string;
         g_wxhook_listbox_reset_content   = hk_lb_reset;
         g_wxhook_listbox_get_count       = hk_lb_get_count;
@@ -223,6 +233,8 @@ struct Install {
         g_wxhook_combo_find_string_exact = nullptr;
         g_wxhook_combo_get_lb_text       = nullptr;
         g_wxhook_combo_reset_content     = nullptr;
+        g_wxhook_combo_set_item_data     = nullptr;
+        g_wxhook_combo_get_item_data     = nullptr;
         g_wxhook_listbox_add_string      = nullptr;
         g_wxhook_listbox_reset_content   = nullptr;
         g_wxhook_listbox_get_count       = nullptr;
@@ -1426,6 +1438,62 @@ TEST(Controls, ComboBoxHookedOperations) {
     EXPECT_EQ(0, cb.GetCount());
 }
 
+// Item data is what makes a sorted combo usable: the caller stores its own
+// index against each entry and reads it back from the selected position.
+// CLuaChooseBox does exactly that, so with these as no-op stubs (which they
+// were) GetItemData always answered 0 and Lua's utils.choose returned the first
+// key in the table no matter what the user picked.
+TEST(Controls, ComboBoxItemDataRoundTrips) {
+    fakewx::Install hooks;
+    CComboBox cb;
+    cb.m_hWnd = (HWND)fakewx::handle_for(72);
+    ASSERT_EQ(0, cb.AddString("zebra"));
+    ASSERT_EQ(1, cb.AddString("aardvark"));
+    ASSERT_EQ(2, cb.AddString("moose"));
+
+    // the caller's own ordering, deliberately not the display ordering
+    cb.SetItemData(0, 20);
+    cb.SetItemData(1, 10);
+    cb.SetItemData(2, 30);
+
+    EXPECT_EQ((DWORD_PTR)20, cb.GetItemData(0));
+    EXPECT_EQ((DWORD_PTR)10, cb.GetItemData(1));
+    EXPECT_EQ((DWORD_PTR)30, cb.GetItemData(2));
+
+    // an entry that was never given data reads as 0, as MFC's does
+    ASSERT_EQ(3, cb.AddString("newt"));
+    EXPECT_EQ((DWORD_PTR)0, cb.GetItemData(3));
+
+    // out-of-range indices are inert, not a crash
+    cb.SetItemData(99, 7);
+    EXPECT_EQ((DWORD_PTR)0, cb.GetItemData(99));
+    EXPECT_EQ((DWORD_PTR)0, cb.GetItemData(-1));
+
+    // ResetContent drops the payloads with the strings
+    cb.ResetContent();
+    EXPECT_EQ((DWORD_PTR)0, cb.GetItemData(0));
+}
+
+// The CLuaChooseBox round trip in miniature: build the combo the way
+// OnInitDialog does, select an entry, and read the key back the way OnOK does.
+TEST(Controls, ComboBoxItemDataSurvivesTheChooseBoxPattern) {
+    fakewx::Install hooks;
+    CComboBox cb;
+    cb.m_hWnd = (HWND)fakewx::handle_for(73);
+
+    static const char* const kValues[] = { "Third", "First", "Second" };
+    for (int i = 0; i < 3; i++) {
+        int pos = cb.AddString(kValues[i]);
+        ASSERT_NE(CB_ERR, pos);
+        cb.SetItemData(pos, i);
+    }
+
+    ASSERT_NE(CB_ERR, cb.SelectString(-1, "Second"));
+    const int which = cb.GetCurSel();
+    ASSERT_NE(CB_ERR, which);
+    EXPECT_EQ((DWORD_PTR)2, cb.GetItemData(which));   // NOT 0
+}
+
 TEST(Controls, ComboBoxNullHooksReturnErrors) {
     CComboBox bare;
     EXPECT_EQ(CB_ERR, bare.AddString("x"));
@@ -1436,6 +1504,8 @@ TEST(Controls, ComboBoxNullHooksReturnErrors) {
     CString s;
     bare.GetLBText(0, s);
     EXPECT_TRUE(s.IsEmpty());
+    bare.SetItemData(0, 1);
+    EXPECT_EQ((DWORD_PTR)0, bare.GetItemData(0));
 }
 
 TEST(Controls, ButtonAndStaticAndEdit) {
@@ -2763,7 +2833,7 @@ TEST(StubSweep, ControlClassRemainder) {
     EXPECT_EQ(CB_ERR, cb.GetLBTextLen(0));
     EXPECT_EQ(0, cb.GetWindowTextLength());
     cb.SetItemData(0, 1);
-    EXPECT_EQ((DWORD_PTR)0, cb.GetItemData(0));
+    EXPECT_EQ((DWORD_PTR)0, cb.GetItemData(0));   // unbound control: hooks see no widget
     cb.ShowDropDown();
     cb.GetDroppedControlRect(nullptr);
     EXPECT_FALSE(cb.GetDroppedState());

@@ -4720,6 +4720,19 @@ static char* hook_combo_get_lb_text(void* hwnd, int index)
     if (!cb || index < 0 || index >= (int) cb->GetCount()) return nullptr;
     return strdup(cb->GetString(index).utf8_str());
 }
+static void hook_combo_set_item_data(void* hwnd, int index, intptr_t data)
+{
+    wxItemContainer* cb = CB(hwnd);
+    if (cb && index >= 0 && index < (int) cb->GetCount())
+        cb->SetClientData(index, reinterpret_cast<void*>(data));
+}
+static intptr_t hook_combo_get_item_data(void* hwnd, int index)
+{
+    wxItemContainer* cb = CB(hwnd);
+    if (cb && index >= 0 && index < (int) cb->GetCount())
+        return reinterpret_cast<intptr_t>(cb->GetClientData(index));
+    return 0;
+}
 static void hook_combo_reset_content(void* hwnd)
 {
     if (wxItemContainer* cb = CB(hwnd)) cb->Clear();
@@ -5102,6 +5115,8 @@ void wx_mfc_install_hooks()
     g_wxhook_combo_find_string_exact  = hook_combo_find_string_exact;
     g_wxhook_combo_get_lb_text        = hook_combo_get_lb_text;
     g_wxhook_combo_reset_content      = hook_combo_reset_content;
+    g_wxhook_combo_set_item_data      = hook_combo_set_item_data;
+    g_wxhook_combo_get_item_data      = hook_combo_get_item_data;
     g_wxhook_radio_get                = hook_radio_get;
     g_wxhook_radio_set                = hook_radio_set;
     g_wxhook_make_owner_draw_button   = hook_make_owner_draw_button;

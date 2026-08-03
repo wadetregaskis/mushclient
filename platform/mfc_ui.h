@@ -3673,8 +3673,12 @@ public:
     void      GetWindowText(CString& s) const { CWnd::GetWindowText(s); }
     void      SetWindowText(LPCTSTR s)        { CWnd::SetWindowText(s); }
     int       GetWindowTextLength() const { return 0; }
-    void      SetItemData(int, DWORD_PTR) {}
-    DWORD_PTR GetItemData(int) const { return 0; }
+    void      SetItemData(int i, DWORD_PTR d) {
+        if (g_wxhook_combo_set_item_data) g_wxhook_combo_set_item_data(m_hWnd, i, (intptr_t) d);
+    }
+    DWORD_PTR GetItemData(int i) const {
+        return g_wxhook_combo_get_item_data ? (DWORD_PTR) g_wxhook_combo_get_item_data(m_hWnd, i) : 0;
+    }
     int       FindString(int after, LPCTSTR s) const { return FindStringExact(after, s); }
     int       FindStringExact(int after, LPCTSTR s) const {
         return g_wxhook_combo_find_string_exact

@@ -374,12 +374,10 @@ CString MUSHCLIENT_VERSION = VERSION_STRING;
 // menu handler; identity is the safe no-op.
 CString QuoteForumCodes (const CString & strText) { return strText; }
 
-// StringToKeyCode (DoFixMenus / accelerator display) — no keyboard headless.
-void StringToKeyCode (const CString /*strKey*/, BYTE & fVirt, WORD & key)
-{
-  fVirt = 0;
-  key   = 0;
-}
+// StringToKeyCode is NOT stubbed: it is pure string parsing and now lives in
+// utilities_shared.cpp, so the headless engine runs the real one.  The stub
+// that used to sit here returned 0/0 for every key, which made the whole
+// accelerator API look like it worked while binding nothing.
 
 // ── CMUSHView view methods (MUSHview.cpp, mushapp-only) ─────────────────────
 void CMUSHView::addedstuff (void) {}

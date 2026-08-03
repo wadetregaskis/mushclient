@@ -764,22 +764,9 @@ BOOL CMUSHclientDoc::Transparency (long Key, short Amount)
   }   // end of CMUSHclientDoc::Transparency
 
 // ══════════════════════════════════════════════════════════════════════════
-// Accelerator family (3) — inert; tables live in accelerators.cpp (mushcore)
-// ══════════════════════════════════════════════════════════════════════════
-
-long CMUSHclientDoc::Accelerator (LPCTSTR Key, LPCTSTR Send)
-  {
-  return eOK;   // accepted, inert — no key events arrive headless
-  }   // end of CMUSHclientDoc::Accelerator
-
-long CMUSHclientDoc::AcceleratorTo (LPCTSTR Key, LPCTSTR Send, short SendTo)
-  {
-  return eOK;   // accepted, inert
-  }   // end of CMUSHclientDoc::AcceleratorTo
-
-VARIANT CMUSHclientDoc::AcceleratorList ()
-  {
-  return EmptySafeArray ();
-  }   // end of CMUSHclientDoc::AcceleratorList
+// Accelerator family: NO LONGER STUBBED.  scripting/methods/methods_accelerators.cpp
+// is in mushcore now, so the tests exercise the real bodies — which is the point:
+// the off-Windows arm of AcceleratorTo used to be unreachable behind a view-list
+// gate, and a stub here would have hidden that forever.
 
 #endif  // !_WIN32

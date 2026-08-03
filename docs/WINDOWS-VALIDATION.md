@@ -225,6 +225,32 @@ Also three casts deleted in `mxp/mxpOpenAtomic.cpp`: a `long` was cast to
 `LPCTSTR` and then read back by `%ld`.  Same printed value on both ABIs.
 **Check:** an MXP `<support>` reply still lists `option=value` pairs correctly.
 
+### 4c-quater. Accelerators moved into the shared engine (2026-08-03)
+
+Three edits, all meant to leave Windows byte-for-byte unchanged:
+
+1. `scripting/methods/methods_accelerators.cpp` — the HACCEL half of
+   `AcceleratorTo` is now inside `#ifdef _WIN32`.  Everything Windows used to run
+   still runs, in the same order, with one cosmetic difference: the `ACCEL
+   aWanted` declaration was hoisted a few lines earlier (it is a POD assigned
+   from the same values).  The only reachable behaviour change would be if the
+   view-list walk mattered on Windows for something other than finding the
+   HACCEL — it does not.
+   **Check:** `/Note (Accelerator ("Ctrl+F8", "hello"))` still binds; pressing
+   Ctrl+F8 in the world window still executes `hello`; `AcceleratorTo` with an
+   empty Send still un-binds; `table.foreach (AcceleratorList (), print)` still
+   lists what is bound.  Also check a key bound by a *plugin*, since the plugin
+   id bookkeeping (`m_CommandToPluginMap`) sits in the same block.
+2. `KeyCodeToString` and `StringToKeyCode` moved from `Utilities.cpp` into
+   `utilities_shared.cpp` — same bodies, same project, different TU, so the
+   headless engine can link them.  `Utilities.cpp` keeps the
+   `extern tVirtualKeyMapping VirtualKeys [];` declaration for its other users.
+   **Check:** the accelerator column in the macros page of world preferences,
+   and the key names shown in `AcceleratorList`, still read the same.
+3. `scripting/methods/methods_accelerators.cpp` moved from the mac-only adapter
+   list into `mushcore` in `CMakeLists.txt`.  No effect on the `.vcxproj`, which
+   always compiled it.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

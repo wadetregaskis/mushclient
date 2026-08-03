@@ -52,6 +52,25 @@ WORD key;
        
   fVirt |= FNOINVERT;   // no inverting of menus
 
+  // ── the Win32 HACCEL table ───────────────────────────────────────────────
+  // Windows keeps the live accelerators in an HACCEL owned by the world's MDI
+  // child frame, found through the doc's view list.  Off-Windows there is no
+  // HACCEL (CopyAcceleratorTable / CreateAcceleratorTable are inert inlines) and
+  // dispatch is done instead by CWorldChildFrame::FireAcceleratorIfMatch, which
+  // reads m_AcceleratorToCommandMap directly.
+  //
+  // The view walk therefore has to be Windows-only.  It was not, and the port
+  // never constructs CMUSHView, so GetFirstViewPosition() always returned NULL
+  // and this function returned eBadParameter before touching the map — which
+  // meant world.Accelerator and world.AcceleratorTo could not register ANY key,
+  // ever.  The map bookkeeping below is the part the port actually needs, and it
+  // now runs on both platforms.
+  ACCEL aWanted;            // new accelerator
+  aWanted.fVirt = fVirt;
+  aWanted.key = key;
+  aWanted.cmd = 0;
+
+#ifdef _WIN32
 	POSITION pos = NULL;
   
   pos = GetFirstViewPosition();
@@ -86,15 +105,11 @@ WORD key;
 
 	CopyAcceleratorTable (hAccel, &vAccel [0], iCount);
 
-  ACCEL aWanted;            // new accelerator
-  aWanted.fVirt = fVirt;
-  aWanted.key = key;
-  aWanted.cmd = 0;
-  
   // if accelerator already exists, remove it
   vAccel.erase (remove_if (vAccel.begin (), vAccel.end (),
                            [&aWanted](const ACCEL & a) { return fFindAccelerator()(a, aWanted); }),
                 vAccel.end ());
+#endif // _WIN32
 
   // new in version 3.75 - if no Send string, simply delete accelerator
   if (Send [0]) 
@@ -122,8 +137,10 @@ WORD key;
 
     aWanted.cmd = command;
 
+#ifdef _WIN32
     // put command into accelerator table
     vAccel.push_back (aWanted);
+#endif
 
     // remember what the command was for that keystroke
     m_AcceleratorToCommandMap [virt_plus_key] = command;
@@ -142,6 +159,7 @@ WORD key;
 
     }  // end of having something to do (ie. not deleting accelerator)
 
+#ifdef _WIN32
   // create new handle
   hAccel = CreateAcceleratorTable (&vAccel [0], vAccel.size ());
 
@@ -151,6 +169,22 @@ WORD key;
 
   // replace accelerator table in document
   m_accelerator = hAccel;
+#else
+  // Deleting: an empty Send means "forget this key".  On Windows that fell out
+  // of rebuilding the table without it; here the map IS the table, so say so.
+  if (!Send [0])
+    {
+    const long virt_plus_key = ((long) fVirt) << 16 | key;
+    map<long, WORD>::iterator it = m_AcceleratorToCommandMap.find (virt_plus_key);
+    if (it != m_AcceleratorToCommandMap.end ())
+      {
+      m_CommandToMacroMap.erase (it->second);
+      m_CommandToSendToMap.erase (it->second);
+      m_CommandToPluginMap.erase (it->second);
+      m_AcceleratorToCommandMap.erase (it);
+      }
+    }
+#endif // _WIN32
 
   // test test test
 

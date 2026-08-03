@@ -433,6 +433,7 @@ if(NOT WIN32)
         doc_hyperlink_shared.cpp
         doc_dblclick_shared.cpp
         doc_editcopy_shared.cpp
+        scripting/methods/methods_accelerators.cpp
         scripting/methods/methods_noting.cpp
         scripting/methods/methods_tracing.cpp
         scripting/methods/methods_variables.cpp
@@ -561,7 +562,6 @@ if(NOT WIN32)
         winplace.cpp
         world_debug.cpp
         scripting/methods/methods.cpp
-        scripting/methods/methods_accelerators.cpp
         scripting/methods/methods_chat.cpp
         scripting/methods/methods_miniwindows.cpp
         scripting/methods/methods_notepad.cpp

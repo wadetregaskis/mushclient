@@ -401,10 +401,38 @@ TEST(LuaSurface, MiscViewStubs)
         "world.SetWorldWindowStatus(1)\n"
         "assert(world.TextRectangle(0, 0, 100, 100, 0, 0, 1, 0, 0) == 0)\n"
         "assert(world.Transparency(0, 1) == false)\n"
+        "assert(world.GetFrame() ~= nil)\n"
+    ));
+}
+
+// ── the accelerator family — real headless, not stubbed ───────────────────
+//
+// These used to live in MiscViewStubs asserting AcceleratorList() == nil, which
+// was true only because AcceleratorTo bailed out at a view-list gate that can
+// never be satisfied off-Windows.  It binds for real now (the HACCEL half is
+// Windows-only), so assert the binding, not the emptiness.  Behaviour detail is
+// in tests/test_accelerators.cpp; this is the Lua-surface reach.
+
+TEST(LuaSurface, AcceleratorFamilyBindsThroughLua)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        "assert(world.AcceleratorList() == nil)\n"          // nothing bound yet
         "assert(world.Accelerator('F9', 'send this') == 0)\n"
         "assert(world.AcceleratorTo('F10', 'x', 0) == 0)\n"
-        "assert(world.AcceleratorList() == nil)\n"
-        "assert(world.GetFrame() ~= nil)\n"
+        "local t = world.AcceleratorList()\n"
+        "assert(type(t) == 'table')\n"
+        "local n = 0\n"
+        "local seen = {}\n"
+        "for _, v in pairs(t) do n = n + 1; seen[v] = true end\n"
+        "assert(n == 2, 'expected 2 accelerators, got ' .. n)\n"
+        "assert(seen['F9 = send this'])\n"                  // eSendToExecute: no suffix
+        "assert(seen['F10 = x\\t[0]'])\n"                    // eSendToWorld == 0
+        "assert(world.Accelerator('F9', '') == 0)\n"        // empty Send un-binds
+        "local u = world.AcceleratorList()\n"
+        "local m = 0\n"
+        "for _ in pairs(u) do m = m + 1 end\n"
+        "assert(m == 1, 'expected 1 accelerator after delete, got ' .. m)\n"
     ));
 }
 

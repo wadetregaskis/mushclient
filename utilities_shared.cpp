@@ -23,6 +23,7 @@
 
   #include "stdafx.h"
   #include "MUSHclient.h"   // App / CColours (ColourToName's reverse lookup)
+  #include "doc.h"          // StringToList (StringToKeyCode's tokenizer)
 
 #include <cctype>
 #include <cstdio>
@@ -1239,3 +1240,111 @@ char cNestArray [MAX_NEST];   // so we know when nested group ends
   //  (aaa[bbb]ccc)[ddd{e']'ee}]
   //  (aaaa "bb \" bb" aaaa)
 }  // end of ScanMatchingBrace
+
+extern tVirtualKeyMapping VirtualKeys [];   // accelerators.cpp
+
+// ── KeyCodeToString ─────────────────────────────────────────────────────────
+// Render an accelerator (HOTKEYF_*/FVIRTKEY modifier byte + virtual-key code)
+// as "Ctrl+Alt+F5".  Pure lookup against the VirtualKeys[] table in
+// accelerators.cpp; moved here verbatim from Utilities.cpp so the headless
+// engine can link CMUSHclientDoc::AcceleratorList, which is the only caller
+// outside the GUI.  Declared in stdafx.h.
+//
+CString KeyCodeToString (const BYTE fVirt, const WORD key)
+  {
+
+  CString strKeyCode,
+          strKey;
+
+   if (fVirt & FSHIFT)
+     strKey += "Shift+";
+   if (fVirt & FCONTROL)
+     strKey += "Ctrl+";
+   if (fVirt & FALT)
+     strKey += "Alt+";
+
+   // default is key code itself, particularly if FVIRTKEY not specified
+   strKeyCode = (char) key;
+
+//  if (fVirt & FVIRTKEY)
+    for (int i = 0; VirtualKeys [i].iVirtualKey; i++)
+      {
+      if (key == VirtualKeys [i].iVirtualKey)
+        {
+        strKeyCode = VirtualKeys [i].sKeyName;
+        break;
+        }
+      } // end of finding key name
+
+  strKey += strKeyCode;
+
+  return strKey;
+
+  } // end of KeyCodeToString
+
+// ── StringToKeyCode ─────────────────────────────────────────────────────────
+// The inverse: parse "Ctrl+Alt+F5" into the modifier byte + virtual-key code,
+// throwing (ThrowErrorException) on anything it cannot parse.  Pure string
+// work; moved here from Utilities.cpp for the same reason as KeyCodeToString —
+// AcceleratorTo needs it, and the headless build used to get a stub that
+// silently returned 0/0, which would have made any test of the accelerator API
+// pass for the wrong reason.  Declared in stdafx.h.
+//
+void StringToKeyCode (const CString strKey,
+                      BYTE & fVirt,
+                      WORD & key)
+  {
+  // break key up into individual parts (eg. Ctrl + Shift + blah )
+  CStringList strList;
+  StringToList (strKey, "+", strList);
+
+  fVirt = FVIRTKEY;
+  key = 0;
+
+  for (POSITION pos = strList.GetHeadPosition (); pos; )
+    {
+    CString strPart = strList.GetNext (pos);
+    strPart.TrimLeft ();
+    strPart.TrimRight ();
+
+    // look for special cases: Alt, Ctrl, Shift
+    if (strPart.CompareNoCase ("Alt") == 0)
+      {
+      if (fVirt & FALT)
+        ThrowErrorException ("You cannot have Alt+Alt");
+      fVirt |= FALT;
+      }
+    else if (strPart.CompareNoCase ("Ctrl") == 0)
+      {
+      if (fVirt & FCONTROL)
+        ThrowErrorException ("You cannot have Ctrl+Ctrl");
+      fVirt |= FCONTROL;
+      }
+    else if (strPart.CompareNoCase ("Shift") == 0)
+      {
+      if (fVirt & FSHIFT)
+        ThrowErrorException ("You cannot have Shift+Shift");
+      fVirt |= FSHIFT;
+      }
+    else
+      {
+      int j;
+      for (j = 0; VirtualKeys [j].iVirtualKey; j++)
+        {
+        if (strPart.CompareNoCase (VirtualKeys [j].sKeyName) == 0)
+          {
+          if (key != 0)
+            ThrowErrorException ("You cannot specify two keystrokes");
+
+          key = VirtualKeys [j].iVirtualKey;
+          break;
+          }
+        } // end of finding key name
+
+      if (VirtualKeys [j].iVirtualKey == 0)
+        ThrowErrorException ("Keystoke %s unknown", (LPCTSTR) strPart);
+
+      } // must be key itself
+    } // end of working through part of key
+
+  } // end of StringToKeyCode

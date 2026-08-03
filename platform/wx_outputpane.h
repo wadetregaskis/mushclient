@@ -478,9 +478,33 @@ private:
     int    m_maxLineChars = 80;   // widest line seen, in characters (stats only)
 
     // ── Wrap cache ────────────────────────────────────────────────────────────
-    std::vector<int> m_visualRowStart;   // m_visualRowStart[i] = visual row of logical line i
-    int              m_totalVisualRows = 0;
-    int              m_wrapCols        = 80;
+    // Entries are ABSOLUTE row numbers on a monotonically increasing axis, and
+    // m_rowBase is the absolute row of the first line still in the buffer.  A
+    // head trim therefore only pops the front entry and re-reads the base — it
+    // does not have to rewrite every remaining entry, which is what let the
+    // at-capacity append path (i.e. the steady state of any long session) do a
+    // full-buffer rebuild for every single line of output.  Read them through
+    // RowStartOf(), never directly.
+    std::deque<long long> m_visualRowStart;
+    long long             m_rowBase         = 0;
+    int                   m_totalVisualRows = 0;
+    int                   m_wrapCols        = 80;
+
+    // Rendered character count per line, parallel to m_lines.  AppendLine
+    // already computes this to update m_maxLineChars; caching it turns
+    // WrapCount() into one integer division instead of a re-scan of every run
+    // (a UTF-8 walk, or a whole wxString decode + allocation per run in a
+    // non-UTF-8 world) and so turns RebuildWrapCache from O(total bytes) into
+    // O(lines) integer arithmetic.
+    std::deque<int>       m_lineChars;
+
+    // First visual row of logical line i, relative to the top of the buffer.
+    int RowStartOf(int i) const {
+        return (i >= 0 && i < (int) m_visualRowStart.size())
+               ? (int) (m_visualRowStart[i] - m_rowBase) : 0;
+    }
+    // Drop the front line's cache entries, keeping the row axis consistent.
+    void PopFrontWrapCache();
 
     // ── Text rectangle (world.TextRectangle) ────────────────────────────────────
     // Resolved client-pixel rect that the text must stay within (origin offset

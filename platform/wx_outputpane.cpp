@@ -358,10 +358,11 @@ void COutputPane::AppendLine(SOutputLine&& line)
         int wc = (m_wrapCols > 0)
                  ? std::max(1, (lineChars > 0 ? (lineChars + m_wrapCols - 1) / m_wrapCols : 1))
                  : 1;
-        m_visualRowStart.push_back(m_totalVisualRows);
+        m_visualRowStart.push_back(m_rowBase + m_totalVisualRows);
         m_totalVisualRows += wc;
     }
 
+    m_lineChars.push_back(lineChars);
     m_lines.push_back(std::move(line));
 
     int trimCount = 0;
@@ -369,12 +370,13 @@ void COutputPane::AppendLine(SOutputLine&& line)
         // Accumulate visual rows being removed so UpdateScrollbars can compensate
         // the scroll position (prevents the viewport jumping to different content).
         if (!m_visualRowStart.empty()) {
-            int firstStart = m_visualRowStart[0];
-            int nextStart  = (m_visualRowStart.size() >= 2)
-                             ? m_visualRowStart[1] : m_totalVisualRows;
-            m_trimmedRowsRemoved += (nextStart - firstStart);
+            const long long firstStart = m_visualRowStart[0];
+            const long long nextStart  = (m_visualRowStart.size() >= 2)
+                             ? m_visualRowStart[1] : (m_rowBase + m_totalVisualRows);
+            m_trimmedRowsRemoved += (int)(nextStart - firstStart);
         }
         m_lines.pop_front();
+        PopFrontWrapCache();
         ++trimCount;
         // Adjust selection indices downward; clear if the anchor line was removed.
         if (m_selAnchor.valid()) {
@@ -386,9 +388,10 @@ void COutputPane::AppendLine(SOutputLine&& line)
             else --m_selFocus.line;
         }
     }
-    // Rebuild wrap cache after trimming so all row indices are correct.
-    if (trimCount > 0)
-        RebuildWrapCache();
+    // No wrap-cache rebuild here: PopFrontWrapCache already kept the cache
+    // consistent in O(1) per trimmed line.  This used to be a full O(N) rebuild
+    // per APPENDED line once the buffer was at capacity -- i.e. permanently, for
+    // any long-running session -- and each rebuild re-scanned every run's bytes.
     m_trimmedCount += trimCount;
 
     // Notify the logging hook (if any) immediately after the line is accepted.
@@ -423,6 +426,7 @@ void COutputPane::SetMaxLines(int n)
     bool trimmed = false;
     while ((int)m_lines.size() > m_maxLines) {
         m_lines.pop_front();
+        if (!m_lineChars.empty()) m_lineChars.pop_front();
         trimmed = true;
     }
     if (trimmed) {
@@ -438,8 +442,10 @@ void COutputPane::DeleteTailLines(long count)
 {
     if (count <= 0 || m_lines.empty()) return;
     long toRemove = std::min(count, (long)m_lines.size());
-    for (long i = 0; i < toRemove; ++i)
+    for (long i = 0; i < toRemove; ++i) {
         m_lines.pop_back();
+        if (!m_lineChars.empty()) m_lineChars.pop_back();
+    }
     // Clear any selection that may have referenced deleted lines.
     m_selAnchor = SelPoint{};
     m_selFocus  = SelPoint{};
@@ -536,7 +542,7 @@ void COutputPane::ScrollToLine(int lineIdx)
     int unitH;
     GetScrollPixelsPerUnit(nullptr, &unitH);
     if (unitH > 0) {
-        int vr = (lineIdx < (int)m_visualRowStart.size()) ? m_visualRowStart[lineIdx] : 0;
+        int vr = RowStartOf(lineIdx);
         Scroll(0, vr * m_lineH / unitH);
     }
     bool wasAuto = m_autoScroll;
@@ -702,6 +708,8 @@ void COutputPane::ClearOutput()
     m_trimmedCount       = 0;
     m_trimmedRowsRemoved = 0;
     m_visualRowStart.clear();
+    m_lineChars.clear();
+    m_rowBase = 0;
     m_totalVisualRows    = 0;
     UpdateScrollbars(true);
     Refresh();
@@ -907,7 +915,7 @@ void COutputPane::OnPaint(wxPaintEvent&)
 
         for (int i = firstLine; i <= lastLine; ++i) {
             // yOff of the first visual row of logical line i.
-            int lineVR = (i < (int)m_visualRowStart.size()) ? m_visualRowStart[i] : 0;
+            int lineVR = RowStartOf(i);
             DrawLine(dc, i, lineVR * m_lineH);
         }
     }
@@ -1359,9 +1367,10 @@ int COutputPane::WrapCount(int lineIdx) const
     if (lineIdx < 0 || lineIdx >= (int)m_lines.size()) return 0;
     const SOutputLine& line = m_lines[lineIdx];
     if (line.size() == 1 && line[0].horiz_rule) return 1;
-    int chars = 0;
-    for (const auto& run : line)
-        chars += RunCharLen(run);
+    // m_lineChars is maintained alongside m_lines, so this costs one division
+    // rather than a re-scan of every run's bytes (which for a non-UTF-8 world
+    // means decoding each run into a fresh wxString just to take its length).
+    const int chars = (lineIdx < (int)m_lineChars.size()) ? m_lineChars[lineIdx] : 0;
     if (chars == 0 || m_wrapCols <= 0) return 1;
     return (chars + m_wrapCols - 1) / m_wrapCols;
 }
@@ -1415,13 +1424,47 @@ void COutputPane::RebuildWrapCache()
                   : 80;
     m_wrapCols = newCols;
 
-    int n = (int)m_lines.size();
-    m_visualRowStart.resize(n);
+    // Renumber from zero: a full rebuild is the one place the absolute row axis
+    // may be reset, since every consumer reads through RowStartOf().
+    const int n = (int)m_lines.size();
+
+    // Self-heal the char-count cache if it ever falls out of step with m_lines.
+    // Every mutation site keeps them paired, so this should never fire — but a
+    // silently wrong wrap count is a scrambled display, and a rebuild is the
+    // natural place to re-establish the invariant rather than assert on it.
+    if ((int)m_lineChars.size() != n) {
+        m_lineChars.assign((size_t)n, 0);
+        for (int i = 0; i < n; ++i) {
+            int chars = 0;
+            for (const auto& run : m_lines[i]) chars += RunCharLen(run);
+            m_lineChars[(size_t)i] = chars;
+        }
+    }
+
+    m_visualRowStart.assign((size_t)n, 0);
+    m_rowBase         = 0;
     m_totalVisualRows = 0;
     for (int i = 0; i < n; ++i) {
-        m_visualRowStart[i] = m_totalVisualRows;
-        m_totalVisualRows  += WrapCount(i);
+        m_visualRowStart[(size_t)i] = m_totalVisualRows;
+        m_totalVisualRows          += WrapCount(i);
     }
+}
+
+// Drop logical line 0 from both caches in O(1), leaving the remaining absolute
+// row numbers untouched and moving the base instead.
+void COutputPane::PopFrontWrapCache()
+{
+    if (m_visualRowStart.empty()) return;
+    m_visualRowStart.pop_front();
+    if (!m_lineChars.empty()) m_lineChars.pop_front();
+    // The new first line's absolute row becomes the base, so RowStartOf(0) == 0
+    // and every other entry keeps its meaning.
+    const long long newBase = m_visualRowStart.empty()
+                              ? m_rowBase + m_totalVisualRows
+                              : m_visualRowStart.front();
+    m_totalVisualRows -= (int)(newBase - m_rowBase);
+    if (m_totalVisualRows < 0) m_totalVisualRows = 0;
+    m_rowBase = newBase;
 }
 
 int COutputPane::VisualRowToLogical(int vr) const
@@ -1432,7 +1475,7 @@ int COutputPane::VisualRowToLogical(int vr) const
     int lo = 0, hi = (int)m_visualRowStart.size() - 1;
     while (lo < hi) {
         int mid = (lo + hi + 1) / 2;
-        if (m_visualRowStart[mid] <= vr) lo = mid;
+        if (m_visualRowStart[mid] - m_rowBase <= vr) lo = mid;
         else hi = mid - 1;
     }
     return lo;
@@ -1600,8 +1643,7 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
     if (m_wrapCols > 0 && m_lineH > 0) {
         int yPix       = scrollY * unitH + clientY;
         int clickVR    = yPix / m_lineH;
-        int lineStartVR = (lineIdx < (int)m_visualRowStart.size())
-                          ? m_visualRowStart[lineIdx] : 0;
+        int lineStartVR = RowStartOf(lineIdx);
         vrOffset = std::max(0, clickVR - lineStartVR);
     }
 
@@ -2572,7 +2614,7 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
             int clientH;
             GetClientSize(nullptr, &clientH);
             int vr = (foundIdx < (int)m_visualRowStart.size())
-                     ? m_visualRowStart[foundIdx] : foundIdx;
+                     ? RowStartOf(foundIdx) : foundIdx;
             // Center the matched line in the viewport rather than placing it at
             // the top: subtract half the client height so the match lands near
             // the middle of the screen.  std::max(0,…) clamps near the buffer top.

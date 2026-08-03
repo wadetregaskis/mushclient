@@ -171,8 +171,18 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
                 w = new wxStaticBox(parent, id, U(c.text), pos, size);
                 break;
             case BS_CHECKBOX: case BS_AUTOCHECKBOX:
-            case BS_3STATE:   case BS_AUTO3STATE:
                 w = new wxCheckBox(parent, id, U(c.text), pos, size);
+                break;
+            case BS_3STATE:   case BS_AUTO3STATE:
+                // Three states, not two.  The trigger dialog's Bold / Italic /
+                // Inverse style matchers are the users of this: unchecked means
+                // "must not be bold", checked "must be bold", and the third
+                // state "don't care", which is the DEFAULT.  Built as a plain
+                // 2-state box, "don't care" was unreachable and read back as
+                // "must not be", so every trigger saved from the dialog silently
+                // demanded plain text.
+                w = new wxCheckBox(parent, id, U(c.text), pos, size,
+                                   wxCHK_3STATE | wxCHK_ALLOW_3RD_STATE_FOR_USER);
                 break;
             case BS_RADIOBUTTON: case BS_AUTORADIOBUTTON:
                 w = new wxRadioButton(parent, id, U(c.text), pos, size,

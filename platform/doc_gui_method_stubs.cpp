@@ -679,6 +679,23 @@ void CMUSHclientDoc::MoveWorldWindowX (long Left, long Top, long Width, long Hei
   // GUI-only headless — silent no-op
   }   // end of CMUSHclientDoc::MoveWorldWindowX
 
+// MoveWorldWindow and GetNotepadWindowPosition were the only two dispatch-map
+// entries with no headless body, which nothing noticed because the dispatch
+// table itself (platform/mc_dispatch.cpp) had never been linked into a test
+// binary -- the archive member was only pulled in once something referenced
+// MC_DispatchInvoke, and until tests/test_mc_dispatch.cpp nothing did.  Adding
+// them is what lets that whole substrate be tested at all.
+void CMUSHclientDoc::MoveWorldWindow (long Left, long Top, long Width, long Height)
+  {
+  // GUI-only headless — silent no-op
+  }   // end of CMUSHclientDoc::MoveWorldWindow
+
+BSTR CMUSHclientDoc::GetNotepadWindowPosition (LPCTSTR Title)
+  {
+  // GUI-only headless — no notepad windows exist, so no position to report.
+  return CString ("").AllocSysString ();
+  }   // end of CMUSHclientDoc::GetNotepadWindowPosition
+
 void CMUSHclientDoc::Pause (BOOL Flag)
   {
   // Scroll-lock / release the output pane through the IWorldView seam

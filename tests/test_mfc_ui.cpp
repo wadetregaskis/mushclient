@@ -4157,4 +4157,65 @@ TEST(FramePostMessage, HeadlessStillFailsClosedWhenNoPumpIsInstalled)
     g_wxhook_post_message = saved;
 }
 
+// ── DDV_MinMax* actually validate ─────────────────────────────────────────
+//
+// These were no-ops, so every numeric range in every property page was
+// advisory: a value outside it was accepted, written to the doc member and
+// SAVED to the world file, with nothing downstream re-checking.  MFC shows a
+// message and calls pDX->Fail(), which throws and aborts the exchange -- so the
+// dialog stays open and the member keeps its old value.
+TEST(Ddv, MinMaxIntRejectsOutOfRangeAndAcceptsInRange) {
+    CDataExchange dx;
+    dx.m_bSaveAndValidate = TRUE;
+
+    // In range: no throw.
+    DDV_MinMaxInt(&dx, 5, 0, 10);
+    DDV_MinMaxInt(&dx, 0, 0, 10);      // inclusive at both ends
+    DDV_MinMaxInt(&dx, 10, 0, 10);
+
+    bool threw = false;
+    try { DDV_MinMaxInt(&dx, 11, 0, 10); } catch (const CDdxValidationFail&) { threw = true; }
+    EXPECT_TRUE(threw);
+
+    threw = false;
+    try { DDV_MinMaxInt(&dx, -1, 0, 10); } catch (const CDdxValidationFail&) { threw = true; }
+    EXPECT_TRUE(threw);
+}
+
+// The LOAD direction (members -> controls) must never validate: MFC only checks
+// when m_bSaveAndValidate is TRUE, so a doc that already holds an out-of-range
+// value can still open its property page.  Validating here would make such a
+// world impossible to edit at all.
+TEST(Ddv, MinMaxDoesNotValidateOnTheLoadDirection) {
+    CDataExchange dx;
+    dx.m_bSaveAndValidate = FALSE;
+
+    bool threw = false;
+    try {
+        DDV_MinMaxInt(&dx, 9999, 0, 10);
+        DDV_MinMaxLong(&dx, 9999, 0, 10);
+        DDV_MinMaxUInt(&dx, 9999u, 0u, 10u);
+        DDV_MinMaxDouble(&dx, 9999.0, 0.0, 10.0);
+        DDV_MinMaxFloat(&dx, 9999.0f, 0.0f, 10.0f);
+    } catch (const CDdxValidationFail&) { threw = true; }
+    EXPECT_FALSE(threw);
+}
+
+TEST(Ddv, EveryMinMaxOverloadValidates) {
+    CDataExchange dx;
+    dx.m_bSaveAndValidate = TRUE;
+
+    int n = 0;
+    try { DDV_MinMaxLong(&dx, 11L, 0L, 10L); }        catch (const CDdxValidationFail&) { n++; }
+    try { DDV_MinMaxUInt(&dx, 11u, 0u, 10u); }        catch (const CDdxValidationFail&) { n++; }
+    try { DDV_MinMaxDouble(&dx, 10.5, 0.0, 10.0); }   catch (const CDdxValidationFail&) { n++; }
+    try { DDV_MinMaxFloat(&dx, 10.5f, 0.0f, 10.0f); } catch (const CDdxValidationFail&) { n++; }
+    EXPECT_EQ(4, n);
+}
+
+// The other half of the chain -- that a Fail() makes UpdateData return FALSE and
+// vetoes OnOK, which is what keeps the dialog open -- is already pinned by
+// Ddx.ValidationFailVetoesUpdateAndOnOK above.  Together with the throws
+// asserted here, an out-of-range entry now cannot reach the doc member.
+
 MC_TEST_MAIN()

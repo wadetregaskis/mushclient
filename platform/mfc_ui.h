@@ -3574,11 +3574,58 @@ inline void DDX_Control(CDataExchange* pDX, int id, CWnd& ctl) {
             g_wxhook_bind_slider(ctl.m_hWnd, pDX->m_pDlgWnd);
     }
 }
-inline void DDV_MinMaxInt(CDataExchange*, int, int, int) {}
-inline void DDV_MinMaxLong(CDataExchange*, long, long, long) {}
-inline void DDV_MinMaxUInt(CDataExchange*, UINT, UINT, UINT) {}
-inline void DDV_MinMaxDouble(CDataExchange*, double, double, double) {}
-inline void DDV_MinMaxFloat(CDataExchange*, float, float, float) {}
+// DDV_MinMax* — MFC rejects an out-of-range value: it shows "Please enter a
+// number between <min> and <max>." and calls pDX->Fail(), which aborts the
+// exchange so the dialog stays open and the member keeps its old value.
+//
+// These were no-ops, which made every numeric range in every property page
+// advisory: 78 call sites, and a value outside any of them was accepted,
+// written to the doc member and SAVED to the world file.  Nothing downstream
+// re-checks, so an out-of-range number persisted across restarts.
+inline void McDdvFailRange(CDataExchange* pDX, const CString& strRange)
+{
+    // TMessageBox, not AfxMessageBox: the latter is declared further down this
+    // header, after the DDV block.
+    TMessageBox(CString("Please enter a number between ") + strRange + ".",
+                MB_ICONEXCLAMATION);
+    pDX->Fail();
+}
+
+inline void DDV_MinMaxInt(CDataExchange* pDX, int value, int minVal, int maxVal)
+{
+    if (pDX && pDX->m_bSaveAndValidate && (value < minVal || value > maxVal)) {
+        CString s; s.Format("%d and %d", minVal, maxVal);
+        McDdvFailRange(pDX, s);
+    }
+}
+inline void DDV_MinMaxLong(CDataExchange* pDX, long value, long minVal, long maxVal)
+{
+    if (pDX && pDX->m_bSaveAndValidate && (value < minVal || value > maxVal)) {
+        CString s; s.Format("%ld and %ld", minVal, maxVal);
+        McDdvFailRange(pDX, s);
+    }
+}
+inline void DDV_MinMaxUInt(CDataExchange* pDX, UINT value, UINT minVal, UINT maxVal)
+{
+    if (pDX && pDX->m_bSaveAndValidate && (value < minVal || value > maxVal)) {
+        CString s; s.Format("%u and %u", minVal, maxVal);
+        McDdvFailRange(pDX, s);
+    }
+}
+inline void DDV_MinMaxDouble(CDataExchange* pDX, double value, double minVal, double maxVal)
+{
+    if (pDX && pDX->m_bSaveAndValidate && (value < minVal || value > maxVal)) {
+        CString s; s.Format("%g and %g", minVal, maxVal);
+        McDdvFailRange(pDX, s);
+    }
+}
+inline void DDV_MinMaxFloat(CDataExchange* pDX, float value, float minVal, float maxVal)
+{
+    if (pDX && pDX->m_bSaveAndValidate && (value < minVal || value > maxVal)) {
+        CString s; s.Format("%g and %g", (double) minVal, (double) maxVal);
+        McDdvFailRange(pDX, s);
+    }
+}
 // DDX_MinMaxString, DDV_MinMaxString, DDV_MaxChars: real implementations live in
 // DDV_validation.cpp (compiled in mushapp).  Provide stubs only when that file
 // is NOT compiled (i.e. the portable mushcore build).

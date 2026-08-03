@@ -569,6 +569,27 @@ Now per-cell, like `DrawRunChunk`.
   Windows behaviour, but confirm it does not feel broken with Quow's pack
   loaded.
 
+### 4c-quaterdecies. DDV_MinMax* validators actually validate now (2026-08-03)
+
+**Port-only** (`platform/mfc_ui.h`), but with a **real regression risk worth
+watching for** — see below.
+
+All five `DDV_MinMax*` overloads were `{}`. That made every numeric range in
+every property page advisory across **78 call sites**: a value outside the
+declared range was accepted, written to the doc member and saved to the world
+file, with nothing downstream re-checking it. They now do what MFC does — show
+"Please enter a number between X and Y." and call `pDX->Fail()`, which aborts
+the exchange so the dialog stays open and the member keeps its old value. The
+load direction (`m_bSaveAndValidate == FALSE`) still never validates, so a world
+that *already* holds an out-of-range value can still open its property page.
+
+**The risk:** any existing world file or default that sits outside a declared
+range will now block OK on that page, where before it sailed through. That is
+Windows behaviour, so a Windows build should reject the same values — but if a
+page here refuses to close on values Windows accepts, the range constant or the
+member's default is wrong and that is the real bug. Please try OK on each
+property page with stock settings.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

@@ -379,15 +379,22 @@ void report_error(CMUSHclientDoc* doc, const char* what, const char* proc)
   Py_XDECREF(type); Py_XDECREF(value); Py_XDECREF(tb);
   PyErr_Clear();
 
+  // Route through the shared policy (scripting/lua_scripting.cpp), so this
+  // engine obeys World Properties > Scripting > "Note errors to the output
+  // window" and raises the canonical CScriptErrorDlg otherwise -- exactly as
+  // Windows does for every COM language via CScriptEngine::ShowError.  It used
+  // to ColourNote unconditionally, which made that setting a dead reader and
+  // the dialog (and its "show errors in the output window next time" checkbox)
+  // unreachable for any world not scripted in Lua.
+  CString raisedBy = "No active world";
   if (doc)
-    {
-    CString hdr;
-    hdr.Format ("Python error: %s%s%s\n",
-                what ? what : "",
-                (proc && *proc) ? " / " : "",
-                proc ? proc : "");
-    doc->ColourNote ("white", "red", hdr + msg);
-    }
+    raisedBy = doc->m_CurrentPlugin
+             ? TFormat ("Plugin: %s (called from world: %s)",
+                        (LPCTSTR) doc->m_CurrentPlugin->m_strName, (LPCTSTR) doc->m_mush_name)
+             : TFormat ("World: %s", (LPCTSTR) doc->m_mush_name);
+  ReportScriptError (doc, "Python error", 
+                     TFormat ("Function/Sub: %s called by %s", proc ? proc : "", what ? what : ""),
+                     msg, raisedBy);
   }
 
 } // anonymous namespace

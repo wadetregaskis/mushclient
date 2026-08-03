@@ -183,10 +183,22 @@ void report_error (CMUSHclientDoc* doc, Tcl_Interp* interp, const char* what, co
   {
   if (!doc || !interp) return;
   const char* msg = Tcl_GetStringResult (interp);
-  CString hdr;
-  hdr.Format ("Tcl error: %s%s%s\n", what ? what : "",
-              (proc && *proc) ? " / " : "", proc ? proc : "");
-  doc->ColourNote ("white", "red", hdr + CString (msg ? msg : ""));
+  // Route through the shared policy (scripting/lua_scripting.cpp), so this
+  // engine obeys World Properties > Scripting > "Note errors to the output
+  // window" and raises the canonical CScriptErrorDlg otherwise -- exactly as
+  // Windows does for every COM language via CScriptEngine::ShowError.  It used
+  // to ColourNote unconditionally, which made that setting a dead reader and
+  // the dialog (and its "show errors in the output window next time" checkbox)
+  // unreachable for any world not scripted in Lua.
+  CString raisedBy = "No active world";
+  if (doc)
+    raisedBy = doc->m_CurrentPlugin
+             ? TFormat ("Plugin: %s (called from world: %s)",
+                        (LPCTSTR) doc->m_CurrentPlugin->m_strName, (LPCTSTR) doc->m_mush_name)
+             : TFormat ("World: %s", (LPCTSTR) doc->m_mush_name);
+  ReportScriptError (doc, "Tcl error",
+                     TFormat ("Function/Sub: %s called by %s", proc ? proc : "", what ? what : ""),
+                     msg ? msg : "", raisedBy);
   }
 
 // Does a command/proc of this name exist in the interpreter?

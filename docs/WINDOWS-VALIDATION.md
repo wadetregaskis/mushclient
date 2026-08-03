@@ -271,6 +271,16 @@ Two shared-source changes, both meant to be Windows no-ops:
    **Check:** install a plugin implementing `OnPluginMXPopenTag` and confirm it
    fires on an MXP tag.
 
+3. `LuaError`'s tail (the dialog-vs-output-window routing and the error log) is
+   factored into a new free function `ReportScriptError` in the same file, called
+   by `LuaError` and by the five embedded engines.  A pure extraction: the body
+   is the former tail, unchanged, and Windows compiles both.
+   **Check:** with "note errors to the output window" OFF, a Lua run-time error
+   still raises the Scripting Error dialog, and ticking its "show errors in the
+   output window next time" box still sets the world option; with it ON, the four
+   ColourNote lines still appear.  Also that `log_script_errors` still appends to
+   `script_error_log.txt`.
+
 `scripting/scripting.h` also gained `CScriptEngine::TraceCallback`, declared
 inside the existing `#else` (non-Windows) arm, and its definition in
 `scripting/lua_scripting.cpp` is `#ifndef _WIN32`.  Nothing to check beyond a

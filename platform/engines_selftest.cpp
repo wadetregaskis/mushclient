@@ -733,6 +733,37 @@ void battery_worldapi(const Dialect& d)
           "an array-returning method arrives with the right length");
 }
 
+// 5b. Where a script error GOES is the world's choice, not the engine's.
+//     World Properties > Scripting > "Note errors to the output window"; with it
+//     clear, the error raises the canonical CScriptErrorDlg instead (inert here),
+//     which is also how a user ticks the box from the error itself.  Each engine
+//     used to ColourNote unconditionally, so the setting was a dead reader for
+//     five of the six languages.
+//
+//     Run BOTH ways in the same engine: an "the output window is empty"
+//     assertion on its own passes when nothing happened at all.
+void battery_error_routing(const Dialect& d)
+{
+    const char* L = d.display;
+
+    {   // the box is ticked: the error text lands in the output window
+        Engine e(d.language, d.source);
+        if (!e.ok) { skip(L, "the error-routing setting is obeyed", "engine failed to open"); return; }
+        e.doc->m_bScriptErrorsToOutputWindow = TRUE;
+        e.callRtn("boom", "x");
+        check(e.saw("deliberate"), L,
+              "with 'note errors to the output window' ON, the error text is noted");
+    }
+    {   // the box is clear: it does not -- it goes to the dialog instead
+        Engine e(d.language, d.source);
+        if (!e.ok) return;
+        e.doc->m_bScriptErrorsToOutputWindow = FALSE;
+        e.callRtn("boom", "x");
+        check(!e.saw("deliberate"), L,
+              "with it OFF, the error is NOT noted (it raises the error dialog)");
+    }
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -800,6 +831,7 @@ bool run_language(const Dialect& d)
     battery_worldapi  (d);
     battery_state     (e, d);
     battery_trace     (d);
+    battery_error_routing(d);
     battery_mxp_callsite(d);
     battery_errors    (e, d);   // last: it disables handlers in this engine
     battery_compile   (d);

@@ -28,6 +28,17 @@ class CRubyEngine;
 #define DOCUMENT_STATE "mushclient.document"
 #define WORLD_LIBRARY "world"
 
+// Route a script error to the dialog or the output window, per the world's
+// "Note errors to the output window" setting, and to the error log.  Shared by
+// LuaError and by all five embedded engines' report_error.
+void ReportScriptError (CMUSHclientDoc * pDoc,
+                        LPCTSTR strEvent,
+                        LPCTSTR strCalledBy,
+                        LPCTSTR strDescription,
+                        LPCTSTR strRaisedBy,
+                        const bool bImmediate = true,
+                        const int nLine = 0);
+
 void LuaError (lua_State *L, 
                LPCTSTR strEvent = "Run-time error",
                LPCTSTR strProcedure = "",

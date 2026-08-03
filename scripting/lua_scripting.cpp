@@ -360,81 +360,31 @@ DISPID CScriptEngine::GetLuaDispid (const CString & strName)
   }
 
 
-void LuaError (lua_State *L,
-                LPCTSTR strEvent,
-                LPCTSTR strProcedure,
-                LPCTSTR strType,
-                LPCTSTR strReason,
-                CMUSHclientDoc * pDoc)
+// ── ReportScriptError ───────────────────────────────────────────────────────
+// The routing half of LuaError, factored out so EVERY engine uses it.
+//
+// It decides where a script error goes: the canonical CScriptErrorDlg unless
+// World Properties > Scripting > "Note errors to the output window" is ticked
+// (m_bScriptErrorsToOutputWindow), in which case four ColourNotes; plus the
+// "log_script_errors" file.  The dialog is also how a user TICKS that box --
+// from the error itself.
+//
+// On Windows this is what CScriptEngine::ShowError does for the COM languages
+// (scripting/scriptengine.cpp), so every language there obeys the setting.  On
+// the port the five embedded engines each ColourNoted directly: the setting was
+// a dead reader for them, the dialog never appeared, and its "show errors in the
+// output window next time" checkbox was unreachable for anyone whose world is
+// not scripted in Lua.
+//
+// Pure extraction -- the body is LuaError's former tail, unchanged.
+void ReportScriptError (CMUSHclientDoc * pDoc,
+                        LPCTSTR strEvent,
+                        LPCTSTR strCalledBy,
+                        LPCTSTR strDescription,
+                        LPCTSTR strRaisedBy,
+                        const bool bImmediate,
+                        const int nLine)
   {
-  // Collect the description and caller info into plain CStrings so both
-  // the Windows dialog path and the portable path can share them.
-  CString strCalledBy;
-  if (strlen (strProcedure) != 0)
-    {
-    strCalledBy = "Function/Sub: ";
-    strCalledBy += strProcedure;
-    strCalledBy += " called by ";
-    strCalledBy += strType;
-    strCalledBy += ENDLINE;
-    strCalledBy += "Reason: ";
-    strCalledBy += strReason;
-    }
-  else
-    strCalledBy = "Immediate execution";
-
-  CString strDescription = lua_tostring(L, -1);
-  lua_settop(L, 0);   // clear stack
-
-  CString strRaisedBy = "No active world";
-  if (pDoc)
-    {
-    if (pDoc->m_CurrentPlugin)
-      {
-      strRaisedBy = "Plugin: " + pDoc->m_CurrentPlugin->m_strName;
-      strRaisedBy += " (called from world: " + pDoc->m_mush_name + ")";
-      }
-    else
-      strRaisedBy = "World: " + pDoc->m_mush_name;
-    }
-
-  // work out the line number where the error is
-  bool bImmediate = true;
-  int nLine = 0;
-
-  if (strDescription.Left (18) == "[string \"Plugin\"]:")
-    {
-    bImmediate = false;
-    nLine = atoi (strDescription.Mid (18));
-    }
-  else if (strDescription.Left (23) == "[string \"Script file\"]:")
-    {
-    bImmediate = false;
-    nLine = atoi (strDescription.Mid (23));
-    }
-
-  // ONE BODY, EVERY BUILD.  This used to be an #ifdef _WIN32 / #else pair, and
-  // the port's arm noted every error to the output window unconditionally.  So
-  // World Properties > Scripting > "Note errors to the output window"
-  // (m_bScriptErrorsToOutputWindow) did nothing on the port: it behaved
-  // permanently as if the box were ticked, and the Scripting Error dialog never
-  // appeared -- which also meant its "show errors in output window next time"
-  // checkbox, the way you TICK that box from the error itself, was unreachable.
-  // The flag's only other readers are in scripting/scriptengine.cpp, which is
-  // #ifdef _WIN32 from top to bottom, so nothing off Windows read it at all.
-  //
-  // The dialog is fully portable and already built into mushgui
-  // (dialogs/ScriptErrorDlg.cpp, template IDD_SCRIPT_ERROR in the recovered
-  // resources); the headless build gets an inert stub from
-  // platform/doc_flip_gui_stubs.cpp, whose DoModal returns IDCANCEL.
-  //
-  // Note this is the branch taken when there is no document at all -- several
-  // callers pass none (LuaError's pDoc defaults to NULL) -- so a doc-less error
-  // now raises the dialog on the port too, exactly as it always has on Windows.
-  // CScriptErrorDlg::OnInitDialog hides the "raised by" and "use output window"
-  // controls when m_bHaveDoc is false, which is what makes that case read
-  // sensibly.
-
 #ifndef _WIN32
   // Console diagnostics.  Port-only, deliberately: Windows has no console and
   // has never emitted these, so they must not leak into the Windows build.
@@ -519,6 +469,85 @@ void LuaError (lua_State *L,
       }
     }
 
+  }  // end of ReportScriptError
+
+void LuaError (lua_State *L,
+                LPCTSTR strEvent,
+                LPCTSTR strProcedure,
+                LPCTSTR strType,
+                LPCTSTR strReason,
+                CMUSHclientDoc * pDoc)
+  {
+  // Collect the description and caller info into plain CStrings so both
+  // the Windows dialog path and the portable path can share them.
+  CString strCalledBy;
+  if (strlen (strProcedure) != 0)
+    {
+    strCalledBy = "Function/Sub: ";
+    strCalledBy += strProcedure;
+    strCalledBy += " called by ";
+    strCalledBy += strType;
+    strCalledBy += ENDLINE;
+    strCalledBy += "Reason: ";
+    strCalledBy += strReason;
+    }
+  else
+    strCalledBy = "Immediate execution";
+
+  CString strDescription = lua_tostring(L, -1);
+  lua_settop(L, 0);   // clear stack
+
+  CString strRaisedBy = "No active world";
+  if (pDoc)
+    {
+    if (pDoc->m_CurrentPlugin)
+      {
+      strRaisedBy = "Plugin: " + pDoc->m_CurrentPlugin->m_strName;
+      strRaisedBy += " (called from world: " + pDoc->m_mush_name + ")";
+      }
+    else
+      strRaisedBy = "World: " + pDoc->m_mush_name;
+    }
+
+  // work out the line number where the error is
+  bool bImmediate = true;
+  int nLine = 0;
+
+  if (strDescription.Left (18) == "[string \"Plugin\"]:")
+    {
+    bImmediate = false;
+    nLine = atoi (strDescription.Mid (18));
+    }
+  else if (strDescription.Left (23) == "[string \"Script file\"]:")
+    {
+    bImmediate = false;
+    nLine = atoi (strDescription.Mid (23));
+    }
+
+  // ONE BODY, EVERY BUILD.  This used to be an #ifdef _WIN32 / #else pair, and
+  // the port's arm noted every error to the output window unconditionally.  So
+  // World Properties > Scripting > "Note errors to the output window"
+  // (m_bScriptErrorsToOutputWindow) did nothing on the port: it behaved
+  // permanently as if the box were ticked, and the Scripting Error dialog never
+  // appeared -- which also meant its "show errors in output window next time"
+  // checkbox, the way you TICK that box from the error itself, was unreachable.
+  // The flag's only other readers are in scripting/scriptengine.cpp, which is
+  // #ifdef _WIN32 from top to bottom, so nothing off Windows read it at all.
+  //
+  // The dialog is fully portable and already built into mushgui
+  // (dialogs/ScriptErrorDlg.cpp, template IDD_SCRIPT_ERROR in the recovered
+  // resources); the headless build gets an inert stub from
+  // platform/doc_flip_gui_stubs.cpp, whose DoModal returns IDCANCEL.
+  //
+  // Note this is the branch taken when there is no document at all -- several
+  // callers pass none (LuaError's pDoc defaults to NULL) -- so a doc-less error
+  // now raises the dialog on the port too, exactly as it always has on Windows.
+  // CScriptErrorDlg::OnInitDialog hides the "raised by" and "use output window"
+  // controls when m_bHaveDoc is false, which is what makes that case read
+  // sensibly.
+
+  ReportScriptError (pDoc, strEvent, strCalledBy, strDescription,
+                     strRaisedBy, bImmediate, nLine);
   }   // end of LuaError
 
 // returns true if error

@@ -3561,8 +3561,18 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     m_histIdx = -1; ApplyHistRSearch(false);   // exit history browsing on send
     m_histParked = eHistNotParked;             // ...and forget any parked end
 
-    // Don't record passwords in history — m_bNoEcho signals a masked prompt.
-    bool isPassword = m_doc->m_bNoEcho;
+    // Don't record passwords in history, or write them to the log.
+    //
+    // Ask WHICH CONTROL the text came from, not just what the echo flag says
+    // right now.  m_bNoEcho is set the instant the telnet parser sees IAC
+    // WILL/WONT ECHO, but the visible swap to and from the masked bar happens in
+    // OnWorldTimer, up to 100 ms later.  In the window after the server restores
+    // echo, the flag is already false while the masked control is still on screen
+    // and still focused — so text the user typed as a password would have been
+    // classified as an ordinary command.  Testing the control closes that window;
+    // the flag stays in the test as well, so a masked prompt is still recognised
+    // in the moment before the swap.
+    bool isPassword = (inp == m_inputPassword) || m_doc->m_bNoEcho;
     if (!isPassword && !text.empty()) {
         // Add to history (no duplicates at the tail; trim if over limit).
         if (m_history.empty() || m_history.back() != text)

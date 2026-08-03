@@ -2268,7 +2268,16 @@ static int hook_font_dialog(void* /*parentHwnd*/, WxFontChoice* io)
                    wxString::FromUTF8(io->faceName));
 
     wxFontData data;
-    data.EnableEffects(false);
+    // Effects ON, and seed the colour from the caller.  Windows' CFontDialog is
+    // opened with CF_EFFECTS and both takes and returns a colour; here effects
+    // were disabled and the incoming io->color was dropped on the floor, so
+    // ret.GetColour() handed back wxFontData's default and every caller —
+    // including utils.fontpicker, whose third argument IS a preferred colour —
+    // got black no matter what it asked for or what the user chose.
+    data.EnableEffects(true);
+    data.SetColour(wxColour(GetRValue(io->color),
+                            GetGValue(io->color),
+                            GetBValue(io->color)));
     if (initial.IsOk()) data.SetInitialFont(initial);
 
     wxFontDialog dlg(parent, data);

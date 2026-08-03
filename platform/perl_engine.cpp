@@ -160,9 +160,13 @@ XS(mc_perl_invoke)
 
   // Every C++ object with a non-trivial destructor lives in this inner scope and
   // is destroyed BEFORE any croak() below.  croak() longjmps to the enclosing
-  // Perl eval and would skip C++ destructors (leak + UB), so we capture an error
-  // string here and croak only once the scope has fully unwound.
-  std::string err;
+  // Perl eval and would skip C++ destructors (leak + UB), so we capture the
+  // error here and croak only once the scope has fully unwound.
+  //
+  // A plain char buffer, not a std::string: the message itself is live AT the
+  // croak, so a std::string would leak its heap buffer -- smaller than the
+  // vectors this scope exists to protect, but the same bug.
+  char errmsg[320] = "";
   int count = 0;
   {
     std::vector<VARIANT> vargs((size_t) nargs);
@@ -180,8 +184,9 @@ XS(mc_perl_invoke)
       for (auto& a : vargs) MC_VariantClear(a);
       if (rc != MC_DISP_OK)
         { MC_VariantClear(result);
-          err = std::string("world->") + name + ": "
-              + (rc == MC_DISP_UNKNOWN ? "unknown method" : "bad arguments"); }
+          for (auto& o : outargs) MC_VariantClear(o);   // was leaked on this path
+          snprintf (errmsg, sizeof errmsg, "world->%s: %s", name,
+                    rc == MC_DISP_UNKNOWN ? "unknown method" : "bad arguments"); }
       else
         {
         rets.push_back(variant_to_sv(result));
@@ -202,10 +207,10 @@ XS(mc_perl_invoke)
     else
       {
       for (auto& a : vargs) MC_VariantClear(a);
-      err = std::string("world has no method or property '") + name + "'";
+      snprintf (errmsg, sizeof errmsg, "world has no method or property '%s'", name);
       }
 
-    if (err.empty())   // push results onto the Perl stack while rets is alive
+    if (!errmsg[0])   // push results onto the Perl stack while rets is alive
       {
       count = (int) rets.size();
       SPAGAIN;   // a world method may have re-entered the shared g_perl stack
@@ -215,7 +220,7 @@ XS(mc_perl_invoke)
       }
     }   // vargs / outargs / result / rets destroyed here — safe to croak now
 
-  if (!err.empty()) croak("%s", err.c_str());
+  if (errmsg[0]) croak("%s", errmsg);
   XSRETURN(count);
   }
 

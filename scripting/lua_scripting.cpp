@@ -641,10 +641,14 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
   if (regexp)
     {
     int i;
-    int ncapt;
-    int namecount;
-    unsigned char *name_table;
-    int name_entry_size;
+    // Initialised: pcre_fullinfo returns an error WITHOUT writing its output
+    // (PCRE_ERROR_NULL / BADMAGIC), and `namecount` then drives a loop over
+    // `name_table` -- both garbage.  Zero degrades to "no wildcards", which is
+    // the right answer for a regexp we cannot interrogate.
+    int ncapt = 0;
+    int namecount = 0;
+    unsigned char *name_table = NULL;
+    int name_entry_size = 0;
     unsigned char *tabptr;
     lua_newtable(L);                                                            
     paramCount++;   // we have one more parameter to the call
@@ -661,7 +665,7 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
     pcre_fullinfo(regexp->m_program, regexp->m_extra, PCRE_INFO_NAMECOUNT, &namecount);
     if (namecount > 0)
       {
-      int jchanged;
+      int jchanged = 0;
       pcre_fullinfo(regexp->m_program, regexp->m_extra, PCRE_INFO_NAMETABLE, &name_table);
       pcre_fullinfo(regexp->m_program, regexp->m_extra, PCRE_INFO_NAMEENTRYSIZE, &name_entry_size);
       pcre_fullinfo(regexp->m_program, regexp->m_extra, PCRE_INFO_JCHANGED, &jchanged);

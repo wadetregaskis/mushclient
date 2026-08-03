@@ -185,16 +185,19 @@ string t_regexp::GetWildcard (const string& sName) const
     else
       {
       /* now do named subpatterns  */
-      int namecount;
+      // Initialised: pcre_fullinfo returns an error WITHOUT writing its
+      // output, and `namecount` then drives a loop over `tabptr` -- both
+      // garbage.  Zero means "no named subpatterns", the right degraded answer.
+      int namecount = 0;
       pcre_fullinfo(m_program, m_extra, PCRE_INFO_NAMECOUNT, &namecount);
 
 
       if (namecount > 0)
         {
-        int name_entry_size;
-        unsigned char *tabptr;
-        int ncapt;
-        int jchanged;
+        int name_entry_size = 0;
+        unsigned char *tabptr = NULL;
+        int ncapt = 0;
+        int jchanged = 0;
         pcre_fullinfo(m_program, m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
         pcre_fullinfo(m_program, m_extra, PCRE_INFO_NAMETABLE, &tabptr);
         pcre_fullinfo(m_program, m_extra, PCRE_INFO_NAMEENTRYSIZE, &name_entry_size);

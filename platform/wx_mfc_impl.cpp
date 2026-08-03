@@ -1252,7 +1252,35 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             // enabled when the output window has a selection, or failing that
             // the command bar does.  The same call decides what Copy acts on
             // (see the command arm), so the two cannot drift.
-            evt.Enable(doc != nullptr && doc->EditCopyTarget() != eCopyNothing);
+            //
+            // The dialog case has to be answered here too, and for Copy only.
+            // Since Copy is on a non-standard id, wxOSX validates its Cmd-C key
+            // equivalent through the MENUBAR's frame — this handler — even while
+            // a modal bridged dialog owns the keyboard.  Without this arm the
+            // world's selection decided whether Cmd-C was live inside a dialog:
+            // with nothing selected in the world, the item was greyed, AppKit
+            // refused the key equivalent, and the command arm's
+            // copy-from-the-focused-field path (added alongside it) could never
+            // run.  That is the exact symmetry the command handler and the
+            // wxTheApp fallback already have; the update-UI arm was the sibling
+            // that got missed.
+            //
+            // Copy as HTML is deliberately NOT included: it only ever means the
+            // output window, so a dialog field does not make it available.
+            wxWindow* activeTop = wxGetActiveWindow();
+            const bool worldIsFrontmost =
+                (activeTop == nullptr) ||
+                (activeTop == frame)   ||
+                (activeTop == frame->GetActiveChild());
+
+            if (id == ID_EDIT_COPY && !worldIsFrontmost) {
+                auto* te = dynamic_cast<wxTextCtrl*>(wxWindow::FindFocus());
+                long from = 0, to = 0;
+                if (te) te->GetSelection(&from, &to);
+                evt.Enable(te != nullptr && to > from);
+            }
+            else
+                evt.Enable(doc != nullptr && doc->EditCopyTarget() != eCopyNothing);
         } else if (id == 32275 || id == 32276 || id == 32272 ||
                    id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
                    id == 32946 || id == 32947 || id == 33046 ||
@@ -1624,18 +1652,21 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             wx_quit_application();   // see wx_quit_application above
         } else if (id == wxID_NEW || id == 0xE100 /*ID_FILE_NEW*/
                    || id == 32289 /*ID_CONNECTION_QUICK_CONNECT*/) {
-            // Which of the two flows OnNewDocument runs is decided HERE, by the
-            // command, exactly as on Windows (MUSHclient.cpp: OnFileNew leaves
-            // eNormalNewDocument, OnConnectionQuickconnect sets eQuickConnect and
-            // resets it after).  hook_new_world used to force eQuickConnect
-            // unconditionally, so File > New World (Ctrl+N) opened the Quick
-            // Connect box instead of the canonical new-world flow — which is
-            // World Properties on the General page (doc_construct.cpp:852).
-            App.m_TypeOfNewDocument = (id == 32289)
-                                      ? CMUSHclientApp::eQuickConnect
-                                      : CMUSHclientApp::eNormalNewDocument;
-            App.OnFileNew();
-            App.m_TypeOfNewDocument = CMUSHclientApp::eNormalNewDocument;
+            // Call the canonical App method for the command, and let IT own the
+            // flow selection — that is where Windows keeps it.  OnFileNew sets
+            // eNormalNewDocument (the World Properties General page,
+            // doc_construct.cpp:852); OnConnectionQuickConnect sets
+            // eQuickConnect, opens the document and resets afterwards.
+            //
+            // Both used to land on App.OnFileNew() while hook_new_world forced
+            // eQuickConnect, so File > New World (Ctrl+N) opened the Quick
+            // Connect box and the canonical new-world flow was unreachable.
+            // Setting the flag around OnFileNew() does NOT work as a fix:
+            // OnFileNew's own first line resets it (MUSHclient.cpp:1364).
+            if (id == 32289 /*ID_CONNECTION_QUICK_CONNECT*/)
+                App.OnConnectionQuickConnect();
+            else
+                App.OnFileNew();
         } else if (id == wxID_OPEN || id == 0xE101 /*ID_FILE_OPEN*/) {
             // Show a file-open dialog filtered to MUSHclient world files.
             // Start in the default world directory if one is configured.

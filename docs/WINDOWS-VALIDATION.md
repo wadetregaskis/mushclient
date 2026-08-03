@@ -378,6 +378,29 @@ index BYTES -- which is also what Windows' `CEdit::GetSel` / `SetSel` are over
 its ANSI buffer. The seam now converts, via the new `UTF8ByteToCharOffset` /
 `UTF8CharToByteOffset` in `utilities_shared.cpp` (**no Windows caller**).
 
+### 4c-octies-bis. QUESTION TO ANSWER: what shape do wildcards reach a non-Lua callback in?
+
+Not a regression check — an **open design question** that cannot be settled off
+Windows. The port's five embedded engines hand a trigger/alias callback a
+0-based array: `[0]` = whole match, `[1..n]` = captures, length `n+1`. That is
+the shape the port's *own Lua* uses. Windows' COM arm builds something different
+(`doc_shared.cpp`, the `eWildcards` SAFEARRAY): 1-relative, always
+`MAX_WILDCARDS` (10) long, captures at 1..9, and the **whole matching line at
+index 10**.
+
+What we cannot determine from the source is what a *script* actually indexes,
+because that depends on the per-language COM bridge. pywin32, for instance,
+marshals a SAFEARRAY to a plain tuple and drops the lower bound — if so, a
+Windows ActivePython callback sees %1 at index 0 and the whole line at index 9,
+a third shape agreeing with neither.
+
+**Please determine, with ActivePython (or PerlScript / ActiveState Tcl — any
+non-Lua, non-VBScript ActiveScript engine) installed:** in a trigger callback
+with two captures, print the wildcards parameter's length and every index. Report
+(a) the lowest valid index, (b) the length, (c) which index holds the whole
+matching line, and (d) what an out-of-range capture reads as. Then the port can
+match the shape a real Windows script sees rather than the shape the C++ builds.
+
 **Check on Windows:** nothing changed there, but this pins the contract the
 Windows adapter already satisfies -- with a non-ASCII character early in the
 command bar, Tab completion must complete the word under the caret without

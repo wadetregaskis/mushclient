@@ -552,6 +552,55 @@ TEST(ConnectSocket, RefusesBadProxyConfiguration)
     delete doc;
 }
 
+// ── OpenSession: who decides whether opening a world dials ────────────────
+//
+// One setting decides, the global "connect to worlds automatically"
+// (App.m_bAutoConnectWorlds), and OpenSession is where it is read -- the last
+// thing OnOpenDocument does.  Pinned here because the wx port used to dial a
+// SECOND time from its open-world hook, gated on the world's m_connect_now,
+// which is a different setting entirely: the auto-LOGIN method (none / MUSH /
+// Diku / MXP).  A world that sent a MUSH login therefore connected on open even
+// with auto-connect switched off.
+//
+// The observable is m_iOutputPacketCount: ConnectSocket zeroes it once past its
+// validation guards, so a sentinel value survives exactly when it did not dial.
+
+TEST(OpenSession, DoesNotDialWhenAutoConnectIsOff)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_server = "127.0.0.1";           // dotted quad: no name lookup
+    doc->m_port = 1;
+    doc->m_bEnableScripts = FALSE;
+    doc->m_connect_now = eConnectMUSH;     // an auto-LOGIN method is set...
+    doc->m_iOutputPacketCount = 99;
+
+    const unsigned int save = App.m_bAutoConnectWorlds;
+    App.m_bAutoConnectWorlds = FALSE;      // ...but auto-connect is off
+    EXPECT_FALSE(doc->OpenSession());
+    App.m_bAutoConnectWorlds = save;
+
+    EXPECT_EQ(99L, doc->m_iOutputPacketCount);   // ConnectSocket never ran
+    delete doc;
+}
+
+TEST(OpenSession, DialsWhenAutoConnectIsOn)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_server = "127.0.0.1";
+    doc->m_port = 1;
+    doc->m_bEnableScripts = FALSE;
+    doc->m_connect_now = eNoAutoConnect;   // no auto-login configured at all...
+    doc->m_iOutputPacketCount = 99;
+
+    const unsigned int save = App.m_bAutoConnectWorlds;
+    App.m_bAutoConnectWorlds = TRUE;       // ...but auto-connect is on
+    doc->OpenSession();
+    App.m_bAutoConnectWorlds = save;
+
+    EXPECT_EQ(0L, doc->m_iOutputPacketCount);    // ConnectSocket ran
+    delete doc;
+}
+
 // ── SendPacket ─────────────────────────────────────────────────────────────
 
 TEST(SendPacket, CountsBytesAndPacketsThroughTransport)

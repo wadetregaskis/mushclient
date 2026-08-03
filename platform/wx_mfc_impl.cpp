@@ -1993,11 +1993,15 @@ static void* hook_open_world_file(const char* path)
     // right home for "where have I been", and it is maintained here.
     recent_worlds_add(path);
 
-    // Auto-connect if the world file says to (m_connect_now != 0).
-    // Mirrors what Windows does: after opening the file the connection phase is
-    // eConnectNotConnected and ConnectSocket() starts the async dial.
-    if (doc->m_connect_now && doc->m_iConnectPhase == eConnectNotConnected)
-        doc->ConnectSocket();
+    // NO auto-connect here.  The canonical rule already ran: OnOpenDocument
+    // above calls OpenSession, whose last act is
+    //   if (App.m_bAutoConnectWorlds) ConnectSocket();     (doc.cpp:500)
+    // -- the global "connect to worlds automatically" preference.  The port used
+    // to dial a second time gated on doc->m_connect_now, which is a different
+    // setting entirely: the auto-LOGIN method (none / MUSH / Diku / MXP,
+    // doc.h:349).  So a world configured to send a MUSH login connected on open
+    // even with auto-connect switched off, and a world with no auto-login never
+    // connected on open even with it switched on.
 
     return static_cast<void*>(doc);
 }
@@ -3698,6 +3702,30 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     dlg->Bind(wxEVT_RADIOBUTTON, [cdlg](wxCommandEvent& e) {
         if (!AfxDispatchCommand(cdlg, BN_CLICKED, (UINT) e.GetId())) e.Skip();
     });
+    // The non-BN_CLICKED notification codes.  Their ON_* map entries exist and
+    // are correct, but nothing emitted them, so twelve canonical handlers were
+    // dead: the trigger dialog's colour and send-to combos, the colour picker's
+    // sort combo, the function list's filter box, and the double-click-to-accept
+    // in the spell checker, Choose Notepad, Complete Word and command history.
+    // wx has one event per control family; MFC has one code per family, so the
+    // mapping is one line each.
+    dlg->Bind(wxEVT_TEXT, [cdlg](wxCommandEvent& e) {
+        if (!AfxDispatchCommand(cdlg, EN_CHANGE, (UINT) e.GetId())) e.Skip();
+    });
+    // wxComboBox (drop-down with an edit) and wxChoice (drop-list) raise
+    // different events; CBS_DROPDOWNLIST templates build the latter.
+    dlg->Bind(wxEVT_COMBOBOX, [cdlg](wxCommandEvent& e) {
+        if (!AfxDispatchCommand(cdlg, CBN_SELCHANGE, (UINT) e.GetId())) e.Skip();
+    });
+    dlg->Bind(wxEVT_CHOICE, [cdlg](wxCommandEvent& e) {
+        if (!AfxDispatchCommand(cdlg, CBN_SELCHANGE, (UINT) e.GetId())) e.Skip();
+    });
+    dlg->Bind(wxEVT_LISTBOX, [cdlg](wxCommandEvent& e) {
+        if (!AfxDispatchCommand(cdlg, LBN_SELCHANGE, (UINT) e.GetId())) e.Skip();
+    });
+    dlg->Bind(wxEVT_LISTBOX_DCLICK, [cdlg](wxCommandEvent& e) {
+        if (!AfxDispatchCommand(cdlg, LBN_DBLCLK, (UINT) e.GetId())) e.Skip();
+    });
     // A dialog posting itself a command -- CWnd::PostMessage(WM_COMMAND, ...) --
     // arrives here as a queued wxEVT_MENU on the dialog window (hook_post_message
     // above).  The wxEVT_BUTTON bind only sees real button clicks, so without this
@@ -3878,6 +3906,19 @@ static wxPanel* build_canonical_sheet_page(wxWindow* bookParent, CPropertyPage* 
         panel->Bind(wxEVT_BUTTON,      dispatch);
         panel->Bind(wxEVT_CHECKBOX,    dispatch);
         panel->Bind(wxEVT_RADIOBUTTON, dispatch);
+        // Same non-BN_CLICKED codes as the modal-dialog path above -- the world
+        // prefs pages carry four of the twelve (the trigger colour/send-to
+        // combos and the two colour combos on the appearance pages).
+        auto notify = [page](UINT code) {
+            return [page, code](wxCommandEvent& e) {
+                if (!AfxDispatchCommand(page, code, (UINT) e.GetId())) e.Skip();
+            };
+        };
+        panel->Bind(wxEVT_TEXT,           notify(EN_CHANGE));
+        panel->Bind(wxEVT_COMBOBOX,       notify(CBN_SELCHANGE));
+        panel->Bind(wxEVT_CHOICE,         notify(CBN_SELCHANGE));
+        panel->Bind(wxEVT_LISTBOX,        notify(LBN_SELCHANGE));
+        panel->Bind(wxEVT_LISTBOX_DCLICK, notify(LBN_DBLCLK));
         bind_list_notifications(panel, page);   // list column-sort / double-click
 
         page->OnInitDialog();          // canonical setup + DDX load (UpdateData(FALSE))
@@ -4418,17 +4459,36 @@ static void hook_set_font(void* hwnd, void* font)
     w->Refresh();
 }
 
+// BST_UNCHECKED = 0, BST_CHECKED = 1, BST_INDETERMINATE = 2.  A BS_AUTO3STATE
+// template builds a 3-state wxCheckBox (see wx_dialog_bridge.cpp), and its third
+// state has to survive the round trip through DDX_Check -- otherwise a trigger's
+// "don't care" style match reads back as "must not match".  Set3StateValue
+// asserts on a 2-state box, so the 3-state arm is taken only when there is one.
 static void hook_button_set_check(void* hwnd, int state)
 {
     wxWindow* w = (wxWindow*) hwnd;
-    if (wxCheckBox* cb = wxDynamicCast(w, wxCheckBox))         cb->SetValue(state != 0);
+    if (wxCheckBox* cb = wxDynamicCast(w, wxCheckBox)) {
+        if (cb->Is3State())
+            cb->Set3StateValue(state == 2 ? wxCHK_UNDETERMINED
+                             : state == 1 ? wxCHK_CHECKED
+                                          : wxCHK_UNCHECKED);
+        else
+            cb->SetValue(state != 0);
+    }
     else if (wxRadioButton* rb = wxDynamicCast(w, wxRadioButton)) rb->SetValue(state != 0);
 }
 
 static int hook_button_get_check(void* hwnd)
 {
     wxWindow* w = (wxWindow*) hwnd;
-    if (wxCheckBox* cb = wxDynamicCast(w, wxCheckBox))            return cb->GetValue() ? 1 : 0;
+    if (wxCheckBox* cb = wxDynamicCast(w, wxCheckBox)) {
+        if (!cb->Is3State()) return cb->GetValue() ? 1 : 0;
+        switch (cb->Get3StateValue()) {
+            case wxCHK_CHECKED:      return 1;
+            case wxCHK_UNDETERMINED: return 2;
+            default:                 return 0;
+        }
+    }
     if (wxRadioButton* rb = wxDynamicCast(w, wxRadioButton))      return rb->GetValue() ? 1 : 0;
     return 0;
 }

@@ -87,8 +87,9 @@ extern void  (*g_wxhook_show_activity_window)();
 
 // ── Open-world-file hook ───────────────────────────────────────────────────
 // Called from CMultiDocTemplate::OpenDocumentFile(path) on non-Windows.
-// Parses the world XML file at 'path', creates the child MDI frame, and
-// auto-connects if the world's m_connect_now setting says to.
+// Parses the world XML file at 'path' and creates the child MDI frame.  It does
+// NOT connect: OnOpenDocument -> OpenSession already applies the canonical
+// App.m_bAutoConnectWorlds rule (doc.cpp:500).
 // Returns the new CMUSHclientDoc* cast to void*, or nullptr on failure.
 extern void* (*g_wxhook_open_world_file)(const char* path);
 // Open the bundled default world (Discworld edition) if no world is open yet.

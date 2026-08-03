@@ -4115,11 +4115,16 @@ void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
   // see RFC 1073
 
 #ifndef _WIN32
-  // Non-Windows: the MFC view list is empty, so use the col/row dimensions
-  // maintained by the wxWidgets frame (m_gui_rows updated by OnSize/SendNAWS).
-  // m_nWrapColumn holds the current column count (updated by scriptingoptions).
+  // Non-Windows: the MFC view list is empty, so the row count comes from the
+  // wxWidgets frame instead (m_gui_rows, updated by OnSize/SendNAWS).  The
+  // column count is the iNewWidth the caller passed, exactly as the Windows arm
+  // uses it — this used to read m_nWrapColumn, which is the same value for the
+  // three callers that pass m_nWrapColumn but is still the OLD width for the
+  // one that matters: CMUSHclientDoc::Configure sends the new wrap column
+  // BEFORE storing it (configuration.cpp), so changing "wrap column" in World
+  // Properties announced the previous width to the MUD.
   {
-    int cols = std::max(1, (int)m_nWrapColumn);
+    int cols = std::max(1, iNewWidth);
     int rows = std::max(1, m_gui_rows);
     unsigned char p[] = {
         (unsigned char)IAC, (unsigned char)SB, (unsigned char)TELOPT_NAWS,

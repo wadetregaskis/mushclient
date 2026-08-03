@@ -1946,6 +1946,37 @@ TEST(AutoWrap, NawsReportsTheConfiguredColumnWhenAutoWrapIsOff)
     delete doc;
 }
 
+// ...but the width NAWS reports is the caller's argument, not m_nWrapColumn.
+// CMUSHclientDoc::Configure announces the new wrap column BEFORE storing it
+// (configuration.cpp), which is the one caller where the two disagree — so a
+// port arm that read the member announced the OLD width every time the user
+// changed "wrap column" in World Properties.
+TEST(AutoWrap, NawsReportsTheWidthItWasGivenNotTheStoredOne)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bNAWS_wanted = TRUE;
+    doc->m_nWrapColumn = 80;        // what the world is still configured for
+    doc->m_gui_rows = 25;
+    doc->SendWindowSizes(120);      // what Configure is about to change it to
+    std::string expect = { '\xFF', '\xFA', '\x1F', 0, 120, 0, 25, '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(expect) != std::string::npos);
+    delete doc;
+}
+
+// Widths and heights above 255 need both bytes; NAWS is big-endian (RFC 1073).
+TEST(AutoWrap, NawsSplitsWideDimensionsAcrossBothBytes)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bNAWS_wanted = TRUE;
+    doc->m_nWrapColumn = 80;                      // deliberately not the width
+    doc->m_gui_rows = 300;                        // 0x012C
+    doc->SendWindowSizes(500);                    // 0x01F4
+    std::string expect = { '\xFF', '\xFA', '\x1F',
+                           '\x01', '\xF4', '\x01', '\x2C', '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(expect) != std::string::npos);
+    delete doc;
+}
+
 // TranslateColour: opacity scaling with and without a translation map.
 TEST(SmallArms, TranslateColourOpacityArms)
 {

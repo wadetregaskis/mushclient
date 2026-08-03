@@ -54,12 +54,33 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
 {
     if (!HaveOutputSink()) return;
 
-    // Skip lines already forwarded to the GUI.
-    long toSkip = m_gui_lines_emitted;
-    POSITION pos = m_LineList.GetHeadPosition();
-    while (pos && toSkip > 0) {
-        m_LineList.GetNext(pos);
-        --toSkip;
+    // Resume at the first line the GUI has not seen yet.
+    //
+    // That line is always in the TAIL of the list — everything before it has
+    // been emitted — so walk BACKWARDS from the tail by the number of
+    // un-emitted lines, rather than forwards from the head by the number of
+    // emitted ones.  Same landing point, but the cost is proportional to the
+    // new lines in this packet instead of to the whole scrollback.
+    //
+    // This matters because of how often the drain runs: once per received
+    // packet (doc_shared.cpp OnBytesReceived), once per 100 ms world timer
+    // tick, and once per Note / WindowCreate / WindowShow / … scripting call.
+    // Skipping forwards meant a plugin doing a dozen Window* calls per prompt
+    // re-walked the entire buffer a dozen times per prompt.
+    //
+    // Deliberately NOT a cached POSITION: RemoveChunk deletes head nodes and
+    // ClearOutput deletes all of them, so a stored cursor would be a dangling
+    // pointer waiting for one more mutation site to be added without updating
+    // it.  Counting from the tail is derived fresh every call and cannot go
+    // stale.
+    const long total  = m_LineList.GetCount();
+    const long toEmit = total - m_gui_lines_emitted;
+
+    POSITION pos = nullptr;
+    if (toEmit > 0) {
+        pos = m_LineList.GetTailPosition();
+        for (long i = 1; i < toEmit && pos; ++i)
+            m_LineList.GetPrev(pos);
     }
 
     // Fast-exit: nothing pending — but still repaint so that operations that

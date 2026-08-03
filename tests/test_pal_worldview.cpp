@@ -16,6 +16,7 @@
 #include "pal/scroll_geometry.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -876,6 +877,55 @@ TEST(EditCopy, NoViewAttachedMeansNothingToCopy)
 //
 // Units: 15 px rows, a 300 px viewport (20 rows), so a 100-row document is
 // 1500 px and the bottom-most scroll position is (1500 - 300) / 15 = row 80.
+
+// The drain used to resume by skipping FORWARD from the head over every line
+// already emitted, so its cost was proportional to the whole scrollback — and
+// it runs once per received packet, once per 100 ms timer tick, and once per
+// Note/WindowCreate/WindowShow scripting call.  It now walks backwards from the
+// tail over the un-emitted lines instead, which is proportional to the new
+// output.  This pins that: draining the same amount of new text must not get
+// dramatically more expensive just because the buffer behind it is larger.
+TEST(PalWorldView, DrainCostFollowsNewLinesNotBufferSize)
+{
+    struct Timed {
+        static double drain_ms(int prefill, int newLines) {
+            FakeWorldView view;
+            CMUSHclientDoc doc; make_doc(doc);
+            doc.m_maxlines = 200000;          // no eviction: isolate the walk
+            doc.AllocateLinePositions();
+            doc.m_pWorldView = &view;
+
+            char buf[32];
+            for (int i = 0; i < prefill; ++i) {
+                snprintf(buf, sizeof buf, "p %d\n", i);
+                feed(doc, buf);               // feed() drains each time
+            }
+
+            auto t0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < newLines; ++i) {
+                snprintf(buf, sizeof buf, "n %d\n", i);
+                feed(doc, buf);
+            }
+            auto t1 = std::chrono::steady_clock::now();
+
+            doc.m_pWorldView = nullptr;
+            return std::chrono::duration<double, std::milli>(t1 - t0).count();
+        }
+    };
+
+    Timed::drain_ms(500, 200);                       // warm up
+    const double shallow = Timed::drain_ms(1000,  200);
+    const double deep    = Timed::drain_ms(40000, 200);
+
+    // 40x the buffer for the same 200 new lines.  O(buffer) would be ~40x the
+    // time; O(new) is ~1x.  Allow 8x plus a floor for timer noise — still far
+    // below what a return to the forward skip would cost.
+    const double budget = std::max(shallow * 8.0, 5.0);
+    EXPECT_TRUE(deep < budget);
+    if (deep >= budget)
+        printf("    drain after 1k lines=%.2fms after 40k=%.2fms budget=%.2fms\n",
+               shallow, deep, budget);
+}
 
 TEST(ScrollGeometry, BottomMostPositionIsAtTheBottom)
 {

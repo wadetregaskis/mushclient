@@ -200,7 +200,7 @@ public:
         // offer "connect anyway" instead of OpenSSL aborting mid-handshake).
         SSL_CTX_set_verify(m_ctx, SSL_VERIFY_PEER,
                            [](int, X509_STORE_CTX*) -> int { return 1; });
-        SSL_CTX_set_default_verify_paths(m_ctx);
+        ConfigureTrustAnchors(m_ctx);
 
         m_ssl = SSL_new(m_ctx);
         if (!m_ssl) {
@@ -473,6 +473,46 @@ private:
 };
 
 // ── factory + completion pump ────────────────────────────────────────────────
+
+// ── ConfigureTrustAnchors ─────────────────────────────────────────────────
+// Fill a client SSL_CTX's trust store, and say how many anchors ended up in it.
+//
+// SSL_CTX_set_default_verify_paths() alone is NOT enough on macOS.  It looks in
+// the OPENSSLDIR compiled into whichever libcrypto we linked, which for a
+// Homebrew build is /opt/homebrew/etc/openssl@3 — a path that exists on the
+// BUILD machine and on essentially no user's machine.  Measured with the
+// linked library: with that directory present the store gets 184 anchors; with
+// it absent it gets ZERO.  Every TLS world would then fail verification and
+// raise the "connect anyway?" prompt on every single connection, which is worse
+// than useless — it teaches the user to click through certificate warnings.
+//
+// macOS ships Apple's maintained root bundle at /etc/ssl/cert.pem (128 roots).
+// Load it too.  The call is additive and harmless where the defaults already
+// worked, and a no-op if the file is missing, so this stays correct on Linux,
+// where set_default_verify_paths finds the distribution's store by itself.
+int ConfigureTrustAnchors(void* vctx)
+{
+#ifdef OPENSSL_FOUND
+    SSL_CTX* ctx = static_cast<SSL_CTX*>(vctx);
+    if (!ctx) return 0;
+
+    SSL_CTX_set_default_verify_paths(ctx);
+
+#ifdef __APPLE__
+    // Ignore the result: a failure here just means the file was not there, and
+    // the defaults above may already have supplied a usable store.
+    SSL_CTX_load_verify_locations(ctx, "/etc/ssl/cert.pem", nullptr);
+#endif
+
+    X509_STORE* store = SSL_CTX_get_cert_store(ctx);
+    if (!store) return 0;
+    STACK_OF(X509_OBJECT)* objs = X509_STORE_get0_objects(store);
+    return objs ? sk_X509_OBJECT_num(objs) : 0;
+#else
+    (void) vctx;
+    return 0;
+#endif
+}
 
 ITransport* CreatePosixTransport(ITransportEvents& events)
 {

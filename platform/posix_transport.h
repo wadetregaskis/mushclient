@@ -35,6 +35,14 @@ ITransport* CreatePosixTransport(ITransportEvents& events);
 // CAsyncSocket::Poll().
 void PumpTransportCompletions();
 
+// Populate a client SSL_CTX's trust store.  Exposed (rather than kept inside
+// startTls) so a test can assert it still finds anchors when OpenSSL's own
+// compiled-in default path is absent — which is the situation on every Mac that
+// does not have the BUILD machine's Homebrew openssl installed.  Returns the
+// number of anchors loaded, so "we have a trust store" is checkable.
+// ctx is a SSL_CTX*; typed as void* so this header does not drag in <openssl/ssl.h>.
+int ConfigureTrustAnchors(void* ctx);
+
 } // namespace pal
 
 // Hidden conformance harness (--pal-transport-selftest): exercises the real

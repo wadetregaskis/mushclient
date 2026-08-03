@@ -738,3 +738,42 @@ TEST(PalTransport, TlsHandshakeProtocolFailure)
 #endif // OPENSSL_VERSION_TEXT
 
 MC_TEST_MAIN()
+
+// ── TLS trust anchors ─────────────────────────────────────────────────────
+// (Registered by static init, so defining it after MC_TEST_MAIN() is fine —
+// same pattern as the TLS block above.)
+//
+// SSL_CTX_set_default_verify_paths() alone looks in the OPENSSLDIR compiled
+// into whichever libcrypto we linked.  For a Homebrew build that is
+// /opt/homebrew/etc/openssl@3 — a path that exists on the BUILD machine and on
+// essentially no user's machine.  Measured against the linked library: with
+// that directory present the store gets 184 anchors; with it absent, ZERO.  A
+// packaged app would then fail verification for every TLS world and raise the
+// "connect anyway?" prompt every single time, which is worse than useless — it
+// teaches the user to click through certificate warnings.
+//
+// This forces exactly that situation (SSL_CERT_FILE / SSL_CERT_DIR point at
+// nothing, which is what OpenSSL consults ahead of its compiled-in default) and
+// requires a usable trust store regardless.
+#if defined(OPENSSL_VERSION_TEXT)
+#include <cstdlib>
+TEST(PalTransport, TrustStoreSurvivesWithoutTheBuildMachinesOpensslDir)
+{
+    setenv("SSL_CERT_FILE", "/nonexistent/cert.pem", 1);
+    setenv("SSL_CERT_DIR",  "/nonexistent/certs",    1);
+
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    ASSERT_NE(nullptr, ctx);
+    const int anchors = pal::ConfigureTrustAnchors(ctx);
+    SSL_CTX_free(ctx);
+
+    unsetenv("SSL_CERT_FILE");
+    unsetenv("SSL_CERT_DIR");
+
+    // Any real store holds dozens; the failure being pinned is exactly 0.
+    EXPECT_GT(anchors, 20);
+    if (anchors <= 20)
+        printf("    only %d trust anchors - a packaged app would prompt on "
+               "every TLS connection\n", anchors);
+}
+#endif

@@ -56,17 +56,106 @@ JSClassRef g_methodClass = nullptr;
 
 struct MethodData { CMUSHclientDoc* doc; std::string name; };
 
-// ── string helpers ──────────────────────────────────────────────────────────
+// ── byte-safe string conversion (surrogate-escape, as py_engine.cpp does) ───
+// MUD text is regularly not valid UTF-8: Latin-1 worlds, and raw bytes captured
+// by a trigger wildcard.  JavaScriptCore only speaks UTF-16, and its two
+// convenience converters both lose such data --
+// JSStringCreateWithUTF8CString answers an EMPTY string for invalid input, and
+// JSStringGetUTF8CString re-encodes on the way back -- so a Latin-1 line reached
+// a JavaScript trigger as "" and could not survive a round trip.
+//
+// Use the same escape the Python engine uses: an undecodable byte b becomes the
+// lone low surrogate U+DC00|b (so 0x80..0xFF map to U+DC80..U+DCFF, exactly
+// Python's "surrogateescape"), and the reverse conversion turns those back into
+// the original byte.  Everything else is ordinary UTF-8 <-> UTF-16, so valid
+// text behaves exactly as before and the escape is invisible to scripts that
+// only ever see well-formed input.
+static void utf8_to_utf16_escaped (const char* p, size_t n, std::vector<JSChar> & out)
+  {
+  const unsigned char* b = (const unsigned char*) p;
+  for (size_t i = 0; i < n; )
+    {
+    unsigned char c = b[i];
+    size_t extra = 0;
+    unsigned int cp = 0;
+    if      (c < 0x80)           { out.push_back ((JSChar) c); i++; continue; }
+    else if ((c & 0xE0) == 0xC0) { extra = 1; cp = c & 0x1F; }
+    else if ((c & 0xF0) == 0xE0) { extra = 2; cp = c & 0x0F; }
+    else if ((c & 0xF8) == 0xF0) { extra = 3; cp = c & 0x07; }
+    else                         { out.push_back ((JSChar) (0xDC00 | c)); i++; continue; }
+
+    bool ok = (i + extra < n);
+    for (size_t k = 1; ok && k <= extra; k++)
+      {
+      unsigned char cc = b[i + k];
+      if ((cc & 0xC0) != 0x80) ok = false;
+      else cp = (cp << 6) | (cc & 0x3F);
+      }
+    if (ok)
+      {
+      if      (extra == 1 && cp < 0x80)      ok = false;   // overlong
+      else if (extra == 2 && cp < 0x800)     ok = false;
+      else if (extra == 3 && cp < 0x10000)   ok = false;
+      else if (cp > 0x10FFFF)                ok = false;
+      else if (cp >= 0xD800 && cp <= 0xDFFF) ok = false;   // encoded surrogate
+      }
+    if (!ok)
+      { out.push_back ((JSChar) (0xDC00 | c)); i++; continue; }   // escape lead byte only
+
+    if (cp < 0x10000)
+      out.push_back ((JSChar) cp);
+    else
+      {
+      cp -= 0x10000;
+      out.push_back ((JSChar) (0xD800 | (cp >> 10)));
+      out.push_back ((JSChar) (0xDC00 | (cp & 0x3FF)));
+      }
+    i += extra + 1;
+    }
+  }
+
+static void append_utf8 (std::string & out, unsigned int cp)
+  {
+  if (cp < 0x80)          out += (char) cp;
+  else if (cp < 0x800)  { out += (char) (0xC0 | (cp >> 6));  out += (char) (0x80 | (cp & 0x3F)); }
+  else if (cp < 0x10000){ out += (char) (0xE0 | (cp >> 12)); out += (char) (0x80 | ((cp >> 6) & 0x3F));
+                          out += (char) (0x80 | (cp & 0x3F)); }
+  else                  { out += (char) (0xF0 | (cp >> 18)); out += (char) (0x80 | ((cp >> 12) & 0x3F));
+                          out += (char) (0x80 | ((cp >> 6) & 0x3F)); out += (char) (0x80 | (cp & 0x3F)); }
+  }
+
 std::string jsstr_to_std(JSStringRef s)
   {
   if (!s) return std::string();
-  size_t maxlen = JSStringGetMaximumUTF8CStringSize(s);
-  std::string out(maxlen, '\0');
-  size_t n = JSStringGetUTF8CString(s, &out[0], maxlen);
-  if (n > 0) out.resize(n - 1);   // n includes the trailing NUL
-  else out.clear();
+  const JSChar* u = JSStringGetCharactersPtr (s);
+  size_t n = JSStringGetLength (s);
+  if (!u) return std::string();
+  std::string out;
+  out.reserve (n);
+  for (size_t i = 0; i < n; i++)
+    {
+    unsigned int c = u[i];
+    if (c >= 0xDC80 && c <= 0xDCFF)          // escaped byte, put it back
+      { out += (char) (unsigned char) (c & 0xFF); continue; }
+    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n &&
+        u[i + 1] >= 0xDC00 && u[i + 1] <= 0xDFFF)
+      { append_utf8 (out, 0x10000 + (((c - 0xD800) << 10) | (u[i + 1] - 0xDC00))); i++; continue; }
+    append_utf8 (out, c);
+    }
   return out;
   }
+
+static JSStringRef js_string_from_bytes (const char* p, size_t n)
+  {
+  if (!p || n == 0) return JSStringCreateWithUTF8CString ("");
+  std::vector<JSChar> u16;
+  u16.reserve (n);
+  utf8_to_utf16_escaped (p, n, u16);
+  return JSStringCreateWithCharacters (u16.empty () ? nullptr : u16.data (), u16.size ());
+  }
+
+static JSStringRef js_string_from_bytes (const std::string & s)
+  { return js_string_from_bytes (s.data (), s.size ()); }
 
 JSValueRef make_world(JSContextRef ctx, CMUSHclientDoc* doc);
 
@@ -105,7 +194,7 @@ JSValueRef variant_to_js(JSContextRef ctx, const VARIANT& v)
         if (base == VT_BSTR)
           {
           BSTR* p = ((BSTR*) sa->pvData) + i;
-          JSStringRef js = JSStringCreateWithUTF8CString((*p) ? *p : "");
+          JSStringRef js = js_string_from_bytes((*p) ? *p : "", (*p) ? strlen(*p) : 0);
           items.push_back(JSValueMakeString(ctx, js));
           JSStringRelease(js);
           }
@@ -129,7 +218,7 @@ JSValueRef variant_to_js(JSContextRef ctx, const VARIANT& v)
     case VT_BOOL: return JSValueMakeBoolean(ctx, v.boolVal != 0);
     case VT_BSTR:
       {
-      JSStringRef js = JSStringCreateWithUTF8CString(v.bstrVal ? v.bstrVal : "");
+      JSStringRef js = js_string_from_bytes(v.bstrVal ? v.bstrVal : "", v.bstrVal ? strlen(v.bstrVal) : 0);
       JSValueRef r = JSValueMakeString(ctx, js);
       JSStringRelease(js);
       return r;
@@ -335,7 +424,7 @@ void CScriptEngine::CloseJS ()
 bool CScriptEngine::ParseJS (const CString & strCode, const CString & strWhat)
   {
   if (!m_jsEngine) return true;
-  JSStringRef src = JSStringCreateWithUTF8CString ((LPCTSTR) strCode);
+  JSStringRef src = js_string_from_bytes ((LPCTSTR) strCode, (size_t) strCode.GetLength ());
   JSValueRef exc = nullptr;
   JSEvaluateScript (m_jsEngine->ctx, src, nullptr, nullptr, 1, &exc);
   JSStringRelease (src);
@@ -369,7 +458,7 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
   for (double d : nparams)
     args.push_back (JSValueMakeNumber (ctx, d));
   for (const string & s : sparams)
-    { JSStringRef js = JSStringCreateWithUTF8CString (s.c_str ()); args.push_back (JSValueMakeString (ctx, js)); JSStringRelease (js); }
+    { JSStringRef js = js_string_from_bytes (s); args.push_back (JSValueMakeString (ctx, js)); JSStringRelease (js); }
 
   if (regexp)                            // wildcards as a JS array [whole, $1, …]
     {
@@ -377,7 +466,7 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
     pcre_fullinfo (regexp->m_program, regexp->m_extra, PCRE_INFO_CAPTURECOUNT, &ncapt);
     std::vector<JSValueRef> wc;
     for (int i = 0; i <= ncapt; i++)
-      { string w (regexp->GetWildcard (i)); JSStringRef js = JSStringCreateWithUTF8CString (w.c_str ());
+      { string w (regexp->GetWildcard (i)); JSStringRef js = js_string_from_bytes (w);
         wc.push_back (JSValueMakeString (ctx, js)); JSStringRelease (js); }
     args.push_back (JSObjectMakeArray (ctx, wc.size (), wc.empty () ? nullptr : wc.data (), nullptr));
     }
@@ -386,8 +475,8 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
     {
     JSObjectRef o = JSObjectMake (ctx, nullptr, nullptr);
     for (const auto & kv : *table)
-      { JSStringRef k = JSStringCreateWithUTF8CString (kv.first.c_str ());
-        JSStringRef vv = JSStringCreateWithUTF8CString (kv.second.c_str ());
+      { JSStringRef k = js_string_from_bytes (kv.first);
+        JSStringRef vv = js_string_from_bytes (kv.second);
         JSObjectSetProperty (ctx, o, k, JSValueMakeString (ctx, vv), 0, nullptr);
         JSStringRelease (k); JSStringRelease (vv); }
     args.push_back (o);
@@ -429,7 +518,7 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
   JSObjectRef fn = resolve (ctx, szProcedure);
   if (!fn) { dispid = DISPID_UNKNOWN; return true; }
 
-  JSStringRef js = JSStringCreateWithUTF8CString ((LPCTSTR) strParam);
+  JSStringRef js = js_string_from_bytes ((LPCTSTR) strParam, (size_t) strParam.GetLength ());
   JSValueRef arg = JSValueMakeString (ctx, js);
   JSStringRelease (js);
 

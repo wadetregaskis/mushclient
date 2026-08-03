@@ -330,7 +330,20 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = iReason;
   int rc = Tcl_EvalObjv (interp, 2, av, 0);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = eUnknownActionSource;
-  if (rc == TCL_OK) { const char* r = Tcl_GetStringResult (interp); result = r ? r : ""; }
+  // Only a non-empty result replaces the caller's string.  This callback shape
+  // is ExecutePluginScriptRtn's, where the same CString is both the argument and
+  // the result -- OnPluginPacketReceived, OnPluginCommandChanged and friends --
+  // so an unconditional assignment blanked every packet and every typed command
+  // the moment a Tcl world loaded a plugin.  Tcl has no "returned nothing"
+  // sentinel: a proc that falls off the end leaves an empty interpreter result,
+  // indistinguishable from an explicit `return ""`.  Empty therefore means
+  // "leave it alone", which is the same effect the four sibling engines get from
+  // their None / undefined / nil / undef checks.
+  if (rc == TCL_OK)
+    {
+    const char* r = Tcl_GetStringResult (interp);
+    if (r && *r) result = r;
+    }
   Tcl_DecrRefCount (av[0]); Tcl_DecrRefCount (av[1]);
 
   if (rc != TCL_OK) { dispid = DISPID_UNKNOWN; report_error (m_pDoc, interp, szType, szProcedure); return true; }

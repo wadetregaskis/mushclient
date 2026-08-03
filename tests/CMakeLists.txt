@@ -118,6 +118,10 @@ if(TARGET mushgui)
              COMMAND $<TARGET_FILE:mushgui> --pal-transport-selftest)
     add_test(NAME selftest_pal_miniwindow
              COMMAND $<TARGET_FILE:mushgui> --pal-miniwindow-selftest)
+    # The five embedded interpreters: the only place they can be exercised, since
+    # they are linked into the app and deliberately kept out of mushcore.
+    add_test(NAME selftest_engines
+             COMMAND $<TARGET_FILE:mushgui> --engines-selftest)
     # RUN_SERIAL: each boots a real wx app instance; two at once race on the
     # window server (an occasional single-selftest flake under `ctest -j`).
     set_tests_properties(selftest_pal_surface selftest_pal_transport

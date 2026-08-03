@@ -125,6 +125,11 @@ SV* variant_to_sv(const VARIANT& v)
     case VT_BSTR: return newSVpv(v.bstrVal ? v.bstrVal : "", 0);
     case VT_DISPATCH:
       {
+      // A null dispatch is how the engine says "no such thing" -- GetWorld on a
+      // world that is not open, for instance.  Blessing it anyway hands the
+      // script a reference that looks live and segfaults on first use; the
+      // other three engines return undef/None/nil/undefined here.
+      if (!v.byref) return newSV(0);
       SV* ref = newRV_noinc(newSViv((IV)(intptr_t) v.byref));
       sv_bless(ref, gv_stashpv(WORLD_STASH, GV_ADD));
       return ref;

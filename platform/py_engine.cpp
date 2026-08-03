@@ -537,7 +537,27 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   if (res != Py_None)
     {
     PyObject* str = PyObject_Str (res);
-    if (str) { const char* s = PyUnicode_AsUTF8 (str); if (s) result = s; Py_DECREF (str); }
+    if (str)
+      {
+      // surrogateescape on the way OUT as well as in (the arguments are decoded
+      // with it a few lines up).  PyUnicode_AsUTF8 refuses a string holding the
+      // lone surrogates that escape produces, so a callback handed a Latin-1 MUD
+      // line and asked to return it got NULL here -- the caller's string was
+      // silently left as it was, and the pending UnicodeEncodeError leaked into
+      // the next call.
+      PyObject* enc = PyUnicode_AsEncodedString (str, "utf-8", "surrogateescape");
+      if (enc)
+        {
+        char*      p = nullptr;
+        Py_ssize_t n = 0;
+        if (PyBytes_AsStringAndSize (enc, &p, &n) == 0 && p)
+          result = CString (p, (int) n);
+        Py_DECREF (enc);
+        }
+      else
+        PyErr_Clear ();
+      Py_DECREF (str);
+      }
     }
   Py_DECREF (res);
   return false;

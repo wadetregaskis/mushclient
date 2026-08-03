@@ -35,6 +35,12 @@ int RunPalTransportSelfTest();
 // hidden --pal-miniwindow-selftest flag.
 int RunPalMiniWindowSelfTest();
 
+// In-app conformance harness for the five embedded scripting engines
+// (platform/engines_selftest.cpp), run via the hidden --engines-selftest flag.
+// They cannot be tested headlessly: each pulls in a whole interpreter, which the
+// 31 mushcore test executables must not link.
+int RunEmbeddedEnginesSelfTest();
+
 #include "pal/surface_bridge.h"   // pal::g_surface — checked before installing
                                   // the bridge for the miniwindow selftest
 
@@ -52,6 +58,10 @@ public:
             }
             if (wxString(argv[i]) == wxT("--pal-transport-selftest")) {
                 const int failures = RunPalTransportSelfTest();
+                std::exit(failures == 0 ? 0 : 1);
+            }
+            if (wxString(argv[i]) == wxT("--engines-selftest")) {
+                const int failures = RunEmbeddedEnginesSelfTest();
                 std::exit(failures == 0 ? 0 : 1);
             }
             if (wxString(argv[i]) == wxT("--pal-miniwindow-selftest")) {

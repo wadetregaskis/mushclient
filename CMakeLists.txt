@@ -556,6 +556,7 @@ if(NOT WIN32)
         miniwindow_compose.cpp
         surface_bridge.cpp
         platform/miniwindow_selftest.cpp
+        platform/engines_selftest.cpp
         mushview.cpp
         sendvw.cpp
         textchildfrm.cpp

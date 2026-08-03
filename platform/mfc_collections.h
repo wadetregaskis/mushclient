@@ -33,212 +33,229 @@ typedef void* POSITION;
 // Tag types used as first template argument in MFC (ignored here)
 struct CPtrList {};
 
+// An INTRUSIVE doubly-linked list: the node carries the value, and POSITION is
+// the node address.  That is what MFC's POSITION actually is, and it is the
+// reason every cursor operation below is O(1).
+//
+// The previous implementation wrapped std::list and kept a separate vector of
+// heap-allocated Node{iterator} objects, mapping an iterator back to its Node by
+// LINEAR SEARCH ("this is O(n) but the collections are small" — which is false:
+// CMUSHclientDoc::m_LineList is the entire scrollback).  Every GetNext() paid
+// that search, so walking a list of N elements was O(N^2), and RemoveHead() —
+// the head-trim in RemoveChunk — was O(N) per element removed.  At the default
+// 5,000-line buffer a single full walk was ~12.5 million node comparisons; the
+// display drain walks the line list on every received packet.
+//
+// Semantics preserved exactly: POSITION is an opaque non-null token, NULL means
+// end/not-found, and a POSITION stays valid until its own element is removed.
 template<typename _Base, typename TYPE>
 class CTypedPtrList
 {
 public:
-    typedef std::list<TYPE> ListType;
-    typedef typename ListType::iterator       Iter;
-    typedef typename ListType::const_iterator CIter;
-
-    // Node wrapper — allocated on heap so we can hand out stable POSITION tokens
     struct Node {
-        Iter it;   // iterator into list_
+        TYPE  val;
+        Node* prev;
+        Node* next;
     };
+
+    // Forward iterator over the VALUES, so range-for and the std::list-shaped
+    // helpers below keep working.  A null node is end().
+    class iterator {
+    public:
+        iterator() : n_(nullptr) {}
+        explicit iterator(Node* n) : n_(n) {}
+        TYPE&     operator*()  const { return n_->val; }
+        TYPE*     operator->() const { return &n_->val; }
+        iterator& operator++()       { n_ = n_->next; return *this; }
+        iterator  operator++(int)    { iterator t = *this; n_ = n_->next; return t; }
+        bool operator==(const iterator& o) const { return n_ == o.n_; }
+        bool operator!=(const iterator& o) const { return n_ != o.n_; }
+        Node* node() const { return n_; }
+    private:
+        Node* n_;
+    };
+    typedef iterator Iter;
+    typedef iterator CIter;
 
     CTypedPtrList() = default;
     ~CTypedPtrList() { RemoveAll(); }
 
     // ── Move / copy ───────────────────────────────────────────────────────
-    // The user-declared destructor suppresses the implicit move constructor
-    // in C++11/17.  Declare it explicitly so containers that hold a
-    // CTypedPtrList (e.g. CMUSHclientDoc) can be returned by value even when
-    // NRVO does not fire.
-    //
-    // std::list move transfers ownership and keeps iterators valid (they now
-    // point into the destination list), so the Node objects in nodes_ remain
-    // correct after a move.
+    // The user-declared destructor suppresses the implicit move constructor in
+    // C++11/17.  Declare it explicitly so containers that hold a CTypedPtrList
+    // (e.g. CMUSHclientDoc) can be returned by value even when NRVO does not
+    // fire.  Nodes are heap-allocated, so moving is a pointer steal and every
+    // outstanding POSITION stays valid.
     CTypedPtrList(CTypedPtrList&& o) noexcept
-        : list_(std::move(o.list_))
-        , nodes_(std::move(o.nodes_))
-    {}
+        : head_(o.head_), tail_(o.tail_), size_(o.size_)
+    { o.head_ = o.tail_ = nullptr; o.size_ = 0; }
     CTypedPtrList& operator=(CTypedPtrList&& o) noexcept {
         if (this != &o) {
             RemoveAll();
-            list_  = std::move(o.list_);
-            nodes_ = std::move(o.nodes_);
+            head_ = o.head_; tail_ = o.tail_; size_ = o.size_;
+            o.head_ = o.tail_ = nullptr; o.size_ = 0;
         }
         return *this;
     }
-    // Copying is unsafe: the default copy would shallow-copy Node pointers
-    // whose iterators point into the source's list_, not the copy's.
+    // Copying is unsafe: the default copy would shallow-copy the node pointers,
+    // so two lists would own the same nodes.
     CTypedPtrList(const CTypedPtrList&)            = delete;
     CTypedPtrList& operator=(const CTypedPtrList&) = delete;
 
     // ── Adding ────────────────────────────────────────────────────────────
 
     POSITION AddTail(TYPE val) {
-        list_.push_back(val);
-        Node* n = new Node{ std::prev(list_.end()) };
-        nodes_.push_back(n);
+        Node* n = new Node{ val, tail_, nullptr };
+        if (tail_) tail_->next = n; else head_ = n;
+        tail_ = n;
+        ++size_;
         return (POSITION)n;
     }
     // Append all elements from another list (mirrors MFC CPtrList::AddTail(CPtrList*))
     void AddTail(CTypedPtrList* pOther) {
         if (!pOther) return;
-        for (TYPE v : pOther->list_) AddTail(v);
+        for (Node* n = pOther->head_; n; n = n->next) AddTail(n->val);
     }
     POSITION AddHead(TYPE val) {
-        list_.push_front(val);
-        Node* n = new Node{ list_.begin() };
-        nodes_.push_back(n);
+        Node* n = new Node{ val, nullptr, head_ };
+        if (head_) head_->prev = n; else tail_ = n;
+        head_ = n;
+        ++size_;
         return (POSITION)n;
     }
 
     // ── Removal ───────────────────────────────────────────────────────────
 
     TYPE RemoveTail() {
-        assert(!list_.empty());
-        TYPE val = list_.back();
-        RemoveNodeAt(std::prev(list_.end()));
+        assert(tail_);
+        TYPE val = tail_->val;
+        Unlink(tail_);
         return val;
     }
     TYPE RemoveHead() {
-        assert(!list_.empty());
-        TYPE val = list_.front();
-        RemoveNodeAt(list_.begin());
+        assert(head_);
+        TYPE val = head_->val;
+        Unlink(head_);
         return val;
     }
     void RemoveAt(POSITION pos) {
-        Node* n = reinterpret_cast<Node*>(pos);
-        RemoveNodeAt(n->it);
+        assert(pos);
+        Unlink(reinterpret_cast<Node*>(pos));
     }
-    // std::list-compatible erase: removes element at `it`, returns next iterator.
-    Iter erase(Iter it) {
-        for (auto nit = nodes_.begin(); nit != nodes_.end(); ++nit) {
-            if ((*nit)->it == it) {
-                delete *nit;
-                nodes_.erase(nit);
-                break;
-            }
-        }
-        return list_.erase(it);
+    // std::list-compatible erase: removes the element at `it`, returns the
+    // iterator that followed it.
+    iterator erase(iterator it) {
+        Node* n = it.node();
+        assert(n);
+        Node* nxt = n->next;
+        Unlink(n);
+        return iterator(nxt);
     }
     void RemoveAll() {
-        list_.clear();
-        for (Node* n : nodes_) delete n;
-        nodes_.clear();
+        for (Node* n = head_; n; ) { Node* nx = n->next; delete n; n = nx; }
+        head_ = tail_ = nullptr;
+        size_ = 0;
     }
 
     // ── Access ────────────────────────────────────────────────────────────
 
-    TYPE& GetHead()        { return list_.front(); }
-    TYPE  GetHead() const  { return list_.front(); }
-    TYPE& GetTail()        { return list_.back(); }
-    TYPE  GetTail() const  { return list_.back(); }
+    TYPE& GetHead()        { assert(head_); return head_->val; }
+    TYPE  GetHead() const  { assert(head_); return head_->val; }
+    TYPE& GetTail()        { assert(tail_); return tail_->val; }
+    TYPE  GetTail() const  { assert(tail_); return tail_->val; }
     TYPE  GetAt(POSITION pos) const {
-        return *reinterpret_cast<const Node*>(pos)->it;
+        return reinterpret_cast<const Node*>(pos)->val;
     }
     TYPE& GetAt(POSITION pos) {
-        return *reinterpret_cast<Node*>(pos)->it;
+        return reinterpret_cast<Node*>(pos)->val;
     }
     void  SetAt(POSITION pos, TYPE val) {
-        *reinterpret_cast<Node*>(pos)->it = val;
+        reinterpret_cast<Node*>(pos)->val = val;
     }
 
     // ── Iteration ─────────────────────────────────────────────────────────
 
-    POSITION GetHeadPosition() const {
-        if (list_.empty()) return nullptr;
-        return nodeForIter(const_cast<ListType&>(list_).begin());
-    }
-    POSITION GetTailPosition() const {
-        if (list_.empty()) return nullptr;
-        return nodeForIter(std::prev(const_cast<ListType&>(list_).end()));
-    }
+    POSITION GetHeadPosition() const { return (POSITION)head_; }
+    POSITION GetTailPosition() const { return (POSITION)tail_; }
     // GetNext: returns value at pos, then advances pos to next (or nullptr)
     TYPE GetNext(POSITION& pos) const {
         Node* n = reinterpret_cast<Node*>(pos);
-        TYPE val = *n->it;
-        Iter next = std::next(n->it);
-        pos = (next == list_.end()) ? nullptr : nodeForIter(next);
-        return val;
+        pos = (POSITION)n->next;
+        return n->val;
     }
     TYPE& GetNext(POSITION& pos) {
         Node* n = reinterpret_cast<Node*>(pos);
-        TYPE& val = *n->it;
-        Iter next = std::next(n->it);
-        pos = (next == list_.end()) ? nullptr : nodeForIter(next);
-        return val;
+        pos = (POSITION)n->next;
+        return n->val;
     }
     TYPE GetPrev(POSITION& pos) const {
         Node* n = reinterpret_cast<Node*>(pos);
-        TYPE val = *n->it;
-        pos = (n->it == list_.begin()) ? nullptr : nodeForIter(std::prev(n->it));
-        return val;
+        pos = (POSITION)n->prev;
+        return n->val;
+    }
+    TYPE& GetPrev(POSITION& pos) {
+        Node* n = reinterpret_cast<Node*>(pos);
+        pos = (POSITION)n->prev;
+        return n->val;
     }
 
     // ── Query ─────────────────────────────────────────────────────────────
 
-    int    GetCount() const  { return (int)list_.size(); }
-    bool   IsEmpty()  const  { return list_.empty(); }
+    int    GetCount() const  { return (int)size_; }
+    bool   IsEmpty()  const  { return size_ == 0; }
     // std::list-compatible aliases (used by test code and range-erase loops)
-    size_t size()     const  { return list_.size(); }
-    TYPE&  front()           { return list_.front(); }
-    TYPE   front()    const  { return list_.front(); }
-    TYPE&  back()            { return list_.back(); }
-    TYPE   back()     const  { return list_.back(); }
+    size_t size()     const  { return size_; }
+    TYPE&  front()           { assert(head_); return head_->val; }
+    TYPE   front()    const  { assert(head_); return head_->val; }
+    TYPE&  back()            { assert(tail_); return tail_->val; }
+    TYPE   back()     const  { assert(tail_); return tail_->val; }
 
     // ── Find ──────────────────────────────────────────────────────────────
+    // Linear, exactly as MFC's CPtrList::Find is.
 
     POSITION Find(TYPE val, POSITION start = nullptr) const {
-        Iter begin = start ? reinterpret_cast<Node*>(start)->it
-                           : const_cast<ListType&>(list_).begin();
-        Iter end   = const_cast<ListType&>(list_).end();
-        for (Iter it = begin; it != end; ++it)
-            if (*it == val) return nodeForIter(it);
+        for (Node* n = start ? reinterpret_cast<Node*>(start) : head_; n; n = n->next)
+            if (n->val == val) return (POSITION)n;
         return nullptr;
     }
 
     // ── Insert ────────────────────────────────────────────────────────────
 
     POSITION InsertBefore(POSITION pos, TYPE val) {
-        Iter it = reinterpret_cast<Node*>(pos)->it;
-        Iter ni = list_.insert(it, val);
-        Node* n = new Node{ ni };
-        nodes_.push_back(n);
+        Node* at = reinterpret_cast<Node*>(pos);
+        if (!at) return AddHead(val);
+        Node* n = new Node{ val, at->prev, at };
+        if (at->prev) at->prev->next = n; else head_ = n;
+        at->prev = n;
+        ++size_;
         return (POSITION)n;
     }
     POSITION InsertAfter(POSITION pos, TYPE val) {
-        Iter it = std::next(reinterpret_cast<Node*>(pos)->it);
-        Iter ni = list_.insert(it, val);
-        Node* n = new Node{ ni };
-        nodes_.push_back(n);
+        Node* at = reinterpret_cast<Node*>(pos);
+        if (!at) return AddTail(val);
+        Node* n = new Node{ val, at, at->next };
+        if (at->next) at->next->prev = n; else tail_ = n;
+        at->next = n;
+        ++size_;
         return (POSITION)n;
     }
 
     // Allow range-for by exposing begin/end
-    Iter  begin()        { return list_.begin(); }
-    Iter  end()          { return list_.end(); }
-    CIter begin()  const { return list_.begin(); }
-    CIter end()    const { return list_.end(); }
+    iterator begin()        { return iterator(head_); }
+    iterator end()          { return iterator(nullptr); }
+    iterator begin()  const { return iterator(head_); }
+    iterator end()    const { return iterator(nullptr); }
 
 private:
-    ListType        list_;
-    std::vector<Node*> nodes_;  // owns all Node objects
+    Node*  head_ = nullptr;
+    Node*  tail_ = nullptr;
+    size_t size_ = 0;
 
-    // Find or create a Node for an iterator.
-    // We search nodes_ — this is O(n) but the collections are small.
-    POSITION nodeForIter(Iter it) const {
-        for (Node* n : nodes_)
-            if (n->it == it) return (POSITION)n;
-        // Should not happen — every live iterator has a Node
-        assert(false);
-        return nullptr;
-    }
-
-    void RemoveNodeAt(Iter it) {
-        erase(it);  // delegate to public erase(); return value ignored
+    void Unlink(Node* n) {
+        if (n->prev) n->prev->next = n->next; else head_ = n->next;
+        if (n->next) n->next->prev = n->prev; else tail_ = n->prev;
+        delete n;
+        --size_;
     }
 };
 

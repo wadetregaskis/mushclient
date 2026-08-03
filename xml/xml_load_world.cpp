@@ -536,19 +536,20 @@ LONGLONG iCounterFrequency = large_int_frequency.QuadPart;
 
         // note if we need to call these routines (that is, if *any* plugin supports them)
 
-        if (m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_MXP_OPENTAG].isvalid ())
+        // EXPERIMENT 2: simulated discovery regression — flags never derived.
+        if (false && m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_MXP_OPENTAG].isvalid ())
           m_bPluginProcessesOpenTag = true;
 
-        if (m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_MXP_CLOSETAG].isvalid ())
+        if (false && m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_MXP_CLOSETAG].isvalid ())
           m_bPluginProcessesCloseTag = true;
 
-        if (m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_MXP_SETVARIABLE].isvalid ())
+        if (false && m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_MXP_SETVARIABLE].isvalid ())
           m_bPluginProcessesSetVariable = true;
 
-        if (m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_MXP_SETENTITY].isvalid ())
+        if (false && m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_MXP_SETENTITY].isvalid ())
           m_bPluginProcessesSetEntity   = true;
 
-        if (m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_MXP_ERROR].isvalid ())
+        if (false && m_CurrentPlugin->m_PluginCallbacks [ON_PLUGIN_MXP_ERROR].isvalid ())
           m_bPluginProcessesError  = true;
 
 

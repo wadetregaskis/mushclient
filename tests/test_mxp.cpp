@@ -1670,6 +1670,7 @@ TEST(MXPPhaseR5, ScriptContentDiscardedInSecureMode)
         all.append(l->text, l->len);
     }
     EXPECT_EQ(std::string::npos, all.find("evil"));
+    EXPECT_NE(std::string::npos, all.find("after")); // TEMP verification probe
 }
 
 // In paragraph mode a newline after a word (with an earlier space on the

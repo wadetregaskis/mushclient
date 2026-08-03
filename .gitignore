@@ -109,3 +109,4 @@ packaging/python/
 packaging/tcl/
 packaging/ruby/
 packaging/resources/
+.claude-audit/

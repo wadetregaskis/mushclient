@@ -47,6 +47,7 @@ endmacro()
 # ── Test executables ──────────────────────────────────────────────────────
 
 mc_test(test_cstring)
+mc_test(test_collections)
 mc_test(test_regexp)
 mc_test(test_mcdatetime)
 mc_test(test_colour)

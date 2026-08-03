@@ -174,6 +174,12 @@ inline bool cmp_eq(const char* a, const char* b) {
         return; \
     }} while(0)
 
+#define ASSERT_FALSE(expr) \
+    do { if (expr) { \
+        mc_test::fail_msg(__FILE__, __LINE__, "Assert failed: !(" #expr ")"); \
+        return; \
+    }} while(0)
+
 // Entry point — put in exactly one .cpp in each test executable.
 //
 // Ignoring SIGPIPE mirrors what the product does at startup

@@ -78,6 +78,7 @@ mc_test(test_mfc_ui)
 mc_test(test_connection)
 mc_test(test_accelerators)
 mc_test(test_mc_dispatch)
+mc_test(test_scriptengine)
 
 # ── Phase 2 Unit B-2 → B-3: headless GDI shim, now a normal mc_test ──────────
 # gdi_headless.cpp folded into the flipped (FULL_BUILD) mushcore at B-3, so the

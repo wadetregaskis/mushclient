@@ -4134,6 +4134,34 @@ TEST(LuaScripting, Utf8EncodeTableNonNumberErrors)
     lua_close(L);
 }
 
+// world.TraceOut hands a SCRIPT-SUPPLIED string to CMUSHclientDoc::Trace, whose
+// first parameter is a printf format run through FormatV.  A '%' in the message
+// therefore used to consume a vararg that was never pushed — printing garbage,
+// or worse.  (Found by giving Trace a format(printf) attribute; the compiler
+// flagged the call as "format string is not a string literal".)
+TEST(LuaScripting, TraceOutTreatsPercentAsLiteralText)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_bTrace = TRUE;                       // Trace() is a no-op when off
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    // %s and %d are the dangerous ones: they dereference / read a missing arg.
+    EXPECT_TRUE(run(L, "world.TraceOut('100% done: %s and %d')"));
+
+    bool sawLiteral = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (std::string(l->text, l->len).find("100% done: %s and %d")
+                != std::string::npos)
+            sawLiteral = true;
+    }
+    EXPECT_TRUE(sawLiteral);
+
+    lua_close(L);
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

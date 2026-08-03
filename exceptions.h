@@ -1,3 +1,17 @@
+
+// ── printf-style argument checking ────────────────────────────────────────
+// Real on GCC/clang, silently nothing on MSVC (which has no equivalent
+// attribute), so the Windows build is unaffected.  Argument numbers are 1-based
+// and COUNT the implicit `this` for non-static member functions and
+// constructors — so a member taking (fmt, ...) is (2, 3), a free function (1, 2).
+#ifndef MC_PRINTF_FORMAT
+#  if defined(__GNUC__) || defined(__clang__)
+#    define MC_PRINTF_FORMAT(fmtArg, firstVararg) \
+            __attribute__((format(printf, fmtArg, firstVararg)))
+#  else
+#    define MC_PRINTF_FORMAT(fmtArg, firstVararg)
+#  endif
+#endif
 #pragma once
 
 /////////////////////////////////////////////////////////////////////////////
@@ -26,14 +40,14 @@ public:
 // CErrorException
 
 void ThrowErrorException(UINT nFormatID, ...);
-void ThrowErrorException(LPCTSTR lpszFormat, ...);
+void ThrowErrorException(LPCTSTR lpszFormat, ...) MC_PRINTF_FORMAT(1, 2);
 
 class CErrorException : public CException
 {
 	// Construction
 	DECLARE_DYNAMIC(CErrorException)
 public:
-	CErrorException(LPCTSTR lpszFormat, ...);
+	CErrorException(LPCTSTR lpszFormat, ...) MC_PRINTF_FORMAT(2, 3);
 	CErrorException(UINT nFormatID, ...);
 
 	// Attributes

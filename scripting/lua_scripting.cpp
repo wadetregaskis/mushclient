@@ -569,7 +569,11 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
   // do not trace OnPluginDrawOutputWindow or OnPluginTick because they can spam the output window
   if (ON_PLUGIN_DRAW_OUTPUT_WINDOW != szProcedure &&
       ON_PLUGIN_TICK != szProcedure)
-    m_pDoc->Trace (TFormat ("Executing %s script \"%s\"", szType, szProcedure));
+    // Trace takes a FORMAT; szProcedure is a plugin-supplied callback name, so
+    // handing the composed string straight in would let a '%' in it read a
+    // vararg that does not exist.
+    m_pDoc->Trace ("%s",
+      (LPCTSTR) TFormat ("Executing %s script \"%s\"", szType, szProcedure));
 
   if (App.m_iCounterFrequency)
     QueryPerformanceCounter (&start);
@@ -800,7 +804,10 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will b
   // do not trace OnPluginDrawOutputWindow or OnPluginTick because they can spam the output window
   if (ON_PLUGIN_DRAW_OUTPUT_WINDOW != szProcedure &&
       ON_PLUGIN_TICK != szProcedure)
-    m_pDoc->Trace (TFormat ("Executing %s script \"%s\"", szType, szProcedure));
+    // Same reason as the sibling call above: Trace takes a format, and
+    // szProcedure is plugin-supplied.
+    m_pDoc->Trace ("%s",
+      (LPCTSTR) TFormat ("Executing %s script \"%s\"", szType, szProcedure));
 
   if (App.m_iCounterFrequency)
     QueryPerformanceCounter (&start);

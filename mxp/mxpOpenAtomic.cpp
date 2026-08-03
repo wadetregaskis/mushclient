@@ -479,7 +479,7 @@ COLORREF       iBackColour = pStyle->iBackColour;
                 char * pName = OptionsTable [i].pName;
                 strOptions += CFormat ("%s=%ld ",
                                pName, 
-                               (LPCTSTR) GetOptionItem (i));
+                               GetOptionItem (i));
                 }
 
               } // end of wanting complete list
@@ -491,7 +491,7 @@ COLORREF       iBackColour = pStyle->iBackColour;
 
                 strOptions += CFormat ("%s=%ld",
                                (LPCTSTR) pArgument->strValue, 
-                               (LPCTSTR) GetOption (pArgument->strValue));
+                               GetOption (pArgument->strValue));
 
                 } // end of doing each argument
 

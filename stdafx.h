@@ -1,3 +1,17 @@
+
+// ── printf-style argument checking ────────────────────────────────────────
+// Real on GCC/clang, silently nothing on MSVC (which has no equivalent
+// attribute), so the Windows build is unaffected.  Argument numbers are 1-based
+// and COUNT the implicit `this` for non-static member functions and
+// constructors — so a member taking (fmt, ...) is (2, 3), a free function (1, 2).
+#ifndef MC_PRINTF_FORMAT
+#  if defined(__GNUC__) || defined(__clang__)
+#    define MC_PRINTF_FORMAT(fmtArg, firstVararg) \
+            __attribute__((format(printf, fmtArg, firstVararg)))
+#  else
+#    define MC_PRINTF_FORMAT(fmtArg, firstVararg)
+#  endif
+#endif
 // stdafx.h : include file for standard system include files,
 //  or project specific include files that are used frequently, but
 //      are changed infrequently
@@ -925,7 +939,7 @@ int TMessageBox (const char * sText, UINT nType = MB_OK);
 // translate text
 CString TranslateGeneric (const char * sText, const char * sSection);
 // translate formatted text
-CString TFormat (const char * sFormat, ...);
+CString TFormat (const char * sFormat, ...) MC_PRINTF_FORMAT(1, 2);
 // translate a static string
 #define Translate(string) TranslateGeneric (string, "messages")
 // translate a date/time string

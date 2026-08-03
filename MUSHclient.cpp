@@ -891,8 +891,9 @@ BOOL CMUSHclientApp::InitInstance()
 
     CWelcomeDlg dlg;
 
-    dlg.m_strMessage.Format (Translate ("I notice that this is the first time you have used"
-                         " MUSHclient on this PC."));
+    dlg.m_strMessage.Format ("%s",
+      (LPCTSTR) Translate ("I notice that this is the first time you have used"
+                           " MUSHclient on this PC."));
 
     dlg.DoModal ();
 

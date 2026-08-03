@@ -57,7 +57,10 @@ CString strFullMsg = "TRACE: ";
 
 void CMUSHclientDoc::TraceOut(LPCTSTR Message) 
 {
-  Trace (Message);
+  // "%s", not Message-as-format.  Trace() runs its first argument through
+  // FormatV, and Message here is whatever a script passed to world.TraceOut —
+  // so world.TraceOut("100% done") was reading a vararg that was never pushed.
+  Trace ("%s", Message);
 }   // end of CMUSHclientDoc::TraceOut
 
 

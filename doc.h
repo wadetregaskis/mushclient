@@ -1,3 +1,17 @@
+
+// ── printf-style argument checking ────────────────────────────────────────
+// Real on GCC/clang, silently nothing on MSVC (which has no equivalent
+// attribute), so the Windows build is unaffected.  Argument numbers are 1-based
+// and COUNT the implicit `this` for non-static member functions and
+// constructors — so a member taking (fmt, ...) is (2, 3), a free function (1, 2).
+#ifndef MC_PRINTF_FORMAT
+#  if defined(__GNUC__) || defined(__clang__)
+#    define MC_PRINTF_FORMAT(fmtArg, firstVararg) \
+            __attribute__((format(printf, fmtArg, firstVararg)))
+#  else
+#    define MC_PRINTF_FORMAT(fmtArg, firstVararg)
+#  endif
+#endif
 // doc.h : interface of the CMUSHclientDoc class
 //
 /////////////////////////////////////////////////////////////////////////////
@@ -2573,7 +2587,7 @@ public:
   long DoSetVariable (LPCTSTR VariableName, LPCTSTR Contents)
     { return SetVariable (VariableName, Contents); };
 
-  void Trace (LPCTSTR lpszFormat, ...);
+  void Trace (LPCTSTR lpszFormat, ...) MC_PRINTF_FORMAT(2, 3);
 
   void Screendraw  (const long iType,
                     const long iLog,

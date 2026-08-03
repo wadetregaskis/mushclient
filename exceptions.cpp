@@ -113,7 +113,10 @@ void ThrowErrorException(UINT nFormatID, ...)
 	va_end(argList);
 	
 	TRACE1("Throw error exception, %s\n", (LPCTSTR) strText);
-	throw new CErrorException(strText);
+	// "%s", not strText-as-format: strText is already-substituted text that can
+	// contain a literal % (a filename, a MUD message), which would make the
+	// ctor read a vararg that was never passed.
+	throw new CErrorException("%s", (LPCTSTR) strText);
 }
 
 // helper function to throw an error exception for you

@@ -361,6 +361,7 @@ bool CScriptEngine::ExecutePerl (DISPID & dispid, LPCTSTR szProcedure,
 
   PUTBACK;
 
+  TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction)
     m_pDoc->m_iCurrentActionSource = iReason;
   int n = call_sv ((SV*) cv, G_SCALAR | G_EVAL);
@@ -403,6 +404,7 @@ bool CScriptEngine::ExecutePerl (DISPID & dispid, LPCTSTR szProcedure,
   XPUSHs (sv_2mortal (newSVpvn ((LPCTSTR) strParam, strParam.GetLength ())));
   PUTBACK;
 
+  TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction)
     m_pDoc->m_iCurrentActionSource = iReason;
   int n = call_sv ((SV*) cv, G_SCALAR | G_EVAL);
@@ -414,7 +416,11 @@ bool CScriptEngine::ExecutePerl (DISPID & dispid, LPCTSTR szProcedure,
   if (n > 0)
     {
     SV* r = POPs;
-    if (!err && SvOK (r)) { STRLEN l = 0; const char* p = SvPV (r, l); result = CString (p, (int) l); }
+    // A plain scalar only: a REFERENCE (hashref, arrayref, object) stringifies
+    // to "HASH(0x7f...)" and must not become the MUD packet.  Lua gates on
+    // lua_isstring for the same reason.
+    if (!err && SvOK (r) && !SvROK (r))
+      { STRLEN l = 0; const char* p = SvPV (r, l); result = CString (p, (int) l); }
     }
   PUTBACK;
   FREETMPS; LEAVE;

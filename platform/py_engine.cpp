@@ -85,16 +85,36 @@ void py_to_variant(PyObject* o, VARIANT& v)
   if (PyFloat_Check(o))                    { v.vt = VT_R8;   v.dblVal = PyFloat_AsDouble(o); return; }
   if (PyUnicode_Check(o))
     {
-    Py_ssize_t len = 0;
-    const char* s = PyUnicode_AsUTF8AndSize(o, &len);
-    v.vt = VT_BSTR; v.bstrVal = SysAllocString(s ? s : "");
+    // surrogateescape, not strict UTF-8.  Everything that entered the script
+    // through this engine's own decoders -- trigger lines, wildcards, table
+    // values, the simple-callback argument, any string a world method returned
+    // -- can hold the lone surrogates U+DC80..U+DCFF that escape produces, and
+    // the strict codec refuses them: it returned NULL, we stored an EMPTY BSTR,
+    // and the pending UnicodeEncodeError leaked into the next call.  So a
+    // wildcard captured from a Latin-1 world could be read but never stored,
+    // sent or noted.  This is the mirror image of the result-direction fix
+    // below; the two have to agree or the round trip is not closed.
+    v.vt = VT_BSTR;
+    PyObject* enc = PyUnicode_AsEncodedString(o, "utf-8", "surrogateescape");
+    if (enc)
+      { v.bstrVal = SysAllocString(PyBytes_AsString(enc) ? PyBytes_AsString(enc) : "");
+        Py_DECREF(enc); }
+    else
+      { PyErr_Clear(); v.bstrVal = SysAllocString(""); }
     return;
     }
   if (PyBytes_Check(o))                    { v.vt = VT_BSTR; v.bstrVal = SysAllocString(PyBytes_AsString(o)); return; }
   // Fallback: str(o)
   PyObject* str = PyObject_Str(o);
   v.vt = VT_BSTR;
-  v.bstrVal = SysAllocString(str ? PyUnicode_AsUTF8(str) : "");
+  v.bstrVal = nullptr;
+  if (str)
+    {
+    PyObject* enc = PyUnicode_AsEncodedString(str, "utf-8", "surrogateescape");
+    if (enc) { v.bstrVal = SysAllocString(PyBytes_AsString(enc)); Py_DECREF(enc); }
+    else     PyErr_Clear();
+    }
+  if (!v.bstrVal) v.bstrVal = SysAllocString("");
   Py_XDECREF(str);
   }
 
@@ -475,6 +495,7 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
   PyObject* argtuple = PyList_AsTuple (argl);
   Py_DECREF (argl);
 
+  TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction)
     m_pDoc->m_iCurrentActionSource = iReason;
 
@@ -520,6 +541,7 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
 
   PyObject* arg = PyUnicode_DecodeUTF8 ((LPCTSTR) strParam, strParam.GetLength (), "surrogateescape");
 
+  TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction)
     m_pDoc->m_iCurrentActionSource = iReason;
   PyObject* res = PyObject_CallFunctionObjArgs (fn, arg, NULL);
@@ -534,7 +556,14 @@ bool CScriptEngine::ExecutePython (DISPID & dispid, LPCTSTR szProcedure,
 
   nInvocationCount++;
 
-  if (res != Py_None)
+  // Only a STRING or a NUMBER replaces the caller's string, mirroring Lua's
+  // lua_isstring gate (lua_scripting.cpp).  This overload carries whole MUD
+  // packets and typed commands, so a handler that happens to return a dict or a
+  // list must not turn the packet into "{'a': 1}"; a stray return value is a
+  // programming slip, not a rewrite request.
+  if (res != Py_None &&
+      (PyUnicode_Check (res) || PyBytes_Check (res) ||
+       PyLong_Check (res)    || PyFloat_Check (res)))
     {
     PyObject* str = PyObject_Str (res);
     if (str)

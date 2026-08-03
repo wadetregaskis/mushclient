@@ -140,6 +140,12 @@ class CScriptEngine : public CObject
   const bool IsTcl    () const { return m_tclEngine  != NULL; }
   const bool IsRuby   () const { return m_rubyEngine != NULL; }
 
+  // The "Executing <type> script \"<name>\"" line ExecuteLua emits before every
+  // callback (lua_scripting.cpp), so the five embedded engines announce
+  // themselves the same way.  Suppressed for the two per-frame callbacks, which
+  // would otherwise flood the output window.  Defined in lua_scripting.cpp.
+  void   TraceCallback (LPCTSTR szType, LPCTSTR szProcedure);
+
   void   OpenPython ();   void   OpenPerl ();   void   OpenJS ();   void   OpenTcl ();   void   OpenRuby ();
   void   ClosePython ();  void   ClosePerl ();  void   CloseJS ();  void   CloseTcl ();  void   CloseRuby ();
   bool   ParsePython (const CString &, const CString &);

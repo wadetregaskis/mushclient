@@ -72,7 +72,9 @@ struct Engine {
 
     // The SIMPLE overload, in ExecutePluginScriptRtn's shape: one CString in,
     // the same CString out.
-    CString simple(DISPID& dispid, const char* fn, const char* in,
+    // `in` is a CString, not a const char*: the argument may contain NUL bytes
+    // (MUD packets do) and a char* would truncate before the engine ever saw it.
+    CString simple(DISPID& dispid, const char* fn, const CString& in,
                    long* countOut = nullptr, bool* errorOut = nullptr)
     {
         long count = 0;
@@ -257,6 +259,57 @@ TEST(ScriptEngine, SimpleCallbackIsABytePipe)
     EXPECT_EQ(CString("<a\xE9z>"), e.simple(w, "wrap", "a\xE9z"));       // Latin-1
     EXPECT_EQ(CString("<a\xC3\xA9z>"), e.simple(w, "wrap", "a\xC3\xA9z"));// UTF-8
     EXPECT_EQ(CString("3"), e.simple(z, "size", "a\xE9z"));
+}
+
+// MUD packets contain NUL bytes -- telnet negotiation, MCCP, binary payloads --
+// and this overload carries whole packets, so the boundary has to be
+// length-explicit in both directions rather than going through a C string.
+TEST(ScriptEngine, SimpleCallbackCarriesNulBytes)
+{
+    Engine e("function wrap(s) return '<' .. s .. '>' end\n"
+             "function size(s) return tostring(#s) end\n");
+    const CString nul ("a\0z", 3);
+    const CString nulw("<a\0z>", 5);
+    DISPID z = e.id("size");
+    EXPECT_EQ(CString("3"), e.simple(z, "size", nul));
+    DISPID w = e.id("wrap");
+    EXPECT_EQ(nulw, e.simple(w, "wrap", nul));
+}
+
+// The other direction: a value the script hands BACK to the world API.  Every
+// engine decodes incoming bytes leniently; the return leg has to be just as
+// lenient, or a wildcard captured from a Latin-1 world can be read but never
+// stored, sent or noted.  (Python was failing exactly this.)
+TEST(ScriptEngine, ValuesPassedToTheWorldApiKeepTheirBytes)
+{
+    Engine e("function store(s) world.SetVariable('echoed', s) end\n");
+    DISPID d = e.id("store");
+    ASSERT_NE(DISPID_UNKNOWN, d);
+
+    struct { const char* what; CString in; } cases[] = {
+        { "ascii",   CString("plain") },
+        { "utf-8",   CString("caf\xC3\xA9") },
+        { "latin-1", CString("caf\xE9") },
+    };
+    for (auto& c : cases) {
+        e.simple(d, "store", c.in);
+        VARIANT v = e.doc.GetVariable("echoed");
+        EXPECT_EQ(c.in, CString(v.bstrVal ? v.bstrVal : ""));
+    }
+}
+
+// With Trace on, every callback announces itself -- it is how a user answers
+// "why did my trigger not fire?".  The five embedded engines were silent here
+// until the shared TraceCallback helper; this pins the reference behaviour.
+TEST(ScriptEngine, TraceAnnouncesTheCallbackItIsAboutToRun)
+{
+    Engine e("function f() end\n");
+    e.doc.m_bTrace = TRUE;
+    DISPID d = e.id("f");
+    bool keep = false;
+    ASSERT_FALSE(e.rich(d, "f", keep));
+    EXPECT_TRUE(saw(e.doc, "Executing"));
+    EXPECT_TRUE(saw(e.doc, "f"));
 }
 
 // ── the RICH overload: keep-processing ────────────────────────────────────

@@ -482,6 +482,7 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
     args.push_back (o);
     }
 
+  TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction)
     m_pDoc->m_iCurrentActionSource = iReason;
   JSValueRef exc = nullptr;
@@ -522,6 +523,7 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
   JSValueRef arg = JSValueMakeString (ctx, js);
   JSStringRelease (js);
 
+  TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction)
     m_pDoc->m_iCurrentActionSource = iReason;
   JSValueRef exc = nullptr;
@@ -531,10 +533,17 @@ bool CScriptEngine::ExecuteJS (DISPID & dispid, LPCTSTR szProcedure,
 
   if (exc) { dispid = DISPID_UNKNOWN; report_error (m_pDoc, ctx, exc, szType, szProcedure); return true; }
   nInvocationCount++;
-  if (ret && !JSValueIsUndefined (ctx, ret) && !JSValueIsNull (ctx, ret))
+  // A string or a number only: an object or array stringifies to
+  // "[object Object]" and must not become the MUD packet.  Lua gates on
+  // lua_isstring for the same reason.
+  if (ret && (JSValueIsString (ctx, ret) || JSValueIsNumber (ctx, ret)))
     {
     JSStringRef rs = JSValueToStringCopy (ctx, ret, nullptr);
-    result = jsstr_to_std (rs).c_str ();
+    // Length-explicit: MUD packets contain NUL bytes (telnet negotiation, MCCP,
+    // binary payloads) and this overload carries whole packets, so going through
+    // a C string truncated them at the first one.
+    const std::string bytes = jsstr_to_std (rs);
+    result = CString (bytes.data (), (int) bytes.size ());
     if (rs) JSStringRelease (rs);
     }
   return false;

@@ -282,6 +282,37 @@ void report_error (CMUSHclientDoc* doc, const char* what, const char* proc)
            klass.c_str (), msg.c_str ());
   }
 
+
+// Is `name` a handler THE SCRIPT defined?
+//
+// rb_respond_to answers yes for all ~58 public instance methods every Object
+// inherits (inspect, to_s, send, class, hash, tap, then, itself, freeze, ...)
+// and for the `world` accessor OpenRuby installs -- so "does this plugin
+// implement that callback?", which is how plugin dispatch works, always
+// answered yes, and a trigger sending to a script named `send` or `display`
+// silently invoked Ruby's own method with the wrong arity.
+//
+// A script's `def` inside instance_eval becomes a SINGLETON method on the
+// isolation object, so `singleton_methods(false)` is exactly the set the script
+// wrote -- minus `world`, which the engine installed the same way.
+struct RespondCtx { VALUE obj; ID mid; };
+VALUE do_singleton_defined (VALUE p)
+  {
+  RespondCtx* c = (RespondCtx*) p;
+  VALUE list = rb_funcall (c->obj, rb_intern ("singleton_methods"), 1, Qfalse);
+  return rb_ary_includes (list, ID2SYM (c->mid)) ? Qtrue : Qfalse;
+  }
+
+bool script_defined (VALUE obj, ID mid)
+  {
+  if (mid == rb_intern ("world")) return false;   // the engine's own accessor
+  RespondCtx c { obj, mid };
+  int state = 0;
+  VALUE r = rb_protect (do_singleton_defined, (VALUE) &c, &state);
+  if (state) { rb_set_errinfo (Qnil); return false; }
+  return RTEST (r);
+  }
+
 } // anonymous namespace
 
 // ── CScriptEngine Ruby methods ────────────────────────────────────────────────
@@ -325,7 +356,7 @@ bool CScriptEngine::ParseRuby (const CString & strCode, const CString & strWhat)
 DISPID CScriptEngine::GetRubyDispid (const CString & strName)
   {
   if (!m_rubyEngine || strName.IsEmpty ()) return DISPID_UNKNOWN;
-  return rb_respond_to (m_rubyEngine->obj, rb_intern ((LPCTSTR) strName))
+  return script_defined (m_rubyEngine->obj, rb_intern ((LPCTSTR) strName))
            ? 1 : DISPID_UNKNOWN;
   }
 
@@ -342,7 +373,7 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   if (!m_rubyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
   ID mid = rb_intern (szProcedure);
-  if (!rb_respond_to (m_rubyEngine->obj, mid)) { dispid = DISPID_UNKNOWN; return true; }
+  if (!script_defined (m_rubyEngine->obj, mid)) { dispid = DISPID_UNKNOWN; return true; }
 
   // Root the args in a Ruby Array held by a C-stack local — MRI's conservative
   // GC scans the machine stack, so this keeps every freshly-allocated arg (the
@@ -369,6 +400,7 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
     rb_ary_push (av, h);
     }
 
+  TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = iReason;
   CallCtx ctx { m_rubyEngine->obj, mid, RARRAY_LENINT (av), RARRAY_CONST_PTR (av) };
   int state = 0;
@@ -408,9 +440,12 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
   if (!m_rubyEngine) return false;
   if (dispid == DISPID_UNKNOWN) return false;
   ID mid = rb_intern (szProcedure);
-  if (!rb_respond_to (m_rubyEngine->obj, mid)) { dispid = DISPID_UNKNOWN; return true; }
+  if (!script_defined (m_rubyEngine->obj, mid)) { dispid = DISPID_UNKNOWN; return true; }
 
-  VALUE arg = rb_str_new_cstr ((LPCTSTR) strParam);
+  // Length-explicit: rb_str_new_cstr stops at the first NUL, and this overload
+  // carries whole MUD packets, which contain them.
+  VALUE arg = rb_str_new ((LPCTSTR) strParam, (long) strParam.GetLength ());
+  TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = iReason;
   CallCtx ctx { m_rubyEngine->obj, mid, 1, &arg };
   int state = 0;
@@ -419,7 +454,10 @@ bool CScriptEngine::ExecuteRuby (DISPID & dispid, LPCTSTR szProcedure,
 
   if (state) { dispid = DISPID_UNKNOWN; report_error (m_pDoc, szType, szProcedure); return true; }
   nInvocationCount++;
-  if (RTEST (r) && TYPE (r) != T_NIL)
+  // A String or a Numeric only: a Hash or an Array #to_s's to "{...}" and must
+  // not become the MUD packet.  Lua gates on lua_isstring for the same reason.
+  if (RTEST (r) && (RB_TYPE_P (r, T_STRING) || RB_TYPE_P (r, T_FIXNUM) ||
+                    RB_TYPE_P (r, T_BIGNUM) || RB_TYPE_P (r, T_FLOAT)))
     {
     int st = 0;
     VALUE s = rb_protect (ruby_to_s, r, &st);

@@ -21,9 +21,13 @@
 // language genuinely cannot express something the dialect says so and the
 // battery skips that one check for that language, printing why -- never silently.
 //
-// Writing this suite is what found the Tcl blank-packet bug, the JavaScript and
-// Python byte-loss bugs, the Perl blessed-null bug and the Ruby zero-is-truthy
-// divergence.
+// Writing this suite is what found, so far: the Tcl blank-packet bug; byte loss
+// in JavaScript and Python (both directions, both engines); the Perl
+// blessed-null bug; Ruby's zero-is-truthy divergence; NUL truncation in
+// JavaScript, Tcl and Ruby; a non-string return overwriting the caller's packet
+// in Python, Perl, JavaScript and Ruby; the missing "Executing ... script" Trace
+// line in all five; and Tcl and Ruby answering "yes, that callback exists" for
+// every built-in command / inherited Object method.
 
 #ifndef _WIN32
 
@@ -180,6 +184,10 @@ struct Dialect {
     const char* badSource;  // source that must fail to compile
     bool        zeroStops;  // does returning numeric 0 stop processing?
     bool        nilStops;   // can the engine tell "returned nil" from "returned nothing"?
+    const char* builtin;    // a name the LANGUAGE defines but the script does not:
+                            // GetDispid must not claim to have found a handler
+    bool        hidesBuiltins;  // ...can this engine tell them apart at all?
+    bool        typedResult;    // ...can it tell a string result from a structure?
 };
 
 const Dialect kDialects[] = {
@@ -205,6 +213,8 @@ const Dialect kDialects[] = {
   "shared = 'from A'\n"
   "function readshared() world.SetVariable('v', tostring(shared)) end\n"
   "function who() world.SetVariable('w', world.GetWorldID()) end\n"
+  "function store(s) world.SetVariable('echoed', s) end\n"
+  "function rettable(s) return {} end\n"
   "function api()\n"
   "  world.Note('a note')\n"
   "  world.SetVariable('rt', 'value')\n"
@@ -218,7 +228,7 @@ const Dialect kDialects[] = {
   "function readshared() world.SetVariable('v', tostring(shared)) end\n"
   "function who() world.SetVariable('w', world.GetWorldID()) end\n",
   "function ( this is not lua\n",
-  true, true },
+  true, true, "Note", false, true },
 
 // ── Python ────────────────────────────────────────────────────────────────
 { "python", "Python", "Python",
@@ -243,6 +253,10 @@ const Dialect kDialects[] = {
   "def readshared():\n"
   "    world.SetVariable('v', str(globals().get('shared')).lower() if 'shared' not in globals() else shared)\n"
   "def who():\n    world.SetVariable('w', world.GetWorldID())\n"
+  "def store(s):\n"
+  "    world.SetVariable('echoed', s)\n"
+  "def rettable(s):\n"
+  "    return {}\n"
   "def api():\n"
   "    world.Note('a note')\n"
   "    world.SetVariable('rt', 'value')\n"
@@ -254,7 +268,7 @@ const Dialect kDialects[] = {
   "    world.SetVariable('v', shared if 'shared' in globals() else 'nil')\n"
   "def who():\n    world.SetVariable('w', world.GetWorldID())\n",
   "def broken(:\n",
-  true, false },
+  true, false, "print", true, true },
 
 // ── Perl ──────────────────────────────────────────────────────────────────
 { "perl", "Perl", "perl",
@@ -276,6 +290,8 @@ const Dialect kDialects[] = {
   "our $shared = 'from A';\n"
   "sub readshared { $world->SetVariable('v', defined($shared) ? $shared : 'nil'); }\n"
   "sub who { $world->SetVariable('w', $world->GetWorldID()); }\n"
+  "sub store { $world->SetVariable('echoed', $_[0]); }\n"
+  "sub rettable { return {}; }\n"
   "sub api {\n"
   "  $world->Note('a note');\n"
   "  $world->SetVariable('rt', 'value');\n"
@@ -287,7 +303,7 @@ const Dialect kDialects[] = {
   "sub readshared { $world->SetVariable('v', defined($shared) ? $shared : 'nil'); }\n"
   "sub who { $world->SetVariable('w', $world->GetWorldID()); }\n",
   "sub broken { $x = ; }\n",
-  true, false },
+  true, false, "printf", true, true },
 
 // ── JavaScript ────────────────────────────────────────────────────────────
 { "js", "JS", "javascript",
@@ -311,6 +327,8 @@ const Dialect kDialects[] = {
   "function readshared() {\n"
   "  world.SetVariable('v', typeof shared === 'undefined' ? 'nil' : shared); }\n"
   "function who() { world.SetVariable('w', world.GetWorldID()); }\n"
+  "function store(s) { world.SetVariable('echoed', s); }\n"
+  "function rettable(s) { return {}; }\n"
   "function api() {\n"
   "  world.Note('a note');\n"
   "  world.SetVariable('rt', 'value');\n"
@@ -323,7 +341,7 @@ const Dialect kDialects[] = {
   "  world.SetVariable('v', typeof shared === 'undefined' ? 'nil' : shared); }\n"
   "function who() { world.SetVariable('w', world.GetWorldID()); }\n",
   "function broken( {\n",
-  true, false },
+  true, false, "parseInt", false, true },
 
 // ── Tcl ───────────────────────────────────────────────────────────────────
 { "tcl", "Tcl", "tcl",
@@ -351,6 +369,8 @@ const Dialect kDialects[] = {
   "  if {[info exists shared]} { world SetVariable v $shared } \\\n"
   "  else { world SetVariable v nil } }\n"
   "proc who {} { world SetVariable w [world GetWorldID] }\n"
+  "proc store {s} { world SetVariable echoed $s }\n"
+  "proc rettable {s} { return [dict create a 1] }\n"
   "proc api {} {\n"
   "  world Note {a note}\n"
   "  world SetVariable rt value\n"
@@ -365,7 +385,7 @@ const Dialect kDialects[] = {
   "  else { world SetVariable v nil } }\n"
   "proc who {} { world SetVariable w [world GetWorldID] }\n",
   "proc broken {  { \n",
-  true, false },
+  true, false, "puts", true, false },
 
 // ── Ruby ──────────────────────────────────────────────────────────────────
 { "ruby", "Ruby", "ruby",
@@ -389,6 +409,8 @@ const Dialect kDialects[] = {
   "@shared = 'from A'\n"
   "def readshared; world.SetVariable('v', @shared || 'nil'); end\n"
   "def who; world.SetVariable('w', world.GetWorldID()); end\n"
+  "def store(s); world.SetVariable('echoed', s); end\n"
+  "def rettable(s); {}; end\n"
   "def api\n"
   "  world.Note('a note')\n"
   "  world.SetVariable('rt', 'value')\n"
@@ -400,7 +422,7 @@ const Dialect kDialects[] = {
   "def readshared; world.SetVariable('v', @shared || 'nil'); end\n"
   "def who; world.SetVariable('w', world.GetWorldID()); end\n",
   "def broken(\n",
-  true, false },
+  true, false, "inspect", true, true },
 };
 
 const int kDialectCount = (int) (sizeof kDialects / sizeof kDialects[0]);
@@ -432,6 +454,27 @@ void battery_simple(Engine& e, const Dialect& d)
     CString utf8wrap; utf8wrap = "<a\xC3\xA9z>";
     check(e.callRtn("wrap", utf8) == utf8wrap, L,
           "a valid UTF-8 argument survives the round trip byte for byte");
+
+    // Only a STRING result replaces the caller's data.  Lua checks lua_isstring,
+    // so a returned table leaves the packet alone; an engine that stringifies
+    // anything non-null turns a handler's stray return value into MUD output.
+    // Tcl has one type.  A dict IS its string representation, so there is nothing
+    // to distinguish -- the others all can, and must.
+    if (d.typedResult)
+        check(e.callRtn("rettable", "untouched") == "untouched", L,
+              "returning a table/object/dict does NOT replace the caller's string");
+    else
+        skip(L, "returning a table/object/dict does NOT replace the caller's string",
+             "every value in this language IS a string");
+
+    // MUD packets contain NUL bytes (telnet negotiation, MCCP, binary data).  A
+    // conversion that goes through a C string truncates there.
+    const CString nul ("a\0z", 3);
+    const CString nulw("<a\0z>", 5);
+    check(e.callRtn("size", nul) == "3", L,
+          "an argument containing a NUL byte arrives at full length");
+    check(e.callRtn("wrap", nul) == nulw, L,
+          "an argument containing a NUL byte survives the round trip");
 }
 
 // 2. The RICH overload: the keep-processing answer.
@@ -481,6 +524,29 @@ void battery_parameters(Engine& e, const Dialect& d)
     e.callRich("tbl", &err, {}, { "line" }, &t);
     check(!err && e.var("t") == "value", L,
           "the optional table (named wildcards) arrives as a mapping");
+}
+
+// 3b. The OTHER direction: a value the script hands BACK to the world API.
+//     Every engine decodes incoming bytes leniently; the return leg has to be
+//     just as lenient or a wildcard captured from a Latin-1 world cannot be
+//     stored in a variable, sent to the MUD, or written to a note.
+void battery_toworld(Engine& e, const Dialect& d)
+{
+    const char* L = d.display;
+
+    e.callRtn("store", "plain ascii");
+    check(e.var("echoed") == "plain ascii", L,
+          "a string the script passes to the world API arrives intact");
+
+    CString utf8; utf8 = "caf\xC3\xA9";
+    e.callRtn("store", utf8);
+    check(e.var("echoed") == "caf\xC3\xA9", L,
+          "valid UTF-8 passed to the world API arrives intact");
+
+    CString latin1; latin1 = "caf\xE9";
+    e.callRtn("store", latin1);
+    check(e.var("echoed") == "caf\xE9", L,
+          "non-UTF-8 bytes passed to the world API arrive intact");
 }
 
 // 4. Errors: reported AND the handler disabled, so a broken trigger does not
@@ -557,6 +623,19 @@ void battery_worldapi(const Dialect& d)
           "an array-returning method arrives with the right length");
 }
 
+// 6b. Tracing.  With Trace on, every reference path announces the callback it is
+//     about to run -- it is how a user debugs "why did my trigger not fire?".
+void battery_trace(const Dialect& d)
+{
+    const char* L = d.display;
+    Engine e(d.language, d.source);
+    if (!e.ok) { skip(L, "a traced call announces itself", "engine failed to open"); return; }
+
+    e.doc->m_bTrace = TRUE;
+    e.callRich("rnothing");
+    check(e.saw("Executing"), L, "with Trace on, running a handler is announced");
+}
+
 // 7. Compiling and resolving.
 void battery_compile(const Dialect& d)
 {
@@ -572,6 +651,21 @@ void battery_compile(const Dialect& d)
     check(e.id("keep")   != DISPID_UNKNOWN, L, "a defined handler resolves");
     check(e.id("absent") == DISPID_UNKNOWN, L, "an undefined handler does not");
     check(e.id("")       == DISPID_UNKNOWN, L, "an empty handler name does not");
+    // A name the LANGUAGE (or the world library) happens to define is not a
+    // handler the SCRIPT defined.  Claiming it turns a plugin's typo'd callback
+    // name into a call to something else entirely, and makes "is this callback
+    // implemented?" -- which is how plugins are dispatched -- always answer yes.
+    // Lua resolves through _G's metatable, whose __index is the world library,
+    // and JavaScriptCore's built-ins are own properties of the global object --
+    // in neither can the engine separate "the script defined this" from "the
+    // language did" without changing resolution semantics that plugins rely on.
+    // Recorded rather than tested, so the gap is visible instead of absent.
+    if (d.hidesBuiltins)
+        check(e.id(d.builtin) == DISPID_UNKNOWN, L,
+              "a name the language itself defines is not a handler");
+    else
+        skip(L, "a name the language itself defines is not a handler",
+             "resolution cannot separate script definitions from the language's own");
 }
 
 // One language, end to end.  Returns false if the interpreter is not built in.
@@ -592,8 +686,10 @@ bool run_language(const Dialect& d)
     battery_simple    (e, d);
     battery_keepgoing (e, d);
     battery_parameters(e, d);
+    battery_toworld   (e, d);
     battery_worldapi  (d);
     battery_state     (e, d);
+    battery_trace     (d);
     battery_errors    (e, d);   // last: it disables handlers in this engine
     battery_compile   (d);
     return true;

@@ -190,11 +190,26 @@ void report_error (CMUSHclientDoc* doc, Tcl_Interp* interp, const char* what, co
   }
 
 // Does a command/proc of this name exist in the interpreter?
+// A handler is a PROC the script defined -- not any command that happens to
+// exist.  Tcl_GetCommandInfo finds every built-in too (puts, set, string, ...,
+// and the `world` command this engine installs), so it answered "yes, that
+// callback is implemented" for hundreds of names no plugin ever wrote.  `info
+// procs` is the distinction Tcl itself draws.
 bool command_exists (Tcl_Interp* interp, const char* name)
   {
   if (!interp || !name || !*name) return false;
-  Tcl_CmdInfo info;
-  return Tcl_GetCommandInfo (interp, name, &info) != 0;
+  Tcl_Obj* cmd = Tcl_NewListObj (0, nullptr);
+  Tcl_ListObjAppendElement (interp, cmd, Tcl_NewStringObj ("info", -1));
+  Tcl_ListObjAppendElement (interp, cmd, Tcl_NewStringObj ("procs", -1));
+  Tcl_ListObjAppendElement (interp, cmd, Tcl_NewStringObj (name, -1));
+  Tcl_IncrRefCount (cmd);
+  const int rc = Tcl_EvalObjEx (interp, cmd, TCL_EVAL_DIRECT);
+  Tcl_DecrRefCount (cmd);
+  if (rc != TCL_OK) { Tcl_ResetResult (interp); return false; }
+  int len = 0;
+  Tcl_ListObjLength (interp, Tcl_GetObjResult (interp), &len);
+  Tcl_ResetResult (interp);
+  return len > 0;
   }
 
 } // anonymous namespace
@@ -295,6 +310,7 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
     }
 
   for (Tcl_Obj* o : av) Tcl_IncrRefCount (o);
+  TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = iReason;
   int rc = Tcl_EvalObjv (interp, (int) av.size (), av.data (), 0);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = eUnknownActionSource;
@@ -324,9 +340,12 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
   Tcl_Interp* interp = m_tclEngine->interp;
   if (!command_exists (interp, szProcedure)) { dispid = DISPID_UNKNOWN; return true; }
 
+  // Length-explicit for the argument: -1 means strlen, and this overload carries
+  // whole MUD packets, which contain NUL bytes.
   Tcl_Obj* av[2] = { Tcl_NewStringObj (szProcedure, -1),
-                     Tcl_NewStringObj ((LPCTSTR) strParam, -1) };
+                     Tcl_NewStringObj ((LPCTSTR) strParam, strParam.GetLength ()) };
   Tcl_IncrRefCount (av[0]); Tcl_IncrRefCount (av[1]);
+  TraceCallback (szType, szProcedure);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = iReason;
   int rc = Tcl_EvalObjv (interp, 2, av, 0);
   if (iReason != eDontChangeAction) m_pDoc->m_iCurrentActionSource = eUnknownActionSource;
@@ -341,8 +360,9 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
   // their None / undefined / nil / undef checks.
   if (rc == TCL_OK)
     {
-    const char* r = Tcl_GetStringResult (interp);
-    if (r && *r) result = r;
+    int rlen = 0;
+    const char* r = Tcl_GetStringFromObj (Tcl_GetObjResult (interp), &rlen);
+    if (r && rlen > 0) result = CString (r, rlen);
     }
   Tcl_DecrRefCount (av[0]); Tcl_DecrRefCount (av[1]);
 

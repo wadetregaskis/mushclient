@@ -764,6 +764,21 @@ bool CScriptEngine::ExecuteLua (DISPID & dispid,  // dispatch ID, will be set to
   return false;   // no error
   } // end of CScriptEngine::ExecuteLua 
 
+#ifndef _WIN32
+// Announce a callback the way ExecuteLua does, for the five embedded engines.
+// Trace is a format string and szProcedure is plugin-supplied, so the text goes
+// through as an ARGUMENT -- a callback whose name contains a % must not read a
+// vararg that was never pushed.
+void CScriptEngine::TraceCallback (LPCTSTR szType, LPCTSTR szProcedure)
+  {
+  if (!m_pDoc) return;
+  if (ON_PLUGIN_DRAW_OUTPUT_WINDOW == szProcedure || ON_PLUGIN_TICK == szProcedure)
+    return;                       // per-frame: would flood the output window
+  m_pDoc->Trace ("%s",
+    (LPCTSTR) TFormat ("Executing %s script \"%s\"", szType, szProcedure));
+  }
+#endif // !_WIN32
+
 // returns true if script error
 bool CScriptEngine::ExecuteLua (DISPID & dispid,          // dispatch ID, will be set to DISPID_UNKNOWN on an error
                                LPCTSTR szProcedure,      // eg. ON_TRIGGER_XYZ

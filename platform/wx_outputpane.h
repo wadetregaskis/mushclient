@@ -53,6 +53,18 @@ struct SelPoint {
 // World, which decodes the doc's style bytes directly.
 wxString DecodeOutputBytes(const char* bytes, size_t n, bool utf8, int charset);
 
+// Decode bytes that are MEANT to be UTF-8 but may not be, substituting U+FFFD
+// per ill-formed subpart the way MultiByteToWideChar(CP_UTF8, 0, ...) does on
+// Windows.  Use this anywhere wxString::FromUTF8 would otherwise be handed bytes
+// of unproven validity: FromUTF8 is all-or-nothing and returns an EMPTY string,
+// so one bad byte silently discards the whole text.
+wxString DecodeUTF8Lenient(const char* bytes, size_t n);
+
+// Rendered character count of a run — the metric DrawLine measures with, so any
+// walk that maps a column onto a run must use THIS and not run.text.size(),
+// which is a BYTE count.
+int RunCharLen(const SOutputRun& run);
+
 // ── COutputPane ───────────────────────────────────────────────────────────────
 
 class COutputPane : public wxScrolledWindow

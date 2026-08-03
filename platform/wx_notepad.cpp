@@ -18,6 +18,7 @@
 #include "../doc.h"
 
 #include "wx_notepad.h"
+#include "wx_outputpane.h"   // DecodeUTF8Lenient
 #include "compat.h"           // GetRValue / GetGValue / GetBValue
 #include "wx_osx_text.h"       // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
 
@@ -363,10 +364,14 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
 void CWxNotepadFrame::AppendText(const std::string& text, bool replace)
 {
     if (!m_ctrl) return;
+    // Lenient, not FromUTF8: this text is whatever the world or a script
+    // handed us.  FromUTF8 is all-or-nothing, so a single stray byte replaced
+    // the notepad with an empty one -- silent data loss on the replace arm.
+    const wxString decoded = DecodeUTF8Lenient(text.data(), text.size());
     if (replace) {
-        m_ctrl->SetValue(wxString::FromUTF8(text.c_str()));
+        m_ctrl->SetValue(decoded);
     } else {
-        m_ctrl->AppendText(wxString::FromUTF8(text.c_str()));
+        m_ctrl->AppendText(decoded);
     }
     Raise();
 }
@@ -612,7 +617,10 @@ void CWxNotepadFrame::OnConvert(wxCommandEvent& evt)
         default: return;
     }
 
-    wxString wxdst = wxString::FromUTF8(static_cast<const char*>(dst));
+    // Base64 DECODE produces arbitrary binary, and several of the other
+    // conversions can too.  FromUTF8 returned "" for those and the SetValue
+    // below then ERASED the whole notepad.
+    wxString wxdst = DecodeUTF8Lenient(static_cast<const char*>(dst), dst.GetLength());
     if (bAll) {
         m_ctrl->SetValue(wxdst);
         m_ctrl->SetSelection(0, m_ctrl->GetLastPosition());

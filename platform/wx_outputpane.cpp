@@ -53,9 +53,10 @@ static inline int UTF8CharLen(const std::string& s)
     return n;
 }
 
-// The tolerant decode.  Only reached when the run is NOT well-formed; a
-// well-formed run takes wxString::FromUTF8 in DecodeOutputBytes below.
-static wxString DecodeUTF8Lenient(const char* bytes, size_t n)
+// The tolerant decode.  Declared in wx_outputpane.h — the notepad needs it too,
+// for text it is handed as raw bytes (world output, and base64 decode output,
+// which is arbitrary binary).
+wxString DecodeUTF8Lenient(const char* bytes, size_t n)
 {
     const unsigned char* p = (const unsigned char*) bytes;
     wxString out;
@@ -142,7 +143,7 @@ static wxString DecodeRunText(const SOutputRun& run)
 // the bytes decode through the world charset, and a byte in 0x80–0xBF (e.g. a
 // CP1252 curly quote) looks like a UTF-8 continuation byte — counting lead bytes
 // would undercount and drift the selection/wrap against the rendered grid.
-static inline int RunCharLen(const SOutputRun& run)
+int RunCharLen(const SOutputRun& run)
 {
     return run.utf8 ? UTF8CharLen(run.text) : (int)DecodeRunText(run).size();
 }

@@ -412,6 +412,29 @@ mangling the line, and `GetInfo(236)`/`GetInfo(237)` fed back into
 three wx functions needs a real `wxTextCtrl` and has not been exercised -- there
 is no output-pane/world-window in-app selftest yet.
 
+### 4c-nonies. Text of unproven validity no longer decodes all-or-nothing (2026-08-03)
+
+**Port-only files** (`platform/wx_notepad.cpp`, `wx_mfc_impl.cpp`,
+`wx_world_child.cpp`) — nothing for Windows to check, listed for completeness.
+Three more `wxString::FromUTF8` sites were handed bytes that are not guaranteed
+valid UTF-8, and FromUTF8 returns an EMPTY string rather than partial text:
+
+- notepad append/replace and notepad creation (world output, or arbitrary script
+  bytes via `world.AppendToNotepad`);
+- notepad **Convert ▸ Base64 decode**, whose output is arbitrary binary — the
+  result was `SetValue("")`, i.e. the conversion silently ERASED the notepad.
+
+All now use `DecodeUTF8Lenient`. Separately, the MXP tooltip run-walk in
+`wx_world_child.cpp` measured runs with `run.text.size()` (BYTES) against a
+rendered CHARACTER column, so the wrong run's hint was returned after the first
+non-ASCII run; it now uses `RunCharLen`, as the hyperlink walk beside it already
+did.
+
+**Port verification debt:** the decoders themselves are covered headlessly
+(`Utf8NextCharTest`), but these four call sites are GUI-only. The notepad text
+area is not exposed to AX, so text cannot be placed in one without synthesising
+global keystrokes — see the notepad note in CLAUDE.md's verification debt.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

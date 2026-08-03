@@ -2860,7 +2860,9 @@ static void* hook_create_text_window(
 
     wxString wxTitle = wxString::FromUTF8(
         static_cast<const char*>(td->m_strTitle));
-    wxString wxText  = wxString::FromUTF8(sText ? sText : "");
+    // Lenient: the initial text is world output, so it can carry bytes that are
+    // not valid UTF-8; FromUTF8 would have opened the notepad empty.
+    wxString wxText  = sText ? DecodeUTF8Lenient(sText, strlen(sText)) : wxString();
 
     // CWxNotepadFrame constructor registers td with the template and shows.
     // The frame takes ownership of td.

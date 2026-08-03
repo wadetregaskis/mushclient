@@ -894,9 +894,14 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         const SOutputLine* line = m_output->GetLine(pt.line);
         if (!line) return {};
 
+        // RunCharLen, not run.text.size(): pt.col is a rendered CHARACTER
+        // column, and run.text is UTF-8 BYTES.  Using the byte count shifted
+        // every run after the first non-ASCII one, so the hint returned was the
+        // wrong run's (or none).  The hyperlink walk in wx_outputpane.cpp
+        // already measures with RunCharLen; this was the odd one out.
         int c = 0;
         for (const auto& run : *line) {
-            int runLen = (int)run.text.size();
+            int runLen = RunCharLen(run);
             if (pt.col >= c && pt.col < c + runLen)
                 return run.hint;   // may be empty — that's fine
             c += runLen;

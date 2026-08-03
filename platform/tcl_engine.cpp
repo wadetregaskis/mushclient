@@ -217,6 +217,17 @@ bool command_exists (Tcl_Interp* interp, const char* name)
 // ── CScriptEngine Tcl methods ────────────────────────────────────────────────
 void CScriptEngine::OpenTcl ()
   {
+  // Tcl's platform initialisation, which sets the system encoding (utf-8 here
+  // rather than the built-in iso8859-1 default) and populates
+  // [info nameofexecutable].  Every embedding is supposed to call it once
+  // before the first Tcl_CreateInterp; this one never did.
+  static bool s_foundExecutable = false;
+  if (!s_foundExecutable)
+    {
+    s_foundExecutable = true;
+    Tcl_FindExecutable (NULL);
+    }
+
   // Point the statically-linked Tcl at the bundled script library
   // (Contents/Resources/tcl8.6) so it finds init.tcl etc. with no system Tcl.
   // Done once, before any interp is created, derived from the executable path so
@@ -288,7 +299,21 @@ bool CScriptEngine::ExecuteTcl (DISPID & dispid, LPCTSTR szProcedure,
 
   std::vector<Tcl_Obj*> av;
   av.push_back (Tcl_NewStringObj (szProcedure, -1));
-  for (double d : nparams)          av.push_back (Tcl_NewDoubleObj (d));
+  // An integral value becomes an INTEGER object, not a double.  nparams is a
+  // list<double> because that is the widest thing the seam carries, but a
+  // trigger's line number or a timer's count arriving as "16.0" is useless in
+  // Tcl: it cannot be `incr`ed, cannot index a string, and reads wrong in any
+  // message the script builds.  Lua and JavaScript both hand the script a number
+  // that stringifies without the decimal point; Tcl was the only engine that
+  // could not.
+  for (double d : nparams)
+    {
+    if (d == (double) (long long) d &&
+        d >= -9007199254740992.0 && d <= 9007199254740992.0)
+      av.push_back (Tcl_NewWideIntObj ((Tcl_WideInt) d));
+    else
+      av.push_back (Tcl_NewDoubleObj (d));
+    }
   for (const string & s : sparams)  av.push_back (Tcl_NewStringObj (s.c_str (), -1));
   if (regexp)                                   // wildcards as a Tcl list {whole $1 ...}
     {

@@ -188,6 +188,7 @@ struct Dialect {
                             // GetDispid must not claim to have found a handler
     bool        hidesBuiltins;  // ...can this engine tell them apart at all?
     bool        typedResult;    // ...can it tell a string result from a structure?
+    bool        intParams;      // ...does an integral number stringify without ".0"?
 };
 
 const Dialect kDialects[] = {
@@ -215,6 +216,7 @@ const Dialect kDialects[] = {
   "function who() world.SetVariable('w', world.GetWorldID()) end\n"
   "function store(s) world.SetVariable('echoed', s) end\n"
   "function rettable(s) return {} end\n"
+  "function rawnum(a, b, c, d) world.SetVariable('r', tostring(a)) end\n"
   "function api()\n"
   "  world.Note('a note')\n"
   "  world.SetVariable('rt', 'value')\n"
@@ -228,7 +230,7 @@ const Dialect kDialects[] = {
   "function readshared() world.SetVariable('v', tostring(shared)) end\n"
   "function who() world.SetVariable('w', world.GetWorldID()) end\n",
   "function ( this is not lua\n",
-  true, true, "Note", false, true },
+  true, true, "Note", false, true, true },
 
 // ── Python ────────────────────────────────────────────────────────────────
 { "python", "Python", "Python",
@@ -257,6 +259,8 @@ const Dialect kDialects[] = {
   "    world.SetVariable('echoed', s)\n"
   "def rettable(s):\n"
   "    return {}\n"
+  "def rawnum(a, b, c, d):\n"
+  "    world.SetVariable('r', str(a))\n"
   "def api():\n"
   "    world.Note('a note')\n"
   "    world.SetVariable('rt', 'value')\n"
@@ -268,7 +272,7 @@ const Dialect kDialects[] = {
   "    world.SetVariable('v', shared if 'shared' in globals() else 'nil')\n"
   "def who():\n    world.SetVariable('w', world.GetWorldID())\n",
   "def broken(:\n",
-  true, false, "print", true, true },
+  true, false, "print", true, true, false },
 
 // ── Perl ──────────────────────────────────────────────────────────────────
 { "perl", "Perl", "perl",
@@ -292,6 +296,7 @@ const Dialect kDialects[] = {
   "sub who { $world->SetVariable('w', $world->GetWorldID()); }\n"
   "sub store { $world->SetVariable('echoed', $_[0]); }\n"
   "sub rettable { return {}; }\n"
+  "sub rawnum { $world->SetVariable('r', \"$_[0]\"); }\n"
   "sub api {\n"
   "  $world->Note('a note');\n"
   "  $world->SetVariable('rt', 'value');\n"
@@ -303,7 +308,7 @@ const Dialect kDialects[] = {
   "sub readshared { $world->SetVariable('v', defined($shared) ? $shared : 'nil'); }\n"
   "sub who { $world->SetVariable('w', $world->GetWorldID()); }\n",
   "sub broken { $x = ; }\n",
-  true, false, "printf", true, true },
+  true, false, "printf", true, true, true },
 
 // ── JavaScript ────────────────────────────────────────────────────────────
 { "js", "JS", "javascript",
@@ -329,6 +334,7 @@ const Dialect kDialects[] = {
   "function who() { world.SetVariable('w', world.GetWorldID()); }\n"
   "function store(s) { world.SetVariable('echoed', s); }\n"
   "function rettable(s) { return {}; }\n"
+  "function rawnum(a, b, c, d) { world.SetVariable('r', String(a)); }\n"
   "function api() {\n"
   "  world.Note('a note');\n"
   "  world.SetVariable('rt', 'value');\n"
@@ -341,7 +347,7 @@ const Dialect kDialects[] = {
   "  world.SetVariable('v', typeof shared === 'undefined' ? 'nil' : shared); }\n"
   "function who() { world.SetVariable('w', world.GetWorldID()); }\n",
   "function broken( {\n",
-  true, false, "parseInt", false, true },
+  true, false, "parseInt", false, true, true },
 
 // ── Tcl ───────────────────────────────────────────────────────────────────
 { "tcl", "Tcl", "tcl",
@@ -371,6 +377,7 @@ const Dialect kDialects[] = {
   "proc who {} { world SetVariable w [world GetWorldID] }\n"
   "proc store {s} { world SetVariable echoed $s }\n"
   "proc rettable {s} { return [dict create a 1] }\n"
+  "proc rawnum {a b c d} { world SetVariable r $a }\n"
   "proc api {} {\n"
   "  world Note {a note}\n"
   "  world SetVariable rt value\n"
@@ -385,7 +392,7 @@ const Dialect kDialects[] = {
   "  else { world SetVariable v nil } }\n"
   "proc who {} { world SetVariable w [world GetWorldID] }\n",
   "proc broken {  { \n",
-  true, false, "puts", true, false },
+  true, false, "puts", true, false, true },
 
 // ── Ruby ──────────────────────────────────────────────────────────────────
 { "ruby", "Ruby", "ruby",
@@ -411,6 +418,7 @@ const Dialect kDialects[] = {
   "def who; world.SetVariable('w', world.GetWorldID()); end\n"
   "def store(s); world.SetVariable('echoed', s); end\n"
   "def rettable(s); {}; end\n"
+  "def rawnum(a, b, c, d); world.SetVariable('r', a.to_s); end\n"
   "def api\n"
   "  world.Note('a note')\n"
   "  world.SetVariable('rt', 'value')\n"
@@ -422,7 +430,7 @@ const Dialect kDialects[] = {
   "def readshared; world.SetVariable('v', @shared || 'nil'); end\n"
   "def who; world.SetVariable('w', world.GetWorldID()); end\n",
   "def broken(\n",
-  true, false, "inspect", true, true },
+  true, false, "inspect", true, true, false },
 };
 
 const int kDialectCount = (int) (sizeof kDialects / sizeof kDialects[0]);
@@ -518,6 +526,20 @@ void battery_parameters(Engine& e, const Dialect& d)
     e.callRich("params", &err, { 7, 8 }, { "first", "second" });
     check(!err && e.var("p") == "7|8|first|second", L,
           "numeric then string parameters arrive in order");
+
+    // An integral value must not gain a decimal point on the way in.  nparams is
+    // a list<double> because that is the widest thing the seam carries, but a
+    // trigger's line number arriving as "16.0" is wrong wherever the script
+    // interpolates it -- and in Tcl it is worse than wrong, because a double
+    // object cannot be `incr`ed or used to index a string.  Python and Ruby
+    // genuinely model it as a float and say so.
+    e.callRich("rawnum", &err, { 16, 0 }, { "x", "y" });
+    if (d.intParams)
+        check(e.var("r") == "16", L,
+              "an integral numeric parameter stringifies without a decimal point");
+    else
+        skip(L, "an integral numeric parameter stringifies without a decimal point",
+             "the language models it as a float, and says so");
 
     std::map<std::string, std::string> t{ { "key", "value" } };
     err = false;

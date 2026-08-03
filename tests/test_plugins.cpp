@@ -1047,6 +1047,62 @@ TEST(PluginCallback, MxpTagAndEntityCallbacksReachPlugins)
     EXPECT_TRUE(CString(plugin_var(p, "err")).Find("E,") == 0);
 }
 
+// The MXP open-tag CALL SITE, end to end: real plugin, real MUD text, real
+// mxpStart.cpp.  Everything else in the scripting suite calls CScriptEngine
+// directly, which leaves the code that BUILDS the callback's arguments
+// untested -- and that is exactly where the damage was: all four MXP hooks
+// gated on IsLua(), so the other five languages took a COM path whose SAFEARRAY
+// the port cannot marshal and received no attributes at all.  Lua is the
+// language this suite can link, so it is the one that guards the call site; the
+// five embedded engines' handling of the same table is covered by the
+// per-language conformance suite (platform/engines_selftest.cpp).
+// The MXP open-tag CALL SITE for the WORLD's own script handler, end to end.
+//
+// Two different notifications leave mxpStart.cpp and they carry different
+// things.  Plugins get SendToAllPluginCallbacks(ON_PLUGIN_MXP_OPENTAG, ...) --
+// one combined "tag,args" string, on both platforms.  The world's configured
+// handler (World Properties > MXP) gets the RICH callback: the tag name, the
+// argument text, and a TABLE of the parsed arguments.
+//
+// That rich arm gated on IsLua(), so a world scripted in Python, Perl,
+// JavaScript, Tcl or Ruby fell through to the COM arm, which packs the
+// arguments into a SAFEARRAY that the port's CScriptEngine::Execute cannot
+// marshal (its switch ends "default: break;") -- those five got no arguments at
+// all.  Lua is the language this suite can link, so it guards the call site;
+// every language's handling of the table itself is covered by the per-language
+// conformance suite (platform/engines_selftest.cpp).
+TEST(MxpWorldScript, OpenTagHandlerGetsTagArgumentsAndTable)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bMXP = true;
+    doc.m_iUseMXP = eUseMXP;
+    doc.m_iMXP_mode = eMXP_secure;
+
+    doc.m_ScriptEngine = new CScriptEngine(&doc, "Lua");
+    ASSERT_FALSE(doc.m_ScriptEngine->CreateScriptEngine());
+    ASSERT_FALSE(doc.m_ScriptEngine->Parse(CString(
+        "function OnMXPopenTag(name, args, t)\n"
+        "  world.SetVariable('tag',   tostring(name))\n"
+        "  world.SetVariable('args',  tostring(args))\n"
+        "  world.SetVariable('ttype', type(t))\n"
+        "end\n"), "<test>"));
+    doc.m_strOnMXP_OpenTag   = "OnMXPopenTag";
+    doc.m_dispidOnMXP_OpenTag = doc.m_ScriptEngine->GetDispid("OnMXPopenTag");
+    ASSERT_NE(DISPID_UNKNOWN, doc.m_dispidOnMXP_OpenTag);
+
+    const char* text = "<font color=red>hi</font>";
+    doc.DisplayMsg(text, (int)strlen(text), 0);
+
+    VARIANT v;
+    v = doc.GetVariable("tag");
+    EXPECT_TRUE(CString(v.bstrVal ? v.bstrVal : "").Find("font") == 0);
+    v = doc.GetVariable("args");
+    EXPECT_TRUE(CString(v.bstrVal ? v.bstrVal : "").Find("color") >= 0);
+    // The third argument is the tell: the COM arm cannot deliver it.
+    v = doc.GetVariable("ttype");
+    EXPECT_STREQ("table", v.bstrVal ? v.bstrVal : "");
+}
+
 // The other half: a plugin with no MXP callbacks must leave the flags alone.
 // Without this, the derivation could satisfy the test above by setting all four
 // for every plugin, which would make MXP call into plugins that implement

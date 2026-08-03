@@ -189,6 +189,8 @@ struct Dialect {
     bool        hidesBuiltins;  // ...can this engine tell them apart at all?
     bool        typedResult;    // ...can it tell a string result from a structure?
     bool        intParams;      // ...does an integral number stringify without ".0"?
+    const char* mxpHandler;     // defines OnMXPopenTag(name, args, table)
+    const char* mxpTableType;   // what that language calls the table's type
 };
 
 const Dialect kDialects[] = {
@@ -230,7 +232,12 @@ const Dialect kDialects[] = {
   "function readshared() world.SetVariable('v', tostring(shared)) end\n"
   "function who() world.SetVariable('w', world.GetWorldID()) end\n",
   "function ( this is not lua\n",
-  true, true, "Note", false, true, true },
+  true, true, "Note", false, true, true,
+  "function OnMXPopenTag(name, args, t)\n"
+  "  world.SetVariable('mxptag', tostring(name))\n"
+  "  world.SetVariable('mxpargs', tostring(args))\n"
+  "  world.SetVariable('mxptype', type(t))\n"
+  "end\n", "table" },
 
 // ── Python ────────────────────────────────────────────────────────────────
 { "python", "Python", "Python",
@@ -272,7 +279,11 @@ const Dialect kDialects[] = {
   "    world.SetVariable('v', shared if 'shared' in globals() else 'nil')\n"
   "def who():\n    world.SetVariable('w', world.GetWorldID())\n",
   "def broken(:\n",
-  true, false, "print", true, true, false },
+  true, false, "print", true, true, false,
+  "def OnMXPopenTag(name, args, t=None):\n"
+  "    world.SetVariable('mxptag', str(name))\n"
+  "    world.SetVariable('mxpargs', str(args))\n"
+  "    world.SetVariable('mxptype', type(t).__name__)\n", "dict" },
 
 // ── Perl ──────────────────────────────────────────────────────────────────
 { "perl", "Perl", "perl",
@@ -308,7 +319,13 @@ const Dialect kDialects[] = {
   "sub readshared { $world->SetVariable('v', defined($shared) ? $shared : 'nil'); }\n"
   "sub who { $world->SetVariable('w', $world->GetWorldID()); }\n",
   "sub broken { $x = ; }\n",
-  true, false, "printf", true, true, true },
+  true, false, "printf", true, true, true,
+  "sub OnMXPopenTag {\n"
+  "  my ($name, $args, $t) = @_;\n"
+  "  $world->SetVariable('mxptag', $name);\n"
+  "  $world->SetVariable('mxpargs', $args);\n"
+  "  $world->SetVariable('mxptype', ref($t) || 'undef');\n"
+  "}\n", "HASH" },
 
 // ── JavaScript ────────────────────────────────────────────────────────────
 { "js", "JS", "javascript",
@@ -347,7 +364,12 @@ const Dialect kDialects[] = {
   "  world.SetVariable('v', typeof shared === 'undefined' ? 'nil' : shared); }\n"
   "function who() { world.SetVariable('w', world.GetWorldID()); }\n",
   "function broken( {\n",
-  true, false, "parseInt", false, true, true },
+  true, false, "parseInt", false, true, true,
+  "function OnMXPopenTag(name, args, t) {\n"
+  "  world.SetVariable('mxptag', String(name));\n"
+  "  world.SetVariable('mxpargs', String(args));\n"
+  "  world.SetVariable('mxptype', typeof t);\n"
+  "}\n", "object" },
 
 // ── Tcl ───────────────────────────────────────────────────────────────────
 { "tcl", "Tcl", "tcl",
@@ -392,7 +414,12 @@ const Dialect kDialects[] = {
   "  else { world SetVariable v nil } }\n"
   "proc who {} { world SetVariable w [world GetWorldID] }\n",
   "proc broken {  { \n",
-  true, false, "puts", true, false, true },
+  true, false, "puts", true, false, true,
+  "proc OnMXPopenTag {name a t} {\n"
+  "  world SetVariable mxptag $name\n"
+  "  world SetVariable mxpargs $a\n"
+  "  world SetVariable mxptype [expr {[catch {dict size $t}] ? \"notadict\" : \"dict\"}]\n"
+  "}\n", "dict" },
 
 // ── Ruby ──────────────────────────────────────────────────────────────────
 { "ruby", "Ruby", "ruby",
@@ -430,10 +457,71 @@ const Dialect kDialects[] = {
   "def readshared; world.SetVariable('v', @shared || 'nil'); end\n"
   "def who; world.SetVariable('w', world.GetWorldID()); end\n",
   "def broken(\n",
-  true, false, "inspect", true, true, false },
+  true, false, "inspect", true, true, false,
+  "def OnMXPopenTag(name, args, t = nil)\n"
+  "  world.SetVariable('mxptag', name.to_s)\n"
+  "  world.SetVariable('mxpargs', args.to_s)\n"
+  "  world.SetVariable('mxptype', t.class.to_s)\n"
+  "end\n", "Hash" },
 };
 
 const int kDialectCount = (int) (sizeof kDialects / sizeof kDialects[0]);
+
+// ── driving a REAL call site ──────────────────────────────────────────────
+//
+// Everything else here calls CScriptEngine directly, which leaves the code that
+// BUILDS the callback's arguments untested -- and that is where the
+// language-specific damage lived: mxpStart.cpp's rich arm gated on IsLua(), so
+// a world scripted in any other language fell through to the COM arm, whose
+// SAFEARRAY the port's CScriptEngine::Execute drops ("default: break;"), and
+// those five received no arguments at all.
+//
+// The world's own MXP handler is the call site to drive, because it needs only
+// a script engine on the doc -- no plugin, and therefore no main frame, which
+// does not exist this early.
+
+void battery_mxp_callsite(const Dialect& d)
+{
+    const char* L = d.display;
+
+    CMUSHclientDoc doc;
+    doc.m_bScriptErrorsToOutputWindow = TRUE;
+    doc.SetUpOutputWindow();
+    doc.m_bMXP      = true;
+    doc.m_iUseMXP   = eUseMXP;
+    doc.m_iMXP_mode = eMXP_secure;
+
+    doc.m_ScriptEngine = new CScriptEngine(&doc, d.language);
+    doc.m_ScriptEngine->CreateScriptEngine();
+    if (doc.m_ScriptEngine->Parse(CString(d.mxpHandler), "selftest-mxp")) {
+        skip(L, "an MXP open tag reaches the world's handler", "the MXP dialect failed to compile");
+        return;
+    }
+    doc.m_strOnMXP_OpenTag    = "OnMXPopenTag";
+    doc.m_dispidOnMXP_OpenTag = doc.m_ScriptEngine->GetDispid("OnMXPopenTag");
+    if (doc.m_dispidOnMXP_OpenTag == DISPID_UNKNOWN) {
+        skip(L, "an MXP open tag reaches the world's handler", "the handler did not resolve");
+        return;
+    }
+
+    const char* text = "<font color=red>hi</font>";
+    doc.DisplayMsg(text, (int) strlen(text), 0);
+
+    VARIANT v = doc.GetVariable("mxptag");
+    const CString tag (v.bstrVal ? v.bstrVal : "");
+    check(tag.Find("font") == 0, L,
+          "an MXP open tag reaches the world's handler with its tag name");
+
+    v = doc.GetVariable("mxpargs");
+    const CString args (v.bstrVal ? v.bstrVal : "");
+    check(args.Find("color") >= 0, L, "...and with the argument text");
+
+    // The third argument is the tell: only the rich callback path carries it.
+    v = doc.GetVariable("mxptype");
+    const CString ttype (v.bstrVal ? v.bstrVal : "");
+    check(ttype == d.mxpTableType, L,
+          "...and with a mapping of the parsed arguments, which the COM path drops");
+}
 
 // ── the battery ───────────────────────────────────────────────────────────
 
@@ -712,6 +800,7 @@ bool run_language(const Dialect& d)
     battery_worldapi  (d);
     battery_state     (e, d);
     battery_trace     (d);
+    battery_mxp_callsite(d);
     battery_errors    (e, d);   // last: it disables handlers in this engine
     battery_compile   (d);
     return true;
@@ -730,6 +819,14 @@ int RunEmbeddedEnginesSelfTest(const char* only)
     // not exist yet.  world.GetWorld walks it unconditionally (as it may: on
     // Windows InitInstance has always run by the time a script can call
     // anything), so give it an empty one to walk.
+    // The MXP element / entity / colour tables are loaded by
+    // CMUSHclientApp::InitInstance (MUSHclient.cpp:743), which we deliberately
+    // run before -- so without this, MXP recognises no tags at all and the
+    // call-site battery below would silently observe nothing happening.
+    App.MXP_LoadElements ();
+    App.MXP_LoadEntities ();
+    App.MXP_LoadColours  ();
+
     if (App.m_pWorldDocTemplate == nullptr)
         App.m_pWorldDocTemplate = new CMultiDocTemplate(
             IDR_MUSHCLTYPE,

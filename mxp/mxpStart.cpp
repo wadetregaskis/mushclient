@@ -581,7 +581,16 @@ bool CMUSHclientDoc::MXP_StartTagScript  (const CString & strName,
   CString strType = "MXP open tag";
   CString strReason =  TFormat ("opening MXP tag %s", (LPCTSTR) strName);
 
-  if (GetScriptEngine () && GetScriptEngine ()->IsLua ())
+  // UsesEmbeddedCallback, not IsLua: this arm is the rich-callback path and all
+  // six languages implement it.  Gating on IsLua sent the other five down the COM
+  // arm instead, which packs the attributes into a SAFEARRAY that the port's
+  // CScriptEngine::Execute cannot marshal (its switch ends "default: break;", so
+  // VT_ARRAY is dropped) -- a Python / Perl / JavaScript / Tcl / Ruby handler
+  // received NO MXP attributes at all.  On Windows the five Is<Lang>() are
+  // compile-time false, so UsesEmbeddedCallback() IS IsLua() there and the
+  // preprocessed behaviour is unchanged.  Same reasoning at the three other MXP
+  // hooks and at world.CallPlugin.
+  if (GetScriptEngine () && GetScriptEngine ()->UsesEmbeddedCallback ())
     {
     list<double> nparams;
     list<string> sparams;

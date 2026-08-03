@@ -134,7 +134,7 @@ bool bHaveVariable = false;
     CString strType = "MXP close tag";
     CString strReason =  TFormat ("closing MXP tag %s", (LPCTSTR) strTag);
 
-    if (GetScriptEngine () && GetScriptEngine ()->IsLua ())
+    if (GetScriptEngine () && GetScriptEngine ()->UsesEmbeddedCallback ())
       {
       list<double> nparams;
       list<string> sparams;
@@ -230,7 +230,7 @@ bool bHaveVariable = false;
       CString strType = "MXP set variable";
       CString strReason =  TFormat ("setting MXP variable %s", (LPCTSTR) strVariable);
 
-      if (GetScriptEngine () && GetScriptEngine ()->IsLua ())
+      if (GetScriptEngine () && GetScriptEngine ()->UsesEmbeddedCallback ())
         {
         list<double> nparams;
         list<string> sparams;

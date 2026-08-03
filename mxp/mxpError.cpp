@@ -49,7 +49,7 @@ char * p = "?";
     CString strType = "MXP Error";
     CString strReason =  "processing MXP error";
 
-    if (GetScriptEngine () && GetScriptEngine ()->IsLua ())
+    if (GetScriptEngine () && GetScriptEngine ()->UsesEmbeddedCallback ())
       {
       list<double> nparams;
       list<string> sparams;

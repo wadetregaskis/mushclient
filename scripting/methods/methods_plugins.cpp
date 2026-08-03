@@ -416,7 +416,7 @@ long nInvocationCount = 0;
                                (LPCTSTR) pPlugin->m_strName,
                                Routine ); 
       
-  if (pPlugin->m_ScriptEngine->IsLua ())
+  if (pPlugin->m_ScriptEngine->UsesEmbeddedCallback ())
     {
     list<double> nparams;
     list<string> sparams;

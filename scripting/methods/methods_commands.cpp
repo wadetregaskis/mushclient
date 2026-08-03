@@ -106,14 +106,27 @@ BSTR CMUSHclientDoc::PasteCommand(LPCTSTR Text)
 CString strResult;
 
 #ifndef _WIN32
-  // Non-Windows: PasteCommand appends Text to the current command bar contents
-  // (replacing any selection) and returns the previously selected text.
-  // We approximate by calling setCommand with the appended text.
+  // Windows is CEdit::ReplaceSel(Text, TRUE): insert at the caret, replacing
+  // any selection, and return whatever was selected.  The port used to append
+  // via SetCommandText instead -- but setCommand REFUSES a non-empty bar (it
+  // implements SetCommand's "only if empty" contract, wx_world_child.cpp:4137)
+  // and its result was discarded, so PasteCommand did nothing at all whenever
+  // the user had typed anything, and always returned "".
+  //
+  // ReplaceCommandSelectionRange is the same splice: one undoable
+  // wxTextCtrl::Replace.  Offsets are UTF-8 bytes on both sides, matching
+  // GetCommandText.  It changes the control's text, so the frame's wxEVT_TEXT
+  // binding fires ON_PLUGIN_COMMAND_CHANGED for us -- notifying explicitly here
+  // as the Windows arm does would double-fire.
   if (HaveCommandSink() && m_pWorldView) {
-    std::string current = GetCommandText();
-    std::string appended = current + std::string(Text ? Text : "");
-    SetCommandText(appended);
-    // No selection support on non-Windows; return empty string.
+    long nStart = 0, nEnd = 0;
+    GetCommandSelection(nStart, nEnd);
+
+    const std::string current = GetCommandText();
+    if (nEnd > nStart && nStart >= 0 && (size_t) nEnd <= current.size())
+      strResult = current.substr(nStart, nEnd - nStart).c_str();
+
+    ReplaceCommandSelectionRange(nStart, nEnd, Text ? Text : "");
   }
 #else
 int nStartChar,

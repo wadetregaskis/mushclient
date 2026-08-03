@@ -455,6 +455,50 @@ canonical `CMUSHclientDoc::OnUpdate*` handlers (as `kCanonCmds` already does for
 other commands) instead of restating the predicate — worth doing if a third
 divergence turns up here.
 
+### 4c-undecies. Command-entry path: history ordering, Repeat, PasteCommand (2026-08-03)
+
+**Port-only** (`platform/wx_world_child.cpp`, plus the `#ifndef _WIN32` arm of
+`scripting/methods/methods_commands.cpp`), but these were written by reading
+`sendvw.cpp` and are **not exercised by any test** — the whole command-entry path
+is GUI-only here. Please try to break them.
+
+1. **Command history is now recorded AFTER the command runs** (was: before
+   everything). Windows does the add at `sendvw.cpp:736`, after `Execute`, which
+   is what makes three things work — and all three were broken here:
+   - an alias with **omit from command history** (`evaluate.cpp:896` sets
+     `m_bOmitFromCommandHistory` *during* evaluation) — nothing in `platform/`
+     read that flag at all, so the option was write-only;
+   - a plugin's `OnPluginCommandEntered` returning `"\t"` (discard) no longer
+     leaves the command in history;
+   - a plugin that REWRITES the command now has the rewritten text recorded, not
+     what was typed.
+   The recorded string is the post-plugin, pre-auto-say-strip, pre-backslash
+   text, matching `strOriginalCommand`. `Execute() != eOK` now returns early
+   without recording, as `sendvw.cpp:729` does.
+2. **Input ▸ Repeat Last Command** went through `EvaluateCommand` directly;
+   Windows routes it through the ordinary send path (`SendCommand(strText,
+   TRUE)`, `sendvw.cpp:1818`). It now does auto-say, backslash translation, the
+   depth reset, `Execute` and the history re-add.
+3. **`world.PasteCommand`** was a silent no-op whenever the command bar was not
+   empty (it went through `setCommand`, which refuses a non-empty bar) and
+   always returned `""`. It now splices at the caret / over the selection and
+   returns the previously selected text, as `CEdit::ReplaceSel(Text, TRUE)` does.
+
+**Where these could be imperfect — worth checking specifically:**
+- Does Windows record history for a command that **auto-say** consumed? Read as
+  yes (the add sits after both arms of the auto-say if/else), and the port now
+  matches — but this was inferred from indentation, so confirm it.
+- The port deliberately does NOT honour `always_record_command_history`
+  (`wx_world_child.cpp:369`): its history is persisted to a **plaintext file**,
+  so it never records while echo is off. That divergence was pre-existing and is
+  intentional — do not "fix" it to match Windows.
+- `PasteCommand` relies on the command-bar selection seam being UTF-8 **byte**
+  offsets (see § 4c-octies). If Windows disagrees about what `GetInfo(236/237)`
+  measures, both change together.
+- Repeat Last Command's history re-add dedups against the tail, so repeating the
+  most recent command is a no-op for the list. Confirm Windows does the same
+  (`AddToCommandHistory` skips `strCommand == m_last_command`, so it should).
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

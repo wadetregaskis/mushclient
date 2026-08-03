@@ -1846,13 +1846,46 @@ void CWorldChildFrame::CopySelectionHTML()
         m_output->CopySelectionAsHTML(m_output->GetCurrentFont().GetFaceName());
 }
 
+// Input ▸ Repeat Last Command.  Windows routes it through the ORDINARY send
+// path -- CSendView::OnRepeatLastCommand (sendvw.cpp:1808) ends in
+// `SendCommand (strText, TRUE)` -- so it gets everything a typed line gets.
+// The port called EvaluateCommand directly, which is the same bypass the Enter
+// handler was fixed out of: it skipped the script prefix, command stacking and
+// its ";;" escape, the MAX_EXECUTION_DEPTH guard, the per-sub-command
+// ON_PLUGIN_COMMAND callback, auto-say, backslash translation, and the history
+// re-add that moves the repeated command back to the bottom of the list.
 void CWorldChildFrame::RepeatLastCommand()
 {
     if (!m_doc || m_history.empty()) return;
+
     CString cmd((const char*) m_history.back().utf8_str());
-    bool bOmit = false;
-    if (!cmd.IsEmpty())
-        m_doc->EvaluateCommand(cmd, true /*countThem*/, bOmit);
+    if (cmd.IsEmpty()) return;
+
+    m_doc->m_bOmitFromCommandHistory = false;    // sendvw.cpp:625
+
+    // sendvw.cpp:736 records the command before auto-say strips its prefix.
+    const CString strForHistory = cmd;
+
+    if (m_doc->ApplyAutoSay(cmd)) {
+        if (!m_doc->m_bOmitFromCommandHistory)
+            addToCommandHistory(strForHistory);
+        m_doc->UpdateAllViews(nullptr);
+        return;
+    }
+
+    if (m_doc->m_bTranslateBackslashSequences)
+        cmd = ::FixupEscapeSequences(cmd);
+
+    m_doc->m_iExecutionDepth = 0;                // hand-driven, depth zero
+    if (m_doc->Execute(cmd) != 0 /*eOK*/) {
+        m_doc->UpdateAllViews(nullptr);
+        return;
+    }
+
+    if (!m_doc->m_bOmitFromCommandHistory)
+        addToCommandHistory(strForHistory);
+
+    m_doc->UpdateAllViews(nullptr);
 }
 
 void CWorldChildFrame::ShowCommandHistory()
@@ -3578,13 +3611,20 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     // the flag stays in the test as well, so a masked prompt is still recognised
     // in the moment before the swap.
     bool isPassword = (inp == m_inputPassword) || m_doc->m_bNoEcho;
-    if (!isPassword && !text.empty()) {
-        // Add to history (no duplicates at the tail; trim if over limit).
-        if (m_history.empty() || m_history.back() != text)
-            m_history.push_back(text);
-        if ((int)m_history.size() > HistoryLimit())
-            m_history.erase(m_history.begin());
-    }
+
+    // History is recorded at the END of this function, not here.  Windows
+    // orders it that way (sendvw.cpp:736, AFTER Execute) for three reasons the
+    // port used to lose by pushing first:
+    //   * an alias with "omit from command history" sets
+    //     m_bOmitFromCommandHistory while it is being evaluated, so the flag
+    //     does not exist yet at this point -- nothing in platform/ read it at
+    //     all, making that alias option dead;
+    //   * a plugin's OnPluginCommandEntered may DISCARD the command ("\t"), and
+    //     Windows never records a discarded one (CSendView::OnChar returns
+    //     before SendCommand);
+    //   * a plugin may REWRITE the command, and Windows records the rewritten
+    //     text, not what was typed.
+    m_doc->m_bOmitFromCommandHistory = false;    // sendvw.cpp:625
 
     // Unpause output on send (unpause_on_send world option, default on).
     if (m_doc->m_bUnpauseOnSend && m_output && m_output->IsPaused())
@@ -3625,7 +3665,17 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     // plain-send translation below, mirroring sendvw.cpp's ordering.  Returns
     // true when it consumed the command; it may also strip the override prefix
     // and return false, in which case we send the stripped text normally.
+    // What Windows puts in the history: the command as the plugin left it, but
+    // BEFORE auto-say strips its prefix and before backslash translation --
+    // sendvw.cpp:736 records strOriginalCommand, "we might have stripped
+    // auto-say prefix".
+    const CString strForHistory = cmd;
+
     if (!cmd.IsEmpty() && m_doc->ApplyAutoSay(cmd)) {
+        // Auto-say still records: on Windows the history add sits after BOTH
+        // arms of the auto-say if/else, not inside the plain-send one.
+        if (!isPassword && !m_doc->m_bOmitFromCommandHistory)
+            addToCommandHistory(strForHistory);
         m_doc->UpdateAllViews(nullptr);
         return;
     }
@@ -3663,8 +3713,19 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
         // Depth is reset first because this is a hand-typed line, matching
         // sendvw.cpp:702 (Windows does the same before its Execute call).
         m_doc->m_iExecutionDepth = 0;
-        m_doc->Execute(cmd);
+        if (m_doc->Execute(cmd) != 0 /*eOK*/) {
+            // sendvw.cpp:729-731 returns here, so a command that failed to
+            // execute is not recorded.
+            m_doc->UpdateAllViews(nullptr);
+            return;
+        }
     }
+
+    // sendvw.cpp:735-737.  m_bOmitFromCommandHistory is set by evaluate.cpp:896
+    // while an alias with "omit from command history" is being evaluated, which
+    // is why this has to come after Execute rather than before it.
+    if (!isPassword && !m_doc->m_bOmitFromCommandHistory)
+        addToCommandHistory(strForHistory);
 
     // Flush any output produced by alias scripts / triggers to the pane.
     m_doc->UpdateAllViews(nullptr);

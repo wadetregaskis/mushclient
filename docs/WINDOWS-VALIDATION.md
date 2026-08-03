@@ -621,6 +621,33 @@ with a differently-configured world.
    Windows session ever shows lines going missing after a gag, this is the first
    place to look; equally, if it never does, the fix costs nothing.
 
+### 4c-sexdecies. Mono pattern brushes keep their colours (2026-08-03)
+
+**Port-only** (`platform/wx_surface.cpp`). GDI colours a 1-bpp pattern brush
+from the DC — 0 bits take the text colour, 1 bits the background — but wx's
+`CreatePatternBrush` ignores `SetTextColor`/`SetBkColor` entirely and painted the
+stipple literally black and white. So `WindowCircleOp` / `WindowPolygon` brush
+styles **8-12** came out monochrome whatever colours the plugin asked for. The
+8x8 tile is now built already coloured (64 pixels; cheap).
+
+**Two things this does NOT fix, both found while testing it:**
+
+1. **The pattern's SHAPE still collapses.** `kFine` is a 50/50 checkerboard
+   (`0xAA`/`0x55`), so a filled area should contain both colours — and only one
+   appears. An 8x8 stipple is being flattened to a single colour, which is
+   almost certainly the **HiDPI resampling** problem already on the list (the
+   miniwindow canvas is 2x and every read-modify-write resamples down and back
+   up). Colouring the tile is a strict improvement over black-and-white, but the
+   pattern will not look right until that is fixed. The selftest asserts the
+   colours, and says in a comment why it deliberately does not assert both
+   appearing.
+2. **Transparent gaps** (`bg == -1`) are not expressible as a stipple without a
+   mask, so they currently paint the gap in the foreground colour instead of
+   leaving the destination alone. Windows leaves it alone.
+
+Worth confirming on Windows what styles 8-12 actually look like with distinct
+pen and brush colours, so there is a reference to match.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

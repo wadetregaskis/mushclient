@@ -346,16 +346,56 @@ static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec, CBitmap& patte
             return br.CreatePatternBrush(&patternBmp) != 0;
         }
         if (!spec.monoPattern) return false;
-        // The 5 built-in mono patterns (WindowCircleOp/WindowPolygon 8-12): a mono
-        // 8x8 CreatePatternBrush coloured with GDI mono-brush semantics — fg via
-        // SetTextColor, bg via SetBkColor, TRANSPARENT gaps when fg == CLR (-1).
-        // (On wxOSX the shim renders the mono stipple black/white, as it does
-        // today; Windows/GDI applies the real text/bk mapping — byte-exact.)
-        if (!patternBmp.CreateBitmap(8, 8, 1, 1, spec.monoPattern)) return false;
-        dc->SetTextColor(spec.fg);
-        dc->SetBkColor(spec.bg);
-        dc->SetBkMode(spec.fg == (Colour)-1 ? TRANSPARENT : OPAQUE);
-        return br.CreatePatternBrush(&patternBmp) != 0;
+        // The 5 built-in mono patterns (WindowCircleOp/WindowPolygon 8-12).
+        //
+        // GDI colours a 1-bpp pattern brush FROM THE DC: 0 bits take the text
+        // colour, 1 bits the background colour.  wx does not -- the shim
+        // materialises the mono bits as a literal black/white image and
+        // CreatePatternBrush ignores SetTextColor/SetBkColor entirely -- so
+        // styles 8-12 used to come out black-and-white whatever colours the
+        // plugin asked for.  Build the 8x8 tile ALREADY COLOURED instead, which
+        // is cheap because it is only 64 pixels.
+        //
+        // Transparent gaps (bg == -1) are still not expressible this way: a
+        // stipple has no mask here, so those fall back to painting the gap in
+        // the foreground colour rather than leaving the destination alone.
+        // Recorded in docs/WINDOWS-VALIDATION.md.
+        {
+            const Colour fg = spec.fg;
+            const Colour bg = (spec.bg == (Colour)-1) ? spec.fg : spec.bg;
+
+            BITMAPINFO bmi;
+            memset(&bmi, 0, sizeof bmi);
+            bmi.bmiHeader.biSize        = sizeof bmi;
+            bmi.bmiHeader.biWidth       = 8;
+            bmi.bmiHeader.biHeight      = 8;             // bottom-up
+            bmi.bmiHeader.biPlanes      = 1;
+            bmi.bmiHeader.biBitCount    = 24;
+            bmi.bmiHeader.biCompression = BI_RGB;
+            const int stride = (int) BytesPerLine(8, 24);
+            bmi.bmiHeader.biSizeImage   = 8 * stride;
+
+            unsigned char* bits = NULL;
+            HBITMAP hbm = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS,
+                                           (void**)&bits, NULL, 0);
+            if (!hbm || !bits) return false;
+            memset(bits, 0, bmi.bmiHeader.biSizeImage);
+
+            for (int row = 0; row < 8; ++row) {
+                const unsigned char bitsRow = spec.monoPattern[row];
+                // The DIB is bottom-up, the pattern's first byte is its top row.
+                unsigned char* out = bits + (size_t)(7 - row) * stride;
+                for (int col = 0; col < 8; ++col) {
+                    const bool set = (bitsRow & (0x80u >> col)) != 0;   // MSB = left
+                    const Colour c = set ? bg : fg;                     // GDI: 1 -> bk
+                    *out++ = (unsigned char)((c >> 16) & 0xFF);         // B
+                    *out++ = (unsigned char)((c >>  8) & 0xFF);         // G
+                    *out++ = (unsigned char)( c        & 0xFF);         // R
+                }
+            }
+            patternBmp.Attach((HGDIOBJ)hbm);   // materializes + frees the DIB
+            return br.CreatePatternBrush(&patternBmp) != 0;
+        }
     }
     }
     return false;

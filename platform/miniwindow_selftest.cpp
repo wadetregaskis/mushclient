@@ -120,6 +120,47 @@ int RunPalMiniWindowSelfTest()
                 "restore the background after the chord probe");
     }
 
+    // ── CircleOp brush style 8-12 = the built-in mono patterns ────────────
+    // GDI colours a 1-bpp pattern brush from the DC (0 bits -> text colour,
+    // 1 bits -> background colour).  wx ignores those and paints the stipple
+    // black/white, so these came out monochrome whatever the plugin asked for.
+    // "Fine" (style 8) is a sparse pattern, so a filled area contains BOTH
+    // colours -- scan a row and assert neither black nor white appears.
+    {
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the mono-pattern probe");
+        mwCheck(doc->WindowCircleOp(W, 2, 4, 4, 40, 40,
+                                    kGreen, 5 /*PS_NULL: no outline*/, 1,
+                                    kRed, 8 /*mono pattern "fine"*/,
+                                    0, 0, 0, 0) == eOK,
+                "WindowCircleOp (mono pattern brush) succeeds");
+        int sawRed = 0, sawGreen = 0, sawMono = 0;
+        for (long x = 10; x < 34; ++x)
+            for (long y = 10; y < 34; ++y) {
+                const long c = doc->WindowGetPixel(W, x, y);
+                if      (c == kRed)   sawRed++;
+                else if (c == kGreen) sawGreen++;
+                else if (c == 0x000000 || c == 0xFFFFFF) sawMono++;
+            }
+        // The bug this fixes: the stipple used to be painted literally
+        // black/white because wx's CreatePatternBrush ignores the DC's
+        // text/background colours.  That is what is asserted here.
+        mwCheck(sawMono == 0, "mono pattern never falls back to black/white");
+        mwCheck(sawRed > 0 || sawGreen > 0,
+                "...and paints in the colours the caller asked for");
+
+        // NOT asserted, because it does not currently hold: kFine is a 50/50
+        // checkerboard (0xAA/0x55), so BOTH colours should appear -- and only
+        // one does.  An 8x8 stipple is collapsing to a single colour, which is
+        // the HiDPI resampling problem tracked separately (the miniwindow canvas
+        // is 2x and every read-modify-write resamples it down and back up).
+        // Colouring the tile is still a strict improvement over black/white;
+        // the pattern's SHAPE needs that other fix before it can be pinned here.
+        (void) sawRed; (void) sawGreen;
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the mono-pattern probe");
+    }
+
     // ── RectOp: solid fill (action 2) ──────────────────────────────────────
     mwCheck(doc->WindowRectOp(W, 2, 10, 10, 20, 20, kRed, 0) == eOK,
             "WindowRectOp fill succeeds");

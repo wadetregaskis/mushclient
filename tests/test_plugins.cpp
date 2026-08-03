@@ -1021,10 +1021,17 @@ TEST(PluginCallback, MxpTagAndEntityCallbacksReachPlugins)
         "function OnPluginMXPerror(text) world.SetVariable('err', text) end\n")));
     CPlugin* p = doc.GetPlugin(IDA);
     ASSERT_NE(nullptr, p);
-    doc.m_bPluginProcessesOpenTag = true;
-    doc.m_bPluginProcessesCloseTag = true;
-    doc.m_bPluginProcessesSetEntity = true;
-    doc.m_bPluginProcessesError = true;
+
+    // ASSERT, do not assign.  These four flags are what MXP consults before it
+    // will call a plugin at all (mxpStart.cpp:159, mxpOpenAtomic.cpp:46), and
+    // deriving them from the plugin's callbacks is InternalLoadPlugin's job
+    // (xml/xml_load_world.cpp).  This test used to SET them by hand, which meant
+    // it kept passing when that derivation was disabled -- and it was, silently,
+    // for a while: every plugin's MXP callbacks were dead and nothing noticed.
+    EXPECT_TRUE(doc.m_bPluginProcessesOpenTag);
+    EXPECT_TRUE(doc.m_bPluginProcessesCloseTag);
+    EXPECT_TRUE(doc.m_bPluginProcessesSetEntity);
+    EXPECT_TRUE(doc.m_bPluginProcessesError);
 
     const char* text1 = "<b>bold</b>";
     doc.DisplayMsg(text1, (int)strlen(text1), 0);
@@ -1038,6 +1045,25 @@ TEST(PluginCallback, MxpTagAndEntityCallbacksReachPlugins)
     const char* text3 = "<nosuchtag>";
     doc.DisplayMsg(text3, (int)strlen(text3), 0);
     EXPECT_TRUE(CString(plugin_var(p, "err")).Find("E,") == 0);
+}
+
+// The other half: a plugin with no MXP callbacks must leave the flags alone.
+// Without this, the derivation could satisfy the test above by setting all four
+// for every plugin, which would make MXP call into plugins that implement
+// nothing on every tag.
+TEST(PluginMxp, FlagsStayFalseForAPluginWithNoMxpCallbacks)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_iUseMXP = eUseMXP;
+    ASSERT_TRUE(load_plugin(doc, write_plugin("nomxp", IDB, "NoMxp",
+        "function OnPluginConnect() end\n")));
+    ASSERT_NE(nullptr, doc.GetPlugin(IDB));
+
+    EXPECT_FALSE(doc.m_bPluginProcessesOpenTag);
+    EXPECT_FALSE(doc.m_bPluginProcessesCloseTag);
+    EXPECT_FALSE(doc.m_bPluginProcessesSetVariable);
+    EXPECT_FALSE(doc.m_bPluginProcessesSetEntity);
+    EXPECT_FALSE(doc.m_bPluginProcessesError);
 }
 
 // ═══ CPlugin::SaveState ════════════════════════════════════════════════════

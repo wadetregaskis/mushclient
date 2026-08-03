@@ -1670,7 +1670,9 @@ TEST(MXPPhaseR5, ScriptContentDiscardedInSecureMode)
         all.append(l->text, l->len);
     }
     EXPECT_EQ(std::string::npos, all.find("evil"));
-    EXPECT_NE(std::string::npos, all.find("after")); // TEMP verification probe
+    // ...and only the script content: without this the test would pass if MXP
+    // discarded the whole line, or the whole packet.
+    EXPECT_NE(std::string::npos, all.find("after"));
 }
 
 // In paragraph mode a newline after a word (with an earlier space on the

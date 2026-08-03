@@ -1209,6 +1209,72 @@ TEST(Utf8NextCharTest, RejectsCodePointsBeyondUnicode) {
 // The invariant the output pane depends on: for WELL-FORMED input the walker's
 // character count equals the lead-byte count, which is what the pane's column
 // and wrap bookkeeping assumed before the walker existed.
+// ── UTF8ByteToCharOffset / UTF8CharToByteOffset ───────────────────────────
+//
+// The command-bar seam: wxTextCtrl indexes CHARACTERS, GetCommandText() and
+// every shared body scanning it index BYTES (as Windows' CEdit offsets do over
+// its ANSI buffer).  Tab completion took wx character offsets straight into the
+// byte-indexed shared body, so one non-ASCII character earlier in the line threw
+// every subsequent offset out by one byte per extra byte.
+
+namespace {
+// "héllo wörld" — 11 characters, 13 bytes.
+const char* kMixed = "h\xC3\xA9llo w\xC3\xB6rld";
+const size_t kMixedBytes = 13;
+} // namespace
+
+TEST(Utf8OffsetTest, RoundTripsEveryCharacterBoundary) {
+    for (size_t chars = 0; chars <= 11; chars++) {
+        const size_t bytes = UTF8CharToByteOffset(kMixed, kMixedBytes, chars);
+        EXPECT_EQ(chars, UTF8ByteToCharOffset(kMixed, kMixedBytes, bytes));
+    }
+}
+
+TEST(Utf8OffsetTest, AccountsForMultiByteCharacters) {
+    // Before the é the two agree; after it they differ by one byte, and after
+    // the ö by two.  This drift IS the bug.
+    EXPECT_EQ(1u,  UTF8CharToByteOffset(kMixed, kMixedBytes, 1));   // "h"
+    EXPECT_EQ(3u,  UTF8CharToByteOffset(kMixed, kMixedBytes, 2));   // "hé"
+    EXPECT_EQ(8u,  UTF8CharToByteOffset(kMixed, kMixedBytes, 7));   // "héllo w"
+    EXPECT_EQ(13u, UTF8CharToByteOffset(kMixed, kMixedBytes, 11));  // all of it
+
+    EXPECT_EQ(1u,  UTF8ByteToCharOffset(kMixed, kMixedBytes, 1));
+    EXPECT_EQ(2u,  UTF8ByteToCharOffset(kMixed, kMixedBytes, 3));
+    EXPECT_EQ(7u,  UTF8ByteToCharOffset(kMixed, kMixedBytes, 8));
+    EXPECT_EQ(11u, UTF8ByteToCharOffset(kMixed, kMixedBytes, 13));
+}
+
+TEST(Utf8OffsetTest, PureAsciiIsTheIdentity) {
+    const char* s = "north";
+    for (size_t i = 0; i <= 5; i++) {
+        EXPECT_EQ(i, UTF8CharToByteOffset(s, 5, i));
+        EXPECT_EQ(i, UTF8ByteToCharOffset(s, 5, i));
+    }
+}
+
+// Out of range must saturate, not read past the buffer: a caller can hand these
+// a stale selection after the text shrank.
+TEST(Utf8OffsetTest, OutOfRangeOffsetsClamp) {
+    EXPECT_EQ(kMixedBytes, UTF8CharToByteOffset(kMixed, kMixedBytes, 99));
+    EXPECT_EQ(11u,         UTF8ByteToCharOffset(kMixed, kMixedBytes, 99));
+    EXPECT_EQ(0u,          UTF8CharToByteOffset(kMixed, kMixedBytes, 0));
+    EXPECT_EQ(0u,          UTF8ByteToCharOffset(kMixed, kMixedBytes, 0));
+}
+
+TEST(Utf8OffsetTest, EmptyBufferIsAlwaysZero) {
+    EXPECT_EQ(0u, UTF8CharToByteOffset("", 0, 5));
+    EXPECT_EQ(0u, UTF8ByteToCharOffset("", 0, 5));
+}
+
+// A byte offset landing INSIDE a multi-byte character cannot be honoured
+// exactly; it must not loop forever or run past the end.  It rounds up to the
+// end of that character, which is the only self-consistent answer.
+TEST(Utf8OffsetTest, ByteOffsetInsideACharacterDoesNotOverrun) {
+    const size_t chars = UTF8ByteToCharOffset(kMixed, kMixedBytes, 2);  // mid-é
+    EXPECT_EQ(2u, chars);
+    EXPECT_TRUE(UTF8CharToByteOffset(kMixed, kMixedBytes, chars) <= kMixedBytes);
+}
+
 TEST(Utf8NextCharTest, CharacterCountMatchesLeadByteCountWhenWellFormed) {
     const std::string s = "caf\xC3\xA9 \xE2\x82\xAC \xF0\x9F\x98\x80!";
     int leadBytes = 0;

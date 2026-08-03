@@ -835,6 +835,16 @@ string tolower (const string & s);
 // Defined in utilities_shared.cpp.
 size_t UTF8NextChar (const unsigned char * p, size_t n, unsigned int & cp);
 
+// Convert between the two ways of counting a position in a UTF-8 buffer.  A
+// frontend control indexes text in CHARACTERS (wxTextCtrl does); the engine's
+// GetCommandText() and every shared body that scans it index BYTES, which is
+// also what Windows' CEdit offsets are over its ANSI buffer.  Mixing them
+// corrupts the text as soon as it contains anything non-ASCII.  Both clamp to
+// the buffer, so an out-of-range offset saturates rather than reads past.
+// Defined in utilities_shared.cpp.
+size_t UTF8ByteToCharOffset (const char * p, size_t n, size_t byteOffset);
+size_t UTF8CharToByteOffset (const char * p, size_t n, size_t charOffset);
+
 void FindMatchingBrace (CEdit & ctlEdit, const bool bSelect);
 // The scan behind it (utilities_shared.cpp) -- pure, so every frontend and the
 // tests can drive it.  nEndChar is the caret on the way in; on true both

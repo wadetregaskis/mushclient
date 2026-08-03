@@ -369,6 +369,26 @@ claiming UTF-8) still shows the accented character and still fires a trigger
 matching that line — that is the behaviour the port was missing, so it should
 already be true on Windows.
 
+### 4c-octies. Command-bar selection offsets are bytes, not characters (2026-08-03)
+
+`CWorldChildFrame::commandSelection` / `setCommandSelection` /
+`replaceCommandSelection` (`platform/wx_world_child.cpp`) used wxTextCtrl
+CHARACTER offsets, while `GetCommandText()` and every shared body that scans it
+index BYTES -- which is also what Windows' `CEdit::GetSel` / `SetSel` are over
+its ANSI buffer. The seam now converts, via the new `UTF8ByteToCharOffset` /
+`UTF8CharToByteOffset` in `utilities_shared.cpp` (**no Windows caller**).
+
+**Check on Windows:** nothing changed there, but this pins the contract the
+Windows adapter already satisfies -- with a non-ASCII character early in the
+command bar, Tab completion must complete the word under the caret without
+mangling the line, and `GetInfo(236)`/`GetInfo(237)` fed back into
+`world.SetCommandSelection` must reselect the same text.
+
+**Port verification debt:** the conversions themselves are covered headlessly
+(`tests/test_utilities.cpp`, `Utf8OffsetTest`), but their *application* in those
+three wx functions needs a real `wxTextCtrl` and has not been exercised -- there
+is no output-pane/world-window in-app selftest yet.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

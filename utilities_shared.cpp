@@ -760,6 +760,41 @@ size_t UTF8NextChar (const unsigned char * p, size_t n, unsigned int & cp)
   return (size_t) extra + 1;
   } // end of UTF8NextChar
 
+// Byte offset -> character offset.  See the declarations in stdafx.h.
+size_t UTF8ByteToCharOffset (const char * p, size_t n, size_t byteOffset)
+  {
+  if (byteOffset > n)
+    byteOffset = n;
+
+  const unsigned char * u = (const unsigned char *) p;
+  size_t i = 0, chars = 0;
+
+  while (i < byteOffset)
+    {
+    unsigned int cp;
+    i += UTF8NextChar (u + i, n - i, cp);
+    chars++;
+    }
+
+  return chars;
+  } // end of UTF8ByteToCharOffset
+
+// Character offset -> byte offset.
+size_t UTF8CharToByteOffset (const char * p, size_t n, size_t charOffset)
+  {
+  const unsigned char * u = (const unsigned char *) p;
+  size_t i = 0, chars = 0;
+
+  while (i < n && chars < charOffset)
+    {
+    unsigned int cp;
+    i += UTF8NextChar (u + i, n - i, cp);
+    chars++;
+    }
+
+  return i;
+  } // end of UTF8CharToByteOffset
+
 // returns a lower case version of the string
 string tolower (const string & s)
   {

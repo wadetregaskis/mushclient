@@ -4149,6 +4149,13 @@ void CWorldChildFrame::selectCommand()
 }
 
 // GetInfo(236/237): the command input selection range.
+//
+// The seam speaks UTF-8 BYTE offsets into GetCommandText(), because that is what
+// every shared body scanning the command text indexes with, and what Windows'
+// CEdit::GetSel returns over its ANSI buffer.  wxTextCtrl counts CHARACTERS, so
+// the two disagree the moment the bar holds anything non-ASCII -- which used to
+// mangle tab completion (doc_tabcomplete_shared.cpp reads strCurrent[nStartChar]
+// and splices with the same numbers).
 pal::Range CWorldChildFrame::commandSelection() const
 {
     pal::Range r;
@@ -4156,38 +4163,53 @@ pal::Range CWorldChildFrame::commandSelection() const
     if (inp) {
         long from = 0, to = 0;
         inp->GetSelection(&from, &to);
-        r.start = (int) from;
-        r.end   = (int) to;
+        const wxScopedCharBuffer utf8 = inp->GetValue().utf8_str();
+        r.start = (int) UTF8CharToByteOffset(utf8.data(), utf8.length(), (size_t) from);
+        r.end   = (int) UTF8CharToByteOffset(utf8.data(), utf8.length(), (size_t) to);
     }
     return r;
 }
 
 // world.SetCommandSelection(first, last): select a range in the command bar.
-// Indices are 1-based character positions (0 = end of bar).
+// Indices are 1-based BYTE positions (0 = end of bar) -- the same space
+// commandSelection() reports in, so GetInfo(236/237) can be fed straight back,
+// and the same space Windows' CEdit::SetSel works in.
 void CWorldChildFrame::setCommandSelection(long first, long last)
 {
     wxTextCtrl* inp = ActiveInput();
     if (!inp) return;
-    long len = (long)inp->GetValue().size();
-    long f = (first  <= 0) ? len : first  - 1;
+    const wxScopedCharBuffer utf8 = inp->GetValue().utf8_str();
+    const size_t nbytes = utf8.length();
+    long f = (first <= 0) ? (long) nbytes : first - 1;
     // End is exclusive (one past the last char), matching Windows'
     // CEdit::SetSel(First - 1, Last): only the start is decremented.
-    long l = (last   <= 0) ? len : last;
-    inp->SetSelection(f, l);
+    long l = (last  <= 0) ? (long) nbytes : last;
+    inp->SetSelection(
+        (long) UTF8ByteToCharOffset(utf8.data(), nbytes, (size_t) (f < 0 ? 0 : f)),
+        (long) UTF8ByteToCharOffset(utf8.data(), nbytes, (size_t) (l < 0 ? 0 : l)));
 }
 
 // Replace [start, end) in the command bar as one undoable edit.  Offsets are
-// RAW (0-based), matching commandSelection() — not the 1-based scripting space
-// of setCommandSelection above.  Tab completion is the caller.
+// RAW (0-based) UTF-8 BYTE offsets, matching commandSelection() — not the
+// 1-based scripting space of setCommandSelection above.  Tab completion is the
+// caller, and it derived these by indexing GetCommandText() itself.
 void CWorldChildFrame::replaceCommandSelection(long start, long end,
                                                const char* text)
 {
     wxTextCtrl* inp = ActiveInput();
     if (!inp) return;
+
+    const wxScopedCharBuffer utf8 = inp->GetValue().utf8_str();
+    const long cs = (long) UTF8ByteToCharOffset(utf8.data(), utf8.length(),
+                                                (size_t) (start < 0 ? 0 : start));
+    const long ce = (long) UTF8ByteToCharOffset(utf8.data(), utf8.length(),
+                                                (size_t) (end   < 0 ? 0 : end));
+
+    const wxString replacement = wxString::FromUTF8(text ? text : "");
     // wxTextCtrl::Replace is a single undo record, like CEdit::ReplaceSel with
     // bCanUndo=TRUE.  It leaves the caret after the inserted text.
-    inp->Replace(start, end, wxString::FromUTF8(text ? text : ""));
-    inp->SetInsertionPoint(start + (long) wxString::FromUTF8(text ? text : "").length());
+    inp->Replace(cs, ce, replacement);
+    inp->SetInsertionPoint(cs + (long) replacement.length());
 }
 
 // world.PushCommand(): save current bar text to history, clear bar.

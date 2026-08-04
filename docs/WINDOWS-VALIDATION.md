@@ -722,7 +722,7 @@ moved.
    in the bar. (Unchanged on Windows — the same expressions, now behind a
    predicate — but it is the cheapest of the five to confirm.)
 
-### 4c-duodevicies. WindowAddHotspot's re-detect goes through IWorldView (2026-08-03)
+### 4c-undevicies. WindowAddHotspot's re-detect goes through IWorldView (2026-08-03)
 
 **Touches shared code AND Windows.** `CMUSHclientDoc::WindowAddHotspot`
 (`scripting/methods/methods_miniwindows.cpp`) ends with the
@@ -742,6 +742,96 @@ the hotspot without moving it, then have the plugin call
 `MouseOver` must fire immediately, exactly as before this change, and
 `WindowInfo(win, 19)` must name the hotspot. Also confirm that adding a
 hotspot **away** from the resting pointer fires nothing.
+
+### 4c-vicies. `world.Bookmark` relocated into the shared engine (2026-08-04)
+
+**Windows code changed** — the body moved from
+`scripting/methods/methods_output.cpp` into `doc_shared.cpp`, and the
+"alter appearance of all output windows" `CMUSHView` walk at the end of it is
+now `pal::IWorldView::setBookmark`, with **that same walk verbatim** in
+`CWinWorldView` (`pal/win_worldview.cpp`). The flag write on the `CLine` is
+untouched. It had to move because `methods_output.cpp` is GUI-only, so the
+headless build linked an inert stub and nothing could test the real body — and
+because the port kept an entirely separate bookmark store that `world.Bookmark`
+never reached.
+
+What to check on Windows: `world.Bookmark(n, 1)` marks line *n* (the bookmark
+gutter/highlight appears), `world.Bookmark(n, 0)` clears it,
+`world.GetLineInfo(n, 7)` agrees with what is drawn in both directions, and
+Display ▸ Bookmark Selection still toggles. Out-of-range line numbers must
+still do nothing at all.
+
+### 4c-unvicies. Unread-line accounting reads one predicate (2026-08-04)
+
+**Windows code changed, but provably equivalently** — `doc_shared.cpp`'s
+`StartNewLine` tested `m_pActiveCommandView == NULL && m_pActiveOutputView ==
+NULL` inline; it now calls `!IsWorldViewActive()`, and the Windows definition of
+that (`doc.h:1177`) is `m_pActiveCommandView != NULL || m_pActiveOutputView !=
+NULL`. De Morgan says these are the same expression, and no other Windows code
+moved — the port needed the seam because neither `CView` pointer is ever set
+there.
+
+What to check on Windows: with two worlds open, output arriving in the
+**background** one bumps its Activity-window unread count; switching to it
+clears the count. That is the only observable, and it must be exactly as before.
+
+### 4c-duovicies. `CMiniWindow::Menu` gained a defaulted `pDoc` (2026-08-04)
+
+**Signature change only on the Windows path.** `Menu(Left, Top, Items, pView)`
+became `Menu(Left, Top, Items, pView, pDoc = NULL)`; the new argument is read
+only inside `#ifndef _WIN32`, where there is no `CMUSHView` to convert the
+anchor through. Windows still converts via `pView` on exactly the same lines.
+`CMenu::TrackPopupMenu` also stopped discarding its `flags` argument (it was
+`UINT /*flags*/` in the port's shim, `mfc_ui.h` — not a Windows file).
+
+What to check on Windows: `world.WindowMenu(win, x, y, "~lt|One|Two")` and the
+other `~` anchor prefixes put the menu where they always did, from a click and
+from an alias/timer alike.
+
+### 4c-tervicies. `SpellCheckString` gained an optional out-parameter (2026-08-04)
+
+**Windows-visible signature, no Windows caller.**
+`CMUSHclientApp::SpellCheckString(strText, bAll)` became
+`(strText, bAll, bool* pbCancelled = NULL)`. Nothing on Windows passes the third
+argument — `CSendView::OnChar` reaches the same fact through `SpellCheck()`
+returning false — so the only Windows risk is the recompile. The port needs it
+because it has no `SpellCheck(CWnd*, CEdit*)` equivalent and could not otherwise
+tell "user cancelled" from "checked clean" (both hand back the original text).
+
+What to check on Windows: spell check on send still works, and Cancel in the
+suggestion dialog still aborts the send with the text left in the bar.
+
+### 4c-quatervicies. Things I could NOT verify here at all (2026-08-04)
+
+Recorded so a Windows run knows where to look rather than re-deriving it. All of
+these are macOS-side fixes whose *Windows* arm was read but never executed:
+
+- **The freeze-on-selection reading.** The port now freezes output whenever a
+  non-empty selection exists, from `!get_selection (newrgn) && pDoc->m_bAutoFreeze`
+  at `mushview.cpp:2453`, `:2613` and `:4837`, plus `pal/win_worldview.cpp`'s
+  `setOutputSelection`. `get_selection` returning **true for an empty region**
+  (`mushview.cpp:2765`, `:2826`) is what makes that condition mean "there IS a
+  selection", and it is the whole basis of the port's `FreezeIfSelection`. If it
+  reads the other way on a live Windows build — i.e. if dragging a selection on
+  Windows does **not** freeze output — the port is now wrong in a very visible
+  way and the four call sites should come back out.
+- **`keep_pause_at_bottom` as a latch.** Read from `ScrollToPosition`
+  (`mushview.cpp:4680`): with the option on, `m_freeze = m_freeze || (pt.y <
+  bottom)`, so arriving at the bottom never unfreezes. Confirm on Windows that
+  scrolling back down with the option ticked really does leave output paused,
+  and that the hint bar / Pause command is what resumes it.
+- **The double-click ordering.** The port freezes, then releases capture, then
+  dispatches the word, then auto-copies — and skips the copy on
+  `eDblClickAbort`. That is `OnLButtonDblClk`'s order as read
+  (`:4837` freeze, `:4860` the abort `return`, `:4884` the copy). Worth watching
+  once on Windows with "copy selection to clipboard" on: double-click a word
+  while disconnected, cancel the "not connected" prompt, and confirm the
+  clipboard is **not** touched.
+- **`world.TextRectangle`'s 20-pixel floor.** `pal/text_rect.h` implements
+  `max (right, left + 20)` from `GetTextRectangle`. An offset larger than the
+  window is the only way to reach it; a plugin is unlikely to, but if the
+  Windows floor turns out to be applied at a different point the port's wrap
+  column will differ by a character or two in that corner.
 
 ### 4d. Everything else (smoke)
 

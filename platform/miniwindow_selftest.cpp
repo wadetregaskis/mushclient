@@ -16,9 +16,11 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "MUSHview.h"          // MXP_FIRST_MENU (the WindowMenu item id base)
 #include "scripting/errors.h"
 
 #include <cstdio>
+#include <cstring>
 
 namespace {
 
@@ -317,6 +319,101 @@ int RunPalMiniWindowSelfTest()
             "WindowCreate on an existing name resizes it");
     mwCheck(doc->WindowGetPixel(W, 16, 16) == kGreen,
             "resized window repainted with the new background");
+
+    // ── WindowMenu: the anchor and the "~" alignment reach the popup ───────
+    // world.WindowMenu(win, Left, Top, "~xy|item|item") asks for a menu at a
+    // SPECIFIC spot inside the miniwindow, with the "~" prefix saying which
+    // corner of the menu goes there.  CMiniWindow::Menu makes the point
+    // absolute (Left += m_rect.left) and builds the TPM_* alignment word; the
+    // port used to throw both away and pop the menu up at the mouse cursor, so
+    // a menu raised from an alias/trigger/timer landed wherever the pointer was
+    // and "drop this under my toolbar button" never lined up.
+    //
+    // g_wxhook_popup_menu is not installed yet at selftest time (the hooks go in
+    // after this runs), so borrow it: capture what TrackPopupMenu was handed and
+    // answer as though the user picked an item.
+    {
+        static int      s_x = -1, s_y = -1;
+        static unsigned s_flags = 0;
+        static int      s_items = 0;
+        int (*saved)(CMenu*, int, int, unsigned) = g_wxhook_popup_menu;
+
+        g_wxhook_popup_menu = [](CMenu* m, int x, int y, unsigned flags) -> int {
+            s_x = x; s_y = y; s_flags = flags;
+            s_items = m ? (int) m->GetMenuItemCount() : 0;
+            return MXP_FIRST_MENU + 1;      // "user picked the second item"
+        };
+
+        const char* const MW = "selftest_menu_mw";
+        mwCheck(doc->WindowCreate(MW, 30, 20, 40, 40, 0 /*absolute*/, 0, kBlack) == eOK,
+                "WindowMenu: create a window at (30,20)");
+        // CMiniWindow::Menu refuses to open a menu over a hidden window.
+        mwCheck(doc->WindowShow(MW, TRUE) == eOK, "WindowMenu: show the window");
+
+        VARIANT vaLeft = doc->WindowInfo(MW, 10);   // m_rect.left
+        VARIANT vaTop  = doc->WindowInfo(MW, 11);   // m_rect.top
+        const long rectLeft = vaLeft.lVal, rectTop = vaTop.lVal;
+
+        // Plain menu, no "~": default (left/top) alignment, anchor honoured.
+        BSTR r1 = doc->WindowMenu(MW, 5, 7, "One|Two|Three");
+        mwCheck(s_x == (int)(rectLeft + 5) && s_y == (int)(rectTop + 7),
+                "WindowMenu anchors the popup at the requested Left/Top");
+        mwCheck(s_items == 3, "WindowMenu built all three items");
+        mwCheck((s_flags & (TPM_CENTERALIGN | TPM_RIGHTALIGN |
+                            TPM_VCENTERALIGN | TPM_BOTTOMALIGN)) == 0,
+                "no \"~\" prefix leaves the default left/top alignment");
+        mwCheck(strcmp((const char*) r1, "Two") == 0,
+                "WindowMenu returns the item the user picked");
+        SysFreeString(r1);
+
+        // "~cb" = centre horizontally, bottom vertically — the drop-below-a-
+        // button idiom.  Both bits must survive to the popup.
+        s_flags = 0;
+        BSTR r2 = doc->WindowMenu(MW, 12, 34, "~cb|One|Two|Three");
+        mwCheck(s_x == (int)(rectLeft + 12) && s_y == (int)(rectTop + 34),
+                "WindowMenu keeps the anchor when an alignment is given");
+        mwCheck((s_flags & TPM_CENTERALIGN) != 0,
+                "\"~c?\" reaches the popup as TPM_CENTERALIGN");
+        mwCheck((s_flags & TPM_BOTTOMALIGN) != 0,
+                "\"~?b\" reaches the popup as TPM_BOTTOMALIGN");
+        SysFreeString(r2);
+
+        // The anchor must arrive in SCREEN coordinates, as Win32's
+        // TrackPopupMenu takes them.  Windows converts through the CMUSHView
+        // (ClientToScreen(pView->m_hWnd, …)); the port has no view, so it
+        // converts through the world's output pane instead.  Stand in for that
+        // pane with a hook that offsets by a known amount.
+        {
+            void (*savedConv)(void*, int*, int*) = g_wxhook_output_client_to_screen;
+            g_wxhook_output_client_to_screen = [](void*, int* x, int* y) {
+                if (x) *x += 1000;
+                if (y) *y += 2000;
+            };
+            BSTR rc = doc->WindowMenu(MW, 5, 7, "One|Two");
+            mwCheck(s_x == (int)(rectLeft + 5 + 1000) &&
+                    s_y == (int)(rectTop  + 7 + 2000),
+                    "the anchor reaches the popup in SCREEN coordinates");
+            SysFreeString(rc);
+            g_wxhook_output_client_to_screen = savedConv;
+        }
+
+        // "~rt" = right/top: the other horizontal bit, and NOT the bottom one.
+        s_flags = 0;
+        BSTR r3 = doc->WindowMenu(MW, 0, 0, "~rt|Only");
+        mwCheck((s_flags & TPM_RIGHTALIGN) != 0,
+                "\"~r?\" reaches the popup as TPM_RIGHTALIGN");
+        mwCheck((s_flags & TPM_BOTTOMALIGN) == 0,
+                "...without inventing a vertical alignment");
+        SysFreeString(r3);
+
+        // TPM_RETURNCMD is what makes TrackPopupMenu hand the id back rather
+        // than posting a WM_COMMAND — CMiniWindow::Menu depends on it.
+        mwCheck((s_flags & TPM_RETURNCMD) != 0,
+                "TPM_RETURNCMD survives to the popup");
+
+        mwCheck(doc->WindowDelete(MW) == eOK, "WindowMenu: clean up the window");
+        g_wxhook_popup_menu = saved;
+    }
 
     // ── deletion ───────────────────────────────────────────────────────────
     mwCheck(doc->WindowDelete(W) == eOK, "WindowDelete succeeds");

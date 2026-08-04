@@ -425,9 +425,18 @@ extern char* (*g_wxhook_directorypicker)(const char* title,
 // ── WindowMenu popup hook ─────────────────────────────────────────────────
 // Shows a plugin's miniwindow popup menu (built by CMiniWindow::Menu into the
 // portable CMenu tree from platform/mfc_ui.h) at screen pixel (x, y), and
-// returns the selected command id, or 0 if the user cancelled.
+// returns the selected command id, or 0 if the user cancelled.  `flags` are the
+// Win32 TPM_* bits: the alignment half says which corner/edge of the menu the
+// anchor names (see TpmAlignAnchor in platform/mfc_ui.h).
 class CMenu;
-extern int (*g_wxhook_popup_menu)(CMenu* menu, int x, int y);
+extern int (*g_wxhook_popup_menu)(CMenu* menu, int x, int y, unsigned flags);
+
+// Convert a point in a world's OUTPUT PANE client coordinates to screen
+// coordinates (`doc` is a CMUSHclientDoc*).  Off-Windows there is no CMUSHView
+// for CMiniWindow::Menu to convert its anchor through, so it asks the frontend
+// for the pane that is standing in for one.  Leaves the point alone if the doc
+// has no window (headless, or mid-teardown).
+extern void (*g_wxhook_output_client_to_screen)(void* doc, int* x, int* y);
 
 // ── MFC dialog bridge hooks ───────────────────────────────────────────────
 // g_run_mfc_dialog: CDialog::DoModal calls this with `self` = the CDialog* and

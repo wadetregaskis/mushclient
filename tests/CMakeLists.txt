@@ -78,6 +78,7 @@ mc_test(test_xmlparse)
 mc_test(test_mfc_ui)
 mc_test(test_connection)
 mc_test(test_accelerators)
+mc_test(test_menu_rules)
 mc_test(test_mc_dispatch)
 mc_test(test_scriptengine)
 

@@ -176,6 +176,22 @@ public:
     }
 
     // ── pulls ──────────────────────────────────────────────────────────────
+    bool isPaused() const override
+    {
+        // The read side of setPaused above, and the same member the canonical
+        // menu tick is drawn from (CMUSHView::OnUpdateDisplayFreezeoutput,
+        // mushview.cpp).  Same view loop, first CMUSHView wins.
+        for (POSITION pos = m_pDoc->GetFirstViewPosition(); pos != NULL; )
+        {
+            CView* pView = m_pDoc->GetNextView(pos);
+
+            if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
+                return ((CMUSHView*)pView)->m_freeze != FALSE;
+        }
+
+        return false;
+    }
+
     std::string currentCommand() const override
     {
         // GetCommand (methods_commands.cpp)

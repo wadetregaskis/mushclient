@@ -3497,7 +3497,8 @@ CMenu* GrabAMenu (void)
 #endif
   }   // end of GrabAMenu
 
-CString CMiniWindow::Menu(long Left, long Top, LPCTSTR Items, CMUSHView* pView)
+CString CMiniWindow::Menu(long Left, long Top, LPCTSTR Items, CMUSHView* pView,
+                          CMUSHclientDoc* pDoc)
   {
 CString strResult;
 int align = TPM_LEFTALIGN | TPM_TOPALIGN;  // these are actually both zero
@@ -3608,9 +3609,20 @@ CPoint menupoint (Left, Top);
 
   ClientToScreen(pView->m_hWnd, &menupoint);
 #else
-  // The wx port has no CMUSHView (pView is null) and renders the popup at the
-  // mouse cursor (see g_wxhook_popup_menu), so neither the owner-window walk nor
-  // the client→screen conversion is needed here.
+  // The wx port has no CMUSHView (pView is null), so the owner-window walk has
+  // nothing to walk.  The client→screen conversion still has to happen — the
+  // popup hook takes screen coordinates, like Win32 TrackPopupMenu — so ask the
+  // frontend for the output pane that stands in for the view.  Without this the
+  // hook had no usable anchor and fell back to the mouse cursor, which put the
+  // menu somewhere else entirely whenever WindowMenu was called from an alias,
+  // a timer or a trigger rather than from a click.
+  if (pDoc && g_wxhook_output_client_to_screen)
+    {
+    int x = menupoint.x, y = menupoint.y;
+    g_wxhook_output_client_to_screen (pDoc, &x, &y);
+    menupoint.x = x;
+    menupoint.y = y;
+    }
 #endif
 
   int j = 0;

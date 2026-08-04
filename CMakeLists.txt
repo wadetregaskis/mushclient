@@ -434,6 +434,7 @@ if(NOT WIN32)
         doc_hyperlink_shared.cpp
         doc_dblclick_shared.cpp
         doc_editcopy_shared.cpp
+        platform/menu_ui_rules.cpp
         scripting/methods/methods_accelerators.cpp
         scripting/methods/methods_noting.cpp
         scripting/methods/methods_tracing.cpp

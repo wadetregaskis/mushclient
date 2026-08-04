@@ -4180,6 +4180,13 @@ void CWorldChildFrame::setPaused(bool paused)
     if (m_output) m_output->SetPaused(paused);
 }
 
+// The read side of setPaused — what Display ▸ Freeze Output draws its tick
+// from (Windows reads CMUSHView::m_freeze for the same purpose).
+bool CWorldChildFrame::isPaused() const
+{
+    return m_output && m_output->IsPaused();
+}
+
 void CWorldChildFrame::flash()
 {
     RequestUserAttention();

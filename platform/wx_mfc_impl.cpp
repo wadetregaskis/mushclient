@@ -60,6 +60,7 @@
 #include "platform/wx_notepad.h"      // CWxNotepadFrame
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
 #include "platform/posix_transport.h"  // pal::PumpTransportCompletions (poll timer)
+#include "platform/menu_ui_rules.h"    // MenuCommandUiState / PortMenuActionForCommandId
 #include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
 #include "dialogs/world_prefs/GenPropertyPage.h"    // CGenPropertyPage (entity-list idle reload)
 #include "dialogs/ImmediateDlg.h"     // CImmediateDlg (canonical Execute-Lua dialog)
@@ -1001,7 +1002,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     displayMenu->Append(32248 /*ID_DISPLAY_FIND*/,         wxT("&Find…"));
     displayMenu->Append(32249 /*ID_DISPLAY_FINDAGAIN*/,    wxT("Find &Again"));
     displayMenu->AppendSeparator();
-    displayMenu->Append(32201 /*ID_DISPLAY_FREEZEOUTPUT*/, wxT("Free&ze Output"));
+    // Freeze Output is a TOGGLE, and Windows ticks it from the view's m_freeze
+    // (CMUSHView::OnUpdateDisplayFreezeoutput).  Built as a plain item here, it
+    // could never show that tick, so after a couple of clicks nothing on screen
+    // said whether the output was frozen or running.
+    displayMenu->AppendCheckItem(32201 /*ID_DISPLAY_FREEZEOUTPUT*/, wxT("Free&ze Output"));
     displayMenu->Append(32963 /*ID_DISPLAY_GOTOLINE*/,     wxT("&Go To Line…"));
     displayMenu->AppendSeparator();
     // Connection diagnostics (toggle, reflected as a check mark).  "Debug
@@ -1288,12 +1293,15 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             }
             else
                 evt.Enable(doc != nullptr && doc->EditCopyTarget() != eCopyNothing);
-        } else if (id == 32275 || id == 32276 || id == 32272 ||
-                   id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
-                   id == 32946 || id == 32947 || id == 33046 ||
-                   id == 32318 || id == 32319) {
-            // View-level output/input commands — need an active world.
-            evt.Enable(doc != nullptr);
+        } else if (const MenuCmdUiState st = MenuCommandUiState(id, doc);
+                   st.handled) {
+            // Every command MFC greys for us on Windows because its only
+            // handler lives on the un-instantiated CMUSHView / CSendView (or on
+            // the document), plus the three per-world check marks.  The rules
+            // are data in platform/menu_ui_rules.cpp so they can be tested
+            // without a live frame — see tests/test_menu_rules.cpp.
+            evt.Enable(st.enabled);
+            if (st.checked >= 0) evt.Check(st.checked != 0);
         } else {
             evt.Skip();  // default behaviour for all other items
         }
@@ -1330,6 +1338,46 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // ── Menu event routing via Bind() ─────────────────────────────────────
     frame->Bind(wxEVT_MENU, [frame](wxCommandEvent& evt) {
         int id = evt.GetId();
+
+        // ── Canonical MFC ids → this frame's own ids ──────────────────────
+        // world.DoCommand(name) posts the canonical id from accelerators.cpp's
+        // CommandIDs[] (ID_EDIT_CUT = 0xE123, ID_FILE_CLOSE = 0xE102, …), but a
+        // handful of those commands are built on wx's standard ids here because
+        // AppKit wants them there.  The arms below matched only the wx id, so
+        // DoCommand("Cut" / "Paste" / "SelectAll" / "Undo" / "Close" / "About" /
+        // "CascadeWindows" / "TileWindows" / …) fell through to evt.Skip() and
+        // did nothing at all — while still returning eOK to the script.
+        // Translating up front fixes the menu and DoCommand in one place.
+        {
+            int wxid = 0;
+            switch (PortMenuActionForCommandId(id)) {
+            case kPortMenuCloseWorld:   wxid = wxID_CLOSE;      break;
+            case kPortMenuCut:          wxid = wxID_CUT;        break;
+            case kPortMenuPaste:        wxid = wxID_PASTE;      break;
+            case kPortMenuSelectAll:    wxid = wxID_SELECTALL;  break;
+            case kPortMenuUndo:         wxid = wxID_UNDO;       break;
+            case kPortMenuAbout:        wxid = wxID_ABOUT;      break;
+            case kPortMenuCascade:      wxid = wxID_MDI_WINDOW_CASCADE;      break;
+            case kPortMenuTileHorz:     wxid = wxID_MDI_WINDOW_TILE_HORZ;    break;
+            case kPortMenuTileVert:     wxid = wxID_MDI_WINDOW_TILE_VERT;    break;
+            case kPortMenuArrangeIcons: wxid = wxID_MDI_WINDOW_ARRANGE_ICONS;break;
+            case kPortMenuNone:                                 break;
+            }
+            if (wxid != 0) {
+                // Re-enter under the port's own id rather than just rewriting
+                // the local `id`: the tile/cascade commands are NOT handled in
+                // this lambda at all — they reach wxMDIParentFrame's own static
+                // event table by falling through to evt.Skip(), which uses the
+                // EVENT's id, not ours.  A fresh event is the only way to give
+                // them the same treatment a menu click gets.  (No recursion: the
+                // wx ids are not canonical MFC ids, so the switch above misses
+                // them the second time round.)
+                wxCommandEvent fwd(wxEVT_MENU, wxid);
+                fwd.SetEventObject(evt.GetEventObject());
+                frame->GetEventHandler()->ProcessEvent(fwd);
+                return;
+            }
+        }
 
         // Helper: get the doc for the currently active MDI child, or nullptr.
         auto activeDoc = [frame]() -> CMUSHclientDoc* {
@@ -1471,22 +1519,27 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return;   // consumed — do not call evt.Skip()
         }
 
-        // ── Edit menu: Cut / Paste / Select All ────────────────────────────
+        // ── Edit menu: Cut / Paste / Select All / Undo ─────────────────────
         // The frame's Bind intercepts menu events before wxMDI can route them
         // to the focused child control, so we dispatch explicitly here.  These
-        // three stay focus-routed, which is also what Windows does: Cut and
-        // Paste only ever apply to the command window, and ID_EDIT_SELECT_ALL is
+        // stay focus-routed, which is also what Windows does: Cut, Paste and
+        // Undo only ever apply to the command window, and ID_EDIT_SELECT_ALL is
         // handled by BOTH CMUSHView and CSendView, so whichever has the focus
         // wins.  (On the port that means Select All can only reach the command
         // bar, since the output pane is never focused — a separate gap.)
-        if (id == wxID_CUT || id == wxID_PASTE || id == wxID_SELECTALL)
+        //
+        // Undo has no menu item here; it is reachable through
+        // world.DoCommand("Undo"), which posts ID_EDIT_UNDO (translated to
+        // wxID_UNDO at the top of this handler).
+        if (id == wxID_CUT || id == wxID_PASTE || id == wxID_SELECTALL ||
+            id == wxID_UNDO)
         {
             wxWindow* focused = wxWindow::FindFocus();
             if (focused) {
                 // Is it the output pane?
                 if (auto* pane = dynamic_cast<COutputPane*>(focused)) {
                     if (id == wxID_SELECTALL) pane->SelectAll();
-                    // Cut and Paste are no-ops on a read-only output pane.
+                    // Cut, Paste and Undo are no-ops on a read-only output pane.
                 } else {
                     // Forward to focused window (wxTextCtrl, etc.) via its
                     // own event handler so the built-in editing works.
@@ -1587,13 +1640,12 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
 
         // ── Display menu: connection diagnostics (toggle flags on the doc) ──
         if (id == 32971 /*ID_EDIT_DEBUGINCOMINGPACKETS*/ || id == 32334 /*ID_GAME_TRACE*/) {
-            bool state = false;
             if (auto* c = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
                 if (CMUSHclientDoc* doc = c->GetDoc()) {
                     bool& flag = (id == 32971) ? doc->m_bDebugIncomingPackets
                                                : doc->m_bTrace;
                     flag  = !flag;
-                    state = flag;
+                    const bool state = flag;
                     // Both features stay silent until there is traffic/activity,
                     // which makes the toggle look like it did nothing.  Confirm
                     // the new state in the output window and say where the real
@@ -1617,9 +1669,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                             : "[Trace] OFF.");
                 }
             }
-            if (wxMenuBar* bar = frame->GetMenuBar())
-                if (wxMenuItem* mi = bar->FindItem(id))
-                    mi->Check(state);
+            // The tick is NOT set here.  Both flags are per-WORLD, so a tick
+            // written once at click time described whichever world happened to
+            // be active then and went stale the moment the user switched worlds
+            // — showing "Trace on" over a world whose m_bTrace was false, and
+            // turning it ON when the user meant to turn it off.  The update-UI
+            // arm re-reads the active document instead (menu_ui_rules.cpp),
+            // exactly as ON_UPDATE_COMMAND_UI does on Windows.
             return;
         }
 
@@ -3616,7 +3672,26 @@ static wxMenu* wx_build_popup_menu(CMenu* m)
     return wxm;
 }
 
-static int hook_popup_menu(CMenu* menu, int /*x*/, int /*y*/)
+// Approximate the popup's size, so the TPM_*ALIGN bits can be honoured: wx
+// offers no way to measure a wxMenu before it is shown.  Consulted ONLY for
+// alignments other than the default left/top, so an imperfect estimate can
+// affect nothing but the menus that explicitly asked to hang off some other
+// corner (world.WindowMenu's "~" prefix).
+static wxSize wx_estimate_popup_size(wxWindow* ref, CMenu* menu)
+{
+    int widest = 0, height = 8;
+    for (const CMenu::Item& it : menu->m_items) {
+        if (it.flags & MF_SEPARATOR) { height += 8; continue; }
+        const wxSize ext = ref->GetTextExtent(wxString::FromUTF8(it.text.c_str()));
+        widest  = std::max(widest, ext.x);
+        height += ext.y + 6;
+    }
+    // Leave room for the check-mark gutter on the left and the submenu arrow /
+    // right margin on the right.
+    return wxSize(widest + 44, height);
+}
+
+static int hook_popup_menu(CMenu* menu, int x, int y, unsigned flags)
 {
     if (!menu) return 0;
     wxWindow* win = wxGetActiveWindow();
@@ -3624,16 +3699,51 @@ static int hook_popup_menu(CMenu* menu, int /*x*/, int /*y*/)
     if (!win) return 0;
 
     wxMenu* wxm = wx_build_popup_menu(menu);
-    // A context menu is invoked in response to a click, so anchor it at the
-    // mouse cursor.  (The Left/Top the caller passes are in client coordinates
-    // that the port's no-op ClientToScreen leaves unconverted, so the live
-    // cursor position is the reliable anchor.)  GetPopupMenuSelectionFromUser
-    // returns the chosen id without firing a menu event — exactly the
+
+    // (x, y) are SCREEN coordinates, as Win32 TrackPopupMenu takes them — every
+    // caller converts before calling (CMiniWindow::Menu through the world's
+    // output pane, the dialogs through CWnd::ClientToScreen).  This used to
+    // ignore them entirely and pop the menu up at the mouse cursor, which is
+    // only right when the menu was raised BY a click: a plugin that raises one
+    // from an alias, a trigger or a timer got its menu wherever the pointer
+    // happened to be, possibly over another window altogether, and the "drop it
+    // under my toolbar button" idiom never lined up.
+    wxPoint anchor(x, y);
+    if (anchor == wxPoint(0, 0))
+        anchor = ::wxGetMousePosition();   // no usable anchor — the old behaviour
+    if (flags & (TPM_CENTERALIGN | TPM_RIGHTALIGN |
+                 TPM_VCENTERALIGN | TPM_BOTTOMALIGN)) {
+        // The alignment bits name which edge of the MENU sits on the anchor;
+        // wx always puts its top-left there, so move the anchor instead.
+        const wxSize sz = wx_estimate_popup_size(win, menu);
+        int ax = anchor.x, ay = anchor.y;
+        TpmAlignAnchor(flags, sz.x, sz.y, &ax, &ay);
+        anchor = wxPoint(ax, ay);
+    }
+
+    // GetPopupMenuSelectionFromUser takes coordinates in `win`'s client space
+    // and returns the chosen id without firing a menu event — exactly the
     // TPM_RETURNCMD behaviour CMiniWindow::Menu expects.
-    wxPoint pt = win->ScreenToClient(::wxGetMousePosition());
+    wxPoint pt = win->ScreenToClient(anchor);
     int sel = win->GetPopupMenuSelectionFromUser(*wxm, pt);
     delete wxm;
     return (sel > 0) ? sel : 0;   // wxID_NONE / negative ⇒ cancelled
+}
+
+// Convert a point in a world's output-pane client coordinates to screen
+// coordinates — the port's stand-in for the ClientToScreen(pView->m_hWnd, …)
+// that CMiniWindow::Menu does on Windows.
+static void hook_output_client_to_screen(void* docp, int* x, int* y)
+{
+    CMUSHclientDoc* doc = static_cast<CMUSHclientDoc*>(docp);
+    if (!doc || !x || !y) return;
+    auto it = s_docFrameMap.find(doc);
+    if (it == s_docFrameMap.end() || !it->second) return;
+    COutputPane* pane = it->second->OutputPane();
+    if (!pane) return;
+    const wxPoint p = pane->ClientToScreen(wxPoint(*x, *y));
+    *x = p.x;
+    *y = p.y;
 }
 
 // ── password_dialog ───────────────────────────────────────────────────────
@@ -5273,6 +5383,7 @@ void wx_mfc_install_hooks()
     g_wxhook_directorypicker      = hook_directorypicker;
     g_wxhook_password_dialog      = hook_password_dialog;
     g_wxhook_popup_menu           = hook_popup_menu;
+    g_wxhook_output_client_to_screen = hook_output_client_to_screen;
     // Sound is the miniaudio engine (platform/ma_sound.*), not wxSound, so these
     // are always installed (no wxUSE_SOUND gate).
     g_wxhook_play_sound           = hook_play_sound;

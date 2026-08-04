@@ -466,6 +466,37 @@ void COutputPane::EndBatch()
     }
 }
 
+// ── RecolourFromPalette ───────────────────────────────────────────────────
+// See the header.  Runs carry the style inputs their fg/bg were resolved from
+// (SOutputRun::style_flags / fore_idx / back_idx), so the same
+// pal::resolveStyleColours the document uses reproduces them exactly against a
+// new palette -- no second implementation, no drift.
+//
+// RGB runs (MXP <color>, trigger "other" colours) and xterm-256 indices are
+// palette-INdependent and re-resolve to themselves, so they cost a branch and
+// are left alone rather than special-cased.
+void COutputPane::RecolourFromPalette(const pal::StylePalette& palette)
+{
+    // The 256-entry xterm table (utilities_shared.cpp fills it).  COLORREF is
+    // uint32_t, so the cast is width-safe -- doc_shared.cpp static_asserts that
+    // against pal::StylePalette's entry type.
+    extern COLORREF xterm_256_colours[256];
+    const unsigned int* xterm = (const unsigned int*) xterm_256_colours;
+
+    auto recolour = [&](SOutputLine& line) {
+        for (SOutputRun& run : line)
+            pal::resolveStyleColours(run.style_flags, run.fore_idx, run.back_idx,
+                                     palette, xterm, run.fg, run.bg);
+    };
+
+    for (SOutputLine& line : m_lines) recolour(line);
+    recolour(m_pendingLine);
+
+    // Colours do not change metrics, so the wrap cache, the scroll geometry and
+    // the selection are all still valid -- a repaint is the whole update.
+    Refresh(false);
+}
+
 void COutputPane::SetMaxLines(int n)
 {
     // 0 is the unlimited sentinel (world option max_output_lines), and it has

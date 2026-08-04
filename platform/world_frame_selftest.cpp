@@ -302,6 +302,61 @@ int RunWorldFrameSelfTest()
         doc->m_nWrapColumn          = 80;
     }
 
+    // ── A palette change recolours in place; it does not re-emit ─────────────
+    // The old path was CMUSHclientDoc::RebuildOutputView: clear the pane, rewind
+    // the emission cursor, re-materialise every line/run/std::string, rebuild
+    // the whole wrap cache.  O(buffer) to change two integers per run, on a path
+    // world.SetNormalColour reaches from a script, and unbounded once
+    // max_output_lines is 0.
+    //
+    // Three observable consequences of NOT re-emitting are asserted here,
+    // because each was previously papered over with a workaround: the line
+    // objects survive (so an open session log gains no second copy of the
+    // buffer), the scroll position survives, and the colours actually change.
+    {
+        doc->m_bAutoWrapWindowWidth = false;
+        pane->ClearOutput();
+
+        // An ANSI-coloured line (index 2 = green) and an RGB one.  Only the
+        // first may move when the palette does.
+        doc->DisplayMsg("\x1b[32mansi green\x1b[0m\n", 21, 0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const int   lines0 = pane->LineCount();
+        check(lines0 >= 1, "palette: a coloured line reached the pane");
+        const SOutputLine* l0 = pane->GetLine(0);
+        check(l0 != NULL && !l0->empty(), "palette: ...with at least one run");
+        const unsigned long before = l0 ? l0->front().fg : 0;
+
+        // Count how many lines the log hook sees from here on.  A re-emit would
+        // push the whole buffer through it again; an in-place recolour pushes
+        // nothing.
+        static int s_logged = 0;
+        s_logged = 0;
+        pane->m_fn_on_line_appended = [](const SOutputLine&) { ++s_logged; };
+
+        // Move ANSI colour 2 to something unmistakable and let the poll see it.
+        doc->m_normalcolour[2] = RGB(1, 2, 3);
+        pumpTicks(400);
+
+        const SOutputLine* l1 = pane->GetLine(0);
+        check(l1 != NULL && !l1->empty(), "palette: the line is still there");
+        check(pane->LineCount() == lines0,
+              "palette: the line count is unchanged (no re-emit)");
+        check(s_logged == 0,
+              "palette: no line was re-appended, so an open log gains no copy");
+        check(l1 && l1->front().fg != before,
+              "palette: ...but the colour really changed");
+        check(l1 && l1->front().fg == (unsigned long) RGB(1, 2, 3),
+              "palette: ...to the new palette entry");
+
+        pane->m_fn_on_line_appended = nullptr;
+        doc->m_normalcolour[2] = RGB(0, 128, 0);   // put it back
+        pumpTicks(250);
+        pane->ClearOutput();
+    }
+
     // ── Unlimited scrollback reaches the PANE, not just the engine ───────────
     // max_output_lines = 0 has to be pushed through to COutputPane::SetMaxLines,
     // and the pane's own floor (n < 100 -> 100) must not clamp the sentinel —

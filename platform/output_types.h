@@ -50,6 +50,21 @@ struct SOutputRun {
     // renderer must decode the bytes with — mirroring the Windows 8-bit text path.
     bool        utf8          = true;
     int         charset       = 0;            // Windows charset enum (used iff !utf8)
+    // The style INPUTS fg/bg above were resolved from, so a palette change can
+    // re-resolve this run in place — pal::resolveStyleColours(style_flags,
+    // fore_idx, back_idx, palette, xterm256, fg, bg) reproduces them exactly.
+    //
+    // Without these the view holds only the resolved answer, so recolouring the
+    // scrollback meant re-emitting all of it (clear the pane, reset the cursor,
+    // re-materialise every string, rebuild the wrap cache).  That is O(buffer)
+    // on a path a script can trigger with world.SetNormalColour, and unbounded
+    // once max_output_lines is 0.
+    //
+    // Raw, like action_type above, because this header must not pull in the MFC
+    // shim: the bit meanings are in pal/style_colour.h.
+    uint16_t    style_flags   = 0;            // iFlags & STYLE_BITS
+    int32_t     fore_idx      = 0;            // iForeColour (index, or a literal RGB)
+    int32_t     back_idx      = 0;            // iBackColour
 };
 
 // ── SOutputLine ───────────────────────────────────────────────────────────────

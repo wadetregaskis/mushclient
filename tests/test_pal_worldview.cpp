@@ -14,6 +14,7 @@
 #include "scripting/errors.h"
 #include "pal/iworldview.h"
 #include "pal/scroll_geometry.h"
+#include "pal/style_colour.h"
 #include "pal/text_rect.h"
 
 #include <algorithm>
@@ -1081,6 +1082,131 @@ TEST(ScrollGeometry, UnmeasuredPaneIsAtTheBottom)
     // brand-new window would freeze before its first line ever arrived.
     EXPECT_TRUE(pal::isScrolledToBottom(0, 0, 300, 1500));
     EXPECT_EQ(0, pal::maxScrollUnit(0, 300, 1500));
+}
+
+// ── A palette change re-resolves runs; it does not re-emit them ───────────
+//
+// SOutputRun now carries the style INPUTS its fg/bg were resolved from, so a
+// palette change can be applied in place.  These pin the arithmetic itself
+// (pal::resolveStyleColours, the one body CMUSHclientDoc::GetStyleRGB also
+// calls) rather than the wx pane, which the headless build cannot construct.
+namespace {
+pal::StylePalette make_palette()
+{
+    pal::StylePalette p;
+    for (int i = 0; i < 8; ++i)  { p.normal[i] = 0x111100u + i; p.bold[i] = 0x222200u + i; }
+    for (int i = 0; i < 16; ++i) { p.customText[i] = 0x330000u + i; p.customBack[i] = 0x440000u + i; }
+    p.alternativeInverse = false;
+    return p;
+}
+// A recognisable stand-in for the xterm table: entry k is 0x50000 + k, so a
+// wrong index is obvious and no entry collides with the palette above.
+struct Xterm { unsigned int t[256]; Xterm() { for (int i = 0; i < 256; ++i) t[i] = 0x50000u + i; } };
+const unsigned int* xt() { static Xterm x; return x.t; }
+}
+
+TEST(StyleColour, AnsiIndicesReadTheNormalAndBoldTables)
+{
+    const pal::StylePalette p = make_palette();
+    unsigned int fg = 0, bg = 0;
+
+    pal::resolveStyleColours(0, 3, 5, p, xt(), fg, bg);
+    EXPECT_EQ(0x111103u, fg);                 // normal[3]
+    EXPECT_EQ(0x111105u, bg);                 // background is ALWAYS the normal table
+
+    // HILITE moves only the FOREGROUND to the bold table — a resolver that
+    // bolded both halves would pass a same-table check.
+    pal::resolveStyleColours(pal::kStyleHilite, 3, 5, p, xt(), fg, bg);
+    EXPECT_EQ(0x222203u, fg);                 // bold[3]
+    EXPECT_EQ(0x111105u, bg);                 // still normal[5]
+}
+
+TEST(StyleColour, InverseSwapsTheIndicesBeforeTheBoldLookup)
+{
+    // The subtle half of GetStyleRGB: with the default (non-alternative)
+    // inverse, the INDICES swap first, so bold applies to what was the
+    // background index.  Alternative inverse keeps the roles and swaps the
+    // OUTPUTS, so bold stays on the original foreground.  Getting these the
+    // same way round is a colour shift on every inverse+bold run.
+    pal::StylePalette p = make_palette();
+    unsigned int fg = 0, bg = 0;
+
+    p.alternativeInverse = false;
+    pal::resolveStyleColours(pal::kStyleHilite | pal::kStyleInverse, 3, 5, p, xt(), fg, bg);
+    EXPECT_EQ(0x222205u, fg);                 // bold[5]  — the OLD background index
+    EXPECT_EQ(0x111103u, bg);                 // normal[3]
+
+    p.alternativeInverse = true;
+    pal::resolveStyleColours(pal::kStyleHilite | pal::kStyleInverse, 3, 5, p, xt(), fg, bg);
+    EXPECT_EQ(0x111105u, fg);                 // normal[5] — background, unbolded
+    EXPECT_EQ(0x222203u, bg);                 // bold[3]   — bold stayed on the fg index
+}
+
+TEST(StyleColour, XtermIndicesArePaletteIndependent)
+{
+    // Indices >= 8 come from the static xterm table, in BOTH tables' place and
+    // regardless of HILITE.  This is why editing the eight ANSI pairs must not
+    // change an xterm-256 run — and it is the case the first version of the
+    // resolver got wrong by casting a 32-bit COLORREF array through
+    // `const unsigned long*`, which read two entries per index on LP64.
+    const pal::StylePalette p = make_palette();
+    unsigned int fg = 0, bg = 0;
+
+    pal::resolveStyleColours(0, 196, 21, p, xt(), fg, bg);
+    EXPECT_EQ(0x50000u + 196, fg);
+    EXPECT_EQ(0x50000u + 21,  bg);
+    pal::resolveStyleColours(pal::kStyleHilite, 196, 21, p, xt(), fg, bg);
+    EXPECT_EQ(0x50000u + 196, fg);            // HILITE does not move it
+}
+
+TEST(StyleColour, CustomColoursComeFromTheForegroundIndexAlone)
+{
+    // COLOUR_CUSTOM stores the custom index in iForeColour ONLY; the pair is
+    // customText[i] / customBack[i].  A resolver that read backIdx for the
+    // background would produce a plausible-looking but wrong pair.
+    const pal::StylePalette p = make_palette();
+    unsigned int fg = 0, bg = 0;
+
+    pal::resolveStyleColours(pal::kColourCustom, 4, 9, p, xt(), fg, bg);
+    EXPECT_EQ(0x330004u, fg);
+    EXPECT_EQ(0x440004u, bg);                 // index 4, NOT 9
+
+    pal::resolveStyleColours(pal::kColourCustom | pal::kStyleInverse, 4, 9, p, xt(), fg, bg);
+    EXPECT_EQ(0x440004u, fg);
+    EXPECT_EQ(0x330004u, bg);
+}
+
+TEST(StyleColour, RgbRunsAreLiteralAndSurviveAnyPalette)
+{
+    // MXP <color> and trigger "other" colours are COLOUR_RGB: the indices ARE
+    // the colours.  They must re-resolve to themselves, which is what lets the
+    // pane recolour every run unconditionally instead of filtering first.
+    pal::StylePalette p = make_palette();
+    unsigned int fg = 0, bg = 0;
+
+    pal::resolveStyleColours(pal::kColourRgb, 0x123456, 0x654321, p, xt(), fg, bg);
+    EXPECT_EQ(0x123456u, fg);
+    EXPECT_EQ(0x654321u, bg);
+
+    // ...including after the palette moves underneath them.
+    for (int i = 0; i < 8; ++i) { p.normal[i] = 0x999999u; p.bold[i] = 0x888888u; }
+    pal::resolveStyleColours(pal::kColourRgb, 0x123456, 0x654321, p, xt(), fg, bg);
+    EXPECT_EQ(0x123456u, fg);
+    EXPECT_EQ(0x654321u, bg);
+}
+
+TEST(StyleColour, ResolvingTwiceWithTheSamePaletteIsStable)
+{
+    // The property the in-place recolour depends on: re-resolving a run that
+    // was already resolved must be a no-op, so a spurious palette poll cannot
+    // drift the colours.  (It would not be, if the resolver ever consumed its
+    // own output — e.g. by writing the resolved value back into fore_idx.)
+    const pal::StylePalette p = make_palette();
+    unsigned int fg1 = 0, bg1 = 0, fg2 = 0, bg2 = 0;
+    pal::resolveStyleColours(pal::kStyleHilite, 3, 5, p, xt(), fg1, bg1);
+    pal::resolveStyleColours(pal::kStyleHilite, 3, 5, p, xt(), fg2, bg2);
+    EXPECT_EQ(fg1, fg2);
+    EXPECT_EQ(bg1, bg2);
 }
 
 // ── 64-bit row -> pixel geometry ──────────────────────────────────────────

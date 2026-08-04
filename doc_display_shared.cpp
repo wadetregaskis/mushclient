@@ -174,6 +174,11 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
             if (pStyle->iLength > 0) {
                 SOutputRun run;
                 GetStyleRGB(pStyle, run.fg, run.bg);
+                // ...and the inputs it resolved them from, so a palette
+                // change can recolour this run without a re-emit.
+                run.style_flags = (uint16_t)(pStyle->iFlags & STYLE_BITS);
+                run.fore_idx    = (int32_t) pStyle->iForeColour;
+                run.back_idx    = (int32_t) pStyle->iBackColour;
                 // The three "Show" checkboxes (World Properties > Appearance >
                 // Output) decide whether the ANSI attribute is rendered at all.
                 // Windows honours them when it builds the 16 style fonts
@@ -232,6 +237,11 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
             if (pStyle->iLength > 0) {
                 SOutputRun run;
                 GetStyleRGB(pStyle, run.fg, run.bg);
+                // ...and the inputs it resolved them from, so a palette
+                // change can recolour this run without a re-emit.
+                run.style_flags = (uint16_t)(pStyle->iFlags & STYLE_BITS);
+                run.fore_idx    = (int32_t) pStyle->iForeColour;
+                run.back_idx    = (int32_t) pStyle->iBackColour;
                 // Same "Show" gates as the finished-line emitter above.
                 run.bold          = m_bShowBold      && ((pStyle->iFlags & HILITE)    != 0);
                 run.underline     = m_bShowUnderline && ((pStyle->iFlags & UNDERLINE) != 0);

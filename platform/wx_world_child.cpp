@@ -4237,39 +4237,30 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     // 100 ms is far cheaper than the repaint it guards.  Same shape as the
     // no-echo poll immediately above.
     if (PaletteChanged()) {
-        // Keep the reader where they were.  A rebuild re-emits every line, and
-        // the pane lands at the bottom when it does; that is right if they were
-        // already following the output, and wrong if they had scrolled up to
-        // read something -- which is exactly when a colour tweak is likely.
-        const bool wasFollowing = m_output && !m_output->IsPaused();
-        int viewX = 0, viewY = 0;
-        if (m_output)
-            m_output->GetViewStart(&viewX, &viewY);
-        // Bookmarks need no save/restore around the rebuild: they live on the
-        // engine's CLines, and the re-emit carries the flag back out with each
-        // line (doc_display_shared.cpp).
-
         // The pane background follows the palette too when the world has no
         // explicit background of its own (NO_COLOUR) -- see ApplyPaneBackground.
         ApplyPaneBackground(m_doc->m_iBackgroundColour);
 
-        // Detach the log hook across the rebuild.  RebuildOutputView clears the
-        // pane and RE-EMITS the whole scrollback, and every line the pane
-        // accepts is forwarded to LogLine -- so with a session log open, one
-        // colour tweak appended a verbatim second copy of the entire buffer to
-        // the log file, a third copy on the next tweak, and so on.  The lines
-        // are not new; only the presentation changed.  (OnClose uses the same
-        // detach-and-restore trick for m_fn_close_window.)
-        auto savedLogHook = m_output ? m_output->m_fn_on_line_appended
-                                     : std::function<void(const SOutputLine&)>();
-        if (m_output) m_output->m_fn_on_line_appended = nullptr;
-
-        m_doc->RebuildOutputView();
-
-        if (m_output) m_output->m_fn_on_line_appended = savedLogHook;
-
-        if (m_output && !wasFollowing)
-            m_output->Scroll(viewX, viewY);
+        // Recolour in place rather than re-emitting.  This used to call
+        // CMUSHclientDoc::RebuildOutputView, which clears the pane, rewinds the
+        // emission cursor and re-materialises every line, run and std::string,
+        // then rebuilds the whole wrap cache -- O(buffer) to change two integers
+        // per run, on a path world.SetNormalColour can reach from a script, and
+        // unbounded once max_output_lines is 0.
+        //
+        // Runs carry the style inputs their colours were resolved from, so the
+        // pane re-runs the SAME pal::resolveStyleColours the document uses.
+        // Colours cannot change metrics, so the wrap cache, the scroll position
+        // and the selection all stay valid -- which also retires three
+        // workarounds the re-emit needed:
+        //   * detaching m_fn_on_line_appended, because every re-emitted line was
+        //     forwarded to LogLine and one colour tweak appended a verbatim
+        //     second copy of the whole buffer to an open session log;
+        //   * restoring the scroll position afterwards;
+        //   * the bookmark round-trip through the engine's CLines.
+        pal::StylePalette palette;
+        m_doc->GetStylePalette(palette);
+        if (m_output) m_output->RecolourFromPalette(palette);
     }
 
     // ── Auto-reconnect countdown ──────────────────────────────────────────

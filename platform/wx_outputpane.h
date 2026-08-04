@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include "platform/output_types.h"   // SOutputLine, SOutputRun
+#include "pal/style_colour.h"        // pal::StylePalette (RecolourFromPalette)
 
 // ── SelPoint — cursor position within the text buffer ────────────────────────
 // Represents a position between characters: col=0 is before the first
@@ -111,6 +112,16 @@ public:
     // Read-only access to the current display font (used by scripting callbacks
     // to build a modified font to pass back into SetOutputFont).
     const wxFont& GetCurrentFont() const { return m_font; }
+
+    // Re-resolve every buffered run's colours against a new palette, in place.
+    //
+    // The alternative is what the port used to do: have the engine re-emit the
+    // entire scrollback (RebuildOutputView).  That reallocates every run's
+    // string and rebuilds the whole wrap cache to change nothing but two
+    // integers per run — O(buffer) work on a path world.SetNormalColour can
+    // reach, and unbounded once max_output_lines is 0.  Colours cannot affect
+    // wrapping, so this needs no cache work at all: walk, re-resolve, repaint.
+    void RecolourFromPalette(const pal::StylePalette& palette);
 
     // Update the scrollback buffer cap.
     void SetMaxLines(int n);

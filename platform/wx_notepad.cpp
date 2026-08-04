@@ -90,74 +90,13 @@ static wxFont MakeFont(const CTextDocument* pDoc)
 }
 
 // ── Text-conversion transforms ──────────────────────────────────────────────
-// Pure CString→CString, mirroring the canonical CTextView::OnConvert* logic
-// (TextView.cpp).  base64 / forum-codes reuse the shared canonical helpers
-// (encodeBase64/decodeBase64/QuoteForumCodes).
-namespace {
-
-CString NP_UnixToDos(const CString& in) {            // LF → CRLF (drop stray CR)
-    std::string out; for (const char* p = in; *p; ++p) {
-        if (*p == '\r') continue;
-        if (*p == '\n') out += '\r';
-        out += *p;
-    }
-    return CString(out.c_str());
-}
-CString NP_DosToUnix(const CString& in) {            // strip CR
-    std::string out; for (const char* p = in; *p; ++p) if (*p != '\r') out += *p;
-    return CString(out.c_str());
-}
-CString NP_MacToDos(const CString& in) {             // CR → CRLF (drop stray LF)
-    std::string out; for (const char* p = in; *p; ++p) {
-        if (*p == '\n') continue;
-        out += *p;
-        if (*p == '\r') out += '\n';
-    }
-    return CString(out.c_str());
-}
-CString NP_DosToMac(const CString& in) {             // strip LF
-    std::string out; for (const char* p = in; *p; ++p) if (*p != '\n') out += *p;
-    return CString(out.c_str());
-}
-CString NP_RemoveExtraBlanks(const CString& in) {    // collapse runs of space/tab
-    std::string out; for (const char* p = in; *p; ++p) {
-        if (*p == ' ' || *p == '\t') { if (p[1] != ' ' && p[1] != '\t') out += ' '; continue; }
-        out += *p;
-    }
-    return CString(out.c_str());
-}
-CString NP_QuoteLines(const CString& in, const char* q) {  // prefix every line with q
-    std::string out; out += q;
-    for (const char* p = in; *p; ++p) { out += *p; if (*p == '\n') out += q; }
-    return CString(out.c_str());
-}
-CString NP_HtmlSpecial(const CString& in) {          // < > & "  → entities
-    std::string out; for (const char* p = in; *p; ++p) switch (*p) {
-        case '<':  out += "&lt;";   break;
-        case '>':  out += "&gt;";   break;
-        case '&':  out += "&amp;";  break;
-        case '"':  out += "&quot;"; break;
-        default:   out += *p;
-    }
-    return CString(out.c_str());
-}
-CString NP_RemoveEndOfLines(const CString& in) {     // join lines, keep paragraph breaks
-    std::string out; char last = ' ';
-    for (const char* p = in; *p; ) {
-        if (*p == '\r') {
-            if (*++p == '\n') ++p;                    // skip the CR (+ LF)
-            const char* s = p;
-            while (*s == ' ' || *s == '\t') ++s;      // a blank line → paragraph break
-            if (s[0] == '\r' && s[1] == '\n') { p = s + 2; out += "\r\n"; }
-            else if (last != ' ') out += ' ';         // else fold to a single space
-        } else {
-            last = *p; out += *p; ++p;
-        }
-    }
-    return CString(out.c_str());
-}
-
-} // namespace
+// The transforms themselves live in notepad_convert_shared.cpp (mushcore) —
+// faithful copies of the canonical CTextView::OnConvert* bodies, wrapped in the
+// LF↔CRLF boundary conversion this control needs.  They used to be a private
+// copy here, fed the control's text raw; because wxOSX rewrites every CR to LF,
+// the CR-keyed transforms (Remove end-of-lines, DOS↔Mac) then did nothing or
+// deleted every line break.  Keeping them in mushcore also puts them under the
+// headless test suite (tests/test_notepad_convert.cpp).
 
 // ── Constructor ────────────────────────────────────────────────────────────
 
@@ -240,6 +179,27 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     // ── Initial content ─────────────────────────────────────────────────
     if (!text.IsEmpty())
         m_ctrl->SetValue(text);
+
+    // ── Track edits ─────────────────────────────────────────────────────
+    // CEditView reflects the edit control's EN_CHANGE to
+    // CEditView::OnEditChange, which sets the document's modified flag; that
+    // flag is what CDocument::SaveModified consults before prompting.  Nothing
+    // here bound the equivalent event, so the flag never became TRUE and
+    // SaveModified had to prompt unconditionally to avoid losing edits.
+    //
+    // Bound AFTER the initial SetValue on purpose: wx fires wxEVT_TEXT for a
+    // programmatic SetValue too, and the initial content is not an edit.  The
+    // canonical decides that case explicitly in CreateTextWindow
+    // (Utilities.cpp: SetModifiedFlag(TRUE) when it has text to install), and
+    // hook_create_text_window mirrors it.  Everything after this point —
+    // typing, paste, the Convert menu, ASCII art, world.AppendToNotepad's
+    // WriteText — is the moral equivalent of the EM_REPLACESEL that raises
+    // EN_CHANGE on Windows.
+    m_ctrl->Bind(wxEVT_TEXT, [this](wxCommandEvent& e) {
+        if (m_pDoc)
+            m_pDoc->SetModifiedFlag(TRUE);
+        e.Skip();
+    });
 
     // ── Font & colours ──────────────────────────────────────────────────
     ApplyFont();
@@ -590,31 +550,29 @@ void CWxNotepadFrame::OnConvert(wxCommandEvent& evt)
     CString src(static_cast<const char*>(wxsrc.ToUTF8()));
     CString dst;
 
+    int op;
     switch (evt.GetId()) {
-        case ID_NP_CONVERT_UPPER:        dst = src; dst.MakeUpper();      break;
-        case ID_NP_CONVERT_LOWER:        dst = src; dst.MakeLower();      break;
-        case ID_NP_CONVERT_UNIX2DOS:     dst = NP_UnixToDos(src);         break;
-        case ID_NP_CONVERT_DOS2UNIX:     dst = NP_DosToUnix(src);         break;
-        case ID_NP_CONVERT_MAC2DOS:      dst = NP_MacToDos(src);          break;
-        case ID_NP_CONVERT_DOS2MAC:      dst = NP_DosToMac(src);          break;
-        case ID_NP_CONVERT_REMOVEEOL:    dst = NP_RemoveEndOfLines(src);  break;
-        case ID_NP_CONVERT_REMOVEBLANKS: dst = NP_RemoveExtraBlanks(src); break;
-        case ID_NP_CONVERT_QUOTELINES: {
-            CString q = App.m_strNotepadQuoteString;
-            if (q.IsEmpty()) q = "> ";
-            dst = NP_QuoteLines(src, static_cast<const char*>(q));
-            break;
-        }
-        case ID_NP_CONVERT_QUOTEFORUM:   dst = QuoteForumCodes(src);      break;
-        case ID_NP_CONVERT_BASE64ENC:
-            dst = encodeBase64(static_cast<const char*>(src), true);      break;
-        case ID_NP_CONVERT_BASE64DEC:
-            try { dst = decodeBase64(static_cast<const char*>(src)); }
-            catch (CException* e) { e->Delete(); wxBell(); return; }
-            catch (...)           { wxBell(); return; }
-            break;
-        case ID_NP_CONVERT_HTMLSPECIAL:  dst = NP_HtmlSpecial(src);       break;
+        case ID_NP_CONVERT_UPPER:        op = eNotepadConvertUpperCase;     break;
+        case ID_NP_CONVERT_LOWER:        op = eNotepadConvertLowerCase;     break;
+        case ID_NP_CONVERT_UNIX2DOS:     op = eNotepadConvertUnixToDos;     break;
+        case ID_NP_CONVERT_DOS2UNIX:     op = eNotepadConvertDosToUnix;     break;
+        case ID_NP_CONVERT_MAC2DOS:      op = eNotepadConvertMacToDos;      break;
+        case ID_NP_CONVERT_DOS2MAC:      op = eNotepadConvertDosToMac;      break;
+        case ID_NP_CONVERT_REMOVEEOL:    op = eNotepadConvertRemoveEol;     break;
+        case ID_NP_CONVERT_REMOVEBLANKS: op = eNotepadConvertRemoveBlanks;  break;
+        case ID_NP_CONVERT_QUOTELINES:   op = eNotepadConvertQuoteLines;    break;
+        case ID_NP_CONVERT_QUOTEFORUM:   op = eNotepadConvertQuoteForum;    break;
+        case ID_NP_CONVERT_BASE64ENC:    op = eNotepadConvertBase64Encode;  break;
+        case ID_NP_CONVERT_BASE64DEC:    op = eNotepadConvertBase64Decode;  break;
+        case ID_NP_CONVERT_HTMLSPECIAL:  op = eNotepadConvertHtmlSpecial;   break;
         default: return;
+    }
+
+    // A failure here is base64 decode on invalid input: leave the notepad alone
+    // and beep, as the canonical does when decodeBase64 throws.
+    if (!NotepadConvertText(op, src, dst)) {
+        wxBell();
+        return;
     }
 
     // Base64 DECODE produces arbitrary binary, and several of the other

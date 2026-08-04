@@ -525,6 +525,16 @@ BOOL CTextDocument::SaveModified()
         break;
       }
 
+    // The rest of this arm stands in for CDocument::SaveModified, which the
+    // Windows arm below falls through to — and MFC's first act there is to
+    // return TRUE when the document is not dirty.  Without this the port asked
+    // "Save changes?" on EVERY close: a file just opened into a notepad (the
+    // open path clears the flag), or one saved a second earlier, both prompted.
+    // The dirty flag is maintained by CWxNotepadFrame's wxEVT_TEXT binding,
+    // which stands in for CEditView's EN_CHANGE handler.
+    if (!IsModified())
+      return TRUE;
+
     CString prompt = TFormat (
         "Save changes to \"%s\"?",
         m_strTitle.IsEmpty() ? (LPCTSTR) GetTitle() : (LPCTSTR) m_strTitle);

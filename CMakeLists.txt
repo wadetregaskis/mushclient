@@ -427,6 +427,7 @@ if(NOT WIN32)
         ansi.cpp
         doc_shared.cpp
         utilities_shared.cpp
+        notepad_convert_shared.cpp
         scripting/errors.cpp
         doc_scripting_shared.cpp
         doc_tabcomplete_shared.cpp
@@ -870,6 +871,10 @@ if(NOT WIN32)
             # parent, so these hang off each world window like the status bar.
             platform/wx_toolbar.cpp
             platform/wx_notepad.cpp
+            # In-app conformance harness for the notepad windows
+            # (--notepad-selftest).  Lives here, not in mushgui_adapters, because
+            # it drives the real CWxNotepadFrame and so includes wx headers.
+            platform/notepad_selftest.cpp
             # MFC dialog bridge: parses the recovered dialog/menu resources so the
             # canonical dialogs/**/*.cpp render natively (vs hand-rebuilt in wx)
             platform/wx_dialog_resource.cpp

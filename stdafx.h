@@ -511,6 +511,34 @@ bool GetSelection (CEdit * pEdit, CString & strSelection);
 
 CString QuoteForumCodes(const CString & strText) ;
 
+#ifndef _WIN32
+// ── Notepad Convert menu (notepad_convert_shared.cpp) ───────────────────────
+// Port only: Windows runs CTextView::OnConvert* directly against its CEdit.
+// These wrap the same transforms for the wx notepad, whose control cannot hold
+// a carriage return at all.
+enum
+  {
+  eNotepadConvertUpperCase,
+  eNotepadConvertLowerCase,
+  eNotepadConvertUnixToDos,
+  eNotepadConvertDosToUnix,
+  eNotepadConvertMacToDos,
+  eNotepadConvertDosToMac,
+  eNotepadConvertRemoveEol,
+  eNotepadConvertRemoveBlanks,
+  eNotepadConvertQuoteLines,
+  eNotepadConvertQuoteForum,
+  eNotepadConvertBase64Encode,
+  eNotepadConvertBase64Decode,
+  eNotepadConvertHtmlSpecial,
+  };
+// src/dst are in the wx control's convention (LF-only); the canonical CRLF
+// buffer the transforms are written against is built and unbuilt inside.
+bool NotepadConvertText (const int op, const CString & src, CString & dst);
+CString NotepadTextToCanonical   (const CString & in);   // control LF → CRLF
+CString NotepadTextFromCanonical (const CString & in);   // CRLF → control LF
+#endif // !_WIN32
+
 // different ways of saving things — implementations in xml/xml_save_world.cpp
 void Save_XML_number  (CArchive& ar,
                        const char * sName,

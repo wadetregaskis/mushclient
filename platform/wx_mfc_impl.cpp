@@ -2734,19 +2734,43 @@ static int hook_query_quit_save()
         SaveMainWindowGeometry(wxDynamicCast(mw, wxTopLevelWindow));
     }
 
-    if (!App.m_pWorldDocTemplate) return 1;
+    // Notepad/text documents, and then worlds.  MFC's CWinApp::SaveAllModified
+    // walks EVERY registered doc template in registration order, and
+    // InitInstance registers m_pNormalDocTemplate first (MUSHclient.cpp) — so on
+    // Windows the notepads are asked about before the worlds.  This pass used to
+    // exist for worlds only, and bailed out entirely when there was no world
+    // template, so an unsaved notepad was silently discarded by every quit.
+    std::vector<CDocument*> notepads;
+    if (App.m_pNormalDocTemplate)
+    {
+        POSITION npos = App.m_pNormalDocTemplate->GetFirstDocPosition();
+        while (npos)
+            if (CDocument* d = App.m_pNormalDocTemplate->GetNextDoc(npos))
+                notepads.push_back(d);
+    }
 
     std::vector<CMUSHclientDoc*> worlds;
-    POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
-    while (pos)
-        if (CDocument* d = App.m_pWorldDocTemplate->GetNextDoc(pos))
-            worlds.push_back(static_cast<CMUSHclientDoc*>(d));
+    if (App.m_pWorldDocTemplate)
+    {
+        POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
+        while (pos)
+            if (CDocument* d = App.m_pWorldDocTemplate->GetNextDoc(pos))
+                worlds.push_back(static_cast<CMUSHclientDoc*>(d));
+    }
 
     // Guard the whole flow: a save raising (e.g. a write error, an MFC
     // CException) must not propagate through applicationShouldTerminate: — that
     // is an Objective-C++ boundary and a C++ exception crossing it crashes.
     try
     {
+        // Phase 0 — the notepads.  SaveModified() is virtual and is exactly what
+        // CDocTemplate::SaveAllModified calls; CTextDocument's override applies
+        // the per-notepad "save on change" setting and the notepad types that
+        // close without asking, then prompts only if the document is dirty.
+        for (CDocument* d : notepads)
+            if (!d->SaveModified())
+                return 0;   // user cancelled → do not quit
+
         // Phase 1 — prompt for any world with unsaved edits.  SaveModified() is
         // the canonical Save / Discard / Cancel prompt: it auto-saves or prompts
         // per the world's settings, handles the variables-only-changed case, and
@@ -2874,6 +2898,14 @@ static void* hook_create_text_window(
     // CWxNotepadFrame constructor registers td with the template and shows.
     // The frame takes ownership of td.
     new CWxNotepadFrame(td, wxTitle, wxText);
+
+    // Canonical CreateTextWindow (Utilities.cpp) marks the document modified
+    // exactly when it has content to install — "nothing to put there" returns
+    // before the SetModifiedFlag(TRUE) — so a notepad handed text by a script
+    // or a trigger prompts on close, and an empty one does not.  Now that
+    // SaveModified honours the flag, the port has to set it the same way.
+    if (sText && *sText)
+        td->SetModifiedFlag(TRUE);
 
     return static_cast<void*>(td);
 }

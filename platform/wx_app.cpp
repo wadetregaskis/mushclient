@@ -41,6 +41,12 @@ int RunPalMiniWindowSelfTest();
 // 31 mushcore test executables must not link.
 int RunEmbeddedEnginesSelfTest(const char* only);
 
+// In-app conformance harness for the notepad windows
+// (platform/notepad_selftest.cpp), run via the hidden --notepad-selftest flag.
+// CTextDocument and its wxFrame are GUI-only, so none of it links into the
+// headless test executables.
+int RunNotepadSelfTest();
+
 #include "pal/surface_bridge.h"   // pal::g_surface — checked before installing
                                   // the bridge for the miniwindow selftest
 
@@ -71,6 +77,15 @@ public:
                     std::exit(RunEmbeddedEnginesSelfTest(
                         which.IsEmpty() ? nullptr : utf8.data()));
                 }
+            }
+            if (wxString(argv[i]) == wxT("--notepad-selftest")) {
+                // Needs the MFC->wx hooks: the harness drives the real notepad
+                // creation hook, the real message-box seam and the real quit
+                // hook.  Installing them is pointer assignment only, and the
+                // normal install point below is never reached here.
+                wx_mfc_install_hooks();
+                const int failures = RunNotepadSelfTest();
+                std::exit(failures == 0 ? 0 : 1);
             }
             if (wxString(argv[i]) == wxT("--pal-miniwindow-selftest")) {
                 // CMiniWindow draws through the bridge unconditionally; the

@@ -632,6 +632,87 @@ TEST(Utilities, UnlimitedScrollbackAppendRateStaysFlat)
                first, later);
 }
 
+// ── Coverage gaps from the 2026-07 test audit, section 1 ──────────────────
+//
+// Each of these is a documented data-integrity path with real logic and no test
+// touching it: a wrong mapping would ship silently.
+
+TEST(Utilities, Base64CoversTheWholeAlphabet)
+{
+    // getBase64Value's '+' (62) and '/' (63) arms were True:0 across the entire
+    // suite -- the RFC-4648 vectors and the round-trip samples happen to produce
+    // no + or / in their output, so a transposed 62<->63 mapping was invisible.
+    // 0xFB 0xFF 0xFE encodes as "+//+", which uses both, twice, in both halves.
+    EXPECT_STREQ("+//+", (const char*) encodeBase64("\xFB\xFF\xFE", false));
+
+    CString decoded = decodeBase64("+//+");
+    ASSERT_EQ(3, decoded.GetLength());
+    EXPECT_EQ('\xFB', decoded[0]);
+    EXPECT_EQ('\xFF', decoded[1]);
+    EXPECT_EQ('\xFE', decoded[2]);
+
+    // ...and the two are genuinely distinguished, which is what a swapped
+    // mapping would break while still round-tripping within itself.
+    EXPECT_TRUE(decodeBase64("+AAA") != decodeBase64("/AAA"));
+}
+
+TEST(Utilities, FixupEscapeSequencesCoversEveryEscape)
+{
+    // Eight of the simple escapes were True:0 -- only \n, \t and \x41/\x00 were
+    // ever exercised -- so a wrong mapping in any of the others would ship.
+    // world.FixupEscapeSequences is what an alias or a send string goes through.
+    const CString s = FixupEscapeSequences("[\\a][\\b][\\f][\\r][\\v][\\'][\\\"][\\\\][\\?]");
+    ASSERT_EQ(27, s.GetLength());          // 9 groups of [x]
+    EXPECT_EQ('\a',  s[1]);
+    EXPECT_EQ('\b',  s[4]);
+    EXPECT_EQ('\f',  s[7]);
+    EXPECT_EQ('\r',  s[10]);
+    EXPECT_EQ('\v',  s[13]);
+    EXPECT_EQ('\'',  s[16]);
+    EXPECT_EQ('"',   s[19]);
+    EXPECT_EQ('\\',  s[22]);
+    EXPECT_EQ('?',   s[25]);
+}
+
+TEST(Utilities, FixupEscapeSequencesHexAcceptsLetters)
+{
+    // The `if (iNewDigit >= 'A') iNewDigit -= 7;` fold never ran: the only \x
+    // test used \x41 and \x00, both all-digits.  That -7 is the gap between '9'
+    // and 'A' in ASCII, and getting it wrong turns every hex letter into
+    // garbage -- \xFF would come out as 0x99.
+    const CString s = FixupEscapeSequences("\\xFF|\\xab|\\x7f");
+    ASSERT_EQ(5, s.GetLength());
+    EXPECT_EQ('\xFF', s[0]);
+    EXPECT_EQ('|',    s[1]);
+    EXPECT_EQ('\xAB', s[2]);   // lower case too (toupper first)
+    EXPECT_EQ('\x7F', s[4]);
+}
+
+TEST(Utilities, ConvertToRegularExpressionEscapesControlCharacters)
+{
+    // The c < ' ' arm (\xhh) and the \n special case were both untested; only
+    // "abc", "a*b" and "*" were ever converted.  These are what a trigger's
+    // match text becomes, so a wrong escape silently changes what matches.
+    EXPECT_STREQ("^a\\nb$",
+                 (const char*) ConvertToRegularExpression("a\nb", true, true));
+    EXPECT_STREQ("^a\\x01b$",
+                 (const char*) ConvertToRegularExpression("a\x01" "b", true, true));
+    EXPECT_STREQ("^a\\x1bb$",
+                 (const char*) ConvertToRegularExpression("a\x1b" "b", true, true));
+}
+
+TEST(Utilities, ConvertToRegularExpressionPassesHighBytesThrough)
+{
+    // c >= 0x80 goes through unescaped so a UTF-8 trigger keeps matching; the
+    // branch was True:0.  A byte-by-byte escape here would break every
+    // non-English world.
+    EXPECT_STREQ("^caf\xc3\xa9$",
+                 (const char*) ConvertToRegularExpression("caf\xc3\xa9", true, true));
+    // ...and the ASCII punctuation around it is still escaped.
+    EXPECT_STREQ("^\\.caf\xc3\xa9\\.$",
+                 (const char*) ConvertToRegularExpression(".caf\xc3\xa9.", true, true));
+}
+
 // doc_portable.cpp GetLinePosition: "sanity check (Santa Claus): nLine >
 // count → clamped, nLine < 0 → 0; ... not there? assume last one in the
 // list" — out-of-range line numbers always yield a valid POSITION.

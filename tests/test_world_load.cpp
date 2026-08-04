@@ -1601,6 +1601,48 @@ TEST(WorldLoad, AliasesAndVariablesSaveAndRoundTrip)
     EXPECT_EQ(3, (int)doc2.GetAliasMap().GetCount());
 }
 
+// ── Variables are written in sorted order ──────────────────────────────────
+//
+// AliasesAndVariablesSaveAndRoundTrip (below) covers that the sections are
+// written and reload intact.  What it cannot see is the ORDER: SortVariables /
+// CompareVariable (xml_serialize.cpp) qsort the map into a stable alphabetical
+// sequence before the write loop, and a comparator that returned 0 for
+// everything would still produce a perfectly loadable file.  The only place
+// that shows is the byte order in the saved XML.
+//
+// Insertion order here is deliberately reverse-alphabetical, so "unsorted"
+// and "sorted" cannot coincide.
+TEST(WorldLoad, VariablesAreSavedInSortedOrder)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="mud.example.com" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_vsort_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        ASSERT_EQ((long)eOK, doc.SetVariable("zeta",  "z"));
+        ASSERT_EQ((long)eOK, doc.SetVariable("mid",   "m"));
+        ASSERT_EQ((long)eOK, doc.SetVariable("alpha", "a"));
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+
+    const std::string c = slurp(path);
+    const size_t vA = c.find("name=\"alpha\"");
+    const size_t vM = c.find("name=\"mid\"");
+    const size_t vZ = c.find("name=\"zeta\"");
+    ASSERT_NE(vA, std::string::npos);
+    ASSERT_NE(vM, std::string::npos);
+    ASSERT_NE(vZ, std::string::npos);
+    EXPECT_TRUE(vA < vM);
+    EXPECT_TRUE(vM < vZ);
+    remove(path);
+}
+
 // scriptingoptions.cpp OPT_COMMAND_STACK validation: only the empty-value arm was
 // covered.  A value longer than one char, and a non-printable/whitespace char,
 // are also rejected with eOptionOutOfRange — and the latter forces command

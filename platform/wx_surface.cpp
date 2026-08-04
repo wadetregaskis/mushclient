@@ -35,6 +35,7 @@ bool wxgdi_read_bgra(CDC* dc, int x, int y, int w, int h,
                      unsigned char* dst, int strideBytes);
 bool wxgdi_write_bgra(CDC* dc, int x, int y, int w, int h,
                       const unsigned char* src, int strideBytes, bool hasAlpha);
+double wx_canvas_scale();   // wx_gdi_compat.cpp: the display scale canvases are made at
 
 namespace pal {
 
@@ -423,16 +424,27 @@ static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec, CBitmap& patte
             const Colour fg = spec.fg;
             const Colour bg = (spec.bg == (Colour)-1) ? spec.fg : spec.bg;
 
+            // Build the tile at PHYSICAL resolution.  An 8x8 logical stipple on
+            // a 2x canvas is scaled up by wx and its alternating pixels average
+            // away -- kFine (0xAA/0x55) is a checkerboard and came out a single
+            // flat colour.  Replicating each pattern pixel across the scale x
+            // scale block, and telling the bitmap its logical size is still 8x8,
+            // makes wx lay it down 1:1 on the physical grid.
+            const double sc = wx_canvas_scale();
+            int isc = (sc > 0) ? (int)(sc + 0.5) : 1;
+            if (isc < 1) isc = 1;
+            const int dim = 8 * isc;
+
             BITMAPINFO bmi;
             memset(&bmi, 0, sizeof bmi);
             bmi.bmiHeader.biSize        = sizeof bmi;
-            bmi.bmiHeader.biWidth       = 8;
-            bmi.bmiHeader.biHeight      = 8;             // bottom-up
+            bmi.bmiHeader.biWidth       = dim;
+            bmi.bmiHeader.biHeight      = dim;           // bottom-up
             bmi.bmiHeader.biPlanes      = 1;
             bmi.bmiHeader.biBitCount    = 24;
             bmi.bmiHeader.biCompression = BI_RGB;
-            const int stride = (int) BytesPerLine(8, 24);
-            bmi.bmiHeader.biSizeImage   = 8 * stride;
+            const int stride = (int) BytesPerLine(dim, 24);
+            bmi.bmiHeader.biSizeImage   = dim * stride;
 
             unsigned char* bits = NULL;
             HBITMAP hbm = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS,
@@ -442,17 +454,26 @@ static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec, CBitmap& patte
 
             for (int row = 0; row < 8; ++row) {
                 const unsigned char bitsRow = spec.monoPattern[row];
-                // The DIB is bottom-up, the pattern's first byte is its top row.
-                unsigned char* out = bits + (size_t)(7 - row) * stride;
-                for (int col = 0; col < 8; ++col) {
-                    const bool set = (bitsRow & (0x80u >> col)) != 0;   // MSB = left
-                    const Colour c = set ? bg : fg;                     // GDI: 1 -> bk
-                    *out++ = (unsigned char)((c >> 16) & 0xFF);         // B
-                    *out++ = (unsigned char)((c >>  8) & 0xFF);         // G
-                    *out++ = (unsigned char)( c        & 0xFF);         // R
+                for (int ry = 0; ry < isc; ++ry) {
+                    // The DIB is bottom-up; the pattern's first byte is its top row.
+                    const int py = dim - 1 - (row * isc + ry);
+                    unsigned char* out = bits + (size_t)py * stride;
+                    for (int col = 0; col < 8; ++col) {
+                        const bool set = (bitsRow & (0x80u >> col)) != 0;  // MSB = left
+                        const Colour c = set ? bg : fg;                    // GDI: 1 -> bk
+                        for (int rx = 0; rx < isc; ++rx) {
+                            *out++ = (unsigned char)((c >> 16) & 0xFF);    // B
+                            *out++ = (unsigned char)((c >>  8) & 0xFF);    // G
+                            *out++ = (unsigned char)( c        & 0xFF);    // R
+                        }
+                    }
                 }
             }
             patternBmp.Attach((HGDIOBJ)hbm);   // materializes + frees the DIB
+            if (isc > 1) {
+                if (wxBitmap* wb = static_cast<wxBitmap*>(patternBmp.m_impl))
+                    if (wb->IsOk()) wb->SetScaleFactor((double) isc);
+            }
             return br.CreatePatternBrush(&patternBmp) != 0;
         }
     }

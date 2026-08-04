@@ -149,14 +149,12 @@ int RunPalMiniWindowSelfTest()
         mwCheck(sawRed > 0 || sawGreen > 0,
                 "...and paints in the colours the caller asked for");
 
-        // NOT asserted, because it does not currently hold: kFine is a 50/50
-        // checkerboard (0xAA/0x55), so BOTH colours should appear -- and only
-        // one does.  An 8x8 stipple is collapsing to a single colour, which is
-        // the HiDPI resampling problem tracked separately (the miniwindow canvas
-        // is 2x and every read-modify-write resamples it down and back up).
-        // Colouring the tile is still a strict improvement over black/white;
-        // the pattern's SHAPE needs that other fix before it can be pinned here.
-        (void) sawRed; (void) sawGreen;
+        // kFine is a 50/50 checkerboard (0xAA/0x55), so BOTH colours must
+        // appear.  They did not until the tile was built at PHYSICAL
+        // resolution: an 8x8 logical stipple on a 2x canvas is scaled up by wx
+        // and its alternating pixels average away to one flat colour.
+        mwCheck(sawRed > 0 && sawGreen > 0,
+                "a checkerboard pattern keeps BOTH colours (not averaged away)");
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
                 "restore the background after the mono-pattern probe");
     }

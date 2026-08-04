@@ -632,17 +632,14 @@ styles **8-12** came out monochrome whatever colours the plugin asked for. The
 
 **Two things this does NOT fix, both found while testing it:**
 
-1. **The pattern's SHAPE still collapses.** `kFine` is a 50/50 checkerboard
-   (`0xAA`/`0x55`), so a filled area should contain both colours — and only one
-   appears. **Corrected diagnosis:** I first blamed the HiDPI read path, but
-   that is now exact (see § 4c-septendecies) and the checkerboard *still*
-   collapses — so the fault is in the DRAW: wx scales the 8x8 stipple onto the
-   2x canvas and the alternating pixels average away. A stipple brush needs to
-   be laid down at physical resolution, or the fill rasterised CPU-side from the
-   pattern. Colouring the tile is a strict improvement over black-and-white, but
-   the pattern will not look right until that is done. The selftest asserts the
-   colours and says in a comment why it deliberately does not assert both
-   appearing.
+1. ~~**The pattern's SHAPE still collapses.**~~ **Also fixed** (same day). `kFine`
+   is a 50/50 checkerboard (`0xAA`/`0x55`) and only one colour was appearing. I
+   first blamed the HiDPI read path; making that exact did not help, which
+   located the fault in the DRAW — wx scales an 8x8 *logical* stipple onto the 2x
+   canvas and the alternating pixels average away. The tile is now built at
+   **physical** resolution (each pattern pixel replicated across the scale x
+   scale block, with the bitmap's scale factor set so its logical size is still
+   8x8), and the selftest asserts both colours survive.
 2. **Transparent gaps** (`bg == -1`) are not expressible as a stipple without a
    mask, so they currently paint the gap in the foreground colour instead of
    leaving the destination alone. Windows leaves it alone.

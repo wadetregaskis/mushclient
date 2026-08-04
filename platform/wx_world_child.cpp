@@ -1648,13 +1648,26 @@ wxTextCtrl* CWorldChildFrame::ActiveInput() const
 }
 
 // ── Global Change (input find/replace) ────────────────────────────────────
-// Mirrors CSendView::OnInputGlobalchange (stubbed on the port): prompt with the
-// canonical CGlobalChangeDlg, then replace every occurrence in the input bar.
+// CSendView::OnInputGlobalchange, split the way that function splits: the
+// dialog and the remembered from/to are frontend work and stay here; everything
+// after DoModal is the canonical body in doc_commandbar_shared.cpp.
+//
+// The port used to reimplement the second half and got two things wrong: it
+// ignored the SELECTION (Windows scopes the change to the selected text --
+// sendvw.cpp:2077 -- while the port always rewrote the whole bar), and it wrote
+// back with SetValue rather than a range replace, so the edit could not be
+// undone.  It also silently rewrote the bar with identical text instead of
+// reporting "No replacements made".
 void CWorldChildFrame::GlobalChangeInput()
 {
     wxTextCtrl* inp = ActiveInput();
-    if (!inp)
+    if (!inp || !m_doc)
         return;
+
+    // The selection BEFORE the dialog runs, exactly as sendvw.cpp:2060 reads
+    // it.  In BYTE offsets, which is the space GlobalChangeCommand indexes
+    // GetCommandText() with (commandSelection() already reports bytes).
+    const pal::Range sel = commandSelection();
 
     // Remember the last from/to across invocations (CSendView kept these as
     // view members; a static is the port equivalent — shared, which is fine).
@@ -1668,20 +1681,11 @@ void CWorldChildFrame::GlobalChangeInput()
     s_lastFrom = dlg.m_strChangeFrom;
     s_lastTo   = dlg.m_strChangeTo;
 
-    CString strCurrent(inp->GetValue().ToUTF8().data());
-    strCurrent.Replace("\r", "");   // drop carriage-returns
-
-    // Canonical backslash handling: \\ -> \, \n -> newline, \t -> tab.
-    CString from = dlg.m_strChangeFrom, to = dlg.m_strChangeTo;
-    from.Replace("\\\\", "\x01"); from.Replace("\\n", "\n"); from.Replace("\\t", "\t"); from.Replace("\x01", "\\");
-    to.Replace  ("\\\\", "\x01"); to.Replace  ("\\n", "\n"); to.Replace  ("\\t", "\t"); to.Replace  ("\x01", "\\");
-
-    if (from.IsEmpty())
-        return;   // nothing to find
-
-    CString strNew = Replace(strCurrent, from, to);   // replace all (canonical helper)
-    inp->SetValue(wxString::FromUTF8(static_cast<const char*>(strNew)));
-    inp->SetInsertionPointEnd();
+    if (!m_doc->GlobalChangeCommand(dlg.m_strChangeFrom, dlg.m_strChangeTo,
+                                    sel.start, sel.end))
+        ::UMessageBox(TFormat("No replacements made for \"%s\".",
+                              (LPCTSTR) s_lastFrom),
+                      MB_ICONINFORMATION);
 }
 
 // ── Generate Character Name ────────────────────────────────────────────────
@@ -1718,22 +1722,46 @@ void CWorldChildFrame::GenerateCharacterName()
     dlg.DoModal();
 }
 
+// ── Recall Last Word ───────────────────────────────────────────────────────
+// Edit ▸ Recall Last Word / Ctrl+Backspace (ID_REPEAT_LAST_WORD).  The whole
+// body is canonical (doc_commandbar_shared.cpp, was CSendView::OnRepeatLastWord);
+// this is just the menu entry point.
+void CWorldChildFrame::RecallLastWord()
+{
+    if (!m_doc)
+        return;
+    m_doc->RepeatLastWord();
+    m_histIdx = -1; ApplyHistRSearch(false);
+    if (wxTextCtrl* inp = ActiveInput())
+        inp->SetFocus();
+}
+
 // ── Spell-check the input ──────────────────────────────────────────────────
 // Mirrors CSendView::OnEditSpellcheck (stubbed): runs the canonical spell-check
 // Lua over the input text (it pops the suggestion dialog per misspelling) and
 // writes the corrected text back.
-void CWorldChildFrame::SpellCheckInput()
+//
+// Returns false when the user CANCELLED the dialog.  Windows distinguishes the
+// two (App.SpellCheck returns false, MUSHclient.cpp:1444) and its caller uses
+// that to abort a send; the port could not, because SpellCheckString folded
+// "cancelled" into "here is your text back unchanged".
+bool CWorldChildFrame::SpellCheckInput()
 {
     wxTextCtrl* inp = ActiveInput();
     if (!inp)
-        return;
+        return true;
 
     long from = 0, to = 0;
     inp->GetSelection(&from, &to);
     bool bAll = (from == to);   // no selection → check the whole line
     wxString wtext = bAll ? inp->GetValue() : inp->GetStringSelection();
 
-    CString corrected = App.SpellCheckString(CString(wtext.ToUTF8().data()), bAll);
+    bool bCancelled = false;
+    CString corrected = App.SpellCheckString(CString(wtext.ToUTF8().data()), bAll,
+                                             &bCancelled);
+    if (bCancelled)
+        return false;   // leave the text exactly as it was, like ReplaceSel-not-called
+
     wxString wcorrected = wxString::FromUTF8(static_cast<const char*>(corrected));
 
     if (bAll)
@@ -1741,6 +1769,7 @@ void CWorldChildFrame::SpellCheckInput()
     else
         inp->Replace(from, to, wcorrected);
     inp->SetInsertionPointEnd();
+    return true;
 }
 
 // ── Print the world output buffer ──────────────────────────────────────────
@@ -2899,13 +2928,30 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
-    // Ctrl+W / Ctrl+Backspace: kill the word immediately before the cursor.
-    // Ctrl+W is the Unix terminal convention; Ctrl+Backspace matches most GUI
-    // apps on Windows and macOS.  Both skip trailing spaces then delete back
-    // to the next word boundary.  Saves to the kill ring.
-    bool deleteWordBack = (code == 'W' && evt.RawControlDown()) ||
-                         (code == WXK_BACK && evt.RawControlDown());
-    if (deleteWordBack) {
+    // Ctrl+Backspace: canonical ID_REPEAT_LAST_WORD (Edit ▸ Recall Last Word).
+    //
+    // This used to be hardwired to "delete the word before the caret" — which
+    // is only HALF of what Windows binds to the key, and not the half you get
+    // by default.  m_bCtrlBackspaceDeletesLastWord (world option
+    // "ctrl_backspace_deletes_last_word") chooses: OFF (the shipped default,
+    // doc_construct.cpp) recalls the last word of the previously-sent command
+    // at the caret; ON deletes the word before the caret.  Its only reader was
+    // CSendView::OnRepeatLastWord, which the port never instantiates, so both
+    // arms were unreachable and the option did nothing whichever way it was
+    // set.  The body now lives in doc_commandbar_shared.cpp.
+    if (code == WXK_BACK && evt.RawControlDown()) {
+        if (m_doc) {
+            m_doc->RepeatLastWord();
+            m_histIdx = -1; ApplyHistRSearch(false);
+        }
+        return;
+    }
+
+    // Ctrl+W: kill the word immediately before the cursor.  The Unix terminal
+    // convention; Windows binds nothing to it, so it keeps the port's own
+    // delete-word body (which, unlike Recall Last Word's delete arm, leaves the
+    // preceding space alone and fills the kill ring for Ctrl+Y).
+    if (code == 'W' && evt.RawControlDown()) {
         if (inp) {
             long pos = inp->GetInsertionPoint();
             if (pos > 0) {
@@ -3156,6 +3202,29 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     }
     if (code == WXK_DOWN && inp == m_input && m_doc && !m_doc->m_bArrowsChangeHistory) {
         evt.Skip();
+        return;
+    }
+
+    // "Only traverse commands if we are at the *start* or *end* of the command"
+    // — sendvw.cpp:1716/1742, the gate that guards BOTH arrow arms of
+    // CSendView::PreTranslateMessage.  The port had no equivalent, so a plain
+    // arrow browsed the history from any caret position: composing a two-line
+    // command with Shift+Return (which this frame supports, and Windows does
+    // too — the bar is ES_MULTILINE there and wxTE_MULTILINE here) and then
+    // pressing Up to reach the first line destroyed the whole composition and
+    // replaced it with a history entry.
+    //
+    // Restricted to a PLAIN arrow, matching where Windows applies it:
+    //   * Ctrl+P / Ctrl+N (remapped to WXK_UP/WXK_DOWN just above) reach the
+    //     history through OnFileCtrlP/OnFileCtrlN, and this block explicitly
+    //     does not run when Ctrl is down (`GetKeyState (VK_CONTROL) >= 0`);
+    //   * Alt+Arrow, when the gate declines, still reaches the history via the
+    //     Alt+Up / Alt+Down accelerators on ID_KEYS_PREVCOMMAND /
+    //     ID_KEYS_NEXTCOMMAND (mushclient_dialogs.rc:3005-3006), so gating it
+    //     here would take away a working key rather than restore one.
+    if ((code == WXK_UP || code == WXK_DOWN) && inp == m_input && m_doc &&
+        !evt.AltDown() && !evt.RawControlDown() && !m_doc->CommandCaretAtEdge()) {
+        evt.Skip();   // let the text control move the caret
         return;
     }
 
@@ -3615,9 +3684,18 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     // anywhere, then re-read the possibly-corrected text.  Mirrors sendvw.cpp:329.
     // Collapse any selection first so SpellCheckInput checks the whole line, and
     // never run it on a masked password prompt.
-    if (m_doc->m_bSpellCheckOnSend && !m_doc->m_bNoEcho) {
+    // Two things this used to get wrong, both from sendvw.cpp:329-346:
+    //   * a SCRIPT command was checked like prose -- with a script prefix
+    //     configured, typing `/tell_all("hi")` popped the suggestion dialog on
+    //     the Lua identifiers, and accepting a suggestion rewrote the code
+    //     before it ran.  Windows skips the check entirely for those lines.
+    //   * CANCELLING the suggestion dialog still sent the line.  On Windows
+    //     `if (!bOK) return;` aborts the send and leaves the text in the bar.
+    if (m_doc->m_bSpellCheckOnSend && !m_doc->m_bNoEcho &&
+        !m_doc->IsScriptPrefixCommand(CString(inp->GetValue().ToUTF8().data()))) {
         inp->SetSelection(0, 0);
-        SpellCheckInput();
+        if (!SpellCheckInput())
+            return;   // spell check was cancelled — don't send, don't clear
     }
 
     wxString text = inp->GetValue();

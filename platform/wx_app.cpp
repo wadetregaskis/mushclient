@@ -52,6 +52,12 @@ int RunEmbeddedEnginesSelfTest(const char* only);
 // CTextDocument and its wxFrame are GUI-only, so none of it links into the
 // headless test executables.
 int RunNotepadSelfTest();
+// In-app conformance harness for the command-input bar
+// (platform/input_selftest.cpp), run via the hidden --input-selftest flag.
+// Unlike the harnesses above it needs the MFC→wx hooks installed (it builds a
+// real CWorldChildFrame), so it is dispatched further down OnInit rather than
+// in the early argv loop.
+int RunInputSelfTest();
 
 #include "pal/surface_bridge.h"   // pal::g_surface — checked before installing
                                   // the bridge for the miniwindow selftest
@@ -149,6 +155,14 @@ public:
 
         // Pre-load the recovered dialog/menu resources (logs the parse result).
         LoadMfcDialogResources();
+
+        // Command-input conformance harness.  It builds a real world frame, so
+        // it runs here — after the bridge hooks and dialog resources are in
+        // place — but still before InitInstance, so no world is opened and the
+        // user's prefs/startup list are never touched.
+        for (int i = 1; i < argc; ++i)
+            if (wxString(argv[i]) == wxT("--input-selftest"))
+                std::exit(RunInputSelfTest());
 
         // Boot the real MUSHclient application.
         // The hook calls App.InitInstance() which creates the main MDI frame.

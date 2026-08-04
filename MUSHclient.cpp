@@ -1456,8 +1456,12 @@ bool CMUSHclientApp::SpellCheck (CWnd * pWnd, CEdit * pEdit)
 // The Lua `spellcheck` function shows its own suggestion dialog per misspelling.
 // Shared logic factored out of SpellCheck() so the wx port can use it on its
 // wxTextCtrl input (SpellCheck() itself needs a CEdit).
-CString CMUSHclientApp::SpellCheckString (const CString & strText, bool bAll)
+CString CMUSHclientApp::SpellCheckString (const CString & strText, bool bAll,
+                                          bool * pbCancelled)
   {
+  if (pbCancelled)
+    *pbCancelled = false;
+
   if (!m_bSpellCheckOK || !m_SpellChecker_Lua)
     return strText;
 
@@ -1479,9 +1483,14 @@ CString CMUSHclientApp::SpellCheckString (const CString & strText, bool bAll)
     return strText;
     }
 
+  // Not a string back means they cancelled (spellchecker.lua:254 "return nil
+  // --> shows they cancelled"), which is exactly the case SpellCheck() reports
+  // by returning false rather than calling ReplaceSel.
   CString strResult = strText;
   if (lua_isstring (L, -1))
     strResult = lua_tostring (L, -1);
+  else if (pbCancelled)
+    *pbCancelled = true;
   return strResult;
   }   // end of CMUSHclientApp::SpellCheckString
 

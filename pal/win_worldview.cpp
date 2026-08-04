@@ -382,6 +382,23 @@ public:
         // the algorithm moved to doc_tabcomplete_shared.cpp — including the
         // LockWindowUpdate/UnlockWindowUpdate pair that stops the select-then-
         // replace from flickering.
+        //
+        // Line endings are the ADAPTER's business, not the shared bodies':
+        // CEdit stores CRLF, wxTextCtrl stores bare LF, and the seam speaks LF.
+        // OnInputGlobalchange used to do this conversion inline
+        // ("strNew.Replace ("\n", ENDLINE); // put carriage-returns back")
+        // right before its ReplaceSel; doing it here keeps
+        // doc_commandbar_shared.cpp platform-free.  Only a LONE '\n' is
+        // promoted, so an already-CRLF replacement cannot grow a second '\r'.
+        // (Tab completion, the other caller, never passes a newline at all.)
+        CString strText (text ? text : "");
+        for (int i = 0; i < strText.GetLength (); i++)
+            if (strText [i] == '\n' && (i == 0 || strText [i - 1] != '\r'))
+            {
+                strText = strText.Left (i) + "\r\n" + strText.Mid (i + 1);
+                i++;    // skip the '\n' we just moved along
+            }
+
         for (POSITION pos = m_pDoc->GetFirstViewPosition(); pos != NULL; )
         {
             CView* pView = m_pDoc->GetNextView(pos);
@@ -408,7 +425,7 @@ public:
                 pmyView->GetEditCtrl().SetSel ((int) start, (int) end);
                 pmyView->UnlockWindowUpdate ();
                 // replace it, allow undos
-                pmyView->GetEditCtrl().ReplaceSel (text, TRUE);
+                pmyView->GetEditCtrl().ReplaceSel (strText, TRUE);
                 break;
             }
         }

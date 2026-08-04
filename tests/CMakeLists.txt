@@ -62,6 +62,7 @@ mc_test(test_aliases)
 mc_test(test_timers)
 mc_test(test_speedwalk)
 mc_test(test_tabcomplete)
+mc_test(test_commandbar)
 mc_test(test_hyperlink)
 mc_test(test_utilities)
 mc_test(test_notepad_convert)
@@ -131,6 +132,28 @@ if(TARGET mushgui)
     # the world-creation defaults: wx adapter code mushcore does not link.
     add_test(NAME selftest_gui_bridge
              COMMAND $<TARGET_FILE:mushgui> --gui-bridge-selftest)
+    # The command-input bar: a real CWorldChildFrame driven with real key
+    # events, which is the only place the port's Ctrl+Backspace / arrow-gate /
+    # spell-check-on-send wiring can be exercised (it all lives in
+    # mushgui_adapters, which the headless test executables never link).
+    #
+    # -ApplePersistenceIgnoreState YES is NOT decoration.  This is the only
+    # selftest that builds a real top-level window, and every selftest exits
+    # from OnInit — which AppKit counts as "crashed while launching".  After a
+    # few of those it greets the NEXT launch with the modal "reopen windows?"
+    # alert (NSPersistentUIRestorer promptToIgnorePersistentStateWithCrashHistory),
+    # which nothing can answer in a headless ctest run: the app then hangs until
+    # the test times out.  NSUserDefaults reads argv into its argument domain, so
+    # this flag turns restoration off FOR THIS LAUNCH ONLY — no machine state is
+    # written and no `defaults write` is needed.
+    if(APPLE)
+        add_test(NAME selftest_input
+                 COMMAND $<TARGET_FILE:mushgui> --input-selftest
+                         -ApplePersistenceIgnoreState YES)
+    else()
+        add_test(NAME selftest_input
+                 COMMAND $<TARGET_FILE:mushgui> --input-selftest)
+    endif()
     # The six scripting languages: the only place five of them can be exercised,
     # since their interpreters are linked into the app and deliberately kept out
     # of mushcore.  One ctest entry per language, so a build without (say) Ruby
@@ -148,5 +171,6 @@ if(TARGET mushgui)
     set_tests_properties(selftest_pal_surface selftest_pal_transport
                          selftest_pal_miniwindow selftest_notepad
                          selftest_pal_miniwindow selftest_gui_bridge
+                         selftest_pal_miniwindow selftest_input
                          PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 endif()

@@ -431,6 +431,7 @@ if(NOT WIN32)
         scripting/errors.cpp
         doc_scripting_shared.cpp
         doc_tabcomplete_shared.cpp
+        doc_commandbar_shared.cpp
         doc_hyperlink_shared.cpp
         doc_dblclick_shared.cpp
         doc_editcopy_shared.cpp
@@ -867,6 +868,10 @@ if(NOT WIN32)
             # GUI widgets (wx headers first, then MUSHclient headers)
             platform/wx_outputpane.cpp
             platform/wx_world_child.cpp
+            # In-app conformance harness for the command-input bar
+            # (--input-selftest).  Lives here, not in mushgui_adapters, because
+            # it drives a real CWorldChildFrame and so needs the wx headers.
+            platform/input_selftest.cpp
             # The three canonical toolbars (Standard/World/Activity) over
             # wxToolBar, using the shipped Windows strips.  wxOSX hides the MDI
             # parent, so these hang off each world window like the status bar.

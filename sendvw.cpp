@@ -329,10 +329,9 @@ ASSERT_VALID(pDoc);
     if (pDoc->m_bSpellCheckOnSend)
       {
             // look for scripting prefix
-      if (pDoc->m_bEnableScripts &&            // providing scripting active
-          !pDoc->m_strScriptPrefix.IsEmpty () &&    // and we *have* a script prefix
-          strText.Left (pDoc->m_strScriptPrefix.GetLength ()) == pDoc->m_strScriptPrefix  // and it matches
-          )
+            // (doc_commandbar_shared.cpp — one body, every build; the wx port
+            //  had no such test, so it spell-checked script commands)
+      if (pDoc->IsScriptPrefixCommand (strText))
         { } // do nothing  (don't spell check script commands)
       else
         {
@@ -1705,18 +1704,12 @@ ASSERT_VALID(pDoc);
         pDoc->m_bArrowsChangeHistory && // and they want to traverse through history
         GetKeyState (VK_CONTROL) >= 0)      // and control key not pressed
       {
-      int nStartChar;
-      int nEndChar;
-
-		  CString strText;
-		  GetEditCtrl().GetWindowText(strText);
-
       TRACE ("PreTranslateMessage - OnKeysPrevcommand\n");
 
       // only traverse commands if we are at the *start* or *end* of the command
-      GetEditCtrl().GetSel(nStartChar, nEndChar);	
-      if ((nStartChar == 0 && nEndChar == 0) ||
-          (nStartChar == strText.GetLength () && nEndChar == strText.GetLength ()) )
+      // (doc_commandbar_shared.cpp — one body, every build; the wx port had no
+      // such gate, so Up destroyed a multi-line composition)
+      if (pDoc->CommandCaretAtEdge ())
         {
         if (GetKeyState (VK_MENU) < 0)  // alt+up-arrow
           OnAltUparrow ();
@@ -1731,18 +1724,11 @@ ASSERT_VALID(pDoc);
         pDoc->m_bArrowsChangeHistory && // and they want to traverse through history
         GetKeyState (VK_CONTROL) >= 0)      // and control key not pressed
       {
-      int nStartChar;
-      int nEndChar;
-
-		  CString strText;
-		  GetEditCtrl().GetWindowText(strText);
-
       TRACE ("PreTranslateMessage - OnKeysNextcommand\n");
 
       // only traverse commands if we are at the *start* or *end* of the command
-      GetEditCtrl().GetSel(nStartChar, nEndChar);	
-      if ((nStartChar == 0 && nEndChar == 0) ||
-          (nStartChar == strText.GetLength () && nEndChar == strText.GetLength ()) )
+      // (doc_commandbar_shared.cpp — one body, every build)
+      if (pDoc->CommandCaretAtEdge ())
         {
         if (GetKeyState (VK_MENU) < 0)  // alt+down-arrow
           OnAltDownarrow ();
@@ -2049,16 +2035,17 @@ void CSendView::OnDisplayBookmarkselection()
   m_topview->doBookmark ();	
 }
 
-void CSendView::OnInputGlobalchange() 
+void CSendView::OnInputGlobalchange()
 {
+CMUSHclientDoc* pDoc = GetDocument();
+ASSERT_VALID(pDoc);
+
 int nStartChar;
 int nEndChar;
-CString strCurrent;
-  // get current text
 
-  GetEditCtrl().GetWindowText (strCurrent);
-  GetEditCtrl().GetSel(nStartChar, nEndChar);	
-	
+  // the selection as it is NOW, before the modal dialog can disturb it
+  GetEditCtrl().GetSel(nStartChar, nEndChar);
+
   CGlobalChangeDlg dlg;
 
   // use last entry they entered
@@ -2072,49 +2059,15 @@ CString strCurrent;
   m_strChangeFrom = dlg.m_strChangeFrom;
   m_strChangeTo =   dlg.m_strChangeTo;
 
-
-  // if they are replacing a selection - just get that bit
-  if (nEndChar > nStartChar)
-    strCurrent = strCurrent.Mid (nStartChar, nEndChar - nStartChar);
-
-  // fix up special characters
-
-  // version 3.65 - better handling of backslash
-  // without this something like \\n becomes treated as \ \n
-
-  strCurrent.Replace ("\r", "");  // get rid of carriage-returns
-
-  // from
-  dlg.m_strChangeFrom.Replace ("\\\\", "\x01"); // temporarily make \\ something else
-  dlg.m_strChangeFrom.Replace ("\\n", "\n");
-  dlg.m_strChangeFrom.Replace ("\\t", "\t");
-  dlg.m_strChangeFrom.Replace ("\x01", "\\");   // put backslashes back
-
-  //to
-  dlg.m_strChangeTo.Replace ("\\\\", "\x01");   // temporarily make \\ something else
-  dlg.m_strChangeTo.Replace ("\\n", "\n");
-  dlg.m_strChangeTo.Replace ("\\t", "\t");
-  dlg.m_strChangeTo.Replace ("\x01", "\\");     // put backslashes back
-
-  CString strNew = Replace (strCurrent, 
-                            dlg.m_strChangeFrom, 
-                            dlg.m_strChangeTo);  // replace all
-
-  if (strNew == strCurrent)
-    {
-    ::UMessageBox (TFormat ("No replacements made for \"%s\".", (LPCTSTR) m_strChangeFrom), 
+  // Everything after the dialog moved to doc_commandbar_shared.cpp (one body,
+  // every build): scope to the selection, translate the backslash escapes,
+  // replace all, splice the result back as one undoable edit.  The wx port had
+  // its own copy that ignored the selection entirely.  Note it is the
+  // UNtranslated from-string that goes in the message, exactly as before.
+  if (!pDoc->GlobalChangeCommand (dlg.m_strChangeFrom, dlg.m_strChangeTo,
+                                  nStartChar, nEndChar))
+    ::UMessageBox (TFormat ("No replacements made for \"%s\".", (LPCTSTR) m_strChangeFrom),
                     MB_ICONINFORMATION);
-    return;
-    }
-
-  strNew.Replace ("\n", ENDLINE); // put carriage-returns back
-
-  // if nothing selected, select all
-  if (nEndChar <= nStartChar)
-    GetEditCtrl().SetSel (0, -1);   // select all
-
-  // replace existing - can undo
-  GetEditCtrl().ReplaceSel (strNew, TRUE);
 
 }
 
@@ -2305,67 +2258,17 @@ ASSERT_VALID(pDoc);
 
   } // end of  CSendView::AddToCommandHistory 
 
-void CSendView::OnRepeatLastWord() 
+void CSendView::OnRepeatLastWord()
 {
 CMUSHclientDoc* pDoc = GetDocument();
 ASSERT_VALID(pDoc);
 
-// if wanted, delete the last word in the command window
-if (pDoc->m_bCtrlBackspaceDeletesLastWord)
-  {
-  int nStartChar;
-  int nEndChar;
-
-  GetEditCtrl().GetSel(nStartChar, nEndChar);
-
-  // if something selected, just delete it
-
-  if (nStartChar != nEndChar)
-    {
-    GetEditCtrl().ReplaceSel ("", TRUE);
-    return;
-    }
-
-  // get current text
-
-  CString strCurrent;
-  GetEditCtrl().GetWindowText (strCurrent);
-
-  // don't bother if nothing typed
-
-  if (strCurrent.IsEmpty ())
-    return;
-
-  CString strLast = strCurrent.Mid (nStartChar);    // after the cursor
-  CString strFirst = strCurrent.Left (nStartChar);  // up to the cursor
-  strFirst.TrimRight ();  // skip trailing spaces
-  int iPos = strFirst.ReverseFind (' ');    // find the preceding space
-  strFirst = strFirst.Left (iPos);  // up to the space
-  strFirst += strLast;  // put last bit back
-  GetEditCtrl().SetSel (0, -1);   // select all
-  GetEditCtrl().ReplaceSel (strFirst, TRUE);
-  if (iPos < 0)  // if no space put cursor at start of line
-    iPos = 0;
-  GetEditCtrl().SetSel (iPos, iPos);   // put cursor at end of preceding word
-
-  return;
-  }
-
-// otherwise, recall the last word from the previously-sent line
-
-// can't, if no previous command
-if (m_msgList.IsEmpty ())
-  return;
-
-CString strLine = m_msgList.GetTail ();
-
-  strLine.TrimRight ();
-
-int iPos = strLine.ReverseFind (' ');
-
-CString strWord = strLine.Mid (iPos + 1);
-
-GetEditCtrl().ReplaceSel (strWord, TRUE);
+  // The body moved to doc_commandbar_shared.cpp (one body, every build) so the
+  // wx port runs it too — it had no equivalent, which made Ctrl+Backspace
+  // always delete a word and left m_bCtrlBackspaceDeletesLastWord unread there.
+  // Same algorithm, reaching the command bar and the history through
+  // pal::IWorldView (whose Windows adapter is these very members).
+  pDoc->RepeatLastWord ();
 
 }
 

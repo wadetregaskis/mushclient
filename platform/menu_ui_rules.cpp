@@ -45,6 +45,10 @@ static const int kNeedsWorld [] = {
   ID_EDIT_SPELLCHECK,             // 32323
   ID_EDIT_GENERATECHARACTERNAME,  // 32326
   ID_REPEAT_LAST_COMMAND,         // 32272
+  // Edit > Repeat Last Word (CSendView).  Carried over from the input cluster,
+  // whose ad-hoc id list this table replaced -- it was the one id in that list
+  // with no rule here.
+  ID_REPEAT_LAST_WORD,            // 32973
   ID_GAME_COMMANDHISTORY,         // 32152
   ID_EDIT_GOTOMATCHINGBRACE,      // 32946
   ID_EDIT_SELECTTOMATCHINGBRACE,  // 32947

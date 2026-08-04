@@ -66,15 +66,11 @@ static VARIANT EmptyVariant (void)
 // Miniwindow family (49) — engine is CMiniWindow (miniwindow.cpp, mushapp-only)
 // ══════════════════════════════════════════════════════════════════════════
 
-long CMUSHclientDoc::BlendPixel (long Blend, long Base, short Mode, double Opacity)
-  {
-  return eNoSuchWindow;
-  }   // end of CMUSHclientDoc::BlendPixel
-
-long CMUSHclientDoc::FilterPixel (long Pixel, short Operation, double Options)
-  {
-  return eNoSuchWindow;
-  }   // end of CMUSHclientDoc::FilterPixel
+// BlendPixel / FilterPixel are NOT stubbed any more: they are pure colour
+// arithmetic with no miniwindow in sight, and now live in the shared
+// scripting/methods/methods_pixel_shared.cpp, so the headless engine runs
+// the real bodies.  The stubs here returned eNoSuchWindow for every call,
+// which is a contract no Windows build has ever had.
 
 long CMUSHclientDoc::WindowAddHotspot (LPCTSTR Name, LPCTSTR HotspotId, long Left, long Top, long Right, long Bottom, LPCTSTR MouseOver, LPCTSTR CancelMouseOver, LPCTSTR MouseDown, LPCTSTR CancelMouseDown, LPCTSTR MouseUp, LPCTSTR TooltipText, long Cursor, long Flags)
   {

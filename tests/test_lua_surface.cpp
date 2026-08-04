@@ -319,8 +319,6 @@ TEST(LuaSurface, WindowFamilyStubSweep)
     LuaDoc f; ASSERT_NE(nullptr, f.L);
     EXPECT_TRUE(run(f.L,
         "local e = error_code.eNoSuchWindow\n"
-        "assert(world.BlendPixel(0, 0, 1, 1) == e)\n"
-        "assert(world.FilterPixel(0, 1, 1) == e)\n"
         "assert(world.WindowAddHotspot('w','h',0,0,10,10,'','','','','','',0,0) == e)\n"
         "assert(world.WindowArc('w',0,0,10,10,0,0,5,5,0,0,1) == e)\n"
         "assert(world.WindowBezier('w','0,0,1,1,2,2,3,3',0,0,1) == e)\n"
@@ -367,6 +365,44 @@ TEST(LuaSurface, WindowFamilyStubSweep)
         "assert(world.WindowTextWidth('w','f','hi',false) == e)\n"
         "assert(world.WindowTransformImage('w','i',0,0,1,1,0,0,1) == e)\n"
         "assert(world.WindowWrite('w','/no/file.png') == e)\n"
+    ));
+}
+
+// ── BlendPixel / FilterPixel are NOT stubs ────────────────────────────────
+//
+// They used to be in the sweep above, asserting eNoSuchWindow — which is a
+// contract no Windows build has ever had.  Both are pure colour arithmetic on
+// a pair of longs: no m_MiniWindows lookup, no surface, nothing to be missing.
+// They sat in the mushgui-only miniwindow TU purely by association with the
+// rest of the Window* family, so the headless build linked a stub and the test
+// pinned the stub's answer.  They now live in
+// scripting/methods/methods_pixel_shared.cpp and run for real here.
+//
+// Pinning the discriminating arms rather than a colour table: the error returns
+// (which are the documented API), the identity operation, and one arm whose
+// arithmetic is checkable by hand.
+TEST(LuaSurface, PixelMathsRunsForReal)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        // FilterPixel: unknown operation is -1 (methods_pixel_shared.cpp
+        // `default: return -1`), and operation 27 ("Average — of 1 pixel is
+        // itself") is the identity, which is the cleanest proof the real body
+        // ran: a stub returning eNoSuchWindow could not produce it.
+        "assert(world.FilterPixel(0x123456, 999, 0) == -1)\n"
+        "assert(world.FilterPixel(0x123456, 27, 0) == 0x123456)\n"
+        // Brightness (7) adds Options to each channel and clamps to 0..255.
+        "assert(world.FilterPixel(0x000000, 7, 16) == 0x101010)\n"
+        "assert(world.FilterPixel(0xFFFFFF, 7, 16) == 0xFFFFFF)\n"   // clamped
+        "assert(world.FilterPixel(0xFFFFFF, 7, -255) == 0x000000)\n" // clamped
+        // BlendPixel: opacity outside 0..1 is -2, unknown mode is -1.
+        "assert(world.BlendPixel(0xFFFFFF, 0, 1, 1.5) == -2)\n"
+        "assert(world.BlendPixel(0xFFFFFF, 0, 1, -0.1) == -2)\n"
+        "assert(world.BlendPixel(0xFFFFFF, 0, 999, 1.0) == -1)\n"
+        // Normal blend (1) at full opacity is the blend colour outright...
+        "assert(world.BlendPixel(0x336699, 0x000000, 1, 1.0) == 0x336699)\n"
+        // ...and at zero opacity it is the base, untouched.
+        "assert(world.BlendPixel(0x336699, 0x112233, 1, 0.0) == 0x112233)\n"
     ));
 }
 

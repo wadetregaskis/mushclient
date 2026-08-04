@@ -359,7 +359,8 @@
     <ClCompile Include="scripting\methods\methods_infobar.cpp" />
     <ClCompile Include="scripting\methods\methods_logging.cpp" />
     <ClCompile Include="scripting\methods\methods_mapping.cpp" />
-    <ClCompile Include="scripting\methods\methods_miniwindows.cpp" />
+    <ClCompile Include="scripting\methods\methods_miniwindows.cpp" />
+    <ClCompile Include="scripting\methods\methods_pixel_shared.cpp" />
     <ClCompile Include="scripting\methods\methods_notepad.cpp" />
     <ClCompile Include="scripting\methods\methods_noting.cpp" />
     <ClCompile Include="scripting\methods\methods_output.cpp" />

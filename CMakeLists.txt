@@ -453,6 +453,9 @@ if(NOT WIN32)
         scripting/methods/methods_mapping.cpp
         scripting/methods/methods_arrays.cpp
         scripting/methods/methods_colours.cpp
+        # BlendPixel / FilterPixel: pure colour arithmetic, moved out of the
+        # mushgui-only miniwindow TU so the headless engine runs the real bodies.
+        scripting/methods/methods_pixel_shared.cpp
         scripting/methods/methods_defaults.cpp
         scripting/methods/methods_sounds.cpp
         scripting/methods/methods_commands.cpp

@@ -101,6 +101,7 @@ public:
     void        requestRepaint(pal::Rect area) override;
     void        clearOutput() override;
     void        setPaused(bool paused) override;
+    bool        isPaused() const override;
     void        flash() override;
     std::string currentCommand() const override;
     pal::TextRange outputSelection() const override;

@@ -26,6 +26,7 @@ struct FakeWorldView : pal::IWorldView {
     void requestRepaint(pal::Rect) override { ++repaints; }
     void clearOutput() override { cleared = true; lines.clear(); }
     void setPaused(bool p) override { paused = p; }
+    bool isPaused() const override { return paused; }
     void flash() override { flashed = true; }
     std::string    cmd;                     // returned by currentCommand()
     int            scroll = 0;              // returned by scrollPos()

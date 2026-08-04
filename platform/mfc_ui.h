@@ -5344,7 +5344,9 @@ public:
 // CMenu stub
 // Popup-menu hook: implemented in the wx layer (wx_mfc_impl.cpp); null in the
 // headless library, where TrackPopupMenu then simply returns 0 (no menu).
-extern int (*g_wxhook_popup_menu)(CMenu* menu, int x, int y);
+// (x, y) are SCREEN coordinates, as Win32 TrackPopupMenu takes them, and
+// `flags` carries the TPM_* alignment bits the caller asked for.
+extern int (*g_wxhook_popup_menu)(CMenu* menu, int x, int y, unsigned flags);
 
 // The real MFC CMenu is a thin wrapper over a Windows HMENU.  Off-Windows we
 // record the menu as a flat list of items (a nested submenu is referenced by
@@ -5446,8 +5448,11 @@ public:
         return m_subs[(size_t) i];
     }
     UINT  GetMenuItemID(int) const { return 0; }
-    UINT  TrackPopupMenu(UINT /*flags*/, int x, int y, CWnd* /*owner*/, LPCRECT=nullptr) {
-        return g_wxhook_popup_menu ? (UINT) g_wxhook_popup_menu(this, x, y) : 0;
+    // flags/x/y are forwarded verbatim: the alignment bits decide where the menu
+    // sits relative to (x, y), and dropping them (as this used to) silently
+    // demoted every "~cb"-style WindowMenu request to top-left alignment.
+    UINT  TrackPopupMenu(UINT flags, int x, int y, CWnd* /*owner*/, LPCRECT=nullptr) {
+        return g_wxhook_popup_menu ? (UINT) g_wxhook_popup_menu(this, x, y, (unsigned) flags) : 0;
     }
     HMENU GetSafeHmenu() const { return m_hMenu; }
     static CMenu* FromHandle(HMENU) { return nullptr; }
@@ -7132,6 +7137,27 @@ BOOL OnNeedText(UINT id, NMHDR* pNMHDR, LRESULT* pResult);
 #  define TPM_NONOTIFY      0x0080L
 #  define TPM_RETURNCMD     0x0100L
 #endif
+
+// Move a TrackPopupMenu anchor for the TPM_*ALIGN bits.
+//
+// Win32 places the popup so that the requested EDGE of the menu (left/centre/
+// right horizontally, top/middle/bottom vertically) lands on (x, y); wx's
+// PopupMenu only ever puts the menu's top-left there.  So the port asks the
+// same question the other way round and shifts the anchor by the menu's size.
+// Default alignment (TPM_LEFTALIGN | TPM_TOPALIGN, both zero) is a no-op, which
+// is every caller that does not use the "~" prefix of world.WindowMenu.
+inline void TpmAlignAnchor(unsigned flags, int menuWidth, int menuHeight,
+                           int* x, int* y)
+{
+    if (x) {
+        if      (flags & TPM_CENTERALIGN) *x -= menuWidth / 2;
+        else if (flags & TPM_RIGHTALIGN)  *x -= menuWidth;
+    }
+    if (y) {
+        if      (flags & TPM_VCENTERALIGN) *y -= menuHeight / 2;
+        else if (flags & TPM_BOTTOMALIGN)  *y -= menuHeight;
+    }
+}
 
 // ── GWL / window long field indices ───────────────────────────────────────
 #ifndef GWL_STYLE

@@ -1348,12 +1348,12 @@ BSTR CMUSHclientDoc::WindowMenu(LPCTSTR Name, long Left, long Top, LPCTSTR Items
   if (pView && it != m_MiniWindows.end ())
 #else
   // The wx port has no CMUSHView registered in the document's view list, so the
-  // loop above leaves pView null.  CMiniWindow::Menu doesn't need it off-Windows
-  // (the popup is rendered at the mouse cursor by g_wxhook_popup_menu), so call
-  // it as long as the named miniwindow exists.
+  // loop above leaves pView null.  CMiniWindow::Menu takes the document instead
+  // off-Windows: the anchor is in this world's output-pane client coordinates,
+  // and the pane is what the port converts through in place of the view.
   if (it != m_MiniWindows.end ())
 #endif
-    strResult = it->second->Menu (Left, Top, Items, (CMUSHView *) pView);
+    strResult = it->second->Menu (Left, Top, Items, (CMUSHView *) pView, this);
 
 	return strResult.AllocSysString();
 

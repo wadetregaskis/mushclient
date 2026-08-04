@@ -65,6 +65,16 @@ public:
     virtual void flash() = 0;                             // bell / attention
 
     // ── frontend → core: pulls (state the engine needs to read) ───────────
+    // The read side of setPaused: is the output window frozen?  Windows draws
+    // the Display ▸ Freeze Output tick from CMUSHView::m_freeze
+    // (OnUpdateDisplayFreezeoutput), and the port's menu needs the same answer
+    // from whichever frontend owns the scrollback.
+    //
+    // Deliberately NOT pure: an adapter that cannot freeze is honestly "never
+    // paused", and a new pure virtual here would break the Windows build from a
+    // tree where pal/win_worldview.cpp cannot be compiled.  Both real adapters
+    // do override it.
+    virtual bool isPaused() const { return false; }
     virtual std::string currentCommand() const = 0;      // input box text
     virtual TextRange   outputSelection() const = 0;     // selection line/col (1-based; 0=none)
     virtual int         scrollPos() const = 0;

@@ -272,7 +272,12 @@ class CMiniWindow
                       short Mode, double Opacity, 
                       long SrcLeft, long SrcTop, long SrcRight, long SrcBottom);
 
-  CString Menu(long Left, long Top, LPCTSTR Items, CMUSHView* pView);
+  // pDoc is used only off-Windows, where there is no CMUSHView to convert the
+  // menu anchor through: the owning document identifies the output pane whose
+  // client coordinates Left/Top are in.  Windows ignores it and converts via
+  // pView exactly as before.
+  CString Menu(long Left, long Top, LPCTSTR Items, CMUSHView* pView,
+               CMUSHclientDoc* pDoc = NULL);
 
 
   long DragHandler(CMUSHclientDoc * pDoc, 

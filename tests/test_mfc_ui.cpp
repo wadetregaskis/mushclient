@@ -1656,12 +1656,33 @@ TEST(Menu, AppendAndTrackPopup) {
     EXPECT_EQ(0u, m.TrackPopupMenu(0, 10, 10, nullptr));
 
     static int s_seenCount;
-    g_wxhook_popup_menu = [](CMenu* menu, int, int) -> int {
+    g_wxhook_popup_menu = [](CMenu* menu, int, int, unsigned) -> int {
         s_seenCount = (int)menu->GetMenuItemCount();
         return 102;
     };
     EXPECT_EQ(102u, m.TrackPopupMenu(0, 10, 10, nullptr));
     EXPECT_EQ(3, s_seenCount);
+    g_wxhook_popup_menu = nullptr;
+
+    // The anchor AND the TPM_* alignment bits must reach the hook: Win32
+    // TrackPopupMenu places the popup at (x, y) with the alignment deciding
+    // which edge of the menu lands there, and CMiniWindow::Menu builds that
+    // alignment word from world.WindowMenu's leading "~xy" spec.  The shim used
+    // to drop `flags` on the floor (and the wx hook then ignored x/y too), so
+    // every plugin menu opened at the mouse cursor, top-left aligned.
+    static int s_x, s_y; static unsigned s_flags;
+    g_wxhook_popup_menu = [](CMenu*, int x, int y, unsigned flags) -> int {
+        s_x = x; s_y = y; s_flags = flags;
+        return 101;
+    };
+    EXPECT_EQ(101u, m.TrackPopupMenu(TPM_CENTERALIGN | TPM_BOTTOMALIGN |
+                                     TPM_RETURNCMD | TPM_NONOTIFY,
+                                     317, 208, nullptr));
+    EXPECT_EQ(317, s_x);
+    EXPECT_EQ(208, s_y);
+    EXPECT_TRUE((s_flags & TPM_CENTERALIGN) != 0);
+    EXPECT_TRUE((s_flags & TPM_BOTTOMALIGN) != 0);
+    EXPECT_TRUE((s_flags & TPM_RETURNCMD) != 0);
     g_wxhook_popup_menu = nullptr;
 
     // Attach / Detach round-trip
@@ -1672,6 +1693,48 @@ TEST(Menu, AppendAndTrackPopup) {
     EXPECT_TRUE(m.DestroyMenu());
     EXPECT_EQ(0u, m.GetMenuItemCount());
     EXPECT_TRUE(m.CreateMenu());
+}
+
+// TpmAlignAnchor: the port's stand-in for what Win32 does with the TPM_*ALIGN
+// bits.  wx can only place a popup by its top-left corner, so the anchor moves
+// by the menu's size instead.
+TEST(Menu, TpmAlignAnchorMovesTheAnchorByTheMenuSize) {
+    const int W = 120, H = 80;
+
+    // Default alignment (both flags are zero) must not move anything.
+    int x = 500, y = 400;
+    TpmAlignAnchor(TPM_LEFTALIGN | TPM_TOPALIGN, W, H, &x, &y);
+    EXPECT_EQ(500, x);
+    EXPECT_EQ(400, y);
+
+    // Right/bottom: the menu's right-bottom corner lands on the anchor.
+    x = 500; y = 400;
+    TpmAlignAnchor(TPM_RIGHTALIGN | TPM_BOTTOMALIGN, W, H, &x, &y);
+    EXPECT_EQ(500 - W, x);
+    EXPECT_EQ(400 - H, y);
+
+    // Centre/vcentre: the menu straddles the anchor.
+    x = 500; y = 400;
+    TpmAlignAnchor(TPM_CENTERALIGN | TPM_VCENTERALIGN, W, H, &x, &y);
+    EXPECT_EQ(500 - W / 2, x);
+    EXPECT_EQ(400 - H / 2, y);
+
+    // The two axes are independent: "~cb" (centre horizontally, bottom
+    // vertically) is the idiom for dropping a menu under a toolbar button.
+    x = 500; y = 400;
+    TpmAlignAnchor(TPM_CENTERALIGN | TPM_TOPALIGN, W, H, &x, &y);
+    EXPECT_EQ(500 - W / 2, x);
+    EXPECT_EQ(400, y);
+
+    // CENTER wins over RIGHT if both are somehow set, as Win32 documents.
+    x = 500; y = 400;
+    TpmAlignAnchor(TPM_CENTERALIGN | TPM_RIGHTALIGN, W, H, &x, &y);
+    EXPECT_EQ(500 - W / 2, x);
+
+    // Null outs are tolerated (one axis only).
+    x = 500;
+    TpmAlignAnchor(TPM_RIGHTALIGN, W, H, &x, nullptr);
+    EXPECT_EQ(500 - W, x);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

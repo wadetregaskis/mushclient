@@ -275,6 +275,61 @@ TEST(TriggerScript, LuaCallbackFiresOnMatch)
     EXPECT_STREQ("ping", (const char*)v->strContents);
 }
 
+// ── DeleteLines is allowed only inside the trigger-script window ───────────
+//
+// m_bInSendToScript is initialised TRUE (doc_construct.cpp:98) and cleared only
+// for the deferred-script window in ProcessPreviousLine (:866 "they can do
+// DeleteLines here", restored at :960).  world.DeleteLines opens with
+//
+//     if (m_bInSendToScript)
+//       return;   // can't do it
+//
+// so it is a documented no-op from an alias, a timer or a plain script chunk,
+// and works from a trigger script.  The refusal half is pinned in
+// test_lua_scripting.cpp (DeleteLinesIsRefusedOutsideATriggerScript); this is
+// the half that stops "always refuse" from passing.
+//
+// The headless stub of DeleteLines used to omit the guard entirely, and a test
+// asserted the resulting (Windows-impossible) behaviour — see the 2026-08 audit
+// notes on doc_gui_method_stubs.cpp fidelity.
+TEST(TriggerScript, DeleteLinesIsAllowedInsideTheScriptWindow)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+
+    const char* lua =
+        "function OnGag(name, line, wildcards)\n"
+        "  world.SetVariable('before', tostring(world.GetLinesInBufferCount()))\n"
+        "  world.DeleteLines(1)\n"
+        "  world.SetVariable('after', tostring(world.GetLinesInBufferCount()))\n"
+        "end\n";
+    ASSERT_TRUE(setup_lua(doc, lua));
+
+    CTrigger* t = add_trigger(doc, "gagme");
+    t->strProcedure = CString("OnGag");
+    doc.ResolveAllEntryPoints();
+
+    feed_line(doc, "keep one");
+    feed_line(doc, "keep two");
+    feed_line(doc, "gagme");
+    EXPECT_EQ(1L, t->nMatched);
+
+    CVariable* vb = nullptr;
+    CVariable* va = nullptr;
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("before", vb));
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("after",  va));
+    ASSERT_NE(nullptr, vb);
+    ASSERT_NE(nullptr, va);
+
+    const long before = atol((const char*)vb->strContents);
+    const long after  = atol((const char*)va->strContents);
+    EXPECT_TRUE(before > 0);
+    // The whole point: inside the window the count really drops.  (DeleteLines
+    // also takes the empty trailing line when there is one, so this is "fewer",
+    // not "exactly one fewer".)
+    EXPECT_TRUE(after < before);
+}
+
 // "Convert wildcards to lower case" (CTrigger::bLowercaseWildcard) reaches the
 // script by TWO routes that upstream deliberately does not keep in step, and
 // this test pins both so neither is "tidied up" into the other:

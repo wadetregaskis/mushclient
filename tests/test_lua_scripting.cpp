@@ -1548,9 +1548,25 @@ TEST(LuaScripting, GetLineInfoOutOfRangeReturnsNil)
 }
 
 // methods_info.cpp GetLinesInBufferCount "returns actual number of lines in
-// output buffer (not count of lines received)" — DeleteLines shrinks it
-// while GetLineCount is unchanged.
-TEST(LuaScripting, LinesInBufferCountExcludesDeletedLines)
+// output buffer (not count of lines received)".
+//
+// The interesting half is WHEN world.DeleteLines is allowed to do anything.
+// m_bInSendToScript is initialised TRUE (doc_construct.cpp:98) and is only
+// cleared for the deferred-trigger-script window inside ProcessPreviousLine
+// (:866 "they can do DeleteLines here", restored at :960).  So DeleteLines
+// called from an alias, a timer or a plain script chunk is a documented no-op
+// on every platform:
+//
+//     if (m_bInSendToScript)
+//       return;   // can't do it
+//
+// This test used to assert the opposite — that a bare world.DeleteLines(2)
+// removed two lines — and it passed only because the HEADLESS STUB of
+// DeleteLines had dropped that guard.  The shipping app was always correct
+// (mushgui links the real body); the test build diverged, and the test
+// defended the divergence.  Both arms are here now so neither direction can
+// regress silently.
+TEST(LuaScripting, DeleteLinesIsRefusedOutsideATriggerScript)
 {
     CMUSHclientDoc doc;
     doc.m_iConnectPhase = eConnectConnectedToMud;
@@ -1558,15 +1574,21 @@ TEST(LuaScripting, LinesInBufferCountExcludesDeletedLines)
     ASSERT_NE(nullptr, L);
 
     run_ret(L, "world.Note('a') world.Note('b') world.Note('c') world.Note('d')");
-    long total_before  = doc.GetLineCount();
-    long buffer_before = doc.GetLinesInBufferCount();
+    const long total_before  = doc.GetLineCount();
+    const long buffer_before = doc.GetLinesInBufferCount();
+    ASSERT_TRUE(buffer_before >= 4);
 
     run_ret(L, "world.DeleteLines(2)");
-    EXPECT_EQ(buffer_before - 2, doc.GetLinesInBufferCount());
-    EXPECT_EQ(total_before, doc.GetLineCount());   // total received unchanged
+    EXPECT_EQ(buffer_before, doc.GetLinesInBufferCount());   // refused
+    EXPECT_EQ(total_before,  doc.GetLineCount());
 
     lua_close(L);
 }
+
+// The arm that makes the one above meaningful — DeleteLines really working
+// inside the trigger-script window — lives in test_triggers.cpp, where the
+// trigger/feed helpers are (TriggerScript.DeleteLinesIsAllowedInsideTheScriptWindow).
+// Without it, a DeleteLines that ALWAYS refused would pass the test above.
 
 // lua_utils_portable.cpp utils.utf8valid: "valid -> the string's length in
 // code points; invalid -> (nil, offset-of-first-bad-byte)".

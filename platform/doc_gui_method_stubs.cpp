@@ -592,55 +592,20 @@ long CMUSHclientDoc::AddFont (LPCTSTR PathName)
 // only view dependency was the CMUSHView walk, now the IWorldView seam), so
 // mushcore links the canonical one.
 
-void CMUSHclientDoc::DeleteLines (long Count)
-  {
-  // The old portable twin's crash-safe delete (display step 7): the
-  // in-progress line is the list TAIL — deleting it would leave
-  // m_pCurrentLine dangling (use-after-free on the next output).
-  // Delete up to Count COMPLETED lines from just before it.
-  if (Count <= 0)
-    return;
-  for (long i = 0; i < Count; ++i)
-    {
-    POSITION pos = m_LineList.GetTailPosition ();
-    if (!pos) break;
-    CLine * pLine = m_LineList.GetAt (pos);
-    if (pLine == m_pCurrentLine)
-      {
-      m_LineList.GetPrev (pos);       // step past the in-progress tail
-      if (!pos) break;                // nothing completed left
-      pLine = m_LineList.GetAt (pos);
-      }
-    m_LineList.RemoveAt (pos);
-    delete pLine;
-    }
-  // Invalidate index chunks beyond the shrunken count and clamp the drain
-  // cursor so already-emitted accounting can't point past the list.
-  long count = m_LineList.GetCount ();
-  for (long s = m_LinePositions.ChunkCount () - 1; s > count / JUMP_SIZE; --s)
-    m_LinePositions.Set (s, NULL);
-  if (m_gui_lines_emitted > count - 1)
-    m_gui_lines_emitted = (count > 0) ? count - 1 : 0;
-  }   // end of CMUSHclientDoc::DeleteLines
+// DeleteLines is no longer stubbed: the real body moved to
+// scripting/methods/methods_output_shared.cpp, so mushcore links the
+// canonical one (m_bInSendToScript refusal, m_total_lines, jump index).
 
 void CMUSHclientDoc::DeleteOutput ()
   {
-  // Free every line INCLUDING the in-progress tail, then re-seed a fresh
-  // in-list current line and re-prime the index (the old portable twin's
-  // display step 7 lifecycle, mirroring the real doc.cpp ClearOutput).
-  POSITION pos = m_LineList.GetHeadPosition ();
-  while (pos)
-    {
-    CLine * pLine = m_LineList.GetNext (pos);
-    delete pLine;
-    }
-  m_LineList.RemoveAll ();
-  m_total_lines = 0;
-  m_pCurrentLine = new CLine (++m_total_lines, m_nWrapColumn,
-                              0, WHITE, BLACK, m_bUTF_8);
-  m_LineList.AddTail (m_pCurrentLine);
-  AllocateLinePositions ();
-  m_gui_lines_emitted = 0;
+  // The real body (methods_output.cpp) is exactly this one call, and
+  // ClearOutput lives in doc.cpp, which mushcore links.  The old stub
+  // reimplemented the teardown by hand and skipped three things
+  // ClearOutput does: m_sRecentLines.clear (), the m_DisplayFindInfo
+  // reset, and EmitClearOutput () -- so world.DeleteOutput left stale
+  // trigger context, a live find cursor into freed lines, and a view
+  // still showing the text it had just deleted.
+  ClearOutput ();
   }   // end of CMUSHclientDoc::DeleteOutput
 
 void CMUSHclientDoc::FlashIcon ()

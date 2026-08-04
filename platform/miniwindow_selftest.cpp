@@ -218,6 +218,64 @@ int RunPalMiniWindowSelfTest()
         mwCheck(tw == w, "WindowTextWidth matches WindowText's return");
     }
 
+    // WindowFontInfo(19) is tmPitchAndFamily.  In a TEXTMETRIC (unlike a
+    // LOGFONT) bit 0 is TMPF_FIXED_PITCH and its meaning is INVERTED: SET means
+    // the font is VARIABLE pitch.  The shim used to return the literal
+    // FIXED_PITCH (1) for every font, which therefore said "variable" for all of
+    // them, with family FF_DONTCARE.  Courier New is fixed-pitch and modern.
+    {
+        VARIANT vpf = doc->WindowFontInfo(W, "f1", 19);
+        const long pf = (vpf.vt == VT_I4) ? vpf.lVal : -1;
+        mwCheck(pf >= 0, "WindowFontInfo(19) returns a pitch/family");
+        mwCheck((pf & 1) == 0,
+                "a fixed-pitch font does NOT set TMPF_FIXED_PITCH (inverted flag)");
+        mwCheck((pf & 0xF0) == 48 /*FF_MODERN*/,
+                "...and reports a real family, not FF_DONTCARE");
+
+        // WindowFontInfo(7) is tmMaxCharWidth, which used to be the invented
+        // averageWidth * 2.  For a fixed-pitch font it must equal the average.
+        VARIANT vavg = doc->WindowFontInfo(W, "f1", 6);   // tmAveCharWidth
+        VARIANT vmax = doc->WindowFontInfo(W, "f1", 7);
+        if (vavg.vt == VT_I4 && vmax.vt == VT_I4 && vavg.lVal > 0)
+            mwCheck(vmax.lVal == vavg.lVal,
+                    "a fixed-pitch font's max char width equals its average");
+        else
+            mwCheck(false, "WindowFontInfo(6)/(7) return numbers");
+    }
+
+    // ── RectOp action 5 = DrawEdge: BF_ side flags are honoured ────────────
+    // Win32 draws two 1px rings and strokes ONLY the sides named in the BF_
+    // flags.  The shim ignored the flags entirely (calling Draw3dRect, which
+    // always strokes all four) and switched on nEdge as an enum, so EDGE_ETCHED
+    // and EDGE_BUMP fell through to a flat grey box.
+    {
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the DrawEdge probe");
+        // EDGE_RAISED (0x05), left + top only (BF_LEFT|BF_TOP = 0x03).
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x03) == eOK,
+                "WindowRectOp (DrawEdge, left+top only) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 10, 25) != kBlue,
+                "DrawEdge strokes the LEFT side when BF_LEFT is set");
+        mwCheck(doc->WindowGetPixel(W, 25, 10) != kBlue,
+                "...and the TOP side when BF_TOP is set");
+        mwCheck(doc->WindowGetPixel(W, 39, 25) == kBlue,
+                "...and leaves the RIGHT side alone when BF_RIGHT is not");
+        mwCheck(doc->WindowGetPixel(W, 25, 39) == kBlue,
+                "...and the BOTTOM side likewise");
+
+        // EDGE_ETCHED (0x06) used to hit `default:` and paint flat grey.  It is
+        // sunken-outer + raised-inner, so the outer and inner rings differ.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the etched probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x06, 0x0F) == eOK,
+                "WindowRectOp (DrawEdge, EDGE_ETCHED) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 25, 10) != doc->WindowGetPixel(W, 25, 11),
+                "EDGE_ETCHED's outer and inner rings differ (not a flat box)");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the DrawEdge probe");
+    }
+
     // ── CreateImage (8x8 mono) + ImageOp pattern fill ──────────────────────
     // all-ones rows = a solid 8x8 pattern; 1-bits draw in PenColour for
     // ImageOp action 3 (pattern fill uses the image as a brush)

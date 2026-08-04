@@ -962,15 +962,50 @@ bool CDC::GetTextMetrics(TEXTMETRIC* lpMetrics) {
     lpMetrics->tmInternalLeading  = fm.internalLeading;
     lpMetrics->tmExternalLeading  = fm.externalLeading;
     lpMetrics->tmAveCharWidth     = fm.averageWidth;
-    lpMetrics->tmMaxCharWidth     = fm.averageWidth * 2;
+
+    // tmMaxCharWidth used to be `averageWidth * 2` -- invented, because
+    // wxFontMetrics has no max-advance field.  It is script-visible as
+    // WindowFontInfo(7), so measure it instead: for a fixed-width font every
+    // advance is the average, and otherwise take the widest of the printable
+    // ASCII range, which is where the maximum sits for nearly every text font.
+    lpMetrics->tmMaxCharWidth     = fm.averageWidth;
+
+    bool fixedPitch = false;
+    int  family     = FF_DONTCARE;
+
     if (p->currentFont && p->currentFont->m_impl) {
         wxFont* f = static_cast<wxFont*>(p->currentFont->m_impl);
         lpMetrics->tmWeight   = f->GetWeight() == wxFONTWEIGHT_BOLD ? FW_BOLD : FW_NORMAL;
         lpMetrics->tmItalic   = (f->GetStyle() != wxFONTSTYLE_NORMAL) ? 1 : 0;
         lpMetrics->tmUnderlined = f->GetUnderlined() ? 1 : 0;
         lpMetrics->tmStruckOut  = f->GetStrikethrough() ? 1 : 0;
+
+        fixedPitch = f->IsFixedWidth();
+        switch (f->GetFamily()) {
+            case wxFONTFAMILY_ROMAN:      family = FF_ROMAN;      break;
+            case wxFONTFAMILY_SWISS:      family = FF_SWISS;      break;
+            case wxFONTFAMILY_MODERN:
+            case wxFONTFAMILY_TELETYPE:   family = FF_MODERN;     break;
+            case wxFONTFAMILY_SCRIPT:     family = FF_SCRIPT;     break;
+            case wxFONTFAMILY_DECORATIVE: family = FF_DECORATIVE; break;
+            default:                      family = FF_DONTCARE;   break;
+        }
     }
-    lpMetrics->tmPitchAndFamily = FIXED_PITCH;
+
+    if (!fixedPitch) {
+        int widest = fm.averageWidth;
+        for (wxChar ch = wxT(' '); ch <= wxT('~'); ++ch) {
+            const int w = p->dc.GetTextExtent(wxString(ch)).GetWidth();
+            if (w > widest) widest = w;
+        }
+        lpMetrics->tmMaxCharWidth = widest;
+    }
+
+    // In a TEXTMETRIC (unlike a LOGFONT) bit 0 is TMPF_FIXED_PITCH and its
+    // meaning is INVERTED: set means the font is VARIABLE pitch.  The old
+    // `= FIXED_PITCH` therefore reported every font as variable, and family
+    // FF_DONTCARE for all of them.  Both reach scripts as WindowFontInfo(19).
+    lpMetrics->tmPitchAndFamily = (BYTE)((fixedPitch ? 0 : 1) | family);
     return true;
 }
 
@@ -1156,22 +1191,66 @@ void CDC::Draw3dRect(int x,int y,int cx,int cy,COLORREF tl,COLORREF br) {
 }
 
 void CDC::DrawEdge(LPRECT lpRect, UINT nEdge, UINT nFlags) {
-    // Simple approximation: draw a 3D border using the edge type
+    // Win32 DrawEdge draws TWO one-pixel rings.  nEdge is a pair of BDR_ bits:
+    // the outer ring (BDR_RAISEDOUTER 0x01 / BDR_SUNKENOUTER 0x02) and the inner
+    // (BDR_RAISEDINNER 0x04 / BDR_SUNKENINNER 0x08).  The named EDGE_ values are
+    // just combinations -- EDGE_RAISED = 0x05, EDGE_SUNKEN = 0x0A,
+    // EDGE_ETCHED = 0x06 (sunken outer + raised inner) and EDGE_BUMP = 0x09.
+    //
+    // The old body switched on nEdge as if it were an enum, so ETCHED and BUMP
+    // fell into `default:` and came out as a flat mid-grey box; it then ignored
+    // nFlags entirely and called Draw3dRect, which always strokes all four
+    // sides -- directly contradicting its own "Only draw the requested sides"
+    // comment.  Both are script-reachable through WindowRectOp action 5.
     if (!lpRect) return;
-    COLORREF light = 0xFFFFFF, shadow = 0x808080, dark = 0x404040;
-    COLORREF tl, br;
-    switch (nEdge) {
-        case EDGE_RAISED: case BDR_RAISEDOUTER: case BDR_RAISEDINNER:
-            tl = light; br = dark; break;
-        case EDGE_SUNKEN: case BDR_SUNKENOUTER: case BDR_SUNKENINNER:
-            tl = dark; br = light; break;
-        default:
-            tl = shadow; br = shadow; break;
+    CDCImpl* p = Impl(this);
+    if (!p) return;
+
+    // The four Win32 3D system colours, in the shim's BGR COLORREF order (these
+    // are the standard greys; the port has no system-colour theme to ask).
+    const COLORREF kHilight   = 0xFFFFFF;   // COLOR_3DHILIGHT
+    const COLORREF kLight     = 0xE0E0E0;   // COLOR_3DLIGHT
+    const COLORREF kShadow    = 0x808080;   // COLOR_3DSHADOW
+    const COLORREF kDkShadow  = 0x404040;   // COLOR_3DDKSHADOW
+
+    if ((nFlags & BF_RECT) == 0) nFlags |= BF_RECT;   // no sides named = all
+
+    RECT r = *lpRect;
+
+    // Stroke one ring, honouring the BF_ side bits.  tl paints top+left,
+    // br paints right+bottom -- the same split Draw3dRect uses.
+    auto ring = [&](const RECT& q, COLORREF tl, COLORREF br) {
+        const int l = q.left, t = q.top, rr = q.right - 1, b = q.bottom - 1;
+        if (rr < l || b < t) return;
+        p->dc.SetPen(wxPen(WxCol(tl)));
+        if (nFlags & BF_TOP)    p->dc.DrawLine(l, t, rr + 1, t);
+        if (nFlags & BF_LEFT)   p->dc.DrawLine(l, t, l, b + 1);
+        p->dc.SetPen(wxPen(WxCol(br)));
+        if (nFlags & BF_RIGHT)  p->dc.DrawLine(rr, t, rr, b + 1);
+        if (nFlags & BF_BOTTOM) p->dc.DrawLine(l, b, rr + 1, b);
+    };
+
+    // Outer ring.
+    if (nEdge & BDR_RAISEDOUTER)      ring(r, kLight,    kDkShadow);
+    else if (nEdge & BDR_SUNKENOUTER) ring(r, kDkShadow, kLight);
+
+    // Inner ring, inset by one pixel on whichever sides the outer ring used.
+    RECT ri = r;
+    if (nFlags & BF_LEFT)   ri.left++;
+    if (nFlags & BF_TOP)    ri.top++;
+    if (nFlags & BF_RIGHT)  ri.right--;
+    if (nFlags & BF_BOTTOM) ri.bottom--;
+
+    if (nEdge & BDR_RAISEDINNER)      ring(ri, kHilight, kShadow);
+    else if (nEdge & BDR_SUNKENINNER) ring(ri, kShadow,  kHilight);
+
+    // BF_ADJUST: report the client rect left inside the border.
+    if (nFlags & BF_ADJUST) {
+        if (nFlags & BF_LEFT)   lpRect->left   += 2;
+        if (nFlags & BF_TOP)    lpRect->top    += 2;
+        if (nFlags & BF_RIGHT)  lpRect->right  -= 2;
+        if (nFlags & BF_BOTTOM) lpRect->bottom -= 2;
     }
-    // Only draw the requested sides
-    RECT r2 = *lpRect;
-    Draw3dRect(&r2, tl, br);
-    (void)nFlags;
 }
 
 // ── Geometry drawing ──────────────────────────────────────────────────────

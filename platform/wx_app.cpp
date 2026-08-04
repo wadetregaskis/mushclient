@@ -35,6 +35,12 @@ int RunPalTransportSelfTest();
 // hidden --pal-miniwindow-selftest flag.
 int RunPalMiniWindowSelfTest();
 
+// In-app conformance harness for the wx bridge layers mushcore cannot link:
+// window-geometry persistence, the dialog-template → wx control mapping and the
+// world-creation defaults (platform/gui_bridge_selftest.cpp), run via the hidden
+// --gui-bridge-selftest flag.
+int RunGuiBridgeSelfTest();
+
 // In-app conformance harness for the five embedded scripting engines
 // (platform/engines_selftest.cpp), run via the hidden --engines-selftest flag.
 // They cannot be tested headlessly: each pulls in a whole interpreter, which the
@@ -86,6 +92,14 @@ public:
                 wx_mfc_install_hooks();
                 const int failures = RunNotepadSelfTest();
                 std::exit(failures == 0 ? 0 : 1);
+            }
+            if (wxString(argv[i]) == wxT("--gui-bridge-selftest")) {
+                // Needs the MFC hooks installed (the dialog bridge builds
+                // controls through them) but NOT the app booted: no world is
+                // opened, no window is shown.
+                wx_mfc_install_hooks();
+                LoadMfcDialogResources();
+                std::exit(RunGuiBridgeSelfTest());
             }
             if (wxString(argv[i]) == wxT("--pal-miniwindow-selftest")) {
                 // CMiniWindow draws through the bridge unconditionally; the

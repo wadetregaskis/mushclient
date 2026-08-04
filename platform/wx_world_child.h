@@ -35,6 +35,16 @@ void wx_activate_world_frame(CMUSHclientDoc* doc);
 #include "platform/wx_toolbar.h"      // CWorldToolBars — Standard/World/Activity bars
 #include "pal/iworldview.h"           // pal::IWorldView — this frame is the wx adapter
 
+// ── The one writer of the visible world window's persisted size ───────────
+// /geometry/child_w + /geometry/child_h are what CWorldChildFrame's constructor
+// reads back, so every path that wants "remember this window's size" must come
+// through here.  Two do: the frame's own close handler, and the macOS quit hook
+// (wx_mfc_impl.cpp) — [NSApp terminate:] never runs the close handler, and when
+// the quit path wrote a different key set instead, a Cmd-Q silently lost the
+// size the user had just dragged out.  Sizes below the frame's own minimum
+// (200x100) are ignored, exactly as the close handler always did.
+void wx_save_child_geometry(wxConfigBase& cfg, const wxSize& size);
+
 // ── CWorldChildFrame ──────────────────────────────────────────────────────────
 // The frame IS this world's pal::IWorldView adapter (L3 in docs/PAL.md): the
 // engine drives output through the IWorldView methods below, which forward to

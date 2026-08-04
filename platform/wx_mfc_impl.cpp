@@ -1929,6 +1929,34 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     return TRUE;
 }
 
+// ── wx_seed_new_world_defaults ────────────────────────────────────────────
+// Pre-load defaults for a freshly constructed world document, shared by File ▸
+// New World and Open World File (they used to carry two copies of this).
+//
+// Colours are deliberately NOT touched.  The document constructor already
+// installed Gammon's palette — SetDefaultAnsiColours + SetDefaultCustomColours
+// (doc_construct.cpp:316-319, bodies in Utilities.cpp:765/786) — which is
+// exactly what Windows shows, and neither OnNewDocument nor OnOpenDocument
+// resets it (SetDefaults(false) walks OptionsTable only; the colour arrays are
+// not option-table items).  Both hooks used to re-seed m_customtext[] from
+// m_normalcolour[i % 8] with a black background here, which made custom colour
+// 1 black-on-black for any world file with no <custom> section (the loader
+// keeps the current member value when the attribute is absent), and destroyed
+// the readable defaults a new world is supposed to get.
+//
+// The ANSI tables the two hooks also wrote by hand were byte-for-byte what
+// SetDefaultAnsiColours had already put there, so they are simply gone.
+//
+// What remains is genuinely port-only: on Windows these three come from the
+// "default world" settings MFC loads before the document is opened.
+void wx_seed_new_world_defaults(CMUSHclientDoc* doc)
+{
+    if (!doc) return;
+    doc->m_nWrapColumn = 80;    // CLine allocates m_nWrapColumn bytes for text
+    doc->m_bUTF_8      = 1;     // use UTF-8 throughout; 4x multiplier in CLine
+    doc->m_maxlines    = 5000;  // SetUpOutputWindow sizes m_pLinePositions from this
+}
+
 // ── Open World File ───────────────────────────────────────────────────────
 // Creates a CMUSHclientDoc, calls OnOpenDocument(path) to parse the XML world
 // file, then creates and shows a CWorldChildFrame for it.
@@ -1967,32 +1995,9 @@ static void* hook_open_world_file(const char* path)
 
     CMUSHclientDoc* doc = new CMUSHclientDoc();
 
-    // Initialise colour tables (same as hook_new_world; overridden by world file).
-    doc->m_normalcolour[0] = RGB(  0,   0,   0);
-    doc->m_normalcolour[1] = RGB(128,   0,   0);
-    doc->m_normalcolour[2] = RGB(  0, 128,   0);
-    doc->m_normalcolour[3] = RGB(128, 128,   0);
-    doc->m_normalcolour[4] = RGB(  0,   0, 128);
-    doc->m_normalcolour[5] = RGB(128,   0, 128);
-    doc->m_normalcolour[6] = RGB(  0, 128, 128);
-    doc->m_normalcolour[7] = RGB(192, 192, 192);
-    doc->m_boldcolour[0]   = RGB(128, 128, 128);
-    doc->m_boldcolour[1]   = RGB(255,   0,   0);
-    doc->m_boldcolour[2]   = RGB(  0, 255,   0);
-    doc->m_boldcolour[3]   = RGB(255, 255,   0);
-    doc->m_boldcolour[4]   = RGB(  0,   0, 255);
-    doc->m_boldcolour[5]   = RGB(255,   0, 255);
-    doc->m_boldcolour[6]   = RGB(  0, 255, 255);
-    doc->m_boldcolour[7]   = RGB(255, 255, 255);
-    for (int i = 0; i < MAX_CUSTOM; ++i) {
-        doc->m_customtext[i] = doc->m_normalcolour[i % 8];
-        doc->m_customback[i] = RGB(0, 0, 0);
-    }
-
-    // Set pre-load defaults (may be overridden by the world file).
-    doc->m_nWrapColumn = 80;
-    doc->m_bUTF_8      = 1;
-    doc->m_maxlines    = 5000;
+    // Set pre-load defaults (may be overridden by the world file).  The colour
+    // tables are the constructor's business — see wx_seed_new_world_defaults.
+    wx_seed_new_world_defaults(doc);
 
     // Load world settings from XML.  This calls Serialize() → Load_World_XML()
     // which parses ip_address, port, triggers, aliases, timers, etc.
@@ -2009,16 +2014,16 @@ static void* hook_open_world_file(const char* path)
     // it can be identified as already-open above, and so Save writes back here.
     doc->SetPathName(path);
 
-    // NOTE: do NOT patch m_customtext[] here.  hook_new_world sets every custom
-    // text slot to light grey so a brand-new world with no colours of its own
-    // still produces readable output — but that rationale ("when no world file
-    // has overridden them") does not hold on this path, which runs immediately
-    // AFTER OnOpenDocument() parsed the world's own custom colours out of the
-    // XML (xml/xml_load_world.cpp, GET_COLOUR("text", m_customtext[i])).
-    // Doing it here threw those colours away on every single world open, so a
-    // custom text colour could never survive a reload no matter how it was set.
+    // NOTE: do NOT patch m_customtext[] here, or before the load either.  This
+    // runs immediately AFTER OnOpenDocument() parsed the world's own custom
+    // colours out of the XML (xml/xml_load_world.cpp, GET_COLOUR("text",
+    // m_customtext[i])), so touching them here threw those colours away on
+    // every single world open.  And a pre-load patch is no better: the loader
+    // keeps the current member value when the attribute is absent, so it just
+    // redefines what "keep the default" means — a world file with no <custom>
+    // section came up with custom colour 1 as black text on a black background.
     // Worlds that specify no custom colours keep the constructor's defaults
-    // (SetDefaultCustomColours, doc_construct.cpp:316), which is also what
+    // (SetDefaultCustomColours, doc_construct.cpp:319), which is also what
     // Windows does.
 
     // Create and show the child frame.
@@ -2482,49 +2487,16 @@ static void* hook_new_world()
 
     CMUSHclientDoc* doc = new CMUSHclientDoc();
 
-    // ── Default ANSI colour tables ────────────────────────────────────────
-    // On non-Windows these arrays are not populated by the MFC/registry
-    // initialisation that runs on Windows, and they stay zero (all black)
-    // unless a world file is loaded from XML.  For Quick Connect (no world
-    // file) we initialise them to the standard VGA / xterm palette here,
-    // matching what doc_portable.cpp does for the mushcore CLI build.
-    doc->m_normalcolour[0/*BLACK*/]   = RGB(  0,   0,   0);
-    doc->m_normalcolour[1/*RED*/]     = RGB(128,   0,   0);
-    doc->m_normalcolour[2/*GREEN*/]   = RGB(  0, 128,   0);
-    doc->m_normalcolour[3/*YELLOW*/]  = RGB(128, 128,   0);
-    doc->m_normalcolour[4/*BLUE*/]    = RGB(  0,   0, 128);
-    doc->m_normalcolour[5/*MAGENTA*/] = RGB(128,   0, 128);
-    doc->m_normalcolour[6/*CYAN*/]    = RGB(  0, 128, 128);
-    doc->m_normalcolour[7/*WHITE*/]   = RGB(192, 192, 192);
-
-    doc->m_boldcolour[0/*BLACK*/]   = RGB(128, 128, 128);
-    doc->m_boldcolour[1/*RED*/]     = RGB(255,   0,   0);
-    doc->m_boldcolour[2/*GREEN*/]   = RGB(  0, 255,   0);
-    doc->m_boldcolour[3/*YELLOW*/]  = RGB(255, 255,   0);
-    doc->m_boldcolour[4/*BLUE*/]    = RGB(  0,   0, 255);
-    doc->m_boldcolour[5/*MAGENTA*/] = RGB(255,   0, 255);
-    doc->m_boldcolour[6/*CYAN*/]    = RGB(  0, 255, 255);
-    doc->m_boldcolour[7/*WHITE*/]   = RGB(255, 255, 255);
-
-    // Custom colours cycle through the normal palette (matching doc_portable.cpp).
-    for (int i = 0; i < MAX_CUSTOM; ++i) {
-        doc->m_customtext[i] = doc->m_normalcolour[i % 8];
-        doc->m_customback[i] = RGB(0, 0, 0);
-    }
-
     // NOT set here: App.m_TypeOfNewDocument is the CALLER's choice of flow
     // (see the File > New World / Quick Connect arm of the menu dispatcher).
     // Forcing eQuickConnect here made every route into this hook show the Quick
     // Connect dialog.
 
     // Initialise display-critical fields that SetUpOutputWindow uses to size
-    // the first CLine text buffer.  On Windows these come from the "default
-    // world" settings that MFC loads before OnNewDocument; on non-Windows we
-    // provide sane defaults here.  They will be overwritten later if the user
-    // opens an actual world file or the window is resized.
-    doc->m_nWrapColumn = 80;     // CLine allocates m_nWrapColumn bytes for text
-    doc->m_bUTF_8      = 1;     // use UTF-8 throughout; 4× multiplier in CLine
-    doc->m_maxlines    = 5000;  // SetUpOutputWindow sizes m_pLinePositions from this
+    // the first CLine text buffer.  They will be overwritten later if the user
+    // opens an actual world file or the window is resized.  Colours are NOT
+    // touched — see wx_seed_new_world_defaults.
+    wx_seed_new_world_defaults(doc);
 
     // OnNewDocument: shows dialog, calls SetUpOutputWindow, OpenSession.
     // Lines produced by Note() accumulate in doc->m_LineList but are not
@@ -2535,16 +2507,16 @@ static void* hook_new_world()
         return nullptr;
     }
 
-    // ── Fix note colours after OnNewDocument ─────────────────────────────
+    // ── Custom colours after OnNewDocument: leave them alone ─────────────
     // OnNewDocument → SetDefaults() sets m_iNoteTextColour = 4 (custom palette
-    // index).  Our m_customtext[4] is initialised to m_normalcolour[4] = dark
-    // blue — not readable on black.  GetStyleRGB is called lazily at
-    // UpdateAllViews time (not at Note() time), so patching m_customtext[] here
-    // still affects the lines that were buffered during OnNewDocument.
-    // Set every custom-text slot to light grey so all custom colour indices
-    // produce readable output when no world file has overridden them.
-    for (int i = 0; i < MAX_CUSTOM; ++i)
-        doc->m_customtext[i] = RGB(192, 192, 192);  // light grey
+    // index), and the constructor's SetDefaultCustomColours already made
+    // m_customtext[4] = RGB(0,128,255) — a readable blue on black, which is the
+    // colour Windows notes come out in.  The port used to overwrite all sixteen
+    // slots with light grey here, which was only ever needed because the block
+    // above (now gone) had re-seeded the palette from m_normalcolour, making
+    // slot 4 dark blue.  The grey patch then made every custom colour identical,
+    // so a trigger or ColourNote picking colours 1-16 rendered them all the
+    // same, and saving the world wrote the grey palette into the file for good.
 
     // Create and show the child frame.
     CWorldChildFrame* child = new CWorldChildFrame(mdiParent, doc);
@@ -2705,13 +2677,12 @@ static void hook_open_default_world()
     }
 }
 
-// ── SaveMainWindowGeometry ────────────────────────────────────────────────
-// Persist the MDI parent's size / position / maximized state to wxConfig so the
-// next session opens the same.  Called from the parent's close handler AND from
-// the quit hook, because [NSApp terminate:] does not reliably fire the close
-// handler (so the geometry would otherwise be saved only when you close the
-// window, not when you Quit).  Safe to call with a null frame.
-static void SaveMainWindowGeometry(wxTopLevelWindow* frame)
+// ── SaveWindowGeometryTo ──────────────────────────────────────────────────
+// Persist `frame`'s size / position / maximized state into `cfg`.  Split out of
+// SaveMainWindowGeometry (below) so the in-app selftest can drive it against a
+// throwaway config file instead of the user's real preferences.  Safe to call
+// with a null frame.
+void SaveWindowGeometryTo(wxConfigBase& cfg, wxTopLevelWindow* frame)
 {
     if (!frame || frame->IsIconized()) return;
     // On macOS the window the user actually sees and resizes is the active MDI
@@ -2728,23 +2699,43 @@ static void SaveMainWindowGeometry(wxTopLevelWindow* frame)
                     geomWin = tlw;
         }
     }
-    wxConfig cfg(wxT("mushclient"));
     const bool maximized = geomWin->IsMaximized();
     cfg.Write(wxT("/geometry/main_maximized"), maximized);
     cfg.Write(wxT("/geometry/status_bar"), s_statusBarVisible);
+    // Full screen is not a size worth restoring, and on macOS the exit is
+    // animated so GetRect() here would still report the full-screen bounds
+    // even if we asked it to leave first.  Use the rect stashed when the
+    // user entered full screen.
+    const wxRect r = (geomWin->IsFullScreen() && s_hadPreFullScreenRect)
+                     ? s_preFullScreenRect
+                     : geomWin->GetRect();
     if (!maximized) {
-        // Full screen is not a size worth restoring, and on macOS the exit is
-        // animated so GetRect() here would still report the full-screen bounds
-        // even if we asked it to leave first.  Use the rect stashed when the
-        // user entered full screen.
-        const wxRect r = (geomWin->IsFullScreen() && s_hadPreFullScreenRect)
-                         ? s_preFullScreenRect
-                         : geomWin->GetRect();
         cfg.Write(wxT("/geometry/main_x"), (long)r.x);
         cfg.Write(wxT("/geometry/main_y"), (long)r.y);
         cfg.Write(wxT("/geometry/main_w"), (long)r.width);
         cfg.Write(wxT("/geometry/main_h"), (long)r.height);
     }
+    // The main_* keys above are read back onto the MDI *parent*, which wxOSX
+    // never shows.  When the window we just measured is the child — i.e. the
+    // window the user can actually see and drag — its size also has to go into
+    // the keys the child reads at construction, or a Cmd-Q (which never runs
+    // the child's close handler) persists the size somewhere nothing looks and
+    // the next launch reopens the world at the previous size.  Same helper as
+    // that close handler, so the two paths cannot drift apart again.
+    if (geomWin != frame)
+        wx_save_child_geometry(cfg, r.GetSize());
+}
+
+// ── SaveMainWindowGeometry ────────────────────────────────────────────────
+// Persist the main window geometry to the real wxConfig so the next session
+// opens the same.  Called from the parent's close handler AND from the quit
+// hook, because [NSApp terminate:] does not reliably fire the close handler (so
+// the geometry would otherwise be saved only when you close the window, not
+// when you Quit).  Safe to call with a null frame.
+static void SaveMainWindowGeometry(wxTopLevelWindow* frame)
+{
+    wxConfig cfg(wxT("mushclient"));
+    SaveWindowGeometryTo(cfg, frame);
     cfg.Flush();
 }
 

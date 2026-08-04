@@ -2437,6 +2437,48 @@ TEST(CommonDialogs, FontDialogHeadlessCancelsHookedFills) {
     g_wxhook_font_dialog = nullptr;
 }
 
+// CHOOSEFONT::rgbColors is IN/OUT on Windows under CF_EFFECTS: it is the colour
+// the dialog's picker opens on, and GetColor() reads it back.  DoModal used to
+// copy only face/height/weight/italic into the exchange struct, so the caller's
+// colour never reached the dialog and every fontpicker round-trip came back
+// black — utils.fontpicker(name, size, colour) silently dropped its third
+// argument (scripting/lua_utils.cpp sets dlg.m_cf.rgbColors from it).
+TEST(CommonDialogs, FontDialogSeedsAndReturnsColour) {
+    LOGFONT lf = {};
+    strcpy(lf.lfFaceName, "Courier");
+    lf.lfHeight = -13;
+
+    // No hook at all (headless/mushcore): the caller's colour survives, it is
+    // not replaced by black.
+    CFontDialog headless(&lf);
+    headless.m_cf.rgbColors = RGB(0, 255, 0);
+    EXPECT_EQ((INT_PTR)IDCANCEL, headless.DoModal());
+    EXPECT_EQ((COLORREF)RGB(0, 255, 0), headless.GetColor());
+
+    // OK: the seed reaches the dialog, and the dialog's choice comes back.
+    g_wxhook_font_dialog = [](void*, WxFontChoice* io) -> int {
+        s_fontIn = *io;
+        strcpy(io->faceName, "Menlo");
+        io->pointSize = 12;
+        io->color = RGB(1, 2, 3);   // user picked something else
+        return 1;
+    };
+    CFontDialog dlg(&lf);
+    dlg.m_cf.rgbColors = RGB(0, 255, 0);          // e.g. mapper's room-name colour
+    EXPECT_EQ((INT_PTR)IDOK, dlg.DoModal());
+    EXPECT_EQ((uint32_t)RGB(0, 255, 0), s_fontIn.color);   // seeded the dialog
+    EXPECT_EQ((COLORREF)RGB(1, 2, 3), dlg.GetColor());     // chosen colour back
+    EXPECT_EQ((COLORREF)RGB(1, 2, 3), dlg.m_cf.rgbColors); // MFC mirrors it here
+
+    // Cancel: GetColor() still reports the colour the caller asked for.
+    g_wxhook_font_dialog = [](void*, WxFontChoice*) -> int { return 0; };
+    CFontDialog dlg2(&lf);
+    dlg2.m_cf.rgbColors = RGB(0, 255, 0);
+    EXPECT_EQ((INT_PTR)IDCANCEL, dlg2.DoModal());
+    EXPECT_EQ((COLORREF)RGB(0, 255, 0), dlg2.GetColor());
+    g_wxhook_font_dialog = nullptr;
+}
+
 static std::string s_fdLeaf, s_fdDir;
 static bool s_fdOpen, s_fdOverwrite;
 

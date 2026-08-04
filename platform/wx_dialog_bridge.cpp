@@ -297,7 +297,18 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
     }
     else if (cls == "ListBox")
     {
-        long st = (c.style & (LBS_EXTENDEDSEL | LBS_MULTIPLESEL)) ? wxLB_EXTENDED : wxLB_SINGLE;
+        // The two Win32 multi-select styles are NOT the same model, and
+        // collapsing both onto wxLB_EXTENDED broke the one dialog that uses the
+        // simple one.  LBS_MULTIPLESEL: every plain click toggles that item and
+        // leaves the rest alone (wxLB_MULTIPLE).  LBS_EXTENDEDSEL: the
+        // Shift/Ctrl model where a plain click replaces the selection
+        // (wxLB_EXTENDED).  Game ▸ Send to All Worlds (IDD_SEND_TO_ALL, style
+        // 0x…010B) is LBS_MULTIPLESEL, so as wxLB_EXTENDED each world the user
+        // clicked deselected the previous one and the message went to one world
+        // instead of the several they thought they had picked.
+        long st = (c.style & LBS_EXTENDEDSEL) ? wxLB_EXTENDED
+                : (c.style & LBS_MULTIPLESEL) ? wxLB_MULTIPLE
+                :                               wxLB_SINGLE;
         w = new wxListBox(parent, id, pos, size, 0, nullptr, st | wxLB_NEEDED_SB);
     }
     else if (cls == "ScrollBar")

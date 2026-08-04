@@ -75,6 +75,22 @@ static const int ID_FIND_PREV    = wxID_HIGHEST + 204;
 // (m_nHistoryLines, default 1000, range 20-5000) — see HistoryLimit().
 static const int kMaxHistoryFallback = 1000;
 
+// ── wx_save_child_geometry ────────────────────────────────────────────────
+// The only writer of /geometry/child_w + /geometry/child_h — the keys this
+// frame's constructor reads back (see the "World window geometry" block
+// there).  Declared in wx_world_child.h; see the note there for why the quit
+// hook has to share it.
+void wx_save_child_geometry(wxConfigBase& cfg, const wxSize& size)
+{
+    // Same floor as the constructor's clamp: a smaller value would be thrown
+    // away on the next launch anyway, and a zero-size (never-laid-out or
+    // already-torn-down) window must not overwrite a good saved size.
+    if (size.x >= 200 && size.y >= 100) {
+        cfg.Write(wxT("/geometry/child_w"), (long) size.x);
+        cfg.Write(wxT("/geometry/child_h"), (long) size.y);
+    }
+}
+
 // ── History file path ─────────────────────────────────────────────────────────
 // Returns the path to the per-world persistent command-history file, creating
 // ~/.mushclient/ if needed.  Uses the world name to distinguish files so that
@@ -4754,14 +4770,12 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
 
     // ── Save child frame size for next session ────────────────────────────
     // Persist the current window dimensions so the next world that opens uses
-    // the same size instead of reverting to the 800×600 default.
+    // the same size instead of reverting to the screen-derived default.  The
+    // quit hook writes the same keys through the same helper, because a Cmd-Q
+    // never reaches this handler at all.
     {
-        wxSize sz = GetSize();
-        if (sz.x >= 200 && sz.y >= 100) {
-            wxConfig cfg(wxT("mushclient"));
-            cfg.Write(wxT("/geometry/child_w"), (long)sz.x);
-            cfg.Write(wxT("/geometry/child_h"), (long)sz.y);
-        }
+        wxConfig cfg(wxT("mushclient"));
+        wx_save_child_geometry(cfg, GetSize());
     }
 
     // ── Save persistent command history ───────────────────────────────────

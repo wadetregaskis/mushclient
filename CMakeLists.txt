@@ -872,6 +872,10 @@ if(NOT WIN32)
             # (--input-selftest).  Lives here, not in mushgui_adapters, because
             # it drives a real CWorldChildFrame and so needs the wx headers.
             platform/input_selftest.cpp
+            # PAL: conformance selftest for the wx miniwindow compositor +
+            # tooltip gate (both live in wx_world_child.cpp, so this must be
+            # an exe TU — mushcore cannot see wxDC)
+            platform/wx_composite_selftest.cpp
             # The three canonical toolbars (Standard/World/Activity) over
             # wxToolBar, using the shipped Windows strips.  wxOSX hides the MDI
             # parent, so these hang off each world window like the status bar.

@@ -45,6 +45,17 @@ void wx_activate_world_frame(CMUSHclientDoc* doc);
 // (200x100) are ignored, exactly as the close handler always did.
 class wxConfigBase;   // <wx/config.h> is included by the .cpp, not this header
 void wx_save_child_geometry(wxConfigBase& cfg, const wxSize& size);
+// ── Miniwindow compositing / tooltips (wx_world_child.cpp) ───────────────────
+// Free functions, not frame members: they need only the doc, and the in-app
+// compositor selftest (platform/wx_composite_selftest.cpp) drives the real
+// bodies without building a window.  See the definitions for the Windows
+// sources they mirror (CMUSHView::OnDraw + Blit_Bitmap, and
+// CMUSHView::Mouse_Tooltip_MiniWindow).
+void wx_composite_miniwindows(CMUSHclientDoc* doc, wxDC& destDC,
+                              int clientW, int clientH,
+                              int frameW, int frameH, bool bUnder);
+bool wx_miniwindow_tooltip(CMUSHclientDoc* doc, int x, int y,
+                           std::string& text);
 
 // ── CWorldChildFrame ──────────────────────────────────────────────────────────
 // The frame IS this world's pal::IWorldView adapter (L3 in docs/PAL.md): the
@@ -148,6 +159,7 @@ public:
     bool        isFullscreen() const override;
     bool        saveWorld() override;
     pal::Rect   mainRect() const override;
+    void        mouseMoveMiniWindow(long x, long y) override;
     void        infobarShow(bool visible) override;
     void        infobarClear() override;
     void        infobarText(const char* text) override;

@@ -154,6 +154,11 @@ if(TARGET mushgui)
         add_test(NAME selftest_input
                  COMMAND $<TARGET_FILE:mushgui> --input-selftest)
     endif()
+    # The wx miniwindow compositor + tooltip gate: their bodies are in the
+    # executable (platform/wx_world_child.cpp, wxDC-typed), so mushcore's
+    # headless suites cannot link them.
+    add_test(NAME selftest_pal_composite
+             COMMAND $<TARGET_FILE:mushgui> --pal-composite-selftest)
     # The six scripting languages: the only place five of them can be exercised,
     # since their interpreters are linked into the app and deliberately kept out
     # of mushcore.  One ctest entry per language, so a build without (say) Ruby
@@ -172,5 +177,6 @@ if(TARGET mushgui)
                          selftest_pal_miniwindow selftest_notepad
                          selftest_pal_miniwindow selftest_gui_bridge
                          selftest_pal_miniwindow selftest_input
+                         selftest_pal_miniwindow selftest_pal_composite
                          PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 endif()

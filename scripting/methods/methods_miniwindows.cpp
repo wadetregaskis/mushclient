@@ -587,13 +587,15 @@ static bool bInWindowAddHotspot = false;
       CHotspot * pHotspot = it->second;
       if ( pHotspot->m_rect.PtInRect(mw->m_last_mouseposition) )
         {
-        for(POSITION pos=GetFirstViewPosition();pos!=NULL;)
-	        {
-	        CView* pView = GetNextView(pos);
-
-	        if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
-            ((CMUSHView*)pView)->Mouse_Move_MiniWindow (this, m_lastMousePosition);
-          } // end of looping through views
+        // Through the typed view seam (pal::IWorldView) rather than this
+        // doc's view list: the Windows adapter runs the identical CMUSHView
+        // walk (pal/win_worldview.cpp mouseMoveMiniWindow), while the ports —
+        // which never construct a CMUSHView, so the walk found nothing — get
+        // the same immediate MouseOver through their own frontend.  The
+        // bInWindowAddHotspot guard above still covers the re-entrancy.
+        if (m_pWorldView)
+          m_pWorldView->mouseMoveMiniWindow (m_lastMousePosition.x,
+                                             m_lastMousePosition.y);
         }
       } // end of hotspot found
     } // end of added hotspot OK

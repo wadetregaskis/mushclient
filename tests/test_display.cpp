@@ -1993,11 +1993,10 @@ TEST(GuardsR5, NoCurrentLineAndNoLinePositions)
     doc.DisplayMsg("x", 1, 0);
     EXPECT_NE(nullptr, doc.m_pCurrentLine);
 
-    // DisplayMsg before the line-positions array exists: early return
-    POSITION* savedPos = doc.m_pLinePositions;
-    doc.m_pLinePositions = nullptr;
+    // DisplayMsg before the line-positions index is allocated: early return
+    doc.m_LinePositions.Clear();
     doc.DisplayMsg("y", 1, 0);
-    doc.m_pLinePositions = savedPos;
+    doc.m_LinePositions.Reset(doc.m_LineList.GetHeadPosition());
 }
 
 

@@ -14,6 +14,7 @@
 #include "mc_test.h"
 #include "platform/windows_types.h"   // UINT/BOOL, used by the array/map shims below
 #include "platform/mfc_collections.h"
+#include "line_position_index.h"     // the output buffer's JUMP_SIZE jump index
 
 #include <chrono>
 #include <vector>
@@ -281,6 +282,147 @@ TEST(PtrList, HeadTrimIsLinearNotQuadratic)
     // 20k O(1) unlinks is microseconds; 20k O(N) scans is ~seconds.
     EXPECT_TRUE(ms < 250.0);
     if (ms >= 250.0) printf("    trim of %d took %.2fms\n", N, ms);
+}
+
+// ── The output buffer's jump index (line_position_index.h) ──────────────────
+//
+// Was a fixed POSITION array sized from the buffer CAP (m_maxlines/JUMP_SIZE+1)
+// but indexed by the live line COUNT, with the eviction in RemoveChunk as its
+// only bound — so lifting the cap for unbounded scrollback would have written
+// one POSITION past a heap block on the first line past the old boundary.  It
+// is now a deque indexed relative to the current head.
+
+TEST(LinePositionIndex, StartsUnallocated)
+{
+    // "Allocated" is a document lifecycle state: DisplayMsg, ClearOutput and
+    // the Note family all early-return on it, because m_maxlines is not known
+    // until the world file has been read.
+    CLinePositionIndex idx;
+    EXPECT_FALSE(idx.IsAllocated());
+    EXPECT_EQ(0L, idx.ChunkCount());
+    EXPECT_TRUE(idx.Get(0) == NULL);
+}
+
+TEST(LinePositionIndex, SizeFollowsTheContentNotTheCap)
+{
+    // The whole point of the change.  The array reserved cap/JUMP_SIZE + 1
+    // slots up front — 5,001 pointers for a 500,000-line cap, on every world,
+    // whether or not the buffer ever filled — and could not represent more.
+    CLinePositionIndex idx;
+    idx.Reset((POSITION) 0x1000);
+    EXPECT_EQ(1L, idx.ChunkCount());
+
+    for (long c = 1; c <= 2000; ++c)
+        idx.Append((POSITION)(0x1000 + c));
+    EXPECT_EQ(2001L, idx.ChunkCount());
+    EXPECT_TRUE(idx.Get(2000) == (POSITION)(0x1000 + 2000));
+    // ...and nothing anywhere consulted a cap to allow that.
+}
+
+TEST(LinePositionIndex, DroppingTheFirstChunkRenumbersEverythingDown)
+{
+    // RemoveChunk evicts JUMP_SIZE lines from the head, so chunk 1 becomes
+    // chunk 0.  The array did this by copying every remaining slot down one;
+    // the deque pops its front, which is the same renumbering in O(1).
+    CLinePositionIndex idx;
+    idx.Reset((POSITION) 0xA0);
+    idx.Append((POSITION) 0xB0);
+    idx.Append((POSITION) 0xC0);
+
+    idx.DropFirstChunk();
+    EXPECT_EQ(2L, idx.ChunkCount());
+    EXPECT_TRUE(idx.Get(0) == (POSITION) 0xB0);
+    EXPECT_TRUE(idx.Get(1) == (POSITION) 0xC0);
+    EXPECT_TRUE(idx.Get(2) == NULL);
+}
+
+TEST(LinePositionIndex, DroppingTheLastChunkKeepsItAllocated)
+{
+    // Allocation must survive an eviction that empties the index, or the
+    // "is this document set up" guards would start failing mid-session.  A
+    // NULL chunk 0 is a hint miss, which GetLinePosition already handles by
+    // falling back to the list head.
+    CLinePositionIndex idx;
+    idx.Reset((POSITION) 0xA0);
+    idx.DropFirstChunk();
+    EXPECT_TRUE(idx.IsAllocated());
+    EXPECT_TRUE(idx.Get(0) == NULL);
+}
+
+TEST(LinePositionIndex, InvalidatingTheTailChunkKeepsTheDequeTight)
+{
+    // DeleteLines and the omit-from-output path in ProcessPreviousLine set the
+    // chunk head they just removed to NULL.  Walking the buffer back should not
+    // leave a tail of NULLs behind.
+    CLinePositionIndex idx;
+    idx.Reset((POSITION) 0xA0);
+    idx.Append((POSITION) 0xB0);
+    idx.Append((POSITION) 0xC0);
+
+    idx.Set(2, NULL);
+    EXPECT_EQ(2L, idx.ChunkCount());
+    idx.Set(1, NULL);
+    EXPECT_EQ(1L, idx.ChunkCount());
+    EXPECT_TRUE(idx.IsAllocated());
+}
+
+TEST(LinePositionIndex, AMiddleInvalidationIsKeptAsAHole)
+{
+    // ...but an interior NULL must stay put: it is what makes GetLinePosition
+    // fall back to chunk n-1 instead of trusting a stale POSITION.
+    CLinePositionIndex idx;
+    idx.Reset((POSITION) 0xA0);
+    idx.Append((POSITION) 0xB0);
+    idx.Append((POSITION) 0xC0);
+
+    idx.Set(1, NULL);
+    EXPECT_EQ(3L, idx.ChunkCount());
+    EXPECT_TRUE(idx.Get(1) == NULL);
+    EXPECT_TRUE(idx.Get(2) == (POSITION) 0xC0);
+}
+
+TEST(LinePositionIndex, AppendingPastTheEndGrowsInsteadOfOverrunning)
+{
+    // The bug this type exists to make impossible.  StartNewLine writes
+    // Set(GetCount() / JUMP_SIZE, pos) with no bounds check of its own; with the
+    // array, a count past cap/JUMP_SIZE wrote off the end of the allocation.
+    CLinePositionIndex idx;
+    idx.Reset((POSITION) 0xA0);
+    idx.Set(500, (POSITION) 0xDEAD);          // far beyond anything appended
+    EXPECT_EQ(501L, idx.ChunkCount());
+    EXPECT_TRUE(idx.Get(500) == (POSITION) 0xDEAD);
+    EXPECT_TRUE(idx.Get(250) == NULL);        // the gap reads as "no hint"
+}
+
+TEST(LinePositionIndex, EvictionIsConstantTimeNotAShuffle)
+{
+    // A complexity pin, not a stopwatch.  The array copied every slot down one
+    // per eviction — O(cap / JUMP_SIZE), i.e. 5,000 pointer copies at a
+    // 500,000-line cap, paid every time the buffer wrapped.  Time the same
+    // number of evictions against a small index and a 100x larger one.
+    const int kEvictions = 2000;
+    auto run = [&](long chunks) {
+        CLinePositionIndex idx;
+        idx.Reset((POSITION) 0x10);
+        for (long c = 1; c < chunks; ++c) idx.Append((POSITION)(0x10 + c));
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < kEvictions; ++i) {
+            idx.DropFirstChunk();
+            idx.Append((POSITION) 0x99);      // keep the size steady
+        }
+        const auto t1 = std::chrono::steady_clock::now();
+        return std::chrono::duration<double, std::milli>(t1 - t0).count();
+    };
+    run(50);                                   // warm
+    const double small = run(50);
+    const double big   = run(5000);            // 100x the chunks
+
+    // Loose by two orders of magnitude against the regression it guards, so
+    // ordinary machine noise cannot fail it.
+    EXPECT_TRUE(big <= small * 10 + 5.0);
+    if (big > small * 10 + 5.0)
+        printf("    %d evictions: 50 chunks %.3fms vs 5000 chunks %.3fms\n",
+               kEvictions, small, big);
 }
 
 MC_TEST_MAIN()

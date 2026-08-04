@@ -754,7 +754,7 @@ assemble the full text of the original line.
      {
      // if this particular line was added to the line positions array, then make it null
       if (m_LineList.GetCount () % JUMP_SIZE == 1)
-            m_pLinePositions [m_LineList.GetCount () / JUMP_SIZE] = NULL;
+            m_LinePositions.Set (m_LineList.GetCount () / JUMP_SIZE, NULL);
 
       // version 4.54 - keep notes, even if omitted from output ;)
       // version 4.72 - also player input
@@ -846,7 +846,7 @@ assemble the full text of the original line.
       pos = m_LineList.AddTail (m_pCurrentLine);
 
       if (m_LineList.GetCount () % JUMP_SIZE == 1)
-        m_pLinePositions [m_LineList.GetCount () / JUMP_SIZE] = pos;
+        m_LinePositions.Set (m_LineList.GetCount () / JUMP_SIZE, pos);
       }
 
     }

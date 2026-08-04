@@ -293,16 +293,25 @@ void RemoveTrailingBackslash(CString& str)
 // Called from doc_construct.cpp's mushcore-only ctor arm and by the world loader.
 void CMUSHclientDoc::AllocateLinePositions()
 {
-    // Trim FIRST so the index can never be smaller than the list it indexes.
-    if (m_pLinePositions)
+    // Trim FIRST, so a shrunken cap really does drop the excess lines.  (The
+    // index itself no longer needs this — it sizes itself from the content, not
+    // from m_maxlines — but the trim is the visible half of a cap change.)
+    if (m_LinePositions.IsAllocated())
         while ((long)m_LineList.GetCount() > m_maxlines)
             RemoveChunk();
 
-    delete [] m_pLinePositions;
-    m_pLinePositions = new POSITION[(m_maxlines / JUMP_SIZE) + 1];
-    for (long i = 0; i <= m_maxlines / JUMP_SIZE; i++)
-        m_pLinePositions[i] = NULL;
-    m_pLinePositions[0] = m_LineList.GetHeadPosition();
+    // Re-seed from what is actually in the list, one chunk head per JUMP_SIZE
+    // lines.  Same walk FixUpOutputBuffer does on the Windows path.
+    m_LinePositions.BeginRebuild();
+    long i = 0;
+    for (POSITION pos = m_LineList.GetHeadPosition(); pos; ++i)
+    {
+        if (i % JUMP_SIZE == 0)
+            m_LinePositions.Append(pos);
+        m_LineList.GetNext(pos);
+    }
+    if (i == 0)
+        m_LinePositions.Reset(m_LineList.GetHeadPosition());   // empty list
 }
 
 // AppendToTheNotepad — real body methods_notepad.cpp (mushapp-only).  Headless

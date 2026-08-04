@@ -371,7 +371,8 @@ int i;
 
   ZeroMemory (&m_sockAddr, sizeof m_sockAddr);
   ZeroMemory (&m_ProxyAddr, sizeof m_ProxyAddr);
-  m_pLinePositions = NULL;
+  // m_LinePositions default-constructs un-allocated (line_position_index.h);
+  // SetUpOutputWindow allocates it once m_maxlines is known.
 
   m_pCurrentLine = NULL;
   m_total_lines = 0;
@@ -656,7 +657,7 @@ int i;
 
 // get rid of our positions array
 
-  delete [] m_pLinePositions;
+  m_LinePositions.Clear ();
 
 // one less document
 

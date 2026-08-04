@@ -57,6 +57,8 @@ void Generate256colours (void);
 // doc.h is self-sufficient regardless of what the including TU has pulled in.
 // (The #pragma once in OtherTypes.h makes this a no-op when already included.)
 #include "OtherTypes.h"
+// The output buffer's JUMP_SIZE jump index (m_LinePositions).
+#include "line_position_index.h"
 // Shared styled-line types and GUI output callbacks.
 #include "platform/output_types.h"
 #include <functional>
@@ -1198,8 +1200,15 @@ public:
   CActionList m_ActionList;
 
 // we will record the position of each JUMP_SIZE lines, to speed up lookups
+//
+// Was `POSITION * m_pLinePositions`, a fixed array sized from the buffer CAP
+// (m_maxlines / JUMP_SIZE + 1) but indexed by the live line COUNT, with the
+// eviction in RemoveChunk as its only bound.  See line_position_index.h — the
+// deque removes the latent overrun, makes an eviction O(1) instead of a
+// full-array shuffle, and takes the cap out of the data structure so unbounded
+// scrollback becomes expressible.
 
-  POSITION * m_pLinePositions;  // array of line positions
+  CLinePositionIndex m_LinePositions;
 
   long m_total_lines;
   long m_new_lines;   // lines they haven't read yet (if not active view)

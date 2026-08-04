@@ -298,18 +298,8 @@ void CMUSHclientDoc::SetUpOutputWindow (void)
 // we defer allocating positions array to now, because m_maxlines is read from the
 // document file.
 
-  if (!m_pLinePositions)
-    {
-    m_pLinePositions = new POSITION [(m_maxlines / JUMP_SIZE) + 1];
-
-  // clear all elements
-
-    for (int i = 0; i <= m_maxlines / JUMP_SIZE; i++)
-      m_pLinePositions [i] = NULL;
-
-    m_pLinePositions [0] = m_LineList.GetHeadPosition ();
-
-    }   // end of not having a positions array yet
+  if (!m_LinePositions.IsAllocated ())
+    m_LinePositions.Reset (m_LineList.GetHeadPosition ());
 
 // we defer allocating the first line to now, because m_nWrapColumn is read from the
 // document file.
@@ -1929,24 +1919,17 @@ long i;
   while (m_LineList.GetCount () > nNewBufferSize)
     RemoveChunk ();
 
-// do a new line positions array
+// re-seed the line positions index (one Append per chunk head, in order —
+// the index sizes itself from what is actually there, not from the cap)
 
-  delete [] m_pLinePositions;
-  m_pLinePositions = new POSITION [(nNewBufferSize / JUMP_SIZE) + 1];
-
-// clear all elements
-
-  for (i = 0; i <= nNewBufferSize / JUMP_SIZE; i++)
-    m_pLinePositions [i] = NULL;
-
-// re-seed positions array
+  m_LinePositions.BeginRebuild ();
 
   for(i = 0, pos=m_LineList.GetHeadPosition();
       pos;
       i++)
         {
         if (i % JUMP_SIZE == 0)
-          m_pLinePositions [i / JUMP_SIZE] = pos;
+          m_LinePositions.Append (pos);
         m_LineList.GetNext (pos);
         } // end of for loop
 
@@ -2008,18 +1991,18 @@ POSITION pos = NULL;
     nLine = 0;
 
 static long iCount = 0;
-int nIndex = nLine / JUMP_SIZE,
-    nItem = nIndex * JUMP_SIZE;
+long nIndex = nLine / JUMP_SIZE,
+     nItem = nIndex * JUMP_SIZE;
 
-  if (m_pLinePositions)
+  if (m_LinePositions.IsAllocated ())
     {
-    pos = m_pLinePositions [nIndex];
+    pos = m_LinePositions.Get (nIndex);
 
   // not there, try previous item
 
     if (!pos && nIndex > 0)
       {
-      pos = m_pLinePositions [nIndex - 1];
+      pos = m_LinePositions.Get (nIndex - 1);
       nItem -= JUMP_SIZE;
       }
     }   // end of having a positions array
@@ -2344,7 +2327,7 @@ BOOL bEnable = TRUE;
 void CMUSHclientDoc::ClearOutput (void)
   {
 
-  if (m_pLinePositions == NULL)
+  if (!m_LinePositions.IsAllocated ())
     return;
 
 POSITION pos;
@@ -2364,12 +2347,9 @@ POSITION pos;
   m_LineList.AddTail (m_pCurrentLine);
 //  m_strCurrentLine.Empty ();
 
-  // clear all elements in our positions array
+  // back to a single chunk pointing at the one line we just re-seeded
 
-  for (int i = 0; i <= m_maxlines / JUMP_SIZE; i++)
-    m_pLinePositions [i] = NULL;
-
-  m_pLinePositions [0] = m_LineList.GetHeadPosition ();
+  m_LinePositions.Reset (m_LineList.GetHeadPosition ());
 
   // previous find won't work now
 

@@ -252,7 +252,7 @@ POSITION pos;
    {
    // if this particular line was added to the line positions array, then make it null
     if (m_LineList.GetCount () % JUMP_SIZE == 1)
-          m_pLinePositions [m_LineList.GetCount () / JUMP_SIZE] = NULL;
+          m_LinePositions.Set (m_LineList.GetCount () / JUMP_SIZE, NULL);
 
     delete m_LineList.GetTail (); // delete contents of tail iten -- version 3.85
     m_LineList.RemoveTail ();   // get rid of the line
@@ -282,7 +282,7 @@ POSITION pos;
     pos = m_LineList.AddTail (m_pCurrentLine);
 
     if (m_LineList.GetCount () % JUMP_SIZE == 1)
-      m_pLinePositions [m_LineList.GetCount () / JUMP_SIZE] = pos;
+      m_LinePositions.Set (m_LineList.GetCount () / JUMP_SIZE, pos);
     }
 
 // notify view that we have "added" stuff (deleted, really)

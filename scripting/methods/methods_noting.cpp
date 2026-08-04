@@ -49,7 +49,7 @@ void CMUSHclientDoc::Tell(LPCTSTR Message)
   // if output buffer doesn't exist yet, remember note for later
   // or ... if this isn't a good time to be doing notes, like in a telnet
   // negotiation sequence callback
-  if (m_pCurrentLine == NULL || m_pLinePositions == NULL ||
+  if (m_pCurrentLine == NULL || !m_LinePositions.IsAllocated () ||
      (m_bNotesNotWantedNow && m_pCurrentLine->len != 0 && ((m_pCurrentLine->flags & NOTE_OR_COMMAND) == 0)))  // don't stick a note inside another line
     {
     COLORREF fore = m_iNoteColourFore, 
@@ -688,7 +688,7 @@ void CMUSHclientDoc::Hyperlink_Helper (LPCTSTR Action,
 
 {
   // return if attempt to do tell (or note) before output buffer exists
-  if (m_pCurrentLine == NULL || m_pLinePositions == NULL)
+  if (m_pCurrentLine == NULL || !m_LinePositions.IsAllocated ())
     return;
 
   // don't muck around if empty message

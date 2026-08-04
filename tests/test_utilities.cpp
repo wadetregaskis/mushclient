@@ -158,8 +158,8 @@ TEST(Utilities, EditDistance_CapsAt20)
     EXPECT_EQ(20, EditDistance(a, b));
 }
 
-// ── m_pLinePositions regression ──────────────────────────────────────────────
-// The shared ProcessPreviousLine omit-from-output branch writes m_pLinePositions
+// ── line-positions index regression ─────────────────────────────────────────
+// The shared ProcessPreviousLine omit-from-output branch writes the jump index
 // slots unguarded whenever the line count passes a JUMP_SIZE boundary during
 // tail deletion.  mushcore historically never allocated the array — a latent
 // NULL-deref.  StartNewLine now lazily allocates it (mirroring the deferred
@@ -185,7 +185,7 @@ TEST(Utilities, OmitFromOutputAcrossJumpBoundaryDoesNotCrash)
 
     // Exactly 100 fillers put the omitted line at in-list position 101, so the
     // omit branch's tail-deletion (and the fresh-line re-add) crosses the
-    // ≡1 (mod JUMP_SIZE=100) boundary, which writes an m_pLinePositions slot.
+    // ≡1 (mod JUMP_SIZE=100) boundary, which writes a jump-index chunk.
     // Unallocated → SIGSEGV; allocated → harmless.
     char buf[64];
     for (int i = 0; i < 100; i++) {
@@ -194,7 +194,7 @@ TEST(Utilities, OmitFromOutputAcrossJumpBoundaryDoesNotCrash)
     }
     doc.DisplayMsg("spamline\n", 9, 0);
 
-    EXPECT_TRUE(doc.m_pLinePositions != NULL);   // lazily allocated
+    EXPECT_TRUE(doc.m_LinePositions.IsAllocated());   // lazily allocated
     EXPECT_GT((long)doc.m_LineList.GetCount(), 0L);
 }
 
@@ -500,6 +500,49 @@ TEST(Utilities, AllocateLinePositionsTrimsListBeforeRebuildingIndex)
     ASSERT_EQ((unsigned short)VT_BSTR, v.vt);
     EXPECT_STREQ("line 350", (const char*)CString(v.bstrVal));
     VariantClear(&v);
+}
+
+// The eviction path, which is what DropFirstChunk replaced.  RemoveChunk drops
+// JUMP_SIZE lines off the head, so chunk 1 becomes chunk 0 and so on; the array
+// did that by copying every slot down one, the deque by popping its front.  A
+// renumbering error here would not crash — GetLinePosition would start from the
+// WRONG chunk head and walk forward, silently returning a line off by a
+// multiple of 100, which world.GetLineInfo and every Recall/Find would inherit.
+TEST(Utilities, LinePositionsSurviveRepeatedEviction)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_maxlines = 200;                 // evict early and often
+    doc.AllocateLinePositions();
+
+    char buf[32];
+    for (int i = 1; i <= 500; i++) {      // ~4 evictions
+        snprintf(buf, sizeof buf, "line %d\n", i);
+        doc.DisplayMsg(buf, (int)strlen(buf), 0);
+    }
+
+    const long count = (long) doc.m_LineList.GetCount();
+    ASSERT_TRUE(count <= 201);            // trimmed, plus the in-progress line
+    const long committed = count - 1;
+
+    // The head is whatever survived; read it, then check every line resolves to
+    // its own text — walking each in turn is what proves the chunk heads line
+    // up, since a stale head only shows on lines past the first chunk.
+    VARIANT v = doc.GetLineInfo(1, 1);
+    ASSERT_EQ((unsigned short)VT_BSTR, v.vt);
+    const CString firstText = CString(v.bstrVal);
+    VariantClear(&v);
+    long firstNum = 0;
+    ASSERT_EQ(1, sscanf((const char*)firstText, "line %ld", &firstNum));
+
+    for (long i = 1; i <= committed; ++i) {
+        v = doc.GetLineInfo(i, 1);
+        ASSERT_EQ((unsigned short)VT_BSTR, v.vt);
+        snprintf(buf, sizeof buf, "line %ld", firstNum + i - 1);
+        EXPECT_STREQ(buf, (const char*)CString(v.bstrVal));
+        VariantClear(&v);
+    }
+    EXPECT_EQ(500L, firstNum + committed - 1);   // ...and the last is the newest
 }
 
 // doc_portable.cpp GetLinePosition: "sanity check (Santa Claus): nLine >

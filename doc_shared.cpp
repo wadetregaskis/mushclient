@@ -2988,7 +2988,7 @@ CString strOriginalText;
 CString strLine (lpszText, size);
 
   // cannot go very far without this - must be called at world loadup from a plugin OnPluginInstall
-  if (m_pLinePositions == NULL)
+  if (!m_LinePositions.IsAllocated ())
     return;
 
   // decompressed data has a size, not a null terminator.
@@ -3715,7 +3715,7 @@ POSITION pos;
 // we want to place the line in the line positions array zero relative.
 
     if (m_LineList.GetCount () % JUMP_SIZE == 1)
-      m_pLinePositions [m_LineList.GetCount () / JUMP_SIZE] = pos;
+      m_LinePositions.Set (m_LineList.GetCount () / JUMP_SIZE, pos);
 
     }   // end of try block
 
@@ -3882,12 +3882,14 @@ CStyle * pNewStyle = NEWSTYLE;
   m_gui_lines_emitted = std::max (0L, m_gui_lines_emitted - JUMP_SIZE);
 #endif
 
-// shuffle positions backwards
+// chunk 1 becomes chunk 0, and so on
+//
+// This was a shuffle of every slot in the array — O(m_maxlines / JUMP_SIZE) per
+// eviction, i.e. 5,000 pointer copies at a 500,000-line cap, paid every time
+// the buffer wrapped.  Dropping the deque's front does the same renumbering in
+// constant time.
 
-  for (i = 0; i < (m_maxlines / JUMP_SIZE); i++)
-    m_pLinePositions [i] = m_pLinePositions [i + 1];
-
-  m_pLinePositions [i] = NULL;    // last one is now empty
+  m_LinePositions.DropFirstChunk ();
 
 // our "last found" line needs adjusting
 

@@ -611,11 +611,11 @@ void CMUSHclientDoc::DeleteLines (long Count)
     m_LineList.RemoveAt (pos);
     delete pLine;
     }
-  // Invalidate index slots beyond the shrunken count and clamp the drain
+  // Invalidate index chunks beyond the shrunken count and clamp the drain
   // cursor so already-emitted accounting can't point past the list.
   long count = m_LineList.GetCount ();
-  for (long s = (count / JUMP_SIZE) + 1; s <= m_maxlines / JUMP_SIZE; ++s)
-    m_pLinePositions [s] = NULL;
+  for (long s = m_LinePositions.ChunkCount () - 1; s > count / JUMP_SIZE; --s)
+    m_LinePositions.Set (s, NULL);
   if (m_gui_lines_emitted > count - 1)
     m_gui_lines_emitted = (count > 0) ? count - 1 : 0;
   }   // end of CMUSHclientDoc::DeleteLines

@@ -641,6 +641,66 @@ static unsigned short start_garbage_server(std::thread& out)
     return ntohs(sa.sin_port);
 }
 
+// TLS server that keeps a TRANSCRIPT of everything it decrypts: greet, then
+// loop read -> record -> echo "ECHO:<plaintext>" until the client closes.
+// start_tls_echo_server above reads exactly ONCE and only its ECHO is asserted,
+// which is why the erase in flushSend's SSL arm (posix_transport.cpp:387) is
+// executed-but-unasserted today.  `transcript` is touched ONLY by this thread
+// and read ONLY after join(), so the assertion needs no lock and no timing
+// tolerance.
+static unsigned short start_tls_transcript_server(std::thread& out,
+                                                  std::string* transcript)
+{
+    sockaddr_in sa;
+    int srv = make_loopback_listener(sa);
+    out = std::thread([srv, transcript]() {
+        EVP_PKEY* pkey = nullptr; X509* x = nullptr;
+        SSL_CTX* ctx = make_tls_server_ctx(pkey, x);
+        int c = ::accept(srv, nullptr, nullptr);
+        if (c >= 0) {
+            SSL* ssl = SSL_new(ctx);
+            SSL_set_fd(ssl, c);
+            if (SSL_accept(ssl) == 1) {
+                SSL_write(ssl, "TLSHELLO", 8);
+                // Blocking socket (accept(2) of a blocking listener), so this
+                // loop ends the instant the client sends close_notify/FIN --
+                // the test's `delete t` -- and join() can never hang.  512 is
+                // larger than any record the client produces here, so one read
+                // returns one whole payload.
+                char buf[512];
+                for (;;) {
+                    int n = SSL_read(ssl, buf, (int)sizeof buf);
+                    if (n <= 0) break;
+                    transcript->append(buf, (size_t)n);
+                    std::string reply = "ECHO:" + std::string(buf, (size_t)n);
+                    SSL_write(ssl, reply.data(), (int)reply.size());
+                }
+                SSL_shutdown(ssl);
+            }
+            SSL_free(ssl);
+            ::close(c);
+        }
+        SSL_CTX_free(ctx); X509_free(x); EVP_PKEY_free(pkey);
+        ::close(srv);
+    });
+    return ntohs(sa.sin_port);
+}
+
+// ── test: add after TlsEncryptedSendRoundTrips (line 675) and before the
+// `#endif // OPENSSL_VERSION_TEXT` at line 676 ──────────────────────────────
+
+// flushSend's SSL arm must consume exactly what SSL_write reported
+// (posix_transport.cpp:386-387).  TlsEncryptedSendRoundTrips above proves the
+// arm ENCRYPTS but cannot see the erase: delete it and the plaintext stays in
+// m_outgoing, every later writable tick re-flushes it (posix_transport.cpp:
+// 316-318 -> flushSend), the server echoes the duplicate too, and
+// "ECHO:PINGTLS" is still found -- i.e. that test passes on a transport that
+// sends the user's command over and over.  So assert the server's WHOLE
+// decrypted transcript instead: both payloads, once each, in order.
+// (No SSL_MODE_ENABLE_PARTIAL_WRITE is set anywhere, so SSL_write is
+// all-or-nothing and `count` is the full length -- this pins that the erase
+// happens with the right count, not a partial write, which cannot occur.)
+
 } // namespace
 
 // (1) encrypted send: plaintext handed to send() is SSL_write-encrypted, the
@@ -673,6 +733,110 @@ TEST(PalTransport, TlsEncryptedSendRoundTrips)
     delete t;
     server.join();
 }
+// A send() issued while the handshake is still in flight must be BUFFERED and
+// then released ENCRYPTED: posix_transport.cpp:193-194 suppresses the flush
+// while m_tlsHandshaking, and stepTls's success arm releases it
+// (posix_transport.cpp:443).  Line 443 itself already executes in every TLS
+// test -- but only ever with an EMPTY m_outgoing, so it has never been more
+// than a no-op; nothing in the suite sends during a handshake.
+// The defect this catches is the guard's: without it flushSend falls straight
+// through to the PLAINTEXT arm (posix_transport.cpp:402 -- m_tlsUp is still
+// false), injecting the user's command in the clear between the ClientHello
+// and the client Finished.
+TEST(PalTransport, TlsSendDuringHandshakeIsBufferedThenEncrypted)
+{
+    std::string transcript;
+    std::thread server;
+    unsigned short port = start_tls_transcript_server(server, &transcript);
+
+    TlsRecorder ev;
+    pal::ITransport* t = pal::CreatePosixTransport(ev);
+    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
+
+    pal::TlsParams params;
+    params.serverName = "localhost";
+    params.allowInvalidCert = true;
+    t->startTls(params);
+
+    // PREMISE PIN -- without this the test can silently stop testing anything.
+    // startTls can get no further than writing the ClientHello: the fd is
+    // O_NONBLOCK (posix_socket.h:127) and the server's flight cannot already be
+    // in the buffer, because the ClientHello that provokes it is written BY the
+    // SSL_do_handshake inside this very call -- so SSL_do_handshake must return
+    // WANT_READ (posix_transport.cpp:448-449) and m_tlsHandshaking is still true
+    // when send() lands below.  If some future change ever let the handshake
+    // complete inside startTls, send() would take the ordinary post-handshake
+    // path and EVERY assertion below would still pass while covering nothing.
+    // Assert the premise rather than reasoning about it in a comment.
+    EXPECT_FALSE(ev.tlsEstablished);
+    EXPECT_FALSE(ev.tlsFailed);
+
+    t->send("PINGTLS\n", 8);
+
+    EXPECT_TRUE(pump_until([&]{ return ev.tlsEstablished || ev.tlsFailed; }));
+    EXPECT_TRUE(ev.tlsEstablished);
+    // Deliberately EXPECT, not ASSERT, everywhere between the thread spawn and
+    // join(): an early return with a joinable std::thread is std::terminate,
+    // which kills the whole binary instead of failing one test.
+    EXPECT_TRUE(pump_until([&]{
+        return ev.bytes.find("ECHO:PINGTLS") != std::string::npos;
+    }));
+
+    delete t;
+    server.join();
+    // Decrypted, exactly once, nothing else.  Cleartext injected mid-handshake
+    // makes the server's SSL_accept fail on an unparseable record, so it never
+    // reads a byte and this stays empty -- two independent failures with
+    // ev.tlsEstablished above.
+    EXPECT_STREQ("PINGTLS\n", transcript.c_str());
+}
+
+TEST(PalTransport, TlsEncryptedSendConsumesTheBufferExactlyOnce)
+{
+    std::string transcript;                 // server thread writes it; we read
+    std::thread server;                     // it only after join()
+    unsigned short port = start_tls_transcript_server(server, &transcript);
+
+    TlsRecorder ev;
+    pal::ITransport* t = pal::CreatePosixTransport(ev);
+    t->connect(htonl(INADDR_LOOPBACK), port, pal::TransportOptions{ false });
+    EXPECT_TRUE(pump_until([&]{ return ev.connects > 0; }));
+
+    pal::TlsParams params;
+    params.serverName = "localhost";
+    params.allowInvalidCert = true;         // self-signed: consent to proceed
+    t->startTls(params);
+    EXPECT_TRUE(pump_until([&]{ return ev.tlsEstablished || ev.tlsFailed; }));
+    EXPECT_TRUE(ev.tlsEstablished);
+    // Deliberately EXPECT, not ASSERT: from here to join() an early return
+    // would destroy a joinable std::thread == std::terminate, taking the whole
+    // binary down instead of failing one test.
+
+    // Two sends with a pump pass in between: a retained buffer duplicates the
+    // first payload into the second write, where the transcript shows it.  The
+    // wait on the first ECHO is what orders them -- the server has already
+    // consumed PINGTLS before BYE is written, so one SSL_read == one payload.
+    t->send("PINGTLS\n", 8);
+    EXPECT_TRUE(pump_until([&]{
+        return ev.bytes.find("ECHO:PINGTLS") != std::string::npos;
+    }));
+    t->send("BYE\n", 4);
+    EXPECT_TRUE(pump_until([&]{
+        return ev.bytes.find("ECHO:BYE") != std::string::npos;
+    }));
+
+    delete t;                               // close_notify ends the server loop
+    server.join();
+
+    // Exact -- and it proves the absence of a duplicate without any timeout:
+    // whatever the transport wrote before the BYE record is ahead of it in the
+    // ordered TLS stream, and join() means the server has finished reading.  An
+    // empty transcript would mean the bytes went out in the CLEAR (the record
+    // layer would have rejected them), so this pins encryption too.
+    EXPECT_STREQ("PINGTLS\nBYE\n", transcript.c_str());
+}
+
 #endif // OPENSSL_VERSION_TEXT
 
 

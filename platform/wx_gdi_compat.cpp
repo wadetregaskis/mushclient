@@ -1625,6 +1625,79 @@ bool wxgdi_read_bgra(CDC* dc, int x, int y, int w, int h,
     return true;
 }
 
+// The write counterpart of wxgdi_read_bgra, and needed for the same reason: the
+// BitBlt round-trip in WxSurface::writePixels goes through an UNSCALED 1x DIB,
+// so on a HiDPI canvas blitting back SCALES the buffer up and interpolates it --
+// a read-modify-write that read exactly still wrote a softened result.  Here
+// each LOGICAL pixel is replicated across the scale x scale physical block it
+// owns, the exact inverse of the read's top-left sampling, so the round-trip is
+// lossless.  Scale is 1 on a non-Retina display, where this reduces to a plain
+// per-pixel copy.
+bool wxgdi_write_bgra(CDC* dc, int x, int y, int w, int h,
+                      const unsigned char* src, int strideBytes, bool hasAlpha)
+{
+    if (!dc || !src || w <= 0 || h <= 0) return false;
+
+    if (dc->m_hDC) {
+        if (DIBSectionData* dib = GetDIBForHDC(dc->m_hDC)) {
+            const int bpp = dib->bytesPerPixel;
+            for (int j = 0; j < h; ++j) {
+                const int dy = y + j;
+                if (dy < 0 || dy >= dib->height) continue;
+                const int drow = dib->bottomUp ? (dib->height - 1 - dy) : dy;
+                unsigned char* out = dib->pixels.data() + (size_t)drow * dib->stride;
+                const unsigned char* in = src + (size_t)(h - 1 - j) * strideBytes;
+                for (int i = 0; i < w; ++i) {
+                    const int dx = x + i;
+                    if (dx < 0 || dx >= dib->width) continue;
+                    unsigned char* px = out + (size_t)dx * bpp;
+                    const unsigned char* s4 = in + (size_t)i * 4;
+                    px[0] = s4[0]; px[1] = s4[1]; px[2] = s4[2];
+                    if (bpp == 4) px[3] = hasAlpha ? s4[3] : 255;
+                }
+            }
+            return true;
+        }
+    }
+
+    CDCImpl* p = Impl(dc);
+    if (!p) return false;
+    wxBitmap bmp = p->dc.GetSelectedBitmap();
+    if (!bmp.IsOk()) return false;
+
+    const double sc  = bmp.GetScaleFactor();
+    const int    isc = (sc > 0) ? (int)(sc + 0.5) : 1;
+
+    wxImage img = bmp.ConvertToImage();
+    if (!img.IsOk()) return false;
+    if (hasAlpha && !img.HasAlpha()) img.InitAlpha();
+    const int bw = img.GetWidth(), bh = img.GetHeight();
+
+    for (int j = 0; j < h; ++j) {
+        const unsigned char* in = src + (size_t)(h - 1 - j) * strideBytes;
+        for (int i = 0; i < w; ++i) {
+            const unsigned char* s4 = in + (size_t)i * 4;
+            for (int by = 0; by < isc; ++by) {
+                const int py = (y + j) * isc + by;
+                if (py < 0 || py >= bh) continue;
+                for (int bx = 0; bx < isc; ++bx) {
+                    const int px = (x + i) * isc + bx;
+                    if (px < 0 || px >= bw) continue;
+                    img.SetRGB(px, py, s4[2], s4[1], s4[0]);
+                    if (hasAlpha && img.HasAlpha()) img.SetAlpha(px, py, s4[3]);
+                }
+            }
+        }
+    }
+
+    wxBitmap updated(img, 32);
+    updated.SetScaleFactor(sc);
+    p->dc.SelectObject(wxNullBitmap);
+    p->dc.SelectObject(updated);
+    return true;
+}
+
+
 bool CDC::PatBlt(int x, int y, int nWidth, int nHeight, DWORD dwRop) {
     CDCImpl* p = Impl(this);
     if (!p) return false;

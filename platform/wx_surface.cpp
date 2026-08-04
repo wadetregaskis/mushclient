@@ -33,6 +33,8 @@ wxFontEncoding WinCharsetToEncoding(int cs);
 // composites on wxOSX). Defined in wx_gdi_compat.cpp; see the note there.
 bool wxgdi_read_bgra(CDC* dc, int x, int y, int w, int h,
                      unsigned char* dst, int strideBytes);
+bool wxgdi_write_bgra(CDC* dc, int x, int y, int w, int h,
+                      const unsigned char* src, int strideBytes, bool hasAlpha);
 
 namespace pal {
 
@@ -224,6 +226,34 @@ void WxSurface::writePixels(SurfaceId id, Rect r, const PixelBuffer& in) {
                                r.h < in.size.h ? r.h : in.size.h };
     if (!clipToBounds(clipped, s->size)) return;
 
+    // Write through the backing bitmap directly, the exact inverse of the read
+    // path above.  The temp-DIB BitBlt below targets an UNSCALED 1x bitmap, so
+    // on a HiDPI canvas blitting it back SCALES it up and interpolates: a
+    // read-modify-write that now reads exactly would still have written a
+    // softened result.  wxgdi_write_bgra replicates each logical pixel across
+    // the scale x scale physical block it owns, so the round-trip is lossless.
+    {
+        const int srcBpp = in.bytesPerPixel();
+        const int stride4 = clipped.w * 4;
+        std::vector<unsigned char> rgba((size_t)stride4 * clipped.h, 0);
+        for (int y = 0; y < clipped.h; ++y) {
+            // in.row() is top-down over the logical buffer; wxgdi_write_bgra
+            // wants bottom-up rows, matching wxgdi_read_bgra's output.
+            const unsigned char* srow = in.row(y + (clipped.y - r.y))
+                                      + (size_t)(clipped.x - r.x) * srcBpp;
+            unsigned char* drow = rgba.data() + (size_t)(clipped.h - 1 - y) * stride4;
+            for (int x = 0; x < clipped.w; ++x, srow += srcBpp, drow += 4) {
+                drow[0] = srow[0]; drow[1] = srow[1]; drow[2] = srow[2];
+                drow[3] = (srcBpp == 4) ? srow[3] : 0xFF;
+            }
+        }
+        if (wxgdi_write_bgra(s->dc, clipped.x, clipped.y, clipped.w, clipped.h,
+                             rgba.data(), stride4,
+                             in.format == PixelFormat::BGRA32_Alpha))
+            return;
+        // else fall through to the legacy BitBlt path
+    }
+
     const int bpp = (in.format == PixelFormat::BGR24) ? 24 : 32;
     BITMAPINFO bmi;
     memset(&bmi, 0, sizeof bmi);
@@ -256,6 +286,7 @@ void WxSurface::writePixels(SurfaceId id, Rect r, const PixelBuffer& in) {
                   &tmp, clipped.x - r.x, clipped.y - r.y, SRCCOPY);
     SelectObject(tmp.m_hDC, hOld);
     DeleteObject(hbm);
+    (void) dibStride;
 }
 
 Colour WxSurface::getPixel(SurfaceId id, Point p) {

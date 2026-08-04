@@ -661,12 +661,13 @@ been routed around this and its comment explained why; every other BGR24 caller
 now go through the same direct backing-bitmap path the alpha format uses and
 drop the alpha channel.
 
-**Still outstanding — the WRITE half.** `writePixels` blits a 1x DIB back onto
-the 2x canvas, which scales it up. So a read-modify-write is now exact on the
-way in and still interpolated on the way out. Fixing it needs a
-`wxgdi_write_bgra` counterpart that writes the backing bitmap directly,
-replicating each logical pixel across the scale x scale block. Worth doing
-before anyone trusts `WindowFilter` output pixel-for-pixel.
+**The WRITE half is done too** (same day): `wxgdi_write_bgra` writes the backing
+bitmap directly, replicating each logical pixel across the scale x scale
+physical block — the exact inverse of the read's top-left sampling, so the
+round-trip is lossless. Pinned by a miniwindow-selftest case that paints
+alternating 1px columns of different colours, runs `WindowFilter` with an
+identity brightness, and asserts both columns come back byte-identical; it fails
+when either half falls back to the BitBlt path.
 
 ### 4d. Everything else (smoke)
 

@@ -276,6 +276,37 @@ int RunPalMiniWindowSelfTest()
                 "restore the background after the DrawEdge probe");
     }
 
+    // ── read-modify-write is lossless on a HiDPI canvas ───────────────────
+    // WindowFilter reads the region, edits the bytes and writes them back.
+    // Both halves used to go through an UNSCALED 1x DIB, so on a Retina canvas
+    // the read averaged each 2x2 physical block down and the write scaled the
+    // result back up -- adjacent single-pixel columns of different colours
+    // bled into each other.  Operation 7 is additive brightness, so an amount
+    // of 0 is an identity: whatever comes out must be exactly what went in.
+    {
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlack, 0) == eOK,
+                "clear before the filter round-trip");
+        // Alternating 1px columns: the worst case for any resampling.
+        for (long x = 10; x < 20; ++x)
+            doc->WindowRectOp(W, 2, x, 10, x + 1, 20,
+                              (x % 2) ? kRed : kGreen, 0);
+        const long before11 = doc->WindowGetPixel(W, 11, 15);
+        const long before12 = doc->WindowGetPixel(W, 12, 15);
+        mwCheck(before11 != before12,
+                "adjacent 1px columns really are different colours to start");
+
+        mwCheck(doc->WindowFilter(W, 8, 8, 24, 24, 7 /*brightness*/, 0.0) == eOK,
+                "WindowFilter (identity brightness) succeeds");
+
+        mwCheck(doc->WindowGetPixel(W, 11, 15) == before11,
+                "a read-modify-write leaves an exact colour exactly alone");
+        mwCheck(doc->WindowGetPixel(W, 12, 15) == before12,
+                "...and does not bleed its neighbour into it");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the filter probe");
+    }
+
     // ── CreateImage (8x8 mono) + ImageOp pattern fill ──────────────────────
     // all-ones rows = a solid 8x8 pattern; 1-bits draw in PenColour for
     // ImageOp action 3 (pattern fill uses the image as a brush)

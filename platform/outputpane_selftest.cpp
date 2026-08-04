@@ -443,6 +443,39 @@ void TestTextRectangleOffsetForm()
               "an over-large offset is floored at 20 pixels wide");
 }
 
+// ── 6. Leaving the pane cancels a hotspot mouse-over ────────────────────────
+// CMUSHView::WindowProc handles WM_MOUSELEAVE by feeding the miniwindow layer a
+// move to (-1,-1) (mushview.cpp:6785), which miniwindow_compose.cpp:680 turns
+// into CancelMouseOver for whatever hotspot was lit.  Without it a hovered
+// button stays highlighted forever once the pointer leaves the pane — straight
+// down onto the command bar is enough — and the plugin's internal "currently
+// hovered" state stays set until the pointer comes back and lands somewhere
+// else.  Nearly every WindowAddHotspot user passes a CancelMouseOver.
+void TestLeaveWindowCancelsMouseOver()
+{
+    printf("leaving the pane cancels the hotspot mouse-over (mushview.cpp:6785)\n");
+
+    Harness h;
+    h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+
+    int  calls = 0, lastX = -99, lastY = -99;
+    h.pane->m_fn_miniwindow_mouse_move = [&](int x, int y) -> bool {
+        ++calls; lastX = x; lastY = y;
+        return false;                    // not handled: fall through as usual
+    };
+
+    // A real move first, so "the handler is never called at all" cannot pass
+    // the leave check by accident.
+    SendMouse(h.pane, wxEVT_MOTION, 40, 8);
+    opCheckEq(calls, 1, "a move over the pane reaches the miniwindow layer");
+    opCheck(lastX == 40 && lastY == 8, "...with the real pointer position");
+
+    SendMouse(h.pane, wxEVT_LEAVE_WINDOW, 40, 500);
+    opCheckEq(calls, 2, "leaving the pane reaches it again");
+    opCheck(lastX == -1 && lastY == -1,
+            "...as the out-of-bounds point Windows sends (-1,-1)");
+}
+
 } // namespace
 
 int RunOutputPaneSelfTest()
@@ -454,6 +487,7 @@ int RunOutputPaneSelfTest()
     TestClearOutputDropsPendingLine();
     TestKeepPauseAtBottom();
     TestTextRectangleOffsetForm();
+    TestLeaveWindowCancelsMouseOver();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

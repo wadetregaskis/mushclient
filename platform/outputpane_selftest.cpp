@@ -637,6 +637,72 @@ void TestReleaseDoesNotMaterialiseUnlessAsked()
     (ok ? g_pass : g_fail)++;
 }
 
+// ── 9. Search highlighting finds the same ranges on both paths ────────────
+//
+// The highlight scan runs for every VISIBLE line on every paint while a search
+// term is set.  It used to decode the line into a wxString, allocate a second
+// from .Lower(), then convert both the line and the term to std::wstring --
+// four allocations per line per paint, at ~10 paints a second while scrolling.
+//
+// It now works on the runs' raw UTF-8 bytes in a reused buffer, but ONLY when
+// byte offsets equal character offsets: an all-ASCII, UTF-8 line.  Anything
+// else takes the original decode path.  Both must agree, because the offsets
+// drive where the highlight rectangle is drawn -- a byte offset used as a
+// character offset would draw the box in the wrong place on non-ASCII lines.
+//
+// The pane has no public "give me the hit ranges" entry point, so this drives
+// the real paint into a bitmap and asserts that the highlight lands on the
+// glyphs it should: at the same COLUMN for an ASCII line and a line whose match
+// sits after a multi-byte character.
+void TestSearchHighlightOffsets()
+{
+    printf("search highlighting agrees on ASCII and non-ASCII lines\n");
+
+    Harness h;
+    h.pane->AppendLine(MakeLine("xxNEEDLE"));            // ASCII: fast path
+    h.pane->AppendLine(MakeLine("\xc3\xa9xNEEDLE"));     // e-acute + 'x' + term
+    h.pane->HighlightSearch("NEEDLE", true);
+
+    std::vector<COutputPane::HighlightHit> hits;
+
+    h.pane->HighlightHitsForLine(0, hits);
+    opCheckEq((int) hits.size(), 1, "ASCII line: one hit");
+    if (hits.size() == 1) {
+        opCheckEq(hits[0].start, 2, "...starting at CHARACTER 2");
+        opCheckEq(hits[0].end,   8, "...ending at character 8");
+    }
+
+    // The load-bearing case.  "e-acute" is TWO bytes, so the term starts at
+    // byte 3 but CHARACTER 2.  The offsets drive where the highlight rectangle
+    // is drawn, so a byte offset leaking out here paints the box one column
+    // right of the text it is supposed to mark.
+    h.pane->HighlightHitsForLine(1, hits);
+    opCheckEq((int) hits.size(), 1, "non-ASCII line: one hit");
+    if (hits.size() == 1) {
+        opCheckEq(hits[0].start, 2, "...starting at CHARACTER 2, not byte 3");
+        opCheckEq(hits[0].end,   8, "...ending at character 8, not byte 9");
+    }
+
+    // Case folding still applies on both paths.
+    h.pane->HighlightSearch("needle", false);
+    h.pane->HighlightHitsForLine(0, hits);
+    opCheckEq((int) hits.size(), 1, "case-insensitive matches on the ASCII path");
+    h.pane->HighlightHitsForLine(1, hits);
+    opCheckEq((int) hits.size(), 1, "...and on the decode path");
+
+    // ...and case-SENSITIVE really is sensitive, so a fold applied
+    // unconditionally would be caught.
+    h.pane->HighlightSearch("needle", true);
+    h.pane->HighlightHitsForLine(0, hits);
+    opCheckEq((int) hits.size(), 0, "case-sensitive lower-case term matches nothing");
+
+    // Two occurrences on one line, so a scan that stopped at the first fails.
+    h.pane->AppendLine(MakeLine("NEEDLE and NEEDLE"));
+    h.pane->HighlightSearch("NEEDLE", true);
+    h.pane->HighlightHitsForLine(2, hits);
+    opCheckEq((int) hits.size(), 2, "both occurrences on a line are marked");
+}
+
 } // namespace
 
 int RunOutputPaneSelfTest()
@@ -651,6 +717,7 @@ int RunOutputPaneSelfTest()
     TestLeaveWindowCancelsMouseOver();
     TestFindNext();
     TestReleaseDoesNotMaterialiseUnlessAsked();
+    TestSearchHighlightOffsets();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

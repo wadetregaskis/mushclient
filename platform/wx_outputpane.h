@@ -113,6 +113,15 @@ public:
     // to build a modified font to pass back into SetOutputFont).
     const wxFont& GetCurrentFont() const { return m_font; }
 
+    // Character ranges of the current search term within one line, as the paint
+    // path computes them.  Public so the in-app selftest can pin the two paths
+    // against each other: the fast one works on raw UTF-8 bytes and is only
+    // valid where byte offsets equal character offsets, and these offsets drive
+    // where the highlight rectangle is drawn -- so a byte offset leaking out on
+    // a non-ASCII line puts the box on the wrong characters.
+    struct HighlightHit { int start, end; };
+    void HighlightHitsForLine(int lineIdx, std::vector<HighlightHit>& out);
+
     // Re-resolve every buffered run's colours against a new palette, in place.
     //
     // The alternative is what the port used to do: have the engine re-emit the
@@ -634,6 +643,11 @@ private:
     int m_lastBookmarkLine = -1;
 
     wxString m_searchTerm;
+    // The term already case-folded, so the paint path does not refold it per
+    // line, and a scratch buffer reused across lines so the highlight scan
+    // allocates nothing per line.  Both maintained by HighlightSearch.
+    wxString    m_searchTermLower;
+    std::string m_hlScratch;
     bool     m_searchCaseSensitive = false;
 
     unsigned long m_bgColor  = 0;   // COLORREF

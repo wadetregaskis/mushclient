@@ -1293,29 +1293,26 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
 
     // ── Search term: left-margin marker + in-line text highlight ─────────────
     if (!m_searchTerm.IsEmpty()) {
-        // Build plain text for the whole line.
-        wxString plain;
-        for (const auto& run : line)
-            if (!run.horiz_rule)
-                plain += DecodeRunText(run);
-
-        // Apply case folding to both the line text and the search term unless
-        // we're in case-sensitive mode.
-        wxString cmpPlain = m_searchCaseSensitive ? plain         : plain.Lower();
-        wxString cmpTerm  = m_searchCaseSensitive ? m_searchTerm  : m_searchTerm.Lower();
-        int termLen = (int)cmpTerm.size();
-
+        // This runs for EVERY visible line on EVERY paint while a search term is
+        // set.  It used to decode the whole line into a wxString, allocate a
+        // second one from .Lower(), then convert BOTH the line and the term to
+        // std::wstring -- four allocations per line per paint, at ~10 paints a
+        // second while smooth-scrolling.
+        //
+        // The fast path works on the runs' raw UTF-8 bytes in a reused member
+        // buffer.  Byte offsets equal character offsets only for ASCII, so it is
+        // taken only when the whole line is ASCII and UTF-8 -- the same
+        // equivalence test LineContains uses -- and anything else falls back to
+        // the original decode path unchanged.
+        // The scan itself is HighlightHitsForLine (below) so the selftest can
+        // drive it directly -- its output is only consumed inside this paint
+        // handler otherwise, which a headless test cannot reach.
+        std::vector<HighlightHit> hitv;
+        HighlightHitsForLine(lineIdx, hitv);
         struct HitRange { int start, end; };
         std::vector<HitRange> hits;
-        if (termLen > 0) {
-            std::wstring pw = cmpPlain.ToStdWstring();
-            std::wstring tw = cmpTerm.ToStdWstring();
-            size_t p = 0;
-            while ((p = pw.find(tw, p)) != std::wstring::npos) {
-                hits.push_back({(int)p, (int)(p + tw.size())});
-                ++p;
-            }
-        }
+        hits.reserve(hitv.size());
+        for (const HighlightHit& hh : hitv) hits.push_back({hh.start, hh.end});
 
         if (!hits.empty()) {
             // Left-margin bar: 3-pixel yellow stripe on each visual row of this
@@ -3032,10 +3029,67 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
     return true;
 }
 
+// ── HighlightHitsForLine ──────────────────────────────────────────────────
+// See the header.  Character ranges of the current search term in line
+// `lineIdx`, using the raw-bytes path where that is exactly equivalent.
+void COutputPane::HighlightHitsForLine(int lineIdx, std::vector<HighlightHit>& out)
+{
+    out.clear();
+    if (m_searchTerm.IsEmpty()) return;
+    if (lineIdx < 0 || lineIdx >= (int)m_lines.size()) return;
+    const SOutputLine& line = m_lines[(size_t)lineIdx];
+
+
+    bool fastable = true;
+    m_hlScratch.clear();
+    for (const auto& run : line) {
+        if (run.horiz_rule) continue;
+        if (!run.utf8) { fastable = false; break; }
+        m_hlScratch += run.text;
+    }
+    if (fastable)
+        for (unsigned char c : m_hlScratch)
+            if (c >= 0x80) { fastable = false; break; }
+
+    if (fastable) {
+        const wxScopedCharBuffer tb = m_searchTermLower.utf8_str();
+        const std::string term(tb.data(), tb.length());
+        if (!term.empty()) {
+            if (!m_searchCaseSensitive)
+                for (char& c : m_hlScratch)
+                    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+            size_t p = 0;
+            while ((p = m_hlScratch.find(term, p)) != std::string::npos) {
+                out.push_back({(int)p, (int)(p + term.size())});
+                ++p;
+            }
+        }
+    } else {
+        wxString plain;
+        for (const auto& run : line)
+            if (!run.horiz_rule)
+                plain += DecodeRunText(run);
+
+        wxString cmpPlain = m_searchCaseSensitive ? plain : plain.Lower();
+        const wxString& cmpTerm = m_searchTermLower;
+        if (!cmpTerm.empty()) {
+            std::wstring pw = cmpPlain.ToStdWstring();
+            std::wstring tw = cmpTerm.ToStdWstring();
+            size_t p = 0;
+            while ((p = pw.find(tw, p)) != std::wstring::npos) {
+                out.push_back({(int)p, (int)(p + tw.size())});
+                ++p;
+            }
+        }
+    }
+}
+
 void COutputPane::HighlightSearch(const wxString& term, bool caseSensitive)
 {
     m_searchTerm          = term;
     m_searchCaseSensitive = caseSensitive;
+    // Fold the term ONCE here rather than on every line of every paint.
+    m_searchTermLower     = caseSensitive ? term : term.Lower();
     Refresh(false);
 }
 

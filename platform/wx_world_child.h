@@ -94,6 +94,7 @@ public:
     // migrate off the remaining m_fn_* callbacks.  Definitions: wx_world_child.cpp.
     void        appendLine(SOutputLine&& line) override;
     void        note(const char* text) override;
+    void        setBookmark(long lineIndex, bool set) override;
     void        setTitle(const char* title) override;
     void        setStatus(const char* text) override;
     void        setBackgroundColour(pal::Colour c) override;

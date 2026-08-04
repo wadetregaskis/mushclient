@@ -120,6 +120,15 @@ if(TARGET mushgui)
              COMMAND $<TARGET_FILE:mushgui> --pal-transport-selftest)
     add_test(NAME selftest_pal_miniwindow
              COMMAND $<TARGET_FILE:mushgui> --pal-miniwindow-selftest)
+    # The world window adapter (CWorldChildFrame = the wx pal::IWorldView):
+    # bookmarks, window geometry, the title, and the active-world state, all of
+    # which are GUI-side and so unreachable from the headless executables.
+    # -ApplePersistenceIgnoreState keeps AppKit from putting up its modal
+    # "reopen windows?" alert (which it does for a bundle with crash history)
+    # and would hang the run; it also keeps saved state out of the user's home.
+    add_test(NAME selftest_world_frame
+             COMMAND $<TARGET_FILE:mushgui> --world-frame-selftest
+                     -ApplePersistenceIgnoreState YES)
     # The six scripting languages: the only place five of them can be exercised,
     # since their interpreters are linked into the app and deliberately kept out
     # of mushcore.  One ctest entry per language, so a build without (say) Ruby
@@ -135,6 +144,6 @@ if(TARGET mushgui)
     # RUN_SERIAL: each boots a real wx app instance; two at once race on the
     # window server (an occasional single-selftest flake under `ctest -j`).
     set_tests_properties(selftest_pal_surface selftest_pal_transport
-                         selftest_pal_miniwindow
+                         selftest_pal_miniwindow selftest_world_frame
                          PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 endif()

@@ -2503,4 +2503,64 @@ TEST(SmallArmsR5, NewActivitySoundRequested)
     delete doc;
 }
 
+// ── unread lines / "is this world's window active?" ───────────────────────
+//
+// StartNewLine (doc_shared.cpp) counts a line as unread only while the world's
+// window is NOT the active one.  Windows answers that with the two CView
+// pointers its views maintain; the port never constructs those views, so the
+// test was permanently "inactive" there: every line of every world — including
+// the one being read — counted as unread, and nothing ever reset the counter.
+// Both frontends now drive the same predicate (IsWorldViewActive), which the
+// wx frame sets from its activate/deactivate handling.
+TEST(UnreadLines, CounterFollowsWorldWindowActivation)
+{
+    CMUSHclientDoc* doc = make_doc();
+    char line[] = "something happened\r\n";
+
+    // A doc whose window has not been activated is a background world.
+    EXPECT_FALSE(doc->IsWorldViewActive());
+    doc->m_new_lines = 0;
+    doc->OnBytesReceived(line, (int)sizeof line - 1);
+    const long unreadWhileHidden = doc->m_new_lines;
+    EXPECT_TRUE(unreadWhileHidden > 0);
+
+    // Bringing the window to the front marks them read…
+    doc->SetWorldViewActive(true);
+    EXPECT_TRUE(doc->IsWorldViewActive());
+    EXPECT_EQ(0L, doc->m_new_lines);
+
+    // …and output arriving in the world you are looking at is never "unread".
+    doc->OnBytesReceived(line, (int)sizeof line - 1);
+    EXPECT_EQ(0L, doc->m_new_lines);
+
+    // Switching away starts the count again.
+    doc->SetWorldViewActive(false);
+    EXPECT_FALSE(doc->IsWorldViewActive());
+    doc->OnBytesReceived(line, (int)sizeof line - 1);
+    EXPECT_TRUE(doc->m_new_lines > 0);
+
+    delete doc;
+}
+
+// GetInfo(113) is "is this world's window the active one?" (the same predicate),
+// and GetInfo(202) is the unread-line count.  113 used to answer "the world is
+// connected" on the port — a different question, and one 106/107 already answer.
+TEST(UnreadLines, GetInfoReportsActivationAndUnreadCount)
+{
+    CMUSHclientDoc* doc = make_doc();
+    char line[] = "something happened\r\n";
+
+    doc->m_new_lines = 0;
+    EXPECT_FALSE(doc->GetInfo(113).boolVal != 0);   // connected, but not active
+    doc->OnBytesReceived(line, (int)sizeof line - 1);
+    EXPECT_EQ(doc->m_new_lines, doc->GetInfo(202).lVal);
+    EXPECT_TRUE(doc->GetInfo(202).lVal > 0);
+
+    doc->SetWorldViewActive(true);
+    EXPECT_TRUE(doc->GetInfo(113).boolVal != 0);
+    EXPECT_EQ(0L, doc->GetInfo(202).lVal);
+
+    delete doc;
+}
+
 MC_TEST_MAIN()

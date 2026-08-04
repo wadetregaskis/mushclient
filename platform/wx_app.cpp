@@ -35,6 +35,12 @@ int RunPalTransportSelfTest();
 // hidden --pal-miniwindow-selftest flag.
 int RunPalMiniWindowSelfTest();
 
+// In-app conformance harness for the world window adapter — the wx
+// pal::IWorldView (platform/world_frame_selftest.cpp), run via the hidden
+// --world-frame-selftest flag.  It needs the real CWorldChildFrame, which the
+// headless mushcore test executables cannot link.
+int RunWorldFrameSelfTest();
+
 // In-app conformance harness for the five embedded scripting engines
 // (platform/engines_selftest.cpp), run via the hidden --engines-selftest flag.
 // They cannot be tested headlessly: each pulls in a whole interpreter, which the
@@ -120,6 +126,18 @@ public:
 
         // Pre-load the recovered dialog/menu resources (logs the parse result).
         LoadMfcDialogResources();
+
+        // The world-window conformance harness runs LATER than the other
+        // selftests: it builds a real CWorldChildFrame, which reaches into the
+        // MFC→wx bridge, so the hooks above must already be installed.  It
+        // still exits before InitInstance, so no prefs, worlds or main window
+        // are touched.
+        for (int i = 1; i < argc; ++i) {
+            if (wxString(argv[i]) == wxT("--world-frame-selftest")) {
+                const int failures = RunWorldFrameSelfTest();
+                std::exit(failures == 0 ? 0 : 1);
+            }
+        }
 
         // Boot the real MUSHclient application.
         // The hook calls App.InitInstance() which creates the main MDI frame.

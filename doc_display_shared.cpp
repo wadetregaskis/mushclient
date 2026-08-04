@@ -119,6 +119,11 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
         SOutputLine outline;
         // A note line: a send-link on it is executed, not sent.
         outline.comment = (pLine->flags & COMMENT) != 0;
+        // The engine's BOOKMARK flag (world.Bookmark / Display ▸ Bookmark
+        // Selection).  Carrying it here makes the CLine the single source of
+        // truth: RebuildOutputView re-emits the buffer, so bookmarks survive a
+        // palette change without the view having to save and restore them.
+        outline.bookmark = (pLine->flags & BOOKMARK) != 0;
         POSITION spos = pLine->styleList.GetHeadPosition();
         int charOff = 0;
         while (spos) {

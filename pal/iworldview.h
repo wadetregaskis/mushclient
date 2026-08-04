@@ -55,6 +55,12 @@ public:
     // display-family rendering: pull vs push (decision)".
     virtual void appendLine(SOutputLine&& line) = 0;
     virtual void note(const char* text) = 0;        // out-of-band note
+    // world.Bookmark / Display ▸ Bookmark Selection: the BOOKMARK flag on the
+    // engine's CLine `lineIndex` (0-based, as CMUSHView::BookmarkLine takes it)
+    // has just been set/cleared — reflect it.  The doc is the single source of
+    // truth: `set` is the flag's new value, so a view that mirrors the flag can
+    // store it without re-reading the line list.
+    virtual void setBookmark(long lineIndex, bool set) = 0;
     virtual void setTitle(const char* title) = 0;   // world/window title
     virtual void setStatus(const char* text) = 0;   // status-bar text
     virtual void setBackgroundColour(Colour c) = 0;

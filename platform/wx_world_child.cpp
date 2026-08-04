@@ -1006,7 +1006,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         for (const auto& run : *line) {
             int runLen = RunCharLen(run);
             if (pt.col >= c && pt.col < c + runLen)
-                return run.hint;   // may be empty — that's fine
+                return run.hint();   // may be empty — that's fine
             c += runLen;
         }
         return {};

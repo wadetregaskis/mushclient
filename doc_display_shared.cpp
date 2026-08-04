@@ -196,13 +196,15 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
                     run.charset = (int) m_font_charset;   // decodes them (else blank)
                 // MXP hyperlink / send-link: copy action and hint strings.
                 if (pStyle->pAction) {
-                    run.action = static_cast<const char*>(pStyle->pAction->m_strAction);
-                    run.hint   = static_cast<const char*>(pStyle->pAction->m_strHint);
-                    // Windows branches on these when the link is clicked (a
-                    // prompt-link fills the command bar; a send-link on a note
-                    // line executes instead of sending), so carry them out to
-                    // the view with the action itself.
-                    run.action_type = pStyle->iFlags & ACTIONTYPE;
+                    // One shared_ptr allocation, and ONLY for a link run: the
+                    // action/hint/type used to be plain members on every run.
+                    // Windows branches on these when the link is clicked (a
+                    // prompt-link fills the command bar; a send-link on a note
+                    // line executes instead of sending), so carry them out to
+                    // the view with the action itself.
+                    run.setLink(static_cast<const char*>(pStyle->pAction->m_strAction),
+                                static_cast<const char*>(pStyle->pAction->m_strHint),
+                                pStyle->iFlags & ACTIONTYPE);
                 }
                 outline.push_back(std::move(run));
             }
@@ -251,13 +253,15 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
                 run.utf8 = m_bUTF_8;
                 if (!m_bUTF_8) run.charset = (int) m_font_charset;
                 if (pStyle->pAction) {
-                    run.action = static_cast<const char*>(pStyle->pAction->m_strAction);
-                    run.hint   = static_cast<const char*>(pStyle->pAction->m_strHint);
-                    // Windows branches on these when the link is clicked (a
-                    // prompt-link fills the command bar; a send-link on a note
-                    // line executes instead of sending), so carry them out to
-                    // the view with the action itself.
-                    run.action_type = pStyle->iFlags & ACTIONTYPE;
+                    // One shared_ptr allocation, and ONLY for a link run: the
+                    // action/hint/type used to be plain members on every run.
+                    // Windows branches on these when the link is clicked (a
+                    // prompt-link fills the command bar; a send-link on a note
+                    // line executes instead of sending), so carry them out to
+                    // the view with the action itself.
+                    run.setLink(static_cast<const char*>(pStyle->pAction->m_strAction),
+                                static_cast<const char*>(pStyle->pAction->m_strHint),
+                                pStyle->iFlags & ACTIONTYPE);
                 }
                 pending.push_back(std::move(run));
             }

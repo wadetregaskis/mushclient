@@ -685,8 +685,8 @@ TEST(PalWorldView, CommittedLineCarriesHyperlinkActionAndHint)
         for (const auto& run : line)
             if (run.text == "click") {
                 found = true;
-                EXPECT_STREQ("do this", run.action.c_str());
-                EXPECT_STREQ("a hint",  run.hint.c_str());
+                EXPECT_STREQ("do this", run.action().c_str());
+                EXPECT_STREQ("a hint",  run.hint().c_str());
             }
     EXPECT_TRUE(found);
 }
@@ -712,8 +712,8 @@ TEST(PalWorldView, PendingLineCarriesHyperlinkActionAndHint)
     for (const auto& run : last)
         if (run.text == "click") {
             found = true;
-            EXPECT_STREQ("do this", run.action.c_str());
-            EXPECT_STREQ("a hint",  run.hint.c_str());
+            EXPECT_STREQ("do this", run.action().c_str());
+            EXPECT_STREQ("a hint",  run.hint().c_str());
         }
     EXPECT_TRUE(found);
 }
@@ -1207,6 +1207,82 @@ TEST(StyleColour, ResolvingTwiceWithTheSamePaletteIsStable)
     pal::resolveStyleColours(pal::kStyleHilite, 3, 5, p, xt(), fg2, bg2);
     EXPECT_EQ(fg1, fg2);
     EXPECT_EQ(bg1, bg2);
+}
+
+// ── SOutputRun's size is part of the contract ─────────────────────────────
+//
+// One SOutputRun exists per styled span of every line in the scrollback, so its
+// size IS the pane-side memory cost of unbounded scrollback: at ~2.5 runs per
+// line, every 8 bytes is 20 MB per million lines.
+//
+// It was 112 bytes, of which 48 were two std::strings (action and hint) that
+// are empty on roughly ninety-nine runs in a hundred -- costing every run two
+// constructions and two destructions as well as the space.  Moving them behind
+// a shared_ptr, allocated only for link runs, and packing the six flags into
+// bitfields brings it to 64.
+//
+// Pinned rather than commented, because a struct grows back one innocuous
+// member at a time.  The number is allowed to CHANGE -- update it deliberately
+// and say why -- but not to drift unnoticed.
+TEST(OutputRun, StaysSmall)
+{
+    // 64 on LP64 with a 24-byte std::string and a 16-byte shared_ptr.
+    EXPECT_TRUE(sizeof(SOutputRun) <= 64);
+    if (sizeof(SOutputRun) > 64)
+        printf("    sizeof(SOutputRun) = %zu, was 112, budget 64\n",
+               sizeof(SOutputRun));
+}
+
+TEST(OutputRun, AnOrdinaryRunAllocatesNoLink)
+{
+    // The whole point: a non-link run must not pay for the link payload, and
+    // must still answer the same things the old plain members did.
+    SOutputRun r;
+    EXPECT_TRUE(r.link == nullptr);
+    EXPECT_FALSE(r.isLink());
+    EXPECT_TRUE(r.action().empty());
+    EXPECT_TRUE(r.hint().empty());
+    EXPECT_EQ(0, r.action_type());
+}
+
+TEST(OutputRun, SetLinkRoundTripsAndSharesOnCopy)
+{
+    SOutputRun r;
+    r.setLink("send this", "a hint", 4);
+    EXPECT_TRUE(r.isLink());
+    EXPECT_STREQ("send this", r.action().c_str());
+    EXPECT_STREQ("a hint",    r.hint().c_str());
+    EXPECT_EQ(4, r.action_type());
+
+    // A copy SHARES the payload rather than duplicating two strings -- which is
+    // what makes copying a run cheap on the DetectURLs and paint paths.
+    SOutputRun c = r;
+    EXPECT_TRUE(c.link == r.link);
+    EXPECT_STREQ("send this", c.action().c_str());
+
+    // ...and an all-empty setLink clears it rather than allocating an empty
+    // payload, so a run that had a link and lost it costs nothing again.
+    r.setLink("", "", 0);
+    EXPECT_TRUE(r.link == nullptr);
+    EXPECT_FALSE(r.isLink());
+}
+
+TEST(OutputRun, FlagsSurviveBeingBitfields)
+{
+    // Packed into bitfields; assigning a bool must still round-trip, and the
+    // fields must not alias each other.
+    SOutputRun r;
+    EXPECT_FALSE(r.bold);
+    EXPECT_TRUE(r.utf8);             // the one that defaults TRUE
+    r.bold = true;  r.italic = true;
+    EXPECT_TRUE(r.bold);
+    EXPECT_TRUE(r.italic);
+    EXPECT_FALSE(r.underline);       // untouched neighbours stay clear
+    EXPECT_FALSE(r.strikethrough);
+    EXPECT_FALSE(r.horiz_rule);
+    r.utf8 = false;
+    EXPECT_FALSE(r.utf8);
+    EXPECT_TRUE(r.bold);             // ...and clearing one did not clear another
 }
 
 // ── 64-bit row -> pixel geometry ──────────────────────────────────────────

@@ -272,7 +272,7 @@ static SOutputLine DetectURLs(SOutputLine line)
     // Quick scan: skip the whole line if it has no "http" substring at all.
     bool hasHttp = false;
     for (const auto& r : line)
-        if (r.action.empty() && !r.horiz_rule &&
+        if (!r.isLink() && !r.horiz_rule &&
             r.text.find("http") != std::string::npos)
             { hasHttp = true; break; }
     if (!hasHttp) return line;
@@ -282,7 +282,7 @@ static SOutputLine DetectURLs(SOutputLine line)
 
     for (SOutputRun run : line) {
         // Pass through runs that already have a label or are decorative.
-        if (!run.action.empty() || run.text.empty() || run.horiz_rule) {
+        if (run.isLink() || run.text.empty() || run.horiz_rule) {
             result.push_back(std::move(run));
             continue;
         }
@@ -341,7 +341,8 @@ static SOutputLine DetectURLs(SOutputLine line)
             // can distinguish it from MXP commands via the "http" prefix.
             SOutputRun urlRun  = run;
             urlRun.text        = text.substr(urlStart, urlEnd - urlStart);
-            urlRun.action      = urlRun.text;
+            // A detected URL is a link run: one allocation, only here.
+            urlRun.setLink(urlRun.text, std::string(), 0);
             // These runs are synthesised by the port, not by MXP, so no engine
             // option governs them and nothing else gives them a link look.  The
             // painter no longer force-colours/underlines action-bearing runs (so
@@ -1974,11 +1975,11 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
             int c = 0;
             for (const auto& run : m_lines[lineIdx]) {
                 int runLen = RunCharLen(run);
-                if (!run.action.empty() &&
+                if (run.isLink() &&
                     clickCol >= c && clickCol < c + runLen)
                 {
-                    m_linkAtDown     = run.action;
-                    m_linkTypeAtDown = run.action_type;
+                    m_linkAtDown     = run.action();
+                    m_linkTypeAtDown = run.action_type();
                     m_linkNoteAtDown = m_lines[lineIdx].comment;
                     break;
                 }
@@ -2289,7 +2290,7 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
                 int c = 0;
                 for (const auto& run : m_lines[pt.line]) {
                     int runLen = RunCharLen(run);
-                    if (!run.action.empty() &&
+                    if (run.isLink() &&
                         pt.col >= c && pt.col < c + runLen)
                     {
                         overLink = true;
@@ -2357,11 +2358,11 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
             int c = 0;
             for (const auto& run : m_lines[lineIdx]) {
                 int runLen = RunCharLen(run);
-                if (!run.action.empty() &&
+                if (run.isLink() &&
                     col >= c && col < c + runLen)
                 {
-                    linkAtClick     = run.action;
-                    linkTypeAtClick = run.action_type;
+                    linkAtClick     = run.action();
+                    linkTypeAtClick = run.action_type();
                     linkNoteAtClick = m_lines[lineIdx].comment;
                     break;
                 }

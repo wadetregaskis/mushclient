@@ -1428,3 +1428,303 @@ TEST(TriggerR5, BackgroundOnlyColourChange)
 }
 
 MC_TEST_MAIN()
+
+// The numeric half of the recompile (methods_triggers.cpp:757-793).  Only
+// "multi_line" can actually reach it: the block's other trigger,
+// "ignore_case", is OPT_CANNOT_WRITE and is bounced 5 lines earlier at :752 --
+// see TriggerApi.SetTriggerOptionIgnoreCaseAndRegexpAreReadOnly.
+//
+// The block is EXECUTED today (test_display.cpp:1204 and
+// test_lua_scripting.cpp:2229 both set multi_line through this setter) but it
+// is not PINNED: both of those use an unanchored pattern
+// ("first-part\\nsecond-part") that matches the assembled target with or
+// without PCRE_MULTILINE, so deleting the recompile leaves them green.
+//
+// PCRE_MULTILINE is a COMPILE-time option (:781), so storing the flag is not
+// enough.  Without the recompile the trigger keeps the program AddTriggerEx
+// built (:201, no PCRE_MULTILINE) and ^/$ still refuse to bind to the interior
+// newlines of the assembled "first\nsecond\n" target (evaluate.cpp:365-388):
+// the option round-trips perfectly and the trigger never fires, which is
+// precisely the "the setting does nothing" shape the settings audit kept
+// turning up.
+TEST(TriggerApi, SetTriggerOptionMultiLineRecompilesWithPcreMultiline)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    // "^first$\n^second$": the $ sitting before the \n can only match
+    // mid-subject in multi-line mode, so this pattern matches
+    // "first\nsecond\n" ONLY if the program carries PCRE_MULTILINE.  (The older
+    // TriggerTest.MultiLineTriggerMatchesAcrossNewlineJoinedLines uses a plain
+    // "first\nsecond", which matches with or without the flag -- it pins the
+    // target ASSEMBLY, not the compile option.)
+    ASSERT_EQ((long)eOK,
+              doc.AddTriggerEx("ml", "^first$\\n^second$", "",
+                               eEnabled | eTriggerRegularExpression,
+                               -1, 0, "", "", eSendToWorld, 100));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("ml", t));
+    t_regexp* compiledAtAdd = t->regexp;
+    ASSERT_NE(nullptr, compiledAtAdd);
+
+    // how many recent lines the multi-line target is built from; this option
+    // has no recompile of its own, so on its own it proves nothing.
+    ASSERT_EQ((long)eOK, doc.SetTriggerOption("ml", "lines_to_match", "2"));
+
+    // control: still single-line, so the match target is just the one line
+    feed_line(doc, "first");
+    feed_line(doc, "second");
+    EXPECT_EQ(0L, t->nMatched);
+
+    ASSERT_EQ((long)eOK, doc.SetTriggerOption("ml", "multi_line", "1"));
+    EXPECT_EQ(1L, doc.GetTriggerOption("ml", "multi_line").lVal);
+    // :791-792 frees the old program and installs the new one.  regcomp runs
+    // FIRST (:780) and allocates the new t_regexp while the old one is still
+    // live (regexp.cpp:47), so a changed pointer really does mean "recompiled".
+    EXPECT_NE(compiledAtAdd, t->regexp);
+
+    // "first" makes the target "second\nfirst\n" (no match: PCRE's multi-line ^
+    // does not match after the newline that ENDS the subject); "second" makes
+    // it "first\nsecond\n", which does.
+    feed_line(doc, "first");
+    feed_line(doc, "second");
+    EXPECT_EQ(1L, t->nMatched);        // matched across "first\nsecond\n"
+}
+
+// ignore_case and regexp are flagged OPT_CANNOT_WRITE in TriggerOptionsTable
+// (methods_triggers.cpp:56 and :61), so SetTriggerOption rejects them at
+// :752-753 -- unconditionally, not just for plugins, which is why a plain
+// world script gets the plugin-shaped code ePluginCannotSetOption.
+//
+// The RETURN CODES are already pinned (test_lua_scripting.cpp:2245-2246, and
+// :312-313 for regexp).  What this adds is the 1 -> 0 direction (the existing
+// tests only ever try 0 -> 1) and, the real point, that nothing was
+// RECOMPILED: the reject at :752 happens before the recompile block at :757.
+// Move that flag check below the block and the existing tests stay green while
+// the trigger silently loses PCRE_CASELESS -- a setting that reads back
+// correctly and behaves as though it were never applied.  The pointer
+// assertion plus the "ALPHA" match are what fail under that mutation.
+//
+// Recorded also because of what it implies about the code just below it: the
+// "ignore_case" half of the recompile block at :757-793 is dead on Windows
+// too and can never be reached through this entry point.  Two things must NOT
+// happen to it -- it must not be "fixed" by making ignore_case writable (that
+// is upstream's deliberate contract: changing case-sensitivity is a
+// world-file/dialog operation), and it must not be deleted on the grounds
+// that it never runs, because multi_line runs through the same block.
+//
+// Reads are unaffected: :671 gates only on OPT_PLUGIN_CANNOT_READ.
+TEST(TriggerApi, SetTriggerOptionIgnoreCaseAndRegexpAreReadOnly)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_EQ((long)eOK,
+              doc.AddTriggerEx("ro", "^alpha$", "",
+                               eEnabled | eTriggerRegularExpression | eIgnoreCase,
+                               -1, 0, "", "", eSendToWorld, 100));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("ro", t));
+    t_regexp* compiledAtAdd = t->regexp;
+    ASSERT_NE(nullptr, compiledAtAdd);
+
+    EXPECT_EQ((long)ePluginCannotSetOption,
+              doc.SetTriggerOption("ro", "ignore_case", "0"));
+    EXPECT_EQ((long)ePluginCannotSetOption,
+              doc.SetTriggerOption("ro", "regexp", "0"));
+
+    // nothing was written -- and nothing was recompiled
+    EXPECT_EQ(1L, doc.GetTriggerOption("ro", "ignore_case").lVal);
+    EXPECT_EQ(1L, doc.GetTriggerOption("ro", "regexp").lVal);
+    EXPECT_EQ(compiledAtAdd, t->regexp);
+
+    // and the trigger is still the case-insensitive one it was created as
+    // (AddTriggerEx compiled it with PCRE_CASELESS at :201)
+    feed_line(doc, "ALPHA");
+    EXPECT_EQ(1L, t->nMatched);
+}
+
+// The bad-pattern catch on the NUMERIC recompile (methods_triggers.cpp
+// :785-789) looks unreachable -- AddTriggerEx and SetTriggerOption("match")
+// both refuse to store a pattern that will not compile -- but it is not.
+// :782 ORs in PCRE_UTF8 from the WORLD's m_bUTF_8, which the user can turn on
+// long after the trigger was written (World Properties > Output > UTF-8).  A
+// pattern holding a Latin-1 byte compiles fine as bytes and is rejected the
+// instant PCRE is asked to read it as UTF-8 (pcre/pcre_compile.c:9263-9275,
+// ERR44 at :9268), which is exactly the situation this catch exists for.
+//
+// What has to survive the rejection is the trigger's EXISTING compiled
+// program.  regcomp runs first and the old program is only freed afterwards
+// (:780 then :791), and the catch returns before either -- so the trigger is
+// left byte-for-byte as it was.  A "free first, then recompile" ordering would
+// leave regexp NULL, and on this port that damage HIDES: evaluate.cpp:332-357
+// lazily recompiles a NULL trigger regexp, here from the same bad pattern, so
+// the trigger would just quietly stop matching.  Hence both assertions -- the
+// pointer, and a real match afterwards.
+TEST(TriggerApi, SetTriggerOptionMultiLineBadPatternKeepsOldRegexp)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bUTF_8 = FALSE;                  // as the world was when written
+    // "\xE9" is Latin-1 'e-acute': a legal byte, an illegal UTF-8 sequence
+    // (a 3-byte lead followed by '?', which is not a continuation byte).
+    // Made optional with '?' so the pattern still matches the pure-ASCII line
+    // fed at the end.
+    ASSERT_EQ((long)eOK,
+              doc.AddTriggerEx("u8", "^cafe\xE9?$", "",
+                               eEnabled | eTriggerRegularExpression,
+                               -1, 0, "", "", eSendToWorld, 100));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("u8", t));
+    t_regexp* compiledAtAdd = t->regexp;
+    ASSERT_NE(nullptr, compiledAtAdd);
+
+    doc.m_bUTF_8 = TRUE;                   // the user ticks UTF-8
+
+    EXPECT_EQ((long)eBadRegularExpression,
+              doc.SetTriggerOption("u8", "multi_line", "1"));
+    // the return at :788 is before SetBaseOptionItem (:795), so the option
+    // itself is untouched as well -- a swallowed exception shows up here
+    EXPECT_EQ(0L, doc.GetTriggerOption("u8", "multi_line").lVal);
+    EXPECT_EQ(compiledAtAdd, t->regexp);   // same program still installed
+
+    // ... and it still works.  The line is pure ASCII so the UTF-8 validity
+    // gate (ProcessPreviousLine.cpp:562-566) passes, and the surviving
+    // non-UTF-8 program matches it.
+    feed_line(doc, "cafe");
+    EXPECT_EQ(1L, t->nMatched);
+}
+
+// The other arm of the "match" recompile (methods_triggers.cpp:842-845): for a
+// non-regexp ("wildcard") trigger the new text goes through
+// ConvertToRegularExpression before regcomp, with that function's DEFAULT
+// arguments -- bWholeLine=true, bMakeAsterisksWildcards=true (stdafx.h:437-439).
+//
+// The LINE is already executed (test_lua_scripting.cpp:2238-2242 sets "match"
+// on a non-regexp trigger) but only its text round-trip is checked -- that
+// test never matches a line, so neither default is pinned.  Both carry weight,
+// and neither is reached by SetTriggerOptionMatchRecompilePaths, which uses a
+// regexp trigger and so takes the :843 branch instead:
+//   * without the conversion, "*gold*" reaches PCRE as a quantifier with
+//     nothing to repeat and the call answers eBadRegularExpression;
+//   * without bWholeLine the new pattern would be UNANCHORED, and a plain
+//     "gold" would start firing on substrings -- the regression already pinned
+//     for the load path by TriggerTest.PlainTriggerDoesNotMatchSubstring, but
+//     reached here through the option setter.
+TEST(TriggerApi, SetTriggerOptionMatchOnWildcardTriggerReconvertsAndAnchors)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_EQ((long)eOK, doc.AddTriggerEx("wm", "nothing", "", eEnabled,
+                                          -1, 0, "", "", eSendToWorld, 100));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("wm", t));
+    EXPECT_FALSE(doc.GetTriggerInfo("wm", 9).boolVal);   // not a regexp trigger
+
+    // asterisks must survive the setter as WILDCARDS, not as PCRE syntax:
+    // utilities_shared.cpp:482-483 turns '*' into "(.*?)"
+    ASSERT_EQ((long)eOK, doc.SetTriggerOption("wm", "match", "*gold*"));
+    feed_line(doc, "you found gold here");
+    EXPECT_EQ(1L, t->nMatched);
+
+    // ... and a pattern with no wildcards must come out anchored to the whole
+    // line (utilities_shared.cpp:465-466 and :488-489), so a substring hit is
+    // NOT a match
+    ASSERT_EQ((long)eOK, doc.SetTriggerOption("wm", "match", "gold"));
+    feed_line(doc, "you found gold here");
+    EXPECT_EQ(1L, t->nMatched);          // unchanged: substring != whole line
+    feed_line(doc, "gold");
+    EXPECT_EQ(2L, t->nMatched);
+}
+
+// SetTriggerOption("script", ...) -- methods_triggers.cpp:865-879.
+//
+// The option itself is already round-tripped (test_lua_scripting.cpp:2238-2243)
+// but that doc has no CScriptEngine, so :870's GetScriptEngine() is false and
+// the whole resolve block is skipped: the dispid path has never run anywhere.
+//
+// Four arms, in the order that makes :877 falsifiable:
+//   * a trigger with no script name simply calls nothing -- ProcessPreviousLine
+//     .cpp:1487 queues a matched trigger for its script only when strProcedure
+//     is non-empty;
+//   * setting a RESOLVABLE name must write the dispid at :877.  This is the
+//     ONLY arm in which that write is observable, and it is only observable
+//     because we start from DISPID_UNKNOWN: CheckScriptingAvailable
+//     (doc.cpp:570-580) refuses to call on DISPID_UNKNOWN, so dropping :877
+//     means the callback never fires at all.  Once the dispid is 1 it stays 1
+//     -- GetLuaDispid (lua_scripting.cpp:355-359) answers 1 for EVERY
+//     resolvable function -- so re-pointing a trigger at a different function
+//     is carried entirely by the NAME (ExecuteLua resolves it at
+//     lua_scripting.cpp:656).  Do not read the OnAlpha->OnBeta arm below as
+//     evidence about the dispid; it is evidence about the name.
+//   * a name the engine cannot resolve returns eScriptNameNotLocated at :876,
+//     BEFORE SetBaseAlphaOptionItem (:884), so the old script name AND the old
+//     dispid both survive and the trigger keeps calling what it called;
+//   * an empty value skips the lookup entirely (the !strValue.IsEmpty() guard
+//     at :870) and merely clears the name -- which is what stops the callback,
+//     because of the :1487 gate.  (The trigger still matches; only the call
+//     goes away.  Note the dispid is left stale here; for triggers that is
+//     harmless because of that gate.  Aliases have no such gate -- see the
+//     comment in AliasApi.SetAliasOptionScriptResolvesAndSwapsTheCallback.)
+//
+// The Lua handlers APPEND to a variable rather than assigning it, so "the
+// callback silently kept running" and "the callback silently stopped running"
+// are distinguishable -- with assigning handlers the reject and clear arms
+// would be unfalsifiable, since re-running the same function would leave the
+// same value behind.
+static std::string script_log(CMUSHclientDoc& doc)
+{
+    CVariable* v = nullptr;
+    if (!doc.GetVariableMap().Lookup("log", v) || v == nullptr)
+        return "<unset>";
+    return std::string((const char*)v->strContents);
+}
+
+TEST(TriggerScript, SetTriggerOptionScriptResolvesRejectsAndClearsTheCallback)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_TRUE(setup_lua(doc,
+        "function OnAlpha()\n"
+        "  world.SetVariable('log', (world.GetVariable('log') or '') .. 'A')\n"
+        "end\n"
+        "function OnBeta()\n"
+        "  world.SetVariable('log', (world.GetVariable('log') or '') .. 'B')\n"
+        "end\n"));
+
+    // created with NO script: dispid starts unresolved, which is what makes
+    // the :877 write below falsifiable
+    ASSERT_EQ((long)eOK,
+              doc.AddTriggerEx("sc", "ping", "", eEnabled,
+                               -1, 0, "", "", eSendToWorld, 100));
+    CTrigger* t = nullptr;
+    ASSERT_TRUE(doc.GetTriggerMap().Lookup("sc", t));
+    EXPECT_EQ((long)DISPID_UNKNOWN, (long)t->dispid);
+
+    // baseline: it matches, and calls nothing
+    feed_line(doc, "ping");
+    EXPECT_EQ(1L, t->nMatched);
+    EXPECT_STREQ("<unset>", script_log(doc).c_str());
+
+    // arm 1: a resolvable name -- :877 writes the dispid, so the call happens.
+    // Drop :877 and CheckScriptingAvailable bails on DISPID_UNKNOWN: no 'A'.
+    EXPECT_EQ((long)eOK, doc.SetTriggerOption("sc", "script", "OnAlpha"));
+    EXPECT_STREQ("OnAlpha", vs(doc.GetTriggerOption("sc", "script")).c_str());
+    EXPECT_NE((long)DISPID_UNKNOWN, (long)t->dispid);
+    feed_line(doc, "ping");
+    EXPECT_STREQ("A", script_log(doc).c_str());
+
+    // arm 2: unresolvable name -- rejected, and NOTHING was written
+    EXPECT_EQ((long)eScriptNameNotLocated,
+              doc.SetTriggerOption("sc", "script", "NoSuchFunction"));
+    EXPECT_STREQ("OnAlpha", vs(doc.GetTriggerOption("sc", "script")).c_str());
+    feed_line(doc, "ping");
+    EXPECT_STREQ("AA", script_log(doc).c_str());     // still OnAlpha
+
+    // arm 3: a different resolvable name -- the stored NAME is what re-points
+    // the callback (the dispid is already 1 and does not change)
+    EXPECT_EQ((long)eOK, doc.SetTriggerOption("sc", "script", "OnBeta"));
+    EXPECT_STREQ("OnBeta", vs(doc.GetTriggerOption("sc", "script")).c_str());
+    feed_line(doc, "ping");
+    EXPECT_STREQ("AAB", script_log(doc).c_str());
+
+    // arm 4: empty value -- the callback stops; the trigger still MATCHES
+    EXPECT_EQ((long)eOK, doc.SetTriggerOption("sc", "script", ""));
+    EXPECT_STREQ("", vs(doc.GetTriggerOption("sc", "script")).c_str());
+    feed_line(doc, "ping");
+    EXPECT_EQ(5L, t->nMatched);
+    EXPECT_STREQ("AAB", script_log(doc).c_str());    // no further call
+}

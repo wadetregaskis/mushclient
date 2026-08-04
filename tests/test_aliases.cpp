@@ -1087,3 +1087,222 @@ TEST(AliasR5, SendToWorldWhileDisconnectedAborts)
 }
 
 MC_TEST_MAIN()
+
+// The alias mirror of the trigger match recompile (methods_aliases.cpp
+// :732-764) -- and the more dangerous of the two, because aliases have no
+// safety net.  ProcessOneAliasSequence calls regexec(alias_item->regexp, ...)
+// directly (evaluate.cpp:873) with no null check and NO lazy recompile (the
+// trigger loop has one at evaluate.cpp:332-357; the alias loop has none), and
+// regexec dereferences its argument on its first executable line
+// (regexp.cpp:70, `if (prog->m_program == NULL)`).  So if a rejected pattern
+// left the alias holding a NULL or freed regexp, the very next typed command
+// would take the process down.
+//
+// It does not, because the setter compiles the NEW pattern first (:749 --
+// regcomp allocates the new t_regexp at regexp.cpp:47 while the old one is
+// still live) and only frees the old one afterwards (:761), and both reject
+// arms return before either.  The pointer assertions pin that ordering; the
+// type_command() after them is the crash canary.
+TEST(AliasApi, SetAliasOptionMatchRejectionKeepsTheOldCompiledRegexp)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    // a regexp alias, so "(unclosed" reaches regcomp un-escaped (a wildcard
+    // alias would be ConvertToRegularExpression'd and the '(' escaped away)
+    ASSERT_EQ((long)eOK,
+              doc.AddAlias("am", "^north$", "go north",
+                           eEnabled | eAliasRegularExpression, ""));
+    CAlias* a = nullptr;
+    ASSERT_TRUE(doc.GetAliasMap().Lookup("am", a));
+    t_regexp* compiledAtAdd = a->regexp;
+    ASSERT_NE(nullptr, compiledAtAdd);
+
+    // empty match -> eAliasCannotBeEmpty (:734-735), before anything is touched
+    EXPECT_EQ((long)eAliasCannotBeEmpty, doc.SetAliasOption("am", "match", ""));
+    EXPECT_EQ(compiledAtAdd, a->regexp);
+    // malformed pattern -> regcomp throws -> eBadRegularExpression (:755-759)
+    EXPECT_EQ((long)eBadRegularExpression,
+              doc.SetAliasOption("am", "match", "(unclosed"));
+    EXPECT_EQ(compiledAtAdd, a->regexp);
+    EXPECT_STREQ("^north$", vs(doc.GetAliasInfo("am", 1)).c_str());
+
+    // the surviving program still matches -- and this line is the crash canary
+    // for a NULL regexp (evaluate.cpp:873 -> regexp.cpp:70)
+    type_command(doc, "north");
+    EXPECT_EQ(1L, a->nMatched);
+
+    // a good pattern DOES swap the program: regcomp (:749) runs before the
+    // delete (:761), so the new allocation cannot reuse the freed address
+    ASSERT_EQ((long)eOK, doc.SetAliasOption("am", "match", "^south$"));
+    EXPECT_NE(compiledAtAdd, a->regexp);
+    type_command(doc, "north");
+    EXPECT_EQ(1L, a->nMatched);          // the old pattern is really gone
+    type_command(doc, "south");
+    EXPECT_EQ(2L, a->nMatched);
+
+    // "go north" from the two alias hits, with the now-unaliased "north"
+    // passing through raw in between (evaluate.cpp:146 -> DoSendMsg, which
+    // appends ENDLINE at doc_shared.cpp:2471-2472)
+    EXPECT_STREQ("go north\r\nnorth\r\ngo north\r\n",
+                 static_cast<FakeTransport*>(doc.m_pTransport)->sent.c_str());
+}
+
+// The wildcard branch of the alias match recompile (methods_aliases.cpp:744):
+// for a non-regexp alias the new text is put through
+// ConvertToRegularExpression with its DEFAULT arguments -- bWholeLine=true,
+// bMakeAsterisksWildcards=true (stdafx.h:437-439) -- exactly as AddAlias does
+// at :165.
+//
+// The LINE already runs (test_lua_scripting.cpp:2146-2151 sets "match" on a
+// non-regexp alias) but that test only round-trips the stored text and never
+// types a command, so neither default is pinned.  Both matter, and neither is
+// reached by SetAliasOptionMatchRecompilePaths, which uses a regexp alias and
+// so takes the :742 branch.
+TEST(AliasApi, SetAliasOptionMatchOnWildcardAliasReconvertsAndAnchors)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_EQ((long)eOK, doc.AddAlias("wm", "nothing", "ok", eEnabled, ""));
+    CAlias* a = nullptr;
+    ASSERT_TRUE(doc.GetAliasMap().Lookup("wm", a));
+    EXPECT_FALSE(doc.GetAliasInfo("wm", 7).boolVal);   // not a regexp alias
+
+    // '*' has to survive as a WILDCARD -- handed to PCRE raw it is a
+    // quantifier with nothing to repeat and the call would fail outright
+    ASSERT_EQ((long)eOK, doc.SetAliasOption("wm", "match", "tell * *"));
+    type_command(doc, "tell bob hello");
+    EXPECT_EQ(1L, a->nMatched);
+    EXPECT_STREQ("bob", vs(doc.GetAliasWildcard("wm", "1")).c_str());
+
+    // ... and the conversion anchors ^...$, so a short alias does NOT fire on
+    // a command that merely contains it -- this is the "cc" matching "accept"
+    // regression, reached through the option setter instead of the loader.
+    ASSERT_EQ((long)eOK, doc.SetAliasOption("wm", "match", "cc"));
+    type_command(doc, "accept");
+    EXPECT_EQ(1L, a->nMatched);          // unchanged
+    type_command(doc, "cc");
+    EXPECT_EQ(2L, a->nMatched);
+}
+
+// AliasOptionsTable flags ignore_case (methods_aliases.cpp:46) and regexp
+// (:50) OPT_CANNOT_WRITE, so SetAliasOption bounces them at :726-727 --
+// unconditionally, which is why a plain world script gets the plugin-shaped
+// ePluginCannotSetOption with no plugin anywhere in sight.
+//
+// The return codes are already pinned (test_lua_scripting.cpp:2153-2154), but
+// only in the 0 -> 1 direction and only for an alias whose flags were already
+// 0.  This is the 1 -> 0 direction: an alias created case-insensitive stays
+// case-insensitive, and its compiled program is not touched.
+//
+// Deliberately NOT asserted here: that the alias still matches "NORTH".  That
+// would pass even if the flag check were deleted -- the alias setter has no
+// recompile block (:691-694 goes straight to SetBaseOptionItem), so clearing
+// bIgnoreCase would leave PCRE_CASELESS in the already-compiled program and
+// the match would succeed anyway.  The read-back is the real discriminator.
+//
+// Worth pinning because "I set ignore_case and nothing happened" looks exactly
+// like the dead-reader settings bugs this port has spent a lot of time on, and
+// it is not one: upstream deliberately refuses the write, because case
+// sensitivity is baked into the COMPILED program (PCRE_CASELESS at :170) and
+// the alias setter -- unlike the trigger one -- has nothing to rebuild it with.
+TEST(AliasApi, SetAliasOptionIgnoreCaseAndRegexpAreReadOnly)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_EQ((long)eOK,
+              doc.AddAlias("ro", "^north$", "go north",
+                           eEnabled | eAliasRegularExpression | eIgnoreAliasCase,
+                           ""));
+    CAlias* a = nullptr;
+    ASSERT_TRUE(doc.GetAliasMap().Lookup("ro", a));
+    t_regexp* compiledAtAdd = a->regexp;
+    ASSERT_NE(nullptr, compiledAtAdd);
+
+    EXPECT_EQ((long)ePluginCannotSetOption,
+              doc.SetAliasOption("ro", "ignore_case", "0"));
+    EXPECT_EQ((long)ePluginCannotSetOption,
+              doc.SetAliasOption("ro", "regexp", "0"));
+
+    EXPECT_EQ(1L, doc.GetAliasOption("ro", "ignore_case").lVal);
+    EXPECT_EQ(1L, doc.GetAliasOption("ro", "regexp").lVal);
+    EXPECT_EQ(compiledAtAdd, a->regexp);
+}
+
+// SetAliasOption("script", ...) -- methods_aliases.cpp:765-779, the alias twin
+// of the trigger path.  The option is already round-tripped
+// (test_lua_scripting.cpp:2146-2151) but with no CScriptEngine on that doc, so
+// :770 is false and the resolve block has never run.
+//
+// Three arms, in the order that makes :777 falsifiable:
+//   * an alias with no script name calls nothing (ExecuteAliasScript is
+//     entered for every matched alias at evaluate.cpp:176, but
+//     CheckScriptingAvailable returns "OK" for an empty name at doc.cpp:555-556
+//     and the dispid gate at evaluate.cpp:1029 then declines);
+//   * setting a RESOLVABLE name must write the dispid at :777 -- this is the
+//     only arm where that write is observable, because we start from
+//     DISPID_UNKNOWN and CheckScriptingAvailable (doc.cpp:570-580) refuses to
+//     call on it.  Once the dispid is 1 it stays 1 (GetLuaDispid,
+//     lua_scripting.cpp:355-359, answers 1 for every resolvable function), so
+//     the later OnAlpha->OnBeta swap is evidence about the NAME, not the
+//     dispid (ExecuteLua resolves by name at lua_scripting.cpp:656);
+//   * an unresolvable name returns eScriptNameNotLocated at :776, BEFORE
+//     SetBaseAlphaOptionItem (:784), so the old name and old dispid survive
+//     and the alias keeps calling what it called.
+//
+// The fourth arm -- clearing the name with "" -- is deliberately NOT asserted:
+// it leaves dispid stale and ExecuteAliasScript gates on the DISPID, not the
+// name (evaluate.cpp:1029), while CheckScriptingAvailable waves an empty name
+// through (doc.cpp:555-556).  So the alias goes on trying to call something
+// after its script was cleared.  See the note in the gap report; do not pin
+// that behaviour until it is decided.
+//
+// The handlers append rather than assign so "kept running the old one" is
+// visible as a character in the log rather than an indistinguishable rewrite.
+TEST(AliasApi, SetAliasOptionScriptResolvesAndSwapsTheCallback)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function OnAlpha()\n"
+        "  world.SetVariable('log', (world.GetVariable('log') or '') .. 'A')\n"
+        "end\n"
+        "function OnBeta()\n"
+        "  world.SetVariable('log', (world.GetVariable('log') or '') .. 'B')\n"
+        "end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+
+    // created with NO script: dispid starts unresolved, which is what makes
+    // the :777 write below falsifiable
+    ASSERT_EQ((long)eOK, doc.AddAlias("as", "ping", "", eEnabled, ""));
+    CAlias* a = nullptr;
+    ASSERT_TRUE(doc.GetAliasMap().Lookup("as", a));
+    EXPECT_EQ((long)DISPID_UNKNOWN, (long)a->dispid);
+
+    CVariable* v = nullptr;
+    type_command(doc, "ping");
+    EXPECT_EQ(1L, a->nMatched);
+    EXPECT_FALSE(doc.GetVariableMap().Lookup("log", v));   // nothing called
+
+    // arm 1: a resolvable name -- :777 writes the dispid, so the call happens.
+    // Drop :777 and CheckScriptingAvailable bails on DISPID_UNKNOWN: no 'A'.
+    EXPECT_EQ((long)eOK, doc.SetAliasOption("as", "script", "OnAlpha"));
+    EXPECT_STREQ("OnAlpha", vs(doc.GetAliasOption("as", "script")).c_str());
+    EXPECT_NE((long)DISPID_UNKNOWN, (long)a->dispid);
+    type_command(doc, "ping");
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("log", v));
+    EXPECT_STREQ("A", (const char*)v->strContents);
+
+    // arm 2: unresolvable name -- rejected, and nothing was written
+    EXPECT_EQ((long)eScriptNameNotLocated,
+              doc.SetAliasOption("as", "script", "NoSuchFunction"));
+    EXPECT_STREQ("OnAlpha", vs(doc.GetAliasOption("as", "script")).c_str());
+    type_command(doc, "ping");
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("log", v));
+    EXPECT_STREQ("AA", (const char*)v->strContents);   // still OnAlpha
+
+    // arm 3: a different resolvable name -- the stored NAME re-points the call
+    EXPECT_EQ((long)eOK, doc.SetAliasOption("as", "script", "OnBeta"));
+    EXPECT_STREQ("OnBeta", vs(doc.GetAliasOption("as", "script")).c_str());
+    type_command(doc, "ping");
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("log", v));
+    EXPECT_STREQ("AAB", (const char*)v->strContents);
+    EXPECT_EQ(4L, a->nMatched);
+}

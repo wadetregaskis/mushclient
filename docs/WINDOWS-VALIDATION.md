@@ -903,6 +903,34 @@ and `CMUSHView`'s own scroll sizes on Windows are unchanged. Setting 0 on a
 Windows build will therefore run into MFC's own limits long before the engine's;
 that is expected and is not what this change is claiming to fix.
 
+### 4c-sexvicies. Two latent MXP-entity hazards, deliberately untested (2026-08-04)
+
+Both found while writing coverage for `mxp/mxpEntities.cpp`. Neither is fixed
+and neither has a test, for reasons that matter:
+
+1. **`MXP_GetEntity` reads `strName[1]` without a length check** (`:76`). For
+   `strName == "#"` — a MUD sending the three bytes `&#;` — that indexes one past
+   the last character. On the port it is defined behaviour: `mfc_string.h`'s
+   `operator[]` is a plain `std::string` subscript, and `std::string::operator[]
+   (size())` legally returns the NUL. **On Windows, real MFC's
+   `CString::operator[]` calls `GetAt`, which ASSERTs on an out-of-range index in
+   a debug build** — so `&#;` from a hostile or buggy MUD fires an assertion
+   there and does nothing here.
+
+   No test was written because a test that is green on macOS and asserts on
+   Windows is worse than none. **What to check on Windows:** connect a debug
+   build to something that can send a bare `&#;` (a scratch MUD or a
+   `world.Note` through the MXP path) and see whether it asserts. If it does,
+   that is an upstream bug worth a length guard.
+
+2. **`isxdigit` / `isdigit` / `toupper` are passed a plain `char`** (`:80`,
+   `:89`, `:106`). A high-bit byte inside an entity — `&#x` followed by 0x80-0xFF
+   — is a negative `int` to the ctype functions, which is undefined per the
+   standard. macOS's `__maskrune` happens to bounds-check, so it does not
+   misbehave here; MSVC's implementation historically indexes a table and can
+   read out of bounds. Not assertable from a test, since the well-defined
+   behaviour and the undefined one look identical when the platform is lenient.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

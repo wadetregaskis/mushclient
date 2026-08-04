@@ -1801,4 +1801,134 @@ TEST(MXPEntity, HexNumericEntityTooManyDigitsRejected)
     EXPECT_TRUE(dbg.contains("maximum of 2 hex digits"));
 }
 
+// mxpEntities.cpp:89-91 -- the hex arm folds a letter digit with toupper()
+// and then `iNewDigit -= 7`, so BOTH cases must decode alike.  The existing
+// MXPEntity.HexNumericEntityDecodesToChar (line ~1748) only feeds UPPER case
+// ("#x4A"), and for upper case the toupper() call is a no-op -- deleting it
+// leaves that test green.  Lower case is what pins it: without toupper, 'a'
+// (97) still passes the `>= 'A'` test at :90, folds to 90, and yields 'j'
+// instead of 'J'.
+TEST(MXPEntity, HexNumericEntityLowerCaseDigitsFold)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    long long errs = doc.m_iMXPerrors;
+
+    CString eJ("#x4a");   // toupper('a')='A'=65 -> 58; (4<<4)+58-'0' = 74 = 'J'
+    CString eO("#x6f");   // toupper('f')='F'=70 -> 63; (6<<4)+63-'0' = 111 = 'o'
+    EXPECT_STREQ("J", (const char*)doc.MXP_GetEntity(eJ));
+    EXPECT_STREQ("o", (const char*)doc.MXP_GetEntity(eO));
+
+    // ...and mixed case within one entity, which catches a fold applied to
+    // only one of the two digits: 0xAb = 171.  Compared numerically so the
+    // expectation carries no non-ASCII source byte.
+    CString eAb("#xAb");
+    CString r = doc.MXP_GetEntity(eAb);
+    ASSERT_EQ(1, r.GetLength());
+    EXPECT_EQ(171, (int)(unsigned char)r[0]);
+
+    EXPECT_EQ(errs, doc.m_iMXPerrors);   // all three are valid: no errors raised
+}
+
+// mxpEntities.cpp:36 + :71-101 -- the hex arm reached the way a MUD reaches it:
+// as bytes on the wire.  ALL existing hex coverage calls MXP_GetEntity directly
+// (tests/test_mxp.cpp:1748-1802), so nothing drives an &#...; through the entity
+// PHASE.  That is the gap: IsValidName("#x41") is FALSE (mxputils.cpp:412
+// requires a leading letter), so on this route the `&& m_strMXPstring.Left (1)
+// != "#"` clause at :36 is the only thing that gets a numeric entity past the
+// collector's guard -- drop it and every &#...; arriving as ordinary MUD text
+// silently becomes an "Invalid MXP entity name" error with no expansion.
+// (MXP_GetEntity has three other callers -- mxpStart.cpp:314, mxpStart.cpp:497
+// and mxpDefs.cpp:446, which expand entities inside element arguments and
+// <!ENTITY> values without consulting IsValidName.  Those keep working, which is
+// exactly why this route needs its own test.)
+TEST(MXPEntity, HexNumericEntityDecodesInTheByteStream)
+{
+    CMUSHclientDoc doc; make_stream_doc(doc);
+    long long errs = doc.m_iMXPerrors;
+    long long ents = doc.m_iMXPentities;
+
+    // 0x41='A' (digits only), 0x6f='o' (lower-case fold), 0x4B='K' (upper-case
+    // fold).  The literal 'x' and 'y' bracket them so a failure distinguishes
+    // "expanded to the wrong byte" from "swallowed the whole packet".
+    stream(doc, "x&#x41;&#x6f;&#x4B;y");
+
+    EXPECT_EQ(std::string("xAoKy"), current_line(doc));
+    EXPECT_EQ(errs, doc.m_iMXPerrors);        // a valid entity is not an error
+    EXPECT_EQ(ents + 3, doc.m_iMXPentities);  // all three reached the collector
+    EXPECT_EQ(NONE, doc.m_phase);             // ';' closed the entity phase
+}
+
+// mxpEntities.cpp:36-42 -- MXP_collected_entity rejects a name that is neither a
+// valid MXP name nor a '#' numeric form.  An error-COUNT assertion cannot see
+// this branch: neuter the `!IsValidName (...)` operand (make it constant-false,
+// or make IsValidName accept anything) and "9bad" falls through to
+// MXP_GetEntity's "Unknown MXP entity" arm (:137-141), which raises exactly ONE
+// error too and likewise expands to nothing -- same count, same line, different
+// message.  Only the message text discriminates, so this asserts the
+// invalid-name wording IS present and the unknown-entity wording is NOT.
+// (The guard is an &&: simply DELETING the operand leaves `Left (1) != "#"`,
+// still true for "9bad", so that mutation is not the one this test catches.)
+TEST(MXPEntity, InvalidEntityNameShortCircuitsBeforeLookup)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc; make_stream_doc(doc);   // m_iMXPdebugLevel = DBG_ALL
+    long long errs = doc.m_iMXPerrors;
+    long long ents = doc.m_iMXPentities;
+
+    stream(doc, "x&9bad;y");   // '9' fails IsValidName (mxputils.cpp:412)
+
+    EXPECT_EQ(ents + 1, doc.m_iMXPentities);   // the collector really ran
+    EXPECT_EQ(errs + 1, doc.m_iMXPerrors);     // exactly one error
+    EXPECT_TRUE(dbg.contains("Invalid MXP entity name \"9bad\" supplied."));
+    EXPECT_FALSE(dbg.contains("Unknown MXP entity"));   // never reached the maps
+    // the entity expands to nothing AND is not echoed raw -- only the
+    // surrounding literal text survives (a substring check would pass even if
+    // "&9bad;" leaked onto the line).
+    EXPECT_EQ(std::string("xy"), current_line(doc));
+}
+
+// mxpEntities.cpp:92-99 and :116-124 -- where the hex arm's two guards actually
+// sit, and where each edge is:
+//   0xFF -- the largest value :92's `iResult & 0xF0` guard can admit (going into
+//     the last digit the accumulator is at most 0x0F), and the ONLY input in the
+//     suite that pins 255 as accepted by `iResult > 255` at :118.  Existing
+//     coverage is &#256; (rejected) and &#65;/&#9; (accepted) at line 507, so an
+//     off-by-one to `>= 255` is caught by nothing today.
+//   0x20 -- likewise the only input pinning 32 as accepted by `iResult < 32`
+//     at :117 (existing coverage jumps from &#7; to &#65;).
+//   0x00A -- THREE digits that pass, because :92 is a VALUE guard, not the digit
+//     COUNT its message claims.  HexNumericEntityTooManyDigitsRejected ("#xFFF")
+//     stays green under a digit-counting rewrite of :92, so this is the only
+//     input that separates the two readings.  &#x00A; really is 10, and this is
+//     shared (also-Windows) source, so a message-driven "fix" would regress it.
+//   0x1F -- the hex arm falling THROUGH to the shared :116-124 range check (the
+//     check itself is already covered on the decimal side at line 507); the
+//     paired message assertions pin which of the two error arms fired.
+TEST(MXPEntity, HexNumericEntityValueBoundaries)
+{
+    MxpDebugCapture dbg;
+    CMUSHclientDoc doc; make_stream_doc(doc);   // m_iMXPdebugLevel = DBG_ALL
+    long long errs = doc.m_iMXPerrors;
+
+    CString eFF("#xFF");     // 255: the top of the accepted range
+    CString r = doc.MXP_GetEntity(eFF);
+    ASSERT_EQ(1, r.GetLength());
+    EXPECT_EQ(255, (int)(unsigned char)r[0]);
+
+    CString e20("#x20");     // 32: the bottom of the printable range
+    EXPECT_STREQ(" ", (const char*)doc.MXP_GetEntity(e20));
+
+    CString e00A("#x00A");   // 10: leading zeros, THREE digits, still valid
+    EXPECT_STREQ("\n", (const char*)doc.MXP_GetEntity(e00A));
+
+    EXPECT_EQ(errs, doc.m_iMXPerrors);   // none of the above is an error
+
+    CString e1F("#x1F");     // 31: below 32 and not one of 9/10/13
+    EXPECT_STREQ("", (const char*)doc.MXP_GetEntity(e1F));
+    EXPECT_EQ(errs + 1, doc.m_iMXPerrors);
+    EXPECT_TRUE(dbg.contains("Disallowed number in MXP entity: &#x1F;"));
+    // ...and it is the RANGE check that rejected it, not the hex guard
+    EXPECT_FALSE(dbg.contains("maximum of 2 hex digits"));
+}
+
 MC_TEST_MAIN()

@@ -833,6 +833,76 @@ these are macOS-side fixes whose *Windows* arm was read but never executed:
   Windows floor turns out to be applied at a different point the port's wrap
   column will differ by a character or two in that corner.
 
+### 4c-quinvicies. Unbounded scrollback: the jump index and the 0 sentinel (2026-08-04)
+
+**Substantial Windows-shared change** — `doc.h`, `doc.cpp`, `doc_shared.cpp`,
+`ProcessPreviousLine.cpp`, `methods_output.cpp`, `methods_noting.cpp`,
+`xml/xml_save_world.cpp`, `xml/xmlparse.cpp` callers, and the world-prefs page.
+`CMUSHclientDoc`'s layout changes, so Windows needs a full rebuild too.
+
+**1. `m_pLinePositions` is now `CLinePositionIndex m_LinePositions`**
+(`line_position_index.h`, new, added to the vcxproj). Was a `POSITION` array
+sized from the buffer cap but indexed by the live line count; now a `std::deque`
+of chunk heads indexed relative to the current list head. Behaviour is meant to
+be identical: a chunk may still be NULL, `GetLinePosition` still falls back to
+chunk *n*−1 and then to the list head, and "allocated" is still a distinct state
+from "empty" (the guard several callers use for "has `SetUpOutputWindow` run").
+
+What to check on Windows — all of it should be invisible, which is the point:
+
+1. Open a world, let the buffer fill past `max_output_lines` (set it to 500 to
+   get there fast) and keep it running. Scrollback, scrollbar, Find, Recall and
+   Go To Line must all behave exactly as before. A renumbering error here does
+   **not** crash: `GetLinePosition` starts from the wrong chunk head and walks
+   forward, so `world.GetLineInfo(n, 1)` returns a line off by a multiple of
+   100. Spot-check a few line numbers against what is on screen.
+2. World Properties ▸ Output ▸ lines: change it up and down on a full buffer
+   (this runs `FixUpOutputBuffer`, which rebuilds the index from scratch).
+3. `world.DeleteLines(n)` and a gagging trigger (`omit_from_output`) both
+   invalidate chunk heads — run a trigger that gags on a busy world and confirm
+   the scrollback stays coherent.
+
+**2. `max_output_lines = 0` now means unlimited.** New option flag
+`OPT_ZERO_UNLIMITED` (`doc.h`), honoured by `SetBaseOptionItem`
+(`doc_shared.cpp`) — zero is legal below the stated minimum — and the ceiling
+rose from 500,000 to 100,000,000. Nothing else in the table carries the flag, so
+no other option changes.
+
+Three knock-on edits that are worth a specific look because they touch generic
+machinery:
+
+- **`Save_XML_number` gained a `bWriteZero` parameter** (default false, so every
+  existing caller is unchanged). It is passed true only for `OPT_ZERO_UNLIMITED`
+  options. Needed because a zero is normally omitted from the world file and the
+  loader keeps the member's current value for an absent numeric attribute — so
+  without this, "unlimited" silently came back as 5,000 on the next load.
+  **Check a save/reload of an ordinary world produces a byte-identical file** to
+  one saved before this change (no stray `="0"` attributes anywhere).
+- **The world loader widens the minimum to 0 for `OPT_ZERO_UNLIMITED` options**
+  (`xml_load_world.cpp`) and lets `SetOptionItem` apply the real "0, or at least
+  200" rule. A world file with `max_output_lines="5"` is still rejected — but now
+  by `SetOptionItem` returning `eOptionOutOfRange` rather than by
+  `Get_XML_number` throwing, so **the error the user sees changes**: previously a
+  per-option exception (caught, option skipped, default kept), now a silent skip.
+  Same outcome, quieter path. Worth confirming a hand-edited bad value still
+  leaves the world loadable.
+- **`DDV_MinMaxLong` on the prefs page is now conditional** on the value being
+  non-zero, and a new confirmation appears when 0 is entered ("…means UNLIMITED
+  scrollback… Continue?"). Check that a non-zero out-of-range value still gets
+  the standard MFC range message, and that Cancel on the new prompt leaves the
+  page open with the value intact.
+
+**3. The disconnect statistics line** (`doc_shared.cpp`) now prints
+"Output buffer has N lines in it (no limit set)." when unlimited, instead of the
+"N/M lines (x% full)" form — which would have divided by zero. Ordinary bounded
+worlds must still print the percentage exactly as before.
+
+**Not yet done, and deliberately:** the scroll geometry is still 32-bit
+(`platform/wx_outputpane.cpp` is port-only, so this is not a Windows concern),
+and `CMUSHView`'s own scroll sizes on Windows are unchanged. Setting 0 on a
+Windows build will therefore run into MFC's own limits long before the engine's;
+that is expected and is not what this change is claiming to fix.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

@@ -922,14 +922,22 @@ bool bWasClosed = m_iConnectPhase == eConnectNotConnected;
   
   Note (strInfo);  
 
-  strInfo = TFormat ("--- Output buffer has %i/%i line%s in it (%.1f%% full).",
-                m_LineList.GetCount (),
-                m_maxlines,
-                (m_LineList.GetCount ()) == 1 ? "" : "s",
-                (double) m_LineList.GetCount () / (double) m_maxlines * 100.0
-                );
+  // "n/m lines (x% full)" makes no sense with no limit set, and the percentage
+  // would divide by zero.
+  if (m_maxlines > 0)
+    strInfo = TFormat ("--- Output buffer has %i/%i line%s in it (%.1f%% full).",
+                  m_LineList.GetCount (),
+                  m_maxlines,
+                  (m_LineList.GetCount ()) == 1 ? "" : "s",
+                  (double) m_LineList.GetCount () / (double) m_maxlines * 100.0
+                  );
+  else
+    strInfo = TFormat ("--- Output buffer has %i line%s in it (no limit set).",
+                  m_LineList.GetCount (),
+                  (m_LineList.GetCount ()) == 1 ? "" : "s"
+                  );
 
-  Note (strInfo);  
+  Note (strInfo);
 
   strInfo = TFormat ("--- Matched %i trigger%s, %i alias%s, and %i timer%s fired.",
                 PLURAL (m_iTriggersMatchedThisSessionCount),   
@@ -3581,8 +3589,14 @@ POSITION pos;
 
 
   // if our buffer is full, remove the JUMP_SIZE items
+  //
+  // m_maxlines == 0 is the "unlimited scrollback" sentinel (OPT_ZERO_UNLIMITED
+  // on max_output_lines): never evict.  This is safe only because the jump
+  // index sizes itself from the content rather than from the cap — with the old
+  // fixed array, skipping the eviction wrote past the end of the allocation on
+  // the first line beyond the old boundary.  See line_position_index.h.
 
-  if (m_LineList.GetCount () >= m_maxlines)
+  if (m_maxlines > 0 && m_LineList.GetCount () >= m_maxlines)
     {
 
     RemoveChunk ();   // get rid of JUMP_SIZE lines
@@ -4416,7 +4430,14 @@ int iMaximum = BaseOptionsTable [iItem].iMaximum;
   if (iMinimum == 0 && iMaximum == 0)
       iMaximum = 1;
 
-  if (Value < iMinimum || Value > iMaximum)
+  // OPT_ZERO_UNLIMITED: zero is legal below the minimum and means "no limit".
+  // Only max_output_lines carries it — the range there is "200 lines at least,
+  // OR none at all" (unbounded scrollback), which a plain min/max cannot say.
+  // Additive: no other option sets the flag, so nothing else changes.
+  const bool bZeroIsUnlimited =
+      (BaseOptionsTable [iItem].iFlags & OPT_ZERO_UNLIMITED) != 0 && Value == 0;
+
+  if (!bZeroIsUnlimited && (Value < iMinimum || Value > iMaximum))
       return eOptionOutOfRange;
 
   // for custom colours, subtract 1 when we set it (-1 = no change (was 0) )

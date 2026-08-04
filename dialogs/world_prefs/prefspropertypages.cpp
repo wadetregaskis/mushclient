@@ -5839,7 +5839,11 @@ void CPrefsP14::DoDataExchange(CDataExchange* pDX)
 	DDX_Check(pDX, IDC_INDENT_PARAS, m_indent_paras);
 	DDX_Check(pDX, IDC_WRAP_OUTPUT, m_wrap_output);
 	DDX_Text(pDX, IDC_LINES, m_nLines);
-	DDV_MinMaxLong(pDX, m_nLines, 200, 500000);
+	// 0 = unlimited scrollback (world option max_output_lines, OPT_ZERO_UNLIMITED).
+	// DDV_MinMaxLong cannot say "200 at least, OR none at all", so validate only
+	// the bounded case; the ceiling matches the option table.
+	if (m_nLines != 0)
+		DDV_MinMaxLong(pDX, m_nLines, 200, 100000000);
 	DDX_Text(pDX, IDC_WRAP_COLUMN, m_nWrapColumn);
 	DDV_MinMaxUInt(pDX, m_nWrapColumn, 20, MAX_LINE_WIDTH);
 	DDX_Check(pDX, IDC_LINE_INFORMATION, m_bLineInformation);
@@ -5874,6 +5878,20 @@ void CPrefsP14::DoDataExchange(CDataExchange* pDX)
 
    if(pDX->m_bSaveAndValidate)
     {
+
+    // Unlimited is a new option value (0), so there is no existing behaviour to
+    // preserve here — but it deserves a word, because it is the one setting on
+    // this page that can grow without bound: a busy MUD is roughly a gigabyte
+    // per million lines.
+    if (m_nOldLines != m_nLines && m_nLines == 0)
+      {
+      if (::UMessageBox (TFormat (
+            "Setting the output buffer to 0 lines means UNLIMITED scrollback: "
+            "nothing is ever discarded, and memory grows for as long as the "
+            "world stays open (roughly 1 Gb per million lines). Continue?"),
+            MB_ICONQUESTION | MB_YESNO) == IDNO)
+        pDX->Fail ();
+      }
 
     // warn them if they are allocating too many lines for their physical memory
     if (m_nOldLines != m_nLines && m_nLines > 1000)

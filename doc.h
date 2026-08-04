@@ -457,6 +457,8 @@ enum {
 #define OPT_FIX_INPUT_WRAP      0x1000000    // Added for input wrapping.
 #define OPT_FIX_TOOLTIP_VISIBLE 0x2000000    // Added for tooltip delay changing.
 #define OPT_FIX_TOOLTIP_START   0x4000000    // Added for tooltip delay changing.
+#define OPT_ZERO_UNLIMITED      0x8000000    // 0 is legal below iMinimum and
+                                             // means "no limit" (max_output_lines)
 
 // for debug.options and MXP <option> tag
 typedef struct

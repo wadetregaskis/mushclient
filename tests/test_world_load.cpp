@@ -437,6 +437,61 @@ TEST(WorldLoad, PasswordBase64Load)
     EXPECT_STREQ("proxypw", (const char*)doc.m_strProxyPassword);
 }
 
+// ── Unlimited scrollback (max_output_lines = 0) ────────────────────────────
+//
+// 0 is the OPT_ZERO_UNLIMITED sentinel: legal below the option's 200-line
+// minimum, and it means "never evict".  It has to survive a save/reload, or a
+// user who sets it loses it the next time the world file is written — and the
+// failure would be silent, since the value would just come back as the 5,000
+// default.
+TEST(WorldLoad, UnlimitedScrollbackSentinelRoundTrips)
+{
+    const char* base = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="mud.example.com" port="4000">
+</world>
+</muclient>)";
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_world_unlim_%d.mcl", (int)getpid());
+    {
+        CMUSHclientDoc doc;
+        ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(base).c_str()));
+        ASSERT_EQ(5000L, (long)doc.m_maxlines);          // the default
+        doc.m_maxlines = 0;
+        ASSERT_TRUE(doc.OnSaveDocument(path));
+    }
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    std::string content; char buf[4096]; size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) content.append(buf, n);
+    fclose(f);
+    EXPECT_NE(content.find("max_output_lines=\"0\""), std::string::npos);
+
+    CMUSHclientDoc reloaded;
+    ASSERT_TRUE(reloaded.LoadWorldFromFile(path));
+    EXPECT_EQ(0L, (long)reloaded.m_maxlines);
+    remove(path);
+}
+
+TEST(WorldLoad, MaxOutputLinesRangeAcceptsZeroButNotOneToOneNinetyNine)
+{
+    // The range is "200 lines at least, OR none at all", which a plain min/max
+    // cannot express — hence OPT_ZERO_UNLIMITED.  Both halves matter: allowing
+    // 0 without keeping the floor would let a script set a 5-line buffer.
+    CMUSHclientDoc doc;
+
+    EXPECT_EQ(eOK,               doc.SetOption("max_output_lines", 0));
+    EXPECT_EQ(0L,                (long)doc.m_maxlines);
+    EXPECT_EQ(eOptionOutOfRange, doc.SetOption("max_output_lines", 5));
+    EXPECT_EQ(eOptionOutOfRange, doc.SetOption("max_output_lines", 199));
+    EXPECT_EQ(eOK,               doc.SetOption("max_output_lines", 200));
+    // ...and the ceiling is raised well past the old 500,000.
+    EXPECT_EQ(eOK,               doc.SetOption("max_output_lines", 5000000));
+    EXPECT_EQ(eOptionOutOfRange, doc.SetOption("max_output_lines", 200000000));
+}
+
 TEST(WorldLoad, PasswordSaveEncodesBase64)
 {
     // A password set in the doc must be written base64-encoded with a

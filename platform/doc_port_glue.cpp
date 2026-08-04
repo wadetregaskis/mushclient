@@ -296,7 +296,8 @@ void CMUSHclientDoc::AllocateLinePositions()
     // Trim FIRST, so a shrunken cap really does drop the excess lines.  (The
     // index itself no longer needs this — it sizes itself from the content, not
     // from m_maxlines — but the trim is the visible half of a cap change.)
-    if (m_LinePositions.IsAllocated())
+    // (m_maxlines == 0 is the unlimited sentinel — nothing is excess.)
+    if (m_LinePositions.IsAllocated() && m_maxlines > 0)
         while ((long)m_LineList.GetCount() > m_maxlines)
             RemoveChunk();
 

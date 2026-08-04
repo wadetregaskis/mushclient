@@ -7,6 +7,7 @@
 // portable twins, these exercise the real shipping code, not a reimplementation.
 
 #include "mc_test.h"
+#include <chrono>
 // B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -543,6 +544,92 @@ TEST(Utilities, LinePositionsSurviveRepeatedEviction)
         VariantClear(&v);
     }
     EXPECT_EQ(500L, firstNum + committed - 1);   // ...and the last is the newest
+}
+
+// ── Unlimited scrollback actually keeps everything ──────────────────────────
+//
+// m_maxlines == 0 is the OPT_ZERO_UNLIMITED sentinel.  The trim in StartNewLine
+// is the only thing that discards lines, so this pins that it is skipped — and,
+// with the counterpart below, that a real cap still evicts.  Without both arms
+// a build that never trims, or one that always does, passes half of this.
+TEST(Utilities, UnlimitedScrollbackNeverEvicts)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_maxlines = 0;                    // unlimited
+    doc.AllocateLinePositions();
+
+    char buf[32];
+    const int kLines = 1200;               // well past several JUMP_SIZE chunks
+    for (int i = 1; i <= kLines; i++) {
+        snprintf(buf, sizeof buf, "line %d\n", i);
+        doc.DisplayMsg(buf, (int)strlen(buf), 0);
+    }
+
+    EXPECT_EQ((long)kLines + 1, (long)doc.m_LineList.GetCount());  // +in-progress
+
+    // ...and the jump index still resolves the oldest and newest lines, which
+    // is what would break if the index had kept sizing itself from the cap.
+    VARIANT v = doc.GetLineInfo(1, 1);
+    ASSERT_EQ((unsigned short)VT_BSTR, v.vt);
+    EXPECT_STREQ("line 1", (const char*)CString(v.bstrVal));
+    VariantClear(&v);
+    v = doc.GetLineInfo(kLines, 1);
+    ASSERT_EQ((unsigned short)VT_BSTR, v.vt);
+    snprintf(buf, sizeof buf, "line %d", kLines);
+    EXPECT_STREQ(buf, (const char*)CString(v.bstrVal));
+    VariantClear(&v);
+}
+
+TEST(Utilities, ABoundedCapStillEvicts)
+{
+    // The control for the test above.
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_maxlines = 300;
+    doc.AllocateLinePositions();
+
+    char buf[32];
+    for (int i = 1; i <= 1200; i++) {
+        snprintf(buf, sizeof buf, "line %d\n", i);
+        doc.DisplayMsg(buf, (int)strlen(buf), 0);
+    }
+    EXPECT_TRUE((long)doc.m_LineList.GetCount() <= 301);
+}
+
+TEST(Utilities, UnlimitedScrollbackAppendRateStaysFlat)
+{
+    // A complexity pin.  With the old fixed index, "unlimited" was unreachable;
+    // now that it is, the thing that would quietly ruin it is an O(N) step on
+    // the append path — the index shuffle used to be exactly that, at O(cap /
+    // JUMP_SIZE) per eviction.  Time the first block of lines against a much
+    // later one: the ratio, not the absolute number, is the assertion.
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_maxlines = 0;
+    doc.AllocateLinePositions();
+
+    char buf[48];
+    auto block = [&](int n) {
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < n; i++) {
+            snprintf(buf, sizeof buf, "some ordinary mud output line\n");
+            doc.DisplayMsg(buf, (int)strlen(buf), 0);
+        }
+        const auto t1 = std::chrono::steady_clock::now();
+        return std::chrono::duration<double, std::milli>(t1 - t0).count();
+    };
+
+    const double first = block(5000);
+    block(40000);                       // get well past any early-growth effects
+    const double later = block(5000);
+
+    // Loose by an order of magnitude against the regression it guards (an O(N)
+    // append at 50,000 lines would be ~10x the cost at 5,000, and worse beyond).
+    EXPECT_TRUE(later <= first * 4.0 + 20.0);
+    if (later > first * 4.0 + 20.0)
+        printf("    append of 5000 lines: at start %.1fms, at 50k %.1fms\n",
+               first, later);
 }
 
 // doc_portable.cpp GetLinePosition: "sanity check (Santa Claus): nLine >

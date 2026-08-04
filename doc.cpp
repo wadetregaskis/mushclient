@@ -1915,9 +1915,11 @@ long i;
   Frame.SetStatusMessageNow (Translate ("Recalculating line positions"));
 
 // delete from head the excess lines
+// (nNewBufferSize == 0 is the unlimited sentinel: nothing is excess)
 
-  while (m_LineList.GetCount () > nNewBufferSize)
-    RemoveChunk ();
+  if (nNewBufferSize > 0)
+    while (m_LineList.GetCount () > nNewBufferSize)
+      RemoveChunk ();
 
 // re-seed the line positions index (one Append per chunk head, in order —
 // the index sizes itself from what is actually there, not from the cap)

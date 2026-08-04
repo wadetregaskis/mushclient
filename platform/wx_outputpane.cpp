@@ -411,7 +411,9 @@ void COutputPane::AppendLine(SOutputLine&& line)
     m_lines.push_back(std::move(line));
 
     int trimCount = 0;
-    while ((int)m_lines.size() > m_maxLines) {
+    // m_maxLines == 0 means unlimited scrollback (world option max_output_lines
+    // = 0), so nothing is ever trimmed off the front.
+    while (m_maxLines > 0 && (int)m_lines.size() > m_maxLines) {
         // Accumulate visual rows being removed so UpdateScrollbars can compensate
         // the scroll position (prevents the viewport jumping to different content).
         if (!m_visualRowStart.empty()) {
@@ -466,10 +468,13 @@ void COutputPane::EndBatch()
 
 void COutputPane::SetMaxLines(int n)
 {
-    if (n < 100) n = 100;
+    // 0 is the unlimited sentinel (world option max_output_lines), and it has
+    // to pass through the floor below: clamping it to 100 would make "no limit"
+    // the SMALLEST buffer in the app.
+    if (n != 0 && n < 100) n = 100;
     m_maxLines = n;
     bool trimmed = false;
-    while ((int)m_lines.size() > m_maxLines) {
+    while (m_maxLines > 0 && (int)m_lines.size() > m_maxLines) {
         m_lines.pop_front();
         if (!m_lineChars.empty()) m_lineChars.pop_front();
         trimmed = true;

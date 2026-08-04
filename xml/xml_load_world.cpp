@@ -1044,12 +1044,22 @@ void CMUSHclientDoc::Load_World_Numeric_Options_XML (CXMLelement & parent,
       else
         {   // not RGB colour or boolean
         long iValue;
-        if (Get_XML_number (parent, 
-                            OptionsTable [i].pName, 
+        // OPT_ZERO_UNLIMITED options accept 0 below their stated minimum
+        // (max_output_lines = 0 is "unlimited scrollback"), which the reader's
+        // plain min/max cannot express — it would throw "value too small" and
+        // the per-option catch below would silently leave the default in place.
+        // Widen the floor here and let SetOptionItem apply the real rule: it
+        // knows "0, or at least the minimum", and rejects anything else without
+        // touching the member, which is the same outcome the throw produced.
+        const long iLoadMinimum =
+            (OptionsTable [i].iFlags & OPT_ZERO_UNLIMITED)
+            ? 0 : OptionsTable [i].iMinimum;
+        if (Get_XML_number (parent,
+                            OptionsTable [i].pName,
                             iValue,
  //  version 4.30           bUseDefault || m_NumericConfiguration [i]->bInclude,
-                            TRUE,  //  version 4.30 
-                            OptionsTable [i].iMinimum,
+                            TRUE,  //  version 4.30
+                            iLoadMinimum,
                             OptionsTable [i].iMaximum))
           SetOptionItem (i, iValue, true, (iFlags & LOAD_INCLUDE) != 0);
         /*    version 4.30

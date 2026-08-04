@@ -118,13 +118,19 @@ void CMUSHclientDoc::Save_World_XML (CArchive& ar,
   ar.WriteString ("</muclient>" NL);
   }  // end of CMUSHclientDoc::Save_World_XML
 
-void Save_XML_number (CArchive& ar, 
-                      const char * sName, 
+void Save_XML_number (CArchive& ar,
+                      const char * sName,
                       const long iNumber,
-                      const bool sameline)
+                      const bool sameline,
+                      const bool bWriteZero)
   {
   // default of zero does not need to be written
-  if (iNumber)
+  //
+  // ...unless zero is a MEANINGFUL value for this option rather than "unset".
+  // The loader keeps the current member value for an absent numeric attribute,
+  // so an option whose 0 is a real setting (max_output_lines = unlimited) would
+  // silently come back as its default on the next load.  See OPT_ZERO_UNLIMITED.
+  if (iNumber || bWriteZero)
     ar.WriteString (CFormat ("%s%s=\"%ld\"%s",
                     sameline ? "" : "   ",
                     sName, 
@@ -255,7 +261,10 @@ void CMUSHclientDoc::Save_World_Numeric_Options_XML (CArchive& ar)
       if (OptionsTable [i].iFlags & OPT_RGB_COLOUR)
         Save_XML_colour (ar, OptionsTable [i].pName, iValue);
       else
-        Save_XML_number (ar, OptionsTable [i].pName, iValue);
+        // OPT_ZERO_UNLIMITED options mean something by 0, so it must be written
+        // rather than left to the loader's "absent = keep the default".
+        Save_XML_number (ar, OptionsTable [i].pName, iValue, false,
+                         (OptionsTable [i].iFlags & OPT_ZERO_UNLIMITED) != 0);
 
     } // end of looping through each option
 

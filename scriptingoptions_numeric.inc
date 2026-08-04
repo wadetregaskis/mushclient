@@ -102,7 +102,7 @@
 {"log_script_errors",                   false, O(m_bLogScriptErrors)},           
 {"lower_case_tab_completion",           false, O(m_bLowerCaseTabCompletion)},           
 {"map_failure_regexp",                  false, O(m_bMapFailureRegexp)},                 
-{"max_output_lines",                    5000,  O(m_maxlines), 200, 500000, OPT_FIX_OUTPUT_BUFFER},            
+{"max_output_lines",                    5000,  O(m_maxlines), 200, 100000000, OPT_FIX_OUTPUT_BUFFER | OPT_ZERO_UNLIMITED},   // 0 = unlimited            
 {"mud_can_change_link_colour",          true,  O(m_bMudCanChangeLinkColour), 0, 0, OPT_SERVER_CAN_WRITE},           
 {"mud_can_remove_underline",            false, O(m_bMudCanRemoveUnderline), 0, 0, OPT_SERVER_CAN_WRITE},            
 {"mud_can_change_options",              true,  O(m_bMudCanChangeOptions)},            

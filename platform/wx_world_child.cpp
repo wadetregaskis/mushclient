@@ -522,8 +522,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                             weight, false, faceName);
                 if (font.IsOk()) m_output->SetOutputFont(font);
             }
-            // Scrollback limit.
-            if (m_doc->m_maxlines > 0) m_output->SetMaxLines(m_doc->m_maxlines);
+            // Scrollback limit — 0 included, since 0 is the "unlimited"
+            // sentinel and the pane has to be told about it (skipping the call
+            // would leave the pane on its 5,000-line construction default while
+            // the engine kept every line).
+            m_output->SetMaxLines(m_doc->m_maxlines);
             // Auto-freeze: if the world has it disabled, the pane should keep
             // auto-scrolling even when the user has scrolled up.
             m_output->SetAllowAutoFreeze(m_doc->m_bAutoFreeze != 0);
@@ -4003,7 +4006,7 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
             m_lastCopySel   = copySel;
             m_lastCopyHtml  = asHtml;
             m_lastKeepPause = keepPz;
-            if (maxl > 0) m_output->SetMaxLines((int) maxl);
+            m_output->SetMaxLines((int) maxl);   // 0 = unlimited, pass it through
             m_output->SetAllowAutoFreeze(freeze);
             m_output->SetKeepPauseAtBottom(keepPz);
             m_output->SetCopySelectionToClipboard(copySel);

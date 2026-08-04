@@ -540,10 +540,15 @@ CString NotepadTextFromCanonical (const CString & in);   // CRLF → control LF
 #endif // !_WIN32
 
 // different ways of saving things — implementations in xml/xml_save_world.cpp
+// bWriteZero: write the attribute even when the value is 0.  Normally a zero is
+// omitted (the loader keeps the member's current value for an absent numeric
+// attribute), which is right for "unset" but wrong for an option where 0 is a
+// real setting — see OPT_ZERO_UNLIMITED and max_output_lines.
 void Save_XML_number  (CArchive& ar,
                        const char * sName,
                        const long iNumber,
-                       const bool sameline = false);
+                       const bool sameline = false,
+                       const bool bWriteZero = false);
 void Save_XML_boolean (CArchive& ar,
                        const char * sName,
                        const long iNumber,

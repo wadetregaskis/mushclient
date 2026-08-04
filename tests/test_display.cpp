@@ -288,6 +288,131 @@ TEST(WrapTest, WrapNeverSplitsUtf8Sequence)
     EXPECT_TRUE(((unsigned char)l1->text[0] & 0xC0) != 0x80);
 }
 
+// doc_shared.cpp AddToLine (2855-2880): the auto-wrap scan looks for a split
+// point at "a multibyte character or a space (whichever comes last)".  The DBCS
+// arm (2868-2871) accepts a lead byte 0x81-0xFE followed by a trail byte in
+// 0x40-0x7E or 0xA1-0xFE, records the LEAD byte's index, and then steps the scan
+// PAST the trail byte (`last_space = i++`, 2871) so that a trail/lead straddle
+// can never be mistaken for the start of a character.
+//
+// WrapR5.Big5DoubleByteSplitPoint is pair-aligned to column 0 with an even wrap
+// column, so a plain hard break at the column would ALSO land on a character
+// boundary: it can prove the arm RAN, not that it chose the right byte, and its
+// trail byte (0x40) is below 0x81 so the `i++` skip is a no-op there.  Here a
+// 5-byte ASCII prefix puts the pairs on ODD offsets, so byte 19 - the last byte
+// that fits the 20-column line - is the LEAD half of a pair.  A naive break at
+// the wrap column WOULD split that character; the arm must retreat to the
+// previous pair boundary at byte 17.
+//
+// The bytes are GB2312 (0xD6 0xD0 = U+4E2D), which also exercises the second-byte
+// 0xA1-0xFE disjunct.  57af097 deleted the separate (unreachable) GB2312 arm and
+// folded it into this one test, so that disjunct is now the only thing standing
+// in for GB2312 - and the Big5 fixture never reaches it.
+TEST(WrapTest, DbcsPairStraddlingWrapColumnMovesWholeToNextLine)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 20;
+    doc.m_bUTF_8 = FALSE;
+    // The ctor default (SetDefaults -> scriptingoptions_numeric.inc:85
+    // "indent_paras", true), set explicitly because the expected split depends on
+    // it: with m_indent_paras FALSE the block at 2891 does last_space++, which
+    // moves the break onto the pair's TRAIL byte and splits the character anyway.
+    doc.m_indent_paras = 1;
+
+    // "abcde" carries no spaces, so the DBCS arm is the ONLY possible source of a
+    // split point (the c1 == ' ' arm at 2872 can never fire).  Pair k then
+    // occupies bytes 5+2k / 6+2k, so byte 19 is a lead byte.
+    std::string s = "abcde";
+    for (int i = 0; i < 10; ++i) { s += (char)0xD6; s += (char)0xD0; }
+    s += '\n';
+    doc.DisplayMsg(s.c_str(), (int)s.size(), 0);
+
+    ASSERT_TRUE(doc.m_LineList.GetCount() >= 2);
+    CLine* l0 = nth_line(doc, 0);
+    CLine* l1 = nth_line(doc, 1);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+    ASSERT_TRUE(l0->len > 0 && l1->len > 0);
+
+    // Hand-derived: at len 20 the scan matches at i = 5,7,9,11,13,15,17 (the i++
+    // skip keeps it off the trail/lead straddle at 18), so last_space = 17 and
+    // bytes 17..19 move to the new line.
+    std::string expect0 = "abcde";
+    for (int i = 0; i < 6; ++i) { expect0 += (char)0xD6; expect0 += (char)0xD0; }
+    EXPECT_EQ(17, l0->len);
+    EXPECT_TRUE(line_text(l0) == expect0);
+
+    // The load-bearing pin: line 0 must not END on a lead byte and line 1 must
+    // not BEGIN on a trail byte.  Disable the arm -> l0->len 20, ending 0xD6;
+    // drop the `i++` -> l0->len 18, ending 0xD6.  Both break these two lines.
+    EXPECT_EQ((char)0xD0, l0->text[l0->len - 1]);
+    EXPECT_EQ((char)0xD6, l1->text[0]);
+
+    std::string expect1;
+    for (int i = 0; i < 4; ++i) { expect1 += (char)0xD6; expect1 += (char)0xD0; }
+    EXPECT_EQ(8, l1->len);
+    EXPECT_TRUE(line_text(l1) == expect1);
+    // nothing lost or duplicated across the split
+    EXPECT_TRUE(line_text(l0) + line_text(l1) == s.substr(0, s.size() - 1));
+
+    EXPECT_EQ(3, (int)doc.m_LineList.GetCount());  // exactly one wrap, then the \n
+    EXPECT_FALSE(l0->hard_return);                 // soft wrap, not the trailing \n
+    EXPECT_EQ(l0->len, style_length_sum(l0));      // style run split stayed exact
+    EXPECT_EQ(l1->len, style_length_sum(l1));
+}
+
+// doc_shared.cpp AddToLine 2869: the trail-byte test is a DISJUNCTION with a
+// deliberate hole - 0x40-0x7E (Big5 only) or 0xA1-0xFE (Big5 and GB2312).  Bytes
+// 0x7F-0xA0 are not a legal trail byte in either encoding, so a high-bit lead
+// followed by one of them is not a character and must NOT become a split point.
+// Nothing else in the suite reaches that hole: widening either bound (0xA1 ->
+// 0x80, or 0x7E -> 0x8F) currently changes no test's result.
+//
+// The fixture catches BOTH failure directions.  Eleven invalid pairs (0x81 0x80
+// - note 0x81 IS an accepted LEAD byte, so this really tests the trail-byte
+// clause and not the lead-byte range) surround ONE valid GB2312 character at
+// byte 10.  If the arm stops working the line breaks hard at the column (len
+// 20); if the hole is closed the last invalid pair at byte 18 wins (len 18).
+// Only "split at the one real character" gives len 10.
+TEST(WrapTest, TrailByteInTheGapBetweenDbcsRangesIsNotASplitPoint)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 20;
+    doc.m_bUTF_8 = FALSE;
+    doc.m_indent_paras = 1;        // ctor default; see the sibling test
+
+    std::string s;
+    for (int i = 0; i < 5; ++i) { s += (char)0x81; s += (char)0x80; }  // bytes 0-9
+    s += (char)0xD6; s += (char)0xD0;                                  // bytes 10-11
+    for (int i = 0; i < 6; ++i) { s += (char)0x81; s += (char)0x80; }  // bytes 12-23
+    s += '\n';
+    doc.DisplayMsg(s.c_str(), (int)s.size(), 0);
+
+    ASSERT_TRUE(doc.m_LineList.GetCount() >= 2);
+    CLine* l0 = nth_line(doc, 0);
+    CLine* l1 = nth_line(doc, 1);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+    ASSERT_TRUE(l1->len > 0);
+
+    // Hand-derived: the only i in 0..18 whose (c1,c2) satisfies 2868-2869 is
+    // i = 10, so last_space = 10 and bytes 10..19 move to the new line.
+    EXPECT_EQ(10, l0->len);
+    EXPECT_EQ(14, l1->len);
+    EXPECT_EQ((char)0xD6, l1->text[0]);   // continuation starts at the character
+
+    std::string expect0;
+    for (int i = 0; i < 5; ++i) { expect0 += (char)0x81; expect0 += (char)0x80; }
+    EXPECT_TRUE(line_text(l0) == expect0);
+    EXPECT_TRUE(line_text(l0) + line_text(l1) == s.substr(0, s.size() - 1));
+
+    EXPECT_FALSE(l0->hard_return);
+    EXPECT_EQ(l0->len, style_length_sum(l0));
+    EXPECT_EQ(l1->len, style_length_sum(l1));
+}
+
 // doc_shared.cpp AddToLine word wrap (audit §3): retitled from
 // WordMovesIntactToContinuationLine — StyleRunSplitAcrossWrapKeepsLengthsAndColours
 // (below) already covers the space-kept / word-moved split, so this test's unique

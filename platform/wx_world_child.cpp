@@ -4127,8 +4127,16 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         }
     }
 
-    // Flush any output produced by the timer callbacks.
-    m_doc->UpdateAllViews(nullptr);
+    // Flush any output produced by the timer callbacks — but ONLY when there is
+    // something to flush.  This call used to be unconditional, and the drain's
+    // fast-exit path still ends in EmitRepaint, so an idle connected world
+    // repainted its whole viewport 10 times a second forever with nothing on
+    // screen changing.  Every OTHER UpdateAllViews caller stays unconditional:
+    // they are asking for a repaint of state the predicate cannot see (a
+    // miniwindow moved or was shown, a palette entry changed), which is exactly
+    // the case that would make Quow's windows go stale.
+    if (m_doc->HasUnflushedOutput())
+        m_doc->UpdateAllViews(nullptr);
 
     // ── Connection-phase change: update title and output pane notes ───────
     int phase     = m_doc->m_iConnectPhase;

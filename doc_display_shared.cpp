@@ -50,6 +50,43 @@ void CMUSHclientDoc::RebuildOutputView()
     UpdateAllViews(nullptr);
 }
 
+// ── HasUnflushedOutput ────────────────────────────────────────────────────
+// Would UpdateAllViews actually push anything?  See the header for why this is
+// for the periodic timer flush ONLY.
+//
+// Without it the world timer drained (and therefore repainted) 10 times a
+// second forever: the drain's fast-exit path still ended in EmitRepaint, so an
+// idle, connected world with a prompt on screen burned CPU continuously with
+// nothing on screen changing.  That is a battery cost at today's default 5,000
+// lines, quite apart from being the multiplier on every O(buffer) path the
+// unbounded-scrollback work is trying to remove.
+bool CMUSHclientDoc::HasUnflushedOutput () const
+{
+    if (!HaveOutputSink ())
+        return false;
+
+    // A completed line the view has not seen yet.
+    //
+    // m_gui_lines_emitted counts COMPLETED lines, and the in-progress line is
+    // always the list's tail (StartNewLine appends it) but is never emitted as
+    // a completed one -- so the steady-state difference is 1, not 0.  Comparing
+    // against the raw count instead makes this arm permanently true and the
+    // idle skip never engages.  != rather than > so a rewind (RebuildOutputView
+    // sets the cursor back to 0) also reports work.
+    const long committed = m_LineList.GetCount () - (m_pCurrentLine ? 1 : 0);
+    if (committed != m_gui_lines_emitted)
+        return true;
+
+    // ...or the in-progress row appearing, growing, restyling or vanishing.
+    const long fingerprint =
+        (m_pCurrentLine && m_pCurrentLine->len > 0)
+        ? (long) m_pCurrentLine->len * 31 +
+          (long) m_pCurrentLine->styleList.GetCount () + 1
+        : 0;
+
+    return fingerprint != m_iPendingFingerprint;
+}
+
 void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
 {
     if (!HaveOutputSink()) return;
@@ -88,11 +125,17 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
     // after a buffer-size change, or a miniwindow deletion) still refresh the
     // canvas.
     if (!pos) {
+        // Nothing at or after the cursor means there is no in-progress row
+        // either (m_pCurrentLine is the tail when it exists), so the pending
+        // fingerprint must not be left stale — HasUnflushedOutput would then
+        // report a phantom change on every tick and defeat the idle skip.
+        m_iPendingFingerprint = 0;
         EmitRepaint();
         return;
     }
 
-    bool batchOpen = false;
+    bool batchOpen     = false;
+    bool emittedPending = false;
 
     // Emit each completed (non-current) line.
     while (pos) {
@@ -165,8 +208,12 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
         ++m_gui_lines_emitted;
     }
 
-    // Close the batch (triggers a single scrollbar update + repaint).
-    if (batchOpen) EndOutputBatch();
+    // NOTE: the batch stays OPEN across the pending-row emit below and is
+    // closed after it.  It used to close here, so a packet that both completed
+    // a line and left a prompt behind — the ordinary shape of MUD output — paid
+    // TWO scrollbar updates and two invalidations per packet: one from
+    // EndOutputBatch and another from the pending AppendLine landing outside
+    // any batch.  Every packet, all day.
 
     // ── Emit the in-progress line as a pending update ──────────────────────
     // m_pCurrentLine is the line still being assembled (no trailing '\n' yet).
@@ -209,13 +256,31 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
         if (!pending.empty()) {
             pending.pending = true;
             EmitOutputLine(std::move(pending));
+            emittedPending = true;
         }
+        // Remember what the pending row looked like, so the world timer can
+        // tell "the prompt grew" from "nothing happened" (HasUnflushedOutput).
+        m_iPendingFingerprint =
+            (long) m_pCurrentLine->len * 31 +
+            (long) m_pCurrentLine->styleList.GetCount () + 1;   // never 0
     }
+    else
+        m_iPendingFingerprint = 0;   // no pending row on screen
 
-    // Always trigger a repaint so miniwindow operations (WindowCreate,
-    // WindowShow, WindowPosition, …) that call UpdateAllViews without emitting
-    // any new text lines still refresh the canvas.
-    EmitRepaint();
+    // Close the batch: ONE scrollbar update and ONE invalidation for everything
+    // this call emitted, completed lines and the prompt row together.
+    if (batchOpen) EndOutputBatch();
+
+    // ...and repaint for the callers that changed visual state without emitting
+    // anything at all — world.WindowShow / WindowPosition / WindowCreate and
+    // friends call UpdateAllViews purely to get the canvas recomposited.
+    //
+    // Skipped when something WAS emitted, because both paths above already
+    // invalidated: EndOutputBatch does UpdateScrollbars + Refresh, and an
+    // unbatched pending row does the same inside AppendLine.  Calling
+    // EmitRepaint anyway just added a third invalidation per packet.
+    if (!batchOpen && !emittedPending)
+        EmitRepaint();
 }
 
 #endif // !_WIN32

@@ -1083,6 +1083,165 @@ TEST(ScrollGeometry, UnmeasuredPaneIsAtTheBottom)
     EXPECT_EQ(0, pal::maxScrollUnit(0, 300, 1500));
 }
 
+// ── One invalidation per packet, not three ────────────────────────────────
+//
+// The ordinary shape of MUD output is "some finished lines, then a prompt with
+// no newline".  The drain used to close its paint batch BEFORE emitting the
+// prompt row, so the prompt landed outside any batch and paid its own scrollbar
+// update and invalidation — and then the unconditional EmitRepaint at the end
+// added a third.  Three invalidations per packet is the multiplier on every
+// O(buffer) paint path, which is why it is the first thing the
+// unbounded-scrollback work fixes.
+//
+// A count, not a stopwatch: the batch must open once, close once, and no
+// separate repaint may be requested when the batch already covered it.
+TEST(DrainBatching, ALineAndAPromptAreOneBatchAndNoExtraRepaint)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    // Prime: get past the initial empty-line bookkeeping so the counts below
+    // describe one steady-state packet only.
+    feed(doc, "priming\n");
+    view.batchBegins = view.batchEnds = view.repaints = 0;
+
+    // One packet: a completed line plus an unterminated prompt.
+    doc.DisplayMsg("you are here\nHP:100 > ", 22, 0);
+    doc.UpdateAllViews(nullptr);
+
+    EXPECT_EQ(1, view.batchBegins);
+    EXPECT_EQ(1, view.batchEnds);
+    EXPECT_EQ(0, view.repaints);      // the batch already invalidated
+}
+
+TEST(DrainBatching, APromptOnItsOwnAsksForNoSeparateRepaint)
+{
+    // No completed line, so no batch is opened at all — the pending AppendLine
+    // does its own single update.  A repaint on top of that would be the third
+    // invalidation again, just via a different route.
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    feed(doc, "priming\n");
+    view.batchBegins = view.batchEnds = view.repaints = 0;
+
+    doc.DisplayMsg("HP:100 > ", 9, 0);
+    doc.UpdateAllViews(nullptr);
+
+    EXPECT_EQ(0, view.batchBegins);
+    EXPECT_EQ(0, view.repaints);
+}
+
+TEST(DrainBatching, AMiniwindowOnlyUpdateStillGetsItsRepaint)
+{
+    // The other direction, and the one that would break Quow's plugins: a
+    // caller that emits nothing — world.WindowShow, WindowPosition, WindowCreate
+    // — calls UpdateAllViews purely to have the canvas recomposited, and MUST
+    // still get an invalidation.  Without this arm, "never repaint" passes.
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    feed(doc, "priming\n");
+    view.batchBegins = view.batchEnds = view.repaints = 0;
+
+    doc.UpdateAllViews(nullptr);      // nothing new to emit
+
+    EXPECT_EQ(0, view.batchBegins);
+    EXPECT_EQ(1, view.repaints);
+}
+
+// ── HasUnflushedOutput: the world timer's idle skip ───────────────────────
+//
+// The 100ms world timer used to call UpdateAllViews unconditionally, and the
+// drain's fast-exit path still ends in EmitRepaint — so an idle connected world
+// repainted its whole viewport 10 times a second forever.  HasUnflushedOutput
+// is the predicate that stops it, and it has to answer TRUE for every way the
+// screen can legitimately change, or output stalls until the next packet.
+TEST(UnflushedOutput, NothingToFlushAfterADrain)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    feed(doc, "hello\n");                 // feed() drains
+    EXPECT_FALSE(doc.HasUnflushedOutput());
+}
+
+TEST(UnflushedOutput, ACompletedLineIsUnflushed)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    feed(doc, "hello\n");
+    ASSERT_FALSE(doc.HasUnflushedOutput());
+
+    doc.DisplayMsg("world\n", 6, 0);      // NO drain
+    EXPECT_TRUE(doc.HasUnflushedOutput());
+
+    doc.UpdateAllViews(nullptr);
+    EXPECT_FALSE(doc.HasUnflushedOutput());
+}
+
+TEST(UnflushedOutput, AGrowingPromptIsUnflushed)
+{
+    // The case the fingerprint exists for: a MUD prompt with no newline is an
+    // in-progress line, never a completed one, so the line COUNT never changes
+    // as it grows.  A predicate that only compared counts would leave a
+    // half-typed prompt on screen until the next full line arrived.
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    doc.DisplayMsg("HP:100 ", 7, 0);
+    EXPECT_TRUE(doc.HasUnflushedOutput());       // the prompt appearing
+    doc.UpdateAllViews(nullptr);
+    EXPECT_FALSE(doc.HasUnflushedOutput());
+
+    doc.DisplayMsg("MP:50 > ", 8, 0);
+    EXPECT_TRUE(doc.HasUnflushedOutput());       // ...and growing
+    doc.UpdateAllViews(nullptr);
+    EXPECT_FALSE(doc.HasUnflushedOutput());
+
+    // ...and finishing it: the pending row becomes a committed line, which the
+    // count arm catches, and the fingerprint must go back to "no pending row"
+    // rather than staying at the prompt's value.
+    doc.DisplayMsg("\n", 1, 0);
+    EXPECT_TRUE(doc.HasUnflushedOutput());
+    doc.UpdateAllViews(nullptr);
+    EXPECT_FALSE(doc.HasUnflushedOutput());
+}
+
+TEST(UnflushedOutput, ARestyledPromptOfTheSameLengthIsUnflushed)
+{
+    // Length alone is not enough: world.ColourTell and an ANSI colour change
+    // mid-prompt add a style run without adding characters.  The fingerprint
+    // carries the style count for exactly this.
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    doc.DisplayMsg("abc", 3, 0);
+    doc.UpdateAllViews(nullptr);
+    ASSERT_FALSE(doc.HasUnflushedOutput());
+
+    doc.DisplayMsg("\x1b[31m", 5, 0);     // colour change: no new characters
+    EXPECT_TRUE(doc.HasUnflushedOutput());
+}
+
+TEST(UnflushedOutput, NoSinkMeansNothingToFlush)
+{
+    // A world with no view attached (every headless test that does not set
+    // m_pWorldView) must not claim work: the drain would return immediately
+    // anyway, and answering true would make the timer spin.
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.DisplayMsg("hello\n", 6, 0);
+    EXPECT_FALSE(doc.HasUnflushedOutput());
+}
+
 // ── world.TextRectangle: the offset-from-edge form ────────────────────────
 //
 // A right or bottom of <= 0 means "that many pixels in from the far edge" —

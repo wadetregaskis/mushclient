@@ -1583,6 +1583,27 @@ public:
   // JUMP_SIZE when RemoveChunk() evicts the oldest lines.
   long                                    m_gui_lines_emitted = 0;
 
+#ifndef _WIN32
+  // Cheap fingerprint of the in-progress line as it was last emitted as the
+  // pending (dim trailing) row: length and style count, or 0 for "no pending
+  // row".  Maintained by the UpdateAllViews drain in doc_display_shared.cpp
+  // and read only by HasUnflushedOutput below.  Text within a line only ever
+  // grows and styles are only ever appended, so the pair changes whenever the
+  // rendered row would.
+  long                                    m_iPendingFingerprint = 0;
+
+  // True when a call to UpdateAllViews would actually push something new: a
+  // completed line the view has not seen, or an in-progress line whose rendered
+  // form has changed since it was last emitted.
+  //
+  // For the periodic world-timer flush ONLY.  Every other UpdateAllViews caller
+  // -- world.WindowShow, WindowPosition, SetOption, ClearOutput, the connection
+  // notes -- is explicitly asking for a repaint of state this predicate cannot
+  // see (a miniwindow moved, a colour changed), and must keep calling it
+  // unconditionally.  Defined in doc_display_shared.cpp.
+  bool HasUnflushedOutput () const;
+#endif
+
   // Re-resolve every already-displayed line through the CURRENT palette.
   //
   // The push pipeline bakes each run's RGB at emit time and the cursor above

@@ -120,6 +120,10 @@ if(TARGET mushgui)
              COMMAND $<TARGET_FILE:mushgui> --pal-transport-selftest)
     add_test(NAME selftest_pal_miniwindow
              COMMAND $<TARGET_FILE:mushgui> --pal-miniwindow-selftest)
+    # Window geometry persistence, the dialog-template -> wx control mapping and
+    # the world-creation defaults: wx adapter code mushcore does not link.
+    add_test(NAME selftest_gui_bridge
+             COMMAND $<TARGET_FILE:mushgui> --gui-bridge-selftest)
     # The six scripting languages: the only place five of them can be exercised,
     # since their interpreters are linked into the app and deliberately kept out
     # of mushcore.  One ctest entry per language, so a build without (say) Ruby
@@ -135,6 +139,6 @@ if(TARGET mushgui)
     # RUN_SERIAL: each boots a real wx app instance; two at once race on the
     # window server (an occasional single-selftest flake under `ctest -j`).
     set_tests_properties(selftest_pal_surface selftest_pal_transport
-                         selftest_pal_miniwindow
+                         selftest_pal_miniwindow selftest_gui_bridge
                          PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 endif()

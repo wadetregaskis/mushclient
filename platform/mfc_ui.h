@@ -4579,12 +4579,20 @@ public:
     // Run wxFontDialog via the bridge (g_wxhook_font_dialog).  Falls back to
     // IDCANCEL in headless/mushcore builds where the hook is null.
     INT_PTR DoModal() override {
+        // MFC's CFontDialog treats CHOOSEFONT::rgbColors as in/out under
+        // CF_EFFECTS: it seeds the dialog's colour picker and GetColor() reads
+        // it back.  Mirror that here — m_resColor starts at the caller's colour
+        // so a cancel (or a headless build with no hook) hands back what was
+        // asked for rather than black, which is what utils.fontpicker's third
+        // argument means (scripting/lua_utils.cpp sets m_cf.rgbColors).
+        m_resColor = m_cf.rgbColors;
         if (!g_wxhook_font_dialog) return IDCANCEL;
         WxFontChoice fc = {};
         strncpy(fc.faceName, m_lf.lfFaceName, sizeof(fc.faceName) - 1);
         fc.lfHeight = m_lf.lfHeight;
         fc.weight   = m_lf.lfWeight ? (int) m_lf.lfWeight : (int) FW_NORMAL;
         fc.italic   = m_lf.lfItalic ? 1 : 0;
+        fc.color    = m_cf.rgbColors;    // in: the colour to open the dialog on
         if (g_wxhook_font_dialog(nullptr, &fc) != 1)
             return IDCANCEL;
         m_resFace      = fc.faceName;
@@ -4594,6 +4602,7 @@ public:
         m_resUnderline = fc.underline != 0;
         m_resStrike    = fc.strikeout != 0;
         m_resColor     = fc.color;
+        m_cf.rgbColors = fc.color;         // MFC writes the result back here too
         m_resCharset   = m_lf.lfCharSet;   // dialog does not choose a charset
         // Mirror the result back into m_lf so callers reading m_cf.lpLogFont
         // (== &m_lf) observe the chosen face/weight/italic.

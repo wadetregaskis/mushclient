@@ -874,6 +874,10 @@ if(NOT WIN32)
             # canonical dialogs/**/*.cpp render natively (vs hand-rebuilt in wx)
             platform/wx_dialog_resource.cpp
             platform/wx_dialog_bridge.cpp
+            # In-app selftest for the wx-only bridge layers (--gui-bridge-selftest):
+            # window geometry, dialog control mapping, world-creation defaults.
+            # Here rather than in mushgui_adapters because it includes wx headers.
+            platform/gui_bridge_selftest.cpp
             platform/wx_activity.cpp
             platform/wx_print.cpp
             # miniaudio sound engine: concurrent buffers + volume/pan/loop

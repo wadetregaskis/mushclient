@@ -409,6 +409,7 @@ void COutputPane::AppendLine(SOutputLine&& line)
 
     m_lineChars.push_back(lineChars);
     m_lines.push_back(std::move(line));
+    ++m_bufferGen;
 
     int trimCount = 0;
     // m_maxLines == 0 means unlimited scrollback (world option max_output_lines
@@ -423,6 +424,7 @@ void COutputPane::AppendLine(SOutputLine&& line)
             m_trimmedRowsRemoved += (int)(nextStart - firstStart);
         }
         m_lines.pop_front();
+        ++m_bufferGen;
         PopFrontWrapCache();
         ++trimCount;
         // Adjust selection indices downward; clear if the anchor line was removed.
@@ -507,6 +509,7 @@ void COutputPane::SetMaxLines(int n)
     bool trimmed = false;
     while (m_maxLines > 0 && (int)m_lines.size() > m_maxLines) {
         m_lines.pop_front();
+        ++m_bufferGen;
         if (!m_lineChars.empty()) m_lineChars.pop_front();
         trimmed = true;
     }
@@ -525,6 +528,7 @@ void COutputPane::DeleteTailLines(long count)
     long toRemove = std::min(count, (long)m_lines.size());
     for (long i = 0; i < toRemove; ++i) {
         m_lines.pop_back();
+        ++m_bufferGen;
         if (!m_lineChars.empty()) m_lineChars.pop_back();
     }
     // Clear any selection that may have referenced deleted lines.
@@ -804,6 +808,7 @@ void COutputPane::RefreshAutoScrollFromPosition()
 void COutputPane::ClearOutput()
 {
     m_lines.clear();
+    ++m_bufferGen;
     // ...including the in-progress line.  The pending row is a port-only
     // concept (Windows' DELETE_LIST takes the partial line away with the rest),
     // and nothing else could ever clear it here: CMUSHclientDoc::ClearOutput
@@ -2823,6 +2828,82 @@ wxString COutputPane::SelectedText() const
 
 // ── Find / Search ─────────────────────────────────────────────────────────────
 
+// ── LineContains ──────────────────────────────────────────────────────────
+// See the header.  The fast path walks the runs' raw UTF-8 bytes into a REUSED
+// buffer and folds ASCII in place; the old code built a fresh wxString per line
+// and then a second one from .Lower(), i.e. two allocations and a full decode
+// for every line of the scrollback on every keypress.
+bool COutputPane::LineContains(int i, const wxString& term,
+                               const std::string& termLowerAscii,
+                               bool caseSensitive, std::string& scratch) const
+{
+    const SOutputLine& line = m_lines[(size_t)i];
+
+    bool decodeNeeded = false;
+    scratch.clear();
+    for (const SOutputRun& run : line) {
+        if (run.horiz_rule) continue;
+        if (!run.utf8) { decodeNeeded = true; break; }   // 8-bit world: must decode
+        scratch += run.text;
+    }
+
+    if (!decodeNeeded && !caseSensitive) {
+        // ASCII folding is only equivalent to wxString::Lower() when there is
+        // nothing above ASCII in play.  A high byte anywhere sends the line to
+        // the slow path rather than risking a different answer.
+        for (unsigned char c : scratch)
+            if (c >= 0x80) { decodeNeeded = true; break; }
+    }
+
+    if (decodeNeeded) {
+        wxString s;
+        for (const SOutputRun& run : line)
+            if (!run.horiz_rule)
+                s += DecodeRunText(run);
+        return caseSensitive ? s.Contains(term) : s.Lower().Contains(term.Lower());
+    }
+
+    if (caseSensitive)
+        return scratch.find(termLowerAscii) != std::string::npos;
+
+    for (char& c : scratch)
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    return scratch.find(termLowerAscii) != std::string::npos;
+}
+
+// ── RebuildFindCache ──────────────────────────────────────────────────────
+// One scan per (term, case flag, buffer generation).  The old code scanned the
+// whole buffer a SECOND time on every keypress purely to label the match "n of
+// m" -- the 9999 cap bounds the match count, not the lines walked -- so Find
+// Next cost two full passes each time it was pressed.
+void COutputPane::RebuildFindCache(const wxString& term, bool caseSensitive)
+{
+    if (m_findCacheValid && m_findCacheGen == m_bufferGen &&
+        m_findCacheCase == caseSensitive && m_findCacheTerm == term)
+        return;                                    // still good
+
+    m_findCache.clear();
+    // NOTE the named local.  utf8_str() can hand back a NON-owning view into the
+    // wxString's own buffer, so taking it from the temporary `term.Lower()`
+    // leaves it dangling the moment the full expression ends -- which made every
+    // search silently match nothing.
+    const wxString wanted = caseSensitive ? term : term.Lower();
+    const wxScopedCharBuffer utf8 = wanted.utf8_str();
+    std::string termBytes(utf8.data(), utf8.length());
+    std::string scratch;
+    scratch.reserve(256);
+
+    const int n = (int)m_lines.size();
+    for (int i = 0; i < n && (int)m_findCache.size() < 9999; ++i)
+        if (LineContains(i, term, termBytes, caseSensitive, scratch))
+            m_findCache.push_back(i);
+
+    m_findCacheTerm  = term;
+    m_findCacheCase  = caseSensitive;
+    m_findCacheGen   = m_bufferGen;
+    m_findCacheValid = true;
+}
+
 bool COutputPane::FindNext(const wxString& term, bool forward,
                             int* outMatchLine, int* outOrdinal, int* outTotalMatches,
                             bool caseSensitive)
@@ -2850,7 +2931,9 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
         if (startIdx < 0) startIdx = n - 1;
     }
 
-    // Returns the (optionally lowercased) plain text of line i for matching.
+    // Returns the (optionally lowercased) plain text of line i.  Used only for
+    // locating the match WITHIN the found line, i.e. once per search, not once
+    // per line -- the scan itself goes through the cache below.
     auto lineText = [this, caseSensitive](int i) -> wxString {
         wxString s;
         for (const auto& run : m_lines[i])
@@ -2859,18 +2942,23 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
         return caseSensitive ? s : s.Lower();
     };
 
-    int foundIdx = -1;
-    int idx = startIdx;
-    for (int pass = 0; pass < n; ++pass) {
-        if (lineText(idx).Contains(searchTerm)) {
-            foundIdx = idx;
-            break;
-        }
-        if (forward) { if (++idx >= n) idx = 0; }
-        else         { if (--idx < 0) idx = n - 1; }
-    }
+    // One scan for this (term, case flag, buffer generation); repeated Find
+    // Next presses reuse it.
+    RebuildFindCache(term, caseSensitive);
+    if (m_findCache.empty()) return false;
 
-    if (foundIdx < 0) return false;
+    // The first cached match at or after (forward) / at or before (backward)
+    // the start point, wrapping.  upper_bound/lower_bound rather than a walk so
+    // this stays O(log matches) with a capped-at-9999 cache.
+    int foundIdx = -1;
+    if (forward) {
+        auto it = std::lower_bound(m_findCache.begin(), m_findCache.end(), startIdx);
+        foundIdx = (it != m_findCache.end()) ? *it : m_findCache.front();
+    } else {
+        auto it = std::upper_bound(m_findCache.begin(), m_findCache.end(), startIdx);
+        foundIdx = (it != m_findCache.begin()) ? *(it - 1) : m_findCache.back();
+    }
+    (void) n;
 
     // Select the precise matched substring (not the whole line) so the user
     // can see exactly which occurrence was found.
@@ -2906,19 +2994,15 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
 
     if (outMatchLine) *outMatchLine = foundIdx;
 
-    // Count total matching lines and the 1-based ordinal of the match in one
-    // linear scan.  Capped at 9999 to avoid stalling on huge buffers.
+    // "n of m", straight off the cache.  This used to be a SECOND full scan of
+    // the buffer on every keypress -- the 9999 cap bounds the match count, not
+    // the lines walked -- which is what made Find Next cost two passes.
     if (outOrdinal || outTotalMatches) {
-        int total   = 0;
-        int ordinal = 0;
-        for (int i = 0; i < n && total < 9999; ++i) {
-            if (lineText(i).Contains(searchTerm)) {
-                ++total;
-                if (i <= foundIdx) ++ordinal;
-            }
+        if (outTotalMatches) *outTotalMatches = (int) m_findCache.size();
+        if (outOrdinal) {
+            auto it = std::upper_bound(m_findCache.begin(), m_findCache.end(), foundIdx);
+            *outOrdinal = (int)(it - m_findCache.begin());
         }
-        if (outOrdinal)      *outOrdinal      = ordinal;
-        if (outTotalMatches) *outTotalMatches = total;
     }
 
     return true;

@@ -520,6 +520,31 @@ private:
     // Rebuild selected text for the clipboard.
     wxString SelectedText() const;
 
+    // ── Find ──────────────────────────────────────────────────────────────
+    // Does line `i` contain `term`?  `scratch` is a caller-owned buffer reused
+    // across the whole scan, so a search allocates once rather than once per
+    // line.  Matches on the raw UTF-8 run bytes with ASCII case folding, which
+    // is exact for an ASCII term against ASCII text; anything else (a non-UTF-8
+    // world, or a high byte anywhere in the line under a case-INsensitive
+    // search) falls back to the decode-and-Lower path so behaviour is
+    // unchanged.  termLower must already be lower-cased when !caseSensitive.
+    bool LineContains(int i, const wxString& term, const std::string& termLowerAscii,
+                      bool caseSensitive, std::string& scratch) const;
+
+    // Line indices matching m_findCacheTerm, ascending.  Rebuilt only when the
+    // term, the case flag or the buffer generation changes -- so pressing Find
+    // Next repeatedly costs one scan in total, not one per keypress, and the
+    // "n of m" label is an upper_bound rather than a second full scan.
+    void RebuildFindCache(const wxString& term, bool caseSensitive);
+
+    // Bumped whenever m_lines changes shape.  Invalidates the find cache.
+    unsigned long long m_bufferGen = 0;
+    std::vector<int>   m_findCache;
+    wxString           m_findCacheTerm;
+    bool               m_findCacheCase = false;
+    unsigned long long m_findCacheGen  = (unsigned long long) -1;
+    bool               m_findCacheValid = false;
+
     // Put the current selection on the clipboard when the world asks for it
     // (copy_selection_to_clipboard, and …_in_html for the format).  Shared by
     // the drag path and the double-click path so they cannot drift: Windows

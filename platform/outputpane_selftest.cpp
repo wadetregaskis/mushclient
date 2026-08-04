@@ -41,6 +41,8 @@ void opCheck(bool ok, const char* what)
     (ok ? g_pass : g_fail)++;
 }
 
+#define EXPECT_FIND(expr, what) opCheck((expr), (what))
+
 void opCheckEq(int got, int want, const char* what)
 {
     const bool ok = (got == want);
@@ -476,6 +478,98 @@ void TestLeaveWindowCancelsMouseOver()
             "...as the out-of-bounds point Windows sends (-1,-1)");
 }
 
+// ── 7. Find: same answers, one scan ───────────────────────────────────────
+//
+// FindNext used to build a fresh wxString for EVERY line (decode + allocate)
+// and then a second one from .Lower(), and then scan the whole buffer AGAIN to
+// label the match "n of m" -- the 9999 cap bounds the match count, not the
+// lines walked.  Two full passes with two allocations per line, per keypress.
+//
+// It now matches on the raw UTF-8 run bytes with ASCII folding into one reused
+// buffer, and caches the matching line indices per (term, case flag, buffer
+// generation) so repeated Find Next is a binary search.
+//
+// The assertions are about ANSWERS, not speed: same match sequence, same
+// ordinal and total, same case behaviour, and the cache invalidating when the
+// buffer changes underneath it.
+void TestFindNext()
+{
+    printf("Find: same answers, one scan\n");
+
+    Harness h;
+    h.pane->AppendLine(MakeLine("alpha needle one"));
+    h.pane->AppendLine(MakeLine("beta nothing"));
+    h.pane->AppendLine(MakeLine("gamma NEEDLE two"));
+    h.pane->AppendLine(MakeLine("delta nothing"));
+    h.pane->AppendLine(MakeLine("epsilon needle three"));
+
+    int line = -1, ord = 0, total = 0;
+
+    // Case-INsensitive: all three, and the ordinal/total come off the cache.
+    EXPECT_FIND(h.pane->FindNext("needle", true, &line, &ord, &total, false),
+                "case-insensitive find succeeds");
+    opCheckEq(total, 3, "...and reports every matching line");
+    const int first = line;
+    opCheck(first >= 0, "...at a real line");
+
+    EXPECT_FIND(h.pane->FindNext("needle", true, &line, &ord, &total, false),
+                "Find Next advances");
+    opCheck(line != first, "...to a different line");
+    opCheckEq(total, 3, "...with the same total");
+
+    // Case-SENSITIVE: only the lower-case two.  Without this arm an ASCII fold
+    // applied unconditionally would pass everything above.
+    EXPECT_FIND(h.pane->FindNext("NEEDLE", true, &line, &ord, &total, true),
+                "case-sensitive find succeeds");
+    opCheckEq(total, 1, "...and matches ONLY the upper-case line");
+    opCheckEq(line, 2, "...which is the one that really has it");
+
+    EXPECT_FIND(h.pane->FindNext("needle", true, &line, &ord, &total, true),
+                "case-sensitive lower-case find succeeds");
+    opCheckEq(total, 2, "...matching the two lower-case lines");
+
+    // A term that is not there at all.
+    opCheck(!h.pane->FindNext("haystack", true, &line, &ord, &total, false),
+            "a term with no match returns false");
+
+    // The cache must notice the buffer changing under it.  This has to repeat
+    // the SAME (term, case flag) as the search immediately before it, or a
+    // differing cache KEY would force the rebuild and the invalidation would go
+    // untested -- which is exactly what the first version of this block did.
+    EXPECT_FIND(h.pane->FindNext("needle", true, &line, &ord, &total, false),
+                "a case-insensitive search, to prime the cache");
+    opCheckEq(total, 3, "...priming total");
+
+    h.pane->AppendLine(MakeLine("zeta needle four"));
+    EXPECT_FIND(h.pane->FindNext("needle", true, &line, &ord, &total, false),
+                "the same search again after an append still succeeds");
+    opCheckEq(total, 4, "...and sees the new line (the cache was invalidated)");
+
+    // ...and the same for a TRIM, which is the other way the buffer moves.
+    // The cap has a floor of 100 in the pane (SetMaxLines), so the fixture has
+    // to be bigger than that for a trim to happen at all -- asking for 2 would
+    // silently be 100 and drop nothing.
+    h.Feed(120, "filler");                       // 6 + 120 = 126 lines
+    // Prime the cache AFTER the last append, so the only thing that can
+    // invalidate it before the next search is the trim itself.  Priming before
+    // the Feed would let the appends do the invalidating and leave the trim's
+    // own bookkeeping untested -- which is what the first version did.
+    EXPECT_FIND(h.pane->FindNext("needle", true, &line, &ord, &total, false),
+                "priming the cache with the buffer at full size");
+    opCheckEq(total, 4, "...still four matches before the trim");
+
+    h.pane->SetMaxLines(100);                    // drops the oldest 26...
+    EXPECT_FIND(!h.pane->FindNext("needle", true, &line, &ord, &total, false),
+                "the same search after a trim finds nothing");
+    opCheckEq(total, 0, "...because every match was trimmed away");
+    h.pane->SetMaxLines(5000);
+
+    // ...and clearing invalidates it the other way.
+    h.pane->ClearOutput();
+    opCheck(!h.pane->FindNext("needle", true, &line, &ord, &total, false),
+            "after Clear Output there is nothing to find");
+}
+
 } // namespace
 
 int RunOutputPaneSelfTest()
@@ -488,6 +582,7 @@ int RunOutputPaneSelfTest()
     TestKeepPauseAtBottom();
     TestTextRectangleOffsetForm();
     TestLeaveWindowCancelsMouseOver();
+    TestFindNext();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

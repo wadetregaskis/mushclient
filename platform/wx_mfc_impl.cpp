@@ -946,6 +946,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                      wxT("Close All Notepad Windows"));
     append_canon_section(editMenu, SEC_EDIT);   // Paste To World, Reload Names, Unique ID, Colour Picker, …
     editMenu->Append(32974 /*ID_EDIT_COPYASHTML*/, wxT("Copy as &HTML\tCtrl+Alt+C"));
+    // Canonical Edit-menu entry (mushclient_dialogs.rc:2956), missing until now:
+    // depending on the world's "ctrl_backspace_deletes_last_word" option this
+    // either recalls the last word of the previous command (the default) or
+    // deletes the word before the caret.  Its canonical handler is on the
+    // never-instantiated CSendView, so it dispatches to the child frame below.
+    editMenu->Append(32973 /*ID_REPEAT_LAST_WORD*/,
+                     wxT("Recall Last Word\tCtrl+Back"));
     editMenu->AppendSeparator();
     editMenu->Append(32946 /*ID_EDIT_GOTOMATCHINGBRACE*/,   wxT("Go To Matching &Brace\tCtrl+E"));
     editMenu->Append(32947 /*ID_EDIT_SELECTTOMATCHINGBRACE*/,wxT("Select To Matching Brace\tShift+Ctrl+E"));
@@ -1291,7 +1298,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         } else if (id == 32275 || id == 32276 || id == 32272 ||
                    id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
                    id == 32946 || id == 32947 || id == 33046 ||
-                   id == 32318 || id == 32319) {
+                   id == 32318 || id == 32319 || id == 32973) {
             // View-level output/input commands — need an active world.
             evt.Enable(doc != nullptr);
         } else {
@@ -1406,13 +1413,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         if (id == 32275 || id == 32276 || id == 32974 || id == 32272 ||
             id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
             id == 32946 || id == 32947 || id == 33046 ||
-            id == 32318 || id == 32319) {
+            id == 32318 || id == 32319 || id == 32973) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
                 switch (id) {
                 case 32275: child->GotoSelectedURL();      break; // ID_DISPLAY_GOTOURL
                 case 32276: child->SendMailToSelection();  break; // ID_DISPLAY_SENDMAILTO
                 case 32974: child->CopySelectionHTML();    break; // ID_EDIT_COPYASHTML
                 case 32272: child->RepeatLastCommand();    break; // ID_REPEAT_LAST_COMMAND
+                case 32973: child->RecallLastWord();       break; // ID_REPEAT_LAST_WORD
                 case 32152: child->ShowCommandHistory();   break; // ID_GAME_COMMANDHISTORY
                 case 33036: child->HighlightSelectedWord();break; // ID_DISPLAY_HIGHLIGHTPHRASE
                 case 33044: child->MakeMultiLineTrigger(); break; // ID_DISPLAY_MULTILINETRIGGER

@@ -256,7 +256,14 @@ public:
   // Spell-check a string and return the (possibly corrected) text.  Factors the
   // Lua call out of SpellCheck() so the wx port can spell-check its wxTextCtrl
   // input (which is not a CEdit).
-  CString SpellCheckString (const CString & strText, bool bAll);
+  //
+  // pbCancelled, when supplied, reports the one outcome the return value cannot:
+  // the user pressed Cancel in the suggestion dialog (spellchecker.lua returns
+  // nil).  That is what SpellCheck() signals by returning false, and what
+  // CSendView::OnChar uses to abort a send — without it a caller cannot tell
+  // "cancelled" from "checked clean", since both give back the original text.
+  CString SpellCheckString (const CString & strText, bool bAll,
+                            bool * pbCancelled = NULL);
 
   __int64 GetUniqueNumber (void) { return m_nUniqueNumber++; };
   CString GetUniqueString (void);

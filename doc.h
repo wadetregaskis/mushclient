@@ -2624,6 +2624,30 @@ public:
                            const CString & strLine);
   void TabCompleteCommand (void);
 
+  // ── Command-bar editing (doc_commandbar_shared.cpp — one body, every build) ─
+  // Was CSendView::OnRepeatLastWord, the second half of OnInputGlobalchange,
+  // the arrow-key gate in PreTranslateMessage, and the script-prefix test at
+  // the top of OnChar.  Each reads world options + the command history and
+  // splices text into the input bar, all of which pal::IWorldView exposes, so
+  // both frontends can run the canonical body instead of the port carrying its
+  // own (and differing) reimplementation.
+  //
+  // Ctrl+Backspace / Edit ▸ Recall Last Word.  m_bCtrlBackspaceDeletesLastWord
+  // picks the arm and defaults FALSE, so the shipped action is RECALL.
+  void RepeatLastWord (void);
+  // Game ▸ Global Change, minus the dialog.  The selection is the caller's,
+  // read BEFORE the dialog ran (as upstream does).  false = nothing matched
+  // (the caller reports "No replacements made for ...").
+  bool GlobalChangeCommand (const CString strChangeFrom,
+                            const CString strChangeTo,
+                            const long lSelStart,
+                            const long lSelEnd);
+  // Up/Down browse the history only from a collapsed caret at the very start
+  // or the very end of the (multi-line) command bar.
+  bool CommandCaretAtEdge (void);
+  // Scripting on + a prefix configured + the line starts with it.
+  bool IsScriptPrefixCommand (const CString & strText) const;
+
   // ── Hyperlink clicks (doc_hyperlink_shared.cpp — one body, every build) ──
   // Was the ACTION_SEND / ACTION_PROMPT arm of CMUSHView::OnLButtonDown.  It is
   // doc work: it decodes the !!pluginID:sub(arg) plugin-call form, runs

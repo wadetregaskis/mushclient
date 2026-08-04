@@ -668,6 +668,62 @@ way in and still interpolated on the way out. Fixing it needs a
 replicating each logical pixel across the scale x scale block. Worth doing
 before anyone trusts `WindowFilter` output pixel-for-pixel.
 
+### 4c-duodevicies. Four command-bar commands hoisted out of `CSendView` (2026-08-03)
+
+**Windows code changed** — `sendvw.cpp` (4 sites) and
+`pal/win_worldview.cpp` (1). New shared TU `doc_commandbar_shared.cpp`, added to
+`MUSHclient.vcxproj`. Nothing was meant to change on Windows; all four bodies
+moved verbatim onto `CMUSHclientDoc`, reaching the bar/history through
+`pal::IWorldView` (whose Windows adapter reads the very `CSendView` members the
+originals used). The port had no equivalent for any of them, which is why they
+moved.
+
+| Was | Now | Reached by |
+|---|---|---|
+| `CSendView::OnRepeatLastWord` | `CMUSHclientDoc::RepeatLastWord` | Edit ▸ Recall Last Word / Ctrl+Backspace |
+| second half of `CSendView::OnInputGlobalchange` | `CMUSHclientDoc::GlobalChangeCommand` | Input ▸ Global Change |
+| the caret gate in both arrow arms of `PreTranslateMessage` | `CMUSHclientDoc::CommandCaretAtEdge` | Up / Down in the command bar |
+| the script-prefix test in `OnChar`'s spell-check arm | `CMUSHclientDoc::IsScriptPrefixCommand` | Return, with "spell check on send" |
+
+**What to check on Windows:**
+
+1. **Recall Last Word, both arms.** With `ctrl_backspace_deletes_last_word`
+   OFF (the shipped default): send `get sword from bag`, type `put ` and press
+   Ctrl+Backspace — expect `put bag`. Turn the option ON: type
+   `get sword from`, Ctrl+Backspace — expect `get sword` with the caret at
+   column 9 (the space goes too). With a selection and the option ON, the
+   selection is simply deleted.
+   The delete arm is expressed differently: upstream selected the whole control
+   and re-inserted `Left(iPos) + Mid(nStartChar)`, then moved the caret to
+   `iPos`; it is now the single splice `ReplaceSel("")` over
+   `[iPos, nStartChar)`. Same text, same caret, one undo record instead of a
+   whole-control rewrite — **confirm undo (Ctrl+Z) restores the deleted word.**
+
+2. **Global Change.** Select part of the command bar, run Input ▸ Global
+   Change: only the selection changes, and Ctrl+Z undoes it. With nothing
+   selected the whole line changes. A from-string that matches nothing still
+   pops "No replacements made for …" — with the string **as typed**, before the
+   backslash escapes are expanded (the message now comes from `OnInputGlobalchange`
+   rather than from inside the moved body).
+
+3. **Multi-line command bar.** Compose two lines with Shift+Return, put the
+   caret in the middle, press Up/Down: the caret moves, the text is untouched.
+   From the very start or the very end the arrows browse the history as before.
+
+4. **Line endings.** `CWinWorldView::replaceCommandSelection` now promotes a
+   lone `\n` to `\r\n` before `ReplaceSel` — this is where
+   `OnInputGlobalchange`'s `strNew.Replace ("\n", ENDLINE)` went, so the shared
+   body can stay platform-free (wxTextCtrl wants bare LF). Check a Global
+   Change whose replacement contains `\n`: the bar must show two real lines,
+   not a stray control character. Tab completion is the other caller and never
+   passes a newline, so it should be unaffected — smoke it anyway.
+
+5. **Spell check on send.** With a script prefix configured and "spell check on
+   send" on, a line starting with the prefix must not be checked; an ordinary
+   misspelled line must be, and Cancel must abort the send with the text still
+   in the bar. (Unchanged on Windows — the same expressions, now behind a
+   predicate — but it is the cheapest of the five to confirm.)
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

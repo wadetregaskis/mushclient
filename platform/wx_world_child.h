@@ -171,7 +171,10 @@ public:
 
     // Spell-check the command-input text (Game ▸ Check Spelling) — runs the
     // canonical spell-check Lua (which shows the suggestion dialog per word).
-    void SpellCheckInput();
+    // False when the user CANCELLED the suggestion dialog: sendvw.cpp:344 makes
+    // that abort the send and leave the text in the bar, so the caller has to be
+    // able to tell cancel from "checked clean".
+    bool SpellCheckInput();
 
     // Print the world output buffer (File ▸ Print World) via wxHtmlEasyPrinting.
     void PrintWorld();
@@ -184,6 +187,7 @@ public:
     void SendMailToSelection();   // Display ▸ Send Mail To (selection → mailto:)
     void CopySelectionHTML();     // Edit ▸ Copy as HTML
     void RepeatLastCommand();     // Input ▸ Repeat Last Command
+    void RecallLastWord();        // Edit ▸ Recall Last Word (also Ctrl+Backspace)
     void ShowCommandHistory();    // Input ▸ Command History (pick a past command)
     void HighlightSelectedWord(); // Display ▸ Highlight Word (canonical dialog → trigger)
     void MakeMultiLineTrigger();  // Display ▸ Multi-Line Trigger (canonical dialog → trigger)

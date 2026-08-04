@@ -64,6 +64,7 @@ mc_test(test_speedwalk)
 mc_test(test_tabcomplete)
 mc_test(test_hyperlink)
 mc_test(test_utilities)
+mc_test(test_notepad_convert)
 mc_test(test_pal_worldview)
 mc_test(test_pal_transport)
 mc_test(test_pal_surface)
@@ -120,6 +121,11 @@ if(TARGET mushgui)
              COMMAND $<TARGET_FILE:mushgui> --pal-transport-selftest)
     add_test(NAME selftest_pal_miniwindow
              COMMAND $<TARGET_FILE:mushgui> --pal-miniwindow-selftest)
+    # The notepad windows: CTextDocument, its wxFrame and the quit hook are all
+    # GUI-only, so this is the only place the modified-flag / SaveModified /
+    # Convert-menu behaviour can be executed at all.
+    add_test(NAME selftest_notepad
+             COMMAND $<TARGET_FILE:mushgui> --notepad-selftest)
     # The six scripting languages: the only place five of them can be exercised,
     # since their interpreters are linked into the app and deliberately kept out
     # of mushcore.  One ctest entry per language, so a build without (say) Ruby
@@ -135,6 +141,6 @@ if(TARGET mushgui)
     # RUN_SERIAL: each boots a real wx app instance; two at once race on the
     # window server (an occasional single-selftest flake under `ctest -j`).
     set_tests_properties(selftest_pal_surface selftest_pal_transport
-                         selftest_pal_miniwindow
+                         selftest_pal_miniwindow selftest_notepad
                          PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 endif()

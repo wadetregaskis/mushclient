@@ -159,7 +159,35 @@ void WxSurface::readPixels(SurfaceId id, Rect r, PixelBuffer& out, PixelFormat f
         return;
     }
 
-    const int bpp = (fmt == PixelFormat::BGR24) ? 24 : 32;
+    if (fmt == PixelFormat::BGR24) {
+        // Route through the alpha path and drop alpha, rather than the
+        // temp-DIB BitBlt below.  That BitBlt targets an UNSCALED 1x bitmap
+        // (wx_gdi_compat.cpp CreateDIBSection), so on a HiDPI canvas -- and
+        // miniwindow canvases are created at scale (CreateCanvasBitmap) -- it
+        // resamples each 2x2 block of physical pixels down to one.  Every
+        // read-modify-write op therefore softened the image it was editing, and
+        // an 8x8 stipple could collapse to a single colour.  getPixel already
+        // took this route and said why; every other BGR24 caller
+        // (CMiniWindow::Filter, WindowGetImageAlpha and friends) did not.
+        PixelBuffer rgba;
+        readPixels(id, r, rgba, PixelFormat::BGRA32_Alpha);
+        if (!rgba.valid()) return;
+
+        out.format = fmt;
+        out.size   = { r.w, r.h };
+        out.stride = PixelBuffer::strideFor(r.w, fmt);
+        out.bytes.assign((size_t)out.stride * r.h, 0);
+        for (int y = 0; y < r.h; ++y) {
+            const unsigned char* src = rgba.bytes.data() + (size_t)y * rgba.stride;
+            unsigned char*       dst = out.bytes.data()  + (size_t)y * out.stride;
+            for (int x = 0; x < r.w; ++x, src += 4, dst += 3) {
+                dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2];
+            }
+        }
+        return;
+    }
+
+    const int bpp = 32;
     BITMAPINFO bmi;
     memset(&bmi, 0, sizeof bmi);
     bmi.bmiHeader.biSize        = sizeof bmi;

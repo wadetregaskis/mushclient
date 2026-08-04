@@ -634,12 +634,14 @@ styles **8-12** came out monochrome whatever colours the plugin asked for. The
 
 1. **The pattern's SHAPE still collapses.** `kFine` is a 50/50 checkerboard
    (`0xAA`/`0x55`), so a filled area should contain both colours — and only one
-   appears. An 8x8 stipple is being flattened to a single colour, which is
-   almost certainly the **HiDPI resampling** problem already on the list (the
-   miniwindow canvas is 2x and every read-modify-write resamples down and back
-   up). Colouring the tile is a strict improvement over black-and-white, but the
-   pattern will not look right until that is fixed. The selftest asserts the
-   colours, and says in a comment why it deliberately does not assert both
+   appears. **Corrected diagnosis:** I first blamed the HiDPI read path, but
+   that is now exact (see § 4c-septendecies) and the checkerboard *still*
+   collapses — so the fault is in the DRAW: wx scales the 8x8 stipple onto the
+   2x canvas and the alternating pixels average away. A stipple brush needs to
+   be laid down at physical resolution, or the fill rasterised CPU-side from the
+   pattern. Colouring the tile is a strict improvement over black-and-white, but
+   the pattern will not look right until that is done. The selftest asserts the
+   colours and says in a comment why it deliberately does not assert both
    appearing.
 2. **Transparent gaps** (`bg == -1`) are not expressible as a stipple without a
    mask, so they currently paint the gap in the foreground colour instead of
@@ -647,6 +649,24 @@ styles **8-12** came out monochrome whatever colours the plugin asked for. The
 
 Worth confirming on Windows what styles 8-12 actually look like with distinct
 pen and brush colours, so there is a reference to match.
+
+### 4c-septendecies. HiDPI: BGR24 pixel READS are exact now (2026-08-03)
+
+**Port-only** (`platform/wx_surface.cpp`). `readPixels`' BGR24 path blitted the
+canvas into a temporary **unscaled 1x** DIB, and miniwindow canvases are created
+at the display scale (`CreateCanvasBitmap`) — so on a Retina display every read
+resampled each 2x2 block of physical pixels down to one. `getPixel` had already
+been routed around this and its comment explained why; every other BGR24 caller
+(`CMiniWindow::Filter`, the image-alpha ops) still went the old way. BGR24 reads
+now go through the same direct backing-bitmap path the alpha format uses and
+drop the alpha channel.
+
+**Still outstanding — the WRITE half.** `writePixels` blits a 1x DIB back onto
+the 2x canvas, which scales it up. So a read-modify-write is now exact on the
+way in and still interpolated on the way out. Fixing it needs a
+`wxgdi_write_bgra` counterpart that writes the backing bitmap directly,
+replicating each logical pixel across the scale x scale block. Worth doing
+before anyone trusts `WindowFilter` output pixel-for-pixel.
 
 ### 4d. Everything else (smoke)
 

@@ -92,6 +92,7 @@ void* (*g_wxhook_progress_open)(const char*, const char*, int)   = nullptr;
 void  (*g_wxhook_progress_set_range)(void*, int)                = nullptr;
 bool  (*g_wxhook_progress_update)(void*, int, const char*)      = nullptr;
 void  (*g_wxhook_progress_close)(void*)                         = nullptr;
+void  (*g_wxhook_progress_set_title)(void*, const char*)        = nullptr;
 char* (*g_wxhook_directorypicker)(const char*, const char*)      = nullptr;
 int   (*g_wxhook_password_dialog)(const char*, char**)           = nullptr;
 int   (*g_wxhook_popup_menu)(CMenu*, int, int, unsigned)         = nullptr;

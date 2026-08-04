@@ -420,6 +420,10 @@ extern void  (*g_wxhook_progress_set_range)(void* handle, int maximum);
 extern bool  (*g_wxhook_progress_update)(void* handle, int pos,
                                          const char* status);
 extern void  (*g_wxhook_progress_close)(void* handle);
+// Retitle an open progress dialog.  The callers all do Create() and THEN
+// SetWindowText("Loading plugins ..." / "Sending..." / "Recalling..."), so
+// without this every one of them read a generic "Progress".
+extern void  (*g_wxhook_progress_set_title)(void* handle, const char* title);
 
 extern char* (*g_wxhook_directorypicker)(const char* title,
                                          const char* defPath);

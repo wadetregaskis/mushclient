@@ -3529,6 +3529,13 @@ static bool hook_progress_update(void* handle, int pos, const char* status)
     return keepGoing;
 }
 
+static void hook_progress_set_title(void* handle, const char* title)
+{
+    PortProgress* p = static_cast<PortProgress*>(handle);
+    if (!p || !p->dlg || !title) return;
+    p->dlg->SetTitle(wxString::FromUTF8(title));
+}
+
 static void hook_progress_close(void* handle)
 {
     PortProgress* p = static_cast<PortProgress*>(handle);
@@ -5280,6 +5287,7 @@ void wx_mfc_install_hooks()
     g_wxhook_progress_set_range = hook_progress_set_range;
     g_wxhook_progress_update    = hook_progress_update;
     g_wxhook_progress_close     = hook_progress_close;
+    g_wxhook_progress_set_title = hook_progress_set_title;
     g_run_mfc_dialog          = hook_run_dialog;
     g_end_mfc_dialog          = hook_end_dialog;
     g_run_mfc_property_sheet  = hook_run_property_sheet;

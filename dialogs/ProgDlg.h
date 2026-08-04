@@ -25,6 +25,14 @@ public:
     int  SetPos(int nPos);
     int  OffsetPos(int nPos);
     int  StepIt();
+#ifndef _WIN32
+    // Port only, and deliberately NOT virtual: CWnd::SetWindowText is not
+    // virtual in the shim either, and every caller holds a CProgressDlg (or a
+    // CProgressDlg*), so hiding the base member is enough.  Without it the
+    // wxProgressDialog kept the generic "Progress" title while the callers were
+    // all setting "Loading plugins ...", "Sending...", "Recalling...".
+    void SetWindowText(LPCTSTR lpszString);
+#endif
 
     bool m_bHideCancel;
 
@@ -59,6 +67,7 @@ protected:
     // CDialog::Create here.  Null when no dialog is showing.
     void * m_pPortProgress;
     CString m_strPortStatus;   // last status text, re-sent on each update
+    int     m_iPortPos;        // last position, so StepIt/OffsetPos can advance
 #endif
 
     void ReEnableParent();

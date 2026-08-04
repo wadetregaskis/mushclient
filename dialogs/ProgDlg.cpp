@@ -30,6 +30,7 @@ CProgressDlg::CProgressDlg(UINT nCaptionID)
     m_bHideCancel = FALSE;
 #ifndef _WIN32
     m_pPortProgress = NULL;
+    m_iPortPos      = 0;
 #endif
 }
 
@@ -174,6 +175,7 @@ int CProgressDlg::SetPos(int nPos)
     // keeps the window painting and the Cancel button clickable during a long
     // send.  It reports false once the user has hit Cancel; latch that for
     // CheckCancelButton, which the send loops poll.
+    m_iPortPos = nPos;
     if (m_pPortProgress && g_wxhook_progress_update) {
         if (!g_wxhook_progress_update(m_pPortProgress,
                                       nPos - m_nLower,
@@ -197,19 +199,43 @@ int CProgressDlg::SetStep(int nStep)
 
 int CProgressDlg::OffsetPos(int nPos)
 {
+#ifndef _WIN32
+    // Both of the relative movers were dead on the port: they drove
+    // m_Progress (a CProgressCtrl stub) and PumpMessages (a no-op on a null
+    // m_hWnd), so nothing reached the wxProgressDialog.  The visible effect was
+    // a plugin-loading bar that sat at zero for the whole load — xml_load_world
+    // advances it with SetStep(1) + StepIt(), and Lua's progress library offers
+    // both to scripts.  Express them in terms of SetPos, which IS wired.
+    return SetPos(m_iPortPos + nPos);
+#else
     PumpMessages();
     int iResult = m_Progress.OffsetPos(nPos);
     UpdatePercent(iResult+nPos);
     return iResult;
+#endif
 }
 
 int CProgressDlg::StepIt()
 {
+#ifndef _WIN32
+    return SetPos(m_iPortPos + m_nStep);   // see OffsetPos
+#else
     PumpMessages();
     int iResult = m_Progress.StepIt();
     UpdatePercent(iResult+m_nStep);
     return iResult;
+#endif
 }
+
+#ifndef _WIN32
+// Port only.  CWnd::SetWindowText has no window to talk to here, so the title
+// every caller sets right after Create() was silently dropped.
+void CProgressDlg::SetWindowText(LPCTSTR lpszString)
+{
+    if (m_pPortProgress && g_wxhook_progress_set_title)
+        g_wxhook_progress_set_title(m_pPortProgress, lpszString ? lpszString : "");
+}
+#endif
 
 void CProgressDlg::PumpMessages()
 {

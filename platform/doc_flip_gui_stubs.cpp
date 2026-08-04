@@ -394,6 +394,11 @@ void CChatListDlg::OnDestroy () {}
 // drivers; inert headless (no window).
 void CProgressDlg::SetStatus (LPCTSTR /*lpszMessage*/) {}
 int  CProgressDlg::StepIt () { return 0; }
+int  CProgressDlg::OffsetPos (int /*nPos*/) { return 0; }
+// The port arm of ProgDlg.cpp hides CWnd::SetWindowText so the caption every
+// caller sets after Create() reaches the wxProgressDialog; headless there is no
+// dialog at all, so this is the matching inert body.
+void CProgressDlg::SetWindowText (LPCTSTR /*lpszString*/) {}
 
 // ── Additional dialog classes the flip instantiates (ctor + vtable) ─────────
 // CDebugLuaDlg (lua_methods.cpp our_lua_debug_function): DoModal via the null

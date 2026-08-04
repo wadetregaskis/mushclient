@@ -23,6 +23,7 @@
 #include <wx/listbox.h>
 #include <memory>
 #include <cstdio>
+#include <string>
 
 // ── MUSHclient headers ────────────────────────────────────────────────────
 #include "stdafx.h"
@@ -31,6 +32,8 @@
 #include "resource.h"                   // IDD_SEND_TO_ALL, IDC_WORLD_LIST
 #include "platform/wx_world_child.h"    // wx_save_child_geometry
 #include "platform/wx_dialog_bridge.h"  // MfcDialogResources, BuildWxDialogFromTemplate
+#include "platform/wx_mfc_hooks.h"      // g_wxhook_progress_* — the progress seam
+#include "dialogs/ProgDlg.h"            // CProgressDlg
 
 // Defined in wx_mfc_impl.cpp: the geometry writer the quit hook and the MDI
 // parent's close handler share, taking the config it writes into.
@@ -237,6 +240,94 @@ void TestNewWorldDefaults()
           "the port-only display defaults are still seeded");
 }
 
+// ── 4. CProgressDlg drives the wx progress dialog ─────────────────────────
+// CProgressDlg is the app's ONLY modeless dialog, and the port backs it with a
+// wxProgressDialog rather than a bridged window (CDialog::Create is a `return
+// FALSE` stub).  Three of its methods had no port arm at all and drove the
+// inert CProgressCtrl / PumpMessages instead:
+//
+//   StepIt / OffsetPos  the relative movers.  xml_load_world advances the
+//                       plugin-loading bar with SetStep(1) + StepIt(), and
+//                       Lua's progress library offers both to scripts — so the
+//                       bar sat at zero for the whole load.
+//   SetWindowText       every caller sets the caption right after Create()
+//                       ("Loading plugins ...", "Sending...", "Recalling...")
+//                       and every one of them was dropped.
+//
+// Drive the real class against stub hooks and watch what it asks for.
+void TestProgressDialog()
+{
+    printf("CProgressDlg -> wxProgressDialog:\n");
+
+    static int  s_pos = -1;
+    static int  s_max = -1;
+    static std::string s_title, s_status;
+    static bool s_open = false;
+    static bool s_cancel = false;
+
+    void* (*savedOpen)(const char*, const char*, int)  = g_wxhook_progress_open;
+    void  (*savedRange)(void*, int)                    = g_wxhook_progress_set_range;
+    bool  (*savedUpd)(void*, int, const char*)         = g_wxhook_progress_update;
+    void  (*savedClose)(void*)                         = g_wxhook_progress_close;
+    void  (*savedTitle)(void*, const char*)            = g_wxhook_progress_set_title;
+
+    g_wxhook_progress_open = [](const char*, const char* status, int maximum) -> void* {
+        s_open = true; s_max = maximum; s_status = status ? status : "";
+        return (void*) 0x1;                       // an opaque non-null handle
+    };
+    g_wxhook_progress_set_range = [](void*, int maximum) { s_max = maximum; };
+    g_wxhook_progress_update = [](void*, int pos, const char* status) -> bool {
+        s_pos = pos; s_status = status ? status : "";
+        return !s_cancel;
+    };
+    g_wxhook_progress_close  = [](void*) { s_open = false; };
+    g_wxhook_progress_set_title = [](void*, const char* t) { s_title = t ? t : ""; };
+
+    {
+        CProgressDlg dlg;
+        check(dlg.Create() != FALSE, "Create opens the wx progress dialog");
+        check(s_open, "...and the open hook really ran");
+
+        dlg.SetRange(0, 40);
+        check(s_max == 40, "SetRange resizes it to the real amount of work");
+
+        dlg.SetWindowText("Loading plugins ...");
+        check(s_title == "Loading plugins ...",
+              "SetWindowText reaches the dialog's caption");
+
+        dlg.SetStatus("working");
+        dlg.SetStep(1);
+        dlg.StepIt();
+        check(s_pos == 1, "StepIt advances by the step (it used to do nothing)");
+        check(s_status == "working", "...carrying the status text with it");
+        dlg.StepIt();
+        dlg.StepIt();
+        check(s_pos == 3, "...and keeps advancing");
+
+        dlg.OffsetPos(10);
+        check(s_pos == 13, "OffsetPos advances by its argument");
+
+        dlg.SetPos(20);
+        check(s_pos == 20, "SetPos is still absolute");
+        dlg.StepIt();
+        check(s_pos == 21, "...and StepIt continues from wherever SetPos left it");
+
+        // Cancel: the hook says stop, and CheckCancelButton must report it.
+        s_cancel = true;
+        dlg.StepIt();
+        check(dlg.CheckCancelButton() != FALSE,
+              "a cancelled wx dialog is reported through CheckCancelButton");
+        s_cancel = false;
+    }
+    check(!s_open, "the dialog is closed when CProgressDlg goes out of scope");
+
+    g_wxhook_progress_open      = savedOpen;
+    g_wxhook_progress_set_range = savedRange;
+    g_wxhook_progress_update    = savedUpd;
+    g_wxhook_progress_close     = savedClose;
+    g_wxhook_progress_set_title = savedTitle;
+}
+
 } // namespace
 
 int RunGuiBridgeSelfTest()
@@ -246,6 +337,7 @@ int RunGuiBridgeSelfTest()
     TestGeometry();
     TestListBoxStyles();
     TestNewWorldDefaults();
+    TestProgressDialog();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

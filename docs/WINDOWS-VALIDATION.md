@@ -668,6 +668,27 @@ way in and still interpolated on the way out. Fixing it needs a
 replicating each logical pixel across the scale x scale block. Worth doing
 before anyone trusts `WindowFilter` output pixel-for-pixel.
 
+### 4c-duodevicies. WindowAddHotspot's re-detect goes through IWorldView (2026-08-03)
+
+**Touches shared code AND Windows.** `CMUSHclientDoc::WindowAddHotspot`
+(`scripting/methods/methods_miniwindows.cpp`) ends with the
+"was the mouse already over the hotspot I just created?" arm. It used to walk
+this doc's view list for a `CMUSHView` and call `Mouse_Move_MiniWindow`; the
+ports never construct a `CMUSHView`, so it was dead there (a plugin that
+rebuilds its hotspots on every redraw lost the hover highlight under a
+motionless pointer). It now calls the new
+`pal::IWorldView::mouseMoveMiniWindow(x, y)`, and **`CWinWorldView`
+(`pal/win_worldview.cpp`) contains that same view walk verbatim**, so Windows
+should behave identically. Nothing here can be compiled on macOS.
+
+What to check on Windows: a plugin miniwindow with a hotspot whose `MouseOver`
+callback is visible (a highlight repaint or a `Note`). Park the pointer over
+the hotspot without moving it, then have the plugin call
+`WindowDeleteAllHotspots` + `WindowAddHotspot` (e.g. on a trigger). The
+`MouseOver` must fire immediately, exactly as before this change, and
+`WindowInfo(win, 19)` must name the hotspot. Also confirm that adding a
+hotspot **away** from the resting pointer fires nothing.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

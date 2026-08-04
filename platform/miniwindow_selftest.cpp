@@ -16,7 +16,9 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "miniwindow.h"           // CMiniWindow, MouseMoveMiniWindow, MINIWINDOW_*
 #include "scripting/errors.h"
+#include "tests/fake_worldview.h" // the recording pal::IWorldView (header-only)
 
 #include <cstdio>
 
@@ -288,6 +290,90 @@ int RunPalMiniWindowSelfTest()
             "WindowCreate on an existing name resizes it");
     mwCheck(doc->WindowGetPixel(W, 16, 16) == kGreen,
             "resized window repainted with the new background");
+
+    // ── WindowAddHotspot: created under a resting pointer ──────────────────
+    // Windows re-runs the mouse-move hit test when a hotspot is added under
+    // the cursor, so the MouseOver fires (and m_sMouseOverHotspot updates)
+    // without waiting for the pointer to twitch — methods_miniwindows.cpp's
+    // `if (pHotspot->m_rect.PtInRect (mw->m_last_mouseposition))` arm.  That
+    // arm used to walk the doc's view list for a CMUSHView, which the port
+    // never constructs, so on macOS a plugin that redraws its button bar
+    // (WindowDeleteAllHotspots + WindowAddHotspot) silently lost the hover
+    // state under a motionless pointer.  It now dispatches through
+    // pal::IWorldView::mouseMoveMiniWindow, which every frontend implements.
+    {
+        // A view that does what the real frontends do with the callback:
+        // count it, and run the shared routing (CWorldChildFrame does exactly
+        // this with its own hooks; the Windows adapter calls CMUSHView's
+        // Mouse_Move_MiniWindow, which is the same body).
+        struct MwSelfTestView : FakeWorldView {
+            CMUSHclientDoc* doc = nullptr;
+            int moves = 0;
+            void mouseMoveMiniWindow(long x, long y) override {
+                ++moves;
+                FakeWorldView::mouseMoveMiniWindow(x, y);   // record the args
+                MiniWindowMouseHooks hooks;      // no-op view services
+                MouseMoveMiniWindow(doc, CPoint((int) x, (int) y), hooks);
+            }
+        };
+
+        const char* const H = "selftest_mw_hs";
+        MwSelfTestView view;
+        view.doc = doc;
+
+        mwCheck(doc->WindowCreate(H, 100, 50, 64, 48,
+                                  0 /*position, ignored*/,
+                                  MINIWINDOW_ABSOLUTE_LOCATION, kBlue) == eOK,
+                "hotspot fixture: absolute-location window at (100,50) 64x48");
+        // WindowCreate leaves a window hidden; placement and hit-testing both
+        // skip hidden windows.
+        mwCheck(doc->WindowShow(H, TRUE) == eOK, "hotspot fixture: shown");
+
+        // Land m_rect the way a paint pass does, then park the pointer inside
+        // the window at client (120, 70) = window-relative (20, 20).
+        RECT clientrect = { 0, 0, 300, 200 };
+        CalculateMiniWindowRectangles(doc, false, clientrect, clientrect);
+        {
+            MiniWindowMouseHooks hooks;
+            MouseMoveMiniWindow(doc, CPoint(120, 70), hooks);
+        }
+
+        MiniWindowMapIterator mit = doc->m_MiniWindows.find(H);
+        CMiniWindow* mw = (mit == doc->m_MiniWindows.end()) ? NULL : mit->second;
+        mwCheck(mw != NULL, "hotspot fixture: the window is in the doc's map");
+        mwCheck(mw && mw->m_last_mouseposition == CPoint(20, 20),
+                "hotspot fixture: pointer parked at window-relative (20,20)");
+        mwCheck(doc->m_lastMousePosition == CPoint(120, 70),
+                "hotspot fixture: doc remembers client (120,70)");
+
+        doc->m_pWorldView = &view;
+
+        // (a) a hotspot created UNDER the pointer re-detects immediately
+        mwCheck(doc->WindowAddHotspot(H, "under", 10, 10, 30, 30,
+                                      "", "", "", "", "", "", 0, 0) == eOK,
+                "WindowAddHotspot (10,10)-(30,30) succeeds");
+        mwCheck(view.moves == 1,
+                "a hotspot created under the pointer re-runs the mouse move");
+        mwCheck(view.lastMouseMoveX == 120 && view.lastMouseMoveY == 70,
+                "...at the doc's last CLIENT mouse position, not the "
+                "window-relative one");
+        mwCheck(mw && mw->m_sMouseOverHotspot == "under",
+                "...so the window's mouse-over state names the new hotspot");
+
+        // (b) one created AWAY from the pointer must NOT: the PtInRect guard
+        // is what keeps this from firing MouseOver for every hotspot a plugin
+        // installs.  (Without this half, a fix that always dispatches passes.)
+        mwCheck(doc->WindowAddHotspot(H, "elsewhere", 40, 40, 60, 46,
+                                      "", "", "", "", "", "", 0, 0) == eOK,
+                "WindowAddHotspot (40,40)-(60,46) succeeds");
+        mwCheck(view.moves == 1,
+                "a hotspot created away from the pointer does NOT re-run it");
+        mwCheck(mw && mw->m_sMouseOverHotspot == "under",
+                "...and the mouse-over state is unchanged");
+
+        doc->m_pWorldView = NULL;
+        mwCheck(doc->WindowDelete(H) == eOK, "hotspot fixture cleaned up");
+    }
 
     // ── deletion ───────────────────────────────────────────────────────────
     mwCheck(doc->WindowDelete(W) == eOK, "WindowDelete succeeds");

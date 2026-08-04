@@ -35,6 +35,12 @@ int RunPalTransportSelfTest();
 // hidden --pal-miniwindow-selftest flag.
 int RunPalMiniWindowSelfTest();
 
+// Defined in platform/wx_composite_selftest.cpp: the wx miniwindow compositor
+// (blit placement + the post-paint m_rect) and its tooltip gate, run via the
+// hidden --pal-composite-selftest flag.  Both bodies live in the executable
+// (wx_world_child.cpp), so mushcore's headless tests cannot reach them.
+int RunWxCompositeSelfTest();
+
 // In-app conformance harness for the five embedded scripting engines
 // (platform/engines_selftest.cpp), run via the hidden --engines-selftest flag.
 // They cannot be tested headlessly: each pulls in a whole interpreter, which the
@@ -71,6 +77,14 @@ public:
                     std::exit(RunEmbeddedEnginesSelfTest(
                         which.IsEmpty() ? nullptr : utf8.data()));
                 }
+            }
+            if (wxString(argv[i]) == wxT("--pal-composite-selftest")) {
+                // Same bridge requirement as the miniwindow selftest below:
+                // the fixtures it composites are real CMiniWindow canvases.
+                if (!pal::g_surface)
+                    InstallWxSurfaceBridge();
+                const int failures = RunWxCompositeSelfTest();
+                std::exit(failures == 0 ? 0 : 1);
             }
             if (wxString(argv[i]) == wxT("--pal-miniwindow-selftest")) {
                 // CMiniWindow draws through the bridge unconditionally; the

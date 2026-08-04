@@ -142,6 +142,17 @@ public:
     // Screen rect of the main (MDI parent) frame (world.GetMainWindowPosition).
     virtual Rect mainRect() const = 0;
 
+    // ── core → frontend: miniwindow mouse routing ─────────────────────────
+    // Re-run the miniwindow mouse-move hit test at a client-space point the
+    // frontend is not reporting right now.  WindowAddHotspot uses it for the
+    // "the pointer is already sitting on the hotspot I just created" case, so
+    // the MouseOver callback fires immediately instead of waiting for the next
+    // real mouse motion (methods_miniwindows.cpp).  Frontend-side because the
+    // hooks the routing needs (capture, modifier keys, tooltips) are the
+    // view's: the Windows adapter runs the original CMUSHView view walk, the
+    // wx frame calls the shared MouseMoveMiniWindow with its own hooks.
+    virtual void mouseMoveMiniWindow(long x, long y) = 0;
+
     // ── core → frontend: the info bar (P2 infobar family) ─────────────────
     // world.ShowInfoBar / InfoClear / Info / InfoColour / InfoBackground /
     // InfoFont.  Colours are COLORREF; font style bits 1=bold, 2=italic,

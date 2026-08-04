@@ -136,6 +136,15 @@ struct FakeWorldView : pal::IWorldView {
     bool saveWorld() override { ++saves; return true; }
     pal::Rect mainRect() const override { return mainR; }
 
+    // ── miniwindow mouse routing ────────────────────────────────────────────
+    // WindowAddHotspot's create-under-the-cursor re-detect lands here.
+    int  mouseMoves = 0;
+    long lastMouseMoveX = -1, lastMouseMoveY = -1;
+
+    void mouseMoveMiniWindow(long x, long y) override {
+        ++mouseMoves; lastMouseMoveX = x; lastMouseMoveY = y;
+    }
+
     // ── the info bar (P2 infobar family) ────────────────────────────────────
     bool infobarVisible = false;
     int  infobarClears = 0;

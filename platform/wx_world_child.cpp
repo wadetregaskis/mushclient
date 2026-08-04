@@ -142,6 +142,185 @@ static int EffectiveTextCols(CMUSHclientDoc* doc, int paneW, int charW)
     return std::max(1, textW / charW);
 }
 
+// ── Miniwindow compositing ────────────────────────────────────────────────
+// One paint pass of a doc's miniwindows onto destDC — the wx twin of
+// CMUSHView::OnDraw's two miniwindow loops (mushview.cpp:996-1026 and
+// :1497-1524) plus the Blit_Bitmap they call (mushview.cpp:684-847).
+// A free function, not a lambda, so the in-app compositor selftest
+// (platform/wx_composite_selftest.cpp) can drive the real body.
+//
+//   clientW/clientH — the output pane's client size ("client rect")
+//   frameW/frameH   — the owning child frame's client size ("owner rect")
+//   bUnder          — this pass draws the MINIWINDOW_DRAW_UNDERNEATH set
+void wx_composite_miniwindows(CMUSHclientDoc* doc, wxDC& destDC,
+                              int clientW, int clientH,
+                              int frameW, int frameH, bool bUnder)
+{
+    if (!doc) return;
+    MiniWindowVector& order = doc->m_MiniWindowsOrder;
+    if (order.empty()) return;
+
+    // ── Phase 1: compute m_rect for this pass's miniwindows ─────────
+    // Engine-owned placement maths shared verbatim with the Windows view
+    // (CalculateMiniWindowRectangles, miniwindow_compose.cpp, docs/PAL.md
+    // S4). Runs per pass with pass-scoped corner tracking, exactly as
+    // CMUSHView::OnDraw always has — including the original's quirky
+    // m_rect right/bottom values for corner/wall position modes, which
+    // Phase 2 then normalizes exactly as Blit_Bitmap does.
+    // "frame" rect = the child frame; "client" rect = the output pane.
+    {
+    RECT clientrect = { 0, 0, clientW, clientH };
+    RECT ownerrect  = { 0, 0, frameW, frameH };
+    CalculateMiniWindowRectangles(doc, bUnder, clientrect, ownerrect);
+    }
+
+    // ── Phase 2: blit each visible miniwindow onto destDC ───────────
+    for (auto& kv : order) {
+        CMiniWindow* mw = kv.second;
+        if (!mw->GetShow() || mw->m_bTemporarilyHide) continue;
+
+        bool wantUnder = (mw->GetFlags() & MINIWINDOW_DRAW_UNDERNEATH) != 0;
+        if (wantUnder != bUnder) continue;
+
+        wxDC* srcDC = WxDCFromCDC(mw->GetDC());
+        if (!srcDC) continue;
+
+        long iW = mw->GetWidth(), iH = mw->GetHeight();
+        if (iW <= 0 || iH <= 0) continue;
+
+        bool bTransparent = (mw->GetFlags() & MINIWINDOW_TRANSPARENT) != 0;
+        short pos = mw->GetPosition();
+
+        // Tile mode: special case (Blit_Bitmap's `case 13`, which tiles the
+        // canvas across the client rect and returns before any other blit).
+        // It is also the one mode CalculateMiniWindowRectangles skips
+        // (`case 13: continue`), because Blit_Bitmap sets the rect itself:
+        // `rect = r`, the view's client rect, and returns before the
+        // position/size normalization below.  Without this the port left a
+        // tiled window's m_rect at (0,0,0,0) and WindowInfo 12/13 answered 0.
+        if (pos == 13) {
+            mw->m_rect = CRect(0, 0, clientW, clientH);
+            int across = clientW / iW + 1;
+            int down   = clientH / iH + 1;
+            for (int tx = 0; tx < across; ++tx)
+                for (int ty = 0; ty < down; ++ty)
+                    destDC.Blit(tx * iW, ty * iH, iW, iH, srcDC, 0, 0, wxCOPY);
+            continue;
+        }
+
+        const int destX = mw->m_rect.left, destY = mw->m_rect.top;
+
+        // NO stretch arm, for any position mode.  OnDraw passes
+        // bUseRect = (GetPosition() != 13), so Blit_Bitmap's
+        // `if (iMode <= 3 && !bUseRect)` StretchBlt is FALSE for every
+        // miniwindow and it falls through to the 1:1 BitBlt below — the
+        // stretch is reachable only from DrawImage (the world's background /
+        // foreground bitmaps), which the port draws in draw_doc_image.
+        // The port used to StretchBlit positions 0-3 to the landed rect,
+        // which blew a 200x100 canvas up to the whole pane while hit-testing
+        // stayed at 200x100 (miniwindow_compose.cpp reads left/top + size),
+        // so hotspots fired nowhere near where they were drawn.
+        if (bTransparent) {
+            // Build a masked bitmap using the miniwindow's background colour
+            // as the transparency key, then draw it with the mask applied.
+            COLORREF bg = mw->GetBackgroundColour();
+            wxColour transCol(GetRValue(bg), GetGValue(bg), GetBValue(bg));
+            // The intermediate MUST carry the canvas's scale.  A plain
+            // wxBitmap(iW, iH) is 1x, so copying a HiDPI canvas into it
+            // throws away three quarters of the pixels and hands the
+            // compositor a blurred image — which is exactly what made
+            // plugin text fuzzy while the maps drawn straight through the
+            // opaque path stayed sharp.
+            wxBitmap srcBmp;
+            if (!srcBmp.CreateWithDIPSize(wxSize(iW, iH), wx_canvas_scale(), 32))
+                srcBmp = wxBitmap(iW, iH);
+            {
+                wxMemoryDC tmpDC(srcBmp);
+                tmpDC.Blit(0, 0, iW, iH, srcDC, 0, 0, wxCOPY);
+            }   // tmpDC destructor deselects srcBmp
+            srcBmp.SetMask(new wxMask(srcBmp, transCol));
+            destDC.DrawBitmap(srcBmp, destX, destY, /*useMask=*/true);
+        } else {
+            destDC.Blit(destX, destY, iW, iH, srcDC, 0, 0, wxCOPY);
+        }
+
+        // Blit_Bitmap's closing two lines (mushview.cpp:844-846):
+        //   // make into rectangle, not position and width/height
+        //   rect.right += rect.left;  rect.bottom += rect.top;
+        // Its bUseRect arm first stuffs the WIDTH/HEIGHT into right/bottom, so
+        // after a paint every miniwindow's m_rect is a NORMALIZED rectangle —
+        // which is what WindowInfo 12/13 hand to scripts (miniwindow.cpp:1066).
+        // The port used to stop at the width/height half, so an absolute or
+        // corner-positioned window reported a right edge to the left of its
+        // own left edge.
+        mw->m_rect.right  = destX + iW;
+        mw->m_rect.bottom = destY + iH;
+    }
+}   // end of wx_composite_miniwindows
+
+// ── Miniwindow tooltip ────────────────────────────────────────────────────
+// Resolve the tooltip for a client-space point that may be over a miniwindow.
+// Returns TRUE when the point is over one — the caller must then use `text`
+// and NOT fall through to the output text underneath, even when `text` comes
+// back empty.  That is CMUSHView::Mouse_Tooltip_MiniWindow
+// (mushview.cpp:6582-6640): `if (!mw) return false;` up front, an empty
+// buffer + `return true` for a window with no hotspot tooltip, and a caller
+// (OnToolTipNeedText, mushview.cpp:4319) that returns immediately on true.
+// The port used to discard the CMiniWindow* and fall through, so hovering an
+// opaque miniwindow leaked the MXP hint of the text it was covering.
+bool wx_miniwindow_tooltip(CMUSHclientDoc* doc, int x, int y, std::string& text)
+{
+    text.clear();
+    if (!doc) return false;
+
+    std::string sHotspotId, sMiniwindowId;
+    CHotspot* pHotspot = nullptr;
+    CMiniWindow* mw = MouseOverMiniWindow(doc, CPoint(x, y),
+                                          sHotspotId, pHotspot, sMiniwindowId);
+    if (!mw) return false;          // not over a miniwindow at all
+
+    if (pHotspot && !pHotspot->m_sTooltipText.empty()) {
+        // "title\tbody" is a two-part tooltip: Windows puts the part before
+        // the tab in the tooltip's bold TITLE (TTM_SETTITLE) and the rest in
+        // the body, consuming the tab (mushview.cpp:6601-6620).  wxToolTip
+        // has no title concept, so join with a newline -- the tab itself must
+        // not survive, which is what the port used to show.
+        const std::string& tip = pHotspot->m_sTooltipText;
+        const std::string::size_type tab = tip.find('\t');
+        if (tab == std::string::npos)
+            text = tip;
+        else
+            text = tip.substr(0, tab) + "\n" + tip.substr(tab + 1);
+    }
+    return true;    // over a miniwindow: this answer is final
+}   // end of wx_miniwindow_tooltip
+
+// ── WxMouseHooks ──────────────────────────────────────────────────────────
+// The view services the engine-owned miniwindow mouse routing calls back into
+// (MiniWindowMouseHooks, miniwindow.h): capture + keyboard modifiers.
+// Tooltips are a no-op here because the pane polls m_fn_get_tooltip on every
+// motion, and mouse-leave needs no arming — wx delivers wxEVT_LEAVE_WINDOW
+// natively.  File scope (it used to be local to the constructor) so
+// CWorldChildFrame::mouseMoveMiniWindow can build one too.
+struct WxMouseHooks : public MiniWindowMouseHooks {
+    COutputPane* pane;
+    WxMouseHooks(COutputPane* p) : pane(p) {}
+    virtual bool IsCaptured() { return pane && pane->HasCapture(); }
+    virtual void SetMouseCapture() {
+        if (pane && !pane->HasCapture()) pane->CaptureMouse();
+    }
+    virtual void ReleaseMouseCapture() {
+        if (pane && pane->HasCapture()) pane->ReleaseMouse();
+    }
+    virtual long KeyboardModifiers() {
+        long flags = 0;
+        if (wxGetKeyState(WXK_SHIFT))       flags |= MW_MOUSE_SHIFT;
+        if (wxGetKeyState(WXK_RAW_CONTROL)) flags |= MW_MOUSE_CTRL;
+        if (wxGetKeyState(WXK_ALT))         flags |= MW_MOUSE_ALT;
+        return flags;
+    }
+};
+
 // ── Event table ───────────────────────────────────────────────────────────
 wxBEGIN_EVENT_TABLE(CWorldChildFrame, wxMDIChildFrame)
     EVT_TEXT_ENTER(ID_INPUT,              CWorldChildFrame::OnInputEnter)
@@ -710,128 +889,18 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         [this](wxDC& destDC, int clientW, int clientH, bool bUnder)
     {
         if (!m_doc) return;
-        MiniWindowVector& order = m_doc->m_MiniWindowsOrder;
-        if (order.empty()) return;
-
-        // ── Phase 1: compute m_rect for this pass's miniwindows ─────────
-        // Engine-owned placement maths shared verbatim with the Windows view
-        // (CalculateMiniWindowRectangles, miniwindow_compose.cpp, docs/PAL.md
-        // S4). Runs per pass with pass-scoped corner tracking, exactly as
-        // CMUSHView::OnDraw always has — including the original's quirky
-        // m_rect right/bottom values for corner/wall position modes, which
-        // WindowInfo exposes to scripts (Windows parity over local tidiness).
-        // "frame" rect = this child frame; "client" rect = output pane.
-        {
         int frameW = 0, frameH = 0;
         GetClientSize(&frameW, &frameH);
-        RECT clientrect = { 0, 0, clientW, clientH };
-        RECT ownerrect  = { 0, 0, frameW, frameH };
-        CalculateMiniWindowRectangles(m_doc, bUnder, clientrect, ownerrect);
-        }
-
-        // ── Phase 2: blit each visible miniwindow onto destDC ───────────
-        for (auto& kv : order) {
-            CMiniWindow* mw = kv.second;
-            if (!mw->GetShow() || mw->m_bTemporarilyHide) continue;
-
-            bool wantUnder = (mw->GetFlags() & MINIWINDOW_DRAW_UNDERNEATH) != 0;
-            if (wantUnder != bUnder) continue;
-
-            wxDC* srcDC = WxDCFromCDC(mw->GetDC());
-            if (!srcDC) continue;
-
-            long iW = mw->GetWidth(), iH = mw->GetHeight();
-            if (iW <= 0 || iH <= 0) continue;
-
-            bool bTransparent = (mw->GetFlags() & MINIWINDOW_TRANSPARENT) != 0;
-            short pos = mw->GetPosition();
-
-            // Tile mode: special case.
-            if (pos == 13) {
-                int across = clientW / iW + 1;
-                int down   = clientH / iH + 1;
-                for (int tx = 0; tx < across; ++tx)
-                    for (int ty = 0; ty < down; ++ty)
-                        destDC.Blit(tx * iW, ty * iH, iW, iH, srcDC, 0, 0, wxCOPY);
-                continue;
-            }
-
-            const CRect& r = mw->m_rect;
-            int destX = r.left, destY = r.top;
-
-            if (pos <= 3 && !(mw->GetFlags() & MINIWINDOW_ABSOLUTE_LOCATION)) {
-                // Stretch modes (0–3): StretchBlit to the landed rect. (The
-                // port stretches these; Windows' Blit_Bitmap draws miniwindows
-                // 1:1 even in modes 0–3 — an existing, deliberate divergence.)
-                int destW = r.Width(), destH = r.Height();
-                if (destW > 0 && destH > 0) {
-                    if (destW == iW && destH == iH)
-                        // Same size: a plain Blit keeps the canvas 1:1 with the
-                        // screen.  StretchBlit resamples even at a 1:1 ratio,
-                        // which visibly softens text on a HiDPI canvas.
-                        destDC.Blit(destX, destY, iW, iH, srcDC, 0, 0, wxCOPY);
-                    else
-                        destDC.StretchBlit(destX, destY, destW, destH,
-                                           srcDC, 0, 0, iW, iH, wxCOPY);
-                }
-            } else if (bTransparent) {
-                // Build a masked bitmap using the miniwindow's background colour
-                // as the transparency key, then draw it with the mask applied.
-                COLORREF bg = mw->GetBackgroundColour();
-                wxColour transCol(GetRValue(bg), GetGValue(bg), GetBValue(bg));
-                // The intermediate MUST carry the canvas's scale.  A plain
-                // wxBitmap(iW, iH) is 1x, so copying a HiDPI canvas into it
-                // throws away three quarters of the pixels and hands the
-                // compositor a blurred image — which is exactly what made
-                // plugin text fuzzy while the maps drawn straight through the
-                // opaque path stayed sharp.
-                wxBitmap srcBmp;
-                if (!srcBmp.CreateWithDIPSize(wxSize(iW, iH), wx_canvas_scale(), 32))
-                    srcBmp = wxBitmap(iW, iH);
-                {
-                    wxMemoryDC tmpDC(srcBmp);
-                    tmpDC.Blit(0, 0, iW, iH, srcDC, 0, 0, wxCOPY);
-                }   // tmpDC destructor deselects srcBmp
-                srcBmp.SetMask(new wxMask(srcBmp, transCol));
-                destDC.DrawBitmap(srcBmp, destX, destY, /*useMask=*/true);
-            } else {
-                destDC.Blit(destX, destY, iW, iH, srcDC, 0, 0, wxCOPY);
-            }
-
-            // == Blit_Bitmap's bUseRect mutation on Windows: after a paint,
-            // m_rect holds {left, top, WIDTH, HEIGHT} — WindowInfo 12/13
-            // expose exactly this to scripts, so keep the convention (the
-            // hit-test above reads left/top + size and doesn't care).
-            mw->m_rect.right  = iW;
-            mw->m_rect.bottom = iH;
-        }
+        wx_composite_miniwindows(m_doc, destDC, clientW, clientH,
+                                 frameW, frameH, bUnder);
     };
 
     // ── Miniwindow mouse-event callbacks ──────────────────────────────────
     // Engine-owned routing (miniwindow_compose.cpp, docs/PAL.md S4): the old
     // CMUSHView Mouse_* family, shared verbatim with the Windows view. The
-    // pane forwards raw client-space coordinates; WxMouseHooks supplies the
-    // view services (capture + keyboard modifiers; tooltips are a no-op here
-    // because the pane polls m_fn_get_tooltip on every motion, and mouse-leave
-    // needs no arming — wx delivers wxEVT_LEAVE_WINDOW natively).
-    struct WxMouseHooks : public MiniWindowMouseHooks {
-        COutputPane* pane;
-        WxMouseHooks(COutputPane* p) : pane(p) {}
-        virtual bool IsCaptured() { return pane && pane->HasCapture(); }
-        virtual void SetMouseCapture() {
-            if (pane && !pane->HasCapture()) pane->CaptureMouse();
-        }
-        virtual void ReleaseMouseCapture() {
-            if (pane && pane->HasCapture()) pane->ReleaseMouse();
-        }
-        virtual long KeyboardModifiers() {
-            long flags = 0;
-            if (wxGetKeyState(WXK_SHIFT))       flags |= MW_MOUSE_SHIFT;
-            if (wxGetKeyState(WXK_RAW_CONTROL)) flags |= MW_MOUSE_CTRL;
-            if (wxGetKeyState(WXK_ALT))         flags |= MW_MOUSE_ALT;
-            return flags;
-        }
-    };
+    // pane forwards raw client-space coordinates; WxMouseHooks (file scope,
+    // just above — the IWorldView::mouseMoveMiniWindow adapter needs it too)
+    // supplies the view services.
 
     m_output->m_fn_miniwindow_mouse_down = [this](int x, int y, long flags) -> bool {
         if (!m_doc) return false;
@@ -873,28 +942,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
 
     // ── Tooltip callback ───────────────────────────────────────────────────
     // Returns the tooltip text for the client-space point (x, y).
-    // Priority: miniwindow hotspot tooltip > MXP run hint > empty.
+    // Priority: miniwindow (hotspot tooltip, else NOTHING) > MXP run hint.
     m_output->m_fn_get_tooltip =
         [this](int x, int y) -> std::string
     {
         if (!m_doc) return {};
 
-        // 1. Check miniwindow hotspot tooltip (engine-owned hit-test).
-        std::string sHotspotId, sMiniwindowId;
-        CHotspot* pHotspot = nullptr;
-        MouseOverMiniWindow(m_doc, CPoint(x, y), sHotspotId, pHotspot, sMiniwindowId);
-        if (pHotspot && !pHotspot->m_sTooltipText.empty()) {
-            // "title\tbody" is a two-part tooltip: Windows puts the part before
-            // the tab in the tooltip's bold TITLE (TTM_SETTITLE) and the rest in
-            // the body, consuming the tab (mushview.cpp:6601-6620).  wxToolTip
-            // has no title concept, so join with a newline -- the tab itself must
-            // not survive, which is what the port used to show.
-            const std::string& tip = pHotspot->m_sTooltipText;
-            const std::string::size_type tab = tip.find('\t');
-            if (tab == std::string::npos)
-                return tip;
-            return tip.substr(0, tab) + "\n" + tip.substr(tab + 1);
-        }
+        // 1. Over a miniwindow?  Then its answer is final — an opaque window
+        // hides the text it covers, so Windows never shows that text's hint
+        // (Mouse_Tooltip_MiniWindow returns TRUE with an empty buffer, and
+        // OnToolTipNeedText returns before the MXP code).
+        std::string mwTip;
+        if (wx_miniwindow_tooltip(m_doc, x, y, mwTip))
+            return mwTip;
 
         // 2. Check MXP hint text on the output line under the cursor.
         // Use PointToChar for wrap-aware hit-testing: it returns the absolute
@@ -4588,6 +4648,19 @@ pal::Rect CWorldChildFrame::mainRect() const
         return { r.x, r.y, r.width, r.height };
     }
     return { 0, 0, 1024, 768 };
+}
+
+// Re-run the miniwindow mouse-move hit test at a point the pane is not
+// reporting right now — WindowAddHotspot's "the pointer is already over the
+// hotspot I just created" case.  The engine site used to walk the doc's view
+// list for a CMUSHView, which the port never constructs, so the immediate
+// MouseOver simply never fired here; it now comes through this seam, and the
+// Windows adapter runs that same view walk (pal/win_worldview.cpp).
+void CWorldChildFrame::mouseMoveMiniWindow(long x, long y)
+{
+    if (!m_doc || !m_output) return;
+    WxMouseHooks hooks(m_output);
+    MouseMoveMiniWindow(m_doc, CPoint((int) x, (int) y), hooks);
 }
 
 // ── the info bar (P2 infobar family) ─────────────────────────────────────────

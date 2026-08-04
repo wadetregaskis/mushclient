@@ -865,6 +865,10 @@ if(NOT WIN32)
             # GUI widgets (wx headers first, then MUSHclient headers)
             platform/wx_outputpane.cpp
             platform/wx_world_child.cpp
+            # PAL: conformance selftest for the wx miniwindow compositor +
+            # tooltip gate (both live in wx_world_child.cpp, so this must be
+            # an exe TU — mushcore cannot see wxDC)
+            platform/wx_composite_selftest.cpp
             # The three canonical toolbars (Standard/World/Activity) over
             # wxToolBar, using the shipped Windows strips.  wxOSX hides the MDI
             # parent, so these hang off each world window like the status bar.

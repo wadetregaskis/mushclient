@@ -38,6 +38,8 @@
 //   infobar*            methods_infobar.cpp ShowInfoBar/InfoClear/Info/
 //                       InfoColour/InfoBackground/InfoFont
 //   flash               methods_output.cpp  FlashIcon (Frame.FlashWindow)
+//   mouseMoveMiniWindow methods_miniwindows.cpp WindowAddHotspot (the
+//                       created-under-the-cursor re-detect view walk)
 //
 // DISPLAY FAMILY — deliberately NOT single-sourced (decision accepted
 // 2026-07-15; full rationale + declined options in docs/PAL.md, "IWorldView —
@@ -785,6 +787,25 @@ public:
         out.h = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
 
         return out;
+    }
+
+    // ── miniwindow mouse routing ───────────────────────────────────────────
+    void mouseMoveMiniWindow(long x, long y) override
+    {
+        // WindowAddHotspot (methods_miniwindows.cpp): the "mouse was already
+        // over the hotspot when it was created" re-detect.  This IS that call
+        // site's view walk, moved here verbatim — the engine site now reaches
+        // it through the seam so the ports (which never construct a CMUSHView)
+        // get the same immediate MouseOver.
+        for (POSITION pos = m_pDoc->GetFirstViewPosition(); pos != NULL; )
+        {
+            CView* pView = m_pDoc->GetNextView(pos);
+
+            if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
+                ((CMUSHView*)pView)->Mouse_Move_MiniWindow (m_pDoc,
+                                                            CPoint((int) x,
+                                                                   (int) y));
+        } // end of looping through views
     }
 
     // ── the info bar ───────────────────────────────────────────────────────

@@ -410,6 +410,15 @@ public:
     // Toggles logging on/off: shows a file-save dialog when starting.
     std::function<void()> m_fn_toggle_log;
 
+    // Display ▸ Clear Output Buffer, the canonical command (prompt, engine
+    // buffer, pane, find state).  Ctrl+L and the context-menu item route here
+    // rather than calling ClearOutput() directly: clearing the pane behind the
+    // engine's back leaves world.GetLinesInBufferCount() counting the cleared
+    // lines, and RebuildOutputView (any palette change) puts them all back.
+    // Wired by CWorldChildFrame; if unwired, the pane-only clear is the
+    // fallback so a pane with no frame is still usable.
+    std::function<void()> m_fn_clear_output_buffer;
+
     // Called when F3 (forward) or Shift+F3 (backward) is pressed while the
     // output pane has focus.  Wired by CWorldChildFrame to DoFind().
     std::function<void(bool forward)> m_fn_find_next_key;
@@ -475,6 +484,9 @@ private:
     void OnMenuCopy(wxCommandEvent& evt);
     void OnMenuSelectAll(wxCommandEvent& evt);
     void OnMenuClear(wxCommandEvent& evt);
+    // Dispatch the canonical clear-buffer command (or fall back to the
+    // pane-only clear when no frame is wired).
+    void ClearOutputBuffer();
 
     // ── Selection helpers ────────────────────────────────────────────────────
 

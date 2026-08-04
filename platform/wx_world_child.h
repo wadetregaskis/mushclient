@@ -136,6 +136,12 @@ public:
     void        setMaxLines(int n) override;
     void        requestRepaint(pal::Rect area) override;
     void        clearOutput() override;
+
+    // Display ▸ Clear Output Buffer (ID_DISPLAY_CLEAR_OUTPUT), the canonical
+    // command — prompt, engine buffer, pane, find state, all of it.  Ctrl+L and
+    // the output pane's context menu both route here rather than clearing the
+    // pane behind the engine's back; see the body for why that mattered.
+    void        ClearOutputBuffer();
     void        setPaused(bool paused) override;
     bool        isPaused() const override;
     void        flash() override;

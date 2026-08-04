@@ -26,6 +26,8 @@
 #include "resource.h"     // IDR_MUSHCLTYPE
 #include "platform/wx_world_child.h"
 #include "platform/wx_outputpane.h"
+#include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box — answer the
+                                     // clear-buffer confirmation prompt
 
 #include <cstdio>
 
@@ -298,6 +300,61 @@ int RunWorldFrameSelfTest()
         doc->m_TextRectangle        = CRect(0, 0, 0, 0);
         doc->m_bAutoWrapWindowWidth = false;
         doc->m_nWrapColumn          = 80;
+    }
+
+    // ── Ctrl+L is the canonical Clear Output Buffer, not a pane-only wipe ─────
+    // COutputPane::ClearOutput touches the pane's own deque only; the engine's
+    // m_LineList is what world.GetLinesInBufferCount() reports and what
+    // RebuildOutputView re-emits on any palette change, so a pane-only clear
+    // came straight back the next time the user touched ANSI Colour or a script
+    // called SetNormalColour.  Ctrl+L now dispatches ID_DISPLAY_CLEAR_OUTPUT
+    // (doc.cpp:2396) like the Display menu item does, prompt included.
+    {
+        // Answer the "Are you SURE…" prompt.  The first arm says No, which must
+        // leave everything alone — without it, a Ctrl+L that ignored the prompt
+        // and always cleared would pass the second arm just as well.
+        static int s_answer = IDNO;
+        static int s_prompts = 0;
+        int (*savedMB)(const char*, const char*, unsigned) = g_wxhook_message_box;
+        g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+            ++s_prompts;
+            return s_answer;
+        };
+
+        doc->Note("clear me one");
+        doc->Note("clear me two");
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        const long before = doc->m_LineList.GetCount();
+        check(before >= 2, "wrap-up: the engine buffer has lines to clear");
+
+        auto sendCtrlL = [&]() {
+            wxKeyEvent key(wxEVT_KEY_DOWN);
+            key.m_keyCode      = 'L';
+            key.m_rawControlDown = true;
+            key.m_controlDown  = true;
+            key.SetEventObject(pane);
+            pane->GetEventHandler()->ProcessEvent(key);
+            wxYield();
+        };
+
+        s_answer = IDNO;
+        sendCtrlL();
+        check(s_prompts == 1, "Ctrl+L prompts, as the canonical command does");
+        check(doc->m_LineList.GetCount() == before,
+              "...and answering No clears nothing");
+        check(pane->LineCount() > 0, "...the pane keeps its lines too");
+
+        s_answer = IDYES;
+        sendCtrlL();
+        check(s_prompts == 2, "Ctrl+L prompts again");
+        check(doc->m_LineList.GetCount() == 1,
+              "...and Yes clears the ENGINE buffer, not just the pane "
+              "(one re-seeded empty line, as CMUSHclientDoc::ClearOutput leaves)");
+        check(pane->LineCount() == 0,
+              "...and the pane follows through EmitClearOutput");
+
+        g_wxhook_message_box = savedMB;
     }
 
     // Tear down without running the close/save flow (this doc has no file).

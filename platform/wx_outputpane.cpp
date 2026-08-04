@@ -2349,7 +2349,10 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     }
 
     menu.AppendSeparator();
-    menu.Append(ID_CLEAR, "Clear Output\tCtrl+L");
+    // The canonical command's own label (kCanonCmds, wx_mfc_impl.cpp:705) —
+    // this item IS that command, not a second, weaker one.  Windows binds it to
+    // Shift+Ctrl+C; Ctrl+L is an extra binding the port adds.
+    menu.Append(ID_CLEAR, wxT("Clear Output Buffer…\tCtrl+L"));
 
     // Zoom and find — for discoverability (same as keyboard shortcuts).
     menu.AppendSeparator();
@@ -2493,7 +2496,7 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
 
     if (code == 'C' && evt.RawControlDown()) { CopySelection(); return; }
     if (code == 'A' && evt.RawControlDown()) { SelectAll();     return; }
-    if (code == 'L' && evt.RawControlDown()) { ClearOutput();   return; }
+    if (code == 'L' && evt.RawControlDown()) { ClearOutputBuffer(); return; }
 
     // Ctrl+G: put selected text into the input bar (output→input shortcut).
     if (code == 'G' && evt.RawControlDown()) {
@@ -2564,7 +2567,19 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
 
 void COutputPane::OnMenuCopy(wxCommandEvent&)      { CopySelection(); }
 void COutputPane::OnMenuSelectAll(wxCommandEvent&) { SelectAll(); }
-void COutputPane::OnMenuClear(wxCommandEvent&)     { ClearOutput(); }
+// ── ClearOutputBuffer ─────────────────────────────────────────────────────
+// Route Ctrl+L and the context-menu item to the canonical Display ▸ Clear
+// Output Buffer through the frame, instead of clearing the pane behind the
+// engine's back.  See m_fn_clear_output_buffer in the header for why.  The
+// direct ClearOutput() is kept as the fallback so a pane with no frame wired
+// (the selftest harness) still responds.
+void COutputPane::ClearOutputBuffer()
+{
+    if (m_fn_clear_output_buffer) m_fn_clear_output_buffer();
+    else                          ClearOutput();
+}
+
+void COutputPane::OnMenuClear(wxCommandEvent&)     { ClearOutputBuffer(); }
 
 // ── Selection / clipboard ─────────────────────────────────────────────────────
 

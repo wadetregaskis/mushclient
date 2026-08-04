@@ -643,6 +643,9 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         return IsLogging();
     };
 
+    // Ctrl+L / context menu → the canonical Display ▸ Clear Output Buffer.
+    m_output->m_fn_clear_output_buffer = [this]() { ClearOutputBuffer(); };
+
     // Toggle logging on/off: shows a save dialog when starting.
     m_output->m_fn_toggle_log = [this]() {
         if (IsLogging()) {
@@ -3491,10 +3494,9 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
         return;
     }
 
-    // Ctrl+L → clear the output pane (same as the menu item and Ctrl+L in the
-    // output pane itself; terminal convention: clear screen without disconnect).
+    // Ctrl+L → Display ▸ Clear Output Buffer.  See ClearOutputBuffer().
     if (code == 'L' && evt.RawControlDown()) {
-        if (m_output) m_output->ClearOutput();
+        ClearOutputBuffer();
         return;
     }
 
@@ -4353,6 +4355,29 @@ void CWorldChildFrame::requestRepaint(pal::Rect /*area*/)
 void CWorldChildFrame::clearOutput()
 {
     if (m_output) m_output->ClearOutput();
+}
+
+// ── ClearOutputBuffer ─────────────────────────────────────────────────────
+// Ctrl+L and the output pane's context-menu "Clear Output Buffer".
+//
+// This used to clear the PANE only (COutputPane::ClearOutput), which was a
+// port invention — a terminal-style clear-screen with no Windows counterpart.
+// The engine's m_LineList was left intact, and that is not merely cosmetic:
+// world.GetLinesInBufferCount() and the disconnect statistics kept counting the
+// cleared lines, and — the visible one — any palette change runs
+// RebuildOutputView (doc_display_shared.cpp), which re-emits the WHOLE doc
+// buffer, so every "cleared" line came back the moment the user touched World
+// Properties ▸ ANSI Colour or a script called SetNormalColour.
+//
+// It is now an alias for the canonical Display ▸ Clear Output Buffer
+// (ID_DISPLAY_CLEAR_OUTPUT = 32291, doc.cpp:2396), prompt included: the pane is
+// cleared as a consequence, through CMUSHclientDoc::ClearOutput's
+// EmitClearOutput seam.  Windows keeps Shift+Ctrl+C for the same command; Ctrl+L
+// is an extra binding for it, not a second command.
+void CWorldChildFrame::ClearOutputBuffer()
+{
+    if (!m_doc) return;
+    AfxDispatchCommand(m_doc, 0 /*ON_COMMAND*/, 32291 /*ID_DISPLAY_CLEAR_OUTPUT*/);
 }
 
 void CWorldChildFrame::setPaused(bool paused)

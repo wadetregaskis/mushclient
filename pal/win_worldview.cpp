@@ -88,6 +88,25 @@ public:
         // to the line list before any view involvement) — nothing to do.
     }
 
+    void setBookmark(long lineIndex, bool /*set*/) override
+    {
+        // Bookmark (methods_output.cpp) — "alter appearance of all output
+        // windows".  BookmarkLine re-reads the CLine's BOOKMARK flag, which
+        // the engine site has already updated, so the `set` argument is not
+        // needed here (it exists for adapters that mirror the flag).
+        for (POSITION pos = m_pDoc->GetFirstViewPosition(); pos != NULL; )
+        {
+            CView* pView = m_pDoc->GetNextView(pos);
+
+            if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
+            {
+                CMUSHView* pmyView = (CMUSHView*)pView;
+
+                pmyView->BookmarkLine(lineIndex);
+            }
+        }
+    }
+
     void setTitle(const char* /*title*/) override
     {
         // now update all views  (SetTitle — reads m_pDoc->m_strWindowTitle,

@@ -1165,6 +1165,26 @@ public:
   CSendView * m_pActiveCommandView;
   CMUSHView * m_pActiveOutputView;
 
+  // ── "is this world's window the active one?" ────────────────────────────
+  // Windows answers it with the two view pointers above, which its two views
+  // maintain in OnActivateView.  The port never constructs those views, so
+  // they are permanently NULL there: every consumer of the raw test believed
+  // EVERY world was in the background forever — the unread-line counter never
+  // stopped counting or reset, the activity toolbar stayed on its "new
+  // messages" tile, and the new-activity sound could only ever play once.
+  // One predicate, maintained by whichever frontend is live.
+#ifdef _WIN32
+  bool IsWorldViewActive () const
+    { return m_pActiveCommandView != NULL || m_pActiveOutputView != NULL; }
+#else
+  bool m_bWorldViewActive;    // set by CWorldChildFrame's activate/deactivate
+  bool IsWorldViewActive () const { return m_bWorldViewActive; }
+  // The port's stand-in for CMUSHView/CSendView::OnActivateView's bookkeeping:
+  // remember the state and, on activation, mark the unread lines read.
+  // Defined in doc_shared.cpp.
+  void SetWorldViewActive (bool bActive);
+#endif
+
 // list of output buffer lines
 
   CLineList m_LineList;
@@ -1595,6 +1615,11 @@ public:
   }
   void EmitTitle(const char* title) {
       if (m_pWorldView) m_pWorldView->setTitle(title);
+  }
+  // world.Bookmark: the CLine's BOOKMARK flag has just changed (lineIndex is
+  // 0-based, as CMUSHView::BookmarkLine takes it).
+  void EmitBookmark(long lineIndex, bool set) {
+      if (m_pWorldView) m_pWorldView->setBookmark(lineIndex, set);
   }
   void EmitClearOutput() {
       if (m_pWorldView) m_pWorldView->clearOutput();
@@ -2304,6 +2329,16 @@ public:
   void FireWorldGetFocus();
   void FireWorldLoseFocus();
   void FireWorldClose();
+  // The text this world's window title should show right now — the script-set
+  // title (world.SetTitle) if there is one, else the world name plus a
+  // connection-phase suffix.  The equivalent derivation on Windows is inside
+  // CMUSHView::FixupTitle (mushview.cpp), which likewise lets a custom title
+  // suppress the status suffix entirely; it is a doc-side expression here so
+  // that both the frame's phase-change tick and IWorldView::setTitle build the
+  // title the same way (they did not: the tick rebuilt "name (Status)" from
+  // scratch and so wiped a script's title on every connect/disconnect).
+  // Defined in doc_shared.cpp.
+  CString WorldWindowTitle () const;
   // (no FireWorldSave: saves go through the canonical DoSave, which fires
   // on_world_save and OnPluginWorldSave itself — see doc_scripting_shared.cpp)
 #endif

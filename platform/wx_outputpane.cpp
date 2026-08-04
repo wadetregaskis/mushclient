@@ -596,15 +596,25 @@ void COutputPane::ScrollToLine(int lineIdx)
 }
 
 // ── Bookmarks (Display ▸ Bookmark Selection / Go To Bookmark) ─────────────────
-void COutputPane::ToggleBookmark()
+// The flag itself belongs to the engine's CLine; this is only the rendering
+// mirror, updated when the doc tells us it changed.
+void COutputPane::SetBookmark(int lineIdx, bool set)
 {
-    int line = -1;
-    SelPoint s, e;
-    if (GetNormalizedSel(s, e))      line = (int) s.line;             // selection start
-    else if (!m_lines.empty())       line = (int) m_lines.size() - 1; // else the last line
-    if (line < 0 || line >= (int) m_lines.size()) return;
-    m_lines[line].bookmark = !m_lines[line].bookmark;
+    if (lineIdx < 0 || lineIdx >= (int) m_lines.size()) return;
+    if (m_lines[lineIdx].bookmark == set) return;
+    m_lines[lineIdx].bookmark = set;
     Refresh(false);
+}
+
+// Which line Display ▸ Bookmark Selection acts on — the selection's start line,
+// else the last line (CMUSHView::OnDisplayBookmarkselection, mushview.cpp).
+int COutputPane::BookmarkTargetLine() const
+{
+    SelPoint s, e;
+    if (GetNormalizedSel(s, e) && s.line >= 0 && s.line < (int) m_lines.size())
+        return (int) s.line;
+    if (m_lines.empty()) return -1;
+    return (int) m_lines.size() - 1;
 }
 
 void COutputPane::GotoNextBookmark()
@@ -737,27 +747,6 @@ void COutputPane::RefreshAutoScrollFromPosition()
     m_autoScroll = atBottom || !m_allowAutoFreeze;
     if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
         m_fn_autoscroll_changed(m_autoScroll);
-}
-
-std::vector<int> COutputPane::BookmarkOffsetsFromEnd() const
-{
-    std::vector<int> out;
-    const int n = (int) m_lines.size();
-    for (int i = 0; i < n; ++i)
-        if (m_lines[i].bookmark)
-            out.push_back(n - 1 - i);
-    return out;
-}
-
-void COutputPane::RestoreBookmarkOffsetsFromEnd(const std::vector<int>& offsets)
-{
-    const int n = (int) m_lines.size();
-    bool any = false;
-    for (int off : offsets) {
-        const int idx = n - 1 - off;
-        if (idx >= 0 && idx < n) { m_lines[idx].bookmark = true; any = true; }
-    }
-    if (any) Refresh(false);
 }
 
 void COutputPane::ClearOutput()

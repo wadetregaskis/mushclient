@@ -821,39 +821,12 @@ void windowPositionHelper (CString & str, const RECT & r)
 
 
 
-void CMUSHclientDoc::Bookmark(long LineNumber, BOOL Set) 
-{
-  // check line exists
-  if (LineNumber <= 0 || LineNumber > m_LineList.GetCount ())
-    return;
-
-  LineNumber--;  // zero relative
-  // get pointer to line in question
-
-CLine * pLine = m_LineList.GetAt (GetLinePosition (LineNumber));
-
-
-  if (Set)
-    pLine->flags |= BOOKMARK;
-  else
-    pLine->flags &= ~BOOKMARK;
-
-  // alter appearance of all output windows
-
-  for(POSITION pos = GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = GetNextView(pos);
-	  
-	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
-  	  {
-		  CMUSHView* pmyView = (CMUSHView*)pView;
-
-      pmyView->BookmarkLine (LineNumber);
-
-	    }	  // end of being a CMUSHView
-    }   // end of loop through views
-
-}  // end of CMUSHclientDoc::Bookmark
+// CMUSHclientDoc::Bookmark moved to doc_shared.cpp — it is pure line-list work
+// plus the view notification, and the notification is now the pal::IWorldView
+// seam (the CMUSHView walk that used to be here lives in the Windows adapter,
+// pal/win_worldview.cpp setBookmark).  Sharing the body is what lets the
+// headless tests reach it: this TU is GUI-only, so mushcore used to link an
+// inert no-op stub of Bookmark instead.
 
 
 void CMUSHclientDoc::SetTitle(LPCTSTR Title)

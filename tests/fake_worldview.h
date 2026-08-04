@@ -19,6 +19,11 @@ struct FakeWorldView : pal::IWorldView {
 
     void appendLine(SOutputLine&& l) override { lines.push_back(std::move(l)); }
     void note(const char* t) override    { notes.emplace_back(t); }
+    // Every setBookmark(lineIndex, set) the engine emitted, in order.
+    std::vector<std::pair<long, bool> > bookmarks;
+    void setBookmark(long lineIndex, bool set) override {
+        bookmarks.push_back(std::make_pair(lineIndex, set));
+    }
     void setTitle(const char* t) override { title.assign(t); }
     void setStatus(const char* t) override { status.assign(t); }
     void setBackgroundColour(pal::Colour c) override { bg = c; }

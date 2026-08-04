@@ -3734,8 +3734,10 @@ POSITION pos;
 
       
 // if this document does not have an active view, note we have a new message for it
+// (IsWorldViewActive is that same test on Windows; on the port it is the flag
+// the wx frame maintains, because the two CView pointers are never set there)
 
-  if (m_pActiveCommandView == NULL && m_pActiveOutputView == NULL)
+  if (!IsWorldViewActive ())
     {
     if (0 == m_new_lines)
       {
@@ -4078,6 +4080,115 @@ int iLen = strFormat.GetLength () + 1000;
 // (SendTo stays in doc.cpp for now: its real body needs Execute and
 // SetVariable, which arrive with the methods_commands/methods_variables
 // Campaign-C adoptions.)
+
+// ── Bookmark ────────────────────────────────────────────────────────────────
+// world.Bookmark (LineNumber, Set) — relocated verbatim from
+// scripting/methods/methods_output.cpp, except that the "alter appearance of
+// all output windows" CMUSHView walk is now the pal::IWorldView seam.  The
+// Windows adapter (pal/win_worldview.cpp setBookmark) runs exactly that walk,
+// so Windows is unchanged; the wx adapter mirrors the flag into the output
+// pane, which used to keep an entirely separate bookmark store that
+// world.Bookmark never touched and GetLineInfo (n, 7) could not see.
+//
+// It has to be shared rather than GUI-only for the same reason tab completion
+// did: methods_output.cpp is mushgui-only, so the headless build linked an
+// inert stub and no test could reach the real body.
+void CMUSHclientDoc::Bookmark(long LineNumber, BOOL Set)
+{
+  // check line exists
+  if (LineNumber <= 0 || LineNumber > m_LineList.GetCount ())
+    return;
+
+  LineNumber--;  // zero relative
+  // get pointer to line in question
+
+CLine * pLine = m_LineList.GetAt (GetLinePosition (LineNumber));
+
+
+  if (Set)
+    pLine->flags |= BOOKMARK;
+  else
+    pLine->flags &= ~BOOKMARK;
+
+  // alter appearance of all output windows
+
+  EmitBookmark (LineNumber, Set != 0);
+
+}  // end of CMUSHclientDoc::Bookmark
+
+#ifndef _WIN32
+
+// ── SetWorldViewActive ──────────────────────────────────────────────────────
+// The port's stand-in for the bookkeeping both Windows views do when the
+// world's window is activated or deactivated (CMUSHView::OnActivateView,
+// mushview.cpp:3394-3402; CSendView::OnActivateView, sendvw.cpp:946-954).
+// Windows records "this view is active" in m_pActiveOutputView /
+// m_pActiveCommandView and zeroes the unread-line counter; here the wx frame
+// calls this from its activate/deactivate handling instead.
+void CMUSHclientDoc::SetWorldViewActive (bool bActive)
+  {
+  m_bWorldViewActive = bActive;
+
+  if (!bActive)
+    return;
+
+  // "the user is looking at this world now" — its unread lines are read.
+  // (Windows: `if (m_new_lines && App.m_pActivityDoc) { m_new_lines = 0;
+  //  App.m_bUpdateActivity = TRUE; } else m_new_lines = 0;`)
+  if (m_new_lines && App.m_pActivityDoc)
+    App.m_bUpdateActivity = TRUE;
+
+  m_new_lines = 0;
+  }  // end of CMUSHclientDoc::SetWorldViewActive
+
+// ── WorldWindowTitle ────────────────────────────────────────────────────────
+// What this world's window title should read, derived the way
+// CMUSHView::FixupTitle derives it on Windows (mushview.cpp:3499-3543): a
+// script-set title (world.SetTitle) wins outright and suppresses the status
+// suffix; otherwise it is the world name plus the connection phase.
+//
+// The phase wording is the port's own (Windows spells out the address and port
+// in a "[...]" suffix); what matters here is that there is ONE expression.  The
+// frame's phase-change tick used to rebuild the title from the world name alone,
+// so any title a plugin had set was destroyed by the next connect, disconnect or
+// close — and never came back.
+CString CMUSHclientDoc::WorldWindowTitle () const
+  {
+  if (!m_strWindowTitle.IsEmpty ())
+    return m_strWindowTitle;
+
+  CString strTitle = m_mush_name;
+  if (strTitle.IsEmpty ())
+    strTitle = "World";
+
+  const char * szStatus = NULL;   // NULL → no suffix
+
+  switch (m_iConnectPhase)
+    {
+    case eConnectMudNameLookup:
+    case eConnectProxyNameLookup:        szStatus = "Resolving\xe2\x80\xa6";     break;
+    case eConnectConnectingToMud:
+    case eConnectConnectingToProxy:      szStatus = "Connecting\xe2\x80\xa6";    break;
+    case eConnectAwaitingProxyResponse1:
+    case eConnectAwaitingProxyResponse2:
+    case eConnectAwaitingProxyResponse3: szStatus = "Proxy\xe2\x80\xa6";         break;
+    case eConnectAwaitingSSLHandshake:   szStatus = "TLS\xe2\x80\xa6";           break;
+    case eConnectConnectedToMud:         szStatus = NULL;                        break;
+    case eConnectDisconnecting:          szStatus = "Disconnecting\xe2\x80\xa6"; break;
+    default:                             szStatus = "Closed";                    break;
+    }
+
+  if (szStatus)
+    {
+    strTitle += " (";
+    strTitle += szStatus;
+    strTitle += ")";
+    }
+
+  return strTitle;
+  }  // end of CMUSHclientDoc::WorldWindowTitle
+
+#endif // !_WIN32
 
 // ── ClampWrapColumn ─────────────────────────────────────────────────────────
 // The legal range for m_nWrapColumn, in one place.  It is the range the option

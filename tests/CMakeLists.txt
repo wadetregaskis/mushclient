@@ -159,6 +159,15 @@ if(TARGET mushgui)
     # headless suites cannot link them.
     add_test(NAME selftest_pal_composite
              COMMAND $<TARGET_FILE:mushgui> --pal-composite-selftest)
+    # The world window adapter (CWorldChildFrame = the wx pal::IWorldView):
+    # bookmarks, window geometry, the title, and the active-world state, all of
+    # which are GUI-side and so unreachable from the headless executables.
+    # -ApplePersistenceIgnoreState keeps AppKit from putting up its modal
+    # "reopen windows?" alert (which it does for a bundle with crash history)
+    # and would hang the run; it also keeps saved state out of the user's home.
+    add_test(NAME selftest_world_frame
+             COMMAND $<TARGET_FILE:mushgui> --world-frame-selftest
+                     -ApplePersistenceIgnoreState YES)
     # The six scripting languages: the only place five of them can be exercised,
     # since their interpreters are linked into the app and deliberately kept out
     # of mushcore.  One ctest entry per language, so a build without (say) Ruby
@@ -178,5 +187,6 @@ if(TARGET mushgui)
                          selftest_pal_miniwindow selftest_gui_bridge
                          selftest_pal_miniwindow selftest_input
                          selftest_pal_miniwindow selftest_pal_composite
+                         selftest_pal_miniwindow selftest_world_frame
                          PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 endif()

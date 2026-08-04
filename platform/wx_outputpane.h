@@ -141,10 +141,17 @@ public:
     // / Highlight Word reimplementations in CWorldChildFrame).  Empty if none.
     wxString GetSelectionText() const { return SelectedText(); }
 
-    // Display ▸ Bookmark Selection — toggle a bookmark on the selected line (or
-    // the last line if nothing is selected); shows a left-margin marker.
+    // Mirror the engine's BOOKMARK flag for line `lineIdx` (0-based, the same
+    // space the doc's CLine list uses); shows a left-margin marker.  Driven
+    // ONLY from CMUSHclientDoc::Bookmark through pal::IWorldView::setBookmark
+    // -- the doc owns the flag, this is the rendering copy.  (It used to be an
+    // independent store the Display menu toggled directly, so scripts and the
+    // menu could not see each other's bookmarks.)
+    void SetBookmark(int lineIdx, bool set);
+    // Line the Display ▸ Bookmark Selection command acts on: the selection's
+    // start line, else the last line.  0-based; -1 when the buffer is empty.
+    int  BookmarkTargetLine() const;
     // Display ▸ Go To Bookmark — scroll to the next bookmarked line (cycling).
-    void ToggleBookmark();
     void GotoNextBookmark();
 
     // Programmatically select a range of text.  Arguments are 1-based line and
@@ -258,13 +265,6 @@ public:
     // so it steps by rows.  Same effect, coarser grain -- true per-pixel would
     // mean rescaling every scroll-unit calculation in this file.
     void SetSmoothScrolling(bool v) { m_smoothScroll = v; }
-
-    // Bookmarks are a per-line flag in m_lines, so anything that clears and
-    // re-emits the buffer (CMUSHclientDoc::RebuildOutputView, for a palette
-    // change) would silently drop them.  Keyed by distance from the NEWEST
-    // line, which survives trimming at the front -- an absolute index does not.
-    std::vector<int> BookmarkOffsetsFromEnd() const;
-    void RestoreBookmarkOffsetsFromEnd(const std::vector<int>& offsets);
 
     // World Properties > Appearance > Output > "Pixel offset" (m_iPixelOffset):
     // inset the text from the left edge of the window, and leave the same gap

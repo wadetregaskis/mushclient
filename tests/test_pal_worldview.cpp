@@ -533,6 +533,109 @@ TEST(PalWorldView, EmissionCursorStaysAlignedAcrossBufferEviction)
 }
 
 
+// ── the world window's title text ───────────────────────────────────────────
+//
+// One expression for "what should this window's title read", so the frame's
+// connection-phase tick and IWorldView::setTitle cannot disagree.  They did:
+// the tick rebuilt "<world name> (<phase>)" from scratch, so a title a plugin
+// had set with world.SetTitle was destroyed by the next connect, disconnect or
+// close and never came back.  Windows suppresses the status suffix entirely
+// while a custom title is set (CMUSHView::FixupTitle, mushview.cpp).
+TEST(PalWorldView, WindowTitleDerivedFromPhaseUntilAScriptSetsOne)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_mush_name = "MyWorld";
+
+    // No custom title: world name + the connection phase.
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    EXPECT_STREQ("MyWorld", (const char*)doc.WorldWindowTitle());
+    doc.m_iConnectPhase = eConnectNotConnected;
+    EXPECT_STREQ("MyWorld (Closed)", (const char*)doc.WorldWindowTitle());
+    doc.m_iConnectPhase = eConnectDisconnecting;
+    EXPECT_STREQ("MyWorld (Disconnecting\xe2\x80\xa6)",
+                 (const char*)doc.WorldWindowTitle());
+    doc.m_iConnectPhase = eConnectConnectingToMud;
+    EXPECT_STREQ("MyWorld (Connecting\xe2\x80\xa6)",
+                 (const char*)doc.WorldWindowTitle());
+
+    // An unnamed world still gets a title.
+    doc.m_mush_name = "";
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    EXPECT_STREQ("World", (const char*)doc.WorldWindowTitle());
+    doc.m_mush_name = "MyWorld";
+
+    // world.SetTitle wins outright — including across every phase change.
+    FakeWorldView view;
+    doc.m_pWorldView = &view;
+    doc.SetTitle("Rincewind");
+    EXPECT_STREQ("Rincewind", view.title.c_str());     // reached the view
+    for (int phase = eConnectNotConnected; phase <= eConnectConnectedToMud; ++phase) {
+        doc.m_iConnectPhase = phase;
+        EXPECT_STREQ("Rincewind", (const char*)doc.WorldWindowTitle());
+    }
+
+    // Clearing it restores the derived title, suffix and all.
+    doc.SetTitle("");
+    doc.m_iConnectPhase = eConnectNotConnected;
+    EXPECT_STREQ("MyWorld (Closed)", (const char*)doc.WorldWindowTitle());
+}
+
+// ── bookmarks: one store, the engine's CLine flag ──────────────────────────
+//
+// world.Bookmark used to set the CLine's BOOKMARK flag and then notify only the
+// dead CMUSHView family, so on the port it drew nothing; the wx pane kept its
+// own independent per-line flag that the Display menu toggled and GetLineInfo
+// could not see.  The doc now emits the change through the typed seam
+// (IWorldView::setBookmark), which is what an adapter mirrors.
+TEST(PalWorldView, BookmarkEmitsThroughTheSeam)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    feed(doc, "one\ntwo\nthree\n");
+    view.bookmarks.clear();
+
+    doc.Bookmark(2, TRUE);                       // 1-based line number
+    ASSERT_EQ(1u, (unsigned)view.bookmarks.size());
+    EXPECT_EQ(1L, view.bookmarks[0].first);      // 0-based index reaches the view
+    EXPECT_TRUE(view.bookmarks[0].second);
+    // …and the engine's own store agrees (GetLineInfo type 7).
+    EXPECT_TRUE(doc.GetLineInfo(2, 7).boolVal);
+
+    doc.Bookmark(2, FALSE);                      // clearing emits too
+    ASSERT_EQ(2u, (unsigned)view.bookmarks.size());
+    EXPECT_EQ(1L, view.bookmarks[1].first);
+    EXPECT_FALSE(view.bookmarks[1].second);
+    EXPECT_FALSE(doc.GetLineInfo(2, 7).boolVal);
+
+    // Out-of-range line numbers change nothing and emit nothing.
+    doc.Bookmark(0, TRUE);
+    doc.Bookmark(doc.m_LineList.GetCount() + 1, TRUE);
+    EXPECT_EQ(2u, (unsigned)view.bookmarks.size());
+}
+
+// The flag rides out with the line, so a view that re-reads the buffer
+// (RebuildOutputView, e.g. after a palette change) gets the bookmarks back
+// without saving and restoring them itself.
+TEST(PalWorldView, RebuiltLinesCarryTheBookmarkFlag)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    feed(doc, "one\ntwo\nthree\n");
+    doc.Bookmark(2, TRUE);
+
+    doc.RebuildOutputView();                     // clear + re-emit the buffer
+
+    auto lines = committed(view);
+    ASSERT_EQ(3u, (unsigned)lines.size());
+    EXPECT_FALSE(lines[0].bookmark);
+    EXPECT_TRUE (lines[1].bookmark);             // "two" is still bookmarked
+    EXPECT_FALSE(lines[2].bookmark);
+}
+
 // doc_display_shared.cpp UpdateAllViews (~68-77): a committed line flagged
 // HORIZ_RULE is emitted as a single sentinel SOutputRun (horiz_rule=true, no
 // text) rather than as styled text.  world.NoteHr sets the flag, commits the

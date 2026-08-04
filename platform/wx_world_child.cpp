@@ -2264,9 +2264,24 @@ void CWorldChildFrame::ShowTextAttributes()
     dlg.DoModal();
 }
 
+// Display ▸ Bookmark Selection — CMUSHView::OnDisplayBookmarkselection
+// (mushview.cpp): toggle the BOOKMARK flag of the selection's start line, or
+// of the last line when there is no selection.  The toggle goes through
+// CMUSHclientDoc::Bookmark so the engine's CLine flag is what changes: that is
+// the store world.Bookmark writes and GetLineInfo(n, 7) / Text Attributes read,
+// and it comes back here as setBookmark() to repaint the margin marker.
 void CWorldChildFrame::BookmarkSelection()
 {
-    if (m_output) m_output->ToggleBookmark();
+    if (!m_output || !m_doc) return;
+
+    const int idx = m_output->BookmarkTargetLine();     // 0-based
+    if (idx < 0 || idx >= (int) m_doc->m_LineList.GetCount()) return;
+
+    CLine* pLine = m_doc->m_LineList.GetAt(m_doc->GetLinePosition(idx));
+    if (!pLine) return;
+
+    // Bookmark() takes a 1-based line number.
+    m_doc->Bookmark(idx + 1, (pLine->flags & BOOKMARK) == 0);
 }
 
 void CWorldChildFrame::GotoBookmark()
@@ -2513,12 +2528,20 @@ void CWorldChildFrame::OnActivate(wxActivateEvent& evt)
     if (evt.GetActive()) {
         UpdateStatusBar();
         if (m_doc) {
+            // The engine's "is this world's window the active one?" state, and
+            // with it the unread-line counter the activity toolbar and the
+            // Activity window's New column report.  Windows does this in
+            // CMUSHView/CSendView::OnActivateView; those views do not exist
+            // here, so nothing ever marked a world read — every world stayed
+            // "has new messages" forever, from its first line onwards.
+            m_doc->SetWorldViewActive(true);
             m_doc->FireWorldGetFocus();
             if (!m_doc->m_bWorldClosing)
                 m_doc->SendToAllPluginCallbacks(ON_PLUGIN_GETFOCUS);
         }
     } else {
         if (m_doc) {
+            m_doc->SetWorldViewActive(false);
             m_doc->FireWorldLoseFocus();
             if (!m_doc->m_bWorldClosing)
                 m_doc->SendToAllPluginCallbacks(ON_PLUGIN_LOSEFOCUS);
@@ -4097,30 +4120,13 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     if (phase != prevPhase) {
         m_lastConnectPhase = phase;
 
-        // Build the window title suffix (empty when connected = clean title).
-        const char* titleStatus = nullptr;   // nullptr → no suffix
-        switch (phase) {
-        case eConnectMudNameLookup:
-        case eConnectProxyNameLookup:        titleStatus = "Resolving\xe2\x80\xa6";     break;
-        case eConnectConnectingToMud:
-        case eConnectConnectingToProxy:      titleStatus = "Connecting\xe2\x80\xa6";    break;
-        case eConnectAwaitingProxyResponse1:
-        case eConnectAwaitingProxyResponse2:
-        case eConnectAwaitingProxyResponse3: titleStatus = "Proxy\xe2\x80\xa6";         break;
-        case eConnectAwaitingSSLHandshake:   titleStatus = "TLS\xe2\x80\xa6";           break;
-        case eConnectConnectedToMud:         titleStatus = nullptr;                     break;
-        case eConnectDisconnecting:          titleStatus = "Disconnecting\xe2\x80\xa6"; break;
-        default:                             titleStatus = "Closed";                    break;
-        }
-
-        wxString name = wxString::FromUTF8(
-            static_cast<const char*>(m_doc->m_mush_name));
-        if (name.IsEmpty()) name = wxT("World");
-
-        if (!titleStatus)
-            SetTitle(name);
-        else
-            SetTitle(name + wxT(" (") + wxString::FromUTF8(titleStatus) + wxT(")"));
+        // The world name plus the phase suffix — unless a script has set its
+        // own title with world.SetTitle, which wins outright (as it does on
+        // Windows, CMUSHView::FixupTitle).  This block used to rebuild the
+        // title from the world name unconditionally, so a plugin's title was
+        // destroyed by the next connect/disconnect/close and never restored.
+        SetTitle(wxString::FromUTF8(
+            static_cast<const char*>(m_doc->WorldWindowTitle())));
 
         // Reaching "connected" is when Quow-style plugins flip the flag that
         // gates their real miniwindow layout (they defer it during load as a
@@ -4209,14 +4215,11 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         // read something -- which is exactly when a colour tweak is likely.
         const bool wasFollowing = m_output && !m_output->IsPaused();
         int viewX = 0, viewY = 0;
-        std::vector<int> marks;
-        if (m_output) {
+        if (m_output)
             m_output->GetViewStart(&viewX, &viewY);
-            // A rebuild clears and re-emits every line, and bookmarks are a
-            // per-line flag in the pane -- so without this, tweaking a colour
-            // would quietly throw the user's bookmarks away.
-            marks = m_output->BookmarkOffsetsFromEnd();
-        }
+        // Bookmarks need no save/restore around the rebuild: they live on the
+        // engine's CLines, and the re-emit carries the flag back out with each
+        // line (doc_display_shared.cpp).
 
         // The pane background follows the palette too when the world has no
         // explicit background of its own (NO_COLOUR) -- see ApplyPaneBackground.
@@ -4237,11 +4240,8 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
 
         if (m_output) m_output->m_fn_on_line_appended = savedLogHook;
 
-        if (m_output) {
-            m_output->RestoreBookmarkOffsetsFromEnd(marks);
-            if (!wasFollowing)
-                m_output->Scroll(viewX, viewY);
-        }
+        if (m_output && !wasFollowing)
+            m_output->Scroll(viewX, viewY);
     }
 
     // ── Auto-reconnect countdown ──────────────────────────────────────────
@@ -4282,14 +4282,25 @@ void CWorldChildFrame::note(const char* text)
     if (m_output) m_output->AppendNote(std::string(text));
 }
 
-void CWorldChildFrame::setTitle(const char* title)
+// world.Bookmark / Display ▸ Bookmark Selection: the engine's CLine flag
+// changed — update the pane's rendering mirror.  lineIndex is 0-based, the
+// same space the pane indexes m_lines by (both count from the oldest line the
+// buffer still holds).
+void CWorldChildFrame::setBookmark(long lineIndex, bool set)
 {
-    // world.SetTitle(s): update the MDI child-frame title bar. An empty title
-    // falls back to the world name (MUD scripts commonly set HP/MP here).
-    wxString wxTitle = wxString::FromUTF8(title);
-    SetTitle(wxTitle.IsEmpty()
-             ? wxString::FromUTF8(static_cast<const char*>(m_doc->m_mush_name))
-             : wxTitle);
+    if (m_output) m_output->SetBookmark((int) lineIndex, set);
+}
+
+void CWorldChildFrame::setTitle(const char* /*title*/)
+{
+    // world.SetTitle(s): update the MDI child-frame title bar.  The doc has
+    // already stored the new title in m_strWindowTitle, so ask it for the whole
+    // title — that way clearing the custom title (SetTitle "") puts the world
+    // name AND the connection-phase suffix back, instead of the bare name, and
+    // this path and the phase-change tick can never disagree.
+    if (m_doc)
+        SetTitle(wxString::FromUTF8(
+            static_cast<const char*>(m_doc->WorldWindowTitle())));
 }
 
 void CWorldChildFrame::setStatus(const char* /*text*/)
@@ -4661,16 +4672,28 @@ void CWorldChildFrame::textRectChanged()
     ApplyWrapColumnAndNAWS(/*skipIfUnchanged=*/true);
 }
 
-// world.GetWorldWindowPosition(): screen rect of the output pane.
-// Scripts use this to position miniwindows relative to the output area.
+// world.GetWorldWindowPosition(): the rect of THIS WORLD'S WINDOW — the same
+// window world.MoveWorldWindow moves (moveWorldWindow below), in the same
+// coordinate space, so the standard save/restore idiom
+//     local p = GetWorldWindowPosition(); ... MoveWorldWindow(p.left, p.top,
+//                                                             p.width, p.height)
+// is a no-op.  Windows reports the frame too: GetWorldWindowPositionX asks the
+// view's parent frame for its GetWindowPlacement, and MoveWorldWindowX calls
+// MoveWindow on that same frame (methods_output.cpp).
+//
+// This used to return the OUTPUT PANE's client rect, which is a different
+// window: restoring it moved the frame's top-left to where the pane's client
+// origin was (down by the title bar) and shrank the frame to the pane's size
+// (losing the title bar and input bar), so every save/restore round trip walked
+// the window down the screen and shrank it.  Scripts that want the pane's own
+// dimensions have GetInfo(280)/(281).
 pal::Rect CWorldChildFrame::outputRect() const
 {
-    if (m_output) {
-        wxPoint pos = m_output->ClientToScreen(wxPoint(0, 0));
-        wxSize  sz  = m_output->GetClientSize();
-        return { pos.x, pos.y, sz.x, sz.y };
-    }
-    return { 0, 0, 800, 600 };
+    // GetRect() is exactly the inverse of the SetSize(x, y, w, h) below (both
+    // are position-in-parent + outer size; for the MDI child, which is a
+    // top-level window on this platform, that is screen space).
+    const wxRect r = GetRect();
+    return { r.x, r.y, r.width, r.height };
 }
 
 // ── world/main window management (P2 window family) ──────────────────────────

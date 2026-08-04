@@ -357,6 +357,9 @@ int i;
 
   m_pActiveCommandView = NULL;
   m_pActiveOutputView = NULL;
+#ifndef _WIN32
+  m_bWorldViewActive = false;   // the wx frame sets it when the window activates
+#endif
 
   m_new_lines = 0;
 

@@ -578,12 +578,13 @@ VARIANT CMUSHclientDoc::GetInfo(long InfoType)
     case  111: SetUpVariantBool (vaResult, IsModified ()); break;
     case  112: SetUpVariantBool (vaResult, m_bMapping); break;
     case  113:
-#ifdef _WIN32
-               SetUpVariantBool (vaResult, m_pActiveCommandView || m_pActiveOutputView);
-#else
-               // Non-Windows: "active" means connected.
-               SetUpVariantBool (vaResult, m_iConnectPhase == eConnectConnectedToMud);
-#endif
+               // "Is this world's window the active one?"  IsWorldViewActive is
+               // exactly `m_pActiveCommandView || m_pActiveOutputView` on
+               // Windows; the port maintains the same predicate from its frame's
+               // activation instead of the two views it never constructs.  It
+               // used to answer "the world is connected" here, which is a
+               // different question (and code 106/107 already report it).
+               SetUpVariantBool (vaResult, IsWorldViewActive ());
                break;
 
     case  114:   // current view frozen / output paused

@@ -1,0 +1,264 @@
+// platform/world_frame_selftest.cpp — in-app conformance test for the world
+// window adapter (--world-frame-selftest).
+//
+// CWorldChildFrame is the wx pal::IWorldView: it is what makes world.Bookmark,
+// world.GetWorldWindowPosition / MoveWorldWindow and world.SetTitle visible on
+// screen.  None of it can be reached from the 30 headless mushcore executables
+// (no wx, no frame), so it followed the miniwindow/engines selftests: build a
+// REAL doc and a REAL world window inside the app, drive the real engine
+// entry points, and read back the real widget state, before the GUI boots.
+//
+// Every check here is written so that "the code under test did nothing" FAILS:
+// the geometry checks compare against the frame's own rect (not a tolerance),
+// and the title checks bracket the interesting case with a control that only
+// passes if the frame's connection-phase tick really ran.
+
+#ifndef _WIN32
+
+#include <wx/wx.h>
+#include <wx/mdi.h>
+
+#include "stdafx.h"
+#include "MUSHclient.h"
+#include "doc.h"
+#include "childfrm.h"     // CChildFrame  ) the world doc template's
+#include "MUSHview.h"     // CMUSHView    ) runtime classes
+#include "resource.h"     // IDR_MUSHCLTYPE
+#include "platform/wx_world_child.h"
+#include "platform/wx_outputpane.h"
+
+#include <cstdio>
+
+namespace {
+
+int g_pass = 0, g_fail = 0;
+
+void check(bool ok, const char* what)
+{
+    printf("  [%s] %s\n", ok ? "PASS" : "FAIL", what);
+    (ok ? g_pass : g_fail)++;
+}
+
+// Let the frame's 100 ms world timer run: the connection-phase block that
+// maintains the title lives there.  Pumps for a bit over two ticks.
+void pumpTicks(int ms = 350)
+{
+    const wxLongLong until = wxGetLocalTimeMillis() + ms;
+    while (wxGetLocalTimeMillis() < until) {
+        wxYield();
+        wxMilliSleep(10);
+    }
+    wxYield();
+}
+
+bool sameRect(const pal::Rect& r, const wxRect& w)
+{
+    return r.x == w.x && r.y == w.y && r.w == w.width && r.h == w.height;
+}
+
+} // namespace
+
+int RunWorldFrameSelfTest()
+{
+    setvbuf(stdout, NULL, _IONBF, 0);   // unbuffered: a crash must not eat the log
+    printf("WORLD-FRAME-SELFTEST: driving the real CWorldChildFrame adapter\n");
+
+    // InitInstance has not run (we exit before it), so give the app the world
+    // registry its window furniture walks — the activity toolbar enumerates it
+    // on every timer tick.  Same shim the engines selftest installs.
+    if (App.m_pWorldDocTemplate == NULL)
+        App.m_pWorldDocTemplate = new CMultiDocTemplate(
+            IDR_MUSHCLTYPE,
+            RUNTIME_CLASS(CMUSHclientDoc),
+            RUNTIME_CLASS(CChildFrame),
+            RUNTIME_CLASS(CMUSHView));
+
+    // A world document with just enough state to display lines.  (Same recipe
+    // the New World hook uses before OnNewDocument; no dialogs here.)
+    CMUSHclientDoc* doc = new CMUSHclientDoc();
+    doc->m_mush_name     = "SelfTest";
+    doc->m_nWrapColumn   = 80;
+    doc->m_bUTF_8        = 1;
+    doc->m_maxlines      = 5000;
+    doc->m_iConnectPhase = eConnectConnectedToMud;
+    // OnNewDocument would do this (it also shows dialogs, which we must not):
+    // allocate the line-position index and seed the first line, without which
+    // nothing can be displayed.
+    doc->SetUpOutputWindow();
+
+    wxMDIParentFrame* parent =
+        new wxMDIParentFrame(NULL, wxID_ANY, wxT("selftest"),
+                             wxPoint(50, 50), wxSize(900, 700));
+    CWorldChildFrame* child = new CWorldChildFrame(parent, doc);
+    child->Show();
+    parent->Show();
+    wxYield();
+
+    COutputPane* pane = child->OutputPane();
+    check(pane != NULL, "the world window has an output pane");
+    check(doc->m_pWorldView == child, "the frame is the doc's IWorldView");
+
+    // ── output for the bookmark checks ─────────────────────────────────────
+    doc->Note("line one");
+    doc->Note("line two");
+    doc->Note("line three");
+    doc->UpdateAllViews(NULL);
+    wxYield();
+
+    check(doc->m_LineList.GetCount() >= 3,
+          "three notes reached the engine's line list");
+    // The pane holds the COMMITTED lines; the engine's list also carries the
+    // in-progress one, so pane index i is engine line i + 1 for every line the
+    // pane has.
+    const int paneLines = pane->LineCount();
+    check(paneLines >= 3, "and reached the output pane");
+
+    // ── world.Bookmark draws ───────────────────────────────────────────────
+    // The engine flag and what the pane renders used to be two disconnected
+    // stores: world.Bookmark set the CLine flag and notified only the CMUSHView
+    // family (never constructed here), so it drew nothing at all.
+    {
+        const int  idx = paneLines - 1;      // last committed line, 0-based
+        const long n   = idx + 1;            // the same line, 1-based
+
+        doc->Bookmark(n, TRUE);
+        const SOutputLine* shown = pane->GetLine(idx);
+        check(shown != NULL && shown->bookmark,
+              "world.Bookmark marks the line in the output pane");
+        check(doc->GetLineInfo(n, 7).boolVal != 0,
+              "...and GetLineInfo(n, 7) agrees");
+
+        doc->Bookmark(n, FALSE);
+        shown = pane->GetLine(idx);
+        check(shown != NULL && !shown->bookmark,
+              "clearing it un-marks the line in the pane");
+    }
+
+    // ── Display > Bookmark Selection is the same store ─────────────────────
+    // With no selection it toggles the last line (CMUSHView::
+    // OnDisplayBookmarkselection).  It used to flip a pane-private flag that
+    // scripts could not see; now it goes through CMUSHclientDoc::Bookmark.
+    {
+        const int  idx = pane->BookmarkTargetLine();
+        const long n   = idx + 1;
+        check(idx == paneLines - 1,
+              "Bookmark Selection targets the last line when nothing is selected");
+
+        child->BookmarkSelection();
+        check(doc->GetLineInfo(n, 7).boolVal != 0,
+              "Bookmark Selection is visible to GetLineInfo (scripts)");
+        const SOutputLine* shown = pane->GetLine(idx);
+        check(shown != NULL && shown->bookmark,
+              "...and is drawn in the pane");
+
+        child->BookmarkSelection();       // toggles back off
+        check(doc->GetLineInfo(n, 7).boolVal == 0,
+              "a second Bookmark Selection clears it again");
+        shown = pane->GetLine(idx);
+        check(shown != NULL && !shown->bookmark, "...in both stores");
+    }
+
+    // ── GetWorldWindowPosition / MoveWorldWindow describe one window ───────
+    // The getter used to report the OUTPUT PANE's screen rect while the setter
+    // moved the FRAME, so the standard save-and-restore idiom walked the window
+    // down the screen and shrank it by the title bar + input bar on every trip.
+    {
+        child->SetSize(120, 140, 640, 480);
+        wxYield();
+
+        int x = 0, y = 0, w = 0, h = 0;
+        check(doc->GetOutputRect(x, y, w, h),
+              "GetWorldWindowPosition answers while a window is open");
+        const pal::Rect got{ x, y, w, h };
+        check(sameRect(got, child->GetRect()),
+              "GetWorldWindowPosition reports the world window's own rect");
+
+        // The round trip a plugin does at every world open must be a no-op.
+        child->moveWorldWindow(x, y, w, h);
+        wxYield();
+        int x2 = 0, y2 = 0, w2 = 0, h2 = 0;
+        doc->GetOutputRect(x2, y2, w2, h2);
+        check(x2 == x && y2 == y && w2 == w && h2 == h,
+              "MoveWorldWindow(GetWorldWindowPosition()) leaves it put");
+
+        // …and MoveWorldWindow really moves it (so the check above cannot pass
+        // by both calls being inert).
+        child->moveWorldWindow(200, 220, 700, 500);
+        wxYield();
+        doc->GetOutputRect(x2, y2, w2, h2);
+        check(x2 == 200 && y2 == 220 && w2 == 700 && h2 == 500,
+              "MoveWorldWindow moves the window it reports");
+    }
+
+    // ── world.SetTitle survives a connection-phase change ──────────────────
+    {
+        // Control: with no script title the phase tick owns the title.  This
+        // also proves the tick is running, so the survival check below cannot
+        // pass vacuously.
+        doc->SetTitle("");
+        doc->m_iConnectPhase = eConnectNotConnected;
+        pumpTicks();
+        check(child->GetTitle() == wxT("SelfTest (Closed)"),
+              "the phase tick titles an untitled world <name> (<phase>)");
+
+        doc->SetTitle("Rincewind");
+        check(child->GetTitle() == wxT("Rincewind"),
+              "world.SetTitle reaches the window title");
+
+        doc->m_iConnectPhase = eConnectConnectedToMud;   // a phase CHANGE
+        pumpTicks();
+        check(child->GetTitle() == wxT("Rincewind"),
+              "...and survives a connection-phase change");
+
+        doc->m_iConnectPhase = eConnectDisconnecting;
+        pumpTicks();
+        check(child->GetTitle() == wxT("Rincewind"),
+              "...and a disconnect");
+
+        // Clearing it hands the title back to the phase (second control: the
+        // tick is still live at this point).
+        doc->SetTitle("");
+        doc->m_iConnectPhase = eConnectNotConnected;
+        pumpTicks();
+        check(child->GetTitle() == wxT("SelfTest (Closed)"),
+              "clearing the script title restores <name> (<phase>)");
+    }
+
+    // ── activating the window marks its lines read ─────────────────────────
+    // Windows does this in CMUSHView/CSendView::OnActivateView; those views do
+    // not exist here, so nothing ever reset the counter and every world stayed
+    // "has new messages" from its first line onwards.
+    {
+        doc->SetWorldViewActive(false);
+        doc->m_new_lines = 0;
+        doc->Note("something happened");
+        doc->UpdateAllViews(NULL);
+        check(doc->m_new_lines > 0,
+              "output in a background world counts as unread");
+
+        wxActivateEvent act(wxEVT_ACTIVATE, true, child->GetId());
+        act.SetEventObject(child);
+        child->GetEventHandler()->ProcessEvent(act);
+        check(doc->IsWorldViewActive(),
+              "activating the world window marks it active");
+        check(doc->m_new_lines == 0,
+              "...and marks its unread lines read");
+
+        wxActivateEvent deact(wxEVT_ACTIVATE, false, child->GetId());
+        deact.SetEventObject(child);
+        child->GetEventHandler()->ProcessEvent(deact);
+        check(!doc->IsWorldViewActive(),
+              "deactivating it marks it inactive again");
+    }
+
+    // Tear down without running the close/save flow (this doc has no file).
+    doc->m_pWorldView = NULL;
+    child->Destroy();
+    parent->Destroy();
+    wxYield();
+
+    printf("WORLD-FRAME-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
+    return g_fail;
+}
+
+#endif // !_WIN32

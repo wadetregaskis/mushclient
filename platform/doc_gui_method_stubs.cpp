@@ -585,10 +585,9 @@ long CMUSHclientDoc::AddFont (LPCTSTR PathName)
   return eOK;   // nothing to register headless (the portable twin's result)
   }   // end of CMUSHclientDoc::AddFont
 
-void CMUSHclientDoc::Bookmark (long LineNumber, BOOL Set)
-  {
-  // GUI-only headless — silent no-op
-  }   // end of CMUSHclientDoc::Bookmark
+// Bookmark is no longer stubbed: the real body moved to doc_shared.cpp (its
+// only view dependency was the CMUSHView walk, now the IWorldView seam), so
+// mushcore links the canonical one.
 
 void CMUSHclientDoc::DeleteLines (long Count)
   {

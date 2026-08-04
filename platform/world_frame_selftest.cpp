@@ -302,6 +302,38 @@ int RunWorldFrameSelfTest()
         doc->m_nWrapColumn          = 80;
     }
 
+    // ── Unlimited scrollback reaches the PANE, not just the engine ───────────
+    // max_output_lines = 0 has to be pushed through to COutputPane::SetMaxLines,
+    // and the pane's own floor (n < 100 -> 100) must not clamp the sentinel —
+    // that would have made "no limit" the smallest buffer in the app.  Headless
+    // tests cover the engine half; only this can see the pane.
+    {
+        const long savedMax = doc->m_maxlines;
+
+        doc->m_maxlines = 300;             // a real cap first (the option's
+        pane->SetMaxLines(300);            //  floor is 200)
+        for (int i = 0; i < 800; ++i)
+            doc->Note("bounded line");
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        check(pane->LineCount() <= 300,
+              "a bounded cap trims the pane");
+
+        pane->ClearOutput();
+        doc->m_maxlines = 0;               // unlimited
+        pane->SetMaxLines(0);
+        for (int i = 0; i < 400; ++i)
+            doc->Note("unlimited line");
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        check(pane->LineCount() >= 400,
+              "...and 0 keeps every line, rather than clamping to the floor");
+
+        doc->m_maxlines = savedMax;
+        pane->SetMaxLines((int) savedMax);
+        pane->ClearOutput();
+    }
+
     // ── Ctrl+L is the canonical Clear Output Buffer, not a pane-only wipe ─────
     // COutputPane::ClearOutput touches the pane's own deque only; the engine's
     // m_LineList is what world.GetLinesInBufferCount() reports and what

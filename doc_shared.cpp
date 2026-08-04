@@ -3885,11 +3885,15 @@ CStyle * pNewStyle = NEWSTYLE;
 
 // remove JUMP_SIZE lines
 
-  for (i = 0; i < JUMP_SIZE; i++)
+  for (i = 0; i < JUMP_SIZE && !m_LineList.IsEmpty (); i++)
     {
     delete m_LineList.GetHead ();   // delete contents of head iten
     m_LineList.RemoveHead ();
     }
+  // The emptiness test is defensive only: max_output_lines has a floor of 200
+  // and JUMP_SIZE is 100, so a legal cap always leaves at least 100 lines
+  // behind.  An out-of-range cap set by writing m_maxlines directly (which the
+  // tests and the world loader can do) used to walk off the end of the list.
 
 #ifndef _WIN32
   // Keep the GUI emission counter in sync with lines removed from the head.

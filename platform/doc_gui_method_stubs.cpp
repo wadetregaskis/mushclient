@@ -578,7 +578,14 @@ void CMUSHclientDoc::ActivateClient ()
 
 long CMUSHclientDoc::AddFont (LPCTSTR PathName)
   {
-  return eOK;   // nothing to register headless (the portable twin's result)
+  // The real body's FIRST act is a parameter check, ahead of anything GUI:
+  //   if (strlen (PathName) <= 0) return eBadParameter;
+  // (methods_output.cpp).  Registering the font itself needs a GUI, but
+  // answering eOK to an empty path is a contract Windows has never had, and a
+  // test asserting it would be pinning the stub.
+  if (!PathName || strlen (PathName) == 0)
+    return eBadParameter;
+  return eOK;   // nothing to register headless
   }   // end of CMUSHclientDoc::AddFont
 
 // Bookmark is no longer stubbed: the real body moved to doc_shared.cpp (its
@@ -709,11 +716,6 @@ void CMUSHclientDoc::ResetStatusTime ()
   // GUI-only headless — silent no-op
   }   // end of CMUSHclientDoc::ResetStatusTime
 
-long CMUSHclientDoc::SetBackgroundColour (long Colour)
-  {
-  (void) Colour; return eOK;
-  }   // end of CMUSHclientDoc::SetBackgroundColour
-
 long CMUSHclientDoc::SetBackgroundImage (LPCTSTR FileName, short Mode)
   {
   return eOK;
@@ -721,18 +723,17 @@ long CMUSHclientDoc::SetBackgroundImage (LPCTSTR FileName, short Mode)
 
 long CMUSHclientDoc::SetCursor (long Cursor)
   {
-  (void) Cursor; return eOK;
+  // Same range gate the real port arm applies before it touches a widget
+  // (methods_output.cpp: `if (Cursor < -1 || Cursor > 12) return eBadParameter`).
+  if (Cursor < -1 || Cursor > 12)
+    return eBadParameter;
+  return eOK;   // no pane to set a cursor on headless
   }   // end of CMUSHclientDoc::SetCursor
 
 long CMUSHclientDoc::SetForegroundImage (LPCTSTR FileName, short Mode)
   {
   return eOK;
   }   // end of CMUSHclientDoc::SetForegroundImage
-
-void CMUSHclientDoc::SetMainTitle (LPCTSTR Title)
-  {
-  // GUI-only headless — silent no-op
-  }   // end of CMUSHclientDoc::SetMainTitle
 
 void CMUSHclientDoc::SetOutputFont (LPCTSTR FontName, short PointSize)
   {
@@ -760,13 +761,13 @@ long CMUSHclientDoc::SetScroll (long Position, BOOL Visible)
 
 long CMUSHclientDoc::SetToolBarPosition (short Which, BOOL Float, short Side, long Top, long Left)
   {
+  // The real body's switch on Which ends in `default: return eBadParameter`
+  // (methods_output.cpp) before any toolbar is touched.  There are no toolbars
+  // headless, but the validation is not a GUI concern.
+  if (Which < 1 || Which > 4)
+    return eBadParameter;
   return eOK;
   }   // end of CMUSHclientDoc::SetToolBarPosition
-
-void CMUSHclientDoc::SetUnseenLines (long Counter)
-  {
-  // GUI-only headless — silent no-op
-  }   // end of CMUSHclientDoc::SetUnseenLines
 
 void CMUSHclientDoc::SetWorldWindowStatus (short Parameter)
   {
@@ -775,6 +776,23 @@ void CMUSHclientDoc::SetWorldWindowStatus (short Parameter)
 
 long CMUSHclientDoc::TextRectangle (long Left, long Top, long Right, long Bottom, long BorderOffset, long BorderColour, long BorderWidth, long OutsideFillColour, long OutsideFillStyle)
   {
+  // The real body (methods_output.cpp) is view-bound at both ends — it opens
+  // with ValidateBrushStyle (miniwindow.cpp, mushgui-only) and closes with a
+  // CMUSHView walk — but the nine assignments in the middle are pure document
+  // state that world.GetInfo and the wrap-column plumbing both read back.  Dropping
+  // them made the reserved-rectangle machinery invisible headless.
+  //
+  // The brush validation is NOT replicated here: duplicating it would be the
+  // twin drift this file is supposed to be shrinking, and a headless caller
+  // has no brush.  So an invalid OutsideFillStyle is accepted here and refused
+  // on the GUI build — recorded rather than hidden.
+  m_TextRectangle = CRect (Left, Top, Right, Bottom);
+  m_TextRectangleBorderOffset      = BorderOffset;
+  m_TextRectangleBorderColour      = BorderColour;
+  m_TextRectangleBorderWidth       = BorderWidth;
+  m_TextRectangleOutsideFillColour = OutsideFillColour;
+  m_TextRectangleOutsideFillStyle  = OutsideFillStyle;
+  EmitTextRectChanged ();
   return eOK;
   }   // end of CMUSHclientDoc::TextRectangle
 

@@ -610,18 +610,6 @@ long CMUSHclientDoc::SetForegroundImage(LPCTSTR FileName, short Mode)
 }   // end of CMUSHclientDoc::SetForegroundImage
 
 // set main window background colour
-long CMUSHclientDoc::SetBackgroundColour(long Colour)
-{
-  long oldColour = m_iBackgroundColour;
-
-  m_iBackgroundColour = Colour;
-
-  EmitBackgroundColour((unsigned long)Colour);
-
-  UpdateAllViews (NULL);
-
-	return oldColour;
-}   // end of CMUSHclientDoc::SetBackgroundColour
 
 
 void CMUSHclientDoc::Repaint() 
@@ -840,13 +828,3 @@ void CMUSHclientDoc::SetTitle(LPCTSTR Title)
 }   // end of CMUSHclientDoc::SetTitle
 
 
-void CMUSHclientDoc::SetMainTitle(LPCTSTR Title)
-{
-	m_strMainWindowTitle = Title;
-  EmitMainTitle(std::string(static_cast<const char*>(m_strMainWindowTitle)));
-} // end of CMUSHclientDoc::SetMainTitle
-
-void CMUSHclientDoc::SetUnseenLines(long Counter)
-{
-	m_new_lines = Counter;
-} // end of CMUSHclientDoc::SetUnseenLines

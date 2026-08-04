@@ -456,6 +456,9 @@ if(NOT WIN32)
         # BlendPixel / FilterPixel: pure colour arithmetic, moved out of the
         # mushgui-only miniwindow TU so the headless engine runs the real bodies.
         scripting/methods/methods_pixel_shared.cpp
+        # SetUnseenLines / SetMainTitle / SetBackgroundColour: document state,
+        # not view state — moved out of the mushgui-only output TU.
+        scripting/methods/methods_output_shared.cpp
         scripting/methods/methods_defaults.cpp
         scripting/methods/methods_sounds.cpp
         scripting/methods/methods_commands.cpp

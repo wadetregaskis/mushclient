@@ -422,23 +422,95 @@ TEST(LuaSurface, MiscViewStubs)
         "world.Repaint()\n"
         "world.Redraw()\n"
         "world.ResetStatusTime()\n"
-        "assert(world.SetBackgroundColour(255) == 0)\n"
+        // SetBackgroundColour returns the PREVIOUS colour, not eOK — that is
+        // its documented result, and the stub that used to answer 0 here had
+        // this test defending the wrong contract.  Checked properly below.
+
         "assert(world.SetBackgroundImage('x.bmp', 0) == 0)\n"
         "assert(world.SetForegroundImage('x.bmp', 0) == 0)\n"
         "assert(world.SetCursor(0) == 0)\n"
-        "world.SetMainTitle('t')\n"
+
         "world.SetTitle('t')\n"
         "world.SetOutputFont('Courier', 10)\n"
         "world.SetInputFont('Courier', 10, 400, 0)\n"
         "assert(world.SetScroll(-2, true) == 0)\n"
         "assert(world.SetScroll(1, true) == 0)\n"
         "assert(world.SetToolBarPosition(1, false, 0, 0, 0) == 0)\n"
-        "world.SetUnseenLines(3)\n"
+
         "world.SetWorldWindowStatus(1)\n"
         "assert(world.TextRectangle(0, 0, 100, 100, 0, 0, 1, 0, 0) == 0)\n"
         "assert(world.Transparency(0, 1) == false)\n"
         "assert(world.GetFrame() ~= nil)\n"
     ));
+}
+
+// ── Three of those were never GUI-only ────────────────────────────────────
+//
+// SetUnseenLines, SetMainTitle and SetBackgroundColour write document state and
+// (at most) push it out through an Emit* seam that exists in every build.  Their
+// stubs did nothing, and the sweep above asserted the stubs' answers — so the
+// wrong contract was defended rather than merely unreachable.  They now live in
+// scripting/methods/methods_output_shared.cpp; these are the real contracts.
+TEST(LuaSurface, OutputStateSettersWriteTheDocument)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        // world.GetInfo(89) reads m_strMainWindowTitle back, so a SetMainTitle
+        // that dropped the write made GetInfo(89) permanently blank.
+        "world.SetMainTitle('a new title')\n"
+        "assert(world.GetInfo(89) == 'a new title', 'GetInfo(89) = ' ..\n"
+        "       tostring(world.GetInfo(89)))\n"
+        // SetUnseenLines sets the unread counter GetInfo(202) reports.
+        "world.SetUnseenLines(7)\n"
+        "assert(world.GetInfo(202) == 7)\n"
+        "world.SetUnseenLines(0)\n"
+        "assert(world.GetInfo(202) == 0)\n"
+        // SetBackgroundColour returns the PREVIOUS colour and keeps the new one.
+        "world.SetBackgroundColour(0x112233)\n"
+        "assert(world.SetBackgroundColour(0x445566) == 0x112233)\n"
+        "assert(world.SetBackgroundColour(0x112233) == 0x445566)\n"
+    ));
+}
+
+// ── Parameter validation happens before any GUI is involved ───────────────
+//
+// These three still have GUI-only bodies, but their FIRST act on Windows is a
+// parameter check, and the stubs answered eOK to inputs Windows rejects.  A
+// script probing for a supported cursor or toolbar would have been told
+// everything works.
+TEST(LuaSurface, GuiOnlySettersStillValidateTheirArguments)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        "local bad = error_code.eBadParameter\n"
+        // AddFont: `if (strlen (PathName) <= 0) return eBadParameter`
+        "assert(world.AddFont('') == bad)\n"
+        "assert(world.AddFont('/no/such/font.ttf') == 0)\n"
+        // SetCursor: the range gate is -1 .. 12
+        "assert(world.SetCursor(-2) == bad)\n"
+        "assert(world.SetCursor(13) == bad)\n"
+        "assert(world.SetCursor(-1) == 0)\n"
+        "assert(world.SetCursor(12) == 0)\n"
+        // SetToolBarPosition: `default: return eBadParameter` on Which
+        "assert(world.SetToolBarPosition(0, false, 0, 0, 0) == bad)\n"
+        "assert(world.SetToolBarPosition(5, false, 0, 0, 0) == bad)\n"
+        "assert(world.SetToolBarPosition(1, false, 0, 0, 0) == 0)\n"
+    ));
+}
+
+// world.TextRectangle's nine member writes are document state — the reserved
+// rectangle is what the engine wrap column and NAWS are computed from — even
+// though the brush validation and the repaint at either end are not.  The stub
+// dropped all nine, so the whole mechanism was invisible headless.
+TEST(LuaSurface, TextRectangleRecordsTheReservedArea)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L, "assert(world.TextRectangle(5, 6, -200, 8, 2, 0, 1, 0, 0) == 0)\n"));
+    EXPECT_EQ(5L,    (long) f.doc.m_TextRectangle.left);
+    EXPECT_EQ(6L,    (long) f.doc.m_TextRectangle.top);
+    EXPECT_EQ(-200L, (long) f.doc.m_TextRectangle.right);   // offset-from-edge form
+    EXPECT_EQ(8L,    (long) f.doc.m_TextRectangle.bottom);
+    EXPECT_EQ(2L,    (long) f.doc.m_TextRectangleBorderOffset);
 }
 
 // ── the accelerator family — real headless, not stubbed ───────────────────

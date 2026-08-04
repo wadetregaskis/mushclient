@@ -12,6 +12,7 @@
 #include "doc.h"
 #include "MUSHview.h"           // CMUSHView (DisplayMsg/StartNewLine view-notify loops)
 #include "scripting/errors.h"   // eOK / eBadParameter
+#include "pal/style_colour.h"    // pal::StylePalette / resolveStyleColours
 #include "dialogs/password.h"   // CPasswordDialog (ConnectionEstablished, full build)
 #ifdef _WIN32
 #include <ws2tcpip.h>           // getaddrinfo (LookupHostName's sync fallback —
@@ -38,127 +39,63 @@
 static char BASED_CODE THIS_FILE[] = __FILE__;
 #endif
 
+// ── GetStyleRGB ─────────────────────────────────────────────────────────────
+// The arithmetic now lives in pal/style_colour.h so the VIEW can re-run it with
+// a palette of its own -- see that header for why.  This is still the only
+// caller-facing entry point, and still the only body: nothing was duplicated.
+//
+// The pal header cannot include OtherTypes.h (it is pulled in by wx TUs that
+// must not see the MFC shim), so it mirrors the six style bits.  Assert them
+// here, where both definitions are visible, so the copy cannot drift.
+static_assert((unsigned short) pal::kStyleHilite     == (unsigned short) HILITE,
+              "pal::kStyleHilite must match HILITE");
+static_assert((unsigned short) pal::kStyleInverse    == (unsigned short) INVERSE,
+              "pal::kStyleInverse must match INVERSE");
+static_assert((unsigned short) pal::kStyleColourType == (unsigned short) COLOURTYPE,
+              "pal::kStyleColourType must match COLOURTYPE");
+static_assert((unsigned short) pal::kColourAnsi      == (unsigned short) COLOUR_ANSI,
+              "pal::kColourAnsi must match COLOUR_ANSI");
+static_assert((unsigned short) pal::kColourCustom    == (unsigned short) COLOUR_CUSTOM,
+              "pal::kColourCustom must match COLOUR_CUSTOM");
+static_assert((unsigned short) pal::kColourRgb       == (unsigned short) COLOUR_RGB,
+              "pal::kColourRgb must match COLOUR_RGB");
+// ...and that the custom tables really are 16 entries, which the struct fixes.
+static_assert(MAX_CUSTOM == 16, "pal::StylePalette sizes the custom tables at 16");
+// ...and that the palette word really is COLORREF-wide.  Getting this wrong is
+// silent: a (const unsigned long *) cast over a 32-bit COLORREF table reads
+// two entries per index and yields garbage colours only for xterm-256 runs.
+static_assert(sizeof (((pal::StylePalette *) 0)->normal [0]) == sizeof (COLORREF),
+              "pal::StylePalette entries must be COLORREF-wide");
+
+// Snapshot the document's palette in the form the resolver wants.
+void CMUSHclientDoc::GetStylePalette (pal::StylePalette & out) const
+  {
+  for (int i = 0; i < 8; i++)
+    {
+    out.normal [i] = m_normalcolour [i];
+    out.bold   [i] = m_boldcolour   [i];
+    }
+  for (int i = 0; i < MAX_CUSTOM; i++)
+    {
+    out.customText [i] = m_customtext [i];
+    out.customBack [i] = m_customback [i];
+    }
+  out.alternativeInverse = m_bAlternativeInverse != 0;
+  }  // end of CMUSHclientDoc::GetStylePalette
+
 void CMUSHclientDoc::GetStyleRGB (CStyle * pStyle, COLORREF & colour1, COLORREF & colour2) const
   {
-unsigned short style;
-int iForeground,
-    iBackground;
+  pal::StylePalette palette;
+  GetStylePalette (palette);
 
-  style = pStyle->iFlags & STYLE_BITS;
-
-  if ((style & COLOURTYPE) == COLOUR_CUSTOM)
-    {
-    ASSERT (pStyle->iForeColour >= 0 && pStyle->iForeColour < MAX_CUSTOM);
-    if (style & INVERSE)    // inverse inverts foreground and background
-      {
-      // custom colour is stored in iForeColour only
-      colour1 = m_customback [pStyle->iForeColour];
-      colour2 = m_customtext [pStyle->iForeColour];
-      }
-    else
-      {
-      colour1 = m_customtext [pStyle->iForeColour];
-      colour2 = m_customback [pStyle->iForeColour];
-      }
-    }
-  // for RGB colour is just itself
-  else if ((style & COLOURTYPE) == COLOUR_RGB)
-    {
-    if (style & INVERSE)    // inverse inverts foreground and background
-      {
-      colour1 = pStyle->iBackColour;
-      colour2 = pStyle->iForeColour;
-      }
-    else
-      {
-      colour1 = pStyle->iForeColour;
-      colour2 = pStyle->iBackColour;
-      }
-    }
-  else
-    {
-    ASSERT (pStyle->iForeColour >= 0 && pStyle->iForeColour < 256);
-    ASSERT (pStyle->iBackColour >= 0 && pStyle->iBackColour < 256);
-
-// display bold inverse differently according to user taste
-
-    if (m_bAlternativeInverse)
-      {
-      iForeground = pStyle->iForeColour;
-      iBackground = pStyle->iBackColour;
-
-      if (style & INVERSE)    // inverse inverts foreground and background
-        {
-        if (iForeground >= 8)
-          colour2 = xterm_256_colours [iForeground];
-        else
-          {
-          if (style & HILITE)
-            colour2 = m_boldcolour [iForeground];
-          else
-            colour2 = m_normalcolour [iForeground];
-          }
-        if (iBackground >= 8)
-          colour1 = xterm_256_colours [iBackground];
-        else
-          colour1 = m_normalcolour [iBackground];
-        }
-      else
-        {
-        if (iForeground >= 8)
-          colour1 = xterm_256_colours [iForeground];
-        else
-          {
-          if (style & HILITE)
-            colour1 = m_boldcolour [iForeground];
-          else
-            colour1 = m_normalcolour [iForeground];
-          }
-        if (iBackground >= 8)
-          colour2 = xterm_256_colours [iBackground];
-        else
-          colour2 = m_normalcolour [iBackground];
-        }   // end of not inverse
-
-
-      } // end of alternate way
-    else
-      {
-      if (style & INVERSE)    // inverse inverts foreground and background
-        {
-        iForeground = pStyle->iBackColour;
-        iBackground = pStyle->iForeColour;
-        }
-      else
-        {
-        iForeground = pStyle->iForeColour;
-        iBackground = pStyle->iBackColour;
-        }
-
-      if (style & HILITE)
-        {
-        if (iForeground >= 8)
-          colour1 = xterm_256_colours [iForeground];
-        else
-          colour1 = m_boldcolour [iForeground];
-        }
-      else
-        {
-        if (iForeground >= 8)
-          colour1 = xterm_256_colours [iForeground];
-        else
-          colour1 = m_normalcolour [iForeground];
-        }
-      if (iBackground >= 8)
-        colour2 = xterm_256_colours [iBackground];
-      else
-        colour2 = m_normalcolour [iBackground];
-
-      } // end of old way
-
-    }   // not custom
-
-  } // end of CMUSHclientDoc::GetStyleRGB 
+  unsigned int c1 = 0, c2 = 0;
+  pal::resolveStyleColours ((unsigned short) (pStyle->iFlags & STYLE_BITS),
+                            pStyle->iForeColour, pStyle->iBackColour,
+                            palette, (const unsigned int *) xterm_256_colours,
+                            c1, c2);
+  colour1 = (COLORREF) c1;
+  colour2 = (COLORREF) c2;
+  } // end of CMUSHclientDoc::GetStyleRGB
 
 void CMUSHclientDoc::RememberStyle (const CStyle * pStyle)
   {

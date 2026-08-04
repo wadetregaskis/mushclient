@@ -58,6 +58,7 @@ void Generate256colours (void);
 // (The #pragma once in OtherTypes.h makes this a no-op when already included.)
 #include "OtherTypes.h"
 // The output buffer's JUMP_SIZE jump index (m_LinePositions).
+#include "pal/style_colour.h"   // pal::StylePalette (GetStylePalette)
 #include "line_position_index.h"
 // Shared styled-line types and GUI output callbacks.
 #include "platform/output_types.h"
@@ -1988,6 +1989,11 @@ public:
                   POSITION & foundpos) const;  // and its position
 
   void GetStyleRGB (CStyle * pStyle, COLORREF & colour1, COLORREF & colour2) const;
+  // The palette half of that resolution, snapshotted for a caller that will
+  // re-resolve later with it -- the output view keeps a copy so a palette
+  // change can recolour the existing scrollback in place instead of
+  // re-emitting it (pal/style_colour.h).
+  void GetStylePalette (pal::StylePalette & out) const;
 
   CStyle * AddStyle (const unsigned short iFlags,
                      const COLORREF       iForeColour,

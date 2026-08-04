@@ -149,7 +149,12 @@ long CMUSHclientDoc::WindowFont (LPCTSTR Name, LPCTSTR FontId, LPCTSTR FontName,
 
 VARIANT CMUSHclientDoc::WindowFontInfo (LPCTSTR Name, LPCTSTR FontId, long InfoType)
   {
-  return NullVariant ();
+  // VT_EMPTY, not VT_NULL: the real bodies stamp vaResult.vt = VT_EMPTY
+  // before the lookup and leave it that way when the window/font/image/
+  // hotspot is missing (methods_miniwindows.cpp).  Both reach Lua as nil, but
+  // the five embedded engines go through mc_dispatch, where VT_NULL and
+  // VT_EMPTY are distinct arms -- so this is a real difference for them.
+  return EmptyVariant ();
   }   // end of CMUSHclientDoc::WindowFontInfo
 
 VARIANT CMUSHclientDoc::WindowFontList (LPCTSTR Name)
@@ -164,7 +169,11 @@ long CMUSHclientDoc::WindowGetImageAlpha (LPCTSTR Name, LPCTSTR ImageId, long Le
 
 long CMUSHclientDoc::WindowGetPixel (LPCTSTR Name, long x, long y)
   {
-  return eNoSuchWindow;
+  // -2, not eNoSuchWindow.  The real body (methods_miniwindows.cpp:798) answers
+  // the documented SENTINEL for "no such window" here, and plugins test for it
+  // numerically -- `if WindowGetPixel(...) == -2 then`.  eNoSuchWindow is an
+  // error CODE from a different space; answering it made every such test fail.
+  return -2;
   }   // end of CMUSHclientDoc::WindowGetPixel
 
 long CMUSHclientDoc::WindowGradient (LPCTSTR Name, long Left, long Top, long Right, long Bottom, long StartColour, long EndColour, short Mode)
@@ -174,7 +183,12 @@ long CMUSHclientDoc::WindowGradient (LPCTSTR Name, long Left, long Top, long Rig
 
 VARIANT CMUSHclientDoc::WindowHotspotInfo (LPCTSTR Name, LPCTSTR HotspotId, long InfoType)
   {
-  return NullVariant ();
+  // VT_EMPTY, not VT_NULL: the real bodies stamp vaResult.vt = VT_EMPTY
+  // before the lookup and leave it that way when the window/font/image/
+  // hotspot is missing (methods_miniwindows.cpp).  Both reach Lua as nil, but
+  // the five embedded engines go through mc_dispatch, where VT_NULL and
+  // VT_EMPTY are distinct arms -- so this is a real difference for them.
+  return EmptyVariant ();
   }   // end of CMUSHclientDoc::WindowHotspotInfo
 
 VARIANT CMUSHclientDoc::WindowHotspotList (LPCTSTR Name)
@@ -194,7 +208,12 @@ long CMUSHclientDoc::WindowImageFromWindow (LPCTSTR Name, LPCTSTR ImageId, LPCTS
 
 VARIANT CMUSHclientDoc::WindowImageInfo (LPCTSTR Name, LPCTSTR ImageId, long InfoType)
   {
-  return NullVariant ();
+  // VT_EMPTY, not VT_NULL: the real bodies stamp vaResult.vt = VT_EMPTY
+  // before the lookup and leave it that way when the window/font/image/
+  // hotspot is missing (methods_miniwindows.cpp).  Both reach Lua as nil, but
+  // the five embedded engines go through mc_dispatch, where VT_NULL and
+  // VT_EMPTY are distinct arms -- so this is a real difference for them.
+  return EmptyVariant ();
   }   // end of CMUSHclientDoc::WindowImageInfo
 
 VARIANT CMUSHclientDoc::WindowImageList (LPCTSTR Name)
@@ -209,7 +228,12 @@ long CMUSHclientDoc::WindowImageOp (LPCTSTR Name, short Action, long Left, long 
 
 VARIANT CMUSHclientDoc::WindowInfo (LPCTSTR Name, long InfoType)
   {
-  return NullVariant ();
+  // VT_EMPTY, not VT_NULL: the real bodies stamp vaResult.vt = VT_EMPTY
+  // before the lookup and leave it that way when the window/font/image/
+  // hotspot is missing (methods_miniwindows.cpp).  Both reach Lua as nil, but
+  // the five embedded engines go through mc_dispatch, where VT_NULL and
+  // VT_EMPTY are distinct arms -- so this is a real difference for them.
+  return EmptyVariant ();
   }   // end of CMUSHclientDoc::WindowInfo
 
 long CMUSHclientDoc::WindowLine (LPCTSTR Name, long x1, long y1, long x2, long y2, long PenColour, long PenStyle, long PenWidth)
@@ -289,12 +313,17 @@ long CMUSHclientDoc::WindowShow (LPCTSTR Name, BOOL Show)
 
 long CMUSHclientDoc::WindowText (LPCTSTR Name, LPCTSTR FontId, LPCTSTR Text, long Left, long Top, long Right, long Bottom, long Colour, BOOL Unicode)
   {
-  return eNoSuchWindow;
+  // -1 for an empty name AND for an unknown window (methods_miniwindows.cpp:235,
+  // :241) -- WindowText returns the width it drew, so its failure sentinel is a
+  // negative width, not an error code.
+  return -1;
   }   // end of CMUSHclientDoc::WindowText
 
 long CMUSHclientDoc::WindowTextWidth (LPCTSTR Name, LPCTSTR FontId, LPCTSTR Text, BOOL Unicode)
   {
-  return eNoSuchWindow;
+  // -1: a measurement, so the sentinel is a negative width
+  // (methods_miniwindows.cpp:251).
+  return -1;
   }   // end of CMUSHclientDoc::WindowTextWidth
 
 long CMUSHclientDoc::WindowTransformImage (LPCTSTR Name, LPCTSTR ImageId, float Left, float Top, short Mode, float Mxx, float Mxy, float Myx, float Myy)

@@ -336,7 +336,6 @@ TEST(LuaSurface, WindowFamilyStubSweep)
         "assert(world.WindowFontInfo('w','f',1) == nil)\n"
         "assert(world.WindowFontList('w') == nil)\n"
         "assert(world.WindowGetImageAlpha('w','i',0,0,10,10,0,0) == e)\n"
-        "assert(world.WindowGetPixel('w',0,0) == e)\n"
         "assert(world.WindowGradient('w',0,0,10,10,0,255,1) == e)\n"
         "assert(world.WindowHotspotInfo('w','h',1) == nil)\n"
         "assert(world.WindowHotspotList('w') == nil)\n"
@@ -361,10 +360,36 @@ TEST(LuaSurface, WindowFamilyStubSweep)
         "assert(world.WindowSetPixel('w',0,0,0) == e)\n"
         "assert(world.WindowSetZOrder('w',1) == e)\n"
         "assert(world.WindowShow('w',true) == e)\n"
-        "assert(world.WindowText('w','f','hi',0,0,10,10,0,false) == e)\n"
-        "assert(world.WindowTextWidth('w','f','hi',false) == e)\n"
         "assert(world.WindowTransformImage('w','i',0,0,1,1,0,0,1) == e)\n"
         "assert(world.WindowWrite('w','/no/file.png') == e)\n"
+    ));
+}
+
+// ── The Window* family's SENTINEL returns are not error codes ─────────────
+//
+// Three of the family answer a documented numeric sentinel for "no such
+// window", not an eXxx error code, because their success value is a
+// measurement: WindowText and WindowTextWidth return the width they drew or
+// measured, so failure is a negative width; WindowGetPixel returns a colour, so
+// failure is -2 (and -1 means "outside the window", which is a different case).
+// Plugins test for these numerically -- `if WindowGetPixel(...) == -2 then`.
+//
+// The headless stubs answered eNoSuchWindow, and the sweep above asserted it,
+// so every such plugin test would have failed under the test build while
+// working in the app. methods_miniwindows.cpp:235/241 (WindowText),
+// :251 (WindowTextWidth), :798 (WindowGetPixel).
+TEST(LuaSurface, WindowFamilySentinelsAreNumbersNotErrorCodes)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        "assert(world.WindowGetPixel('nope',0,0) == -2)\n"
+        "assert(world.WindowText('nope','f','hi',0,0,10,10,0,false) == -1)\n"
+        "assert(world.WindowText('','f','hi',0,0,10,10,0,false) == -1)\n"
+        "assert(world.WindowTextWidth('nope','f','hi',false) == -1)\n"
+        // ...and they are genuinely distinct from the error code the rest of
+        // the family uses, which is the whole point.
+        "assert(-2 ~= error_code.eNoSuchWindow)\n"
+        "assert(-1 ~= error_code.eNoSuchWindow)\n"
     ));
 }
 

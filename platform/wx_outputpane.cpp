@@ -592,8 +592,8 @@ void COutputPane::ScrollToLine(int lineIdx)
     int unitH;
     GetScrollPixelsPerUnit(nullptr, &unitH);
     if (unitH > 0) {
-        int vr = RowStartOf(lineIdx);
-        Scroll(0, vr * m_lineH / unitH);
+        const long long vr = RowStartOf(lineIdx);
+        Scroll(0, pal::pixelsToScrollUnits(pal::rowsToPixels(vr, m_lineH), unitH));
     }
     bool wasAuto = m_autoScroll;
     m_autoScroll = false;
@@ -1008,7 +1008,10 @@ void COutputPane::OnPaint(wxPaintEvent&)
     // partial server output before the '\n' arrives (useful for MUDs that send
     // a prompt without a trailing newline, e.g. "> ").
     if (!m_pendingLine.empty() && m_lineH > 0) {
-        int pendingY = m_totalVisualRows * m_lineH;  // virtual y, just after committed lines
+        // virtual y, just after committed lines (64-bit product, saturated:
+        // a device coordinate is an int whatever the row count is)
+        int pendingY = pal::clampToDeviceExtent(
+                           pal::rowsToPixels(m_totalVisualRows, m_lineH));
         int clientTop = scrollY * unitH;
         if (pendingY >= clientTop && pendingY < clientTop + clientH) {
             dc.SetFont(m_font);
@@ -1559,7 +1562,7 @@ void COutputPane::PopFrontWrapCache()
     const long long newBase = m_visualRowStart.empty()
                               ? m_rowBase + m_totalVisualRows
                               : m_visualRowStart.front();
-    m_totalVisualRows -= (int)(newBase - m_rowBase);
+    m_totalVisualRows -= (newBase - m_rowBase);   // both 64-bit now
     if (m_totalVisualRows < 0) m_totalVisualRows = 0;
     m_rowBase = newBase;
 }
@@ -1587,7 +1590,9 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
 
     // Add one row for the in-progress (pending) line when it has content.
     int pendingRows = (!m_pendingLine.empty()) ? 1 : 0;
-    int totalH = (m_totalVisualRows + pendingRows) * m_lineH;
+    // 64-bit: this is THE product that overflows.  See pal::rowsToPixels.
+    const long long totalH64 =
+        pal::rowsToPixels(m_totalVisualRows + pendingRows, m_lineH);
 
     // Virtual width = client width: horizontal scrolling is disabled; long
     // lines are visually wrapped rather than requiring H-scroll.
@@ -1609,7 +1614,9 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
     // exactly 20.  Making it exact would mean scrolling this pane by pixels
     // rather than rows, which is a much larger change than this setting is
     // worth; the gap is a margin, and erring wide is the harmless direction.
-    SetVirtualSize(clientW, totalH + (clientH - TextViewportH()) + m_pixelOffset);
+    SetVirtualSize(clientW,
+                   pal::clampToDeviceExtent(totalH64 + (clientH - TextViewportH())
+                                                     + m_pixelOffset));
 
     if (scrollToBottom && !m_lines.empty()) {
         int unitH;
@@ -1707,8 +1714,9 @@ int COutputPane::YToLine(int clientY) const
     const_cast<COutputPane*>(this)->GetViewStart(nullptr, &scrollY);
     int unitH;
     const_cast<COutputPane*>(this)->GetScrollPixelsPerUnit(nullptr, &unitH);
-    int yPix   = scrollY * unitH + clientY;
-    int visRow = (m_lineH > 0) ? yPix / m_lineH : 0;
+    const long long yPix = (long long) scrollY * unitH + clientY;
+    const int visRow = pal::clampToDeviceExtent(
+                           (m_lineH > 0) ? yPix / m_lineH : 0);
     // Map visual row → logical line via the wrap cache.
     return std::max(0, std::min((int)m_lines.size() - 1,
                                 const_cast<COutputPane*>(this)->VisualRowToLogical(visRow)));
@@ -2855,9 +2863,10 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
             // Center the matched line in the viewport rather than placing it at
             // the top: subtract half the client height so the match lands near
             // the middle of the screen.  std::max(0,…) clamps near the buffer top.
-            int yPixel    = vr * m_lineH;
-            int scrollPix = std::max(0, yPixel - (clientH - m_lineH) / 2);
-            Scroll(0, scrollPix / unitH);
+            const long long yPixel = pal::rowsToPixels(vr, m_lineH);
+            const long long scrollPix =
+                std::max(0LL, yPixel - (long long)(clientH - m_lineH) / 2);
+            Scroll(0, pal::pixelsToScrollUnits(scrollPix, unitH));
             m_autoScroll = false;
             if (m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
         }

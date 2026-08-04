@@ -62,4 +62,45 @@ inline bool isScrolledToBottom(int scrollUnit, int unitHeight,
     return scrollUnit >= maxScrollUnit(unitHeight, clientHeight, virtualHeight);
 }
 
+// ── 64-bit row -> pixel geometry ──────────────────────────────────────────
+//
+// Row counts times a row height is the one product in the pane that can
+// overflow: at a 15-pixel row, `rows * m_lineH` in `int` wraps NEGATIVE past
+// 143,165,576 rows, and every consumer (the virtual size, hit-testing, the
+// find-scroll) collapses at once.  That ceiling was unreachable while the
+// scrollback was capped at 500,000 lines; with max_output_lines = 0 it is not,
+// so the products are computed in 64 bits and saturated where a 32-bit device
+// coordinate is genuinely required.
+//
+// The saturation is not a fix for the ceiling — wxScrolledWindow's virtual size
+// is an int, so pixel-addressed scrolling cannot go past INT_MAX however the
+// arithmetic is done.  It is there so that reaching it degrades into "the
+// scrollbar stops growing" instead of undefined behaviour and a negative
+// height.  Lifting the ceiling entirely means scrolling by ROW rather than by
+// pixel, which is a much larger change (docs/AUDIT-2026-08.md, step 8).
+
+// rows * rowHeight, in 64 bits.  Negative or zero inputs give 0.
+inline long long rowsToPixels(long long rows, int rowHeight)
+{
+    if (rows <= 0 || rowHeight <= 0) return 0;
+    return rows * (long long) rowHeight;
+}
+
+// Saturate a 64-bit pixel extent into the int a wx device coordinate wants.
+inline int clampToDeviceExtent(long long pixels)
+{
+    const long long kMax = 2147483647LL;         // INT_MAX
+    if (pixels <= 0)    return 0;
+    if (pixels >= kMax) return (int) kMax;
+    return (int) pixels;
+}
+
+// A 64-bit pixel position expressed in whole scroll units, saturated.  Used
+// wherever a computed pixel offset is handed to wxScrolledWindow::Scroll.
+inline int pixelsToScrollUnits(long long pixels, int unitHeight)
+{
+    if (unitHeight <= 0 || pixels <= 0) return 0;
+    return clampToDeviceExtent(pixels / (long long) unitHeight);
+}
+
 } // namespace pal

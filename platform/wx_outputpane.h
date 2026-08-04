@@ -554,7 +554,10 @@ private:
     // RowStartOf(), never directly.
     std::deque<long long> m_visualRowStart;
     long long             m_rowBase         = 0;
-    int                   m_totalVisualRows = 0;
+    // 64-bit: at a 15px row, rows * m_lineH in int wraps negative past
+    // ~143M rows, which max_output_lines = 0 (unlimited) makes reachable.
+    // Every product with m_lineH goes through pal::rowsToPixels.
+    long long             m_totalVisualRows = 0;
     int                   m_wrapCols        = 80;
 
     // Rendered character count per line, parallel to m_lines.  AppendLine

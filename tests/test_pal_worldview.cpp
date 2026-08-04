@@ -1083,6 +1083,54 @@ TEST(ScrollGeometry, UnmeasuredPaneIsAtTheBottom)
     EXPECT_EQ(0, pal::maxScrollUnit(0, 300, 1500));
 }
 
+// ── 64-bit row -> pixel geometry ──────────────────────────────────────────
+//
+// rows * rowHeight was computed in int.  At a 15-pixel row that wraps NEGATIVE
+// past 143,165,576 rows — unreachable while the scrollback was capped at
+// 500,000 lines, reachable now that max_output_lines can be 0 (unlimited).
+// A negative virtual height does not fail loudly; the scrollbar, hit-testing
+// and the find-scroll all quietly produce nonsense.
+TEST(ScrollGeometry64, TheProductThatUsedToWrapIsNowExact)
+{
+    // 200,000,000 rows * 15 px = 3,000,000,000 — past INT_MAX (2,147,483,647),
+    // and as a signed int it lands at -1,294,967,296.
+    const long long rows = 200000000LL;
+    EXPECT_EQ(3000000000LL, pal::rowsToPixels(rows, 15));
+    EXPECT_TRUE(pal::rowsToPixels(rows, 15) > 0);      // the actual regression
+}
+
+TEST(ScrollGeometry64, DeviceExtentSaturatesInsteadOfWrapping)
+{
+    // wxScrolledWindow's virtual size is an int, so the ceiling is real however
+    // the arithmetic is done.  Saturating turns "undefined behaviour and a
+    // negative height" into "the scrollbar stops growing", which is a bad day
+    // rather than a broken window.
+    EXPECT_EQ(2147483647, pal::clampToDeviceExtent(3000000000LL));
+    EXPECT_EQ(2147483647, pal::clampToDeviceExtent(2147483647LL));
+    EXPECT_EQ(2147483646, pal::clampToDeviceExtent(2147483646LL));
+    EXPECT_EQ(0,          pal::clampToDeviceExtent(-5LL));
+    EXPECT_EQ(1234,       pal::clampToDeviceExtent(1234LL));
+}
+
+TEST(ScrollGeometry64, ScrollUnitsDivideBeforeSaturating)
+{
+    // Dividing in 64 bits first is what keeps a reachable scroll POSITION
+    // reachable even when the pixel extent is past INT_MAX: 3e9 px at 15 px per
+    // unit is 200,000,000 units, comfortably inside an int.
+    EXPECT_EQ(200000000, pal::pixelsToScrollUnits(3000000000LL, 15));
+    EXPECT_EQ(0,         pal::pixelsToScrollUnits(3000000000LL, 0));   // unmeasured
+    EXPECT_EQ(0,         pal::pixelsToScrollUnits(-1LL, 15));
+    EXPECT_EQ(66,        pal::pixelsToScrollUnits(1000LL, 15));
+}
+
+TEST(ScrollGeometry64, DegenerateInputsAreZeroNotGarbage)
+{
+    EXPECT_EQ(0LL, pal::rowsToPixels(0, 15));
+    EXPECT_EQ(0LL, pal::rowsToPixels(-100, 15));
+    EXPECT_EQ(0LL, pal::rowsToPixels(100, 0));     // font not measured yet
+    EXPECT_EQ(0LL, pal::rowsToPixels(100, -3));
+}
+
 // ── One invalidation per packet, not three ────────────────────────────────
 //
 // The ordinary shape of MUD output is "some finished lines, then a prompt with

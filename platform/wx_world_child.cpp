@@ -32,6 +32,7 @@
 #include "platform/wx_print.h"        // PrintStyledDocument (File ▸ Print World)
 #include "platform/wx_osx_text.h"    // wxOSXSetWindowTabbing ("Window tabs" pref)
 #include "genprint.h"                 // FONT_BOLD / FONT_ITALIC / FONT_UNDERLINE
+#include "pal/text_rect.h"            // pal::textRectWidth — world.TextRectangle
 #include <wx/numdlg.h>                // wxGetNumberFromUser (Display ▸ Go To Line)
 
 // MW_MOUSE_* flag constants (from mushview.h — copied here to avoid pulling in
@@ -139,23 +140,26 @@ static int EffectiveTextCols(CMUSHclientDoc* doc, int paneW, int charW)
     if (doc)
     {
         const CRect& tr = doc->m_TextRectangle;
-        if (!(tr.left == 0 && tr.top == 0 && tr.right == 0 && tr.bottom == 0))
-        {
-            int rw = (int) (tr.right - tr.left);
-            if (rw > 0 && rw < paneW) textW = rw;
-        }
+        // pal::textRectWidth resolves the offset-from-edge form (right <= 0 means
+        // "that many pixels in from the right edge") exactly as Windows'
+        // CMUSHView::GetTextRectangle does, and is the same helper
+        // COutputPane::TextRect uses -- the raw `tr.right - tr.left` here went
+        // NEGATIVE for that form, so the reservation was silently dropped and the
+        // MUD was told the full width.
+        textW = pal::textRectWidth((int) tr.left, (int) tr.top,
+                                   (int) tr.right, (int) tr.bottom, paneW);
         // ...and by the world's pixel offset, which insets the text from the
-        // left edge of the window.  This is the SAME formula the renderer uses
-        // in COutputPane::RebuildWrapCache, and the two must change together
-        // forever: this one sets m_nWrapColumn (the engine's hard wrap, read at
+        // left edge of the window.  pal::textWrapColumns is the SAME call the
+        // renderer makes in COutputPane::RebuildWrapCache, and it has to stay
+        // that way: this one sets m_nWrapColumn (the engine's hard wrap, read at
         // doc_shared.cpp:2839), that one sets m_wrapCols (the visual wrap).  If
         // the renderer's were the narrower of the two, every full-width engine
         // line would spill a one- or two-character continuation row.
         // Windows keeps them equal by construction -- it has one formula,
         // mushview.cpp:3220: (GetOutputWindowWidth() - m_iPixelOffset) / charW.
-        textW -= (int) doc->m_iPixelOffset;
+        return pal::textWrapColumns(textW, (int) doc->m_iPixelOffset, charW);
     }
-    return std::max(1, textW / charW);
+    return pal::textWrapColumns(textW, 0, charW);
 }
 
 // ── Miniwindow compositing ────────────────────────────────────────────────
@@ -523,6 +527,10 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             // Auto-freeze: if the world has it disabled, the pane should keep
             // auto-scrolling even when the user has scrolled up.
             m_output->SetAllowAutoFreeze(m_doc->m_bAutoFreeze != 0);
+            // keep_pause_at_bottom: once frozen, stay frozen even after the
+            // user scrolls back to the bottom (mushview.cpp:4680-4685).  The
+            // option had no reader on the port at all.
+            m_output->SetKeepPauseAtBottom(m_doc->m_bKeepFreezeAtBottom != 0);
             // Start-paused: if the world's "auto_pause" option is set, begin
             // with auto-scroll disengaged so output doesn't scroll on arrival.
             if (m_doc->m_bStartPaused)
@@ -544,20 +552,22 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // "…Pastes Word".  The decision is shared (doc_dblclick_shared.cpp); what is
     // left here is this frontend's own history and command bar, which is exactly
     // the split the hyperlink hoist uses.
+    // Returns false only for eDblClickAbort -- the pane skips its auto-copy
+    // then, matching the early `return` in CMUSHView::OnLButtonDblClk.
     m_output->m_fn_word_double_clicked = [this](const wxString& word, bool bShift) {
-        if (!m_doc) return;
+        if (!m_doc) return true;
 
         // DIVERGENCE, deliberate: Windows treats Shift+double-click as "the
         // whole PARAGRAPH" (mushview.cpp:4780/4812).  Reconstructing a paragraph
         // across this pane's wrapped visual rows is a different job, and sending
         // a single WORD where Windows sends a LINE is precisely the case a user
         // would notice, so decline rather than approximate.
-        if (bShift) return;
+        if (bShift) return true;
 
         const CString cword(word.utf8_str());
         switch (m_doc->OutputWordDoubleClicked(cword)) {
         case eDblClickAbort:
-            break;                       // not connected; already prompted
+            return false;                // not connected; already prompted
 
         case eDblClickSend:
             // The port's history gate is STRICTER than Windows' here, on
@@ -597,6 +607,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         case eDblClickNothing:
             break;
         }
+        return true;
     };
 
     // "Put in Input Bar" context-menu action: paste selected output text into
@@ -3980,15 +3991,19 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         const bool freeze = m_doc->m_bAutoFreeze != 0;
         const bool copySel= m_doc->m_bCopySelectionToClipboard != 0;
         const bool asHtml = m_doc->m_bAutoCopyInHTML != 0;
+        const bool keepPz = m_doc->m_bKeepFreezeAtBottom != 0;
         const int  poff   = (int) m_doc->m_iPixelOffset;
         if (maxl != m_lastMaxLines || freeze != m_lastAutoFreeze ||
-            copySel != m_lastCopySel || asHtml != m_lastCopyHtml) {
+            copySel != m_lastCopySel || asHtml != m_lastCopyHtml ||
+            keepPz != m_lastKeepPause) {
             m_lastMaxLines  = maxl;
             m_lastAutoFreeze= freeze;
             m_lastCopySel   = copySel;
             m_lastCopyHtml  = asHtml;
+            m_lastKeepPause = keepPz;
             if (maxl > 0) m_output->SetMaxLines((int) maxl);
             m_output->SetAllowAutoFreeze(freeze);
+            m_output->SetKeepPauseAtBottom(keepPz);
             m_output->SetCopySelectionToClipboard(copySel);
             m_output->SetAutoCopyInHTML(asHtml);
         }
@@ -4619,7 +4634,12 @@ void CWorldChildFrame::setScroll(long pos)
 // All-zeros clears the selection.
 void CWorldChildFrame::setOutputSelection(int sl, int el, int sc, int ec)
 {
-    if (m_output) m_output->SetSelectionRange(sl, el, sc, ec);
+    if (!m_output) return;
+    m_output->SetSelectionRange(sl, el, sc, ec);
+    // ...and freeze, exactly as the Windows arm of this same PAL method does
+    // (pal/win_worldview.cpp:639): a script that selects text has the same claim
+    // on the view holding still as a user who dragged over it.
+    m_output->FreezeIfSelection();
 }
 
 // world.SetOutputFont(face, pts, bold, italic): change the output pane font.

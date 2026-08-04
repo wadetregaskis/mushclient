@@ -867,6 +867,9 @@ if(NOT WIN32)
             platform/wx_surface.cpp
             # GUI widgets (wx headers first, then MUSHclient headers)
             platform/wx_outputpane.cpp
+            # In-app conformance harness for the pane (--outputpane-selftest);
+            # here, not in mushgui_adapters, because it includes wx headers.
+            platform/outputpane_selftest.cpp
             platform/wx_world_child.cpp
             # In-app conformance harness for the command-input bar
             # (--input-selftest).  Lives here, not in mushgui_adapters, because

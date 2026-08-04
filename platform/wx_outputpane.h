@@ -203,6 +203,16 @@ public:
     // Number of lines currently in the buffer.
     int LineCount() const { return (int)m_lines.size(); }
 
+    // True while an in-progress (not yet newline-terminated) line is being shown
+    // as the dim trailing row — the engine's m_pCurrentLine.  Read-only; exists
+    // so the in-app selftest can pin that ClearOutput takes it away.
+    bool HasPendingLine() const { return !m_pendingLine.empty(); }
+
+    // Current wrap width in characters, i.e. what RebuildWrapCache resolved from
+    // the client width, the text rectangle and the pixel offset.  Read-only;
+    // the selftest uses it to observe world.TextRectangle's effect on the text.
+    int WrapColumns() const { return m_wrapCols; }
+
     // Read-only access to a single buffered line.
     const SOutputLine* GetLine(int idx) const {
         if (idx < 0 || idx >= (int)m_lines.size()) return nullptr;
@@ -233,6 +243,25 @@ public:
     // visible regardless of where the user has scrolled.  Mirrors the world's
     // m_bAutoFreeze field.  Default is true (freeze on scroll-up).
     void SetAllowAutoFreeze(bool allow) { m_allowAutoFreeze = allow; }
+
+    // World option keep_pause_at_bottom (m_bKeepFreezeAtBottom): once the pane
+    // is frozen, scrolling back down to the bottom must NOT resume output — the
+    // user unfreezes explicitly.  That is the whole purpose of the option, and
+    // it is a LATCH, not a state: Windows writes
+    //   m_freeze = m_freeze || (pt.y < bottom)     (mushview.cpp:4680-4685)
+    // instead of the plain assignment it uses when the option is off.
+    void SetKeepPauseAtBottom(bool v) { m_keepPauseAtBottom = v; }
+
+    // Windows freezes output the moment a selection exists, so the text the user
+    // is about to copy or print stops scrolling away under the cursor:
+    //   if (!get_selection (newrgn) && pDoc->m_bAutoFreeze)
+    //      m_freeze = true;   // freeze output so they can copy or print it
+    // (get_selection returns TRUE for an EMPTY region, so this is "non-empty
+    // selection AND auto-freeze enabled".)  CMUSHView does it on every path that
+    // ends a selection — LButtonUp, MouseMove during the drag, double-click —
+    // and pal/win_worldview.cpp:639 repeats it for world.SetSelection.
+    // Public so CWorldChildFrame::setOutputSelection can do the same.
+    void FreezeIfSelection();
 
     // Whether to auto-copy text selection to the clipboard on mouse release.
     // Corresponds to world option copy_selection_to_clipboard.
@@ -355,7 +384,11 @@ public:
     // never has to distinguish a fresh word from a stale selection.  bShift is
     // passed because Windows treats Shift+double-click as a whole-paragraph
     // operation, which the port declines rather than approximating with a word.
-    std::function<void(const wxString& word, bool bShift)> m_fn_word_double_clicked;
+    // Returns false for CMUSHclientDoc::eDblClickAbort (not connected and the
+    // user cancelled the prompt) — Windows returns straight out of
+    // OnLButtonDblClk there, skipping the selection tidy-up and the auto-copy
+    // (mushview.cpp:4860), so the pane must skip the auto-copy too.
+    std::function<bool(const wxString& word, bool bShift)> m_fn_word_double_clicked;
 
     // Called from the right-click context menu "Put in Input Bar" action.
     // Receives the currently selected text; the frame wires this to set the
@@ -464,6 +497,13 @@ private:
     // Rebuild selected text for the clipboard.
     wxString SelectedText() const;
 
+    // Put the current selection on the clipboard when the world asks for it
+    // (copy_selection_to_clipboard, and …_in_html for the format).  Shared by
+    // the drag path and the double-click path so they cannot drift: Windows
+    // ends BOTH extend_selection (mushview.cpp:1982) and OnLButtonDblClk
+    // (mushview.cpp:4884) with the same four lines.
+    void AutoCopySelection();
+
     // ── State ────────────────────────────────────────────────────────────────
     std::deque<SOutputLine> m_lines;
     int                     m_maxLines;
@@ -566,6 +606,9 @@ private:
     // When false, scrolling up does NOT freeze output — new lines keep
     // scrolling into view.  Mirrors the world's m_bAutoFreeze flag.
     bool        m_allowAutoFreeze    = true;
+    // World option keep_pause_at_bottom: returning to the bottom does not
+    // resume output once the pane is frozen.  Default off, as on Windows.
+    bool        m_keepPauseAtBottom  = false;
     bool        m_copySelToClip     = false;  // copy_selection_to_clipboard
     bool        m_autoCopyInHTML    = false;  // …and do it as HTML
     bool m_bleedBackground = false;   // App.m_bBleedBackground

@@ -1594,9 +1594,6 @@ bool wxgdi_read_bgra(CDC* dc, int x, int y, int w, int h,
     if (!p) return false;
     const wxBitmap& bmp = p->dc.GetSelectedBitmap();
     if (!bmp.IsOk()) return false;
-    wxImage img = bmp.ConvertToImage();
-    const bool hasA = img.HasAlpha();
-    const int bw = img.GetWidth(), bh = img.GetHeight();
 
     // The caller addresses the surface in LOGICAL units, but a HiDPI canvas
     // (CBitmap::CreateCanvasBitmap) holds scale x that many physical pixels, and
@@ -1607,14 +1604,53 @@ bool wxgdi_read_bgra(CDC* dc, int x, int y, int w, int h,
     // to the original indexing.
     const double sc  = bmp.GetScaleFactor();
     const int    isc = (sc > 0) ? (int)(sc + 0.5) : 1;
+    const int    bw  = bmp.GetWidth(), bh = bmp.GetHeight();   // PHYSICAL pixels
+    if (bw <= 0 || bh <= 0) return false;
+    // ...and the LOGICAL extent, which is what the caller's coordinates are in
+    // and what wxBitmap::GetSubBitmap's rectangle is in (verified: on wxOSX a
+    // 1x1 logical sub-rect of a 2x-scaled bitmap yields a 2x2 physical bitmap
+    // still tagged scale 2).  Take the smaller of the two derivations so a
+    // fractional scale factor can never hand GetSubBitmap an out-of-range rect,
+    // which would fail its wxCHECK and return an invalid bitmap.
+    const int lwFromScale = bw / isc, lhFromScale = bh / isc;
+    const int lw = std::min(lwFromScale, (int) bmp.GetLogicalWidth());
+    const int lh = std::min(lhFromScale, (int) bmp.GetLogicalHeight());
+    if (lw <= 0 || lh <= 0) return false;
+
+    // Logical bounding box of the samples we are actually going to take, clipped
+    // to the bitmap.  Everything outside is left as the caller zeroed it
+    // (BitBlt's out-of-bounds behaviour, handled engine-side).
+    const int lx0 = std::max(0, x),           ly0 = std::max(0, y);
+    const int lx1 = std::min(x + w - 1, lw - 1),
+              ly1 = std::min(y + h - 1, lh - 1);              // inclusive
+    if (lx1 < lx0 || ly1 < ly0) return true;                  // nothing in range
+    const int lwid = lx1 - lx0 + 1, lhgt = ly1 - ly0 + 1;
+
+    // Convert ONLY that box.  ConvertToImage on the whole bitmap is O(surface)
+    // per call, and this is the single-pixel path: WindowGetPixel →
+    // ISurface::getPixel → readPixels(…, 1, 1) lands here, so a plugin's
+    // `for x,y do WindowGetPixel(...)` sweep of a 400x300 Retina miniwindow was
+    // 120,000 conversions of an 800x600x4 buffer — minutes, for an operation the
+    // user expects to be instant.  The hot BLIT path has the same shape:
+    // CMiniWindow's transparent DrawImage reads pixel (0,0) of the SOURCE image
+    // for its colour key (miniwindow.cpp:1483 and :4148), i.e. one full-image
+    // conversion per icon per redraw.  A 1x1 read now converts 1x1.
+    // (Windows never had the problem: GetPixel on a DIB is a pointer add, which
+    // is also what the DIBSection fast path above does.)
+    wxImage img = (lx0 == 0 && ly0 == 0 && lwid == lw && lhgt == lh)
+                  ? bmp.ConvertToImage()          // whole thing: skip the copy
+                  : bmp.GetSubBitmap(wxRect(lx0, ly0, lwid, lhgt)).ConvertToImage();
+    if (!img.IsOk()) return false;
+    const bool hasA = img.HasAlpha();
+    const int  iw   = img.GetWidth(), ih = img.GetHeight();
 
     for (int j = 0; j < h; ++j) {
-        const int sy = (y + j) * isc;
-        if (sy < 0 || sy >= bh) continue;
+        const int sy = (y + j - ly0) * isc;
+        if (sy < 0 || sy >= ih) continue;
         unsigned char* out = dst + (size_t)(h - 1 - j) * strideBytes;
         for (int i = 0; i < w; ++i) {
-            const int sx = (x + i) * isc;
-            if (sx < 0 || sx >= bw) continue;
+            const int sx = (x + i - lx0) * isc;
+            if (sx < 0 || sx >= iw) continue;
             unsigned char* o = out + (size_t)i * 4;
             o[0] = img.GetBlue(sx, sy);
             o[1] = img.GetGreen(sx, sy);

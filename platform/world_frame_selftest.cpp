@@ -251,6 +251,55 @@ int RunWorldFrameSelfTest()
               "deactivating it marks it inactive again");
     }
 
+    // ── world.TextRectangle reaches the ENGINE wrap column, not just the paint ─
+    // EffectiveTextCols (wx_world_child.cpp) is the other consumer of
+    // pal::textRectWidth, and it is the one that sets m_nWrapColumn and the NAWS
+    // width.  It used to compute `tr.right - tr.left` raw, which goes NEGATIVE
+    // for the documented offset-from-edge form (right <= 0 means "that many
+    // pixels in from the right edge"), so the reservation was silently dropped
+    // and the MUD was told the full pane width.  The pane's own selftest pins
+    // the VISUAL half of the same helper; this pins the engine half, through the
+    // real frame, so the two cannot be fixed apart.
+    {
+        const int charW = pane->CharWidth();
+        int paneW = 0, paneH = 0;
+        pane->GetClientSize(&paneW, &paneH);
+        check(charW > 0 && paneW > charW * 4,
+              "wrap: the pane has a measurable font and width");
+
+        // The wrap column only follows the window when the world asks it to;
+        // without this the whole path returns "leave it alone" (doc_shared.cpp
+        // AutoWrapColumnFor) and the assertions below would be vacuous.
+        doc->m_bAutoWrapWindowWidth = true;
+        doc->m_iPixelOffset         = 0;
+
+        doc->m_TextRectangle = CRect(0, 0, 0, 0);      // no rectangle
+        check(child->ApplyWrapColumnAndNAWS(), "wrap: recomputed with no rectangle");
+        const int fullCols = (int) doc->m_nWrapColumn;
+        check(fullCols == paneW / charW,
+              "wrap: with no rectangle the engine wraps at the full pane width");
+
+        // Reserve the rightmost 200 pixels, the way a docked miniwindow does.
+        doc->m_TextRectangle = CRect(0, 0, -200, 0);
+        check(child->ApplyWrapColumnAndNAWS(), "wrap: recomputed with a reserved edge");
+        const int reservedCols = (int) doc->m_nWrapColumn;
+        check(reservedCols == (paneW - 200) / charW,
+              "wrap: -200 right edge narrows the ENGINE wrap column too");
+        check(reservedCols < fullCols,
+              "...and that is genuinely narrower than the unreserved pane");
+
+        // An absolute right edge is still taken literally, so the fix cannot be
+        // "always treat right as an offset".
+        doc->m_TextRectangle = CRect(0, 0, 300, 0);
+        check(child->ApplyWrapColumnAndNAWS(), "wrap: recomputed with an absolute edge");
+        check((int) doc->m_nWrapColumn == 300 / charW,
+              "wrap: a positive right edge is an absolute position, not an offset");
+
+        doc->m_TextRectangle        = CRect(0, 0, 0, 0);
+        doc->m_bAutoWrapWindowWidth = false;
+        doc->m_nWrapColumn          = 80;
+    }
+
     // Tear down without running the close/save flow (this doc has no file).
     doc->m_pWorldView = NULL;
     child->Destroy();

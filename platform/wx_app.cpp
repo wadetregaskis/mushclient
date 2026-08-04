@@ -68,6 +68,11 @@ int RunNotepadSelfTest();
 // real CWorldChildFrame), so it is dispatched further down OnInit rather than
 // in the early argv loop.
 int RunInputSelfTest();
+// In-app conformance harness for the real COutputPane — selection freeze,
+// keep_pause_at_bottom, Clear Output, auto-copy, world.TextRectangle
+// (platform/outputpane_selftest.cpp), run via --outputpane-selftest.  The pane
+// is a wxScrolledWindow in mushgui_adapters, so the headless tests cannot see it.
+int RunOutputPaneSelfTest();
 
 #include "pal/surface_bridge.h"   // pal::g_surface — checked before installing
                                   // the bridge for the miniwindow selftest
@@ -123,6 +128,10 @@ public:
                 if (!pal::g_surface)
                     InstallWxSurfaceBridge();
                 const int failures = RunWxCompositeSelfTest();
+                std::exit(failures == 0 ? 0 : 1);
+            }
+            if (wxString(argv[i]) == wxT("--outputpane-selftest")) {
+                const int failures = RunOutputPaneSelfTest();
                 std::exit(failures == 0 ? 0 : 1);
             }
             if (wxString(argv[i]) == wxT("--pal-miniwindow-selftest")) {

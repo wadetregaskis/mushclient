@@ -88,6 +88,19 @@ public:
     // Give external code access to the output pane (e.g. to set the font).
     COutputPane* OutputPane() const { return m_output; }
 
+    // ── Wrap column + NAWS ─────────────────────────────────────────────────
+    // Recompute the engine's wrap column from the visible text width — but only
+    // when the world asked for that (world option auto_wrap_window_width), which
+    // is the gate Windows applies in CMUSHView::AutoWrapWindowWidth — then tell
+    // the MUD the size.  Every trigger (frame resize, font/zoom change, a plugin
+    // moving the text rectangle) goes through here so they cannot disagree.
+    // skipIfUnchanged suppresses a redundant NAWS packet when nothing moved.
+    // Returns false if the pane has no usable metrics yet.
+    // Public so the in-app selftest can drive the recompute directly: it is the
+    // only way to observe world.TextRectangle reaching m_nWrapColumn and NAWS
+    // (a resize event cannot pin the arithmetic, only that something changed).
+    bool ApplyWrapColumnAndNAWS(bool skipIfUnchanged = false);
+
     // View ▸ Toolbar / World Toolbar / Activity Toolbar / Reset Toolbar
     // Locations.  Driven from the View-menu handler in wx_mfc_impl.cpp, which
     // applies the change to every world window so they do not drift apart.
@@ -373,6 +386,7 @@ private:
     bool m_lastAutoFreeze = false;
     bool m_lastCopySel    = false;
     bool m_lastCopyHtml   = false;
+    bool m_lastKeepPause  = false;   // world option keep_pause_at_bottom
     int  m_lastPixelOffset = -1;
 
     // Enter or leave Ctrl+R reverse-history-search mode.  Sets m_histRSearch and
@@ -415,16 +429,6 @@ private:
 
     // Returns the currently-visible input control (m_input or m_inputPassword).
     wxTextCtrl* ActiveInput() const;
-
-    // ── Wrap column + NAWS ─────────────────────────────────────────────────
-    // Recompute the engine's wrap column from the visible text width — but only
-    // when the world asked for that (world option auto_wrap_window_width), which
-    // is the gate Windows applies in CMUSHView::AutoWrapWindowWidth — then tell
-    // the MUD the size.  Every trigger (frame resize, font/zoom change, a plugin
-    // moving the text rectangle) goes through here so they cannot disagree.
-    // skipIfUnchanged suppresses a redundant NAWS packet when nothing moved.
-    // Returns false if the pane has no usable metrics yet.
-    bool ApplyWrapColumnAndNAWS(bool skipIfUnchanged = false);
 
     // Switch the input bar between normal and password (masked) mode.
     // Called whenever m_doc->m_bNoEcho changes.

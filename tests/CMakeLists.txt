@@ -117,57 +117,65 @@ endif()
 # boots — no prefs, worlds, or windows are touched.  The wx-backed ones need
 # a window server, so they are registered only when the GUI target exists.
 if(TARGET mushgui)
+    # -ApplePersistenceIgnoreState YES is NOT decoration, and it belongs on
+    # EVERY selftest rather than only the ones that build a window.  All of them
+    # exit from OnInit, which AppKit counts as "crashed while launching"; after a
+    # few of those it greets the NEXT launch with the modal "reopen windows?"
+    # alert (NSPersistentUIRestorer promptToIgnorePersistentStateWithCrashHistory),
+    # which nothing can answer in a headless ctest run — that launch then hangs
+    # until its test times out.  The victim is therefore whichever selftest runs
+    # after the history fills up, NOT the one that added the launches: adding the
+    # outputpane selftest made selftest_pal_composite (untouched, and green both
+    # before and after in a standalone run) time out at 120s.  Restricting the
+    # flag to the window-building tests just moves the blast radius around.
+    #
+    # NSUserDefaults reads argv into its argument domain, so this turns
+    # restoration off FOR THIS LAUNCH ONLY — no machine state is written and no
+    # `defaults write` is needed.  It is a no-op argument off macOS (the flags
+    # are matched by name in OnInit, and everything else is ignored), but keep it
+    # APPLE-gated so a Linux run's argv stays clean.
+    if(APPLE)
+        set(_selftest_args -ApplePersistenceIgnoreState YES)
+    else()
+        set(_selftest_args)
+    endif()
+
     add_test(NAME selftest_pal_surface
-             COMMAND $<TARGET_FILE:mushgui> --pal-surface-selftest)
+             COMMAND $<TARGET_FILE:mushgui> --pal-surface-selftest ${_selftest_args})
     add_test(NAME selftest_pal_transport
-             COMMAND $<TARGET_FILE:mushgui> --pal-transport-selftest)
+             COMMAND $<TARGET_FILE:mushgui> --pal-transport-selftest ${_selftest_args})
     add_test(NAME selftest_pal_miniwindow
-             COMMAND $<TARGET_FILE:mushgui> --pal-miniwindow-selftest)
+             COMMAND $<TARGET_FILE:mushgui> --pal-miniwindow-selftest ${_selftest_args})
     # The notepad windows: CTextDocument, its wxFrame and the quit hook are all
     # GUI-only, so this is the only place the modified-flag / SaveModified /
     # Convert-menu behaviour can be executed at all.
     add_test(NAME selftest_notepad
-             COMMAND $<TARGET_FILE:mushgui> --notepad-selftest)
+             COMMAND $<TARGET_FILE:mushgui> --notepad-selftest ${_selftest_args})
     # Window geometry persistence, the dialog-template -> wx control mapping and
     # the world-creation defaults: wx adapter code mushcore does not link.
     add_test(NAME selftest_gui_bridge
-             COMMAND $<TARGET_FILE:mushgui> --gui-bridge-selftest)
+             COMMAND $<TARGET_FILE:mushgui> --gui-bridge-selftest ${_selftest_args})
     # The command-input bar: a real CWorldChildFrame driven with real key
     # events, which is the only place the port's Ctrl+Backspace / arrow-gate /
     # spell-check-on-send wiring can be exercised (it all lives in
     # mushgui_adapters, which the headless test executables never link).
-    #
-    # -ApplePersistenceIgnoreState YES is NOT decoration.  This is the only
-    # selftest that builds a real top-level window, and every selftest exits
-    # from OnInit — which AppKit counts as "crashed while launching".  After a
-    # few of those it greets the NEXT launch with the modal "reopen windows?"
-    # alert (NSPersistentUIRestorer promptToIgnorePersistentStateWithCrashHistory),
-    # which nothing can answer in a headless ctest run: the app then hangs until
-    # the test times out.  NSUserDefaults reads argv into its argument domain, so
-    # this flag turns restoration off FOR THIS LAUNCH ONLY — no machine state is
-    # written and no `defaults write` is needed.
-    if(APPLE)
-        add_test(NAME selftest_input
-                 COMMAND $<TARGET_FILE:mushgui> --input-selftest
-                         -ApplePersistenceIgnoreState YES)
-    else()
-        add_test(NAME selftest_input
-                 COMMAND $<TARGET_FILE:mushgui> --input-selftest)
-    endif()
+    add_test(NAME selftest_input
+             COMMAND $<TARGET_FILE:mushgui> --input-selftest ${_selftest_args})
     # The wx miniwindow compositor + tooltip gate: their bodies are in the
     # executable (platform/wx_world_child.cpp, wxDC-typed), so mushcore's
     # headless suites cannot link them.
     add_test(NAME selftest_pal_composite
-             COMMAND $<TARGET_FILE:mushgui> --pal-composite-selftest)
+             COMMAND $<TARGET_FILE:mushgui> --pal-composite-selftest ${_selftest_args})
     # The world window adapter (CWorldChildFrame = the wx pal::IWorldView):
     # bookmarks, window geometry, the title, and the active-world state, all of
     # which are GUI-side and so unreachable from the headless executables.
-    # -ApplePersistenceIgnoreState keeps AppKit from putting up its modal
-    # "reopen windows?" alert (which it does for a bundle with crash history)
-    # and would hang the run; it also keeps saved state out of the user's home.
     add_test(NAME selftest_world_frame
-             COMMAND $<TARGET_FILE:mushgui> --world-frame-selftest
-                     -ApplePersistenceIgnoreState YES)
+             COMMAND $<TARGET_FILE:mushgui> --world-frame-selftest ${_selftest_args})
+    # COutputPane is a wxScrolledWindow in mushgui_adapters, so the headless
+    # tests cannot construct it: the selection/freeze/scrollback behaviour is
+    # only reachable from inside the app.
+    add_test(NAME selftest_outputpane
+             COMMAND $<TARGET_FILE:mushgui> --outputpane-selftest ${_selftest_args})
     # The six scripting languages: the only place five of them can be exercised,
     # since their interpreters are linked into the app and deliberately kept out
     # of mushcore.  One ctest entry per language, so a build without (say) Ruby
@@ -175,7 +183,8 @@ if(TARGET mushgui)
     # scripting support is expected but not required.  Exit 77 is the skip.
     foreach(_lang lua python perl js tcl ruby)
         add_test(NAME selftest_engine_${_lang}
-                 COMMAND $<TARGET_FILE:mushgui> --engines-selftest=${_lang})
+                 COMMAND $<TARGET_FILE:mushgui> --engines-selftest=${_lang}
+                         ${_selftest_args})
         set_tests_properties(selftest_engine_${_lang} PROPERTIES
                              SKIP_RETURN_CODE 77
                              RUN_SERIAL TRUE)
@@ -184,9 +193,8 @@ if(TARGET mushgui)
     # window server (an occasional single-selftest flake under `ctest -j`).
     set_tests_properties(selftest_pal_surface selftest_pal_transport
                          selftest_pal_miniwindow selftest_notepad
-                         selftest_pal_miniwindow selftest_gui_bridge
-                         selftest_pal_miniwindow selftest_input
-                         selftest_pal_miniwindow selftest_pal_composite
-                         selftest_pal_miniwindow selftest_world_frame
+                         selftest_gui_bridge selftest_input
+                         selftest_pal_composite selftest_world_frame
+                         selftest_outputpane
                          PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 endif()

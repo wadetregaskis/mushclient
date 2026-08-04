@@ -10,6 +10,7 @@
 // compat.h provides RGB(), GetRValue(), GetGValue(), GetBValue().
 #include "platform/compat.h"
 #include "pal/scroll_geometry.h"   // pal::isScrolledToBottom — the shared predicate
+#include "pal/text_rect.h"         // pal::resolveTextRect — world.TextRectangle
 
 // Forward declarations for font variant helpers defined after the constructor.
 static wxFont MakeFontVariant(const wxFont& base, bool bold, bool underline, bool italic = false);
@@ -744,7 +745,22 @@ void COutputPane::RefreshAutoScrollFromPosition()
     // freezes: new output is always visible wherever the user has scrolled to.
     // Only the scrollbar path used to honour that; wheel and keyboard scrolling
     // froze the pane anyway.
-    m_autoScroll = atBottom || !m_allowAutoFreeze;
+    //
+    // keep_pause_at_bottom (m_bKeepFreezeAtBottom) turns the assignment into a
+    // LATCH — Windows, mushview.cpp:4680-4685:
+    //     if (pDoc->m_bAutoFreeze) {
+    //       if (pDoc->m_bKeepFreezeAtBottom)
+    //          m_freeze = m_freeze || (pt.y < bottom);
+    //       else
+    //          m_freeze = pt.y < bottom;
+    //     }
+    // i.e. with the option on, merely ARRIVING at the bottom never unfreezes;
+    // the user has to unfreeze explicitly (the hint bar / Pause command, which
+    // go through ScrollToBottom and set m_autoScroll directly).  The port had no
+    // reader for the option at all, so scrolling back down always resumed and
+    // the next line of output dragged the view away again.
+    const bool stayFrozen = m_keepPauseAtBottom && !m_autoScroll;
+    m_autoScroll = (atBottom && !stayFrozen) || !m_allowAutoFreeze;
     if (m_autoScroll != wasAuto && m_fn_autoscroll_changed)
         m_fn_autoscroll_changed(m_autoScroll);
 }
@@ -752,6 +768,17 @@ void COutputPane::RefreshAutoScrollFromPosition()
 void COutputPane::ClearOutput()
 {
     m_lines.clear();
+    // ...including the in-progress line.  The pending row is a port-only
+    // concept (Windows' DELETE_LIST takes the partial line away with the rest),
+    // and nothing else could ever clear it here: CMUSHclientDoc::ClearOutput
+    // re-seeds m_pCurrentLine EMPTY (doc.cpp), and the drain only emits a
+    // pending line when `m_pCurrentLine->len > 0` (doc_display_shared.cpp), so
+    // there is no follow-up push carrying the empty state.  A MUD prompt with no
+    // newline ("HP:100 MP:50 > ") therefore survived Display ▸ Clear Output and
+    // sat alone at the top of an otherwise empty pane — indefinitely, if the
+    // world was idle or disconnected.
+    m_pendingLine.clear();
+    m_pendingLine.pending = false;
     m_selAnchor          = SelPoint{};
     m_selFocus           = SelPoint{};
     m_maxLineChars       = 80;
@@ -1444,11 +1471,19 @@ bool COutputPane::TextRect(int& l, int& t, int& r, int& b) const
     if (!m_fn_text_rect) return false;
     int rl = 0, rt = 0, rr = 0, rb = 0;
     if (!m_fn_text_rect(rl, rt, rr, rb)) return false;
+    // Resolve the documented offset-from-edge form BEFORE clamping: a right or
+    // bottom <= 0 means "that many pixels in from the far edge", and treating it
+    // as "not given" (the old `(rr > 0) ? … : clientW`) handed the text the full
+    // client width, so it wrapped late and drew underneath the very miniwindow
+    // the plugin had reserved space for.  pal::resolveTextRect is Windows'
+    // CMUSHView::GetTextRectangle arithmetic, shared with EffectiveTextCols so
+    // the visual wrap and the engine wrap cannot disagree.
+    pal::resolveTextRect(rl, rt, rr, rb, clientW, clientH);
     // Clamp to the client area; ignore degenerate rectangles.
     l = std::max(0, rl);
     t = std::max(0, rt);
-    r = (rr > 0) ? std::min(clientW, rr) : clientW;
-    b = (rb > 0) ? std::min(clientH, rb) : clientH;
+    r = std::min(clientW, rr);
+    b = std::min(clientH, rb);
     if (r <= l || b <= t) { l = 0; t = 0; r = clientW; b = clientH; return false; }
     return true;
 }
@@ -1473,15 +1508,13 @@ void COutputPane::RebuildWrapCache()
     // Windows does exactly this in its own wrap computation:
     //   mushview.cpp:3220  (GetOutputWindowWidth () - pDoc->m_iPixelOffset) / charW
     // where GetOutputWindowWidth() is already the text rectangle's width.
-    // CWorldChildFrame::EffectiveTextCols computes the ENGINE's wrap column from
-    // the same two terms and the two must agree: if this one came out narrower,
-    // every full-width engine line would gain a one- or two-character orphan
-    // continuation row.
-    int wrapW = (TextRect(trL, trT, trR, trB) ? (trR - trL) : clientW) - m_pixelOffset;
-    int newCols = (m_charW > 0 && wrapW > 0)
-                  ? std::max(1, wrapW / m_charW)
-                  : 80;
-    m_wrapCols = newCols;
+    // CWorldChildFrame::EffectiveTextCols computes the ENGINE's wrap column, and
+    // the two must agree -- if this one came out narrower, every full-width
+    // engine line would gain a one- or two-character orphan continuation row.
+    // They now make the SAME call (pal::textWrapColumns) over the SAME resolved
+    // rectangle (pal::resolveTextRect), so they cannot drift.
+    int wrapW = TextRect(trL, trT, trR, trB) ? (trR - trL) : clientW;
+    m_wrapCols = pal::textWrapColumns(wrapW, m_pixelOffset, m_charW);
 
     // Renumber from zero: a full rebuild is the one place the absolute row axis
     // may be reset, since every consumer reads through RowStartOf().
@@ -1749,6 +1782,67 @@ bool COutputPane::GetNormalizedSel(SelPoint& start, SelPoint& end) const
     return true;
 }
 
+// ── FreezeIfSelection ─────────────────────────────────────────────────────────
+// "Freeze output so they can copy or print it" — the two lines every
+// selection-ending path on Windows carries (mushview.cpp:2453 OnLButtonUp,
+// :2613 OnMouseMove, :4837 OnLButtonDblClk, pal/win_worldview.cpp:639
+// SetSelection):
+//
+//     if (!get_selection (newrgn) && pDoc->m_bAutoFreeze)
+//        m_freeze = true;
+//
+// get_selection returns TRUE for an EMPTY region (mushview.cpp:2765, :2826),
+// so the condition reads "there IS a selection, and the world wants
+// auto-freeze".  Without it, drag-selecting a line on a busy MUD is a race: the
+// text scrolls out from under the cursor before the user reaches Cmd-C, and
+// once the scrollback trim kicks in the selection indices slide onto different
+// text, so the wrong line is copied.
+void COutputPane::FreezeIfSelection()
+{
+    if (!m_allowAutoFreeze) return;
+    SelPoint s, e;
+    if (!GetNormalizedSel(s, e)) return;   // empty region: nothing to freeze for
+    if (!m_autoScroll) return;             // already frozen
+    SetPaused(true);
+}
+
+// ── AutoCopySelection ─────────────────────────────────────────────────────────
+// copy_selection_to_clipboard (+ …_in_html for the format).  Windows runs the
+// same four lines at the end of BOTH extend_selection (mushview.cpp:1982, the
+// drag) and OnLButtonDblClk (mushview.cpp:4884, the word):
+//
+//     if (pDoc->m_bCopySelectionToClipboard)
+//       if (pDoc->m_bAutoCopyInHTML) OnEditCopyashtml (); else OnEditCopy ();
+//
+// The port only had it on the drag path, so a double-clicked word highlighted
+// but left the PREVIOUS drag on the clipboard — paste produced stale text.
+// On GTK the X11 primary selection is written regardless of the option, because
+// middle-click paste is a universal Unix convention users rely on.
+void COutputPane::AutoCopySelection()
+{
+    SelPoint s, e;
+    if (!GetNormalizedSel(s, e)) return;
+    const wxString text = SelectedText();
+    if (text.IsEmpty()) return;
+
+    if (m_copySelToClip) {
+        if (m_autoCopyInHTML) {
+            CopySelectionAsHTML(GetFont().GetFaceName());
+        } else if (wxTheClipboard->Open()) {
+            wxTheClipboard->SetData(new wxTextDataObject(text));
+            wxTheClipboard->Close();
+        }
+    }
+#ifdef __WXGTK__
+    if (wxTheClipboard->Open()) {
+        wxTheClipboard->UsePrimarySelection(true);
+        wxTheClipboard->SetData(new wxTextDataObject(text));
+        wxTheClipboard->UsePrimarySelection(false);
+        wxTheClipboard->Close();
+    }
+#endif
+}
+
 // ── Mouse ─────────────────────────────────────────────────────────────────────
 
 void COutputPane::OnLeftDown(wxMouseEvent& evt)
@@ -1782,6 +1876,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
             m_selFocus       = SelPoint{clickLine, lineLen};
             m_lastDClickLine = -1;   // consume so a 4th click starts fresh
             Refresh(false);
+            FreezeIfSelection();     // a selection was just made
             evt.Skip();
             return;
         }
@@ -1803,6 +1898,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
     if (evt.ShiftDown() && m_selAnchor.valid()) {
         m_selFocus = MouseToSelPoint(evt);
         Refresh(false);
+        FreezeIfSelection();     // extend_selection's freeze (mushview.cpp:2453)
         evt.Skip();
         return;
     }
@@ -1862,38 +1958,13 @@ void COutputPane::OnLeftUp(wxMouseEvent& evt)
         }
         m_linkAtDown.clear();
 
-        // Auto-copy non-empty selection to clipboard when
-        // copy_selection_to_clipboard is enabled (off by default).
-        // On GTK we always write the X11 primary selection regardless, because
-        // middle-click paste is a universal Unix convention users rely on.
-        {
-            SelPoint s, e;
-            if (GetNormalizedSel(s, e)) {
-                wxString text = SelectedText();
-                if (!text.IsEmpty()) {
-                    if (m_copySelToClip) {
-                        // "…in HTML" (m_bAutoCopyInHTML) was previously ignored
-                        // here: the auto-copy always put plain text on the
-                        // clipboard, so ticking the HTML box did nothing.
-                        if (m_autoCopyInHTML) {
-                            CopySelectionAsHTML(GetFont().GetFaceName());
-                        } else if (wxTheClipboard->Open()) {
-                            wxTheClipboard->SetData(new wxTextDataObject(text));
-                            wxTheClipboard->Close();
-                        }
-                    }
-#ifdef __WXGTK__
-                    // X11 primary selection: always set so middle-click works.
-                    if (wxTheClipboard->Open()) {
-                        wxTheClipboard->UsePrimarySelection(true);
-                        wxTheClipboard->SetData(new wxTextDataObject(text));
-                        wxTheClipboard->UsePrimarySelection(false);
-                        wxTheClipboard->Close();
-                    }
-#endif
-                }
-            }
-        }
+        // If the release left a non-empty region, freeze so the text stays put
+        // under the cursor, then copy it if the world asked for that.  Both are
+        // exactly what CMUSHView::OnLButtonUp ends with (mushview.cpp:2453 and,
+        // via extend_selection, :1982).  A plain click collapses the region and
+        // neither fires.
+        FreezeIfSelection();
+        AutoCopySelection();
     }
 
     // Return focus to the input bar so the user can keep typing.
@@ -1950,6 +2021,26 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
                 m_selFocus  = SelPoint{lineIdx, wordEnd};
                 Refresh(false);
 
+                // Windows freezes here, BEFORE the word is dispatched
+                // (mushview.cpp:4837, ahead of OutputWordDoubleClicked).
+                FreezeIfSelection();
+
+                // End the drag before anything else.  Two reasons, and both
+                // matter: (a) the handler below can open a modal (the
+                // not-connected prompt) and on macOS a nested modal loop
+                // swallows the following mouse-up, which would strand the pane
+                // mid-drag with the mouse still captured; (b) the platform
+                // delivers DOWN, UP, DCLICK, UP, and that trailing UP would
+                // otherwise re-run the drag branch of OnLeftUp and collapse the
+                // word selection onto the click point.  Windows is immune for
+                // the same reason: OnLButtonDblClk never SetCapture()s, so the
+                // trailing WM_LBUTTONUP hits `if (GetCapture() != this) return;`
+                // (mushview.cpp:2430) and leaves the word alone.  This used to
+                // sit INSIDE the callback guard, so it only held when a frame
+                // had wired m_fn_word_double_clicked.
+                m_dragging = false;
+                if (HasCapture()) ReleaseMouse();
+
                 // "Double-click Sends Word" / "…Pastes Word".  Dispatch the word
                 // computed RIGHT HERE, not SelectedText(): the selection is only
                 // written inside this guard, so a double-click that lands on a
@@ -1957,17 +2048,20 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
                 // possibly a whole dragged paragraph -- and sending that would be
                 // badly wrong.  No word, no dispatch, which is also what Windows
                 // does (it computes an empty word and tests IsEmpty first).
+                bool aborted = false;
                 if (m_fn_word_double_clicked) {
-                    // The handler can open a modal (the not-connected prompt).
-                    // On macOS a nested modal loop swallows the following
-                    // mouse-up, which would strand the pane mid-drag with the
-                    // mouse still captured, so let go before dispatching.
-                    m_dragging = false;
-                    if (HasCapture()) ReleaseMouse();
-                    m_fn_word_double_clicked(
+                    aborted = !m_fn_word_double_clicked(
                         lineText.Mid(wordStart, wordEnd - wordStart),
                         evt.ShiftDown());
                 }
+
+                // ...and copy the word if the world asked for that, which is
+                // where OnLButtonDblClk ends on Windows (mushview.cpp:4884).
+                // The port only auto-copied on the DRAG path, so a
+                // double-clicked word highlighted while the clipboard kept the
+                // previous drag — the user pasted stale text.  eDblClickAbort
+                // skips it, as the early `return` does on Windows.
+                if (!aborted) AutoCopySelection();
             }
 
             // Record for triple-click line selection.
@@ -2095,6 +2189,11 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
     if (m_dragging && evt.LeftIsDown()) {
         m_selFocus = MouseToSelPoint(evt);
         Refresh(false);
+
+        // Windows freezes the instant the dragged region becomes non-empty, not
+        // at the release (mushview.cpp:2613, CMUSHView::OnMouseMove) — on a busy
+        // MUD the difference is a whole drag's worth of scrolling.
+        FreezeIfSelection();
 
         // Auto-scroll when dragging past the top or bottom edges.
         // When the hint bar is visible, treat its upper edge as the bottom

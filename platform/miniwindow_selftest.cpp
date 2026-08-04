@@ -21,12 +21,16 @@
 #include "scripting/errors.h"
 #include "tests/fake_worldview.h" // the recording pal::IWorldView (header-only)
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 
 namespace {
 
 int g_mwPass = 0, g_mwFail = 0;
+// Accumulator for the timing probe below, so the optimiser cannot delete the
+// reads it is measuring.
+volatile long g_mwSink = 0;
 void mwCheck(bool ok, const char* what)
 {
     printf("  [%s] %s\n", ok ? "PASS" : "FAIL", what);
@@ -499,6 +503,61 @@ int RunPalMiniWindowSelfTest()
 
         doc->m_pWorldView = NULL;
         mwCheck(doc->WindowDelete(H) == eOK, "hotspot fixture cleaned up");
+    }
+
+    // ── WindowGetPixel is O(1) in the SURFACE size, not O(surface) ─────────
+    //
+    // A complexity pin, not a stopwatch.  WindowGetPixel → CMiniWindow::GetPixel
+    // → pal::ISurface::getPixel → WxSurface::readPixels(…, 1, 1) →
+    // wxgdi_read_bgra.  A miniwindow canvas is a plain wxBitmap, never a
+    // DIBSection, so it always misses the fast path and lands in the wxImage
+    // branch — which used to run bmp.ConvertToImage() over the WHOLE surface, at
+    // physical resolution (2x on Retina), to answer a single-pixel probe.  Cost
+    // per probe therefore scaled with the window's area: a plugin sweeping a
+    // 400x300 miniwindow did 120,000 conversions of an 800x600x4 buffer and the
+    // app appeared to hang.  The same shape sat in the hot blit path, where a
+    // transparent DrawImage reads the source's pixel (0,0) as its colour key.
+    //
+    // Time the SAME number of probes against a small window and a 256x-larger
+    // one.  With an area-proportional read the big one costs ~256x more; with a
+    // region read the two are within call-overhead of each other.  The bound is
+    // deliberately loose (16x) so ordinary machine noise cannot fail it while
+    // still being two orders of magnitude below the regression.
+    {
+        const char* const SMALL = "selftest_mw_small";
+        const char* const BIG   = "selftest_mw_big";
+        const int  kProbes = 400;
+        mwCheck(doc->WindowCreate(SMALL, 0, 0, 32, 32, 0, 0, kRed) == eOK,
+                "perf pin: 32x32 window created");
+        mwCheck(doc->WindowCreate(BIG, 0, 0, 512, 512, 0, 0, kRed) == eOK,
+                "perf pin: 512x512 window created (256x the area)");
+
+        auto probe = [&](const char* name, int extent) {
+            const auto t0 = std::chrono::steady_clock::now();
+            long acc = 0;
+            for (int i = 0; i < kProbes; ++i)
+                acc += doc->WindowGetPixel(name, i % extent, (i * 7) % extent);
+            const auto t1 = std::chrono::steady_clock::now();
+            g_mwSink += acc;   // keep the reads alive
+            return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0)
+                   .count();
+        };
+        probe(SMALL, 32);                          // warm the code paths
+        const long long tSmall = probe(SMALL, 32);
+        const long long tBig   = probe(BIG, 512);
+
+        // +500us of slack so a sub-millisecond small-window measurement (where
+        // clock granularity dominates) cannot make the ratio meaningless.
+        const bool ok = tBig <= tSmall * 16 + 500;
+        printf("  [%s] %d WindowGetPixel probes: 32x32 %lldus vs 512x512 "
+               "%lldus (area x256; must stay under %lldus)\n",
+               ok ? "PASS" : "FAIL", kProbes, tSmall, tBig, tSmall * 16 + 500);
+        (ok ? g_mwPass : g_mwFail)++;
+
+        mwCheck(doc->WindowGetPixel(BIG, 500, 500) == kRed,
+                "...and the probes still read the right colour");
+        doc->WindowDelete(SMALL);
+        doc->WindowDelete(BIG);
     }
 
     // ── deletion ───────────────────────────────────────────────────────────

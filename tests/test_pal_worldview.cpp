@@ -14,6 +14,7 @@
 #include "scripting/errors.h"
 #include "pal/iworldview.h"
 #include "pal/scroll_geometry.h"
+#include "pal/text_rect.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1080,6 +1081,93 @@ TEST(ScrollGeometry, UnmeasuredPaneIsAtTheBottom)
     // brand-new window would freeze before its first line ever arrived.
     EXPECT_TRUE(pal::isScrolledToBottom(0, 0, 300, 1500));
     EXPECT_EQ(0, pal::maxScrollUnit(0, 300, 1500));
+}
+
+// ── world.TextRectangle: the offset-from-edge form ────────────────────────
+//
+// A right or bottom of <= 0 means "that many pixels in from the far edge" —
+// world.TextRectangle(0, 0, -200, 0) reserves the rightmost 200 pixels for a
+// docked miniwindow.  Windows resolves it in CMUSHView::GetTextRectangle; both
+// wx consumers (COutputPane::TextRect for the clip + visual wrap,
+// EffectiveTextCols for m_nWrapColumn + NAWS) used to treat a non-positive edge
+// as "not given" and hand the text the FULL client width, so it wrapped late and
+// drew underneath the miniwindow.
+TEST(TextRect, NegativeRightIsAnOffsetFromTheRightEdge)
+{
+    int l = 0, t = 0, r = -200, b = 0;
+    pal::resolveTextRect(l, t, r, b, 800, 600);
+    EXPECT_EQ(0,   l);
+    EXPECT_EQ(600, r);            // 800 - 200
+    EXPECT_EQ(600, b);            // bottom 0 → the full client height
+    EXPECT_EQ(600, pal::textRectWidth(0, 0, -200, 0, 800));
+}
+
+TEST(TextRect, ZeroFarEdgeMeansTheClientEdge)
+{
+    // 0 is the <= 0 case too: 0 + clientW == clientW.
+    int l = 100, t = 0, r = 0, b = 0;
+    pal::resolveTextRect(l, t, r, b, 800, 600);
+    EXPECT_EQ(800, r);
+    EXPECT_EQ(600, b);
+}
+
+TEST(TextRect, PositiveEdgesArePassedThroughUnchanged)
+{
+    int l = 10, t = 20, r = 300, b = 400;
+    pal::resolveTextRect(l, t, r, b, 800, 600);
+    EXPECT_EQ(10, l); EXPECT_EQ(20, t); EXPECT_EQ(300, r); EXPECT_EQ(400, b);
+    EXPECT_EQ(290, pal::textRectWidth(10, 20, 300, 400, 800));
+}
+
+TEST(TextRect, AnOverlargeOffsetIsFlooredAtTwentyPixels)
+{
+    // mushview.cpp: max (TextRectangle.right, TextRectangle.left + 20) — an
+    // offset bigger than the window must not invert the rectangle.
+    int l = 50, t = 0, r = -900, b = -900;
+    pal::resolveTextRect(l, t, r, b, 800, 600);
+    EXPECT_EQ(70, r);             // left + 20
+    EXPECT_EQ(20, b);             // top + 20
+}
+
+TEST(TextRect, AllZeroMeansNoRectangleAtAll)
+{
+    // CMUSHView::HaveTextRectangle: the all-zero rect is the "unset" sentinel
+    // and must NOT be resolved — resolving it would produce the whole client
+    // rect anyway, but textRectWidth has to answer the full pane width without
+    // the caller having to special-case it.
+    EXPECT_TRUE (pal::textRectIsUnset(0, 0, 0, 0));
+    EXPECT_FALSE(pal::textRectIsUnset(0, 0, -200, 0));
+    EXPECT_EQ(800, pal::textRectWidth(0, 0, 0, 0, 800));
+}
+
+TEST(TextRect, AWiderRectangleDoesNotWidenTheText)
+{
+    // A rectangle wider than the pane cannot buy extra columns: the text is
+    // still bounded by the window (GetOutputWindowWidth is a client measure).
+    EXPECT_EQ(800, pal::textRectWidth(0, 0, 5000, 0, 800));
+}
+
+TEST(TextRect, WrapColumnsSubtractThePixelOffsetOnce)
+{
+    // mushview.cpp:3220 — (GetOutputWindowWidth() - m_iPixelOffset) / charW.
+    EXPECT_EQ(80, pal::textWrapColumns(800, 0,  10));
+    EXPECT_EQ(79, pal::textWrapColumns(800, 10, 10));
+    EXPECT_EQ(1,  pal::textWrapColumns(800, 0,  0));    // font not measured yet
+    EXPECT_EQ(1,  pal::textWrapColumns(5,   20, 10));   // offset wider than the pane
+}
+
+TEST(TextRect, TheEngineWrapAndTheVisualWrapAgreeOnTheOffsetForm)
+{
+    // The whole point of sharing the two helpers: EffectiveTextCols (engine
+    // wrap + NAWS) and RebuildWrapCache (visual wrap) must land on the same
+    // number for the same reserved rectangle, offset form included.
+    const int paneW = 800, charW = 10, pixOff = 4;
+    const int reserved = pal::textRectWidth(0, 0, -200, 0, paneW);
+    EXPECT_EQ(600, reserved);
+    EXPECT_EQ(59, pal::textWrapColumns(reserved, pixOff, charW));  // (600-4)/10
+    // ...and that is narrower than the unreserved pane, which is the bug the
+    // dropped offset form hid: it used to answer the full 79 columns.
+    EXPECT_EQ(79, pal::textWrapColumns(paneW, pixOff, charW));
 }
 
 // ── omit-from-output must rewind the GUI emission cursor ──────────────────

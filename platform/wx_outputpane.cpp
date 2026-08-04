@@ -1871,6 +1871,19 @@ void COutputPane::AutoCopySelection()
 {
     SelPoint s, e;
     if (!GetNormalizedSel(s, e)) return;
+
+    // Materialise the selection ONLY if something is going to consume it.  On
+    // macOS with copy_selection_to_clipboard off -- the default -- nothing
+    // does, yet every mouse release with a selection used to build the whole
+    // thing: for a Select All over a large scrollback that is the entire buffer
+    // decoded into a wxString, freed immediately, on every click.
+#ifdef __WXGTK__
+    const bool wanted = true;          // the X11 primary selection always wants it
+#else
+    const bool wanted = m_copySelToClip;
+#endif
+    if (!wanted) return;
+
     const wxString text = SelectedText();
     if (text.IsEmpty()) return;
 
@@ -2802,6 +2815,17 @@ wxString COutputPane::SelectedText() const
     int hi = std::min((int)m_lines.size() - 1, selEnd.line);
 
     wxString result;
+    // Reserve from the wrap cache's per-line character counts rather than
+    // growing geometrically: a multi-hundred-megabyte selection otherwise
+    // reallocates and copies its way up in doubling steps, and wxString on this
+    // build is not a cheap thing to copy.  An estimate is enough -- reserve
+    // never has to be exact, only close.
+    {
+        size_t estimate = 0;
+        for (int i = lo; i <= hi && i < (int)m_lineChars.size(); ++i)
+            estimate += (size_t)m_lineChars[(size_t)i] + 1;   // +1 for the newline
+        if (estimate) result.reserve(estimate);
+    }
     for (int i = lo; i <= hi; ++i) {
         if (!m_lines[i].empty() && m_lines[i][0].horiz_rule) {
             result += wxT("────────────────────────────────────────\n");

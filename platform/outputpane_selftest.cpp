@@ -28,6 +28,7 @@
 #include <wx/clipbrd.h>
 #include "platform/wx_outputpane.h"
 
+#include <chrono>
 #include <cstdio>
 #include <string>
 
@@ -570,6 +571,72 @@ void TestFindNext()
             "after Clear Output there is nothing to find");
 }
 
+// ── 8. A mouse release does no work the world did not ask for ─────────────
+//
+// AutoCopySelection used to materialise SelectedText() before looking at
+// copy_selection_to_clipboard -- so on macOS with the option OFF (the default)
+// every mouse release with a selection decoded the whole selection into a
+// wxString and immediately freed it.  With Select All over a large scrollback
+// that is the entire buffer, per click.
+//
+// A complexity pin, not a stopwatch: the same number of release cycles over the
+// same selection, with the option off and on.  The bound is deliberately loose
+// so ordinary noise cannot fail it while still being far below the regression.
+void TestReleaseDoesNotMaterialiseUnlessAsked()
+{
+    printf("a mouse release only builds the selection when something wants it\n");
+
+    Harness h;
+    h.Feed(4000);
+    h.pane->SelectAll();
+    opCheck(!h.pane->GetSelectionText().IsEmpty(),
+            "the fixture really has a large selection");
+
+    const int cw = h.pane->CharWidth();
+    const int lh = h.pane->LineHeight();
+    // OnLeftUp only runs the auto-copy on a release that ENDS A DRAG, so each
+    // cycle has to be a real down-move-up.  SelectAll between the move and the
+    // release widens the region to the whole buffer without leaving the drag,
+    // which is the case that used to cost the most.
+    auto releases = [&](int n) {
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < n; ++i) {
+            SendMouse(h.pane, wxEVT_LEFT_DOWN, 0, lh / 2);
+            SendMouse(h.pane, wxEVT_MOTION, cw * 5, lh / 2, /*leftDown*/ true);
+            h.pane->SelectAll();
+            SendMouse(h.pane, wxEVT_LEFT_UP, cw * 5, lh / 2);
+        }
+        const auto t1 = std::chrono::steady_clock::now();
+        return std::chrono::duration<double, std::milli>(t1 - t0).count();
+    };
+
+    h.pane->SetCopySelectionToClipboard(false);
+    releases(3);                                   // warm
+    const double off = releases(30);
+
+    // With the option ON the work is real and unavoidable -- that arm is the
+    // control, and it is what makes "off is cheap" meaningful rather than
+    // vacuous.  (It also touches the clipboard, so save and restore it.)
+    const std::string saved = ClipboardText();
+    h.pane->SetCopySelectionToClipboard(true);
+    releases(3);
+    const double on = releases(30);
+    h.pane->SetCopySelectionToClipboard(false);
+    if (!saved.empty()) SetClipboardText(saved);
+
+    // "off is cheaper than on" is NOT enough: with the guard removed the off
+    // arm still skips the clipboard write, so it comes out a few times faster
+    // and a plain `off < on` passes the very mutation this exists to catch
+    // (measured: 62ms vs 242ms unguarded, against 0.1ms vs 253ms guarded).
+    // Require it to be an order of magnitude cheaper, with a 1ms floor so a
+    // sub-millisecond measurement cannot make the ratio meaningless.
+    const bool ok = (off * 10.0 + 1.0) < on;
+    printf("  [%s] 30 releases: option off %.1fms vs on %.1fms "
+           "(off*10+1 must stay under on)\n",
+           ok ? "PASS" : "FAIL", off, on);
+    (ok ? g_pass : g_fail)++;
+}
+
 } // namespace
 
 int RunOutputPaneSelfTest()
@@ -583,6 +650,7 @@ int RunOutputPaneSelfTest()
     TestTextRectangleOffsetForm();
     TestLeaveWindowCancelsMouseOver();
     TestFindNext();
+    TestReleaseDoesNotMaterialiseUnlessAsked();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

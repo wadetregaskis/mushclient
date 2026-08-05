@@ -3816,6 +3816,73 @@ CStyle * pNewStyle = NEWSTYLE;
   } // end of CMUSHclientDoc::AddStyle 
 
 
+// ── DeleteHeadLines ─────────────────────────────────────────────────────────
+// Discard the OLDEST `count` committed lines, freeing them.
+//
+// RemoveChunk is the only other head deletion and it is fixed at JUMP_SIZE, so
+// there was no way to drop an arbitrary number.  This is what the macOS-shaped
+// clear commands need:
+//
+//   Clear Scrollback        drop everything above the first VISIBLE line
+//   Clear to Previous Mark  drop everything above the last USER_INPUT line
+//
+// Both are "keep the recent part, free the rest", which is the one operation
+// that genuinely returns memory on a long unlimited-scrollback session --
+// Clear Output Buffer (the canonical Windows command) frees everything, and
+// Clear Screen frees nothing.
+//
+// The jump index cannot renumber a partial chunk the way DropFirstChunk does,
+// so it is rebuilt; that is O(surviving lines), paid once per explicit user
+// command rather than per line.
+void CMUSHclientDoc::DeleteHeadLines (long count)
+  {
+  if (count <= 0)
+    return;
+  // Never take the in-progress line: it is the list's tail and the drain has
+  // not emitted it, so removing it would strand the view's pending row.
+  const long committed = m_LineList.GetCount () - (m_pCurrentLine ? 1 : 0);
+  if (count > committed)
+    count = committed;
+  if (count <= 0)
+    return;
+
+  for (long i = 0; i < count && !m_LineList.IsEmpty (); i++)
+    {
+    delete m_LineList.GetHead ();
+    m_LineList.RemoveHead ();
+    }
+
+#ifndef _WIN32
+  // The GUI has already seen these lines; tell the view how many to drop and
+  // wind the emission cursor back by the same amount, exactly as RemoveChunk
+  // does for its own eviction.
+  const long dropped = std::min (count, m_gui_lines_emitted);
+  m_gui_lines_emitted = std::max (0L, m_gui_lines_emitted - count);
+  if (dropped > 0)
+    DeleteOutputHeadLines (dropped);
+#endif
+
+  // Rebuild the jump index from what survived (one Append per chunk head).
+  m_LinePositions.BeginRebuild ();
+  long i = 0;
+  for (POSITION pos = m_LineList.GetHeadPosition (); pos; i++)
+    {
+    if (i % JUMP_SIZE == 0)
+      m_LinePositions.Append (pos);
+    m_LineList.GetNext (pos);
+    }
+  if (i == 0)
+    m_LinePositions.Reset (m_LineList.GetHeadPosition ());
+
+  // A find cursor into a freed line is a dangling read, so reset it -- the same
+  // reason ClearOutput does (doc.cpp).
+  m_DisplayFindInfo.m_nCurrentLine  = 0;
+  m_DisplayFindInfo.m_pFindPosition = NULL;
+  m_DisplayFindInfo.m_bAgain        = FALSE;
+
+  UpdateAllViews (NULL);
+  }  // end of CMUSHclientDoc::DeleteHeadLines
+
  void CMUSHclientDoc::RemoveChunk (void)
    {
   int i;

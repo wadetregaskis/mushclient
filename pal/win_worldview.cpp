@@ -625,6 +625,23 @@ public:
         }
     }
 
+    void deleteHeadLines(long /*n*/) override
+    {
+        // DeleteHeadLines (doc_shared.cpp): the engine already freed the
+        // list; resync the views' scrollbar state
+        for (POSITION pos = m_pDoc->GetFirstViewPosition(); pos != NULL; )
+        {
+            CView* pView = m_pDoc->GetNextView(pos);
+
+            if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
+            {
+                CMUSHView* pmyView = (CMUSHView*)pView;
+
+                pmyView->addedstuff();
+            }
+        }
+    }
+
     void setScroll(long line) override
     {
         // SetScroll (methods_output.cpp), scroll half only — the seam does

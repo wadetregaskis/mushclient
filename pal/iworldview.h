@@ -124,6 +124,10 @@ public:
     // Buffer trim (world.DeleteLines / buffer-size change): drop the last n
     // lines from the display.
     virtual void deleteLines(long n) = 0;
+    // Drop the OLDEST n lines the view is showing.  deleteLines above takes
+    // them off the TAIL (world.DeleteLines); this is the head, which is what
+    // Clear Scrollback and Clear to Previous Mark need.
+    virtual void deleteHeadLines(long n) = 0;
     // world.SetScroll: -1 = bottom (resume auto-scroll), 0 = top,
     // > 0 = 1-based line. (-2 "no change" is filtered engine-side.)
     virtual void setScroll(long line) = 0;

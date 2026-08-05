@@ -164,6 +164,7 @@ public:
     void        beginBatch() override;
     void        endBatch() override;
     void        deleteLines(long n) override;
+    void        deleteHeadLines(long n) override;
     void        setScroll(long line) override;
     void        setOutputSelection(int startLine, int endLine,
                                    int startCol, int endCol) override;

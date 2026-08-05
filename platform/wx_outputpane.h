@@ -137,6 +137,9 @@ public:
     // Remove up to `count` lines from the tail of m_lines (most-recent output).
     // Called when Lua scripts call world.DeleteLines(n).
     void DeleteTailLines(long count);
+    // Remove `count` lines from the FRONT (oldest).  Clear Scrollback and
+    // Clear to Previous Mark, after the engine has freed the same lines.
+    void DeleteHeadLines(long count);
 
     // Adjust font size by delta points.  Returns new size.
     int AdjustFontSize(int delta);

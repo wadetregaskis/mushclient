@@ -713,7 +713,72 @@ TEST(Utilities, ConvertToRegularExpressionPassesHighBytesThrough)
                  (const char*) ConvertToRegularExpression(".caf\xc3\xa9.", true, true));
 }
 
-// doc_portable.cpp GetLinePosition: "sanity check (Santa Claus): nLine >
+// ── DeleteHeadLines: the primitive behind the macOS clear commands ─────────
+//
+// RemoveChunk is fixed at JUMP_SIZE, so there was no way to drop an arbitrary
+// number of the OLDEST lines.  Clear Scrollback (everything above the first
+// visible line) and Clear to Previous Mark (everything above the last user
+// input) are both that operation with different cut points, and both are the
+// only clear that genuinely returns memory on a long unlimited session --
+// Clear Output Buffer frees everything, Clear Screen frees nothing.
+TEST(Utilities, DeleteHeadLinesDropsTheOldestAndRenumbers)
+{
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_maxlines = 0;                      // unlimited: nothing else may trim
+    doc.AllocateLinePositions();
+
+    char buf[32];
+    for (int i = 1; i <= 500; i++) {
+        snprintf(buf, sizeof buf, "line %d\n", i);
+        doc.DisplayMsg(buf, (int)strlen(buf), 0);
+    }
+    ASSERT_EQ(501, (int)doc.m_LineList.GetCount());   // 500 done + the in-progress one
+
+    doc.DeleteHeadLines(200);
+    EXPECT_EQ(301, (int)doc.m_LineList.GetCount());
+
+    // The survivors keep their text and are addressable through the rebuilt
+    // jump index -- an index left stale here does not crash, it silently
+    // returns a line a multiple of 100 away.
+    VARIANT v = doc.GetLineInfo(1, 1);
+    ASSERT_EQ((unsigned short)VT_BSTR, v.vt);
+    EXPECT_STREQ("line 201", (const char*)CString(v.bstrVal));
+    VariantClear(&v);
+    v = doc.GetLineInfo(300, 1);
+    ASSERT_EQ((unsigned short)VT_BSTR, v.vt);
+    EXPECT_STREQ("line 500", (const char*)CString(v.bstrVal));
+    VariantClear(&v);
+}
+
+TEST(Utilities, DeleteHeadLinesNeverTakesTheInProgressLine)
+{
+    // The in-progress line is the list's tail and the drain has not emitted it,
+    // so taking it would strand the view's pending prompt row.  Asking for more
+    // than there are clamps to the committed count.
+    CMUSHclientDoc doc;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_maxlines = 0;
+    doc.AllocateLinePositions();
+
+    doc.DisplayMsg("one\ntwo\n", 8, 0);
+    doc.DisplayMsg("a prompt with no newline", 24, 0);
+    const int before = (int)doc.m_LineList.GetCount();
+    EXPECT_EQ(3, before);                    // two committed + the prompt
+
+    doc.DeleteHeadLines(9999);
+    EXPECT_EQ(1, (int)doc.m_LineList.GetCount());   // only the prompt survives
+    EXPECT_TRUE(doc.m_pCurrentLine != NULL);
+    EXPECT_EQ(24, doc.m_pCurrentLine->len);
+
+    doc.DeleteHeadLines(5);                  // nothing committed left to take
+    EXPECT_EQ(1, (int)doc.m_LineList.GetCount());
+    doc.DeleteHeadLines(0);
+    doc.DeleteHeadLines(-1);
+    EXPECT_EQ(1, (int)doc.m_LineList.GetCount());
+}
+
+// doc_portable.cpp GetLinePosition: "sanity check (Santa Claus): nLine >// doc_portable.cpp GetLinePosition: "sanity check (Santa Claus): nLine >
 // count → clamped, nLine < 0 → 0; ... not there? assume last one in the
 // list" — out-of-range line numbers always yield a valid POSITION.
 TEST(Utilities, GetLinePositionClampsOutOfRangeLineNumbers)

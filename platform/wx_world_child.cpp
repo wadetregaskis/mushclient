@@ -4633,6 +4633,13 @@ void CWorldChildFrame::deleteLines(long n)
     if (m_output) m_output->DeleteTailLines(n);
 }
 
+void CWorldChildFrame::deleteHeadLines(long n)
+{
+    // The engine has already freed the oldest n lines (DeleteHeadLines); drop
+    // the pane's copies of the same ones from the FRONT.
+    if (m_output) m_output->DeleteHeadLines(n);
+}
+
 // world.SetScroll(line): -1 = bottom (resume auto-scroll, matching Windows'
 // "-1 goes to the end"), 0 = top, > 0 = 1-based line number.
 // (-2 "no change" is filtered engine-side.)

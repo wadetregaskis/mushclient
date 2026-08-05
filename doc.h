@@ -1738,6 +1738,9 @@ public:
   void DeleteOutputLines(long n) {
       if (m_pWorldView) m_pWorldView->deleteLines(n);
   }
+  void DeleteOutputHeadLines(long n) {
+      if (m_pWorldView) m_pWorldView->deleteHeadLines(n);
+  }
   void EmitScroll(long line) {
       if (m_pWorldView) m_pWorldView->setScroll(line);
   }
@@ -2409,6 +2412,11 @@ public:
   POSITION GetLinePosition (long nLine);
   long GetLastLine (void);
   void RemoveChunk (void);
+  // Discard the OLDEST `count` committed lines, freeing them.  RemoveChunk
+  // is fixed at JUMP_SIZE; this takes an arbitrary number, which is what
+  // Clear Scrollback / Clear to Previous Mark need.  Defined in
+  // doc_shared.cpp.
+  void DeleteHeadLines (long count);
 
   void InterpretANSIcode (const int iCode);
   void Interpret256ANSIcode (const int iCode);

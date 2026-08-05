@@ -523,6 +523,36 @@ void COutputPane::SetMaxLines(int n)
     }
 }
 
+// ── DeleteHeadLines ───────────────────────────────────────────────────────
+// The oldest `count` lines, after the engine has freed the same ones
+// (CMUSHclientDoc::DeleteHeadLines).  Uses the SAME bookkeeping the capacity
+// trim in AppendLine does -- PopFrontWrapCache keeps the wrap cache and the
+// visual-row base consistent in O(1) per line, and the selection indices shift
+// down with the content.
+void COutputPane::DeleteHeadLines(long count)
+{
+    if (count <= 0 || m_lines.empty()) return;
+    const long toRemove = std::min(count, (long) m_lines.size());
+
+    for (long i = 0; i < toRemove; ++i) {
+        m_lines.pop_front();
+        PopFrontWrapCache();
+        if (m_selAnchor.valid()) {
+            if (m_selAnchor.line == 0) m_selAnchor = SelPoint{};
+            else --m_selAnchor.line;
+        }
+        if (m_selFocus.valid()) {
+            if (m_selFocus.line == 0) m_selFocus = SelPoint{};
+            else --m_selFocus.line;
+        }
+    }
+    m_trimmedCount += (int) toRemove;
+    ++m_bufferGen;
+
+    UpdateScrollbars(m_autoScroll);
+    Refresh(false);
+}
+
 void COutputPane::DeleteTailLines(long count)
 {
     if (count <= 0 || m_lines.empty()) return;

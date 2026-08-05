@@ -111,6 +111,8 @@ struct FakeWorldView : pal::IWorldView {
     void beginBatch() override { ++batchBegins; }
     void endBatch() override   { ++batchEnds; }
     void deleteLines(long n) override { deletedLines += n; }
+    long deletedHeadLines = 0;
+    void deleteHeadLines(long n) override { deletedHeadLines += n; }
     void setScroll(long line) override { scrolledTo = line; }
     void setOutputSelection(int sl, int el, int sc, int ec) override {
         selSL = sl; selEL = el; selSC = sc; selEC = ec;

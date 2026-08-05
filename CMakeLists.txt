@@ -889,6 +889,7 @@ if(NOT WIN32)
             # (--world-frame-selftest): needs the real frame + pane, so it lives
             # with them rather than in mushgui_adapters.
             platform/world_frame_selftest.cpp
+            platform/menubar_selftest.cpp
             # The three canonical toolbars (Standard/World/Activity) over
             # wxToolBar, using the shipped Windows strips.  wxOSX hides the MDI
             # parent, so these hang off each world window like the status bar.

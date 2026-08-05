@@ -1093,7 +1093,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     cfgMenu->Append(ID_MENU_CFG_ALIASES,   wxT("&Aliases…\tCtrl+Shift+A"));
     cfgMenu->Append(ID_MENU_CFG_TIMERS,    wxT("T&imers…\tCtrl+Shift+I"));
     cfgMenu->AppendSeparator();
-    cfgMenu->Append(ID_MENU_CFG_VARIABLES, wxT("&Variables…\tCtrl+Shift+V"));
+    // Shift+Ctrl+7 is what the canonical menu resource gives this command
+    // (mushclient_dialogs.rc:3077, ID_GAME_CONFIGURE_VARIABLES).  The port had
+    // invented Ctrl+Shift+V, which is ALSO the canonical accelerator for
+    // Edit ▸ Paste To World (rc:2955) -- so the two commands claimed one key
+    // and exactly one of them got it, silently.  The three Configure items
+    // above still carry port-invented mnemonics rather than the resource's
+    // Shift+Ctrl+8/9/0; those clash with nothing, so they are left alone.
+    cfgMenu->Append(ID_MENU_CFG_VARIABLES, wxT("&Variables…\tShift+Ctrl+7"));
     cfgMenu->AppendSeparator();
     cfgMenu->Append(ID_MENU_CFG_MACROS,   wxT("&Macros && Keypad…"));
     cfgMenu->Append(ID_MENU_CFG_COLORS,   wxT("&Colors…"));

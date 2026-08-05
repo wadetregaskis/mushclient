@@ -171,6 +171,12 @@ if(TARGET mushgui)
     # which are GUI-side and so unreachable from the headless executables.
     add_test(NAME selftest_world_frame
              COMMAND $<TARGET_FILE:mushgui> --world-frame-selftest ${_selftest_args})
+
+    # The real menu bar: every accelerator parses, none is claimed twice, and
+    # the four macOS-shaped clears are where they say they are.  Both failure
+    # modes it covers are silent -- see platform/menubar_selftest.cpp.
+    add_test(NAME selftest_menubar
+             COMMAND $<TARGET_FILE:mushgui> --menubar-selftest ${_selftest_args})
     # COutputPane is a wxScrolledWindow in mushgui_adapters, so the headless
     # tests cannot construct it: the selection/freeze/scrollback behaviour is
     # only reachable from inside the app.

@@ -51,6 +51,13 @@ int RunWxCompositeSelfTest();
 // headless mushcore test executables cannot link.
 int RunWorldFrameSelfTest();
 
+// In-app conformance harness for the REAL menu bar (platform/menubar_selftest.cpp),
+// run via the hidden --menubar-selftest flag.  The menu bar is built inside the
+// MFC->wx bridge hook, so no headless executable can see it -- and its two
+// failure modes (an accelerator wx cannot parse, two commands claiming the same
+// key) are both completely silent.
+int RunMenuBarSelfTest();
+
 // In-app conformance harness for the five embedded scripting engines
 // (platform/engines_selftest.cpp), run via the hidden --engines-selftest flag.
 // They cannot be tested headlessly: each pulls in a whole interpreter, which the
@@ -198,6 +205,16 @@ public:
         for (int i = 1; i < argc; ++i) {
             if (wxString(argv[i]) == wxT("--world-frame-selftest")) {
                 const int failures = RunWorldFrameSelfTest();
+                std::exit(failures == 0 ? 0 : 1);
+            }
+        }
+        // The menu-bar harness runs the bridge's own main-frame hook, so it
+        // needs the hooks installed too -- and, like the others, exits before
+        // InitInstance, so no world is opened and the geometry SAVE (which is
+        // on close) never runs.
+        for (int i = 1; i < argc; ++i) {
+            if (wxString(argv[i]) == wxT("--menubar-selftest")) {
+                const int failures = RunMenuBarSelfTest();
                 std::exit(failures == 0 ? 0 : 1);
             }
         }

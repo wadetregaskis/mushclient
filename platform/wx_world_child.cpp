@@ -4441,6 +4441,17 @@ long CWorldChildFrame::ClearScrollback()
     return count;
 }
 
+// ── ClearScreen ───────────────────────────────────────────────────────────
+// Display ▸ Clear Screen (⌃⌘L).  Purely a scroll: the last line goes to the
+// top of the viewport and the scrollback stays exactly where it was, which is
+// what Terminal.app's command does and why it is the only clear you can undo
+// (scroll back up).  Nothing is freed, so it is also the only one that is safe
+// to reach for by reflex on a session you care about.
+bool CWorldChildFrame::ClearScreen()
+{
+    return m_output && m_output->ClearScreen();
+}
+
 void CWorldChildFrame::setPaused(bool paused)
 {
     if (m_output) m_output->SetPaused(paused);

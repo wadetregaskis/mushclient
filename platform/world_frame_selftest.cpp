@@ -536,6 +536,63 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── Clear Screen erases nothing and scrolls the last line to the top ─────
+    // The fourth clear, and the odd one out: no line is freed, so the only
+    // observable effects are the scroll position and the blank region opened
+    // below the last line.  Both are checked, because a version that merely
+    // scrolled to the bottom would look identical from the outside on a buffer
+    // shorter than a screenful.
+    {
+        pane->ClearOutput();
+        doc->ClearOutput();
+        for (int i = 1; i <= 300; ++i) {
+            char buf[32];
+            snprintf(buf, sizeof buf, "screen line %d\n", i);
+            doc->DisplayMsg(buf, (int) strlen(buf), 0);
+        }
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const int  lines  = pane->LineCount();
+        const long before = doc->m_LineList.GetCount();
+        check(lines == 300, "wrap-up: 300 lines to scroll through");
+        check(pane->OverscrollRows() == 0, "...and no blank region yet");
+
+        auto* childFrame = dynamic_cast<CWorldChildFrame*>(child);
+        check(childFrame && childFrame->ClearScreen(),
+              "Ctrl-Cmd-L reports it moved the view");
+        wxYield();
+
+        check(doc->m_LineList.GetCount() == before,
+              "...and freed NOTHING: every line is still in the engine buffer");
+        check(pane->LineCount() == lines, "...and still in the pane");
+        check(pane->OverscrollRows() > 0,
+              "...having opened a blank region to scroll the last line into");
+        check(pane->FirstVisibleLine() == lines - 1,
+              "...which puts the LAST line at the top of the viewport");
+
+        // The blank region is consumed by output, not added to: the next line
+        // lands below the last one rather than pushing the view down again.
+        const long long blank = pane->OverscrollRows();
+        doc->DisplayMsg("and one more\n", 13, 0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        check(pane->OverscrollRows() < blank,
+              "new output eats into the blank region rather than extending it");
+
+        // Scrolling back up must still reach the very first line -- "erases
+        // nothing" is the whole claim.
+        pane->ScrollToTop();
+        wxYield();
+        check(pane->FirstVisibleLine() == 0,
+              "...and the scrollback is all still reachable");
+
+        pane->ClearOutput();
+        doc->ClearOutput();
+        check(pane->OverscrollRows() == 0,
+              "clearing the buffer takes the blank region with it");
+    }
+
     // ── Ctrl+L is the canonical Clear Output Buffer, not a pane-only wipe ─────
     // COutputPane::ClearOutput touches the pane's own deque only; the engine's
     // m_LineList is what world.GetLinesInBufferCount() reports and what

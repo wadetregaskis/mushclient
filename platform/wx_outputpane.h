@@ -215,6 +215,19 @@ public:
     // when the buffer is empty or already scrolled to the top.
     int FirstVisibleLine() const;
 
+    // Clear Screen (⌃⌘L): scroll the last line to the TOP of the viewport,
+    // erasing nothing.  Opens a blank region below it to scroll into, which
+    // the output that follows then fills — Terminal.app's overscroll, and the
+    // one clear that costs no scrollback.  Returns false when the buffer is
+    // empty or the viewport cannot be measured.
+    bool ClearScreen();
+
+    // Blank rows currently reserved below the last line.  Read-only, for the
+    // in-app selftest: the effect of ClearScreen is otherwise only visible as
+    // a scroll position, which is exactly what a broken implementation also
+    // produces.
+    long long OverscrollRows() const { return m_overscrollRows; }
+
     // Scroll one page up (direction=-1) or down (+1).
     // Updates the auto-scroll state accordingly.
     void ScrollPage(int direction);
@@ -614,6 +627,12 @@ private:
     // Every product with m_lineH goes through pal::rowsToPixels.
     long long             m_totalVisualRows = 0;
     int                   m_wrapCols        = 80;
+    // Blank rows below the last line, opened by Clear Screen (⌃⌘L) so the last
+    // line can be scrolled to the TOP of the viewport.  Part of the scrollable
+    // extent only: no line maps into it, so it paints as background and every
+    // pixel-to-line mapping ignores it.  Consumed row for row by the output
+    // that follows, and cleared outright by anything that rebuilds the buffer.
+    long long             m_overscrollRows  = 0;
 
     // Rendered character count per line, parallel to m_lines.  AppendLine
     // already computes this to update m_maxLineChars; caching it turns

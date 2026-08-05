@@ -406,6 +406,12 @@ void COutputPane::AppendLine(SOutputLine&& line)
                  : 1;
         m_visualRowStart.push_back(m_rowBase + m_totalVisualRows);
         m_totalVisualRows += wc;
+        // Clear Screen's blank space is consumed by the output that follows it,
+        // exactly as Terminal.app's is: the virtual height stays put while real
+        // rows replace padding ones, so the newest line lands where the blank
+        // region began instead of pushing the whole view down.
+        if (m_overscrollRows > 0)
+            m_overscrollRows = std::max(0LL, m_overscrollRows - wc);
     }
 
     m_lineChars.push_back(lineChars);
@@ -667,6 +673,48 @@ int COutputPane::FirstVisibleLine() const
     return std::max(0, std::min((int) m_lines.size() - 1, line));
 }
 
+// ── ClearScreen ───────────────────────────────────────────────────────────
+// Terminal.app's ⌃⌘L: put the last line at the TOP of the viewport and erase
+// nothing.  The scrollback is untouched -- scroll up and it is all still
+// there -- which is the whole point, and the reason this is the one clear that
+// frees no memory.
+//
+// It needs somewhere to scroll TO.  Ordinarily the last line can only reach
+// the BOTTOM of the viewport, because wxScrolled clamps the position to
+// (range - page).  So reserve a page of blank rows below it, which
+// UpdateScrollbars adds to the virtual height and AppendLine gives back one
+// row at a time as real output arrives.
+bool COutputPane::ClearScreen()
+{
+    if (m_lines.empty() || m_lineH <= 0) return false;
+
+    int clientH = 0;
+    GetClientSize(nullptr, &clientH);
+    const int pageRows = clientH / m_lineH;
+    if (pageRows <= 1) return false;      // nothing to push it up by
+
+    // Where the last line starts, on the absolute row axis.
+    const long long lastRow = RowStartOf((int) m_lines.size() - 1);
+
+    // Enough blank rows that `lastRow` survives Scroll()'s clamp to
+    // (range - page).  Anything already reserved counts towards it.
+    m_overscrollRows = std::max(m_overscrollRows, (long long) pageRows - 1);
+    UpdateScrollbars(false);
+
+    int unitH = 0;
+    GetScrollPixelsPerUnit(nullptr, &unitH);
+    if (unitH <= 0) return false;
+    Scroll(0, pal::pixelsToScrollUnits(pal::rowsToPixels(lastRow, m_lineH), unitH));
+
+    // The user has deliberately parked the view; auto-scroll would undo it on
+    // the next line of output.  Same reasoning as ScrollToLine.
+    const bool wasAuto = m_autoScroll;
+    m_autoScroll = false;
+    if (wasAuto && m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
+    Refresh(false);
+    return true;
+}
+
 void COutputPane::ScrollToLine(int lineIdx)
 {
     if (m_lines.empty()) return;
@@ -876,6 +924,7 @@ void COutputPane::ClearOutput()
     m_lineChars.clear();
     m_rowBase = 0;
     m_totalVisualRows    = 0;
+    m_overscrollRows     = 0;   // no last line left to hold at the top
     UpdateScrollbars(true);
     Refresh();
 }
@@ -1671,8 +1720,13 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
     // Add one row for the in-progress (pending) line when it has content.
     int pendingRows = (!m_pendingLine.empty()) ? 1 : 0;
     // 64-bit: this is THE product that overflows.  See pal::rowsToPixels.
+    // m_overscrollRows is the blank region Clear Screen (⌃⌘L) opened below the
+    // last line so that line could sit at the top of the viewport.  It is part
+    // of the scrollable extent and nothing else -- no line maps into it, so it
+    // paints as background and every pixel-to-line mapping ignores it.
     const long long totalH64 =
-        pal::rowsToPixels(m_totalVisualRows + pendingRows, m_lineH);
+        pal::rowsToPixels(m_totalVisualRows + pendingRows + m_overscrollRows,
+                          m_lineH);
 
     // Virtual width = client width: horizontal scrolling is disabled; long
     // lines are visually wrapped rather than requiring H-scroll.

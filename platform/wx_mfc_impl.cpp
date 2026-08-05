@@ -142,6 +142,7 @@ static const int ID_MENU_VIEW_ALWAYSONTOP = wxID_HIGHEST + 430;
 static const int ID_MENU_DISPLAY_CLEAR_TO_START = wxID_HIGHEST + 431;
 static const int ID_MENU_DISPLAY_CLEAR_TO_MARK  = wxID_HIGHEST + 432;
 static const int ID_MENU_DISPLAY_CLEAR_SCROLLBACK = wxID_HIGHEST + 433;
+static const int ID_MENU_DISPLAY_CLEAR_SCREEN     = wxID_HIGHEST + 434;
 // Canonical command ids, not private wxIDs: world.DoCommand("FullScreenMode")
 // and world.DoCommand("ViewStatusbar") post these through
 // Frame.PostMessage -> hook_post_message -> wxEVT_MENU, and accelerators.cpp
@@ -1043,6 +1044,9 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                         wxT("Clear to Previous &Mark\tCtrl+L"));
     displayMenu->Append(ID_MENU_DISPLAY_CLEAR_SCROLLBACK,
                         wxT("Clear Scroll&back\tAlt+Ctrl+K"));
+    // Erases nothing: the last line goes to the top and the scrollback stays.
+    displayMenu->Append(ID_MENU_DISPLAY_CLEAR_SCREEN,
+                        wxT("Clear Scr&een\tRawCtrl+Ctrl+L"));
     // Output-selection commands (reimplemented on CWorldChildFrame).
     displayMenu->AppendSeparator();
     displayMenu->Append(32275 /*ID_DISPLAY_GOTOURL*/,         wxT("Go To &URL\tCtrl+Alt+J"));
@@ -1668,13 +1672,15 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         // ── Display menu: the three macOS-shaped clears ────────────────────
         // Each frees a different slice of the buffer; none of them is Clear
         // Output Buffer, which erases the lot and is the canonical command.
-        if (id == ID_MENU_DISPLAY_CLEAR_TO_START ||
-            id == ID_MENU_DISPLAY_CLEAR_TO_MARK  ||
-            id == ID_MENU_DISPLAY_CLEAR_SCROLLBACK) {
+        if (id == ID_MENU_DISPLAY_CLEAR_TO_START   ||
+            id == ID_MENU_DISPLAY_CLEAR_TO_MARK    ||
+            id == ID_MENU_DISPLAY_CLEAR_SCROLLBACK ||
+            id == ID_MENU_DISPLAY_CLEAR_SCREEN) {
             if (auto* c = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
-                if      (id == ID_MENU_DISPLAY_CLEAR_TO_START) c->ClearToStart();
-                else if (id == ID_MENU_DISPLAY_CLEAR_TO_MARK)  c->ClearToPreviousMark();
-                else                                           c->ClearScrollback();
+                if      (id == ID_MENU_DISPLAY_CLEAR_TO_START)   c->ClearToStart();
+                else if (id == ID_MENU_DISPLAY_CLEAR_TO_MARK)    c->ClearToPreviousMark();
+                else if (id == ID_MENU_DISPLAY_CLEAR_SCROLLBACK) c->ClearScrollback();
+                else                                             c->ClearScreen();
             }
             return;
         }

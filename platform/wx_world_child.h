@@ -153,6 +153,10 @@ public:
     // Display ▸ Clear Scrollback (⌥⌘K): free everything that has scrolled out
     // of sight above the viewport, keeping the visible screen intact.
     long        ClearScrollback();
+    // Display ▸ Clear Screen (⌃⌘L): scroll the last line to the top of the
+    // viewport and erase nothing.  The only one of the four that frees no
+    // memory — and the only one that can be undone, by scrolling back up.
+    bool        ClearScreen();
     void        setPaused(bool paused) override;
     bool        isPaused() const override;
     void        flash() override;

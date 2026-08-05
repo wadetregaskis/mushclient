@@ -475,7 +475,31 @@ Confirmed at source. platform/wx_activity.cpp:89-115 is CActivityFrame::OnTimer 
 
 # The ranked plan
 
-## Item 0 — the one infrastructure decision that changes the cost of half this list
+## Item 0 — DEFERRED (Wade, 2026-08-05)
+
+**Decision: pinned for now. Revisit when it becomes a significant limiting
+factor in test coverage.**
+
+Work the hoistable items first — they are most of the list, they need no event
+loop, and each one leaves the code better factored whether or not the loop mode
+ever arrives. Build the loop-running mode only when what remains is genuinely
+unreachable without it (realistically: the modal-dialog sequencing, items 14
+and 16-19), and give it a watchdog timer from the start.
+
+The downsides that informed the deferral: a selftest that fails to leave the
+loop HANGS to the ctest timeout instead of failing, and per CLAUDE.md the
+victim is usually a different, untouched test; real windows appear on screen
+during every `ctest` run; paint-driven assertions become timing-dependent where
+today they are synchronous. Against that, it probably retires the
+`-ApplePersistenceIgnoreState` hazard, since an app that reaches `OnRun` is not
+"crashing while launching".
+
+The original analysis follows, unchanged, because it is what the revisit should
+be argued against.
+
+---
+
+## Item 0 (original) — the one infrastructure decision that changes the cost of half this list
 
 Fifteen of the twenty-four findings are unreachable for the *same* mechanical reason: every in-app selftest runs inside `wxApp::OnInit` and `std::exit`s before `OnRun`, so there is no event loop. That single fact is what makes `OnPaint` (findings 1, 2, 3), every `ShowModal` bridge hook (14, 16, 17, 18, 19), the update-UI idle pass (12, 19), and the deferred `CallAfter` in the TLS path (21) untestable — not their design.
 

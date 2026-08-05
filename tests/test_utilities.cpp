@@ -972,6 +972,74 @@ TEST(Utilities, ClearOutputForgetsTheRememberedPromptAndGaLine)
     EXPECT_STREQ("beta|", buffer_text(doc).c_str());
 }
 
+// ── CountLinesBeforeLastUserInput: the cut point for "Clear to Previous Mark"
+//
+// Terminal.app's mark is a shell prompt, drawn from shell integration.  The
+// MUD equivalent is already in the buffer: the echoed command, flagged
+// USER_INPUT by the send path (evaluate.cpp:928).
+
+static void user_typed(CMUSHclientDoc& doc, const char* s)
+{
+    std::string line(s);
+    line += '\n';
+    doc.DisplayMsg(line.c_str(), (int)line.size(), USER_INPUT);
+}
+
+TEST(Utilities, ClearToPreviousMarkKeepsTheLastCommandAndEverythingSince)
+{
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    mud_text(doc, "You are in a forest.\n");
+    user_typed(doc, "north");
+    mud_text(doc, "You walk north.\n");
+    user_typed(doc, "look");
+    mud_text(doc, "A clearing.\nA raven watches.\n");
+
+    EXPECT_EQ(3L, doc.CountLinesBeforeLastUserInput());
+    doc.DeleteHeadLines(doc.CountLinesBeforeLastUserInput());
+    EXPECT_STREQ("look|A clearing.|A raven watches.|", buffer_text(doc).c_str());
+}
+
+TEST(Utilities, ClearToPreviousMarkStopsAtTheLastMarkNotAnEarlierOne)
+{
+    // Two commands back to back: the cut is at the LATER one, which is what
+    // "clear to the previous mark" means -- an implementation that ran the
+    // wrap-group walk across preceding USER_INPUT lines would keep both.
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    mud_text(doc, "intro\n");
+    user_typed(doc, "north");
+    user_typed(doc, "look");
+    mud_text(doc, "A clearing.\n");
+
+    doc.DeleteHeadLines(doc.CountLinesBeforeLastUserInput());
+    EXPECT_STREQ("look|A clearing.|", buffer_text(doc).c_str());
+}
+
+TEST(Utilities, ClearToPreviousMarkKeepsAWrappedCommandWhole)
+{
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 10;
+    mud_text(doc, "intro\n");
+    user_typed(doc, "say something rather long");
+    mud_text(doc, "You say it.\n");
+
+    doc.DeleteHeadLines(doc.CountLinesBeforeLastUserInput());
+    EXPECT_STREQ("say something rather longYou say it.",
+                 buffer_joined(doc).c_str());
+}
+
+TEST(Utilities, ClearToPreviousMarkDoesNothingWithNoMark)
+{
+    // A fresh connection, or anything after a Clear Output Buffer.  Guessing at
+    // a cut point here would throw away exactly the output not yet read.
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    mud_text(doc, "one\ntwo\nthree\n");
+
+    EXPECT_EQ(0L, doc.CountLinesBeforeLastUserInput());
+    doc.DeleteHeadLines(doc.CountLinesBeforeLastUserInput());
+    EXPECT_STREQ("one|two|three|", buffer_text(doc).c_str());
+}
+
 TEST(Utilities, ClearToStartOnAnEmptyOrSingleLineBufferDoesNothing)
 {
     CMUSHclientDoc doc; make_buffer_doc(doc);

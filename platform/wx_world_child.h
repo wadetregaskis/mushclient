@@ -146,6 +146,13 @@ public:
     // prompt and free everything above it.  Returns how many lines went, so a
     // caller (the selftest) can tell "nothing to do" from "did nothing".
     long        ClearToStart();
+    // Display ▸ Clear to Previous Mark (⌘L): keep the last command the user
+    // typed and everything since.  Returns the number of lines freed; 0 when
+    // there is no such command in the buffer, so the command does nothing.
+    long        ClearToPreviousMark();
+    // Display ▸ Clear Scrollback (⌥⌘K): free everything that has scrolled out
+    // of sight above the viewport, keeping the visible screen intact.
+    long        ClearScrollback();
     void        setPaused(bool paused) override;
     bool        isPaused() const override;
     void        flash() override;

@@ -450,6 +450,92 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── Clear to Previous Mark / Clear Scrollback ────────────────────────────
+    // The other two macOS-shaped clears.  Clear to Previous Mark's cut point is
+    // engine-side and covered headlessly; what is checked here is that the menu
+    // command reaches it and the pane follows.  Clear Scrollback's cut point is
+    // NOT reachable headlessly at all -- only the pane knows how the buffer is
+    // wrapped and where the viewport sits.
+    {
+        pane->ClearOutput();
+        doc->ClearOutput();
+        auto* childFrame = dynamic_cast<CWorldChildFrame*>(child);
+
+        // ── Clear to Previous Mark ──
+        doc->DisplayMsg("older output\n", 13, 0);
+        doc->DisplayMsg("look\n", 5, USER_INPUT);
+        doc->DisplayMsg("A clearing.\n", 12, 0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        check(pane->LineCount() == 3, "wrap-up: three lines, the middle one typed");
+
+        const long cut = childFrame ? childFrame->ClearToPreviousMark() : -1;
+        wxYield();
+        check(cut == 1, "Cmd-L cuts back to the last command the user typed");
+        check(pane->LineCount() == 2, "...and the pane drops that one line");
+        std::string top;
+        if (const SOutputLine* l = pane->GetLine(0))
+            for (const SOutputRun& r : *l) top += r.text;
+        check(top == "look", "...leaving the command itself at the top");
+
+        check(childFrame && childFrame->ClearToPreviousMark() == 0,
+              "Cmd-L again cuts nothing: the mark is already at the top");
+
+        // ── Clear Scrollback ──
+        pane->ClearOutput();
+        doc->ClearOutput();
+        // The lines must be long enough that the PANE wraps them: with one
+        // visual row per logical line, a visual row index and a line index are
+        // the same number, and a FirstVisibleLine that skipped the wrap
+        // mapping entirely would still pass.  The pane wraps narrower than the
+        // engine does (its width is the client area, the engine's is
+        // m_nWrapColumn), so a full-width engine line always spans two rows --
+        // asserted below rather than assumed, because if the two ever agreed
+        // this test would quietly stop testing anything.
+        const std::string pad(200, 'x');
+        for (int i = 1; i <= 200; ++i) {
+            char buf[64];
+            snprintf(buf, sizeof buf, "scroll line %d ", i);
+            const std::string s = std::string(buf) + pad + "\n";
+            doc->DisplayMsg(s.c_str(), (int) s.size(), 0);
+        }
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const int paneN = pane->LineCount();
+        check(paneN > 200, "wrap-up: the engine split the long lines");
+        check(pane->WrapColumns() > 0 &&
+              pane->WrapColumns() < (int) doc->m_nWrapColumn,
+              "...and the pane is narrower still, so its rows outnumber its lines");
+
+        const int target = paneN / 2;
+        std::string wanted;      // the text that is about to become line 0
+        if (const SOutputLine* l = pane->GetLine(target))
+            for (const SOutputRun& r : *l) wanted += r.text;
+        check(!wanted.empty(), "...and the line we scroll to has text");
+
+        pane->ScrollToLine(target);
+        wxYield();
+        check(pane->FirstVisibleLine() == target,
+              "the pane reports the line it was scrolled to as the first visible");
+
+        const long freed = childFrame ? childFrame->ClearScrollback() : -1;
+        wxYield();
+        check(freed == target, "Alt-Cmd-K frees exactly what was above the viewport");
+        check(pane->LineCount() == paneN - target,
+              "...and the pane keeps everything from the viewport down");
+        std::string kept;
+        if (const SOutputLine* l = pane->GetLine(0))
+            for (const SOutputRun& r : *l) kept += r.text;
+        check(kept == wanted,
+              "...with the formerly-topmost VISIBLE line now at the head");
+        check(doc->m_LineList.GetCount() == (paneN - target) + 1,
+              "...and the engine buffer agrees (the survivors + the pending row)");
+
+        pane->ClearOutput();
+        doc->ClearOutput();
+    }
+
     // ── Ctrl+L is the canonical Clear Output Buffer, not a pane-only wipe ─────
     // COutputPane::ClearOutput touches the pane's own deque only; the engine's
     // m_LineList is what world.GetLinesInBufferCount() reports and what

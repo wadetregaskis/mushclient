@@ -3884,6 +3884,38 @@ void CMUSHclientDoc::DeleteHeadLines (long count)
   }  // end of CMUSHclientDoc::DeleteHeadLines
 
 
+// ── BlockLengthEndingAt ─────────────────────────────────────────────────────
+// How many lines the block whose LAST line is at `blockEnd` occupies, walking
+// backwards over
+//
+//   * its soft-wrap group.  A line is a continuation of its predecessor
+//     exactly when that predecessor has no hard_return, which is how
+//     ProcessPreviousLine reassembles a wrapped logical line; and
+//
+//   * if `flagJoins` is non-zero, any immediately preceding line carrying that
+//     flag, together with that line's own wrap group.
+//
+// Never returns less than 1, and never walks past the head.
+long CMUSHclientDoc::BlockLengthEndingAt (POSITION blockEnd, int flagJoins) const
+  {
+  long len = 0;
+  for (POSITION pos = blockEnd; pos; )
+    {
+    m_LineList.GetPrev (pos);   // pos now names the line BEFORE this one
+    len++;
+    if (!pos)
+      break;                    // reached the head of the buffer
+    const CLine * pPrev = m_LineList.GetAt (pos);
+    if (!pPrev->hard_return)
+      continue;                 // this line is a wrapped continuation of pPrev
+    if (flagJoins && (pPrev->flags & flagJoins))
+      continue;                 // pPrev belongs to the block in its own right
+    break;
+    }
+  return len;
+  }  // end of CMUSHclientDoc::BlockLengthEndingAt
+
+
 // ── CountLinesBeforePromptBlock ─────────────────────────────────────────────
 // "Clear to Start": scroll the current prompt to the top of the window by
 // throwing away everything above it.  This returns how many head lines that
@@ -3967,25 +3999,49 @@ long CMUSHclientDoc::CountLinesBeforePromptBlock (void) const
       }
     }
 
-  // ── extend backwards over the whole block ────────────────────────────────
-  long blockLen = 0;
-  for (POSITION pos = blockEnd; pos; )
-    {
-    m_LineList.GetPrev (pos);   // pos now names the line BEFORE this one
-    blockLen++;
-    if (!pos)
-      break;                    // reached the head of the buffer
-    const CLine * pPrev = m_LineList.GetAt (pos);
-    if (!pPrev->hard_return)
-      continue;                 // this line is a wrapped continuation of pPrev
-    if (pPrev->flags & PROMPT)
-      continue;                 // pPrev is a prompt line in its own right
-    break;
-    }
-
-  const long before = total - after - blockLen;
+  const long blockLen = BlockLengthEndingAt (blockEnd, PROMPT);
+  const long before   = total - after - blockLen;
   return before > 0 ? before : 0;
   }  // end of CMUSHclientDoc::CountLinesBeforePromptBlock
+
+
+// ── CountLinesBeforeLastUserInput ───────────────────────────────────────────
+// "Clear to Previous Mark": keep the last command the user typed and
+// everything the world has said since, and free what is above it.
+//
+// Terminal.app draws its marks from shell integration; the MUD equivalent is
+// already in the buffer -- the echoed command line, flagged USER_INPUT
+// (evaluate.cpp:928).  A typed command longer than the wrap column is several
+// CLines, and unlike PROMPT the flag is on all of them (it is passed to
+// StartNewLine, which stamps each continuation), but the wrap-group walk is
+// still what finds the FIRST of them.
+//
+// Returns 0 when the user has not typed anything the buffer still holds, so
+// the command does nothing rather than guessing at a cut point.
+//
+// Unlike the prompt search there is no recorded line number to bound this, so
+// a buffer with no user input at all is walked in full.  That is the same
+// order as the DeleteHeadLines that normally follows it, and it happens once
+// per keypress, not per line.
+long CMUSHclientDoc::CountLinesBeforeLastUserInput (void) const
+  {
+  const long total = m_LineList.GetCount ();
+  if (total <= 1)
+    return 0;
+
+  long n = 0;
+  for (POSITION pos = m_LineList.GetTailPosition (); pos; n++)
+    {
+    const POSITION here = pos;
+    const CLine * pLine = m_LineList.GetPrev (pos);
+    if (!(pLine->flags & USER_INPUT))
+      continue;
+    const long before = total - n - BlockLengthEndingAt (here, 0);
+    return before > 0 ? before : 0;
+    }
+
+  return 0;     // no mark to clear back to
+  }  // end of CMUSHclientDoc::CountLinesBeforeLastUserInput
 
  void CMUSHclientDoc::RemoveChunk (void)
    {

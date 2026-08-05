@@ -208,6 +208,13 @@ public:
     // Safe to call at any time; no-op if already at the top.
     void ScrollToTop();
 
+    // 0-based index of the topmost LOGICAL line with any part of it on screen —
+    // the cut point for Clear Scrollback, which frees exactly what has scrolled
+    // out of sight above the viewport.  A wrapped line only partly visible
+    // counts as visible, so the command never takes half of one.  Returns 0
+    // when the buffer is empty or already scrolled to the top.
+    int FirstVisibleLine() const;
+
     // Scroll one page up (direction=-1) or down (+1).
     // Updates the auto-scroll state accordingly.
     void ScrollPage(int direction);

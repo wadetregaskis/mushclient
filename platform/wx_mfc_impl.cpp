@@ -140,6 +140,8 @@ static const int ID_MENU_VIEW_ALWAYSONTOP = wxID_HIGHEST + 430;
 // is a different operation and a different cut point -- see
 // CMUSHclientDoc::CountLinesBeforePromptBlock.
 static const int ID_MENU_DISPLAY_CLEAR_TO_START = wxID_HIGHEST + 431;
+static const int ID_MENU_DISPLAY_CLEAR_TO_MARK  = wxID_HIGHEST + 432;
+static const int ID_MENU_DISPLAY_CLEAR_SCROLLBACK = wxID_HIGHEST + 433;
 // Canonical command ids, not private wxIDs: world.DoCommand("FullScreenMode")
 // and world.DoCommand("ViewStatusbar") post these through
 // Frame.PostMessage -> hook_post_message -> wxEVT_MENU, and accelerators.cpp
@@ -1037,6 +1039,10 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // is above it.  "Ctrl+" in a wx accelerator string is Command on macOS.
     displayMenu->Append(ID_MENU_DISPLAY_CLEAR_TO_START,
                         wxT("Clear to &Start\tCtrl+K"));
+    displayMenu->Append(ID_MENU_DISPLAY_CLEAR_TO_MARK,
+                        wxT("Clear to Previous &Mark\tCtrl+L"));
+    displayMenu->Append(ID_MENU_DISPLAY_CLEAR_SCROLLBACK,
+                        wxT("Clear Scroll&back\tAlt+Ctrl+K"));
     // Output-selection commands (reimplemented on CWorldChildFrame).
     displayMenu->AppendSeparator();
     displayMenu->Append(32275 /*ID_DISPLAY_GOTOURL*/,         wxT("Go To &URL\tCtrl+Alt+J"));
@@ -1659,10 +1665,17 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return;
         }
 
-        // ── Display menu: Clear to Start (⌘K) ──────────────────────────────
-        if (id == ID_MENU_DISPLAY_CLEAR_TO_START) {
-            if (auto* c = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
-                c->ClearToStart();
+        // ── Display menu: the three macOS-shaped clears ────────────────────
+        // Each frees a different slice of the buffer; none of them is Clear
+        // Output Buffer, which erases the lot and is the canonical command.
+        if (id == ID_MENU_DISPLAY_CLEAR_TO_START ||
+            id == ID_MENU_DISPLAY_CLEAR_TO_MARK  ||
+            id == ID_MENU_DISPLAY_CLEAR_SCROLLBACK) {
+            if (auto* c = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
+                if      (id == ID_MENU_DISPLAY_CLEAR_TO_START) c->ClearToStart();
+                else if (id == ID_MENU_DISPLAY_CLEAR_TO_MARK)  c->ClearToPreviousMark();
+                else                                           c->ClearScrollback();
+            }
             return;
         }
 

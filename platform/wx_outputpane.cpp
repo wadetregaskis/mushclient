@@ -651,6 +651,22 @@ void COutputPane::ScrollToTop()
     Refresh(false);
 }
 
+// Topmost logical line with any pixel of it on screen.  The scrollbar is the
+// authority on where we are -- deriving it from a line count instead is the
+// mistake that once put a one-row dead zone in the wheel handler.
+int COutputPane::FirstVisibleLine() const
+{
+    if (m_lines.empty()) return 0;
+    int scrollY = 0, unitH = 0;
+    const_cast<COutputPane*>(this)->GetViewStart(nullptr, &scrollY);
+    const_cast<COutputPane*>(this)->GetScrollPixelsPerUnit(nullptr, &unitH);
+    if (unitH <= 0 || m_lineH <= 0) return 0;
+    const long long topPixel = (long long) scrollY * unitH;
+    const int topRow = (int) (topPixel / m_lineH);
+    const int line = VisualRowToLogical(topRow);
+    return std::max(0, std::min((int) m_lines.size() - 1, line));
+}
+
 void COutputPane::ScrollToLine(int lineIdx)
 {
     if (m_lines.empty()) return;

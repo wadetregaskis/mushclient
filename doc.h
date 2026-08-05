@@ -2427,6 +2427,12 @@ public:
   // prompt block -- i.e. the argument to hand DeleteHeadLines to implement
   // "Clear to Start".  Defined in doc_shared.cpp.
   long CountLinesBeforePromptBlock (void) const;
+  // The same, cut at the last line the user typed (Clear to Previous Mark).
+  // Zero when there is no such line, i.e. nothing to clear back to.
+  long CountLinesBeforeLastUserInput (void) const;
+  // Length of the block whose last line is `blockEnd`: its soft-wrap group,
+  // plus any preceding line carrying `flagJoins` (0 for none).
+  long BlockLengthEndingAt (POSITION blockEnd, int flagJoins) const;
   // Stamp the PROMPT flag on the line an IAC GA/EOR just terminated.
   // Defined in telnet_phases.cpp.
   void MarkPromptLine (void);

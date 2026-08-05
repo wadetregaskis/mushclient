@@ -4408,6 +4408,39 @@ long CWorldChildFrame::ClearToStart()
     return count;
 }
 
+// ── ClearToPreviousMark ───────────────────────────────────────────────────
+// Display ▸ Clear to Previous Mark (⌘L).  Terminal.app's mark is a shell
+// prompt; ours is the echoed command line, which the engine already flags
+// USER_INPUT.  Keeps that line and everything the world has said since.
+//
+// Does nothing at all when the buffer holds no command of yours -- a fresh
+// connection, or after a Clear Output Buffer.  Guessing at a cut point there
+// would throw away exactly the output you had not read yet.
+long CWorldChildFrame::ClearToPreviousMark()
+{
+    if (!m_doc) return 0;
+    const long count = m_doc->CountLinesBeforeLastUserInput();
+    if (count > 0)
+        m_doc->DeleteHeadLines(count);
+    return count;
+}
+
+// ── ClearScrollback ───────────────────────────────────────────────────────
+// Display ▸ Clear Scrollback (⌥⌘K).  Free what has scrolled out of sight and
+// leave the visible screen exactly as it is.
+//
+// The cut point is the pane's, not the engine's: only the view knows how the
+// buffer is wrapped and where the viewport sits, and a wrapped line that is
+// only partly visible counts as visible, so this never takes half of one.
+long CWorldChildFrame::ClearScrollback()
+{
+    if (!m_doc || !m_output) return 0;
+    const long count = m_output->FirstVisibleLine();
+    if (count > 0)
+        m_doc->DeleteHeadLines(count);
+    return count;
+}
+
 void CWorldChildFrame::setPaused(bool paused)
 {
     if (m_output) m_output->SetPaused(paused);

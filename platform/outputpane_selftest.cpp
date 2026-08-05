@@ -774,6 +774,78 @@ void TestMeasuredMetrics()
     h.pane->m_fn_grid_changed = nullptr;
 }
 
+// ── RunCharLen must equal what the renderer will actually draw ───────────────
+// Every column, wrap, selection, hit-test and tooltip walk in the pane measures
+// a run with RunCharLen.  DrawLine measures it with DecodeRunText(run).size(),
+// because it needs the decoded string to slice anyway.  The two MUST agree: if
+// they ever differ, the highlight marks different characters than Cmd-C copies,
+// and -- worse -- a click lands on a different run than the one drawn there, so
+// an MXP send-link sends the wrong command.
+//
+// They agree today through a chain that is easy to break and is currently held
+// together only by comments: UTF8CharLen and DecodeUTF8Lenient share
+// UTF8NextChar (a previous fix -- they used to be a lead-byte scan versus
+// wxString::FromUTF8, agreeing only on well-formed input), and
+// DecodeOutputBytes relies on FromUTF8 being all-or-nothing so the lenient
+// fallback covers exactly the cases FromUTF8 refuses.
+//
+// So this pins the equality itself, over the inputs where the chain could give.
+void TestRunCharLenMatchesTheDecode()
+{
+    struct Case { const char* what; std::string bytes; bool utf8; int charset; };
+    const std::string kEuro   = "\xE2\x82\xAC";              // U+20AC, 3 bytes
+    const std::string kCJK    = "\xE4\xB8\xAD\xE6\x96\x87";  // 2 chars, 6 bytes
+    const Case kCases[] = {
+        { "empty",                   "",                       true,  0 },
+        { "plain ASCII",             "hello",                  true,  0 },
+        { "well-formed UTF-8",       kEuro,                    true,  0 },
+        { "UTF-8 CJK",               kCJK,                     true,  0 },
+        { "ASCII + UTF-8 mixed",     "a" + kEuro + "b",        true,  0 },
+        // FromUTF8 refuses these outright, so the lenient path decides the
+        // count -- and it must still match the fast scan.
+        { "truncated multi-byte",    "ab\xE2\x82",             true,  0 },
+        { "stray continuation byte", "ab\x80" "cd",            true,  0 },
+        { "lone 0xFF",               "a\xFF" "b",              true,  0 },
+        { "all continuation bytes",  "\x80\x81\x82",          true,  0 },
+        { "overlong NUL",            "a\xC0\x80" "b",          true,  0 },
+        { "high byte at the end",    "abc\xE2",                true,  0 },
+        // Non-UTF-8 worlds: RunCharLen IS the decode there, so these are a
+        // control -- they cannot fail unless the definition changes.
+        { "CP1252 curly quote",      "a\x93" "b\x94",          false, 0 },
+        { "latin-1 high bytes",      "\xE9\xE8\xEA",          false, 0 },
+        { "Big5 pair",               "\xA4\xA4\xA4\xE5",      false, 136 },
+    };
+
+    for (const Case& c : kCases) {
+        SOutputRun run;
+        run.text    = c.bytes;
+        run.utf8    = c.utf8 ? 1 : 0;
+        run.charset = (short) c.charset;
+
+        const int measured = RunCharLen(run);
+        const int drawn    = (int) DecodeOutputBytes(run.text.c_str(),
+                                                     run.text.size(),
+                                                     run.utf8 != 0,
+                                                     run.charset).size();
+        if (measured != drawn)
+            printf("    %s: RunCharLen %d, decoded %d\n", c.what, measured, drawn);
+        opCheck(measured == drawn, c.what);
+    }
+
+    // A horizontal-rule run carries no text at all (platform/output_types.h:25),
+    // so it contributes zero columns -- which is why the `if (!run.horiz_rule)`
+    // guards dotted around the column walks are redundant rather than a
+    // divergence between them.  Pin that, so removing a guard stays harmless
+    // and adding text to an HR run fails loudly here instead of silently
+    // shifting every column on the line.
+    {
+        SOutputRun hr;
+        hr.horiz_rule = 1;
+        opCheck(hr.text.empty(), "a horizontal-rule run has no text");
+        opCheck(RunCharLen(hr) == 0, "...so it measures zero columns");
+    }
+}
+
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
@@ -788,6 +860,7 @@ int RunOutputPaneSelfTest()
     TestReleaseDoesNotMaterialiseUnlessAsked();
     TestSearchHighlightOffsets();
     TestMeasuredMetrics();
+    TestRunCharLenMatchesTheDecode();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

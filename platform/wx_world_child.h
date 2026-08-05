@@ -157,6 +157,16 @@ public:
     // viewport and erase nothing.  The only one of the four that frees no
     // memory — and the only one that can be undone, by scrolling back up.
     bool        ClearScreen();
+    // The four clears' menu accelerators, in wx's FromString notation, where
+    // "Ctrl" is Command on macOS and "RawCtrl" the physical Control key.
+    // Defined next to the menu that uses them (wx_mfc_impl.cpp) and named here
+    // so the in-app selftest checks the same strings the menu is built from --
+    // an accelerator wx cannot parse yields a menu item with no shortcut and
+    // no error, which is invisible until someone reaches for the key.
+    static const char* const kAccelClearToStart;      // Cmd-K
+    static const char* const kAccelClearToMark;       // Cmd-L
+    static const char* const kAccelClearScrollback;   // Alt-Cmd-K
+    static const char* const kAccelClearScreen;       // Ctrl-Cmd-L
     void        setPaused(bool paused) override;
     bool        isPaused() const override;
     void        flash() override;

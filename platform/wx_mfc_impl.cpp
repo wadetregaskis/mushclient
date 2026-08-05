@@ -143,6 +143,14 @@ static const int ID_MENU_DISPLAY_CLEAR_TO_START = wxID_HIGHEST + 431;
 static const int ID_MENU_DISPLAY_CLEAR_TO_MARK  = wxID_HIGHEST + 432;
 static const int ID_MENU_DISPLAY_CLEAR_SCROLLBACK = wxID_HIGHEST + 433;
 static const int ID_MENU_DISPLAY_CLEAR_SCREEN     = wxID_HIGHEST + 434;
+
+// Declared on CWorldChildFrame (it owns the commands) so the in-app selftest
+// checks the same strings the menu is built from.  "Ctrl" is Command on macOS;
+// "RawCtrl" is the physical Control key.
+const char* const CWorldChildFrame::kAccelClearToStart    = "Ctrl+K";
+const char* const CWorldChildFrame::kAccelClearToMark     = "Ctrl+L";
+const char* const CWorldChildFrame::kAccelClearScrollback = "Alt+Ctrl+K";
+const char* const CWorldChildFrame::kAccelClearScreen     = "RawCtrl+Ctrl+L";
 // Canonical command ids, not private wxIDs: world.DoCommand("FullScreenMode")
 // and world.DoCommand("ViewStatusbar") post these through
 // Frame.PostMessage -> hook_post_message -> wxEVT_MENU, and accelerators.cpp
@@ -1038,15 +1046,19 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // Sits with Clear Output Buffer because they are the two clears, but it is
     // not the same command: this one keeps the prompt block and frees only what
     // is above it.  "Ctrl+" in a wx accelerator string is Command on macOS.
-    displayMenu->Append(ID_MENU_DISPLAY_CLEAR_TO_START,
-                        wxT("Clear to &Start\tCtrl+K"));
-    displayMenu->Append(ID_MENU_DISPLAY_CLEAR_TO_MARK,
-                        wxT("Clear to Previous &Mark\tCtrl+L"));
-    displayMenu->Append(ID_MENU_DISPLAY_CLEAR_SCROLLBACK,
-                        wxT("Clear Scroll&back\tAlt+Ctrl+K"));
+    auto clearItem = [displayMenu](int id, const char* label, const char* accel) {
+        displayMenu->Append(id, wxString::FromUTF8(label) + wxT("\t") +
+                                wxString::FromUTF8(accel));
+    };
+    clearItem(ID_MENU_DISPLAY_CLEAR_TO_START, "Clear to &Start",
+              CWorldChildFrame::kAccelClearToStart);
+    clearItem(ID_MENU_DISPLAY_CLEAR_TO_MARK, "Clear to Previous &Mark",
+              CWorldChildFrame::kAccelClearToMark);
+    clearItem(ID_MENU_DISPLAY_CLEAR_SCROLLBACK, "Clear Scroll&back",
+              CWorldChildFrame::kAccelClearScrollback);
     // Erases nothing: the last line goes to the top and the scrollback stays.
-    displayMenu->Append(ID_MENU_DISPLAY_CLEAR_SCREEN,
-                        wxT("Clear Scr&een\tRawCtrl+Ctrl+L"));
+    clearItem(ID_MENU_DISPLAY_CLEAR_SCREEN, "Clear Scr&een",
+              CWorldChildFrame::kAccelClearScreen);
     // Output-selection commands (reimplemented on CWorldChildFrame).
     displayMenu->AppendSeparator();
     displayMenu->Append(32275 /*ID_DISPLAY_GOTOURL*/,         wxT("Go To &URL\tCtrl+Alt+J"));

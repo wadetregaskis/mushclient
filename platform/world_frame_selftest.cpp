@@ -593,6 +593,32 @@ int RunWorldFrameSelfTest()
               "clearing the buffer takes the blank region with it");
     }
 
+    // ── the four clears' accelerators are ones wx can actually parse ─────────
+    // An accelerator string wx rejects produces a menu item with no shortcut
+    // and no error of any kind, so the key simply does nothing and nobody
+    // finds out until they reach for it.  These are the same constants the
+    // Display menu is built from (wx_mfc_impl.cpp), so a typo is caught here
+    // rather than by a user.  "Ctrl" is Command on macOS; "RawCtrl" is the
+    // physical Control key, and the pairing in Clear Screen is the unusual one.
+    {
+        struct { const char* accel; int flags; int key; const char* what; } kAccels[] = {
+            { CWorldChildFrame::kAccelClearToStart,    wxACCEL_CTRL,
+              'K', "Clear to Start is Cmd-K" },
+            { CWorldChildFrame::kAccelClearToMark,     wxACCEL_CTRL,
+              'L', "Clear to Previous Mark is Cmd-L" },
+            { CWorldChildFrame::kAccelClearScrollback, wxACCEL_ALT | wxACCEL_CTRL,
+              'K', "Clear Scrollback is Alt-Cmd-K" },
+            { CWorldChildFrame::kAccelClearScreen,     wxACCEL_RAW_CTRL | wxACCEL_CTRL,
+              'L', "Clear Screen is Ctrl-Cmd-L" },
+        };
+        for (const auto& a : kAccels) {
+            wxAcceleratorEntry e;
+            const bool ok = e.FromString(wxString::FromUTF8(a.accel)) &&
+                            e.GetFlags() == a.flags && e.GetKeyCode() == a.key;
+            check(ok, a.what);
+        }
+    }
+
     // ── Ctrl+L is the canonical Clear Output Buffer, not a pane-only wipe ─────
     // COutputPane::ClearOutput touches the pane's own deque only; the engine's
     // m_LineList is what world.GetLinesInBufferCount() reports and what

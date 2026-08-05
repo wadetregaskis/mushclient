@@ -20,6 +20,8 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 9 | xterm-256 colour index subscripts the 8-entry print-style arrays | port-guarded only | mushview.cpp `CMUSHView::PrintWorld` |
 | 10 | DBCS wrap splits the character when `indent_paras` is off | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::AddToLine` |
 | 11 | `ClearOutput` leaves `m_last_line_with_IAC_GA` naming a deleted line | this commit | doc.cpp `CMUSHclientDoc::ClearOutput` |
+| 12 | The queued-command "no log" flag can never suppress logging | **NOT FIXED — needs a decision** | TimerWnd.cpp `CTimerWnd::OnTimer`; mirrored in platform/wx_world_child.cpp |
+| 13 | Windows' two queue drains disagree about case, so a `nolog` command echoes from one and not the other | **NOT FIXED — needs a decision** | TimerWnd.cpp `OnTimer` vs `ChangeTimerRate` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -251,3 +253,67 @@ stamped on, used by Clear to Start — is reset in the same place and for the
 same reason.
 
 Covered by `Utilities.ClearOutputForgetsTheRememberedPromptAndGaLine`.
+
+
+## 12 — the queued-command "no log" flag can never suppress logging
+
+`SendMsg` queues a speed-walk command as a one-byte flag plus the text
+(`doc_shared.cpp:2360-2377`). The flag is `E`/`N`/`I`/`W` for
+queue/immediate x echo/no-echo, **lowercased when the caller asked for no
+logging**:
+
+```
+   // nolog is the lower-case version of the flag
+  if (!bLogIt)
+    strEchoFlag.MakeLower ();
+```
+
+Every drain then recovers the two booleans the same way:
+
+```
+  m_pDoc->DoSendMsg (strCommand.Mid (1),
+                     toupper (cMessageType) == QUEUE_WITH_ECHO ||
+                     toupper (cMessageType) == IMMEDIATE_WITH_ECHO,
+                     cMessageType >= 'A');      // log flag
+```
+
+`toupper` correctly makes the ECHO decision case-insensitive. But the log flag
+is `cMessageType >= 'A'`, and every one of the eight codes is a letter:
+`'E'` is 69 and `'e'` is 101 — **both are >= 'A' (65)**. The test is a
+tautology, so `bLogIt` is true for every queued command and the lower-casing
+above accomplishes nothing for logging. A speed-walk sent with logging
+suppressed is logged anyway.
+
+The intended test is almost certainly `cMessageType < 'a'` (upper case = log).
+
+**Why it is not fixed here:** the same expression appears in Windows-only
+`TimerWnd.cpp` and in the port's replica, so fixing it changes what appears in
+users' log files on both platforms — for anyone who has been relying on the
+current (broken) behaviour, a previously-absent command starts being logged...
+or rather stops. **Wade's call.** It is also an argument for doing the hoist in
+`docs/UNREACHABLE-PATHS-2026-08.md` item 3 first, so there is one drain to fix.
+
+## 13 — Windows' two queue drains disagree about case
+
+`CTimerWnd::OnTimer` (`TimerWnd.cpp:52`) — the per-tick drain — compares with
+`toupper`, so a lower-case `e` counts as QUEUE_WITH_ECHO and the command is
+echoed. `CTimerWnd::ChangeTimerRate` (`TimerWnd.cpp:101`) — the "the delay was
+just set to zero, flush everything" path — compares **case-sensitively**:
+
+```
+  m_pDoc->DoSendMsg (strCommand.Mid (1),
+                     cMessageType == QUEUE_WITH_ECHO ||
+                     cMessageType == IMMEDIATE_WITH_ECHO,
+                     cMessageType >= 'A');
+```
+
+so the same command echoes when drained on a tick and does not when flushed.
+Given that the paired upper/lower codes exist only to carry the log flag,
+`OnTimer`'s reading is the intended one and `ChangeTimerRate` is the defect.
+
+**The port already diverges here, accidentally in the right direction.** Its
+`delay <= 0` arm (`platform/wx_world_child.cpp:4131-4140`) applies `toupper`,
+matching `OnTimer` rather than `ChangeTimerRate`. So a no-log speed-walk
+flushed by setting the delay to zero echoes on macOS and does not on Windows.
+Recorded rather than silently kept: it is a real observable difference, and the
+fix direction depends on the answer to #12.

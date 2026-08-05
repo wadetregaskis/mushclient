@@ -108,6 +108,7 @@ static const int ID_MENU_CFG_TIMERS    = wxID_HIGHEST + 402;
 static const int ID_MENU_CFG_VARIABLES = wxID_HIGHEST + 403;
 static const int ID_MENU_CFG_MACROS    = wxID_HIGHEST + 404;
 static const int ID_MENU_CFG_COLORS    = wxID_HIGHEST + 405;
+static const int ID_MENU_CFG_INFO      = wxID_HIGHEST + 406;
 
 // Import / Export set IDs (one pair per set type)
 static const int ID_MENU_IMPORT_TRIGGERS = wxID_HIGHEST + 420;
@@ -726,7 +727,7 @@ static const CanonMenuCmd kCanonCmds[] = {
   { SEC_DISPLAY, 32970, "No Command Echo",                   'D', true,  true  }, // ID_DISPLAY_NOCOMMANDECHO
   // ── Game ──
   { SEC_GAME, 32118, "Wrap &Output",                         'D', true,  true  }, // ID_GAME_WRAPLINES
-  { SEC_GAME, 32252, "&Auto Say",                            'D', true,  true  }, // ID_GAME_AUTOSAY
+  { SEC_GAME, 32252, "&Auto Say\tShift+Ctrl+A",              'D', true,  true  }, // ID_GAME_AUTOSAY
   { SEC_GAME, 32216, "Send &File\xE2\x80\xA6",               'D', false, true  }, // ID_GAME_PASTEFILE
   { SEC_GAME, 32956, "&Discard Queued Commands",             'D', false, true  }, // ID_INPUT_DISCARDQUEUEDCOMMANDS
   { SEC_GAME, 33049, "Show &Key Name\xE2\x80\xA6",           'D', false, true  }, // ID_INPUT_KEYNAME
@@ -1089,9 +1090,16 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
 
     // ── Configure menu ────────────────────────────────────────────────────
     wxMenu* cfgMenu = new wxMenu();
+    // Accelerators here follow one rule: a chord that already MEANS something
+    // in MUSHclient must not mean something else on the port.  Shift+Ctrl+A is
+    // Game ▸ Auto Say and Shift+Ctrl+I is Configure ▸ Info in the canonical
+    // resource (mushclient_dialogs.rc:3014, 3083), so Aliases and Timers take
+    // the resource's own Shift+Ctrl+9 / Shift+Ctrl+0 and hand those chords back
+    // to the commands they belong to.  Ctrl+T is bound to nothing anywhere in
+    // the resource, so Triggers keeps it as a macOS-native addition.
     cfgMenu->Append(ID_MENU_CFG_TRIGGERS,  wxT("&Triggers…\tCtrl+T"));
-    cfgMenu->Append(ID_MENU_CFG_ALIASES,   wxT("&Aliases…\tCtrl+Shift+A"));
-    cfgMenu->Append(ID_MENU_CFG_TIMERS,    wxT("T&imers…\tCtrl+Shift+I"));
+    cfgMenu->Append(ID_MENU_CFG_ALIASES,   wxT("&Aliases…\tShift+Ctrl+9"));
+    cfgMenu->Append(ID_MENU_CFG_TIMERS,    wxT("T&imers…\tShift+Ctrl+0"));
     cfgMenu->AppendSeparator();
     // Shift+Ctrl+7 is what the canonical menu resource gives this command
     // (mushclient_dialogs.rc:3077, ID_GAME_CONFIGURE_VARIABLES).  The port had
@@ -1104,6 +1112,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     cfgMenu->AppendSeparator();
     cfgMenu->Append(ID_MENU_CFG_MACROS,   wxT("&Macros && Keypad…"));
     cfgMenu->Append(ID_MENU_CFG_COLORS,   wxT("&Colors…"));
+    cfgMenu->Append(ID_MENU_CFG_INFO,     wxT("In&fo…\tShift+Ctrl+I"));
     cfgMenu->AppendSeparator();
     // Import / Export submenus
     wxMenu* importMenu = new wxMenu();
@@ -1257,6 +1266,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                    id == ID_MENU_CFG_VARIABLES ||
                    id == ID_MENU_CFG_MACROS    ||
                    id == ID_MENU_CFG_COLORS    ||
+                   id == ID_MENU_CFG_INFO      ||
                    id == ID_MENU_IMPORT_TRIGGERS ||
                    id == ID_MENU_EXPORT_TRIGGERS ||
                    id == ID_MENU_IMPORT_ALIASES  ||
@@ -1921,6 +1931,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             if (CMUSHclientDoc* doc = activeDoc()) {
                 doc->GamePreferences(ePageVariables);
             }
+        } else if (id == ID_MENU_CFG_INFO) {
+            // Canonical World Properties ▸ Info page (rc:3083 gives it
+            // Shift+Ctrl+I).  The page has always existed in the treebook; the
+            // Configure menu simply had no item for it, and the chord that
+            // should have opened it was opening Timers instead.
+            if (CMUSHclientDoc* doc = activeDoc())
+                doc->GamePreferences(ePageInfo);
         } else if (id == ID_MENU_CFG_MACROS) {
             // Canonical Macros page (CPrefsP6) in the World Properties treebook;
             // the Keypad page (CPrefsP12) is its tree sibling.  Editing a macro

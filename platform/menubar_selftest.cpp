@@ -245,6 +245,44 @@ int RunMenuBarSelfTest()
         }
     }
 
+    // ── chords that already mean something in MUSHclient still mean it ──────
+    // Stronger than the duplicate lint, which only catches two commands
+    // claiming one key WITHIN this menu bar.  These chords are bound in the
+    // canonical resource, so binding them to a different command here is just
+    // as wrong even though nothing on the port collides: a MUSHclient user's
+    // fingers land on the wrong dialog and no test would have said a word.
+    // Each entry cites the resource line it comes from.
+    {
+        struct Canon { const char* accel; const char* label; const char* rc; };
+        const Canon kCanon[] = {
+            { "Shift+Ctrl+V", "Paste To World",  "rc:2955" },
+            { "Shift+Ctrl+7", "Variables",       "rc:3077" },
+            { "Shift+Ctrl+9", "Aliases",         "rc:3081" },
+            { "Shift+Ctrl+0", "Timers",          "rc:3079" },
+            { "Shift+Ctrl+I", "Info",            "rc:3083" },
+            { "Shift+Ctrl+A", "Auto Say",        "rc:3014" },
+        };
+        for (const Canon& c : kCanon) {
+            wxAcceleratorEntry want;
+            if (!want.FromString(wxString(wxT("\t")) + wxString::FromUTF8(c.accel))) {
+                checkf(false, std::string("could not parse ") + c.accel);
+                continue;
+            }
+            const Item* holder = NULL;
+            for (const Item& it : items)
+                if (it.accelKey == want.GetKeyCode() &&
+                    it.accelFlags == want.GetFlags()) { holder = &it; break; }
+
+            const std::string what =
+                std::string(c.accel) + " is " + c.label + " (" + c.rc + ")";
+            checkf(holder != NULL, what + " -- bound at all");
+            if (!holder) continue;
+            // Label match is a prefix test: the port drops the "..." and the
+            // resource's "&" mnemonics land in different places.
+            checkf(holder->label.find(c.label) != std::string::npos, what);
+        }
+    }
+
     // Also pin that Clear Output Buffer -- the canonical Windows command these
     // sit beside -- is still there and still distinct from all four.  It is the
     // one that erases everything, and confusing it with the others is the

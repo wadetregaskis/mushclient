@@ -1012,11 +1012,9 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // maximum), so the doc line = doc count - pane count + pane index.
     m_output->m_fn_draw_output_window = [this](int firstPaneLine, int pixelOffset) {
         if (!m_doc) return;
-        long docLine = (long)m_doc->GetLastLine()
-                     - (long)m_output->LineCount() + firstPaneLine + 1;   // 1-based
-        if (docLine < 1) docLine = 1;
         m_doc->SendToAllPluginCallbacks(ON_PLUGIN_DRAW_OUTPUT_WINDOW,
-                                        docLine, pixelOffset, "", false, false);
+                                        PaneLineToDocLine(firstPaneLine),
+                                        pixelOffset, "", false, false);
     };
 
     m_output->m_fn_composite_miniwindows =
@@ -4548,6 +4546,40 @@ long CWorldChildFrame::ClearScrollback()
 // what Terminal.app's command does and why it is the only clear you can undo
 // (scroll back up).  Nothing is freed, so it is also the only one that is safe
 // to reach for by reflex on a session you care about.
+// ── PaneLineToDocLine ─────────────────────────────────────────────────────
+// Windows passes ON_PLUGIN_DRAW_OUTPUT_WINDOW a 1-based DOC line index plus the
+// pixel scroll offset, and plugins use it to align miniwindows to the text
+// under them.  The pane speaks in its own line list, which tail-aligns with the
+// doc's -- both hold one entry per COMPLETED output line and trim to the same
+// maximum -- so the doc line is (doc committed count - pane count) + pane index
+// + 1, and that leading difference is zero except transiently, before a drain.
+//
+// It used to read m_doc->GetLastLine() for the doc side, and that is NOT the
+// committed count: GetLastLine (doc.cpp:2039) returns GetCount() - 1 and then
+// adds one back IF the in-progress line has any text in it.  So the moment a
+// prompt was showing -- which on a MUD is most of the time -- every plugin was
+// told the first visible line was one further down than it really was, and any
+// miniwindow positioned from it sat one line off.  It corrected itself the
+// instant the prompt was terminated, which is exactly the sort of intermittence
+// that gets blamed on the plugin.
+//
+// Split out of the lambda because its only caller is OnPaint, which no in-app
+// selftest reaches (docs/AUDIT-2026-08.md) -- so this arithmetic had never once
+// executed under test.
+long CWorldChildFrame::PaneLineToDocLine(int firstPaneLine) const
+{
+    if (!m_doc || !m_output) return 1;
+    // COMMITTED doc lines: the in-progress line is the list's tail and is drawn
+    // as the pending row, never as a committed one -- whether or not it has
+    // text in it yet.
+    const long docCommitted = (long) m_doc->m_LineList.GetCount()
+                            - (m_doc->m_pCurrentLine ? 1 : 0);
+    long docLine = docCommitted - (long) m_output->LineCount()
+                 + firstPaneLine + 1;                       // 1-based
+    if (docLine < 1) docLine = 1;
+    return docLine;
+}
+
 bool CWorldChildFrame::ClearScreen()
 {
     return m_output && m_output->ClearScreen();

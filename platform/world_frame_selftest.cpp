@@ -840,6 +840,55 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── the line number plugins are given to align to ───────────────────────
+    // ON_PLUGIN_DRAW_OUTPUT_WINDOW hands plugins a 1-based DOC line for the top
+    // of the viewport; Quow's pack positions miniwindows from it.  The
+    // arithmetic lived inside the paint callback, which no selftest reaches, so
+    // it had never executed under test -- and it was wrong.
+    {
+        pane->ClearOutput();
+        doc->ClearOutput();
+        auto* childFrame = dynamic_cast<CWorldChildFrame*>(child);
+        check(childFrame != nullptr, "wrap-up: the frame is what plugins ask");
+
+        for (int i = 1; i <= 10; ++i) {
+            char buf[32];
+            snprintf(buf, sizeof buf, "aligned %d\n", i);
+            doc->DisplayMsg(buf, (int) strlen(buf), 0);
+        }
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        check(pane->LineCount() == 10, "ten committed lines");
+
+        // With nothing pending, pane row 0 is doc line 1.
+        check(childFrame && childFrame->PaneLineToDocLine(0) == 1,
+              "pane row 0 is doc line 1");
+        check(childFrame && childFrame->PaneLineToDocLine(4) == 5,
+              "...and pane row 4 is doc line 5");
+
+        // NOW the case that was broken.  An unterminated prompt is the pending
+        // row, not a committed line, so it must not move the mapping at all --
+        // but GetLastLine() counts it as soon as it has any text, which shifted
+        // every plugin's idea of the viewport down by one for as long as a
+        // prompt was showing.  On a MUD that is most of the time.
+        doc->DisplayMsg("HP:100 MP:50 > ", 15, 0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        check(pane->LineCount() == 10,
+              "a pending prompt adds no committed line");
+        check(childFrame && childFrame->PaneLineToDocLine(0) == 1,
+              "...and does not move pane row 0 off doc line 1");
+        check(childFrame && childFrame->PaneLineToDocLine(4) == 5,
+              "...nor any other row");
+
+        // Never below 1, whatever it is asked.
+        check(childFrame && childFrame->PaneLineToDocLine(-50) == 1,
+              "a nonsensical row clamps to line 1, not to zero or negative");
+
+        pane->ClearOutput();
+        doc->ClearOutput();
+    }
+
     // Tear down without running the close/save flow (this doc has no file).
     doc->m_pWorldView = NULL;
     child->Destroy();

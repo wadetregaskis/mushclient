@@ -165,6 +165,11 @@ public:
     // viewport and erase nothing.  The only one of the four that frees no
     // memory — and the only one that can be undone, by scrolling back up.
     bool        ClearScreen();
+    // The 1-based DOC line number that pane row `firstPaneLine` shows -- what
+    // ON_PLUGIN_DRAW_OUTPUT_WINDOW hands plugins so they can align miniwindows
+    // to the text.  Public because its only caller is inside OnPaint, which no
+    // test can reach; see the body.
+    long        PaneLineToDocLine(int firstPaneLine) const;
     // The four clears' menu accelerators, in wx's FromString notation, where
     // "Ctrl" is Command on macOS and "RawCtrl" the physical Control key.
     // Defined next to the menu that uses them (wx_mfc_impl.cpp) and named here

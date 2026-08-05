@@ -132,6 +132,14 @@ static const int ID_MENU_GAME_LUA_EVAL = wxID_HIGHEST + 411;
 // must use a distinct range or wx can't tell the commands apart (the View branch
 // ran first, so Import/Export silently toggled View state and were unreachable).
 static const int ID_MENU_VIEW_ALWAYSONTOP = wxID_HIGHEST + 430;
+
+// ── Display menu: the macOS-shaped clear ──────────────────────────────────────
+// Port-local, with no canonical counterpart: Windows has exactly one clear
+// (Display ▸ Clear Output Buffer, which erases everything).  Terminal.app users
+// expect ⌘K to keep the current prompt and throw away what is above it, which
+// is a different operation and a different cut point -- see
+// CMUSHclientDoc::CountLinesBeforePromptBlock.
+static const int ID_MENU_DISPLAY_CLEAR_TO_START = wxID_HIGHEST + 431;
 // Canonical command ids, not private wxIDs: world.DoCommand("FullScreenMode")
 // and world.DoCommand("ViewStatusbar") post these through
 // Frame.PostMessage -> hook_post_message -> wxEVT_MENU, and accelerators.cpp
@@ -1024,6 +1032,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                                  wxT("&Debug Incoming Packets"));
     displayMenu->AppendCheckItem(32334 /*ID_GAME_TRACE*/, wxT("&Trace"));
     append_canon_section(displayMenu, SEC_DISPLAY); // Recall Text, Clear Output, Stop Sound, No Command Echo
+    // Sits with Clear Output Buffer because they are the two clears, but it is
+    // not the same command: this one keeps the prompt block and frees only what
+    // is above it.  "Ctrl+" in a wx accelerator string is Command on macOS.
+    displayMenu->Append(ID_MENU_DISPLAY_CLEAR_TO_START,
+                        wxT("Clear to &Start\tCtrl+K"));
     // Output-selection commands (reimplemented on CWorldChildFrame).
     displayMenu->AppendSeparator();
     displayMenu->Append(32275 /*ID_DISPLAY_GOTOURL*/,         wxT("Go To &URL\tCtrl+Alt+J"));
@@ -1643,6 +1656,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 else if (id == 32201) c->FreezeOutput();
                 else                  c->GotoLine();
             }
+            return;
+        }
+
+        // ── Display menu: Clear to Start (⌘K) ──────────────────────────────
+        if (id == ID_MENU_DISPLAY_CLEAR_TO_START) {
+            if (auto* c = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
+                c->ClearToStart();
             return;
         }
 

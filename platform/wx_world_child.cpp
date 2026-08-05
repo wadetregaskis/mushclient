@@ -4382,6 +4382,32 @@ void CWorldChildFrame::ClearOutputBuffer()
     AfxDispatchCommand(m_doc, 0 /*ON_COMMAND*/, 32291 /*ID_DISPLAY_CLEAR_OUTPUT*/);
 }
 
+// ── ClearToStart ──────────────────────────────────────────────────────────
+// Display ▸ Clear to Start (⌘K).  The macOS-shaped clear: put the server's
+// current prompt at the top of the window and throw away everything above it.
+//
+// Not a variant of Clear Output Buffer -- that one erases the lot, prompt
+// included, and is the canonical Windows command.  This is Terminal.app's
+// "Clear to Start", and the cut point is the whole question: see
+// CMUSHclientDoc::CountLinesBeforePromptBlock, which finds the block the last
+// IAC GA/EOR marked (with its soft-wrap group, and any adjacent line the
+// server also marked), or falls back to the last line when the server has
+// never sent a GA -- which is most of them.
+//
+// Deleting from the engine buffer rather than the pane is deliberate, for the
+// same reason ClearOutputBuffer stopped doing that: lines cleared only in the
+// pane come straight back the moment anything triggers RebuildOutputView, and
+// world.GetLinesInBufferCount keeps counting them.  DeleteHeadLines drives the
+// pane through the same seam.
+long CWorldChildFrame::ClearToStart()
+{
+    if (!m_doc) return 0;
+    const long count = m_doc->CountLinesBeforePromptBlock();
+    if (count > 0)
+        m_doc->DeleteHeadLines(count);
+    return count;
+}
+
 void CWorldChildFrame::setPaused(bool paused)
 {
     if (m_output) m_output->SetPaused(paused);

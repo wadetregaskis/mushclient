@@ -142,6 +142,10 @@ public:
     // the output pane's context menu both route here rather than clearing the
     // pane behind the engine's back; see the body for why that mattered.
     void        ClearOutputBuffer();
+    // Display ▸ Clear to Start (⌘K), port-local: keep the server's current
+    // prompt and free everything above it.  Returns how many lines went, so a
+    // caller (the selftest) can tell "nothing to do" from "did nothing".
+    long        ClearToStart();
     void        setPaused(bool paused) override;
     bool        isPaused() const override;
     void        flash() override;

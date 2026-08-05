@@ -389,6 +389,67 @@ int RunWorldFrameSelfTest()
         pane->ClearOutput();
     }
 
+    // ── Display ▸ Clear to Start (⌘K) keeps the prompt block ─────────────────
+    // The engine side is covered headlessly (Utilities.ClearToStart*); what
+    // only runs here is the GUI half: DeleteHeadLines has to drive the pane
+    // through DeleteOutputHeadLines and wind m_gui_lines_emitted back by the
+    // same amount, or the pane and the engine buffer drift apart -- the pane
+    // keeps rows the engine has freed, and the next drain appends at the wrong
+    // offset.
+    {
+        pane->ClearOutput();
+        doc->ClearOutput();
+        doc->m_bConvertGAtoNewline = 1;    // so the prompt becomes a real line
+
+        for (int i = 1; i <= 6; ++i) {
+            char buf[32];
+            snprintf(buf, sizeof buf, "scrollback %d\n", i);
+            doc->DisplayMsg(buf, (int) strlen(buf), 0);
+        }
+        doc->DisplayMsg("HP:100 MP:50 > ", 15, 0);
+        unsigned char ga = GO_AHEAD;
+        doc->Phase_IAC(ga);                // stamps PROMPT, substitutes '\n'
+        if (ga) { char nl = (char) ga; doc->DisplayMsg(&nl, 1, 0); }
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const long engineBefore = doc->m_LineList.GetCount();
+        const int  paneBefore   = pane->LineCount();
+        check(engineBefore == 8, "wrap-up: 6 lines, a prompt and the pending row");
+        check(paneBefore == 7, "...seven of them committed to the pane");
+
+        auto* childFrame = dynamic_cast<CWorldChildFrame*>(child);
+        check(childFrame != nullptr, "the world child frame is what handles Cmd-K");
+        const long dropped = childFrame ? childFrame->ClearToStart() : -1;
+        wxYield();
+
+        check(dropped == 6, "Cmd-K cuts the six lines above the prompt");
+        check(doc->m_LineList.GetCount() == 2,
+              "...leaving the prompt and the pending row in the engine buffer");
+        check(pane->LineCount() == 1,
+              "...and the PANE drops exactly the same six, through "
+              "DeleteOutputHeadLines");
+
+        // The surviving row must be the prompt itself, not a fragment or the
+        // wrong end of the buffer.
+        std::string first;
+        if (const SOutputLine* l = pane->GetLine(0))
+            for (const SOutputRun& r : *l) first += r.text;
+        check(first == "HP:100 MP:50 > ",
+              "...and the row that survived IS the prompt");
+
+        // A second ⌘K with nothing above the prompt must be a no-op, not an
+        // off-by-one that eats the prompt too.
+        check(childFrame && childFrame->ClearToStart() == 0,
+              "Cmd-K again cuts nothing: the prompt is already at the top");
+        wxYield();
+        check(pane->LineCount() == 1, "...and the pane is untouched");
+
+        doc->m_bConvertGAtoNewline = 0;
+        pane->ClearOutput();
+        doc->ClearOutput();
+    }
+
     // ── Ctrl+L is the canonical Clear Output Buffer, not a pane-only wipe ─────
     // COutputPane::ClearOutput touches the pane's own deque only; the engine's
     // m_LineList is what world.GetLinesInBufferCount() reports and what

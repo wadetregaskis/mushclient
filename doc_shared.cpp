@@ -2787,6 +2787,14 @@ Unicode range              UTF-8 bytes
 
       int last_space = -1;
 
+      // WHICH arm recorded last_space.  The !m_indent_paras adjustment further
+      // down moves the split byte back onto the OLD line.  That is right for a
+      // space -- the continuation must not begin with one -- and wrong for a
+      // DBCS lead byte, where it strands the trail byte at the head of the next
+      // line and splits the very character the DBCS arm exists to keep whole.
+      // See docs/UPSTREAM-BUGS.md #10.
+      bool bSplitAtSpace = false;
+
       // do auto line wrapping here
 
       // see if we can split at a multibyte character or a space (whichever comes last)
@@ -2805,14 +2813,23 @@ Unicode range              UTF-8 bytes
           if (c1 >= 0x81 && c1 <= 0xFE &&                               // first  DBCS (Big5 / GB2312) character
             ((c2 >= 0x40 && c2 <= 0x7E) || (c2 >= 0xA1 && c2 <= 0xFE))  // second DBCS character
               && !m_bUTF_8) // not for UTF-8
+            {
             last_space = i++;  // remember position, skip the second byte
+            bSplitAtSpace = false;
+            }
           else if (c1 == ' ' && m_wrap)
+            {
             last_space = i;    // or split at a space
+            bSplitAtSpace = true;
+            }
           }
 
         // allow for space being the final thing on the line
         if (m_pCurrentLine->text [m_pCurrentLine->len - 1] == ' ' && m_wrap)
+          {
           last_space = m_pCurrentLine->len - 1;
+          bSplitAtSpace = true;
+          }
 
         } // end of checking for a space, Big5 or GB2132 break point
 
@@ -2825,12 +2842,16 @@ Unicode range              UTF-8 bytes
 
         // note - saved_count should not be zero because length is 1-relative
         // (eg. 1) and last_space is zero-relative (eg. 0)
-        if (!m_indent_paras)
+        if (!m_indent_paras && bSplitAtSpace)
           {
           saved_count--;    // one less to copy
           last_space++;  // one more on this line (the space)
           m_pCurrentLine->len = last_space; // this line is longer
           }   // end of indenting not wanted
+        // A DBCS split point needs no adjustment: it is already ON a character
+        // boundary, so the continuation line starts on a lead byte either way.
+        // There is no space to absorb, and absorbing the lead byte instead is
+        // what UPSTREAM-BUGS.md #10 was.
 
         // saved_count might be zero now, because of no indenting
         if (saved_count > 0)

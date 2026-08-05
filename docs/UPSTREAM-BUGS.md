@@ -18,7 +18,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 7 | Timer at_time toggle HOUR→MINUTE | `eea4a45` | methods_timers.cpp `CMUSHclientDoc::SetTimerOption` |
 | 8 | Custom-colour index used unchecked (`note_text_colour`) | `36db6c1` (partial) | methods_noting.cpp note-colour getters; prefspropertypages.cpp `FixSwatch` |
 | 9 | xterm-256 colour index subscripts the 8-entry print-style arrays | port-guarded only | mushview.cpp `CMUSHView::PrintWorld` |
-| 10 | DBCS wrap splits the character when `indent_paras` is off | **NOT FIXED — needs a decision** | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::AddToLine` |
+| 10 | DBCS wrap splits the character when `indent_paras` is off | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::AddToLine` |
 | 11 | `ClearOutput` leaves `m_last_line_with_IAC_GA` naming a deleted line | this commit | doc.cpp `CMUSHclientDoc::ClearOutput` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
@@ -170,11 +170,10 @@ reproduce it: it treats an index outside 0..7 as `WHITE`, which is already what
 the non-ANSI arm of the same `if` does. A Windows fix would be the same clamp on
 those four lines.
 
-## 10 — DBCS wrap splits the character when "indent paragraphs" is off (NOT FIXED)
+## 10 — DBCS wrap splits the character when "indent paragraphs" is off
 
-**Found 2026-08-04 while writing coverage for the wrap split-point. Reported
-here rather than fixed, because the fix changes Windows behaviour and needs a
-decision.**
+**Found 2026-08-04 while writing coverage for the wrap split-point; fixed
+2026-08-05 after Wade confirmed it should be corrected on Windows too.**
 
 `CMUSHclientDoc::AddToLine`'s auto-wrap looks for a split point at "a multibyte
 character or a space, whichever comes last". The DBCS arm records the index of
@@ -198,7 +197,8 @@ is the index of a **lead byte**, and incrementing it leaves the lead byte at the
 end of the old line and starts the continuation line on the orphaned trail byte.
 The double-byte character is split exactly as the DBCS arm exists to prevent.
 
-**Reproduction** (worked by hand, not yet as a test): a non-UTF-8 world,
+**Reproduction** (now `WrapTest.DbcsPairStaysWholeWithIndentParagraphsOff`,
+which fails without the fix): a non-UTF-8 world,
 `wrap_column` 20, `indent_paras` off, and a line of GB2312 pairs `D6 D0` behind
 a 5-byte ASCII prefix so the pairs sit on odd offsets. The split point is found
 at byte 17 (a lead byte); `last_space++` makes it 18, so line 0 ends `… D6` and
@@ -209,17 +209,28 @@ line 1 begins `D0 …`. It happens on pair-aligned Big5 input too.
 turns "indent paragraphs" off. A CJK world with that option off would see torn
 characters at every wrap.
 
-**Why it is not fixed here:** the obvious fix — skip the `last_space++` when the
-split point came from the DBCS arm rather than from a space — is a change to
-shared code that Windows compiles, so it alters upstream rendering for that
-configuration. `docs/AUDIT-2026-08.md` already lists the interaction as
-"untested option interplay"; reading it shows it is not merely untested, it is
-wrong. **Wade's call.**
+**Fix:** record WHICH arm found the split point (`bSplitAtSpace`, set false by
+the DBCS arm and true by both space arms) and gate the `!m_indent_paras`
+adjustment on it. A DBCS split point needs no adjustment at all — it is already
+on a character boundary, so the continuation starts on a lead byte either way,
+and there is no space to absorb.
 
-The two new tests (`WrapTest.DbcsPairStraddlingWrapColumnMovesWholeToNextLine`,
-`WrapTest.TrailByteInTheGapBetweenDbcsRangesIsNotASplitPoint`) set
-`m_indent_paras = 1` explicitly and say why, so they neither depend on nor
-enshrine the broken configuration.
+The adjustment itself is untouched for the case it was written for, which the
+new `WrapTest.SpaceSplitKeepsTheSpaceOnTheOldLineWithIndentParagraphsOff` pins:
+with indenting off, a space split still leaves the space at the end of the old
+line so the continuation does not begin with one. Mutating the gate *both* ways
+kills tests — restoring the unconditional form fails the DBCS test, and
+removing the adjustment entirely fails four space-arm tests.
+
+**This changes Windows rendering** for a non-UTF-8 CJK world with "indent
+paragraphs" off: the wrap now falls one byte earlier and the character stays
+whole. That is the point of the fix, and it is on the Windows validation list
+(`docs/WINDOWS-VALIDATION.md` § 4c-duodetricies).
+
+The two earlier tests (`WrapTest.DbcsPairStraddlingWrapColumnMovesWholeToNextLine`,
+`WrapTest.TrailByteInTheGapBetweenDbcsRangesIsNotASplitPoint`) still set
+`m_indent_paras = 1` explicitly, and now say what the other setting does rather
+than avoiding it.
 
 ## 11 — `ClearOutput` leaves the recorded IAC GA line number stale
 

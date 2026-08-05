@@ -969,6 +969,30 @@ returns 0 after a Clear Output Buffer instead of a phantom line number.
 **Check:** `GetInfo(289)` before and after Clear Output; the "before" value must
 be unchanged from today.
 
+### 4c-duodetricies. DBCS wrap with "indent paragraphs" off (2026-08-05)
+
+`docs/UPSTREAM-BUGS.md` #10, fixed rather than merely recorded — **this one
+deliberately changes what Windows draws.**
+
+`AddToLine`'s `!m_indent_paras` block moved the split byte back onto the old
+line unconditionally. That is right for a space (the continuation must not
+begin with one) and wrong for a DBCS lead byte, where it stranded the trail
+byte at the head of the next line. The adjustment is now gated on which arm
+found the split point.
+
+**What to check on Windows:** a non-UTF-8 world (Big5 or GB2312 encoding), a
+narrow `wrap_column`, "indent paragraphs" **off**, and CJK text long enough to
+wrap several times. Before: occasional mojibake at the right margin, one torn
+character per wrap, worse when an odd-length ASCII prefix puts the pairs on odd
+offsets. After: every wrap falls on a character boundary. The wrap now falls up
+to one byte earlier, so line breaks in such a world will move — that is the fix
+working, not a regression.
+
+**And the control:** with "indent paragraphs" off and ordinary ASCII text, a
+line that wraps at a space must still keep that space at the END of the old
+line, exactly as before. If continuation lines start showing a leading space,
+the gate is wrong in the other direction.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

@@ -308,6 +308,75 @@ TEST(WrapTest, WrapNeverSplitsUtf8Sequence)
 // 0xA1-0xFE disjunct.  57af097 deleted the separate (unreachable) GB2312 arm and
 // folded it into this one test, so that disjunct is now the only thing standing
 // in for GB2312 - and the Big5 fixture never reaches it.
+// UPSTREAM-BUGS.md #10.  The same fixture with "indent paragraphs" OFF, which
+// is the ONLY difference: the DBCS arm must still keep the character whole.
+//
+// The !m_indent_paras block was written for the SPACE arm, where `last_space++`
+// keeps the space at the end of the old line so the continuation does not start
+// with one.  It ran unconditionally, so when the split point came from the DBCS
+// arm instead -- where the recorded index is a LEAD BYTE, not a space -- the
+// increment left the lead byte ending the old line and started the next line on
+// the orphaned trail byte, splitting exactly the character the arm exists to
+// protect.
+TEST(WrapTest, DbcsPairStaysWholeWithIndentParagraphsOff)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 20;
+    doc.m_bUTF_8 = FALSE;
+    doc.m_indent_paras = 0;          // <-- the whole point of this test
+
+    std::string s = "abcde";
+    for (int i = 0; i < 10; ++i) { s += (char)0xD6; s += (char)0xD0; }
+    s += '\n';
+    doc.DisplayMsg(s.c_str(), (int)s.size(), 0);
+
+    ASSERT_TRUE(doc.m_LineList.GetCount() >= 2);
+    CLine* l0 = nth_line(doc, 0);
+    CLine* l1 = nth_line(doc, 1);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+    ASSERT_TRUE(l0->len > 0 && l1->len > 0);
+
+    // Identical to the indent_paras = 1 case above: the split retreats to the
+    // pair boundary at byte 17.  With the bug, last_space++ makes it 18.
+    EXPECT_EQ(17, l0->len);
+    EXPECT_EQ((char)0xD0, l0->text[l0->len - 1]);   // ends on a TRAIL byte
+    EXPECT_EQ((char)0xD6, l1->text[0]);             // starts on a LEAD byte
+    EXPECT_EQ(8, l1->len);
+
+    // Nothing lost or duplicated -- the fix must move the boundary, not a byte.
+    EXPECT_TRUE(line_text(l0) + line_text(l1) == s.substr(0, s.size() - 1));
+    EXPECT_EQ(l0->len, style_length_sum(l0));
+    EXPECT_EQ(l1->len, style_length_sum(l1));
+}
+
+// The space arm keeps its behaviour with indenting off: the space stays at the
+// END of the old line, so the continuation does not begin with one.  This is
+// what `last_space++` is FOR, and the DBCS fix must not disturb it.
+TEST(WrapTest, SpaceSplitKeepsTheSpaceOnTheOldLineWithIndentParagraphsOff)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 20;
+    doc.m_bUTF_8 = FALSE;
+    doc.m_indent_paras = 0;
+
+    // The last space before column 20 is at index 13.
+    const std::string s = "aaaa bbbb cccc dddd eeee\n";
+    doc.DisplayMsg(s.c_str(), (int)s.size(), 0);
+
+    ASSERT_TRUE(doc.m_LineList.GetCount() >= 2);
+    CLine* l0 = nth_line(doc, 0);
+    CLine* l1 = nth_line(doc, 1);
+    ASSERT_NE(nullptr, l0);
+    ASSERT_NE(nullptr, l1);
+
+    EXPECT_EQ(' ', l0->text[l0->len - 1]);   // the space stayed behind...
+    EXPECT_NE(' ', l1->text[0]);             // ...so the next line has none
+    EXPECT_TRUE(line_text(l0) + line_text(l1) == s.substr(0, s.size() - 1));
+}
+
 TEST(WrapTest, DbcsPairStraddlingWrapColumnMovesWholeToNextLine)
 {
     CMUSHclientDoc doc; make_doc(doc);

@@ -16,6 +16,7 @@
 #include "pal/scroll_geometry.h"
 #include "pal/style_colour.h"
 #include "pal/text_rect.h"
+#include "pal/image_placement.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1762,6 +1763,128 @@ TEST(PalWorldView, GagTriggerDoesNotSwallowTheLinesAfterIt)
 
     put("and another\n");      drain();
     EXPECT_TRUE(sawInView("and another"));
+}
+
+// ── pal::imagePlacement — world.SetBackgroundImage's 13 modes ───────────────
+// This arithmetic lived inside the paint-time drawing lambda, which no test can
+// reach (COutputPane::OnPaint is never called by any selftest -- see
+// docs/AUDIT-2026-08.md), so none of the thirteen placements had ever been
+// checked.  The numbering is script API and cannot change.
+//
+// Fixture: a 40x20 image on a 200x100 client inside a 300x160 owner.  Every
+// number below is deliberately distinct -- image, client and owner all differ
+// in both axes, and neither client dimension is a whole multiple of the image,
+// so a mode that confused width with height, client with owner, or that got the
+// tile rounding wrong, lands somewhere visibly different.
+
+static pal::ImagePlacement place(int mode)
+{
+    return pal::imagePlacement(mode, 40, 20, 200, 100, 300, 160);
+}
+
+TEST(PalImagePlacement, StretchModesScaleToTheRightRectangle)
+{
+    // 0: fill the output window.
+    pal::ImagePlacement p = place(0);
+    EXPECT_TRUE(p.stretch);
+    EXPECT_EQ(0, p.x); EXPECT_EQ(0, p.y);
+    EXPECT_EQ(200, p.w); EXPECT_EQ(100, p.h);
+
+    // 1: fill the height, width follows the source's 2:1 aspect => 200.
+    p = place(1);
+    EXPECT_TRUE(p.stretch);
+    EXPECT_EQ(200, p.w); EXPECT_EQ(100, p.h);
+
+    // 2: the OWNER, not the client -- the two differ here on purpose.
+    p = place(2);
+    EXPECT_TRUE(p.stretch);
+    EXPECT_EQ(300, p.w); EXPECT_EQ(160, p.h);
+
+    // 3: the owner's height, aspect-preserved => 160 * 2 = 320.
+    p = place(3);
+    EXPECT_TRUE(p.stretch);
+    EXPECT_EQ(320, p.w); EXPECT_EQ(160, p.h);
+}
+
+TEST(PalImagePlacement, AlignedModesPutTheImageAtTheRightCorner)
+{
+    // Modes 4-12 blit 1:1, so the size is always the image's.
+    for (int mode = 4; mode <= 12; ++mode) {
+        pal::ImagePlacement p = place(mode);
+        EXPECT_FALSE(p.stretch);
+        EXPECT_FALSE(p.tile);
+        EXPECT_EQ(40, p.w);
+        EXPECT_EQ(20, p.h);
+    }
+
+    const int right = 200 - 40, bottom = 100 - 20;   // 160, 80
+    const int hmid  = (200 - 40) / 2, vmid = (100 - 20) / 2;   // 80, 40
+
+    struct { int mode, x, y; const char* what; } kCases[] = {
+        {  4, 0,     0,      "top left" },
+        {  5, hmid,  0,      "top centre" },
+        {  6, right, 0,      "top right" },
+        {  7, right, vmid,   "right, centred vertically" },
+        {  8, right, bottom, "bottom right" },
+        {  9, hmid,  bottom, "bottom centre" },
+        { 10, 0,     bottom, "bottom left" },
+        { 11, 0,     vmid,   "left, centred vertically" },
+        { 12, hmid,  vmid,   "centred both ways" },
+    };
+    for (const auto& c : kCases) {
+        pal::ImagePlacement p = place(c.mode);
+        if (p.x != c.x || p.y != c.y)
+            printf("  mode %d (%s): got (%d,%d) want (%d,%d)\n",
+                   c.mode, c.what, p.x, p.y, c.x, c.y);
+        EXPECT_EQ(c.x, p.x);
+        EXPECT_EQ(c.y, p.y);
+    }
+}
+
+TEST(PalImagePlacement, TileCoversThePartialLastRowAndColumn)
+{
+    pal::ImagePlacement p = place(13);
+    EXPECT_TRUE(p.tile);
+    EXPECT_FALSE(p.stretch);
+    // 200/40 = 5 exactly, 100/20 = 5 exactly -- and the +1 is deliberate, so a
+    // client area that is NOT a whole multiple still gets its edge covered.
+    EXPECT_EQ(6, p.across);
+    EXPECT_EQ(6, p.down);
+
+    // The case the +1 exists for: 210x110 needs 6 across and 6 down to cover
+    // the ragged edge, where a bare division would give 5 and leave a strip.
+    pal::ImagePlacement q = pal::imagePlacement(13, 40, 20, 210, 110, 300, 160);
+    EXPECT_EQ(6, q.across);
+    EXPECT_EQ(6, q.down);
+    EXPECT_TRUE(q.across * 40 >= 210);
+    EXPECT_TRUE(q.down * 20 >= 110);
+}
+
+TEST(PalImagePlacement, AnImageBiggerThanTheClientGivesNegativeOffsets)
+{
+    // Windows blits 1:1 and lets the image overhang; the aligned modes then
+    // produce negative coordinates, which is correct -- the image is clipped by
+    // the DC, not repositioned.  Clamping these to 0 would silently move a
+    // bottom-right image to the top-left.
+    pal::ImagePlacement p = pal::imagePlacement(8, 400, 300, 200, 100, 300, 160);
+    EXPECT_EQ(200 - 400, p.x);
+    EXPECT_EQ(100 - 300, p.y);
+}
+
+TEST(PalImagePlacement, NonsenseIsRefusedRatherThanGuessed)
+{
+    // A degenerate image: the tile arithmetic would divide by zero.
+    pal::ImagePlacement p = pal::imagePlacement(13, 0, 20, 200, 100, 300, 160);
+    EXPECT_EQ(0, p.w); EXPECT_EQ(0, p.h);
+    p = pal::imagePlacement(4, 40, 0, 200, 100, 300, 160);
+    EXPECT_EQ(0, p.w); EXPECT_EQ(0, p.h);
+
+    // An unknown mode draws NOTHING.  The option is script-settable, so a typo
+    // must not land the image at some arbitrary default corner.
+    p = place(14);
+    EXPECT_EQ(0, p.w); EXPECT_EQ(0, p.h);
+    p = place(-1);
+    EXPECT_EQ(0, p.w); EXPECT_EQ(0, p.h);
 }
 
 MC_TEST_MAIN()

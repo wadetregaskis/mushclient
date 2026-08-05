@@ -33,6 +33,7 @@
 #include "platform/wx_osx_text.h"    // wxOSXSetWindowTabbing ("Window tabs" pref)
 #include "genprint.h"                 // FONT_BOLD / FONT_ITALIC / FONT_UNDERLINE
 #include "pal/text_rect.h"            // pal::textRectWidth — world.TextRectangle
+#include "pal/image_placement.h"    // pal::imagePlacement — background/foreground image modes
 #include "pal/surface_bridge.h"       // pal::g_surface — contentGeneration for the mask cache
 #include <map>                        // the transparency-mask cache
 #include <iterator>                   // std::next
@@ -965,30 +966,24 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         int fw = 0, fh = 0;
         GetClientSize(&fw, &fh);              // frame rect, for modes 2/3
 
+        // WHERE it goes is pure arithmetic and lives in pal/image_placement.h,
+        // so it can be checked: this lambda is only ever called from
+        // COutputPane::OnPaint, which no selftest reaches, and thirteen modes
+        // of centring and edge-alignment had never executed under test.
+        const pal::ImagePlacement p =
+            pal::imagePlacement(mode, w, h, clientW, clientH, fw, fh);
+        if (p.w <= 0 || p.h <= 0)
+            return;                           // unknown mode: draw nothing
+
         wxMemoryDC src(*wxbmp);
-        switch (mode) {                       // == Blit_Bitmap's !bUseRect placement
-        case 0:  dc.StretchBlit(0, 0, clientW, clientH, &src, 0, 0, w, h, wxCOPY); break;
-        case 1:  dc.StretchBlit(0, 0, (int)(clientH * (double)w / h), clientH,
-                                &src, 0, 0, w, h, wxCOPY); break;
-        case 2:  dc.StretchBlit(0, 0, fw, fh, &src, 0, 0, w, h, wxCOPY); break;
-        case 3:  dc.StretchBlit(0, 0, (int)(fh * (double)w / h), fh,
-                                &src, 0, 0, w, h, wxCOPY); break;
-        case 4:  dc.Blit(0, 0, w, h, &src, 0, 0, wxCOPY); break;
-        case 5:  dc.Blit((clientW - w) / 2, 0, w, h, &src, 0, 0, wxCOPY); break;
-        case 6:  dc.Blit(clientW - w, 0, w, h, &src, 0, 0, wxCOPY); break;
-        case 7:  dc.Blit(clientW - w, (clientH - h) / 2, w, h, &src, 0, 0, wxCOPY); break;
-        case 8:  dc.Blit(clientW - w, clientH - h, w, h, &src, 0, 0, wxCOPY); break;
-        case 9:  dc.Blit((clientW - w) / 2, clientH - h, w, h, &src, 0, 0, wxCOPY); break;
-        case 10: dc.Blit(0, clientH - h, w, h, &src, 0, 0, wxCOPY); break;
-        case 11: dc.Blit(0, (clientH - h) / 2, w, h, &src, 0, 0, wxCOPY); break;
-        case 12: dc.Blit((clientW - w) / 2, (clientH - h) / 2, w, h, &src, 0, 0, wxCOPY); break;
-        case 13: {                            // tile
-            const int across = clientW / w + 1, down = clientH / h + 1;
-            for (int tx = 0; tx < across; ++tx)
-                for (int ty = 0; ty < down; ++ty)
-                    dc.Blit(tx * w, ty * h, w, h, &src, 0, 0, wxCOPY);
-            break;
-        }
+        if (p.tile) {
+            for (int tx = 0; tx < p.across; ++tx)
+                for (int ty = 0; ty < p.down; ++ty)
+                    dc.Blit(tx * p.w, ty * p.h, p.w, p.h, &src, 0, 0, wxCOPY);
+        } else if (p.stretch) {
+            dc.StretchBlit(p.x, p.y, p.w, p.h, &src, 0, 0, w, h, wxCOPY);
+        } else {
+            dc.Blit(p.x, p.y, p.w, p.h, &src, 0, 0, wxCOPY);
         }
     };
 

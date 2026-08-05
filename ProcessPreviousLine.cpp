@@ -185,7 +185,12 @@ assemble the full text of the original line.
    {
    prevpos = pos;   // remember line which did have a hard return
    CLine * pLine = m_LineList.GetPrev (pos);
-   if (pLine->hard_return || pLine->flags != flags)
+   // PROMPT is masked out: it is stamped when the IAC GA/EOR arrives, which is
+   // AFTER the prompt's text, so only the wrap group's LAST segment carries it.
+   // Comparing it here would end the group at that segment and the trigger
+   // would see the tail fragment of a wrapped prompt instead of the whole line.
+   if (pLine->hard_return ||
+       (pLine->flags & PROMPT_GROUPING_MASK) != (flags & PROMPT_GROUPING_MASK))
      break;
    }
 

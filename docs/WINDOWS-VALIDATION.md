@@ -931,6 +931,44 @@ and neither has a test, for reasons that matter:
    read out of bounds. Not assertable from a test, since the well-defined
    behaviour and the undefined one look identical when the platform is lenient.
 
+### 4c-septemvicies. A new `CLine::flags` bit, and the trigger grouping test (2026-08-04)
+
+The macOS "Clear to Start" command needs to know which line is the server's
+prompt, so `MarkPromptLine` (`telnet_phases.cpp`, called from the IAC GA and
+IAC EOR arms of `Phase_IAC`) now stamps a new **`PROMPT = 0x20`** bit on that
+line and records its number in a new `CMUSHclientDoc::m_last_prompt_line`. Both
+are in shared source, so **Windows sets the bit too** — nothing there reads it
+yet.
+
+**Why this is on the list.** `ProcessPreviousLine` decides which soft-wrapped
+segments form one logical line for trigger matching by comparing whole
+`CLine::flags` values (`:188`). Every *other* consumer of that field tests
+individual bits, so a new bit is invisible to them; this one comparison is not.
+And PROMPT is stamped *after* the prompt's text has arrived — the GA byte comes
+last — so on a prompt wider than the wrap column it lands on the final segment
+only. Compared naively, the group would end at that segment and a trigger would
+match a tail fragment instead of the whole prompt. `PROMPT_GROUPING_MASK`
+(`OtherTypes.h`) is what prevents it.
+
+Pinned headlessly by
+`TriggerR5.WrappedPromptMatchesAsOneLogicalLineDespiteThePromptFlag`, which
+fails if the mask is widened to `~0`. That test runs the real shared code, so
+the risk of a Windows-only difference is low — but trigger matching is the
+hottest user-visible path in the app, so:
+
+**What to check on Windows:** connect to a MUD that sends IAC GA (most do) with
+`convert_ga_to_newline` **on**, a wrap column narrower than the prompt, and a
+trigger whose pattern spans the prompt's wrap boundary. It must still fire. Do
+the same with the option **off** (the default) to confirm the unterminated
+prompt behaves exactly as before. Then check any trigger that matches ordinary
+wrapped output still fires — the mask must not have loosened grouping either.
+
+Also here: `ClearOutput` now zeroes `m_last_line_with_IAC_GA` alongside
+`m_total_lines` (`docs/UPSTREAM-BUGS.md` #11). `world.GetInfo(289)` therefore
+returns 0 after a Clear Output Buffer instead of a phantom line number.
+**Check:** `GetInfo(289)` before and after Clear Output; the "before" value must
+be unchanged from today.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

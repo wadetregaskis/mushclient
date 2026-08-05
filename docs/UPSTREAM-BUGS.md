@@ -19,6 +19,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 8 | Custom-colour index used unchecked (`note_text_colour`) | `36db6c1` (partial) | methods_noting.cpp note-colour getters; prefspropertypages.cpp `FixSwatch` |
 | 9 | xterm-256 colour index subscripts the 8-entry print-style arrays | port-guarded only | mushview.cpp `CMUSHView::PrintWorld` |
 | 10 | DBCS wrap splits the character when `indent_paras` is off | **NOT FIXED — needs a decision** | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::AddToLine` |
+| 11 | `ClearOutput` leaves `m_last_line_with_IAC_GA` naming a deleted line | this commit | doc.cpp `CMUSHclientDoc::ClearOutput` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -219,3 +220,23 @@ The two new tests (`WrapTest.DbcsPairStraddlingWrapColumnMovesWholeToNextLine`,
 `WrapTest.TrailByteInTheGapBetweenDbcsRangesIsNotASplitPoint`) set
 `m_indent_paras = 1` explicitly and say why, so they neither depend on nor
 enshrine the broken configuration.
+
+## 11 — `ClearOutput` leaves the recorded IAC GA line number stale
+
+**Bug:** `CMUSHclientDoc::ClearOutput` deletes every line and restarts the
+numbering (`m_total_lines = 0`, then the re-seeded line becomes number 1), but
+leaves `m_last_line_with_IAC_GA` holding the number it had before. That number
+now names a line which does not exist, and — because the counter went back to
+zero — usually one that *cannot* exist: `world.GetInfo(289)` will happily
+report line 4,312 of a buffer holding one line.
+
+A script using it the obvious way (`GetLineInfo(GetInfo(289), 1)` to re-read
+the last prompt) gets a silently wrong line rather than an error, because
+`GetLinePosition` clamps out-of-range numbers to the last line.
+
+**Fix:** zero it alongside `m_total_lines`, which is the only place the two can
+disagree. The port's own `m_last_prompt_line` — the line the PROMPT flag was
+stamped on, used by Clear to Start — is reset in the same place and for the
+same reason.
+
+Covered by `Utilities.ClearOutputForgetsTheRememberedPromptAndGaLine`.

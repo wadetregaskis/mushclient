@@ -2341,7 +2341,14 @@ POSITION pos;
 // put one line in line list
 
   m_total_lines = 0;
-  m_pCurrentLine = new CLine (++m_total_lines, 
+  // Both of these name a line by number, and the numbering restarts here, so a
+  // value carried over would name a line that no longer exists -- and, since
+  // m_total_lines is now 0, one that cannot exist.  (Upstream leaves
+  // m_last_line_with_IAC_GA stale, so world.GetInfo(289) reports a phantom
+  // line after Clear Output; see docs/UPSTREAM-BUGS.md #11.)
+  m_last_line_with_IAC_GA = 0;
+  m_last_prompt_line = 0;
+  m_pCurrentLine = new CLine (++m_total_lines,
                               m_nWrapColumn,
                               0, WHITE, BLACK,
                               m_bUTF_8);

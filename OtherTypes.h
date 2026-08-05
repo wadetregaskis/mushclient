@@ -320,8 +320,19 @@ const int USER_INPUT  = 0x02;  // this is echoed user input
 const int LOG_LINE    = 0x04;  // this line is to be logged
 const int BOOKMARK    = 0x08;  // line is bookmarked
 const int HORIZ_RULE  = 0x10;  // line is a horizontal rule
+const int PROMPT      = 0x20;  // server sent IAC GA/EOR on this line: it is a prompt
 const int NOTE_OR_COMMAND = 0x03; // for testing if line is an output line or not
 #endif
+
+// PROMPT is unlike its neighbours in one way that matters: it is stamped on a
+// line AFTER the line's text has arrived (the GA byte follows the prompt text),
+// so it can be set on the last member of a soft-wrap group and not on the
+// earlier ones.  Every other consumer of CLine::flags tests individual bits, so
+// a new bit is invisible to them -- but ProcessPreviousLine compares the whole
+// value to decide which wrapped segments form one logical line for trigger
+// matching, and there it MUST be masked out.  See PROMPT_GROUPING_MASK below
+// and the comment at ProcessPreviousLine.cpp's grouping loop.
+const int PROMPT_GROUPING_MASK = ~PROMPT;
 
 class CLine : public CObject
   {

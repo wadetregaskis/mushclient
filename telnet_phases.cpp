@@ -133,6 +133,51 @@ void CMUSHclientDoc::Handle_IAC_GA ()
   SendToAllPluginCallbacks (ON_PLUGIN_IAC_GA);
   }   // end of  CMUSHclientDoc::Handle_IAC_GA
 
+// An IAC GA or IAC EOR means "go ahead, it is your turn" -- the text that has
+// arrived since the last line break IS the server's prompt.  Remember which
+// line that was, so a later "clear everything above the prompt" can find it
+// even after more output has pushed it up the buffer.
+//
+// Two server conventions, both handled:
+//
+//   "...\r\n> " IAC GA    the usual one.  The prompt was NOT terminated, so it
+//                         is still the in-progress line -- stamp that.
+//   "...\r\n" IAC EOR     GA/EOR as an end-of-record marker.  The prompt is
+//                         already committed and the in-progress line is a fresh
+//                         empty one, so stamp the line before it.
+//
+// An empty line is never a prompt, which is what distinguishes the two.
+//
+// m_last_line_with_IAC_GA keeps its upstream meaning (the line number current
+// when the GA was seen, reported by world.GetInfo(289)); m_last_prompt_line is
+// the line actually stamped, which differs in the second case above.
+void CMUSHclientDoc::MarkPromptLine ()
+  {
+  m_last_line_with_IAC_GA = m_total_lines;
+
+  CLine * pPrompt = NULL;
+
+  if (m_pCurrentLine && m_pCurrentLine->len > 0)
+    pPrompt = m_pCurrentLine;
+  else if (!m_LineList.IsEmpty ())
+    {
+    // The in-progress line is empty (or absent): the prompt, if there is one,
+    // is the last committed line.
+    POSITION pos = m_LineList.GetTailPosition ();
+    CLine * pLast = m_LineList.GetPrev (pos);
+    if (pLast == m_pCurrentLine)          // skip the empty in-progress line
+      pLast = pos ? m_LineList.GetPrev (pos) : NULL;
+    if (pLast && pLast->len > 0)
+      pPrompt = pLast;
+    }
+
+  if (!pPrompt)
+    return;
+
+  pPrompt->flags |= PROMPT;
+  m_last_prompt_line = pPrompt->m_nLineNumber;
+  }   // end of CMUSHclientDoc::MarkPromptLine
+
 void CMUSHclientDoc::Phase_IAC (unsigned char & c)
   {
   const char * p;
@@ -145,15 +190,15 @@ void CMUSHclientDoc::Phase_IAC (unsigned char & c)
           p = "EOR"; 
           if (m_bConvertGAtoNewline)
             new_c = '\n';
-          m_last_line_with_IAC_GA = m_total_lines;
+          MarkPromptLine ();
           Handle_IAC_GA ();
           break;
-    case GO_AHEAD            : 
-          m_phase = NONE; 
-          p = "GA"; 
+    case GO_AHEAD            :
+          m_phase = NONE;
+          p = "GA";
           if (m_bConvertGAtoNewline)
             new_c = '\n';
-          m_last_line_with_IAC_GA = m_total_lines;
+          MarkPromptLine ();
           Handle_IAC_GA ();
           break;
 

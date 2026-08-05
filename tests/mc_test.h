@@ -180,6 +180,33 @@ inline bool cmp_eq(const char* a, const char* b) {
         return; \
     }} while(0)
 
+// The ordering ASSERTs, for the same reason as ASSERT_EQ/ASSERT_NE: when a
+// later assertion would dereference or index using the value, carrying on past
+// a failure turns a clear message into a crash.
+#define ASSERT_GT(a, b) \
+    do { if (!((a) > (b))) { \
+        mc_test::fail_msg(__FILE__, __LINE__, "Assert failed: " #a " > " #b); \
+        return; \
+    }} while(0)
+
+#define ASSERT_GE(a, b) \
+    do { if (!((a) >= (b))) { \
+        mc_test::fail_msg(__FILE__, __LINE__, "Assert failed: " #a " >= " #b); \
+        return; \
+    }} while(0)
+
+#define ASSERT_LT(a, b) \
+    do { if (!((a) < (b))) { \
+        mc_test::fail_msg(__FILE__, __LINE__, "Assert failed: " #a " < " #b); \
+        return; \
+    }} while(0)
+
+#define ASSERT_LE(a, b) \
+    do { if (!((a) <= (b))) { \
+        mc_test::fail_msg(__FILE__, __LINE__, "Assert failed: " #a " <= " #b); \
+        return; \
+    }} while(0)
+
 // Entry point — put in exactly one .cpp in each test executable.
 //
 // Ignoring SIGPIPE mirrors what the product does at startup

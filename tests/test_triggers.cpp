@@ -1042,6 +1042,59 @@ TEST(TriggerR5, MatchOnSecondWrappedLine)
     EXPECT_EQ(1L, t->nMatched);
 }
 
+// ── the PROMPT flag must not split a wrapped line ────────────────────────────
+//
+// ProcessPreviousLine decides which soft-wrapped segments form one logical
+// line by comparing whole CLine::flags values.  PROMPT is stamped by
+// MarkPromptLine when the IAC GA arrives -- AFTER the prompt's text, so it
+// lands on the LAST segment only.  Compared naively, that segment's flags
+// differ from its predecessors' and the group ends there, leaving the trigger
+// to match a tail fragment instead of the prompt.  PROMPT_GROUPING_MASK is
+// what stops that; widen it to ~0 and this test fails.
+//
+// convert_ga_to_newline is on because a prompt is otherwise never terminated,
+// and an unterminated line never reaches trigger matching at all.
+TEST(TriggerR5, WrappedPromptMatchesAsOneLogicalLineDespiteThePromptFlag)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 10;
+    doc.m_bConvertGAtoNewline = 1;
+
+    // `whole` fires only if every segment was reassembled; `straddle` only if
+    // the join across a wrap boundary happened at all.  Neither can match the
+    // last segment on its own, which is all a broken group offers.
+    CTrigger* whole    = add_trigger(doc, "HP:100 MP:50 EXP:25 >");
+    CTrigger* straddle = add_trigger(doc, "*100 MP*");   // plain => whole-line
+    whole->bKeepEvaluating = TRUE;   // or the first match stops the sequence
+
+    doc.DisplayMsg("HP:100 MP:50 EXP:25 >", 21, 0);
+    unsigned char c = GO_AHEAD;
+    doc.Phase_IAC(c);                 // stamps PROMPT, substitutes '\n'
+    ASSERT_EQ('\n', c);
+    char nl = (char) c;
+    doc.DisplayMsg(&nl, 1, 0);        // ...which finalises the line
+
+    // The stamp really did land on one segment only -- otherwise this test
+    // would pass for the wrong reason.
+    int wrapped = 0, stamped = 0;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (l->len > 0) wrapped++;
+        if (l->flags & PROMPT) stamped++;
+    }
+    EXPECT_GT(wrapped, 1);            // it did wrap
+    EXPECT_EQ(1, stamped);            // exactly one segment carries PROMPT
+
+    // The wrap must really have fallen inside "HP:100 MP:50", or `straddle`
+    // would prove nothing.
+    CLine* first = doc.m_LineList.GetHead();
+    EXPECT_LT(first->len, 13);
+
+    EXPECT_EQ(1L, whole->nMatched);      // the trigger sees the WHOLE prompt
+    EXPECT_EQ(1L, straddle->nMatched);   // ...joined across the wrap boundary
+}
+
 // An omitted line's paragraph can contain an open note (world.Tell); the
 // note text is preserved via m_OutstandingLines and re-emitted.
 TEST(TriggerR5, OmittedLineReplaysInterleavedNote)

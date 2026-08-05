@@ -3883,6 +3883,110 @@ void CMUSHclientDoc::DeleteHeadLines (long count)
   UpdateAllViews (NULL);
   }  // end of CMUSHclientDoc::DeleteHeadLines
 
+
+// ── CountLinesBeforePromptBlock ─────────────────────────────────────────────
+// "Clear to Start": scroll the current prompt to the top of the window by
+// throwing away everything above it.  This returns how many head lines that
+// is, so the caller can just hand it to DeleteHeadLines.
+//
+// WHAT COUNTS AS THE PROMPT BLOCK
+//
+// The block ends at the line MarkPromptLine last stamped (m_last_prompt_line),
+// and extends BACKWARDS over:
+//
+//   * the soft-wrap group that line belongs to -- a prompt wider than the wrap
+//     column is several CLines, and only the last carries the PROMPT flag,
+//     because the GA byte arrives after all of the text.  A line is a
+//     continuation of its predecessor exactly when that predecessor has no
+//     hard_return, which is how ProcessPreviousLine reassembles logical lines.
+//
+//   * any immediately preceding line that is itself flagged PROMPT (plus that
+//     line's own wrap group).  That is the only way a prompt spanning several
+//     HARD lines can be recognised: telnet marks the end of a prompt, never
+//     the start, so a block is identifiable only if the server sent a GA/EOR
+//     after each of its lines.  Servers that send one GA for a multi-line
+//     prompt give us no signal at all, and only the final line is kept.
+//
+// If no prompt has ever been seen -- no GA/EOR, which is most of them -- the
+// block is the last line and its wrap group, which is the fallback the macOS
+// Clear to Start command specifies.
+//
+// The backwards search for the block's end is bounded by m_last_prompt_line
+// rather than running to the head, so a world whose server never sends GA does
+// not walk the buffer at all.  A recorded number that no longer names a live
+// line (evicted by RemoveChunk, or renumbered by ClearOutput) simply fails to
+// match and takes the fallback.
+long CMUSHclientDoc::CountLinesBeforePromptBlock (void) const
+  {
+  const long total = m_LineList.GetCount ();
+  if (total <= 1)
+    return 0;         // nothing above the last line
+
+  // ── find the block's LAST line ───────────────────────────────────────────
+  POSITION blockEnd = m_LineList.GetTailPosition ();
+  long     after    = 0;      // lines strictly after blockEnd
+
+  // The in-progress line is the buffer's tail even when nothing has arrived on
+  // it yet -- it is where the next character will land, not content.  Keeping
+  // only THAT would clear the window completely, so the fallback starts one
+  // line further back.
+    {
+    POSITION pos = blockEnd;
+    const CLine * pTail = m_LineList.GetPrev (pos);
+    if (pTail == m_pCurrentLine && pTail->len == 0 && pos)
+      {
+      blockEnd = pos;
+      after    = 1;
+      }
+    }
+
+  // The head's line number is the oldest one the buffer still holds, so this
+  // is an O(1) "has the prompt been evicted?" test.  Without it, a prompt that
+  // RemoveChunk has already dropped would send the search below all the way to
+  // the head -- the whole buffer, which with unlimited scrollback is unbounded.
+  const bool bPromptStillHeld =
+      m_last_prompt_line > 0 &&
+      m_LineList.GetHead ()->m_nLineNumber <= m_last_prompt_line;
+
+  if (bPromptStillHeld)
+    {
+    long n = 0;
+    for (POSITION pos = m_LineList.GetTailPosition (); pos; n++)
+      {
+      const POSITION here = pos;
+      const CLine * pLine = m_LineList.GetPrev (pos);
+      if (pLine->m_nLineNumber < m_last_prompt_line)
+        break;        // walked past it: the prompt is gone
+      if (pLine->m_nLineNumber == m_last_prompt_line &&
+          (pLine->flags & PROMPT))
+        {
+        blockEnd = here;
+        after    = n;
+        break;
+        }
+      }
+    }
+
+  // ── extend backwards over the whole block ────────────────────────────────
+  long blockLen = 0;
+  for (POSITION pos = blockEnd; pos; )
+    {
+    m_LineList.GetPrev (pos);   // pos now names the line BEFORE this one
+    blockLen++;
+    if (!pos)
+      break;                    // reached the head of the buffer
+    const CLine * pPrev = m_LineList.GetAt (pos);
+    if (!pPrev->hard_return)
+      continue;                 // this line is a wrapped continuation of pPrev
+    if (pPrev->flags & PROMPT)
+      continue;                 // pPrev is a prompt line in its own right
+    break;
+    }
+
+  const long before = total - after - blockLen;
+  return before > 0 ? before : 0;
+  }  // end of CMUSHclientDoc::CountLinesBeforePromptBlock
+
  void CMUSHclientDoc::RemoveChunk (void)
    {
   int i;

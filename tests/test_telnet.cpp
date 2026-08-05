@@ -16,6 +16,7 @@
 #include "scripting/errors.h"
 #include "pal/itransport.h"
 #include <cstring>
+#include <string>
 
 // A transport that records the raw negotiation bytes the doc puts on the wire,
 // so Send_IAC_* suppression is observable.
@@ -184,6 +185,145 @@ TEST(TelnetTest, Phase_IAC_GA_NoConversionWhenDisabled)
     doc.Phase_IAC(c);
     EXPECT_EQ(NONE, doc.m_phase);
     EXPECT_EQ('\0', c);   // no conversion
+}
+
+// ── IAC GA / EOR prompt marking ──────────────────────────────────────────
+//
+// A GA or EOR means "go ahead, it is your turn": the text that has arrived
+// since the last line break IS the server's prompt.  MarkPromptLine stamps
+// that line with the PROMPT flag so "clear everything above the prompt" can
+// find it later, and records its number in m_last_prompt_line.
+//
+// These drive the real display pipeline rather than poking m_pCurrentLine,
+// because WHICH line gets stamped depends on whether the server terminated
+// the prompt before sending the GA -- the two conventions in the wild.
+
+// A doc set up to receive MUD output, as test_display's fixture does: no
+// pre-made current line, so DisplayMsg builds and links the line list itself.
+static void make_stream_doc(CMUSHclientDoc& doc)
+{
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+}
+
+static void mud(CMUSHclientDoc& doc, const char* s)
+{
+    doc.DisplayMsg(s, (int)strlen(s), 0);
+}
+
+// Drive one IAC <cmd>, then feed on whatever character Phase_IAC substituted
+// -- which is how the real caller behaves, and is what makes the
+// convert-GA-to-newline arm actually terminate the line.
+static void send_iac(CMUSHclientDoc& doc, unsigned char cmd)
+{
+    unsigned char c = cmd;
+    doc.Phase_IAC(c);
+    if (c) {
+        char ch = (char) c;
+        doc.DisplayMsg(&ch, 1, 0);
+    }
+}
+
+// The common convention: the prompt is deliberately NOT terminated, so it is
+// still the in-progress line when the GA arrives.
+TEST(TelnetTest, IAC_GA_StampsTheUnterminatedPromptLine)
+{
+    CMUSHclientDoc doc; make_stream_doc(doc);
+    doc.m_bConvertGAtoNewline = 0;
+    mud(doc, "You are in a forest.\nHP:100 MP:50 > ");
+
+    const long lines_before = doc.m_total_lines;
+    send_iac(doc, GO_AHEAD);
+
+    ASSERT_NE(nullptr, doc.m_pCurrentLine);
+    EXPECT_TRUE(std::string(doc.m_pCurrentLine->text, doc.m_pCurrentLine->len)
+                == "HP:100 MP:50 > ");
+    EXPECT_TRUE((doc.m_pCurrentLine->flags & PROMPT) != 0);
+    EXPECT_EQ(doc.m_pCurrentLine->m_nLineNumber, doc.m_last_prompt_line);
+
+    // world.GetInfo(289) keeps its upstream meaning: the line number current
+    // when the GA was seen.  Here that is the same line.
+    EXPECT_EQ(lines_before, doc.m_last_line_with_IAC_GA);
+    EXPECT_EQ(doc.m_last_prompt_line, doc.m_last_line_with_IAC_GA);
+}
+
+// The other convention: EOR as an end-of-record marker, sent AFTER the
+// newline.  The prompt is already committed and the in-progress line is a
+// fresh empty one, so the stamp has to go one line back -- and here
+// m_last_prompt_line and m_last_line_with_IAC_GA genuinely differ.
+TEST(TelnetTest, IAC_EOR_StampsTheLastCommittedLineWhenPromptWasTerminated)
+{
+    CMUSHclientDoc doc; make_stream_doc(doc);
+    doc.m_bConvertGAtoNewline = 0;
+    mud(doc, "You are in a forest.\nHP:100 MP:50 >\n");
+
+    ASSERT_NE(nullptr, doc.m_pCurrentLine);
+    ASSERT_EQ(0, doc.m_pCurrentLine->len);      // fresh empty line
+
+    send_iac(doc, EOR);
+
+    // The empty in-progress line is NOT the prompt...
+    EXPECT_TRUE((doc.m_pCurrentLine->flags & PROMPT) == 0);
+    // ...the committed line before it is.
+    POSITION pos = doc.m_LineList.GetTailPosition();
+    doc.m_LineList.GetPrev(pos);                // skip the in-progress line
+    ASSERT_NE(nullptr, pos);
+    CLine* prompt = doc.m_LineList.GetAt(pos);
+    EXPECT_TRUE(std::string(prompt->text, prompt->len) == "HP:100 MP:50 >");
+    EXPECT_TRUE((prompt->flags & PROMPT) != 0);
+    EXPECT_EQ(prompt->m_nLineNumber, doc.m_last_prompt_line);
+
+    // The upstream field still names the line current at GA time, which is the
+    // empty one -- one further on.  That difference is the whole reason
+    // m_last_prompt_line exists.
+    EXPECT_EQ(doc.m_pCurrentLine->m_nLineNumber, doc.m_last_line_with_IAC_GA);
+    EXPECT_LT(doc.m_last_prompt_line, doc.m_last_line_with_IAC_GA);
+}
+
+// convert_ga_to_newline turns the GA into a line break.  The stamp must land
+// on the prompt itself, before that break commits it -- not on the empty line
+// the break creates.
+TEST(TelnetTest, IAC_GA_ConvertedToNewlineStillStampsThePromptLine)
+{
+    CMUSHclientDoc doc; make_stream_doc(doc);
+    doc.m_bConvertGAtoNewline = 1;
+    mud(doc, "HP:100 MP:50 > ");
+
+    send_iac(doc, GO_AHEAD);       // becomes '\n', committing the prompt
+
+    POSITION pos = doc.m_LineList.GetTailPosition();
+    doc.m_LineList.GetPrev(pos);   // the empty line the newline started
+    ASSERT_NE(nullptr, pos);
+    CLine* prompt = doc.m_LineList.GetAt(pos);
+    EXPECT_TRUE(std::string(prompt->text, prompt->len) == "HP:100 MP:50 > ");
+    EXPECT_TRUE((prompt->flags & PROMPT) != 0);
+    EXPECT_EQ(prompt->m_nLineNumber, doc.m_last_prompt_line);
+}
+
+// Nothing has arrived at all: there is no prompt to remember, and in
+// particular MarkPromptLine must not walk off an empty line list.
+TEST(TelnetTest, IAC_GA_OnAnEmptyBufferMarksNothing)
+{
+    CMUSHclientDoc doc; make_stream_doc(doc);
+    doc.m_bConvertGAtoNewline = 0;
+
+    send_iac(doc, GO_AHEAD);
+
+    EXPECT_EQ(0L, doc.m_last_prompt_line);
+}
+
+// A GA arriving where the buffer holds nothing but the empty in-progress line
+// must not stamp that line -- an empty line is never a prompt.
+TEST(TelnetTest, IAC_GA_DoesNotStampAnEmptyInProgressLine)
+{
+    CMUSHclientDoc doc; make_stream_doc(doc);
+    doc.m_bConvertGAtoNewline = 0;
+    mud(doc, "\n");                 // one empty committed line + the pending one
+
+    send_iac(doc, GO_AHEAD);
+
+    EXPECT_EQ(0L, doc.m_last_prompt_line);
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; )
+        EXPECT_TRUE((doc.m_LineList.GetNext(pos)->flags & PROMPT) == 0);
 }
 
 // ── Phase_WILL (telnet negotiation) ──────────────────────────────────────

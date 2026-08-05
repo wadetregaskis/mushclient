@@ -778,6 +778,213 @@ TEST(Utilities, DeleteHeadLinesNeverTakesTheInProgressLine)
     EXPECT_EQ(1, (int)doc.m_LineList.GetCount());
 }
 
+// ── CountLinesBeforePromptBlock: the cut point for "Clear to Start" ────────
+//
+// Clear to Start scrolls the current prompt to the top of the window by
+// throwing away everything above it.  The block that survives is the line the
+// last IAC GA/EOR stamped, its soft-wrap group, and any immediately preceding
+// line that was itself stamped -- with a fallback to the last line when the
+// server never sends GA, which is most of them.
+
+static void make_buffer_doc(CMUSHclientDoc& doc)
+{
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.m_maxlines = 0;                      // unlimited: nothing else may trim
+    doc.AllocateLinePositions();
+}
+
+static void mud_text(CMUSHclientDoc& doc, const char* s)
+{
+    doc.DisplayMsg(s, (int)strlen(s), 0);
+}
+
+// One IAC GA, followed by whatever character Phase_IAC substituted -- which is
+// how the real caller behaves, and is what makes convert_ga_to_newline
+// actually terminate the line.
+static void mud_ga(CMUSHclientDoc& doc)
+{
+    unsigned char c = GO_AHEAD;
+    doc.Phase_IAC(c);
+    if (c) {
+        char ch = (char) c;
+        doc.DisplayMsg(&ch, 1, 0);
+    }
+}
+
+// Text of every line still in the buffer, joined with '|'.
+static std::string buffer_text(CMUSHclientDoc& doc)
+{
+    std::string out;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        if (!out.empty()) out += '|';
+        out.append(l->text, l->len);
+    }
+    return out;
+}
+
+// Every line's text, concatenated -- a wrap group reassembled.
+static std::string buffer_joined(CMUSHclientDoc& doc)
+{
+    std::string out;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        out.append(l->text, l->len);
+    }
+    return out;
+}
+
+TEST(Utilities, ClearToStartWithNoPromptKeepsTheLastLine)
+{
+    // No GA ever arrived, so there is no known prompt.  The specified
+    // fallback is "everything but the last line" -- and the empty in-progress
+    // line does not count as that last line, or the window would end up blank.
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    mud_text(doc, "one\ntwo\nthree\n");
+    ASSERT_EQ(4, (int)doc.m_LineList.GetCount());   // 3 committed + in-progress
+    EXPECT_EQ(0L, doc.m_last_prompt_line);
+
+    EXPECT_EQ(2L, doc.CountLinesBeforePromptBlock());
+    doc.DeleteHeadLines(doc.CountLinesBeforePromptBlock());
+    EXPECT_STREQ("three|", buffer_text(doc).c_str());
+}
+
+TEST(Utilities, ClearToStartWithNoPromptKeepsTheWholeWrapGroup)
+{
+    // A wrapped line is several CLines; keeping only the last would show the
+    // user its tail fragment.
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 10;
+    mud_text(doc, "first\n");
+    mud_text(doc, "AAAA BBBB CCCC DDDD\n");
+    ASSERT_GT((int)doc.m_LineList.GetCount(), 3);   // it really did wrap
+
+    doc.DeleteHeadLines(doc.CountLinesBeforePromptBlock());
+
+    // "first" is gone; every segment of the long line survived, in order.
+    EXPECT_STREQ("AAAA BBBB CCCC DDDD", buffer_joined(doc).c_str());
+}
+
+TEST(Utilities, ClearToStartKeepsTheStampedPromptEvenWithOutputBelowIt)
+{
+    // The point of the PROMPT flag: once the server has sent something after
+    // the prompt, "the last line" is no longer the prompt, and only the stamp
+    // can find it.
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    doc.m_bConvertGAtoNewline = 1;         // so the prompt becomes a real line
+
+    mud_text(doc, "one\ntwo\n");
+    mud_text(doc, "HP:100 > ");
+    mud_ga(doc);
+    mud_text(doc, "A raven flies overhead.\n");
+
+    ASSERT_EQ(5, (int)doc.m_LineList.GetCount());
+    EXPECT_EQ(2L, doc.CountLinesBeforePromptBlock());
+
+    doc.DeleteHeadLines(doc.CountLinesBeforePromptBlock());
+    EXPECT_STREQ("HP:100 > |A raven flies overhead.|", buffer_text(doc).c_str());
+}
+
+TEST(Utilities, ClearToStartKeepsEverySegmentOfAWrappedPrompt)
+{
+    // Only the LAST segment carries PROMPT (the GA arrives after the text), so
+    // the block has to be extended backwards over the wrap group.
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    doc.m_bConvertGAtoNewline = 1;
+    doc.m_wrap = TRUE;
+    doc.m_nWrapColumn = 10;
+
+    mud_text(doc, "one\ntwo\n");
+    mud_text(doc, "HP:100 MP:50 EXP:25 > ");
+    mud_ga(doc);
+    mud_text(doc, "A raven flies overhead.\n");
+
+    doc.DeleteHeadLines(doc.CountLinesBeforePromptBlock());
+    EXPECT_STREQ("HP:100 MP:50 EXP:25 > A raven flies overhead.",
+                 buffer_joined(doc).c_str());
+}
+
+TEST(Utilities, ClearToStartKeepsConsecutivePromptLinesAsOneBlock)
+{
+    // Telnet marks the END of a prompt and never the start, so a prompt
+    // spanning several HARD lines is identifiable only when the server sends a
+    // GA after each of them.  When it does, all of them are kept.
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    doc.m_bConvertGAtoNewline = 1;
+
+    mud_text(doc, "one\ntwo\n");
+    mud_text(doc, "HP: 100");   mud_ga(doc);
+    mud_text(doc, "Mana: 50");  mud_ga(doc);
+    mud_text(doc, "> ");        mud_ga(doc);
+
+    EXPECT_EQ(2L, doc.CountLinesBeforePromptBlock());
+    doc.DeleteHeadLines(doc.CountLinesBeforePromptBlock());
+    EXPECT_STREQ("HP: 100|Mana: 50|> |", buffer_text(doc).c_str());
+}
+
+TEST(Utilities, ClearToStartFallsBackWhenThePromptHasBeenEvicted)
+{
+    // m_last_prompt_line names a line by number.  Once RemoveChunk or an
+    // earlier clear has dropped that line the number is a phantom, and the
+    // head's own number is what proves it -- an O(1) test, so a stale value
+    // cannot send the search down the whole buffer.
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    doc.m_bConvertGAtoNewline = 1;
+
+    mud_text(doc, "HP:100 > ");
+    mud_ga(doc);
+    const long stamped = doc.m_last_prompt_line;
+    ASSERT_GT(stamped, 0L);
+
+    mud_text(doc, "alpha\nbeta\ngamma\n");
+    doc.DeleteHeadLines(1);                  // takes the prompt itself
+    EXPECT_EQ(stamped, doc.m_last_prompt_line);          // still recorded...
+    EXPECT_GT(doc.m_LineList.GetHead()->m_nLineNumber, stamped);  // ...but gone
+
+    EXPECT_EQ(2L, doc.CountLinesBeforePromptBlock());    // fallback: last line
+    doc.DeleteHeadLines(doc.CountLinesBeforePromptBlock());
+    EXPECT_STREQ("gamma|", buffer_text(doc).c_str());
+}
+
+TEST(Utilities, ClearOutputForgetsTheRememberedPromptAndGaLine)
+{
+    // ClearOutput restarts the numbering at zero, so a line number carried
+    // over from before names a line that cannot exist.  Upstream leaves
+    // m_last_line_with_IAC_GA stale and world.GetInfo(289) reports the
+    // phantom; see docs/UPSTREAM-BUGS.md #11.
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    doc.m_bConvertGAtoNewline = 1;
+
+    mud_text(doc, "one\ntwo\nHP:100 > ");
+    mud_ga(doc);
+    ASSERT_GT(doc.m_last_prompt_line, 0L);
+    ASSERT_GT(doc.m_last_line_with_IAC_GA, 0L);
+
+    doc.ClearOutput();
+
+    EXPECT_EQ(0L, doc.m_last_prompt_line);
+    EXPECT_EQ(0L, doc.m_last_line_with_IAC_GA);
+
+    // and the fallback is what applies from here on
+    mud_text(doc, "alpha\nbeta\n");
+    doc.DeleteHeadLines(doc.CountLinesBeforePromptBlock());
+    EXPECT_STREQ("beta|", buffer_text(doc).c_str());
+}
+
+TEST(Utilities, ClearToStartOnAnEmptyOrSingleLineBufferDoesNothing)
+{
+    CMUSHclientDoc doc; make_buffer_doc(doc);
+    EXPECT_EQ(0L, doc.CountLinesBeforePromptBlock());     // no lines at all
+
+    mud_text(doc, "solitary");                            // one, in progress
+    EXPECT_EQ(1, (int)doc.m_LineList.GetCount());
+    EXPECT_EQ(0L, doc.CountLinesBeforePromptBlock());
+
+    doc.DeleteHeadLines(doc.CountLinesBeforePromptBlock());
+    EXPECT_STREQ("solitary", buffer_text(doc).c_str());
+}
+
 // doc_portable.cpp GetLinePosition: "sanity check (Santa Claus): nLine >// doc_portable.cpp GetLinePosition: "sanity check (Santa Claus): nLine >
 // count → clamped, nLine < 0 → 0; ... not there? assume last one in the
 // list" — out-of-range line numbers always yield a valid POSITION.

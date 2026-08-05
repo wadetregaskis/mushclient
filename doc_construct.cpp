@@ -228,6 +228,7 @@ int i;
   m_total_lines = 0;
   m_newlines_received = 0;
   m_last_line_with_IAC_GA = 0;
+  m_last_prompt_line = 0;
   m_nTotalLinesSent = 0;
   m_nTotalLinesReceived = 0;
   m_phase = NONE;

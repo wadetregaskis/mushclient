@@ -1219,6 +1219,12 @@ public:
   long m_nTotalLinesSent;   // lines sent this connection
   long m_nTotalLinesReceived;  // lines they received this connection
   long m_last_line_with_IAC_GA;
+  // m_nLineNumber of the line MarkPromptLine last stamped with the PROMPT flag.
+  // Not the same as m_last_line_with_IAC_GA when the server terminates its
+  // prompt before sending the GA/EOR -- see MarkPromptLine (telnet_phases.cpp).
+  // Zero means "no prompt has been seen"; it is reset by ClearOutput, and a
+  // value naming a line that has since been evicted simply fails to match.
+  long m_last_prompt_line;
 
   CTime m_tConnectTime;       // time we connected to the world
   CTime m_tLastPlayerInput;   // time the player last typed something (for <afk> )
@@ -2417,6 +2423,13 @@ public:
   // Clear Scrollback / Clear to Previous Mark need.  Defined in
   // doc_shared.cpp.
   void DeleteHeadLines (long count);
+  // How many lines at the HEAD of the buffer are not part of the trailing
+  // prompt block -- i.e. the argument to hand DeleteHeadLines to implement
+  // "Clear to Start".  Defined in doc_shared.cpp.
+  long CountLinesBeforePromptBlock (void) const;
+  // Stamp the PROMPT flag on the line an IAC GA/EOR just terminated.
+  // Defined in telnet_phases.cpp.
+  void MarkPromptLine (void);
 
   void InterpretANSIcode (const int iCode);
   void Interpret256ANSIcode (const int iCode);

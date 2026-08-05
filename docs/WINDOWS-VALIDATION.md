@@ -993,6 +993,42 @@ line that wraps at a space must still keep that space at the END of the old
 line, exactly as before. If continuation lines start showing a leading space,
 the gate is wrong in the other direction.
 
+### 4c-undetricies. The TLS failure recovery is now one body (2026-08-05)
+
+**`mainfrm.cpp` is edited here** — one of the few Windows-only files this port
+has touched — so it needs a compile before anything else.
+
+`CMainFrame::PreTranslateMessage`'s `WM_USER_SSL_FALLBACK_PROMPT` arm and the
+port's equivalent (`platform/wx_mfc_impl.cpp:499`) were hand-written twins.
+Each decided, on its own, what the user's answer to a TLS failure prompt
+*means*: a certificate that could not be verified sets
+`m_bSSLAllowInvalidCert` and stays **encrypted**, while a failed handshake sets
+`m_bUseSSL = false` and reconnects **in the clear**. Two copies, no test on
+either platform, and a mistake is invisible — no error, no output, the world
+simply connects.
+
+Both now call `CMUSHclientDoc::ApplyTlsFallbackChoice(bCertFailure,
+bUserAgreed)` (`doc_shared.cpp`), which owns the decision; the frontends keep
+only the wording of the question and the reconnect. Behaviour is intended to be
+identical.
+
+**What to check on Windows:**
+1. It compiles — the change is six lines in `mainfrm.cpp` and could not be
+   compile-checked here.
+2. Connect to a TLS world with an untrusted/self-signed certificate. Answer
+   **Yes**. The connection must proceed **and still be encrypted** — confirm
+   with `world.GetInfo(...)` for the SSL state, or the world's own report.
+   This is the one that matters: the wrong outcome is plaintext, and nothing
+   on screen would say so.
+3. Answer **No** to the same prompt: nothing should reconnect and no flag
+   should change.
+4. Force a handshake failure (an old TLS version, or a non-TLS port with SSL
+   on). Answer **Yes**: it must reconnect unencrypted, and it must NOT leave
+   `m_bSSLAllowInvalidCert` set behind.
+
+Covered headlessly by the four `Connection.Tls*` tests, including a 2x2 table
+that fails if both arms are ever made to do the same thing.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

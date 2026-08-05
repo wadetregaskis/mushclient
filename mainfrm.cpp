@@ -1077,11 +1077,9 @@ BOOL CMainFrame::PreTranslateMessage(MSG* pMsg)
                          "Connect anyway (still encrypted, but unverified)?",
                          (LPCTSTR) pDoc->m_mush_name,
                          (LPCTSTR) pDoc->m_strSSLLastError);
-       if (UMessageBox (strPrompt, MB_YESNO | MB_ICONEXCLAMATION) == IDYES)
-         {
-         pDoc->m_bSSLAllowInvalidCert = true;
+       if (pDoc->ApplyTlsFallbackChoice (true /* bCertFailure */,
+             UMessageBox (strPrompt, MB_YESNO | MB_ICONEXCLAMATION) == IDYES))
          pDoc->ConnectSocket ();
-         }
        }
      else
        {
@@ -1090,11 +1088,9 @@ BOOL CMainFrame::PreTranslateMessage(MSG* pMsg)
                          "Connect without encryption?",
                          (LPCTSTR) pDoc->m_mush_name,
                          (LPCTSTR) pDoc->m_strSSLLastError);
-       if (UMessageBox (strPrompt, MB_YESNO | MB_ICONQUESTION) == IDYES)
-         {
-         pDoc->m_bUseSSL = false;
+       if (pDoc->ApplyTlsFallbackChoice (false /* bCertFailure */,
+             UMessageBox (strPrompt, MB_YESNO | MB_ICONQUESTION) == IDYES))
          pDoc->ConnectSocket ();
-         }
        }
      }
 

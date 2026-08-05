@@ -511,24 +511,22 @@ static int hook_post_message(void* h, unsigned msg, uintptr_t wp, intptr_t lp)
                         "This can mean the connection is being intercepted. "
                         "Connect anyway (still encrypted, but unverified)?"),
                     name, err);
-                if (wxMessageBox(prompt, wxT("TLS Certificate Not Verified"),
-                                 wxYES_NO | wxICON_EXCLAMATION, parent) == wxYES)
-                {
-                    doc->m_bSSLAllowInvalidCert = true;
+                const bool agreed =
+                    wxMessageBox(prompt, wxT("TLS Certificate Not Verified"),
+                                 wxYES_NO | wxICON_EXCLAMATION, parent) == wxYES;
+                if (doc->ApplyTlsFallbackChoice(/*bCertFailure=*/true, agreed))
                     doc->ConnectSocket();
-                }
             } else {
                 // Handshake failed: offer an unencrypted fallback connection.
                 wxString prompt = wxString::Format(
                     wxT("TLS connection to \"%s\" failed.\n\n%s\n\n"
                         "Connect without encryption?"),
                     name, err);
-                if (wxMessageBox(prompt, wxT("TLS Connection Failed"),
-                                 wxYES_NO | wxICON_QUESTION, parent) == wxYES)
-                {
-                    doc->m_bUseSSL = false;
+                const bool agreed =
+                    wxMessageBox(prompt, wxT("TLS Connection Failed"),
+                                 wxYES_NO | wxICON_QUESTION, parent) == wxYES;
+                if (doc->ApplyTlsFallbackChoice(/*bCertFailure=*/false, agreed))
                     doc->ConnectSocket();
-                }
             }
         });
         return TRUE;

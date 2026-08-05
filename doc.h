@@ -2431,6 +2431,10 @@ public:
   // How many lines at the HEAD of the buffer are not part of the trailing
   // prompt block -- i.e. the argument to hand DeleteHeadLines to implement
   // "Clear to Start".  Defined in doc_shared.cpp.
+  // Apply the user's answer to a TLS failure prompt.  ONE body for both
+  // frontends: the two recoveries differ in a way that matters and the
+  // frontends were hand-written twins of each other.  Defined in doc_shared.cpp.
+  bool ApplyTlsFallbackChoice (bool bCertFailure, bool bUserAgreed);
   long CountLinesBeforePromptBlock (void) const;
   // The same, cut at the last line the user typed (Clear to Previous Mark).
   // Zero when there is no such line, i.e. nothing to clear back to.

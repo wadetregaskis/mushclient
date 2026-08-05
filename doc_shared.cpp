@@ -3944,6 +3944,42 @@ long CMUSHclientDoc::BlockLengthEndingAt (POSITION blockEnd, int flagJoins) cons
   }  // end of CMUSHclientDoc::BlockLengthEndingAt
 
 
+// ── ApplyTlsFallbackChoice ──────────────────────────────────────────────────
+// What actually happens when the user answers a TLS failure prompt.
+//
+// The two recoveries are NOT interchangeable, and that is the whole reason this
+// is one body rather than two:
+//
+//   certificate could not be verified -> stay ENCRYPTED, and record that this
+//     world may proceed with an unverifiable certificate.  The user consented
+//     to "I cannot prove who this is", not to "send my password in the clear".
+//
+//   handshake failed                  -> reconnect with NO ENCRYPTION AT ALL.
+//     A materially bigger concession, and the only arm allowed to make it.
+//
+// It was written twice -- mainfrm.cpp (Windows) and platform/wx_mfc_impl.cpp
+// (the port) -- as hand-copied twins, with no test on either platform.  Nothing
+// about a mistake here is visible: there is no error, no output, and the world
+// connects normally, so a user who consented to an unverified certificate and
+// silently got plaintext would never know.  The frontends now own only the
+// wording of the question.
+//
+// Returns true when the caller should reconnect.
+bool CMUSHclientDoc::ApplyTlsFallbackChoice (const bool bCertFailure,
+                                             const bool bUserAgreed)
+  {
+  if (!bUserAgreed)
+    return false;      // declined: change nothing, reconnect nothing
+
+  if (bCertFailure)
+    m_bSSLAllowInvalidCert = true;   // still encrypted, merely unverified
+  else
+    m_bUseSSL = false;               // in the clear, deliberately
+
+  return true;
+  }  // end of CMUSHclientDoc::ApplyTlsFallbackChoice
+
+
 // ── CountLinesBeforePromptBlock ─────────────────────────────────────────────
 // "Clear to Start": scroll the current prompt to the top of the window by
 // throwing away everything above it.  This returns how many head lines that

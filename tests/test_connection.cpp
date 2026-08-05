@@ -2563,4 +2563,73 @@ TEST(UnreadLines, GetInfoReportsActivationAndUnreadCount)
     delete doc;
 }
 
+// ── ApplyTlsFallbackChoice — what a TLS failure prompt actually does ─────────
+// The two recoveries are not interchangeable: a certificate that cannot be
+// verified leaves the connection ENCRYPTED, and only a failed handshake is
+// allowed to drop to plaintext.  Both frontends (mainfrm.cpp on Windows,
+// platform/wx_mfc_impl.cpp here) used to carry their own hand-copied version
+// of this with no test on either platform, and a mistake is invisible: no
+// error, no output, the world just connects.
+
+static void tls_doc(CMUSHclientDoc& doc)
+{
+    doc.m_bUseSSL              = 1;
+    doc.m_bSSLAllowInvalidCert = false;
+}
+
+TEST(Connection, TlsCertFailureConsentStaysEncrypted)
+{
+    CMUSHclientDoc doc; tls_doc(doc);
+
+    EXPECT_TRUE(doc.ApplyTlsFallbackChoice(/*certFailure*/true, /*agreed*/true));
+    EXPECT_TRUE(doc.m_bSSLAllowInvalidCert);
+    // THE assertion.  Consenting to an unverifiable certificate must never
+    // turn encryption off -- that is a different question the user was not
+    // asked, and the answer they gave is not consent to it.
+    EXPECT_TRUE(doc.m_bUseSSL != 0);
+}
+
+TEST(Connection, TlsHandshakeFailureConsentGoesInTheClear)
+{
+    CMUSHclientDoc doc; tls_doc(doc);
+
+    EXPECT_TRUE(doc.ApplyTlsFallbackChoice(/*certFailure*/false, /*agreed*/true));
+    EXPECT_TRUE(doc.m_bUseSSL == 0);            // deliberately unencrypted
+    // ...and it does NOT also whitelist bad certificates for this world: the
+    // next connection is plaintext, so the flag would be a lie left behind for
+    // whenever TLS is turned back on.
+    EXPECT_FALSE(doc.m_bSSLAllowInvalidCert);
+}
+
+TEST(Connection, TlsPromptDeclinedChangesNothingEitherWay)
+{
+    // Declining must be inert -- no reconnect, and above all no downgrade.
+    for (int certFailure = 0; certFailure <= 1; ++certFailure) {
+        CMUSHclientDoc doc; tls_doc(doc);
+        EXPECT_FALSE(doc.ApplyTlsFallbackChoice(certFailure != 0, /*agreed*/false));
+        EXPECT_TRUE(doc.m_bUseSSL != 0);
+        EXPECT_FALSE(doc.m_bSSLAllowInvalidCert);
+    }
+}
+
+TEST(Connection, TlsChoiceOnlyEverLoosensTheArmItWasAskedAbout)
+{
+    // Cross-check the whole 2x2 in one place, so a future edit that makes both
+    // arms do the same thing fails here even if the two tests above were
+    // updated to match it.
+    struct { bool certFailure, agreed, expectSSL, expectAllowInvalid; } kCases[] = {
+        { true,  true,  true,  true  },   // unverified, still encrypted
+        { true,  false, true,  false },   // declined
+        { false, true,  false, false },   // plaintext fallback
+        { false, false, true,  false },   // declined
+    };
+    for (const auto& c : kCases) {
+        CMUSHclientDoc doc; tls_doc(doc);
+        const bool reconnect = doc.ApplyTlsFallbackChoice(c.certFailure, c.agreed);
+        EXPECT_EQ(c.agreed, reconnect);
+        EXPECT_EQ(c.expectSSL, doc.m_bUseSSL != 0);
+        EXPECT_EQ(c.expectAllowInvalid, (bool) doc.m_bSSLAllowInvalidCert);
+    }
+}
+
 MC_TEST_MAIN()

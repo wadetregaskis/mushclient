@@ -1209,6 +1209,119 @@ TEST(StyleColour, ResolvingTwiceWithTheSamePaletteIsStable)
     EXPECT_EQ(bg1, bg2);
 }
 
+// ── BuildOutputLine must reproduce the push path exactly ──────────────────
+//
+// The drain (push) and any fetch-at-paint consumer (pull) now share one
+// conversion, CMUSHclientDoc::BuildOutputLine.  This is the property that makes
+// that safe: for every committed line, what the view was PUSHED and what a
+// later fetch BUILDS must be indistinguishable -- text, colours, flags, link
+// payload and the line-level comment/bookmark bits.
+//
+// It is the whole basis of a pull model, so it is asserted over a mixture that
+// exercises every branch of the converter: ANSI colour, a bold run, a
+// horizontal rule, a note line, a bookmarked line and a line with an MXP link.
+TEST(BuildOutputLine, ReproducesWhatThePushPathEmitted)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    feed(doc, "plain text\n");
+    feed(doc, "\x1b[1;32mbold green\x1b[0m and normal\n");
+    doc.Note("a note line");
+    doc.UpdateAllViews(nullptr);
+    doc.Hyperlink("do this", "click", "a hint", "", "", FALSE);
+    doc.Note("");
+    doc.UpdateAllViews(nullptr);
+    doc.NoteHr();
+    doc.UpdateAllViews(nullptr);
+
+    const auto pushed = committed(view);
+    ASSERT_TRUE(pushed.size() >= 4);
+
+    for (size_t i = 0; i < pushed.size(); ++i) {
+        SOutputLine built;
+        ASSERT_TRUE(doc.BuildOutputLine((long) i, built));
+
+        EXPECT_EQ(pushed[i].size(),     built.size());
+        EXPECT_EQ(pushed[i].comment,    built.comment);
+        EXPECT_EQ(pushed[i].bookmark,   built.bookmark);
+        if (pushed[i].size() != built.size()) continue;
+
+        for (size_t r = 0; r < built.size(); ++r) {
+            const SOutputRun& a = pushed[i][r];
+            const SOutputRun& b = built[r];
+            EXPECT_EQ(a.text,          b.text);
+            EXPECT_EQ(a.fg,            b.fg);
+            EXPECT_EQ(a.bg,            b.bg);
+            EXPECT_EQ((int) a.bold,    (int) b.bold);
+            EXPECT_EQ((int) a.underline, (int) b.underline);
+            EXPECT_EQ((int) a.italic,  (int) b.italic);
+            EXPECT_EQ((int) a.horiz_rule, (int) b.horiz_rule);
+            EXPECT_EQ((int) a.utf8,    (int) b.utf8);
+            EXPECT_EQ(a.style_flags,   b.style_flags);
+            EXPECT_EQ(a.fore_idx,      b.fore_idx);
+            EXPECT_EQ(a.back_idx,      b.back_idx);
+            EXPECT_EQ(a.action(),      b.action());
+            EXPECT_EQ(a.hint(),        b.hint());
+            EXPECT_EQ(a.action_type(), b.action_type());
+        }
+    }
+}
+
+// ...and where the two DELIBERATELY differ, which is the argument for a pull
+// model in the first place.  A pushed SOutputLine is a SNAPSHOT: once emitted,
+// nothing keeps it in step with the CLine it came from.  world.Bookmark writes
+// the CLine flag, so a later BuildOutputLine sees it while the pushed copy
+// still says false -- which is exactly why the push path needs a separate
+// setBookmark seam to patch the view's copy, and a pull path would not.
+TEST(BuildOutputLine, SeesLiveFlagsThatAPushedSnapshotHasMissed)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    feed(doc, "one\n");
+    feed(doc, "two\n");
+    feed(doc, "three\n");
+
+    const auto pushed = committed(view);
+    ASSERT_TRUE(pushed.size() >= 3);
+    EXPECT_FALSE(pushed[1].bookmark);
+
+    doc.Bookmark(2, TRUE);             // 1-based: the second line
+
+    SOutputLine built;
+    ASSERT_TRUE(doc.BuildOutputLine(1, built));
+    EXPECT_TRUE(built.bookmark);       // the fetch sees the live flag...
+    EXPECT_FALSE(pushed[1].bookmark);  // ...the snapshot never will
+
+    // The push path keeps them in step by patching the view separately.
+    ASSERT_TRUE(!view.bookmarks.empty());
+    EXPECT_EQ(1L,   view.bookmarks.back().first);
+    EXPECT_TRUE(view.bookmarks.back().second);
+}
+
+TEST(BuildOutputLine, RefusesOutOfRangeAndTheInProgressLine)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    feed(doc, "one\n");
+    SOutputLine out;
+    EXPECT_FALSE(doc.BuildOutputLine(-1, out));
+    EXPECT_FALSE(doc.BuildOutputLine(9999, out));
+
+    // The in-progress line is NOT a committed line: the drain stops before it
+    // and emits it separately as the pending row, so a fetch must refuse it too
+    // or a pull consumer would show the prompt twice.
+    doc.DisplayMsg("prompt without a newline", 24, 0);
+    const long committedCount = doc.m_LineList.GetCount() - 1;
+    EXPECT_FALSE(doc.BuildOutputLine(committedCount, out));
+    EXPECT_TRUE(doc.BuildOutputLine(committedCount - 1, out));
+}
+
 // ── SOutputRun's size is part of the contract ─────────────────────────────
 //
 // One SOutputRun exists per styled span of every line in the scrollback, so its

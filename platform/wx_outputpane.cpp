@@ -415,44 +415,28 @@ void COutputPane::AppendLine(SOutputLine&& line)
     }
 
     m_lineChars.push_back(lineChars);
-    m_lines.push_back(std::move(line));
-    ++m_bufferGen;
+    // PULL MODEL: keep the wrap metrics, DROP the content.  The engine's CLine
+    // already holds it, and m_lines was a second full copy of the entire
+    // scrollback -- ~64 bytes per run plus its strings, against the 4 bytes per
+    // line the wrap cache actually needs.  The push still happens: it is how
+    // the pane learns a line exists and how wide it is.
+    const SOutputLine& loggedLine = m_fn_fetch_line ? line : (m_lines.push_back(std::move(line)), m_lines.back());
+    ++m_bufferGen; InvalidateLineCache();
 
-    int trimCount = 0;
-    // m_maxLines == 0 means unlimited scrollback (world option max_output_lines
-    // = 0), so nothing is ever trimmed off the front.
-    while (m_maxLines > 0 && (int)m_lines.size() > m_maxLines) {
-        // Accumulate visual rows being removed so UpdateScrollbars can compensate
-        // the scroll position (prevents the viewport jumping to different content).
-        if (!m_visualRowStart.empty()) {
-            const long long firstStart = m_visualRowStart[0];
-            const long long nextStart  = (m_visualRowStart.size() >= 2)
-                             ? m_visualRowStart[1] : (m_rowBase + m_totalVisualRows);
-            m_trimmedRowsRemoved += (int)(nextStart - firstStart);
-        }
-        m_lines.pop_front();
-        ++m_bufferGen;
-        PopFrontWrapCache();
-        ++trimCount;
-        // Adjust selection indices downward; clear if the anchor line was removed.
-        if (m_selAnchor.valid()) {
-            if (m_selAnchor.line == 0) m_selAnchor = SelPoint{};
-            else --m_selAnchor.line;
-        }
-        if (m_selFocus.valid()) {
-            if (m_selFocus.line == 0) m_selFocus = SelPoint{};
-            else --m_selFocus.line;
-        }
-    }
-    // No wrap-cache rebuild here: PopFrontWrapCache already kept the cache
-    // consistent in O(1) per trimmed line.  This used to be a full O(N) rebuild
-    // per APPENDED line once the buffer was at capacity -- i.e. permanently, for
-    // any long-running session -- and each rebuild re-scanned every run's bytes.
-    m_trimmedCount += trimCount;
+    // Trim the front back to what the pane should be holding.  -1 = unlimited
+    // (max_output_lines 0 in the push model), so nothing is ever dropped.
+    //
+    // No wrap-cache rebuild: PopFrontWrapCache keeps the cache consistent in
+    // O(1) per trimmed line.  This used to be a full O(N) rebuild per APPENDED
+    // line once the buffer was at capacity -- i.e. permanently, for any
+    // long-running session -- and each rebuild re-scanned every run's bytes.
+    const int keep = DerivedTargetLength();
+    if (keep >= 0 && (int) m_visualRowStart.size() > keep)
+        DropFrontLines((long) m_visualRowStart.size() - keep, true);
 
     // Notify the logging hook (if any) immediately after the line is accepted.
     // Done before the batch-depth check so every line is logged even in batches.
-    if (m_fn_on_line_appended) m_fn_on_line_appended(m_lines.back());
+    if (m_fn_on_line_appended) m_fn_on_line_appended(loggedLine);
 
     if (m_batchDepth == 0) {
         UpdateScrollbars(m_autoScroll);
@@ -498,7 +482,10 @@ void COutputPane::RecolourFromPalette(const pal::StylePalette& palette)
                                      palette, xterm, run.fg, run.bg);
     };
 
+    // Push model: recolour the stored copies.  Pull model: the engine owns
+    // the lines and re-resolves on the next fetch, so just drop the cache.
     for (SOutputLine& line : m_lines) recolour(line);
+    InvalidateLineCache();
     recolour(m_pendingLine);
 
     // Colours do not change metrics, so the wrap cache, the scroll geometry and
@@ -513,13 +500,10 @@ void COutputPane::SetMaxLines(int n)
     // the SMALLEST buffer in the app.
     if (n != 0 && n < 100) n = 100;
     m_maxLines = n;
-    bool trimmed = false;
-    while (m_maxLines > 0 && (int)m_lines.size() > m_maxLines) {
-        m_lines.pop_front();
-        ++m_bufferGen;
-        if (!m_lineChars.empty()) m_lineChars.pop_front();
-        trimmed = true;
-    }
+    const int keep = DerivedTargetLength();
+    const bool trimmed =
+        (keep >= 0 && (int) m_visualRowStart.size() > keep)
+        && DropFrontLines((long) m_visualRowStart.size() - keep, false) > 0;
     if (trimmed) {
         m_selAnchor = SelPoint{};
         m_selFocus  = SelPoint{};
@@ -537,23 +521,11 @@ void COutputPane::SetMaxLines(int n)
 // down with the content.
 void COutputPane::DeleteHeadLines(long count)
 {
-    if (count <= 0 || m_lines.empty()) return;
-    const long toRemove = std::min(count, (long) m_lines.size());
-
-    for (long i = 0; i < toRemove; ++i) {
-        m_lines.pop_front();
-        PopFrontWrapCache();
-        if (m_selAnchor.valid()) {
-            if (m_selAnchor.line == 0) m_selAnchor = SelPoint{};
-            else --m_selAnchor.line;
-        }
-        if (m_selFocus.valid()) {
-            if (m_selFocus.line == 0) m_selFocus = SelPoint{};
-            else --m_selFocus.line;
-        }
-    }
-    m_trimmedCount += (int) toRemove;
-    ++m_bufferGen;
+    if (count <= 0) return;
+    // Bounded by the WRAP CACHE, not by LineCountI(): the engine has already
+    // freed these lines by the time it calls us, so its count is the one AFTER
+    // the deletion and would trim nothing at all under the pull model.
+    if (DropFrontLines(count, false) <= 0) return;
 
     UpdateScrollbars(m_autoScroll);
     Refresh(false);
@@ -561,13 +533,17 @@ void COutputPane::DeleteHeadLines(long count)
 
 void COutputPane::DeleteTailLines(long count)
 {
-    if (count <= 0 || m_lines.empty()) return;
-    long toRemove = std::min(count, (long)m_lines.size());
+    // Same reasoning as DeleteHeadLines: world.DeleteLines(n) has already taken
+    // them off the engine, so the pane's own derived length is the bound.  In
+    // the pull model there is no content deque to pop -- only the metrics.
+    if (count <= 0 || m_visualRowStart.empty()) return;
+    long toRemove = std::min(count, (long) m_visualRowStart.size());
     for (long i = 0; i < toRemove; ++i) {
-        m_lines.pop_back();
-        ++m_bufferGen;
+        if (!m_fn_fetch_line && !m_lines.empty()) m_lines.pop_back();
+        if (!m_visualRowStart.empty()) m_visualRowStart.pop_back();
         if (!m_lineChars.empty()) m_lineChars.pop_back();
     }
+    ++m_bufferGen; InvalidateLineCache();
     // Clear any selection that may have referenced deleted lines.
     m_selAnchor = SelPoint{};
     m_selFocus  = SelPoint{};
@@ -662,7 +638,7 @@ void COutputPane::ScrollToTop()
 // mistake that once put a one-row dead zone in the wheel handler.
 int COutputPane::FirstVisibleLine() const
 {
-    if (m_lines.empty()) return 0;
+    if (LineCountI() == 0) return 0;
     int scrollY = 0, unitH = 0;
     const_cast<COutputPane*>(this)->GetViewStart(nullptr, &scrollY);
     const_cast<COutputPane*>(this)->GetScrollPixelsPerUnit(nullptr, &unitH);
@@ -670,7 +646,7 @@ int COutputPane::FirstVisibleLine() const
     const long long topPixel = (long long) scrollY * unitH;
     const int topRow = (int) (topPixel / m_lineH);
     const int line = VisualRowToLogical(topRow);
-    return std::max(0, std::min((int) m_lines.size() - 1, line));
+    return std::max(0, std::min(LineCountI() - 1, line));
 }
 
 // ── ClearScreen ───────────────────────────────────────────────────────────
@@ -686,7 +662,7 @@ int COutputPane::FirstVisibleLine() const
 // row at a time as real output arrives.
 bool COutputPane::ClearScreen()
 {
-    if (m_lines.empty() || m_lineH <= 0) return false;
+    if (LineCountI() == 0 || m_lineH <= 0) return false;
 
     int clientH = 0;
     GetClientSize(nullptr, &clientH);
@@ -694,7 +670,7 @@ bool COutputPane::ClearScreen()
     if (pageRows <= 1) return false;      // nothing to push it up by
 
     // Where the last line starts, on the absolute row axis.
-    const long long lastRow = RowStartOf((int) m_lines.size() - 1);
+    const long long lastRow = RowStartOf(LineCountI() - 1);
 
     // Enough blank rows that `lastRow` survives Scroll()'s clamp to
     // (range - page).  Anything already reserved counts towards it.
@@ -717,8 +693,8 @@ bool COutputPane::ClearScreen()
 
 void COutputPane::ScrollToLine(int lineIdx)
 {
-    if (m_lines.empty()) return;
-    lineIdx = std::max(0, std::min((int)m_lines.size() - 1, lineIdx));
+    if (LineCountI() == 0) return;
+    lineIdx = std::max(0, std::min(LineCountI() - 1, lineIdx));
     int unitH;
     GetScrollPixelsPerUnit(nullptr, &unitH);
     if (unitH > 0) {
@@ -736,9 +712,17 @@ void COutputPane::ScrollToLine(int lineIdx)
 // mirror, updated when the doc tells us it changed.
 void COutputPane::SetBookmark(int lineIdx, bool set)
 {
-    if (lineIdx < 0 || lineIdx >= (int) m_lines.size()) return;
-    if (m_lines[lineIdx].bookmark == set) return;
-    m_lines[lineIdx].bookmark = set;
+    if (lineIdx < 0 || lineIdx >= LineCountI()) return;
+    if (LineAt(lineIdx).bookmark == set) return;
+    if (m_fn_fetch_line) {
+        // PULL MODEL: the flag lives on the engine's CLine and CMUSHclientDoc::
+        // Bookmark has already written it -- this seam only exists to tell the
+        // view to repaint.  Drop the cached conversion so the next fetch picks
+        // the new flag up; there is no view-side copy to patch.
+        m_lineCache.erase(lineIdx);
+    } else {
+        m_lines[(size_t) lineIdx].bookmark = set;
+    }
     Refresh(false);
 }
 
@@ -747,19 +731,19 @@ void COutputPane::SetBookmark(int lineIdx, bool set)
 int COutputPane::BookmarkTargetLine() const
 {
     SelPoint s, e;
-    if (GetNormalizedSel(s, e) && s.line >= 0 && s.line < (int) m_lines.size())
+    if (GetNormalizedSel(s, e) && s.line >= 0 && s.line < LineCountI())
         return (int) s.line;
-    if (m_lines.empty()) return -1;
-    return (int) m_lines.size() - 1;
+    if (LineCountI() == 0) return -1;
+    return LineCountI() - 1;
 }
 
 void COutputPane::GotoNextBookmark()
 {
-    const int n = (int) m_lines.size();
+    const int n = LineCountI();
     if (n == 0) return;
     for (int i = 1; i <= n; ++i) {     // start just past the last one we jumped to
         int idx = (((m_lastBookmarkLine % n) + n + i) % n);
-        if (m_lines[idx].bookmark) {
+        if (LineAt(idx).bookmark) {
             m_lastBookmarkLine = idx;
             ScrollToLine(idx);
             return;
@@ -788,14 +772,14 @@ void COutputPane::SetSelectionRange(int startLine, int endLine,
     // without touching the line list, so a selection over a nonexistent line is
     // simply not visible or copyable there.  Clearing the selection reproduces
     // that observable result.
-    if (m_lines.empty()) {
+    if (LineCountI() == 0) {
         m_selAnchor = SelPoint{};
         m_selFocus  = SelPoint{};
         Refresh(false);
         return;
     }
 
-    int n = (int)m_lines.size();
+    int n = LineCountI();
     // Convert 1-based → 0-based; clamp to buffer.
     int sl = std::max(0, std::min(n - 1, startLine - 1));
     int el = std::max(0, std::min(n - 1, endLine   - 1));
@@ -803,7 +787,7 @@ void COutputPane::SetSelectionRange(int startLine, int endLine,
     // Column 0 in the API means "start / end of line".
     auto lineLen = [&](int li) {
         int len = 0;
-        for (const auto& run : m_lines[li]) len += RunCharLen(run);
+        for (const auto& run : LineAt(li)) len += RunCharLen(run);
         return len;
     };
     int sc = (startCol <= 0) ? 0
@@ -900,10 +884,107 @@ void COutputPane::RefreshAutoScrollFromPosition()
         m_fn_autoscroll_changed(m_autoScroll);
 }
 
+// ── PULL MODEL: the read path ─────────────────────────────────────────────
+// See the header.  When m_fn_fetch_line is wired the pane holds no line
+// content at all -- m_lines stays EMPTY -- and every read comes from the
+// engine's CLine through CMUSHclientDoc::BuildOutputLine, the same converter
+// the push drain uses.
+int COutputPane::LineCountI() const
+{
+    if (m_fn_line_count) return m_fn_line_count();
+    return (int) m_lines.size();
+}
+
+// See the header.  The push model trims to its own cap; the pull model follows
+// the engine, which has already done the deleting by the time we are told.
+int COutputPane::DerivedTargetLength() const
+{
+    if (m_fn_line_count) return LineCountI();
+    return m_maxLines > 0 ? m_maxLines : -1;
+}
+
+// One head-trim primitive for all three callers (the capacity trim in
+// AppendLine, SetMaxLines, and DeleteHeadLines), so the pull-model branch
+// exists once instead of three times.
+//
+// It is driven by the length of the WRAP CACHE, never by LineCountI(): when the
+// engine calls DeleteHeadLines it has already dropped the lines, so its count is
+// the post-delete one and using it here would trim nothing.
+long COutputPane::DropFrontLines(long n, bool bAccumulateTrimmedRows)
+{
+    long dropped = 0;
+    for (long i = 0; i < n && !m_visualRowStart.empty(); ++i) {
+        if (bAccumulateTrimmedRows) {
+            // Visual rows leaving the top, so UpdateScrollbars can compensate
+            // the scroll position and the viewport does not jump to different
+            // content.
+            const long long firstStart = m_visualRowStart[0];
+            const long long nextStart  = (m_visualRowStart.size() >= 2)
+                             ? m_visualRowStart[1] : (m_rowBase + m_totalVisualRows);
+            m_trimmedRowsRemoved += (int)(nextStart - firstStart);
+        }
+        // Only the push model has content of its own to drop.
+        if (!m_fn_fetch_line && !m_lines.empty()) m_lines.pop_front();
+        PopFrontWrapCache();
+        ++dropped;
+
+        // Selection indices shift down with the content; an anchor on the line
+        // that just went is cleared.
+        if (m_selAnchor.valid()) {
+            if (m_selAnchor.line == 0) m_selAnchor = SelPoint{};
+            else --m_selAnchor.line;
+        }
+        if (m_selFocus.valid()) {
+            if (m_selFocus.line == 0) m_selFocus = SelPoint{};
+            else --m_selFocus.line;
+        }
+    }
+    if (dropped > 0) {
+        m_trimmedCount += (int) dropped;
+        ++m_bufferGen;
+        // Every cached line is keyed by INDEX, and they have all just shifted.
+        InvalidateLineCache();
+    }
+    return dropped;
+}
+
+const SOutputLine& COutputPane::LineAt(int i) const
+{
+    static const SOutputLine kEmpty;
+    if (!m_fn_fetch_line) {
+        if (i < 0 || i >= (int) m_lines.size()) return kEmpty;
+        return m_lines[(size_t) i];
+    }
+    if (i < 0) return kEmpty;
+
+    auto it = m_lineCache.find(i);
+    if (it != m_lineCache.end()) return it->second;
+
+    SOutputLine built;
+    if (!m_fn_fetch_line(i, built)) return kEmpty;
+
+    // Evict oldest-first, never the entry we are about to hand back.  The cap
+    // is far larger than any viewport, so a caller walking the visible rows
+    // cannot evict a line it is still looking at.
+    while ((int) m_lineCache.size() >= kLineCacheMin && !m_lineCacheOrder.empty()) {
+        const int victim = m_lineCacheOrder.front();
+        m_lineCacheOrder.pop_front();
+        if (victim != i) m_lineCache.erase(victim);
+    }
+    m_lineCacheOrder.push_back(i);
+    return m_lineCache.emplace(i, std::move(built)).first->second;
+}
+
+void COutputPane::InvalidateLineCache() const
+{
+    m_lineCache.clear();
+    m_lineCacheOrder.clear();
+}
+
 void COutputPane::ClearOutput()
 {
     m_lines.clear();
-    ++m_bufferGen;
+    ++m_bufferGen; InvalidateLineCache();
     // ...including the in-progress line.  The pending row is a port-only
     // concept (Windows' DELETE_LIST takes the partial line away with the rest),
     // and nothing else could ever clear it here: CMUSHclientDoc::ClearOutput
@@ -1111,7 +1192,7 @@ void COutputPane::OnPaint(wxPaintEvent&)
     if (trActive)
         dc.SetDeviceClippingRegion(wxRegion(trL, trT, trR - trL, trB - trT));
 
-    if (!m_lines.empty() && m_lineH > 0) {
+    if (!LineCountI() == 0 && m_lineH > 0) {
         // Rows are drawn within the text viewport: the rectangle's height when a
         // plugin reserved one, else the client (less the hint bar when showing).
         int usableH = trActive ? (trB - trT)
@@ -1123,7 +1204,7 @@ void COutputPane::OnPaint(wxPaintEvent&)
         int firstLine = VisualRowToLogical(firstVR);
         int lastLine  = VisualRowToLogical(lastVR);
         firstLine = std::max(0, firstLine);
-        lastLine  = std::min((int)m_lines.size() - 1, lastLine);
+        lastLine  = std::min(LineCountI() - 1, lastLine);
 
         dc.SetFont(m_font);
 
@@ -1196,7 +1277,7 @@ void COutputPane::OnPaint(wxPaintEvent&)
     // (handled in OnLeftDown) or pressing Escape in the input bar snaps the
     // view back to the live bottom.  Drawn after miniwindows so it's always
     // on top.  Uses client coordinates (device origin reset to 0,0).
-    if (!m_autoScroll && !m_lines.empty()) {
+    if (!m_autoScroll && !LineCountI() == 0) {
         dc.SetDeviceOrigin(0, 0);
 
         // Background bar.
@@ -1222,7 +1303,7 @@ void COutputPane::OnPaint(wxPaintEvent&)
 
 void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
 {
-    const SOutputLine& line = m_lines[lineIdx];
+    const SOutputLine& line = LineAt(lineIdx);
 
     // ── Horizontal rule ───────────────────────────────────────────────────────
     if (line.size() == 1 && line[0].horiz_rule) {
@@ -1587,8 +1668,8 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
 
 int COutputPane::WrapCount(int lineIdx) const
 {
-    if (lineIdx < 0 || lineIdx >= (int)m_lines.size()) return 0;
-    const SOutputLine& line = m_lines[lineIdx];
+    if (lineIdx < 0 || lineIdx >= LineCountI()) return 0;
+    const SOutputLine& line = LineAt(lineIdx);
     if (line.size() == 1 && line[0].horiz_rule) return 1;
     // m_lineChars is maintained alongside m_lines, so this costs one division
     // rather than a re-scan of every run's bytes (which for a non-UTF-8 world
@@ -1655,7 +1736,7 @@ void COutputPane::RebuildWrapCache()
 
     // Renumber from zero: a full rebuild is the one place the absolute row axis
     // may be reset, since every consumer reads through RowStartOf().
-    const int n = (int)m_lines.size();
+    const int n = LineCountI();
 
     // Self-heal the char-count cache if it ever falls out of step with m_lines.
     // Every mutation site keeps them paired, so this should never fire — but a
@@ -1665,7 +1746,7 @@ void COutputPane::RebuildWrapCache()
         m_lineChars.assign((size_t)n, 0);
         for (int i = 0; i < n; ++i) {
             int chars = 0;
-            for (const auto& run : m_lines[i]) chars += RunCharLen(run);
+            for (const auto& run : LineAt(i)) chars += RunCharLen(run);
             m_lineChars[(size_t)i] = chars;
         }
     }
@@ -1752,7 +1833,7 @@ void COutputPane::UpdateScrollbars(bool scrollToBottom)
                    pal::clampToDeviceExtent(totalH64 + (clientH - TextViewportH())
                                                      + m_pixelOffset));
 
-    if (scrollToBottom && !m_lines.empty()) {
+    if (scrollToBottom && !LineCountI() == 0) {
         int unitH;
         GetScrollPixelsPerUnit(nullptr, &unitH);
         if (unitH > 0) {
@@ -1839,7 +1920,7 @@ void COutputPane::OnSize(wxSizeEvent& evt)
 
 int COutputPane::YToLine(int clientY) const
 {
-    if (m_lines.empty()) return 0;
+    if (LineCountI() == 0) return 0;
 
     // Honor the text rectangle's vertical offset (text starts at its top).
     { int l, t, r, b; if (TextRect(l, t, r, b)) { clientY -= t; } }
@@ -1852,13 +1933,13 @@ int COutputPane::YToLine(int clientY) const
     const int visRow = pal::clampToDeviceExtent(
                            (m_lineH > 0) ? yPix / m_lineH : 0);
     // Map visual row → logical line via the wrap cache.
-    return std::max(0, std::min((int)m_lines.size() - 1,
+    return std::max(0, std::min(LineCountI() - 1,
                                 const_cast<COutputPane*>(this)->VisualRowToLogical(visRow)));
 }
 
 int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
 {
-    if (lineIdx < 0 || lineIdx >= (int)m_lines.size() || m_charW <= 0)
+    if (lineIdx < 0 || lineIdx >= LineCountI() || m_charW <= 0)
         return 0;
 
     // Honor the text rectangle: text is drawn from its top-left, so hit-testing
@@ -1871,7 +1952,7 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
 
     // Count total characters on the line (Unicode code points, not UTF-8 bytes).
     int totalChars = 0;
-    for (const auto& run : m_lines[lineIdx])
+    for (const auto& run : LineAt(lineIdx))
         totalChars += RunCharLen(run);
 
     // Convert client x to virtual (unscrolled) x.
@@ -2011,7 +2092,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
     // The hint bar is painted on top of everything (miniwindows included), so
     // its click region takes priority.  We check it before the miniwindow hit
     // test so the visual layering is respected.
-    if (!m_autoScroll && !m_lines.empty()) {
+    if (!m_autoScroll && !LineCountI() == 0) {
         int clientH;
         GetClientSize(nullptr, &clientH);
         if (evt.GetY() >= clientH - kHintBarH) {
@@ -2024,13 +2105,13 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
     // ── Triple-click: select the entire line ──────────────────────────────────
     // wxWidgets has no EVT_LEFT_TCLICK.  Detect triple-click as a left-down
     // that arrives within 500 ms of the last double-click on the same line.
-    if (!m_lines.empty() && m_lastDClickLine >= 0) {
+    if (!LineCountI() == 0 && m_lastDClickLine >= 0) {
         wxLongLong elapsed = wxGetLocalTimeMillis() - m_lastDClickTimeMs;
         int clickLine = YToLine(evt.GetY());
         if (elapsed < 500 && clickLine == m_lastDClickLine) {
             // Build the full line length and select it end-to-end.
             int lineLen = 0;
-            for (const auto& run : m_lines[clickLine])
+            for (const auto& run : LineAt(clickLine))
                 if (!run.horiz_rule) lineLen += RunCharLen(run);
             m_selAnchor      = SelPoint{clickLine, 0};
             m_selFocus       = SelPoint{clickLine, lineLen};
@@ -2068,19 +2149,19 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
     // that the user can still select/copy link text by dragging over it.
     // XToChar returns the absolute character column within the logical line,
     // correctly accounting for visual-row wrapping.
-    if (m_lineH > 0 && !m_lines.empty()) {
+    if (m_lineH > 0 && !LineCountI() == 0) {
         int lineIdx = YToLine(evt.GetY());
-        if (lineIdx >= 0 && lineIdx < (int)m_lines.size()) {
+        if (lineIdx >= 0 && lineIdx < LineCountI()) {
             int clickCol = XToChar(lineIdx, evt.GetX(), evt.GetY());
             int c = 0;
-            for (const auto& run : m_lines[lineIdx]) {
+            for (const auto& run : LineAt(lineIdx)) {
                 int runLen = RunCharLen(run);
                 if (run.isLink() &&
                     clickCol >= c && clickCol < c + runLen)
                 {
                     m_linkAtDown     = run.action();
                     m_linkTypeAtDown = run.action_type();
-                    m_linkNoteAtDown = m_lines[lineIdx].comment;
+                    m_linkNoteAtDown = LineAt(lineIdx).comment;
                     break;
                 }
                 c += runLen;
@@ -2144,12 +2225,12 @@ void COutputPane::OnLeftDClick(wxMouseEvent& evt)
     }
 
     // Double-click: select the word under the cursor.
-    if (!m_lines.empty() && m_lineH > 0) {
+    if (!LineCountI() == 0 && m_lineH > 0) {
         int lineIdx = YToLine(evt.GetY());
-        if (lineIdx >= 0 && lineIdx < (int)m_lines.size()) {
+        if (lineIdx >= 0 && lineIdx < LineCountI()) {
             // Build plain text for the line.
             wxString lineText;
-            for (const auto& run : m_lines[lineIdx])
+            for (const auto& run : LineAt(lineIdx))
                 if (!run.horiz_rule)
                     lineText += DecodeRunText(run);
 
@@ -2360,7 +2441,7 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
         // boundary so the drag doesn't fight with the hint-bar click region.
         int clientW, clientH;
         GetClientSize(&clientW, &clientH);
-        int bottomEdge = (!m_autoScroll && !m_lines.empty())
+        int bottomEdge = (!m_autoScroll && !LineCountI() == 0)
                        ? clientH - kHintBarH - 10
                        : clientH - 10;
         if (evt.GetY() > bottomEdge)
@@ -2375,7 +2456,7 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
         //   4. Anywhere else → I-beam text cursor.
         int clientH;
         GetClientSize(nullptr, &clientH);
-        if (!m_autoScroll && !m_lines.empty() &&
+        if (!m_autoScroll && !LineCountI() == 0 &&
             evt.GetY() >= clientH - kHintBarH)
         {
             SetCursor(wxCursor(wxCURSOR_HAND));
@@ -2384,11 +2465,11 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
         } else {
             SelPoint pt = MouseToSelPoint(evt);
             bool overLink = false;
-            if (pt.valid() && pt.line < (int)m_lines.size()) {
+            if (pt.valid() && pt.line < LineCountI()) {
                 // pt.col is the absolute char column in the logical line
                 // (already wrap-aware via XToChar in MouseToSelPoint).
                 int c = 0;
-                for (const auto& run : m_lines[pt.line]) {
+                for (const auto& run : LineAt(pt.line)) {
                     int runLen = RunCharLen(run);
                     if (run.isLink() &&
                         pt.col >= c && pt.col < c + runLen)
@@ -2453,17 +2534,17 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     bool linkNoteAtClick = false;
     {
         int lineIdx = YToLine(evt.GetY());
-        if (lineIdx >= 0 && lineIdx < (int)m_lines.size()) {
+        if (lineIdx >= 0 && lineIdx < LineCountI()) {
             int col = XToChar(lineIdx, evt.GetX(), evt.GetY());
             int c = 0;
-            for (const auto& run : m_lines[lineIdx]) {
+            for (const auto& run : LineAt(lineIdx)) {
                 int runLen = RunCharLen(run);
                 if (run.isLink() &&
                     col >= c && col < c + runLen)
                 {
                     linkAtClick     = run.action();
                     linkTypeAtClick = run.action_type();
-                    linkNoteAtClick = m_lines[lineIdx].comment;
+                    linkNoteAtClick = LineAt(lineIdx).comment;
                     break;
                 }
                 c += runLen;
@@ -2649,7 +2730,7 @@ void COutputPane::OnKeyDown(wxKeyEvent& evt)
 
     // Escape: scroll to bottom (if paused) then return focus to the input bar.
     if (code == WXK_ESCAPE) {
-        if (!m_autoScroll && !m_lines.empty()) ScrollToBottom();
+        if (!m_autoScroll && !LineCountI() == 0) ScrollToBottom();
         if (m_fn_return_focus) m_fn_return_focus();
         return;
     }
@@ -2759,7 +2840,7 @@ void COutputPane::CopySelectionAsHTML(const wxString& fontName)
     if (!GetNormalizedSel(s, e)) return;
 
     int lo = std::max(0, s.line);
-    int hi = std::min((int)m_lines.size() - 1, e.line);
+    int hi = std::min(LineCountI() - 1, e.line);
     if (lo > hi) return;
 
     // HTML-escape one byte string (matches Utilities.cpp FixHTMLString:
@@ -2791,7 +2872,7 @@ void COutputPane::CopySelectionAsHTML(const wxString& fontName)
     // Default background = first run's bg on the start line (canonical uses the
     // start line's first style); fall back to the pane background.
     uint32_t defaultBack = m_bgColor;
-    if (!m_lines[lo].empty()) defaultBack = m_lines[lo][0].bg;
+    if (!LineAt(lo).empty()) defaultBack = LineAt(lo)[0].bg;
 
     char buf[256];
     std::string html;
@@ -2817,7 +2898,7 @@ void COutputPane::CopySelectionAsHTML(const wxString& fontName)
     bool bInSpan = false, firstLine = true;
 
     for (int li = lo; li <= hi; ++li) {
-        const SOutputLine& line = m_lines[li];
+        const SOutputLine& line = LineAt(li);
 
         int lineLen = 0;
         for (const auto& run : line)
@@ -2893,10 +2974,10 @@ void COutputPane::CopySelectionAsHTML(const wxString& fontName)
 
 void COutputPane::SelectAll()
 {
-    if (m_lines.empty()) return;
-    int lastLine = (int)m_lines.size() - 1;
+    if (LineCountI() == 0) return;
+    int lastLine = LineCountI() - 1;
     int lastCol  = 0;
-    for (const auto& run : m_lines[lastLine])
+    for (const auto& run : LineAt(lastLine))
         lastCol += RunCharLen(run);
 
     m_selAnchor = SelPoint{0, 0};
@@ -2910,7 +2991,7 @@ wxString COutputPane::SelectedText() const
     if (!GetNormalizedSel(selStart, selEnd)) return wxEmptyString;
 
     int lo = std::max(0, selStart.line);
-    int hi = std::min((int)m_lines.size() - 1, selEnd.line);
+    int hi = std::min(LineCountI() - 1, selEnd.line);
 
     wxString result;
     // Reserve from the wrap cache's per-line character counts rather than
@@ -2925,14 +3006,14 @@ wxString COutputPane::SelectedText() const
         if (estimate) result.reserve(estimate);
     }
     for (int i = lo; i <= hi; ++i) {
-        if (!m_lines[i].empty() && m_lines[i][0].horiz_rule) {
+        if (!LineAt(i).empty() && LineAt(i)[0].horiz_rule) {
             result += wxT("────────────────────────────────────────\n");
             continue;
         }
 
         // Build plain text for this line.
         wxString lineText;
-        for (const auto& run : m_lines[i])
+        for (const auto& run : LineAt(i))
             if (!run.horiz_rule)
                 lineText += DecodeRunText(run);
 
@@ -2959,7 +3040,7 @@ bool COutputPane::LineContains(int i, const wxString& term,
                                const std::string& termLowerAscii,
                                bool caseSensitive, std::string& scratch) const
 {
-    const SOutputLine& line = m_lines[(size_t)i];
+    const SOutputLine& line = LineAt(i);
 
     bool decodeNeeded = false;
     scratch.clear();
@@ -3015,7 +3096,7 @@ void COutputPane::RebuildFindCache(const wxString& term, bool caseSensitive)
     std::string scratch;
     scratch.reserve(256);
 
-    const int n = (int)m_lines.size();
+    const int n = LineCountI();
     for (int i = 0; i < n && (int)m_findCache.size() < 9999; ++i)
         if (LineContains(i, term, termBytes, caseSensitive, scratch))
             m_findCache.push_back(i);
@@ -3034,12 +3115,12 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
     if (outOrdinal)      *outOrdinal      = 0;
     if (outTotalMatches) *outTotalMatches = 0;
 
-    if (term.IsEmpty() || m_lines.empty()) return false;
+    if (term.IsEmpty() || LineCountI() == 0) return false;
 
     // For case-insensitive search, lower-case the term once and compare against
     // lower-cased line text.  For case-sensitive search, compare as-is.
     wxString searchTerm = caseSensitive ? term : term.Lower();
-    int n = (int)m_lines.size();
+    int n = LineCountI();
 
     SelPoint selStart, selEnd;
     GetNormalizedSel(selStart, selEnd);
@@ -3058,7 +3139,7 @@ bool COutputPane::FindNext(const wxString& term, bool forward,
     // per line -- the scan itself goes through the cache below.
     auto lineText = [this, caseSensitive](int i) -> wxString {
         wxString s;
-        for (const auto& run : m_lines[i])
+        for (const auto& run : LineAt(i))
             if (!run.horiz_rule)
                 s += DecodeRunText(run);
         return caseSensitive ? s : s.Lower();
@@ -3137,8 +3218,8 @@ void COutputPane::HighlightHitsForLine(int lineIdx, std::vector<HighlightHit>& o
 {
     out.clear();
     if (m_searchTerm.IsEmpty()) return;
-    if (lineIdx < 0 || lineIdx >= (int)m_lines.size()) return;
-    const SOutputLine& line = m_lines[(size_t)lineIdx];
+    if (lineIdx < 0 || lineIdx >= LineCountI()) return;
+    const SOutputLine& line = LineAt(lineIdx);
 
 
     bool fastable = true;

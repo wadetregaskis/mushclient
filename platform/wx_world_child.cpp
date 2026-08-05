@@ -646,6 +646,24 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         return IsLogging();
     };
 
+    // ── PULL MODEL (branch pull-model-worldview) ──────────────────────────
+    // Wire the fetch seam and the pane stops KEEPING what it is pushed: the
+    // engine's CLine is the only copy, and the pane holds 4 bytes of wrap
+    // metrics per line instead of a full SOutputLine.  Both use the SAME
+    // converter (CMUSHclientDoc::BuildOutputLine), so what a fetch builds is
+    // what the push would have delivered.
+    m_output->m_fn_fetch_line = [this](int i, SOutputLine& out) -> bool {
+        return m_doc && m_doc->BuildOutputLine((long) i, out);
+    };
+    m_output->m_fn_line_count = [this]() -> int {
+        if (!m_doc) return 0;
+        // COMMITTED lines only: the in-progress line is the list's tail and is
+        // shown as the pending row, not as a committed one.
+        const long n = (long) m_doc->m_LineList.GetCount()
+                     - (m_doc->m_pCurrentLine ? 1 : 0);
+        return (int) (n > 0 ? n : 0);
+    };
+
     // Ctrl+L / context menu → the canonical Display ▸ Clear Output Buffer.
     m_output->m_fn_clear_output_buffer = [this]() { ClearOutputBuffer(); };
 

@@ -50,6 +50,91 @@ void CMUSHclientDoc::RebuildOutputView()
     UpdateAllViews(nullptr);
 }
 
+// ── BuildOutputLine ───────────────────────────────────────────────────────
+// One CLine -> one SOutputLine.  Extracted from the UpdateAllViews drain so the
+// PUSH path (the drain, below) and any PULL path (a view fetching line k at
+// paint time) share a single conversion -- two copies of this would be the
+// twin drift the port keeps paying for elsewhere.
+//
+// Returns false when `index` is out of range.  `index` is a 0-based COMMITTED
+// line index, the same space m_gui_lines_emitted counts in.
+bool CMUSHclientDoc::BuildOutputLine (long index, SOutputLine & out) const
+{
+  out.clear();
+  out.pending = false;
+  if (index < 0 || index >= m_LineList.GetCount ())
+    return false;
+
+  CLine * pLine = m_LineList.GetAt (
+      const_cast<CMUSHclientDoc *>(this)->GetLinePosition (index));
+  if (!pLine || pLine == m_pCurrentLine)
+    return false;
+
+    // Horizontal rule: emit a single sentinel run rather than text.
+    if (pLine->flags & HORIZ_RULE) {
+        SOutputLine outline;
+        SOutputRun hrRun;
+        hrRun.horiz_rule = true;
+        outline.push_back(std::move(hrRun));
+        out = std::move(outline);
+        return true;
+    }
+
+    SOutputLine outline;
+    // A note line: a send-link on it is executed, not sent.
+    outline.comment = (pLine->flags & COMMENT) != 0;
+    // The engine's BOOKMARK flag (world.Bookmark / Display ▸ Bookmark
+    // Selection).  Carrying it here makes the CLine the single source of
+    // truth: RebuildOutputView re-emits the buffer, so bookmarks survive a
+    // palette change without the view having to save and restore them.
+    outline.bookmark = (pLine->flags & BOOKMARK) != 0;
+    POSITION spos = pLine->styleList.GetHeadPosition();
+    int charOff = 0;
+    while (spos) {
+        CStyle* pStyle = pLine->styleList.GetNext(spos);
+        if (pStyle->iLength > 0) {
+            SOutputRun run;
+            GetStyleRGB(pStyle, run.fg, run.bg);
+            // ...and the inputs it resolved them from, so a palette
+            // change can recolour this run without a re-emit.
+            run.style_flags = (uint16_t)(pStyle->iFlags & STYLE_BITS);
+            run.fore_idx    = (int32_t) pStyle->iForeColour;
+            run.back_idx    = (int32_t) pStyle->iBackColour;
+            // The three "Show" checkboxes (World Properties > Appearance >
+            // Output) decide whether the ANSI attribute is rendered at all.
+            // Windows honours them when it builds the 16 style fonts
+            // (doc.cpp ChangeFont, which takes bShowBold/Italic/Underline);
+            // these run flags are the equivalent choke point for a PAL view
+            // adapter, and were ungated — so on the port the checkboxes did
+            // nothing.  UpdateAllViews re-emits, so this is live.
+            run.bold          = m_bShowBold      && ((pStyle->iFlags & HILITE)    != 0);
+            run.underline     = m_bShowUnderline && ((pStyle->iFlags & UNDERLINE) != 0);
+            run.italic        = m_bShowItalic    && ((pStyle->iFlags & BLINK)     != 0);  // MUSHclient maps BLINK → italic
+            run.strikethrough = (pStyle->iFlags & STRIKEOUT) != 0;
+            run.text = std::string(pLine->text + charOff, pStyle->iLength);
+            run.utf8 = m_bUTF_8;                      // non-UTF-8 worlds: tag the
+            if (!m_bUTF_8)                            // bytes' charset so the pane
+                run.charset = (int) m_font_charset;   // decodes them (else blank)
+            // MXP hyperlink / send-link: copy action and hint strings.
+            if (pStyle->pAction) {
+                // One shared_ptr allocation, and ONLY for a link run: the
+                // action/hint/type used to be plain members on every run.
+                // Windows branches on these when the link is clicked (a
+                // prompt-link fills the command bar; a send-link on a note
+                // line executes instead of sending), so carry them out to
+                // the view with the action itself.
+                run.setLink(static_cast<const char*>(pStyle->pAction->m_strAction),
+                            static_cast<const char*>(pStyle->pAction->m_strHint),
+                            pStyle->iFlags & ACTIONTYPE);
+            }
+            outline.push_back(std::move(run));
+        }
+        charOff += pStyle->iLength;
+    }
+  out = std::move(outline);
+  return true;
+}
+
 // ── HasUnflushedOutput ────────────────────────────────────────────────────
 // Would UpdateAllViews actually push anything?  See the header for why this is
 // for the periodic timer flush ONLY.

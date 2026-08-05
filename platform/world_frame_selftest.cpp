@@ -315,7 +315,10 @@ int RunWorldFrameSelfTest()
     // buffer), the scroll position survives, and the colours actually change.
     {
         doc->m_bAutoWrapWindowWidth = false;
-        pane->ClearOutput();
+        // Reset through the DOC, not the pane.  Under the pull model the pane
+        // holds no lines of its own, so a pane-only clear leaves the engine's
+        // buffer intact and the two disagree about how many lines exist.
+        doc->ClearOutput();
 
         // An ANSI-coloured line (index 2 = green) and an RGB one.  Only the
         // first may move when the palette does.
@@ -354,7 +357,10 @@ int RunWorldFrameSelfTest()
         pane->m_fn_on_line_appended = nullptr;
         doc->m_normalcolour[2] = RGB(0, 128, 0);   // put it back
         pumpTicks(250);
-        pane->ClearOutput();
+        // Reset through the DOC, not the pane.  Under the pull model the pane
+        // holds no lines of its own, so a pane-only clear leaves the engine's
+        // buffer intact and the two disagree about how many lines exist.
+        doc->ClearOutput();
     }
 
     // ── Unlimited scrollback reaches the PANE, not just the engine ───────────
@@ -374,7 +380,10 @@ int RunWorldFrameSelfTest()
         check(pane->LineCount() <= 300,
               "a bounded cap trims the pane");
 
-        pane->ClearOutput();
+        // Reset through the DOC, not the pane.  Under the pull model the pane
+        // holds no lines of its own, so a pane-only clear leaves the engine's
+        // buffer intact and the two disagree about how many lines exist.
+        doc->ClearOutput();
         doc->m_maxlines = 0;               // unlimited
         pane->SetMaxLines(0);
         for (int i = 0; i < 400; ++i)
@@ -386,7 +395,10 @@ int RunWorldFrameSelfTest()
 
         doc->m_maxlines = savedMax;
         pane->SetMaxLines((int) savedMax);
-        pane->ClearOutput();
+        // Reset through the DOC, not the pane.  Under the pull model the pane
+        // holds no lines of its own, so a pane-only clear leaves the engine's
+        // buffer intact and the two disagree about how many lines exist.
+        doc->ClearOutput();
     }
 
     // ── Display ▸ Clear to Start (⌘K) keeps the prompt block ─────────────────
@@ -672,6 +684,160 @@ int RunWorldFrameSelfTest()
               "...and the pane follows through EmitClearOutput");
 
         g_wxhook_message_box = savedMB;
+    }
+
+    // ── PULL MODEL: what it actually saves ───────────────────────────────
+    // Feed a large buffer and report resident memory, so the branch can be
+    // judged on a number rather than an argument.  Printed, not asserted: the
+    // figure is machine-dependent and the point is the comparison against the
+    // same run on main.
+    {
+        doc->m_maxlines = 0;                 // unlimited, which is the case at issue
+        doc->ClearOutput();
+        pane->SetMaxLines(0);
+
+        auto rssMB = []() -> double {
+            FILE* f = popen("ps -o rss= -p $PPID", "r");
+            if (!f) return -1;
+            long kb = 0;
+            if (fscanf(f, "%ld", &kb) != 1) kb = 0;
+            pclose(f);
+            return kb / 1024.0;
+        };
+
+        const double before = rssMB();
+        const int kLines = 200000;
+        char buf[96];
+        for (int i = 0; i < kLines; ++i) {
+            snprintf(buf, sizeof buf,
+                     "\x1b[32m%06d\x1b[0m the quick brown fox jumps over the lazy dog\n", i);
+            doc->DisplayMsg(buf, (int) strlen(buf), 0);
+        }
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const double after = rssMB();
+        printf("    MEMORY: %d lines, RSS %.1f MB -> %.1f MB (delta %.1f MB, "
+               "%.0f bytes/line); pane holds %d lines of content\n",
+               kLines, before, after, after - before,
+               (after - before) * 1024.0 * 1024.0 / kLines,
+               pane->PullModelActive() ? 0 : pane->LineCount());
+        check(pane->LineCount() >= kLines,
+              "memory probe: every line is addressable through the pane");
+        check(pane->PullModelActive(),
+              "memory probe: ...with the pull seam actually wired");
+
+        doc->ClearOutput();
+        doc->m_maxlines = 5000;
+    }
+
+    // ── the pull model's MUTATORS ────────────────────────────────────────────
+    // The half the spike left undone.  It converted the pane's line-count
+    // READERS to LineCountI() and left every mutator guarding with a count and
+    // then operating on m_lines -- which the pull model empties.  Each of these
+    // three paths popped an empty deque; the crash was reachable from
+    // world.DeleteLines(n), which has nothing to do with the clear commands.
+    //
+    // The invariant they all now share: in the pull model the ENGINE owns the
+    // line set and the pane owns only what it derives from it, so a pane-side
+    // trim targets the length of that derived data, never m_maxLines.
+    {
+        pane->ClearOutput();
+        doc->ClearOutput();
+        doc->m_maxlines = 0;                     // unlimited: only we trim
+        check(pane->PullModelActive(), "wrap-up: the pull seam is still wired");
+
+        for (int i = 1; i <= 40; ++i) {
+            char buf[32];
+            snprintf(buf, sizeof buf, "mutator line %d\n", i);
+            doc->DisplayMsg(buf, (int) strlen(buf), 0);
+        }
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        check(pane->LineCount() == 40, "40 lines, and the pane reads them all");
+
+        // world.DeleteLines(n) -- the tail mutator.  This is the one that
+        // segfaulted, and it predates every clear command.
+        // m_bInSendToScript starts TRUE (doc_construct.cpp:98) and DeleteLines
+        // refuses while it is set -- the method is only callable from inside a
+        // trigger or alias script, which is where ProcessPreviousLine clears
+        // it.  Reproduce that window rather than skipping the check.
+        doc->m_bInSendToScript = false;
+        doc->DeleteLines(10);
+        doc->m_bInSendToScript = true;
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        // Exactly 10: DeleteLines folds the empty in-progress line into the
+        // count (methods_output_shared.cpp:79) and then re-seeds one, so those
+        // two cancel and the committed lines lose 10.
+        check(pane->LineCount() == 30, "world.DeleteLines takes 10 off the tail");
+        check(pane->DerivedLength() == pane->LineCount(),
+              "...and the pane's derived data is exactly as long as the engine's");
+        {
+            std::string last;
+            if (const SOutputLine* l = pane->GetLine(pane->LineCount() - 1))
+                for (const SOutputRun& r : *l) last += r.text;
+            check(last == "mutator line 30",
+                  "...and the pane still reads the right last line");
+        }
+
+        // The head mutator, through Clear to Start's fallback (no GA here).
+        auto* childFrame = dynamic_cast<CWorldChildFrame*>(child);
+        const long cut = childFrame ? childFrame->ClearToStart() : -1;
+        wxYield();
+        check(cut == 29, "Clear to Start cuts the 29 lines above the last");
+        check(pane->LineCount() == 1, "...and the pane follows to one line");
+        check(pane->DerivedLength() == pane->LineCount(),
+              "...with the wrap cache cut to match, not left 30 long");
+        {
+            std::string only;
+            if (const SOutputLine* l = pane->GetLine(0))
+                for (const SOutputRun& r : *l) only += r.text;
+            check(only == "mutator line 30",
+                  "...reading the surviving line at its NEW index");
+        }
+
+        // The capacity trim.  In the pull model the engine evicts at its own
+        // cap and the pane has to follow it -- trimming to the pane's m_maxLines
+        // instead could not even terminate, because popping the pane's wrap
+        // cache does not change what the engine reports.
+        pane->ClearOutput();
+        doc->ClearOutput();
+        doc->m_maxlines = 300;                   // engine evicts in JUMP_SIZE chunks
+
+        // DRAIN AS WE GO, which is what a connected world does: the pane sees
+        // each line before the engine's RemoveChunk takes it away again.  A
+        // single drain at the end would prove nothing -- the engine would have
+        // finished evicting first, so the pane could never be holding more
+        // lines than the engine, which is the only state the capacity trim
+        // exists to resolve.
+        for (int i = 1; i <= 500; ++i) {
+            char buf[32];
+            snprintf(buf, sizeof buf, "cap line %d\n", i);
+            doc->DisplayMsg(buf, (int) strlen(buf), 0);
+            if (i % 25 == 0) doc->UpdateAllViews(NULL);
+        }
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        check(pane->LineCount() == (int) doc->m_LineList.GetCount() - 1,
+              "the pane's line count tracks the ENGINE's, not its own cap");
+        // The load-bearing one.  LineCount() reports the engine's number under
+        // the pull seam, so it agrees no matter what the pane did; only the
+        // derived length can show the pane keeping rows for lines the engine
+        // has already evicted.
+        check(pane->DerivedLength() == pane->LineCount(),
+              "...and so does its wrap cache, which is the only way to tell");
+        {
+            std::string first;
+            if (const SOutputLine* l = pane->GetLine(0))
+                for (const SOutputRun& r : *l) first += r.text;
+            check(first.rfind("cap line ", 0) == 0,
+                  "...and line 0 is a real line, not a fetch past the end");
+        }
+
+        doc->m_maxlines = 5000;
+        pane->ClearOutput();
+        doc->ClearOutput();
     }
 
     // Tear down without running the close/save flow (this doc has no file).

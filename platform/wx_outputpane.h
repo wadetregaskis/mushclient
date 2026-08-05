@@ -21,6 +21,7 @@
 #include <wx/wx.h>
 #include <wx/scrolwin.h>
 #include <deque>
+#include <unordered_map>
 #include <functional>
 #include <string>
 #include <vector>
@@ -215,6 +216,18 @@ public:
     // when the buffer is empty or already scrolled to the top.
     int FirstVisibleLine() const;
 
+    // How many lines the pane's DERIVED data actually holds -- the wrap cache's
+    // length.  Read-only, for the in-app selftest.
+    //
+    // This is THE invariant of the pull model: the pane owns no content, only
+    // what it derives from the engine's line set, so the two must be the same
+    // length.  Nothing else can see a violation.  LineCount() reports the
+    // ENGINE's count when the pull seam is wired, so it agrees with the engine
+    // by construction and stays right even when the wrap cache has drifted --
+    // and a drifted wrap cache is wrong scroll geometry, wrong
+    // FirstVisibleLine, and a Clear Scrollback that cuts in the wrong place.
+    int DerivedLength() const { return (int) m_visualRowStart.size(); }
+
     // Clear Screen (⌃⌘L): scroll the last line to the TOP of the viewport,
     // erasing nothing.  Opens a blank region below it to scroll into, which
     // the output that follows then fills — Terminal.app's overscroll, and the
@@ -244,7 +257,11 @@ public:
     SelPoint PointToChar(int clientX, int clientY) const;
 
     // Number of lines currently in the buffer.
-    int LineCount() const { return (int)m_lines.size(); }
+    int LineCount() const { return LineCountI(); }
+
+    // True when the fetch seam is wired, i.e. the pane keeps no line content
+    // of its own and reads through the engine (branch pull-model-worldview).
+    bool PullModelActive() const { return (bool) m_fn_fetch_line; }
 
     // True while an in-progress (not yet newline-terminated) line is being shown
     // as the dim trailing row — the engine's m_pCurrentLine.  Read-only; exists
@@ -258,8 +275,9 @@ public:
 
     // Read-only access to a single buffered line.
     const SOutputLine* GetLine(int idx) const {
-        if (idx < 0 || idx >= (int)m_lines.size()) return nullptr;
-        return &m_lines[idx];
+        if (idx < 0 || idx >= LineCountI()) return nullptr;
+        const SOutputLine& l = LineAt(idx);
+        return &l;
     }
 
     // Query the current output-pane text selection.
@@ -447,6 +465,21 @@ public:
     // Wired by CWorldChildFrame to write to the session log file.
     std::function<void(const SOutputLine&)> m_fn_on_line_appended;
 
+    // ── PULL MODEL (spike, branch pull-model-worldview) ───────────────────
+    // Fetch committed line `i` from the engine.  When wired, the pane stops
+    // KEEPING the lines it is pushed: AppendLine still receives one (that is
+    // how it learns the line exists and how wide it is) but drops the payload
+    // instead of storing it, and every read goes through here.
+    //
+    // The duplicate store is the point: the engine's CLine already holds the
+    // line, so m_lines was a second full copy of the whole scrollback --
+    // ~64 bytes per run plus its strings, against the 4 bytes per line the wrap
+    // cache actually needs.
+    std::function<bool(int i, SOutputLine& out)> m_fn_fetch_line;
+    // How many COMMITTED lines the engine currently holds.  Authoritative; the
+    // pane's own count is derived from it rather than the other way round.
+    std::function<int()> m_fn_line_count;
+
     // Returns true if a log file is currently open (used by context menu label).
     std::function<bool()> m_fn_is_logging;
 
@@ -548,6 +581,40 @@ private:
     // Fills start/end with the normalised (start <= end) selection.
     // Returns false if there is no selection (both points invalid or equal).
     bool GetNormalizedSel(SelPoint& start, SelPoint& end) const;
+
+    // ── PULL MODEL: the read path ─────────────────────────────────────────
+    // Committed line count.  The engine's when the pull seam is wired, the
+    // pane's own deque otherwise, so both models share every caller.
+    int  LineCountI() const;
+    // How many lines the pane's DERIVED data -- wrap cache, char counts, and in
+    // the push model the content deque -- should currently hold.  -1 means "no
+    // limit, do not trim".
+    //
+    // This is the one asymmetry between the two models, and every trim goes
+    // through it.  In the PUSH model the pane owns the line set and trims to its
+    // own cap.  In the PULL model the ENGINE owns it: it has already evicted at
+    // its own cap (RemoveChunk) or through DeleteHeadLines, and the pane simply
+    // follows.  Trimming to m_maxLines there could never terminate -- popping
+    // the pane's wrap cache does not change what LineCountI() reports, because
+    // that number comes from the engine.
+    int  DerivedTargetLength() const;
+    // Drop `n` lines from the front of everything derived from the buffer, and
+    // from the content deque if this build has one.  Shifts the selection down
+    // with them.  Returns how many were actually dropped.
+    long DropFrontLines(long n, bool bAccumulateTrimmedRows);
+    // Line `i`, fetched and cached.  The reference is valid until the NEXT
+    // LineAt for a different line evicts it, which the cache is sized to make
+    // impossible within a paint (see kLineCacheMin) -- no caller holds two at
+    // once, and that invariant is what keeps this safe.
+    const SOutputLine& LineAt(int i) const;
+    // Drop cached conversions.  Called whenever the engine's buffer moves under
+    // us: a trim, a clear, a palette change, or a re-emit.
+    void InvalidateLineCache() const;
+
+
+    static const int kLineCacheMin = 512;   // >> any viewport's row count
+    mutable std::unordered_map<int, SOutputLine> m_lineCache;
+    mutable std::deque<int>                      m_lineCacheOrder;   // LRU, front = oldest
 
     // Rebuild selected text for the clipboard.
     wxString SelectedText() const;

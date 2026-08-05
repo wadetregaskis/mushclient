@@ -1620,6 +1620,11 @@ public:
   // see (a miniwindow moved, a colour changed), and must keep calling it
   // unconditionally.  Defined in doc_display_shared.cpp.
   bool HasUnflushedOutput () const;
+
+  // One CLine -> one SOutputLine, shared by the push drain and any pull
+  // (fetch-at-paint) consumer.  `index` is a 0-based COMMITTED line index.
+  // False when out of range or when it names the in-progress line.
+  bool BuildOutputLine (long index, SOutputLine & out) const;
 #endif
 
   // Re-resolve every already-displayed line through the CURRENT palette.

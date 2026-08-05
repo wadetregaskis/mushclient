@@ -3873,17 +3873,13 @@ void CMUSHclientDoc::DeleteHeadLines (long count)
     m_LineList.RemoveHead ();
     }
 
-#ifndef _WIN32
-  // The GUI has already seen these lines; tell the view how many to drop and
-  // wind the emission cursor back by the same amount, exactly as RemoveChunk
-  // does for its own eviction.
-  const long dropped = std::min (count, m_gui_lines_emitted);
-  m_gui_lines_emitted = std::max (0L, m_gui_lines_emitted - count);
-  if (dropped > 0)
-    DeleteOutputHeadLines (dropped);
-#endif
-
-  // Rebuild the jump index from what survived (one Append per chunk head).
+  // Rebuild the jump index from what survived (one Append per chunk head)
+  // BEFORE telling anyone.  Every entry above still points at a node that has
+  // just been freed, and the view notification below is not necessarily
+  // passive: UpdateScrollbars can force a synchronous repaint, and a repaint
+  // resolves line indices through GetLinePosition -- i.e. through this index.
+  // Notifying first made that a use-after-free, reachable only when a paint
+  // landed in the window, which is exactly the intermittent kind.
   m_LinePositions.BeginRebuild ();
   long i = 0;
   for (POSITION pos = m_LineList.GetHeadPosition (); pos; i++)
@@ -3896,10 +3892,21 @@ void CMUSHclientDoc::DeleteHeadLines (long count)
     m_LinePositions.Reset (m_LineList.GetHeadPosition ());
 
   // A find cursor into a freed line is a dangling read, so reset it -- the same
-  // reason ClearOutput does (doc.cpp).
+  // reason ClearOutput does (doc.cpp).  Also before the notification, and for
+  // the same reason.
   m_DisplayFindInfo.m_nCurrentLine  = 0;
   m_DisplayFindInfo.m_pFindPosition = NULL;
   m_DisplayFindInfo.m_bAgain        = FALSE;
+
+#ifndef _WIN32
+  // The GUI has already seen these lines; tell the view how many to drop and
+  // wind the emission cursor back by the same amount, exactly as RemoveChunk
+  // does for its own eviction.
+  const long dropped = std::min (count, m_gui_lines_emitted);
+  m_gui_lines_emitted = std::max (0L, m_gui_lines_emitted - count);
+  if (dropped > 0)
+    DeleteOutputHeadLines (dropped);
+#endif
 
   UpdateAllViews (NULL);
   }  // end of CMUSHclientDoc::DeleteHeadLines

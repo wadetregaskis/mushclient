@@ -214,6 +214,13 @@ public:
     // out of sight above the viewport.  A wrapped line only partly visible
     // counts as visible, so the command never takes half of one.  Returns 0
     // when the buffer is empty or already scrolled to the top.
+    // Adopt character metrics measured from a live paint DC; returns true when
+    // they differ from what the pane is using and a reflow is needed.  Public
+    // because OnPaint is unreachable from the test suite -- see the body.
+    bool AdoptMeasuredMetrics(int dcW, int dcH);
+    // The reflow that must follow a true from the above.
+    void ApplyMetricsChange();
+
     int FirstVisibleLine() const;
 
     // How many lines the pane's DERIVED data actually holds -- the wrap cache's

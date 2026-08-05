@@ -705,6 +705,75 @@ void TestSearchHighlightOffsets()
 
 } // namespace
 
+// ── the HiDPI char-metric correction ─────────────────────────────────────────
+// This lived inline in OnPaint, which means it had never executed under test:
+// no in-app selftest reaches the paint handler at all (they exit before
+// wxApp::OnRun, so AppKit never issues drawRect: -- docs/AUDIT-2026-08.md).
+// It is the arm that notices the paint DC disagrees with the metrics measured
+// at construction, which on macOS is the difference between physical and
+// logical pixels -- and getting it wrong puts every selection rectangle and
+// every click-to-character mapping out by the display scale factor.
+void TestMeasuredMetrics()
+{
+    Harness h(800, 400);
+    const int cw0 = h.pane->CharWidth();
+    const int lh0 = h.pane->LineHeight();
+    opCheck(cw0 > 0 && lh0 > 0, "metrics: the pane starts with a usable grid");
+
+    // Same measurement -> nothing to do.  Without this the pane would reflow
+    // on every single paint, which is the whole reason the comparison exists.
+    opCheck(!h.pane->AdoptMeasuredMetrics(cw0, lh0 - 2),
+            "metrics: an unchanged measurement asks for no reflow");
+    opCheck(h.pane->CharWidth() == cw0 && h.pane->LineHeight() == lh0,
+            "...and leaves the grid alone");
+
+    // A DC that cannot measure text must NOT be allowed to set the grid to
+    // zero: the wrap arithmetic divides by the character width.
+    opCheck(!h.pane->AdoptMeasuredMetrics(0, 20),
+            "metrics: a zero width is refused");
+    opCheck(!h.pane->AdoptMeasuredMetrics(9, 0),
+            "metrics: a zero height is refused");
+    opCheck(!h.pane->AdoptMeasuredMetrics(-9, -20),
+            "metrics: negatives are refused");
+    opCheck(h.pane->CharWidth() == cw0 && h.pane->LineHeight() == lh0,
+            "...and none of them touched the grid");
+
+    // A real change is taken, and the row height carries the +2 leading.
+    opCheck(h.pane->AdoptMeasuredMetrics(cw0 * 2, (lh0 - 2) * 2),
+            "metrics: a doubled measurement IS a change");
+    opCheck(h.pane->CharWidth() == cw0 * 2,
+            "...the character width is adopted verbatim");
+    opCheck(h.pane->LineHeight() == (lh0 - 2) * 2 + 2,
+            "...and the row height is the text height plus two");
+
+    // Only the width differing is still a change -- an implementation that
+    // compared just the height would miss the pure-width case, which is
+    // exactly the one a font substitution produces.
+    opCheck(h.pane->AdoptMeasuredMetrics(cw0 * 2 + 1, (lh0 - 2) * 2),
+            "metrics: a width-only change counts");
+    opCheck(h.pane->AdoptMeasuredMetrics(cw0 * 2 + 1, (lh0 - 2) * 2 + 1),
+            "metrics: a height-only change counts");
+
+    // The reflow half: the wrap column must follow the new grid, and the frame
+    // must be told so the ENGINE's wrap column can follow too.  Without that
+    // last step the two disagree and every full-width line gains a one-
+    // character orphan continuation row.
+    h.Feed(20);
+    h.pane->AdoptMeasuredMetrics(cw0, lh0 - 2);      // back to the real grid
+    h.pane->ApplyMetricsChange();
+    const int wideCols = h.pane->WrapColumns();
+    opCheck(wideCols > 0, "metrics: the wrap column is recomputed");
+
+    int gridChanges = 0;
+    h.pane->m_fn_grid_changed = [&gridChanges]() { ++gridChanges; };
+    h.pane->AdoptMeasuredMetrics(cw0 * 2, lh0 - 2);
+    h.pane->ApplyMetricsChange();
+    opCheck(gridChanges == 1, "metrics: the frame is told the grid changed");
+    opCheck(h.pane->WrapColumns() < wideCols,
+            "...and twice-as-wide characters halve the wrap column");
+    h.pane->m_fn_grid_changed = nullptr;
+}
+
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
@@ -718,6 +787,7 @@ int RunOutputPaneSelfTest()
     TestFindNext();
     TestReleaseDoesNotMaterialiseUnlessAsked();
     TestSearchHighlightOffsets();
+    TestMeasuredMetrics();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

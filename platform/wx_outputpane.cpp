@@ -1074,6 +1074,46 @@ void COutputPane::ResetFontSize()
 
 // ── Paint ─────────────────────────────────────────────────────────────────────
 
+// ── character metrics measured from a live DC ─────────────────────────────
+// The HiDPI correction.  On macOS the wxMemoryDC used during construction can
+// report PHYSICAL pixel widths (2x logical) while the paint DC works in logical
+// pixels; left uncorrected, selection rectangles and click-to-char mapping are
+// off by the scale factor.
+//
+// Split out of OnPaint, and not for tidiness: the paint handler never runs in
+// an in-app selftest (every one exits before wxApp::OnRun, so AppKit never
+// issues drawRect: -- see docs/AUDIT-2026-08.md), so anything left inline there
+// has no coverage at all.  These two are the engine-shaped halves -- the
+// decision and the reflow -- and both are callable directly.
+//
+// Returns true when the measurement DIFFERS from what the pane is using, i.e.
+// when the caller should reflow.  A non-positive measurement is refused: a DC
+// that cannot measure text must not be allowed to set the grid to zero, which
+// would divide by zero in the wrap arithmetic.
+bool COutputPane::AdoptMeasuredMetrics(int dcW, int dcH)
+{
+    if (dcW <= 0 || dcH <= 0) return false;
+    const int newLineH = dcH + 2;          // one pixel of leading top and bottom
+    if (dcW == m_charW && newLineH == m_lineH) return false;
+    m_charW = dcW;
+    m_lineH = newLineH;
+    return true;
+}
+
+// Everything that has to follow a grid change.  The scroll rate is in the new
+// row height, the wrap cache is recomputed against the new character width, and
+// the frame is told so the ENGINE's wrap column can follow -- without that last
+// step the pane and the engine disagree about how wide a line is, and every
+// full-width line gains a one-character orphan continuation row.
+void COutputPane::ApplyMetricsChange()
+{
+    SetScrollRate(0, m_lineH);
+    RebuildWrapCache();
+    UpdateScrollbars(m_autoScroll);
+    Refresh();
+    if (m_fn_grid_changed) m_fn_grid_changed();
+}
+
 void COutputPane::OnPaint(wxPaintEvent&)
 {
     // wxAutoBufferedPaintDC uses native double-buffering when the platform
@@ -1093,22 +1133,9 @@ void COutputPane::OnPaint(wxPaintEvent&)
         dc.SetFont(m_font);
         wxCoord dcW = 0, dcH = 0;
         dc.GetTextExtent("M", &dcW, &dcH);
-        if (dcW > 0 && dcH > 0) {
-            int newLineH = dcH + 2;
-            if (dcW != m_charW || newLineH != m_lineH) {
-                m_charW = dcW;
-                m_lineH = newLineH;
-                // Defer the wrap-cache rebuild so we don't invalidate layout
-                // while in the middle of a paint pass.
-                CallAfter([this]() {
-                    SetScrollRate(0, m_lineH);
-                    RebuildWrapCache();
-                    UpdateScrollbars(m_autoScroll);
-                    Refresh();
-                    if (m_fn_grid_changed) m_fn_grid_changed();
-                });
-            }
-        }
+        // Defer the reflow so we don't invalidate layout mid-paint.
+        if (AdoptMeasuredMetrics(dcW, dcH))
+            CallAfter([this]() { ApplyMetricsChange(); });
     }
 
     wxColour bgCol(GetRValue(m_bgColor), GetGValue(m_bgColor), GetBValue(m_bgColor));

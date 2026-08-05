@@ -33,6 +33,9 @@
 #include "platform/wx_osx_text.h"    // wxOSXSetWindowTabbing ("Window tabs" pref)
 #include "genprint.h"                 // FONT_BOLD / FONT_ITALIC / FONT_UNDERLINE
 #include "pal/text_rect.h"            // pal::textRectWidth — world.TextRectangle
+#include "pal/surface_bridge.h"       // pal::g_surface — contentGeneration for the mask cache
+#include <map>                        // the transparency-mask cache
+#include <iterator>                   // std::next
 #include <wx/numdlg.h>                // wxGetNumberFromUser (Display ▸ Go To Line)
 
 // MW_MOUSE_* flag constants (from mushview.h — copied here to avoid pulling in
@@ -172,12 +175,56 @@ static int EffectiveTextCols(CMUSHclientDoc* doc, int paneW, int charW)
 //   clientW/clientH — the output pane's client size ("client rect")
 //   frameW/frameH   — the owning child frame's client size ("owner rect")
 //   bUnder          — this pass draws the MINIWINDOW_DRAW_UNDERNEATH set
+// ── transparency-mask cache ───────────────────────────────────────────────
+// One entry per transparent miniwindow, valid while the canvas contents (and
+// the geometry the mask depends on) are unchanged.  See the use site.
+namespace {
+struct MaskCacheEntry {
+    wxBitmap           bmp;
+    unsigned long long gen   = 0;
+    long               w     = 0, h = 0;
+    wxColour           transCol;
+    double             scale = 0;
+};
+std::map<const CMiniWindow*, MaskCacheEntry> s_maskCache;
+// Counters, for the in-app selftest: "the mask was rebuilt" is otherwise
+// invisible from outside -- the drawn result is identical either way, which is
+// exactly what makes a broken cache hard to notice.
+long s_maskCacheBuilds = 0, s_maskCacheHits = 0;
+} // namespace
+
+void wx_miniwindow_mask_cache_stats(long& builds, long& hits) {
+    builds = s_maskCacheBuilds; hits = s_maskCacheHits;
+}
+void wx_miniwindow_mask_cache_reset() {
+    s_maskCache.clear(); s_maskCacheBuilds = 0; s_maskCacheHits = 0;
+}
+long wx_miniwindow_mask_cache_size() { return (long) s_maskCache.size(); }
+
 void wx_composite_miniwindows(CMUSHclientDoc* doc, wxDC& destDC,
                               int clientW, int clientH,
                               int frameW, int frameH, bool bUnder)
 {
     if (!doc) return;
     MiniWindowVector& order = doc->m_MiniWindowsOrder;
+
+    // Drop entries for windows this document no longer has.  Cheap (one entry
+    // per transparent miniwindow) and it runs per pass, so a deleted window
+    // cannot leave a bitmap behind.
+    //
+    // ABOVE the empty-order early-out, deliberately: deleting the LAST
+    // miniwindow is exactly the case where nothing would be composited
+    // afterwards, so a sweep below the early-out would never run for it and
+    // that window's bitmap would be held forever.
+    if (!s_maskCache.empty()) {
+        for (auto it = s_maskCache.begin(); it != s_maskCache.end(); ) {
+            bool alive = false;
+            for (auto& kv : order)
+                if (kv.second == it->first) { alive = true; break; }
+            it = alive ? std::next(it) : s_maskCache.erase(it);
+        }
+    }
+
     if (order.empty()) return;
 
     // ── Phase 1: compute m_rect for this pass's miniwindows ─────────
@@ -245,21 +292,57 @@ void wx_composite_miniwindows(CMUSHclientDoc* doc, wxDC& destDC,
             // as the transparency key, then draw it with the mask applied.
             COLORREF bg = mw->GetBackgroundColour();
             wxColour transCol(GetRValue(bg), GetGValue(bg), GetBValue(bg));
-            // The intermediate MUST carry the canvas's scale.  A plain
-            // wxBitmap(iW, iH) is 1x, so copying a HiDPI canvas into it
-            // throws away three quarters of the pixels and hands the
-            // compositor a blurred image — which is exactly what made
-            // plugin text fuzzy while the maps drawn straight through the
-            // opaque path stayed sharp.
-            wxBitmap srcBmp;
-            if (!srcBmp.CreateWithDIPSize(wxSize(iW, iH), wx_canvas_scale(), 32))
-                srcBmp = wxBitmap(iW, iH);
-            {
-                wxMemoryDC tmpDC(srcBmp);
-                tmpDC.Blit(0, 0, iW, iH, srcDC, 0, 0, wxCOPY);
-            }   // tmpDC destructor deselects srcBmp
-            srcBmp.SetMask(new wxMask(srcBmp, transCol));
-            destDC.DrawBitmap(srcBmp, destX, destY, /*useMask=*/true);
+
+            // ...but only when the contents have actually changed.  Building it
+            // costs a bitmap allocation, a full-canvas blit and a wxMask, and
+            // the mask is an O(w x h) scan of every pixel against the key
+            // colour.  That was happening for EVERY transparent miniwindow on
+            // EVERY paint, so with a plugin pack like Quow's it is several
+            // full-canvas scans per frame, for canvases that usually have not
+            // changed at all between frames.
+            //
+            // The cache key is the adapter's content generation, which is
+            // globally unique per content-state (pal/isurface.h) -- so a stale
+            // entry is not merely unlikely, it is unrepresentable.  A 0
+            // generation means the adapter does not track changes, and then
+            // nothing is cached and every paint rebuilds, which is the old
+            // behaviour.
+            const unsigned long long gen =
+                pal::g_surface ? pal::g_surface->contentGeneration(mw->GetSurfaceId())
+                               : 0;
+
+            MaskCacheEntry& entry = s_maskCache[mw];
+            const bool usable = gen != 0 && entry.gen == gen &&
+                                entry.w == iW && entry.h == iH &&
+                                entry.transCol == transCol &&
+                                entry.scale == wx_canvas_scale() &&
+                                entry.bmp.IsOk();
+            if (!usable) {
+                // The intermediate MUST carry the canvas's scale.  A plain
+                // wxBitmap(iW, iH) is 1x, so copying a HiDPI canvas into it
+                // throws away three quarters of the pixels and hands the
+                // compositor a blurred image — which is exactly what made
+                // plugin text fuzzy while the maps drawn straight through the
+                // opaque path stayed sharp.
+                wxBitmap srcBmp;
+                if (!srcBmp.CreateWithDIPSize(wxSize(iW, iH), wx_canvas_scale(), 32))
+                    srcBmp = wxBitmap(iW, iH);
+                {
+                    wxMemoryDC tmpDC(srcBmp);
+                    tmpDC.Blit(0, 0, iW, iH, srcDC, 0, 0, wxCOPY);
+                }   // tmpDC destructor deselects srcBmp
+                srcBmp.SetMask(new wxMask(srcBmp, transCol));
+                entry.bmp      = srcBmp;
+                entry.gen      = gen;
+                entry.w        = iW;
+                entry.h        = iH;
+                entry.transCol = transCol;
+                entry.scale    = wx_canvas_scale();
+                ++s_maskCacheBuilds;
+            } else {
+                ++s_maskCacheHits;
+            }
+            destDC.DrawBitmap(entry.bmp, destX, destY, /*useMask=*/true);
         } else {
             destDC.Blit(destX, destY, iW, iH, srcDC, 0, 0, wxCOPY);
         }

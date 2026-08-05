@@ -83,6 +83,19 @@ WxSurface::Surf* WxSurface::surf(SurfaceId id) {
     return it == m_surfaces.end() ? nullptr : &it->second;
 }
 
+// surf(), plus the record that these pixels are about to change.  See the
+// header for why every mutator goes through here rather than surf().
+WxSurface::Surf* WxSurface::mutate(SurfaceId id) {
+    Surf* s = surf(id);
+    if (s) s->gen = ++m_genCounter;
+    return s;
+}
+
+unsigned long long WxSurface::contentGeneration(SurfaceId id) {
+    Surf* s = surf(id);
+    return s ? s->gen : 0;    // 0 is the interface's "no caching" sentinel
+}
+
 WxSurface::Font* WxSurface::font(FontId id) {
     auto it = m_fonts.find((std::uint32_t)id);
     return it == m_fonts.end() ? nullptr : &it->second;
@@ -109,6 +122,7 @@ SurfaceId WxSurface::createSurface(Size sz, Colour background) {
     s.oldBmp = s.dc->SelectObject(s.bmp);
     s.dc->SetWindowOrg(0, 0);
     s.dc->FillSolidRect(0, 0, s.size.w, s.size.h, background);
+    s.gen = ++m_genCounter;      // fresh content-state, never reused
     std::uint32_t id = m_nextSurface++;
     m_surfaces[id] = s;
     return (SurfaceId)id;
@@ -133,6 +147,7 @@ SurfaceId WxSurface::adopt(CDC* dc, Size sz) {
     s.dc      = dc;
     s.size    = { sz.w > 0 ? sz.w : 1, sz.h > 0 ? sz.h : 1 };
     s.adopted = true;
+    s.gen     = ++m_genCounter;  // ditto: an adopted DC starts a new state
     std::uint32_t id = m_nextSurface++;
     m_surfaces[id] = s;
     return (SurfaceId)id;
@@ -221,7 +236,7 @@ void WxSurface::readPixels(SurfaceId id, Rect r, PixelBuffer& out, PixelFormat f
 }
 
 void WxSurface::writePixels(SurfaceId id, Rect r, const PixelBuffer& in) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s || !in.valid()) return;
     Rect clipped = { r.x, r.y, r.w < in.size.w ? r.w : in.size.w,
                                r.h < in.size.h ? r.h : in.size.h };
@@ -313,7 +328,7 @@ Colour WxSurface::getPixel(SurfaceId id, Point p) {
 }
 
 void WxSurface::setPixel(SurfaceId id, Point p, Colour c) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s || p.x < 0 || p.y < 0 || p.x >= s->size.w || p.y >= s->size.h) return;
     // CPU-exact 1x1 write via the DIB round-trip — consistent with getPixel and
     // exact (wxOSX DrawPoint can antialias / subpixel-position, so SetPixel then
@@ -482,7 +497,7 @@ static bool makeBrush(CBrush& br, CDC* dc, const BrushSpec& spec, CBitmap& patte
 }
 
 void WxSurface::fillRect(SurfaceId id, Rect r, const BrushSpec& spec) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s || spec.style == BrushStyle::Null) return;
     if (spec.style == BrushStyle::Pattern) return;       // S2 gap (with ImageOp family)
     if (spec.style == BrushStyle::Solid) {
@@ -513,7 +528,7 @@ void WxSurface::fillRect(SurfaceId id, Rect r, const BrushSpec& spec) {
 
 // CPU-exact destination-NOT (wx logical functions are unreliable on wxOSX).
 void WxSurface::invertRect(SurfaceId id, Rect r) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s || !clipToBounds(r, s->size)) return;
     PixelBuffer buf;
     readPixels(id, r, buf, PixelFormat::BGR24);
@@ -526,7 +541,7 @@ void WxSurface::invertRect(SurfaceId id, Rect r) {
 }
 
 void WxSurface::drawEdge(SurfaceId id, Rect r, int edge, int flags) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s) return;
     CRect rc(r.x, r.y, r.x + r.w, r.y + r.h);
     s->dc->DrawEdge(&rc, edge, flags);           // shim's approximation, as today
@@ -534,7 +549,7 @@ void WxSurface::drawEdge(SurfaceId id, Rect r, int edge, int flags) {
 
 void WxSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
                       const PenSpec& pen, const BrushSpec& brSpec) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s) return;
     CPen cpen;
     cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
@@ -559,7 +574,7 @@ void WxSurface::shape(SurfaceId id, ShapeKind kind, Rect r, Point a, Point b,
 }
 
 void WxSurface::line(SurfaceId id, Point p1, Point p2, const PenSpec& pen) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s || pen.style == PenStyle::Null) return;
     s->dc->SetBkMode(TRANSPARENT);               // == the old Line() SetBkMode (dashed gaps)
     CPen cpen;
@@ -571,7 +586,7 @@ void WxSurface::line(SurfaceId id, Point p1, Point p2, const PenSpec& pen) {
 }
 
 void WxSurface::polyline(SurfaceId id, const Point* pts, size_t n, const PenSpec& pen) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s || !pts || n < 2) return;
     CPen cpen;
     cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
@@ -584,7 +599,7 @@ void WxSurface::polyline(SurfaceId id, const Point* pts, size_t n, const PenSpec
 
 void WxSurface::polygon(SurfaceId id, const Point* pts, size_t n, const PenSpec& pen,
                         const BrushSpec& brSpec, PolyFill fill) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s || !pts || n < 2) return;
     CPen cpen;
     cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
@@ -605,7 +620,7 @@ void WxSurface::polygon(SurfaceId id, const Point* pts, size_t n, const PenSpec&
 }
 
 void WxSurface::bezier(SurfaceId id, const Point* pts, size_t n, const PenSpec& pen) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s || !pts || n < 4) return;
     CPen cpen;
     cpen.CreatePen(penToPs(pen.style), pen.width, pen.colour);
@@ -617,7 +632,7 @@ void WxSurface::bezier(SurfaceId id, const Point* pts, size_t n, const PenSpec& 
 }
 
 void WxSurface::arc(SurfaceId id, Rect r, Point a, Point b, const PenSpec& pen) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s) return;
     s->dc->SetBkMode(TRANSPARENT);               // == the old Arc() SetBkMode
     CPen cpen;
@@ -632,7 +647,7 @@ void WxSurface::arc(SurfaceId id, Rect r, Point a, Point b, const PenSpec& pen) 
 // and the colour-key blit — this reimplements the GDI semantics against
 // canonical bytes. Matches CpuRaster::floodFill exactly.
 void WxSurface::floodFill(SurfaceId id, Point seed, Colour fill, Colour ref, FloodMode mode) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     if (!s || seed.x < 0 || seed.y < 0 || seed.x >= s->size.w || seed.y >= s->size.h)
         return;
     PixelBuffer buf;
@@ -668,7 +683,7 @@ void WxSurface::floodFill(SurfaceId id, Point seed, Colour fill, Colour ref, Flo
 
 // The engine's own per-strip fallback (exact endpoints, matches the reference).
 void WxSurface::gradient(SurfaceId id, Rect r, Colour from, Colour to, bool horizontal) {
-    Surf* s = surf(id);
+    Surf* s = mutate(id);
     Rect c = r;
     if (!s || !clipToBounds(c, s->size)) return;
     const int n = horizontal ? r.w : r.h;
@@ -687,7 +702,7 @@ void WxSurface::gradient(SurfaceId id, Rect r, Colour from, Colour to, bool hori
 // ── blits ───────────────────────────────────────────────────────────────────
 void WxSurface::blit(SurfaceId dstId, Rect dstRect, SurfaceId srcId, Rect srcRect,
                      BlitMode mode, Colour key, BlitQuality q, const Matrix2x3* m) {
-    Surf* dst = surf(dstId);
+    Surf* dst = mutate(dstId);
     Surf* src = surf(srcId);
     if (!dst || !src) return;
     if (m) {
@@ -733,7 +748,7 @@ void WxSurface::blit(SurfaceId dstId, Rect dstRect, SurfaceId srcId, Rect srcRec
 
 void WxSurface::blit(SurfaceId dstId, Rect dstRect, const PixelBuffer& src, Rect srcRect,
                      BlitMode mode, Colour key, BlitQuality /*q*/, const Matrix2x3* m) {
-    Surf* dst = surf(dstId);
+    Surf* dst = mutate(dstId);
     if (!dst || !src.valid()) return;
     if (m) {
         // Matrix blit: device = M·(srcRect-relative) + t; dstRect ignored
@@ -868,7 +883,7 @@ static std::string DecodeSeamText(const char* utf8, size_t len, int charsetHint)
 
 int WxSurface::drawText(SurfaceId sid, FontId fid, const char* utf8, size_t len, Point pt,
                         Colour colour, const Rect* clip) {
-    Surf* s = surf(sid);
+    Surf* s = mutate(sid);
     Font* f = font(fid);
     if (!s || !f) return 0;
     const std::string text = DecodeSeamText(utf8, len, f->spec.charsetHint);
@@ -1336,6 +1351,106 @@ int RunPalSurfaceSelfTest() {
                 "matrix blit: transparent key skips the key colour");
         ad.destroySurface(msrc);
         ad.destroySurface(mdst);
+    }
+
+    // ── content generation: EVERY mutator moves it, no reader does ──────────
+    // The compositor caches the transparency mask a transparent miniwindow
+    // needs, keyed by this number.  A mutator that forgets to bump it does not
+    // fail loudly -- it leaves the miniwindow frozen at its previous contents,
+    // which looks exactly like a plugin bug and gets diagnosed as one.  So
+    // every mutating entry point is exercised here, one per check, and every
+    // read is checked NOT to move it.
+    //
+    // This is what makes the mask cache safe to have: the ~50 Window* script
+    // methods all funnel into these adapter ops, so "did we cover them all?" is
+    // a question about this list rather than about the whole scripting surface.
+    {
+        SurfaceId g = ad.createSurface({ 8, 8 }, kBlack);
+        SurfaceId gsrc = ad.createSurface({ 4, 4 }, kGreen);
+        FontSpec gfs; gfs.face = "Monaco"; gfs.pixelHeight = 12;
+        FontId gf = ad.createFont(gfs);
+
+        stCheck(ad.contentGeneration(g) != 0,
+                "gen: a live surface never reports 0 (the no-caching sentinel)");
+        stCheck(ad.contentGeneration(SurfaceId::None) == 0,
+                "gen: an unknown surface reports 0");
+
+        unsigned long long last = ad.contentGeneration(g);
+        auto moved = [&](const char* what) {
+            const unsigned long long now = ad.contentGeneration(g);
+            stCheck(now != last, what);
+            last = now;
+        };
+        auto still = [&](const char* what) {
+            const unsigned long long now = ad.contentGeneration(g);
+            stCheck(now == last, what);
+            last = now;
+        };
+
+        const Point pts[3] = { { 0, 0 }, { 3, 3 }, { 6, 0 } };
+        PixelBuffer pb;
+        ad.readPixels(g, { 0, 0, 2, 2 }, pb, PixelFormat::BGRA32);
+
+        ad.setPixel(g, { 1, 1 }, kRed);                          moved("gen: setPixel");
+        ad.writePixels(g, { 0, 0, 2, 2 }, pb);                   moved("gen: writePixels");
+        ad.fillRect(g, { 0, 0, 4, 4 }, { BrushStyle::Solid, kRed });
+                                                                 moved("gen: fillRect");
+        ad.invertRect(g, { 0, 0, 2, 2 });                        moved("gen: invertRect");
+        ad.drawEdge(g, { 0, 0, 4, 4 }, 4 /*BDR_RAISEDINNER*/, 15 /*BF_RECT*/);
+                                                                 moved("gen: drawEdge");
+        ad.shape(g, ShapeKind::Rect, { 1, 1, 3, 3 }, {}, {},
+                 { PenStyle::Solid, 1, kBlue }, { BrushStyle::Solid, kGreen });
+                                                                 moved("gen: shape");
+        ad.line(g, { 0, 0 }, { 7, 7 }, { PenStyle::Solid, 1, kBlue });
+                                                                 moved("gen: line");
+        ad.polyline(g, pts, 3, { PenStyle::Solid, 1, kBlue });    moved("gen: polyline");
+        ad.polygon(g, pts, 3, { PenStyle::Solid, 1, kBlue },
+                   { BrushStyle::Solid, kGreen }, PolyFill::Winding);
+                                                                 moved("gen: polygon");
+        ad.bezier(g, pts, 3, { PenStyle::Solid, 1, kBlue });      moved("gen: bezier");
+        ad.arc(g, { 0, 0, 8, 8 }, { 0, 0 }, { 7, 7 }, { PenStyle::Solid, 1, kBlue });
+                                                                 moved("gen: arc");
+        ad.floodFill(g, { 4, 4 }, kWhite, kBlack, FloodMode::Surface);
+                                                                 moved("gen: floodFill");
+        ad.gradient(g, { 0, 0, 8, 8 }, kRed, kBlue, true);        moved("gen: gradient");
+        ad.blit(g, { 0, 0, 4, 4 }, gsrc, { 0, 0, 4, 4 }, BlitMode::Copy);
+                                                                 moved("gen: blit (surface source)");
+        ad.blit(g, { 0, 0, 2, 2 }, pb, { 0, 0, 2, 2 }, BlitMode::Copy);
+                                                                 moved("gen: blit (pixel-buffer source)");
+        ad.drawText(g, gf, "x", 1, { 0, 0 }, kWhite, nullptr);    moved("gen: drawText");
+
+        // ...and the readers must NOT move it, or the cache is rebuilt on every
+        // paint and the whole exercise buys nothing.
+        ad.getPixel(g, { 1, 1 });                                still("gen: getPixel does not move it");
+        ad.readPixels(g, { 0, 0, 2, 2 }, pb, PixelFormat::BGR24);
+                                                                 still("gen: readPixels does not move it");
+        ad.measureText(gf, "x", 1);                              still("gen: measureText does not move it");
+        // A blit whose SOURCE is this surface changes the destination, not it.
+        SurfaceId gdst = ad.createSurface({ 8, 8 }, kBlack);
+        ad.blit(gdst, { 0, 0, 4, 4 }, g, { 0, 0, 4, 4 }, BlitMode::Copy);
+        still("gen: being a blit SOURCE does not move it");
+        stCheck(ad.contentGeneration(gdst) != ad.contentGeneration(g),
+                "gen: ...but the blit DESTINATION moved");
+
+        // Globally unique, not per-surface: two surfaces never share a
+        // generation, so a cache keyed by it cannot be handed an entry
+        // belonging to a destroyed surface whose id was recycled.
+        SurfaceId ga = ad.createSurface({ 2, 2 }, kBlack);
+        SurfaceId gb = ad.createSurface({ 2, 2 }, kBlack);
+        stCheck(ad.contentGeneration(ga) != ad.contentGeneration(gb),
+                "gen: two identical fresh surfaces do NOT share a generation");
+        const unsigned long long genA = ad.contentGeneration(ga);
+        ad.destroySurface(ga);
+        SurfaceId gc = ad.createSurface({ 2, 2 }, kBlack);
+        stCheck(ad.contentGeneration(gc) != genA,
+                "gen: ...and a recycled id starts a new one");
+        ad.destroySurface(gb);
+        ad.destroySurface(gc);
+
+        ad.destroyFont(gf);
+        ad.destroySurface(gdst);
+        ad.destroySurface(gsrc);
+        ad.destroySurface(g);
     }
 
     printf("  dpi() reports: %d\n", ad.dpi());

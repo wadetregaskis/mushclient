@@ -268,6 +268,87 @@ int RunWxCompositeSelfTest()
         ckCheck(doc->WindowDelete(A) == eOK, "absolute fixture cleaned up");
     }
 
+    // ── 4. the transparency-mask cache ─────────────────────────────────────
+    // A transparent miniwindow is composited by building a masked bitmap: a
+    // bitmap allocation, a full-canvas blit, and a wxMask, which is an
+    // O(w x h) scan of every pixel against the key colour.  That ran on every
+    // paint for every transparent window; it is now cached against the
+    // surface adapter's content generation.
+    //
+    // Counting rebuilds is NOT enough on its own: a cache that never
+    // invalidates would show a beautiful hit rate and draw stale pixels
+    // forever, and the drawn result looks identical either way.  So every
+    // arm below checks the PIXELS as well as the counters.
+    {
+        const char* const T = "selftest_maskcache";
+        // Transparent, keyed on its own background (red): the red pixels drop
+        // out and whatever was drawn in green shows through.
+        ckCheck(doc->WindowCreate(T, 10, 10, 64, 48, 0,
+                                  MINIWINDOW_ABSOLUTE_LOCATION | MINIWINDOW_TRANSPARENT,
+                                  kRed) == eOK,
+                "mask cache: transparent window created");
+        ckCheck(doc->WindowShow(T, TRUE) == eOK, "...and shown");
+        ckCheck(doc->WindowRectOp(T, 2 /*fill*/, 0, 0, 20, 20, kGreen, 0) == eOK,
+                "...with a green patch drawn on it");
+
+        long builds = 0, hits = 0;
+        wx_miniwindow_mask_cache_reset();
+
+        // First composite: nothing cached, so it must build.
+        {
+            DestCanvas canvas(kW, kH, paneColour);
+            wx_composite_miniwindows(doc, canvas.dc, kW, kH, kW, kH, false);
+            canvas.Finish();
+            wx_miniwindow_mask_cache_stats(builds, hits);
+            ckCheck(builds == 1 && hits == 0, "mask cache: first paint builds it");
+            ckCheck(canvas.Is(15, 15, greenColour),
+                    "...the green patch is drawn");
+            ckCheck(canvas.Is(50, 40, paneColour),
+                    "...and the keyed background is transparent");
+        }
+
+        // Second composite, nothing touched: must reuse, and draw the same.
+        {
+            DestCanvas canvas(kW, kH, paneColour);
+            wx_composite_miniwindows(doc, canvas.dc, kW, kH, kW, kH, false);
+            canvas.Finish();
+            wx_miniwindow_mask_cache_stats(builds, hits);
+            ckCheck(builds == 1 && hits == 1,
+                    "mask cache: an unchanged canvas is NOT rebuilt");
+            ckCheck(canvas.Is(15, 15, greenColour) && canvas.Is(50, 40, paneColour),
+                    "...and draws exactly what the built one did");
+        }
+
+        // Now change the canvas.  The generation moves, so the mask must be
+        // rebuilt -- and, the part that actually matters, the NEW contents
+        // must appear.  A cache that ignored the generation would still show
+        // the old green-only canvas here.
+        ckCheck(doc->WindowRectOp(T, 2 /*fill*/, 30, 0, 50, 20, kBlue, 0) == eOK,
+                "mask cache: a blue patch added to the canvas");
+        {
+            DestCanvas canvas(kW, kH, paneColour);
+            wx_composite_miniwindows(doc, canvas.dc, kW, kH, kW, kH, false);
+            canvas.Finish();
+            wx_miniwindow_mask_cache_stats(builds, hits);
+            ckCheck(builds == 2, "mask cache: a changed canvas IS rebuilt");
+            ckCheck(canvas.Is(45, 15, blueColour),
+                    "...and the NEW pixels are what gets drawn");
+            ckCheck(canvas.Is(15, 15, greenColour),
+                    "...alongside the old ones");
+        }
+
+        // Deleting the window must not leave its bitmap in the cache.
+        ckCheck(doc->WindowDelete(T) == eOK, "mask cache: window deleted");
+        {
+            DestCanvas canvas(kW, kH, paneColour);
+            wx_composite_miniwindows(doc, canvas.dc, kW, kH, kW, kH, false);
+            canvas.Finish();
+        }
+        ckCheck(wx_miniwindow_mask_cache_size() == 0,
+                "...and its cache entry went with it");
+        wx_miniwindow_mask_cache_reset();
+    }
+
     delete doc;
 
     printf("PAL-COMPOSITE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);

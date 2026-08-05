@@ -152,6 +152,18 @@ struct Matrix2x3 { double m11 = 1, m12 = 0, m21 = 0, m22 = 1, dx = 0, dy = 0; };
 // ── the interface ───────────────────────────────────────────────────────────
 class ISurface {
 public:
+    // ── content generation ──────────────────────────────────────────────────
+    // A counter that changes whenever a surface's PIXELS change, so a consumer
+    // can cache something expensive derived from them (the compositor's
+    // transparency mask) and know when to throw it away.
+    //
+    // Returning 0 means "this adapter does not track it" and is the default, so
+    // an adapter that has not implemented it forces callers to recompute every
+    // time -- slow, never stale.  Callers MUST treat 0 as "no caching", not as
+    // a generation number, or the first adapter without support silently
+    // freezes every cache at whatever it saw first.
+    virtual unsigned long long contentGeneration(SurfaceId) { return 0; }
+
     virtual ~ISurface() = default;
 
     // lifecycle

@@ -86,6 +86,8 @@ public:
     FontMetrics fontMetrics(FontId) override;
     int         dpi() override;   // shim LOGPIXELSY (== product; Mac-native)
 
+    unsigned long long contentGeneration(SurfaceId) override;
+
     // Wrap an externally-owned CDC as a surface (S3 migration bridge); the
     // adapter draws into it but does not own/free it.
     SurfaceId adopt(CDC* dc, Size);
@@ -97,6 +99,10 @@ private:
         CBitmap* oldBmp  = nullptr;  // swap-back on destroy
         Size     size;
         bool     adopted = false;    // wraps an externally-owned CDC (S3 bridge)
+        // The value of the adapter-wide counter when these pixels last
+        // changed.  Never 0 for a live surface, because 0 is the interface's
+        // "not tracked" sentinel.
+        unsigned long long gen = 0;
     };
     struct Font {
         CFont*   font = nullptr;
@@ -104,10 +110,26 @@ private:
     };
 
     Surf* surf(SurfaceId id);
+    // surf(), plus "this call is about to change the pixels".  Every mutating
+    // op goes through THIS rather than surf(), which is what makes the counter
+    // trustworthy: the ~50 Window* script methods all funnel into these few
+    // adapter entry points, so there is one place to get right instead of one
+    // per method -- and per-op coverage in the surface selftest catches a
+    // mutator that forgets, which is the failure that would show up as a
+    // miniwindow frozen at its previous contents.
+    Surf* mutate(SurfaceId id);
     Font* font(FontId id);
     CDC*  measureDc();               // lazily-created 1x1 DC for measuring
 
     std::map<std::uint32_t, Surf> m_surfaces;
+
+    // ONE counter for the whole adapter, not one per surface, so a generation
+    // number identifies a content-state globally.  Per-surface counters would
+    // both start at 1, and SurfaceIds are recycled -- so a cache keyed by
+    // (surface, generation) could hit an entry belonging to a destroyed
+    // surface that happened to have been mutated the same number of times.
+    // That is a stale miniwindow, which looks like a plugin bug.
+    unsigned long long m_genCounter = 0;
     std::map<std::uint32_t, Font> m_fonts;
     std::uint32_t m_nextSurface = 1, m_nextFont = 1;
     CDC* m_measureDc = nullptr;

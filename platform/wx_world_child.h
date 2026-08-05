@@ -51,6 +51,14 @@ void wx_save_child_geometry(wxConfigBase& cfg, const wxSize& size);
 // bodies without building a window.  See the definitions for the Windows
 // sources they mirror (CMUSHView::OnDraw + Blit_Bitmap, and
 // CMUSHView::Mouse_Tooltip_MiniWindow).
+// Transparency-mask cache instrumentation, for the composite selftest.  The
+// cache is invisible from outside -- the drawn result is identical whether the
+// mask was rebuilt or reused, which is exactly what makes a broken one hard to
+// notice -- so the counters are exposed rather than inferred.
+void wx_miniwindow_mask_cache_stats(long& builds, long& hits);
+void wx_miniwindow_mask_cache_reset();
+long wx_miniwindow_mask_cache_size();
+
 void wx_composite_miniwindows(CMUSHclientDoc* doc, wxDC& destDC,
                               int clientW, int clientH,
                               int frameW, int frameH, bool bUnder);

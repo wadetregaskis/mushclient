@@ -133,6 +133,10 @@ class CMiniWindow
   string  m_sCallbackPlugin;      // plugin we are using
   string  m_sCreatingPlugin;      // plugin that created the miniwindow
 
+  // The adopted pal surface this window draws through (docs/PAL.md S3).
+  // Read-only, so the compositor can ask the adapter whether the contents have
+  // changed since it last built this window's transparency mask.
+  pal::SurfaceId GetSurfaceId () const { return m_surfaceId; }
   const long GetWidth ()      const { return m_iWidth; }
   const long GetHeight ()     const { return m_iHeight; }
   const short GetPosition ()  const { return m_iPosition; }

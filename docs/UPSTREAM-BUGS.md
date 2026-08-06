@@ -20,8 +20,8 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 9 | xterm-256 colour index subscripts the 8-entry print-style arrays | port-guarded only | mushview.cpp `CMUSHView::PrintWorld` |
 | 10 | DBCS wrap splits the character when `indent_paras` is off | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::AddToLine` |
 | 11 | `ClearOutput` leaves `m_last_line_with_IAC_GA` naming a deleted line | this commit | doc.cpp `CMUSHclientDoc::ClearOutput` |
-| 12 | The queued-command "no log" flag can never suppress logging | **NOT FIXED — needs a decision** | TimerWnd.cpp `CTimerWnd::OnTimer`; mirrored in platform/wx_world_child.cpp |
-| 13 | Windows' two queue drains disagree about case, so a `nolog` command echoes from one and not the other | **NOT FIXED — needs a decision** | TimerWnd.cpp `OnTimer` vs `ChangeTimerRate` |
+| 12 | The queued-command "no log" flag can never suppress logging | this commit | TimerWnd.cpp `CTimerWnd::OnTimer`; mirrored in platform/wx_world_child.cpp |
+| 13 | Windows' two queue drains disagree about case, so a `nolog` command echoes from one and not the other | this commit | TimerWnd.cpp `OnTimer` vs `ChangeTimerRate` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -286,12 +286,11 @@ suppressed is logged anyway.
 
 The intended test is almost certainly `cMessageType < 'a'` (upper case = log).
 
-**Why it is not fixed here:** the same expression appears in Windows-only
-`TimerWnd.cpp` and in the port's replica, so fixing it changes what appears in
-users' log files on both platforms — for anyone who has been relying on the
-current (broken) behaviour, a previously-absent command starts being logged...
-or rather stops. **Wade's call.** It is also an argument for doing the hoist in
-`docs/UNREACHABLE-PATHS-2026-08.md` item 3 first, so there is one drain to fix.
+**Fix (Wade's call, 2026-08-05: make it work):** `c < 'a'` — upper case logs,
+lower case does not. Done in the shared drain, so all three former copies get
+it. **This changes log-file contents on both platforms**: a speed-walk sent
+with logging suppressed stops appearing, which is what the flag was always
+meant to do. See `docs/WINDOWS-VALIDATION.md` § 4c-duodetricies-bis.
 
 ## 13 — Windows' two queue drains disagree about case
 
@@ -315,5 +314,8 @@ Given that the paired upper/lower codes exist only to carry the log flag,
 `delay <= 0` arm (`platform/wx_world_child.cpp:4131-4140`) applies `toupper`,
 matching `OnTimer` rather than `ChangeTimerRate`. So a no-log speed-walk
 flushed by setting the delay to zero echoes on macOS and does not on Windows.
-Recorded rather than silently kept: it is a real observable difference, and the
-fix direction depends on the answer to #12.
+**Fix (Wade's call, 2026-08-05: `toupper` everywhere):** the flush arm now
+calls the same shared body as the tick drain, so the two cannot disagree again.
+The port was already on this side, so only Windows changes — a no-log command
+flushed by setting the delay to zero now echoes, as it always did when drained
+on a tick.

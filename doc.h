@@ -2435,6 +2435,25 @@ public:
   // frontends: the two recoveries differ in a way that matters and the
   // frontends were hand-written twins of each other.  Defined in doc_shared.cpp.
   bool ApplyTlsFallbackChoice (bool bCertFailure, bool bUserAgreed);
+  // ── the speed-walk / command queue ────────────────────────────────────────
+  // A queued command is one flag byte plus the text (SendMsg, doc_shared.cpp).
+  // The letter says which of the four kinds; the CASE says whether to log it.
+  struct QueuedFlags {
+    bool bEcho;        // echo the command in the output window
+    bool bLog;         // write it to the session log
+    bool bPacedSlot;   // a QUEUE_* command: consumes one speed-walk delay slot
+  };
+  static QueuedFlags DecodeQueuedCommandFlag (char c);
+
+  // Send everything up to and INCLUDING the next QUEUE_* command; interleaved
+  // IMMEDIATE_* commands ride along in the same slot.  Returns how many went.
+  int  DrainOneQueuedSlot (void);
+  // Send the whole queue now -- there is no delay left to pace against.
+  int  DrainAllQueuedCommands (void);
+  // Advance the queue by `elapsedMs` of wall time, releasing one slot per
+  // m_iSpeedWalkDelay.  `accumulator` carries the remainder between calls.
+  int  DrainQueuedCommands (int elapsedMs, int & accumulator);
+
   long CountLinesBeforePromptBlock (void) const;
   // The same, cut at the last line the user typed (Clear to Previous Mark).
   // Zero when there is no such line, i.e. nothing to clear back to.

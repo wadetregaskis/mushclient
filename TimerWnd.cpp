@@ -42,21 +42,7 @@ void CTimerWnd::OnTimer(UINT nIDEvent)
   if (m_pDoc->m_QueuedCommandsList.IsEmpty ())
     return;
 
-  while (!m_pDoc->m_QueuedCommandsList.IsEmpty ())
-    {
-    CString strCommand = m_pDoc->m_QueuedCommandsList.RemoveHead ();
-
-    char cMessageType = strCommand [0];
-  
-    m_pDoc->DoSendMsg (strCommand.Mid (1), 
-                       toupper (cMessageType) == QUEUE_WITH_ECHO ||
-                       toupper (cMessageType) == IMMEDIATE_WITH_ECHO,
-                       cMessageType >= 'A');      // log flag
-
-    if (toupper (cMessageType) == QUEUE_WITH_ECHO ||
-        toupper (cMessageType) == QUEUE_WITHOUT_ECHO)
-        break;    // if we need to wait, don't keep pulling them out
-    }
+  m_pDoc->DrainOneQueuedSlot ();   // shared body — doc_shared.cpp
   m_pDoc->ShowQueuedCommands ();    // update status line
 }
 
@@ -90,18 +76,11 @@ void CTimerWnd::ChangeTimerRate (const int iRate)
   else
     {
 
-    // if no delay any more, send all outstanding lines
-    while (!m_pDoc->m_QueuedCommandsList.IsEmpty ())
-      {
-      CString strCommand = m_pDoc->m_QueuedCommandsList.RemoveHead ();
-  
-      char cMessageType = strCommand [0];
-     
-      m_pDoc->DoSendMsg (strCommand.Mid (1), 
-                         cMessageType == QUEUE_WITH_ECHO ||
-                         cMessageType == IMMEDIATE_WITH_ECHO,
-                         cMessageType >= 'A');  // log flag
-      }   // end of sending all lines
+    // if no delay any more, send all outstanding lines.  This used to compare
+    // the echo flag case-SENSITIVELY while OnTimer above used toupper, so the
+    // same no-log command echoed from one drain and not the other; the shared
+    // body settles it (docs/UPSTREAM-BUGS.md #13).
+    m_pDoc->DrainAllQueuedCommands ();
 
     }
 

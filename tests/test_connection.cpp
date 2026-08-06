@@ -2632,4 +2632,197 @@ TEST(Connection, TlsChoiceOnlyEverLoosensTheArmItWasAskedAbout)
     }
 }
 
+// ── the speed-walk / command queue drain ────────────────────────────────────
+// The queue is how a speed-walk is paced: SendMsg stores each command as one
+// flag byte plus the text, and a drain releases them a slot at a time.  Until
+// now there were THREE copies of the drain -- CTimerWnd::OnTimer,
+// CTimerWnd::ChangeTimerRate's flush arm, and the port's re-implementation
+// inside the world frame's timer, which exists because there is no CTimerWnd
+// here -- and none of them was reachable from any test.  They now share one
+// body, and this is it under test.
+//
+// The flag byte (doc.h:317-325): letter = which of four kinds, CASE = log it.
+//   E/e queue+echo   N/n queue+no-echo   I/i immediate+echo   W/w immediate+no-echo
+
+TEST(QueueDrain, FlagByteDecodesAllEightCodes)
+{
+    struct { char c; bool echo, log, paced; } kCases[] = {
+        { 'E', true,  true,  true  },   { 'e', true,  false, true  },
+        { 'N', false, true,  true  },   { 'n', false, false, true  },
+        { 'I', true,  true,  false },   { 'i', true,  false, false },
+        { 'W', false, true,  false },   { 'w', false, false, false },
+    };
+    for (const auto& c : kCases) {
+        const CMUSHclientDoc::QueuedFlags f =
+            CMUSHclientDoc::DecodeQueuedCommandFlag(c.c);
+        if (f.bEcho != c.echo || f.bLog != c.log || f.bPacedSlot != c.paced)
+            printf("  '%c': echo %d log %d paced %d (want %d %d %d)\n",
+                   c.c, (int)f.bEcho, (int)f.bLog, (int)f.bPacedSlot,
+                   (int)c.echo, (int)c.log, (int)c.paced);
+        EXPECT_EQ(c.echo,  f.bEcho);
+        EXPECT_EQ(c.log,   f.bLog);
+        EXPECT_EQ(c.paced, f.bPacedSlot);
+    }
+}
+
+TEST(QueueDrain, LowerCaseActuallySuppressesLogging)
+{
+    // UPSTREAM-BUGS #12.  SendMsg lower-cases the flag byte to mean "do not
+    // log this", and every drain recovered that as `c >= 'A'` -- which all
+    // eight codes satisfy, 'e' being 101 and 'A' being 65.  So the flag was
+    // read as "log it" no matter what, and the feature had never worked.
+    EXPECT_TRUE(CMUSHclientDoc::DecodeQueuedCommandFlag('E').bLog);
+    EXPECT_FALSE(CMUSHclientDoc::DecodeQueuedCommandFlag('e').bLog);
+    // The four lower-case codes are exactly the four that must not log.
+    for (char c : { 'e', 'n', 'i', 'w' })
+        EXPECT_FALSE(CMUSHclientDoc::DecodeQueuedCommandFlag(c).bLog);
+    for (char c : { 'E', 'N', 'I', 'W' })
+        EXPECT_TRUE(CMUSHclientDoc::DecodeQueuedCommandFlag(c).bLog);
+}
+
+TEST(QueueDrain, EchoIsCaseInsensitive)
+{
+    // UPSTREAM-BUGS #13.  The tick drain compared with toupper and the
+    // flush-everything drain compared case-sensitively, so the same command
+    // echoed from one and not the other.  Case carries the LOG flag only.
+    EXPECT_EQ(CMUSHclientDoc::DecodeQueuedCommandFlag('E').bEcho,
+              CMUSHclientDoc::DecodeQueuedCommandFlag('e').bEcho);
+    EXPECT_EQ(CMUSHclientDoc::DecodeQueuedCommandFlag('I').bEcho,
+              CMUSHclientDoc::DecodeQueuedCommandFlag('i').bEcho);
+    EXPECT_EQ(CMUSHclientDoc::DecodeQueuedCommandFlag('N').bEcho,
+              CMUSHclientDoc::DecodeQueuedCommandFlag('n').bEcho);
+}
+
+TEST(QueueDrain, OneSlotStopsAfterThePacedCommand)
+{
+    CMUSHclientDoc* doc = make_doc();
+    // Two immediates ride along with the first queued command; the second
+    // queued command waits for the next slot.
+    doc->m_QueuedCommandsList.AddTail("Ilook");     // immediate
+    doc->m_QueuedCommandsList.AddTail("Enorth");    // paced -- ends the slot
+    doc->m_QueuedCommandsList.AddTail("Eeast");     // next slot
+
+    EXPECT_EQ(2, doc->DrainOneQueuedSlot());
+    EXPECT_EQ(1, (int)doc->m_QueuedCommandsList.GetCount());
+    EXPECT_TRUE(wire(doc).sent.find("look")  != std::string::npos);
+    EXPECT_TRUE(wire(doc).sent.find("north") != std::string::npos);
+    EXPECT_TRUE(wire(doc).sent.find("east")  == std::string::npos);
+
+    EXPECT_EQ(1, doc->DrainOneQueuedSlot());
+    EXPECT_TRUE(doc->m_QueuedCommandsList.IsEmpty());
+    EXPECT_TRUE(wire(doc).sent.find("east")  != std::string::npos);
+    delete doc;
+}
+
+TEST(QueueDrain, DrainAllEmptiesTheQueueRegardlessOfPacing)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_QueuedCommandsList.AddTail("Enorth");
+    doc->m_QueuedCommandsList.AddTail("Eeast");
+    doc->m_QueuedCommandsList.AddTail("nsouth");
+
+    EXPECT_EQ(3, doc->DrainAllQueuedCommands());
+    EXPECT_TRUE(doc->m_QueuedCommandsList.IsEmpty());
+    const std::string& out = wire(doc).sent;
+    EXPECT_TRUE(out.find("north") != std::string::npos);
+    EXPECT_TRUE(out.find("east")  != std::string::npos);
+    EXPECT_TRUE(out.find("south") != std::string::npos);
+    delete doc;
+}
+
+TEST(QueueDrain, PacingReleasesOneSlotPerDelay)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iSpeedWalkDelay = 250;                  // ms between commands
+    for (const char* c : { "Ea", "Eb", "Ec" })
+        doc->m_QueuedCommandsList.AddTail(c);
+
+    int accum = 0;
+    // Two ticks of 100 ms is not yet a slot.
+    EXPECT_EQ(0, doc->DrainQueuedCommands(100, accum));
+    EXPECT_EQ(0, doc->DrainQueuedCommands(100, accum));
+    EXPECT_EQ(3, (int)doc->m_QueuedCommandsList.GetCount());
+    // The third crosses 250 and releases exactly one.
+    EXPECT_EQ(1, doc->DrainQueuedCommands(100, accum));
+    EXPECT_EQ(2, (int)doc->m_QueuedCommandsList.GetCount());
+    // The remainder carries over rather than being thrown away -- otherwise a
+    // delay that is not a multiple of the tick drifts slower and slower.
+    EXPECT_EQ(50, accum);
+    delete doc;
+}
+
+TEST(QueueDrain, ALongTickReleasesEverySlotItCovers)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iSpeedWalkDelay = 100;
+    for (const char* c : { "Ea", "Eb", "Ec", "Ed" })
+        doc->m_QueuedCommandsList.AddTail(c);
+
+    // The app was busy: 350 ms of wall time arrives in one tick.  Three slots
+    // are due, and they must all be released rather than one per call.
+    int accum = 0;
+    EXPECT_EQ(3, doc->DrainQueuedCommands(350, accum));
+    EXPECT_EQ(1, (int)doc->m_QueuedCommandsList.GetCount());
+    EXPECT_EQ(50, accum);
+    delete doc;
+}
+
+TEST(QueueDrain, ZeroDelayFlushesImmediatelyAndBanksNoCredit)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iSpeedWalkDelay = 0;                    // no pacing wanted
+    doc->m_QueuedCommandsList.AddTail("Ea");
+    doc->m_QueuedCommandsList.AddTail("Eb");
+
+    int accum = 999;                               // stale credit
+    EXPECT_EQ(2, doc->DrainQueuedCommands(100, accum));
+    EXPECT_TRUE(doc->m_QueuedCommandsList.IsEmpty());
+    EXPECT_EQ(0, accum);
+    delete doc;
+}
+
+TEST(QueueDrain, CreditIsForgottenWhileTheQueueIsEmpty)
+{
+    // The leftover from one walk must not shorten the FIRST delay of the next.
+    // Note what this needs to discriminate: the empty-queue branch does not
+    // accumulate either, so simply idling and reading the accumulator proves
+    // nothing -- it is zero either way.  The credit has to be banked first, the
+    // queue drained empty, and only then a new command queued.
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_iSpeedWalkDelay = 250;
+    int accum = 0;
+
+    doc->m_QueuedCommandsList.AddTail("Ea");
+    doc->DrainQueuedCommands(100, accum);
+    doc->DrainQueuedCommands(100, accum);
+    EXPECT_EQ(1, doc->DrainQueuedCommands(100, accum));   // 300 >= 250: sent
+    EXPECT_TRUE(doc->m_QueuedCommandsList.IsEmpty());
+    EXPECT_EQ(50, accum);                                 // 50 left over
+
+    doc->DrainQueuedCommands(100, accum);                 // idle: forget it
+    EXPECT_EQ(0, accum);
+
+    // A fresh command now waits a FULL delay.  Two 100 ms ticks is 200, which
+    // is short of 250 -- but would be 250 exactly if the 50 had been kept.
+    doc->m_QueuedCommandsList.AddTail("Eb");
+    EXPECT_EQ(0, doc->DrainQueuedCommands(100, accum));
+    EXPECT_EQ(0, doc->DrainQueuedCommands(100, accum));
+    EXPECT_EQ(1, (int)doc->m_QueuedCommandsList.GetCount());
+    EXPECT_TRUE(wire(doc).sent.find("b") == std::string::npos);
+    delete doc;
+}
+
+TEST(QueueDrain, AnEmptyEntryIsSkippedRatherThanDecoded)
+{
+    // A zero-length entry has no flag byte; strCommand[0] on it is a read past
+    // the end.  It should be dropped, not decoded as some arbitrary byte.
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_QueuedCommandsList.AddTail("");
+    doc->m_QueuedCommandsList.AddTail("Enorth");
+    EXPECT_EQ(1, doc->DrainAllQueuedCommands());
+    EXPECT_TRUE(doc->m_QueuedCommandsList.IsEmpty());
+    EXPECT_TRUE(wire(doc).sent.find("north") != std::string::npos);
+    delete doc;
+}
+
 MC_TEST_MAIN()

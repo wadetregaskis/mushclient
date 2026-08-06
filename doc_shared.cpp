@@ -3944,6 +3944,105 @@ long CMUSHclientDoc::BlockLengthEndingAt (POSITION blockEnd, int flagJoins) cons
   }  // end of CMUSHclientDoc::BlockLengthEndingAt
 
 
+// ── the speed-walk / command queue drain ────────────────────────────────────
+// One body for what used to be three: CTimerWnd::OnTimer (the per-tick drain),
+// CTimerWnd::ChangeTimerRate's flush-everything arm, and the port's
+// re-implementation inside the world frame's 100 ms timer -- the port needing
+// its own because doc_construct.cpp nulls m_pTimerWnd, so there is no
+// CTimerWnd here at all.
+//
+// Two upstream defects lived in those copies and are fixed here (see
+// docs/UPSTREAM-BUGS.md #12 and #13):
+//
+//   * The log flag was recovered as `c >= 'A'`.  Every one of the eight flag
+//     bytes is a letter -- 'E' is 69, 'e' is 101, both >= 65 -- so the test was
+//     a tautology and "do not log this command", which SendMsg encodes by
+//     lower-casing the byte, has never once suppressed anything.
+//
+//   * OnTimer compared the echo flag with toupper() and ChangeTimerRate
+//     compared it case-sensitively, so the same no-log command echoed when it
+//     was drained on a tick and stayed silent when it was flushed by setting
+//     the delay to zero.  toupper is the intended reading -- the paired
+//     upper/lower letters exist ONLY to carry the log flag -- so it is now
+//     used everywhere.
+
+CMUSHclientDoc::QueuedFlags CMUSHclientDoc::DecodeQueuedCommandFlag (const char c)
+  {
+  QueuedFlags f;
+  const char upper = (char) toupper ((unsigned char) c);
+  f.bEcho      = upper == QUEUE_WITH_ECHO || upper == IMMEDIATE_WITH_ECHO;
+  // Upper case logs, lower case does not.  NOT `c >= 'A'`, which every flag
+  // byte satisfies.
+  f.bLog       = c < 'a';
+  f.bPacedSlot = upper == QUEUE_WITH_ECHO || upper == QUEUE_WITHOUT_ECHO;
+  return f;
+  }  // end of CMUSHclientDoc::DecodeQueuedCommandFlag
+
+
+int CMUSHclientDoc::DrainOneQueuedSlot (void)
+  {
+  int sent = 0;
+  while (!m_QueuedCommandsList.IsEmpty ())
+    {
+    const CString strCommand = m_QueuedCommandsList.RemoveHead ();
+    if (strCommand.IsEmpty ())
+      continue;                     // no flag byte: nothing to decode
+    const QueuedFlags f = DecodeQueuedCommandFlag (strCommand [0]);
+    DoSendMsg (strCommand.Mid (1), f.bEcho, f.bLog);
+    sent++;
+    if (f.bPacedSlot)
+      break;      // a QUEUE_* command consumes this slot; wait for the next
+    }
+  return sent;
+  }  // end of CMUSHclientDoc::DrainOneQueuedSlot
+
+
+int CMUSHclientDoc::DrainAllQueuedCommands (void)
+  {
+  int sent = 0;
+  // Each call takes everything up to the next paced command, so repeating it
+  // until the queue is empty sends the lot -- the flush arm's behaviour,
+  // expressed with the same primitive rather than a second copy of the loop.
+  while (!m_QueuedCommandsList.IsEmpty ())
+    {
+    const int n = DrainOneQueuedSlot ();
+    if (n == 0)
+      break;                        // nothing consumable left; do not spin
+    sent += n;
+    }
+  return sent;
+  }  // end of CMUSHclientDoc::DrainAllQueuedCommands
+
+
+int CMUSHclientDoc::DrainQueuedCommands (const int elapsedMs, int & accumulator)
+  {
+  if (m_QueuedCommandsList.IsEmpty ())
+    {
+    accumulator = 0;                // nothing pending: do not bank credit
+    return 0;
+    }
+
+  const int delay = m_iSpeedWalkDelay;
+  if (delay <= 0)
+    {
+    accumulator = 0;
+    return DrainAllQueuedCommands ();
+    }
+
+  accumulator += elapsedMs;
+  int sent = 0;
+  while (accumulator >= delay && !m_QueuedCommandsList.IsEmpty ())
+    {
+    accumulator -= delay;
+    const int n = DrainOneQueuedSlot ();
+    if (n == 0)
+      break;
+    sent += n;
+    }
+  return sent;
+  }  // end of CMUSHclientDoc::DrainQueuedCommands
+
+
 // ── ApplyTlsFallbackChoice ──────────────────────────────────────────────────
 // What actually happens when the user answers a TLS failure prompt.
 //

@@ -4122,48 +4122,13 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
 
     // ── Speed-walk / command queue draining ──────────────────────────────────
     // On Windows, CTimerWnd fires a WM_TIMER at m_iSpeedWalkDelay ms intervals
-    // and drains one queued command each time.  On non-Windows, m_pTimerWnd is
-    // null, so we replicate that rate here via an accumulator.
-    if (!m_doc->m_QueuedCommandsList.IsEmpty()) {
-        int delay = m_doc->m_iSpeedWalkDelay;   // 0 = flush all immediately
-        if (delay <= 0) {
-            // No delay — drain the entire queue now.
-            while (!m_doc->m_QueuedCommandsList.IsEmpty()) {
-                CString strCommand = m_doc->m_QueuedCommandsList.RemoveHead();
-                char cMessageType = strCommand[0];
-                m_doc->DoSendMsg(strCommand.Mid(1),
-                                 toupper(cMessageType) == QUEUE_WITH_ECHO ||
-                                 toupper(cMessageType) == IMMEDIATE_WITH_ECHO,
-                                 cMessageType >= 'A');
-            }
-            m_speedWalkAccum = 0;
-        } else {
-            // Drain one QUEUE_* command each time the accumulator reaches the delay.
-            m_speedWalkAccum += 100;    // 100 ms per timer tick
-            while (m_speedWalkAccum >= delay && !m_doc->m_QueuedCommandsList.IsEmpty()) {
-                m_speedWalkAccum -= delay;
-                // Drain through to (and including) the next QUEUE_* command;
-                // interleaved IMMEDIATE_* commands fall through in the same slot,
-                // matching CTimerWnd::OnTimer (which only breaks on QUEUE_*).
-                for (;;) {
-                    CString strCommand = m_doc->m_QueuedCommandsList.RemoveHead();
-                    char cMessageType = strCommand[0];
-                    m_doc->DoSendMsg(strCommand.Mid(1),
-                                     toupper(cMessageType) == QUEUE_WITH_ECHO ||
-                                     toupper(cMessageType) == IMMEDIATE_WITH_ECHO,
-                                     cMessageType >= 'A');
-                    if (toupper(cMessageType) == QUEUE_WITH_ECHO ||
-                        toupper(cMessageType) == QUEUE_WITHOUT_ECHO)
-                        break;   // QUEUE_* command consumes this delay slot
-                    if (m_doc->m_QueuedCommandsList.IsEmpty())
-                        break;
-                }
-            }
-        }
-        m_doc->ShowQueuedCommands();
-    } else {
-        m_speedWalkAccum = 0;   // reset when queue is empty
-    }
+    // and drains one queued command each time.  Here m_pTimerWnd is null
+    // (doc_construct.cpp), so this 100 ms tick supplies the pacing instead --
+    // but the DRAIN itself is the shared body both platforms now use, so the
+    // flag-byte decoding cannot drift between them again.
+    if (m_doc->DrainQueuedCommands(100 /* ms per tick */, m_speedWalkAccum) > 0
+        || !m_doc->m_QueuedCommandsList.IsEmpty())
+        m_doc->ShowQueuedCommands();   // keep the status line's count honest
 
     // ── World timers (triggers based on elapsed time, speed-walk queues, etc.)
     // File > Preferences > Timers > "Check timers every N seconds"

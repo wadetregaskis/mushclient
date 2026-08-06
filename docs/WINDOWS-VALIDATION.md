@@ -1029,6 +1029,39 @@ identical.
 Covered headlessly by the four `Connection.Tls*` tests, including a 2x2 table
 that fails if both arms are ever made to do the same thing.
 
+### 4c-duodetricies-bis. The command queue has one drain now (2026-08-05)
+
+**`TimerWnd.cpp` is edited** — needs a compile.
+
+`CTimerWnd::OnTimer`, `CTimerWnd::ChangeTimerRate`'s flush arm and the port's
+replica were three copies of the same drain. All three now call
+`CMUSHclientDoc::DrainOneQueuedSlot` / `DrainAllQueuedCommands`
+(`doc_shared.cpp`). Two deliberate behaviour changes come with it, both agreed:
+
+**1. "No log" now actually suppresses logging (UPSTREAM-BUGS #12).** The log
+flag was recovered as `cMessageType >= 'A'`, and all eight flag bytes are
+letters, so it was always true. It is now `c < 'a'`.
+**Check:** open a session log, set a speed-walk delay, and send a speed-walk
+through a path that suppresses logging (a plugin or script calling `SendNoEcho`
+/ the no-log `Send` variants). Those commands must now be ABSENT from the log
+file; everything else must still be there. This is the one that changes what
+users' log files contain.
+
+**2. The zero-delay flush echoes like the tick drain (UPSTREAM-BUGS #13).**
+`ChangeTimerRate` compared the echo flag case-sensitively where `OnTimer` used
+`toupper`.
+**Check:** queue a speed-walk with a delay, then set the speed-walk delay to 0
+while commands are still pending (World Properties ▸ Commands, or
+`world.SetOption("speed_walk_delay", 0)`). The pending commands flush, and a
+no-log one must now be ECHOED in the output window where before it was silent.
+
+**3. Nothing else moved.** Same commands, same order, same pacing. The
+`ShowQueuedCommands` status-line update is still the caller's job in both
+drains, exactly as before.
+
+Covered headlessly by the ten `QueueDrain.*` tests, including the eight-code
+flag table and the pacing/carry-over arithmetic.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

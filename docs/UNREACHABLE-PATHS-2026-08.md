@@ -18,7 +18,7 @@ closes several rows.
 |---|---|
 | Landed | **15 of 24.** #21 TLS recovery (`c6ccc92`); then clusters A–D, merged 2026-08-05: the output pane (1, 3, 4, 6-part, 10), the world frame (7, 9, 20/22), the MFC bridge (11, 12, 13, 14, 18), and the activity refresh (24). |
 | | (`PaneLineToDocLine` and the image-placement modes were found and fixed before this audit ran, by the same reasoning.) |
-| Open | **3, all waiting on the loop-running mode**: 16 (property-sheet page lifecycle), 17 (bridged-dialog command routing), 19 (`pump_dialog_update_ui`). Every finding that can be closed without a running event loop now is. |
+| Open | **none.** All 24 are closed. 16, 17 and 19 landed once the loop-running selftest mode existed — see `CLAUDE.md` for how to turn it on. |
 
 That is also the trigger Item 0 was deferred against: what remains is exactly
 the set that needs a modal to complete, so the next person to want progress

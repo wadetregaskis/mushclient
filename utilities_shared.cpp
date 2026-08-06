@@ -699,6 +699,50 @@ CString RemoveFinalSlash (CString str)
   } // end of RemoveFinalSlash
 
 
+// ── DefaultWorldFileName ─────────────────────────────────────────────────────
+// The filename to offer for a world that has never been saved: the WORLD NAME,
+// scrubbed of the characters Windows forbids in a filename (the same set and
+// the same strip loop as doc.cpp:2187), with ".mcl" ensured.
+//
+// Relocated here from the wx save hooks (platform/wx_mfc_impl.cpp) purely so a
+// test can see it: it is a pure function of one string, but it used to sit next
+// to a wxFileDialog::ShowModal, and no in-app selftest can complete a modal.
+//
+// The '/' in the scrub set is the one that matters.  It is a path separator,
+// not just an illegal character, so an unscrubbed world name containing one
+// would send the Save-As dialog to a directory the user never chose.
+//
+// (Windows itself reaches its copy of this via CDocument::OnSaveDocument, a
+// path the port never takes — both save hooks compute the name themselves.
+// Without this they offered the literal "world.mcl" for every world, so a user
+// saving three worlds got three identical suggestions.)
+// Declared in stdafx.h.
+CString DefaultWorldFileName (const CString & strWorldName)
+  {
+  CString strClean = strWorldName;
+
+  int i;
+  while ((i = strClean.FindOneOf ("<>\"|?:#%;/\\")) != -1)
+    strClean = strClean.Left (i) + strClean.Mid (i + 1);
+
+  // A name that scrubs down to nothing but spaces is no more usable than an
+  // empty one, so fold both onto the fallback.
+  strClean.TrimLeft ();
+  strClean.TrimRight ();
+
+  if (strClean.IsEmpty ())
+    return "world.mcl";          // unnamed world
+
+  CString strLower = strClean;
+  strLower.MakeLower ();
+  if (strLower.Right (4) != ".mcl")
+    strClean += ".mcl";
+
+  return strClean;
+
+  } // end of DefaultWorldFileName
+
+
 // ── tolower(string) / GetWord / StringToVector ─────────────────────────────
 // Relocated verbatim from the Windows Utilities.cpp.  The old portable twin
 // of StringToVector had DRIFTED: its 4th argument meant include_delim (append

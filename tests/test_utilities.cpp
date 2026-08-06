@@ -446,6 +446,63 @@ TEST(Utilities, ExtractDirectoryAcceptsBackslashSeparators)
     EXPECT_STREQ("./", (const char*)ExtractDirectory("noslash.png"));
 }
 
+// ── DefaultWorldFileName ────────────────────────────────────────────────────
+// The name Save-As offers for a world that has never been saved.  Table-driven
+// because the rule is three independent steps (scrub, trim, ensure suffix) and
+// each has an edge that only shows up in combination with the others.
+TEST(Utilities, DefaultWorldFileNameScrubsTrimsAndSuffixes)
+{
+    static const struct { const char* name; const char* want; } kCases[] = {
+        // ordinary names just gain the suffix
+        { "Discworld",            "Discworld.mcl" },
+        { "Discworld.mcl",        "Discworld.mcl" },     // already suffixed
+        { "Discworld.MCL",        "Discworld.MCL" },     // ...case-insensitively
+        { "Discworld.mclx",       "Discworld.mclx.mcl" },// only an exact tail counts
+        { "mcl",                  "mcl.mcl" },           // shorter than the suffix
+
+        // nothing usable left → the generic fallback, never an empty filename
+        { "",                     "world.mcl" },
+        { "   ",                  "world.mcl" },         // whitespace only
+        { "<>\"|?:#%;/\\",        "world.mcl" },         // forbidden chars only
+        { "  <>|  ",              "world.mcl" },         // ...and after trimming
+
+        // every character of the forbidden set is stripped, not replaced
+        { "a<b>c\"d|e?f:g#h%i;j/k\\l", "abcdefghijkl.mcl" },
+
+        // THE case that matters: '/' is a path separator, so an unscrubbed name
+        // would point the save dialog at a directory the user never chose.
+        { "Discworld/2",          "Discworld2.mcl" },
+        { "/etc/passwd",          "etcpasswd.mcl" },
+        { "..\\..\\evil",         "....evil.mcl" },      // separators gone; dots are legal
+
+        // trimming happens AFTER the scrub, so a stripped separator cannot
+        // leave a leading or trailing space in the filename
+        { "  Mid Space  ",        "Mid Space.mcl" },
+        { "/ Discworld /",        "Discworld.mcl" },
+    };
+
+    for (const auto& c : kCases)
+        EXPECT_STREQ(c.want, (const char*) DefaultWorldFileName(c.name));
+}
+
+// Whatever it returns must be a bare filename — no separator survives — or the
+// port's save hooks, which join it to a directory themselves, would escape that
+// directory.  Asserted over the table rather than per-row so a new row cannot
+// quietly opt out.
+TEST(Utilities, DefaultWorldFileNameNeverContainsAPathSeparator)
+{
+    const char* kNames[] = {
+        "a/b", "a\\b", "/", "\\", "//../..//", "world/../../etc/passwd",
+        "plain", "", "   ",
+    };
+    for (const char* n : kNames) {
+        CString got = DefaultWorldFileName(n);
+        EXPECT_EQ(-1, got.Find('/'));
+        EXPECT_EQ(-1, got.Find('\\'));
+        EXPECT_FALSE(got.IsEmpty());
+    }
+}
+
 // utilities_shared.cpp: the CommandIDs[] lookups are case-insensitive and
 // round-trip; unknown name → 0, ID 0 → "".
 extern tCommandIDMapping CommandIDs[];

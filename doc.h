@@ -460,6 +460,9 @@ enum {
 #define OPT_FIX_TOOLTIP_START   0x4000000    // Added for tooltip delay changing.
 #define OPT_ZERO_UNLIMITED      0x8000000    // 0 is legal below iMinimum and
                                              // means "no limit" (max_output_lines)
+#define OPT_CUSTOM_INDEX       0x10000000    // an INDEX into the 16-entry custom
+                                             // colour arrays, or SAMECOLOUR for
+                                             // "none" -- see doc_shared.cpp
 
 // for debug.options and MXP <option> tag
 typedef struct

@@ -108,7 +108,7 @@
 {"mud_can_change_options",              true,  O(m_bMudCanChangeOptions)},            
 {"mxp_debug_level",                     DBG_NONE, O(m_iMXPdebugLevel), 0, 4},      
 {"naws",                                false, O(m_bNAWS)},                             
-{"note_text_colour",                    4,     O(m_iNoteTextColour), 0, 0xFFFFFF, OPT_RGB_COLOUR | OPT_UPDATE_VIEWS}, 
+{"note_text_colour",                    4,     O(m_iNoteTextColour), 0, 0xFFFFFF, OPT_RGB_COLOUR | OPT_CUSTOM_INDEX | OPT_UPDATE_VIEWS}, 
 {"no_echo_off",                         false, O(m_bNoEchoOff)},
 {"omit_date_from_save_files",           false, O(m_bOmitSavedDateFromSaveFiles)},                     
 {"output_font_height",                  12,    O(m_font_height), 1, 1000, OPT_UPDATE_VIEWS | OPT_UPDATE_OUTPUT_FONT}, 

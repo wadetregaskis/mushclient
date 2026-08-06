@@ -2533,4 +2533,66 @@ TEST(NoteColour, TheDedicatedPropertyStillValidatesAsItAlwaysDid)
     EXPECT_EQ(before, doc.m_iNoteTextColour);
 }
 
+// ── note_text_colour now REFUSES what it used to swallow ────────────────────
+// docs/UPSTREAM-BUGS.md #8, option D.  The field is an index into the 16-entry
+// custom-colour arrays with SAMECOLOUR meaning "none", and its row declared it
+// an RGB colour with a maximum of 0xFFFFFF -- so SetOption stored 300 happily
+// and five readers then used it as a subscript.
+//
+// OPT_CUSTOM_INDEX makes the RANGE CHECK say what the field actually is.  It
+// deliberately changes nothing else: no +/-1 encoding (that is
+// OPT_CUSTOM_COLOUR, and adopting it would shift every value by one), and
+// OPT_RGB_COLOUR still routes serialisation through ColourToName, because both
+// would rewrite what is already in every existing world file.
+TEST(NoteColour, TheOptionRefusesAValueThatIsNotAnIndex)
+{
+    CMUSHclientDoc doc;
+
+    // Every legal index, and the sentinel.
+    for (long v = 0; v < MAX_CUSTOM; ++v)
+        EXPECT_EQ((long) eOK, doc.SetOption("note_text_colour", v));
+    EXPECT_EQ((long) eOK, doc.SetOption("note_text_colour", SAMECOLOUR));
+
+    // ...and the range that used to be accepted and then subscripted.
+    for (long bad : { (long) MAX_CUSTOM, 17L, 300L, 65534L, 0xFFFFFFL }) {
+        const long rc = doc.SetOption("note_text_colour", bad);
+        if (rc == (long) eOK)
+            printf("  note_text_colour=%ld was ACCEPTED\n", bad);
+        EXPECT_EQ((long) eOptionOutOfRange, rc);
+    }
+}
+
+TEST(NoteColour, ARefusedValueDoesNotChangeTheStoredOne)
+{
+    // eOptionOutOfRange must mean "nothing happened", not "clamped".
+    CMUSHclientDoc doc;
+    EXPECT_EQ((long) eOK, doc.SetOption("note_text_colour", 7));
+    EXPECT_EQ(7, (long) doc.m_iNoteTextColour);
+    EXPECT_EQ((long) eOptionOutOfRange, doc.SetOption("note_text_colour", 300));
+    EXPECT_EQ(7, (long) doc.m_iNoteTextColour);
+}
+
+TEST(NoteColour, TheStoredEncodingIsUnchangedByTheNewFlag)
+{
+    // The load-bearing compatibility assertion.  OPT_CUSTOM_COLOUR would have
+    // made SetOption(4) store 3; every existing world file and every working
+    // script depends on it storing 4.
+    CMUSHclientDoc doc;
+    EXPECT_EQ((long) eOK, doc.SetOption("note_text_colour", 4));
+    EXPECT_EQ(4, (long) doc.m_iNoteTextColour);
+    EXPECT_EQ(4, doc.GetOption("note_text_colour"));
+}
+
+TEST(NoteColour, OtherOptionsKeepTheirOwnRangeRules)
+{
+    // The flag is on exactly one row; nothing else may have tightened.
+    CMUSHclientDoc doc;
+    // echo_colour is OPT_CUSTOM_COLOUR (1-based, 0 = same colour) and still
+    // takes its full 0..MAX_CUSTOM.
+    EXPECT_EQ((long) eOK, doc.SetOption("echo_colour", MAX_CUSTOM));
+    // A genuine RGB colour still takes any 24-bit value.
+    EXPECT_EQ((long) eOK, doc.SetOption("hyperlink_colour", 0xFFFFFF));
+    EXPECT_EQ((long) eOK, doc.SetOption("input_text_colour", 300));
+}
+
 MC_TEST_MAIN()

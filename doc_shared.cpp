@@ -4768,7 +4768,27 @@ int iMaximum = BaseOptionsTable [iItem].iMaximum;
   const bool bZeroIsUnlimited =
       (BaseOptionsTable [iItem].iFlags & OPT_ZERO_UNLIMITED) != 0 && Value == 0;
 
-  if (!bZeroIsUnlimited && (Value < iMinimum || Value > iMaximum))
+  // OPT_CUSTOM_INDEX: the value is an INDEX into the 16-entry m_customtext /
+  // m_customback arrays, or SAMECOLOUR meaning "no custom colour".  Same shape
+  // of problem as OPT_ZERO_UNLIMITED above: the legal set is "0..15 OR 65535",
+  // which a plain minimum/maximum cannot express, so the row's 0..0xFFFFFF
+  // admitted everything and note_text_colour = 300 was stored and then used as
+  // a subscript (docs/UPSTREAM-BUGS.md #8).
+  //
+  // Only the range check consults this.  The stored encoding is untouched --
+  // no +/-1, unlike OPT_CUSTOM_COLOUR -- and so is the serialisation, which
+  // OPT_RGB_COLOUR still routes through ColourToName.  That is deliberate:
+  // either of those would change what is already written in every existing
+  // world file.
+  const bool bCustomIndex =
+      (BaseOptionsTable [iItem].iFlags & OPT_CUSTOM_INDEX) != 0;
+
+  if (bCustomIndex)
+    {
+    if (Value != SAMECOLOUR && (Value < 0 || Value >= MAX_CUSTOM))
+      return eOptionOutOfRange;
+    }
+  else if (!bZeroIsUnlimited && (Value < iMinimum || Value > iMaximum))
       return eOptionOutOfRange;
 
   // for custom colours, subtract 1 when we set it (-1 = no change (was 0) )

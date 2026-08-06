@@ -130,6 +130,24 @@ not a number. Drop the flag and:
   (`doc_shared.cpp`: subtract 1 on set, add 1 on get, 0 ⇄ SAMECOLOUR), so every
   value would additionally **shift by one**.
 
+**It is a singleton, not a class (swept 2026-08-05).** The obvious worry after
+finding this is that other option rows lie about their type the same way. They
+do not:
+
+* Every one of the twelve `OPT_RGB_COLOUR` rows has a genuine `RGB(r,g,b)`
+  default — **except `note_text_colour`, whose default is a bare `4`.** That is
+  the mechanical tell, and it is worth remembering: a colour-flagged row whose
+  default is a small integer is declaring the wrong thing.
+* `echo_colour` is the only `OPT_CUSTOM_COLOUR` row on the world, correctly
+  flagged and correctly capped at `MAX_CUSTOM`.
+* The trigger table's `custom_colour` row is capped at `MAX_CUSTOM + 1`, which
+  looks like an off-by-one and is not: `OTHER_CUSTOM` is 16, the "use the RGB
+  fields instead" sentinel, and `ProcessPreviousLine.cpp:1445` tests for it
+  before any subscript. Stored 0..15 index the arrays; 16 never reaches them.
+* Every other site that subscripts `m_customtext` / `m_customback` is either
+  range-guarded already (`world_debug.cpp:966`, `:1831`) or provably in range
+  (`doc_shared.cpp:735` reads `m_echo_colour`, whose row caps it correctly).
+
 So the semantically correct row (`OPT_CUSTOM_COLOUR`, max `MAX_CUSTOM`) needs a
 world-file migration, not a one-line edit. Note also that
 `world.NoteColour` (`methods_noting.cpp:139-146`) already implements that exact

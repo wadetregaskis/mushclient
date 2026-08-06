@@ -67,6 +67,14 @@ wxString DecodeUTF8Lenient(const char* bytes, size_t n);
 // which is a BYTE count.
 int RunCharLen(const SOutputRun& run);
 
+// Rendered character count of a whole line: the sum of its runs' RunCharLen.
+// Seven walks derived this independently, two of them skipping horiz_rule runs
+// first -- a guard that is redundant, not a divergence, because a rule run
+// carries no text at all (pinned in outputpane_selftest.cpp).  Having one body
+// is what keeps "how long is this line" from drifting between the selection,
+// the hit-test, the wrap cache and the API.
+int LineCharLen(const SOutputLine& line);
+
 // ── COutputPane ───────────────────────────────────────────────────────────────
 
 class COutputPane : public wxScrolledWindow
@@ -220,6 +228,43 @@ public:
     bool AdoptMeasuredMetrics(int dcW, int dcH);
     // The reflow that must follow a true from the above.
     void ApplyMetricsChange();
+
+    // Re-read the plugin text rectangle (world.TextRectangle) and store it;
+    // returns true when it CHANGED, i.e. when the text band moved or resized
+    // and the wrap cache has to be rebuilt.  Same split, and for the same
+    // reason, as AdoptMeasuredMetrics: this is the only thing in the pane that
+    // notices a script narrowed the band, and it sat inside OnPaint, which no
+    // in-app selftest can reach.  Public so the test can call it.
+    bool AdoptTextRect();
+
+    // The rectangle AdoptTextRect last stored -- what the NEXT call compares
+    // against.  Read-only, for the in-app selftest: nothing else can observe
+    // it, and "the values were stored" is exactly what a broken adopt (one
+    // that returns the right bool but keeps the old rectangle) gets wrong.
+    bool AdoptedTextRect(int& l, int& t, int& r, int& b) const
+    { l = m_trL; t = m_trT; r = m_trR; b = m_trB; return m_trActive; }
+
+    // What a wheel event should do, decided before anything is done about it.
+    enum class WheelAction { HotspotTookIt, Zoom, Scroll };
+
+    // The ORDERING rule, as a pure decision: a miniwindow hotspot that consumed
+    // the wheel wins outright, and only then is Ctrl considered.  Windows orders
+    // it that way and this shipped the other way round once (see OnMouseWheel),
+    // which made every Ctrl+wheel plugin callback unreachable while the pointer
+    // was over a miniwindow.  Static and wx-free so the rule is testable without
+    // an event loop.
+    static WheelAction DecideWheelAction(bool hotspotTookIt, bool rawCtrlDown);
+
+    // The run covering character column `col` of `line`, or nullptr when the
+    // column falls past the end of the line (or is negative).  `col` is a
+    // RENDERED character column -- RunCharLen space, the same axis the
+    // selection, the wrap cache and DrawLine use -- and *colWithinRun, when
+    // asked for, receives the offset of that column inside the returned run.
+    //
+    // Five walks derived this by hand; a zero-length run can never contain a
+    // column, so a horiz_rule run is skipped without needing a guard.
+    static const SOutputRun* RunAtCharColumn(const SOutputLine& line, int col,
+                                             int* colWithinRun = nullptr);
 
     int FirstVisibleLine() const;
 

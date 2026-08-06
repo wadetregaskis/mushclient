@@ -846,6 +846,266 @@ void TestRunCharLenMatchesTheDecode()
     }
 }
 
+// ── the plugin text rectangle, adopted ───────────────────────────────────────
+// world.TextRectangle is POLLED, not signalled: nothing tells the pane a plugin
+// narrowed the text band, so this comparison in OnPaint is the only thing that
+// ever notices.  Like the metric correction above it had never executed under
+// test, because no in-app selftest reaches the paint handler at all.  If it
+// stops firing, the text keeps wrapping at the OLD width and draws straight
+// underneath the miniwindow the plugin reserved the space for.
+void TestAdoptTextRect()
+{
+    printf("world.TextRectangle change detection (COutputPane::AdoptTextRect)\n");
+
+    Harness h(800, 400);
+    int clientW = 0, clientH = 0;
+    h.pane->GetClientSize(&clientW, &clientH);
+
+    int l = -1, t = -1, r = -1, b = -1;
+
+    // First look: the pane starts with a zeroed rectangle, so even "no rectangle
+    // at all" is a change -- the full client area has to be adopted once.
+    opCheck(h.pane->AdoptTextRect(), "textrect: the first look is always a change");
+    opCheck(!h.pane->AdoptedTextRect(l, t, r, b), "...with no rectangle active");
+    opCheckEq(r, clientW, "...spanning the full client width");
+    opCheckEq(b, clientH, "...and the full client height");
+
+    // Nothing moved -> no reflow.  Without this the pane would rebuild its wrap
+    // cache on every single paint, which is what the comparison exists to stop.
+    opCheck(!h.pane->AdoptTextRect(),
+            "textrect: an unchanged rectangle asks for no reflow");
+    opCheck(!h.pane->AdoptTextRect(), "...still, on a third look");
+
+    // A plugin reserves the right-hand strip.
+    int rl = 0, rt = 0, rr = 300, rb = 200;
+    h.pane->m_fn_text_rect = [&](int& ll, int& tt, int& rrr, int& bb) -> bool {
+        ll = rl; tt = rt; rrr = rr; bb = rb;
+        return true;
+    };
+    opCheck(h.pane->AdoptTextRect(), "textrect: a newly set rectangle IS a change");
+    opCheck(h.pane->AdoptedTextRect(l, t, r, b), "...and it is active");
+    opCheckEq(r, 300, "...the stored right edge is the one just set");
+    opCheckEq(b, 200, "...and the stored bottom edge too");
+
+    // THE point of storing it: the next look compares against these values.
+    opCheck(!h.pane->AdoptTextRect(),
+            "textrect: the stored rectangle is what the next look compares against");
+
+    // Each edge on its own must count.  An implementation that compared only
+    // (say) the width would miss a band that MOVED without resizing -- which is
+    // exactly what a plugin docking its miniwindow to the other side produces.
+    rr = 301;
+    opCheck(h.pane->AdoptTextRect(), "textrect: a right-edge-only change counts");
+    rb = 201;
+    opCheck(h.pane->AdoptTextRect(), "textrect: a bottom-edge-only change counts");
+    rl = 20;
+    opCheck(h.pane->AdoptTextRect(), "textrect: a left-edge-only change counts");
+    rt = 10;
+    opCheck(h.pane->AdoptTextRect(), "textrect: a top-edge-only change counts");
+    opCheck(!h.pane->AdoptTextRect(), "...and then it settles again");
+
+    // Switching the rectangle back off is a change too, and clears the active
+    // flag -- the text has to be given the full width back.
+    h.pane->m_fn_text_rect = nullptr;
+    opCheck(h.pane->AdoptTextRect(), "textrect: removing the rectangle is a change");
+    opCheck(!h.pane->AdoptedTextRect(l, t, r, b), "...and it is no longer active");
+    opCheckEq(l, 0, "...the origin goes back to the window's top-left");
+    opCheckEq(t, 0, "...on both axes");
+
+    // The transition the four edges CANNOT see: a plugin whose rectangle covers
+    // exactly the client area.  Its resolved geometry is identical to having no
+    // rectangle at all, so setting it -- and later dropping it -- moves nothing
+    // but the active flag.  A comparison that only looked at the edges reports
+    // "unchanged", never stores, and leaves the pane's idea of whether a
+    // rectangle is set permanently stuck at whichever value it had first.
+    rl = 0; rt = 0; rr = clientW; rb = clientH;
+    h.pane->m_fn_text_rect = [&](int& ll, int& tt, int& rrr, int& bb) -> bool {
+        ll = rl; tt = rt; rrr = rr; bb = rb;
+        return true;
+    };
+    opCheck(h.pane->AdoptTextRect(),
+            "textrect: a rectangle covering the whole client area is still a change");
+    opCheck(h.pane->AdoptedTextRect(l, t, r, b),
+            "...because the pane now HAS one, though no edge moved");
+    opCheckEq(r, clientW, "...spanning the client width exactly");
+
+    h.pane->m_fn_text_rect = nullptr;
+    opCheck(h.pane->AdoptTextRect(),
+            "textrect: dropping it again is a change, on the flag alone");
+    opCheck(!h.pane->AdoptedTextRect(l, t, r, b),
+            "...and the pane stops believing a rectangle is set");
+}
+
+// ── the wheel's ordering rule ────────────────────────────────────────────────
+// A wheel event cannot be delivered here (no event loop), so the rule is tested
+// as the pure decision it is.  The case that matters is the last one: Ctrl+wheel
+// OVER A HOTSPOT.  Windows gives that to the plugin with MW_MOUSE_CTRL set, and
+// the port once tested the modifier first -- which silently made every
+// Ctrl+wheel plugin callback unreachable while the pointer was over a
+// miniwindow.
+void TestWheelActionOrdering()
+{
+    printf("wheel: hotspot before modifier (mushview.cpp:5160)\n");
+
+    using WA = COutputPane::WheelAction;
+
+    opCheck(COutputPane::DecideWheelAction(false, false) == WA::Scroll,
+            "wheel: plain wheel scrolls");
+    opCheck(COutputPane::DecideWheelAction(false, true) == WA::Zoom,
+            "wheel: Ctrl+wheel zooms");
+    opCheck(COutputPane::DecideWheelAction(true, false) == WA::HotspotTookIt,
+            "wheel: a hotspot that consumed the wheel keeps it");
+    opCheck(COutputPane::DecideWheelAction(true, true) == WA::HotspotTookIt,
+            "wheel: ...and still keeps it with Ctrl held, rather than zooming");
+}
+
+// ── the zoom clamp ───────────────────────────────────────────────────────────
+// AdjustFontSize is reachable from four places (Ctrl+wheel, Ctrl+/Ctrl-, the
+// context menu, and the saved per-world size on world open) and appeared in no
+// test at all.  The clamp is what stops a saved or scripted size from producing
+// an unreadable or un-renderable font.
+void TestFontSizeClamp()
+{
+    printf("zoom clamp (COutputPane::AdjustFontSize)\n");
+
+    Harness h(800, 400);
+    opCheckEq(h.pane->FontSize(), COutputPane::kDefaultFontSize,
+              "zoom: a fresh pane is at the default size");
+
+    // A no-op delta changes nothing and reports the size unchanged.
+    const int cw0 = h.pane->CharWidth(), lh0 = h.pane->LineHeight();
+    opCheckEq(h.pane->AdjustFontSize(0), COutputPane::kDefaultFontSize,
+              "zoom: a zero delta returns the current size");
+    opCheck(h.pane->CharWidth() == cw0 && h.pane->LineHeight() == lh0,
+            "...and leaves the grid alone");
+
+    // An ordinary step really moves.
+    opCheckEq(h.pane->AdjustFontSize(1), COutputPane::kDefaultFontSize + 1,
+              "zoom: one step up is one point");
+    opCheckEq(h.pane->AdjustFontSize(-1), COutputPane::kDefaultFontSize,
+              "zoom: and one step down comes back");
+
+    // The top end.  A huge delta must land ON the cap, not past it.
+    opCheckEq(h.pane->AdjustFontSize(1000), COutputPane::kMaxFontSize,
+              "zoom: an over-large step clamps to the maximum");
+    opCheckEq(h.pane->AdjustFontSize(1), COutputPane::kMaxFontSize,
+              "zoom: ...and stepping up again stays there");
+    const int cwMax = h.pane->CharWidth();
+
+    // The bottom end.
+    opCheckEq(h.pane->AdjustFontSize(-1000), COutputPane::kMinFontSize,
+              "zoom: an over-large step down clamps to the minimum");
+    opCheckEq(h.pane->AdjustFontSize(-1), COutputPane::kMinFontSize,
+              "zoom: ...and stepping down again stays there");
+    const int cwMin = h.pane->CharWidth();
+
+    // The size is not just a number being reported back: the FONT has to have
+    // followed it, or the clamp is guarding nothing.  A monospaced 6pt cell is
+    // narrower than a 32pt one on any font the pane will accept.
+    opCheck(cwMin < cwMax,
+            "zoom: the character cell really shrank between the two ends");
+
+    opCheckEq((h.pane->ResetFontSize(), h.pane->FontSize()),
+              COutputPane::kDefaultFontSize,
+              "zoom: reset goes back to the default from the minimum");
+}
+
+// ── one answer to "which run is at column N" ─────────────────────────────────
+// Five walks in this file derived it by hand, plus the tooltip in
+// wx_world_child.cpp.  They all decide which MXP link a click lands on, so a
+// boundary that is off by one sends the wrong command to the MUD -- and an
+// implementation that clamped to the last run instead of answering "past the
+// end" would fire a link from a click in the blank space after the text.
+void TestRunAtCharColumn()
+{
+    printf("RunAtCharColumn / LineCharLen\n");
+
+    auto run = [](const char* text) {
+        SOutputRun r;
+        r.text = text;
+        r.fg   = 0x00FFFFFFu;
+        return r;
+    };
+
+    SOutputLine line;
+    line.push_back(run("abc"));      // [0] cols 0..2
+    line.push_back(run(""));         // [1] zero length -- covers NO column
+    line.push_back(run("de"));       // [2] cols 3..4
+    SOutputRun hr;                   // [3] a horizontal rule: also zero length
+    hr.horiz_rule = 1;
+    line.push_back(hr);
+    line.push_back(run("fghi"));     // [4] cols 5..8
+
+    opCheckEq(LineCharLen(line), 9, "line: nine rendered columns across five runs");
+
+    int within = -1;
+    const SOutputRun* r = nullptr;
+
+    r = COutputPane::RunAtCharColumn(line, 0, &within);
+    opCheck(r == &line[0], "col 0 is in the first run");
+    opCheckEq(within, 0, "...at offset 0 within it");
+
+    r = COutputPane::RunAtCharColumn(line, 2, &within);
+    opCheck(r == &line[0], "col 2 is still in the first run");
+    opCheckEq(within, 2, "...at its last offset");
+
+    // THE boundary.  col 3 is the first column of "de", and it must not be
+    // answered by the run that ends at 3 -- nor by either zero-length run,
+    // which sit exactly here and cover nothing.
+    r = COutputPane::RunAtCharColumn(line, 3, &within);
+    opCheck(r == &line[2], "col 3 is the first column of the NEXT run, not the last of the previous");
+    opCheckEq(within, 0, "...at offset 0 within it");
+
+    r = COutputPane::RunAtCharColumn(line, 4, &within);
+    opCheck(r == &line[2], "col 4 is the second column of that run");
+    opCheckEq(within, 1, "...at offset 1");
+
+    // The second boundary, this time with a horiz_rule run sitting on it.
+    r = COutputPane::RunAtCharColumn(line, 5, &within);
+    opCheck(r == &line[4], "col 5 skips the rule run and lands in the last run");
+    opCheckEq(within, 0, "...at offset 0");
+
+    r = COutputPane::RunAtCharColumn(line, 8, &within);
+    opCheck(r == &line[4], "col 8 is the last column of the line");
+    opCheckEq(within, 3, "...at offset 3");
+
+    // Past the end must be nullptr, NOT the last run.
+    opCheck(COutputPane::RunAtCharColumn(line, 9) == nullptr,
+            "col 9 is one past the end: no run");
+    opCheck(COutputPane::RunAtCharColumn(line, 1000) == nullptr,
+            "a column far past the end: no run");
+    opCheck(COutputPane::RunAtCharColumn(line, -1) == nullptr,
+            "a negative column: no run");
+
+    // An empty line answers nothing at all, at any column.
+    SOutputLine empty;
+    opCheckEq(LineCharLen(empty), 0, "an empty line is zero columns long");
+    opCheck(COutputPane::RunAtCharColumn(empty, 0) == nullptr,
+            "an empty line has no run at column 0");
+
+    // A line that is NOTHING but zero-length runs likewise.
+    SOutputLine blanks;
+    blanks.push_back(run(""));
+    blanks.push_back(hr);
+    opCheckEq(LineCharLen(blanks), 0, "zero-length runs contribute no columns");
+    opCheck(COutputPane::RunAtCharColumn(blanks, 0) == nullptr,
+            "...so no column can land in one");
+
+    // The column axis is RENDERED CHARACTERS, not bytes.  A byte-counting
+    // implementation puts every boundary after a multi-byte run in the wrong
+    // place, which is the same defect the highlight offsets were fixed for.
+    SOutputLine utf8;
+    utf8.push_back(run("\xE2\x82\xAC\xE2\x82\xAC"));   // 2 euro signs, 6 bytes
+    utf8.push_back(run("x"));                          // col 2
+    opCheckEq(LineCharLen(utf8), 3, "two euro signs plus 'x' is three columns, not seven");
+    opCheck(COutputPane::RunAtCharColumn(utf8, 1) == &utf8[0],
+            "col 1 is the second euro sign");
+    opCheck(COutputPane::RunAtCharColumn(utf8, 2) == &utf8[1],
+            "col 2 is the 'x' after them, by CHARACTER not byte");
+    opCheck(COutputPane::RunAtCharColumn(utf8, 3) == nullptr,
+            "...and col 3 is past the end");
+}
+
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
@@ -861,6 +1121,10 @@ int RunOutputPaneSelfTest()
     TestSearchHighlightOffsets();
     TestMeasuredMetrics();
     TestRunCharLenMatchesTheDecode();
+    TestAdoptTextRect();
+    TestWheelActionOrdering();
+    TestFontSizeClamp();
+    TestRunAtCharColumn();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

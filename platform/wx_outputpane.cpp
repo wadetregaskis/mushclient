@@ -149,6 +149,38 @@ int RunCharLen(const SOutputRun& run)
     return run.utf8 ? UTF8CharLen(run.text) : (int)DecodeRunText(run).size();
 }
 
+// See the header.  No horiz_rule guard: a rule run has no text, so it already
+// measures zero -- the two call sites that used to guard were doing nothing.
+int LineCharLen(const SOutputLine& line)
+{
+    int chars = 0;
+    for (const SOutputRun& run : line) chars += RunCharLen(run);
+    return chars;
+}
+
+// See the header.  Runs tile the line's column axis without gaps or overlap, so
+// at most one run can contain a given column -- which is why the old hand-rolled
+// walks could `break` on the first match and why a zero-length run (a horizontal
+// rule) is never returned: `col < c + 0` is false for every col.
+//
+// A negative column needs no guard of its own: c starts at zero and only grows,
+// so `col >= c` can never hold.  (A guard here would be code no test could ever
+// distinguish from its absence.)
+const SOutputRun* COutputPane::RunAtCharColumn(const SOutputLine& line, int col,
+                                               int* colWithinRun)
+{
+    int c = 0;
+    for (const SOutputRun& run : line) {
+        const int runLen = RunCharLen(run);
+        if (col >= c && col < c + runLen) {
+            if (colWithinRun) *colWithinRun = col - c;
+            return &run;
+        }
+        c += runLen;
+    }
+    return nullptr;
+}
+
 // ── Hint bar ──────────────────────────────────────────────────────────────────
 // Height (px) of the "↓ new output below" banner painted at the bottom of the
 // client area when the user has scrolled up and new lines are arriving.
@@ -395,8 +427,7 @@ void COutputPane::AppendLine(SOutputLine&& line)
     // Auto-detect plain http:// / https:// URLs and split them into link runs.
     line = DetectURLs(std::move(line));
 
-    int lineChars = 0;
-    for (const auto& run : line) lineChars += RunCharLen(run);
+    int lineChars = LineCharLen(line);
     if (lineChars > m_maxLineChars) m_maxLineChars = lineChars;
 
     // Append to wrap cache before the line is in m_lines so WrapCount() works.
@@ -785,11 +816,7 @@ void COutputPane::SetSelectionRange(int startLine, int endLine,
     int el = std::max(0, std::min(n - 1, endLine   - 1));
 
     // Column 0 in the API means "start / end of line".
-    auto lineLen = [&](int li) {
-        int len = 0;
-        for (const auto& run : LineAt(li)) len += RunCharLen(run);
-        return len;
-    };
+    auto lineLen = [&](int li) { return LineCharLen(LineAt(li)); };
     int sc = (startCol <= 0) ? 0
            : std::min(lineLen(sl), startCol - 1);
     int ec = (endCol   <= 0) ? lineLen(el)
@@ -1114,6 +1141,32 @@ void COutputPane::ApplyMetricsChange()
     if (m_fn_grid_changed) m_fn_grid_changed();
 }
 
+// ── the plugin text rectangle, adopted ────────────────────────────────────
+// The same shape as AdoptMeasuredMetrics above, and split out of OnPaint for
+// the same reason: this comparison is the ONLY thing in the pane that notices a
+// script narrowed the text band (world.TextRectangle is polled, not signalled),
+// and inline in the paint handler it had no coverage at all.
+//
+// The l/t zeroing on the inactive path is belt-and-braces, carried over
+// verbatim: TextRect already returns l = t = 0 from every one of its false
+// paths, so no test can tell whether this line is here (the mutation that
+// deletes it survives by construction).  It stays because the values become the
+// text origin OnPaint draws at, and that should not silently depend on
+// TextRect's out-parameters for a rectangle it just said was not set.
+bool COutputPane::AdoptTextRect()
+{
+    int trL, trT, trR, trB;
+    const bool trActive = TextRect(trL, trT, trR, trB);
+    if (!trActive) { trL = 0; trT = 0; }
+
+    if (trActive == m_trActive && trL == m_trL && trT == m_trT &&
+        trR == m_trR && trB == m_trB)
+        return false;
+
+    m_trActive = trActive; m_trL = trL; m_trT = trT; m_trR = trR; m_trB = trB;
+    return true;
+}
+
 void COutputPane::OnPaint(wxPaintEvent&)
 {
     // wxAutoBufferedPaintDC uses native double-buffering when the platform
@@ -1163,21 +1216,19 @@ void COutputPane::OnPaint(wxPaintEvent&)
     // ── Text rectangle (world.TextRectangle) ──────────────────────────────
     // A plugin may reserve part of the output area for a docked miniwindow;
     // the text then shifts to its top-left and wraps within its width.
-    int trL, trT, trR, trB;
-    bool trActive = TextRect(trL, trT, trR, trB);
-    if (!trActive) { trL = 0; trT = 0; }
     // If the rectangle changed since the last paint, rebuild the wrap cache
     // (deferred so we don't reflow layout mid-paint).
-    if (trActive != m_trActive || trL != m_trL || trT != m_trT ||
-        trR != m_trR || trB != m_trB)
-    {
-        m_trActive = trActive; m_trL = trL; m_trT = trT; m_trR = trR; m_trB = trB;
+    if (AdoptTextRect()) {
         CallAfter([this]() {
             RebuildWrapCache();
             UpdateScrollbars(m_autoScroll);
             Refresh();
         });
     }
+    // Draw against what was just stored: unchanged or not, the members now hold
+    // this paint's rectangle.
+    const bool trActive = m_trActive;
+    const int  trL = m_trL, trT = m_trT, trR = m_trR, trB = m_trB;
 
     // ── Miniwindows: draw-underneath pass ─────────────────────────────────
     if (m_fn_composite_miniwindows) {
@@ -1771,11 +1822,8 @@ void COutputPane::RebuildWrapCache()
     // natural place to re-establish the invariant rather than assert on it.
     if ((int)m_lineChars.size() != n) {
         m_lineChars.assign((size_t)n, 0);
-        for (int i = 0; i < n; ++i) {
-            int chars = 0;
-            for (const auto& run : LineAt(i)) chars += RunCharLen(run);
-            m_lineChars[(size_t)i] = chars;
-        }
+        for (int i = 0; i < n; ++i)
+            m_lineChars[(size_t)i] = LineCharLen(LineAt(i));
     }
 
     m_visualRowStart.assign((size_t)n, 0);
@@ -1978,9 +2026,7 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
     clientX -= m_pixelOffset;
 
     // Count total characters on the line (Unicode code points, not UTF-8 bytes).
-    int totalChars = 0;
-    for (const auto& run : LineAt(lineIdx))
-        totalChars += RunCharLen(run);
+    int totalChars = LineCharLen(LineAt(lineIdx));
 
     // Convert client x to virtual (unscrolled) x.
     // Horizontal scroll is always 0 (H-scrolling is disabled), but keep the
@@ -2137,9 +2183,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
         int clickLine = YToLine(evt.GetY());
         if (elapsed < 500 && clickLine == m_lastDClickLine) {
             // Build the full line length and select it end-to-end.
-            int lineLen = 0;
-            for (const auto& run : LineAt(clickLine))
-                if (!run.horiz_rule) lineLen += RunCharLen(run);
+            int lineLen = LineCharLen(LineAt(clickLine));
             m_selAnchor      = SelPoint{clickLine, 0};
             m_selFocus       = SelPoint{clickLine, lineLen};
             m_lastDClickLine = -1;   // consume so a 4th click starts fresh
@@ -2180,18 +2224,11 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
         int lineIdx = YToLine(evt.GetY());
         if (lineIdx >= 0 && lineIdx < LineCountI()) {
             int clickCol = XToChar(lineIdx, evt.GetX(), evt.GetY());
-            int c = 0;
-            for (const auto& run : LineAt(lineIdx)) {
-                int runLen = RunCharLen(run);
-                if (run.isLink() &&
-                    clickCol >= c && clickCol < c + runLen)
-                {
-                    m_linkAtDown     = run.action();
-                    m_linkTypeAtDown = run.action_type();
-                    m_linkNoteAtDown = LineAt(lineIdx).comment;
-                    break;
-                }
-                c += runLen;
+            const SOutputRun* run = RunAtCharColumn(LineAt(lineIdx), clickCol);
+            if (run && run->isLink()) {
+                m_linkAtDown     = run->action();
+                m_linkTypeAtDown = run->action_type();
+                m_linkNoteAtDown = LineAt(lineIdx).comment;
             }
         }
     }
@@ -2495,17 +2532,8 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
             if (pt.valid() && pt.line < LineCountI()) {
                 // pt.col is the absolute char column in the logical line
                 // (already wrap-aware via XToChar in MouseToSelPoint).
-                int c = 0;
-                for (const auto& run : LineAt(pt.line)) {
-                    int runLen = RunCharLen(run);
-                    if (run.isLink() &&
-                        pt.col >= c && pt.col < c + runLen)
-                    {
-                        overLink = true;
-                        break;
-                    }
-                    c += runLen;
-                }
+                const SOutputRun* run = RunAtCharColumn(LineAt(pt.line), pt.col);
+                overLink = run && run->isLink();
             }
             SetCursor(overLink ? wxCursor(wxCURSOR_HAND)
                                : wxCursor(wxCURSOR_IBEAM));
@@ -2563,18 +2591,11 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
         int lineIdx = YToLine(evt.GetY());
         if (lineIdx >= 0 && lineIdx < LineCountI()) {
             int col = XToChar(lineIdx, evt.GetX(), evt.GetY());
-            int c = 0;
-            for (const auto& run : LineAt(lineIdx)) {
-                int runLen = RunCharLen(run);
-                if (run.isLink() &&
-                    col >= c && col < c + runLen)
-                {
-                    linkAtClick     = run.action();
-                    linkTypeAtClick = run.action_type();
-                    linkNoteAtClick = LineAt(lineIdx).comment;
-                    break;
-                }
-                c += runLen;
+            const SOutputRun* run = RunAtCharColumn(LineAt(lineIdx), col);
+            if (run && run->isLink()) {
+                linkAtClick     = run->action();
+                linkTypeAtClick = run->action_type();
+                linkNoteAtClick = LineAt(lineIdx).comment;
             }
         }
     }
@@ -2722,28 +2743,44 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     PopupMenu(&menu, evt.GetPosition());
 }
 
+// Hotspots get FIRST refusal, before the modifier is looked at.  Windows orders
+// it that way (mushview.cpp:5160 dispatches to Mouse_Wheel_MiniWindow, and only
+// returns to CView at :5165 for Ctrl/Shift), and the flags a plugin receives
+// include MW_MOUSE_CTRL -- so Ctrl+wheel over a hotspot is a scrollwheel
+// callback WITH the ctrl bit set, not a zoom.  Testing the modifier first, as
+// this used to, made every Ctrl+wheel callback unreachable while the pointer was
+// over a miniwindow.
+//
+// Pulled out of the handler because that is a rule, not plumbing, and a wheel
+// event cannot be delivered from an in-app selftest (there is no event loop).
+COutputPane::WheelAction COutputPane::DecideWheelAction(bool hotspotTookIt,
+                                                        bool rawCtrlDown)
+{
+    if (hotspotTookIt) return WheelAction::HotspotTookIt;
+    if (rawCtrlDown)   return WheelAction::Zoom;
+    return WheelAction::Scroll;
+}
+
 void COutputPane::OnMouseWheel(wxMouseEvent& evt)
 {
-    // Hotspots get FIRST refusal, before the modifier is looked at.  Windows
-    // orders it that way (mushview.cpp:5160 dispatches to
-    // Mouse_Wheel_MiniWindow, and only returns to CView at :5165 for
-    // Ctrl/Shift), and the flags a plugin receives include MW_MOUSE_CTRL -- so
-    // Ctrl+wheel over a hotspot is a scrollwheel callback WITH the ctrl bit
-    // set, not a zoom.  Testing the modifier first, as this used to, made every
-    // Ctrl+wheel callback unreachable while the pointer was over a miniwindow.
-    if (m_fn_miniwindow_mouse_wheel) {
-        if (m_fn_miniwindow_mouse_wheel(evt.GetX(), evt.GetY(),
-                                        evt.GetWheelRotation()))
-            return;
-    }
+    // Offered unconditionally, and BEFORE the decision, so the plugin sees the
+    // Ctrl+wheel it is entitled to -- see DecideWheelAction.
+    const bool hotspotTookIt =
+        m_fn_miniwindow_mouse_wheel &&
+        m_fn_miniwindow_mouse_wheel(evt.GetX(), evt.GetY(),
+                                    evt.GetWheelRotation());
 
-    if (evt.RawControlDown()) {
+    switch (DecideWheelAction(hotspotTookIt, evt.RawControlDown())) {
+    case WheelAction::HotspotTookIt:
+        return;
+    case WheelAction::Zoom:
         AdjustFontSize((evt.GetWheelRotation() > 0) ? 1 : -1);
         return;
+    case WheelAction::Scroll:
+        evt.Skip();
+        CallAfter([this]() { RefreshAutoScrollFromPosition(); });
+        return;
     }
-
-    evt.Skip();
-    CallAfter([this]() { RefreshAutoScrollFromPosition(); });
 }
 
 void COutputPane::OnKeyDown(wxKeyEvent& evt)
@@ -2927,9 +2964,7 @@ void COutputPane::CopySelectionAsHTML(const wxString& fontName)
     for (int li = lo; li <= hi; ++li) {
         const SOutputLine& line = LineAt(li);
 
-        int lineLen = 0;
-        for (const auto& run : line)
-            if (!run.horiz_rule) lineLen += RunCharLen(run);
+        int lineLen = LineCharLen(line);
 
         int startCol = (li == lo) ? std::max(0, (int)s.col) : 0;
         int endCol   = (li == hi) ? std::min(lineLen, (int)e.col) : lineLen;
@@ -3003,9 +3038,7 @@ void COutputPane::SelectAll()
 {
     if (LineCountI() == 0) return;
     int lastLine = LineCountI() - 1;
-    int lastCol  = 0;
-    for (const auto& run : LineAt(lastLine))
-        lastCol += RunCharLen(run);
+    int lastCol  = LineCharLen(LineAt(lastLine));
 
     m_selAnchor = SelPoint{0, 0};
     m_selFocus  = SelPoint{lastLine, lastCol};

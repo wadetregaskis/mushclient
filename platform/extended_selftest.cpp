@@ -13,6 +13,12 @@
 #include <cstdio>
 #include <cstdlib>
 
+// Defined in platform/dialog_bridge_selftest.cpp: the MFC->wx dialog and
+// property-sheet bridges (docs/UNREACHABLE-PATHS-2026-08.md findings 16, 17,
+// 19).  It lives in its own TU because it pulls in the canonical property-page
+// and entity-list headers, which nothing else here wants.
+int RunDialogBridgeSelfTest();
+
 namespace {
 
 int g_pass = 0, g_fail = 0;
@@ -156,16 +162,30 @@ int RunWatchdogProbe()
 
 struct Harness { const wxChar* name; int (*run)(); };
 const Harness kHarnesses[] = {
-    { wxT("paint"), &RunPaintDeliverySelfTest },
-    { wxT("hang"),  &RunWatchdogProbe },
+    { wxT("paint"),         &RunPaintDeliverySelfTest },
+    { wxT("dialog-bridge"), &RunDialogBridgeSelfTest },
+    { wxT("hang"),          &RunWatchdogProbe },
 };
 
 wxString g_which;
 int      g_exitCode = 1;   // pessimistic: only a completed harness clears it
 
+// Remove the scratch preferences, if the harness ever caused them to be
+// written.  The FileExists test is not tidiness: wxRemoveFile on a file that is
+// not there logs a system error, wxLogGui defers that to the next idle, and the
+// flush puts up a modal NSAlert -- which registers no wxTopLevelWindow, so
+// nothing looks wrong, but the main loop can no longer exit and the run dies at
+// the watchdog instead.  Only the `paint` harness happens to write a
+// preference, which is why every OTHER harness wedged until this was found.
+void RemoveScratchPrefs()
+{
+    if (!g_prefsPath.empty() && wxFileName::FileExists(g_prefsPath))
+        wxRemoveFile(g_prefsPath);
+}
+
 void Finish(int failures)
 {
-    if (!g_prefsPath.empty()) wxRemoveFile(g_prefsPath);
+    RemoveScratchPrefs();
     g_exitCode = failures == 0 ? 0 : 1;
 
     // Leave the loop and let OnRun's return value carry the verdict.  Not
@@ -195,9 +215,20 @@ void Finish(int failures)
 
 } // namespace
 
+bool ExtendedSelfTestArmed()
+{
+    return !g_which.empty();
+}
+
 int ExtendedSelfTestExitCode()
 {
     return g_exitCode;
+}
+
+bool ExtendedSelfTestCheck(bool ok, const char* what)
+{
+    chk(ok, what);
+    return ok;
 }
 
 bool WantsExtendedSelfTest(int argc, wxChar** argv, wxString& nameOut)

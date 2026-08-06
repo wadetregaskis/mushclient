@@ -188,9 +188,10 @@ if(TARGET mushgui)
     #
     #   * a watchdog inside the app turns a wedged harness into exit code 2
     #     with a message naming it (platform/extended_selftest.cpp);
-    #   * RESOURCE_LOCK "mushclient_app" serialises them against each other, so
-    #     two real GUI apps never race for the same window server, focus and
-    #     saved state;
+    #   * RUN_SERIAL -- the same serialisation the other fifteen in-app
+    #     selftests already use.  RESOURCE_LOCK was not enough: it only excludes
+    #     tests holding the SAME lock, so an unlocked GUI test could still start
+    #     alongside one of these while it had a modal dialog up;
     #   * the app points its preferences at a scratch file first, so a mode
     #     that runs far enough to WRITE preferences cannot touch the ones
     #     belonging to the user's installed copy.
@@ -202,7 +203,19 @@ if(TARGET mushgui)
                  COMMAND $<TARGET_FILE:mushgui> --extended-selftest=paint ${_selftest_args})
         set_tests_properties(extended_paint PROPERTIES
                              LABELS "extended"
-                             RESOURCE_LOCK "mushclient_app"
+                             RUN_SERIAL TRUE
+                             TIMEOUT 120)
+
+        # The MFC->wx dialog and property-sheet bridges: the page-activation
+        # contract, the mapped-handler-wins command routing, and the update-UI
+        # pump that stands in for WM_KICKIDLE.  All of it sits behind a
+        # ShowModal, which is exactly what only this mode can complete
+        # (docs/UNREACHABLE-PATHS-2026-08.md findings 16, 17, 19).
+        add_test(NAME extended_dialog_bridge
+                 COMMAND $<TARGET_FILE:mushgui> --extended-selftest=dialog-bridge ${_selftest_args})
+        set_tests_properties(extended_dialog_bridge PROPERTIES
+                             LABELS "extended"
+                             RUN_SERIAL TRUE
                              TIMEOUT 120)
 
         # The watchdog is the safety net the whole mode rests on, so it is
@@ -213,7 +226,7 @@ if(TARGET mushgui)
                  COMMAND $<TARGET_FILE:mushgui> --extended-selftest=hang ${_selftest_args})
         set_tests_properties(extended_watchdog PROPERTIES
                              LABELS "extended"
-                             RESOURCE_LOCK "mushclient_app"
+                             RUN_SERIAL TRUE
                              ENVIRONMENT "MUSHCLIENT_EXTENDED_WATCHDOG_SECS=5"
                              WILL_FAIL TRUE
                              TIMEOUT 60)
@@ -245,6 +258,6 @@ if(TARGET mushgui)
                          selftest_pal_miniwindow selftest_notepad
                          selftest_gui_bridge selftest_input
                          selftest_pal_composite selftest_world_frame
-                         selftest_outputpane
+                         selftest_outputpane selftest_menubar
                          PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 endif()

@@ -899,6 +899,11 @@ if(NOT WIN32)
             platform/menubar_selftest.cpp
             platform/app_config.cpp
             platform/extended_selftest.cpp
+            # The MFC->wx dialog + property-sheet bridges, which only the
+            # loop-running mode can reach (everything there is behind a
+            # ShowModal).  Always compiled -- the harness costs nothing until
+            # --extended-selftest=dialog-bridge names it.
+            platform/dialog_bridge_selftest.cpp
             # The three canonical toolbars (Standard/World/Activity) over
             # wxToolBar, using the shipped Windows strips.  wxOSX hides the MDI
             # parent, so these hang off each world window like the status bar.

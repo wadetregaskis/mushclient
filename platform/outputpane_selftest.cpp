@@ -19,6 +19,8 @@
 //   double-click auto-copies        CMUSHView::OnLButtonDblClk mushview.cpp:4884
 //   TextRectangle offset form       CMUSHView::GetTextRectangle mushview.cpp:6698
 //   Clear Output empties the pane   DELETE_LIST in CMUSHclientDoc::ClearOutput
+//   mid-paint prints are deferred   (port-only: Windows relies on the
+//                                    documented draw-only discipline instead)
 //
 // Every assertion is written so that "the code did nothing" FAILS.
 
@@ -1106,6 +1108,245 @@ void TestRunAtCharColumn()
             "...and col 3 is past the end");
 }
 
+// ── a plugin that prints from ON_PLUGIN_DRAW_OUTPUT_WINDOW ──────────────────
+// OnPaint fires that callback between the underneath-miniwindow composite and
+// the text pass, so it runs arbitrary plugin script in the middle of a paint --
+// and plugins DO print from it (Quow-class status plugins on their error
+// paths).  AppendLine therefore defers anything that arrives while the window
+// is open instead of mutating m_lines / m_lineChars / m_visualRowStart under
+// the draw loop that is about to walk them.
+//
+// That branch had never executed: the flag was private, only OnPaint wrote it,
+// and OnPaint needs an event loop this harness (like every in-app selftest)
+// exits before reaching.  Both failure modes are user-visible -- no deferral is
+// a crash inside the paint handler, and a replay that drops the line is a
+// plugin message that silently never appears.
+std::string LineText(const SOutputLine* line)
+{
+    std::string out;
+    if (line)
+        for (const SOutputRun& r : *line) out += r.text;
+    return out;
+}
+
+// CallAfter queues a wxAsyncMethodCallEvent on the pane; it is delivered by
+// ProcessPendingEvents, which wxYield's temporary loop drives.  One turn is
+// enough -- the replays are queued, not timed.
+void PumpDeferred() { wxYield(); }
+
+void TestPluginDrawDefersAppends()
+{
+    printf("prints from ON_PLUGIN_DRAW_OUTPUT_WINDOW are deferred, not lost\n");
+
+    // ── the callback really runs inside the guard ────────────────────────
+    // FirePluginDraw is OnPaint's one line, lifted out so the pairing itself
+    // can be pinned: a later edit that moves the call out from under the scope
+    // would otherwise go unnoticed until it crashed a user's paint.
+    {
+        Harness h;
+        h.Feed(3);
+        bool sawGuard = false;
+        int  gotLine = -1, gotOffset = -1;
+        h.pane->m_fn_draw_output_window = [&](int firstLine, int pixelOffset) {
+            sawGuard  = h.pane->InPluginDraw();
+            gotLine   = firstLine;
+            gotOffset = pixelOffset;
+        };
+        opCheck(!h.pane->InPluginDraw(), "the window is shut before the callback");
+        h.pane->FirePluginDraw(7, 42);
+        opCheck(sawGuard, "the plugin callback runs with the re-entrancy window OPEN");
+        opCheckEq(gotLine,   7,  "...and is handed the first visible line");
+        opCheckEq(gotOffset, 42, "...and the pixel offset");
+        opCheck(!h.pane->InPluginDraw(), "the window shuts again when it returns");
+        h.pane->m_fn_draw_output_window = nullptr;
+    }
+
+    // ── one line, deferred and replayed exactly once ─────────────────────
+    {
+        Harness h;
+        h.pane->AppendLine(MakeLine("before the paint"));
+        opCheckEq(h.pane->LineCount(), 1,
+                  "control: a line appended OUTSIDE the window lands at once");
+
+        {
+            COutputPane::PluginDrawScope guard(*h.pane);
+            opCheck(h.pane->InPluginDraw(), "the scope reports itself open");
+            h.pane->AppendLine(MakeLine("printed mid-paint"));
+            opCheckEq(h.pane->LineCount(), 1,
+                      "a line appended INSIDE the window is not in the buffer yet");
+            // The load-bearing one, and the only one of the two that means the
+            // same thing in the app.  This harness builds a bare COutputPane,
+            // so it runs the PUSH model and LineCount() is m_lines.size();
+            // CWorldChildFrame wires the pull seam unconditionally, so in
+            // production LineCount() is the ENGINE's count and the engine has
+            // already appended before it calls the pane -- the deferral does
+            // not move it at all there.  The wrap cache is what is genuinely
+            // held back in both models, so assert on that.
+            opCheckEq(h.pane->DerivedLength(), 1,
+                      "...and the wrap cache the draw loop is walking is untouched");
+        }
+        opCheck(!h.pane->InPluginDraw(), "closing the scope reopens the pane");
+        opCheckEq(h.pane->LineCount(), 1,
+                  "closing it does not itself replay -- that needs the event loop");
+
+        PumpDeferred();
+        opCheckEq(h.pane->LineCount(), 2,
+                  "one turn later the deferred line has arrived -- exactly once");
+        opCheck(LineText(h.pane->GetLine(1)) == "printed mid-paint",
+                "...with its text intact, after the line that preceded it");
+        opCheckEq(h.pane->DerivedLength(), h.pane->LineCount(),
+                  "wrap cache and line count agree after the replay");
+
+        // A second turn must not conjure a third copy: the replay is consumed.
+        PumpDeferred();
+        opCheckEq(h.pane->LineCount(), 2, "and it does not arrive again on the next turn");
+    }
+
+    // ── NESTED scopes: the whole reason this is a count, not a flag ──────
+    // A plugin callback can force a synchronous repaint, which re-enters
+    // OnPaint and opens a second scope inside the first.  With a bool, the
+    // INNER close reopens the buffer while the OUTER callback is still
+    // running -- which is exactly the hazard the guard exists to prevent, and
+    // it is the one behaviour the switch from bool to int actually changes.
+    // Without this group, replacing EndPluginDraw's decrement with "= 0"
+    // passes the whole suite, so a later "simplify this back to a flag" would
+    // sail through.
+    {
+        Harness h;
+        h.pane->AppendLine(MakeLine("before"));
+        opCheckEq(h.pane->LineCount(), 1, "nested: one line to start");
+
+        {
+            COutputPane::PluginDrawScope outer(*h.pane);
+            {
+                COutputPane::PluginDrawScope inner(*h.pane);
+                opCheck(h.pane->InPluginDraw(), "nested: the inner scope is open");
+                h.pane->AppendLine(MakeLine("from the inner paint"));
+                opCheckEq(h.pane->DerivedLength(), 1,
+                          "nested: an append inside the inner scope is deferred");
+            }
+            // THE assertion.  A bool would report closed here.
+            opCheck(h.pane->InPluginDraw(),
+                    "nested: closing the INNER scope leaves the window open");
+            h.pane->AppendLine(MakeLine("from the outer paint"));
+            opCheckEq(h.pane->DerivedLength(), 1,
+                      "nested: ...so the outer callback's append is deferred too");
+        }
+        opCheck(!h.pane->InPluginDraw(),
+                "nested: closing the outer scope finally reopens the pane");
+
+        PumpDeferred();
+        opCheckEq(h.pane->LineCount(), 3, "nested: both deferred lines arrive");
+        opCheck(LineText(h.pane->GetLine(1)) == "from the inner paint" &&
+                LineText(h.pane->GetLine(2)) == "from the outer paint",
+                "nested: ...in the order they were printed");
+        opCheckEq(h.pane->DerivedLength(), h.pane->LineCount(),
+                  "nested: wrap cache agrees afterwards");
+    }
+
+    // ── several lines from one callback, in order ────────────────────────
+    {
+        Harness h;
+        {
+            COutputPane::PluginDrawScope guard(*h.pane);
+            h.pane->AppendLine(MakeLine("alpha"));
+            h.pane->AppendLine(MakeLine("bravo"));
+            h.pane->AppendLine(MakeLine("charlie"));
+            opCheckEq(h.pane->LineCount(), 0, "three prints inside one paint, none applied");
+        }
+        PumpDeferred();
+        opCheckEq(h.pane->LineCount(), 3, "all three arrive");
+        opCheck(LineText(h.pane->GetLine(0)) == "alpha" &&
+                LineText(h.pane->GetLine(1)) == "bravo" &&
+                LineText(h.pane->GetLine(2)) == "charlie",
+                "...IN ORDER -- a plugin's multi-line report is not shuffled");
+        opCheckEq(h.pane->DerivedLength(), 3, "wrap cache holds the same three");
+    }
+
+    // ── the in-progress prompt row is not disturbed ──────────────────────
+    // A guard placed after the pending-row handling would clear the prompt the
+    // paint is still drawing, and only put the replacement back a turn later.
+    {
+        Harness h;
+        h.pane->AppendLine(MakeLine("You are in a dark room."));
+        h.pane->AppendLine(MakeLine("HP:100 MP:50 > ", /*pending*/ true));
+        opCheck(h.pane->HasPendingLine(), "a prompt row is showing before the paint");
+
+        {
+            COutputPane::PluginDrawScope guard(*h.pane);
+            h.pane->AppendLine(MakeLine("[status] connection wobbled"));
+            opCheck(h.pane->HasPendingLine(),
+                    "the deferral leaves the prompt row the paint is drawing alone");
+            opCheckEq(h.pane->LineCount(), 1, "...and adds nothing to the buffer");
+        }
+        PumpDeferred();
+        opCheckEq(h.pane->LineCount(), 2, "the plugin's note arrives after the paint");
+        opCheck(!h.pane->HasPendingLine(),
+                "...and supersedes the prompt exactly as an immediate append would");
+    }
+
+    // ── a PENDING row printed inside the window defers too ───────────────
+    {
+        Harness h;
+        h.pane->AppendLine(MakeLine("committed"));
+        {
+            COutputPane::PluginDrawScope guard(*h.pane);
+            h.pane->AppendLine(MakeLine("mid-paint prompt > ", /*pending*/ true));
+            opCheck(!h.pane->HasPendingLine(),
+                    "a pending row printed inside the window is deferred as well");
+        }
+        PumpDeferred();
+        opCheck(h.pane->HasPendingLine(), "...and shows once the paint is over");
+        opCheckEq(h.pane->LineCount(), 1, "a pending row is still not a buffered line");
+    }
+
+    // ── batching does not swallow the replay ─────────────────────────────
+    // The replay lands on the next event-loop turn, which in principle can be
+    // inside a Begin/EndBatch pair opened by the display drain.  A batch only
+    // defers the scrollbar update and the repaint, so the line itself must
+    // still be appended.
+    {
+        Harness h;
+        h.pane->BeginBatch();
+        {
+            COutputPane::PluginDrawScope guard(*h.pane);
+            h.pane->AppendLine(MakeLine("deferred into a batch"));
+        }
+        PumpDeferred();
+        opCheckEq(h.pane->LineCount(), 1,
+                  "the replay appends even with a batch still open");
+        h.pane->EndBatch();
+        opCheckEq(h.pane->LineCount(), 1, "closing the batch neither drops nor doubles it");
+        opCheckEq(h.pane->DerivedLength(), 1, "wrap cache agrees");
+    }
+
+    // ── the capacity trim runs on the replayed line ──────────────────────
+    // The deferral moves the append, not its bookkeeping: a full buffer must
+    // still trim its head, or a plugin that prints every paint grows it without
+    // bound.  (100 is SetMaxLines' floor for any non-zero cap.)
+    {
+        Harness h;
+        h.pane->SetMaxLines(100);
+        h.Feed(100, "keep");
+        opCheckEq(h.pane->LineCount(), 100, "the buffer starts full");
+        const std::string firstBefore = LineText(h.pane->GetLine(0));
+
+        {
+            COutputPane::PluginDrawScope guard(*h.pane);
+            h.pane->AppendLine(MakeLine("trimmer"));
+            opCheckEq(h.pane->LineCount(), 100, "nothing trimmed during the paint");
+        }
+        PumpDeferred();
+        opCheckEq(h.pane->LineCount(), 100, "still at the cap after the replay");
+        opCheck(LineText(h.pane->GetLine(99)) == "trimmer",
+                "the replayed line is the newest");
+        opCheck(LineText(h.pane->GetLine(0)) != firstBefore,
+                "...and the oldest was trimmed to make room for it");
+        opCheckEq(h.pane->DerivedLength(), h.pane->LineCount(),
+                  "wrap cache and line count agree after a replay that trimmed");
+    }
+}
+
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
@@ -1125,6 +1366,7 @@ int RunOutputPaneSelfTest()
     TestWheelActionOrdering();
     TestFontSizeClamp();
     TestRunAtCharColumn();
+    TestPluginDrawDefersAppends();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

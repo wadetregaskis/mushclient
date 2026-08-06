@@ -25,6 +25,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <cassert>
 #include "platform/output_types.h"   // SOutputLine, SOutputRun
 #include "pal/style_colour.h"        // pal::StylePalette (RecolourFromPalette)
 
@@ -236,6 +237,51 @@ public:
     // notices a script narrowed the band, and it sat inside OnPaint, which no
     // in-app selftest can reach.  Public so the test can call it.
     bool AdoptTextRect();
+
+    // ── ON_PLUGIN_DRAW_OUTPUT_WINDOW re-entrancy window ───────────────────
+    // OnPaint fires the plugin draw callback in the middle of the paint, which
+    // runs arbitrary plugin script -- and script prints (Quow-class status
+    // plugins do it on their error paths).  Anything appended while this window
+    // is open is deferred to the next event-loop turn rather than mutating
+    // m_lines / m_lineChars / m_visualRowStart / m_totalVisualRows underneath
+    // the draw loop that is about to walk them.
+    //
+    // Public for the same reason as AdoptMeasuredMetrics / AdoptTextRect:
+    // OnPaint needs an event loop and every in-app selftest exits from
+    // wxApp::OnInit before there is one, so while the flag was private to the
+    // paint handler the whole defer-and-replay branch was unreachable -- and
+    // silently losing a plugin's message is as bad as the crash it prevents.
+    //
+    // A depth COUNT, not a flag: a plugin callback that forces a synchronous
+    // repaint re-enters OnPaint, and the inner window's close must not reopen
+    // the buffer to the outer callback still running above it.
+    void BeginPluginDraw() { ++m_pluginDrawDepth; }
+    // No clamp: an End without a Begin is a bug in the caller, and silently
+    // absorbing it would leave the buffer open for the rest of the session --
+    // every subsequent append deferred, for ever.  Better to trip here.
+    void EndPluginDraw()   { assert(m_pluginDrawDepth > 0); --m_pluginDrawDepth; }
+    bool InPluginDraw() const { return m_pluginDrawDepth > 0; }
+
+    // RAII form -- what OnPaint uses, so an early return out of the paint (or
+    // a throw through the plugin callback) cannot leave the pane deferring
+    // every append for the rest of the session.
+    class PluginDrawScope {
+    public:
+        explicit PluginDrawScope(COutputPane& pane) : m_pane(pane)
+        { m_pane.BeginPluginDraw(); }
+        ~PluginDrawScope() { m_pane.EndPluginDraw(); }
+        PluginDrawScope(const PluginDrawScope&)            = delete;
+        PluginDrawScope& operator=(const PluginDrawScope&) = delete;
+    private:
+        COutputPane& m_pane;
+    };
+
+    // Fire m_fn_draw_output_window with that window held open -- OnPaint's one
+    // line, extracted so a test can prove the callback really runs INSIDE the
+    // guard.  The pairing is the part that rots (a later edit moves the call
+    // out from under the scope and nothing notices until a plugin crashes a
+    // user's paint), and it cannot be observed from outside OnPaint otherwise.
+    void FirePluginDraw(int firstVisiblePaneLine, int pixelOffset);
 
     // The rectangle AdoptTextRect last stored -- what the NEXT call compares
     // against.  Read-only, for the in-app selftest: nothing else can observe
@@ -811,11 +857,12 @@ private:
     bool        m_linkNoteAtDown = false;  // its line was a note (COMMENT)
 
     bool m_autoScroll      = true;
-    // True while OnPaint runs its mid-paint plugin callback
+    // Nesting depth of the mid-paint plugin callback window
     // (ON_PLUGIN_DRAW_OUTPUT_WINDOW): AppendLine defers mutations of m_lines
-    // until the paint completes, so the pass the paint is iterating stays
-    // stable even if the script prints (docs/PAL.md S4c re-entrancy guard).
-    bool m_inPaint         = false;
+    // while it is open, so the pass the paint is iterating stays stable even
+    // if the script prints (docs/PAL.md S4c re-entrancy guard).  See
+    // BeginPluginDraw for why it counts rather than flags.
+    int  m_pluginDrawDepth = 0;
     // When false, scrolling up does NOT freeze output — new lines keep
     // scrolling into view.  Mirrors the world's m_bAutoFreeze flag.
     bool        m_allowAutoFreeze    = true;

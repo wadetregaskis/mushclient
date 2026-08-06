@@ -25,6 +25,8 @@
 #include "childfrm.h"     // CChildFrame  ) the world doc template's
 #include "MUSHview.h"     // CMUSHView    ) runtime classes
 #include "resource.h"     // IDR_MUSHCLTYPE
+#include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
+#include <memory>
 #include "platform/wx_world_child.h"
 #include "platform/wx_outputpane.h"
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box — answer the
@@ -907,7 +909,8 @@ int RunWorldFrameSelfTest()
         // the keys back afterwards: a selftest must not resize the next launch.
         long savedW = -1, savedH = -1;
         {
-            wxConfig cfg(wxT("mushclient"));
+            const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
             if (!cfg.Read(wxT("/geometry/child_w"), &savedW)) savedW = -1;
             if (!cfg.Read(wxT("/geometry/child_h"), &savedH)) savedH = -1;
         }
@@ -1073,7 +1076,8 @@ int RunWorldFrameSelfTest()
         App.m_bConfirmBeforeSavingVariables = savedConfirmVars;
         App.m_bConfirmBeforeClosingWorld    = savedConfirmClose;
         {
-            wxConfig cfg(wxT("mushclient"));
+            const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
             if (savedW > 0) cfg.Write(wxT("/geometry/child_w"), savedW);
             else            cfg.DeleteEntry(wxT("/geometry/child_w"));
             if (savedH > 0) cfg.Write(wxT("/geometry/child_h"), savedH);

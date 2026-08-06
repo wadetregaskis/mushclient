@@ -180,6 +180,45 @@ if(TARGET mushgui)
     # The real menu bar: every accelerator parses, none is claimed twice, and
     # the four macOS-shaped clears are where they say they are.  Both failure
     # modes it covers are silent -- see platform/menubar_selftest.cpp.
+    # ── extended (loop-running) selftests ───────────────────────────────────
+    # OPT-IN: -DMUSHCLIENT_EXTENDED_TESTS=ON.  These are the only tests that
+    # reach wxApp::OnRun, so they are the only ones where a paint is delivered
+    # or a modal can complete -- and the only ones whose failure mode is a HANG
+    # rather than a failure.  Three things make that safe enough to have:
+    #
+    #   * a watchdog inside the app turns a wedged harness into exit code 2
+    #     with a message naming it (platform/extended_selftest.cpp);
+    #   * RESOURCE_LOCK "mushclient_app" serialises them against each other, so
+    #     two real GUI apps never race for the same window server, focus and
+    #     saved state;
+    #   * the app points its preferences at a scratch file first, so a mode
+    #     that runs far enough to WRITE preferences cannot touch the ones
+    #     belonging to the user's installed copy.
+    #
+    # TIMEOUT is above the watchdog's default so the watchdog reports first --
+    # its message says which harness hung, where a ctest timeout does not.
+    if (MUSHCLIENT_EXTENDED_TESTS)
+        add_test(NAME extended_paint
+                 COMMAND $<TARGET_FILE:mushgui> --extended-selftest=paint ${_selftest_args})
+        set_tests_properties(extended_paint PROPERTIES
+                             LABELS "extended"
+                             RESOURCE_LOCK "mushclient_app"
+                             TIMEOUT 120)
+
+        # The watchdog is the safety net the whole mode rests on, so it is
+        # itself a test: a harness that deliberately never finishes must be
+        # killed by it, not by ctest.  WILL_FAIL inverts the verdict -- the
+        # PASS here is the app exiting non-zero of its own accord.
+        add_test(NAME extended_watchdog
+                 COMMAND $<TARGET_FILE:mushgui> --extended-selftest=hang ${_selftest_args})
+        set_tests_properties(extended_watchdog PROPERTIES
+                             LABELS "extended"
+                             RESOURCE_LOCK "mushclient_app"
+                             ENVIRONMENT "MUSHCLIENT_EXTENDED_WATCHDOG_SECS=5"
+                             WILL_FAIL TRUE
+                             TIMEOUT 60)
+    endif()
+
     add_test(NAME selftest_menubar
              COMMAND $<TARGET_FILE:mushgui> --menubar-selftest ${_selftest_args})
     # COutputPane is a wxScrolledWindow in mushgui_adapters, so the headless

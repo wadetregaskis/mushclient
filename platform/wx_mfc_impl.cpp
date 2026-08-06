@@ -52,6 +52,8 @@
 #include "mainfrm.h"       // CMainFrame full definition
 #include "doc.h"           // CMUSHclientDoc (needed for hook_new_world)
 #include "TextDocument.h"             // CTextDocument (for hook_create_text_window)
+#include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
+#include <memory>
 #include "platform/wx_world_child.h"  // CWorldChildFrame
 #include "StatLink.h"                 // CStaticLink — the only real SubclassDlgItem client
 #include "platform/wx_osx_text.h"     // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
@@ -283,14 +285,16 @@ int RecentWorldsMenuIdBase()  { return kRecentMenuBase; }
 // Load the recent list from the user's config into s_recentWorlds.
 static void recent_worlds_load()
 {
-    wxConfig cfg(wxT("mushclient"));
+    const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
     RecentWorldsLoadFrom(cfg, s_recentWorlds, kMaxRecentWorlds);
 }
 
 // Persist the current s_recentWorlds to the user's config.
 static void recent_worlds_save()
 {
-    wxConfig cfg(wxT("mushclient"));
+    const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
     RecentWorldsSaveTo(cfg, s_recentWorlds, kMaxRecentWorlds);
 }
 
@@ -908,7 +912,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // first-run default is computed in CWorldChildFrame's constructor.  Changing
     // the numbers here alone has no visible effect on macOS.
     {
-        wxConfig cfg(wxT("mushclient"));
+        const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
 
         // First-run default size: the full usable screen height, and
         // CWorldChildFrame::kMaxDefaultWidthDIP wide unless the screen's usable
@@ -2874,7 +2879,8 @@ void SaveWindowGeometryTo(wxConfigBase& cfg, wxTopLevelWindow* frame)
 // when you Quit).  Safe to call with a null frame.
 static void SaveMainWindowGeometry(wxTopLevelWindow* frame)
 {
-    wxConfig cfg(wxT("mushclient"));
+    const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
     SaveWindowGeometryTo(cfg, frame);
     cfg.Flush();
 }

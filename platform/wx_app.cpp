@@ -13,6 +13,7 @@
 #include <wx/image.h>          // wxInitAllImageHandlers
 #include <csignal>             // signal, SIGPIPE
 #include <cstdlib>             // std::exit (selftest flag)
+#include "platform/extended_selftest.h"   // the loop-running test mode
 #include "platform/wx_mfc_hooks.h"
 
 // Defined in wx_dialog_bridge.cpp: parse the bundled dialog resources once.
@@ -85,6 +86,7 @@ int RunOutputPaneSelfTest();
                                   // the bridge for the miniwindow selftest
 
 class CMUSHWxApp : public wxApp {
+    bool m_extendedSelfTest = false;
 public:
     bool OnInit() override
     {
@@ -219,6 +221,23 @@ public:
             }
         }
 
+        // ── the extended (loop-running) selftests ──────────────────────────
+        // Unlike every flag above, these do NOT exit here: they need the event
+        // loop that OnRun starts, because that is the only way a paint is
+        // delivered or a modal completes.  Arming installs isolated
+        // preferences FIRST -- this mode runs far enough into the app to write
+        // them, and on macOS the real ones belong to the user's installed copy
+        // -- then schedules the harness and starts a watchdog.
+        {
+            wxString which;
+            if (WantsExtendedSelfTest(argc, argv, which)) {
+                if (!ArmExtendedSelfTest(which))
+                    std::exit(2);            // unknown name: a usage error
+                m_extendedSelfTest = true;
+                return true;      // straight to OnRun; the harness ends the loop
+            }
+        }
+
         // Boot the real MUSHclient application.
         // The hook calls App.InitInstance() which creates the main MDI frame.
         if (!g_wxhook_init_instance || !g_wxhook_init_instance())
@@ -242,6 +261,15 @@ public:
             g_wxhook_open_default_world();
 
         return true;
+    }
+
+    // The EXTENDED selftests are the only mode that reaches OnRun: everything
+    // else exits from OnInit.  OnRun's return value is the process exit code,
+    // so it is what carries their verdict out of the event loop.
+    int OnRun() override
+    {
+        const int rc = wxApp::OnRun();
+        return m_extendedSelfTest ? ExtendedSelfTestExitCode() : rc;
     }
 
     int OnExit() override

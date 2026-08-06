@@ -28,6 +28,8 @@
 #include "dialogs/TextAttributesDlg.h"   // CTextAttributesDlg (Display ▸ Text Attributes)
 #include "miniwindow.h"               // CMiniWindow, MiniWindowVector, MINIWINDOW_* flags
 #include "scripting/scripting.h"      // CScriptEngine, lua_State* — for Shift+Tab globals
+#include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
+#include <memory>
 #include "platform/wx_world_child.h"  // our own header (CWorldChildFrame, COutputPane)
 #include "platform/wx_print.h"        // PrintStyledDocument (File ▸ Print World)
 #include "platform/wx_osx_text.h"    // wxOSXSetWindowTabbing ("Window tabs" pref)
@@ -469,7 +471,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         m_findCaseBox = new wxCheckBox(m_findBar, wxID_ANY, wxT("Aa"));
         m_findCaseBox->SetToolTip(wxT("Case-sensitive search"));
         {
-            wxConfig cfg(wxT("mushclient"));
+            const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
             bool savedCase = false;
             cfg.Read(wxT("/find/case_sensitive"), &savedCase, false);
             m_findCaseBox->SetValue(savedCase);
@@ -500,7 +503,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             bool cs = m_findCaseBox->IsChecked();
             m_output->HighlightSearch(m_findInput ? m_findInput->GetValue() : wxString(), cs);
             if (m_findLabel) m_findLabel->SetLabel(wxEmptyString);
-            wxConfig cfg(wxT("mushclient"));
+            const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
             cfg.Write(wxT("/find/case_sensitive"), cs);
         });
         m_findInput->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& e) {
@@ -839,7 +843,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     m_output->m_fn_grid_changed = [this]() {
         // Persist font size immediately (synchronous — size is already committed).
         {
-            wxConfig cfg(wxT("mushclient"));
+            const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
             cfg.Write(wxT("/display/font_size"), (long)m_output->FontSize());
         }
         // Keep the input bars in sync with the output pane font so Ctrl+scroll
@@ -1362,7 +1367,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // the window correctly fills it — which is the behaviour we want in both
     // cases, without having to ask about the auto-hide setting ourselves.
     {
-        wxConfig cfg(wxT("mushclient"));
+        const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
 
         int di = wxDisplay::GetFromWindow(this);
         if (di < 0) di = 0;               // not mapped yet → primary display
@@ -1488,7 +1494,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         const bool worldHasOwnFont =
             m_doc && ((worldFace && *worldFace) || (int)m_doc->m_font_height != 0);
 
-        wxConfig cfg(wxT("mushclient"));
+        const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
         long savedSize = 0;
         cfg.Read(wxT("/display/font_size"), &savedSize, 0L);
         if (!worldHasOwnFont &&
@@ -4870,7 +4877,8 @@ void CWorldChildFrame::setOutputFont(const char* face, int pointSize,
         m_doc->m_font_weight = (f.GetWeight() >= wxFONTWEIGHT_BOLD) ? 700 : 400;
     }
     // Persist face name and size so they survive restart even without saving.
-    wxConfig cfg(wxT("mushclient"));
+    const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
     cfg.Write(wxT("/display/font_name"), faceName);
     cfg.Write(wxT("/display/font_size"), (long)f.GetPointSize());
     // NOTE: the input bars are deliberately NOT synced here.  The input font is
@@ -5185,7 +5193,8 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
     // quit hook writes the same keys through the same helper, because a Cmd-Q
     // never reaches this handler at all.
     {
-        wxConfig cfg(wxT("mushclient"));
+        const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
         wx_save_child_geometry(cfg, GetSize());
     }
 

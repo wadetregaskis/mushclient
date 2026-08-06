@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.14)
 project(MUSHclient VERSION 5.07 LANGUAGES C CXX)
 
+option(MUSHCLIENT_EXTENDED_TESTS
+       "Register the loop-running (\"extended\") selftests.  They reach \
+wxApp::OnRun, so they are the only tests where a paint is delivered or a modal \
+completes -- and the only ones that can HANG rather than fail.  Off by default; \
+see platform/extended_selftest.h." OFF)
+
+
 # ── Linker-aware de-duplication of link libraries ──────────────────────────
 # Under the default policies for cmake_minimum_required 3.14, CMake re-emits
 # raw "-lfoo" link flags more than once when a target links both a static lib
@@ -890,6 +897,8 @@ if(NOT WIN32)
             # with them rather than in mushgui_adapters.
             platform/world_frame_selftest.cpp
             platform/menubar_selftest.cpp
+            platform/app_config.cpp
+            platform/extended_selftest.cpp
             # The three canonical toolbars (Standard/World/Activity) over
             # wxToolBar, using the shipped Windows strips.  wxOSX hides the MDI
             # parent, so these hang off each world window like the status bar.

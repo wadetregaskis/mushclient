@@ -14,6 +14,8 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "resource.h"
+#include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
+#include <memory>
 #include "platform/wx_toolbar.h"
 
 // Defined in wx_mfc_impl.cpp (see the same forward declaration in
@@ -247,7 +249,8 @@ CWorldToolBars::CWorldToolBars (wxFrame* frame, wxBoxSizer* sizer)
         m_activityImage[i] = -1;
 
     {
-        wxConfig cfg(wxT("mushclient"));
+        const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
         for (int i = 0; i < eBarCount; ++i)
             cfg.Read(VisKey(i), &m_visible[i], true);
     }
@@ -392,7 +395,8 @@ void CWorldToolBars::SetBarVisible (Which which, bool show)
         m_bars[which]->Show(show);
         m_frame->Layout();
     }
-    wxConfig cfg(wxT("mushclient"));
+    const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
     cfg.Write(VisKey(which), show);
     cfg.Flush();
 }

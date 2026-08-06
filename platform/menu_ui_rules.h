@@ -25,12 +25,37 @@ struct MenuCmdUiState {
     bool handled = false;   // false → not one of ours; the caller decides
     bool enabled = true;
     int  checked = -1;      // -1 = not a check item; 0 = unticked, 1 = ticked
+    // UTF-8 replacement label, or null to leave the item's own text alone.
+    // CCmdUI::SetText is how MFC lets an update-UI handler rename an item; the
+    // port needs it for the one item that stands for two commands (below).
+    const char* text = nullptr;
 };
 
 // Enable/check for menu command `id` against the active world document (null
 // when no world window is active).  Returns handled == false for ids these
 // rules do not own, leaving them to the caller's own arms.
 MenuCmdUiState MenuCommandUiState(int id, CMUSHclientDoc* doc);
+
+// ── The port's own Connection-menu ids ─────────────────────────────────────
+// Disconnect and Reconnect are built on ids of the port's own choosing rather
+// than on ID_CONNECTION_DISCONNECT.  Disconnect's RULE is still the canonical
+// one, so the id is translated back before the document's handler is asked;
+// Reconnect has no canonical counterpart at all (Windows offers only Connect,
+// Disconnect and the Auto/On-Disconnect toggles).
+const int kPortMenuIdDisconnect = 0xE200;
+const int kPortMenuIdReconnect  = 0xE201;
+
+// ── Rules for commands that have no canonical id to be keyed by ────────────
+// The port builds a few menu items on ids of its own making (wxID_HIGHEST + n),
+// which this TU must not name — it is linked into the headless tests, which do
+// not link wxWidgets.  Same answer as PortMenuAction below: express the command
+// as a port-neutral rule, and let the frame map its own id onto it.
+enum PortMenuRule {
+    kPortRuleScripting,   // Game ▸ Execute Lua…, Game ▸ Reload Script
+    kPortRuleLogToggle,   // Connection ▸ Start/Stop Logging
+};
+
+MenuCmdUiState PortMenuRuleUiState(PortMenuRule rule, CMUSHclientDoc* doc);
 
 // ── Canonical command ids the port's own menu bar spells differently ───────
 // world.DoCommand(name) looks `name` up in accelerators.cpp's CommandIDs[] and

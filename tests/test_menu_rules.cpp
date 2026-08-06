@@ -152,6 +152,167 @@ TEST(MenuRules, QuitFromThisWorldNeedsAConnectedSession) {
     EXPECT_FALSE(MenuCommandUiState(32217, nullptr).enabled);
 }
 
+// ── the Connection tri-state ───────────────────────────────────────────────
+// Connect and Disconnect are NOT restated in the rules: their canonical
+// update-UI handlers are on the document (doc.cpp:1891 / :1900) and the rules
+// dispatch them through the real message map.  These tests therefore also pin
+// that the dispatch REACHES those handlers — mutate either one and they fail.
+
+TEST(MenuRules, ConnectNeedsADisconnectedWorldWithAnAddress) {
+    CMUSHclientDoc doc;
+    doc.m_server = "mud.example.com";
+
+    doc.m_iConnectPhase = eConnectNotConnected;
+    EXPECT_TRUE(MenuCommandUiState(32239, &doc).handled);
+    EXPECT_TRUE(MenuCommandUiState(32239, &doc).enabled);
+
+    // A world still on the placeholder address has nowhere to connect to.
+    doc.m_server = "0.0.0.0";
+    EXPECT_FALSE(MenuCommandUiState(32239, &doc).enabled);
+    doc.m_server = "mud.example.com";
+
+    // Every phase from the first name lookup on means a connect is already
+    // under way or finished.
+    for (int phase = eConnectMudNameLookup; phase <= eConnectDisconnecting; phase++) {
+        doc.m_iConnectPhase = phase;
+        EXPECT_FALSE(MenuCommandUiState(32239, &doc).enabled);
+    }
+
+    // No world: nobody to ask, and nothing to connect.
+    EXPECT_TRUE(MenuCommandUiState(32239, nullptr).handled);
+    EXPECT_FALSE(MenuCommandUiState(32239, nullptr).enabled);
+}
+
+// The rule that has shipped broken before, and the reason the copy had to go:
+// Disconnect is live on EVERY non-zero phase, so a connect to a host that never
+// answers can still be cancelled.  Phases 1-8 are the two name lookups, the two
+// connects, the three SOCKS waits and the TLS handshake.
+TEST(MenuRules, DisconnectIsLiveThroughoutAHangingConnect) {
+    CMUSHclientDoc doc;
+
+    doc.m_iConnectPhase = eConnectNotConnected;
+    EXPECT_TRUE(MenuCommandUiState(32240, &doc).handled);
+    EXPECT_FALSE(MenuCommandUiState(32240, &doc).enabled);
+
+    for (int phase = eConnectMudNameLookup; phase <= eConnectDisconnecting; phase++) {
+        doc.m_iConnectPhase = phase;
+        const MenuCmdUiState st = MenuCommandUiState(32240, &doc);
+        if (!st.enabled)
+            printf("      (Disconnect is greyed in phase %d)\n", phase);
+        EXPECT_TRUE(st.enabled);
+    }
+
+    EXPECT_FALSE(MenuCommandUiState(32240, nullptr).enabled);
+}
+
+// The port's Connection menu builds Disconnect on an id of its own, so the
+// same rule has to answer for both spellings or the menu item is the one that
+// misses out.
+TEST(MenuRules, ThePortsDisconnectIdGetsTheCanonicalRule) {
+    CMUSHclientDoc doc;
+
+    doc.m_iConnectPhase = eConnectNotConnected;
+    EXPECT_TRUE(MenuCommandUiState(kPortMenuIdDisconnect, &doc).handled);
+    EXPECT_FALSE(MenuCommandUiState(kPortMenuIdDisconnect, &doc).enabled);
+
+    doc.m_iConnectPhase = eConnectAwaitingSSLHandshake;
+    EXPECT_TRUE(MenuCommandUiState(kPortMenuIdDisconnect, &doc).enabled);
+
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    EXPECT_TRUE(MenuCommandUiState(kPortMenuIdDisconnect, &doc).enabled);
+
+    EXPECT_FALSE(MenuCommandUiState(kPortMenuIdDisconnect, nullptr).enabled);
+}
+
+// Reconnect is the port's own item and shares Connect's phase test — but NOT
+// Connect's address test, which is the one place the two answers differ.
+TEST(MenuRules, ReconnectSharesConnectsPhasesButNotItsAddressTest) {
+    CMUSHclientDoc doc;
+    doc.m_server = "mud.example.com";
+
+    doc.m_iConnectPhase = eConnectNotConnected;
+    EXPECT_TRUE(MenuCommandUiState(kPortMenuIdReconnect, &doc).handled);
+    EXPECT_TRUE(MenuCommandUiState(kPortMenuIdReconnect, &doc).enabled);
+
+    doc.m_server = "0.0.0.0";
+    EXPECT_TRUE(MenuCommandUiState(kPortMenuIdReconnect, &doc).enabled);
+    EXPECT_FALSE(MenuCommandUiState(32239, &doc).enabled);   // ...Connect is not
+    doc.m_server = "mud.example.com";
+
+    for (int phase = eConnectMudNameLookup; phase <= eConnectDisconnecting; phase++) {
+        doc.m_iConnectPhase = phase;
+        EXPECT_FALSE(MenuCommandUiState(kPortMenuIdReconnect, &doc).enabled);
+    }
+
+    EXPECT_FALSE(MenuCommandUiState(kPortMenuIdReconnect, nullptr).enabled);
+}
+
+// None of the three is a check item; a stray tick box beside Connect would be
+// the visible cost of routing one of them through the wrong arm.
+// NOT a test of the connection commands: `checked` is never written on any
+// path those four ids take, so this cannot fail whatever the rules do -- even
+// deleting the arm outright leaves it at -1.  It is here to pin the DISCARD
+// that finding 1 describes: the connection arm hands a `checked` out-parameter
+// to the canonical handler and never reads it back, unlike the Trace/Debug arm
+// below.  Inert today (neither canonical handler calls SetCheck, and both items
+// are built with Append rather than AppendCheckItem), so if upstream ever
+// starts ticking Connect, Windows will show it and the port will not.
+//
+// Kept, labelled, and deliberately not counted as coverage.
+TEST(MenuRules, TheConnectionArmDiscardsAnyCheckStateItIsGiven) {
+    CMUSHclientDoc doc;
+    EXPECT_EQ(-1, MenuCommandUiState(32239, &doc).checked);
+    EXPECT_EQ(-1, MenuCommandUiState(32240, &doc).checked);
+    EXPECT_EQ(-1, MenuCommandUiState(kPortMenuIdDisconnect, &doc).checked);
+    EXPECT_EQ(-1, MenuCommandUiState(kPortMenuIdReconnect, &doc).checked);
+}
+
+// ── the port's own menu items ──────────────────────────────────────────────
+
+TEST(MenuRules, ScriptingCommandsNeedAWorldWithScriptingOn) {
+    CMUSHclientDoc doc;
+
+    doc.m_bEnableScripts = false;
+    EXPECT_TRUE(PortMenuRuleUiState(kPortRuleScripting, &doc).handled);
+    EXPECT_FALSE(PortMenuRuleUiState(kPortRuleScripting, &doc).enabled);
+
+    doc.m_bEnableScripts = true;
+    EXPECT_TRUE(PortMenuRuleUiState(kPortRuleScripting, &doc).enabled);
+
+    // Scripting on in some OTHER world must not light the menu up.
+    EXPECT_FALSE(PortMenuRuleUiState(kPortRuleScripting, nullptr).enabled);
+
+    // Not a check item, and it never renames itself.
+    EXPECT_EQ(-1, PortMenuRuleUiState(kPortRuleScripting, &doc).checked);
+    EXPECT_TRUE(PortMenuRuleUiState(kPortRuleScripting, &doc).text == nullptr);
+}
+
+// One item stands for two commands, so the caption is the state.
+TEST(MenuRules, TheLogItemRenamesItselfToMatchTheLog) {
+    CMUSHclientDoc doc;
+
+    doc.m_logfile = NULL;
+    MenuCmdUiState st = PortMenuRuleUiState(kPortRuleLogToggle, &doc);
+    EXPECT_TRUE(st.enabled);
+    EXPECT_TRUE(st.text != nullptr);
+    EXPECT_STREQ("Start &Logging\xE2\x80\xA6", st.text ? st.text : "");
+
+    // A file handle the rule only ever compares against NULL; cleared again
+    // below, because the document's destructor closes a non-null m_logfile.
+    doc.m_logfile = (FILE *) 1;
+    st = PortMenuRuleUiState(kPortRuleLogToggle, &doc);
+    EXPECT_TRUE(st.enabled);
+    EXPECT_STREQ("Stop &Logging", st.text ? st.text : "");
+    doc.m_logfile = NULL;
+
+    // With no world the caption is left ALONE rather than reset: the item is
+    // greyed either way, and nothing here knows what it currently says.
+    st = PortMenuRuleUiState(kPortRuleLogToggle, nullptr);
+    EXPECT_TRUE(st.handled);
+    EXPECT_FALSE(st.enabled);
+    EXPECT_TRUE(st.text == nullptr);
+}
+
 // ── canonical ids world.DoCommand posts ────────────────────────────────────
 // StringToCommandID hands back the canonical MFC id; the port's menu bar builds
 // these particular commands on wx's own ids, so the frame has to recognise both

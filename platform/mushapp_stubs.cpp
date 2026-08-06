@@ -23,6 +23,7 @@
 #include "doc.h"
 #include "OtherTypes.h"   // CLine, CStyle, HILITE, UNDERLINE
 #include "scripting/errors.h"  // eOK
+#include "platform/wx_mfc_hooks.h"  // HeadlessMessageBoxAnswer
 #include "platform/wx_osx_text.h"  // wxOSXActivateApp (utils.sendtofront)
 #include <zlib.h>
 #include <cstdarg>
@@ -407,11 +408,16 @@ BOOL CMDIFrameWnd::LoadFrame(UINT id, DWORD style, CWnd* pParent, void* /*pConte
 // ── UMessageBox / TMessageBox ─────────────────────────────────────────────
 // Route through g_wxhook_message_box when it is set (mushgui at runtime);
 // fall back to stderr for headless builds.
+// The literals in HeadlessMessageBoxAnswer (platform/wx_mfc_hooks.h, which
+// cannot see the shim) must be the real ID* values.
+static_assert (IDOK == 1 && IDCANCEL == 2 && IDABORT == 3 && IDNO == 7,
+               "ID* constants moved: fix HeadlessMessageBoxAnswer");
+
 int UMessageBox(const char* sText, UINT nType, const char* caption) {
     if (g_wxhook_message_box)
         return g_wxhook_message_box(sText ? sText : "", caption ? caption : "MUSHclient", nType);
     fprintf(stderr, "MUSHclient [%s]: %s\n", caption ? caption : "MUSHclient", sText ? sText : "");
-    return (nType & MB_YESNO) ? IDNO : IDOK;
+    return HeadlessMessageBoxAnswer(nType);
 }
 int TMessageBox(const char* sText, UINT nType) {
     return UMessageBox(sText, nType, "MUSHclient");

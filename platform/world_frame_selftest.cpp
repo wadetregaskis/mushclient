@@ -17,6 +17,7 @@
 
 #include <wx/wx.h>
 #include <wx/mdi.h>
+#include <wx/config.h>    // the child-geometry keys OnClose writes
 
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -30,6 +31,7 @@
                                      // clear-buffer confirmation prompt
 
 #include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -887,6 +889,196 @@ int RunWorldFrameSelfTest()
 
         pane->ClearOutput();
         doc->ClearOutput();
+    }
+
+    // ── closing a world: what it asks, and the ORDER of the teardown ────────
+    // Neither half could be tested before.  The prompts were raw wxMessageBox
+    // calls with no seam, and the order was unobservable because the frame and
+    // its document are both gone by the time OnClose returns -- so
+    // CWorldChildFrame::RunCloseTeardown now reports each step as it completes.
+    //
+    // The order is the content.  A world timer that outlives the doc calls into
+    // freed memory; ON_PLUGIN_CLOSE / SaveState is where Quow-class packs
+    // persist their miniwindow layout, so it has to run while the pane is still
+    // attached; and the view must be detached before anything is deleted or the
+    // doc's final flush paints into a dying pane.
+    {
+        // OnClose writes the window size to the user's REAL preferences.  Put
+        // the keys back afterwards: a selftest must not resize the next launch.
+        long savedW = -1, savedH = -1;
+        {
+            wxConfig cfg(wxT("mushclient"));
+            if (!cfg.Read(wxT("/geometry/child_w"), &savedW)) savedW = -1;
+            if (!cfg.Read(wxT("/geometry/child_h"), &savedH)) savedH = -1;
+        }
+        const unsigned savedConfirmVars  = App.m_bConfirmBeforeSavingVariables;
+        const unsigned savedConfirmClose = App.m_bConfirmBeforeClosingWorld;
+
+        static int  s_prompts = 0;      // prompts put up by the chain
+        static int  s_answer  = IDNO;   // what the user "presses"
+        static int  s_saves   = 0;      // calls to the save hook
+        static bool s_saveOK  = true;   // whether that save succeeds
+        int  (*savedMB)(const char*, const char*, unsigned) = g_wxhook_message_box;
+        bool (*savedSaveWorld)(void*, bool, void*)          = g_wxhook_save_world;
+        g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+            ++s_prompts;
+            return s_answer;
+        };
+        // A save that neither touches the disk nor opens the Save As dialog the
+        // real hook would open for these file-less documents.
+        g_wxhook_save_world = [](void* d, bool, void*) -> bool {
+            ++s_saves;
+            if (s_saveOK && d)
+                static_cast<CMUSHclientDoc*>(d)->SetModifiedFlag(FALSE);
+            return s_saveOK;
+        };
+
+        // A world window with just enough state to be closed.  The name is one
+        // no real world uses, so the per-world history file cannot collide with
+        // the user's own (nothing is written: the history is empty).
+        auto makeWorld = [&](const char* name) -> CWorldChildFrame* {
+            CMUSHclientDoc* d = new CMUSHclientDoc();
+            d->m_mush_name   = name;
+            d->m_nWrapColumn = 80;
+            d->m_maxlines    = 5000;
+            d->SetUpOutputWindow();
+            App.m_pWorldDocTemplate->AddDocument(d);
+            return new CWorldChildFrame(parent, d, wxString::FromUTF8(name));
+        };
+
+        // ── a forced close asks nothing, and still tears down in order ──────
+        {
+            CWorldChildFrame* f = makeWorld("zz_selftest_close_order");
+            CMUSHclientDoc*   d = f->GetDoc();
+            // Everything that could possibly prompt is switched ON, so "no
+            // prompts" is a statement about CanVeto and not about the fixture.
+            d->SetModifiedFlag(TRUE);
+            d->m_bVariablesChanged = true;
+            App.m_bConfirmBeforeSavingVariables = 1;
+            App.m_bConfirmBeforeClosingWorld    = 1;
+
+            static std::vector<int> steps, timerOn, viewOn;
+            steps.clear(); timerOn.clear(); viewOn.clear();
+            f->SetCloseTeardownObserver([f, d](CWorldChildFrame::CloseStep s) {
+                steps.push_back((int) s);
+                timerOn.push_back(f->IsWorldTimerRunning() ? 1 : 0);
+                // `d` is freed by the last step; never dereference it there.
+                viewOn.push_back(s == CWorldChildFrame::CloseStep::DocDeleted
+                                     ? -1 : (d->m_pWorldView == f ? 1 : 0));
+            });
+
+            s_prompts = 0; s_saves = 0; s_answer = IDCANCEL;
+            const bool closed = f->Close(true);      // forced: CanVeto() is false
+            wxYield();
+
+        // (Deliberately NOT asserting GetVeto() here: it returns
+        // m_canVeto && m_veto, and Close(true) clears m_canVeto, so it is true
+        // whatever OnClose does.  The three checks below carry this block.)
+            check(s_prompts == 0,
+                  "...asking nothing, because a forced close cannot be vetoed");
+            check(s_saves == 0, "...and saving nothing behind the user's back");
+
+            const std::vector<int> wanted = {
+                (int) CWorldChildFrame::CloseStep::TimerStopped,
+                (int) CWorldChildFrame::CloseStep::WorldCloseFired,
+                (int) CWorldChildFrame::CloseStep::PluginsClosed,
+                (int) CWorldChildFrame::CloseStep::PluginStateSaved,
+                (int) CWorldChildFrame::CloseStep::ViewDetached,
+                (int) CWorldChildFrame::CloseStep::Deregistered,
+                (int) CWorldChildFrame::CloseStep::DocDeleted,
+            };
+            check(steps == wanted, "the teardown runs all seven steps, in order");
+
+            if (steps.size() == wanted.size()) {
+                bool everRunning = false;
+                for (int on : timerOn) everRunning = everRunning || on;
+                check(!everRunning,
+                      "the world timer is stopped before the doc is touched");
+                check(viewOn[2] == 1 && viewOn[3] == 1,
+                      "ON_PLUGIN_CLOSE and SaveState run while the pane is "
+                      "still attached");
+                check(viewOn[4] == 0 && viewOn[5] == 0,
+                      "...and the view is detached before anything is deleted");
+            } else {
+                check(false, "(teardown order wrong - dependent checks skipped)");
+                check(false, "(teardown order wrong - dependent checks skipped)");
+                check(false, "(teardown order wrong - dependent checks skipped)");
+            }
+        }
+
+        // ── the prompt chain: Cancel vetoes, No discards ────────────────────
+        {
+            CWorldChildFrame* f = makeWorld("zz_selftest_close_prompt");
+            CMUSHclientDoc*   d = f->GetDoc();
+            d->SetModifiedFlag(TRUE);
+
+            static bool s_toreDown = false;
+            s_toreDown = false;
+            f->SetCloseTeardownObserver(
+                [](CWorldChildFrame::CloseStep) { s_toreDown = true; });
+
+            s_prompts = 0; s_saves = 0; s_answer = IDCANCEL;
+            const bool vetoed = !f->Close(false);    // vetoable: the chain runs
+            check(vetoed, "Cancel on the unsaved-changes prompt vetoes the close");
+            check(s_prompts == 1, "...after exactly one question");
+            check(!s_toreDown, "...and nothing is torn down");
+            check(f->GetDoc() == d, "...so the world is still open");
+
+            s_prompts = 0; s_saves = 0; s_answer = IDNO;
+            const bool closed = f->Close(false);
+            wxYield();
+            check(closed, "No on the same prompt closes the world");
+            check(s_prompts == 1, "...after one question");
+            check(s_saves == 0, "...discarding the changes rather than saving");
+            check(s_toreDown, "...and the teardown runs this time");
+        }
+
+        // ── "save world automatically on close" replaces the question ───────
+        {
+            App.m_bConfirmBeforeClosingWorld = 0;   // isolate the save arm
+            CWorldChildFrame* f = makeWorld("zz_selftest_close_autosave");
+            CMUSHclientDoc*   d = f->GetDoc();
+            d->m_bSaveWorldAutomatically = 1;
+            d->SetModifiedFlag(TRUE);
+
+            // Cancel is the answer, so if a prompt DID appear the close would be
+            // vetoed -- "closed" is what makes this check falsifiable.
+            s_prompts = 0; s_saves = 0; s_answer = IDCANCEL; s_saveOK = true;
+            const bool closed = f->Close(false);
+            wxYield();
+            check(s_saves == 1, "save_world_automatically saves without asking");
+            check(s_prompts == 0, "...and no unsaved-changes prompt follows it");
+            check(closed, "...so the world closes");
+        }
+
+        // ── ...but only if it worked ───────────────────────────────────────
+        {
+            CWorldChildFrame* f = makeWorld("zz_selftest_close_savefail");
+            CMUSHclientDoc*   d = f->GetDoc();
+            d->m_bSaveWorldAutomatically = 1;
+            d->SetModifiedFlag(TRUE);
+
+            s_prompts = 0; s_saves = 0; s_answer = IDNO; s_saveOK = false;
+            const bool closed = f->Close(false);
+            wxYield();
+            check(s_saves == 1, "a failed automatic save is still attempted");
+            check(s_prompts == 1,
+                  "...and the document is still modified, so the user IS asked");
+            check(closed, "...and No closes it");
+            s_saveOK = true;
+        }
+
+        g_wxhook_message_box = savedMB;
+        g_wxhook_save_world  = savedSaveWorld;
+        App.m_bConfirmBeforeSavingVariables = savedConfirmVars;
+        App.m_bConfirmBeforeClosingWorld    = savedConfirmClose;
+        {
+            wxConfig cfg(wxT("mushclient"));
+            if (savedW > 0) cfg.Write(wxT("/geometry/child_w"), savedW);
+            else            cfg.DeleteEntry(wxT("/geometry/child_w"));
+            if (savedH > 0) cfg.Write(wxT("/geometry/child_h"), savedH);
+            else            cfg.DeleteEntry(wxT("/geometry/child_h"));
+        }
     }
 
     // Tear down without running the close/save flow (this doc has no file).

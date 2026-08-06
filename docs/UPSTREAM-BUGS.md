@@ -116,8 +116,22 @@ anything that is not a usable index; out of range then behaves exactly as
 already doing. Removing that guard segfaults the test suite — the overrun was
 real, not theoretical.
 
-**The option row itself is NOT fixed, and tightening it is not the small change
-it looks like.** `OPT_RGB_COLOUR` does not merely set a maximum: it is also
+**The row now validates too (option D, 2026-08-05).** A new `OPT_CUSTOM_INDEX`
+flag makes the range check say what the field actually is — 0..`MAX_CUSTOM`-1,
+or `SAMECOLOUR` — so `SetOption("note_text_colour", 300)` returns
+`eOptionOutOfRange` instead of being stored. It follows the shape
+`OPT_ZERO_UNLIMITED` already established for `max_output_lines`: a legal set
+that a plain minimum/maximum cannot express. Only the range check consults it.
+
+It deliberately changes NOTHING else — not the stored encoding, and not the
+serialisation. The off-by-one between the two script APIs is also deliberately
+left: `world.NoteColour = 4` stores 3 and `SetOption("note_text_colour", 4)`
+stores 4, and fixing that breaks either scripts or world files. After this
+change both are at least VALID values rather than one of them being a silent
+read past the end of a 16-entry array. If it is ever worth fixing, it is a
+world-file format change with a version bump, not an option-row edit.
+
+**Why the row was not simply RE-FLAGGED, which is the tempting one-liner:** `OPT_RGB_COLOUR` does not merely set a maximum: it is also
 what routes the value through `Save_XML_colour` → `ColourToName` on the way to
 the world file, so `note_text_colour` is stored on disk as a **colour name**,
 not a number. Drop the flag and:

@@ -1101,6 +1101,32 @@ from 55 to 56). The refactor was verified by the reviewer as a differential
 against a faithful MFC `CString` model over 400,027 generated packets, with no
 mismatches, and the harness proved non-vacuous by seeding four differences.
 
+### 4c-quatertricies. note_text_colour is validated as an index (2026-08-05)
+
+`docs/UPSTREAM-BUGS.md` #8. Shared code: `doc.h`, `doc_shared.cpp`,
+`scriptingoptions_numeric.inc`.
+
+The readers were guarded earlier; the row now validates too, via a new
+`OPT_CUSTOM_INDEX` flag consulted only by the range check.
+
+**This changes what `SetOption` ACCEPTS, on both platforms.** A script passing
+anything outside 0..15 (or `SAMECOLOUR`) now gets `eOptionOutOfRange` where it
+previously got success and a silently wrong colour.
+
+**What to check on Windows:**
+1. `world.SetOption("note_text_colour", 3)` still succeeds and
+   `world.GetOption("note_text_colour")` still returns **3** — the stored
+   encoding must be unchanged, or every existing world file shifts by one.
+2. `world.SetOption("note_text_colour", 300)` now returns `eOptionOutOfRange`
+   and leaves the previous value in place.
+3. Open a world saved BEFORE this change with a non-default note colour set via
+   World Properties ▸ Notes: the colour must be exactly as it was. The
+   serialisation is untouched (still a colour NAME via `ColourToName`), and this
+   is the check that it really is.
+4. `world.SetOption("echo_colour", 16)` and
+   `world.SetOption("hyperlink_colour", 0xFFFFFF)` must still succeed — the new
+   flag is on one row only.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

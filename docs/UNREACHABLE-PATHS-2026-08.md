@@ -16,9 +16,39 @@ closes several rows.
 
 | | |
 |---|---|
-| Landed | #21 TLS recovery — `c6ccc92`, one body + 4 tests + Windows validation entry |
-| | (`PaneLineToDocLine` and the image-placement modes were found and fixed before this audit ran, by the same reasoning) |
-| Open | the other 23 |
+| Landed | **15 of 24.** #21 TLS recovery (`c6ccc92`); then clusters A–D, merged 2026-08-05: the output pane (1, 3, 4, 6-part, 10), the world frame (7, 9, 20/22), the MFC bridge (11, 12, 13, 14, 18), and the activity refresh (24). |
+| | (`PaneLineToDocLine` and the image-placement modes were found and fixed before this audit ran, by the same reasoning.) |
+| Open | 2, 5, 8, 15, 16, 17, 19, 23 — the dialog/property-sheet bridge (16-19, needs the loop-running mode), the `m_inPaint` re-entrancy guard (2), the frame's update-UI lambda (12's refactor half), and chat sockets (23). |
+
+### What the cluster pass actually found
+
+Three defects the extractions turned up, none of them the finding they were
+aimed at:
+
+* **The `DefaultWorldFileName` hoist was not behaviour-identical.** The old code
+  converted the world name from UTF-8 *first*, so an invalid name became an
+  empty `wxString` and fell into the `world.mcl` fallback. Converting last let
+  the invalid name survive the scrub and die in `FromUTF8` — an **empty
+  filename in the Save-As dialog**. Caught by the adversarial reviewer with a
+  compiled probe, fixed before merge.
+* **`UMessageBox`'s headless fallback answered the wrong button.** Both copies
+  said `(nType & MB_YESNO) ? IDNO : IDOK`; `MB_YESNOCANCEL` is 3 and `MB_YESNO`
+  is 4, so `3 & 4 == 0` answered a three-way *save your changes?* prompt with
+  `IDOK` — which the caller falls straight through, closing the world and
+  discarding the work. Same mis-reading `hook_message_box`'s own comment
+  records being fixed there. Now one shared decision, `static_assert`ed.
+* **The Activity window rebuilt its whole list four times a second, for ever,**
+  on a non-positive refresh interval. The member is unsigned, so a stored −5
+  read back as 4294967291 and passed the old `> 0` guard, which then cast it
+  back to −5 *inside* the guard — and `elapsed >= -5000` is true on every tick.
+  The comment written beside the fix stated the bug backwards ("never refresh")
+  until a reviewer compiled the old expression; corrected before merge.
+
+And one **coverage hole the work itself left**: the no-echo extraction was
+tested while its *wiring* was not — deleting the `PollNoEcho()` call from the
+world timer left the entire suite green, with a real MUD password prompt going
+to a visible, echoing control. Found by a reviewer's mutation, closed with an
+arm that touches only `m_bNoEcho` and lets the timer find it.
 
 ## Confirmed findings
 

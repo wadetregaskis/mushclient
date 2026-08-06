@@ -18,7 +18,13 @@ closes several rows.
 |---|---|
 | Landed | **15 of 24.** #21 TLS recovery (`c6ccc92`); then clusters A–D, merged 2026-08-05: the output pane (1, 3, 4, 6-part, 10), the world frame (7, 9, 20/22), the MFC bridge (11, 12, 13, 14, 18), and the activity refresh (24). |
 | | (`PaneLineToDocLine` and the image-placement modes were found and fixed before this audit ran, by the same reasoning.) |
-| Open | 2, 5, 8, 15, 16, 17, 19, 23 — the dialog/property-sheet bridge (16-19, needs the loop-running mode), the `m_inPaint` re-entrancy guard (2), the frame's update-UI lambda (12's refactor half), and chat sockets (23). |
+| Open | **9.** In flight: 2 (the `m_inPaint` re-entrancy guard), 12 (the frame's update-UI lambda), 23 (the chat protocol's pure half). Waiting on the loop-running mode: 16, 17, 19 (property-sheet page lifecycle, bridged-dialog command routing, `pump_dialog_update_ui`). |
+
+Findings 5, 8 and 15 were listed as open here for a few hours and were not:
+the wheel handler landed with cluster A, the speed-walk drain in `5a07b7e`, and
+`DefaultWorldFileName` with cluster C. Grep HEAD before believing this table —
+the same warning `CLAUDE.md` gives about every backlog file in this repo
+applies to this one, and it took under a day to come true.
 
 ### What the cluster pass actually found
 

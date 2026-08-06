@@ -229,6 +229,17 @@ if(TARGET mushgui)
                              RUN_SERIAL TRUE
                              TIMEOUT 120)
 
+        # A measurement rather than a behaviour test: it prints the paint cost
+        # that refuted 11(b) (docs/AUDIT-2026-08.md).  Registered so the number
+        # can be re-taken in one command instead of re-derived, and so the
+        # harness cannot rot.
+        add_test(NAME extended_paint_cost
+                 COMMAND $<TARGET_FILE:mushgui> --extended-selftest=paint-cost ${_selftest_args})
+        set_tests_properties(extended_paint_cost PROPERTIES
+                             LABELS "extended"
+                             RUN_SERIAL TRUE
+                             TIMEOUT 120)
+
         add_test(NAME extended_watchdog
                  COMMAND $<TARGET_FILE:mushgui> --extended-selftest=hang ${_selftest_args})
         set_tests_properties(extended_watchdog PROPERTIES

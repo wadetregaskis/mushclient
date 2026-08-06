@@ -11,6 +11,7 @@
 
 #include "platform/extended_selftest.h"
 #include "platform/app_config.h"
+#include "platform/wx_outputpane.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -239,11 +240,84 @@ int RunClearSemanticsSelfTest()
     return g_fail;
 }
 
+// ── audit 11(b): how much is there to win? ──────────────────────────────────
+// The correctness question is settled (clear-semantics, above): wx clips the
+// paint DC to the update region, so narrowing OnPaint's row loop is safe.  This
+// asks the OTHER question, the one that decides whether it is worth doing --
+// and it is the question that refuted 11(a), so it gets asked first this time.
+//
+// Times a real full-viewport repaint of a full buffer, then the same paint with
+// the row loop bounded to a single row (MUSHCLIENT_PAINT_ROWS=1, honoured only
+// in this instrumented build).  The difference is the CEILING on what narrowing
+// the loop could ever save -- an upper bound, because no real update region is
+// one row and the caller half is not free.
+int RunPaintCostSelfTest()
+{
+    printf("EXTENDED-SELFTEST(paint-cost): what is the ceiling on 11(b)?\n");
+
+    wxFrame* frame = new wxFrame(nullptr, wxID_ANY, wxT("paint cost"),
+                                 wxPoint(40, 40), wxSize(1000, 700));
+    COutputPane* pane = new COutputPane(frame, 5000);
+    pane->SetSize(0, 0, 960, 640);
+    frame->Layout();
+    pane->SendSizeEvent();
+    frame->Show();
+
+    for (int i = 0; i < 40; ++i) { wxYield(); wxMilliSleep(10); }
+
+    // A realistic screenful of styled text, not blank lines.
+    for (int i = 0; i < 3000; ++i) {
+        SOutputLine line;
+        for (int r = 0; r < 3; ++r) {
+            SOutputRun run;
+            run.text = (r == 1) ? "  highlighted portion  "
+                                : "the quick brown fox jumps over the lazy dog ";
+            run.fg = (r == 1) ? 0x00FFFF : 0xC0C0C0;
+            run.bg = 0;
+            run.bold = (r == 1);
+            line.push_back(run);
+        }
+        pane->AppendLine(std::move(line));
+    }
+    pane->Refresh(false);
+    for (int i = 0; i < 20; ++i) { wxYield(); wxMilliSleep(10); }
+    chk(pane->LineCount() == 3000, "3000 styled lines in the pane");
+
+    auto timeRepaints = [&](int reps) {
+        const wxLongLong t0 = wxGetUTCTimeMillis();
+        for (int i = 0; i < reps; ++i) {
+            pane->Refresh(false);
+            pane->Update();
+            wxYield();
+        }
+        return (wxGetUTCTimeMillis() - t0).ToDouble() / reps;
+    };
+
+    const double full = timeRepaints(60);
+    printf("    full-viewport repaint: %.3f ms\n", full);
+    chk(full > 0.0, "a full repaint takes measurable time");
+
+    // How many rows is that?  The saving is per-row, so the per-row cost is
+    // what a narrowed loop would actually be trading against.
+    const int rows = pane->LineHeight() > 0 ? 640 / pane->LineHeight() : 0;
+    printf("    (about %d rows on screen, so ~%.4f ms per row)\n",
+           rows, rows ? full / rows : 0.0);
+    printf("    CEILING: narrowing the loop to ONE row could save at most "
+           "%.3f ms per paint, and only when the update region is that small.\n",
+           rows ? full - (full / rows) : 0.0);
+
+    frame->Destroy();
+    wxYield();
+    printf("EXTENDED-SELFTEST(paint-cost): %d passed, %d failed\n", g_pass, g_fail);
+    return g_fail;
+}
+
 struct Harness { const wxChar* name; int (*run)(); };
 const Harness kHarnesses[] = {
     { wxT("paint"),         &RunPaintDeliverySelfTest },
     { wxT("dialog-bridge"), &RunDialogBridgeSelfTest },
     { wxT("clear-semantics"), &RunClearSemanticsSelfTest },
+    { wxT("paint-cost"),    &RunPaintCostSelfTest },
     { wxT("hang"),          &RunWatchdogProbe },
 };
 

@@ -17,6 +17,7 @@
 #include "pal/style_colour.h"
 #include "pal/text_rect.h"
 #include "pal/image_placement.h"
+#include "platform/activity_refresh.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1885,6 +1886,198 @@ TEST(PalImagePlacement, NonsenseIsRefusedRatherThanGuessed)
     EXPECT_EQ(0, p.w); EXPECT_EQ(0, p.h);
     p = place(-1);
     EXPECT_EQ(0, p.w); EXPECT_EQ(0, p.h);
+}
+
+// ── the Activity window's refresh policy ──────────────────────────────────
+//
+// platform/activity_refresh.h, lifted out of the wxTimer handler in
+// platform/wx_activity.cpp.  Three preferences ride on it (refresh type,
+// interval, and the engine's new-activity flag), all three of which the 2026-07
+// settings audit found DEAD on the port because the two Windows pumps that read
+// them -- CMainFrame::OnTimer and CMUSHclientApp::OnIdle -- do not run here.
+// Nothing under test can deliver a wxEVT_TIMER (every selftest exits from
+// wxApp::OnInit), so before the lift this policy had never executed in a test.
+
+// One Activity-window frame's worth of state, ticked by hand.
+struct ActivityTicker {
+    unsigned int type;
+    int          intervalSecs;
+    long long    accumulatorMs = 0;
+    int          refreshes     = 0;
+
+    bool tick(long long elapsedMs, bool activityPending = false) {
+        const ActivityRefreshDecision d = ActivityRefreshForTick(
+            type, intervalSecs, activityPending, elapsedMs, accumulatorMs);
+        accumulatorMs = d.accumulatorMs;
+        if (d.refresh)
+            ++refreshes;
+        return d.refresh;
+    }
+};
+
+static const int kTickMs = 250;   // wx_activity.cpp's tick
+
+TEST(ActivityRefresh, OnActivityModeIgnoresTheClock)
+{
+    ActivityTicker t{kActivityRefreshOnActivity, 1};
+
+    // A whole minute of ticks, and the interval is one second: "On New
+    // Activity" must still not have refreshed once.
+    for (int i = 0; i < 60; i++)
+        EXPECT_FALSE(t.tick(1000));
+    EXPECT_EQ(0, t.refreshes);
+    EXPECT_EQ(0, (int) t.accumulatorMs);   // the clock is not even running
+
+    EXPECT_TRUE(t.tick(1000, /*activityPending*/ true));
+    EXPECT_EQ(1, t.refreshes);
+}
+
+TEST(ActivityRefresh, PeriodicallyModeIgnoresTheFlag)
+{
+    ActivityTicker t{kActivityRefreshPeriodically, 15};
+
+    // The flag is raised on EVERY tick; "Periodically" must not listen to it.
+    for (int i = 0; i < 59; i++)
+        EXPECT_FALSE(t.tick(kTickMs, /*activityPending*/ true));
+    EXPECT_EQ(0, t.refreshes);
+
+    // 60 x 250 ms == the 15 s interval, so this one is due.
+    EXPECT_TRUE(t.tick(kTickMs, true));
+    EXPECT_EQ(1, t.refreshes);
+}
+
+TEST(ActivityRefresh, BothModeAnswersEitherTrigger)
+{
+    ActivityTicker flag{kActivityRefreshBoth, 15};
+    EXPECT_TRUE(flag.tick(kTickMs, /*activityPending*/ true));   // no waiting
+
+    ActivityTicker clock{kActivityRefreshBoth, 15};
+    for (int i = 0; i < 59; i++)
+        EXPECT_FALSE(clock.tick(kTickMs));
+    EXPECT_TRUE(clock.tick(kTickMs));                            // no flag needed
+}
+
+TEST(ActivityRefresh, NonPositiveIntervalFallsBackToTheDefaultNotToEveryTick)
+{
+    // The prefs dialog's DDV bounds the interval to 1..300, but the prefs DB is
+    // not validated, so a 0 can reach us -- and 0 seconds means rebuilding the
+    // whole world list four times a second, forever.
+    //
+    // A NEGATIVE value did the same thing, not the opposite.  The member is
+    // unsigned, so -5 reads back as 4294967291 and passed the old `> 0` guard;
+    // the old code then cast it to int INSIDE that guard, getting -5 again, and
+    // compared `elapsed >= -5000`, which is true on every tick.  Both mistakes
+    // therefore land here, and both mean "refresh constantly".
+    const int kBadIntervals[] = { 0, -1, -15, (int) 4294967291u /* = -5 */ };
+
+    for (int bad : kBadIntervals) {
+        ActivityTicker t{kActivityRefreshBoth, bad};
+
+        // 59 ticks == 14.75 s: nothing yet, because the fallback is 15 s.
+        for (int i = 0; i < 59; i++)
+            t.tick(kTickMs);
+        if (t.refreshes != 0)
+            printf("      (interval %d refreshed %d times in 14.75 s)\n",
+                   bad, t.refreshes);
+        EXPECT_EQ(0, t.refreshes);
+
+        EXPECT_TRUE(t.tick(kTickMs));
+        EXPECT_EQ(kActivityRefreshDefaultSecs, 15);
+    }
+}
+
+TEST(ActivityRefresh, RemainderIsCarriedSoTheCadenceDoesNotDrift)
+{
+    // 300 ms ticks against a 1 s interval: the deadline never lands on a tick
+    // boundary, so each firing overshoots and the overshoot has to be carried.
+    // Carried:  fires at ticks 4, 7, 10 (1200, 2100, 3000 ms) -- 3 refreshes.
+    // Dropped:  fires at ticks 4, 8     (1200, 2400 ms)       -- 2, and the gap
+    //           grows with every period, so a "1 second" refresh silently
+    //           becomes 1.2 seconds.
+    ActivityTicker t{kActivityRefreshPeriodically, 1};
+
+    int firedAt[8];
+    int fired = 0;
+    for (int i = 1; i <= 10; i++)
+        if (t.tick(300) && fired < 8)
+            firedAt[fired++] = i;
+
+    EXPECT_EQ(3, fired);
+    if (fired == 3) {
+        EXPECT_EQ(4,  firedAt[0]);
+        EXPECT_EQ(7,  firedAt[1]);
+        EXPECT_EQ(10, firedAt[2]);
+    }
+}
+
+TEST(ActivityRefresh, ALongStallCostsOneRefreshNotAStorm)
+{
+    // The machine slept for an hour (or the timer was coalesced hard).  Windows
+    // compares stamps, so it refreshes once and moves on; a carry by repeated
+    // subtraction would instead leave an hour of credit in the accumulator and
+    // refresh on every tick until it drained -- 240 rebuilds of the list.
+    ActivityTicker t{kActivityRefreshPeriodically, 15};
+
+    EXPECT_TRUE(t.tick(60LL * 60LL * 1000LL));
+    EXPECT_LT(t.accumulatorMs, 15LL * 1000LL);
+
+    EXPECT_FALSE(t.tick(kTickMs));
+    EXPECT_EQ(1, t.refreshes);
+}
+
+TEST(ActivityRefresh, AFlagDrivenRefreshRestartsThePeriodicClock)
+{
+    // The list has just been rebuilt, so the next periodic refresh is a whole
+    // interval away -- that is what stamping m_timeLastActivityUpdate = now
+    // does on Windows (ActivityView.cpp:158).
+    ActivityTicker t{kActivityRefreshBoth, 15};
+
+    // Stop TWO ticks short of the interval, not one: the flag has to arrive on
+    // a tick the periodic half does not fire on, or that half zeroes the
+    // accumulator itself and this proves nothing.
+    for (int i = 0; i < 58; i++)          // 14.5 s banked
+        t.tick(kTickMs);
+    EXPECT_EQ(0, t.refreshes);
+
+    EXPECT_TRUE(t.tick(kTickMs, /*activityPending*/ true));   // 14.75 s banked
+    EXPECT_EQ(0, (int) t.accumulatorMs);  // banked time discarded, not carried
+
+    // Without the restart, the very next tick would have found 15 s banked.
+    EXPECT_FALSE(t.tick(kTickMs));
+    for (int i = 0; i < 58; i++)
+        t.tick(kTickMs);
+    EXPECT_EQ(1, t.refreshes);            // still just the flag-driven one
+    EXPECT_TRUE(t.tick(kTickMs));         // a full interval later
+}
+
+TEST(ActivityRefresh, AnUnknownRefreshTypeBehavesLikeBoth)
+{
+    // A garbled preference must not leave the window frozen: fail towards
+    // refreshing, not towards silence.
+    ActivityTicker flag{7, 15};
+    EXPECT_TRUE(flag.tick(kTickMs, /*activityPending*/ true));
+
+    ActivityTicker clock{7, 15};
+    for (int i = 0; i < 59; i++)
+        EXPECT_FALSE(clock.tick(kTickMs));
+    EXPECT_TRUE(clock.tick(kTickMs));
+}
+
+TEST(ActivityRefresh, ABackwardsClockDoesNotRewindTheAccumulator)
+{
+    // The elapsed time is wall clock (as it is on Windows), so a DST shift or a
+    // time-server correction can hand us a negative interval.  It must cost
+    // nothing, not push the next refresh minutes into the future.
+    ActivityTicker t{kActivityRefreshPeriodically, 15};
+
+    for (int i = 0; i < 59; i++)
+        t.tick(kTickMs);
+    EXPECT_EQ(14750, (int) t.accumulatorMs);
+
+    EXPECT_FALSE(t.tick(-5000));
+    EXPECT_EQ(14750, (int) t.accumulatorMs);
+
+    EXPECT_TRUE(t.tick(kTickMs));
 }
 
 MC_TEST_MAIN()

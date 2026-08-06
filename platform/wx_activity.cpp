@@ -9,11 +9,20 @@
 #include <wx/wx.h>
 #include <wx/listctrl.h>
 #include <wx/timer.h>
+#include <wx/stopwatch.h>
 
 #include "stdafx.h"                   // compat.h, GetConnectionStatus()
 #include "MUSHclient.h"               // CMUSHclientApp + App + doc template
 #include "doc.h"                      // CMUSHclientDoc, eConnectConnectedToMud
 #include "platform/wx_activity.h"
+#include "platform/activity_refresh.h"   // the refresh policy, lifted out to be testable
+
+// activity_refresh.h restates the refresh-type enum so it can stay free of MFC;
+// this is the only place both spellings are visible, so check them here.
+static_assert ((int) CMUSHclientApp::eRefreshOnActivity   == kActivityRefreshOnActivity &&
+               (int) CMUSHclientApp::eRefreshPeriodically == kActivityRefreshPeriodically &&
+               (int) CMUSHclientApp::eRefreshBoth         == kActivityRefreshBoth,
+               "activity_refresh.h's refresh types have drifted from CMUSHclientApp's");
 
 // Defined in wx_mfc_impl.cpp, where the full CWorldChildFrame type and the correct
 // wx/MFC include order live: raise + activate the world's MDI child frame.  (We
@@ -84,37 +93,40 @@ private:
     //     has set App.m_bUpdateActivity, which the shared display code raises on
     //     every new line (doc_shared.cpp "new activity!").
     // The flag is cleared once consumed, so a burst coalesces into one refresh.
+    //
+    // The decision itself is ActivityRefreshForTick (platform/activity_refresh.h):
+    // nothing can reach a wxEVT_TIMER handler under test, so it lives where it
+    // can be called directly.
     static const int kTickMs = 250;
 
     void OnTimer(wxTimerEvent&)
     {
-        const unsigned int type = App.m_nActivityWindowRefreshType;
-        bool bRefresh = false;
+        // Charge the policy the time that really passed, not the 250 ms we
+        // asked for.  macOS coalesces timers (and the machine may have slept),
+        // so counting nominal ticks would quietly stretch the user's "every N
+        // seconds" into something longer — the wall clock is what Windows
+        // compares against too (mainfrm.cpp:774).
+        const long long elapsedMs = m_sinceTick.Time();
+        m_sinceTick.Start();
 
-        if (type != CMUSHclientApp::eRefreshPeriodically && App.m_bUpdateActivity)
-            bRefresh = true;                       // new activity arrived
+        const ActivityRefreshDecision decision = ActivityRefreshForTick (
+            App.m_nActivityWindowRefreshType,
+            (int) App.m_nActivityWindowRefreshInterval,   // signed on purpose — see the header
+            App.m_bUpdateActivity != FALSE,
+            elapsedMs,
+            m_msSinceRefresh);
 
-        if (type != CMUSHclientApp::eRefreshOnActivity) {
-            // Interval of 0 would busy-refresh; the dialog's DDV bounds it to
-            // 1..300, but the prefs DB is not validated, so guard it here.
-            const int secs = (App.m_nActivityWindowRefreshInterval > 0)
-                           ? (int) App.m_nActivityWindowRefreshInterval : 15;
-            m_msSinceRefresh += kTickMs;
-            if (m_msSinceRefresh >= secs * 1000) {
-                bRefresh = true;
-                m_msSinceRefresh = 0;
-            }
-        }
+        m_msSinceRefresh = decision.accumulatorMs;
 
-        if (!bRefresh)
+        if (!decision.refresh)
             return;
 
         App.m_bUpdateActivity = FALSE;   // consumed
-        m_msSinceRefresh = 0;
         Repopulate();
     }
 
-    int m_msSinceRefresh = 0;
+    long long   m_msSinceRefresh = 0;
+    wxStopWatch m_sinceTick;             // runs from construction
 
     void OnClose(wxCloseEvent&)
     {

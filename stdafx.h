@@ -591,6 +591,10 @@ void MakeRandomNumber (CMUSHclientDoc * pDoc, SHS_INFO & shsInfo);
 void ShutDownSocket (CAsyncSocket & s);
 CString ExtractDirectory (CString str);
 CString RemoveFinalSlash (CString str);
+// Filename to offer for a never-saved world: the world name with the characters
+// Windows forbids stripped out (utilities_shared.cpp).  Used by the port's save
+// hooks; Windows reaches the same logic inline in CMUSHclientDoc::OnSaveDocument.
+CString DefaultWorldFileName (const CString & strWorldName);
 
 #define PLUGIN_UNIQUE_ID_LENGTH 24
 

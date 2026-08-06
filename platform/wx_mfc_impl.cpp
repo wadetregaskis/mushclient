@@ -61,6 +61,7 @@
 #include "platform/wx_dialog_bridge.h" // MfcDialogResources, BuildWxDialogFromTemplate
 #include "platform/posix_transport.h"  // pal::PumpTransportCompletions (poll timer)
 #include "platform/menu_ui_rules.h"    // MenuCommandUiState / PortMenuActionForCommandId
+#include "platform/wx_mfc_logic.h"     // the pure decisions lifted out of the hooks below
 #include "dialogs/world_prefs/TreePropertySheet.h" // port CTreePropertySheet (page list)
 #include "dialogs/world_prefs/GenPropertyPage.h"    // CGenPropertyPage (entity-list idle reload)
 #include "dialogs/ImmediateDlg.h"     // CImmediateDlg (canonical Execute-Lua dialog)
@@ -229,63 +230,108 @@ static void apply_always_on_top(wxMDIParentFrame* frame, bool bOnTop)
 static wxMenu*    s_recentMenu     = nullptr;
 static std::vector<std::string> s_recentWorlds;
 
-// Load the recent list from config into s_recentWorlds.
-static void recent_worlds_load()
+// Load the recent list out of `cfg`.  The config object is a parameter, not a
+// local, so a test can round-trip this against a scratch file rather than the
+// user's real preferences (same reason SaveWindowGeometryTo takes one).
+//
+// The walk STOPS at the first missing-or-empty slot, which is what makes the
+// tail deletion in RecentWorldsSaveTo load-bearing rather than tidy-up.
+void RecentWorldsLoadFrom(wxConfigBase& cfg, std::vector<std::string>& out,
+                          int maxEntries)
 {
-    s_recentWorlds.clear();
-    wxConfig cfg(wxT("mushclient"));
-    for (int i = 0; i < kMaxRecentWorlds; ++i) {
+    out.clear();
+    for (int i = 0; i < maxEntries; ++i) {
         wxString key = wxString::Format(wxT("/recent/%d"), i);
         wxString val;
         if (!cfg.Read(key, &val) || val.IsEmpty()) break;
-        s_recentWorlds.push_back(std::string(val.ToUTF8()));
+        out.push_back(std::string(val.ToUTF8()));
     }
 }
 
-// Persist the current s_recentWorlds to config.
+// Persist `list` into `cfg`, deleting every slot past its end: a shorter list
+// written over a longer one must not leave the old tail readable, or the next
+// load resurrects worlds the user removed.
+void RecentWorldsSaveTo(wxConfigBase& cfg, const std::vector<std::string>& list,
+                        int maxEntries)
+{
+    for (int i = 0; i < maxEntries; ++i) {
+        wxString key = wxString::Format(wxT("/recent/%d"), i);
+        if (i < (int)list.size())
+            cfg.Write(key, wxString::FromUTF8(list[i].c_str()));
+        else
+            cfg.DeleteEntry(key);
+    }
+}
+
+// Move `path` to the front, dropping any earlier occurrence, and cap the list.
+void RecentWorldsPromote(std::vector<std::string>& list,
+                         const std::string& path,
+                         int maxEntries)
+{
+    if (path.empty()) return;
+    list.erase(std::remove(list.begin(), list.end(), path), list.end());
+    list.insert(list.begin(), path);
+    if ((int)list.size() > maxEntries)
+        list.resize(maxEntries);
+}
+
+// The live list and its menu-id block, for the menu-bar selftest.
+const std::vector<std::string>& RecentWorldsList() { return s_recentWorlds; }
+int RecentWorldsMaxEntries()  { return kMaxRecentWorlds; }
+int RecentWorldsMenuIdBase()  { return kRecentMenuBase; }
+
+// Load the recent list from the user's config into s_recentWorlds.
+static void recent_worlds_load()
+{
+    wxConfig cfg(wxT("mushclient"));
+    RecentWorldsLoadFrom(cfg, s_recentWorlds, kMaxRecentWorlds);
+}
+
+// Persist the current s_recentWorlds to the user's config.
 static void recent_worlds_save()
 {
     wxConfig cfg(wxT("mushclient"));
-    for (int i = 0; i < kMaxRecentWorlds; ++i) {
-        wxString key = wxString::Format(wxT("/recent/%d"), i);
-        if (i < (int)s_recentWorlds.size())
-            cfg.Write(key, wxString::FromUTF8(s_recentWorlds[i].c_str()));
-        else
-            cfg.DeleteEntry(key);
+    RecentWorldsSaveTo(cfg, s_recentWorlds, kMaxRecentWorlds);
+}
+
+// Rebuild `menu` from `list`.  Takes both as parameters so a test can drive it
+// with a list of its own: the live one comes from the user's config, so an
+// assertion against it alone would be strong or vacuous depending on whose
+// machine it runs on.
+void RecentWorldsBuildMenu(wxMenu* menu, const std::vector<std::string>& list,
+                           int idBase)
+{
+    if (!menu) return;
+    while (menu->GetMenuItemCount() > 0)
+        menu->Delete(menu->FindItemByPosition(0));
+    if (list.empty()) {
+        // Disabled, and it must stay that way: it occupies the same id as the
+        // first real entry, so an enabled placeholder would try to open a world
+        // called "(no recent worlds)".
+        wxMenuItem* dummy = menu->Append(idBase, wxT("(no recent worlds)"));
+        dummy->Enable(false);
+        return;
+    }
+    for (int i = 0; i < (int)list.size(); ++i) {
+        wxString path  = wxString::FromUTF8(list[i].c_str());
+        wxString label = wxString::Format(wxT("&%d  %s"),
+                                          (i + 1) % 10,
+                                          wxFileName(path).GetFullName());
+        menu->Append(idBase + i, label);
     }
 }
 
 // Rebuild s_recentMenu from s_recentWorlds.
 static void recent_worlds_update_menu()
 {
-    if (!s_recentMenu) return;
-    while (s_recentMenu->GetMenuItemCount() > 0)
-        s_recentMenu->Delete(s_recentMenu->FindItemByPosition(0));
-    if (s_recentWorlds.empty()) {
-        wxMenuItem* dummy = s_recentMenu->Append(kRecentMenuBase,
-                                                  wxT("(no recent worlds)"));
-        dummy->Enable(false);
-        return;
-    }
-    for (int i = 0; i < (int)s_recentWorlds.size(); ++i) {
-        wxString path  = wxString::FromUTF8(s_recentWorlds[i].c_str());
-        wxString label = wxString::Format(wxT("&%d  %s"),
-                                          (i + 1) % 10,
-                                          wxFileName(path).GetFullName());
-        s_recentMenu->Append(kRecentMenuBase + i, label);
-    }
+    RecentWorldsBuildMenu(s_recentMenu, s_recentWorlds, kRecentMenuBase);
 }
 
 // Prepend path to s_recentWorlds (deduplicated), persist, and update the menu.
 static void recent_worlds_add(const std::string& path)
 {
     if (path.empty()) return;
-    s_recentWorlds.erase(
-        std::remove(s_recentWorlds.begin(), s_recentWorlds.end(), path),
-        s_recentWorlds.end());
-    s_recentWorlds.insert(s_recentWorlds.begin(), path);
-    if ((int)s_recentWorlds.size() > kMaxRecentWorlds)
-        s_recentWorlds.resize(kMaxRecentWorlds);
+    RecentWorldsPromote(s_recentWorlds, path, kMaxRecentWorlds);
     recent_worlds_save();
     recent_worlds_update_menu();
 }
@@ -536,7 +582,12 @@ static int hook_post_message(void* h, unsigned msg, uintptr_t wp, intptr_t lp)
     return FALSE;
 }
 
-static int hook_message_box(const char* text, const char* caption, unsigned flags)
+// The decode half of hook_message_box, split out so it can be tested: the hook
+// itself ends in ShowModal, and no in-app selftest can complete a modal (they
+// all exit from wxApp::OnInit, before there is an event loop).  Since all three
+// bugs recorded below lived in the decode and not in the dialog, that is
+// exactly the half worth reaching.  Declared in platform/wx_mfc_logic.h.
+long MessageBoxStyleForMbFlags(unsigned flags, MbRelabel* relabel_out)
 {
     // The MB_* button set is the low nibble — an ENUMERATION, not bit flags — and
     // the icon is the 0xF0 nibble.  Decode each as a field; the old bitwise tests
@@ -547,8 +598,7 @@ static int hook_message_box(const char* text, const char* caption, unsigned flag
     // OK and OK/Cancel: utils.msgbox(..., "abortretryignore") showed one button
     // and could only ever return IDOK, so a script branching on abort vs retry
     // vs ignore always took the same arm.
-    enum ERelabel { eNoRelabel, eAbortRetryIgnore, eRetryCancel };
-    ERelabel relabel = eNoRelabel;
+    MbRelabel relabel = eNoRelabel;
 
     long style = wxOK;
     switch (flags & 0x000F) {
@@ -590,19 +640,16 @@ static int hook_message_box(const char* text, const char* caption, unsigned flag
         if ((style & wxYES_NO) && (style & wxCANCEL)) style |= wxCANCEL_DEFAULT;
     }
 
-    wxString wxText    = text    ? wxString::FromUTF8(text)    : wxString();
-    wxString wxCaption = caption ? wxString::FromUTF8(caption) : wxString("MUSHclient");
+    if (relabel_out) *relabel_out = relabel;
+    return style;
+}
 
-    wxMessageDialog dlg(nullptr, wxText, wxCaption, (int)style);
-    if (relabel == eAbortRetryIgnore)
-        dlg.SetYesNoCancelLabels(wxT("Abort"), wxT("Retry"), wxT("Ignore"));
-    else if (relabel == eRetryCancel)
-        dlg.SetOKCancelLabels(wxT("Retry"), wxT("Cancel"));
-
-    const int res = dlg.ShowModal();
-
-    // Map wx result to MB_* return codes, honouring the relabelling above so the
-    // caller gets the code for the button it actually asked for.
+// The result half: map wx's ShowModal answer back to the MB_* code the caller
+// is branching on.  Split out with the decode, and for the same reason.
+int MbResultForWxId(MbRelabel relabel, int res)
+{
+    // Honour the relabelling so the caller gets the code for the button it
+    // actually asked for.
     if (relabel == eAbortRetryIgnore) {
         switch (res) {
         case wxID_YES:    return IDABORT;
@@ -625,6 +672,23 @@ static int hook_message_box(const char* text, const char* caption, unsigned flag
     case wxID_NO:     return IDNO;
     default:          return IDOK;
     }
+}
+
+static int hook_message_box(const char* text, const char* caption, unsigned flags)
+{
+    MbRelabel relabel = eNoRelabel;
+    const long style  = MessageBoxStyleForMbFlags(flags, &relabel);
+
+    wxString wxText    = text    ? wxString::FromUTF8(text)    : wxString();
+    wxString wxCaption = caption ? wxString::FromUTF8(caption) : wxString("MUSHclient");
+
+    wxMessageDialog dlg(nullptr, wxText, wxCaption, (int)style);
+    if (relabel == eAbortRetryIgnore)
+        dlg.SetYesNoCancelLabels(wxT("Abort"), wxT("Retry"), wxT("Ignore"));
+    else if (relabel == eRetryCancel)
+        dlg.SetOKCancelLabels(wxT("Retry"), wxT("Cancel"));
+
+    return MbResultForWxId(relabel, dlg.ShowModal());
 }
 
 static void hook_set_status(const char* msg)
@@ -2156,29 +2220,26 @@ static void* hook_open_world_file(const char* path)
 }
 
 // ── Default filename for a world that has never been saved ────────────────
-// Windows offers the WORLD NAME, scrubbed of the characters it forbids in a
-// filename (doc.cpp:2190-2202).  That branch is unreachable on the port -- both
-// save hooks compute the path themselves -- so they used to offer the literal
-// "world.mcl" for every world, and a user saving three worlds got three
-// identically-named suggestions.  Same scrub set as the canonical code.
-static wxString DefaultWorldFileName(CMUSHclientDoc* doc)
+// The scrub-and-suffix rule itself now lives in utilities_shared.cpp, next to
+// the other pure string utilities and where tests/ can reach it; this is only
+// the doc → name lookup.
+wxString DefaultWorldFileNameForName(const CString& worldName)
 {
-    wxString name;
-    if (doc)
-        name = wxString::FromUTF8(static_cast<const char*>(doc->m_mush_name));
-
-    wxString clean;
-    for (size_t i = 0; i < name.length(); ++i) {
-        const wxUniChar ch = name[i];
-        if (wxString(wxT("<>\"|?:#%;/\\")).Find(ch) == wxNOT_FOUND)
-            clean += ch;
-    }
-    clean.Trim(true).Trim(false);
-
-    if (clean.IsEmpty()) return wxT("world.mcl");          // unnamed world
-    if (!clean.Lower().EndsWith(wxT(".mcl"))) clean += wxT(".mcl");
-    return clean;
+    const wxString out =
+        wxString::FromUTF8((const char*) DefaultWorldFileName(worldName));
+    // See the header.  FromUTF8 yields "" for a name that is not valid UTF-8 --
+    // an old world file carrying Latin-1 bytes, say -- and the Save dialog must
+    // not open with an empty filename.  Before the scrub was hoisted, the
+    // conversion happened FIRST and this fallback came out of the existing
+    // IsEmpty test; converting last means saying it explicitly.
+    return out.IsEmpty() ? wxT("world.mcl") : out;
 }
+
+static wxString DefaultWorldFileNameFor(CMUSHclientDoc* doc)
+{
+    return DefaultWorldFileNameForName(doc ? doc->m_mush_name : CString());
+}
+
 
 // ── Save Active World ─────────────────────────────────────────────────────
 // Saves the doc of the currently active MDI child frame.
@@ -2213,7 +2274,7 @@ static void hook_save_active_world(wxMDIParentFrame* frame, bool saveAs)
         wxFileDialog dlg(frame,
                          wxT("Save World File"),
                          saveDir,
-                         path.IsEmpty() ? DefaultWorldFileName(doc)
+                         path.IsEmpty() ? DefaultWorldFileNameFor(doc)
                                        : wxFileName(path).GetFullName(),
                          wxT("MUSHclient world files (*.mcl)|*.mcl|All files (*.*)|*.*"),
                          wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
@@ -2515,7 +2576,7 @@ static bool hook_save_world(void* vdoc, bool saveAs, void* vparent)
         wxFileDialog dlg(parent,
                          wxT("Save World File"),
                          saveDir,
-                         path.IsEmpty() ? DefaultWorldFileName(doc)
+                         path.IsEmpty() ? DefaultWorldFileNameFor(doc)
                                         : wxFileName(path).GetFullName(),
                          wxT("MUSHclient world files (*.mcl)|*.mcl"
                              "|All files (*.*)|*.*"),
@@ -3700,7 +3761,11 @@ static char* hook_directorypicker(const char* title, const char* defPath)
 // CMiniWindow::Menu() builds the plugin's context menu into the portable CMenu
 // tree (platform/mfc_ui.h); render it as a wxWidgets popup and return the
 // selected command id (TPM_RETURNCMD semantics), or 0 if cancelled.
-static wxMenu* wx_build_popup_menu(CMenu* m)
+//
+// The translation is externally callable (platform/wx_mfc_logic.h) so a test
+// can build a CMenu, render it and read the result back without ever showing
+// it — the popup itself needs an event loop, which no in-app selftest has.
+wxMenu* wx_build_popup_menu(CMenu* m)
 {
     wxMenu* wxm = new wxMenu();
     for (const CMenu::Item& it : m->m_items)
@@ -3895,6 +3960,32 @@ static void pump_dialog_update_ui(CCmdTarget* target, wxWindow* container, const
         if (gp->m_bReloadList) { gp->m_bReloadList = false; gp->LoadList(); }
 }
 
+// The key translation the dialog bridge's CHAR_HOOK performs before offering
+// the keystroke to PreTranslateMessage.  Split out of the lambda (see the
+// comment at the Bind below for what depends on it) because a CHAR_HOOK is
+// delivered by the event loop, and no in-app selftest ever reaches one.
+// Declared in platform/wx_mfc_logic.h.
+bool DialogKeyToMsg(int wxKeyCode, bool altDown, MSG* msg)
+{
+    if (!msg) return false;
+    switch (wxKeyCode) {
+        case WXK_TAB:
+            msg->message = WM_KEYDOWN;
+            msg->wParam  = VK_TAB;
+            return true;
+        case WXK_RETURN:
+        case WXK_NUMPAD_ENTER:
+            // Alt+Return is WM_SYSKEYDOWN on Windows, and that is the only
+            // thing distinguishing "open the multi-line editor" from "press
+            // the default button" for the three entity dialogs.
+            msg->message = altDown ? WM_SYSKEYDOWN : WM_KEYDOWN;
+            msg->wParam  = VK_RETURN;
+            return true;
+        default:
+            return false;
+    }
+}
+
 static intptr_t hook_run_dialog(void* self, unsigned idd)
 {
     CDialog* cdlg = static_cast<CDialog*>(self);
@@ -3996,19 +4087,9 @@ static intptr_t hook_run_dialog(void* self, unsigned idd)
     // for every ES_MULTILINE edit regardless of the flag.)
     dlg->Bind(wxEVT_CHAR_HOOK, [cdlg](wxKeyEvent& e) {
         MSG msg{};
-        msg.message = WM_KEYDOWN;
-        switch (e.GetKeyCode()) {
-            case WXK_TAB:
-                msg.wParam = VK_TAB;
-                break;
-            case WXK_RETURN:
-            case WXK_NUMPAD_ENTER:
-                msg.wParam = VK_RETURN;
-                if (e.AltDown()) msg.message = WM_SYSKEYDOWN;
-                break;
-            default:
-                e.Skip();
-                return;
+        if (!DialogKeyToMsg(e.GetKeyCode(), e.AltDown(), &msg)) {
+            e.Skip();
+            return;
         }
         // MFC's contract: TRUE means the override consumed the key.
         if (!cdlg->PreTranslateMessage(&msg)) e.Skip();

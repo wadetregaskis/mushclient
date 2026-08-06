@@ -27,6 +27,7 @@
 #include <wx/mdi.h>
 #include <wx/menu.h>
 #include <wx/accel.h>
+#include <wx/filename.h>   // wxFileName — the Open Recent labels are basenames
 
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -36,6 +37,7 @@
 #include "resource.h"
 #include "platform/wx_world_child.h"
 #include "platform/wx_mfc_hooks.h"
+#include "platform/wx_mfc_logic.h"   // RecentWorlds* — the MRU behind File ▸ Open Recent
 
 #include <cstdio>
 #include <map>
@@ -293,6 +295,156 @@ int RunMenuBarSelfTest()
         if (canon)
             check(canon->accelKey == 0,
                   "...and takes no accelerator here (Windows keeps Shift+Ctrl+C)");
+    }
+
+    // ── the Save-As default filename ────────────────────────────────────────
+    // The scrub itself is covered headlessly (Utilities.DefaultWorldFileName*).
+    // What only exists on this side is the wx conversion, and the fallback that
+    // has to come AFTER it: FromUTF8 is all-or-nothing, so a world name that is
+    // not valid UTF-8 -- an old world file carrying Latin-1 bytes -- converts to
+    // an EMPTY string, and an empty filename in the Save dialog is worse than a
+    // generic one.  Before the scrub was hoisted the conversion came first and
+    // this fell out of the existing IsEmpty test.
+    {
+        check(DefaultWorldFileNameForName("Dune") == wxT("Dune.mcl"),
+              "the Save-As default is the world name plus .mcl");
+        check(DefaultWorldFileNameForName("a/b") == wxT("ab.mcl"),
+              "...with the path separator scrubbed out");
+        check(DefaultWorldFileNameForName("") == wxT("world.mcl"),
+              "...falling back for an unnamed world");
+        // The regression this exists to catch.  "Caf\xE9" is Latin-1, not UTF-8.
+        check(DefaultWorldFileNameForName("Caf\xE9") == wxT("world.mcl"),
+              "...and for a name that is not valid UTF-8, rather than empty");
+        check(!DefaultWorldFileNameForName("Caf\xE9").IsEmpty(),
+              "...which is the part that matters: never an empty filename");
+    }
+
+    // ── File ▸ Open Recent ──────────────────────────────────────────────────
+    // The MRU load and the menu rebuild both ran during the frame build above;
+    // nothing had ever looked at the result.  Two halves, because they fail
+    // differently: the LIVE menu is checked against the LIVE list (so the two
+    // cannot drift), and the builder is then driven with lists of our own (so
+    // the check is not at the mercy of whatever is in the tester's config —
+    // on a machine with no recent worlds every list assertion would otherwise
+    // be vacuously true).
+    {
+        const int idBase = RecentWorldsMenuIdBase();
+        const std::vector<std::string>& live = RecentWorldsList();
+
+        wxMenu* recent = NULL;
+        for (size_t m = 0; m < mb->GetMenuCount() && !recent; ++m)
+            for (const wxMenuItem* mi : mb->GetMenu(m)->GetMenuItems())
+                if (mi->IsSubMenu() && mi->GetItemLabelText() == wxT("Open Recent"))
+                    { recent = mi->GetSubMenu(); break; }
+
+        check(recent != NULL, "File > Open Recent is in the menu bar");
+        printf("    (%d recent worlds in this config)\n", (int) live.size());
+
+        // Whatever recent_worlds_load produced from the real config has to obey
+        // the MRU's own invariants, or the menu it feeds is already wrong.
+        check((int) live.size() <= RecentWorldsMaxEntries(),
+              "the loaded MRU respects the cap");
+        {
+            bool clean = true;
+            for (size_t i = 0; i < live.size(); ++i) {
+                if (live[i].empty()) clean = false;      // an empty entry ends the list
+                for (size_t j = i + 1; j < live.size(); ++j)
+                    if (live[i] == live[j]) clean = false;
+            }
+            check(clean, "the loaded MRU has no empty and no duplicate entries");
+        }
+
+        // A full MRU is the only case where the mnemonic digit wraps: entries
+        // 1..9 get &1..&9 and the tenth gets &0, because "&10" is not a
+        // mnemonic.  Driven with our own list so it does not depend on the
+        // tester's config having ten worlds in it.
+        {
+            std::vector<std::string> full;
+            for (int i = 1; i <= RecentWorldsMaxEntries(); ++i)
+                full.push_back("/tmp/w" + std::to_string(i) + ".mcl");
+            wxMenu probe;
+            RecentWorldsBuildMenu(&probe, full, idBase);
+            check((int) probe.GetMenuItemCount() == RecentWorldsMaxEntries(),
+                  "a full MRU gives one menu item per entry");
+            const wxMenuItem* first = probe.FindItemByPosition(0);
+            const wxMenuItem* last  =
+                probe.FindItemByPosition(RecentWorldsMaxEntries() - 1);
+            check(first && first->GetItemLabel().StartsWith(wxT("&1")),
+                  "...the first is mnemonic &1");
+            check(last && last->GetItemLabel().StartsWith(wxT("&0")),
+                  "...and the tenth wraps to &0, not &10");
+        }
+
+        if (recent) {
+            check(recent->GetMenuItemCount() ==
+                      (live.empty() ? 1u : (unsigned) live.size()),
+                  "the menu has exactly one item per recent world");
+            if (live.empty()) {
+                const wxMenuItem* mi = recent->FindItemByPosition(0);
+                check(mi && !mi->IsEnabled(),
+                      "an empty MRU shows a DISABLED placeholder");
+                check(mi && mi->GetId() == idBase,
+                      "...on the first id of the reserved block");
+            } else {
+                bool idsOk = true, labelsOk = true, enabledOk = true;
+                for (size_t i = 0; i < live.size(); ++i) {
+                    const wxMenuItem* mi = recent->FindItemByPosition(i);
+                    if (!mi) { idsOk = labelsOk = false; break; }
+                    if (mi->GetId() != idBase + (int) i) idsOk = false;
+                    if (!mi->IsEnabled()) enabledOk = false;
+                    // The label carries only the basename; the command handler
+                    // indexes the LIST by (id - base), so this correspondence is
+                    // what makes the right world open.
+                    const wxString want =
+                        wxFileName(wxString::FromUTF8(live[i].c_str())).GetFullName();
+                    if (mi->GetItemLabelText().Find(want) == wxNOT_FOUND)
+                        labelsOk = false;
+                }
+                check(idsOk,     "each entry sits at its own id, in list order");
+                check(labelsOk,  "each entry is labelled with its world's filename");
+                check(enabledOk, "every real entry is enabled");
+            }
+        }
+
+        // ── the builder, driven directly ────────────────────────────────────
+        // Rebuild a scratch menu from lists we choose, so both branches are
+        // exercised on every machine.  (It is the same function the frame just
+        // ran; the live menu is left alone.)
+        {
+            wxMenu scratch;
+            const std::vector<std::string> three = {
+                "/worlds/Discworld.mcl", "/elsewhere/Aardwolf.mcl", "/w/Discworld.mcl" };
+            RecentWorldsBuildMenu(&scratch, three, idBase);
+            check(scratch.GetMenuItemCount() == 3, "builder: one item per world");
+            bool ok = true;
+            for (int i = 0; i < 3; ++i) {
+                const wxMenuItem* mi = scratch.FindItemByPosition(i);
+                if (!mi || mi->GetId() != idBase + i || !mi->IsEnabled()) ok = false;
+            }
+            check(ok, "builder: consecutive ids from the base, all enabled");
+            // Two worlds sharing a basename must still be two items — the menu
+            // shows only the filename, but they are different files.
+            check(scratch.FindItemByPosition(0)->GetItemLabelText()
+                      .Find(wxT("Discworld.mcl")) != wxNOT_FOUND &&
+                  scratch.FindItemByPosition(2)->GetItemLabelText()
+                      .Find(wxT("Discworld.mcl")) != wxNOT_FOUND,
+                  "builder: same-basename worlds each get their own entry");
+
+            // Rebuilding must REPLACE, not append: recent_worlds_add calls this
+            // on every world opened, so a menu that only grew would soon list
+            // the same world ten times.
+            const std::vector<std::string> one = { "/worlds/Only.mcl" };
+            RecentWorldsBuildMenu(&scratch, one, idBase);
+            check(scratch.GetMenuItemCount() == 1,
+                  "builder: a rebuild replaces the old items, it does not append");
+
+            RecentWorldsBuildMenu(&scratch, std::vector<std::string>(), idBase);
+            check(scratch.GetMenuItemCount() == 1,
+                  "builder: an empty list still leaves something to look at");
+            const wxMenuItem* ph = scratch.FindItemByPosition(0);
+            check(ph && !ph->IsEnabled(),
+                  "builder: ...and that placeholder is disabled, so it cannot be picked");
+        }
     }
 
     frame->Destroy();

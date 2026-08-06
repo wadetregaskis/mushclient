@@ -33,7 +33,10 @@
 #include "platform/wx_world_child.h"    // wx_save_child_geometry
 #include "platform/wx_dialog_bridge.h"  // MfcDialogResources, BuildWxDialogFromTemplate
 #include "platform/wx_mfc_hooks.h"      // g_wxhook_progress_* — the progress seam
+#include "platform/wx_mfc_logic.h"      // the decisions lifted out of the wx entry points
 #include "dialogs/ProgDlg.h"            // CProgressDlg
+
+#include <vector>
 
 // Defined in wx_mfc_impl.cpp: the geometry writer the quit hook and the MDI
 // parent's close handler share, taking the config it writes into.
@@ -328,6 +331,422 @@ void TestProgressDialog()
     g_wxhook_progress_set_title = savedTitle;
 }
 
+// ── 5. ::MessageBox MB_* decode ───────────────────────────────────────────
+// hook_message_box gates every destructive confirmation in the app and the
+// whole of scripted utils.msgbox, and until now had NO coverage at all: three
+// selftests replace the hook with a stub of their own, and the real one ends in
+// ShowModal, which cannot complete without an event loop.  Its own comments
+// record three bugs that shipped in these lines — MB_OKCANCEL read as Yes/No,
+// the two borrowed button sets collapsing so utils.msgbox could only ever
+// return IDOK, and a dropped MB_DEFBUTTON2 that pointed "Delete the selected N
+// items?" at Yes.  Table-test the decode, which is where all three lived.
+void TestMessageBoxDecode()
+{
+    printf("MessageBox MB_* decode:\n");
+
+    // ── the button set: the LOW NIBBLE, an enumeration, not bit flags ──────
+    struct BtnCase {
+        const char* what;
+        unsigned    flags;
+        long        wantOn;     // bits that must be set
+        long        wantOff;    // bits that must NOT be set
+        MbRelabel   wantRelabel;
+    };
+    static const BtnCase kBtn[] = {
+        { "MB_OK is just OK",
+          MB_OK,               wxOK,              wxCANCEL | wxYES_NO, eNoRelabel },
+        // The first shipped bug: 1 & 0x0003 is non-zero, so a bitwise test read
+        // MB_OKCANCEL as Yes/No and threw the Cancel button away.
+        { "MB_OKCANCEL is OK+Cancel, NOT Yes/No",
+          MB_OKCANCEL,         wxOK | wxCANCEL,   wxYES_NO,            eNoRelabel },
+        { "MB_ABORTRETRYIGNORE borrows Yes/No/Cancel and relabels it",
+          MB_ABORTRETRYIGNORE, wxYES_NO | wxCANCEL, 0,                 eAbortRetryIgnore },
+        { "MB_YESNOCANCEL is Yes/No/Cancel, unrelabelled",
+          MB_YESNOCANCEL,      wxYES_NO | wxCANCEL, 0,                 eNoRelabel },
+        { "MB_YESNO has no Cancel",
+          MB_YESNO,            wxYES_NO,          wxCANCEL,            eNoRelabel },
+        { "MB_RETRYCANCEL borrows OK/Cancel and relabels it",
+          MB_RETRYCANCEL,      wxOK | wxCANCEL,   wxYES_NO,            eRetryCancel },
+        // 6 and 7 complete the nibble; Win32 has no such set, and a bitwise
+        // decode would have found "Yes/No" in both.
+        { "an unknown button set falls back to plain OK (6)",
+          6u,                  wxOK,              wxCANCEL | wxYES_NO, eNoRelabel },
+        { "an unknown button set falls back to plain OK (7)",
+          7u,                  wxOK,              wxCANCEL | wxYES_NO, eNoRelabel },
+    };
+    for (const BtnCase& c : kBtn) {
+        MbRelabel relabel = eRetryCancel;          // poisoned: it must be written
+        const long style = MessageBoxStyleForMbFlags(c.flags, &relabel);
+        check((style & c.wantOn) == c.wantOn && (style & c.wantOff) == 0, c.what);
+        check(relabel == c.wantRelabel,
+              (std::string(c.what) + " (relabel)").c_str());
+    }
+
+    // ── the icon: the 0xF0 nibble, decoded independently of the buttons ────
+    struct IconCase { const char* what; unsigned flags; long want; };
+    static const IconCase kIcon[] = {
+        { "no icon requested, none set",   0u,                  0 },
+        { "MB_ICONERROR",       (unsigned) MB_ICONERROR,        wxICON_ERROR },
+        { "MB_ICONQUESTION",    (unsigned) MB_ICONQUESTION,     wxICON_QUESTION },
+        { "MB_ICONEXCLAMATION", (unsigned) MB_ICONEXCLAMATION,  wxICON_WARNING },
+        { "MB_ICONINFORMATION", (unsigned) MB_ICONINFORMATION,  wxICON_INFORMATION },
+        { "an unknown icon nibble asks for no icon", 0x0050u,   0 },
+    };
+    const long kAllIcons = wxICON_ERROR | wxICON_QUESTION |
+                           wxICON_WARNING | wxICON_INFORMATION;
+    for (const IconCase& c : kIcon) {
+        MbRelabel relabel = eNoRelabel;
+        const long style = MessageBoxStyleForMbFlags(c.flags, &relabel);
+        check((style & kAllIcons) == c.want,
+              (std::string("icon: ") + c.what).c_str());
+    }
+
+    // ── the default button: a THIRD field, and the one that was dropped ────
+    // Win32 numbers buttons in the order the SET declares them, so "the second
+    // button" is a different button per set — for Yes/No/Cancel it is No, not
+    // Cancel.  wx can only express the two negative defaults it names.
+    struct DefCase { const char* what; unsigned flags; bool wantNo; bool wantCancel; };
+    static const DefCase kDef[] = {
+        { "MB_DEFBUTTON1 asks for nothing (wx already defaults to the first)",
+          (unsigned)(MB_YESNO | MB_DEFBUTTON1),             false, false },
+        { "no default-button field at all",
+          (unsigned) MB_YESNO,                              false, false },
+        // The third shipped bug, and the reason it mattered: this exact
+        // combination is the six delete confirmations.
+        { "MB_YESNO + DEFBUTTON2 defaults to No (the delete confirmations)",
+          (unsigned)(MB_YESNO | MB_DEFBUTTON2),             true,  false },
+        { "MB_YESNOCANCEL + DEFBUTTON2 defaults to No, NOT Cancel",
+          (unsigned)(MB_YESNOCANCEL | MB_DEFBUTTON2),       true,  false },
+        { "MB_YESNOCANCEL + DEFBUTTON3 defaults to Cancel",
+          (unsigned)(MB_YESNOCANCEL | MB_DEFBUTTON3),       false, true  },
+        { "MB_OKCANCEL + DEFBUTTON2 defaults to Cancel",
+          (unsigned)(MB_OKCANCEL | MB_DEFBUTTON2),          false, true  },
+        // Sets with no such button: Win32 falls back to the first, which is
+        // already wx's default, so nothing may be added.
+        { "MB_YESNO + DEFBUTTON3 has no third button to default to",
+          (unsigned)(MB_YESNO | MB_DEFBUTTON3),             false, false },
+        { "MB_OKCANCEL + DEFBUTTON3 has no third button either",
+          (unsigned)(MB_OKCANCEL | MB_DEFBUTTON3),          false, false },
+        { "MB_OK + DEFBUTTON2 has only one button",
+          (unsigned)(MB_OK | MB_DEFBUTTON2),                false, false },
+        // MB_DEFBUTTON4 is 0x0300 — the two DEFBUTTON bits TOGETHER, because
+        // this is a field and not a set of flags.  No MB_* set has a fourth
+        // button, so Win32 falls back to the first.  A `defBtn & 0x0100` test
+        // would read it as DEFBUTTON2 and quietly point these at the wrong
+        // button; only a value that sets both bits can tell the two apart.
+        { "MB_DEFBUTTON4 (0x0300) names a button no set has",
+          (unsigned)(MB_YESNOCANCEL | 0x0300u),             false, false },
+        { "MB_DEFBUTTON4 on OK/Cancel likewise",
+          (unsigned)(MB_OKCANCEL | 0x0300u),                false, false },
+    };
+    for (const DefCase& c : kDef) {
+        MbRelabel relabel = eNoRelabel;
+        const long style = MessageBoxStyleForMbFlags(c.flags, &relabel);
+        check(((style & wxNO_DEFAULT) != 0)     == c.wantNo &&
+              ((style & wxCANCEL_DEFAULT) != 0) == c.wantCancel,
+              (std::string("default button: ") + c.what).c_str());
+    }
+
+    // ── the three fields are independent ──────────────────────────────────
+    // The whole point of decoding them as fields: setting one must not disturb
+    // the others.  "Delete the selected N items?" is exactly this combination.
+    {
+        MbRelabel relabel = eAbortRetryIgnore;
+        const long style = MessageBoxStyleForMbFlags(
+            (unsigned)(MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2), &relabel);
+        check((style & wxYES_NO) == wxYES_NO &&
+              (style & wxCANCEL) == 0 &&
+              (style & kAllIcons) == wxICON_QUESTION &&
+              (style & wxNO_DEFAULT) != 0 &&
+              relabel == eNoRelabel,
+              "buttons, icon and default button decode independently");
+    }
+
+    // ── the result remap, in both directions ──────────────────────────────
+    check(MbResultForWxId(eNoRelabel, wxID_OK)     == IDOK,     "plain: wxID_OK -> IDOK");
+    check(MbResultForWxId(eNoRelabel, wxID_CANCEL) == IDCANCEL, "plain: wxID_CANCEL -> IDCANCEL");
+    check(MbResultForWxId(eNoRelabel, wxID_YES)    == IDYES,    "plain: wxID_YES -> IDYES");
+    check(MbResultForWxId(eNoRelabel, wxID_NO)     == IDNO,     "plain: wxID_NO -> IDNO");
+
+    check(MbResultForWxId(eAbortRetryIgnore, wxID_YES)    == IDABORT,
+          "abort/retry/ignore: the first button is Abort");
+    check(MbResultForWxId(eAbortRetryIgnore, wxID_NO)     == IDRETRY,
+          "abort/retry/ignore: the second is Retry");
+    check(MbResultForWxId(eAbortRetryIgnore, wxID_CANCEL) == IDIGNORE,
+          "abort/retry/ignore: the third is Ignore");
+    // A dismissed dialog has to pick something; Ignore is the no-op arm.
+    check(MbResultForWxId(eAbortRetryIgnore, wxID_NONE)   == IDIGNORE,
+          "abort/retry/ignore: dismissing means Ignore");
+
+    check(MbResultForWxId(eRetryCancel, wxID_OK)     == IDRETRY,
+          "retry/cancel: the borrowed OK is Retry");
+    check(MbResultForWxId(eRetryCancel, wxID_CANCEL) == IDCANCEL,
+          "retry/cancel: Cancel is Cancel");
+    check(MbResultForWxId(eRetryCancel, wxID_NONE)   == IDCANCEL,
+          "retry/cancel: dismissing means Cancel");
+
+    // The bug that made a script's abort/retry/ignore branch unreachable was
+    // precisely that all three answers collapsed onto ONE code.  Assert the
+    // distinctness, not just the individual rows, so no future remap can
+    // reintroduce it row-by-row.
+    {
+        const int a = MbResultForWxId(eAbortRetryIgnore, wxID_YES);
+        const int r = MbResultForWxId(eAbortRetryIgnore, wxID_NO);
+        const int i = MbResultForWxId(eAbortRetryIgnore, wxID_CANCEL);
+        check(a != r && r != i && a != i,
+              "abort, retry and ignore are three DISTINCT return codes");
+        check(MbResultForWxId(eRetryCancel, wxID_OK) !=
+              MbResultForWxId(eRetryCancel, wxID_CANCEL),
+              "retry and cancel are two distinct return codes");
+        // ...and the relabelled sets must not answer with the plain codes,
+        // which is what a caller would see if the relabel were forgotten.
+        check(a != IDOK && r != IDOK,
+              "a relabelled set never answers IDOK (it did when the relabel was lost)");
+    }
+}
+
+// ── 6. dialog CHAR_HOOK key translation ───────────────────────────────────
+// Six canonical PreTranslateMessage overrides hang off this: the tab-inserts-tab
+// preference in CEditMultiLine, the <enter> swallow in the two Lua input boxes,
+// and Alt+Enter opening the multi-line "send" editor in the trigger, alias and
+// timer dialogs.  The hook itself is delivered by the event loop, which no
+// selftest has, so test the translation.
+void TestDialogKeyTranslation()
+{
+    printf("Dialog CHAR_HOOK key translation:\n");
+
+    MSG msg{};
+    msg.message = 0xDEAD; msg.wParam = 0xBEEF;
+
+    check(DialogKeyToMsg(WXK_TAB, false, &msg) &&
+          msg.message == WM_KEYDOWN && msg.wParam == VK_TAB,
+          "TAB becomes WM_KEYDOWN/VK_TAB");
+
+    msg = MSG{};
+    check(DialogKeyToMsg(WXK_RETURN, false, &msg) &&
+          msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN,
+          "RETURN becomes WM_KEYDOWN/VK_RETURN");
+
+    msg = MSG{};
+    check(DialogKeyToMsg(WXK_NUMPAD_ENTER, false, &msg) &&
+          msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN,
+          "the keypad's Enter is the same key to MFC");
+
+    // The distinguishing case: MFC sees Alt+Return as WM_SYSKEYDOWN, and that
+    // is the ONLY thing separating "open the multi-line editor" from "press the
+    // default button" in CTriggerDlg / CAliasDlg / CTimerDlg.
+    msg = MSG{};
+    check(DialogKeyToMsg(WXK_RETURN, true, &msg) &&
+          msg.message == WM_SYSKEYDOWN && msg.wParam == VK_RETURN,
+          "Alt+RETURN becomes WM_SYSKEYDOWN (the multi-line editor chord)");
+    msg = MSG{};
+    check(DialogKeyToMsg(WXK_NUMPAD_ENTER, true, &msg) &&
+          msg.message == WM_SYSKEYDOWN,
+          "...and so does Alt+keypad-Enter");
+
+    // Alt does NOT promote Tab: nothing overrides Alt+Tab, and the window
+    // manager owns it anyway.
+    msg = MSG{};
+    check(DialogKeyToMsg(WXK_TAB, true, &msg) && msg.message == WM_KEYDOWN,
+          "Alt+TAB is still a plain WM_KEYDOWN");
+
+    // Everything else must be refused, so the caller Skip()s it and wx's own
+    // Esc→Cancel and Enter→default-button keep working in every dialog.  A
+    // blanket hook here would break all of them.
+    const int kPassThrough[] = {
+        WXK_ESCAPE, WXK_SPACE, WXK_BACK, WXK_DELETE, WXK_LEFT, WXK_UP,
+        WXK_F1, WXK_HOME, WXK_PAGEUP, WXK_NUMPAD_ADD, 'a', 'Z', '0', '\'',
+    };
+    bool anyTranslated = false;
+    for (int k : kPassThrough) {
+        MSG m{};
+        m.message = 0x1234;
+        if (DialogKeyToMsg(k, false, &m) || DialogKeyToMsg(k, true, &m))
+            anyTranslated = true;
+        if (m.message != 0x1234) anyTranslated = true;   // and it left *msg alone
+    }
+    check(!anyTranslated,
+          "every other key is refused untouched (Esc, arrows, letters, F-keys)");
+
+    check(!DialogKeyToMsg(WXK_TAB, false, nullptr),
+          "a null MSG is refused rather than written through");
+}
+
+// ── 7. CMenu -> wxMenu (world.WindowMenu) ─────────────────────────────────
+// The translation behind CMiniWindow::Menu.  Showing the popup needs an event
+// loop; BUILDING it does not, so build one and read it back.
+void TestPopupMenuBuild()
+{
+    printf("CMenu -> wxMenu (world.WindowMenu):\n");
+
+    CMenu::ResetArena();
+
+    // A menu shaped like the ones plugins actually produce (miniwindow.cpp
+    // :3630-3675): plain items, a separator, a ticked item, a greyed
+    // placeholder with NO command id, a labelled submenu — plus the unlabelled
+    // submenu the port has to invent a rule for.
+    CMenu top;
+    top.CreatePopupMenu();
+    top.AppendMenu(MF_STRING, 5001, "Look");
+    top.AppendMenu(MF_SEPARATOR, 0, "");
+    top.AppendMenu(MF_STRING | MF_CHECKED, 5002, "Sound on");
+    top.AppendMenu(MF_STRING | MF_GRAYED,  0,    "-- not available --");
+
+    CMenu* named = CMenu::NewPopup();
+    named->AppendMenu(MF_STRING, 5010, "North");
+    named->AppendMenu(MF_STRING, 5011, "South");
+    top.AppendMenu(MF_POPUP | MF_ENABLED, (UINT_PTR) named->m_hMenu, "Go");
+
+    // An UNLABELLED popup — what CMenu::GetSubMenu materialises, because the
+    // port has no menu-resource loader to supply the .rc title.  Its items get
+    // inlined behind a separator rather than shown as a nameless submenu.
+    CMenu* unnamed = CMenu::NewPopup();
+    unnamed->AppendMenu(MF_STRING, 5020, "Inlined A");
+    unnamed->AppendMenu(MF_STRING, 5021, "Inlined B");
+    top.AppendMenu(MF_POPUP, (UINT_PTR) unnamed->m_hMenu, "");
+
+    std::unique_ptr<wxMenu> m(wx_build_popup_menu(&top));
+    check(m != nullptr, "the CMenu tree renders as a wxMenu");
+    if (!m) return;
+
+    // 4 top-level entries + the "Go" submenu + a separator + 2 inlined items.
+    check(m->GetMenuItemCount() == 8,
+          "every item is carried over (with the unlabelled popup inlined)");
+
+    const wxMenuItem* look = m->FindItem(5001);
+    check(look != nullptr && look->GetItemLabelText() == wxT("Look"),
+          "a plain item keeps its id and its label");
+
+    const wxMenuItem* sound = m->FindItem(5002);
+    check(sound != nullptr && sound->IsCheckable() && sound->IsChecked(),
+          "MF_CHECKED produces a checkable item that IS checked");
+    check(look != nullptr && !look->IsCheckable(),
+          "...and an unticked item is not even checkable");
+
+    // THE guard worth having: a greyed placeholder has arg == 0, and 0 is what
+    // TrackPopupMenu returns for "the user cancelled".  Give it id 0 and a
+    // caller cannot tell the two apart.
+    {
+        const wxMenuItem* grey = nullptr;
+        for (const wxMenuItem* mi : m->GetMenuItems())
+            if (mi->GetItemLabelText() == wxT("-- not available --")) grey = mi;
+        check(grey != nullptr, "the greyed placeholder is present");
+        if (grey) {
+            check(!grey->IsEnabled(), "...and is disabled");
+            check(grey->GetId() != 0,
+                  "...and does NOT get id 0, which means \"cancelled\"");
+        }
+    }
+
+    {
+        const wxMenuItem* go = nullptr;
+        for (const wxMenuItem* mi : m->GetMenuItems())
+            if (mi->GetItemLabelText() == wxT("Go")) go = mi;
+        check(go != nullptr && go->IsSubMenu(), "a labelled popup stays a submenu");
+        if (go && go->GetSubMenu()) {
+            check(go->GetSubMenu()->GetMenuItemCount() == 2,
+                  "...carrying its children");
+            check(go->GetSubMenu()->FindItem(5011) != nullptr,
+                  "...with their ids intact");
+        }
+    }
+
+    // The unlabelled popup's items are inlined into the PARENT, not hidden
+    // behind a nameless submenu the user cannot read.
+    check(m->FindItem(5020) != nullptr && m->FindItem(5021) != nullptr,
+          "an unlabelled popup's items are inlined into the parent menu");
+    {
+        int separators = 0;
+        for (const wxMenuItem* mi : m->GetMenuItems())
+            if (mi->IsSeparator()) separators++;
+        check(separators == 2,
+              "...behind a separator of their own, plus the explicit one");
+    }
+
+    CMenu::ResetArena();
+}
+
+// ── 8. recent-worlds MRU ──────────────────────────────────────────────────
+// File ▸ Open Recent.  The list transform is pure; the persistence is tested
+// against a scratch config file, never the user's real preferences.
+void TestRecentWorlds()
+{
+    printf("Recent-worlds MRU:\n");
+
+    // ── the pure transform ────────────────────────────────────────────────
+    {
+        std::vector<std::string> l;
+        RecentWorldsPromote(l, "/w/a.mcl", 3);
+        RecentWorldsPromote(l, "/w/b.mcl", 3);
+        check(l.size() == 2 && l[0] == "/w/b.mcl" && l[1] == "/w/a.mcl",
+              "the newest world goes to the front");
+
+        RecentWorldsPromote(l, "/w/a.mcl", 3);
+        check(l.size() == 2 && l[0] == "/w/a.mcl" && l[1] == "/w/b.mcl",
+              "re-opening a world moves it to the front, it does not duplicate");
+
+        RecentWorldsPromote(l, "/w/c.mcl", 3);
+        RecentWorldsPromote(l, "/w/d.mcl", 3);
+        check(l.size() == 3, "the list is capped");
+        check(l[0] == "/w/d.mcl" && l[1] == "/w/c.mcl" && l[2] == "/w/a.mcl",
+              "...and it is the OLDEST entry that falls off the end");
+
+        RecentWorldsPromote(l, "", 3);
+        check(l.size() == 3 && l[0] == "/w/d.mcl",
+              "an empty path is ignored rather than pushed");
+
+        // Two worlds of the same basename in different directories are two
+        // different worlds; the menu shows only the basename, so a dedup on
+        // the wrong key would silently lose one.
+        std::vector<std::string> two;
+        RecentWorldsPromote(two, "/one/w.mcl", 5);
+        RecentWorldsPromote(two, "/two/w.mcl", 5);
+        check(two.size() == 2, "paths are deduped whole, not by basename");
+    }
+
+    // ── the config round-trip, on a scratch file ──────────────────────────
+    {
+        wxFileName fn(wxStandardPaths::Get().GetTempDir(),
+                      wxT("mushclient-selftest-recent.ini"));
+        if (fn.FileExists()) wxRemoveFile(fn.GetFullPath());
+        wxFileConfig cfg(wxEmptyString, wxEmptyString, fn.GetFullPath(),
+                         wxEmptyString, wxCONFIG_USE_LOCAL_FILE);
+
+        const std::vector<std::string> five = {
+            "/w/1.mcl", "/w/2.mcl", "/w/3.mcl", "/w/4.mcl", "/w/5.mcl" };
+        RecentWorldsSaveTo(cfg, five, 10);
+
+        std::vector<std::string> back;
+        RecentWorldsLoadFrom(cfg, back, 10);
+        check(back == five, "the list round-trips through the config in order");
+
+        // THE invariant: the load stops at the first gap, so a shorter list
+        // written over a longer one MUST erase the tail.  Without the
+        // DeleteEntry the next load resurrects worlds the user removed.
+        const std::vector<std::string> two = { "/w/9.mcl", "/w/8.mcl" };
+        RecentWorldsSaveTo(cfg, two, 10);
+        RecentWorldsLoadFrom(cfg, back, 10);
+        check(back == two,
+              "a shorter list erases the old tail (the load stops at a gap)");
+
+        // The load is also capped, so a config hand-edited past the cap cannot
+        // grow the menu beyond the id block reserved for it.
+        for (int i = 0; i < 12; ++i)
+            cfg.Write(wxString::Format(wxT("/recent/%d"), i),
+                      wxString::Format(wxT("/w/%d.mcl"), i));
+        RecentWorldsLoadFrom(cfg, back, 10);
+        check((int) back.size() == 10, "the load honours the cap");
+
+        // An empty value is a gap too — that is what makes DeleteEntry and
+        // "never store an empty path" the same invariant.
+        cfg.Write(wxT("/recent/3"), wxT(""));
+        RecentWorldsLoadFrom(cfg, back, 10);
+        check(back.size() == 3, "an empty entry ends the list");
+
+        wxRemoveFile(fn.GetFullPath());
+    }
+}
+
 } // namespace
 
 int RunGuiBridgeSelfTest()
@@ -338,6 +757,10 @@ int RunGuiBridgeSelfTest()
     TestListBoxStyles();
     TestNewWorldDefaults();
     TestProgressDialog();
+    TestMessageBoxDecode();
+    TestDialogKeyTranslation();
+    TestPopupMenuBuild();
+    TestRecentWorlds();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

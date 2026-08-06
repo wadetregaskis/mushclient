@@ -1048,8 +1048,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     connMenu->Append(32289,                     wxT("Quick Connect…\tCtrl+Shift+K"));
     connMenu->AppendSeparator();
     connMenu->Append(32239 /*ID_CONNECTION_CONNECT*/,    wxT("Connect"));
-    connMenu->Append(0xE200,                    wxT("Disconnect"));
-    connMenu->Append(0xE201,                    wxT("Reconnect\tCtrl+Shift+R"));
+    connMenu->Append(kPortMenuIdDisconnect,     wxT("Disconnect"));
+    connMenu->Append(kPortMenuIdReconnect,      wxT("Reconnect\tCtrl+Shift+R"));
     connMenu->AppendSeparator();
     connMenu->Append(ID_CONN_LOG_TOGGLE,        wxT("Start &Logging…"));
     append_canon_section(connMenu, SEC_CONN);   // Auto Connect, Reconnect, Connect-All, Connect-Startup
@@ -1283,6 +1283,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         int id = evt.GetId();
         CMUSHclientDoc* doc = activeDoc();
 
+        // Put a rule's answer onto the event.  One place, so an arm cannot
+        // forget the check mark or the caption half of it.
+        auto apply = [&evt](const MenuCmdUiState& st) {
+            evt.Enable(st.enabled);
+            if (st.checked >= 0) evt.Check(st.checked != 0);
+            if (st.text) evt.SetText(wxString::FromUTF8(st.text));
+        };
+
         // ── Table-driven canonical commands: enable + check come from the
         // canonical ON_UPDATE_COMMAND_UI handler, captured onto the menu item.
         if (const CanonMenuCmd* c = find_canon_cmd(id)) {
@@ -1303,55 +1311,45 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return;
         }
 
-        if (id == 32239 /*ID_CONNECTION_CONNECT*/) {
-            // doc.cpp:1904 OnUpdateConnectionConnect — disconnected AND the
-            // world actually has a server to connect to.
-            evt.Enable(doc && doc->m_iConnectPhase == eConnectNotConnected &&
-                       doc->m_server != "0.0.0.0");
-        } else if (id == 0xE200 /*Disconnect*/) {
-            // doc.cpp:1913 OnUpdateConnectionDisconnect — enabled for EVERY
-            // non-zero phase, not just eConnectConnectedToMud.  Phases 1-8 are
-            // the name lookups, the connect itself, the three SOCKS waits and
-            // the SSL handshake: exactly the window in which a user wants to
-            // cancel, and exactly where the port used to grey the item out.  A
-            // connect to a host that does not answer left no way to stop it.
-            evt.Enable(doc && doc->m_iConnectPhase != eConnectNotConnected);
-        } else if (id == 0xE201 /*Reconnect*/) {
-            // Enable only when not connected.
-            evt.Enable(doc && doc->m_iConnectPhase == eConnectNotConnected);
-        } else if (id == wxID_SAVE || id == wxID_SAVEAS ||
-                   id == wxID_CLOSE ||
-                   id == 32158 /*ID_GAME_PREFERENCES*/ ||
-                   id == ID_MENU_CFG_TRIGGERS  ||
-                   id == ID_MENU_CFG_ALIASES   ||
-                   id == ID_MENU_CFG_TIMERS    ||
-                   id == ID_MENU_CFG_VARIABLES ||
-                   id == ID_MENU_CFG_MACROS    ||
-                   id == ID_MENU_CFG_COLORS    ||
-                   id == ID_MENU_CFG_INFO      ||
-                   id == ID_MENU_IMPORT_TRIGGERS ||
-                   id == ID_MENU_EXPORT_TRIGGERS ||
-                   id == ID_MENU_IMPORT_ALIASES  ||
-                   id == ID_MENU_EXPORT_ALIASES  ||
-                   id == ID_MENU_IMPORT_TIMERS   ||
-                   id == ID_MENU_EXPORT_TIMERS   ||
-                   id == ID_MENU_IMPORT_COLORS   ||
-                   id == ID_MENU_EXPORT_COLORS   ||
-                   id == ID_MENU_IMPORT_MACROS   ||
-                   id == ID_MENU_EXPORT_MACROS) {
+        // Connect / Disconnect / Reconnect used to be three hand-written
+        // predicates here.  Two of them were copies of canonical update-UI
+        // handlers that the document dispatches for itself — and a copy is how
+        // Disconnect's rule (live on every non-zero phase, so a connect to a
+        // host that never answers can still be cancelled) came adrift once
+        // before.  All three now live in platform/menu_ui_rules.cpp with the
+        // rest, and are answered by the MenuCommandUiState arm below.
+        if (id == wxID_SAVE || id == wxID_SAVEAS ||
+            id == wxID_CLOSE ||
+            id == 32158 /*ID_GAME_PREFERENCES*/ ||
+            id == ID_MENU_CFG_TRIGGERS  ||
+            id == ID_MENU_CFG_ALIASES   ||
+            id == ID_MENU_CFG_TIMERS    ||
+            id == ID_MENU_CFG_VARIABLES ||
+            id == ID_MENU_CFG_MACROS    ||
+            id == ID_MENU_CFG_COLORS    ||
+            id == ID_MENU_CFG_INFO      ||
+            id == ID_MENU_IMPORT_TRIGGERS ||
+            id == ID_MENU_EXPORT_TRIGGERS ||
+            id == ID_MENU_IMPORT_ALIASES  ||
+            id == ID_MENU_EXPORT_ALIASES  ||
+            id == ID_MENU_IMPORT_TIMERS   ||
+            id == ID_MENU_EXPORT_TIMERS   ||
+            id == ID_MENU_IMPORT_COLORS   ||
+            id == ID_MENU_EXPORT_COLORS   ||
+            id == ID_MENU_IMPORT_MACROS   ||
+            id == ID_MENU_EXPORT_MACROS) {
             // Need an active world.
             evt.Enable(doc != nullptr);
         } else if (id == ID_MENU_GAME_LUA_EVAL ||
                    id == 32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/) {
-            // Need an active world with scripting enabled.
-            evt.Enable(doc != nullptr && doc->m_bEnableScripts);
+            // Both need an active world with scripting on; the rule is in
+            // menu_ui_rules.cpp, keyed by an action rather than by these ids
+            // because ID_MENU_GAME_LUA_EVAL is wxID_HIGHEST-relative.
+            apply(PortMenuRuleUiState(kPortRuleScripting, doc));
         } else if (id == ID_CONN_LOG_TOGGLE) {
-            // Need an active world; label flips between Start/Stop.
-            evt.Enable(doc != nullptr);
-            if (doc) {
-                bool logging = (doc->m_logfile != nullptr);
-                evt.SetText(logging ? wxT("Stop &Logging") : wxT("Start &Logging…"));
-            }
+            // Needs an active world; the label flips between Start and Stop,
+            // which is the whole state this item shows — same file, same reason.
+            apply(PortMenuRuleUiState(kPortRuleLogToggle, doc));
         } else if (id == ID_MENU_VIEW_ALWAYSONTOP) {
             // Read the preference, as CMainFrame::OnUpdateViewAlwaysontop does;
             // reading the parent's style flag reported the wrong thing once the
@@ -1418,11 +1416,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                    st.handled) {
             // Every command MFC greys for us on Windows because its only
             // handler lives on the un-instantiated CMUSHView / CSendView (or on
-            // the document), plus the three per-world check marks.  The rules
-            // are data in platform/menu_ui_rules.cpp so they can be tested
-            // without a live frame — see tests/test_menu_rules.cpp.
-            evt.Enable(st.enabled);
-            if (st.checked >= 0) evt.Check(st.checked != 0);
+            // the document), plus the three per-world check marks and the
+            // Connection tri-state.  The rules are data in
+            // platform/menu_ui_rules.cpp so they can be tested without a live
+            // frame — see tests/test_menu_rules.cpp.
+            apply(st);
         } else {
             evt.Skip();  // default behaviour for all other items
         }
@@ -1901,14 +1899,14 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                     doc->ConnectSocket();
                 }
             }
-        } else if (id == 0xE200 /*Disconnect*/ ||
+        } else if (id == kPortMenuIdDisconnect ||
                    id == 32240 /*ID_CONNECTION_DISCONNECT*/) {
             if (CMUSHclientDoc* doc = activeDoc()) {
                 doc->DisconnectWorld();
                 if (s_statusBar)
                     s_statusBar->SetStatusText(wxT("Disconnected."));
             }
-        } else if (id == 0xE201 /*Reconnect*/) {
+        } else if (id == kPortMenuIdReconnect) {
             if (CMUSHclientDoc* doc = activeDoc()) {
                 if (doc->m_iConnectPhase == eConnectNotConnected) {
                     doc->m_bDisconnectOK = false;

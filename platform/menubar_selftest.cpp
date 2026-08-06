@@ -105,6 +105,47 @@ const Item* find_by_id(const std::vector<Item>& items, int id)
     return nullptr;
 }
 
+// First item whose label CONTAINS `needle` — for the handful of commands the
+// port builds on wxID_HIGHEST-relative ids, which are file-static and so have
+// no name out here.  The label is what the user picks anyway.
+const Item* find_by_label(const std::vector<Item>& items, const char* needle)
+{
+    for (const Item& it : items)
+        if (it.label.find(needle) != std::string::npos) return &it;
+    return nullptr;
+}
+
+// ── what the frame answers for one menu command ────────────────────────────
+// The frame decides greying, ticking and (for one item) the caption in a
+// wxEVT_UPDATE_UI handler.  Nothing ever sent it a wxUpdateUIEvent, so none of
+// that had ever run outside the app proper.  It needs no event loop: build the
+// event and process it.
+struct UiAnswer {
+    bool        claimed    = false;   // the handler took it rather than Skip()ing
+    bool        setEnabled = false;
+    bool        enabled    = true;
+    bool        setChecked = false;
+    bool        checked    = false;
+    bool        setText    = false;
+    std::string text;
+};
+
+UiAnswer probeUi(wxWindow* frame, int id)
+{
+    wxUpdateUIEvent evt(id);
+    evt.SetEventObject(frame);
+
+    UiAnswer a;
+    a.claimed    = frame->GetEventHandler()->ProcessEvent(evt);
+    a.setEnabled = evt.GetSetEnabled();
+    a.enabled    = evt.GetEnabled();
+    a.setChecked = evt.GetSetChecked();
+    a.checked    = evt.GetChecked();
+    a.setText    = evt.GetSetText();
+    a.text       = std::string(evt.GetText().utf8_str());
+    return a;
+}
+
 } // namespace
 
 int RunMenuBarSelfTest()
@@ -444,6 +485,164 @@ int RunMenuBarSelfTest()
             const wxMenuItem* ph = scratch.FindItemByPosition(0);
             check(ph && !ph->IsEnabled(),
                   "builder: ...and that placeholder is disabled, so it cannot be picked");
+        }
+    }
+
+    // ── update-UI: what the menu bar greys, ticks and renames ───────────────
+    // The frame's wxEVT_UPDATE_UI handler is the fourth silent failure mode: an
+    // item that should be greyed but is not looks completely normal, and only
+    // does nothing when picked.  Nothing had ever fired one of these events, so
+    // every arm of that handler was dead code as far as the suite went.  The
+    // rules themselves are pinned headlessly (tests/test_menu_rules.cpp); what
+    // is only checkable HERE is that the frame is actually wired to them, and
+    // the arms that must stay wx-side.
+    {
+        const Item* lua = find_by_label(items, "Execute Lua");
+        const Item* log = find_by_label(items, "Logging");
+        check(lua != NULL, "Game > Execute Lua is in the menu bar");
+        check(log != NULL, "Connection > Start Logging is in the menu bar");
+        check(find_by_id(items, 32239) != NULL,
+              "Connection > Connect is on ID_CONNECTION_CONNECT");
+        check(find_by_id(items, 0xE200) != NULL,
+              "Connection > Disconnect is on the port's own id");
+        check(find_by_id(items, 0xE201) != NULL,
+              "Connection > Reconnect is on the port's own id");
+
+        // ── with no world open ──────────────────────────────────────────────
+        {
+            const UiAnswer connect    = probeUi(frame, 32239);
+            const UiAnswer disconnect = probeUi(frame, 0xE200);
+            const UiAnswer reconnect  = probeUi(frame, 0xE201);
+            check(connect.claimed && disconnect.claimed && reconnect.claimed,
+                  "the frame answers for all three Connection commands");
+            check(connect.setEnabled && !connect.enabled &&
+                  disconnect.setEnabled && !disconnect.enabled &&
+                  reconnect.setEnabled && !reconnect.enabled,
+                  "...greying every one of them with no world open");
+
+            // The canonical-command table's three outcomes, which are easy to
+            // conflate.  A 'D'-target command with no active world never
+            // reaches a handler at all: it is forced OFF because there is no
+            // document to route to.  A 'F'-target command always reaches one
+            // (CMainFrame is always there), so its answer is whatever that
+            // handler says.  Only a target with NO update-UI handler falls back
+            // to the row's needsDoc flag.
+            check(!probeUi(frame, 32980 /*ID_FILE_IMPORT, 'D'*/).enabled,
+                  "a world-targeted table command is dead with no world");
+
+            // 'F', driven BOTH ways: CMainFrame::OnUpdateFileOpenworldsinstartuplist
+            // enables Open Worlds In Startup List only when that list is not
+            // empty.  An arm that answered "true" out of the initialiser rather
+            // than out of the canonical handler would pass one half and fail
+            // the other.
+            {
+                const CString saved = App.m_strWorldList;
+                App.m_strWorldList = "";
+                const bool deadWhenEmpty = !probeUi(frame, 32954).enabled;
+                App.m_strWorldList = "example.mcl";
+                const bool liveWhenSet = probeUi(frame, 32954).enabled;
+                App.m_strWorldList = saved;
+                check(deadWhenEmpty && liveWhenSet,
+                      "...while a frame-targeted one follows CMainFrame's own rule");
+            }
+
+            // 'A' is the one arm that reaches the needsDoc fallback: the app's
+            // message map carries no ON_UPDATE_COMMAND_UI whatsoever, and this
+            // row does not need a world, so it stays live.
+            check(probeUi(frame, 32234 /*ID_GAME_MINIMISEPROGRAM, 'A'*/).enabled,
+                  "...and an app-targeted one falls back to its needs-a-world flag");
+
+            check(!probeUi(frame, lua ? lua->id : 0).enabled,
+                  "Execute Lua is dead with no world");
+            const UiAnswer logAns = probeUi(frame, log ? log->id : 0);
+            check(!logAns.enabled, "Start Logging is dead with no world");
+            check(!logAns.setText,
+                  "...and its caption is left alone rather than reset");
+
+            // A View item that deliberately stays live with nothing open --
+            // proof the probe is reading a real answer and not just "false".
+            const Item* statusBar = find_by_label(items, "Status Bar");
+            check(statusBar != NULL, "View > Status Bar is in the menu bar");
+            check(statusBar && probeUi(frame, statusBar->id).enabled,
+                  "...and is live with no world open, as it is on Windows");
+        }
+
+        // ── with a world open ───────────────────────────────────────────────
+        // Everything above is one half of each rule; without a document the
+        // suite could not tell a correct rule from `Enable(false)`.
+        {
+            CMUSHclientDoc* doc = new CMUSHclientDoc();
+            doc->m_mush_name   = "MenuBarSelfTest";
+            doc->m_nWrapColumn = 80;
+            doc->m_maxlines    = 5000;
+            doc->m_server      = "mud.example.com";
+            doc->SetUpOutputWindow();
+
+            CWorldChildFrame* child = new CWorldChildFrame(frame, doc);
+            child->Show();
+            frame->Show();
+            child->Activate();
+            wxYield();
+
+            check(frame->GetActiveChild() == child,
+                  "the world window is the frame's active child");
+
+            // The other half of the 'D' path above: with a document to route
+            // to, the same command comes alive.
+            check(probeUi(frame, 32980 /*ID_FILE_IMPORT, 'D'*/).enabled,
+                  "a world-targeted table command comes alive with one open");
+
+            // Connect: disconnected AND the world has an address to go to.
+            doc->m_iConnectPhase = eConnectNotConnected;
+            check(probeUi(frame, 32239).enabled,
+                  "Connect is live on a disconnected world");
+            doc->m_server = "0.0.0.0";
+            check(!probeUi(frame, 32239).enabled,
+                  "...but not on a world still at the placeholder address");
+            check(probeUi(frame, 0xE201).enabled,
+                  "...which does NOT gate Reconnect, whose rule is its own");
+            doc->m_server = "mud.example.com";
+
+            // Disconnect: live on EVERY non-zero phase, so a connect that hangs
+            // can still be cancelled.  This is the rule that has shipped broken.
+            check(!probeUi(frame, 0xE200).enabled,
+                  "Disconnect is dead while the world is disconnected");
+            bool liveThroughout = true, connectDead = true, reconnectDead = true;
+            for (int phase = eConnectMudNameLookup; phase <= eConnectDisconnecting;
+                 ++phase) {
+                doc->m_iConnectPhase = phase;
+                if (!probeUi(frame, 0xE200).enabled) {
+                    liveThroughout = false;
+                    printf("    (Disconnect greyed in connect phase %d)\n", phase);
+                }
+                if (probeUi(frame, 32239).enabled) connectDead   = false;
+                if (probeUi(frame, 0xE201).enabled) reconnectDead = false;
+            }
+            check(liveThroughout,
+                  "Disconnect stays live through every phase of a hanging connect");
+            check(connectDead && reconnectDead,
+                  "...while Connect and Reconnect are dead in all of them");
+
+            doc->m_iConnectPhase = eConnectNotConnected;
+
+            // Scripting and the log caption, the two port-only rules.
+            doc->m_bEnableScripts = 0;
+            check(!probeUi(frame, lua ? lua->id : 0).enabled,
+                  "Execute Lua stays dead in a world with scripting off");
+            doc->m_bEnableScripts = 1;
+            check(probeUi(frame, lua ? lua->id : 0).enabled,
+                  "...and comes alive when scripting is on");
+            check(probeUi(frame, 32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/).enabled,
+                  "Reload Script follows the same switch");
+
+            const UiAnswer logAns = probeUi(frame, log ? log->id : 0);
+            check(logAns.enabled, "Start Logging is live with a world open");
+            check(logAns.setText && logAns.text.find("Start") != std::string::npos,
+                  "...and captions itself Start while the world is not logging");
+
+            doc->m_pWorldView = NULL;
+            child->Destroy();
+            wxYield();
         }
     }
 

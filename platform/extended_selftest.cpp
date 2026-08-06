@@ -6,6 +6,8 @@
 #include <wx/filename.h>
 #include <wx/stdpaths.h>
 #include <wx/timer.h>
+#include <wx/dcbuffer.h>   // wxAutoBufferedPaintDC -- the DC OnPaint actually uses
+#include <wx/dcclient.h>
 
 #include "platform/extended_selftest.h"
 #include "platform/app_config.h"
@@ -160,10 +162,88 @@ int RunWatchdogProbe()
     return 0;   // unreachable
 }
 
+// ── audit 11(b): what does wxAutoBufferedPaintDC::Clear actually clear? ─────
+// The open question, and the only thing standing between here and narrowing
+// OnPaint's row loop to the update region.  If Clear() wipes the whole backing
+// store, rows outside the update region are erased and never redrawn -- silent
+// scrolling corruption that no assertion in the suite would catch.  If it
+// honours the update region (or the clip), narrowing the loop is safe.
+//
+// Unanswerable until now: it needs a REAL paint into a REAL backing store, and
+// no OnInit-scoped selftest ever gets one.
+int RunClearSemanticsSelfTest()
+{
+    printf("EXTENDED-SELFTEST(clear-semantics): what does Clear() erase?\n");
+
+    wxFrame* frame = new wxFrame(nullptr, wxID_ANY, wxT("clear semantics"),
+                                 wxPoint(80, 80), wxSize(300, 200));
+    wxPanel* panel = new wxPanel(frame);
+
+    // Paint 1 fills everything red.  Paint 2 sets the background GREEN, calls
+    // Clear(), and draws nothing -- then we read back a pixel far outside the
+    // rectangle we invalidated.  Red means Clear respected the region; green
+    // means it wiped the lot.
+    int    pass = 0;
+    wxRect invalidated(0, 0, 20, 20);
+    wxRect clipSeen, updateSeen;
+
+    panel->Bind(wxEVT_PAINT, [&](wxPaintEvent&) {
+        wxAutoBufferedPaintDC dc(panel);
+        ++pass;
+        if (pass == 1) {
+            dc.SetBackground(*wxRED_BRUSH);
+            dc.Clear();
+            return;
+        }
+        if (pass == 2) {
+            // THE measurement.  A pixel read-back would be the obvious test and
+            // is not trustworthy here -- wxOSX cannot reliably blit out of a
+            // wxClientDC, which platform/wx_composite_selftest.cpp documents and
+            // works around.  The clipping box is exact and needs no read-back:
+            // if wx clips the paint DC to the update region then Clear() cannot
+            // write outside it, whatever Clear() intends, so narrowing the row
+            // loop to that region is safe by construction.
+            dc.GetClippingBox(clipSeen);
+            updateSeen = panel->GetUpdateRegion().GetBox();
+            dc.SetBackground(*wxGREEN_BRUSH);
+            dc.Clear();
+        }
+    });
+
+    frame->Show();
+    for (int i = 0; i < 40 && pass < 1; ++i) { wxYield(); wxMilliSleep(20); }
+    chk(pass >= 1, "the first paint ran");
+
+    panel->RefreshRect(invalidated, false);
+    for (int i = 0; i < 40 && pass < 2; ++i) { wxYield(); wxMilliSleep(20); }
+    chk(pass >= 2, "a partial invalidation produced a second paint");
+
+    printf("    (invalidated %d,%d %dx%d; update region %d,%d %dx%d; "
+           "paint DC clip %d,%d %dx%d)\n",
+           invalidated.x, invalidated.y, invalidated.width, invalidated.height,
+           updateSeen.x, updateSeen.y, updateSeen.width, updateSeen.height,
+           clipSeen.x, clipSeen.y, clipSeen.width, clipSeen.height);
+
+    chk(!updateSeen.IsEmpty() && updateSeen.width < 200,
+        "a partial invalidation really does give a PARTIAL update region");
+    chk(!clipSeen.IsEmpty(),
+        "the paint DC arrives with a clipping box set");
+    chk(clipSeen == updateSeen,
+        "...and it is exactly the update region -- so Clear() cannot reach "
+        "outside it, and narrowing OnPaint's row loop to that region is safe");
+
+    frame->Destroy();
+    wxYield();
+    printf("EXTENDED-SELFTEST(clear-semantics): %d passed, %d failed\n",
+           g_pass, g_fail);
+    return g_fail;
+}
+
 struct Harness { const wxChar* name; int (*run)(); };
 const Harness kHarnesses[] = {
     { wxT("paint"),         &RunPaintDeliverySelfTest },
     { wxT("dialog-bridge"), &RunDialogBridgeSelfTest },
+    { wxT("clear-semantics"), &RunClearSemanticsSelfTest },
     { wxT("hang"),          &RunWatchdogProbe },
 };
 

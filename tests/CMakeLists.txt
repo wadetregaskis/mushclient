@@ -222,6 +222,13 @@ if(TARGET mushgui)
         # itself a test: a harness that deliberately never finishes must be
         # killed by it, not by ctest.  WILL_FAIL inverts the verdict -- the
         # PASS here is the app exiting non-zero of its own accord.
+        add_test(NAME extended_clear_semantics
+                 COMMAND $<TARGET_FILE:mushgui> --extended-selftest=clear-semantics ${_selftest_args})
+        set_tests_properties(extended_clear_semantics PROPERTIES
+                             LABELS "extended"
+                             RUN_SERIAL TRUE
+                             TIMEOUT 120)
+
         add_test(NAME extended_watchdog
                  COMMAND $<TARGET_FILE:mushgui> --extended-selftest=hang ${_selftest_args})
         set_tests_properties(extended_watchdog PROPERTIES

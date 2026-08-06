@@ -2445,6 +2445,16 @@ public:
   };
   static QueuedFlags DecodeQueuedCommandFlag (char c);
 
+  // The custom-colour index a Note should draw with, or -1 for "there is no
+  // usable index -- fall back to the default colour".
+  //
+  // m_iNoteTextColour is an index into the 16-entry m_customtext/m_customback,
+  // with SAMECOLOUR (65535) meaning "no custom colour".  Its option-table row
+  // declares it an RGB colour with a maximum of 0xFFFFFF, so
+  // SetOption("note_text_colour", 300) is accepted and stored -- and most of
+  // the readers then used it as a bare subscript.  See docs/UPSTREAM-BUGS.md #8.
+  int NoteCustomColourIndex (void) const;
+
   // Send everything up to and INCLUDING the next QUEUE_* command; interleaved
   // IMMEDIATE_* commands ride along in the same slot.  Returns how many went.
   int  DrainOneQueuedSlot (void);

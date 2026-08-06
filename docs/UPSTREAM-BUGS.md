@@ -107,10 +107,35 @@ m_iNoteColourBack = m_customback [m_iNoteTextColour];
 
 `m_customtext` / `m_customback` hold `MAX_CUSTOM` (16) entries, so any value in
 16..65534 reads hundreds of elements past the array on ordinary `Note` /
-`NoteColourFore` / `NoteColourBack` calls — no dialog involved. NOT FIXED here:
-the root is the option row's maximum (and `echo_colour`'s, which is also wrong
-for an index), and tightening it changes what `SetOption` accepts on Windows,
-so it wants a deliberate decision rather than a drive-by patch.
+`NoteColourFore` / `NoteColourBack` calls — no dialog involved.
+
+**The readers are fixed (2026-08-05).** All seven now go through one guarded
+accessor, `CMUSHclientDoc::NoteCustomColourIndex`, which returns -1 for
+anything that is not a usable index; out of range then behaves exactly as
+`SAMECOLOUR` already did, which is what the two readers that *did* check were
+already doing. Removing that guard segfaults the test suite — the overrun was
+real, not theoretical.
+
+**The option row itself is NOT fixed, and tightening it is not the small change
+it looks like.** `OPT_RGB_COLOUR` does not merely set a maximum: it is also
+what routes the value through `Save_XML_colour` → `ColourToName` on the way to
+the world file, so `note_text_colour` is stored on disk as a **colour name**,
+not a number. Drop the flag and:
+
+* the writer switches to `Save_XML_number` and the reader to the number branch,
+  so **every existing world file's stored colour string stops parsing** and the
+  setting silently reverts to the default; and
+* `OPT_CUSTOM_COLOUR` — the flag `echo_colour` uses, and the one that matches
+  how this field is actually consumed — carries a ±1 encoding
+  (`doc_shared.cpp`: subtract 1 on set, add 1 on get, 0 ⇄ SAMECOLOUR), so every
+  value would additionally **shift by one**.
+
+So the semantically correct row (`OPT_CUSTOM_COLOUR`, max `MAX_CUSTOM`) needs a
+world-file migration, not a one-line edit. Note also that
+`world.NoteColour` (`methods_noting.cpp:139-146`) already implements that exact
+1-based convention by hand and validates it — so the two script APIs onto this
+one field disagree by one, and only the property validates. That is the real
+shape of the defect, and it is still **Wade's call**.
 
 **The instance fixed in `36db6c1`.** The same bad value reaches
 `CPrefsP9::FixSwatch` / `CPrefsP17::FixSwatch`, which special-case only

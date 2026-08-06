@@ -60,10 +60,11 @@ void CMUSHclientDoc::Tell(LPCTSTR Message)
     // select correct colour, if needed, from custom pallette
     if (!m_bNotesInRGB)
       {
-      if (m_iNoteTextColour >= 0 && m_iNoteTextColour < MAX_CUSTOM)
-        {   
-        fore = m_customtext [m_iNoteTextColour];
-        back = m_customback [m_iNoteTextColour];
+      const int idx = NoteCustomColourIndex ();
+      if (idx >= 0)
+        {
+        fore = m_customtext [idx];
+        back = m_customback [idx];
         }  // end of notes in custom colour
       }
 
@@ -131,6 +132,34 @@ CStyle * pOldStyle = NULL;
 } // end of CMUSHclientDoc::Tell
 
 
+// ── which custom colour a Note uses ─────────────────────────────────────────
+// One place to ask, because the answer was being derived in seven and only two
+// of them range-checked.
+//
+// m_iNoteTextColour is an index into the 16-entry custom-colour arrays, with
+// SAMECOLOUR standing for "none".  The dedicated property (SetNoteColour, just
+// below) validates 0..MAX_CUSTOM and stores n-1, so through THAT door the field
+// is always sane.  The option table is the other door, and it declares the
+// field an RGB colour with a maximum of 0xFFFFFF -- so
+// SetOption("note_text_colour", 300) stores 300, and five of the seven readers
+// then indexed m_customtext[300], hundreds of elements past a 16-entry array,
+// on an ordinary world.Note.  docs/UPSTREAM-BUGS.md #8.
+//
+// Out of range is treated exactly as SAMECOLOUR is -- fall back to the default
+// colour -- which is what the two readers that DID check already did, so no
+// valid configuration changes behaviour.
+int CMUSHclientDoc::NoteCustomColourIndex (void) const
+  {
+  // ONE test, and deliberately only one.  The two you would expect to see
+  // beside it are both dead: m_iNoteTextColour is an unsigned short, so "< 0"
+  // can never fire, and SAMECOLOUR is 65535, which is itself >= MAX_CUSTOM.
+  // Writing them out anyway leaves branches no test can reach, reading as
+  // though they were load-bearing.
+  if (m_iNoteTextColour >= MAX_CUSTOM)
+    return -1;      // SAMECOLOUR, or whatever the option table let through
+  return (int) m_iNoteTextColour;
+  }   // end of CMUSHclientDoc::NoteCustomColourIndex
+
 short CMUSHclientDoc::GetNoteColour() 
 {
   if (m_bNotesInRGB)
@@ -153,15 +182,16 @@ long CMUSHclientDoc::GetNoteColourFore()
   if (m_bNotesInRGB)
     return m_iNoteColourFore;
 
-  if (m_iNoteTextColour == SAMECOLOUR)
+  const int idx = NoteCustomColourIndex ();
+  if (idx < 0)
     {
     if (m_bCustom16isDefaultColour)
       return m_customtext [15];
     else
       return m_normalcolour [WHITE];
-    } // not same colour
+    } // no usable custom colour
   else
-    return m_customtext [m_iNoteTextColour];
+    return m_customtext [idx];
 }   // end of CMUSHclientDoc::GetNoteColourFore
 
 void CMUSHclientDoc::SetNoteColourFore(long nNewValue) 
@@ -170,15 +200,16 @@ void CMUSHclientDoc::SetNoteColourFore(long nNewValue)
 
   if (!m_bNotesInRGB)
     {
-    if (m_iNoteTextColour == SAMECOLOUR)
+    const int idx = NoteCustomColourIndex ();
+    if (idx < 0)
       {
       if (m_bCustom16isDefaultColour)
         m_iNoteColourBack = m_customback [15];
       else
         m_iNoteColourBack = m_normalcolour [BLACK];
-      } // not same colour
+      } // no usable custom colour
     else
-      m_iNoteColourBack = m_customback [m_iNoteTextColour];
+      m_iNoteColourBack = m_customback [idx];
     }  // end of not notes in RGB
 
   m_bNotesInRGB = true;
@@ -191,15 +222,16 @@ long CMUSHclientDoc::GetNoteColourBack()
   if (m_bNotesInRGB)
     return m_iNoteColourBack;
 
-  if (m_iNoteTextColour == SAMECOLOUR)
+  const int idx = NoteCustomColourIndex ();
+  if (idx < 0)
     {
     if (m_bCustom16isDefaultColour)
       return m_customback [15];
     else
       return m_normalcolour [BLACK];
-    } // not same colour
+    } // no usable custom colour
   else
-    return m_customback [m_iNoteTextColour];
+    return m_customback [idx];
 }   // end of CMUSHclientDoc::GetNoteColourBack
 
 void CMUSHclientDoc::SetNoteColourBack(long nNewValue) 
@@ -207,15 +239,16 @@ void CMUSHclientDoc::SetNoteColourBack(long nNewValue)
 // convert foreground to RGB if necessary
   if (!m_bNotesInRGB)
     {
-    if (m_iNoteTextColour == SAMECOLOUR)
+    const int idx = NoteCustomColourIndex ();
+    if (idx < 0)
       {
       if (m_bCustom16isDefaultColour)
         m_iNoteColourFore = m_customtext [15];
       else
         m_iNoteColourFore = m_normalcolour [WHITE];
-      } // not same colour
+      } // no usable custom colour
     else
-      m_iNoteColourFore = m_customtext [m_iNoteTextColour];
+      m_iNoteColourFore = m_customtext [idx];
     }  // end of not notes in RGB
 
   m_bNotesInRGB = true;
@@ -250,10 +283,10 @@ void CMUSHclientDoc::NoteColourName(LPCTSTR Foreground, LPCTSTR Background)
       }   // end of notes were "same colour" (as what?)
     else
       // just normal custom colours - however check in range just in case
-      if (m_iNoteTextColour >= 0 && m_iNoteTextColour < MAX_CUSTOM)
+      if (NoteCustomColourIndex () >= 0)
         {   // notes were a custom colour
-        m_iNoteColourFore = m_customtext [m_iNoteTextColour];
-        m_iNoteColourBack = m_customback [m_iNoteTextColour];
+        m_iNoteColourFore = m_customtext [NoteCustomColourIndex ()];
+        m_iNoteColourBack = m_customback [NoteCustomColourIndex ()];
         }  // end of notes in custom colour
       else
         {   // white on black - shouldn't get here
@@ -711,15 +744,16 @@ void CMUSHclientDoc::Hyperlink_Helper (LPCTSTR Action,
     backcolour = m_iNoteColourBack;
   else
     {
-    if (m_iNoteTextColour == SAMECOLOUR)
+    const int idx = NoteCustomColourIndex ();
+    if (idx < 0)
       {
       if (m_bCustom16isDefaultColour)
         backcolour =  m_customback [15];
       else
         backcolour =  m_normalcolour [BLACK];
-      } // not same colour
+      } // no usable custom colour
     else
-      backcolour =  m_customback [m_iNoteTextColour];
+      backcolour =  m_customback [idx];
     }
 
   SetColour (TextColour, forecolour);

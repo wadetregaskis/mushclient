@@ -2451,4 +2451,86 @@ TEST(WrapTest, TrailingSpaceAtWrapColumnSavedCountZeroSplit)
 }
 
 
+// ── note_text_colour is an INDEX, and nothing stopped it being nonsense ─────
+// docs/UPSTREAM-BUGS.md #8.  m_iNoteTextColour indexes the 16-entry
+// m_customtext/m_customback, with SAMECOLOUR meaning "none".  Its option-table
+// row declares it an RGB colour with a maximum of 0xFFFFFF, so
+// SetOption("note_text_colour", 300) is accepted and stored -- and five of the
+// seven readers then used it as a bare subscript, hundreds of elements past
+// the array, on an ordinary world.Note.
+//
+// The row cannot simply be tightened: OPT_RGB_COLOUR is also what makes the
+// value serialise to the world file as a COLOUR NAME (Save_XML_colour ->
+// ColourToName), so changing the flag changes the on-disk format and shifts
+// every existing world by one.  So the readers are what got fixed, through a
+// single guarded accessor.
+
+TEST(NoteColour, OutOfRangeIndexFallsBackInsteadOfReadingPastTheArray)
+{
+    CMUSHclientDoc doc;
+    doc.m_bNotesInRGB = false;
+
+    // What SetOption can legally store today, and used to subscript with.
+    for (long bad : { 16L, 300L, 65534L, 0xFFFFFFL }) {
+        doc.m_iNoteTextColour = (unsigned short) bad;
+        EXPECT_EQ(-1, doc.NoteCustomColourIndex());
+    }
+
+    // ...and the readers hand back the DEFAULT rather than whatever was at
+    // m_customtext[300].  m_bCustom16isDefaultColour picks which default.
+    doc.m_iNoteTextColour = 300;
+    doc.m_bCustom16isDefaultColour = false;
+    EXPECT_EQ(doc.m_normalcolour[WHITE], (COLORREF) doc.GetNoteColourFore());
+    EXPECT_EQ(doc.m_normalcolour[BLACK], (COLORREF) doc.GetNoteColourBack());
+    doc.m_bCustom16isDefaultColour = true;
+    EXPECT_EQ(doc.m_customtext[15], (COLORREF) doc.GetNoteColourFore());
+    EXPECT_EQ(doc.m_customback[15], (COLORREF) doc.GetNoteColourBack());
+}
+
+TEST(NoteColour, ValidIndicesStillResolveToTheirCustomColour)
+{
+    // The control: the fix must not change any legal configuration.
+    CMUSHclientDoc doc;
+    doc.m_bNotesInRGB = false;
+    for (int i = 0; i < MAX_CUSTOM; ++i) {
+        doc.m_iNoteTextColour = (unsigned short) i;
+        EXPECT_EQ(i, doc.NoteCustomColourIndex());
+        EXPECT_EQ(doc.m_customtext[i], (COLORREF) doc.GetNoteColourFore());
+        EXPECT_EQ(doc.m_customback[i], (COLORREF) doc.GetNoteColourBack());
+    }
+}
+
+TEST(NoteColour, SameColourIsStillTheNoCustomColourSentinel)
+{
+    CMUSHclientDoc doc;
+    doc.m_bNotesInRGB = false;
+    doc.m_iNoteTextColour = SAMECOLOUR;
+    EXPECT_EQ(-1, doc.NoteCustomColourIndex());
+    doc.m_bCustom16isDefaultColour = false;
+    EXPECT_EQ(doc.m_normalcolour[WHITE], (COLORREF) doc.GetNoteColourFore());
+    doc.m_bCustom16isDefaultColour = true;
+    EXPECT_EQ(doc.m_customtext[15], (COLORREF) doc.GetNoteColourFore());
+}
+
+TEST(NoteColour, TheDedicatedPropertyStillValidatesAsItAlwaysDid)
+{
+    // world.NoteColour is 1-based with 0 meaning "same colour", and it already
+    // refused out-of-range input -- which is why the option table was the only
+    // way to get a bad value in.  Unchanged by the fix.
+    CMUSHclientDoc doc;
+    doc.m_iNoteTextColour = 3;
+    doc.SetNoteColour(0);
+    EXPECT_EQ(SAMECOLOUR, doc.m_iNoteTextColour);
+    doc.SetNoteColour(1);
+    EXPECT_EQ(0, doc.m_iNoteTextColour);
+    doc.SetNoteColour(MAX_CUSTOM);
+    EXPECT_EQ(MAX_CUSTOM - 1, doc.m_iNoteTextColour);
+
+    const unsigned short before = doc.m_iNoteTextColour;
+    doc.SetNoteColour(MAX_CUSTOM + 1);      // refused, silently
+    EXPECT_EQ(before, doc.m_iNoteTextColour);
+    doc.SetNoteColour(-1);
+    EXPECT_EQ(before, doc.m_iNoteTextColour);
+}
+
 MC_TEST_MAIN()

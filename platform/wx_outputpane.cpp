@@ -394,6 +394,16 @@ static SOutputLine DetectURLs(SOutputLine line)
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+// See the header.  Lifted out of OnPaint so the guard-and-callback pairing is
+// callable — and therefore testable — without an event loop; OnPaint still
+// calls it at exactly the point Windows' OnDraw fires the plugin callback.
+void COutputPane::FirePluginDraw(int firstVisiblePaneLine, int pixelOffset)
+{
+    if (!m_fn_draw_output_window) return;
+    PluginDrawScope guard(*this);
+    m_fn_draw_output_window(firstVisiblePaneLine, pixelOffset);
+}
+
 void COutputPane::AppendLine(SOutputLine&& line)
 {
     // Script running inside the mid-paint ON_PLUGIN_DRAW_OUTPUT_WINDOW
@@ -401,7 +411,11 @@ void COutputPane::AppendLine(SOutputLine&& line)
     // iterating m_lines.  Defer such appends until the paint completes
     // (docs/PAL.md S4c re-entrancy guard; Windows relies on the documented
     // draw-only discipline instead).
-    if (m_inPaint) {
+    //
+    // BEFORE the pending-row handling below, deliberately: the paint is drawing
+    // the pending row too, so a print from the callback must not replace or
+    // clear it either.  The replay runs the whole body, in order, next turn.
+    if (m_pluginDrawDepth > 0) {
         auto pending = std::make_shared<SOutputLine>(std::move(line));
         CallAfter([this, pending]() { AppendLine(std::move(*pending)); });
         return;
@@ -1240,13 +1254,13 @@ void COutputPane::OnPaint(wxPaintEvent&)
     // ── ON_PLUGIN_DRAW_OUTPUT_WINDOW (docs/PAL.md S4c) ─────────────────────
     // Give plugins a chance to update miniwindows to match the visible text —
     // fired between the underneath composite and the text pass, exactly where
-    // Windows' OnDraw fires it.  The callback runs script: m_inPaint makes
-    // AppendLine defer any prints it causes until this paint completes.
-    if (m_fn_draw_output_window) {
-        m_inPaint = true;
-        m_fn_draw_output_window(YToLine(0), yPixOffset);
-        m_inPaint = false;
-    }
+    // Windows' OnDraw fires it.  The callback runs script; FirePluginDraw holds
+    // the re-entrancy window open across it so AppendLine defers any prints it
+    // causes until this paint completes.  The wiring test stays here rather
+    // than relying on FirePluginDraw's own so YToLine(0) — a wrap-cache walk —
+    // is not paid on every paint of every world that has no such plugin.
+    if (m_fn_draw_output_window)
+        FirePluginDraw(YToLine(0), yPixOffset);
 
     // Shift the text-drawing origin to the text rectangle's top-left so output
     // (and its selection highlight, which DrawLine renders at the same origin)

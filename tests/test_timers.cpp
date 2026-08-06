@@ -15,6 +15,9 @@
 #include "OtherTypes.h"     // CTimer, CmcDateTime
 #include "mcdatetime.h"
 #include "pal/iclock.h"     // pal::IClock / pal::g_clock — deterministic time
+#include "platform/wx_mfc_hooks.h"  // g_wxhook_set_status — reads the reconnect's status line
+
+#include <string>
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -169,6 +172,61 @@ TEST(TimerTest, TimersDisabledGlobally)
     doc.m_bEnableTimers = TRUE;
     doc.CheckTimers();
     EXPECT_EQ(1L, t->nMatched);   // enabled → the same overdue timer fires
+}
+
+// ── the automatic reconnect ───────────────────────────────────────────────
+// CheckTimers is also where "Reconnect on link failure" lives (timers.cpp:328),
+// in COMMON code, and it is the only reconnect either platform has: the port's
+// world timer calls CheckTimers every 100 ms by default, so nothing slower could
+// ever get there first.  All three of its conditions were untested, and the
+// first one -- the preference, which ships OFF -- short-circuited the block on
+// its opening line in every test run there has ever been.
+//
+// Observed through g_wxhook_set_status, the status line the block writes
+// immediately before ConnectSocket().  m_server is "0.0.0.0", which
+// ConnectSocket refuses on its first line (doc_shared.cpp:1258), so the attempt
+// is recorded without resolving a name or opening a socket.
+static std::string g_lastStatus;
+static void capture_status(const char* msg) { g_lastStatus = msg ? msg : ""; }
+
+TEST(TimerTest, LinkFailureReconnectsOnlyWhenAllThreeConditionsHold)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_server        = "0.0.0.0";
+    doc.m_iConnectPhase = eConnectNotConnected;
+    doc.m_bDisconnectOK = false;          // the link DROPPED; nobody asked for it
+
+    const unsigned savedPref = App.m_bReconnectOnLinkFailure;
+    void (*savedHook)(const char*) = g_wxhook_set_status;
+    g_wxhook_set_status = capture_status;
+
+    // The shipped default: the preference is off, so a dropped link stays down.
+    App.m_bReconnectOnLinkFailure = 0;
+    g_lastStatus.clear();
+    doc.CheckTimers();
+    EXPECT_TRUE(g_lastStatus.empty());
+
+    // Turn it on and the very same state reconnects.
+    App.m_bReconnectOnLinkFailure = 1;
+    g_lastStatus.clear();
+    doc.CheckTimers();
+    EXPECT_STREQ("Reconnecting ...", g_lastStatus.c_str());
+
+    // A disconnect the user asked for is not a link failure.
+    doc.m_bDisconnectOK = true;
+    g_lastStatus.clear();
+    doc.CheckTimers();
+    EXPECT_TRUE(g_lastStatus.empty());
+
+    // Neither is a world that is still connected.
+    doc.m_bDisconnectOK = false;
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    g_lastStatus.clear();
+    doc.CheckTimers();
+    EXPECT_TRUE(g_lastStatus.empty());
+
+    g_wxhook_set_status           = savedHook;
+    App.m_bReconnectOnLinkFailure = savedPref;
 }
 
 TEST(TimerTest, ActiveWhenClosedFiresWhileDisconnected)

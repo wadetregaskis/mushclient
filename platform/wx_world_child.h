@@ -28,6 +28,7 @@ void wx_activate_world_frame(CMUSHclientDoc* doc);
 #include <wx/timer.h>
 #include <wx/textctrl.h>              // wxTextCtrl, wxTextAttr (info bar)
 #include <cstdio>
+#include <functional>                 // std::function — the close-teardown observer
 #include <string>
 #include <vector>
 #include <memory>
@@ -129,6 +130,49 @@ public:
     // Public access to the active input bar so scripting callbacks in
     // wx_mfc_impl.cpp can read/write it for world.GetCommand/SetCommand.
     wxTextCtrl* ActiveInputPublic() const { return ActiveInput(); }
+
+    // Both command bars, for the in-app selftest.  The password swap is the one
+    // place where BOTH have to be inspected at once — shown/hidden, and empty or
+    // not — and ActiveInputPublic() by construction can only ever see one.
+    wxTextCtrl* NormalInputPublic()   const { return m_input; }
+    wxTextCtrl* PasswordInputPublic() const { return m_inputPassword; }
+
+    // The world timer's echo-suppression edge detector (see the body).  Public
+    // because it IS the seam: driving the real 100 ms tick would test the swap
+    // but never the latch that stops it repeating.  Returns true if it swapped.
+    bool PollNoEcho();
+
+    // ── Close teardown ─────────────────────────────────────────────────────
+    // The steps Cmd+W runs once the prompts are settled, in the order they
+    // must happen.  Each is a hazard if it moves: a running timer can call into
+    // a half-freed doc; a plugin's OnPluginClose / SaveState is where Quow-class
+    // packs persist their miniwindow layout, so it has to run while the pane is
+    // still attached; and the view must be detached before anything is deleted
+    // or the doc's final flush paints into a dying pane.
+    enum class CloseStep {
+        TimerStopped,
+        WorldCloseFired,      // the world's own OnWorldClose script
+        PluginsClosed,        // ON_PLUGIN_CLOSE for every plugin
+        PluginStateSaved,     // CPlugin::SaveState for every plugin
+        ViewDetached,         // m_pWorldView = nullptr
+        Deregistered,         // out of the doc template + the doc→frame registry
+        DocDeleted
+    };
+    using CloseObserver = std::function<void(CloseStep)>;
+
+    // Called after each step completes.  Both the frame and its doc are gone by
+    // the time OnClose returns, so this is the only way the order can be read
+    // back — the in-app selftest installs one and closes a real world.
+    void SetCloseTeardownObserver(CloseObserver observe)
+        { m_closeObserver = std::move(observe); }
+
+    // Ordered teardown; see the body.  Runs the same steps whether it is
+    // reached through the close handler or called directly.
+    void RunCloseTeardown(const CloseObserver& observe = CloseObserver());
+
+    // Is the 100 ms world timer still armed?  Asserted by the teardown test:
+    // "stopped before the doc is touched" is otherwise unobservable.
+    bool IsWorldTimerRunning() const { return m_worldTimer.IsRunning(); }
 
     // ── pal::IWorldView ───────────────────────────────────────────────────
     // The engine's typed output seam.  In the current step only appendLine()
@@ -381,9 +425,11 @@ private:
     // Tab completion lives in doc_tabcomplete_shared.cpp (canonical body,
     // shared with Windows); this frame only forwards the key.
 
+    // Installed by SetCloseTeardownObserver; empty in normal use.
+    CloseObserver m_closeObserver;
+
     // ── Connection status tracking ─────────────────────────────────────────
     int  m_lastConnectPhase    = -1;   // tracks phase changes to update title/status
-    int  m_reconnectCountdown  = 0;    // ticks until auto-reconnect (0 = idle)
     bool m_lastNoEcho          = false; // last known m_doc->m_bNoEcho state
     int  m_pluginTickAccum     = 0;    // ms accumulated toward next ON_PLUGIN_TICK (~40 ms)
     int  m_speedWalkAccum      = 0;    // ms accumulated toward next queued-command drain
@@ -476,7 +522,7 @@ private:
     wxTextCtrl* ActiveInput() const;
 
     // Switch the input bar between normal and password (masked) mode.
-    // Called whenever m_doc->m_bNoEcho changes.
+    // Called from PollNoEcho whenever m_doc->m_bNoEcho changes.
     void ApplyNoEcho(bool noEcho);
 
     // Returns true when this frame is the active MDI child.

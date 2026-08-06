@@ -33,6 +33,7 @@
 #include "platform/wx_osx_text.h"    // wxOSXSetWindowTabbing ("Window tabs" pref)
 #include "genprint.h"                 // FONT_BOLD / FONT_ITALIC / FONT_UNDERLINE
 #include "pal/text_rect.h"            // pal::textRectWidth — world.TextRectangle
+#include "platform/world_close_decision.h"  // DecideWorldClose — the Cmd+W prompt chain
 #include "pal/image_placement.h"    // pal::imagePlacement — background/foreground image modes
 #include "pal/surface_bridge.h"       // pal::g_surface — contentGeneration for the mask cache
 #include <map>                        // the transparency-mask cache
@@ -2424,12 +2425,17 @@ void CWorldChildFrame::GotoLine()
 
 // ── ApplyNoEcho ───────────────────────────────────────────────────────────
 // Switches the input bar between normal and password (masked) mode.
-// Called from OnWorldTimer whenever m_doc->m_bNoEcho changes.
+// Called from PollNoEcho whenever m_doc->m_bNoEcho changes.
+//
+// The masked bar is wiped on the way IN as well as on the way out, so nothing a
+// previous prompt left behind can be submitted as this prompt's answer.  The
+// NORMAL bar keeps whatever was half-typed when the prompt arrived: it is the
+// user's own command, it is not what Enter sends while the masked bar is up,
+// and Windows — one edit control, no swap — does not discard it either.
 void CWorldChildFrame::ApplyNoEcho(bool noEcho)
 {
     if (noEcho) {
-        // Switch to the password bar.  Clear any partial command first so it
-        // isn't accidentally sent as a password.
+        // Switch to the password bar.
         if (m_input) m_input->Hide();
         if (m_inputPassword) {
             m_inputPassword->Clear();
@@ -2449,6 +2455,23 @@ void CWorldChildFrame::ApplyNoEcho(bool noEcho)
     }
     Layout();
     m_lastNoEcho = noEcho;
+}
+
+// ── PollNoEcho ────────────────────────────────────────────────────────────
+// The edge detector OnWorldTimer runs every 100 ms: swap the bars only when the
+// MUD's echo state has actually changed.  Split out from the tick so the in-app
+// selftest can drive the EDGE rather than the effect — the latch is the part
+// that matters and the part a test could not otherwise reach.  ApplyNoEcho
+// steals focus and clears the masked bar every time it runs, so without
+// m_lastNoEcho a password prompt would re-focus and erase what the user is
+// typing ten times a second for as long as echo stayed off.
+// Returns true when the state changed and the bars were swapped.
+bool CWorldChildFrame::PollNoEcho()
+{
+    if (!m_doc || m_doc->m_bNoEcho == m_lastNoEcho)
+        return false;
+    ApplyNoEcho(m_doc->m_bNoEcho);
+    return true;
 }
 
 // ── IsActiveWorld ─────────────────────────────────────────────────────────
@@ -2558,8 +2581,6 @@ void CWorldChildFrame::UpdateStatusBar()
         msg = static_cast<const char*>(m_doc->m_strStatusMessage);
     } else if (m_output && !m_output->IsAutoScrolling()) {
         msg = "\xe2\x86\x91 Scrolled back \xe2\x80\x94 press Escape or scroll to bottom to resume";
-    } else if (m_reconnectCountdown > 0) {
-        msg = "Reconnecting in " + std::to_string((m_reconnectCountdown + 9) / 10) + "s\xe2\x80\xa6";
     } else if (connected) {
         msg = "Connected to ";
         msg += static_cast<const char*>(m_doc->m_server);
@@ -4239,19 +4260,17 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
                 // Green — successful connection.
                 m_output->AppendNote("** Connected to " + hostport + " **",
                                      RGB(68, 204, 68));
-                m_reconnectCountdown = 0;
                 TriggerNAWS();
 
             } else if (phase == eConnectNotConnected) {
                 if (prevPhase == eConnectConnectedToMud ||
                     prevPhase == eConnectDisconnecting) {
                     // Amber — link dropped or user-initiated disconnect.
+                    // Auto-reconnect is NOT armed here: CheckTimers (called at
+                    // the top of this same tick) holds the canonical one, with
+                    // the same conditions and no delay — see timers.cpp:328.
                     m_output->AppendNote("** Disconnected from " + hostport + " **",
                                          RGB(255, 136, 0));
-                    // Auto-reconnect on unexpected link failure.
-                    if (!m_doc->m_bDisconnectOK && App.m_bReconnectOnLinkFailure) {
-                        m_reconnectCountdown = 50;  // 50 × 100 ms = 5 s
-                    }
                 } else if (prevPhase != eConnectNotConnected) {
                     // Red — connection attempt failed.
                     m_output->AppendNote("** Connection to " + hostport + " failed **",
@@ -4278,8 +4297,7 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     // ── Telnet echo suppression (password mode) ───────────────────────────
     // The MUD sends IAC WILL ECHO to suppress echo (password prompts) and
     // IAC WONT ECHO to restore it.  We swap the input bar for a masked one.
-    if (m_doc->m_bNoEcho != m_lastNoEcho)
-        ApplyNoEcho(m_doc->m_bNoEcho);
+    PollNoEcho();
 
     // ── ANSI palette changed → recolour what is already on screen ─────────
     // Windows resolves each style through the palette on every paint, so its
@@ -4322,26 +4340,14 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         if (m_output) m_output->RecolourFromPalette(palette);
     }
 
-    // ── Auto-reconnect countdown ──────────────────────────────────────────
-    if (m_reconnectCountdown > 0) {
-        if (phase != eConnectNotConnected) {
-            // Reconnect already started (phase advanced) — clear the counter.
-            m_reconnectCountdown = 0;
-        } else {
-            --m_reconnectCountdown;
-            if (m_reconnectCountdown == 0) {
-                // Time to fire the reconnect.
-                if (m_output)
-                    m_output->AppendNote("** Reconnecting\xe2\x80\xa6 **",
-                                         RGB(255, 204, 0));
-                m_doc->m_bDisconnectOK = false;
-                m_doc->ConnectSocket();
-            }
-            // Refresh status bar with countdown (only if active).
-            if (IsActiveWorld())
-                UpdateStatusBar();
-        }
-    }
+    // (No auto-reconnect countdown here.  There used to be a port-local 5 s one,
+    //  armed on an unexpected disconnect and displayed in the status bar; it
+    //  could never fire.  CheckTimers — called near the top of this tick, every
+    //  100 ms by default — carries the canonical reconnect in common code
+    //  (timers.cpp:328) with the identical conditions and no delay, and
+    //  ConnectSocket advances m_iConnectPhase synchronously, so by the time the
+    //  connection-phase block above ran the phase was no longer
+    //  eConnectNotConnected and the countdown's arm was unreachable.)
 }
 
 // ── pal::IWorldView ─────────────────────────────────────────────────────────
@@ -5088,24 +5094,44 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         // modified so the normal prompt still protects the user's work.
     }
 
+    // Which questions this close asks is a pure function of five flags, and it
+    // lives in platform/world_close_decision.h so the whole truth table can be
+    // checked headlessly — nothing below this point could be, because a modal
+    // cannot complete without the event loop the selftests run before.
+    // `modified` is read HERE, after the automatic save above, so a save that
+    // failed still reaches the unsaved-changes prompt.
+    const std::string worldName =
+        m_doc ? static_cast<const char*>(m_doc->m_mush_name) : std::string();
+    const std::string name = worldName.empty() ? std::string("this world")
+                                               : worldName;
+    const WorldClosePlan plan = DecideWorldClose(
+        evt.CanVeto() && m_doc != nullptr,
+        m_doc && m_doc->IsModified(),
+        m_doc && m_doc->m_bVariablesChanged,
+        App.m_bConfirmBeforeSavingVariables != 0,
+        App.m_bConfirmBeforeClosingWorld != 0);
+
+    // Every prompt goes through ::UMessageBox rather than wxMessageBox: it is
+    // the same seam (g_wxhook_message_box) the rest of the app's prompts use,
+    // and the only way an automated test can answer them.
     // "Offer to save world if only Variables have changed" (Global Prefs ▸
     // Closing, default ON).  This ADDS a prompt rather than suppressing one:
     // changing a script variable does not mark the document modified, so
     // without this a variables-only change closes silently.  Windows asks when
     // the option is on (doc.cpp:2125-2127); the port ignored it entirely.
-    if (evt.CanVeto() && m_doc && !m_doc->IsModified() &&
-        m_doc->m_bVariablesChanged && App.m_bConfirmBeforeSavingVariables)
-    {
-        wxString vname = wxString::FromUTF8(
-            static_cast<const char*>(m_doc->m_mush_name));
-        if (vname.IsEmpty()) vname = wxT("this world");
-        int vans = wxMessageBox(
-            wxT("Variables have changed in ") + vname +
-                wxT(".\n\nSave the world file before closing?"),
-            wxT("Variables Changed"),
-            wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_QUESTION, this);
-        if (vans == wxCANCEL) { evt.Veto(); return; }
-        if (vans == wxYES && g_wxhook_save_world) {
+    if (plan.askSaveVariables) {
+        const std::string msg = "Variables have changed in " + name +
+                                ".\n\nSave the world file before closing?";
+        int vans = ::UMessageBox(msg.c_str(),
+                                 MB_YESNOCANCEL | MB_ICONQUESTION,
+                                 "Variables Changed");
+        // Anything that is not an explicit No vetoes.  Not just IDCANCEL:
+        // this is a three-way prompt guarding unsaved work, so an answer the
+        // caller does not recognise must stop the close rather than fall
+        // through it.  ::UMessageBox has a headless fallback, and its previous
+        // one answered exactly this prompt with IDOK.
+        if (vans != IDYES && vans != IDNO) { evt.Veto(); return; }
+        if (vans == IDYES && g_wxhook_save_world) {
             if (!g_wxhook_save_world(m_doc, /*saveAs=*/false, this)) {
                 evt.Veto();
                 return;
@@ -5113,21 +5139,17 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         }
     }
 
-    if (evt.CanVeto() && m_doc && m_doc->IsModified()) {
-        wxString name = wxString::FromUTF8(
-            static_cast<const char*>(m_doc->m_mush_name));
-        if (name.IsEmpty()) name = wxT("this world");
+    if (plan.askSaveModified) {
+        const std::string msg = "Save changes to " + name + " before closing?";
+        int answer = ::UMessageBox(msg.c_str(),
+                                   MB_YESNOCANCEL | MB_ICONQUESTION,
+                                   "Unsaved Changes");
 
-        int answer = wxMessageBox(
-            wxT("Save changes to ") + name + wxT(" before closing?"),
-            wxT("Unsaved Changes"),
-            wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_QUESTION, this);
-
-        if (answer == wxCANCEL) {
+        if (answer != IDYES && answer != IDNO) {   // see the prompt above
             evt.Veto();
             return;
         }
-        if (answer == wxYES) {
+        if (answer == IDYES) {
             // Attempt to save.  If the user cancels the save-as dialog (no path
             // yet) or the save fails, veto the close so no work is lost.
             if (g_wxhook_save_world) {
@@ -5138,22 +5160,20 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
                 }
             }
         }
-        // answer == wxNO → discard changes and fall through to close.
+        // answer == IDNO → discard changes and fall through to close.
     }
 
     // ── Close confirmation ────────────────────────────────────────────────
     // General "are you sure?" prompt (separate from the save prompt above).
     // Skipped when we already asked about saving — no need to ask twice.
-    else if (evt.CanVeto() && App.m_bConfirmBeforeClosingWorld && m_doc &&
-             !m_doc->IsModified()) {
-        wxString name = wxString::FromUTF8(
-            static_cast<const char*>(m_doc->m_mush_name));
-        if (name.IsEmpty()) name = wxT("this world");
-        int answer = wxMessageBox(
-            wxT("Close ") + name + wxT("?"),
-            wxT("Confirm Close"),
-            wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this);
-        if (answer != wxYES) {
+    // MB_DEFBUTTON2 = "No" is the default button, as the destructive answer is
+    // the other one.
+    if (plan.askConfirmClose) {
+        const std::string msg = "Close " + name + "?";
+        int answer = ::UMessageBox(msg.c_str(),
+                                   MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION,
+                                   "Confirm Close");
+        if (answer != IDYES) {
             evt.Veto();
             return;
         }
@@ -5187,60 +5207,80 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
     // Close any open log file before the doc is destroyed.
     if (IsLogging()) StopLogging();
 
+    RunCloseTeardown(m_closeObserver);
+
+    evt.Skip();  // let wxWidgets destroy the frame and its child widgets
+}
+
+// ── RunCloseTeardown ──────────────────────────────────────────────────────
+// Everything Cmd+W does once the questions are settled, in the one order that
+// is safe.  Split out of OnClose because the ORDER is the whole content and
+// nothing could observe it: the frame and its doc are both gone by the time the
+// close handler returns, so `observe` is called after each step and is how the
+// in-app selftest reads the sequence back (world_frame_selftest.cpp).
+void CWorldChildFrame::RunCloseTeardown(const CloseObserver& observe)
+{
+    auto done = [&observe](CloseStep s) { if (observe) observe(s); };
+
     // Stop the world timer before we touch the doc — prevents a timer callback
     // from firing between m_pWorldView=nullptr and delete doc.  (The value
     // member also stops itself when the frame is destroyed, covering the Cmd+Q
     // teardown path where OnClose never runs.)
     m_worldTimer.Stop();
+    done(CloseStep::TimerStopped);
 
-    if (m_doc) {
-        // Capture the world file path before clearing the doc, so we can
-        // remove it from the startup-reopen list below.
-        std::string worldPath = static_cast<const char*>(m_doc->GetPathName());
+    if (!m_doc)
+        return;
 
-        // Run the world-close script teardown while the pane is STILL attached,
-        // so anything these handlers print can reach the screen.  Closing a
-        // single world previously skipped all of this — only Cmd+Q did it (see
-        // the identical block in platform/wx_mfc_impl.cpp hook_query_quit_save)
-        // — so Cmd+W and Cmd+Q behaved differently and, because Quow's plugins
-        // persist their miniwindow layout from OnPluginClose, closing one world
-        // silently threw that layout away.
-        //
-        // Deliberately NOT routed through SaveModified(): doc.cpp:2098-2144
-        // would re-ask the "this will end your session" and variables-changed
-        // prompts that OnClose already asked above, double-prompting the user.
-        m_doc->FireWorldClose();
-        m_doc->SendToAllPluginCallbacks(ON_PLUGIN_CLOSE);
-        for (PluginListIterator pit = m_doc->m_PluginList.begin();
-             pit != m_doc->m_PluginList.end(); ++pit)
-            if (*pit) (*pit)->SaveState();
+    // Run the world-close script teardown while the pane is STILL attached,
+    // so anything these handlers print can reach the screen.  Closing a
+    // single world previously skipped all of this — only Cmd+Q did it (see
+    // the identical block in platform/wx_mfc_impl.cpp hook_query_quit_save)
+    // — so Cmd+W and Cmd+Q behaved differently and, because Quow's plugins
+    // persist their miniwindow layout from OnPluginClose, closing one world
+    // silently threw that layout away.
+    //
+    // Deliberately NOT routed through SaveModified(): doc.cpp:2098-2144
+    // would re-ask the "this will end your session" and variables-changed
+    // prompts that OnClose already asked above, double-prompting the user.
+    m_doc->FireWorldClose();
+    done(CloseStep::WorldCloseFired);
 
-        // Detach the view BEFORE deleting the doc so that any final output
-        // flushed by the destructor doesn't call AppendLine on the dying pane
-        // (m_pWorldView is this frame; every Emit*/pull helper no-ops on null).
-        m_doc->m_pWorldView = nullptr;
+    m_doc->SendToAllPluginCallbacks(ON_PLUGIN_CLOSE);
+    done(CloseStep::PluginsClosed);
 
-        // Deregister from the world doc-template so GetWorldList() no longer
-        // returns this world after it is destroyed.
-        if (App.m_pWorldDocTemplate)
-            App.m_pWorldDocTemplate->RemoveDocument(m_doc);
+    for (PluginListIterator pit = m_doc->m_PluginList.begin();
+         pit != m_doc->m_PluginList.end(); ++pit)
+        if (*pit) (*pit)->SaveState();
+    done(CloseStep::PluginStateSaved);
 
-        // Remove from the doc→frame registry before deleting so that no hook
-        // can look up a dangling frame pointer during the destructor.
-        wx_unregister_world_frame(m_doc);
+    // Detach the view BEFORE deleting the doc so that any final output
+    // flushed by the destructor doesn't call AppendLine on the dying pane
+    // (m_pWorldView is this frame; every Emit*/pull helper no-ops on null).
+    m_doc->m_pWorldView = nullptr;
+    done(CloseStep::ViewDetached);
 
-        // Closing a world deliberately does NOT remove it from
-        // App.m_strWorldList.  That list is the user's curated "open these at
-        // startup" set (its only writer on Windows is the Global Preferences
-        // page); treating a close as a request to edit it meant the set was
-        // whatever happened to be open when you last quit.
+    // Deregister from the world doc-template so GetWorldList() no longer
+    // returns this world after it is destroyed.
+    if (App.m_pWorldDocTemplate)
+        App.m_pWorldDocTemplate->RemoveDocument(m_doc);
 
-        // Disconnect and release the doc.  Deletes socket, triggers, timers, etc.
-        CMUSHclientDoc* doc = m_doc;
-        m_doc = nullptr;    // prevent re-entrancy
-        delete doc;
-    }
-    evt.Skip();  // let wxWidgets destroy the frame and its child widgets
+    // Remove from the doc→frame registry before deleting so that no hook
+    // can look up a dangling frame pointer during the destructor.
+    wx_unregister_world_frame(m_doc);
+    done(CloseStep::Deregistered);
+
+    // Closing a world deliberately does NOT remove it from
+    // App.m_strWorldList.  That list is the user's curated "open these at
+    // startup" set (its only writer on Windows is the Global Preferences
+    // page); treating a close as a request to edit it meant the set was
+    // whatever happened to be open when you last quit.
+
+    // Disconnect and release the doc.  Deletes socket, triggers, timers, etc.
+    CMUSHclientDoc* doc = m_doc;
+    m_doc = nullptr;    // prevent re-entrancy
+    delete doc;
+    done(CloseStep::DocDeleted);
 }
 
 // ── OnSize ────────────────────────────────────────────────────────────────────

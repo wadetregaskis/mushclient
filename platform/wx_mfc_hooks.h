@@ -60,6 +60,39 @@ extern int  (*g_wxhook_post_message)(void* hwnd, unsigned msg,
                                       uintptr_t wp, intptr_t lp);
 
 // MessageBox (replaces ::MessageBox on non-Windows)
+// ── the headless answer to a message box ─────────────────────────────────────
+// When no hook is installed there is no user to ask, so answer the LEAST
+// DESTRUCTIVE button of whichever set was requested: decline, never proceed.
+//
+// Inline and shared because there are two UMessageBox definitions -- one in
+// platform/windows_stubs.cpp for the headless test builds and one in
+// platform/mushapp_stubs.cpp for mushgui -- and they are in the two adapter
+// sets that never co-link, so they cannot be merged into one function.  They
+// CAN share the decision, which is the part that was wrong in both.
+//
+// Both used to say `(nType & MB_YESNO) ? IDNO : IDOK`, treating the button set
+// as a bit field.  It is the LOW NIBBLE and an ENUMERATION: MB_YESNOCANCEL is
+// 3 and MB_YESNO is 4, so `3 & 4 == 0` answered a three-way "save your changes
+// before closing?" with IDOK -- and a caller testing for IDYES and IDCANCEL
+// falls straight through both, closing the world and discarding the work.  It
+// is the same mis-reading that hook_message_box's own comment records having
+// been fixed there.
+// This header is deliberately free of the MFC/Win32 shim (it is the hook table
+// every side includes), so the ID* values are written out rather than named.
+// The two callers static_assert them against the real constants, so the numbers
+// here cannot drift from mfc_ui.h without a compile error.
+inline int HeadlessMessageBoxAnswer(unsigned int nType)
+{
+    switch (nType & 0x0F) {   // the button set: an enumeration, not bit flags
+        case 1:  return 2;    // MB_OKCANCEL         -> IDCANCEL
+        case 2:  return 3;    // MB_ABORTRETRYIGNORE -> IDABORT
+        case 3:  return 2;    // MB_YESNOCANCEL      -> IDCANCEL
+        case 4:  return 7;    // MB_YESNO            -> IDNO
+        case 5:  return 2;    // MB_RETRYCANCEL      -> IDCANCEL
+        default: return 1;    // MB_OK               -> IDOK (nothing to decline)
+    }
+}
+
 extern int  (*g_wxhook_message_box)(const char* text,
                                      const char* caption,
                                      unsigned    flags);

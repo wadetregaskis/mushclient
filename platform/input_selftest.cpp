@@ -105,6 +105,19 @@ int swallow_message_box(const char* text, const char* /*caption*/, unsigned)
 
 } // namespace
 
+// Let the frame's own 100 ms world timer run.  Used by the no-echo arm to
+// prove the timer CALLS the poll, which driving the poll directly cannot.
+static void pumpWorldTicks(wxWindow* w, int ms)
+{
+    (void) w;
+    const wxLongLong until = wxGetLocalTimeMillis() + ms;
+    while (wxGetLocalTimeMillis() < until) {
+        wxYield();
+        wxMilliSleep(10);
+    }
+    wxYield();
+}
+
 int RunInputSelfTest()
 {
     printf("INPUT-SELFTEST: driving the real command-bar key + send handlers\n");
@@ -275,6 +288,99 @@ int RunInputSelfTest()
     chk(g_spellCalls == 0, "a script-prefix command is not spell checked");
     chkStr(inp->GetValue(), "",
            "...and is sent normally (the bar is cleared)");
+
+    // ── the password-prompt bar swap ───────────────────────────────────────
+    // The MUD asks for a password with IAC WILL ECHO; the world timer polls
+    // m_bNoEcho and swaps the visible bar for a masked one (and back).  Get it
+    // wrong and the password is typed into an echoing control, or survives in a
+    // control after the prompt has gone.  Driven through PollNoEcho rather than
+    // ApplyNoEcho so the LATCH is under test too: ApplyNoEcho steals focus and
+    // clears the masked bar, and only m_lastNoEcho stops the 100 ms tick doing
+    // that over and over for as long as echo stays off.
+    // Last in this file on purpose: it leaves m_input hidden for a while, and
+    // every check above drives that control directly.
+    {
+        wxTextCtrl* normal = child->NormalInputPublic();
+        wxTextCtrl* secret = child->PasswordInputPublic();
+        chk(normal != NULL && secret != NULL,
+            "the world window has both a normal and a masked command bar");
+        chk(secret && (secret->GetWindowStyle() & wxTE_PASSWORD) != 0,
+            "...and the second one really masks what is typed");
+        chk(normal && secret && normal->IsShown() && !secret->IsShown(),
+            "with echo on, the normal bar is the visible one");
+
+        // Half-typed command in the bar when the prompt arrives.
+        normal->SetValue(wxT("who is on"));
+
+        doc->m_bNoEcho = true;
+        chk(child->PollNoEcho(), "the poll notices the MUD suppressing echo");
+        chk(!normal->IsShown() && secret->IsShown(),
+            "...and swaps the masked bar in for the normal one");
+        chk(child->ActiveInputPublic() == secret,
+            "...so the masked bar is what the send path now reads");
+        chkStr(secret->GetValue(), "",
+               "...and it starts empty, whatever was in it before");
+        chkStr(normal->GetValue(), "who is on",
+               "...while the half-typed command waits, hidden, as on Windows");
+
+        // The latch.  A second poll with the state unchanged must do NOTHING —
+        // asserted on the password text, not just the return value, because a
+        // re-apply would silently wipe what the user was typing.
+        secret->SetValue(wxT("hunter2"));
+        chk(!child->PollNoEcho(),
+            "a second poll with echo still off does not re-apply");
+        chkStr(secret->GetValue(), "hunter2",
+               "...so the half-typed password is left alone");
+        chk(secret->IsShown() && !normal->IsShown(),
+            "...and the bars stay swapped");
+
+        doc->m_bNoEcho = false;
+        chk(child->PollNoEcho(), "the poll notices echo being restored");
+        chk(normal->IsShown() && !secret->IsShown(),
+            "...and swaps the normal bar back");
+        chk(child->ActiveInputPublic() == normal,
+            "...so the send path reads the normal bar again");
+        chkStr(secret->GetValue(), "",
+               "...and the password does NOT survive the swap");
+        chkStr(normal->GetValue(), "who is on",
+               "...while the command typed before the prompt comes back");
+        chk(!child->PollNoEcho(),
+            "a second poll with echo back on does not re-apply either");
+
+        // Entering the masked bar clears it too, so nothing a script or an
+        // earlier prompt left in it can be submitted as the next answer.
+        secret->SetValue(wxT("left over"));
+        doc->m_bNoEcho = true;
+        chk(child->PollNoEcho(), "echo goes off again");
+        chkStr(secret->GetValue(), "",
+               "...and the masked bar is wiped on the way IN as well");
+
+        // ── ...and that the TIMER actually calls it ────────────────────────
+        // Everything above drives PollNoEcho directly, which tests the
+        // function and NOT the wiring: deleting the PollNoEcho() line from
+        // OnWorldTimer leaves every assertion above green while a real MUD
+        // password prompt would be typed into a visible, echoing control.
+        // So this arm touches nothing but m_bNoEcho and lets the world timer
+        // find it -- the only assertion here that fails if the call site goes.
+        doc->m_bNoEcho = false;
+        child->PollNoEcho();               // settle, then stop calling it
+        normal->Clear();
+
+        doc->m_bNoEcho = true;             // as IAC WILL ECHO would leave it
+        pumpWorldTicks(child, 350);        // the timer runs every 100 ms
+        chk(secret->IsShown() && !normal->IsShown(),
+            "the world TIMER swaps the bar, not just a direct poll");
+
+        doc->m_bNoEcho = false;
+        pumpWorldTicks(child, 350);
+        chk(normal->IsShown() && !secret->IsShown(),
+            "...and swaps it back when the prompt is over");
+
+        // Leave the frame in the state the rest of the app expects.
+        doc->m_bNoEcho = false;
+        child->PollNoEcho();
+        normal->Clear();
+    }
 
     printf("INPUT-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

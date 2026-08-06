@@ -25,6 +25,7 @@
 #include "doc.h"
 #include "mainfrm.h"   // CMainFrame (platform/mainfrm_stub.h here) — FramePostMessage tests
 #include "scripting/errors.h"
+#include "platform/world_close_decision.h"  // DecideWorldClose — the Cmd+W prompt chain
 
 #include <algorithm>
 #include <cerrno>     // ENOENT — CFile open-failure cause checks
@@ -4322,5 +4323,131 @@ TEST(Ddv, EveryMinMaxOverloadValidates) {
 // vetoes OnOK, which is what keeps the dialog open -- is already pinned by
 // Ddx.ValidationFailVetoesUpdateAndOnOK above.  Together with the throws
 // asserted here, an out-of-range entry now cannot reach the doc member.
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Closing a world: which questions get asked
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// platform/world_close_decision.h, lifted out of CWorldChildFrame::OnClose.
+// It lives in this executable for the same reason the rest of this file does:
+// it is the port's own frontend logic, pure, and free of wx types -- so it can
+// be checked here rather than in the app, where every selftest exits before the
+// event loop and no modal could ever complete.
+//
+// The assertions are properties, not a re-implementation of the function: a
+// table that simply repeats the code would agree with any mutation of it.
+
+TEST(WorldClose, AForcedCloseAsksNothingAtAll)
+{
+    // Cmd+Q, app shutdown, Close(true): the event cannot be vetoed, so a
+    // question nobody can answer would only wedge the teardown.  Every
+    // combination of the other four flags, because this must hold for all of
+    // them -- it is the property the whole teardown path depends on.
+    for (int bits = 0; bits < 16; ++bits) {
+        WorldClosePlan p = DecideWorldClose(/*canVeto*/ false,
+                                            (bits & 1) != 0, (bits & 2) != 0,
+                                            (bits & 4) != 0, (bits & 8) != 0);
+        EXPECT_FALSE(p.askSaveVariables);
+        EXPECT_FALSE(p.askSaveModified);
+        EXPECT_FALSE(p.askConfirmClose);
+    }
+}
+
+TEST(WorldClose, AModifiedWorldIsAskedAboutOnceAndOnlyOnce)
+{
+    // The save question covers the close, so neither of the other two may join
+    // it -- whatever the two global preferences say, and whether or not script
+    // variables changed as well.
+    for (int bits = 0; bits < 8; ++bits) {
+        WorldClosePlan p = DecideWorldClose(/*canVeto*/ true, /*modified*/ true,
+                                            (bits & 1) != 0, (bits & 2) != 0,
+                                            (bits & 4) != 0);
+        EXPECT_TRUE(p.askSaveModified);
+        EXPECT_FALSE(p.askConfirmClose);
+        EXPECT_FALSE(p.askSaveVariables);
+    }
+}
+
+TEST(WorldClose, VariablesOnlyChangesGetTheirOwnQuestion)
+{
+    // Changing a script variable does not mark the document modified, so
+    // without this question the world would close and lose them silently.
+    WorldClosePlan p = DecideWorldClose(true, false, true, true, false);
+    EXPECT_TRUE(p.askSaveVariables);
+    EXPECT_FALSE(p.askSaveModified);
+    EXPECT_FALSE(p.askConfirmClose);
+
+    // The global preference gates it...
+    p = DecideWorldClose(true, false, true, false, false);
+    EXPECT_FALSE(p.askSaveVariables);
+    // ...and so does something actually having changed.
+    p = DecideWorldClose(true, false, false, true, false);
+    EXPECT_FALSE(p.askSaveVariables);
+}
+
+TEST(WorldClose, ConfirmBeforeClosingIsTheOtherwiseSilentCase)
+{
+    WorldClosePlan p = DecideWorldClose(true, false, false, false, true);
+    EXPECT_TRUE(p.askConfirmClose);
+    EXPECT_FALSE(p.askSaveModified);
+    EXPECT_FALSE(p.askSaveVariables);
+
+    // With the preference off an unmodified world closes without a word.
+    p = DecideWorldClose(true, false, false, false, false);
+    EXPECT_FALSE(p.askConfirmClose);
+    EXPECT_FALSE(p.askSaveModified);
+    EXPECT_FALSE(p.askSaveVariables);
+}
+
+TEST(WorldClose, VariablesAndConfirmCloseBothAsk)
+{
+    // Two questions in a row, which is what the handler does today: saving the
+    // variables leaves the document unmodified, so the confirm-close arm is
+    // still live.  Pinned rather than fixed -- both preferences are opt-in and
+    // both default ON, so the pair is what a stock installation sees, and
+    // changing it is a UX decision rather than a bug fix.
+    WorldClosePlan p = DecideWorldClose(true, false, true, true, true);
+    EXPECT_TRUE(p.askSaveVariables);
+    EXPECT_TRUE(p.askConfirmClose);
+    EXPECT_FALSE(p.askSaveModified);
+}
+
+// ── UMessageBox's headless fallback answers the RIGHT button ────────────────
+// With no hook installed there is no user to ask, so it must answer the least
+// destructive button of whichever set was requested -- decline, never proceed.
+//
+// It used to be `(nType & MB_YESNO) ? IDNO : IDOK`, treating the button set as
+// a bit field.  It is the LOW NIBBLE and an ENUMERATION: MB_YESNOCANCEL is 3
+// and MB_YESNO is 4, so 3 & 4 == 0 and a three-way "save your changes?" prompt
+// was answered IDOK -- which a caller testing for IDYES and IDCANCEL falls
+// straight through, closing the world and discarding the work.  Exactly the
+// mis-reading hook_message_box's own comment records being fixed there.
+TEST(MfcUi, UMessageBoxHeadlessFallbackDeclines)
+{
+    struct { unsigned type; int want; const char* what; } kCases[] = {
+        { MB_OK,                IDOK,     "MB_OK has nothing to decline" },
+        { MB_OKCANCEL,          IDCANCEL, "MB_OKCANCEL declines" },
+        { MB_ABORTRETRYIGNORE,  IDABORT,  "MB_ABORTRETRYIGNORE aborts" },
+        { MB_YESNOCANCEL,       IDCANCEL, "MB_YESNOCANCEL cancels, NOT IDOK" },
+        { MB_YESNO,             IDNO,     "MB_YESNO says no" },
+        { MB_RETRYCANCEL,       IDCANCEL, "MB_RETRYCANCEL cancels" },
+    };
+    for (const auto& c : kCases) {
+        const int got = UMessageBox("headless", c.type, "test");
+        if (got != c.want)
+            printf("  %s: got %d, want %d\n", c.what, got, c.want);
+        EXPECT_EQ(c.want, got);
+    }
+
+    // The icon and default-button fields must not disturb the button decode --
+    // they are the other two nibbles, and the real call sites always set them.
+    EXPECT_EQ(IDCANCEL, UMessageBox("x", MB_YESNOCANCEL | MB_ICONQUESTION, "t"));
+    EXPECT_EQ(IDNO,     UMessageBox("x", MB_YESNO | MB_ICONEXCLAMATION | MB_DEFBUTTON2, "t"));
+
+    // And the answer is never one the caller cannot act on: every value above
+    // is a real ID*, not zero.
+    for (const auto& c : kCases)
+        EXPECT_NE(0, UMessageBox("x", c.type, "t"));
+}
 
 MC_TEST_MAIN()

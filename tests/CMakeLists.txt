@@ -82,6 +82,11 @@ mc_test(test_accelerators)
 mc_test(test_menu_rules)
 mc_test(test_mc_dispatch)
 mc_test(test_scriptengine)
+# The chat handshake.  chatsock.cpp is mushgui-only and its OnReceive is an
+# empty stub in the headless build, so this covers pal/chat_protocol.h — the
+# parts of the negotiation that are pure decisions — and nothing else in the
+# chat stack is reachable from here.
+mc_test(test_chat_protocol)
 
 # ── Phase 2 Unit B-2 → B-3: headless GDI shim, now a normal mc_test ──────────
 # gdi_headless.cpp folded into the flipped (FULL_BUILD) mushcore at B-3, so the

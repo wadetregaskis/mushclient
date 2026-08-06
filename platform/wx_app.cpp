@@ -240,6 +240,18 @@ public:
 
         // Boot the real MUSHclient application.
         // The hook calls App.InitInstance() which creates the main MDI frame.
+        //
+        // NOT under an extended selftest.  Its preference isolation covers
+        // wxConfig and nothing else; the sqlite preferences database and
+        // MUSHclient.ini are opened by InitInstance and would be the user's
+        // REAL ones.  Reaching here in that state means the arm above stopped
+        // returning early, so fail loudly rather than write to them.
+        if (ExtendedSelfTestArmed()) {
+            fprintf(stderr, "EXTENDED-SELFTEST: InitInstance must not run -- "
+                            "only wxConfig is redirected, so the real "
+                            "preferences database would be opened.\n");
+            std::exit(2);
+        }
         if (!g_wxhook_init_instance || !g_wxhook_init_instance())
             return false;
 

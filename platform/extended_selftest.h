@@ -51,11 +51,32 @@ bool WantsExtendedSelfTest(int argc, wxChar** argv, wxString& nameOut);
 // return true so OnRun starts the loop.  The process exits from inside.
 // Returns false for an unknown harness name, having said so -- the caller
 // should exit rather than start the loop.
+//
+// IMPORTANT, and the limit of the isolation: this redirects wxConfig ONLY.
+// The app has two other persistent stores -- the sqlite preferences database
+// and MUSHclient.ini, both named in CMUSHclientApp::InitInstance -- and
+// neither is redirected.  They are out of reach today because the extended arm
+// returns from OnInit BEFORE g_wxhook_init_instance(), so InitInstance never
+// runs and those paths are never opened.  That is a guarantee of the call
+// ORDER, not of anything in this file: a harness that ever needs InitInstance
+// would start writing the user's real preferences database, and nothing here
+// would notice.  ExtendedSelfTestRequiresIsolation() exists to trip on that.
 bool ArmExtendedSelfTest(const wxString& name);
+
+// True once an extended selftest is armed.  InitInstance must NOT run in that
+// state -- see above.  Checked at the InitInstance call site.
+bool ExtendedSelfTestArmed();
 
 // The process exit code once the loop has ended.  Starts at 1 (failure), so a
 // loop that ends WITHOUT the harness having finished -- a window closed by
 // hand, an unexpected ExitMainLoop -- reports failure rather than success.
 int ExtendedSelfTestExitCode();
+
+// Record one assertion: prints its PASS/FAIL line and adds it to the tally the
+// watchdog reports if it has to fire.  Harnesses that live in their own TU need
+// this; a private counter there would leave the watchdog's "N passed, M failed
+// (incomplete)" line reading 0, 0 for exactly the run where it matters most.
+// Returns `ok` so the caller can also keep its own failure count.
+bool ExtendedSelfTestCheck(bool ok, const char* what);
 
 #endif // !_WIN32

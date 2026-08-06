@@ -12,6 +12,12 @@
 
 #include "doc.h"
 
+// The handshake's decisions (prefix -> dialect, the name/address splits, the
+// ON_PLUGIN_CHAT_ACCEPT veto) live here so they can be tested without a socket:
+// nothing headless links this file, and its OnReceive is an empty stub in the
+// test build.
+#include "pal/chat_protocol.h"
+
 #include <stddef.h>
 
 #ifdef _DEBUG
@@ -21,6 +27,16 @@ static char BASED_CODE THIS_FILE[] = __FILE__;
 #endif
 
 #define CHAT_DEBUG 0
+
+// pal/chat_protocol.h restates these rather than including chatsock.h (it must
+// stay MFC-free), so pin the two enumerations equal here.
+static_assert ((int) pal::kChatMudMaster == (int) eChatMudMaster,
+               "pal::kChatMudMaster must match chatsock.h's eChatMudMaster");
+static_assert ((int) pal::kChatZMud == (int) eChatZMud,
+               "pal::kChatZMud must match chatsock.h's eChatZMud");
+static_assert ((int) pal::kChatFileBlockSize == 500 &&
+               (int) pal::kZChatFileBlockSize == 1024,
+               "the chat file block sizes are protocol, not tunables");
 
 IMPLEMENT_DYNAMIC(CChatSocket, CAsyncSocket)
 
@@ -83,7 +99,7 @@ CChatSocket::CChatSocket(CMUSHclientDoc* pDoc)
   m_pFile = NULL;  
   m_pFileBuffer = NULL;
   m_tStartedFileTransfer = 0;
-  m_iFileBlockSize = 500;
+  m_iFileBlockSize = pal::kChatFileBlockSize;   // 500; zChat raises it at the handshake
 
   // zero counters
 
@@ -196,7 +212,9 @@ int count = Receive (buff, sizeof (buff) - 1);
 
 #endif
 
-      if (count < 5 || memcmp (buff, "YES:", 4) != 0)
+      const pal::ChatAcceptance acceptance = pal::parseChatAcceptance (buff, count);
+
+      if (!acceptance.ok)
         {
         m_pDoc->ChatNote (eChatConnection,
                 _T("Server rejected chat session attempt."));
@@ -204,29 +222,16 @@ int count = Receive (buff, sizeof (buff) - 1);
         return;
         } // end of not being accepted
 
-      // get rid of "YES:" (4 bytes)
-      memmove (buff, &buff [4], count - 4);
-      count -= 4;
-
-      CString strName = CString (buff, count);
-      int i = strName.Find ('\n');
-      if (i == -1)
-        m_strRemoteUserName = strName;
-      else
-        m_strRemoteUserName = strName.Left (i);
+      m_strRemoteUserName = CString (acceptance.remoteUserName.data (),
+                                     (int) acceptance.remoteUserName.size ());
 
       m_pDoc->ChatNote (eChatSession,
                 CFormat (_T("Chat session accepted, remote server: \"%s\""),
               (LPCTSTR) m_strRemoteUserName));
 
-      if (i == -1)
-        count = 0;
-      else
-        {   // get rid of initial acceptance message
-        i++;     // get rid of \n too
-        memmove (buff, &buff [i], count - i);
-        count -= i;
-        }
+      // get rid of the acceptance message, leaving any chat data behind it
+      memmove (buff, &buff [acceptance.consumed], count - acceptance.consumed);
+      count -= acceptance.consumed;
 
       // connected now
       m_iChatStatus = eChatConnected;
@@ -266,8 +271,9 @@ int count = Receive (buff, sizeof (buff) - 1);
 
 #endif
 
-      if (count < 7 || !(memcmp (buff, "CHAT:", 5) == 0 ||
-                         memcmp (buff, "ZCHAT:", 6) == 0))
+      const pal::ChatRequest request = pal::parseChatConnectionRequest (buff, count);
+
+      if (!request.ok)
         {
         m_pDoc->ChatNote (eChatConnection,
                       _T("Unexpected chat negotiation."));
@@ -276,87 +282,46 @@ int count = Receive (buff, sizeof (buff) - 1);
         return;
         } // end of not accepting it
 
-      // get rid of "CHAT:" (5 bytes)
-      if (memcmp (buff, "CHAT:", 5) == 0)
+      m_iChatConnectionType = request.connectionType;
+      m_iFileBlockSize      = request.fileBlockSize;   // 1024 for zChat
+      m_strRemoteUserName   = CString (request.remoteUserName.data (),
+                                       (int) request.remoteUserName.size ());
+
+      if (request.haveAllegedAddress)
         {
-        memmove (buff, &buff [5], count - 5);
-        count -= 5;
-        m_iChatConnectionType = eChatMudMaster;
-        }
-      else
-        {
-        memmove (buff, &buff [6], count - 6);
-        count -= 6;
-        m_iChatConnectionType = eChatZMud;
-        m_iFileBlockSize = 1024;    // larger size for zChat
-        }
-
-      CString strName = CString (buff, count);
-      int i = strName.Find ('\n');
-      if (i == -1)
-        m_strRemoteUserName = strName;
-      else
-        m_strRemoteUserName = strName.Left (i);
-
-      // zChat has a tab after the name
-      int iTab = m_strRemoteUserName.Find ('\t');
-      if (iTab != -1)
-        m_strRemoteUserName = m_strRemoteUserName.Left (iTab);
-
-      if (i == -1)
-        count = 0;
-      else
-        {   // get rid of initial connection message
-        i++;     // get rid of \n too
-        memmove (buff, &buff [i], count - i);
-        count -= i;
-        }
-
-      CString strRest = CString (buff, count);
-
-      // throw away zChat security stuff (after the next newline)
-      i = strRest.Find ('\n');
-      if (i != -1)
-        strRest = strRest.Left (i);
-
-      if (strRest.GetLength () > 5)
-        {
-        m_iAllegedPort = atoi (strRest.Right (5));
-        m_strAllegedAddress = strRest.Left (strRest.GetLength () - 5);
+        m_iAllegedPort = request.allegedPort;
+        m_strAllegedAddress = CString (request.allegedAddress.data (),
+                                       (int) request.allegedAddress.size ());
         }
 
       count = 0;    // can't see how this packet can be reasonably terminated
 
-      if (!m_pDoc->SendToAllPluginCallbacks (ON_PLUGIN_CHAT_ACCEPT, 
-                                              CFormat ("%s,%s",
-                                              (LPCTSTR) inet_ntoa (m_ServerAddr.sin_addr),
-                                              (LPCTSTR) m_strRemoteUserName
-                                              ),
-                                              true))    // stop on false response
-          {
-          // tell them our rejection
-          SendData ("NO");
-          OnClose (0);
-          return;   // false means plugin rejects him 
-          }
+      pal::ChatAcceptDecision decision = pal::chatAcceptAfterPlugins (
+              m_pDoc->SendToAllPluginCallbacks (ON_PLUGIN_CHAT_ACCEPT,
+                        pal::chatAcceptCallbackArgument (
+                                  inet_ntoa (m_ServerAddr.sin_addr),
+                                  string (m_strRemoteUserName)).c_str (),
+                        true),   // stop on false response
+              m_pDoc->m_bValidateIncomingCalls);
 
-      if (m_pDoc->m_bValidateIncomingCalls)
+      if (decision == pal::eChatAcceptAsk)
         {
         m_pDoc->Activate ();
-        if (::UMessageBox (
+        decision = pal::chatAcceptAfterUser (::UMessageBox (
               TFormat ("Incoming chat call to world %s from %s, IP address: %s.\n\nAccept it?",
                        (LPCTSTR) m_pDoc->m_mush_name,
                        (LPCTSTR) m_strRemoteUserName,
                        (LPCTSTR) inet_ntoa (m_ServerAddr.sin_addr)),
-            MB_YESNO) != IDYES)
-          {
-          // tell them our rejection
-          SendData ("NO");
-          OnClose (0);
-          return;   
-          }
-
+            MB_YESNO) == IDYES);
         }  // end of needing to validate calls
+
+      if (!pal::chatConnectionAllowed (decision))
+        {
+        // tell them our rejection
+        SendData ("NO");
+        OnClose (0);
+        return;   // a plugin, or the user, said no
+        }
 
       m_pDoc->ChatNote (eChatSession,
                   TFormat ("Chat session accepted, remote user: \"%s\"",

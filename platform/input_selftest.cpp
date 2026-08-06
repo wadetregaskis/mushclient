@@ -36,6 +36,7 @@
 #include "platform/wx_mfc_hooks.h"    // g_wxhook_message_box
 
 #include <cstdio>
+#include <functional>
 
 namespace {
 
@@ -107,15 +108,24 @@ int swallow_message_box(const char* text, const char* /*caption*/, unsigned)
 
 // Let the frame's own 100 ms world timer run.  Used by the no-echo arm to
 // prove the timer CALLS the poll, which driving the poll directly cannot.
-static void pumpWorldTicks(wxWindow* w, int ms)
+// Pump the event loop until `done` is true, or give up after `limitMs`.
+//
+// NOT a fixed sleep.  It was one -- 350 ms for a 100 ms timer -- and that is
+// fine on an idle machine and marginal when the extended selftests are running
+// beside it: the run that caught this had ctest -j4 driving four GUI apps.  A
+// deadline that waits for the CONDITION is both faster in the normal case and
+// immune to load; the limit is only there so a genuine regression fails
+// instead of hanging.
+static bool pumpUntil(const std::function<bool()>& done, int limitMs = 3000)
 {
-    (void) w;
-    const wxLongLong until = wxGetLocalTimeMillis() + ms;
+    const wxLongLong until = wxGetLocalTimeMillis() + limitMs;
     while (wxGetLocalTimeMillis() < until) {
+        if (done()) return true;
         wxYield();
-        wxMilliSleep(10);
+        wxMilliSleep(5);
     }
     wxYield();
+    return done();
 }
 
 int RunInputSelfTest()
@@ -367,12 +377,12 @@ int RunInputSelfTest()
         normal->Clear();
 
         doc->m_bNoEcho = true;             // as IAC WILL ECHO would leave it
-        pumpWorldTicks(child, 350);        // the timer runs every 100 ms
+        pumpUntil([&]{ return secret->IsShown() && !normal->IsShown(); });
         chk(secret->IsShown() && !normal->IsShown(),
             "the world TIMER swaps the bar, not just a direct poll");
 
         doc->m_bNoEcho = false;
-        pumpWorldTicks(child, 350);
+        pumpUntil([&]{ return normal->IsShown() && !secret->IsShown(); });
         chk(normal->IsShown() && !secret->IsShown(),
             "...and swaps it back when the prompt is over");
 

@@ -1062,6 +1062,45 @@ drains, exactly as before.
 Covered headlessly by the ten `QueueDrain.*` tests, including the eight-code
 flag table and the pacing/carry-over arithmetic.
 
+### 4c-tertricies. The chat handshake's decisions moved to a shared header (2026-08-05)
+
+**`chatsock.cpp` is edited, and it IS compiled on Windows** (`MUSHclient.vcxproj:231`)
+— so this needs a compile before anything else. The new `pal/chat_protocol.h`
+is not in the project's `ClInclude` list, which is consistent with
+`pal/style_colour.h`, already included the same way from `doc_shared.cpp`.
+
+`CChatSocket::OnReceive`'s handshake decisions — the `YES:` / `CHAT:` / `ZCHAT:`
+prefix validation, the remote-name and callback-address splits, the zChat file
+block size, and the `ON_PLUGIN_CHAT_ACCEPT` veto — are now pure functions in a
+shared header, so the headless suite can reach them. Nothing headless links
+`chatsock.cpp` and `platform/windows_stubs.cpp` defines `OnReceive` as an empty
+body, so none of this had ever been under test.
+
+**One deliberate behaviour change, and it moves macOS TO Windows.** MFC's
+`CString::Find(char)` is `_tcschr` and stops at an embedded NUL; the port's
+`CString` is `std::string`-backed and does not (`platform/mfc_string.h:179`).
+For a packet `"CHAT:Fr\0ed\n1.2"` the port found the newline at 5 and Windows
+found none — so a chat peer sending a NUL in its negotiation line was parsed
+differently on the two platforms, changing the recorded name and whether a
+callback address was recorded at all. `pal::chatFindChar` implements the
+`strchr` semantics for both builds, so **Windows should be byte-for-byte
+unchanged** and macOS now matches it.
+
+**What to check on Windows:**
+1. It compiles.
+2. A normal MudMaster chat session still connects both ways — call out, and
+   accept an incoming call — with the name shown correctly at both ends.
+3. A zChat session still negotiates: the file block size must go to 1024, and
+   `CHAT_STATUS` / `CHAT_STAMP` must still be sent (MudMaster gets neither).
+4. A plugin returning false from `OnPluginChatAccept` must still refuse the
+   connection with no prompt. This is the security-shaped one: a refusal that
+   is ignored gives the peer live snooping and file transfer.
+
+Covered headlessly by `test_chat_protocol` (a new ctest entry — the suite goes
+from 55 to 56). The refactor was verified by the reviewer as a differential
+against a faithful MFC `CString` model over 400,027 generated packets, with no
+mismatches, and the harness proved non-vacuous by seeding four differences.
+
 ### 4d. Everything else (smoke)
 
 World open/save, prefs dialogs, triggers/aliases/timers on live MUD output,

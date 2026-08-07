@@ -111,9 +111,16 @@ void CChatSocket::OnConnect (int) {}
 // B-3: FindStyle, CheckScriptingAvailable, SortTriggers, SortAliases (+ their
 // CompareTrigger/CompareAlias helpers), DoFixMenus, ShowStatusLine are now the
 // REAL bodies in the adopted doc.cpp — the stub copies here were duplicate
-// symbols, so they are gone.  Redraw() stays: its real body is mushview.cpp
-// (mushapp-only), so it is still mushcore's provider.
-void CMUSHclientDoc::Redraw()       {}
+// symbols, so they are gone.  Redraw() stays because mushcore still needs a
+// provider — but it is the REAL body, not a no-op.
+//
+// The comment that used to sit here was wrong twice over: it claimed the real
+// body was "mushview.cpp (mushapp-only)", when it is methods_output.cpp:50 and
+// is one line — UpdateAllViews (NULL) — and CMUSHclientDoc::UpdateAllViews is
+// itself the real override in doc_display_shared.cpp:175, which mushcore links.
+// So the no-op was never necessary, and it silently disabled every script-driven
+// redraw in the headless engine.
+void CMUSHclientDoc::Redraw()       { UpdateAllViews (NULL); }
 
 // ColourNote(LPCTSTR, LPCTSTR, LPCTSTR) is now implemented in doc_portable.cpp
 // with real terminal ANSI colour output (replaces the old no-op stub here).

@@ -538,6 +538,41 @@ TEST(LuaSurface, TextRectangleRecordsTheReservedArea)
     EXPECT_EQ(2L,    (long) f.doc.m_TextRectangleBorderOffset);
 }
 
+// world.GetRecentLines joins with the SAME rule as the shipping body.
+//
+// methods_output.cpp:116-117 guards the separator on the ACCUMULATOR
+// (`if (!s.empty ())`); the headless twin guarded it on the loop INDEX
+// (`if (i > start)`).  Those agree on every input except one: when the oldest
+// line in the requested window is blank.  That is not a contrived case — every
+// completed line is pushed unconditionally at ProcessPreviousLine.cpp:549,
+// blank ones included — and the value feeds multi-line trigger matching, so the
+// headless engine was matching against a leading newline the product never has.
+TEST(LuaSurface, GetRecentLinesJoinsTheWayTheShippingBodyDoes)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    // The discriminator.  Index guard → "\nhp: 100"; accumulator guard → "hp: 100".
+    f.doc.m_sRecentLines.clear();
+    f.doc.m_sRecentLines.push_back("");
+    f.doc.m_sRecentLines.push_back("hp: 100");
+    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(2) == 'hp: 100')\n"));
+
+    // Control: two non-blank lines must still be joined by exactly one newline,
+    // so "never emit a separator" fails too.
+    f.doc.m_sRecentLines.clear();
+    f.doc.m_sRecentLines.push_back("a");
+    f.doc.m_sRecentLines.push_back("b");
+    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(2) == 'a\\nb')\n"));
+
+    // Second control: a blank line in the MIDDLE still produces its separators,
+    // so the fix cannot be "drop blank lines".
+    f.doc.m_sRecentLines.clear();
+    f.doc.m_sRecentLines.push_back("a");
+    f.doc.m_sRecentLines.push_back("");
+    f.doc.m_sRecentLines.push_back("b");
+    EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(3) == 'a\\n\\nb')\n"));
+}
+
 // ── the accelerator family — real headless, not stubbed ───────────────────
 //
 // These used to live in MiscViewStubs asserting AcceleratorList() == nil, which

@@ -1406,47 +1406,10 @@ void metaphone (const char *name, char * metaph, int metalen)
 #endif
 
 
-// for forum posts, where I am quoting code, I want to fix up
-// [ ] and \ to have a \ in front of them
-
-CString QuoteForumCodes(const CString & strText)
-{
-CString strNewText;
-const char * pOld;
-char * pNew;
-int iChanges = 0;
-
-  // count how many characters we see that need converting
-  for (pOld = strText; *pOld; pOld++)
-    if (*pOld == '[' ||
-        *pOld == ']' ||
-        *pOld == '\\')
-      iChanges++;
-
-  // allocate memory for new buffer
-  pNew = strNewText.GetBuffer (strText.GetLength () + iChanges + 1);
-
-  for (pOld = strText; *pOld; pOld++)
-    {
-    if (*pOld == '[' ||
-        *pOld == ']' ||
-        *pOld == '\\')
-      *pNew++ = '\\';
-
-    // now copy over whatever it was
-    *pNew++ = *pOld;
-    }
-
-  *pNew++ = 0;    // terminator at end
-  strNewText.ReleaseBuffer ();
-
-  if (::UMessageBox (TFormat ("Clipboard converted for use with the Forum, %i change%s made",
-      PLURAL (iChanges)), MB_ICONINFORMATION | MB_OKCANCEL) != IDOK)
-      return strText;
-
-  return strNewText;
-
-  }  // end of QuoteForumCodes
+// QuoteForumCodes moved to utilities_shared.cpp (unchanged) — it is pure string
+// logic plus one confirmation box, and a headless caller reaches it through
+// notepad_convert_shared.cpp, so it must not be a GUI-only body.  Precedent:
+// StringToKeyCode, hoisted for the same reason.
 
 
 

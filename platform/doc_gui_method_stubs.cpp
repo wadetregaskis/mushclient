@@ -658,7 +658,13 @@ BSTR CMUSHclientDoc::GetRecentLines (long Count)
     if (start < 0) start = 0;
     for (long i = start; i < total; ++i)
       {
-      if (i > start) result += '\n';
+      // Guard on the ACCUMULATOR, not the index — methods_output.cpp:116-117 is
+      // `if (!s.empty ()) s += '\n';`.  The two differ in exactly one case: when
+      // the oldest line in the window is blank.  Blank lines DO reach here —
+      // ProcessPreviousLine.cpp:549 pushes every completed line unconditionally —
+      // so with {"", "hp: 100"} the index guard returned "\nhp: 100" where the
+      // product returns "hp: 100".  Multi-line trigger matching reads this.
+      if (!result.empty ()) result += '\n';
       result += m_sRecentLines [(size_t) i];
       }
     }
@@ -702,7 +708,13 @@ void CMUSHclientDoc::Pause (BOOL Flag)
 
 void CMUSHclientDoc::Repaint ()
   {
-  // GUI-only headless — silent no-op
+  // NOT a no-op.  The real body (methods_output.cpp:509-523) opens with
+  // UpdateAllViews (NULL) and then walks the views to force an immediate
+  // redraw.  Only the walk is GUI-bound: CMUSHclientDoc::UpdateAllViews is the
+  // REAL override in doc_display_shared.cpp:175, which mushcore links, and it
+  // is what drains the display buffer into pal::IWorldView.  Dropping it meant
+  // world.Repaint () did nothing at all headless.
+  UpdateAllViews (NULL);
   }   // end of CMUSHclientDoc::Repaint
 
 void CMUSHclientDoc::ResetStatusTime ()
@@ -770,11 +782,11 @@ void CMUSHclientDoc::SetWorldWindowStatus (short Parameter)
 
 long CMUSHclientDoc::TextRectangle (long Left, long Top, long Right, long Bottom, long BorderOffset, long BorderColour, long BorderWidth, long OutsideFillColour, long OutsideFillStyle)
   {
-  // The real body (methods_output.cpp) is view-bound at both ends — it opens
-  // with ValidateBrushStyle (miniwindow.cpp, mushgui-only) and closes with a
-  // CMUSHView walk — but the nine assignments in the middle are pure document
-  // state that world.GetInfo and the wrap-column plumbing both read back.  Dropping
-  // them made the reserved-rectangle machinery invisible headless.
+  // The real body (methods_output.cpp:520-580) opens with ValidateBrushStyle
+  // (miniwindow.cpp, mushgui-only) and has a CMUSHView walk near the end, but
+  // everything else in it is portable: the nine assignments are pure document
+  // state that world.GetInfo and the wrap-column plumbing both read back, and
+  // the last two statements are NOT view-bound at all.
   //
   // The brush validation is NOT replicated here: duplicating it would be the
   // twin drift this file is supposed to be shrinking, and a headless caller
@@ -787,6 +799,14 @@ long CMUSHclientDoc::TextRectangle (long Left, long Top, long Right, long Bottom
   m_TextRectangleOutsideFillColour = OutsideFillColour;
   m_TextRectangleOutsideFillStyle  = OutsideFillStyle;
   EmitTextRectChanged ();
+
+  // methods_output.cpp:577-578.  SendWindowSizes is doc_shared.cpp:4570 — a
+  // mushcore body, not a view call — so dropping it was pure drift: reserving a
+  // text rectangle shrinks the usable width, and the MUD has to be told through
+  // NAWS.  The headless engine used to skip that renegotiation silently, which
+  // also meant no test could ever see a NAWS regression through this path.
+  SendWindowSizes (m_nWrapColumn);
+  Redraw ();
   return eOK;
   }   // end of CMUSHclientDoc::TextRectangle
 

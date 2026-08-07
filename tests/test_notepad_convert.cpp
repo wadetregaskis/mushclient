@@ -21,6 +21,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box (QuoteForumCodes confirm)
 
 // Convenience: run an op over a C string and return the result as std::string.
 static std::string Convert(int op, const char* src)
@@ -190,6 +191,65 @@ TEST(NotepadConvert, UnknownOpIsRefused)
     CString dst("untouched");
     EXPECT_FALSE(NotepadConvertText(-1, CString("hello"), dst));
     EXPECT_STREQ("untouched", (const char*) dst);
+}
+
+// ── QuoteForumCodes: the twelfth op ─────────────────────────────────────────
+//
+// This op was the one conversion this file did not cover, and that gap is why
+// nobody noticed it had no real implementation headless: platform/
+// doc_flip_gui_stubs.cpp defined `QuoteForumCodes` as the identity, on the
+// (false) grounds that the headless engine never reaches it.  It does — through
+// notepad_convert_shared.cpp:244, which is the very function under test here.
+//
+// The body ends in a confirmation box and returns the input UNCHANGED unless the
+// answer is IDOK, so a test that does not install a message-box hook cannot tell
+// the real body from the identity stub: headless UMessageBox answers IDCANCEL
+// for MB_OKCANCEL (platform/wx_mfc_hooks.h:87).  Both fixtures below therefore
+// drive g_wxhook_message_box, which is the discriminator — and the second one
+// pins the cancel arm, so the auto-cancel behaviour is now covered rather than
+// merely relied upon.
+
+static int g_answer      = IDOK;
+static int g_boxCalls    = 0;
+static int FakeMessageBox(const char*, const char*, unsigned) { g_boxCalls++; return g_answer; }
+
+struct MessageBoxHook {
+    int (*saved)(const char*, const char*, unsigned);
+    MessageBoxHook(int answer) : saved(g_wxhook_message_box)
+      { g_answer = answer; g_boxCalls = 0; g_wxhook_message_box = FakeMessageBox; }
+    ~MessageBoxHook() { g_wxhook_message_box = saved; }
+};
+
+TEST(NotepadConvert, QuoteForumCodesEscapesBracketsAndBackslash)
+{
+    MessageBoxHook confirm(IDOK);
+
+    // The discriminator: against the identity stub this returns the input
+    // verbatim and fails on the first assertion.
+    EXPECT_EQ(std::string("\\[b\\]a\\\\c\\[/b\\]"),
+              Convert(eNotepadConvertQuoteForum, "[b]a\\c[/b]"));
+
+    // Control: text with nothing to escape must round-trip UNCHANGED, so a
+    // mutation that escapes indiscriminately fails too.  Without this, "return
+    // a string with backslashes in it" would pass.
+    EXPECT_EQ(std::string("plain text"),
+              Convert(eNotepadConvertQuoteForum, "plain text"));
+
+    // The conversion is not silent — it reports the change count.  Asserting the
+    // box was actually asked makes "skip the prompt entirely" a failure.
+    EXPECT_EQ(2, g_boxCalls);
+}
+
+TEST(NotepadConvert, QuoteForumCodesLeavesTextAloneWhenTheUserCancels)
+{
+    MessageBoxHook decline(IDCANCEL);
+
+    // Utilities.cpp's contract, now utilities_shared.cpp: `!= IDOK` returns the
+    // ORIGINAL text, not the converted one.  This is also the arm the headless
+    // engine takes by default, so it is worth pinning explicitly.
+    EXPECT_EQ(std::string("[b]a\\c[/b]"),
+              Convert(eNotepadConvertQuoteForum, "[b]a\\c[/b]"));
+    EXPECT_EQ(1, g_boxCalls);
 }
 
 MC_TEST_MAIN()

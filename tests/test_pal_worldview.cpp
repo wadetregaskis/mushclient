@@ -2080,4 +2080,46 @@ TEST(ActivityRefresh, ABackwardsClockDoesNotRewindTheAccumulator)
     EXPECT_TRUE(t.tick(kTickMs));
 }
 
+// ── world.Redraw / world.Repaint actually drain ─────────────────────────────
+//
+// Both were no-ops in the headless engine: platform/windows_stubs.cpp defined
+// Redraw as `{}` under a comment claiming its real body was "mushview.cpp
+// (mushapp-only)", and platform/doc_gui_method_stubs.cpp did the same for
+// Repaint.  Both halves of that claim were wrong.  The real bodies are
+// methods_output.cpp:50 and :509, and each opens with UpdateAllViews (NULL) —
+// which is itself the REAL override in doc_display_shared.cpp:175, compiled
+// into mushcore all along.  Only Repaint's trailing CMUSHView walk is GUI-bound.
+//
+// The consequence was that a script which wrote output and then asked for it to
+// be shown got nothing until some unrelated drain happened to run.
+//
+// The discriminator here is feed-WITHOUT-drain, then Redraw: against the `{}`
+// bodies the view never sees the line.
+TEST(PalWorldView, RedrawAndRepaintDrainPendingOutput)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    // Feed but deliberately do NOT call UpdateAllViews — this is the state a
+    // script is in between a Note and its redraw request.
+    const char* bytes = "pending line\n";
+    doc.DisplayMsg((char*) bytes, (int) strlen(bytes), 0);
+    ASSERT_EQ(0u, (unsigned) committed(view).size());   // fixture precondition
+
+    doc.Redraw();
+    auto after = committed(view);
+    ASSERT_EQ(1u, (unsigned) after.size());
+    EXPECT_STREQ("pending line", line_text(after[0]).c_str());
+
+    // Repaint takes the same path (its real body opens with the same call), and
+    // must likewise not be a no-op.
+    const char* more = "second line\n";
+    doc.DisplayMsg((char*) more, (int) strlen(more), 0);
+    ASSERT_EQ(1u, (unsigned) committed(view).size());   // still undrained
+    doc.Repaint();
+    ASSERT_EQ(2u, (unsigned) committed(view).size());
+    EXPECT_STREQ("second line", line_text(committed(view)[1]).c_str());
+}
+
 MC_TEST_MAIN()

@@ -370,9 +370,11 @@ CString MUSHCLIENT_VERSION = VERSION_STRING;
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── Free functions doc.cpp reaches (stdafx.h decls) ─────────────────────────
-// QuoteForumCodes (OnEditConvertclipboardforumcodes) — headless never runs the
-// menu handler; identity is the safe no-op.
-CString QuoteForumCodes (const CString & strText) { return strText; }
+// QuoteForumCodes is NOT stubbed any more, for the same reason StringToKeyCode
+// below is not: the stub's justification ("headless never runs the menu
+// handler") was false — notepad_convert_shared.cpp:244 is a CORE_SOURCES TU and
+// routes eNotepadConvertQuoteForum straight into it.  The real body now lives in
+// utilities_shared.cpp, so every build compiles one definition.
 
 // StringToKeyCode is NOT stubbed: it is pure string parsing and now lives in
 // utilities_shared.cpp, so the headless engine runs the real one.  The stub

@@ -1925,6 +1925,41 @@ TEST(SmallArms, SendWindowSizesEmitsNaws)
     delete doc;
 }
 
+// world.TextRectangle must renegotiate the window size with the MUD.
+//
+// Reserving a text rectangle shrinks the area the output is laid out in, so the
+// real body ends with `SendWindowSizes (m_nWrapColumn); Redraw ();`
+// (scripting/methods/methods_output.cpp:577-578).  The headless twin in
+// platform/doc_gui_method_stubs.cpp dropped both for years, on the grounds that
+// the method is "view-bound at both ends" — true of the CMUSHView walk in the
+// middle, false of these two statements: SendWindowSizes is doc_shared.cpp:4570,
+// a mushcore body.  So the engine silently skipped a NAWS renegotiation the
+// product performs, and no test could see a regression through this path.
+TEST(SmallArms, TextRectangleRenegotiatesTheWindowSize)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bNAWS_wanted = TRUE;
+    doc->m_nWrapColumn = 80;
+    doc->m_gui_rows = 30;
+    wire(doc).sent.clear();
+
+    EXPECT_EQ(eOK, doc->TextRectangle(10, 10, 200, 200, 1, 0, 1, 0, 0));
+
+    // The discriminator: against the old body nothing at all goes on the wire.
+    const std::string expect = { '\xFF', '\xFA', '\x1F', 0, 80, 0, 30, '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(expect) != std::string::npos);
+
+    // Control, so that "always send NAWS regardless" also fails: with NAWS not
+    // negotiated the call must stay silent.  This is SendWindowSizes' own gate,
+    // and asserting it here pins that TextRectangle goes THROUGH that gate
+    // rather than hand-rolling a packet.
+    wire(doc).sent.clear();
+    doc->m_bNAWS_wanted = FALSE;
+    EXPECT_EQ(eOK, doc->TextRectangle(10, 10, 200, 200, 1, 0, 1, 0, 0));
+    EXPECT_TRUE(wire(doc).sent.empty());
+    delete doc;
+}
+
 // ── Auto-wrap-to-window-width ────────────────────────────────────────────────
 // The wx port used to overwrite m_nWrapColumn from the window width on every
 // resize, font change and plugin text-rectangle change, with no regard for the

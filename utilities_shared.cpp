@@ -1480,3 +1480,61 @@ void StringToKeyCode (const CString strKey,
     } // end of working through part of key
 
   } // end of StringToKeyCode
+
+// ── QuoteForumCodes ─────────────────────────────────────────────────────────
+// For forum posts, where code is being quoted: put a backslash in front of
+// every '[', ']' and '\'.  Declared in stdafx.h.
+//
+// Moved here verbatim from Utilities.cpp (mushgui_adapters-only), where the
+// headless engine could not reach it and platform/doc_flip_gui_stubs.cpp
+// supplied `return strText;` instead — an identity stub justified by "headless
+// never runs the menu handler".  That justification was false: eNotepadConvert-
+// QuoteForum routes straight into this function from notepad_convert_shared.cpp:244,
+// a CORE_SOURCES TU, so the headless engine WAS running it.
+//
+// The stub was nevertheless not an observable behaviour bug, and the distinction
+// matters for anyone reading this later.  The body ends in a confirmation box,
+// and headless UMessageBox falls through to HeadlessMessageBoxAnswer, which
+// answers IDCANCEL for MB_OKCANCEL (platform/wx_mfc_hooks.h:87) — so the real
+// body ALSO returns strText unchanged when nothing installs a message-box hook.
+// Stub and real body agreed; they simply agreed for unrelated reasons.  What the
+// hoist buys is that they can no longer stop agreeing, and that a test which
+// installs g_wxhook_message_box can now exercise the conversion for real.
+CString QuoteForumCodes(const CString & strText)
+{
+CString strNewText;
+const char * pOld;
+char * pNew;
+int iChanges = 0;
+
+  // count how many characters we see that need converting
+  for (pOld = strText; *pOld; pOld++)
+    if (*pOld == '[' ||
+        *pOld == ']' ||
+        *pOld == '\\')
+      iChanges++;
+
+  // allocate memory for new buffer
+  pNew = strNewText.GetBuffer (strText.GetLength () + iChanges + 1);
+
+  for (pOld = strText; *pOld; pOld++)
+    {
+    if (*pOld == '[' ||
+        *pOld == ']' ||
+        *pOld == '\\')
+      *pNew++ = '\\';
+
+    // now copy over whatever it was
+    *pNew++ = *pOld;
+    }
+
+  *pNew++ = 0;    // terminator at end
+  strNewText.ReleaseBuffer ();
+
+  if (::UMessageBox (TFormat ("Clipboard converted for use with the Forum, %i change%s made",
+      PLURAL (iChanges)), MB_ICONINFORMATION | MB_OKCANCEL) != IDOK)
+      return strText;
+
+  return strNewText;
+
+  }  // end of QuoteForumCodes

@@ -209,6 +209,20 @@ readers. Headless says `eOK`.
    below), so keep it separate.
 6. **`dialogs/ProgDlg.cpp`** — opportunistic; retires 14 definitions.
 
+## 5a. A hazard found while sizing the output family
+
+Moving `scripting/methods/methods_output.cpp` into `mushcore` **without deleting
+the stubs in the same step builds cleanly and passes the entire suite** — and is
+wrong. Both archives then define the family, and which body is live depends on
+static-archive link order (`mushcore_testsupport` is listed first, so its stub
+wins the symbols it defines, while `mushcore`'s object may still be pulled in for
+others). There is no duplicate-symbol error to warn you.
+
+**Delete the stubs in the same commit as the TU move**, and prove the real body
+is live with an assertion the stub would fail — not with a green suite. A green
+suite is exactly what this hazard produces, not what rules it out.
+
+
 ## 6. Explicitly not doing
 
 - **Retiring the five `Frame`-dereferencing stubs.** Permanent contract; see §2.

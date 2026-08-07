@@ -261,9 +261,26 @@ readers. Headless says `eOK`.
      survive being painted over, matching GDI.
 
    Still not covered: `WindowMergeImageAlpha` (the two-image mask variant),
-   `BlendImage`, `WindowFilter`, `WindowTransformImage` and `WindowImageOp`.
-   All of them now HAVE a pixel source — they were blocked on this, and are
-   only a matter of writing the assertions.
+   `BlendImage`, `WindowFilter`, `WindowTransformImage`, `WindowImageOp` and
+   `WindowCreateImage`. **Four of those six are "only a matter of writing the
+   assertions"; two are not, and an earlier version of this line said all of
+   them were.** Merge/Blend/Filter touch only `readPixels`/`writePixels`, and
+   `TransformImage` needs the matrix blit, which *is* implemented
+   (`pal/cpu_raster.cpp`'s `blit` `if (m)` arm — `cpu_raster.h`'s gap list was
+   stale about it). `WindowImageOp` and `WindowCreateImage` are blocked one
+   layer down, in `CpuRaster`: `shape` draws only `ShapeKind::Rect`, and
+   `fillSpan` silently drops `BrushSpec::monoPattern`. The mono gap is wider
+   than `ImageOp` — `BrushSpecFromWin32` (`miniwindow.cpp:583-588`) means
+   `CircleOp`/`Polygon`/`RectOp` brush styles 8-12 fill nothing headless too,
+   which is worth knowing before pricing the ~8-line fix.
+
+   `WindowDrawImage` **mode 2** is a third case, and the interesting one: the
+   obvious reading is that a stretch cannot be tested against an adapter that
+   refuses to stretch. That is wrong — `miniwindow.cpp:1471-1478` computes its
+   destination and source rects from *independent* expressions, so an
+   equal-extent fixture passes `CpuRaster`'s guard and the arm really draws,
+   pinning that mode 2 alone derives its destination through
+   `FixRight`/`FixBottom`. Only genuine magnification is out of reach.
 6. **`scripting/scripting.cpp`** — carries a real behavioural question (see
    below), so keep it separate.
 7. **`dialogs/ProgDlg.cpp`** — opportunistic; retires 14 definitions.
@@ -319,9 +336,25 @@ Windows (`pal/gdi_surface.cpp`). The headless side must key its map on the
 `::CreateDIBSection` are no longer in `platform/gdi_headless.cpp`** — stage 2
 moved them to `platform/headless_surface.cpp` with real bodies over
 `pal::CpuRaster`. What is left in `gdi_headless.cpp` (`CreateCompatibleBitmap`,
-`CreateBitmap`) is still contract rather than placeholder: nothing in mushcore
-calls either, and a bitmap that realises no surface degrades to "the window
-exists, the pixels do not" rather than to an error.
+`CreateBitmap`) is still contract rather than placeholder — **but not for the
+reason first recorded here.** That reason was "nothing in mushcore calls
+either", and both halves of it were false: `CreateBitmap` has six unguarded
+callers in `miniwindow.cpp`, which IS in mushcore (the five built-in mono brush
+patterns in `ValidateBrushStyle` at `:498-538`, plus `CreateImage` at `:2000`);
+`CreateCompatibleBitmap` is called from `CMiniWindow::Resize` at `:4039`. Only
+the canvas call at `:239` is `#ifdef _WIN32`.
+
+The real reason is better: the port keeps each mono pattern in a **parallel
+portable store** (`m_MonoImages`, `miniwindow.cpp:2005-2011`) so `ImageOp` can
+rebuild a real mono brush through `pal::BrushSpec` and never reads the
+`CBitmap`. The `CBitmap` failing is by design; the gap is one layer down, where
+`CpuRaster::fillSpan` drops `monoPattern`. `tests/test_mfc_ui.cpp:2559-2560`
+pins both returns, so changing either means editing that test first.
+
+This mistake is worth leaving on the record. It is the *blocker stated at the
+wrong layer* pattern in its other guise — a claim about who calls a function,
+made by reasoning about what the function is *for* rather than by grepping for
+its callers.
 
 ## 6. Explicitly not doing
 

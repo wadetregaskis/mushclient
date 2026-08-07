@@ -248,8 +248,10 @@ TEST(GdiHeadless, AttachKeepsTheAlphaChannelOfA32bppDib)
 
     BITMAP bi;
     ASSERT_TRUE(image.GetBitmap(&bi));
-    // Load-bearing, not decoration: WindowMergeImageAlpha / WindowGetImageAlpha /
-    // WindowDrawImageAlpha all return eImageNotInstalled unless this reads 32.
+    // Load-bearing, not decoration: WindowDrawImageAlpha (miniwindow.cpp:3797)
+    // and WindowGetImageAlpha (:3916) both return eImageNotInstalled unless
+    // this reads 32.  (WindowMergeImageAlpha does NOT gate on depth — an
+    // earlier version of this comment claimed it did.)
     EXPECT_EQ(32, (int) bi.bmBitsPixel);
 
     const pal::SurfaceId sid = HeadlessSurfaceOfBitmapForTesting(&image);

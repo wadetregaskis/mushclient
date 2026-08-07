@@ -159,13 +159,30 @@ bool    CBitmap::CreateBitmap (int, int, UINT, UINT, const void*) { return false
 // platform/headless_surface.cpp.  They own pixels, which makes them the surface
 // bridge rather than part of this inert shim.
 //
-// The two left above stay inert, and the false is contract rather than
-// placeholder: nothing in mushcore calls either (CreateCompatibleBitmap is a
-// mushview.cpp path, CreateBitmap a dialog one), and every drawing site in
-// miniwindow.cpp is guarded `if (!srf) return …`, so a bitmap that realises no
-// surface degrades to "the window exists, the pixels do not" rather than to an
-// error.  Do NOT "improve" them into failure returns — those guarded arms
-// answer eOK by design on both shipping platforms.
+// The two left above stay inert.  An earlier version of this comment said
+// "nothing in mushcore calls either (CreateCompatibleBitmap is a mushview.cpp
+// path, CreateBitmap a dialog one)".  BOTH halves were wrong, and the mistake
+// is worth leaving recorded because it is the sort a reader would otherwise
+// inherit:
+//
+//   * CreateBitmap has SIX unguarded callers in miniwindow.cpp, which is in
+//     mushcore — the five built-in 8x8 mono brush patterns in ValidateBrushStyle
+//     (:498-538) and CMiniWindow::CreateImage (:2000).  Only the canvas call at
+//     :239 is inside `#ifdef _WIN32`; the port takes CreateCanvasBitmap there.
+//   * CreateCompatibleBitmap is called from CMiniWindow::Resize (:4039).
+//
+// So the `false` is contract, but for a different reason than claimed: the port
+// deliberately keeps the mono pattern in a PARALLEL portable store
+// (m_MonoImages, miniwindow.cpp:2005-2011) so ImageOp can rebuild a real mono
+// brush through pal::BrushSpec, and never reads the CBitmap.  The CBitmap
+// failing is therefore by design, not a gap — the gap is one layer down, where
+// pal::CpuRaster drops BrushSpec::monoPattern.
+//
+// Every drawing site in miniwindow.cpp is guarded `if (!srf) return …`, so a
+// bitmap that realises no surface degrades to "the window exists, the pixels do
+// not" rather than to an error.  Do NOT "improve" these into failure returns —
+// those guarded arms answer eOK by design on both shipping platforms.
+// tests/test_mfc_ui.cpp:2559-2560 pins both returns.
 
 // ── CBrush (dtor is the vtable key function) ────────────────────────────────
 CBrush::~CBrush () {}

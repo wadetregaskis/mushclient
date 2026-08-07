@@ -14,9 +14,20 @@
 //
 // Documented S1 gaps (deliberate no-ops until the S3 op families need them):
 //   drawEdge; shape kinds other than Rect; polyline/polygon/bezier/arc;
-//   stretched / Smooth / matrix blits; pen widths > 1 and dash styles.
+//   STRETCHED / Smooth blits; pen widths > 1 and dash styles; and
+//   BrushSpec::monoPattern, which fillSpan drops (it consults only
+//   br.pattern) — so WindowImageOp over a WindowCreateImage image, and
+//   WindowCircleOp / WindowPolygon / WindowRectOp brush styles 8-12, fill
+//   nothing here.
 //   Hatch phase is this adapter's own 8x8 grid (the Windows adapter is the
 //   parity bearer for exact GDI hatch phase).
+//
+//   NOT a gap, despite what this list said until 2026-08-07: the MATRIX blit
+//   is implemented (see blit's `if (m)` arm), which is what
+//   WindowTransformImage needs.  Only the stretch case returns early.
+//
+// Because the gaps above are SILENT no-ops, never write a test whose passing
+// condition is "nothing was drawn" — it pins the gap instead of the body.
 //
 // TEXT IS A TEST FONT: glyphs are a deterministic procedural pattern in a
 // fixed cell (width = 3/5 of height) — NOT real typography. It exists so the

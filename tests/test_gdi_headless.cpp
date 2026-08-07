@@ -23,6 +23,9 @@
 
 #include "stdafx.h"          // full-build CDC / CFont / CBitmap / CGdiObject
 #include "mc_test.h"
+#include "pal/surface_bridge.h"
+
+pal::SurfaceId HeadlessSurfaceOfBitmapForTesting(const CBitmap*);
 
 #include <cstring>
 
@@ -99,6 +102,125 @@ TEST(GdiHeadless, ObjectsConstructAndDestructCleanly)
     { CBitmap b; (void)b; }                                          // ~CBitmap → ~CGdiObject (no GetSafeHandle shim)
     CGdiObject* obj = new CFont;             // delete-through-base → virtual dispatch
     delete obj;
+}
+
+// ── 4. The headless surface bridge's canvas lifetime ────────────────────────
+//
+// platform/headless_surface.cpp makes CBitmap own a pal::CpuRaster surface and
+// CDC::SelectObject associate a DC with it.  Three parts of that pairing are
+// easy to get wrong and are not reachable through world.Window*, so they are
+// asserted directly here.
+//
+// The third one — DeleteObject making any DC forget the surface — is the reason
+// a mutation that removed it survived the Lua-level tests: CMiniWindow::Create
+// deletes the DC immediately afterwards, so the stale entry is never read
+// through the scripting API.  It is still a real hazard, because `delete pdc;
+// pdc = new CDC;` very often hands back the SAME address, and the entry would
+// then be inherited by an unrelated DC.
+
+TEST(GdiHeadless, CanvasBitmapOwnsASurfaceAndSelectObjectAssociatesIt)
+{
+    CDC dc;
+    CBitmap bmp;
+
+    // A DC with nothing selected paints nowhere — and must not crash.
+    dc.FillSolidRect(0, 0, 10, 10, RGB(255, 0, 0));
+
+    ASSERT_TRUE(bmp.CreateCanvasBitmap(16, 16));
+
+    // Still not selected: the fill must NOT reach the new canvas.  Without this
+    // control, "always paint the most recent bitmap" would pass.
+    dc.FillSolidRect(0, 0, 16, 16, RGB(255, 0, 0));
+
+    CBitmap* previous = dc.SelectObject(&bmp);
+    EXPECT_EQ((CBitmap*)nullptr, previous);   // nothing was selected before
+
+    // Now it lands.  Reading back through the surface is what proves it.
+    dc.FillSolidRect(0, 0, 16, 16, RGB(0, 0, 255));
+    EXPECT_TRUE(bmp.DeleteObject());          // releases the surface
+    EXPECT_FALSE(bmp.DeleteObject());         // ...and only once
+}
+
+TEST(GdiHeadless, DeletingABitmapLeavesNoDcPointingAtItsSurface)
+{
+    // The hazard: a DC that outlives the bitmap selected into it.  After
+    // DeleteObject the surface is destroyed, so a later fill through that DC
+    // must be inert rather than addressing freed state.
+    CDC dc;
+    {
+        CBitmap bmp;
+        ASSERT_TRUE(bmp.CreateCanvasBitmap(8, 8));
+        dc.SelectObject(&bmp);
+        dc.FillSolidRect(0, 0, 8, 8, RGB(0, 255, 0));
+        bmp.DeleteObject();
+    }
+    // If DeleteObject had not cleared the association this addresses a
+    // destroyed surface.  Under ASan that is a use-after-free; without it, it
+    // is silent corruption of whatever surface id got reused.
+    dc.FillSolidRect(0, 0, 8, 8, RGB(255, 255, 255));
+
+    // And the same DC must still be usable for a NEW canvas afterwards — the
+    // case CMiniWindow::Create hits every time a window is re-created.
+    CBitmap fresh;
+    ASSERT_TRUE(fresh.CreateCanvasBitmap(8, 8));
+    EXPECT_EQ((CBitmap*)nullptr, dc.SelectObject(&fresh));
+    dc.FillSolidRect(0, 0, 8, 8, RGB(0, 0, 255));
+    EXPECT_TRUE(fresh.DeleteObject());
+}
+
+// Why DeleteObject's DC cleanup is DEFENSIVE, and what would make it load-bearing.
+//
+// This test was written to prove the cleanup matters, and it proved the
+// opposite — which is worth keeping rather than deleting.
+//
+// The hazard would be: CpuRaster hands a destroyed surface's id back to the next
+// createSurface, and a DC still holding the stale association silently paints
+// into a canvas belonging to something else.  It cannot happen today, because
+// CpuRaster allocates ids monotonically and never recycles them (the [note]
+// below prints the two ids so this stays visible rather than assumed).
+//
+// So the cleanup in headless_surface.cpp is hygiene, not a fix for a live bug —
+// and no mutation of it can fail a test, which is why removing it survives the
+// suite.  That is recorded rather than papered over.
+//
+// What this test actually pins is the INVARIANT the reasoning rests on: ids are
+// not recycled.  If someone makes CpuRaster reuse them, the note changes and the
+// cleanup becomes load-bearing — at which point the assertion below starts
+// carrying real weight without anyone having to rediscover why.
+TEST(GdiHeadless, AStaleDcCannotPaintIntoAReusedSurface)
+{
+    CDC stale;
+    pal::SurfaceId freed = pal::SurfaceId::None;
+    {
+        CBitmap doomed;
+        ASSERT_TRUE(doomed.CreateCanvasBitmap(8, 8));
+        freed = HeadlessSurfaceOfBitmapForTesting(&doomed);
+        ASSERT_TRUE(freed != pal::SurfaceId::None);
+        stale.SelectObject(&doomed);
+        doomed.DeleteObject();
+    }
+
+    // The next canvas very likely gets that id back.
+    CBitmap victim;
+    ASSERT_TRUE(victim.CreateCanvasBitmap(8, 8));
+    const pal::SurfaceId reused = HeadlessSurfaceOfBitmapForTesting(&victim);
+
+    CDC live;
+    live.SelectObject(&victim);
+    live.FillSolidRect(0, 0, 8, 8, RGB(0, 0, 255));      // victim is blue
+    ASSERT_EQ((unsigned long) 0x00FF0000u,
+              (unsigned long) pal::g_surface->getPixel(reused, { 4, 4 }));
+
+    // The stale DC tries to paint red.  It must reach nothing.
+    stale.FillSolidRect(0, 0, 8, 8, RGB(255, 0, 0));
+    // Still blue: a red pixel here means the stale DC reached a reused surface.
+    EXPECT_EQ((unsigned long) 0x00FF0000u,
+              (unsigned long) pal::g_surface->getPixel(reused, { 4, 4 }));
+
+    printf("  [note] freed id %d, next id %d — %s\n", (int) freed, (int) reused,
+           reused == freed ? "RECYCLED: the cleanup is now load-bearing"
+                           : "not recycled: the cleanup stays defensive");
+    EXPECT_TRUE(victim.DeleteObject());
 }
 
 MC_TEST_MAIN()

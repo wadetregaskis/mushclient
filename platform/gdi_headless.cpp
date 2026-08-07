@@ -184,9 +184,10 @@ bool    CBitmap::CreateBitmap (int, int, UINT, UINT, const void*) { return false
 // error returns — the guarded arms answer eOK by design on both shipping
 // platforms, and turning that into a failure would be a real behaviour change
 // if an adapter ever failed to install.
-bool    CBitmap::CreateCanvasBitmap (int, int)  { return false; }
-BOOL    CBitmap::Attach (HGDIOBJ)               { return FALSE; }
-bool    CBitmap::DeleteObject ()                { return false; }
+// CreateCanvasBitmap / Attach / DeleteObject moved to
+// platform/headless_surface.cpp: they own the pixels now (a pal::CpuRaster
+// surface), which makes them the surface bridge rather than part of this inert
+// GDI shim.
 
 // ── CBrush (dtor is the vtable key function) ────────────────────────────────
 CBrush::~CBrush () {}
@@ -211,7 +212,8 @@ int  CFont::GetObject (int, LOGFONT* lf) const { if (lf) *lf = {}; return 0; }
 //    GetDeviceCaps(int) / SelectObject(CFont*) / GetTextMetrics are above) ────
 CDC* CDC::FromHandle (HDC)                       { static CDC dc; return &dc; }
 
-CBitmap* CDC::SelectObject (CBitmap*)            { return nullptr; }
+// SelectObject(CBitmap*) moved to platform/headless_surface.cpp — it is what
+// associates a DC with the surface its bitmap owns.
 CBrush*  CDC::SelectObject (CBrush*)             { return nullptr; }
 CPen*    CDC::SelectObject (CPen*)               { return nullptr; }
 CGdiObject* CDC::SelectStockObject (int)         { return nullptr; }
@@ -231,7 +233,8 @@ bool CDC::FloodFill (int, int, COLORREF)         { return false; }
 bool CDC::ExtFloodFill (int, int, COLORREF, UINT) { return false; }
 bool CDC::InvertRect (const RECT*)               { return false; }
 bool CDC::InvertRect (const CRect*)              { return false; }
-void CDC::FillSolidRect (int, int, int, int, COLORREF) {}
+// FillSolidRect moved to platform/headless_surface.cpp — it paints the
+// miniwindow background through the selected bitmap's surface.
 void CDC::Draw3dRect (int, int, int, int, COLORREF, COLORREF) {}
 bool CDC::PatBlt (int, int, int, int, DWORD)     { return false; }
 bool CDC::BitBlt (int, int, int, int, CDC*, int, int, DWORD) { return false; }

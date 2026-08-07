@@ -703,18 +703,13 @@ TEST(LuaSurface, WindowFamilyWithAWindowOpen)
         "assert(world.WindowDeleteHotspot('m','h') == 0)\n"
         "assert(world.WindowDeleteHotspot('m','h') == error_code.eHotspotNotInstalled)\n"
 
-        // The drawing calls answer eOK against a null surface, by design: that
-        // guarded arm is what makes stage 1 safe without a headless rasteriser,
-        // and it is the same arm both shipping platforms take if an adapter ever
-        // fails to install.  Pinned so a later change cannot quietly turn it
-        // into an error.
         "assert(world.WindowRectOp('m', 2, 0, 0, 10, 10, 0, 0) == 0)\n"
         "assert(world.WindowSetPixel('m', 1, 1, 255) == 0)\n"
 
-        // Fonts DO need the GDI shim, so they fail honestly rather than
-        // pretending — eCannotAddFont, not eNoSuchWindow.
-        "assert(world.WindowFont('m','f','Menlo',10,false,false,false,false,0,0)"
-        " == error_code.eCannotAddFont)\n"
+        // Fonts work now — stage 2 installed a pal::CpuRaster, and its
+        // (deliberately synthetic) test font realises.  This asserted
+        // eCannotAddFont in stage 1, when there was no surface to realise into.
+        "assert(world.WindowFont('m','f','Menlo',10,false,false,false,false,0,0) == 0)\n"
 
         // The window is in the list while it exists, and gone after.
         "local l = world.WindowList()\n"
@@ -724,6 +719,111 @@ TEST(LuaSurface, WindowFamilyWithAWindowOpen)
         "assert(world.WindowDelete('m') == 0)\n"
         "assert(world.WindowInfo('m', 1) == nil)\n"
         "assert(world.WindowList() == nil)\n"
+    ));
+}
+
+// Stage 2: the pixels are real.
+//
+// platform/headless_surface.cpp installs pal::CpuRaster as the headless
+// pal::ISurface, so the ~190 drawing sites in miniwindow.cpp stop taking their
+// guarded `if (!srf)` arm and actually paint.  Before this, every assertion the
+// miniwindow family could make was about STATE — geometry, z-order, hotspots.
+//
+// Every assertion below is written so that "drew nothing" FAILS, which matters
+// more here than usual: CpuRaster has documented no-op gaps (pal/cpu_raster.h:15-19
+// — drawEdge, non-Rect shapes, polyline/bezier/arc, stretched blits, pen widths
+// > 1), so an assertion that merely checked a return code would pass against an
+// op that painted nothing at all.  These read the pixels back.
+TEST(LuaSurface, WindowDrawingActuallyPaints)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        // Background: WindowCreate's own FillSolidRect must reach the surface,
+        // which is the ordering hazard headless_surface.cpp exists to get right
+        // (the fill happens BEFORE the adopt).  A white window must read white.
+        "assert(world.WindowCreate('p', 0, 0, 40, 30, 0, 0, 0xFFFFFF) == 0)\n"
+        "assert(world.WindowGetPixel('p', 5, 5) == 0xFFFFFF, 'background lost')\n"
+
+        // setPixel/getPixel round-trip, and only where it was set: the
+        // neighbour must still be the background, so "fill everything" fails.
+        "assert(world.WindowSetPixel('p', 10, 10, 0x0000FF) == 0)\n"
+        "assert(world.WindowGetPixel('p', 10, 10) == 0x0000FF)\n"
+        "assert(world.WindowGetPixel('p', 11, 10) == 0xFFFFFF, 'setPixel bled')\n"
+
+        // A filled rect covers its interior and NOTHING outside it.
+        "assert(world.WindowRectOp('p', 2, 2, 2, 8, 8, 0xFF0000, 0) == 0)\n"
+        "assert(world.WindowGetPixel('p', 4, 4) == 0xFF0000)\n"
+        "assert(world.WindowGetPixel('p', 20, 20) == 0xFFFFFF, 'fill escaped')\n"
+
+        // ...and the rect's edges are where they were asked to be.  Right/bottom
+        // are exclusive, as everywhere else in this API.
+        "assert(world.WindowGetPixel('p', 2, 2) == 0xFF0000, 'top-left missing')\n"
+        "assert(world.WindowGetPixel('p', 7, 7) == 0xFF0000, 'inside missing')\n"
+        "assert(world.WindowGetPixel('p', 8, 8) == 0xFFFFFF, 'right/bottom inclusive')\n"
+        "assert(world.WindowGetPixel('p', 1, 1) == 0xFFFFFF, 'left/top overreach')\n"
+
+        // A gradient must actually vary — the assertion a return code cannot
+        // make.  Ends differ from each other AND from the background.
+        "assert(world.WindowCreate('g', 0, 0, 40, 10, 0, 0, 0) == 0)\n"
+        "assert(world.WindowGradient('g', 0, 0, 40, 10, 0x000000, 0xFFFFFF, 1) == 0)\n"
+        "local a, b = world.WindowGetPixel('g', 1, 5), world.WindowGetPixel('g', 38, 5)\n"
+        "assert(a ~= b, 'gradient is flat: ' .. tostring(a) .. ' vs ' .. tostring(b))\n"
+
+        // Text: CpuRaster's font is deliberately synthetic, so do NOT assert
+        // glyph shapes.  What IS a real contract is that measuring and drawing
+        // agree, that a longer string measures wider, and that drawing changed
+        // something.
+        "assert(world.WindowFont('t2', 'f', 'Menlo', 10, false, false, false, false, 0, 0)"
+        "       == error_code.eNoSuchWindow)\n"
+        "assert(world.WindowFont('g', 'f', 'Menlo', 10, false, false, false, false, 0, 0) == 0)\n"
+        "local w1 = world.WindowTextWidth('g', 'f', 'i', false)\n"
+        "local w2 = world.WindowTextWidth('g', 'f', 'iiii', false)\n"
+        "assert(w1 > 0 and w2 > w1, 'text measurement is degenerate')\n"
+    ));
+
+    // Drawing text must change pixels — checked from C++ so the failure message
+    // can say how many changed.
+    EXPECT_TRUE(run(f.L,
+        "assert(world.WindowCreate('tx', 0, 0, 60, 20, 0, 0, 0x000000) == 0)\n"
+        "assert(world.WindowFont('tx','f','Menlo',10,false,false,false,false,0,0) == 0)\n"
+        "local before = 0\n"
+        "for x = 0, 59 do for y = 0, 19 do\n"
+        "  if world.WindowGetPixel('tx', x, y) ~= 0 then before = before + 1 end\n"
+        "end end\n"
+        "assert(before == 0, 'canvas did not start blank')\n"
+        "assert(world.WindowText('tx','f','WWWW',0,0,60,20,0xFFFFFF,false) > 0)\n"
+        "local after = 0\n"
+        "for x = 0, 59 do for y = 0, 19 do\n"
+        "  if world.WindowGetPixel('tx', x, y) ~= 0 then after = after + 1 end\n"
+        "end end\n"
+        "assert(after > 0, 'WindowText reported a width but painted nothing')\n"
+    ));
+}
+
+// WindowDelete must release the surface, not just forget the window.
+//
+// The lifetime here is not obvious: the CBitmap owns the surface, and
+// CMiniWindow::Create releases the OLD surface id AFTER already deleting the old
+// bitmap — so headless_surface.cpp's release is deliberately a no-op and the
+// destroy happens in CBitmap::DeleteObject.  If that pairing were wrong this
+// would either leak every canvas or destroy a live one.
+TEST(LuaSurface, RecreatingAWindowDoesNotStrandItsCanvas)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        // Create, paint, then RE-create at a different size: the second create
+        // frees the first canvas and makes a fresh one, which must come back
+        // with the NEW background rather than the old pixels.
+        "assert(world.WindowCreate('r', 0, 0, 20, 20, 0, 0, 0xFF0000) == 0)\n"
+        "assert(world.WindowGetPixel('r', 5, 5) == 0xFF0000)\n"
+        "assert(world.WindowCreate('r', 0, 0, 30, 30, 0, 0, 0x00FF00) == 0)\n"
+        "assert(world.WindowGetPixel('r', 5, 5) == 0x00FF00, 'stale canvas survived')\n"
+        "assert(world.WindowInfo('r', 3) == 30)\n"
+        // ...and a resize keeps the window usable rather than stranding it.
+        "assert(world.WindowResize('r', 50, 40, 0x0000FF) == 0)\n"
+        "assert(world.WindowSetPixel('r', 45, 35, 0xFFFFFF) == 0)\n"
+        "assert(world.WindowGetPixel('r', 45, 35) == 0xFFFFFF, 'resized canvas is dead')\n"
+        "assert(world.WindowDelete('r') == 0)\n"
     ));
 }
 

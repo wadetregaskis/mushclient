@@ -568,6 +568,7 @@ if(NOT WIN32)
         platform/doc_headless_stubs.cpp
         platform/doc_port_glue.cpp
         platform/gdi_headless.cpp
+        platform/headless_surface.cpp
         platform/headless_app.cpp
         platform/windows_stubs.cpp
         doc_construct.cpp

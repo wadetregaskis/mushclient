@@ -38,12 +38,25 @@ call sites all sit inside a `GetFirstView` walk that yields nothing (the
 recorded *dead view family strategy*). Only **~18** of that file are real work.
 
 `doc_gui_method_stubs.cpp` is **~95% real todo — but almost none of it is
-implementation.** Only **five of 108** are irreducible, and they are irreducible
-for a specific reason worth writing down: `FlashIcon`, `MoveMainWindow`,
-`GetFrame`, `Transparency` and `SetToolBarPosition` all dereference `Frame`, i.e.
-`*(CMainFrame*)App.m_pMainWnd` (`stdafx.h:271`), which is nullptr headless.
-Adopting them is a SIGSEGV, not a no-op. **These five are the permanent headless
-contract.**
+implementation.** The survey said **five of 108** were irreducible because
+`FlashIcon`, `MoveMainWindow`, `GetFrame`, `Transparency` and
+`SetToolBarPosition` all dereference `Frame` = `*(CMainFrame*)App.m_pMainWnd`
+(`stdafx.h:271`), nullptr headless.
+
+**That is wrong on this platform, and the correction matters.** `stdafx.h:271` is
+inside `#ifdef _WIN32`. Off Windows `Frame` is a **real extern global object**
+(`CMainFrame Frame;`, `platform/windows_stubs.cpp:27`), so `FlashIcon`,
+`MoveMainWindow` and `SetToolBarPosition` would call inert methods on a real
+object — no crash. Only **two** genuinely deref a null pointer, and they do it
+through `App.m_pMainWnd->m_hWnd`, not through `Frame`:
+
+| Method | Why |
+|---|---|
+| `GetFrame` | `return (long) App.m_pMainWnd->m_hWnd;` (`methods_output.cpp:81`) |
+| `Transparency` | `MakeWindowTransparent (App.m_pMainWnd->m_hWnd, …)` (`:249`) |
+
+So the permanent-contract list is **two**, not five. Anyone doing the output
+family must still decide what those two answer headless before moving the TU.
 
 The other 103 are **TUs to be moved, not bodies to be written**. Measured with
 `nm` against the real objects, the entire implementation cost across the four

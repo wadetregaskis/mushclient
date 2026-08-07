@@ -318,21 +318,13 @@ BOOL CPluginsDlg::OnInitDialog () { return TRUE; }
 BEGIN_MESSAGE_MAP(CPluginsDlg, CCmdTarget)
 END_MESSAGE_MAP()
 
-// CProgressDlg (ProgDlg.cpp) — the world-load progress bar.  Besides the dialog
-// ctor/vtable it exposes non-virtual drivers the loader pokes (Create / SetPos /
-// SetRange / CheckCancelButton); all inert headless (no window, never cancels).
-CProgressDlg::CProgressDlg (UINT /*nCaptionID*/) {}
-CProgressDlg::~CProgressDlg () {}
-void CProgressDlg::DoDataExchange (CDataExchange* /*pDX*/) {}
-BOOL CProgressDlg::OnInitDialog () { return TRUE; }
-BOOL CProgressDlg::DestroyWindow () { return TRUE; }
-void CProgressDlg::OnCancel () {}
-BOOL CProgressDlg::Create (CWnd* /*pParent*/) { return TRUE; }
-BOOL CProgressDlg::CheckCancelButton () { return FALSE; }   // never cancelled
-void CProgressDlg::SetRange (int /*nLower*/, int /*nUpper*/) {}
-int  CProgressDlg::SetPos (int /*nPos*/) { return 0; }
-BEGIN_MESSAGE_MAP(CProgressDlg, CCmdTarget)
-END_MESSAGE_MAP()
+// CProgressDlg's fourteen stub bodies are GONE — dialogs/ProgDlg.cpp is in
+// CORE_SOURCES now, so mushcore runs the shipping ones.  It was adopted for the
+// reason the doc's own rule names: not for coverage (its DoDataExchange is a
+// single DDX_Control and OnInitDialog cannot run headless), but because the
+// twin was expensive to maintain — it had already drifted once and needed
+// patching in a SECOND block after ccd094b.  The drivers it stubbed do carry
+// real port logic, which now has its first headless test.
 
 // ════════════════════════════════════════════════════════════════════════════
 // 6. Free functions doc.cpp reaches (declared locally / in stdafx.h).  Real
@@ -398,15 +390,10 @@ void CPluginsDlg::OnDestroy () {}
 void CPluginsDlg::OnSize (UINT /*nType*/, int /*cx*/, int /*cy*/) {}
 void CChatListDlg::OnDestroy () {}
 
-// CProgressDlg (world-load progress) — the loader also pokes these non-virtual
-// drivers; inert headless (no window).
-void CProgressDlg::SetStatus (LPCTSTR /*lpszMessage*/) {}
-int  CProgressDlg::StepIt () { return 0; }
-int  CProgressDlg::OffsetPos (int /*nPos*/) { return 0; }
-// The port arm of ProgDlg.cpp hides CWnd::SetWindowText so the caption every
-// caller sets after Create() reaches the wxProgressDialog; headless there is no
-// dialog at all, so this is the matching inert body.
-void CProgressDlg::SetWindowText (LPCTSTR /*lpszString*/) {}
+// (The four further CProgressDlg stubs that lived here — SetStatus, StepIt,
+// OffsetPos, SetWindowText — are gone with the ten above.  Their existence in a
+// SECOND block, added after ccd094b patched the first, is precisely why this
+// TU was worth retiring.)
 
 // ── Additional dialog classes the flip instantiates (ctor + vtable) ─────────
 // CDebugLuaDlg (lua_methods.cpp our_lua_debug_function): DoModal via the null

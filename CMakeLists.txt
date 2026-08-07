@@ -546,6 +546,10 @@ if(NOT WIN32)
         UDPsocket.cpp
         dialogs/plugins/PluginWizardSheet.cpp
         dialogs/plugins/PluginWizard.cpp
+        # The app's ONLY modeless dialog, and the one whose non-virtual drivers
+        # (SetRange/SetPos/SetStep/StepIt/OffsetPos/CheckCancelButton) carry
+        # real port-side logic rather than being ctor/DDX boilerplate.
+        dialogs/ProgDlg.cpp
         DDV_validation.cpp
         platform/wx_mfc_hooks_storage.cpp
         scriptingoptions.cpp
@@ -668,7 +672,7 @@ if(NOT WIN32)
         dialogs/MapDlg.cpp
         dialogs/MapMoveDlg.cpp
         dialogs/MultiLineTriggerDlg.cpp
-        dialogs/ProgDlg.cpp
+        # dialogs/ProgDlg.cpp is in CORE_SOURCES — adopted 2026-08-07
         dialogs/ProxyServerPasswordDlg.cpp
         dialogs/QuickConnectDlg.cpp
         dialogs/RecallDlg.cpp

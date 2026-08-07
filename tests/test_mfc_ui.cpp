@@ -26,6 +26,7 @@
 #include "mainfrm.h"   // CMainFrame (platform/mainfrm_stub.h here) — FramePostMessage tests
 #include "scripting/errors.h"
 #include "platform/world_close_decision.h"  // DecideWorldClose — the Cmd+W prompt chain
+#include "dialogs/ProgDlg.h"   // CProgressDlg — adopted into mushcore 2026-08-07
 
 #include <algorithm>
 #include <cerrno>     // ENOENT — CFile open-failure cause checks
@@ -4448,6 +4449,218 @@ TEST(MfcUi, UMessageBoxHeadlessFallbackDeclines)
     // is a real ID*, not zero.
     for (const auto& c : kCases)
         EXPECT_NE(0, UMessageBox("x", c.type, "t"));
+}
+
+// ── CProgressDlg: the shipping bodies, not a twin ───────────────────────────
+//
+// dialogs/ProgDlg.cpp is in mushcore as of 2026-08-07; fourteen hand-written
+// stubs in platform/doc_flip_gui_stubs.cpp went with it.  CProgressDlg is the
+// app's only modeless dialog, so this one class serves Recall, Send-to-world,
+// Find/Global Change, the world-prefs memory calculation and the Lua `progress`
+// library.
+//
+// This test exists for two reasons.  First, PROOF OF LIVENESS: adopting a TU
+// without deleting its stub in the same commit builds clean and passes the
+// whole suite, because both archives define the symbols and the linker silently
+// picks one (docs/STUB-ADOPTION-2026-08.md §5a).  A green suite is what that
+// hazard produces, not what rules it out — so the discriminator has to be an
+// assertion the stub would FAIL.  SetStep is the strongest available: it had no
+// stub at all, so this test could not even LINK before the adoption.
+//
+// Second, the relative movers are what ccd094b fixed, and until now their only
+// coverage was the in-app selftest.  Their port arms are expressed in terms of
+// SetPos, which is the one driver that is really wired, so the position
+// arithmetic below is the whole of what the fix did.
+// The port arm talks to wxProgressDialog through five function pointers, so a
+// fake set of them drives the REAL chain rather than a friend class poking at
+// members — the same technique tests/test_chat_sockets.cpp uses for the accept
+// prompt.  It also lets the test see the value actually handed to the dialog,
+// which is the only way to check the m_nLower rebase.
+namespace {
+
+struct ProgressSpy {
+    static int         opens, updates, closes, ranges;
+    static int         lastPos, lastRange;
+    static std::string lastStatus, lastTitle, openCaption;
+    static bool        answer;          // what _update reports (false = cancelled)
+    static int         handleTarget;    // its address is the fake handle
+
+    static void reset()
+    {
+        opens = updates = closes = ranges = 0;
+        lastPos = lastRange = -999;
+        lastStatus.clear(); lastTitle.clear(); openCaption.clear();
+        answer = true;
+    }
+};
+int ProgressSpy::opens, ProgressSpy::updates, ProgressSpy::closes, ProgressSpy::ranges;
+int ProgressSpy::lastPos, ProgressSpy::lastRange;
+std::string ProgressSpy::lastStatus, ProgressSpy::lastTitle, ProgressSpy::openCaption;
+bool ProgressSpy::answer;
+int ProgressSpy::handleTarget;
+
+void* SpyOpen(const char* caption, const char*, int maximum)
+{
+    ++ProgressSpy::opens;
+    ProgressSpy::openCaption = caption ? caption : "";
+    ProgressSpy::lastRange   = maximum;
+    return &ProgressSpy::handleTarget;
+}
+void SpySetRange(void*, int maximum) { ++ProgressSpy::ranges; ProgressSpy::lastRange = maximum; }
+bool SpyUpdate(void*, int pos, const char* status)
+{
+    ++ProgressSpy::updates;
+    ProgressSpy::lastPos    = pos;
+    ProgressSpy::lastStatus = status ? status : "";
+    return ProgressSpy::answer;
+}
+void SpyClose(void*) { ++ProgressSpy::closes; }
+void SpySetTitle(void*, const char* title) { ProgressSpy::lastTitle = title ? title : ""; }
+
+struct ProgressHooks {
+    void* (*sOpen)(const char*, const char*, int);
+    void  (*sRange)(void*, int);
+    bool  (*sUpdate)(void*, int, const char*);
+    void  (*sClose)(void*);
+    void  (*sTitle)(void*, const char*);
+    ProgressHooks()
+      : sOpen(g_wxhook_progress_open), sRange(g_wxhook_progress_set_range),
+        sUpdate(g_wxhook_progress_update), sClose(g_wxhook_progress_close),
+        sTitle(g_wxhook_progress_set_title)
+    {
+        ProgressSpy::reset();
+        g_wxhook_progress_open      = SpyOpen;
+        g_wxhook_progress_set_range = SpySetRange;
+        g_wxhook_progress_update    = SpyUpdate;
+        g_wxhook_progress_close     = SpyClose;
+        g_wxhook_progress_set_title = SpySetTitle;
+    }
+    ~ProgressHooks()
+    {
+        g_wxhook_progress_open      = sOpen;
+        g_wxhook_progress_set_range = sRange;
+        g_wxhook_progress_update    = sUpdate;
+        g_wxhook_progress_close     = sClose;
+        g_wxhook_progress_set_title = sTitle;
+    }
+};
+
+} // namespace
+
+TEST(MfcUi, ProgressDialogDriversRunTheShippingBodies)
+{
+    ProgressHooks hooks;
+    CProgressDlg dlg;
+
+    // Create reports whether it really got a dialog.  The stub returned TRUE
+    // unconditionally, so every caller believed it had one.
+    ASSERT_TRUE(dlg.Create(NULL));
+    EXPECT_EQ(1, ProgressSpy::opens);
+
+    // The real ctor seeds a state no stub did: range 0..100, step 10.  Create
+    // passes that range straight through as the dialog's maximum.
+    EXPECT_EQ(100, ProgressSpy::lastRange);
+
+    // Callers do Create() then SetRange(), so the true maximum is only known
+    // afterwards and the port re-sizes the bar.  The bound handed over is the
+    // EXTENT, not the upper bound — so the lower bound must be non-zero here or
+    // the subtraction under test is an identity and any bug survives.
+    dlg.SetRange(20, 220);
+    EXPECT_EQ(1, ProgressSpy::ranges);
+    EXPECT_EQ(200, ProgressSpy::lastRange);
+    dlg.SetRange(0, 200);                    // back to a zero base for the rest
+    EXPECT_EQ(2, ProgressSpy::ranges);
+
+    EXPECT_EQ(40, dlg.SetPos(40));
+    EXPECT_EQ(40, ProgressSpy::lastPos);
+    EXPECT_EQ(10, dlg.StepIt() - 40);        // the ctor's default step
+
+    // SetStep's RETURN is meaningless off Windows — it forwards to the
+    // CProgressCtrl shim, which is a `return 0` (platform/mfc_ui.h:4121).  Only
+    // the m_nStep it stores matters, and StepIt is the only way to observe it.
+    EXPECT_EQ(0, dlg.SetStep(5));
+    EXPECT_EQ(55, dlg.StepIt());             // 50 + 5, so the STORE took effect
+    EXPECT_EQ(55, ProgressSpy::lastPos);
+
+    // OffsetPos is relative to where StepIt left the bar — the coupling through
+    // m_iPortPos that ccd094b introduced.  Before it, both drove an inert
+    // CProgressCtrl and a pump that returns on a null m_hWnd, so the bar never
+    // moved at all.
+    EXPECT_EQ(58, dlg.OffsetPos(3));
+    EXPECT_EQ(63, dlg.StepIt());
+    EXPECT_EQ(60, dlg.OffsetPos(-3));        // and it really is signed
+    EXPECT_EQ(60, ProgressSpy::lastPos);
+
+    // Every one of those reached the dialog: 1 (SetPos) + 5 (the movers).
+    EXPECT_EQ(6, ProgressSpy::updates);
+
+    // The value CALLERS see is absolute; the lower bound is subtracted only on
+    // the way to the dialog, which is a wxProgressDialog counting from 0.
+    dlg.SetRange(100, 300);
+    EXPECT_EQ(120, dlg.SetPos(120));
+    EXPECT_EQ(20, ProgressSpy::lastPos);     // 120 - 100
+    EXPECT_EQ(125, dlg.StepIt());
+    EXPECT_EQ(25, ProgressSpy::lastPos);
+
+    // SetWindowText retitles the live dialog.  It used to drop every caption,
+    // so all five callers read a generic "Progress".
+    dlg.SetWindowText("Recalling...");
+    EXPECT_EQ(std::string("Recalling..."), ProgressSpy::lastTitle);
+
+    // SetStatus is DEFERRED, and the difference is observable: wxProgressDialog
+    // carries the message on its Update() call, so the text lands with the next
+    // position change rather than immediately.  Asserting only the end state
+    // would pass against an implementation that showed it at once, which is
+    // what the Windows arm does.
+    const std::string before = ProgressSpy::lastStatus;
+    dlg.SetStatus("line 3 of 9");
+    EXPECT_EQ(before, ProgressSpy::lastStatus);        // not yet
+    dlg.StepIt();
+    EXPECT_EQ(std::string("line 3 of 9"), ProgressSpy::lastStatus);   // now
+}
+
+// CheckCancelButton is one-shot BY DESIGN: it reports the flag and clears it, so
+// a caller can poll it in a loop and still continue.  The stub returned FALSE
+// unconditionally — indistinguishable from "nobody cancelled" — so a test that
+// only covered the un-cancelled case would have passed against it too.
+TEST(MfcUi, ProgressDialogCancelIsLatchedThenCleared)
+{
+    ProgressHooks hooks;
+    CProgressDlg dlg;
+    ASSERT_TRUE(dlg.Create(NULL));
+
+    EXPECT_FALSE(dlg.CheckCancelButton());   // nothing has happened yet
+    EXPECT_EQ(10, dlg.SetPos(10));
+    EXPECT_FALSE(dlg.CheckCancelButton());   // ...and an ordinary update is not a cancel
+
+    // The user hits Cancel: wxProgressDialog::Update reports false, and that is
+    // the ONLY way the flag gets set on this platform.
+    ProgressSpy::answer = false;
+    dlg.SetPos(20);
+
+    EXPECT_TRUE(dlg.CheckCancelButton());    // latched — the stub could never say this
+    EXPECT_FALSE(dlg.CheckCancelButton());   // and cleared, so a polling loop may continue
+
+    // It latches again rather than being once-per-lifetime.
+    dlg.SetPos(30);
+    EXPECT_TRUE(dlg.CheckCancelButton());
+}
+
+// With no hooks installed — which is every other headless test in this binary —
+// the drivers must stay safe rather than dereferencing a null handle.  This is
+// what the old stubs bought, and adopting the real bodies must not lose it.
+TEST(MfcUi, ProgressDialogIsInertWithNoDialogBehindIt)
+{
+    CProgressDlg dlg;
+    EXPECT_FALSE(dlg.Create(NULL));          // honest: there is no dialog
+
+    dlg.SetRange(0, 50);
+    EXPECT_EQ(7, dlg.SetPos(7));             // the position is still tracked...
+    EXPECT_EQ(17, dlg.StepIt());             // ...so the arithmetic still works
+    EXPECT_EQ(20, dlg.OffsetPos(3));
+    dlg.SetWindowText("x");
+    dlg.SetStatus("y");
+    EXPECT_FALSE(dlg.CheckCancelButton());   // nothing can cancel it
 }
 
 MC_TEST_MAIN()

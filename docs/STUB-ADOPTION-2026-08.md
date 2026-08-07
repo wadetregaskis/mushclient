@@ -361,9 +361,9 @@ its callers.
 The four unblocked ops are covered (`ad434ad`, 17 tests, 61 mutations, 56
 killed). Two findings outlast the tests.
 
-### `CpuRaster`'s surface-to-surface blit silently mis-draws a stretch
+### `CpuRaster`'s surface-to-surface blit silently mis-drew a stretch — FIXED
 
-`pal/cpu_raster.cpp`'s `SurfaceId -> SurfaceId` overload **overwrites the
+`pal/cpu_raster.cpp`'s `SurfaceId -> SurfaceId` overload **overwrote the
 caller's destination extent with the clipped source extent** before delegating:
 
 ```
@@ -371,35 +371,31 @@ caller's destination extent with the clipped source extent** before delegating:
                 dstRect.y + (clipped.y - srcRect.y), clipped.w, clipped.h };
 ```
 
-Two consequences, both measured:
+so the `PixelBuffer` overload's no-stretch guard compared two values that could
+never disagree. **The guard was dead code**, and a stretch was not declined but
+answered with a 1:1 blit at the destination origin: a requested 2x1 destination
+painted a whole 9x5 image.
 
-1. The documented no-stretch guard in the `PixelBuffer` overload
-   (`if (dstRect.w != srcRect.w || ...) return;`) is **dead code** on this path.
-   The two extents can never disagree by the time it runs.
-2. A stretch request is therefore not *declined* — it is answered with a **1:1
-   blit at the destination origin**. `WindowDrawImage(..., Left=1, Top=1,
-   Right=3, Bottom=2, Mode=2)` on a 9x5 source — a requested 2x1 destination —
-   painted the whole 9x5 image.
+That is worse than an unimplemented gap. A no-op is visibly missing; a wrong
+answer at the right place looks correct, so a test written against it passes and
+pins the wrong behaviour. **This actually happened**: the mode-2 test written
+hours earlier had assertions describing the 1:1 mis-draw, and implementing the
+stretch turned them red. Its first call was safe only by luck — the fixture made
+the destination extent 9x5, exactly the image size, so that call was never a
+stretch at all.
 
-So headless, `DrawImage` **mode 2 is observationally identical to mode 1**: same
-origin, same source rect, and the only other difference (`BlitQuality::Smooth`
-vs `Fast`) is discarded, since `CpuRaster::blit` ignores its quality argument
-entirely. Mutating the engine's mode-2 destination extent to something
-*negative* leaves the whole suite green.
+**Fixed 2026-08-07 (Wade's call: implement it).** Nearest neighbour, GDI's
+COLORONCOLOR rule, in the `PixelBuffer` overload; the surface overload now keeps
+the caller's extent when the extents differ. Two COMBINATIONS stay declined,
+both matching the wx adapter's own S2 gaps so the two agree: a stretch whose
+source rect was clipped (`wx_surface.cpp:728`) and a colour-KEYED stretch
+(`:734`). Six mutations, all killed — including reinstating the original defect.
 
-This matters more than an unimplemented gap would. A no-op is visibly missing; a
-1:1 blit at the right origin looks correct, so a test written against it would
-**pin the wrong behaviour** — which is the worst property a golden-reference
-adapter can have. `pal/cpu_raster.cpp` is in `MUSHCORE_TESTSUPPORT_SOURCES`
-only, so nothing in the product is affected either way.
-
-**Recommendation (needs a decision — §6 currently scopes CpuRaster gaps out):**
-implement nearest-neighbour resampling in the surface-to-surface path, ~15
-lines. That turns a lie into a capability and makes mode 2 genuinely testable.
-The cheaper alternative — hoisting the guard so a stretch is *declined* — is
-honest but strictly loses coverage, because mode 2 would then draw nothing at
-all. Doing neither is the one option that should not stand, because the current
-behaviour is the kind that gets tested INTO the contract.
+**The constraint this buys, and it must not be forgotten:** the stretch
+resamples but does not interpolate, so it will never reproduce the wx adapter's
+HALFTONE (`BlitQuality::Smooth`) colours. A test over a stretch must assert
+**placement and extent**, never an interpolated colour value. The shipping
+rasteriser remains the parity bearer for the latter.
 
 ### `BlendImage` has an unreachable-looking silent-success arm
 

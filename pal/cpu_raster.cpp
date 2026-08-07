@@ -316,8 +316,28 @@ void CpuRaster::blit(SurfaceId dstId, Rect dstRect, SurfaceId srcId, Rect srcRec
     // overload's per-pixel clipping does.
     Rect clipped = srcRect;
     if (!clipRect(clipped, src->size)) return;
-    dstRect = { dstRect.x + (clipped.x - srcRect.x),
-                dstRect.y + (clipped.y - srcRect.y), clipped.w, clipped.h };
+
+    // A STRETCH must keep the caller's destination extent. Overwriting it with
+    // the source's (as the 1:1 rebase below does) used to be unconditional,
+    // which made the PixelBuffer overload's no-stretch guard unreachable — the
+    // two extents it compares could never disagree — so a stretch was not
+    // declined but silently answered with a 1:1 blit at the destination origin.
+    // A wrong answer at the right place is worse than a visible no-op, because
+    // a test written against it passes.
+    const bool stretch = m == nullptr &&
+                         (dstRect.w != srcRect.w || dstRect.h != srcRect.h);
+
+    // A stretch whose source was clipped would need the destination scaled by
+    // the same ratio. Declined rather than approximated, matching the wx
+    // adapter's own S2 gap (platform/wx_surface.cpp:728) so the two agree.
+    if (stretch && (clipped.x != srcRect.x || clipped.y != srcRect.y ||
+                    clipped.w != srcRect.w || clipped.h != srcRect.h))
+        return;
+
+    if (!stretch)
+        dstRect = { dstRect.x + (clipped.x - srcRect.x),
+                    dstRect.y + (clipped.y - srcRect.y), clipped.w, clipped.h };
+
     PixelBuffer buf;
     readPixels(srcId, clipped, buf, PixelFormat::BGRA32);
     blit(dstId, dstRect, buf, { 0, 0, buf.size.w, buf.size.h }, mode, key, q, m);
@@ -368,7 +388,41 @@ void CpuRaster::blit(SurfaceId dstId, Rect dstRect, const PixelBuffer& src, Rect
             }
         return;
     }
-    if (dstRect.w != srcRect.w || dstRect.h != srcRect.h) return; // S1: no stretch
+    if (dstRect.w != srcRect.w || dstRect.h != srcRect.h) {
+        // ── stretch: nearest neighbour ──────────────────────────────────────
+        //
+        // GDI's COLORONCOLOR rule — each destination pixel takes the source
+        // pixel its position maps back to, nothing is interpolated.  This will
+        // NOT match the wx adapter's HALFTONE (BlitQuality::Smooth) output, and
+        // it is not meant to: the shipping rasteriser is the parity bearer for
+        // interpolated colour.  What this makes testable is PLACEMENT and
+        // EXTENT — that a scale happens, of the right size, at the right spot.
+        // Tests over a stretch must assert those and never an interpolated
+        // colour value.
+        if (dstRect.w <= 0 || dstRect.h <= 0 || srcRect.w <= 0 || srcRect.h <= 0)
+            return;
+        // Colour-keying a stretch is declined rather than approximated: which
+        // source pixel a destination pixel samples decides whether it is
+        // transparent, so the result depends on the resampling rule and would
+        // not match the shipping adapter.  The wx adapter declines it too
+        // (platform/wx_surface.cpp:734).
+        if (mode == BlitMode::TransparentKey) return;
+
+        const int bpp = src.bytesPerPixel();
+        for (int Y = 0; Y < dstRect.h; ++Y) {
+            const int sy = srcRect.y + (int)((long long) Y * srcRect.h / dstRect.h);
+            if (sy < 0 || sy >= src.size.h) continue;
+            const unsigned char* sp = src.row(sy);
+            for (int X = 0; X < dstRect.w; ++X) {
+                const int sx = srcRect.x + (int)((long long) X * srcRect.w / dstRect.w);
+                if (sx < 0 || sx >= src.size.w) continue;
+                const unsigned char* p = sp + (size_t)sx * bpp;
+                // setPx bounds-checks the destination, so no dst clipping here.
+                setPx(*dst, dstRect.x + X, dstRect.y + Y, makeCol(p[2], p[1], p[0]));
+            }
+        }
+        return;
+    }
     const int bpp = src.bytesPerPixel();
     for (int y = 0; y < srcRect.h; ++y) {
         const int sy = srcRect.y + y;

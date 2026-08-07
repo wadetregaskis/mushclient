@@ -2568,24 +2568,81 @@ TEST(LuaSurface, DrawImageStretchModeDrawsAndHonoursItsSourceRect)
         "assert(world.WindowGetPixel('w', 11,  8) == BG, 'mode 2 spilled up')\n"
         "assert(world.WindowGetPixel('w', 10, 13) == BG, 'mode 2 spilled left')\n"
 
-        // Second call: a source sub-rectangle given with NEGATIVE far edges.
-        // SrcRight = -2 -> 9 - 2 = 7 and SrcBottom = -1 -> 5 - 1 = 4, so the
-        // source is (2, 2) to (7, 4) = 5 x 2.  SrcTop = 2 is the last of the
-        // blue/green rows and SrcTop + 1 = 3 is the first red one, so the two
-        // destination rows must differ — a body that dropped SrcTop would give
-        // two identical blue/green rows instead.
+        // Second call: a genuine STRETCH, with a source sub-rectangle given
+        // using NEGATIVE far edges.  SrcRight = -2 -> 9 - 2 = 7 and
+        // SrcBottom = -1 -> 5 - 1 = 4, so the source is (2,2)..(7,4) = 5 x 2,
+        // while Right = 0 / Bottom = 0 make the destination 19 x 6.  Those
+        // extents differ in BOTH axes and by different ratios, so a body that
+        // used one axis's scale for both fails.
+        //
+        // Nearest neighbour (CpuRaster is COLORONCOLOR, never interpolating),
+        // so the expected pixels are exact rather than approximate:
+        //   sy = 2 + floor(Y * 2 / 6)  -> Y in [0,3) reads image row 2,
+        //                                 Y in [3,6) reads image row 3
+        //   sx = 2 + floor(X * 5 / 19) -> X in [0,16) reads image x 2..5,
+        //                                 X in [16,19) reads image x 6
+        // Image row 2 is the last blue/green row and row 3 the first red one,
+        // so the two halves must differ — dropping SrcTop would give six
+        // identical blue/green rows.
         "assert(world.WindowDrawImage('w', 'img', 1, 8, 0, 0, 2, 2, 2, -2, -1) == 0)\n"
-        "assert(world.WindowGetPixel('w', 1,  8) == GREEN, 'SrcLeft ignored')\n"
-        "assert(world.WindowGetPixel('w', 4,  8) == GREEN, 'src right edge')\n"
-        "assert(world.WindowGetPixel('w', 5,  8) == BLUE,  'src width wrong')\n"
-        "assert(world.WindowGetPixel('w', 1,  9) == RED,   'SrcTop ignored')\n"
-        "assert(world.WindowGetPixel('w', 5,  9) == RED,   'SrcTop ignored')\n"
-        // Controls all round: past the right edge pins the -2, past the bottom
-        // edge pins the -1, and the other two pin the destination origin.
+        "assert(world.WindowGetPixel('w',  1,  8) == GREEN, 'SrcLeft ignored')\n"
+        "assert(world.WindowGetPixel('w', 16,  8) == GREEN, 'src x=5 column')\n"
+        "assert(world.WindowGetPixel('w', 17,  8) == BLUE,  'src x=6 column')\n"
+        "assert(world.WindowGetPixel('w', 19,  8) == BLUE,  'stretch stopped short')\n"
+        "assert(world.WindowGetPixel('w',  1, 10) == GREEN, 'row 2 band too thin')\n"
+        "assert(world.WindowGetPixel('w',  1, 11) == RED,   'SrcTop ignored')\n"
+        "assert(world.WindowGetPixel('w', 19, 13) == RED,   'stretch stopped short')\n"
+        // ...and it really SCALED rather than copying 1:1 at the origin, which
+        // is what this adapter did until the stretch was implemented: at 1:1
+        // the source is only 5 wide and 2 tall, so (6,8) and (1,10) would both
+        // be background.
+        "assert(world.WindowGetPixel('w',  6,  8) ~= BG, 'not stretched: 1:1 width')\n"
+        "assert(world.WindowGetPixel('w',  1, 12) ~= BG, 'not stretched: 1:1 height')\n"
+        // Controls on the two edges that are not the window's own.
         "assert(world.WindowGetPixel('w', 0,  8) == BG, 'sub-rect spilled left')\n"
-        "assert(world.WindowGetPixel('w', 6,  8) == BG, 'negative SrcRight ignored')\n"
         "assert(world.WindowGetPixel('w', 1,  7) == BG, 'sub-rect spilled up')\n"
-        "assert(world.WindowGetPixel('w', 1, 10) == BG, 'negative SrcBottom ignored')\n"
+
+        // ── MAGNIFY, with explicit far edges so all four spill controls exist
+        //
+        // Both calls above run to the window's own edge (Right = 0), which
+        // makes a right/bottom overrun invisible.  This one does not.
+        //
+        // Source (0,0)..(3,1) is 3 x 1 — image x = 0,1 blue and x = 2 green —
+        // into a 9 x 5 destination at (2,1).  So each source column becomes
+        // exactly three columns and the single source row becomes five rows:
+        //   sx = floor(X * 3 / 9) = X / 3,   sy = floor(Y * 1 / 5) = 0
+        // The ratios differ per axis (3x across, 5x down), so a body using one
+        // scale for both fails, and 9/3 and 5/1 are exact so there is no
+        // rounding to argue about.
+        "assert(world.WindowCreate('s', 0, 0, 20, 14, 0, 0, BG) == 0)\n"
+        "assert(world.WindowLoadImage('s', 'img', '" + png + "') == 0)\n"
+        "assert(world.WindowDrawImage('s', 'img', 2, 1, 11, 6, 2, 0, 0, 3, 1) == 0)\n"
+        "assert(world.WindowGetPixel('s',  2, 1) == BLUE,  'magnify origin')\n"
+        "assert(world.WindowGetPixel('s',  7, 1) == BLUE,  'magnify src x=1')\n"
+        "assert(world.WindowGetPixel('s',  8, 1) == GREEN, 'magnify src x=2')\n"
+        "assert(world.WindowGetPixel('s', 10, 1) == GREEN, 'magnify right edge')\n"
+        // The one source row really did become five: without a vertical scale
+        // rows 2..5 of the destination would be background.
+        "assert(world.WindowGetPixel('s', 10, 5) == GREEN, 'magnify bottom edge')\n"
+        "assert(world.WindowGetPixel('s',  2, 5) == BLUE,  'vertical scale wrong')\n"
+        // All four controls, which is what the explicit far edges buy.
+        "assert(world.WindowGetPixel('s',  1, 1) == BG, 'magnify spilled left')\n"
+        "assert(world.WindowGetPixel('s',  2, 0) == BG, 'magnify spilled up')\n"
+        "assert(world.WindowGetPixel('s', 11, 1) == BG, 'magnify spilled right')\n"
+        "assert(world.WindowGetPixel('s',  2, 6) == BG, 'magnify spilled down')\n"
+
+        // ── MINIFY — the other direction, which a scale-up-only body fails.
+        //
+        // The whole 9 x 5 image into a 3 x 2 destination at (14,8):
+        //   sx = floor(X * 9 / 3) = 3X,   sy = floor(Y * 5 / 2)
+        // so the three destination columns sample image x = 0, 3, 6 — blue,
+        // green, blue — which no monotone smear could produce.
+        "assert(world.WindowDrawImage('s', 'img', 14, 8, 17, 10, 2, 0, 0, 9, 5) == 0)\n"
+        "assert(world.WindowGetPixel('s', 14, 8) == BLUE,  'minify src x=0')\n"
+        "assert(world.WindowGetPixel('s', 15, 8) == GREEN, 'minify src x=3')\n"
+        "assert(world.WindowGetPixel('s', 16, 8) == BLUE,  'minify src x=6')\n"
+        "assert(world.WindowGetPixel('s', 17, 8) == BG,    'minify spilled right')\n"
+        "assert(world.WindowGetPixel('s', 14, 10) == BG,   'minify spilled down')\n"
 
         // The refusing control: a mode the switch does not know is rejected,
         // and leaves the canvas alone — then the very same call in mode 2 does

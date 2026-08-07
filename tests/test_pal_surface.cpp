@@ -162,6 +162,116 @@ TEST(PalSurface, OnlyTheAlphaFormatCarriesAlphaThroughWritePixels)
     }
 }
 
+// The STRETCHED blit — nearest neighbour, GDI's COLORONCOLOR rule.
+//
+// This was a documented S1 gap until 2026-08-07, but it was not behaving as
+// one: the surface-to-surface overload overwrote the caller's destination
+// extent with the source's before delegating, so the no-stretch guard it was
+// supposed to hit compared two values that could never differ.  A stretch was
+// therefore not declined but silently answered with a 1:1 blit at the
+// destination origin — a wrong answer at the right place, which a test written
+// against it would have pinned.
+//
+// Assert PLACEMENT and EXTENT only, never an interpolated colour: this adapter
+// resamples without interpolating and is deliberately not the parity bearer
+// for the wx adapter's HALFTONE output.
+TEST(PalSurface, StretchedBlitResamplesToTheRequestedExtent)
+{
+    PAL_FIXTURE();
+
+    // A 3x2 source with four distinguishable pixels, non-square so an axis
+    // swap shows, and with the two rows DIFFERENT so a vertical scale is
+    // provable independently of the horizontal one.
+    pal::SurfaceId src = ad.createSurface({ 3, 2 }, BLACK);
+    ad.fillRect(src, { 0, 0, 1, 1 }, { pal::BrushStyle::Solid, RED });
+    ad.fillRect(src, { 1, 0, 1, 1 }, { pal::BrushStyle::Solid, GREEN });
+    ad.fillRect(src, { 2, 0, 1, 1 }, { pal::BrushStyle::Solid, BLUE });
+    ad.fillRect(src, { 0, 1, 3, 1 }, { pal::BrushStyle::Solid, WHITE });
+
+    // Magnify 3x2 -> 6x6 at (2,1): 2x across, 3x down.  Different ratios per
+    // axis, both exact.
+    pal::SurfaceId dst = ad.createSurface({ 12, 10 }, BLACK);
+    ad.blit(dst, { 2, 1, 6, 6 }, src, { 0, 0, 3, 2 },
+            pal::BlitMode::Copy, 0, pal::BlitQuality::Fast, nullptr);
+
+    // Row band 1: source row 0 — each source column became two columns.
+    EXPECT_TRUE(ad.getPixel(dst, { 2, 1 }) == RED);
+    EXPECT_TRUE(ad.getPixel(dst, { 3, 1 }) == RED);
+    EXPECT_TRUE(ad.getPixel(dst, { 4, 1 }) == GREEN);
+    EXPECT_TRUE(ad.getPixel(dst, { 5, 1 }) == GREEN);
+    EXPECT_TRUE(ad.getPixel(dst, { 6, 1 }) == BLUE);
+    EXPECT_TRUE(ad.getPixel(dst, { 7, 1 }) == BLUE);
+    // ...and it is three rows deep, not one — the vertical scale.
+    EXPECT_TRUE(ad.getPixel(dst, { 2, 3 }) == RED);
+    // Row band 2: source row 1, so a different colour — a body that scaled x
+    // only, or sampled row 0 throughout, fails here.
+    EXPECT_TRUE(ad.getPixel(dst, { 2, 4 }) == WHITE);
+    EXPECT_TRUE(ad.getPixel(dst, { 7, 6 }) == WHITE);
+
+    // Nothing outside the requested rectangle. Without these the old
+    // "1:1 at the destination origin" behaviour would still pass everything
+    // above except the extent checks.
+    EXPECT_TRUE(ad.getPixel(dst, { 1, 1 }) == BLACK);   // left
+    EXPECT_TRUE(ad.getPixel(dst, { 2, 0 }) == BLACK);   // above
+    EXPECT_TRUE(ad.getPixel(dst, { 8, 1 }) == BLACK);   // right
+    EXPECT_TRUE(ad.getPixel(dst, { 2, 7 }) == BLACK);   // below
+
+    // Minify, the other direction: 3x2 -> 1x1 samples the top-left only.
+    ad.blit(dst, { 10, 8, 1, 1 }, src, { 0, 0, 3, 2 },
+            pal::BlitMode::Copy, 0, pal::BlitQuality::Fast, nullptr);
+    EXPECT_TRUE(ad.getPixel(dst, { 10, 8 }) == RED);
+    EXPECT_TRUE(ad.getPixel(dst, { 11, 8 }) == BLACK);
+    EXPECT_TRUE(ad.getPixel(dst, { 10, 9 }) == BLACK);
+
+    // A 1:1 blit still takes the unscaled path unchanged — the control that
+    // catches a "stretch" that quietly became the only path.
+    ad.blit(dst, { 0, 8, 3, 2 }, src, { 0, 0, 3, 2 },
+            pal::BlitMode::Copy, 0, pal::BlitQuality::Fast, nullptr);
+    EXPECT_TRUE(ad.getPixel(dst, { 0, 8 }) == RED);
+    EXPECT_TRUE(ad.getPixel(dst, { 1, 8 }) == GREEN);
+    EXPECT_TRUE(ad.getPixel(dst, { 2, 8 }) == BLUE);
+    EXPECT_TRUE(ad.getPixel(dst, { 0, 9 }) == WHITE);
+}
+
+// Two stretch COMBINATIONS stay declined, both matching the wx adapter's own
+// S2 gaps (platform/wx_surface.cpp:728 and :734) so the two adapters agree.
+//
+// These assert "nothing was drawn", which is normally the shape to avoid — so
+// each is paired with the same call in a form that DOES draw, proving the
+// refusal is the specific combination rather than the whole blit being broken.
+TEST(PalSurface, StretchDeclinesTheTwoCombinationsWxDeclines)
+{
+    PAL_FIXTURE();
+    pal::SurfaceId src = ad.createSurface({ 4, 4 }, RED);
+    pal::SurfaceId dst = ad.createSurface({ 20, 20 }, BLACK);
+
+    // (1) Clipped source + stretch: the destination would need scaling by the
+    // same ratio as the clip, which is not attempted.
+    ad.blit(dst, { 0, 0, 8, 8 }, src, { 2, 2, 4, 4 },     // srcRect runs 2 past
+            pal::BlitMode::Copy, 0, pal::BlitQuality::Fast, nullptr);
+    EXPECT_TRUE(ad.getPixel(dst, { 0, 0 }) == BLACK);
+    // The same clipped source rect at 1:1 DOES draw, so the refusal above is
+    // about the stretch and not about the clipping.
+    ad.blit(dst, { 0, 0, 4, 4 }, src, { 2, 2, 4, 4 },
+            pal::BlitMode::Copy, 0, pal::BlitQuality::Fast, nullptr);
+    EXPECT_TRUE(ad.getPixel(dst, { 0, 0 }) == RED);
+
+    // (2) Colour-keyed stretch: which source pixel a destination pixel samples
+    // decides whether it is transparent, so the result would depend on the
+    // resampling rule and would not match the shipping adapter.
+    ad.blit(dst, { 10, 10, 8, 8 }, src, { 0, 0, 4, 4 },
+            pal::BlitMode::TransparentKey, GREEN, pal::BlitQuality::Fast, nullptr);
+    EXPECT_TRUE(ad.getPixel(dst, { 10, 10 }) == BLACK);
+    // ...whereas an unkeyed stretch of the very same rectangles draws, and a
+    // keyed 1:1 blit draws too. Neither half alone is refused.
+    ad.blit(dst, { 10, 10, 8, 8 }, src, { 0, 0, 4, 4 },
+            pal::BlitMode::Copy, 0, pal::BlitQuality::Fast, nullptr);
+    EXPECT_TRUE(ad.getPixel(dst, { 10, 10 }) == RED);
+    ad.blit(dst, { 5, 15, 4, 4 }, src, { 0, 0, 4, 4 },
+            pal::BlitMode::TransparentKey, GREEN, pal::BlitQuality::Fast, nullptr);
+    EXPECT_TRUE(ad.getPixel(dst, { 5, 15 }) == RED);
+}
+
 TEST(PalSurface, InvertRectIsExactNot)
 {
     PAL_FIXTURE();

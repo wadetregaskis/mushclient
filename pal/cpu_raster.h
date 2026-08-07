@@ -14,7 +14,7 @@
 //
 // Documented S1 gaps (deliberate no-ops until the S3 op families need them):
 //   drawEdge; shape kinds other than Rect; polyline/polygon/bezier/arc;
-//   STRETCHED / Smooth blits; pen widths > 1 and dash styles; and
+//   pen widths > 1 and dash styles; and
 //   BrushSpec::monoPattern, which fillSpan drops (it consults only
 //   br.pattern) — so WindowImageOp over a WindowCreateImage image, and
 //   WindowCircleOp / WindowPolygon / WindowRectOp brush styles 8-12, fill
@@ -22,9 +22,17 @@
 //   Hatch phase is this adapter's own 8x8 grid (the Windows adapter is the
 //   parity bearer for exact GDI hatch phase).
 //
-//   NOT a gap, despite what this list said until 2026-08-07: the MATRIX blit
-//   is implemented (see blit's `if (m)` arm), which is what
-//   WindowTransformImage needs.  Only the stretch case returns early.
+//   NOT gaps, despite what this list said until 2026-08-07: the MATRIX blit is
+//   implemented (blit's `if (m)` arm), and so is the STRETCHED blit — nearest
+//   neighbour, GDI's COLORONCOLOR rule.  Two stretch COMBINATIONS are still
+//   declined, both matching the wx adapter's own S2 gaps so the two agree: a
+//   stretch whose source rect was clipped, and a colour-KEYED stretch.
+//
+//   The stretch resamples but does not interpolate, so it will not reproduce
+//   the wx adapter's HALFTONE (BlitQuality::Smooth) colours — deliberately.
+//   A test over a stretch must assert PLACEMENT and EXTENT, never an
+//   interpolated colour value; the shipping rasteriser is the parity bearer
+//   for the latter.
 //
 // Because the gaps above are SILENT no-ops, never write a test whose passing
 // condition is "nothing was drawn" — it pins the gap instead of the body.

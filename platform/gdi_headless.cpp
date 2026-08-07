@@ -25,14 +25,12 @@
 // there is no display and no wx, and — crucially — the reachable callers do not
 // NEED real pixels or real metrics:
 //
-//   * The image path (::CreateDIBSection, CBitmap::~CBitmap, CBitmap vtable) is
-//     DEAD headless.  Its only callers are Utilities.cpp's LoadPng / LoadPngMemory,
-//     which are reached only from mushapp-only TUs (methods_output.cpp
-//     SetBackgroundImage / SetForegroundImage, miniwindow.cpp) — none compiled
-//     into mushcore.  Headless, SetBackground/ForegroundImage are the eOK stubs in
-//     doc_gui_method_stubs.cpp and world.WindowLoadImage returns eNoSuchWindow
-//     before ever reaching LoadPng.  So CreateDIBSection returning nullptr is
-//     never observed (and LoadPng degrades to eUnableToLoadImage if it ever were).
+//   * The image path was DEAD headless when this was written, on the reasoning
+//     that LoadPng's only callers (methods_output.cpp SetBackground/Foreground-
+//     Image, miniwindow.cpp) were mushapp-only.  BOTH are now in mushcore, so
+//     that premise is gone: ::CreateDIBSection and CBitmap::Attach/GetBitmap are
+//     real, in platform/headless_surface.cpp, and a PNG really does load, blit
+//     and read back here.  Only CBitmap's dtor/vtable remain this file's business.
 //
 //   * The font-metric path (CDC::CreateCompatibleDC / GetDeviceCaps / GetTextMetrics
 //     / SelectObject, CFont::CreateFont / ~CFont, CDC::~CDC, the CDC/CFont/
@@ -138,19 +136,10 @@ bool CDC::GetTextMetrics (TEXTMETRIC* lpMetrics)
   return false;                     // no real metrics headless (mirrors the stub)
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// ::CreateDIBSection — Utilities.cpp LoadPng / LoadPngMemory.  DEAD headless;
-// returning nullptr makes LoadPng report eUnableToLoadImage were it ever called.
-// (In the full build this has a real pixel-buffer impl in wx_gdi_compat.cpp.)
-// ════════════════════════════════════════════════════════════════════════════
-
-HBITMAP CreateDIBSection (HDC /*hdc*/, const BITMAPINFO* /*pbmi*/, UINT /*iUsage*/,
-                          void** ppvBits, HANDLE /*hSection*/, DWORD /*dwOffset*/)
-{
-  if (ppvBits)
-    *ppvBits = nullptr;
-  return nullptr;
-}
+// ::CreateDIBSection and CBitmap::Attach / GetBitmap are the DIB STORE, and
+// they live in platform/headless_surface.cpp with the rest of the surface
+// bridge — they are the image family's pixel source, not part of this inert
+// shim.  (They were one-liners here until the DIB store landed.)
 
 // ════════════════════════════════════════════════════════════════════════════
 // B-3: the FULL remainder of the GDI shim.  Under MUSHCLIENT_FULL_BUILD the
@@ -163,31 +152,20 @@ HBITMAP CreateDIBSection (HDC /*hdc*/, const BITMAPINFO* /*pbmi*/, UINT /*iUsage
 
 // ── CBitmap ─────────────────────────────────────────────────────────────────
 HBITMAP CBitmap::CreateCompatibleBitmap (void*, int, int)       { return nullptr; }
-BOOL    CBitmap::GetBitmap (BITMAP* bm)         { if (bm) *bm = {}; return FALSE; }
 bool    CBitmap::CreateBitmap (int, int, UINT, UINT, const void*) { return false; }
 
-// The three the miniwindow adoption needed (docs/STUB-ADOPTION-2026-08.md §5
-// step 3).  They are the whole GDI cost of that family: CMiniWindow::Create and
-// ::Resize allocate their canvas through CreateCanvasBitmap, and the image
-// family reaches Attach/DeleteObject.
+// CreateCanvasBitmap / Attach / GetBitmap / DeleteObject and ::CreateDIBSection
+// are NOT here: stage 2 gave them real bodies over a pal::CpuRaster surface, in
+// platform/headless_surface.cpp.  They own pixels, which makes them the surface
+// bridge rather than part of this inert shim.
 //
-// FALSE / false here is not a placeholder — it is the contract that keeps Stage 1
-// safe on its own.  Every drawing site in miniwindow.cpp is guarded
-// `if (!srf) return …` against a null pal::ISurface, and with no canvas realised
-// the surface stays null, so the engine takes exactly those guarded arms: the
-// miniwindow EXISTS, its geometry, z-order, hotspots, fonts and info are all
-// real, and only the pixels are absent.  That is what makes ~24 of the family's
-// methods testable headless without a rasteriser.
-//
-// Stage 2 (the headless surface bridge + DIB store) replaces these with real
-// bodies backed by pal::CpuRaster.  Until then, do NOT "improve" them into
-// error returns — the guarded arms answer eOK by design on both shipping
-// platforms, and turning that into a failure would be a real behaviour change
-// if an adapter ever failed to install.
-// CreateCanvasBitmap / Attach / DeleteObject moved to
-// platform/headless_surface.cpp: they own the pixels now (a pal::CpuRaster
-// surface), which makes them the surface bridge rather than part of this inert
-// GDI shim.
+// The two left above stay inert, and the false is contract rather than
+// placeholder: nothing in mushcore calls either (CreateCompatibleBitmap is a
+// mushview.cpp path, CreateBitmap a dialog one), and every drawing site in
+// miniwindow.cpp is guarded `if (!srf) return …`, so a bitmap that realises no
+// surface degrades to "the window exists, the pixels do not" rather than to an
+// error.  Do NOT "improve" them into failure returns — those guarded arms
+// answer eOK by design on both shipping platforms.
 
 // ── CBrush (dtor is the vtable key function) ────────────────────────────────
 CBrush::~CBrush () {}
@@ -279,8 +257,9 @@ CBitmap* CDC::GetCurrentBitmap () const          { return nullptr; }
 
 // ── Global GDI functions (full-build declares them; wx impls are mushgui) ────
 HGDIOBJ SelectObject (HDC, HGDIOBJ)              { return nullptr; }
-BOOL    DeleteObject (HGDIOBJ)                   { return FALSE; }
 int     GetDeviceCaps (HDC, int)                 { return 0; }
+// ::DeleteObject is in platform/headless_surface.cpp — it frees a DIB store
+// handle, so it belongs with ::CreateDIBSection rather than here.
 HPEN    ExtCreatePen (DWORD, DWORD, const LOGBRUSH*, DWORD, const DWORD*) { return nullptr; }
 
 #endif // !_WIN32 && MUSHCLIENT_FULL_BUILD

@@ -77,10 +77,14 @@ void CpuRaster::readPixels(SurfaceId id, Rect r, PixelBuffer& out, PixelFormat f
         unsigned char*       dst = out.row(y);
         for (int x = 0; x < r.w; ++x, src += 4, dst += bpp) {
             dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2];
-            if (bpp == 4)                                 // surface alpha pinned 0;
+            if (bpp == 4)                                 // plain BGRA32 pins A = 0;
                 dst[3] = (fmt == PixelFormat::BGRA32_Alpha) ? src[3] : 0;
-                // _Alpha passes the stored byte through (0 here — this adapter
-                // has no image sources, matching a GDI drawing surface)
+                // _Alpha passes the STORED byte through.  That is 0 for an
+                // ordinary drawing surface (every drawing op pins it, as GDI
+                // does) and the real alpha for a surface written from a 32bpp
+                // image buffer via writePixels — which is what the DIB store
+                // (platform/headless_surface.cpp) produces for a loaded RGBA
+                // PNG, and what WindowMergeImageAlpha / WindowGetImageAlpha read.
         }
     }
 }
@@ -97,7 +101,18 @@ void CpuRaster::writePixels(SurfaceId id, Rect r, const PixelBuffer& in) {
                                    + (size_t)(clipped.x - r.x) * bpp;
         unsigned char* dst = s->row(clipped.y + y) + (size_t)clipped.x * 4;
         for (int x = 0; x < clipped.w; ++x, src += bpp, dst += 4) {
-            dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = 0;
+            dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2];
+            // The FORMAT decides whether the source's alpha is carried, which
+            // is the rule the wx adapter already uses (platform/wx_surface.cpp
+            // passes `in.format == BGRA32_Alpha` to wxgdi_write_bgra as its
+            // hasAlpha flag).  Plain BGRA32 and BGR24 both pin 0.
+            //
+            // This is what makes an image surface differ from a drawing one:
+            // every DRAWING op (setPx, blit, fillRect...) pins byte 3 to 0,
+            // exactly as GDI leaves it, so only pixels written as _Alpha image
+            // bytes ever have alpha to read back.  The one caller that does
+            // that is CBitmap::Attach — the DIB store.
+            dst[3] = (bpp == 4 && in.format == PixelFormat::BGRA32_Alpha) ? src[3] : 0;
         }
     }
 }

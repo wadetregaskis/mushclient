@@ -29,7 +29,9 @@ extern "C" {
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 #include <unistd.h>
+#include <png.h>       // the image-family tests emit a real RGBA PNG
 
 // make_lua()/run()/run_ret()/LuaDoc/EXPECT_LUA_OK are shared with
 // test_lua_scripting.cpp (audit §2/§4).
@@ -824,6 +826,225 @@ TEST(LuaSurface, RecreatingAWindowDoesNotStrandItsCanvas)
         "assert(world.WindowSetPixel('r', 45, 35, 0xFFFFFF) == 0)\n"
         "assert(world.WindowGetPixel('r', 45, 35) == 0xFFFFFF, 'resized canvas is dead')\n"
         "assert(world.WindowDelete('r') == 0)\n"
+    ));
+}
+
+// ── the image family — the DIB store ──────────────────────────────────────
+//
+// Stage 2's second half (docs/STUB-ADOPTION-2026-08.md §5b).  ::CreateDIBSection
+// used to return nullptr headless, so world.WindowLoadImage answered
+// eUnableToLoadImage for a perfectly good PNG and the whole image family — draw,
+// info, the three alpha ops — had no pixel source at all.  These drive the real
+// png_load_shared.cpp decoder through the real miniwindow.cpp bodies.
+
+// Emit a small RGBA PNG.  Written with libpng rather than by hand because the
+// point is to exercise the SHIPPING decoder, and a hand-rolled file would only
+// prove the two agreed with each other.
+//
+// Every channel gets a different function of (x, y) so a channel swap, a row
+// flip or a transpose all fail: R varies with x, G with y, B is constant, and
+// alpha varies with y on a different scale from G.
+static std::string write_rgba_png(int w, int h)
+{
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_alpha_%d.png", (int)getpid());
+    FILE* fp = fopen(path, "wb");
+    if (!fp) return "";
+
+    png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    png_infop   info = png ? png_create_info_struct(png) : NULL;
+    if (!png || !info || setjmp(png_jmpbuf(png))) {
+        if (png) png_destroy_write_struct(&png, info ? &info : NULL);
+        fclose(fp);
+        return "";
+    }
+    png_init_io(png, fp);
+    png_set_IHDR(png, info, w, h, 8, PNG_COLOR_TYPE_RGB_ALPHA,
+                 PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
+                 PNG_FILTER_TYPE_DEFAULT);
+    png_write_info(png, info);
+
+    std::vector<unsigned char> row((size_t)w * 4);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            row[x*4+0] = (unsigned char)(20 + x * 10);   // R
+            row[x*4+1] = (unsigned char)(90 + y * 5);    // G
+            row[x*4+2] = 200;                            // B
+            row[x*4+3] = (unsigned char)(240 - y * 80);  // A
+        }
+        png_write_row(png, row.data());
+    }
+    png_write_end(png, NULL);
+    png_destroy_write_struct(&png, &info);
+    fclose(fp);
+    return path;
+}
+
+TEST(LuaSurface, ImageFamilyRoundTripsAPngThroughTheDibStore)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    char png[256];
+    snprintf(png, sizeof(png), "/tmp/mc_test_image_%d.png", (int)getpid());
+    ::unlink(png);
+
+    char script[2048];
+    snprintf(script, sizeof(script),
+        // Paint a source window with three distinguishable areas, then let the
+        // app's own writer emit a PNG of it.
+        // Blue field with a green band at x in [2, 6) — off both edges, so a
+        // mirrored or transposed image cannot land on the same colours.
+        "assert(world.WindowCreate('src', 0, 0, 9, 5, 0, 0, 0x0000FF) == 0)\n"
+        "assert(world.WindowRectOp('src', 2, 2, 0, 6, 5, 0x00FF00, 0) == 0)\n"
+        "assert(world.WindowWrite('src', '%s') == 0)\n"
+
+        // ...and read it straight back in.  This is the assertion the old
+        // contract could not make: it used to be eUnableToLoadImage here.
+        "assert(world.WindowCreate('dst', 0, 0, 20, 20, 0, 0, 0x000000) == 0)\n"
+        "assert(world.WindowLoadImage('dst', 'img', '%s') == 0, 'PNG did not load')\n"
+
+        // Geometry survives the round trip.  9 x 5 at 24bpp is 27 bytes a row,
+        // padded to 28 — so bmWidthBytes catches a stride computed as w*3.
+        "assert(world.WindowImageInfo('dst', 'img', 2) == 9, 'width wrong')\n"
+        "assert(world.WindowImageInfo('dst', 'img', 3) == 5, 'height wrong')\n"
+        "assert(world.WindowImageInfo('dst', 'img', 6) == 24, 'depth wrong')\n"
+        "assert(world.WindowImageInfo('dst', 'img', 4) == 28, 'stride wrong')\n"
+        "assert(world.WindowImageInfo('dst', 'img', 5) == 1)\n"
+        "local list = world.WindowImageList('dst')\n"
+        "assert(type(list) == 'table' and list[1] == 'img')\n"
+
+        // Drawing it moves real pixels, in the right orientation and at the
+        // right offset.  Mode 1 is a straight copy.
+        "assert(world.WindowDrawImage('dst', 'img', 3, 4, 0, 0, 1, 0, 0, 0, 0) == 0)\n"
+        "assert(world.WindowGetPixel('dst', 3, 4) == 0x0000FF, 'left column lost')\n"
+        "assert(world.WindowGetPixel('dst', 5, 4) == 0x00FF00, 'green band lost')\n"
+        "assert(world.WindowGetPixel('dst', 9, 4) == 0x0000FF, 'right of band wrong')\n"
+        "assert(world.WindowGetPixel('dst', 12, 4) == 0x000000, 'drew past the image')\n"
+        "assert(world.WindowGetPixel('dst', 3, 3) == 0x000000, 'drew above the offset')\n"
+
+        // A sub-rectangle really is a sub-rectangle: start at x=2, which is
+        // inside the green band, so the left-hand blue must NOT appear.
+        "assert(world.WindowDrawImage('dst', 'img', 0, 10, 0, 0, 1, 2, 0, 5, 3) == 0)\n"
+        "assert(world.WindowGetPixel('dst', 0, 10) == 0x00FF00, 'src offset ignored')\n"
+        "assert(world.WindowGetPixel('dst', 3, 10) == 0x000000, 'src width ignored')\n"
+
+        // Mode 3 keys on the image's own (0,0) pixel, which is blue — so the
+        // blue columns drop out and the green survives.
+        "assert(world.WindowDrawImage('dst', 'img', 0, 15, 0, 0, 3, 0, 0, 0, 0) == 0)\n"
+        "assert(world.WindowGetPixel('dst', 0, 15) == 0x000000, 'colour key ignored')\n"
+        "assert(world.WindowGetPixel('dst', 2, 15) == 0x00FF00, 'colour key too greedy')\n"
+
+        // An unknown id is refused rather than silently ignored, and a bad mode
+        // is rejected — both controls for \"the body ran at all\".
+        "assert(world.WindowDrawImage('dst', 'nope', 0, 0, 0, 0, 1, 0, 0, 0, 0)\n"
+        "       == error_code.eImageNotInstalled)\n"
+        "assert(world.WindowDrawImage('dst', 'img', 0, 0, 0, 0, 9, 0, 0, 0, 0)\n"
+        "       == error_code.eBadParameter)\n",
+        png, png);
+
+    EXPECT_TRUE(run(f.L, script));
+    ::unlink(png);
+}
+
+TEST(LuaSurface, AlphaImageOpsReadTheImagesRealAlpha)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    const std::string png = write_rgba_png(4, 3);
+    ASSERT_FALSE(png.empty());
+
+    char script[3072];
+    snprintf(script, sizeof(script),
+        "assert(world.WindowCreate('w', 0, 0, 20, 20, 0, 0, 0x000000) == 0)\n"
+        "assert(world.WindowLoadImage('w', 'a', '%s') == 0, 'RGBA PNG did not load')\n"
+
+        // The gate every alpha op checks first.  A 32bpp PNG must report 32, or
+        // all three return eImageNotInstalled and nothing below runs.
+        "assert(world.WindowImageInfo('w', 'a', 6) == 32, 'alpha channel lost')\n"
+
+        // WindowGetImageAlpha paints the alpha CHANNEL as grey.  Row y has
+        // alpha 240 - y*80, so the three rows must read three different greys —
+        // an image whose alpha came back as a constant (0, or 255) fails.
+        "assert(world.WindowGetImageAlpha('w', 'a', 0, 0, 4, 3, 0, 0) == 0)\n"
+        "assert(world.WindowGetPixel('w', 1, 0) == 240 * 0x010101, 'row 0 alpha')\n"
+        "assert(world.WindowGetPixel('w', 1, 1) == 160 * 0x010101, 'row 1 alpha')\n"
+        "assert(world.WindowGetPixel('w', 1, 2) ==  80 * 0x010101, 'row 2 alpha')\n"
+
+        // ...and it is the alpha, not the colour: B is a constant 200 in every
+        // pixel, so a body that copied a colour channel would give one grey.
+        "assert(world.WindowGetPixel('w', 3, 0) == 240 * 0x010101, 'not per-pixel')\n"
+
+        // WindowDrawImageAlpha over black at full opacity is C * alpha / 255,
+        // per channel.  R varies with x and G with y, so this pins the whole
+        // BGRA ordering as well as the blend.
+        "assert(world.WindowCreate('m', 0, 0, 20, 20, 0, 0, 0x000000) == 0)\n"
+        "assert(world.WindowLoadImage('m', 'a', '%s') == 0)\n"
+        "assert(world.WindowDrawImageAlpha('m', 'a', 0, 0, 4, 3, 1.0, 0, 0) == 0)\n"
+        "local function px(r, g, b) return r + g * 256 + b * 65536 end\n"
+        "local function blend(c, m) return math.floor((c * m) / 255) end\n"
+        "for y = 0, 2 do\n"
+        "  local al = 240 - y * 80\n"
+        "  for x = 0, 3 do\n"
+        "    local want = px(blend(20 + x * 10, al), blend(90 + y * 5, al), blend(200, al))\n"
+        "    local got = world.WindowGetPixel('m', x, y)\n"
+        "    assert(got == want, string.format('draw-alpha at %%d,%%d: got %%d want %%d',\n"
+        "                                       x, y, got, want))\n"
+        "  end\n"
+        "end\n"
+        // Outside the drawn rectangle the base is untouched.
+        "assert(world.WindowGetPixel('m', 5, 0) == 0, 'draw-alpha escaped its rect')\n"
+
+        // Opacity 0 is the control: the same call must leave the base alone.
+        // Without it, a body that ignored Opacity entirely would still pass
+        // everything above.
+        "assert(world.WindowCreate('z', 0, 0, 20, 20, 0, 0, 0x123456) == 0)\n"
+        "assert(world.WindowLoadImage('z', 'a', '%s') == 0)\n"
+        "assert(world.WindowDrawImageAlpha('z', 'a', 0, 0, 4, 3, 0.0, 0, 0) == 0)\n"
+        "assert(world.WindowGetPixel('z', 1, 1) == 0x123456, 'opacity 0 still drew')\n"
+        "assert(world.WindowDrawImageAlpha('z', 'a', 0, 0, 4, 3, 1.5, 0, 0)\n"
+        "       == error_code.eBadParameter)\n",
+        png.c_str(), png.c_str(), png.c_str());
+
+    EXPECT_TRUE(run(f.L, script));
+    ::unlink(png.c_str());
+}
+
+// WindowImageFromWindow is the other producer of a 32bpp image, and it makes one
+// without going near a PNG: a surface readback memcpy'd into a DIB.  Its alpha is
+// the surface's, i.e. zero everywhere — which is not a defect but the same thing
+// GDI leaves behind, and it has an observable consequence worth pinning.
+TEST(LuaSurface, ImageFromWindowCapturesPixelsWithGdiAlpha)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        "assert(world.WindowCreate('s', 0, 0, 6, 4, 0, 0, 0x00FF00) == 0)\n"
+        "assert(world.WindowSetPixel('s', 1, 1, 0xFF0000) == 0)\n"
+        "assert(world.WindowCreate('d', 0, 0, 20, 20, 0, 0, 0x000000) == 0)\n"
+        "assert(world.WindowImageFromWindow('d', 'cap', 's') == 0)\n"
+        "assert(world.WindowImageInfo('d', 'cap', 2) == 6)\n"
+        "assert(world.WindowImageInfo('d', 'cap', 3) == 4)\n"
+        "assert(world.WindowImageInfo('d', 'cap', 6) == 32)\n"
+
+        // The captured pixels are the source's, in place.
+        "assert(world.WindowDrawImage('d', 'cap', 0, 0, 0, 0, 1, 0, 0, 0, 0) == 0)\n"
+        "assert(world.WindowGetPixel('d', 1, 1) == 0xFF0000, 'capture lost a pixel')\n"
+        "assert(world.WindowGetPixel('d', 0, 0) == 0x00FF00, 'capture lost the field')\n"
+
+        // Alpha 0 everywhere: an alpha draw of it changes nothing, because
+        // Blend_Mask with a zero mask keeps the base.  Same on Windows.
+        "assert(world.WindowCreate('b', 0, 0, 20, 20, 0, 0, 0x0000FF) == 0)\n"
+        "assert(world.WindowImageFromWindow('b', 'cap', 's') == 0)\n"
+        "assert(world.WindowDrawImageAlpha('b', 'cap', 0, 0, 6, 4, 1.0, 0, 0) == 0)\n"
+        "assert(world.WindowGetPixel('b', 1, 1) == 0x0000FF, 'zero alpha still drew')\n"
+        // ...while a plain DrawImage of the same capture DOES paint, so the
+        // line above is about the alpha, not about the capture being empty.
+        "assert(world.WindowDrawImage('b', 'cap', 0, 0, 0, 0, 1, 0, 0, 0, 0) == 0)\n"
+        "assert(world.WindowGetPixel('b', 1, 1) == 0xFF0000, 'capture was empty')\n"
+
+        // A capture of a window that is not there leaves nothing behind.
+        "assert(world.WindowImageFromWindow('d', 'cap2', 'nope')\n"
+        "       == error_code.eNoSuchWindow)\n"
+        "assert(world.WindowImageInfo('d', 'cap2', 2) == nil)\n"
     ));
 }
 

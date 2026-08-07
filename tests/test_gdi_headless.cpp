@@ -17,15 +17,19 @@
 //      lands in m_FontHeight/m_FontWidth must be 0 (matching doc_construct.cpp's
 //      ctor), and GetTextMetrics must ZERO the struct (never leave ChangeFont
 //      reading uninitialised stack).
-//   2. the image path (Utilities.cpp LoadPng/LoadPngMemory, DEAD headless):
-//      ::CreateDIBSection must return nullptr and null the pixel pointer, so a
-//      would-be LoadPng degrades to eUnableToLoadImage rather than crash.
+//   2. the image path (png_load_shared.cpp LoadPng/LoadPngMemory): the DIB
+//      STORE — ::CreateDIBSection hands out a real padded, zeroed, bottom-up
+//      buffer and CBitmap::Attach turns it into a pal surface with the right
+//      geometry, orientation, depth and alpha.  (This was "DEAD headless, must
+//      return nullptr" until stage 2; both its callers are in mushcore now.)
 
 #include "stdafx.h"          // full-build CDC / CFont / CBitmap / CGdiObject
 #include "mc_test.h"
 #include "pal/surface_bridge.h"
+#include "pal/isurface.h"
 
 pal::SurfaceId HeadlessSurfaceOfBitmapForTesting(const CBitmap*);
+size_t         HeadlessLiveDibCountForTesting();
 
 #include <cstring>
 
@@ -65,28 +69,268 @@ TEST(GdiHeadless, FontMetricPathZeroesMetricsSafely)
     delete font;                             // exercises virtual ~CFont path
 }
 
-// ── 2. Image path (LoadPng / LoadPngMemory shape) ───────────────────────────
-// Mirrors Utilities.cpp:2406-2433: a stack CBitmap + CreateCompatibleDC + the
-// free ::CreateDIBSection.  DEAD headless, but must link and degrade cleanly.
-TEST(GdiHeadless, ImagePathDegradesToNullBitmap)
-{
-    CDC B_DC;
-    B_DC.CreateCompatibleDC(NULL);
-    CBitmap B_bmp;                           // ctor + (later) virtual dtor + vtable
+// ── 2. The DIB store ────────────────────────────────────────────────────────
+//
+// This used to be ImagePathDegradesToNullBitmap, asserting that
+// ::CreateDIBSection returned null — the exact "a test pins a stub's contract
+// and so blocks adopting the real body" shape.  The image path is no longer
+// dead headless: png_load_shared.cpp and miniwindow.cpp are both in mushcore,
+// so these two entry points are what a loaded PNG's pixels actually travel
+// through.  The tests below are the same shape as the old one (the LoadPng
+// call sequence, png_load_shared.cpp:146-182) with the assertions turned round.
 
+// Fill a DIB's buffer the way LoadPng does — bottom-up, 4-byte padded rows.
+static void FillDib(unsigned char* bits, int w, int h, int bpp)
+{
+    const int stride = (w * (bpp / 8) + 3) & ~3;
+    for (int imgY = 0; imgY < h; ++imgY) {
+        unsigned char* row = bits + (size_t)(h - 1 - imgY) * stride;   // bottom-up
+        for (int x = 0; x < w; ++x) {
+            unsigned char* px = row + x * (bpp / 8);
+            px[0] = (unsigned char)(10 + x);          // B
+            px[1] = (unsigned char)(40 + imgY);       // G — differs from B
+            px[2] = (unsigned char)(90 + x + imgY);   // R — differs from both
+            if (bpp == 32) px[3] = (unsigned char)(200 - imgY * 30);
+        }
+    }
+}
+
+static BITMAPINFO MakeBmi(int w, int h, int bpp)
+{
     BITMAPINFO bmi;
     std::memset(&bmi, 0, sizeof bmi);
     bmi.bmiHeader.biSize     = sizeof bmi;
-    bmi.bmiHeader.biWidth    = 4;
-    bmi.bmiHeader.biHeight   = 4;
+    bmi.bmiHeader.biWidth    = w;
+    bmi.bmiHeader.biHeight   = h;          // positive = bottom-up, as both loaders ask
     bmi.bmiHeader.biPlanes   = 1;
-    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biBitCount = (WORD) bpp;
+    return bmi;
+}
 
-    void*   pBits = (void*)0xDEADBEEF;       // poison — shim must null it
-    HBITMAP hbmp  = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBits, NULL, 0);
+TEST(GdiHeadless, CreateDIBSectionHandsBackARealBuffer)
+{
+    CDC B_DC;
+    B_DC.CreateCompatibleDC(NULL);
 
-    EXPECT_EQ((HBITMAP)nullptr, hbmp);       // Utilities.cpp: `if (!hbmp) return eUnableToLoadImage;`
-    EXPECT_EQ((void*)nullptr, pBits);
+    // 5 wide x 3 high, so a transposed width/height shows up, and 5*3 = 15 bytes
+    // per row at 24bpp — NOT a multiple of 4, so the row padding is exercised
+    // rather than being accidentally right.
+    BITMAPINFO bmi = MakeBmi(5, 3, 24);
+    void* pBits = (void*)0xDEADBEEF;         // poison: a failure must null it
+    HBITMAP hbmp = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBits, NULL, 0);
+
+    ASSERT_NE((HBITMAP)nullptr, hbmp);       // png_load_shared: `if (!hbmp) return eUnableToLoadImage`
+    ASSERT_NE((void*)nullptr, pBits);
+    EXPECT_NE((void*)0xDEADBEEF, pBits);
+
+    // The buffer is writable for stride * height bytes and starts zeroed (the
+    // alpha ops rely on the zero fill past an image edge).
+    const int stride = (5 * 3 + 3) & ~3;     // = 16, not 15
+    unsigned char* p = (unsigned char*) pBits;
+    for (int i = 0; i < stride * 3; ++i)
+        ASSERT_EQ(0, (int) p[i]);
+    FillDib(p, 5, 3, 24);
+
+    EXPECT_EQ((size_t)1, HeadlessLiveDibCountForTesting());
+    EXPECT_TRUE(DeleteObject((HGDIOBJ) hbmp));
+    EXPECT_EQ((size_t)0, HeadlessLiveDibCountForTesting());
+    EXPECT_FALSE(DeleteObject((HGDIOBJ) hbmp));   // gone, and says so
+}
+
+TEST(GdiHeadless, AttachTurnsADibIntoAReadableSurface)
+{
+    BITMAPINFO bmi = MakeBmi(5, 3, 24);
+    void* pBits = nullptr;
+    HBITMAP hbmp = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBits, NULL, 0);
+    ASSERT_NE((void*)nullptr, pBits);
+    FillDib((unsigned char*) pBits, 5, 3, 24);
+
+    CBitmap image;
+    ASSERT_TRUE(image.Attach((HGDIOBJ) hbmp));
+
+    // Attach CONSUMES the handle, as wx's MaterializeDIBSection does — otherwise
+    // every WindowLoadImage would leak its decode buffer.
+    EXPECT_EQ((size_t)0, HeadlessLiveDibCountForTesting());
+
+    BITMAP bi;
+    std::memset(&bi, 0x7F, sizeof bi);       // poison: GetBitmap must overwrite
+    ASSERT_TRUE(image.GetBitmap(&bi));
+    EXPECT_EQ(5, (int) bi.bmWidth);
+    EXPECT_EQ(3, (int) bi.bmHeight);
+    EXPECT_EQ(24, (int) bi.bmBitsPixel);
+    EXPECT_EQ(1, (int) bi.bmPlanes);
+    EXPECT_EQ(0, (int) bi.bmType);        // ImageInfo 1 reports this verbatim
+    EXPECT_EQ(16, (int) bi.bmWidthBytes); // 5*3 = 15, padded
+
+    // The pixels arrived, in the right places.  Reading (x,y) rather than a
+    // single pixel is the point: the DIB is stored bottom-up and the surface is
+    // addressed top-down, so a missing flip shows as a vertical mirror — and
+    // with h = 3 the middle row is the only one that would survive one.
+    const pal::SurfaceId sid = HeadlessSurfaceOfBitmapForTesting(&image);
+    ASSERT_TRUE(sid != pal::SurfaceId::None);
+    for (int y = 0; y < 3; ++y)
+        for (int x = 0; x < 5; ++x) {
+            // COLORREF is 0x00BBGGRR — R lowest.  The three channels are given
+            // different values in FillDib precisely so a swap here fails.
+            const pal::Colour c = pal::g_surface->getPixel(sid, { x, y });
+            const int r = (int)(c & 0xFF), g = (int)((c >> 8) & 0xFF), b = (int)((c >> 16) & 0xFF);
+            ASSERT_EQ(10 + x, b);
+            ASSERT_EQ(40 + y, g);
+            ASSERT_EQ(90 + x + y, r);
+        }
+
+    // A 24bpp image has no alpha, and must read back as 0 rather than as
+    // opaque: that is what Windows leaves in the high byte when a 24bpp source
+    // is BitBlt'ed into a 32bpp DIB, and WindowDrawImageAlpha treats 0 as
+    // "keep the base".  255 here would silently make every 24bpp image opaque.
+    pal::PixelBuffer buf;
+    pal::g_surface->readPixels(sid, { 0, 0, 5, 3 }, buf, pal::PixelFormat::BGRA32_Alpha);
+    ASSERT_TRUE(buf.valid());
+    for (int y = 0; y < 3; ++y)
+        for (int x = 0; x < 5; ++x)
+            ASSERT_EQ(0, (int) buf.row(y)[x * 4 + 3]);
+}
+
+// biHeight's SIGN is the DIB row-order rule: positive is bottom-up (what both
+// loaders ask for), negative is top-down.  Nothing in MUSHclient makes a
+// top-down DIB today, so the strongest available assertion is that the two
+// spellings of the SAME image produce the same surface — which fails if either
+// arm flips and the other does not.
+TEST(GdiHeadless, DibRowOrderFollowsTheSignOfBiHeight)
+{
+    const int w = 4, h = 3, stride = (w * 3 + 3) & ~3;
+
+    // Bottom-up: buffer row 0 is the image's BOTTOM row.
+    BITMAPINFO up = MakeBmi(w, h, 24);
+    void* upBits = nullptr;
+    HBITMAP upH = CreateDIBSection(NULL, &up, DIB_RGB_COLORS, &upBits, NULL, 0);
+    ASSERT_NE((void*)nullptr, upBits);
+    FillDib((unsigned char*) upBits, w, h, 24);
+
+    // Top-down: same image, buffer row 0 is the image's TOP row.
+    BITMAPINFO down = MakeBmi(w, -h, 24);
+    void* downBits = nullptr;
+    HBITMAP downH = CreateDIBSection(NULL, &down, DIB_RGB_COLORS, &downBits, NULL, 0);
+    ASSERT_NE((void*)nullptr, downBits);
+    for (int imgY = 0; imgY < h; ++imgY)
+        std::memcpy((unsigned char*) downBits + (size_t) imgY * stride,
+                    (const unsigned char*) upBits + (size_t)(h - 1 - imgY) * stride,
+                    (size_t) stride);
+
+    CBitmap a, b;
+    ASSERT_TRUE(a.Attach((HGDIOBJ) upH));
+    ASSERT_TRUE(b.Attach((HGDIOBJ) downH));
+
+    const pal::SurfaceId sa = HeadlessSurfaceOfBitmapForTesting(&a);
+    const pal::SurfaceId sb = HeadlessSurfaceOfBitmapForTesting(&b);
+    ASSERT_TRUE(sa != pal::SurfaceId::None && sb != pal::SurfaceId::None);
+
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            const pal::Colour ca = pal::g_surface->getPixel(sa, { x, y });
+            ASSERT_EQ(ca, pal::g_surface->getPixel(sb, { x, y }));
+            // ...and both are the image the fill described, so "both flipped
+            // the same way" cannot pass either.
+            ASSERT_EQ(40 + y, (int)((ca >> 8) & 0xFF));   // G varies with y only
+        }
+}
+
+TEST(GdiHeadless, AttachKeepsTheAlphaChannelOfA32bppDib)
+{
+    BITMAPINFO bmi = MakeBmi(4, 3, 32);
+    void* pBits = nullptr;
+    HBITMAP hbmp = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBits, NULL, 0);
+    ASSERT_NE((void*)nullptr, pBits);
+    FillDib((unsigned char*) pBits, 4, 3, 32);
+
+    CBitmap image;
+    ASSERT_TRUE(image.Attach((HGDIOBJ) hbmp));
+
+    BITMAP bi;
+    ASSERT_TRUE(image.GetBitmap(&bi));
+    // Load-bearing, not decoration: WindowMergeImageAlpha / WindowGetImageAlpha /
+    // WindowDrawImageAlpha all return eImageNotInstalled unless this reads 32.
+    EXPECT_EQ(32, (int) bi.bmBitsPixel);
+
+    const pal::SurfaceId sid = HeadlessSurfaceOfBitmapForTesting(&image);
+    ASSERT_TRUE(sid != pal::SurfaceId::None);
+
+    // BGRA32_Alpha is the format the three alpha ops read an image with, and it
+    // must give back what the PNG carried — per row, so an all-one-value alpha
+    // (which any plausible bug would produce) cannot pass.
+    pal::PixelBuffer buf;
+    pal::g_surface->readPixels(sid, { 0, 0, 4, 3 }, buf, pal::PixelFormat::BGRA32_Alpha);
+    ASSERT_TRUE(buf.valid());
+    for (int y = 0; y < 3; ++y) {
+        ASSERT_EQ(200 - y * 30, (int) buf.row(y)[3]);
+        ASSERT_EQ(10 + 0,     (int) buf.row(y)[0]);   // B — and not the alpha,
+        ASSERT_EQ(40 + y,     (int) buf.row(y)[1]);   // G   which a 4-byte
+        ASSERT_EQ(90 + 0 + y, (int) buf.row(y)[2]);   // R   rotation would give
+    }
+
+    // ...and plain BGRA32 must still pin it to 0, or the drawing-surface half of
+    // the contract is gone.
+    pal::PixelBuffer plain;
+    pal::g_surface->readPixels(sid, { 0, 0, 4, 3 }, plain, pal::PixelFormat::BGRA32);
+    ASSERT_TRUE(plain.valid());
+    for (int y = 0; y < 3; ++y)
+        ASSERT_EQ(0, (int) plain.row(y)[3]);
+}
+
+TEST(GdiHeadless, AttachRejectsWhatItCannotRepresent)
+{
+    // Only 24 and 32 bpp can be carried: pal::PixelBuffer has no palette and no
+    // wide-channel format.  Attach says no rather than inventing a mapping —
+    // and consumes the handle either way, so a rejected load does not leak.
+    //
+    // 48bpp is the case that NEEDS the explicit depth check: below 24 the
+    // buffer fails PixelBuffer::valid() on its own (its stride is too small to
+    // be a BGR24 row), but 48bpp has a stride that is comfortably large enough,
+    // so without the check it would be read as BGR24 and silently produce a
+    // garbled image.
+    const int kUnsupported[] = { 8, 16, 48 };
+    for (int bpp : kUnsupported) {
+        BITMAPINFO bmi = MakeBmi(4, 4, bpp);
+        void* pBits = nullptr;
+        HBITMAP hbmp = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBits, NULL, 0);
+        ASSERT_NE((HBITMAP)nullptr, hbmp);
+        ASSERT_NE((void*)nullptr, pBits);
+
+        CBitmap image;
+        ASSERT_FALSE(image.Attach((HGDIOBJ) hbmp));
+        ASSERT_EQ((size_t)0, HeadlessLiveDibCountForTesting());
+        ASSERT_EQ(pal::SurfaceId::None, HeadlessSurfaceOfBitmapForTesting(&image));
+
+        // ...and the caller is left with a BITMAP it can branch on rather than
+        // stack garbage.  miniwindow.cpp declares `BITMAP bi;` uninitialised and
+        // several sites read bi.bmBitsPixel without checking the return, so a
+        // GetBitmap that only returned FALSE would decide those branches by
+        // whatever happened to be on the stack.
+        BITMAP bi;
+        std::memset(&bi, 0x7F, sizeof bi);
+        ASSERT_FALSE(image.GetBitmap(&bi));
+        ASSERT_EQ(0, (int) bi.bmWidth);
+        ASSERT_EQ(0, (int) bi.bmHeight);
+        ASSERT_EQ(0, (int) bi.bmBitsPixel);
+        ASSERT_EQ(0, (int) bi.bmPlanes);
+        ASSERT_EQ(0, (int) bi.bmWidthBytes);
+        ASSERT_EQ(0, (int) bi.bmType);
+    }
+
+    // A degenerate BITMAPINFO gets nothing at all, and still nulls the poison.
+    BITMAPINFO empty = MakeBmi(0, 4, 24);
+    void* p2 = (void*)0xDEADBEEF;
+    EXPECT_EQ((HBITMAP)nullptr,
+              CreateDIBSection(NULL, &empty, DIB_RGB_COLORS, &p2, NULL, 0));
+    EXPECT_EQ((void*)nullptr, p2);
+
+    // And a handle that never came from the store is refused rather than
+    // dereferenced — LoadImage(".bmp") returns null headless, so this is the
+    // path SetBackgroundImage takes for a BMP.
+    CBitmap other;
+    int notAHandle = 0;
+    EXPECT_FALSE(other.Attach((HGDIOBJ) &notAHandle));
+    EXPECT_FALSE(other.Attach(nullptr));
 }
 
 // ── 3. GDI object lifetimes (vtable / dtor resolution) ──────────────────────

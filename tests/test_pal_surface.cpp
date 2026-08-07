@@ -106,6 +106,62 @@ TEST(PalSurface, WritePixelsRoundTripsBothFormats)
     }
 }
 
+// The alpha rule, in both directions: the FORMAT decides whether byte 3 is
+// carried or pinned, on writePixels as well as readPixels.  This is what makes
+// a surface written from a 32bpp image differ from an ordinary drawing surface,
+// and it is the same flag the wx adapter derives (wxgdi_write_bgra's hasAlpha).
+TEST(PalSurface, OnlyTheAlphaFormatCarriesAlphaThroughWritePixels)
+{
+    PAL_FIXTURE();
+
+    // One buffer, two formats, identical bytes — so the ONLY thing that differs
+    // between the two surfaces below is which PixelFormat was declared.
+    pal::PixelBuffer src;
+    src.size   = { 3, 2 };
+    src.stride = pal::PixelBuffer::strideFor(3, pal::PixelFormat::BGRA32);
+    src.bytes.assign((size_t)src.stride * 2, 0);
+    for (int y = 0; y < 2; ++y)
+        for (int x = 0; x < 3; ++x) {
+            unsigned char* p = src.row(y) + x * 4;
+            p[0] = 10; p[1] = 20; p[2] = 30;
+            p[3] = (unsigned char)(60 + y * 90 + x);   // varies on both axes
+        }
+
+    for (auto fmt : { pal::PixelFormat::BGRA32_Alpha, pal::PixelFormat::BGRA32 }) {
+        src.format = fmt;
+        pal::SurfaceId s = ad.createSurface({ 3, 2 }, BLACK);
+        ad.writePixels(s, { 0, 0, 3, 2 }, src);
+
+        pal::PixelBuffer back;
+        ad.readPixels(s, { 0, 0, 3, 2 }, back, pal::PixelFormat::BGRA32_Alpha);
+        ASSERT_TRUE(back.valid());
+        for (int y = 0; y < 2; ++y)
+            for (int x = 0; x < 3; ++x) {
+                const int want = (fmt == pal::PixelFormat::BGRA32_Alpha)
+                               ? 60 + y * 90 + x : 0;
+                ASSERT_EQ(want, (int) back.row(y)[x * 4 + 3]);
+                // The colour is unaffected either way.
+                ASSERT_EQ(10, (int) back.row(y)[x * 4 + 0]);
+                ASSERT_EQ(30, (int) back.row(y)[x * 4 + 2]);
+            }
+
+        // ...and a plain BGRA32 READ pins it even on the image surface, so the
+        // drawing-surface half of the contract survives the change.
+        pal::PixelBuffer plain;
+        ad.readPixels(s, { 0, 0, 3, 2 }, plain, pal::PixelFormat::BGRA32);
+        for (int y = 0; y < 2; ++y)
+            for (int x = 0; x < 3; ++x)
+                ASSERT_EQ(0, (int) plain.row(y)[x * 4 + 3]);
+
+        // A drawing op over an image surface clears that pixel's alpha, exactly
+        // as GDI leaves 0 behind — so alpha cannot survive being painted over.
+        ad.setPixel(s, { 1, 1 }, 0x00FF00);
+        ad.readPixels(s, { 0, 0, 3, 2 }, back, pal::PixelFormat::BGRA32_Alpha);
+        ASSERT_EQ(0, (int) back.row(1)[1 * 4 + 3]);
+        ad.destroySurface(s);
+    }
+}
+
 TEST(PalSurface, InvertRectIsExactNot)
 {
     PAL_FIXTURE();

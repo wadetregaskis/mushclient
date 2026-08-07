@@ -632,6 +632,25 @@ Start with a deletion, not an addition: the connection tri-state at `:1244-1259`
 
 **Triple-click line selection (finding 6) — answer a question before writing a test.** The 500 ms window, the one-shot latch and the horiz_rule-skipping length sum at `wx_outputpane.cpp:2135-2154` are all real and all unexecuted, but the port invented the whole feature (`mushview.cpp` has no triple-click path) and it is not established that wx even delivers a plain `LEFT_DOWN` for a third click on macOS. Ten minutes in the running app settles whether this is untested logic or dead logic. If it is dead, delete it. If it works, `TryTripleClickSelect(lineIdx, nowMs)` taking the clock as a parameter is a cheap Tier-2 item and the `horiz_rule` question folds into Item 2 above.
 
+> **CLOSED 2026-08-06, both halves.** The cost estimate below was for
+> *untangling the stub*, and the stub is gone: `chatsock.cpp` and
+> `chatlistensock.cpp` are compiled into `mushcore`
+> (`docs/STUB-ADOPTION-2026-08.md`), so only the harness remained — and the
+> pieces it needed were already real (`CAsyncSocket::Listen/Accept/AsyncSelect`
+> in `platform/posix_socket.h`, driven by the same `Poll()` pump
+> `platform/posix_transport.cpp:637` already uses). `tests/test_chat_sockets.cpp`
+> now runs the whole chain over loopback: `ChatAcceptCalls` → bind/listen →
+> `Poll` → `OnAccept` → `Accept` → `AsyncSelect` re-arm → `m_ChatList` ownership
+> → handshake → the accept veto → the `timers.cpp:75` reap. The security-shaped
+> arm is covered in **both** directions through the user-validation prompt, and a
+> mutation that ignores a refusal is caught. What is still uncovered is only the
+> *plugin* half of the veto, which needs a live script engine; the decision
+> itself stays covered as a pure function in `tests/test_chat_protocol.cpp`.
+>
+> Worth keeping: the finding was right that this was multi-day work *at the time*,
+> and wrong that the expensive part was the harness. Re-derive a cost estimate
+> when its stated blocker has been removed by unrelated work.
+
 **Chat sockets (finding 23) — do the parsing half only, and only if chat is used.** `chatsock.cpp:169` and `chatlistensock.cpp:37-69` hold a genuine protocol state machine that no binary links (`windows_stubs.cpp:95-98` supplies inert twins — the "stubs defend wrong contracts" shape). But a loopback harness in the style of `tests/test_posix_socket.cpp` plus untangling the stub is a multi-day job for a feature nobody here has been shown to use. Split it: hoist the pure string transforms — the `YES:`/`CHAT:`/`ZCHAT:` prefix validation, the `\n` and tab name splits, the last-5-characters address/port parse — and the `ON_PLUGIN_CHAT_ACCEPT` veto decision into a shared TU with a headless test. That covers the one arm with a security shape (a plugin's refusal being ignored gives the peer live snooping and file transfer) at a fraction of the cost. Leave `Accept`/`AsyncSelect`/`m_ChatList` ownership uncovered and record it as accepted debt.
 
 **`OnMouseWheel`'s scroll fallthrough** and **the five dialog notification-code binds** are already-verified non-findings; do not spend time on them. The first delegates to the covered `RefreshAutoScrollFromPosition`, the second to the covered `AfxDispatchCommand`.

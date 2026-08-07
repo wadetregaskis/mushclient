@@ -456,6 +456,20 @@ if(NOT WIN32)
         chatlistensock.cpp
         chatsock.cpp
         scripting/methods/methods_chat.cpp
+        # Miniwindow family adoption, stage 1
+        # (docs/STUB-ADOPTION-2026-08.md §5 step 3).
+        # CMiniWindow does not need wx — it needs a SURFACE.  These TUs include
+        # no wx headers at all; ~190 of their ~205 drawing sites go through
+        # pal::ISurface (pal/surface_bridge.h) and every one is guarded
+        # `if (!srf) return ...`.  With no adapter installed headless the surface
+        # stays null and those guarded arms run, so miniwindow geometry, z-order,
+        # hotspots, fonts, info and the menu are all REAL headless; only the
+        # pixels wait for stage 2's headless rasteriser.
+        miniwindow.cpp
+        miniwindow_compose.cpp
+        surface_bridge.cpp
+        scripting/methods/methods_miniwindows.cpp
+        png_load_shared.cpp
         scripting/errors.cpp
         doc_scripting_shared.cpp
         doc_tabcomplete_shared.cpp
@@ -586,9 +600,6 @@ if(NOT WIN32)
         format.cpp
         genprint.cpp
         mainfrm.cpp
-        miniwindow.cpp
-        miniwindow_compose.cpp
-        surface_bridge.cpp
         platform/miniwindow_selftest.cpp
         platform/engines_selftest.cpp
         mushview.cpp
@@ -597,7 +608,6 @@ if(NOT WIN32)
         winplace.cpp
         world_debug.cpp
         scripting/methods/methods.cpp
-        scripting/methods/methods_miniwindows.cpp
         scripting/methods/methods_output.cpp
         scripting/methods/methods_panes.cpp
         dialogs/world_prefs/ButtonColour.cpp
@@ -890,7 +900,8 @@ if(NOT WIN32)
             # bridge: includes BOTH wx and MUSHclient headers; implements hooks
             platform/wx_mfc_impl.cpp
             # GDI compatibility layer: wx-backed CDC/CBitmap/CPen/CBrush/CFont
-            # Resolves the GDI symbols left undefined by mushgui_adapters' miniwindow.cpp
+            # Resolves the GDI symbols left undefined by mushcore's miniwindow.cpp
+            # (it moved there in the stage-1 miniwindow adoption)
             platform/wx_gdi_compat.cpp
             # PAL: wx adapter for pal::ISurface + conformance selftest (S2)
             platform/wx_surface.cpp

@@ -502,26 +502,60 @@ TEST(LuaScripting, AddAndGetTimer)
 
 // ── GUI stub graceful failure ─────────────────────────────────────────────
 
-TEST(LuaScripting, GuiStubsReturnValues)
+// The Window* / Chat* / Spell* families through the Lua marshalling layer.
+//
+// Named "GuiStubsReturnValues" when all three were headless stubs.  Two of the
+// three are adopted now (docs/STUB-ADOPTION-2026-08.md) and these drive their
+// real bodies; only the spell-checker below is still answering an inactive-
+// subsystem contract.
+TEST(LuaScripting, GuiFamilyReturnValues)
 {
-    // Window*, Chat*, Spell* stubs must return a number (not crash with nil-call).
     CMUSHclientDoc doc;
     lua_State* L = make_lua(&doc);
     ASSERT_NE(nullptr, L);
 
-    // WindowCreate → eNoSuchWindow (30073).  Argument shape is the Windows
-    // one — L_WindowCreate (lua_methods.cpp:6060-6075): (Name, Left, Top,
-    // Width, Height, Position, Flags, BackgroundColour), all my_check'd.
-    int n = run_ret(L, "return world.WindowCreate('w',0,0,100,100,0,0,0)");
-    EXPECT_EQ(1, n);
-    EXPECT_EQ(30073.0, lua_tonumber(L, -1));
-    lua_settop(L, 0);
-
-    // WindowList with no miniwindows → nil (Windows: the safe array is never
-    // created — "cannot create empty dimension" — so Detach hands back VT_EMPTY)
-    n = run_ret(L, "return world.WindowList()");
+    // WindowList with NO miniwindows -> nil (the safe array is never created —
+    // "cannot create empty dimension" — so Detach hands back VT_EMPTY).  Assert
+    // this BEFORE creating one, so it is the empty case being tested.
+    int n = run_ret(L, "return world.WindowList()");
     EXPECT_EQ(1, n);
     EXPECT_TRUE(lua_isnil(L, -1));
+    lua_settop(L, 0);
+
+    // WindowCreate -> eOK, and the window really exists afterwards.
+    //
+    // This pair used to assert eNoSuchWindow (30073) and then that WindowList
+    // was STILL nil — the stub's contract, under which no miniwindow could ever
+    // be created.  miniwindow.cpp and methods_miniwindows.cpp are in mushcore
+    // now (docs/STUB-ADOPTION-2026-08.md §5 step 3), so this is the real body:
+    // it allocates a CMiniWindow, registers it in m_MiniWindows and re-sorts the
+    // z-order.  Argument shape is the Windows one — L_WindowCreate
+    // (lua_methods.cpp:6060-6075): (Name, Left, Top, Width, Height, Position,
+    // Flags, BackgroundColour), all my_check'd.
+    n = run_ret(L, "return world.WindowCreate('w',0,0,100,100,0,0,0)");
+    EXPECT_EQ(1, n);
+    EXPECT_EQ(0.0, lua_tonumber(L, -1));            // eOK
+    lua_settop(L, 0);
+
+    // …and now the list has it.  Asserting the CONTENT, not just non-nil, so a
+    // body that created an empty list would fail.
+    EXPECT_LUA_OK(L,
+        "local l = world.WindowList()\n"
+        "assert(type(l) == 'table', 'WindowList should be a table once a window exists')\n"
+        "local n = 0\n"
+        "for _, v in pairs(l) do n = n + 1; assert(v == 'w') end\n"
+        "assert(n == 1, 'expected 1 window, got ' .. n)\n"
+        "return true\n");
+
+    // The parameter checks are real too, and they precede any window creation —
+    // so these are not "no such window", they are refusals.
+    n = run_ret(L, "return world.WindowCreate('',0,0,10,10,0,0,0)");
+    EXPECT_EQ(1, n);
+    EXPECT_EQ((double) eNoNameSpecified, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+    n = run_ret(L, "return world.WindowCreate('bad',0,0,-1,10,0,0,0)");
+    EXPECT_EQ(1, n);
+    EXPECT_EQ((double) eBadParameter, lua_tonumber(L, -1));
     lua_settop(L, 0);
 
     // ChatCall with a HOSTNAME -> eCannotLookupDomainName (30043).

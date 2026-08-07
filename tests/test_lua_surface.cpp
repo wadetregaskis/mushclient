@@ -313,9 +313,20 @@ TEST(LuaSurface, PluginQueriesAgainstLoadedPlugin)
     unlink(path.c_str());
 }
 
-// ── platform/doc_gui_method_stubs.cpp — Window* family answers headless ───
+// ── the Window* family's NO-SUCH-WINDOW arm ───────────────────────────────
+//
+// Every call here targets window 'w', which this fixture never creates, so the
+// whole sweep still reads exactly as it did when these were stubs — but for a
+// different reason.  It used to pass because the stubs answered eNoSuchWindow
+// unconditionally; it passes now because the REAL bodies
+// (scripting/methods/methods_miniwindows.cpp, adopted into mushcore — see
+// docs/STUB-ADOPTION-2026-08.md) look the name up and do not find it.
+//
+// On its own that makes this a weak test, in exactly the way the notepad family
+// was weak before its adoption: a body that did nothing at all would pass every
+// line.  WindowFamilyWithAWindowOpen below is the other arm.
 
-TEST(LuaSurface, WindowFamilyStubSweep)
+TEST(LuaSurface, WindowFamilyWithNoSuchWindow)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);
     EXPECT_TRUE(run(f.L,
@@ -572,6 +583,81 @@ TEST(LuaSurface, GetRecentLinesJoinsTheWayTheShippingBodyDoes)
     f.doc.m_sRecentLines.push_back("");
     f.doc.m_sRecentLines.push_back("b");
     EXPECT_TRUE(run(f.L, "assert(world.GetRecentLines(3) == 'a\\n\\nb')\n"));
+}
+
+// The other arm: with a miniwindow actually created, most of this family does
+// real work headless.
+//
+// This is what the stage-1 adoption bought.  No pixels are involved — nothing
+// installs a pal::ISurface headless, so every drawing site takes its guarded
+// `if (!srf)` arm — but the miniwindow itself, its geometry, visibility,
+// z-order and hotspots are all real engine state, and world.GetInfo and the
+// plugin API read them back.
+TEST(LuaSurface, WindowFamilyWithAWindowOpen)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        "assert(world.WindowCreate('m', 10, 20, 300, 200, 0, 0, 0) == 0)\n"
+
+        // Geometry is stored and reported — WindowInfo 1..4 are left/top/
+        // width/height.  Deliberately four DIFFERENT numbers: a fixture where
+        // any two matched would hide a swapped pair.
+        "assert(world.WindowInfo('m', 1) == 10)\n"
+        "assert(world.WindowInfo('m', 2) == 20)\n"
+        "assert(world.WindowInfo('m', 3) == 300)\n"
+        "assert(world.WindowInfo('m', 4) == 200)\n"
+
+        // Visibility really toggles (info 5 is the show flag), so "WindowShow
+        // does nothing" fails.  Created windows start hidden.
+        "assert(world.WindowInfo('m', 5) == false)\n"
+        "assert(world.WindowShow('m', true) == 0)\n"
+        "assert(world.WindowInfo('m', 5) == true)\n"
+
+        // Moving and resizing change what Info reports — the control against a
+        // body that stores the creation values and never updates them.
+        "assert(world.WindowPosition('m', 50, 60, 0, 0) == 0)\n"
+        "assert(world.WindowInfo('m', 1) == 50)\n"
+        "assert(world.WindowResize('m', 400, 300, 0) == 0)\n"
+        "assert(world.WindowInfo('m', 3) == 400)\n"
+
+        "assert(world.WindowSetZOrder('m', 7) == 0)\n"
+
+        // Hotspots: add, retitle, move, list, delete — and deleting twice must
+        // report eHotspotNotInstalled, NOT eNoSuchWindow.  The stub could not
+        // tell those apart because it answered eNoSuchWindow to both.
+        "assert(world.WindowAddHotspot('m','h',0,0,10,10,'','','','','','tip',0,0) == 0)\n"
+        "local hs = world.WindowHotspotList('m')\n"
+        "assert(type(hs) == 'table')\n"
+        "local n = 0\n"
+        "for _, v in pairs(hs) do n = n + 1; assert(v == 'h') end\n"
+        "assert(n == 1, 'expected 1 hotspot, got ' .. n)\n"
+        "assert(world.WindowHotspotTooltip('m','h','tip2') == 0)\n"
+        "assert(world.WindowMoveHotspot('m','h',1,2,3,4) == 0)\n"
+        "assert(world.WindowDeleteHotspot('m','h') == 0)\n"
+        "assert(world.WindowDeleteHotspot('m','h') == error_code.eHotspotNotInstalled)\n"
+
+        // The drawing calls answer eOK against a null surface, by design: that
+        // guarded arm is what makes stage 1 safe without a headless rasteriser,
+        // and it is the same arm both shipping platforms take if an adapter ever
+        // fails to install.  Pinned so a later change cannot quietly turn it
+        // into an error.
+        "assert(world.WindowRectOp('m', 2, 0, 0, 10, 10, 0, 0) == 0)\n"
+        "assert(world.WindowSetPixel('m', 1, 1, 255) == 0)\n"
+
+        // Fonts DO need the GDI shim, so they fail honestly rather than
+        // pretending — eCannotAddFont, not eNoSuchWindow.
+        "assert(world.WindowFont('m','f','Menlo',10,false,false,false,false,0,0)"
+        " == error_code.eCannotAddFont)\n"
+
+        // The window is in the list while it exists, and gone after.
+        "local l = world.WindowList()\n"
+        "local c = 0\n"
+        "for _, v in pairs(l) do c = c + 1; assert(v == 'm') end\n"
+        "assert(c == 1, 'expected 1 window, got ' .. c)\n"
+        "assert(world.WindowDelete('m') == 0)\n"
+        "assert(world.WindowInfo('m', 1) == nil)\n"
+        "assert(world.WindowList() == nil)\n"
+    ));
 }
 
 // ── the accelerator family — real headless, not stubbed ───────────────────

@@ -166,6 +166,28 @@ HBITMAP CBitmap::CreateCompatibleBitmap (void*, int, int)       { return nullptr
 BOOL    CBitmap::GetBitmap (BITMAP* bm)         { if (bm) *bm = {}; return FALSE; }
 bool    CBitmap::CreateBitmap (int, int, UINT, UINT, const void*) { return false; }
 
+// The three the miniwindow adoption needed (docs/STUB-ADOPTION-2026-08.md §5
+// step 3).  They are the whole GDI cost of that family: CMiniWindow::Create and
+// ::Resize allocate their canvas through CreateCanvasBitmap, and the image
+// family reaches Attach/DeleteObject.
+//
+// FALSE / false here is not a placeholder — it is the contract that keeps Stage 1
+// safe on its own.  Every drawing site in miniwindow.cpp is guarded
+// `if (!srf) return …` against a null pal::ISurface, and with no canvas realised
+// the surface stays null, so the engine takes exactly those guarded arms: the
+// miniwindow EXISTS, its geometry, z-order, hotspots, fonts and info are all
+// real, and only the pixels are absent.  That is what makes ~24 of the family's
+// methods testable headless without a rasteriser.
+//
+// Stage 2 (the headless surface bridge + DIB store) replaces these with real
+// bodies backed by pal::CpuRaster.  Until then, do NOT "improve" them into
+// error returns — the guarded arms answer eOK by design on both shipping
+// platforms, and turning that into a failure would be a real behaviour change
+// if an adapter ever failed to install.
+bool    CBitmap::CreateCanvasBitmap (int, int)  { return false; }
+BOOL    CBitmap::Attach (HGDIOBJ)               { return FALSE; }
+bool    CBitmap::DeleteObject ()                { return false; }
+
 // ── CBrush (dtor is the vtable key function) ────────────────────────────────
 CBrush::~CBrush () {}
 bool CBrush::CreateSolidBrush (COLORREF)        { return false; }

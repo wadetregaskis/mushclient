@@ -249,7 +249,11 @@ void CMainFrame::DoFileOpen () {}
 void CMUSHView::sizewindow  (void) {}
 void CSendView::UpdateWrap  ()     {}
 // CTextDocument::SetTheFont: real body now (TextDocument.cpp, adopted).
-CMiniWindow::~CMiniWindow () {}
+// CMiniWindow::~CMiniWindow: the REAL dtor now (miniwindow.cpp, adopted).
+// The empty stub that stood here LEAKED every miniwindow: the members it left
+// unreleased are pointers (pdc / m_Bitmap), so nothing crashed and nothing
+// noticed.  The real dtor is null-safe headless — both pal::g_releaseAdoptedSurface
+// and pal::g_surface are guarded.
 
 // ════════════════════════════════════════════════════════════════════════════
 // 5. Dialog classes doc.cpp / doc_construct.cpp construct but never DoModal

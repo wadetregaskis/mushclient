@@ -144,19 +144,10 @@ CString CMUSHclientApp::GetUniqueString ()
     return s;
 }
 
-// App-level notepad helpers — no app-owned notepad windows headless.
-bool CMUSHclientApp::AppendToTheNotepad (const CString /*strTitle*/,
-                                         const CString /*strText*/,
-                                         const bool /*bReplace*/,
-                                         const int  /*iNotepadType*/)
-{
-    return false;
-}
-
-BOOL CMUSHclientApp::ActivateNotepad (LPCTSTR /*Title*/)
-{
-    return FALSE;
-}
+// The App-level notepad helpers (AppendToTheNotepad / FindNotepad /
+// ActivateNotepad) are the REAL bodies now, in notepad_app_shared.cpp.  The
+// twins that stood here returned false unconditionally, which made the whole
+// utils.appendtonotepad / utils.activatenotepad surface inert headless.
 
 // SQLite prefs-database no-ops.  Headless there is no prefs database; the App
 // members already hold the table defaults (ctor above), so db reads return the

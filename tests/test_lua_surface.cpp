@@ -997,6 +997,9 @@ TEST(LuaSurface, UtilsDialogsHeadlessInert)
         "assert(utils.filterpicker() == nil)\n"
         "assert(utils.spellcheckdialog() == nil)\n"
         "assert(utils.sendtofront('x') == false)\n"
+        // No notepad exists and nothing can create one (no window hook), so
+        // both are false.  The arms where they SUCCEED are covered by
+        // UtilsNotepadReachesTheAppLevelNotepads below.
         "assert(utils.appendtonotepad('t', 'm') == false)\n"
         "assert(utils.activatenotepad('t') == false)\n"
         "utils.setbackgroundcolour(0)\n"
@@ -1053,6 +1056,48 @@ TEST(LuaSurface, UtilsXmlRead)
         "local bad, msg = utils.xmlread('<unclosed')\n"
         "assert(bad == nil and type(msg) == 'string')\n"
     ));
+}
+
+// utils.appendtonotepad / utils.activatenotepad reach the APP-level notepads.
+//
+// These are the notepads with no owning world (m_pRelatedWorld == NULL), which
+// is what distinguishes CMUSHclientApp::FindNotepad from the world-scoped
+// CMUSHclientDoc::FindNotepad.  The portable twins used to route through
+// g_wxhook_append_to_notepad, which looked up by TITLE ALONE and never created
+// anything — so on this platform utils.appendtonotepad to a new title silently
+// did nothing where Windows opens a notepad.  They call the same App methods
+// Windows calls now (notepad_app_shared.cpp).
+TEST(LuaSurface, UtilsNotepadReachesTheAppLevelNotepads)
+{
+    NotepadCapture cap;
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    // Nothing by this name: the canonical body CREATES.  Against the old hook
+    // route this returned false and made no window at all.
+    EXPECT_TRUE(run(f.L, "assert(utils.appendtonotepad('apppad', 'hello') == true)\n"));
+    ASSERT_EQ(1u, (unsigned) cap.count());
+    EXPECT_EQ(std::string("apppad"),
+              std::string((const char*) cap.pads[0]->doc->m_strTitle));
+    EXPECT_NE(std::string::npos, cap.pads[0]->text.find("hello"));
+
+    // Now it exists, so the second call APPENDS to it rather than making a
+    // second window — the control that makes "always create" fail.
+    EXPECT_TRUE(run(f.L, "assert(utils.appendtonotepad('apppad', ' more') == true)\n"));
+    EXPECT_EQ(1u, (unsigned) cap.count());
+    EXPECT_NE(std::string::npos, cap.pads[0]->text.find("hello more"));
+
+    // Newlines become ENDLINE (canonical lua_utils.cpp:1543), which the twin
+    // never did.
+    EXPECT_TRUE(run(f.L, "assert(utils.appendtonotepad('apppad', 'a\\nb') == true)\n"));
+    EXPECT_NE(std::string::npos, cap.pads[0]->text.find("a\r\nb"));
+
+    // …and activate finds the same window.
+    EXPECT_TRUE(run(f.L, "assert(utils.activatenotepad('apppad') == true)\n"));
+    EXPECT_EQ(1, cap.pads[0]->activateCalls);
+
+    // Control: a title that does not exist must NOT be activated.
+    EXPECT_TRUE(run(f.L, "assert(utils.activatenotepad('nosuch') == false)\n"));
+    EXPECT_EQ(1, cap.pads[0]->activateCalls);
 }
 
 MC_TEST_MAIN()

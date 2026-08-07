@@ -196,6 +196,10 @@
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="notepad_app_shared.cpp">
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
     <ClCompile Include="doc_tabcomplete_shared.cpp">
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -359,8 +363,10 @@
     <ClCompile Include="scripting\methods\methods_infobar.cpp" />
     <ClCompile Include="scripting\methods\methods_logging.cpp" />
     <ClCompile Include="scripting\methods\methods_mapping.cpp" />
-    <ClCompile Include="scripting\methods\methods_miniwindows.cpp" />
-    <ClCompile Include="scripting\methods\methods_pixel_shared.cpp" />
+    <ClCompile Include="scripting\methods\methods_miniwindows.cpp" />
+
+    <ClCompile Include="scripting\methods\methods_pixel_shared.cpp" />
+
     <ClCompile Include="scripting\methods\methods_output_shared.cpp" />
     <ClCompile Include="scripting\methods\methods_notepad.cpp" />
     <ClCompile Include="scripting\methods\methods_noting.cpp" />

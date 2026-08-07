@@ -3414,140 +3414,20 @@ static void hook_set_main_background(unsigned long colour)
 }
 
 
-// ── Notepad append ────────────────────────────────────────────────────────
-
-static bool hook_append_to_notepad(const char* title, const char* text, bool replace)
-{
-    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
-    if (!frame) return false;
-    frame->AppendText(text ? text : "", replace);
-    return true;
-}
-
-
-static char* hook_get_notepad_text(const char* title)
-{
-    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
-    if (!frame) return nullptr;
-    std::string text = frame->GetText();
-    char* result = static_cast<char*>(malloc(text.size() + 1));
-    if (result) memcpy(result, text.c_str(), text.size() + 1);
-    return result;
-}
-
-static char** hook_get_notepad_list()
-{
-    std::vector<std::string> titles = CWxNotepadFrame::ListTitles();
-    char** arr = static_cast<char**>(malloc((titles.size() + 1) * sizeof(char*)));
-    if (!arr) return nullptr;
-    for (size_t i = 0; i < titles.size(); ++i) {
-        arr[i] = static_cast<char*>(malloc(titles[i].size() + 1));
-        if (arr[i]) memcpy(arr[i], titles[i].c_str(), titles[i].size() + 1);
-    }
-    arr[titles.size()] = nullptr;
-    return arr;
-}
-
-// ── Notepad activate / close / move / position ───────────────────────────
-
-static bool hook_activate_notepad(const char* title)
-{
-    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
-    if (!frame) return false;
-    if (!frame->IsShown()) frame->Show(true);
-    frame->Raise();
-    return true;
-}
-
-static bool hook_close_notepad(const char* title)
-{
-    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
-    if (!frame) return false;
-    frame->Close(false);   // allow SaveModified check
-    return true;
-}
-
-static bool hook_move_notepad(const char* title, int x, int y, int w, int h)
-{
-    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
-    if (!frame) return false;
-    frame->SetSize(x, y, w, h);
-    return true;
-}
-
-static char* hook_get_notepad_position(const char* title)
-{
-    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
-    if (!frame) return nullptr;
-    wxRect r = frame->GetRect();
-    char buf[80];
-    snprintf(buf, sizeof(buf), "%d %d %d %d",
-             r.GetLeft(), r.GetTop(), r.GetWidth(), r.GetHeight());
-    char* result = static_cast<char*>(malloc(strlen(buf) + 1));
-    if (result) strcpy(result, buf);
-    return result;
-}
-
-// ── Notepad save ─────────────────────────────────────────────────────────
-
-static bool hook_notepad_colour(const char* title, unsigned long fg, unsigned long bg)
-{
-    CWxNotepadFrame* f = CWxNotepadFrame::Find(title ? title : "");
-    if (!f) return false;
-    f->SetColours(fg, bg);
-    return true;
-}
-
-static bool hook_notepad_font(const char* title, const char* fontName,
-                               int size, int style, int charset)
-{
-    CWxNotepadFrame* f = CWxNotepadFrame::Find(title ? title : "");
-    if (!f) return false;
-    f->SetFont(fontName ? fontName : "", size, style, charset);
-    return true;
-}
-
-static bool hook_notepad_readonly(const char* title, bool readOnly)
-{
-    CWxNotepadFrame* f = CWxNotepadFrame::Find(title ? title : "");
-    if (!f) return false;
-    f->SetReadOnly(readOnly);
-    return true;
-}
-
-static bool hook_save_notepad(const char* title, const char* filename, bool /*replaceExisting*/)
-{
-    CWxNotepadFrame* frame = CWxNotepadFrame::Find(title ? title : "");
-    if (!frame) return false;
-    // Delegate to the frame's File→Save handler (same as menu Ctrl+S).
-    // Pass the filename via a synthetic event if non-empty, otherwise show dialog.
-    wxCommandEvent evt(wxEVT_MENU, wxID_SAVE);
-    // We can't easily pass a filename through the event; instead call SaveFile
-    // directly on the ctrl via the doc's m_fn_save_to_file if wired.
-    // GetText() retrieves the current text; save it using wxTextCtrl::SaveFile.
-    if (filename && *filename)
-    {
-        wxString path = wxString::FromUTF8(filename);
-        // SaveFile is accessible from the wxTextCtrl inside the frame.
-        // Since we can't access m_ctrl directly, use m_pDoc callback if set.
-        // Fall back: AppendText trick: use the m_fn_save_to_file lambda.
-        // The lambda is on the CTextDocument, which we can reach via FindNotepad.
-        // For simplicity, use the hook_get_notepad_text + write ourselves.
-        std::string text = frame->GetText();
-        FILE* fp = fopen(filename, "w");
-        if (!fp) return false;
-        fwrite(text.c_str(), 1, text.size(), fp);
-        fclose(fp);
-        return true;
-    }
-    else
-    {
-        // Show save dialog — trigger via the frame's menu save handler.
-        wxCommandEvent saveEvt(wxEVT_MENU, wxID_SAVE);
-        frame->GetEventHandler()->ProcessEvent(saveEvt);
-        return true;
-    }
-}
+// ── Notepad hooks: REMOVED ────────────────────────────────────────────────
+//
+// Eleven g_wxhook_*_notepad hooks and their bodies lived here.  They were the
+// GUI half of a twin: the only caller of nine of them was the headless stub
+// file, and the only installer was this one, and the two adapter sets never
+// co-link — so every body here was unreachable in the shipped app while every
+// call site was permanently nullptr.  ~135 lines that could not run.
+//
+// The notepad family is adopted into mushcore now
+// (docs/STUB-ADOPTION-2026-08.md), so both sides go through the real
+// scripting/methods/methods_notepad.cpp and notepad_app_shared.cpp, which reach
+// the window through CTextDocument's m_fn_* callbacks CWxNotepadFrame already
+// wires.  g_wxhook_create_text_window and g_wxhook_open_text_file stay: those
+// are genuinely live seams used by real code in both builds.
 
 // ── Colour picker ─────────────────────────────────────────────────────────
 
@@ -5572,17 +5452,7 @@ void wx_mfc_install_hooks()
     g_wxhook_get_pixel            = wxgdi_get_pixel;   // defined in wx_gdi_compat.cpp
     g_wxhook_set_cursor           = hook_set_cursor;
     g_wxhook_set_main_background  = hook_set_main_background;
-    g_wxhook_append_to_notepad    = hook_append_to_notepad;
-    g_wxhook_get_notepad_text     = hook_get_notepad_text;
-    g_wxhook_get_notepad_list     = hook_get_notepad_list;
-    g_wxhook_activate_notepad     = hook_activate_notepad;
-    g_wxhook_close_notepad        = hook_close_notepad;
-    g_wxhook_move_notepad         = hook_move_notepad;
-    g_wxhook_get_notepad_position = hook_get_notepad_position;
-    g_wxhook_save_notepad         = hook_save_notepad;
-    g_wxhook_notepad_colour       = hook_notepad_colour;
-    g_wxhook_notepad_font         = hook_notepad_font;
-    g_wxhook_notepad_readonly     = hook_notepad_readonly;
+    // The eleven notepad hooks are gone — see "Notepad hooks: REMOVED" above.
 
     // Wire the system-beep hook so doc.cpp's MessageBeep() calls produce
     // an audible alert on macOS/Linux via wxWidgets.

@@ -445,6 +445,7 @@ if(NOT WIN32)
         # CTextDocument's std::function m_fn_* members, which need no wx.
         TextDocument.cpp
         scripting/methods/methods_notepad.cpp
+        notepad_app_shared.cpp
         scripting/errors.cpp
         doc_scripting_shared.cpp
         doc_tabcomplete_shared.cpp

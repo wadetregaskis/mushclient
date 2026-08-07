@@ -633,25 +633,40 @@ static int utils_multilistbox(lua_State* L) {
 }
 
 // ── appendtonotepad / activatenotepad ─────────────────────────────────────────
+//
+// These used to route through g_wxhook_append_to_notepad / _activate_notepad,
+// and differed from the canonical bodies (scripting/lua_utils.cpp:1535, :1551)
+// in three ways.  All three are fixed here by calling the same App methods
+// Windows calls, which live in notepad_app_shared.cpp now:
+//
+//  * The hook looked a notepad up by TITLE ALONE (CWxNotepadFrame::Find) and
+//    returned false when there was none.  App.AppendToTheNotepad matches on
+//    title AND m_pRelatedWorld == NULL — an APP notepad, not a world's — and
+//    CREATES one when there is no match.  So utils.appendtonotepad on a title
+//    that did not exist yet silently did nothing on this platform, where
+//    Windows opens a notepad.
+//  * The "\n" → ENDLINE conversion was missing, so multi-line text arrived with
+//    bare newlines into a control the canonical feeds CRLF.
+//  * The notepad type was not passed at all; the canonical passes
+//    eNotepadPacketDebug, which is what gives the window its colours.
 static int utils_appendtonotepad(lua_State* L)
 {
     const char* title   = luaL_checkstring(L, 1);
     const char* message = luaL_checkstring(L, 2);
     bool bReplace = lua_toboolean(L, 3) != 0;
-    // Route through the GUI notepad hook (nullptr in CLI builds).
-    bool ok = false;
-    if (g_wxhook_append_to_notepad)
-        ok = g_wxhook_append_to_notepad(title, message, bReplace);
+
+    CString strMessage (message);
+    strMessage.Replace ("\n", ENDLINE);
+
+    bool ok = App.AppendToTheNotepad (title, strMessage, bReplace,
+                                      eNotepadPacketDebug);
     lua_pushboolean(L, ok);
     return 1;
 }
 static int utils_activatenotepad(lua_State* L)
 {
     const char* title = luaL_checkstring(L, 1);
-    bool ok = false;
-    if (g_wxhook_activate_notepad)
-        ok = g_wxhook_activate_notepad(title);
-    lua_pushboolean(L, ok);
+    lua_pushboolean(L, App.ActivateNotepad (title) != 0);
     return 1;
 }
 

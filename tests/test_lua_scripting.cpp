@@ -524,10 +524,33 @@ TEST(LuaScripting, GuiStubsReturnValues)
     EXPECT_TRUE(lua_isnil(L, -1));
     lua_settop(L, 0);
 
-    // ChatCall → eNoChatConnections (30044)
-    n = run_ret(L, "return world.ChatCall('host', 4050)");
+    // ChatCall with a HOSTNAME -> eCannotLookupDomainName (30043).
+    //
+    // This used to assert eNoChatConnections (30044), which was the stub's
+    // answer; chatsock.cpp and methods_chat.cpp are in mushcore now
+    // (docs/STUB-ADOPTION-2026-08.md) so this is the real body.
+    //
+    // 30043 is not a healthy answer — it is a REAL macOS product bug this
+    // assertion now pins.  ChatCallGeneral resolves non-dotted-quad addresses
+    // through WSAAsyncGetHostByName, which is an inline stub returning nullptr
+    // (platform/mfc_ui.h:7451), so methods_chat.cpp:145-149 deletes the socket
+    // and reports "cannot look up domain name".  world.ChatCall to a HOSTNAME
+    // has therefore never worked in the shipping mac app; only dotted-IP calls
+    // do.  Recorded in docs/STUB-ADOPTION-2026-08.md §4 with the route to fixing
+    // it (PosixTransport already has a headless-drivable getaddrinfo resolver).
+    // When that lands, this expectation changes to eOK and this comment goes.
+    n = run_ret(L, "return world.ChatCall('host.invalid', 4050)");
     EXPECT_EQ(1, n);
-    EXPECT_EQ(30044.0, lua_tonumber(L, -1));
+    EXPECT_EQ(30043.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    // The control that makes the bug above legible: a DOTTED-QUAD address takes
+    // the other branch and does NOT fail, because it needs no DNS at all.  If
+    // both forms returned the same thing, the finding would be invisible.
+    n = run_ret(L, "return world.ChatCall('127.0.0.1', 4050)");
+    EXPECT_EQ(1, n);
+    EXPECT_EQ(0.0, lua_tonumber(L, -1));       // eOK — connection under way
+    doc.ChatDisconnectAll();                   // tidy up the socket we just made
     lua_settop(L, 0);
 
     // SpellCheck with the spell checker inactive → nil, as on Windows:

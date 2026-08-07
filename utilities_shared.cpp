@@ -1538,3 +1538,53 @@ int iChanges = 0;
   return strNewText;
 
   }  // end of QuoteForumCodes
+
+// ── GetHostNameAndAddresses ─────────────────────────────────────────────────
+// Our own host name and the dotted-quad addresses it resolves to, used by the
+// chat CHAT:/ZCHAT: handshake to advertise where a peer should call us back
+// (chatsock.cpp MakeCall) and by the About box (mainfrm.cpp).  Declared in
+// stdafx.h.
+//
+// Moved verbatim from Utilities.cpp, which is mushgui_adapters-only, so that the
+// adopted chat family links headless.  Pure POSIX — gethostname, gethostbyname,
+// inet_ntoa — with no MFC or wx in it, which is why it can move at all.
+void GetHostNameAndAddresses (CString & strHostName, CString & strAddresses)
+  {
+ char szHostName[256];
+
+ if( gethostname(szHostName, sizeof szHostName) == 0 )
+   {
+   // Get host adresses
+   struct hostent * pHost;
+   int i;
+
+   pHost = gethostbyname(szHostName);
+   strHostName = szHostName;
+
+   for( i = 0; pHost != NULL && pHost->h_addr_list [i] != NULL; i++ )
+     {
+     /*
+     CString str;
+     int j;
+
+     for( j = 0; j < pHost->h_length; j++ )
+       {
+       CString addr;
+
+       if( j > 0 )
+         str += ".";
+
+       addr.Format("%u", (unsigned int)((unsigned
+         char*)pHost->h_addr_list[i])[j]);
+       str += addr;
+
+       }
+*/
+     if (!strAddresses.IsEmpty ())
+       strAddresses += ", ";
+     strAddresses += inet_ntoa ( *((in_addr *)pHost->h_addr_list[i]));
+
+
+     }
+   }
+  } // end of GetHostNameAndAddresses

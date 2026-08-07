@@ -357,133 +357,25 @@ long CMUSHclientDoc::WindowWrite (LPCTSTR Name, LPCTSTR FileName)
 // which a headless test fills with lambdas over a std::string.
 
 // ══════════════════════════════════════════════════════════════════════════
-// Chat family (25) — no CChatSocket headless
-// ══════════════════════════════════════════════════════════════════════════
-
-long CMUSHclientDoc::ChatAcceptCalls (short Port)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatAcceptCalls
-
-long CMUSHclientDoc::ChatCall (LPCTSTR Server, long Port)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatCall
-
-long CMUSHclientDoc::ChatCallzChat (LPCTSTR Server, long Port)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatCallzChat
-
-long CMUSHclientDoc::ChatDisconnect (long ID)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatDisconnect
-
-long CMUSHclientDoc::ChatDisconnectAll ()
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatDisconnectAll
-
-long CMUSHclientDoc::ChatEverybody (LPCTSTR Message, BOOL Emote)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatEverybody
-
-long CMUSHclientDoc::ChatGetID (LPCTSTR Who)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatGetID
-
-long CMUSHclientDoc::ChatGroup (LPCTSTR Group, LPCTSTR Message, BOOL Emote)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatGroup
-
-long CMUSHclientDoc::ChatID (long ID, LPCTSTR Message, BOOL Emote)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatID
-
-long CMUSHclientDoc::ChatMessage (long ID, short Message, LPCTSTR Text)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatMessage
-
-long CMUSHclientDoc::ChatNameChange (LPCTSTR NewName)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatNameChange
-
-void CMUSHclientDoc::ChatNote (short NoteType, LPCTSTR Message)
-  {
-  // no chat system headless — nothing to do
-  }   // end of CMUSHclientDoc::ChatNote
-
-long CMUSHclientDoc::ChatPasteEverybody ()
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatPasteEverybody
-
-long CMUSHclientDoc::ChatPasteText (long ID)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatPasteText
-
-long CMUSHclientDoc::ChatPeekConnections (long ID)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatPeekConnections
-
-long CMUSHclientDoc::ChatPersonal (LPCTSTR Who, LPCTSTR Message, BOOL Emote)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatPersonal
-
-long CMUSHclientDoc::ChatPing (long ID)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatPing
-
-long CMUSHclientDoc::ChatRequestConnections (long ID)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatRequestConnections
-
-long CMUSHclientDoc::ChatSendFile (long ID, LPCTSTR FileName)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatSendFile
-
-void CMUSHclientDoc::ChatStopAcceptingCalls ()
-  {
-  // no chat system headless — nothing to do
-  }   // end of CMUSHclientDoc::ChatStopAcceptingCalls
-
-long CMUSHclientDoc::ChatStopFileTransfer (long ID)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::ChatStopFileTransfer
-
-VARIANT CMUSHclientDoc::GetChatInfo (long ChatID, short InfoType)
-  {
-  return NullVariant ();    // the Windows missing-socket result (methods_chat.cpp GetChatSocket → NULL)
-  }   // end of CMUSHclientDoc::GetChatInfo
-
-VARIANT CMUSHclientDoc::GetChatList ()
-  {
-  return EmptyVariant ();   // the Windows zero-connection result (methods_chat.cpp:568-602)
-  }   // end of CMUSHclientDoc::GetChatList
-
-VARIANT CMUSHclientDoc::GetChatOption (long ID, LPCTSTR OptionName)
-  {
-  return NullVariant ();    // the Windows missing-socket result (methods_chat.cpp GetChatSocket → NULL)
-  }   // end of CMUSHclientDoc::GetChatOption
-
-long CMUSHclientDoc::SetChatOption (long ID, LPCTSTR OptionName, LPCTSTR Value)
-  {
-  return eNoChatConnections;
-  }   // end of CMUSHclientDoc::SetChatOption
+// Chat family: NO LONGER STUBBED.  chatsock.cpp, chatlistensock.cpp and
+// scripting/methods/methods_chat.cpp are compiled into mushcore now.
+//
+// The 25 stubs deleted here all returned eNoChatConnections, and that was wrong
+// for 18 of them even as a no-connections answer: the real bodies return
+// eChatIDNotFound, eBadParameter, eChatPersonNotFound, eClipboardEmpty, eOK, or
+// a plain COUNT.  ChatDisconnectAll returns the number it closed, so the stub
+// put an error code (30044) in a count slot and a script doing
+// `if world.ChatDisconnectAll() > 0` behaved backwards.  ChatNameChange
+// SUCCEEDS with zero connections on Windows — it renames m_strOurChatName and
+// broadcasts — where the stub mutated nothing.
+//
+// mushcore already linked half this engine: GetChatSocket and
+// SendChatMessageToAll are the real bodies in doc.cpp, walking m_ChatList and
+// calling into sockets these stubs had hollowed out.
+//
+// The chat DIALOGS are NOT part of this and stay stubbed in
+// platform/doc_flip_gui_stubs.cpp: they are irreducible shells that the dialog
+// bridge renders in the product.
 
 // ══════════════════════════════════════════════════════════════════════════
 // Output/view family (25) — GUI ops inert; line-list ops keep twin semantics

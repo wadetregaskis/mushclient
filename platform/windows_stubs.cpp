@@ -79,23 +79,16 @@ void CMainFrame::SetStatusMessageNow (const CString& msg) {
 // TimerWnd.cpp is Windows-only; stub here.
 void CTimerWnd::ChangeTimerRate(int) {}
 
-// ── CChatSocket method stubs ──────────────────────────────────────────────
-// ProcessPreviousLine.cpp calls these.  The real implementations are in
-// chatsock.cpp (Windows-only).
-void CChatSocket::Process_Snoop   (CString) {}
-void CChatSocket::SendChatMessage (int, CString, long) {}
-// B-3: the ctor/dtor (chatsock.cpp, mushapp-only) — the flipped test_display
-// constructs a snooper CChatSocket(doc).  Inert: remember the doc; the snoop
-// path reads only the flags the test sets (m_iChatStatus/m_bCanSnoop/…).
-CChatSocket::CChatSocket (CMUSHclientDoc * pDoc) : m_pDoc (pDoc) {}
-CChatSocket::~CChatSocket () {}
-// CAsyncSocket virtual overrides (vtable slots) + the DECLARE_DYNAMIC runtime
-// class — inert headless (no live chat socket).
-CRuntimeClass CChatSocket::classCChatSocket = { "CChatSocket" };
-void CChatSocket::OnReceive (int) {}
-void CChatSocket::OnSend    (int) {}
-void CChatSocket::OnClose   (int) {}
-void CChatSocket::OnConnect (int) {}
+// ── CChatSocket: NO LONGER STUBBED ────────────────────────────────────────
+// Eight definitions stood here (ctor, dtor, classCChatSocket, the four
+// CAsyncSocket virtual overrides, Process_Snoop and SendChatMessage).
+// chatsock.cpp is compiled into mushcore now and supplies all of them —
+// classCChatSocket comes from its IMPLEMENT_DYNAMIC.
+//
+// SendChatMessage being a no-op here is why tests/test_display.cpp's snoop test
+// could only ever be a coverage test: its own comment conceded the bytes were
+// unobservable "because the port's chat send path does not go through ::send
+// here".  It goes through the real one now.
 
 // ── CMUSHclientDoc method stubs (compiled against doc.h) ──────────────────
 // All methods listed below are declared in doc.h (the full Windows class)

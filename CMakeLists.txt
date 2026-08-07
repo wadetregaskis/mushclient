@@ -446,6 +446,16 @@ if(NOT WIN32)
         TextDocument.cpp
         scripting/methods/methods_notepad.cpp
         notepad_app_shared.cpp
+        # Chat family adoption (docs/STUB-ADOPTION-2026-08.md §5 step 2).
+        # CChatSocket / CChatListenSocket derive from the port's own fully
+        # implemented CAsyncSocket (platform/posix_socket.h), and mushcore
+        # already linked HALF the chat engine — GetChatSocket and
+        # SendChatMessageToAll are real bodies in doc.cpp walking m_ChatList,
+        # which was calling into stubbed sockets.  None of the three TUs forks
+        # on a compile flag, so they compile once for both consumers.
+        chatlistensock.cpp
+        chatsock.cpp
+        scripting/methods/methods_chat.cpp
         scripting/errors.cpp
         doc_scripting_shared.cpp
         doc_tabcomplete_shared.cpp
@@ -572,8 +582,6 @@ if(NOT WIN32)
         TimerWnd.cpp
         activitychildfrm.cpp
         art.cpp
-        chatlistensock.cpp
-        chatsock.cpp
         childfrm.cpp
         format.cpp
         genprint.cpp
@@ -589,7 +597,6 @@ if(NOT WIN32)
         winplace.cpp
         world_debug.cpp
         scripting/methods/methods.cpp
-        scripting/methods/methods_chat.cpp
         scripting/methods/methods_miniwindows.cpp
         scripting/methods/methods_output.cpp
         scripting/methods/methods_panes.cpp

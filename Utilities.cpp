@@ -410,46 +410,8 @@ CString GetSendToString (const unsigned short iWhere)
 // GetConnectionStatus: single-sourced in doc_shared.cpp (ITransport T3b)
 
 
-void GetHostNameAndAddresses (CString & strHostName, CString & strAddresses)
-  {
- char szHostName[256];
-
- if( gethostname(szHostName, sizeof szHostName) == 0 )
-   {
-   // Get host adresses
-   struct hostent * pHost;
-   int i;
-
-   pHost = gethostbyname(szHostName);
-   strHostName = szHostName;
-
-   for( i = 0; pHost != NULL && pHost->h_addr_list [i] != NULL; i++ )
-     {
-     /*
-     CString str;
-     int j;
-
-     for( j = 0; j < pHost->h_length; j++ )
-       {
-       CString addr;
-
-       if( j > 0 )
-         str += ".";
-
-       addr.Format("%u", (unsigned int)((unsigned
-         char*)pHost->h_addr_list[i])[j]);
-       str += addr;
-
-       }
-*/
-     if (!strAddresses.IsEmpty ())
-       strAddresses += ", ";
-     strAddresses += inet_ntoa ( *((in_addr *)pHost->h_addr_list[i]));
-
-
-     }
-   }
-  } // end of GetHostNameAndAddresses
+// GetHostNameAndAddresses: single-sourced in utilities_shared.cpp (it is pure
+// POSIX, and chatsock.cpp's CHAT:/ZCHAT: handshake needs it in mushcore).
 
 
 // CommandIDToString / StringToCommandID: single-sourced in utilities_shared.cpp

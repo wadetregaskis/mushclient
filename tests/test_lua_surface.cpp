@@ -673,41 +673,92 @@ TEST(LuaSurface, NotepadFamilyWithANotepadOpen)
     EXPECT_EQ(1, pad.moveCalls);
 }
 
-// ── chat family (stubbed headless: eNoChatConnections) ────────────────────
+// ── chat family — REAL bodies now, not stubs ──────────────────────────────
+//
+// chatsock.cpp, chatlistensock.cpp and methods_chat.cpp are compiled into
+// mushcore (docs/STUB-ADOPTION-2026-08.md), so these drive the shipping bodies.
+//
+// The block this replaces asserted `== eNoChatConnections` for nineteen of these
+// methods.  That was the STUB's contract, and it is right for exactly TWO of
+// them.  The real bodies distinguish five different failure modes, and two of
+// the calls are not failures at all — which is the whole reason this family was
+// worth adopting rather than leaving inert.
 
-TEST(LuaSurface, ChatFamilyHeadless)
+TEST(LuaSurface, ChatFamilyWithNoConnections)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);
     EXPECT_TRUE(run(f.L,
-        "local e = error_code.eNoChatConnections\n"
-        "assert(world.ChatAcceptCalls(4050) == e)\n"
-        "assert(world.ChatCallzChat('h', 4050) == e)\n"
-        "assert(world.ChatDisconnect(1) == e)\n"
-        "assert(world.ChatDisconnectAll() == e)\n"
-        "assert(world.ChatEverybody('hi', false) == e)\n"
-        "assert(world.ChatGetID('who') == e)\n"
-        "assert(world.ChatGroup('g', 'hi', false) == e)\n"
-        "assert(world.ChatID(1, 'hi', false) == e)\n"
-        "assert(world.ChatMessage(1, 1, 'x') == e)\n"
-        "assert(world.ChatNameChange('n') == e)\n"
-        "assert(world.ChatPasteEverybody() == e)\n"
-        "assert(world.ChatPasteText(1) == e)\n"
-        "assert(world.ChatPeekConnections(1) == e)\n"
-        "assert(world.ChatPersonal(1, 'hi', false) == e)\n"
-        "assert(world.ChatPing(1) == e)\n"
-        "assert(world.ChatRequestConnections(1) == e)\n"
-        "assert(world.ChatSendFile(1, '/no/file') == e)\n"
-        "world.ChatStopAcceptingCalls()\n"
-        "assert(world.ChatStopFileTransfer(1) == e)\n"
-        "world.ChatNote(1, 'note')\n"
+        // "No connections at all" — the only two that really mean that.  Both
+        // are broadcasts, so having nobody to broadcast to IS the error.
+        "assert(world.ChatEverybody('hi', false) == error_code.eNoChatConnections)\n"
+        "assert(world.ChatGroup('g', 'hi', false) == error_code.eNoChatConnections)\n"
+
+        // "That chat ID is not open" — a DIFFERENT error from having none, and
+        // the one nine of these actually return.  The stub answered 30044 for
+        // all of them, so a script distinguishing "nobody connected" from "that
+        // person hung up" could not.
+        "local nf = error_code.eChatIDNotFound\n"
+        "assert(world.ChatDisconnect(1)          == nf)\n"
+        "assert(world.ChatID(1, 'hi', false)     == nf)\n"
+        "assert(world.ChatMessage(1, 1, 'x')     == nf)\n"
+        "assert(world.ChatPasteText(1)           == nf)\n"
+        "assert(world.ChatPeekConnections(1)     == nf)\n"
+        "assert(world.ChatPing(1)                == nf)\n"
+        "assert(world.ChatRequestConnections(1)  == nf)\n"
+        "assert(world.ChatSendFile(1, '/tmp/x')  == nf)\n"
+        "assert(world.ChatStopFileTransfer(1)    == nf)\n"
+        "assert(world.SetChatOption(1, 'x', 'y') == nf)\n"
+
+        // Looked up BY NAME rather than by id, so it fails differently again.
+        "assert(world.ChatPersonal('w', 'hi', false) == error_code.eChatPersonNotFound)\n"
+
+        // Fails on the CLIPBOARD, before it ever looks for a peer — so the stub's
+        // 30044 was reporting the wrong subsystem entirely.
+        "assert(world.ChatPasteEverybody() == error_code.eClipboardEmpty)\n"
+
+        // Not an error code at all: a COUNT of how many were closed.  The stub
+        // returned 30044 here, so `if world.ChatDisconnectAll() > 0` was true
+        // when nothing had been disconnected — backwards.
+        "assert(world.ChatDisconnectAll() == 0)\n"
+
+        // Also a plain value, not a code: 0 means "no such person".  The stub's
+        // 30044 would read as a valid chat ID.
+        "assert(world.ChatGetID('nobody') == 0)\n"
+
+        // The VARIANT-returning three answer nil when there is no such session.
         "assert(world.GetChatInfo(1, 1) == nil)\n"
-        "assert(world.GetChatList() == nil)\n"
         "assert(world.GetChatOption(1, 'name') == nil)\n"
-        "assert(world.SetChatOption(1, 'name', 'x') == e)\n"
+        "assert(world.GetChatList() == nil)\n"
+
+        // Void, must not throw.
+        "world.ChatStopAcceptingCalls()\n"
+        "world.ChatNote(1, 'note')\n"
     ));
 }
 
-// ── logging family (methods_logging.cpp) — real file I/O ──────────────────
+// ChatNameChange SUCCEEDS with zero connections, and mutates state.
+//
+// This is the sharpest example of what the stub cost: it returned 30044 and
+// changed nothing, where Windows returns eOK, renames the world's chat identity,
+// marks the document modified and broadcasts the change to any peers.  A script
+// setting its chat name at startup — before connecting to anyone, which is the
+// normal time to do it — silently did not.
+TEST(LuaSurface, ChatNameChangeWorksWithNobodyConnected)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    f.doc.m_strOurChatName = "old";
+
+    EXPECT_TRUE(run(f.L, "assert(world.ChatNameChange('newname') == error_code.eOK)\n"));
+    EXPECT_EQ(std::string("newname"),
+              std::string((const char*) f.doc.m_strOurChatName));
+
+    // …and the parameter check is real: a blank name is refused, and refused
+    // WITHOUT clobbering the name that was already set.  Without this control a
+    // body that assigned unconditionally would pass.
+    EXPECT_TRUE(run(f.L, "assert(world.ChatNameChange('') == error_code.eBadParameter)\n"));
+    EXPECT_EQ(std::string("newname"),
+              std::string((const char*) f.doc.m_strOurChatName));
+}
 
 TEST(LuaSurface, LoggingLifecycle)
 {

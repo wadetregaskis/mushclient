@@ -18,6 +18,8 @@
 #include <cstdio>
 #include <string>
 #include <unistd.h>
+#include <sys/socket.h>   // socketpair (chat snoop test)
+#include <fcntl.h>
 
 #include "flags.h"   // eEnabled / eOmitFromOutput / ... (AddTriggerEx flags)
 #include "pal/itransport.h"
@@ -1972,18 +1974,25 @@ TEST(PrevLineArms, MappingFailureRegexpVariant)
 // ProcessPreviousLine.cpp:320-431), then the stop-snooping arm when permission
 // is revoked, without disturbing the line list.
 //
-// COVERAGE-ONLY for the reconstruction *content*: the bytes the reconstruction
-// sends to the snoop socket are not observable in this headless harness — the
-// chat socket's CChatSocket::OnSend consumes m_outstanding_output but never
-// reaches a readable descriptor (verified: even a real socketpair fd assigned to
+// This was COVERAGE-ONLY until the chat family was adopted
+// (docs/STUB-ADOPTION-2026-08.md).  Its old comment recorded that the
+// reconstructed bytes were unobservable — "even a real socketpair fd assigned to
 // m_hSocket yields no peer bytes, because the port's chat send path does not go
-// through ::send here).  What IS asserted is the load-bearing invariant that the
-// snoop pass leaves the normal output pipeline intact (both fed lines still land
-// in the line list, before and after the snoop-permission change).
+// through ::send here" — and that was true for one reason only: CChatSocket::
+// SendChatMessage was an empty stub in platform/windows_stubs.cpp.  chatsock.cpp
+// is in mushcore now, SendData -> OnSend -> CAsyncSocket::Send reaches ::send
+// for real, and the bytes ARE readable off the other end of a socketpair.
 TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
 {
     CMUSHclientDoc doc; make_doc(doc);
+
+    // A real, connected pair: fd[0] is the "socket" the snoop output goes out
+    // of, fd[1] is the peer we read it back from.
+    int fds[2];
+    ASSERT_EQ(0, ::socketpair(AF_UNIX, SOCK_STREAM, 0, fds));
+
     CChatSocket* snooper = new CChatSocket(&doc);
+    snooper->m_hSocket = fds[0];
     snooper->m_iChatStatus = eChatConnected;
     snooper->m_bCanSnoop = true;
     snooper->m_bHeIsSnooping = true;
@@ -1995,13 +2004,35 @@ TEST(PrevLineArms, ChatSnoopReconstructsAnsiRuns)
     ASSERT_TRUE(nth_line(doc, 0) != nullptr);
     EXPECT_TRUE(line_text(nth_line(doc, 0)).find("hot") != std::string::npos);
 
+    // THE ASSERTION THIS TEST COULD NOT MAKE BEFORE: the reconstructed ANSI
+    // actually went out on the wire.
+    char buf[4096];
+    ::fcntl(fds[1], F_SETFL, O_NONBLOCK);
+    const ssize_t got = ::read(fds[1], buf, sizeof buf - 1);
+    ASSERT_GT((int) got, 0);
+    buf[got] = 0;
+    const std::string wire(buf, (size_t) got);
+
+    // The text survived...
+    EXPECT_NE(std::string::npos, wire.find("hot"));
+    EXPECT_NE(std::string::npos, wire.find("weird"));
+    EXPECT_NE(std::string::npos, wire.find("plain"));
+    // ...and so did the ANSI that had to be RECONSTRUCTED from the style runs,
+    // which is the part of the path this test exists for.  Without the
+    // reconstruction the peer would receive the text stripped bare, so an
+    // escape byte is the discriminator.
+    EXPECT_NE(std::string::npos, wire.find("\x1B["));
+
     // snoop-permission revoked: the stop-snooping arm still leaves output intact
     snooper->m_bCanSnoop = false;
     feed(doc, "another line\n");
     EXPECT_TRUE(line_text(nth_line(doc, 1)).find("another") != std::string::npos);
 
     doc.m_ChatList.RemoveAll();
+    snooper->m_hSocket = INVALID_SOCKET;   // we own the fds, not the socket
     delete snooper;
+    ::close(fds[0]);
+    ::close(fds[1]);
 }
 
 // LogLineInHTMLcolour called DIRECTLY on an explicit head POSITION (the public

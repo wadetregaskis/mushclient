@@ -3,9 +3,11 @@
 //
 // What lives here is code with NO Windows counterpart that mushcore compiles:
 //   • the port-only world-load/save entry points over the real XML machinery
-//     (LoadWorldFromFile / Load_Set), the Lua-only entry-point resolver
-//     (ResolveAllEntryPoints / FindAllEntryPoints), the script-file mtime poll
-//     (OnScriptFileChanged), and the display-index helper (AllocateLinePositions);
+//     (LoadWorldFromFile / Load_Set) and the display-index helper
+//     (AllocateLinePositions).  The scripting entries that used to be listed
+//     here — ResolveAllEntryPoints, the FindAllEntryPoints twin, the
+//     CreateScriptEngine twin and the OnScriptFileChanged mtime poll — are all
+//     gone: scripting/scripting.cpp is in mushcore now;
 //   • the doc-side GUI methods whose real bodies are in mushapp-only TUs
 //     (methods_output.cpp GetChildFrame / GetWorldWindowPositionX /
 //     windowPositionHelper, methods_notepad.cpp AppendToTheNotepad);
@@ -334,147 +336,26 @@ void CMUSHclientDoc::AllocateLinePositions()
 // Port-only scripting / world-load entry points over the real machinery
 // ════════════════════════════════════════════════════════════════════════════
 
-// ResolveAllEntryPoints — the Lua-only headless equivalent of
-// CMUSHclientDoc::FindAllEntryPoints (scripting/scripting.cpp, mushapp-only):
-// resolve each trigger/alias/timer strProcedure dispid + the world/MXP callbacks
-// (only when not inside a plugin), matching the scripting.cpp plugin/world split.
-void CMUSHclientDoc::ResolveAllEntryPoints()
-{
-    CScriptEngine* engine = GetScriptEngine();
-    if (!engine || !engine->IsLua())
-        return;
+// ResolveAllEntryPoints is gone with the twins it served.  It was the Lua-only
+// headless stand-in for FindAllEntryPoints; all sixteen of its test call sites
+// moved to the canonical body unchanged and green, which is the clearest
+// evidence there was that it never needed to exist separately.
 
-    auto resolve = [&](const CString& name) -> DISPID {
-        if (name.IsEmpty()) return DISPID_UNKNOWN;
-        return engine->GetLuaDispid(name);
-    };
-
-    if (!m_CurrentPlugin) {
-        m_dispidWorldOpen       = resolve(m_strWorldOpen);
-        m_dispidWorldClose      = resolve(m_strWorldClose);
-        m_dispidWorldSave       = resolve(m_strWorldSave);
-        m_dispidWorldConnect    = resolve(m_strWorldConnect);
-        m_dispidWorldDisconnect = resolve(m_strWorldDisconnect);
-        m_dispidWorldGetFocus   = resolve(m_strWorldGetFocus);
-        m_dispidWorldLoseFocus  = resolve(m_strWorldLoseFocus);
-
-        m_dispidOnMXP_Start       = resolve(m_strOnMXP_Start);
-        m_dispidOnMXP_Stop        = resolve(m_strOnMXP_Stop);
-        m_dispidOnMXP_OpenTag     = resolve(m_strOnMXP_OpenTag);
-        m_dispidOnMXP_CloseTag    = resolve(m_strOnMXP_CloseTag);
-        m_dispidOnMXP_SetVariable = resolve(m_strOnMXP_SetVariable);
-        m_dispidOnMXP_Error       = resolve(m_strOnMXP_Error);
-    }
-
-    {
-        CTrigger* pTrigger;
-        CString   strName;
-        CTriggerMap& tmap = GetTriggerMap();
-        for (POSITION pos = tmap.GetStartPosition(); pos; )
-        {
-            tmap.GetNextAssoc(pos, strName, pTrigger);
-            pTrigger->dispid = resolve(pTrigger->strProcedure);
-        }
-    }
-
-    {
-        CAlias* pAlias;
-        CString strName;
-        CAliasMap& amap = GetAliasMap();
-        for (POSITION pos = amap.GetStartPosition(); pos; )
-        {
-            amap.GetNextAssoc(pos, strName, pAlias);
-            pAlias->dispid = resolve(pAlias->strProcedure);
-        }
-    }
-
-    {
-        CTimer* pTimer;
-        CString strName;
-        CTimerMap& timap = GetTimerMap();
-        for (POSITION pos = timap.GetStartPosition(); pos; )
-        {
-            timap.GetNextAssoc(pos, strName, pTimer);
-            pTimer->dispid = resolve(pTimer->strProcedure);
-        }
-    }
-}
-
-// FindAllEntryPoints — real body scripting/scripting.cpp:169 (mushapp-only).
-// Headless the Lua-only ResolveAllEntryPoints covers the same ground; false =
-// "no errors" so the loader never throws "Could not find all required routines".
-bool CMUSHclientDoc::FindAllEntryPoints(void)
-{
-    ResolveAllEntryPoints();
-    return false;
-}
+// FindAllEntryPoints is the canonical body now (scripting/scripting.cpp, in
+// mushcore).  The twin above returned false unconditionally — "no errors" — so
+// xml_load_world.cpp:527 never threw "Could not find all required script
+// routines" for a plugin naming a procedure that does not exist.  Windows
+// throws; the port now does too.
 
 // Option tables (scriptingoptions.cpp) — per-TU externs (Windows convention).
 extern tConfigurationNumericOption OptionsTable [];
 extern tConfigurationAlphaOption   AlphaOptionsTable [];
 
-// Port equivalent of CMUSHclientDoc::CreateScriptEngine (scripting.cpp): create
-// the world's Lua engine, read + parse the external script file, resolve entry
-// points.  Headless deviations (both deliberate): Lua only; the engine is created
-// only when a script FILE is configured.
-static void PortCreateWorldScriptEngine(CMUSHclientDoc& doc)
-{
-    if (doc.m_strScriptFilename.IsEmpty())
-        return;                      // nothing to run (see deviation note)
-
-    CString strLanguage = doc.m_strLanguage;
-    strLanguage.MakeLower();
-    if (strLanguage.IsEmpty())
-        strLanguage = "lua";         // table default
-    if (strLanguage != "lua") {
-        fprintf(stderr, "[world load] scripting language \"%s\" is not supported "
-                        "headless - script not loaded\n",
-                (const char*)doc.m_strLanguage);
-        return;
-    }
-
-    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
-    if (engine->CreateScriptEngine()) {
-        fprintf(stderr, "[world load] could not initialise Lua engine\n");
-        delete engine;
-        return;
-    }
-    doc.m_ScriptEngine = engine;     // scripting.cpp (set before parsing)
-
-    FILE* f = fopen((const char*)doc.m_strScriptFilename, "rb");
-    if (!f) {
-        fprintf(stderr, "[world load] cannot open script file \"%s\": %s\n",
-                (const char*)doc.m_strScriptFilename, strerror(errno));
-        // Windows shows "unable to open" and disables scripting; keep the
-        // (empty) engine so the failure is visible but harmless.
-    } else {
-        fseek(f, 0, SEEK_END);
-        long sz = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        std::string buf;
-        if (sz > 0) {
-            buf.resize((size_t)sz);
-            size_t got = fread(&buf[0], 1, (size_t)sz, f);
-            buf.resize(got);
-        }
-        fclose(f);
-        doc.m_strScript = CString(buf.c_str());
-
-        struct stat st;
-        if (::stat((const char*)doc.m_strScriptFilename, &st) == 0)
-            doc.m_scriptFileMtime = st.st_mtime;
-
-        if (engine->Parse(doc.m_strScript, "Script file")) {
-            fprintf(stderr, "[world load] error parsing script \"%s\"\n",
-                    (const char*)doc.m_strScriptFilename);
-            delete engine;                       // DisableScripting equivalent
-            doc.m_ScriptEngine = nullptr;
-            return;
-        }
-    }
-
-    doc.FindAllEntryPoints();
-}
+// PortCreateWorldScriptEngine is gone.  It was the second hand-written twin of
+// CreateScriptEngine — and the one that mattered, because LoadWorldFromFile is
+// the path essentially every test world load takes, so leaving it would have
+// made the adoption cosmetic.  Six ways it had drifted from the canonical body
+// are listed in docs/STUB-ADOPTION-2026-08.md §7.
 
 // LoadWorldFromFile — port-only public world-load entry (the test suite path).
 // Thin driver over the REAL loader (xml/xml_load_world.cpp): the Windows
@@ -553,7 +434,7 @@ BOOL CMUSHclientDoc::LoadWorldFromFile(const char* path)
     // ── OpenSession scripting steps (doc.cpp) ──────────────────────────────
     if (m_bEnableScripts &&      // provided wanted
         !m_ScriptEngine)         // and not already going
-        PortCreateWorldScriptEngine(*this);
+        CreateScriptEngine();    // the canonical body, exactly as doc.cpp:469 does
 
     if (m_ScriptEngine) {
         if (SeeIfHandlerCanExecute(m_strWorldOpen)) {
@@ -626,80 +507,13 @@ BOOL CMUSHclientDoc::Load_Set(const int set_type, CString strFileName,
     return FALSE;   // FALSE = OK (matches Windows convention)
 }
 
-// OnScriptFileChanged — port script-file auto-reload (polls m_scriptFileMtime).
-// Real body scripting/scripting.cpp (mushapp-only, GUI-prompt based); headless
-// always reloads (eReloadAlways), so bForce is ignored.
-void CMUSHclientDoc::OnScriptFileChanged(const bool /*bForce*/)
-{
-    if (m_bInScriptFileChanged)
-        return;
-
-    if (m_strScriptFilename.IsEmpty())
-        return;
-
-    struct stat st;
-    if (::stat((const char*)m_strScriptFilename, &st) != 0)
-        return;  // file disappeared or unreadable — leave engine as-is
-
-    if (st.st_mtime == m_scriptFileMtime)
-        return;  // unchanged
-
-    m_bInScriptFileChanged = true;
-
-    fprintf(stderr, "[script] \"%s\" changed - reloading\n",
-            (const char*)m_strScriptFilename);
-
-    delete m_ScriptEngine;
-    m_ScriptEngine = nullptr;
-
-    FILE* f = fopen((const char*)m_strScriptFilename, "rb");
-    if (!f) {
-        fprintf(stderr, "[script] could not open \"%s\": %s\n",
-                (const char*)m_strScriptFilename, strerror(errno));
-        m_bInScriptFileChanged = false;
-        return;
-    }
-    fseek(f, 0, SEEK_END);
-    long fileLen = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* buf = (char*)malloc(fileLen + 1);
-    if (!buf) {
-        fclose(f);
-        m_bInScriptFileChanged = false;
-        return;
-    }
-    fread(buf, 1, fileLen, f);
-    fclose(f);
-    buf[fileLen] = '\0';
-    m_strScript = CString(buf);
-    free(buf);
-
-    m_scriptFileMtime = st.st_mtime;
-
-    CScriptEngine* engine = new CScriptEngine(this, "lua");
-    if (engine->CreateScriptEngine()) {
-        fprintf(stderr, "[script] could not initialise Lua engine\n");
-        delete engine;
-        m_bInScriptFileChanged = false;
-        return;
-    }
-
-    if (engine->Parse(m_strScript, m_strScriptFilename)) {
-        fprintf(stderr, "[script] error parsing \"%s\"\n",
-                (const char*)m_strScriptFilename);
-        delete engine;
-        m_bInScriptFileChanged = false;
-        return;
-    }
-
-    m_ScriptEngine = engine;
-    ResolveAllEntryPoints();
-
-    fprintf(stderr, "[script] \"%s\" reloaded successfully\n",
-            (const char*)m_strScriptFilename);
-
-    m_bInScriptFileChanged = false;
-}
+// OnScriptFileChanged is the canonical body now (scripting/scripting.cpp, in
+// mushcore).  The twin here ignored m_nReloadOption entirely and always
+// reloaded; the canonical body honours eReloadNever / eReloadAlways and
+// otherwise asks.  It also already carries a port arm for the declined case —
+// change detection here is poll-driven rather than event-driven, so it records
+// the new mtime even on a "no", which stops the same change re-prompting every
+// two seconds.
 
 // ── Lua function stubs (only when Lua is NOT compiled in) ────────────────────
 // ProcessPreviousLine.cpp builds a Lua table for OnPluginLineReceived; without

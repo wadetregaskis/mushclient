@@ -147,11 +147,9 @@ void CMUSHclientDoc::CheckTickTimers()
 {
 }
 
-// ── CMUSHclientDoc::CreateMonitoringThread ────────────────────────────────────
-// Creates a Windows monitoring thread.  No-op on non-Windows.
-void CMUSHclientDoc::CreateMonitoringThread()
-{
-}
+// CreateMonitoringThread's no-op moved into scripting/scripting.cpp's own
+// #else arm when that TU was adopted into mushcore — one definition, both
+// consumers, instead of a stub only the GUI link could see.
 
 // ── Set_Up_Set_Strings: non-Windows version ───────────────────────────────────
 // Returns the file extension, dialog title, and wxWidgets wildcard filter string

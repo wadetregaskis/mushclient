@@ -25,6 +25,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "scripting/errors.h"
+#include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box (the reload prompt)
 #include "scripting/scripting.h"   // DOCUMENT_STATE, MakeLuaState, RegisterLuaRoutines
 
 extern "C" {
@@ -1930,46 +1931,59 @@ TEST(LuaScripting, XmlreadParsesNestedElementStructure)
     lua_close(L);
 }
 
-// doc_portable.cpp OnScriptFileChanged: "st.st_mtime == m_scriptFileMtime
-// -> return, unchanged" (and the new mtime is recorded before Parse so a
-// re-entrant call does not loop) --- the reload happens ONLY when the file's
-// mtime differs, not when its content does.
+// CMUSHclientDoc::OnScriptFileChanged (scripting/scripting.cpp) — the
+// script-file auto-reload, now the canonical body rather than a port twin.
+//
+// The twin this replaced differed in two ways that this test had absorbed into
+// its premise:
+//   * it had no "scripting is not active" guard, so it would CREATE the engine
+//     from nothing.  The canonical body returns immediately when there is no
+//     engine (scripting.cpp:394) — it is a RELOAD hook, not a loader — so the
+//     engine has to exist first.  That is why the setup below calls
+//     CreateScriptEngine.
+//   * it ignored m_nReloadOption entirely and always reloaded.  The canonical
+//     body honours eReloadNever / eReloadAlways and otherwise ASKS, which
+//     headless answers IDNO (HeadlessMessageBoxAnswer).  So the reload option
+//     is now load-bearing, and all three of its values are covered below —
+//     coverage the twin made impossible.
 TEST(LuaScripting, ScriptFileChangeReloadsOnlyWhenMtimeDiffers)
 {
     char path[256];
     snprintf(path, sizeof path, "/tmp/mc_test_script_%d.lua", (int)getpid());
     const time_t t0 = time(nullptr) - 100;
 
-    auto write_script = [&](const char* body) {
+    auto write_script = [&](const char* body, time_t when) {
         FILE* f = fopen(path, "wb");
         ASSERT_TRUE(f != nullptr);
         fputs(body, f);
         fclose(f);
-        struct utimbuf tb; tb.actime = tb.modtime = t0;
+        struct utimbuf tb; tb.actime = tb.modtime = when;
         ASSERT_EQ(0, utime(path, &tb));          // pin the mtime
     };
-    write_script("function fn1() end\n");
+    write_script("function fn1() end\n", t0);
 
     CMUSHclientDoc doc;
     doc.m_bEnableScripts    = TRUE;
     doc.m_strLanguage       = "lua";
     doc.m_strScriptFilename = path;
+    doc.m_nReloadOption     = eReloadAlways;     // else headless answers IDNO
 
-    doc.OnScriptFileChanged(false);              // initial load (mtime 0 differs)
+    // The initial load is CreateScriptEngine's job, not this hook's.  false is
+    // the good return.
+    ASSERT_FALSE(doc.CreateScriptEngine());
     ASSERT_TRUE(doc.m_ScriptEngine != nullptr);
     EXPECT_NE(DISPID_UNKNOWN, doc.m_ScriptEngine->GetDispid("fn1"));
     EXPECT_EQ(DISPID_UNKNOWN, doc.m_ScriptEngine->GetDispid("fn2"));
 
     // new CONTENT but the SAME mtime: must NOT reload (mtime is the trigger)
-    write_script("function fn2() end\n");
+    write_script("function fn2() end\n", t0);
     doc.OnScriptFileChanged(false);
     ASSERT_TRUE(doc.m_ScriptEngine != nullptr);
     EXPECT_NE(DISPID_UNKNOWN, doc.m_ScriptEngine->GetDispid("fn1"));  // old script
     EXPECT_EQ(DISPID_UNKNOWN, doc.m_ScriptEngine->GetDispid("fn2"));
 
     // bump the mtime: now it reloads and picks up the new content
-    struct utimbuf tb; tb.actime = tb.modtime = t0 + 10;
-    ASSERT_EQ(0, utime(path, &tb));
+    write_script("function fn2() end\n", t0 + 10);
     doc.OnScriptFileChanged(false);
     ASSERT_TRUE(doc.m_ScriptEngine != nullptr);
     EXPECT_EQ(DISPID_UNKNOWN, doc.m_ScriptEngine->GetDispid("fn1"));
@@ -1978,6 +1992,185 @@ TEST(LuaScripting, ScriptFileChangeReloadsOnlyWhenMtimeDiffers)
     // and a further call with the same (new) mtime is a no-op, not a loop
     doc.OnScriptFileChanged(false);
     EXPECT_NE(DISPID_UNKNOWN, doc.m_ScriptEngine->GetDispid("fn2"));
+}
+
+// The reload OPTION, all three values.  The port twin ignored it entirely, so
+// none of this was reachable before the adoption — and the default is the
+// middle one, which means the headless default flipped from "always reload" to
+// "declined", because MB_YESNO answers IDNO here.
+TEST(LuaScripting, ScriptReloadOptionDecidesWhetherAChangeIsPickedUp)
+{
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/mc_test_reloadopt_%d.lua", (int)getpid());
+    const time_t t0 = time(nullptr) - 100;
+
+    auto write_script = [&](const char* body, time_t when) {
+        FILE* f = fopen(path, "wb");
+        ASSERT_TRUE(f != nullptr);
+        fputs(body, f);
+        fclose(f);
+        struct utimbuf tb; tb.actime = tb.modtime = when;
+        ASSERT_EQ(0, utime(path, &tb));
+    };
+
+    struct Case {
+        LONG        option;
+        const char* name;
+        bool        expectReload;
+    };
+    const Case cases[] = {
+        { eReloadAlways,  "eReloadAlways",  true  },
+        { eReloadNever,   "eReloadNever",   false },
+        // The DEFAULT (scriptingoptions_numeric.inc:129).  It prompts, and
+        // HeadlessMessageBoxAnswer answers MB_YESNO with IDNO — so headless,
+        // the default is "do not reload".
+        { eReloadConfirm, "eReloadConfirm", false },
+    };
+
+    for (const Case& c : cases) {
+        write_script("function fn1() end\n", t0);
+
+        CMUSHclientDoc doc;
+        doc.m_bEnableScripts    = TRUE;
+        doc.m_strLanguage       = "lua";
+        doc.m_strScriptFilename = path;
+        doc.m_nReloadOption     = c.option;
+
+        ASSERT_FALSE(doc.CreateScriptEngine());
+        ASSERT_TRUE(doc.m_ScriptEngine != nullptr);
+
+        write_script("function fn2() end\n", t0 + 10);
+        doc.OnScriptFileChanged(false);
+
+        ASSERT_TRUE(doc.m_ScriptEngine != nullptr);
+        const bool reloaded =
+            doc.m_ScriptEngine->GetDispid("fn2") != DISPID_UNKNOWN;
+        if (reloaded != c.expectReload)
+            printf("  %s: reloaded=%d, expected %d\n",
+                   c.name, (int) reloaded, (int) c.expectReload);
+        EXPECT_EQ(c.expectReload, reloaded);
+        // The old script survives exactly when the new one was not taken —
+        // so "reloaded" is not merely "the engine was thrown away".
+        EXPECT_EQ(!c.expectReload,
+                  doc.m_ScriptEngine->GetDispid("fn1") != DISPID_UNKNOWN);
+    }
+
+    // bForce overrides even eReloadNever — that is what Game > Reload script
+    // file passes, and nothing covered it before.
+    write_script("function fn1() end\n", t0);
+    CMUSHclientDoc doc;
+    doc.m_bEnableScripts    = TRUE;
+    doc.m_strLanguage       = "lua";
+    doc.m_strScriptFilename = path;
+    doc.m_nReloadOption     = eReloadNever;
+    ASSERT_FALSE(doc.CreateScriptEngine());
+    write_script("function fn2() end\n", t0 + 10);
+    doc.OnScriptFileChanged(true);
+    ASSERT_TRUE(doc.m_ScriptEngine != nullptr);
+    EXPECT_NE(DISPID_UNKNOWN, doc.m_ScriptEngine->GetDispid("fn2"));
+    ::unlink(path);
+}
+
+// The two arms that mutation showed nothing could observe.
+//
+// Both survived a mutation of the canonical body, and neither because the test
+// suite was lazy — each is genuinely invisible through the paths anything else
+// takes, which is exactly why they need naming here.
+
+// (1) The RE-ENTRANCY GUARD (scripting.cpp:29).  Both port twins lacked it, so a
+// second call would `new CScriptEngine` over the live pointer and LEAK the
+// first.  Every one of the six production call sites gates on !m_ScriptEngine or
+// calls DisableScripting first, so the leak was latent rather than live — and
+// unreachable except by calling the method directly, which is what this does.
+TEST(LuaScripting, CreateScriptEngineRefusesToReplaceALiveEngine)
+{
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/mc_test_reentrant_%d.lua", (int)getpid());
+    FILE* f = fopen(path, "wb");
+    ASSERT_TRUE(f != nullptr);
+    fputs("function fn1() end\n", f);
+    fclose(f);
+
+    CMUSHclientDoc doc;
+    doc.m_bEnableScripts    = TRUE;
+    doc.m_strLanguage       = "lua";
+    doc.m_strScriptFilename = path;
+
+    ASSERT_FALSE(doc.CreateScriptEngine());       // false = good return
+    CScriptEngine * first = doc.m_ScriptEngine;
+    ASSERT_NE(nullptr, first);
+
+    // Second call: refused, and — the load-bearing part — the ORIGINAL engine
+    // is still the one installed.  Without the guard this pointer changes and
+    // the old engine is lost with no delete.
+    EXPECT_FALSE(doc.CreateScriptEngine());
+    EXPECT_EQ(first, doc.m_ScriptEngine);
+    EXPECT_NE(DISPID_UNKNOWN, doc.m_ScriptEngine->GetDispid("fn1"));
+    ::unlink(path);
+}
+
+// (2) eReloadNever's EARLY RETURN (scripting.cpp:401).  Deleting it leaves the
+// headless outcome identical, because control then reaches the prompt and
+// HeadlessMessageBoxAnswer answers MB_YESNO with IDNO — so no reload either
+// way.  The difference is only visible on Windows, where the user would be
+// ASKED about a file they said never to reload.
+//
+// So the assertion is not about the outcome but about the QUESTION: under
+// eReloadNever nothing may be asked at all.
+static int  g_askCount = 0;
+static int  CountingAsk(const char*, const char*, unsigned) { ++g_askCount; return IDNO; }
+
+TEST(LuaScripting, ReloadNeverDoesNotEvenAsk)
+{
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/mc_test_neverask_%d.lua", (int)getpid());
+    const time_t t0 = time(nullptr) - 100;
+
+    auto write_script = [&](const char* body, time_t when) {
+        FILE* f = fopen(path, "wb");
+        ASSERT_TRUE(f != nullptr);
+        fputs(body, f);
+        fclose(f);
+        struct utimbuf tb; tb.actime = tb.modtime = when;
+        ASSERT_EQ(0, utime(path, &tb));
+    };
+
+    int (*saved)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    g_wxhook_message_box = CountingAsk;
+
+    // eReloadConfirm ASKS — the control, without which "asked nothing" could
+    // mean the change was never noticed.
+    write_script("function fn1() end\n", t0);
+    {
+        CMUSHclientDoc doc;
+        doc.m_bEnableScripts    = TRUE;
+        doc.m_strLanguage       = "lua";
+        doc.m_strScriptFilename = path;
+        doc.m_nReloadOption     = eReloadConfirm;
+        ASSERT_FALSE(doc.CreateScriptEngine());
+        g_askCount = 0;
+        write_script("function fn2() end\n", t0 + 10);
+        doc.OnScriptFileChanged(false);
+        EXPECT_GT(g_askCount, 0);
+    }
+
+    // eReloadNever asks NOTHING, on the very same change.
+    write_script("function fn1() end\n", t0);
+    {
+        CMUSHclientDoc doc;
+        doc.m_bEnableScripts    = TRUE;
+        doc.m_strLanguage       = "lua";
+        doc.m_strScriptFilename = path;
+        doc.m_nReloadOption     = eReloadNever;
+        ASSERT_FALSE(doc.CreateScriptEngine());
+        g_askCount = 0;
+        write_script("function fn2() end\n", t0 + 10);
+        doc.OnScriptFileChanged(false);
+        EXPECT_EQ(0, g_askCount);
+    }
+
+    g_wxhook_message_box = saved;
+    ::unlink(path);
 }
 
 // ── world.Metaphone ──────────────────────────────────────────────────────

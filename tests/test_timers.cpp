@@ -591,7 +591,7 @@ TEST(TimerScript, ScriptDeletingOtherDueTimerPreventsItsFiring)
     CTimer* t2 = add_timer(doc, "b_second", 5.0);
     make_overdue(t1);
     make_overdue(t2);
-    doc.ResolveAllEntryPoints();
+    doc.FindAllEntryPoints();
 
     long fired_before = doc.m_iTimersFiredCount;
     tick(doc);                               // must not crash (no UAF)

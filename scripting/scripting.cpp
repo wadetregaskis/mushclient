@@ -371,6 +371,15 @@ void CMUSHclientDoc::CreateMonitoringThread()
 
 	// Thread will delete data object
 }
+#else
+// The port has no equivalent: the script file is not watched, so a change to it
+// is noticed only when the user asks (Game > Reload script file), which routes
+// to OnScriptFileChanged directly.  A no-op here rather than a stub in an
+// adapter TU, so there is exactly ONE definition and both consumers see it —
+// this used to live in platform/mushapp_stubs.cpp, invisible to mushcore.
+void CMUSHclientDoc::CreateMonitoringThread()
+{
+}
 #endif // _WIN32
 
 

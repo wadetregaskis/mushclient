@@ -127,6 +127,70 @@ static bool output_contains(CMUSHclientDoc& doc, const char* text)
 // plugins.cpp: "this crazy code is to get 0x00 bytes into telnet
 // subnegotiations ;)" — the (long, string) callback overload passes
 // embedded NULs intact to OnPluginTelnetSubnegotiation.
+// ── the entry-point check that the port used to skip ────────────────────────
+//
+// xml_load_world.cpp:527 throws "Could not find all required script routines"
+// when FindAllEntryPoints reports errors, aborting the plugin load.  The port's
+// hand-written twin returned false unconditionally — "no errors" — so a plugin
+// naming a procedure that does not exist loaded anyway, with the trigger silently
+// dead.  Windows has always refused it.  Adopting scripting/scripting.cpp made
+// the port agree; this pins that, in both directions.
+static std::string write_plugin_with_trigger(const char* tag, const char* id,
+                                             const char* procedure,
+                                             const char* script_body)
+{
+    static int s_seq = 0;
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_ep_%d_%d_%s.xml",
+             (int)getpid(), ++s_seq, tag);
+    FILE* f = fopen(path, "wb");
+    if (!f) return "";
+    fprintf(f,
+        "<?xml version=\"1.0\"?>\n"
+        "<!DOCTYPE muclient>\n"
+        "<muclient>\n"
+        "<plugin name=\"EP\" author=\"T\" id=\"%s\" language=\"Lua\" "
+        "version=\"1.0\" />\n"
+        "<triggers>\n"
+        "  <trigger match=\"ping\" name=\"t1\" enabled=\"y\" script=\"%s\">"
+        "<send>pong</send></trigger>\n"
+        "</triggers>\n"
+        "<script><![CDATA[\n%s\n]]></script>\n"
+        "</muclient>\n", id, procedure, script_body);
+    fclose(f);
+    return path;
+}
+
+TEST(PluginCallback, PluginNamingAMissingScriptRoutineIsRefused)
+{
+    CMUSHclientDoc doc;
+
+    // The control FIRST, so a failure below cannot be "plugins never load".
+    // The trigger names a procedure the script really defines.
+    const std::string ok = write_plugin_with_trigger(
+        "ok", "aaaaaaaaaaaaaaaaaaaaaaa1", "OnPing",
+        "function OnPing (name, line, wildcards) end");
+    ASSERT_FALSE(ok.empty());
+    EXPECT_TRUE(load_plugin(doc, ok));
+    EXPECT_EQ(1u, doc.m_PluginList.size());
+
+    // ...and now the same plugin naming a routine that does not exist.  The
+    // load must be REFUSED, not merely logged: on Windows the exception aborts
+    // it, and the port matched only after the twin went.
+    const std::string bad = write_plugin_with_trigger(
+        "bad", "aaaaaaaaaaaaaaaaaaaaaaa2", "NoSuchRoutine",
+        "function SomethingElse () end");
+    ASSERT_FALSE(bad.empty());
+    EXPECT_FALSE(load_plugin(doc, bad));
+
+    // Refused means NOT INSTALLED — a plugin that threw during load must not be
+    // left in the list half-built.
+    EXPECT_EQ(1u, doc.m_PluginList.size());
+
+    ::unlink(ok.c_str());
+    ::unlink(bad.c_str());
+}
+
 TEST(PluginCallback, TelnetSubnegotiationStringPreservesEmbeddedNuls)
 {
     CMUSHclientDoc doc; make_doc(doc);

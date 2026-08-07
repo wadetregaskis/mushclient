@@ -242,7 +242,7 @@ static bool setup_lua(CMUSHclientDoc& doc, const char* lua_src)
     if (engine->CreateScriptEngine()) { delete engine; return false; }
     if (engine->Parse(CString(lua_src), "<test>")) { delete engine; return false; }
     doc.m_ScriptEngine = engine;
-    doc.ResolveAllEntryPoints();
+    doc.FindAllEntryPoints();
     return true;
 }
 
@@ -262,7 +262,7 @@ TEST(TriggerScript, LuaCallbackFiresOnMatch)
     // Add a trigger with a script callback
     CTrigger* t = add_trigger(doc, "ping");
     t->strProcedure = CString("OnPing");
-    doc.ResolveAllEntryPoints();   // re-resolve now that trigger exists
+    doc.FindAllEntryPoints();   // re-resolve now that trigger exists
 
     feed_line(doc, "ping");
 
@@ -307,7 +307,7 @@ TEST(TriggerScript, DeleteLinesIsAllowedInsideTheScriptWindow)
 
     CTrigger* t = add_trigger(doc, "gagme");
     t->strProcedure = CString("OnGag");
-    doc.ResolveAllEntryPoints();
+    doc.FindAllEntryPoints();
 
     feed_line(doc, "keep one");
     feed_line(doc, "keep two");
@@ -372,7 +372,7 @@ TEST(TriggerScript, LowercaseWildcardFoldsTheStoredArrayButNotTheLuaCallback)
     doc.GetTriggerMap().SetAt(t->strLabel, t);
     doc.GetTriggerArray().Add(t);
     doc.GetTriggerRevMap()[t] = "shout_trigger";
-    doc.ResolveAllEntryPoints();
+    doc.FindAllEntryPoints();
 
     feed_line(doc, "GandalF shouts loudly");
     EXPECT_EQ(1L, t->nMatched);
@@ -455,7 +455,7 @@ TEST(TriggerScript, LuaCallbackReceivesWildcard)
     doc.GetTriggerMap().SetAt(t->strLabel, t);
     doc.GetTriggerArray().Add(t);
     doc.GetTriggerRevMap()[t] = "hp_trigger";
-    doc.ResolveAllEntryPoints();
+    doc.FindAllEntryPoints();
 
     feed_line(doc, "HP: 42");
 
@@ -479,7 +479,7 @@ TEST(TriggerScript, MissingLuaFunctionDoesNotCrash)
 
     CTrigger* t = add_trigger(doc, "hello");
     t->strProcedure = CString("NonExistentFunction");
-    doc.ResolveAllEntryPoints();
+    doc.FindAllEntryPoints();
     // After resolve, dispid should still be DISPID_UNKNOWN for a missing fn
     EXPECT_EQ(DISPID_UNKNOWN, t->dispid);
 
@@ -726,7 +726,7 @@ TEST(TriggerScript, DuplicateNamedWildcardKeepsNonEmptyCapture)
     doc.GetTriggerMap().SetAt(t->strLabel, t);
     doc.GetTriggerArray().Add(t);
     doc.GetTriggerRevMap()[t] = "mobtrig";
-    doc.ResolveAllEntryPoints();
+    doc.FindAllEntryPoints();
 
     feed_line(doc, "Kobold attacks");        // second <mob> group unset
     CVariable* v = nullptr;
@@ -1158,7 +1158,7 @@ TEST(TriggerScriptR5, UnlabelledScriptedTriggerUsesInternalName)
     doc.m_TriggerMap.SetAt(internalName, t);
     doc.m_TriggerArray.Add(t);
     doc.GetTriggerRevMap()[t] = (LPCTSTR)internalName;
-    doc.ResolveAllEntryPoints();
+    doc.FindAllEntryPoints();
 
     feed_line(doc, "anonline");
     EXPECT_EQ(1L, t->nMatched);

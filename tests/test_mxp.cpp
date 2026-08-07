@@ -1506,7 +1506,7 @@ TEST(MxpR4, TagAndErrorScriptCallbacks)
     doc.m_strOnMXP_OpenTag  = "OnOpen";
     doc.m_strOnMXP_CloseTag = "OnClose";
     doc.m_strOnMXP_Error    = "OnError";
-    doc.ResolveAllEntryPoints();
+    doc.FindAllEntryPoints();
 
     mud(doc, "<B>bold</B>\n");
     mud(doc, "<3bad>\n");                    // triggers the error callback
@@ -1607,7 +1607,7 @@ TEST(MxpR4, OpenTagCallbackReceivesFormattedArguments)
         "function OnOpen(name, a) args = a return false end\n"), "<test>"));
     doc.m_ScriptEngine = engine;
     doc.m_strOnMXP_OpenTag = "OnOpen";
-    doc.ResolveAllEntryPoints();
+    doc.FindAllEntryPoints();
 
     mud(doc, "<color fore=red back=blue>x</color>\n");
 

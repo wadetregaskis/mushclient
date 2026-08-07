@@ -550,6 +550,14 @@ if(NOT WIN32)
         # (SetRange/SetPos/SetStep/StepIt/OffsetPos/CheckCancelButton) carry
         # real port-side logic rather than being ctor/DDX boilerplate.
         dialogs/ProgDlg.cpp
+        # The canonical scripting front end (CreateScriptEngine / FindAllEntryPoints
+        # / DisableScripting / OnScriptFileChanged).  mushgui has always run these;
+        # adopting them retires the headless twins that had drifted from them.
+        # The two dialogs come with it: it constructs both, and both are inert
+        # headless through the null DoModal hook.
+        scripting/scripting.cpp
+        dialogs/ImmediateDlg.cpp
+        dialogs/world_prefs/MissingEntryPoints.cpp
         DDV_validation.cpp
         platform/wx_mfc_hooks_storage.cpp
         scriptingoptions.cpp
@@ -588,7 +596,6 @@ if(NOT WIN32)
         platform/mushapp_stubs.cpp
         platform/wx_tree_property_sheet.cpp
         Utilities.cpp
-        scripting/scripting.cpp
         scripting/functionlist.cpp
         ActivityDoc.cpp
         ActivityView.cpp
@@ -622,7 +629,6 @@ if(NOT WIN32)
         dialogs/world_prefs/ButtonColour.cpp
         dialogs/world_prefs/CommandOptionsDlg.cpp
         dialogs/world_prefs/EditVariable.cpp
-        dialogs/world_prefs/MissingEntryPoints.cpp
         dialogs/world_prefs/PrefsPropertySheet.cpp
         dialogs/world_prefs/TabDefaultsDlg.cpp
         dialogs/world_prefs/TimerDlg.cpp
@@ -657,7 +663,6 @@ if(NOT WIN32)
         dialogs/GlobalChangeDlg.cpp
         dialogs/GoToLineDlg.cpp
         dialogs/HighlightPhraseDlg.cpp
-        dialogs/ImmediateDlg.cpp
         dialogs/ImportXMLdlg.cpp
         dialogs/InsertUnicodeDlg.cpp
         dialogs/KeyNameDlg.cpp

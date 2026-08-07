@@ -84,7 +84,6 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 void CMUSHclientDoc::OnGamePreferences        () {}
-void CMUSHclientDoc::OnGameImmediate          () {}
 void CMUSHclientDoc::OnGameResetalltimers     () {}
 void CMUSHclientDoc::OnGameMapper             () {}
 void CMUSHclientDoc::OnGameDomapperspecial    () {}
@@ -114,7 +113,8 @@ void CMUSHclientDoc::OnGameConfigureCustomColours   () {}
 void CMUSHclientDoc::OnGameConfigureMxppueblo       () {}
 void CMUSHclientDoc::OnGameConfigureChat            () {}
 
-void CMUSHclientDoc::OnUpdateGameImmediate       (CCmdUI* /*pCmdUI*/) {}
+// OnGameImmediate / OnUpdateGameImmediate: real bodies are
+// scripting/scripting.cpp, in mushcore since the adoption.
 // OnUpdateGameResetalltimers: real body is timers.cpp (mushcore compiles it
 // under FULL_BUILD now) — a stub here would be a duplicate symbol.
 void CMUSHclientDoc::OnUpdateGameMapper          (CCmdUI* /*pCmdUI*/) {}
@@ -134,96 +134,10 @@ bool CMUSHclientDoc::GamePreferences (const int /*iPage*/)
 // The tiny real copy that stood here was identical to it line for line.
 
 
-// ════════════════════════════════════════════════════════════════════════════
-// 2. Tiny REAL scripting bodies (scripting.cpp is mushapp-only; §5's 2 real).
-//    These ARE called post-flip (OpenSession doc.cpp:479, doc.cpp:2287-2288,
-//    doc_construct.cpp:618), so behaviour matters.  Relocated from the portable
-//    twin doc_portable.cpp:PortCreateWorldScriptEngine (still live until B-3):
-//    Lua-only (the other five engines are embedded on the mushgui side) and the
-//    engine is created only when a script FILE is configured — the deliberate
-//    headless deviation where engine-presence == script-presence.
-// ════════════════════════════════════════════════════════════════════════════
-
-bool CMUSHclientDoc::CreateScriptEngine ()
-{
-  // The m_bEnableScripts / !m_ScriptEngine gate stays in the caller
-  // (OpenSession, doc.cpp:477-479), matching Windows.
-  if (m_strScriptFilename.IsEmpty ())
-    return false;                 // nothing to run (headless deviation)
-
-  CString strLanguage = m_strLanguage;
-  strLanguage.MakeLower ();
-  if (strLanguage.IsEmpty ())
-    strLanguage = "lua";          // table default
-  if (strLanguage != "lua")
-    {
-    fprintf (stderr, "[world load] scripting language \"%s\" is not supported "
-                     "headless - script not loaded\n",
-             static_cast<const char*> (m_strLanguage));
-    return false;
-    }
-
-  m_bSyntaxErrorOnly = false;
-  CScriptEngine * engine = new CScriptEngine (this, "lua");
-  if (engine->CreateScriptEngine ())     // true == failed (scripting.cpp:39)
-    {
-    fprintf (stderr, "[world load] could not initialise Lua engine\n");
-    delete engine;
-    return true;                         // engine-init failure (scripting.cpp:43)
-    }
-  m_ScriptEngine = engine;               // scripting.cpp:37 (set before parsing)
-
-  // Read the script file (scripting.cpp:52-73) + remember its mtime so
-  // OnScriptFileChanged doesn't immediately see a "change".
-  FILE * f = fopen (static_cast<const char*> (m_strScriptFilename), "rb");
-  if (!f)
-    {
-    fprintf (stderr, "[world load] cannot open script file \"%s\": %s\n",
-             static_cast<const char*> (m_strScriptFilename), strerror (errno));
-    // Windows shows "unable to open" and disables scripting; keep the (empty)
-    // engine so the failure is visible but harmless.
-    }
-  else
-    {
-    fseek (f, 0, SEEK_END);
-    long sz = ftell (f);
-    fseek (f, 0, SEEK_SET);
-    std::string buf;
-    if (sz > 0)
-      {
-      buf.resize ((size_t) sz);
-      size_t got = fread (&buf [0], 1, (size_t) sz, f);
-      buf.resize (got);
-      }
-    fclose (f);
-    m_strScript = CString (buf.c_str ());
-
-    struct stat st;
-    if (::stat (static_cast<const char*> (m_strScriptFilename), &st) == 0)
-      m_scriptFileMtime = st.st_mtime;
-
-    if (engine->Parse (m_strScript, "Script file"))    // scripting.cpp:78
-      {
-      fprintf (stderr, "[world load] error parsing script \"%s\"\n",
-               static_cast<const char*> (m_strScriptFilename));
-      m_bSyntaxErrorOnly = true;
-      DisableScripting ();                             // scripting.cpp:81
-      return true;
-      }
-    }
-
-  FindAllEntryPoints ();                               // scripting.cpp:102
-  return false;                                        // good return
-}
-
-void CMUSHclientDoc::DisableScripting (void)
-{
-  // No script-file monitoring thread headless (the port polls m_scriptFileMtime
-  // in OnScriptFileChanged), so scripting.cpp:290's KillThread has no analogue.
-  delete m_ScriptEngine;
-  m_ScriptEngine = NULL;
-}
-
+// CreateScriptEngine and DisableScripting are GONE from here: the canonical
+// bodies in scripting/scripting.cpp are in mushcore now.  Their twins had
+// drifted on six counts, three of them never recorded — see
+// docs/STUB-ADOPTION-2026-08.md §7.
 // ════════════════════════════════════════════════════════════════════════════
 // 3. CMainFrame::DoFileOpen — real body (mainfrm.cpp) shows a file-open dialog
 //    then opens the world.  Headless there is no dialog; no-op.

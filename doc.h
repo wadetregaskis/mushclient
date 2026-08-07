@@ -2050,14 +2050,11 @@ public:
   // (Re)build the JUMP_SIZE m_pLinePositions index from m_maxlines — the
   // headless equivalent of the allocation SetUpOutputWindow defers.
   void AllocateLinePositions ();
-  // After the script engine is created and the file parsed, resolve all
-  // trigger/alias/timer strProcedure names to dispids (Lua-only headless).
-  void ResolveAllEntryPoints ();
-  // Script-file auto-reload, port style: OnScriptFileChanged polls this
-  // mtime.  Coexists with the Windows auto-reload machinery above
-  // (m_pThread / m_eventScriptFileChanged / m_timeScriptFileMod), which
-  // the port never starts.
-  time_t m_scriptFileMtime = 0;
+  // ResolveAllEntryPoints and m_scriptFileMtime are GONE: they existed only to
+  // serve the hand-written CreateScriptEngine / OnScriptFileChanged twins.  The
+  // canonical bodies (scripting/scripting.cpp, in mushcore) use
+  // FindAllEntryPoints and m_timeScriptFileMod, which are the members Windows
+  // uses, so the port no longer keeps a second mtime that nothing read.
 #endif
 
   void StartNewLine (const bool hard_break, const int flags);

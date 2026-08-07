@@ -58,16 +58,9 @@ void CMUSHclientDoc::SortTimers ()
 {
 }
 
-// ShowErrorLines / WriteErrorLines — scripting/scripting.cpp:450 / :490 show the
-// script file around an error point.  Headless there is no script editor / error
-// window, so both are no-ops (matching the retired headless-stub inlines).
-void CMUSHclientDoc::ShowErrorLines (const int /*iLine*/)
-{
-}
-
-void CMUSHclientDoc::WriteErrorLines (const int /*iLine*/, FILE * /*f*/)
-{
-}
+// ShowErrorLines / WriteErrorLines are the canonical bodies now
+// (scripting/scripting.cpp, in mushcore) — they walk the script file around an
+// error point, which is real work the no-ops here never did.
 
 // DrawMappingStatusLine — the real body (Mapping.cpp:258) pushes the speedwalk
 // preview to Frame.SetStatusMessageNow().  Headless there is no status bar, so

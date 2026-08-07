@@ -676,9 +676,25 @@ function Ping() return "pong" end
     EXPECT_TRUE(doc.m_ScriptEngine->IsLua());
 }
 
-TEST(WorldLoad, NoScriptNoEngine)
+// Scripting ENABLED with no script file still gets an engine.
+//
+// This test used to assert the opposite, and the assertion was the whole of the
+// "deliberate headless deviation" recorded in
+// docs/STUB-ADOPTION-2026-08.md §7: the port's hand-written CreateScriptEngine
+// twin bailed on an empty m_strScriptFilename BEFORE constructing the engine,
+// so engine-presence meant script-file-presence. Windows has never worked that
+// way — scripting/scripting.cpp:37 creates the engine and only then, at :48,
+// returns early for the empty filename — and the deviation dated from when Lua
+// was the only language the port could run.
+//
+// It matters because the engine is what makes immediate mode and world.Execute
+// work: a world with scripting on and no script file is exactly the setup
+// somebody uses to type Lua at the command line.
+TEST(WorldLoad, ScriptingEnabledWithNoScriptFileStillGetsAnEngine)
 {
-    // A world with no script file should have no script engine.
+    // No <world> tag, so the ctor's default m_bEnableScripts = TRUE survives
+    // (the absent-boolean rule only applies to attributes of a tag that IS
+    // present).
     const char* xml = R"(<?xml version="1.0"?>
 <!DOCTYPE muclient>
 <muclient>
@@ -689,6 +705,41 @@ TEST(WorldLoad, NoScriptNoEngine)
 
     CMUSHclientDoc doc;
     ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    ASSERT_TRUE(doc.m_bEnableScripts);            // the premise, stated
+    ASSERT_NE(nullptr, doc.m_ScriptEngine);
+    EXPECT_TRUE(doc.m_ScriptEngine->IsLua());
+    EXPECT_TRUE(doc.m_strScript.IsEmpty());       // ...and it ran no script
+
+    // The engine is USABLE, which is the whole point of having it — this is
+    // the path CImmediateDlg takes when you type Lua at the immediate window
+    // (scripting/scripting.cpp's OnGameImmediate).  Parse returns false on
+    // success, MFC-style.
+    EXPECT_FALSE(doc.m_ScriptEngine->Parse("world.SetVariable('v', 'typed')",
+                                           "Immediate"));
+    CVariable * pVar = NULL;
+    EXPECT_TRUE(doc.GetVariableMap().Lookup("v", pVar));
+    ASSERT_NE(nullptr, pVar);
+    EXPECT_EQ(CString("typed"), pVar->strContents);
+}
+
+// The control, and the thing that genuinely means "no engine": scripting off.
+// Without this the change above would be indistinguishable from "always make an
+// engine", which is not what the canonical body does — doc.cpp:467 gates on
+// m_bEnableScripts.
+TEST(WorldLoad, ScriptingDisabledGetsNoEngine)
+{
+    const char* xml = R"(<?xml version="1.0"?>
+<!DOCTYPE muclient>
+<muclient>
+<world site="test.mud" port="4000">
+</world>
+</muclient>)";
+
+    CMUSHclientDoc doc;
+    ASSERT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
+    // A <world> tag with no enable_scripts attribute zeroes it, by the Windows
+    // absent-boolean rule.
+    ASSERT_FALSE(doc.m_bEnableScripts);
     EXPECT_EQ(nullptr, doc.m_ScriptEngine);
 }
 

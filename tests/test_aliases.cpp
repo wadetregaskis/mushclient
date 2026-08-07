@@ -414,7 +414,7 @@ TEST(AliasScript, DeleteAliasFromOwnScriptReturnsItemInUse)
     a->strInternalName = CString("myalias");
     a->strProcedure    = CString("OnAlias");
     doc.GetAliasMap().SetAt("myalias", a);
-    doc.ResolveAllEntryPoints();
+    doc.FindAllEntryPoints();
 
     type_command(doc, "n");
 

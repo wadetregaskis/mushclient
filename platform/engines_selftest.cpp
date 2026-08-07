@@ -685,9 +685,9 @@ void battery_trigger_callsite(const Dialect& d, bool lowercase)
     doc.GetTriggerMap().SetAt(t->strLabel, t);
     doc.GetTriggerArray().Add(t);
     doc.GetTriggerRevMap()[t] = "shouter";
-    // What FindAllEntryPoints does for each trigger.  (Its headless twin
-    // ResolveAllEntryPoints is test-link-only, and the real one wants a
-    // document template we do not have this early.)
+    // What FindAllEntryPoints does for each trigger, inlined: the real one
+    // wants a document template we do not have this early.  (It used to have a
+    // headless twin, ResolveAllEntryPoints; that is gone.)
     t->dispid = doc.m_ScriptEngine->GetDispid(t->strProcedure);
 
     if (t->dispid == DISPID_UNKNOWN) {

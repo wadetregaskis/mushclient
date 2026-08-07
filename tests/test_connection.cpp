@@ -1743,7 +1743,7 @@ TEST(LifecycleArms, WorldConnectAndDisconnectScriptsRun)
     doc->m_ScriptEngine = engine;
     doc->m_strWorldConnect = "OnWorldConnect";
     doc->m_strWorldDisconnect = "OnWorldDisconnect";
-    doc->ResolveAllEntryPoints();      // resolve the handler dispids
+    doc->FindAllEntryPoints();      // resolve the handler dispids
 
     doc->ConnectionEstablished();
     CVariable* v = nullptr;

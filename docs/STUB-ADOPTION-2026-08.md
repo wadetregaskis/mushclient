@@ -223,6 +223,36 @@ is live with an assertion the stub would fail — not with a green suite. A gree
 suite is exactly what this hazard produces, not what rules it out.
 
 
+## 5b. Live constraints for stage 2 (do not lose these)
+
+These lived as comments in `platform/doc_gui_method_stubs.cpp`, which is deleted
+now that it holds no definitions. They are constraints on the *next* piece of
+work, not history.
+
+**Keep the `eOK`-on-null-surface arms exactly as they are.** Every drawing site
+in `miniwindow.cpp` is guarded `if (!srf) return eOK` (or the family's equivalent).
+That guard is what makes stage 1 safe without a rasteriser — the window exists,
+its geometry and hotspots are real, and only the pixels are absent. It is also
+the arm **both shipping platforms** take if an adapter ever fails to install, so
+turning it into an error would be a real behaviour change on Windows too, not a
+headless-only tightening.
+
+**One exception, and it is a real defect waiting to happen:** `WindowWrite`
+(`miniwindow.cpp:1246-1247`) returns `eOK` with no surface, so it claims to have
+written a PNG it never wrote. Every other surface-dependent method merely fails
+to paint. Either give it an explicit null-surface failure arm or leave it until
+the headless surface lands — but do not let it stay `eOK` once a headless
+rasteriser exists, because then the claim becomes checkable and wrong.
+
+**Do not widen `pal::g_adoptSurface(void*, int, int)`.** It is shared with
+Windows (`pal/gdi_surface.cpp`). The headless side must key its map on the
+`CBitmap` pointer instead, leaving `platform/mfc_ui.h` layout untouched.
+
+**`platform/gdi_headless.cpp`'s three `CBitmap` bodies** (`CreateCanvasBitmap`,
+`Attach`, `DeleteObject`) return `false`/`FALSE` deliberately — that is what
+keeps the surface null and the guarded arms live. Stage 2 replaces them with real
+bodies backed by `pal::CpuRaster`; until then they are contract, not placeholder.
+
 ## 6. Explicitly not doing
 
 - **Retiring the five `Frame`-dereferencing stubs.** Permanent contract; see §2.

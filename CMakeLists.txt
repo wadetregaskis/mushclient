@@ -565,7 +565,6 @@ if(NOT WIN32)
         utilities_portable.cpp
         pal/cpu_raster.cpp
         platform/doc_flip_gui_stubs.cpp
-        platform/doc_gui_method_stubs.cpp
         platform/doc_headless_stubs.cpp
         platform/doc_port_glue.cpp
         platform/gdi_headless.cpp

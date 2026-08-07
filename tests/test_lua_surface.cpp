@@ -880,6 +880,99 @@ static std::string write_rgba_png(int w, int h)
     return path;
 }
 
+// LoadPngMemory is the OTHER decoder — world.WindowLoadImageMemory, which is how
+// a plugin loads an image it has fetched or generated rather than one on disk.
+// It had only a negative test ("notpng" is refused), so its row-copy loop
+// (png_load_shared.cpp:348-350) was never executed.
+//
+// That loop is the twin of the one in LoadPng that was reading past every row
+// allocation, so this test is what keeps a fix at one site from being made at
+// only one site.  The widths below are deliberately NOT multiples of 4: for a
+// 24bpp image that is exactly when the padded DIB stride exceeds what libpng
+// allocated, and the over-read appears.  Run under AddressSanitizer, this test
+// is what catches a regression; run normally, it still proves the decode is
+// correct.
+// A 24bpp (RGB, no alpha) PNG.  It has to be 24bpp: at 32bpp the row is w * 4
+// bytes, which is a multiple of 4 for EVERY width, so the padded DIB stride
+// always equals what libpng allocated and the over-read this test guards
+// against cannot happen.  Writing an RGBA fixture here would have been a test
+// that could never fail — which is exactly what the first draft of it was.
+static std::string write_rgb_png(int w, int h)
+{
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_rgb_%d_%d.png", w, (int)getpid());
+    FILE* fp = fopen(path, "wb");
+    if (!fp) return "";
+
+    png_structp png  = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    png_infop   info = png ? png_create_info_struct(png) : NULL;
+    if (!png || !info || setjmp(png_jmpbuf(png))) {
+        if (png) png_destroy_write_struct(&png, info ? &info : NULL);
+        fclose(fp);
+        return "";
+    }
+    png_init_io(png, fp);
+    png_set_IHDR(png, info, w, h, 8, PNG_COLOR_TYPE_RGB,
+                 PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
+                 PNG_FILTER_TYPE_DEFAULT);
+    png_write_info(png, info);
+
+    std::vector<unsigned char> row((size_t)w * 3);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            row[x*3+0] = (unsigned char)(20 + x * 10);   // R varies with x
+            row[x*3+1] = (unsigned char)(90 + y * 5);    // G varies with y
+            row[x*3+2] = 200;                            // B constant
+        }
+        png_write_row(png, row.data());
+    }
+    png_write_end(png, NULL);
+    png_destroy_write_struct(&png, &info);
+    fclose(fp);
+    return path;
+}
+
+TEST(LuaSurface, LoadImageMemoryDecodesAPngWithAPaddedStride)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    // Widths 5, 6 and 7 pad by 1, 2 and 3 bytes respectively — every non-zero
+    // remainder — and a height of 3 means the loop runs more than once, so a
+    // fault on any row but the first is still reachable.
+    for (int w = 5; w <= 7; ++w) {
+        const std::string png = write_rgb_png(w, 3);
+        ASSERT_FALSE(png.empty());
+
+        char script[1400];
+        snprintf(script, sizeof(script),
+            "local fh = assert(io.open('%s', 'rb'))\n"
+            "local bytes = fh:read('*a')\n"
+            "fh:close()\n"
+            "assert(#bytes > 0, 'fixture PNG is empty')\n"
+            "assert(world.WindowCreate('m%d', 0, 0, 20, 20, 0, 0, 0x000000) == 0)\n"
+            "assert(world.WindowLoadImageMemory('m%d', 'i', bytes, false) == 0,\n"
+            "       'in-memory PNG did not decode')\n"
+            "assert(world.WindowImageInfo('m%d', 'i', 2) == %d, 'width')\n"
+            "assert(world.WindowImageInfo('m%d', 'i', 3) == 3, 'height')\n"
+            // 24bpp is load-bearing here, not incidental: it is the only depth
+            // at which the DIB stride is padded, which is the condition under
+            // test.  Assert it, so a fixture that quietly became RGBA fails.
+            "assert(world.WindowImageInfo('m%d', 'i', 6) == 24, 'depth')\n"
+            "assert(world.WindowDrawImage('m%d', 'i', 0, 0, 0, 0, 1, 0, 0, 0, 0) == 0)\n"
+            "for x = 0, %d do for y = 0, 2 do\n"
+            "  local want = (20 + x * 10) + (90 + y * 5) * 256 + 200 * 65536\n"
+            "  local got = world.WindowGetPixel('m%d', x, y)\n"
+            "  assert(got == want,\n"
+            "         string.format('memory decode at %%d,%%d: got %%d want %%d',\n"
+            "                       x, y, got, want))\n"
+            "end end\n",
+            png.c_str(), w, w, w, w, w, w, w, w - 1, w);
+
+        EXPECT_TRUE(run(f.L, script));
+        ::unlink(png.c_str());
+    }
+}
+
 TEST(LuaSurface, ImageFamilyRoundTripsAPngThroughTheDibStore)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);

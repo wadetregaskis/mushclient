@@ -376,3 +376,58 @@ calls the same shared body as the tick drain, so the two cannot disagree again.
 The port was already on this side, so only Windows changes — a no-log command
 flushed by setting the delay to zero now echoes, as it always did when drained
 on a tick.
+
+---
+
+## PNG loader reads past the end of every row libpng allocated
+
+`LoadPng` and `LoadPngMemory` (now `png_load_shared.cpp:193` and `:353`;
+`Utilities.cpp` upstream) size their row copy with
+
+```
+  long bpl = BytesPerLine (width, bit_per_pixel);   // padded to 4 bytes
+  ...
+  memcpy (p, row_pointers [iHeight - row - 1], bpl);
+```
+
+but `png_read_png` allocates each `row_pointers[i]` at exactly
+`png_get_rowbytes()`, which is `width * channels` with **no padding**. For any
+24bpp image whose width is not a multiple of 4, the copy therefore reads 1–3
+bytes past the end of every row allocation — once per row, on every PNG load.
+
+Measured at HEAD, printing both sizes from inside the loop:
+
+| width | `png_get_rowbytes()` | `bpl` | over-read |
+|---|---|---|---|
+| 5 | 15 | 16 | 1 |
+| 6 | 18 | 20 | 2 |
+| 7 | 21 | 24 | 3 |
+| 9 | 27 | 28 | 1 |
+
+Confirmed under AddressSanitizer, reached straight from a script:
+
+```
+ERROR: AddressSanitizer: heap-buffer-overflow ... READ of size 28
+    #1 LoadPng(char const*, void*&) png_load_shared.cpp:182
+    #2 CMiniWindow::LoadPngImage(...) miniwindow.cpp:1205
+    #5 L_WindowLoadImage(lua_State*) lua_methods.cpp:6480
+```
+
+32bpp is unaffected — `width * 4` is always 4-aligned, so `bpl` and `rowbytes`
+agree. That is also why this went unnoticed: the alpha images are safe, and the
+padding bytes are never read as pixel data, so nothing renders wrongly. It is a
+latent crash, not a visible defect — which is precisely the kind that survives
+for years.
+
+**Fixed 2026-08-07** by copying `min(png_get_rowbytes(), bpl)` at both sites and
+leaving the pad bytes as the zero the DIB came back with. **Not one visible
+pixel changes on either platform**, so this needs no `UPSTREAM-DIVERGENCES.md`
+entry — but it IS a change to shared code that ships on Windows, and belongs in
+the Windows validation pass.
+
+Regression guard: `tests/test_lua_surface.cpp`'s
+`LoadImageMemoryDecodesAPngWithAPaddedStride` covers the second site, which had
+no positive test at all before. **Both sites were reverted independently and
+each was caught by ASAN**, so neither is guarded only by the other. Note that
+the fixture must be **24bpp** — a first draft used the existing RGBA helper,
+whose stride is 4-aligned at every width, and so could never have failed.

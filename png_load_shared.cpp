@@ -177,9 +177,20 @@ unsigned char header [8];
 
   // have to reverse row order
 
+  // Copy only what libpng ALLOCATED, not the whole DIB stride.  bpl is padded
+  // to a 4-byte boundary; png_read_png allocates each row at exactly
+  // png_get_rowbytes(), so for any 24bpp image whose width is not a multiple
+  // of 4 this memcpy used to read 1-3 bytes past the end of every row (proved
+  // under AddressSanitizer: a 7-wide image reads 24 from a 21-byte
+  // allocation).  The DIB comes back zeroed, so the pad bytes stay 0 instead
+  // of picking up heap contents — and since nothing ever reads them as pixels,
+  // not one visible pixel changes on either platform.
+  const size_t rowBytes = (size_t) png_get_rowbytes (png_ptr, info_ptr);
+  const size_t copyBytes = rowBytes < (size_t) bpl ? rowBytes : (size_t) bpl;
+
   png_uint_32 iHeight = png_get_image_height (png_ptr, info_ptr);
   for (row = 0; row < iHeight; row++, p += bpl)
-     memcpy (p, row_pointers [iHeight - row - 1], bpl);
+     memcpy (p, row_pointers [iHeight - row - 1], copyBytes);
 
   // done with data
   png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
@@ -332,10 +343,14 @@ long LoadPngMemory (unsigned char * Buffer, const size_t Length, HBITMAP & hbmp,
   long row;
   unsigned char * p = pB;
 
+  // Copy only what libpng allocated — see the identical fix in LoadPng above.
+  const size_t rowBytes = (size_t) png_get_rowbytes (png_ptr, info_ptr);
+  const size_t copyBytes = rowBytes < (size_t) bpl ? rowBytes : (size_t) bpl;
+
   // have to reverse row order
   png_uint_32 iHeight = png_get_image_height (png_ptr, info_ptr);
   for (row = 0; row < iHeight; row++, p += bpl)
-     memcpy (p, row_pointers [iHeight - row - 1], bpl);
+     memcpy (p, row_pointers [iHeight - row - 1], copyBytes);
 
   // done with data
   png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);

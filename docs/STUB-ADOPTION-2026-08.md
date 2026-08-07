@@ -215,7 +215,28 @@ readers. Headless says `eOK`.
    `windows_stubs.cpp` already owns. **`platform/doc_gui_method_stubs.cpp` is
    deleted** — 108 stubs to zero. Surfaced two macOS product gaps (`AddFont`,
    `SetToolBarPosition`) and five more twins, bringing this family to six too.
-5. **Headless surface bridge + DIB store.** The one genuine infrastructure item.
+5. **Headless surface bridge + DIB store** — the bridge half is **done**
+   (`ae50c1a`); the DIB store is not.
+
+   `platform/headless_surface.cpp` installs `pal::CpuRaster`, so the miniwindow
+   drawing ops paint for real: fill/line/gradient/setPixel/getPixel/blit, and
+   fonts realise (CpuRaster's synthetic test font), so `WindowTextWidth` and
+   `WindowText` return real measurements. Asserted by reading pixels back, not
+   by return codes.
+
+   The ordering was the whole difficulty: `CMiniWindow::Create` fills the
+   background BEFORE adopting, so a headless `adopt` that *created* a surface
+   would discard every miniwindow's background colour. Ownership therefore
+   follows GDI's model — the bitmap owns the pixels, `SelectObject` associates
+   the DC, `adopt` only looks up — which also makes
+   `g_releaseAdoptedSurface` necessarily inert.
+
+   **Still open — the DIB store.** `gdi_headless.cpp`'s `::CreateDIBSection`
+   returns nullptr and `CBitmap::Attach` is `FALSE`, so the IMAGE family
+   (`WindowLoadImage`, `DrawImage*`, `BlendImage`, `MergeImageAlpha`,
+   `GetImageAlpha`, `ImageInfo`) still has no pixel source. The wx version is
+   `platform/wx_gdi_compat.cpp:73-200`; roughly two thirds of it (buffer, stride,
+   bottom-up flag, handle map) is toolkit-free.
 6. **`scripting/scripting.cpp`** — carries a real behavioural question (see
    below), so keep it separate.
 7. **`dialogs/ProgDlg.cpp`** — opportunistic; retires 14 definitions.

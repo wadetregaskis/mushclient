@@ -130,16 +130,9 @@ bool CMUSHclientDoc::GamePreferences (const int /*iPage*/)
   return false;
 }
 
-// SetTitle (methods_output.cpp:848, mushapp-only) — tiny REAL body: store the
-// document title and propagate it to the world's IWorldView.  Kept real (not a
-// no-op) so post-flip m_strWindowTitle stays live and title changes still reach
-// the view seam, exactly as today via the portable path.  EmitTitle is the
-// unguarded IWorldView seam (available in mushcore).
-void CMUSHclientDoc::SetTitle (LPCTSTR Title)
-{
-  m_strWindowTitle = Title;
-  EmitTitle (static_cast<const char*> (m_strWindowTitle));
-}
+// SetTitle: the REAL body now (methods_output.cpp:714, adopted into mushcore).
+// The tiny real copy that stood here was identical to it line for line.
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // 2. Tiny REAL scripting bodies (scripting.cpp is mushapp-only; §5's 2 real).
@@ -388,6 +381,15 @@ CString MUSHCLIENT_VERSION = VERSION_STRING;
 // ── CMUSHView view methods (MUSHview.cpp, mushapp-only) ─────────────────────
 void CMUSHView::addedstuff (void) {}
 void CMUSHView::did_jump   (void) {}
+
+// AutoWrapWindowWidth — ADDRESS-ONLY, and the distinction matters.  The adopted
+// CMUSHclientDoc::TextRectangle (methods_output.cpp) calls it, so the symbol has
+// to exist, but the call sits inside a GetFirstViewPosition walk that yields
+// nothing headless (CSplitterWnd::CreateStatic is a FALSE stub, so no CMUSHView
+// is ever constructed — the recorded dead-view-family strategy).  So this needs
+// a DEFINITION, not an implementation, and giving it a body would be inventing
+// behaviour no build has.
+void CMUSHView::AutoWrapWindowWidth (CMUSHclientDoc* /*pDoc*/) {}
 
 // ── Missing virtual overrides on the already-stubbed dialogs (§8) ───────────
 // OnSize/OnDestroy are virtual in the wx CWnd shim, so the dialog vtables above

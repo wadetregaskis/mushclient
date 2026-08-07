@@ -470,6 +470,13 @@ if(NOT WIN32)
         surface_bridge.cpp
         scripting/methods/methods_miniwindows.cpp
         png_load_shared.cpp
+        # Output/view family adoption (docs/STUB-ADOPTION-2026-08.md §5 step 4).
+        # Its two recorded blockers are gone: ValidateBrushStyle came with
+        # miniwindow.cpp, and CMUSHView::AutoWrapWindowWidth is address-only
+        # (the CMUSHView walk that reaches it never yields headless).
+        # MakeWindowTransparent.cpp comes along because Transparency calls it.
+        MakeWindowTransparent.cpp
+        scripting/methods/methods_output.cpp
         scripting/errors.cpp
         doc_scripting_shared.cpp
         doc_tabcomplete_shared.cpp
@@ -586,7 +593,6 @@ if(NOT WIN32)
         MDIClientWnd.cpp
         MDITabs.cpp
         MUSHclient.cpp
-        MakeWindowTransparent.cpp
         Mapping.cpp
         MySplitterWnd.cpp
         MyStatusBar.cpp
@@ -608,7 +614,6 @@ if(NOT WIN32)
         winplace.cpp
         world_debug.cpp
         scripting/methods/methods.cpp
-        scripting/methods/methods_output.cpp
         scripting/methods/methods_panes.cpp
         dialogs/world_prefs/ButtonColour.cpp
         dialogs/world_prefs/CommandOptionsDlg.cpp

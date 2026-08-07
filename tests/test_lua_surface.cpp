@@ -463,8 +463,12 @@ TEST(LuaSurface, MiscViewStubs)
         // its documented result, and the stub that used to answer 0 here had
         // this test defending the wrong contract.  Checked properly below.
 
-        "assert(world.SetBackgroundImage('x.bmp', 0) == 0)\n"
-        "assert(world.SetForegroundImage('x.bmp', 0) == 0)\n"
+        // These two now report the FILE failure they always should have —
+        // eCouldNotOpenFile for a path that does not exist.  The stub answered
+        // eOK for anything, so "the image silently did not load" was
+        // indistinguishable from success.
+        "assert(world.SetBackgroundImage('x.bmp', 0) == error_code.eCouldNotOpenFile)\n"
+        "assert(world.SetForegroundImage('x.bmp', 0) == error_code.eCouldNotOpenFile)\n"
         "assert(world.SetCursor(0) == 0)\n"
 
         "world.SetTitle('t')\n"
@@ -472,7 +476,9 @@ TEST(LuaSurface, MiscViewStubs)
         "world.SetInputFont('Courier', 10, 400, 0)\n"
         "assert(world.SetScroll(-2, true) == 0)\n"
         "assert(world.SetScroll(1, true) == 0)\n"
-        "assert(world.SetToolBarPosition(1, false, 0, 0, 0) == 0)\n"
+        // SetToolBarPosition answers eBadParameter for EVERY Which — see the
+        // note on it below; this is a real macOS gap, now visible.
+        "assert(world.SetToolBarPosition(1, false, 0, 0, 0) == error_code.eBadParameter)\n"
 
         "world.SetWorldWindowStatus(1)\n"
         "assert(world.TextRectangle(0, 0, 100, 100, 0, 0, 1, 0, 0) == 0)\n"
@@ -522,16 +528,77 @@ TEST(LuaSurface, GuiOnlySettersStillValidateTheirArguments)
         "local bad = error_code.eBadParameter\n"
         // AddFont: `if (strlen (PathName) <= 0) return eBadParameter`
         "assert(world.AddFont('') == bad)\n"
-        "assert(world.AddFont('/no/such/font.ttf') == 0)\n"
+        // eNoSuchCommand, not eOK: AddFont cannot register a font on this
+        // platform at all — see the note below the test.
+        "assert(world.AddFont('/no/such/font.ttf') == error_code.eNoSuchCommand)\n"
         // SetCursor: the range gate is -1 .. 12
         "assert(world.SetCursor(-2) == bad)\n"
         "assert(world.SetCursor(13) == bad)\n"
         "assert(world.SetCursor(-1) == 0)\n"
         "assert(world.SetCursor(12) == 0)\n"
+        // The two image setters gate on Mode BEFORE they touch the file, so an
+        // out-of-range mode is eBadParameter and not the file error.  Both arms
+        // are needed: the stub accepted anything, and a check-free body passes a
+        // test that only ever supplies a valid mode.
+        "assert(world.SetBackgroundImage('x.bmp', 99) == bad)\n"
+        "assert(world.SetBackgroundImage('x.bmp', -1) == bad)\n"
+        "assert(world.SetForegroundImage('x.bmp', 99) == bad)\n"
+        // ...and a VALID mode gets past the gate to report the file failure,
+        // so "reject everything" fails too.
+        "assert(world.SetBackgroundImage('x.bmp', 0) == error_code.eCouldNotOpenFile)\n"
         // SetToolBarPosition: `default: return eBadParameter` on Which
         "assert(world.SetToolBarPosition(0, false, 0, 0, 0) == bad)\n"
         "assert(world.SetToolBarPosition(5, false, 0, 0, 0) == bad)\n"
-        "assert(world.SetToolBarPosition(1, false, 0, 0, 0) == 0)\n"
+        // ...and so does a VALID Which, because the toolbars do not exist.
+        "assert(world.SetToolBarPosition(1, false, 0, 0, 0) == bad)\n"
+    ));
+}
+
+// ── two macOS gaps these assertions now pin ───────────────────────────────
+//
+// Both were INVISIBLE while the output family was stubbed, because the stub
+// answered eOK and a test asserted eOK.  They are not adoption regressions —
+// they are what the shipping app has always done — and they are pinned here so
+// the next person meets them as facts rather than rediscovering them.
+//
+// world.AddFont ALWAYS fails on macOS.  AddSpecialFont (doc.cpp:3851) opens with
+// LoadLibrary("gdi32") to find AddFontResourceExA; platform/mfc_ui.h:5921 stubs
+// LoadLibrary to nullptr, so the real body returns eNoSuchCommand at doc.cpp:3874
+// before it ever looks at the path.  The macOS equivalent is
+// CTFontManagerRegisterFontsForURL.
+//
+// world.SetToolBarPosition ALWAYS returns eBadParameter on macOS, for every
+// Which — not only the out-of-range ones.  The real body gates each arm on
+// `!pToolBar->m_hWnd` (methods_output.cpp:275) and the toolbars are created in
+// CMainFrame::OnCreate, one of the port's recorded dead readers.  The survey
+// listed this as "probable, needs a product run"; the adopted body settles it.
+//
+// world.Transparency is a third instance of the same LoadLibrary shape —
+// MakeWindowTransparent opens with LoadLibrary("user32") — and is asserted false
+// in the sweep above.  All three are recorded in docs/STUB-ADOPTION-2026-08.md §4.
+
+// GetFrame and Transparency were the two stubs that blocked this whole family,
+// because both dereference App.m_pMainWnd, which used to be nullptr headless.
+// platform/headless_app.cpp points it at the real CMainFrame that
+// windows_stubs.cpp already owns, whose m_hWnd is null — so both answer exactly
+// what their stubs answered, with no dereference.  Pinned so that a later change
+// to m_pMainWnd cannot silently turn either into a crash or a different value.
+TEST(LuaSurface, FrameDependentMethodsAnswerWithoutAMainWindow)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        // A null lightuserdata — the same "no window" answer the stub gave, and
+        // the honest one: the product hands back a wxWindow* here, which is not
+        // an HWND and cannot be used as one.
+        "local h = world.GetFrame()\n"
+        "assert(h == nil or tostring(h) == 'userdata: 0x0', tostring(h))\n"
+        // FALSE, matching the PRODUCT — MakeWindowTransparent bails at its
+        // LoadLibrary('user32') before touching a window.
+        "assert(world.Transparency(0, 1) == false)\n"
+        // The clamp still runs ahead of that (MWT_MIN_FACTOR/MWT_MAX_FACTOR), so
+        // out-of-range input must not throw.
+        "assert(world.Transparency(0, -500) == false)\n"
+        "assert(world.Transparency(0, 5000) == false)\n"
     ));
 }
 

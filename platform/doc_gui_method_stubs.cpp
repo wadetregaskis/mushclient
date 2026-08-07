@@ -124,220 +124,29 @@ static VARIANT EmptyVariant (void)
 // bridge renders in the product.
 
 // ══════════════════════════════════════════════════════════════════════════
-// Output/view family (25) — GUI ops inert; line-list ops keep twin semantics
-// ══════════════════════════════════════════════════════════════════════════
-
-void CMUSHclientDoc::ActivateClient ()
-  {
-  // GUI-only headless — silent no-op
-  }   // end of CMUSHclientDoc::ActivateClient
-
-long CMUSHclientDoc::AddFont (LPCTSTR PathName)
-  {
-  // The real body's FIRST act is a parameter check, ahead of anything GUI:
-  //   if (strlen (PathName) <= 0) return eBadParameter;
-  // (methods_output.cpp).  Registering the font itself needs a GUI, but
-  // answering eOK to an empty path is a contract Windows has never had, and a
-  // test asserting it would be pinning the stub.
-  if (!PathName || strlen (PathName) == 0)
-    return eBadParameter;
-  return eOK;   // nothing to register headless
-  }   // end of CMUSHclientDoc::AddFont
-
-// Bookmark is no longer stubbed: the real body moved to doc_shared.cpp (its
-// only view dependency was the CMUSHView walk, now the IWorldView seam), so
-// mushcore links the canonical one.
-
-// DeleteLines is no longer stubbed: the real body moved to
-// scripting/methods/methods_output_shared.cpp, so mushcore links the
-// canonical one (m_bInSendToScript refusal, m_total_lines, jump index).
-
-void CMUSHclientDoc::DeleteOutput ()
-  {
-  // The real body (methods_output.cpp) is exactly this one call, and
-  // ClearOutput lives in doc.cpp, which mushcore links.  The old stub
-  // reimplemented the teardown by hand and skipped three things
-  // ClearOutput does: m_sRecentLines.clear (), the m_DisplayFindInfo
-  // reset, and EmitClearOutput () -- so world.DeleteOutput left stale
-  // trigger context, a live find cursor into freed lines, and a view
-  // still showing the text it had just deleted.
-  ClearOutput ();
-  }   // end of CMUSHclientDoc::DeleteOutput
-
-void CMUSHclientDoc::FlashIcon ()
-  {
-  // GUI-only headless — silent no-op
-  }   // end of CMUSHclientDoc::FlashIcon
-
-long CMUSHclientDoc::GetFrame ()
-  {
-  return 0;   // HWND-ish null — L_GetFrame pushes it as a null lightuserdata
-  }   // end of CMUSHclientDoc::GetFrame
-
-BSTR CMUSHclientDoc::GetRecentLines (long Count)
-  {
-  // Join the last Count entries of m_sRecentLines (the old portable twin).
-  std::string result;
-  if (Count > 0)
-    {
-    long total = (long) m_sRecentLines.size ();
-    long start = total - Count;
-    if (start < 0) start = 0;
-    for (long i = start; i < total; ++i)
-      {
-      // Guard on the ACCUMULATOR, not the index — methods_output.cpp:116-117 is
-      // `if (!s.empty ()) s += '\n';`.  The two differ in exactly one case: when
-      // the oldest line in the window is blank.  Blank lines DO reach here —
-      // ProcessPreviousLine.cpp:549 pushes every completed line unconditionally —
-      // so with {"", "hp: 100"} the index guard returned "\nhp: 100" where the
-      // product returns "hp: 100".  Multi-line trigger matching reads this.
-      if (!result.empty ()) result += '\n';
-      result += m_sRecentLines [(size_t) i];
-      }
-    }
-  return CString (result.c_str ()).AllocSysString ();
-  }   // end of CMUSHclientDoc::GetRecentLines
-
-void CMUSHclientDoc::MoveMainWindow (long Left, long Top, long Width, long Height)
-  {
-  // GUI-only headless — silent no-op
-  }   // end of CMUSHclientDoc::MoveMainWindow
-
-void CMUSHclientDoc::MoveWorldWindowX (long Left, long Top, long Width, long Height, short Which)
-  {
-  // GUI-only headless — silent no-op
-  }   // end of CMUSHclientDoc::MoveWorldWindowX
-
-// MoveWorldWindow and GetNotepadWindowPosition were the only two dispatch-map
-// entries with no headless body, which nothing noticed because the dispatch
-// table itself (platform/mc_dispatch.cpp) had never been linked into a test
-// binary -- the archive member was only pulled in once something referenced
-// MC_DispatchInvoke, and until tests/test_mc_dispatch.cpp nothing did.  Adding
-// them is what lets that whole substrate be tested at all.
-void CMUSHclientDoc::MoveWorldWindow (long Left, long Top, long Width, long Height)
-  {
-  // GUI-only headless — silent no-op
-  }   // end of CMUSHclientDoc::MoveWorldWindow
-
-// GetNotepadWindowPosition is the real body now (methods_notepad.cpp:368),
-// adopted with the rest of the notepad family.
-
-void CMUSHclientDoc::Pause (BOOL Flag)
-  {
-  // Scroll-lock / release the output pane through the IWorldView seam
-  // (the old portable twin's behaviour; m_gui_paused feeds GetInfo(114)).
-  EmitPaused (Flag != 0);
-  m_gui_paused = Flag != 0;
-  }   // end of CMUSHclientDoc::Pause
-
-void CMUSHclientDoc::Repaint ()
-  {
-  // NOT a no-op.  The real body (methods_output.cpp:509-523) opens with
-  // UpdateAllViews (NULL) and then walks the views to force an immediate
-  // redraw.  Only the walk is GUI-bound: CMUSHclientDoc::UpdateAllViews is the
-  // REAL override in doc_display_shared.cpp:175, which mushcore links, and it
-  // is what drains the display buffer into pal::IWorldView.  Dropping it meant
-  // world.Repaint () did nothing at all headless.
-  UpdateAllViews (NULL);
-  }   // end of CMUSHclientDoc::Repaint
-
-void CMUSHclientDoc::ResetStatusTime ()
-  {
-  // GUI-only headless — silent no-op
-  }   // end of CMUSHclientDoc::ResetStatusTime
-
-long CMUSHclientDoc::SetBackgroundImage (LPCTSTR FileName, short Mode)
-  {
-  return eOK;
-  }   // end of CMUSHclientDoc::SetBackgroundImage
-
-long CMUSHclientDoc::SetCursor (long Cursor)
-  {
-  // Same range gate the real port arm applies before it touches a widget
-  // (methods_output.cpp: `if (Cursor < -1 || Cursor > 12) return eBadParameter`).
-  if (Cursor < -1 || Cursor > 12)
-    return eBadParameter;
-  return eOK;   // no pane to set a cursor on headless
-  }   // end of CMUSHclientDoc::SetCursor
-
-long CMUSHclientDoc::SetForegroundImage (LPCTSTR FileName, short Mode)
-  {
-  return eOK;
-  }   // end of CMUSHclientDoc::SetForegroundImage
-
-void CMUSHclientDoc::SetOutputFont (LPCTSTR FontName, short PointSize)
-  {
-  // Drive the IWorldView seam as the old portable twin did.
-  EmitOutputFont (std::string (FontName ? FontName : ""), PointSize, false, false);
-  }   // end of CMUSHclientDoc::SetOutputFont
-
-long CMUSHclientDoc::SetScroll (long Position, BOOL Visible)
-  {
-  // MUST match the real body in scripting/methods/methods_output.cpp, which is
-  // what mushgui links -- this file is test-link-only.  The two drifted once
-  // already: this twin dropped Visible on the floor, so GetInfo(120) reported a
-  // hard-coded "true" no matter what a script set, and the headless suite could
-  // not see the product's behaviour at all.
-  //
-  // Visible is RECORDED even though the port's pane always shows its scrollbar:
-  // m_bScrollBarWanted has no other writer besides doc_construct.cpp:136, and
-  // GetInfo(120) reports it.  -2 means "no change" to the position.
-  m_bScrollBarWanted = Visible;
-
-  if (Position != -2)
-    EmitScroll (Position);
-  return eOK;
-  }   // end of CMUSHclientDoc::SetScroll
-
-long CMUSHclientDoc::SetToolBarPosition (short Which, BOOL Float, short Side, long Top, long Left)
-  {
-  // The real body's switch on Which ends in `default: return eBadParameter`
-  // (methods_output.cpp) before any toolbar is touched.  There are no toolbars
-  // headless, but the validation is not a GUI concern.
-  if (Which < 1 || Which > 4)
-    return eBadParameter;
-  return eOK;
-  }   // end of CMUSHclientDoc::SetToolBarPosition
-
-void CMUSHclientDoc::SetWorldWindowStatus (short Parameter)
-  {
-  // GUI-only headless — silent no-op
-  }   // end of CMUSHclientDoc::SetWorldWindowStatus
-
-long CMUSHclientDoc::TextRectangle (long Left, long Top, long Right, long Bottom, long BorderOffset, long BorderColour, long BorderWidth, long OutsideFillColour, long OutsideFillStyle)
-  {
-  // The real body (methods_output.cpp:520-580) opens with ValidateBrushStyle
-  // (miniwindow.cpp, mushgui-only) and has a CMUSHView walk near the end, but
-  // everything else in it is portable: the nine assignments are pure document
-  // state that world.GetInfo and the wrap-column plumbing both read back, and
-  // the last two statements are NOT view-bound at all.
-  //
-  // The brush validation is NOT replicated here: duplicating it would be the
-  // twin drift this file is supposed to be shrinking, and a headless caller
-  // has no brush.  So an invalid OutsideFillStyle is accepted here and refused
-  // on the GUI build — recorded rather than hidden.
-  m_TextRectangle = CRect (Left, Top, Right, Bottom);
-  m_TextRectangleBorderOffset      = BorderOffset;
-  m_TextRectangleBorderColour      = BorderColour;
-  m_TextRectangleBorderWidth       = BorderWidth;
-  m_TextRectangleOutsideFillColour = OutsideFillColour;
-  m_TextRectangleOutsideFillStyle  = OutsideFillStyle;
-  EmitTextRectChanged ();
-
-  // methods_output.cpp:577-578.  SendWindowSizes is doc_shared.cpp:4570 — a
-  // mushcore body, not a view call — so dropping it was pure drift: reserving a
-  // text rectangle shrinks the usable width, and the MUD has to be told through
-  // NAWS.  The headless engine used to skip that renegotiation silently, which
-  // also meant no test could ever see a NAWS regression through this path.
-  SendWindowSizes (m_nWrapColumn);
-  Redraw ();
-  return eOK;
-  }   // end of CMUSHclientDoc::TextRectangle
-
-BOOL CMUSHclientDoc::Transparency (long Key, short Amount)
-  {
-  return FALSE;   // no layered windows headless
-  }   // end of CMUSHclientDoc::Transparency
+// Output/view family: NO LONGER STUBBED.  scripting/methods/methods_output.cpp
+// (and MakeWindowTransparent.cpp, which Transparency calls) are compiled into
+// mushcore now.  That empties this file of CMUSHclientDoc methods entirely.
+//
+// The two blockers on record for this family both dissolved rather than being
+// solved: ValidateBrushStyle arrived with miniwindow.cpp in the previous stage,
+// and CMUSHView::AutoWrapWindowWidth is address-only — TextRectangle reaches it
+// inside a GetFirstViewPosition walk that yields nothing headless, so it needs a
+// definition, not an implementation.
+//
+// A third "blocker" was a misreading: GetFrame and Transparency dereference
+// App.m_pMainWnd unguarded, and that was recorded as a permanent headless
+// contract.  It is not.  platform/headless_app.cpp points m_pMainWnd at the real
+// CMainFrame that windows_stubs.cpp already owns, whose m_hWnd is null — so both
+// answer exactly what their stubs answered (0 and FALSE) with no dereference and
+// no invented contract.
+//
+// Worth knowing about Transparency specifically: it returns FALSE on the PRODUCT
+// too, because MakeWindowTransparent opens with LoadLibrary("user32") and the
+// shim returns nullptr.  world.Transparency has never done anything on macOS.
+// The stub agreed with the product by coincidence; now there is one body, so the
+// gap is visible and fixable in one place.  Same shape as world.AddFont
+// (LoadLibrary("gdi32")) — see docs/STUB-ADOPTION-2026-08.md §4.
 
 // ══════════════════════════════════════════════════════════════════════════
 // Accelerator family: NO LONGER STUBBED.  scripting/methods/methods_accelerators.cpp

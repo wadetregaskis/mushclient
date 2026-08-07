@@ -37,6 +37,7 @@
 
 #include "stdafx.h"
 #include "MUSHclient.h"
+#include "mainfrm.h"   // CMainFrame / the Frame global (m_pMainWnd, below)
 
 #include <string>   // std::string (db_simple_query signature)
 
@@ -82,6 +83,26 @@ CMUSHclientApp::CMUSHclientApp()
 
     m_pWorldDocTemplate  = &s_worldDocTemplate;        // world registry (see above)
     m_pNormalDocTemplate = &s_normalDocTemplate;       // notepad registry (see above)
+
+    // The main window.  Windows sets this in InitInstance (MUSHclient.cpp:653)
+    // and the wx product sets it from hook_load_mdi_frame; headless neither
+    // runs, so it used to stay nullptr — and two adopted methods dereference it
+    // WITHOUT a guard, because on Windows it cannot be null by the time a script
+    // can call them:
+    //
+    //   GetFrame      return (long) App.m_pMainWnd->m_hWnd;   (methods_output.cpp:81)
+    //   Transparency  MakeWindowTransparent (App.m_pMainWnd->m_hWnd, ...)  (:249)
+    //
+    // platform/windows_stubs.cpp:27 already owns a real CMainFrame for exactly
+    // this kind of reason, so point at it.  Its m_hWnd is null, which makes both
+    // methods answer what their headless stubs used to answer — 0 and FALSE —
+    // with no null dereference and no invented contract.
+    //
+    // Deliberately NOT a wider change: the only mushcore TUs that read
+    // m_pMainWnd are those two methods (mainfrm.cpp's two reads are adapter-side
+    // and already `if (App.m_pMainWnd)`-guarded), so nothing else can observe it
+    // becoming non-null.
+    m_pMainWnd = &Frame;
 
     // ── Global-option defaults (were the retired stub's in-class defaults) ───
     // Boolean/int global prefs whose Windows table default is non-zero.

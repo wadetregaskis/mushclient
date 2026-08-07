@@ -323,36 +323,12 @@ void CMUSHclientDoc::AllocateLinePositions()
 // matches on world AND docnum), and it hardcoded black-on-white instead of the
 // world's m_input_text_colour / m_input_background_colour.
 
-// GetChildFrame — real body methods_output.cpp (mushapp-only).  Headless there
-// are no views, so the view walk finds nothing → nullptr (methods_commands.cpp
-// SetCommandWindowHeight then returns eBadParameter).
-CChildFrame * CMUSHclientDoc::GetChildFrame (void)
-{
-    return nullptr;
-}
-
-// windowPositionHelper — byte-copy of methods_output.cpp (mushapp-only).
-void windowPositionHelper (CString & str, const RECT & r)
-  {
-  str.Format ("%ld,%ld,%ld,%ld",
-              r.left,
-              r.top,
-              r.right - r.left,  // Width
-              r.bottom - r.top);  // Height
-  } // end of windowPositionHelper
-
-// GetWorldWindowPositionX — non-Windows arm of methods_output.cpp (mushapp-only):
-// the world's one child-frame rect via the IWorldView seam (Which is always 1).
-BSTR CMUSHclientDoc::GetWorldWindowPositionX(short Which)
-{
-CString strResult;
-
-  int x = 0, y = 0, w = 800, h = 600;
-  if (Which == 1 && GetOutputRect (x, y, w, h))
-    strResult.Format ("%d,%d,%d,%d", x, y, w, h);
-
-	return strResult.AllocSysString();
-}   // end of CMUSHclientDoc::GetWorldWindowPositionX
+// GetChildFrame / windowPositionHelper / GetWorldWindowPositionX: the REAL
+// bodies now (methods_output.cpp, adopted into mushcore).  All three twins were
+// behaviour-identical to the real non-Windows arms — windowPositionHelper was a
+// byte copy, GetWorldWindowPositionX was that arm verbatim, and GetChildFrame's
+// `return nullptr` is what the real view walk yields when no view exists — so
+// deleting them changes nothing and removes three more places to drift.
 
 // ════════════════════════════════════════════════════════════════════════════
 // Port-only scripting / world-load entry points over the real machinery

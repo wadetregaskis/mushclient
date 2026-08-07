@@ -502,11 +502,36 @@ the one commit, and the proof afterwards is `nm -A` over `libmushcore.a` +
 `libmushcore_testsupport.a` showing exactly one definition per symbol — not a
 green suite, which is what the §5a hazard produces.
 
-**Recommendation: adopt, but as its own deliberate piece of work with a triage
-pass budgeted, and only once the plugin-load throw is a decision rather than a
-surprise.** It buys the shipping TU its first headless coverage and kills six
-drifts, but it is a test-fidelity change, not a product fix, and it is the only
-remaining item that can turn the suite red for reasons that are *correct*.
+### Done, 2026-08-07 (`c51724c`)
+
+Adopted, Wade's call, plugin-load throw included. What actually happened, against
+the predictions above:
+
+- **The blast radius was ONE assertion in each of two tests, not ~46 blocks.**
+  The prediction was right about *behaviour* and wrong about *failures*: most
+  `test_world_load` blocks do gain a Lua state, and nothing looks at it. Worth
+  remembering the next time a blast radius is estimated from "how many blocks
+  change state" rather than "how many blocks assert on it".
+- **`ResolveAllEntryPoints` and `m_scriptFileMtime` went too.** Both existed only
+  to serve the twins. All sixteen of the resolver's test call sites moved to the
+  canonical `FindAllEntryPoints` unchanged and green — the clearest evidence
+  available that it never needed to exist separately.
+- **Five mutations, all killed, but two survived the first pass** and neither
+  because the tests were lazy. The re-entrancy guard is unreachable except by
+  calling the method directly, since all six call sites gate on it; and
+  `eReloadNever`'s early return changes no headless outcome, because control
+  otherwise reaches a prompt that auto-answers no. The first got a direct test.
+  The second is the more interesting: its assertion had to be about the
+  **question, not the outcome** — under `eReloadNever` nothing may be *asked* —
+  which is only visible by counting prompts through `g_wxhook_message_box`.
+  A guard whose only effect is on Windows still has a headless-observable
+  signature if you find the right observable.
+
+The three behaviour changes all landed as described, and each is pinned in both
+directions: an engine with no script file (and proven *usable*, via the
+immediate-mode `Parse` path), a plugin naming a missing routine refused (with
+the working plugin asserted first, so a failure cannot read as "plugins never
+load"), and all three reload-option values.
 
 ## 8. A documentation correction
 

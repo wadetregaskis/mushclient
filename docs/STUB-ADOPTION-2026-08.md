@@ -167,11 +167,27 @@ readers. Headless says `eOK`.
      because it can now assert that replace *discards* what append kept.
    - One behaviour changed headless, deliberately and towards Windows:
      `GetNotepadList` with nothing open returns nil, not an empty table.
-2. **Chat (25).** Three TU moves plus one ~40-line hoist. Unblocks the most
-   concrete new test in the survey — `CAsyncSocket` is fully real
-   (`platform/posix_socket.h`), so `ChatAcceptCalls` → `Poll` → `OnAccept` →
-   handshake → `ON_PLUGIN_CHAT_ACCEPT` veto → `m_ChatList` becomes drivable over
-   loopback, closing `docs/UNREACHABLE-PATHS-2026-08.md` finding 23.
+2. ~~**Chat (25)**~~ — **done**, `44383aa` + `065cfab`. The three TUs are in
+   `mushcore`, `GetHostNameAndAddresses` is hoisted to `utilities_shared.cpp`,
+   and `tests/test_chat_sockets.cpp` drives the whole accept chain over loopback,
+   closing `docs/UNREACHABLE-PATHS-2026-08.md` finding 23 outright.
+
+   Worth carrying forward:
+   - The recorded "chat is half-ported, `Accept`/`AsyncSelect`/`m_ChatList`/
+     file-transfer is accepted debt" note was **stale**. `mushcore` already
+     linked half the engine.
+   - `eNoChatConnections` was the right answer for **2** of the 25. The real
+     bodies distinguish five failure modes, and two of the calls are not failures
+     at all — `ChatDisconnectAll` returns a **count** (so the stub put an error
+     code in a count slot and `> 0` read backwards) and `ChatNameChange`
+     **succeeds** with nobody connected, which is exactly when a script sets it.
+   - Finding 23's cost estimate was for *untangling the stub*, not for the
+     harness. Once unrelated work removed its stated blocker the "multi-day"
+     item was an afternoon. **Re-derive a cost estimate when its blocker has been
+     removed by something else.**
+   - `test_display`'s chat-snoop test stopped being coverage-only: its comment
+     recorded the bytes as unobservable, which was true only because
+     `SendChatMessage` was an empty stub.
 3. **Miniwindow stage 1 (47).** Build-graph move + three one-line `CBitmap`
    bodies + the `LoadPng` hoist (do it once — the output family's image setters
    need the same symbol).

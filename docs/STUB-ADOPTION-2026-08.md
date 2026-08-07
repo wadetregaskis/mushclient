@@ -201,13 +201,24 @@ readers. Headless says `eOK`.
    - `test_display`'s chat-snoop test stopped being coverage-only: its comment
      recorded the bytes as unobservable, which was true only because
      `SendChatMessage` was an empty stub.
-3. **Miniwindow stage 1 (47).** Build-graph move + three one-line `CBitmap`
-   bodies + the `LoadPng` hoist (do it once — the output family's image setters
-   need the same symbol).
-4. **Headless surface bridge + DIB store.** The one genuine infrastructure item.
-5. **`scripting/scripting.cpp`** — carries a real behavioural question (see
+3. ~~**Miniwindow stage 1 (47)**~~ — **done**, `650edaa`. Three one-line
+   `CBitmap` bodies in `gdi_headless.cpp`, `LoadPng`/`LoadPngMemory` hoisted to
+   `png_load_shared.cpp` (added to `MUSHclient.vcxproj`), four TUs moved.
+   `doc_gui_method_stubs.cpp` went from 108 definitions to 21. Fixed a live leak
+   — the empty `~CMiniWindow` released nothing, invisible because the members it
+   dropped are pointers — and removed the output family's `ValidateBrushStyle`
+   blocker for free.
+4. ~~**Output/view (22)**~~ — **done**, `ae8b153` + `dec4a81`. All three
+   blockers dissolved rather than being solved: `ValidateBrushStyle` came with
+   miniwindow, `AutoWrapWindowWidth` is address-only, and the `App.m_pMainWnd`
+   "permanent contract" was answered by pointing it at the `CMainFrame` that
+   `windows_stubs.cpp` already owns. **`platform/doc_gui_method_stubs.cpp` is
+   deleted** — 108 stubs to zero. Surfaced two macOS product gaps (`AddFont`,
+   `SetToolBarPosition`) and five more twins, bringing this family to six too.
+5. **Headless surface bridge + DIB store.** The one genuine infrastructure item.
+6. **`scripting/scripting.cpp`** — carries a real behavioural question (see
    below), so keep it separate.
-6. **`dialogs/ProgDlg.cpp`** — opportunistic; retires 14 definitions.
+7. **`dialogs/ProgDlg.cpp`** — opportunistic; retires 14 definitions.
 
 ## 5a. A hazard found while sizing the output family
 

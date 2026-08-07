@@ -102,6 +102,12 @@ Two are confirmed by reading both sides at HEAD. Neither is a stub defect — th
 are genuine unimplemented features on macOS, and the stubs' cheerful `eOK` is
 why they went unnoticed.
 
+**`utils.appendtonotepad('newtitle', …)` did nothing on macOS** — fixed in
+`9feb902`. It routed through `g_wxhook_append_to_notepad`, which looks a notepad
+up by title alone and returns false when there is none; the canonical body calls
+`App.AppendToTheNotepad`, which creates one. Two smaller drifts in the same twin
+went with it: the `\n` → `ENDLINE` conversion and the `eNotepadPacketDebug` type.
+
 **`world.AddFont()` silently registers nothing on macOS.** `AddFont` →
 `AddSpecialFont` (`doc.cpp:3851`), whose first act is `LoadLibrary("gdi32")`
 (`doc.cpp:3855`); the shim returns nullptr (`platform/mfc_ui.h:5921`), so
@@ -129,15 +135,38 @@ readers. Headless says `eOK`.
 
 ## 5. Order of work
 
-0. **Drift fixes** — done, `4f41ad5`. Four verified drifts (`TextRectangle`'s
-   dropped NAWS renegotiation, `GetRecentLines`' separator guard, `Redraw`/
-   `Repaint` as no-ops, `QuoteForumCodes` hoisted out of the GUI TU), each with a
-   regression test mutated in both directions.
-1. **Notepad (14).** Zero irreducibles, zero undefined symbols, and it deletes a
-   twin carrying four more verified defects. The family has **zero coverage
-   anywhere** today. Its seam already exists and is already what the GUI uses:
-   `CTextDocument`'s twelve `std::function m_fn_*` members
-   (`TextDocument.h:66-98`).
+0. ~~**Drift fixes**~~ — **done**, `4f41ad5`. Four verified drifts
+   (`TextRectangle`'s dropped NAWS renegotiation, `GetRecentLines`' separator
+   guard, `Redraw`/`Repaint` as no-ops, `QuoteForumCodes` hoisted out of the GUI
+   TU), each with a regression test mutated in both directions.
+1. ~~**Notepad (14)**~~ — **done**, `3d9d241` + `9feb902`. `TextDocument.cpp`
+   and `methods_notepad.cpp` are in `mushcore`; the App-level trio
+   (`AppendToTheNotepad` / `FindNotepad` / `ActivateNotepad`) is hoisted to
+   `notepad_app_shared.cpp` and added to `MUSHclient.vcxproj`. All eleven
+   `g_wxhook_*_notepad` hooks are gone. Net **-349 lines**, `ctest` 56 → 57.
+
+   Worth carrying forward from it:
+   - The link confirmed the analyst's one caveat did not materialise: **zero**
+     new undefined symbols, no `CTextView` to stub. Adoption really was a CMake
+     move.
+   - It found **six** twins for one family, not one: the stub file, the App-level
+     pair in `headless_app.cpp`, `AppendToTheNotepad` in `doc_port_glue.cpp`
+     (which passed `App.m_strLuaScript` — the Lua sandbox script — as a **font
+     name**, and docnum 0 so its notepad could never be found again),
+     `ActivateNotepad` in `doc_headless_stubs.cpp`, `SetTheFont` in
+     `doc_flip_gui_stubs.cpp`, and the `utils.*` pair in
+     `lua_utils_portable.cpp`. Count twins per *family*, not per file.
+   - One real macOS product bug fell out: `utils.appendtonotepad` to a title
+     that did not exist yet did **nothing**, because the hook it used looks up by
+     title alone and never creates, where the canonical creates.
+   - **Four existing tests were using a twin's hook as their capture seam** —
+     that is a second way a stub blocks adoption, distinct from pinning a return
+     value, and the grep in §3 does not find it. They now capture at
+     `g_wxhook_create_text_window`, which is what the product actually uses;
+     `test_connection`'s SendTo test got materially stronger as a result,
+     because it can now assert that replace *discards* what append kept.
+   - One behaviour changed headless, deliberately and towards Windows:
+     `GetNotepadList` with nothing open returns nil, not an empty table.
 2. **Chat (25).** Three TU moves plus one ~40-line hoist. Unblocks the most
    concrete new test in the survey — `CAsyncSocket` is fully real
    (`platform/posix_socket.h`), so `ChatAcceptCalls` → `Poll` → `OnAccept` →

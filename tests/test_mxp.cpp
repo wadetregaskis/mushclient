@@ -311,6 +311,7 @@ TEST(GetWordTest, UnclosedQuoteEmptyContentLeavesEmptyRemainder)
 
 #include "pal/itransport.h"
 #include <string>
+#include "notepad_fixture.h"
 
 namespace {
 struct MxpFakeTransport : pal::ITransport {
@@ -1044,18 +1045,16 @@ TEST(MXPOpenAtomic, SecureTagRejectedInOpenMode)
 
 #include <string>
 
-static std::string g_mxp_notepad;
-static bool hk_mxp_notepad(const char*, const char* text, bool)
-{
-    g_mxp_notepad += text;
-    return true;
-}
-
+// MXP debug output goes to a notepad.  This used to capture at
+// g_wxhook_append_to_notepad, a hook belonging to the headless twin that has
+// since been deleted (the notepad family is adopted — see
+// docs/STUB-ADOPTION-2026-08.md).  NotepadCapture captures at
+// g_wxhook_create_text_window instead, which is the seam the product actually
+// uses, and hands the engine a real registered CTextDocument so the append path
+// runs for real too.
 struct MxpDebugCapture {
-    MxpDebugCapture() { g_mxp_notepad.clear(); g_wxhook_append_to_notepad = hk_mxp_notepad; }
-    ~MxpDebugCapture() { g_wxhook_append_to_notepad = nullptr; }
-    bool contains(const char* s) const
-        { return g_mxp_notepad.find(s) != std::string::npos; }
+    NotepadCapture cap;
+    bool contains(const char* s) const { return cap.contains(s); }
 };
 
 // A doc wired for full-stream MXP: secure mode, all debug levels captured.

@@ -20,6 +20,7 @@
 #include "pal/itransport.h"
 #include "scripting/scripting.h"
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_set_status (queued-command status seam)
+#include "notepad_fixture.h"   // FakeNotepad / NotepadCapture
 
 #include <zlib.h>
 
@@ -1132,46 +1133,48 @@ TEST(SendToTest, EmptyTextDoesNothingForMostDestinations)
     delete doc;
 }
 
-static std::string s_notepadTitle, s_notepadText;
-static bool s_notepadReplace;
-
+// The three notepad SendTo destinations, against the REAL bodies.
+//
+// This used to install g_wxhook_append_to_notepad and assert on what the hook
+// received.  That hook belonged to the headless twin, which is gone now that
+// the notepad family is adopted (docs/STUB-ADOPTION-2026-08.md), and asserting
+// on it never distinguished append from replace in terms of RESULTING CONTENT —
+// it only checked which flag was passed.  Driving the real bodies over a real
+// registered CTextDocument makes the distinction observable, which is the point.
 TEST(SendToTest, NotepadDestinations)
 {
-    g_wxhook_append_to_notepad = [](const char* title, const char* text,
-                                    bool replace) -> bool {
-        s_notepadTitle = title ? title : "";
-        s_notepadText = text ? text : "";
-        s_notepadReplace = replace;
-        return true;
-    };
-    static std::string s_createdTitle, s_createdBody;
-    g_wxhook_create_text_window = [](const char* body, const char* title,
-                                     CMUSHclientDoc*, long long, const char*,
-                                     long, long, unsigned int, unsigned long,
-                                     unsigned long, const char*, const char*,
-                                     bool, bool, bool, bool, bool, int, int) -> void* {
-        s_createdTitle = title ? title : "";
-        s_createdBody = body ? body : "";
-        return (void*)1;
-    };
+    NotepadCapture cap;
     CMUSHclientDoc* doc = make_doc();
     CString out;
+
+    // eSendToNotepad always CREATES — it never looks for an existing window
+    // (methods_notepad.cpp:181).  So this makes a notepad even though none
+    // existed, and would make a second one if called again.
     doc->SendTo(eSendToNotepad, "fresh contents", false, false,
                 "Trigger: pad", "", out);
-    EXPECT_STREQ("Trigger: pad", s_createdTitle.c_str());
-    EXPECT_TRUE(s_createdBody.find("fresh contents") == 0);
+    ASSERT_EQ(1u, (unsigned) cap.count());
+    EXPECT_EQ(std::string("Trigger: pad"),
+              std::string((const char*) cap.pads[0]->doc->m_strTitle));
+    EXPECT_EQ(0u, cap.pads[0]->text.find("fresh contents"));
+
+    // Now a notepad called "pad" exists, so append and replace find it.
+    FakeNotepad pad(doc, "pad", doc->m_iUniqueDocumentNumber);
+    pad.text = "seed:";
 
     doc->SendTo(eAppendToNotepad, "appended", false, false, "pad", "", out);
-    EXPECT_STREQ("pad", s_notepadTitle.c_str());
-    EXPECT_TRUE(s_notepadText.find("appended") == 0);
-    EXPECT_FALSE(s_notepadReplace);
+    EXPECT_EQ(0u, pad.text.find("seed:"));                      // kept the seed
+    EXPECT_NE(std::string::npos, pad.text.find("appended"));
 
+    // Replace must DISCARD what append kept — asserting both halves is what
+    // separates the two modes.  A body that appended in both cases passes the
+    // first assertion and fails this one.
     doc->SendTo(eReplaceNotepad, "replaced", false, false, "pad", "", out);
-    EXPECT_TRUE(s_notepadText.find("replaced") == 0);
-    EXPECT_TRUE(s_notepadReplace);
+    EXPECT_EQ(std::string::npos, pad.text.find("seed:"));
+    EXPECT_EQ(std::string::npos, pad.text.find("appended"));
+    EXPECT_EQ(0u, pad.text.find("replaced"));
 
-    g_wxhook_append_to_notepad = nullptr;
-    g_wxhook_create_text_window = nullptr;
+    // …and neither of those created a second window.
+    EXPECT_EQ(1u, (unsigned) cap.count());
     delete doc;
 }
 

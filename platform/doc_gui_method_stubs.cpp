@@ -337,135 +337,24 @@ long CMUSHclientDoc::WindowWrite (LPCTSTR Name, LPCTSTR FileName)
   }   // end of CMUSHclientDoc::WindowWrite
 
 // ══════════════════════════════════════════════════════════════════════════
-// Notepad family (14) — headless: FindNotepad → NULL; hooks null → FALSE/0/empty
-// ══════════════════════════════════════════════════════════════════════════
-
-BOOL CMUSHclientDoc::AppendToNotepad (LPCTSTR Title, LPCTSTR Contents)
-  {
-  return AppendToTheNotepad (Title, Contents, false);   // append mode (methods_notepad.cpp:207)
-  }   // end of CMUSHclientDoc::AppendToNotepad
-
-long CMUSHclientDoc::CloseNotepad (LPCTSTR Title, BOOL QuerySave)
-  {
-  (void) QuerySave;   // headless close never prompts
-  return g_wxhook_close_notepad && g_wxhook_close_notepad (Title);
-  }   // end of CMUSHclientDoc::CloseNotepad
-
-CTextDocument * CMUSHclientDoc::FindNotepad (const CString strTitle)
-  {
-  return NULL;    // headless: no CTextDocument instances exist
-  }   // end of CMUSHclientDoc::FindNotepad
-
-long CMUSHclientDoc::GetNotepadLength (LPCTSTR Title)
-  {
-  if (!g_wxhook_get_notepad_text)
-    return 0;
-  char * text = g_wxhook_get_notepad_text (Title);
-  long iLength = text ? (long) strlen (text) : 0;
-  free (text);
-  return iLength;
-  }   // end of CMUSHclientDoc::GetNotepadLength
-
-VARIANT CMUSHclientDoc::GetNotepadList (BOOL All)
-  {
-  (void) All;   // hook list is app-wide
-  COleSafeArray sa;
-  sa.CreateOneDim (VT_VARIANT, 0);
-  long iCount = 0;
-  if (g_wxhook_get_notepad_list)
-    {
-    char ** list = g_wxhook_get_notepad_list ();
-    if (list)
-      {
-      long n = 0;
-      while (list [n]) n++;
-      sa.CreateOneDim (VT_VARIANT, n);
-      for (long i = 0; list [i]; i++)
-        {
-        CString strTitle (list [i]);
-        COleVariant v (strTitle);
-        sa.PutElement (&iCount, &v);
-        iCount++;
-        free (list [i]);
-        }
-      free (list);
-      }
-    }
-  VARIANT vResult;
-  VariantInit (&vResult);
-  sa.Detach (vResult);
-  return vResult;
-  }   // end of CMUSHclientDoc::GetNotepadList
-
-BSTR CMUSHclientDoc::GetNotepadText (LPCTSTR Title)
-  {
-  CString strResult;
-  if (g_wxhook_get_notepad_text)
-    {
-    char * text = g_wxhook_get_notepad_text (Title);
-    if (text)
-      {
-      strResult = text;
-      free (text);
-      }
-    }
-  return strResult.AllocSysString ();
-  }   // end of CMUSHclientDoc::GetNotepadText
-
-long CMUSHclientDoc::MoveNotepadWindow (LPCTSTR Title, long Left, long Top, long Width, long Height)
-  {
-  return g_wxhook_move_notepad &&
-         g_wxhook_move_notepad (Title, (int) Left, (int) Top,
-                                (int) Width, (int) Height);
-  }   // end of CMUSHclientDoc::MoveNotepadWindow
-
-long CMUSHclientDoc::NotepadColour (LPCTSTR Title, LPCTSTR TextColour, LPCTSTR BackgroundColour)
-  {
-  COLORREF iTextColour, iBackColour;
-  if (SetColour (TextColour, iTextColour))
-    return false;    // can't find colour (as methods_notepad.cpp:424)
-  if (SetColour (BackgroundColour, iBackColour))
-    return false;    // can't find colour
-  return g_wxhook_notepad_colour &&
-         g_wxhook_notepad_colour (Title, (unsigned long) iTextColour,
-                                  (unsigned long) iBackColour);
-  }   // end of CMUSHclientDoc::NotepadColour
-
-long CMUSHclientDoc::NotepadFont (LPCTSTR Title, LPCTSTR FontName, short Size, short Style, short Charset)
-  {
-  return g_wxhook_notepad_font &&
-         g_wxhook_notepad_font (Title, FontName, Size, Style, Charset);
-  }   // end of CMUSHclientDoc::NotepadFont
-
-long CMUSHclientDoc::NotepadReadOnly (LPCTSTR Title, BOOL ReadOnly)
-  {
-  return g_wxhook_notepad_readonly &&
-         g_wxhook_notepad_readonly (Title, ReadOnly != 0);
-  }   // end of CMUSHclientDoc::NotepadReadOnly
-
-BOOL CMUSHclientDoc::NotepadSaveMethod (LPCTSTR Title, short Method)
-  {
-  (void) Method;
-  return FALSE;   // no notepad found (methods_notepad.cpp:484-485)
-  }   // end of CMUSHclientDoc::NotepadSaveMethod
-
-BOOL CMUSHclientDoc::ReplaceNotepad (LPCTSTR Title, LPCTSTR Contents)
-  {
-  return AppendToTheNotepad (Title, Contents, true);    // replace mode (methods_notepad.cpp:246)
-  }   // end of CMUSHclientDoc::ReplaceNotepad
-
-long CMUSHclientDoc::SaveNotepad (LPCTSTR Title, LPCTSTR FileName, BOOL ReplaceExisting)
-  {
-  return g_wxhook_save_notepad &&
-         g_wxhook_save_notepad (Title, FileName, ReplaceExisting != 0);
-  }   // end of CMUSHclientDoc::SaveNotepad
-
-BOOL CMUSHclientDoc::SendToNotepad (LPCTSTR Title, LPCTSTR Contents)
-  {
-  // Windows creates a fresh eNotepadScript window; the hook-backed
-  // AppendToTheNotepad is the portable equivalent (append-or-create).
-  return AppendToTheNotepad (Title, Contents, false, eNotepadScript);
-  }   // end of CMUSHclientDoc::SendToNotepad
+// Notepad family: NO LONGER STUBBED.  TextDocument.cpp and
+// scripting/methods/methods_notepad.cpp are compiled into mushcore now, so the
+// tests exercise the real bodies.
+//
+// The 14 stubs deleted here did not merely return inert values — they forwarded
+// to a parallel g_wxhook_*_notepad table that carried no traffic in EITHER
+// build.  Nine of those hooks had exactly one caller (this file, headless) and
+// exactly one installer (platform/wx_mfc_impl.cpp, GUI), and the two adapter
+// sets never co-link — so every forward was permanently nullptr where it was
+// called and permanently uncalled where it was installed.  Meanwhile the twin
+// had drifted: SendToNotepad appended where Windows creates, CloseNotepad
+// discarded QuerySave, GetNotepadList discarded All (the parameter's whole
+// purpose is world-scoping), and NotepadFont/NotepadColour/NotepadReadOnly
+// never wrote the state they are named for.
+//
+// methods_notepad.cpp needed no new seam: its non-Windows arms already go
+// through CTextDocument's std::function m_fn_* members (TextDocument.h:66-98),
+// which a headless test fills with lambdas over a std::string.
 
 // ══════════════════════════════════════════════════════════════════════════
 // Chat family (25) — no CChatSocket headless
@@ -692,11 +581,8 @@ void CMUSHclientDoc::MoveWorldWindow (long Left, long Top, long Width, long Heig
   // GUI-only headless — silent no-op
   }   // end of CMUSHclientDoc::MoveWorldWindow
 
-BSTR CMUSHclientDoc::GetNotepadWindowPosition (LPCTSTR Title)
-  {
-  // GUI-only headless — no notepad windows exist, so no position to report.
-  return CString ("").AllocSysString ();
-  }   // end of CMUSHclientDoc::GetNotepadWindowPosition
+// GetNotepadWindowPosition is the real body now (methods_notepad.cpp:368),
+// adopted with the rest of the notepad family.
 
 void CMUSHclientDoc::Pause (BOOL Flag)
   {

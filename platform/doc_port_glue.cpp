@@ -315,38 +315,13 @@ void CMUSHclientDoc::AllocateLinePositions()
         m_LinePositions.Reset(m_LineList.GetHeadPosition());   // empty list
 }
 
-// AppendToTheNotepad — real body methods_notepad.cpp (mushapp-only).  Headless
-// route through the wx hook, else create a text window (mfc_ui.h inline).
-bool CMUSHclientDoc::AppendToTheNotepad(const CString strTitle,
-                                         const CString strText,
-                                         const bool bReplace,
-                                         const int  iNotepadType)
-{
-    if (g_wxhook_append_to_notepad)
-    {
-        const char* title = static_cast<const char*>(strTitle);
-        const char* text  = static_cast<const char*>(strText);
-        if (g_wxhook_append_to_notepad(title, text, bReplace))
-            return true;
-    }
-
-    return CreateTextWindow(
-        static_cast<const char*>(strText),
-        static_cast<const char*>(strTitle),
-        this,
-        0,                              // iUniqueDocNum (not tracked portably)
-        App.m_strLuaScript,             // use default font name (fallback)
-        10,                             // default font size
-        400,                            // FW_NORMAL
-        0,                              // charset
-        RGB(0,   0,   0),               // black text
-        RGB(255, 255, 255),             // white background
-        CString(""),                    // no search string
-        CString(""),                    // no line preamble
-        false, false, false, false, false,
-        0,
-        iNotepadType);
-}
+// AppendToTheNotepad is the REAL body now (methods_notepad.cpp:103), adopted
+// with the rest of the notepad family.  The twin that stood here got three
+// things wrong that the real body gets right: it passed App.m_strLuaScript —
+// the multi-line Lua sandbox script — as the FONT NAME, it passed docnum 0 so
+// the notepad it created could never be found again by FindNotepad (which
+// matches on world AND docnum), and it hardcoded black-on-white instead of the
+// world's m_input_text_colour / m_input_background_colour.
 
 // GetChildFrame — real body methods_output.cpp (mushapp-only).  Headless there
 // are no views, so the view walk finds nothing → nullptr (methods_commands.cpp

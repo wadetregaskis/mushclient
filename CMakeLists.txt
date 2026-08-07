@@ -435,6 +435,16 @@ if(NOT WIN32)
         doc_shared.cpp
         utilities_shared.cpp
         notepad_convert_shared.cpp
+        # Notepad family adoption (docs/STUB-ADOPTION-2026-08.md §5 step 1).
+        # These were mushgui_adapters-only and the headless build faked the whole
+        # family through g_wxhook_*_notepad function pointers — a second twin
+        # that carried no traffic in either build (the hooks' only caller and
+        # only installer live in the two adapter sets, which never co-link) and
+        # had drifted in several observable ways.  The real TU is already fully
+        # ported: methods_notepad.cpp's non-Windows arms go through
+        # CTextDocument's std::function m_fn_* members, which need no wx.
+        TextDocument.cpp
+        scripting/methods/methods_notepad.cpp
         scripting/errors.cpp
         doc_scripting_shared.cpp
         doc_tabcomplete_shared.cpp
@@ -557,7 +567,6 @@ if(NOT WIN32)
         MyStatusBar.cpp
         NameGeneration.cpp
         StatLink.cpp
-        TextDocument.cpp
         TextView.cpp
         TimerWnd.cpp
         activitychildfrm.cpp
@@ -581,7 +590,6 @@ if(NOT WIN32)
         scripting/methods/methods.cpp
         scripting/methods/methods_chat.cpp
         scripting/methods/methods_miniwindows.cpp
-        scripting/methods/methods_notepad.cpp
         scripting/methods/methods_output.cpp
         scripting/methods/methods_panes.cpp
         dialogs/world_prefs/ButtonColour.cpp

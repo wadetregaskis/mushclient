@@ -15,7 +15,8 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "scripting/errors.h"
-#include "platform/wx_mfc_hooks.h"   // g_wxhook_append_to_notepad (XML-import notes seam)
+#include "platform/wx_mfc_hooks.h"
+#include "notepad_fixture.h"   // NotepadCapture (XML-import notes seam)
 
 #include <cstdio>
 #include <cstring>
@@ -2751,27 +2752,23 @@ TEST(WorldLoadR5, CommentsGoToTheNotepad)
 <comment>Imported from somewhere.</comment>
 </muclient>)";
 
-    // The XML-import-notes notepad is a no-op headless unless the append seam is
-    // installed; install it (returning true = "handled", so the fallback
-    // CreateTextWindow is skipped) and capture what would be appended.
-    static std::string s_padTitle, s_padText;
-    s_padTitle.clear(); s_padText.clear();
-    auto* saved = g_wxhook_append_to_notepad;
-    g_wxhook_append_to_notepad =
-        [](const char* title, const char* text, bool) -> bool {
-            s_padTitle = title ? title : "";
-            s_padText  = text  ? text  : "";
-            return true;
-        };
+    // Capture at g_wxhook_create_text_window, the seam the product uses: no
+    // notepad by this title exists yet, so the real AppendToTheNotepad
+    // (methods_notepad.cpp:103, adopted into mushcore) falls through to
+    // CreateTextWindow, which is what makes the window in the first place.
+    // This used to capture at g_wxhook_append_to_notepad, a hook on the headless
+    // twin that has since been deleted.
+    NotepadCapture cap;
 
     CMUSHclientDoc doc;
     EXPECT_TRUE(doc.LoadWorldFromFile(write_temp(xml).c_str()));
 
-    g_wxhook_append_to_notepad = saved;
-
     // the <comment> body lands on the "XML import notes ..." notepad
-    EXPECT_NE(std::string::npos, s_padText.find("Imported from somewhere."));
-    EXPECT_NE(std::string::npos, s_padTitle.find("XML import notes"));
+    ASSERT_EQ(1u, (unsigned) cap.count());
+    EXPECT_NE(std::string::npos, cap.text().find("Imported from somewhere."));
+    EXPECT_NE(std::string::npos,
+              std::string((const char*) cap.pads[0]->doc->m_strTitle)
+                  .find("XML import notes"));
 }
 
 // An include file whose name is the reserved clipboard pseudo-name is refused

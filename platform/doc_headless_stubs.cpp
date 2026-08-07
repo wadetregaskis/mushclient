@@ -48,14 +48,8 @@
 // scripting/scripting.cpp, the view no-op).  All are doc.h-declared.
 // ════════════════════════════════════════════════════════════════════════════
 
-// ActivateNotepad — methods_notepad.cpp:210-241.  Headless there are no
-// app-owned notepad windows; route through the same g_wxhook_activate_notepad
-// hook the retired headless-stub inline used, so the wx product path is
-// preserved and the headless path returns FALSE (FindNotepad → none).
-BOOL CMUSHclientDoc::ActivateNotepad (LPCTSTR Title)
-{
-    return g_wxhook_activate_notepad && g_wxhook_activate_notepad (Title);
-}
+// ActivateNotepad is the REAL body now (methods_notepad.cpp:210), adopted with
+// the rest of the notepad family.
 
 // SortTimers — timers.cpp:431 is #ifdef _WIN32 (rebuilds a sorted display list);
 // the headless timer map is iterated directly, so this is a no-op.  Body copied

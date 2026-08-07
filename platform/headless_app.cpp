@@ -51,6 +51,19 @@
 // mainfrm walk.  Was the stub App's `CWorldDocTemplate m_worldDocTemplate` member.
 static CMultiDocTemplate s_worldDocTemplate (0, NULL, NULL, NULL);
 
+// The headless NOTEPAD-document template, for exactly the same reason.  It is
+// separate from the world one deliberately: doc.cpp:2988 walks it to find an
+// existing notepad, and the comment three lines above that call spells out why
+// the two must not be conflated — the portable CMultiDocTemplate shim treats
+// POSITION as an index into the template's OWN list, so searching the world
+// template would index the world docs and never find the notepad, spawning a
+// duplicate every time.
+//
+// This was a latent null-deref, not a hypothetical: App.m_pNormalDocTemplate was
+// never assigned headless while CMUSHclientDoc::OnEditFliptonotepad — compiled
+// into mushcore — dereferences it unguarded.  Nothing had called it yet.
+static CMultiDocTemplate s_normalDocTemplate (0, NULL, NULL, NULL);
+
 // Headless ctor — reproduces the retired stub CMUSHclientApp ctor
 // plus the stub's in-class global-option defaults, since the
 // real MUSHclient.h members have NO in-class initialisers (Windows fills them
@@ -67,7 +80,8 @@ CMUSHclientApp::CMUSHclientApp()
     m_nUniqueNumber     = 0;                           // __int64 GetUniqueNumber()
                                                        // { return m_nUniqueNumber++; }
 
-    m_pWorldDocTemplate = &s_worldDocTemplate;         // world registry (see above)
+    m_pWorldDocTemplate  = &s_worldDocTemplate;        // world registry (see above)
+    m_pNormalDocTemplate = &s_normalDocTemplate;       // notepad registry (see above)
 
     // ── Global-option defaults (were the retired stub's in-class defaults) ───
     // Boolean/int global prefs whose Windows table default is non-zero.

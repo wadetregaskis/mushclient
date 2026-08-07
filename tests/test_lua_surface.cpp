@@ -34,6 +34,7 @@ extern "C" {
 // make_lua()/run()/run_ret()/LuaDoc/EXPECT_LUA_OK are shared with
 // test_lua_scripting.cpp (audit §2/§4).
 #include "lua_test_helpers.h"
+#include "notepad_fixture.h"
 
 // ── methods_utilities.cpp: pure string helpers ────────────────────────────
 
@@ -604,10 +605,20 @@ TEST(LuaSurface, AcceleratorFamilyBindsThroughLua)
     ));
 }
 
-// ── notepad family (stubbed headless: hooks null) ─────────────────────────
+// ── notepad family — REAL bodies now, not stubs ───────────────────────────
+//
+// scripting/methods/methods_notepad.cpp is compiled into mushcore
+// (docs/STUB-ADOPTION-2026-08.md), so these drive the shipping bodies.  The
+// block below used to pin the twin's contract; the one value that actually
+// changed on adoption is GetNotepadList, and it changed to match Windows —
+// see the comment on it.
+//
+// The Lua-level tests here cover the marshalling.  tests/test_notepad_methods.cpp
+// covers the semantics against a real CTextDocument.
 
-TEST(LuaSurface, NotepadFamilyHeadless)
+TEST(LuaSurface, NotepadFamilyWithNoNotepadOpen)
 {
+    ClearAllNotepads();
     LuaDoc f; ASSERT_NE(nullptr, f.L);
     EXPECT_TRUE(run(f.L,
         "assert(world.AppendToNotepad('t', 'text') == false)\n"
@@ -618,8 +629,13 @@ TEST(LuaSurface, NotepadFamilyHeadless)
         "assert(world.CloseNotepad('t', false) == 0)\n"
         "assert(world.GetNotepadLength('t') == 0)\n"
         "assert(world.GetNotepadText('t') == '')\n"
-        "local l = world.GetNotepadList(false)\n"
-        "assert(type(l) == 'table' and next(l) == nil)\n"   // explicit 0-dim array
+        // CHANGED ON ADOPTION, deliberately: the twin called CreateOneDim(…, 0)
+        // and handed back a real zero-element array, which reached Lua as an
+        // empty TABLE.  The shipping body guards with `if (iCount)` — "cannot
+        // create empty array dimension" — so a never-created COleSafeArray
+        // detaches as VT_EMPTY, which reaches Lua as NIL.  Windows has always
+        // done the latter.
+        "assert(world.GetNotepadList(false) == nil)\n"
         "assert(world.MoveNotepadWindow('t', 0, 0, 10, 10) == false)\n"
         "assert(world.NotepadColour('t', 'red', 'white') == 0)\n"
         "assert(world.NotepadFont('t', 'Courier', 10, 0, 0) == 0)\n"
@@ -627,6 +643,34 @@ TEST(LuaSurface, NotepadFamilyHeadless)
         "assert(world.NotepadSaveMethod('t', 0) == 0)\n"
         "assert(world.SaveNotepad('t', '/tmp/np.txt', true) == 0)\n"
     ));
+}
+
+// The other arm.  Without this the whole family would still only ever be tested
+// in its "there is no notepad" state — which is exactly the hole the stub left,
+// and every assertion above would pass against a body that did nothing at all.
+TEST(LuaSurface, NotepadFamilyWithANotepadOpen)
+{
+    ClearAllNotepads();
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    FakeNotepad pad(&f.doc, "t", f.doc.m_iUniqueDocumentNumber);
+    pad.text = "seed";
+
+    EXPECT_TRUE(run(f.L,
+        "assert(world.AppendToNotepad('t', '+more') == true)\n"
+        "assert(world.GetNotepadText('t') == 'seed+more')\n"
+        "assert(world.GetNotepadLength('t') == 9)\n"
+        // now the list is non-empty, and reaches Lua as a table
+        "local l = world.GetNotepadList(false)\n"
+        "assert(type(l) == 'table')\n"
+        "local n = 0\n"
+        "for _, v in pairs(l) do n = n + 1; assert(v == 't') end\n"
+        "assert(n == 1, 'expected 1 notepad, got ' .. n)\n"
+        "assert(world.NotepadReadOnly('t', true) == 1)\n"
+        "assert(world.MoveNotepadWindow('t', 1, 2, 3, 4) == true)\n"
+        "assert(world.GetNotepadWindowPosition('t') ~= '')\n"
+    ));
+    EXPECT_TRUE(pad.readOnly);
+    EXPECT_EQ(1, pad.moveCalls);
 }
 
 // ── chat family (stubbed headless: eNoChatConnections) ────────────────────

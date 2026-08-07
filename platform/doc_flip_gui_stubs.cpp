@@ -248,7 +248,7 @@ void CMainFrame::DoFileOpen () {}
 
 void CMUSHView::sizewindow  (void) {}
 void CSendView::UpdateWrap  ()     {}
-void CTextDocument::SetTheFont (void) {}
+// CTextDocument::SetTheFont: real body now (TextDocument.cpp, adopted).
 CMiniWindow::~CMiniWindow () {}
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -356,6 +356,59 @@ wrong layer* pattern in its other guise — a claim about who calls a function,
 made by reasoning about what the function is *for* rather than by grepping for
 its callers.
 
+## 5c. Found while covering the image ops (2026-08-07)
+
+The four unblocked ops are covered (`ad434ad`, 17 tests, 61 mutations, 56
+killed). Two findings outlast the tests.
+
+### `CpuRaster`'s surface-to-surface blit silently mis-draws a stretch
+
+`pal/cpu_raster.cpp`'s `SurfaceId -> SurfaceId` overload **overwrites the
+caller's destination extent with the clipped source extent** before delegating:
+
+```
+    dstRect = { dstRect.x + (clipped.x - srcRect.x),
+                dstRect.y + (clipped.y - srcRect.y), clipped.w, clipped.h };
+```
+
+Two consequences, both measured:
+
+1. The documented no-stretch guard in the `PixelBuffer` overload
+   (`if (dstRect.w != srcRect.w || ...) return;`) is **dead code** on this path.
+   The two extents can never disagree by the time it runs.
+2. A stretch request is therefore not *declined* — it is answered with a **1:1
+   blit at the destination origin**. `WindowDrawImage(..., Left=1, Top=1,
+   Right=3, Bottom=2, Mode=2)` on a 9x5 source — a requested 2x1 destination —
+   painted the whole 9x5 image.
+
+So headless, `DrawImage` **mode 2 is observationally identical to mode 1**: same
+origin, same source rect, and the only other difference (`BlitQuality::Smooth`
+vs `Fast`) is discarded, since `CpuRaster::blit` ignores its quality argument
+entirely. Mutating the engine's mode-2 destination extent to something
+*negative* leaves the whole suite green.
+
+This matters more than an unimplemented gap would. A no-op is visibly missing; a
+1:1 blit at the right origin looks correct, so a test written against it would
+**pin the wrong behaviour** — which is the worst property a golden-reference
+adapter can have. `pal/cpu_raster.cpp` is in `MUSHCORE_TESTSUPPORT_SOURCES`
+only, so nothing in the product is affected either way.
+
+**Recommendation (needs a decision — §6 currently scopes CpuRaster gaps out):**
+implement nearest-neighbour resampling in the surface-to-surface path, ~15
+lines. That turns a lie into a capability and makes mode 2 genuinely testable.
+The cheaper alternative — hoisting the guard so a stretch is *declined* — is
+honest but strictly loses coverage, because mode 2 would then draw nothing at
+all. Doing neither is the one option that should not stand, because the current
+behaviour is the kind that gets tested INTO the contract.
+
+### `BlendImage` has an unreachable-looking silent-success arm
+
+`if (!bufA.valid () || !bufB.valid () || bufA.bytes.size () != bufB.bytes.size ())
+return eOK;` — a size mismatch produces no blend and no error. Every route to it
+appears headed off by the earlier clamps, but that argument could not be
+completed, and a refactor of those clamps would make it reachable with no test
+noticing. Recorded rather than tested.
+
 ## 6. Explicitly not doing
 
 - **Retiring the five `Frame`-dereferencing stubs.** Permanent contract; see §2.

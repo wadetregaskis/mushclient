@@ -408,8 +408,10 @@ extern bool  (*g_wxhook_progress_update)(void* handle, int pos,
                                          const char* status);
 extern void  (*g_wxhook_progress_close)(void* handle);
 // Retitle an open progress dialog.  The callers all do Create() and THEN
-// SetWindowText("Loading plugins ..." / "Sending..." / "Recalling..."), so
-// without this every one of them read a generic "Progress".
+// SetWindowText("Sending..." / "Recalling..." / ...), so without this every one
+// of them read a generic "Progress".  (The "Loading plugins ..." caller this
+// comment used to cite is inside #if IT_GET_GOATS_BLOOD_OUT and is dead on
+// every platform, Windows included.)
 extern void  (*g_wxhook_progress_set_title)(void* handle, const char* title);
 
 extern char* (*g_wxhook_directorypicker)(const char* title,

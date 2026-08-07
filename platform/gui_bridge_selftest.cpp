@@ -249,13 +249,14 @@ void TestNewWorldDefaults()
 // FALSE` stub).  Three of its methods had no port arm at all and drove the
 // inert CProgressCtrl / PumpMessages instead:
 //
-//   StepIt / OffsetPos  the relative movers.  xml_load_world advances the
-//                       plugin-loading bar with SetStep(1) + StepIt(), and
-//                       Lua's progress library offers both to scripts — so the
-//                       bar sat at zero for the whole load.
+//   StepIt / OffsetPos  the relative movers.  Lua's progress library offers
+//                       both to scripts, and Find/Global Change drives them —
+//                       so those bars sat at zero.  (NOT plugin loading: that
+//                       block is inside #if IT_GET_GOATS_BLOOD_OUT, a macro
+//                       defined nowhere, so it is dead on Windows too.)
 //   SetWindowText       every caller sets the caption right after Create()
-//                       ("Loading plugins ...", "Sending...", "Recalling...")
-//                       and every one of them was dropped.
+//                       ("Sending...", "Recalling...") and every one of them
+//                       was dropped.
 //
 // Drive the real class against stub hooks and watch what it asks for.
 void TestProgressDialog()

@@ -202,10 +202,14 @@ int CProgressDlg::OffsetPos(int nPos)
 #ifndef _WIN32
     // Both of the relative movers were dead on the port: they drove
     // m_Progress (a CProgressCtrl stub) and PumpMessages (a no-op on a null
-    // m_hWnd), so nothing reached the wxProgressDialog.  The visible effect was
-    // a plugin-loading bar that sat at zero for the whole load — xml_load_world
-    // advances it with SetStep(1) + StepIt(), and Lua's progress library offers
-    // both to scripts.  Express them in terms of SetPos, which IS wired.
+    // m_hWnd), so nothing reached the wxProgressDialog.  Express them in terms
+    // of SetPos, which IS wired.
+    //
+    // An earlier version of this comment blamed "a plugin-loading bar that sat
+    // at zero for the whole load".  That was wrong: xml_load_world's block is
+    // inside #if IT_GET_GOATS_BLOOD_OUT, a macro defined nowhere, so it is dead
+    // on Windows too.  The real sufferers are Lua's progress library (which
+    // offers both movers to scripts) and Find/Global Change.
     return SetPos(m_iPortPos + nPos);
 #else
     PumpMessages();

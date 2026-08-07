@@ -30,7 +30,9 @@ public:
     // virtual in the shim either, and every caller holds a CProgressDlg (or a
     // CProgressDlg*), so hiding the base member is enough.  Without it the
     // wxProgressDialog kept the generic "Progress" title while the callers were
-    // all setting "Loading plugins ...", "Sending...", "Recalling...".
+    // all setting "Sending...", "Recalling..." and so on.  ("Loading plugins
+    // ..." is NOT one of them -- that call site is inside
+    // #if IT_GET_GOATS_BLOOD_OUT, dead on every platform.)
     void SetWindowText(LPCTSTR lpszString);
 #endif
 

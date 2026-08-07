@@ -400,12 +400,23 @@ inherited.
 CLAUDE.md credits `ccd094b` (the `StepIt`/`OffsetPos`/`SetWindowText` fix) with
 making "the plugin-loading bar" move. **It cannot have.** The plugin-loading
 progress block at `xml/xml_load_world.cpp:734` sits inside
-`#if IT_GET_GOATS_BLOOD_OUT`, and that macro occurs exactly once in the entire
+`#if IT_GET_GOATS_BLOOD_OUT`, and that macro occurs exactly once in the code
 tree — at that `#if`. It is defined nowhere, so the block is dead code on every
 platform, Windows included.
 
 The fix was still real and still worth having; it just benefited the *other*
-`CProgressDlg` users (Recall, Send-to-world, world-prefs page 9067, the Lua
-`progress` library) rather than plugin loading. Worth correcting because the
-claim reads as evidence that the progress bar is exercised during world load,
-which would make it a natural place to hang an adoption test — and it is not.
+`CProgressDlg` users — Recall (`doc.cpp:2432`), Send-to-world / paste-file
+(`doc.cpp:1429`), Find and Global Change (`Finding.cpp:169`), the world-prefs
+Info page's *Calculate memory usage*, and the Lua `progress` library
+(`scripting/lua_progressdlg.cpp`) — rather than plugin loading. Worth
+correcting because the claim reads as evidence that the progress bar is
+exercised during world load, which would make it a natural place to hang an
+adoption test — and it is not.
+
+**Landed 2026-08-07** (`eb39282` for the adoption, and the corrections with it).
+The false claim had been copied into **five** places, not one: `CLAUDE.md`,
+`dialogs/ProgDlg.cpp`, `dialogs/ProgDlg.h`, `platform/wx_mfc_hooks.h` and
+`platform/gui_bridge_selftest.cpp`. All five are fixed. That spread is the
+lesson worth keeping — a wrong explanation propagates into comments faster than
+a wrong line of code does, because each copy looks like corroboration for the
+next reader.

@@ -378,11 +378,12 @@ its callers.
 ## 7. Unresolved, needs a decision
 
 `CreateScriptEngine` exists in **two** hand-written copies
-(`platform/doc_flip_gui_stubs.cpp:154` and `platform/doc_port_glue.cpp:468`) that
-have drifted from each other and from `scripting/scripting.cpp:23-101`. Three
+(`platform/doc_flip_gui_stubs.cpp:147` and `platform/doc_port_glue.cpp:420` —
+these line numbers were stale in the first version of this section) that have
+drifted from each other and from `scripting/scripting.cpp:23-101`. Three
 differences, none recorded in `docs/UPSTREAM-DIVERGENCES.md`:
 
-1. The re-entrancy guard (`scripting.cpp:28-32`) is absent, so a second call
+1. The re-entrancy guard (`scripting.cpp:29-33`) is absent, so a second call
    overwrites `m_ScriptEngine` and **leaks** the previous one.
 2. The real body creates the engine *before* the `m_strScriptFilename.IsEmpty()`
    bail, so on Windows a world with scripting enabled and no script file still
@@ -391,9 +392,72 @@ differences, none recorded in `docs/UPSTREAM-DIVERGENCES.md`:
    `DisableScripting()`; the twin prints to stderr, keeps the empty engine, and
    returns **false meaning success**.
 
-(2) is a deliberate headless deviation dating from when Lua was the only engine.
-Six languages work in the product now, so it should be re-decided rather than
-inherited.
+### Re-surveyed 2026-08-07, and the question is not the one above
+
+All three still hold at HEAD. But the framing was wrong in the way that decides
+whether to act, and a fourth difference outranks all of them.
+
+**This is a headless-only cleanup. It fixes no product bug.**
+`scripting/scripting.cpp` is already in `MUSHGUI_ADAPTERS_SOURCES`
+(`CMakeLists.txt:587`), so the macOS *product* has run the canonical body all
+along; both twins live in `mushcore_testsupport` alone. The two are not
+one-per-consumer either — they are two copies in ONE consumer serving two entry
+paths (`CMUSHclientDoc::CreateScriptEngine` from `OpenSession`, and the
+file-local `PortCreateWorldScriptEngine` from the port-only `LoadWorldFromFile`,
+which is the path 98 of the ~100 test world loads actually take).
+
+**The blocker, which the first survey missed entirely:
+`xml/xml_load_world.cpp:527-528`.** Canonical `FindAllEntryPoints` returns
+**true** — meaning "errors found" — for any unresolvable procedure name
+(`scripting.cpp:222-234`, via `strErrorMessage` accumulation), and the plugin
+loader turns that into `ThrowErrorException ("Could not find all required script
+routines")`. The port's twin hard-returns `false` **on purpose**, and says so at
+`platform/doc_port_glue.cpp:403-405`. So adopting the canonical body makes
+headless plugin loads start FAILING where they succeed today, and constructs a
+`CMissingEntryPoints` + `DoModal` during load. On Windows the throw is exactly
+what happens, so the twin is *port-invented behaviour* — but the blast radius
+lands entirely on the test suite.
+
+Three further things anyone acting on this must know:
+
+- **`tests/test_world_load.cpp:692`** (`WorldLoad.NoScriptNoEngine`) asserts
+  `EXPECT_EQ(nullptr, doc.m_ScriptEngine)` for a scripting-enabled world with no
+  script file. That assertion **is** difference (2). The "decision" this section
+  asks for is not a design question in the abstract — it is whether to flip that
+  line. (Found by the *grep the test suite for the stub's contract* check; the
+  other pin is `tests/test_lua_scripting.cpp:1937-1982`.)
+- **Blast radius is ~46 test blocks, not two.** Any `test_world_load.cpp` block
+  with no `<world>` tag keeps the ctor's `enable_scripts = TRUE`, so after
+  adoption it gains a real Lua state and flips `doc_port_glue.cpp:558`'s
+  `if (m_ScriptEngine)` gate. Budget a full-suite triage, not a two-test fix.
+- **The default reload answer inverts.** `m_nReloadOption` defaults to
+  `eReloadConfirm`, and headless `MB_YESNO` answers `IDNO`
+  (`HeadlessMessageBoxAnswer`), so after adoption the default headless script
+  reload is **declined**, where the twin always reloads.
+
+Three drifts beyond the recorded three, all verified:
+
+4. The twins set the port-only `m_scriptFileMtime` and never
+   `m_timeScriptFileMod`, so `world.GetInfo`'s script-modification item
+   (`scripting/methods/methods_info.cpp:1147`) is **permanently dead headless**.
+   The tests missed it because they assign the member by hand.
+5. Both twins are **Lua-only** and stderr-reject any other language, five years
+   after the other five engines started working.
+6. The port's `OnScriptFileChanged` ignores `m_nReloadOption` entirely.
+
+There are **six** doc-level `CreateScriptEngine` call sites, not three (add
+`dialogs/world_prefs/configuration.cpp:1740`, `platform/wx_mfc_impl.cpp:1932`,
+`scripting/scripting.cpp:412`); all six are safely gated, so difference (1) is a
+latent hazard rather than a live leak. Adoption needs **nine** stub deletions in
+the one commit, and the proof afterwards is `nm -A` over `libmushcore.a` +
+`libmushcore_testsupport.a` showing exactly one definition per symbol — not a
+green suite, which is what the §5a hazard produces.
+
+**Recommendation: adopt, but as its own deliberate piece of work with a triage
+pass budgeted, and only once the plugin-load throw is a decision rather than a
+surprise.** It buys the shipping TU its first headless coverage and kills six
+drifts, but it is a test-fidelity change, not a product fix, and it is the only
+remaining item that can turn the suite red for reasons that are *correct*.
 
 ## 8. A documentation correction
 

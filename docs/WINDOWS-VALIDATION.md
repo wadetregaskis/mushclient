@@ -6,6 +6,12 @@ regressions against original/upstream MUSHclient behaviour.  Everything
 Windows-side described below was written **by reasoning only** — no MSVC
 compile or run has ever happened on it.  You are the first empirical check.
 
+> **STATUS 2026-08-08 — the first empirical pass has happened.  Read §8
+> (Results) before working from anything below it**: several open questions in
+> §4c are now answered, one prediction in §4b was wrong, and the build was
+> broken at HEAD until `0abb31b`.  Sections 1–7 are left exactly as written so
+> the predictions can be scored against what actually happened.
+
 ## 1. Context in three paragraphs
 
 This repo is Nick Gammon's MUSHclient (a Windows MFC MUD client) plus a
@@ -1182,3 +1188,190 @@ least to grip:
 - `pal/win_worldview.cpp` `outputSelection()`: the fused four-getter
   selection math (1-based, clamped, `endcol + 1`) against
   `GetSelectionStartLine` et al. in official-client behaviour.
+
+---
+
+## 8. Results of the first empirical pass (2026-08-08)
+
+Environment: Windows 11 Pro 26200, VS 2022 Build Tools (MSVC 14.44, v143,
+Windows SDK 10.0.26100), Debug|Win32.  Baseline for every comparison: the
+**official MUSHclient 5.06** installed at `C:\Program Files (x86)\MUSHclient`
+(Nick Gammon's last release), driven through the *same* scripts as the new
+build so the two outputs can be diffed rather than eyeballed.
+
+### 8a. Build — was broken at HEAD; fixed in `0abb31b`
+
+**The Windows build did not compile.**  59 unique errors on the first pass,
+from five places where a declaration had drifted into the `#ifndef _WIN32`
+arm while its definition or its use stayed unconditional:
+
+| Site | What was wrong |
+|---|---|
+| `doc.h` | `#include "pal/style_colour.h"` and `#include "line_position_index.h"` sat inside `#ifndef _WIN32`, but `CMUSHclientDoc` declares `GetStylePalette (pal::StylePalette&)` and the `m_LinePositions` member unconditionally.  The class body did not parse; 55 of the 59 errors were this one omission and its cascade. |
+| `doc.h` | the `Phase_OSC` declaration was guarded, although `telnet_phases.cpp` defines it and `doc_shared.cpp` dispatches `HAVE_OSC` to it on every platform. |
+| `mcdatetime.cpp` | both `#include "pal/iclock.h"` and the single definition of `pal::g_clock` were guarded, while `GetTimeNow()` consults `g_clock` unconditionally. |
+| `doc_shared.cpp` | uses `CSendView` in its `_WIN32` arm without including `sendvw.h`. |
+| `methods_output_shared.cpp` | uses `CMUSHView` in its `_WIN32` arm without including `MUSHview.h`. |
+
+All five are include/declaration placement — no behaviour changed on either
+platform.  Afterwards: **links clean, with no warnings from our own code**
+(`WinDebug/MUSHclient.exe`, reports version 5.07).  What remains is `LNK4099`
+from OpenSSL's static libs (no PDB shipped) and three pre-existing `C4244`s in
+vendored `scripting/lua_compress.c`.
+
+Lesson worth carrying to the mac side: a shared header's `#ifndef _WIN32`
+block is the most dangerous place to put an include, because nothing on macOS
+can notice.  Adding a member whose *type* comes from a guarded include breaks
+Windows silently until somebody compiles it.
+
+**Running the built exe needs runtime assets staged beside it.**  MSVC writes
+`WinDebug\MUSHclient.exe`, but the app resolves `locale\en.dll`,
+`spellchecker.lua`, `lua5.1.dll`, `tips.txt`, `help.db` and friends relative to
+the executable, so a fresh `WinDebug` gives, in order: a missing-DLL system
+error, "Failed to load resources file", then a scripting error about
+`spellchecker.lua`.  Copying the *data* files (not the exe) from an installed
+5.06 makes it run.  Worth knowing before diagnosing a "broken build" that is
+really a bare directory.
+
+### 8b. Two reusable conformance scripts (new)
+
+Both live in `tests/lua/` and run in any client — paste into Game ▸ Immediate
+(Ctrl+I), or point a world's `script_filename` at a driver that `dofile`s them.
+Writing them in Lua is the whole trick: **the same file runs against a stock
+MUSHclient**, so "is this a regression?" becomes a diff instead of a judgement.
+
+- `tests/lua/miniwindow_conformance.lua` — §4b's checklist, ported from
+  `platform/miniwindow_selftest.cpp` (64 probes).  **64/64 pass** on Windows.
+- `tests/lua/api_conformance.lua` — the scriptable half of §4c as `key = value`
+  lines, for diffing two clients.
+
+### 8c. §4b miniwindows — 64/64, and §4b's pinned differences were 3-for-4
+
+The three platform differences §4b predicted are **confirmed**: out-of-bounds
+`WindowGetPixel` is `-1` on Windows (the port sees 4294967295); GDI's `LineTo`
+**excludes** the endpoint (the port draws it); a stroked outline is the crisp
+pen colour with no antialiasing.
+
+**A fourth was missed, and belongs in §4b**: real GDI reports Courier New 10pt
+as `tmMaxCharWidth` = 10 and `tmAveCharWidth` = 8, so
+`WindowFontInfo(7) == WindowFontInfo(6)` — which the mac selftest asserts for a
+fixed-pitch font — is **false on Windows**.  The glyph cell is wider than the
+average advance even when every advance is identical.  Only `max >= average`
+holds on both, and that is what the Lua script asserts.
+
+Everything else agreed exactly, including the ones the mac side had only just
+fixed and could not check here: RoundRect right/bottom-exclusive, Chord filling
+the cap rather than the pie, mono pattern brushes 8–12 keeping *both* caller
+colours (288 red / 288 green pixels in the checkerboard, no black or white),
+DrawEdge honouring the `BF_` side flags, `EDGE_ETCHED`'s two rings differing,
+and the `WindowFilter` identity round-trip being lossless.
+
+### 8d. §4a connection lifecycle — works, against a real MUD
+
+Validated against **discworld.starturtle.net:4242** (the world §4a names),
+connecting **by hostname** — the mechanism §7 flagged as having the least
+reasoning grip: `WSAAsyncGetHostByName` posting to the adapter's message-only
+window.
+
+Confirmed in one session: async DNS resolve, connect,
+`--- Connected on Saturday, August 08, 2026, 3:32 PM ---`, the full 30-line
+MOTD rendered correctly, `Send` reaching the MUD and its reply coming back,
+IAC GA handled with `GetInfo(289)` naming the `Your choice: ` prompt line (56),
+`Disconnect`, and the complete statistics block:
+
+```
+--- Disconnected on Saturday, August 08, 2026, 3:32 PM ---
+--- Connected for 0 days, 0 hours, 0 minutes, 7 seconds. ---
+--- Received 57 lines, sent 1 line.
+--- Output buffer has 61/10000 lines in it (0.6% full).
+--- Matched 0 triggers, 0 aliases, and 2 timers fired.
+```
+
+`IsConnected()` is false afterwards, with no zombie state.  Automatic reconnect
+after a peer close was also seen working (a mis-written test server closed the
+socket and the client re-established by itself).
+
+**A warning about loopback test servers.**  A PowerShell `TcpListener` echo
+server on `127.0.0.1` produced a connection that established but carried no
+data in either direction.  That looked alarming until the *official 5.06* was
+pointed at the same server and behaved **identically** — so it is the harness,
+not the client.  If you write a loopback MUD stub, verify it against a stock
+client before believing anything it tells you.
+
+Still untested here: TLS (all of §4a's certificate/handshake matrix, and so
+§4c-undetricies items 2–4), SOCKS proxies, and long idle sessions.
+
+### 8e. §4c — differential results against 5.06
+
+`tests/lua/api_conformance.lua` run on both clients.  **Identical output** for:
+the whole command-bar family (`SetCommand` filling only when empty and
+returning `eCommandNotEmpty` = 30020 otherwise, `GetCommand`, `SelectCommand`,
+`SetCommandSelection`, `GetInfo(236)`/`(237)` including clamping past the end);
+command history (newest-first `GetCommandList`, the count limit,
+`DeleteCommandHistory`); bookmarks (§4c-vicies — set, clear, `GetLineInfo(n,7)`
+agreeing in both directions, out-of-range line numbers doing nothing);
+accelerators (§4c-quater); printf-format handling (§4c-ter —
+`Note("literal percent: 100% done %s")` comes out verbatim); and `GetInfo(289)`
+across Clear Output.
+
+**§4c-sexies is answered.**  A regexp trigger with *convert wildcards to lower
+case* ticked and a Lua script callback behaves **identically in 5.06 and this
+build**: the callback receives a 0-based table — `[0]` the whole matching line,
+`[1]`/`[2]` the captures — with the **original** case (`Alice`, `Bob`), while
+`GetTriggerInfo(name, 101/102)` returns the **folded** ones (`alice`, `bob`)
+and `110` the folded whole line.  The asymmetry the mac side pinned is
+upstream's, and it is preserved exactly.
+
+**§4c-duodecies is answered: `SetScroll`'s argument really is a device-pixel Y,
+and `GetInfo(296)` reports the same unit.**  With the buffer filled past a
+screenful, `SetScroll(150)` gives `GetInfo(296) == 150` in **both** clients,
+`SetScroll(-1)` reaches the same bottom value in both, feeding `GetInfo(296)`
+back into `SetScroll` is a no-op in both, and `SetScroll(-2)` changes nothing.
+(On a near-empty buffer 5.06 answers `-248` where this build answers `0`,
+because `highest = lastline * fontheight - windowheight` goes negative and
+upstream clamps *up* to it, while this build's `will_scroll` short-circuit
+skips the scroll entirely.  That difference comes from fork commit `9975939`
+in 2020, not from the PAL work.)
+
+Differences found, all explained, **none a regression**:
+
+| Probe | 5.06 | this build | Verdict |
+|---|---|---|---|
+| `SetSelection` + the four `GetSelection*` | absent | works (2/2/1/6, clamped end column 36) | `SetSelection` does not exist in 5.06 — a later addition, not a change |
+| `SetOption("note_text_colour", 300)` | `0` — accepted, stored **300** | `30026` (`eOptionOutOfRange`), keeps 3 | **intended** (§4c-quatertricies / UPSTREAM-BUGS #8); confirms upstream really did accept it |
+| `SetOption("max_output_lines", 0)` | `30026` | `0`, reads back 0 | **intended** (§4c-quinvicies) — 0 now means unlimited |
+| `GetInfo(125)` | `nil` | `false` | cosmetic; both falsy |
+
+### 8f. An undocumented, Windows-visible divergence: world-load warnings are no longer modal
+
+Not in §6 and not in `docs/UPSTREAM-DIVERGENCES.md`, so recording it here.
+`CMUSHclientDoc::LoadError` (`xml/xml_load_world.cpp:607`) used to call
+`AfxMessageBox` when the output buffer was not yet set up; it now **always**
+emits the `[WARNING]` title and the detail as red `ColourNote`s.
+
+Demonstrated with one world file carrying a bad `id` and an unknown attribute:
+5.06 puts up a modal *"Line 10: World "id" field must be 24 hex characters
+(option 'id' not set)"* that must be acknowledged, while this build writes the
+same text into the world's output window and loads straight through.  The
+information is not lost — but a user who mis-edits a world file now gets
+something they can scroll past instead of something they must dismiss.  The
+in-code comment says this was deliberate (the message box "is easy to miss" on
+the port).  **A decision for Wade**: if it stays, it belongs in
+`docs/UPSTREAM-DIVERGENCES.md` as entry 6.
+
+### 8g. §4c-quater's "empty Send un-binds" is wrong for both clients
+
+`AcceleratorTo("Ctrl+F8", "", 0)` leaves `Ctrl+F8` listed in
+`AcceleratorList()` in **5.06 and this build alike**.  The check should be
+reworded: an empty Send does not un-bind upstream either, so there is nothing
+to preserve.
+
+### 8h. Not covered by this pass
+
+TLS (§4a, §4c-undetricies 2–4); SOCKS; MCCP verified only indirectly (data from
+a compressing MUD arrived intact); Quow's plugin pack (§4b's acceptance
+workload); everything needing real mouse input (§4c-terdecies, §4c-undevicies);
+the spell checker (§4c-tervicies); modal dialogs and property pages
+(§4c-quaterdecies); chat sockets (§4c-tertricies); DBCS wrap
+(§4c-duodetricies); the queue-drain logging change (§4c-duodetricies-bis); and
+the `&#;` MFC assertion in `MXP_GetEntity` (§4c-sexvicies).

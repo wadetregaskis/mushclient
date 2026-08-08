@@ -110,3 +110,8 @@ packaging/tcl/
 packaging/ruby/
 packaging/resources/
 .claude-audit/
+
+# MSVC drops the precompiled header in the SOURCE directory, not WinDebug
+# (the project sets no <PrecompiledHeaderOutputFile>), so it lands here as a
+# ~50 MB untracked file after every Windows build.
+*.pch

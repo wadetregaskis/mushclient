@@ -2332,8 +2332,6 @@ void CMUSHclientDoc::ClearOutput (void)
   if (!m_LinePositions.IsAllocated ())
     return;
 
-POSITION pos;
-
 // delete lines list
 
   DELETE_LIST (m_LineList);

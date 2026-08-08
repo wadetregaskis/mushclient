@@ -6,15 +6,10 @@
 
 #include "stdafx.h"
 
-#ifndef _WIN32
-// OLE Automation Date (DATE) is a double: days since Dec 30, 1899.
-// On POSIX we define it as double and provide helpers to convert it.
-typedef double DATE;
-
-#include <time.h>
-#include <ctime>
-#include <cmath>
-
+// The injectable clock is consulted by GetTimeNow() on every platform, so both
+// the declaration and its single definition must be unconditional.  Installing
+// one is a test-only act; g_clock is nullptr in production everywhere, which is
+// the "read the real system clock" path this file has always taken.
 #include "pal/iclock.h"
 
 namespace pal {
@@ -23,6 +18,15 @@ namespace pal {
 // foundation links exactly one definition.
 IClock* g_clock = nullptr;
 }
+
+#ifndef _WIN32
+// OLE Automation Date (DATE) is a double: days since Dec 30, 1899.
+// On POSIX we define it as double and provide helpers to convert it.
+typedef double DATE;
+
+#include <time.h>
+#include <ctime>
+#include <cmath>
 
 // Offset in days between OLE epoch (Dec 30, 1899) and Unix epoch (Jan 1, 1970)
 static const double OLE_UNIX_EPOCH_DIFF = 25569.0;

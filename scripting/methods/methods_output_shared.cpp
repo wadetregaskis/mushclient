@@ -17,6 +17,9 @@
 #include "stdafx.h"
 #include "../../MUSHclient.h"
 #include "../../doc.h"
+#ifdef _WIN32
+#include "../../MUSHview.h"     // CMUSHView (DeleteLines' view-resync walk)
+#endif
 #include "../errors.h"
 
 #include <string>

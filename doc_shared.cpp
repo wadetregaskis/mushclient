@@ -11,6 +11,9 @@
 #include "mainfrm.h"            // Frame (ConnectionClosed's status/button updates)
 #include "doc.h"
 #include "MUSHview.h"           // CMUSHView (DisplayMsg/StartNewLine view-notify loops)
+#ifdef _WIN32
+#include "sendvw.h"             // CSendView (SendTo's eSendToCommand view walk)
+#endif
 #include "scripting/errors.h"   // eOK / eBadParameter
 #include "pal/style_colour.h"    // pal::StylePalette / resolveStyleColours
 #include "dialogs/password.h"   // CPasswordDialog (ConnectionEstablished, full build)

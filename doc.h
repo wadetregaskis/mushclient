@@ -42,6 +42,11 @@ extern CString MUSHCLIENT_VERSION;
 #include "pal/iworldview.h"   // pal::IWorldView — the typed per-world view seam
 namespace pal { class ITransport; }   // pal/itransport.h — the byte-transport seam
 class CDocTransportEvents;            // doc_shared.cpp — the ITransportEvents → engine bridge
+// Likewise unconditional: pal::StylePalette is a parameter of GetStylePalette
+// and CLinePositionIndex is the type of the m_LinePositions member, both of
+// which the class body below declares on every platform.
+#include "pal/style_colour.h"      // pal::StylePalette (GetStylePalette)
+#include "line_position_index.h"   // the output buffer's JUMP_SIZE jump index
 
 #ifndef _WIN32
 // Verbose protocol tracing flag — defined in mushapp_globals.cpp / doc_portable.cpp.
@@ -57,9 +62,6 @@ void Generate256colours (void);
 // doc.h is self-sufficient regardless of what the including TU has pulled in.
 // (The #pragma once in OtherTypes.h makes this a no-op when already included.)
 #include "OtherTypes.h"
-// The output buffer's JUMP_SIZE jump index (m_LinePositions).
-#include "pal/style_colour.h"   // pal::StylePalette (GetStylePalette)
-#include "line_position_index.h"
 // Shared styled-line types and GUI output callbacks.
 #include "platform/output_types.h"
 #include <functional>
@@ -1891,9 +1893,7 @@ public:
   void Phase_UTF8 (const unsigned char c);
   void Phase_ANSI (const unsigned char c);
   void Phase_IAC (unsigned char & c);
-#ifndef _WIN32
   void Phase_OSC (const unsigned char c);  // OSC discard (all platforms)
-#endif            
   void Phase_WILL (const unsigned char c);           
   void Phase_WONT (const unsigned char c);           
   void Phase_DO (const unsigned char c);             

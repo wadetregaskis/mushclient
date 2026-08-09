@@ -38,6 +38,44 @@ static_assert ((int) pal::kChatFileBlockSize == 500 &&
                (int) pal::kZChatFileBlockSize == 1024,
                "the chat file block sizes are protocol, not tunables");
 
+// ── ChatAppendBytes ─────────────────────────────────────────────────────────
+// Append n bytes to a CString, NULs and all.
+//
+// `dest += src` cannot be used for chat traffic.  Modern ATL's
+// CSimpleStringT::Append (atlsimpstr.h) starts with
+//
+//     //Make sure we don't read pass end of the terminating NULL
+//     nLength = StringLengthN(pszSrc, nLength);
+//
+// so it silently clamps an append to the first NUL even when the caller passed
+// an explicit, correct length.  Every route into it -- operator+=,
+// Append(const CSimpleStringT&), Append(ptr, len) -- clamps.
+//
+// That is fatal for zChat, whose framing is 2 bytes of little-endian command
+// followed by 2 bytes of little-endian length: for every command below 256 the
+// SECOND BYTE IS A NUL.  Measured on Windows 2026-08-09, a 20-byte
+// CHAT_VERSION frame reached the wire as one byte, and the same for
+// CHAT_STATUS and CHAT_STAMP -- so a zChat peer received a stream of stray
+// first bytes and no complete message in either direction.  A MUSHclient 5.06
+// binary, built against an older MFC whose Append was a plain memcpy, sends all
+// three frames intact; this is a toolchain regression rather than anything the
+// port did.  It bites file transfers too, where a block of an ordinary binary
+// file is very likely to contain a NUL.
+//
+// CString's other operations are safe: SetString(ptr, len) -- which is what the
+// (ptr, len) constructor, Mid and Left all use -- memcpys the length it is
+// given.  So only appending needs this, and it is expressed with those safe
+// primitives so both platforms' CString take the same path.
+static void ChatAppendBytes (CString & dest, const char * pSrc, const int nLength)
+  {
+  if (pSrc == NULL || nLength <= 0)
+    return;
+
+  std::string combined (dest.GetString (), (size_t) dest.GetLength ());
+  combined.append (pSrc, (size_t) nLength);
+  dest = CString (combined.data (), (int) combined.size ());
+  }   // end of ChatAppendBytes
+
 IMPLEMENT_DYNAMIC(CChatSocket, CAsyncSocket)
 
 CChatSocket::CChatSocket(CMUSHclientDoc* pDoc)
@@ -360,7 +398,7 @@ int count = Receive (buff, sizeof (buff) - 1);
 
 // now take the incoming text and break into blocks
 
-  m_outstanding_input += CString (buff, count); // add to any left over
+  ChatAppendBytes (m_outstanding_input, buff, count); // add to any left over
 
   while (!m_bDeleteMe && !m_outstanding_input.IsEmpty ())
     {
@@ -626,7 +664,7 @@ void CChatSocket::SendData (const CString & strText)
 
   m_tLastOutgoing = CTime::GetCurrentTime();
 
-  m_outstanding_output += strText;
+  ChatAppendBytes (m_outstanding_output, strText.GetString (), strText.GetLength ());
 
   OnSend (0);   // in case FD_WRITE message got lost, try to send again
   
@@ -738,7 +776,9 @@ void CChatSocket::SendChatMessage (const int iMessage,
       {
       // messages start with a message number and end with 0xFF
       strData = (char) (unsigned char) iMessage;
-      strData += strMessage;
+      // ChatAppendBytes, not +=: a file block is raw file bytes and will
+      // contain NULs (see the note on the helper).
+      ChatAppendBytes (strData, strMessage.GetString (), strMessage.GetLength ());
       // can't have 0xFF imbedded in messages, except file blocks :)
       // 0xFF is y with 2 dots on it so y will look reasonable 
       if (iMessage != CHAT_FILE_BLOCK)
@@ -778,7 +818,8 @@ void CChatSocket::SendChatMessage (const int iMessage,
       strData += (char) (unsigned char) ((iLength >> 8) & 0xFF);
 
       // then the message itself
-      strData += strStampedMessage;
+      ChatAppendBytes (strData, strStampedMessage.GetString (),
+                       strStampedMessage.GetLength ());
       }
       break;
 

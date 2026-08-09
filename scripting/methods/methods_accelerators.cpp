@@ -169,9 +169,25 @@ WORD key;
 
   // replace accelerator table in document
   m_accelerator = hAccel;
-#else
-  // Deleting: an empty Send means "forget this key".  On Windows that fell out
-  // of rebuilding the table without it; here the map IS the table, so say so.
+#endif // _WIN32
+
+  // Deleting: an empty Send means "forget this key", and that has to mean
+  // forgetting the BOOKKEEPING too, not just the dispatch.
+  //
+  // Upstream only half-deleted.  The HACCEL above is rebuilt without the key,
+  // so it genuinely stops firing -- but the three maps are written only inside
+  // the `if (Send [0])` arm above and were never erased, so the entries
+  // survived their own deletion.  AcceleratorList reads them, and therefore
+  // went on reporting `Ctrl+F8 = hello` for a key that could no longer do
+  // anything; a script asking "is this key taken?" got the wrong answer.
+  // m_CommandToPluginMap likewise kept naming a plugin as the owner of a dead
+  // binding, which matters when that plugin is unloaded.
+  //
+  // Off Windows there is no HACCEL at all -- CWorldChildFrame::FireAccelerator-
+  // IfMatch dispatches straight from m_AcceleratorToCommandMap -- so the map IS
+  // the table and this erase is the whole deletion.  It ran there already; it
+  // now runs on both, which is the only Windows-visible change: a key that was
+  // already dead stops being listed.  See docs/UPSTREAM-DIVERGENCES.md.
   if (!Send [0])
     {
     const long virt_plus_key = ((long) fVirt) << 16 | key;
@@ -184,7 +200,6 @@ WORD key;
       m_AcceleratorToCommandMap.erase (it);
       }
     }
-#endif // _WIN32
 
   // test test test
 

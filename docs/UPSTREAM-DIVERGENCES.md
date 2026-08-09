@@ -144,6 +144,45 @@ reordering either platform's key dispatch to unify.
 
 ---
 
+
+---
+
+## 6 — Un-binding an accelerator forgets it completely
+
+**Where:** `scripting/methods/methods_accelerators.cpp`,
+`CMUSHclientDoc::AcceleratorTo` — the erase block after the HACCEL rebuild,
+which used to be inside `#else` (non-Windows only).
+
+**Upstream:** an empty `Send` half-deletes. The Win32 HACCEL is rebuilt without
+the key — so it genuinely stops firing — but `m_AcceleratorToCommandMap`,
+`m_CommandToMacroMap`, `m_CommandToSendToMap` and `m_CommandToPluginMap` are
+written only inside the `if (Send [0])` arm and are never erased. The entries
+outlive the binding.
+
+**Now:** the erase runs on both platforms, so an empty `Send` clears the maps
+as well as the table.
+
+**Why:** `AcceleratorList` is built from those maps, so upstream went on
+reporting `Ctrl+F8 = hello` for a key that could no longer do anything —
+confirmed on Windows against a stock 5.06, which behaves the same way
+(`docs/WINDOWS-VALIDATION.md` §8g, §8j). A script's only way to ask "is this
+key already taken?" therefore answered wrongly, and `m_CommandToPluginMap` kept
+naming a plugin as the owner of a dead binding, which is exactly the
+bookkeeping that plugin unloading consults.
+
+Off Windows this erase was always required rather than merely tidy: there is no
+HACCEL at all, and `CWorldChildFrame::FireAcceleratorIfMatch` dispatches
+straight out of `m_AcceleratorToCommandMap`, so the map *is* the table. That is
+why the block already existed in the `#else` arm; all that changed is that
+Windows now runs it too.
+
+**Observable change on Windows:** `AcceleratorList()` stops listing keys that
+were already unable to fire. Nothing that worked before stops working — the
+HACCEL rebuild is untouched, and re-binding a key still re-uses its previously
+allocated command id, because that lookup misses either way once the map entry
+is gone (a fresh id is allocated instead, from the same `ACCELERATOR_COUNT`
+pool).
+
 ## Verification status
 
 Entries 1-3 are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)
@@ -171,3 +210,8 @@ and its seam is covered headlessly by `DefaultFonts.*` in
 here; what a Windows run would still add is confirmation that `CMUSHView`
 repaints from the same `ChangeFont` call, which it already does for the
 World Properties font path.
+
+Entry 6 was found and verified on Windows (`docs/WINDOWS-VALIDATION.md` §8g,
+§8j): a stock 5.06 and this build both listed an un-bound key until the erase
+was hoisted, and `tests/lua/api_conformance.lua` reports the list either way,
+so re-running it against both clients is the check.

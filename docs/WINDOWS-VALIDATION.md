@@ -1220,6 +1220,13 @@ platform.  Afterwards: **links clean, with no warnings from our own code**
 from OpenSSL's static libs (no PDB shipped) and three pre-existing `C4244`s in
 vendored `scripting/lua_compress.c`.
 
+**Release|Win32 builds and runs too** (checked at the end of the third pass,
+`d62906c`): zero errors, and the only warnings are the same pre-existing ones
+in vendored C — `lua_compress.c` plus two `GetVersionEx` deprecations in
+`sqlite3.c`.  Both conformance scripts were re-run against `WinRel` and gave
+identical answers to the Debug build, `miniwindow_conformance` included at
+64/64 — so nothing here depends on `_DEBUG` or on being unoptimised.
+
 Lesson worth carrying to the mac side: a shared header's `#ifndef _WIN32`
 block is the most dangerous place to put an include, because nothing on macOS
 can notice.  Adding a member whose *type* comes from a guarded include breaks

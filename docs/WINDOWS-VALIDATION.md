@@ -6,11 +6,12 @@ regressions against original/upstream MUSHclient behaviour.  Everything
 Windows-side described below was written **by reasoning only** — no MSVC
 compile or run has ever happened on it.  You are the first empirical check.
 
-> **STATUS 2026-08-08 — the first empirical pass has happened.  Read §8
-> (Results) before working from anything below it**: several open questions in
-> §4c are now answered, one prediction in §4b was wrong, and the build was
-> broken at HEAD until `0abb31b`.  Sections 1–7 are left exactly as written so
-> the predictions can be scored against what actually happened.
+> **STATUS 2026-08-09 — this has now been built and run.  Read §8 (Results)
+> before working from anything below it**: most of §4c's open questions are
+> answered, one prediction in §4b was wrong, four defects were found and fixed
+> (`0abb31b`, `50a1303`, `c24926f`), and the build was broken at HEAD until the
+> first of those.  Sections 1–7 are left exactly as written so the predictions
+> can be scored against what actually happened; §8n lists what is still open.
 
 ## 1. Context in three paragraphs
 
@@ -1455,7 +1456,7 @@ which is worth knowing for anyone who keeps worlds in version control.  Making
 whatever the map yields first) is the fix if that matters; it is a data-format
 decision, so it is left for Wade.
 
-### 8j. Recommendation: what un-binding an accelerator should do
+### 8j. Un-binding an accelerator: what it should do (now fixed, c24926f)
 
 §4c-quater assumed an empty Send un-binds; §8g showed it does not, in either
 client.  Reading `AcceleratorTo` (`scripting/methods/methods_accelerators.cpp`)
@@ -1475,28 +1476,134 @@ taken?", and it answers wrongly.  It also leaves `m_CommandToPluginMap` naming
 a plugin as the owner of a binding that is not live, which matters when a
 plugin is unloaded.
 
-The port already does the right thing: `AcceleratorTo`'s `#else` arm erases all
-three map entries when `Send` is empty.  **Recommendation: hoist that erase out
-of the `#else` so both platforms do it**, leaving the Windows HACCEL rebuild
-exactly as it is.  It is a few lines moving, and the only observable change on
-Windows is that `AcceleratorList` stops listing keys that were already dead.
-Being a deliberate departure from upstream it needs an entry in
-`docs/UPSTREAM-DIVERGENCES.md`, so it is not done here.
+The port already did the right thing: `AcceleratorTo`'s `#else` arm erases all
+three map entries when `Send` is empty.  **Done in `c24926f`**: that erase moved
+out of the `#else` so both platforms run it, leaving the Windows HACCEL rebuild
+exactly as it was.  The only observable change on Windows is that
+`AcceleratorList` stops listing keys that were already dead.  Being a
+deliberate departure from upstream it is recorded as
+`docs/UPSTREAM-DIVERGENCES.md` entry 6.
 
-### 8k. Not covered by either pass
+
+### 8l. Third pass: DBCS wrap, the command queue, MCCP
+
+All three differentially against 5.06, all three showing exactly the intended
+change and nothing else.
+
+**§4c-duodetricies (DBCS wrap) — the fix works, and the control holds.**  This
+is the one change that deliberately alters what Windows *draws*, so it wanted
+the closest look.  A Big5 world (`utf_8` off, `wrap_column` 20, *indent
+paragraphs* off) fed CJK byte pairs through `Simulate`, with the wrapped lines
+read back through `GetLineInfo` and scanned for lead/trail bytes rather than
+eyeballed:
+
+| | 5.06 | this build |
+|---|---|---|
+| Big5, even offset | **5 torn characters** — every wrap strands a lead byte at end of line | **0**, every line 18 bytes, all breaks on a character boundary |
+| Big5, odd ASCII prefix | **5 torn** | **0** |
+| ASCII control (wraps at a space) | byte-for-byte identical between the two clients — the space stays at the END of the old line, no continuation begins with one |
+
+So `UPSTREAM-BUGS.md` #10 reproduces exactly on stock 5.06 and is gone here,
+the wrap does fall up to a byte earlier as predicted (18 vs 19), and the gate
+did not loosen in the other direction.
+
+**§4c-duodetricies-bis (the command queue) — both deliberate changes
+confirmed, with exact counts.**  Against a real MUD, four commands queued
+behind a speed-walk delay, two asking to be logged and two not:
+
+- *"No log" now suppresses logging* (UPSTREAM-BUGS #12).  5.06 wrote **4** of
+  the 4 sent commands into the session log — the flag was recovered as
+  `cMessageType >= 'A'`, which every flag byte satisfies, so it never
+  suppressed anything.  This build writes **2**.  Total log size differs by
+  exactly those two lines (104 vs 102), so nothing else moved.
+- *The zero-delay flush echoes like the tick drain* (UPSTREAM-BUGS #13).  Three
+  commands queued behind a 30-second delay, then the delay set to 0 to force
+  `ChangeTimerRate`'s flush arm: 5.06 echoed **1** of 3 (the two lower-case
+  flags failed its case-sensitive test and went out silently); this build
+  echoes **3**.
+
+**MCCP is confirmed, not merely inferred.**  `GetInfo(103)` goes false → true
+on connecting to Discworld and `GetInfo(208)` reports type **2**, so MCCP v2
+really was negotiated and the whole MOTD came through the inflate path.
+Identical in 5.06, including the detail that both leave the flags set after
+disconnect (`m_bCompress` is cleared by the next `ConnectSocket`, not by
+teardown) — so that is upstream's, not a transport-rewrite leak.
+
+**§4c-quater / §8j (accelerators) — fixed and verified.**  The erase moved out
+of its `#else` (`c24926f`), so an empty `Send` now clears the maps as well as
+the table on both platforms.  `tests/lua/api_conformance.lua` reported
+`accel.list.after.unbind = {1=Ctrl+F8 = hello}` before and reports an empty
+list now.  Recorded as `docs/UPSTREAM-DIVERGENCES.md` entry 6.
+
+**An incidental confirmation that the restored modal earns its keep.**  While
+setting these up, a world file carrying `reconnect_on_link_failure="n"` — not
+an option in either client — sailed through unnoticed under the note-only
+behaviour, and stops the load with a modal now.  That is precisely the class of
+mistake §8f was about.
+
+### 8m. §4c-quatervicies item 1 settled by inspection: the freeze-on-selection reading is right
+
+The first of the four "could not verify here at all" items does not need a run.
+`CMUSHView::get_selection` (`mushview.cpp:2716`) returns **true when the region
+is EMPTY** — explicitly, in three places: the past-end-of-data early return
+(`:2740`), the same-line degenerate case (`:2766`), and the tail
+`return bReturn; // true if empty region` (`:2828`).  So
+`!get_selection (newrgn) && pDoc->m_bAutoFreeze` really does mean "there IS a
+selection and auto-freeze is on → freeze", which is what the port's
+`FreezeIfSelection` was built on.
+
+The three Windows call sites (`:2453`, `:2613`, `:4837`) are also **original
+upstream code, not edits** — they are present verbatim in the initial import
+`ad0cd12`.  The fourth site, `CWinWorldView::setOutputSelection`, is
+`SetSelection`'s Windows body relocated: diffed against `02b7336^` it is
+verbatim, down to the `m_pin_line` / `m_pin_col` assignments and the
+`UpdateAllViews (NULL)` at the end.
+
+So nothing to un-do: the reading was correct and no Windows behaviour changed.
+The other three items in §4c-quatervicies (the `keep_pause_at_bottom` latch,
+the double-click ordering, `TextRectangle`'s 20-pixel floor) still need a
+pointer and a human.
+
+Two other §7 review requests, also settled by reading rather than running:
+
+- **`pal/win_worldview.cpp` `outputSelection()`** — diffed against the four
+  separate getters as they stood at `a9061ce^`.  The fused body is faithful:
+  same view walk, same `m_LineList.GetCount () > 0` guard (so a `CMUSHView`
+  with an empty buffer still falls through to the next view), same
+  `MIN (col, line->len)` clamps, same no-selection test, same `+ 1`s, same
+  "first output view wins, else zeros".  §8e then confirmed it empirically —
+  `SetSelection (2, 2, 1, 6)` reads back 2/2/1/6, a degenerate selection reads
+  back as none, and a past-the-end column clamps to the line length.
+- **`pal/win_transport.cpp`'s message-only window** — the two mechanics that
+  worried the mac side both behaved: `WSAAsyncGetHostByName` completions match
+  on the handle and resolve a real hostname (§8d), and destroying the transport
+  from inside its own event is exercised on every disconnect through
+  `CDocTransportEvents::onClosed`, which deletes it before the bookkeeping.
+  Dozens of connect/disconnect cycles across these passes, including
+  server-initiated closes, TLS teardowns and an automatic reconnect, produced
+  no crash.  `connect()`'s immediate-success arm is the one that stayed
+  untested: on loopback MFC's `Connect` can return TRUE inline, and the deferred
+  `WM_WT_CONNECTED` post is what keeps the engine from re-entering — it did not
+  misbehave, but nothing here proved which arm was taken.
+
+### 8n. Not covered by any pass
 
 - **SOCKS proxies** (§4a) — no proxy available here.
-- **MCCP** — verified only indirectly: data from a compressing MUD arrived
-  intact, but nothing confirmed compression was actually negotiated.
-- **Quow's plugin pack** (§4b's acceptance workload) — not installed.
+- **Quow's plugin pack** (§4b's acceptance workload) — not installed.  The
+  drawing primitives it exercises are covered by
+  `tests/lua/miniwindow_conformance.lua`; what is missing is the *composition*
+  of a real mapper at speed, and the hotspot mouse paths below.
 - **zChat specifics** (§4c-tertricies item 3) — the 1024 file block size and
   `CHAT_STATUS` / `CHAT_STAMP`.  The MudMaster path is covered (§8i).
-- **The queue-drain logging change** (§4c-duodetricies-bis) — needs a live MUD
-  to accept the queued speed-walk commands; `Send` returns `eWorldClosed` on a
-  disconnected world, so nothing reaches the queue.  Sending a burst of
-  speed-walk traffic to a real MUD was not something to do casually.
-- **DBCS wrap with indent-paragraphs off** (§4c-duodetricies) — needs a Big5 or
-  GB2312 world with CJK text long enough to wrap.
-- Everything needing real mouse input (§4c-terdecies, §4c-undevicies), the
-  spell checker (§4c-tervicies), and the property-page validators
-  (§4c-quaterdecies), which want a human at the dialogs.
+- **The mouse-driven miniwindow paths** (§4c-terdecies, §4c-undevicies) — the
+  hotspot re-detect under a motionless pointer, middle-click, Ctrl+wheel
+  ordering, right double-click, leave-window.  These want a real pointer, and
+  synthesising global mouse input is not something to do on someone's desktop.
+- **The spell checker** (§4c-tervicies) and the **property-page validators**
+  (§4c-quaterdecies) — both want a human at the dialogs.  Note the DDV change
+  is port-only, so the Windows question is only "does MFC reject the same
+  values", which is upstream behaviour nothing here touched.
+- **`world.TextRectangle`'s 20-pixel floor** and the other three
+  §4c-quatervicies items whose Windows arm is `CMUSHView` code no script can
+  reach.  The first of the four — the freeze-on-selection reading — is settled
+  by inspection in §8m instead.

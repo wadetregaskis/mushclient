@@ -8,8 +8,9 @@ compile or run has ever happened on it.  You are the first empirical check.
 
 > **STATUS 2026-08-09 — this has now been built and run.  Read §8 (Results)
 > before working from anything below it**: most of §4c's open questions are
-> answered, one prediction in §4b was wrong, five defects were found and fixed
-> (`0abb31b`, `50a1303`, `c24926f`, `08c8fa8`), and the build was broken at HEAD
+> answered, one prediction in §4b was wrong, six defects were found and fixed
+> (`0abb31b`, `50a1303`, `c24926f`, `08c8fa8`, `e4236e8` — the last of them a
+> complete zChat outage), and the build was broken at HEAD
 > until the first of those.  Sections 1–7 are left exactly as written so the
 > predictions can be scored against what actually happened; **§8z** lists what
 > is still open.
@@ -1653,19 +1654,111 @@ automated check can reach — plugin loading, Lua at that scale, the miniwindow
 lifecycle, fonts, images, hotspots, SQLite, and a live compressed connection
 underneath — works.
 
+
+### 8p. Fifth pass: SOCKS, zChat (and a real bug), the mapper, hotspot re-detect
+
+Four items §8z had listed as unreachable turned out to be reachable with a
+little machinery.  The harnesses are in the session scratchpad, not the repo,
+but each is a dozen lines of C# hosted in PowerShell and is described here well
+enough to rebuild.
+
+**SOCKS 4 and 5 (§4a) — validated at the byte level.**  Not through an open
+proxy found online: a MUD session carries credentials, an unknown third party
+is a bad place to send them, and a proxy under our own control is a far better
+witness because it can log what the client actually sent.  A local logging
+proxy, with the world pointed at the real Discworld through it:
+
+- **SOCKS4**: `04 01 10 92 51 BB 33 06` + `probeuser` + NUL — version 4, CONNECT,
+  port `0x1092` = 4242, address `51 BB 33 06` = 81.187.51.6.  18 bytes total
+  with a **4-byte address field**, which is exactly what the `unsigned int`
+  comment in `doc_shared.cpp` is guarding (an 8-byte `unsigned long` would have
+  put a malformed 22-byte request on the wire).
+- **SOCKS5 with authentication**: greeting `05` + methods `00 02`, proxy picks
+  `02`, client sends RFC 1929 auth (`ver=1 user="probeuser"`), proxy answers
+  `01 00`, then `05 01 00 01` + address + port.  Correct throughout.
+
+Both then relayed, and the MUD's MOTD arrived in the client each time.
+
+**zChat (§4c-tertricies item 3) — and it was completely broken.**  There is no
+"zChat server" to find: it is peer-to-peer between MUD clients, so the way to
+see what MUSHclient puts on the wire is to be the peer.  A peer that calls IN
+chooses the dialect with its first packet, which is what makes zChat reachable
+at all.
+
+The handshake parses correctly — `GetChatInfo` reports connection type **1**
+(zChat), the remote name, the callback address `127.0.0.1` and port `4051` split
+correctly out of the trailing five characters, and the **file block size raised
+from 500 to 1024**, which was the specific thing §4c-tertricies asked about.
+MudMaster stays at type 0 / 500 and gets `CHAT_VERSION` only, as it should.
+
+But the messages themselves went out **one byte each** — see `e4236e8`.  A zChat
+frame is 2 bytes of little-endian command then 2 bytes of little-endian length,
+so for every command below 256 the second byte is a NUL, and modern ATL's
+`CSimpleStringT::Append` clamps at the first NUL even when handed an explicit
+length (`nLength = StringLengthN(pszSrc, nLength);`, with the comment "Make
+sure we don't read pass end of the terminating NULL").  A stock 5.06 sends 47
+bytes of intact `CHAT_VERSION` / `CHAT_STATUS` / `CHAT_STAMP`; this tree sent
+17, of which three were message stumps.  Both directions, since the receive
+buffer is appended the same way — so zChat could not work at all.
+
+**It is a toolchain regression, not a port one**: `SendChatMessage`, `SendData`
+and `OnSend` are byte-for-byte as imported, and 5.06's binary (built against an
+older MFC whose `Append` was a plain memcpy) is fine.  Anyone building this
+source with VS2022 gets it.  It would bite chat file transfers too, where a
+block of an ordinary binary file is very likely to contain a NUL.  Fixed by
+appending through `SetString(ptr, len)`, which does not clamp; verified
+byte-identical to 5.06 afterwards, with MudMaster unchanged.
+
+**Quow's mapper, looked at rather than measured (§4b).**  `PrintWindow` with
+`PW_RENDERFULLCONTENT` captures the window's own rendering without needing it
+focused or unobscured, so the composition §8o could not check is checkable
+after all.  With the pack loaded and the world connected, the Ankh-Morpork
+minimap draws correctly: the street grid, the room labels (CONTRACT BRIDGE,
+BRASS BRIDGE, FILIGREE ST, MERCHANT, ASSASSINS…), the coloured room markers,
+the blue title strip and the in-game clock line beneath it.  The comms panel
+renders its `All / Tells / Group / Talkers / One` tab headers, and the stats
+column its position marker, XP lines and HP/GP/B bars.  Everything sits where
+it belongs — no overlap, no clipping, no torn text — with the MUD's own output
+filling the rest of the pane.
+
+**The hotspot re-detect (§4c-undevicies) — confirmed, both directions.**
+Synthetic `WM_MOUSEMOVE` posted straight to the `AfxFrameOrView140sd` view
+drives `CMUSHView::OnMouseMove` without touching the user's cursor.  With a
+probe plugin whose hotspot callbacks write to a file:
+
+- `WindowAddHotspot` fires `MouseOver` **synchronously, inside the call** — the
+  log line lands before `AddHotspot` returns — when the last known mouse
+  position is inside the new hotspot.  That is precisely the arm that now goes
+  through `pal::IWorldView::mouseMoveMiniWindow` into `CWinWorldView`'s
+  `CMUSHView` walk, so the relocation works.
+- Adding a hotspot away from that position fires nothing, and
+  `WindowInfo(win, 19)` stays empty.  The control holds.
+
+**What this method cannot do**, and it is worth recording: MFC arms
+`TrackMouseEvent(TME_LEAVE)` on the first mouse move, so Windows immediately
+posts `WM_MOUSELEAVE` for a cursor that is not really there and the engine's
+`m_last_mouseposition` reverts to the `(-1,-1)` sentinel.  Posted moves are
+therefore good for *provoking* the paths but cannot *park* a pointer.  The
+remaining §4c-terdecies edges — middle button, Ctrl+wheel ordering, right
+double-click — need a real cursor, and all of them are port-only fixes whose
+Windows side is upstream code this work never touched.
+
 ### 8z. Still not covered
 
-- **SOCKS proxies** (§4a) — no proxy available here.  Byte-level tests exist on
-  the mac side, which is why §4a called this lower priority.
-- **What Quow's pack LOOKS like** — the pack itself loads and draws (§8o); what
-  no automated check reaches is mapper geometry, layering, and redraw as the
-  character moves.  That wants a human at the screen.
-- **zChat specifics** (§4c-tertricies item 3) — the 1024 file block size and
-  `CHAT_STATUS` / `CHAT_STAMP`.  The MudMaster path is covered (§8i).
-- **The mouse-driven miniwindow paths** (§4c-terdecies, §4c-undevicies) — the
-  hotspot re-detect under a motionless pointer, middle-click, Ctrl+wheel
-  ordering, right double-click, leave-window.  These want a real pointer, and
-  synthesising global mouse input is not something to do on someone's desktop.
+SOCKS, zChat, the mapper's appearance and the hotspot re-detect were all on
+this list and have since been done — see §8p.  What is genuinely left:
+
+- **The remaining mouse edges** (§4c-terdecies) — middle button, Ctrl+wheel
+  ordering, right double-click, leave-window.  Posted `WM_MOUSE*` messages
+  provoke the paths but cannot park a pointer (§8p explains why), so these want
+  a real cursor.  All four are port-only fixes whose Windows side is upstream
+  code this work never touched, so the risk is low.
+- **Chat file transfer.**  The NUL clamp that broke zChat (`e4236e8`) would
+  equally have truncated a `CHAT_FILE_BLOCK` of binary data; the fix covers
+  that path too, but an actual file was never sent between two clients.
+- **Mapper behaviour over time** — geometry and layering render correctly in a
+  still capture (§8p), but redraw as a character moves through rooms needs
+  someone playing.
 - **The spell checker** (§4c-tervicies) and the **property-page validators**
   (§4c-quaterdecies) — both want a human at the dialogs.  Note the DDV change
   is port-only, so the Windows question is only "does MFC reject the same

@@ -989,6 +989,49 @@ CString ExtractDirectory (CString str)
 // writes names like "dodgerblue"; App.m_ColoursMap is populated headless
 // (stub App ctor runs MXP_LoadColours), so the real reverse lookup works
 // everywhere.
+//
+// WHICH name, when a colour has several.  Nine RGB values in the HTML table
+// (mxp/mxpinit.cpp) carry two names apiece: aqua/cyan, fuchsia/magenta, and
+// seven -gray/-grey pairs.  The original returned the first match found while
+// walking App.m_ColoursMap -- an MFC CMapStringToPtr, so the answer was
+// whichever the hash buckets happened to yield first, with the comment "note -
+// colour might match more than one name" acknowledging the ambiguity but not
+// resolving it.
+//
+// That is not an internal detail: ColourToName's output is the TEXT WRITTEN
+// INTO EVERY SAVED WORLD FILE.  Measured 2026-08-09, a stock 5.06 and this
+// tree disagreed on four of the nine, so re-saving an untouched world rewrote
+// `magenta` as `fuchsia` and `cyan` as `aqua`; and this tree was not even
+// self-consistent, answering `dimgrey` but `darkgray`.  The order depends on
+// the compiler's hash, the bucket count and the table's contents, so it can
+// change again for no reason anyone would connect to it.
+//
+// So the choice is pinned.  kCanonicalColourNames is the name every SHIPPED
+// MUSHclient emitted: for the three pairs that both had (aqua/cyan,
+// fuchsia/magenta, lightgray/lightgrey) it is what 5.06 wrote, and for the six
+// -grey spellings added after 5.06 shipped it is the -gray spelling, which is
+// the only one that existed when those colours were last written to a file.
+// Anything not listed falls back to the alphabetically first match, so the
+// result is deterministic even for a colour that gains an alias tomorrow.
+
+static const char * const kCanonicalColourNames [] =
+  {
+  // the two 5.06 wrote that a hash-order change had flipped
+  "cyan", "magenta",
+  // 5.06's answer for the one -gray/-grey pair it already had
+  "lightgrey",
+  // the six pairs whose -grey spelling arrived after 5.06: -gray is the
+  // spelling any existing world file will be carrying
+  "gray", "darkgray", "dimgray", "slategray", "darkslategray", "lightslategray",
+  };
+
+static bool IsCanonicalColourName (const CString & strName)
+  {
+  for (int i = 0; i < sizeof kCanonicalColourNames / sizeof kCanonicalColourNames [0]; i++)
+    if (strName.CompareNoCase (kCanonicalColourNames [i]) == 0)
+      return true;
+  return false;
+  }   // end of IsCanonicalColourName
 
 CString ColourToName (const COLORREF colour)
   {
@@ -996,7 +1039,8 @@ int iRed    = GetRValue (colour);
 int iGreen  = GetGValue (colour);
 int iBlue   = GetBValue (colour);
 
-CString strName;
+CString strBest;              // empty until we match something
+bool    bBestIsCanonical = false;
 
 // see if we can find colour name in list
   for (POSITION pos = App.m_ColoursMap.GetStartPosition(); pos; )
@@ -1007,10 +1051,25 @@ CString strName;
 
     App.m_ColoursMap.GetNextAssoc (pos, strColourName, pColour);
 
-    // note - colour might match more than one name
-    if (pColour->iColour == colour)
-      return strColourName;
+    // note - colour might match more than one name, so keep looking and take
+    // the canonical one, or failing that the alphabetically first
+    if (pColour->iColour != colour)
+      continue;
+
+    const bool bCanonical = IsCanonicalColourName (strColourName);
+
+    if (strBest.IsEmpty () ||                                  // first match
+        (bCanonical && !bBestIsCanonical) ||                   // canonical wins
+        (bCanonical == bBestIsCanonical &&                     // else alphabetical
+         strColourName.CompareNoCase (strBest) < 0))
+      {
+      strBest = strColourName;
+      bBestIsCanonical = bCanonical;
+      }
     } // end of loop
+
+  if (!strBest.IsEmpty ())
+    return strBest;
 
  return CFormat ("#%02X%02X%02X",
                            iRed,

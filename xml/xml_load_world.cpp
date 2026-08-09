@@ -622,12 +622,24 @@ void CMUSHclientDoc::LoadError (const char * sType, const char * sMessage, UINT 
                       sType,  // type of thing (eg, trigger)
                       ENDLINE);
 
-  // Always show the detail inline as a red note, right after the "[WARNING]
-  // <file>" title — instead of an AfxMessageBox when m_pLinePositions == NULL.
-  // On the port that message box during world load is easy to miss, leaving the
-  // user with just the title and "no further information" about which
-  // attribute / node was not used.
-  ColourNote (SCRIPTERRORCONTEXTFORECOLOUR, SCRIPTERRORBACKCOLOUR, str);
+  if (!m_LinePositions.IsAllocated ())
+    {
+    // Upstream: before the output buffer exists the detail goes to a MODAL
+    // box, which the user must acknowledge before the world finishes loading.
+    // Windows keeps that exactly -- a mis-edited world file should not be
+    // something you can scroll past.
+    ::AfxMessageBox (str);
+#ifndef _WIN32
+    // ...but the port's AfxMessageBox (platform/mfc_ui.h) is a stderr stub, so
+    // on this side the box shows nothing at all.  Queue the detail as a note
+    // as well; Tell defers notes made before the output buffer exists, so it
+    // appears once the world window is up.  Costs Windows nothing -- this arm
+    // is not compiled there.
+    ColourNote (SCRIPTERRORCONTEXTFORECOLOUR, SCRIPTERRORBACKCOLOUR, str);
+#endif
+    }
+  else
+    ColourNote (SCRIPTERRORCONTEXTFORECOLOUR, SCRIPTERRORBACKCOLOUR, str);
 
   iErrorCount++;
   }   // end of CMUSHclientDoc::LoadError

@@ -965,8 +965,7 @@ bool CDC::GetTextMetrics(TEXTMETRIC* lpMetrics) {
 
     // tmMaxCharWidth used to be `averageWidth * 2` -- invented, because
     // wxFontMetrics has no max-advance field.  It is script-visible as
-    // WindowFontInfo(7), so measure it instead: for a fixed-width font every
-    // advance is the average, and otherwise take the widest of the printable
+    // WindowFontInfo(7), so it is MEASURED below: the widest of the printable
     // ASCII range, which is where the maximum sits for nearly every text font.
     lpMetrics->tmMaxCharWidth     = fm.averageWidth;
 
@@ -992,7 +991,15 @@ bool CDC::GetTextMetrics(TEXTMETRIC* lpMetrics) {
         }
     }
 
-    if (!fixedPitch) {
+    // Measured for EVERY font, fixed-pitch included.  Skipping the fixed-pitch
+    // case assumed "every advance is the average", and a Windows run disproves
+    // it: real GDI reports Courier New 10pt as tmAveCharWidth 8, tmMaxCharWidth
+    // 10.  tmAveCharWidth is roughly the width of 'x', while tmMaxCharWidth is
+    // the widest glyph CELL -- side bearings and overhang put the maximum above
+    // the advance even when every advance is identical.  So max > average is
+    // normal, not a contradiction, and the only way to answer WindowFontInfo(7)
+    // honestly is to measure rather than assert.
+    {
         int widest = fm.averageWidth;
         for (wxChar ch = wxT(' '); ch <= wxT('~'); ++ch) {
             const int w = p->dc.GetTextExtent(wxString(ch)).GetWidth();

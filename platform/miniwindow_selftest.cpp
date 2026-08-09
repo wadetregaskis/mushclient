@@ -239,12 +239,18 @@ int RunPalMiniWindowSelfTest()
                 "...and reports a real family, not FF_DONTCARE");
 
         // WindowFontInfo(7) is tmMaxCharWidth, which used to be the invented
-        // averageWidth * 2.  For a fixed-pitch font it must equal the average.
+        // averageWidth * 2.  This used to assert max == average for a
+        // fixed-pitch font; a Windows run (2026-08-08) showed that is FALSE
+        // even there -- real GDI reports Courier New 10pt as average 8, max 10,
+        // because tmAveCharWidth is about the width of 'x' while tmMaxCharWidth
+        // is the widest glyph cell, and side bearings put the cell above the
+        // advance.  `max >= average` is the only relation that holds on both,
+        // and the shim now measures instead of assuming (wx_gdi_compat.cpp).
         VARIANT vavg = doc->WindowFontInfo(W, "f1", 6);   // tmAveCharWidth
         VARIANT vmax = doc->WindowFontInfo(W, "f1", 7);
         if (vavg.vt == VT_I4 && vmax.vt == VT_I4 && vavg.lVal > 0)
-            mwCheck(vmax.lVal == vavg.lVal,
-                    "a fixed-pitch font's max char width equals its average");
+            mwCheck(vmax.lVal >= vavg.lVal,
+                    "max char width is at least the average");
         else
             mwCheck(false, "WindowFontInfo(6)/(7) return numbers");
     }

@@ -8,10 +8,11 @@ compile or run has ever happened on it.  You are the first empirical check.
 
 > **STATUS 2026-08-09 — this has now been built and run.  Read §8 (Results)
 > before working from anything below it**: most of §4c's open questions are
-> answered, one prediction in §4b was wrong, four defects were found and fixed
-> (`0abb31b`, `50a1303`, `c24926f`), and the build was broken at HEAD until the
-> first of those.  Sections 1–7 are left exactly as written so the predictions
-> can be scored against what actually happened; §8n lists what is still open.
+> answered, one prediction in §4b was wrong, five defects were found and fixed
+> (`0abb31b`, `50a1303`, `c24926f`, `08c8fa8`), and the build was broken at HEAD
+> until the first of those.  Sections 1–7 are left exactly as written so the
+> predictions can be scored against what actually happened; **§8z** lists what
+> is still open.
 
 ## 1. Context in three paragraphs
 
@@ -1593,13 +1594,72 @@ Two other §7 review requests, also settled by reading rather than running:
   `WM_WT_CONNECTED` post is what keeps the engine from re-entering — it did not
   misbehave, but nothing here proved which arm was taken.
 
-### 8n. Not covered by any pass
 
-- **SOCKS proxies** (§4a) — no proxy available here.
-- **Quow's plugin pack** (§4b's acceptance workload) — not installed.  The
-  drawing primitives it exercises are covered by
-  `tests/lua/miniwindow_conformance.lua`; what is missing is the *composition*
-  of a real mapper at speed, and the hotspot mouse paths below.
+### 8o. Fourth pass: ColourToName pinned, and Quow's pack actually runs
+
+**`ColourToName` is deterministic now (`08c8fa8`).**  §8i recorded that a save
+from this build differed from 5.06's by `magenta`→`fuchsia` and `cyan`→`aqua`,
+and left the fix as a decision.  Taken: the aliased names were measured on both
+clients first, with `RGBColourToName` over all nine RGB values that carry two
+names.  Four of the nine disagreed — and this tree was not self-consistent
+either, answering `dimgrey` but `darkgray`, because the winner is whichever
+name MFC's hash buckets yield first:
+
+| RGB | names | 5.06 | before | after |
+|---|---|---|---|---|
+| `0x00ffff` | aqua / cyan | cyan | aqua | **cyan** |
+| `0xff00ff` | fuchsia / magenta | magenta | fuchsia | **magenta** |
+| `0xd3d3d3` | lightgray / lightgrey | lightgrey | lightgray | **lightgrey** |
+| `0x2f4f4f` | darkslategray / -grey | darkslategray | darkslategrey | **darkslategray** |
+| `0x696969` | dimgray / dimgrey | dimgray | dimgrey | **dimgray** |
+| the other four | | agreed already | | unchanged |
+
+The choice is pinned to what every *shipped* MUSHclient emitted: 5.06's answer
+for the three pairs it already had, and the `-gray` spelling for the six whose
+`-grey` alias arrived after 5.06 (that being the only spelling an existing
+world file can be carrying).  Anything unlisted falls back to the
+alphabetically first match, so the result no longer depends on a hash.
+
+Two checks: `RGBColourToName` now answers identically to 5.06 for all nine, and
+each round-trips through `ColourNameToRGB`; and **a saved world file is
+byte-identical to one saved by 5.06 apart from the version string and the
+timestamp**, which is the strongest form of §4c-quinvicies' save check.
+
+**§4b's acceptance workload — Quow's Discworld pack — loads and runs.**  It was
+already in the tree under `packaging/discworld-plugins/`, so no download was
+needed; the mapper wants its database at `.\quow_plugins\maps\` relative to the
+working directory, which is the only setup step.
+
+All **six** plugins load and enable, CowBar (the 1.5 MB mapper) included, and
+between them they build:
+
+- **14 miniwindows**, each the size it asked for, from 4×390 margins to a
+  1599×4 strip and a 1008×150 comms panel;
+- **86 hotspots** across them;
+- **19 fonts** through `WindowFont`;
+- **2 images** through `WindowLoadImage` — so `png_load_shared.cpp` and the GDI
+  surface's image path both ran on real PNGs;
+- and the canvases are real: `WindowGetPixel(name, 1, 1)` reads back non-zero
+  colours (`0x36...`, `0x52...`, `0x29...`) from four of them, so the plugins'
+  drawing landed rather than going nowhere.
+
+The mapper also opened its SQLite database without complaint, and the world
+auto-connected to Discworld over MCCP with all of that active — no scripting
+errors, no dialogs, nothing in the output window but the plugins' own notices.
+
+What this does NOT cover is what a mapper *looks* like: geometry, layering and
+redraw under movement still want a human at the screen.  But everything an
+automated check can reach — plugin loading, Lua at that scale, the miniwindow
+lifecycle, fonts, images, hotspots, SQLite, and a live compressed connection
+underneath — works.
+
+### 8z. Still not covered
+
+- **SOCKS proxies** (§4a) — no proxy available here.  Byte-level tests exist on
+  the mac side, which is why §4a called this lower priority.
+- **What Quow's pack LOOKS like** — the pack itself loads and draws (§8o); what
+  no automated check reaches is mapper geometry, layering, and redraw as the
+  character moves.  That wants a human at the screen.
 - **zChat specifics** (§4c-tertricies item 3) — the 1024 file block size and
   `CHAT_STATUS` / `CHAT_STAMP`.  The MudMaster path is covered (§8i).
 - **The mouse-driven miniwindow paths** (§4c-terdecies, §4c-undevicies) — the

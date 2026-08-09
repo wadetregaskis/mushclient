@@ -1254,10 +1254,13 @@ pen colour with no antialiasing.
 
 **A fourth was missed, and belongs in §4b**: real GDI reports Courier New 10pt
 as `tmMaxCharWidth` = 10 and `tmAveCharWidth` = 8, so
-`WindowFontInfo(7) == WindowFontInfo(6)` — which the mac selftest asserts for a
-fixed-pitch font — is **false on Windows**.  The glyph cell is wider than the
+`WindowFontInfo(7) == WindowFontInfo(6)` — which the mac selftest asserted for
+a fixed-pitch font — is **false on Windows**.  The glyph cell is wider than the
 average advance even when every advance is identical.  Only `max >= average`
-holds on both, and that is what the Lua script asserts.
+holds on both.  Fixed in `50a1303`: `CDC::GetTextMetrics` used to skip the
+measuring loop for a fixed-pitch font and hand back the average, and now
+measures every font; the selftest and the Lua script both assert
+`max >= average`.
 
 Everything else agreed exactly, including the ones the mac side had only just
 fixed and could not check here: RoundRect right/bottom-exclusive, Chord filling
@@ -1344,6 +1347,12 @@ Differences found, all explained, **none a regression**:
 
 ### 8f. An undocumented, Windows-visible divergence: world-load warnings are no longer modal
 
+**RESOLVED in `50a1303`** — Wade confirmed the change was not intended, and
+upstream's conditional is back: the modal returns on Windows, while the port
+(whose `AfxMessageBox` is a stderr stub that shows nothing) also queues the
+detail as a note.  Verified afterwards against 5.06: same modal, same text.
+The account below is what the first pass found.
+
 Not in §6 and not in `docs/UPSTREAM-DIVERGENCES.md`, so recording it here.
 `CMUSHclientDoc::LoadError` (`xml/xml_load_world.cpp:607`) used to call
 `AfxMessageBox` when the output buffer was not yet set up; it now **always**
@@ -1364,14 +1373,130 @@ the port).  **A decision for Wade**: if it stays, it belongs in
 `AcceleratorTo("Ctrl+F8", "", 0)` leaves `Ctrl+F8` listed in
 `AcceleratorList()` in **5.06 and this build alike**.  The check should be
 reworded: an empty Send does not un-bind upstream either, so there is nothing
-to preserve.
+to preserve.  §8j reads the code to explain why, and recommends what should
+happen instead.
 
-### 8h. Not covered by this pass
 
-TLS (§4a, §4c-undetricies 2–4); SOCKS; MCCP verified only indirectly (data from
-a compressing MUD arrived intact); Quow's plugin pack (§4b's acceptance
-workload); everything needing real mouse input (§4c-terdecies, §4c-undevicies);
-the spell checker (§4c-tervicies); modal dialogs and property pages
-(§4c-quaterdecies); chat sockets (§4c-tertricies); DBCS wrap
-(§4c-duodetricies); the queue-drain logging change (§4c-duodetricies-bis); and
-the `&#;` MFC assertion in `MXP_GetEntity` (§4c-sexvicies).
+### 8i. Second pass (2026-08-08, later): TLS, chat, MXP entities, world save
+
+**TLS — the whole 2x2 is confirmed on Windows** (§4a's TLS bullet and
+§4c-undetricies items 1-4), against `openssl s_server` with a self-signed
+certificate on 127.0.0.1:4443 and, for the handshake-failure arm, against a
+plain telnet port with `use_ssl="y"`.
+
+| Scenario | Answer | Result |
+|---|---|---|
+| certificate could not be verified (`IP address mismatch` -- the cert is CN=localhost, reached by IP, so `SSL_set1_host` did its job) | **Yes** | reconnects and is **still encrypted**: `--- WARNING: proceeding with UNVERIFIED TLS certificate ... ---` then `--- Connected via TLSv1.3 (TLS_AES_256_GCM_SHA384) ---`.  `use_ssl` stays 1 |
+| same | **No** | nothing reconnects, nothing changes, `use_ssl` still 1 |
+| handshake failure (`error:0A0000C6:SSL routines::packet length too long`) | **Yes** | reconnects **in the clear** -- plain MOTD, no "Connected via" line, `use_ssl` becomes 0 |
+
+That is the one §4c-undetricies said mattered most: the wrong outcome for
+arm 1 is silent plaintext, and it does not happen.  `mainfrm.cpp` compiles and
+its prompt wording is intact.  Also seen working on the way past: the
+connect-failure path (`Unable to connect ... code = 10061 (Connection
+refused)` plus the phase line and the help URL).
+
+**Chat (§4c-tertricies) — handshake and veto both correct.**  One instance
+listening on 4050 and calling itself over loopback:
+
+- accepted: *Incoming chat call / Accepted call from 127.0.0.1 / Session
+  established*, then **`Chat session accepted, remote user: "ProbePeer"`** and
+  the same for *remote server* -- the remote-name split (the part that moved
+  into `pal/chat_protocol.h`) is right.  `ChatEverybody` delivered, teardown
+  closed 2 connections cleanly.
+- vetoed: with a plugin whose `OnPluginChatAccept` returns false, the log shows
+  **`Server rejected chat session attempt.`**, no session is created, no prompt
+  appears, `ChatEverybody` returns `eNoChatConnections` (30044) and
+  `ChatDisconnectAll` closes 0.  This is the security-shaped one and it holds.
+
+(`OnPluginChatAccept` is a PLUGIN callback only -- a world script defining it
+is never consulted.  Worth knowing before writing this test again.)
+
+**§4c-sexvicies -- neither hazard fires, and the first one provably cannot.**
+
+1. `MXP_GetEntity`'s unchecked `strName[1]`: modern MFC explicitly permits it.
+   `atlsimpstr.h:369` is `ATLASSERT( (iChar >= 0) && (iChar <= GetLength()) );`
+   with the comment *"Indexing the '\0' is OK"*, and `GetAt` (:492) is the same.
+   So `&#;` reads the terminator legitimately -- the concern came from older MFC
+   semantics.  Nine malformed entities (`&#;`, `&#x;`, `&#`, `&;`, `&#xZZ;`,
+   `&#999999999;`) were fed through `Simulate` with `use_mxp` forced to
+   `eUseMXP`; all were consumed, no assertion, no dialog, process alive.
+2. The high-bit `isxdigit`/`toupper` hazard also did not fire (`&#x\xE9;`,
+   `&#\xE9;`, `&\xE9\xC8;` in the same run).  **Caveat**: the byte may have been
+   repaired by `OutputBadUTF8characters` before MXP saw it, so this is "did not
+   reproduce", not "cannot happen".  A length/cast guard would still be
+   harmless; nothing here demands one.
+
+**§4c-quinvicies save check -- passes.**  Saving the same world twice gives
+byte-identical files, and the only `="0"` in the output is a legitimate
+`<key name="0">` keypad entry, so `Save_XML_number`'s new `bWriteZero` is not
+leaking zeros.
+
+**...but a save is NOT byte-identical to 5.06's, for an unrelated reason.**
+Diffing a save from each client, everything matches except the version/date
+stamps and this:
+
+```
+-   <colour seq="6" rgb="magenta" />        -> +   <colour seq="6" rgb="fuchsia" />
+-   <colour seq="7" rgb="cyan" />           -> +   <colour seq="7" rgb="aqua" />
+-  <colour seq="9" ... text="magenta" ...>  -> +  <colour seq="9" ... text="fuchsia" ...>
+```
+
+`ColourToName` (`utilities_shared.cpp:993`) walks `App.m_ColoursMap` -- an MFC
+`CMapStringToPtr` -- and returns the FIRST name whose RGB matches, with its own
+comment admitting *"colour might match more than one name"*.  magenta/fuchsia
+and cyan/aqua are exact aliases, so which one wins is decided by hash-map
+iteration order.  That order differs between the two binaries; the colour table
+itself also gained seven names in June 2019, after 5.06 shipped (`90eb7fe`,
+`4ac65e7`).  **Not attributable to the PAL work** -- but it does mean saved
+world files are not stable across a compiler change or a colour-table edit,
+which is worth knowing for anyone who keeps worlds in version control.  Making
+`ColourToName` deterministic (an explicit preferred-name list rather than
+whatever the map yields first) is the fix if that matters; it is a data-format
+decision, so it is left for Wade.
+
+### 8j. Recommendation: what un-binding an accelerator should do
+
+§4c-quater assumed an empty Send un-binds; §8g showed it does not, in either
+client.  Reading `AcceleratorTo` (`scripting/methods/methods_accelerators.cpp`)
+explains why, and the two halves disagree:
+
+- The **HACCEL** is rebuilt without the key (the `remove_if` before the
+  `if (Send [0])` branch), so **the key really does stop firing**.
+- The **maps** are not touched.  `m_AcceleratorToCommandMap`,
+  `m_CommandToMacroMap` and `m_CommandToPluginMap` are only ever written in the
+  `if (Send [0])` arm, so the stale entries survive -- which is why
+  `AcceleratorList` still reports `Ctrl+F8 = hello` for a key that can no longer
+  do anything.
+
+So upstream half-deletes: the binding stops working but still enumerates.  That
+is a bug, not a design -- `AcceleratorList` is how a script asks "is this key
+taken?", and it answers wrongly.  It also leaves `m_CommandToPluginMap` naming
+a plugin as the owner of a binding that is not live, which matters when a
+plugin is unloaded.
+
+The port already does the right thing: `AcceleratorTo`'s `#else` arm erases all
+three map entries when `Send` is empty.  **Recommendation: hoist that erase out
+of the `#else` so both platforms do it**, leaving the Windows HACCEL rebuild
+exactly as it is.  It is a few lines moving, and the only observable change on
+Windows is that `AcceleratorList` stops listing keys that were already dead.
+Being a deliberate departure from upstream it needs an entry in
+`docs/UPSTREAM-DIVERGENCES.md`, so it is not done here.
+
+### 8k. Not covered by either pass
+
+- **SOCKS proxies** (§4a) — no proxy available here.
+- **MCCP** — verified only indirectly: data from a compressing MUD arrived
+  intact, but nothing confirmed compression was actually negotiated.
+- **Quow's plugin pack** (§4b's acceptance workload) — not installed.
+- **zChat specifics** (§4c-tertricies item 3) — the 1024 file block size and
+  `CHAT_STATUS` / `CHAT_STAMP`.  The MudMaster path is covered (§8i).
+- **The queue-drain logging change** (§4c-duodetricies-bis) — needs a live MUD
+  to accept the queued speed-walk commands; `Send` returns `eWorldClosed` on a
+  disconnected world, so nothing reaches the queue.  Sending a burst of
+  speed-walk traffic to a real MUD was not something to do casually.
+- **DBCS wrap with indent-paragraphs off** (§4c-duodetricies) — needs a Big5 or
+  GB2312 world with CJK text long enough to wrap.
+- Everything needing real mouse input (§4c-terdecies, §4c-undevicies), the
+  spell checker (§4c-tervicies), and the property-page validators
+  (§4c-quaterdecies), which want a human at the dialogs.

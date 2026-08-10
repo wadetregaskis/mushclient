@@ -3574,19 +3574,27 @@ inline void DDX_Control(CDataExchange* pDX, int id, CWnd& ctl) {
             g_wxhook_bind_slider(ctl.m_hWnd, pDX->m_pDlgWnd);
     }
 }
-// DDV_MinMax* — MFC rejects an out-of-range value: it shows "Please enter a
-// number between <min> and <max>." and calls pDX->Fail(), which aborts the
+// DDV_MinMax* — MFC rejects an out-of-range value: it shows "Please enter an
+// integer between <min> and <max>." and calls pDX->Fail(), which aborts the
 // exchange so the dialog stays open and the member keeps its old value.
 //
 // These were no-ops, which made every numeric range in every property page
 // advisory: 78 call sites, and a value outside any of them was accepted,
 // written to the doc member and SAVED to the world file.  Nothing downstream
 // re-checks, so an out-of-range number persisted across restarts.
-inline void McDdvFailRange(CDataExchange* pDX, const CString& strRange)
+//
+// The noun is not decoration: MFC has two strings, AFX_IDP_PARSE_INT_RANGE
+// ("an integer") for the integral overloads and AFX_IDP_PARSE_REAL_RANGE
+// ("a number") for the real ones.  Measured on Windows 2026-08-10 by feeding
+// World Properties ▸ Output ▸ wrap column (DDV_MinMaxUInt 20..500) a 5 and a
+// 600: both answered "Please enter an integer between 20 and 500." and left
+// the sheet open, and 100 closed it.  See WINDOWS-VALIDATION.md §8t.
+inline void McDdvFailRange(CDataExchange* pDX, const CString& strRange,
+                           const char* pszWhat = "an integer")
 {
     // TMessageBox, not AfxMessageBox: the latter is declared further down this
     // header, after the DDV block.
-    TMessageBox(CString("Please enter a number between ") + strRange + ".",
+    TMessageBox(CString("Please enter ") + pszWhat + " between " + strRange + ".",
                 MB_ICONEXCLAMATION);
     pDX->Fail();
 }
@@ -3616,14 +3624,14 @@ inline void DDV_MinMaxDouble(CDataExchange* pDX, double value, double minVal, do
 {
     if (pDX && pDX->m_bSaveAndValidate && (value < minVal || value > maxVal)) {
         CString s; s.Format("%g and %g", minVal, maxVal);
-        McDdvFailRange(pDX, s);
+        McDdvFailRange(pDX, s, "a number");   // AFX_IDP_PARSE_REAL_RANGE
     }
 }
 inline void DDV_MinMaxFloat(CDataExchange* pDX, float value, float minVal, float maxVal)
 {
     if (pDX && pDX->m_bSaveAndValidate && (value < minVal || value > maxVal)) {
         CString s; s.Format("%g and %g", (double) minVal, (double) maxVal);
-        McDdvFailRange(pDX, s);
+        McDdvFailRange(pDX, s, "a number");   // AFX_IDP_PARSE_REAL_RANGE
     }
 }
 // DDX_MinMaxString, DDV_MinMaxString, DDV_MaxChars: real implementations live in

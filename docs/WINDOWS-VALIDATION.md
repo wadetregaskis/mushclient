@@ -587,8 +587,11 @@ All five `DDV_MinMax*` overloads were `{}`. That made every numeric range in
 every property page advisory across **78 call sites**: a value outside the
 declared range was accepted, written to the doc member and saved to the world
 file, with nothing downstream re-checking it. They now do what MFC does — show
-"Please enter a number between X and Y." and call `pDX->Fail()`, which aborts
-the exchange so the dialog stays open and the member keeps its old value. The
+"Please enter an integer between X and Y." and call `pDX->Fail()`, which aborts
+the exchange so the dialog stays open and the member keeps its old value.
+(Measured on Windows — see §8t. This paragraph used to say "a number", which is
+MFC's wording only for the *real* overloads; the port said that for all five
+until `mfc_ui.h` was corrected.) The
 load direction (`m_bSaveAndValidate == FALSE`) still never validates, so a world
 that *already* holds an out-of-range value can still open its property page.
 
@@ -1928,6 +1931,54 @@ Two things worth keeping from this one:
 file and nothing matching in the registry.  Stock 5.06 does it identically, so
 it is leftover state on this machine, not a port defect.
 
+### 8t. §4c-quaterdecies — the DDV reference, measured
+
+The property-page validators were on §8z as "wants a human at the dialogs".
+They do not: a property sheet answers to posted messages like anything else.
+`world.DoCommand` posts its menu command to the **frame**
+(`methods_commands.cpp:328`), so `WM_COMMAND ID_GAME_CONFIGURE_OUTPUT` (32300)
+to the frame opens World Properties on the Output page; the wrap-column edit is
+`IDC_WRAP_COLUMN` = 2008, whose validator is
+`DDV_MinMaxUInt (pDX, m_nWrapColumn, 20, MAX_LINE_WIDTH)` with
+`MAX_LINE_WIDTH` = 500 (`prefspropertypages.cpp:5847-5848`, `doc.h:94`) — and
+the page even prints "(20 to 500)" beside it.
+
+| value typed | what MFC did |
+|---|---|
+| `5` | **"Please enter an integer between 20 and 500."**, sheet stayed open |
+| `600` | the same message, sheet stayed open |
+| `100` | accepted, sheet closed, world file byte-identical on disk |
+
+So the port's new DDV behaviour is right in substance — reject, complain, keep
+the dialog open, leave the member alone — and the ranges in the shipping pages
+are ones Windows itself enforces, which was the stated risk.
+
+**One wording defect, found by having the real string to compare against.**
+MFC has *two* messages: `AFX_IDP_PARSE_INT_RANGE` ("Please enter an integer
+between %1 and %2.") for the integral overloads and `AFX_IDP_PARSE_REAL_RANGE`
+("Please enter a number between %1 and %2.") for `float`/`double`. The port's
+`McDdvFailRange` (`platform/mfc_ui.h`) said "a number" for all five, so every
+integer field on macOS reported itself in the language of a real-number field.
+Fixed by defaulting the noun to "an integer" and passing "a number" from the
+two real overloads. §4c-quaterdecies above quoted the wrong string too, which
+is how it survived review — the description and the code agreed with each
+other and both disagreed with MFC.
+
+This is **port-only** code (`mfc_ui.h` is `#ifndef _WIN32` and is not in
+`MUSHclient.vcxproj`), so Windows is unaffected; it does need the macOS build,
+along with the other port-side files listed at the end of §8.
+
+Two harness notes, both of which cost time:
+
+- **`GetWindowText` cannot read another process's controls.** It returns the
+  cached caption, which for an `Edit` is empty — so every read came back `""`
+  while the writes were landing perfectly. `WM_GETTEXT` works cross-process and
+  `WM_SETTEXT` always did. The give-away was that MFC answered with the
+  *range* message rather than a parse error, which only happens if a number
+  really did arrive.
+- The menu command has to go to the **frame**. Posted to the view it is silently
+  dropped: `ID_GAME_CONFIGURE_*` is not in the view's routing.
+
 ### 8z. Still not covered
 
 SOCKS, zChat, the mapper's appearance, the hotspot re-detect, the whole mouse
@@ -1938,7 +1989,6 @@ why:
 - **Mapper behaviour over time** — geometry and layering render correctly in a
   still capture (§8p), but redraw as a character moves through rooms needs
   someone playing.
-- **The spell checker** (§4c-tervicies) and the **property-page validators**
-  (§4c-quaterdecies) — both want a human at the dialogs.  Note the DDV change
-  is port-only, so the Windows question is only "does MFC reject the same
-  values", which is upstream behaviour nothing here touched.
+- **The spell checker** (§4c-tervicies) — wants a human at the suggestion
+  dialog.  (The property-page validators were here too; they turned out to be
+  drivable, and §8t has the measurement.)

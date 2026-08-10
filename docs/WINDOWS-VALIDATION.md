@@ -1979,16 +1979,57 @@ Two harness notes, both of which cost time:
 - The menu command has to go to the **frame**. Posted to the view it is silently
   dropped: `ID_GAME_CONFIGURE_*` is not in the view's routing.
 
+### 8u. §4c-tervicies — spell check on send, and Cancel
+
+Also drivable, for the same reason: the command bar is `CSendView`, a
+`CEditView`, so its window is a plain `Edit` child of the world's MDI child
+frame, and `CSendView::OnChar` acts on `VK_RETURN` from the message map
+(`sendvw.cpp:320`).  `WM_SETTEXT` puts a command in it and a posted `WM_CHAR`
+13 presses Return.  Global spell check needed no setting up — `EnableSpellCheck`
+defaults to 1 (`globalregistryoptions.cpp:34`) and this VM had never overridden
+it — and `spell_check_on_send` is a world option.
+
+| | spell check ON | spell check OFF |
+|---|---|---|
+| typed | `hello thair` | `hello there` |
+| dialog | **Spell Check**, Misspelt = `thair` | none |
+| after | bar still `hello thair` | — |
+| send happened? | **no** — no reconnect prompt | **yes** — "The connection to SpellWorld is not open. Attempt to reconnect?" |
+
+The reconnect prompt is what makes this conclusive.  The world is disconnected,
+so a send that really reaches `SendCommand` must go through `CheckConnected`
+and ask; Cancel produced no such prompt, which is `OnChar` returning at
+`sendvw.cpp:342` before the send.  The bar keeping its text is true in both
+columns (the disconnected send does not clear it either), so on its own it
+proves nothing — the earlier attempt at this test rested on it and was
+worthless.
+
+The checker itself works: `teh` and `thair` were both flagged, `hello` and
+`quick` were not.  So §4c-tervicies' Windows risk — that the added defaulted
+third parameter on `SpellCheckString` broke the recompile or the behaviour — is
+answered: it built (§8a) and the two-argument `App.SpellCheck (this,
+&GetEditCtrl())` path Windows uses is unchanged and unaffected.
+
 ### 8z. Still not covered
 
-SOCKS, zChat, the mapper's appearance, the hotspot re-detect, the whole mouse
-family, chat file transfer and all of §4c-quatervicies were on this list and
-have since been done — see §8p, §8q, §8r and §8s.  What is genuinely left, and
-why:
+Everything that was ever on this list has come off it except one item: SOCKS,
+zChat, the mapper's appearance, the hotspot re-detect, the mouse family, chat
+file transfer, all four of §4c-quatervicies, the property-page validators and
+the spell checker are done — §8p, §8q, §8r, §8s, §8t, §8u.  What is left:
 
 - **Mapper behaviour over time** — geometry and layering render correctly in a
   still capture (§8p), but redraw as a character moves through rooms needs
-  someone playing.
-- **The spell checker** (§4c-tervicies) — wants a human at the suggestion
-  dialog.  (The property-page validators were here too; they turned out to be
-  drivable, and §8t has the measurement.)
+  someone playing a MUD, which is a different kind of test from anything here.
+
+**Why the rest fell.**  Three items were written off as "needs a human at the
+dialog" or "`CMUSHView` code no script can reach", and none of that was true.
+The whole of the GUI answers to posted messages: `WM_COMMAND` in the
+`ACCELERATOR_FIRST_COMMAND` range runs a script in the view's message queue
+(§8q), menu commands go to the frame (§8t), `WM_VSCROLL` scrolls, `WM_CHAR`
+types, and a modal is a `#32770` that answers to its button's control id.  The
+two things that are genuinely hard are (a) anything needing a *real* cursor
+position that outlives the next queued message, and (b) judging what something
+looks like.  The mapper is (b).
+
+The recurring mistake in the earlier passes was to conclude "unreachable" from
+"unreachable *from Lua*".  Worth remembering next time the phrase appears.

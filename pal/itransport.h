@@ -133,6 +133,16 @@ public:
 
     // Human-readable form of the last error, for the engine's Notes.
     virtual std::string lastErrorString() const = 0;
+
+    // Platform error code from the LAST failed resolve(), or 0 if the adapter
+    // has none to offer.  Deliberately NOT pure, and deliberately not a
+    // parameter of onResolved: upstream's message carried the WSA code
+    // (`, code = %i (%s)`, doc.cpp at ad0cd12:3987) and dropping it lost real
+    // diagnostic detail on Windows, but widening onResolved would touch every
+    // implementer and every test double for a string suffix.  An adapter with
+    // nothing to report keeps the default and the message keeps its shorter
+    // form, which is what the POSIX side already prints.
+    virtual int lastResolveError() const { return 0; }
 };
 
 } // namespace pal

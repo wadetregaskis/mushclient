@@ -121,20 +121,27 @@ public:
     {
         cancelResolve();
         m_resolveToken = token;
+        m_lastResolveError = 0;
         if (!m_hWnd) {
             // out-of-resources only (window creation failed): without a
             // window neither the completion nor a deferred failure can be
             // delivered — report synchronously rather than losing it
+            m_lastResolveError = ::WSAGetLastError();
             m_events.onResolved(token, 0, false);
             return;
         }
         m_hLookup = ::WSAAsyncGetHostByName(m_hWnd, WM_WT_RESOLVED,
                                             host ? host : "",
                                             m_hostBuf, sizeof m_hostBuf);
-        if (!m_hLookup)
+        if (!m_hLookup) {
             // could not even initiate — report failure, but deferred so the
-            // engine never sees a re-entrant onResolved
+            // engine never sees a re-entrant onResolved.  This is the path
+            // upstream answered with its own message box; keeping the code
+            // means the ordinary "Unable to resolve host name" line says
+            // exactly as much as that box did.
+            m_lastResolveError = ::WSAGetLastError();
             ::PostMessage(m_hWnd, WM_WT_RESOLVE_FAILED, 0, 0);
+        }
     }
 
     void cancelResolve() override
@@ -277,6 +284,11 @@ public:
         return std::string(buf);
     }
 
+    // WSAGETASYNCERROR from the completion, or WSAGetLastError from a failed
+    // initiation — whichever ended the last resolve.  The engine appends it to
+    // "Unable to resolve host name", which is what upstream printed.
+    int lastResolveError() const override { return m_lastResolveError; }
+
 private:
     // ── the event-facing socket ────────────────────────────────────────────
     // An MFC CAsyncSocket: WSAAsyncSelect posts to MFC's socket window, which
@@ -335,9 +347,13 @@ private:
                     if ((HANDLE)wParam == self->m_hLookup) {
                         self->m_hLookup = NULL;
                         if (WSAGETASYNCERROR(lParam)) {
+                            // keep the code: the engine appends it to
+                            // "Unable to resolve host name", as upstream did
+                            self->m_lastResolveError = WSAGETASYNCERROR(lParam);
                             self->m_events.onResolved(self->m_resolveToken,
                                                       0, false);
                         } else {
+                            self->m_lastResolveError = 0;
                             // the exact HostNameResolved parse
                             struct hostent* pHostent =
                                 (struct hostent*)self->m_hostBuf;
@@ -543,6 +559,7 @@ private:
     HWND         m_hWnd         = NULL;
     HANDLE       m_hLookup      = NULL;   // WSAAsyncGetHostByName task handle
     ResolveToken m_resolveToken = 0;
+    int          m_lastResolveError = 0;  // WSA code from the last failed resolve
     alignas(hostent) char m_hostBuf[MAXGETHOSTSTRUCT];   // hostent + data
 
     bool      m_tlsHandshaking = false;

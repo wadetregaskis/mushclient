@@ -2052,6 +2052,15 @@ void CMUSHclientDoc::LookupHostNameComplete (struct in_addr addr, int phase, boo
                          : m_server;
       CString strMsg = TFormat ("Unable to resolve host name for \"%s\"",
                                 (LPCTSTR) strWhich);
+      // Upstream appended the platform code (`, code = %i (%s)`), and losing it
+      // cost real diagnostic detail — 11001 "Host not found" versus a bare
+      // "could not resolve".  An adapter with no code to offer returns 0 and
+      // the message keeps the shorter form.
+      const int iResolveError = m_pTransport ? m_pTransport->lastResolveError () : 0;
+      if (iResolveError != 0)
+        strMsg += TFormat (", code = %i (%s)",
+                           iResolveError,
+                           (LPCTSTR) GetSocketError (iResolveError));
       if (App.m_bErrorNotificationToOutputWindow)
         Note (strMsg);
       else

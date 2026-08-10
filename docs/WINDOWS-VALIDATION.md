@@ -1785,15 +1785,66 @@ what was wrong was the claim, in this document and in a comment in
 bullet — hotspot before zoom — is confirmed above and is the part that
 mattered.
 
+### 8r. Chat file transfer — eight runs, all byte-exact
+
+The one remaining §8z item that was actually reachable.  A file transfer is the
+only thing that drives raw binary through the chat framing, and both halves of
+it are exactly the input shape `e4236e8` was about: the sender builds a
+`CString` **from file bytes** (`chatsock.cpp:1233`) and the receiver
+accumulates raw bytes into `m_outstanding_input` (`chatsock.cpp:401`).
+
+The payload is 1234 bytes of `(i * 7 + 3) mod 256`.  That is deliberate: it
+contains 4 NULs — the first at offset 219, inside the first block either way —
+and 5 `0xFF`s, which for MudMaster are the framing terminator appearing
+unescaped inside a message body.  1234 is a multiple of neither block size, so
+the final block is partial and therefore zero-padded on the wire
+(`ZeroMemory`, `chatsock.cpp:1197`).
+
+| direction | dialect | blocks | 5.07 | 5.06 | sumcheck (both) |
+|---|---|---|---|---|---|
+| MUSHclient sends | zChat | 2 × 1024 | 1234 B, 0 differing | same | `5C2FF204 F1071C0E 4F1E4C4A 5AFFE491 905079E4` |
+| MUSHclient sends | MudMaster | 3 × 500 | 1234 B, 0 differing | same | `A37589A8 3D598668 C9402805 4AA0F156 08E9BF1A` |
+| MUSHclient receives | zChat | 2 × 1024 | 1234 B, 0 differing | same | `5C2FF204 …` |
+| MUSHclient receives | MudMaster | 3 × 500 | 1234 B, 0 differing | same | `A37589A8 …` |
+
+Every combination delivers the file byte-for-byte, and the sumcheck the sender
+announces equals the one the receiver computes.  Harnesses:
+`chat/filepeer.ps1` (peer receives) and `chat/filesender.ps1` (peer sends),
+with `conformance/driver_filexfer.lua` and `driver_filerecv.lua`.
+
+**The receive direction is scriptable after all**, which is what made this
+testable without a human answering two modal dialogs.  All three gates are real
+options: `can_send_files` per connection (`methods_chat.cpp:49`, and it
+defaults **false** — `chatsock.cpp:95`), plus `auto_allow_files`
+(`scriptingoptions_numeric.inc:14`) and `chat_file_save_directory`
+(`scriptingoptions_alpha.inc:9`).  Grepping `scriptingoptions.cpp` for them
+finds nothing and reads as "not scriptable"; the tables are the `.inc` files.
+
+**One thing this turned up, and it is upstream.**  The sumcheck is not a hash
+of the file: the same 1234 bytes produce two different numbers depending on the
+dialect, because the block size feeds straight into `shsUpdate`.  The source
+says why — "this code assumes that the buffer size is a multiple of
+SHS_BLOCKSIZE bytes long" (`scripting/shs.c:219-221`) — and the implementation
+simply `memcpy`s any remainder into `shsInfo->data`, where the *next* call
+overwrites it.  1024 is a multiple of 64 and 500 is not, so a MudMaster
+transfer silently drops 52 bytes per block out of the digest while still
+counting them in the bit length.
+
+This is not a port regression and not a transfer defect: stock 5.06 produces
+the same two numbers, both ends of a transfer compute it the same way, so it
+still detects a corrupted transfer between two MUSHclients — which is all it is
+used for.  The port's only edit to `shs.c` (`43e2bd2`) is an include guard plus
+`unsigned long` → `unsigned int`, which is a no-op on Win32 and a correctness
+fix on LP64.  Recording it because "sumcheck" reads like a checksum of the
+file, and it is not one; anything that ever compares it across dialects, or
+against an externally computed SHA, will be wrong.
+
 ### 8z. Still not covered
 
-SOCKS, zChat, the mapper's appearance, the hotspot re-detect and the whole
-mouse family were all on this list and have since been done — see §8p and §8q.
-What is genuinely left, and why:
+SOCKS, zChat, the mapper's appearance, the hotspot re-detect, the whole mouse
+family and chat file transfer were all on this list and have since been done —
+see §8p, §8q and §8r.  What is genuinely left, and why:
 
-- **Chat file transfer.**  The NUL clamp that broke zChat (`e4236e8`) would
-  equally have truncated a `CHAT_FILE_BLOCK` of binary data; the fix covers
-  that path too, but an actual file was never sent between two clients.
 - **Mapper behaviour over time** — geometry and layering render correctly in a
   still capture (§8p), but redraw as a character moves through rooms needs
   someone playing.

@@ -1734,25 +1734,60 @@ probe plugin whose hotspot callbacks write to a file:
 - Adding a hotspot away from that position fires nothing, and
   `WindowInfo(win, 19)` stays empty.  The control holds.
 
-**What this method cannot do**, and it is worth recording: MFC arms
-`TrackMouseEvent(TME_LEAVE)` on the first mouse move, so Windows immediately
-posts `WM_MOUSELEAVE` for a cursor that is not really there and the engine's
-`m_last_mouseposition` reverts to the `(-1,-1)` sentinel.  Posted moves are
-therefore good for *provoking* the paths but cannot *park* a pointer.  The
-remaining §4c-terdecies edges — middle button, Ctrl+wheel ordering, right
-double-click — need a real cursor, and all of them are port-only fixes whose
-Windows side is upstream code this work never touched.
+There is one obstacle to going further, which MFC arms
+`TrackMouseEvent(TME_LEAVE)` on the first mouse move: Windows then posts
+`WM_MOUSELEAVE` for a cursor that is not really there and
+`m_last_mouseposition` reverts to the `(-1,-1)` sentinel.  **§8q gets past it**
+and finishes the rest of the mouse family.
+
+
+### 8q. The mouse paths, after all — §4c-terdecies and §4c-undevicies
+
+§8p said posted mouse messages could provoke the hotspot paths but could not
+*park* a pointer, because MFC arms `TrackMouseEvent(TME_LEAVE)` on the first
+move and Windows then posts `WM_MOUSELEAVE` for a cursor that is not really
+there, resetting `m_last_mouseposition` to its `(-1,-1)` sentinel.  That was
+giving up too early: the leave is *queued*, so anything queued ahead of it
+still sees the position we set.
+
+The lever is an accelerator.  `AcceleratorTo(key, script, 12)` binds a command
+in the `ACCELERATOR_FIRST_COMMAND` range (12000, `mainfrm.h`) handled by
+`CMUSHView`'s `ON_COMMAND_RANGE` (`mushview.cpp:261`), so posting
+`WM_MOUSEMOVE` and then `WM_COMMAND 12000` to the view in one burst runs the
+script in the same pump turn, before the leave lands.  No real cursor is
+touched, and nothing on the desktop moves.
+
+With a probe plugin that logs every hotspot callback and its flags:
+
+| Check | Result |
+|---|---|
+| **§4c-undevicies re-detect** | pointer parked at (100,50); `ReAddHotspot` confirms `mouse now at (100,50)`, and `MouseOver` fires **synchronously inside `WindowAddHotspot`** — the log line lands between the delete and the add returning — with `WindowInfo(19)` then naming `probe_hotspot` |
+| **…and its control** | with the pointer still at (100,50), adding a 2x2 hotspot at (0,0) fires nothing and `WindowInfo(19)` stays empty |
+| **Middle button** (§4c-terdecies) | `MouseDown flags=0x200 (MIDDLE)` **and** `MouseUp flags=0x200 (MIDDLE)` — both edges dispatched, which is the Windows behaviour the port was changed to match |
+| **Right double-click** | `MouseDown flags=0x60 (RH\|DBL)` — exactly `MW_MOUSE_RH \| MW_MOUSE_DBL` |
+| **Ctrl+wheel ordering** | the hotspot's scrollwheel handler fires (`flags=0x780000`), so the wheel reaches the hotspot **before** the view's font zoom, confirming `mushview.cpp:5160` dispatches first and only falls back at `:5165` |
+| **Leave-window** | each posted move is followed by the OS's own `WM_MOUSELEAVE`, and the log shows the matching `CancelMouseOver` — the `CPoint(-1,-1)` arm working as described |
+
+So every mouse behaviour §4c-terdecies cites as the Windows reference is
+confirmed to actually be the Windows behaviour, and §4c-undevicies' relocation
+of the re-detect through `pal::IWorldView::mouseMoveMiniWindow` works in both
+directions.
+
+**One correction to §4c-terdecies.**  It says of Ctrl+wheel that "the flags a
+plugin receives include `MW_MOUSE_CTRL`".  On Windows they do not:
+`OnMouseWheel` builds the miniwindow flags as
+`(zDelta < 0 ? MW_MOUSE_SCROLL_BACK : 0) | (abs (zDelta) << 16)`
+(`mushview.cpp:5160`) and never consults `nFlags`, so the delta is all a
+scrollwheel callback gets — measured `0x780000` for a 120-unit forward notch
+with MK_CONTROL held.  If the port passes `MW_MOUSE_CTRL` there, that is a
+divergence rather than a match, and worth a look on the mac side.
 
 ### 8z. Still not covered
 
-SOCKS, zChat, the mapper's appearance and the hotspot re-detect were all on
-this list and have since been done — see §8p.  What is genuinely left:
+SOCKS, zChat, the mapper's appearance, the hotspot re-detect and the whole
+mouse family were all on this list and have since been done — see §8p and §8q.
+What is genuinely left, and why:
 
-- **The remaining mouse edges** (§4c-terdecies) — middle button, Ctrl+wheel
-  ordering, right double-click, leave-window.  Posted `WM_MOUSE*` messages
-  provoke the paths but cannot park a pointer (§8p explains why), so these want
-  a real cursor.  All four are port-only fixes whose Windows side is upstream
-  code this work never touched, so the risk is low.
 - **Chat file transfer.**  The NUL clamp that broke zChat (`e4236e8`) would
   equally have truncated a `CHAT_FILE_BLOCK` of binary data; the fix covers
   that path too, but an actual file was never sent between two clients.

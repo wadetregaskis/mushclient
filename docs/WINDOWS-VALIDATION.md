@@ -6,14 +6,15 @@ regressions against original/upstream MUSHclient behaviour.  Everything
 Windows-side described below was written **by reasoning only** — no MSVC
 compile or run has ever happened on it.  You are the first empirical check.
 
-> **STATUS 2026-08-09 — this has now been built and run.  Read §8 (Results)
-> before working from anything below it**: most of §4c's open questions are
-> answered, one prediction in §4b was wrong, six defects were found and fixed
-> (`0abb31b`, `50a1303`, `c24926f`, `08c8fa8`, `e4236e8` — the last of them a
-> complete zChat outage), and the build was broken at HEAD
-> until the first of those.  Sections 1–7 are left exactly as written so the
-> predictions can be scored against what actually happened; **§8z** lists what
-> is still open.
+> **STATUS 2026-08-10 — this has now been built and run.  Read §8 (Results)
+> before working from anything below it**: every §4c question is answered, one
+> prediction in §4b was wrong, and seven defects were found and fixed
+> (`0abb31b`, `50a1303`, `c24926f`, `08c8fa8`, `e4236e8` — a complete zChat
+> outage — and `edc407e`), with the build broken at HEAD until the first of
+> those.  Sections 1–7 are left exactly as written so the predictions can be
+> scored against what actually happened.  **§8z** is down to one item (mapper
+> redraw while playing); **§8-end** lists the files that still need a macOS
+> build.
 
 ## 1. Context in three paragraphs
 
@@ -2033,3 +2034,25 @@ looks like.  The mapper is (b).
 
 The recurring mistake in the earlier passes was to conclude "unreachable" from
 "unreachable *from Lua*".  Worth remembering next time the phrase appears.
+
+### 8-end. What still needs the OTHER platform
+
+Everything above was compiled and run on Windows.  Six of the files this pass
+touched are built by the macOS/Linux side and have **not** been compiled or
+tested there, so they want a `cmake --build` and a `ctest` run before anyone
+calls this finished:
+
+| file | change | why it matters over there |
+|---|---|---|
+| `utilities_shared.cpp` | `ColourToName` made deterministic (§8o) | **shared** — it changes which name the *mac* build writes into a world file, so it is the one to check first |
+| `xml/xml_load_world.cpp` | the `#ifndef _WIN32` arm restoring the world-load warning (§8f) | port-only arm of a shared TU |
+| `platform/mfc_ui.h` | DDV range wording (§8t) | port-only; a header, so it rebuilds a lot |
+| `platform/wx_gdi_compat.cpp` | `GetTextMetrics` measures max char width for every font, not only fixed-pitch | port-only |
+| `platform/miniwindow_selftest.cpp` | new assertion that max ≥ average char width | port-only; it is an in-app selftest, so `ctest` is exactly where it shows up |
+| `platform/wx_outputpane.cpp` | comment only (§8q) | no behaviour |
+
+The Windows-shared files (`chatsock.cpp`, `doc.cpp`, `doc.h`,
+`doc_shared.cpp`, `mcdatetime.cpp`, `methods_accelerators.cpp`,
+`methods_output_shared.cpp`) all compile on both, but only Windows has run
+them; the accelerator change in particular (`c24926f`) alters behaviour on both
+platforms and its macOS arm is untested.

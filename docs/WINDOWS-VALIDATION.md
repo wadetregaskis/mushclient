@@ -2019,14 +2019,18 @@ answered: it built (§8a) and the two-argument `App.SpellCheck (this,
 
 ### 8z. Still not covered
 
-Everything that was ever on this list has come off it except one item: SOCKS,
-zChat, the mapper's appearance, the hotspot re-detect, the mouse family, chat
-file transfer, all four of §4c-quatervicies, the property-page validators and
-the spell checker are done — §8p, §8q, §8r, §8s, §8t, §8u.  What is left:
+Everything that was ever on this list has come off it except one judgement call:
+SOCKS, zChat, the mapper's appearance, the hotspot re-detect, the mouse family,
+chat file transfer, all four of §4c-quatervicies, the property-page validators,
+the spell checker, the four `sendvw.cpp` divergences and §6's five deltas are
+done — §8p, §8q, §8r, §8s, §8t, §8u, §8v, §8w, §8x.  What is left:
 
-- **Mapper behaviour over time** — geometry and layering render correctly in a
-  still capture (§8p), but redraw as a character moves through rooms needs
-  someone playing a MUD, which is a different kind of test from anything here.
+- **What a real mapper looks like while its own state changes.**  The engine
+  half of this is now measured — 400 redraws accumulate nothing, leak nothing,
+  and produce a checksum identical to 5.06's (§8x) — and the geometry renders
+  correctly in a still capture (§8p).  What is left is the judgement a person
+  makes watching Quow's map while walking, which no assertion here can stand
+  in for.
 
 **Why the rest fell.**  Three items were written off as "needs a human at the
 dialog" or "`CMUSHView` code no script can reach", and none of that was true.
@@ -2192,6 +2196,57 @@ not-initialised or handle exhaustion; neither is reachable without deliberately
 breaking the process, and the arm being tested is the one that then reports
 through the generic connect-failure path.  Recorded as untested rather than
 claimed.
+
+### 8x. Redraw over time — the measurable half of the mapper question
+
+§8z's last item was "mapper redraw as a character moves through rooms needs
+someone playing".  Whether Quow's map *looks* right while walking is a visual
+judgement and still does.  What the **engine** can get wrong under sustained
+redrawing is not, and none of it needs a MUD: a surface that is not fully
+repainted or an op that leaves residue, and handles leaked per frame.  A mapper
+redrawing once per room would meet either within an evening.
+
+`conformance/driver_redraw.lua` draws a deliberately mapper-shaped frame — full
+background fill, a street grid, nine room rectangles with outlines and circle
+markers, labels in a created font, an image blit, and nine hotspots **deleted
+and re-added every frame** — then redraws it 400 times with a moving marker,
+and finally redraws frame 1 again.  `WindowGetPixel` samples 2451 pixels into a
+fingerprint, so nothing is captured from the screen and nothing depends on
+focus.  The harness reads `GetGuiResources` around the loop.
+
+| | this build (Release) | stock 5.06 |
+|---|---|---|
+| frame-1 checksum | **`AB373FA6`** | **`AB373FA6`** |
+| same after 400 redraws | yes, exactly | yes, exactly |
+| 400 frames took | 0.37 s | 0.39 s |
+| GDI objects | 100 → 102 → 102 | 101 → 103 → 103 |
+| USER objects | 101 → 101 | 100 → 100 |
+| process handles | 488 → 490 → 490 | 446 → 448 → 448 |
+| private bytes | 15 MB throughout | 13 MB throughout |
+| hotspots left | 9 | 9 |
+
+Three things worth having from that.
+
+**The two clients draw the identical picture.**  The checksum is computed
+in-process from the surface itself, so it is comparable across processes: the
+same scene through `pal::ISurface` and through 5.06's direct GDI agrees
+pixel-for-pixel over fills, outlines, lines, circles, text in a created font,
+and an image blit with transparency.  That is a far richer probe of the surface
+refactor than any single op in §4b's list.
+
+**Nothing accumulates and nothing leaks.**  The +2 GDI objects are the window's
+own bitmap and the created font, and they are stable; 400 frames × ~40 ops ×
+9 hotspot deletes/adds add nothing further, in either build.  Nine hotspots at
+the end, not 3600.
+
+**No speed regression.**  0.37 s versus 0.39 s for 400 frames. The first run of
+this measured 0.46 s and looked like a 2× slowdown — that was the **Debug**
+build against 5.06's Release; the comparison is only meaningful Release to
+Release.
+
+What this does **not** cover, and should not be read as covering: whether a
+real mapper's geometry stays correct as its own state changes — that is
+plugin behaviour, and §8p's still capture plus a human are the only ways to it.
 
 ### 8-end. What still needs the OTHER platform
 

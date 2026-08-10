@@ -188,20 +188,30 @@ pool).
 Entries 1-3 are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)
 but whose class `CSendView` is never instantiated on the port — so the macOS
 build type-checks them and cannot exercise them. The behaviour was verified
-live through the port's own equivalent in `AltArrowRecall`. **A Windows build
-run is still required to confirm them on that side.** See
-`docs/WINDOWS-VALIDATION.md`.
+live through the port's own equivalent in `AltArrowRecall`.
 
-Entry 5 is half and half. The macOS half is in `wx_world_child.cpp` and was
-verified live (Shift+Return and Option+Return insert a line break; plain Return
-still sends). The Windows half is another `sendvw.cpp` edit and carries the same
-caveat as 1-3 — **needs a Windows run.** Two things to check there specifically,
-neither observable here: that `ES_MULTILINE` + `ReplaceSel("\r\n")` puts a real
-line break in the control (rather than the edit control swallowing it), and that
-consuming `WM_SYSKEYDOWN` for Alt+Return does not leave the Alt key latched into
-menu-activation state — `CSendView` already carries an `ON_WM_SYSCOMMAND`
-handler whose comment is "suppress default ALT key behaviour", so that area has
-a history.
+**All four `sendvw.cpp` entries (1, 2, 3 and 5) were run on Windows on
+2026-08-10** against this build and stock 5.06 side by side, with the same
+history (`abc, abcd, abcde, northeast, north`) and the same keystrokes. The two
+traces differ at exactly these four points and nowhere else —
+`docs/WINDOWS-VALIDATION.md` §8v has them in full:
+
+| | this build | stock 5.06 |
+|---|---|---|
+| 1 — Alt+Up with `north` typed, `north` newest | `north` | `northeast` |
+| 2 — Alt+Down past the newest match | `no` restored | bar blanked |
+| 3 — ordinary Down past the newest entry | `abc` restored, then blank | blank at once |
+| 5 — Shift+Return / Alt+Return | `\r\n` inserted, nothing sent | sent |
+
+Entry 5's two specific hazards are both answered. `ES_MULTILINE` +
+`ReplaceSel("\r\n")` does put a real line break in the control — the bar read
+back as `"line one\r\nline two\r\nline three"` — and Alt is **not** left
+latched into menu-activation state: typing straight after Alt+Return still
+lands in the bar, the focus window is still the edit, and no menu is owned.
+Plain Return still sends and still clears the bar.
+
+The macOS half of entry 5 (in `wx_world_child.cpp`) was already verified live
+(Shift+Return and Option+Return insert a line break; plain Return still sends).
 
 Entry 4 is different: it lives in `GlobalPrefs.cpp` and
 `scripting/methods/methods_defaults.cpp`, both of which the port *does* execute,

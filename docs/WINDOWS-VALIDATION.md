@@ -2035,6 +2035,74 @@ looks like.  The mapper is (b).
 The recurring mistake in the earlier passes was to conclude "unreachable" from
 "unreachable *from Lua*".  Worth remembering next time the phrase appears.
 
+### 8v. The four `sendvw.cpp` divergences, run at last
+
+`docs/UPSTREAM-DIVERGENCES.md` entries 1, 2, 3 and 5 are deliberate departures
+from stock MUSHclient applied to canonical source, and its verification status
+said flatly that **a Windows run was still required** — `CSendView` is never
+instantiated on the port, so that side type-checks them and nothing more.  This
+is that run.  Unlike every other differential here the two traces are *supposed*
+to differ, and the shape of the difference is the check.
+
+History for all four: `abc, abcd, abcde, northeast, north` (oldest first).
+
+| step | this build | stock 5.06 |
+|---|---|---|
+| **1** type `north`, Alt+Up | **`north`** | **`northeast`** |
+| **2** type `no`, Alt+Down ×3 | `northeast` → `north` → **`no`** | `northeast` → `north` → **`""`** |
+| **3** type `abc`, Up ×2, Down ×3 | `north` → `northeast` → `north` → **`abc`** → `""` | `north` → `northeast` → `north` → **`""`** → `""` |
+| **5** Shift+Return, type, Alt+Return | `"line one\r\n"`, then `"line one\r\nline two\r\n"` | sent both times, no break inserted |
+
+Every other step is identical, including the walk order in both directions, so
+nothing else has drifted in that file.
+
+**Entry 1 needed the history in the right order to mean anything.**  `Alt+Up`
+starts at `m_msgList`'s **tail** — the newest — and walks back
+(`sendvw.cpp:1949`), so the exact match is only in its path when `north` is
+*newer* than `northeast`.  Seeded the other way round both clients answer
+`northeast` and the test proves nothing; the first run of this did exactly
+that.
+
+**Entry 5's two named hazards are both answered.**  `ES_MULTILINE` +
+`ReplaceSel("\r\n")` puts a real break in the control (the bar reads back as
+`"line one\r\nline two\r\nline three"`), and consuming `WM_SYSKEYDOWN` for
+Alt+Return does **not** leave Alt latched: typing immediately afterwards still
+lands in the bar, `GetGUIThreadInfo` still reports the edit as the focus window,
+and no menu is owned.  Plain Return still sends and clears the bar.
+
+**How entry 5 was driven, because three obvious approaches all fail.**
+`PreTranslateMessage` decides the chord with `GetKeyState`
+(`sendvw.cpp:1695-1696`), and that is not something a posted message can
+satisfy:
+
+- `PostMessage (WM_KEYDOWN, VK_SHIFT)` — a thread's key-state table is
+  maintained by the input layer, not by messages arriving in its queue.  The
+  give-away was that a posted *plain* Return sent the command while the same
+  Return with a posted modifier ahead of it also just sent: the message was
+  arriving, the modifier was not.
+- `AttachThreadInput` + `SetKeyboardState` — retrieving a keyboard message
+  re-syncs the thread's key state from the queue's own record, which has no
+  shift in it, so the fake state is gone before it is read.
+- `keybd_event` — correct, but injected keys go to the **focus** window, and
+  this app had none.
+
+That last one is the load-bearing discovery.  **This VM stacks three dialogs at
+startup** — Tip of the Day, "`/tmp/ows.mcl` contains an invalid path", and
+sometimes a reconnect prompt — and they *stack*, so dismissing one reveals the
+next, which is why they looked like something firing on a timer.  Until all are
+gone MFC never gives the command bar the keyboard focus: `GetGUIThreadInfo`
+reported the focus window as the **frame**.  Clear them all and the focus lands
+on the edit, after which ordinary injected keys work.  Stock 5.06 stacks the
+same dialogs, so this is the machine, not the build (§8s) — but any future
+Windows test that needs real keystrokes must drain the dialog queue first, and
+`GetGUIThreadInfo` is how to check it worked without perturbing it.
+
+Entries 1-3 need none of that: they live in the four `ON_COMMAND` handlers
+(`sendvw.cpp:51,52,98,99`), so a `WM_COMMAND` posted at `CSendView` runs them
+directly.  Typing, though, must be one posted `WM_CHAR` per character —
+`WM_SETTEXT` does not raise `EN_CHANGE`, so `m_bChanged` stays false and every
+"remember what they were typing" arm (`:407`, `:1833`) skips silently.
+
 ### 8-end. What still needs the OTHER platform
 
 Everything above was compiled and run on Windows.  Six of the files this pass

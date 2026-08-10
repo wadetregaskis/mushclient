@@ -2759,11 +2759,17 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
 
 // Hotspots get FIRST refusal, before the modifier is looked at.  Windows orders
 // it that way (mushview.cpp:5160 dispatches to Mouse_Wheel_MiniWindow, and only
-// returns to CView at :5165 for Ctrl/Shift), and the flags a plugin receives
-// include MW_MOUSE_CTRL -- so Ctrl+wheel over a hotspot is a scrollwheel
-// callback WITH the ctrl bit set, not a zoom.  Testing the modifier first, as
-// this used to, made every Ctrl+wheel callback unreachable while the pointer was
+// returns to CView at :5165 for Ctrl/Shift), so Ctrl+wheel over a hotspot is a
+// scrollwheel callback rather than a zoom.  Testing the modifier first, as this
+// used to, made every Ctrl+wheel callback unreachable while the pointer was
 // over a miniwindow.
+//
+// The callback does NOT see the ctrl bit, on either platform: the flags are
+// just (delta < 0 ? MW_MOUSE_SCROLL_BACK : 0) | (abs (delta) << 16), the same
+// expression mushview.cpp:5160 uses, and neither side consults the keyboard
+// modifiers.  Measured on Windows 2026-08-09 as 0x780000 for a forward notch
+// with Ctrl held.  (This comment used to claim MW_MOUSE_CTRL was included; it
+// never was, here or there.)
 //
 // Pulled out of the handler because that is a rule, not plumbing, and a wheel
 // event cannot be delivered from an in-app selftest (there is no event loop).

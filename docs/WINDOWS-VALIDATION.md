@@ -1773,14 +1773,17 @@ confirmed to actually be the Windows behaviour, and §4c-undevicies' relocation
 of the re-detect through `pal::IWorldView::mouseMoveMiniWindow` works in both
 directions.
 
-**One correction to §4c-terdecies.**  It says of Ctrl+wheel that "the flags a
-plugin receives include `MW_MOUSE_CTRL`".  On Windows they do not:
-`OnMouseWheel` builds the miniwindow flags as
+**One correction to §4c-terdecies, and it is only a comment.**  It says of
+Ctrl+wheel that "the flags a plugin receives include `MW_MOUSE_CTRL`".  They do
+not, on either platform.  `OnMouseWheel` builds the miniwindow flags as
 `(zDelta < 0 ? MW_MOUSE_SCROLL_BACK : 0) | (abs (zDelta) << 16)`
-(`mushview.cpp:5160`) and never consults `nFlags`, so the delta is all a
-scrollwheel callback gets — measured `0x780000` for a 120-unit forward notch
-with MK_CONTROL held.  If the port passes `MW_MOUSE_CTRL` there, that is a
-divergence rather than a match, and worth a look on the mac side.
+(`mushview.cpp:5160`) and never consults `nFlags`; measured here as `0x780000`
+for a 120-unit forward notch with MK_CONTROL held.  The port's forwarder
+(`wx_world_child.cpp:1071`) builds the identical expression, so the two agree —
+what was wrong was the claim, in this document and in a comment in
+`platform/wx_outputpane.cpp`, both now fixed.  The *ordering* half of that
+bullet — hotspot before zoom — is confirmed above and is the part that
+mattered.
 
 ### 8z. Still not covered
 

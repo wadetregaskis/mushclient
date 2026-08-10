@@ -1161,6 +1161,11 @@ whole **display family** (line rendering) — unchanged pull model.
 
 ## 6. Known intentional behaviour deltas (expected; verify they're benign)
 
+> **All five were checked on 2026-08-10 — see §8w.**  1, 3 and 4 are benign as
+> described; 5 is not provokable; and 2 turned out to have quietly dropped the
+> WSA error code from the message it reports, which was a defect and is fixed
+> (`ed60501`).
+
 1. **Bytes-sent statistics count once.**  Upstream double-counted
    (`SendPacket` and again in `CWorldSocket::OnSend`); session "sent" byte
    stats will read ~half the old values.
@@ -2102,6 +2107,90 @@ Entries 1-3 need none of that: they live in the four `ON_COMMAND` handlers
 directly.  Typing, though, must be one posted `WM_CHAR` per character —
 `WM_SETTEXT` does not raise `EN_CHANGE`, so `m_bChanged` stays false and every
 "remember what they were typing" arm (`:407`, `:1833`) skips silently.
+
+### 8w. §6's five "expected; verify they're benign" deltas
+
+Never individually ticked off until now.  Four are benign; the fifth is not
+provokable; and looking for the second turned up a real defect that was **not**
+in §6 (fixed in `ed60501`).
+
+**1. Bytes-sent statistics count once — confirmed, and it is the *correct*
+number.**  A counting server says what actually crossed the wire; `GetInfo(217)`
+says what the client believes.  Sending a 40-character line:
+
+| | on the wire | `GetInfo(217)` |
+|---|---|---|
+| this build | 42 bytes | **42** |
+| stock 5.06 | 42 bytes | **84** |
+
+`GetInfo(216)` (received) reads 33 in both and was never doubled.  So the delta
+is real, expected, and an improvement: upstream's "sent" figure was simply
+wrong.
+
+**2. Failed DNS reports through the ordinary path — confirmed, but it had lost
+something.**  An unresolvable host prints in the output window with no modal, in
+both clients.  What differed is the text:
+
+```
+5.06        Unable to resolve host name for "x.invalid", code = 11001 (Host not found)
+this build  Unable to resolve host name for "x.invalid"
+```
+
+Single-sourcing the completion into `LookupHostNameComplete` reduced the
+adapter's report to a `bool`, so `WSAGETASYNCERROR`'s code and its text were
+dropped.  That is an observable Windows change and it is not listed in §6, so
+by §1's rule it is a defect — fixed in `ed60501` by giving `ITransport` a
+**non-pure** `lastResolveError()` (default 0) rather than widening
+`onResolved`, which would have touched every implementer and every test double
+for a string suffix.  Re-measured afterwards: byte-identical to 5.06.  The
+*initiation* failure that §6 actually describes (`WSAAsyncGetHostByName`
+returning 0) is resource-exhaustion-only and was not provoked, but it now
+records `WSAGetLastError` too, so it reports the same detail through the same
+line.
+
+**3. Cert-refused TLS teardown sends no close_notify — confirmed, and there is
+no shipped client to compare with.**  A TLS server with a self-signed
+certificate, counting *raw* bytes underneath `SslStream` so encryption does not
+hide them: after the handshake the client sent **0 bytes** and then EOF.  A
+close_notify would have been a small alert record.
+
+The mechanism is visible in the diff.  Pre-PAL, `m_bSSL_Connected = true` was
+set at `doc.cpp:5641` *before* `SSL_get_verify_result` was checked, so
+`SSLCleanup`'s `if (m_bSSL_Connected) SSL_shutdown()` fired on a refused
+certificate.  The adapter sets `m_tlsUp` *after* the check
+(`pal/win_transport.cpp:506` vs the refusal return at `:499`), so `teardownTls`
+skips the shutdown.  Benign: no application data was ever exchanged, the TCP
+close still happens, and the only consequence is that a server may log an
+unexpected EOF instead of a clean shutdown.
+
+**Worth knowing for every other TLS comparison in this document: stock 5.06 has
+no TLS.**  Pointed at the same world it answers `Line 28: Attribute not used:
+use_ssl="y" (world)` and connects in plain text.  So "upstream" in §6 delta 3
+means *this repo before the PAL*, not Nick's shipped client, and no §4a TLS item
+can be differentially tested against 5.06 at all.
+
+**4. Hard send-error leaves `FD_READ|FD_CLOSE` armed — no zombie, in either
+build.**  A server that accepts, waits, then aborts with `SO_LINGER 0` (an RST,
+not a FIN), while the world sends once a second across the abort:
+
+```
+t= 7s  Send=0      IsConnected=true
+t= 8s  Send=30002  IsConnected=false     <- the abort lands
+```
+
+then the full disconnect banner, the statistics block, and `The "AbortWorld"
+server has closed the connection`.  **Stock 5.06 produces the identical trace**
+(with doubled byte counts, per delta 1).  So this provocation shows equivalence
+rather than the fix: an RST gives the read side an event too, so the send error
+is never the only signal, which is the case upstream mishandled.  Reaching the
+original failure would need a peer that stops reading without closing — worth
+noting as the one part of delta 4 still unexercised.
+
+**5. Socket-create failure — not provokable here.**  It requires WSA
+not-initialised or handle exhaustion; neither is reachable without deliberately
+breaking the process, and the arm being tested is the one that then reports
+through the generic connect-failure path.  Recorded as untested rather than
+claimed.
 
 ### 8-end. What still needs the OTHER platform
 

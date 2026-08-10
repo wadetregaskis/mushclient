@@ -7,14 +7,15 @@ Windows-side described below was written **by reasoning only** — no MSVC
 compile or run has ever happened on it.  You are the first empirical check.
 
 > **STATUS 2026-08-10 — this has now been built and run.  Read §8 (Results)
-> before working from anything below it**: every §4c question is answered, one
-> prediction in §4b was wrong, and seven defects were found and fixed
-> (`0abb31b`, `50a1303`, `c24926f`, `08c8fa8`, `e4236e8` — a complete zChat
-> outage — and `edc407e`), with the build broken at HEAD until the first of
-> those.  Sections 1–7 are left exactly as written so the predictions can be
-> scored against what actually happened.  **§8z** is down to one item (mapper
-> redraw while playing); **§8-end** lists the files that still need a macOS
-> build.
+> before working from anything below it**: every §4c question is answered, §6's
+> five deltas are measured (§8w), the four `sendvw.cpp` divergences have been
+> run (§8v), one prediction in §4b was wrong, and eight defects were found and
+> fixed (`0abb31b`, `50a1303`, `c24926f`, `08c8fa8`, `e4236e8` — a complete
+> zChat outage — `edc407e` and `ed60501`), with the build broken at HEAD until
+> the first of those.  Sections 1–7 are left exactly as written so the
+> predictions can be scored against what actually happened.  **§8z** is down to
+> one item (mapper redraw while playing); **§8-end** lists the files that still
+> need a macOS build.
 
 ## 1. Context in three paragraphs
 
@@ -2207,9 +2208,14 @@ calls this finished:
 | `platform/wx_gdi_compat.cpp` | `GetTextMetrics` measures max char width for every font, not only fixed-pitch | port-only |
 | `platform/miniwindow_selftest.cpp` | new assertion that max ≥ average char width | port-only; it is an in-app selftest, so `ctest` is exactly where it shows up |
 | `platform/wx_outputpane.cpp` | comment only (§8q) | no behaviour |
+| `pal/itransport.h` + `doc_shared.cpp` | `lastResolveError()` and the message suffix (§8w) | **shared** — but the new method is non-pure and defaults to 0, so the POSIX transport needs no edit and the mac message is unchanged.  Still a header both sides compile |
 
 The Windows-shared files (`chatsock.cpp`, `doc.cpp`, `doc.h`,
 `doc_shared.cpp`, `mcdatetime.cpp`, `methods_accelerators.cpp`,
 `methods_output_shared.cpp`) all compile on both, but only Windows has run
 them; the accelerator change in particular (`c24926f`) alters behaviour on both
 platforms and its macOS arm is untested.
+
+The macOS side may also want `lastResolveError()` implemented in its own
+transport — `getaddrinfo`'s `EAI_*` code would make the port's message as
+informative as Windows' — but nothing breaks without it.

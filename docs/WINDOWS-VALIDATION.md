@@ -1839,11 +1839,101 @@ fix on LP64.  Recording it because "sumcheck" reads like a checksum of the
 file, and it is not one; anything that ever compares it across dialects, or
 against an externally computed SHA, will be wrong.
 
+### 8s. §4c-quatervicies is now closed — all four items
+
+§8m settled item 1 (the freeze-on-selection reading) by inspection.  The other
+three were listed as "`CMUSHView` code no script can reach", which was true of a
+*script alone* and false once the accelerator lever from §8q is available.
+
+**Item 2 — `keep_pause_at_bottom` really is a latch.**  `m_freeze` is not
+scriptable, but its effect is: `addedstuff` only jumps to the end when not
+frozen (`mushview.cpp:1815`), so the vertical scroll position after appending
+lines reports the freeze state exactly.  Posting `WM_VSCROLL` reaches
+`CMUSHView::OnVScroll` (`:4033`), which handles every `SB_` code, so the posted
+message takes the same path a scrollbar drag does.
+
+| step | option OFF | option ON |
+|---|---|---|
+| at bottom | 5864 | 6764 |
+| page up ×3 → freezes | 4736 | 5636 |
+| back to bottom | 5864 | 6764 |
+| append 60 lines | **6764** — followed the output | **6764** — did not move |
+| append 60 more | — | **6764** again, range now 8954 |
+| page down ×3, append 60 | — | 7892 → **7892**, still frozen |
+
+That is `mushview.cpp:4682` doing exactly what the port read it as: with the
+option on, arriving at the bottom leaves `m_freeze` set, and nothing short of
+the Pause command clears it.
+
+**Item 3 — the double-click ordering, and the auto-copy that must not run.**
+With `copy_selection_to_clipboard` on and the world disconnected:
+
+- **Control** (neither `double_click_sends` nor `double_click_inserts`):
+  double-clicking a word replaced a clipboard sentinel with `wordone`.  So the
+  posted `WM_LBUTTONDBLCLK` really does reach `OnLButtonDblClk`, resolve the
+  word, and reach the auto-copy at `:4884`.
+- **`double_click_sends` on**: the click raised "The connection to
+  DblClickWorld is not open. Attempt to reconnect?" (`doc.cpp:2732`) and the
+  sentinel was **still on the clipboard** afterwards — with **either** answer.
+  Both are correct: `CheckConnected` returns true either way, so
+  `OutputWordDoubleClicked` returns `eDblClickAbort` and the caller's early
+  `return` at `:4861` skips the copy.
+
+The control is what makes this evidence: without it, "clipboard untouched"
+would equally describe a double-click that never arrived.
+
+**Item 4 — `world.TextRectangle`'s 20-pixel floor.**  Two independent answers,
+and they agree.
+
+By inspection: `git log -L 6685,6723:mushview.cpp` returns exactly one commit —
+`ad0cd12`, the initial import.  `CMUSHView::GetTextRectangle` has never been
+edited, so the floor is at the original point and `pal/text_rect.h` was
+transcribed from it rather than the other way round.
+
+Empirically, the whole chain is script-driven (`TextRectangle` calls
+`AutoWrapWindowWidth` itself, `methods_output.cpp:572`), so `GetOption
+("wrap_column")` reads the result.  With both clients' world windows pinned to
+the same size (view client 979×391), 5.06 and this build agree on every line:
+
+| rectangle | wrap column, both builds |
+|---|---|
+| reset `(0,0,0,0)` | 122 |
+| right `-200` (offset from edge) | 97 |
+| right `-100000` (floor) | 20 |
+| left 100, right `-100000` | 20 |
+| right `300` (absolute) | 37 |
+| right `10` (absolute, below the floor) | 20 |
+| bottom `-100000` only | 122 — unchanged, as it should be |
+
+implied character width 8 and implied output width 977–984 in both, bracketing
+the measured 979.
+
+Two things worth keeping from this one:
+
+- **The 20-*pixel* floor is invisible through the wrap column**, because
+  `ClampWrapColumn`'s 20-*column* floor swallows it: an un-floored rectangle
+  would give a negative width and clamp to 20 as well.  Its only observable
+  effect is on drawing geometry.  So this test proves the resolution agrees; it
+  does not, and cannot, isolate the floor by itself.
+- **Probing from `OnWorldOpen` measures the wrong window.**  The MDI child is
+  still being created, so the view's client rect is an interim size; the first
+  run of this probe reported 134 vs 135 and looked like a real one-column
+  divergence.  It was not — the two clients restore *different* world-window
+  placements (1199 vs 1216 px wide), and pinning both to 1000×400 made every
+  number identical.  Any Windows-vs-Windows comparison of a width-derived value
+  has to pin the window first.
+
+**One environmental artifact, so it is not re-investigated:** both clients pop
+"`/tmp/ows.mcl` contains an invalid path." at startup on this VM, with no world
+file and nothing matching in the registry.  Stock 5.06 does it identically, so
+it is leftover state on this machine, not a port defect.
+
 ### 8z. Still not covered
 
 SOCKS, zChat, the mapper's appearance, the hotspot re-detect, the whole mouse
-family and chat file transfer were all on this list and have since been done —
-see §8p, §8q and §8r.  What is genuinely left, and why:
+family, chat file transfer and all of §4c-quatervicies were on this list and
+have since been done — see §8p, §8q, §8r and §8s.  What is genuinely left, and
+why:
 
 - **Mapper behaviour over time** — geometry and layering render correctly in a
   still capture (§8p), but redraw as a character moves through rooms needs
@@ -1852,7 +1942,3 @@ see §8p, §8q and §8r.  What is genuinely left, and why:
   (§4c-quaterdecies) — both want a human at the dialogs.  Note the DDV change
   is port-only, so the Windows question is only "does MFC reject the same
   values", which is upstream behaviour nothing here touched.
-- **`world.TextRectangle`'s 20-pixel floor** and the other three
-  §4c-quatervicies items whose Windows arm is `CMUSHView` code no script can
-  reach.  The first of the four — the freeze-on-selection reading — is settled
-  by inspection in §8m instead.

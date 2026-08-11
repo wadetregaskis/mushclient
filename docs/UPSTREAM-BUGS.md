@@ -431,3 +431,42 @@ no positive test at all before. **Both sites were reverted independently and
 each was caught by ASAN**, so neither is guarded only by the other. Note that
 the fixture must be **24bpp** — a first draft used the existing RGBA helper,
 whose stride is 4-aligned at every width, and so could never have failed.
+
+---
+
+## `AltV` is published as a command but has no implementation, on either platform
+
+`accelerators.cpp` is the table that gives MUSHclient commands their public
+NAMES — the strings `world.DoCommand()` accepts and the Macros/Keypad UI binds
+keys to. It publishes **eighteen** `Alt<letter>` names:
+
+    AltA AltB AltJ AltK AltL AltM AltN AltO AltP AltQ AltR AltS AltT AltU
+    AltV AltX AltY AltZ
+
+but only **seventeen** macro slots exist. `OtherTypes.h`'s `MAC_ALT_*` enum has
+A, B, J–U, X, Y, Z, and `sendvw.cpp`'s id→slot switch has exactly 17 `case`
+labels. `ID_ALT_V` appears in precisely two places in the whole tree — the
+accelerators table and its `#define` — with no `ON_COMMAND_EX` in `mushview.cpp`
+or `sendvw.cpp` and no `case` label. So binding a key to `AltV`, or calling
+`world.DoCommand("AltV")`, does nothing **on Windows too**. `DoCommand` cannot
+report this: it posts `WM_COMMAND` and returns `eOK` regardless.
+
+The excluded letters are the menu access keys — C, D, E, F, G, H, I, V, W —
+so dropping V (View) from the macro slots was deliberate. What looks accidental
+is that its *table entry* survived: `ID_ALT_W` (Window) is not published at all,
+which is what V should have been. A leftover, not a design.
+
+**Deliberately not fixed.** Adding a handler would invent a macro slot Windows
+does not have, and removing the table entry would change what
+`world.DoCommand("AltV")` returns (`eOK` → `eNoSuchCommand`) — a visible
+behaviour change to shared code for a command nobody can be using, since it has
+never done anything. Recorded so it is not re-triaged as a port defect.
+
+**How it was found, and the correction that came with it.** A sweep for
+"published command ids with no handler reference" flagged four candidates.
+Three — `ActivityViewCloseWorld`, `ActivityViewSaveWorld`,
+`ActivityViewSaveWorldAs` — were **false positives**: they have full
+`ON_COMMAND` + `ON_UPDATE_COMMAND_UI` handlers in `ActivityView.cpp` and entries
+in two recovered menus, and the sweep simply had not read that file. That sweep
+was later deleted for failing its own mutation check; this entry is the one
+real thing it found.

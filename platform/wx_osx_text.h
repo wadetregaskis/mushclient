@@ -44,8 +44,25 @@ void wxOSXTerminateApp();
 // System Settings "Prefer tabs" choice), NOT Disallowed: the Windows setting
 // means "don't ask for tabs", not "forbid the user from making them".
 void wxOSXSetWindowTabbing(wxWindow* win, bool bPreferTabs, const char* identifier);
+// "Add full stop with double-space" — the one substitution with NO per-view
+// switch, so wxOSXDisableSmartSubstitutions cannot reach it:
+// NSSpellChecker's automaticPeriodSubstitutionEnabled is a CLASS property and
+// read-only, and there is no matching NSTextCheckingType to clear from a text
+// view's enabledTextCheckingTypes.  The only lever is the preference itself, so
+// opt out in THIS APPLICATION's own defaults domain, which takes precedence
+// over NSGlobalDomain and changes nothing for any other app.  Call once at
+// startup, before any window exists.
+void wxOSXDisableAutomaticPeriodSubstitution();
+// True when the control's NSTextView has the quote/dash/replacement
+// substitutions off.  Exists so an in-app selftest can assert the WIRING: the
+// defect this guards against was not a broken helper but a control nobody
+// called it for, which no amount of testing the helper itself would catch.
+// False for a control with no NSTextView (nothing was, or could be, disabled).
+bool wxOSXSmartSubstitutionsDisabled(wxTextCtrl* ctrl);
 #else
 inline void wxOSXDisableSmartSubstitutions(wxTextCtrl*) {}
+inline void wxOSXDisableAutomaticPeriodSubstitution() {}
+inline bool wxOSXSmartSubstitutionsDisabled(wxTextCtrl*) { return true; }
 inline void wxOSXSetDockIcon(const wxBitmap&) {}
 inline int  wxOSXFontHasGlyph(const char*, unsigned int) { return 0; }
 inline bool wxOSXActivateApp(const char*) { return false; }

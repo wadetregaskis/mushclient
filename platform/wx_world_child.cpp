@@ -1228,6 +1228,15 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     m_input = new wxTextCtrl(this, ID_INPUT, wxEmptyString,
                              wxDefaultPosition, wxDefaultSize,
                              wxTE_MULTILINE | wxTE_DONTWRAP | wxTE_PROCESS_ENTER);
+    // macOS substitutes as you type, and this is the control the user types
+    // EVERY command into -- so without this, `say "hi"` reaches the MUD as
+    // `say "hi"` with curly quotes and `a -- b` as an em dash.  Measured
+    // against a live MUD 2026-08-10: both happened, and both are sent.  MUD
+    // command grammars are ASCII, so a smart quote is not a cosmetic
+    // difference, it is a command that does not parse.  The helper was already
+    // written and already applied to the notepad and to multiline dialog
+    // fields; the busiest control in the app was simply never wired to it.
+    wxOSXDisableSmartSubstitutions(m_input);
     sizer->Add(m_input, 0, wxEXPAND);
 
     // Fire OnPluginCommandChanged per-keystroke — mirrors CSendView::OnChange()

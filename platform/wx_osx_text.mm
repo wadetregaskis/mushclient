@@ -9,29 +9,42 @@
 #include <wx/bitmap.h>
 #include "wx_osx_text.h"
 
-void wxOSXDisableSmartSubstitutions(wxTextCtrl* ctrl)
+// wxWindow::GetHandle() returns the native peer's main NSView.  For a multiline
+// wxTextCtrl that is the enclosing NSScrollView, whose documentView is the
+// NSTextView we want; for a control that already *is* an NSTextView, use it
+// directly.  Single-line controls (NSTextField) have no NSTextView document
+// view → nil, and nothing to do.
+static NSTextView* McTextViewFor(wxTextCtrl* ctrl)
 {
     if (!ctrl)
-        return;
-
-    // wxWindow::GetHandle() returns the native peer's main NSView.  For a
-    // multiline wxTextCtrl that is the enclosing NSScrollView, whose
-    // documentView is the NSTextView we want; for a control that already *is*
-    // an NSTextView, use it directly.  Single-line controls (NSTextField) have
-    // no NSTextView document view → nothing to do.
+        return nil;
     id peer = (id) ctrl->GetHandle();
     if (!peer)
-        return;
-
-    NSTextView* tv = nil;
+        return nil;
     if ([peer isKindOfClass:[NSTextView class]])
-        tv = (NSTextView*) peer;
-    else if ([peer respondsToSelector:@selector(documentView)])
+        return (NSTextView*) peer;
+    if ([peer respondsToSelector:@selector(documentView)])
     {
         id doc = [peer documentView];
         if ([doc isKindOfClass:[NSTextView class]])
-            tv = (NSTextView*) doc;
+            return (NSTextView*) doc;
     }
+    return nil;
+}
+
+bool wxOSXSmartSubstitutionsDisabled(wxTextCtrl* ctrl)
+{
+    NSTextView* tv = McTextViewFor(ctrl);
+    if (!tv)
+        return false;   // no text view → nothing was (or could be) disabled
+    return ![tv isAutomaticQuoteSubstitutionEnabled] &&
+           ![tv isAutomaticDashSubstitutionEnabled] &&
+           ![tv isAutomaticTextReplacementEnabled];
+}
+
+void wxOSXDisableSmartSubstitutions(wxTextCtrl* ctrl)
+{
+    NSTextView* tv = McTextViewFor(ctrl);
     if (!tv)
         return;
 
@@ -47,6 +60,26 @@ void wxOSXDisableSmartSubstitutions(wxTextCtrl* ctrl)
     tv.enabledTextCheckingTypes &= ~(NSTextCheckingTypeQuote |
                                      NSTextCheckingTypeDash |
                                      NSTextCheckingTypeReplacement);
+}
+
+void wxOSXDisableAutomaticPeriodSubstitution()
+{
+    // Two spaces become ". " as you type, which for a MUD client means the
+    // period is SENT.  Unlike the quote/dash/replacement substitutions there is
+    // no per-view switch to turn this off: NSTextView exposes none, and
+    // NSSpellChecker's automaticPeriodSubstitutionEnabled is a class property
+    // and read-only (it reports the setting rather than setting it).  Clearing
+    // enabledTextCheckingTypes does not help either — no NSTextCheckingType
+    // corresponds to it.  Verified against a live MUD 2026-08-10: with the
+    // per-view substitutions off, `a  b` still arrived as `a. b`.
+    //
+    // So opt out where the preference is actually read.  Writing the key into
+    // the standard user defaults puts it in THIS application's own domain
+    // (au.com.gammon.MUSHclient), which takes precedence over NSGlobalDomain
+    // for this process only — the user's system-wide setting, and every other
+    // application, are untouched.
+    [[NSUserDefaults standardUserDefaults]
+        setBool:NO forKey:@"NSAutomaticPeriodSubstitutionEnabled"];
 }
 
 void wxOSXSetDockIcon(const wxBitmap& bmp)

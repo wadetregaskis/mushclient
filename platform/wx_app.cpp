@@ -14,6 +14,7 @@
 #include <csignal>             // signal, SIGPIPE
 #include <cstdlib>             // std::exit (selftest flag)
 #include "platform/extended_selftest.h"   // the loop-running test mode
+#include "platform/wx_osx_text.h"         // wxOSXDisableAutomaticPeriodSubstitution
 #include "platform/wx_mfc_hooks.h"
 
 // Defined in wx_dialog_bridge.cpp: parse the bundled dialog resources once.
@@ -90,6 +91,12 @@ class CMUSHWxApp : public wxApp {
 public:
     bool OnInit() override
     {
+        // Before any control exists: opt this application out of "add full stop
+        // with double-space".  It is the one macOS substitution with no
+        // per-view switch, and in a MUD client the inserted period is SENT.
+        // Scoped to this app's own defaults domain — see wx_osx_text.h.
+        wxOSXDisableAutomaticPeriodSubstitution();
+
         // Hidden conformance harness: exercise the wx ISurface adapter against
         // the contract goldens inside a real (headless-enough) wx app, print
         // the results, and exit without booting the GUI.

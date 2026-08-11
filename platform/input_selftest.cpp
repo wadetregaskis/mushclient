@@ -34,6 +34,7 @@
 #include "doc.h"
 #include "platform/wx_world_child.h"
 #include "platform/wx_mfc_hooks.h"    // g_wxhook_message_box
+#include "platform/wx_osx_text.h"     // wxOSXSmartSubstitutionsDisabled
 
 #include <cstdio>
 #include <functional>
@@ -168,6 +169,26 @@ int RunInputSelfTest()
     {
         printf("INPUT-SELFTEST: no input bar - cannot run\n");
         return 1;
+    }
+
+    // ── macOS text substitutions are OFF on the bar the user types into ────
+    // Found by using the app against a live MUD (2026-08-10): `say "hi" -- ok`
+    // reached the command bar as `say "hi" — ok` — curly quotes and an em dash
+    // — and that is what would have been SENT.  MUD grammars are ASCII, so a
+    // smart quote is not a cosmetic difference, it is a command that does not
+    // parse.
+    //
+    // The helper was never broken; it simply was not called for this control,
+    // while the notepad and multiline dialog fields did get it.  So the thing
+    // worth asserting is the WIRING, and it has to be asserted on the REAL
+    // frame's control — which is exactly what this selftest already builds.
+    // A test of wxOSXDisableSmartSubstitutions itself would have stayed green
+    // throughout the entire period the bug existed.
+    {
+        wxTextCtrl* normalBar = child->NormalInputPublic();
+        chk(normalBar != NULL, "substitutions: the world window has a command bar");
+        chk(normalBar && wxOSXSmartSubstitutionsDisabled(normalBar),
+            "macOS smart quote/dash/replacement are disabled on the command bar");
     }
 
     // ── Ctrl+Backspace: the world option chooses, and OFF is the default ────

@@ -24,8 +24,35 @@ static void RebuildFontVariants(const wxFont& base,
                                 wxFont& outBoldItalicUnderline);
 
 // ── Context-menu IDs ─────────────────────────────────────────────────────────
-static const int ID_COPY       = wxID_COPY;
-static const int ID_SELECTALL  = wxID_SELECTALL;
+// NOT wxID_COPY / wxID_SELECTALL.  On macOS AppKit claims the standard ids for
+// its own Edit-menu actions: it decides their enabled state (overriding
+// menu.Enable) and it takes the click, so the pane's EVT_MENU never fires.
+// Measured with a live selection: this context menu's "Copy" rendered GREY
+// while wx had enabled it, and "Select All" did nothing at all -- while "Copy
+// as HTML", the one item in the same menu built with a dynamically-allocated
+// id, was enabled and worked.  Same menu, same selection, differing only in
+// the id.
+//
+// The main Edit menu already had this fixed (wx_mfc_impl.cpp uses ID_EDIT_COPY),
+// but this menu was never converted.  These are MFC's canonical command ids —
+// ID_EDIT_COPY (mfc_ui.h) and ID_EDIT_SELECTALL (resource.h) — which AppKit has
+// no opinion about.  Spelled numerically because this file is wx-side and pulls
+// in neither header.
+static const int ID_COPY       = 0xE122;   // ID_EDIT_COPY
+static const int ID_SELECTALL  = 32108;    // ID_EDIT_SELECTALL
+
+// The defect was the VALUE of these two constants, so the guard belongs where a
+// value can be checked: reverting either to the wx standard id now fails to
+// compile rather than silently producing a dead menu item that still looks
+// right.  A runtime test could not see this — the menu is built inside the
+// right-click handler, and the symptom (AppKit greying an item wx enabled)
+// only appears with a real NSMenu on screen.
+static_assert(ID_COPY != wxID_COPY,
+              "output-pane context Copy must not use wxID_COPY: AppKit claims "
+              "the standard ids, greys the item and swallows the click");
+static_assert(ID_SELECTALL != wxID_SELECTALL,
+              "output-pane context Select All must not use wxID_SELECTALL: "
+              "same AppKit hijack, and it silently does nothing");
 static const int ID_CLEAR      = wxID_HIGHEST + 100;
 
 // ── UTF-8 character counting ──────────────────────────────────────────────────

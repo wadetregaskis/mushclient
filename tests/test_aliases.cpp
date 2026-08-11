@@ -364,6 +364,38 @@ TEST(CommandTest, AliasesMatchWithinCommandStack)
     EXPECT_STREQ("look\r\ngo north\r\n", wire(doc)->sent.c_str());
 }
 
+// A multi-line command is sent as one command PER LINE, independently of
+// command stacking.  This is the path a pasted block takes, and the path a
+// Shift+Return composition takes: the command bar hands Execute the whole
+// thing in one go (wx_world_child.cpp OnInputEnter) and the split happens
+// here, so nothing above the engine has to know about it.
+//
+// Pinned after driving the real client against a live MUD (2026-08-11):
+// pasting "north/south/east" into the command bar and pressing Enter walked
+// three rooms in order.  Stacking is deliberately left OFF, because these are
+// different mechanisms and a test that enabled it could not tell which one
+// did the splitting.
+TEST(CommandTest, MultiLineCommandSendsOneCommandPerLine)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    ASSERT_FALSE(doc.m_enable_command_stack);   // the control: stacking is off
+
+    doc.Execute("north\nsouth\neast");
+    EXPECT_STREQ("north\r\nsouth\r\neast\r\n", wire(doc)->sent.c_str());
+    EXPECT_EQ(3L, doc.m_nTotalLinesSent);
+}
+
+// ...and the same when the lines arrive CRLF-separated, which is what a
+// Windows clipboard carries and what the multiline edit control holds there.
+TEST(CommandTest, MultiLineCommandAcceptsCRLFSeparators)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+
+    doc.Execute("north\r\nsouth");
+    EXPECT_STREQ("north\r\nsouth\r\n", wire(doc)->sent.c_str());
+    EXPECT_EQ(2L, doc.m_nTotalLinesSent);
+}
+
 // methods_commands.cpp: "if list is empty, make sure we send at least one
 // empty line" — Execute("") sends exactly one blank line.
 TEST(CommandTest, EmptyCommandSendsOneBlankLine)

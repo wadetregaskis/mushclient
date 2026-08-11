@@ -4652,7 +4652,11 @@ pal::Range CWorldChildFrame::commandSelection() const
     if (inp) {
         long from = 0, to = 0;
         inp->GetSelection(&from, &to);
-        const wxScopedCharBuffer utf8 = inp->GetValue().utf8_str();
+        // Named local, NOT inp->GetValue().utf8_str(): the buffer can be a
+        // non-owning view into the string, and GetValue() returns a temporary
+        // that dies at the semicolon.  See hook_get_clipboard_text.
+        const wxString value = inp->GetValue();
+        const wxScopedCharBuffer utf8 = value.utf8_str();
         r.start = (int) UTF8CharToByteOffset(utf8.data(), utf8.length(), (size_t) from);
         r.end   = (int) UTF8CharToByteOffset(utf8.data(), utf8.length(), (size_t) to);
     }
@@ -4667,7 +4671,9 @@ void CWorldChildFrame::setCommandSelection(long first, long last)
 {
     wxTextCtrl* inp = ActiveInput();
     if (!inp) return;
-    const wxScopedCharBuffer utf8 = inp->GetValue().utf8_str();
+    // Named local — see commandSelection() above for why.
+    const wxString value = inp->GetValue();
+    const wxScopedCharBuffer utf8 = value.utf8_str();
     const size_t nbytes = utf8.length();
     long f = (first <= 0) ? (long) nbytes : first - 1;
     // End is exclusive (one past the last char), matching Windows'
@@ -4688,7 +4694,9 @@ void CWorldChildFrame::replaceCommandSelection(long start, long end,
     wxTextCtrl* inp = ActiveInput();
     if (!inp) return;
 
-    const wxScopedCharBuffer utf8 = inp->GetValue().utf8_str();
+    // Named local — see commandSelection() above for why.
+    const wxString value = inp->GetValue();
+    const wxScopedCharBuffer utf8 = value.utf8_str();
     const long cs = (long) UTF8ByteToCharOffset(utf8.data(), utf8.length(),
                                                 (size_t) (start < 0 ? 0 : start));
     const long ce = (long) UTF8ByteToCharOffset(utf8.data(), utf8.length(),

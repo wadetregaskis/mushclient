@@ -2326,10 +2326,39 @@ Three things the run corrected, none of them a build failure:
   reached macOS output.
 - **The max-char-width selftest could not fail.** See §8t-bis below.
 
-The macOS side may also want `lastResolveError()` implemented in its own
-transport — `getaddrinfo`'s `EAI_*` code would make the port's message as
-informative as Windows' — but nothing breaks without it, and the run confirms
-the default-0 path leaves the mac message byte-identical.
+**`lastResolveError()` on the POSIX transport — done, but NOT the way the
+suggestion reads.** The follow-up above proposes returning `getaddrinfo`'s
+`EAI_*` code "to make the port's message as informative as Windows'". Doing
+only that would have made it *misinformative*, because the description is
+rendered by `CMUSHclientDoc::GetSocketError`, whose non-Windows arm is
+`strerror` — and `EAI_*` is a different numbering that merely overlaps errno.
+Measured on macOS 2026-08-10:
+
+| code | value | `gai_strerror` (right) | `strerror` (what it would have printed) |
+|---|---|---|---|
+| `EAI_NONAME` | 8 | nodename nor servname provided, or not known | **Exec format error** |
+| `EAI_AGAIN` | 2 | Temporary failure in name resolution | **No such file or directory** |
+| `EAI_FAIL` | 4 | Non-recoverable failure in name resolution | **Interrupted system call** |
+| `EAI_NODATA` | 7 | No address associated with nodename | **Argument list too long** |
+
+`EAI_NONAME` is the commonest resolver failure there is — a mistyped hostname —
+so the naive version would have answered a typo with "Exec format error", which
+is worse than the terse message it replaced.
+
+Implemented instead as a sibling to `lastResolveError()`, in the same shape and
+with the same non-invasiveness: a **non-pure** `lastResolveErrorString()`
+defaulting to empty, meaning "use `GetSocketError`". Windows overrides neither,
+so its path and its message are byte-identical — its codes *are* Winsock's, and
+that table was written for them. The POSIX transport returns `gai_strerror`.
+`getaddrinfo`'s code is carried to the main thread through the existing
+completion mailbox rather than written from the resolver thread, since the
+member it lands in is read on the main thread.
+
+Pinned in `--pal-transport-selftest` against a reserved `.invalid` name (RFC
+2606, so it needs no network): the code is non-zero, the description equals
+`gai_strerror`'s, and — the assertion that actually discriminates — it is
+demonstrably **not** `strerror`'s text for the same number. A code alone proves
+nothing here, precisely because the two numberings overlap.
 
 ### §8t-bis — the relaxed font-metric assertion had no teeth
 

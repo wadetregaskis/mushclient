@@ -59,6 +59,11 @@ struct ResolveCompletion {
     ResolveToken token = 0;
     unsigned int addr = 0;     // network byte order
     bool         ok = false;
+    // getaddrinfo's return code, carried across the thread boundary rather
+    // than written to the transport from the resolver thread — the member it
+    // ends up in is read on the main thread by lastResolveError(), and the
+    // gate only makes the POINTER safe there, not a concurrent write.
+    int          gaiError = 0;
 };
 
 // Deliberately IMMORTAL (leaked once, never destroyed).  The resolver thread is
@@ -111,16 +116,18 @@ public:
             struct addrinfo* res = nullptr;
             hints.ai_family   = AF_INET;
             hints.ai_socktype = SOCK_STREAM;
-            bool ok = (::getaddrinfo(hostCopy.c_str(), nullptr, &hints, &res) == 0
-                       && res != nullptr);
+            const int gai = ::getaddrinfo(hostCopy.c_str(), nullptr, &hints, &res);
+            bool ok = (gai == 0 && res != nullptr);
             unsigned int addr = 0;
             if (ok) {
                 addr = reinterpret_cast<struct sockaddr_in*>(res->ai_addr)
                            ->sin_addr.s_addr;
                 ::freeaddrinfo(res);
             }
+            else if (res != nullptr)
+                ::freeaddrinfo(res);   // gai == 0 but empty list: still ours to free
             std::lock_guard<std::mutex> lk(MB().lock);
-            MB().items.push_back({ gate, self, gen, token, addr, ok });
+            MB().items.push_back({ gate, self, gen, token, addr, ok, gai });
         }).detach();
     }
 
@@ -258,6 +265,19 @@ public:
     std::string lastErrorString() const override
     {
         return std::string(strerror(errno));
+    }
+
+    // getaddrinfo's code from the last failed resolve, with its OWN renderer.
+    // EAI_* is not errno: GetSocketError's non-Windows arm is strerror, which
+    // turns EAI_NONAME (8) into "Exec format error" — see pal/itransport.h.
+    int lastResolveError() const override { return m_lastResolveError; }
+
+    std::string lastResolveErrorString() const override
+    {
+        if (m_lastResolveError == 0)
+            return std::string();
+        const char* s = ::gai_strerror(m_lastResolveError);
+        return s ? std::string(s) : std::string();
     }
 
 private:
@@ -476,8 +496,10 @@ private:
 
 public:
     // Called only by PumpTransportCompletions (main thread, gate-checked).
-    void deliverResolve(ResolveToken token, unsigned int addr, bool ok)
+    void deliverResolve(ResolveToken token, unsigned int addr, bool ok,
+                        int gaiError)
     {
+        m_lastResolveError = ok ? 0 : gaiError;
         m_events.onResolved(token, addr, ok);
     }
 
@@ -486,6 +508,9 @@ private:
     std::shared_ptr<Gate> m_gate;
     PumpSocket            m_sock;
     std::string           m_outgoing;
+    // Written only in deliverResolve, i.e. on the main thread from the pump —
+    // never by the resolver thread, which reports its code through the mailbox.
+    int                   m_lastResolveError = 0;
 
     bool m_tlsHandshaking = false;
     bool m_tlsUp = false;
@@ -556,7 +581,7 @@ void PumpTransportCompletions()
         // The dtor clears alive on the main thread before the object dies,
         // so a true gate here means rc.transport is valid.
         if (rc.gate->alive && rc.gate->resolveGen == rc.gen)
-            rc.transport->deliverResolve(rc.token, rc.addr, rc.ok);
+            rc.transport->deliverResolve(rc.token, rc.addr, rc.ok, rc.gaiError);
     }
 }
 
@@ -748,6 +773,12 @@ int RunPalTransportSelfTest()
                 ev.resolveAddr == kLoopback,
                 "resolve(localhost) completes with 127.0.0.1 + token echo");
 
+        // A successful resolve leaves NO error behind, so the message keeps its
+        // short form after a good lookup.
+        ttCheck(t->lastResolveError() == 0 &&
+                t->lastResolveErrorString().empty(),
+                "a successful resolve reports no error code");
+
         // A cancelled lookup must never deliver.
         RecordingEvents ev2;
         pal::ITransport* t2 = pal::CreatePosixTransport(ev2);
@@ -757,6 +788,35 @@ int RunPalTransportSelfTest()
         ttCheck(!ev2.resolved, "cancelResolve drops the completion");
         delete t2;
         delete t;
+
+        // ── a FAILED resolve reports getaddrinfo's code, rendered by
+        // getaddrinfo's own strings.  `.invalid` is reserved by RFC 2606
+        // precisely so it can never resolve, so this needs no network.
+        //
+        // The second assertion is the one that matters: EAI_* overlaps errno
+        // numerically, so a code alone proves nothing about which table was
+        // consulted.  strerror(EAI_NONAME==8) is "Exec format error" on macOS —
+        // if that (or any other strerror text) came back, the message would be
+        // confidently wrong rather than merely terse, which is the whole reason
+        // lastResolveErrorString exists.
+        RecordingEvents ev3;
+        pal::ITransport* t3 = pal::CreatePosixTransport(ev3);
+        t3->resolve("no-such-host.invalid", 99);
+        pumpUntil([&] { return ev3.resolved; }, 600);
+        ttCheck(ev3.resolved && !ev3.resolveOk,
+                "resolve of a reserved .invalid name fails");
+        ttCheck(t3->lastResolveError() != 0,
+                "...and leaves a non-zero getaddrinfo code");
+        {
+            const std::string why = t3->lastResolveErrorString();
+            const char* gai = ::gai_strerror(t3->lastResolveError());
+            ttCheck(!why.empty() && gai && why == gai,
+                    "...described by gai_strerror, not strerror");
+            const char* wrong = strerror(t3->lastResolveError());
+            ttCheck(!wrong || why != wrong,
+                    "...and demonstrably NOT the errno text for the same number");
+        }
+        delete t3;
     }
 
     // ── 2. TCP round trip ───────────────────────────────────────────────────

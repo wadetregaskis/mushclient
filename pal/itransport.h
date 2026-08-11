@@ -143,6 +143,20 @@ public:
     // nothing to report keeps the default and the message keeps its shorter
     // form, which is what the POSIX side already prints.
     virtual int lastResolveError() const { return 0; }
+
+    // Description of that code, when the adapter's numbering is not something
+    // CMUSHclientDoc::GetSocketError can render.  Empty means "use
+    // GetSocketError", which is what Windows wants: its codes ARE Winsock's and
+    // that table was written for them.
+    //
+    // The POSIX side needs this because its resolver codes are getaddrinfo's
+    // EAI_*, a numbering unrelated to errno despite overlapping it — and
+    // GetSocketError's non-Windows arm is strerror.  Without an override the
+    // commonest failure of all, a mistyped hostname (EAI_NONAME == 8 on macOS),
+    // would be reported as "Exec format error".  A confidently wrong
+    // explanation is worse than the shorter message it replaced, so the
+    // adapter that knows the numbering names it.
+    virtual std::string lastResolveErrorString() const { return std::string(); }
 };
 
 } // namespace pal

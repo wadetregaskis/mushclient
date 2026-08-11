@@ -2056,11 +2056,28 @@ void CMUSHclientDoc::LookupHostNameComplete (struct in_addr addr, int phase, boo
       // cost real diagnostic detail — 11001 "Host not found" versus a bare
       // "could not resolve".  An adapter with no code to offer returns 0 and
       // the message keeps the shorter form.
+      //
+      // The DESCRIPTION comes from the adapter when it offers one, because
+      // GetSocketError cannot render every adapter's numbering.  Winsock codes
+      // are what its table was written for, so Windows keeps that path exactly
+      // (its transport offers no string, and the fallback below is the original
+      // expression).  The resolver codes off Windows are getaddrinfo's EAI_*,
+      // which are NOT errno values however much they look like small ints —
+      // GetSocketError's non-Windows arm is strerror, and measured on macOS
+      // 2026-08-10 that renders the commonest failure, EAI_NONAME (8), as
+      // "Exec format error", EAI_AGAIN (2) as "No such file or directory" and
+      // EAI_FAIL (4) as "Interrupted system call".  Appending one of those to a
+      // mistyped hostname is worse than saying nothing, so the POSIX transport
+      // supplies gai_strerror instead.
       const int iResolveError = m_pTransport ? m_pTransport->lastResolveError () : 0;
       if (iResolveError != 0)
+        {
+        const std::string sWhy = m_pTransport->lastResolveErrorString ();
         strMsg += TFormat (", code = %i (%s)",
                            iResolveError,
-                           (LPCTSTR) GetSocketError (iResolveError));
+                           sWhy.empty () ? (LPCTSTR) GetSocketError (iResolveError)
+                                         : sWhy.c_str ());
+        }
       if (App.m_bErrorNotificationToOutputWindow)
         Note (strMsg);
       else

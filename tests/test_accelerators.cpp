@@ -122,6 +122,50 @@ TEST(Accelerators, EmptySendUnregistersTheKeystroke)
     EXPECT_TRUE(doc.m_CommandToSendToMap.find((WORD) cmd) == doc.m_CommandToSendToMap.end());
 }
 
+// ...and the price of that erase, pinned so it cannot change unnoticed.
+//
+// RebindingAKeyReusesTheCommandId above says a re-bind "re-uses it rather than
+// leaking one out of the fixed ACCELERATOR_COUNT pool" — but it never unbinds
+// in between, so it only ever exercises the map-HIT branch.  Once the key has
+// been forgotten the lookup misses, and `command = m_nextAcceleratorCommand++`
+// (methods_accelerators.cpp) hands out a fresh id.  Nothing ever returns one:
+// the counter is seeded once in doc_construct.cpp and only incremented, so an
+// unbind/rebind cycle consumes an id permanently, out of 1000
+// (ACCELERATOR_FIRST_COMMAND 12000 .. +ACCELERATOR_COUNT, mainfrm.h).
+//
+// This is not a defect in the erase; it is the cost of it, and the two cannot
+// both be had with these data structures.  AcceleratorList enumerates
+// m_AcceleratorToCommandMap itself, so hiding an un-bound key from the list
+// REQUIRES destroying the very entry that would have supplied the old id.
+// Recording it as a test rather than a comment because the alternative — a
+// free list of released ids — would be a deliberate change that should turn
+// this red, not slip past a suite that never looked.
+TEST(Accelerators, RebindingAfterAnUnbindAllocatesAFreshCommandId)
+{
+    CMUSHclientDoc doc;
+
+    ASSERT_EQ((long) eOK, doc.AcceleratorTo("F5", "first", eSendToWorld));
+    const long before = command_for(doc, FVIRTKEY, VK_F5);
+    ASSERT_NE(-1L, before);
+
+    // forget it, then bind the SAME keystroke again
+    ASSERT_EQ((long) eOK, doc.AcceleratorTo("F5", "", eSendToWorld));
+    ASSERT_EQ(-1L, command_for(doc, FVIRTKEY, VK_F5));
+    ASSERT_EQ((long) eOK, doc.AcceleratorTo("F5", "second", eSendToWorld));
+
+    const long after = command_for(doc, FVIRTKEY, VK_F5);
+    ASSERT_NE(-1L, after);
+
+    // the id is NOT re-used: one is consumed per cycle
+    EXPECT_NE(before, after);
+    // and it is the next one, not an arbitrary value — which is what makes the
+    // consumption exactly one per cycle rather than merely "different"
+    EXPECT_EQ(before + 1, after);
+    // the binding itself is otherwise intact
+    EXPECT_EQ(std::string("second"), doc.m_CommandToMacroMap[(WORD) after]);
+    EXPECT_EQ(1u, doc.m_AcceleratorToCommandMap.size());
+}
+
 // Deleting one keystroke must not disturb its neighbours.
 TEST(Accelerators, EmptySendLeavesOtherKeystrokesAlone)
 {

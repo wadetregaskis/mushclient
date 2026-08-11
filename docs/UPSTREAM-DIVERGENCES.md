@@ -144,9 +144,6 @@ reordering either platform's key dispatch to unify.
 
 ---
 
-
----
-
 ## 6 — Un-binding an accelerator forgets it completely
 
 **Where:** `scripting/methods/methods_accelerators.cpp`,
@@ -177,11 +174,34 @@ why the block already existed in the `#else` arm; all that changed is that
 Windows now runs it too.
 
 **Observable change on Windows:** `AcceleratorList()` stops listing keys that
-were already unable to fire. Nothing that worked before stops working — the
-HACCEL rebuild is untouched, and re-binding a key still re-uses its previously
-allocated command id, because that lookup misses either way once the map entry
-is gone (a fresh id is allocated instead, from the same `ACCELERATOR_COUNT`
-pool).
+were already unable to fire. The HACCEL rebuild is untouched, so no key that
+fired before stops firing.
+
+**There is a second, real consequence, and this entry used to deny it** — in a
+sentence that contradicted itself inside its own parentheses ("re-binding a key
+still re-uses its previously allocated command id … (a fresh id is allocated
+instead)"). The truth is the parenthesis. Un-binding destroys the
+`m_AcceleratorToCommandMap` entry, so a later re-bind of the same key MISSES
+the lookup at `methods_accelerators.cpp` and takes `m_nextAcceleratorCommand++`.
+Nothing ever returns an id — the counter is seeded once in `doc_construct.cpp`
+and only incremented — so **each unbind/rebind cycle permanently consumes one
+of the 1000** (`ACCELERATOR_FIRST_COMMAND` 12000 `.. + ACCELERATOR_COUNT`,
+`mainfrm.h`). At exhaustion `AcceleratorTo` returns `eBadParameter` and no
+further key can be bound in that world for the rest of the session.
+
+This is the **cost** of the erase, not an oversight in it, and the two cannot
+both be had as the data structures stand: `AcceleratorList` enumerates
+`m_AcceleratorToCommandMap` itself, so hiding an un-bound key from the list
+requires destroying the entry that would have supplied the old id. A free list
+of released ids would buy both, and is the fix if it ever bites.
+
+Note the cost is **not new to the port** — off Windows the erase always ran, so
+macOS has always behaved this way; what `c24926f` changes is that Windows now
+does too. Pinned by `tests/test_accelerators.cpp`,
+`RebindingAfterAnUnbindAllocatesAFreshCommandId`, which asserts the fresh id is
+exactly `before + 1` so the consumption is one per cycle rather than merely
+"different". The neighbouring `RebindingAKeyReusesTheCommandId` does not cover
+it: it never unbinds, so it only ever exercises the map-hit branch.
 
 ## Verification status
 

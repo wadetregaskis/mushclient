@@ -125,12 +125,26 @@ WORD key;
 
     if (it == m_AcceleratorToCommandMap.end ())
       {
-      // check not too many ;)
-      if (m_nextAcceleratorCommand >= (ACCELERATOR_FIRST_COMMAND + ACCELERATOR_COUNT))
-        return eBadParameter;   // too many of them
+      // An id released by a previous un-bind comes back first.  Without this,
+      // the erase below made every unbind/rebind cycle cost one of the
+      // ACCELERATOR_COUNT ids for the life of the world -- a plugin that binds
+      // in OnPluginInstall and clears in OnPluginClose, reloaded often enough,
+      // eventually got eBadParameter for every key.  Upstream never leaked
+      // because it never erased; it also never stopped listing dead keys.
+      if (!m_freeAcceleratorCommands.empty ())
+        {
+        command = m_freeAcceleratorCommands.back ();
+        m_freeAcceleratorCommands.pop_back ();
+        }
+      else
+        {
+        // check not too many ;)
+        if (m_nextAcceleratorCommand >= (ACCELERATOR_FIRST_COMMAND + ACCELERATOR_COUNT))
+          return eBadParameter;   // too many of them
 
-      // allocate new one
-      command = m_nextAcceleratorCommand++;
+        // allocate new one
+        command = m_nextAcceleratorCommand++;
+        }
       }
     else
       command = it->second;  // re-use command
@@ -197,6 +211,8 @@ WORD key;
       m_CommandToMacroMap.erase (it->second);
       m_CommandToSendToMap.erase (it->second);
       m_CommandToPluginMap.erase (it->second);
+      // release the id for re-use before dropping the only record of it
+      m_freeAcceleratorCommands.push_back (it->second);
       m_AcceleratorToCommandMap.erase (it);
       }
     }

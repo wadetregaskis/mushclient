@@ -19,6 +19,7 @@
 #include "stdafx.h"
 #include "MUSHclient.h"
 #include "doc.h"
+#include "mainfrm.h"   // ACCELERATOR_FIRST_COMMAND / ACCELERATOR_COUNT (the id pool)
 #include "scripting/errors.h"
 #include "variant_test_helpers.h"
 
@@ -122,25 +123,25 @@ TEST(Accelerators, EmptySendUnregistersTheKeystroke)
     EXPECT_TRUE(doc.m_CommandToSendToMap.find((WORD) cmd) == doc.m_CommandToSendToMap.end());
 }
 
-// ...and the price of that erase, pinned so it cannot change unnoticed.
+// ...and un-binding must not COST an id, which it did until the free list.
 //
 // RebindingAKeyReusesTheCommandId above says a re-bind "re-uses it rather than
 // leaking one out of the fixed ACCELERATOR_COUNT pool" — but it never unbinds
-// in between, so it only ever exercises the map-HIT branch.  Once the key has
-// been forgotten the lookup misses, and `command = m_nextAcceleratorCommand++`
-// (methods_accelerators.cpp) hands out a fresh id.  Nothing ever returns one:
-// the counter is seeded once in doc_construct.cpp and only incremented, so an
-// unbind/rebind cycle consumes an id permanently, out of 1000
-// (ACCELERATOR_FIRST_COMMAND 12000 .. +ACCELERATOR_COUNT, mainfrm.h).
+// in between, so it only ever exercises the map-HIT branch and passed either
+// way.  Once the key has been forgotten the lookup misses, and the allocator
+// used to run straight to `m_nextAcceleratorCommand++`.  Nothing ever returned
+// an id — the counter is seeded once in doc_construct.cpp and only incremented
+// — so each unbind/rebind cycle consumed one of the 1000 permanently
+// (ACCELERATOR_FIRST_COMMAND 12000 .. +ACCELERATOR_COUNT, mainfrm.h), and at
+// exhaustion AcceleratorTo returned eBadParameter for EVERY key in that world.
 //
-// This is not a defect in the erase; it is the cost of it, and the two cannot
-// both be had with these data structures.  AcceleratorList enumerates
-// m_AcceleratorToCommandMap itself, so hiding an un-bound key from the list
-// REQUIRES destroying the very entry that would have supplied the old id.
-// Recording it as a test rather than a comment because the alternative — a
-// free list of released ids — would be a deliberate change that should turn
-// this red, not slip past a suite that never looked.
-TEST(Accelerators, RebindingAfterAnUnbindAllocatesAFreshCommandId)
+// The erase itself is not the problem and cannot simply be dropped:
+// AcceleratorList enumerates m_AcceleratorToCommandMap, so hiding an un-bound
+// key from the list requires destroying the entry that would have supplied the
+// old id.  Releasing the id to a free list buys both, and restores upstream's
+// property that binding the same key twice costs one id — which upstream got
+// for free by never erasing, at the price of listing dead keys forever.
+TEST(Accelerators, UnbindingReleasesTheCommandIdForReuse)
 {
     CMUSHclientDoc doc;
 
@@ -156,14 +157,38 @@ TEST(Accelerators, RebindingAfterAnUnbindAllocatesAFreshCommandId)
     const long after = command_for(doc, FVIRTKEY, VK_F5);
     ASSERT_NE(-1L, after);
 
-    // the id is NOT re-used: one is consumed per cycle
-    EXPECT_NE(before, after);
-    // and it is the next one, not an arbitrary value — which is what makes the
-    // consumption exactly one per cycle rather than merely "different"
-    EXPECT_EQ(before + 1, after);
+    EXPECT_EQ(before, after);   // the released id came back
     // the binding itself is otherwise intact
     EXPECT_EQ(std::string("second"), doc.m_CommandToMacroMap[(WORD) after]);
     EXPECT_EQ(1u, doc.m_AcceleratorToCommandMap.size());
+}
+
+// The pool survives a great many cycles — the property the free list exists
+// for.  Without it this exhausts ACCELERATOR_COUNT and starts failing; a plain
+// "it worked twice" test would not notice, because the leak is one per cycle.
+TEST(Accelerators, ManyUnbindRebindCyclesDoNotExhaustThePool)
+{
+    CMUSHclientDoc doc;
+
+    // one cycle per id in the pool, plus a margin: without the free list this
+    // starts returning eBadParameter partway through
+    int failedAt = -1;
+    for (int i = 0; i < ACCELERATOR_COUNT + 50 && failedAt < 0; i++) {
+        if (doc.AcceleratorTo("F5", "x", eSendToWorld) != (long) eOK ||
+            doc.AcceleratorTo("F5", "", eSendToWorld)  != (long) eOK)
+            failedAt = i;
+    }
+    EXPECT_EQ(-1, failedAt);   // -1 = never failed; otherwise the cycle number
+    // and a different key can still be bound afterwards
+    EXPECT_EQ((long) eOK, doc.AcceleratorTo("F6", "still works", eSendToWorld));
+
+    // Distinct keys bound SIMULTANEOUSLY still each cost one, so the free list
+    // has not turned the pool into an unbounded resource.
+    CMUSHclientDoc doc2;
+    ASSERT_EQ((long) eOK, doc2.AcceleratorTo("F5", "a", eSendToWorld));
+    ASSERT_EQ((long) eOK, doc2.AcceleratorTo("F6", "b", eSendToWorld));
+    EXPECT_NE(command_for(doc2, FVIRTKEY, VK_F5),
+              command_for(doc2, FVIRTKEY, VK_F6));
 }
 
 // Deleting one keystroke must not disturb its neighbours.

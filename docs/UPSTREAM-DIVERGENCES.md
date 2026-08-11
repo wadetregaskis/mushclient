@@ -189,19 +189,26 @@ of the 1000** (`ACCELERATOR_FIRST_COMMAND` 12000 `.. + ACCELERATOR_COUNT`,
 `mainfrm.h`). At exhaustion `AcceleratorTo` returns `eBadParameter` and no
 further key can be bound in that world for the rest of the session.
 
-This is the **cost** of the erase, not an oversight in it, and the two cannot
-both be had as the data structures stand: `AcceleratorList` enumerates
-`m_AcceleratorToCommandMap` itself, so hiding an un-bound key from the list
-requires destroying the entry that would have supplied the old id. A free list
-of released ids would buy both, and is the fix if it ever bites.
+**Fixed — the free list.** The two looked mutually exclusive, because
+`AcceleratorList` enumerates `m_AcceleratorToCommandMap` itself, so hiding an
+un-bound key from the list requires destroying the entry that would have
+supplied the old id. Releasing that id to `m_freeAcceleratorCommands` on erase,
+and preferring it on the next allocation, buys both: the list stops naming dead
+keys **and** binding the same key twice costs one id, which is the property
+upstream had (it got it by never erasing, at the price of listing dead keys
+forever). So this is no longer a divergence in the pool's behaviour at all —
+only in what `AcceleratorList` reports, which is the intended change.
 
-Note the cost is **not new to the port** — off Windows the erase always ran, so
-macOS has always behaved this way; what `c24926f` changes is that Windows now
-does too. Pinned by `tests/test_accelerators.cpp`,
-`RebindingAfterAnUnbindAllocatesAFreshCommandId`, which asserts the fresh id is
-exactly `before + 1` so the consumption is one per cycle rather than merely
-"different". The neighbouring `RebindingAKeyReusesTheCommandId` does not cover
-it: it never unbinds, so it only ever exercises the map-hit branch.
+Note the leak was **not new to the port** — off Windows the erase always ran, so
+macOS had always paid it; `c24926f` merely gave Windows the same bill, and the
+free list now cancels it on both. Pinned by `tests/test_accelerators.cpp`:
+`UnbindingReleasesTheCommandIdForReuse` (the same id comes back) and
+`ManyUnbindRebindCyclesDoNotExhaustThePool` (`ACCELERATOR_COUNT + 50` cycles,
+which is what the old code could not survive), with a control asserting two
+keys bound *simultaneously* still get distinct ids — so the free list has not
+quietly turned a fixed pool into an unbounded one. The neighbouring
+`RebindingAKeyReusesTheCommandId` covers none of this: it never unbinds, so it
+only ever exercises the map-hit branch and passed before and after.
 
 ## Verification status
 

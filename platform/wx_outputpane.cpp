@@ -2764,12 +2764,35 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
 // used to, made every Ctrl+wheel callback unreachable while the pointer was
 // over a miniwindow.
 //
-// The callback does NOT see the ctrl bit, on either platform: the flags are
-// just (delta < 0 ? MW_MOUSE_SCROLL_BACK : 0) | (abs (delta) << 16), the same
-// expression mushview.cpp:5160 uses, and neither side consults the keyboard
-// modifiers.  Measured on Windows 2026-08-09 as 0x780000 for a forward notch
-// with Ctrl held.  (This comment used to claim MW_MOUSE_CTRL was included; it
-// never was, here or there.)
+// The ctrl bit: the flags the CALLER builds do not carry it, but the flags the
+// CALLBACK receives do -- and this comment claimed otherwise between 2026-08-09
+// and 2026-08-10, which is worth spelling out because the two are one function
+// call apart.
+//
+// `(delta < 0 ? MW_MOUSE_SCROLL_BACK : 0) | (abs (delta) << 16)` -- built at
+// mushview.cpp:5160 here and wx_world_child.cpp there -- indeed never consults
+// the keyboard.  But both sides then call the SHARED MouseWheelMiniWindow,
+// which reaches SendMouseEventToPlugin (miniwindow_compose.cpp) without passing
+// dont_modify_flags; that defaults to false (miniwindow.h), so
+// `Flags |= hooks.KeyboardModifiers ()` runs before the callback is dispatched,
+// and both frontends' KeyboardModifiers set MW_MOUSE_CTRL from the live key
+// state.  So a Ctrl+wheel over a hotspot should reach the plugin as 0x780002.
+//
+// Proven on this side by platform/miniwindow_selftest.cpp, which drives
+// MouseWheelMiniWindow with a hooks object that reports Ctrl and asserts the
+// modifiers are consulted -- plus the control that they are NOT consulted when
+// the hotspot has no scrollwheel callback, since SendMouseEventToPlugin returns
+// before the OR in that case.  Adding `, true` to that call fails exactly the
+// first of those and nothing else.
+//
+// UNRESOLVED, and deliberately not papered over: WINDOWS-VALIDATION.md §8r
+// reports a live Windows plugin logging `flags=0x780000` with Ctrl held, i.e.
+// no ctrl bit.  The code that computes it is shared, and GetKeyState(VK_CONTROL)
+// is what the Windows hooks read, so the two cannot both be right.  The likely
+// explanation is that the measurement was read at the call site rather than
+// inside the callback, but that is a guess and it needs a Windows re-run before
+// anyone relies on either number over there.  What is NOT in doubt is the macOS
+// behaviour, which the selftest pins.
 //
 // Pulled out of the handler because that is a rule, not plumbing, and a wheel
 // event cannot be delivered from an in-app selftest (there is no event loop).

@@ -246,13 +246,59 @@ int RunPalMiniWindowSelfTest()
         // is the widest glyph cell, and side bearings put the cell above the
         // advance.  `max >= average` is the only relation that holds on both,
         // and the shim now measures instead of assuming (wx_gdi_compat.cpp).
+        //
+        // `>=` ALONE would not be a regression test, though: the invented value
+        // was averageWidth * 2, which is also >= averageWidth, so relaxing the
+        // check to it would have let the original defect straight back in.  The
+        // upper bound is what keeps the teeth.  Both measurements sit far below
+        // it -- Windows 10/8 = 1.25x, and a monospace font here measures every
+        // printable advance identically for 1.0x -- while the invented value is
+        // exactly 2.0x, so it is the one thing this bound excludes.
         VARIANT vavg = doc->WindowFontInfo(W, "f1", 6);   // tmAveCharWidth
         VARIANT vmax = doc->WindowFontInfo(W, "f1", 7);
         if (vavg.vt == VT_I4 && vmax.vt == VT_I4 && vavg.lVal > 0)
+            {
             mwCheck(vmax.lVal >= vavg.lVal,
                     "max char width is at least the average");
+            mwCheck(vmax.lVal < vavg.lVal * 2,
+                    "...and is measured, not the old invented average * 2");
+            }
         else
             mwCheck(false, "WindowFontInfo(6)/(7) return numbers");
+
+        // Neither check above can detect the MEASUREMENT ITSELF going away, and
+        // that is not hypothetical -- it is the shape of the original defect.
+        // The measuring loop seeds `widest` with fm.averageWidth and only ever
+        // raises it (wx_gdi_compat.cpp), so deleting the loop leaves
+        // tmMaxCharWidth == tmAveCharWidth, which satisfies BOTH `>=` and the
+        // upper bound.  Measured here 2026-08-10, a monospace face gives
+        // avg 11 / max 11 -- identical -- so a fixed-pitch font can never tell
+        // the two apart, whatever relation is asserted over it.
+        //
+        // A PROPORTIONAL face can: its widest printable glyph is genuinely wider
+        // than its average advance (measured 11 / 20 here), so a strict `>` goes
+        // red the moment the measurement stops happening.  The pitch bit is
+        // checked first so that a font substitution -- which would silently make
+        // this a second monospace fixture, and the comparison an identity again
+        // -- reports itself instead of masquerading as a metric failure.
+        mwCheck(doc->WindowFont(W, "fprop", "Times New Roman", 12,
+                                FALSE, FALSE, FALSE, FALSE, 0, 0) == eOK,
+                "WindowFont creates a proportional font");
+        {
+            VARIANT ppf   = doc->WindowFontInfo(W, "fprop", 19);
+            VARIANT pavg  = doc->WindowFontInfo(W, "fprop", 6);
+            VARIANT pmax  = doc->WindowFontInfo(W, "fprop", 7);
+            // bit 0 SET means variable pitch (the flag is inverted in a
+            // TEXTMETRIC) -- i.e. the fixture really is the opposite of "f1"
+            mwCheck(ppf.vt == VT_I4 && (ppf.lVal & 1) != 0,
+                    "...that really is proportional, not a substituted monospace");
+            if (pavg.vt == VT_I4 && pmax.vt == VT_I4 && pavg.lVal > 0)
+                mwCheck(pmax.lVal > pavg.lVal,
+                        "a proportional font's max char width EXCEEDS its average "
+                        "(so the measurement is real, not a fallback)");
+            else
+                mwCheck(false, "WindowFontInfo(6)/(7) return numbers for it");
+        }
     }
 
     // ── RectOp action 5 = DrawEdge: BF_ side flags are honoured ────────────
@@ -506,6 +552,59 @@ int RunPalMiniWindowSelfTest()
                 "a hotspot created away from the pointer does NOT re-run it");
         mwCheck(mw && mw->m_sMouseOverHotspot == "under",
                 "...and the mouse-over state is unchanged");
+
+        // (c) the wheel callback DOES receive the keyboard modifiers.
+        //
+        // wx_outputpane.cpp's DecideWheelAction comment asserts the opposite --
+        // "The callback does NOT see the ctrl bit, on either platform: the
+        // flags are just (delta < 0 ? MW_MOUSE_SCROLL_BACK : 0) |
+        // (abs (delta) << 16)" -- citing a Windows measurement of 0x780000.
+        // That expression is only what the CALLER passes in.  Both frontends
+        // then funnel into the shared MouseWheelMiniWindow
+        // (mushview.cpp Mouse_Wheel_MiniWindow here, wx_world_child.cpp there),
+        // which calls SendMouseEventToPlugin WITHOUT the dont_modify_flags
+        // argument -- and that defaults to false (miniwindow.h), so
+        // `Flags |= hooks.KeyboardModifiers ()` runs before the callback is
+        // dispatched.  Both frontends' KeyboardModifiers set MW_MOUSE_CTRL from
+        // the live key state, so a Ctrl+wheel over a hotspot arrives as
+        // 0x780002.  The measurement was almost certainly taken at the call
+        // site rather than at the callback.
+        //
+        // Asserting the CONSULTATION rather than the final value keeps this
+        // free of a script engine: SendMouseEventToPlugin reaches the modifier
+        // OR before it does anything with the routine, and the OR is the only
+        // thing that calls KeyboardModifiers on this path.  So "was it asked?"
+        // is exactly "is dont_modify_flags false here?", which is the claim.
+        {
+            struct CtrlHooks : MiniWindowMouseHooks {
+                int asked = 0;
+                long KeyboardModifiers() override
+                    { ++asked; return MW_MOUSE_CTRL; }
+            };
+            CtrlHooks wheelHooks;
+
+            mwCheck(doc->WindowScrollwheelHandler(H, "under", "OnWheel") == eOK,
+                    "wheel: the hotspot gets a scrollwheel callback");
+
+            // pointer is still parked inside "under" at client (120,70)
+            const long delta = (120 << 16);   // one forward notch, as Win32 packs it
+            const bool overMw = MouseWheelMiniWindow(doc, CPoint(120, 70),
+                                                     delta, wheelHooks);
+            mwCheck(overMw, "wheel: the event lands on the miniwindow");
+            mwCheck(wheelHooks.asked == 1,
+                    "wheel: the modifiers ARE consulted, so Ctrl reaches the "
+                    "callback (dont_modify_flags is false on this path)");
+
+            // The control: a hotspot with no scrollwheel callback returns from
+            // SendMouseEventToPlugin BEFORE the modifier OR, so a bare
+            // "asked >= 1" could otherwise be satisfied by some other path.
+            mwCheck(doc->WindowScrollwheelHandler(H, "under", "") == eOK,
+                    "wheel: clear the callback again");
+            wheelHooks.asked = 0;
+            MouseWheelMiniWindow(doc, CPoint(120, 70), delta, wheelHooks);
+            mwCheck(wheelHooks.asked == 0,
+                    "...and with no callback installed they are not consulted");
+        }
 
         doc->m_pWorldView = NULL;
         mwCheck(doc->WindowDelete(H) == eOK, "hotspot fixture cleaned up");

@@ -1784,16 +1784,48 @@ of the re-detect through `pal::IWorldView::mouseMoveMiniWindow` works in both
 directions.
 
 **One correction to §4c-terdecies, and it is only a comment.**  It says of
-Ctrl+wheel that "the flags a plugin receives include `MW_MOUSE_CTRL`".  They do
-not, on either platform.  `OnMouseWheel` builds the miniwindow flags as
+Ctrl+wheel that "the flags a plugin receives include `MW_MOUSE_CTRL`".  The
+flags `OnMouseWheel` *builds* do not: it uses
 `(zDelta < 0 ? MW_MOUSE_SCROLL_BACK : 0) | (abs (zDelta) << 16)`
 (`mushview.cpp:5160`) and never consults `nFlags`; measured here as `0x780000`
 for a 120-unit forward notch with MK_CONTROL held.  The port's forwarder
-(`wx_world_child.cpp:1071`) builds the identical expression, so the two agree —
-what was wrong was the claim, in this document and in a comment in
-`platform/wx_outputpane.cpp`, both now fixed.  The *ordering* half of that
-bullet — hotspot before zoom — is confirmed above and is the part that
-mattered.
+(`wx_world_child.cpp:1071`) builds the identical expression, so the two agree
+about *that* value.
+
+> **⚠ RE-OPENED 2026-08-10 — this correction over-reached, and the macOS side
+> now contradicts it.**  The paragraph above concluded "they do not, on either
+> platform", and the comment in `platform/wx_outputpane.cpp` was changed to
+> match.  But the built value is not the delivered one.  Both frontends hand
+> off to the **shared** `MouseWheelMiniWindow`, which calls
+> `SendMouseEventToPlugin` (`miniwindow_compose.cpp`) *without* the
+> `dont_modify_flags` argument — and it defaults to `false` (`miniwindow.h`) —
+> so `Flags |= hooks.KeyboardModifiers ()` runs before the callback is
+> dispatched.  Both frontends' `KeyboardModifiers` set `MW_MOUSE_CTRL` from the
+> live key state (`mushview.cpp` via `GetKeyState`, `wx_world_child.cpp` via
+> `wxGetKeyState`).  A Ctrl+wheel over a hotspot should therefore arrive as
+> `0x780002`.
+>
+> This is now **pinned on macOS** by `platform/miniwindow_selftest.cpp`, which
+> drives `MouseWheelMiniWindow` with a hooks object reporting Ctrl and asserts
+> the modifiers are consulted, with a control asserting they are *not* when the
+> hotspot has no scrollwheel callback (`SendMouseEventToPlugin` returns before
+> the OR in that case).  Passing `, true` at that call site fails exactly the
+> first assertion — so the test discriminates the two claims rather than merely
+> restating one.
+>
+> **What needs a Windows run:** the `flags=0x780000` in the table above is
+> reported as what the *plugin's handler logged*.  If that is accurate, the
+> shared code cannot be doing what it plainly reads as doing, so one of the two
+> observations is mis-attributed — most likely the value was read at the call
+> site rather than inside the callback.  Re-measure by printing the flags
+> argument from **inside** a scrollwheel callback with Ctrl held, and record
+> `0x780002` or `0x780000`.  Until then the sibling comment in
+> `platform/outputpane_selftest.cpp` — which still says Windows delivers
+> `MW_MOUSE_CTRL`, and was never touched by the correction — should be treated
+> as the open question, not as settled either way.
+
+The *ordering* half of that bullet — hotspot before zoom — is unaffected by any
+of this, is confirmed above, and is the part that mattered.
 
 ### 8r. Chat file transfer — eight runs, all byte-exact
 
@@ -2262,15 +2294,75 @@ calls this finished:
 | `platform/mfc_ui.h` | DDV range wording (§8t) | port-only; a header, so it rebuilds a lot |
 | `platform/wx_gdi_compat.cpp` | `GetTextMetrics` measures max char width for every font, not only fixed-pitch | port-only |
 | `platform/miniwindow_selftest.cpp` | new assertion that max ≥ average char width | port-only; it is an in-app selftest, so `ctest` is exactly where it shows up |
+| `tests/lua/*.lua` | two new conformance probes | not registered with ctest by design — they are diff-against-a-stock-client scripts, run by hand |
 | `platform/wx_outputpane.cpp` | comment only (§8q) | no behaviour |
 | `pal/itransport.h` + `doc_shared.cpp` | `lastResolveError()` and the message suffix (§8w) | **shared** — but the new method is non-pure and defaults to 0, so the POSIX transport needs no edit and the mac message is unchanged.  Still a header both sides compile |
 
 The Windows-shared files (`chatsock.cpp`, `doc.cpp`, `doc.h`,
 `doc_shared.cpp`, `mcdatetime.cpp`, `methods_accelerators.cpp`,
-`methods_output_shared.cpp`) all compile on both, but only Windows has run
-them; the accelerator change in particular (`c24926f`) alters behaviour on both
-platforms and its macOS arm is untested.
+`methods_output_shared.cpp`) all compile on both, but only Windows had run
+them at the time this list was written.
+
+**The macOS run asked for above was done on 2026-08-10**, on the fast-forward
+of this whole series into the canonical tree. Clean configure + full rebuild
+(`doc.h` moved two includes, so nothing was allowed to link against a stale
+object), then `ctest` **58/58** on the default set and **5/5** extended:
+everything above builds and passes on macOS with no source change required.
+Three things the run corrected, none of them a build failure:
+
+- **The accelerator change (`c24926f`) alters nothing on macOS**, and its macOS
+  arm is not untested — this paragraph used to claim both. The erase block was
+  *already* the `#else` arm before the hoist, so the port ran it verbatim; the
+  commit only adds Windows to it. It is covered here by
+  `tests/test_accelerators.cpp` — `EmptySendUnregistersTheKeystroke` and
+  `AcceleratorListDropsDeletedKeystrokes` in particular, which pin exactly the
+  bookkeeping the hoist gives Windows.
+- **`ColourToName` gained the regression test its determinism needs**
+  (`tests/test_utilities.cpp`, `ColourToNameIsDeterministicForColoursWithTwoNames`).
+  It pins all nine two-named RGB values rather than a sample, so dropping or
+  flipping a `kCanonicalColourNames` entry fails; three mutations confirmed it,
+  including reverting to first-match-wins. This was the file flagged above as
+  "the one to check first", and it was the only shared behaviour change that
+  reached macOS output.
+- **The max-char-width selftest could not fail.** See §8t-bis below.
 
 The macOS side may also want `lastResolveError()` implemented in its own
 transport — `getaddrinfo`'s `EAI_*` code would make the port's message as
-informative as Windows' — but nothing breaks without it.
+informative as Windows' — but nothing breaks without it, and the run confirms
+the default-0 path leaves the mac message byte-identical.
+
+### §8t-bis — the relaxed font-metric assertion had no teeth
+
+`50a1303` correctly relaxed `platform/miniwindow_selftest.cpp` from
+`max == average` to `max >= average`, because the Windows measurement (Courier
+New 10pt: average 8, max 10) disproves equality. But `>=` is guaranteed by the
+implementation rather than tested by it: `CDC::GetTextMetrics` seeds
+`int widest = fm.averageWidth` and only ever raises it, so `max >= average`
+holds *however the loop behaves, including if it is deleted* — and the original
+defect, `averageWidth * 2`, also satisfies it. The commit that introduced the
+measurement therefore left it with no assertion that could detect its absence,
+which is the shape `CLAUDE.md` rules out ("design each assertion so that 'the
+code did nothing' FAILS").
+
+Fixed by measuring what the two fonts actually report here (2026-08-10):
+
+| face | tmAveCharWidth | tmMaxCharWidth |
+|---|---|---|
+| Courier New 10 (monospace) | 11 | 11 |
+| Times New Roman 12 (proportional) | 11 | 20 |
+
+A monospace face **cannot** discriminate on this platform — the port measures
+the widest printable advance, and for a monospace face that *is* the average,
+so the two are equal and every relation over them is an identity. The
+proportional face can: `max > average` strictly, and it collapses to equality
+the moment the measurement stops happening. The selftest now asserts the strict
+inequality over a proportional font (checking the pitch bit first, so a font
+substitution reports itself instead of silently restoring the identity), and
+keeps `< average * 2` over the monospace one to exclude the specific historical
+invention. Verified by mutation: neutering the measuring loop leaves both
+monospace assertions green and fails only the proportional one.
+
+Consequence for the Windows side: this is a `platform/` file and does not
+compile there, so nothing is owed. But the same numbers are worth having —
+if real GDI reports Times New Roman with `max == average`, the strict assertion
+is wrong on that side and the check should stay macOS-only.

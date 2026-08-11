@@ -33,6 +33,7 @@
 #include <unistd.h>   // readlink, ssize_t, realpath
 #include <stdlib.h>   // realpath, free()
 #include <sys/stat.h> // stat() — used by CFile::GetStatus
+#include <sys/sysctl.h> // sysctlbyname("hw.memsize") — GlobalMemoryStatus
 #include <time.h>     // clock_gettime / nanosleep — GetTickCount / timeGetTime / Sleep
 #if defined(__APPLE__)
 #  include <mach-o/dyld.h>  // _NSGetExecutablePath
@@ -429,8 +430,28 @@ struct MEMORYSTATUS {
     SIZE_T dwTotalVirtual;
     SIZE_T dwAvailVirtual;
 };
+// Report the REAL physical memory.  This used to zero every field, and
+// dwTotalPhys has a live consumer: the world's output-buffer size check
+// (dialogs/world_prefs/prefspropertypages.cpp) warns when
+// 16 MB + 60 bytes/line exceeds physical RAM.  Against zero that is true for
+// any buffer over 1000 lines -- and the shipped default is 5000 -- so changing
+// the buffer size at all produced "you have only 0 Mb of physical RAM. This is
+// not recommended", every time, on every machine.  A false alarm quoting an
+// absurd number, which is worse than no check: it teaches the user to click
+// through a dialog that will one day be right.
+//
+// Only dwTotalPhys is filled: it is the only field anything reads, and the
+// honest alternative for the rest is to leave them zero rather than invent
+// plausible-looking numbers.  dwMemoryLoad stays 0 (nothing consults it).
 inline void GlobalMemoryStatus(MEMORYSTATUS* ms) {
-    if (ms) { ms->dwMemoryLoad = 0; ms->dwTotalPhys = 0; ms->dwAvailPhys = 0; }
+    if (!ms) return;
+    ms->dwMemoryLoad = 0;
+    ms->dwTotalPhys = 0;
+    ms->dwAvailPhys = 0;
+    uint64_t total = 0;
+    size_t   len   = sizeof total;
+    if (sysctlbyname("hw.memsize", &total, &len, nullptr, 0) == 0 && total != 0)
+        ms->dwTotalPhys = (SIZE_T) total;   // SIZE_T is 64-bit here, so no clamp
 }
 
 // Hit-test return codes

@@ -3817,6 +3817,32 @@ TEST(MiscShims, GlobalMemoryStatusZeroesAndSmallStubs) {
     EXPECT_FALSE(dc.TextOut(0, 0, CString("s")));   // CString overload
 }
 
+// dwTotalPhys is REAL, not zero.  It has one consumer and that consumer is a
+// warning: the world's output-buffer page refuses sizes whose
+// 16 MB + 60 bytes/line exceeds physical RAM.  Zero made that true for every
+// buffer over 1000 lines, so changing the size at all popped "you have only
+// 0 Mb of physical RAM" -- on a machine with gigabytes.
+//
+// The bound is deliberately loose at both ends rather than an equality: this
+// has to hold on any machine the suite runs on, and the defect it guards
+// against is a value of ZERO, not a value that is slightly off.  The upper
+// bound keeps it from passing on a garbage read (an uninitialised or
+// byte-swapped sysctl result would blow past it).
+TEST(MiscShims, GlobalMemoryStatusReportsRealPhysicalMemory) {
+    MEMORYSTATUS ms;
+    ms.dwTotalPhys = 12345;          // poison: the call must overwrite it
+    GlobalMemoryStatus(&ms);
+
+    const unsigned long long mb = (unsigned long long) ms.dwTotalPhys / (1024ULL * 1024ULL);
+    EXPECT_GT(mb, 256ULL);               // not zero, and not implausibly small
+    EXPECT_LT(mb, 8ULL * 1024 * 1024);   // < 8 TB: a sane machine, not garbage
+
+    // The consumer's actual arithmetic, at the shipped default buffer size:
+    // this must NOT trip the warning.
+    const unsigned long long needed = 16ULL * 1024 * 1024 + 5000ULL * 60;
+    EXPECT_LT(needed, (unsigned long long) ms.dwTotalPhys);
+}
+
 // ── round 5: document open/save shims, stdio strings, shell, clipboard ────
 
 // B-3 atomic flip: real headers (portable stub deleted; tests are FULL_BUILD).

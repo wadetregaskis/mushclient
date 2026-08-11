@@ -14,22 +14,28 @@
      — which also makes it usable against a stock, official MUSHclient as the
      reference (docs/WINDOWS-VALIDATION.md §3 wants both baselines).
 
-     FOUR PROBES EXPECT DIFFERENT ANSWERS ON THE TWO PLATFORMS, by design.
+     THREE PROBES EXPECT DIFFERENT ANSWERS ON THE TWO PLATFORMS, by design.
      They are marked PLATFORM below and the script picks the expectation from
      `windows`, derived from Lua's own directory separator so it needs nothing
      from the host application.
 
-       * WindowGetPixel outside the window: Win32 CLR_INVALID reaches a script
-         as -1; the port's long is 64-bit, so it arrives as 4294967295.
        * line endpoints: GDI LineTo excludes the final pixel, the port's
          surface draws it.
        * a stroked outline: GDI pens are not antialiased, so the edge pixel is
          exactly the pen colour; wxOSX blends it with what is underneath.
-       * WindowFontInfo(7) (tmMaxCharWidth) vs (6) (tmAveCharWidth): the port
-         synthesises them from one measurement so they agree for a fixed-pitch
-         font, but real GDI reports Courier New as max 10 / average 8 — the
-         glyph cell is wider than the average advance even when every advance
-         is the same.  Only "max >= average" holds on both.
+       * WindowFontInfo(7) (tmMaxCharWidth) vs (6) (tmAveCharWidth): real GDI
+         reports Courier New 10pt as max 10 / average 8, because the glyph cell
+         is wider than the average advance even when every advance is the same;
+         the port measures the widest printable advance, which for a monospace
+         face IS the average.  So only "max >= average" holds on both, and
+         neither side may assert equality.
+
+     WindowGetPixel outside the window was a fourth until 2026-08-10, and is
+     deliberately NOT one now: CLR_INVALID reaches a script as -1 on BOTH
+     platforms.  miniwindow.cpp folds 0xFFFFFFFF to -1L at the doc boundary
+     precisely because a straight widening cast gives 4294967295 on LP64 and
+     `if WindowGetPixel(...) == -1` then never matches.  Expecting the widened
+     value here would have reported the FIX as the regression.
 
      Everything else must agree on both platforms; a mismatch is a finding.
 ]]
@@ -88,8 +94,9 @@ checkEq (WindowRectOp ("nosuch", 2, 0, 0, 1, 1, RED, 0), eNoSuchWindow,
 
 checkEq (WindowGetPixel (W, 5, 5), BLUE,
          "create's background fill is readable (WindowGetPixel)")
--- PLATFORM: CLR_INVALID as a 32-bit long vs the port's 64-bit widening.
-checkEq (WindowGetPixel (W, 9999, 5), windows and -1 or 4294967295,
+-- NOT a platform difference: miniwindow.cpp folds CLR_INVALID to -1L on every
+-- platform, so that `WindowGetPixel(...) == -1` matches on LP64 too.
+checkEq (WindowGetPixel (W, 9999, 5), -1,
          "WindowGetPixel outside the window is CLR_INVALID")
 checkEq (WindowGetPixel ("nosuch", 5, 5), -2,
          "WindowGetPixel on an unknown window returns -2")
@@ -227,15 +234,15 @@ do
   end
   local avg, max = WindowFontInfo (W, "f1", 6), WindowFontInfo (W, "f1", 7)
   if type (avg) == "number" and type (max) == "number" and avg > 0 then
-    -- PLATFORM: real GDI reports Courier New 10pt as max 10 / average 8, so
-    -- only the inequality is common ground.  The port derives both from one
-    -- measurement, which is why its own selftest can assert equality.
-    if windows then
-      check (max >= avg,
-             string.format ("max char width >= average (%d >= %d)", max, avg))
-    else
-      checkEq (max, avg, "a fixed-pitch font's max char width equals its average")
-    end
+    -- PLATFORM: real GDI reports Courier New 10pt as max 10 / average 8, while
+    -- the port measures the widest printable advance -- which for a monospace
+    -- face is the average, so it reports 11 / 11.  Only the inequality is
+    -- common ground.  This arm used to assert EQUALITY off Windows, on the
+    -- since-retired premise that the port synthesised both from one
+    -- measurement; wx_gdi_compat.cpp has measured tmMaxCharWidth separately,
+    -- for every font, since 2026-08-10.
+    check (max >= avg,
+           string.format ("max char width >= average (%d >= %d)", max, avg))
   else
     check (false, "WindowFontInfo(6)/(7) return numbers")
   end

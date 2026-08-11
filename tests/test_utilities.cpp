@@ -405,6 +405,46 @@ TEST(Utilities, ColourToNameUsesFullNameTableElseHex)
     EXPECT_STREQ("#010203", (const char*)ColourToName(RGB(1, 2, 3)));
 }
 
+// ColourToName's answer for a colour carrying TWO names is pinned, because it
+// is the text written into every saved world file: an unpinned answer comes
+// from CMapStringToPtr's bucket order, which changes with the hash, the bucket
+// count and the table's contents, and re-saving an untouched world then
+// rewrites `magenta` as `fuchsia` for no reason anyone would connect to it.
+//
+// All nine ambiguous RGB values in mxp/mxpinit.cpp are listed, which is what
+// makes this a regression test rather than a sample: the three pairs 5.06
+// already shipped (aqua/cyan, fuchsia/magenta, lightgray/lightgrey) keep 5.06's
+// spelling, and the six -grey spellings added in 5.07 answer -gray, the only
+// spelling that existed when those colours were last written to a file.
+//
+// Mutating kCanonicalColourNames — dropping an entry, or flipping one to its
+// alias — must fail here.  Dropping one falls back to the alphabetically first
+// match, which differs from the canonical answer for every pair below except
+// darkslategray/darkslategrey and the five other -gray/-grey pairs where -gray
+// already sorts first; those four rows (cyan, magenta, lightgrey, and the
+// alphabetical control) are the ones that catch it.
+TEST(Utilities, ColourToNameIsDeterministicForColoursWithTwoNames)
+{
+    // 5.06 shipped both spellings of these three and wrote the second one
+    EXPECT_STREQ("cyan",     (const char*)ColourToName(RGB(0x00, 0xFF, 0xFF)));
+    EXPECT_STREQ("magenta",  (const char*)ColourToName(RGB(0xFF, 0x00, 0xFF)));
+    EXPECT_STREQ("lightgrey",(const char*)ColourToName(RGB(0xD3, 0xD3, 0xD3)));
+
+    // the six whose -grey spelling arrived in 5.07: -gray is what any existing
+    // world file carries
+    EXPECT_STREQ("gray",          (const char*)ColourToName(RGB(0x80, 0x80, 0x80)));
+    EXPECT_STREQ("darkgray",      (const char*)ColourToName(RGB(0xA9, 0xA9, 0xA9)));
+    EXPECT_STREQ("dimgray",       (const char*)ColourToName(RGB(0x69, 0x69, 0x69)));
+    EXPECT_STREQ("slategray",     (const char*)ColourToName(RGB(0x70, 0x80, 0x90)));
+    EXPECT_STREQ("darkslategray", (const char*)ColourToName(RGB(0x2F, 0x4F, 0x4F)));
+    EXPECT_STREQ("lightslategray",(const char*)ColourToName(RGB(0x77, 0x88, 0x99)));
+
+    // and the rule for a colour NOT in the canonical list is alphabetical, not
+    // bucket order — a single-name colour is unaffected either way, so this is
+    // the control that shows the walk still finds a name at all
+    EXPECT_STREQ("dodgerblue", (const char*)ColourToName(RGB(30, 144, 255)));
+}
+
 // doc_portable.cpp GetUniqueID: "24 lowercase hex chars, byte-for-byte the
 // output shape of the CoCreateGuid-based original" — and consecutive calls
 // differ.

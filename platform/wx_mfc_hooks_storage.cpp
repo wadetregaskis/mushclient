@@ -102,6 +102,7 @@ void (*g_wxhook_listctrl_set_item_text)(void*, int, int, const char*) = nullptr;
 int  (*g_wxhook_listctrl_get_item_count)(void*)                  = nullptr;
 void (*g_wxhook_listctrl_set_item_data)(void*, int, void*)       = nullptr;
 void* (*g_wxhook_listctrl_get_item_data)(void*, int)             = nullptr;
+char* (*g_wxhook_listctrl_get_item_text)(void*, int, int)        = nullptr;
 int  (*g_wxhook_listctrl_get_next_item)(void*, int, int)         = nullptr;
 void (*g_wxhook_listctrl_set_item_state)(void*, int, unsigned, unsigned) = nullptr;
 unsigned (*g_wxhook_listctrl_get_item_state)(void*, int, unsigned) = nullptr;

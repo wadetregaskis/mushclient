@@ -494,6 +494,9 @@ extern void (*g_wxhook_listctrl_set_item_text)(void* hwnd, int item, int col, co
 extern int  (*g_wxhook_listctrl_get_item_count)(void* hwnd);
 extern void (*g_wxhook_listctrl_set_item_data)(void* hwnd, int item, void* data);
 extern void* (*g_wxhook_listctrl_get_item_data)(void* hwnd, int item);
+// Row/column label; caller free()s.  NULL when there is no control behind the
+// handle, which is what an unattached CListCtrl has.
+extern char* (*g_wxhook_listctrl_get_item_text)(void* hwnd, int item, int subitem);
 extern int  (*g_wxhook_listctrl_get_next_item)(void* hwnd, int start, int flags);
 extern void (*g_wxhook_listctrl_set_item_state)(void* hwnd, int item, unsigned state, unsigned mask);
 extern unsigned (*g_wxhook_listctrl_get_item_state)(void* hwnd, int item, unsigned mask);

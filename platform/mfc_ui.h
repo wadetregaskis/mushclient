@@ -3934,7 +3934,18 @@ public:
         return g_wxhook_listctrl_get_item_data
              ? (DWORD_PTR) g_wxhook_listctrl_get_item_data(m_hWnd, item) : 0;
     }
-    CString   GetItemText(int, int) const{ return {}; }
+    // Empty for an unattached control (no hook, or no wx control behind the
+    // handle) — that is what a bare CListCtrl has, and what the shim used to
+    // return unconditionally.  Its only caller is the Functions dialog's Copy
+    // button, which therefore copied "" over the user's clipboard.
+    CString   GetItemText(int item, int subitem) const {
+        if (!g_wxhook_listctrl_get_item_text) return {};
+        char* t = g_wxhook_listctrl_get_item_text(m_hWnd, item, subitem);
+        if (!t) return {};
+        CString s(t);
+        free(t);
+        return s;
+    }
     int       GetItemCount() const {
         return g_wxhook_listctrl_get_item_count
              ? g_wxhook_listctrl_get_item_count(m_hWnd) : 0;

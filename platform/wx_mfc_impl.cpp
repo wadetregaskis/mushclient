@@ -4759,6 +4759,20 @@ static void* hook_listctrl_get_item_data(void* hwnd, int item)
     return lc ? (void*) lc->GetItemData(item) : nullptr;
 }
 
+// MFC: GetItemText(item, subitem) — the label of a row (subitem 0) or of one of
+// its columns.  Caller frees.  CListCtrl::GetItemText was the one accessor in
+// the shim with no hook behind it, hardcoded to return an empty CString, and
+// the Functions dialog's Copy button is its only caller: it copied "" over
+// whatever the user had on the clipboard.
+static char* hook_listctrl_get_item_text(void* hwnd, int item, int subitem)
+{
+    wxListCtrl* lc = LC(hwnd);
+    if (!lc) return nullptr;
+    // Named local: utf8_str() can return a view into the string's own storage.
+    const wxString s = lc->GetItemText(item, subitem);
+    return strdup(s.utf8_str().data());
+}
+
 // MFC: GetNextItem(start, flags) returns the next item after `start` matching
 // `flags` (LVNI_ALL=0 → any; LVNI_SELECTED=2 → selected), or -1.  start==-1
 // means "from the beginning".
@@ -5356,6 +5370,7 @@ void wx_mfc_install_hooks()
     g_wxhook_listctrl_get_item_count  = hook_listctrl_get_item_count;
     g_wxhook_listctrl_set_item_data   = hook_listctrl_set_item_data;
     g_wxhook_listctrl_get_item_data   = hook_listctrl_get_item_data;
+    g_wxhook_listctrl_get_item_text   = hook_listctrl_get_item_text;
     g_wxhook_listctrl_get_next_item   = hook_listctrl_get_next_item;
     g_wxhook_listctrl_set_item_state  = hook_listctrl_set_item_state;
     g_wxhook_listctrl_get_item_state  = hook_listctrl_get_item_state;

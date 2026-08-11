@@ -342,7 +342,18 @@ wxWindow* CreateControl(wxWindow* parent, const RcControl& c,
         // stubs in the shipped library).  That trade-off, what it would cost and
         // when to revisit it, is written up in docs/LIST-CONTROL-DECISION.md —
         // read it before changing this line.
-        long st = wxLC_REPORT;
+        // ...but NOT all of them are in report mode, and assuming so made one
+        // dialog useless.  The view is the low TWO bits (LVS_ICON 0,
+        // LVS_REPORT 1, LVS_SMALLICON 2, LVS_LIST 3), and IDC_FUNCTIONS_LIST
+        // (Game ▸ Functions List) is LVS_LIST — the only one of the fifteen
+        // that is.  An LVS_LIST control has no columns and its owner never
+        // calls InsertColumn, so forcing wxLC_REPORT gave it ZERO columns:
+        // every InsertItem succeeded and returned a row index, and not one of
+        // ~400 function names was visible, because there was no column to draw
+        // them in.  The dialog opened empty, filtering did nothing and OK
+        // stayed greyed (nothing selectable).
+        const long view = c.style & 0x3;
+        long st = (view == 0x3 /*LVS_LIST*/) ? wxLC_LIST : wxLC_REPORT;
         if (c.style & 0x4 /*LVS_SINGLESEL*/) st |= wxLC_SINGLE_SEL;
         if (c.style & 0x8000 /*LVS_NOSORTHEADER*/) st |= wxLC_NO_SORT_HEADER;
         w = new wxListCtrl(parent, id, pos, size, st);

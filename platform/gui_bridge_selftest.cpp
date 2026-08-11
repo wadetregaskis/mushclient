@@ -21,6 +21,7 @@
 #include <wx/filename.h>
 #include <wx/stdpaths.h>
 #include <wx/listbox.h>
+#include <wx/listctrl.h>                // wxListCtrl (SysListView32 view mode)
 #include <memory>
 #include <cstdio>
 #include <string>
@@ -799,6 +800,75 @@ void TestClipboardRoundTrip()
         putontoclipboard(CString(""), false);
 }
 
+// ── 10. Game ▸ Functions List: the view mode, and reading a row back ───────
+// Two defects, one dialog, both of which made it useless.
+//
+// The bridge hardcoded wxLC_REPORT for every SysListView32.  Fourteen of the
+// fifteen recovered list controls do ask for LVS_REPORT — but IDC_FUNCTIONS_LIST
+// asks for LVS_LIST, which has no columns and whose owner never calls
+// InsertColumn.  In report mode with zero columns every InsertItem still
+// succeeded and returned a row index, and not one of ~400 function names was
+// visible because there was nowhere to draw them.
+//
+// And CListCtrl::GetItemText was the one accessor in the shim with no hook
+// behind it, hardcoded `return {}`.  Its only caller is this dialog's Copy
+// button, so Copy put an empty string on the clipboard, over whatever the user
+// had there.
+void TestFunctionListView()
+{
+    printf("Functions list (view mode + item text):\n");
+
+    const RcDialog* t = MfcDialogResources().FindDialog(IDD_FUNCTION_LIST);
+    check(t != nullptr, "IDD_FUNCTION_LIST is in the recovered resources");
+    if (t)
+    {
+        wxDialog* dlg = BuildWxDialogFromTemplate(nullptr, *t);
+        wxListCtrl* lv = wxDynamicCast(dlg->FindWindow(IDC_FUNCTIONS_LIST), wxListCtrl);
+        check(lv != nullptr, "its function list is built as a wxListCtrl");
+        if (lv)
+        {
+            const long st = lv->GetWindowStyleFlag();
+            check((st & wxLC_LIST) != 0,
+                  "LVS_LIST builds wxLC_LIST (a column-less list)");
+            check((st & wxLC_REPORT) == 0,
+                  "...and NOT wxLC_REPORT, which here would have no columns at all");
+
+            // End to end: a row inserted the way ReloadList does it is readable
+            // back through the CListCtrl shim — which is the Copy button's source.
+            lv->InsertItem(0, wxT("world.Note"));
+            CListCtrl lc;
+            lc.m_hWnd = (HWND) lv;
+            check(lc.GetItemCount() == 1, "an inserted row is counted");
+            check(lc.GetItemText(0, 0) == CString("world.Note"),
+                  "...and GetItemText reads it back (what Copy puts on the clipboard)");
+            lc.m_hWnd = nullptr;
+        }
+        dlg->Destroy();
+    }
+
+    // The control, and the reason this is safe: a template that asks for
+    // LVS_REPORT still gets report mode, so honouring the view bits did not
+    // quietly change the fourteen list controls that DO want columns.
+    {
+        RcDialog synth;
+        synth.id = 1; synth.cx = 200; synth.cy = 100;
+        synth.caption = "selftest";
+        RcControl rep;
+        rep.className = "SysListView32"; rep.id = 1000;
+        rep.style = 0x50810009;    // the style every entity-manager list uses
+        rep.x = 5; rep.y = 5; rep.cx = 150; rep.cy = 60;
+        synth.controls.push_back(rep);
+
+        wxDialog* d2 = BuildWxDialogFromTemplate(nullptr, synth);
+        wxListCtrl* r = wxDynamicCast(d2->FindWindow(1000), wxListCtrl);
+        check(r && (r->GetWindowStyleFlag() & wxLC_REPORT) != 0,
+              "LVS_REPORT still builds wxLC_REPORT (the entity managers)");
+        check(r && (r->GetWindowStyleFlag() & wxLC_LIST) == 0,
+              "...and does not pick up list mode");
+        d2->Destroy();
+    }
+}
+
 } // namespace
 
 int RunGuiBridgeSelfTest()
@@ -814,6 +884,7 @@ int RunGuiBridgeSelfTest()
     TestPopupMenuBuild();
     TestRecentWorlds();
     TestClipboardRoundTrip();
+    TestFunctionListView();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

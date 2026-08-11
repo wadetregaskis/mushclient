@@ -1920,7 +1920,18 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                         s_statusBar->SetStatusText(wxT("Connecting…"));
                 }
             }
-        } else if (id == wxID_PREFERENCES /*macOS app-menu Settings…*/) {
+        } else if (id == wxID_PREFERENCES /*macOS app-menu Settings…*/ ||
+                   id == 32246 /*ID_FILE_PREFERENCES*/) {
+            // BOTH ids, for the same reason ID_MENU_VIEW_FULLSCREEN exists (see
+            // the comment by its definition): the menu item has to be
+            // wxID_PREFERENCES so wx relocates it to the macOS application menu,
+            // but accelerators.cpp publishes this command to scripts and macros
+            // under the CANONICAL id, and world.DoCommand posts that id through
+            // Frame.PostMessage -> hook_post_message -> wxEVT_MENU.  Handling
+            // only the wx id meant DoCommand("GlobalPreferences") -- and any key
+            // a user bound to it -- returned eOK and did nothing, because
+            // DoCommand posts and reports success without ever learning whether
+            // anything handled the message.
             hook_file_preferences(frame);
         } else if (id == 32158 /*ID_GAME_PREFERENCES*/) {
             if (CMUSHclientDoc* doc = activeDoc())

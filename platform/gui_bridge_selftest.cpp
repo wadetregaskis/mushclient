@@ -748,6 +748,57 @@ void TestRecentWorlds()
     }
 }
 
+// ── 9. the system clipboard round-trips ───────────────────────────────────
+// putontoclipboard / GetClipboardContents are the seam behind world.GetClipboard,
+// world.SetClipboard, Edit ▸ Convert Clipboard Forum Codes, the
+// colour-from-clipboard picker and IsClipboardXML.  Reading was broken for all
+// of them: hook_get_clipboard_text built its UTF-8 buffer from the TEMPORARY
+// wxString returned by wxTextDataObject::GetText(), and wxString::ToUTF8() can
+// return a buffer pointing into that string's own storage, so the bytes were
+// freed at the end of the statement while the buffer's length field survived.
+// Every read came back empty.  The forum-codes command then wrote that empty
+// string BACK, silently destroying whatever the user had copied.
+//
+// This has to go through the REAL clipboard: the defect is entirely in the wx
+// interaction, so a test over the string handling alone would have stayed green.
+// It therefore saves and restores whatever the user had there — a test is not
+// entitled to take someone's clipboard, and this one would otherwise take it
+// every ctest run.
+void TestClipboardRoundTrip()
+{
+    printf("System clipboard round-trip:\n");
+
+    CString saved;
+    const bool hadSaved = GetClipboardContents(saved, false, false) ? true : false;
+
+    // Deliberately contains the characters the forum-codes path counts, so a
+    // silent truncation shows up as a wrong length rather than a lucky match.
+    const char* const kProbe = "HELLO[42]WORLD\\end";
+
+    putontoclipboard(CString(kProbe), false);
+
+    CString got;
+    const BOOL ok = GetClipboardContents(got, false, false);
+    check(ok != FALSE, "GetClipboardContents reports success after a write");
+    check(got.GetLength() == (int) strlen(kProbe),
+          "...and returns the full length, not a truncated or empty string");
+    check(strcmp((const char*) got, kProbe) == 0,
+          "...and the bytes survive the round trip exactly");
+
+    // The control: a DIFFERENT value must read back differently, so the test
+    // cannot be satisfied by a stale read of whatever was there before.
+    putontoclipboard(CString("second value"), false);
+    CString got2;
+    GetClipboardContents(got2, false, false);
+    check(strcmp((const char*) got2, "second value") == 0,
+          "...and a second write is what the next read sees");
+
+    if (hadSaved && !saved.IsEmpty())
+        putontoclipboard(saved, false);
+    else
+        putontoclipboard(CString(""), false);
+}
+
 } // namespace
 
 int RunGuiBridgeSelfTest()
@@ -762,6 +813,7 @@ int RunGuiBridgeSelfTest()
     TestDialogKeyTranslation();
     TestPopupMenuBuild();
     TestRecentWorlds();
+    TestClipboardRoundTrip();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

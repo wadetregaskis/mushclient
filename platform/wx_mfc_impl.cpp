@@ -2380,10 +2380,24 @@ static char* hook_get_clipboard_text()
         wxTheClipboard->IsSupported(wxDF_TEXT))
     {
         wxTextDataObject data;
-        wxTheClipboard->GetData(data);
-        wxScopedCharBuffer buf = data.GetText().ToUTF8();
-        if (buf.length() > 0)
-            result = strdup(buf.data());
+        if (wxTheClipboard->GetData(data))
+        {
+            // The wxString MUST be a named local.  wxString::ToUTF8() may hand
+            // back a buffer that points into the string's OWN storage rather
+            // than a copy, so calling it on the temporary returned by GetText()
+            // leaves the buffer dangling the moment the full expression ends —
+            // and the length field survives that while the bytes do not.  This
+            // was written as `data.GetText().ToUTF8()` and read back as an
+            // empty string every time, on a buffer still reporting its true
+            // length.  Everything downstream believed the clipboard was empty:
+            // world.GetClipboard() returned "", and Edit ▸ Convert Clipboard
+            // Forum Codes reported "0 changes made" and then wrote the empty
+            // result BACK, destroying whatever the user had copied.
+            const wxString  text = data.GetText();
+            const wxScopedCharBuffer buf = text.ToUTF8();
+            if (buf.length() > 0)
+                result = strdup(buf.data());
+        }
     }
     wxTheClipboard->Close();
     return result;   // caller must free()

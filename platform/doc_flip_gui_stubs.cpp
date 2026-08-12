@@ -84,7 +84,8 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 void CMUSHclientDoc::OnGamePreferences        () {}
-void CMUSHclientDoc::OnGameResetalltimers     () {}
+// OnGameResetalltimers: REAL body in timers.cpp now (un-gated 2026-08-12) —
+// it resets plugin timers too, which the stub (and the GUI's one-liner) lost.
 void CMUSHclientDoc::OnGameMapper             () {}
 void CMUSHclientDoc::OnGameDomapperspecial    () {}
 void CMUSHclientDoc::OnGameDomappercomment    () {}

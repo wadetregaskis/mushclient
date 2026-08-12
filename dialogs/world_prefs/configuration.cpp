@@ -2462,7 +2462,9 @@ void CMUSHclientDoc::OnGameConfigureTriggers()        { GamePreferences (ePageTr
 void CMUSHclientDoc::OnGameConfigureAliases()         { GamePreferences (ePageAliases); }
 void CMUSHclientDoc::OnGameConfigureTimers()          { GamePreferences (ePageTimers); }
 void CMUSHclientDoc::OnGameConfigureMxppueblo()       { GamePreferences (ePageMXP); }
-void CMUSHclientDoc::OnGameResetalltimers()           { ResetAllTimers (GetTimerMap ()); }
+// OnGameResetalltimers: the canonical body in timers.cpp compiles on every
+// platform now (2026-08-12).  The one-liner that lived here reset only the
+// world's own timers — every plugin's timers kept their old schedule.
 #endif // !_WIN32
 
 int CMUSHclientDoc::RecompileRegularExpressions ()

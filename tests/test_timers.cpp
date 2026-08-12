@@ -682,6 +682,47 @@ TEST(TimerScript, LabelledTimerPassesItsLabelToScript)
 }
 #endif // MUSHCLIENT_LUA_SCRIPTING
 
+// (CPlugin comes via doc.h — plugins.h has no include guard.)
+
+// Game > Reset All Timers resets PLUGIN timers too (timers.cpp
+// OnGameResetalltimers, un-gated 2026-08-12).  The port substituted a
+// one-liner that reset only the world's own map, so a plugin heartbeat 30 s
+// into its 60 s period still fired 30 s after the reset.  The world timer is
+// the control (it passed either way); the plugin timer discriminates.
+TEST(TimerApi, ResetAllTimersIncludesPluginTimers)
+{
+    ScopedClock clk(start_instant());
+    // OnGameResetalltimers is a protected message-map handler; re-expose it.
+    struct Probe : CMUSHclientDoc { using CMUSHclientDoc::OnGameResetalltimers; };
+    Probe doc; make_doc(doc);
+
+    CTimer* worldT = add_timer(doc, "w", 60.0);
+
+    CPlugin* p = new CPlugin(&doc);
+    p->m_bSaveState = false;
+    p->m_strID   = "aaaaaaaaaaaaaaaaaaaaaaaa";
+    p->m_strName = "reset_fixture";
+    p->m_bEnabled = TRUE;
+    doc.m_PluginList.push_back(p);
+    CTimer* plugT = new CTimer();
+    plugT->strLabel = "p"; plugT->bEnabled = TRUE;
+    plugT->iType = CTimer::eInterval; plugT->fEverySecond = 60.0;
+    p->m_TimerMap.SetAt("p", plugT);
+
+    // Both mid-period: due 10 s from "now".
+    worldT->tFireTime = CmcDateTime::GetTimeNow() + CmcDateTimeSpan(0, 0, 0, 10);
+    plugT->tFireTime  = CmcDateTime::GetTimeNow() + CmcDateTimeSpan(0, 0, 0, 10);
+
+    doc.OnGameResetalltimers();
+
+    // A reset re-bases to now + full period (60 s), so both must have MOVED.
+    CmcDateTimeSpan w = worldT->tFireTime - CmcDateTime::GetTimeNow();
+    CmcDateTimeSpan g = plugT->tFireTime  - CmcDateTime::GetTimeNow();
+    EXPECT_TRUE(w.GetTotalSeconds() > 30);   // control
+    EXPECT_TRUE(g.GetTotalSeconds() > 30);   // the plugin timer moved too
+    EXPECT_TRUE(doc.m_CurrentPlugin == NULL);  // the walk restored the context
+}
+
 // ═══ world.* timer API (methods_timers.cpp) ═══════════════════════════════
 
 // (the eEnabled / eAtTime / eOneShot flag enums come via doc.h)

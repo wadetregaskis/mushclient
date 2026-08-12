@@ -389,7 +389,12 @@ void CMUSHclientDoc::CheckTickTimers ()
 
   } // end of CMUSHclientDoc::CheckTickTimers
 
+#endif // _WIN32
 
+// Compiled on EVERY platform (un-gated 2026-08-12; nothing in it is
+// platform-specific).  The port used to substitute a one-liner that reset
+// only the world's own timers, so Game > Reset All Timers left every
+// PLUGIN's timers on their old fire schedule.
 void CMUSHclientDoc::OnGameResetalltimers()
 {
   ResetAllTimers (GetTimerMap ());
@@ -404,8 +409,6 @@ void CMUSHclientDoc::OnGameResetalltimers()
     } // end of doing each plugin
   m_CurrentPlugin = NULL;
 }
-
-#endif // _WIN32
 
 // Command-UI handler: portable (DoFixMenus is a no-op stub off-Windows, Enable
 // routes to the control), so compile it in the full app build (mushapp), whose

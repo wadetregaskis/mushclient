@@ -923,21 +923,27 @@ void CMUSHclientDoc::Handle_TELOPT_TERMINAL_TYPE ()
         break;
 
     case 1:
-#ifdef _WIN32
+        // "ANSI", not "XTERM-256COLOR".  Per the MTTS text above, reporting
+        // XTERM-256COLOR asserts mouse tracking and the OSC colour palette as
+        // well, neither of which this client has on any platform; the 256-colour
+        // capability is stated properly by bit 8 of the bitvector below.
         strTemp = "ANSI";
-#else
-        strTemp = "XTERM-256COLOR";  // CLI: 256-colour xterm-compatible
-#endif
         m_ttype_sequence++;
         break;
 
     case 2:
         {
-#ifdef _WIN32
-        int iMTTS = 265;  // ANSI=1, 256=8, TRUECOLOR=256
-#else
-        int iMTTS = 9;    // CLI: ANSI=1, 256 COLORS=8 (no truecolor claim)
-#endif
+        // ANSI=1, 256 COLORS=8, TRUECOLOR=256.
+        //
+        // The TRUECOLOR bit was upstream's deliberate addition (d9d45b3), and
+        // it is honest here: ansi.cpp parses ESC[38;2;r;g;b into COLOUR_RGB and
+        // the pane renders the literal RGB.  A guard sweep from the mushcli era
+        // had dropped it, along with the terminal name above, on the reasoning
+        // that a command-line client could not show 24-bit colour -- true of
+        // mushcli, which no longer exists, and never true of the GUI.  MUDs
+        // that gate 24-bit output on this bit were sending banded 256-colour
+        // approximations to a client that could display the real thing.
+        int iMTTS = 265;
         if (m_bUTF_8)
           iMTTS |= 4;     // UTF-8
         if (m_bSSL_Connected)

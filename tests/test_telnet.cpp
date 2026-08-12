@@ -1095,11 +1095,18 @@ TEST(TelnetR4, TerminalTypeSequenceAndMttsBits)
     EXPECT_TRUE(t->sent.find("mushclient") != std::string::npos);
 
     doc.Handle_TELOPT_TERMINAL_TYPE();
-    EXPECT_TRUE(t->sent.find("XTERM-256COLOR") != std::string::npos);
+    // "ANSI", not "XTERM-256COLOR": the latter also asserts mouse tracking and
+    // the OSC colour palette, which this client does not have.  Same answer on
+    // both platforms -- the port used to differ here.
+    EXPECT_TRUE(t->sent.find("ANSI") != std::string::npos);
+    EXPECT_TRUE(t->sent.find("XTERM-256COLOR") == std::string::npos);
 
     doc.Handle_TELOPT_TERMINAL_TYPE();
-    // 9 (ANSI + 256 colours) | 4 (UTF-8) | 2048 (SSL) = 2061
-    EXPECT_TRUE(t->sent.find("MTTS 2061") != std::string::npos);
+    // 265 (ANSI + 256 colours + TRUECOLOR) | 4 (UTF-8) | 2048 (SSL) = 2317.
+    // The TRUECOLOR bit is what MUDs gate 24-bit output on, and this client
+    // really does render it (tests/test_ansi.cpp drives ESC[38;2;r;g;b through
+    // to COLOUR_RGB); the port used to drop the bit and get banded output.
+    EXPECT_TRUE(t->sent.find("MTTS 2317") != std::string::npos);
 }
 
 // Phase_UTF8: a byte with the high bits wrong mid-sequence flushes the

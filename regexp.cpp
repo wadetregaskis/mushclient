@@ -166,7 +166,28 @@ pcre * program;
   dlg.m_iColumn = erroroffset + 1;
   dlg.DoModal ();
 #else
-  fprintf(stderr, "Regexp error: %s at column %d\n", error, erroroffset + 1);
+  // Same information, in a real message box.  IDD_REGEXP_PROBLEM is not among
+  // the recovered dialog templates, so CRegexpProblemDlg cannot be built here
+  // and DoModal would decline silently -- but a bad pattern must not be a
+  // silent failure: the caller's dialog simply refuses to close, and stderr is
+  // not somewhere a user of a .app ever looks.  Text laid out like the dialog's
+  // three fields, caret line included.
+  {
+  CString strMessage = Translate (error);
+  strMessage += ".";
+  if (!strMessage.IsEmpty ())
+    strMessage.SetAt (0, toupper (strMessage [0]));
+  strMessage += ENDLINE;
+  strMessage += TFormat ("Error occurred at column %i.", erroroffset + 1);
+  strMessage += ENDLINE;
+  strMessage += ENDLINE;
+  strMessage += strRegexp;
+  strMessage += ENDLINE;
+  if (erroroffset > 0)
+    strMessage += CString ('-', erroroffset - 1);
+  strMessage += '^';
+  ::UMessageBox (strMessage, MB_ICONEXCLAMATION, "Regular expression problem");
+  }
 #endif // _WIN32
   return false;   // bad
   }

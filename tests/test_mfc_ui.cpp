@@ -2169,8 +2169,43 @@ TEST(Utils, AfxStringHelpers) {
     EXPECT_TRUE(AfxExtractSubString(sub, "x,y", 1, ','));
     EXPECT_STREQ("y", (LPCTSTR)sub);
 
-    EXPECT_EQ(IDOK, AfxMessageBox("test message"));
-    EXPECT_EQ(IDOK, AfxMessageBox((UINT)1234));
+    // AfxMessageBox must put up the SAME box TMessageBox does, not a stderr
+    // line.  It was a stub returning a hardcoded IDOK, which made all twelve of
+    // its live call sites in shared code invisible on this platform -- the
+    // startup "Can't open global preferences database", the plugins' save-state
+    // folder complaint, "Cannot open the Clipboard", the corrupt-tips-file
+    // reports, the Lua PANIC handler and the per-item world-load errors.
+    //
+    // Both halves are asserted: that the hook SAW the text (a stub prints to
+    // stderr and the hook never fires), and that the hook's ANSWER comes back
+    // (a stub returns IDOK whatever the user picked -- which is not even one of
+    // the buttons when the caller passed MB_YESNO).
+    {
+        static std::string s_seen; static UINT s_type = 0; static int s_answer = IDOK;
+        s_seen.clear(); s_type = 0;
+        int (*const saved)(const char*, const char*, unsigned) = g_wxhook_message_box;
+        g_wxhook_message_box = [](const char* text, const char*, unsigned type) -> int {
+            s_seen = text ? text : ""; s_type = type; return s_answer;
+        };
+
+        s_answer = IDOK;
+        EXPECT_EQ(IDOK, AfxMessageBox("test message"));
+        EXPECT_STREQ("test message", s_seen.c_str());
+
+        s_seen.clear();
+        s_answer = IDNO;
+        EXPECT_EQ(IDNO, AfxMessageBox("really?", MB_YESNO));
+        EXPECT_STREQ("really?", s_seen.c_str());
+        EXPECT_EQ((UINT) MB_YESNO, s_type);
+
+        // The resource-id overload has no string table to look in, but must
+        // still SHOW something rather than swallow the error.
+        s_seen.clear(); s_answer = IDOK;
+        EXPECT_EQ(IDOK, AfxMessageBox((UINT)1234));
+        EXPECT_TRUE(s_seen.find("1234") != std::string::npos);
+
+        g_wxhook_message_box = saved;
+    }
     EXPECT_STREQ("MUSHclient", AfxGetAppName());
 }
 

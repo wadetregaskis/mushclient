@@ -20,6 +20,8 @@
 // Defined in platform/windows_stubs.cpp (mushcore) / mushapp_stubs.cpp
 // (mushapp): routes through the wx message-box hook in the GUI, stderr headless.
 int TMessageBox(const char* sText, UINT nType);
+// Same box, with a caller-chosen caption — what AfxMessageBox routes to.
+int UMessageBox(const char* sText, UINT nType, const char* caption);
 
 // ── CException base ───────────────────────────────────────────────────────
 // MFC CException is the root of all MFC exceptions.

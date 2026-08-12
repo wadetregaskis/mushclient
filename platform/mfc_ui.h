@@ -5191,16 +5191,39 @@ inline UINT AfxGetFileTitle(LPCTSTR lpszPathName, LPTSTR lpszTitle, UINT nMax)
 }
 
 // ── AfxMessageBox ─────────────────────────────────────────────────────────
-inline int AfxMessageBox(LPCTSTR msg, UINT = MB_OK, UINT = 0)
+// The SAME box TMessageBox puts up, not a stderr line.  This was a stub that
+// printed to stderr and returned IDOK, so all TWELVE of its live call sites in
+// shared code were invisible on this platform: the three startup failures in
+// MUSHclient.cpp ("Can't open global preferences database at: %s", "... is
+// read-only", the sockets-init failure) and globalregistryoptions.cpp's copy of
+// the first; the plugins' "save state" folder complaint (plugins.cpp:772);
+// "Cannot open the Clipboard" (doc.cpp:3587); the two corrupt-tips-file reports
+// in TipDlg.cpp; methods_panes.cpp's command-failure box; the Lua PANIC handler
+// (Utilities.cpp:1395); and xml_load_world.cpp's per-item world-load error --
+// which had already grown a local ColourNote workaround, the clue that the
+// symptom had been seen without the cause being found.
+//
+// (Not affected, so as not to overstate it: the two AfxMessageBox lines in
+// miniwindow.cpp and the two in png_load_shared.cpp are commented out upstream,
+// doc_shared.cpp's pair sit inside a block comment, DDV_validation.cpp's
+// DDV_MinMaxChars has no callers anywhere, and Utilities.cpp:1730 is inside
+// #ifdef _WIN32.)
+//
+// Returning UMessageBox's answer rather than a hardcoded IDOK also matters: a
+// caller passing MB_YESNO was told IDOK, which is neither of its buttons.
+inline int AfxMessageBox(LPCTSTR msg, UINT nType = MB_OK, UINT = 0)
 {
-    fprintf(stderr, "[AfxMessageBox] %s\n", msg ? msg : "");
-    return IDOK;
+    return UMessageBox(msg ? msg : "", nType, "MUSHclient");
 }
 // Overload for callers that pass a string-table resource ID (IDP_* / IDS_*).
-inline int AfxMessageBox(UINT nIDPrompt, UINT nType = MB_OK, UINT nIDHelp = 0)
+// There is no string table on the port (CString::LoadString returns false), so
+// the id is all we have -- but show it rather than swallow it, because the
+// alternative is an app that fails in total silence.
+inline int AfxMessageBox(UINT nIDPrompt, UINT nType = MB_OK, UINT /*nIDHelp*/ = 0)
 {
-    fprintf(stderr, "[AfxMessageBox] (resource id %u)\n", nIDPrompt);
-    return IDOK;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Error %u", nIDPrompt);
+    return UMessageBox(buf, nType, "MUSHclient");
 }
 
 // ── Windows API function stubs ────────────────────────────────────────────

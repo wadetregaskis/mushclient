@@ -37,6 +37,10 @@
 #include <cstdio>
 #include <vector>
 
+// The world option table, so the font-size check below can assert against the
+// declared range for output_font_height rather than a number copied into a test.
+extern tConfigurationNumericOption OptionsTable [];
+
 namespace {
 
 int g_pass = 0, g_fail = 0;
@@ -1195,6 +1199,55 @@ int RunWorldFrameSelfTest()
         g_run_mfc_dialog = savedRunDlg;
         pane->SetSelectionRange(0, 0, 0, 0);
         doc->ClearOutput();
+    }
+
+    // ── The stored output font size is a point size, not a LOGFONT height ────
+    // m_font_height IS the world option output_font_height.  Its table row
+    // bounds it to a point size, every canonical reader assumes that
+    // (configuration.cpp prints "%i pt.", mushview.cpp derives the LOGFONT
+    // height from it and guards on > 0), and the world-file loader range-checks
+    // it on the way back in.  Writing a LOGFONT pixel height here — negative,
+    // by Win32 convention — put an out-of-range number in the world file, which
+    // the loader then threw away: the font size silently reverted on reload,
+    // the prefs page read "-24 pt.", and world.GetOption handed scripts a
+    // negative.
+    {
+        const long optIdx = doc->GetOptionIndex("output_font_height");
+        check(optIdx >= 0, "font size: output_font_height is a known world option");
+        const double lo = (optIdx >= 0) ? OptionsTable[optIdx].iMinimum : 0;
+        const double hi = (optIdx >= 0) ? OptionsTable[optIdx].iMaximum : 0;
+        check(lo >= 1 && hi > lo,
+              "font size: ...whose declared range admits only positive sizes");
+
+        // TWO writers reach m_font_height and the later one wins, so each is
+        // checked at the only moment it is observable: setOutputFont writes
+        // synchronously, then the zoom handler's CallAfter re-derives it from
+        // the pane's actual font on the next turn of the loop.  (The CallAfter
+        // early-outs on a zero-sized pane, so the synchronous write is the only
+        // one in that case — checking only after the yield would leave it
+        // unpinned.)  Two different sizes, so "the code did nothing" cannot pass.
+        for (int wanted : { 14, 18 }) {
+            const bool first = (wanted == 14);
+            child->setOutputFont("Menlo", wanted, false, false);
+            const long sync = doc->GetOption("output_font_height");
+            check(sync == wanted,
+                  first ? "font size: setOutputFont stores the point size asked for"
+                        : "font size: ...and follows a second, different size");
+            check((double) sync >= lo && (double) sync <= hi,
+                  first ? "font size: ...within the range the loader enforces"
+                        : "font size: ...still within it");
+
+            wxYield();          // let the zoom path's CallAfter run
+            const long async = doc->GetOption("output_font_height");
+            check(async == wanted,
+                  first ? "font size: the zoom handler agrees, not a LOGFONT height"
+                        : "font size: ...and agrees on the second size too");
+            check((double) async >= lo && (double) async <= hi,
+                  first ? "font size: ...also in range" : "font size: ...still in range");
+            check(pane->GetCurrentFont().GetPointSize() == wanted,
+                  first ? "font size: ...and the pane really is at that size"
+                        : "font size: ...and the pane followed too");
+        }
     }
 
     // Tear down without running the close/save flow (this doc has no file).

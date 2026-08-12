@@ -892,12 +892,20 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             // to be re-derived (when the world follows the window) and the MUD
             // re-told.  Shared with the resize path.
             ApplyWrapColumnAndNAWS();
-            // Persist face name + LOGFONT height so font zoom survives save/reload.
+            // Persist face name + POINT SIZE so font zoom survives save/reload.
+            // m_font_height is the world option output_font_height, whose table
+            // row is {default 12, min 1, max 1000} — a point size, which is what
+            // every canonical reader assumes (configuration.cpp prints "%i pt.",
+            // mushview.cpp derives lfHeight = -MulDiv(m_font_height, dpi, 72)
+            // and guards on > 0).  Storing a LOGFONT pixel height here wrote a
+            // negative into the world file, which the loader's own range check
+            // then rejected — so the size did NOT survive the reload this line
+            // exists to guarantee.
             const wxFont& zf = m_output->GetCurrentFont();
             if (zf.IsOk()) {
                 std::string faceStr = zf.GetFaceName().ToUTF8().data();
                 m_doc->m_font_name   = CString(faceStr.c_str());
-                m_doc->m_font_height = -(zf.GetPointSize() * 96 / 72);
+                m_doc->m_font_height = zf.GetPointSize();
                 m_doc->m_font_weight = (zf.GetWeight() >= wxFONTWEIGHT_BOLD) ? 700 : 400;
             }
         });
@@ -4902,10 +4910,12 @@ void CWorldChildFrame::setOutputFont(const char* face, int pointSize,
     if (!f.IsOk()) f = cur;  // fall back to current font on failure
     m_output->SetOutputFont(f);
     // Update doc font fields so Ctrl+S saves the new font to the world file.
+    // A POINT SIZE — see the note on the zoom path above; output_font_height is
+    // {min 1, max 1000} and a negative is rejected by the world-file loader.
     {
         std::string faceStr = f.GetFaceName().ToUTF8().data();
         m_doc->m_font_name   = CString(faceStr.c_str());
-        m_doc->m_font_height = -(f.GetPointSize() * 96 / 72);
+        m_doc->m_font_height = f.GetPointSize();
         m_doc->m_font_weight = (f.GetWeight() >= wxFONTWEIGHT_BOLD) ? 700 : 400;
     }
     // Persist face name and size so they survive restart even without saving.

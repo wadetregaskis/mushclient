@@ -1357,6 +1357,64 @@ int RunWorldFrameSelfTest()
         wxYield();
     }
 
+    // ── "Show Line Information" produces a tooltip ──────────────────────────
+    // Windows answers a hover over ordinary output with "Line N, <weekday,
+    // month day, time>", plus ", (note)" or ", (input)" for those two kinds of
+    // line (CMUSHView::OnToolTipNeedText, mushview.cpp:4406-4427).  The port's
+    // tooltip callback handled miniwindows and MXP hints and then returned
+    // EMPTY, so the option -- which defaults ON -- had nothing behind it.
+    {
+        doc->m_bAutoWrapWindowWidth = false;
+        doc->ClearOutput();
+        doc->Note("a note line");
+        doc->DisplayMsg("typed line\n", 11, USER_INPUT);
+        doc->DisplayMsg("plain mud line\n", 15, 0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        check(pane->m_fn_get_tooltip != nullptr,
+              "line info: the pane has a tooltip callback at all");
+
+        const int lh = pane->LineHeight();
+        auto tipForRow = [&](int row) -> std::string {
+            return pane->m_fn_get_tooltip
+                 ? pane->m_fn_get_tooltip(4, row * lh + lh / 2) : std::string();
+        };
+
+        // Find the three lines by what their tooltip says, rather than assuming
+        // which pane row each landed on (ClearOutput re-seeds a line of its own).
+        std::string note, input, plain;
+        for (int row = 0; row < pane->LineCount(); ++row) {
+            const std::string t = tipForRow(row);
+            if (t.find("(note)")  != std::string::npos) note  = t;
+            else if (t.find("(input)") != std::string::npos) input = t;
+            else if (!t.empty() && plain.empty())            plain = t;
+        }
+
+        check(!plain.empty(), "line info: an ordinary line gets a tooltip");
+        check(plain.compare(0, 5, "Line ") == 0,
+              "line info: ...which begins with the line number");
+        // The date half really is a date, not an empty format run: the weekday
+        // name is spelled out, so at least three letters follow the comma.
+        check(plain.find(", ") != std::string::npos &&
+              plain.size() > 12,
+              "line info: ...and carries the timestamp too");
+        check(!note.empty(),  "line info: a note line is marked (note)");
+        check(!input.empty(), "line info: a typed line is marked (input)");
+        check(note != input,  "line info: ...and the two are not the same string");
+
+        // The control: the option gates it.  Without this, a callback that
+        // ignored m_bLineInformation would pass everything above.
+        doc->m_bLineInformation = 0;
+        bool anyTip = false;
+        for (int row = 0; row < pane->LineCount(); ++row)
+            if (!tipForRow(row).empty()) anyTip = true;
+        check(!anyTip, "line info: turning the option off silences it");
+        doc->m_bLineInformation = 1;
+
+        doc->ClearOutput();
+    }
+
     // Tear down without running the close/save flow (this doc has no file).
     doc->m_pWorldView = NULL;
     child->Destroy();

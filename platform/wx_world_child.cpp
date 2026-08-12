@@ -1114,11 +1114,41 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         int c = 0;
         for (const auto& run : *line) {
             int runLen = RunCharLen(run);
-            if (pt.col >= c && pt.col < c + runLen)
-                return run.hint();   // may be empty — that's fine
+            if (pt.col >= c && pt.col < c + runLen) {
+                const std::string hint = run.hint();
+                if (!hint.empty())
+                    return hint;
+                break;      // empty hint: fall through to the line information,
+            }               // exactly as `if (strText.IsEmpty ())` does upstream
             c += runLen;
         }
-        return {};
+
+        // 3. No MXP hint here, so show the LINE INFORMATION Windows shows
+        // (CMUSHView::OnToolTipNeedText, mushview.cpp:4406-4427), gated on the
+        // world's "Show Line Information" option -- which is ON by default and
+        // had nothing behind it here at all: this callback simply returned
+        // empty, so hovering over ordinary output never showed anything.
+        if (!m_doc->m_bLineInformation)
+            return {};
+        if (pt.line < 0 || pt.line >= (int) m_doc->m_LineList.GetCount())
+            return {};      // cursor below the last line: not over a line
+
+        CLine* pLine = m_doc->m_LineList.GetAt(m_doc->GetLinePosition(pt.line));
+        if (!pLine)
+            return {};
+
+        // Same format string, so the same words in the same order -- and
+        // CTime::Format maps Windows' %# (no leading zero) to POSIX %-.
+        const CString strDate =
+            pLine->m_theTime.Format(TranslateTime("%A, %B %d, %#I:%M:%S %p"));
+        const char* suffix = "";
+        if (pLine->flags & COMMENT)         suffix = ", (note)";
+        else if (pLine->flags & USER_INPUT) suffix = ", (input)";
+
+        const CString strText = TFormat("Line %ld, %s%s",
+                                        pLine->m_nLineNumber,
+                                        (LPCTSTR) strDate, suffix);
+        return std::string((const char*) strText);
     };
 
     // ── MXP hyperlink / send-link / plain-URL callback ───────────────────────

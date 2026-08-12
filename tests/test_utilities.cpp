@@ -1450,27 +1450,40 @@ namespace fakesound {
     inline int  statusResult = 1;
     inline int  adjustResult = 1;
     inline int  stoppedBuffer = -99;
+    // Which doc each call named.  The buffers are per world on Windows (the ten
+    // LPDIRECTSOUNDBUFFERs are a CMUSHclientDoc member), so every hook carries
+    // the owner and these record it.
+    inline const void* lastOwner = nullptr;
+    inline const void* stoppedOwner = nullptr;
+    inline const void* releasedOwner = nullptr;
+    inline int  releaseCount = 0;
 
-    inline int hk_play(int buffer, const char* path, int loop,
+    inline int hk_play(const void* owner, int buffer, const char* path, int loop,
                        double volume, double pan) {
+        lastOwner = owner;
         lastBuffer = buffer; lastPath = path ? path : "";
         lastLoop = loop; lastVolume = volume; lastPan = pan;
         return playResult;
     }
-    inline int hk_play_memory(int buffer, const void*, size_t len,
+    inline int hk_play_memory(const void* owner, int buffer, const void*, size_t len,
                               int loop, double volume, double pan) {
+        lastOwner = owner;
         lastBuffer = buffer; lastLoop = loop;
         lastVolume = volume; lastPan = pan;
         lastPath = "<memory:" + std::to_string(len) + ">";
         return playResult;
     }
-    inline int  hk_status(int) { return statusResult; }
-    inline int  hk_adjust(int buffer, int loop, double volume, double pan) {
+    inline int  hk_status(const void* owner, int) { lastOwner = owner; return statusResult; }
+    inline int  hk_adjust(const void* owner, int buffer, int loop, double volume, double pan) {
+        lastOwner = owner;
         lastBuffer = buffer; lastLoop = loop;
         lastVolume = volume; lastPan = pan;
         return adjustResult;
     }
-    inline void hk_stop(int buffer) { stoppedBuffer = buffer; }
+    inline void hk_stop(const void* owner, int buffer) {
+        stoppedOwner = owner; stoppedBuffer = buffer;
+    }
+    inline void hk_release(const void* owner) { releasedOwner = owner; ++releaseCount; }
 
     struct Install {
         Install() {
@@ -1478,6 +1491,9 @@ namespace fakesound {
             lastVolume = 99; lastPan = 99;
             playResult = 1; statusResult = 1; adjustResult = 1;
             stoppedBuffer = -99;
+            lastOwner = stoppedOwner = releasedOwner = nullptr;
+            releaseCount = 0;
+            g_wxhook_sound_release_owner = hk_release;
             g_wxhook_sound_play        = hk_play;
             g_wxhook_sound_play_memory = hk_play_memory;
             g_wxhook_sound_status      = hk_status;
@@ -1490,6 +1506,7 @@ namespace fakesound {
             g_wxhook_sound_status      = nullptr;
             g_wxhook_sound_adjust      = nullptr;
             g_wxhook_sound_stop_buffer = nullptr;
+            g_wxhook_sound_release_owner = nullptr;
         }
     };
 }
@@ -1539,6 +1556,67 @@ TEST(Sounds, PlaySoundParameterValidation)
     EXPECT_EQ((long)eBadParameter, doc.PlaySound(-1, "/s.wav", FALSE, 0, 0));
     fakesound::playResult = 0;   // backend failure
     EXPECT_EQ((long)eCannotPlaySound, doc.PlaySound(0, "/s.wav", FALSE, 0, 0));
+}
+
+// The ten buffers belong to the WORLD, not the process.  On Windows they are
+// LPDIRECTSOUNDBUFFER m_pDirectSoundSecondaryBuffer[MAX_SOUND_BUFFERS], a member
+// of CMUSHclientDoc (doc.h), so two worlds can both be using buffer 1 and one
+// world's StopSound never touches the other's.  A single process-wide array got
+// that wrong in both directions: world B's PlaySound(1,...) replaced world A's
+// voice, and B's StopSound(0) -- a very common plugin idiom on install and on
+// close -- silenced A.
+TEST(Sounds, BuffersBelongToTheWorldThatPlayedThem)
+{
+    fakesound::Install fake;
+    CMUSHclientDoc a, b;
+    ASSERT_NE(&a, &b);
+
+    EXPECT_EQ((long)eOK, a.PlaySound(1, "/abs/a.wav", TRUE, 0, 0));
+    EXPECT_EQ((const void*)&a, fakesound::lastOwner);
+    EXPECT_EQ((long)eOK, b.PlaySound(1, "/abs/b.wav", TRUE, 0, 0));
+    EXPECT_EQ((const void*)&b, fakesound::lastOwner);   // same buffer NUMBER,
+                                                        // different owner
+
+    // StopSound(0) names its own world, so the engine can leave the other alone.
+    EXPECT_EQ((long)eOK, b.StopSound(0));
+    EXPECT_EQ(0, fakesound::stoppedBuffer);
+    EXPECT_EQ((const void*)&b, fakesound::stoppedOwner);
+    EXPECT_EQ((long)eOK, a.StopSound(3));
+    EXPECT_EQ(3, fakesound::stoppedBuffer);
+    EXPECT_EQ((const void*)&a, fakesound::stoppedOwner);
+
+    // The query side too: GetSoundStatus(1) must be a question about the world
+    // it was asked of, or one world reports the other's sound as its own.
+    fakesound::lastOwner = nullptr;
+    EXPECT_EQ(1L, a.GetSoundStatus(1));
+    EXPECT_EQ((const void*)&a, fakesound::lastOwner);
+    EXPECT_EQ(1L, b.GetSoundStatus(1));
+    EXPECT_EQ((const void*)&b, fakesound::lastOwner);
+
+    // ...and the retune-in-place and memory-image paths.
+    EXPECT_EQ((long)eOK, a.PlaySound(2, "", TRUE, -3, 0));
+    EXPECT_EQ((const void*)&a, fakesound::lastOwner);
+    EXPECT_EQ((long)eOK, b.PlaySoundHelper(2, NULL, FALSE, 0, 0, "RIFFxxxx", 8));
+    EXPECT_EQ((const void*)&b, fakesound::lastOwner);
+}
+
+// Closing a world releases its buffers.  Windows does this in ~CMUSHclientDoc
+// (doc_construct.cpp, inside #ifdef _WIN32): Stop() then Release() on each of
+// its ten.  With no port arm a looping world.PlaySound outlived its window and
+// kept playing until the app quit.
+TEST(Sounds, ClosingAWorldReleasesItsBuffers)
+{
+    fakesound::Install fake;
+    const void* addr = nullptr;
+    {
+        CMUSHclientDoc doomed;
+        addr = (const void*)&doomed;
+        EXPECT_EQ((long)eOK, doomed.PlaySound(1, "/abs/loop.wav", TRUE, 0, 0));
+        EXPECT_EQ(0, fakesound::releaseCount);   // ...not before it is destroyed
+    }
+    // The destructor must release THIS world's buffers, and only once.
+    EXPECT_EQ(1, fakesound::releaseCount);
+    EXPECT_EQ(addr, fakesound::releasedOwner);
 }
 
 TEST(Sounds, EmptyFilenameAdjustsPlayingBuffer)

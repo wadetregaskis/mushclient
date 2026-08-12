@@ -15,6 +15,9 @@
 #include "UDPsocket.h"
 #ifdef _WIN32
 #include "pal/win_worldview.h"   // the native IWorldView adapter (WV-2)
+#ifndef _WIN32
+#include "platform/wx_mfc_hooks.h"   // g_wxhook_sound_release_owner (dtor)
+#endif
 #endif
 
 extern int gdoccount;
@@ -571,6 +574,13 @@ int i;
 
       m_pDirectSoundSecondaryBuffer [i]->Release ();
       }
+#else
+  // The port's counterpart.  The ten buffers are owned by the miniaudio engine
+  // and keyed by this doc, so releasing them here is what makes a looping
+  // world.PlaySound stop when its world closes -- without this the voice
+  // outlived the window and played until the app quit.
+  if (g_wxhook_sound_release_owner)
+    g_wxhook_sound_release_owner (this);
 #endif
 
   if (m_pTimerWnd)

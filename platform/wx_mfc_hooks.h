@@ -222,14 +222,20 @@ extern void (*g_wxhook_stop_sound)();
 //   adjust → 1 if an already-playing buffer was retuned, else 0
 //   stop   → buffer 1..N, or 0 for all
 //   status → -2 free, 0 not playing, 1 playing, 2 playing+looping
-extern int  (*g_wxhook_sound_play)(int buffer, const char* path, int loop,
-                                   double volume, double pan);
-extern int  (*g_wxhook_sound_play_memory)(int buffer, const void* data, size_t len,
+// `owner` is the CMUSHclientDoc* whose buffers these are: on Windows the ten
+// LPDIRECTSOUNDBUFFERs are a doc member, so the ten are PER WORLD, and one
+// world's StopSound(0) must not silence another's.  release_owner is the doc
+// destructor's counterpart to Windows releasing its buffers.
+extern int  (*g_wxhook_sound_play)(const void* owner, int buffer, const char* path,
+                                   int loop, double volume, double pan);
+extern int  (*g_wxhook_sound_play_memory)(const void* owner, int buffer,
+                                          const void* data, size_t len,
                                           int loop, double volume, double pan);
-extern int  (*g_wxhook_sound_adjust)(int buffer, int loop,
+extern int  (*g_wxhook_sound_adjust)(const void* owner, int buffer, int loop,
                                      double volume, double pan);
-extern void (*g_wxhook_sound_stop_buffer)(int buffer);
-extern int  (*g_wxhook_sound_status)(int buffer);
+extern void (*g_wxhook_sound_stop_buffer)(const void* owner, int buffer);
+extern int  (*g_wxhook_sound_status)(const void* owner, int buffer);
+extern void (*g_wxhook_sound_release_owner)(const void* owner);
 
 // ── Bundled "TEXT" resources ──────────────────────────────────────────────
 // Win32 FindResource/LoadResource/LockResource for RT-"TEXT" int-resources map

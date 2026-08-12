@@ -210,6 +210,34 @@ quietly turned a fixed pool into an unbounded one. The neighbouring
 `RebindingAKeyReusesTheCommandId` covers none of this: it never unbinds, so it
 only ever exercises the map-hit branch and passed before and after.
 
+## 7 — Stop Sound Playing stops scripted sounds too (port only)
+
+**Where:** `platform/wx_mfc_impl.cpp`, `hook_stop_sound` → `ma_audio_stop_all()`.
+Port-only: `CMainFrame::CancelSound`'s Windows arm is untouched.
+
+**Upstream:** two separate sound systems. `PlaySoundFile` / `CancelSound`
+(`mainfrm.cpp`) drive the app-wide MCI device and Win32 `PlaySound`, which is
+what MSP sounds, trigger sounds and the world-properties *Test* buttons use.
+`world.PlaySound` drives `m_pDirectSoundSecondaryBuffer[10]`, a **CMUSHclientDoc
+member**.  `CancelSound` ends with `PlaySound(NULL, NULL, SND_PURGE)` and never
+touches the DirectSound buffers, so on Windows *Display ▸ Stop Sound Playing*
+does **not** stop a looping `world.PlaySound`; only `world.StopSound` does.
+
+**Now:** it stops everything, in every open world.
+
+**Why:** it is what the port has always done, and narrowing it to match Windows
+would take away the only way to silence a runaway plugin loop from the menu.
+Recorded rather than changed silently — this is a behaviour question for Wade,
+not a defect: the alternative is to match Windows exactly and leave
+`world.StopSound` as the only remedy.
+
+Note this entry is only about the *menu command's reach*.  The buffers
+themselves are now per world, as they are on Windows: one world's
+`world.StopSound(0)` no longer silences another's, two worlds can both use
+buffer 1, and closing a world releases its own — see
+`tests/test_utilities.cpp`, `Sounds.BuffersBelongToTheWorldThatPlayedThem` and
+`Sounds.ClosingAWorldReleasesItsBuffers`.
+
 ## Verification status
 
 Entries 1-3 are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)

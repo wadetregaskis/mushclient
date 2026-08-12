@@ -3218,40 +3218,55 @@ static void* hook_open_text_file(const char* path)
 // paths, so every path is normalised to POSIX via PortableFilePath() here.
 
 // MSP / trigger sounds + the world-properties "test" button: auto-buffer, full
-// volume, centred — the simple fire-and-forget path.
+// volume, centred — the simple fire-and-forget path.  These are CMainFrame's
+// PlaySoundFile, which on Windows is the app-wide MCI / PlaySound channel and
+// not any world's DirectSound buffers, so they get an owner of their own rather
+// than eating into the ten a world is entitled to.
+static const char kAppSoundOwner = 0;
+
 static bool hook_play_sound(const char* path, bool loop)
 {
     if (!path || !*path) return false;
     std::string fixed = PortableFilePath(path);
-    return ma_audio_play(0 /*auto buffer*/, fixed.c_str(), loop ? 1 : 0,
-                         0.0 /*full volume*/, 0.0 /*centre*/) != 0;
+    return ma_audio_play(&kAppSoundOwner, 0 /*auto buffer*/, fixed.c_str(),
+                         loop ? 1 : 0, 0.0 /*full volume*/, 0.0 /*centre*/) != 0;
 }
 
-// CancelSound / StopSound(0): stop every voice.
+// CancelSound (Display ▸ Stop Sound Playing): stop every voice in every world.
+// Deliberately wider than Windows, where this purges only the channel above —
+// see the note in ma_sound.h and docs/UPSTREAM-DIVERGENCES.md.
 static void hook_stop_sound()
 {
-    ma_audio_stop(0);
+    ma_audio_stop_all();
 }
 
 // Buffered world.PlaySound: explicit buffer (0 = auto), volume %, pan %, loop.
-static int hook_sound_play(int buffer, const char* path, int loop,
+// `owner` is the world doc — the buffers are per world, as they are on Windows.
+static int hook_sound_play(const void* owner, int buffer, const char* path, int loop,
                            double volume, double pan)
 {
     if (!path || !*path) return 0;
     std::string fixed = PortableFilePath(path);
-    return ma_audio_play(buffer, fixed.c_str(), loop, volume, pan);
+    return ma_audio_play(owner, buffer, fixed.c_str(), loop, volume, pan);
 }
 
-static int hook_sound_play_memory(int buffer, const void* data, size_t len,
+static int hook_sound_play_memory(const void* owner, int buffer,
+                                  const void* data, size_t len,
                                   int loop, double volume, double pan)
-{ return ma_audio_play_memory(buffer, data, len, loop, volume, pan); }
+{ return ma_audio_play_memory(owner, buffer, data, len, loop, volume, pan); }
 
-static int  hook_sound_adjust(int buffer, int loop, double volume, double pan)
-{ return ma_audio_adjust(buffer, loop, volume, pan); }
+static int  hook_sound_adjust(const void* owner, int buffer, int loop,
+                              double volume, double pan)
+{ return ma_audio_adjust(owner, buffer, loop, volume, pan); }
 
-static void hook_sound_stop_buffer(int buffer) { ma_audio_stop(buffer); }
+static void hook_sound_stop_buffer(const void* owner, int buffer)
+{ ma_audio_stop(owner, buffer); }
 
-static int  hook_sound_status(int buffer) { return ma_audio_status(buffer); }
+static int  hook_sound_status(const void* owner, int buffer)
+{ return ma_audio_status(owner, buffer); }
+
+static void hook_sound_release_owner(const void* owner)
+{ ma_audio_release_owner(owner); }
 
 
 // ── Bundled "TEXT" resources (licence + credits) ──────────────────────────
@@ -5493,6 +5508,7 @@ void wx_mfc_install_hooks()
     g_wxhook_sound_adjust         = hook_sound_adjust;
     g_wxhook_sound_stop_buffer    = hook_sound_stop_buffer;
     g_wxhook_sound_status         = hook_sound_status;
+    g_wxhook_sound_release_owner  = hook_sound_release_owner;
     g_wxhook_load_text_resource   = hook_load_text_resource;
     g_wxhook_get_font_families    = hook_get_font_families;
     g_wxhook_font_has_glyph       = hook_font_has_glyph;

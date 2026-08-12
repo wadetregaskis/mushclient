@@ -497,7 +497,7 @@ long CMUSHclientDoc::PlaySoundHelper(short Buffer, LPCTSTR FileName, BOOL Loop,
       return eBadParameter;
     if (!g_wxhook_sound_play_memory)
       return eCannotPlaySound;
-    return (g_wxhook_sound_play_memory (Buffer, MemoryBuffer, MemLen,
+    return (g_wxhook_sound_play_memory (this, Buffer, MemoryBuffer, MemLen,
                                         Loop != 0, Volume, Pan) != 0)
            ? eOK : eCannotPlaySound;
     }
@@ -506,13 +506,13 @@ long CMUSHclientDoc::PlaySoundHelper(short Buffer, LPCTSTR FileName, BOOL Loop,
   if (Buffer >= 1 && Buffer <= MAX_SOUND_BUFFERS &&
       (FileName == NULL || strlen (FileName) == 0))
     {
-    int status = g_wxhook_sound_status ? g_wxhook_sound_status (Buffer) : -2;
+    int status = g_wxhook_sound_status ? g_wxhook_sound_status (this, Buffer) : -2;
     if (status == -2)                        // buffer is free → nothing to adjust
       return eBadParameter;
     if (status <= 0)                         // loaded but not playing
       return eCannotPlaySound;
     return (g_wxhook_sound_adjust &&
-            g_wxhook_sound_adjust (Buffer, Loop != 0, Volume, Pan))
+            g_wxhook_sound_adjust (this, Buffer, Loop != 0, Volume, Pan))
            ? eOK : eCannotPlaySound;
     }
 
@@ -531,7 +531,7 @@ long CMUSHclientDoc::PlaySoundHelper(short Buffer, LPCTSTR FileName, BOOL Loop,
     strName = ExtractDirectory (App.m_strMUSHclientFileName) + "sounds/" + strName;
 
   // play returns the buffer used (1..N), or 0 on failure.
-  if (g_wxhook_sound_play (Buffer, (LPCTSTR) strName, Loop != 0, Volume, Pan) == 0)
+  if (g_wxhook_sound_play (this, Buffer, (LPCTSTR) strName, Loop != 0, Volume, Pan) == 0)
     return eCannotPlaySound;
   return eOK;
 }
@@ -547,7 +547,7 @@ long CMUSHclientDoc::PlaySound(short Buffer, LPCTSTR FileName, BOOL Loop, double
 long CMUSHclientDoc::StopSound(short Buffer)
 {
   if (g_wxhook_sound_stop_buffer)
-    g_wxhook_sound_stop_buffer (Buffer);
+    g_wxhook_sound_stop_buffer (this, Buffer);
   else if (Buffer == 0 && g_wxhook_stop_sound)
     g_wxhook_stop_sound();
   return eOK;
@@ -562,7 +562,7 @@ long CMUSHclientDoc::GetSoundStatus(short Buffer)
     return -3;                               // no audio backend
   if (Buffer < 1 || Buffer > MAX_SOUND_BUFFERS)
     return -1;
-  return g_wxhook_sound_status (Buffer);
+  return g_wxhook_sound_status (this, Buffer);
 }
 
 #endif // _NOSOUND

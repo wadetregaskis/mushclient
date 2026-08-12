@@ -56,11 +56,5 @@ int  ma_audio_status(const void* owner, int buffer);
 // that never played anything.
 void ma_audio_release_owner(const void* owner);
 
-// Stop every voice, whoever owns it.  This is CancelSound / Display ▸ Stop Sound
-// Playing.  NOTE it is wider than Windows, where CancelSound purges only the MCI
-// / PlaySound channel the MSP and trigger sounds use and leaves each world's
-// DirectSound buffers alone, so a scripted loop there survives it.  Kept as-is
-// rather than narrowed silently — see docs/UPSTREAM-DIVERGENCES.md.
-void ma_audio_stop_all();
 
 #endif // !_WIN32

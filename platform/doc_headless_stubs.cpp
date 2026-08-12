@@ -119,8 +119,13 @@ void CMainFrame::OnUpdateBtnWorlds (int /*iWorld*/, CCmdUI * /*pCmdUI*/)
 {
 }
 
+// The other half of the sound seam below, and it has to be the same seam: a
+// trigger sound could START headless (PlaySoundFile routes to the hook) and
+// then never stop, because this was empty.  Mirrors the real mainfrm.cpp arm.
 void CMainFrame::CancelSound ()
 {
+    if (g_wxhook_stop_sound)
+        g_wxhook_stop_sound ();
 }
 
 // The real doc.cpp PlaySoundFile routes through Frame.PlaySoundFile (the MCI

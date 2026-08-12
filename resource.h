@@ -1557,6 +1557,8 @@
 #define ID_WINDOW_RESTORE               33051
 #define ID_EDIT_CONVERTCLIPBOARDFORUMCODES 33052
 #define ID_POPUP_HELP                   33053
+#define ID_DISPLAY_STOPTRIGGERSOUNDS    33054
+#define ID_DISPLAY_STOPSCRIPTSOUNDS     33055
 
 // Next default values for new objects
 // 
@@ -1564,7 +1566,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_3D_CONTROLS                     1
 #define _APS_NEXT_RESOURCE_VALUE        369
-#define _APS_NEXT_COMMAND_VALUE         33054
+#define _APS_NEXT_COMMAND_VALUE         33056
 #define _APS_NEXT_CONTROL_VALUE         2898
 #define _APS_NEXT_SYMED_VALUE           312
 #endif

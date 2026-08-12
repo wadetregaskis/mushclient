@@ -275,17 +275,5 @@ void ma_audio_release_owner(const void* owner)
     g_owners.erase(it);
 }
 
-void ma_audio_stop_all()
-{
-    std::lock_guard<std::mutex> lk(g_mutex);
-    if (!g_engineReady) return;
-    for (std::map<const void*, std::unique_ptr<Voices>>::iterator it = g_owners.begin();
-         it != g_owners.end(); ++it)
-        if (it->second)
-            for (int i = 0; i < MA_MAX_SOUND_BUFFERS; ++i)
-                unloadSlot(it->second->s[i]);
-    // The sets themselves stay: an owner keeps its (now free) buffers, exactly
-    // as a Windows doc keeps its ten after StopSound(0) released them.
-}
 
 #endif // !_WIN32

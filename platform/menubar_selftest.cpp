@@ -575,6 +575,14 @@ int RunMenuBarSelfTest()
             check(statusBar != NULL, "View > Status Bar is in the menu bar");
             check(statusBar && probeUi(frame, statusBar->id).enabled,
                   "...and is live with no world open, as it is on Windows");
+
+            // Stop Sound Playing survives with no world because CMainFrame
+            // handles it too ('M' falls back to the frame); its two halves are
+            // document commands and correctly grey out.
+            check(probeUi(frame, 32292).enabled,
+                  "Stop Sound Playing is live with no world open");
+            check(!probeUi(frame, 33054).enabled && !probeUi(frame, 33055).enabled,
+                  "...while its two halves, being document commands, are not");
         }
 
         // ── with a world open ───────────────────────────────────────────────
@@ -649,6 +657,69 @@ int RunMenuBarSelfTest()
             check(logAns.enabled, "Start Logging is live with a world open");
             check(logAns.setText && logAns.text.find("Start") != std::string::npos,
                   "...and captions itself Start while the world is not logging");
+
+            // ── Display ▸ Stop Sound Playing and its two new halves ─────────
+            // Stop Sound Playing is handled by BOTH doc.cpp and mainfrm.cpp, and
+            // MFC routes it to the DOCUMENT while one is active — which is why
+            // its table row is 'M' (document first, else the frame) and not the
+            // 'F' it used to be.  The two halves are plain document commands.
+            {
+                const Item* both    = find_by_id(items, 32292);
+                const Item* trigger = find_by_id(items, 33054);
+                const Item* script  = find_by_id(items, 33055);
+                check(both && trigger && script,
+                      "Display has Stop Sound Playing and both of its halves");
+                check(trigger && trigger->label.find("Trigger") != std::string::npos,
+                      "...the trigger-sound one is named for what it stops");
+                check(script && script->label.find("Script") != std::string::npos,
+                      "...and so is the script-sound one");
+                // Enable rules: the combined one works with no world (it falls
+                // through to the frame); the halves are document-only.
+                check(probeUi(frame, 32292).enabled,
+                      "Stop Sound Playing is live with a world open");
+                check(probeUi(frame, 33054).enabled && probeUi(frame, 33055).enabled,
+                      "...as are both halves");
+
+                // Enablement cannot tell 'M' from 'F' — the frame's update
+                // handler enables it either way — so the routing is pinned by
+                // WHICH handler runs.  Swap in recording sound hooks and fire
+                // the command for real: the document's CancelSound stops the
+                // app channel AND this world's buffers; the frame's stops only
+                // the app channel.
+                static int s_appStops = 0, s_bufStops = 0;
+                static const void* s_bufOwner = nullptr;
+                void (*savedStop)()                     = g_wxhook_stop_sound;
+                void (*savedStopBuf)(const void*, int)  = g_wxhook_sound_stop_buffer;
+                g_wxhook_stop_sound        = []() { ++s_appStops; };
+                g_wxhook_sound_stop_buffer = [](const void* owner, int buffer) {
+                    if (buffer == 0) { ++s_bufStops; s_bufOwner = owner; }
+                };
+
+                s_appStops = 0; s_bufStops = 0; s_bufOwner = nullptr;
+                fireCmd(frame, 32292);
+                wxYield();
+                check(s_appStops == 1,
+                      "Stop Sound Playing silences the world's own voice...");
+                check(s_bufStops == 1 && s_bufOwner == (const void*) doc,
+                      "...and this world's script buffers, because MFC routes it "
+                      "to the document");
+
+                s_appStops = 0; s_bufStops = 0; s_bufOwner = nullptr;
+                fireCmd(frame, 33054);
+                wxYield();
+                check(s_appStops == 1 && s_bufStops == 0,
+                      "Stop Trigger Sounds takes only the first half");
+
+                s_appStops = 0; s_bufStops = 0; s_bufOwner = nullptr;
+                fireCmd(frame, 33055);
+                wxYield();
+                check(s_appStops == 0 && s_bufStops == 1 &&
+                      s_bufOwner == (const void*) doc,
+                      "Stop Script Sounds takes only the second");
+
+                g_wxhook_stop_sound        = savedStop;
+                g_wxhook_sound_stop_buffer = savedStopBuf;
+            }
 
             // ── a canonical command with no menu item of its own still runs ──
             // The port's Configure menu items carry PRIVATE ids, so the

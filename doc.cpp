@@ -197,6 +197,8 @@ BEGIN_MESSAGE_MAP(CMUSHclientDoc, CDocument)
 	ON_COMMAND(ID_GAME_CONFIGURE_CHAT, OnGameConfigureChat)
 	ON_COMMAND(ID_GAME_RESETCONNECTEDTIME, OnGameResetconnectedtime)
 	ON_COMMAND(ID_DISPLAY_STOPSOUNDPLAYING, OnDisplayStopsoundplaying)
+	ON_COMMAND(ID_DISPLAY_STOPTRIGGERSOUNDS, OnDisplayStoptriggersounds)
+	ON_COMMAND(ID_DISPLAY_STOPSCRIPTSOUNDS, OnDisplayStopscriptsounds)
 	ON_COMMAND(ID_INPUT_KEYNAME, OnInputKeyname)
 	ON_COMMAND(ID_EDIT_CONVERTCLIPBOARDFORUMCODES, OnEditConvertclipboardforumcodes)
 	//}}AFX_MSG_MAP
@@ -3816,6 +3818,32 @@ void CMUSHclientDoc::CancelSound (void)
 void CMUSHclientDoc::OnDisplayStopsoundplaying() 
 {
   CancelSound ();	
+}
+
+// The two halves of CancelSound, separately.  CancelSound stops both -- the
+// sound file the world itself is playing AND the buffers its scripts are using
+// -- which is right for a panic button and wrong when you want to silence one
+// without the other (a looping ambience from a plugin while a trigger sound is
+// what is annoying you, or the reverse).
+//
+// Neither goes through the ON_PLUGIN_PLAYSOUND gate that CancelSound offers:
+// that callback exists so a plugin can take over sound PLAYING, and letting it
+// veto a half-cancel would make these two unpredictable.  Use Stop Sound
+// Playing for the plugin-aware cancel.
+
+// The world's own voice: MSP sounds, trigger sounds, the world-properties Test
+// buttons -- everything CMainFrame::PlaySoundFile started.  One channel, so
+// this is app-wide on both platforms.
+void CMUSHclientDoc::OnDisplayStoptriggersounds() 
+{
+  Frame.CancelSound ();
+}
+
+// The scripts' voices: the ten buffers world.PlaySound uses, which belong to
+// THIS document.  Other worlds keep playing.
+void CMUSHclientDoc::OnDisplayStopscriptsounds() 
+{
+  StopSound (0);
 }
 
 

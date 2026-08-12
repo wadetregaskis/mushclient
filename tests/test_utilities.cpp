@@ -13,6 +13,7 @@
 #include "MUSHclient.h"
 #include "doc.h"   // CString + prototypes: myAtoF, EditDistance,
 #include "scripting/errors.h"  // eOK / eBadParameter / eCannotPlaySound
+#include "resource.h"          // ID_DISPLAY_STOP* — the sound menu commands
                                  // encodeBase64, decodeBase64
 #include <cstring>
 
@@ -1484,6 +1485,10 @@ namespace fakesound {
         stoppedOwner = owner; stoppedBuffer = buffer;
     }
     inline void hk_release(const void* owner) { releasedOwner = owner; ++releaseCount; }
+    // CMainFrame::CancelSound's port arm — the app-wide MCI/PlaySound channel
+    // (MSP + trigger sounds + the Test buttons), NOT any world's buffers.
+    inline int appChannelStops = 0;
+    inline void hk_cancel_app() { ++appChannelStops; }
 
     struct Install {
         Install() {
@@ -1492,7 +1497,9 @@ namespace fakesound {
             playResult = 1; statusResult = 1; adjustResult = 1;
             stoppedBuffer = -99;
             lastOwner = stoppedOwner = releasedOwner = nullptr;
-            releaseCount = 0;
+            releaseCount = 0; appChannelStops = 0;
+            savedStop = g_wxhook_stop_sound;
+            g_wxhook_stop_sound          = hk_cancel_app;
             g_wxhook_sound_release_owner = hk_release;
             g_wxhook_sound_play        = hk_play;
             g_wxhook_sound_play_memory = hk_play_memory;
@@ -1507,7 +1514,9 @@ namespace fakesound {
             g_wxhook_sound_adjust      = nullptr;
             g_wxhook_sound_stop_buffer = nullptr;
             g_wxhook_sound_release_owner = nullptr;
+            g_wxhook_stop_sound          = savedStop;
         }
+        void (*savedStop)() = nullptr;
     };
 }
 
@@ -1604,6 +1613,46 @@ TEST(Sounds, BuffersBelongToTheWorldThatPlayedThem)
 // (doc_construct.cpp, inside #ifdef _WIN32): Stop() then Release() on each of
 // its ten.  With no port arm a looping world.PlaySound outlived its window and
 // kept playing until the app quit.
+// Display > Stop Sound Playing has always stopped BOTH kinds of sound at once:
+// the world's own voice (CMainFrame::CancelSound -- the MCI/PlaySound channel
+// the MSP, trigger and Test-button sounds use) and the scripts' voices (this
+// document's ten world.PlaySound buffers).  These two commands are those halves
+// on their own, so one can be silenced without the other.
+//
+// Each assertion names BOTH counters, because "the right thing happened" and
+// "the other thing did not" are different claims and only the pair pins the
+// split.
+TEST(Sounds, TheTwoHalvesOfStopSoundPlayingActSeparately)
+{
+    fakesound::Install fake;
+    CMUSHclientDoc doc;
+
+    // Driven through the message map, which is how the menu command really
+    // arrives -- so this covers the ON_COMMAND wiring as well as the bodies.
+    // (The handlers themselves are protected, as they should be.)
+    ASSERT_TRUE(AfxDispatchCommand(&doc, 0, ID_DISPLAY_STOPTRIGGERSOUNDS));
+
+    // Stop Trigger Sounds: the app channel, and not the buffers.
+    EXPECT_EQ(1, fakesound::appChannelStops);
+    EXPECT_EQ(-99, fakesound::stoppedBuffer);          // untouched sentinel
+
+    // Stop Script Sounds: this document's buffers, and not the app channel.
+    ASSERT_TRUE(AfxDispatchCommand(&doc, 0, ID_DISPLAY_STOPSCRIPTSOUNDS));
+    EXPECT_EQ(1, fakesound::appChannelStops);          // still just the one
+    EXPECT_EQ(0, fakesound::stoppedBuffer);            // 0 = all of them
+    EXPECT_EQ((const void*)&doc, fakesound::stoppedOwner);
+
+    // And the combined command is still both -- CancelSound calls
+    // Frame.CancelSound() and then StopSound(0).
+    fakesound::appChannelStops = 0;
+    fakesound::stoppedBuffer = -99;
+    fakesound::stoppedOwner = nullptr;
+    ASSERT_TRUE(AfxDispatchCommand(&doc, 0, ID_DISPLAY_STOPSOUNDPLAYING));
+    EXPECT_EQ(1, fakesound::appChannelStops);
+    EXPECT_EQ(0, fakesound::stoppedBuffer);
+    EXPECT_EQ((const void*)&doc, fakesound::stoppedOwner);
+}
+
 TEST(Sounds, ClosingAWorldReleasesItsBuffers)
 {
     fakesound::Install fake;

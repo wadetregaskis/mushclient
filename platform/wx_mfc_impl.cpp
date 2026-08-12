@@ -789,7 +789,13 @@ static const CanonMenuCmd kCanonCmds[] = {
   // ── Display ──
   { SEC_DISPLAY, 32324, "&Recall Text\xE2\x80\xA6\tCtrl+U",  'D', false, true  }, // ID_DISPLAY_RECALLTEXT
   { SEC_DISPLAY, 32291, "Clear Output Buffer\xE2\x80\xA6",   'D', false, true  }, // ID_DISPLAY_CLEAR_OUTPUT
-  { SEC_DISPLAY, 32292, "Stop Sound Playing",                'F', false, false }, // ID_DISPLAY_STOPSOUNDPLAYING
+  { SEC_DISPLAY, 32292, "Stop Sound Playing",                'M', false, false }, // ID_DISPLAY_STOPSOUNDPLAYING
+  // ...and its two halves separately, for when you want to silence one kind of
+  // sound without the other.  Both are document commands (doc.cpp's map), so
+  // they grey out with no world open, which is what MFC gives a doc-only
+  // command.
+  { SEC_DISPLAY, 33054, "Stop Trigger Sounds",              'D', false, true  }, // ID_DISPLAY_STOPTRIGGERSOUNDS
+  { SEC_DISPLAY, 33055, "Stop Script Sounds",               'D', false, true  }, // ID_DISPLAY_STOPSCRIPTSOUNDS
   { SEC_DISPLAY, 32970, "No Command Echo",                   'D', true,  true  }, // ID_DISPLAY_NOCOMMANDECHO
   // ── Game ──
   { SEC_GAME, 32118, "Wrap &Output",                         'D', true,  true  }, // ID_GAME_WRAPLINES
@@ -843,6 +849,14 @@ static CCmdTarget* canon_target(char t, CMUSHclientDoc* doc)
         case 'D': return doc;
         case 'F': return &Frame;
         case 'A': return &App;
+        // MFC routes a command view -> document -> frame -> app, so a command
+        // both the document and the frame handle belongs to the DOCUMENT while
+        // one is active and to the frame otherwise.  Display > Stop Sound
+        // Playing is exactly that shape (doc.cpp and mainfrm.cpp both have an
+        // ON_COMMAND for it), and pinning it to 'F' meant the port ran the
+        // frame's half only: no ON_PLUGIN_PLAYSOUND callback, and none of the
+        // active world's script sounds stopped.
+        case 'M': return doc ? (CCmdTarget*) doc : (CCmdTarget*) &Frame;
     }
     return nullptr;
 }
@@ -3232,12 +3246,14 @@ static bool hook_play_sound(const char* path, bool loop)
                          loop ? 1 : 0, 0.0 /*full volume*/, 0.0 /*centre*/) != 0;
 }
 
-// CancelSound (Display ▸ Stop Sound Playing): stop every voice in every world.
-// Deliberately wider than Windows, where this purges only the channel above —
-// see the note in ma_sound.h and docs/UPSTREAM-DIVERGENCES.md.
+// CMainFrame::CancelSound.  On Windows that is MCI stop/close plus
+// PlaySound(NULL, NULL, SND_PURGE) — it purges the channel above and NOTHING
+// else; a world's DirectSound buffers are untouched by it.  So this stops the
+// app channel only.  The menu command that stops both is
+// CMUSHclientDoc::CancelSound, which calls this AND its own StopSound(0).
 static void hook_stop_sound()
 {
-    ma_audio_stop_all();
+    ma_audio_stop(&kAppSoundOwner, 0);
 }
 
 // Buffered world.PlaySound: explicit buffer (0 = auto), volume %, pan %, loop.

@@ -3093,7 +3093,9 @@ protected:
 	afx_msg void OnGameChatsessions();
 	afx_msg void OnGameConfigureChat();
 	afx_msg void OnGameResetconnectedtime();
-	afx_msg void OnDisplayStopsoundplaying();
+	afx_msg void OnDisplayStopsoundplaying();
+	afx_msg void OnDisplayStoptriggersounds();
+	afx_msg void OnDisplayStopscriptsounds();
 	afx_msg void OnInputKeyname();
 	afx_msg void OnEditConvertclipboardforumcodes();
 	//}}AFX_MSG

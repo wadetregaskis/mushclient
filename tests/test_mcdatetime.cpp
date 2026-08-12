@@ -2,8 +2,14 @@
 // Unit tests for CmcDateTime / CmcDateTimeSpan.
 
 #include "mc_test.h"
+#include <set>
+#include <ctime>
 #include "platform/compat.h"
 #include "mcdatetime.h"
+#include "pal/iclock.h"        // pal::g_clock — must be null for the real path
+
+// mcdatetime.cpp keeps this private; the test needs it to read m_dt as seconds.
+static const double kSecsInDay = 60.0 * 60.0 * 24.0;
 
 // ── CmcDateTime basic construction ───────────────────────────────────────
 
@@ -26,6 +32,41 @@ TEST(CmcDateTimeTest, GetTimeNowReturnsNonZero) {
     CmcDateTime now = CmcDateTime::GetTimeNow();
     EXPECT_EQ(CmcDateTime::valid, now.GetStatus());
     EXPECT_NE(0.0, now.m_dt);
+}
+
+// GetTimeNow must carry SUB-SECOND precision.  CmcDateTime's constructor cannot:
+// SetDateTime takes a `double nSec` and passes it into mcDateFromTm, whose
+// parameter is a WORD, so the fraction is truncated on the way in.  Windows
+// sidesteps that by adding its QueryPerformanceCounter delta straight onto
+// m_dt; the POSIX arm used to hand its nanoseconds to the constructor and lose
+// them, which quantised every fractional timer to 1 Hz.
+//
+// This cannot be tested through the timer suite: those tests install
+// pal::g_clock, whose nowOle() returns a raw double and so bypasses the
+// constructor entirely -- which is exactly why a whole green suite never saw
+// this.  Here g_clock is null, so the real code path runs.
+TEST(CmcDateTimeTest, GetTimeNowHasSubSecondPrecision) {
+    ASSERT_TRUE(pal::g_clock == nullptr);   // or the real path is not under test
+
+    // Sample across a fraction of a second.  With the truncating constructor
+    // every sample inside one wall-clock second is byte-identical, so the set
+    // of distinct values is 1 (or 2 if a second boundary falls in the middle).
+    std::set<double> seen;
+    const CmcDateTime t0 = CmcDateTime::GetTimeNow();
+    for (int i = 0; i < 40; i++) {
+        seen.insert(CmcDateTime::GetTimeNow().m_dt);
+        struct timespec req = { 0, 5 * 1000 * 1000 };   // 5 ms
+        nanosleep(&req, nullptr);
+    }
+    const CmcDateTime t1 = CmcDateTime::GetTimeNow();
+
+    EXPECT_TRUE(seen.size() > 5);   // truncation gives 1-2
+
+    // ...and the elapsed time is a real fraction, not a whole number of
+    // seconds.  ~200 ms of sleeping: more than zero, well under one second.
+    const double elapsedSecs = (t1.m_dt - t0.m_dt) * kSecsInDay;
+    EXPECT_TRUE(elapsedSecs > 0.05);
+    EXPECT_TRUE(elapsedSecs < 1.0);
 }
 
 TEST(CmcDateTimeTest, CopyConstruct) {

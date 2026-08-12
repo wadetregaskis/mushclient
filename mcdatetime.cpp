@@ -397,19 +397,33 @@ static LONGLONG iCounterFrequency = 0;
   return this_date;
 
 #else // !_WIN32
-  // POSIX: clock_gettime gives nanosecond precision directly — no need for
-  // the performance-counter resync trick used on Windows.
+  // POSIX: clock_gettime gives nanosecond precision directly — no need for the
+  // performance-counter resync trick used on Windows.
+  //
+  // But the fraction must NOT be handed to the constructor.  SetDateTime takes
+  // a `double nSec` and passes it straight into mcDateFromTm, whose parameter
+  // is a WORD — so the implicit conversion truncates, and every sub-second
+  // timer was quantised to 1 Hz (a 0.5 s timer fired once a second; DoAfter(0.2)
+  // landed anywhere up to a second late).  Windows does not hit this because it
+  // never puts a fraction through the constructor either: it builds from whole
+  // seconds and then adds the elapsed QueryPerformanceCounter delta straight
+  // onto m_dt, a few lines up.
+  //
+  // Same shape here: whole seconds through the constructor, the fraction added
+  // to the DATE double afterwards.  m_dt is days, so nanoseconds scale by
+  // 1e9 * SECS_IN_DAY.
   struct timespec ts;
   clock_gettime(CLOCK_REALTIME, &ts);
   struct tm local_tm;
   localtime_r(&ts.tv_sec, &local_tm);
-  double frac_sec = (double)(local_tm.tm_sec) + (double)ts.tv_nsec / 1.0e9;
-  return CmcDateTime(local_tm.tm_year + 1900,
+  CmcDateTime whole (local_tm.tm_year + 1900,
                      local_tm.tm_mon  + 1,
                      local_tm.tm_mday,
                      local_tm.tm_hour,
                      local_tm.tm_min,
-                     frac_sec);
+                     (double) local_tm.tm_sec);
+  whole.m_dt += ((double) ts.tv_nsec / 1.0e9) / SECS_IN_DAY;
+  return whole;
 #endif // _WIN32
   }
 

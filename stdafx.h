@@ -1037,7 +1037,10 @@ int myAtoF(const char *z, double *pResult);
 
 
 
-long LoadPng (LPCTSTR FileName, HBITMAP & hbmp);  // load a PNG file into a bitmap
+long LoadPng (LPCTSTR FileName, HBITMAP & hbmp);  // load a PNG file into a bitmap
+// Decode a .bmp into a Windows-shaped HBITMAP (bmp_load_shared.cpp).  The port's
+// stand-in for ::LoadImage(IMAGE_BITMAP, LR_LOADFROMFILE), which Win32 owns.
+long LoadBmp (LPCTSTR FileName, HBITMAP & hbmp);
 long LoadPngMemory (unsigned char * Buffer, const size_t Length, HBITMAP & hbmp, const bool bAlpha);  // load a PNG from memory into a bitmap
 
 void ChangeToFileBrowsingDirectory ();

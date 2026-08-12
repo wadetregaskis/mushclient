@@ -4513,8 +4513,20 @@ inline int  SetScrollPos(HWND, int, int, BOOL) { return 0; }
 inline int  GetScrollPos(HWND, int) { return 0; }
 inline BOOL SetScrollRange(HWND, int, int, int, BOOL) { return FALSE; }
 
-// Additional Win32 API stubs needed by dialog code
-inline HANDLE LoadImage(HINSTANCE, LPCTSTR, UINT, int, int, UINT) { return nullptr; }
+// ── LoadImage ─────────────────────────────────────────────────────────────
+// Only the shape MUSHclient actually uses is served: a .bmp FILE loaded into a
+// DIB section.  That is world.WindowLoadImage, world.SetBackgroundImage and
+// world.SetForegroundImage, all three of which used to fail on every .bmp
+// because this returned nullptr -- and then reported eFileNotFound for a file
+// that was there.  LoadBmp (bmp_load_shared.cpp) is the decoder; it hands back
+// the same shape LoadPng does, so CBitmap::Attach cannot tell them apart.
+//
+// The RESOURCE form (Splash.cpp, mainfrm.cpp's tray icon) still answers null:
+// those want a bitmap out of the Windows resource fork, which this port does
+// not have, and the callers already degrade on null.
+// Defined in bmp_load_shared.cpp rather than here: it needs LoadBmp and eOK,
+// and this header is parsed long before either is declared.
+HANDLE LoadImage(HINSTANCE hInst, LPCTSTR name, UINT type, int, int, UINT flags);
 // FindResource/LoadResource/SizeofResource/LockResource for RT-"TEXT"
 // int-resources (the About box's licence + credits) route to bundled files via
 // g_wxhook_load_text_resource.  The "handle" carried through the chain is just

@@ -470,6 +470,7 @@ if(NOT WIN32)
         surface_bridge.cpp
         scripting/methods/methods_miniwindows.cpp
         png_load_shared.cpp
+        bmp_load_shared.cpp
         # Output/view family adoption (docs/STUB-ADOPTION-2026-08.md §5 step 4).
         # Its two recorded blockers are gone: ValidateBrushStyle came with
         # miniwindow.cpp, and CMUSHView::AutoWrapWindowWidth is address-only

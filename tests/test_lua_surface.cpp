@@ -469,8 +469,15 @@ TEST(LuaSurface, MiscViewStubs)
         // eCouldNotOpenFile for a path that does not exist.  The stub answered
         // eOK for anything, so "the image silently did not load" was
         // indistinguishable from success.
-        "assert(world.SetBackgroundImage('x.bmp', 0) == error_code.eCouldNotOpenFile)\n"
-        "assert(world.SetForegroundImage('x.bmp', 0) == error_code.eCouldNotOpenFile)\n"
+        // eFileNotFound, not eCouldNotOpenFile.  The canonical mapping
+        // (methods_output.cpp:430) is "GetLastError() == 2 -> eFileNotFound,
+        // else eCouldNotOpenFile", and now that .bmp files really are opened
+        // here the failed fopen sets errno = ENOENT = 2, which is the same
+        // number Windows' ERROR_FILE_NOT_FOUND has.  The old expectation was
+        // pinning the stub: ::LoadImage returned null without touching errno,
+        // so the branch read whatever the last unrelated syscall had left.
+        "assert(world.SetBackgroundImage('x.bmp', 0) == error_code.eFileNotFound)\n"
+        "assert(world.SetForegroundImage('x.bmp', 0) == error_code.eFileNotFound)\n"
         "assert(world.SetCursor(0) == 0)\n"
 
         "world.SetTitle('t')\n"
@@ -487,6 +494,170 @@ TEST(LuaSurface, MiscViewStubs)
         "assert(world.Transparency(0, 1) == false)\n"
         "assert(world.GetFrame() ~= nil)\n"
     ));
+}
+
+
+// ── .bmp decoding ──────────────────────────────────────────────────────────
+// Write a 2x2 BMP to /tmp and return its path.  `bpp` is 24 or 32; `topDown`
+// stores the rows the other way up (a negative biHeight), which real encoders
+// do emit and which the decoder has to undo.
+//
+// The image is, reading normally (top row first):   red   green
+//                                                   blue  white
+static std::string write_bmp(const char* tag, int bpp, bool topDown)
+{
+    static int seq = 0;
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_bmp_%d_%d_%s.bmp",
+             (int) getpid(), ++seq, tag);
+
+    const int bytesPP  = bpp / 8;
+    const int rowBytes = ((2 * bpp + 31) / 32) * 4;      // padded to 4
+    const int pixels   = rowBytes * 2;
+    const int palBytes = (bpp == 8) ? 4 * 4 : 0;         // four BGRA entries
+    const int offBits  = 14 + 40 + palBytes;
+
+    std::vector<unsigned char> out(offBits + pixels, 0);
+    auto put16 = [&](int at, unsigned v) {
+        out[at] = (unsigned char)(v & 0xFF); out[at+1] = (unsigned char)((v >> 8) & 0xFF);
+    };
+    auto put32 = [&](int at, unsigned v) {
+        for (int i = 0; i < 4; i++) out[at+i] = (unsigned char)((v >> (8*i)) & 0xFF);
+    };
+
+    out[0] = 'B'; out[1] = 'M';
+    put32(2, (unsigned)(offBits + pixels));
+    put32(10, (unsigned) offBits);
+    put32(14, 40);                                  // BITMAPINFOHEADER
+    put32(18, 2);                                   // width
+    put32(22, (unsigned)(topDown ? -2 : 2));        // height (sign = row order)
+    put16(26, 1);                                   // planes
+    put16(28, (unsigned) bpp);
+    put32(30, 0);                                   // BI_RGB
+    put32(34, (unsigned) pixels);
+    if (bpp == 8) {
+        put32(46, 4);                               // biClrUsed
+        // Palette, BGRA: 0 red, 1 green, 2 blue, 3 white.
+        const unsigned char pal[4][4] = {{0,0,255,0}, {0,255,0,0},
+                                         {255,0,0,0}, {255,255,255,0}};
+        for (int i = 0; i < 4; i++)
+            for (int b = 0; b < 4; b++) out[54 + i*4 + b] = pal[i][b];
+    }
+
+    // BGR(A) in the file.  Rows are stored bottom-up unless topDown.
+    const unsigned char topRow[2][4]    = {{0,0,255,255}, {0,255,0,255}};   // red,   green
+    const unsigned char bottomRow[2][4] = {{255,0,0,255}, {255,255,255,255}};// blue,  white
+    for (int r = 0; r < 2; r++) {
+        // Which image row this stored row holds.
+        const bool isTopImageRow = topDown ? (r == 0) : (r == 1);
+        const unsigned char (*srcRow)[4] = isTopImageRow ? topRow : bottomRow;
+        unsigned char* dst = &out[offBits + r * rowBytes];
+        if (bpp == 8) {
+            // Palette indices rather than colours: 0 red, 1 green, 2 blue,
+            // 3 white, matching the table written above.
+            dst[0] = isTopImageRow ? 0 : 2;
+            dst[1] = isTopImageRow ? 1 : 3;
+        } else {
+            for (int x = 0; x < 2; x++)
+                for (int b = 0; b < bytesPP; b++)
+                    dst[x * bytesPP + b] = srcRow[x][b];
+        }
+    }
+
+    FILE* fp = fopen(path, "wb");
+    if (!fp) return "";
+    fwrite(out.data(), 1, out.size(), fp);
+    fclose(fp);
+    return path;
+}
+
+// world.WindowLoadImage on a .bmp used to fail for EVERY file: ::LoadImage was a
+// stub returning null, so the caller reported eFileNotFound for a file that was
+// there.  .png worked (it has its own decoder); .bmp had none.  Now decoded by
+// bmp_load_shared.cpp -- and the proof is the PIXELS, not the return code.
+TEST(LuaSurface, BmpImagesDecodeAndDraw)
+{
+    // 24bpp, 32bpp, top-down row order, and 8-bit palettised — the four shapes
+    // the decoder accepts.  The palette branch has its own pixel path (an index
+    // lookup rather than a memcpy), which is why it needs its own variant: a
+    // mutation reversing its channels survived until this was here.
+    for (int variant = 0; variant < 4; variant++)
+    {
+        const int  bpp     = (variant == 1) ? 32 : (variant == 3) ? 8 : 24;
+        const bool topDown = (variant == 2);
+        const std::string bmp = write_bmp(variant == 0 ? "b24"
+                                        : variant == 1 ? "b32"
+                                        : variant == 2 ? "top" : "pal", bpp, topDown);
+        ASSERT_FALSE(bmp.empty());
+
+        LuaDoc f; ASSERT_NE(nullptr, f.L);
+        const std::string script =
+            "assert(world.WindowCreate('b', 0, 0, 8, 8, 0, 0, 0x000000) == 0)\n"
+            "assert(world.WindowLoadImage('b', 'i', '" + bmp + "') == 0,"
+            "       'bmp did not load')\n"
+            // Drawn 1:1 into the top-left corner (mode 1 = copy).
+            "assert(world.WindowDrawImage('b', 'i', 0, 0, 2, 2, 1, 0, 0, 2, 2) == 0)\n"
+            // The four corners of the image, in image order.  A decoder that
+            // ignored the row order would swap the two rows; one that got BGR
+            // and RGB the wrong way round would swap red and blue.
+            "assert(world.WindowGetPixel('b', 0, 0) == 0x0000FF, 'top-left not red')\n"
+            "assert(world.WindowGetPixel('b', 1, 0) == 0x00FF00, 'top-right not green')\n"
+            "assert(world.WindowGetPixel('b', 0, 1) == 0xFF0000, 'bottom-left not blue')\n"
+            "assert(world.WindowGetPixel('b', 1, 1) == 0xFFFFFF, 'bottom-right not white')\n";
+        EXPECT_TRUE(run(f.L, script.c_str()));
+        remove(bmp.c_str());
+    }
+}
+
+// The refusals, which matter as much: a caller must be able to tell "no such
+// file" from "that is not a bitmap I can read", and a malformed header must not
+// be half-decoded into a wrong picture.
+TEST(LuaSurface, BmpDecoderRefusesWhatItCannotRead)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_bmp_bad_%d.bmp", (int) getpid());
+
+    auto writeBytes = [&](const std::vector<unsigned char>& v) {
+        FILE* fp = fopen(path, "wb");
+        if (fp) { fwrite(v.data(), 1, v.size(), fp); fclose(fp); }
+    };
+
+    EXPECT_TRUE(run(f.L, "assert(world.WindowCreate('b', 0, 0, 8, 8, 0, 0, 0) == 0)\n"));
+
+    // Missing file — distinct from unreadable.
+    const std::string missing =
+        std::string("assert(world.WindowLoadImage('b','i','/no/such/x.bmp') == ")
+        + "error_code.eFileNotFound)\n";
+    EXPECT_TRUE(run(f.L, missing.c_str()));
+
+    // Not a BMP at all (right extension, wrong magic).
+    writeBytes({'N','O','T','A','B','M','P',0,0,0,0,0,0,0,0,0,0,0,0,0,
+                0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                0,0,0,0,0,0,0,0,0,0,0,0,0,0});
+    const std::string notbmp =
+        std::string("assert(world.WindowLoadImage('b','i','") + path + "') == "
+        + "error_code.eUnableToLoadImage)\n";
+    EXPECT_TRUE(run(f.L, notbmp.c_str()));
+
+    // A well-formed header whose pixel data is truncated: refused, not read past.
+    {
+        std::vector<unsigned char> v(54 + 4, 0);
+        v[0] = 'B'; v[1] = 'M';
+        v[10] = 54;                       // offBits
+        v[14] = 40;                       // header size
+        v[18] = 64;                       // width 64
+        v[22] = 64;                       // height 64  (needs 64*192 bytes)
+        v[26] = 1;  v[28] = 24;           // planes, bpp
+        writeBytes(v);
+    }
+    const std::string trunc =
+        std::string("assert(world.WindowLoadImage('b','i','") + path + "') == "
+        + "error_code.eUnableToLoadImage)\n";
+    EXPECT_TRUE(run(f.L, trunc.c_str()));
+
+    remove(path);
 }
 
 // ── Three of those were never GUI-only ────────────────────────────────────
@@ -547,7 +718,7 @@ TEST(LuaSurface, GuiOnlySettersStillValidateTheirArguments)
         "assert(world.SetForegroundImage('x.bmp', 99) == bad)\n"
         // ...and a VALID mode gets past the gate to report the file failure,
         // so "reject everything" fails too.
-        "assert(world.SetBackgroundImage('x.bmp', 0) == error_code.eCouldNotOpenFile)\n"
+        "assert(world.SetBackgroundImage('x.bmp', 0) == error_code.eFileNotFound)\n"
         // SetToolBarPosition: `default: return eBadParameter` on Which
         "assert(world.SetToolBarPosition(0, false, 0, 0, 0) == bad)\n"
         "assert(world.SetToolBarPosition(5, false, 0, 0, 0) == bad)\n"

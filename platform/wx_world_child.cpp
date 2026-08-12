@@ -71,6 +71,13 @@ double wx_canvas_scale();
 // App singleton — defined in platform/mushapp_globals.cpp for the mushapp build.
 extern CMUSHclientApp App;
 
+// ── selection column-space helpers (defined with outputSelection, below) ──
+static CLine* DocLineAt(CMUSHclientDoc* doc, long line0);
+static long   PaneColToByteCol(const CMUSHclientDoc* doc, const CLine* pLine,
+                               long charCol0);
+static long   ByteColToPaneCol(const CMUSHclientDoc* doc, const CLine* pLine,
+                               long byteCol0);
+
 // ── Event IDs ─────────────────────────────────────────────────────────────
 static const int ID_INPUT        = wxID_HIGHEST + 200;
 static const int ID_WORLD_TIMER  = wxID_HIGHEST + 201;
@@ -2269,8 +2276,11 @@ void CWorldChildFrame::HighlightSelectedWord()
         CLine* pLine = m_doc->m_LineList.GetAt(m_doc->GetLinePosition(sLine));
         if (pLine) {
             // Windows passes the 0-based startcol here (not startcol + 1 as Text
-            // Attributes does) — reproduce that, boundary case and all.
-            const long startcol = MIN(sCol, pLine->len);
+            // Attributes does) — reproduce that, boundary case and all.  sCol is
+            // a pane CHARACTER column; FindStyle walks byte-length style runs,
+            // so convert (PaneColToByteCol, defined below with outputSelection).
+            const long startcol = MIN(PaneColToByteCol(m_doc, pLine, sCol),
+                                      (long) pLine->len);
             CStyle* pStyle; int iCol; POSITION fp;
             if (m_doc->FindStyle(pLine, startcol, iCol, pStyle, fp))
                 m_doc->GetStyleRGB(pStyle, dlg.m_iOtherForeground, dlg.m_iOtherBackground);
@@ -2455,7 +2465,10 @@ void CWorldChildFrame::ShowTextAttributes()
 
     CLine* pLine = m_doc->m_LineList.GetAt(m_doc->GetLinePosition(sLine));
     if (!pLine) return;
-    long startcol = MIN(sCol, pLine->len);
+    // sCol is a pane CHARACTER column; pLine->text/len and FindStyle's style
+    // runs are BYTES — convert, or any multibyte character before the
+    // selection shifts the reported letter and colours left.
+    long startcol = MIN(PaneColToByteCol(m_doc, pLine, sCol), (long) pLine->len);
 
     CStyle* pStyle; int iCol; POSITION fp;
     if (!m_doc->FindStyle(pLine, startcol + 1, iCol, pStyle, fp)) {
@@ -4804,15 +4817,60 @@ std::string CWorldChildFrame::currentCommand() const
     return in ? std::string(in->GetValue().utf8_str()) : std::string();
 }
 
+// ── selection column spaces ──────────────────────────────────────────────────
+// The pane's selection columns are rendered CHARACTERS (SelPoint / RunCharLen
+// space).  The doc — CLine::len, CStyle::iLength, and the columns
+// world.GetSelection* / SetSelection speak on Windows (CMUSHView's
+// calculate_line_and_column advances m_selstart_col by whole UTF-8 sequences)
+// — is BYTES.  These convert a 0-based column between the two spaces over one
+// doc line; in a non-UTF-8 world every character is one byte, so the value
+// passes through (clamped, as Windows' MIN(col, pLine->len) clamps).  The
+// command bar made the same conversion first (commandSelection above); the
+// output selection was the one unconverted seam.
+static CLine* DocLineAt(CMUSHclientDoc* doc, long line0)
+{
+    if (!doc || line0 < 0) return NULL;
+    POSITION pos = doc->GetLinePosition(line0);
+    return pos ? doc->m_LineList.GetAt(pos) : NULL;
+}
+
+static long PaneColToByteCol(const CMUSHclientDoc* doc, const CLine* pLine,
+                             long charCol0)
+{
+    if (!pLine || charCol0 <= 0) return 0;
+    if (!doc->m_bUTF_8) return MIN(charCol0, (long) pLine->len);
+    return (long) UTF8CharToByteOffset(pLine->text, (size_t) pLine->len,
+                                       (size_t) charCol0);
+}
+
+static long ByteColToPaneCol(const CMUSHclientDoc* doc, const CLine* pLine,
+                             long byteCol0)
+{
+    if (!pLine || byteCol0 <= 0) return 0;
+    if (!doc->m_bUTF_8) return MIN(byteCol0, (long) pLine->len);
+    return (long) UTF8ByteToCharOffset(pLine->text, (size_t) pLine->len,
+                                       (size_t) byteCol0);
+}
+
 pal::TextRange CWorldChildFrame::outputSelection() const
 {
     // Line/col endpoints (1-based; 0 = no selection), from the pane's selection
-    // state — same semantics as the old selection callback.
+    // state — same semantics as the old selection callback.  Columns cross
+    // from the pane's character space into the seam's BYTE space here, so a
+    // plugin slicing GetLineInfo text with string.sub gets the same substring
+    // it gets on Windows even when the line holds multibyte characters.
     pal::TextRange r;
     if (m_output) {
         long sl = 0, sc = 0, el = 0, ec = 0;
-        if (m_output->GetSelectionInfo(sl, sc, el, ec))
+        if (m_output->GetSelectionInfo(sl, sc, el, ec)) {
+            if (m_doc) {
+                if (CLine* pS = DocLineAt(m_doc, sl - 1))
+                    sc = PaneColToByteCol(m_doc, pS, sc - 1) + 1;
+                if (CLine* pE = DocLineAt(m_doc, el - 1))
+                    ec = PaneColToByteCol(m_doc, pE, ec - 1) + 1;
+            }
             r = { (int) sl, (int) sc, (int) el, (int) ec };
+        }
     }
     return r;
 }
@@ -5076,6 +5134,17 @@ void CWorldChildFrame::setScroll(long pos)
 void CWorldChildFrame::setOutputSelection(int sl, int el, int sc, int ec)
 {
     if (!m_output) return;
+    // The seam's columns are 1-based BYTES (what Windows stores raw into
+    // m_selstart_col); the pane wants rendered characters.  0 keeps its
+    // "start / end of line" meaning — SetSelectionRange handles it.
+    if (m_doc) {
+        if (sc > 0)
+            if (CLine* pS = DocLineAt(m_doc, sl - 1))
+                sc = (int) ByteColToPaneCol(m_doc, pS, sc - 1) + 1;
+        if (ec > 0)
+            if (CLine* pE = DocLineAt(m_doc, el - 1))
+                ec = (int) ByteColToPaneCol(m_doc, pE, ec - 1) + 1;
+    }
     m_output->SetSelectionRange(sl, el, sc, ec);
     // ...and freeze, exactly as the Windows arm of this same PAL method does
     // (pal/win_worldview.cpp:639): a script that selects text has the same claim

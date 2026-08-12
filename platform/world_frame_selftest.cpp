@@ -356,7 +356,7 @@ int RunWorldFrameSelfTest()
 
         // An ANSI-coloured line (index 2 = green) and an RGB one.  Only the
         // first may move when the palette does.
-        doc->DisplayMsg("\x1b[32mansi green\x1b[0m\n", 21, 0);
+        doc->DisplayMsg("\x1b[32mansi green\x1b[0m\n", 20, 0);
         doc->UpdateAllViews(NULL);
         wxYield();
 
@@ -1175,8 +1175,8 @@ int RunWorldFrameSelfTest()
     {
         doc->m_bAutoWrapWindowWidth = false;
         doc->ClearOutput();
-        doc->DisplayMsg("\x1b[31mABCDEFGH\x1b[0m\n", 20, 0);
-        doc->DisplayMsg("\x1b[32mijklmnop\x1b[0m\n", 20, 0);
+        doc->DisplayMsg("\x1b[31mABCDEFGH\x1b[0m\n", 18, 0);
+        doc->DisplayMsg("\x1b[32mijklmnop\x1b[0m\n", 18, 0);
         doc->UpdateAllViews(NULL);
         wxYield();
 
@@ -1266,6 +1266,76 @@ int RunWorldFrameSelfTest()
         child->HighlightSelectedWord();
         check(s_seenHL == 1, "Highlight Word: the dialog was reached again");
         check(s_hlFore == rgbB, "Highlight Word: ...and follows the selection down");
+
+        // ── BYTE columns at the seam, CHARACTER columns in the pane ─────────
+        // (2026-08-12)  On Windows world.GetSelection*/SetSelection speak BYTE
+        // offsets into CLine::text (m_selstart_col steps whole UTF-8
+        // sequences); the pane's columns are rendered characters.  The seam
+        // passed them through unconverted, so the two spaces disagreed on any
+        // line with a multibyte character — plugins slicing GetLineInfo text
+        // with the selection columns (string.sub is byte-based) got the wrong
+        // substring, and both dialogs above read the wrong style.  The fixture
+        // makes bytes != chars on purpose: three UTF-8 arrows (9 bytes, 3
+        // chars) in red, then ABC in green.
+        {
+            const BOOL savedUtf8 = doc->m_bUTF_8;
+            doc->m_bUTF_8 = TRUE;
+            doc->DisplayMsg("\x1b[31m\xe2\x86\x92\xe2\x86\x92\xe2\x86\x92"
+                            "\x1b[32mABC\x1b[0m\n", 27, 0);
+            doc->UpdateAllViews(NULL);
+            wxYield();
+
+            const long idxC =
+                lineIndexOf("\xe2\x86\x92\xe2\x86\x92\xe2\x86\x92" "ABC");
+            check(idxC >= 0, "byte cols: the multibyte fixture line arrived");
+
+            // A Windows-written script selects "AB": 1-based BYTE columns
+            // 10..12 (bytes 0-8 are the arrows).
+            doc->SetSelection(idxC + 1, idxC + 1, 10, 12);
+            check(pane->GetSelectionText() == wxString::FromUTF8("AB"),
+                  "byte cols: SetSelection(10,12) selects AB, not arrow bytes");
+
+            // ...and reading it back answers in the same byte space.
+            check(doc->GetSelectionStartColumn() == 10,
+                  "byte cols: GetSelectionStartColumn round-trips as 10");
+            check(doc->GetSelectionEndColumn() == 12,
+                  "byte cols: GetSelectionEndColumn round-trips as 12");
+
+            // The pane itself holds the CHARACTER form: chars 4..6, 1-based.
+            long psl = 0, psc = 0, pel = 0, pec = 0;
+            check(pane->GetSelectionInfo(psl, psc, pel, pec) &&
+                      psc == 4 && pec == 6,
+                  "byte cols: the pane's own columns stay characters (4..6)");
+
+            // Text Attributes on that selection: first selected char is the
+            // GREEN 'A'.  Unconverted, char col 3 read byte 3 — the middle of
+            // an arrow — a lone continuation byte in the red run.
+            s_seenTA = 0;
+            child->ShowTextAttributes();
+            check(s_seenTA == 1, "byte cols: Text Attributes reached");
+            check(s_letter == "A",
+                  "byte cols: Text Attributes reports 'A' (was: arrow byte)");
+
+            // Highlight Word seeds the selection's style.  It passes the
+            // 0-based column to FindStyle (the canonical Windows boundary
+            // quirk), so a selection starting exactly ON the style boundary
+            // seeds the PREVIOUS style on both platforms — where old and new
+            // code agree.  Select "B" (bytes 11..12, green run interior)
+            // instead: byte space gives green, the old char-space read hands
+            // FindStyle column 4 — inside the red arrows.
+            const COLORREF rgbGreen = engineRGB(idxC, 9);   // byte 9 = 'A'
+            const COLORREF rgbRed   = engineRGB(idxC, 3);   // inside arrows
+            check(rgbGreen != rgbRed && rgbGreen != (COLORREF) -1,
+                  "byte cols: the fixture's two styles really differ");
+            doc->SetSelection(idxC + 1, idxC + 1, 11, 13);   // "BC"
+            s_seenHL = 0;
+            child->HighlightSelectedWord();
+            check(s_seenHL == 1, "byte cols: Highlight Word reached");
+            check(s_hlFore == rgbGreen,
+                  "byte cols: Highlight Word seeds green (was: red)");
+
+            doc->m_bUTF_8 = savedUtf8;
+        }
 
         g_run_mfc_dialog = savedRunDlg;
         pane->SetSelectionRange(0, 0, 0, 0);

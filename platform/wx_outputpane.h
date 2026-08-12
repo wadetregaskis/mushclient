@@ -118,6 +118,12 @@ public:
 
     // Change the display font (e.g. from preferences or scripting API).
     void SetOutputFont(const wxFont& font);
+    // World option line_spacing: the row pitch in pixels, or 0 to derive it
+    // from the font's own height.  Windows applies this in ChangeFont
+    // (doc.cpp:1179, `m_FontHeight = iLineSpacing`); off Windows the pane owns
+    // the row pitch, so it has to be told.
+    void SetLineSpacing(int px);
+    int  LineSpacing() const { return m_lineSpacing; }
 
     // Read-only access to the current display font (used by scripting callbacks
     // to build a modified font to pass back into SetOutputFont).
@@ -773,6 +779,7 @@ private:
 
     int    m_fontSize = kDefaultFontSize;
     int    m_lineH    = 18;   // line height pixels (set from font metrics)
+    int    m_lineSpacing = 0; // world option line_spacing; 0 = use the font's
     int    m_charW    = 10;   // avg char width pixels
 
     int    m_maxLineChars = 80;   // widest line seen, in characters (stats only)

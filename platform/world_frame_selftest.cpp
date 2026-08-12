@@ -1297,6 +1297,66 @@ int RunWorldFrameSelfTest()
         }
     }
 
+    // ── the line_spacing world option reaches the row pitch ─────────────────
+    // Windows applies it inside ChangeFont -- `if (iLineSpacing) m_FontHeight =
+    // iLineSpacing` (doc.cpp:1179) -- where m_FontHeight is the pitch CMUSHView
+    // paints with.  There is no CMUSHView here; the wx pane owns the pitch and
+    // derived it from the font alone, so the option round-tripped through the
+    // dialog, the XML and GetOption while nothing ever read it.
+    {
+        const long savedSpacing = doc->m_iLineSpacing;
+
+        doc->m_iLineSpacing = 0;
+        child->setOutputFont("Menlo", 12, false, false);
+        wxYield();
+        const int fromFont = pane->LineHeight();
+        check(fromFont > 0, "line spacing: the font's own pitch is a real number");
+
+        // A value the font cannot coincidentally equal, so "it did nothing"
+        // cannot pass -- and asserted to differ, not assumed to.
+        const int wanted = fromFont + 11;
+        doc->m_iLineSpacing = (unsigned short) wanted;
+        child->setOutputFont("Menlo", 12, false, false);
+        wxYield();
+        check(pane->LineHeight() == wanted,
+              "line spacing: a non-zero line_spacing IS the row pitch");
+        check(wanted != fromFont,
+              "line spacing: ...and the fixture's two pitches really differ");
+
+        // 0 is the documented default: "use the font's own height".  A setter
+        // that only ever raised the pitch would pass the check above.
+        doc->m_iLineSpacing = 0;
+        child->setOutputFont("Menlo", 12, false, false);
+        wxYield();
+        check(pane->LineHeight() == fromFont,
+              "line spacing: zero goes back to the font's height");
+
+        // The paint path re-measures the font and adopts the result, and that
+        // is a THIRD writer of the row pitch -- the one the screen actually
+        // sees.  It has to honour the override too, or the option is live only
+        // until the next repaint: GetInfo(212) reported the new pitch while the
+        // window kept the old one, which is exactly what happened when this was
+        // first written.  Driven directly, because the selftests exit before
+        // OnRun and so never paint.
+        doc->m_iLineSpacing = (unsigned short) wanted;
+        child->setOutputFont("Menlo", 12, false, false);
+        wxYield();
+        pane->AdoptMeasuredMetrics(7, fromFont - 2);   // a plausible measurement
+        check(pane->LineHeight() == wanted,
+              "line spacing: survives the paint path's own re-measurement");
+
+        doc->m_iLineSpacing = 0;
+        child->setOutputFont("Menlo", 12, false, false);
+        wxYield();
+        pane->AdoptMeasuredMetrics(7, fromFont - 2);
+        check(pane->LineHeight() == fromFont - 2 + 2,
+              "line spacing: ...and with no override the measurement still wins");
+
+        doc->m_iLineSpacing = (unsigned short) savedSpacing;
+        child->setOutputFont("Menlo", 12, false, false);
+        wxYield();
+    }
+
     // Tear down without running the close/save flow (this doc has no file).
     doc->m_pWorldView = NULL;
     child->Destroy();

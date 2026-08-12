@@ -261,7 +261,7 @@ COutputPane::COutputPane(wxWindow* parent, int maxLines)
         mdc.SetFont(m_font);
         wxCoord w, h;
         mdc.GetTextExtent("M", &w, &h);
-        if (h > 0) m_lineH = h + 2;   // +2 px inter-line gap
+        if (h > 0) m_lineH = (m_lineSpacing > 0) ? m_lineSpacing : h + 2;
         if (w > 0) m_charW = w;
     }
 
@@ -1078,6 +1078,25 @@ void COutputPane::ClearOutput()
     Refresh();
 }
 
+// World option line_spacing.  Windows applies it inside ChangeFont --
+// `if (iLineSpacing) m_FontHeight = iLineSpacing;` (doc.cpp:1179) -- where
+// m_FontHeight is the row pitch CMUSHView paints with.  The port has no
+// CMUSHView; the wx pane owns the pitch and derives it from the font, so the
+// option round-tripped through the dialog, the XML and GetOption while nothing
+// on this side ever read it and the spacing never budged.
+//
+// 0 means "use the font's own height", which is the option's documented default
+// and what the field says in World Properties ("0 = use font default").
+void COutputPane::SetLineSpacing(int px)
+{
+    if (px < 0) px = 0;
+    if (px == m_lineSpacing) return;
+    m_lineSpacing = px;
+    // Re-derive the pitch through the same path a font change takes, so the
+    // scroll rate, wrap cache and scrollbars are all rebuilt against it.
+    SetOutputFont(m_font);
+}
+
 void COutputPane::SetOutputFont(const wxFont& font)
 {
     m_font     = font;
@@ -1108,7 +1127,7 @@ void COutputPane::SetOutputFont(const wxFont& font)
         mdc.SetFont(m_font);
         mdc.GetTextExtent("M", &w, &h);
     }
-    if (h > 0) m_lineH = h + 2;
+    if (h > 0) m_lineH = (m_lineSpacing > 0) ? m_lineSpacing : h + 2;
     if (w > 0) m_charW = w;
 
     m_maxLineChars = 80;
@@ -1161,7 +1180,14 @@ void COutputPane::ResetFontSize()
 bool COutputPane::AdoptMeasuredMetrics(int dcW, int dcH)
 {
     if (dcW <= 0 || dcH <= 0) return false;
-    const int newLineH = dcH + 2;          // one pixel of leading top and bottom
+    // line_spacing wins over the measurement, the same way it wins in
+    // SetOutputFont.  This is the THIRD place the row pitch is set and the only
+    // one the paint reaches, so missing it here made the option look live for
+    // exactly as long as it took the pane to repaint -- GetInfo(212) reported
+    // the new pitch while the screen kept the old one.  (Not caught by the
+    // selftests: they exit before OnRun, so no paint ever happens there.)
+    const int newLineH = (m_lineSpacing > 0) ? m_lineSpacing
+                                             : dcH + 2;   // 1px leading each side
     if (dcW == m_charW && newLineH == m_lineH) return false;
     m_charW = dcW;
     m_lineH = newLineH;

@@ -609,6 +609,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                                     ? wxString::FromUTF8(face) : wxString();
                 wxFont font(points, wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL,
                             weight, false, faceName);
+                m_output->SetLineSpacing((int) m_doc->m_iLineSpacing);
                 if (font.IsOk()) m_output->SetOutputFont(font);
             }
             // Scrollback limit — 0 included, since 0 is the "unlimited"
@@ -4975,6 +4976,12 @@ void CWorldChildFrame::setOutputFont(const char* face, int pointSize,
     wxFont f(size, wxFONTFAMILY_TELETYPE, style, weight,
              /*underline=*/false, faceName);
     if (!f.IsOk()) f = cur;  // fall back to current font on failure
+    // Line spacing before the font, so the pitch is already known when
+    // SetOutputFont re-derives the metrics (it would otherwise measure once
+    // with the old pitch and again with the new one).  Read straight off the
+    // doc, exactly as the Windows adapter does -- pal/win_worldview.cpp:728
+    // passes m_iLineSpacing into ChangeFont for the same reason.
+    m_output->SetLineSpacing((int) m_doc->m_iLineSpacing);
     m_output->SetOutputFont(f);
     // Update doc font fields so Ctrl+S saves the new font to the world file.
     // A POINT SIZE — see the note on the zoom path above; output_font_height is

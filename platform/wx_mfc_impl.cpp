@@ -349,6 +349,12 @@ void wx_register_world_frame(CMUSHclientDoc* doc, CWorldChildFrame* frame)
 void wx_unregister_world_frame(CMUSHclientDoc* doc)
 {
     if (doc) s_docFrameMap.erase(doc);
+    // Re-densify the world slot numbers NOW (2026-08-12): Windows does this
+    // from OnIdle (CMUSHclientApp::UpdateWorldCounts), which the port never
+    // pumps, so closing world B of three left a dead slot and a later world
+    // could collide with a live one's number.  The toolbar tick also calls
+    // this, covering the open-world moment.
+    App.UpdateWorldCounts();
 }
 
 void wx_activate_world_frame(CMUSHclientDoc* doc)

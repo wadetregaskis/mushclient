@@ -274,7 +274,8 @@ int RunWorldFrameSelfTest()
         bg->m_nWrapColumn = 80;
         bg->m_maxlines = 5000;
         bg->SetUpOutputWindow();
-        App.m_pWorldDocTemplate->AddDocument(bg);
+        // (doc ctor already ran AddDocument -- doc_construct.cpp:521;
+        //  a second add left a DANGLING duplicate entry after close)
         CWorldChildFrame* bgFrame =
             new CWorldChildFrame(parent, bg, wxT("zz_selftest_bgstatus"));
 
@@ -313,6 +314,43 @@ int RunWorldFrameSelfTest()
         if (wxTheApp) wxTheApp->SetTopWindow(savedTop);
         bgFrame->Close(true);      // forced: CanVeto() is false
         wxYield();
+    }
+
+    // ── world slot numbers stay dense across a close (2026-08-12) ───────────
+    // Windows renumbers m_view_number from OnIdle; the port never pumped it,
+    // so closing world B of three left a dead toolbar slot and WorldInSlot's
+    // lazy fallback could hand a NEW world a number an existing one already
+    // held.  Renumbering now runs at the close moment (and the toolbar tick).
+    // Three worlds on purpose — with fewer, lazy and dense numbering coincide.
+    {
+        CMUSHclientDoc* w2 = new CMUSHclientDoc();
+        w2->m_mush_name = "zz_selftest_slot2"; w2->m_nWrapColumn = 80;
+        w2->m_maxlines = 5000; w2->SetUpOutputWindow();
+        // (doc ctor already ran AddDocument -- doc_construct.cpp:521;
+        //  a second add left a DANGLING duplicate entry after close)
+        CWorldChildFrame* f2 = new CWorldChildFrame(parent, w2, wxT("slot2"));
+        CMUSHclientDoc* w3 = new CMUSHclientDoc();
+        w3->m_mush_name = "zz_selftest_slot3"; w3->m_nWrapColumn = 80;
+        w3->m_maxlines = 5000; w3->SetUpOutputWindow();
+        // (doc ctor already ran AddDocument -- doc_construct.cpp:521;
+        //  a second add left a DANGLING duplicate entry after close)
+        CWorldChildFrame* f3 = new CWorldChildFrame(parent, w3, wxT("slot3"));
+
+        App.UpdateWorldCounts();
+        check(doc->m_view_number == 1 && w2->m_view_number == 2 &&
+                  w3->m_view_number == 3,
+              "three worlds number densely 1..3");
+
+        // Close the MIDDLE world; the close path itself must renumber.
+        f2->Close(true);
+        wxYield();
+        check(doc->m_view_number == 1 && w3->m_view_number == 2,
+              "closing the middle world renumbers the survivors (was: gap)");
+
+        f3->Close(true);
+        wxYield();
+        check(doc->m_view_number == 1,
+              "...and the fixture world is number 1 again");
     }
 
     // ── activating the window marks its lines read ─────────────────────────
@@ -1030,7 +1068,8 @@ int RunWorldFrameSelfTest()
             d->m_nWrapColumn = 80;
             d->m_maxlines    = 5000;
             d->SetUpOutputWindow();
-            App.m_pWorldDocTemplate->AddDocument(d);
+            // (doc ctor already ran AddDocument -- doc_construct.cpp:521;
+            //  a second add left a DANGLING duplicate entry after close)
             return new CWorldChildFrame(parent, d, wxString::FromUTF8(name));
         };
 
@@ -1703,7 +1742,8 @@ int RunWorldFrameSelfTest()
             cd->m_nWrapColumn = 80;
             cd->m_maxlines    = 5000;
             cd->SetUpOutputWindow();
-            App.m_pWorldDocTemplate->AddDocument(cd);
+            // (doc ctor already ran AddDocument -- doc_construct.cpp:521;
+            //  a second add left a DANGLING duplicate entry after close)
             CWorldChildFrame* cf =
                 new CWorldChildFrame(parent, cd, wxT("zz_selftest_plugin_close"));
 

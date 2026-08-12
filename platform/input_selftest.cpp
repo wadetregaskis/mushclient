@@ -155,7 +155,8 @@ int RunInputSelfTest()
         App.m_pActivityDocTemplate = new CMultiDocTemplate(0, NULL, NULL, NULL);
 
     CMUSHclientDoc* doc = new CMUSHclientDoc();
-    App.m_pWorldDocTemplate->AddDocument(doc);
+    // (doc ctor already ran AddDocument -- doc_construct.cpp:521;
+    //  a second add left a DANGLING duplicate entry after close)
     // A name no real world uses, so the per-world history file this frame keys
     // off cannot collide with (or be read from) the user's own.  Nothing is
     // written: the file is only saved when the frame is CLOSED, and this

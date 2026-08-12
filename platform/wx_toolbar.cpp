@@ -433,6 +433,15 @@ void CWorldToolBars::UpdateState (CMUSHclientDoc* activeDoc)
 {
     m_doc = activeDoc;   // Dispatch() needs it; clicks arrive between ticks
 
+    // Keep slot numbers DENSE (2026-08-12).  Windows renumbers on every idle
+    // tick (CMUSHclientApp::UpdateWorldCounts from OnIdle) and on activity
+    // updates; the port ran neither, so closing world B of three left its
+    // slot greyed forever and WorldInSlot's lazy fallback then assigned a
+    // NEW world a number an existing one already held — a world the bar
+    // could never raise or light again.  This tick (every 100 ms) is the
+    // port's idle pump; the walk is the canonical one.
+    App.UpdateWorldCounts();
+
     // ── Standard + World bars ─────────────────────────────────────────────
     // Run the canonical ON_UPDATE_COMMAND_UI handler for each button against
     // the active world, as the menu path does (wx_mfc_impl.cpp).  A command

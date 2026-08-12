@@ -33,6 +33,7 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "platform/wx_world_child.h"
+#include "platform/selftest_support.h"   // plugin-loading fixture
 #include "platform/wx_mfc_hooks.h"    // g_wxhook_message_box
 #include "platform/wx_osx_text.h"     // wxOSXSmartSubstitutionsDisabled
 
@@ -367,6 +368,74 @@ int RunInputSelfTest()
         chkStr(inp->GetValue(), "", "an accepted command still clears the bar");
 
         doc->m_bAutoRepeat = savedRepeat ? 1 : 0;
+    }
+
+    // ── OnPluginCommandEntered, through a REAL plugin ──────────────────────
+    // The two arms the "\t" block above cannot reach, because the sentinel is
+    // what the PLUGIN returns while the bar still holds the user's own text:
+    //   "\r" rejects the command and LEAVES the typing in the bar to be fixed;
+    //   and the callback fires even for a BARE Enter, which the port used to
+    //   skip with `if (!cmd.IsEmpty())`.
+    // Both were uncovered until a selftest could load a plugin at all.
+    {
+        SelfTestEnablePluginLoading();
+
+        char seenPath[512];
+        snprintf(seenPath, sizeof(seenPath), "/tmp/mc_selftest_entered_%d.log",
+                 (int) getpid());
+        remove(seenPath);
+
+        char body[1024];
+        snprintf(body, sizeof(body),
+                 "function OnPluginCommandEntered(s)\n"
+                 "  local h = io.open(\"%s\", \"a\")\n"
+                 "  if h then h:write(\"[\" .. s .. \"]\\n\") h:close() end\n"
+                 "  if s == \"reject me\" then return \"\\r\" end\n"
+                 "  return s\n"
+                 "end", seenPath);
+
+        const std::string pluginPath = SelfTestWritePlugin(
+            "entered", "abcdefabcdefabcdef445566", "EnteredProbe", body);
+        chk(!pluginPath.empty(), "OnPluginCommandEntered: wrote a plugin");
+
+        const long rc = doc->LoadPlugin(CString(pluginPath.c_str()));
+        chk(rc == 0, "OnPluginCommandEntered: the plugin loaded");
+
+        auto pressEnter2 = [&]() {
+            wxCommandEvent enter(wxEVT_TEXT_ENTER, wxID_HIGHEST + 200 /*ID_INPUT*/);
+            enter.SetEventObject(inp);
+            child->GetEventHandler()->ProcessEvent(enter);
+        };
+        auto seen = [&]() {
+            std::string s;
+            if (FILE* fp = fopen(seenPath, "rb")) {
+                int ch; while ((ch = fgetc(fp)) != EOF) s += (char) ch;
+                fclose(fp);
+            }
+            return s;
+        };
+
+        // A rejected command stays in the bar to be edited.
+        inp->SetValue(wxT("reject me"));
+        pressEnter2();
+        chkStr(inp->GetValue(), "reject me",
+               "a plugin rejecting a command leaves the typing in the bar");
+
+        // ...and an accepted one is still sent and cleared.
+        inp->SetValue(wxT("keep me"));
+        pressEnter2();
+        chkStr(inp->GetValue(), "",
+               "...while an accepted one is sent and the bar cleared");
+
+        // A BARE Enter reaches the callback too.
+        remove(seenPath);
+        inp->SetValue(wxEmptyString);
+        pressEnter2();
+        chk(seen() == "[]\n",
+            "the callback fires for a bare Enter, with the empty command");
+
+        remove(seenPath);
+        remove(pluginPath.c_str());
     }
 
     // ── the password-prompt bar swap ───────────────────────────────────────

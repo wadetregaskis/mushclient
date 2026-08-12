@@ -29,6 +29,7 @@
 #include <memory>
 #include "platform/wx_world_child.h"
 #include "platform/wx_outputpane.h"
+#include "platform/selftest_support.h"   // plugin-loading fixture
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box — answer the
                                      // clear-buffer confirmation prompt
 #include "dialogs/TextAttributesDlg.h"    // Display ▸ Text Attributes
@@ -1516,6 +1517,67 @@ int RunWorldFrameSelfTest()
         doc->m_FadeOutputOpacityPercent      = (unsigned short) savedPercent;
         doc->m_FadeOutputSeconds             = (unsigned short) savedSeconds;
         doc->m_timeFadeCancelled             = CTime((time_t) 0);
+    }
+
+    // ── a plugin's OnPluginClose fires ONCE per close ───────────────────────
+    // ~CPlugin fires ON_PLUGIN_CLOSE and calls SaveState when the doc is
+    // deleted, which the teardown's `delete doc` reaches.  An explicit pass
+    // earlier in the teardown made every enabled plugin's close handler run
+    // TWICE, and the second SaveState persisted the doubled state -- so a
+    // plugin counting sessions counted two.  Removed in b356c11; this is the
+    // test that was not possible then, because a selftest could not load a
+    // plugin at all until SelfTestEnablePluginLoading existed.
+    //
+    // Counted through a REAL plugin with a REAL script engine, appending to a
+    // file, because that is the only way to tell one fire from two.
+    {
+        SelfTestEnablePluginLoading();
+
+        char logPath[512];
+        snprintf(logPath, sizeof(logPath), "/tmp/mc_selftest_close_%d.log",
+                 (int) getpid());
+        remove(logPath);
+
+        char body[1024];
+        snprintf(body, sizeof(body),
+                 "function OnPluginClose()\n"
+                 "  local h = io.open(\"%s\", \"a\")\n"
+                 "  if h then h:write(\"closed\\n\") h:close() end\n"
+                 "end", logPath);
+
+        const std::string pluginPath = SelfTestWritePlugin(
+            "close", "abcdefabcdefabcdef990011", "CloseCounter", body);
+        check(!pluginPath.empty(), "close-count: wrote a plugin file");
+
+        if (!pluginPath.empty()) {
+            CMUSHclientDoc* cd = new CMUSHclientDoc();
+            cd->m_mush_name   = "zz_selftest_plugin_close";
+            cd->m_nWrapColumn = 80;
+            cd->m_maxlines    = 5000;
+            cd->SetUpOutputWindow();
+            App.m_pWorldDocTemplate->AddDocument(cd);
+            CWorldChildFrame* cf =
+                new CWorldChildFrame(parent, cd, wxT("zz_selftest_plugin_close"));
+
+            const long rc = cd->LoadPlugin(CString(pluginPath.c_str()));
+            check(rc == 0 && cd->m_PluginList.size() == 1,
+                  "close-count: the plugin loaded, with its script engine");
+
+            cf->Close(true);          // forced: no prompts
+            wxYield();
+
+            int fires = 0;
+            if (FILE* lf = fopen(logPath, "rb")) {
+                int ch;
+                while ((ch = fgetc(lf)) != EOF) if (ch == '\n') ++fires;
+                fclose(lf);
+            }
+            check(fires == 1,
+                  "close-count: OnPluginClose fires exactly ONCE per world close");
+
+            remove(logPath);
+            remove(pluginPath.c_str());
+        }
     }
 
     // Tear down without running the close/save flow (this doc has no file).

@@ -316,6 +316,32 @@ int RunWorldFrameSelfTest()
         wxYield();
     }
 
+    // ── auto_resize_command_window sizes the input bar (2026-08-12) ─────────
+    // Windows keeps the command area between auto_resize_minimum_lines and
+    // auto_resize_maximum_lines (CSendView::AdjustCommandWindowSize); the
+    // port hardcoded 1..8 and read none of the three options.  The option
+    // poll on the world timer applies changes; the floor must lift the bar
+    // even with a single line of content.
+    {
+        wxTextCtrl* inp = child->ActiveInputPublic();
+        check(inp != nullptr, "auto-resize: the input bar exists");
+        const int before = inp ? inp->GetMinSize().y : 0;
+
+        doc->m_bAutoResizeCommandWindow = TRUE;
+        doc->m_iAutoResizeMinimumLines  = 3;
+        doc->m_iAutoResizeMaximumLines  = 6;
+        pumpTicks();
+        const int floored = inp ? inp->GetMinSize().y : 0;
+        check(inp && floored >= before + 2 * inp->GetCharHeight(),
+              "a 3-line floor lifts the bar by two lines (was: fixed 1 line)");
+
+        doc->m_bAutoResizeCommandWindow = FALSE;
+        pumpTicks();
+        const int off = inp ? inp->GetMinSize().y : 0;
+        check(inp && off < floored,
+              "turning the option off shrinks the bar back (control)");
+    }
+
     // ── world slot numbers stay dense across a close (2026-08-12) ───────────
     // Windows renumbers m_view_number from OnIdle; the port never pumped it,
     // so closing world B of three left a dead toolbar slot and WorldInSlot's

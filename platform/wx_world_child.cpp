@@ -4066,8 +4066,20 @@ void CWorldChildFrame::UpdateInputBarHeight()
     if (!m_input) return;
 
     // wxTE_DONTWRAP means GetNumberOfLines() counts real lines, not display rows.
-    const int wanted = std::max(1, std::min(m_input->GetNumberOfLines(),
-                                            (int) kMaxInputBarLines));
+    // Honour the world's auto-resize options (2026-08-12): on Windows,
+    // CSendView::AdjustCommandWindowSize keeps the command area between
+    // auto_resize_minimum_lines and auto_resize_maximum_lines when
+    // auto_resize_command_window is on.  The port hardcoded 1..8, so a world
+    // that keeps a 3-line command area on Windows got a one-line bar here
+    // while all three options round-tripped doing nothing.
+    int floorLines = 1, capLines = (int) kMaxInputBarLines;
+    if (m_doc && m_doc->m_bAutoResizeCommandWindow) {
+        floorLines = std::max(1, (int) m_doc->m_iAutoResizeMinimumLines);
+        capLines   = std::max(floorLines,
+                              (int) m_doc->m_iAutoResizeMaximumLines);
+    }
+    const int wanted = std::max(floorLines,
+                                std::min(m_input->GetNumberOfLines(), capLines));
     if (wanted == m_inputBarLines) return;   // nothing to do — avoids relayout churn
     m_inputBarLines = wanted;
 
@@ -4385,6 +4397,21 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
             m_lastPixelOffset = poff;
             m_output->SetTextPixelOffset(poff);
             textRectChanged();
+        }
+    }
+
+    // The command bar's auto-resize options are consumed in
+    // UpdateInputBarHeight, which only runs on text changes — so an option
+    // change (World Properties > Commands, or world.SetOption) must poke it.
+    // The initial sentinel also applies the world's floor once at open.
+    if (m_doc && m_input) {
+        const long ar = (m_doc->m_bAutoResizeCommandWindow ? 1L : 0L)
+                      | ((long) m_doc->m_iAutoResizeMinimumLines << 1)
+                      | ((long) m_doc->m_iAutoResizeMaximumLines << 16);
+        if (ar != m_lastAutoResize) {
+            m_lastAutoResize = ar;
+            m_inputBarLines  = -1;             // force the relayout
+            UpdateInputBarHeight();
         }
     }
 

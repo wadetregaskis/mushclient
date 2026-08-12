@@ -479,6 +479,7 @@ private:
     // Last input colours pushed to the controls, so OnWorldTimer can notice a
     // prefs change and re-apply without repainting every tick.  0xFFFFFFFF =
     // "nothing applied yet".
+    long m_lastAutoResize = -1;   // auto-resize option poll (see OnWorldTimer)
     unsigned long m_lastInputFg = 0xFFFFFFFFUL;
     unsigned long m_lastInputBg = 0xFFFFFFFFUL;
     // Likewise for the output-pane options the ctor applies once (-1/absurd

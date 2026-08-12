@@ -871,6 +871,59 @@ void TestFunctionListView()
 
 } // namespace
 
+// ── 11. DDX text hooks keep legacy-charset bytes (2026-08-12) ──────────────
+// hook_set_window_text decoded with bare wxString::FromUTF8, which is
+// all-or-nothing: a doc CString holding CP1252 bytes ("Caf\xE9") rendered as
+// an EMPTY edit field in every bridged dialog, and DDX's save arm then wrote
+// the blank back over the member on OK — silent data destruction for any
+// unvalidated free-text field.  The trigger/alias list rows blanked the same
+// way through the listctrl hooks.  Now DecodeTextLenient falls back to
+// Latin-1, so the text stays visible and round-trips (re-encoded as UTF-8).
+void TestDdxCharsetRoundTrip()
+{
+    printf("DDX charset round-trip (legacy bytes):\n");
+
+    wxFrame* host = new wxFrame(nullptr, wxID_ANY, wxT("ddx-host"));
+    wxTextCtrl* tc = new wxTextCtrl(host, wxID_ANY);
+
+    // The exact seam DDX load uses: CWnd::SetWindowText → this hook.
+    check(g_wxhook_set_window_text != nullptr, "set_window_text hook installed");
+    g_wxhook_set_window_text((void*) tc, "Caf\xE9 monde");  // é in Latin-1: invalid UTF-8
+    const wxString shown = tc->GetValue();
+    check(!shown.empty(),
+          "a legacy-charset value still renders (was: blank field)");
+    check(shown.Contains(wxT("Caf")) && shown.Contains(wxT("monde")),
+          "...with its ASCII text intact");
+    check(shown.length() == 10,
+          "...one character per byte (the Latin-1 reading)");
+
+    // The save arm reads it back — the data-destruction half of the bug.
+    char* back = g_wxhook_get_window_text((void*) tc);
+    check(back && *back,
+          "reading the field back is non-empty (was: member erased on OK)");
+    check(back && strcmp(back, "Caf\xC3\xA9 monde") == 0,
+          "...as UTF-8 re-encoded text (the e-acute survives as a character)");
+    free(back);
+
+    // The common case must stay exact: valid UTF-8 round-trips untouched.
+    g_wxhook_set_window_text((void*) tc, "Caf\xC3\xA9");
+    char* back2 = g_wxhook_get_window_text((void*) tc);
+    check(back2 && strcmp(back2, "Caf\xC3\xA9") == 0,
+          "valid UTF-8 round-trips byte-identical");
+    free(back2);
+
+    // And the list rows.
+    wxListCtrl* lv = new wxListCtrl(host, wxID_ANY, wxDefaultPosition,
+                                    wxDefaultSize, wxLC_REPORT);
+    lv->InsertColumn(0, wxT("match"));
+    const int row = g_wxhook_listctrl_insert_item((void*) lv, 0, "Vous \xEAtes");
+    check(row == 0, "listctrl insert accepts the row");
+    check(!lv->GetItemText(0).empty(),
+          "a legacy-charset list row shows its text (was: blank row)");
+
+    host->Destroy();
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -885,6 +938,7 @@ int RunGuiBridgeSelfTest()
     TestRecentWorlds();
     TestClipboardRoundTrip();
     TestFunctionListView();
+    TestDdxCharsetRoundTrip();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

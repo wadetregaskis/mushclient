@@ -15,6 +15,7 @@
 #include "MUSHclient.h"               // CMUSHclientApp + App + doc template
 #include "doc.h"                      // CMUSHclientDoc, eConnectConnectedToMud
 #include "platform/wx_activity.h"
+#include "platform/wx_outputpane.h"      // DecodeTextLenient — legacy-charset names
 #include "platform/activity_refresh.h"   // the refresh policy, lifted out to be testable
 
 // activity_refresh.h restates the refresh-type enum so it can stay free of MFC;
@@ -35,7 +36,9 @@ namespace {
 // Column order (a useful subset of CActivityView's columns).
 enum { kColWorld, kColNew, kColLines, kColStatus, kColSince, kColDuration };
 
-wxString C(const CString& s) { return wxString::FromUTF8(static_cast<const char*>(s)); }
+// Lenient: a legacy-charset world name must show in its row, not blank it
+// (bare FromUTF8 is all-or-nothing).
+wxString C(const CString& s) { return DecodeTextLenient(static_cast<const char*>(s)); }
 
 class CActivityFrame : public wxFrame
 {

@@ -237,6 +237,29 @@ int RunWorldFrameSelfTest()
               "clearing the script title restores <name> (<phase>)");
     }
 
+    // ── a legacy-charset world name still titles the window (2026-08-12) ────
+    // "Caf\xE9" is CP1252/Latin-1, not valid UTF-8.  The title path decoded
+    // with bare all-or-nothing FromUTF8, so the whole composed title became ""
+    // and the phase tick SET an empty title bar for any world migrated from a
+    // Windows install with an accented name.  DecodeTextLenient reads it as
+    // Latin-1 instead.
+    {
+        doc->m_mush_name = "Caf\xE9";
+        doc->m_iConnectPhase = eConnectConnectedToMud;   // force a re-title
+        pumpTicks();
+        check(!child->GetTitle().empty(),
+              "a legacy-charset world name still yields a title (was: empty)");
+        check(child->GetTitle().Contains(wxT("Caf")),
+              "...containing the name's ASCII prefix");
+
+        // Restore the fixture for the blocks below.
+        doc->m_mush_name = "SelfTest";
+        doc->m_iConnectPhase = eConnectNotConnected;
+        pumpTicks();
+        check(child->GetTitle() == wxT("SelfTest (Closed)"),
+              "fixture restored after the charset check");
+    }
+
     // ── activating the window marks its lines read ─────────────────────────
     // Windows does this in CMUSHView/CSendView::OnActivateView; those views do
     // not exist here, so nothing ever reset the counter and every world stayed

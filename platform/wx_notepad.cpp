@@ -229,7 +229,12 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
 
     pDoc->m_fn_replace_sel = [this](const std::string& s) {
         if (!m_ctrl) return;
-        m_ctrl->WriteText(wxString::FromUTF8(s.c_str()));
+        // Lenient, matching AppendText below: FromUTF8 is all-or-nothing, so
+        // world.AppendToNotepad of legacy-charset bytes wrote NOTHING (while
+        // returning true), and ReplaceNotepad — which selects all first —
+        // replaced the content with that nothing.  data()+size() also stops
+        // c_str() truncating at an embedded NUL.
+        m_ctrl->WriteText(DecodeUTF8Lenient(s.data(), s.size()));
     };
 
     pDoc->m_fn_activate = [this]() {

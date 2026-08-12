@@ -1629,7 +1629,9 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
 void CWorldChildFrame::UpdateTitle()
 {
     if (!m_doc) return;
-    wxString title = wxString::FromUTF8(
+    // Lenient decode: a CP1252 world name from a migrated Windows world would
+    // otherwise come back "" from FromUTF8 and the title silently kept stale.
+    wxString title = DecodeTextLenient(
         static_cast<const char*>(m_doc->m_mush_name));
     if (!title.empty())
         SetTitle(title);
@@ -2112,9 +2114,9 @@ void CWorldChildFrame::PrintWorld()
     // keeps itself free of the MFC-compat headers, so read them here.  The job
     // title is the world's name, as on Windows (mushview.cpp), not the frame's.
     PrintStyledDocument(this,
-                        wxString::FromUTF8((const char*) m_doc->m_mush_name),
+                        DecodeTextLenient((const char*) m_doc->m_mush_name),
                         lines,
-                        wxString::FromUTF8((const char*) App.m_strPrinterFont),
+                        DecodeTextLenient((const char*) App.m_strPrinterFont),
                         (int) App.m_nPrinterFontSize,
                         (int) App.m_nPrinterLeftMargin,
                         (int) App.m_nPrinterTopMargin,
@@ -2677,7 +2679,9 @@ void CWorldChildFrame::UpdateStatusBar()
     if (!m_doc || !m_statusBar) return;
 
     auto pane = [this](int field, const std::string& s) {
-        m_statusBar->SetStatusText(wxString::FromUTF8(s), field);
+        // Lenient: world.SetStatus text and the world name can carry legacy-
+        // charset bytes; bare FromUTF8 would blank the pane.
+        m_statusBar->SetStatusText(DecodeTextLenient(s.data(), s.size()), field);
     };
 
     int phase = m_doc->m_iConnectPhase;
@@ -3210,7 +3214,7 @@ bool CWorldChildFrame::FireNamedMacroCommand(int id)
     if (id == 32218 /*ID_ACTIONS_LOGOUT*/) {
         wxString q = wxString::Format(
             wxT("Logout from this character on %s?"),
-            wxString::FromUTF8((const char*) m_doc->m_mush_name));
+            DecodeTextLenient((const char*) m_doc->m_mush_name));
         if (wxMessageBox(q, wxT("Logout"),
                          wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this) == wxYES)
             FireMacro(MAC_LOGOUT);
@@ -3220,7 +3224,7 @@ bool CWorldChildFrame::FireNamedMacroCommand(int id)
     if (id == 32217 /*ID_ACTIONS_QUIT*/) {
         wxString q = wxString::Format(
             wxT("Quit from %s?"),
-            wxString::FromUTF8((const char*) m_doc->m_mush_name));
+            DecodeTextLenient((const char*) m_doc->m_mush_name));
         if (wxMessageBox(q, wxT("Quit"),
                          wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION, this) == wxYES) {
             m_doc->m_bDisconnectOK = true;   // don't reconnect after a deliberate quit
@@ -4459,7 +4463,7 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
         // Windows, CMUSHView::FixupTitle).  This block used to rebuild the
         // title from the world name unconditionally, so a plugin's title was
         // destroyed by the next connect/disconnect/close and never restored.
-        SetTitle(wxString::FromUTF8(
+        SetTitle(DecodeTextLenient(
             static_cast<const char*>(m_doc->WorldWindowTitle())));
 
         // Reaching "connected" is when Quow-style plugins flip the flag that
@@ -4609,7 +4613,7 @@ void CWorldChildFrame::setTitle(const char* /*title*/)
     // name AND the connection-phase suffix back, instead of the bare name, and
     // this path and the phase-change tick can never disagree.
     if (m_doc)
-        SetTitle(wxString::FromUTF8(
+        SetTitle(DecodeTextLenient(
             static_cast<const char*>(m_doc->WorldWindowTitle())));
 }
 

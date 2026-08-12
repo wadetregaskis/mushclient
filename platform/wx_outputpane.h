@@ -63,6 +63,23 @@ wxString DecodeOutputBytes(const char* bytes, size_t n, bool utf8, int charset);
 // so one bad byte silently discards the whole text.
 wxString DecodeUTF8Lenient(const char* bytes, size_t n);
 
+// FromUTF8 that never comes back empty for non-empty input: falls back to
+// Latin-1 (From8BitData cannot fail).  This is the decode for UI CHROME —
+// dialog fields, window titles, the status bar, list rows — where a
+// legacy-charset string (a CP1252 world name or trigger text migrated from
+// Windows) must stay visible and ROUND-TRIP through a control rather than
+// become "" (which DDX then saves back over the member: silent data loss).
+// DecodeUTF8Lenient above is for the OUTPUT pipeline, where Windows shows
+// U+FFFD; here Windows' ANSI codepage shows the letters, and Latin-1 is the
+// closest faithful reading.  NUL-safe: pass the true length.
+wxString DecodeTextLenient(const char* bytes, size_t n);
+
+// NUL-terminated convenience form (titles, hook text, CString casts).
+inline wxString DecodeTextLenient(const char* sz)
+{
+    return sz ? DecodeTextLenient(sz, strlen(sz)) : wxString();
+}
+
 // Rendered character count of a run — the metric DrawLine measures with, so any
 // walk that maps a column onto a run must use THIS and not run.text.size(),
 // which is a BYTE count.

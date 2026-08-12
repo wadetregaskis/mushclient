@@ -97,6 +97,20 @@ wxString DecodeUTF8Lenient(const char* bytes, size_t n)
     return out;
 }
 
+// UI-chrome decode: UTF-8, else Latin-1.  See wx_outputpane.h for when to use
+// this vs DecodeUTF8Lenient.  Until 2026-08-12 a dozen boundary sites (DDX
+// SetWindowText, list rows, window titles, the status bar, the Activity list)
+// each called bare FromUTF8, so a legacy-charset string blanked the control —
+// and through DDX's save arm, then erased the doc member it came from.
+wxString DecodeTextLenient(const char* bytes, size_t n)
+{
+    if (!bytes || n == 0) return wxString();
+    wxString s = wxString::FromUTF8(bytes, n);
+    if (s.empty())
+        s = wxString::From8BitData(bytes, n);
+    return s;
+}
+
 // ── Non-UTF-8 world text decoding ─────────────────────────────────────────────
 // Map a Windows LOGFONT charset (the world's m_font_charset) to a wxFontEncoding,
 // so a non-UTF-8 world's bytes decode the way the Windows 8-bit render path shows

@@ -189,6 +189,37 @@ int RunNotepadSelfTest()
     npCheck(withText->IsModified(),
             "text written into the notepad marks the document modified");
 
+    // ── 3b. Legacy-charset bytes are WRITTEN, not dropped (2026-08-12) ─────
+    // m_fn_replace_sel decoded with all-or-nothing wxString::FromUTF8, so
+    // world.AppendToNotepad("caf\xE9") wrote NOTHING while returning true —
+    // and world.ReplaceNotepad, which selects all first, replaced the whole
+    // notepad with that nothing.  Now it decodes leniently, like every other
+    // write path in this file.
+    {
+        CWxNotepadFrame* frame = CWxNotepadFrame::Find("selftest_np_text");
+        npCheck(frame != nullptr, "the text notepad's frame is findable");
+        if (frame && withText->m_fn_replace_sel && withText->m_fn_set_sel)
+        {
+            const size_t before = frame->GetText().size();
+            withText->m_fn_replace_sel(std::string("caf\xE9 latte\n"));
+            const std::string after = frame->GetText();
+            npCheck(after.size() > before,
+                    "ill-formed UTF-8 still appends (it used to write nothing)");
+            npCheck(after.find("caf") != std::string::npos &&
+                    after.find("latte") != std::string::npos,
+                    "...with the ASCII part of the text intact");
+
+            // The replace arm: select-all + write must REPLACE, not erase.
+            withText->m_fn_set_sel(0, -1);
+            withText->m_fn_replace_sel(std::string("nouveau caf\xE9\n"));
+            const std::string replaced = frame->GetText();
+            npCheck(!replaced.empty() &&
+                    replaced.find("nouveau") != std::string::npos,
+                    "ReplaceNotepad-shape write with legacy bytes replaces "
+                    "(it used to erase the notepad)");
+        }
+    }
+
     // ── 4. The Convert menu's end-of-line commands ─────────────────────────
     // wxOSX rewrites every CR to LF on the way into the control, so the
     // canonical CR-keyed transforms have to be given a CRLF buffer.  Assert the

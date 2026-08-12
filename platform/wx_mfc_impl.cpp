@@ -69,6 +69,7 @@
 #include "dialogs/ImmediateDlg.h"     // CImmediateDlg (canonical Execute-Lua dialog)
 #include "dialogs/plugins/PluginsDlg.h" // CPluginsDlg (canonical plugin manager)
 #include "platform/wx_gdi_compat.h"   // PaintOwnerDrawButton (real CDC lives there)
+#include "platform/wx_outputpane.h"   // DecodeTextLenient — UI-chrome charset fallback
 #include "scripting/scripting.h"     // CScriptEngine
 
 // Lua C API — included after MUSHclient headers to avoid wx/macro conflicts.
@@ -411,7 +412,10 @@ static void hook_set_window_text(void* h, const char* text)
 {
     auto* w = toWx(h);
     if (!w) return;
-    wxString s = wxString::FromUTF8(text ? text : "");
+    // DecodeTextLenient, NOT bare FromUTF8: this is the DDX load arm, and
+    // FromUTF8 of a legacy-charset member yields "" — which blanks the field,
+    // and DDX's save arm then writes the blank back over the member on OK.
+    wxString s = DecodeTextLenient(text);
     // wxTextCtrl / wxComboBox ignore SetLabel — their text is the *value*.  This
     // is what DDX_Text(...FALSE) calls to push a member into an edit control, so
     // getting it wrong leaves every edit field blank.  ChangeValue (not SetValue)
@@ -550,7 +554,7 @@ static int hook_post_message(void* h, unsigned msg, uintptr_t wp, intptr_t lp)
             // Verify the doc is still live before touching it.
             if (s_docFrameMap.find(doc) == s_docFrameMap.end())
                 return;
-            wxString name = wxString::FromUTF8(static_cast<const char*>(doc->m_mush_name));
+            wxString name = DecodeTextLenient(static_cast<const char*>(doc->m_mush_name));
             wxString err  = wxString::FromUTF8(static_cast<const char*>(doc->m_strSSLLastError));
             if (certFailure) {
                 // Certificate could not be verified: stay encrypted, but require
@@ -683,8 +687,8 @@ static int hook_message_box(const char* text, const char* caption, unsigned flag
     MbRelabel relabel = eNoRelabel;
     const long style  = MessageBoxStyleForMbFlags(flags, &relabel);
 
-    wxString wxText    = text    ? wxString::FromUTF8(text)    : wxString();
-    wxString wxCaption = caption ? wxString::FromUTF8(caption) : wxString("MUSHclient");
+    wxString wxText    = DecodeTextLenient(text);   // lenient: may embed world names
+    wxString wxCaption = caption ? DecodeTextLenient(caption) : wxString("MUSHclient");
 
     wxMessageDialog dlg(nullptr, wxText, wxCaption, (int)style);
     if (relabel == eAbortRetryIgnore)
@@ -702,7 +706,7 @@ static void hook_set_status(const char* msg)
     // speedwalk line, find results, the notepad messages.  s_statusBar belongs
     // to the MDI parent, which wxOSX hides behind the active child, so all of
     // that was invisible.  Prefer the visible world frame's own pane 0.
-    const wxString text = msg ? wxString::FromUTF8(msg) : wxString();
+    const wxString text = DecodeTextLenient(msg);
     if (wxTheApp) {
         if (auto* mdi = wxDynamicCast(wxTheApp->GetTopWindow(), wxMDIParentFrame))
             if (auto* child = dynamic_cast<CWorldChildFrame*>(mdi->GetActiveChild()))
@@ -2447,7 +2451,7 @@ static void hook_set_clipboard_text(const char* text)
 {
     if (!text) return;
     if (wxTheClipboard->Open()) {
-        wxTheClipboard->SetData(new wxTextDataObject(wxString::FromUTF8(text)));
+        wxTheClipboard->SetData(new wxTextDataObject(DecodeTextLenient(text)));
         wxTheClipboard->Close();
     }
 }
@@ -2530,12 +2534,12 @@ static char* hook_file_dialog(bool bOpen,
         wxFilter = wxT("All files (*.*)|*.*");
 
     wxString wxTitle = (title && *title)
-                       ? wxString::FromUTF8(title)
+                       ? DecodeTextLenient(title)
                        : wxString(bOpen ? wxT("Open") : wxT("Save As"));
     wxString wxDir  = (defaultDir  && *defaultDir)
                       ? wxString::FromUTF8(defaultDir)  : wxString(wxEmptyString);
     wxString wxFile = (defaultFile && *defaultFile)
-                      ? wxString::FromUTF8(defaultFile) : wxString(wxEmptyString);
+                      ? DecodeTextLenient(defaultFile) : wxString(wxEmptyString);
 
     long style = bOpen
         ? (wxFD_OPEN | wxFD_FILE_MUST_EXIST)
@@ -3158,7 +3162,7 @@ static void* hook_create_text_window(
     strTitle.Replace(":",  "-");
     td->SetTitle(strTitle);
 
-    wxString wxTitle = wxString::FromUTF8(
+    wxString wxTitle = DecodeTextLenient(
         static_cast<const char*>(td->m_strTitle));
     // Lenient: the initial text is world output, so it can carry bytes that are
     // not valid UTF-8; FromUTF8 would have opened the notepad empty.
@@ -4811,13 +4815,15 @@ static int hook_listctrl_insert_item(void* hwnd, int item, const char* text)
 {
     wxListCtrl* lc = LC(hwnd);
     if (!lc) return -1;
-    return lc->InsertItem(item, wxString::FromUTF8(text ? text : ""));
+    // Lenient decode: a legacy-charset trigger/alias would otherwise show a
+    // BLANK row (FromUTF8 is all-or-nothing).
+    return lc->InsertItem(item, DecodeTextLenient(text));
 }
 
 static void hook_listctrl_set_item_text(void* hwnd, int item, int col, const char* text)
 {
     if (wxListCtrl* lc = LC(hwnd))
-        lc->SetItem(item, col, wxString::FromUTF8(text ? text : ""));
+        lc->SetItem(item, col, DecodeTextLenient(text));
 }
 
 static int hook_listctrl_get_item_count(void* hwnd)

@@ -2661,6 +2661,7 @@ public:
 
 protected:
     FILE*   m_fp      = nullptr;
+    bool    m_bWrite  = false;   // opened for writing → close/flush failures matter
     CString m_strPath;
 
     // Translate MFC OpenFlags bitmask to fopen mode string.
@@ -2711,6 +2712,7 @@ public:
     virtual BOOL Open(LPCTSTR path, UINT flags, CFileException* pError = nullptr) {
         if (m_fp) { fclose(m_fp); m_fp = nullptr; }
         const char* mode = FlagsToMode(flags);
+        m_bWrite = (flags & modeWrite) || (flags & modeReadWrite);
         m_fp = fopen(PosixPath(path).c_str(), mode);
         if (m_fp) { m_strPath = path; return TRUE; }
         if (pError) {
@@ -2720,13 +2722,36 @@ public:
         }
         return FALSE;
     }
-    virtual void Close() { if (m_fp) { fclose(m_fp); m_fp = nullptr; } }
+    // Close/Write/Flush are MFC-faithful: they THROW a heap CFileException* on
+    // I/O failure, which is the contract every canonical caller was written
+    // against (plugins.cpp SaveState catches CFileException; CDocument::
+    // OnSaveDocument below converts it to FALSE so the save hooks show the
+    // error and KEEP the modified flag).  Until 2026-08-12 all three swallowed
+    // errors, so a save to a full disk reported success, cleared the modified
+    // flag, and left a truncated .mcl where a good one had been.  Throwing is
+    // confined to files opened for WRITING (m_bWrite): a read file's fclose
+    // has nothing to lose, and OnOpenDocument calls Close() outside its catch.
+    // On a closed file Write stays a no-op (pinned at the end of
+    // Files.CFileOpenMissingFails — MFC would ASSERT there, not throw) and
+    // Close stays harmless; Abort() and the destructor never throw.
+    virtual void Close() {
+        if (!m_fp) return;
+        const bool hadError = ferror(m_fp) != 0;   // fclose would clear it
+        const int rc = fclose(m_fp);
+        m_fp = nullptr;
+        if (m_bWrite && (hadError || rc != 0))
+            AfxThrowFileException(CFileException::ErrnoToException(errno),
+                                  errno, m_strPath);
+    }
     virtual UINT Read(void* buf, UINT count) {
         if (!m_fp) return 0;
         return (UINT)fread(buf, 1, count, m_fp);
     }
     virtual void Write(const void* buf, UINT count) {
-        if (m_fp) fwrite(buf, 1, count, m_fp);
+        if (!m_fp) return;
+        if (fwrite(buf, 1, count, m_fp) != count)
+            AfxThrowFileException(CFileException::ErrnoToException(errno),
+                                  errno, m_strPath);
     }
     virtual LONG Seek(LONG offset, UINT from) {
         if (!m_fp) return 0;
@@ -2747,7 +2772,12 @@ public:
         return (DWORD)ftell(m_fp);
     }
     virtual void SetLength(DWORD) {}
-    virtual void Flush() { if (m_fp) fflush(m_fp); }
+    virtual void Flush() {
+        if (!m_fp) return;
+        if (fflush(m_fp) != 0 && m_bWrite)
+            AfxThrowFileException(CFileException::ErrnoToException(errno),
+                                  errno, m_strPath);
+    }
     virtual void Abort() { if (m_fp) { fclose(m_fp); m_fp = nullptr; } }
     bool IsOpen() const { return m_fp != nullptr; }
 
@@ -2804,7 +2834,11 @@ public:
         return fgets(buf, (int)max, m_fp) != nullptr;
     }
     void WriteString(LPCTSTR str) {
-        if (m_fp) fputs(str, m_fp);
+        // MFC-faithful: throws on a failed write (see CFile::Write above).
+        if (!m_fp) return;
+        if (fputs(str, m_fp) == EOF)
+            AfxThrowFileException(CFileException::ErrnoToException(errno),
+                                  errno, m_strPath);
     }
 };
 
@@ -3159,18 +3193,25 @@ public:
             return FALSE;
         }
         BOOL ok = TRUE;
+        // MFC's shape: the flush AND close live inside the try — stdio buffers,
+        // so a full disk often only surfaces at fflush/fclose, and CFile now
+        // throws there (2026-08-12).  On failure Abort() closes without
+        // throwing (MFC's ReleaseFile(bAbort=TRUE)) and the FALSE return makes
+        // the save hooks report the error and keep the doc modified.
         try {
             CArchive ar(f, CArchive::store);
             Serialize(ar);
             ar.Close();
+            f->Flush();
+            f->Close();
         } catch (CException* e) {
             e->Delete();
+            f->Abort();
             ok = FALSE;
         } catch (...) {
+            f->Abort();
             ok = FALSE;
         }
-        f->Flush();
-        f->Close();
         delete f;
         return ok;
     }

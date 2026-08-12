@@ -30,12 +30,14 @@
 
 #include <algorithm>
 #include <cerrno>     // ENOENT — CFile open-failure cause checks
+#include <csignal>    // SIGXFSZ — Files.OnSaveDocumentReportsWriteFailure
 #include <cstring>
 #include <cstdlib>
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
+#include <sys/resource.h>  // RLIMIT_FSIZE — simulated full disk
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -696,6 +698,117 @@ TEST(Files, CFileOpenMissingFails) {
     EXPECT_EQ((DWORD)0, f.GetLength());
     EXPECT_EQ((DWORD)0, f.GetPosition());
     EXPECT_EQ((LONG)0, f.Seek(10, CFile::begin));
+}
+
+// ── I/O failures throw (2026-08-12) ─────────────────────────────────────────
+// Until then CFile::Write/Flush/Close swallowed every stdio error, so a save
+// to a full disk reported SUCCESS: the hooks cleared the modified flag, the
+// close-time prompt was suppressed, and a truncated .mcl silently replaced a
+// good one.  MFC's contract — which plugins.cpp SaveState and OnSaveDocument's
+// catch were already written against — is a thrown CFileException*.
+
+namespace {
+// m_fp is protected; the failure injection needs the raw stream.
+struct ExposedFile : public CFile {
+    FILE* fp() { return m_fp; }
+};
+}
+
+TEST(Files, WriteFailureThrowsFileException) {
+    std::string path = temp_path("writefail.bin");
+    ExposedFile f;
+    ASSERT_TRUE(f.Open(path.c_str(), CFile::modeCreate | CFile::modeWrite));
+    setvbuf(f.fp(), nullptr, _IONBF, 0);   // unbuffered: fail AT the fwrite
+    close(fileno(f.fp()));                 // yank the fd out from under stdio
+    bool threw = false;
+    try { f.Write("x", 1); }
+    catch (CFileException* e) {
+        threw = true;
+        EXPECT_EQ((LONG)EBADF, e->m_lOsError);
+        e->Delete();
+    }
+    EXPECT_TRUE(threw);
+    f.Abort();                             // Abort never throws, even now
+    EXPECT_FALSE(f.IsOpen());
+    CFile::Remove(path.c_str());
+}
+
+TEST(Files, CloseFailureThrowsButOnlyForWriteFiles) {
+    // A buffered write "succeeds" into stdio's buffer; the error surfaces at
+    // fclose — exactly the ENOSPC shape.  Close must throw AND still leave
+    // the file closed.
+    std::string path = temp_path("closefail.bin");
+    {
+        ExposedFile f;
+        ASSERT_TRUE(f.Open(path.c_str(), CFile::modeCreate | CFile::modeWrite));
+        f.Write("buffered", 8);            // lands in the buffer, no error yet
+        close(fileno(f.fp()));
+        bool threw = false;
+        try { f.Close(); }
+        catch (CFileException* e) { threw = true; e->Delete(); }
+        EXPECT_TRUE(threw);
+        EXPECT_FALSE(f.IsOpen());          // closed even on the throwing path
+    }
+    // A READ file's Close never throws, even with a pending stream error:
+    // OnOpenDocument calls Close() outside its catch, and a reader has
+    // nothing to lose.  (Failure injection: kill the fd, then read.)
+    {
+        FILE* seed = fopen(path.c_str(), "wb");
+        ASSERT_TRUE(seed != nullptr);
+        fputs("data", seed);
+        fclose(seed);
+        ExposedFile r;
+        ASSERT_TRUE(r.Open(path.c_str(), CFile::modeRead));
+        setvbuf(r.fp(), nullptr, _IONBF, 0);
+        close(fileno(r.fp()));
+        char buf[4];
+        EXPECT_EQ((UINT)0, r.Read(buf, 4));  // fails, sets ferror
+        bool threw = false;
+        try { r.Close(); }
+        catch (CFileException* e) { threw = true; e->Delete(); }
+        EXPECT_FALSE(threw);
+        EXPECT_FALSE(r.IsOpen());
+    }
+    CFile::Remove(path.c_str());
+}
+
+TEST(Files, OnSaveDocumentReportsWriteFailure) {
+    // End to end through the save machinery: Serialize → CArchive::WriteString
+    // → CFile::Write, against a REAL failing filesystem write.  RLIMIT_FSIZE=0
+    // forbids file growth (the kernel's own "disk full"); SIGXFSZ must be
+    // ignored or the process is killed instead of the write failing.
+    struct BigDoc : public CDocument {
+        void Serialize(CArchive& ar) override {
+            std::string line(1024, 'x');
+            for (int i = 0; i < 256; i++)      // 256 KB — far past any buffer
+                ar.WriteString(line.c_str());
+        }
+    };
+    std::string path = temp_path("savefail.mcl");
+
+    struct rlimit old_rl;
+    ASSERT_EQ(0, getrlimit(RLIMIT_FSIZE, &old_rl));
+    void (*old_sig)(int) = signal(SIGXFSZ, SIG_IGN);
+    struct rlimit rl = old_rl;
+    rl.rlim_cur = 0;
+    ASSERT_EQ(0, setrlimit(RLIMIT_FSIZE, &rl));
+
+    BigDoc doc;
+    BOOL ok = doc.OnSaveDocument(path.c_str());
+
+    setrlimit(RLIMIT_FSIZE, &old_rl);
+    signal(SIGXFSZ, old_sig);
+
+    EXPECT_FALSE(ok);                      // the save FAILED and said so
+
+    // With the limit restored the identical save succeeds — proving both the
+    // restore and that the throwing path did not wedge the machinery.
+    EXPECT_TRUE(doc.OnSaveDocument(path.c_str()));
+    CFile check;
+    ASSERT_TRUE(check.Open(path.c_str(), CFile::modeRead));
+    EXPECT_EQ((DWORD)(256 * 1024), check.GetLength());
+    check.Close();
+    CFile::Remove(path.c_str());
 }
 
 TEST(Files, CFileBackslashPathsAreNormalized) {

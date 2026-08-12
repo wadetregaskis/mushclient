@@ -360,6 +360,9 @@ public:
     // CMainFrame::SetStatusMessage sends).  Returns false when this frame has
     // no visible strip, so the caller can fall back to the MDI parent's bar.
     bool SetTransientStatus(const wxString& text);
+    // Selftest probe: pane 0's current text (the transient/status line).
+    wxString StatusPane0() const
+        { return m_statusBar ? m_statusBar->GetStatusText(0) : wxString(); }
     bool IsStatusBarStripShown() const;
 
     // Show/hide the inline find bar (Ctrl+F to show, Escape in find bar to hide).

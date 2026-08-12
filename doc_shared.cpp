@@ -900,7 +900,13 @@ CString str;
       ::UMessageBox (str, MB_ICONEXCLAMATION);
     }
   else
+#ifdef _WIN32
     Frame.SetStatusMessage (str);
+#else
+    // Port: attribute to THIS doc, so a background world's close message
+    // lands on its own status bar, not the frontmost world's.
+    Frame.SetStatusMessage (this, str);
+#endif
   m_iConnectPhase = eConnectNotConnected;
 
   UpdateAllViews  (NULL);     // force window title to be redrawn
@@ -1324,7 +1330,11 @@ CString str;
 
   str = TFormat ("Connecting to %s, port %d", 
               (const char *) m_mush_name, m_port);
+#ifdef _WIN32
   Frame.SetStatusMessageNow (str);
+#else
+  Frame.SetStatusMessageNow (this, str);   // port: this doc's own status bar
+#endif
 
 // The connection runs through the PAL transport on EVERY platform (T5):
 // the adapter (native CAsyncSocket/WSAAsyncSelect on Windows, the POSIX
@@ -2580,7 +2590,11 @@ void CMUSHclientDoc::ShowQueuedCommands (void)
   if (pos)
     strQueued += " ...";
 
+#ifdef _WIN32
   Frame.SetStatusMessageNow (strQueued);
+#else
+  Frame.SetStatusMessageNow (this, strQueued);   // port: this doc's own bar
+#endif
   m_tStatusDisplayed = CTime::GetCurrentTime ();
   }    // end of CMUSHclientDoc::ShowQueuedCommands
 

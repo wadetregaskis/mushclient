@@ -27,6 +27,7 @@
 #include "resource.h"     // IDR_MUSHCLTYPE
 #include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
 #include <memory>
+#include "mainfrm.h"      // Frame — doc-attributed status overloads
 #include "platform/wx_world_child.h"
 #include "platform/wx_outputpane.h"
 #include "platform/selftest_support.h"   // plugin-loading fixture
@@ -258,6 +259,60 @@ int RunWorldFrameSelfTest()
         pumpTicks();
         check(child->GetTitle() == wxT("SelfTest (Closed)"),
               "fixture restored after the charset check");
+    }
+
+    // ── doc-attributed status: a background world cannot stomp the bar ──────
+    // (2026-08-12)  Frame.SetStatusMessage resolved its target purely by
+    // GetActiveChild(), so a BACKGROUND world's "Connecting to B, port 4000"
+    // landed on the ACTIVE world's status bar and stuck there.  The per-doc
+    // callers in doc_shared.cpp now attribute their doc, and the new hook
+    // delivers to that doc's own frame.  App-scoped messages (no doc) keep
+    // the old active-child route — the control.
+    {
+        CMUSHclientDoc* bg = new CMUSHclientDoc();
+        bg->m_mush_name = "zz_selftest_bgstatus";
+        bg->m_nWrapColumn = 80;
+        bg->m_maxlines = 5000;
+        bg->SetUpOutputWindow();
+        App.m_pWorldDocTemplate->AddDocument(bg);
+        CWorldChildFrame* bgFrame =
+            new CWorldChildFrame(parent, bg, wxT("zz_selftest_bgstatus"));
+
+        // hook_set_status resolves the active child through GetTopWindow():
+        // true in the booted app, not in this harness — point it at the
+        // fixture's MDI parent for the duration of the block.
+        wxWindow* savedTop = wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+        if (wxTheApp) wxTheApp->SetTopWindow(parent);
+        // ...and the 1-arg SetStatusMessage no-ops while App.m_pMainWnd is
+        // null (true only pre-InitInstance, i.e. in this harness).
+        CWnd* savedMainWnd = App.m_pMainWnd;
+        if (!App.m_pMainWnd) App.m_pMainWnd = &Frame;
+
+        // Make the MAIN fixture the active child again, with a known pane 0.
+        child->Activate();
+        wxYield();
+        child->SetTransientStatus(wxT("A's own status"));
+
+        // The background doc announces a connection — attributed to ITSELF.
+        Frame.SetStatusMessageNow(bg, CString("Connecting to B, port 4000"));
+        check(child->StatusPane0() == wxT("A's own status"),
+              "a background world's status does NOT stomp the active bar");
+        check(bgFrame->StatusPane0() == wxT("Connecting to B, port 4000"),
+              "...it lands on the background world's own bar");
+
+        // Control: an app-scoped message (no doc) still reaches the ACTIVE
+        // frame — proving the assertion above discriminates attribution, not
+        // a broken status path.  MDI activation under a test harness is
+        // asynchronous, so ask wx who IS active rather than assuming.
+        Frame.SetStatusMessageNow(CString("app-scoped message"));
+        auto* active = dynamic_cast<CWorldChildFrame*>(parent->GetActiveChild());
+        check(active && active->StatusPane0() == wxT("app-scoped message"),
+              "an unattributed message still lands on the active bar");
+
+        App.m_pMainWnd = savedMainWnd;
+        if (wxTheApp) wxTheApp->SetTopWindow(savedTop);
+        bgFrame->Close(true);      // forced: CanVeto() is false
+        wxYield();
     }
 
     // ── activating the window marks its lines read ─────────────────────────

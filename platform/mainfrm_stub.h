@@ -160,6 +160,10 @@ public:
     BOOL OnDynamicTipText(UINT, NMHDR*, LRESULT*);
     void SetStatusMessage(const CString&);
     void SetStatusMessageNow(const CString&);
+    // Doc-attributed forms (port-only; see windows_stubs.cpp) -- a per-world
+    // message reaches that world's own status bar, not the frontmost one.
+    void SetStatusMessage(CMUSHclientDoc*, const CString&);
+    void SetStatusMessageNow(CMUSHclientDoc*, const CString&);
     void SetStatusNormal();
     void ReturnStatusRect(CRect&);
     void ReturnToolbarRect(CRect&);

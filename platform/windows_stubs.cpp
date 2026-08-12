@@ -72,6 +72,19 @@ void CMainFrame::SetStatusMessageNow (const CString& msg) {
     if (g_wxhook_set_status)
         g_wxhook_set_status(static_cast<const char*>(msg));
 }
+// Doc-attributed overloads (port-only): a per-world message goes to that
+// world's OWN status bar, not whichever window happens to be frontmost.
+// Falls back to the plain route when the attributed hook is absent
+// (headless, or a null doc).
+void CMainFrame::SetStatusMessage    (CMUSHclientDoc* doc, const CString& msg) {
+    if (doc && g_wxhook_set_status_for)
+        g_wxhook_set_status_for(doc, static_cast<const char*>(msg));
+    else if (g_wxhook_set_status)
+        g_wxhook_set_status(static_cast<const char*>(msg));
+}
+void CMainFrame::SetStatusMessageNow (CMUSHclientDoc* doc, const CString& msg) {
+    SetStatusMessage(doc, msg);
+}
 
 // ── CTimerWnd::ChangeTimerRate ────────────────────────────────────────────
 // serialize.cpp calls m_pTimerWnd->ChangeTimerRate().

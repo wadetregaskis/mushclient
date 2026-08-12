@@ -22,6 +22,7 @@
 #include "MUSHclient.h"   // full CMUSHclientApp / CMUSHclientDoc definition
 #include "doc.h"
 #include "OtherTypes.h"   // CLine, CStyle, HILITE, UNDERLINE
+#include "mainfrm.h"      // CMainFrame — the doc-attributed status overloads
 #include "scripting/errors.h"  // eOK
 #include "platform/wx_mfc_hooks.h"  // HeadlessMessageBoxAnswer
 #include "platform/wx_osx_text.h"  // wxOSXActivateApp (utils.sendtofront)
@@ -352,6 +353,23 @@ BOOL CMUSHclientDoc::Save_Set(const int set_type,
 // implementations in dialogs/world_prefs/configuration.cpp now compile on the
 // port and build the real CTreePropertySheet (rendered as a native wxTreebook
 // via hook_run_property_sheet).
+
+// ── CMainFrame doc-attributed status (port-only; declared mainfrm_stub.h) ──
+// The GUI twin of windows_stubs.cpp's pair: a per-world message goes to that
+// world's OWN status bar via g_wxhook_set_status_for, not whichever window is
+// frontmost.  Falls back to the plain route (active child) for a null doc or
+// an uninstalled hook.
+void CMainFrame::SetStatusMessage(CMUSHclientDoc* doc, const CString& msg)
+{
+    if (doc && g_wxhook_set_status_for)
+        g_wxhook_set_status_for(doc, static_cast<const char*>(msg));
+    else
+        SetStatusMessage(msg);
+}
+void CMainFrame::SetStatusMessageNow(CMUSHclientDoc* doc, const CString& msg)
+{
+    SetStatusMessage(doc, msg);
+}
 
 // SortTimers is the REAL body now (timers.cpp:431, un-gated 2026-08-12): it
 // builds the timer reverse map, which the script-callback path and

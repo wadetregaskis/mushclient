@@ -452,6 +452,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                       wxDefaultPosition, wxSize(800, 600))
     , m_doc(doc)
 {
+    // Register the doc→frame mapping HERE, not at the two creation hooks
+    // (which also still call it — idempotent): every constructor path gets an
+    // entry, so doc-attributed delivery (status bars, activation) can never
+    // miss a hand-constructed frame.  OnClose unregisters (see :5576).
+    wx_register_world_frame(doc, this);
+
     // Vertical sizer: output pane takes all space; input bar at bottom.
     wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
 

@@ -148,6 +148,27 @@ public:
     // Did the last paint see anything still fading?  Drives the repaint tick.
     bool AnyLineFading() const { return m_anyFading; }
 
+    // ── Line preamble (timestamps — 2026-08-12) ───────────────────────────
+    // Windows prefixes every output/input/note line with a formatted preamble
+    // in its own colours (the nine timestamp_* world options; CMUSHView::
+    // OnDraw's "line preamble" block).  The doc owns the options, the format
+    // codes (%e elapsed, %D delta, strftime the rest) and the colours, so the
+    // FRAME builds the preamble; the pane draws it in the plain font on the
+    // line's first visual row and shifts the text right by its width.  This
+    // pane is strictly monospace, so the preamble occupies whole character
+    // cells — which keeps click-to-column exact (XToChar subtracts
+    // PreambleCells on the first row; Windows' m_iPreambleOffset twin).
+    // Returns false (or empty text) when the option is off for that kind.
+    // Colours are raw COLORREFs: the pane routes them through the same
+    // m_fn_translate_colour as run colours, so the fade and world.MapColour
+    // apply to the preamble exactly as they do to the text (as on Windows,
+    // which draws it through TranslateColour too).
+    struct SLinePreamble { wxString text; uint32_t fg = 0; uint32_t bg = 0; };
+    std::function<bool(const SOutputLine& line, time_t prevArrived,
+                       bool isFirstLine, SLinePreamble& out)> m_fn_line_preamble;
+    // The preamble's width in character cells for a line (0 = none).
+    int PreambleCells(int lineIdx) const;
+
     // World option line_spacing: the row pitch in pixels, or 0 to derive it
     // from the font's own height.  Windows applies this in ChangeFont
     // (doc.cpp:1179, `m_FontHeight = iLineSpacing`); off Windows the pane owns

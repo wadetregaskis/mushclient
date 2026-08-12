@@ -84,6 +84,7 @@ bool CMUSHclientDoc::BuildOutputLine (long index, SOutputLine & out) const
     if (pLine->flags & HORIZ_RULE) {
         SOutputLine outline;
         outline.arrived = arrivedAt;
+        outline.userInput = (pLine->flags & USER_INPUT) != 0;
         SOutputRun hrRun;
         hrRun.horiz_rule = true;
         outline.push_back(std::move(hrRun));
@@ -95,6 +96,9 @@ bool CMUSHclientDoc::BuildOutputLine (long index, SOutputLine & out) const
     outline.arrived = arrivedAt;
     // A note line: a send-link on it is executed, not sent.
     outline.comment = (pLine->flags & COMMENT) != 0;
+    // An echoed command: the line-preamble (timestamp) family picks its text
+    // and colours by kind — note / input / output.
+    outline.userInput = (pLine->flags & USER_INPUT) != 0;
     // The engine's BOOKMARK flag (world.Bookmark / Display ▸ Bookmark
     // Selection).  Carrying it here makes the CLine the single source of
     // truth: RebuildOutputView re-emits the buffer, so bookmarks survive a

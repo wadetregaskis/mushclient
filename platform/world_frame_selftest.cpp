@@ -342,6 +342,81 @@ int RunWorldFrameSelfTest()
               "turning the option off shrinks the bar back (control)");
     }
 
+    // ── line preambles (timestamps) — the nine timestamp_* options ──────────
+    // (2026-08-12)  Windows prefixes every line with a per-kind formatted
+    // preamble (CMUSHView::OnDraw); the port read none of the nine options —
+    // the bundled Timestamps.xml plugin was a silent no-op.  The paint path
+    // cannot run in this harness, so the assertions drive the SAME callback
+    // the paint uses, plus the public PreambleCells/PointToChar arithmetic
+    // that keeps click-to-column exact.
+    {
+        doc->ClearOutput();
+        doc->m_strOutputLinePreambleOutput = "[TS] ";        // 5 cells
+        doc->m_strOutputLinePreambleNotes  = "note> ";       // 6 cells
+        doc->m_strOutputLinePreambleInput  = "";             // input: off
+        doc->DisplayMsg("0123456789012345678901234567890123456789\n", 41, 0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        check((bool) pane->m_fn_line_preamble,
+              "preamble: the frame wired the callback");
+
+        // Kind selection, driven exactly as the paint drives it.
+        COutputPane::SLinePreamble pre;
+        SOutputLine mud;  mud.arrived = time(nullptr);
+        SOutputLine note; note.arrived = mud.arrived; note.comment = true;
+        SOutputLine inp;  inp.arrived = mud.arrived;  inp.userInput = true;
+        check(pane->m_fn_line_preamble &&
+                  pane->m_fn_line_preamble(mud, 0, true, pre) &&
+                  pre.text == wxT("[TS] "),
+              "preamble: an output line gets the output preamble");
+        check(pane->m_fn_line_preamble(note, 0, true, pre) &&
+                  pre.text == wxT("note> "),
+              "preamble: a Note line gets the notes preamble");
+        check(!pane->m_fn_line_preamble(inp, 0, true, pre),
+              "preamble: an empty option means none for that kind");
+
+        // Format codes: %H:%M:%S via FormatTime, %e elapsed, %D delta.
+        doc->m_strOutputLinePreambleOutput = "%H:%M:%S ";
+        check(pane->m_fn_line_preamble(mud, 0, true, pre) &&
+                  pre.text.length() == 9 && !pre.text.Contains(wxT("%")),
+              "preamble: strftime codes expand (HH:MM:SS + space = 9 cells)");
+        doc->m_strOutputLinePreambleOutput = "%D";
+        check(pane->m_fn_line_preamble(mud, mud.arrived - 3, false, pre) &&
+                  pre.text.Contains(wxT("3.000000")),
+              "preamble: %D is the delta from the previous line");
+
+        // Click-to-column: with a preamble on, the same pixel resolves 5
+        // columns EARLIER (the stamp occupies cells).  Comparing on/off at
+        // one pixel avoids caring what the char width is.
+        doc->m_strOutputLinePreambleOutput = "[TS] ";
+        // Line 0 is the MUD line: ClearOutput's seed line is consumed by the
+        // first DisplayMsg (the click test below confirms it independently).
+        check(pane->PreambleCells(0) == 5,
+              "preamble: PreambleCells reports the stamp width");
+
+        // A REAL echoed-command line carries USER_INPUT through
+        // BuildOutputLine's userInput stamp — the hand-built structs above
+        // cannot see that stamp, so this is what pins it.  Different widths
+        // (4 vs 5) make a dropped stamp fall to the output preamble and fail.
+        doc->m_strOutputLinePreambleInput = "in> ";           // 4 cells
+        doc->DisplayMsg("look\n", 5, USER_INPUT);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        check(pane->PreambleCells(1) == 4,
+              "preamble: a real echoed command gets the INPUT preamble");
+        doc->m_strOutputLinePreambleInput = "";
+        const SelPoint on  = pane->PointToChar(200, 2);
+        doc->m_strOutputLinePreambleOutput = "";
+        const SelPoint off = pane->PointToChar(200, 2);
+        check(off.col - on.col == 5,
+              "preamble: click-to-column shifts by exactly the stamp width");
+
+        doc->m_strOutputLinePreambleOutput = "";
+        doc->m_strOutputLinePreambleNotes  = "";
+        doc->ClearOutput();
+    }
+
     // ── world slot numbers stay dense across a close (2026-08-12) ───────────
     // Windows renumbers m_view_number from OnIdle; the port never pumped it,
     // so closing world B of three left a dead toolbar slot and WorldInSlot's

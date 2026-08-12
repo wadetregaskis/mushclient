@@ -1567,6 +1567,37 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
     int currentY   = yOff;
     int globalChar = 0;
 
+    // ── Line preamble (timestamps) ────────────────────────────────────────────
+    // Drawn in the plain font on the line's FIRST visual row; the text starts
+    // after it.  Whole character cells (the pane is monospace), so XToChar's
+    // PreambleCells subtraction stays exact — the port's m_iPreambleOffset.
+    // Colours go through the same TranslateColour as the runs, so the fade
+    // dims the stamp with its line.
+    if (m_fn_line_preamble) {
+        SLinePreamble pre;
+        const time_t prevArr =
+            (lineIdx > 0) ? LineAt(lineIdx - 1).arrived : (time_t) 0;
+        if (m_fn_line_preamble(line, prevArr, lineIdx == 0, pre) &&
+            !pre.text.empty()) {
+            uint32_t rawFg = pre.fg, rawBg = pre.bg;
+            if (m_fn_translate_colour) {
+                rawFg = m_fn_translate_colour(rawFg, m_paintOpacity);
+                rawBg = m_fn_translate_colour(rawBg, m_paintOpacity);
+            }
+            const int preW = (int) pre.text.length() * m_charW;
+            dc.SetBrush(wxBrush(wxColour(GetRValue(rawBg), GetGValue(rawBg),
+                                         GetBValue(rawBg))));
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            dc.DrawRectangle(x, currentY, preW, m_lineH);
+            dc.SetFont(m_font);
+            dc.SetBackgroundMode(wxTRANSPARENT);
+            dc.SetTextForeground(wxColour(GetRValue(rawFg), GetGValue(rawFg),
+                                          GetBValue(rawFg)));
+            dc.DrawText(pre.text, x, currentY);
+            x += preW;
+        }
+    }
+
     for (const auto& run : line) {
         if (run.text.empty()) continue;
 
@@ -2121,6 +2152,22 @@ int COutputPane::YToLine(int clientY) const
                                 const_cast<COutputPane*>(this)->VisualRowToLogical(visRow)));
 }
 
+// The preamble's width in character cells for a line — 0 when the option is
+// off, the frame is not wired, or the line's kind has an empty preamble.
+// Recomputed on demand (a strftime per call): the text depends on the line's
+// own timestamp, and paint and hit-test must agree on ONE definition.
+int COutputPane::PreambleCells(int lineIdx) const
+{
+    if (!m_fn_line_preamble || lineIdx < 0 || lineIdx >= LineCountI())
+        return 0;
+    SLinePreamble pre;
+    const time_t prevArr =
+        (lineIdx > 0) ? LineAt(lineIdx - 1).arrived : (time_t) 0;
+    if (!m_fn_line_preamble(LineAt(lineIdx), prevArr, lineIdx == 0, pre))
+        return 0;
+    return (int) pre.text.length();
+}
+
 int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
 {
     if (lineIdx < 0 || lineIdx >= LineCountI() || m_charW <= 0)
@@ -2160,6 +2207,10 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
     // per-row column to the wrap width so a click past the text on a non-final
     // visual row can't spill into a later row's character range.
     int colInRow = std::max(0, (virtualX + m_charW / 2) / m_charW);
+    // The line preamble occupies whole cells at the START of the first visual
+    // row; clicks land on the text after it (Windows' m_iPreambleOffset).
+    if (vrOffset == 0)
+        colInRow = std::max(0, colInRow - PreambleCells(lineIdx));
     if (m_wrapCols > 0) colInRow = std::min(colInRow, m_wrapCols);
     int col      = vrOffset * m_wrapCols + colInRow;
     return std::max(0, std::min(totalChars, col));

@@ -130,6 +130,9 @@ struct SOutputLine : std::vector<SOutputRun> {
     // !!pluginID:sub(arg) plugin-call convention work — so the click handler
     // needs it alongside the run's action_type.
     bool comment  = false;
+    // The line's USER_INPUT flag (an echoed command).  The line-preamble
+    // (timestamp) family shows a different preamble per kind, as Windows does.
+    bool userInput = false;
     // When the line arrived, as a Unix time (CLine::m_theTime).  Only the
     // output-buffer FADE reads it: Windows works out each line's opacity from
     // how long ago it arrived (CMUSHView::OnDraw, mushview.cpp:1096-1121), so

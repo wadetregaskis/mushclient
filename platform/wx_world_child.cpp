@@ -1147,6 +1147,57 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         return (uint32_t) m_doc->TranslateColour((COLORREF) colour, opacity);
     };
 
+    // The line preamble (timestamps): CMUSHView::OnDraw's "line preamble"
+    // block, verbatim in substance.  The doc owns the nine timestamp_*
+    // options; the members are read HERE, live, each paint — so a
+    // SetOption("timestamp_output", ...) shows on the next repaint with no
+    // extra seam, exactly as on Windows.  %e is seconds since the world
+    // started, %D since the previous line (Windows' no-QPC fallback arm; its
+    // QPC arm exists only for sub-second precision the port's line stamps do
+    // not carry).  One deliberate simplification: Windows zeroes %D for the
+    // first line of each PAINT, making it scroll-dependent; here the first
+    // line of the BUFFER gets the zero.
+    m_output->m_fn_line_preamble =
+        [this](const SOutputLine& line, time_t prevArrived, bool isFirstLine,
+               COutputPane::SLinePreamble& out) -> bool
+    {
+        if (!m_doc) return false;
+        CString  strPreamble;
+        COLORREF cText, cBack;
+        if (line.comment) {
+            strPreamble = m_doc->m_strOutputLinePreambleNotes;
+            cText = m_doc->m_OutputLinePreambleNotesTextColour;
+            cBack = m_doc->m_OutputLinePreambleNotesBackColour;
+        } else if (line.userInput) {
+            strPreamble = m_doc->m_strOutputLinePreambleInput;
+            cText = m_doc->m_OutputLinePreambleInputTextColour;
+            cBack = m_doc->m_OutputLinePreambleInputBackColour;
+        } else {
+            strPreamble = m_doc->m_strOutputLinePreambleOutput;
+            cText = m_doc->m_OutputLinePreambleOutputTextColour;
+            cBack = m_doc->m_OutputLinePreambleOutputBackColour;
+        }
+        if (strPreamble.IsEmpty()) return false;
+
+        CString strElapsed;
+        strElapsed.Format("%0.6f",
+            (double) line.arrived -
+            (double) m_doc->m_whenWorldStarted.GetTime());
+        strPreamble.Replace("%e", strElapsed);
+
+        const double delta = (isFirstLine || prevArrived == 0)
+            ? 0.0 : (double) line.arrived - (double) prevArrived;
+        strElapsed.Format("%10.6f", delta);
+        strPreamble.Replace("%D", strElapsed);
+
+        strPreamble = m_doc->FormatTime(CTime(line.arrived), strPreamble,
+                                        false);
+        out.text = DecodeTextLenient((const char*) strPreamble);
+        out.fg   = (uint32_t) cText;
+        out.bg   = (uint32_t) cBack;
+        return true;
+    };
+
     m_output->m_fn_get_tooltip =
         [this](int x, int y) -> std::string
     {

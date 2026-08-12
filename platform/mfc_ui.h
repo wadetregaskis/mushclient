@@ -3724,8 +3724,14 @@ public:
         return g_wxhook_listbox_add_string
              ? g_wxhook_listbox_add_string(m_hWnd, s ? s : "") : LB_ERR;
     }
-    int       InsertString(int, LPCTSTR) { return LB_ERR; }
-    int       DeleteString(UINT) { return LB_ERR; }
+    int       InsertString(int i, LPCTSTR s) {
+        return g_wxhook_listbox_insert_string
+             ? g_wxhook_listbox_insert_string(m_hWnd, i, s ? s : "") : LB_ERR;
+    }
+    int       DeleteString(UINT i) {
+        return g_wxhook_listbox_delete_string
+             ? g_wxhook_listbox_delete_string(m_hWnd, (int) i) : LB_ERR;
+    }
     void      ResetContent() {
         if (g_wxhook_listbox_reset_content) g_wxhook_listbox_reset_content(m_hWnd);
     }
@@ -3757,7 +3763,11 @@ public:
         return g_wxhook_listbox_get_item_data ? (DWORD_PTR) g_wxhook_listbox_get_item_data(m_hWnd, i) : 0;
     }
     int       FindString(int, LPCTSTR) const { return LB_ERR; }
-    int       FindStringExact(int, LPCTSTR) const { return LB_ERR; }
+    int       FindStringExact(int after, LPCTSTR s) const {
+        return g_wxhook_listbox_find_string_exact
+             ? g_wxhook_listbox_find_string_exact(m_hWnd, after, s ? s : "")
+             : LB_ERR;
+    }
     int       SelectString(int, LPCTSTR) { return LB_ERR; }
     int       GetSelCount() const {
         return g_wxhook_listbox_get_sel_count ? g_wxhook_listbox_get_sel_count(m_hWnd) : 0;

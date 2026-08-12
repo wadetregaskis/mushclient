@@ -982,6 +982,61 @@ void TestScriptingPageBrowse()
     host->Destroy();
 }
 
+// ── 13. CListBox mutators really mutate (2026-08-12) ───────────────────────
+// DeleteString / InsertString / FindStringExact were hard LB_ERR stubs with
+// no wx hook — so Global Prefs' Remove button did nothing, Move Up/Down only
+// CLEARED the selection (InsertString's LB_ERR fed SetCurSel(-1)), and the
+// add-time duplicate check always answered "not found".  With that page the
+// ONLY writer of the startup world list, there was no UI way to stop a world
+// auto-opening at launch.
+void TestListBoxMutators()
+{
+    printf("CListBox mutators (Global Prefs Remove / Move / dedupe):\n");
+
+    wxFrame* host = new wxFrame(nullptr, wxID_ANY, wxT("lbx-host"));
+    wxListBox* lb = new wxListBox(host, wxID_ANY);
+    CListBox box;
+    box.m_hWnd = lb;
+
+    box.AddString("alpha");
+    box.AddString("bravo");
+    box.AddString("charlie");
+
+    // Delete: the COUNT decrease is what makes "did nothing" fail.
+    check(box.DeleteString(1) != LB_ERR, "DeleteString returns success");
+    check(box.GetCount() == 2, "...and the list really shrank");
+    CString at1; box.GetText(1, at1);
+    check(at1 == "charlie", "...with the right survivor at index 1");
+
+    // Insert at 0 (the Move Up shape): lands at 0 and returns 0.
+    check(box.InsertString(0, "bravo") == 0, "InsertString returns the index");
+    CString at0; box.GetText(0, at0);
+    check(at0 == "bravo" && box.GetCount() == 3,
+          "...and the item is really there");
+
+    // Find: exact, case-insensitive, absent -> LB_ERR (the dedupe check).
+    check(box.FindStringExact(-1, "alpha") != LB_ERR, "FindStringExact finds");
+    check(box.FindStringExact(-1, "ALPHA") != LB_ERR, "...case-insensitively");
+    check(box.FindStringExact(-1, "zz") == LB_ERR, "...and misses honestly");
+
+    // The whole Move Up sequence, as GlobalPrefs.cpp runs it: must end with
+    // the item one row up AND STILL SELECTED (it used to end deselected).
+    box.SetCurSel(2);   // "charlie"
+    {
+        int nIndex = box.GetCurSel();
+        CString strItem; box.GetText(nIndex, strItem);
+        box.DeleteString(nIndex);
+        nIndex = box.InsertString(nIndex - 1, strItem);
+        box.SetCurSel(nIndex);
+    }
+    CString moved; box.GetText(1, moved);
+    check(moved == "charlie" && box.GetCurSel() == 1,
+          "the Move Up sequence moves and keeps the selection");
+
+    box.m_hWnd = nullptr;
+    host->Destroy();
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -998,6 +1053,7 @@ int RunGuiBridgeSelfTest()
     TestFunctionListView();
     TestDdxCharsetRoundTrip();
     TestScriptingPageBrowse();
+    TestListBoxMutators();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

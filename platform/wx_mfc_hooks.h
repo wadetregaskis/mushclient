@@ -529,6 +529,22 @@ extern int   (*g_wxhook_listbox_get_count)(void* hwnd);
 extern int   (*g_wxhook_listbox_get_cur_sel)(void* hwnd);
 extern int   (*g_wxhook_listbox_set_cur_sel)(void* hwnd, int sel);
 extern char* (*g_wxhook_listbox_get_text)(void* hwnd, int index);   // heap; caller free()s
+// Mutators + search (2026-08-12): these three had NO hooks — hard LB_ERR stubs
+// — so Global Prefs' Remove/Move Up/Move Down did nothing and its duplicate
+// checks always answered "not found".  Win32 semantics: delete returns the
+// remaining count (LB_ERR for a bad index), insert returns the inserted index
+// (index -1 = append), find is a case-insensitive exact match starting after
+// `after`, wrapping, LB_ERR when absent.
+// Status text WITH doc attribution (2026-08-12): a background world's
+// "Connecting to X" used to land on the ACTIVE world's status bar (the
+// plain set_status hook resolves purely by GetActiveChild).  This variant
+// delivers to the producing doc's own frame; unknown doc falls back to the
+// active child (app-scoped messages keep their old route).
+extern void  (*g_wxhook_set_status_for)(void* doc, const char* msg);
+
+extern int   (*g_wxhook_listbox_delete_string)(void* hwnd, int index);
+extern int   (*g_wxhook_listbox_insert_string)(void* hwnd, int index, const char* text);
+extern int   (*g_wxhook_listbox_find_string_exact)(void* hwnd, int after, const char* text);
 // Per-item data + multi-selection (Send-to-All world list, Choose-Notepad).
 extern void     (*g_wxhook_listbox_set_item_data)(void* hwnd, int index, intptr_t data);
 extern intptr_t (*g_wxhook_listbox_get_item_data)(void* hwnd, int index);

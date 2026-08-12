@@ -716,6 +716,21 @@ static void hook_set_status(const char* msg)
         s_statusBar->SetStatusText(text, 0);
 }
 
+// Doc-attributed status (2026-08-12): a background world's "Connecting to X"
+// used to land on whichever world was FRONTMOST (the hook above resolves by
+// GetActiveChild) and stick there until the next activation.  Deliver to the
+// producing doc's own frame — visible if frontmost, waiting on its own bar if
+// not.  Unknown doc (app-scoped caller): the old active-child route.
+static void hook_set_status_for(void* vdoc, const char* msg)
+{
+    auto it = s_docFrameMap.find(static_cast<CMUSHclientDoc*>(vdoc));
+    if (it != s_docFrameMap.end() && it->second) {
+        it->second->SetTransientStatus(DecodeTextLenient(msg));
+        return;
+    }
+    hook_set_status(msg);
+}
+
 
 // ── MDI frame creation ────────────────────────────────────────────────────
 // Called when CMDIFrameWnd::LoadFrame() is invoked on CMainFrame.
@@ -4986,6 +5001,41 @@ static char* hook_listbox_get_text(void* hwnd, int index)
     if (!lb || index < 0 || index >= (int) lb->GetCount()) return nullptr;
     return strdup(lb->GetString(index).utf8_str());
 }
+// The mutators + search (2026-08-12): without these, Global Prefs' Remove /
+// Move Up / Move Down were silent no-ops and its duplicate checks always
+// added.  Win32 semantics throughout — see wx_mfc_hooks.h.
+static int hook_listbox_delete_string(void* hwnd, int index)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (!lb || index < 0 || index >= (int) lb->GetCount()) return LB_ERR;
+    lb->Delete((unsigned) index);
+    return (int) lb->GetCount();
+}
+static int hook_listbox_insert_string(void* hwnd, int index, const char* text)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (!lb) return LB_ERR;
+    const wxString s = DecodeTextLenient(text);
+    if (index < 0 || index >= (int) lb->GetCount())
+        return (int) lb->Append(s);              // -1 (or past end) = append
+    return (int) lb->Insert(s, (unsigned) index);
+}
+static int hook_listbox_find_string_exact(void* hwnd, int after, const char* text)
+{
+    wxListBox* lb = LBX(hwnd);
+    if (!lb) return LB_ERR;
+    const int n = (int) lb->GetCount();
+    if (n == 0) return LB_ERR;
+    const wxString want = DecodeTextLenient(text);
+    // Win32: start after `after`, wrap once round the whole list.
+    int start = (after < -1 || after >= n - 1) ? 0 : after + 1;
+    for (int k = 0; k < n; ++k) {
+        const int i = (start + k) % n;
+        if (lb->GetString((unsigned) i).IsSameAs(want, false /*case-insensitive*/))
+            return i;
+    }
+    return LB_ERR;
+}
 static void hook_listbox_set_item_data(void* hwnd, int index, intptr_t data)
 {
     wxListBox* lb = LBX(hwnd);
@@ -5472,6 +5522,9 @@ void wx_mfc_install_hooks()
     g_wxhook_listbox_get_cur_sel      = hook_listbox_get_cur_sel;
     g_wxhook_listbox_set_cur_sel      = hook_listbox_set_cur_sel;
     g_wxhook_listbox_get_text         = hook_listbox_get_text;
+    g_wxhook_listbox_delete_string    = hook_listbox_delete_string;
+    g_wxhook_listbox_insert_string    = hook_listbox_insert_string;
+    g_wxhook_listbox_find_string_exact = hook_listbox_find_string_exact;
     g_wxhook_listbox_set_item_data    = hook_listbox_set_item_data;
     g_wxhook_listbox_get_item_data    = hook_listbox_get_item_data;
     g_wxhook_listbox_get_sel_count    = hook_listbox_get_sel_count;
@@ -5527,6 +5580,7 @@ void wx_mfc_install_hooks()
     g_wxhook_query_quit_save    = hook_query_quit_save;
     g_wxhook_report_mfc_exception = hook_report_mfc_exception;
     g_wxhook_set_status         = hook_set_status;
+    g_wxhook_set_status_for   = hook_set_status_for;
     g_wxhook_save_world         = hook_save_world;
     g_wxhook_file_dialog        = hook_file_dialog;
     g_wxhook_font_dialog        = hook_font_dialog;

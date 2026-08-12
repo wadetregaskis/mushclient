@@ -10,6 +10,9 @@
 #include <wx/listctrl.h>
 #include <wx/timer.h>
 #include <wx/stopwatch.h>
+#include <algorithm>
+#include <ctime>
+#include <vector>
 
 #include "stdafx.h"                   // compat.h, GetConnectionStatus()
 #include "MUSHclient.h"               // CMUSHclientApp + App + doc template
@@ -72,6 +75,10 @@ public:
         Bind(wxEVT_CLOSE_WINDOW, &CActivityFrame::OnClose, this);
         // Double-click (or Enter) on a row → bring that world's window to front.
         m_list->Bind(wxEVT_LIST_ITEM_ACTIVATED, &CActivityFrame::OnActivateRow, this);
+        // Column click → sort by that column, toggling the direction on a
+        // repeat click — CActivityView::OnColumnclick behaviour (2026-08-12;
+        // the port bound no handler, so headers were dead).
+        m_list->Bind(wxEVT_LIST_COL_CLICK, &CActivityFrame::OnColClick, this);
 
         Repopulate();
         m_timer.Start(kTickMs);
@@ -147,6 +154,18 @@ private:
             wx_activate_world_frame(pDoc);   // no-ops if the world has since closed
     }
 
+    void OnColClick(wxListEvent& evt)
+    {
+        const int col = evt.GetColumn();
+        if (col < 0) return;
+        if (col == m_lastSortCol)
+            m_sortReverse = !m_sortReverse;
+        else
+            m_sortReverse = false;
+        m_lastSortCol = col;
+        Repopulate();
+    }
+
     void Repopulate()
     {
         if (!m_list || !App.m_pWorldDocTemplate)
@@ -155,14 +174,40 @@ private:
         m_list->Freeze();
         m_list->DeleteAllItems();
 
-        POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition();
+        // Snapshot the docs, sorted by the clicked column (insertion order
+        // until a header is clicked).  Sorting the snapshot rather than the
+        // control matches the rebuild-per-refresh model, and the comparator
+        // is the hoisted, headless-tested ActivityCompareKeys.
+        std::vector<CMUSHclientDoc*> docs;
+        for (POSITION p = App.m_pWorldDocTemplate->GetFirstDocPosition(); p; ) {
+            CMUSHclientDoc* d =
+                (CMUSHclientDoc*) App.m_pWorldDocTemplate->GetNextDoc(p);
+            if (d) docs.push_back(d);
+        }
+        if (m_lastSortCol >= 0) {
+            const time_t now = time(nullptr);
+            auto key = [now](CMUSHclientDoc* d) {
+                ActivitySortKey k;
+                k.name        = (const char*) d->m_mush_name;
+                k.newLines    = d->m_new_lines;
+                k.totalLines  = d->m_total_lines;
+                k.status      = (const char*)
+                                GetConnectionStatus(d->m_iConnectPhase);
+                k.connectTime = (long long) d->m_tConnectTime.GetTime();
+                k.durationSecs= (long long) now - k.connectTime;
+                return k;
+            };
+            const int col = m_lastSortCol;
+            const bool rev = m_sortReverse;
+            std::stable_sort(docs.begin(), docs.end(),
+                [&key, col, rev](CMUSHclientDoc* a, CMUSHclientDoc* b) {
+                    return ActivityCompareKeys(key(a), key(b), col, rev) < 0;
+                });
+        }
+
         int row = 0;
-        while (pos)
+        for (CMUSHclientDoc* pDoc : docs)
         {
-            CMUSHclientDoc* pDoc =
-                (CMUSHclientDoc*) App.m_pWorldDocTemplate->GetNextDoc(pos);
-            if (!pDoc)
-                continue;
 
             CString strStatus = GetConnectionStatus(pDoc->m_iConnectPhase);
 
@@ -200,6 +245,8 @@ private:
     }
 
     wxListCtrl* m_list = nullptr;
+    int  m_lastSortCol = -1;      // -1 = insertion order (no click yet)
+    bool m_sortReverse = false;
     wxTimer     m_timer;
 };
 

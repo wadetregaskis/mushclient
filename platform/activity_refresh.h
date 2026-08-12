@@ -42,6 +42,9 @@
 
 #pragma once
 
+#include <string>
+#include <strings.h>   // strcasecmp — ActivityCompareKeys
+
 // Mirrors CMUSHclientApp's anonymous refresh-type enum.  Restated rather than
 // included so this header stays free of MUSHclient.h (and therefore of MFC);
 // wx_activity.cpp static_asserts the two agree, so the copy cannot drift.
@@ -130,3 +133,53 @@ inline ActivityRefreshDecision ActivityRefreshForTick (unsigned int refreshType,
 
   return decision;
   }   // end of ActivityRefreshForTick
+
+// ── Column sort for the Activity list (2026-08-12) ───────────────────────────
+// The canonical CActivityView sorts by any clicked column, toggling
+// ascending/descending (OnColumnclick + CompareFunc), and re-sorts on every
+// refresh.  The port's window bound no column-click handler at all.  The
+// comparator is hoisted here as a pure function over a snapshot key -- same
+// reasoning as the refresh policy above: it is live policy, and in the wx TU
+// no test could reach it.  Keys mirror CompareFunc's per-column rules
+// (ActivityView.cpp:449): case-insensitive strings for World/Status, numeric
+// for New/Lines, the connect timestamp for Since, elapsed-since-connect for
+// Duration.  The Seq column is not shown on the port.
+
+enum ActivitySortColumn
+  {
+  kActivityColWorld = 0,
+  kActivityColNew,
+  kActivityColLines,
+  kActivityColStatus,
+  kActivityColSince,
+  kActivityColDuration,
+  };
+
+struct ActivitySortKey
+  {
+  std::string name;          // world name
+  long        newLines      = 0;
+  long        totalLines    = 0;
+  std::string status;        // connection-status text
+  long long   connectTime   = 0;   // time_t of connect (0 = never)
+  long long   durationSecs  = 0;   // now - connectTime, Windows' Duration key
+  };
+
+inline int ActivityCompareKeys (const ActivitySortKey& a,
+                                const ActivitySortKey& b,
+                                int col, bool reverse)
+  {
+  int r = 0;
+  auto num = [](long long x, long long y) { return x < y ? -1 : (x > y ? 1 : 0); };
+  switch (col)
+    {
+    case kActivityColWorld:  r = strcasecmp (a.name.c_str (), b.name.c_str ()); break;
+    case kActivityColNew:    r = num (a.newLines, b.newLines);                  break;
+    case kActivityColLines:  r = num (a.totalLines, b.totalLines);              break;
+    case kActivityColStatus: r = strcasecmp (a.status.c_str (), b.status.c_str ()); break;
+    case kActivityColSince:  r = num (a.connectTime, b.connectTime);            break;
+    case kActivityColDuration: r = num (a.durationSecs, b.durationSecs);        break;
+    default: break;
+    }
+  return reverse ? -r : r;
+  }   // end of ActivityCompareKeys

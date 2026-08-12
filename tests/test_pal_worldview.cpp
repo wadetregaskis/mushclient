@@ -2025,6 +2025,43 @@ TEST(ActivityRefresh, NonPositiveIntervalFallsBackToTheDefaultNotToEveryTick)
     }
 }
 
+// ── ActivityCompareKeys: the column-sort comparator (2026-08-12) ────────────
+// Windows sorts the Activity list by any clicked column, toggling direction;
+// the port bound no handler at all.  The comparator was hoisted next to the
+// refresh policy so it can be pinned here.  The fixture makes lexical and
+// numeric order DISAGREE (9 vs 10), per the degenerate-fixture lesson.
+TEST(ActivityRefresh, CompareKeysSortsEachColumnInItsOwnDomain)
+{
+    ActivitySortKey a, b;
+    a.name = "Aardwolf";  b.name = "discworld";       // case-insensitive
+    a.newLines = 9;       b.newLines = 10;            // numeric, not lexical
+    a.totalLines = 200;   b.totalLines = 30;
+    a.status = "Open";    b.status = "closed";
+    a.connectTime = 1000; b.connectTime = 2000;
+    a.durationSecs = 50;  b.durationSecs = 5;
+
+    // World: case-insensitive text — "Aardwolf" < "discworld" despite 'A'<'d'
+    // only holding case-insensitively.
+    EXPECT_TRUE(ActivityCompareKeys(a, b, kActivityColWorld, false) < 0);
+    // New: 9 < 10 numerically (lexically "9" > "10" — the discriminator).
+    EXPECT_TRUE(ActivityCompareKeys(a, b, kActivityColNew, false) < 0);
+    // Lines: 200 > 30 numerically (lexically "200" < "30").
+    EXPECT_TRUE(ActivityCompareKeys(a, b, kActivityColLines, false) > 0);
+    // Status: case-insensitive — "closed" < "Open".
+    EXPECT_TRUE(ActivityCompareKeys(a, b, kActivityColStatus, false) > 0);
+    // Since / Duration: numeric.
+    EXPECT_TRUE(ActivityCompareKeys(a, b, kActivityColSince, false) < 0);
+    EXPECT_TRUE(ActivityCompareKeys(a, b, kActivityColDuration, false) > 0);
+
+    // The reverse toggle flips every column's answer.
+    EXPECT_TRUE(ActivityCompareKeys(a, b, kActivityColNew, true) > 0);
+    EXPECT_TRUE(ActivityCompareKeys(a, b, kActivityColLines, true) < 0);
+
+    // Equal keys stay equal either way (stability's precondition).
+    EXPECT_EQ(0, ActivityCompareKeys(a, a, kActivityColNew, false));
+    EXPECT_EQ(0, ActivityCompareKeys(a, a, kActivityColNew, true));
+}
+
 TEST(ActivityRefresh, RemainderIsCarriedSoTheCadenceDoesNotDrift)
 {
     // 300 ms ticks against a 1 s interval: the deadline never lands on a tick

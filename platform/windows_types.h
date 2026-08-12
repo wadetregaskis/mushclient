@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <cassert>
 #include <cstring>
+#include <string>    // mc_tcsftime's %# rewrite
 
 // ── Integer types ──────────────────────────────────────────────────────────
 
@@ -68,7 +69,26 @@ typedef const wchar_t *    LPCWSTR;
 // TCHAR string function aliases — map Windows _tcs* names to POSIX equivalents.
 #include <time.h>
 #ifndef _tcsftime
-#  define _tcsftime strftime
+// NOT plain strftime (2026-08-12): MSVC's strftime understands the %# flag
+// (no leading zero); POSIX spells that %-.  A bare alias fed %# through raw,
+// so FormatTime — used by the Activity window's Since column, log-file
+// preambles/postambles and auto-log filenames — printed "#I:58 PM" instead
+// of "2:58 PM" for any Windows-authored format.  Same rewrite CTime::Format
+// (platform/mfc_time.h) already does; FormatTime bypasses that shim.
+inline size_t mc_tcsftime(char* out, size_t maxsize, const char* fmt,
+                          const struct tm* tmv)
+{
+    std::string cleanFmt;
+    if (fmt) {
+        cleanFmt.reserve(strlen(fmt) + 1);
+        for (const char* p = fmt; *p; ++p) {
+            if (p[0] == '%' && p[1] == '#') { cleanFmt += "%-"; ++p; }
+            else                            cleanFmt += *p;
+        }
+    }
+    return strftime(out, maxsize, cleanFmt.c_str(), tmv);
+}
+#  define _tcsftime mc_tcsftime
 #endif
 #ifndef _tcscpy
 #  define _tcscpy   strcpy

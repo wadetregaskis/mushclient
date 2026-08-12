@@ -843,4 +843,18 @@ TEST(InfoTest, SetScrollRecordsTheScrollbarWantedFlag)
     EXPECT_TRUE(doc.GetInfo(120).boolVal == 0);
 }
 
+// FormatTime translates the MSVC-only %# flag (no leading zero; POSIX %-).
+// The bare `#define _tcsftime strftime` fed it through raw, so the Activity
+// window's Since column showed "#I:58 PM" and any Windows-authored log
+// preamble/postamble/auto-log filename containing %# was mangled the same
+// way.  Now mc_tcsftime rewrites it — the same loop CTime::Format uses.
+TEST(InfoTest, FormatTimeTranslatesTheWindowsNoLeadingZeroFlag)
+{
+    CMUSHclientDoc doc;
+    const CTime t(2026, 7, 16, 5, 4, 0);
+    EXPECT_STREQ("5:04", (LPCTSTR) doc.FormatTime(t, "%#I:%M"));
+    // The control: the plain form keeps its leading zero.
+    EXPECT_STREQ("05:04", (LPCTSTR) doc.FormatTime(t, "%I:%M"));
+}
+
 MC_TEST_MAIN()

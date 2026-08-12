@@ -279,6 +279,45 @@ TEST(PalWorldView, CommandFamilyDrivesTheView)
     EXPECT_TRUE(view.fontPts == 14 && view.fontBold && !view.fontItalic);
 }
 
+// world.SetInputFont sets the INPUT font.  It used to fork on the port and drive
+// EmitOutputFont instead, on the premise that the two shared one face -- so the
+// script API restyled the MUD output, never touched the command bar, and (since
+// the port's setOutputFont also writes the doc's output-font members) a save
+// afterwards persisted an output font the user never chose.
+//
+// The two halves are asserted TOGETHER: "the input font changed" alone would
+// still pass with the fork in place if some other path had also set it, and "the
+// output font is untouched" alone would pass if the call did nothing at all.
+TEST(PalWorldView, SetInputFontSetsTheInputFontAndOnlyThat)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    // Seed the output font with something recognisable, so a stray write shows.
+    doc.EmitOutputFont("Courier", 13, false, false);
+    EXPECT_STREQ("Courier", view.outFontFace.c_str());
+    ASSERT_EQ(13, view.outFontPts);
+
+    doc.SetInputFont("Menlo", 17, 700, TRUE);
+
+    EXPECT_STREQ("Menlo", view.fontFace.c_str());   // ...the command bar
+    EXPECT_EQ(17, view.fontPts);
+    EXPECT_TRUE(view.fontBold);                     // 700 >= FW_SEMIBOLD
+    EXPECT_TRUE(view.fontItalic);
+
+    EXPECT_STREQ("Courier", view.outFontFace.c_str());   // ...and NOT the output
+    EXPECT_EQ(13, view.outFontPts);
+
+    // Reaching view.fontFace at all is what proves the canonical body ran:
+    // EmitInputFont has exactly ONE caller in the tree, ChangeInputFont
+    // (doc.cpp:1284).  (m_InputFontHeight/Width are deliberately zero in this
+    // build -- gdi_headless.cpp zeroes the TEXTMETRIC on purpose -- so they are
+    // not an oracle here.)
+
+    doc.m_pWorldView = nullptr;
+}
+
 // With no view attached the command helpers are inert and report "no host":
 // SetCommandText false, empty pulls, no crashes.
 TEST(PalWorldView, CommandFamilyNullHostIsInert)

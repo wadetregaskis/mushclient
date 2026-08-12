@@ -405,18 +405,16 @@ void CMUSHclientDoc::SetInputFont(LPCTSTR FontName, short PointSize, short Weigh
 {
   Italic = Italic != 0; // make boolean
 
-#ifndef _WIN32
-  // On non-Windows the "input font" also controls the output font (they share
-  // one monospace face in the terminal-style layout).  Forward to the output
-  // pane via the wxWidgets callback.
-  {
-    std::string face(FontName ? FontName : "");
-    bool bold = (Weight >= 600);
-    EmitOutputFont(face, (int)PointSize, bold, (bool)Italic);
-  }
-#else
+  // One body on both platforms.  The port used to fork here and drive
+  // EmitOutputFont instead, on the premise that "the input font also controls
+  // the output font (they share one monospace face)" -- which was not true: the
+  // command bar has its own font, its own preference and its own live seam
+  // (CWorldChildFrame::setInputFont), and ChangeInputFont already reaches it
+  // through EmitInputFont.  The fork left world.SetInputFont restyling the MUD
+  // output, never touching the command bar, and -- because the port's
+  // setOutputFont also writes the doc's output-font members -- persisting an
+  // output font the user never chose.
   ChangeInputFont(PointSize, FontName, Weight, DEFAULT_CHARSET, Italic);
-#endif
 }  // end of CMUSHclientDoc::SetInputFont
 
 

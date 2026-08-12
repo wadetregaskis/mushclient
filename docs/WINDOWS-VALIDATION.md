@@ -1152,13 +1152,25 @@ several TUs changed — a broad smoke matters.
 
 These sites still run their original Windows code directly; each is a
 genuine semantic fork, documented in commits `de9970b`/`a9061ce`:
-`SetInputFont` (port maps input→output font), `PasteCommand`,
+`PasteCommand`,
 `SendTo`→command (plugin-notify delta), `ChangeInputFont`'s view fixup,
 `MoveWorldWindowX`/`GetWorldWindowPositionX` (`Which`>1 multi-view), Lua
 `GetMainWindowPosition`/`GetWorldWindowPosition` (param variants),
 `Activate` (child-frame semantics), `SetScroll` (Visible flag),
 `DeleteLines` view resync, `GetInfo(296)`, `GetInfo(257/258)`.  Also the
 whole **display family** (line rendering) — unchanged pull model.
+
+**`SetInputFont` was struck off this list on 2026-08-11 and unforked.** The
+premise recorded in `de9970b` — "one shared monospace face in the terminal
+layout" — was never true here: the command bar has its own font, its own
+preference, and its own live seam (`CWorldChildFrame::setInputFont`), which
+`ChangeInputFont` already drives through `EmitInputFont`.  The fork made
+`world.SetInputFont` restyle the MUD **output** and never touch the command
+bar, and because the port's `setOutputFont` also writes the doc's output-font
+members, a save then persisted an output font the user never chose.  Both
+platforms now run the one canonical body, so nothing here needs a Windows run
+— but it is worth an eyeball that the Windows command window still restyles,
+since `ChangeInputFont`'s own `CSendView` fixup is the arm that does it.
 
 ## 6. Known intentional behaviour deltas (expected; verify they're benign)
 

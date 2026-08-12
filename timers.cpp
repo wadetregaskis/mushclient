@@ -419,10 +419,14 @@ void CMUSHclientDoc::OnUpdateGameResetalltimers(CCmdUI* pCmdUI)
 }
 #endif
 
-// Rebuild the timer reverse map (timer pointer -> name).  Off-Windows this is
-// a no-op supplied by platform/mushapp_stubs.cpp (the timer map is iterated
-// directly there), so only Windows needs the real body here.
-#ifdef _WIN32
+// Rebuild the timer reverse map (timer pointer -> name).  Compiled on EVERY
+// platform: the map is what gives an unlabelled timer its internal "*timerN"
+// name at the two places that report one — the script-callback argument
+// (CheckTimerList above, :209) and Debug("timerlist").  This was #ifdef _WIN32
+// with no-op stubs on the port until 2026-08-12, on the strength of a comment
+// claiming it "rebuilds a sorted display list" — it never did; unlike
+// SortTriggers/SortAliases there is no timer array, ONLY the rev map, so the
+// stubs handed every unlabelled timer's script an empty name.
 
 void  CMUSHclientDoc::SortTimers (void)
   {
@@ -442,7 +446,5 @@ POSITION pos;
     }
 
   } // end of CMUSHclientDoc::SortTimers
-
-#endif // _WIN32
 
 

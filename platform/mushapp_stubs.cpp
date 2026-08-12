@@ -353,12 +353,11 @@ BOOL CMUSHclientDoc::Save_Set(const int set_type,
 // port and build the real CTreePropertySheet (rendered as a native wxTreebook
 // via hook_run_property_sheet).
 
-// ── CMUSHclientDoc::SortTimers ────────────────────────────────────────────────
-// On Windows this rebuilds a sorted timer display list.  On non-Windows the
-// timer map is iterated directly, so this is a no-op (matching the headless build).
-void CMUSHclientDoc::SortTimers()
-{
-}
+// SortTimers is the REAL body now (timers.cpp:431, un-gated 2026-08-12): it
+// builds the timer reverse map, which the script-callback path and
+// Debug("timerlist") read for unlabelled timers' internal names.  The no-op
+// stub here rested on a false premise ("rebuilds a sorted display list" —
+// there is no timer array) and made those names empty.
 
 // ── BrowseCallbackProc ────────────────────────────────────────────────────────
 // Windows SHBrowseForFolder callback — never called on POSIX because

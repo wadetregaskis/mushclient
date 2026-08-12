@@ -44,19 +44,18 @@
 
 // ════════════════════════════════════════════════════════════════════════════
 // Item 1 — CMUSHclientDoc methods whose real bodies live in TUs mushcore never
-// compiles (scripting/methods/methods_notepad.cpp, timers.cpp #ifdef _WIN32,
-// scripting/scripting.cpp, the view no-op).  All are doc.h-declared.
+// compiles (scripting/methods/methods_notepad.cpp, scripting/scripting.cpp,
+// the view no-op).  All are doc.h-declared.
 // ════════════════════════════════════════════════════════════════════════════
 
 // ActivateNotepad is the REAL body now (methods_notepad.cpp:210), adopted with
 // the rest of the notepad family.
 
-// SortTimers — timers.cpp:431 is #ifdef _WIN32 (rebuilds a sorted display list);
-// the headless timer map is iterated directly, so this is a no-op.  Body copied
-// from the mushapp no-op at platform/mushapp_stubs.cpp:358-361 (mushapp-only).
-void CMUSHclientDoc::SortTimers ()
-{
-}
+// SortTimers is the REAL body now (timers.cpp:431, un-gated 2026-08-12).  The
+// no-op here — copied from mushapp_stubs on a false premise ("rebuilds a
+// sorted display list"; there is no timer array) — left the timer reverse map
+// empty, so unlabelled timers' script routines received "" instead of the
+// internal "*timerN" name.
 
 // ShowErrorLines / WriteErrorLines are the canonical bodies now
 // (scripting/scripting.cpp, in mushcore) — they walk the script file around an

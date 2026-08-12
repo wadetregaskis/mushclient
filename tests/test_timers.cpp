@@ -601,6 +601,85 @@ TEST(TimerScript, ScriptDeletingOtherDueTimerPreventsItsFiring)
     CTimer* gone = nullptr;
     EXPECT_FALSE(doc.GetTimerMap().Lookup("b_second", gone));  // deleted
 }
+
+// timers.cpp:207-209 — a timer with no label passes its INTERNAL name (the
+// "*timerN" map key) to its script routine, read out of the timer reverse
+// map.  Only SortTimers builds that map, and the port stubbed SortTimers to a
+// no-op until 2026-08-12 (on the false premise that it "rebuilds a sorted
+// display list" — there is no timer array; the rev map is ALL it builds), so
+// every unlabelled timer's script received "" where Windows passes "*timerN".
+TEST(TimerScript, UnlabelledTimerPassesInternalNameToScript)
+{
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc; make_doc(doc);
+
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function OnTimer(name)\n"
+        "  world.SetVariable('seen_name', 'got:' .. name)\n"
+        "end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+
+    // An empty label mints an internal "*timer%010ld" map key
+    // (methods_timers.cpp:150), and AddTimer ends in SortTimers().
+    ASSERT_EQ((long)eOK, doc.AddTimer("", 0, 0, 5.0, "", eEnabled, "OnTimer"));
+
+    CString internalName;
+    CTimer* t = nullptr;
+    POSITION pos = doc.GetTimerMap().GetStartPosition();
+    ASSERT_TRUE(pos != NULL);
+    doc.GetTimerMap().GetNextAssoc(pos, internalName, t);
+    ASSERT_TRUE(t != nullptr);
+    EXPECT_TRUE(t->strLabel.IsEmpty());
+    ASSERT_EQ(0, strncmp(internalName, "*timer", 6));
+
+    // The root cause pinned directly: the rev map holds this timer's name.
+    // (A no-op SortTimers leaves it empty — operator[] would mint "".)
+    ASSERT_EQ((size_t)1, doc.GetTimerRevMap().size());
+    EXPECT_STREQ((LPCTSTR)internalName, doc.GetTimerRevMap()[t].c_str());
+
+    make_overdue(t);
+    doc.FindAllEntryPoints();
+    tick(doc);
+
+    // End to end: the script saw the internal name, not "".  The 'got:'
+    // prefix makes "callback never ran" fail differently from "empty name".
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("seen_name", v));
+    EXPECT_STREQ((LPCTSTR)(CString("got:") + internalName), v->strContents);
+}
+
+// The labelled control: a timer WITH a label passes the label itself (the
+// plain arm of timers.cpp:207 — pLabel = strLabel).  Guards the reverse
+// mutation, where the fix hands the map key to labelled timers too; the two
+// only coincide because a labelled timer's key IS its label, so this pins the
+// strLabel read specifically via nMatched + the variable.
+TEST(TimerScript, LabelledTimerPassesItsLabelToScript)
+{
+    ScopedClock clk(start_instant());
+    CMUSHclientDoc doc; make_doc(doc);
+
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "function OnTimer(name)\n"
+        "  world.SetVariable('seen_name', 'got:' .. name)\n"
+        "end\n"), "<test>"));
+    doc.m_ScriptEngine = engine;
+
+    ASSERT_EQ((long)eOK, doc.AddTimer("heartbeat", 0, 0, 5.0, "", eEnabled,
+                                      "OnTimer"));
+    CTimer* t = nullptr;
+    ASSERT_TRUE(doc.GetTimerMap().Lookup("heartbeat", t));
+    make_overdue(t);
+    doc.FindAllEntryPoints();
+    tick(doc);
+
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("seen_name", v));
+    EXPECT_STREQ("got:heartbeat", (LPCTSTR)v->strContents);
+}
 #endif // MUSHCLIENT_LUA_SCRIPTING
 
 // ═══ world.* timer API (methods_timers.cpp) ═══════════════════════════════

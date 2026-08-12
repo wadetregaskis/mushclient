@@ -31,6 +31,8 @@
 #include "platform/wx_outputpane.h"
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_message_box — answer the
                                      // clear-buffer confirmation prompt
+#include "dialogs/TextAttributesDlg.h"    // Display ▸ Text Attributes
+#include "dialogs/HighlightPhraseDlg.h"   // Display ▸ Highlight Word
 
 #include <cstdio>
 #include <vector>
@@ -1083,6 +1085,116 @@ int RunWorldFrameSelfTest()
             if (savedH > 0) cfg.Write(wxT("/geometry/child_h"), savedH);
             else            cfg.DeleteEntry(wxT("/geometry/child_h"));
         }
+    }
+
+    // ── The selection's coordinate space, at the two dialogs that read it ────
+    // COutputPane::GetSelectionInfo answers in the 1-based line/column space
+    // world.GetSelection uses.  Both of these functions are the canonical
+    // CMUSHView bodies, which work in the 0-based m_selstart_line /
+    // m_selstart_col space — so both used to describe the character one line
+    // BELOW and one column RIGHT of the one the user had selected.
+    //
+    // The fixture is deliberately non-degenerate: the two lines differ in text
+    // AND in colour, and no letter repeats, so an off-by-one in either axis
+    // produces a different answer rather than the same one.
+    {
+        doc->m_bAutoWrapWindowWidth = false;
+        doc->ClearOutput();
+        doc->DisplayMsg("\x1b[31mABCDEFGH\x1b[0m\n", 20, 0);
+        doc->DisplayMsg("\x1b[32mijklmnop\x1b[0m\n", 20, 0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        // Find each line by its text rather than assuming an index: ClearOutput
+        // re-seeds a line of its own, so the two are not at 0 and 1.
+        auto lineIndexOf = [&](const char* want) -> long {
+            const int n = (int) strlen(want);
+            long i = 0;
+            for (POSITION p = doc->m_LineList.GetHeadPosition(); p; ++i) {
+                const CLine* l = doc->m_LineList.GetNext(p);
+                if (l && l->len >= n && memcmp(l->text, want, n) == 0) return i;
+            }
+            return -1;
+        };
+        const long idxA = lineIndexOf("ABCDEFGH");   // 0-based
+        const long idxB = lineIndexOf("ijklmnop");
+        check(idxA >= 0 && idxB == idxA + 1,
+              "selection coords: the two-line fixture reached the buffer");
+
+        // What the engine says about the FIRST SELECTED character of each line,
+        // computed here from the line found by text.  This is the oracle: if the
+        // code under test reads a different line, it cannot match.
+        auto engineRGB = [&](long idx, long col0) -> COLORREF {
+            CLine* l = doc->m_LineList.GetAt(doc->GetLinePosition(idx));
+            CStyle* st = NULL; int iCol = 0; POSITION fp = NULL;
+            if (!l || !doc->FindStyle(l, col0 + 1, iCol, st, fp)) return (COLORREF) -1;
+            COLORREF fg = 0, bg = 0;
+            doc->GetStyleRGB(st, fg, bg);
+            return fg;
+        };
+        const COLORREF rgbA = engineRGB(idxA, 2);
+        const COLORREF rgbB = engineRGB(idxB, 2);
+        check(rgbA != rgbB && rgbA != (COLORREF) -1,
+              "selection coords: ...with the two lines in different colours");
+
+        // Capture what each dialog was handed, then decline it.
+        static CString s_letter, s_textColour;
+        static int     s_lineNo = 0;
+        static COLORREF s_hlFore = 0;
+        static int     s_seenTA = 0, s_seenHL = 0;
+        intptr_t (*const savedRunDlg)(void*, unsigned) = g_run_mfc_dialog;
+        g_run_mfc_dialog = [](void* self, unsigned idd) -> intptr_t {
+            if (idd == IDD_TEXT_ATTRIBUTES) {
+                const CTextAttributesDlg* d = (const CTextAttributesDlg*) self;
+                s_letter = d->m_strLetter; s_textColour = d->m_strTextColour;
+                s_lineNo = d->m_iLine; ++s_seenTA;
+            } else if (idd == IDD_HIGHLIGHT) {
+                const CHighlightPhraseDlg* d = (const CHighlightPhraseDlg*) self;
+                s_hlFore = d->m_iOtherForeground; ++s_seenHL;
+            }
+            return IDCANCEL;
+        };
+
+        // Select "CDEF" on the first line: 1-based columns 3..7, so the first
+        // selected character is 'C'.  One column right is 'D'; the same column
+        // one line down is 'k'.  All three are distinguishable.
+        pane->SetSelectionRange((int)(idxA + 1), (int)(idxA + 1), 3, 7);
+        s_seenTA = 0;
+        child->ShowTextAttributes();
+        check(s_seenTA == 1, "Text Attributes: the dialog was reached");
+        check(s_letter == "C",
+              "Text Attributes: reports the SELECTED character, not the next one");
+        check(s_lineNo == (int)(idxA + 1),
+              "Text Attributes: ...on the selected line, 1-relative");
+        const CString colourA = s_textColour;
+
+        // Same selection on the second line — the answer must move with it.
+        pane->SetSelectionRange((int)(idxB + 1), (int)(idxB + 1), 3, 7);
+        s_seenTA = 0;
+        child->ShowTextAttributes();
+        check(s_seenTA == 1, "Text Attributes: the dialog was reached again");
+        check(s_letter == "k", "Text Attributes: ...and follows the selection down");
+        check(s_lineNo == (int)(idxB + 1), "Text Attributes: ...as does the line number");
+        check(colourA != s_textColour,
+              "Text Attributes: the two lines really do report different colours");
+
+        // Highlight Word takes the same coordinates to seed the trigger colour.
+        pane->SetSelectionRange((int)(idxA + 1), (int)(idxA + 1), 3, 7);
+        s_seenHL = 0;
+        child->HighlightSelectedWord();
+        check(s_seenHL == 1, "Highlight Word: the dialog was reached");
+        check(s_hlFore == rgbA,
+              "Highlight Word: seeds the SELECTED line's colour, not the next line's");
+
+        pane->SetSelectionRange((int)(idxB + 1), (int)(idxB + 1), 3, 7);
+        s_seenHL = 0;
+        child->HighlightSelectedWord();
+        check(s_seenHL == 1, "Highlight Word: the dialog was reached again");
+        check(s_hlFore == rgbB, "Highlight Word: ...and follows the selection down");
+
+        g_run_mfc_dialog = savedRunDlg;
+        pane->SetSelectionRange(0, 0, 0, 0);
+        doc->ClearOutput();
     }
 
     // Tear down without running the close/save flow (this doc has no file).

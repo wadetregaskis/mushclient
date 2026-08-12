@@ -2161,10 +2161,15 @@ void CWorldChildFrame::HighlightSelectedWord()
     dlg.m_iOtherBackground = m_doc->m_normalcolour[BLACK];
 
     // Pre-fill from the selection (first line, <=80 chars) + its style colour.
+    // GetSelectionInfo answers in the 1-based coordinates world.GetSelection
+    // uses; everything below is CMUSHView::OnDisplayHighlightphrase, which works
+    // in the 0-based m_selstart_line / m_selstart_col space.  Without the shift
+    // the swatch showed the colour of the line BELOW the selection.
     long sLine, sCol, eLine, eCol;
     if (m_output->GetSelectionInfo(sLine, sCol, eLine, eCol) &&
         (eLine > sLine || (eLine == sLine && eCol > sCol)))
     {
+        --sLine; --sCol;
         CString strSelection((const char*) m_output->GetSelectionText().utf8_str());
         int nl = strSelection.Find("\n");
         if (nl != -1) strSelection = strSelection.Left(nl);
@@ -2173,8 +2178,11 @@ void CWorldChildFrame::HighlightSelectedWord()
 
         CLine* pLine = m_doc->m_LineList.GetAt(m_doc->GetLinePosition(sLine));
         if (pLine) {
+            // Windows passes the 0-based startcol here (not startcol + 1 as Text
+            // Attributes does) — reproduce that, boundary case and all.
+            const long startcol = MIN(sCol, pLine->len);
             CStyle* pStyle; int iCol; POSITION fp;
-            if (m_doc->FindStyle(pLine, sCol, iCol, pStyle, fp))
+            if (m_doc->FindStyle(pLine, startcol, iCol, pStyle, fp))
                 m_doc->GetStyleRGB(pStyle, dlg.m_iOtherForeground, dlg.m_iOtherBackground);
         }
     }
@@ -2347,6 +2355,13 @@ void CWorldChildFrame::ShowTextAttributes()
     if (!m_output->GetSelectionInfo(sLine, sCol, eLine, eCol) ||
         !(eLine > sLine || (eLine == sLine && eCol > sCol)))
         return;   // need a non-empty selection
+
+    // GetSelectionInfo answers in the 1-based coordinates world.GetSelection
+    // uses; the rest of this function is CMUSHView::OnDisplayTextattributes,
+    // which works in the 0-based m_selstart_line / m_selstart_col space.
+    // Without the shift the dialog described the character one line down and
+    // one column right of the one the user selected.
+    --sLine; --sCol; --eLine; --eCol;
 
     CLine* pLine = m_doc->m_LineList.GetAt(m_doc->GetLinePosition(sLine));
     if (!pLine) return;

@@ -1081,6 +1081,49 @@ int RunWorldFrameSelfTest()
             s_saveOK = true;
         }
 
+        // ── the command history reaches disk on BOTH close paths ───────────
+        // Cmd+W runs OnClose, which persists it.  Cmd+Q does not run OnClose at
+        // all -- [NSApp terminate:] tears the app down without it -- so quitting,
+        // the ordinary way to leave the app, never saved the up-arrow history:
+        // what survived was whatever the last Cmd+W had written.  Both paths now
+        // go through PersistBeforeTeardown, which is what this drives.
+        {
+            const std::string worldName = "zz_selftest_history";
+            std::string path;
+            {
+                const char* home = getenv("HOME");
+                if (home && *home)
+                    path = std::string(home) + "/.mushclient/history_"
+                         + worldName + ".txt";
+            }
+            check(!path.empty(), "history: a per-world history path exists");
+            if (!path.empty()) {
+                remove(path.c_str());
+
+                CWorldChildFrame* hf = makeWorld(worldName.c_str());
+                hf->addToCommandHistory("north");
+                hf->addToCommandHistory("look at the dragon");
+
+                // Nothing on disk until a close path runs.
+                check(fopen(path.c_str(), "rb") == NULL,
+                      "history: nothing is written while the world is open");
+
+                hf->PersistBeforeTeardown();
+
+                std::string got;
+                if (FILE* rf = fopen(path.c_str(), "rb")) {
+                    int ch; while ((ch = fgetc(rf)) != EOF) got += (char) ch;
+                    fclose(rf);
+                }
+                check(got == "north\nlook at the dragon\n",
+                      "history: the quit path writes every command, in order");
+
+                remove(path.c_str());
+                hf->Close(true);
+                wxYield();
+            }
+        }
+
         g_wxhook_message_box = savedMB;
         g_wxhook_save_world  = savedSaveWorld;
         App.m_bConfirmBeforeSavingVariables = savedConfirmVars;

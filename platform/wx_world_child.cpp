@@ -3055,6 +3055,36 @@ bool CWorldChildFrame::FireMacro(int idx)
     return true;
 }
 
+// ── SaveCommandHistoryFile ─────────────────────────────────────────────────
+// Write each command on its own line to the same per-world file determined at
+// construction time, so the path is consistent regardless of later World
+// Properties renames.
+//
+// Extracted from OnClose because Cmd+Q does not go through OnClose:
+// [NSApp terminate:] tears the app down without the MDI child's close handler
+// ever running, so quitting -- the ordinary way to leave the app -- never saved
+// the history at all.  What survived was whatever the last Cmd+W had written,
+// which is why the up-arrow list could look frozen weeks out of date.
+void CWorldChildFrame::SaveCommandHistoryFile()
+{
+    if (m_history.empty() || m_historyFilePath.empty()) return;
+    if (FILE* f = fopen(m_historyFilePath.c_str(), "w")) {
+        for (const wxString& cmd : m_history)
+            fprintf(f, "%s\n", cmd.ToUTF8().data());
+        fclose(f);
+    }
+}
+
+// Everything OnClose writes to disk before the teardown begins.  BOTH close
+// paths call this one method rather than repeating the pair, so they cannot
+// drift: OnClose for Cmd+W, and the quit hook for [NSApp terminate:], which
+// never runs OnClose at all.  Safe to call twice.
+void CWorldChildFrame::PersistBeforeTeardown()
+{
+    SaveCommandHistoryFile();
+    if (IsLogging()) StopLogging();
+}
+
 // ── FireNamedMacroCommand ──────────────────────────────────────────────────
 // The command-id entry point for the 17 named slots.  ID_ACTIONS_QUIT and
 // ID_ACTIONS_LOGOUT confirm first and QUIT suppresses auto-reconnect, exactly
@@ -5277,23 +5307,7 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         wx_save_child_geometry(cfg, GetSize());
     }
 
-    // ── Save persistent command history ───────────────────────────────────
-    // Write each command on its own line to the same per-world file determined
-    // at construction time, so the path is consistent regardless of later
-    // World Properties renames.
-    if (!m_history.empty()) {
-        std::string histPath = m_historyFilePath;
-        if (!histPath.empty()) {
-            if (FILE* f = fopen(histPath.c_str(), "w")) {
-                for (const wxString& cmd : m_history)
-                    fprintf(f, "%s\n", cmd.ToUTF8().data());
-                fclose(f);
-            }
-        }
-    }
-
-    // Close any open log file before the doc is destroyed.
-    if (IsLogging()) StopLogging();
+    PersistBeforeTeardown();
 
     RunCloseTeardown(m_closeObserver);
 

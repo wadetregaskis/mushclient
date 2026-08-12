@@ -3039,6 +3039,28 @@ static int hook_query_quit_save()
         for (CMUSHclientDoc* d : worlds)
             for (auto pit = d->m_PluginList.begin(); pit != d->m_PluginList.end(); ++pit)
                 if (*pit) (*pit)->SaveState();
+
+        // Phase 3 — the two things CWorldChildFrame::OnClose does that
+        // [NSApp terminate:] skips, because it never runs OnClose.
+        //
+        //  * the per-world command-history file.  Quitting is the ORDINARY way
+        //    to leave the app, and it never saved the up-arrow history: what
+        //    survived was whatever the last Cmd+W had written, so the list could
+        //    look frozen weeks out of date.
+        //  * the session log.  CloseLog writes the log-file POSTAMBLE (the
+        //    user's configured closing line, with its %-substitutions) and then
+        //    fcloses; the doc destructor calls it on a normal close, and the doc
+        //    is never destroyed on quit.  StopLogging closes the frame's own
+        //    log, which OnClose also does.
+        for (CMUSHclientDoc* d : worlds)
+        {
+            auto it = s_docFrameMap.find(d);
+            if (it != s_docFrameMap.end() && it->second)
+            {
+                it->second->PersistBeforeTeardown();
+            }
+            d->CloseLog();
+        }
     }
     catch (...)
     {

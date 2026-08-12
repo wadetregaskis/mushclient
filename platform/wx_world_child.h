@@ -130,6 +130,10 @@ public:
     // Public access to the active input bar so scripting callbacks in
     // wx_mfc_impl.cpp can read/write it for world.GetCommand/SetCommand.
     wxTextCtrl* ActiveInputPublic() const { return ActiveInput(); }
+    // Everything OnClose writes to disk before teardown: the up-arrow history
+    // file and the session log's postamble+close.  Public because
+    // [NSApp terminate:] skips OnClose entirely, so the quit hook calls it too.
+    void        PersistBeforeTeardown();
 
     // Both command bars, for the in-app selftest.  The password swap is the one
     // place where BOTH have to be inspected at once — shown/hidden, and empty or
@@ -520,6 +524,7 @@ private:
 
     // Returns the currently-visible input control (m_input or m_inputPassword).
     wxTextCtrl* ActiveInput() const;
+    void        SaveCommandHistoryFile();
 
     // Switch the input bar between normal and password (masked) mode.
     // Called from PollNoEcho whenever m_doc->m_bNoEcho changes.

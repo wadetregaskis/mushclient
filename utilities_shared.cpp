@@ -1647,3 +1647,78 @@ void GetHostNameAndAddresses (CString & strHostName, CString & strAddresses)
      }
    }
   } // end of GetHostNameAndAddresses
+
+// ── MacroCommandIdToSlot ─────────────────────────────────────────────────────
+// Which m_macros[] slot a macro COMMAND ID names, or -1 for an id that is not a
+// macro.  Hoisted verbatim out of CSendView::OnMacroCommand (sendvw.cpp), which
+// now calls it, so the mapping has one definition instead of one per frontend:
+// the port needs it too, and a hand-copied 50-case switch is exactly the kind of
+// twin that drifts.
+//
+// The gaps are upstream's and are preserved: there is no ID_MACRO_CTRL_F4 case
+// (commented out in the original), and ID_ALT_V is absent because no MAC_ALT_V
+// slot exists -- see docs/UPSTREAM-BUGS.md.
+int MacroCommandIdToSlot (const unsigned int nIDC)
+  {
+  switch (nIDC)
+    {
+    case ID_MACRO_F1                : return MAC_F1;
+    case ID_MACRO_F2                : return MAC_F2;
+    case ID_MACRO_F3                : return MAC_F3;
+    case ID_MACRO_F4                : return MAC_F4;
+    case ID_MACRO_F5                : return MAC_F5;
+    case ID_MACRO_F6                : return MAC_F6;
+    case ID_MACRO_F7                : return MAC_F7;
+    case ID_MACRO_F8                : return MAC_F8;
+    case ID_MACRO_F9                : return MAC_F9;
+    case ID_MACRO_F10               : return MAC_F10;
+    case ID_MACRO_F11               : return MAC_F11;
+    case ID_MACRO_F12               : return MAC_F12;
+
+    case ID_MACRO_CTRL_F1           : return MAC_CTRL_F1;
+    case ID_MACRO_CTRL_F2           : return MAC_CTRL_F2;
+    case ID_MACRO_CTRL_F3           : return MAC_CTRL_F3;
+//  case ID_MACRO_CTRL_F4           : return MAC_CTRL_F4;   // upstream: absent
+    case ID_MACRO_CTRL_F5           : return MAC_CTRL_F5;
+    case ID_MACRO_CTRL_F6           : return MAC_CTRL_F6;
+    case ID_MACRO_CTRL_F7           : return MAC_CTRL_F7;
+    case ID_MACRO_CTRL_F8           : return MAC_CTRL_F8;
+    case ID_MACRO_CTRL_F9           : return MAC_CTRL_F9;
+    case ID_MACRO_CTRL_F10          : return MAC_CTRL_F10;
+    case ID_MACRO_CTRL_F11          : return MAC_CTRL_F11;
+    case ID_MACRO_CTRL_F12          : return MAC_CTRL_F12;
+
+    case ID_MACRO_SHIFT_F1          : return MAC_SHIFT_F1;
+    case ID_MACRO_SHIFT_F2          : return MAC_SHIFT_F2;
+    case ID_MACRO_SHIFT_F3          : return MAC_SHIFT_F3;
+    case ID_MACRO_SHIFT_F4          : return MAC_SHIFT_F4;
+    case ID_MACRO_SHIFT_F5          : return MAC_SHIFT_F5;
+    case ID_MACRO_SHIFT_F6          : return MAC_SHIFT_F6;
+    case ID_MACRO_SHIFT_F7          : return MAC_SHIFT_F7;
+    case ID_MACRO_SHIFT_F8          : return MAC_SHIFT_F8;
+    case ID_MACRO_SHIFT_F9          : return MAC_SHIFT_F9;
+    case ID_MACRO_SHIFT_F10         : return MAC_SHIFT_F10;
+    case ID_MACRO_SHIFT_F11         : return MAC_SHIFT_F11;
+    case ID_MACRO_SHIFT_F12         : return MAC_SHIFT_F12;
+
+    case ID_ALT_A                   : return MAC_ALT_A;
+    case ID_ALT_B                   : return MAC_ALT_B;
+    case ID_ALT_J                   : return MAC_ALT_J;
+    case ID_ALT_K                   : return MAC_ALT_K;
+    case ID_ALT_L                   : return MAC_ALT_L;
+    case ID_ALT_M                   : return MAC_ALT_M;
+    case ID_ALT_N                   : return MAC_ALT_N;
+    case ID_ALT_O                   : return MAC_ALT_O;
+    case ID_ALT_P                   : return MAC_ALT_P;
+    case ID_ALT_Q                   : return MAC_ALT_Q;
+    case ID_ALT_R                   : return MAC_ALT_R;
+    case ID_ALT_S                   : return MAC_ALT_S;
+    case ID_ALT_T                   : return MAC_ALT_T;
+    case ID_ALT_U                   : return MAC_ALT_U;
+    case ID_ALT_X                   : return MAC_ALT_X;
+    case ID_ALT_Y                   : return MAC_ALT_Y;
+    case ID_ALT_Z                   : return MAC_ALT_Z;
+    }
+
+  return -1;
+  }   // end of MacroCommandIdToSlot

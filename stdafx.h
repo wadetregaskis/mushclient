@@ -510,6 +510,8 @@ bool GetSelection (CEdit * pEdit, CString & strSelection);
 // forum codes
 
 CString QuoteForumCodes(const CString & strText) ;
+// Which m_macros[] slot a macro command id names, or -1 (utilities_shared.cpp).
+int MacroCommandIdToSlot (const unsigned int nIDC);
 
 #ifndef _WIN32
 // ── Notepad Convert menu (notepad_convert_shared.cpp) ───────────────────────

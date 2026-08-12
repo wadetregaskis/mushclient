@@ -3108,6 +3108,20 @@ bool CWorldChildFrame::FireNamedMacroCommand(int id)
         return true;
     }
 
+    // The F-key and Alt+letter macros, by COMMAND ID.  Pressing the key already
+    // worked (OnInputKeyDown maps the key straight to a slot); what did not was
+    // the other way in — world.DoCommand("MacroF1"), a toolbar/menu item, or an
+    // accelerator bound to the command name.  On Windows those arrive at
+    // CSendView::OnMacroCommand, which is dead here, so they fell through to
+    // evt.Skip() while DoCommand still returned eOK.  MacroCommandIdToSlot is
+    // that view's own switch, hoisted to utilities_shared.cpp so both frontends
+    // read one table.
+    const int slot = MacroCommandIdToSlot((unsigned int) id);
+    if (slot != -1) {
+        FireMacro(slot);
+        return true;
+    }
+
     return false;
 }
 

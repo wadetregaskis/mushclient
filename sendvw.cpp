@@ -2401,76 +2401,11 @@ void CSendView::OnAcceleratorCommand (UINT nID)
 BOOL CSendView::OnMacroCommand(UINT nIDC) 
   {
 
-int iIndex = -1;
+  // The id -> slot mapping now lives in utilities_shared.cpp, so the port
+  // dispatches macro command ids through the same table instead of a copy.
+  // Same cases, same gaps, same behaviour.
+int iIndex = MacroCommandIdToSlot (nIDC);
 
-  switch (nIDC)
-    {
-    case ID_MACRO_F2          : iIndex = MAC_F2    ; break;
-    case ID_MACRO_F3          : iIndex = MAC_F3    ; break;
-    case ID_MACRO_F4          : iIndex = MAC_F4    ; break;
-    case ID_MACRO_F5          : iIndex = MAC_F5    ; break;
-    case ID_MACRO_F7          : iIndex = MAC_F7    ; break;
-    case ID_MACRO_F8          : iIndex = MAC_F8    ; break;
-    case ID_MACRO_F9          : iIndex = MAC_F9    ; break;
-    case ID_MACRO_F10         : iIndex = MAC_F10   ; break;
-    case ID_MACRO_F11         : iIndex = MAC_F11   ; break;
-    case ID_MACRO_F12         : iIndex = MAC_F12   ; break;
-
-    case ID_MACRO_CTRL_F2          : iIndex = MAC_CTRL_F2    ; break;
-    case ID_MACRO_CTRL_F3          : iIndex = MAC_CTRL_F3    ; break;
-//    case ID_MACRO_CTRL_F4          : iIndex = MAC_CTRL_F4    ; break;
-    case ID_MACRO_CTRL_F5          : iIndex = MAC_CTRL_F5    ; break;
-    case ID_MACRO_CTRL_F7          : iIndex = MAC_CTRL_F7    ; break;
-    case ID_MACRO_CTRL_F8          : iIndex = MAC_CTRL_F8    ; break;
-    case ID_MACRO_CTRL_F9          : iIndex = MAC_CTRL_F9    ; break;
-    case ID_MACRO_CTRL_F10         : iIndex = MAC_CTRL_F10   ; break;
-    case ID_MACRO_CTRL_F11         : iIndex = MAC_CTRL_F11   ; break;
-    case ID_MACRO_CTRL_F12         : iIndex = MAC_CTRL_F12   ; break;
-
-    case ID_MACRO_SHIFT_F2          : iIndex = MAC_SHIFT_F2    ; break;
-    case ID_MACRO_SHIFT_F3          : iIndex = MAC_SHIFT_F3    ; break;
-    case ID_MACRO_SHIFT_F4          : iIndex = MAC_SHIFT_F4    ; break;
-    case ID_MACRO_SHIFT_F5          : iIndex = MAC_SHIFT_F5    ; break;
-    case ID_MACRO_SHIFT_F7          : iIndex = MAC_SHIFT_F7    ; break;
-    case ID_MACRO_SHIFT_F8          : iIndex = MAC_SHIFT_F8    ; break;
-    case ID_MACRO_SHIFT_F9          : iIndex = MAC_SHIFT_F9    ; break;
-    case ID_MACRO_SHIFT_F10         : iIndex = MAC_SHIFT_F10   ; break;
-    case ID_MACRO_SHIFT_F11         : iIndex = MAC_SHIFT_F11   ; break;
-    case ID_MACRO_SHIFT_F12         : iIndex = MAC_SHIFT_F12   ; break;
-
-    // new ones in 3.42
-
-    case ID_ALT_A                   : iIndex = MAC_ALT_A    ; break;
-    case ID_ALT_B                   : iIndex = MAC_ALT_B    ; break;
-    case ID_ALT_J                   : iIndex = MAC_ALT_J    ; break;
-    case ID_ALT_K                   : iIndex = MAC_ALT_K    ; break;
-    case ID_ALT_L                   : iIndex = MAC_ALT_L    ; break;
-    case ID_ALT_M                   : iIndex = MAC_ALT_M    ; break;
-    case ID_ALT_N                   : iIndex = MAC_ALT_N    ; break;
-    case ID_ALT_O                   : iIndex = MAC_ALT_O    ; break;
-    case ID_ALT_P                   : iIndex = MAC_ALT_P    ; break;
-    case ID_ALT_Q                   : iIndex = MAC_ALT_Q    ; break;
-    case ID_ALT_R                   : iIndex = MAC_ALT_R    ; break;
-    case ID_ALT_S                   : iIndex = MAC_ALT_S    ; break;
-    case ID_ALT_T                   : iIndex = MAC_ALT_T    ; break;
-    case ID_ALT_U                   : iIndex = MAC_ALT_U    ; break;
-    case ID_ALT_X                   : iIndex = MAC_ALT_X    ; break;
-    case ID_ALT_Y                   : iIndex = MAC_ALT_Y    ; break;
-    case ID_ALT_Z                   : iIndex = MAC_ALT_Z    ; break;
-                 
-      
-    // new ones in 3.42
-
-    case ID_MACRO_F1                : iIndex = MAC_F1       ; break;
-    case ID_MACRO_CTRL_F1           : iIndex = MAC_CTRL_F1  ; break;
-    case ID_MACRO_SHIFT_F1          : iIndex = MAC_SHIFT_F1 ; break;
-    case ID_MACRO_F6                : iIndex = MAC_F6       ; break;
-    case ID_MACRO_CTRL_F6           : iIndex = MAC_CTRL_F6  ; break;
-    case ID_MACRO_SHIFT_F6          : iIndex = MAC_SHIFT_F6 ; break;
-
-
-    } // end of switch
-         
   // if command found
   if (iIndex != -1)
     SendMacro (iIndex);

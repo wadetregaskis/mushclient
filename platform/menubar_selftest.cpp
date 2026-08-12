@@ -721,6 +721,52 @@ int RunMenuBarSelfTest()
                 g_wxhook_sound_stop_buffer = savedStopBuf;
             }
 
+            // ── macro command ids reach the macro, not evt.Skip() ──────────
+            // Pressing F1 always worked (the key handler maps the key straight
+            // to a slot).  The COMMAND-ID way in did not: on Windows those ids
+            // are CSendView's, and CSendView is never constructed here, so
+            // world.DoCommand("MacroF1") -- and any menu item, toolbar button or
+            // accelerator bound to the command name -- fell through to
+            // evt.Skip() while DoCommand returned eOK.
+            {
+                wxTextCtrl* bar = child->ActiveInputPublic();
+                check(bar != NULL, "the world window has a command bar to fire into");
+                if (bar) {
+                    // REPLACE_COMMAND puts the macro text in the bar, which is
+                    // the observable that needs no connection.
+                    doc->m_macros[MAC_F1]      = "west";
+                    doc->m_macro_type[MAC_F1]  = REPLACE_COMMAND;
+                    doc->m_macros[MAC_ALT_Z]   = "look";
+                    doc->m_macro_type[MAC_ALT_Z] = REPLACE_COMMAND;
+
+                    bar->SetValue(wxT("untouched"));
+                    fireCmd(frame, 33026 /*ID_MACRO_F1*/);
+                    wxYield();
+                    check(bar->GetValue() == wxT("west"),
+                          "DoCommand(\"MacroF1\") fires the F1 macro");
+
+                    // A second, different slot: a handler that fired some fixed
+                    // macro would pass the first check and fail this one.
+                    bar->SetValue(wxT("untouched"));
+                    fireCmd(frame, 33014 /*ID_ALT_Z*/);
+                    wxYield();
+                    check(bar->GetValue() == wxT("look"),
+                          "...and DoCommand(\"AltZ\") fires the Alt+Z one");
+
+                    // ID_ALT_V is published with no slot behind it (upstream);
+                    // it must leave the bar alone rather than fire macro 0.
+                    bar->SetValue(wxT("untouched"));
+                    fireCmd(frame, 33012 /*ID_ALT_V*/);
+                    wxYield();
+                    check(bar->GetValue() == wxT("untouched"),
+                          "...while AltV, which has no macro slot, does nothing");
+
+                    doc->m_macros[MAC_F1] = "";
+                    doc->m_macros[MAC_ALT_Z] = "";
+                    bar->SetValue(wxEmptyString);
+                }
+            }
+
             // ── a canonical command with no menu item of its own still runs ──
             // The port's Configure menu items carry PRIVATE ids, so the
             // canonical ID_GAME_CONFIGURE_* ids only ever arrive from

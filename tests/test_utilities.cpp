@@ -16,6 +16,7 @@
 #include "resource.h"          // ID_DISPLAY_STOP* — the sound menu commands
                                  // encodeBase64, decodeBase64
 #include <cstring>
+#include <set>
 
 // ── encodeBase64 / decodeBase64 ─────────────────────────────────────────────
 
@@ -1434,6 +1435,83 @@ TEST(Metaphone, LoopStopsOncePrimaryAndSecondaryReachMaxlength)
     DM cath("CATHERINE", 2);
     EXPECT_STREQ("K0", (const char*)cath.p);
     EXPECT_STREQ("KT", (const char*)cath.s);
+}
+
+// ═══ MacroCommandIdToSlot ══════════════════════════════════════════════════
+// The macro command id -> m_macros[] slot table, hoisted out of
+// CSendView::OnMacroCommand so the port dispatches through the same one.  On the
+// port those ids used to reach nothing at all -- CSendView is never constructed
+// -- so world.DoCommand("MacroF1"), and any menu/toolbar item or accelerator
+// bound to the command NAME, silently did nothing while returning eOK.  Pressing
+// the key still worked, which is what hid it.
+TEST(MacroCommandIds, EveryMacroCommandIdMapsToItsOwnSlot)
+{
+    struct Row { unsigned id; int slot; const char* name; };
+    static const Row kRows[] = {
+        { ID_MACRO_F1,  MAC_F1,  "MacroF1"  }, { ID_MACRO_F2,  MAC_F2,  "MacroF2"  },
+        { ID_MACRO_F3,  MAC_F3,  "MacroF3"  }, { ID_MACRO_F4,  MAC_F4,  "MacroF4"  },
+        { ID_MACRO_F5,  MAC_F5,  "MacroF5"  }, { ID_MACRO_F6,  MAC_F6,  "MacroF6"  },
+        { ID_MACRO_F7,  MAC_F7,  "MacroF7"  }, { ID_MACRO_F8,  MAC_F8,  "MacroF8"  },
+        { ID_MACRO_F9,  MAC_F9,  "MacroF9"  }, { ID_MACRO_F10, MAC_F10, "MacroF10" },
+        { ID_MACRO_F11, MAC_F11, "MacroF11" }, { ID_MACRO_F12, MAC_F12, "MacroF12" },
+
+        { ID_MACRO_CTRL_F1,  MAC_CTRL_F1,  "MacroCtrlF1"  },
+        { ID_MACRO_CTRL_F2,  MAC_CTRL_F2,  "MacroCtrlF2"  },
+        { ID_MACRO_CTRL_F3,  MAC_CTRL_F3,  "MacroCtrlF3"  },
+        { ID_MACRO_CTRL_F5,  MAC_CTRL_F5,  "MacroCtrlF5"  },
+        { ID_MACRO_CTRL_F6,  MAC_CTRL_F6,  "MacroCtrlF6"  },
+        { ID_MACRO_CTRL_F7,  MAC_CTRL_F7,  "MacroCtrlF7"  },
+        { ID_MACRO_CTRL_F8,  MAC_CTRL_F8,  "MacroCtrlF8"  },
+        { ID_MACRO_CTRL_F9,  MAC_CTRL_F9,  "MacroCtrlF9"  },
+        { ID_MACRO_CTRL_F10, MAC_CTRL_F10, "MacroCtrlF10" },
+        { ID_MACRO_CTRL_F11, MAC_CTRL_F11, "MacroCtrlF11" },
+        { ID_MACRO_CTRL_F12, MAC_CTRL_F12, "MacroCtrlF12" },
+
+        { ID_MACRO_SHIFT_F1,  MAC_SHIFT_F1,  "MacroShiftF1"  },
+        { ID_MACRO_SHIFT_F2,  MAC_SHIFT_F2,  "MacroShiftF2"  },
+        { ID_MACRO_SHIFT_F3,  MAC_SHIFT_F3,  "MacroShiftF3"  },
+        { ID_MACRO_SHIFT_F4,  MAC_SHIFT_F4,  "MacroShiftF4"  },
+        { ID_MACRO_SHIFT_F5,  MAC_SHIFT_F5,  "MacroShiftF5"  },
+        { ID_MACRO_SHIFT_F6,  MAC_SHIFT_F6,  "MacroShiftF6"  },
+        { ID_MACRO_SHIFT_F7,  MAC_SHIFT_F7,  "MacroShiftF7"  },
+        { ID_MACRO_SHIFT_F8,  MAC_SHIFT_F8,  "MacroShiftF8"  },
+        { ID_MACRO_SHIFT_F9,  MAC_SHIFT_F9,  "MacroShiftF9"  },
+        { ID_MACRO_SHIFT_F10, MAC_SHIFT_F10, "MacroShiftF10" },
+        { ID_MACRO_SHIFT_F11, MAC_SHIFT_F11, "MacroShiftF11" },
+        { ID_MACRO_SHIFT_F12, MAC_SHIFT_F12, "MacroShiftF12" },
+
+        { ID_ALT_A, MAC_ALT_A, "AltA" }, { ID_ALT_B, MAC_ALT_B, "AltB" },
+        { ID_ALT_J, MAC_ALT_J, "AltJ" }, { ID_ALT_K, MAC_ALT_K, "AltK" },
+        { ID_ALT_L, MAC_ALT_L, "AltL" }, { ID_ALT_M, MAC_ALT_M, "AltM" },
+        { ID_ALT_N, MAC_ALT_N, "AltN" }, { ID_ALT_O, MAC_ALT_O, "AltO" },
+        { ID_ALT_P, MAC_ALT_P, "AltP" }, { ID_ALT_Q, MAC_ALT_Q, "AltQ" },
+        { ID_ALT_R, MAC_ALT_R, "AltR" }, { ID_ALT_S, MAC_ALT_S, "AltS" },
+        { ID_ALT_T, MAC_ALT_T, "AltT" }, { ID_ALT_U, MAC_ALT_U, "AltU" },
+        { ID_ALT_X, MAC_ALT_X, "AltX" }, { ID_ALT_Y, MAC_ALT_Y, "AltY" },
+        { ID_ALT_Z, MAC_ALT_Z, "AltZ" },
+    };
+
+    std::set<int> seen;
+    for (const Row& r : kRows) {
+        const int got = MacroCommandIdToSlot(r.id);
+        EXPECT_EQ(r.slot, got);
+        // In range, or FireMacro would index past m_macros[].
+        EXPECT_TRUE(got >= 0 && got < MACRO_COUNT);
+        // No two commands may share a slot, or one macro fires for two keys.
+        EXPECT_TRUE(seen.insert(got).second);
+    }
+    // All distinct, and the expected population: 12 F + 11 Ctrl (no F4) +
+    // 12 Shift + 17 Alt.  The literal catches a row silently going missing.
+    EXPECT_EQ(sizeof(kRows) / sizeof(kRows[0]), seen.size());
+    EXPECT_EQ((size_t) 52, seen.size());
+
+    // ID_ALT_V is published as a command name with no MAC_ slot behind it
+    // (docs/UPSTREAM-BUGS.md) -- it must answer "not a macro", not slot 0.
+    EXPECT_EQ(-1, MacroCommandIdToSlot(ID_ALT_V));
+
+    // And an id that is not a macro at all.
+    EXPECT_EQ(-1, MacroCommandIdToSlot(ID_DISPLAY_STOPSOUNDPLAYING));
+    EXPECT_EQ(-1, MacroCommandIdToSlot(0));
 }
 
 // ═══ world.Sound / PlaySound / StopSound / GetSoundStatus ══════════════════

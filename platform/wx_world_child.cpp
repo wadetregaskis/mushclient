@@ -1085,6 +1085,55 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // ── Tooltip callback ───────────────────────────────────────────────────
     // Returns the tooltip text for the client-space point (x, y).
     // Priority: miniwindow (hotspot tooltip, else NOTHING) > MXP run hint.
+    // ── Output-buffer fade ──────────────────────────────────────────────────
+    // How faded a line is, given when it arrived.  This is
+    // CMUSHView::OnDraw's arithmetic verbatim (mushview.cpp:1096-1121), which
+    // has to live on this side because it reads four things the pane has no
+    // access to: the three world options, and m_timeFadeCancelled.
+    m_output->m_fn_line_opacity = [this](time_t arrived) -> double
+    {
+        if (!m_doc) return 1.0;
+
+        const unsigned short fadeAfterSeconds = m_doc->m_iFadeOutputBufferAfterSeconds;
+        // Frozen output does not fade -- you froze it in order to read it --
+        // and Windows also treats the freeze as a fade-cancel so the text is
+        // still legible for a while after you let it run again.
+        const bool frozen = m_output && m_output->IsPaused();
+        if (frozen)
+            m_doc->m_timeFadeCancelled = CTime::GetCurrentTime();
+        if (fadeAfterSeconds <= 0 || frozen || arrived == 0)
+            return 1.0;
+
+        const double fadeLimit = (double) m_doc->m_FadeOutputOpacityPercent / 100.0;
+        const double fadeSteps = m_doc->m_FadeOutputSeconds;
+        const time_t timeNow      = time(NULL);
+        const time_t fadeCancelled = m_doc->m_timeFadeCancelled.GetTime();
+
+        time_t timeSinceArrived = timeNow - arrived;
+
+        // If the fade was cancelled a moment ago, lines that already existed
+        // then are treated as having arrived at the cancel, so scrolling back
+        // brings old text up to full intensity for one fade's worth of time.
+        if (timeNow < (fadeCancelled + fadeAfterSeconds + (time_t) fadeSteps) &&
+            arrived <= fadeCancelled)
+            timeSinceArrived = timeNow - fadeCancelled;
+
+        if (timeSinceArrived <= (time_t) fadeAfterSeconds)
+            return 1.0;
+        if ((double) (timeSinceArrived - fadeAfterSeconds) >= fadeSteps)
+            return fadeLimit;
+        return 1.0 - (((1.0 - fadeLimit) / fadeSteps)
+                      * (double) (timeSinceArrived - fadeAfterSeconds));
+    };
+
+    // The doc's own colour translation, which is both the fade's dimming and
+    // world.MapColour's substitution -- one function on Windows, so one here.
+    m_output->m_fn_translate_colour = [this](uint32_t colour, double opacity) -> uint32_t
+    {
+        if (!m_doc) return colour;
+        return (uint32_t) m_doc->TranslateColour((COLORREF) colour, opacity);
+    };
+
     m_output->m_fn_get_tooltip =
         [this](int x, int y) -> std::string
     {
@@ -3116,6 +3165,17 @@ void CWorldChildFrame::PersistBeforeTeardown()
     if (IsLogging()) StopLogging();
 }
 
+// ── CancelOutputFade ───────────────────────────────────────────────────────
+// "When we last scrolled up and cancelled faded text" (doc.h:1586).  Lines that
+// already existed at this moment are treated by the fade as having arrived now,
+// so scrolling back makes old text readable again for one fade's worth of time.
+void CWorldChildFrame::CancelOutputFade()
+{
+    if (!m_doc) return;
+    m_doc->m_timeFadeCancelled = CTime::GetCurrentTime();
+    if (m_output) m_output->Refresh(false);
+}
+
 // ── FireNamedMacroCommand ──────────────────────────────────────────────────
 // The command-id entry point for the 17 named slots.  ID_ACTIONS_QUIT and
 // ID_ACTIONS_LOGOUT confirm first and QUIT suppresses auto-reconnect, exactly
@@ -3223,11 +3283,19 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 
     // Page Up / Page Down: scroll the output pane one page without leaving the
     // input bar.  This lets the user page through output while still typing.
+    //
+    // Scrolling also CANCELS the output-buffer fade, which is the whole point
+    // of the cancel: you scrolled back to read something, so it comes back to
+    // full intensity for one fade's worth of time.  Windows does this in the
+    // same three commands (CSendView::OnTestPageup / OnTestPagedown /
+    // OnTestEnd, sendvw.cpp:564-580).
     if (code == WXK_PAGEUP) {
+        CancelOutputFade();
         if (m_output) m_output->ScrollPage(-1);
         return;
     }
     if (code == WXK_PAGEDOWN) {
+        CancelOutputFade();
         if (m_output) m_output->ScrollPage(+1);
         return;
     }
@@ -3236,10 +3304,12 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
     // without leaving the input bar.  Mirrors the Ctrl+Home/End shortcuts that
     // work when the output pane itself has focus (COutputPane::OnKeyDown).
     if (code == WXK_HOME && evt.RawControlDown()) {
+        CancelOutputFade();
         if (m_output) m_output->ScrollToTop();
         return;
     }
     if (code == WXK_END && evt.RawControlDown()) {
+        CancelOutputFade();
         if (m_output) m_output->ScrollToBottom();
         return;
     }
@@ -4221,6 +4291,25 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
     // (UpdateState only touches wx state that actually changed).
     if (m_toolbars)
         m_toolbars->UpdateState(m_doc);
+
+    // Keep the fade moving.  It changes by the SECOND (the arithmetic is all in
+    // time_t), so repainting on every 100 ms tick would be nine repaints out of
+    // ten with nothing to show; once per second is the finest granularity the
+    // effect has.
+    //
+    // Gated on the OPTION, not on "the last paint saw something fading".  That
+    // was the first attempt and it deadlocks: the flag is only set while
+    // painting, and without a repaint nothing recomputes the opacity, so a line
+    // that was fresh when it was last drawn stays fresh for ever and the app
+    // never faded at all.  With the option off -- its default -- this costs
+    // nothing.
+    if (m_output && m_doc && m_doc->m_iFadeOutputBufferAfterSeconds > 0) {
+        const time_t nowSec = time(NULL);
+        if (nowSec != m_lastFadeRepaint) {
+            m_lastFadeRepaint = nowSec;
+            m_output->Refresh(false);
+        }
+    }
 
     // Pick up a change to the world's input colours (World Properties > Input >
     // Commands).  Those live on the doc with no notification seam, so poll them

@@ -433,6 +433,16 @@ void COutputPane::FirePluginDraw(int firstVisiblePaneLine, int pixelOffset)
 
 void COutputPane::AppendLine(SOutputLine&& line)
 {
+    // Every line entering the pane carries an arrival time, because the
+    // output-buffer fade works out its opacity from one.  The drain stamps the
+    // lines it builds from a CLine (that time is the accurate one -- a line can
+    // be drained later than it arrived); this is the fallback for the ones
+    // built anywhere else, of which there are three, and which would otherwise
+    // read as time 0 and so as infinitely old.  One choke point rather than a
+    // stamp at each builder: the next builder added cannot forget.
+    if (line.arrived == 0)
+        line.arrived = time(NULL);
+
     // Script running inside the mid-paint ON_PLUGIN_DRAW_OUTPUT_WINDOW
     // callback may print (Note etc.), which lands here while OnPaint is
     // iterating m_lines.  Defer such appends until the paint completes
@@ -1337,6 +1347,7 @@ void COutputPane::OnPaint(wxPaintEvent&)
     if (trActive)
         dc.SetDeviceClippingRegion(wxRegion(trL, trT, trR - trL, trB - trT));
 
+    m_anyFading = false;      // recomputed by the DrawLine calls below
     if (!LineCountI() == 0 && m_lineH > 0) {
         // Rows are drawn within the text viewport: the rectangle's height when a
         // plugin reserved one, else the client (less the hint bar when showing).
@@ -1448,6 +1459,15 @@ void COutputPane::OnPaint(wxPaintEvent&)
 
 void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
 {
+    // The output-buffer fade: one opacity for the whole line, worked out by the
+    // frame (it owns the doc, which holds the three fade options, the
+    // fade-cancelled time and the freeze state).  Anything below full intensity
+    // means something is still moving, which is what AnyLineFading() reports.
+    m_paintOpacity = 1.0;
+    if (m_fn_line_opacity && lineIdx >= 0 && lineIdx < LineCountI()) {
+        m_paintOpacity = m_fn_line_opacity(LineAt(lineIdx).arrived);
+        if (m_paintOpacity < 1.0) m_anyFading = true;
+    }
     const SOutputLine& line = LineAt(lineIdx);
 
     // ── Horizontal rule ───────────────────────────────────────────────────────
@@ -1744,8 +1764,16 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
 {
     if (text.IsEmpty()) return;
 
-    wxColour fg(GetRValue(run.fg), GetGValue(run.fg), GetBValue(run.fg));
-    wxColour bg(GetRValue(run.bg), GetGValue(run.bg), GetBValue(run.bg));
+    // Faded and/or colour-mapped, through the doc's own TranslateColour -- the
+    // same function Windows paints through, so world.MapColour applies here as
+    // well.  With no fade and no colour map it hands the colour straight back.
+    uint32_t rawFg = run.fg, rawBg = run.bg;
+    if (m_fn_translate_colour) {
+        rawFg = m_fn_translate_colour(rawFg, m_paintOpacity);
+        rawBg = m_fn_translate_colour(rawBg, m_paintOpacity);
+    }
+    wxColour fg(GetRValue(rawFg), GetGValue(rawFg), GetBValue(rawFg));
+    wxColour bg(GetRValue(rawBg), GetGValue(rawBg), GetBValue(rawBg));
 
     // ── Background fill ───────────────────────────────────────────────────────
     // For selected text, use the OS system selection colours (wxSYS_COLOUR_HIGHLIGHT

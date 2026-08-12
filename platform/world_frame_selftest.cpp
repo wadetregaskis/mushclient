@@ -1415,6 +1415,109 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── the output-buffer fade ──────────────────────────────────────────────
+    // Windows dims old text in CMUSHView::OnDraw (mushview.cpp:1096-1121): a
+    // line is full intensity for fade_output_buffer_after_seconds, then ramps
+    // over fade_output_seconds down to fade_output_opacity_percent.  There is
+    // no CMUSHView here, so all three options round-tripped while nothing dimmed.
+    //
+    // The arithmetic is what is tested -- the pane asks the frame for a line's
+    // opacity, so that callback IS the feature.  Times are fed as "arrived N
+    // seconds ago" rather than by waiting.
+    {
+        const long savedAfter   = doc->m_iFadeOutputBufferAfterSeconds;
+        const long savedPercent = doc->m_FadeOutputOpacityPercent;
+        const long savedSeconds = doc->m_FadeOutputSeconds;
+
+        check(pane->m_fn_line_opacity != nullptr,
+              "fade: the pane has an opacity callback");
+
+        doc->m_iFadeOutputBufferAfterSeconds = 10;
+        doc->m_FadeOutputOpacityPercent      = 20;    // fade down to 0.2
+        doc->m_FadeOutputSeconds             = 8;     // over 8 seconds
+        doc->m_timeFadeCancelled             = CTime((time_t) 0);
+        if (pane->IsPaused()) pane->SetPaused(false);
+
+        const time_t now = time(NULL);
+        auto opacityAgo = [&](int secondsAgo) -> double {
+            return pane->m_fn_line_opacity ? pane->m_fn_line_opacity(now - secondsAgo)
+                                           : -1.0;
+        };
+        auto near = [](double a, double b) { return a > b - 0.01 && a < b + 0.01; };
+
+        check(near(opacityAgo(0), 1.0),  "fade: a brand new line is full intensity");
+        check(near(opacityAgo(10), 1.0), "fade: ...and still is at the delay itself");
+        // Half way down the 8-second ramp: 1.0 - (0.8/8)*4 = 0.6.
+        check(near(opacityAgo(14), 0.6), "fade: half way through the ramp it is half dimmed");
+        check(near(opacityAgo(18), 0.2), "fade: at the end of the ramp it reaches the limit");
+        check(near(opacityAgo(600), 0.2),
+              "fade: ...and stops there rather than going to nothing");
+
+        // 0 = disabled, which is the option's default and must not dim at all.
+        doc->m_iFadeOutputBufferAfterSeconds = 0;
+        check(near(opacityAgo(600), 1.0), "fade: zero seconds disables it entirely");
+        doc->m_iFadeOutputBufferAfterSeconds = 10;
+
+        // A line with no timestamp (arrived == 0) must not be treated as
+        // ancient and blanked -- that is what an un-stamped line would do.
+        check(pane->m_fn_line_opacity && near(pane->m_fn_line_opacity(0), 1.0),
+              "fade: a line with no arrival time is left alone");
+
+        // Freezing the output stops the fade: you froze it in order to read it.
+        pane->SetPaused(true);
+        check(near(opacityAgo(600), 1.0), "fade: frozen output does not fade");
+        pane->SetPaused(false);
+
+        // ...and freezing counts as a cancel, so text stays readable for one
+        // fade's worth of time after letting it run again.
+        check(near(opacityAgo(600), 1.0),
+              "fade: ...and unfreezing leaves it readable for a while");
+
+        // A cancel long ago must NOT keep everything bright for ever.
+        doc->m_timeFadeCancelled = CTime((time_t) (now - 600));
+        check(near(opacityAgo(600), 0.2), "fade: an old cancel has expired");
+        // ...and a RECENT one does hold old text at full intensity, which is
+        // what scrolling back is for.
+        doc->m_timeFadeCancelled = CTime((time_t) (now - 2));
+        check(near(opacityAgo(600), 1.0),
+              "fade: a recent cancel brings old lines back to full intensity");
+        doc->m_timeFadeCancelled = CTime((time_t) 0);
+
+        // Lines really do reach the pane carrying an arrival time.  This is the
+        // assertion that matters most, because the arithmetic above is driven
+        // with times the test made up: BuildOutputLine ends with
+        // `out = std::move (outline)`, so a stamp written to `out` is silently
+        // overwritten -- which is exactly what the first version of this fix
+        // did, and the app faded nothing at all while every arithmetic check
+        // above still passed.
+        doc->DisplayMsg("a line with a real arrival time\n", 32, 0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        bool anyStamped = false;
+        for (int i = 0; i < pane->LineCount(); ++i) {
+            const SOutputLine* l = pane->GetLine(i);
+            if (l && l->arrived != 0) anyStamped = true;
+        }
+        check(anyStamped, "fade: a line reaching the pane carries its arrival time");
+
+        // The colour hook is the doc's own TranslateColour, so it dims.
+        check(pane->m_fn_translate_colour != nullptr,
+              "fade: the pane has a colour-translation hook");
+        if (pane->m_fn_translate_colour) {
+            const uint32_t white = 0x00FFFFFFu;
+            check(pane->m_fn_translate_colour(white, 1.0) == white,
+                  "fade: full opacity leaves a colour untouched");
+            const uint32_t dim = pane->m_fn_translate_colour(white, 0.5);
+            check(dim != white && GetRValue(dim) < 200,
+                  "fade: half opacity really dims it");
+        }
+
+        doc->m_iFadeOutputBufferAfterSeconds = (unsigned short) savedAfter;
+        doc->m_FadeOutputOpacityPercent      = (unsigned short) savedPercent;
+        doc->m_FadeOutputSeconds             = (unsigned short) savedSeconds;
+        doc->m_timeFadeCancelled             = CTime((time_t) 0);
+    }
+
     // Tear down without running the close/save flow (this doc has no file).
     doc->m_pWorldView = NULL;
     child->Destroy();

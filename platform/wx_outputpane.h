@@ -118,6 +118,19 @@ public:
 
     // Change the display font (e.g. from preferences or scripting API).
     void SetOutputFont(const wxFont& font);
+    // ── Output-buffer fade ────────────────────────────────────────────────
+    // Windows fades old text in CMUSHView::OnDraw: each line's opacity comes
+    // from how long ago it arrived, and the colours are then run through
+    // CMUSHclientDoc::TranslateColour (which is also what world.MapColour
+    // works through).  Both live on the doc, so the pane asks rather than
+    // reimplementing: give it these two and the fade is live.
+    //   line opacity     — 1.0 = full intensity, down to the world's limit
+    //   translate colour — (colour, opacity) -> colour
+    std::function<double(time_t arrived)>            m_fn_line_opacity;
+    std::function<uint32_t(uint32_t, double)>        m_fn_translate_colour;
+    // Did the last paint see anything still fading?  Drives the repaint tick.
+    bool AnyLineFading() const { return m_anyFading; }
+
     // World option line_spacing: the row pitch in pixels, or 0 to derive it
     // from the font's own height.  Windows applies this in ChangeFont
     // (doc.cpp:1179, `m_FontHeight = iLineSpacing`); off Windows the pane owns
@@ -639,6 +652,12 @@ private:
     int VisualRowToLogical(int vr) const;
 
     // Draw a single text chunk from a run with the given selection inversion.
+    // Paint-scoped: the opacity DrawLine worked out for the line it is drawing,
+    // read by DrawRunChunk.  A parameter would have to be threaded through five
+    // call sites that all sit inside DrawLine itself; this is DC-like scratch
+    // state, valid only between DrawLine setting it and returning.
+    double m_paintOpacity = 1.0;
+
     void DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
                       const SOutputRun& run, bool selected);
 
@@ -780,6 +799,10 @@ private:
     int    m_fontSize = kDefaultFontSize;
     int    m_lineH    = 18;   // line height pixels (set from font metrics)
     int    m_lineSpacing = 0; // world option line_spacing; 0 = use the font's
+    // True when the last paint saw a line still part-way through its fade, so
+    // the frame knows to keep repainting.  Once every visible line has reached
+    // the final opacity there is nothing left to animate and the ticking stops.
+    bool   m_anyFading = false;
     int    m_charW    = 10;   // avg char width pixels
 
     int    m_maxLineChars = 80;   // widest line seen, in characters (stats only)

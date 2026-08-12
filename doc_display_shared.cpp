@@ -62,6 +62,7 @@ bool CMUSHclientDoc::BuildOutputLine (long index, SOutputLine & out) const
 {
   out.clear();
   out.pending = false;
+  out.arrived = 0;
   if (index < 0 || index >= m_LineList.GetCount ())
     return false;
 
@@ -70,9 +71,19 @@ bool CMUSHclientDoc::BuildOutputLine (long index, SOutputLine & out) const
   if (!pLine || pLine == m_pCurrentLine)
     return false;
 
+  // When the line arrived, for the output-buffer fade.  THIS is the builder the
+  // pane actually uses: it is on a pull model (COutputPane::LineAt →
+  // m_fn_fetch_line → here), so a line is rebuilt from its CLine on demand and
+  // the push-side builders below are only used when no fetch callback is wired.
+  //
+  // Set on the LOCAL `outline` in each branch, not on `out` here: both branches
+  // end with `out = std::move (outline)`, which would overwrite it.
+  const time_t arrivedAt = pLine->m_theTime.GetTime ();
+
     // Horizontal rule: emit a single sentinel run rather than text.
     if (pLine->flags & HORIZ_RULE) {
         SOutputLine outline;
+        outline.arrived = arrivedAt;
         SOutputRun hrRun;
         hrRun.horiz_rule = true;
         outline.push_back(std::move(hrRun));
@@ -81,6 +92,7 @@ bool CMUSHclientDoc::BuildOutputLine (long index, SOutputLine & out) const
     }
 
     SOutputLine outline;
+    outline.arrived = arrivedAt;
     // A note line: a send-link on it is executed, not sent.
     outline.comment = (pLine->flags & COMMENT) != 0;
     // The engine's BOOKMARK flag (world.Bookmark / Display ▸ Bookmark
@@ -236,6 +248,7 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
         // Horizontal rule: emit a single sentinel run rather than text.
         if (pLine->flags & HORIZ_RULE) {
             SOutputLine outline;
+            outline.arrived = pLine->m_theTime.GetTime();
             SOutputRun hrRun;
             hrRun.horiz_rule = true;
             outline.push_back(std::move(hrRun));
@@ -245,6 +258,8 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
         }
 
         SOutputLine outline;
+        // When it arrived, for the output-buffer fade (the view has no CLine).
+        outline.arrived = pLine->m_theTime.GetTime();
         // A note line: a send-link on it is executed, not sent.
         outline.comment = (pLine->flags & COMMENT) != 0;
         // The engine's BOOKMARK flag (world.Bookmark / Display ▸ Bookmark
@@ -354,6 +369,11 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
         }
         if (!pending.empty()) {
             pending.pending = true;
+            // The in-progress line carries its arrival time too -- it is the
+            // THIRD place an SOutputLine is built, and the one a prompt sits
+            // in, so leaving it unstamped left the newest line on screen (the
+            // one the fade should never have touched) looking ancient.
+            pending.arrived = m_pCurrentLine->m_theTime.GetTime();
             EmitOutputLine(std::move(pending));
             emittedPending = true;
         }

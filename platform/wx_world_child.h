@@ -408,6 +408,9 @@ private:
 
     // ── Command history ────────────────────────────────────────────────────
     std::vector<wxString> m_history;           // sent commands, oldest first
+    // Last wall-clock second the output-buffer fade was repainted, so the
+    // world timer redraws at most once a second while text is fading.
+    time_t      m_lastFadeRepaint = 0;
     int                   m_histIdx = -1;       // -1 = not browsing; ≥0 = index into m_history
     wxString              m_histSaved;          // text in input when user started browsing
     bool                  m_histRSearch = false; // true = Ctrl+R substring mode (vs prefix)
@@ -525,6 +528,8 @@ private:
     // Returns the currently-visible input control (m_input or m_inputPassword).
     wxTextCtrl* ActiveInput() const;
     void        SaveCommandHistoryFile();
+    // Scrolling brings faded text back to full intensity for a while.
+    void        CancelOutputFade();
 
     // Switch the input bar between normal and password (masked) mode.
     // Called from PollNoEcho whenever m_doc->m_bNoEcho changes.

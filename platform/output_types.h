@@ -45,6 +45,8 @@ struct SRunLink {
     int         action_type = 0;
 };
 
+#include <ctime>   // time_t — SOutputLine::arrived
+
 struct SOutputRun {
     std::string text;
     uint32_t    fg            = 0x00C0C0C0u;  // default: light grey  (RGB 192,192,192)
@@ -128,6 +130,12 @@ struct SOutputLine : std::vector<SOutputRun> {
     // !!pluginID:sub(arg) plugin-call convention work — so the click handler
     // needs it alongside the run's action_type.
     bool comment  = false;
+    // When the line arrived, as a Unix time (CLine::m_theTime).  Only the
+    // output-buffer FADE reads it: Windows works out each line's opacity from
+    // how long ago it arrived (CMUSHView::OnDraw, mushview.cpp:1096-1121), so
+    // the view has to know, and the pane holds no CLine of its own.  0 means
+    // "unknown", which the fade treats as "do not fade".
+    time_t arrived = 0;
     // Inherit all std::vector constructors (default, initializer_list, etc.).
     using std::vector<SOutputRun>::vector;
 };

@@ -170,7 +170,13 @@ unsigned char header [8];
   hbmp = CreateDIBSection(NULL, &bmiB, DIB_RGB_COLORS, (void**) &pB, NULL, 0);
 
   if (!hbmp)
+    {
+    // Free what the success path frees -- this early return used to leak the
+    // open FILE* and all three libpng structs on every failed load.
+    png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
+    fclose(fp);
     return eUnableToLoadImage;
+    }
 
   long row;
   unsigned char * p = pB;
@@ -338,7 +344,11 @@ long LoadPngMemory (unsigned char * Buffer, const size_t Length, HBITMAP & hbmp,
   hbmp = CreateDIBSection(NULL, &bmiB, DIB_RGB_COLORS, (void**) &pB, NULL, 0);
 
   if (!hbmp)
+    {
+    // Same leak as LoadPng's arm above, minus the FILE* (memory source).
+    png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
     return eUnableToLoadImage;
+    }
 
   long row;
   unsigned char * p = pB;

@@ -5748,12 +5748,20 @@ struct RGBQUAD { BYTE rgbBlue, rgbGreen, rgbRed, rgbReserved; };
 struct BITMAPINFO { BITMAPINFOHEADER bmiHeader; RGBQUAD bmiColors[1]; };
 typedef BITMAPINFO* LPBITMAPINFO;
 typedef const BITMAPINFO* LPCBITMAPINFO;
+// Packed to 2 bytes, as Windows' wingdi.h declares it (#pragma pack(2)).
+// Without this the LP64 default alignment pads 2 bytes after bfType: sizeof
+// becomes 16, and CMiniWindow::Write — which dumps the struct raw and computes
+// bfOffBits from sizeof hdr — wrote a .bmp whose every field sat +2 from its
+// standard offset, with bfOffBits 56.  No parser (including this port's own
+// LoadBmp, which reads by byte offset) could open a WindowWrite .bmp.
+#pragma pack(push, 2)
 struct BITMAPFILEHEADER {
     WORD  bfType;
     DWORD bfSize;
     WORD  bfReserved1, bfReserved2;
     DWORD bfOffBits;
 };
+#pragma pack(pop)
 
 // CHARFORMAT / CHARFORMAT2 — Rich edit character formatting
 #ifndef CHARFORMAT_DEFINED

@@ -32,6 +32,7 @@ pal::SurfaceId HeadlessSurfaceOfBitmapForTesting(const CBitmap*);
 size_t         HeadlessLiveDibCountForTesting();
 
 #include <cstring>
+#include <vector>
 
 // ── 1. Font-metric path (ChangeFont / ChangeInputFont shape) ────────────────
 // Mirrors doc.cpp:1140-1192 / 1229-1258 exactly, then asserts the metric that
@@ -385,6 +386,40 @@ TEST(GdiHeadless, CanvasBitmapOwnsASurfaceAndSelectObjectAssociatesIt)
     dc.FillSolidRect(0, 0, 16, 16, RGB(0, 0, 255));
     EXPECT_TRUE(bmp.DeleteObject());          // releases the surface
     EXPECT_FALSE(bmp.DeleteObject());         // ...and only once
+}
+
+// ~CBitmap releases the surface (2026-08-12).  miniwindow.cpp deletes images
+// with plain `delete` at five sites (image replace in LoadImage /
+// LoadImageMemory / CreateImage / ImageFromWindow and the m_Images teardown);
+// an empty dtor leaked each one's CpuRaster pixel buffer AND left the
+// surface map keyed by the freed object address, which the next heap-recycled
+// CBitmap aliased — GetBitmap answered for the DEAD image.
+TEST(GdiHeadless, DeletingABitmapObjectReleasesItsSurface)
+{
+    CBitmap* a = new CBitmap;
+    ASSERT_TRUE(a->CreateCanvasBitmap(8, 8));
+    BITMAP info = {};
+    EXPECT_TRUE(a->GetBitmap(&info));      // registered in the store
+
+    delete a;                              // plain delete — miniwindow's shape
+
+    // macOS libmalloc reuses a just-freed same-size block immediately, so the
+    // very next new lands on a's address; the loop is a bound, not a search
+    // strategy.  A recycled address must NOT inherit the dead image.
+    CBitmap* recycled = nullptr;
+    std::vector<CBitmap*> others;
+    for (int i = 0; i < 64 && !recycled; ++i) {
+        CBitmap* c = new CBitmap;
+        if (c == a) recycled = c; else others.push_back(c);
+    }
+    for (CBitmap* c : others) delete c;
+    EXPECT_TRUE(recycled != nullptr);      // allocator handed the address back
+    if (recycled) {
+        BITMAP inherited = {};
+        EXPECT_FALSE(recycled->GetBitmap(&inherited));  // no aliasing
+        EXPECT_FALSE(recycled->DeleteObject());          // nothing to release
+        delete recycled;
+    }
 }
 
 TEST(GdiHeadless, DeletingABitmapLeavesNoDcPointingAtItsSurface)

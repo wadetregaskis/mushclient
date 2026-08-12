@@ -1210,6 +1210,91 @@ TEST(LuaSurface, ImageFamilyRoundTripsAPngThroughTheDibStore)
     ::unlink(png);
 }
 
+// A .bmp written by world.WindowWrite must be readable — by anything.  The
+// shim's BITMAPFILEHEADER lacked Windows' #pragma pack(2), so on LP64 it was
+// 16 bytes: every field of a written .bmp sat +2 from its standard offset,
+// bfOffBits said 56, no parser (including this port's own LoadBmp) could open
+// the file, and WindowWrite still returned eOK.  The static_assert pins the
+// layout; the round trip and the raw header bytes pin the file.
+static_assert(sizeof(BITMAPFILEHEADER) == 14,
+              "BITMAPFILEHEADER must have the on-disk 14-byte layout");
+
+TEST(LuaSurface, WindowWriteBmpRoundTrips)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    char bmp[256];
+    snprintf(bmp, sizeof(bmp), "/tmp/mc_test_write_%d.bmp", (int)getpid());
+    ::unlink(bmp);
+
+    char script[1536];
+    snprintf(script, sizeof(script),
+        // Same non-degenerate source as the PNG round trip: blue field, green
+        // band off both edges.
+        "assert(world.WindowCreate('src', 0, 0, 9, 5, 0, 0, 0x0000FF) == 0)\n"
+        "assert(world.WindowRectOp('src', 2, 2, 0, 6, 5, 0x00FF00, 0) == 0)\n"
+        "assert(world.WindowWrite('src', '%s') == 0)\n"
+        "assert(world.WindowCreate('dst', 0, 0, 20, 20, 0, 0, 0x000000) == 0)\n"
+        "assert(world.WindowLoadImage('dst', 'img', '%s') == 0, 'BMP unreadable')\n"
+        "assert(world.WindowImageInfo('dst', 'img', 2) == 9, 'width wrong')\n"
+        "assert(world.WindowImageInfo('dst', 'img', 3) == 5, 'height wrong')\n"
+        "assert(world.WindowDrawImage('dst', 'img', 0, 0, 0, 0, 1, 0, 0, 0, 0) == 0)\n"
+        "assert(world.WindowGetPixel('dst', 0, 0) == 0x0000FF, 'blue lost')\n"
+        "assert(world.WindowGetPixel('dst', 3, 0) == 0x00FF00, 'band lost')\n",
+        bmp, bmp);
+    EXPECT_TRUE(run(f.L, script));
+
+    // The header bytes themselves, at their STANDARD offsets: 'BM' at 0,
+    // bfOffBits at 10 == 54 (14-byte file header + 40-byte info header).
+    FILE* fp = fopen(bmp, "rb");
+    ASSERT_TRUE(fp != nullptr);
+    unsigned char hdr[14] = {};
+    ASSERT_EQ((size_t)14, fread(hdr, 1, sizeof hdr, fp));
+    fclose(fp);
+    EXPECT_EQ('B', hdr[0]);
+    EXPECT_EQ('M', hdr[1]);
+    const unsigned offBits = hdr[10] | (hdr[11] << 8) |
+                             ((unsigned)hdr[12] << 16) | ((unsigned)hdr[13] << 24);
+    EXPECT_EQ(54u, offBits);
+    ::unlink(bmp);
+}
+
+// world.SetBackgroundImage('') must CLEAR the image.  The clear guard is
+// shared Windows code — `if ((HBITMAP) m_BackgroundBitmap) DeleteObject()` —
+// reading the m_hObject ownership token, which the port's CBitmap::Attach
+// left NULL after every successful load: the guard skipped the delete, the
+// surface survived, and (in the GUI) the old image painted forever after the
+// user removed it.  Attach now keeps the token non-null in both builds.
+TEST(LuaSurface, SetBackgroundImageEmptyClearsTheImage)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    char png[256];
+    snprintf(png, sizeof(png), "/tmp/mc_test_bgimg_%d.png", (int)getpid());
+    ::unlink(png);
+
+    char script[512];
+    snprintf(script, sizeof(script),
+        "assert(world.WindowCreate('src', 0, 0, 9, 5, 0, 0, 0x0000FF) == 0)\n"
+        "assert(world.WindowWrite('src', '%s') == 0)\n"
+        "assert(world.SetBackgroundImage('%s', 0) == 0, 'load failed')\n",
+        png, png);
+    EXPECT_TRUE(run(f.L, script));
+
+    // After a successful load the token is set and the bitmap is REAL.
+    EXPECT_TRUE((HBITMAP) f.doc.m_BackgroundBitmap != NULL);
+    BITMAP info = {};
+    EXPECT_TRUE(f.doc.m_BackgroundBitmap.GetBitmap(&info));
+    EXPECT_EQ(9, (int) info.bmWidth);
+
+    // Clearing really deletes it: with the old null token, DeleteObject was
+    // skipped and GetBitmap kept answering for the stale image.
+    EXPECT_EQ((long) eOK, f.doc.SetBackgroundImage("", 0));
+    EXPECT_TRUE((HBITMAP) f.doc.m_BackgroundBitmap == NULL);
+    EXPECT_FALSE(f.doc.m_BackgroundBitmap.GetBitmap(&info));
+    ::unlink(png);
+}
+
 TEST(LuaSurface, AlphaImageOpsReadTheImagesRealAlpha)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);

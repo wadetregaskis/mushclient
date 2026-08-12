@@ -704,7 +704,15 @@ BOOL CBitmap::Attach(HGDIOBJ hObject) {
     // WindowDrawImage of a loaded PNG actually render instead of crashing).
     if (wxBitmap* materialized = MaterializeDIBSection(hObject)) {
         m_impl = materialized;
-        m_hObject = nullptr;   // the DIBSection handle has been freed
+        // Keep the ownership token NON-NULL.  The shared clear/replace guard
+        // reads it through operator HGDIOBJ — methods_output.cpp:372
+        // `if ((HBITMAP) m_BackgroundBitmap) m_BackgroundBitmap.DeleteObject()`
+        // — and a null here made world.SetBackgroundImage("") skip the delete,
+        // so the old image painted forever (the paint reads m_impl, which had
+        // survived).  The value is opaque: nothing feeds it back to
+        // ::DeleteObject; m_impl doubles as the token, and DeleteObject()
+        // above nulls both.
+        m_hObject = materialized;
     } else {
         m_impl = hObject;      // already a wxBitmap* (or null)
     }
@@ -1736,7 +1744,20 @@ bool wxgdi_write_bgra(CDC* dc, int x, int y, int w, int h,
     wxBitmap updated(img, 32);
     updated.SetScaleFactor(sc);
     p->dc.SelectObject(wxNullBitmap);
-    p->dc.SelectObject(updated);
+    if (p->currentBitmap && p->currentBitmap->m_impl) {
+        // Write the new pixels back through the SELECTED CBitmap, keeping it
+        // the single owner.  Selecting a detached `updated` here froze the
+        // owner's m_impl at pre-write content, and every consumer that reads
+        // the bitmap OBJECT rather than the DC — CMiniWindow::Resize's
+        // copy-old-contents blit above all — saw stale pixels: after any
+        // pixel-write op, a WindowResize reverted the canvas to what it held
+        // before the first such op.
+        *static_cast<wxBitmap*>(p->currentBitmap->m_impl) = updated;
+        p->dc.SelectObject(*static_cast<wxBitmap*>(p->currentBitmap->m_impl));
+    } else {
+        // No CBitmap selected (DIB-backed DCs returned earlier): old behaviour.
+        p->dc.SelectObject(updated);
+    }
     return true;
 }
 

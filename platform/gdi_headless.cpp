@@ -103,7 +103,13 @@ bool CFont::CreateFont (int /*nHeight*/, int /*nWidth*/, int /*nEscapement*/,
 // reached), but its symbols must resolve for the flip to link.
 // ════════════════════════════════════════════════════════════════════════════
 
-CBitmap::~CBitmap () {}
+// Release the surface (2026-08-12): miniwindow.cpp deletes images with plain
+// `delete` at five sites (image replace + the m_Images map teardown), and an
+// empty dtor leaked each one's CpuRaster pixel buffer AND left a stale
+// BitmapSurfaces() entry keyed by the freed address — which a heap-recycled
+// CBitmap then aliased.  DeleteObject is a cheap map lookup and a no-op for
+// never-registered bitmaps (LoadPng's stack B_bmp).
+CBitmap::~CBitmap () { DeleteObject (); }
 
 // ════════════════════════════════════════════════════════════════════════════
 // CDC — the screenless font-measurement DC in ChangeFont / ChangeInputFont /

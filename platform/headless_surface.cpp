@@ -230,6 +230,7 @@ bool CBitmap::DeleteObject()
 
     if (g_adapter) g_adapter->destroySurface(it->second.id);
     m.erase(it);
+    m_hObject = nullptr;   // the guard token Attach set (see there)
     return true;
 }
 
@@ -285,6 +286,12 @@ BOOL CBitmap::Attach(HGDIOBJ hObject)
     g_adapter->writePixels(id, { 0, 0, dib->w, dib->h }, buf);
 
     BitmapSurfaces()[this] = { id, dib->w, dib->h, alpha ? 32 : 24 };
+    // Non-null ownership token, mirroring the wx build (wx_gdi_compat.cpp
+    // CBitmap::Attach): the shared clear/replace guard reads m_hObject via
+    // operator HGDIOBJ, so a null here made `if ((HBITMAP) bmp)` skip
+    // DeleteObject in this build too.  Opaque — nothing dereferences it; the
+    // surface record is keyed on `this`.
+    m_hObject = (HGDIOBJ) this;
     return TRUE;
 }
 

@@ -665,6 +665,63 @@ int RunPalMiniWindowSelfTest()
         doc->WindowDelete(BIG);
     }
 
+    // ── drawing survives a resize, even after a pixel-write op ─────────────
+    // (2026-08-12)  wxgdi_write_bgra used to swap a detached wxBitmap into the
+    // wxMemoryDC, orphaning the CBitmap's m_impl at pre-write content.  Every
+    // pixel-write op (WindowSetPixel, BlendImage, the alpha draws...) took
+    // that path, and CMiniWindow::Resize copies old content through the
+    // BITMAP OBJECT — so everything drawn after the first pixel op vanished
+    // on the next WindowResize.  Quow-style draw-then-resize-to-fit plugins
+    // hit this on every layout pass.
+    {
+        const char* RW = "selftest_mw_resize";
+        mwCheck(doc->WindowCreate(RW, 0, 0, 32, 32, 0, 0, kBlack) == eOK,
+                "resize fixture window created");
+        // A line op BEFORE any pixel write (control), then the pixel write.
+        mwCheck(doc->WindowRectOp(RW, 2, 1, 1, 9, 9, kGreen, 0) == eOK,
+                "...rect drawn (pre-pixel-write path)");
+        mwCheck(doc->WindowSetPixel(RW, 20, 20, kRed) == eOK,
+                "...pixel written (the write_bgra path)");
+        mwCheck(doc->WindowGetPixel(RW, 20, 20) == kRed,
+                "...and reads back before the resize");
+
+        mwCheck(doc->WindowResize(RW, 48, 48, kBlue) == eOK,
+                "WindowResize grows the window");
+        mwCheck(doc->WindowGetPixel(RW, 4, 4) == kGreen,
+                "resize keeps content drawn BEFORE the pixel write");
+        mwCheck(doc->WindowGetPixel(RW, 20, 20) == kRed,
+                "resize keeps the written pixel (it used to revert)");
+        doc->WindowDelete(RW);
+    }
+
+    // ── SetBackgroundImage('') clears the image (wx CBitmap::Attach token) ──
+    // The shared clear guard reads the m_hObject token, which Attach left
+    // null after every load — so the delete was skipped and the old image
+    // painted forever.  Same assertion as the headless twin in
+    // tests/test_lua_surface.cpp, here against the REAL wx bitmap.
+    {
+        char png[256];
+        snprintf(png, sizeof(png), "/tmp/mc_selftest_bg_%d.png", (int) getpid());
+        ::unlink(png);
+        mwCheck(doc->WindowCreate("bgsrc", 0, 0, 9, 5, 0, 0, kBlue) == eOK,
+                "background fixture window created");
+        mwCheck(doc->WindowWrite("bgsrc", png) == eOK, "...written as a PNG");
+        mwCheck(doc->SetBackgroundImage(png, 0) == eOK,
+                "SetBackgroundImage loads it");
+        mwCheck((HBITMAP) doc->m_BackgroundBitmap != NULL,
+                "...and the ownership token is set (it used to stay null)");
+        BITMAP bmInfo = {};
+        mwCheck(doc->m_BackgroundBitmap.GetBitmap(&bmInfo) &&
+                    bmInfo.bmWidth == 9,
+                "...and the bitmap is real (9 wide)");
+        mwCheck(doc->SetBackgroundImage("", 0) == eOK,
+                "SetBackgroundImage('') accepts the clear");
+        mwCheck(doc->m_BackgroundBitmap.GetBitmap(&bmInfo) == FALSE,
+                "...and the image is really GONE (it used to survive)");
+        doc->WindowDelete("bgsrc");
+        ::unlink(png);
+    }
+
     // ── deletion ───────────────────────────────────────────────────────────
     mwCheck(doc->WindowDelete(W) == eOK, "WindowDelete succeeds");
     mwCheck(doc->WindowDelete(W) == eNoSuchWindow,

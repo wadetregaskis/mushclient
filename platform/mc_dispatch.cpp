@@ -16,6 +16,7 @@
 #include <utility>
 #include <type_traits>
 #include <cstdlib>
+#include <strings.h>   // strcasecmp — bool_word()
 
 // COM constants not in the port's VT_* set.
 #ifndef VT_ERROR
@@ -65,6 +66,25 @@ void var_copy(VARIANT& dst, const VARIANT& src)
     }                              // arrays today; the array getters marshal directly).
   }
 
+// Boolean words for string→number coercion.  Tcl's everything-is-a-string
+// model marshals flags as "true"/"yes"/"on", which atol read as 0 — so the
+// idiomatic `world EnableTrigger t true` silently DISABLED the trigger, and
+// `world Trace true` turned tracing off.  Full words only, case-insensitive
+// (Tcl itself accepts prefixes, but being stricter here can only leave the
+// old zero, never invert the other way).  This runs only when a STRING meets
+// a numeric/BOOL parameter — string parameters never consult it, so
+// world.Note("on") still prints "on".
+static bool bool_word (const char* s, long& out)
+  {
+  if (!s) return false;
+  static const struct { const char* w; long v; } k[] = {
+    { "true", 1 }, { "yes", 1 }, { "on", 1 },
+    { "false", 0 }, { "no", 0 }, { "off", 0 } };
+  for (const auto& e : k)
+    if (strcasecmp (s, e.w) == 0) { out = e.v; return true; }
+  return false;
+  }
+
 // ── VARIANT readers (input arg -> C++ scalar/string) ───────────────────────
 long var_to_long(const VARIANT* a)
   {
@@ -76,7 +96,9 @@ long var_to_long(const VARIANT* a)
     case VT_R4:   return (long) a->fltVal;
     case VT_R8:   return (long) a->dblVal;
     case VT_BOOL: return a->boolVal ? 1 : 0;
-    case VT_BSTR: return a->bstrVal ? atol (a->bstrVal) : 0;
+    case VT_BSTR: { long b;
+                    if (bool_word (a->bstrVal, b)) return b;
+                    return a->bstrVal ? atol (a->bstrVal) : 0; }
     default:      return 0;
     }
   }
@@ -91,7 +113,9 @@ double var_to_double(const VARIANT* a)
     case VT_R4:   return a->fltVal;
     case VT_R8:   return a->dblVal;
     case VT_BOOL: return a->boolVal ? 1 : 0;
-    case VT_BSTR: return a->bstrVal ? atof (a->bstrVal) : 0.0;
+    case VT_BSTR: { long b;
+                    if (bool_word (a->bstrVal, b)) return b;
+                    return a->bstrVal ? atof (a->bstrVal) : 0.0; }
     default:      return 0.0;
     }
   }
@@ -105,8 +129,14 @@ CString var_to_cstr(const VARIANT* a)
     case VT_BSTR: if (a->bstrVal) s = a->bstrVal;            break;
     case VT_I2:   s.Format ("%d",  (int) a->iVal);          break;
     case VT_I4:   s.Format ("%ld", a->lVal);                break;
-    case VT_R4:   s.Format ("%g",  (double) a->fltVal);     break;
-    case VT_R8:   s.Format ("%g",  a->dblVal);              break;
+    // %.7g / %.14g, NOT %g: %g keeps only 6 significant digits, so a script
+    // passing 1234567.89 into a string parameter (SetVariable's value, Note
+    // text...) stored "1.23457e+06" — and every JS integer >= 2^31 rides the
+    // VT_R8 path.  %.14g is the Lua control's own format (LUA_NUMBER_FMT),
+    // so the six languages now agree byte-for-byte; the R4 arm stays at
+    // float precision so a widened 2.6f does not print representation noise.
+    case VT_R4:   s.Format ("%.7g",  (double) a->fltVal);   break;
+    case VT_R8:   s.Format ("%.14g", a->dblVal);            break;
     case VT_BOOL: s = a->boolVal ? "1" : "0";               break;
     default:                                                break;
     }
@@ -319,15 +349,102 @@ void build_table()
 } // anonymous namespace
 
 // ── Public API ──────────────────────────────────────────────────────────────
+// ── Trailing-argument defaults, mirroring the Lua binding ───────────────────
+// A short argument list fills every missing typed parameter with the zero
+// value (the VT_ERROR sentinel through var_to_long) — which, for the methods
+// whose Lua binding documents a NON-ZERO default, inverted the call:
+// world.EnableTrigger("t") from Python/Perl/JS/Tcl/Ruby disabled the trigger,
+// WindowShow("w") hid the window, Pause() un-paused, DatabaseOpen(n, f) passed
+// sqlite flags 0 so the open failed.  (On Windows these engines rode COM,
+// which refuses a short list for typed parameters outright — so no working
+// script ever relied on the zero-fill.)  This table is the Lua opt* defaults
+// exactly, slot numbers 0-based; methods not listed keep the zero-fill that
+// McDispatch.MissingArgumentsAreTheZeroValueNotGarbage pins.  Method names
+// LOWERCASE (compared against lc(name)).
+struct ArgDefault { const char* method; int slot; long value; };
+static const ArgDefault kArgDefaults[] = {
+  { "addtriggerex",          9, DEFAULT_TRIGGER_SEQUENCE },
+  { "blendpixel",            3, 1 },                    // Opacity
+  { "bookmark",              1, 1 },
+  { "chatacceptcalls",       0, DEFAULT_CHAT_PORT },
+  { "chatcall",              1, DEFAULT_CHAT_PORT },
+  { "chatcallzchat",         1, DEFAULT_CHAT_PORT },
+  { "databaseopen",          2, 2 | 4 },                // SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
+  { "setechoinput",          0, 1 },
+  { "enablealias",           1, 1 },
+  { "enablealiasgroup",      1, 1 },
+  { "enablegroup",           1, 1 },
+  { "enablemapping",         0, 1 },
+  { "enableplugin",          1, 1 },
+  { "enabletimer",           1, 1 },
+  { "enabletimergroup",      1, 1 },
+  { "enabletrigger",         1, 1 },
+  { "enabletriggergroup",    1, 1 },
+  { "getworldwindowposition",0, 1 },
+  { "setloginput",           0, 1 },
+  { "setlognotes",           0, 1 },
+  { "setlogoutput",          0, 1 },
+  { "setmapping",            0, 1 },
+  { "metaphone",             1, 4 },
+  { "moveworldwindow",       4, 1 },
+  { "notepadreadonly",       1, 1 },
+  { "pause",                 0, 1 },
+  { "queue",                 1, 1 },
+  { "replace",               3, 1 },
+  { "setchanged",            0, 1 },
+  { "setscroll",             1, 1 },
+  { "showinfobar",           0, 1 },
+  { "settrace",              0, 1 },
+  { "windowblendimage",      7, 1 },
+  { "windowdrawimage",       6, 1 },
+  { "windowdrawimagealpha",  6, 1 },
+  { "windowfont",            8, DEFAULT_CHARSET },
+  { "windowmergeimagealpha", 8, 1 },
+  { "windowshow",            1, 1 },
+};
+
 int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
                       const VARIANT* args, int nargs,
                       VARIANT& result, std::vector<VARIANT>* outargs)
   {
   build_table();
   VariantInit(&result);
-  auto it = table().find(lc(name));
+  const std::string key = lc(name);
+  auto it = table().find(key);
   if (it == table().end())
     return MC_DISP_UNKNOWN;
+
+  // Pad a short list up to the highest defaulted slot.  The padded vector
+  // holds shallow VIEWS of the caller's VARIANTs (the thunk only reads them);
+  // filler slots without a default carry the same VT_ERROR sentinel arg_at
+  // hands out, so unlisted parameters keep their zero-fill semantics.
+  std::vector<VARIANT> padded;
+  int maxSlot = -1;
+  for (const ArgDefault& d : kArgDefaults)
+    if (d.slot >= nargs && d.slot > maxSlot && key == d.method)
+      maxSlot = d.slot;
+  if (maxSlot >= 0)
+    {
+    padded.reserve((size_t) maxSlot + 1);
+    for (int i = 0; i <= maxSlot; ++i)
+      {
+      VARIANT v;
+      VariantInit(&v);
+      if (i < nargs)
+        v = args[i];                       // borrowed, not owned
+      else
+        {
+        v.vt = VT_ERROR; v.lVal = 0;       // "not supplied"
+        for (const ArgDefault& d : kArgDefaults)
+          if (d.slot == i && key == d.method)
+            { v.vt = VT_I4; v.lVal = d.value; break; }
+        }
+      padded.push_back(v);
+      }
+    args  = padded.data();
+    nargs = maxSlot + 1;
+    }
+
   if (!it->second(doc, args, nargs, result, outargs))
     return MC_DISP_BADARGS;
   return MC_DISP_OK;

@@ -316,9 +316,12 @@ TEST(McDispatch, StringsCoerceToNumericParameters)
 }
 
 // Arguments the script did not supply arrive as VT_ERROR ("not supplied") and
-// read as the zero value for their type.  This is how optional arguments work
-// for every language at once, so it has to be the documented behaviour rather
-// than an accident of reading past the end of the array.
+// read as the zero value for their type — EXCEPT the ~38 methods whose Lua
+// binding documents a non-zero default (EnableTrigger's flag, WindowShow's
+// show, DatabaseOpen's sqlite flags...), which mc_dispatch's kArgDefaults
+// table now fills with that default instead (see the tests below).  For
+// everything else, zero-fill is the documented behaviour rather than an
+// accident of reading past the end of the array.
 TEST(McDispatch, MissingArgumentsAreTheZeroValueNotGarbage)
 {
     CMUSHclientDoc doc;
@@ -373,6 +376,107 @@ TEST(McDispatch, ExtraArgumentsAreIgnored)
         { vstr("  padded  "), vstr("ignored"), vi4(99) }, r));
     EXPECT_EQ(std::string("padded"), bstr_of(r));
     MC_VariantClear(r);
+}
+
+// ── the Lua-default table (2026-08-12) ─────────────────────────────────────
+// Methods whose Lua binding documents a NON-ZERO optional default get that
+// default here too.  Before the kArgDefaults table, the zero-fill INVERTED
+// them: world.EnableTrigger("t") from Python/Perl/JS/Tcl/Ruby disabled the
+// trigger it was asked to enable, and DatabaseOpen without flags passed 0 to
+// sqlite3_open_v2, which refuses to open.  (Windows COM refused a short list
+// outright — DISP_E_BADPARAMCOUNT — so nothing working relied on zero-fill.)
+TEST(McDispatch, OmittedTrailingArgsTakeTheLuaDefaults)
+{
+    CMUSHclientDoc doc;
+
+    // An ENABLED trigger + EnableTrigger with only the name must stay enabled.
+    VARIANT r; VariantInit(&r);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "AddTrigger",
+        { vstr("t"), vstr("match"), vstr(""), vi4(1) /*eEnabled*/, vi4(-1),
+          vi4(0), vstr(""), vstr("") }, r));
+    EXPECT_EQ((long) eOK, r.lVal);
+    MC_VariantClear(r);
+
+    VARIANT e; VariantInit(&e);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("t") }, e));
+    EXPECT_EQ((long) eOK, e.lVal);
+    MC_VariantClear(e);
+
+    VARIANT info; VariantInit(&info);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetTriggerInfo", { vstr("t"), vi2(8) }, info));
+    EXPECT_EQ((int) VT_BOOL, (int) info.vt);
+    EXPECT_TRUE(info.boolVal != 0);   // still enabled (zero-fill disabled it)
+    MC_VariantClear(info);
+
+    // The control: an explicit 0 still disables — the default must not win
+    // over a SUPPLIED argument.
+    VARIANT d; VariantInit(&d);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("t"), vi4(0) }, d));
+    MC_VariantClear(d);
+    VARIANT info2; VariantInit(&info2);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetTriggerInfo", { vstr("t"), vi2(8) }, info2));
+    EXPECT_TRUE(info2.boolVal == 0);
+    MC_VariantClear(info2);
+
+    // DatabaseOpen with two args gets READWRITE|CREATE, not flags 0.
+    char dbpath[256];
+    snprintf(dbpath, sizeof dbpath, "/tmp/mc_test_dispdb_%d.sqlite", (int)getpid());
+    ::unlink(dbpath);
+    VARIANT db; VariantInit(&db);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "DatabaseOpen", { vstr("db"), vstr(dbpath) }, db));
+    EXPECT_EQ(0L, db.lVal);           // SQLITE_OK — flags 0 fails with MISUSE/CANTOPEN
+    MC_VariantClear(db);
+    VARIANT dbc; VariantInit(&dbc);
+    call(doc, "DatabaseClose", { vstr("db") }, dbc);
+    MC_VariantClear(dbc);
+    ::unlink(dbpath);
+}
+
+// Tcl marshals every argument as a string; the boolean words its own model
+// treats as true/false everywhere reached atol as 0, so the idiomatic
+// `world EnableTrigger t true` DISABLED the trigger while returning eOK.
+TEST(McDispatch, BooleanWordsCoerceToNumericParameters)
+{
+    CMUSHclientDoc doc;
+    VARIANT r; VariantInit(&r);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "AddTrigger",
+        { vstr("bw"), vstr("m"), vstr(""), vi4(1), vi4(-1),
+          vi4(0), vstr(""), vstr("") }, r));
+    MC_VariantClear(r);
+
+    // Disable with "false", then enable with "true" — both words, as Tcl sends.
+    VARIANT d; VariantInit(&d);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("bw"), vstr("false") }, d));
+    MC_VariantClear(d);
+    VARIANT i1; VariantInit(&i1);
+    call(doc, "GetTriggerInfo", { vstr("bw"), vi2(8) }, i1);
+    EXPECT_TRUE(i1.boolVal == 0);     // "false" really disabled it
+    MC_VariantClear(i1);
+
+    VARIANT e; VariantInit(&e);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("bw"), vstr("true") }, e));
+    MC_VariantClear(e);
+    VARIANT i2; VariantInit(&i2);
+    call(doc, "GetTriggerInfo", { vstr("bw"), vi2(8) }, i2);
+    EXPECT_TRUE(i2.boolVal != 0);     // "true" enabled, not atol()=0-disabled
+    MC_VariantClear(i2);
+
+    // A string PARAMETER is untouched: "on" stays the text "on".
+    EXPECT_EQ(std::string("on"), roundtrip_variable(doc, "word", vstr("on")));
+}
+
+// %g kept six significant digits, so numbers passed into string parameters
+// (SetVariable's value above all) silently lost precision: 1234567.89 stored
+// as "1.23457e+06", and every JS integer >= 2^31 rides the VT_R8 path.
+// %.14g is LUA_NUMBER_FMT — the six languages now agree byte-for-byte.
+TEST(McDispatch, DoublesKeepPrecisionThroughStringParameters)
+{
+    CMUSHclientDoc doc;
+    EXPECT_EQ(std::string("1234567.89"),
+              roundtrip_variable(doc, "f", vr8(1234567.89)));
+    EXPECT_EQ(std::string("4294967295"),
+              roundtrip_variable(doc, "big", vr8(4294967295.0)));
+    EXPECT_EQ(std::string("2.5"), roundtrip_variable(doc, "r8", vr8(2.5)));
 }
 
 // ── [out] parameters ──────────────────────────────────────────────────────

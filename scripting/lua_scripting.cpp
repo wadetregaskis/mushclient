@@ -28,9 +28,7 @@ extern "C"
 
 //LUALIB_API int luaopen_trie(lua_State *L);
 
-#ifdef _WIN32
 LUALIB_API int luaopen_progress_dialog(lua_State *L);
-#endif
 
 static void BuildOneLuaFunction (lua_State * L, const char * sTableName)
   {
@@ -198,9 +196,7 @@ void CScriptEngine::OpenLuaDelayed ()
   CallLuaCFunction (L, luaopen_rex);            // regular expression library
   CallLuaCFunction (L, luaopen_bits);           // bit manipulation library
   CallLuaCFunction (L, luaopen_compress);       // compression (utils) library
-#ifdef _WIN32
-  CallLuaCFunction (L, luaopen_progress_dialog);// progress dialog (Windows GUI only)
-#endif
+  CallLuaCFunction (L, luaopen_progress_dialog);// progress dialog (wxProgressDialog on the port)
   CallLuaCFunction (L, luaopen_bc);             // open bc library
   CallLuaCFunction (L, luaopen_lsqlite3);       // open sqlite library
   CallLuaCFunction (L, luaopen_lpeg);           // open lpeg library

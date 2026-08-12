@@ -27,6 +27,7 @@
 #include "scripting/errors.h"
 #include "platform/world_close_decision.h"  // DecideWorldClose — the Cmd+W prompt chain
 #include "dialogs/ProgDlg.h"   // CProgressDlg — adopted into mushcore 2026-08-07
+#include "dialogs/plugins/PluginWizard.h"  // CPluginWizardPage7 — language gates
 
 #include <algorithm>
 #include <cerrno>     // ENOENT — CFile open-failure cause checks
@@ -4835,6 +4836,41 @@ TEST(MfcUi, ProgressDialogIsInertWithNoDialogBehindIt)
     dlg.SetWindowText("x");
     dlg.SetStatus("y");
     EXPECT_FALSE(dlg.CheckCancelButton());   // nothing can cancel it
+}
+
+// Plugin Wizard language page (2026-08-12).  USE_PYTHON/USE_TCL/USE_RUBY are
+// defined only in stdafx.h's _WIN32 arm, so the wizard's language switch was
+// compiled WITHOUT those cases here: choosing Python/Tcl/Ruby (all fully
+// supported engines on the port) produced a plugin whose language attribute
+// was "", and re-entering the page never preselected them.  The gates now
+// admit the port.  PHP stays Windows-only — the port refuses it by design.
+TEST(MfcUi, PluginWizardLanguagePageSpeaksAllPortLanguages)
+{
+    fakewx::Install hooks;
+    // OnInitDialog is protected; re-expose it (members and OnOK are public).
+    struct Probe : CPluginWizardPage7 { using CPluginWizardPage7::OnInitDialog; };
+    Probe page;
+
+    // Re-entering the page preselects a port language (used to map to -1).
+    page.m_strLanguage = "python";
+    page.OnInitDialog();
+    EXPECT_EQ(3, fakewx::widget(IDC_LANGUAGE).cursel);
+
+    struct Case { int idx; const char* want; };
+    static const Case kCases[] = {
+        { 3, "Python" }, { 4, "TclScript" }, { 7, "RubyScript" },
+        { 5, "Lua" },                       // control: has always worked
+    };
+    for (const Case& c : kCases) {
+        fakewx::widget(IDC_LANGUAGE).cursel = c.idx;
+        page.OnOK();
+        EXPECT_STREQ(c.want, (LPCTSTR) page.m_strLanguage);
+    }
+
+    // PHP is unsupported on the port: still the documented empty refusal.
+    fakewx::widget(IDC_LANGUAGE).cursel = 6;
+    page.OnOK();
+    EXPECT_STREQ("", (LPCTSTR) page.m_strLanguage);
 }
 
 MC_TEST_MAIN()

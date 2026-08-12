@@ -36,6 +36,7 @@
 #include "platform/wx_mfc_hooks.h"      // g_wxhook_progress_* — the progress seam
 #include "platform/wx_mfc_logic.h"      // the decisions lifted out of the wx entry points
 #include "dialogs/ProgDlg.h"            // CProgressDlg
+#include "dialogs/world_prefs/prefspropertypages.h"  // CPrefsP17 — ScriptBrowser
 
 #include <vector>
 
@@ -924,6 +925,63 @@ void TestDdxCharsetRoundTrip()
     host->Destroy();
 }
 
+// ── 12. Scripting page: Browse speaks the port's languages (2026-08-12) ────
+// CPrefsP17::ScriptBrowser's Python/Tcl/Ruby cases were behind USE_PYTHON/
+// USE_TCL/USE_RUBY, which only stdafx.h's _WIN32 arm defines — so with the
+// world's language set to any of the three (fully supported here), the
+// Browse and New-script buttons fell into `default: return FALSE`: a silent
+// no-op.  The gates now admit the port; this drives the real ScriptBrowser
+// with the file-dialog hook stubbed to capture the filter it offers.
+void TestScriptingPageBrowse()
+{
+    printf("Scripting page Browse (port languages):\n");
+
+    static std::string s_filter;
+    static int s_calls = 0;
+    char* (*saved)(bool, const char*, const char*, const char*, const char*,
+                   bool) = g_wxhook_file_dialog;
+    g_wxhook_file_dialog = [](bool, const char*, const char*, const char*,
+                              const char* filter, bool) -> char* {
+        s_filter = filter ? filter : "";
+        ++s_calls;
+        return nullptr;                     // cancel — no file touched
+    };
+
+    wxFrame* host = new wxFrame(nullptr, wxID_ANY, wxT("p17-host"));
+    wxComboBox* cb = new wxComboBox(host, wxID_ANY);
+    static const char* const kLangs[] = { "VBscript", "JScript", "PerlScript",
+        "Python", "TclScript", "Lua", "PhpScript", "RubyScript" };
+    for (const char* l : kLangs) cb->Append(wxString(l));
+
+    struct Probe : CPrefsP17 { using CPrefsP17::ScriptBrowser; };
+    Probe page;
+    page.m_ctlLanguage.m_hWnd = cb;         // the real hook route: toWx(m_hWnd)
+
+    struct Case { int idx; const char* pat; const char* what; };
+    static const Case kCases[] = {
+        { 3, "*.pys", "Python browse offers *.pys (was: silent no-op)" },
+        { 4, "*.tcl", "Tcl browse offers *.tcl (was: silent no-op)" },
+        { 7, "*.rb",  "Ruby browse offers *.rb (was: silent no-op)" },
+        { 5, "*.lua", "Lua browse still offers *.lua (control)" },
+    };
+    for (const Case& c : kCases) {
+        cb->SetSelection(c.idx);
+        s_calls = 0; s_filter.clear();
+        const BOOL ran = page.ScriptBrowser(TRUE);
+        check(!ran && s_calls == 1 && s_filter.find(c.pat) != std::string::npos,
+              c.what);
+    }
+    // PHP stays refused on the port (unsupported language, by design).
+    cb->SetSelection(6);
+    s_calls = 0;
+    check(page.ScriptBrowser(TRUE) == FALSE && s_calls == 0,
+          "PHP browse stays a refusal (unsupported on the port)");
+
+    page.m_ctlLanguage.m_hWnd = nullptr;    // not ours to destroy
+    g_wxhook_file_dialog = saved;
+    host->Destroy();
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -939,6 +997,7 @@ int RunGuiBridgeSelfTest()
     TestClipboardRoundTrip();
     TestFunctionListView();
     TestDdxCharsetRoundTrip();
+    TestScriptingPageBrowse();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

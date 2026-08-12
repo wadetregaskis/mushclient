@@ -15,9 +15,8 @@
 #include "UDPsocket.h"
 #ifdef _WIN32
 #include "pal/win_worldview.h"   // the native IWorldView adapter (WV-2)
-#ifndef _WIN32
+#else
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_sound_release_owner (dtor)
-#endif
 #endif
 
 extern int gdoccount;

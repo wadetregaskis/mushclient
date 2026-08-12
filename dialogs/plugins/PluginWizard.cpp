@@ -1016,12 +1016,12 @@ int nItem = -1;
   else
   if (m_strLanguage.CompareNoCase ("perlscript") == 0)
     nItem = 2;
-#ifdef USE_PYTHON
+#if defined(USE_PYTHON) || !defined(_WIN32)   // port: engine present
   else
   if (m_strLanguage.CompareNoCase ("python") == 0)
     nItem = 3;
 #endif
-#ifdef USE_TCL
+#if defined(USE_TCL) || !defined(_WIN32)   // port: engine present
   else
   if (m_strLanguage.CompareNoCase ("tclscript") == 0)
     nItem = 4;
@@ -1034,7 +1034,7 @@ int nItem = -1;
   if (m_strLanguage.CompareNoCase ("phpscript") == 0)
     nItem = 6;
 #endif
-#ifdef USE_RUBY
+#if defined(USE_RUBY) || !defined(_WIN32)   // port: engine present
   else
   if (m_strLanguage.CompareNoCase ("rubyscript") == 0)
     nItem = 7;
@@ -1055,17 +1055,17 @@ int nItem = m_ctlLanguage.GetCurSel ();
     case SCRIPT_VBSCRIPT:   m_strLanguage = "VBscript"; break;
     case SCRIPT_JSCRIPT:   m_strLanguage = "JScript"; break;
     case SCRIPT_PERL:   m_strLanguage = "PerlScript"; break;
-#ifdef USE_PYTHON
+#if defined(USE_PYTHON) || !defined(_WIN32)   // port: engine present
     case SCRIPT_PYTHON:   m_strLanguage = "Python"; break;
 #endif
-#ifdef USE_TCL
+#if defined(USE_TCL) || !defined(_WIN32)   // port: engine present
     case SCRIPT_TCL:   m_strLanguage = "TclScript"; break;
 #endif
     case SCRIPT_LUA:   m_strLanguage = "Lua"; break;
 #ifdef USE_PHP
     case SCRIPT_PHP:   m_strLanguage = "PhpScript"; break;
 #endif
-#ifdef USE_RUBY
+#if defined(USE_RUBY) || !defined(_WIN32)   // port: engine present
     case SCRIPT_RUBY:   m_strLanguage = "RubyScript"; break;
 #endif
     default:  m_strLanguage = ""; break;

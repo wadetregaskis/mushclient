@@ -7202,12 +7202,12 @@ int nItem = m_ctlLanguage.GetCurSel ();
     case SCRIPT_PERL:   strSubscript = "pl"; 
               strPrompt = "PerlScript source files (*.pl)|*.pl";
               break;
-#ifdef USE_PYTHON
+#if defined(USE_PYTHON) || !defined(_WIN32)   // port: engine present
     case SCRIPT_PYTHON:   strSubscript = "pys"; 
               strPrompt = "Python source files (*.pys;*.py)|*.pys;*.py";
               break;
 #endif
-#ifdef USE_TCL
+#if defined(USE_TCL) || !defined(_WIN32)   // port: engine present
     case SCRIPT_TCL:   strSubscript = "tcl"; 
               strPrompt = "Tcl source files (*.tcl)|*.tcl";
               break;
@@ -7220,7 +7220,7 @@ int nItem = m_ctlLanguage.GetCurSel ();
               strPrompt = "PHP source files (*.php)|*.php";
               break;
 #endif
-#ifdef USE_RUBY
+#if defined(USE_RUBY) || !defined(_WIN32)   // port: engine present
     case SCRIPT_RUBY:   strSubscript = "RubyScript"; 
               strPrompt = "Ruby source files (*.rb)|*.rb";
               break;

@@ -1836,6 +1836,29 @@ TEST(LuaScripting, PluginSupportsResolvesDottedFunctionNames)
     EXPECT_EQ(DISPID_UNKNOWN, engine->GetDispid("no.such.table"));
 }
 
+// The `progress` (progress-dialog) library is part of every world/plugin Lua
+// state on Windows.  Until 2026-08-12 its registration sat behind #ifdef
+// _WIN32 (and its TU behind the GUI-only library), so any plugin touching
+// progress.new died with "attempt to index global 'progress' (a nil value)"
+// — even though the port's CProgressDlg backing exists and was repaired
+// specifically so scripts could drive it.  Headless the dialog is inert, but
+// the LIBRARY must exist and construct.
+TEST(LuaScripting, ProgressDialogLibraryIsRegistered)
+{
+    CMUSHclientDoc doc;
+    CScriptEngine* engine = new CScriptEngine(&doc, "lua");
+    ASSERT_TRUE(!engine->CreateScriptEngine());
+    ASSERT_TRUE(!engine->Parse(CString(
+        "assert(type(progress) == 'table', 'progress library missing')\n"
+        "assert(type(progress.new) == 'function', 'progress.new missing')\n"
+        "local dlg = progress.new('working...')\n"
+        "assert(dlg ~= nil, 'progress.new returned nothing')\n"
+        "dlg:range(0, 10)\n"
+        "dlg:position(3)\n"
+        "dlg:close()\n"), "<test>"));
+    delete engine;
+}
+
 
 // ── Intent-comment tests, tail batch (candidate mining, 2026-07) ──────────
 

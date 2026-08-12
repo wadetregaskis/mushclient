@@ -799,16 +799,22 @@ if(NOT WIN32)
             scripting/lpeg/lpcode.c
             lsqlite/lsqlite3.c
             scripting/lua_methods.cpp
+            # The Lua `progress` library (2026-08-12: was adapter-side, and its
+            # registration was #ifdef _WIN32 — so no world/plugin script on the
+            # port could ever reach it).  Its backing CProgressDlg and the
+            # g_wxhook_progress_* storage are both already in CORE_SOURCES, so
+            # it links headless with an inert dialog, exactly like ProgDlg's
+            # other five users.
+            scripting/lua_progressdlg.cpp
         )
         # Portable Lua utils + portable world.Debug (the GUI twins live adapter-side).
         target_sources(mushcore_testsupport PRIVATE
             scripting/lua_utils_portable.cpp
             scripting/world_debug_portable.cpp
         )
-        # Real Lua utils + the Lua progress dialog.
+        # Real Lua utils (the GUI twin of lua_utils_portable.cpp).
         target_sources(mushgui_adapters PRIVATE
             scripting/lua_utils.cpp
-            scripting/lua_progressdlg.cpp
         )
     endif()
 

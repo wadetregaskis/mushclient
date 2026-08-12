@@ -990,23 +990,27 @@ int RunWorldFrameSelfTest()
             const std::vector<int> wanted = {
                 (int) CWorldChildFrame::CloseStep::TimerStopped,
                 (int) CWorldChildFrame::CloseStep::WorldCloseFired,
-                (int) CWorldChildFrame::CloseStep::PluginsClosed,
-                (int) CWorldChildFrame::CloseStep::PluginStateSaved,
                 (int) CWorldChildFrame::CloseStep::ViewDetached,
                 (int) CWorldChildFrame::CloseStep::Deregistered,
                 (int) CWorldChildFrame::CloseStep::DocDeleted,
             };
-            check(steps == wanted, "the teardown runs all seven steps, in order");
+            // Five, not seven.  The two that used to sit between
+            // WorldCloseFired and ViewDetached were an explicit
+            // ON_PLUGIN_CLOSE + SaveState pass over every plugin -- which
+            // `delete doc` already does, once, through ~CPlugin.  Every enabled
+            // plugin's close handler therefore ran TWICE per close.  This list
+            // is what fails if the pass comes back.
+            check(steps == wanted, "the teardown runs all five steps, in order");
 
             if (steps.size() == wanted.size()) {
                 bool everRunning = false;
                 for (int on : timerOn) everRunning = everRunning || on;
                 check(!everRunning,
                       "the world timer is stopped before the doc is touched");
-                check(viewOn[2] == 1 && viewOn[3] == 1,
-                      "ON_PLUGIN_CLOSE and SaveState run while the pane is "
-                      "still attached");
-                check(viewOn[4] == 0 && viewOn[5] == 0,
+                check(viewOn[1] == 1,
+                      "the world-close script runs while the pane is still "
+                      "attached, so anything it prints can reach the screen");
+                check(viewOn[2] == 0 && viewOn[3] == 0,
                       "...and the view is detached before anything is deleted");
             } else {
                 check(false, "(teardown order wrong - dependent checks skipped)");

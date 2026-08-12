@@ -5311,13 +5311,18 @@ void CWorldChildFrame::RunCloseTeardown(const CloseObserver& observe)
     m_doc->FireWorldClose();
     done(CloseStep::WorldCloseFired);
 
-    m_doc->SendToAllPluginCallbacks(ON_PLUGIN_CLOSE);
-    done(CloseStep::PluginsClosed);
-
-    for (PluginListIterator pit = m_doc->m_PluginList.begin();
-         pit != m_doc->m_PluginList.end(); ++pit)
-        if (*pit) (*pit)->SaveState();
-    done(CloseStep::PluginStateSaved);
+    // NO plugin pass here.  `delete doc` below runs ~CMUSHclientDoc, which
+    // deletes every plugin, and ~CPlugin (plugins.cpp:181-190) already fires
+    // ON_PLUGIN_CLOSE and calls SaveState() — with the script engine still
+    // alive, since it is destroyed later in that same destructor.  That is the
+    // one and only pass on Windows, and `delete doc` was already here when an
+    // explicit pass was added on top of it (3ab64cb, whose premise that Cmd+W
+    // "never called ON_PLUGIN_CLOSE or per-plugin SaveState()" was wrong), so
+    // every enabled plugin's close handler ran TWICE per close and the second
+    // SaveState persisted the doubled state.  FireWorldClose above is different
+    // — that is the WORLD-level on_world_close script, which the destructor does
+    // not fire (doc.cpp:2151 fires it from SaveModified, which this path
+    // deliberately does not use), so it stays.
 
     // Detach the view BEFORE deleting the doc so that any final output
     // flushed by the destructor doesn't call AppendLine on the dying pane

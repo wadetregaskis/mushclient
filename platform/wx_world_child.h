@@ -152,8 +152,8 @@ public:
     enum class CloseStep {
         TimerStopped,
         WorldCloseFired,      // the world's own OnWorldClose script
-        PluginsClosed,        // ON_PLUGIN_CLOSE for every plugin
-        PluginStateSaved,     // CPlugin::SaveState for every plugin
+        // (No PluginsClosed / PluginStateSaved step: ~CPlugin does both, once,
+        // during DocDeleted — see the note in RunCloseTeardown.)
         ViewDetached,         // m_pWorldView = nullptr
         Deregistered,         // out of the doc template + the doc→frame registry
         DocDeleted

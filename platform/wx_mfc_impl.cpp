@@ -2068,7 +2068,22 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             // — losing the postamble and the user's logging preferences.
             AfxDispatchCommand(doc, 0 /*ON_COMMAND*/, 32117 /*ID_FILE_LOGSESSION*/);
         } else {
-            evt.Skip();
+            // MFC's own command routing: a command the frame does not handle
+            // goes to the active DOCUMENT next, and CMUSHclientDoc's message map
+            // has 60 real ON_COMMAND entries.  The port's menu items carry
+            // private ids and are handled above, so the CANONICAL ids only ever
+            // arrive here from world.DoCommand(name) or an accelerator — and
+            // they used to fall straight through to evt.Skip(): DoCommand posted
+            // the id, nothing consumed it, and it still returned eOK.
+            //
+            // Measured blast radius (ids that are DoCommand-nameable, have a doc
+            // handler, and no other port reference): exactly 16 — the fourteen
+            // Game > Configure pages with no toolbar/menu equivalent, plus
+            // "Info" and "Immediate".  Every one opens a dialog.  Anything the
+            // document does not handle still skips, because AfxDispatchCommand
+            // only reports TRUE when it actually found an entry.
+            if (!AfxDispatchCommand(activeDoc(), 0 /*ON_COMMAND*/, id))
+                evt.Skip();
         }
     });
 

@@ -38,6 +38,7 @@
 #include "platform/wx_world_child.h"
 #include "platform/wx_mfc_hooks.h"
 #include "platform/wx_mfc_logic.h"   // RecentWorlds* — the MRU behind File ▸ Open Recent
+#include "dialogs/world_prefs/TreePropertySheet.h"   // m_iWantedPage — which page a Configure command asked for
 
 #include <cstdio>
 #include <map>
@@ -129,6 +130,15 @@ struct UiAnswer {
     bool        setText    = false;
     std::string text;
 };
+
+// Fire a menu command at the frame exactly as a menu click or a posted
+// WM_COMMAND does.  Returns whether any handler claimed it.
+bool fireCmd(wxWindow* frame, int id)
+{
+    wxCommandEvent evt(wxEVT_MENU, id);
+    evt.SetEventObject(frame);
+    return frame->GetEventHandler()->ProcessEvent(evt);
+}
 
 UiAnswer probeUi(wxWindow* frame, int id)
 {
@@ -639,6 +649,61 @@ int RunMenuBarSelfTest()
             check(logAns.enabled, "Start Logging is live with a world open");
             check(logAns.setText && logAns.text.find("Start") != std::string::npos,
                   "...and captions itself Start while the world is not logging");
+
+            // ── a canonical command with no menu item of its own still runs ──
+            // The port's Configure menu items carry PRIVATE ids, so the
+            // canonical ID_GAME_CONFIGURE_* ids only ever arrive from
+            // world.DoCommand(name) or an accelerator.  They used to reach the
+            // dispatcher's final else and evt.Skip() — DoCommand posted the id,
+            // nothing consumed it, and it still returned eOK.  MFC would have
+            // routed them to the active DOCUMENT, whose message map has had the
+            // handlers all along.
+            {
+                static int s_page = -999, s_sheets = 0;
+                intptr_t (*const savedSheet)(void*) = g_run_mfc_property_sheet;
+                g_run_mfc_property_sheet = [](void* self) -> intptr_t {
+                    s_page = ((CTreePropertySheet*) self)->m_iWantedPage;
+                    ++s_sheets;
+                    return IDCANCEL;      // decline: no SavePrefs* runs
+                };
+
+                // Four ids, four DIFFERENT pages, so a handler that opened the
+                // sheet at some fixed page could not pass.  The last two are the
+                // ids furthest from the others (32344 / 33025), which is where an
+                // id-range shortcut would fail.
+                const struct { int id; int page; const char* name; } kCases[] = {
+                    { 32301, ePageANSIColours, "ConfigureColours"          },
+                    { 32306, ePageKeypad,      "ConfigureKeypad"           },
+                    { 32344, ePageConnecting,  "ConfigureNameAndPassword"  },
+                    { 33025, ePageChat,        "ConfigureChat"             },
+                };
+                for (const auto& c : kCases) {
+                    s_page = -999; s_sheets = 0;
+                    const bool claimed = fireCmd(frame, c.id);
+                    wxYield();
+                    checkf(s_sheets == 1,
+                           std::string("DoCommand(\"") + c.name + "\") reaches the document");
+                    checkf(s_page == c.page,
+                           std::string("...and opens World Properties at its own page"));
+                    checkf(claimed, std::string("...and the event is consumed, not skipped"));
+                }
+
+                // The control: routing to the document must not become a
+                // catch-all.  30054 is in no message map anywhere, so it must
+                // still be SKIPPED — and skipping is the half that matters,
+                // because "no sheet opened" is equally true of a dispatcher
+                // that swallowed the event.  ProcessEvent answers false only
+                // when the handler skipped and nobody else claimed it.
+                s_page = -999; s_sheets = 0;
+                const bool strayClaimed = fireCmd(frame, 30054);
+                wxYield();
+                check(s_sheets == 0,
+                      "an id no message map knows opens nothing");
+                check(!strayClaimed,
+                      "...and is passed on rather than swallowed");
+
+                g_run_mfc_property_sheet = savedSheet;
+            }
 
             doc->m_pWorldView = NULL;
             child->Destroy();

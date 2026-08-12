@@ -3965,8 +3965,11 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
             return;   // spell check was cancelled — don't send, don't clear
     }
 
+    // NOT cleared yet.  The bar is emptied further down, after
+    // OnPluginCommandEntered has had its say -- because two of that callback's
+    // three answers are ABOUT the typed text staying put, and clearing here
+    // made all three identical.  See the block below.
     wxString text = inp->GetValue();
-    inp->Clear();
     m_histIdx = -1; ApplyHistRSearch(false);   // exit history browsing on send
     m_histParked = eHistNotParked;             // ...and forget any parked end
 
@@ -4009,21 +4012,41 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
     CString cmd(text.ToUTF8().data());
     bool bOmitFromLog = isPassword;   // don't log passwords either
 
-    // Fire OnPluginCommandEntered — mirrors sendvw.cpp line 352.
-    // Plugins may modify cmd, or return "\t" (discard) / "\r" (ignore silently).
-    if (!cmd.IsEmpty()) {
-        m_doc->SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, cmd);
-        if (cmd == "\t") {
-            // Plugin discarded the command; no-op (input already cleared).
-            m_doc->UpdateAllViews(nullptr);
-            return;
-        }
-        if (cmd == "\r") {
-            // Plugin said ignore silently.
-            m_doc->UpdateAllViews(nullptr);
-            return;
-        }
+    // Fire OnPluginCommandEntered — sendvw.cpp:350-364.  Plugins may rewrite
+    // cmd, or answer "\t" (discard) / "\r" (reject).
+    //
+    // UNCONDITIONALLY, including for a bare Enter: Windows has no emptiness
+    // test here, and a plugin that wants to see the user press Return on an
+    // empty line -- to send a keep-alive, to close its own prompt -- never got
+    // the chance.
+    //
+    // And the two answers differ, which is their whole point:
+    //   "\t" discard  — the command is thrown away, and the bar is cleared
+    //                    UNLESS auto-repeat is on (sendvw.cpp:356-357), which
+    //                    keeps the text so Enter can repeat it.
+    //   "\r" reject   — the command is not sent and the text STAYS in the bar,
+    //                    so the user can fix it and press Enter again.  That is
+    //                    the only thing distinguishing it from "\t".
+    // Clearing the bar before this ran collapsed both onto "text destroyed":
+    // a plugin rejecting `kill dragon` for confirmation took the line away
+    // instead of offering it back.
+    m_doc->SendToAllPluginCallbacksRtn(ON_PLUGIN_COMMAND_ENTERED, cmd);
+    if (cmd == "\t") {
+        if (!m_doc->m_bAutoRepeat)
+            inp->Clear();
+        m_doc->UpdateAllViews(nullptr);
+        return;
     }
+    if (cmd == "\r") {
+        m_doc->UpdateAllViews(nullptr);   // text deliberately left in the bar
+        return;
+    }
+
+    // Accepted: now the bar is emptied.  (Windows clears at the END of
+    // SendCommand instead, so a command whose Execute fails also keeps its text
+    // there; that difference is left alone here — it is a separate change to
+    // the busiest control in the app, and not what this fixes.)
+    inp->Clear();
 
     // "Auto repeat last command" (m_bAutoRepeat): a blank Enter re-sends the
     // previous command instead of sending a bare newline.  Mirrors sendvw.cpp:725.

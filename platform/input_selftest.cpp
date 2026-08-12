@@ -320,6 +320,55 @@ int RunInputSelfTest()
     chkStr(inp->GetValue(), "",
            "...and is sent normally (the bar is cleared)");
 
+    // ── what OnPluginCommandEntered's two rejections do to the bar ─────────
+    // A plugin answers the callback with the (possibly rewritten) command, or
+    // with "\t" to DISCARD it or "\r" to REJECT it.  The difference between
+    // those two is entirely about the typed text: "\r" leaves it in the bar so
+    // the user can fix it and press Enter again ("are you sure you want to kill
+    // the dragon?"), and "\t" clears it -- unless auto-repeat is on, which
+    // keeps it so Enter repeats.  The port cleared the bar BEFORE running the
+    // callback, which collapsed all three answers onto "your typing is gone".
+    //
+    // Only the "\t" arm is reachable from here, and only because that arm's
+    // behaviour does not depend on what the bar holds.  The "\r" arm cannot be
+    // simulated this way at all: the sentinel is what the PLUGIN returns while
+    // the bar still holds the user's own text, so putting "\r" in the bar tests
+    // nothing (and a lone CR does not survive SetValue in a multiline control
+    // anyway).  That arm, and the fix's other half -- that the callback fires at
+    // all for a BARE Enter, which it did not -- both need a real plugin with a
+    // script engine, which cannot be loaded this early.  NOT covered here.
+    doc->m_bSpellCheckOnSend = false;
+    {
+        const bool savedRepeat = doc->m_bAutoRepeat != 0;
+
+        auto pressEnter = [&]() {
+            wxCommandEvent enter(wxEVT_TEXT_ENTER, wxID_HIGHEST + 200 /*ID_INPUT*/);
+            enter.SetEventObject(inp);
+            child->GetEventHandler()->ProcessEvent(enter);
+        };
+
+        // "\t" — discarded.  Cleared, EXCEPT with auto-repeat on.
+        doc->m_bAutoRepeat = 0;
+        inp->SetValue(wxT("\t"));
+        pressEnter();
+        chkStr(inp->GetValue(), "", "a discarded command (\"\\t\") clears the bar");
+
+        doc->m_bAutoRepeat = 1;
+        inp->SetValue(wxT("\t"));
+        pressEnter();
+        chkStr(inp->GetValue(), "\t",
+               "...but not when auto-repeat is on, which keeps it to repeat");
+
+        // The control: an ordinary command must still clear the bar, or the
+        // three checks above would pass on a handler that never clears at all.
+        doc->m_bAutoRepeat = 0;
+        inp->SetValue(wxT("look"));
+        pressEnter();
+        chkStr(inp->GetValue(), "", "an accepted command still clears the bar");
+
+        doc->m_bAutoRepeat = savedRepeat ? 1 : 0;
+    }
+
     // ── the password-prompt bar swap ───────────────────────────────────────
     // The MUD asks for a password with IAC WILL ECHO; the world timer polls
     // m_bNoEcho and swaps the visible bar for a masked one (and back).  Get it

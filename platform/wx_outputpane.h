@@ -270,6 +270,9 @@ public:
     // Scroll to a specific 0-based line index.  Clamps to [0, lineCount-1].
     // Disengages auto-scroll (same as the user manually scrolling up).
     void ScrollToLine(int lineIdx);
+    // Scroll so the given device-pixel Y is the view top (world.SetScroll's
+    // real contract; see the .cpp).  Disengages auto-scroll like ScrollToLine.
+    void ScrollToPixelY(long y);
 
     // Return the current scroll position as a y-pixel offset from the top of
     // the virtual (full scrollback) area.  Equivalent to CScrollView::

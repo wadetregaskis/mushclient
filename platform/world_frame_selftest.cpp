@@ -500,6 +500,44 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── world.SetScroll scrolls to the PIXEL, not a row-mistaken-for-a-line ─
+    // (2026-08-12)  setScroll divided the documented device-pixel position by
+    // the line height — a visual-ROW ordinal — and passed it to ScrollToLine,
+    // which expects a LOGICAL line and re-maps through RowStartOf.  With any
+    // wrapped line above the target the view landed below the requested
+    // pixel, so the documented GetInfo(296) -> SetScroll round-trip drifted.
+    // The fixture's long line wraps into several visual rows on purpose: with
+    // only short lines, row == line and the old code passes (the degenerate-
+    // fixture trap the conformance script fell into).
+    {
+        doc->m_bAutoWrapWindowWidth = false;
+        doc->ClearOutput();
+        std::string longLine(500, 'x');
+        longLine += "\n";
+        doc->DisplayMsg(longLine.c_str(), (long) longLine.size(), 0);
+        for (int i = 0; i < 30; ++i) {
+            char buf[32];
+            const int n = snprintf(buf, sizeof buf, "short %02d\n", i);
+            doc->DisplayMsg(buf, n, 0);
+        }
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        pane->ScrollToLine(10);
+        const long p = pane->GetScrollPositionY();
+        check(p > 0, "setScroll: the fixture really scrolled somewhere");
+
+        child->setScroll(p);           // the PAL seam under test
+        check(pane->GetScrollPositionY() == p,
+              "setScroll: the pixel round-trip is exact (was: drifted below "
+              "by the long line's wrap rows)");
+
+        child->setScroll(-1);          // control: -1 resumes the bottom
+        check(pane->IsAutoScrolling(),
+              "setScroll(-1) resumes auto-scroll (control)");
+        doc->ClearOutput();
+    }
+
     // ── world slot numbers stay dense across a close (2026-08-12) ───────────
     // Windows renumbers m_view_number from OnIdle; the port never pumped it,
     // so closing world B of three left a dead toolbar slot and WorldInSlot's

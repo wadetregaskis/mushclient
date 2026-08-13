@@ -803,6 +803,26 @@ void COutputPane::ScrollToLine(int lineIdx)
     Refresh(false);
 }
 
+// world.SetScroll's pixel form (2026-08-12): scroll so the given DEVICE-PIXEL
+// Y is the top of the view.  The old route divided the pixel by the line
+// height and passed the result — a visual-ROW ordinal — to ScrollToLine,
+// which expects a LOGICAL line and re-maps through RowStartOf: with any
+// wrapped line above the target the view landed below the requested pixel,
+// and the GetInfo(296) round-trip drifted.  No quantisation here either;
+// Windows scrolls to the raw pixel (ScrollToPosition).
+void COutputPane::ScrollToPixelY(long y)
+{
+    if (LineCountI() == 0) return;
+    int unitH;
+    GetScrollPixelsPerUnit(nullptr, &unitH);
+    if (unitH > 0)
+        Scroll(0, pal::pixelsToScrollUnits(y < 0 ? 0 : y, unitH));
+    bool wasAuto = m_autoScroll;
+    m_autoScroll = false;
+    if (wasAuto && m_fn_autoscroll_changed) m_fn_autoscroll_changed(false);
+    Refresh(false);
+}
+
 // ── Bookmarks (Display ▸ Bookmark Selection / Go To Bookmark) ─────────────────
 // The flag itself belongs to the engine's CLine; this is only the rendering
 // mirror, updated when the doc tells us it changed.

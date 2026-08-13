@@ -5255,8 +5255,11 @@ void CWorldChildFrame::setScroll(long pos)
     } else if (pos <= 0) {
         m_output->ScrollToTop();
     } else {
-        const int lineH = m_output->LineHeight();
-        m_output->ScrollToLine(lineH > 0 ? (int)(pos / lineH) : (int) pos);
+        // Pixels straight through (2026-08-12): dividing by the line height
+        // produced a visual-ROW ordinal, which ScrollToLine then re-mapped as
+        // a LOGICAL line — any wrapped line above the target dragged the view
+        // below the requested pixel, and the GetInfo(296) round-trip drifted.
+        m_output->ScrollToPixelY(pos);
     }
 }
 

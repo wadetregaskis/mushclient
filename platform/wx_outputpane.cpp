@@ -2276,7 +2276,8 @@ int COutputPane::PreambleCells(int lineIdx) const
     return (int) pre.text.length();
 }
 
-int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
+int COutputPane::XToChar(int lineIdx, int clientX, int clientY,
+                         bool halfway) const
 {
     if (lineIdx < 0 || lineIdx >= LineCountI() || m_charW <= 0)
         return 0;
@@ -2314,7 +2315,7 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY) const
     // Column within the visual row, then offset by wrapped rows. Clamp the
     // per-row column to the wrap width so a click past the text on a non-final
     // visual row can't spill into a later row's character range.
-    int colInRow = std::max(0, (virtualX + m_charW / 2) / m_charW);
+    int colInRow = std::max(0, (virtualX + (halfway ? m_charW / 2 : 0)) / m_charW);
     // The line preamble occupies whole cells at the START of the first visual
     // row; clicks land on the text after it (Windows' m_iPreambleOffset).
     if (vrOffset == 0)
@@ -2329,10 +2330,10 @@ SelPoint COutputPane::MouseToSelPoint(const wxMouseEvent& evt) const
     return PointToChar(evt.GetX(), evt.GetY());
 }
 
-SelPoint COutputPane::PointToChar(int clientX, int clientY) const
+SelPoint COutputPane::PointToChar(int clientX, int clientY, bool halfway) const
 {
     int line = YToLine(clientY);
-    int col  = XToChar(line, clientX, clientY);
+    int col  = XToChar(line, clientX, clientY, halfway);
     return SelPoint{line, col};
 }
 
@@ -2491,7 +2492,8 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
     if (m_lineH > 0 && !LineCountI() == 0) {
         int lineIdx = YToLine(evt.GetY());
         if (lineIdx >= 0 && lineIdx < LineCountI()) {
-            int clickCol = XToChar(lineIdx, evt.GetX(), evt.GetY());
+            int clickCol = XToChar(lineIdx, evt.GetX(), evt.GetY(),
+                                   false /*containment: which cell holds it*/);
             const SOutputRun* run = RunAtCharColumn(LineAt(lineIdx), clickCol);
             if (run && run->isLink()) {
                 m_linkAtDown     = run->action();
@@ -2795,7 +2797,8 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
         } else if (mwCursor != -999) {
             SetCursor(MiniWindowCursor(mwCursor));
         } else {
-            SelPoint pt = MouseToSelPoint(evt);
+            SelPoint pt = PointToChar(evt.GetX(), evt.GetY(),
+                                      false /*containment: hover, not caret*/);
             bool overLink = false;
             if (pt.valid() && pt.line < LineCountI()) {
                 // pt.col is the absolute char column in the logical line
@@ -2858,7 +2861,8 @@ void COutputPane::OnRightDown(wxMouseEvent& evt)
     {
         int lineIdx = YToLine(evt.GetY());
         if (lineIdx >= 0 && lineIdx < LineCountI()) {
-            int col = XToChar(lineIdx, evt.GetX(), evt.GetY());
+            int col = XToChar(lineIdx, evt.GetX(), evt.GetY(),
+                              false /*containment*/);
             const SOutputRun* run = RunAtCharColumn(LineAt(lineIdx), col);
             if (run && run->isLink()) {
                 linkAtClick     = run->action();

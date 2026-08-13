@@ -423,7 +423,7 @@ public:
     // wrapped logical line was hit.  Returns an invalid SelPoint if the buffer
     // is empty.  Exposed for callers (e.g. CWorldChildFrame tooltip handler)
     // that need to map pixel coordinates to text without owning a wxMouseEvent.
-    SelPoint PointToChar(int clientX, int clientY) const;
+    SelPoint PointToChar(int clientX, int clientY, bool halfway = true) const;
 
     // Number of lines currently in the buffer.
     int LineCount() const { return LineCountI(); }
@@ -767,7 +767,14 @@ private:
     // clientY is required to resolve which visual row within a wrapped line was
     // clicked so that the column offset is computed correctly.
     // Column is a cursor position: 0 = before first char, n = after nth char.
-    int XToChar(int lineIdx, int clientX, int clientY) const;
+    // halfway=true: caret semantics — round to the NEAREST cell boundary
+    // (selection anchors/foci).  halfway=false: containment — the character
+    // whose cell holds the pixel (link firing, hover cursor, hints).  The
+    // exact bHalfWay split CMUSHView::calculate_line_and_column has; using
+    // the rounding form for containment displaced every link hit zone half
+    // a character left (2026-08-12).
+    int XToChar(int lineIdx, int clientX, int clientY,
+                bool halfway = true) const;
 
     // Build a SelPoint from a mouse event position.
     SelPoint MouseToSelPoint(const wxMouseEvent& evt) const;

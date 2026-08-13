@@ -12,6 +12,7 @@
 #include <wx/config.h>
 #include <wx/clipbrd.h>   // wxTheClipboard, wxTextDataObject, wxDF_TEXT
 #include <wx/display.h>   // wxDisplay (usable screen area for the default size)
+#include <wx/tooltip.h>   // wxToolTip::SetDelay/SetAutoPop — tooltip timing options
 #include <string>
 #include <netdb.h>  // getaddrinfo, freeaddrinfo
 
@@ -1216,6 +1217,18 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     {
         if (!m_doc) return {};
 
+        // Apply the world's tooltip timing options at hover time (2026-08-12):
+        // tool_tip_start_time / tool_tip_visible_time were dead readers (their
+        // consumer was CMUSHView's TTM_SETDELAYTIME calls).  wxToolTip's
+        // knobs are app-global statics, so setting them here — on the world
+        // whose tooltip is about to show — is the per-world behaviour Windows
+        // gets from its per-view tooltip control, and reading them live means
+        // an option change needs no extra seam.
+        if (m_doc->m_iToolTipStartTime > 0)
+            wxToolTip::SetDelay((long) m_doc->m_iToolTipStartTime);
+        if (m_doc->m_iToolTipVisibleTime > 0)
+            wxToolTip::SetAutoPop((long) m_doc->m_iToolTipVisibleTime);
+
         // 1. Over a miniwindow?  Then its answer is final — an opaque window
         // hides the text it covers, so Windows never shows that text's hint
         // (Mouse_Tooltip_MiniWindow returns TRUE with an empty buffer, and
@@ -1228,7 +1241,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // Use PointToChar for wrap-aware hit-testing: it returns the absolute
         // character column within the logical line, which we then walk to find
         // which run the cursor is over (same approach as link detection).
-        SelPoint pt = m_output->PointToChar(x, y);
+        SelPoint pt = m_output->PointToChar(x, y, false /*containment*/);
         const SOutputLine* line = m_output->GetLine(pt.line);
         if (!line) return {};
 

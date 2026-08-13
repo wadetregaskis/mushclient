@@ -585,6 +585,32 @@ int RunWorldFrameSelfTest()
         doc->TextRectangle(0, 0, 0, 0, 0, 0, 0, 0, 1);   // clear
     }
 
+    // ── caret vs containment hit-testing (2026-08-12) ───────────────────────
+    // XToChar rounded to the NEAREST cell boundary — right for placing a
+    // selection caret, wrong for containment: link firing, the hover hand
+    // cursor and MXP hints all shifted half a character left (clicking the
+    // right half of the character BEFORE a link fired it).  Windows keeps the
+    // two apart with calculate_line_and_column's bHalfWay flag; the pane now
+    // has the same split.  A pixel in the RIGHT half of cell 2 must answer
+    // col 3 as a caret and col 2 as containment.
+    {
+        doc->ClearOutput();
+        doc->DisplayMsg("ABCDEF\n", 7, 0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const int cw = pane->CharWidth();
+        check(cw > 0, "hit-test: the pane has a character width");
+        const int x = 2 * cw + (3 * cw) / 4;   // right half of cell 2 ('C')
+        const SelPoint caret = pane->PointToChar(x, 2, true);
+        const SelPoint cont  = pane->PointToChar(x, 2, false);
+        check(caret.line == 0 && caret.col == 3,
+              "hit-test: caret rounding answers the nearest boundary (3)");
+        check(cont.line == 0 && cont.col == 2,
+              "hit-test: containment answers the clicked cell (2)");
+        doc->ClearOutput();
+    }
+
     // ── world slot numbers stay dense across a close (2026-08-12) ───────────
     // Windows renumbers m_view_number from OnIdle; the port never pumped it,
     // so closing world B of three left a dead toolbar slot and WorldInSlot's

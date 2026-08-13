@@ -1264,6 +1264,71 @@ void COutputPane::ApplyMetricsChange()
 // deletes it survives by construction).  It stays because the values become the
 // text origin OnPaint draws at, and that should not silently depend on
 // TextRect's out-parameters for a rectangle it just said was not set.
+// ── world.TextRectangle decorations (2026-08-12) ─────────────────────────────
+// Windows paints an outside fill and a border around the reserved text area
+// (CMUSHView::OnDraw, mushview.cpp:926-990); the port honoured only the
+// geometry, so layout plugins that frame the output on Windows showed a bare
+// text area here.  Style mapping is ValidateBrushStyle's (miniwindow.cpp:438):
+// hatches paint in the BORDER colour over an opaque ground of the fill colour
+// (the SetBkColor result under OPAQUE bkmode); patterns approximate as
+// cross-hatch.  Both rects inflate by offset+width, as Windows' two
+// InflateRect calls total.
+void COutputPane::DrawTextRectOutsideFill(wxDC& dc, int clientW, int clientH,
+                                          const wxColour& bgCol)
+{
+    int l = 0, t = 0, r = 0, b = 0;
+    STextRectDecor d;
+    if (!TextRect(l, t, r, b) || !m_fn_text_rect_decor || !m_fn_text_rect_decor(d))
+        return;
+    if (d.outsideFillStyle == 1 /*BS_NULL*/) return;
+
+    auto col = [](uint32_t c) {
+        return wxColour(GetRValue(c), GetGValue(c), GetBValue(c));
+    };
+    dc.SetPen(*wxTRANSPARENT_PEN);
+    dc.SetBrush(wxBrush(col(d.outsideFillColour)));
+    dc.DrawRectangle(0, 0, clientW, clientH);
+    if (d.outsideFillStyle != 0 /*BS_SOLID*/) {
+        static const wxBrushStyle kHatch[] = {
+            wxBRUSHSTYLE_HORIZONTAL_HATCH, wxBRUSHSTYLE_VERTICAL_HATCH,
+            wxBRUSHSTYLE_FDIAGONAL_HATCH,  wxBRUSHSTYLE_BDIAGONAL_HATCH,
+            wxBRUSHSTYLE_CROSS_HATCH,      wxBRUSHSTYLE_CROSSDIAG_HATCH };
+        const int h = (d.outsideFillStyle >= 2 && d.outsideFillStyle <= 7)
+                          ? d.outsideFillStyle - 2
+                          : 4;   // patterns (8+): cross-hatch approximation
+        dc.SetBrush(wxBrush(col(d.borderColour), kHatch[h]));
+        dc.DrawRectangle(0, 0, clientW, clientH);
+    }
+    // The reserved area itself returns to the normal background — Windows'
+    // inner FillRect with the back brush.
+    const int inf = d.borderOffset + d.borderWidth;
+    dc.SetBrush(wxBrush(bgCol));
+    dc.DrawRectangle(l - inf, t - inf, (r - l) + 2 * inf, (b - t) + 2 * inf);
+}
+
+void COutputPane::DrawTextRectBorder(wxDC& dc)
+{
+    int l = 0, t = 0, r = 0, b = 0;
+    STextRectDecor d;
+    if (!TextRect(l, t, r, b) || !m_fn_text_rect_decor || !m_fn_text_rect_decor(d))
+        return;
+    if (d.borderWidth <= 0) return;
+
+    dc.SetPen(wxPen(wxColour(GetRValue(d.borderColour), GetGValue(d.borderColour),
+                             GetBValue(d.borderColour)),
+                    d.borderWidth));
+    dc.SetBrush(*wxTRANSPARENT_BRUSH);
+    const int inf = d.borderOffset + d.borderWidth;
+    dc.DrawRectangle(l - inf, t - inf, (r - l) + 2 * inf, (b - t) + 2 * inf);
+}
+
+void COutputPane::RenderTextRectDecorForTest(wxDC& dc, int clientW, int clientH,
+                                             const wxColour& bgCol)
+{
+    DrawTextRectOutsideFill(dc, clientW, clientH, bgCol);
+    DrawTextRectBorder(dc);
+}
+
 bool COutputPane::AdoptTextRect()
 {
     int trL, trT, trR, trB;
@@ -1316,12 +1381,28 @@ void COutputPane::OnPaint(wxPaintEvent&)
 
     int yPixOffset = scrollY * unitH;
 
+    // ── TextRectangle outside fill (under the background image) ───────────
+    // Windows' order: outside fill + inner re-fill, THEN the background
+    // image, THEN the border (below).  Viewport-anchored, like the image.
+    if (m_fn_text_rect_decor) {
+        dc.SetDeviceOrigin(0, 0);
+        DrawTextRectOutsideFill(dc, clientW, clientH, bgCol);
+        dc.SetDeviceOrigin(-scrollX * unitW, -scrollY * unitH);
+    }
+
     // ── Background image (SetBackgroundImage) ────────────────────────────
     // Right after the colour fill, under everything — the Windows OnDraw
     // order. Viewport-anchored (the Windows view has no scroll transform).
     if (m_fn_draw_background_image) {
         dc.SetDeviceOrigin(0, 0);
         m_fn_draw_background_image(dc, clientW, clientH);
+    }
+
+    // ── TextRectangle border (over the background image) ──────────────────
+    if (m_fn_text_rect_decor) {
+        dc.SetDeviceOrigin(0, 0);
+        DrawTextRectBorder(dc);
+        dc.SetDeviceOrigin(-scrollX * unitW, -scrollY * unitH);
     }
 
     // ── Text rectangle (world.TextRectangle) ──────────────────────────────

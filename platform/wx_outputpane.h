@@ -302,6 +302,12 @@ public:
     // notices a script narrowed the band, and it sat inside OnPaint, which no
     // in-app selftest can reach.  Public so the test can call it.
     bool AdoptTextRect();
+    // The two TextRectangle decoration stages (fill under the background
+    // image, border over it — the Windows OnDraw order).  Callers own the
+    // device-origin; these draw in CLIENT coordinates.
+    void DrawTextRectOutsideFill(wxDC& dc, int clientW, int clientH,
+                                 const wxColour& bgCol);
+    void DrawTextRectBorder(wxDC& dc);
 
     // ── ON_PLUGIN_DRAW_OUTPUT_WINDOW re-entrancy window ───────────────────
     // OnPaint fires the plugin draw callback in the middle of the paint, which
@@ -562,6 +568,25 @@ public:
     // left/top/right/bottom (client pixels) when a rectangle is active; false
     // means use the full client area.
     std::function<bool(int& l, int& t, int& r, int& b)> m_fn_text_rect;
+
+    // world.TextRectangle's five DECORATION parameters (2026-08-12): Windows
+    // paints an outside fill and a border around the reserved area
+    // (CMUSHView::OnDraw); the port honoured only the geometry.  Style codes
+    // are ValidateBrushStyle's: 0 solid, 1 null (no fill), 2-7 hatches drawn
+    // in the BORDER colour over an opaque ground of the fill colour, 8+
+    // patterns (approximated as cross-hatch here).  Read live per paint.
+    struct STextRectDecor {
+        int      borderOffset     = 0;
+        int      borderWidth      = 0;
+        uint32_t borderColour     = 0;
+        uint32_t outsideFillColour= 0;
+        int      outsideFillStyle = 1;   // BS_NULL
+    };
+    std::function<bool(STextRectDecor&)> m_fn_text_rect_decor;
+    // Selftest probe: run both decoration stages into an arbitrary DC (the
+    // paint path never runs under the OnInit harnesses).
+    void RenderTextRectDecorForTest(wxDC& dc, int clientW, int clientH,
+                                    const wxColour& bgCol);
 
     // Draw the world's background / foreground images (SetBackgroundImage /
     // SetForegroundImage), placed per their mode by the frame. Background

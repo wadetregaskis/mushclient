@@ -973,6 +973,19 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         return true;
     };
 
+    // ...and its five decoration parameters (border + outside fill), read
+    // live per paint so world.TextRectangle updates show on the next repaint.
+    m_output->m_fn_text_rect_decor =
+        [this](COutputPane::STextRectDecor& d) -> bool {
+        if (!m_doc) return false;
+        d.borderOffset      = (int) m_doc->m_TextRectangleBorderOffset;
+        d.borderWidth       = (int) m_doc->m_TextRectangleBorderWidth;
+        d.borderColour      = (uint32_t) m_doc->m_TextRectangleBorderColour;
+        d.outsideFillColour = (uint32_t) m_doc->m_TextRectangleOutsideFillColour;
+        d.outsideFillStyle  = (int) m_doc->m_TextRectangleOutsideFillStyle;
+        return true;
+    };
+
     // ── SetBackgroundImage / SetForegroundImage (Windows OnDraw parity) ────
     // The exact Blit_Bitmap !bUseRect placement: modes 0/2 stretch to the
     // pane/frame, 1/3 aspect-stretch, 4-12 positioned 1:1 (corners / wall

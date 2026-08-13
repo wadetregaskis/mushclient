@@ -538,6 +538,53 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── world.TextRectangle decorations paint (2026-08-12) ──────────────────
+    // The five decoration parameters (border offset/colour/width, outside
+    // fill colour/style) round-tripped while painting nothing — the consumer
+    // was CMUSHView::OnDraw.  Pixel-proven through the render probe: border
+    // red on the inflated edge, fill blue outside, and the BS_NULL control
+    // leaves the outside at the pane background.
+    {
+        // TextRectangle(l, t, r, b, offset, borderColour, width,
+        //               fillColour, fillStyle)
+        check(doc->TextRectangle(40, 40, 300, 200, 2, RGB(255, 0, 0), 3,
+                                 RGB(0, 0, 255), 0 /*solid*/) == 0 /*eOK*/,
+              "textrect: world.TextRectangle accepts the decoration set");
+
+        auto probe = [&](int x, int y, unsigned char& rr, unsigned char& gg,
+                         unsigned char& bb) {
+            wxBitmap bmp(400, 300, 32);
+            wxMemoryDC mdc(bmp);
+            mdc.SetBackground(*wxBLACK_BRUSH);
+            mdc.Clear();
+            pane->RenderTextRectDecorForTest(mdc, 400, 300, *wxBLACK);
+            mdc.SelectObject(wxNullBitmap);
+            wxImage img = bmp.ConvertToImage();
+            rr = img.GetRed(x, y); gg = img.GetGreen(x, y); bb = img.GetBlue(x, y);
+        };
+
+        unsigned char rr, gg, bb;
+        probe(5, 5, rr, gg, bb);           // well outside the rect: the fill
+        check(bb > 200 && rr < 60, "textrect: outside fill is blue");
+        // the border sits on the rect inflated by offset+width (5px): the
+        // stroke is centred on the inflated rect edge at 35
+        probe(35, 120, rr, gg, bb);
+        check(rr > 200 && bb < 60, "textrect: the border strokes red");
+        probe(150, 120, rr, gg, bb);       // inside the reserved area
+        check(rr < 60 && gg < 60 && bb < 60,
+              "textrect: the text area returns to the pane background");
+
+        // Control: BS_NULL (1) fills nothing — outside stays background.
+        check(doc->TextRectangle(40, 40, 300, 200, 2, RGB(255, 0, 0), 3,
+                                 RGB(0, 0, 255), 1 /*BS_NULL*/) == 0 /*eOK*/,
+              "textrect: the null-fill control applies");
+        probe(5, 5, rr, gg, bb);
+        check(rr < 60 && gg < 60 && bb < 60,
+              "textrect: BS_NULL leaves the outside at the background");
+
+        doc->TextRectangle(0, 0, 0, 0, 0, 0, 0, 0, 1);   // clear
+    }
+
     // ── world slot numbers stay dense across a close (2026-08-12) ───────────
     // Windows renumbers m_view_number from OnIdle; the port never pumped it,
     // so closing world B of three left a dead toolbar slot and WorldInSlot's

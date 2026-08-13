@@ -442,6 +442,64 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── File ▸ Print Selection (2026-08-12) ─────────────────────────────────
+    // A separate menu item on the port (Windows puts the choice on its print
+    // dialog, which the preview frame replaces).  BuildPrintLines is the
+    // testable half: full-buffer and selection-clipped builds, with the clip
+    // in the seam's BYTE space — the multibyte fixture proves a stamp cannot
+    // split a character.
+    {
+        doc->m_bAutoWrapWindowWidth = false;
+        doc->ClearOutput();
+        doc->DisplayMsg("alpha bravo charlie\n", 20, 0);
+        doc->DisplayMsg("delta echo foxtrot\n", 19, 0);
+        doc->DisplayMsg("golf hotel india\n", 17, 0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        std::vector<SPrintLine> all;
+        check(child->BuildPrintLines(false, all) && all.size() >= 3,
+              "print: the full-buffer build sees every line");
+
+        // No selection: the selection build refuses (the item is greyed too).
+        pane->SetSelectionRange(0, 0, 0, 0);
+        std::vector<SPrintLine> none;
+        check(!child->HasOutputSelection() &&
+                  !child->BuildPrintLines(true, none),
+              "print: no selection means no selection build");
+
+        // Select "bravo char" — line 1, byte cols 7..17 (1-based, end-excl).
+        doc->SetSelection(1, 1, 7, 17);
+        check(child->HasOutputSelection(),
+              "print: the selection is visible to the menu rule");
+        std::vector<SPrintLine> sel;
+        check(child->BuildPrintLines(true, sel) && sel.size() == 1,
+              "print: a one-line selection builds one line");
+        wxString joined;
+        if (!sel.empty())
+            for (const SPrintRun& r : sel[0].runs) joined += r.text;
+        check(joined == wxT("bravo char"),
+              "print: ...clipped to exactly the selected bytes");
+
+        // A multi-line selection: from "echo" (line 2 col 7) through
+        // "hotel" (line 3 col 11) — first line clipped left, last clipped
+        // right, and nothing from line 1.
+        doc->SetSelection(2, 3, 7, 11);
+        std::vector<SPrintLine> multi;
+        check(child->BuildPrintLines(true, multi) && multi.size() == 2,
+              "print: a two-line selection builds two lines");
+        wxString first, last;
+        if (multi.size() == 2) {
+            for (const SPrintRun& r : multi[0].runs) first += r.text;
+            for (const SPrintRun& r : multi[1].runs) last  += r.text;
+        }
+        check(first == wxT("echo foxtrot") && last == wxT("golf hotel"),
+              "print: ...first line clipped left, last clipped right");
+
+        pane->SetSelectionRange(0, 0, 0, 0);
+        doc->ClearOutput();
+    }
+
     // ── world slot numbers stay dense across a close (2026-08-12) ───────────
     // Windows renumbers m_view_number from OnIdle; the port never pumped it,
     // so closing world B of three left a dead toolbar slot and WorldInSlot's

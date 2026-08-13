@@ -148,6 +148,10 @@ static const int ID_MENU_DISPLAY_CLEAR_TO_START = wxID_HIGHEST + 431;
 static const int ID_MENU_DISPLAY_CLEAR_TO_MARK  = wxID_HIGHEST + 432;
 static const int ID_MENU_DISPLAY_CLEAR_SCROLLBACK = wxID_HIGHEST + 433;
 static const int ID_MENU_DISPLAY_CLEAR_SCREEN     = wxID_HIGHEST + 434;
+// File ▸ Print Selection (2026-08-12).  Port-only id: on Windows the choice is
+// the print dialog's Selection radio; the port opens a preview frame with no
+// dialog, so it gets its own item — greyed without a selection.
+static const int ID_MENU_PRINT_SELECTION          = wxID_HIGHEST + 435;
 
 // Declared on CWorldChildFrame (it owns the commands) so the in-app selftest
 // checks the same strings the menu is built from.  "Ctrl" is Command on macOS;
@@ -1023,6 +1027,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // Note: plain Ctrl+W is reserved for word-delete-backward in the input bar.
     fileMenu->AppendSeparator();
     fileMenu->Append(32250 /*ID_FILE_PRINT_WORLD*/, wxT("&Print World…\tCtrl+P"));
+    fileMenu->Append(ID_MENU_PRINT_SELECTION, wxT("Print Selection…"));
     // File ▸ Preferences uses wxID_PREFERENCES so wxWidgets automatically moves
     // it to the macOS application menu as "Settings…" (⌘,), where Mac users
     // expect it.  (No surrounding separator here — it leaves the File menu.)
@@ -1384,6 +1389,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             id == ID_MENU_EXPORT_MACROS) {
             // Need an active world.
             evt.Enable(doc != nullptr);
+        } else if (id == ID_MENU_PRINT_SELECTION) {
+            // Needs an active world WITH a selection — the whole point of the
+            // separate item (Windows puts this choice on its print dialog).
+            auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
+            evt.Enable(child && child->HasOutputSelection());
         } else if (id == ID_MENU_GAME_LUA_EVAL ||
                    id == 32290 /*ID_GAME_RELOAD_SCRIPT_FILE*/) {
             // Both need an active world with scripting on; the rule is in
@@ -1784,9 +1794,10 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         }
 
         // ── Print World (output buffer → wxHtmlEasyPrinting preview) ───────
-        if (id == 32250 /*ID_FILE_PRINT_WORLD*/) {
+        if (id == 32250 /*ID_FILE_PRINT_WORLD*/ ||
+            id == ID_MENU_PRINT_SELECTION) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild()))
-                child->PrintWorld();
+                child->PrintWorld(id == ID_MENU_PRINT_SELECTION);
             return;
         }
 

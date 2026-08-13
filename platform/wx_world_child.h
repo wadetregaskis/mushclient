@@ -33,6 +33,7 @@ void wx_activate_world_frame(CMUSHclientDoc* doc);
 #include <vector>
 #include <memory>
 #include "platform/wx_outputpane.h"   // COutputPane → output_types.h
+#include "platform/wx_print.h"        // SPrintLine — BuildPrintLines
 #include "platform/wx_toolbar.h"      // CWorldToolBars — Standard/World/Activity bars
 #include "pal/iworldview.h"           // pal::IWorldView — this frame is the wx adapter
 
@@ -308,7 +309,14 @@ public:
     bool SpellCheckInput();
 
     // Print the world output buffer (File ▸ Print World) via wxHtmlEasyPrinting.
-    void PrintWorld();
+    // Print the output buffer, or (2026-08-12) just the selection.  On
+    // Windows the selection choice is the print dialog's radio; the port
+    // opens a preview frame with no such dialog, so File carries a separate
+    // "Print Selection" item instead (greyed without one — see
+    // HasOutputSelection).  The line builder is public for the selftest.
+    void PrintWorld(bool selectionOnly = false);
+    bool BuildPrintLines(bool selectionOnly, std::vector<SPrintLine>& lines) const;
+    bool HasOutputSelection() const;
 
     // ── View-level output/input commands ──────────────────────────────────
     // The canonical handlers for these live on CMUSHView / CSendView (not

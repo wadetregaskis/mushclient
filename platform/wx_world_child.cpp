@@ -2115,9 +2115,26 @@ bool CWorldChildFrame::SpellCheckInput()
 }
 
 // ── Print the world output buffer ──────────────────────────────────────────
-void CWorldChildFrame::PrintWorld()
+// The line builder is split from the preview so the selection clipping is
+// testable without opening a print-preview frame (selftest calls it directly).
+// `selectionOnly` clips to the current output selection, read through the PAL
+// seam — which answers in the same BYTE space the doc's style runs use, so
+// the intersection arithmetic below never splits a multibyte character.
+bool CWorldChildFrame::BuildPrintLines(bool selectionOnly,
+                                       std::vector<SPrintLine>& lines) const
 {
-    if (!m_doc) return;
+    lines.clear();
+    if (!m_doc) return false;
+
+    // Selection endpoints: 1-based lines; 1-based byte columns, end-exclusive
+    // (the space world.GetSelection* answers in).
+    long selSL = 0, selSC = 0, selEL = 0, selEC = 0;
+    if (selectionOnly) {
+        const pal::TextRange r = outputSelection();
+        if (r.startLine <= 0) return false;   // no selection (item is greyed)
+        selSL = r.startLine; selSC = r.startCol;
+        selEL = r.endLine;   selEC = r.endCol;
+    }
 
     // Walk the DOC, not the output pane.  Two reasons, both of which rule the
     // pane out entirely: SOutputRun's bold/italic/underline are already filtered
@@ -2125,11 +2142,20 @@ void CWorldChildFrame::PrintWorld()
     // (doc_display_shared.cpp), which Windows printing deliberately ignores —
     // mushview.cpp:3956 tests HILITE raw — and SOutputRun carries no ANSI colour
     // index at all, which is exactly what the print styles are keyed on.
-    std::vector<SPrintLine> lines;
+    long lineNo = 0;   // 1-based, the seam's line space (GetLinePosition order)
     for (POSITION pos = m_doc->m_LineList.GetHeadPosition(); pos; )
     {
         CLine* pLine = m_doc->m_LineList.GetNext(pos);
         if (!pLine) continue;
+        ++lineNo;
+        if (selectionOnly && (lineNo < selSL || lineNo > selEL)) continue;
+
+        // The byte range of this line to print (whole line unless clipped).
+        const int clipLo = (selectionOnly && lineNo == selSL)
+                               ? (int) (selSC - 1) : 0;
+        const int clipHi = (selectionOnly && lineNo == selEL)
+                               ? std::min((int) (selEC - 1), (int) pLine->len)
+                               : (int) pLine->len;
 
         SPrintLine out;
         int charOff = 0;
@@ -2155,15 +2181,20 @@ void CWorldChildFrame::PrintWorld()
             const int   f     = (style & HILITE) ? m_doc->m_nBoldPrintStyle[slot]
                                                  : m_doc->m_nNormalPrintStyle[slot];
 
+            // Intersect the run's byte range with the clip window.
+            const int runLo = std::max(charOff, clipLo);
+            const int runHi = std::min(charOff + (int) pStyle->iLength, clipHi);
+            charOff += pStyle->iLength;
+            if (runHi <= runLo) continue;
+
             SPrintRun run;
             run.bold      = (f & FONT_BOLD)      != 0;
             run.italic    = (f & FONT_ITALIC)    != 0;
             run.underline = (f & FONT_UNDERLINE) != 0;
-            run.text      = DecodeOutputBytes(pLine->text + charOff,
-                                              (size_t) pStyle->iLength,
+            run.text      = DecodeOutputBytes(pLine->text + runLo,
+                                              (size_t) (runHi - runLo),
                                               m_doc->m_bUTF_8 != 0,
                                               (int) m_doc->m_font_charset);
-            charOff += pStyle->iLength;
             out.runs.push_back(std::move(run));
         }
         // The page header carries the arrival time of the page's first line —
@@ -2173,6 +2204,23 @@ void CWorldChildFrame::PrintWorld()
             pLine->m_theTime.Format(TranslateTime("%A, %B %d, %Y, %#I:%M %p")));
         lines.push_back(std::move(out));
     }
+    return true;
+}
+
+// Does the output pane hold a non-empty selection?  (Menu update-UI for
+// File ▸ Print Selection.)
+bool CWorldChildFrame::HasOutputSelection() const
+{
+    const pal::TextRange r = outputSelection();
+    return r.startLine > 0 &&
+           (r.endLine > r.startLine ||
+            (r.endLine == r.startLine && r.endCol > r.startCol));
+}
+
+void CWorldChildFrame::PrintWorld(bool selectionOnly)
+{
+    std::vector<SPrintLine> lines;
+    if (!BuildPrintLines(selectionOnly, lines)) return;
 
     // The printer face/size and margins are global preferences; wx_print.cpp
     // keeps itself free of the MFC-compat headers, so read them here.  The job

@@ -19,6 +19,8 @@
 
 #include "wx_notepad.h"
 #include "wx_outputpane.h"   // DecodeUTF8Lenient
+#include <wx/numdlg.h>       // wxGetNumberFromUser (Go To Line)
+#include <algorithm>         // std::max/min (Go To Line clamps)
 #include "compat.h"           // GetRValue / GetGValue / GetBValue
 #include "wx_osx_text.h"       // wxOSXDisableSmartSubstitutions (macOS smart-quote fix)
 
@@ -46,6 +48,16 @@ enum {
     // Edit ▸ ASCII Art (canonical ID_EDIT_ASCIIART).  Outside the Convert
     // range: it is an Edit-menu command, and it inserts rather than transforms.
     ID_NP_EDIT_ASCIIART,
+    // Search / navigation / misc (2026-08-13; canonical CTextView commands
+    // the port's bar lacked — the whole Search popup among them).
+    ID_NP_FILE_SAVEAS,
+    ID_NP_SEARCH_FIND,
+    ID_NP_SEARCH_FINDNEXT,
+    ID_NP_SEARCH_REPLACE,
+    ID_NP_EDIT_GOTO,
+    ID_NP_EDIT_INSERTDATETIME,
+    ID_NP_EDIT_WORDCOUNT,
+    ID_NP_EDIT_SENDTOWORLD,
 };
 
 // ── Event table ───────────────────────────────────────────────────────────
@@ -55,6 +67,14 @@ wxBEGIN_EVENT_TABLE(CWxNotepadFrame, wxFrame)
     EVT_MENU(ID_NP_FILE_NEW,   CWxNotepadFrame::OnMenuNew)
     EVT_MENU_RANGE(ID_NP_CONVERT_FIRST, ID_NP_CONVERT_LAST, CWxNotepadFrame::OnConvert)
     EVT_MENU(ID_NP_EDIT_ASCIIART, CWxNotepadFrame::OnEditAsciiArt)
+    EVT_MENU(ID_NP_FILE_SAVEAS,        CWxNotepadFrame::OnMenuSaveAs)
+    EVT_MENU(ID_NP_SEARCH_FIND,        CWxNotepadFrame::OnMenuFind)
+    EVT_MENU(ID_NP_SEARCH_FINDNEXT,    CWxNotepadFrame::OnMenuFindNext)
+    EVT_MENU(ID_NP_SEARCH_REPLACE,     CWxNotepadFrame::OnMenuReplace)
+    EVT_MENU(ID_NP_EDIT_GOTO,          CWxNotepadFrame::OnMenuGoto)
+    EVT_MENU(ID_NP_EDIT_INSERTDATETIME,CWxNotepadFrame::OnMenuInsertDateTime)
+    EVT_MENU(ID_NP_EDIT_WORDCOUNT,     CWxNotepadFrame::OnMenuWordCount)
+    EVT_MENU(ID_NP_EDIT_SENDTOWORLD,   CWxNotepadFrame::OnMenuSendToWorld)
 wxEND_EVENT_TABLE()
 
 // ── Static registry ────────────────────────────────────────────────────────
@@ -115,6 +135,9 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     wxMenu*    mnu = new wxMenu();
     mnu->Append(ID_NP_FILE_NEW,  wxT("&New notepad\tCtrl+N"));
     mnu->Append(ID_NP_FILE_SAVE, wxT("&Save\tCtrl+S"));
+    // Save As re-targets an already-pathed document — the plugin-editor case,
+    // where plain Save can only overwrite the plugin's own .lua in place.
+    mnu->Append(ID_NP_FILE_SAVEAS, wxT("Save &As…"));
     mb->Append(mnu, wxT("&File"));
 
     // Edit menu — wxTextCtrl handles these standard ids when focused.
@@ -132,7 +155,22 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     // recovered resources (mushclient_dialogs.rc: "ASCII Art...\tShift+Ctrl+A",
     // ID_EDIT_ASCIIART).
     edit->Append(ID_NP_EDIT_ASCIIART, wxT("ASCII &Art...\tShift+Ctrl+A"));
+    edit->AppendSeparator();
+    // Canonical CTextView Edit-menu commands (2026-08-13).  Accelerators are
+    // macOS-appropriate where Windows' clash with Mac conventions (Go To was
+    // Ctrl+G, which is Find Next on a Mac; F3/F4 are system keys here).
+    edit->Append(ID_NP_EDIT_GOTO,           wxT("&Go To Line…\tCtrl+L"));
+    edit->Append(ID_NP_EDIT_INSERTDATETIME, wxT("Insert &Date/Time\tCtrl+D"));
+    edit->Append(ID_NP_EDIT_WORDCOUNT,      wxT("&Word Count"));
+    edit->Append(ID_NP_EDIT_SENDTOWORLD,    wxT("Send To W&orld\tShift+Ctrl+S"));
     mb->Append(edit, wxT("&Edit"));
+
+    // Search menu — the canonical IDR_NORMALTYPE popup the port lacked.
+    wxMenu* search = new wxMenu();
+    search->Append(ID_NP_SEARCH_FIND,     wxT("&Find…\tCtrl+F"));
+    search->Append(ID_NP_SEARCH_FINDNEXT, wxT("Find &Next\tCtrl+G"));
+    search->Append(ID_NP_SEARCH_REPLACE,  wxT("&Replace…\tAlt+Ctrl+F"));
+    mb->Append(search, wxT("&Search"));
 
     // Convert menu — text transforms (canonical CTextView ID_CONVERT_* parity).
     // Each acts on the selection, or the whole document when nothing is selected.
@@ -491,6 +529,235 @@ void CWxNotepadFrame::OnMenuSave(wxCommandEvent& /*evt*/)
         m_pDoc->GetPathName().IsEmpty()
             ? nullptr
             : static_cast<LPCTSTR>(m_pDoc->GetPathName()));
+}
+
+// ── Search / navigation / misc (2026-08-13) ─────────────────────────────────
+// The canonical CTextView commands; core ops separate from their dialogs so
+// the notepad selftest can drive them.
+
+void CWxNotepadFrame::OnMenuSaveAs(wxCommandEvent& /*evt*/)
+{
+    // DoSave(nullptr) takes the save lambda's dialog arm, which re-targets
+    // the document (SetPathName) and renames the frame on success.
+    if (m_pDoc) m_pDoc->DoSave(nullptr);
+}
+
+bool CWxNotepadFrame::FindNextInText(const wxString& term, bool matchCase)
+{
+    if (!m_ctrl || term.empty()) return false;
+    const wxString hay0 = m_ctrl->GetValue();
+    const wxString hay  = matchCase ? hay0 : hay0.Lower();
+    const wxString ndl  = matchCase ? term : term.Lower();
+
+    long selFrom = 0, selTo = 0;
+    m_ctrl->GetSelection(&selFrom, &selTo);
+    size_t hit = hay.find(ndl, (size_t) selTo);
+    if (hit == wxString::npos && selTo > 0)
+        hit = hay.find(ndl);                       // wrap to the top
+    if (hit == wxString::npos) return false;
+
+    m_ctrl->SetSelection((long) hit, (long) (hit + ndl.length()));
+    m_ctrl->ShowPosition((long) hit);
+    return true;
+}
+
+int CWxNotepadFrame::ReplaceAllInText(const wxString& term,
+                                      const wxString& repl, bool matchCase)
+{
+    if (!m_ctrl || term.empty()) return 0;
+    const wxString text = m_ctrl->GetValue();
+    const wxString hay  = matchCase ? text : text.Lower();
+    const wxString ndl  = matchCase ? term : term.Lower();
+
+    wxString out;
+    out.reserve(text.length());
+    int count = 0;
+    size_t from = 0;
+    for (;;) {
+        const size_t hit = hay.find(ndl, from);
+        if (hit == wxString::npos) { out += text.Mid(from); break; }
+        out += text.Mid(from, hit - from);
+        out += repl;
+        from = hit + ndl.length();
+        ++count;
+    }
+    if (count) m_ctrl->SetValue(out);              // fires wxEVT_TEXT → modified
+    return count;
+}
+
+void CWxNotepadFrame::GoToLine(long line1)
+{
+    if (!m_ctrl) return;
+    const long lines = std::max(1, m_ctrl->GetNumberOfLines());
+    const long line0 = std::max(0L, std::min(lines - 1, line1 - 1));
+    const long pos = m_ctrl->XYToPosition(0, line0);
+    if (pos < 0) return;
+    m_ctrl->SetInsertionPoint(pos);
+    m_ctrl->ShowPosition(pos);
+    m_ctrl->SetFocus();
+}
+
+void CWxNotepadFrame::OnMenuGoto(wxCommandEvent& /*evt*/)
+{
+    if (!m_ctrl) return;
+    long curX = 0, curY = 0;
+    m_ctrl->PositionToXY(m_ctrl->GetInsertionPoint(), &curX, &curY);
+    const long line = wxGetNumberFromUser(
+        wxT("Go to which line?"), wxT("Line:"), wxT("Go To Line"),
+        curY + 1, 1, std::max(1, m_ctrl->GetNumberOfLines()), this);
+    if (line > 0) GoToLine(line);
+}
+
+void CWxNotepadFrame::InsertDateTime()
+{
+    if (!m_ctrl) return;
+    // The canonical format (CTextView::OnEditInsertdatetime), incl. the %#
+    // no-leading-zero flag the CTime shim maps to POSIX %-.
+    CTime theTime = CTime::GetCurrentTime();
+    CString strTime = theTime.Format(TranslateTime("%A, %#d %B %Y, %#I:%M %p"));
+    m_ctrl->WriteText(DecodeUTF8Lenient((const char*) strTime,
+                                        (size_t) strTime.GetLength()));
+}
+
+void CWxNotepadFrame::OnMenuInsertDateTime(wxCommandEvent& /*evt*/)
+{
+    InsertDateTime();
+}
+
+wxString CWxNotepadFrame::WordCountSummary() const
+{
+    if (!m_ctrl) return wxString();
+    // Selection, or the whole document when nothing is selected — the
+    // CTextView::GetSelection convention, and its exact counting rules.
+    long from = 0, to = 0;
+    m_ctrl->GetSelection(&from, &to);
+    const bool bAll = (from == to);
+    const wxString wtext = bAll ? m_ctrl->GetValue()
+                                : m_ctrl->GetStringSelection();
+    const wxScopedCharBuffer utf8 = wtext.utf8_str();
+    const char* p = utf8.data();
+
+    int iNewLines = 0, iWords = 0;
+    for (; *p; p++) {
+        if (*p == '\n') iNewLines++;
+        if (isspace((unsigned char) p[0]) &&
+            !isspace((unsigned char) p[1]) && p[1])
+            iWords++;
+    }
+    const long chars = (long) wtext.length();
+    if (chars > 0) {
+        iNewLines++;
+        if (!isspace((unsigned char) (char) wtext[0])) iWords++;
+    }
+    return wxString::Format(
+        wxT("The %s contains %d line%s, %d word%s, %ld character%s"),
+        bAll ? wxT("document") : wxT("selection"),
+        iNewLines, iNewLines == 1 ? wxT("") : wxT("s"),
+        iWords,    iWords    == 1 ? wxT("") : wxT("s"),
+        chars,     chars     == 1 ? wxT("") : wxT("s"));
+}
+
+void CWxNotepadFrame::OnMenuWordCount(wxCommandEvent& /*evt*/)
+{
+    wxMessageBox(WordCountSummary(), wxT("Word Count"),
+                 wxOK | wxICON_INFORMATION, this);
+}
+
+bool CWxNotepadFrame::SendSelectionToWorld()
+{
+    // CTextView::OnEditSendtoworld: the selection (or the whole document)
+    // goes through the world's paste machinery, preambles and all; sending
+    // everything counts as saved.
+    if (!m_ctrl || !m_pDoc) return false;
+    CMUSHclientDoc* pWorld = m_pDoc->FindWorld();
+    if (!pWorld) return false;
+
+    long from = 0, to = 0;
+    m_ctrl->GetSelection(&from, &to);
+    const bool bAll = (from == to);
+    const wxString wtext = bAll ? m_ctrl->GetValue()
+                                : m_ctrl->GetStringSelection();
+    if (wtext.empty()) return false;
+
+    const wxScopedCharBuffer utf8 = wtext.utf8_str();
+    CMemFile f((unsigned char*) utf8.data(), (unsigned) utf8.length());
+    const bool bOK = pWorld->SendToMushHelper(&f,
+                        pWorld->m_paste_preamble,
+                        pWorld->m_pasteline_preamble,
+                        pWorld->m_pasteline_postamble,
+                        pWorld->m_paste_postamble,
+                        pWorld->m_bPasteCommentedSoftcode,
+                        pWorld->m_nPasteDelay,
+                        pWorld->m_nPasteDelayPerLines,
+                        pWorld->m_bConfirmOnPaste,
+                        pWorld->m_bPasteEcho) != FALSE;
+    if (bOK && bAll)
+        m_pDoc->SetModifiedFlag(FALSE);
+    return bOK;
+}
+
+void CWxNotepadFrame::OnMenuSendToWorld(wxCommandEvent& /*evt*/)
+{
+    SendSelectionToWorld();
+}
+
+void CWxNotepadFrame::OnMenuFind(wxCommandEvent& /*evt*/)     { OpenFindDialog(false); }
+void CWxNotepadFrame::OnMenuReplace(wxCommandEvent& /*evt*/)  { OpenFindDialog(true); }
+
+void CWxNotepadFrame::OnMenuFindNext(wxCommandEvent& /*evt*/)
+{
+    if (m_findTerm.empty()) { OpenFindDialog(false); return; }
+    if (!FindNextInText(m_findTerm, m_findCase))
+        wxMessageBox(wxT("Cannot find \"") + m_findTerm + wxT("\""),
+                     wxT("Find"), wxOK | wxICON_INFORMATION, this);
+}
+
+void CWxNotepadFrame::OpenFindDialog(bool replace)
+{
+    if (m_frDlg) { m_frDlg->Destroy(); m_frDlg = nullptr; }
+    m_frData.SetFlags(wxFR_DOWN | (m_findCase ? wxFR_MATCHCASE : 0));
+    m_frData.SetFindString(m_findTerm);
+    m_frDlg = new wxFindReplaceDialog(this, &m_frData,
+                                      replace ? wxT("Replace") : wxT("Find"),
+                                      replace ? wxFR_REPLACEDIALOG : 0);
+    m_frDlg->Bind(wxEVT_FIND,             &CWxNotepadFrame::OnFindDialog, this);
+    m_frDlg->Bind(wxEVT_FIND_NEXT,        &CWxNotepadFrame::OnFindDialog, this);
+    m_frDlg->Bind(wxEVT_FIND_REPLACE,     &CWxNotepadFrame::OnFindDialog, this);
+    m_frDlg->Bind(wxEVT_FIND_REPLACE_ALL, &CWxNotepadFrame::OnFindDialog, this);
+    m_frDlg->Bind(wxEVT_FIND_CLOSE,       &CWxNotepadFrame::OnFindDialog, this);
+    m_frDlg->Show();
+}
+
+void CWxNotepadFrame::OnFindDialog(wxFindDialogEvent& evt)
+{
+    const wxEventType t = evt.GetEventType();
+    m_findTerm = evt.GetFindString();
+    m_findCase = (evt.GetFlags() & wxFR_MATCHCASE) != 0;
+    if (t == wxEVT_FIND || t == wxEVT_FIND_NEXT) {
+        if (!FindNextInText(m_findTerm, m_findCase))
+            wxMessageBox(wxT("Cannot find \"") + m_findTerm + wxT("\""),
+                         wxT("Find"), wxOK | wxICON_INFORMATION, this);
+    } else if (t == wxEVT_FIND_REPLACE) {
+        if (m_ctrl) {
+            const wxString sel = m_ctrl->GetStringSelection();
+            const bool match = m_findCase ? (sel == m_findTerm)
+                                          : sel.IsSameAs(m_findTerm, false);
+            if (match) {
+                long f = 0, tn = 0;
+                m_ctrl->GetSelection(&f, &tn);
+                m_ctrl->Replace(f, tn, evt.GetReplaceString());
+            }
+        }
+        FindNextInText(m_findTerm, m_findCase);
+    } else if (t == wxEVT_FIND_REPLACE_ALL) {
+        const int n = ReplaceAllInText(m_findTerm, evt.GetReplaceString(),
+                                       m_findCase);
+        wxMessageBox(wxString::Format(wxT("%d replacement%s made"),
+                                      n, n == 1 ? wxT("") : wxT("s")),
+                     wxT("Replace All"), wxOK | wxICON_INFORMATION, this);
+    } else if (t == wxEVT_FIND_CLOSE) {
+        if (m_frDlg) { m_frDlg->Destroy(); m_frDlg = nullptr; }
+    }
 }
 
 void CWxNotepadFrame::OnMenuNew(wxCommandEvent& /*evt*/)

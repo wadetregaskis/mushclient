@@ -220,6 +220,59 @@ int RunNotepadSelfTest()
         }
     }
 
+    // ── 3c. Search / navigation commands (2026-08-13) ──────────────────────
+    // The canonical CTextView commands the bar lacked entirely — the whole
+    // Search popup among them (the bite: Plugins ▸ Edit opens plugin .lua
+    // here, unsearchable).  Menu presence asserted so "menu absent" FAILS;
+    // the core ops driven directly (their dialogs are modal/modeless UI).
+    {
+        CWxNotepadFrame* frame = CWxNotepadFrame::Find("selftest_np_text");
+        npCheck(frame != nullptr, "search: the fixture frame is findable");
+        if (frame)
+        {
+            wxMenuBar* mb = frame->GetMenuBar();
+            npCheck(mb && mb->FindMenu(wxT("Search")) != wxNOT_FOUND,
+                    "the notepad has a Search menu (it had none)");
+
+            frame->AppendText("alpha beta gamma beta\n", true /*replace*/);
+            npCheck(frame->FindNextInText(wxT("beta"), false),
+                    "Find finds a term");
+            npCheck(frame->FindNextInText(wxT("beta"), false),
+                    "Find Next advances to the second hit");
+            npCheck(!frame->FindNextInText(wxT("zzz"), false),
+                    "a missing term reports not-found");
+            npCheck(frame->FindNextInText(wxT("BETA"), false),
+                    "...case-insensitively by default");
+            npCheck(!frame->FindNextInText(wxT("BETA"), true),
+                    "...but not when match-case is on (control)");
+
+            npCheck(frame->ReplaceAllInText(wxT("beta"), wxT("BETA"), true) == 2,
+                    "Replace All counts its replacements");
+            npCheck(frame->GetText().find("BETA gamma BETA")
+                        != std::string::npos,
+                    "...and really replaced both");
+
+            // Go To Line + Insert Date/Time in one observable: the stamp
+            // lands at the START of line 2, between aaa and bbb.
+            frame->AppendText("aaa\nbbb\nccc\n", true /*replace*/);
+            frame->GoToLine(2);
+            frame->InsertDateTime();
+            const std::string txt = frame->GetText();
+            // The stamp is the only ':' in the fixture (the time HH:MM).
+            const size_t iA = txt.find("aaa"), iY = txt.find(":"),
+                         iB = txt.find("bbb");
+            npCheck(iA != std::string::npos && iY != std::string::npos &&
+                        iB != std::string::npos && iA < iY && iY < iB,
+                    "Go To Line 2 + Insert Date/Time lands between the lines");
+
+            frame->AppendText("one two\nthree\n", true /*replace*/);
+            npCheck(frame->WordCountSummary().Contains(wxT("3 words")),
+                    "Word Count counts words");
+            npCheck(frame->WordCountSummary().Contains(wxT("3 lines")),
+                    "...and lines, the canonical way");
+        }
+    }
+
     // ── 4. The Convert menu's end-of-line commands ─────────────────────────
     // wxOSX rewrites every CR to LF on the way into the control, so the
     // canonical CR-keyed transforms have to be given a CRLF buffer.  Assert the

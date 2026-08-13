@@ -17,6 +17,8 @@
 // Forward declaration — avoids pulling stdafx.h into wx headers.
 class CTextDocument;
 
+#include <wx/fdrepdlg.h>   // wxFindReplaceDialog/Data (the Search menu)
+
 class CWxNotepadFrame : public wxFrame
 {
 public:
@@ -51,7 +53,36 @@ public:
     // Set or clear read-only mode.
     void SetReadOnly(bool ro);
 
+    // ── Search / navigation / misc (2026-08-13) ────────────────────────
+    // The canonical CTextView commands the port's menu bar lacked entirely
+    // (the whole Search popup, Go To, Save As, Word Count, Insert
+    // Date/Time, Send To World) — the bite concentrated in Plugins > Edit,
+    // which opens the plugin's .lua here.  Core ops are public so the
+    // notepad selftest can drive them without the (modal/modeless) dialogs.
+    bool FindNextInText(const wxString& term, bool matchCase);   // wraps
+    int  ReplaceAllInText(const wxString& term, const wxString& repl,
+                          bool matchCase);
+    void GoToLine(long line1);                                   // 1-based
+    void InsertDateTime();
+    wxString WordCountSummary() const;    // "The document contains N ..."
+    bool SendSelectionToWorld();          // selection (or all) → the world
+
 private:
+    void OnMenuSaveAs(wxCommandEvent& evt);
+    void OnMenuFind(wxCommandEvent& evt);
+    void OnMenuFindNext(wxCommandEvent& evt);
+    void OnMenuReplace(wxCommandEvent& evt);
+    void OnMenuGoto(wxCommandEvent& evt);
+    void OnMenuInsertDateTime(wxCommandEvent& evt);
+    void OnMenuWordCount(wxCommandEvent& evt);
+    void OnMenuSendToWorld(wxCommandEvent& evt);
+    void OpenFindDialog(bool replace);
+    void OnFindDialog(wxFindDialogEvent& evt);
+    wxString            m_findTerm;
+    bool                m_findCase = false;
+    wxFindReplaceData   m_frData;
+    wxFindReplaceDialog* m_frDlg = nullptr;
+
     CTextDocument* m_pDoc;
     wxTextCtrl*    m_ctrl;
     bool           m_forceClose; // set by m_fn_close_window to skip SaveModified

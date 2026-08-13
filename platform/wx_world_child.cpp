@@ -1410,35 +1410,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // horizontally rather than wrapping onto a second visual row (which would
     // also make GetNumberOfLines() count display rows, breaking the height
     // calculation in UpdateInputBarHeight).
-    m_input = new wxTextCtrl(this, ID_INPUT, wxEmptyString,
-                             wxDefaultPosition, wxDefaultSize,
-                             wxTE_MULTILINE | wxTE_DONTWRAP | wxTE_PROCESS_ENTER);
-    // macOS substitutes as you type, and this is the control the user types
-    // EVERY command into -- so without this, `say "hi"` reaches the MUD as
-    // `say "hi"` with curly quotes and `a -- b` as an em dash.  Measured
-    // against a live MUD 2026-08-10: both happened, and both are sent.  MUD
-    // command grammars are ASCII, so a smart quote is not a cosmetic
-    // difference, it is a command that does not parse.  The helper was already
-    // written and already applied to the notepad and to multiline dialog
-    // fields; the busiest control in the app was simply never wired to it.
-    wxOSXDisableSmartSubstitutions(m_input);
+    // One body builds the bar (see BuildInputBar); the ctor adds it to the
+    // sizer, the wrap_input toggle replaces it in the same slot.
+    m_lastWrapInput = (m_doc && m_doc->m_bAutoWrapInput) ? 1 : 0;
+    BuildInputBar(m_lastWrapInput != 0);
     sizer->Add(m_input, 0, wxEXPAND);
-
-    // Fire OnPluginCommandChanged per-keystroke — mirrors CSendView::OnChange()
-    // in sendvw.cpp (line 1175).  Re-entrancy guard prevents recursion if a
-    // plugin callback itself modifies the command bar.
-    m_input->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
-        // Grow/shrink the bar to fit however many lines are now in it.  Runs
-        // even without a document so a paste is visible before connecting.
-        UpdateInputBarHeight();
-        if (!m_doc) return;
-        static thread_local bool s_firing = false;
-        if (!s_firing) {
-            s_firing = true;
-            m_doc->SendToAllPluginCallbacks(ON_PLUGIN_COMMAND_CHANGED);
-            s_firing = false;
-        }
-    });
 
     // Password-mode input bar: shown in place of m_input when the MUD sends
     // IAC WILL ECHO (telnet echo suppression) to signal a password prompt.
@@ -1634,9 +1610,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         }
     }
 
-    // ── Input bar: key handler for history navigation ─────────────────────
-    // Bind directly to m_input so we only see input-bar key events.
-    m_input->Bind(wxEVT_KEY_DOWN, &CWorldChildFrame::OnInputKeyDown, this);
+    // (The input bar's key handler is bound in BuildInputBar, with the rest
+    // of its wiring.)
 
     // Paste is deliberately NOT intercepted.  wxTextCtrl's own paste inserts the
     // clipboard text — newlines and all — which is exactly what Windows does.
@@ -4236,6 +4211,90 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 //
 // Only a paste can put a newline in here — Return always sends (OnInputKeyDown),
 // exactly as CSendView::OnChar does — so in normal typing this never fires.
+// ── BuildInputBar ─────────────────────────────────────────────────────────
+// See the header.  Everything the bar needs lives HERE: creation style,
+// smart-substitution disable, the text/key/mouse bindings.  The wrap_input
+// world option picks the wrap mode: Windows wraps typed text at
+// min(wrap column, window width) via the edit control's right margin
+// (CSendView::UpdateWrap); wx has no right-margin API (SetMargins is
+// left/top-only on wxOSX), so the port wraps at the WINDOW width — identical
+// whenever the window is narrower than the wrap column, later than Windows
+// when it is wider (recorded in docs/UPSTREAM-DIVERGENCES.md).
+void CWorldChildFrame::BuildInputBar(bool wrapInput)
+{
+    wxTextCtrl* old = m_input;
+
+    long style = wxTE_MULTILINE | wxTE_PROCESS_ENTER;
+    // wxTE_DONTWRAP keeps the single-line feel: long commands scroll
+    // horizontally rather than wrapping onto a second visual row.
+    style |= wrapInput ? wxTE_BESTWRAP : wxTE_DONTWRAP;
+
+    m_input = new wxTextCtrl(this, ID_INPUT, wxEmptyString,
+                             wxDefaultPosition, wxDefaultSize, style);
+
+    // macOS substitutes as you type, and this is the control the user types
+    // EVERY command into -- so without this, `say "hi"` reaches the MUD as
+    // `say "hi"` with curly quotes and `a -- b` as an em dash.  Measured
+    // against a live MUD 2026-08-10: both happened, and both are sent.  MUD
+    // command grammars are ASCII, so a smart quote is not a cosmetic
+    // difference, it is a command that does not parse.
+    wxOSXDisableSmartSubstitutions(m_input);
+
+    // Fire OnPluginCommandChanged per-keystroke — mirrors CSendView::OnChange()
+    // in sendvw.cpp (line 1175).  Re-entrancy guard prevents recursion if a
+    // plugin callback itself modifies the command bar.
+    m_input->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
+        // Grow/shrink the bar to fit however many lines are now in it.  Runs
+        // even without a document so a paste is visible before connecting.
+        UpdateInputBarHeight();
+        if (!m_doc) return;
+        static thread_local bool s_firing = false;
+        if (!s_firing) {
+            s_firing = true;
+            m_doc->SendToAllPluginCallbacks(ON_PLUGIN_COMMAND_CHANGED);
+            s_firing = false;
+        }
+    });
+
+    // History navigation / send / tab completion.
+    m_input->Bind(wxEVT_KEY_DOWN, &CWorldChildFrame::OnInputKeyDown, this);
+
+    // Ctrl+click → the alias menu: the command-bar arm Windows has
+    // (CSendView::OnLButtonDown maps the point into the output view and calls
+    // AliasMenu there).  The nearest output text is the bottom visible row.
+    m_input->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& evt) {
+        if (evt.RawControlDown() && m_output) {
+            const wxPoint p = m_output->ScreenToClient(
+                m_input->ClientToScreen(evt.GetPosition()));
+            int ph = 0;
+            m_output->GetClientSize(nullptr, &ph);
+            const int y = std::max(0, ph - 1);
+            const SelPoint pt = m_output->PointToChar(p.x, y, false);
+            if (pt.valid())
+                ShowAliasMenu(pt.line, pt.col, wxPoint(p.x, y));
+            return;                    // consumed — no caret move
+        }
+        evt.Skip();
+    });
+
+    // A REBUILD (the wrap_input toggle): carry the user's state across and
+    // swap the sizer slot in place.
+    if (old) {
+        m_input->SetFont(old->GetFont());
+        m_input->SetValue(old->GetValue());
+        m_input->SetInsertionPoint(old->GetInsertionPoint());
+        const bool hadFocus = (FindFocus() == old);
+        if (GetSizer())
+            GetSizer()->Replace(old, m_input);
+        old->Destroy();
+        UpdateInputBarColors();
+        m_inputBarLines = -1;          // force the next height fit
+        UpdateInputBarHeight();
+        Layout();
+        if (hadFocus) m_input->SetFocus();
+    }
+}
+
 void CWorldChildFrame::UpdateInputBarHeight()
 {
     if (!m_input) return;
@@ -4253,8 +4312,27 @@ void CWorldChildFrame::UpdateInputBarHeight()
         capLines   = std::max(floorLines,
                               (int) m_doc->m_iAutoResizeMaximumLines);
     }
+    // Content height.  Measured 2026-08-13: wxOSX's GetNumberOfLines counts
+    // HARD lines even on a wrapping control (300 wrapped chars report 1), so
+    // under wrap_input the display rows are computed here — chars per row
+    // from the control's own width, rows per hard line by division.  (An
+    // approximation for a proportional input font; the bar is monospace by
+    // default, matching the output.)
+    int contentLines;
+    if (m_doc && m_doc->m_bAutoWrapInput) {
+        const int charW = std::max(1, m_input->GetCharWidth());
+        const int availCols = std::max(1, m_input->GetClientSize().x / charW);
+        long rows = 0;
+        const int hard = m_input->GetNumberOfLines();
+        for (int i = 0; i < hard; ++i)
+            rows += std::max(1L, (long) (m_input->GetLineLength(i)
+                                         + availCols - 1) / availCols);
+        contentLines = (int) std::min(rows, 1000L);
+    } else {
+        contentLines = m_input->GetNumberOfLines();
+    }
     const int wanted = std::max(floorLines,
-                                std::min(m_input->GetNumberOfLines(), capLines));
+                                std::min(contentLines, capLines));
     if (wanted == m_inputBarLines) return;   // nothing to do — avoids relayout churn
     m_inputBarLines = wanted;
 
@@ -4587,6 +4665,15 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
             m_lastAutoResize = ar;
             m_inputBarLines  = -1;             // force the relayout
             UpdateInputBarHeight();
+        }
+
+        // wrap_input: the wrap mode is a creation-time style on wxOSX, so a
+        // change REBUILDS the bar — one body builds it (BuildInputBar), so
+        // nothing can be dropped, and the user's text/caret/focus carry over.
+        const int wrapIn = (m_doc->m_bAutoWrapInput != 0) ? 1 : 0;
+        if (wrapIn != m_lastWrapInput) {
+            m_lastWrapInput = wrapIn;
+            BuildInputBar(wrapIn != 0);
         }
     }
 

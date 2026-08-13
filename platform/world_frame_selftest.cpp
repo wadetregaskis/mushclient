@@ -611,6 +611,56 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── wrap_input rebuilds the bar and wraps typed text (2026-08-13) ───────
+    // The world option was a dead reader (CSendView::UpdateWrap).  The wrap
+    // mode is a creation-time style on wxOSX, so the toggle rebuilds the
+    // control through the same BuildInputBar the constructor uses — text,
+    // caret and bindings must survive the swap.
+    {
+        wxTextCtrl* before = child->ActiveInputPublic();
+        check(before != nullptr, "wrap_input: the bar exists");
+        before->SetValue(wxT("carried text"));
+        before->SetInsertionPoint(7);
+
+        doc->m_bAutoWrapInput = TRUE;
+        pumpTicks();
+        wxTextCtrl* on = child->ActiveInputPublic();
+        check(on != nullptr && on != before,
+              "wrap_input: the toggle rebuilt the control");
+        check(on && on->GetValue() == wxT("carried text"),
+              "...the text carried across");
+        check(on && on->GetInsertionPoint() == 7,
+              "...and the caret");
+        // The discriminating pair (wxOSX does not retain wxTE_DONTWRAP in
+        // the readable style flags, so the assertion is BEHAVIOURAL): the
+        // same 300-char single command grows the bar to several display
+        // rows with wrap on, and stays one line with wrap off.
+        const std::string longcmd(300, 'k');
+        const int oneRowH = on->GetMinSize().y;
+        on->SetValue(wxString(longcmd));
+        check(on->GetMinSize().y >= oneRowH + 2 * on->GetCharHeight(),
+              "...a long command grows the bar by display rows (was: 1 line)");
+
+        doc->m_bAutoWrapInput = FALSE;
+        pumpTicks();
+        wxTextCtrl* off = child->ActiveInputPublic();
+        check(off != nullptr && off != on,
+              "wrap_input: toggling off rebuilds again");
+        check(off && off->GetValue() == wxString(longcmd),
+              "...still carrying the text");
+        const int offH = off->GetMinSize().y;
+        check(offH < oneRowH + 2 * off->GetCharHeight(),
+              "...and the non-wrapping bar stays one line (control)");
+
+        // The TEXT binding survived the rebuilds: three hard lines must grow
+        // the bar (the wxEVT_TEXT → UpdateInputBarHeight chain).
+        const int oneLineH = off->GetMinSize().y;
+        off->SetValue(wxT("a\nb\nc"));
+        check(off->GetMinSize().y > oneLineH,
+              "...the TEXT binding survived the rebuilds (bar grew)");
+        off->SetValue(wxEmptyString);
+    }
+
     // ── world slot numbers stay dense across a close (2026-08-12) ───────────
     // Windows renumbers m_view_number from OnIdle; the port never pumped it,
     // so closing world B of three left a dead toolbar slot and WorldInSlot's

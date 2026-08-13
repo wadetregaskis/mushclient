@@ -493,6 +493,7 @@ private:
     // prefs change and re-apply without repainting every tick.  0xFFFFFFFF =
     // "nothing applied yet".
     long m_lastAutoResize = -1;   // auto-resize option poll (see OnWorldTimer)
+    int  m_lastWrapInput  = -1;   // wrap_input poll (-1 = not yet seen)
     unsigned long m_lastInputFg = 0xFFFFFFFFUL;
     unsigned long m_lastInputBg = 0xFFFFFFFFUL;
     // Likewise for the output-pane options the ctor applies once (-1/absurd
@@ -527,6 +528,14 @@ private:
     void FireAcceleratorCommand(WORD nID);
     // Grow/shrink the multi-line command bar to fit its content (1..8 lines).
     void UpdateInputBarHeight();
+    // Create (or re-create) the command input bar — ONE body for the
+    // constructor and the wrap_input toggle, so a rebuild can never silently
+    // drop a binding (the smart-quote disable is exactly the wiring a second
+    // creation site would have lost).  wrap_input's wrap mode is a
+    // creation-time style on wxOSX, hence rebuild-on-toggle.  When `old` is
+    // non-null the user's text, caret, font and focus are carried across and
+    // the sizer slot is replaced in place.
+    void BuildInputBar(bool wrapInput);
     // Frame is about to close — delete the doc (disconnects + frees memory).
     void OnClose(wxCloseEvent& evt);
     // 100 ms world timer: process MUSHclient timers and flush output.

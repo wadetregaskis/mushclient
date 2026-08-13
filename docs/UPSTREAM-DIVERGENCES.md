@@ -210,6 +210,25 @@ quietly turned a fixed pool into an unbounded one. The neighbouring
 `RebindingAKeyReusesTheCommandId` covers none of this: it never unbinds, so it
 only ever exercises the map-hit branch and passed before and after.
 
+## 7 — wrap_input wraps at the window edge, not at the wrap column
+
+`wrap_input` ("match input wrap to output") makes Windows' command window
+wrap typed text at `min(wrap column + 1, window width)` characters, by
+setting the edit control's RIGHT margin (`CSendView::UpdateWrap`,
+sendvw.cpp).  wxWidgets has no right-margin API — `wxTextCtrl::SetMargins`
+is left/top-only on wxOSX — so the port's bar (rebuilt with a wrapping
+style when the option is on; see `CWorldChildFrame::BuildInputBar`) wraps
+at the WINDOW width instead.
+
+Identical whenever the window is narrower than the wrap column — the case
+the option exists for — and later than Windows when the window is wider.
+Exact column parity would need an AppKit shim pinning the NSTextView's
+text-container width (wx_osx_text.mm territory); deferred until someone
+actually hits the wide-window case.
+
+This is port-side only (platform/wx_world_child.cpp); no canonical source
+was changed, so no Windows run is owed for it.
+
 ## Verification status
 
 Entries 1-3 are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)

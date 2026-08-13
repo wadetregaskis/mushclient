@@ -441,6 +441,7 @@ void CMUSHclientDoc::ChatNote(short NoteType, LPCTSTR Message)
     {
     int iLines = 0;
     char * p;
+    char chAfterCut = 0;   // sampled before ReleaseBuffer -- see below
 
     for (p = strMessage.GetBuffer (strMessage.GetLength ());
          *p;
@@ -450,11 +451,16 @@ void CMUSHclientDoc::ChatNote(short NoteType, LPCTSTR Message)
         if (++iLines >= m_iMaxChatLinesPerMessage)
           {
           *p = 0;
+          // Sample the byte AFTER the cut while the buffer is still live: the
+          // port's CString shim hands GetBuffer a scratch that ReleaseBuffer
+          // clears, so the old post-release p[1] read was out-of-lifetime
+          // there (harmless on Windows, where p targets the real buffer).
+          chAfterCut = p [1];
           break;    // stop scanning for newlines
           }
       } // end of buffer scan
     strMessage.ReleaseBuffer (-1);
-    if (iLines >= m_iMaxChatLinesPerMessage && p [1])
+    if (iLines >= m_iMaxChatLinesPerMessage && chAfterCut)
       strMessage += TFormat ("\n[Chat message truncated, exceeds %i lines]", 
             m_iMaxChatLinesPerMessage);
     }   // end of line count check wanted

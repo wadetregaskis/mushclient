@@ -3611,6 +3611,45 @@ TEST(LuaSurface, UtilsNotepadReachesTheAppLevelNotepads)
     EXPECT_EQ(1, cap.pads[0]->activateCalls);
 }
 
+// ChatNote's line cap sampled p[1] AFTER ReleaseBuffer -- on the port's
+// CString shim, GetBuffer hands out a scratch that ReleaseBuffer clears, so
+// the read was out-of-lifetime (fine on Windows, where p targets the real
+// buffer).  The byte is sampled before release now; behaviour is identical.
+TEST(LuaSurface, ChatNoteTruncatesOverLongMessages)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    f.doc.m_iMaxChatLinesPerMessage = 2;
+    f.doc.ChatNote(0, "one\ntwo\nthree\nfour");
+
+    bool sawSuffix = false, sawCutContent = false;
+    for (POSITION p2 = f.doc.m_LineList.GetHeadPosition(); p2; ) {
+        CLine* l = f.doc.m_LineList.GetNext(p2);
+        if (!l || l->len <= 0) continue;
+        std::string t(l->text, (size_t) l->len);
+        if (t.find("Chat message truncated") != std::string::npos)
+            sawSuffix = true;
+        if (t.find("three") != std::string::npos ||
+            t.find("four") != std::string::npos)
+            sawCutContent = true;
+    }
+    EXPECT_TRUE(sawSuffix);          // the cap fired and said so
+    EXPECT_FALSE(sawCutContent);     // content past the cap is really gone
+
+    // Control: an under-cap message passes through untouched.
+    f.doc.m_iMaxChatLinesPerMessage = 50;
+    f.doc.ChatNote(0, "alpha\nbeta");
+    bool sawBeta = false, sawSuffix2 = false;
+    for (POSITION p2 = f.doc.m_LineList.GetHeadPosition(); p2; ) {
+        CLine* l = f.doc.m_LineList.GetNext(p2);
+        if (!l || l->len <= 0) continue;
+        std::string t(l->text, (size_t) l->len);
+        if (t.find("beta") != std::string::npos) sawBeta = true;
+        if (t.find("truncated, exceeds 50") != std::string::npos) sawSuffix2 = true;
+    }
+    EXPECT_TRUE(sawBeta);
+    EXPECT_FALSE(sawSuffix2);
+}
+
 MC_TEST_MAIN()
 
 #else // !MUSHCLIENT_LUA_SCRIPTING

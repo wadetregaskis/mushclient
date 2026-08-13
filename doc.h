@@ -2500,6 +2500,13 @@ public:
   // through this; SetOption already enforces the same range.
   static int ClampWrapColumn (int iColumn);
 
+  // The Ctrl+click alias menu, hoisted from the view family so the port can
+  // drive it (doc_aliasmenu_shared.cpp, 2026-08-13).  Windows' CMUSHView
+  // keeps its CMenu UI and calls these three.
+  void SetWordUnderMenu (CLine * pLine, int col);      // -> GetInfo(86)
+  int  BuildAliasMenuItems (CString * items, int maxItems);
+  void ExecuteAliasMenuItem (const CString & strItem);
+
   // The wrap column implied by an output window `iTextColumns` characters wide,
   // or 0 when this world does not want the window width to drive it (world
   // option "auto_wrap_window_width", default off).  Zero means "leave
@@ -3093,7 +3100,7 @@ protected:
 	afx_msg void OnGameChatsessions();
 	afx_msg void OnGameConfigureChat();
 	afx_msg void OnGameResetconnectedtime();
-	afx_msg void OnDisplayStopsoundplaying();
+	afx_msg void OnDisplayStopsoundplaying();
 	afx_msg void OnDisplayStoptriggersounds();
 	afx_msg void OnDisplayStopscriptsounds();
 	afx_msg void OnInputKeyname();

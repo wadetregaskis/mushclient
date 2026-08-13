@@ -2428,8 +2428,23 @@ void COutputPane::AutoCopySelection()
 
 // ── Mouse ─────────────────────────────────────────────────────────────────────
 
+// Ctrl+click => the alias menu (CMUSHView::OnLButtonDown's arm).  Returns
+// true when consumed; the hit is containment (which cell holds the pixel).
+bool COutputPane::TryAliasMenu(wxMouseEvent& evt)
+{
+    if (!m_fn_alias_menu || !evt.RawControlDown()) return false;
+    const int lineIdx = YToLine(evt.GetY());
+    if (lineIdx < 0 || lineIdx >= LineCountI()) return false;
+    const int col = XToChar(lineIdx, evt.GetX(), evt.GetY(),
+                            false /*containment*/);
+    m_fn_alias_menu(lineIdx, col, evt.GetPosition());
+    return true;
+}
+
 void COutputPane::OnLeftDown(wxMouseEvent& evt)
 {
+    if (TryAliasMenu(evt)) return;   // Ctrl+click: the alias menu, no selection
+
     // ── Hint bar: click snaps to the live bottom ───────────────────────────
     // The hint bar is painted on top of everything (miniwindows included), so
     // its click region takes priority.  We check it before the miniwindow hit
@@ -2843,6 +2858,8 @@ void COutputPane::OnLeaveWindow(wxMouseEvent& evt)
 
 void COutputPane::OnRightDown(wxMouseEvent& evt)
 {
+    if (TryAliasMenu(evt)) return;   // macOS: Ctrl+click arrives as right-click
+
     if (m_fn_miniwindow_mouse_down &&
         m_fn_miniwindow_mouse_down(evt.GetX(), evt.GetY(), 0x20 /*MW_MOUSE_RH*/))
     {

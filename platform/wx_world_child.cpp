@@ -1161,6 +1161,13 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         return (uint32_t) m_doc->TranslateColour((COLORREF) colour, opacity);
     };
 
+    // Ctrl+click => the alias menu (both mouse buttons consult it; see the
+    // pane header for the macOS right-click conversion note).
+    m_output->m_fn_alias_menu =
+        [this](int lineIdx, int col, wxPoint pos) {
+            ShowAliasMenu(lineIdx, col, pos);
+        };
+
     // The line preamble (timestamps): CMUSHView::OnDraw's "line preamble"
     // block, verbatim in substance.  The doc owns the nine timestamp_*
     // options; the members are read HERE, live, each paint — so a
@@ -2241,6 +2248,49 @@ bool CWorldChildFrame::HasOutputSelection() const
     return r.startLine > 0 &&
            (r.endLine > r.startLine ||
             (r.endLine == r.startLine && r.endCol > r.startCol));
+}
+
+// ── Ctrl+click alias menu ───────────────────────────────────────────────────
+void CWorldChildFrame::ShowAliasMenu(int lineIdx, int col, const wxPoint& panePos)
+{
+    if (!m_doc || !m_output) return;
+
+    enum { kAliasMenuMax = 100 };                   // MXP_MENU_COUNT
+    static const int kAliasMenuFirstId = wxID_HIGHEST + 500;
+
+    // The word under the mouse, for GetInfo(86).  col is a pane CHARACTER
+    // column; the doc scans bytes.
+    CLine* pLine = DocLineAt(m_doc, lineIdx);
+    m_doc->SetWordUnderMenu(pLine,
+        pLine ? (int) PaneColToByteCol(m_doc, pLine, col) : 0);
+
+    CString items[kAliasMenuMax];
+    const int n = m_doc->BuildAliasMenuItems(items, kAliasMenuMax);
+
+    wxMenu menu;
+    if (n == 0) {
+        menu.Append(kAliasMenuFirstId, wxT("(no alias menu items)"))
+            ->Enable(false);
+    } else {
+        for (int j = 0; j < n; ++j) {
+            // Display exactly as the Windows view: underscores become
+            // spaces, the plugin id is stripped.
+            CString strMenu = ::Replace(items[j], "_", " ");
+            CStringList strList;
+            StringToList(strMenu, ":", strList);
+            strMenu = strList.GetHead();
+            menu.Append(kAliasMenuFirstId + j,
+                        DecodeTextLenient((const char*) strMenu));
+        }
+    }
+
+    const int chosen =
+        m_output->GetPopupMenuSelectionFromUser(menu, panePos);
+    if (chosen >= kAliasMenuFirstId && chosen < kAliasMenuFirstId + n) {
+        CString item = items[chosen - kAliasMenuFirstId];
+        item.MakeLower();          // the alias-map lookup is lower-case
+        m_doc->ExecuteAliasMenuItem(item);
+    }
 }
 
 void CWorldChildFrame::PrintWorld(bool selectionOnly)

@@ -1118,6 +1118,113 @@ TEST(AliasR5, SendToWorldWhileDisconnectedAborts)
     EXPECT_EQ(1L, a->nMatched);   // matched, but the send was refused
 }
 
+// ── the Ctrl+click alias menu trio (doc_aliasmenu_shared.cpp, 2026-08-13) ───
+// Hoisted from CMUSHView::AliasMenu / OnMXPMenu's ACTION_ALIAS arm, which the
+// port never constructed: aliases flagged "menu" gained nothing and
+// GetInfo(86) was always "".
+
+TEST(AliasMenu, BuildsFilteredSortedListWithPluginTags)
+{
+    CMUSHclientDoc doc;
+    const long eEnabledF = 1, eMenuF = eAliasMenu /*0x2000*/;
+    // Two IN (inserted in reverse order to make the sort observable), two OUT.
+    ASSERT_EQ(0L, doc.AddAlias("zebra_walk", "zw", "walk", eEnabledF | eMenuF, ""));
+    ASSERT_EQ(0L, doc.AddAlias("apple_eat",  "ae", "eat",  eEnabledF | eMenuF, ""));
+    ASSERT_EQ(0L, doc.AddAlias("dead_menu",  "dm", "x",    eMenuF,             ""));
+    ASSERT_EQ(0L, doc.AddAlias("plain",      "pl", "y",    eEnabledF,          ""));
+
+    // ...and one in an enabled plugin, which gains the ":pluginid" tag.
+    CPlugin* p = new CPlugin(&doc);
+    p->m_bSaveState = false;
+    p->m_strID   = "bbbbbbbbbbbbbbbbbbbbbbbb";
+    p->m_strName = "menu_fixture";
+    p->m_bEnabled = TRUE;
+    doc.m_PluginList.push_back(p);
+    CAlias* pa = new CAlias();
+    pa->name = "pm"; pa->strLabel = "middle_item";
+    pa->bMenu = TRUE; pa->bEnabled = TRUE;
+    p->m_AliasMap.SetAt("middle_item", pa);
+
+    CString items[100];
+    const int n = doc.BuildAliasMenuItems(items, 100);
+    ASSERT_EQ(3, n);
+    EXPECT_STREQ("apple_eat",  (LPCTSTR) items[0]);   // sorted by label...
+    EXPECT_STREQ("middle_item:bbbbbbbbbbbbbbbbbbbbbbbb",
+                 (LPCTSTR) items[1]);                 // ...ignoring the tag
+    EXPECT_STREQ("zebra_walk", (LPCTSTR) items[2]);
+    EXPECT_TRUE(doc.m_CurrentPlugin == NULL);         // context restored
+}
+
+TEST(AliasMenu, WordUnderMenuFollowsTheDelimiterSet)
+{
+    CMUSHclientDoc doc;
+    doc.DisplayMsg("say foo.bar baz\n", 16, 0);
+    CLine* pLine = doc.m_LineList.GetAt(doc.GetLinePosition(0));
+    ASSERT_TRUE(pLine != NULL && pLine->len >= 11);
+
+    // Byte col 5 sits inside "foo".  With '.' a delimiter the word is "foo";
+    // without it, "foo.bar" — the delimiter-sensitivity is what makes this
+    // non-degenerate (a scan ignoring App.m_strWordDelimitersDblClick could
+    // not produce both answers).
+    const CString saved = App.m_strWordDelimitersDblClick;
+    App.m_strWordDelimitersDblClick = ".,";
+    doc.SetWordUnderMenu(pLine, 5);
+    EXPECT_STREQ("foo", (LPCTSTR) doc.m_strWordUnderMenu);
+    App.m_strWordDelimitersDblClick = ",";
+    doc.SetWordUnderMenu(pLine, 5);
+    EXPECT_STREQ("foo.bar", (LPCTSTR) doc.m_strWordUnderMenu);
+    App.m_strWordDelimitersDblClick = saved;
+
+    // ...and GetInfo(86) is how scripts read it.
+    VARIANT v = doc.GetInfo(86);
+    EXPECT_EQ(std::string("foo.bar"), vs(v));
+    VariantClear(&v);
+}
+
+TEST(AliasMenu, ExecuteRunsTheChosenAliasInItsOwnSpace)
+{
+    CMUSHclientDoc doc;
+    const long eEnabledF = 1, eMenuF = eAliasMenu;
+
+    // World alias: send-to-variable, with a %% substitution to prove the
+    // replacement pass ran.
+    ASSERT_EQ(0L, doc.AddAlias("do_it", "di", "done 100%%", eEnabledF | eMenuF, ""));
+    CAlias* wa = nullptr;
+    ASSERT_TRUE(doc.GetAliasMap().Lookup("do_it", wa));
+    wa->iSendTo = eSendToVariable;
+    wa->strVariable = "menu_out";
+
+    doc.ExecuteAliasMenuItem(CString("do_it"));
+    CVariable* v = nullptr;
+    ASSERT_TRUE(doc.GetVariableMap().Lookup("menu_out", v));
+    EXPECT_STREQ("done 100%", (LPCTSTR) v->strContents);
+    EXPECT_EQ(1, (int) wa->nMatched);            // counted as a match
+
+    // Plugin item: "label:id" executes in the PLUGIN's space — its variable
+    // map, not the world's — and restores m_CurrentPlugin.
+    CPlugin* p = new CPlugin(&doc);
+    p->m_bSaveState = false;
+    p->m_strID   = "cccccccccccccccccccccccc";
+    p->m_strName = "exec_fixture";
+    p->m_bEnabled = TRUE;
+    doc.m_PluginList.push_back(p);
+    CAlias* pa = new CAlias();
+    pa->name = "px"; pa->strLabel = "plug_act";
+    pa->bMenu = TRUE; pa->bEnabled = TRUE;
+    pa->contents = "from plugin";
+    pa->iSendTo = eSendToVariable;
+    pa->strVariable = "plug_out";
+    p->m_AliasMap.SetAt("plug_act", pa);
+
+    doc.ExecuteAliasMenuItem(CString("plug_act:cccccccccccccccccccccccc"));
+    CVariable* pv = nullptr;
+    ASSERT_TRUE(p->m_VariableMap.Lookup("plug_out", pv));
+    EXPECT_STREQ("from plugin", (LPCTSTR) pv->strContents);
+    CVariable* worldV = nullptr;
+    EXPECT_FALSE(doc.m_VariableMap.Lookup("plug_out", worldV));  // not the world's
+    EXPECT_TRUE(doc.m_CurrentPlugin == NULL);
+}
+
 MC_TEST_MAIN()
 
 // The alias mirror of the trigger match recompile (methods_aliases.cpp

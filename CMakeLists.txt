@@ -432,6 +432,7 @@ if(NOT WIN32)
         scripting/sha256.c
         scripting/shs.c
         ansi.cpp
+        doc_aliasmenu_shared.cpp
         doc_shared.cpp
         utilities_shared.cpp
         notepad_convert_shared.cpp

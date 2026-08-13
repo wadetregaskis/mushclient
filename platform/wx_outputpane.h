@@ -166,6 +166,13 @@ public:
     struct SLinePreamble { wxString text; uint32_t fg = 0; uint32_t bg = 0; };
     std::function<bool(const SOutputLine& line, time_t prevArrived,
                        bool isFirstLine, SLinePreamble& out)> m_fn_line_preamble;
+
+    // Ctrl+click alias menu (2026-08-13): the pane detects the PHYSICAL Ctrl
+    // modifier (RawControlDown -- the key Windows' VK_CONTROL test reads) and
+    // reports the containment hit; the FRAME owns the doc and the wxMenu.
+    // Consulted from BOTH button paths: macOS convention turns Ctrl+click
+    // into a right-click, so the gesture can arrive as either event.
+    std::function<void(int lineIdx, int col, wxPoint clientPos)> m_fn_alias_menu;
     // The preamble's width in character cells for a line (0 = none).
     int PreambleCells(int lineIdx) const;
     // Selftest probe: render one logical line into an arbitrary DC exactly as
@@ -775,6 +782,7 @@ private:
     // a character left (2026-08-12).
     int XToChar(int lineIdx, int clientX, int clientY,
                 bool halfway = true) const;
+    bool TryAliasMenu(wxMouseEvent& evt);   // Ctrl+click → m_fn_alias_menu
 
     // Build a SelPoint from a mouse event position.
     SelPoint MouseToSelPoint(const wxMouseEvent& evt) const;

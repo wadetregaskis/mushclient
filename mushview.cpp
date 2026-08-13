@@ -1988,23 +1988,8 @@ ASSERT_VALID(pDoc);
 
   } // end of CMUSHView::extend_selection
 
-int CompareMenu (const void * elem1, const void * elem2)
-  {
-  CString string1 = (*((CString *) elem1));
-  CString string2 = (*((CString *) elem2));
+// CompareMenu moved to doc_aliasmenu_shared.cpp (AliasMenuCompare).
 
-  // strip off plugin IDs
-  CStringList strList;
-
-  StringToList (string1, ":", strList);
-  string1 = strList.GetHead ();
-
-  StringToList (string2, ":", strList);
-  string2 = strList.GetHead ();
-
-  return string1.CompareNoCase (string2);
-
-  }   // end of CompareMenu
 
 void CMUSHView::AliasMenu (CPoint point)
   {
@@ -2023,7 +2008,7 @@ ASSERT_VALID(pDoc);
   OnPrepareDC(&dc);
   dc.DPtoLP(&wordPoint);
 
-  int line, start_col, end_col, col;
+  int line, col;
 
   // find which line and column the mouse position is at
 
@@ -2031,28 +2016,12 @@ ASSERT_VALID(pDoc);
 
   POSITION pos = pDoc->GetLinePosition (line);
 
-  start_col = end_col = col;
-
   // find word under mouse for GetInfo (86)
 
+  // hoisted to doc_aliasmenu_shared.cpp (2026-08-13) so the wx
+  // frontend shares one body; start_col/end_col fell out with it.
   CLine * pLine = pDoc->m_LineList.GetAt (pos);
-  while (start_col >= 0 &&
-        !isspace ((unsigned char) pLine->text [start_col]) &&
-        strchr (App.m_strWordDelimitersDblClick, pLine->text [start_col]) == NULL)
-    start_col--;
-  start_col++;   // now onto the start of that word
-
-  // a word will end on a space, or whatever
-  while (end_col < pLine->len &&
-        !isspace ((unsigned char) pLine->text [end_col]) &&
-        strchr (App.m_strWordDelimitersDblClick, pLine->text [end_col]) == NULL)
-    end_col++;
-
-  if (end_col > start_col)
-      pDoc->m_strWordUnderMenu = CString (&pLine->text [start_col],
-                                          end_col - start_col);
-  else
-      pDoc->m_strWordUnderMenu.Empty ();
+  pDoc->SetWordUnderMenu (pLine, col);
 
 CPoint menupoint = point;
 
@@ -2065,53 +2034,9 @@ CPoint menupoint = point;
 
   pPopup->DeleteMenu (0, MF_BYPOSITION);  // get rid of dummy item
 
-  int i = 0;
-
-  CAlias * pAlias;
-  CString strAliasName;
-
-  for (pos = pDoc->m_AliasMap.GetStartPosition();
-       pos && i < MXP_MENU_COUNT;
-       )
-     {
-     pDoc->m_AliasMap.GetNextAssoc (pos, strAliasName, pAlias);
-     if (pAlias->strLabel.IsEmpty () ||
-        !pAlias->bMenu ||
-        !pAlias->bEnabled)
-        continue;
-
-     // remember what to send if they click on it
-     strMXP_menu_item [i] = pAlias->strLabel;
-     i++;
-    } // end of all aliases
-
-  // do plugins
-  for (PluginListIterator pit = pDoc->m_PluginList.begin ();
-       pit != pDoc->m_PluginList.end () && i < MXP_MENU_COUNT;
-       ++pit)
-    {
-    pDoc->m_CurrentPlugin = *pit;
-
-    if (pDoc->m_CurrentPlugin->m_bEnabled)
-      for (POSITION pos = pDoc->GetAliasMap ().GetStartPosition ();
-            pos && i < MXP_MENU_COUNT; )
-        {
-        pDoc->GetAliasMap ().GetNextAssoc (pos, strAliasName, pAlias);
-
-         if (pAlias->strLabel.IsEmpty () ||
-            !pAlias->bMenu ||
-            !pAlias->bEnabled)
-            continue;
-
-         // remember what to send if they click on it
-         strMXP_menu_item [i] = pAlias->strLabel;
-         strMXP_menu_item [i] += ":";
-         strMXP_menu_item [i] += pDoc->m_CurrentPlugin->m_strID;  // need to know which plugin
-         i++;
-
-        }  // end of scanning plugin aliases
-    } // end of doing plugins list
-  pDoc->m_CurrentPlugin = NULL;
+  // hoisted to doc_aliasmenu_shared.cpp (2026-08-13): the filter, the
+  // plugin walk and the sort (formerly CompareMenu, moved with it).
+  int i = pDoc->BuildAliasMenuItems (strMXP_menu_item, MXP_MENU_COUNT);
 
   if (i == 0)
     {
@@ -2120,12 +2045,7 @@ CPoint menupoint = point;
     }
   else
     {
-        // sort the array - otherwise we'll be all over the map :)
-    qsort (strMXP_menu_item,
-           i,
-           sizeof (CString),
-           CompareMenu);
-
+        // (BuildAliasMenuItems returned the array already sorted)
     for (int j = 0; j < i; j++)
       {
       CString strMenu = Replace (strMXP_menu_item [j], "_", " ");
@@ -5593,269 +5513,8 @@ ASSERT_VALID(pDoc);
 
 
     case ACTION_ALIAS:
-      {
-      CAlias * pAlias;
-      CString strLabel;
-      
-      // strip off plugin id
-      CStringList strList;
-      StringToList (strMXP_menu_item [nID - MXP_FIRST_MENU], ":", strList);
-      strLabel = strList.GetHead ();
-
-      // alias might be in a plugin
-      switch (strList.GetCount ())
-        {
-        case 1:   // main world
-            if (!pDoc->m_AliasMap.Lookup (strLabel, pAlias))
-              return;   // not there? strange
-        break;
-
-        case 2:   // plugin
-          {
-            CString strPluginID;
-            strPluginID = strList.GetTail ();
-            CPlugin * pPlugin = pDoc->GetPlugin (strPluginID);
-            if (!pPlugin)
-              return;   // plugin does not exist? strange
-            if (!pPlugin->m_AliasMap.Lookup (strLabel, pAlias))
-              return;   // not there? strange
-          pDoc->m_CurrentPlugin = pPlugin;     // remember plugin so alias executes in correct space
-          }
-
-        break;
-            default:   return;   // not 1 or 2 items? very strange
-        } // end of switch
-
-
-      CString strAction;
-
-//---
-
-        // copy contents to strAction area, substituting variables
-
-        const char * p,
-                   * start;
-        long length;
-        int subscript;
-
-        CString strFixedContents = ::FixupEscapeSequences (pAlias->contents);
-        p = start = strFixedContents;
-
-        while (*p)
-          {
-          if (p [0] == '%' && isdigit (p [1]))
-            {
-
-        // copy up to the percent sign
-
-            length = p - start;
-    
-            if (length > 0)
-              strAction += CString (start, length);
-                
-            subscript = *++p - '0';
-
-          // get ready for next batch from beyond the digit
-
-            start = ++p;
-
-            } // end of finding a percent sign, followed by a number
-          else if (p [0] == '%' && toupper (p [1]) == 'C')
-            {
-            CString strClipboard;
-
-            if (!GetClipboardContents (strClipboard, pDoc->m_bUTF_8))
-              {
-              pDoc->m_CurrentPlugin = NULL;
-              return;
-              }
-
-        // copy up to the percent sign
-
-            length = p - start;
-          
-            if (length > 0)
-              strAction += CString (start, length);
-
-            strAction += strClipboard;
-
-  // get ready for next batch from beyond the 'c'
-
-            p += 2;
-            start = p;
-
-            }   // end of finding %c
-        else if (p [0] == '%' && toupper (p [1]) == '%')
-          {
-// copy up to the percent sign
-
-         length = p - start;
-      
-          if (length > 0)
-           strAction += CString (start, length);
-
-          // get ready for next batch from beyond the %
-
-          start = ++p;
-          p++;    // don't reprocess the %
-
-          }   // end of %%
-         else if (pAlias->bExpandVariables && p [0] == '@')
-           {
-// copy up to the @ sign
-
-         length = p - start;
-      
-          if (length > 0)
-           strAction += CString (start, length);
-            
-          p++;    // skip the @
-
-          // @@ becomes @
-          if (*p == '@')
-            {
-            start = ++p;
-            strAction += "@";
-            continue;
-            }
-
-          const char * pName = p;
-
-          // find end of variable name
-          while (*p)
-            if (*p == '_' || isalnum (*p))
-              p++;
-            else
-              break;
-          
-          CString strName (pName, p - pName);
-
-          if (strName.IsEmpty ())
-            {
-            ::TMessageBox("@ must be followed by a variable name");
-            pDoc->m_CurrentPlugin = NULL;
-            return;
-            }
-
-          CVariable * variable_item;
-
-          strName.MakeLower ();
-          if (!pDoc->m_VariableMap.Lookup (strName, variable_item))
-            {
-            ::UMessageBox(TFormat ("Variable '%s' is not defined.", (LPCTSTR) strName));
-            pDoc->m_CurrentPlugin = NULL;
-            return;
-            }
-
-          strAction += variable_item->strContents;
-
-          // get ready for next batch from beyond the variable
-
-          start = p;
-           }
-         else
-            p++;
-          } // end of processing each character in the replacement text
-
-  // copy last group
-
-        strAction += start;
-
-//--- 
-
-
-      if (pDoc->m_ScriptEngine)
-        if (pAlias->dispid != DISPID_UNKNOWN)        // if we have a dispatch id
-          {
-
-
-          CString strType = "alias";
-          CString strReason =  TFormat ("processing alias \"%s\"", 
-                                        (LPCTSTR) pAlias->strLabel);
-
-      if (pDoc->GetScriptEngine () && pDoc->GetScriptEngine ()->UsesEmbeddedCallback ())
-            {
-            list<double> nparams;
-            list<string> sparams;
-            sparams.push_back ((LPCTSTR) strMXP_menu_item [nID - MXP_FIRST_MENU]);
-            sparams.push_back ((LPCTSTR) pAlias->name);
-            pDoc->GetScriptEngine ()->ExecuteLua (pAlias->dispid, 
-                                           pAlias->strProcedure, 
-                                           eUserMenuAction,
-                                           strType, 
-                                           strReason, 
-                                           nparams,
-                                           sparams, 
-                                           pAlias->nInvocationCount); 
-            }   // end of Lua
-          else
-            {
-
-            // execute any scripts associated with alias we found
-            enum
-              {
-              eWildcards,
-              eInputLine,
-              eAliasName,
-              eArgCount,     // this MUST be last
-              };    
-
-            COleSafeArray sa;   // for wildcard list
-            COleVariant args [eArgCount];
-            DISPPARAMS params = { args, NULL, eArgCount, 0 };
-
-            args [eAliasName] = strMXP_menu_item [nID - MXP_FIRST_MENU];
-            args [eInputLine] = pAlias->name;
-
-            // --------------- set up wildcards array ---------------------------
-            sa.Clear ();
-            // nb - to be consistent with %1, %2 etc. we will make array 1-relative
-            sa.CreateOneDim (VT_VARIANT, MAX_WILDCARDS, NULL, 1);
-            for (long i = 1; i <= MAX_WILDCARDS; i++)
-              {
-              CString s ("");
-              COleVariant v (s); // no wildcards are relevant
-              sa.PutElement (&i, &v);
-              }
-            args [eWildcards] = sa;
-
-            pDoc->ExecuteScript (pAlias->dispid,  
-                                 pAlias->strProcedure,
-                                 eUserMenuAction,
-                                 strType, 
-                                 strReason,
-                                 params, 
-                                 pAlias->nInvocationCount); 
-            } // end of not Lua
-
-          }     // end of having a dispatch ID
-
-    // send the message
-
-      CString strExtraOutput;
-
-      pDoc->m_iCurrentActionSource = eUserMenuAction;
-
-      pDoc->SendTo (pAlias->iSendTo, 
-              strAction, 
-              pAlias->bOmitFromOutput,
-              pAlias->bOmitFromLog,
-              TFormat ("Alias: %s", (LPCTSTR) pAlias->strLabel),
-              pAlias->strVariable,
-              strExtraOutput
-              );
-
-      pDoc->m_iCurrentActionSource = eUnknownActionSource;
-
-      if (!strExtraOutput.IsEmpty ())
-         pDoc->DisplayMsg (strExtraOutput, strExtraOutput.GetLength (), COMMENT);
-
-      pDoc->m_tLastPlayerInput = CTime::GetCurrentTime();   // for <afk> tests
-
-      pAlias->nMatched++;   // count alias matches
-
-      }
-      pDoc->m_CurrentPlugin = NULL;     // no plugin active right now
+      // hoisted verbatim to doc_aliasmenu_shared.cpp (2026-08-13).
+      pDoc->ExecuteAliasMenuItem (strMXP_menu_item [nID - MXP_FIRST_MENU]);
       break;  // end of ACTION_ALIAS
     } // end of switch on iAction
 

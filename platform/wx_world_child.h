@@ -317,6 +317,11 @@ public:
     void PrintWorld(bool selectionOnly = false);
     bool BuildPrintLines(bool selectionOnly, std::vector<SPrintLine>& lines) const;
     bool HasOutputSelection() const;
+    // Ctrl+click alias menu (2026-08-13): word under the hit for GetInfo(86),
+    // then a wxMenu of every enabled, labelled alias flagged "menu", and the
+    // chosen one executed -- the doc's hoisted trio does the engine half.
+    // col is the pane's CHARACTER column (converted to bytes inside).
+    void ShowAliasMenu(int lineIdx, int col, const wxPoint& panePos);
 
     // ── View-level output/input commands ──────────────────────────────────
     // The canonical handlers for these live on CMUSHView / CSendView (not

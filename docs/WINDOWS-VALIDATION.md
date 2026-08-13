@@ -2407,3 +2407,24 @@ Consequence for the Windows side: this is a `platform/` file and does not
 compile there, so nothing is owed. But the same numbers are worth having —
 if real GDI reports Times New Roman with `max == average`, the strict assertion
 is wrong on that side and the check should stay macOS-only.
+
+### The Ctrl+click alias-menu hoist (doc_aliasmenu_shared.cpp, 2026-08-13)
+
+CMUSHView::AliasMenu's word scan and menu-list build, and OnMXPMenu's
+ACTION_ALIAS arm, moved verbatim into three CMUSHclientDoc methods
+(SetWordUnderMenu / BuildAliasMenuItems / ExecuteAliasMenuItem) so the wx
+frontend can share them; mushview.cpp now delegates.  Meant to be
+behaviour-preserving on Windows, with three deliberate near-identities to
+check in a Windows run:
+
+- The list is sorted by std::sort, not qsort.  The original qsort swaps
+  elements by raw bytes — fine on MFC's pointer-sized CString, corrupting on
+  the port's shim (this bit during the hoist, headless).  Ordering is the
+  same comparator; both sorts are unstable, so equal labels may tie-break
+  differently than before.
+- BuildAliasMenuItems sorts unconditionally; the view previously sorted only
+  in its display branch.  Windows' display loop now runs over the pre-sorted
+  array (its own qsort was removed as a duplicate).
+- Ctrl+click in the output/command bar, an alias flagged "menu" firing from
+  the popup (world and plugin arms), and GetInfo(86) after the popup are the
+  behaviours to smoke-test.

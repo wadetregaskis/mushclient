@@ -1180,10 +1180,15 @@ bool bNegative = false;
     iResult *= 10;
     iResult += *p - '0';
 
-    // Allow one extra (LONG_MIN's absolute value = LONG_MAX + 1); use unsigned
-    // comparison so that LONG_MAX + 1 doesn't overflow on 64-bit platforms
-    // where __int64 and long have the same width.
-    if ((unsigned long long)iResult > (unsigned long long)LONG_MAX + 1)
+    // Allow one extra (LONG_MIN's absolute value = LONG_MAX + 1); unsigned
+    // comparison so the +1 cannot overflow.  The bound is WINDOWS' 32-bit
+    // LONG_MAX written out, NOT the native one (2026-08-12): `long` is 8
+    // bytes on LP64, so the native LONG_MAX silently widened the accepted
+    // domain by 2^32 — this build loaded world/plugin files (and ImportXML
+    // input) carrying values Windows refuses with this very error, and
+    // Save_XML_number then wrote files the Windows build could not open
+    // back.  On Windows the literal IS LONG_MAX, so nothing changes there.
+    if ((unsigned long long)iResult > 2147483647ULL + 1)
       ThrowErrorException ("Value '%s' too large in numeric attribute named '%s'" ,
                           (LPCTSTR) strValue,
                           sName);

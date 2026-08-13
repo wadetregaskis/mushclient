@@ -439,6 +439,31 @@ TEST(XmlAttrR5, NumberSignsAndDigits)
         .find("too large"));
 }
 
+// The magnitude guard uses WINDOWS' 32-bit LONG_MAX, not the native LP64 one
+// (2026-08-12).  With the native bound this build accepted values up to 2^63,
+// loading world/plugin files (and world.ImportXML input) that Windows refuses
+// with "too large" -- and Save_XML_number then wrote files the Windows build
+// could not open back.  The boundary pair makes "the guard does nothing" fail
+// in both directions; the negative arm pins LONG_MIN's one-extra allowance.
+TEST(XmlAttrR5, NumberDomainIsWindows32BitLong)
+{
+    CXMLparser p;
+    CXMLelement* a = one_element(p,
+        "over=\"4000000000\" max=\"2147483647\" minv=\"-2147483648\" "
+        "negover=\"-2147483649\"");
+    ASSERT_NE(nullptr, a);
+    long v = 0;
+
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_number(*a, "over", v, false); })
+        .find("too large"));                 // 4e9 loads here today; Windows refuses
+    EXPECT_TRUE(Get_XML_number(*a, "max", v, false));
+    EXPECT_EQ(2147483647L, v);               // INT32_MAX still accepted exactly
+    EXPECT_TRUE(Get_XML_number(*a, "minv", v, false));
+    EXPECT_EQ(-2147483648L, v);              // LONG_MIN's one-extra allowance
+    EXPECT_NE(std::string::npos, thrown([&]{ Get_XML_number(*a, "negover", v, false); })
+        .find("too large"));                 // ...but only ONE extra
+}
+
 TEST(XmlAttrR5, NumberRangeChecks)
 {
     CXMLparser p;

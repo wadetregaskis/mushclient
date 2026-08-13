@@ -168,6 +168,11 @@ public:
                        bool isFirstLine, SLinePreamble& out)> m_fn_line_preamble;
     // The preamble's width in character cells for a line (0 = none).
     int PreambleCells(int lineIdx) const;
+    // Selftest probe: render one logical line into an arbitrary DC exactly as
+    // OnPaint would.  The paint path never runs under the OnInit-scoped
+    // harnesses (CLAUDE.md's structural hazard), so pixel assertions call the
+    // engine-shaped function directly — the composite-selftest pattern.
+    void RenderLineForTest(wxDC& dc, int lineIdx, int yOff);
 
     // World option line_spacing: the row pitch in pixels, or 0 to derive it
     // from the font's own height.  Windows applies this in ChangeFont

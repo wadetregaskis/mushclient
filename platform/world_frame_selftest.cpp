@@ -412,6 +412,31 @@ int RunWorldFrameSelfTest()
         check(off.col - on.col == 5,
               "preamble: click-to-column shifts by exactly the stamp width");
 
+        // The DRAW itself, pixel-proven: render line 0 into a memory DC
+        // exactly as OnPaint would (RenderLineForTest — no paint can run
+        // here).  A loud red stamp background must reach the pixels, and must
+        // NOT when the option is off.  This is the arm the fade bug taught us
+        // to cover: callback green, screen unchanged.
+        doc->m_strOutputLinePreambleOutput = "[TS] ";
+        const COLORREF savedBack = doc->m_OutputLinePreambleOutputBackColour;
+        doc->m_OutputLinePreambleOutputBackColour = RGB(255, 0, 0);
+        auto stampPixelRed = [&]() -> bool {
+            wxBitmap bmp(400, 40, 32);
+            wxMemoryDC mdc(bmp);
+            mdc.SetBackground(*wxBLACK_BRUSH);
+            mdc.Clear();
+            pane->RenderLineForTest(mdc, 0, 0);
+            mdc.SelectObject(wxNullBitmap);
+            wxImage img = bmp.ConvertToImage();
+            return img.GetRed(2, 2) > 200 && img.GetGreen(2, 2) < 60;
+        };
+        check(stampPixelRed(),
+              "preamble draw: the stamp's red background reaches the PIXELS");
+        doc->m_strOutputLinePreambleOutput = "";
+        check(!stampPixelRed(),
+              "preamble draw: ...and not when the option is off (control)");
+        doc->m_OutputLinePreambleOutputBackColour = savedBack;
+
         doc->m_strOutputLinePreambleOutput = "";
         doc->m_strOutputLinePreambleNotes  = "";
         doc->ClearOutput();

@@ -1471,6 +1471,13 @@ void COutputPane::OnPaint(wxPaintEvent&)
 
 // ── DrawLine ──────────────────────────────────────────────────────────────────
 
+// See the header: the OnInit-scoped selftests can never receive a paint, so
+// this is the seam that lets them assert on PIXELS anyway.
+void COutputPane::RenderLineForTest(wxDC& dc, int lineIdx, int yOff)
+{
+    DrawLine(dc, lineIdx, yOff);
+}
+
 void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
 {
     // The output-buffer fade: one opacity for the whole line, worked out by the

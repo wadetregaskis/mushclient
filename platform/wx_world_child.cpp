@@ -2226,6 +2226,11 @@ bool CWorldChildFrame::HasOutputSelection() const
 }
 
 // ── Ctrl+click alias menu ───────────────────────────────────────────────────
+bool CWorldChildFrame::WantsInputBarAliasMenu(bool rawControlDown) const
+{
+    return rawControlDown && m_output != nullptr;
+}
+
 void CWorldChildFrame::ShowAliasMenu(int lineIdx, int col, const wxPoint& panePos)
 {
     if (!m_doc || !m_output) return;
@@ -4262,19 +4267,46 @@ void CWorldChildFrame::BuildInputBar(bool wrapInput)
     // Ctrl+click → the alias menu: the command-bar arm Windows has
     // (CSendView::OnLButtonDown maps the point into the output view and calls
     // AliasMenu there).  The nearest output text is the bottom visible row.
-    m_input->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& evt) {
+    auto tryAliasMenuAt = [this](const wxPoint& screenPt) {
+        const wxPoint p = m_output->ScreenToClient(screenPt);
+        int ph = 0;
+        m_output->GetClientSize(nullptr, &ph);
+        const int y = std::max(0, ph - 1);
+        const SelPoint pt = m_output->PointToChar(p.x, y, false);
+        if (pt.valid())
+            ShowAliasMenu(pt.line, pt.col, wxPoint(p.x, y));
+    };
+
+    // Two arms for the one gesture: platforms disagree about what event a
+    // native control's Control+click even generates. GTK (and anywhere else
+    // it lands as an ordinary click with the modifier set) fires LEFT_DOWN,
+    // which the block above always saw. macOS's AppKit does not -- a
+    // Control-click on a native NSTextField/NSTextView is intercepted before
+    // it becomes a mouse-down at all and routed straight to menuForEvent:,
+    // which wx surfaces as wxEVT_CONTEXT_MENU, so LEFT_DOWN never fired here
+    // (BUG-2, GUI drive run 2026-08-12/13): the native Look Up/Cut/Copy/Paste
+    // menu won every time, with no fallback. A context-menu event carries no
+    // modifier state of its own -- wxGetKeyState is how the output pane's own
+    // handlers already tell a Ctrl+click from a plain right-click
+    // (wx_outputpane.cpp's RawControlDown checks) -- so it is the only way to
+    // ask here too. A plain right-click (no Control) still Skip()s to the
+    // native edit menu, same as an unmodified right-click on the output pane
+    // falls through to ITS normal context menu.
+    m_input->Bind(wxEVT_LEFT_DOWN, [this, tryAliasMenuAt](wxMouseEvent& evt) {
         if (evt.RawControlDown() && m_output) {
-            const wxPoint p = m_output->ScreenToClient(
-                m_input->ClientToScreen(evt.GetPosition()));
-            int ph = 0;
-            m_output->GetClientSize(nullptr, &ph);
-            const int y = std::max(0, ph - 1);
-            const SelPoint pt = m_output->PointToChar(p.x, y, false);
-            if (pt.valid())
-                ShowAliasMenu(pt.line, pt.col, wxPoint(p.x, y));
+            tryAliasMenuAt(m_input->ClientToScreen(evt.GetPosition()));
             return;                    // consumed — no caret move
         }
         evt.Skip();
+    });
+
+    m_input->Bind(wxEVT_CONTEXT_MENU, [this, tryAliasMenuAt](wxContextMenuEvent& evt) {
+        if (WantsInputBarAliasMenu(wxGetKeyState(WXK_RAW_CONTROL))) {
+            if (evt.GetPosition() != wxDefaultPosition)   // valid for a mouse click
+                tryAliasMenuAt(evt.GetPosition());         // already screen coords
+            return;                    // consumed — no native edit menu
+        }
+        evt.Skip();                    // plain right-click: native menu as normal
     });
 
     // A REBUILD (the wrap_input toggle): carry the user's state across and

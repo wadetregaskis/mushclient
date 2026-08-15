@@ -37,16 +37,18 @@ void wx_activate_world_frame(CMUSHclientDoc* doc);
 #include "platform/wx_toolbar.h"      // CWorldToolBars — Standard/World/Activity bars
 #include "pal/iworldview.h"           // pal::IWorldView — this frame is the wx adapter
 
-// ── The one writer of the visible world window's persisted size ───────────
-// /geometry/child_w + /geometry/child_h are what CWorldChildFrame's constructor
-// reads back, so every path that wants "remember this window's size" must come
-// through here.  Two do: the frame's own close handler, and the macOS quit hook
-// (wx_mfc_impl.cpp) — [NSApp terminate:] never runs the close handler, and when
-// the quit path wrote a different key set instead, a Cmd-Q silently lost the
-// size the user had just dragged out.  Sizes below the frame's own minimum
-// (200x100) are ignored, exactly as the close handler always did.
+// ── The one writer of the visible world window's persisted geometry ───────
+// /geometry/child_w + /geometry/child_h (+ child_x + child_y) are what
+// CWorldChildFrame's constructor reads back, so every path that wants
+// "remember this window's size and position" must come through here.  Two
+// do: the frame's own close handler, and the macOS quit hook
+// (wx_mfc_impl.cpp) — [NSApp terminate:] never runs the close handler, and
+// when the quit path wrote a different key set instead, a Cmd-Q silently
+// lost the size/position the user had just dragged out.  Rects with a size
+// below the frame's own minimum (200x100) are ignored entirely — position
+// included — exactly as the close handler always did for size.
 class wxConfigBase;   // <wx/config.h> is included by the .cpp, not this header
-void wx_save_child_geometry(wxConfigBase& cfg, const wxSize& size);
+void wx_save_child_geometry(wxConfigBase& cfg, const wxRect& rect);
 // ── Miniwindow compositing / tooltips (wx_world_child.cpp) ───────────────────
 // Free functions, not frame members: they need only the doc, and the in-app
 // compositor selftest (platform/wx_composite_selftest.cpp) drives the real

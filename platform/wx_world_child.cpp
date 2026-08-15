@@ -92,18 +92,21 @@ static const int ID_FIND_PREV    = wxID_HIGHEST + 204;
 static const int kMaxHistoryFallback = 1000;
 
 // ── wx_save_child_geometry ────────────────────────────────────────────────
-// The only writer of /geometry/child_w + /geometry/child_h — the keys this
-// frame's constructor reads back (see the "World window geometry" block
-// there).  Declared in wx_world_child.h; see the note there for why the quit
-// hook has to share it.
-void wx_save_child_geometry(wxConfigBase& cfg, const wxSize& size)
+// The only writer of /geometry/child_w + /geometry/child_h + child_x +
+// child_y — the keys this frame's constructor reads back (see the "World
+// window geometry" block there).  Declared in wx_world_child.h; see the note
+// there for why the quit hook has to share it.
+void wx_save_child_geometry(wxConfigBase& cfg, const wxRect& rect)
 {
     // Same floor as the constructor's clamp: a smaller value would be thrown
     // away on the next launch anyway, and a zero-size (never-laid-out or
-    // already-torn-down) window must not overwrite a good saved size.
-    if (size.x >= 200 && size.y >= 100) {
-        cfg.Write(wxT("/geometry/child_w"), (long) size.x);
-        cfg.Write(wxT("/geometry/child_h"), (long) size.y);
+    // already-torn-down) window must not overwrite a good saved size or
+    // position.
+    if (rect.width >= 200 && rect.height >= 100) {
+        cfg.Write(wxT("/geometry/child_w"), (long) rect.width);
+        cfg.Write(wxT("/geometry/child_h"), (long) rect.height);
+        cfg.Write(wxT("/geometry/child_x"), (long) rect.x);
+        cfg.Write(wxT("/geometry/child_y"), (long) rect.y);
     }
 }
 
@@ -1520,8 +1523,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         SetWindowStyleFlag(GetWindowStyleFlag() | wxSTAY_ON_TOP);
 
     // ── World window geometry ─────────────────────────────────────────────
-    // We persist a single "last used" size (not per-world, since all worlds
-    // share the same MDI client area on Windows).
+    // We persist a single "last used" size and position (not per-world,
+    // since all worlds share the same MDI client area on Windows).
     //
     // The first-run default is derived from the display: the full usable HEIGHT,
     // and kMaxDefaultWidthDIP wide unless the screen is narrower than that.  It
@@ -1555,8 +1558,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         long w = defW, h = defH;
         // Two-arg Read leaves the value alone when the key is absent, and tells
         // us whether it was there — which is how we know this is a first run.
-        const bool hadW = cfg.Read(wxT("/geometry/child_w"), &w);
-        const bool hadH = cfg.Read(wxT("/geometry/child_h"), &h);
+        // (Neither is used below any more: the position restore now keys off
+        // its own child_x/child_y keys instead, so a fresh install where only
+        // one pair or the other is missing still degrades sensibly.)
+        cfg.Read(wxT("/geometry/child_w"), &w);
+        cfg.Read(wxT("/geometry/child_h"), &h);
 
         // A restored size is clamped to the usable screen too: a window saved on
         // a larger display must not come back bigger than this one.
@@ -1566,14 +1572,31 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         SetSize((int)w, (int)h);
 
 #ifdef __WXOSX__
-        // First run only, and only where the child is a real top-level window:
-        // place it, because a full-height frame left at the OS's cascade offset
-        // hangs off the bottom of the screen.  Horizontally centred, top of the
-        // usable area (i.e. immediately below the menu bar).
-        if (!hadW && !hadH)
+        // Restore the saved position too — on macOS this frame IS the window
+        // the user drags, so its on-screen position is exactly as much "the
+        // user's geometry" as its size.  wx_save_child_geometry (the single
+        // writer, shared by this frame's own close handler and the quit hook
+        // in wx_mfc_impl.cpp) is where child_x/child_y come from.  Clamped
+        // onto the usable area of whatever display we land on, in case the
+        // last run's screen was bigger or arranged differently — the size
+        // clamp above already guarantees w/h fit, so this can only need to
+        // slide the window, never shrink it.
+        //
+        // No saved position — first run, or a prefs file that predates these
+        // keys — falls back to the centred top-of-screen placement that was
+        // already here: a full-height frame left at the OS's cascade offset
+        // hangs off the bottom of the screen.
+        long x = 0, y = 0;
+        if (cfg.Read(wxT("/geometry/child_x"), &x) &&
+            cfg.Read(wxT("/geometry/child_y"), &y)) {
+            if (x < scr.x) x = scr.x;
+            if (y < scr.y) y = scr.y;
+            if (x + w > scr.x + scr.width)  x = scr.x + scr.width  - w;
+            if (y + h > scr.y + scr.height) y = scr.y + scr.height - h;
+            SetPosition(wxPoint((int) x, (int) y));
+        } else {
             SetPosition(wxPoint(scr.x + (scr.width - (int) w) / 2, scr.y));
-#else
-        (void) hadW; (void) hadH;
+        }
 #endif
     }
 
@@ -5793,15 +5816,15 @@ void CWorldChildFrame::OnClose(wxCloseEvent& evt)
         }
     }
 
-    // ── Save child frame size for next session ────────────────────────────
-    // Persist the current window dimensions so the next world that opens uses
-    // the same size instead of reverting to the screen-derived default.  The
-    // quit hook writes the same keys through the same helper, because a Cmd-Q
-    // never reaches this handler at all.
+    // ── Save child frame geometry for next session ──────────────────────────
+    // Persist the current window size AND position so the next world that
+    // opens uses the same geometry instead of reverting to the
+    // screen-derived default.  The quit hook writes the same keys through
+    // the same helper, because a Cmd-Q never reaches this handler at all.
     {
         const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
     wxConfigBase& cfg = *cfgOwner;
-        wx_save_child_geometry(cfg, GetSize());
+        wx_save_child_geometry(cfg, GetRect());
     }
 
     PersistBeforeTeardown();

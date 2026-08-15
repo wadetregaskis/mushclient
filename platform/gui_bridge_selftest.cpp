@@ -70,9 +70,12 @@ wxString ScratchConfigPath()
 // The quit hook (hook_query_quit_save) calls SaveWindowGeometryTo with the MDI
 // parent.  On macOS the window the user sees and resizes is the active MDI
 // child, so that is what gets measured — but the child sizes itself at
-// construction from /geometry/child_w + /geometry/child_h, and the quit path
-// used to write only the main_* keys, which are read back onto the MDI parent
-// wxOSX never shows.  Result: ⌘Q lost the size, ⇧⌘W kept it.
+// construction from /geometry/child_w + /geometry/child_h (+ child_x +
+// child_y), and the quit path used to write only the main_* keys, which are
+// read back onto the MDI parent wxOSX never shows.  Result: ⌘Q lost the
+// size, ⇧⌘W kept it.  The position half of the same bug (main_x/main_y
+// landing on the same invisible parent, with no child_x/child_y at all)
+// survived that fix and is what this now also guards.
 void TestGeometry()
 {
     printf("Window geometry (quit path):\n");
@@ -86,7 +89,10 @@ void TestGeometry()
         parent, wxID_ANY, wxT("selftest-child"),
         wxDefaultPosition, wxSize(640, 480));
     child->Activate();                       // make it the frame's active child
-    child->SetSize(640, 480);
+    // A position distinct from (0,0) and from the parent's own origin: a fix
+    // that quietly wrote the parent's position (or just left the field zero)
+    // would still pass a test anchored at the origin.
+    child->SetSize(123, 45, 640, 480);
 
     const bool haveChild = (parent->GetActiveChild() == child);
     check(haveChild, "the MDI parent reports the child we just created");
@@ -105,6 +111,16 @@ void TestGeometry()
         // The child's own frame size, not the parent's 1000x700.
         check(w == 640 && h == 480,
               "...and they carry the VISIBLE window's size, not the MDI parent's");
+
+        long x = 0, y = 0;
+        const bool hadX = cfg.Read(wxT("/geometry/child_x"), &x);
+        const bool hadY = cfg.Read(wxT("/geometry/child_y"), &y);
+        check(hadX && hadY,
+              "...and the position too (/geometry/child_x + child_y) -- "
+              "the port bug this guards: only the parent-scoped main_x/main_y "
+              "used to carry it, and macOS never shows the parent");
+        check(x == 123 && y == 45,
+              "...carrying the VISIBLE window's position, not the origin");
 
         long mw = 0, mh = 0;
         cfg.Read(wxT("/geometry/main_w"), &mw);
@@ -130,15 +146,17 @@ void TestGeometry()
     }
 
     // The shared helper refuses a degenerate size, so a torn-down or
-    // never-laid-out window cannot wipe a good saved size.
+    // never-laid-out window cannot wipe a good saved size — or position.
     {
         wxRemoveFile(path);
         wxFileConfig cfg(wxEmptyString, wxEmptyString, path, wxEmptyString,
                          wxCONFIG_USE_LOCAL_FILE);
-        wx_save_child_geometry(cfg, wxSize(0, 0));
-        long w = 0;
+        wx_save_child_geometry(cfg, wxRect(123, 45, 0, 0));
+        long w = 0, x = 0;
         check(!cfg.Read(wxT("/geometry/child_w"), &w),
               "a zero-size window is not persisted");
+        check(!cfg.Read(wxT("/geometry/child_x"), &x),
+              "...nor is its position, even though it was well-formed");
     }
 
     child->Destroy();

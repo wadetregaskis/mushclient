@@ -36,6 +36,7 @@
 #include "dialogs/TextAttributesDlg.h"    // Display ▸ Text Attributes
 #include "dialogs/HighlightPhraseDlg.h"   // Display ▸ Highlight Word
 
+#include <climits>        // LONG_MIN — "no saved child_x/child_y" sentinel below
 #include <cstdio>
 #include <vector>
 
@@ -1373,14 +1374,20 @@ int RunWorldFrameSelfTest()
     // attached; and the view must be detached before anything is deleted or the
     // doc's final flush paints into a dying pane.
     {
-        // OnClose writes the window size to the user's REAL preferences.  Put
-        // the keys back afterwards: a selftest must not resize the next launch.
-        long savedW = -1, savedH = -1;
+        // OnClose writes the window size AND position to the user's REAL
+        // preferences.  Put the keys back afterwards: a selftest must not
+        // resize or reposition the next launch.
+        long savedW = -1, savedH = -1, savedX = -1, savedY = -1;
         {
             const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
     wxConfigBase& cfg = *cfgOwner;
             if (!cfg.Read(wxT("/geometry/child_w"), &savedW)) savedW = -1;
             if (!cfg.Read(wxT("/geometry/child_h"), &savedH)) savedH = -1;
+            // -1 legitimately can be a saved X or Y (e.g. a second-monitor
+            // window left of the primary), so track presence separately
+            // rather than reusing "-1 means absent" for these two.
+            if (!cfg.Read(wxT("/geometry/child_x"), &savedX)) savedX = LONG_MIN;
+            if (!cfg.Read(wxT("/geometry/child_y"), &savedY)) savedY = LONG_MIN;
         }
         const unsigned savedConfirmVars  = App.m_bConfirmBeforeSavingVariables;
         const unsigned savedConfirmClose = App.m_bConfirmBeforeClosingWorld;
@@ -1598,6 +1605,80 @@ int RunWorldFrameSelfTest()
             else            cfg.DeleteEntry(wxT("/geometry/child_w"));
             if (savedH > 0) cfg.Write(wxT("/geometry/child_h"), savedH);
             else            cfg.DeleteEntry(wxT("/geometry/child_h"));
+            if (savedX != LONG_MIN) cfg.Write(wxT("/geometry/child_x"), savedX);
+            else                    cfg.DeleteEntry(wxT("/geometry/child_x"));
+            if (savedY != LONG_MIN) cfg.Write(wxT("/geometry/child_y"), savedY);
+            else                    cfg.DeleteEntry(wxT("/geometry/child_y"));
+        }
+    }
+
+    // ── a saved position is actually restored on the NEXT launch ────────────
+    // Confirmed port bug (GUI-drive run 2026-08-12, P1-08): a world window
+    // dragged to a new position and resized, then the app quit and the world
+    // reopened, came back at the default position (size was fine).  Root
+    // cause: the writer captured the visible child's x/y correctly, but nothing
+    // on the READ side ever looked at child_x/child_y — SetPosition was only
+    // ever called for the centred FIRST-run placement.  This seeds specific
+    // child_x/child_y (and child_w/child_h) into the user's real config —
+    // the same OpenAppConfig() the app itself opens on launch — and
+    // constructs a real CWorldChildFrame to check the constructor actually
+    // reads them back, not just that something writes them (the write side
+    // is covered separately by --gui-bridge-selftest).
+    {
+        long savedW = -1, savedH = -1, savedX = -1, savedY = -1;
+        {
+            const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
+            if (!cfg.Read(wxT("/geometry/child_w"), &savedW)) savedW = -1;
+            if (!cfg.Read(wxT("/geometry/child_h"), &savedH)) savedH = -1;
+            if (!cfg.Read(wxT("/geometry/child_x"), &savedX)) savedX = LONG_MIN;
+            if (!cfg.Read(wxT("/geometry/child_y"), &savedY)) savedY = LONG_MIN;
+        }
+
+        // Comfortably inside any real display's usable area (so the ctor's
+        // off-screen clamp is not what would make this pass), and NOT the
+        // centred first-run placement, so a constructor that silently fell
+        // back to that default would be caught rather than accidentally
+        // matching.  550 wide echoes the exact width from the field report.
+        const long wantW = 550, wantH = 400, wantX = 60, wantY = 80;
+        {
+            const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
+            cfg.Write(wxT("/geometry/child_w"), wantW);
+            cfg.Write(wxT("/geometry/child_h"), wantH);
+            cfg.Write(wxT("/geometry/child_x"), wantX);
+            cfg.Write(wxT("/geometry/child_y"), wantY);
+        }
+
+        CMUSHclientDoc* d = new CMUSHclientDoc();
+        d->m_mush_name   = "zz_selftest_geometry_restore";
+        d->m_nWrapColumn = 80;
+        d->m_maxlines    = 5000;
+        d->SetUpOutputWindow();
+        CWorldChildFrame* f = new CWorldChildFrame(
+            parent, d, wxT("zz_selftest_geometry_restore"));
+
+        check(f->GetSize().GetWidth()  == wantW &&
+              f->GetSize().GetHeight() == wantH,
+              "a freshly constructed world frame restores the saved SIZE");
+        check(f->GetPosition().x == wantX && f->GetPosition().y == wantY,
+              "...and the saved POSITION, not the centred first-run default "
+              "(this is the exact bug: size round-tripped, position did not)");
+
+        f->Close(true);      // forced: no doc changes, nothing to ask
+        wxYield();
+
+        {
+            const std::unique_ptr<wxConfigBase> cfgOwner = OpenAppConfig();
+    wxConfigBase& cfg = *cfgOwner;
+            if (savedW > 0) cfg.Write(wxT("/geometry/child_w"), savedW);
+            else            cfg.DeleteEntry(wxT("/geometry/child_w"));
+            if (savedH > 0) cfg.Write(wxT("/geometry/child_h"), savedH);
+            else            cfg.DeleteEntry(wxT("/geometry/child_h"));
+            if (savedX != LONG_MIN) cfg.Write(wxT("/geometry/child_x"), savedX);
+            else                    cfg.DeleteEntry(wxT("/geometry/child_x"));
+            if (savedY != LONG_MIN) cfg.Write(wxT("/geometry/child_y"), savedY);
+            else                    cfg.DeleteEntry(wxT("/geometry/child_y"));
         }
     }
 

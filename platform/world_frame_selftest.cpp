@@ -1890,6 +1890,57 @@ int RunWorldFrameSelfTest()
         wxYield();
     }
 
+    // ── line_spacing via ChangeFont, as World Properties really drives it ────
+    // The block above calls child->setOutputFont() directly and sets
+    // doc->m_iLineSpacing itself first, which is what GamePreferences
+    // (configuration.cpp) does NOT do: it calls CMUSHclientDoc::ChangeFont with
+    // the dialog's new spacing as the iLineSpacing PARAMETER, and only copies
+    // that into doc->m_iLineSpacing afterwards (SavePrefsP14, further down the
+    // same function).  Going through ChangeFont itself, leaving
+    // doc->m_iLineSpacing at its old value exactly as the real caller does, is
+    // the only way to exercise the ordering bug this reproduces: a value
+    // that's live in the parameter but not yet in the member.
+    {
+        const long savedSpacing2 = doc->m_iLineSpacing;
+
+        doc->m_iLineSpacing = 0;
+        child->setOutputFont("Menlo", 12, false, false);
+        wxYield();
+        const int fromFont = pane->LineHeight();
+        const int wanted = fromFont + 13;   // must differ, same reasoning as above
+
+        // doc->m_iLineSpacing is deliberately left at 0 here -- ChangeFont's
+        // iLineSpacing parameter is the only place the new value lives, exactly
+        // the state GamePreferences is in when it calls ChangeFont, before its
+        // own SavePrefsP14 catches the member field up.
+        doc->ChangeFont(12, "Menlo", FW_NORMAL, DEFAULT_CHARSET,
+                        doc->m_bShowBold, doc->m_bShowItalic,
+                        doc->m_bShowUnderline, (unsigned short) wanted);
+        wxYield();
+        check(pane->LineHeight() == wanted,
+              "line spacing via ChangeFont: the JUST-PASSED value takes, "
+              "not the stale doc field");
+
+        // Catch the member up, as SavePrefsP14 would moments later -- then
+        // reset to 0 the same way GamePreferences applies a reset: through
+        // ChangeFont's parameter, with the member still holding the OLD
+        // (wide) value at call time.  This is the "stuck" half of the bug --
+        // resetting to 0 must re-take immediately, not require a second
+        // change or an app restart to clear.
+        doc->m_iLineSpacing = (unsigned short) wanted;
+        doc->ChangeFont(12, "Menlo", FW_NORMAL, DEFAULT_CHARSET,
+                        doc->m_bShowBold, doc->m_bShowItalic,
+                        doc->m_bShowUnderline, 0);
+        wxYield();
+        check(pane->LineHeight() == fromFont,
+              "line spacing via ChangeFont: resetting to 0 takes immediately, "
+              "not stuck on the previous value");
+
+        doc->m_iLineSpacing = (unsigned short) savedSpacing2;
+        child->setOutputFont("Menlo", 12, false, false);
+        wxYield();
+    }
+
     // ── "Show Line Information" produces a tooltip ──────────────────────────
     // Windows answers a hover over ordinary output with "Line N, <weekday,
     // month day, time>", plus ", (note)" or ", (input)" for those two kinds of

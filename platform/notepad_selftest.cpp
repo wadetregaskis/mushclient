@@ -26,6 +26,7 @@
 
 #include <wx/wx.h>
 #include <wx/menu.h>
+#include <wx/mdi.h>
 
 #include "../stdafx.h"
 #include "../MUSHclient.h"
@@ -34,6 +35,8 @@
 
 #include "wx_notepad.h"
 #include "wx_mfc_hooks.h"
+#include "wx_world_child.h"
+#include "../pal/itransport.h"
 
 #include <cstdio>
 #include <string>
@@ -110,6 +113,61 @@ bool FireConvert (CWxNotepadFrame* frame, const char* labelSubstring)
     }
     return false;
 }
+
+// Find a menu item anywhere on the bar by its containing menu's label and a
+// substring of the item's own label.  Returns nullptr if either lookup fails.
+wxMenuItem* FindMenuItem (CWxNotepadFrame* frame, const char* menuLabel,
+                          const char* labelSubstring)
+{
+    wxMenuBar* mb = frame->GetMenuBar();
+    if (!mb) return nullptr;
+    const int menuIdx = mb->FindMenu(wxString::FromUTF8(menuLabel));
+    if (menuIdx == wxNOT_FOUND) return nullptr;
+    wxMenu* menu = mb->GetMenu(menuIdx);
+    if (!menu) return nullptr;
+    for (size_t i = 0; i < menu->GetMenuItemCount(); ++i)
+    {
+        wxMenuItem* item = menu->FindItemByPosition(i);
+        if (item && !item->IsSeparator() &&
+            item->GetItemLabelText().Contains(wxString::FromUTF8(labelSubstring)))
+            return item;
+    }
+    return nullptr;
+}
+
+// Ask the frame's real wxEVT_UPDATE_UI handler what it would do with a menu
+// item, without an event loop or a menu ever actually opening (the same
+// no-loop technique platform/menubar_selftest.cpp uses).
+struct UiAnswer {
+    bool claimed = false;
+    bool enabled = true;
+    std::string text;
+};
+
+UiAnswer ProbeUi (CWxNotepadFrame* frame, int id)
+{
+    wxUpdateUIEvent evt(id);
+    evt.SetEventObject(frame);
+    UiAnswer a;
+    a.claimed = frame->GetEventHandler()->ProcessEvent(evt);
+    a.enabled = evt.GetEnabled();
+    a.text    = std::string(evt.GetText().utf8_str());
+    return a;
+}
+
+// A pal::ITransport that just records what was sent, so a notepad's Send To
+// World can be proven to actually reach the wire -- the same recipe
+// tests/test_connection.cpp's RecTransport uses, headless.
+struct RecordingTransport : pal::ITransport {
+    std::string sent;
+    void resolve (const char*, pal::ResolveToken) override {}
+    void cancelResolve () override {}
+    void connect (unsigned int, unsigned short, const pal::TransportOptions&) override {}
+    void send (const char* data, size_t n) override { sent.append(data, n); }
+    void startTls (const pal::TlsParams&) override {}
+    void close () override {}
+    std::string lastErrorString () const override { return "rec"; }
+};
 
 } // namespace
 
@@ -270,6 +328,103 @@ int RunNotepadSelfTest()
                     "Word Count counts words");
             npCheck(frame->WordCountSummary().Contains(wxT("3 lines")),
                     "...and lines, the canonical way");
+        }
+    }
+
+    // ── 3d. Send To World (2026-08-15, BUG-5) ───────────────────────────────
+    // CTextView::OnEditSendtoworld only ever fires for a notepad with a
+    // related world (CTextDocument::FindWorld), and CTextView::OnUpdateEdit-
+    // Sendtoworld disables + relabels the item when there is none.  The port
+    // left the notepad's own Send To World menu item unconditionally enabled
+    // with no update-UI handler at all, so a standalone notepad's copy looked
+    // exactly as live as a world-tied one and silently did nothing when
+    // clicked: verified live against a real connected world by selecting text
+    // and invoking Send To World, twice (menu click and Shift+Cmd+S), with
+    // server.log unchanged and no error or dialog either time.
+    {
+        // InitInstance never ran, so give the app the world doc template
+        // FindWorld() walks — same recipe this file already uses for the
+        // (separate) notepad/text template above.
+        if (!App.m_pWorldDocTemplate)
+            App.m_pWorldDocTemplate =
+                new CMultiDocTemplate(IDR_MUSHCLTYPE, nullptr, nullptr, nullptr);
+
+        RecordingTransport* wire = new RecordingTransport();
+        CMUSHclientDoc* world = new CMUSHclientDoc();
+        world->m_mush_name       = "zz_selftest_sendtoworld";
+        world->m_iConnectPhase   = eConnectConnectedToMud;
+        world->m_pTransport      = wire;
+        world->m_bConfirmOnPaste = FALSE;   // must not raise a modal here
+        world->SetUpOutputWindow();
+
+        // CWorldChildFrame's constructor is what registers the doc with
+        // App.m_pWorldDocTemplate (mirrors what hook_new_world does) --
+        // without it FindWorld() would never find `world` at all.
+        wxMDIParentFrame* parent = new wxMDIParentFrame(
+            nullptr, wxID_ANY, wxT("selftest_stw_parent"),
+            wxPoint(60, 60), wxSize(400, 300));
+        new CWorldChildFrame(parent, world);
+
+        // A notepad with NO related world -- exactly what Edit > New Notepad
+        // makes.  The control case.
+        CTextDocument* stray = MakeNotepad("selftest_np_stray", "unsent text");
+        CWxNotepadFrame* strayFrame = CWxNotepadFrame::Find("selftest_np_stray");
+        npCheck(stray != nullptr && strayFrame != nullptr,
+                "stray (world-less) notepad created");
+        if (strayFrame)
+        {
+            wxMenuItem* item = FindMenuItem(strayFrame, "Edit", "Send To");
+            npCheck(item != nullptr, "the notepad has a Send To World item");
+            if (item)
+            {
+                UiAnswer ui = ProbeUi(strayFrame, item->GetId());
+                npCheck(ui.claimed, "...and its update-UI is answered");
+                npCheck(!ui.enabled,
+                        "...disabled with no related world (it used to stay enabled)");
+                npCheck(ui.text.find("Send To") != std::string::npos &&
+                        ui.text.find("zz_selftest") == std::string::npos,
+                        "...with the generic caption (not a world's name)");
+
+                // Clicking it anyway (a stale menu, direct dispatch) must
+                // still be a harmless no-op, not a send.
+                wxCommandEvent cmd(wxEVT_MENU, item->GetId());
+                cmd.SetEventObject(strayFrame);
+                strayFrame->GetEventHandler()->ProcessEvent(cmd);
+                npCheck(wire->sent.empty(),
+                        "...and invoking it anyway sends nothing");
+            }
+        }
+
+        // A notepad WITH a related world -- what Flip To Notepad already
+        // makes correctly, and the exact BUG-5 repro shape once New Notepad
+        // is opened against a connected world.
+        void* pv = g_wxhook_create_text_window(
+            "hello from the notepad", "selftest_np_worldbound",
+            world, world->m_iUniqueDocumentNumber,
+            "", 0, 0, 0, 0, 0, "", "",
+            false, false, false, false, false, 0, eNotepadNormal);
+        CWxNotepadFrame* boundFrame = CWxNotepadFrame::Find("selftest_np_worldbound");
+        npCheck(pv != nullptr && boundFrame != nullptr,
+                "world-bound notepad created");
+        if (boundFrame)
+        {
+            wxMenuItem* item = FindMenuItem(boundFrame, "Edit", "Send To");
+            npCheck(item != nullptr, "...has a Send To World item too");
+            if (item)
+            {
+                UiAnswer ui = ProbeUi(boundFrame, item->GetId());
+                npCheck(ui.enabled,
+                        "enabled once the notepad has a related, connected world");
+                npCheck(ui.text.find("zz_selftest_sendtoworld") != std::string::npos,
+                        "...captioned with the world's own name");
+
+                wxCommandEvent cmd(wxEVT_MENU, item->GetId());
+                cmd.SetEventObject(boundFrame);
+                boundFrame->GetEventHandler()->ProcessEvent(cmd);
+                npCheck(wire->sent.find("hello from the notepad") != std::string::npos,
+                        "clicking it sends the notepad's text to the world "
+                        "(BUG-5's repro: it used to reach nowhere)");
+            }
         }
     }
 

@@ -75,6 +75,7 @@ wxBEGIN_EVENT_TABLE(CWxNotepadFrame, wxFrame)
     EVT_MENU(ID_NP_EDIT_INSERTDATETIME,CWxNotepadFrame::OnMenuInsertDateTime)
     EVT_MENU(ID_NP_EDIT_WORDCOUNT,     CWxNotepadFrame::OnMenuWordCount)
     EVT_MENU(ID_NP_EDIT_SENDTOWORLD,   CWxNotepadFrame::OnMenuSendToWorld)
+    EVT_UPDATE_UI(ID_NP_EDIT_SENDTOWORLD, CWxNotepadFrame::OnUpdateSendToWorld)
 wxEND_EVENT_TABLE()
 
 // ── Static registry ────────────────────────────────────────────────────────
@@ -663,6 +664,16 @@ void CWxNotepadFrame::OnMenuWordCount(wxCommandEvent& /*evt*/)
                  wxOK | wxICON_INFORMATION, this);
 }
 
+wxString CWxNotepadFrame::SelectionOrAllText(bool* pAll) const
+{
+    long from = 0, to = 0;
+    if (m_ctrl) m_ctrl->GetSelection(&from, &to);
+    const bool bAll = (from == to);
+    if (pAll) *pAll = bAll;
+    if (!m_ctrl) return wxString();
+    return bAll ? m_ctrl->GetValue() : m_ctrl->GetStringSelection();
+}
+
 bool CWxNotepadFrame::SendSelectionToWorld()
 {
     // CTextView::OnEditSendtoworld: the selection (or the whole document)
@@ -672,11 +683,8 @@ bool CWxNotepadFrame::SendSelectionToWorld()
     CMUSHclientDoc* pWorld = m_pDoc->FindWorld();
     if (!pWorld) return false;
 
-    long from = 0, to = 0;
-    m_ctrl->GetSelection(&from, &to);
-    const bool bAll = (from == to);
-    const wxString wtext = bAll ? m_ctrl->GetValue()
-                                : m_ctrl->GetStringSelection();
+    bool bAll = false;
+    const wxString wtext = SelectionOrAllText(&bAll);
     if (wtext.empty()) return false;
 
     const wxScopedCharBuffer utf8 = wtext.utf8_str();
@@ -699,6 +707,25 @@ bool CWxNotepadFrame::SendSelectionToWorld()
 void CWxNotepadFrame::OnMenuSendToWorld(wxCommandEvent& /*evt*/)
 {
     SendSelectionToWorld();
+}
+
+void CWxNotepadFrame::OnUpdateSendToWorld(wxUpdateUIEvent& evt)
+{
+    // CTextView::OnUpdateEditSendtoworld: with no related world the command
+    // is disabled and the caption reverts to the generic form; the port left
+    // this item unconditionally enabled, so a standalone notepad's Send To
+    // World looked live but silently did nothing when clicked.
+    CMUSHclientDoc* pWorld = m_pDoc ? m_pDoc->FindWorld() : nullptr;
+    if (!pWorld)
+    {
+        evt.Enable(false);
+        evt.SetText(wxT("Send To W&orld\tShift+Ctrl+S"));
+        return;
+    }
+
+    evt.Enable(!SelectionOrAllText().empty());
+    evt.SetText(wxString::Format(wxT("Send To %s\tShift+Ctrl+S"),
+                DecodeTextLenient((const char*) pWorld->m_mush_name)));
 }
 
 void CWxNotepadFrame::OnMenuFind(wxCommandEvent& /*evt*/)     { OpenFindDialog(false); }

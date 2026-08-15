@@ -76,6 +76,10 @@ private:
     void OnMenuInsertDateTime(wxCommandEvent& evt);
     void OnMenuWordCount(wxCommandEvent& evt);
     void OnMenuSendToWorld(wxCommandEvent& evt);
+    void OnUpdateSendToWorld(wxUpdateUIEvent& evt);
+    // Selection, or the whole document when nothing is selected (the
+    // CTextView::GetSelection convention).  *pAll, if given, reports which.
+    wxString SelectionOrAllText(bool* pAll = nullptr) const;
     void OpenFindDialog(bool replace);
     void OnFindDialog(wxFindDialogEvent& evt);
     wxString            m_findTerm;

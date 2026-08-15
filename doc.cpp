@@ -1203,6 +1203,18 @@ int i;
     else
       points = 10;                          // same fallback as CreateFont above
 
+    // Commit the new spacing to the doc BEFORE emitting the font.  The
+    // World Properties dialog (configuration.cpp: GamePreferences) calls
+    // ChangeFont with the JUST-CHOSEN iLineSpacing, but doesn't copy it into
+    // m_iLineSpacing itself until SavePrefsP14 runs afterwards.  EmitOutputFont
+    // below reaches CWorldChildFrame::setOutputFont, which reads
+    // m_iLineSpacing straight off the doc (wx_world_child.cpp) -- without this,
+    // it would still see the PREVIOUS value, so every dialog-driven spacing
+    // change applied one commit late, and a value set back to 0 (its own
+    // "use font default") would never re-take, since nothing else ever
+    // re-applies it after SavePrefsP14 finally does catch up.
+    m_iLineSpacing = iLineSpacing;
+
     EmitOutputFont (std::string (lpszFacename ? lpszFacename : ""),
                     points, nWeight >= FW_BOLD, false);
     }

@@ -298,6 +298,32 @@ int RunMenuBarSelfTest()
         }
     }
 
+    // ── Edit ▸ Select All must not be back on the standard id (BUG-3) ───────
+    // wxID_SELECTALL is claimed natively by AppKit for whatever text control
+    // has REAL wx focus, which is always the command bar (nothing ever calls
+    // SetFocus() on the output pane) -- so a menu click or Cmd+A on the pane
+    // never even reached this frame's own EVT_MENU handler, let alone
+    // CWorldChildFrame::EditSelectAll's pane-vs-command-bar decision.
+    // ID_EDIT_SELECT_ALL is the fix; this pins the id so a revert to the
+    // standard one fails loudly here instead of silently going dead again.
+    {
+        const Item* found = NULL;
+        for (const Item& it : items)
+            if (it.path == "Edit > Select All") { found = &it; break; }
+
+        checkf(found != NULL, "Edit > Select All is in the menu bar");
+        if (found) {
+            checkf(found->id != wxID_SELECTALL,
+                   "Edit > Select All is not on the standard id (AppKit would "
+                   "claim its click/enable-state and never reach our dispatcher)");
+
+            wxCommandEvent cmd(wxEVT_MENU, found->id);
+            cmd.SetEventObject(frame);
+            checkf(frame->GetEventHandler()->ProcessEvent(cmd),
+                   "Edit > Select All is bound to a handler");
+        }
+    }
+
     // ── chords that already mean something in MUSHclient still mean it ──────
     // Stronger than the duplicate lint, which only catches two commands
     // claiming one key WITHIN this menu bar.  These chords are bound in the

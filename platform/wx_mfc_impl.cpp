@@ -1041,23 +1041,26 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     // Standard IDs (wxID_CUT etc.) are routed automatically by wxWidgets to
     // the focused window; no explicit handler is needed in our menu dispatcher.
     //
-    // Copy is the exception, and deliberately uses the canonical MFC id instead.
-    // A menu item with a STANDARD id gets AppKit's native action (copy:), and
-    // AppKit then enables or disables it by asking the first responder whether it
-    // can copy — overriding whatever wx's update-UI handler decided.  The first
+    // Copy and Select All are the exceptions, and deliberately use canonical
+    // MFC ids instead.  A menu item with a STANDARD id gets AppKit's native
+    // action (copy:/selectAll:), and AppKit then enables/dispatches it by
+    // asking the first responder — overriding whatever wx's update-UI handler
+    // decided and never reaching our own EVT_MENU handler at all.  The first
     // responder here is always the command bar (nothing ever focuses the output
-    // pane), so with text selected in the OUTPUT window the item was validated
+    // pane), so with text selected in the OUTPUT window Copy was validated
     // against an empty command bar and greyed out, and clicking it would have
-    // gone to the command bar rather than to us.  A non-standard id keeps the
-    // item under wx's control, where CMUSHclientDoc::EditCopyTarget decides.
-    // Verified: with the standard id the item stays grey however the world's
-    // selection looks; with this one it enables and copies the selection.
+    // gone to the command bar rather than to us; Select All silently selected
+    // nothing in the (usually empty) command bar and did nothing visible at
+    // all.  Non-standard ids keep both items under wx's control, where
+    // CMUSHclientDoc::EditCopyTarget and CWorldChildFrame::EditSelectAll decide.
+    // Verified: with the standard ids Copy stays grey however the world's
+    // selection looks and Select All is inert; with these it enables/works.
     wxMenu* editMenu = new wxMenu();
     editMenu->Append(ID_EDIT_COPY,   wxT("Copy\tCtrl+C"));
     editMenu->Append(wxID_CUT,       wxT("Cut\tCtrl+X"));
     editMenu->Append(wxID_PASTE,     wxT("Paste\tCtrl+V"));
     editMenu->AppendSeparator();
-    editMenu->Append(wxID_SELECTALL, wxT("Select All\tCtrl+A"));
+    editMenu->Append(ID_EDIT_SELECT_ALL, wxT("Select All\tCtrl+A"));
     editMenu->AppendSeparator();
     editMenu->Append(wxID_FIND,      wxT("Find…\tCtrl+F"));
     editMenu->AppendSeparator();
@@ -1508,6 +1511,19 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                    },
                    ID_EDIT_COPY);
 
+    // Select All, same argument again: a modal bridged dialog's text field
+    // used to get Select All for free from AppKit (standard id); moving it to
+    // the canonical id to fix the output-pane case (below) gives that up, so
+    // hand it back here for whichever field has the focus.
+    wxTheApp->Bind(wxEVT_MENU,
+                   [](wxCommandEvent& evt) {
+                       if (auto* te = dynamic_cast<wxTextCtrl*>(wxWindow::FindFocus()))
+                           te->SelectAll();
+                       else
+                           evt.Skip();
+                   },
+                   ID_EDIT_SELECT_ALL);
+
     // ── Menu event routing via Bind() ─────────────────────────────────────
     frame->Bind(wxEVT_MENU, [frame](wxCommandEvent& evt) {
         int id = evt.GetId();
@@ -1527,7 +1543,11 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             case kPortMenuCloseWorld:   wxid = wxID_CLOSE;      break;
             case kPortMenuCut:          wxid = wxID_CUT;        break;
             case kPortMenuPaste:        wxid = wxID_PASTE;      break;
-            case kPortMenuSelectAll:    wxid = wxID_SELECTALL;  break;
+            // Select All is NOT translated to wxID_SELECTALL here: unlike Cut/
+            // Paste/Undo, it needs the pane-vs-command decision below, and
+            // ID_EDIT_SELECT_ALL (what DoCommand("SelectAll") already posts) is
+            // itself the id that block matches on — nothing to translate.
+            case kPortMenuSelectAll:                            break;
             case kPortMenuUndo:         wxid = wxID_UNDO;       break;
             case kPortMenuAbout:        wxid = wxID_ABOUT;      break;
             case kPortMenuCascade:      wxid = wxID_MDI_WINDOW_CASCADE;      break;
@@ -1693,30 +1713,52 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
             return;   // consumed — do not call evt.Skip()
         }
 
-        // ── Edit menu: Cut / Paste / Select All / Undo ─────────────────────
+        // ── Edit menu: Select All ────────────────────────────────────────────
+        // Windows routes ID_EDIT_SELECT_ALL by focus: it is handled by BOTH
+        // CMUSHView and CSendView, so whichever view has focus wins, and a
+        // click in the output view leaves real focus there (CMUSHView never
+        // hands it back the way CMUSHView::OnEditCopy does).  On the port,
+        // real wx focus can't stand in for that: COutputPane::OnLeftUp always
+        // returns focus to the command bar so typing keeps working (nothing
+        // calls SetFocus() on the pane otherwise), so by the time this event
+        // fires, wxWindow::FindFocus() is always the command bar regardless of
+        // which view the user actually clicked.  CWorldChildFrame::EditSelectAll
+        // uses COutputPane::WantsSelectAll() instead — a claim the pane records
+        // on every real click and gives up on a genuine command-bar click or
+        // keystroke — which is what a real per-view focus flag would track.
+        if (id == ID_EDIT_SELECT_ALL) {
+            wxWindow* activeTop = wxGetActiveWindow();
+            auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild());
+            const bool worldIsFrontmost =
+                (activeTop == nullptr) || (activeTop == child) || (activeTop == frame);
+
+            if (!worldIsFrontmost) {
+                if (auto* te = dynamic_cast<wxTextCtrl*>(wxWindow::FindFocus()))
+                    te->SelectAll();
+                return;
+            }
+
+            if (child) child->EditSelectAll();
+            return;   // consumed — do not call evt.Skip()
+        }
+
+        // ── Edit menu: Cut / Paste / Undo ───────────────────────────────────
         // The frame's Bind intercepts menu events before wxMDI can route them
         // to the focused child control, so we dispatch explicitly here.  These
         // stay focus-routed, which is also what Windows does: Cut, Paste and
-        // Undo only ever apply to the command window, and ID_EDIT_SELECT_ALL is
-        // handled by BOTH CMUSHView and CSendView, so whichever has the focus
-        // wins.  (On the port that means Select All can only reach the command
-        // bar, since the output pane is never focused — a separate gap.)
+        // Undo only ever apply to the command window.
         //
         // Undo has no menu item here; it is reachable through
         // world.DoCommand("Undo"), which posts ID_EDIT_UNDO (translated to
         // wxID_UNDO at the top of this handler).
-        if (id == wxID_CUT || id == wxID_PASTE || id == wxID_SELECTALL ||
-            id == wxID_UNDO)
+        if (id == wxID_CUT || id == wxID_PASTE || id == wxID_UNDO)
         {
             wxWindow* focused = wxWindow::FindFocus();
             if (focused) {
-                // Is it the output pane?
-                if (auto* pane = dynamic_cast<COutputPane*>(focused)) {
-                    if (id == wxID_SELECTALL) pane->SelectAll();
-                    // Cut, Paste and Undo are no-ops on a read-only output pane.
-                } else {
-                    // Forward to focused window (wxTextCtrl, etc.) via its
-                    // own event handler so the built-in editing works.
+                // Cut, Paste and Undo are no-ops on a read-only output pane;
+                // otherwise forward to focused window (wxTextCtrl, etc.) via
+                // its own event handler so the built-in editing works.
+                if (!dynamic_cast<COutputPane*>(focused)) {
                     wxCommandEvent fwd(wxEVT_MENU, id);
                     fwd.SetEventObject(focused);
                     focused->GetEventHandler()->ProcessEvent(fwd);

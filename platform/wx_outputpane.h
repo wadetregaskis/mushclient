@@ -264,6 +264,15 @@ public:
     // Select all text in the buffer.
     void SelectAll();
 
+    // Whether the Edit ▸ Select All command should act on this pane rather
+    // than the command bar — a stand-in for "this view has focus" (Windows'
+    // real routing test), since nothing ever gives the pane real wx focus.
+    // Set by every real click in OnLeftDown; given up by ClearSelectAllClaim,
+    // called on a genuine click or keystroke in the command bar.  See the
+    // usage in CWorldChildFrame::EditSelectAll.
+    bool WantsSelectAll() const { return m_wantsSelectAll; }
+    void ClearSelectAllClaim() { m_wantsSelectAll = false; }
+
     // Scroll to the very bottom of the buffer and re-engage auto-scroll.
     // Safe to call at any time; no-op if already at the bottom.
     void ScrollToBottom();
@@ -948,6 +957,9 @@ private:
     // When anchor == focus, there is no selection (just a cursor position).
     SelPoint m_selAnchor;
     SelPoint m_selFocus;
+
+    // See WantsSelectAll().
+    bool m_wantsSelectAll = false;
 
     // Index of the last bookmark jumped to, so Go To Bookmark cycles forward.
     int m_lastBookmarkLine = -1;

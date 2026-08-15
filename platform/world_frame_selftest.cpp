@@ -2113,6 +2113,102 @@ int RunWorldFrameSelfTest()
         }
     }
 
+    // ── Edit ▸ Select All (BUG-3, 2026-08-12 GUI-drive run) ─────────────────
+    // Clicking into the output pane, then Edit > Select All (menu click or
+    // Cmd+A, same result either way) did nothing: no highlight, Copy stayed
+    // disabled, Cmd+C copied nothing.  Root cause: the Edit-menu item's
+    // wxID_SELECTALL id let AppKit claim the click/enable-state and route it
+    // to the real first responder -- always the command bar, since nothing
+    // ever calls SetFocus() on the pane -- so the port's own code never even
+    // ran; and the fallback it WOULD have reached still asked
+    // wxWindow::FindFocus(), which is permanently the command bar for the same
+    // reason (COutputPane::OnLeftUp always hands focus back so typing keeps
+    // working).  CWorldChildFrame::EditSelectAll is the fix.  This drives it
+    // through the real frame, exactly as the bug was found: a real click on
+    // blank pane space, then the command, checking the outcome a user would
+    // see -- the selection Copy actually acts on (doc->EditCopyTarget(), the
+    // same function driving the Edit menu's Copy item).
+    {
+        wxTextCtrl* inp = child->ActiveInputPublic();
+        check(pane != NULL && inp != NULL,
+              "select-all: the output pane and input bar both exist");
+
+        // Seed deterministic content rather than trusting whatever earlier
+        // sections left in the buffer (by here that can be down to one line).
+        doc->Note("select-all fixture alpha");
+        doc->Note("select-all fixture bravo");
+        doc->Note("select-all fixture charlie");
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const int totalLines = pane->LineCount();
+        check(totalLines > 1,
+              "select-all: the pane has more than one line (control: a "
+              "one-line buffer could not distinguish a real selection from a "
+              "degenerate one)");
+        std::string firstText, lastText;
+        if (const SOutputLine* l = pane->GetLine(0))
+            if (!l->empty()) firstText = l->front().text;
+        if (const SOutputLine* l = pane->GetLine(totalLines - 1))
+            if (!l->empty()) lastText = l->front().text;
+
+        // Baseline: nothing has clicked the pane, so Select All targets the
+        // command bar exactly as it always has -- this must not regress.
+        inp->ChangeValue(wxT("unsent command"));
+        inp->SetSelection(0, 0);          // collapse to a caret first
+        child->EditSelectAll();
+        long from = 0, to = 0;
+        inp->GetSelection(&from, &to);
+        check(from == 0 && to == (long) inp->GetValue().length(),
+              "select-all: with nothing clicked in the pane, it selects the "
+              "command bar (unchanged behaviour)");
+        check(doc->EditCopyTarget() != eCopyOutputSelection,
+              "select-all: ...and Copy would act on the command bar, not the output");
+
+        // BUG-3's own repro: a plain click on blank pane space (no drag, no
+        // text selection of its own) --
+        const int lh = pane->LineHeight();
+        wxMouseEvent down(wxEVT_LEFT_DOWN);
+        down.SetPosition(wxPoint(0, lh / 2));
+        down.SetEventObject(pane);
+        pane->ProcessWindowEvent(down);
+        wxMouseEvent up(wxEVT_LEFT_UP);
+        up.SetPosition(wxPoint(0, lh / 2));
+        up.SetEventObject(pane);
+        pane->ProcessWindowEvent(up);
+        check(doc->EditCopyTarget() != eCopyOutputSelection,
+              "select-all: the click alone (no drag) makes no selection yet");
+
+        // -- then Edit > Select All.
+        child->EditSelectAll();
+        check(doc->EditCopyTarget() == eCopyOutputSelection,
+              "select-all: after a pane click, Select All selects the OUTPUT "
+              "(was: nothing, and Copy stayed disabled)");
+        const wxString sel = pane->GetSelectionText();
+        check(!firstText.empty() && sel.Find(wxString(firstText)) != wxNOT_FOUND,
+              "select-all: the selection reaches back to the first line");
+        check(!lastText.empty() && sel.Find(wxString(lastText)) != wxNOT_FOUND,
+              "select-all: ...and forward to the last line (the WHOLE buffer)");
+
+        // A genuine command-bar click gives the claim back up.  (The output
+        // pane's own selection rightly stays highlighted after this -- moving
+        // to the command bar does not clear it, same as any other app with
+        // two text areas -- so what this checks is the claim itself, not
+        // EditCopyTarget()'s precedence, which would still see the output's
+        // now-stale selection either way.)
+        wxMouseEvent inpDown(wxEVT_LEFT_DOWN);
+        inpDown.SetPosition(wxPoint(2, 2));
+        inpDown.SetEventObject(inp);
+        inp->ProcessWindowEvent(inpDown);
+        wxMouseEvent inpUp(wxEVT_LEFT_UP);
+        inpUp.SetPosition(wxPoint(2, 2));
+        inpUp.SetEventObject(inp);
+        inp->ProcessWindowEvent(inpUp);
+
+        check(!pane->WantsSelectAll(),
+              "select-all: a genuine command-bar click gives the pane's claim back up");
+    }
+
     // Tear down without running the close/save flow (this doc has no file).
     doc->m_pWorldView = NULL;
     child->Destroy();

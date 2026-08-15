@@ -2994,13 +2994,16 @@ void SaveWindowGeometryTo(wxConfigBase& cfg, wxTopLevelWindow* frame)
     }
     // The main_* keys above are read back onto the MDI *parent*, which wxOSX
     // never shows.  When the window we just measured is the child — i.e. the
-    // window the user can actually see and drag — its size also has to go into
-    // the keys the child reads at construction, or a Cmd-Q (which never runs
-    // the child's close handler) persists the size somewhere nothing looks and
-    // the next launch reopens the world at the previous size.  Same helper as
-    // that close handler, so the two paths cannot drift apart again.
+    // window the user can actually see, drag and resize — its size AND
+    // position also have to go into the keys the child reads at
+    // construction, or a Cmd-Q (which never runs the child's close handler)
+    // persists the geometry somewhere nothing looks and the next launch
+    // reopens the world at the previous size but a DIFFERENT, unrelated
+    // position (main_x/main_y land on the invisible parent, and the child
+    // otherwise never learns where it used to be).  Same helper as that
+    // close handler, so the two paths cannot drift apart again.
     if (geomWin != frame)
-        wx_save_child_geometry(cfg, r.GetSize());
+        wx_save_child_geometry(cfg, r);
 }
 
 // ── SaveMainWindowGeometry ────────────────────────────────────────────────

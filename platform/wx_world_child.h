@@ -322,6 +322,15 @@ public:
     // chosen one executed -- the doc's hoisted trio does the engine half.
     // col is the pane's CHARACTER column (converted to bytes inside).
     void ShowAliasMenu(int lineIdx, int col, const wxPoint& panePos);
+    // Whether the command bar's wxEVT_CONTEXT_MENU should become the alias
+    // menu above instead of AppKit's native edit menu (2026-08-15 fix for
+    // BUG-2, GUI drive run 2026-08-12/13: Ctrl+click on the command bar is
+    // intercepted by macOS before it ever reaches wxEVT_LEFT_DOWN, so it has
+    // to be caught here instead -- see BuildInputBar). A context-menu event
+    // carries no modifier state of its own; the caller polls
+    // wxGetKeyState(WXK_RAW_CONTROL) and passes the result in, which is also
+    // what lets a selftest pin the RULE without faking OS keyboard state.
+    bool WantsInputBarAliasMenu(bool rawControlDown) const;
 
     // ── View-level output/input commands ──────────────────────────────────
     // The canonical handlers for these live on CMUSHView / CSendView (not

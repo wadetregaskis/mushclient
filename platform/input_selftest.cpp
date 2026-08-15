@@ -532,6 +532,30 @@ int RunInputSelfTest()
         normal->Clear();
     }
 
+    // ── BUG-2 (GUI drive run 2026-08-12/13): the command-bar Ctrl+click ────
+    // alias menu. On macOS a Control+click on a native NSTextField/NSTextView
+    // is intercepted by AppKit before it ever becomes a wxEVT_LEFT_DOWN --
+    // routed instead to menuForEvent:, which wx surfaces as
+    // wxEVT_CONTEXT_MENU -- so the port's original Ctrl+click handling (bound
+    // only to LEFT_DOWN, in BuildInputBar) silently never ran on this
+    // control; the native Look Up/Cut/Copy/Paste menu won every time.
+    //
+    // wxContextMenuEvent carries no modifier flags of its own, so the real
+    // fix has to poll wxGetKeyState(WXK_RAW_CONTROL) live -- something a
+    // headless/in-app selftest cannot fake without synthesising real OS
+    // keyboard input (out of reach here; see the port's own notes on
+    // Escape-dependent paths being unreachable by automation). What CAN be
+    // pinned without touching live OS state, and without risking a REAL
+    // native or custom popup menu blocking this selftest forever (there is
+    // no running event loop yet to dismiss one), is the decision rule the
+    // fix's context-menu handler consults -- so it is split out.
+    // "Did nothing" fails both checks below: an unfixed/reverted rule would
+    // return the SAME answer regardless of rawControlDown.
+    chk(child->WantsInputBarAliasMenu(true) == true,
+        "command bar: Ctrl+ (context-menu) click wants the alias menu");
+    chk(child->WantsInputBarAliasMenu(false) == false,
+        "...and a plain right-click still defers to the native edit menu");
+
     printf("INPUT-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

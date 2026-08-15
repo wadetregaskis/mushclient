@@ -1225,6 +1225,44 @@ TEST(AliasMenu, ExecuteRunsTheChosenAliasInItsOwnSpace)
     EXPECT_TRUE(doc.m_CurrentPlugin == NULL);
 }
 
+// BUG-1 (GUI drive run 2026-08-12/13, docs/UPSTREAM-BUGS.md #14): the
+// ACTION_ALIAS %-substitution loop computed the %<digit> subscript and then
+// never used it, so a menu alias's own send text always lost its %1 -- the
+// server received "echo greeting " with the word silently dropped, even
+// though the menu itself was correctly keyed off the clicked word (proving
+// SetWordUnderMenu / word-matching worked; only the substitution was dead).
+// This drives the whole chain the real gesture does: scan a real output line
+// for the word under the click, then execute the menu item and check what
+// actually reached the (fake) world.
+TEST(AliasMenu, ExecuteSubstitutesWordUnderMenuIntoPercentOne)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    const long eEnabledF = 1, eMenuF = eAliasMenu;
+
+    doc.DisplayMsg("echo: samwise\n", 14, 0);
+    CLine* pLine = doc.m_LineList.GetAt(doc.GetLinePosition(0));
+    ASSERT_TRUE(pLine != NULL);
+    doc.SetWordUnderMenu(pLine, 8);   // column inside "samwise"
+    ASSERT_TRUE(doc.m_strWordUnderMenu == "samwise");
+
+    ASSERT_EQ(0L, doc.AddAlias("greet_this", "greet *", "echo greeting %1",
+                               eEnabledF | eMenuF, ""));
+
+    doc.ExecuteAliasMenuItem(CString("greet_this"));
+    EXPECT_STREQ("echo greeting samwise\r\n",
+                 static_cast<FakeTransport*>(doc.m_pTransport)->sent.c_str());
+
+    // %0 and %2-%9 have no analogue for a menu click (there is only ever one
+    // captured word) and stay empty -- not a regression, just pinned so a
+    // future "substitute the same word everywhere" change is a visible diff.
+    ASSERT_EQ((long) eOK, doc.SetAliasOption("greet_this", "send",
+                                             "echo %0 [%1] %2"));
+    static_cast<FakeTransport*>(doc.m_pTransport)->sent.clear();
+    doc.ExecuteAliasMenuItem(CString("greet_this"));
+    EXPECT_STREQ("echo  [samwise] \r\n",
+                 static_cast<FakeTransport*>(doc.m_pTransport)->sent.c_str());
+}
+
 MC_TEST_MAIN()
 
 // The alias mirror of the trigger match recompile (methods_aliases.cpp

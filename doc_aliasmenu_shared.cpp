@@ -12,12 +12,17 @@
 //                            (AliasMenu's two map loops + CompareMenu)
 //   ExecuteAliasMenuItem  -- run the chosen alias: %-substitution, script
 //                            callback, SendTo (OnMXPMenu's ACTION_ALIAS arm,
-//                            verbatim -- pDoc-> dropped, the item argument
-//                            replacing the strMXP_menu_item subscript)
+//                            pDoc-> dropped, the item argument replacing the
+//                            strMXP_menu_item subscript)
 //
 // Windows' CMUSHView keeps its CMenu/TrackPopupMenu UI and calls these; the
 // port pops a wxMenu through CWorldChildFrame.  One body, both platforms.
 // (docs/WINDOWS-VALIDATION.md records the needed Windows run.)
+//
+// docs/UPSTREAM-BUGS.md #14: the original ACTION_ALIAS arm computed the %1
+// subscript and then never used it, so a menu alias's own %1 always sent
+// empty -- the ONE substitution GetInfo(86) exists to make available.  Fixed
+// here, so it is fixed on Windows too now that mushview.cpp calls this body.
 
 #include "stdafx.h"
 #include "MUSHclient.h"
@@ -212,6 +217,13 @@ void CMUSHclientDoc::ExecuteAliasMenuItem (const CString & strItem)
               strAction += CString (start, length);
                 
             subscript = *++p - '0';
+
+          // %1 is the word the menu was invoked on (SetWordUnderMenu /
+          // GetInfo(86)) -- a menu click has no matched line to capture
+          // wildcards from, so it is the only one this can supply; %0 and
+          // %2-%9 stay empty, as they always have.
+          if (subscript == 1)
+            strAction += m_strWordUnderMenu;
 
           // get ready for next batch from beyond the digit
 

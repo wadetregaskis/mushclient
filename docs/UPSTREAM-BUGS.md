@@ -22,6 +22,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 11 | `ClearOutput` leaves `m_last_line_with_IAC_GA` naming a deleted line | this commit | doc.cpp `CMUSHclientDoc::ClearOutput` |
 | 12 | The queued-command "no log" flag can never suppress logging | this commit | TimerWnd.cpp `CTimerWnd::OnTimer`; mirrored in platform/wx_world_child.cpp |
 | 13 | Windows' two queue drains disagree about case, so a `nolog` command echoes from one and not the other | this commit | TimerWnd.cpp `OnTimer` vs `ChangeTimerRate` |
+| 14 | Menu-triggered alias's own `%1` is dropped (subscript computed, never used) | this commit | mushview.cpp `CMUSHView::OnMXPMenu` ACTION_ALIAS arm (now `doc_aliasmenu_shared.cpp` `ExecuteAliasMenuItem`) |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -376,6 +377,36 @@ calls the same shared body as the tick drain, so the two cannot disagree again.
 The port was already on this side, so only Windows changes — a no-log command
 flushed by setting the delay to zero now echoes, as it always did when drained
 on a tick.
+
+---
+
+## 14 — a menu-triggered alias's own `%1` is silently dropped
+
+`CMUSHView::OnMXPMenu`'s `ACTION_ALIAS` arm — used for both an MXP `<a>` menu's
+alias action and the Ctrl+click word-menu (`CMUSHView::AliasMenu`) — has its own
+hand-rolled `%`-substitution loop (it does not call `FixSendText`, which is what
+a normally-typed/matched alias or trigger uses). For a `%<digit>` sequence it
+computes `subscript = *++p - '0'` and then, immediately after, resumes
+scanning — `subscript` is never read again. So an alias like `greet *` → send
+`echo greeting %1`, fired from either menu, always sent `echo greeting ` with
+the wildcard silently dropped, regardless of what the menu was invoked on.
+
+This is not a case of the value being unavailable: `AliasMenu` already scans
+the word under the mouse into `m_strWordUnderMenu` for exactly this purpose —
+`GetInfo(86)` documents it as "word under menu in output window" and a script
+attached to the alias could always read it that way. The plain `%1`
+substitution path into the alias's own Send text, which is the obvious first
+thing to try before reaching for a script, was simply never wired up.
+
+**Fix:** `%1` now substitutes `m_strWordUnderMenu`. `%0` and `%2`-`%9` are
+unchanged (still empty) — there is only ever one captured word for a menu
+click, and `GetInfo(86)`'s own phrasing ("word", singular) is the closest
+thing to a spec this feature has. Fixed in `doc_aliasmenu_shared.cpp`
+`ExecuteAliasMenuItem`, which is now the single body `OnMXPMenu` calls into on
+Windows too (2026-08-13's hoist), so this fixes both platforms from one edit.
+
+Regression guard: `tests/test_aliases.cpp`
+`AliasMenu.ExecuteSubstitutesWordUnderMenuIntoPercentOne`.
 
 ---
 

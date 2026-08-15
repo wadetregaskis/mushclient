@@ -204,6 +204,51 @@ int RunMenuBarSelfTest()
                 std::string(mb->GetMenuLabelText(m).utf8_str()) + " > ", items);
     check(items.size() > 50, "the menu bar has its full complement of commands");
 
+    // ── Help items that launch a browser must say so ─────────────────────────
+    // BUG-6 (2026-08-12 GUI drive): Help > Function List... opened Safari with
+    // no visual warning, unlike its "(web)" siblings.  The table label was
+    // already right for that one item; what this pins is the CONVENTION, so a
+    // future item cannot go stale the same way silently.  Each id below is one
+    // whose handler unconditionally calls ShellExecute on this platform (read
+    // from the source, not guessed from the label):
+    //   ID_HELP_FORUM/_FUNCTIONSWEBPAGE/_DOCUMENTATIONWEBPAGE/
+    //   _REGULAREXPRESSIONSWEBPAGE/_MUDLISTS/_PLUGINSLIST and
+    //   ID_HELP_BUGREPORTSUGGESTION all do so in mainfrm.cpp, on every
+    //   platform.  ID_HELP_GETTINGSTARTED does so ONLY on this port --
+    //   MUSHclient.cpp's OnHelpGettingstarted has a real #ifdef _WIN32 arm
+    //   (local .chm help) and a non-Windows #else that opens the online docs
+    //   instead, because no .chm ships here -- so the port's OWN menu table
+    //   must reflect the port's OWN behaviour, not Windows'.
+    //
+    // ID_HELP_TIPOFTHEDAY is the control: CMainFrame::OnHelpTipoftheday opens
+    // CTipDlg, a real local dialog, so its label must NOT carry the tag --
+    // proving this loop can fail, not just pass by construction.
+    {
+        const struct { int id; const char* name; } kWebBound[] = {
+            { ID_HELP_FORUM,                     "Forum"                     },
+            { ID_HELP_FUNCTIONSWEBPAGE,          "Function List"             },
+            { ID_HELP_DOCUMENTATIONWEBPAGE,      "Documentation"             },
+            { ID_HELP_REGULAREXPRESSIONSWEBPAGE, "Regular Expressions"       },
+            { ID_HELP_MUDLISTS,                  "MUD Lists"                 },
+            { ID_HELP_PLUGINSLIST,               "Plugins List"              },
+            { ID_HELP_BUGREPORTSUGGESTION,       "Bug Reports / Suggestions" },
+            { ID_HELP_GETTINGSTARTED,            "Getting Started"           },
+        };
+        for (const auto& w : kWebBound) {
+            const Item* it = find_by_id(items, w.id);
+            const std::string what =
+                std::string("Help > ") + w.name + " is labelled (web)";
+            checkf(it != NULL, what + " -- item exists");
+            if (it)
+                checkf(it->label.find("(web)") != std::string::npos, what);
+        }
+
+        const Item* tip = find_by_id(items, ID_HELP_TIPOFTHEDAY);
+        check(tip != NULL, "Help > Tip Of The Day is in the menu bar");
+        check(tip && tip->label.find("(web)") == std::string::npos,
+              "...and, being genuinely local, carries no (web) tag");
+    }
+
     // ── every accelerator that is present must PARSE ────────────────────────
     // A rejected string leaves the item with no shortcut at all.  Covers every
     // menu in the app, not just the new ones.

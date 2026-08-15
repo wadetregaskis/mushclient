@@ -843,7 +843,7 @@ static const CanonMenuCmd kCanonCmds[] = {
   { SEC_GAME, 32234, "Minimize &Program\tCtrl+M",            'A', false, false }, // ID_GAME_MINIMISEPROGRAM
   // ── Help (web links use the working ShellExecute shim) ──
   { SEC_HELP, 32237, "&Tip Of The Day\xE2\x80\xA6",          'F', false, false }, // ID_HELP_TIPOFTHEDAY
-  { SEC_HELP, 32294, "&Getting Started\xE2\x80\xA6",         'A', false, false }, // ID_HELP_GETTINGSTARTED
+  { SEC_HELP, 32294, "&Getting Started (web)",               'A', false, false }, // ID_HELP_GETTINGSTARTED (web here; Windows uses local .chm help)
   { SEC_HELP, 32986, "MUSHclient &Forum (web)",              'F', false, false }, // ID_HELP_FORUM
   { SEC_HELP, 32271, "MUSHclient &Web Page",                 'F', false, false }, // ID_WEB_PAGE
   { SEC_HELP, 32987, "Function &List (web)",                 'F', false, false }, // ID_HELP_FUNCTIONSWEBPAGE
@@ -851,7 +851,7 @@ static const CanonMenuCmd kCanonCmds[] = {
   { SEC_HELP, 33030, "&Regular Expressions (web)",           'F', false, false }, // ID_HELP_REGULAREXPRESSIONSWEBPAGE
   { SEC_HELP, 32287, "&MUD Lists (web)",                     'F', false, false }, // ID_HELP_MUDLISTS
   { SEC_HELP, 33034, "&Plugins List (web)",                  'F', false, false }, // ID_HELP_PLUGINSLIST
-  { SEC_HELP, 32293, "&Bug Reports / Suggestions\xE2\x80\xA6",'F', false, false }, // ID_HELP_BUGREPORTSUGGESTION
+  { SEC_HELP, 32293, "&Bug Reports / Suggestions (web)",      'F', false, false }, // ID_HELP_BUGREPORTSUGGESTION
 };
 
 // Append every table command for one section to `menu`, led by a separator.

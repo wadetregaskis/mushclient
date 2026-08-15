@@ -204,6 +204,48 @@ void TestSelectionFreezesOutput()
     }
 }
 
+// ── 1b. WantsSelectAll: the pane's stand-in for "this view has focus" ───────
+// BUG-3 (2026-08-12 GUI-drive run): Edit ▸ Select All did nothing at all with
+// the output pane clicked into, because nothing ever gives the pane real wx
+// keyboard focus (COutputPane::OnLeftUp always hands it back to the command
+// bar so typing keeps working) — so the Edit-menu dispatcher's old
+// wxWindow::FindFocus() test was permanently false.  WantsSelectAll() is the
+// real signal CWorldChildFrame::EditSelectAll uses instead; this pins the
+// pane's half of it: a click claims it, even one (like these, on blank space)
+// that makes no text selection, and ClearSelectAllClaim gives it up again.
+void TestWantsSelectAll()
+{
+    printf("WantsSelectAll claims/releases like a real per-view focus flag\n");
+
+    Harness h;
+    h.Feed(10);
+    const int lh = h.pane->LineHeight();
+
+    opCheck(!h.pane->WantsSelectAll(),
+            "a fresh pane has not claimed Select All");
+
+    // A plain click on blank space -- no drag, no text selection -- is
+    // exactly BUG-3's repro step 2, and must still claim it.
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, 0, lh / 2);
+    opCheck(h.pane->WantsSelectAll(),
+            "a click with no selection still claims Select All");
+    SendMouse(h.pane, wxEVT_LEFT_UP, 0, lh / 2);
+    opCheck(h.pane->WantsSelectAll(),
+            "...and releasing the button does not give it up");
+
+    h.pane->ClearSelectAllClaim();
+    opCheck(!h.pane->WantsSelectAll(),
+            "ClearSelectAllClaim (a real command-bar click/keystroke) gives it up");
+
+    // The claim survives an unrelated selection-clearing call -- it is not
+    // aliased to the selection state, only to "was the pane clicked".
+    SendMouse(h.pane, wxEVT_LEFT_DOWN, 0, lh / 2);
+    SendMouse(h.pane, wxEVT_LEFT_UP, 0, lh / 2);
+    h.pane->SetSelectionRange(0, 0, 0, 0);   // world.SetSelection(0,0,0,0): clear
+    opCheck(h.pane->WantsSelectAll(),
+            "clearing the text selection does not also clear the claim");
+}
+
 // ── 2. Double-click selects a word AND copies it ────────────────────────────
 void TestDoubleClickAutoCopy()
 {
@@ -1352,6 +1394,7 @@ int RunOutputPaneSelfTest()
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
 
     TestSelectionFreezesOutput();
+    TestWantsSelectAll();
     TestDoubleClickAutoCopy();
     TestClearOutputDropsPendingLine();
     TestKeepPauseAtBottom();

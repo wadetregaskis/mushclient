@@ -2443,6 +2443,10 @@ bool COutputPane::TryAliasMenu(wxMouseEvent& evt)
 
 void COutputPane::OnLeftDown(wxMouseEvent& evt)
 {
+    // Any real click claims Select All for this pane, even one that (like the
+    // alias menu or a plain click below) does not go on to make a selection.
+    m_wantsSelectAll = true;
+
     if (TryAliasMenu(evt)) return;   // Ctrl+click: the alias menu, no selection
 
     // ── Hint bar: click snaps to the live bottom ───────────────────────────

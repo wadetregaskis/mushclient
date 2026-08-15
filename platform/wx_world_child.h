@@ -330,6 +330,7 @@ public:
     void GotoSelectedURL();       // Display ▸ Go To URL  (selection → browser)
     void SendMailToSelection();   // Display ▸ Send Mail To (selection → mailto:)
     void CopySelectionHTML();     // Edit ▸ Copy as HTML
+    void EditSelectAll();         // Edit ▸ Select All (output pane or command bar)
     void RepeatLastCommand();     // Input ▸ Repeat Last Command
     void RecallLastWord();        // Edit ▸ Recall Last Word (also Ctrl+Backspace)
     void ShowCommandHistory();    // Input ▸ Command History (pick a past command)

@@ -2342,6 +2342,21 @@ void CWorldChildFrame::CopySelectionHTML()
         m_output->CopySelectionAsHTML(m_output->GetCurrentFont().GetFaceName());
 }
 
+// Edit ▸ Select All.  See wx_mfc_impl.cpp's ID_EDIT_SELECT_ALL handler for why
+// this can't be a real focus test: COutputPane::WantsSelectAll() is the stand-
+// in, claimed by the pane's own OnLeftDown and given up by a genuine
+// command-bar click or keystroke (ClearSelectAllClaim, below and in
+// OnInputKeyDown).
+void CWorldChildFrame::EditSelectAll()
+{
+    if (m_output && m_output->WantsSelectAll()) {
+        m_output->SelectAll();
+        return;
+    }
+    if (wxTextCtrl* inp = ActiveInput())
+        inp->SelectAll();
+}
+
 // Input ▸ Repeat Last Command.  Windows routes it through the ORDINARY send
 // path -- CSendView::OnRepeatLastCommand (sendvw.cpp:1808) ends in
 // `SendCommand (strText, TRUE)` -- so it gets everything a typed line gets.
@@ -3425,6 +3440,11 @@ void CWorldChildFrame::OnInputKeyDown(wxKeyEvent& evt)
 {
     int code = evt.GetKeyCode();
 
+    // A real keystroke here (Cmd+A itself never arrives -- it is consumed by
+    // the menu bar's accelerator before any control's key handler sees it)
+    // gives up the output pane's stale Select All claim; see WantsSelectAll.
+    if (m_output) m_output->ClearSelectAllClaim();
+
     // Lua Accelerator() API — check before built-in key bindings so scripts
     // can override any key (including Escape, PgUp/Dn, etc.).
     if (FireAcceleratorIfMatch(evt))
@@ -4263,6 +4283,12 @@ void CWorldChildFrame::BuildInputBar(bool wrapInput)
     // (CSendView::OnLButtonDown maps the point into the output view and calls
     // AliasMenu there).  The nearest output text is the bottom visible row.
     m_input->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& evt) {
+        // A genuine click in the command bar gives up the output pane's
+        // Select All claim (see WantsSelectAll) -- the pane's own click
+        // handler is the only thing that sets it, and it does not hear about
+        // this one.
+        if (m_output) m_output->ClearSelectAllClaim();
+
         if (evt.RawControlDown() && m_output) {
             const wxPoint p = m_output->ScreenToClient(
                 m_input->ClientToScreen(evt.GetPosition()));

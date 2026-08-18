@@ -598,16 +598,18 @@ bool CBitmap::CreateBitmap(int nWidth, int nHeight, UINT nPlanes,
 
     if (lpBits && nBitCount == 1) {
         // Monochrome bitmap from raw bit data (used for pattern brushes).
-        // Windows stores 8 bytes, one byte per row, MSB = leftmost pixel.
+        // Windows DIB scanlines are WORD-aligned, not byte-packed -- each row
+        // occupies stride bytes even though only the first ceil(w/8) hold bits.
         // We convert to a wxImage (8x8) then create a wxBitmap.
         wxImage img(w, h);
         img.InitAlpha();
         const unsigned char* src = static_cast<const unsigned char*>(lpBits);
+        const int stride = ((w * (int)nBitCount + 15) / 16) * 2;
         for (int y = 0; y < h && y < 8; ++y) {
-            unsigned char row = src[y];
+            unsigned char row = src[y * stride];
             for (int x = 0; x < w && x < 8; ++x) {
                 bool set = (row & (0x80u >> x)) != 0;
-                unsigned char v = set ? 0 : 255;   // Windows mono: 1=black,0=white
+                unsigned char v = set ? 255 : 0;   // GDI mono: 1=background, 0=text (white/black with the default DC colours)
                 img.SetRGB(x, y, v, v, v);
                 img.SetAlpha(x, y, 255);
             }
@@ -1228,7 +1230,7 @@ void CDC::DrawEdge(LPRECT lpRect, UINT nEdge, UINT nFlags) {
     const COLORREF kShadow    = 0x808080;   // COLOR_3DSHADOW
     const COLORREF kDkShadow  = 0x404040;   // COLOR_3DDKSHADOW
 
-    if ((nFlags & BF_RECT) == 0) nFlags |= BF_RECT;   // no sides named = all
+    if ((nFlags & BF_RECT) == 0) return;   // no sides named = Win32 draws nothing
 
     RECT r = *lpRect;
 

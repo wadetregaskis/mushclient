@@ -92,8 +92,6 @@ public:
 
 	int SetDateTime(int nYear, int nMonth, int nDay,
 		int nHour, int nMin, double nSec);
-	int SetDate(int nYear, int nMonth, int nDay);
-	int SetTime(int nHour, int nMin, double nSec);
 
 #ifndef _WIN32
 	// Format — uses strftime-style fmt string, returns a CString.
@@ -178,9 +176,6 @@ public:
 
 	long GetDays() const       // component days in span
   	{ ASSERT(GetStatus() == valid); return (long)m_span; }
-	long GetHours() const;      // component hours in span (-23 to 23)
-	long GetMinutes() const;    // component minutes in span (-59 to 59)
-	double GetSeconds() const;    // component seconds in span (-59 to 59)
 
 // Operations
 public:
@@ -219,11 +214,6 @@ public:
 	// DateTimeSpan math
 	CmcDateTimeSpan operator+(const CmcDateTimeSpan& dateSpan) const;
 	CmcDateTimeSpan operator-(const CmcDateTimeSpan& dateSpan) const;
-	const CmcDateTimeSpan& operator+=(const CmcDateTimeSpan dateSpan);
-	const CmcDateTimeSpan& operator-=(const CmcDateTimeSpan dateSpan);
-	CmcDateTimeSpan operator-() const;
-
-	operator double() const;
 
 	void SetDateTimeSpan(long lDays, int nHours, int nMins, double nSecs);
 

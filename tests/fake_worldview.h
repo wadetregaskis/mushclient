@@ -39,10 +39,19 @@ struct FakeWorldView : pal::IWorldView {
     std::string    currentCommand() const override { return cmd; }
     pal::TextRange outputSelection() const override { return sel; }
     int            scrollPos() const override { return scroll; }
-    pal::Size      outputAreaChars() const override { return { 80, 25 }; }
+    // Deliberately NOT the wrap-column default (80): a caller that silently
+    // falls back to the wrap column instead of asking the view would pass a
+    // fixture seeded at 80 x 25 without anyone noticing.  Settable so a future
+    // consumer of the seam (currently dead, K-781) can be tested discriminately.
+    pal::Size areaChars{ 61, 17 };
+    pal::Size      outputAreaChars() const override { return areaChars; }
 
     // ── the command input bar (P2 command family) ──────────────────────────
     std::vector<std::string> history;       // newest last, like the wx frame's
+    // Mirrors CWorldChildFrame::HistoryLimit(): both real IWorldView adapters
+    // evict at the world's history-lines setting, so a fake with unbounded
+    // history has no failing-capable test through the seam for that eviction.
+    int historyCap = 1000;
     pal::Range cmdSel;                      // the bar's selection
     bool selectedAll = false;
     std::string fontFace; int fontPts = 0; bool fontBold = false, fontItalic = false;
@@ -90,6 +99,8 @@ struct FakeWorldView : pal::IWorldView {
         std::string entry(text);
         if (!history.empty() && history.back() == entry) return;
         history.push_back(entry);
+        if (historyCap > 0 && (int)history.size() > historyCap)
+            history.erase(history.begin());
     }
     void deleteCommandHistory() override { history.clear(); }
     void setInputFont(const char* face, int pointSize,

@@ -224,6 +224,9 @@ void Method_dealloc(PyObject* self)
 PyObject* Method_str(PyObject* self)
   {
   MethodObject* m = (MethodObject*) self;
+  if (!MC_DispatchDocIsLive(m->doc))
+    { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
+      return nullptr; }
   VARIANT result; VariantInit(&result);
   if (MC_DispatchInvoke(m->doc, m->name, nullptr, 0, result, nullptr) == MC_DISP_OK)
     {
@@ -249,6 +252,14 @@ PyObject* World_getattro(PyObject* self, PyObject* nameobj)
       return make_method(doc, name);
     if (MC_DispatchHasProperty(name))
       {
+      // The same stale-proxy rule Method_call keeps -- and it has to be INSIDE
+      // this branch, or a dunder or an unknown name would stop falling through
+      // to the generic lookup.  A property is read off the doc's members
+      // directly, with no method call anywhere, so Method_call's guard never
+      // saw it: world.Trace on a proxy to a closed world read freed memory.
+      if (!MC_DispatchDocIsLive(doc))
+        { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
+          return nullptr; }
       VARIANT v;
       if (MC_DispatchGetProperty(doc, name, v))
         { PyObject* r = variant_to_py(v); MC_VariantClear(v); return r; }
@@ -264,6 +275,9 @@ int World_setattro(PyObject* self, PyObject* nameobj, PyObject* value)
   CMUSHclientDoc* doc = ((WorldObject*) self)->doc;
   if (name && value && MC_DispatchHasProperty(name))
     {
+    if (!MC_DispatchDocIsLive(doc))
+      { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
+        return -1; }
     VARIANT v;
     py_to_variant(value, v);
     bool ok = MC_DispatchSetProperty(doc, name, v);

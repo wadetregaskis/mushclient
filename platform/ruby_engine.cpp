@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <climits>          // LONG_MAX — the 64-bit range a VARIANT's lVal holds
 #include <pthread.h>        // pthread_get_stackaddr_np — GC stack base (see ensure_started)
 
 // MUSHclient defines WIN32 (no underscore) for source compatibility; Ruby's
@@ -120,7 +121,25 @@ void ruby_to_variant (VALUE r, VARIANT& out)
     case T_FALSE:  out.vt = VT_BOOL; out.boolVal = 0; return;
     case T_FIXNUM: out.vt = VT_I4; out.lVal = (long) NUM2LONG (r); return;
     case T_FLOAT:  out.vt = VT_R8; out.dblVal = NUM2DBL (r); return;
-    case T_BIGNUM: out.vt = VT_R8; out.dblVal = NUM2DBL (r); return;
+    case T_BIGNUM:
+      {
+      // A Bignum that still fits lVal must cross as VT_I4, not VT_R8.  CRuby's
+      // tagged Fixnum stops at 2^62, so 2^62+1 is already a Bignum -- and a
+      // double holds only 53 mantissa bits, so it arrived rounded, and every
+      // one of them reached a BSTR parameter as "%.14g" scientific notation
+      // (world.SetVariable ('big', 2**62+1) stored "4.6116860184274e+18").
+      // rb_integer_pack fills the ABSOLUTE value and returns the sign (±2 when
+      // it did not fit), so the range test raises nothing: an rb_raise here
+      // would longjmp past the live C++ destructors this file warns about.
+      unsigned long long mag = 0;
+      const int sign = rb_integer_pack (r, &mag, 1, sizeof mag, 0,
+                                        INTEGER_PACK_NATIVE_BYTE_ORDER);
+      if (sign == 1 && mag <= (unsigned long long) LONG_MAX)
+        { out.vt = VT_I4; out.lVal = (long) mag; return; }
+      if (sign == -1 && mag <= (unsigned long long) LONG_MAX + 1ULL)
+        { out.vt = VT_I4; out.lVal = (long) (- (long long) (mag - 1) - 1); return; }
+      out.vt = VT_R8; out.dblVal = NUM2DBL (r); return;   // genuinely out of range
+      }
     default: break;
     }
   // strings and everything else -> string (the dispatch coerces as needed)

@@ -51,7 +51,8 @@ note "configuring (static, threaded, no Tk) and building"
 (
     cd "$DEST/src/unix"
     ./configure --prefix="$INSTALL" --disable-shared --enable-threads >/dev/null
-    make -j"$(sysctl -n hw.ncpu)" >/dev/null
+    JOBS="$(sysctl -n hw.ncpu 2>/dev/null || true)"
+    make -j"${JOBS:-4}" >/dev/null
     make install >/dev/null
 ) || die "Tcl build failed"
 

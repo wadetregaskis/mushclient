@@ -51,7 +51,8 @@ OPENSSL_PREFIX="${OPENSSL_PREFIX:-$(brew --prefix openssl@3 2>/dev/null || true)
 INSTALL="$DEST/install"                              # final staged Ruby
 DEPS="$DEST/deps"                                    # static libyaml (OpenSSL = Homebrew)
 SRC="$DEST/src"
-JOBS="$(sysctl -n hw.ncpu)"
+JOBS="$(sysctl -n hw.ncpu 2>/dev/null || true)"
+JOBS="${JOBS:-4}"
 mkdir -p "$DEST" "$SRC"
 
 # download $1=url $2=cache-file ; verify it is a gzip tarball

@@ -296,8 +296,10 @@ not "reproduce the Windows DLL".
    rpaths. (The Ruby in `Contents/lib` is already `@rpath`/`@executable_path`-
    relative, so the relocator leaves it alone.) Result: `otool -L` shows only
    `/usr/lib`, `/System`, and `@`-relative paths.
-4. **Info.plist**: set `LSMinimumSystemVersion`, `NSHighResolutionCapable`,
-   `CFBundleVersion`.
+4. **Info.plist**: set `LSMinimumSystemVersion`, `NSHighResolutionCapable`.
+   (`CFBundleShortVersionString`/`CFBundleVersion` are already set by CMake,
+   sourced from `../version.h`'s `VERSION_STRING` — the app's version is
+   edited in exactly one place.)
 5. **Code sign** inside-out — nested Mach-O first (everything in
    `Contents/Frameworks` *and* `Contents/lib`, i.e. libruby + its `.bundle`
    extensions), then the app — with the hardened runtime and
@@ -318,5 +320,6 @@ the app can load the bundled dylibs / framework). See the comments in
 ### Useful flags
 
 `--no-relocate` (fast local build against Homebrew), `--no-dmg`, `--clean`,
-`-j N`, `-o DIR`, `-t Debug`, `--discworld-dir DIR`. Run
+`-j N`, `-o DIR`, `-t Debug`, `--discworld-dir DIR`, `--no-prune-python`
+(keep tkinter/tests/idle in the bundled Python framework). Run
 `packaging/build-app.sh --help` for the full list.

@@ -72,6 +72,7 @@ Options
   -j, --jobs N              parallel build jobs (default: ncpu)
       --no-dmg              skip DMG creation (leave the .app in dist/)
       --no-relocate         skip dylib bundling (faster; not self-contained)
+      --no-prune-python     keep tkinter/tests/idle in the bundled Python framework
       --clean               wipe the build dir first
   -h, --help                this help
 EOF
@@ -263,6 +264,13 @@ relocate_one() {  # scan one binary, bundle + rewrite its non-system deps
                     # loaded image.
                     real="$(resolve_symlink "$resolved")"
                     base="$(basename "$real")"
+                    # A dependency that already resolves to a path inside the
+                    # .app (e.g. libruby staged into Contents/lib by CMake) is
+                    # already bundled -- copying it into Frameworks too would
+                    # ship and sign a second copy of the same image.
+                    case "$real" in
+                        "$APP"/*) continue;;
+                    esac
                     if [ ! -f "$FRAMEWORKS/$base" ]; then          # not yet bundled
                         cp "$real" "$FRAMEWORKS/$base"
                         chmod u+w "$FRAMEWORKS/$base"
@@ -428,8 +436,6 @@ $PB -c "Set :LSMinimumSystemVersion $MIN_MACOS" "$plist" 2>/dev/null || \
     $PB -c "Add :LSMinimumSystemVersion string $MIN_MACOS" "$plist"
 $PB -c "Set :NSHighResolutionCapable true" "$plist" 2>/dev/null || \
     $PB -c "Add :NSHighResolutionCapable bool true" "$plist"
-$PB -c "Print :CFBundleVersion" "$plist" >/dev/null 2>&1 || \
-    $PB -c "Add :CFBundleVersion string $($PB -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null || echo 1.0)" "$plist"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 5. code sign (inside-out)

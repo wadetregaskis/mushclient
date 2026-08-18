@@ -4610,6 +4610,19 @@ int CMUSHclientDoc::AutoWrapColumnFor (int iTextColumns) const
   return ClampWrapColumn (iTextColumns);
   }
 
+// The NAWS width/height go out as raw bytes between IAC SB NAWS and IAC SE, so
+// a dimension byte that happens to be 255 IS an IAC and has to be doubled --
+// otherwise the MUD reads it as the start of a command, swallows the byte after
+// it, and the subnegotiation goes out of step.  See RFC 854 ("if a 255 is to be
+// sent as data, it must be doubled") and RFC 1073.  Appends one payload byte,
+// escaped, to p at *piLen.
+static void AppendNAWSByte (unsigned char * p, int & iLen, const unsigned char c)
+  {
+  p [iLen++] = c;
+  if (c == (unsigned char) IAC)
+    p [iLen++] = (unsigned char) IAC;
+  }   // end of AppendNAWSByte
+
 void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
   {
 
@@ -4634,13 +4647,18 @@ void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
   {
     int cols = std::max(1, iNewWidth);
     int rows = std::max(1, m_gui_rows);
-    unsigned char p[] = {
-        (unsigned char)IAC, (unsigned char)SB, (unsigned char)TELOPT_NAWS,
-        (unsigned char)HIBYTE(cols), (unsigned char)LOBYTE(cols),
-        (unsigned char)HIBYTE(rows), (unsigned char)LOBYTE(rows),
-        (unsigned char)IAC, (unsigned char)SE
-    };
-    SendPacket(p, sizeof p);
+    unsigned char p [13];   // IAC SB NAWS + up to 8 escaped payload bytes + IAC SE
+    int iLen = 0;
+    p [iLen++] = (unsigned char) IAC;
+    p [iLen++] = (unsigned char) SB;
+    p [iLen++] = (unsigned char) TELOPT_NAWS;
+    AppendNAWSByte (p, iLen, (unsigned char) HIBYTE (cols));
+    AppendNAWSByte (p, iLen, (unsigned char) LOBYTE (cols));
+    AppendNAWSByte (p, iLen, (unsigned char) HIBYTE (rows));
+    AppendNAWSByte (p, iLen, (unsigned char) LOBYTE (rows));
+    p [iLen++] = (unsigned char) IAC;
+    p [iLen++] = (unsigned char) SE;
+    SendPacket (p, iLen);
   }
 #else
   // Windows: derive dimensions from the MFC view geometry.
@@ -4665,11 +4683,18 @@ void CMUSHclientDoc::SendWindowSizes (const int iNewWidth)
       WORD height = (r.bottom - r.top - m_iPixelOffset) / m_FontHeight;
 
       // now tell them our size
-      unsigned char p [] = { IAC, SB, TELOPT_NAWS,
-                              HIBYTE (iNewWidth), LOBYTE (iNewWidth),
-                              HIBYTE (height), LOBYTE (height),
-                              IAC, SE };
-      SendPacket (p, sizeof p);
+      unsigned char p [13];   // IAC SB NAWS + up to 8 escaped payload bytes + IAC SE
+      int iLen = 0;
+      p [iLen++] = (unsigned char) IAC;
+      p [iLen++] = (unsigned char) SB;
+      p [iLen++] = (unsigned char) TELOPT_NAWS;
+      AppendNAWSByte (p, iLen, (unsigned char) HIBYTE (iNewWidth));
+      AppendNAWSByte (p, iLen, (unsigned char) LOBYTE (iNewWidth));
+      AppendNAWSByte (p, iLen, (unsigned char) HIBYTE (height));
+      AppendNAWSByte (p, iLen, (unsigned char) LOBYTE (height));
+      p [iLen++] = (unsigned char) IAC;
+      p [iLen++] = (unsigned char) SE;
+      SendPacket (p, iLen);
 
       break;    // found one
       }

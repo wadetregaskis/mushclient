@@ -1928,6 +1928,52 @@ TEST(SmallArms, SendWindowSizesEmitsNaws)
     delete doc;
 }
 
+// UPSTREAM-BUGS #15: a NAWS dimension byte of exactly 255 IS an IAC, and the
+// four payload bytes sit between IAC SB NAWS and IAC SE where RFC 854 requires
+// a 255 sent as data to be doubled.  Unescaped, the MUD reads it as the start
+// of a command, eats the byte after it, and the subnegotiation goes out of
+// step.  Only the single value 255 per byte trips it, which is why it survived.
+TEST(SmallArms, NawsEscapesADimensionByteOfExactly255)
+{
+    CMUSHclientDoc* doc = make_doc();
+    doc->m_bNAWS_wanted = TRUE;
+    doc->m_gui_rows = 30;
+
+    // 255 columns: the LOW byte is 0xFF and must go out doubled.  Unfixed, the
+    // wire carries the 9-byte unescaped form and this find() fails.
+    doc->SendWindowSizes(255);
+    const std::string colsEscaped =
+        { '\xFF', '\xFA', '\x1F', 0, '\xFF', '\xFF', 0, 30, '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(colsEscaped) != std::string::npos);
+
+    // ...and the unescaped form must NOT be there, so a build that appends the
+    // doubled byte as well as the raw one cannot pass on the assertion above.
+    const std::string colsRaw =
+        { '\xFF', '\xFA', '\x1F', 0, '\xFF', 0, 30, '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(colsRaw) == std::string::npos);
+
+    // The same for the ROWS pair, which the old code wrote from a different
+    // slot of the same array — 255 rows, 80 columns.
+    wire(doc).sent.clear();
+    doc->m_gui_rows = 255;
+    doc->SendWindowSizes(80);
+    const std::string rowsEscaped =
+        { '\xFF', '\xFA', '\x1F', 0, 80, 0, '\xFF', '\xFF', '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(rowsEscaped) != std::string::npos);
+
+    // Control: only 0xFF is doubled.  256 columns is 0x01 0x00 and 30 rows is
+    // 0x00 0x1E — nothing here may be escaped, so a fix that doubled every byte
+    // (or every high bit) fails this while still passing the two above.
+    wire(doc).sent.clear();
+    doc->m_gui_rows = 30;
+    doc->SendWindowSizes(256);
+    const std::string plain =
+        { '\xFF', '\xFA', '\x1F', 1, 0, 0, 30, '\xFF', '\xF0' };
+    EXPECT_TRUE(wire(doc).sent.find(plain) != std::string::npos);
+    EXPECT_EQ(9, (int)wire(doc).sent.size());   // exactly the 9 unescaped bytes
+    delete doc;
+}
+
 // world.TextRectangle must renegotiate the window size with the MUD.
 //
 // Reserving a text rectangle shrinks the area the output is laid out in, so the

@@ -22,6 +22,7 @@
 #include "doc.h"
 #include "platform/mc_dispatch.h"
 #include "scripting/errors.h"
+#include "fake_worldview.h"    // the window-family defaults need a view to land on
 
 // VT_DISPATCH is not in the shim's VT_* set (mc_dispatch.cpp defines it locally
 // for the same reason): it only exists at this boundary, where a world method
@@ -430,6 +431,48 @@ TEST(McDispatch, OmittedTrailingArgsTakeTheLuaDefaults)
     call(doc, "DatabaseClose", { vstr("db") }, dbc);
     MC_VariantClear(dbc);
     ::unlink(dbpath);
+}
+
+// The window default belongs to the methods that HAVE a Which parameter.  The
+// table used to name MoveWorldWindow / GetWorldWindowPosition, which do not
+// take one at all (they pass 1 to the X variant themselves), so those two rows
+// never fired while the methods that needed them -- MoveWorldWindowX with four
+// arguments, GetWorldWindowPositionX with none -- got Which = 0 and quietly did
+// nothing.
+TEST(McDispatch, TheWindowMethodsDefaultToTheFirstWindow)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc;
+    doc.m_pWorldView = &view;
+
+    VARIANT r; VariantInit(&r);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "MoveWorldWindowX",
+        { vi4(10), vi4(20), vi4(300), vi4(200) }, r));   // no Which supplied
+    MC_VariantClear(r);
+    EXPECT_TRUE(view.mwX == 10 && view.mwY == 20 &&
+                view.mwW == 300 && view.mwH == 200);
+
+    VARIANT p; VariantInit(&p);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetWorldWindowPositionX", {}, p));
+    EXPECT_EQ(std::string("10,20,640,480"), bstr_of(p));   // the view's outputRect
+    MC_VariantClear(p);
+
+    // The control: Which is read, not ignored -- a second window (which the
+    // port does not have) is still answered with nothing.  Without it, a method
+    // that dropped Which entirely would pass the two assertions above.
+    view.mwX = -1;
+    VARIANT r2; VariantInit(&r2);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "MoveWorldWindowX",
+        { vi4(1), vi4(2), vi4(3), vi4(4), vi2(2) }, r2));
+    MC_VariantClear(r2);
+    EXPECT_TRUE(view.mwX == -1);
+
+    VARIANT p2; VariantInit(&p2);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetWorldWindowPositionX", { vi2(2) }, p2));
+    EXPECT_EQ(std::string(""), bstr_of(p2));
+    MC_VariantClear(p2);
+
+    doc.m_pWorldView = nullptr;
 }
 
 // Tcl marshals every argument as a string; the boolean words its own model

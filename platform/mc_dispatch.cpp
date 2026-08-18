@@ -361,6 +361,14 @@ void build_table()
 // exactly, slot numbers 0-based; methods not listed keep the zero-fill that
 // McDispatch.MissingArgumentsAreTheZeroValueNotGarbage pins.  Method names
 // LOWERCASE (compared against lc(name)).
+//
+// Only METHODS belong here, and only slots the method actually has.  A
+// PROPERTY (world.Trace = 1) travels MC_DispatchSetProperty, which never
+// consults this table, so rows named for the property setters -- setechoinput,
+// setloginput, setlognotes, setlogoutput, setmapping, settrace -- could never
+// fire and are gone; and MoveWorldWindow / GetWorldWindowPosition do not take
+// the Which parameter at all (they hand 1 to the X variant themselves), so the
+// window rows name MoveWorldWindowX / GetWorldWindowPositionX, which do.
 struct ArgDefault { const char* method; int slot; long value; };
 static const ArgDefault kArgDefaults[] = {
   { "addtriggerex",          9, DEFAULT_TRIGGER_SEQUENCE },
@@ -370,7 +378,6 @@ static const ArgDefault kArgDefaults[] = {
   { "chatcall",              1, DEFAULT_CHAT_PORT },
   { "chatcallzchat",         1, DEFAULT_CHAT_PORT },
   { "databaseopen",          2, 2 | 4 },                // SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
-  { "setechoinput",          0, 1 },
   { "enablealias",           1, 1 },
   { "enablealiasgroup",      1, 1 },
   { "enablegroup",           1, 1 },
@@ -380,13 +387,9 @@ static const ArgDefault kArgDefaults[] = {
   { "enabletimergroup",      1, 1 },
   { "enabletrigger",         1, 1 },
   { "enabletriggergroup",    1, 1 },
-  { "getworldwindowposition",0, 1 },
-  { "setloginput",           0, 1 },
-  { "setlognotes",           0, 1 },
-  { "setlogoutput",          0, 1 },
-  { "setmapping",            0, 1 },
+  { "getworldwindowpositionx",0, 1 },
   { "metaphone",             1, 4 },
-  { "moveworldwindow",       4, 1 },
+  { "moveworldwindowx",      4, 1 },
   { "notepadreadonly",       1, 1 },
   { "pause",                 0, 1 },
   { "queue",                 1, 1 },
@@ -394,7 +397,6 @@ static const ArgDefault kArgDefaults[] = {
   { "setchanged",            0, 1 },
   { "setscroll",             1, 1 },
   { "showinfobar",           0, 1 },
-  { "settrace",              0, 1 },
   { "windowblendimage",      7, 1 },
   { "windowdrawimage",       6, 1 },
   { "windowdrawimagealpha",  6, 1 },

@@ -3747,6 +3747,21 @@ POSITION pos;
 
     } // end of catch block
 
+// MFC's operator new throws CMemoryException *; the port's does not exist, so
+// off Windows a failed "new CLine" throws std::bad_alloc BY VALUE and the arm
+// above never matches -- the exception escapes the socket/timer handler and
+// takes the app down instead of closing the one world.  Same recovery, minus
+// the MFC-only Delete.  Inert on Windows.
+
+  catch (std::bad_alloc &)
+    {
+
+    RemoveChunk ();   // get rid of JUMP_SIZE lines
+    OnConnectionDisconnect ();    // close the world
+    TMessageBox ("Ran out of memory. The world has been closed.");
+
+    } // end of catch block
+
       
 // if this document does not have an active view, note we have a new message for it
 // (IsWorldViewActive is that same test on Windows; on the port it is the flag

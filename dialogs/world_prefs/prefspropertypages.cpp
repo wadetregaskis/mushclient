@@ -5225,6 +5225,13 @@ DWORD length;
     e->Delete ();
     } // end of catching a memory exception
 
+  // off Windows there is no MFC operator new, so an allocation failure arrives
+  // as std::bad_alloc by value and the arm above never matches; inert on Windows
+   catch (std::bad_alloc &)
+    {
+    ::TMessageBox ("Insufficient memory to do this operation", MB_ICONEXCLAMATION);
+    } // end of catching a memory exception
+
 
   delete f;       // delete file
 
@@ -5284,6 +5291,13 @@ CString str;
     {
     ::TMessageBox ("Insufficient memory to do this operation", MB_ICONEXCLAMATION);
     e->Delete ();
+    } // end of catching a memory exception
+
+  // off Windows there is no MFC operator new, so an allocation failure arrives
+  // as std::bad_alloc by value and the arm above never matches; inert on Windows
+   catch (std::bad_alloc &)
+    {
+    ::TMessageBox ("Insufficient memory to do this operation", MB_ICONEXCLAMATION);
     } // end of catching a memory exception
 
 

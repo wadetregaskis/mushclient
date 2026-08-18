@@ -791,6 +791,18 @@ void TestClipboardRoundTrip()
     CString saved;
     const bool hadSaved = GetClipboardContents(saved, false, false) ? true : false;
 
+    // Saving and restoring only covers what can be READ as text.  An empty read
+    // does not mean an empty clipboard: a copied image or file reference reads
+    // as nothing here, and putontoclipboard replaces the whole pasteboard, so
+    // running the round trip would destroy it with no way to put it back.  A
+    // test is not entitled to do that to whoever typed `ctest`.
+    if ((!hadSaved || saved.IsEmpty()) &&
+        g_wxhook_clipboard_has_nontext && g_wxhook_clipboard_has_nontext())
+    {
+        printf("  [SKIP] clipboard holds non-text content - not overwriting it\n");
+        return;
+    }
+
     // Deliberately contains the characters the forum-codes path counts, so a
     // silent truncation shows up as a wrong length rather than a lucky match.
     const char* const kProbe = "HELLO[42]WORLD\\end";
@@ -1055,6 +1067,72 @@ void TestListBoxMutators()
     host->Destroy();
 }
 
+// ── 14. utils.directorypicker shows a dialog, or answers nil (2026-08-18) ──
+// The app's Lua "utils" grab-bag comes from scripting/lua_utils.cpp, whose
+// directorypicker body hung entirely off ::SHGetMalloc — off Windows the shim
+// stub that always returns E_FAIL (platform/mfc_ui.h).  So the body never ran,
+// nothing was pushed, and the function's `return 1` handed back whatever
+// argument was still on top of the Lua stack: a plugin asking the user for a
+// folder got back the DEFAULT PATH it had passed in, indistinguishable from the
+// user having chosen exactly that, or the dialog TITLE when it passed no
+// default.  No dialog was ever shown.
+//
+// It has to be tested here.  mushcore links the portable twin
+// (scripting/lua_utils_portable.cpp), which always had the hook arm, so the
+// headless suite exercises the other body entirely.
+extern const struct luaL_Reg * ptr_xmllib;      // scripting/lua_utils.cpp
+
+static std::string g_dirpick_title, g_dirpick_default;
+
+void TestLuaDirectoryPicker()
+{
+    printf("utils.directorypicker:\n");
+
+    lua_State* L = luaL_newstate();
+    if (!L) { check(false, "a Lua state to register utils into"); return; }
+    luaL_openlibs(L);
+    luaL_register(L, "utils", ptr_xmllib);
+    lua_settop(L, 0);
+
+    char* (*const savedHook)(const char*, const char*) = g_wxhook_directorypicker;
+
+    g_dirpick_title.clear();
+    g_dirpick_default.clear();
+    g_wxhook_directorypicker = [](const char* title, const char* defPath) -> char* {
+        g_dirpick_title   = title   ? title   : "";
+        g_dirpick_default = defPath ? defPath : "";
+        return strdup("/fake");
+    };
+
+    check(luaL_dostring(L, "picked = utils.directorypicker ('Pick one', '/tmp')") == 0,
+          "utils.directorypicker is registered and runs");
+    lua_getglobal(L, "picked");
+    check(lua_isstring(L, -1) && strcmp(lua_tostring(L, -1), "/fake") == 0,
+          "...and returns the folder the picker actually chose");
+    lua_pop(L, 1);
+    check(g_dirpick_title == "Pick one" && g_dirpick_default == "/tmp",
+          "...having handed the title and the default directory to the dialog");
+
+    // No picker installed is the shape of the shipped defect: nothing can be
+    // chosen, so the answer must be nil.  Returning the default path here is
+    // the bug — the caller cannot tell it from a genuine choice.
+    g_wxhook_directorypicker = nullptr;
+    check(luaL_dostring(L, "picked = utils.directorypicker ('Pick one', '/tmp')") == 0,
+          "a call with no picker available still returns cleanly");
+    lua_getglobal(L, "picked");
+    check(lua_isnil(L, -1), "...and answers nil, not the default directory");
+    lua_pop(L, 1);
+
+    check(luaL_dostring(L, "picked = utils.directorypicker ('Pick one')") == 0,
+          "...as does one that passed no default directory");
+    lua_getglobal(L, "picked");
+    check(lua_isnil(L, -1), "...answering nil rather than the dialog title");
+    lua_pop(L, 1);
+
+    g_wxhook_directorypicker = savedHook;
+    lua_close(L);
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -1072,6 +1150,7 @@ int RunGuiBridgeSelfTest()
     TestDdxCharsetRoundTrip();
     TestScriptingPageBrowse();
     TestListBoxMutators();
+    TestLuaDirectoryPicker();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

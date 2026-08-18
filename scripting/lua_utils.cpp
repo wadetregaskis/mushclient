@@ -852,6 +852,28 @@ static int directorypicker (lua_State *L)
   const char * sTitle = luaL_optstring (L, 1, "");
   const char * sDefaultName = luaL_optstring (L, 2, "");
 
+#ifndef _WIN32
+  // Portable folder picker (wxDirDialog via the bridge).  Without this the
+  // whole Windows body below is skipped -- it hangs off ::SHGetMalloc, which
+  // off Windows is the shim stub returning E_FAIL (platform/mfc_ui.h) -- so
+  // nothing was ever pushed and the "return 1" below handed back whatever
+  // argument happened to be on top of the stack: the default directory, as if
+  // the user had chosen it, or the title if no default was passed.  Same arm as
+  // the folder pickers in dialogs/global_prefs/GlobalPrefs.cpp.
+  if (!g_wxhook_directorypicker)
+    lua_pushnil (L);
+  else
+    {
+    char * picked = g_wxhook_directorypicker (sTitle, sDefaultName);
+    if (picked)
+      {
+      lua_pushstring (L, picked);
+      free (picked);
+      }
+    else
+      lua_pushnil (L);
+    }
+#else
 	// Gets the Shell's default allocator
 	LPMALLOC pMalloc;
 	if (::SHGetMalloc(&pMalloc) == NOERROR)
@@ -890,6 +912,7 @@ static int directorypicker (lua_State *L)
 		// Release the shell's allocator.
 		pMalloc->Release();
     }
+#endif // _WIN32
 
   return 1;
 

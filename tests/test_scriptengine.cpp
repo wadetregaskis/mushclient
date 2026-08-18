@@ -638,4 +638,29 @@ TEST(ScriptEngine, EachEngineTalksToItsOwnWorld)
     EXPECT_EQ(CString("bbbbbbbbbbbbbbbbbbbbbbbb"), CString(v.bstrVal ? v.bstrVal : ""));
 }
 
+// ── the world surface the engine actually builds ──────────────────────────
+//
+// RegisterPortableLuaExtras (scripting/lua_utils_portable.cpp) adds one name
+// the Windows Lua API does not have, world.ExpandVariables.  No engine-built
+// state has ever carried it here: the OpenLuaDelayed call that registered it
+// was guarded on !MUSHCLIENT_FULL_BUILD, which the Stage 9 fold made
+// permanently false, and it has now been removed.  Only tests/lua_test_helpers.h
+// registers it, so every make_lua()-based test sees a surface the product does
+// not have -- this one goes through CreateScriptEngine, the way a world does.
+//
+// It is therefore the test that would notice if the extra were ever wired into
+// the product, which is the open question (K-231), not an accident to fix here.
+TEST(ScriptEngine, TheEngineBuiltWorldTableCarriesNoPortOnlyExtras)
+{
+    Engine e("function probe(s)\n"
+             "  return tostring (world.ExpandVariables) .. '/' ..\n"
+             "         tostring (world.Note ~= nil)\n"
+             "end\n");
+    DISPID d = e.id("probe");
+    ASSERT_NE(DISPID_UNKNOWN, d);
+    // The second half is the control: the world table IS populated, so the
+    // "nil" is a statement about that one name, not about an empty table.
+    EXPECT_EQ(CString("nil/true"), e.simple(d, "probe", ""));
+}
+
 MC_TEST_MAIN()

@@ -2143,27 +2143,48 @@ TEST(LuaScripting, CreateScriptEngineRefusesToReplaceALiveEngine)
 static int  g_askCount = 0;
 static int  CountingAsk(const char*, const char*, unsigned) { ++g_askCount; return IDNO; }
 
+// Saves a process-global g_wxhook_* pointer and restores it in the
+// destructor, so an ASSERT_* between the install and a manual reset (which
+// returns out of the whole TEST body, not just past the reset line) cannot
+// leave the hook installed for every later TEST() in this binary.
+template <typename T>
+struct HookGuard {
+    T& slot;
+    T  saved;
+    explicit HookGuard(T& s) : slot(s), saved(s) {}
+    ~HookGuard() { slot = saved; }
+};
+
 TEST(LuaScripting, ReloadNeverDoesNotEvenAsk)
 {
     char path[256];
     snprintf(path, sizeof path, "/tmp/mc_test_neverask_%d.lua", (int)getpid());
     const time_t t0 = time(nullptr) - 100;
 
-    auto write_script = [&](const char* body, time_t when) {
+    // Returns false (via EXPECT_, not ASSERT_) on a write failure instead of
+    // just unwinding out of the lambda: an ASSERT_* inside a lambda only
+    // returns from the LAMBDA, letting the TEST continue past a failed write
+    // with a stale file on disk -- which let the targeted
+    // EXPECT_EQ(0, g_askCount) below pass vacuously in that corner case
+    // instead of failing at the point of the real defect.  Callers now check
+    // the return value with their own ASSERT_TRUE, which aborts the TEST body.
+    auto write_script = [&](const char* body, time_t when) -> bool {
         FILE* f = fopen(path, "wb");
-        ASSERT_TRUE(f != nullptr);
+        EXPECT_TRUE(f != nullptr);
+        if (!f) return false;
         fputs(body, f);
         fclose(f);
         struct utimbuf tb; tb.actime = tb.modtime = when;
-        ASSERT_EQ(0, utime(path, &tb));
+        EXPECT_EQ(0, utime(path, &tb));
+        return true;
     };
 
-    int (*saved)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    HookGuard<decltype(g_wxhook_message_box)> mbGuard(g_wxhook_message_box);
     g_wxhook_message_box = CountingAsk;
 
     // eReloadConfirm ASKS — the control, without which "asked nothing" could
     // mean the change was never noticed.
-    write_script("function fn1() end\n", t0);
+    ASSERT_TRUE(write_script("function fn1() end\n", t0));
     {
         CMUSHclientDoc doc;
         doc.m_bEnableScripts    = TRUE;
@@ -2172,13 +2193,13 @@ TEST(LuaScripting, ReloadNeverDoesNotEvenAsk)
         doc.m_nReloadOption     = eReloadConfirm;
         ASSERT_FALSE(doc.CreateScriptEngine());
         g_askCount = 0;
-        write_script("function fn2() end\n", t0 + 10);
+        ASSERT_TRUE(write_script("function fn2() end\n", t0 + 10));
         doc.OnScriptFileChanged(false);
         EXPECT_GT(g_askCount, 0);
     }
 
     // eReloadNever asks NOTHING, on the very same change.
-    write_script("function fn1() end\n", t0);
+    ASSERT_TRUE(write_script("function fn1() end\n", t0));
     {
         CMUSHclientDoc doc;
         doc.m_bEnableScripts    = TRUE;
@@ -2187,12 +2208,11 @@ TEST(LuaScripting, ReloadNeverDoesNotEvenAsk)
         doc.m_nReloadOption     = eReloadNever;
         ASSERT_FALSE(doc.CreateScriptEngine());
         g_askCount = 0;
-        write_script("function fn2() end\n", t0 + 10);
+        ASSERT_TRUE(write_script("function fn2() end\n", t0 + 10));
         doc.OnScriptFileChanged(false);
         EXPECT_EQ(0, g_askCount);
     }
 
-    g_wxhook_message_box = saved;
     ::unlink(path);
 }
 

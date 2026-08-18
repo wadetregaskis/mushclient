@@ -986,16 +986,67 @@ TEST(Files, CArchiveStringIO) {
 
 TEST(Files, CArchiveBinaryOperatorsAreInert) {
     // The << / >> operators are deliberate no-ops on the port (world files are
-    // XML text); they must chain and not touch the file.
-    CArchive ar(nullptr, CArchive::store);
-    ar << (BYTE)1 << (WORD)2 << (DWORD)3 << (int)4 << (long)5
-       << 1.5f << 2.5 << true << CString("s");
-    POINT pt = {}; RECT rc = {};
-    ar << pt << rc << (const CObject*)nullptr;
-    BYTE b; WORD w; DWORD dw; int i; long l; float fl; double d; bool bo;
-    CString cs; CObject* obj = nullptr;
+    // XML text); they must chain and not touch the file.  A null-file archive
+    // cannot prove that -- "did nothing" and "there was nowhere to write
+    // anyway" look identical -- so the store half runs against a REAL temp
+    // file and asserts it is still empty afterwards.
+    std::string path = temp_path("archive_binary_inert.bin");
+    CFile::Remove(path.c_str());   // start clean; a stale file would pass vacuously
+
+    {
+        CFile f;
+        ASSERT_TRUE(f.Open(path.c_str(), CFile::modeCreate | CFile::modeWrite));
+        CArchive ar(&f, CArchive::store);
+        ar << (BYTE)1 << (WORD)2 << (DWORD)3 << (int)4 << (long)5
+           << 1.5f << 2.5 << true << CString("s");
+        POINT pt = {}; RECT rc = {};
+        ar << pt << rc << (const CObject*)nullptr;
+        f.Close();
+    }
+    {
+        CFile check;
+        ASSERT_TRUE(check.Open(path.c_str(), CFile::modeRead));
+        EXPECT_EQ((DWORD)0, check.GetLength());   // the << chain wrote nothing
+        check.Close();
+    }
+    CFile::Remove(path.c_str());
+
+    // Extraction: seed every local with a sentinel before the >> chain, and
+    // assert each sentinel SURVIVED unchanged -- a >> that actually read
+    // through the (empty/null) archive would leave some of these zeroed or
+    // blanked instead, which today's bare declarations could never catch.
+    BYTE     b  = 0xAB;
+    WORD     w  = 0xBEEF;
+    DWORD    dw = 0xDEADBEEF;
+    int      i  = -42;
+    long     l  = -99;
+    float    fl = 3.25f;
+    double   d  = 6.5;
+    bool     bo = true;
+    CString  cs("sentinel");
+    CObject* obj = (CObject*)0x1234;
+    POINT    pt = { 7, 8 };
+    RECT     rc = { 1, 2, 3, 4 };
+
     CArchive in(nullptr, CArchive::load);
     in >> b >> w >> dw >> i >> l >> fl >> d >> bo >> cs >> obj >> pt >> rc;
+
+    EXPECT_EQ((BYTE)0xAB, b);
+    EXPECT_EQ((WORD)0xBEEF, w);
+    EXPECT_EQ((DWORD)0xDEADBEEF, dw);
+    EXPECT_EQ(-42, i);
+    EXPECT_EQ(-99L, l);
+    EXPECT_EQ(3.25f, fl);
+    EXPECT_EQ(6.5, d);
+    EXPECT_TRUE(bo);
+    EXPECT_STREQ("sentinel", (LPCTSTR)cs);
+    EXPECT_EQ((CObject*)0x1234, obj);
+    EXPECT_EQ(7L, pt.x);
+    EXPECT_EQ(8L, pt.y);
+    EXPECT_EQ(1L, rc.left);
+    EXPECT_EQ(2L, rc.top);
+    EXPECT_EQ(3L, rc.right);
+    EXPECT_EQ(4L, rc.bottom);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2633,12 +2684,25 @@ TEST(CommonDialogs, FontDialogSeedsAndReturnsColour) {
 static std::string s_fdLeaf, s_fdDir;
 static bool s_fdOpen, s_fdOverwrite;
 
+// Saves a process-global g_wxhook_* pointer and restores it in the
+// destructor, so an ASSERT_* between the install and a manual reset (which
+// returns out of the whole TEST body, not just past the reset line) cannot
+// leave the hook installed for every later TEST() in this binary.
+template <typename T>
+struct HookGuard {
+    T& slot;
+    T  saved;
+    explicit HookGuard(T& s) : slot(s), saved(s) {}
+    ~HookGuard() { slot = saved; }
+};
+
 TEST(CommonDialogs, FileDialogPathPlumbing) {
     // Headless: cancel
     CFileDialog cancel(TRUE);
     EXPECT_EQ((INT_PTR)IDCANCEL, cancel.DoModal());
     EXPECT_EQ((POSITION)nullptr, cancel.GetStartPosition());
 
+    HookGuard<decltype(g_wxhook_file_dialog)> fdGuard(g_wxhook_file_dialog);
     g_wxhook_file_dialog = [](bool bOpen, const char*, const char* dir,
                               const char* leaf, const char*, bool ow) -> char* {
         s_fdOpen = bOpen;

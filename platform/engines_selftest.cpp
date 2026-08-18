@@ -203,7 +203,8 @@ struct Dialect {
     bool        exactBigInt;    // ...are its integers exact past 2^53, or doubles?
     const char* mxpHandler;     // defines OnMXPopenTag(name, args, table)
     const char* mxpTableType;   // what that language calls the table's type
-    const char* staleProxy;     // grab(), then useit() a proxy to a closed world
+    const char* staleProxy;     // grab(), then useit()/useprop() a proxy to a
+                                // closed world (method path, then property path)
     const char* gcChurn;        // allocate hard, then call the world API
 };
 
@@ -266,7 +267,10 @@ const Dialect kDialects[] = {
   "  if other == nil then return 'noproxy' end\n"
   "  local ok = pcall(function() return other:GetWorldID() end)\n"
   "  return ok and 'used' or 'refused'\n"
-  "end\n",
+  "end\n"
+  // Lua has no property syntax -- world.Trace is world.GetTrace() here -- so
+  // there is no second road into the doc for this language to guard.
+  "function useprop(s) return 'unsupported' end\n",
   "function churn(s)\n"
   "  local acc = {}\n"
   "  for i = 1, 2000 do acc[#acc+1] = tostring(i) .. s end\n"
@@ -334,6 +338,11 @@ const Dialect kDialects[] = {
   "def useit(s):\n"
   "    if other is None: return 'noproxy'\n"
   "    try:\n        other.GetWorldID()\n        return 'used'\n"
+  "    except Exception:\n        return 'refused'\n"
+  "def useprop(s):\n"
+  "    if other is None: return 'noproxy'\n"
+  "    try:\n        other.SpeedWalkDelay = 7\n"
+  "        return 'on' if other.SpeedWalkDelay == 7 else 'off'\n"
   "    except Exception:\n        return 'refused'\n",
   "import gc\n"
   "def churn(s):\n"
@@ -394,7 +403,10 @@ const Dialect kDialects[] = {
   "sub grab { $other = $world->GetWorld($_[0]); return 'ok'; }\n"
   "sub useit { return 'noproxy' unless defined $other;\n"
   "  my $r = eval { $other->GetWorldID(); 1 };\n"
-  "  return $r ? 'used' : 'refused'; }\n",
+  "  return $r ? 'used' : 'refused'; }\n"
+  "sub useprop { return 'noproxy' unless defined $other;\n"
+  "  my $r = eval { $other->SpeedWalkDelay(7); $other->SpeedWalkDelay() == 7 ? 1 : 0 };\n"
+  "  return defined($r) ? ($r ? 'on' : 'off') : 'refused'; }\n",
   "sub churn {\n"
   "  my @acc; push @acc, $_ . $_[0] for (1 .. 2000);\n"
   "  $world->SetVariable('gc', $world->Trim('  ' . $_[0] . '  '));\n"
@@ -455,6 +467,12 @@ const Dialect kDialects[] = {
   "function useit(s) {\n"
   "  if (!other) return 'noproxy';\n"
   "  try { other.GetWorldID(); return 'used'; } catch (e) { return 'refused'; }\n"
+  "}\n"
+  "function useprop(s) {\n"
+  "  if (!other) return 'noproxy';\n"
+  "  try { other.SpeedWalkDelay = 7;\n"
+  "        return other.SpeedWalkDelay == 7 ? 'on' : 'off'; }\n"
+  "  catch (e) { return 'refused'; }\n"
   "}\n",
   "function churn(s) {\n"
   "  var acc = [];\n"
@@ -519,7 +537,8 @@ const Dialect kDialects[] = {
   "  world SetVariable mxptype [expr {[catch {dict size $t}] ? \"notadict\" : \"dict\"}]\n"
   "}\n", "dict",
   "proc grab {s} { return unsupported }\n"
-  "proc useit {s} { return unsupported }\n",
+  "proc useit {s} { return unsupported }\n"
+  "proc useprop {s} { return unsupported }\n",
   "proc churn {s} {\n"
   "  set acc {}\n"
   "  for {set i 0} {$i < 2000} {incr i} { lappend acc $i$s }\n"
@@ -580,6 +599,13 @@ const Dialect kDialects[] = {
   "def useit(s)\n"
   "  return 'noproxy' if @other.nil?\n"
   "  begin; @other.GetWorldID(); 'used'; rescue Exception; 'refused'; end\n"
+  "end\n"
+  "def useprop(s)\n"
+  "  return 'noproxy' if @other.nil?\n"
+  "  begin\n"
+  "    @other.SpeedWalkDelay = 7\n"
+  "    @other.SpeedWalkDelay == 7 ? 'on' : 'off'\n"
+  "  rescue Exception; 'refused'; end\n"
   "end\n",
   "def churn(s)\n"
   "  acc = []\n"
@@ -1149,11 +1175,27 @@ void battery_stale_proxy(const Dialect& d)
     check(e.callRtn("useit", "") == "used", L,
           "a proxy to an OPEN world works");     // the positive control
 
+    // A dispatch PROPERTY is the SECOND road into the same doc, and the method
+    // guard cannot see it: world.SpeedWalkDelay reads and writes the members
+    // through MC_DispatchGet/SetProperty, no Invoke anywhere.  Python and
+    // JavaScript took it without asking whether the world was still open.
+    const CString propOpen = e.callRtn("useprop", "");
+    const bool hasProps = propOpen != "unsupported";
+    if (hasProps)
+        check(propOpen == "on", L,
+              "a property on a proxy to an OPEN world works");   // the positive control
+    else
+        skip(L, "a property on a proxy to a CLOSED world is refused",
+             "this language reaches properties through the method path");
+
     App.m_pWorldDocTemplate->RemoveDocument(other);
     delete other;                                 // the world closes
 
     check(e.callRtn("useit", "") == "refused", L,
           "a proxy to a CLOSED world is refused, not dereferenced");
+    if (hasProps)
+        check(e.callRtn("useprop", "") == "refused", L,
+              "...and so is a property on it, which is a road of its own");
 }
 
 // 5d. Under collector pressure.

@@ -325,10 +325,16 @@ void Method_finalize(JSObjectRef function)
 // coerce it by invoking with no args and returning the value; world.foo() still
 // calls it normally.  Lets COM-style JScript plugins that use world.X work.
 JSValueRef Method_convertToType(JSContextRef ctx, JSObjectRef object,
-                                JSType /*type*/, JSValueRef* /*exception*/)
+                                JSType /*type*/, JSValueRef* exception)
   {
   MethodData* m = (MethodData*) JSObjectGetPrivate(object);
   if (!m) return nullptr;
+  if (!MC_DispatchDocIsLive(m->doc))
+    {
+    if (exception) *exception = make_js_error(ctx, "world." + m->name +
+                                              ": that world has been closed");
+    return nullptr;
+    }
   VARIANT result; VariantInit(&result);
   if (MC_DispatchInvoke(m->doc, m->name.c_str(), nullptr, 0, result, nullptr) != MC_DISP_OK)
     { MC_VariantClear(result); return nullptr; }
@@ -339,7 +345,7 @@ JSValueRef Method_convertToType(JSContextRef ctx, JSObjectRef object,
 
 // world.<name> -> bound method (callable) or property value.
 JSValueRef World_getProperty(JSContextRef ctx, JSObjectRef object,
-                             JSStringRef propertyName, JSValueRef* /*exception*/)
+                             JSStringRef propertyName, JSValueRef* exception)
   {
   CMUSHclientDoc* doc = (CMUSHclientDoc*) JSObjectGetPrivate(object);
   std::string name = jsstr_to_std(propertyName);
@@ -354,6 +360,17 @@ JSValueRef World_getProperty(JSContextRef ctx, JSObjectRef object,
 
   if (MC_DispatchHasProperty(name.c_str()))
     {
+    // The same stale-proxy rule Method_call keeps -- and it has to be INSIDE
+    // this branch, or a name that is not ours would stop falling through to
+    // the standard JS lookup.  A property is read off the doc's members
+    // directly, with no method call anywhere, so Method_call's guard never saw
+    // it: other.Trace on a proxy to a closed world read freed memory.
+    if (!MC_DispatchDocIsLive(doc))
+      {
+      if (exception) *exception = make_js_error(ctx, "world." + name +
+                                                ": that world has been closed");
+      return JSValueMakeUndefined(ctx);
+      }
     VARIANT v;
     if (MC_DispatchGetProperty(doc, name.c_str(), v))
       { JSValueRef r = variant_to_js(ctx, v); MC_VariantClear(v); return r; }
@@ -362,12 +379,18 @@ JSValueRef World_getProperty(JSContextRef ctx, JSObjectRef object,
   }
 
 bool World_setProperty(JSContextRef ctx, JSObjectRef object, JSStringRef propertyName,
-                       JSValueRef value, JSValueRef* /*exception*/)
+                       JSValueRef value, JSValueRef* exception)
   {
   CMUSHclientDoc* doc = (CMUSHclientDoc*) JSObjectGetPrivate(object);
   std::string name = jsstr_to_std(propertyName);
   if (MC_DispatchHasProperty(name.c_str()))
     {
+    if (!MC_DispatchDocIsLive(doc))
+      {
+      if (exception) *exception = make_js_error(ctx, "world." + name +
+                                                ": that world has been closed");
+      return false;
+      }
     VARIANT v;
     js_to_variant(ctx, value, v);
     bool ok = MC_DispatchSetProperty(doc, name.c_str(), v);

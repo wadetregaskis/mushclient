@@ -857,8 +857,12 @@ const struct luaL_Reg * ptr_xmllib = utils_lib;
 // does not register.  All are dropped for Windows parity EXCEPT
 // ExpandVariables — a port-only convenience that exercises real doc variable
 // state and is locked by tests/test_lua_scripting.cpp (ExpandVariables).
-// Registered AFTER RegisterLuaRoutines, from OpenLuaDelayed
-// (mushcore builds only) and the test fixture — never from lua_methods.cpp.
+// Registered AFTER RegisterLuaRoutines, from the TEST FIXTURE ONLY
+// (tests/lua_test_helpers.h) — never from lua_methods.cpp, and no longer from
+// OpenLuaDelayed: that call was guarded on !MUSHCLIENT_FULL_BUILD, which the
+// Stage 9 fold made permanently false, so no engine-built Lua state has ever
+// carried these on this side.  Exposing ExpandVariables in the product is a
+// separate decision (K-231), not a wiring fix.
 
 static int L_ExpandVariablesStr(lua_State* L)
 {

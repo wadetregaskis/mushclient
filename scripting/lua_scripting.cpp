@@ -190,9 +190,6 @@ void CScriptEngine::OpenLuaDelayed ()
   lua_setfield (L, LUA_REGISTRYINDEX, DOCUMENT_STATE);  // document pointer into registry
 
   CallLuaCFunction (L, RegisterLuaRoutines);    // our stuff
-#if !defined(_WIN32) && !defined(MUSHCLIENT_FULL_BUILD)
-  RegisterPortableLuaExtras (L);   // mushcore-only world.* extras (ExpandVariables)
-#endif
   CallLuaCFunction (L, luaopen_rex);            // regular expression library
   CallLuaCFunction (L, luaopen_bits);           // bit manipulation library
   CallLuaCFunction (L, luaopen_compress);       // compression (utils) library

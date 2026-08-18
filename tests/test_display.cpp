@@ -2626,4 +2626,61 @@ TEST(NoteColour, OtherOptionsKeepTheirOwnRangeRules)
     EXPECT_EQ((long) eOK, doc.SetOption("input_text_colour", 300));
 }
 
+// ── StartNewLine's out-of-memory recovery ─────────────────────────────────
+// StartNewLine wraps its `new CLine` in a try and catches CMemoryException *,
+// which is what MFC's operator new throws on Windows.  Off Windows there is no
+// MFC operator new and no new-handler installing one, so a failed allocation
+// throws std::bad_alloc BY VALUE and that arm cannot match it: the exception
+// escaped the socket/timer handler and took the whole app down, where Windows
+// frees a chunk, closes the one world and says so.
+//
+// Nothing but a real allocation failure reaches this arm, so the test makes one
+// happen.  Replacing global operator new is a blunt instrument, so it is armed
+// by EXACT SIZE and one-shot: only the `new CLine` is hit, and every CString,
+// std::string and harness allocation around it proceeds normally.
+static size_t g_failNewOfSize = 0;      // 0 = disarmed
+
+void* operator new(size_t n)
+{
+    if (g_failNewOfSize != 0 && n == g_failNewOfSize) {
+        g_failNewOfSize = 0;            // one-shot, so the unwind can allocate
+        throw std::bad_alloc();
+    }
+    void* p = malloc(n ? n : 1);
+    if (!p) throw std::bad_alloc();
+    return p;
+}
+void* operator new[](size_t n) { return operator new(n); }
+
+TEST(DisplayTest, OutOfMemoryStartingALineClosesTheWorldInsteadOfEscaping)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+
+    // The recovery's first act is RemoveChunk(), which frees JUMP_SIZE lines
+    // off the HEAD.  Give it more than that to eat, so the line still being
+    // built -- which stays m_pCurrentLine, the allocation having failed -- is
+    // not itself freed underneath the rest of the call.
+    for (int i = 0; i < 150; i++) feed(doc, "filler\n");
+    EXPECT_EQ((int) eConnectConnectedToMud, (int) doc.m_iConnectPhase);
+    const int linesBefore = (int) doc.m_LineList.GetCount();
+
+    bool escaped = false;
+    g_failNewOfSize = sizeof(CLine);
+    try {
+        feed(doc, "boom\n");            // the '\n' is what makes StartNewLine allocate
+    } catch (std::bad_alloc&) {
+        escaped = true;
+    }
+    g_failNewOfSize = 0;
+
+    // The discriminator: without the std::bad_alloc arm the exception comes all
+    // the way out here, and neither of the next two assertions can hold.
+    EXPECT_TRUE(!escaped);
+    EXPECT_EQ((int) eConnectNotConnected, (int) doc.m_iConnectPhase);
+
+    // ...and it was the RECOVERY that ran, not merely a swallowed exception:
+    // a chunk of lines was actually freed.
+    EXPECT_TRUE((int) doc.m_LineList.GetCount() < linesBefore);
+}
+
 MC_TEST_MAIN()

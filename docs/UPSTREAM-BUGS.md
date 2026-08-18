@@ -23,6 +23,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 12 | The queued-command "no log" flag can never suppress logging | this commit | TimerWnd.cpp `CTimerWnd::OnTimer`; mirrored in platform/wx_world_child.cpp |
 | 13 | Windows' two queue drains disagree about case, so a `nolog` command echoes from one and not the other | this commit | TimerWnd.cpp `OnTimer` vs `ChangeTimerRate` |
 | 14 | Menu-triggered alias's own `%1` is dropped (subscript computed, never used) | this commit | mushview.cpp `CMUSHView::OnMXPMenu` ACTION_ALIAS arm (now `doc_aliasmenu_shared.cpp` `ExecuteAliasMenuItem`) |
+| 15 | NAWS sends a dimension byte of 255 as a bare IAC, corrupting the subnegotiation | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::SendWindowSizes` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -407,6 +408,41 @@ Windows too (2026-08-13's hoist), so this fixes both platforms from one edit.
 
 Regression guard: `tests/test_aliases.cpp`
 `AliasMenu.ExecuteSubstitutesWordUnderMenuIntoPercentOne`.
+
+---
+
+## 15 — a NAWS dimension of exactly 255 goes out as a bare IAC
+
+`CMUSHclientDoc::SendWindowSizes` announces the window size as
+
+    IAC SB NAWS <cols-hi> <cols-lo> <rows-hi> <rows-lo> IAC SE
+
+building those nine bytes as a plain array and handing it to `SendPacket`. The
+four payload bytes are written raw. RFC 854 is explicit that inside the telnet
+stream "if a 255 is to be sent as data, it must be doubled", and RFC 1073 —
+which defines NAWS — repeats it for exactly these bytes. So a width or height
+whose high or low byte is 255 emits an *unescaped* IAC in the middle of the
+subnegotiation: the MUD's telnet parser reads it as the start of a command,
+consumes the following byte as that command, and the negotiation goes out of
+step. With a wrap column of 255 the low byte is 0xFF and the very next byte is
+the rows high byte, so the server sees `IAC <rows-hi>` and then never finds a
+matching `IAC SE` where it expects one.
+
+255 is reachable without contrivance: the wrap column is user-settable and the
+"auto wrap to window width" path derives it from the pane, and both 255 columns
+and (on a tall enough window) 255 rows are ordinary values. It is only the
+single value 255 per byte that trips it, which is why it has survived — 256
+comes out as `01 00` and is fine.
+
+**Fix:** both arms now append the four payload bytes through a tiny
+`AppendNAWSByte` helper that doubles a 0xFF, and send the resulting length
+rather than `sizeof p`. The buffer is sized for the worst case (all four bytes
+255). The Windows arm is fixed with the same helper in the same file, so this
+is one edit for both platforms; nothing changes for any dimension that does not
+contain a 255 byte.
+
+Regression guard: `tests/test_connection.cpp`
+`Naws.EscapesADimensionByteOfExactly255`.
 
 ---
 

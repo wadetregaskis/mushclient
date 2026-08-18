@@ -281,6 +281,8 @@ BOOL CMUSHclientDoc::Load_Set(const int set_type,
     }
     catch (CFileException* e)    { ::UMessageBox(TFormat("Unable to open or read %s", (LPCTSTR)strFileName), MB_ICONSTOP); e->Delete(); }
     catch (CMemoryException* e)  { ::TMessageBox("Insufficient memory to do this operation", MB_ICONEXCLAMATION); e->Delete(); }
+    // no MFC operator new here, so a real allocation failure is std::bad_alloc
+    catch (std::bad_alloc&)      { ::TMessageBox("Insufficient memory to do this operation", MB_ICONEXCLAMATION); }
     catch (CArchiveException* e) { ::TMessageBox("There was a problem in the data format", MB_ICONEXCLAMATION); e->Delete(); }
     catch (...)                  { ::TMessageBox("Unknown error loading file", MB_ICONEXCLAMATION); }
 
@@ -341,6 +343,8 @@ BOOL CMUSHclientDoc::Save_Set(const int set_type,
     }
     catch (CFileException* e)    { ::TMessageBox("Unable to create the requested file", MB_ICONEXCLAMATION); e->Delete(); }
     catch (CMemoryException* e)  { ::TMessageBox("Insufficient memory to do this operation", MB_ICONEXCLAMATION); e->Delete(); }
+    // no MFC operator new here, so a real allocation failure is std::bad_alloc
+    catch (std::bad_alloc&)      { ::TMessageBox("Insufficient memory to do this operation", MB_ICONEXCLAMATION); }
     catch (CArchiveException* e) { ::TMessageBox("There was a problem in the data format", MB_ICONEXCLAMATION); e->Delete(); }
 
     m_CurrentPlugin = pSavedPlugin;

@@ -176,6 +176,7 @@ struct Engine {
 //     params(a,b,c,d)  writes "a|b|c|d" (ints) into world variable "p"
 //     tbl(s, t)   writes t["key"] into world variable "t"
 //     bump()      increments a global and writes it into "n"
+//     bignum(s)   passes 2^62+1 into world.SetVariable as variable "big"
 //     shared()    writes the global `shared` (or its absence) into "v"
 //     who()       writes world.GetWorldID() into "w"
 //     api()       exercises the world API: a Note, a variable round trip, an
@@ -199,6 +200,7 @@ struct Dialect {
     bool        hidesBuiltins;  // ...can this engine tell them apart at all?
     bool        typedResult;    // ...can it tell a string result from a structure?
     bool        intParams;      // ...does an integral number stringify without ".0"?
+    bool        exactBigInt;    // ...are its integers exact past 2^53, or doubles?
     const char* mxpHandler;     // defines OnMXPopenTag(name, args, table)
     const char* mxpTableType;   // what that language calls the table's type
     const char* staleProxy;     // grab(), then useit() a proxy to a closed world
@@ -231,6 +233,7 @@ const Dialect kDialects[] = {
   "function store(s) world.SetVariable('echoed', s) end\n"
   "function rettable(s) return {} end\n"
   "function rawnum(a, b, c, d) world.SetVariable('r', tostring(a)) end\n"
+  "function bignum(s) world.SetVariable('big', 4611686018427387905) end\n"
   "function readdate() world.SetVariable('dt', tostring(world.GetInfo(301))) end\n"
   "function stylish()\n"
   "  world.SetVariable('ns', world.GetNoteStyle() == 0 and 'normal' or 'inherited')\n"
@@ -252,7 +255,7 @@ const Dialect kDialects[] = {
   "function readshared() world.SetVariable('v', tostring(shared)) end\n"
   "function who() world.SetVariable('w', world.GetWorldID()) end\n",
   "function ( this is not lua\n",
-  true, true, "Note", false, true, true,
+  true, true, "Note", false, true, true, false,
   "function OnMXPopenTag(name, args, t)\n"
   "  world.SetVariable('mxptag', tostring(name))\n"
   "  world.SetVariable('mxpargs', tostring(args))\n"
@@ -301,6 +304,8 @@ const Dialect kDialects[] = {
   "    return {}\n"
   "def rawnum(a, b, c, d):\n"
   "    world.SetVariable('r', str(a))\n"
+  "def bignum(s):\n"
+  "    world.SetVariable('big', 4611686018427387905)\n"
   "def readdate():\n"
   "    world.SetVariable('dt', str(world.GetInfo(301)))\n"
   "def stylish():\n"
@@ -319,7 +324,7 @@ const Dialect kDialects[] = {
   "    world.SetVariable('v', shared if 'shared' in globals() else 'nil')\n"
   "def who():\n    world.SetVariable('w', world.GetWorldID())\n",
   "def broken(:\n",
-  true, false, "print", true, true, false,
+  true, false, "print", true, true, false, true,
   "def OnMXPopenTag(name, args, t=None):\n"
   "    world.SetVariable('mxptag', str(name))\n"
   "    world.SetVariable('mxpargs', str(args))\n"
@@ -360,6 +365,7 @@ const Dialect kDialects[] = {
   "sub store { $world->SetVariable('echoed', $_[0]); }\n"
   "sub rettable { return {}; }\n"
   "sub rawnum { $world->SetVariable('r', \"$_[0]\"); }\n"
+  "sub bignum { $world->SetVariable('big', 4611686018427387905); }\n"
   "sub readdate { $world->SetVariable('dt', '' . $world->GetInfo(301)); }\n"
   "sub stylish {\n"
   "  $world->SetVariable('ns', $world->GetNoteStyle() == 0 ? 'normal' : 'inherited');\n"
@@ -377,7 +383,7 @@ const Dialect kDialects[] = {
   "sub readshared { $world->SetVariable('v', defined($shared) ? $shared : 'nil'); }\n"
   "sub who { $world->SetVariable('w', $world->GetWorldID()); }\n",
   "sub broken { $x = ; }\n",
-  true, false, "printf", true, true, true,
+  true, false, "printf", true, true, true, true,
   "sub OnMXPopenTag {\n"
   "  my ($name, $args, $t) = @_;\n"
   "  $world->SetVariable('mxptag', $name);\n"
@@ -420,6 +426,7 @@ const Dialect kDialects[] = {
   "function store(s) { world.SetVariable('echoed', s); }\n"
   "function rettable(s) { return {}; }\n"
   "function rawnum(a, b, c, d) { world.SetVariable('r', String(a)); }\n"
+  "function bignum(s) { world.SetVariable('big', 4611686018427387905); }\n"
   "function readdate() { world.SetVariable('dt', String(world.GetInfo(301))); }\n"
   "function stylish() {\n"
   "  world.SetVariable('ns', world.GetNoteStyle() == 0 ? 'normal' : 'inherited');\n"
@@ -437,7 +444,7 @@ const Dialect kDialects[] = {
   "  world.SetVariable('v', typeof shared === 'undefined' ? 'nil' : shared); }\n"
   "function who() { world.SetVariable('w', world.GetWorldID()); }\n",
   "function broken( {\n",
-  true, false, "parseInt", false, true, true,
+  true, false, "parseInt", false, true, true, false,
   "function OnMXPopenTag(name, args, t) {\n"
   "  world.SetVariable('mxptag', String(name));\n"
   "  world.SetVariable('mxpargs', String(args));\n"
@@ -485,6 +492,7 @@ const Dialect kDialects[] = {
   "proc store {s} { world SetVariable echoed $s }\n"
   "proc rettable {s} { return [dict create a 1] }\n"
   "proc rawnum {a b c d} { world SetVariable r $a }\n"
+  "proc bignum {s} { world SetVariable big 4611686018427387905 }\n"
   "proc readdate {} { world SetVariable dt [world GetInfo 301] }\n"
   "proc stylish {} {\n"
   "  world SetVariable ns [expr {[world GetNoteStyle] == 0 ? \"normal\" : \"inherited\"}]\n"
@@ -504,7 +512,7 @@ const Dialect kDialects[] = {
   "  else { world SetVariable v nil } }\n"
   "proc who {} { world SetVariable w [world GetWorldID] }\n",
   "proc broken {  { \n",
-  true, false, "puts", true, false, true,
+  true, false, "puts", true, false, true, true,
   "proc OnMXPopenTag {name a t} {\n"
   "  world SetVariable mxptag $name\n"
   "  world SetVariable mxpargs $a\n"
@@ -544,6 +552,7 @@ const Dialect kDialects[] = {
   "def store(s); world.SetVariable('echoed', s); end\n"
   "def rettable(s); {}; end\n"
   "def rawnum(a, b, c, d); world.SetVariable('r', a.to_s); end\n"
+  "def bignum(s); world.SetVariable('big', 4611686018427387905); end\n"
   "def readdate; world.SetVariable('dt', world.GetInfo(301).to_s); end\n"
   "def stylish\n"
   "  world.SetVariable('ns', world.GetNoteStyle() == 0 ? 'normal' : 'inherited')\n"
@@ -561,7 +570,7 @@ const Dialect kDialects[] = {
   "def readshared; world.SetVariable('v', @shared || 'nil'); end\n"
   "def who; world.SetVariable('w', world.GetWorldID()); end\n",
   "def broken(\n",
-  true, false, "inspect", true, true, false,
+  true, false, "inspect", true, true, false, true,
   "def OnMXPopenTag(name, args, t = nil)\n"
   "  world.SetVariable('mxptag', name.to_s)\n"
   "  world.SetVariable('mxpargs', args.to_s)\n"
@@ -1178,6 +1187,32 @@ void battery_gc_pressure(const Dialect& d)
           "...and the world call's arguments and result survived the collection");
 }
 
+// 5e. A 64-bit integer must not lose precision crossing into the VARIANT.
+//     Ruby's Bignum arm sent every one of them to VT_R8, and CRuby's tagged
+//     Fixnum stops at 2^62 -- so 2^62+1, which the port's 64-bit lVal holds
+//     exactly, arrived rounded to 2^62 and reached a string parameter as
+//     "4.6116860184274e+18".  Languages whose numbers ARE doubles (Lua,
+//     JavaScript) cannot express the value in the first place and say so.
+void battery_big_integer(const Dialect& d)
+{
+    const char* L = d.display;
+
+    if (!d.exactBigInt) {
+        skip(L, "a 2^62 integer reaches the world API exactly",
+             "this language's numbers are doubles");
+        return;
+    }
+
+    Engine e(d.language, d.source);
+    if (!e.ok) { skip(L, "a 2^62 integer reaches the world API exactly",
+                      "engine failed to open"); return; }
+
+    e.seed("big", "not set");     // so a handler that does nothing fails too
+    e.callRtn("bignum", "");
+    check(e.var("big") == "4611686018427387905", L,
+          "a 2^62 integer reaches the world API exactly, not as a rounded double");
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -1251,6 +1286,7 @@ bool run_language(const Dialect& d)
     battery_error_routing(d);
     battery_stale_proxy  (d);
     battery_gc_pressure  (d);
+    battery_big_integer  (d);
     battery_mxp_callsite(d);
     battery_trigger_callsite(d, true);    // box ticked
     // The negative control at the SAME layer: without it, hard-coding the flag

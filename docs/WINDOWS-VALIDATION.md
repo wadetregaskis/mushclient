@@ -2428,3 +2428,51 @@ check in a Windows run:
 - Ctrl+click in the output/command bar, an alias flagged "menu" firing from
   the popup (world and plugin arms), and GetInfo(86) after the popup are the
   behaviours to smoke-test.
+
+### Three mushview.cpp corrections nothing here can execute (2026-08-18)
+
+All three are in `CMUSHView`, which the port never constructs, so the macOS
+build type-checks them and nothing more.  A Windows run is the only way to
+see any of them work, and the third is not even confirmed to be a bug.
+
+- **`OnMXPMenu`'s ACTION_HYPERLINK arm now allows `https://`.**  The
+  left-click arm (`mushview.cpp` ~2221) and `OpenBrowser`
+  (`methods_utilities.cpp:465`) both allow http/https/mailto; the popup-menu
+  arm allowed only http and mailto, so an MXP hyperlink opened from the
+  right-click menu was refused with "permission denied" while left-clicking
+  the very same link opened it.  **To check:** a world sending an `<a
+  href="https://...">` link with a `<send>`-style menu — open it from the
+  right-click popup, not by clicking, and confirm the browser opens.  The
+  three copies of the allowlist are still three copies; hoisting them into
+  one helper in `utilities_shared.cpp` is a follow-up.
+
+- **The double-click word scan no longer reads past the line.**  A completed
+  line's `text` buffer is reallocated to exactly `MAX (len, 1)` bytes with no
+  terminator (`doc_shared.cpp:3637`), and `calculate_line_and_column` returns
+  `col == pLine->len` for a click to the right of the text, so
+  `OnLButtonDblClk`'s backward scan read `text [len]` — one byte past the
+  allocation.  Whether a word came back at all depended on that byte: a
+  space or delimiter there produced no selection, anything else selected the
+  last word.  Now clamped the way the hoisted twin already clamps
+  (`doc_aliasmenu_shared.cpp` `SetWordUnderMenu`), so it deterministically
+  selects the last word.  `OnDisplayTextattributes` had the same shape — a
+  selection spanning lines can leave `startcol == pStartLine->len` and the
+  character read below it is `text [startcol]` — clamped after the
+  valid-selection test so which selections are accepted is unchanged.
+  **To check:** double-click well to the right of a short line (expect the
+  last word selected, every time), and run Display ▸ Text attributes on a
+  selection that starts at the end of one line and ends on a later one.
+
+- **`m_ScrollbarPosition` is written through `.cy` now — and this one is a
+  question, not a fix.**  It is a `CSize`, and the three writers assigned a
+  plain `int` to it.  Real MFC's `CSize` has a `CSize(DWORD)` constructor
+  that splits the value `LOWORD`/`HIWORD`, which would put the scroll
+  position's *high* word in `.cy` — the only field ever read
+  (`mushview.cpp:3255`, `m_bAtBufferEnd`) — making it 0 for any position
+  under 65536 and the "at buffer end" test wrong.  The port's shim declares
+  an explicit `operator= (int)` that sets `.cy`, so the port never had the
+  problem and cannot demonstrate it either way.  The writes are now
+  unambiguous on both platforms.  **To check:** whether the pause/freeze
+  status line was ever wrong on Windows before this — if `CSize(DWORD)` does
+  not participate here (e.g. the assignment was ambiguous or resolved
+  elsewhere), this was a no-op and the change is merely clearer.

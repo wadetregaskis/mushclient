@@ -1181,6 +1181,38 @@ TEST(AliasMenu, WordUnderMenuFollowsTheDelimiterSet)
     VariantClear(&v);
 }
 
+TEST(AliasMenu, WordUnderMenuClampsAColumnPastTheEndOfTheLine)
+{
+    CMUSHclientDoc doc;
+    doc.DisplayMsg("say foo.bar baz\n", 16, 0);
+    CLine* pLine = doc.m_LineList.GetAt(doc.GetLinePosition(0));
+    ASSERT_TRUE(pLine != NULL);
+
+    // A completed line is resized to exactly len bytes with no terminator
+    // (doc_shared.cpp), so text [len] is already one past the buffer.  The hit
+    // test hands us that column whenever the click lands to the right of the
+    // text, so the scan has to clamp before its first read -- the fixture is
+    // only meaningful while len is the real byte count.
+    ASSERT_EQ(15, pLine->len);
+
+    const CString saved = App.m_strWordDelimitersDblClick;
+    App.m_strWordDelimitersDblClick = ".,";
+
+    // One past the end, and well past it: both name the last word instead of
+    // scanning from a byte that is not ours.
+    doc.SetWordUnderMenu(pLine, pLine->len);
+    EXPECT_STREQ("baz", (LPCTSTR) doc.m_strWordUnderMenu);
+    doc.SetWordUnderMenu(pLine, pLine->len + 50);
+    EXPECT_STREQ("baz", (LPCTSTR) doc.m_strWordUnderMenu);
+
+    // ...while an in-range column still answers for itself, so the clamp is
+    // not simply pinning every column to the last word.
+    doc.SetWordUnderMenu(pLine, 5);
+    EXPECT_STREQ("foo", (LPCTSTR) doc.m_strWordUnderMenu);
+
+    App.m_strWordDelimitersDblClick = saved;
+}
+
 TEST(AliasMenu, ExecuteRunsTheChosenAliasInItsOwnSpace)
 {
     CMUSHclientDoc doc;

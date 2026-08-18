@@ -153,9 +153,10 @@ SurfaceId WxSurface::adopt(CDC* dc, Size sz) {
     return (SurfaceId)id;
 }
 
-// ── region pixel I/O — the engine's temp-DIB BitBlt round-trip, verbatim ────
-// The DIB the shim builds has EXACTLY the PixelBuffer layout (BGR24/BGRA32,
-// bottom-up, 4-byte-aligned rows), so the copy out/in is row-wise memcpy.
+// ── region pixel I/O — always through the alpha-preserving DC read ─────────
+// BGR24/BGRA32 both derive from the BGRA32_Alpha read below rather than the
+// engine's temp-DIB BitBlt: that BitBlt targets an unscaled 1x bitmap, which
+// resamples on a HiDPI canvas (see the comment inside).
 void WxSurface::readPixels(SurfaceId id, Rect r, PixelBuffer& out, PixelFormat fmt) {
     Surf* s = surf(id);
     out = PixelBuffer{};
@@ -177,16 +178,17 @@ void WxSurface::readPixels(SurfaceId id, Rect r, PixelBuffer& out, PixelFormat f
         return;
     }
 
-    if (fmt == PixelFormat::BGR24) {
-        // Route through the alpha path and drop alpha, rather than the
-        // temp-DIB BitBlt below.  That BitBlt targets an UNSCALED 1x bitmap
-        // (wx_gdi_compat.cpp CreateDIBSection), so on a HiDPI canvas -- and
-        // miniwindow canvases are created at scale (CreateCanvasBitmap) -- it
-        // resamples each 2x2 block of physical pixels down to one.  Every
+    if (fmt == PixelFormat::BGR24 || fmt == PixelFormat::BGRA32) {
+        // Route through the alpha path and drop/pin alpha, rather than the
+        // temp-DIB BitBlt the engine used.  That BitBlt targets an UNSCALED 1x
+        // bitmap (wx_gdi_compat.cpp CreateDIBSection), so on a HiDPI canvas --
+        // and miniwindow canvases are created at scale (CreateCanvasBitmap) --
+        // it resamples each 2x2 block of physical pixels down to one.  Every
         // read-modify-write op therefore softened the image it was editing, and
         // an 8x8 stipple could collapse to a single colour.  getPixel already
-        // took this route and said why; every other BGR24 caller
-        // (CMiniWindow::Filter, WindowGetImageAlpha and friends) did not.
+        // took this route and said why; every other caller of either format
+        // (CMiniWindow::Filter, WindowGetImageAlpha, WindowDrawImageAlpha's
+        // base read, WindowImageFromWindow and friends) did not.
         PixelBuffer rgba;
         readPixels(id, r, rgba, PixelFormat::BGRA32_Alpha);
         if (!rgba.valid()) return;
@@ -195,44 +197,17 @@ void WxSurface::readPixels(SurfaceId id, Rect r, PixelBuffer& out, PixelFormat f
         out.size   = { r.w, r.h };
         out.stride = PixelBuffer::strideFor(r.w, fmt);
         out.bytes.assign((size_t)out.stride * r.h, 0);
+        const int dstBpp = (fmt == PixelFormat::BGR24) ? 3 : 4;
         for (int y = 0; y < r.h; ++y) {
             const unsigned char* src = rgba.bytes.data() + (size_t)y * rgba.stride;
             unsigned char*       dst = out.bytes.data()  + (size_t)y * out.stride;
-            for (int x = 0; x < r.w; ++x, src += 4, dst += 3) {
+            for (int x = 0; x < r.w; ++x, src += 4, dst += dstBpp) {
                 dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2];
+                if (dstBpp == 4) dst[3] = 0;   // surface alpha pinned 0
             }
         }
         return;
     }
-
-    const int bpp = 32;
-    BITMAPINFO bmi;
-    memset(&bmi, 0, sizeof bmi);
-    bmi.bmiHeader.biSize        = sizeof bmi;
-    bmi.bmiHeader.biWidth       = r.w;
-    bmi.bmiHeader.biHeight      = r.h;          // positive = bottom-up
-    bmi.bmiHeader.biPlanes      = 1;
-    bmi.bmiHeader.biBitCount    = bpp;
-    bmi.bmiHeader.biCompression = BI_RGB;
-    bmi.bmiHeader.biSizeImage   = r.h * BytesPerLine(r.w, bpp);
-
-    unsigned char* bits = NULL;
-    HBITMAP hbm = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
-    if (!hbm || !bits) return;
-    CDC tmp;
-    tmp.CreateCompatibleDC(s->dc);
-    HBITMAP hOld = (HBITMAP)SelectObject(tmp.m_hDC, hbm);
-    tmp.BitBlt(0, 0, r.w, r.h, s->dc, r.x, r.y, SRCCOPY);
-
-    out.format = fmt;
-    out.size   = { r.w, r.h };
-    out.stride = PixelBuffer::strideFor(r.w, fmt);
-    out.bytes.assign(bits, bits + bmi.bmiHeader.biSizeImage);
-    if (fmt == PixelFormat::BGRA32)             // surface alpha pinned 0
-        for (size_t i = 3; i < out.bytes.size(); i += 4) out.bytes[i] = 0;
-
-    SelectObject(tmp.m_hDC, hOld);
-    DeleteObject(hbm);
 }
 
 void WxSurface::writePixels(SurfaceId id, Rect r, const PixelBuffer& in) {

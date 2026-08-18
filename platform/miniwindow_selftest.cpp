@@ -321,6 +321,19 @@ int RunPalMiniWindowSelfTest()
         mwCheck(doc->WindowGetPixel(W, 25, 39) == kBlue,
                 "...and the BOTTOM side likewise");
 
+        // EdgeFlags 0 (no BF_ side bits at all): Win32 draws NOTHING.  The
+        // shim used to invent "no sides named = all sides" and paint a full
+        // border here.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the no-flags probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0) == eOK,
+                "WindowRectOp (DrawEdge, EdgeFlags 0) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 10, 25) == kBlue &&
+                doc->WindowGetPixel(W, 25, 10) == kBlue &&
+                doc->WindowGetPixel(W, 39, 25) == kBlue &&
+                doc->WindowGetPixel(W, 25, 39) == kBlue,
+                "...EdgeFlags 0 draws no border at all, matching Win32");
+
         // EDGE_ETCHED (0x06) used to hit `default:` and paint flat grey.  It is
         // sunken-outer + raised-inner, so the outer and inner rings differ.
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
@@ -365,12 +378,89 @@ int RunPalMiniWindowSelfTest()
                 "restore the background after the filter probe");
     }
 
-    // ── CreateImage (8x8 mono) + ImageOp pattern fill ──────────────────────
-    // all-ones rows = a solid 8x8 pattern; 1-bits draw in PenColour for
-    // ImageOp action 3 (pattern fill uses the image as a brush)
-    mwCheck(doc->WindowCreateImage(W, "img1",
-                                   255, 255, 255, 255, 255, 255, 255, 255) == eOK,
-            "WindowCreateImage (8x8 mono) succeeds");
+    // ── DrawImageAlpha's base readback is lossless on a HiDPI canvas ───────
+    // DrawImageAlpha reads its OWN canvas as the blend "base" via readPixels
+    // BGRA32, then writes the blended result straight back.  A fully
+    // alpha-0 overlay forces the blend to output exactly what it read as the
+    // base (Blend_Mask with mask 0 keeps B), so this isolates that read: only
+    // the plain BGRA32 arm still took the unscaled temp-DIB BitBlt, which
+    // resamples on a Retina canvas -- see LEDGER-CONFLICT K-652.  If it reads
+    // exactly, DrawImageAlpha is a no-op here.
+    {
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlack, 0) == eOK,
+                "clear before the BGRA32 readback probe");
+        // Alternating 1px columns: the worst case for any resampling.
+        for (long x = 10; x < 20; ++x)
+            doc->WindowRectOp(W, 2, x, 10, x + 1, 20,
+                              (x % 2) ? kRed : kGreen, 0);
+        const long before11 = doc->WindowGetPixel(W, 11, 15);
+        const long before12 = doc->WindowGetPixel(W, 12, 15);
+        mwCheck(before11 != before12,
+                "adjacent 1px columns really are different colours to start");
+
+        // DrawImageAlpha refuses anything but a 32bpp image; capturing the
+        // canvas itself is a convenient source.  WindowImageFromWindow pins
+        // its alpha to 0 (BGRA32, no real alpha channel), so the merge below
+        // keeps the base untouched regardless of the captured content -- this
+        // exists only to exercise the base's readPixels(..., BGRA32) call.
+        mwCheck(doc->WindowImageFromWindow(W, "canvasImg", W) == eOK,
+                "WindowImageFromWindow captures the canvas as a 32bpp image");
+        mwCheck(doc->WindowDrawImageAlpha(W, "canvasImg", 0, 0, 64, 48, 1.0,
+                                          0, 0) == eOK,
+                "WindowDrawImageAlpha (opacity 1, alpha-0 overlay) succeeds");
+
+        mwCheck(doc->WindowGetPixel(W, 11, 15) == before11,
+                "DrawImageAlpha's base readback leaves an exact colour exactly alone");
+        mwCheck(doc->WindowGetPixel(W, 12, 15) == before12,
+                "...and does not bleed its neighbour into it");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the BGRA32 readback probe");
+    }
+
+    // ── CreateImage (8x8 mono) + WindowDrawImage round-trip ────────────────
+    // Row-distinct "leading 1s" pattern (0x80, 0xC0, 0xE0, 0xF8, 0xFC, 0xFE,
+    // 0xFF, 0xF0 -- one bit count each, no two rows equal), so a scanline-
+    // stride bug that reads only every OTHER row -- leaving the skipped ones
+    // as a solid 0x00 (all-clear) line -- cannot pass by accident.  Each row
+    // has AT MOST one 0/1 transition, and only x=0 (always inside the leading
+    // run) is probed, staying clear of the 2:1 HiDPI blit's known edge blur
+    // at a transition (unrelated to this fix -- see the WindowFilter/BGRA32
+    // probes above for that one). The top row (0xF0) also pins the 1-bit/
+    // 0-bit colour polarity: GDI mono is 1 = background colour, 0 = text
+    // colour -- probed at x=0 and x=7, on opposite sides of its one
+    // transition and both away from it.
+    {
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the CreateImage probe");
+        mwCheck(doc->WindowCreateImage(W, "img1",
+                                       0x80, 0xC0, 0xE0, 0xF8,
+                                       0xFC, 0xFE, 0xFF, 0xF0) == eOK,
+                "WindowCreateImage (8x8 mono, row-distinct pattern) succeeds");
+        mwCheck(doc->WindowDrawImage(W, "img1", 0, 0, 8, 8, 1 /*straight copy*/,
+                                     0, 0, 8, 8) == eOK,
+                "WindowDrawImage (8x8 mono, 1:1) succeeds");
+
+        // (a) every row drew its leading 1-bit at x=0.  A 1-byte stride reads
+        // only every other row (see the finding), so the skipped rows come
+        // out as a solid 0x00 line -- no white pixel anywhere in them.
+        bool everyRowHasWhite = true;
+        for (long y = 0; y < 8; ++y)
+            everyRowHasWhite = everyRowHasWhite &&
+                               (doc->WindowGetPixel(W, 0, y) == kWhite);
+        mwCheck(everyRowHasWhite, "CreateImage: all eight rows drew "
+                                  "(a 1-byte stride would blank half of them)");
+
+        // (b) a 1-bit and a 0-bit pixel in the same row differ, and follow
+        // GDI's polarity rather than its inverse.
+        mwCheck(doc->WindowGetPixel(W, 0, 0) == kWhite,
+                "CreateImage: a 1-bit pixel draws the background colour (white)");
+        mwCheck(doc->WindowGetPixel(W, 7, 0) == kBlack,
+                "CreateImage: a 0-bit pixel draws the text colour (black)");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the CreateImage probe");
+    }
 
     // ── resize keeps working: re-create at a new size, probe again ────────
     mwCheck(doc->WindowCreate(W, 0, 0, 32, 32, 0, 0, kGreen) == eOK,

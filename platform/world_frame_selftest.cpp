@@ -38,6 +38,7 @@
 
 #include <climits>        // LONG_MIN — "no saved child_x/child_y" sentinel below
 #include <cstdio>
+#include <functional>
 #include <vector>
 
 // The world option table, so the font-size check below can assert against the
@@ -55,15 +56,27 @@ void check(bool ok, const char* what)
 }
 
 // Let the frame's 100 ms world timer run: the connection-phase block that
-// maintains the title lives there.  Pumps for a bit over two ticks.
-void pumpTicks(int ms = 350)
+// maintains the title lives there.  Pump the event loop until `done` is true,
+// or give up after `limitMs`.
+//
+// NOT a fixed sleep.  It was one -- 350 ms for a 100 ms timer, same pattern
+// platform/input_selftest.cpp's own pumpUntil replaced -- and that is fine on
+// an idle machine and marginal under a loaded ctest -j run: the 12 call sites
+// below gate timer-driven behaviour (title survival, auto-resize, wrap_input,
+// palette recolour) and could spuriously FAIL near the 350 ms boundary. A
+// deadline that waits for the CONDITION is both faster in the normal case and
+// immune to load; the limit is only there so a genuine regression fails
+// instead of hanging.
+bool pumpUntil(const std::function<bool()>& done, int limitMs = 3000)
 {
-    const wxLongLong until = wxGetLocalTimeMillis() + ms;
+    const wxLongLong until = wxGetLocalTimeMillis() + limitMs;
     while (wxGetLocalTimeMillis() < until) {
+        if (done()) return true;
         wxYield();
-        wxMilliSleep(10);
+        wxMilliSleep(5);
     }
     wxYield();
+    return done();
 }
 
 bool sameRect(const pal::Rect& r, const wxRect& w)
@@ -212,7 +225,7 @@ int RunWorldFrameSelfTest()
         // pass vacuously.
         doc->SetTitle("");
         doc->m_iConnectPhase = eConnectNotConnected;
-        pumpTicks();
+        pumpUntil([&] { return child->GetTitle() == wxT("SelfTest (Closed)"); });
         check(child->GetTitle() == wxT("SelfTest (Closed)"),
               "the phase tick titles an untitled world <name> (<phase>)");
 
@@ -221,12 +234,16 @@ int RunWorldFrameSelfTest()
               "world.SetTitle reaches the window title");
 
         doc->m_iConnectPhase = eConnectConnectedToMud;   // a phase CHANGE
-        pumpTicks();
+        // The title itself must NOT move (asserted below) -- so wait on the
+        // status bar instead, which the SAME tick unconditionally rewrites
+        // from the phase (UpdateStatusBar), so the wait still proves the tick
+        // ran rather than passing vacuously on an unpumped loop.
+        pumpUntil([&] { return child->StatusPane0().Contains(wxT("Connected to")); });
         check(child->GetTitle() == wxT("Rincewind"),
               "...and survives a connection-phase change");
 
         doc->m_iConnectPhase = eConnectDisconnecting;
-        pumpTicks();
+        pumpUntil([&] { return child->StatusPane0().Contains(wxT("Disconnecting")); });
         check(child->GetTitle() == wxT("Rincewind"),
               "...and a disconnect");
 
@@ -234,7 +251,7 @@ int RunWorldFrameSelfTest()
         // tick is still live at this point).
         doc->SetTitle("");
         doc->m_iConnectPhase = eConnectNotConnected;
-        pumpTicks();
+        pumpUntil([&] { return child->GetTitle() == wxT("SelfTest (Closed)"); });
         check(child->GetTitle() == wxT("SelfTest (Closed)"),
               "clearing the script title restores <name> (<phase>)");
     }
@@ -248,7 +265,8 @@ int RunWorldFrameSelfTest()
     {
         doc->m_mush_name = "Caf\xE9";
         doc->m_iConnectPhase = eConnectConnectedToMud;   // force a re-title
-        pumpTicks();
+        pumpUntil([&] { return !child->GetTitle().empty() &&
+                                child->GetTitle().Contains(wxT("Caf")); });
         check(!child->GetTitle().empty(),
               "a legacy-charset world name still yields a title (was: empty)");
         check(child->GetTitle().Contains(wxT("Caf")),
@@ -257,7 +275,7 @@ int RunWorldFrameSelfTest()
         // Restore the fixture for the blocks below.
         doc->m_mush_name = "SelfTest";
         doc->m_iConnectPhase = eConnectNotConnected;
-        pumpTicks();
+        pumpUntil([&] { return child->GetTitle() == wxT("SelfTest (Closed)"); });
         check(child->GetTitle() == wxT("SelfTest (Closed)"),
               "fixture restored after the charset check");
     }
@@ -331,13 +349,15 @@ int RunWorldFrameSelfTest()
         doc->m_bAutoResizeCommandWindow = TRUE;
         doc->m_iAutoResizeMinimumLines  = 3;
         doc->m_iAutoResizeMaximumLines  = 6;
-        pumpTicks();
+        pumpUntil([&] {
+            return inp && inp->GetMinSize().y >= before + 2 * inp->GetCharHeight();
+        });
         const int floored = inp ? inp->GetMinSize().y : 0;
         check(inp && floored >= before + 2 * inp->GetCharHeight(),
               "a 3-line floor lifts the bar by two lines (was: fixed 1 line)");
 
         doc->m_bAutoResizeCommandWindow = FALSE;
-        pumpTicks();
+        pumpUntil([&] { return inp && inp->GetMinSize().y < floored; });
         const int off = inp ? inp->GetMinSize().y : 0;
         check(inp && off < floored,
               "turning the option off shrinks the bar back (control)");
@@ -624,7 +644,7 @@ int RunWorldFrameSelfTest()
         before->SetInsertionPoint(7);
 
         doc->m_bAutoWrapInput = TRUE;
-        pumpTicks();
+        pumpUntil([&] { return child->ActiveInputPublic() != before; });
         wxTextCtrl* on = child->ActiveInputPublic();
         check(on != nullptr && on != before,
               "wrap_input: the toggle rebuilt the control");
@@ -643,7 +663,7 @@ int RunWorldFrameSelfTest()
               "...a long command grows the bar by display rows (was: 1 line)");
 
         doc->m_bAutoWrapInput = FALSE;
-        pumpTicks();
+        pumpUntil([&] { return child->ActiveInputPublic() != on; });
         wxTextCtrl* off = child->ActiveInputPublic();
         check(off != nullptr && off != on,
               "wrap_input: toggling off rebuilds again");
@@ -814,7 +834,11 @@ int RunWorldFrameSelfTest()
 
         // Move ANSI colour 2 to something unmistakable and let the poll see it.
         doc->m_normalcolour[2] = RGB(1, 2, 3);
-        pumpTicks(400);
+        pumpUntil([&] {
+            const SOutputLine* l = pane->GetLine(0);
+            return l && !l->empty() &&
+                   l->front().fg == (unsigned long) RGB(1, 2, 3);
+        });
 
         const SOutputLine* l1 = pane->GetLine(0);
         check(l1 != NULL && !l1->empty(), "palette: the line is still there");
@@ -829,7 +853,11 @@ int RunWorldFrameSelfTest()
 
         pane->m_fn_on_line_appended = nullptr;
         doc->m_normalcolour[2] = RGB(0, 128, 0);   // put it back
-        pumpTicks(250);
+        pumpUntil([&] {
+            const SOutputLine* l = pane->GetLine(0);
+            return l && !l->empty() &&
+                   l->front().fg == (unsigned long) RGB(0, 128, 0);
+        });
         // Reset through the DOC, not the pane.  Under the pull model the pane
         // holds no lines of its own, so a pane-only clear leaves the engine's
         // buffer intact and the two disagree about how many lines exist.

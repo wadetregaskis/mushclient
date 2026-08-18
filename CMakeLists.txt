@@ -1,5 +1,26 @@
 cmake_minimum_required(VERSION 3.14)
-project(MUSHclient VERSION 5.07 LANGUAGES C CXX)
+
+# version.h's VERSION_STRING is the single source of truth for the app's
+# version (see version.h's own header comment); everything below (project(),
+# the macOS bundle's CFBundleShortVersionString/CFBundleVersion) derives from
+# it so a release bump only touches one file. Re-run configure automatically
+# if version.h changes without CMakeLists.txt also changing.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/version.h" _mushclient_version_line
+     REGEX "^#define VERSION_STRING")
+# The capture takes only the leading numeric part: version.h documents that
+# pre-release builds append "-pre" to VERSION_STRING, and project() accepts
+# strictly numeric versions.  The full string (suffix included) still reaches
+# the app itself, which displays the compiled-in VERSION_STRING at runtime.
+string(REGEX REPLACE ".*\"([0-9]+(\\.[0-9]+)*)[^\"]*\".*" "\\1"
+       MUSHCLIENT_VERSION "${_mushclient_version_line}")
+if(NOT MUSHCLIENT_VERSION MATCHES "^[0-9]+(\\.[0-9]+)*$")
+    message(FATAL_ERROR "Could not parse a numeric version out of version.h's "
+            "VERSION_STRING line: '${_mushclient_version_line}'")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/version.h")
+
+project(MUSHclient VERSION ${MUSHCLIENT_VERSION} LANGUAGES C CXX)
 
 option(MUSHCLIENT_EXTENDED_TESTS
        "Register the loop-running (\"extended\") selftests.  They reach \
@@ -1045,7 +1066,11 @@ if(NOT WIN32)
                 OUTPUT_NAME                   "MUSHclient"
                 MACOSX_BUNDLE_GUI_IDENTIFIER  "au.com.gammon.MUSHclient"
                 MACOSX_BUNDLE_BUNDLE_NAME     "MUSHclient"
-                MACOSX_BUNDLE_SHORT_VERSION_STRING "5.07"
+                # MUSHCLIENT_VERSION, not PROJECT_VERSION: project()'s VERSION
+                # parsing treats each dot-component as a plain integer, so it
+                # silently drops version.h's leading zero ("5.07" -> "5.7").
+                MACOSX_BUNDLE_SHORT_VERSION_STRING "${MUSHCLIENT_VERSION}"
+                MACOSX_BUNDLE_BUNDLE_VERSION  "${MUSHCLIENT_VERSION}"
                 MACOSX_BUNDLE_ICON_FILE       "MUSHclient.icns"
             )
             # The app icon (built from platform/dialog_art/MUSHclient.png via

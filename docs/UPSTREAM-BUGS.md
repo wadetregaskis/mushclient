@@ -24,6 +24,8 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 13 | Windows' two queue drains disagree about case, so a `nolog` command echoes from one and not the other | this commit | TimerWnd.cpp `OnTimer` vs `ChangeTimerRate` |
 | 14 | Menu-triggered alias's own `%1` is dropped (subscript computed, never used) | this commit | mushview.cpp `CMUSHView::OnMXPMenu` ACTION_ALIAS arm (now `doc_aliasmenu_shared.cpp` `ExecuteAliasMenuItem`) |
 | 15 | NAWS sends a dimension byte of 255 as a bare IAC, corrupting the subnegotiation | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::SendWindowSizes` |
+| 16 | MXP hyperlink from the right-click menu refuses `https://` | this commit | mushview.cpp `CMUSHView::OnMXPMenu` ACTION_HYPERLINK arm |
+| 17 | Double-click word scan reads one byte past the line buffer | this commit | mushview.cpp `CMUSHView::OnLButtonDblClk`, `OnDisplayTextattributes` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -537,3 +539,34 @@ Three — `ActivityViewCloseWorld`, `ActivityViewSaveWorld`,
 in two recovered menus, and the sweep simply had not read that file. That sweep
 was later deleted for failing its own mutation check; this entry is the one
 real thing it found.
+
+## 15 — MXP hyperlink opened from the popup menu refuses `https://` (this commit)
+**Bug:** `OnMXPMenu`'s ACTION_HYPERLINK arm guards against arbitrary OS
+commands with a scheme allowlist, but its copy lists only `http://` and
+`mailto:`.  The other two copies of the same guard — the left-click arm a few
+thousand lines earlier in the same file, and `CMUSHclientDoc::OpenBrowser`
+(methods_utilities.cpp) — both list `https://` as well.  So an MXP hyperlink
+to an https URL is rejected as "permission denied" when opened from the
+right-click popup, while left-clicking the identical link opens it.
+**Fix:** add the `https://` arm, matching the other two copies.  The three
+copies should really be one helper; that hoist is deliberately deferred so it
+does not collide with other in-flight work on utilities_shared.cpp.
+
+## 16 — Double-click word scan reads one byte past the line buffer (this commit)
+**Bug:** once a line is complete its `text` buffer is reallocated to exactly
+`MAX (len, 1)` bytes, with no terminator (doc.cpp — `ProcessPreviousLine`;
+doc_shared.cpp in this tree).  `calculate_line_and_column` returns
+`col == pLine->len` when the click lands to the right of the text, and
+`OnLButtonDblClk` then starts its backward word scan at `text [col]` — one
+past the allocation.  The over-read decides the result: a byte that happens to
+look like a space or a word delimiter yields no selection at all, anything
+else selects the last word, so double-clicking to the right of a line behaves
+differently run to run.  `OnDisplayTextattributes` has the same shape: it
+clamps `startcol` to `pStartLine->len` and then reads `text [startcol]`, which
+is one past the end whenever the selection spans lines (the same-line case is
+bounded by its own `endcol > startcol` test).
+**Fix:** clamp the column into `[0, len - 1]` before the scan, with an
+early-out for an empty line — the same clamp `SetWordUnderMenu` already
+carries in this tree, so the two copies of the scan agree again.  The
+text-attributes clamp is applied *after* the valid-selection test, leaving the
+set of accepted selections unchanged.

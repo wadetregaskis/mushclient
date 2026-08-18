@@ -4556,7 +4556,7 @@ int iDeltaY = m_scroll_position.y - pt.y;
         ScrollInfo.nPos = m_scroll_position.y;
         if (pDoc->m_bScrollBarWanted)
           SetScrollInfo (SB_VERT, &ScrollInfo, pDoc->m_bScrollBarWanted);
-        m_ScrollbarPosition = ScrollInfo.nPos;
+        m_ScrollbarPosition.cy = ScrollInfo.nPos;
         ScrollWindow (0, iSmoothDelta);
         UpdateWindow ();
         }
@@ -4590,7 +4590,7 @@ int iDeltaY = m_scroll_position.y - pt.y;
 
   // update scroll bar
   SetScrollPos (SB_VERT, pt.y, pDoc->m_bScrollBarWanted);
-  m_ScrollbarPosition = pt.y;
+  m_ScrollbarPosition.cy = pt.y;
 
 
 //  GetScrollInfo (SB_HORZ, &ScrollInfo, SIF_POS);
@@ -4622,7 +4622,7 @@ SCROLLINFO ScrollInfo;
   ScrollInfo.nMax = sizeTotal.cy - 1;
   ScrollInfo.nPage = sizePage.cy;
   SetScrollInfo (SB_VERT, &ScrollInfo, pDoc->m_bScrollBarWanted);
-  m_ScrollbarPosition = ScrollInfo.nPos;
+  m_ScrollbarPosition.cy = ScrollInfo.nPos;
 
   /*
   GetScrollInfo (SB_HORZ, &ScrollInfo, SIF_ALL);
@@ -4731,25 +4731,44 @@ int line,
   else
     {
     CLine * pLine = pDoc->m_LineList.GetAt (pos);
-    while (m_selstart_col >= 0 && 
-          !isspace ((unsigned char) pLine->text [m_selstart_col]) &&
-          strchr (App.m_strWordDelimitersDblClick, pLine->text [m_selstart_col]) == NULL)
-      m_selstart_col--;
-    m_selstart_col++;   // now onto the start of that word
 
-    m_pin_col = m_selstart_col;
+    // A click to the right of the text gives col == pLine->len, and a completed
+    // line's buffer is exactly len bytes (doc_shared.cpp resizes it to
+    // MAX (len, 1), with no terminator), so the backward scan would read one
+    // past the end.  Clamp first, the way the hoisted twin does -- see
+    // doc_aliasmenu_shared.cpp CMUSHclientDoc::SetWordUnderMenu.
+    if (pLine->len <= 0)
+      {
+      m_selstart_col = m_selend_col = 0;
+      m_pin_col = 0;
+      }
+    else
+      {
+      if (m_selstart_col >= pLine->len)
+        m_selstart_col = m_selend_col = pLine->len - 1;
+      if (m_selstart_col < 0)
+        m_selstart_col = m_selend_col = 0;
 
-    point.x = calculate_width (line, col, pDoc, dc);
+      while (m_selstart_col >= 0 && 
+            !isspace ((unsigned char) pLine->text [m_selstart_col]) &&
+            strchr (App.m_strWordDelimitersDblClick, pLine->text [m_selstart_col]) == NULL)
+        m_selstart_col--;
+      m_selstart_col++;   // now onto the start of that word
 
-    // a word will end on a space, or whatever
-    while (m_selend_col < pLine->len && 
-          !isspace ((unsigned char) pLine->text [m_selend_col]) &&
-          strchr (App.m_strWordDelimitersDblClick, pLine->text [m_selend_col]) == NULL)
-      m_selend_col++;
+      m_pin_col = m_selstart_col;
 
-    if (m_selend_col > m_selstart_col)
-      strCurrentLine = CString (&pLine->text [m_selstart_col], 
-                                m_selend_col - m_selstart_col);
+      point.x = calculate_width (line, col, pDoc, dc);
+
+      // a word will end on a space, or whatever
+      while (m_selend_col < pLine->len && 
+            !isspace ((unsigned char) pLine->text [m_selend_col]) &&
+            strchr (App.m_strWordDelimitersDblClick, pLine->text [m_selend_col]) == NULL)
+        m_selend_col++;
+
+      if (m_selend_col > m_selstart_col)
+        strCurrentLine = CString (&pLine->text [m_selstart_col], 
+                                  m_selend_col - m_selstart_col);
+      }
     }
 
 // Get new selection region
@@ -5198,6 +5217,15 @@ long startcol,
                endcol > startcol)))
     return;
 
+  // A selection spanning lines can leave startcol at pStartLine->len, which is
+  // one past a completed line's exactly-len-sized buffer, so clamp before
+  // reading the character below.  (The same-line case cannot get here with
+  // startcol at the end -- the endcol > startcol test above bounds it.)
+  if (startcol >= pStartLine->len)
+    startcol = pStartLine->len - 1;
+  if (startcol < 0)
+    startcol = 0;
+
 unsigned int iStyle;
 CStyle * pStyle;
 int iCol;
@@ -5497,6 +5525,7 @@ ASSERT_VALID(pDoc);
 
       // don't let them slip in arbitrary OS commands
       if (strAction.Left (7).CompareNoCase ("http://") != 0 &&
+          strAction.Left (8).CompareNoCase ("https://") != 0 &&
           strAction.Left (7).CompareNoCase ("mailto:") != 0)
         ::UMessageBox(TFormat ("Hyperlink action \"%s\" - permission denied.", 
                         (const char *) strAction), 

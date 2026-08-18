@@ -19,6 +19,7 @@
 
 #include "wx_notepad.h"
 #include "wx_outputpane.h"   // DecodeUTF8Lenient
+#include "wx_mfc_hooks.h"     // g_wxhook_open_text_file (File > Open)
 #include <wx/numdlg.h>       // wxGetNumberFromUser (Go To Line)
 #include <algorithm>         // std::max/min (Go To Line clamps)
 #include "compat.h"           // GetRValue / GetGValue / GetBValue
@@ -28,6 +29,7 @@
 enum {
     ID_NP_FILE_SAVE    = wxID_HIGHEST + 2000,
     ID_NP_FILE_NEW,
+    ID_NP_FILE_OPEN,
     // Convert-menu transforms (parity with canonical CTextView ID_CONVERT_*).
     // Kept contiguous so the event table can bind them as one range.
     ID_NP_CONVERT_FIRST,
@@ -65,6 +67,7 @@ wxBEGIN_EVENT_TABLE(CWxNotepadFrame, wxFrame)
     EVT_CLOSE                (CWxNotepadFrame::OnClose)
     EVT_MENU(ID_NP_FILE_SAVE,  CWxNotepadFrame::OnMenuSave)
     EVT_MENU(ID_NP_FILE_NEW,   CWxNotepadFrame::OnMenuNew)
+    EVT_MENU(ID_NP_FILE_OPEN,  CWxNotepadFrame::OnMenuOpen)
     EVT_MENU_RANGE(ID_NP_CONVERT_FIRST, ID_NP_CONVERT_LAST, CWxNotepadFrame::OnConvert)
     EVT_MENU(ID_NP_EDIT_ASCIIART, CWxNotepadFrame::OnEditAsciiArt)
     EVT_MENU(ID_NP_FILE_SAVEAS,        CWxNotepadFrame::OnMenuSaveAs)
@@ -135,6 +138,10 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     wxMenuBar* mb  = new wxMenuBar();
     wxMenu*    mnu = new wxMenu();
     mnu->Append(ID_NP_FILE_NEW,  wxT("&New notepad\tCtrl+N"));
+    // The canonical CTextView File menu's Open (CTextDocument::OnFileOpen),
+    // absent here entirely until 2026-08-18: load an arbitrary text/xml/lua
+    // file into a fresh notepad window.
+    mnu->Append(ID_NP_FILE_OPEN, wxT("&Open…\tCtrl+O"));
     mnu->Append(ID_NP_FILE_SAVE, wxT("&Save\tCtrl+S"));
     // Save As re-targets an already-pathed document — the plugin-editor case,
     // where plain Save can only overwrite the plugin's own .lua in place.
@@ -255,14 +262,30 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
 
     pDoc->m_fn_get_text_length = [this]() -> int {
         if (!m_ctrl) return 0;
-        return static_cast<int>(m_ctrl->GetLastPosition());
+        // UTF-8 BYTE length, not the control's character count: GetNotepadText
+        // returns the notepad's contents as UTF-8 bytes (methods_notepad.cpp),
+        // and AppendToTheNotepad computes an append position from this length
+        // and feeds it straight into m_fn_set_sel below — the two callbacks
+        // must agree on units, or an append after any non-ASCII text lands at
+        // the wrong offset.
+        return static_cast<int>(m_ctrl->GetValue().utf8_str().length());
     };
 
     pDoc->m_fn_set_sel = [this](int from, int to) {
         if (!m_ctrl) return;
-        long last = m_ctrl->GetLastPosition();
-        long f = (from < 0) ? last : static_cast<long>(from);
-        long t = (to   < 0) ? last : static_cast<long>(to);
+        // from/to are UTF-8 BYTE offsets (see m_fn_get_text_length above);
+        // wx text-control positions are character offsets, so translate
+        // through the same byte->char helper the output pane uses for the
+        // same split.
+        const wxScopedCharBuffer utf8 = m_ctrl->GetValue().utf8_str();
+        const size_t nbytes = utf8.length();
+        long last = static_cast<long>(m_ctrl->GetLastPosition());
+        long f = (from < 0) ? last
+                 : static_cast<long>(UTF8ByteToCharOffset(
+                       utf8.data(), nbytes, static_cast<size_t>(from)));
+        long t = (to   < 0) ? last
+                 : static_cast<long>(UTF8ByteToCharOffset(
+                       utf8.data(), nbytes, static_cast<size_t>(to)));
         m_ctrl->SetSelection(f, t);
     };
 
@@ -289,8 +312,16 @@ CWxNotepadFrame::CWxNotepadFrame(CTextDocument* pDoc,
     pDoc->m_fn_get_rect = [this]() -> std::string {
         wxRect r = GetRect();
         char buf[80];
+        // Emit EXCLUSIVE right/bottom edges (left+width, top+height), not
+        // wxRect's own INCLUSIVE GetRight()/GetBottom(): both consumers of
+        // this string (the BSTR-formatted GetNotepadWindowPosition and Lua's
+        // L_GetNotepadWindowPosition, scripting/methods/methods_notepad.cpp
+        // and scripting/lua_methods.cpp) subtract left/top from right/bottom
+        // as if this were a Win32 RECT, whose right/bottom are exclusive — so
+        // an inclusive edge here read the window's width/height one pixel short.
         snprintf(buf, sizeof(buf), "%d %d %d %d",
-                 r.GetLeft(), r.GetTop(), r.GetRight(), r.GetBottom());
+                 r.GetLeft(), r.GetTop(),
+                 r.GetLeft() + r.GetWidth(), r.GetTop() + r.GetHeight());
         return std::string(buf);
     };
 
@@ -535,6 +566,34 @@ void CWxNotepadFrame::OnMenuSave(wxCommandEvent& /*evt*/)
 // ── Search / navigation / misc (2026-08-13) ─────────────────────────────────
 // The canonical CTextView commands; core ops separate from their dialogs so
 // the notepad selftest can drive them.
+
+// File > Open (canonical CTextDocument::OnFileOpen).  Load an arbitrary text/
+// xml/lua file into a fresh notepad window — the port had no menu item for
+// this at all, so the command was permanently unreachable from the UI.
+//
+// Deliberately NOT App.m_pNormalDocTemplate->OpenDocumentFile (what the
+// canonical body calls): on this port that override
+// (platform/mfc_ui.h CMultiDocTemplate::OpenDocumentFile) always treats a
+// non-empty path as a WORLD file, so an Open here would try to load the
+// chosen .txt/.xml/.lua as a world.  g_wxhook_open_text_file is the actual
+// non-world-file open path — the same one the "edit script with notepad"
+// call sites (world_debug.cpp) and the Plugins dialog's Edit button use — and
+// it does exactly what OnFileOpen wants: read the file, open a notepad on its
+// contents, and set the path so Save writes back rather than prompting.
+void CWxNotepadFrame::OnMenuOpen(wxCommandEvent& /*evt*/)
+{
+    wxFileDialog dlg(this, wxT("Open"), wxEmptyString, wxEmptyString,
+                     wxT("Text files (*.txt)|*.txt|"
+                         "Plugins (*.xml)|*.xml|"
+                         "Lua scripts (*.lua)|*.lua|"
+                         "All files (*.*)|*.*"),
+                     wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+    if (dlg.ShowModal() != wxID_OK)
+        return;
+
+    if (g_wxhook_open_text_file)
+        g_wxhook_open_text_file((const char*) dlg.GetPath().ToUTF8());
+}
 
 void CWxNotepadFrame::OnMenuSaveAs(wxCommandEvent& /*evt*/)
 {
@@ -792,9 +851,19 @@ void CWxNotepadFrame::OnMenuNew(wxCommandEvent& /*evt*/)
     // Delegate back to the document's "File → New" logic.
     if (!m_pDoc) return;
     // Re-use the doc's OnFileNew which calls CreateTextWindow for a fresh pad.
-    // On non-Windows this isn't hooked to MFC command routing, so call directly.
+    // On non-Windows this isn't hooked to MFC command routing (OnFileNew is
+    // protected), so reproduce its body directly.
     CMUSHclientDoc* pWorld = m_pDoc->FindWorld();
     CString title = m_pDoc->m_strTitle;
+
+    // Don't make another Recall/search-results window (CTextDocument::
+    // OnFileNew's guard, TextDocument.cpp:460): a fresh notepad opened from
+    // within a Recall/search-results one must reset to the generic title,
+    // not inherit "Recall: <query>".
+    if (!m_pDoc->m_strSearchString.IsEmpty())
+        title = pWorld ? TFormat("Notepad: %s", (LPCTSTR) pWorld->m_mush_name)
+                       : Translate("Untitled");
+
     CreateTextWindow("",
                      static_cast<LPCTSTR>(title),
                      pWorld,
@@ -867,12 +936,12 @@ void CWxNotepadFrame::OnConvert(wxCommandEvent& evt)
         default: return;
     }
 
-    // A failure here is base64 decode on invalid input: leave the notepad alone
-    // and beep, as the canonical does when decodeBase64 throws.
-    if (!NotepadConvertText(op, src, dst)) {
-        wxBell();
+    // A failure here is base64 decode on invalid input: leave the notepad
+    // alone.  NotepadConvertText already reported the error (ReportError, the
+    // same box CTextView::OnConvertBase64decode puts up) — no beep on top of
+    // that; the canonical never beeps here.
+    if (!NotepadConvertText(op, src, dst))
         return;
-    }
 
     // Base64 DECODE produces arbitrary binary, and several of the other
     // conversions can too.  FromUTF8 returned "" for those and the SetValue

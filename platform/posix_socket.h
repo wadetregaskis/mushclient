@@ -113,6 +113,7 @@ public:
 
         m_hSocket = ::socket(AF_INET, nSocketType, 0);
         if (m_hSocket == INVALID_SOCKET) return FALSE;
+        m_sockType = nSocketType;
 
         // Don't let a write to a peer-closed socket raise SIGPIPE and kill the
         // process.  macOS: per-socket SO_NOSIGPIPE; Linux relies on the global
@@ -396,6 +397,14 @@ public:
                     // calls; without it the listen fd would be recv()'d below
                     // and the connection silently dropped.
                     s->OnAccept(0);
+                } else if (s->m_sockType == SOCK_DGRAM) {
+                    // SOCK_DGRAM has no concept of a peer closing the
+                    // connection -- a zero-length UDP datagram is a legitimate
+                    // (if unusual) piece of data, not EOF, and peeks
+                    // indistinguishably from the TCP EOF case below.  Skipping
+                    // the peek entirely and always calling OnReceive is what
+                    // keeps world.UdpListen alive across one.
+                    s->OnReceive(0);
                 } else {
                     // Peek to distinguish data vs. EOF
                     char peek;
@@ -437,6 +446,12 @@ private:
     enum State { kIdle, kConnecting, kConnected, kListening };
     State m_state  = kIdle;
     long  m_events = FD_READ | FD_WRITE | FD_OOB | FD_ACCEPT | FD_CONNECT | FD_CLOSE;
+    int   m_sockType = SOCK_STREAM;  // set by Create(); Poll() needs this to tell
+                                      // a peer-closed TCP stream from a legitimate
+                                      // zero-length UDP datagram (both peek as 0
+                                      // bytes).  Accepted sockets never change
+                                      // this from the SOCK_STREAM default -- accept(2)
+                                      // only ever hands back stream sockets.
     unsigned long m_generation = 0;   // bumped on each Register; lets Poll detect
                                       // an ABA reuse of a freed socket's address
 

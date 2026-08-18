@@ -234,12 +234,11 @@ bool NotepadConvertText (const int op, const CString & src, CString & dst)
     case eNotepadConvertRemoveEol:      strResult = NP_RemoveEndOfLines (strCanonical);  break;
     case eNotepadConvertRemoveBlanks:   strResult = NP_RemoveExtraBlanks (strCanonical); break;
     case eNotepadConvertQuoteLines:
-      {
-      CString strQuote = App.m_strNotepadQuoteString;
-      if (strQuote.IsEmpty ())
-        strQuote = "> ";
-      strResult = NP_QuoteLines (strCanonical, (LPCTSTR) strQuote);
-      }
+      // Whatever the preference holds, including an explicitly-cleared empty
+      // string (a no-op quote) — the canonical CTextView::OnConvertQuotelines
+      // (TextView.cpp:477-521) has no "> " fallback of its own, so inventing
+      // one here quoted lines the user had asked NOT to be quoted.
+      strResult = NP_QuoteLines (strCanonical, (LPCTSTR) App.m_strNotepadQuoteString);
       break;
     case eNotepadConvertQuoteForum:     strResult = QuoteForumCodes (strCanonical);      break;
     case eNotepadConvertBase64Encode:
@@ -252,6 +251,12 @@ bool NotepadConvertText (const int op, const CString & src, CString & dst)
         }
       catch (CException * e)
         {
+        // Report the failure the way the canonical
+        // CTextView::OnConvertBase64decode does (TextView.cpp:1226): a failed
+        // decode used to be swallowed silently here, with only the false
+        // return telling the caller not to touch the control — the wx
+        // frontend turned that into a bare beep, with no indication of WHY.
+        e->ReportError ();
         e->Delete ();
         return false;
         }

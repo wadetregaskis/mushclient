@@ -329,7 +329,13 @@ void CMUSHclientDoc::CheckTimers ()
       !m_bDisconnectOK &&
       m_iConnectPhase == eConnectNotConnected)
     {
+#ifdef _WIN32
     Frame.SetStatusMessage (Translate ("Reconnecting ..."));
+#else
+    // Port: attribute to THIS doc, so a background world's reconnect message
+    // lands on its own status bar, not the frontmost world's.
+    Frame.SetStatusMessage (this, Translate ("Reconnecting ..."));
+#endif
     ConnectSocket();      // reconnect
     }
 

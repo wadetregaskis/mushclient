@@ -180,7 +180,13 @@ void CMUSHclientDoc::DrawMappingStatusLine (void)
     {
     if (strSpeedWalk.GetLength () > 50)
       strSpeedWalk = strSpeedWalk.Left (50) + " ...";
+#ifdef _WIN32
     Frame.SetStatusMessageNow (TFormat ("Mapper: %s", (LPCTSTR) strSpeedWalk));
+#else
+    // Port: attribute to THIS doc, so a background world's mapper status
+    // lands on its own status bar, not the frontmost world's.
+    Frame.SetStatusMessageNow (this, TFormat ("Mapper: %s", (LPCTSTR) strSpeedWalk));
+#endif
     m_tStatusDisplayed = CTime::GetCurrentTime ();
     m_bShowingMapperStatus = true;
     }

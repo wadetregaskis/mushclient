@@ -229,6 +229,68 @@ TEST(TimerTest, LinkFailureReconnectsOnlyWhenAllThreeConditionsHold)
     App.m_bReconnectOnLinkFailure = savedPref;
 }
 
+// ...and it must land on the status bar of the world that dropped, not on
+// whichever world happens to be frontmost.  The doc-attributed status route
+// (8dd87e5) was applied to doc_shared.cpp's callers only, so this one still
+// used the 1-arg Frame.SetStatusMessage.
+//
+// Frame.SetStatusMessage(this, ...) prefers g_wxhook_set_status_for and falls
+// back to the unattributed hook only for a null doc or an uninstalled hook, so
+// with BOTH installed the attributed one is what must fire.  Unfixed, it never
+// fires at all and the text arrives on the unattributed hook instead.
+static void* g_lastStatusDoc;
+static std::string g_lastStatusForText;
+static void capture_status_for(void* doc, const char* msg)
+{
+    g_lastStatusDoc     = doc;
+    g_lastStatusForText = msg ? msg : "";
+}
+
+TEST(TimerTest, ReconnectStatusIsAttributedToTheWorldThatDropped)
+{
+    CMUSHclientDoc docA; make_doc(docA);
+    CMUSHclientDoc docB; make_doc(docB);
+
+    // Both worlds are in the "link dropped" state, so the only thing that can
+    // decide which pointer comes through is which doc ran CheckTimers.
+    for (CMUSHclientDoc* d : { &docA, &docB }) {
+        d->m_server        = "0.0.0.0";   // ConnectSocket refuses this at once
+        d->m_iConnectPhase = eConnectNotConnected;
+        d->m_bDisconnectOK = false;       // the link DROPPED
+    }
+
+    const unsigned savedPref = App.m_bReconnectOnLinkFailure;
+    void (*savedHook)(const char*)           = g_wxhook_set_status;
+    void (*savedHookFor)(void*, const char*) = g_wxhook_set_status_for;
+    g_wxhook_set_status     = capture_status;
+    g_wxhook_set_status_for = capture_status_for;
+    App.m_bReconnectOnLinkFailure = 1;
+
+    g_lastStatus.clear();
+    g_lastStatusForText.clear();
+    g_lastStatusDoc = NULL;
+    docA.CheckTimers();
+
+    EXPECT_STREQ("Reconnecting ...", g_lastStatusForText.c_str());
+    EXPECT_TRUE(g_lastStatusDoc == &docA);
+    EXPECT_TRUE(g_lastStatus.empty());   // NOT the frontmost-window route
+
+    // The pointer tracks the doc rather than being some fixed value: the other
+    // world's reconnect must carry the other world's pointer.
+    g_lastStatus.clear();
+    g_lastStatusForText.clear();
+    g_lastStatusDoc = NULL;
+    docB.CheckTimers();
+
+    EXPECT_STREQ("Reconnecting ...", g_lastStatusForText.c_str());
+    EXPECT_TRUE(g_lastStatusDoc == &docB);
+    EXPECT_TRUE(g_lastStatus.empty());
+
+    g_wxhook_set_status_for       = savedHookFor;
+    g_wxhook_set_status           = savedHook;
+    App.m_bReconnectOnLinkFailure = savedPref;
+}
+
 TEST(TimerTest, ActiveWhenClosedFiresWhileDisconnected)
 {
     CMUSHclientDoc doc; make_doc(doc);

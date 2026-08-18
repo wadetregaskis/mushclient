@@ -26,6 +26,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 15 | NAWS sends a dimension byte of 255 as a bare IAC, corrupting the subnegotiation | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::SendWindowSizes` |
 | 16 | MXP hyperlink from the right-click menu refuses `https://` | this commit | mushview.cpp `CMUSHView::OnMXPMenu` ACTION_HYPERLINK arm |
 | 17 | Double-click word scan reads one byte past the line buffer | this commit | mushview.cpp `CMUSHView::OnLButtonDblClk`, `OnDisplayTextattributes` |
+| 18 | `CmcDateTime::operator-`'s Windows arm discards a null/invalid span status | this commit | mcdatetime.cpp `CmcDateTime::operator-(const CmcDateTime&)` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -551,6 +552,21 @@ right-click popup, while left-clicking the identical link opens it.
 **Fix:** add the `https://` arm, matching the other two copies.  The three
 copies should really be one helper; that hoist is deliberately deferred so it
 does not collide with other in-flight work on utilities_shared.cpp.
+
+## 18 — `CmcDateTime::operator-`'s Windows arm discards a null/invalid span status (this commit)
+**Bug:** on the `_WIN32` arm, the null/invalid early-outs build a real
+`COleDateTimeSpan`, set ITS status to `null`/`invalid`, then `return (double)
+spanResult;`. The function's return type is `CmcDateTimeSpan`, so that double
+goes straight into `CmcDateTimeSpan(double)` — a constructor that unconditionally
+calls `SetStatus(valid)` — so the caller always observes `valid` regardless of
+which of the two null/invalid arms actually ran. The POSIX arm two lines below
+does not have this bug: it already constructs and returns a `CmcDateTimeSpan`
+directly.
+**Fix:** construct a `CmcDateTimeSpan` and set its status directly in both
+early-out arms, mirroring the POSIX arm, instead of routing the result through
+`(double)`. `needs: windows-run` — unreachable from this platform; the POSIX arm
+was already correct and is what `tests/test_mcdatetime.cpp`'s
+`CmcDateTimeR4.NullAndInvalidStatusPropagation` exercises.
 
 ## 16 — Double-click word scan reads one byte past the line buffer (this commit)
 **Bug:** once a line is complete its `text` buffer is reallocated to exactly

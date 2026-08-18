@@ -791,6 +791,18 @@ void TestClipboardRoundTrip()
     CString saved;
     const bool hadSaved = GetClipboardContents(saved, false, false) ? true : false;
 
+    // Saving and restoring only covers what can be READ as text.  An empty read
+    // does not mean an empty clipboard: a copied image or file reference reads
+    // as nothing here, and putontoclipboard replaces the whole pasteboard, so
+    // running the round trip would destroy it with no way to put it back.  A
+    // test is not entitled to do that to whoever typed `ctest`.
+    if ((!hadSaved || saved.IsEmpty()) &&
+        g_wxhook_clipboard_has_nontext && g_wxhook_clipboard_has_nontext())
+    {
+        printf("  [SKIP] clipboard holds non-text content - not overwriting it\n");
+        return;
+    }
+
     // Deliberately contains the characters the forum-codes path counts, so a
     // silent truncation shows up as a wrong length rather than a lucky match.
     const char* const kProbe = "HELLO[42]WORLD\\end";

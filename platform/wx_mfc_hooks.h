@@ -204,6 +204,16 @@ extern char* (*g_wxhook_get_clipboard_text)();
 // Set the system clipboard to the given UTF-8 string.
 extern void  (*g_wxhook_set_clipboard_text)(const char* text);
 
+// True if the clipboard holds content in one of the common NON-text formats
+// (an image, a PDF, a file reference, rich text).  Setting the clipboard
+// replaces the whole pasteboard, and content this seam cannot read as text also
+// cannot be put back afterwards, so a caller about to overwrite the user's
+// clipboard can ask first.  --gui-bridge-selftest is the only caller: it skips
+// its round trip rather than destroy a copied image on an ordinary ctest run.
+// Best effort — wxClipboard answers about named formats but cannot enumerate,
+// so a format private to another application is invisible here.
+extern bool  (*g_wxhook_clipboard_has_nontext)();
+
 // ── Sound hooks ───────────────────────────────────────────────────────────
 // Play a sound file asynchronously.  path is a UTF-8 filesystem path.
 // Returns true if playback started successfully, false on error or if no

@@ -2530,6 +2530,49 @@ static void hook_set_clipboard_text(const char* text)
     }
 }
 
+// Is there something on the clipboard that hook_get_clipboard_text cannot read
+// and hook_set_clipboard_text would therefore destroy?  SetData replaces the
+// WHOLE pasteboard, so a caller that saves the text, writes its own, and puts
+// the text back has silently thrown away a copied image or file reference.
+// --gui-bridge-selftest asks this before overwriting and skips instead, rather
+// than eat the developer's clipboard on an ordinary ctest run.
+//
+// Best effort, and deliberately so: wxClipboard cannot enumerate what is on
+// offer, only answer about a format you name, so a type private to some other
+// application stays invisible.  The names below are the ones a person actually
+// loses — an image, a file reference, rich text.  They are given NATIVELY rather
+// than as wxDF_* because the enum does not survive the trip on macOS: with a PNG
+// on the pasteboard, IsSupported(wxDF_BITMAP) is false while
+// IsSupported("public.png") is true (measured).  The wxDF_* text pair does work,
+// and the GTK MIME spellings sit beside the UTIs so this keeps its meaning on
+// Linux — a name the platform does not know simply never matches.
+static bool hook_clipboard_has_nontext()
+{
+    // Fail safe: a clipboard that will not even open is not one to encourage
+    // the caller to overwrite.
+    if (!wxTheClipboard->Open()) return true;
+
+    bool nontext = false;
+    if (!wxTheClipboard->IsSupported(wxDF_UNICODETEXT) &&
+        !wxTheClipboard->IsSupported(wxDF_TEXT))
+    {
+        static const char* const kNonText[] = {
+            "public.png",      "image/png",
+            "public.tiff",     "image/tiff",
+            "public.jpeg",     "image/jpeg",
+            "com.adobe.pdf",   "application/pdf",
+            "public.file-url", "text/uri-list",
+            "public.rtf",      "text/rtf",
+            "public.html",     "text/html",
+        };
+        for (size_t i = 0; !nontext && i < WXSIZEOF(kNonText); i++)
+            nontext = wxTheClipboard->IsSupported(wxDataFormat(wxString(kNonText[i])));
+    }
+
+    wxTheClipboard->Close();
+    return nontext;
+}
+
 // ── Bridged-dialog parent stack ──────────────────────────────────────────────
 // Innermost-last stack of bridged modal dialogs currently on screen (pushed by
 // hook_run_dialog / hook_run_property_sheet around their ShowModal).  Nested
@@ -5648,6 +5691,7 @@ void wx_mfc_install_hooks()
     g_wxhook_font_dialog        = hook_font_dialog;
     g_wxhook_get_clipboard_text   = hook_get_clipboard_text;
     g_wxhook_set_clipboard_text   = hook_set_clipboard_text;
+    g_wxhook_clipboard_has_nontext = hook_clipboard_has_nontext;
     g_wxhook_create_text_window   = hook_create_text_window;
     g_wxhook_open_text_file       = hook_open_text_file;
     g_wxhook_pick_colour          = hook_pick_colour;

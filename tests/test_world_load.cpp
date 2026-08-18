@@ -2668,6 +2668,8 @@ TEST(WorldLoadR5, PluginHeaderValidationArms)
         { "p_shortid.xml", "name=\"P\" id=\"abc\"" },
         { "p_hexid.xml",   "name=\"P\" id=\"zzzzzzzzzzzzzzzzzzzzzzzz\"" },
         { "p_lang.xml",    "name=\"P\" id=\"0123456789abcdef012345dd\" language=\"rubyscript\"" },
+        { "p_lang_perl.xml",
+          "name=\"P\" id=\"0123456789abcdef012345de\" language=\"perlscript\"" },
     };
 
     for (auto& c : cases) {

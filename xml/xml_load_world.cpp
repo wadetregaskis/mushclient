@@ -2524,11 +2524,15 @@ void CMUSHclientDoc::Load_Plugin_XML (CXMLelement & parent)
       m_CurrentPlugin->m_strLanguage.MakeLower ();
       if (!m_CurrentPlugin->m_strLanguage.IsEmpty ())
         if (m_CurrentPlugin->m_strLanguage != "vbscript" &&
-            m_CurrentPlugin->m_strLanguage != "vbscript.encode" &&
-            m_CurrentPlugin->m_strLanguage != "jscript" &&
-            m_CurrentPlugin->m_strLanguage != "jscript.encode" &&
-            m_CurrentPlugin->m_strLanguage != "perlscript" 
-#if defined(USE_PYTHON) || !defined(_WIN32)
+            m_CurrentPlugin->m_strLanguage != "vbscript.encode"
+#if defined(_WIN32) || defined(MUSHCLIENT_JS_SCRIPTING)
+            && m_CurrentPlugin->m_strLanguage != "jscript" &&
+            m_CurrentPlugin->m_strLanguage != "jscript.encode"
+#endif
+#if defined(_WIN32) || defined(MUSHCLIENT_PERL_SCRIPTING)
+            && m_CurrentPlugin->m_strLanguage != "perlscript"
+#endif
+#if defined(USE_PYTHON) || defined(MUSHCLIENT_PYTHON_SCRIPTING)
             && m_CurrentPlugin->m_strLanguage != "python"
 #endif
 #if defined(USE_TCL) || defined(MUSHCLIENT_TCL_SCRIPTING)

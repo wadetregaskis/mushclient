@@ -36,7 +36,7 @@ bool wx_canonical_menu_ui_state(int id, CMUSHclientDoc* doc,
 #include <wx/timer.h>
 #include <wx/textctrl.h>              // wxTextCtrl, wxTextAttr (info bar)
 #include <cstdio>
-#include <ctime>                      // time_t — DefaultLogFileName
+#include <ctime>                      // time_t — FormatTimePane, the tick clocks
 #include <functional>                 // std::function — the close-teardown observer
 #include <string>
 #include <vector>

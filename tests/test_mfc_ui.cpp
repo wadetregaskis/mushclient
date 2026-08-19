@@ -45,6 +45,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <strings.h>  // strcasecmp — ComboBox FindStringExact's case fold
 #include <sys/resource.h>  // RLIMIT_FSIZE — simulated full disk
 #include <sys/stat.h>
 #include <unistd.h>
@@ -99,9 +100,17 @@ inline int  hk_combo_get_count(void* h)                { return (int)widgets()[h
 inline int  hk_combo_get_cur_sel(void* h)              { return widgets()[h].cursel; }
 inline void hk_combo_set_cur_sel(void* h, int s)       { widgets()[h].cursel = s; }
 inline int  hk_combo_find_string_exact(void* h, int after, const char* t) {
+    // Mirrors the shipping hook (wx_mfc_impl.cpp hook_combo_find_string_exact):
+    // the real CB_FINDSTRINGEXACT contract wraps once past the end and folds
+    // case, so the double has to as well or it proves nothing about the
+    // hooked path it stands in for.
     auto& it = widgets()[h].items;
-    for (int i = after + 1; i < (int)it.size(); ++i)
-        if (it[i] == t) return i;
+    int n = (int)it.size();
+    if (n == 0) return -1;
+    for (int i = 0; i < n; ++i) {
+        int idx = (after + 1 + i) % n;
+        if (strcasecmp(it[idx].c_str(), t) == 0) return idx;
+    }
     return -1;
 }
 inline char* hk_combo_get_lb_text(void* h, int i) {
@@ -1960,7 +1969,8 @@ TEST(Controls, ComboBoxHookedOperations) {
     cb.GetLBText(9, s);
     EXPECT_TRUE(s.IsEmpty());
     EXPECT_EQ(2, cb.FindStringExact(-1, "blue"));
-    EXPECT_EQ(CB_ERR, cb.FindStringExact(2, "blue"));   // search starts after
+    EXPECT_EQ(2, cb.FindStringExact(2, "blue"));   // search starts after and wraps
+    EXPECT_EQ(2, cb.FindStringExact(-1, "BLUE"));  // CB_FINDSTRINGEXACT folds case
     EXPECT_EQ(CB_ERR, cb.FindStringExact(-1, "mauve"));
     EXPECT_EQ(2, cb.FindString(-1, "blue"));
     EXPECT_EQ(0, cb.SelectString(-1, "red"));
@@ -3085,18 +3095,6 @@ TEST(CommonDialogs, FontDialogSeedsAndReturnsColour) {
 
 static std::string s_fdLeaf, s_fdDir;
 static bool s_fdOpen, s_fdOverwrite;
-
-// Saves a process-global g_wxhook_* pointer and restores it in the
-// destructor, so an ASSERT_* between the install and a manual reset (which
-// returns out of the whole TEST body, not just past the reset line) cannot
-// leave the hook installed for every later TEST() in this binary.
-template <typename T>
-struct HookGuard {
-    T& slot;
-    T  saved;
-    explicit HookGuard(T& s) : slot(s), saved(s) {}
-    ~HookGuard() { slot = saved; }
-};
 
 TEST(CommonDialogs, FileDialogPathPlumbing) {
     // Headless: cancel

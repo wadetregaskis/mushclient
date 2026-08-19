@@ -1183,6 +1183,24 @@ void TestListBoxMutators()
     check(box.FindStringExact(-1, "ALPHA") != LB_ERR, "...case-insensitively");
     check(box.FindStringExact(-1, "zz") == LB_ERR, "...and misses honestly");
 
+    // CComboBox::FindStringExact shares the same CB_FINDSTRINGEXACT contract
+    // (wrap once past the end, fold case) — the headless double in
+    // tests/test_mfc_ui.cpp mirrors this, but only the real hook, exercised
+    // here, proves the shipping wx bridge actually honours it.
+    {
+        wxComboBox* combo = new wxComboBox(host, wxID_ANY);
+        CComboBox cbox;
+        cbox.m_hWnd = combo;
+        cbox.AddString("red");
+        cbox.AddString("green");
+        cbox.AddString("blue");
+        check(cbox.FindStringExact(-1, "blue") == 2, "CComboBox::FindStringExact finds");
+        check(cbox.FindStringExact(2, "blue") == 2, "...wraps past the end");
+        check(cbox.FindStringExact(-1, "BLUE") == 2, "...and folds case");
+        check(cbox.FindStringExact(-1, "mauve") == CB_ERR, "...misses honestly");
+        cbox.m_hWnd = nullptr;
+    }
+
     // The whole Move Up sequence, as GlobalPrefs.cpp runs it: must end with
     // the item one row up AND STILL SELECTED (it used to end deselected).
     box.SetCurSel(2);   // "charlie"

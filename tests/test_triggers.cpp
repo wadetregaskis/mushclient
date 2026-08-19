@@ -977,18 +977,6 @@ TEST(TriggerR5, ColourAndStyleMatchConditions)
     }
 }
 
-// Saves a process-global g_wxhook_* pointer and restores it in the
-// destructor, so an ASSERT_* between the install and a manual reset (which
-// returns out of the whole TEST body, not just past the reset line) cannot
-// leave the hook installed for every later TEST() in this binary.
-template <typename T>
-struct HookGuard {
-    T& slot;
-    T  saved;
-    explicit HookGuard(T& s) : slot(s), saved(s) {}
-    ~HookGuard() { slot = saved; }
-};
-
 // clipboard_arg copies the selected wildcard to the clipboard on match.
 TEST(TriggerR5, ClipboardArgCopiesWildcard)
 {

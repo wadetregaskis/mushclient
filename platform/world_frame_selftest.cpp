@@ -39,6 +39,7 @@
 #include <climits>        // LONG_MIN — "no saved child_x/child_y" sentinel below
 #include <cstdio>
 #include <functional>
+#include <string>
 #include <vector>
 
 // The world option table, so the font-size check below can assert against the
@@ -457,6 +458,45 @@ int RunWorldFrameSelfTest()
         check(!stampPixelRed(),
               "preamble draw: ...and not when the option is off (control)");
         doc->m_OutputLinePreambleOutputBackColour = savedBack;
+
+        // The search highlight has to shift by the stamp too (2026-08-18).
+        // It did not: the yellow box and its re-drawn text were computed from
+        // the raw character column, so with timestamps on they landed one
+        // preamble-width LEFT of the characters they were meant to cover.
+        // Line 0 begins "0123456789...", so the term matches at column 0 and
+        // the box must start exactly at the first cell AFTER the stamp.
+        doc->m_strOutputLinePreambleOutput = "[TS] ";        // 5 cells
+        pane->HighlightSearch(wxT("0123"));
+        {
+            const int cw = pane->CharWidth();
+            wxBitmap bmp(400, 40, 32);
+            wxMemoryDC mdc(bmp);
+            mdc.SetBackground(*wxBLACK_BRUSH);
+            mdc.Clear();
+            pane->RenderLineForTest(mdc, 0, 0);
+            mdc.SelectObject(wxNullBitmap);
+            wxImage img = bmp.ConvertToImage();
+            auto isHit = [&img](int x, int y) {
+                return img.GetRed(x, y) > 240 && img.GetGreen(x, y) > 200 &&
+                       img.GetBlue(x, y) < 60;      // the (255,220,0) box
+            };
+            check(cw >= 4, "search highlight: the char cell is wide enough to "
+                           "tell the stamp's cells from the text's (control)");
+            // Where does the yellow START?  Scanning from x == 3 skips the
+            // 3-pixel left-margin marker, which is the same colour and is
+            // always at the window edge.  Without the correction the box began
+            // at x == 0 and this would find x == 3.
+            int firstYellow = -1;
+            for (int x = 3; x < 380 && firstYellow < 0; ++x)
+                for (int y = 0; y < pane->LineHeight(); ++y)
+                    if (isHit(x, y)) { firstYellow = x; break; }
+            printf("    (highlight starts at x=%d; the 5-cell stamp is %d px "
+                   "wide)\n", firstYellow, 5 * cw);
+            check(firstYellow == 5 * cw,
+                  "search highlight: the box starts at the first cell AFTER "
+                  "the timestamp, not one stamp-width to its left");
+        }
+        pane->HighlightSearch(wxEmptyString);
 
         doc->m_strOutputLinePreambleOutput = "";
         doc->m_strOutputLinePreambleNotes  = "";
@@ -2367,6 +2407,181 @@ int RunWorldFrameSelfTest()
 
         check(!pane->WantsSelectAll(),
               "select-all: a genuine command-bar click gives the pane's claim back up");
+    }
+
+    // ── a note the PORT emits is a REAL engine line ─────────────────────────
+    // Under the pull model the pane keeps no content: a line pushed straight
+    // into COutputPane has no CLine to fetch, so it could never be painted, and
+    // its wrap-cache entry left the cache one longer than the engine's buffer.
+    // The trim at the end of the very next AppendLine then dropped the OLDEST
+    // REAL line's metrics, and every line's wrap count was off by one from
+    // there on.  Both halves are asserted: the metrics must not move, AND the
+    // note must still be readable -- swallowing it would pass the first arm.
+    {
+        // The ENGINE hard-wraps at m_nWrapColumn long before the pane's own
+        // visual wrap can bite, so widen it for the fixture: without this both
+        // fixture lines arrive one row high and the control below could not
+        // tell a shifted cache from a correct one (the degenerate-fixture trap).
+        const unsigned short savedWrap = doc->m_nWrapColumn;
+        doc->m_nWrapColumn = 500;
+        doc->ClearOutput();
+        const int cols = pane->WrapColumns();
+        check(cols > 4, "note: the pane has a real wrap column (control)");
+        // Two lines whose char counts differ and both exceed the wrap column,
+        // so their wrap counts differ.
+        const std::string shortLine(cols + 2, 'a');
+        const std::string longLine (cols * 2 + 3, 'b');
+        doc->Note(shortLine.c_str());
+        doc->Note(longLine.c_str());
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const int n0 = pane->LineCount();
+        check(n0 >= 2, "note: the two fixture lines reached the pane");
+        const int w1 = pane->VisualRowsForLine(n0 - 2);
+        const int w2 = pane->VisualRowsForLine(n0 - 1);
+        const long long rows0 = pane->TotalVisualRows();
+        check(w1 != w2, "note: the two fixture lines wrap differently (control)");
+
+        pane->AppendNote("** selftest note **", RGB(200, 200, 0));
+        wxYield();
+
+        const int n1 = pane->LineCount();
+        check(n1 == n0 + 1, "note: AppendNote added exactly one line");
+        check(pane->DerivedLength() == n1,
+              "note: ...and the wrap cache is exactly as long as the engine's "
+              "buffer (a pane-only line used to leave it one longer)");
+        check(pane->VisualRowsForLine(n0 - 2) == w1 &&
+              pane->VisualRowsForLine(n0 - 1) == w2,
+              "note: the lines already in the buffer keep their wrap counts");
+        check(pane->TotalVisualRows() ==
+                  rows0 + pane->VisualRowsForLine(n1 - 1),
+              "note: the visual-row total grew by exactly the note's own rows");
+        std::string noteText;
+        if (const SOutputLine* l = pane->GetLine(n1 - 1))
+            if (!l->empty()) noteText = l->front().text;
+        check(noteText.find("selftest note") != std::string::npos,
+              "note: ...and the note is fetchable as the new last line (a "
+              "swallowed note would leave the metrics right and the text gone)");
+        doc->m_nWrapColumn = savedWrap;
+        doc->ClearOutput();
+    }
+
+    // ── Appearance > Output's three "Show" checkboxes reach the SCROLLBACK ──
+    // BuildOutputLine gates each run's bold/italic/underline on them, so lines
+    // the pane has already cached keep the old attributes until something drops
+    // that cache.  Nothing on the change path did, so on an idle or
+    // disconnected world the checkbox appeared to do nothing at all.  Both
+    // directions are driven: a one-way fix would pass only the first arm.
+    {
+        doc->ClearOutput();
+        doc->m_bShowBold = 1;
+        doc->NoteStyle(1);              // HILITE — the bold style bit
+        doc->Note("show-bold fixture");
+        doc->NoteStyle(0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const int idx = pane->LineCount() - 1;
+        auto lineIsBold = [&]() {
+            const SOutputLine* l = pane->GetLine(idx);
+            return l && !l->empty() && l->front().bold;
+        };
+        check(lineIsBold(), "show-bold: the fixture line starts out bold");
+
+        // Let the frame's appearance poll catch up with the "on" state first:
+        // it only ever reacts to a CHANGE, so flipping the flag twice between
+        // two of its 100 ms ticks would be invisible to it.  Asking the poll
+        // itself is the condition -- once it reports nothing changed, its
+        // snapshot matches the doc.
+        pumpUntil([&] { return !child->PaletteChanged(); });
+
+        // No new output from here on: only the appearance poll can change it.
+        doc->m_bShowBold = 0;
+        check(pumpUntil([&] { return !lineIsBold(); }),
+              "show-bold: turning it OFF restyles scrollback already on screen");
+        doc->m_bShowBold = 1;
+        check(pumpUntil([&] { return lineIsBold(); }),
+              "show-bold: ...and turning it back ON restores it (mirror arm)");
+        doc->ClearOutput();
+    }
+
+    // ── CheckTimerFallback is a LIVE timer driver here ──────────────────────
+    // The world tick's comment used to say it was unreachable off Windows;
+    // doc_shared.cpp calls it for every packet received.  Driven on a doc with
+    // NO frame, so the 100 ms tick cannot be what fires the timer -- if the
+    // comment were right (an empty body) nothing would fire at all.
+    {
+        const long eEnabled = 0x01;   // flags.h AddTimer flag
+        CMUSHclientDoc* tdoc = new CMUSHclientDoc();
+        tdoc->m_mush_name     = "SelfTestTimerFallback";
+        tdoc->m_iConnectPhase = eConnectConnectedToMud;   // timers only run then
+        tdoc->SetUpOutputWindow();
+        if (App.m_pWorldDocTemplate)
+            App.m_pWorldDocTemplate->AddDocument(tdoc);
+
+        check(tdoc->AddTimer("cn02", 0, 0, 1.0, "", eEnabled, "") == 0 /*eOK*/,
+              "timer fallback: a one-second timer armed on a frameless world");
+        const long firedBefore = tdoc->m_iTimersFiredCount;
+        const bool fired = pumpUntil([&] {
+            Frame.CheckTimerFallback();
+            return tdoc->m_iTimersFiredCount > firedBefore;
+        }, 4000);
+        check(fired,
+              "timer fallback: Frame.CheckTimerFallback() really does fire "
+              "world timers on the port");
+
+        if (App.m_pWorldDocTemplate)
+            App.m_pWorldDocTemplate->RemoveDocument(tdoc);
+        delete tdoc;
+    }
+
+    // ── world.GetInfo(295): the output window's redraw count ────────────────
+    // Windows bumps it in CMUSHView::OnDraw, which does not exist here, so the
+    // counter answered 0 for ever.  No paint can be delivered from an
+    // OnInit-scoped harness, so the hook is called the way the paint calls it —
+    // the composite-selftest pattern.
+    {
+        check((bool) pane->m_fn_painted,
+              "redraw count: the frame wired the pane's paint hook");
+        const long before = doc->m_iOutputWindowRedrawCount;
+        if (pane->m_fn_painted) pane->m_fn_painted();
+        check(doc->m_iOutputWindowRedrawCount == before + 1,
+              "redraw count: a paint bumps the doc's counter");
+    }
+
+    // ── Display > Go To Line ────────────────────────────────────────────────
+    // Windows SELECTS the target line (CMUSHView::SelectLine), remembers the
+    // number in m_lastGoTo so the dialog opens there next time, and centres the
+    // view only when the line is off screen.  The port only scrolled.
+    {
+        doc->ClearOutput();
+        for (int i = 0; i < 200; ++i)
+            doc->Note(("goto fixture line " + std::to_string(i + 1)).c_str());
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const int total = pane->LineCount();
+        check(total > 100, "goto: a multi-screen buffer (control)");
+        const int target = total / 2;          // 1-based, mid-buffer
+        doc->m_lastGoTo = 1;
+        child->GotoLineTo(target);
+        wxYield();
+
+        check(doc->m_lastGoTo == target,
+              "goto: the line number is remembered for the next Go To Line");
+        long sl = 0, sc = 0, el = 0, ec = 0;
+        check(pane->GetSelectionInfo(sl, sc, el, ec) && sl == target,
+              "goto: ...and the target line is SELECTED, not merely scrolled to");
+        check(pane->IsLineVisible(target - 1), "goto: ...and it is on screen");
+
+        // A line already on screen must not move the view again.
+        const int firstBefore = pane->FirstVisibleLine();
+        child->GotoLineTo(target);
+        wxYield();
+        check(pane->FirstVisibleLine() == firstBefore,
+              "goto: a line already visible does not scroll the view");
+        doc->ClearOutput();
     }
 
     // Tear down without running the close/save flow (this doc has no file).

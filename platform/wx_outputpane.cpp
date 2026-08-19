@@ -650,6 +650,22 @@ void COutputPane::DeleteTailLines(long count)
 
 void COutputPane::AppendNote(const std::string& text, unsigned long fg)
 {
+    // PULL MODEL: the pane keeps no line content of its own, so a line
+    // manufactured here has no CLine behind it.  It could never be painted --
+    // every read goes back to the engine -- and its wrap-cache entry left the
+    // pane one line LONGER than the engine, so the capacity trim at the end of
+    // the next AppendLine dropped the oldest REAL line's metrics and every wrap
+    // count from then on was off by one.  The frame gives the pane a route to
+    // the document instead, and the note comes back through the ordinary drain
+    // as a real line like any other.
+    if (m_fn_engine_note) {
+        m_fn_engine_note(text, fg);
+        return;
+    }
+    // No route to a document: dropping the note is the lesser harm, since the
+    // pane-only line below would corrupt the wrap cache and still not show.
+    if (m_fn_fetch_line) return;
+
     SOutputLine noteLine;
     SOutputRun  noteRun;
     noteRun.text      = text;
@@ -743,6 +759,21 @@ int COutputPane::FirstVisibleLine() const
     const int topRow = (int) (topPixel / m_lineH);
     const int line = VisualRowToLogical(topRow);
     return std::max(0, std::min(LineCountI() - 1, line));
+}
+
+// Any pixel of logical line `lineIdx` inside the text viewport?  Same rule as
+// FirstVisibleLine: the scrollbar is the authority on where we are.
+bool COutputPane::IsLineVisible(int lineIdx) const
+{
+    if (lineIdx < 0 || lineIdx >= LineCountI() || m_lineH <= 0) return false;
+    int scrollY = 0, unitH = 0;
+    const_cast<COutputPane*>(this)->GetViewStart(nullptr, &scrollY);
+    const_cast<COutputPane*>(this)->GetScrollPixelsPerUnit(nullptr, &unitH);
+    if (unitH <= 0) return false;
+    const long long topPixel  = (long long) scrollY * unitH;
+    const long long lineTop   = pal::rowsToPixels(RowStartOf(lineIdx), m_lineH);
+    const long long lineBot   = lineTop + (long long) WrapCount(lineIdx) * m_lineH;
+    return lineBot > topPixel && lineTop < topPixel + TextViewportH();
 }
 
 // ── ClearScreen ───────────────────────────────────────────────────────────
@@ -1345,6 +1376,11 @@ bool COutputPane::AdoptTextRect()
 
 void COutputPane::OnPaint(wxPaintEvent&)
 {
+    // Windows counts redraws of the output window in CMUSHView::OnDraw
+    // (mushview.cpp:900) and world.GetInfo(295) reports the total; there is no
+    // CMUSHView here, so this paint is the equivalent moment.
+    if (m_fn_painted) m_fn_painted();
+
     // wxAutoBufferedPaintDC uses native double-buffering when the platform
     // already provides it (macOS Cocoa, GTK3) and a manual backbuffer only when
     // needed.  wxBufferedPaintDC always allocates a bitmap, which on Retina
@@ -1590,6 +1626,17 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
         m_paintOpacity = m_fn_line_opacity(LineAt(lineIdx).arrived);
         if (m_paintOpacity < 1.0) m_anyFading = true;
     }
+
+    // The PREVIOUS line's arrival time, for the preamble's %D delta — fetched
+    // BEFORE the line being drawn, and kept as a time_t rather than a
+    // reference.  LineAt caches by index and evicts the oldest entry when it
+    // is full, so a second fetch inside the paint could free the very line
+    // this function is holding: the cache is sized so a viewport's walk cannot
+    // do that, but lineIdx-1 walks BACKWARDS out of the region already cached,
+    // which is exactly the eviction the sizing does not cover.
+    const time_t prevArrived =
+        (lineIdx > 0) ? LineAt(lineIdx - 1).arrived : (time_t) 0;
+
     const SOutputLine& line = LineAt(lineIdx);
 
     // ── Horizontal rule ───────────────────────────────────────────────────────
@@ -1683,9 +1730,7 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
     // dims the stamp with its line.
     if (m_fn_line_preamble) {
         SLinePreamble pre;
-        const time_t prevArr =
-            (lineIdx > 0) ? LineAt(lineIdx - 1).arrived : (time_t) 0;
-        if (m_fn_line_preamble(line, prevArr, lineIdx == 0, pre) &&
+        if (m_fn_line_preamble(line, prevArrived, lineIdx == 0, pre) &&
             !pre.text.empty()) {
             uint32_t rawFg = pre.fg, rawBg = pre.bg;
             if (m_fn_translate_colour) {
@@ -1856,7 +1901,15 @@ void COutputPane::DrawLine(wxDC& dc, int lineIdx, int yOff)
                         int vr       = c / wrapCols;   // visual row index within this line
                         int vcol     = c % wrapCols;   // column within that visual row
                         int py       = yOff + vr * m_lineH;
-                        int px       = vcol * m_charW;
+                        // The preamble (timestamp) occupies whole cells at the
+                        // start of the FIRST visual row and the text was drawn
+                        // after it, so the highlight has to shift by the same
+                        // amount -- the correction XToChar already makes.
+                        // Without it the yellow box and its re-drawn text land
+                        // one preamble-width to the left of the characters they
+                        // are meant to be covering.
+                        int px       = vcol * m_charW
+                                     + (vr == 0 ? PreambleCells(lineIdx) * m_charW : 0);
                         // Batch to end-of-match or end-of-visual-row, whichever comes first.
                         int batchEnd = std::min(hi, (vr + 1) * wrapCols);
                         int nChars   = batchEnd - c;
@@ -1995,8 +2048,12 @@ void COutputPane::DrawRunChunk(wxDC& dc, const wxString& text, int x, int yOff,
 int COutputPane::WrapCount(int lineIdx) const
 {
     if (lineIdx < 0 || lineIdx >= LineCountI()) return 0;
-    const SOutputLine& line = LineAt(lineIdx);
-    if (line.size() == 1 && line[0].horiz_rule) return 1;
+    // Pure arithmetic, and it has to stay that way: RebuildWrapCache calls this
+    // once per BUFFERED line on every resize, font change and text-rectangle
+    // change.  It used to fetch the whole line first, only to test a horiz_rule
+    // guard the m_lineChars arithmetic already answers (a rule line's only run
+    // carries no text, so `chars == 0` returns 1 anyway) -- which under the pull
+    // model made every rebuild one full CLine -> SOutputLine conversion per line.
     // m_lineChars is maintained alongside m_lines, so this costs one division
     // rather than a re-scan of every run's bytes (which for a non-UTF-8 world
     // means decoding each run into a fresh wxString just to take its length).
@@ -2320,7 +2377,13 @@ int COutputPane::XToChar(int lineIdx, int clientX, int clientY,
     // row; clicks land on the text after it (Windows' m_iPreambleOffset).
     if (vrOffset == 0)
         colInRow = std::max(0, colInRow - PreambleCells(lineIdx));
-    if (m_wrapCols > 0) colInRow = std::min(colInRow, m_wrapCols);
+    // The caret form (halfway) may sit just past the last cell of the row --
+    // that is where "click at the end of the row" puts it.  The CONTAINMENT
+    // form must not: m_wrapCols is the FIRST column of the next visual row, so
+    // a click to the right of the text on a wrapped line resolved into that
+    // row and could fire ITS hyperlink (2026-08-18).
+    if (m_wrapCols > 0)
+        colInRow = std::min(colInRow, halfway ? m_wrapCols : m_wrapCols - 1);
     int col      = vrOffset * m_wrapCols + colInRow;
     return std::max(0, std::min(totalChars, col));
 }

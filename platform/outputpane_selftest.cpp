@@ -543,6 +543,140 @@ void TestKeepPauseAtBottom()
     }
 }
 
+// ── 4b. "frozen" and "at the buffer end" are two different questions ───────
+// The status line needs BOTH to pick among its four values
+// (CMUSHView::OnUpdateStatuslineFreeze_helper, mushview.cpp:3247): the freeze
+// flag chooses between blank and PAUSE/MORE, and m_bAtBufferEnd chooses between
+// those two.  The port only ever asked the first, so COutputPane::IsAtBufferEnd
+// is new and this is its coverage.  Two of the four states below are the ones
+// that discriminate -- (2) frozen but still AT the end, and (4) away from the
+// end but NOT frozen -- and without them a pane answering both questions from
+// one bit would pass.
+void TestFrozenVersusAtBufferEnd()
+{
+    printf("frozen vs at-buffer-end: the four status-line states "
+           "(mushview.cpp:3247)\n");
+
+    // (1) running, at the end: the blank state.
+    {
+        Harness h;
+        h.Feed(400);
+        opCheck(!h.pane->IsPaused(),
+                "blank state: a fed pane is still auto-scrolling");
+        opCheck(h.pane->IsAtBufferEnd(),
+                "blank state: ...and auto-scroll leaves it at the buffer end");
+    }
+
+    // (2) frozen, AT the end: PAUSE.  Freezing does not move the viewport, so
+    // the newest line is still on screen.  One bit cannot say this.
+    {
+        Harness h;
+        h.Feed(400);
+        h.pane->SetPaused(true);
+        opCheck(h.pane->IsPaused(), "PAUSE state: Freeze Output froze it");
+        opCheck(h.pane->IsAtBufferEnd(),
+                "PAUSE state: ...and it is STILL at the buffer end "
+                "(freezing scrolls nothing)");
+    }
+
+    // (3) frozen, with output arriving underneath: MORE.  The same freeze and
+    // no scrolling by the user at all -- what changed is that there is now
+    // output below the window that has not been seen.
+    {
+        Harness h;
+        h.Feed(400);
+        h.pane->SetPaused(true);
+        opCheck(h.pane->IsAtBufferEnd(),
+                "MORE state: control -- at the buffer end beforehand");
+        h.Feed(40, "more");
+        opCheck(h.pane->IsPaused(),
+                "MORE state: the new output did not thaw it");
+        opCheck(!h.pane->IsAtBufferEnd(),
+                "MORE state: ...and it is no longer at the end -- there IS more");
+    }
+
+    // (4) away from the end but NOT frozen.  Reachable only with the world's
+    // auto_pause off, and the other state a single bit cannot express.
+    {
+        Harness h;
+        h.Feed(400);
+        h.pane->SetAllowAutoFreeze(false);
+        h.pane->ScrollPage(-1);
+        opCheck(!h.pane->IsAtBufferEnd(),
+                "not-frozen: scrolling back really did leave the buffer end");
+        opCheck(!h.pane->IsPaused(),
+                "not-frozen: ...but with auto_pause off it is NOT frozen, so "
+                "the status line stays blank");
+    }
+
+    // (5) ...and with auto_pause ON (its default) the same scroll DOES freeze,
+    // which is the control that makes (4) a branch rather than a coincidence.
+    // This is also the answer a script gets from GetInfo(114), on both
+    // platforms: Windows' ScrollToPosition writes m_freeze here too.
+    {
+        Harness h;
+        h.Feed(400);
+        h.pane->ScrollPage(-1);
+        opCheck(!h.pane->IsAtBufferEnd(), "control: the scroll moved it");
+        opCheck(h.pane->IsPaused(),
+                "control: ...and with auto_pause ON that scroll freezes it");
+    }
+}
+
+// ── 4c. auto_pause off must not CANCEL an explicit freeze ──────────────────
+// Windows, CMUSHView::ScrollToPosition (mushview.cpp:4598): the entire freeze
+// assignment sits inside `if (pDoc->m_bAutoFreeze)`, so with the option off a
+// scroll neither freezes nor thaws.  The port's expression ended
+// `|| !m_allowAutoFreeze`, which FORCED auto-scroll back on, so in such a world
+// every explicit freeze -- Display ▸ Freeze Output, world.Pause(true),
+// start_paused, the scroll-to-top and find-match freezes -- was cancelled by
+// the next scroll event.
+void TestAutoPauseOffLeavesTheFreezeAlone()
+{
+    printf("auto_pause off: a scroll neither freezes nor thaws "
+           "(mushview.cpp:4598)\n");
+
+    {
+        Harness h;
+        h.Feed(400);
+        h.pane->SetAllowAutoFreeze(false);
+        h.pane->SetPaused(true);          // Display ▸ Freeze Output / world.Pause
+        opCheck(h.pane->IsPaused(), "control: the explicit freeze took");
+        h.pane->ScrollPage(-1);
+        opCheck(h.pane->IsPaused(),
+                "...scrolling UP leaves it frozen");
+        for (int i = 0; i < 8; ++i) h.pane->ScrollPage(+1);
+        opCheck(h.pane->IsPaused(),
+                "...and so does scrolling all the way back to the bottom");
+        h.pane->SetPaused(false);
+        opCheck(!h.pane->IsPaused(),
+                "...while an EXPLICIT unfreeze still resumes, so it is not stuck");
+    }
+
+    // Control: with auto_pause ON the scroll really is what decides, so the
+    // arm above is a branch and not a pane that simply never thaws.
+    {
+        Harness h;
+        h.Feed(400);
+        h.pane->SetPaused(true);
+        for (int i = 0; i < 8; ++i) h.pane->ScrollPage(+1);
+        opCheck(!h.pane->IsPaused(),
+                "control: with auto_pause ON, reaching the bottom thaws");
+    }
+
+    // The other half of the option, which the old expression got right and
+    // which must keep working: with auto_pause off, scrolling up must not
+    // freeze a pane that was running.
+    {
+        Harness h;
+        h.Feed(400);
+        h.pane->SetAllowAutoFreeze(false);
+        h.pane->ScrollPage(-1);
+        opCheck(!h.pane->IsPaused(),
+                "with auto_pause off, scrolling up does not freeze either");
+    }
+}
+
 // ── 5. world.TextRectangle's offset-from-edge form ──────────────────────────
 void TestTextRectangleOffsetForm()
 {
@@ -2796,6 +2930,8 @@ int RunOutputPaneSelfTest()
     TestDoubleClickAutoCopy();
     TestClearOutputDropsPendingLine();
     TestKeepPauseAtBottom();
+    TestFrozenVersusAtBufferEnd();
+    TestAutoPauseOffLeavesTheFreezeAlone();
     TestTextRectangleOffsetForm();
     TestLeaveWindowCancelsMouseOver();
     TestFindNext();

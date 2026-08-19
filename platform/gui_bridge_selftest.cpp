@@ -2341,6 +2341,25 @@ void TestOwnerDrawColourCombos()
     check(!wx_render_owner_draw_combo_item(plainWin, 1, 0, W, H).IsOk(),
           "the plain combo has no owner-draw painter at all");
 
+    // (c2) Picking a row must still reach the canonical CBN_SELCHANGE handler —
+    // that is what opens the colour picker for "Other ...", and what keeps the
+    // two swatch buttons beside the combo in step.  The modal runner binds
+    // wxEVT_COMBOBOX on the DIALOG (wx_mfc_impl.cpp), so the control's event has
+    // to propagate up to it; a control parented anywhere else would silently
+    // stop firing the handler.  wxOwnerDrawnComboBox raises wxEVT_COMBOBOX, the
+    // same event as wxComboBox, so the existing bind is the right one.
+    check(colourWin->GetParent() == dlg,
+          "the owner-draw combo is a child of the dialog (events can reach it)");
+    // `seen` outlives the binding: the handler stays attached until the dialog
+    // is destroyed below, so it must not capture anything shorter-lived.
+    int seen = -1;
+    dlg->Bind(wxEVT_COMBOBOX, [&seen](wxCommandEvent& e) { seen = e.GetId(); });
+    wxCommandEvent sel(wxEVT_COMBOBOX, colourWin->GetId());
+    sel.SetEventObject(colourWin);
+    colourWin->GetEventHandler()->ProcessEvent(sel);
+    check(seen == IDC_TRIGGER_COLOUR,
+          "...and a selection from it propagates there as CBN_SELCHANGE");
+
     dlg->Destroy();
 
     // (d) The other four owner-draw templates light up too — this fix is not

@@ -22,6 +22,8 @@
 // and entity-list headers, which nothing else here wants.
 int RunDialogBridgeSelfTest();
 
+int RunNotepadSelfTest();   // platform/notepad_selftest.cpp
+
 namespace {
 
 int g_pass = 0, g_fail = 0;
@@ -318,6 +320,7 @@ const Harness kHarnesses[] = {
     { wxT("dialog-bridge"), &RunDialogBridgeSelfTest },
     { wxT("clear-semantics"), &RunClearSemanticsSelfTest },
     { wxT("paint-cost"),    &RunPaintCostSelfTest },
+    { wxT("notepad"),       &RunNotepadSelfTest },
     { wxT("hang"),          &RunWatchdogProbe },
 };
 

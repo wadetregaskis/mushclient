@@ -86,6 +86,21 @@ int RunOutputPaneSelfTest();
 #include "pal/surface_bridge.h"   // pal::g_surface — checked before installing
                                   // the bridge for the miniwindow selftest
 
+// Selftest exit: flush stdio so a crash during process teardown cannot eat
+// the harness output, then exit.  Deliberately NOTHING else: an experiment
+// that drained CoreAnimation and spun the runloop here (2026-08-18) turned
+// the menubar selftest's rare window-server flake into a deterministic
+// SEGV -- deferred AppKit work ran against the harness's half-torn state.
+// A harness that creates or moves SHOWN windows corrupts the heap mid-run
+// with no event loop at all, and must run in extended mode instead (the
+// notepad selftest does; 15/40 aborts loop-free, 0/40 extended).
+[[noreturn]] static void SelftestExit(int rc)
+{
+    std::fflush(stdout);
+    std::fflush(stderr);
+    std::exit(rc);
+}
+
 class CMUSHWxApp : public wxApp {
     bool m_extendedSelfTest = false;
 public:
@@ -103,11 +118,11 @@ public:
         for (int i = 1; i < argc; ++i) {
             if (wxString(argv[i]) == wxT("--pal-surface-selftest")) {
                 const int failures = RunPalSurfaceSelfTest();
-                std::exit(failures == 0 ? 0 : 1);
+                SelftestExit(failures == 0 ? 0 : 1);
             }
             if (wxString(argv[i]) == wxT("--pal-transport-selftest")) {
                 const int failures = RunPalTransportSelfTest();
-                std::exit(failures == 0 ? 0 : 1);
+                SelftestExit(failures == 0 ? 0 : 1);
             }
             // --engines-selftest runs every language; --engines-selftest=tcl
             // runs one, so ctest can register a separate entry per language and
@@ -117,7 +132,7 @@ public:
                 if (a == wxT("--engines-selftest") || a.StartsWith(wxT("--engines-selftest="))) {
                     const wxString which = a.AfterFirst(wxT('='));
                     const wxScopedCharBuffer utf8 = which.utf8_str();
-                    std::exit(RunEmbeddedEnginesSelfTest(
+                    SelftestExit(RunEmbeddedEnginesSelfTest(
                         which.IsEmpty() ? nullptr : utf8.data()));
                 }
             }
@@ -128,7 +143,7 @@ public:
                 // normal install point below is never reached here.
                 wx_mfc_install_hooks();
                 const int failures = RunNotepadSelfTest();
-                std::exit(failures == 0 ? 0 : 1);
+                SelftestExit(failures == 0 ? 0 : 1);
             }
             if (wxString(argv[i]) == wxT("--gui-bridge-selftest")) {
                 // Needs the MFC hooks installed (the dialog bridge builds
@@ -136,7 +151,7 @@ public:
                 // opened, no window is shown.
                 wx_mfc_install_hooks();
                 LoadMfcDialogResources();
-                std::exit(RunGuiBridgeSelfTest());
+                SelftestExit(RunGuiBridgeSelfTest());
             }
             if (wxString(argv[i]) == wxT("--pal-composite-selftest")) {
                 // Same bridge requirement as the miniwindow selftest below:
@@ -144,11 +159,11 @@ public:
                 if (!pal::g_surface)
                     InstallWxSurfaceBridge();
                 const int failures = RunWxCompositeSelfTest();
-                std::exit(failures == 0 ? 0 : 1);
+                SelftestExit(failures == 0 ? 0 : 1);
             }
             if (wxString(argv[i]) == wxT("--outputpane-selftest")) {
                 const int failures = RunOutputPaneSelfTest();
-                std::exit(failures == 0 ? 0 : 1);
+                SelftestExit(failures == 0 ? 0 : 1);
             }
             if (wxString(argv[i]) == wxT("--pal-miniwindow-selftest")) {
                 // CMiniWindow draws through the bridge unconditionally; the
@@ -157,7 +172,7 @@ public:
                 if (!pal::g_surface)
                     InstallWxSurfaceBridge();
                 const int failures = RunPalMiniWindowSelfTest();
-                std::exit(failures == 0 ? 0 : 1);
+                SelftestExit(failures == 0 ? 0 : 1);
             }
         }
 
@@ -205,7 +220,7 @@ public:
         // user's prefs/startup list are never touched.
         for (int i = 1; i < argc; ++i)
             if (wxString(argv[i]) == wxT("--input-selftest"))
-                std::exit(RunInputSelfTest());
+                SelftestExit(RunInputSelfTest());
         // The world-window conformance harness runs LATER than the other
         // selftests: it builds a real CWorldChildFrame, which reaches into the
         // MFC→wx bridge, so the hooks above must already be installed.  It
@@ -214,7 +229,7 @@ public:
         for (int i = 1; i < argc; ++i) {
             if (wxString(argv[i]) == wxT("--world-frame-selftest")) {
                 const int failures = RunWorldFrameSelfTest();
-                std::exit(failures == 0 ? 0 : 1);
+                SelftestExit(failures == 0 ? 0 : 1);
             }
         }
         // The menu-bar harness runs the bridge's own main-frame hook, so it
@@ -224,7 +239,7 @@ public:
         for (int i = 1; i < argc; ++i) {
             if (wxString(argv[i]) == wxT("--menubar-selftest")) {
                 const int failures = RunMenuBarSelfTest();
-                std::exit(failures == 0 ? 0 : 1);
+                SelftestExit(failures == 0 ? 0 : 1);
             }
         }
 

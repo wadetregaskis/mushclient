@@ -167,8 +167,15 @@ if(TARGET mushgui)
     # The notepad windows: CTextDocument, its wxFrame and the quit hook are all
     # GUI-only, so this is the only place the modified-flag / SaveModified /
     # Convert-menu behaviour can be executed at all.
+    # Extended (loop-running) mode, unconditionally: this harness creates,
+    # MOVES and hides real windows, and doing that with no event loop leaves
+    # CoreAnimation's async commit workers racing the main thread -- an
+    # intermittent write-after-free the allocator aborted on (~1 run in 3,
+    # 2026-08-18; 0/40 with the loop).  The --extended-selftest flag exists in
+    # every build; the MUSHCLIENT_EXTENDED_TESTS option gates only the extra
+    # harnesses below.  --notepad-selftest remains for manual loop-free runs.
     add_test(NAME selftest_notepad
-             COMMAND $<TARGET_FILE:mushgui> --notepad-selftest ${_selftest_args})
+             COMMAND $<TARGET_FILE:mushgui> --extended-selftest=notepad ${_selftest_args})
     # Window geometry persistence, the dialog-template -> wx control mapping and
     # the world-creation defaults: wx adapter code mushcore does not link.
     add_test(NAME selftest_gui_bridge

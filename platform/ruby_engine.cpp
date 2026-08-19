@@ -215,8 +215,10 @@ VALUE world_method_missing (int argc, VALUE* argv, VALUE self)
         {
         MC_VariantClear (result);
         for (auto& o : outargs) MC_VariantClear (o);   // was leaked on this path
-        snprintf (errmsg, sizeof errmsg, "world.%s : %s", name.c_str (),
-                  rc == MC_DISP_UNKNOWN ? "unknown method" : "bad arguments");
+        const std::string why = (rc == MC_DISP_UNKNOWN)
+                                ? std::string ("unknown method")
+                                : MC_DispatchBadArgsMessage (name.c_str (), nargs);
+        snprintf (errmsg, sizeof errmsg, "world.%s : %s", name.c_str (), why.c_str ());
         errclass = rb_eArgError;
         }
       else if (outargs.empty ())

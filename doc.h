@@ -1027,6 +1027,14 @@ public:
 
   unsigned short m_bScriptErrorsToOutputWindow;     // write script errors in window
 
+  // Opt-in strict argument checking for the portable dispatch (the road every
+  // non-Lua script takes to the world API).  OFF by default, so no existing
+  // plugin changes behaviour; ON makes a short argument list an error the
+  // script can catch, which is what Windows' real IDispatch::Invoke does
+  // (DISP_E_BADPARAMCOUNT) and what Lua's own binding already does.  See
+  // platform/mc_dispatch.cpp.  Inert on Windows, where COM checks first.
+  unsigned short m_bStrictScriptArguments;          // short arg list -> script error
+
   unsigned short m_bAutoResizeCommandWindow;   // change command window height automatically
   CString m_strEditorWindowName;               // What window to bring to the front after editing a text file
   unsigned short m_iAutoResizeMinimumLines;    // command window minimum number of lines

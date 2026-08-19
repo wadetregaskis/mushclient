@@ -143,7 +143,9 @@ int World_cmd (ClientData cd, Tcl_Interp* interp, int objc, Tcl_Obj* const objv[
       {
       MC_VariantClear (result);
       Tcl_SetObjResult (interp, Tcl_NewStringObj (
-        ("world " + name + (rc == MC_DISP_UNKNOWN ? ": unknown method" : ": bad arguments")).c_str (), -1));
+        ("world " + name + ": " +
+         (rc == MC_DISP_UNKNOWN ? std::string ("unknown method")
+          : MC_DispatchBadArgsMessage (name.c_str (), nextra))).c_str (), -1));
       return TCL_ERROR;
       }
 

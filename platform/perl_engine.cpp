@@ -186,8 +186,13 @@ XS(mc_perl_invoke)
       if (rc != MC_DISP_OK)
         { MC_VariantClear(result);
           for (auto& o : outargs) MC_VariantClear(o);   // was leaked on this path
-          snprintf (errmsg, sizeof errmsg, "world->%s: %s", name,
-                    rc == MC_DISP_UNKNOWN ? "unknown method" : "bad arguments"); }
+          // A NAMED std::string, not `cond ? "..." : MC_...().c_str()`: the
+          // temporary in that shape is legal here but is exactly the
+          // buffer-from-a-temporary pattern that has bitten this port before.
+          const std::string why = (rc == MC_DISP_UNKNOWN)
+                                  ? std::string ("unknown method")
+                                  : MC_DispatchBadArgsMessage (name, nargs);
+          snprintf (errmsg, sizeof errmsg, "world->%s: %s", name, why.c_str ()); }
       else
         {
         rets.push_back(variant_to_sv(result));

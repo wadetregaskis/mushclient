@@ -25,6 +25,7 @@
 #pragma once
 #if !defined(_WIN32) && defined(MUSHCLIENT_FULL_BUILD)
 
+#include <string>
 #include <vector>
 
 class CMUSHclientDoc;
@@ -35,6 +36,19 @@ enum {
   MC_DISP_OK        =  0,   // call succeeded; `result` holds the return value
   MC_DISP_UNKNOWN   = -1,   // no method of that name in the dispatch map
   MC_DISP_BADARGS   = -2,   // argument marshalling failed
+};
+
+// Flags for MC_DispatchInvoke's `flags` parameter.
+//
+// MC_DISP_F_INTROSPECT marks a call the SCRIPT did not write: Python and
+// JavaScript coerce a bare method reference to a string by invoking it with no
+// arguments (py_engine.cpp Method_str, js_engine.cpp Method_convertToType), so
+// that COM-style plugins which write `world.GetPluginID` without parentheses
+// keep working.  That is a language coercion, not a call the author made, and
+// strict argument checking must not fire on it -- it would turn every
+// `str(world.X)` on a method that takes parameters into the placeholder text.
+enum {
+  MC_DISP_F_INTROSPECT = 1,   // engine-generated 0-arg coercion, not a script call
 };
 
 // Invoke a world-API method by automation name.
@@ -49,10 +63,39 @@ enum {
 //              declaration order (for the by-ref getters GetTrigger/GetAlias/
 //              GetTimer); the caller owns these and must MC_VariantClear them.
 //
+//   flags    — zero, or MC_DISP_F_INTROSPECT (see above).
+//
 // Returns one of the MC_DISP_* codes above.
 int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
                       const VARIANT* args, int nargs,
-                      VARIANT& result, std::vector<VARIANT>* outargs = nullptr);
+                      VARIANT& result, std::vector<VARIANT>* outargs = nullptr,
+                      unsigned flags = 0);
+
+// ── Strict argument checking (world option "script_strict_arguments") ───────
+//
+// Off by default, the substrate zero-fills every parameter a short argument
+// list did not supply, so world.SetVariable("x") silently sets "x" to "".  The
+// real IDispatch::Invoke the Windows build rides refuses that outright with
+// DISP_E_BADPARAMCOUNT -- the dispatch map declares no VTS_VARIANT anywhere, so
+// on Windows every declared parameter is required -- and Lua's own binding
+// errors too (my_checkstring on a missing argument).  The leniency is this
+// port's invention; the option lets a plugin author opt back into parity while
+// developing.  ARITY ONLY, never types: the Tcl engine marshals every argument
+// as VT_BSTR by design, so a type-strict check would reject all of Tcl.
+//
+// The check runs AFTER the kArgDefaults padding, so the Lua-parity defaults
+// (EnableTrigger's implicit `true`, DatabaseOpen's sqlite flags, …) still
+// apply: a slot the caller omitted is only an error when it has no default.
+
+// How many leading arguments `name` genuinely requires -- its declared arity
+// less any trailing slots kArgDefaults supplies.  -1 if there is no such
+// method.  This is the "expected" half of the error message.
+int MC_DispatchRequiredArgs(const char* name);
+
+// The engines' shared wording for MC_DISP_BADARGS, e.g.
+//   "expected at least 2 arguments, got 1"
+// The caller prefixes it with its own "world.Foo: " in its native style.
+std::string MC_DispatchBadArgsMessage(const char* name, int nargs);
 
 // True if `name` is a known automation method.
 bool MC_DispatchHas(const char* name);

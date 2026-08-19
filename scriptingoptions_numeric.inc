@@ -128,6 +128,7 @@
 {"save_world_automatically",            false, O(m_bSaveWorldAutomatically)},           
 {"script_reload_option",                eReloadConfirm, O(m_nReloadOption), 0, 2},
 {"script_errors_to_output_window",      false, O(m_bScriptErrorsToOutputWindow) },       
+{"script_strict_arguments",             false, O(m_bStrictScriptArguments)},
 {"send_echo",                           false, O(m_bSendEcho)},                         
 {"send_file_commented_softcode",        false, O(m_bFileCommentedSoftcode)},            
 {"send_file_delay",                     0,     O(m_nFileDelay), 0, 100000},          

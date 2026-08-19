@@ -206,6 +206,22 @@ struct Dialect {
     const char* staleProxy;     // grab(), then useit()/useprop() a proxy to a
                                 // closed world (method path, then property path)
     const char* gcChurn;        // allocate hard, then call the world API
+
+    // Strict argument checking (world option "script_strict_arguments").
+    //   probe(s)         calls world.SetVariable with ONE argument -- the method
+    //                    declares two and neither has a kArgDefaults entry --
+    //                    inside the language's error trap; "raised" or "silent".
+    //   probedefault(s)  the same shape around world.EnableTrigger with one
+    //                    argument, whose second slot DOES have a default, so it
+    //                    must stay "silent" even with the option on.
+    const char* strictProbe;
+    //   introspect(s)    stringifies a bare method reference, the coercion
+    //                    Python and JavaScript perform so that COM-style plugins
+    //                    can write `world.GetPluginID` without parentheses.
+    //                    Compares it against the same call spelled properly, so
+    //                    the check does not hardcode a hash.  Null for the
+    //                    languages that have no such coercion.
+    const char* strictIntrospect;
 };
 
 const Dialect kDialects[] = {
@@ -277,7 +293,20 @@ const Dialect kDialects[] = {
   "  collectgarbage('collect')\n"
   "  world.SetVariable('gc', world.Trim('  ' .. s .. '  '))\n"
   "  return 'ok'\n"
-  "end\n" },
+  "end\n",
+  // Lua does NOT travel mc_dispatch -- lua_methods.cpp binds every method by
+  // hand -- and my_checkstring already errors on a missing required argument.
+  // So Lua raises with the option off as well, which is the whole point of
+  // running it here: it is the behaviour strict restores for the other five.
+  "function probe(s)\n"
+  "  local ok = pcall(function() world.SetVariable('probe') end)\n"
+  "  return ok and 'silent' or 'raised'\n"
+  "end\n"
+  "function probedefault(s)\n"
+  "  local ok = pcall(function() world.EnableTrigger('nosuchtrigger') end)\n"
+  "  return ok and 'silent' or 'raised'\n"
+  "end\n",
+  nullptr },   // Lua keeps world.Hash as a function; no string coercion
 
 // ── Python ────────────────────────────────────────────────────────────────
 { "python", "Python", "Python",
@@ -352,7 +381,20 @@ const Dialect kDialects[] = {
   "    acc = [str(i) + s for i in range(2000)]\n"
   "    gc.collect()\n"
   "    world.SetVariable('gc', world.Trim('  ' + s + '  '))\n"
-  "    return 'ok'\n" },
+  "    return 'ok'\n",
+  "def probe(s):\n"
+  "    try:\n        world.SetVariable('probe')\n        return 'silent'\n"
+  "    except Exception:\n        return 'raised'\n"
+  "def probedefault(s):\n"
+  "    try:\n        world.EnableTrigger('nosuchtrigger')\n        return 'silent'\n"
+  "    except Exception:\n        return 'raised'\n",
+  // str(world.Hash) invokes Hash with no arguments (py_engine.cpp Method_str).
+  // Compared against the same call written out, so the assertion does not
+  // depend on which hash function Hash is.  Without the introspection
+  // exemption strict refuses the invoke and str() falls back to the
+  // "<world method Hash>" placeholder, which cannot match.
+  "def introspect(s):\n"
+  "    return 'match' if str(world.Hash) == world.Hash('') else 'differ'\n" },
 
 // ── Perl ──────────────────────────────────────────────────────────────────
 { "perl", "Perl", "perl",
@@ -414,7 +456,12 @@ const Dialect kDialects[] = {
   "  my @acc; push @acc, $_ . $_[0] for (1 .. 2000);\n"
   "  $world->SetVariable('gc', $world->Trim('  ' . $_[0] . '  '));\n"
   "  return 'ok';\n"
-  "}\n" },
+  "}\n",
+  "sub probe { my $r = eval { $world->SetVariable('probe'); 1 };\n"
+  "  return $r ? 'silent' : 'raised'; }\n"
+  "sub probedefault { my $r = eval { $world->EnableTrigger('nosuchtrigger'); 1 };\n"
+  "  return $r ? 'silent' : 'raised'; }\n",
+  nullptr },   // Perl calls methods explicitly; no bare-reference coercion
 
 // ── JavaScript ────────────────────────────────────────────────────────────
 { "js", "JS", "javascript",
@@ -482,6 +529,20 @@ const Dialect kDialects[] = {
   "  for (var i = 0; i < 20000; i++) acc.push(String(i) + s);\n"
   "  world.SetVariable('gc', world.Trim('  ' + s + '  '));\n"
   "  return 'ok';\n"
+  "}\n",
+  "function probe(s) {\n"
+  "  try { world.SetVariable('probe'); return 'silent'; }\n"
+  "  catch (e) { return 'raised'; }\n"
+  "}\n"
+  "function probedefault(s) {\n"
+  "  try { world.EnableTrigger('nosuchtrigger'); return 'silent'; }\n"
+  "  catch (e) { return 'raised'; }\n"
+  "}\n",
+  // '' + world.Hash runs Method_convertToType (js_engine.cpp), the same
+  // no-argument coercion Method_str is for Python.
+  "function introspect(s) {\n"
+  "  try { return ('' + world.Hash) == world.Hash('') ? 'match' : 'differ'; }\n"
+  "  catch (e) { return 'differ'; }\n"
   "}\n" },
 
 // ── Tcl ───────────────────────────────────────────────────────────────────
@@ -549,7 +610,15 @@ const Dialect kDialects[] = {
   "  for {set i 0} {$i < 2000} {incr i} { lappend acc $i$s }\n"
   "  world SetVariable gc [world Trim \"  $s  \"]\n"
   "  return ok\n"
-  "}\n" },
+  "}\n",
+  "proc probe {s} {\n"
+  "  if {[catch {world SetVariable probe}]} { return raised } else { return silent }\n"
+  "}\n"
+  "proc probedefault {s} {\n"
+  "  if {[catch {world EnableTrigger nosuchtrigger}]} { return raised }\n"
+  "  return silent\n"
+  "}\n",
+  nullptr },   // `world Foo` is a command invocation; nothing to coerce
 
 // ── Ruby ──────────────────────────────────────────────────────────────────
 { "ruby", "Ruby", "ruby",
@@ -620,7 +689,14 @@ const Dialect kDialects[] = {
   "  GC.start\n"
   "  world.SetVariable('gc', world.Trim('  ' + s + '  '))\n"
   "  'ok'\n"
-  "end\n" },
+  "end\n",
+  "def probe(s)\n"
+  "  begin; world.SetVariable('probe'); 'silent'; rescue Exception; 'raised'; end\n"
+  "end\n"
+  "def probedefault(s)\n"
+  "  begin; world.EnableTrigger('nosuchtrigger'); 'silent'; rescue Exception; 'raised'; end\n"
+  "end\n",
+  nullptr },   // Ruby needs the parentheses; no bare-reference coercion
 };
 
 const int kDialectCount = (int) (sizeof kDialects / sizeof kDialects[0]);
@@ -1284,6 +1360,83 @@ void battery_big_integer(const Dialect& d)
           "a 2^62 integer reaches the world API exactly, not as a rounded double");
 }
 
+// 5f. Strict argument checking -- world option "script_strict_arguments".
+//
+//     Off by default, a short argument list is zero-filled: world.SetVariable
+//     with one argument quietly sets that variable to "".  That leniency is the
+//     port's own invention.  The Windows build rides the real
+//     IDispatch::Invoke, which refuses the same call with DISP_E_BADPARAMCOUNT
+//     -- the shared dispatch map declares no VTS_VARIANT anywhere, so every
+//     declared parameter is required there -- and Lua's hand-written binding
+//     errors too.  The option lets a plugin author opt back into that while
+//     developing.
+//
+//     Lua is a genuine control here rather than a skip: it does not travel
+//     mc_dispatch at all, so it raises with the option OFF as well, and what it
+//     shows is precisely the behaviour strict restores for the other five.
+//
+//     ARITY ONLY, never types: tcl_engine.cpp marshals every argument as
+//     VT_BSTR by design (tcl_to_variant), so a type-strict check would reject
+//     every numeric parameter Tcl passes -- the entire language.
+void battery_strict_arguments(const Dialect& d)
+{
+    const char* L = d.display;
+    // Lua's own binding checks arguments, so the option cannot change it.
+    const bool luaAlwaysStrict = (strcmp(d.key, "lua") == 0);
+
+    std::string src(d.source);
+    src += d.strictProbe;
+    if (d.strictIntrospect) src += d.strictIntrospect;
+
+    // ── the control: option OFF, today's behaviour ────────────────────────
+    {
+        Engine e(d.language, src.c_str());
+        if (!e.ok) { skip(L, "a short argument list is refused when strict is on",
+                          "engine failed to open"); return; }
+        // A sentinel, so "the call did nothing" is distinguishable from "the
+        // call zero-filled": var() cannot tell an absent variable from an
+        // empty one, and both halves of this battery turn on that difference.
+        e.seed("probe", "sentinel");
+        check(e.callRtn("probe", "") == (luaAlwaysStrict ? "raised" : "silent"), L,
+              luaAlwaysStrict
+                ? "strict OFF: Lua still checks its own arguments"
+                : "strict OFF: a short argument list is accepted, as it always was");
+        check(e.var("probe") == (luaAlwaysStrict ? "sentinel" : ""), L,
+              luaAlwaysStrict
+                ? "strict OFF: ...so nothing was written"
+                : "strict OFF: ...and the zero-fill really ran");
+    }
+
+    // ── option ON ─────────────────────────────────────────────────────────
+    {
+        Engine e(d.language, src.c_str());
+        if (!e.ok) return;
+        e.doc->m_bStrictScriptArguments = TRUE;
+        e.seed("probe", "sentinel");
+
+        check(e.callRtn("probe", "") == "raised", L,
+              "strict ON: a short argument list raises an error the script can catch");
+        check(e.var("probe") == "sentinel", L,
+              "strict ON: ...and the method did not run");
+
+        // The ordering crux: the check sits AFTER the kArgDefaults padding, so
+        // EnableTrigger's documented default still fills its second slot.
+        check(e.callRtn("probedefault", "") == "silent", L,
+              "strict ON: a method whose missing slot HAS a default is still fine");
+
+        if (d.strictIntrospect)
+            // Stringifying a bare method reference invokes it with no
+            // arguments.  That is the language coercing, not the author
+            // calling, so strict must not fire -- or every COM-style
+            // `world.Foo` in a plugin turns into a placeholder string.
+            check(e.callRtn("introspect", "") == "match", L,
+                  "strict ON: the no-argument string coercion is exempt");
+        else
+            skip(L, "strict ON: the no-argument string coercion is exempt",
+                 "this language has no bare-method-reference coercion");
+    }
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -1358,6 +1511,7 @@ bool run_language(const Dialect& d)
     battery_stale_proxy  (d);
     battery_gc_pressure  (d);
     battery_big_integer  (d);
+    battery_strict_arguments(d);
     battery_mxp_callsite(d);
     battery_trigger_callsite(d, true);    // box ticked
     // The negative control at the SAME layer: without it, hard-coding the flag

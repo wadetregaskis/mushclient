@@ -192,7 +192,8 @@ PyObject* Method_call(PyObject* self, PyObject* args, PyObject* /*kw*/)
   if (rc == MC_DISP_UNKNOWN)
     { PyErr_Format(PyExc_AttributeError, "world has no method '%s'", m->name); return nullptr; }
   if (rc != MC_DISP_OK)
-    { PyErr_Format(PyExc_RuntimeError, "world.%s: bad arguments", m->name);
+    { PyErr_Format(PyExc_RuntimeError, "world.%s: %s", m->name,
+                   MC_DispatchBadArgsMessage(m->name, (int) n).c_str());
       MC_VariantClear(result); return nullptr; }
 
   PyObject* res = variant_to_py(result);
@@ -228,7 +229,11 @@ PyObject* Method_str(PyObject* self)
     { PyErr_SetString(PyExc_RuntimeError, "that world has been closed");
       return nullptr; }
   VARIANT result; VariantInit(&result);
-  if (MC_DispatchInvoke(m->doc, m->name, nullptr, 0, result, nullptr) == MC_DISP_OK)
+  // MC_DISP_F_INTROSPECT: this 0-arg call is Python's string coercion, not
+  // something the plugin author wrote, so strict argument checking must not
+  // fire on it (see mc_dispatch.h).
+  if (MC_DispatchInvoke(m->doc, m->name, nullptr, 0, result, nullptr,
+                        MC_DISP_F_INTROSPECT) == MC_DISP_OK)
     {
     PyObject* v = variant_to_py(result);
     MC_VariantClear(result);

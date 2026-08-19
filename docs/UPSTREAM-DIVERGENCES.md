@@ -229,6 +229,27 @@ actually hits the wide-window case.
 This is port-side only (platform/wx_world_child.cpp); no canonical source
 was changed, so no Windows run is owed for it.
 
+## 8 — DrawEdge with no BF_ side flags now draws nothing (a divergence removed)
+
+**Where:** `platform/wx_gdi_compat.cpp`, `CDC::DrawEdge`.
+
+**Windows:** `DrawEdge`'s `nFlags` says which sides of the rect to stroke
+(`BF_LEFT`/`BF_TOP`/`BF_RIGHT`/`BF_BOTTOM`); passing 0 (none of the four
+bits set) draws no border at all.
+
+**The port used to invent** its own rule -- "no sides named means all
+sides" -- forcing `BF_RECT` in whenever `nFlags` named none of the four,
+so `world.WindowRectOp` action 5 with `EdgeFlags` 0 painted a complete
+border where Windows paints nothing.
+
+**Now:** `nFlags == 0` returns immediately, drawing nothing, matching
+Windows. This undoes the invented rule rather than adding a new one, so
+it is listed here as a correction, not a fresh design decision.
+
+**Status:** port-side only (platform/wx_gdi_compat.cpp); no canonical
+source changed. Still needs a Windows run to confirm real `DrawEdge`
+truly no-ops on `nFlags == 0` before this can be called verified.
+
 ## Verification status
 
 Entries 1-3 are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)

@@ -858,6 +858,304 @@ TEST(DatabaseTest, CppGetFieldBadSqlOrNoRowsIsEmptyVariant)
     EXPECT_EQ(VT_EMPTY, (int)v.vt);
 }
 
+// ── 64-bit INTEGER columns (all four readers) ────────────────────────────
+// SQLite INTEGER is a signed 64-bit value; every reader used to fetch it with
+// sqlite3_column_int (32 bits) and truncate.  scripting/db_int64.h now bands it:
+//   32-bit range: the integral form (VT_I4 / Lua number) -- unchanged;
+//   |v| <= 2^53:  a double (VT_R8 / Lua number) -- exact;
+//   larger:       a decimal string (BSTR / Lua string) -- lossless.
+// Both bands and both boundaries are checked through all four readers.
+
+// One row, one column per interesting magnitude.  Column numbers are 1-based
+// and are used as-is by the single-column readers.
+#define BIG_COL_I32MAX   1
+#define BIG_COL_I32MIN   2
+#define BIG_COL_P31      3
+#define BIG_COL_P40      4
+#define BIG_COL_N31      5
+#define BIG_COL_P53      6
+#define BIG_COL_N53      7
+#define BIG_COL_P53P1    8
+#define BIG_COL_N53M1    9
+#define BIG_COL_P60     10
+#define BIG_COL_I64MAX  11
+#define BIG_COL_I64MIN  12
+#define BIG_COLUMNS     12
+
+struct BigIntFixture {
+    CMUSHclientDoc doc;
+    lua_State* L = nullptr;
+    BigIntFixture()
+    {
+        L = make_lua(&doc);
+        if (!L) return;
+        run(L, "assert(world.DatabaseOpen('db', ':memory:', 6) == 0)");
+        // NOTE the last value: SQLite's tokenizer reads -9223372036854775808 as
+        // unary minus applied to a literal that does NOT fit in an int64, and
+        // yields a REAL.  Written as a subtraction it stays an INTEGER --
+        // BigIntColumnsAreAllIntegers below is the guard that says so.
+        run(L, "assert(world.DatabaseExec('db', [[\n"
+               "CREATE TABLE big (i32max INTEGER, i32min INTEGER, p31 INTEGER,\n"
+               "  p40 INTEGER, n31 INTEGER, p53 INTEGER, n53 INTEGER,\n"
+               "  p53p1 INTEGER, n53m1 INTEGER, p60 INTEGER, i64max INTEGER,\n"
+               "  i64min INTEGER);\n"
+               "INSERT INTO big VALUES (2147483647, -2147483648, 2147483648,\n"
+               "  1099511627776, -2147483649, 9007199254740992,\n"
+               "  -9007199254740992, 9007199254740993, -9007199254740993,\n"
+               "  1152921504606846976, 9223372036854775807,\n"
+               "  -9223372036854775807 - 1);]]) == 0)");
+    }
+    ~BigIntFixture() { if (L) lua_close(L); }
+
+    // Prepare + step SELECT * FROM big, leaving the single row current.
+    bool row()
+    {
+        return run(L, "assert(world.DatabasePrepare('db', 'SELECT * FROM big') == 0)")
+            && run(L, "assert(world.DatabaseStep('db') == 100)");
+    }
+};
+
+// Evaluate `fmt` with the column number substituted; leave one value on the
+// Lua stack.  Returns false if the chunk did not yield exactly one value.
+static bool lua_col(lua_State* L, const char* fmt, int col)
+{
+    char code[160];
+    snprintf(code, sizeof code, fmt, col);
+    lua_settop(L, 0);
+    return run_ret(L, code) == 1;
+}
+
+#define LUA_SINGLE "return world.DatabaseColumnValue('db', %d)"
+#define LUA_ROW    "local t = world.DatabaseColumnValues('db') return t[%d]"
+
+// A column that must come back as a Lua NUMBER holding exactly `expected`.
+// lua_type, not lua_isnumber: a numeric STRING passes lua_isnumber, so only the
+// type tag can tell the two bands apart.
+#define EXPECT_LUA_EXACT_NUMBER(L, reader, col, expected) \
+    do { \
+        ASSERT_TRUE(lua_col((L), (reader), (col))); \
+        EXPECT_EQ(LUA_TNUMBER, lua_type((L), -1)); \
+        EXPECT_EQ((double)(expected), (double)lua_tonumber((L), -1)); \
+        lua_settop((L), 0); \
+    } while (0)
+
+// A column that must come back as a Lua STRING holding exactly `expected`.
+#define EXPECT_LUA_EXACT_STRING(L, reader, col, expected) \
+    do { \
+        ASSERT_TRUE(lua_col((L), (reader), (col))); \
+        EXPECT_EQ(LUA_TSTRING, lua_type((L), -1)); \
+        EXPECT_STREQ((expected), lua_tostring((L), -1)); \
+        lua_settop((L), 0); \
+    } while (0)
+
+// Guard against a degenerate fixture: if any literal above had landed as REAL
+// or TEXT the banding tests would be exercising the wrong code path entirely.
+TEST(DatabaseTest, BigIntColumnsAreAllIntegers)
+{
+    BigIntFixture f;
+    ASSERT_NE(nullptr, f.L);
+    ASSERT_TRUE(f.row());
+    EXPECT_EQ((long)BIG_COLUMNS, f.doc.DatabaseColumns("db"));
+    for (int col = 1; col <= BIG_COLUMNS; col++)
+        EXPECT_EQ(1L, f.doc.DatabaseColumnType("db", col));   // SQLITE_INTEGER
+}
+
+// (a) still inside 32 bits: still a number, exact, and still the same Lua type.
+TEST(DatabaseTest, LuaColumnValueKeepsSmallIntegersAsNumbers)
+{
+    BigIntFixture f;
+    ASSERT_NE(nullptr, f.L);
+    ASSERT_TRUE(f.row());
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_I32MAX, 2147483647.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_I32MIN, -2147483648.0);
+}
+
+// (b)+(d) past 32 bits but within 2^53: a number, still exact, both signs.
+TEST(DatabaseTest, LuaColumnValueWidensBeyond32BitsExactly)
+{
+    BigIntFixture f;
+    ASSERT_NE(nullptr, f.L);
+    ASSERT_TRUE(f.row());
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_P31, 2147483648.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_P40, 1099511627776.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_N31, -2147483649.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_P53, 9007199254740992.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_SINGLE, BIG_COL_N53, -9007199254740992.0);
+}
+
+// (c)+(d) past 2^53: the decimal string, byte-exact, both signs.
+TEST(DatabaseTest, LuaColumnValueGivesStringPast2To53)
+{
+    BigIntFixture f;
+    ASSERT_NE(nullptr, f.L);
+    ASSERT_TRUE(f.row());
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_SINGLE, BIG_COL_P53P1,  "9007199254740993");
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_SINGLE, BIG_COL_N53M1, "-9007199254740993");
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_SINGLE, BIG_COL_P60,    "1152921504606846976");
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_SINGLE, BIG_COL_I64MAX, "9223372036854775807");
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_SINGLE, BIG_COL_I64MIN, "-9223372036854775808");
+}
+
+// (e) the row reader must band identically to the single-column reader.
+TEST(DatabaseTest, LuaColumnValuesRowBandsIdentically)
+{
+    BigIntFixture f;
+    ASSERT_NE(nullptr, f.L);
+    ASSERT_TRUE(f.row());
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_I32MAX, 2147483647.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_I32MIN, -2147483648.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_P31, 2147483648.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_P40, 1099511627776.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_N31, -2147483649.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_P53, 9007199254740992.0);
+    EXPECT_LUA_EXACT_NUMBER(f.L, LUA_ROW, BIG_COL_N53, -9007199254740992.0);
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_ROW, BIG_COL_P53P1,  "9007199254740993");
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_ROW, BIG_COL_N53M1, "-9007199254740993");
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_ROW, BIG_COL_P60,    "1152921504606846976");
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_ROW, BIG_COL_I64MAX, "9223372036854775807");
+    EXPECT_LUA_EXACT_STRING(f.L, LUA_ROW, BIG_COL_I64MIN, "-9223372036854775808");
+}
+
+// The widened value is not merely exact in C -- feeding it back into SQL as a
+// literal selects the same row again, for the number band and the string band.
+TEST(DatabaseTest, LuaWidenedValuesRoundTripThroughAQuery)
+{
+    BigIntFixture f;
+    ASSERT_NE(nullptr, f.L);
+    ASSERT_TRUE(f.row());
+    // %.0f renders a Lua number with no exponent and no fraction; a string-band
+    // value is already decimal, so tostring() is the identity there.
+    int n = run_ret(f.L,
+        "local p31 = world.DatabaseColumnValue('db', 3)\n"
+        "local p40 = world.DatabaseColumnValue('db', 4)\n"
+        "local big = world.DatabaseColumnValue('db', 11)\n"
+        "world.DatabaseFinalize('db')\n"
+        "local sql = 'SELECT count(*) FROM big WHERE p31 = ' ..\n"
+        "  string.format('%.0f', p31) .. ' AND p40 = ' ..\n"
+        "  string.format('%.0f', p40) .. ' AND i64max = ' .. tostring(big)\n"
+        "assert(world.DatabasePrepare('db', sql) == 0)\n"
+        "assert(world.DatabaseStep('db') == 100)\n"
+        "return world.DatabaseColumnValue('db', 1)");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ(LUA_TNUMBER, lua_type(f.L, -1));
+    EXPECT_EQ(1.0, (double)lua_tonumber(f.L, -1));   // the row matched
+    lua_settop(f.L, 0);
+}
+
+// ── the same five cases down the VARIANT (dispatch) path ─────────────────
+// Python/Perl/JavaScript/Tcl/Ruby all reach these two methods through the
+// automation dispatch map, so this is where their banding is pinned.
+
+static void expect_variant_number(VARIANT& v, double expected)
+{
+    EXPECT_EQ((int)VT_R8, (int)v.vt);
+    if (v.vt == VT_R8)
+        EXPECT_EQ(expected, v.dblVal);
+}
+
+static void expect_variant_string(VARIANT& v, const char* expected)
+{
+    EXPECT_EQ((int)VT_BSTR, (int)v.vt);
+    if (v.vt == VT_BSTR)
+        EXPECT_STREQ(expected, (const char*)v.bstrVal);
+}
+
+TEST(DatabaseTest, CppColumnValueBandsInt64)
+{
+    BigIntFixture f;
+    ASSERT_NE(nullptr, f.L);
+    ASSERT_TRUE(f.row());
+
+    // (a) inside 32 bits: still VT_I4, exactly as before the widening.
+    VARIANT v = f.doc.DatabaseColumnValue("db", BIG_COL_I32MAX);
+    EXPECT_EQ((int)VT_I4, (int)v.vt);
+    EXPECT_EQ(2147483647L, (long)v.lVal);
+    v = f.doc.DatabaseColumnValue("db", BIG_COL_I32MIN);
+    EXPECT_EQ((int)VT_I4, (int)v.vt);
+    EXPECT_EQ(-2147483648L, (long)v.lVal);
+
+    // (b)+(d) up to 2^53: VT_R8, exact.
+    v = f.doc.DatabaseColumnValue("db", BIG_COL_P31);  expect_variant_number(v, 2147483648.0);
+    v = f.doc.DatabaseColumnValue("db", BIG_COL_P40);  expect_variant_number(v, 1099511627776.0);
+    v = f.doc.DatabaseColumnValue("db", BIG_COL_N31);  expect_variant_number(v, -2147483649.0);
+    v = f.doc.DatabaseColumnValue("db", BIG_COL_P53);  expect_variant_number(v, 9007199254740992.0);
+    v = f.doc.DatabaseColumnValue("db", BIG_COL_N53);  expect_variant_number(v, -9007199254740992.0);
+
+    // (c)+(d) past 2^53: a BSTR holding the exact decimal.
+    static const struct { int col; const char* text; } kStrings[] = {
+        { BIG_COL_P53P1,  "9007199254740993" },
+        { BIG_COL_N53M1,  "-9007199254740993" },
+        { BIG_COL_P60,    "1152921504606846976" },
+        { BIG_COL_I64MAX, "9223372036854775807" },
+        { BIG_COL_I64MIN, "-9223372036854775808" },
+    };
+    for (size_t i = 0; i < sizeof kStrings / sizeof kStrings[0]; i++) {
+        v = f.doc.DatabaseColumnValue("db", kStrings[i].col);
+        expect_variant_string(v, kStrings[i].text);
+        if (v.vt == VT_BSTR) SysFreeString(v.bstrVal);
+    }
+}
+
+TEST(DatabaseTest, CppColumnValuesRowBandsInt64)
+{
+    BigIntFixture f;
+    ASSERT_NE(nullptr, f.L);
+    ASSERT_TRUE(f.row());
+
+    VARIANT v = f.doc.DatabaseColumnValues("db");
+    ASSERT_EQ((int)(VT_ARRAY | VT_VARIANT), (int)v.vt);
+    ASSERT_TRUE(v.parray != NULL);
+    VARIANT* e = (VARIANT*)v.parray->pvData;
+    ASSERT_TRUE(e != NULL);
+
+    EXPECT_EQ((int)VT_I4, (int)e[BIG_COL_I32MAX - 1].vt);
+    EXPECT_EQ(2147483647L, (long)e[BIG_COL_I32MAX - 1].lVal);
+    EXPECT_EQ((int)VT_I4, (int)e[BIG_COL_I32MIN - 1].vt);
+    EXPECT_EQ(-2147483648L, (long)e[BIG_COL_I32MIN - 1].lVal);
+
+    expect_variant_number(e[BIG_COL_P31 - 1], 2147483648.0);
+    expect_variant_number(e[BIG_COL_P40 - 1], 1099511627776.0);
+    expect_variant_number(e[BIG_COL_N31 - 1], -2147483649.0);
+    expect_variant_number(e[BIG_COL_P53 - 1], 9007199254740992.0);
+    expect_variant_number(e[BIG_COL_N53 - 1], -9007199254740992.0);
+
+    expect_variant_string(e[BIG_COL_P53P1 - 1],  "9007199254740993");
+    expect_variant_string(e[BIG_COL_N53M1 - 1],  "-9007199254740993");
+    expect_variant_string(e[BIG_COL_P60 - 1],    "1152921504606846976");
+    expect_variant_string(e[BIG_COL_I64MAX - 1], "9223372036854775807");
+    expect_variant_string(e[BIG_COL_I64MIN - 1], "-9223372036854775808");
+
+    VariantClear(&v);
+}
+
+// DatabaseGetField reads its one field through the same two readers -- Lua via
+// GetDatabaseColumnValue, everything else via DatabaseColumnValue -- so it
+// inherits the banding.  Pinned here because it is the method a script reaches
+// for when it wants a single value and never touches Prepare/Step itself.
+TEST(DatabaseTest, GetFieldBandsInt64Too)
+{
+    BigIntFixture f;
+    ASSERT_NE(nullptr, f.L);
+
+    int n = run_ret(f.L, "return world.DatabaseGetField('db', 'SELECT p40 FROM big')");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ(LUA_TNUMBER, lua_type(f.L, -1));
+    EXPECT_EQ(1099511627776.0, (double)lua_tonumber(f.L, -1));
+    lua_settop(f.L, 0);
+
+    n = run_ret(f.L, "return world.DatabaseGetField('db', 'SELECT i64max FROM big')");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ(LUA_TSTRING, lua_type(f.L, -1));
+    EXPECT_STREQ("9223372036854775807", lua_tostring(f.L, -1));
+    lua_settop(f.L, 0);
+
+    VARIANT v = f.doc.DatabaseGetField("db", "SELECT p40 FROM big");
+    expect_variant_number(v, 1099511627776.0);
+    v = f.doc.DatabaseGetField("db", "SELECT i64min FROM big");
+    expect_variant_string(v, "-9223372036854775808");
+    if (v.vt == VT_BSTR) SysFreeString(v.bstrVal);
+}
+
 MC_TEST_MAIN()
 
 #else  // !MUSHCLIENT_LUA_SCRIPTING

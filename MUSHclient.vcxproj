@@ -1478,6 +1478,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="line_position_index.h" />
+    <ClInclude Include="scripting\db_int64.h" />
     <ClInclude Include="dialogs\global_prefs\GlobalPrefsSheet.h" />
     <ClInclude Include="dialogs\world_prefs\themeglue.h" />
     <ClInclude Include="luacom\LuaAux.h" />

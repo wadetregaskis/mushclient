@@ -1212,6 +1212,11 @@ as a `ClInclude`). Commits `d8de347`, `648622c`.
 4. A column past 2^53 must come back as a **decimal string**. This is deliberate and
    lossless, but it is a type change: confirm `type(v) == "string"` in Lua and
    `VT_BSTR` from JScript.
+   **Superseded later the same day — read §4c-sexquadragies before running this one.**
+   `e24ab4b` replaced the 2^53 *magnitude* cap with a *value* test, so a value above
+   2^53 that a double happens to hold exactly (2^60, `INT64_MIN`) is now a **number**
+   again. As written here, item 4 would fail on those. The band it should be read as
+   is "anything a double would round".
 5. A column that fits in 32 bits must return the same type and value it always has —
    `VT_I4` / Lua number. Nothing that works today may move.
 6. `CString::Format("%I64d", …)` behaves as it always has (MSVC's native modifier, so
@@ -1601,6 +1606,121 @@ a headless test and an in-app selftest would block on it. The tests drive the
 and the enumeration. **Not** covered: `hook_file_dialog`'s `wxFD_MULTIPLE` style bit and
 its packing of `wxFileDialog::GetPaths()` — that half runs only with a real panel on
 screen.
+
+### 4c-sexquadragies. The two SQLite surfaces band by value, and agree (2026-08-19)
+
+`docs/UPSTREAM-BUGS.md` 87, and a revision of the D-07 half of §4c-septentricies.
+Shared code: `scripting/db_int64.h` and `scripting/lua_methods.cpp` (`e24ab4b`),
+`lsqlite/lsqlite3.c` (`fbb6695`). All three are in `MUSHclient.vcxproj`, so both
+commits ship to Windows.
+
+**What changed, in one sentence each.** `e24ab4b` moved the four `world.Database*`
+column readers' middle band from "magnitude at most 2^53" to "the value survives a
+round trip through a double". `fbb6695` fixed the bundled Lua `sqlite3` module's own
+round-trip test, which widened both operands and so was vacuously true — its exact
+decimal-string branch had never run. The two surfaces now band identically; before
+these two commits they disagreed in **both** directions at once.
+
+**What to check on Windows:**
+1. `world.DatabaseColumnValue` on `1152921504606846976` (2^60): a **number**, not a
+   string. This is the case §4c-septentricies item 4 got wrong, and it is the one
+   most likely to be mis-tested.
+2. The same column read through the Lua `sqlite3` module (`sqlite3.open_memory()`,
+   `db:urows`/`db:rows`/`vm:get_value`): also a **number**, and equal to it.
+3. `9007199254740993` (2^53+1) through **both** surfaces: a lossless decimal
+   **string** from both. Before `fbb6695` the module returned the Lua number
+   `9007199254740992` here — a silently wrong value, which is the defect.
+4. `INT64_MAX` (`9223372036854775807`) through both: a **string**. This is the input
+   the range guard exists for. `(double) INT64_MAX` rounds *up* to exactly 2^63, and
+   casting that back is undefined behaviour — arm64 saturates to `INT64_MAX` and would
+   call the value exact, x86-64 yields `INT64_MIN` and would not. **MSVC/x86-64 is the
+   platform this was never run on**, so this row is the one that actually needs a
+   Windows machine rather than reasoning.
+5. `INT64_MIN` (`-9223372036854775808`) through both: a **number** — it is exactly
+   `-2^63` and a double holds it perfectly.
+6. A 32-bit-range value: unchanged type and value on both surfaces (`VT_I4` / Lua
+   number). Nothing that works today may move.
+7. `db:last_insert_rowid()` on a table whose rowid exceeds 2^53: the module's
+   `lua_pushfstring(L, "%I64d", …)` arm is now reachable for the first time, so this
+   is the one place the fix depends on **MSVC's** `%I64d` rather than ours.
+
+**A plugin-visible type change, on Windows too.** Any plugin reading a large integer
+through the `sqlite3` module now gets a string where it got a (wrong) number. That is
+the point of the fix, but it is the kind of thing to say out loud before a release.
+
+### 4c-septenquadragies. Two canonical edits with nothing to observe (2026-08-19)
+
+Both are behaviour-neutral by construction; they are here so that a Windows build is
+known to be needed, not a Windows *run*.
+
+**1. The `m_bUTF_8` seed line is deleted** (`336625d`, `doc_construct.cpp`). The
+constructor set `m_bUTF_8 = false` explicitly, two lines after `SetDefaults(false)`
+had already set it from `OptionsTable`'s `utf_8` row. The two writes **agreed**, so
+nothing was observably wrong — but the table was not actually authoritative, and a
+change to its default alone would not have moved a fresh document at all. This is the
+*last-writer-wins hides a mutation* shape the project keeps meeting. A fresh document
+gets the same value before and after.
+
+- [ ] Compile only. A new world's Special ▸ ... ▸ UTF-8 state is unchanged.
+
+**2. The delayed-alias comment web is deleted** (`893395a`). Seven canonical files
+(`OtherTypes.h`, `scripting/methods/methods_aliases.cpp`, `xml/xml_save_world.cpp`,
+`dialogs/world_prefs/prefspropertypages.cpp`, `aliasdlg.h`, `aliasdlg.cpp`,
+`world_debug.cpp`) lose **comments only** — every member of the web was already
+commented out, and was at the 2010 import. Verified dead first by grepping `bDelayed`,
+`eDelayed`, `IDC_DELAYED` and `OnUpdateDelayed` across every `.cpp`/`.h`/`.vcxproj`/`.rc`
+and the `plugins/` XML samples. Recorded as `docs/UPSTREAM-DIVERGENCES.md` §18's update.
+
+- [ ] Compile only, in all configurations — the point of the check is that seven more
+      files now conflict on an upstream merge, not that anything runs differently.
+
+### 4c-duodequinquagies. Port-only changes whose *Windows reference claims* want checking (2026-08-19)
+
+Same shape as §4c-terquadragies: none of these has a Windows half at all — the code is
+in `platform/`, which `MUSHclient.vcxproj` does not build — but each rests on a claim
+*about* Windows that was read out of the source and never executed. If a claim is
+wrong the port's design argument is wrong, so they are worth a spot-check by whoever
+next has a Windows build in front of them.
+
+**1. The connected-time pane (D-13, `65fa4ed`).** The port's redesign rests on
+`m_tStatusTime` having exactly three writers — the document constructor
+(`doc_construct.cpp:364`), Game ▸ Reset Connected Time (`doc.cpp:3607`) and
+`world.ResetStatusTime()` (`scripting/methods/methods_output.cpp:87`) — and on nothing
+on connect or disconnect touching it.
+
+- [ ] Open a world and do **not** connect. The `ID_STATUSLINE_TIME` pane counts up
+      anyway. (If it does not, the "despite its name, Windows measures the window's
+      age" reading is wrong.)
+- [ ] Connect, wait, disconnect, wait. The pane keeps counting across all four.
+- [ ] Game ▸ Reset Connected Time zeroes it *while disconnected*.
+
+**2. The output pane's right-click menu (D-29, `3fe8413`).** The merged menu's
+grey-vs-omit decisions were taken from `CMUSHView`'s message map, not from a run.
+
+- [ ] Right-click the output pane with **no** selection: Windows raises its menu
+      **without** selecting a word first (`CMUSHView::OnRButtonDown`,
+      `mushview.cpp:2283`, falls through to `CView`). The port deliberately differs;
+      this confirms what it differs *from*.
+- [ ] With no selection, **Go To URL…** and **Send Mail To…** are greyed
+      (`OnUpdateNeedSelection`, `mushview.cpp:128`, `:159`), and **Highlight Word…**,
+      **Multi-Line Trigger…** and **Bookmark Selection** are **not** — the port copies
+      that asymmetry rather than tidying it.
+- [ ] The MXP arm (`IDR_MXP_MENU`) really does run *before* `CG_IDR_POPUP_MUSHVIEW`
+      (`mushview.cpp:3560`), which is why the port puts the link group first.
+
+**3. An explicitly-passed nil (`8fa8baa`).** `platform/mc_dispatch.cpp` is port-only
+and the fix is Lua-parity by construction, so there is nothing to validate — but there
+is one question only Windows can answer, and the divergence file's §17 argument brushes
+against it:
+
+- [ ] From JScript or VBScript on Windows, call a world method with an explicit
+      `null`/`Empty` in a slot that has a documented default — e.g.
+      `world.EnableTrigger("t", null)`. Does MFC's `oledisp.cpp` coerce the `VT_EMPTY`
+      to 0 (disabling the trigger), or does it supply the default? **Do not assume**:
+      `oledisp.cpp` is not in this tree, standard OLE `VariantChangeType` would give 0,
+      but that is inference. The port's rule is Lua's, deliberately, and stays Lua's
+      either way — this only settles whether the port is *also* matching COM here or
+      diverging from it.
 
 ### 4d. Everything else (smoke)
 

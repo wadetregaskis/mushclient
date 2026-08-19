@@ -2,9 +2,18 @@
 
 > ## Status — worked through 2026-08-19
 >
-> **All 32 items were taken. 30 landed, 2 are documentation-only outcomes, and 1 was
-> stopped at a false premise.** (D-12 and D-15 reached `refs/heads/main` after this
-> scorecard was first written and are marked accordingly; the table is current.)
+> **All 32 items were taken. 29 landed and 3 are documentation-only outcomes.**
+> (D-12 and D-15 reached `refs/heads/main` after this scorecard was first written and
+> are marked accordingly; the table is current.)
+>
+> **Updated 2026-08-19, second consolidation round.** Two items were re-opened after
+> the *Close-out record* below was written, and their rows here now supersede it:
+> **D-13**'s connected-time pane had its semantics changed by owner decision, and
+> **D-29** was implemented after all, so it is no longer "stopped". The close-out
+> record's D-29 paragraphs are preserved as written — they are an accurate account of
+> why the *survey* stopped, and the owner's answer to it came later. This line also
+> corrects the arithmetic: the counts used to read "30 landed, 2 documentation-only,
+> 1 stopped", which is 33 for a 32-item queue.
 >
 > The per-item sections below are preserved **as the questions were posed** — several
 > of their context paragraphs turned out to be wrong, and the corrections are recorded
@@ -25,7 +34,7 @@
 | D-10 | Notepad line-ending conversions inert | **Fixed** `7f95a15`, `97b6f7e` | the *real feature* arm; also closed a silent CRLF corruption · UPSTREAM-BUGS 82 · CLAUDE.md |
 | D-11 | "Icon Placement: System tray" does nothing | **Implemented** `1ed8720` | a real `NSStatusItem`; `--statusitem-selftest` · WINDOWS-VALIDATION §4c-unquadragies |
 | D-12 | Two dead window-geometry features | **Fixed** `4e4ce04`, `b29469d`, `37bebec` | both, through a new `pal::IWorldView` geometry seam · WINDOWS-VALIDATION §4c-quinquadragies · **one open item below** |
-| D-13 | Status-bar click shortcuts | **Fixed** `7d733e4` (+ `04e5443`) | all four; the connected-time pane was a live port bug · WINDOWS-VALIDATION §4c-unquadragies |
+| D-13 | Status-bar click shortcuts | **Fixed** `7d733e4` (+ `04e5443`); **re-opened and re-decided** `65fa4ed`, `2fff5f0` | all four shortcuts; the connected-time pane was a live port bug, and its *semantics* then changed by owner decision — it reports the **connection** (cumulative in parentheses, `past` when disconnected), not the window's age · WINDOWS-VALIDATION §4c-unquadragies, §4c-duodequinquagies · deliberately **not** a DIVERGENCES entry: macOS-vs-Windows, no canonical source touched |
 | D-14 | Colour dropdowns show text, not swatches | **Fixed** `8314538`, `65365aa`, `89defbf` | port-only bridge capability · WINDOWS-VALIDATION §4c-terquadragies |
 | D-15 | Three "Add …" dialogs add one file per click | **Fixed** `5d6345e` | multi-select through the shim · WINDOWS-VALIDATION §4c-quinquadragies |
 | D-16 | `ReplaceNotepad` returns nil in Lua | **Fixed** `203c0fe` | UPSTREAM-BUGS 83 · DIVERGENCES §13 · WINDOWS-VALIDATION §4c-sextricies |
@@ -41,7 +50,7 @@
 | D-26 | UTF-8 click resolves one character right | **Documented, not fixed** | UPSTREAM-BUGS 86 — unverifiable from this platform |
 | D-27 | `DelayedSend` dead feature | **Deleted** `0ad0cd7` | DIVERGENCES §18 · WINDOWS-VALIDATION §4c-duoquadragies |
 | D-28 | Retired "Sounds" prefs page | **Deleted** `1b17ec8` | DIVERGENCES §19 · WINDOWS-VALIDATION §4c-duoquadragies |
-| D-29 | Dead-view context menus | **STOPPED — closed with no code change** | three premises false; **needs a fresh product call, below** |
+| D-29 | Dead-view context menus | **Implemented** `3fe8413`, `778760d` — after the survey stopped at three false premises | the stop was right and the owner then answered it: not "replace the port menu with the canonical one and lose 12 items" but **integrate** — **8** groups ordered by what the user is trying to do (7 separators, the first conditional on there being a link under the pointer), about 30 items depending on how many alternatives an MXP link offers, plus select-the-word-under-the-pointer when nothing is selected · WINDOWS-VALIDATION §4c-duodequinquagies · deliberately **not** a DIVERGENCES entry: macOS-vs-Windows · **supersedes the Close-out record's D-29 entry** |
 | D-30 | "Disable keyboard menu activation" vacuous | **Documented** | CLAUDE.md, *Settings that are deliberately NOT coming back* |
 | D-31 | `GetScrollInfo`'s NULL-window contract | **Fixed** `6bf7246` | FALSE-for-null, matching `CView` and Win32 · CLAUDE.md |
 | D-32 | `world.ExpandVariables` | **Removed** `e142839` | never in the shipping binary · **ledger K-231 is now moot, below** |

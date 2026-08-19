@@ -106,9 +106,16 @@ int RunOutputPaneSelfTest();
 // that drained CoreAnimation and spun the runloop here (2026-08-18) turned
 // the menubar selftest's rare window-server flake into a deterministic
 // SEGV -- deferred AppKit work ran against the harness's half-torn state.
-// A harness that creates or moves SHOWN windows corrupts the heap mid-run
-// with no event loop at all, and must run in extended mode instead (the
-// notepad selftest does; 15/40 aborts loop-free, 0/40 extended).
+//
+// The last two lines here used to say that a harness creating or moving
+// SHOWN windows corrupts the heap mid-run with no event loop, and must run
+// in extended mode instead.  That was WRONG, and was corrected on
+// 2026-08-19 (8f12c1c).  The notepad selftest's aborts came from one
+// wxYield() in the harness itself: with no active loop wxYield builds a
+// TEMPORARY one and pumps AppKit events into a half-booted app, corrupting
+// the malloc tiny-zone free list.  Creating and moving shown windows is
+// fine -- six loop-free harnesses do it, measured clean under Guard Malloc.
+// Do not dispatch events from a loop-free harness; that is the actual rule.
 [[noreturn]] static void SelftestExit(int rc)
 {
     std::fflush(stdout);

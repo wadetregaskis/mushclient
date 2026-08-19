@@ -1211,3 +1211,21 @@ heap-allocated exception object. The two other handlers in the same file
 `tests/test_lua_scripting.cpp`, using a live-instance counter added to the
 shim's `CArchiveException` (`platform/mfc_ui.h`) since a leak otherwise leaves
 no other observable trace.
+
+## 59 — `SetBackgroundImage` and `SetForegroundImage` duplicate a 66-line body (this commit)
+**Bug:** the two methods are byte-identical apart from the three
+`CMUSHclientDoc` members they touch (`m_BackgroundBitmap`/`m_ForegroundBitmap`,
+`m_iBackgroundMode`/`m_iForegroundMode`,
+`m_strBackgroundImageName`/`m_strForegroundImageName`), so any fix to the
+image-loading logic — the PNG-vs-BMP sniff, the error mapping, the bitmap
+lifetime — has to be made twice and can silently be made once, the exact
+pattern behind several of the other entries in this file (portable twins,
+forked TUs). No functional consequence today; the two bodies had not yet
+diverged.
+**Fix:** extract the shared body into a static `SetFrameImage` helper taking
+the bitmap/mode/name triple by reference, and reduce both methods to a single
+call each — behaviour-identical on both platforms. Covered by
+`LuaSurface.SetImageFamilySharesOneBodyBackgroundAndForeground` in
+`tests/test_lua_surface.cpp`, which drives both entry points over the same
+four fixtures so a future edit landing on only one of them shows up as a
+divergence.

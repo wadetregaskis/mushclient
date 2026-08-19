@@ -248,26 +248,23 @@ bool call_impl(CMUSHclientDoc* doc, Ret (CMUSHclientDoc::*pmf)(Args...),
   }
 
 // ── The dispatch table ──────────────────────────────────────────────────────
-// Each entry carries two counts beside its thunk, both deduced from
-// &CMUSHclientDoc::method rather than from a second list that could drift:
+// Each entry carries beside its thunk the count of parameters the SCRIPT is
+// expected to supply, deduced from &CMUSHclientDoc::method rather than from a
+// second list that could drift.
 //
-//   arity    sizeof...(Args) — the full parameter list, the same count the
-//            Windows dispatch map spells out as its VTS_ token list.
-//   inArity  how many of those the SCRIPT supplies.
-//
-// They differ for exactly three methods.  GetTrigger, GetAlias and GetTimer
+// That is NOT always sizeof...(Args).  GetTrigger, GetAlias and GetTimer
 // declare trailing [out] VARIANT* parameters (VTS_PVARIANT), and on Windows a
 // COM script really does pass by-ref variables for them.  Off Windows it does
 // not: every engine synthesises those slots itself and hands the values back as
 // a tuple/list (py_engine.cpp builds exactly that), so world.GetTrigger("t") is
-// a COMPLETE call here with one argument.  Strict checking has to count what
-// the script is expected to pass, or it would reject all three outright.
+// a COMPLETE call here with one argument.  Counting the declared arity instead
+// would make strict checking reject all three outright.
 template<class T> constexpr bool is_out_param   = false;
 template<>       constexpr bool is_out_param<VARIANT*> = true;
 
 using Thunk = std::function<bool(CMUSHclientDoc*, const VARIANT*, int,
                                  VARIANT&, std::vector<VARIANT>*)>;
-struct Entry { Thunk fn; int arity; int inArity; };
+struct Entry { Thunk fn; int inArity; };
 std::unordered_map<std::string, Entry>& table()
   {
   static std::unordered_map<std::string, Entry> t;
@@ -284,7 +281,6 @@ void register_disp(const char* name, Ret (CMUSHclientDoc::*pmf)(Args...))
       return call_impl(doc, pmf, args, n, result, outargs,
                        std::index_sequence_for<Args...>{});
       },
-    (int) sizeof...(Args),
     (int) (0 + ... + (is_out_param<std::decay_t<Args>> ? 0 : 1)) };
   }
 

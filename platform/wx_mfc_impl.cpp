@@ -449,6 +449,43 @@ static void hook_get_client_rect(const void* h, RECT* r)
     }
 }
 
+// ── DDX byte fidelity ──────────────────────────────────────────────────────
+// The two DDX arms are a pair: hook_set_window_text decodes the member's bytes
+// with DecodeTextLenient (UTF-8, else Latin-1) and hook_get_window_text encodes
+// the control's text back.  The encode CANNOT be derived from the wxString
+// alone, because the decode is not injective: "Café" is the same wxString
+// whether it came from 43 61 66 E9 (Latin-1) or 43 61 66 C3 A9 (UTF-8).  With
+// only utf8_str() on the save side, a member holding legacy bytes was silently
+// re-encoded to UTF-8 on ANY dialog OK — the mutation reaching disk, because
+// the world-file path is byte-transparent end to end: xml/xmlparse.cpp never
+// acts on the `encoding="iso-8859-1"` declaration xml_save_world.cpp:40 writes
+// (it only strips a UTF-8 BOM / converts a UTF-16 one), so the loader hands the
+// doc the file's bytes verbatim and the saver writes the member's bytes back.
+//
+// So remember the bytes the load arm was handed, per control, and hand those
+// very bytes back while the control still shows what they decoded to.  A
+// control the user actually edited no longer matches and encodes as UTF-8,
+// which is what it did before and what DecodeTextLenient reads back first.
+static std::unordered_map<const wxWindow*, std::string>& ddx_source_bytes()
+{
+    static std::unordered_map<const wxWindow*, std::string> m;
+    return m;
+}
+
+// Erased when the control dies, so a later window reusing the address cannot
+// inherit a stale entry.  wxEVT_DESTROY also propagates to the parent, hence
+// the GetWindow() test; bound once, on the insert that created the entry.
+static void remember_ddx_source_bytes(wxWindow* w, const char* text)
+{
+    auto& m = ddx_source_bytes();
+    const auto it = m.emplace(w, text ? text : "");
+    if (!it.second) { it.first->second = text ? text : ""; return; }
+    w->Bind(wxEVT_DESTROY, [w](wxWindowDestroyEvent& e) {
+        if (e.GetWindow() == w) ddx_source_bytes().erase(w);
+        e.Skip();
+    });
+}
+
 static void hook_set_window_text(void* h, const char* text)
 {
     auto* w = toWx(h);
@@ -457,6 +494,7 @@ static void hook_set_window_text(void* h, const char* text)
     // FromUTF8 of a legacy-charset member yields "" — which blanks the field,
     // and DDX's save arm then writes the blank back over the member on OK.
     wxString s = DecodeTextLenient(text);
+    remember_ddx_source_bytes(w, text);
     // wxTextCtrl / wxComboBox ignore SetLabel — their text is the *value*.  This
     // is what DDX_Text(...FALSE) calls to push a member into an edit control, so
     // getting it wrong leaves every edit field blank.  ChangeValue (not SetValue)
@@ -5034,6 +5072,16 @@ static char* hook_get_window_text(void* hwnd)
     else if (wxComboBox* c = wxDynamicCast(w, wxComboBox)) s = c->GetValue();
     else if (wxChoice* ch = wxDynamicCast(w, wxChoice))    s = ch->GetStringSelection();
     else                                                   s = w->GetLabel();
+    // Byte fidelity — see ddx_source_bytes() above.  When the control still
+    // shows exactly what the load arm's bytes decoded to, those bytes ARE the
+    // answer: re-encoding them would rewrite a member the user never touched.
+    // Anything else (edited text, a control wx filled itself, a wxChoice that
+    // matched no row) falls through to UTF-8, as before.
+    auto& memo = ddx_source_bytes();
+    const auto it = memo.find(w);
+    if (it != memo.end() &&
+        DecodeTextLenient(it->second.c_str(), it->second.size()) == s)
+        return strdup(it->second.c_str());
     return strdup(s.utf8_str());
 }
 

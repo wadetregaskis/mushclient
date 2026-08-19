@@ -2771,6 +2771,7 @@ void COutputPane::OnLeftDown(wxMouseEvent& evt)
                 m_linkAtDown     = run->action();
                 m_linkTypeAtDown = run->action_type();
                 m_linkNoteAtDown = LineAt(lineIdx).comment;
+                m_linkEncAtDown  = run->encoding();
             }
         }
     }
@@ -2801,7 +2802,7 @@ void COutputPane::OnLeftUp(wxMouseEvent& evt)
         if (!m_linkAtDown.empty() && m_selAnchor == m_selFocus) {
             if (m_fn_link_clicked)
                 m_fn_link_clicked(m_linkAtDown, m_linkTypeAtDown,
-                                  m_linkNoteAtDown);
+                                  m_linkNoteAtDown, m_linkEncAtDown);
         }
         m_linkAtDown.clear();
 
@@ -3046,12 +3047,14 @@ void COutputPane::OnMotion(wxMouseEvent& evt)
 
     // Tooltip update (skip during drag to avoid flicker).
     if (!m_dragging && m_fn_get_tooltip) {
-        std::string tip = m_fn_get_tooltip(evt.GetX(), evt.GetY());
-        if (tip.empty()) {
+        // Already decoded by the frame -- see m_fn_get_tooltip.  It used to
+        // arrive as bytes and be read with bare FromUTF8, so an MXP hint with
+        // one legacy-charset byte in it showed NO tooltip at all.
+        const wxString wxTip = m_fn_get_tooltip(evt.GetX(), evt.GetY());
+        if (wxTip.empty()) {
             UnsetToolTip();
         } else {
             wxToolTip* existing = GetToolTip();
-            wxString wxTip = wxString::FromUTF8(tip.c_str(), tip.size());
             if (!existing || existing->GetTip() != wxTip)
                 SetToolTip(wxTip);
         }
@@ -3282,6 +3285,7 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
     std::string linkAtClick;
     int  linkTypeAtClick = 0;
     bool linkNoteAtClick = false;
+    SRunEncoding linkEncAtClick;   // how to read linkAtClick's bytes
     {
         int lineIdx = YToLine(y);
         if (lineIdx >= 0 && lineIdx < LineCountI()) {
@@ -3292,6 +3296,7 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
                 linkAtClick     = run->action();
                 linkTypeAtClick = run->action_type();
                 linkNoteAtClick = LineAt(lineIdx).comment;
+                linkEncAtClick  = run->encoding();
             }
         }
     }
@@ -3309,17 +3314,19 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
         if (isURL) {
             wxMenuItem* itemOpen = menu.Append(wxID_ANY, "Open URL in Browser");
             menu.Bind(wxEVT_MENU,
-                [this, linkAtClick, linkTypeAtClick, linkNoteAtClick](wxCommandEvent&) {
+                [this, linkAtClick, linkTypeAtClick, linkNoteAtClick,
+                 linkEncAtClick](wxCommandEvent&) {
                     if (m_fn_link_clicked)
-                        m_fn_link_clicked(linkAtClick, linkTypeAtClick, linkNoteAtClick);
+                        m_fn_link_clicked(linkAtClick, linkTypeAtClick,
+                                          linkNoteAtClick, linkEncAtClick);
                 }, itemOpen->GetId());
 
             wxMenuItem* itemCopyURL = menu.Append(wxID_ANY, "Copy URL");
             menu.Bind(wxEVT_MENU,
-                [linkAtClick](wxCommandEvent&) {
+                [linkAtClick, linkEncAtClick](wxCommandEvent&) {
                     if (wxTheClipboard->Open()) {
                         wxTheClipboard->SetData(new wxTextDataObject(
-                            wxString::FromUTF8(linkAtClick.c_str())));
+                            DecodeRunBytes(linkAtClick, linkEncAtClick)));
                         wxTheClipboard->Close();
                     }
                 }, itemCopyURL->GetId());
@@ -3339,13 +3346,17 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
                 }
             }
             for (const std::string& ch : choices) {
+                // DecodeRunBytes, not FromUTF8: one legacy-charset byte in the
+                // action made this label "Send: " with nothing after it.
                 wxString label = wxString::Format(wxT("Send: %s"),
-                    wxString::FromUTF8(ch.c_str(), ch.size()));
+                    DecodeRunBytes(ch, linkEncAtClick));
                 wxMenuItem* item = menu.Append(wxID_ANY, label);
                 menu.Bind(wxEVT_MENU,
-                    [this, cmd = ch, linkTypeAtClick, linkNoteAtClick](wxCommandEvent&) {
+                    [this, cmd = ch, linkTypeAtClick, linkNoteAtClick,
+                     linkEncAtClick](wxCommandEvent&) {
                         if (m_fn_link_clicked)
-                            m_fn_link_clicked(cmd, linkTypeAtClick, linkNoteAtClick);
+                            m_fn_link_clicked(cmd, linkTypeAtClick,
+                                              linkNoteAtClick, linkEncAtClick);
                     }, item->GetId());
             }
             if (choices.size() > 1) {
@@ -3353,17 +3364,19 @@ void COutputPane::BuildContextMenu(wxMenu& menu, int x, int y)
                 wxMenuItem* itemAll = menu.Append(wxID_ANY,
                     wxT("Send All (in order)"));
                 menu.Bind(wxEVT_MENU,
-                    [this, linkAtClick, linkTypeAtClick, linkNoteAtClick](wxCommandEvent&) {
+                    [this, linkAtClick, linkTypeAtClick, linkNoteAtClick,
+                     linkEncAtClick](wxCommandEvent&) {
                         if (m_fn_link_clicked)
-                            m_fn_link_clicked(linkAtClick, linkTypeAtClick, linkNoteAtClick);
+                            m_fn_link_clicked(linkAtClick, linkTypeAtClick,
+                                              linkNoteAtClick, linkEncAtClick);
                     }, itemAll->GetId());
             }
             wxMenuItem* itemCopy = menu.Append(wxID_ANY, "Copy Action");
             menu.Bind(wxEVT_MENU,
-                [linkAtClick](wxCommandEvent&) {
+                [linkAtClick, linkEncAtClick](wxCommandEvent&) {
                     if (wxTheClipboard->Open()) {
                         wxTheClipboard->SetData(new wxTextDataObject(
-                            wxString::FromUTF8(linkAtClick.c_str())));
+                            DecodeRunBytes(linkAtClick, linkEncAtClick)));
                         wxTheClipboard->Close();
                     }
                 }, itemCopy->GetId());

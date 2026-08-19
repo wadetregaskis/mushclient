@@ -2542,8 +2542,9 @@ int RunWorldFrameSelfTest()
 
         const int lh = pane->LineHeight();
         auto tipForRow = [&](int row) -> std::string {
-            return pane->m_fn_get_tooltip
-                 ? pane->m_fn_get_tooltip(4, row * lh + lh / 2) : std::string();
+            const wxString t = pane->m_fn_get_tooltip
+                 ? pane->m_fn_get_tooltip(4, row * lh + lh / 2) : wxString();
+            return std::string(t.utf8_str());
         };
 
         // Find the three lines by what their tooltip says, rather than assuming
@@ -2578,6 +2579,133 @@ int RunWorldFrameSelfTest()
         doc->m_bLineInformation = 1;
 
         doc->ClearOutput();
+    }
+
+    // ── an MXP link/hint must survive a legacy-charset byte ────────────────
+    // The action and hint bytes of an MXP link are the world's bytes in the
+    // world's charset, like the run text beside them -- but every DISPLAY use
+    // of them went through wxString::FromUTF8, which is all-or-nothing.  One
+    // byte that is not valid UTF-8 and the tooltip was blank, the choose-an-
+    // alternative menu was blank, and an ACTION_PROMPT link did not fill the
+    // command bar but ERASED it.
+    //
+    // CP1251 (charset 204) rather than CP1252, so the expected text pins the
+    // charset as well as the flag: the two codepages read these bytes as
+    // entirely different words.
+    {
+        const std::string kBytes = "\xCF\xF0\xE8\xE2\xE5\xF2";   // CP1251
+        const wxString    kText  = wxString::FromUTF8(
+            "\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82");   // "Privet"
+
+        check(wxString::FromUTF8(kBytes.c_str(), kBytes.size()).empty(),
+              "mxp charset (fixture): FromUTF8 of these bytes really is \"\", "
+              "so the assertions below can tell the fix from the bug");
+
+        // ── the command bar: the worst symptom, on its own ────────────────
+        // An ACTION_PROMPT link fills the bar rather than sending
+        // (HyperlinkClicked -> eHyperlinkFillCommand).  CheckConnected runs
+        // first, so the doc needs a wire or it puts up a modal instead.
+        {
+            // CheckConnected wants BOTH the phase and a transport; without
+            // either it puts up a modal, which under ctest is a hang rather
+            // than a failure.  The hook below turns any modal that does get
+            // raised into a recorded refusal, so this can never wedge.
+            pal::ITransport* savedWire  = doc->m_pTransport;
+            const int        savedPhase = doc->m_iConnectPhase;
+            RecordingTransport* wire = new RecordingTransport();
+            doc->m_pTransport   = wire;
+            doc->m_iConnectPhase = eConnectConnectedToMud;
+
+            static int s_modals = 0;
+            s_modals = 0;
+            int (*savedMB)(const char*, const char*, unsigned) =
+                g_wxhook_message_box;
+            g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+                ++s_modals;
+                return IDNO;
+            };
+
+            wxTextCtrl* bar = child->ActiveInputPublic();
+            check(bar != NULL, "mxp charset: the world window has a command bar");
+            check(pane->m_fn_link_clicked != nullptr,
+                  "mxp charset: the pane's link handler is wired");
+            if (bar && pane->m_fn_link_clicked) {
+                bar->SetValue(wxT("half-typed command"));
+                pane->m_fn_link_clicked(kBytes, ACTION_PROMPT, false,
+                                        SRunEncoding{ false, 204 });
+                wxYield();
+                check(!bar->GetValue().empty(),
+                      "mxp charset: a legacy-charset prompt-link does NOT CLEAR "
+                      "THE COMMAND BAR (was: SetValue(\"\") wiping what was "
+                      "already typed there)");
+                check(bar->GetValue() == kText,
+                      "mxp charset: ...it fills the bar with the action's "
+                      "CP1251 text");
+
+                // The control: a UTF-8 prompt-link is read as UTF-8, so the
+                // fix did not become a blanket re-interpretation of everything.
+                // Its text must be NON-ASCII or the control is vacuous -- CP1251
+                // and UTF-8 agree byte for byte on ASCII, so "look at sign"
+                // would pass even a build that decoded every link as CP1251.
+                const std::string kUtf8Bytes = "look \xC3\xA9";      // "look e-acute"
+                const wxString    kUtf8Text  = wxString::FromUTF8(kUtf8Bytes.c_str(),
+                                                                  kUtf8Bytes.size());
+                check(DecodeRunBytes(kUtf8Bytes, SRunEncoding{ false, 204 })
+                          != kUtf8Text,
+                      "mxp charset (fixture): the control's text reads "
+                      "DIFFERENTLY as CP1251, so it can discriminate");
+                bar->SetValue(wxT("half-typed command"));
+                pane->m_fn_link_clicked(kUtf8Bytes, ACTION_PROMPT, false,
+                                        SRunEncoding{ true, 0 });
+                wxYield();
+                check(bar->GetValue() == kUtf8Text,
+                      "mxp charset (control): a UTF-8 prompt-link fills the bar "
+                      "with its UTF-8 text, not a re-reading of its bytes");
+                bar->SetValue(wxEmptyString);
+            }
+
+            check(s_modals == 0,
+                  "mxp charset: the prompt-link path raised no modal "
+                  "(if this fails the checks above tested nothing)");
+            g_wxhook_message_box = savedMB;
+
+            doc->m_iConnectPhase = savedPhase;
+            doc->m_pTransport = savedWire;   // the doc did not own this one
+            delete wire;
+        }
+
+        // ── the hint, through the real tooltip callback ───────────────────
+        {
+            const unsigned short savedUtf8    = doc->m_bUTF_8;
+            const int            savedCharset = (int) doc->m_font_charset;
+            doc->m_bUTF_8      = 0;
+            doc->m_font_charset = 204;
+
+            doc->ClearOutput();
+            doc->Hyperlink("go north", "north", kBytes.c_str(), "", "", FALSE);
+            // Hyperlink_Helper leaves the line OPEN (it adds styles and text
+            // but no newline), and the pane keeps an unterminated line as the
+            // pending row, outside LineCount.  End it so there is a committed
+            // row to hover.
+            doc->DisplayMsg("\n", 1, COMMENT);
+            doc->UpdateAllViews(NULL);
+            wxYield();
+
+            const int lh2 = pane->LineHeight();
+            wxString hintTip;
+            for (int row = 0; row < pane->LineCount(); ++row) {
+                const wxString t = pane->m_fn_get_tooltip
+                    ? pane->m_fn_get_tooltip(4, row * lh2 + lh2 / 2) : wxString();
+                if (t == kText) { hintTip = t; break; }
+            }
+            check(hintTip == kText,
+                  "mxp charset: hovering a link whose HINT is legacy-charset "
+                  "shows that hint (was: FromUTF8 -> \"\", no tooltip at all)");
+
+            doc->m_bUTF_8      = savedUtf8;
+            doc->m_font_charset = (BYTE) savedCharset;
+            doc->ClearOutput();
+        }
     }
 
     // ── the output-buffer fade ──────────────────────────────────────────────

@@ -1393,8 +1393,14 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         return true;
     };
 
+    // Returns a DECODED wxString, not bytes: the three things it can answer
+    // with have three different encodings and only this lambda knows which is
+    // which, so each arm decodes at the point it resolves its text.  The pane
+    // used to read whatever came back with bare wxString::FromUTF8, which is
+    // all-or-nothing -- so one legacy-charset byte in an MXP hint showed no
+    // tooltip at all rather than the hint.
     m_output->m_fn_get_tooltip =
-        [this](int x, int y) -> std::string
+        [this](int x, int y) -> wxString
     {
         if (!m_doc) return {};
 
@@ -1416,7 +1422,11 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // OnToolTipNeedText returns before the MXP code).
         std::string mwTip;
         if (wx_miniwindow_tooltip(m_doc, x, y, mwTip))
-            return mwTip;
+            // A hotspot's tooltip is script-supplied text for THIS world, so
+            // it reads the way the world's own output does.
+            return DecodeRunBytes(mwTip,
+                                  SRunEncoding{ m_doc->m_bUTF_8 != 0,
+                                                (int) m_doc->m_font_charset });
 
         // 2. Check MXP hint text on the output line under the cursor.
         // Use PointToChar for wrap-aware hit-testing: it returns the absolute
@@ -1437,7 +1447,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
             if (pt.col >= c && pt.col < c + runLen) {
                 const std::string hint = run.hint();
                 if (!hint.empty())
-                    return hint;
+                    return DecodeRunBytes(hint, run.encoding());
                 break;      // empty hint: fall through to the line information,
             }               // exactly as `if (strText.IsEmpty ())` does upstream
             c += runLen;
@@ -1468,7 +1478,10 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         const CString strText = TFormat("Line %ld, %s%s",
                                         pLine->m_nLineNumber,
                                         (LPCTSTR) strDate, suffix);
-        return std::string((const char*) strText);
+        // UI chrome (a formatted date), not world output -- DecodeTextLenient
+        // is the decode for that, and like the two above it never comes back
+        // empty for non-empty bytes.
+        return DecodeTextLenient((const char*) strText, strText.GetLength());
     };
 
     // ── MXP hyperlink / send-link / plain-URL callback ───────────────────────
@@ -1487,7 +1500,8 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
     // MUD as literal text.  actionType/bCommentLine are the two facts the
     // decision needs and they now travel with the action from the run.
     m_output->m_fn_link_clicked = [this](const std::string& action,
-                                         int actionType, bool bCommentLine) {
+                                         int actionType, bool bCommentLine,
+                                         SRunEncoding enc) {
         if (action.empty()) return;
 
         // Plain URL from auto-detection.
@@ -1518,7 +1532,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         // One place that runs a chosen alternative through the shared handler
         // and then does the parts that are this frontend's own business —
         // exactly what mushview.cpp does with the same return value.
-        auto fire = [this, actionType, bCommentLine](const std::string& cmd) {
+        auto fire = [this, actionType, bCommentLine, enc](const std::string& cmd) {
             switch (m_doc->HyperlinkClicked(CString(cmd.c_str()),
                                             actionType, bCommentLine))
             {
@@ -1531,7 +1545,12 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
                     // before replacing something already typed) — that prompt is
                     // its own backlog item on the port and is not faked here.
                     if (m_input) {
-                        m_input->SetValue(wxString::FromUTF8(cmd.c_str(), cmd.size()));
+                        // DecodeRunBytes, NOT FromUTF8.  FromUTF8 is
+                        // all-or-nothing, so a prompt-link carrying one
+                        // legacy-charset byte CLEARED the command bar --
+                        // SetValue("") wiping whatever the user had typed --
+                        // instead of filling it with the prompt.
+                        m_input->SetValue(DecodeRunBytes(cmd, enc));
                         m_input->SetInsertionPointEnd();
                     }
                     break;
@@ -1562,7 +1581,7 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         wxMenu linkMenu;
         for (const std::string& ch : choices) {
             wxMenuItem* item = linkMenu.Append(
-                wxID_ANY, wxString::FromUTF8(ch.c_str(), ch.size()));
+                wxID_ANY, DecodeRunBytes(ch, enc));
             linkMenu.Bind(wxEVT_MENU, [fire, cmd = ch](wxCommandEvent&) {
                 fire(cmd);
             }, item->GetId());

@@ -1005,7 +1005,17 @@ void TestFunctionListView()
 // the blank back over the member on OK — silent data destruction for any
 // unvalidated free-text field.  The trigger/alias list rows blanked the same
 // way through the listctrl hooks.  Now DecodeTextLenient falls back to
-// Latin-1, so the text stays visible and round-trips (re-encoded as UTF-8).
+// Latin-1, so the text stays visible.
+//
+// 2026-08-19: the SAVE arm was still bare utf8_str(), so the two arms were not
+// inverses and this test PINNED the wrong contract -- the member came back
+// RE-ENCODED (E9 -> C3 A9) on any dialog OK, mutating stored bytes the user
+// never touched.  It reaches disk: xml/xmlparse.cpp never acts on the encoding=
+// declaration xml_save_world.cpp:40 writes (it handles only a UTF-16/UTF-8 BOM),
+// so a world file is byte-transparent end to end and this seam was the only
+// thing changing the bytes.  The decode is not injective -- one wxString, two
+// possible byte strings -- so the save arm cannot invert it by inspection; it
+// remembers the bytes the load arm was handed and hands those back.
 void TestDdxCharsetRoundTrip()
 {
     printf("DDX charset round-trip (legacy bytes):\n");
@@ -1028,8 +1038,9 @@ void TestDdxCharsetRoundTrip()
     char* back = g_wxhook_get_window_text((void*) tc);
     check(back && *back,
           "reading the field back is non-empty (was: member erased on OK)");
-    check(back && strcmp(back, "Caf\xC3\xA9 monde") == 0,
-          "...as UTF-8 re-encoded text (the e-acute survives as a character)");
+    check(back && strcmp(back, "Caf\xE9 monde") == 0,
+          "...as the VERY BYTES the load arm was handed (was: re-encoded to "
+          "UTF-8, mutating a member the user never touched)");
     free(back);
 
     // The common case must stay exact: valid UTF-8 round-trips untouched.
@@ -1038,6 +1049,63 @@ void TestDdxCharsetRoundTrip()
     check(back2 && strcmp(back2, "Caf\xC3\xA9") == 0,
           "valid UTF-8 round-trips byte-identical");
     free(back2);
+
+    // ── the whole seam, as a dialog runs it ────────────────────────────────
+    // The two hooks above are DDX's two arms; this drives the arms themselves,
+    // through the real DDX_Text(CString) over a real CDataExchange, which is
+    // what every bridged dialog's DoDataExchange calls.  "Open the dialog,
+    // change nothing, press OK" must leave the member bit-for-bit as it was.
+    {
+        const int kId = 4711;
+        wxTextCtrl* field = new wxTextCtrl(host, kId);
+
+        CWnd dlgWnd;  dlgWnd.m_hWnd = (HWND) host;
+        CDataExchange dx;  dx.m_pDlgWnd = &dlgWnd;
+
+        // A world-file member as it actually sits on disk: CP1252/Latin-1 text
+        // written by MUSHclient on Windows, which is not valid UTF-8.
+        const CString kOnDisk("Vous \xEAtes ici \x97 \x93sud\x94");
+        CString member = kOnDisk;
+
+        dx.m_bSaveAndValidate = FALSE;       // load: member -> control
+        DDX_Text(&dx, kId, member);
+        check(!field->GetValue().empty(),
+              "DDX load puts a legacy-charset member on screen");
+
+        dx.m_bSaveAndValidate = TRUE;        // OK: control -> member
+        DDX_Text(&dx, kId, member);
+        check(member.GetLength() == kOnDisk.GetLength() &&
+              memcmp((LPCTSTR) member, (LPCTSTR) kOnDisk,
+                     kOnDisk.GetLength()) == 0,
+              "DDX load -> OK -> save leaves the member BYTE-IDENTICAL "
+              "(was: silently re-encoded to UTF-8 on every dialog OK)");
+
+        // A second OK must not drift either -- the memo has to survive the
+        // save, or the first OK would be exact and the next one would not.
+        DDX_Text(&dx, kId, member);
+        check(member == kOnDisk,
+              "...and a second OK does not drift it further");
+
+        // ── the control ────────────────────────────────────────────────────
+        // Everything above would also pass a save arm that ignored the control
+        // and always answered with the remembered bytes.  Typing must win.
+        field->ChangeValue(wxString::FromUTF8("Vous \xC3\xAAtes l\xC3\xA0"));
+        DDX_Text(&dx, kId, member);
+        check(member == CString("Vous \xC3\xAAtes l\xC3\xA0"),
+              "...but an EDITED field saves what the user typed, as UTF-8, "
+              "not the bytes the load arm remembered");
+
+        // And a control the load arm never touched is unaffected by any of it.
+        {
+            const int kId2 = 4712;
+            wxTextCtrl* fresh = new wxTextCtrl(host, kId2);
+            fresh->ChangeValue(wxString::FromUTF8("caf\xC3\xA9"));
+            CString never;
+            DDX_Text(&dx, kId2, never);
+            check(never == CString("caf\xC3\xA9"),
+                  "...and a control the load arm never wrote still saves as UTF-8");
+        }
+    }
 
     // And the list rows.
     wxListCtrl* lv = new wxListCtrl(host, wxID_ANY, wxDefaultPosition,

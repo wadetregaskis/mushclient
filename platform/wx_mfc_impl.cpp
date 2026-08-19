@@ -1199,6 +1199,13 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
     displayMenu->Append(32331 /*ID_DISPLAY_TEXTATTRIBUTES*/,  wxT("Text &Attributes…"));
     displayMenu->Append(32318 /*ID_DISPLAY_BOOKMARKSELECTION*/, wxT("&Bookmark Selection\tShift+Ctrl+B"));
     displayMenu->Append(32319 /*ID_DISPLAY_GOTOBOOKMARK*/,    wxT("&Go To Bookmark\tCtrl+B"));
+    displayMenu->AppendSeparator();
+    // ID_DISPLAY_CLEAR_COMMAND_HISTORY (32343): Windows carries this on
+    // CSendView, which the port never constructs, so there was no UI route to
+    // clearing the persistent per-world history file — only
+    // world.DeleteCommandHistory() from a script could.
+    displayMenu->Append(ID_DISPLAY_CLEAR_COMMAND_HISTORY,
+                        wxT("Clear Command &History…"));
     mb->Append(displayMenu, wxT("&Display"));
 
     // ── View menu (port-local; real wx implementations, not the canonical
@@ -1389,6 +1396,7 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         if (id == wxID_SAVE || id == wxID_SAVEAS ||
             id == wxID_CLOSE ||
             id == 32158 /*ID_GAME_PREFERENCES*/ ||
+            id == ID_DISPLAY_CLEAR_COMMAND_HISTORY ||
             id == ID_MENU_CFG_TRIGGERS  ||
             id == ID_MENU_CFG_ALIASES   ||
             id == ID_MENU_CFG_TIMERS    ||
@@ -1703,7 +1711,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
         if (id == 32275 || id == 32276 || id == 32974 || id == 32272 ||
             id == 32152 || id == 33036 || id == 33044 || id == 32331 ||
             id == 32946 || id == 32947 || id == 33046 ||
-            id == 32318 || id == 32319 || id == 32973) {
+            id == 32318 || id == 32319 || id == 32973 ||
+            id == ID_DISPLAY_CLEAR_COMMAND_HISTORY) {
             if (auto* child = dynamic_cast<CWorldChildFrame*>(frame->GetActiveChild())) {
                 switch (id) {
                 case 32275: child->GotoSelectedURL();      break; // ID_DISPLAY_GOTOURL
@@ -1720,6 +1729,8 @@ static int hook_load_mdi_frame(void* selfVoid, unsigned /*id*/,
                 case 33046: child->ShowFunctionsList();    break; // ID_GAME_FUNCTIONSLIST
                 case 32318: child->BookmarkSelection();    break; // ID_DISPLAY_BOOKMARKSELECTION
                 case 32319: child->GotoBookmark();         break; // ID_DISPLAY_GOTOBOOKMARK
+                case ID_DISPLAY_CLEAR_COMMAND_HISTORY:
+                    child->ClearCommandHistory();          break;
                 }
             }
             return;

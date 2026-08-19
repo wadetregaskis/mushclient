@@ -693,6 +693,9 @@ int RunMenuBarSelfTest()
             check(!probeUi(frame, 32980 /*ID_FILE_IMPORT, 'D'*/).enabled,
                   "a world-targeted table command is dead with no world");
 
+            check(!probeUi(frame, ID_DISPLAY_CLEAR_COMMAND_HISTORY).enabled,
+                  "Display > Clear Command History is dead with no world too");
+
             // 'F', driven BOTH ways: CMainFrame::OnUpdateFileOpenworldsinstartuplist
             // enables Open Worlds In Startup List only when that list is not
             // empty.  An arm that answered "true" out of the initialiser rather
@@ -872,6 +875,38 @@ int RunMenuBarSelfTest()
 
                 g_wxhook_stop_sound        = savedStop;
                 g_wxhook_sound_stop_buffer = savedStopBuf;
+            }
+
+            // ── Display ▸ Clear Command History (ID_DISPLAY_CLEAR_COMMAND_HISTORY,
+            // 32343) ──────────────────────────────────────────────────────────
+            // Before this there was no UI route to it at all: the id existed
+            // only in resource.h / accelerators.cpp / the recovered .rc, never
+            // in the port's hand-built Display menu.
+            {
+                const Item* clearHist =
+                    find_by_id(items, ID_DISPLAY_CLEAR_COMMAND_HISTORY);
+                check(clearHist != NULL,
+                      "Display > Clear Command History is in the menu bar");
+                check(probeUi(frame, ID_DISPLAY_CLEAR_COMMAND_HISTORY).enabled,
+                      "...and enabled with a world open");
+
+                // The item itself is right, but a menu entry with no wiring
+                // behind it is the exact failure mode this test file exists
+                // to catch (see the file header) -- so fire it for real and
+                // check the effect, not just that the row exists.
+                int (*savedMB)(const char*, const char*, unsigned) =
+                    g_wxhook_message_box;
+                g_wxhook_message_box = [](const char*, const char*, unsigned) {
+                    return IDYES;
+                };
+                child->addToCommandHistory("menubar_f8_probe");
+                check(!child->commandList(0).empty(),
+                      "...the history has an entry to clear before firing it");
+                check(fireCmd(frame, ID_DISPLAY_CLEAR_COMMAND_HISTORY),
+                      "...firing the command is claimed by a handler");
+                check(child->commandList(0).empty(),
+                      "...and it really does reach ClearCommandHistory");
+                g_wxhook_message_box = savedMB;
             }
 
             // ── macro command ids reach the macro, not evt.Skip() ──────────

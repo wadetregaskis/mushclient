@@ -28,6 +28,7 @@ void wx_activate_world_frame(CMUSHclientDoc* doc);
 #include <wx/timer.h>
 #include <wx/textctrl.h>              // wxTextCtrl, wxTextAttr (info bar)
 #include <cstdio>
+#include <ctime>                      // time_t — DefaultLogFileName
 #include <functional>                 // std::function — the close-teardown observer
 #include <string>
 #include <vector>
@@ -147,6 +148,16 @@ public:
     // look at what reached disk — and the name is no longer derivable from the
     // world name alone, since a hash of the full name disambiguates it.
     const std::string& HistoryFilePath() const { return m_historyFilePath; }
+
+    // Display ▸ Toggle Log's default save-dialog filename:
+    // WORLDNAME_YYYYMMDD_HHMMSS.log, sanitised the same way the history
+    // filename is (see the log-toggle lambda's own comment for why the two
+    // copies used to be able to drift).  A static, free-standing helper --
+    // exposed so the in-app selftest can pin the sanitising rule without
+    // driving the real wxFileDialog the toggle-log handler pops, which
+    // cannot be answered headlessly.
+    static std::string DefaultLogFileName(const std::string& worldName,
+                                          time_t now);
 
     // Both command bars, for the in-app selftest.  The password swap is the one
     // place where BOTH have to be inspected at once — shown/hidden, and empty or
@@ -359,6 +370,7 @@ public:
     void RepeatLastCommand();     // Input ▸ Repeat Last Command
     void RecallLastWord();        // Edit ▸ Recall Last Word (also Ctrl+Backspace)
     void ShowCommandHistory();    // Input ▸ Command History (pick a past command)
+    void ClearCommandHistory();   // Display ▸ Clear Command History (confirm, then wipe)
     void HighlightSelectedWord(); // Display ▸ Highlight Word (canonical dialog → trigger)
     void MakeMultiLineTrigger();  // Display ▸ Multi-Line Trigger (canonical dialog → trigger)
     void GotoMatchingBrace(bool select); // Edit ▸ Go To / Select To Matching Brace (input bar)

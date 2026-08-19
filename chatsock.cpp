@@ -13,9 +13,11 @@
 #include "doc.h"
 
 // The handshake's decisions (prefix -> dialect, the name/address splits, the
-// ON_PLUGIN_CHAT_ACCEPT veto) live here so they can be tested without a socket:
-// nothing headless links this file, and its OnReceive is an empty stub in the
-// test build.
+// ON_PLUGIN_CHAT_ACCEPT veto) are restated here so they can be tested without
+// a socket. This is no longer the only way to reach them: the chat family
+// adoption (docs/STUB-ADOPTION-2026-08.md §5 step 2) put chatsock.cpp itself
+// into mushcore's CORE_SOURCES, so OnReceive below is the real state machine
+// in both builds, not an empty stub.
 #include "pal/chat_protocol.h"
 
 #include <stddef.h>

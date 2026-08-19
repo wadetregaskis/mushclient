@@ -448,6 +448,42 @@ DISPID iDispid = pPlugin->m_ScriptEngine->GetDispid (sRoutineName.c_str ());
   }  // end of SendMouseEventToPlugin
 
 
+// Re-find a miniwindow by the id we were holding before we ran script, the
+// same idiom the "re-establish hotspot pointer in case previous callback
+// deleted it" blocks below already use one container down.
+//
+// It is needed for the WINDOW pointers too, because m_bExecutingScript does
+// not protect them: WindowDelete refuses only the window whose flag is set,
+// which is by construction the one whose own callback is running, so a
+// callback is free to WindowDelete any OTHER window — including the one the
+// routine is holding in mw / old_mw / prev_mw across the call.  (Widening the
+// refusal to every held window is not the fix: it would answer eItemInUse to
+// the legitimate cross-window delete plugins do all the time — a toolbar
+// button dismissing its own popup — and break them on Windows too.)
+//
+// The flag does not even reliably protect the window it is set on: it is a
+// plain bool, not a counter, so a NESTED dispatch on the same window clears it
+// on the way out and the outer dispatch's protection silently evaporates.
+// That is reachable, not theoretical — WindowAddHotspot re-enters
+// pal::IWorldView::mouseMoveMiniWindow synchronously when the new hotspot
+// lands under the cursor (methods_miniwindows.cpp:583), so a callback that
+// adds a hotspot and then deletes its own window gets exactly that.  Hence
+// even the flag CLEAR after each dispatch goes through here.
+//
+// Always call this with an id captured BEFORE the dispatch, by value: a
+// reference into the object that may die (mw->m_sMouseOverHotspot,
+// mwit->first) is no safer than the pointer itself.
+static CMiniWindow * ReFindMiniWindow (CMUSHclientDoc* pDoc, const string & sId)
+  {
+  MiniWindowMapIterator it = pDoc->m_MiniWindows.find (sId);
+
+  if (it == pDoc->m_MiniWindows.end ())
+    return NULL;
+
+  return it->second;
+  }  // end of ReFindMiniWindow
+
+
 bool MouseMoveMiniWindow (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHooks & hooks)
   {
   // see if we moused over one of our miniwindows
@@ -487,6 +523,18 @@ bool MouseMoveMiniWindow (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHoo
                                   false,
                                   false);
 
+  // That callback ran plugin script with NOTHING protecting mw — no
+  // m_bExecutingScript is set for it, and it would not help anyway (see
+  // ReFindMiniWindow) — so a plugin's OnPluginMouseMoved may have deleted the
+  // very window we are over.  pHotspot lives in that window's hotspot map, so
+  // it goes with it.
+  if (mw)
+    {
+    mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+    if (mw == NULL)
+      pHotspot = NULL;
+    }
+
   // drag-and-drop stuff
 
   // see if mouse was already down and captured
@@ -494,8 +542,12 @@ bool MouseMoveMiniWindow (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHoo
   if (!pDoc->m_sPreviousMiniWindow.empty ())
     {
 
+    // by value, before any dispatch: the member can be reassigned by a nested
+    // dispatch, and prev_mw's own strings die with prev_mw
+    const string sPrevId = pDoc->m_sPreviousMiniWindow;
+
     // here if *something* is up
-    MiniWindowMapIterator it = pDoc->m_MiniWindows.find (pDoc->m_sPreviousMiniWindow);
+    MiniWindowMapIterator it = pDoc->m_MiniWindows.find (sPrevId);
 
     // find the invoking miniwindow
     if (it != pDoc->m_MiniWindows.end ())
@@ -521,7 +573,10 @@ bool MouseMoveMiniWindow (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHoo
                                       it->second->m_sMoveCallback, 
                                       prev_mw->m_sMouseDownHotspot,
                                       prev_mw->m_FlagsOnMouseDown);
-          prev_mw->m_bExecutingScript = false;
+          // re-establish the window pointer in case the callback deleted it
+          prev_mw = ReFindMiniWindow (pDoc, sPrevId);
+          if (prev_mw)
+            prev_mw->m_bExecutingScript = false;
           }
         return true;  // that's all
 
@@ -542,7 +597,9 @@ bool MouseMoveMiniWindow (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHoo
   if (sMiniWindowId != pDoc->m_sPreviousMiniWindow  && !pDoc->m_sPreviousMiniWindow.empty ())
     {
 
-    MiniWindowMapIterator it = pDoc->m_MiniWindows.find (pDoc->m_sPreviousMiniWindow);
+    const string sOldId = pDoc->m_sPreviousMiniWindow;   // by value, before any dispatch
+
+    MiniWindowMapIterator it = pDoc->m_MiniWindows.find (sOldId);
   
     if (it != pDoc->m_MiniWindows.end ())
       {
@@ -571,7 +628,19 @@ bool MouseMoveMiniWindow (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHoo
                                       old_mw->m_sCallbackPlugin,
                                       it->second->m_sCancelMouseOver, 
                                       sOldMouseOverHotspot);
-          old_mw->m_bExecutingScript = false;
+          // re-establish the window pointer in case the callback deleted it
+          old_mw = ReFindMiniWindow (pDoc, sOldId);
+          if (old_mw)
+            old_mw->m_bExecutingScript = false;
+
+          // ...and the window we have moved ON to: that callback belonged to
+          // the OLD window, so nothing at all was protecting this one
+          if (mw)
+            {
+            mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+            if (mw == NULL)
+              pHotspot = NULL;
+            }
           }
         pDoc->m_sPreviousMiniWindow.erase ();  // no longer have a previous mouse-over
         }   // we had previous hotspot
@@ -607,6 +676,12 @@ bool MouseMoveMiniWindow (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHoo
                                     mw->m_sCallbackPlugin,
                                     it->second->m_sCancelMouseOver, 
                                     sOldMouseOverHotspotInThisWindow);
+        // re-establish the window pointer in case the callback deleted it: a
+        // nested dispatch on this window clears m_bExecutingScript on its way
+        // out, so being the callback's own window is no guarantee
+        mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+        if (mw == NULL)
+          return true;   // the event WAS consumed by it, there is just no "it"
         mw->m_bExecutingScript = false;
         }
 
@@ -642,6 +717,10 @@ bool MouseMoveMiniWindow (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHoo
                                     mw->m_sCallbackPlugin, 
                                     pHotspot->m_sMouseOver, 
                                     sHotspotId);
+        // re-establish the window pointer in case the callback deleted it
+        mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+        if (mw == NULL)
+          return true;   // the event WAS consumed by it, there is just no "it"
         mw->m_bExecutingScript = false;
         // activate tooltip if possible
         hooks.ActivateToolTip ();
@@ -675,6 +754,10 @@ bool MouseMoveMiniWindow (CMUSHclientDoc* pDoc, CPoint point, MiniWindowMouseHoo
                                       mw->m_sCallbackPlugin, 
                                       pHotspot->m_sMouseOver, 
                                       sHotspotId, MW_MOUSE_NOT_FIRST);
+          // re-establish the window pointer in case the callback deleted it
+          mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+          if (mw == NULL)
+            return true;   // the event WAS consumed by it, there is just no "it"
           mw->m_bExecutingScript = false;
           }
 
@@ -719,7 +802,9 @@ bool MouseDownMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWi
   if (!pDoc->m_sPreviousMiniWindow.empty ())
     {
 
-    MiniWindowMapIterator it = pDoc->m_MiniWindows.find (pDoc->m_sPreviousMiniWindow);
+    const string sOldId = pDoc->m_sPreviousMiniWindow;   // by value, before any dispatch
+
+    MiniWindowMapIterator it = pDoc->m_MiniWindows.find (sOldId);
   
     if (it != pDoc->m_MiniWindows.end ())
       {
@@ -747,7 +832,19 @@ bool MouseDownMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWi
                                       old_mw->m_sCallbackPlugin,
                                       it->second->m_sCancelMouseOver, 
                                       sOldMouseOverHotspot); 
-          old_mw->m_bExecutingScript = false;
+          // re-establish the window pointer in case the callback deleted it
+          old_mw = ReFindMiniWindow (pDoc, sOldId);
+          if (old_mw)
+            old_mw->m_bExecutingScript = false;
+
+          // ...and the window we clicked IN: that callback belonged to the old
+          // window, so nothing at all was protecting this one
+          if (mw)
+            {
+            mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+            if (mw == NULL)
+              pHotspot = NULL;
+            }
           }
         pDoc->m_sPreviousMiniWindow.erase ();  // no longer have a previous mouse-over
         }   // we had previous hotspot
@@ -782,6 +879,11 @@ bool MouseDownMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWi
                                   pHotspot->m_sMouseDown, 
                                   sHotspotId,
                                   flags);   // LH / RH mouse?
+      // re-establish the window pointer in case the callback deleted it
+      mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+      if (mw == NULL)
+        return true;   // the click WAS consumed by it, there is just no "it" —
+                       // and with no window there is nothing to capture for
       mw->m_bExecutingScript = false;
       }
 
@@ -846,8 +948,10 @@ bool MouseUpMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWind
   if (!pDoc->m_sPreviousMiniWindow.empty ())
     {
 
+    const string sPrevId = pDoc->m_sPreviousMiniWindow;   // by value, before any dispatch
+
     // here if *something* is up
-    MiniWindowMapIterator it = pDoc->m_MiniWindows.find (pDoc->m_sPreviousMiniWindow);
+    MiniWindowMapIterator it = pDoc->m_MiniWindows.find (sPrevId);
 
     // find the invoking miniwindow
     if (it != pDoc->m_MiniWindows.end ())
@@ -874,7 +978,19 @@ bool MouseUpMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWind
                                       it->second->m_sReleaseCallback, 
                                       sOldMouseDownHotspot,
                                       prev_mw->m_FlagsOnMouseDown);
-          prev_mw->m_bExecutingScript = false;
+          // re-establish the window pointer in case the callback deleted it
+          prev_mw = ReFindMiniWindow (pDoc, sPrevId);
+          if (prev_mw)
+            prev_mw->m_bExecutingScript = false;
+
+          // ...and the window the mouse came UP over: that callback belonged
+          // to the drag's window, so nothing was protecting this one
+          if (mw)
+            {
+            mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+            if (mw == NULL)
+              pHotspot = NULL;
+            }
           }
 
         }   // we had previous hotspot
@@ -895,7 +1011,9 @@ bool MouseUpMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWind
     hooks.ReleaseMouseCapture ();   // Release the mouse capture established at
                                     // the beginning of the mouse click.
 
-    MiniWindowMapIterator it = pDoc->m_MiniWindows.find (pDoc->m_sPreviousMiniWindow);
+    const string sOldId = pDoc->m_sPreviousMiniWindow;   // by value, before any dispatch
+
+    MiniWindowMapIterator it = pDoc->m_MiniWindows.find (sOldId);
   
     if (it != pDoc->m_MiniWindows.end ())
       {
@@ -921,7 +1039,19 @@ bool MouseUpMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWind
                                       it->second->m_sCancelMouseDown, 
                                       sOldMouseDownHotspot,
                                       old_mw->m_FlagsOnMouseDown);
-          old_mw->m_bExecutingScript = false;
+          // re-establish the window pointer in case the callback deleted it
+          old_mw = ReFindMiniWindow (pDoc, sOldId);
+          if (old_mw)
+            old_mw->m_bExecutingScript = false;
+
+          // ...and the window the mouse came UP over: that callback belonged
+          // to the old window, so nothing at all was protecting this one
+          if (mw)
+            {
+            mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+            if (mw == NULL)
+              pHotspot = NULL;
+            }
           }
         }   // we had previous hotspot
 
@@ -968,6 +1098,10 @@ bool MouseUpMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWind
                                     it->second->m_sCancelMouseDown, 
                                     sOldMouseDownHotspotInThisWindow,
                                     mw->m_FlagsOnMouseDown);
+        // re-establish the window pointer in case the callback deleted it
+        mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+        if (mw == NULL)
+          return true;   // the event WAS consumed by it, there is just no "it"
         mw->m_bExecutingScript = false;
         }
 
@@ -993,6 +1127,13 @@ bool MouseUpMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long flags, MiniWind
                                     pHotspot->m_sMouseUp, 
                                     sHotspotId, 
                                     mw->m_FlagsOnMouseDown);  // LH / RH / middle mouse?
+        // re-establish the window pointer in case the callback deleted it
+        mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+        if (mw == NULL)
+          {
+          pDoc->m_sPreviousMiniWindow.erase ();   // as the surviving path does
+          return true;   // the event WAS consumed by it, there is just no "it"
+          }
         mw->m_bExecutingScript = false;
       }
 
@@ -1032,6 +1173,13 @@ bool MouseWheelMiniWindow (CMUSHclientDoc* pDoc, CPoint point, long delta, MiniW
                                 pHotspot->m_sScrollwheelCallback, 
                                 sHotspotId,
                                 delta);
+    // re-establish the window pointer in case the callback deleted it.  Only
+    // reachable through a nested dispatch clearing m_bExecutingScript early
+    // (WindowAddHotspot's re-detect does exactly that), but the write below is
+    // a store into freed memory when it happens.
+    mw = ReFindMiniWindow (pDoc, sMiniWindowId);
+    if (mw == NULL)
+      return true;   // the wheel WAS consumed by it, there is just no "it"
     mw->m_bExecutingScript = false;
     }
 

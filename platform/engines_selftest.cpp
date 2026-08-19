@@ -36,6 +36,7 @@
 #include "doc.h"
 #include "scripting.h"
 #include "scripting/errors.h"
+#include "flags.h"                 // eEnabled -- the nil-default battery seeds triggers
 #include "platform/mc_dispatch.h"   // MC_VariantDateToUnix
 #include "childfrm.h"
 #include "MUSHview.h"
@@ -222,6 +223,15 @@ struct Dialect {
     //                    the check does not hardcode a hash.  Null for the
     //                    languages that have no such coercion.
     const char* strictIntrospect;
+
+    // An explicitly-passed nil (world.EnableTrigger('t', None)) must take the
+    // same default an OMITTED argument takes, not coerce to zero and mean the
+    // opposite.  nilcalls(s) makes the four calls the harness then reads back
+    // off the doc: omitted, explicit nil, explicit true, explicit false.
+    // Null for a language that cannot express nil at this boundary (Tcl:
+    // tcl_to_variant marshals every argument as VT_BSTR, so there is no
+    // VT_EMPTY for it to send).
+    const char* nilArgs;
 };
 
 const Dialect kDialects[] = {
@@ -307,7 +317,17 @@ const Dialect kDialects[] = {
   "  return ok and 'silent' or 'raised'\n"
   "end\n"
   "function probeloud(s) world.SetVariable('probe') end\n",
-  nullptr },   // Lua keeps world.Hash as a function; no string coercion
+  nullptr,     // Lua keeps world.Hash as a function; no string coercion
+  // Lua is the CONTRACT here, not merely a control: optboolean says in so many
+  // words that "nil will default to the default" (lua_methods.cpp:335), and it
+  // is that binding's opt* defaults kArgDefaults copies for the other five.
+  "function nilcalls(s)\n"
+  "  world.EnableTrigger('n_omit')\n"
+  "  world.EnableTrigger('n_nil', nil)\n"
+  "  world.EnableTrigger('n_true', true)\n"
+  "  world.EnableTrigger('n_false', false)\n"
+  "  return 'done'\n"
+  "end\n" },
 
 // ── Python ────────────────────────────────────────────────────────────────
 { "python", "Python", "Python",
@@ -396,7 +416,13 @@ const Dialect kDialects[] = {
   // exemption strict refuses the invoke and str() falls back to the
   // "<world method Hash>" placeholder, which cannot match.
   "def introspect(s):\n"
-  "    return 'match' if str(world.Hash) == world.Hash('') else 'differ'\n" },
+  "    return 'match' if str(world.Hash) == world.Hash('') else 'differ'\n",
+  "def nilcalls(s):\n"
+  "    world.EnableTrigger('n_omit')\n"
+  "    world.EnableTrigger('n_nil', None)\n"
+  "    world.EnableTrigger('n_true', True)\n"
+  "    world.EnableTrigger('n_false', False)\n"
+  "    return 'done'\n" },
 
 // ── Perl ──────────────────────────────────────────────────────────────────
 { "perl", "Perl", "perl",
@@ -464,7 +490,14 @@ const Dialect kDialects[] = {
   "sub probedefault { my $r = eval { $world->EnableTrigger('nosuchtrigger'); 1 };\n"
   "  return $r ? 'silent' : 'raised'; }\n"
   "sub probeloud { $world->SetVariable('probe'); }\n",
-  nullptr },   // Perl calls methods explicitly; no bare-reference coercion
+  nullptr,     // Perl calls methods explicitly; no bare-reference coercion
+  "sub nilcalls {\n"
+  "  $world->EnableTrigger('n_omit');\n"
+  "  $world->EnableTrigger('n_nil', undef);\n"
+  "  $world->EnableTrigger('n_true', 1);\n"
+  "  $world->EnableTrigger('n_false', 0);\n"
+  "  return 'done';\n"
+  "}\n" },
 
 // ── JavaScript ────────────────────────────────────────────────────────────
 { "js", "JS", "javascript",
@@ -547,6 +580,13 @@ const Dialect kDialects[] = {
   "function introspect(s) {\n"
   "  try { return ('' + world.Hash) == world.Hash('') ? 'match' : 'differ'; }\n"
   "  catch (e) { return 'differ'; }\n"
+  "}\n",
+  "function nilcalls(s) {\n"
+  "  world.EnableTrigger('n_omit');\n"
+  "  world.EnableTrigger('n_nil', undefined);\n"
+  "  world.EnableTrigger('n_true', true);\n"
+  "  world.EnableTrigger('n_false', false);\n"
+  "  return 'done';\n"
   "}\n" },
 
 // ── Tcl ───────────────────────────────────────────────────────────────────
@@ -623,7 +663,8 @@ const Dialect kDialects[] = {
   "  return silent\n"
   "}\n"
   "proc probeloud {s} { world SetVariable probe }\n",
-  nullptr },   // `world Foo` is a command invocation; nothing to coerce
+  nullptr,     // `world Foo` is a command invocation; nothing to coerce
+  nullptr },   // ...and no nil either: every Tcl argument marshals as VT_BSTR
 
 // ── Ruby ──────────────────────────────────────────────────────────────────
 { "ruby", "Ruby", "ruby",
@@ -702,7 +743,14 @@ const Dialect kDialects[] = {
   "  begin; world.EnableTrigger('nosuchtrigger'); 'silent'; rescue Exception; 'raised'; end\n"
   "end\n"
   "def probeloud(s); world.SetVariable('probe'); end\n",
-  nullptr },   // Ruby needs the parentheses; no bare-reference coercion
+  nullptr,     // Ruby needs the parentheses; no bare-reference coercion
+  "def nilcalls(s)\n"
+  "  world.EnableTrigger('n_omit')\n"
+  "  world.EnableTrigger('n_nil', nil)\n"
+  "  world.EnableTrigger('n_true', true)\n"
+  "  world.EnableTrigger('n_false', false)\n"
+  "  'done'\n"
+  "end\n" },
 };
 
 const int kDialectCount = (int) (sizeof kDialects / sizeof kDialects[0]);
@@ -1468,6 +1516,76 @@ void battery_strict_arguments(const Dialect& d)
     }
 }
 
+// 5g. An explicitly-passed nil is an OMITTED argument, not a zero.
+//
+//     The five embedded engines all marshal their nothing-value to VT_EMPTY
+//     (Python None, Ruby nil, Perl undef, JavaScript undefined/null), and
+//     mc_dispatch used to fill a default only into slots BEYOND the supplied
+//     count -- so an explicit nil skipped the default and var_to_long read it as
+//     0.  world.EnableTrigger("t") ENABLED and world.EnableTrigger("t", None)
+//     DISABLED: two spellings of one call, opposite effects, eOK both times.
+//
+//     Lua is the contract rather than a bystander: optboolean treats nil as
+//     absent by design ("nil will default to the default", lua_methods.cpp:335)
+//     and it is Lua's opt* defaults that kArgDefaults copies.  It is also the
+//     one language here that does NOT travel mc_dispatch, so it stays green
+//     across the fix and shows what the other five were supposed to do.
+//
+//     Asserting the trigger's enabled STATE, not the number the argument
+//     coerced to, is the whole point -- the defect was an inverted effect.  The
+//     fixture makes "the call did nothing" fail every row: the three that must
+//     enable start disabled, the one that must disable starts enabled.
+void battery_explicit_nil(const Dialect& d, const bool strict)
+{
+    const char* L = d.display;
+    const char* what = strict
+        ? "strict ON: an explicit nil still takes the argument's default"
+        : "an explicit nil takes the same default as an omitted argument";
+    if (!d.nilArgs) {
+        skip(L, what, "this language has no nil: every argument marshals as a string");
+        return;
+    }
+
+    std::string src(d.source);
+    src += d.nilArgs;
+    Engine e(d.language, src.c_str());
+    if (!e.ok) { skip(L, what, "engine failed to open"); return; }
+    e.doc->m_bStrictScriptArguments = strict ? TRUE : FALSE;
+
+    struct Row { const char* name; bool before; bool after; const char* what; };
+    static const Row rows[] = {
+        { "n_omit",  false, true,  "omitted -> the documented default (enabled)" },
+        { "n_nil",   false, true,  "explicit nil -> the SAME default, not 0" },
+        { "n_true",  false, true,  "explicit true -> enabled" },
+        { "n_false", true,  false, "explicit false -> disabled (a supplied value wins)" },
+    };
+    for (const Row& r : rows)
+        e.doc->AddTrigger(r.name, "match", "", r.before ? eEnabled : 0,
+                          -1, 0, "", "");
+
+    // The fixture really is non-degenerate before the script runs.
+    bool seeded = true;
+    for (const Row& r : rows) {
+        VARIANT v = e.doc->GetTriggerInfo(r.name, 8);
+        if (!(v.vt == VT_BOOL && (v.boolVal != 0) == r.before)) seeded = false;
+    }
+    check(seeded, L, strict
+          ? "strict ON: the nil fixture starts in the state the calls must change"
+          : "the nil fixture starts in the state the calls must change");
+
+    check(e.callRtn("nilcalls", "") == "done", L, strict
+          ? "strict ON: the four spellings of EnableTrigger all ran"
+          : "the four spellings of EnableTrigger all ran");
+
+    for (const Row& r : rows) {
+        VARIANT v = e.doc->GetTriggerInfo(r.name, 8);
+        const bool on = (v.vt == VT_BOOL && v.boolVal != 0);
+        std::string label = strict ? std::string("strict ON: ") : std::string();
+        label += r.what;
+        check(on == r.after, L, label.c_str());
+    }
+}
+
 // 6b. Tracing.  With Trace on, every reference path announces the callback it is
 //     about to run -- it is how a user debugs "why did my trigger not fire?".
 void battery_trace(const Dialect& d)
@@ -1543,6 +1661,9 @@ bool run_language(const Dialect& d)
     battery_gc_pressure  (d);
     battery_big_integer  (d);
     battery_strict_arguments(d);
+    battery_explicit_nil(d, false);       // option off -- the everyday path
+    battery_explicit_nil(d, true);        // ...and on: strict must not read an
+                                          // explicit nil as a MISSING argument
     battery_mxp_callsite(d);
     battery_trigger_callsite(d, true);    // box ticked
     // The negative control at the SAME layer: without it, hard-coding the flag

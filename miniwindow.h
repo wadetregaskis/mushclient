@@ -114,6 +114,7 @@ class CMiniWindow
 
   CRect   m_rect;   // where we actually put it
   bool m_bTemporarilyHide;   // no room right now
+  bool m_bLaidOut;   // a layout pass has placed it (m_rect is meaningful)
   HotspotMap  m_Hotspots;   // where we can click with the mouse
 
   // where we last did things:

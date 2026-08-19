@@ -167,6 +167,38 @@ int RunPalMiniWindowSelfTest()
                 "restore the background after the mono-pattern probe");
     }
 
+    // ── ImageOp's arbitrary-image pattern brush, at physical resolution ────
+    // The same defect one arm over: the tile for a LOADED image was built at
+    // 1x with no scale factor, so on a Retina canvas wx scaled it up and
+    // interpolated it and a fine-detail pattern averaged toward a flat colour.
+    // 1px alternating columns are the worst case, as above.
+    {
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlack, 0) == eOK,
+                "clear before the image-pattern probe");
+        for (long x = 0; x < 64; ++x)
+            doc->WindowRectOp(W, 2, x, 0, x + 1, 48,
+                              (x % 2) ? kRed : kGreen, 0);
+        mwCheck(doc->WindowImageFromWindow(W, "patImg", W) == eOK,
+                "WindowImageFromWindow captures the striped canvas as an image");
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before filling with the image brush");
+        mwCheck(doc->WindowImageOp(W, 2 /*rectangle*/, 4, 4, 40, 40,
+                                   kWhite, 5 /*PS_NULL: no outline*/, 1,
+                                   kWhite, "patImg", 0, 0) == eOK,
+                "WindowImageOp (rectangle, image pattern brush) succeeds");
+        int sawRed = 0, sawGreen = 0;
+        for (long x = 10; x < 34; ++x)
+            for (long y = 10; y < 34; ++y) {
+                const long c = doc->WindowGetPixel(W, x, y);
+                if      (c == kRed)   sawRed++;
+                else if (c == kGreen) sawGreen++;
+            }
+        mwCheck(sawRed > 0 && sawGreen > 0,
+                "an image brush keeps BOTH colours of a 1px checkerboard");
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the image-pattern probe");
+    }
+
     // ── RectOp: solid fill (action 2) ──────────────────────────────────────
     mwCheck(doc->WindowRectOp(W, 2, 10, 10, 20, 20, kRed, 0) == eOK,
             "WindowRectOp fill succeeds");
@@ -343,8 +375,68 @@ int RunPalMiniWindowSelfTest()
         mwCheck(doc->WindowGetPixel(W, 25, 10) != doc->WindowGetPixel(W, 25, 11),
                 "EDGE_ETCHED's outer and inner rings differ (not a flat box)");
 
+        // BF_MIDDLE (0x0800) fills the interior with the button-face colour.
+        // It was never implemented: with BF_RECT|BF_MIDDLE the two rings
+        // appeared over an untouched interior, and BF_MIDDLE on its own fell
+        // into the "no sides named" early return and drew nothing at all.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the BF_MIDDLE probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x080F) == eOK,
+                "WindowRectOp (DrawEdge, BF_RECT|BF_MIDDLE) succeeds");
+        {
+            const long middle = doc->WindowGetPixel(W, 25, 25);
+            mwCheck(middle != kBlue, "BF_MIDDLE fills the interior");
+            mwCheck(doc->WindowGetPixel(W, 25, 10) != middle,
+                    "...and the rings are still stroked over that fill");
+        }
+
+        // BF_MIDDLE on its own: Win32 fills and draws NO border.
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the fill-only probe");
+        mwCheck(doc->WindowRectOp(W, 5, 10, 10, 40, 40, 0x05, 0x0800) == eOK,
+                "WindowRectOp (DrawEdge, BF_MIDDLE alone) succeeds");
+        {
+            const long middle = doc->WindowGetPixel(W, 25, 25);
+            mwCheck(middle != kBlue, "BF_MIDDLE alone still fills the interior");
+            mwCheck(doc->WindowGetPixel(W, 25, 10) == middle &&
+                    doc->WindowGetPixel(W, 10, 25) == middle,
+                    "...and strokes no edges over it");
+        }
+
         mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
                 "restore the background after the DrawEdge probe");
+    }
+
+    // ── a wide pen's endcap is the one the caller asked for ───────────────
+    // WindowLine / WindowPolygon / WindowCircleOp accept and validate the
+    // PS_ENDCAP_* / PS_JOIN_* bits, but the adapter passed only the STYLE word
+    // to CPen::CreatePen and PS_ENDCAP_ROUND is 0, so every wide pen came out
+    // round-capped.  A projecting (SQUARE) cap extends half the pen width past
+    // the endpoint; a FLAT one stops dead there.
+    {
+        const long kEnd = 40, kProbe = 43;   // 3 past the endpoint, half-width 4
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the flat-endcap probe");
+        mwCheck(doc->WindowLine(W, 10, 24, kEnd, 24, kGreen,
+                                0x0200 /*PS_SOLID|PS_ENDCAP_FLAT*/, 9) == eOK,
+                "WindowLine (width 9, flat endcap) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 25, 24) == kGreen,
+                "the wide line drew along its span");
+        mwCheck(doc->WindowGetPixel(W, kProbe, 24) == kBlue,
+                "a FLAT endcap stops at the endpoint");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "clear before the square-endcap probe");
+        mwCheck(doc->WindowLine(W, 10, 24, kEnd, 24, kGreen,
+                                0x0100 /*PS_SOLID|PS_ENDCAP_SQUARE*/, 9) == eOK,
+                "WindowLine (width 9, square endcap) succeeds");
+        mwCheck(doc->WindowGetPixel(W, 25, 24) == kGreen,
+                "the wide line drew along its span");
+        mwCheck(doc->WindowGetPixel(W, kProbe, 24) == kGreen,
+                "...and a SQUARE endcap projects past it");
+
+        mwCheck(doc->WindowRectOp(W, 2, 0, 0, 64, 48, kBlue, 0) == eOK,
+                "restore the background after the endcap probe");
     }
 
     // ── read-modify-write is lossless on a HiDPI canvas ───────────────────

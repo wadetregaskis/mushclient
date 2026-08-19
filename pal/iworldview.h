@@ -172,6 +172,16 @@ public:
     // view's: the Windows adapter runs the original CMUSHView view walk, the
     // wx frame calls the shared MouseMoveMiniWindow with its own hooks.
     virtual void mouseMoveMiniWindow(long x, long y) = 0;
+    // Is the frontend holding the mouse capture right now?  WindowAddHotspot
+    // reads it to SKIP the re-detect above mid-drag: while a hotspot's
+    // MouseDown callback owns the pointer, adding a hotspot from the drag's own
+    // Move/Release callback must not re-enter the routing and fire a second
+    // MoveCallback plus a second ON_PLUGIN_MOUSE_MOVED.  Upstream asked
+    // ::GetCapture() directly, which off Windows is a permanent nullptr.
+    //
+    // Deliberately NOT pure, for the same reason as isPaused above: an adapter
+    // with no capture concept is honestly "never captured".
+    virtual bool mouseCaptured() const { return false; }
 
     // ── core → frontend: the info bar (P2 infobar family) ─────────────────
     // world.ShowInfoBar / InfoClear / Info / InfoColour / InfoBackground /

@@ -5484,14 +5484,6 @@ void CMUSHclientDoc::SendTo (
         }
         break;
 
-/*
-    case eSendDelayed:
-        if (strSendText.Right (2) != ENDLINE)
-          strSendText += ENDLINE;      // add a new line if necessary
-        strExtraOutput += DelayedSend (strSendText, trigger_item->bOmitFromOutput ? FALSE : m_display_my_input);
-        break;
-*/
-
     case eSendToSpeedwalk:
         {
         CString strEvaluatedSpeedwalk = DoEvaluateSpeedwalk (strSendText);

@@ -2553,7 +2553,6 @@ public:
   void SendNAWS (int cols, int rows);
 #endif
 //  void ShowHyperlink (const CString strLink);
-  CString DelayedSend(const CString strMessage, const bool bEchoIt);
   void SendTo (const unsigned short iWhere, 
                const CString strSendText,
                const bool bOmitFromOutput,

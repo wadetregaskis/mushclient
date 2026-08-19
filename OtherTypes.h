@@ -54,7 +54,6 @@ enum { eSendToWorld,        //  0   - send to MUD
 #ifdef PANE
        eSendToPane,         // 15   - send to a pane window
 #endif
-//       eSendDelayed,        // ??
 
        eSendToLast  // THIS MUST BE LAST!!!
       };

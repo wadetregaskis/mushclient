@@ -966,6 +966,12 @@ if(NOT WIN32)
             # with them rather than in mushgui_adapters.
             platform/world_frame_selftest.cpp
             platform/menubar_selftest.cpp
+            # The macOS menu-bar ("system tray") item: the portable half decides
+            # what to show, the Obj-C++ half below owns the NSStatusItem.  Here
+            # rather than in mushgui_adapters because it includes wx headers.
+            platform/wx_statusitem.cpp
+            # In-app conformance harness for it (--statusitem-selftest).
+            platform/statusitem_selftest.cpp
             platform/app_config.cpp
             platform/extended_selftest.cpp
             # The MFC->wx dialog + property-sheet bridges, which only the
@@ -1060,6 +1066,11 @@ if(NOT WIN32)
             # macOS-only Obj-C++ helper (AppKit): disable NSTextView smart-quote
             # substitution so typed/pasted Lua isn't corrupted in script edits.
             target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/platform/wx_osx_text.mm)
+            # The NSStatusItem behind Global Preferences > "Icon Placement:
+            # System tray" -- macOS's nearest equivalent of the Windows system
+            # tray.  Obj-C++ for the same reason wx_osx_text.mm is: AppKit types
+            # must not reach the TUs that include the MFC headers.
+            target_sources(mushgui PRIVATE ${CMAKE_SOURCE_DIR}/platform/wx_osx_statusitem.mm)
             set_target_properties(mushgui PROPERTIES
                 # The CMake target stays "mushgui" (mushcore/mushgui_adapters/mushgui
                 # build-target convention), but the bundle + executable are named

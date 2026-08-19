@@ -370,6 +370,13 @@ if(TARGET mushgui)
 
     add_test(NAME selftest_menubar
              COMMAND $<TARGET_FILE:mushgui> --menubar-selftest ${_selftest_args})
+    # The macOS menu-bar ("system tray") item: an NSStatusItem in an Obj-C++ TU
+    # only the executable compiles, so nothing headless can observe it -- and
+    # the preference behind it (Icon Placement) used to reach a canonical
+    # function that could not possibly do anything.  Every assertion reads the
+    # item back out of AppKit, so a no-op fails.
+    add_test(NAME selftest_statusitem
+             COMMAND $<TARGET_FILE:mushgui> --statusitem-selftest ${_selftest_args})
     # COutputPane is a wxScrolledWindow in mushgui_adapters, so the headless
     # tests cannot construct it: the selection/freeze/scrollback behaviour is
     # only reachable from inside the app.
@@ -404,5 +411,6 @@ if(TARGET mushgui)
                          selftest_gui_bridge selftest_input
                          selftest_pal_composite selftest_world_frame
                          selftest_outputpane selftest_menubar
+                         selftest_statusitem
                          PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 endif()

@@ -25,6 +25,12 @@
 
 #include "MakeWindowTransparent.h"
 
+#ifndef _WIN32
+// The macOS menu-bar item that stands in for the Windows system-tray icon --
+// see AddTrayIcon below.
+#include "platform/wx_statusitem.h"
+#endif
+
 #ifdef _DEBUG
 #define new DEBUG_NEW 
 #undef THIS_FILE
@@ -1980,6 +1986,19 @@ void CMainFrame::OnUpdateInfoBar(CCmdUI* pCmdUI)
 void CMainFrame::AddTrayIcon (void)
   {
 
+#ifndef _WIN32
+  // Non-Windows: there is no Shell_NotifyIcon, and every line below this point
+  // was unreachable anyway -- the function gives up at "if (m_niData.hIcon ==
+  // NULL) return" because ::LoadImage's RESOURCE form answers nullptr on the
+  // port (platform/mfc_ui.h), so the Icon Placement preference had no effect at
+  // all.  macOS's equivalent is a menu-bar NSStatusItem; the port builds one
+  // from the same App.m_iTrayIcon / m_strTrayIconFileName choice, and ALSO
+  // removes it when the preference is off (nothing canonical ever removes the
+  // tray icon, so the preferences dialog could not turn it back off).
+  ApplyTrayItemFromPrefs ();
+  return;
+#else
+
 //  MUSHclient icon in tray, if wanted
 //  see: http://www.codeproject.com/shell/StealthDialog.asp#xx588118xx
 
@@ -2076,6 +2095,8 @@ void CMainFrame::AddTrayIcon (void)
 
   if (m_niData.hIcon) 
         DestroyIcon(m_niData.hIcon); 
+
+#endif  // _WIN32
  
   } // end of CMainFrame::AddTrayIcon
 

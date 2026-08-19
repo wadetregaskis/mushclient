@@ -17,6 +17,9 @@
                                  // encodeBase64, decodeBase64
 #include <cstring>
 #include <set>
+#include <sys/utsname.h>       // OSVersionString's oracle (tests never build on Windows)
+
+extern CString OSVersionString (void);   // utilities_shared.cpp
 
 // ── encodeBase64 / decodeBase64 ─────────────────────────────────────────────
 
@@ -2134,6 +2137,27 @@ TEST(Utf8NextCharTest, CharacterCountMatchesLeadByteCountWhenWellFormed) {
     for (unsigned char c : s)
         if ((c & 0xC0u) != 0x80u) ++leadBytes;
     EXPECT_EQ((size_t) leadBytes, utf8_walk(s).size());
+}
+
+// ── OSVersionString ─────────────────────────────────────────────────────────
+
+// world.Debug ("summary") names the operating system through this.  Off Windows
+// os_version holds whatever the GetVersionEx shim invented — a fixed platform 2
+// / major 10 — so running the Windows version switch over it answered
+// "Windows 10" on macOS.  The answer has to come from the kernel instead, and
+// pinning it against uname is what makes a fall-back to that switch fail.
+TEST(Utilities, OSVersionString_ReportsThisKernelNotWindows) {
+    struct utsname u;
+    ASSERT_EQ(0, uname(&u));
+
+    const CString sVersion = OSVersionString();
+    const std::string expected = std::string(u.sysname) + " " + u.release;
+
+    EXPECT_STREQ(expected.c_str(), (const char*) sVersion);
+
+    // Belt and braces: neither of the two answers the old code could give.
+    EXPECT_TRUE(strstr((const char*) sVersion, "Windows") == NULL);
+    EXPECT_TRUE(strstr((const char*) sVersion, "Unknown (Platform") == NULL);
 }
 
 MC_TEST_MAIN()

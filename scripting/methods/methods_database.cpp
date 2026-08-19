@@ -103,7 +103,11 @@ long CMUSHclientDoc::DatabaseOpen(LPCTSTR Name, LPCTSTR Filename, long Flags)
   if (rc == SQLITE_OK && pDatabase->db != NULL)
     m_Databases [Name] = pDatabase;
   else
+    {
+    if (pDatabase->db)          // sqlite3_open_v2 can allocate a handle even on failure
+      sqlite3_close (pDatabase->db);
     delete pDatabase;
+    }
 
   return rc;
 }   // end of CMUSHclientDoc::DatabaseOpen

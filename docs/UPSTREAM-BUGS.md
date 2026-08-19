@@ -60,12 +60,26 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 49 | Plugins dialog reads a stale `CPlugin*` once it leaves `m_PluginList` | this commit | dialogs/plugins/PluginsDlg.cpp `CPluginsDlg::OnUpdateNeedDescription` |
 | 50 | Seven file dialogs `strcpy` an unbounded suggested name into a `_MAX_PATH` buffer | this commit | doc.cpp / dialogs (log-session, save-notes, select-sound et al) — bounded with `lstrcpyn` |
 | 51 | A duplicate trigger/alias label whose replacement fails validation leaves the freed original in the map | this commit | xml_load_world.cpp `CMUSHclientDoc::Load_One_Trigger_XML` / `Load_One_Alias_XML` |
-| 52 | The Lua `error_code`/`error_desc` tables key `ePluginCouldNotSaveState` on 30037 instead of 30038, duplicating `ePluginDoesNotSaveState`'s code | this commit | lua_methods.cpp `error_codes[]`; errors.cpp `error_descriptions[]` |
-| 53 | `ExecuteLua`'s "function not found" arm returns without restoring `m_iNoteStyle` | this commit | lua_scripting.cpp `CScriptEngine::ExecuteLua` (both overloads) |
-| 56 | The RGB bold/unbold colour scans stop one palette entry short, so white text never swaps | this commit | ansi.cpp `CMUSHclientDoc::InterpretANSIcode` (`ANSI_BOLD` / `ANSI_CANCEL_BOLD`) |
-| 57 | `CmcDateTime`'s constructor truncates a fractional second, so an `at_time` timer fires up to a second early | this commit | mcdatetime.cpp `mcDateFromTm` (via `CmcDateTime::SetDateTime`) |
-| 58 | `DisplayMsg`'s tab stop measures the line in bytes, so a tab after multi-byte text lands on the wrong column | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::DisplayMsg` (`'\t'` and period-space cases) |
-| 59 | `/triggerlist`, `/aliaslist`, `/variablelist` and `/acceleratorlist` compute their truncation width as `(m_nWrapColumn - N)` with no floor, so a narrow wrap column drives it to zero or negative and `CString::Left` (which clamps `n<=0` to empty) prints a bare `"..."` for every entry | this commit | world_debug.cpp `CMUSHclientDoc::DebugHelper` (triggerlist/aliaslist/variablelist/acceleratorlist) |
+| 52 | A nested plugin dispatch (e.g. `world.Send` from inside `ON_PLUGIN_LINE_RECEIVED`) turns note batching off for the rest of the outer dispatch, so a later plugin's `Note`/`Tell` lands mid-line instead of being queued | this commit | plugins.cpp `CMUSHclientDoc::SendToAllPluginCallbacks*` (six dispatchers) |
+| 53 | The plugin wizard re-sorts the whole world once per surviving item when removing exported triggers/aliases/timers/variables, making cleanup O(N² log N) | this commit | plugins.cpp `CMUSHclientDoc::OnFilePluginwizard` / `RemoveSelectedWizardItems` |
+| 54 | The Lua `error_code`/`error_desc` tables key `ePluginCouldNotSaveState` on 30037 instead of 30038, duplicating `ePluginDoesNotSaveState`'s code | this commit | lua_methods.cpp `error_codes[]`; errors.cpp `error_descriptions[]` |
+| 55 | `ExecuteLua`'s "function not found" arm returns without restoring `m_iNoteStyle` | this commit | lua_scripting.cpp `CScriptEngine::ExecuteLua` (both overloads) |
+| 56 | `world.ArrayImport`'s un-escape pass mistakes a doubled backslash right before the real delimiter for an escaped one, eating the field separator and corrupting or rejecting the imported key/value pairs | this commit | methods_arrays.cpp `CMUSHclientDoc::ArrayImport` |
+| 57 | `world.Help`'s fallback binds its Lua flag to `ShowFunctionslist`'s start-offset parameter instead of its `bLua` parameter, so a scripting-enabled world's Function List never lists Lua's own functions | this commit | methods_utilities.cpp `CMUSHclientDoc::Help`; scripting/functionlist.cpp `CMainFrame::OnGameFunctionslist` |
+| 58 | `world.ImportXML` leaks the `CArchiveException` on every failed import, because its `catch (CArchiveException*)` has no parameter name to call `Delete()` on | this commit | methods_xml.cpp `CMUSHclientDoc::ImportXML` |
+| 59 | `SetBackgroundImage` and `SetForegroundImage` duplicate a 66-line body, so any fix to the image-loading logic has to be made twice and can silently be made once | this commit | methods_output.cpp `CMUSHclientDoc::SetBackgroundImage` / `SetForegroundImage` |
+| 60 | The RGB bold/unbold colour scans stop one palette entry short, so white text never swaps | this commit | ansi.cpp `CMUSHclientDoc::InterpretANSIcode` (`ANSI_BOLD` / `ANSI_CANCEL_BOLD`) |
+| 61 | `CmcDateTime`'s constructor truncates a fractional second, so an `at_time` timer fires up to a second early | this commit | mcdatetime.cpp `mcDateFromTm` (via `CmcDateTime::SetDateTime`) |
+| 62 | `DisplayMsg`'s tab stop measures the line in bytes, so a tab after multi-byte text lands on the wrong column | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::DisplayMsg` (`'\t'` and period-space cases) |
+| 63 | "Use SSL" is not compared in `ChangedPrefsP1`, so ticking it and nothing else is never applied to the document or saved to the world file | this commit | configuration.cpp `CMUSHclientDoc::ChangedPrefsP1` |
+| 64 | `RecompileRegularExpressions` recompiles a NULL-expression trigger from the PREVIOUS trigger's pattern, or an empty one, which matches every line | this commit | configuration.cpp `CMUSHclientDoc::RecompileRegularExpressions` |
+| 65 | `CTipDlg`'s constructor `strcat`s the tips-file suffix onto a fixed `MAX_PATH` buffer with no bound, smashing the stack for a long enough install path | this commit | TipDlg.cpp `CTipDlg::CTipDlg` |
+| 66 | The mapper's "make alias" keeps its own stale copy of the dialog-to-`CAlias` field list, discarding seven fields the world-properties Aliases page already saves | this commit | MapDlg.cpp `CMapDlg::AddAlias`; prefspropertypages.cpp `CPrefsP7::UnloadDialog` |
+| 67 | World Properties' `paste_delay`/`send_file_delay` DDV ceilings (10000) are narrower than the option table's (100000), so the dialog refuses to close on a value the table already accepted | this commit | prefspropertypages.cpp `CPrefsP10::DoDataExchange` / `CPrefsP13::DoDataExchange` |
+| 68 | MCCP `Z_NEED_DICT` from a crafted zlib header is not treated as a decompress failure, spinning the decompressor in an unbounded 100%-CPU loop | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::OnBytesReceived` (MCCP decompress loop) |
+| 69 | MCCP stream-end residue can exceed both transports' receive buffers, overflowing a 9000-byte stack array with up to 10000 bytes of real post-stream data | this commit | platform/posix_transport.cpp; pal/win_transport.cpp |
+| 70 | MCCP compression-start `memmove` into `m_CompressInput` has no size guard, overflowing the buffer when the post-`SE` remainder exceeds `COMPRESS_BUFFER_LENGTH` | this commit | doc_shared.cpp ← doc.cpp `CMUSHclientDoc::DisplayMsg` (`Phase_COMPRESS_WILL` / `Phase_SUBNEGOTIATION_IAC`) |
+| 71 | `/triggerlist`, `/aliaslist`, `/variablelist` and `/acceleratorlist` compute their truncation width as `(m_nWrapColumn - N)` with no floor, so a narrow wrap column drives it to zero or negative and `CString::Left` (which clamps `n<=0` to empty) prints a bare `"..."` for every entry | this commit | world_debug.cpp `CMUSHclientDoc::DebugHelper` (triggerlist/aliaslist/variablelist/acceleratorlist) |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -580,7 +594,7 @@ in two recovered menus, and the sweep simply had not read that file. That sweep
 was later deleted for failing its own mutation check; this entry is the one
 real thing it found.
 
-## 15 — MXP hyperlink opened from the popup menu refuses `https://` (this commit)
+## 16 — MXP hyperlink opened from the popup menu refuses `https://` (this commit)
 **Bug:** `OnMXPMenu`'s ACTION_HYPERLINK arm guards against arbitrary OS
 commands with a scheme allowlist, but its copy lists only `http://` and
 `mailto:`.  The other two copies of the same guard — the left-click arm a few
@@ -592,22 +606,7 @@ right-click popup, while left-clicking the identical link opens it.
 copies should really be one helper; that hoist is deliberately deferred so it
 does not collide with other in-flight work on utilities_shared.cpp.
 
-## 18 — `CmcDateTime::operator-`'s Windows arm discards a null/invalid span status (this commit)
-**Bug:** on the `_WIN32` arm, the null/invalid early-outs build a real
-`COleDateTimeSpan`, set ITS status to `null`/`invalid`, then `return (double)
-spanResult;`. The function's return type is `CmcDateTimeSpan`, so that double
-goes straight into `CmcDateTimeSpan(double)` — a constructor that unconditionally
-calls `SetStatus(valid)` — so the caller always observes `valid` regardless of
-which of the two null/invalid arms actually ran. The POSIX arm two lines below
-does not have this bug: it already constructs and returns a `CmcDateTimeSpan`
-directly.
-**Fix:** construct a `CmcDateTimeSpan` and set its status directly in both
-early-out arms, mirroring the POSIX arm, instead of routing the result through
-`(double)`. `needs: windows-run` — unreachable from this platform; the POSIX arm
-was already correct and is what `tests/test_mcdatetime.cpp`'s
-`CmcDateTimeR4.NullAndInvalidStatusPropagation` exercises.
-
-## 16 — Double-click word scan reads one byte past the line buffer (this commit)
+## 17 — Double-click word scan reads one byte past the line buffer (this commit)
 **Bug:** once a line is complete its `text` buffer is reallocated to exactly
 `MAX (len, 1)` bytes, with no terminator (doc.cpp — `ProcessPreviousLine`;
 doc_shared.cpp in this tree).  `calculate_line_and_column` returns
@@ -625,6 +624,34 @@ early-out for an empty line — the same clamp `SetWordUnderMenu` already
 carries in this tree, so the two copies of the scan agree again.  The
 text-attributes clamp is applied *after* the valid-selection test, leaving the
 set of accepted selections unchanged.
+
+## 18 — `CmcDateTime::operator-`'s Windows arm discards a null/invalid span status (this commit)
+**Bug:** on the `_WIN32` arm, the null/invalid early-outs build a real
+`COleDateTimeSpan`, set ITS status to `null`/`invalid`, then `return (double)
+spanResult;`. The function's return type is `CmcDateTimeSpan`, so that double
+goes straight into `CmcDateTimeSpan(double)` — a constructor that unconditionally
+calls `SetStatus(valid)` — so the caller always observes `valid` regardless of
+which of the two null/invalid arms actually ran. The POSIX arm two lines below
+does not have this bug: it already constructs and returns a `CmcDateTimeSpan`
+directly.
+**Fix:** construct a `CmcDateTimeSpan` and set its status directly in both
+early-out arms, mirroring the POSIX arm, instead of routing the result through
+`(double)`. `needs: windows-run` — unreachable from this platform; the POSIX arm
+was already correct and is what `tests/test_mcdatetime.cpp`'s
+`CmcDateTimeR4.NullAndInvalidStatusPropagation` exercises.
+
+## 19 — Doc ctor's unqualified `GetUniqueID()` picks the automation member and leaks its BSTR (`3c58886`)
+**Bug:** inside `CMUSHclientDoc`, the unqualified `GetUniqueID ()` call in the
+constructor resolves to the automation member (the `IDispatch`-facing one)
+rather than the free `::GetUniqueID ()` CString helper the three sibling call
+sites (mainfrm.cpp, scriptingoptions.cpp, plugins.cpp) already use. The
+automation member returns an `AllocSysString`'d `BSTR` whose ownership belongs
+to the caller; `m_strWorldID = GetUniqueID ();` copies the text into the
+`CString` and drops the `BSTR` on the floor, once per document, on both
+platforms, since the original 2010 import.
+**Fix:** qualify the call as `::GetUniqueID ()`, matching the three sibling
+callers. Same string, no behavioural change; verified with `leaks(1)` — the
+`AllocSysString` leak population in the test binary drops to zero.
 
 ## 20 — A MouseOver callback that deletes its own hotspot crashes the client (this commit)
 **Bug:** after dispatching a hotspot's MouseOver, `Mouse_Move_MiniWindow`
@@ -1436,3 +1463,17 @@ heap.  Local rather than remote, but a real overflow.
 **Fix:** guard both arms with the same `size > COMPRESS_BUFFER_LENGTH` →
 disconnect check the append path already uses.  Covered by
 `MccpArms.OversizeCompressionStartDisconnects` in `tests/test_connection.cpp`.
+
+## 71 — Debug listings print a bare "..." at a narrow wrap column (`69155bd`)
+**Bug:** `/triggerlist`, `/aliaslist`, `/variablelist` and `/acceleratorlist`
+each compute their truncation width as `(m_nWrapColumn - N)` with no floor. At
+a narrow enough wrap column that goes zero or negative, and `CString::Left`
+clamps `n <= 0` to empty, so every entry printed a bare `"..."` instead of any
+of the match/name/value text.
+**Fix:** floor the width at a `MIN_DEBUG_TRUNCATE_WIDTH` of 20 columns, via a
+new `ClampDebugTruncateWidth` helper in `world_debug.cpp` and the matching
+change to `Truncate()` in its headless twin
+`scripting/world_debug_portable.cpp`. Covered by
+`SweepR4.DebugListingsTruncateAtNarrowWrapColumn` and
+`SweepR4.DebugListingsTruncateLongValueToTheWrapBudget` in
+`tests/test_lua_scripting.cpp`.

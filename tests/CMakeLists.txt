@@ -182,6 +182,30 @@ else()
     message(WARNING "Python3 not found; conflict-marker lint SKIPPED")
 endif()
 
+# ── Source lint: docs/UPSTREAM-BUGS.md's table rows and '## N' sections
+#    stay 1:1 ─────────────────────────────────────────────────────────────
+# The index table and the numbered write-up sections drifted apart
+# repeatedly (rows 17/19 with no section, '## 15'/'## 16' each written
+# twice for two different bugs, eleven rows from 52 on pointing at the
+# wrong section, nine sections from 54 on with no row at all) because
+# parallel fix commits each picked "the next number" from a stale view of
+# the file and collided at merge time.  Nothing else catches this: both
+# halves individually look fine, only cross-checking them does.  As with
+# the two lints above, the second test is the checker's own fixture, so
+# this cannot rot into a vacuous pass.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME lint_doc_sections
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_doc_sections.py
+                     ${CMAKE_SOURCE_DIR})
+    add_test(NAME lint_doc_sections_selftest
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_doc_sections.py
+                     --selftest)
+else()
+    message(WARNING "Python3 not found; doc-section-reconciliation lint SKIPPED")
+endif()
+
 # ── Source lint: no duplicated test-helper definitions under tests/ ─────────
 # The HookGuard<T> RAII template (with its four-line preceding comment) was
 # pasted byte-identical into three test files, by the same commit that, the

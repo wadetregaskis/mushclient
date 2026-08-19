@@ -1167,27 +1167,6 @@ TEST(LuaScripting, TranslateGerman)
     lua_close(L);
 }
 
-// ── ExpandVariables ───────────────────────────────────────────────────────
-
-TEST(LuaScripting, ExpandVariables)
-{
-    CMUSHclientDoc doc;
-    lua_State* L = make_lua(&doc);
-    ASSERT_NE(nullptr, L);
-
-    EXPECT_TRUE(run(L,
-        "world.SetVariable('direction', 'north')\n"
-        "world.SetVariable('dest', 'forest')\n"
-    ));
-
-    int n = run_ret(L, "return world.ExpandVariables('go @direction to @dest')");
-    EXPECT_EQ(1, n);
-    EXPECT_STREQ("go north to forest", lua_tostring(L, -1));
-    lua_settop(L, 0);
-
-    lua_close(L);
-}
-
 // ── Hashing functions ─────────────────────────────────────────────────────
 // world.MD5/world.SHA256 were port-only inventions (never Windows Lua names);
 // the canonical surface is utils.md5/utils.sha256 (lua_compress.c, opened by

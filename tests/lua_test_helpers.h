@@ -31,7 +31,6 @@ static inline lua_State* make_lua(CMUSHclientDoc* pDoc)
     lua_setfield(L, LUA_REGISTRYINDEX, DOCUMENT_STATE);
     RegisterLuaRoutines(L);
     luaopen_compress(L);            // mirrors OpenLuaDelayed (lua_scripting.cpp:203)
-    RegisterPortableLuaExtras(L);   // port-only world.ExpandVariables
     lua_settop(L, 0);
     return L;
 }

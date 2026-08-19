@@ -855,53 +855,6 @@ const struct luaL_Reg * ptr_xmllib = utils_lib;
 // copy lacked).  The portable world library twin
 // (scripting/lua_world_api_portable.cpp) is deleted.
 
-// ── Portable-only Lua extras ─────────────────────────────────────────────────
-// The pre-flip portable world library exposed 20 names the Windows Lua API
-// does not register.  All are dropped for Windows parity EXCEPT
-// ExpandVariables — a port-only convenience that exercises real doc variable
-// state and is locked by tests/test_lua_scripting.cpp (ExpandVariables).
-// Registered AFTER RegisterLuaRoutines, from the TEST FIXTURE ONLY
-// (tests/lua_test_helpers.h) — never from lua_methods.cpp, and no longer from
-// OpenLuaDelayed: that call was guarded on !MUSHCLIENT_FULL_BUILD, which the
-// Stage 9 fold made permanently false, so no engine-built Lua state has ever
-// carried these on this side.  Exposing ExpandVariables in the product is a
-// separate decision (K-231), not a wiring fix.
-
-static int L_ExpandVariablesStr(lua_State* L)
-{
-    lua_getfield(L, LUA_REGISTRYINDEX, DOCUMENT_STATE);
-    CMUSHclientDoc* pDoc = static_cast<CMUSHclientDoc*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    if (!pDoc) return 0;
-
-    const char* raw = luaL_checkstring(L, 1);
-    CString result(raw);
-
-    // Walk the variable map; replace each @varname occurrence
-    POSITION pos = pDoc->GetVariableMap().GetStartPosition();
-    while (pos) {
-        CString key;
-        CVariable* pVar;
-        pDoc->GetVariableMap().GetNextAssoc(pos, key, pVar);
-        if (!pVar) continue;
-        CString token("@");
-        token += key;
-        result.Replace(token, pVar->strContents);
-    }
-    lua_pushstring(L, static_cast<const char*>(result));
-    return 1;
-}
-
-void RegisterPortableLuaExtras (lua_State * L)
-{
-    lua_getglobal(L, "world");
-    if (lua_istable(L, -1)) {
-        lua_pushcfunction(L, L_ExpandVariablesStr);
-        lua_setfield(L, -2, "ExpandVariables");
-    }
-    lua_pop(L, 1);
-}
-
 #endif  // LUA_VERSION
 
 #endif  // !_WIN32

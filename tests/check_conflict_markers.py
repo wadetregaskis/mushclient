@@ -78,18 +78,22 @@ def check_file(path):
 # finding things is worse than none, so it carries a fixture that must catch a
 # planted real conflict block AND must NOT flag a lone "=======" divider that
 # has no conflict markers anywhere near it.
-SELFTEST_SOURCE = """\
-line one, ordinary text
-<<<<<<< HEAD
-our side
-=======
-their side
->>>>>>> some-branch
-line seven, ordinary text
-""" + ("filler\n" * 60) + """\
-=======
-trailing filler
-"""
+#
+# The fixture is built from START/END/MID rather than written out literally --
+# a literal `<<<<<<< HEAD` line right here would make this checker flag its
+# OWN source file when it scans the tree.
+SELFTEST_LINES = (
+    ["line one, ordinary text",
+     START + "HEAD",
+     "our side",
+     MID,
+     "their side",
+     END + "some-branch",
+     "line seven, ordinary text"]
+    + ["filler"] * 60
+    + [MID, "trailing filler"]
+)
+SELFTEST_SOURCE = "\n".join(SELFTEST_LINES) + "\n"
 
 
 def selftest():

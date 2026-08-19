@@ -149,14 +149,18 @@ CmcDateTimeSpan CmcDateTime::operator-(const CmcDateTime& date) const
 	if (GetStatus() == null || date.GetStatus() == null)
 	{
 		spanResult.SetStatus(COleDateTimeSpan::null);
-		return (double)spanResult;
+		CmcDateTimeSpan r;
+		r.SetStatus(CmcDateTimeSpan::null);
+		return r;
 	}
 
 	// If either operand invalid, result invalid
 	if (GetStatus() == invalid || date.GetStatus() == invalid)
 	{
 		spanResult.SetStatus(COleDateTimeSpan::invalid);
-		return (double)spanResult;
+		CmcDateTimeSpan r;
+		r.SetStatus(CmcDateTimeSpan::invalid);
+		return r;
 	}
 
 	// Return result (span can't be invalid, so don't check range)

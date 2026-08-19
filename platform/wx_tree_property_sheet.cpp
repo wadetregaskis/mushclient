@@ -48,6 +48,12 @@ void CTreePropertySheet::AddPage(int nType, CPropertyPage* pPage,
     p.pPage   = pPage;
     p.caption = lpszCaptionDescr ? lpszCaptionDescr : _T("");
     m_portPages.push_back(p);
+    // Also record it in the base list, so the base page accessors
+    // (GetPage/GetPageCount/GetPageIndex and, above all, GetActivePage — which
+    // every sheet's OnKickIdle dereferences unconditionally) answer for World
+    // Properties too.  Nothing iterates m_flatPages for a tree sheet: DoModal is
+    // overridden above, so the flat-sheet bridge is never reached from here.
+    CPropertySheet::AddPage(pPage);
 }
 
 INT_PTR CTreePropertySheet::DoModal()

@@ -287,6 +287,11 @@ extern void (*g_wxhook_edit_replace_sel)(void* hwnd, const char* text); // repla
 // op: 0=line count, 1=char index of line `arg` (-1=current), 2=length of line
 // holding char `arg` (-1=current), 3=line of char `arg` (-1=current), 4=text length.
 extern int  (*g_wxhook_edit_line_info)(void* hwnd, int op, int arg);
+// CEdit::LimitText / CEdit::SetReadOnly — EM_LIMITTEXT and ES_READONLY.  These
+// carry the `max_length` and `read_only` options of utils.inputbox/editbox, both
+// of which were silently dropped while the shim methods were `{}`.
+extern void (*g_wxhook_edit_set_max_length)(void* hwnd, int chars);  // 0 = no limit
+extern void (*g_wxhook_edit_set_readonly)(void* hwnd, bool readOnly);
 // CWnd::SetFont — `font` is the CFont's wxFont* (CGdiObject::m_impl).  The wx
 // side copies it, so the caller may destroy the CFont afterwards.
 extern void (*g_wxhook_set_font)(void* hwnd, void* font);

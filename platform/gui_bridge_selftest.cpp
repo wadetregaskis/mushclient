@@ -39,6 +39,7 @@
 #include "dialogs/world_prefs/prefspropertypages.h"  // CPrefsP17 — ScriptBrowser
 #include "dialogs/world_prefs/triggdlg.h"             // CTriggerDlg
 #include "dialogs/global_prefs/GlobalPrefs.h"         // CGlobalPrefsP4 — printer font
+#include "dialogs/DebugWorldInputDlg.h"                // CDebugWorldInputDlg — fixed-pitch font
 
 #include <vector>
 
@@ -1275,9 +1276,10 @@ void TestPrinterFontPickerSeedsFromThePage()
         ++s_calls;
         return 0;                            // cancel — nothing is chosen
     };
-    // The page has no window here, so DDX zeroes the numeric fields and the
-    // lines-per-page DDV (10..500) objects.  Swallow that: the assertion below
-    // is about which string seeded the picker, not about the margins.
+    // The page has no window here.  DDX now leaves a member alone when the
+    // control is missing (it used to zero it, which then tripped the
+    // lines-per-page DDV), but keep the swallow: the assertion below is about
+    // which string seeded the picker, not about the margins.
     g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
         return IDOK;
     };
@@ -1328,6 +1330,39 @@ void TestTimerListSortsByContents()
           "the Label column still sorts too");
 }
 
+// Three dialogs put their fixed-pitch font on their edit control with a raw
+// WM_SETFONT ::SendMessage, and the port's send-message hook handles only
+// WM_COMMAND and the two LVM_*EXTENDEDLISTVIEWSTYLE messages — so the font was
+// simply dropped and the World ▸ Debug input box, the Credits box and Send To
+// All showed the proportional default.  They now go through CWnd::SetFont, as
+// Utilities.cpp's FixFont already did (with the WM_SETFONT form commented out).
+void TestFixedPitchFontReachesTheDialogs()
+{
+    printf("Fixed-pitch font on the raw-SendMessage dialogs:\n");
+
+    static std::string s_face;
+    static int s_calls = 0;
+    void (*const savedFont)(void*, void*) = g_wxhook_set_font;
+    g_wxhook_set_font = [](void*, void* font) {
+        ++s_calls;
+        wxFont* f = (wxFont*) font;
+        s_face = f ? std::string(f->GetFaceName().utf8_str()) : std::string();
+    };
+
+    App.m_strFixedPitchFont  = "Menlo";
+    App.m_iFixedPitchFontSize = 9;
+
+    s_calls = 0; s_face.clear();
+    struct Probe : CDebugWorldInputDlg { using CDebugWorldInputDlg::OnInitDialog; };
+    Probe dlg;
+    dlg.OnInitDialog();
+
+    check(s_calls >= 1, "World > Debug input box sets a font at all (was: 0 calls)");
+    check(s_face == "Menlo", "...and it is the fixed-pitch font from the preferences");
+
+    g_wxhook_set_font = savedFont;
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -1351,6 +1386,7 @@ int RunGuiBridgeSelfTest()
     TestCommandColoursSurviveAPageChange();
     TestPrinterFontPickerSeedsFromThePage();
     TestTimerListSortsByContents();
+    TestFixedPitchFontReachesTheDialogs();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

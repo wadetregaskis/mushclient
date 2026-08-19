@@ -28,10 +28,12 @@
 #include "platform/world_close_decision.h"  // DecideWorldClose — the Cmd+W prompt chain
 #include "dialogs/ProgDlg.h"   // CProgressDlg — adopted into mushcore 2026-08-07
 #include "dialogs/plugins/PluginWizard.h"  // CPluginWizardPage7 — language gates
+#include "dialogs/plugins/PluginWizardSheet.h"  // CPluginWizardSheet — OnKickIdle
 #include "dialogs/world_prefs/prefspropertypages.h"  // FittedLastColumnWidth,
                                                      // OutputBufferBytesNeeded
 
 #include <algorithm>
+#include <chrono>     // CStringList walk-complexity pin
 #include <cerrno>     // ENOENT — CFile open-failure cause checks
 #include <csignal>    // SIGXFSZ — Files.OnSaveDocumentReportsWriteFailure
 #include <cstring>
@@ -493,6 +495,105 @@ TEST(Collections, StringListFindInsertRemoveAt) {
     l.RemoveAt(l.Find("two"));
     EXPECT_EQ((POSITION)nullptr, l.Find("two"));
     EXPECT_EQ(4, l.GetCount());
+
+    // MFC's Find searches strictly AFTER the position handed to it, so a caller
+    // can walk the duplicates rather than being handed the first one forever.
+    CStringList dups;
+    dups.AddTail("x");
+    POSITION second = dups.AddTail("x");
+    POSITION first  = dups.GetHeadPosition();
+    EXPECT_EQ(second, dups.Find("x", first));
+    EXPECT_EQ((POSITION)nullptr, dups.Find("x", second));
+}
+
+TEST(Collections, StringListPositionsSurviveOtherRemovals) {
+    // The MFC contract the node rewrite exists for: a POSITION is a stable
+    // handle to ITS element, unaffected by removals elsewhere.
+    CStringList l;
+    POSITION marks[5];
+    const char* words[5] = { "a", "b", "c", "d", "e" };
+    for (int i = 0; i < 5; i++) marks[i] = l.AddTail(words[i]);
+
+    l.RemoveAt(marks[1]);
+    l.RemoveHead();                    // "a"
+    l.RemoveTail();                    // "e"
+    EXPECT_EQ(2, l.GetCount());
+    EXPECT_STREQ("c", (LPCTSTR)l.GetAt(marks[2]));
+    EXPECT_STREQ("d", (LPCTSTR)l.GetAt(marks[3]));
+
+    // A NULL POSITION resolves to an empty string rather than reading off the
+    // end of an empty list (the old not-found path was m_data.back(), UB).
+    CStringList empty;
+    EXPECT_TRUE(empty.GetAt(nullptr).IsEmpty());
+    EXPECT_TRUE(empty.GetHead().IsEmpty());
+    EXPECT_TRUE(empty.GetTail().IsEmpty());
+    EXPECT_TRUE(empty.RemoveHead().IsEmpty());
+    EXPECT_TRUE(empty.RemoveTail().IsEmpty());
+    POSITION p = nullptr;
+    EXPECT_TRUE(empty.GetNext(p).IsEmpty());
+    EXPECT_TRUE(empty.GetPrev(p).IsEmpty());
+}
+
+TEST(Collections, StringListCopiesDeeply) {
+    // The std::list member gave copy/assign for free; owned nodes do not, and a
+    // shallow copy would double-free at the second destructor.
+    CStringList src;
+    src.AddTail("one");
+    src.AddTail("two");
+
+    CStringList copy(src);
+    EXPECT_EQ(2, copy.GetCount());
+    EXPECT_NE(src.GetHeadPosition(), copy.GetHeadPosition());   // own nodes
+    copy.AddTail("three");
+    EXPECT_EQ(2, src.GetCount());                               // src untouched
+
+    CStringList assigned;
+    assigned.AddTail("junk");
+    assigned = src;
+    EXPECT_EQ(2, assigned.GetCount());
+    EXPECT_STREQ("one", (LPCTSTR)assigned.GetHead());
+    assigned = assigned;                                        // self-assign
+    EXPECT_EQ(2, assigned.GetCount());
+}
+
+namespace {
+// Wall-clock milliseconds for a full head-to-tail walk of `n` entries.
+double string_list_walk_ms(int n)
+{
+    CStringList l;
+    for (int i = 0; i < n; i++) l.AddTail("entry");
+
+    auto t0 = std::chrono::steady_clock::now();
+    long chars = 0;
+    for (POSITION pos = l.GetHeadPosition(); pos; )
+        chars += l.GetNext(pos).GetLength();
+    auto t1 = std::chrono::steady_clock::now();
+
+    // Consume the result so the walk cannot be optimised away -- and so a walk
+    // that returns nothing fails rather than looking fast.
+    EXPECT_TRUE(chars == (long) n * 5);
+    return std::chrono::duration<double, std::milli>(t1 - t0).count();
+}
+} // namespace
+
+TEST(Collections, StringListFullWalkIsLinearNotQuadratic) {
+    // CStringList used to hand out element addresses and then map each one back
+    // to its ITERATOR by scanning, so every cursor step was O(N) and a full walk
+    // O(N^2) -- the K-784 defect, fixed for CTypedPtrList in 5cb6681 but left
+    // here.  The list that pays is m_strMapList, which CalculateSpeedWalkString
+    // walks in full and which grows unbounded across a mapping session.
+    //
+    // 4x the entries against a generous 8x time budget (plus a floor, so timer
+    // noise on a tiny baseline cannot fail it): linear is ~4x, quadratic ~16x.
+    string_list_walk_ms(1000);                        // warm caches/allocator
+    const double small = string_list_walk_ms(4000);
+    const double large = string_list_walk_ms(16000);
+
+    const double budget = std::max(small * 8.0, 5.0);
+    EXPECT_TRUE(large < budget);
+    if (large >= budget)
+        printf("    walk(4000)=%.2fms walk(16000)=%.2fms budget=%.2fms\n",
+               small, large, budget);
 }
 
 TEST(Collections, StringArray) {
@@ -615,6 +716,58 @@ TEST(Collections, ListTemplate) {
     EXPECT_TRUE(l.IsEmpty());
     EXPECT_EQ(0, l.RemoveHead());   // empty-list guard returns TYPE{}
     EXPECT_EQ(0, l.RemoveTail());
+}
+
+// Find was `return nullptr` and four siblings answered plausibly-wrong things,
+// which is why the Chat List dialog lost the user's selection and focus on every
+// refresh: CChatListDlg asks Find whether each chat id was selected before, and
+// the answer was always "no".
+TEST(Collections, ListTemplateFindsAndAddressesItsElements) {
+    CList<int> l;
+    l.AddTail(1);
+    l.AddTail(2);
+    l.AddTail(3);
+
+    EXPECT_EQ(l.FindIndex(2), l.Find(3));
+    EXPECT_NE((POSITION)nullptr, l.Find(3));
+    EXPECT_EQ(l.FindIndex(0), l.Find(1));
+    EXPECT_EQ((POSITION)nullptr, l.Find(99));
+
+    // GetTailPosition used to answer GetHeadPosition, and GetPrev used to run
+    // FORWARDS, so a tail-to-head walk visited exactly one element.
+    std::string back;
+    for (POSITION pos = l.GetTailPosition(); pos; ) {
+        char buf[8]; snprintf(buf, sizeof buf, "%d", l.GetPrev(pos));
+        back += buf;
+    }
+    EXPECT_STREQ("321", back.c_str());
+
+    // GetAt returned a static dummy whatever it was handed.
+    EXPECT_EQ(2, l.GetAt(l.FindIndex(1)));
+    EXPECT_EQ(0, l.GetAt(nullptr));           // out of range: the empty answer
+
+    // InsertBefore/InsertAfter used to be AddHead/AddTail, so both ignored the
+    // position entirely.
+    l.InsertAfter(l.Find(1), 15);
+    l.InsertBefore(l.Find(3), 25);
+    std::string order;
+    for (POSITION pos = l.GetHeadPosition(); pos; ) {
+        char buf[8]; snprintf(buf, sizeof buf, "%d,", l.GetNext(pos));
+        order += buf;
+    }
+    EXPECT_STREQ("1,15,2,25,3,", order.c_str());
+
+    // RemoveAt was a no-op.
+    l.RemoveAt(l.Find(25));
+    EXPECT_EQ(4, l.GetCount());
+    EXPECT_EQ((POSITION)nullptr, l.Find(25));
+
+    // MFC searches strictly AFTER the given position.
+    CList<int> dups;
+    POSITION a = dups.AddTail(7);
+    POSITION b = dups.AddTail(7);
+    EXPECT_EQ(b, dups.Find(7, a));
+    EXPECT_EQ((POSITION)nullptr, dups.Find(7, b));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1116,6 +1269,73 @@ TEST(Document, TitlePathModifiedFlags) {
     EXPECT_EQ((LPVOID)nullptr, d.GetIDispatch());
 }
 
+// CDocument::SaveModified was `return TRUE` — the answer a document with
+// nothing to lose gives.  Cmd-Q / the app menu / the Dock reach it through
+// CMUSHclientDoc::SaveModified (doc.cpp:2105), whose own prompts cover only the
+// connection and the variables-only case, so a world with unsaved edits was
+// discarded without a word.  (CWorldChildFrame::OnClose's prompt chain is the
+// Cmd+W path and never comes through here, so this cannot double-ask.)
+TEST(Document, SaveModifiedPromptsOnlyForADirtyDocument) {
+    static int s_prompts = 0, s_answer = IDCANCEL;
+    static std::string s_text;
+    int (*const saved)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    g_wxhook_message_box = [](const char* text, const char*, unsigned) -> int {
+        ++s_prompts; s_text = text ? text : ""; return s_answer;
+    };
+
+    // Clean document: no question at all.
+    CDocument clean;
+    clean.SetPathName("/a/b.mcl");
+    EXPECT_TRUE(clean.SaveModified());
+    EXPECT_EQ(0, s_prompts);
+
+    // Dirty + Cancel: the close is refused.  The stub could never say FALSE.
+    CDocument d;
+    d.SetPathName("/a/b.mcl");
+    d.SetModifiedFlag();
+    s_answer = IDCANCEL;
+    EXPECT_FALSE(d.SaveModified());
+    EXPECT_EQ(1, s_prompts);
+    EXPECT_TRUE(s_text.find("/a/b.mcl") != std::string::npos);  // names the doc
+
+    // Dirty + No: discard and continue — asked exactly once, not once per view.
+    s_answer = IDNO;
+    EXPECT_TRUE(d.SaveModified());
+    EXPECT_EQ(2, s_prompts);
+
+    // With no path, MFC falls back to the caption.
+    CDocument untitled;
+    untitled.SetTitle("Fresh World");
+    untitled.SetModifiedFlag();
+    s_answer = IDNO;
+    EXPECT_TRUE(untitled.SaveModified());
+    EXPECT_TRUE(s_text.find("Fresh World") != std::string::npos);
+
+    // Dirty + Yes: DoFileSave must really write.  It was `return TRUE`, so a
+    // Yes answer reported success and produced no file.
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/mc_test_savemod_%d.mcl", (int)getpid());
+    unlink(path);
+    CDocument writer;
+    writer.SetPathName(path);
+    writer.SetModifiedFlag();
+    s_answer = IDYES;
+    EXPECT_TRUE(writer.SaveModified());
+    struct stat st;
+    EXPECT_EQ(0, stat(path, &st));           // the file exists now
+    unlink(path);
+
+    // Yes with nowhere to write it: DoSave fails, so the close is refused
+    // rather than silently losing the document.
+    CDocument nowhere;
+    nowhere.SetTitle("Nowhere");
+    nowhere.SetModifiedFlag();
+    s_answer = IDYES;
+    EXPECT_FALSE(nowhere.SaveModified());
+
+    g_wxhook_message_box = saved;
+}
+
 TEST(Document, ViewListIteration) {
     CDocument d;
     EXPECT_EQ((POSITION)nullptr, d.GetFirstViewPosition());
@@ -1428,6 +1648,7 @@ TEST(Ddx, ComboWithNoSelectionPreservesMember) {
     fakewx::Install hooks;
     DdxDialog dlg;
     dlg.m_comboIndex = 3;
+    EXPECT_TRUE(dlg.UpdateData(FALSE));     // as OnInitDialog does: fill the controls
     fakewx::widget(ID_COMBO).cursel = -1;   // no selection
     EXPECT_TRUE(dlg.UpdateData(TRUE));
     EXPECT_EQ(3, dlg.m_comboIndex);
@@ -1450,6 +1671,7 @@ TEST(Ddx, CBStringFallsBackToEditTextWhenNotInList) {
 TEST(Ddx, ValidationFailVetoesUpdateAndOnOK) {
     fakewx::Install hooks;
     DdxDialog dlg;
+    EXPECT_TRUE(dlg.UpdateData(FALSE));   // as OnInitDialog does: fill the controls
     dlg.m_failValidation = true;
     EXPECT_FALSE(dlg.UpdateData(TRUE));   // pDX->Fail() -> FALSE, no throw escape
     static int s_endCalls = 0;
@@ -1463,20 +1685,101 @@ TEST(Ddx, ValidationFailVetoesUpdateAndOnOK) {
     g_end_mfc_dialog = nullptr;
 }
 
-TEST(Ddx, NullDlgItemsPinnedBehaviour) {
-    // No hooks at all (headless): the guarded DDX forms leave members alone,
-    // but the numeric DDX_Text family parses the (empty) control text on save,
-    // so numeric members become 0.  Pinned as the shim's actual contract.
+TEST(Ddx, NullDlgItemsLeaveEveryMemberAlone) {
+    // No hooks at all (headless): every DDX form must leave its member alone.
+    // The numeric family used to parse the empty text of a control that is not
+    // there and store the resulting 0 -- and the bridge legitimately omits
+    // controls Windows hides (the WS_VISIBLE arm), so that was a live way for a
+    // prefs page to zero a setting nobody had touched.  It must not now fail the
+    // exchange either: there is no field for the user to correct.
     DdxDialog dlg;
     EXPECT_TRUE(dlg.UpdateData(TRUE));
     EXPECT_STREQ("hello", (LPCTSTR)dlg.m_text);   // CString form: guarded
-    EXPECT_EQ(0, dlg.m_int);                       // numeric forms: zeroed
-    EXPECT_EQ((short)0, dlg.m_short);
-    EXPECT_NEAR(0.0, dlg.m_double, 1e-12);
+    EXPECT_EQ(42, dlg.m_int);                      // numeric forms: guarded too
+    EXPECT_EQ((short)-7, dlg.m_short);
+    EXPECT_EQ(123456789L, dlg.m_long);
+    EXPECT_EQ(77u, dlg.m_uint);
+    EXPECT_NEAR(1.5f, dlg.m_float, 1e-6);
+    EXPECT_NEAR(2.25, dlg.m_double, 1e-12);
     EXPECT_EQ(1, dlg.m_check);                     // control-class forms: guarded
     EXPECT_EQ(1, dlg.m_comboIndex);
     EXPECT_STREQ("beta", (LPCTSTR)dlg.m_comboString);
     EXPECT_EQ(2, dlg.m_radio);
+}
+
+// MFC formats a double with DBL_DIG (15) significant digits; "%g" gives 6, so
+// merely OPENING a dialog on a timer of 59.999999 seconds rewrote it as 60 --
+// and a value near the top of its DDV range could round PAST the range, leaving
+// a dialog whose OK button no longer worked on a value the user never touched.
+TEST(Ddx, DoubleLoadKeepsFifteenSignificantDigits) {
+    fakewx::Install hooks;
+    DdxDialog dlg;
+    dlg.m_double = 59.999999;
+    EXPECT_TRUE(dlg.UpdateData(FALSE));            // member -> control
+    EXPECT_STREQ("59.999999", fakewx::widget(ID_DOUBLE).text.c_str());
+
+    // ...and the round trip is lossless, which "%g" made it not.
+    EXPECT_TRUE(dlg.UpdateData(TRUE));
+    EXPECT_NEAR(59.999999, dlg.m_double, 1e-12);
+
+    // The float overload keeps "%g": MFC uses FLT_DIG, which IS 6.
+    dlg.m_float = 1.25f;
+    EXPECT_TRUE(dlg.UpdateData(FALSE));
+    EXPECT_STREQ("1.25", fakewx::widget(ID_FLOAT).text.c_str());
+}
+
+// MFC rejects text it cannot scan a number out of ("Please enter an integer.")
+// and calls pDX->Fail(), so the dialog stays open with the member untouched.
+// The port fed the text to strtol/strtod and kept their 0, so typing rubbish
+// into any of the ~100 numeric prefs fields set the setting to zero.
+TEST(Ddx, UnparseableNumericTextIsRejectedRatherThanRead) {
+    fakewx::Install hooks;
+    static int s_boxes = 0;
+    static std::string s_msg;
+    int (*const saved)(const char*, const char*, unsigned) = g_wxhook_message_box;
+    g_wxhook_message_box = [](const char* text, const char*, unsigned) -> int {
+        ++s_boxes; s_msg = text ? text : ""; return IDOK;
+    };
+
+    DdxDialog dlg;
+    EXPECT_TRUE(dlg.UpdateData(FALSE));            // seed every control
+    fakewx::widget(ID_INT).text = "abc";
+    EXPECT_FALSE(dlg.UpdateData(TRUE));            // vetoed
+    EXPECT_EQ(42, dlg.m_int);                      // member kept its old value
+    EXPECT_EQ(1, s_boxes);                         // and the user was told why
+    EXPECT_TRUE(s_msg.find("integer") != std::string::npos);
+
+    // An emptied field is the same failure — not a zero.
+    fakewx::widget(ID_INT).text = "";
+    EXPECT_FALSE(dlg.UpdateData(TRUE));
+    EXPECT_EQ(42, dlg.m_int);
+
+    // Only ONE box per UpdateData: Fail() aborts the rest of the exchange.
+    s_boxes = 0;
+    fakewx::widget(ID_INT).text = "x";
+    fakewx::widget(ID_DOUBLE).text = "y";
+    EXPECT_FALSE(dlg.UpdateData(TRUE));
+    EXPECT_EQ(1, s_boxes);
+
+    // The real overload reports the real noun.
+    fakewx::widget(ID_INT).text = "7";
+    s_boxes = 0;
+    EXPECT_FALSE(dlg.UpdateData(TRUE));
+    EXPECT_EQ(1, s_boxes);
+    EXPECT_TRUE(s_msg.find("number") != std::string::npos);
+    EXPECT_NEAR(2.25, dlg.m_double, 1e-12);
+
+    // Like the scanf it stands in for, a valid number with trailing rubbish is
+    // still accepted, so this cannot start rejecting text Windows takes.
+    s_boxes = 0;
+    fakewx::widget(ID_INT).text = "  12abc";
+    fakewx::widget(ID_DOUBLE).text = "3.5 seconds";
+    EXPECT_TRUE(dlg.UpdateData(TRUE));
+    EXPECT_EQ(0, s_boxes);
+    EXPECT_EQ(12, dlg.m_int);
+    EXPECT_NEAR(3.5, dlg.m_double, 1e-12);
+
+    g_wxhook_message_box = saved;
 }
 
 static intptr_t s_modalResult;
@@ -1561,6 +1864,44 @@ TEST(Controls, ListBoxHookedOperations) {
     EXPECT_EQ(1, items[0]);
     lb.ResetContent();
     EXPECT_EQ(0, lb.GetCount());
+}
+
+// LB_FINDSTRING / LB_SELECTSTRING were permanent LB_ERR, which is why the
+// Complete Word dialog never pre-selected the entry matching what the user had
+// typed -- so pressing OK (or Enter) inserted nothing at all.  The match is a
+// case-insensitive PREFIX, not an exact one: the filter is the part of the word
+// already typed, so an exactly-equal entry usually does not exist.
+TEST(Controls, ListBoxFindsAndSelectsByPrefix) {
+    fakewx::Install hooks;
+    CListBox lb;
+    lb.m_hWnd = (HWND)fakewx::handle_for(78);
+    lb.AddString("world.Note");
+    lb.AddString("world.NoteStyle");
+    lb.AddString("world.Send");
+
+    // A prefix nothing matches exactly still finds the entry, and selects it.
+    EXPECT_EQ(0, lb.SelectString(-1, "world.no"));   // and case-insensitively
+    EXPECT_EQ(0, lb.GetCurSel());
+    EXPECT_EQ(0, lb.FindString(-1, "WORLD.NOTE"));
+
+    // FindStringExact would answer 1 here; the prefix search must answer 0.
+    EXPECT_EQ(0, lb.FindString(-1, "world.Note"));
+
+    // `after` resumes past that index and wraps, so a repeated search walks the
+    // matches rather than sticking on the first.
+    EXPECT_EQ(1, lb.FindString(0, "world.no"));
+    EXPECT_EQ(0, lb.FindString(1, "world.no"));
+
+    // No match: LB_ERR, and the selection is left where it was.
+    lb.SetCurSel(2);
+    EXPECT_EQ(LB_ERR, lb.SelectString(-1, "zzz"));
+    EXPECT_EQ(2, lb.GetCurSel());
+
+    // An empty filter is a prefix of everything (MFC's behaviour), and an empty
+    // list has nothing to find.
+    EXPECT_EQ(0, lb.FindString(-1, ""));
+    lb.ResetContent();
+    EXPECT_EQ(LB_ERR, lb.FindString(-1, "world"));
 }
 
 TEST(Controls, ListBoxNullHooksReturnErrors) {
@@ -1732,6 +2073,42 @@ TEST(Controls, ButtonAndStaticAndEdit) {
     g_wxhook_edit_set_sel = nullptr;
     g_wxhook_edit_get_sel = nullptr;
     g_wxhook_edit_replace_sel = nullptr;
+}
+
+// LimitText and SetReadOnly were `{}`, so utils.inputbox / utils.editbox's
+// max_length and read_only options did nothing at all on the port: the reply
+// field took unlimited text, and a display-only box stayed editable.
+TEST(Controls, EditLengthLimitAndReadOnlyReachTheControl) {
+    static int  s_limit = -1;
+    static bool s_readOnly = false, s_readOnlyCalled = false;
+    void (*const savedLimit)(void*, int)  = g_wxhook_edit_set_max_length;
+    void (*const savedRo)(void*, bool)    = g_wxhook_edit_set_readonly;
+    g_wxhook_edit_set_max_length = [](void*, int n) { s_limit = n; };
+    g_wxhook_edit_set_readonly   = [](void*, bool ro) { s_readOnly = ro; s_readOnlyCalled = true; };
+
+    CEdit e;
+    e.m_hWnd = (HWND)(void*)0x77;
+    e.LimitText(80);
+    EXPECT_EQ(80, s_limit);
+    e.LimitText();                      // MFC's default argument: remove the limit
+    EXPECT_EQ(0, s_limit);
+
+    e.SetReadOnly(TRUE);
+    EXPECT_TRUE(s_readOnlyCalled);
+    EXPECT_TRUE(s_readOnly);
+    e.SetReadOnly(FALSE);               // and it really is a two-way switch
+    EXPECT_FALSE(s_readOnly);
+    e.SetReadOnly();                    // MFC's default argument is TRUE
+    EXPECT_TRUE(s_readOnly);
+
+    // Headless (no hooks): both stay safe rather than dereferencing a handle.
+    g_wxhook_edit_set_max_length = nullptr;
+    g_wxhook_edit_set_readonly   = nullptr;
+    e.LimitText(10);
+    e.SetReadOnly(TRUE);
+
+    g_wxhook_edit_set_max_length = savedLimit;
+    g_wxhook_edit_set_readonly   = savedRo;
 }
 
 TEST(Controls, ListCtrlHookedOperations) {
@@ -2738,6 +3115,39 @@ TEST(CommonDialogs, FileDialogPathPlumbing) {
     EXPECT_FALSE(s_fdOverwrite);
     EXPECT_STREQ("/explicit/dir", s_fdDir.c_str());
     EXPECT_STREQ("hint.txt", s_fdLeaf.c_str());
+    g_wxhook_file_dialog = nullptr;
+
+    // "Open OR create" — an open-style dialog that warns before overwriting and
+    // does NOT require the file to exist.  That is the world-prefs Notes page's
+    // "Save notes", the only call site in the tree shaped this way, and it could
+    // not create a new file because an NSOpenPanel will not return a name that
+    // is not there (and wxFD_FILE_MUST_EXIST is a no-op on macOS, so honouring
+    // the flag would not have helped).  It has to reach the hook as a SAVE.
+    g_wxhook_file_dialog = [](bool bOpen, const char*, const char*,
+                              const char*, const char*, bool ow) -> char* {
+        s_fdOpen = bOpen;
+        s_fdOverwrite = ow;
+        return strdup("/picked/notes.txt");
+    };
+    CFileDialog openOrCreate(TRUE, "txt", "",
+                             OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+                             "Text files (*.txt)|*.txt||");
+    EXPECT_EQ((INT_PTR)IDOK, openOrCreate.DoModal());
+    EXPECT_FALSE(s_fdOpen);                       // a save panel
+    EXPECT_TRUE(s_fdOverwrite);
+
+    // The control: a genuine open dialog stays an open dialog, so this cannot
+    // be a blanket flip.  Both halves of the predicate are exercised — the
+    // must-exist flag, and (below) a flagless CFileDialog(TRUE).
+    CFileDialog mustExist(TRUE, "txt", "",
+                          OFN_HIDEREADONLY | OFN_FILEMUSTEXIST | OFN_OVERWRITEPROMPT,
+                          "Text files (*.txt)|*.txt||");
+    EXPECT_EQ((INT_PTR)IDOK, mustExist.DoModal());
+    EXPECT_TRUE(s_fdOpen);
+    CFileDialog plainOpen(TRUE, "txt", "", OFN_HIDEREADONLY,
+                          "Text files (*.txt)|*.txt||");
+    EXPECT_EQ((INT_PTR)IDOK, plainOpen.DoModal());
+    EXPECT_TRUE(s_fdOpen);
     g_wxhook_file_dialog = nullptr;
 
     // extension-less result
@@ -3841,6 +4251,41 @@ TEST(Wnd, MessageAndGeometryHooksRoute) {
     bare.FlashWindow(TRUE);
 }
 
+// CWnd::SetWindowPlacement was a permanent FALSE, so even once
+// CWindowPlacement::Restore got past its screen-intersect test it had nowhere to
+// put the geometry it had just read out of the database: every dialog and world
+// window opened at its default position, however carefully it had been placed.
+TEST(Wnd, SetWindowPlacementMovesTheWindow) {
+    static int s_x, s_y, s_w, s_h, s_calls;
+    static bool s_repaint;
+    s_calls = 0;
+    void (*const saved)(void*, int, int, int, int, bool) = g_wxhook_move_window;
+    g_wxhook_move_window = [](void*, int x, int y, int w, int h, bool rp) {
+        s_x = x; s_y = y; s_w = w; s_h = h; s_repaint = rp; ++s_calls;
+    };
+
+    CWnd w;
+    WINDOWPLACEMENT wp = {};
+    wp.rcNormalPosition.left   = 40;
+    wp.rcNormalPosition.top    = 50;
+    wp.rcNormalPosition.right  = 340;
+    wp.rcNormalPosition.bottom = 250;
+    EXPECT_TRUE(w.SetWindowPlacement(&wp));
+    EXPECT_EQ(1, s_calls);
+    EXPECT_EQ(40, s_x);
+    EXPECT_EQ(50, s_y);
+    // Width/height, NOT right/bottom — the two differ here on purpose, so a
+    // straight-through copy of the rect fails.
+    EXPECT_EQ(300, s_w);
+    EXPECT_EQ(200, s_h);
+    EXPECT_TRUE(s_repaint);
+
+    EXPECT_FALSE(w.SetWindowPlacement(nullptr));   // and a null placement is refused
+    EXPECT_EQ(1, s_calls);
+
+    g_wxhook_move_window = saved;
+}
+
 TEST(Wnd, InertStubSurface) {
     CWnd w;
     EXPECT_EQ((void*)nullptr, w.GetSafeHwnd());
@@ -3906,7 +4351,8 @@ TEST(Wnd, InertStubSurface) {
     w.DragAcceptFiles();
     EXPECT_FALSE(w.SetForegroundWindow());
     WINDOWPLACEMENT wp = {};
-    EXPECT_FALSE(w.SetWindowPlacement(&wp));
+    EXPECT_FALSE(w.SetWindowPlacement(&wp));       // no move hook installed here
+    EXPECT_FALSE(w.SetWindowPlacement(nullptr));
     w.MessageBox("msg");
     EXPECT_FALSE(w.IsIconic());
     EXPECT_FALSE(w.IsZoomed());
@@ -4880,11 +5326,51 @@ TEST(MfcUi, ProgressDialogCancelIsLatchedThenCleared)
     dlg.SetPos(20);
 
     EXPECT_TRUE(dlg.CheckCancelButton());    // latched — the stub could never say this
-    EXPECT_FALSE(dlg.CheckCancelButton());   // and cleared, so a polling loop may continue
+
+    // MFC's read-and-clear only SHOWS once the dialog stops reporting a cancel:
+    // CheckCancelButton is now a pump too, so while wxProgressDialog::Update
+    // keeps saying "cancelled" (which a real one does — the flag is sticky) the
+    // poll keeps saying so, rather than answering "carry on" to a user who has
+    // already pressed the button.
+    EXPECT_TRUE(dlg.CheckCancelButton());
+    ProgressSpy::answer = true;              // ...and once it stops reporting it
+    EXPECT_FALSE(dlg.CheckCancelButton());   // the flag is cleared, so a loop may continue
 
     // It latches again rather than being once-per-lifetime.
+    ProgressSpy::answer = false;
     dlg.SetPos(30);
     EXPECT_TRUE(dlg.CheckCancelButton());
+}
+
+// A caller that polls ONLY checkcancel -- which the Lua progress library offers
+// as a standalone method -- used to get a frozen dialog: PumpMessages returns at
+// once on a null m_hWnd, so nothing repainted and the Cancel click could never
+// be seen.  wxProgressDialog::Update is this platform's pump, so CheckCancelButton
+// now re-sends the current position.
+TEST(MfcUi, CheckCancelButtonPumpsWithoutASetPos)
+{
+    ProgressHooks hooks;
+    CProgressDlg dlg;
+    ASSERT_TRUE(dlg.Create(NULL));
+    dlg.SetRange(0, 100);
+    dlg.SetStatus("working");
+    EXPECT_EQ(40, dlg.SetPos(40));
+
+    const int before = ProgressSpy::updates;
+    ProgressSpy::answer = false;             // the user hits Cancel
+
+    EXPECT_TRUE(dlg.CheckCancelButton());    // seen with NO intervening SetPos
+    EXPECT_EQ(before + 1, ProgressSpy::updates);
+    EXPECT_EQ(40, ProgressSpy::lastPos);     // and it did not move the bar
+    EXPECT_EQ(std::string("working"), ProgressSpy::lastStatus);
+
+    // The lower bound is still subtracted on the way to the dialog, exactly as
+    // SetPos does it — so a non-zero base cannot make this an identity.
+    dlg.SetRange(20, 120);
+    dlg.SetPos(50);
+    EXPECT_EQ(30, ProgressSpy::lastPos);
+    dlg.CheckCancelButton();
+    EXPECT_EQ(30, ProgressSpy::lastPos);
 }
 
 // With no hooks installed — which is every other headless test in this binary —
@@ -4937,6 +5423,43 @@ TEST(MfcUi, PluginWizardLanguagePageSpeaksAllPortLanguages)
     fakewx::widget(IDC_LANGUAGE).cursel = 6;
     page.OnOK();
     EXPECT_STREQ("", (LPCTSTR) page.m_strLanguage);
+}
+
+// CPropertySheet::GetActivePage() was a permanent nullptr, and every sheet's
+// OnKickIdle handler dereferences it with no null check (GlobalPrefsSheet.cpp:59,
+// PluginWizardSheet.cpp:90, PrefsPropertySheet.cpp:45).  Nothing on the port
+// routes WM_KICKIDLE to a sheet today, so it was a landmine rather than a live
+// crash — the fix is to make the accessor answer, not to touch the canonical
+// dialog code, which cannot see a null GetActivePage on Windows.
+//
+// (The shim's CWnd::WindowProc does not consult message maps, so there is no way
+// to reach the handler through ON_MESSAGE here; it is called directly.)
+TEST(PropertySheet, ActivePageIsARealPageSoKickIdleCannotCrash)
+{
+    struct Probe : CPluginWizardSheet { using CPluginWizardSheet::OnKickIdle; };
+    Probe sheet;
+
+    // The ctor adds eight pages, and MFC opens on the first.
+    EXPECT_EQ(8, sheet.GetPageCount());
+    EXPECT_EQ((CPropertyPage*) &sheet.m_Page1, sheet.GetActivePage());
+    EXPECT_EQ(0, sheet.GetActiveIndex());
+    EXPECT_EQ(3, sheet.GetPageIndex(&sheet.m_Page4));
+    EXPECT_EQ((CPropertyPage*) &sheet.m_Page4, sheet.GetPage(3));
+    EXPECT_EQ((CPropertyPage*) nullptr, sheet.GetPage(99));
+
+    sheet.SetActivePage(3);
+    EXPECT_EQ((CPropertyPage*) &sheet.m_Page4, sheet.GetActivePage());
+    sheet.SetActivePage(&sheet.m_Page7);
+    EXPECT_EQ(6, sheet.GetActiveIndex());
+    sheet.SetActivePage(99);                  // out of range: ignored, not stored
+    EXPECT_EQ(6, sheet.GetActiveIndex());
+
+    // The handler itself.  It cannot crash HERE even with a null active page —
+    // CWnd::SendMessage returns before touching `this` when no send hook is
+    // installed, which is every headless test — so this line is not what
+    // discriminates; the accessor assertions above are.  It is here because in
+    // the GUI, where the hook IS installed, the same call would dereference.
+    EXPECT_EQ((LRESULT) 0, sheet.OnKickIdle(0, 0));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

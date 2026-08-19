@@ -391,7 +391,10 @@ public:
     // Fills rcNormalPosition with the control's size so GetButtonSize() etc.
     // get correct dimensions for the canonical OnSize relayout.
     BOOL  GetWindowPlacement(WINDOWPLACEMENT* wp) const;
-    BOOL  SetWindowPlacement(const WINDOWPLACEMENT*) { return FALSE; }
+    // Also out-of-line in mfc_ui.h: the other half of the pair.  A permanent
+    // FALSE meant CWindowPlacement::Restore could not put a window back even
+    // once the geometry it had saved reached it.
+    BOOL  SetWindowPlacement(const WINDOWPLACEMENT* wp);
     void  FlashWindow(BOOL bInvert) {
         // No per-window taskbar flash on macOS/Linux.  On "start flash"
         // (bInvert TRUE) bounce the Dock icon / request user attention via the

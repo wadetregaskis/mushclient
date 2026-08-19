@@ -4523,6 +4523,7 @@ static intptr_t hook_run_property_sheet(void* self)
     // Bound after the initial SetSelection, like the leave handler.
     tb->Bind(wxEVT_TREEBOOK_PAGE_CHANGED, [&pages, sheet, bar](wxBookCtrlEvent& e) {
         int arriving = e.GetSelection();
+        sheet->SetActivePage(arriving);      // so GetActivePage() names this one
         if (arriving >= 0 && arriving < (int) pages.size() && pages[arriving])
             pages[arriving]->OnSetActive();
         // Keep the caption band on the page you are looking at, as Windows'
@@ -4537,6 +4538,7 @@ static intptr_t hook_run_property_sheet(void* self)
     // just opening the sheet and pressing OK records the page you were on).
     {
         int opening = tb->GetSelection();
+        sheet->SetActivePage(opening);
         if (opening >= 0 && opening < (int) pages.size() && pages[opening])
             pages[opening]->OnSetActive();
         if (opening >= 0 && opening < (int) sheet->m_portPages.size())
@@ -4658,6 +4660,12 @@ static intptr_t hook_run_property_sheet_flat(void* self)
 
     // Validate-on-leave (MFC OnKillActive): capture + validate the page being
     // left; veto the tab change if it fails (the page already showed its msg).
+    // Keep the sheet's idea of its active page in step with the notebook, so
+    // GetActivePage() names the page the user is looking at.
+    nb->Bind(wxEVT_NOTEBOOK_PAGE_CHANGED, [sheet](wxBookCtrlEvent& e) {
+        sheet->SetActivePage(e.GetSelection());
+        e.Skip();
+    });
     nb->Bind(wxEVT_NOTEBOOK_PAGE_CHANGING, [&pages](wxBookCtrlEvent& e) {
         int leaving = e.GetOldSelection();
         if (leaving >= 0 && leaving < (int) pages.size()
@@ -4854,6 +4862,19 @@ static int hook_edit_line_info(void* hwnd, int op, int arg) {
     case 4: return (int) t->GetLastPosition();                           // total text length
     }
     return 0;
+}
+
+// CEdit::LimitText (EM_LIMITTEXT) and CEdit::SetReadOnly (ES_READONLY).  These
+// are the `max_length` and `read_only` options of utils.inputbox / utils.editbox:
+// with the shim methods empty, a script asking for a 20-character reply got an
+// unlimited field, and one asking for a display-only box got an editable one.
+static void hook_edit_set_max_length(void* hwnd, int chars) {
+    if (auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl))
+        t->SetMaxLength(chars < 0 ? 0 : (unsigned long) chars);   // 0 = no limit
+}
+static void hook_edit_set_readonly(void* hwnd, bool readOnly) {
+    if (auto* t = wxDynamicCast((wxWindow*) hwnd, wxTextCtrl))
+        t->SetEditable(!readOnly);
 }
 
 // CWnd::SetFont — used by FixFont (Utilities.cpp) to put the fixed-pitch font on
@@ -5723,6 +5744,8 @@ void wx_mfc_install_hooks()
     g_wxhook_edit_set_sel         = hook_edit_set_sel;
     g_wxhook_edit_replace_sel     = hook_edit_replace_sel;
     g_wxhook_edit_line_info       = hook_edit_line_info;
+    g_wxhook_edit_set_max_length  = hook_edit_set_max_length;
+    g_wxhook_edit_set_readonly    = hook_edit_set_readonly;
     g_wxhook_set_font             = hook_set_font;
     g_wxhook_get_pixel            = wxgdi_get_pixel;   // defined in wx_gdi_compat.cpp
     g_wxhook_set_cursor           = hook_set_cursor;

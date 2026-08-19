@@ -262,6 +262,22 @@ void CProgressDlg::PumpMessages()
 
 BOOL CProgressDlg::CheckCancelButton()
 {
+#ifndef _WIN32
+    // PumpMessages returns immediately off Windows (there is no m_hWnd), so a
+    // caller that polls ONLY checkcancel -- which the Lua progress library
+    // offers as a standalone method -- got a frozen dialog whose Cancel could
+    // never be observed.  wxProgressDialog::Update is this platform's pump, so
+    // re-send the position we are already at: it repaints, services the button
+    // and reports false once the user has hit it.  No in-app caller is affected
+    // (all four pair this with SetPos in the same loop).
+    if (m_pPortProgress && g_wxhook_progress_update) {
+        if (!g_wxhook_progress_update(m_pPortProgress,
+                                      m_iPortPos - m_nLower,
+                                      (LPCTSTR) m_strPortStatus))
+            m_bCancel = TRUE;
+    }
+#endif
+
     // Process all pending messages
     PumpMessages();
 

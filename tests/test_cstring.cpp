@@ -302,6 +302,25 @@ TEST(CStringTest, FindOneOf) {
     EXPECT_EQ(-1, s.FindOneOf("xyz1234"));
 }
 
+// ── Span operations ───────────────────────────────────────────────────────
+// SpanIncluding used to return an INT — the position of the first character not
+// in the set — which is a different operation under MFC's name, and answered -1
+// for the case where every character matches.
+
+TEST(CStringTest, SpanIncludingReturnsTheLeadingRunThatMatches) {
+    EXPECT_EQ(CString("123"), CString("123abc").SpanIncluding("0123456789"));
+    EXPECT_EQ(CString("123"), CString("123").SpanIncluding("0123456789"));  // all match
+    EXPECT_TRUE(CString("abc").SpanIncluding("0123456789").IsEmpty());
+    EXPECT_TRUE(CString("123").SpanIncluding(nullptr).IsEmpty());
+    EXPECT_TRUE(CString("").SpanIncluding("0123456789").IsEmpty());
+}
+
+TEST(CStringTest, SpanExcludingIsItsMirror) {
+    EXPECT_EQ(CString("abc"), CString("abc123").SpanExcluding("0123456789"));
+    EXPECT_EQ(CString("abc"), CString("abc").SpanExcluding("0123456789"));
+    EXPECT_TRUE(CString("123").SpanExcluding("0123456789").IsEmpty());
+}
+
 // ── Empty string edge-cases ───────────────────────────────────────────────
 
 TEST(CStringTest, EmptyStringOps) {

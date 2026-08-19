@@ -80,9 +80,7 @@ CDC dc;
 
   dc.SelectObject(&m_font);
 
-  m_ctlText.SendMessage (WM_SETFONT,
-                               (WPARAM) m_font.m_hObject,
-                               MAKELPARAM (TRUE, 0));
+  m_ctlText.SetFont (&m_font);
 
   m_ctlSpecials.AddString ("Backslash - \\\\");
   AddOtherSpecial ("New Line", '\n');

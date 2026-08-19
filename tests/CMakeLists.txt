@@ -79,6 +79,14 @@ mc_test(test_database)
 mc_test(test_info)
 mc_test(test_xmlparse)
 mc_test(test_mfc_ui)
+# dialogs/InsertUnicodeDlg.cpp (E26-F3) has no wx/MFC-adapter dependency at all
+# -- just CDialog/CDataExchange/CString, same as every other class this suite
+# already exercises -- so it is compiled into this one test binary too, to
+# drive the real DoDataExchange rather than a stand-in.  It stays in
+# MUSHGUI_ADAPTERS_SOURCES for the shipping app; this is a second, test-only
+# compile of the same TU into a binary that never links mushgui_adapters, so
+# there is no ODR clash.
+target_sources(test_mfc_ui PRIVATE ${CMAKE_SOURCE_DIR}/dialogs/InsertUnicodeDlg.cpp)
 mc_test(test_connection)
 mc_test(test_accelerators)
 mc_test(test_menu_rules)

@@ -643,7 +643,7 @@ CString m_strFilter = Name;
     bLua = true;
 
   // not exact match, show list matching filter
- ShowFunctionslist (m_strFilter, bLua);
+ ShowFunctionslist (m_strFilter, 0, 0, bLua);
 }   // end of CMUSHclientDoc::Help
 
 

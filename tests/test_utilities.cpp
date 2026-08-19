@@ -21,6 +21,27 @@
 
 extern CString OSVersionString (void);   // utilities_shared.cpp
 
+// ── CMUSHclientDoc::Help / ShowFunctionslist wiring (R2-02-F4) ─────────────
+// Needs a real (closable) lua_State so CScriptEngine::L reads as "scripting is
+// active", which is what steers Help()'s bLua flag.
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+#include "scripting/scripting.h"
+extern "C" {
+#include "lua.h"
+#include "lauxlib.h"
+}
+
+lua_State* MakeLuaState();   // scripting/lua_utils_portable.cpp
+
+// Recorder installed in the headless ShowFunctionslist stub
+// (platform/doc_headless_stubs.cpp) purely for this test.
+extern int  g_ShowFunctionslistCallCount;
+extern int  g_ShowFunctionslistLastStartChar;
+extern int  g_ShowFunctionslistLastEndChar;
+extern bool g_ShowFunctionslistLastBLua;
+extern CString g_ShowFunctionslistLastFilter;
+#endif
+
 // ── encodeBase64 / decodeBase64 ─────────────────────────────────────────────
 
 // Single source of truth (audit §4): RFC 4648 §10 canonical vectors, shared by the
@@ -2159,5 +2180,43 @@ TEST(Utilities, OSVersionString_ReportsThisKernelNotWindows) {
     EXPECT_TRUE(strstr((const char*) sVersion, "Windows") == NULL);
     EXPECT_TRUE(strstr((const char*) sVersion, "Unknown (Platform") == NULL);
 }
+
+// methods_utilities.cpp CMUSHclientDoc::Help: on a Lua-enabled world, a filter
+// that isn't an exact function match falls through to
+// ShowFunctionslist(m_strFilter, 0, 0, bLua) — the four-argument overload.
+// bLua used to land in the nStartChar SLOT instead (true == 1), which both
+// dropped the real bLua argument (so the Lua functions never appeared in the
+// list) and fed GetSelectedFunction a bogus 1/0 start/end pair that blanked
+// the filter.
+#ifdef MUSHCLIENT_LUA_SCRIPTING
+TEST(Utilities, HelpPassesBLuaAndZeroOffsetsToShowFunctionslist) {
+    CMUSHclientDoc doc;
+
+    // Just needs a real, closable lua_State for GetScriptEngine()->L to read
+    // as "scripting is active" - no need to go through CreateScriptEngine()'s
+    // full library-registration dance for this.
+    CScriptEngine* engine = new CScriptEngine(&doc, "Lua");
+    engine->L = MakeLuaState();
+    ASSERT_NE(nullptr, engine->L);
+    doc.m_ScriptEngine = engine;
+
+    g_ShowFunctionslistCallCount = 0;
+    g_ShowFunctionslistLastStartChar = -1;
+    g_ShowFunctionslistLastEndChar = -1;
+    g_ShowFunctionslistLastBLua = false;
+    g_ShowFunctionslistLastFilter = "";
+
+    doc.Help("nosuchfunction");
+
+    ASSERT_EQ(1, g_ShowFunctionslistCallCount);
+    EXPECT_TRUE(g_ShowFunctionslistLastBLua);
+    EXPECT_EQ(0, g_ShowFunctionslistLastStartChar);
+    EXPECT_EQ(0, g_ShowFunctionslistLastEndChar);
+    EXPECT_STREQ("nosuchfunction", (const char*) g_ShowFunctionslistLastFilter);
+
+    doc.m_ScriptEngine = nullptr;
+    delete engine;   // ~CScriptEngine -> DisableScripting -> CloseLua
+}
+#endif
 
 MC_TEST_MAIN()

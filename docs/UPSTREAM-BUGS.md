@@ -1184,3 +1184,18 @@ backslash is not itself the second half of such a pair. Covered by
 `LuaScripting.ArrayImportHandlesValueEndingInBackslashBeforeDelimiter` and
 `LuaScripting.ArrayImportHandlesTwoValuesEndingInBackslashBeforeDelimiter` in
 `tests/test_lua_scripting.cpp`.
+
+## 57 — `world.Help` passes its Lua flag into `ShowFunctionslist`'s start-offset parameter (this commit)
+**Bug:** `CMUSHclientDoc::Help`'s fallback call reads `ShowFunctionslist
+(m_strFilter, bLua)` — the two-argument call binds `bLua` to the SECOND
+parameter, `nStartChar` (`int`), not the fourth, `bLua` (`bool`), which then
+takes its default of `false`. A Lua-enabled world's Function List therefore
+never lists Lua's own functions, and the bogus `nStartChar` of 0 or 1 also
+blanks `GetSelectedFunction`'s filter (its `nEndChar > nStartChar` guard fails
+for 1/0). `CMainFrame::OnGameFunctionslist` (`functionlist.cpp:605`,
+Windows-only) had the identical mistake — `ShowFunctionslist (s, true)`.
+**Fix:** call `ShowFunctionslist (m_strFilter, 0, 0, bLua)` and
+`ShowFunctionslist (s, 0, 0, true)` respectively, naming all four parameters so
+neither collapses again. Covered by
+`Utilities.HelpPassesBLuaAndZeroOffsetsToShowFunctionslist` in
+`tests/test_utilities.cpp`.

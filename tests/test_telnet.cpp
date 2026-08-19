@@ -444,6 +444,55 @@ TEST(TelnetTest, Phase_SUBNEG_IACTransitionsToHAVE_SUBNEG_IAC)
     EXPECT_EQ(HAVE_SUBNEGOTIATION_IAC, doc.m_phase);
 }
 
+// A hostile or broken server can open a subnegotiation (IAC SB <type>) and
+// then stream data forever without the terminating IAC SE.  The collector
+// m_IAC_subnegotiation_data used to grow without any bound, exhausting memory
+// (on the 32-bit Windows build std::string throws at ~2GB, terminating).  Past
+// MAX_SUBNEGOTIATION_LENGTH the phase machine now drops the connection -- the
+// same decisive response the MCCP input path already gives when its buffer
+// would overflow.  kSubnegCap mirrors that file-local #define in
+// telnet_phases.cpp (not visible here); the test only needs to feed
+// comfortably past it, and fails loudly if the two ever drift.
+static const size_t kSubnegCap = 256 * 1024;
+
+TEST(TelnetTest, Phase_SUBNEG_UnterminatedSubnegotiationIsCappedAndDisconnects)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.Phase_SB(TELOPT_TERMINAL_TYPE);   // IAC SB <type>: start collecting
+    ASSERT_EQ(HAVE_SUBNEGOTIATION, doc.m_phase);
+
+    bool disconnected = false;
+    for (size_t i = 0; i < kSubnegCap + 64; i++) {
+        doc.Phase_SUBNEGOTIATION('X');   // a server that never sends IAC SE
+        if (doc.m_iConnectPhase == eConnectNotConnected) { disconnected = true; break; }
+    }
+
+    EXPECT_TRUE(disconnected);   // bounded, not accumulated forever
+    EXPECT_LE(doc.m_IAC_subnegotiation_data.size(), kSubnegCap);
+}
+
+// The IAC-IAC escape (Phase_SUBNEGOTIATION_IAC storing a single IAC) is a
+// second, slower growth vector -- one byte per IAC IAC pair -- and is capped
+// on the same bound.
+TEST(TelnetTest, Phase_SUBNEG_IAC_EscapedIACsAreAlsoCapped)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_iConnectPhase = eConnectConnectedToMud;
+    doc.Phase_SB(TELOPT_TERMINAL_TYPE);
+    ASSERT_EQ(HAVE_SUBNEGOTIATION, doc.m_phase);
+
+    bool disconnected = false;
+    for (size_t i = 0; i < kSubnegCap + 64; i++) {
+        doc.Phase_SUBNEGOTIATION(IAC);       // IAC ...
+        doc.Phase_SUBNEGOTIATION_IAC(IAC);   // ... IAC -> store one IAC byte
+        if (doc.m_iConnectPhase == eConnectNotConnected) { disconnected = true; break; }
+    }
+
+    EXPECT_TRUE(disconnected);
+    EXPECT_LE(doc.m_IAC_subnegotiation_data.size(), kSubnegCap);
+}
+
 // ── Phase_SUBNEGOTIATION_IAC ──────────────────────────────────────────────
 
 TEST(TelnetTest, Phase_SUBNEG_IAC_IACIACStoresOneIAC)

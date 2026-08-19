@@ -82,6 +82,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 71 | `/triggerlist`, `/aliaslist`, `/variablelist` and `/acceleratorlist` compute their truncation width as `(m_nWrapColumn - N)` with no floor, so a narrow wrap column drives it to zero or negative and `CString::Left` (which clamps `n<=0` to empty) prints a bare `"..."` for every entry | this commit | world_debug.cpp `CMUSHclientDoc::DebugHelper` (triggerlist/aliaslist/variablelist/acceleratorlist) |
 | 72 | `strnrchr` never increments its counter (`while (*s && n < count++)`), so it ignores the `count` length bound and scans to the first NUL; both MXP `<P>`-mode callers pass `m_pCurrentLine->text`, a `CLine` buffer of exactly `len` bytes with no NUL terminator, so a hostile long line with no space reads past `len` into uninitialised heap (and possibly past the allocation) | `6491c97` | utilities_shared.cpp `strnrchr`; doc_shared.cpp ← doc.cpp `CMUSHclientDoc::DisplayMsg` (MXP `<P>` last-space scan) |
 | 73 | MXP's malformed-tag/definition error returns leak their argument lists: `MXP_StartTag`'s custom-element expansion drops the LOCAL `BuiltArgumentList` (the `CArgument` nodes already built for the tag) on an unterminated-entity abort, and both it and `MXP_Element` skip `DELETE_LIST` on their function-static `ArgumentList` on several early returns | this commit | mxpStart.cpp `CMUSHclientDoc::MXP_StartTag`; mxpDefs.cpp `CMUSHclientDoc::MXP_Element` |
+| 74 | A telnet subnegotiation with no terminating `IAC SE` accumulates into `m_IAC_subnegotiation_data` with no size bound, so a hostile server that opens `IAC SB <type>` and streams data forever drives the client to unbounded heap allocation — memory exhaustion (on the 32-bit Windows build `std::string` throws at ~2GB, terminating) | this commit | telnet_phases.cpp `CMUSHclientDoc::Phase_SUBNEGOTIATION` / `Phase_SUBNEGOTIATION_IAC` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -1516,3 +1517,28 @@ completes the class F21 (`0dae192`) fixed for the neighbouring returns.
 and the static `ArgumentList` at the atomic abort and every `MXP_Element` early
 return. Covered by `MxpR4.CustomElementArgumentAbortDoesNotLeakTheBuiltList` in
 `tests/test_mxp.cpp` (a differential live-heap-blocks test, mutation-verified).
+
+## 74 — An unterminated telnet subnegotiation grows the collector without bound (this commit)
+**Bug:** `Phase_SUBNEGOTIATION` appends every data byte to
+`m_IAC_subnegotiation_data` (and `Phase_SUBNEGOTIATION_IAC` appends one more for
+each escaped `IAC IAC`) until it sees `IAC SE`. Nothing capped the string's
+length, so a hostile or broken server that opens a subnegotiation
+(`IAC SB <type>`) and never sends `IAC SE` keeps the phase machine in
+`HAVE_SUBNEGOTIATION` across packets and appends forever — unbounded heap growth
+ending in memory exhaustion (on the sacred 32-bit Windows build `std::string`
+throws at ~2GB, terminating). The sibling MCCP input buffer was hardened with a
+`COMPRESS_BUFFER_LENGTH` cap (`759d778`); this accumulator had no equivalent.
+**Fix:** cap `m_IAC_subnegotiation_data` at a file-local
+`MAX_SUBNEGOTIATION_LENGTH` at both append sites; past it, drop the connection
+via `OnConnectionDisconnect` + `UMessageBox`, the same decisive response the
+MCCP input path already gives. The bound is 256 KB — deliberately larger than
+the audit's "a few KB" suggestion so that no legitimate GMCP/MSDP/MTTS/CHARSET
+payload is ever clipped, while still bounding the hostile-stream memory to a
+fixed amount per connection (any finite cap defeats the exhaustion attack).
+Upstream Windows has **no** cap at all, so this diverges from it only by adding
+the bound; it is a security hardening of the shared `DisplayMsg` phase machine,
+not a behaviour change any world relies on, and a Windows run should confirm the
+256 KB ceiling clears real traffic. Covered by
+`TelnetTest.Phase_SUBNEG_UnterminatedSubnegotiationIsCappedAndDisconnects` and
+`Phase_SUBNEG_IAC_EscapedIACsAreAlsoCapped` in `tests/test_telnet.cpp`,
+mutation-verified.

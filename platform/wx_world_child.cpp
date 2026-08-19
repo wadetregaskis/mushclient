@@ -3307,6 +3307,64 @@ void CWorldChildFrame::RefreshTimePane()
                                kStatusPaneTime);
 }
 
+// ── FreezePaneText ────────────────────────────────────────────────────────
+// The whole of CMUSHView::OnUpdateStatuslineFreeze_helper's decision
+// (mushview.cpp:3247-3268), as a pure function:
+//
+//     int iNewPauseStatus = eNotPaused;
+//     m_bAtBufferEnd = m_ScrollbarPosition.cy >=
+//                      (m_ScrollbarSizeTotal.cy - m_ScrollbarSizePage.cy);
+//     if (pDoc->m_iConnectPhase != eConnectConnectedToMud)
+//       iNewPauseStatus = eClosed;
+//     else if (m_freeze)
+//       {
+//        iNewPauseStatus = ePaused;
+//        if (!m_bAtBufferEnd) iNewPauseStatus = eMore;
+//       }
+//
+// Two things in that order are easy to get wrong and are asserted separately:
+// CLOSED wins over a freeze (a frozen world that loses its connection says
+// CLOSED, not PAUSE), and MORE is NOT "scrolled back" -- it is "frozen, AND
+// there is output past the bottom of the window that you have not seen".  A
+// pane that is merely scrolled back in a world with auto_pause off is not
+// frozen and says nothing at all.
+//
+// Windows draws MORE inverse (SBT_OWNERDRAW); wxStatusBar has no per-field
+// owner draw, so the port shows the same word without the inversion.
+// static
+const char* CWorldChildFrame::FreezePaneText(bool connected, bool frozen,
+                                             bool atBufferEnd)
+{
+    if (!connected)   return "CLOSED";
+    if (!frozen)      return "";
+    return atBufferEnd ? "PAUSE" : "MORE";
+}
+
+// ── RefreshFreezePane ─────────────────────────────────────────────────────
+// Rewrite ONLY kStatusPaneFreeze.  Deliberately not UpdateStatusBar(), for the
+// reason RefreshTimePane gives above; and it needs its own driver at all
+// because the PAUSE -> MORE edge is crossed by output ARRIVING while the freeze
+// flag does not change, so none of UpdateStatusBar's callers (the connection
+// edge, activation, world.SetStatus, the autoscroll callback) sees it happen.
+// Windows gets this for free from the idle ON_UPDATE_COMMAND_UI pump and caches
+// the last value in CMUSHView::m_iPauseStatus to make the common pass free;
+// comparing against what the pane already shows is the same saving without a
+// second copy of the state to keep in step.
+void CWorldChildFrame::RefreshFreezePane()
+{
+    if (!m_doc || !m_statusBar) return;
+    // With no output pane the at-the-end answer is not observable and does not
+    // matter: `frozen` is false as well, so the pane says "" or CLOSED either
+    // way.  (Do not read anything into the default -- Windows initialises its
+    // m_bAtBufferEnd to FALSE, mushview.cpp:288, and recomputes it every pass.)
+    const wxString want = wxString::FromAscii(FreezePaneText(
+        m_doc->m_iConnectPhase == eConnectConnectedToMud,
+        m_output && m_output->IsPaused(),
+        !m_output || m_output->IsAtBufferEnd()));
+    if (m_statusBar->GetStatusText(kStatusPaneFreeze) != want)
+        m_statusBar->SetStatusText(want, kStatusPaneFreeze);
+}
+
 // ── UpdateStatusBar ───────────────────────────────────────────────────────
 // Writes the current connection state to the MDI parent's status bar.
 // Only meaningful when this frame is the active MDI child; callers should
@@ -3324,17 +3382,13 @@ void CWorldChildFrame::UpdateStatusBar()
     int phase = m_doc->m_iConnectPhase;
     const bool connected = (phase == eConnectConnectedToMud);
 
-    // ── Freeze pane: "" / PAUSE / CLOSED ───────────────────────────────────
-    // CMUSHView::OnUpdateStatuslineFreeze_helper (mushview.cpp:3247) writes one
-    // of "", "PAUSE", "CLOSED", "MORE" into ID_STATUSLINE_FREEZE.  "MORE" --
-    // frozen AND scrolled back -- has no port equivalent: COutputPane makes
-    // Freeze Output and scroll-lock the same bit (SetPaused only disengages
-    // auto-scroll), so a frozen pane here is "PAUSE" whether or not the view
-    // sits at the buffer end.  Distinguishing them needs a freeze flag separate
-    // from m_autoScroll, which is a behaviour change, not a wiring one.
-    pane(kStatusPaneFreeze,
-         !connected                                ? "CLOSED" :
-         (m_output && m_output->IsPaused())        ? "PAUSE"  : "");
+    // ── Freeze pane: "" / PAUSE / MORE / CLOSED ────────────────────────────
+    // All four of CMUSHView::OnUpdateStatuslineFreeze_helper's values, decided
+    // by FreezePaneText above.  MORE used to be inexpressible here because
+    // nothing asked the pane where its viewport was -- only whether it was
+    // frozen -- so a frozen pane said PAUSE whether or not there was unseen
+    // output below.  COutputPane::IsAtBufferEnd() is the missing half.
+    RefreshFreezePane();
 
     // ── World-name pane (its own field, no longer a message prefix) ────────
     pane(kStatusPaneName, static_cast<const char*>(m_doc->m_mush_name));
@@ -5403,6 +5457,14 @@ void CWorldChildFrame::OnWorldTimer(wxTimerEvent& /*evt*/)
             RefreshTimePane();
         }
     }
+
+    // Keep the freeze pane's PAUSE/MORE distinction honest.  Unlike the clock
+    // this is worth doing on every 100 ms tick rather than once a second: the
+    // edge is crossed the moment a line of output arrives under a frozen pane,
+    // which is exactly when the user is looking at that word.  It costs a
+    // string compare when nothing changed -- Windows recomputes it on every
+    // idle pass for the same reason.
+    RefreshFreezePane();
 
     // Keep the fade moving.  It changes by the SECOND (the arithmetic is all in
     // time_t), so repainting on every 100 ms tick would be nine repaints out of

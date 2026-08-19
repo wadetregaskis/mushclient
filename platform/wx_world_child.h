@@ -514,6 +514,20 @@ public:
     // pane 0 and wipe SetTransientStatus's message within the second.
     void RefreshTimePane();
 
+    // Rewrite ONLY kStatusPaneFreeze, for the same reason, and driven by the
+    // same timer -- the PAUSE -> MORE edge is crossed by output ARRIVING, which
+    // changes nothing this frame is otherwise told about.  Writes only when the
+    // answer differs from what the pane already shows (Windows caches the same
+    // decision in CMUSHView::m_iPauseStatus).
+    void RefreshFreezePane();
+
+    // CMUSHView::OnUpdateStatuslineFreeze_helper's decision (mushview.cpp:3247)
+    // as a pure function: "" / "PAUSE" / "MORE" / "CLOSED".  Public and static
+    // so the in-app selftest can drive all four answers directly, including the
+    // combinations a live pane makes awkward to arrange.
+    static const char* FreezePaneText(bool connected, bool frozen,
+                                      bool atBufferEnd);
+
     // Selftest probe: pane 0's current text (the transient/status line).
     wxString StatusPane0() const { return StatusPane(kStatusPaneMessage); }
     // Selftest probe: any pane's current text (kStatusPane* below).

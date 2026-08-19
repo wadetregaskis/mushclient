@@ -3564,13 +3564,103 @@ int RunWorldFrameSelfTest()
               "freeze: a SINGLE click on the freeze pane runs nothing");
         check(!child->isPaused(), "freeze: ...and leaves the output running");
 
-        // The third state of the pane, so "blank" above is not the only thing
-        // it can ever say.
+        // ── the freeze pane's FOUR states ──────────────────────────
+        // CMUSHView::OnUpdateStatuslineFreeze_helper (mushview.cpp:3247) writes
+        // one of "", PAUSE, MORE, CLOSED.  The port could only ever say three:
+        // nothing asked the output pane WHERE its viewport was, only whether it
+        // was frozen, so a frozen pane said PAUSE whether or not there was
+        // unseen output below.  MORE is the missing one.
+        //
+        // (i) the decision itself.  Both orderings that are easy to invert get
+        // their own assertion: CLOSED beats a freeze, and MORE means "frozen
+        // AND there is output you have not seen", not "scrolled back".
+        check(wxString::FromAscii(F::FreezePaneText(true, false, true )).empty() &&
+              wxString::FromAscii(F::FreezePaneText(true, false, false)).empty(),
+              "freeze table: not frozen -> blank, wherever the viewport sits");
+        check(wxString::FromAscii(F::FreezePaneText(true, true, true))
+                  == wxT("PAUSE"),
+              "freeze table: frozen, at the buffer end -> PAUSE");
+        check(wxString::FromAscii(F::FreezePaneText(true, true, false))
+                  == wxT("MORE"),
+              "freeze table: frozen, with output below -> MORE");
+        check(wxString::FromAscii(F::FreezePaneText(false, true,  false))
+                  == wxT("CLOSED") &&
+              wxString::FromAscii(F::FreezePaneText(false, false, true))
+                  == wxT("CLOSED"),
+              "freeze table: not connected -> CLOSED whether frozen or not");
+
+        // (ii) ...and all four through the real doc and the real output pane.
+        doc->m_iConnectPhase = eConnectConnectedToMud;
+        pane->SetPaused(false);
+        child->UpdateStatusBar();
+        check(child->StatusPane(F::kStatusPaneFreeze).empty(),
+              "freeze pane: running -> blank");
+
+        pane->SetPaused(true);
+        child->UpdateStatusBar();
+        check(pane->IsAtBufferEnd(),
+              "freeze pane: fixture -- freezing scrolled nothing away");
+        check(child->StatusPane(F::kStatusPaneFreeze) == wxT("PAUSE"),
+              "freeze pane: frozen with nothing below it -> PAUSE");
+
+        // Output arriving UNDER a frozen pane is what turns PAUSE into MORE.
+        // It changes no state this frame is otherwise told about, which is why
+        // the pane needs a driver of its own.
+        for (int i = 0; i < 60; ++i) {
+            char buf[48];
+            const int n = snprintf(buf, sizeof buf, "more output %02d\n", i);
+            doc->DisplayMsg(buf, n, 0);
+        }
+        doc->UpdateAllViews(NULL);
+        wxYield();
+        check(pane->IsPaused(),
+              "freeze pane: fixture -- the new output did not thaw the pane");
+        check(!pane->IsAtBufferEnd(),
+              "freeze pane: fixture -- ...and it really is off the buffer end");
+        child->RefreshFreezePane();
+        check(child->StatusPane(F::kStatusPaneFreeze) == wxT("MORE"),
+              "freeze pane: frozen with unseen output below -> MORE");
+
+        // CLOSED beats the freeze, live: this is the same pane still frozen.
         doc->m_iConnectPhase = eConnectNotConnected;
         child->UpdateStatusBar();
         check(child->StatusPane(F::kStatusPaneFreeze) == wxT("CLOSED"),
-              "freeze: the pane says CLOSED while the world is not connected");
+              "freeze pane: a still-frozen world that is not connected "
+              "says CLOSED, not PAUSE");
         doc->m_iConnectPhase = eConnectConnectedToMud;
+
+        // ...and back to PAUSE, so MORE is not simply where it sticks: an
+        // explicit unfreeze returns to the end, and a fresh freeze there has
+        // nothing below it again.
+        pane->SetPaused(false);
+        pane->SetPaused(true);
+        child->RefreshFreezePane();
+        check(child->StatusPane(F::kStatusPaneFreeze) == wxT("PAUSE"),
+              "freeze pane: returning to the buffer end makes it PAUSE again");
+
+        // (iii) what makes it tick.  UpdateStatusBar's callers are the
+        // connection edge, activation, world.SetStatus, the pane clicks and the
+        // autoscroll callback -- and output arriving under a freeze is none of
+        // them, so without the world timer the pane would sit on PAUSE with a
+        // screenful of unread text below it.  Only that pane, for the reason
+        // RefreshTimePane exists: pane 0's transient message has to survive.
+        child->SetTransientStatus(wxT("mapper: 3 rooms"));
+        for (int i = 0; i < 60; ++i) {
+            char buf[48];
+            const int n = snprintf(buf, sizeof buf, "yet more %02d\n", i);
+            doc->DisplayMsg(buf, n, 0);
+        }
+        doc->UpdateAllViews(NULL);
+        const bool ticked = pumpUntil([&] {
+            return child->StatusPane(F::kStatusPaneFreeze) == wxT("MORE"); });
+        check(ticked,
+              "the world timer moves the freeze pane to MORE on its own");
+        check(child->StatusPane0() == wxT("mapper: 3 rooms"),
+              "...touching only that pane, so pane 0's message survives");
+
+        doc->ClearOutput();
+        pane->SetPaused(false);
+        child->UpdateStatusBar();
 
         // (d) reset connected time, end to end through the real hit test.
         doc->m_tStatusTime = CTime::GetCurrentTime() - 90L;

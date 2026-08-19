@@ -582,6 +582,70 @@ int RunWorldFrameSelfTest()
         doc->ClearOutput();
     }
 
+    // ── File ▸ Save Selection (2026-08-18) ──────────────────────────────────
+    // The canonical handler is CMUSHView::OnFileSaveselection (mushview.cpp:
+    // 3995) and CMUSHView is never constructed here, so there had been no way
+    // at all on macOS to write the output selection to a file.  The dialog is
+    // the menu handler's business; what this drives is the write itself.
+    {
+        doc->m_bAutoWrapWindowWidth = false;
+        doc->ClearOutput();
+        doc->DisplayMsg("alpha bravo charlie\n", 20, 0);
+        doc->DisplayMsg("delta echo foxtrot\n", 19, 0);
+        doc->UpdateAllViews(NULL);
+        wxYield();
+
+        const wxString path =
+            wxFileName::CreateTempFileName(wxT("mc_saveselection"));
+
+        // No selection: nothing is written, and the caller is told so.  This
+        // is also the state the menu item greys itself out in.
+        pane->SetSelectionRange(0, 0, 0, 0);
+        check(!child->SaveSelectionToFile(path),
+              "save selection: refuses when nothing is selected");
+
+        // "bravo charlie" — line 1, byte cols 7..20 (1-based, end-exclusive),
+        // the same space the print build above uses.
+        doc->SetSelection(1, 1, 7, 20);
+        check(child->HasOutputSelection(),
+              "save selection: the selection is visible to the menu rule");
+        check(child->SaveSelectionToFile(path),
+              "save selection: ...and writing it reports success");
+
+        // Read the file back as BYTES: "the call returned true" is exactly
+        // what a no-op stub would also do.
+        std::string written;
+        if (FILE* f = fopen((const char*) path.utf8_str(), "rb")) {
+            char buf[512];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof buf, f)) > 0)
+                written.append(buf, n);
+            fclose(f);
+        }
+        check(written == "bravo charlie",
+              "save selection: the file holds exactly the selected text");
+
+        // A different selection must produce a different file, so the check
+        // above cannot be passed by a stale or hard-coded write.
+        doc->SetSelection(2, 2, 1, 6);
+        check(child->SaveSelectionToFile(path),
+              "save selection: a second write succeeds");
+        written.clear();
+        if (FILE* f = fopen((const char*) path.utf8_str(), "rb")) {
+            char buf[512];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof buf, f)) > 0)
+                written.append(buf, n);
+            fclose(f);
+        }
+        check(written == "delta",
+              "save selection: ...and rewrites the file, not appends to it");
+
+        wxRemoveFile(path);
+        pane->SetSelectionRange(0, 0, 0, 0);
+        doc->ClearOutput();
+    }
+
     // ── world.SetScroll scrolls to the PIXEL, not a row-mistaken-for-a-line ─
     // (2026-08-12)  setScroll divided the documented device-pixel position by
     // the line height — a visual-ROW ordinal — and passed it to ScrollToLine,

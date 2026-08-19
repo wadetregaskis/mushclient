@@ -33,12 +33,28 @@
 #include "MUSHclient.h"
 #include "doc.h"
 #include "childfrm.h"
+#include "mainfrm.h"          // CMainFrame — m_bActive / m_bFlashingWindow
 #include "MUSHview.h"
 #include "resource.h"
 #include "platform/wx_world_child.h"
 #include "platform/wx_mfc_hooks.h"
 #include "platform/wx_mfc_logic.h"   // RecentWorlds* — the MRU behind File ▸ Open Recent
+#include "platform/wx_toolbar.h"     // CWorldToolBars — the Connect/Disconnect toggle
+#include "platform/menu_ui_rules.h"  // kPortMenuIdDisconnect — the id both must agree on
 #include "dialogs/world_prefs/TreePropertySheet.h"   // m_iWantedPage — which page a Configure command asked for
+
+// Defined in wx_toolbar.cpp: the world in activity slot 1..10.  The menu/
+// startup ID_WORLDS_WORLD* commands resolve their world through this same
+// lookup, which is the point of asserting on it here.
+CMUSHclientDoc* wx_world_in_slot(int slot);
+
+// Defined in wx_mfc_impl.cpp: drop a world from the doc→frame registry.
+// Closing a world normally does this from CWorldChildFrame::OnClose, via
+// RunCloseTeardown -- but this harness tears its worlds down with Destroy(),
+// which never runs OnClose.  The entry would then outlive the frame, and the
+// next command that activates a world by slot would dereference freed memory
+// (seen: an intermittent SIGSEGV in the world-switch block below).
+void wx_unregister_world_frame(CMUSHclientDoc* doc);
 
 #include <cstdio>
 #include <map>
@@ -138,6 +154,28 @@ bool fireCmd(wxWindow* frame, int id)
     wxCommandEvent evt(wxEVT_MENU, id);
     evt.SetEventObject(frame);
     return frame->GetEventHandler()->ProcessEvent(evt);
+}
+
+// The command id a toolbar button forwarded to the main frame.  A plain
+// function rather than a lambda so the binding can be undone again: the
+// recorder must not outlive the toolbar assertions below.
+int g_forwardedCmd = -1;
+void recordForwardedCmd(wxCommandEvent& evt) { g_forwardedCmd = evt.GetId(); }
+
+// What File ▸ Save / Save As handed to the single save flow.  Globals rather
+// than captures because g_wxhook_save_world takes a plain function pointer.
+int   g_saveCalls  = 0;
+void* g_saveDoc    = NULL;
+bool  g_saveAs     = false;
+void* g_saveParent = NULL;
+
+// Click a toolbar button.  wxEVT_TOOL is delivered to the bar's FRAME, which is
+// where CWorldToolBars binds its handler.
+void pressTool(wxWindow* barFrame, int id)
+{
+    wxCommandEvent evt(wxEVT_TOOL, id);
+    evt.SetEventObject(barFrame);
+    barFrame->GetEventHandler()->ProcessEvent(evt);
 }
 
 UiAnswer probeUi(wxWindow* frame, int id)
@@ -366,6 +404,50 @@ int RunMenuBarSelfTest()
             cmd.SetEventObject(frame);
             checkf(frame->GetEventHandler()->ProcessEvent(cmd),
                    "Edit > Select All is bound to a handler");
+        }
+    }
+
+    // ── Edit ▸ Undo has to EXIST (2026-08-18) ───────────────────────────────
+    // The canonical Edit menu opens with Undo, and the port's menu simply had
+    // no such item: Ctrl/Cmd+Z was registered nowhere, so neither the command
+    // bar nor any bridged dialog field could be undone from the keyboard, and
+    // world.DoCommand("Undo") was the only way in.  The dispatcher arm for it
+    // was already there -- only the item was missing.
+    {
+        const Item* found = NULL;
+        for (const Item& it : items)
+            if (it.path == "Edit > Undo") { found = &it; break; }
+
+        checkf(found != NULL, "Edit > Undo is in the menu bar");
+        if (found) {
+            checkf(found->accelKey == 'Z' && found->accelFlags == wxACCEL_CTRL,
+                   "...bound to Ctrl/Cmd+Z");
+            // Unlike Copy and Select All this one KEEPS the standard id on
+            // purpose: its target is always the focused field, which is
+            // exactly what AppKit's undo: routing does.
+            checkf(found->id == wxID_UNDO,
+                   "...on the standard id, so AppKit routes it to the focused field");
+        }
+    }
+
+    // ── File ▸ Save Selection exists at all (2026-08-18) ────────────────────
+    // ID_FILE_SAVESELECTION is a canonical command whose only handler is
+    // CMUSHView::OnFileSaveselection, and CMUSHView is never constructed on
+    // the port -- so the command had no item and no implementation here.
+    {
+        const Item* found = find_by_id(items, 32255 /*ID_FILE_SAVESELECTION*/);
+        check(found != NULL, "File > Save Selection is in the menu bar");
+        if (found) {
+            // Prefix compare: the label carries an ellipsis, and a narrow
+            // literal may not (ascii-literals lint).
+            checkf(found->path.find("File > Save Selection") == 0,
+                   "...under File, beside Print Selection");
+            // It follows Copy's rule: no world, no selection, no command.  The
+            // handler must SAY so rather than leave the item alone, which is
+            // what an unhandled id looks like.
+            const UiAnswer a = probeUi(frame, found->id);
+            check(a.setEnabled && !a.enabled,
+                  "...and is explicitly greyed with no world open");
         }
     }
 
@@ -893,10 +975,231 @@ int RunMenuBarSelfTest()
                 g_run_mfc_property_sheet = savedSheet;
             }
 
+            // ── File ▸ Save / Save As go through the ONE save flow ──────────
+            // There used to be two hand-copied versions of the whole save/
+            // save-as sequence: this menu path had its own, and the close
+            // prompt called g_wxhook_save_world (wx_world_child.cpp:6038).
+            // They had drifted -- the menu copy's failure message box was
+            // parented to nothing, so a save error appeared as a detached
+            // app-modal alert instead of belonging to the world that failed.
+            // Asserting the PARENT is what pins the merge: a revert stops
+            // calling the hook at all and every line here fails.
+            {
+                bool (*savedSaveWorld)(void*, bool, void*) = g_wxhook_save_world;
+                g_wxhook_save_world = [](void* d, bool as, void* p) -> bool {
+                    ++g_saveCalls;
+                    g_saveDoc    = d;
+                    g_saveAs     = as;
+                    g_saveParent = p;
+                    return true;      // no disk, no Save As dialog
+                };
+
+                g_saveCalls = 0; g_saveDoc = NULL; g_saveParent = NULL;
+                fireCmd(frame, 0xE103 /*ID_FILE_SAVE*/);
+                check(g_saveCalls == 1, "File > Save reaches the save flow");
+                check(g_saveDoc == doc, "...with the active world's document");
+                check(!g_saveAs, "...as a plain Save, not a Save As");
+                check(g_saveParent == child,
+                      "...parented to the world's own child frame");
+
+                g_saveCalls = 0; g_saveDoc = NULL; g_saveParent = NULL;
+                fireCmd(frame, 0xE104 /*ID_FILE_SAVE_AS*/);
+                check(g_saveCalls == 1, "File > Save As reaches the same flow");
+                check(g_saveAs, "...asking for the Save As arm");
+                check(g_saveParent == child,
+                      "...and parented to the child frame too");
+
+                g_wxhook_save_world = savedSaveWorld;
+            }
+
             doc->m_pWorldView = NULL;
+            wx_unregister_world_frame(doc);   // Destroy() skips OnClose — see above
             child->Destroy();
             wxYield();
         }
+    }
+
+    // ── ID_WORLDS_WORLD1..0 switch worlds (2026-08-18) ──────────────────
+    // InitInstance ends by posting ID_WORLDS_WORLD1 (MUSHclient.cpp:950) so
+    // that with "Open activity window at startup" on, the Activity frame does
+    // not keep the focus.  On the port that was a silent no-op: the canonical
+    // handler is CMainFrame::OnWorldSwitch, an ON_COMMAND_EX entry, and the
+    // port's message maps never expand ON_COMMAND_EX -- so no amount of
+    // AfxDispatchCommand could have reached it, and the id fell through to
+    // evt.Skip().
+    //
+    // What CANNOT be asserted here is the end of the chain.  Window activation
+    // needs the event loop this harness exits before: measured 2026-08-18,
+    // wxMDIChildFrame::Activate() moves neither GetActiveChild() nor a single
+    // wxEVT_ACTIVATE, whichever child it is called on.  So the two halves that
+    // ARE observable get asserted instead -- the frame now CLAIMS the command
+    // (it used to skip), and the slot it resolves comes from the one lookup
+    // the activity toolbar also uses.
+    {
+        CWnd* const savedMainWnd = App.m_pMainWnd;
+        App.m_pMainWnd = &host;
+
+        auto makeWorld = [&](const char* name) -> CWorldChildFrame* {
+            CMUSHclientDoc* d = new CMUSHclientDoc();
+            d->m_mush_name   = name;
+            d->m_nWrapColumn = 80;
+            d->m_maxlines    = 5000;
+            d->SetUpOutputWindow();
+            return new CWorldChildFrame(frame, d, wxString::FromUTF8(name));
+        };
+
+        CWorldChildFrame* w1 = makeWorld("zz_selftest_switch1");
+        CWorldChildFrame* w2 = makeWorld("zz_selftest_switch2");
+        w1->Show();
+        w2->Show();
+        wxYield();
+
+        // Earlier blocks left their documents behind, so take the slots as
+        // assigned rather than assuming 1 and 2 -- what matters is that two
+        // DIFFERENT worlds hold two DIFFERENT slots.
+        App.UpdateWorldCounts();
+        const int s1 = w1->GetDoc()->m_view_number;
+        const int s2 = w2->GetDoc()->m_view_number;
+        check(s1 >= 1 && s2 >= 1 && s1 != s2,
+              "two open worlds hold two distinct slots");
+        check(wx_world_in_slot(s1) == w1->GetDoc() &&
+              wx_world_in_slot(s2) == w2->GetDoc(),
+              "...and the shared slot lookup maps each id to its own world");
+
+        // The chain InitInstance actually uses: CWnd::SendMessage(WM_COMMAND)
+        // -> the send-message hook -> resolveTarget(App.m_pMainWnd) -> this
+        // frame's dispatcher.  Observed with a handler that passes the event
+        // on, so the real arm still runs behind it.
+        static int seen = -1;
+        frame->Bind(wxEVT_MENU, [](wxCommandEvent& e) { seen = e.GetId(); e.Skip(); });
+        seen = -1;
+        // One of THIS block's own slots, not a bare ID_WORLDS_WORLD1: earlier
+        // blocks leave their documents behind, so slot 1 can belong to a world
+        // whose frame is already gone.
+        const int wantId = ID_WORLDS_WORLD1 + s1 - 1;
+        Frame.SendMessage(WM_COMMAND, wantId, 0);
+        check(seen == wantId,
+              "Frame.SendMessage(WM_COMMAND, ID_WORLDS_WORLD*) reaches the frame");
+
+        check(fireCmd(frame, ID_WORLDS_WORLD1 + s1 - 1),
+              "...and a world-switch id is consumed, not skipped (was: skipped)");
+        check(fireCmd(frame, ID_WORLDS_WORLD1 + s2 - 1),
+              "...for the second world's slot too");
+        // Both ends of the block, since it is a RANGE test and an off-by-one
+        // at either end is the mistake to fear.
+        check(fireCmd(frame, ID_WORLDS_WORLD0),
+              "...and the last slot (the button labelled 0, i.e. world 10)");
+
+        // The control: the arm must not have become a catch-all.  32214 is
+        // ID_GAME_TESTCOMMAND, one past the block, and no message map here
+        // knows it -- so it must still be passed on.
+        check(!fireCmd(frame, 32214 /*ID_GAME_TESTCOMMAND*/),
+              "...while the id one past the block is still skipped");
+
+        w1->GetDoc()->m_pWorldView = NULL;
+        w2->GetDoc()->m_pWorldView = NULL;
+        wx_unregister_world_frame(w1->GetDoc());   // Destroy() skips OnClose
+        wx_unregister_world_frame(w2->GetDoc());
+        w1->Destroy();
+        w2->Destroy();
+        wxYield();
+        App.m_pMainWnd = savedMainWnd;
+    }
+
+    // ── the toolbar's Connect/Disconnect toggle sends the SAME id the menu
+    //    does (2026-08-18) ────────────────────────────────────────────────
+    // Windows has one toggle button; the port splits it into two commands and
+    // picks by connection phase.  The Disconnect half used to carry a bare
+    // 0xE200 while menu_ui_rules.h named the same number — the second copy of
+    // an id this exact command has already come adrift on once.  Nothing had
+    // ever pressed the button, so a drift would have been silent.
+    //
+    // Both branches are asserted: an implementation stuck on either one is a
+    // plausible mistake, and only the pair rules it out.  Deliberately runs
+    // after the world child is gone — the MDI parent offers its events to the
+    // active child first, whose own toolbar would answer instead of us.
+    {
+        CMUSHclientDoc* tdoc = new CMUSHclientDoc();
+        tdoc->m_mush_name = "ToolBarSelfTest";
+        tdoc->m_server    = "mud.example.com";
+
+        wxFrame*     tbHost  = new wxFrame(frame, wxID_ANY, wxT("toolbar-host"));
+        wxBoxSizer*  tbSizer = new wxBoxSizer(wxVERTICAL);
+        tbHost->SetSizer(tbSizer);
+        // Deliberately leaked: its click lambda captures this object, and the
+        // frame outlives a stack instance by the length of one Destroy().
+        CWorldToolBars* bars = new CWorldToolBars(tbHost, tbSizer);
+
+        check(wxTheApp->GetTopWindow() != tbHost,
+              "the toolbar's forwarding target is not its own frame");
+
+        frame->Bind(wxEVT_MENU, &recordForwardedCmd);
+
+        tdoc->m_iConnectPhase = eConnectConnectedToMud;
+        bars->UpdateState(tdoc);         // the only way in to the active doc
+        g_forwardedCmd = -1;
+        pressTool(tbHost, ID_CONNECT_DISCONNECT);
+        check(g_forwardedCmd == kPortMenuIdDisconnect,
+              "a connected world's toggle forwards kPortMenuIdDisconnect");
+
+        tdoc->m_iConnectPhase = eConnectNotConnected;
+        bars->UpdateState(tdoc);
+        g_forwardedCmd = -1;
+        pressTool(tbHost, ID_CONNECT_DISCONNECT);
+        check(g_forwardedCmd == 32239 /*ID_CONNECTION_CONNECT*/,
+              "...and a disconnected one forwards Connect (the other branch)");
+
+        frame->Unbind(wxEVT_MENU, &recordForwardedCmd);
+        tbHost->Destroy();
+        wxYield();
+    }
+
+    // ── app activation reaches CMainFrame::m_bActive (2026-08-18) ───────────
+    // Windows maintains it in CMainFrame::OnActivate; the port never did, so
+    // the `if (bFlashIcon && !m_bActive)` guard at mainfrm.cpp:811 -- the one
+    // that stops a background world asking for attention while MUSHclient is
+    // already the frontmost app -- was vacuously true, and m_bFlashingWindow
+    // was set once and never cleared (its only clearer is that same handler).
+    {
+        const bool savedActive = Frame.m_bActive;
+        const bool savedFlash  = Frame.m_bFlashingWindow;
+
+        Frame.m_bActive = false;
+        {
+            wxActivateEvent act(wxEVT_ACTIVATE_APP, true);
+            wxTheApp->ProcessEvent(act);
+        }
+        check(Frame.m_bActive, "activating the app sets CMainFrame::m_bActive");
+
+        {
+            wxActivateEvent act(wxEVT_ACTIVATE_APP, false);
+            wxTheApp->ProcessEvent(act);
+        }
+        check(!Frame.m_bActive, "...and deactivating clears it again");
+
+        // The half the flash actually depends on: a window flashed while in
+        // the background must stop being marked as flashing when the user
+        // comes back to it, or it can never be flashed again.
+        Frame.m_bFlashingWindow = true;
+        {
+            wxActivateEvent act(wxEVT_ACTIVATE_APP, true);
+            wxTheApp->ProcessEvent(act);
+        }
+        check(!Frame.m_bFlashingWindow,
+              "coming back to the app clears m_bFlashingWindow");
+
+        // The control: deactivating must NOT clear it, or the flag would look
+        // right for the wrong reason.
+        Frame.m_bFlashingWindow = true;
+        {
+            wxActivateEvent act(wxEVT_ACTIVATE_APP, false);
+            wxTheApp->ProcessEvent(act);
+        }
+        check(Frame.m_bFlashingWindow,
+              "...while leaving it does not (only activation stops a flash)");
+
+        Frame.m_bActive         = savedActive;
+        Frame.m_bFlashingWindow = savedFlash;
     }
 
     frame->Destroy();

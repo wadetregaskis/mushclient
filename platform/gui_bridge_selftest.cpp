@@ -961,6 +961,87 @@ void TestDdxCharsetRoundTrip()
     host->Destroy();
 }
 
+// ── 11b. CEdit offsets are BYTES, not characters (2026-08-18) ──────────────
+// The CEdit hooks answered in wxWidgets CHARACTER positions, but every
+// canonical caller uses the same numbers to index the UTF-8 CString it got
+// from GetWindowText: FindMatchingBrace (Utilities.cpp:579) slices strBuf with
+// them, EditMultiLine's Go-To-Line splices at LineIndex, and the Notes page's
+// Find (prefspropertypages.cpp:5351) scans from GetSel.  One non-ASCII
+// character before the caret shifted every offset after it, so brace matching
+// selected the wrong span and Go-To-Line jumped into the middle of a character.
+//
+// The fixture has to make the two spaces DIFFER — a monospace/ASCII string
+// would make the conversion an identity and nothing could discriminate.
+void TestEditOffsetsAreBytes()
+{
+    printf("CEdit offsets (UTF-8 bytes vs wx characters):\n");
+
+    wxFrame* host = new wxFrame(nullptr, wxID_ANY, wxT("edit-host"));
+
+    // "héllo wörld": 11 characters, 13 bytes.  "wörld" is characters 6..11,
+    // which is bytes 7..13 — every number below differs between the two.
+    {
+        wxTextCtrl* tc = new wxTextCtrl(host, wxID_ANY);
+        tc->SetValue(wxString::FromUTF8("h\xC3\xA9llo w\xC3\xB6rld"));
+
+        CEdit ed;
+        ed.m_hWnd = (HWND) tc;
+
+        check(ed.GetWindowTextLength() == 13,
+              "GetWindowTextLength counts bytes, not characters (13, not 11)");
+
+        // The caller's own text, in the space it indexes.
+        char* raw = g_wxhook_get_window_text((void*) tc);
+        CString text(raw ? raw : "");
+        free(raw);
+        check(text.GetLength() == ed.GetWindowTextLength(),
+              "...which is exactly the length of the CString GetWindowText returns");
+
+        tc->SetSelection(6, 11);              // wx ground truth: "wörld"
+        int s = 0, e = 0;
+        ed.GetSel(s, e);
+        check(s == 7 && e == 13,
+              "GetSel reports the byte span of the selection (7..13, not 6..11)");
+        check(text.Mid(s, e - s) == CString("w\xC3\xB6rld"),
+              "...so slicing the CString with them yields exactly the selected word");
+
+        // And back the other way: byte arguments must land on the same word.
+        ed.SetSel(7, 13);
+        long from = 0, to = 0;
+        tc->GetSelection(&from, &to);
+        check(from == 6 && to == 11,
+              "SetSel maps byte arguments back onto the wx character range");
+    }
+
+    // The line accessors carry the same numbers.  Three lines of "àà": each is
+    // 2 characters but 4 bytes, so the line starts diverge immediately.
+    // Characters: 0-1 àà, 2 \n, 3-4 àà, 5 \n, 6-7 àà   (last position 8)
+    // Bytes:      0-3 àà, 4 \n, 5-8 àà, 9 \n, 10-13 àà (length 14)
+    {
+        wxTextCtrl* tc = new wxTextCtrl(host, wxID_ANY, wxEmptyString,
+                                        wxDefaultPosition, wxDefaultSize,
+                                        wxTE_MULTILINE | wxTE_DONTWRAP);
+        tc->SetValue(wxString::FromUTF8(
+            "\xC3\xA0\xC3\xA0\n\xC3\xA0\xC3\xA0\n\xC3\xA0\xC3\xA0"));
+
+        CEdit ed;
+        ed.m_hWnd = (HWND) tc;
+
+        check(ed.GetLineCount() == 3, "the line count is unaffected (the control)");
+        check(ed.GetWindowTextLength() == 14, "the total length is 14 bytes, not 8");
+        check(ed.LineIndex(1) == 5,  "LineIndex(1) is the line's BYTE start (5, not 3)");
+        check(ed.LineIndex(2) == 10, "LineIndex(2) likewise (10, not 6)");
+        check(ed.LineLength(5) == 4,
+              "LineLength takes a byte offset and answers in bytes (4, not 2)");
+        // Byte 8 is the second à of line 1; read as a character it would be the
+        // end of the text, i.e. line 2 — so this one crosses a line boundary.
+        check(ed.LineFromChar(8) == 1,
+              "LineFromChar reads its argument as a byte offset (line 1, not 2)");
+    }
+
+    host->Destroy();
+}
+
 // ── 12. Scripting page: Browse speaks the port's languages (2026-08-12) ────
 // CPrefsP17::ScriptBrowser's Python/Tcl/Ruby cases were behind USE_PYTHON/
 // USE_TCL/USE_RUBY, which only stdafx.h's _WIN32 arm defines — so with the
@@ -1527,6 +1608,7 @@ int RunGuiBridgeSelfTest()
     TestClipboardRoundTrip();
     TestFunctionListView();
     TestDdxCharsetRoundTrip();
+    TestEditOffsetsAreBytes();
     TestScriptingPageBrowse();
     TestListBoxMutators();
     TestLuaDirectoryPicker();

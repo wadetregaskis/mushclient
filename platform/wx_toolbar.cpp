@@ -15,6 +15,7 @@
 #include "doc.h"
 #include "resource.h"
 #include "platform/app_config.h"   // OpenAppConfig -- never the raw wxConfig
+#include "platform/menu_ui_rules.h" // kPortMenuIdDisconnect -- one owner of the id
 #include <memory>
 #include "platform/wx_toolbar.h"
 
@@ -148,9 +149,14 @@ const TbButton* FindButton (int id)
     return nullptr;
 }
 
+} // namespace
+
 // The world occupying activity slot `slot` (1..10), or null.  Numbers any
 // unnumbered world on the way, as CMainFrame::OnUpdateBtnWorlds does.
-CMUSHclientDoc* WorldInSlot (int slot)
+// Not file-static: the Window-menu / startup ID_WORLDS_WORLD* commands in
+// wx_mfc_impl.cpp pick their world the same way, and a second copy of this
+// walk is how the two would disagree about which world is "world 1".
+CMUSHclientDoc* wx_world_in_slot (int slot)
 {
     int nItem = 1;
     for (POSITION pos = App.m_pWorldDocTemplate->GetFirstDocPosition(); pos; ) {
@@ -164,6 +170,8 @@ CMUSHclientDoc* WorldInSlot (int slot)
     }
     return nullptr;
 }
+
+namespace {
 
 // ── Art ───────────────────────────────────────────────────────────────────
 
@@ -308,14 +316,17 @@ void CWorldToolBars::DispatchId (int id)
     case eConnectTgl:
         // Windows has one toggle button (ID_CONNECT_DISCONNECT); the port has
         // separate Connect / Disconnect commands, so pick by current state.
+        // The Disconnect id is menu_ui_rules.h's constant, not a copy of its
+        // value: this pair has come adrift before (see menu_ui_rules.cpp), and
+        // a second literal is exactly how it does so.
         if (doc)
             Forward(doc->m_iConnectPhase == eConnectNotConnected
                         ? 32239   /*ID_CONNECTION_CONNECT*/
-                        : 0xE200  /*Disconnect*/);
+                        : kPortMenuIdDisconnect);
         return;
 
     case eWorldSwitch:
-        if (CMUSHclientDoc* target = WorldInSlot(b.arg))
+        if (CMUSHclientDoc* target = wx_world_in_slot(b.arg))
             wx_activate_world_frame(target);
         return;
 
@@ -436,7 +447,7 @@ void CWorldToolBars::UpdateState (CMUSHclientDoc* activeDoc)
     // Keep slot numbers DENSE (2026-08-12).  Windows renumbers on every idle
     // tick (CMUSHclientApp::UpdateWorldCounts from OnIdle) and on activity
     // updates; the port ran neither, so closing world B of three left its
-    // slot greyed forever and WorldInSlot's lazy fallback then assigned a
+    // slot greyed forever and wx_world_in_slot's lazy fallback then assigned a
     // NEW world a number an existing one already held — a world the bar
     // could never raise or light again.  This tick (every 100 ms) is the
     // port's idle pump; the walk is the canonical one.
@@ -495,7 +506,7 @@ void CWorldToolBars::UpdateState (CMUSHclientDoc* activeDoc)
         const int btnIndex = slot - 1;
         const int id       = kActivity[btnIndex].id;
 
-        CMUSHclientDoc* found = WorldInSlot(slot);
+        CMUSHclientDoc* found = wx_world_in_slot(slot);
         if (!found) {
             act->EnableTool(id, false);
             act->ToggleTool(id, false);

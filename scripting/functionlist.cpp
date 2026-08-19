@@ -602,7 +602,7 @@ CFunctionListDlg dlg;
 void CMainFrame::OnGameFunctionslist() 
   {
   CString s;
-  ShowFunctionslist (s, true);
+  ShowFunctionslist (s, 0, 0, true);
   }
 
 #ifdef _WIN32

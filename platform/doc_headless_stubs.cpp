@@ -78,9 +78,25 @@ void CMUSHclientDoc::DrawMappingStatusLine (void)
 // headless ShowFunctionslist has no function-list window to populate.
 // ════════════════════════════════════════════════════════════════════════════
 
-void ShowFunctionslist (CString & /*strSelection*/, int /*nStartChar*/,
-                        int /*nEndChar*/, const bool /*bLua*/)
+// Test instrumentation (R2-02-F4 covering test): record the arguments of the
+// last call so tests/test_utilities.cpp can pin the bLua / nStartChar /
+// nEndChar wiring through CMUSHclientDoc::Help without a real function-list
+// window to inspect.  Additive and self-contained; no shipping code reads
+// these.
+int g_ShowFunctionslistCallCount = 0;
+int g_ShowFunctionslistLastStartChar = -1;
+int g_ShowFunctionslistLastEndChar = -1;
+bool g_ShowFunctionslistLastBLua = false;
+CString g_ShowFunctionslistLastFilter;
+
+void ShowFunctionslist (CString & strSelection, int nStartChar,
+                        int nEndChar, const bool bLua)
 {
+  g_ShowFunctionslistCallCount++;
+  g_ShowFunctionslistLastStartChar = nStartChar;
+  g_ShowFunctionslistLastEndChar = nEndChar;
+  g_ShowFunctionslistLastBLua = bLua;
+  g_ShowFunctionslistLastFilter = strSelection;
 }
 
 void ShowHelp (const CString /*strPrefix*/, const CString /*strTopic*/)

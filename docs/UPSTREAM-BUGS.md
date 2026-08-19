@@ -1164,3 +1164,68 @@ COM host's equivalent early return (`scriptengine.cpp:101`) restores too.
 `SweepR4.ExecuteLuaMissingRoutineRestoresNoteStyle` and
 `SweepR4.ExecuteLuaSimpleOverloadMissingRoutineRestoresNoteStyle` in
 `tests/test_lua_scripting.cpp`.
+
+## 56 — `world.ArrayImport` mistakes a doubled backslash for an escaped delimiter (this commit)
+**Bug:** `ArrayImport`'s pre-pass un-escapes the exported string with a single
+`FindAndReplace (sValues, sEscapedDelimiter, sTemp)` (methods_arrays.cpp:284-305).
+`ArrayExport` doubles every backslash and then escapes the real delimiter, so a
+key or value ending in a literal backslash right before a REAL, unescaped
+delimiter is exported as two backslashes followed by the separator. The naive
+left-to-right search matches the SECOND backslash plus the following delimiter
+as if it were an escaped one and substitutes the scratch character over it,
+eating the real field separator. With one such field the import fails loudly
+with `eArrayNotEvenNumberOfValues`; with two, the field count stays even and
+`ArrayImport` silently stores corrupted key/value pairs instead.
+**Fix:** replace the blind `FindAndReplace` pre-pass with a left-to-right scan
+that consumes a doubled backslash as an untouched literal pair (leaving it for
+the existing post-split un-doubling) and only substitutes the scratch
+character for a backslash immediately followed by the delimiter when that
+backslash is not itself the second half of such a pair. Covered by
+`LuaScripting.ArrayImportHandlesValueEndingInBackslashBeforeDelimiter` and
+`LuaScripting.ArrayImportHandlesTwoValuesEndingInBackslashBeforeDelimiter` in
+`tests/test_lua_scripting.cpp`.
+
+## 57 — `world.Help` passes its Lua flag into `ShowFunctionslist`'s start-offset parameter (this commit)
+**Bug:** `CMUSHclientDoc::Help`'s fallback call reads `ShowFunctionslist
+(m_strFilter, bLua)` — the two-argument call binds `bLua` to the SECOND
+parameter, `nStartChar` (`int`), not the fourth, `bLua` (`bool`), which then
+takes its default of `false`. A Lua-enabled world's Function List therefore
+never lists Lua's own functions, and the bogus `nStartChar` of 0 or 1 also
+blanks `GetSelectedFunction`'s filter (its `nEndChar > nStartChar` guard fails
+for 1/0). `CMainFrame::OnGameFunctionslist` (`functionlist.cpp:605`,
+Windows-only) had the identical mistake — `ShowFunctionslist (s, true)`.
+**Fix:** call `ShowFunctionslist (m_strFilter, 0, 0, bLua)` and
+`ShowFunctionslist (s, 0, 0, true)` respectively, naming all four parameters so
+neither collapses again. Covered by
+`Utilities.HelpPassesBLuaAndZeroOffsetsToShowFunctionslist` in
+`tests/test_utilities.cpp`.
+
+## 58 — `world.ImportXML` leaks the `CArchiveException` on every failed import (this commit)
+**Bug:** `ImportXML`'s `catch (CArchiveException*)` clause has no parameter
+name, so it can never call `e->Delete()` — every malformed-XML import leaks the
+heap-allocated exception object. The two other handlers in the same file
+(`ExportXML`, `GetXMLEntity`) both call `Delete()` on the way out.
+**Fix:** name the parameter and call `e->Delete()` before setting `iCount =
+-1`, matching the other two handlers. Covered by
+`LuaScripting.ImportXMLDeletesArchiveExceptionOnFailure` in
+`tests/test_lua_scripting.cpp`, using a live-instance counter added to the
+shim's `CArchiveException` (`platform/mfc_ui.h`) since a leak otherwise leaves
+no other observable trace.
+
+## 59 — `SetBackgroundImage` and `SetForegroundImage` duplicate a 66-line body (this commit)
+**Bug:** the two methods are byte-identical apart from the three
+`CMUSHclientDoc` members they touch (`m_BackgroundBitmap`/`m_ForegroundBitmap`,
+`m_iBackgroundMode`/`m_iForegroundMode`,
+`m_strBackgroundImageName`/`m_strForegroundImageName`), so any fix to the
+image-loading logic — the PNG-vs-BMP sniff, the error mapping, the bitmap
+lifetime — has to be made twice and can silently be made once, the exact
+pattern behind several of the other entries in this file (portable twins,
+forked TUs). No functional consequence today; the two bodies had not yet
+diverged.
+**Fix:** extract the shared body into a static `SetFrameImage` helper taking
+the bitmap/mode/name triple by reference, and reduce both methods to a single
+call each — behaviour-identical on both platforms. Covered by
+`LuaSurface.SetImageFamilySharesOneBodyBackgroundAndForeground` in
+`tests/test_lua_surface.cpp`, which drives both entry points over the same
+four fixtures so a future edit landing on only one of them shows up as a
+divergence.

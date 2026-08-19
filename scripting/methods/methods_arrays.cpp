@@ -300,7 +300,44 @@ long CMUSHclientDoc::ArrayImport(LPCTSTR Name, LPCTSTR Values, LPCTSTR Delimiter
     if (iTemp > 255)
       return eCannotImport;
 
-    sValues = FindAndReplace (sValues, sEscapedDelimiter, sTemp);
+    // can't just FindAndReplace the raw string for backslash+delimiter -
+    // a value that itself ENDS in a backslash, right before a real
+    // (unescaped) delimiter, has been doubled by ArrayExport to "\\" and
+    // a naive left-to-right search matches the second half of that pair
+    // plus the following real delimiter, eating the real delimiter.  So
+    // scan left-to-right ourselves, consuming a doubled backslash as an
+    // untouched literal pair (the post-split un-doubling below fixes it
+    // up) and only substituting the scratch character for a backslash
+    // that is immediately followed by the delimiter and is NOT itself
+    // the second half of such a pair
+    string sScanned;
+    sScanned.reserve (sValues.size ());
+
+    for (string::size_type i = 0; i < sValues.size (); )
+      {
+      if (sValues [i] == '\\' && i + 1 < sValues.size ())
+        {
+        if (sValues [i + 1] == '\\')
+          {
+          sScanned += sValues [i];
+          sScanned += sValues [i + 1];
+          i += 2;
+          continue;
+          } // end of doubled backslash - leave the pair alone
+
+        if (sValues [i + 1] == sDelimiter [0])
+          {
+          sScanned += sTemp;
+          i += 2;
+          continue;
+          } // end of escaped delimiter
+        } // end of backslash with a following character
+
+      sScanned += sValues [i];
+      i++;
+      } // end of scanning sValues left-to-right
+
+    sValues = sScanned;
 
     } // end of having at least one escaped delimiter in the string
 

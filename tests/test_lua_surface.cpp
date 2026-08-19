@@ -1781,6 +1781,66 @@ TEST(LuaSurface, SetBackgroundImageEmptyClearsTheImage)
     ::unlink(png);
 }
 
+// methods_output.cpp: SetBackgroundImage and SetForegroundImage now both call
+// the same extracted SetFrameImage body (R2-10-F7 — they used to be
+// byte-identical 66-line copies).  Drive BOTH entry points over the same
+// four fixtures, one block per entry point (so a failing line identifies
+// which one), so a future edit that lands on only one of the two callers —
+// the exact failure mode the duplication invited — shows up as a divergence
+// between them, rather than passing silently.
+TEST(LuaSurface, SetImageFamilySharesOneBodyBackgroundAndForeground)
+{
+    char png[256];
+    snprintf(png, sizeof(png), "/tmp/mc_test_imgfamily_%d.png", (int) getpid());
+
+    // ── background ──────────────────────────────────────────────────────
+    {
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    CMUSHclientDoc& doc = f.doc;
+
+    EXPECT_EQ((long) eBadParameter, doc.SetBackgroundImage("x.bmp", 14));    // mode out of range
+    EXPECT_EQ((long) eBadParameter, doc.SetBackgroundImage("x.gif", 0));     // neither .bmp nor .png
+    EXPECT_EQ((long) eFileNotFound, doc.SetBackgroundImage("nope.bmp", 0));  // looks like a .bmp, but does not exist
+
+    // a real PNG loads, and the eOK case updates the bitmap/mode/name triple
+    ::unlink(png);
+    char script[512];
+    snprintf(script, sizeof(script),
+        "assert(world.WindowCreate('src', 0, 0, 9, 5, 0, 0, 0x0000FF) == 0)\n"
+        "assert(world.WindowWrite('src', '%s') == 0)\n", png);
+    ASSERT_TRUE(run(f.L, script));
+
+    EXPECT_EQ((long) eOK, doc.SetBackgroundImage(png, 5));
+    EXPECT_TRUE((HBITMAP) doc.m_BackgroundBitmap != NULL);
+    EXPECT_EQ(5, doc.m_iBackgroundMode);
+    EXPECT_STREQ(png, (const char*) doc.m_strBackgroundImageName);
+    }
+
+    // ── foreground — same four fixtures, same expectations ─────────────
+    {
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    CMUSHclientDoc& doc = f.doc;
+
+    EXPECT_EQ((long) eBadParameter, doc.SetForegroundImage("x.bmp", 14));
+    EXPECT_EQ((long) eBadParameter, doc.SetForegroundImage("x.gif", 0));
+    EXPECT_EQ((long) eFileNotFound, doc.SetForegroundImage("nope.bmp", 0));
+
+    ::unlink(png);
+    char script[512];
+    snprintf(script, sizeof(script),
+        "assert(world.WindowCreate('src', 0, 0, 9, 5, 0, 0, 0x0000FF) == 0)\n"
+        "assert(world.WindowWrite('src', '%s') == 0)\n", png);
+    ASSERT_TRUE(run(f.L, script));
+
+    EXPECT_EQ((long) eOK, doc.SetForegroundImage(png, 5));
+    EXPECT_TRUE((HBITMAP) doc.m_ForegroundBitmap != NULL);
+    EXPECT_EQ(5, doc.m_iForegroundMode);
+    EXPECT_STREQ(png, (const char*) doc.m_strForegroundImageName);
+    }
+
+    ::unlink(png);
+}
+
 TEST(LuaSurface, AlphaImageOpsReadTheImagesRealAlpha)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);

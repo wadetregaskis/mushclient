@@ -30,6 +30,14 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 19 | Doc ctor's unqualified `GetUniqueID()` picks the automation member and leaks its BSTR once per document | this commit | doc_construct.cpp (ex doc.cpp ctor) `m_strWorldID = GetUniqueID()` — since the 2010 import; fix is the `::` the three sibling callers already use |
 | 20 | A MouseOver callback that deletes its own hotspot crashes the client | this commit | mushview.cpp `CMUSHView::Mouse_Move_MiniWindow` (now `miniwindow_compose.cpp` `MouseMoveMiniWindow`) |
 | 21 | The second layout pass wipes the first pass's "would not fit" decision | this commit | mushview.cpp `CMUSHView::Calculate_MiniWindow_Rectangles` (now `miniwindow_compose.cpp` `CalculateMiniWindowRectangles`) |
+| 22 | Trigger "multi-line" tick is not compared, so un-ticking it is discarded | this commit | prefspropertypages.cpp `CPrefsP8::CheckIfChanged` |
+| 23 | Command-window colours are lost by visiting another prefs page | this commit | prefspropertypages.cpp `CPrefsP9` (no `OnKillActive`) |
+| 24 | The default echo colour always reports a change (SAMECOLOUR vs -1) | this commit | configuration.cpp `CMUSHclientDoc::ChangedPrefsP9` |
+| 25 | The default note colour always reports a change (the same defect) | this commit | configuration.cpp `CMUSHclientDoc::ChangedPrefsP17` |
+| 26 | "Fit the last column to the list view" computes a width nothing applies | this commit | prefspropertypages.cpp `CPrefsP7`/`CPrefsP16`/`CPrefsP18::OnInitDialog` |
+| 27 | The Timers list's Contents column header does not sort | this commit | prefspropertypages.cpp `CPrefsP16::CompareObjects` |
+| 28 | The alias page's column arrays are indexed with the trigger page's enum | this commit | configuration.cpp `CMUSHclientDoc::LoadPrefsP7` |
+| 29 | The printer-font picker opens on the font from before the sheet opened | this commit | GlobalPrefs.cpp `CGlobalPrefsP4::OnFont` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -636,3 +644,88 @@ achieved.  `needs: windows-run`.  Covered headless by
 (`tests/test_lua_surface.cpp`), which also runs both passes against a wall wide
 enough to fit the window and asserts the flag comes back false — so deleting
 the reset outright fails as well.
+## 22 — Trigger "multi-line" is not compared, so un-ticking it is discarded (this commit)
+**Bug:** `CPrefsP8::CheckIfChanged` decides whether editing a trigger dirties
+the world, and its comparison chain covers every field of `CTrigger` — including
+`iLinesToMatch`, `bMultiLine`'s own sibling — except `bMultiLine` itself.  A user
+who un-ticks "multi-line" and changes nothing else is told nothing changed, the
+document is never marked modified, and the edit is thrown away at the next save
+decision.
+**Fix:** add a `bMultiLine` term next to the `iLinesToMatch` one, normalising
+both sides to `bool` (the member is an `unsigned short`, the dialog field a
+`BOOL`).
+
+## 23 — Command-window colours are lost by visiting another prefs page (this commit)
+**Bug:** `CPrefsP9::OnSetActive` re-seeds `m_ctlTextSwatch` and
+`m_ctlBackgroundSwatch` from `m_input_text_colour` / `m_input_background_colour`,
+but the only place those two members are ever written from the swatches is
+`OnOK`.  So a colour picked on the Commands page and then left — by clicking any
+other page in the sheet — is reverted to the value the sheet opened with the
+moment the user comes back.  `CPrefsP3` and `CPrefsP5` do not have this defect:
+both save their swatches in `OnKillActive`.
+**Fix:** give `CPrefsP9` the same `OnKillActive`, copying the two swatches into
+the two members.  `OnOK`'s identical copy becomes idempotent.
+
+## 24 — The default echo colour always reports a change (this commit)
+**Bug:** `LoadPrefsP9` encodes the world's `m_echo_colour` for the page as
+`m_echo_colour == SAMECOLOUR ? 0 : m_echo_colour + 1`, but `ChangedPrefsP9`
+undoes it arithmetically: `m_echo_colour != (page9.m_echo_colour - 1)`.  For the
+default "same as normal text" that compares 65535 (the `unsigned short`
+`SAMECOLOUR`) against `0 - 1` — an `int` -1 that no `unsigned short` can equal.
+Opening World Properties and pressing OK therefore marks the document modified
+every time, prompting to save a world nothing was changed in.
+**Fix:** compare in the encoding `Load` wrote —
+`(m_echo_colour == SAMECOLOUR ? 0 : m_echo_colour + 1) != page9.m_echo_colour`.
+`SavePrefsP9` is deliberately left alone: its `-1`-wraps-to-65535 assignment is
+what existing world files depend on.
+
+## 25 — The default note colour always reports a change (this commit)
+**Bug:** `ChangedPrefsP17` has the identical `SAMECOLOUR`-vs-`-1` defect on
+`m_iNoteTextColour`, with the identical consequence.
+**Fix:** mirror `LoadPrefsP17`'s transform, leaving `SavePrefsP17` untouched.
+
+## 26 — "Fit the last column to the list view" computes a width nothing applies (this commit)
+**Bug:** the alias, timer and variable pages each end `OnInitDialog` with a
+block that measures the list control and stores a fitted width into
+`m_iColWidth [eColumnContents]`.  By then `CGenPropertyPage::OnInitDialog` has
+already restored the saved widths into that array AND inserted the columns from
+it, and nothing reads `m_iColWidth` again — so the block has no effect at all and
+the Contents column keeps the 150-pixel seed from configuration.cpp.
+**Fix:** apply the figure with `SetColumnWidth`.  Only when the user has no
+saved width of their own, though: the restore happens over the seed, so fitting
+unconditionally would discard their width on every open.  The seed is captured
+before the base call and the two compared afterwards; the decision itself is
+`FittedLastColumnWidth` in prefspropertypages.h, which the headless suite drives.
+
+## 27 — The Timers list's Contents column header does not sort (this commit)
+**Bug:** `CPrefsP16::CompareObjects` has cases for Type, When, Group, Label and
+Next, but none for `eColumnContents`, so clicking that header falls to
+`default: iResult = 0` and the list does not move.  The alias and trigger pages
+both compare their Contents column.
+**Fix:** add `case eColumnContents: iResult = timer1->strContents.CompareNoCase
+(timer2->strContents); break;`, following the sibling pages.
+
+## 28 — The alias page's column arrays are indexed with the trigger page's enum (this commit)
+**Bug:** `LoadPrefsP7` fills `page7`'s column arrays, but two of the subscripts
+name `CPrefsP8::eColumnSequence` — the *trigger* page's enumerator — rather than
+`CPrefsP7`'s own.  The two enums are independent declarations; this is correct
+today only because both happen to give that name the value 1, and reordering
+either one silently writes the alias page's justification and heading into the
+wrong column.
+**Fix:** use `CPrefsP7::eColumnSequence` at both sites.  No behaviour changes
+today; the point is that it can no longer break from an unrelated edit.
+
+## 29 — The printer-font picker opens on the font from before the sheet opened (this commit)
+**Bug:** `CGlobalPrefsP4::OnFont` seeds `lf.lfFaceName` from
+`App.m_strPrinterFont`, but the page's own choice lives in `m_strPrinterFont`
+(DDX_Text on `IDC_FONT_NAME`), and `OnFont` writes the chosen face straight to
+the control with `SetWindowText`.  So a second visit to the picker within one
+Global Preferences session opens showing the pre-dialog font rather than the one
+just chosen, and confirming it without re-selecting the face silently reverts the
+earlier pick — most easily hit when reopening it only to change the size, since
+the size half already uses the page's own `m_nPrinterFontSize`.
+`CGlobalPrefsP10::OnFont` already does it the right way round.
+**Fix:** start with `UpdateData (TRUE)` and seed from `m_strPrinterFont`,
+matching `CGlobalPrefsP10::OnFont`.  `needs: windows-run` — the port's font
+picker is the wx one behind `g_wxhook_font_dialog`, so only a Windows build
+confirms the `CFontDialog` seeding end to end.

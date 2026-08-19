@@ -2500,6 +2500,17 @@ public:
   // through this; SetOption already enforces the same range.
   static int ClampWrapColumn (int iColumn);
 
+  // The output window's text width in PIXELS, asked of whichever frontend owns
+  // the scrollback.  0 = nothing has measured it yet; callers keep their own
+  // figure.  (doc_shared.cpp — one body, every build.)
+  int OutputWindowWidthPixels () const;
+
+  // The wrap column that exactly fills that window with a font whose average
+  // character is iAveCharWidth pixels wide, already clamped by ClampWrapColumn.
+  // 0 = cannot tell.  This is World Properties ▸ Output ▸ "Adjust width to
+  // size", which used to walk the views for a CMUSHView the port never builds.
+  int WrapColumnForCharWidth (int iAveCharWidth) const;
+
   // The Ctrl+click alias menu, hoisted from the view family so the port can
   // drive it (doc_aliasmenu_shared.cpp, 2026-08-13).  Windows' CMUSHView
   // keeps its CMenu UI and calls these three.

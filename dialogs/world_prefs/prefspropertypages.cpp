@@ -3072,6 +3072,11 @@ int nItem;
 
 BOOL CPrefsP7::OnInitDialog() 
 {
+  // the seed width configuration.cpp supplied ("will be modified in
+  // WM_INITDIALOG") -- the base class is about to restore the user's own width
+  // over it, if they have one
+  const int iSeedContents = m_iColWidth [eColumnContents];
+
 	CGenPropertyPage::OnInitDialog();
 
   // fix up last column to exactly fit the list view
@@ -3079,9 +3084,21 @@ BOOL CPrefsP7::OnInitDialog()
 
   m_ctlAliasList.GetClientRect (&rect);
 
-  m_iColWidth [eColumnContents] = rect.right - rect.left -            // get width of control
-                                GetSystemMetrics (SM_CXVSCROLL) -   // minus vertical scroll bar
-                                m_iColWidth [eColumnAlias];           // minus width of other items
+  const int iFitted = FittedLastColumnWidth (
+                                iSeedContents,
+                                m_iColWidth [eColumnContents],
+                                rect.right - rect.left,             // width of control
+                                GetSystemMetrics (SM_CXVSCROLL),    // vertical scroll bar
+                                m_iColWidth [eColumnAlias]);        // width of other items
+
+  // ... and apply it.  The base class inserted the columns from m_iColWidth
+  // already, so storing the new figure there (all this used to do) reached
+  // nothing at all.
+  if (iFitted)
+    {
+    m_iColWidth [eColumnContents] = iFitted;
+    m_ctlAliasList.SetColumnWidth (eColumnContents, iFitted);
+    }
 	
 	return FALSE;  // return TRUE unless you set the focus to a control
 	              // EXCEPTION: OCX Property Pages should return FALSE
@@ -4084,6 +4101,10 @@ bool CPrefsP8::CheckIfChanged (CDialog * pDlg, CObject * pItem) const
       trigger_item->iOtherForeground == dlg->m_iOtherForeground &&
       trigger_item->iOtherBackground == dlg->m_iOtherBackground &&
       trigger_item->iLinesToMatch == dlg->m_iLinesToMatch &&
+      // the member is an unsigned short and the dialog field a BOOL, so both
+      // sides are normalised -- without this term un-ticking "multi-line" with
+      // nothing else altered was silently thrown away
+      ((trigger_item->bMultiLine != 0) == (dlg->m_bMultiLine != 0)) &&
       trigger_item->iColourChangeType == dlg->m_iColourChangeType
      ) return false;    // no need to set modified flag if nothing changed
 
@@ -4940,6 +4961,18 @@ void CPrefsP9::OnOK( )
   CPropertyPage::OnOK ();
     
   }
+
+// save colours when our window becomes inactive, so a colour picked here is not
+// lost by visiting another page: OnSetActive re-seeds both swatches from the two
+// members, which until now only OnOK ever wrote
+
+BOOL CPrefsP9::OnKillActive() 
+{
+  m_input_text_colour = m_ctlTextSwatch.m_colour;
+  m_input_background_colour = m_ctlBackgroundSwatch.m_colour;
+
+	return CPropertyPage::OnKillActive();
+}
 
 void CPrefsP9::OnInputFont() 
 {
@@ -5915,10 +5948,9 @@ void CPrefsP14::DoDataExchange(CDataExchange* pDX)
 	    MemStat.dwLength = sizeof(MEMORYSTATUS);
 	    GlobalMemoryStatus(&MemStat);
 
-      DWORD nBytesNeeded = 16L * 1024L * 1024L;    // start with 16 Mb for OS
-      nBytesNeeded += m_nLines * 60L;             // plus 60 bytes per line
+      const unsigned long long nBytesNeeded = OutputBufferBytesNeeded (m_nLines);
 
-      if (nBytesNeeded > MemStat.dwTotalPhys)
+      if (nBytesNeeded > (unsigned long long) MemStat.dwTotalPhys)
         {
         CString strMsg;
 
@@ -6046,29 +6078,17 @@ void CPrefsP14::OnAdjustWidth()
   TEXTMETRIC tm;
   dc.GetTextMetrics(&tm);
 
-  // find the first output window, work out the correct width
-  for(POSITION pos = m_doc->GetFirstViewPosition(); pos != NULL; )
-	  {
-	  CView* pView = m_doc->GetNextView(pos);
-	  
-	  if (pView->IsKindOf(RUNTIME_CLASS(CMUSHView)))
-  	  {
-		  CMUSHView* pmyView = (CMUSHView*)pView;
+  // work out the correct width.  This used to walk the document's views looking
+  // for the CMUSHView to ask -- which the wx port never constructs, so the
+  // button did nothing at all there.  The document answers for both frontends
+  // now (doc_shared.cpp), and already applies the 20 .. MAX_LINE_WIDTH clamp
+  // this did inline.  0 = no measured output window: leave the figure alone,
+  // exactly as not finding a view used to.
 
-      int iWidth = (pmyView->GetOutputWindowWidth () - m_doc->m_iPixelOffset) / tm.tmAveCharWidth;
+  const int iWidth = m_doc->WrapColumnForCharWidth (tm.tmAveCharWidth);
 
-      // ensure in range that we allow
-      if (iWidth < 20)
-        iWidth = 20;
-      if (iWidth > MAX_LINE_WIDTH)
-        iWidth = MAX_LINE_WIDTH;
-
-      // put in the new figure
-      m_ctlWrapColumn.SetWindowText (CFormat ("%i", iWidth));
-  
-      break;
-	    }	 // if CMUSHView
-    }  // end for
+  if (iWidth > 0)
+    m_ctlWrapColumn.SetWindowText (CFormat ("%i", iWidth));
 
 }   // end of CPrefsP14::OnAdjustWidth
 
@@ -6734,6 +6754,7 @@ CmcDateTimeSpan ts1,
                           if (iResult)
                             break;
     case eColumnLabel:    iResult = timer1->strLabel.CompareNoCase (timer2->strLabel); break;
+    case eColumnContents: iResult = timer1->strContents.CompareNoCase (timer2->strContents); break;
     case eColumnNext:    
                 if (timer1->tFireTime < timer2->tFireTime)
                   iResult = -1;
@@ -6894,6 +6915,9 @@ CString strWhen;
 
 BOOL CPrefsP16::OnInitDialog() 
 {
+  // the seed width configuration.cpp supplied -- see CPrefsP7::OnInitDialog
+  const int iSeedContents = m_iColWidth [eColumnContents];
+
 	CGenPropertyPage::OnInitDialog();
 
   // fix up last column to exactly fit the list view
@@ -6902,10 +6926,19 @@ BOOL CPrefsP16::OnInitDialog()
 
   m_ctlTimerList.GetClientRect (&rect);
 
-  m_iColWidth [eColumnContents] = rect.right - rect.left -            // get width of control
-                                GetSystemMetrics (SM_CXVSCROLL) -   // minus vertical scroll bar
-                                m_iColWidth [eColumnType] -           // minus existing column
-                                m_iColWidth [eColumnWhen];            // minus existing column
+  const int iFitted = FittedLastColumnWidth (
+                                iSeedContents,
+                                m_iColWidth [eColumnContents],
+                                rect.right - rect.left,             // width of control
+                                GetSystemMetrics (SM_CXVSCROLL),    // vertical scroll bar
+                                m_iColWidth [eColumnType] +         // existing columns
+                                m_iColWidth [eColumnWhen]);
+
+  if (iFitted)
+    {
+    m_iColWidth [eColumnContents] = iFitted;
+    m_ctlTimerList.SetColumnWidth (eColumnContents, iFitted);
+    }
 	
 	return FALSE;  // return TRUE unless you set the focus to a control
 	              // EXCEPTION: OCX Property Pages should return FALSE
@@ -7876,6 +7909,9 @@ CString CPrefsP18::GetFindText (CObject * pItem) const
 
 BOOL CPrefsP18::OnInitDialog() 
 {
+  // the seed width configuration.cpp supplied -- see CPrefsP7::OnInitDialog
+  const int iSeedContents = m_iColWidth [eColumnContents];
+
 	CGenPropertyPage::OnInitDialog();
 
   // fix up last column to exactly fit the list view
@@ -7883,9 +7919,18 @@ BOOL CPrefsP18::OnInitDialog()
 
   m_ctlVariableList.GetClientRect (&rect);
 
-  m_iColWidth [eColumnContents] = rect.right - rect.left -            // get width of control
-                                GetSystemMetrics (SM_CXVSCROLL) -   // minus vertical scroll bar
-                                m_iColWidth [eColumnName];           // minus width of other items
+  const int iFitted = FittedLastColumnWidth (
+                                iSeedContents,
+                                m_iColWidth [eColumnContents],
+                                rect.right - rect.left,             // width of control
+                                GetSystemMetrics (SM_CXVSCROLL),    // vertical scroll bar
+                                m_iColWidth [eColumnName]);         // width of other items
+
+  if (iFitted)
+    {
+    m_iColWidth [eColumnContents] = iFitted;
+    m_ctlVariableList.SetColumnWidth (eColumnContents, iFitted);
+    }
 	
 	return FALSE;  // return TRUE unless you set the focus to a control
 	              // EXCEPTION: OCX Property Pages should return FALSE

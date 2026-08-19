@@ -37,6 +37,8 @@
 #include "platform/wx_mfc_logic.h"      // the decisions lifted out of the wx entry points
 #include "dialogs/ProgDlg.h"            // CProgressDlg
 #include "dialogs/world_prefs/prefspropertypages.h"  // CPrefsP17 — ScriptBrowser
+#include "dialogs/world_prefs/triggdlg.h"             // CTriggerDlg
+#include "dialogs/global_prefs/GlobalPrefs.h"         // CGlobalPrefsP4 — printer font
 
 #include <vector>
 
@@ -1133,6 +1135,199 @@ void TestLuaDirectoryPicker()
     lua_close(L);
 }
 
+
+// ── 15. World-properties change detection and page-to-page state (2026-08-18) ──
+// Five defects that show up only when a page is left and re-entered, or when OK
+// is pressed with nothing altered.  None of them is reachable from mushcore:
+// configuration.cpp, prefspropertypages.cpp and GlobalPrefs.cpp are all
+// mushgui_adapters TUs.
+
+// CPrefsP8::CheckIfChanged decides whether editing a trigger dirties the world.
+// It compared every field of CTrigger except bMultiLine, so un-ticking a
+// trigger's "multi-line" box and changing nothing else was silently discarded.
+void TestTriggerMultiLineIsAChange()
+{
+    printf("Trigger dialog change detection:\n");
+
+    CMUSHclientDoc doc;
+    CPrefsP14 page14;                    // LoadDialog reads its three show-* flags
+    CPrefsP8  page8;
+    page8.m_doc      = &doc;
+    page8.m_prefsp3  = NULL;
+    page8.m_prefsp14 = &page14;
+
+    CTrigger trig;
+    trig.trigger       = "^You see (.*)$";
+    trig.contents      = "look $1";
+    trig.bMultiLine    = true;
+    trig.iLinesToMatch = 3;
+
+    CTriggerDlg dlg;
+    page8.LoadDialog(&dlg, &trig);
+
+    // The control.  Without it a gutted `return true` would pass everything
+    // below.
+    check(!page8.CheckIfChanged(&dlg, &trig),
+          "an untouched trigger dialog reports NO change");
+
+    dlg.m_bMultiLine = FALSE;
+    check(page8.CheckIfChanged(&dlg, &trig),
+          "un-ticking multi-line IS a change (was: silently thrown away)");
+
+    // The sibling field was already compared; assert it still is, so a fix that
+    // replaced a term rather than adding one would show up.
+    dlg.m_bMultiLine = TRUE;
+    dlg.m_iLinesToMatch = 4;
+    check(page8.CheckIfChanged(&dlg, &trig),
+          "...and changing the number of lines to match still is too");
+}
+
+// ChangedPrefsP9 / ChangedPrefsP17 decide whether pressing OK on World
+// Properties marks the world modified.  Both undid LoadPrefs*'s SAMECOLOUR
+// encoding by subtracting 1, giving -1 — which the unsigned short 65535 can
+// never equal, so a world using the default "same as normal text" colour was
+// reported changed every single time.
+void TestDefaultColoursAreNotASpuriousChange()
+{
+    printf("World-properties change detection (SAMECOLOUR):\n");
+
+    CMUSHclientDoc doc;
+
+    CPrefsP9 page9;
+    doc.m_echo_colour = SAMECOLOUR;          // the default: same as normal text
+    doc.LoadPrefsP9(page9);
+    check(!doc.ChangedPrefsP9(page9),
+          "the default echo colour is not reported as a change");
+    page9.m_echo_colour = 1;                 // the user picked custom colour 1
+    check(doc.ChangedPrefsP9(page9),
+          "...but picking one IS (so this is not a blanket 'nothing changed')");
+
+    // A world that already uses a custom colour has to keep working too.
+    doc.m_echo_colour = 4;
+    doc.LoadPrefsP9(page9);
+    check(!doc.ChangedPrefsP9(page9),
+          "a custom echo colour round-trips as unchanged as well");
+
+    CPrefsP17 page17;
+    doc.m_iNoteTextColour = SAMECOLOUR;
+    doc.LoadPrefsP17(page17);
+    check(!doc.ChangedPrefsP17(page17),
+          "the default note colour is not reported as a change");
+    page17.m_iNoteTextColour = 5;
+    check(doc.ChangedPrefsP17(page17),
+          "...but picking one IS");
+
+    doc.m_iNoteTextColour = 4;               // the shipped default note colour
+    doc.LoadPrefsP17(page17);
+    check(!doc.ChangedPrefsP17(page17),
+          "a custom note colour round-trips as unchanged as well");
+}
+
+// CPrefsP9::OnSetActive re-seeds both command-window swatches from
+// m_input_text_colour / m_input_background_colour, which only OnOK ever wrote.
+// So a colour picked on the Commands page was discarded by visiting any other
+// page and coming back.  CPrefsP3 and CPrefsP5 already saved theirs in
+// OnKillActive; P9 now does the same.
+void TestCommandColoursSurviveAPageChange()
+{
+    printf("Commands page colour swatches:\n");
+
+    CPrefsP9 page;
+    page.m_input_text_colour       = RGB(1, 2, 3);
+    page.m_input_background_colour = RGB(4, 5, 6);
+    page.m_ctlTextSwatch.m_colour       = RGB(9, 9, 9);   // what the user just picked
+    page.m_ctlBackgroundSwatch.m_colour = RGB(8, 8, 8);
+
+    page.OnKillActive();                     // leaving the page for another one
+
+    check(page.m_input_text_colour == RGB(9, 9, 9) &&
+          page.m_input_background_colour == RGB(8, 8, 8),
+          "leaving the page saves both swatches (was: only OnOK ever did)");
+
+    // ...so the two lines OnSetActive re-seeds with restore the user's pick
+    // rather than reverting it.  (OnSetActive itself needs a live property sheet
+    // as its parent, so its body is spelled out here.)
+    page.m_ctlTextSwatch.m_colour       = 0;
+    page.m_ctlBackgroundSwatch.m_colour = 0;
+    page.m_ctlTextSwatch.m_colour       = page.m_input_text_colour;
+    page.m_ctlBackgroundSwatch.m_colour = page.m_input_background_colour;
+    check(page.m_ctlTextSwatch.m_colour == RGB(9, 9, 9) &&
+          page.m_ctlBackgroundSwatch.m_colour == RGB(8, 8, 8),
+          "...so coming back shows it, not the colour from before the sheet opened");
+}
+
+// CGlobalPrefsP4::OnFont seeded the font picker's face from App.m_strPrinterFont
+// — the value from before the sheet opened — instead of the page's own
+// in-progress one.  Reopening the picker to change only the size therefore
+// silently reverted the face chosen a moment earlier.  CGlobalPrefsP10::OnFont
+// already did it the right way round.
+void TestPrinterFontPickerSeedsFromThePage()
+{
+    printf("Global prefs printer font picker:\n");
+
+    static std::string s_seed;
+    static int s_calls = 0;
+    int (*const savedFont)(void*, WxFontChoice*)              = g_wxhook_font_dialog;
+    int (*const savedBox)(const char*, const char*, unsigned) = g_wxhook_message_box;
+
+    g_wxhook_font_dialog = [](void*, WxFontChoice* io) -> int {
+        s_seed = io ? io->faceName : "";
+        ++s_calls;
+        return 0;                            // cancel — nothing is chosen
+    };
+    // The page has no window here, so DDX zeroes the numeric fields and the
+    // lines-per-page DDV (10..500) objects.  Swallow that: the assertion below
+    // is about which string seeded the picker, not about the margins.
+    g_wxhook_message_box = [](const char*, const char*, unsigned) -> int {
+        return IDOK;
+    };
+
+    struct Probe : CGlobalPrefsP4 { using CGlobalPrefsP4::OnFont; };
+    Probe page;
+    App.m_strPrinterFont    = "Courier";     // what it was when the sheet opened
+    page.m_strPrinterFont   = "Menlo";       // what the user has picked since
+    page.m_nPrinterFontSize = 10;
+
+    s_seed.clear(); s_calls = 0;
+    page.OnFont();
+
+    check(s_calls == 1, "the font picker was actually opened");
+    check(s_seed == "Menlo",
+          "...seeded with the page's own font (was: the one from before the sheet)");
+
+    g_wxhook_font_dialog = savedFont;
+    g_wxhook_message_box = savedBox;
+}
+
+// CPrefsP16::CompareObjects is the Timers list's sort.  Its switch had no
+// eColumnContents case, so it fell through to `default: iResult = 0` and
+// clicking the Contents header did nothing at all.
+void TestTimerListSortsByContents()
+{
+    printf("Timers list column sort:\n");
+
+    CTimer a, b;
+    // Everything the other cases key on is deliberately EQUAL, so only the
+    // Contents comparison can discriminate.
+    a.strContents = "aaa";
+    b.strContents = "zzz";
+
+    check(CPrefsP16::CompareObjects(CPrefsP16::eColumnContents, &a, &b) < 0,
+          "the Contents column sorts (was: always 0, so the header did nothing)");
+    check(CPrefsP16::CompareObjects(CPrefsP16::eColumnContents, &b, &a) > 0,
+          "...in both directions");
+    check(CPrefsP16::CompareObjects(CPrefsP16::eColumnContents, &a, &a) == 0,
+          "...and calls equal contents equal");
+    // Case-insensitively, like every other string column on these pages.
+    b.strContents = "AAA";
+    check(CPrefsP16::CompareObjects(CPrefsP16::eColumnContents, &a, &b) == 0,
+          "...ignoring case, as the alias and trigger pages do");
+    // The control: a column that has always sorted still does.
+    a.strLabel = "aaa"; b.strLabel = "zzz";
+    check(CPrefsP16::CompareObjects(CPrefsP16::eColumnLabel, &a, &b) < 0,
+          "the Label column still sorts too");
+}
+
 int RunGuiBridgeSelfTest()
 {
     printf("GUI-BRIDGE-SELFTEST: geometry, dialog controls, world defaults\n");
@@ -1151,6 +1346,11 @@ int RunGuiBridgeSelfTest()
     TestScriptingPageBrowse();
     TestListBoxMutators();
     TestLuaDirectoryPicker();
+    TestTriggerMultiLineIsAChange();
+    TestDefaultColoursAreNotASpuriousChange();
+    TestCommandColoursSurviveAPageChange();
+    TestPrinterFontPickerSeedsFromThePage();
+    TestTimerListSortsByContents();
 
     printf("GUI-BRIDGE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

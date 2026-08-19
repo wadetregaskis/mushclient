@@ -223,6 +223,10 @@ void CMUSHclientDoc:: LoadPrefsP7  (CPrefsP7  &page7)
   page7.m_strColumnHeadings = new CString [CPrefsP7::eColumnCount];
   page7.m_iColJust         = new int [CPrefsP7::eColumnCount];
 
+  // Every subscript below is CPrefsP7's OWN enumerator.  The alias and trigger
+  // pages declare independent column enums, and two of these used to name
+  // CPrefsP8::eColumnSequence -- correct only while both enums happened to give
+  // that name the same number.
   page7.m_iColWidth [CPrefsP7::eColumnAlias] = 160;
   page7.m_iColWidth [CPrefsP7::eColumnSequence] = 40;
   page7.m_iColWidth [CPrefsP7::eColumnContents] = 150;    // will be modified in WM_INITDIALOG
@@ -230,13 +234,13 @@ void CMUSHclientDoc:: LoadPrefsP7  (CPrefsP7  &page7)
   page7.m_iColWidth [CPrefsP7::eColumnGroup] = 50;    // will be modified in WM_INITDIALOG
 
   page7.m_iColJust [CPrefsP7::eColumnAlias] = LVCFMT_LEFT;
-  page7.m_iColJust [CPrefsP8::eColumnSequence] = LVCFMT_RIGHT;
+  page7.m_iColJust [CPrefsP7::eColumnSequence] = LVCFMT_RIGHT;
   page7.m_iColJust [CPrefsP7::eColumnContents] = LVCFMT_LEFT;  
   page7.m_iColJust [CPrefsP7::eColumnLabel] = LVCFMT_LEFT;  
   page7.m_iColJust [CPrefsP7::eColumnGroup] = LVCFMT_LEFT;  
   
   page7.m_strColumnHeadings [CPrefsP7::eColumnAlias] = TranslateHeading ("Alias");
-  page7.m_strColumnHeadings [CPrefsP8::eColumnSequence] = TranslateHeading ("Seq");
+  page7.m_strColumnHeadings [CPrefsP7::eColumnSequence] = TranslateHeading ("Seq");
   page7.m_strColumnHeadings [CPrefsP7::eColumnContents] = TranslateHeading ("Send");
   page7.m_strColumnHeadings [CPrefsP7::eColumnLabel] = TranslateHeading ("Label");
   page7.m_strColumnHeadings [CPrefsP7::eColumnGroup] = TranslateHeading ("Group");
@@ -988,7 +992,12 @@ bool CMUSHclientDoc:: ChangedPrefsP9  (CPrefsP9  &page9)
     m_enable_command_stack != page9.m_enable_command_stacking ||
     m_enable_speed_walk != page9.m_enable_speed_walk ||
     m_speed_walk_prefix != page9.m_speed_walk_prefix ||
-    m_echo_colour != (page9.m_echo_colour - 1) ||
+    // Compare in the encoding LoadPrefsP9 wrote, not by undoing it: m_echo_colour
+    // is an unsigned short holding SAMECOLOUR (65535) for "same as normal text",
+    // and the page holds 0 for that.  Undoing gives 0 - 1 == -1, which no
+    // unsigned short can equal, so the default colour always reported a change
+    // and every OK on World Properties marked the world modified.
+    (m_echo_colour == SAMECOLOUR ? 0 : m_echo_colour + 1) != page9.m_echo_colour ||
     m_nHistoryLines != page9.m_nHistoryLines ||
     m_display_my_input != page9.m_echo_input ||
     m_input_text_colour       != page9.m_input_text_colour ||
@@ -1160,7 +1169,9 @@ bool CMUSHclientDoc:: ChangedPrefsP17 (CPrefsP17 &page17)
 	  m_strScriptFilename    != page17.m_strScriptFilename ||  
     m_strScriptPrefix      != page17.m_strScriptPrefix ||
     m_strScriptEditor      != page17.m_strScriptEditor ||
-    m_iNoteTextColour      != (page17.m_iNoteTextColour - 1) ||
+    // Same SAMECOLOUR encoding as the echo colour on page 9 -- compare the way
+    // LoadPrefsP17 wrote it, or the default note colour always looks changed.
+    (m_iNoteTextColour == SAMECOLOUR ? 0 : m_iNoteTextColour + 1) != page17.m_iNoteTextColour ||
     m_nReloadOption        != page17.m_iReloadOption || 
     m_bEditScriptWithNotepad != page17.m_bEditScriptWithNotepad ||
     m_bWarnIfScriptingInactive != page17.m_bWarnIfScriptingInactive ||

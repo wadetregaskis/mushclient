@@ -4610,6 +4610,45 @@ int CMUSHclientDoc::ClampWrapColumn (int iColumn)
   return iColumn;
   }
 
+// ── OutputWindowWidthPixels ─────────────────────────────────────────────────
+// How wide the output window's text area is, in pixels.  Windows asks the view
+// that paints it (CMUSHView::GetOutputWindowWidth); the port never constructs
+// one, so it uses the two numbers the wx pane keeps current on every resize and
+// that GetInfo(280) already multiplies together — the same fallback shape
+// methods_info.cpp uses for the rest of that family.  0 means nothing has been
+// measured yet.
+int CMUSHclientDoc::OutputWindowWidthPixels () const
+  {
+#ifdef _WIN32
+  CMUSHView * pmyView = ((CMUSHclientDoc *) this)->GetFirstOutputWindow ();
+
+  if (pmyView)
+    return pmyView->GetOutputWindowWidth ();
+
+  return 0;
+#else
+  return m_gui_cols * m_gui_font_width;
+#endif // _WIN32
+  }
+
+// ── WrapColumnForCharWidth ──────────────────────────────────────────────────
+// "Adjust width to size" on the world-properties Output page: the wrap column
+// that exactly fills the output window with the font the user has chosen on
+// that page (which need not be the one the world is using yet, so the caller
+// supplies the metric).  Windows' formula, mushview.cpp:3132.
+int CMUSHclientDoc::WrapColumnForCharWidth (int iAveCharWidth) const
+  {
+  if (iAveCharWidth <= 0)
+    return 0;
+
+  const int iWidth = OutputWindowWidthPixels ();
+
+  if (iWidth <= 0)
+    return 0;      // no measured output window — caller keeps its figure
+
+  return ClampWrapColumn ((iWidth - m_iPixelOffset) / iAveCharWidth);
+  }
+
 // ── AutoWrapColumnFor ───────────────────────────────────────────────────────
 // The "does the window width drive the wrap column?" decision, so that both
 // frontends read the same option and neither has to remember the clamp.  0 means

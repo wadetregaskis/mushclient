@@ -9,6 +9,50 @@ class CPrefsP3;
 class CPrefsP5;
 class CPrefsP14;
 
+// ── two decisions the pages used to make inline ───────────────────────────
+// Pure arithmetic, in the header so the headless suite can drive them without
+// linking a property page (the pal/scroll_geometry.h shape).  Both were bugs
+// precisely because they were buried in a dialog nothing tests.
+
+// The "fix up last column to exactly fit the list view" figure the alias, timer
+// and variable pages want, and the rule for when it may be used.  0 = leave the
+// column alone.
+//
+// It may only be applied when the user has no saved width of their own: by the
+// time a page's OnInitDialog runs, CGenPropertyPage::OnInitDialog has restored
+// their saved widths over the seed configuration.cpp supplied AND inserted the
+// columns, so fitting unconditionally would throw their width away on every
+// open.  (Storing the figure in m_iColWidth, which is what the three pages used
+// to do, reached nothing at all -- the columns were already in.)
+inline int FittedLastColumnWidth (const int iSeedWidth,
+                                  const int iRestoredWidth,
+                                  const int iListClientWidth,
+                                  const int iScrollBarWidth,
+                                  const int iOtherColumnsWidth)
+  {
+  if (iRestoredWidth != iSeedWidth)
+    return 0;      // the user resized this column - keep their width
+
+  const int iFitted = iListClientWidth - iScrollBarWidth - iOtherColumnsWidth;
+
+  return iFitted > 0 ? iFitted : 0;
+  }
+
+// What an output buffer of nLines would cost: 16 Mb for the OS plus 60 bytes a
+// line.  64-bit throughout, because the port raised the ceiling from 500,000
+// lines to 100,000,000 and the DWORD this used to accumulate into wrapped at
+// 4 Gb -- so the largest, and only genuinely dangerous, settings were the ones
+// that warned least.
+inline unsigned long long OutputBufferBytesNeeded (const long nLines)
+  {
+  unsigned long long nBytesNeeded = 16ULL * 1024ULL * 1024ULL;   // start with 16 Mb for OS
+
+  if (nLines > 0)
+    nBytesNeeded += (unsigned long long) nLines * 60ULL;         // plus 60 bytes per line
+
+  return nBytesNeeded;
+  }
+
 /////////////////////////////////////////////////////////////////////////////
 // CPrefsP1 dialog
 
@@ -876,6 +920,7 @@ public:
 	public:
 	virtual void OnOK();
 	virtual BOOL OnSetActive();
+	virtual BOOL OnKillActive();
 	protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
 	//}}AFX_VIRTUAL

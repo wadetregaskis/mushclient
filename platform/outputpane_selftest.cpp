@@ -2246,6 +2246,458 @@ void TestMiddleClickIsInert()
     }
 }
 
+// ── The right-click context menu ─────────────────────────────────────────────
+// Two things are pinned here and they are different in kind:
+//
+//   * the MENU — its items, their order, their grouping and their enable /
+//     check state.  Built by COutputPane::BuildContextMenu, which is called
+//     directly rather than through a popup: a selftest exits from
+//     wxApp::OnInit, so PopupMenu's nested tracking loop would never return.
+//   * the SELECTION side-effect of the right-click itself, which is a
+//     deliberate macOS-vs-Windows difference (wx_outputpane.cpp, OnRightDown)
+//     and therefore has to be driven through the REAL event table.  That needs
+//     a real EVT_RIGHT_DOWN, so m_fn_popup_context_menu stands in for the
+//     popup — and doubles as the observation that a menu was raised at all.
+
+// One row of the expected menu.  `id` < 0 means "do not care" (the port's own
+// items are built on wxID_ANY); kSep marks a separator.
+struct MenuRow { int id; const char* label; };
+const int kSep = -2;
+const int kAny = -1;
+
+// Flatten a built menu to (id, label) rows.  GetItemLabelText strips the
+// accelerator suffix and the mnemonic, so "Copy\tCtrl+C" reads as "Copy".
+std::vector<std::pair<int, std::string>> FlattenMenu(const wxMenu& menu)
+{
+    std::vector<std::pair<int, std::string>> out;
+    for (size_t i = 0; i < menu.GetMenuItemCount(); ++i) {
+        const wxMenuItem* it = menu.FindItemByPosition(i);
+        if (!it) continue;
+        if (it->IsSeparator()) { out.push_back({kSep, "---"}); continue; }
+        const wxString    label = it->GetItemLabelText();
+        const wxScopedCharBuffer buf = label.utf8_str();
+        out.push_back({it->GetId(), buf.data() ? std::string(buf.data(), buf.length())
+                                               : std::string()});
+    }
+    return out;
+}
+
+// A menu item by its (unique) label.
+const wxMenuItem* ItemNamed(const wxMenu& menu, const char* label)
+{
+    for (size_t i = 0; i < menu.GetMenuItemCount(); ++i) {
+        const wxMenuItem* it = menu.FindItemByPosition(i);
+        if (it && !it->IsSeparator() &&
+            it->GetItemLabelText() == wxString::FromUTF8(label))
+            return it;
+    }
+    return nullptr;
+}
+
+bool ItemEnabled(const wxMenu& menu, const char* label)
+{
+    const wxMenuItem* it = ItemNamed(menu, label);
+    return it && it->IsEnabled();
+}
+
+// Wire the two canonical-command seams onto a pane, recording what is asked
+// and what is run.  `uiState` decides the answers; null means "own nothing",
+// which is the seeded enabled=true / checked=-1.
+struct CanonSpy {
+    std::vector<int> dispatched;
+    std::vector<int> asked;
+
+    void Attach(COutputPane* pane,
+                std::function<bool(int, bool&, int&)> uiState = nullptr)
+    {
+        pane->m_fn_menu_command = [this](int id) { dispatched.push_back(id); };
+        pane->m_fn_menu_ui_state =
+            [this, uiState](int id, bool& enabled, int& checked) {
+                asked.push_back(id);
+                enabled = true;
+                checked = -1;
+                return uiState ? uiState(id, enabled, checked) : false;
+            };
+    }
+};
+
+void TestContextMenuShape()
+{
+    printf("output-pane right-click menu: CG_IDR_POPUP_MUSHVIEW merged in\n");
+
+    // ── (a) the items, in order, with their groups ───────────────────────
+    // Written out in full, so ANY reordering, insertion or deletion fails.
+    // The canonical ids are spelled here too: the whole point of carrying them
+    // on the items is that menu_ui_rules.cpp can be asked about them by name,
+    // and a silent switch to wxID_ANY would leave the labels looking right.
+    {
+        Harness h;
+        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+        CanonSpy spy;
+        spy.Attach(h.pane);
+        h.pane->m_fn_put_in_input = [](const wxString&) {};
+        h.pane->m_fn_send_to_mud  = [](const wxString&) {};
+        h.pane->m_fn_toggle_log   = []() {};
+        h.pane->m_fn_is_logging   = []() { return false; };
+
+        wxMenu menu;
+        h.pane->BuildContextMenu(menu, 0, h.pane->LineHeight() / 2);
+
+        static const MenuRow kWant[] = {
+            // 2. clipboard
+            { kAny,  "Copy" },
+            { kAny,  "Copy as HTML" },
+            { kAny,  "Select All" },
+            { kSep,  "---" },
+            // 3. do something with the selection, right now
+            { kAny,  "Put in Input Bar" },
+            { kAny,  "Send to MUD" },
+            { 32275, "Go To URL\xE2\x80\xA6" },
+            { 32276, "Send Mail To\xE2\x80\xA6" },
+            { kSep,  "---" },
+            // 4. turn the selection into a standing rule
+            { 33036, "Highlight Word\xE2\x80\xA6" },
+            { 33044, "Multi-Line Trigger\xE2\x80\xA6" },
+            { kSep,  "---" },
+            // 5. search and navigate the scrollback
+            { 32248, "Find\xE2\x80\xA6" },
+            { 32249, "Find Again" },
+            { 32324, "Recall Text\xE2\x80\xA6" },
+            { 32318, "Bookmark Selection" },
+            { 32319, "Go To Bookmark" },
+            { kSep,  "---" },
+            // 6. how the output looks and behaves
+            { 32201, "Pause Output" },
+            { 32118, "Wrap Output" },
+            { kAny,  "Zoom In" },
+            { kAny,  "Zoom Out" },
+            { kAny,  "Reset Zoom" },
+            { 32332, "Full Screen Mode" },
+            { kSep,  "---" },
+            // 7. this world and this session
+            { kAny,  "Start Logging\xE2\x80\xA6" },
+            { 32203, "Activity List" },
+            { 32333, "Notepad" },
+            { 32158, "World Configuration\xE2\x80\xA6" },
+            { kSep,  "---" },
+            // 8. destructive, alone at the far end
+            { kAny,  "Clear Output Buffer\xE2\x80\xA6" },
+        };
+        const size_t want = sizeof(kWant) / sizeof(kWant[0]);
+
+        const std::vector<std::pair<int, std::string>> got = FlattenMenu(menu);
+        opCheckEq((int) got.size(), (int) want, "the menu has exactly the merged item set");
+
+        bool orderOk = (got.size() == want), idsOk = true;
+        std::string firstBad;
+        for (size_t i = 0; i < want && i < got.size(); ++i) {
+            if (got[i].second != kWant[i].label) {
+                orderOk = false;
+                if (firstBad.empty())
+                    firstBad = "position " + std::to_string(i) + ": got \"" +
+                               got[i].second + "\", want \"" + kWant[i].label + "\"";
+            }
+            if (kWant[i].id >= 0 && got[i].first != kWant[i].id) {
+                idsOk = false;
+                if (firstBad.empty())
+                    firstBad = "\"" + got[i].second + "\" carries id " +
+                               std::to_string(got[i].first) + ", want " +
+                               std::to_string(kWant[i].id);
+            }
+        }
+        opCheck(orderOk, ("items and separators are in the designed order"
+                          + (firstBad.empty() ? std::string() : " [" + firstBad + "]")).c_str());
+        opCheck(idsOk, "...and the canonical items carry their canonical ids");
+
+        // Every canonical item must have ASKED the rules about itself; an item
+        // that quietly skipped the question would still look right above.
+        opCheckEq((int) spy.asked.size(), 15,
+                  "every canonical item asked menu_ui_rules about its own id");
+
+        // ── the id map the brief calls out ───────────────────────────────
+        // Notepad is the one item whose id is not the command: it carries
+        // ID_EDIT_NOTESWORKAREA (32333) and runs the port's 40001.
+        {
+            wxCommandEvent pick(wxEVT_MENU, 32333);
+            menu.ProcessEvent(pick);
+            opCheck(spy.dispatched.size() == 1 && spy.dispatched[0] == 40001,
+                    "choosing Notepad (id 32333) dispatches 40001, not 32333");
+        }
+        // ...and a canonical item with no map dispatches its own id, so the
+        // assertion above is about the MAP and not about the plumbing.
+        {
+            wxCommandEvent pick(wxEVT_MENU, 32248);
+            menu.ProcessEvent(pick);
+            opCheck(spy.dispatched.size() == 2 && spy.dispatched[1] == 32248,
+                    "control: Find\xE2\x80\xA6 dispatches its own id");
+        }
+    }
+
+    // ── (a-bis) the link cluster still leads the menu ────────────────────
+    // The port's stand-in for Windows' IDR_MXP_MENU arm.  Losing it would
+    // regress MXP link handling, and the rest of the menu would still look
+    // perfect above.
+    {
+        Harness h;
+        SOutputRun plain;  plain.text = "click ";  plain.fg = 0x00FFFFFFu;
+        SOutputRun link;   link.text  = "here";    link.fg  = 0x0000FFFFu;
+        link.setLink("https://example.com/", "", 1);
+        SOutputLine line;  line.push_back(plain);  line.push_back(link);
+        h.pane->AppendLine(std::move(line));
+
+        CanonSpy spy;
+        spy.Attach(h.pane);
+
+        const int cw = h.pane->CharWidth();
+        wxMenu menu;
+        h.pane->BuildContextMenu(menu, cw * 7 + cw / 2, h.pane->LineHeight() / 2);
+
+        const std::vector<std::pair<int, std::string>> got = FlattenMenu(menu);
+        opCheck(got.size() > 3 && got[0].second == "Open URL in Browser" &&
+                got[1].second == "Copy URL" && got[2].second == "---" &&
+                got[3].second == "Copy",
+                "a right-click ON a link leads with the link cluster, then Copy");
+    }
+
+    // ── (b) enable state: no selection vs selection ──────────────────────
+    {
+        Harness h;
+        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+        CanonSpy spy;
+        spy.Attach(h.pane);
+        h.pane->m_fn_put_in_input = [](const wxString&) {};
+        h.pane->m_fn_send_to_mud  = [](const wxString&) {};
+
+        wxMenu none;
+        h.pane->BuildContextMenu(none, 0, h.pane->LineHeight() / 2);
+        opCheck(!ItemEnabled(none, "Copy"),          "no selection: Copy is greyed");
+        opCheck(!ItemEnabled(none, "Copy as HTML"),  "no selection: Copy as HTML is greyed");
+        opCheck(!ItemEnabled(none, "Put in Input Bar"),
+                "no selection: Put in Input Bar is greyed");
+        opCheck(!ItemEnabled(none, "Send to MUD"),   "no selection: Send to MUD is greyed");
+        opCheck(!ItemEnabled(none, "Go To URL\xE2\x80\xA6"),
+                "no selection: Go To URL is greyed (OnUpdateNeedSelection)");
+        opCheck(!ItemEnabled(none, "Send Mail To\xE2\x80\xA6"),
+                "no selection: Send Mail To is greyed (OnUpdateNeedSelection)");
+        // ...and the items that do NOT depend on one stay live, so the six
+        // above cannot be passing because everything is greyed.
+        opCheck(ItemEnabled(none, "Select All"),  "no selection: Select All stays live");
+        opCheck(ItemEnabled(none, "Find\xE2\x80\xA6"), "no selection: Find stays live");
+        opCheck(ItemEnabled(none, "Highlight Word\xE2\x80\xA6"),
+                "no selection: Highlight Word stays live, as on Windows");
+
+        h.pane->SelectAll();
+        wxMenu some;
+        h.pane->BuildContextMenu(some, 0, h.pane->LineHeight() / 2);
+        opCheck(ItemEnabled(some, "Copy"),          "with a selection: Copy is live");
+        opCheck(ItemEnabled(some, "Copy as HTML"),  "with a selection: Copy as HTML is live");
+        opCheck(ItemEnabled(some, "Put in Input Bar"),
+                "with a selection: Put in Input Bar is live");
+        opCheck(ItemEnabled(some, "Send to MUD"),   "with a selection: Send to MUD is live");
+        opCheck(ItemEnabled(some, "Go To URL\xE2\x80\xA6"),
+                "with a selection: Go To URL is live");
+        opCheck(ItemEnabled(some, "Send Mail To\xE2\x80\xA6"),
+                "with a selection: Send Mail To is live");
+    }
+
+    // ── (b-bis) a second stateful item: the rules' own answer ────────────
+    // Pause Output and Wrap Output are check items whose tick comes from the
+    // canonical ON_UPDATE_COMMAND_UI through wx_canonical_menu_ui_state.  The
+    // fake answers for exactly one of them, so a build that ignored `checked`
+    // (or applied it to every item) fails.  World Configuration is answered
+    // DISABLED, which no other rule here would produce.
+    {
+        Harness h;
+        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+        CanonSpy spy;
+        spy.Attach(h.pane, [](int id, bool& enabled, int& checked) {
+            if (id == 32201) { checked = 1; return true; }   // Pause Output ticked
+            if (id == 32118) { checked = 0; return true; }   // Wrap Output not
+            if (id == 32158) { enabled = false; return true; }  // World Configuration
+            return false;
+        });
+
+        wxMenu menu;
+        h.pane->BuildContextMenu(menu, 0, h.pane->LineHeight() / 2);
+
+        const wxMenuItem* pause = ItemNamed(menu, "Pause Output");
+        const wxMenuItem* wrap  = ItemNamed(menu, "Wrap Output");
+        opCheck(pause && pause->IsCheckable() && pause->IsChecked(),
+                "Pause Output is ticked when the rules say so");
+        opCheck(wrap && wrap->IsCheckable() && !wrap->IsChecked(),
+                "...and Wrap Output is NOT, from the same call");
+        opCheck(!ItemEnabled(menu, "World Configuration\xE2\x80\xA6"),
+                "World Configuration is greyed when the rules disable it");
+        opCheck(ItemEnabled(menu, "Activity List"),
+                "...while an id the rules do not own stays live");
+    }
+
+    // ── (b-ter) unwired ⇒ greyed ─────────────────────────────────────────
+    // A canonical item with nowhere to send its command must not look
+    // available.  This is also the state the pane is in before a frame wires
+    // it, so "did nothing" cannot masquerade as "worked".
+    {
+        Harness h;
+        h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+        wxMenu menu;
+        h.pane->BuildContextMenu(menu, 0, h.pane->LineHeight() / 2);
+        opCheck(!ItemEnabled(menu, "Find\xE2\x80\xA6"),
+                "with no frame wired, the canonical items are greyed");
+        opCheck(ItemEnabled(menu, "Select All"),
+                "...but the pane's own items still work");
+    }
+}
+
+void TestRightClickSelectsWord()
+{
+    printf("right-click selects the word under the pointer (macOS convention)\n");
+
+    // The popup stands in for PopupMenu — see m_fn_popup_context_menu.  It
+    // also records THAT a menu was raised, which the hotspot control needs.
+    struct RightClick {
+        Harness  h;
+        int      menus = 0;
+        wxString firstItem;
+
+        RightClick() {
+            h.pane->AppendLine(MakeLine("alpha bravo charlie"));
+            // Line 1 has a RUN of spaces (indices 3..8), so a caret can land
+            // with whitespace on both sides -- a single gap cannot, because one
+            // of its two sides is always a word character.
+            h.pane->AppendLine(MakeLine("gap      here"));
+            h.pane->AppendLine(MakeLine(""));            // line 2: nothing at all
+            h.pane->m_fn_popup_context_menu = [this](wxMenu& m, const wxPoint&) {
+                menus++;
+                if (const wxMenuItem* it = m.FindItemByPosition(0))
+                    firstItem = it->GetItemLabelText();
+            };
+        }
+        // Aim at the middle of cell `col` on line `line`.  Halfway rounding
+        // then puts the caret on the boundary AFTER that cell.
+        void At(int col, int line = 0) {
+            const int cw = h.pane->CharWidth();
+            const int lh = h.pane->LineHeight();
+            SendMouse(h.pane, wxEVT_RIGHT_DOWN, cw * col + cw / 2,
+                      lh * line + lh / 2);
+        }
+    };
+
+    // ── (c) no selection → the word under the pointer is selected ────────
+    {
+        RightClick rc;
+        rc.At(8);                       // inside "bravo" (columns 6..10)
+        opCheck(rc.h.pane->GetSelectionText() == wxT("bravo"),
+                "no selection: right-click selects the word under the pointer");
+        opCheckEq(rc.menus, 1, "...and the menu was raised");
+    }
+
+    // ── (d) an existing selection is left EXACTLY alone ──────────────────
+    // The important half.  Copy acts on the selection, so a right-click that
+    // moved it would make the menu's most-used item copy the wrong thing.
+    {
+        RightClick rc;
+        const int cw = rc.h.pane->CharWidth();
+        const int lh = rc.h.pane->LineHeight();
+        // Double-click "alpha" (columns 0..5) to establish a selection...
+        SendMouse(rc.h.pane, wxEVT_LEFT_DOWN,   cw * 2 + cw / 2, lh / 2);
+        SendMouse(rc.h.pane, wxEVT_LEFT_DCLICK, cw * 2 + cw / 2, lh / 2);
+        SendMouse(rc.h.pane, wxEVT_LEFT_UP,     cw * 2 + cw / 2, lh / 2);
+        opCheck(rc.h.pane->GetSelectionText() == wxT("alpha"),
+                "setup: a double-click selected \"alpha\"");
+
+        // ...then right-click a DIFFERENT word.
+        rc.At(8);                       // "bravo"
+        opCheck(rc.h.pane->GetSelectionText() == wxT("alpha"),
+                "an existing selection survives a right-click elsewhere");
+        opCheckEq(rc.menus, 1, "...and the menu still came up");
+    }
+
+    // ── (e) a right-click that resolves to no word ────────────────────
+    // The pointer resolves to a caret position and the word grows outwards, so
+    // "not on a word" means neither side of that caret is a word character:
+    // inside a RUN of spaces, or on an empty line.  Selecting nothing (and
+    // clearing nothing) is both NSTextView's answer and this pane's own
+    // double-click answer -- see OnRightDown.
+    {
+        RightClick rc;
+        rc.At(5, 1);                    // mid-run of line 1's six spaces
+        opCheck(rc.h.pane->GetSelectionText().IsEmpty(),
+                "right-click inside a run of spaces selects nothing");
+        opCheckEq(rc.menus, 1, "...and the menu is still offered");
+        opCheck(rc.firstItem == wxT("Copy"),
+                "...led by Copy, greyed, since there is nothing to copy");
+    }
+    {
+        RightClick rc;
+        rc.At(0, 2);                    // the empty line
+        opCheck(rc.h.pane->GetSelectionText().IsEmpty(),
+                "right-click on an empty line selects nothing");
+    }
+    {
+        // ...and it does not CLEAR one either: same branch, selection present.
+        RightClick rc;
+        rc.h.pane->SelectAll();
+        const wxString before = rc.h.pane->GetSelectionText();
+        rc.At(5, 1);
+        opCheck(!before.IsEmpty() && rc.h.pane->GetSelectionText() == before,
+                "a no-word right-click does not clear an existing selection");
+    }
+    {
+        // The two cases that look like "no word" but are NOT, asserted so the
+        // three above cannot be passing because the scan gave up too easily --
+        // and so the documented rule is pinned rather than merely commented.
+        RightClick rc;
+        rc.At(5);                       // the single gap between alpha and bravo
+        opCheck(rc.h.pane->GetSelectionText() == wxT("bravo"),
+                "the single gap beside a word still takes that word");
+    }
+    {
+        RightClick rc;
+        rc.At(60);                      // far past the end of the line
+        opCheck(rc.h.pane->GetSelectionText() == wxT("charlie"),
+                "past the end of the line takes the last word, as NSTextView does");
+    }
+    {
+        // The one-scanner guarantee: a right-click and a double-click at the
+        // SAME point must agree.  A second word scanner would drift from this.
+        RightClick rc;
+        const int cw = rc.h.pane->CharWidth();
+        const int lh = rc.h.pane->LineHeight();
+        SendMouse(rc.h.pane, wxEVT_LEFT_DOWN,   cw * 5 + cw / 2, lh / 2);
+        SendMouse(rc.h.pane, wxEVT_LEFT_DCLICK, cw * 5 + cw / 2, lh / 2);
+        SendMouse(rc.h.pane, wxEVT_LEFT_UP,     cw * 5 + cw / 2, lh / 2);
+        opCheck(rc.h.pane->GetSelectionText() == wxT("bravo"),
+                "...and a double-click at that same point agrees");
+    }
+
+    // ── (f) a miniwindow hotspot takes the click; nothing else happens ───
+    {
+        RightClick rc;
+        long gotFlags = 0;
+        rc.h.pane->m_fn_miniwindow_mouse_down =
+            [&](int, int, long f) { gotFlags = f; return true; };
+
+        rc.At(8);                       // over "bravo", but a hotspot claims it
+
+        opCheckEq((int) gotFlags, 0x20, "the hotspot layer saw MW_MOUSE_RH");
+        opCheckEq(rc.menus, 0, "a claimed hotspot raises NO context menu");
+        opCheck(rc.h.pane->GetSelectionText().IsEmpty(),
+                "...and changes no selection");
+    }
+    {
+        // The control for the arm above: the SAME click with a hotspot layer
+        // that declines must do both things, so "nothing happened" cannot pass
+        // for "the hotspot won".
+        RightClick rc;
+        rc.h.pane->m_fn_miniwindow_mouse_down = [](int, int, long) { return false; };
+        rc.At(8);
+        opCheckEq(rc.menus, 1, "control: a declined hotspot lets the menu through");
+        opCheck(rc.h.pane->GetSelectionText() == wxT("bravo"),
+                "...and the word is selected as usual");
+    }
+}
+
+
 int RunOutputPaneSelfTest()
 {
     printf("OUTPUTPANE-SELFTEST: driving the real COutputPane\n");
@@ -2279,6 +2731,8 @@ int RunOutputPaneSelfTest()
     TestPullSeamDetectsURLs();
     TestPendingRowUsesTheRunPipeline();
     TestMiddleClickIsInert();
+    TestContextMenuShape();
+    TestRightClickSelectsWord();
 
     printf("OUTPUTPANE-SELFTEST: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail;

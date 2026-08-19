@@ -22,6 +22,14 @@ void wx_unregister_world_frame(CMUSHclientDoc* doc);
 // Raise + activate a doc's world frame, if it still has one (e.g. the Activity
 // window switching to the world the user double-clicked).  No-op if none.
 void wx_activate_world_frame(CMUSHclientDoc* doc);
+// Enable / check state for canonical menu command `id` against `doc`, from the
+// same sources and in the same order the menu bar's update-UI uses (defined in
+// wx_mfc_impl.cpp).  `enabled` is seeded true and `checked` -1; the return is
+// false when no rule owned the id, leaving those seeds in place.  Used by the
+// output pane's right-click menu, which is built rather than bound and so
+// cannot receive wxEVT_UPDATE_UI.
+bool wx_canonical_menu_ui_state(int id, CMUSHclientDoc* doc,
+                                bool& enabled, int& checked);
 
 #include <wx/wx.h>
 #include <wx/mdi.h>

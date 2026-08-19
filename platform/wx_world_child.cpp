@@ -963,6 +963,36 @@ CWorldChildFrame::CWorldChildFrame(wxMDIParentFrame* parent,
         }
     };
 
+    // ── The output pane's right-click menu → canonical commands ────────────
+    // The pane's context menu carries the whole of Windows'
+    // CG_IDR_POPUP_MUSHVIEW, whose items are canonical MFC command ids.  Both
+    // seams land here rather than in the pane so the pane stays wx-only.
+    //
+    // Running one goes through the main frame's dispatcher, exactly as the
+    // world toolbar's Forward does (wx_toolbar.cpp:340) — that is the whole
+    // canonical→wx id translation, the kCanonCmds table and the port-local
+    // arms, not a second copy of any of it.  The dispatcher resolves "which
+    // world" from GetActiveChild(), so this frame makes itself active first:
+    // a right-click on a background world's pane must not run the command
+    // against whichever world happens to be in front.
+    m_output->m_fn_menu_command = [this](int id) {
+        if (id == 0) return;
+        if (!IsActiveWorld()) Activate();
+        wxWindow* top = wxTheApp->GetTopWindow();
+        if (!top) return;
+        wxCommandEvent fwd(wxEVT_MENU, id);
+        fwd.SetEventObject(top);
+        top->GetEventHandler()->ProcessEvent(fwd);
+    };
+
+    // ...and greying them is the same question the menu bar asks, asked the
+    // same way.  Against THIS world's document, not the active one: the menu
+    // describes the pane it was raised over.
+    m_output->m_fn_menu_ui_state =
+        [this](int id, bool& enabled, int& checked) {
+            return wx_canonical_menu_ui_state(id, m_doc, enabled, checked);
+        };
+
     // F3 / Shift+F3 from the output pane fires the find bar.
     m_output->m_fn_find_next_key = [this](bool fwd) {
         ShowFindBar(true);

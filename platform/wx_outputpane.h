@@ -788,6 +788,43 @@ public:
     // Wired by CWorldChildFrame to CWorldChildFrame::FireAcceleratorIfMatch.
     std::function<bool(wxKeyEvent&)> m_fn_accelerator_check;
 
+    // ── Canonical commands in the right-click menu ───────────────────────────
+    // The context menu carries the whole of Windows' CG_IDR_POPUP_MUSHVIEW, and
+    // those items are canonical MFC command ids rather than pane-local actions.
+    // Two seams rather than one, because "what does this command do" and "may
+    // the user choose it right now" have different owners:
+    //
+    //   m_fn_menu_command  — run canonical command `id`.  Wired by
+    //       CWorldChildFrame to the same forward the world toolbar uses.
+    //   m_fn_menu_ui_state — enable / check for `id`, seeded enabled=true and
+    //       checked=-1 and answered from platform/menu_ui_rules.cpp plus the
+    //       canonical ON_UPDATE_COMMAND_UI handlers (see
+    //       wx_canonical_menu_ui_state).  Returns false when nothing owns the
+    //       id, leaving the seeded values — which is how the app-level
+    //       commands (Activity List, Notepad, Full Screen) stay live.
+    //
+    // Unwired, every canonical item is greyed: an item that would silently do
+    // nothing must not look available.
+    std::function<void(int commandId)> m_fn_menu_command;
+    std::function<bool(int commandId, bool& enabled, int& checked)>
+        m_fn_menu_ui_state;
+
+    // Present the built context menu at client point `pt`.  Unwired — which is
+    // the product — the pane calls PopupMenu itself.  The in-app selftest wires
+    // it because it MUST drive a real EVT_RIGHT_DOWN (the selection change is
+    // part of that handler, not of the menu) and equally must not let a menu be
+    // shown: every selftest exits from wxApp::OnInit, so PopupMenu's nested
+    // tracking loop would have no event loop to come back from.  Wiring it also
+    // makes "no menu was raised" directly observable, which is what the
+    // miniwindow-hotspot control asserts.
+    std::function<void(wxMenu& menu, const wxPoint& pt)> m_fn_popup_context_menu;
+
+    // Build the right-click context menu for a click at client (x, y).
+    // Split out of OnRightDown, and public, because that is the only way the
+    // in-app selftest can see it: every selftest exits from wxApp::OnInit, so
+    // a popup menu can never actually be shown (docs/AUDIT-2026-08.md).
+    void BuildContextMenu(wxMenu& menu, int x, int y);
+
 private:
     // ── Paint ────────────────────────────────────────────────────────────────
     void OnPaint(wxPaintEvent& evt);
@@ -871,6 +908,17 @@ private:
     int XToChar(int lineIdx, int clientX, int clientY,
                 bool halfway = true) const;
     bool TryAliasMenu(wxMouseEvent& evt);   // Ctrl+click → m_fn_alias_menu
+
+    // The word under client point (x, y), using the same delimiter rule the
+    // double-click scan uses (m_wordDelimitersDblClick + whitespace).  The
+    // point resolves to a caret POSITION and the word grows outwards from it,
+    // so the gap beside a word still takes that word; false — leaving the
+    // outputs untouched — only when neither side of that caret is a word
+    // character (a run of two or more spaces or delimiters, an empty line).
+    // ONE scanner, shared by OnLeftDClick and the macOS select-on-right-click,
+    // so the two can never disagree about where a word starts.
+    bool WordAtPoint(int x, int y, SelPoint& outStart, SelPoint& outEnd,
+                     wxString& outWord) const;
 
     // Build a SelPoint from a mouse event position.
     SelPoint MouseToSelPoint(const wxMouseEvent& evt) const;

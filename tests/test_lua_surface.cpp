@@ -446,6 +446,37 @@ TEST(LuaSurface, PixelMathsRunsForReal)
     ));
 }
 
+// ── the two blend modes whose arithmetic was wrong ────────────────────────
+//
+// Both are shared Windows code, and both survived every earlier sweep because
+// the family's assertions were the error returns and the identity blend — none
+// of which touches a mode with a clamp or a colour-space conversion in it.
+TEST(LuaSurface, BlendPixelColourBurnAndHslAreArithmeticallyRight)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+    EXPECT_TRUE(run(f.L,
+        // Mode 7 is ColorBurn, whose underflow clamp compared an UNSIGNED long
+        // against 0: it never fired, and the wrapped value was truncated to a
+        // byte instead.  A blend red of 1 over a black base came back 255 —
+        // the exact opposite of a burn — and 100 came back 115.  Two pairs, so
+        // no single lucky constant passes.
+        "assert(world.BlendPixel(0x000001, 0x000000, 7, 1.0) == 0)\n"
+        "assert(world.BlendPixel(0x000064, 0x000000, 7, 1.0) == 0)\n"
+        // ...and a pair that must NOT clamp, so a "fix" that just answers 0
+        // fails too: burning white onto white leaves white.
+        "assert(world.BlendPixel(0xFFFFFF, 0xFFFFFF, 7, 1.0) == 0xFFFFFF)\n"
+        // Mode 64 puts the blend colour's hue, saturation and luminance into
+        // red, green and blue.  It read an unset CColor, so the blend colour
+        // was ignored altogether and every pixel came back as the base scaled
+        // by (1 - Opacity) — plain black at full opacity, whatever was blended.
+        // Pure red is hue 0, saturation 1, luminance 0.5 -> (0, 255, 127), and
+        // pure cyan is hue 180 -> (127, 255, 127).  Neither hue lands near an
+        // integer boundary of hue/360*255, so the truncation is not in doubt.
+        "assert(world.BlendPixel(0x0000FF, 0x000000, 64, 1.0) == 0x7FFF00)\n"
+        "assert(world.BlendPixel(0xFFFF00, 0x000000, 64, 1.0) == 0x7FFF7F)\n"
+    ));
+}
+
 // ── doc_gui_method_stubs.cpp — misc view/frame arms ───────────────────────
 
 TEST(LuaSurface, MiscViewStubs)
@@ -1082,6 +1113,65 @@ TEST(LuaSurface, MouseOverCallbackMayDeleteItsOwnHotspot)
     delete engine;
 }
 
+// WindowAddHotspot's re-entrancy guard used to be a function-local static, i.e.
+// ONE flag for the whole process rather than one per world.  A hotspot created
+// under the cursor fires its MouseOver immediately — through
+// pal::IWorldView::mouseMoveMiniWindow — and a script that added a hotspot to a
+// different, simultaneously-open world from there was refused eItemInUse.
+//
+// This view is where that script runs: it re-enters WindowAddHotspot from
+// inside the create-under-the-cursor re-detect, in whichever document it is
+// pointed at, so the fix and its control take the identical code path.
+struct ReentrantHotspotView : FakeWorldView {
+    CMUSHclientDoc * target;   // whose WindowAddHotspot to call from the callback
+    bool             fired;    // one nested call only, so B cannot bounce back
+    long             nested;   // ...and what it answered
+
+    ReentrantHotspotView () : target (NULL), fired (false), nested (-999) {}
+
+    void mouseMoveMiniWindow (long x, long y) override {
+        FakeWorldView::mouseMoveMiniWindow (x, y);
+        if (fired || !target)
+            return;
+        fired = true;
+        nested = target->WindowAddHotspot ("mw", "nested", 0, 0, 10, 10,
+                                           "", "", "", "", "", "", 0, 0);
+    }
+};
+
+TEST(LuaSurface, WindowAddHotspotGuardIsPerDocument)
+{
+    CMUSHclientDoc docA, docB;
+    ReentrantHotspotView view;
+    docA.m_pWorldView = &view;
+
+    ASSERT_EQ((long) eOK, docA.WindowCreate("mw", 0, 0, 20, 20, 0, 0, 0));
+    ASSERT_EQ((long) eOK, docB.WindowCreate("mw", 0, 0, 20, 20, 0, 0, 0));
+
+    // A hotspot at the origin contains the miniwindow's last mouse position,
+    // which is where the re-detect comes from.
+    view.target = &docB;
+    EXPECT_EQ((long) eOK, docA.WindowAddHotspot("mw", "h", 0, 0, 10, 10,
+                                                "", "", "", "", "", "", 0, 0));
+    // If the re-detect never ran, nothing below proves anything — so this is an
+    // ASSERT, not an EXPECT.
+    ASSERT_TRUE(view.fired);
+    EXPECT_EQ((long) eOK, view.nested);
+    EXPECT_EQ((long) eOK, docB.WindowDeleteHotspot("mw", "nested"));
+
+    // Control: re-entering A's OWN WindowAddHotspot is still refused, which is
+    // the whole point of the guard — so simply deleting it fails here.
+    view.fired  = false;
+    view.nested = -999;
+    view.target = &docA;
+    EXPECT_EQ((long) eOK, docA.WindowAddHotspot("mw", "h2", 0, 0, 10, 10,
+                                                "", "", "", "", "", "", 0, 0));
+    ASSERT_TRUE(view.fired);
+    EXPECT_EQ((long) eItemInUse, view.nested);
+
+    docA.m_pWorldView = NULL;
+}
+
 // Stage 2: the pixels are real.
 //
 // platform/headless_surface.cpp installs pal::CpuRaster as the headless
@@ -1331,6 +1421,169 @@ TEST(LuaSurface, LoadImageMemoryDecodesAPngWithAPaddedStride)
     }
 }
 
+// The two colour types NEITHER decoder handled.  A PNG is not always
+// truecolour, and the transform list only ever grew to cover what the app's own
+// artwork happened to be: LoadPng asks for EXPAND (so a palette file survives)
+// and LoadPngMemory does not, and neither asks for GRAY_TO_RGB, which is the
+// separate transform that promotes greyscale.  Anything left at 1 byte per
+// pixel is memcpy'd into a 24bpp DIB as if it were BGR — noise a third of the
+// image's width, reported as eOK.
+//
+// Indices vary with x AND y (a constant row would decode "correctly" from the
+// first byte of a garbled row by luck), and the palette entries are far apart
+// in all three channels so a channel swap fails too.
+static std::string write_palette_png(int w, int h)
+{
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_pal_%d.png", (int)getpid());
+    FILE* fp = fopen(path, "wb");
+    if (!fp) return "";
+
+    png_structp png  = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    png_infop   info = png ? png_create_info_struct(png) : NULL;
+    if (!png || !info || setjmp(png_jmpbuf(png))) {
+        if (png) png_destroy_write_struct(&png, info ? &info : NULL);
+        fclose(fp);
+        return "";
+    }
+    png_init_io(png, fp);
+    png_set_IHDR(png, info, w, h, 8, PNG_COLOR_TYPE_PALETTE,
+                 PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
+                 PNG_FILTER_TYPE_DEFAULT);
+    png_color pal[4];
+    for (int i = 0; i < 4; ++i) {
+        pal[i].red   = (png_byte)(20  + i * 60);
+        pal[i].green = (png_byte)(90  + i * 30);
+        pal[i].blue  = (png_byte)(200 - i * 40);
+    }
+    png_set_PLTE(png, info, pal, 4);
+    png_write_info(png, info);
+
+    std::vector<unsigned char> row((size_t)w);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x)
+            row[x] = (unsigned char)((x + y) % 4);
+        png_write_row(png, row.data());
+    }
+    png_write_end(png, NULL);
+    png_destroy_write_struct(&png, &info);
+    fclose(fp);
+    return path;
+}
+
+// An 8-bit greyscale PNG.  Deliberately 8-bit and not 1/2/4: PACKING and EXPAND
+// between them already cover the sub-byte depths, so an 8-bit file is the one
+// that needs GRAY_TO_RGB and nothing else.
+static std::string write_gray_png(int w, int h)
+{
+    char path[256];
+    snprintf(path, sizeof(path), "/tmp/mc_test_gray_%d.png", (int)getpid());
+    FILE* fp = fopen(path, "wb");
+    if (!fp) return "";
+
+    png_structp png  = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    png_infop   info = png ? png_create_info_struct(png) : NULL;
+    if (!png || !info || setjmp(png_jmpbuf(png))) {
+        if (png) png_destroy_write_struct(&png, info ? &info : NULL);
+        fclose(fp);
+        return "";
+    }
+    png_init_io(png, fp);
+    png_set_IHDR(png, info, w, h, 8, PNG_COLOR_TYPE_GRAY,
+                 PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
+                 PNG_FILTER_TYPE_DEFAULT);
+    png_write_info(png, info);
+
+    std::vector<unsigned char> row((size_t)w);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x)
+            row[x] = (unsigned char)(10 + x * 20 + y * 5);  // x and y scale differently
+        png_write_row(png, row.data());
+    }
+    png_write_end(png, NULL);
+    png_destroy_write_struct(&png, &info);
+    fclose(fp);
+    return path;
+}
+
+// The Lua that loads `path` into miniwindow `win` through one of the two
+// decoders, draws it at the origin and checks every pixel against `wantExpr` —
+// a Lua expression in x and y giving the COLORREF the fixture wrote there.
+// Both decoders get driven with the same fixture and the same expectation,
+// which is the point: they used to disagree about the very same file.
+static std::string decode_script(const char* win, const std::string& path,
+                                 bool useMemory, int w, int h,
+                                 const char* wantExpr)
+{
+    char buf[1024];
+    std::string s;
+
+    snprintf(buf, sizeof buf,
+        "assert(world.WindowCreate('%s', 0, 0, 40, 40, 0, 0, 0x000000) == 0)\n",
+        win);
+    s += buf;
+
+    if (useMemory)
+        snprintf(buf, sizeof buf,
+            "local fh = assert(io.open('%s', 'rb'))\n"
+            "local bytes = fh:read('*a')\n"
+            "fh:close()\n"
+            "assert(#bytes > 0, 'fixture PNG is empty')\n"
+            "assert(world.WindowLoadImageMemory('%s', 'i', bytes, false) == 0,\n"
+            "       'in-memory decode refused')\n",
+            path.c_str(), win);
+    else
+        snprintf(buf, sizeof buf,
+            "assert(world.WindowLoadImage('%s', 'i', '%s') == 0,\n"
+            "       'on-disk decode refused')\n",
+            win, path.c_str());
+    s += buf;
+
+    snprintf(buf, sizeof buf,
+        // The geometry is right even unfixed (it comes from the IHDR, not from
+        // the transformed rows), so it is only here to pin what the pixel loop
+        // walks — the pixels themselves are what discriminate.
+        "assert(world.WindowImageInfo('%s', 'i', 2) == %d, 'width')\n"
+        "assert(world.WindowImageInfo('%s', 'i', 3) == %d, 'height')\n"
+        "assert(world.WindowDrawImage('%s', 'i', 0, 0, 0, 0, 1, 0, 0, 0, 0) == 0)\n"
+        "for x = 0, %d do for y = 0, %d do\n"
+        "  local want = %s\n"
+        "  local got = world.WindowGetPixel('%s', x, y)\n"
+        "  assert(got == want,\n"
+        "         string.format('at %%d,%%d: got %%d want %%d', x, y, got, want))\n"
+        "end end\n",
+        win, w, win, h, win, w - 1, h - 1, wantExpr, win);
+    s += buf;
+    return s;
+}
+
+TEST(LuaSurface, PaletteAndGreyscalePngsDecodeThroughBothLoaders)
+{
+    LuaDoc f; ASSERT_NE(nullptr, f.L);
+
+    // 5 wide so the 24bpp stride is padded, 3 high so more than one row runs.
+    const std::string pal  = write_palette_png(5, 3);
+    const std::string grey = write_gray_png(5, 3);
+    ASSERT_FALSE(pal.empty());
+    ASSERT_FALSE(grey.empty());
+
+    // must match write_palette_png() / write_gray_png() above
+    static const char kPalWant[] =
+        "(20 + ((x + y) % 4) * 60) + (90 + ((x + y) % 4) * 30) * 256"
+        " + (200 - ((x + y) % 4) * 40) * 65536";
+    static const char kGreyWant[] =
+        "(10 + x * 20 + y * 5) + (10 + x * 20 + y * 5) * 256"
+        " + (10 + x * 20 + y * 5) * 65536";
+
+    EXPECT_TRUE(run(f.L, decode_script("pf", pal,  false, 5, 3, kPalWant ).c_str()));
+    EXPECT_TRUE(run(f.L, decode_script("pm", pal,  true,  5, 3, kPalWant ).c_str()));
+    EXPECT_TRUE(run(f.L, decode_script("gf", grey, false, 5, 3, kGreyWant).c_str()));
+    EXPECT_TRUE(run(f.L, decode_script("gm", grey, true,  5, 3, kGreyWant).c_str()));
+
+    ::unlink(pal.c_str());
+    ::unlink(grey.c_str());
+}
+
 TEST(LuaSurface, ImageFamilyRoundTripsAPngThroughTheDibStore)
 {
     LuaDoc f; ASSERT_NE(nullptr, f.L);
@@ -1435,14 +1688,22 @@ TEST(LuaSurface, WindowWriteBmpRoundTrips)
     // bfOffBits at 10 == 54 (14-byte file header + 40-byte info header).
     FILE* fp = fopen(bmp, "rb");
     ASSERT_TRUE(fp != nullptr);
-    unsigned char hdr[14] = {};
-    ASSERT_EQ((size_t)14, fread(hdr, 1, sizeof hdr, fp));
+    unsigned char hdr[18] = {};
+    ASSERT_EQ((size_t)18, fread(hdr, 1, sizeof hdr, fp));
     fclose(fp);
     EXPECT_EQ('B', hdr[0]);
     EXPECT_EQ('M', hdr[1]);
     const unsigned offBits = hdr[10] | (hdr[11] << 8) |
                              ((unsigned)hdr[12] << 16) | ((unsigned)hdr[13] << 24);
     EXPECT_EQ(54u, offBits);
+    // ...and the info header's own biSize, immediately after it, must be the 40
+    // that actually follows.  CMiniWindow::Write stamped sizeof(BITMAPINFO) =
+    // 44 there (BITMAPINFO carries a trailing bmiColors [1]), so the file
+    // claimed a header dialect it did not have: macOS ImageIO — Preview, Quick
+    // Look, sips — refuses it outright, while WindowWrite still returned eOK.
+    const unsigned biSize = hdr[14] | (hdr[15] << 8) |
+                            ((unsigned)hdr[16] << 16) | ((unsigned)hdr[17] << 24);
+    EXPECT_EQ(40u, biSize);
     ::unlink(bmp);
 }
 

@@ -1249,7 +1249,12 @@ long CMiniWindow::Write (LPCTSTR FileName)
   BITMAPINFO bmi;
   ZeroMemory (&bmi, sizeof bmi);
 
-  bmi.bmiHeader.biSize = sizeof bmi;
+  // sizeof the HEADER, not sizeof the whole BITMAPINFO (which is 4 bytes more
+  // for its trailing bmiColors [1]).  This same bmi.bmiHeader is written out as
+  // the .bmp file's info header below, so a biSize of 44 described a 40-byte
+  // header and made the file unopenable by any strict reader (macOS ImageIO
+  // refuses it outright).
+  bmi.bmiHeader.biSize = sizeof bmi.bmiHeader;
   bmi.bmiHeader.biWidth =          m_iWidth;
   bmi.bmiHeader.biHeight =         m_iHeight;
   bmi.bmiHeader.biPlanes =         1;

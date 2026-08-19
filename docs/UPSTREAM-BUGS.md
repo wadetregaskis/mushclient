@@ -39,6 +39,11 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 28 | The alias page's column arrays are indexed with the trigger page's enum | this commit | configuration.cpp `CMUSHclientDoc::LoadPrefsP7` |
 | 29 | The printer-font picker opens on the font from before the sheet opened | this commit | GlobalPrefs.cpp `CGlobalPrefsP4::OnFont` |
 | 30 | `metaphone()` copies a word into a 61-byte stack buffer with no bound | this commit | Utilities.cpp `metaphone` |
+| 31 | Greyscale PNGs decode garbled, and palette PNGs do too from memory | this commit | png_load_shared.cpp ← Utilities.cpp `LoadPng` / `LoadPngMemory` |
+| 32 | `world.BlendPixel` mode 64 (HSL) ignores the blend colour entirely | this commit | methods_pixel_shared.cpp ← methods_miniwindows.cpp `CMUSHclientDoc::BlendPixel` |
+| 33 | `world.WindowWrite` writes a .bmp strict readers refuse to open | this commit | miniwindow.cpp `CMiniWindow::Write` |
+| 34 | `Blend_ColorBurn`'s underflow clamp is dead code (unsigned comparison) | this commit | blending.h `Blend_ColorBurn` |
+| 35 | `WindowAddHotspot`'s re-entrancy guard is shared by every open world | this commit | methods_miniwindows.cpp `CMUSHclientDoc::WindowAddHotspot` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -743,3 +748,63 @@ caller added would be the one to find it.
 **Fix:** `break` out of the fill loop once `jj` reaches `sizeof (wname) - 1`,
 which is the same clamp the `metalen` line above it already applies.  Kept
 rather than deleted so the reference implementation stays available.
+## 31 — Greyscale PNGs decode garbled, and palette PNGs do too from memory (this commit)
+**Bug:** both decoders ask libpng for `STRIP_16 | PACKING | BGR`, and only
+`LoadPng` adds `EXPAND`.  Neither asks for `GRAY_TO_RGB`, which is a *separate*
+transform: `EXPAND` promotes sub-8-bit samples and expands a palette, but leaves
+an 8-bit greyscale image at one byte per pixel and a grey+alpha one at two.  The
+row bytes are then `memcpy`'d straight into a 24/32bpp DIB as if they were BGR,
+so every greyscale PNG renders as coloured noise a third of its width — and
+`world.WindowLoadImage`/`WindowLoadImageMemory` still return `eOK`.  The missing
+`EXPAND` in `LoadPngMemory` does the same to palette-indexed images, so the same
+file loads correctly from disk and garbled from memory.
+**Fix:** add `PNG_TRANSFORM_GRAY_TO_RGB` to both, and `PNG_TRANSFORM_EXPAND` to
+`LoadPngMemory`.  Both are no-ops for truecolour input, so existing RGB/RGBA
+decodes are byte-identical; `png_read_png` calls `png_read_update_info`, so the
+`png_get_color_type` test that picks 24 vs 32bpp already sees the transformed
+image.
+
+## 32 — `world.BlendPixel` mode 64 (HSL) ignores the blend colour entirely (this commit)
+**Bug:** case 64 declares `CColor cA, cB`, populates only `cA`, and then reads
+`cB.GetRed/GetGreen/GetBlue` — a default-constructed colour, i.e. black.  Each
+channel is therefore `Simple_Opacity (base, 0, Opacity)`: the base scaled by
+`(1 - Opacity)`, which is pure black at opacity 1.0 and merely darkened below
+it.  The blend colour never participates.
+**Fix:** mirror what `CMiniWindow::BlendImage` case 64 does over a whole
+surface — hue/360*255 to red, saturation*255 to green, luminance*255 to blue,
+each `Simple_Opacity`-blended against the base — and drop the unused `cB`.
+
+## 33 — `world.WindowWrite` writes a .bmp strict readers refuse to open (this commit)
+**Bug:** `CMiniWindow::Write` fills a `BITMAPINFO` with
+`biSize = sizeof bmi` — 44 bytes, because `BITMAPINFO` carries a trailing
+`bmiColors [1]` — and then writes out only `bmi.bmiHeader`, which is 40.  The
+`biSize` field is how a reader knows which header dialect follows, so the file
+claims a 44-byte header it does not have.  Windows' own GDI is lenient enough to
+open it; macOS ImageIO (Preview, Quick Look, `sips`) is not, and `WindowWrite`
+returns `eOK` either way.
+**Fix:** `bmi.bmiHeader.biSize = sizeof bmi.bmiHeader;`.  The same `bmi` goes on
+to `WritePng`, which reads only `biWidth`/`biHeight`, so the PNG path is
+unchanged.
+
+## 34 — `Blend_ColorBurn`'s underflow clamp is dead code (this commit)
+**Bug:** the macro tests `(255 - (((unsigned long)(255 - B)) << 8) / A) < 0`.
+The division yields an `unsigned long`, so the subtraction is done unsigned and
+the result can never be negative: the clamp never fires, and the `(uint8)` cast
+truncates the wrapped value instead.  For the 32640 of 65536 (A, B) pairs where
+the burn *should* clamp to 0, the macro returns an arbitrary byte — `A=1, B=0`
+gives 255 (the opposite of the intended answer) and `A=100, B=0` gives 115.  It
+corrupts modes 7 (ColorBurn), 9 (InverseColorBurn) and 20 (VividLight) of both
+`world.WindowBlendImage` and `world.BlendPixel`.
+**Fix:** cast the division result to `long` so the subtraction is signed, in the
+test and in the value — the shape `Blend_Freeze` already uses two lines below.
+
+## 35 — `WindowAddHotspot`'s re-entrancy guard is shared by every open world (this commit)
+**Bug:** the guard that stops a MouseOver callback recursing back into
+`WindowAddHotspot` for ever is a function-local `static bool`, so it is one flag
+for the whole process rather than one per document.  While world A is inside
+`WindowAddHotspot`, a MouseOver script that adds a hotspot to an unrelated,
+simultaneously-open world B is refused with `eItemInUse` — a world's hotspots
+depending on what another world happens to be doing.
+**Fix:** make it the `CMUSHclientDoc` member `m_bInWindowAddHotspot`, cleared in
+the constructor.  Per-document scope still terminates any A→B→A recursion,
+because the document's own flag is set on the way in.

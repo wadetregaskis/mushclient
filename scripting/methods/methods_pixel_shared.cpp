@@ -491,12 +491,16 @@ long r, g, b;
 
     case 64:           // HSL (hue to red, saturation to green, luminance to blue)
         {
-          CColor cA, cB;    // A = blend, B = base
+          CColor cA;    // A = blend, B = base
           cA.SetRGB (rA, gA, bA);
 
-          r = Simple_Opacity (rB, cB.GetRed (), Opacity); 
-          g = Simple_Opacity (gB, cB.GetGreen (), Opacity); 
-          b = Simple_Opacity (bB, cB.GetBlue (), Opacity); 
+          // the blend colour's H, S and L go to R, G and B respectively --
+          // as CMiniWindow::BlendImage case 64 does it.  This used to read an
+          // unset cB, so the blend colour was ignored altogether and every
+          // pixel came back as the base scaled by (1 - Opacity).
+          r = Simple_Opacity (rB, (cA.GetHue () / 360.0) * 255, Opacity);
+          g = Simple_Opacity (gB, cA.GetSaturation () * 255, Opacity);
+          b = Simple_Opacity (bB, cA.GetLuminance () * 255, Opacity);
 
          }
       break;

@@ -30,7 +30,11 @@
 #define Blend_SoftLight(A,B)	((uint8) ((A * B) >> 8) +  ((B * (255 - (((255 - B) * (255-A)) >> 8) - ((A * B) >> 8) )) >> 8) )           // c = ((A * B) >> 8)
 #define Blend_HardLight(A,B)	(Blend_Overlay(B,A))
 #define Blend_ColorDodge(A,B)	((uint8)((A == 255) ? A:((((unsigned long) B) << 8 ) / (255 - A) > 255) ? 255:((((unsigned long) B) << 8 ) / (255 - A))))
-#define Blend_ColorBurn(A,B)	((uint8)((A == 0) ? 0:((255 - (( ((unsigned long)(255 - B)) << 8 ) / A)) < 0) ? 0:(255 - (( ((unsigned long)(255 - B)) << 8 ) / A))))
+// the (long) cast is what makes the underflow test work at all: without it the
+// subtraction is done on the unsigned long the division yields, so it can never
+// be < 0 and the clamp below it is dead code — every pair that should burn to 0
+// came back as the wrapped value truncated to a byte (A=1, B=0 gave 255)
+#define Blend_ColorBurn(A,B)	((uint8)((A == 0) ? 0:((255 - (long) (( ((unsigned long)(255 - B)) << 8 ) / A)) < 0) ? 0:(255 - (long) (( ((unsigned long)(255 - B)) << 8 ) / A))))
 #define Blend_LinearDodge(A,B)	(Blend_Add(A,B))
 #define Blend_LinearBurn(A,B)	(Blend_Subtract(A,B))
 #define Blend_LinearLight(A,B)	((uint8)(A < 128) ? Blend_LinearBurn((2 * A),B):Blend_LinearDodge((2 * (A - 128)),B))

@@ -548,13 +548,11 @@ long CMUSHclientDoc::WindowAddHotspot(LPCTSTR Name,
 
   CMiniWindow * mw = it->second;
 
-static bool bInWindowAddHotspot = false;
-
   // don't recurse into infinite loops
-  if (bInWindowAddHotspot)
+  if (m_bInWindowAddHotspot)
     return eItemInUse;
 
-  bInWindowAddHotspot = true;
+  m_bInWindowAddHotspot = true;
 
   string sPluginID;
 
@@ -592,7 +590,7 @@ static bool bInWindowAddHotspot = false;
         // walk (pal/win_worldview.cpp mouseMoveMiniWindow), while the ports —
         // which never construct a CMUSHView, so the walk found nothing — get
         // the same immediate MouseOver through their own frontend.  The
-        // bInWindowAddHotspot guard above still covers the re-entrancy.
+        // m_bInWindowAddHotspot guard above still covers the re-entrancy.
         if (m_pWorldView)
           m_pWorldView->mouseMoveMiniWindow (m_lastMousePosition.x,
                                              m_lastMousePosition.y);
@@ -601,7 +599,7 @@ static bool bInWindowAddHotspot = false;
     } // end of added hotspot OK
 
 
-  bInWindowAddHotspot = false;
+  m_bInWindowAddHotspot = false;
 
   return status;
 

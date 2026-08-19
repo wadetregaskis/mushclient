@@ -132,7 +132,14 @@ unsigned char header [8];
   int png_transforms = PNG_TRANSFORM_STRIP_16 |    // Strip 16-bit samples to 8 bits
                        PNG_TRANSFORM_PACKING |     // Expand 1, 2 and 4-bit samples to bytes
                        PNG_TRANSFORM_EXPAND  |     // expand out to 8 bits if less
+                       PNG_TRANSFORM_GRAY_TO_RGB | // Expand greyscale to RGB (see below)
                        PNG_TRANSFORM_BGR;          // Flip RGB to BGR, RGBA to BGRA
+
+  // GRAY_TO_RGB is not optional: EXPAND does not touch an 8-bit greyscale or
+  // grey+alpha image, so without it the rows stay 1 or 2 bytes per pixel and
+  // get memcpy'd into a 24/32bpp DIB as if they were BGR — a garbled image
+  // reported as eOK.  It is a no-op for truecolour input, so every RGB/RGBA
+  // decode is byte-identical to before.
 
   // read the file
   png_read_png(png_ptr, info_ptr, png_transforms, NULL);
@@ -300,8 +307,17 @@ long LoadPngMemory (unsigned char * Buffer, const size_t Length, HBITMAP & hbmp,
   png_set_read_fn(png_ptr, &PngBufferInfo, ReadDataFromInputStream);
 
 
+  // EXPAND and GRAY_TO_RGB have to match LoadPng above, or the same file that
+  // loads correctly from disk comes out garbled from memory: this list used to
+  // have neither, so a palette PNG kept one index byte per pixel and a
+  // greyscale one kept one grey byte, and both were copied into a 24bpp DIB as
+  // if they were BGR.  (EXPAND is belt and braces — libpng's gray_to_rgb turns
+  // the same PNG_EXPAND flag on for itself — but it is what LoadPng says, and
+  // this list should not depend on that being true.)
   int png_transforms = PNG_TRANSFORM_STRIP_16 |    // Strip 16-bit samples to 8 bits
                        PNG_TRANSFORM_PACKING |     // Expand 1, 2 and 4-bit samples to bytes
+                       PNG_TRANSFORM_EXPAND  |     // expand out to 8 bits if less
+                       PNG_TRANSFORM_GRAY_TO_RGB | // Expand greyscale to RGB
                        PNG_TRANSFORM_BGR;          // Flip RGB to BGR, RGBA to BGRA
 
 

@@ -304,6 +304,7 @@ CStyle * pNewStyle = AddStyle (iFlags & STYLE_BITS,
               MXP_error (DBG_ERROR, errMXP_NoClosingSemicolonInArgument,
                         TFormat ("No closing \";\" in MXP element argument \"%s\"", 
                         (LPCTSTR) pArgument->strValue)); 
+              DELETE_LIST (ArgumentList);
               return;
               }
 
@@ -440,6 +441,8 @@ CElementItem * pElementItem;
             MXP_error (DBG_ERROR, errMXP_NoClosingSemicolonInArgument,
                       TFormat ("No closing \";\" in MXP element argument \"%s\"", 
                       (LPCTSTR) pArgument->strValue)); 
+            DELETE_LIST (BuiltArgumentList);
+            DELETE_LIST (ArgumentList);
             return;
             }
 

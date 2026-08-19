@@ -14,6 +14,16 @@
 static const bool g_debug = false;
 #endif
 
+// A hostile or broken server can open a telnet subnegotiation (IAC SB) and then
+// stream data forever without ever sending the terminating IAC SE, growing
+// m_IAC_subnegotiation_data without bound until memory is exhausted.  No
+// legitimate subnegotiation (GMCP, MSDP, MTTS, CHARSET, NAWS ...) comes anywhere
+// near this size, so past this cap we drop the connection -- mirroring the MCCP
+// input path, which likewise disconnects when its COMPRESS_BUFFER_LENGTH buffer
+// would overflow.  Deliberately generous so no real payload is ever clipped;
+// any finite bound defeats the memory-exhaustion attack.
+#define MAX_SUBNEGOTIATION_LENGTH (256 * 1024)
+
 /* Phases for processing input stream ...
 
 
@@ -604,8 +614,17 @@ void CMUSHclientDoc::Phase_SUBNEGOTIATION (const unsigned char c)
     m_phase = HAVE_SUBNEGOTIATION_IAC;
     }
   else
+    {
     // just collect the data until IAC SE
+    if (m_IAC_subnegotiation_data.size () >= MAX_SUBNEGOTIATION_LENGTH)
+      {
+      OnConnectionDisconnect ();    // close the world
+      UMessageBox ("Telnet subnegotiation too long - closing connection",
+                   MB_ICONEXCLAMATION);
+      return;
+      }
     m_IAC_subnegotiation_data += c;
+    }
 
 
   } // end of Phase_SUBNEGOTIATION
@@ -620,6 +639,13 @@ void CMUSHclientDoc::Phase_SUBNEGOTIATION_IAC (const unsigned char c)
     {
     // have IAC SB x <data> IAC IAC
     // store the single IAC
+    if (m_IAC_subnegotiation_data.size () >= MAX_SUBNEGOTIATION_LENGTH)
+      {
+      OnConnectionDisconnect ();    // close the world
+      UMessageBox ("Telnet subnegotiation too long - closing connection",
+                   MB_ICONEXCLAMATION);
+      return;
+      }
     m_IAC_subnegotiation_data += c;
     // press on with subnegotiation
     m_phase = HAVE_SUBNEGOTIATION;

@@ -193,6 +193,7 @@ CString strArgument;
       MXP_error (DBG_ERROR, errMXP_NoTagInDefinition,
                 TFormat ("No opening \"<\" in MXP element definition \"%s\"", 
                 (LPCTSTR) strArgument)); 
+      DELETE_LIST (ArgumentList);
       return;
       }
     p++;  // skip <
@@ -207,6 +208,7 @@ CString strArgument;
         MXP_error (DBG_ERROR, errMXP_UnexpectedDefinitionSymbol,
                   TFormat ("Unexpected \"<\" in MXP element definition \"%s\"", 
                   (LPCTSTR) strArgument)); 
+        DELETE_LIST (ArgumentList);
         return;
         }
       if (*p == '\'' || *p == '\"') // quoted string?
@@ -219,6 +221,7 @@ CString strArgument;
           MXP_error (DBG_ERROR, errMXP_NoClosingDefinitionQuote,
                      TFormat ("No closing quote in MXP element definition \"%s\"", 
                     (LPCTSTR) strArgument)); 
+          DELETE_LIST (ArgumentList);
           return;
           }
         } // end of quoted string
@@ -231,6 +234,7 @@ CString strArgument;
       MXP_error (DBG_ERROR, errMXP_NoClosingDefinitionTag,
                 TFormat ("No closing \">\" in MXP element definition \"%s\"", 
                 (LPCTSTR) strArgument)); 
+      DELETE_LIST (ArgumentList);
       return;
       }
 
@@ -243,6 +247,7 @@ CString strArgument;
       MXP_error (DBG_ERROR, errMXP_NoDefinitionTag,
                 TFormat ("No element name in MXP element definition \"<%s>\"", 
                 (LPCTSTR) CString (pStart, p - pStart))); 
+      DELETE_LIST (ArgumentList);
       return;
       }
 
@@ -253,6 +258,7 @@ CString strArgument;
       MXP_error (DBG_ERROR, errMXP_DefinitionCannotCloseElement,
                 TFormat ("Element definitions cannot close other elements: </%s>" ,
                           (LPCTSTR) strAtomName));
+      DELETE_LIST (ArgumentList);
       return;
       }
 
@@ -263,6 +269,7 @@ CString strArgument;
       MXP_error (DBG_ERROR, errMXP_DefinitionCannotDefineElement,
                 TFormat ("Element definitions cannot define other elements: <!%s>" ,
                           (LPCTSTR) strAtomName));
+      DELETE_LIST (ArgumentList);
       return;
       }
 
@@ -277,6 +284,7 @@ CString strArgument;
       MXP_error (DBG_ERROR, errMXP_NoInbuiltDefinitionTag,
                 TFormat ("Unknown MXP element: <%s>" ,
                           (LPCTSTR) strAtomName));
+      DELETE_LIST (ArgumentList);
       return;
       }
 
@@ -288,6 +296,7 @@ CString strArgument;
       {     // bad arguments
       DELETE_LIST (pElementItem->ArgumentList);
       delete pElementItem;
+      DELETE_LIST (ArgumentList);
       return;
       }
 
@@ -306,6 +315,7 @@ CString strArgument;
   if (BuildArgumentList (pElement->AttributeList, GetArgument (ArgumentList, "att", 2, false)))
     {     // bad arguments
     DELETE_LIST (pElement->AttributeList);
+    DELETE_LIST (ArgumentList);
     return;
     }
 

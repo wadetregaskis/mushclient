@@ -154,6 +154,27 @@ else()
     message(WARNING "Python3 not found; ASCII-literal lint (mojibake guard) SKIPPED")
 endif()
 
+# ── Source lint: no unresolved merge-conflict markers ───────────────────────
+# docs/UPSTREAM-BUGS.md shipped at HEAD for over a week with three literal
+# `<<<<<<<`/`=======`/`>>>>>>>` markers left behind by a botched merge
+# resolution — invisible in review because they read as a slightly odd prose
+# divider, not an error.  This greps every `git ls-files`-tracked file for
+# git's own marker syntax.  As with the ASCII-literal lint above, the second
+# test is the checker's own fixture, so the lint cannot rot into a vacuous
+# pass.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME lint_conflict_markers
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_conflict_markers.py
+                     ${CMAKE_SOURCE_DIR})
+    add_test(NAME lint_conflict_markers_selftest
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/check_conflict_markers.py
+                     --selftest)
+else()
+    message(WARNING "Python3 not found; conflict-marker lint SKIPPED")
+endif()
+
 # ── In-app conformance selftests ────────────────────────────────────────────
 # The hidden --pal-*-selftest flags run inside the real app binary (real wx
 # adapter, real transport, real world.Window* engine) and exit before the GUI

@@ -570,6 +570,23 @@ rely on the zero-fill, so it is opt-in and off by default. The option is carried
 the option set still loads on Windows — which is the whole reason this is a divergence
 and not a port-local setting.
 
+**Refinement (`8fa8baa`, 2026-08-19) — an explicitly-passed nil is an omitted
+argument.** The `kArgDefaults` padding used to fill only the slots *beyond* the
+supplied argument count, so `world.EnableTrigger("t", None)` reached the method with a
+zero where `world.EnableTrigger("t")` reached it with the documented default — the
+first disabled the trigger the second enabled, both returning `eOK`. Python `None`,
+Ruby `nil`, Perl `undef` and JavaScript `undefined`/`null` all marshal to `VT_EMPTY`,
+which is *inside* the count. The padding now fills a `VT_EMPTY`/`VT_NULL` slot too.
+**This is port-only** — `mc_dispatch.cpp` does not exist upstream — but it interacts
+with the option above and the two readings must stay apart: strict counts the
+arguments the caller *wrote*, so an explicit nil is a **supplied** argument for the
+arity check while being an **unfilled** slot for the padding. Collapsing them would
+make strict reject a call that the same option leaves working when spelled with the
+argument omitted. The authority for the rule is Lua's own shipping binding, where
+`optboolean` (`scripting/lua_methods.cpp:330-345`) says in so many words that nil
+takes the default — and `kArgDefaults` is by its own comment the Lua `opt*` defaults
+exactly, so Lua's rule *is* the table's rule.
+
 **Note for anyone merging upstream:** this adds a row to `scriptingoptions_numeric.inc`
 and a member to `CMUSHclientDoc`. Both are shared source; expect a conflict at both
 sites. The rationale rests on a claim never observed on Windows in this project — that
@@ -632,6 +649,17 @@ already commented out. D-27 sanctioned removing the *enumerators*; the `bDelayed
 a separate consolidated feature that deserves its own decision. It is a pure
 comment-deletion job with no build risk, but it touches seven more canonical files and so
 widens the upstream-merge conflict surface.
+
+**Update (`893395a`, 2026-08-19): the web is now deleted too.** Pure comment removal,
+verified genuinely dead first — `bDelayed`, `eDelayed`, `IDC_DELAYED` and
+`OnUpdateDelayed` were grepped across every `.cpp`/`.h`/`.vcxproj`/`.rc` and the
+`plugins/` XML samples, and the only other hit was unrelated prose in
+`plugins/sample_plugin.xml` ("the announcement is delayed a second"). So the
+conflict surface this paragraph warned about has been taken deliberately rather than
+avoided: seven more canonical files (`OtherTypes.h`, `methods_aliases.cpp`,
+`xml/xml_save_world.cpp`, `prefspropertypages.cpp`, `aliasdlg.h`, `aliasdlg.cpp`,
+`world_debug.cpp`) now differ from upstream by deleted comments. Nothing executable
+changed, on either platform.
 
 ---
 
@@ -774,3 +802,32 @@ The notepad's four line-ending conversions were considered too and fail the same
 bytes exactly as upstream does. The port's representation and the two behavioural
 differences that follow from it are recorded in CLAUDE.md, and the upstream data-loss
 defect it sidesteps is `docs/UPSTREAM-BUGS.md` 82.
+
+**Two more were considered in the second consolidation round (2026-08-19) and fail the
+same test.** Both were written up by their branches as proposed entries for this file;
+both are macOS-vs-Windows differences, so both are recorded as comments at their sites
+and in `docs/DECISION-QUEUE-2026-08.md` instead:
+
+* **The status bar's connected-time pane reporting the connection rather than the
+  window's age** (D-13, `65fa4ed`). Windows fills `ID_STATUSLINE_TIME` from
+  `CMUSHclientDoc::OnUpdateStatuslineTime` (`doc.cpp:1069`), which renders
+  `CTime::GetCurrentTime() - m_tStatusTime` — wall-clock time since the world *window*
+  opened or was last reset, counting on while disconnected. The port now shows the
+  current connection, with the cumulative total in parentheses and `past` marking a
+  finished one. The whole change is in `platform/wx_world_child.cpp` and
+  `wx_world_child.h`; **no canonical source is touched**, `doc.cpp:1069`,
+  `doc.cpp:3607` and `methods_output.cpp:87` are untouched, and the Windows pane and
+  both Windows resets behave exactly as before. The mechanism that keeps Game ▸ Reset
+  Connected Time observable without editing canonical source — reading `m_tStatusTime`
+  as a display epoch that upper-bounds both figures — is the load-bearing part and is
+  recorded at the site.
+* **Right-click resolving the click to a word when nothing is selected** (D-29,
+  `3fe8413`). Windows does not: `CMUSHView::OnRButtonDown` (`mushview.cpp:2283`) offers
+  the point to the miniwindow layer and falls through to `CView`, and every
+  context-dependent handler reads the selection the user made earlier. The port follows
+  the macOS platform convention instead, and only in `platform/wx_outputpane.cpp`
+  (`COutputPane::OnRightDown`). An existing selection is left *exactly* alone, which is
+  the half that matters: Copy is the menu's most-used item and copies the selection, so
+  a right-click that moved it first would make Copy copy the wrong thing. The branch
+  reached this conclusion itself and placed the note at the site; it is repeated here
+  so the exclusion is visible from this file.

@@ -295,8 +295,9 @@ JSValueRef Method_call(JSContextRef ctx, JSObjectRef function, JSObjectRef /*thi
 
   if (rc != MC_DISP_OK)
     {
-    if (exception) *exception = make_js_error(ctx, "world." + m->name +
-                                  (rc == MC_DISP_UNKNOWN ? ": unknown method" : ": bad arguments"));
+    if (exception) *exception = make_js_error(ctx, "world." + m->name + ": " +
+                                  (rc == MC_DISP_UNKNOWN ? std::string("unknown method")
+                                   : MC_DispatchBadArgsMessage(m->name.c_str(), (int) argc)));
     MC_VariantClear(result);
     return JSValueMakeUndefined(ctx);
     }
@@ -336,7 +337,10 @@ JSValueRef Method_convertToType(JSContextRef ctx, JSObjectRef object,
     return nullptr;
     }
   VARIANT result; VariantInit(&result);
-  if (MC_DispatchInvoke(m->doc, m->name.c_str(), nullptr, 0, result, nullptr) != MC_DISP_OK)
+  // MC_DISP_F_INTROSPECT: JavaScript's type coercion, not a call the plugin
+  // author wrote — strict argument checking must not fire (see mc_dispatch.h).
+  if (MC_DispatchInvoke(m->doc, m->name.c_str(), nullptr, 0, result, nullptr,
+                        MC_DISP_F_INTROSPECT) != MC_DISP_OK)
     { MC_VariantClear(result); return nullptr; }
   JSValueRef v = variant_to_js(ctx, result);
   MC_VariantClear(result);

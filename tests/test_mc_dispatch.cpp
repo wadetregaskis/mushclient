@@ -730,4 +730,248 @@ TEST(McDispatch, ArbitraryBytesSurviveTheVariantBoundary)
     EXPECT_EQ(std::string("\xFF\xFE\x01"), roundtrip_variable(doc, "raw",  vstr("\xFF\xFE\x01")));
 }
 
+// ── strict argument checking (world option "script_strict_arguments") ──────
+//
+// Opt-in, default OFF.  With it off the substrate zero-fills every parameter a
+// short list did not supply -- world.SetVariable("x") sets "x" to "" -- which
+// is this port's invention: the real IDispatch::Invoke the Windows build rides
+// answers DISP_E_BADPARAMCOUNT instead (the dispatch map declares no
+// VTS_VARIANT anywhere, so every declared parameter is required), and Lua's own
+// binding errors too.  With it on, the five embedded engines match both.
+//
+// ARITY ONLY, never types: tcl_engine.cpp marshals every argument as VT_BSTR by
+// design, so a type-strict check would reject every numeric parameter Tcl
+// passes -- the whole language.
+
+// The control.  Nothing about the default path may move: a short list still
+// zero-fills and still succeeds.  Every other test in this file runs with the
+// option off, so this is what they all rely on.
+TEST(McDispatch, StrictOffLeavesTheZeroFillAlone)
+{
+    CMUSHclientDoc doc;
+    ASSERT_FALSE(doc.m_bStrictScriptArguments);   // the shipped default
+
+    VARIANT r; VariantInit(&r);
+    EXPECT_EQ(MC_DISP_OK, call(doc, "SetVariable", { vstr("v") }, r));
+    MC_VariantClear(r);
+
+    // ...and the method really ran: the variable exists, holding the zero-fill.
+    VARIANT g; VariantInit(&g);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetVariable", { vstr("v") }, g));
+    EXPECT_EQ((int) VT_BSTR, (int) g.vt);
+    EXPECT_EQ(std::string(""), bstr_of(g));
+    MC_VariantClear(g);
+}
+
+// Strict on: the same call is refused, and -- the half that matters -- the
+// method does not run.  An error code the caller ignores would be no better
+// than the zero-fill if the world had already been mutated.
+TEST(McDispatch, StrictOnRefusesAShortArgumentList)
+{
+    CMUSHclientDoc doc;
+    doc.m_bStrictScriptArguments = TRUE;
+
+    VARIANT r; VariantInit(&r);
+    EXPECT_EQ(MC_DISP_BADARGS, call(doc, "SetVariable", { vstr("v") }, r));
+    MC_VariantClear(r);
+
+    VARIANT g; VariantInit(&g);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetVariable", { vstr("v") }, g));
+    EXPECT_NE((int) VT_BSTR, (int) g.vt);        // never created
+    MC_VariantClear(g);
+
+    // A COMPLETE list is untouched by the option.
+    VARIANT ok; VariantInit(&ok);
+    EXPECT_EQ(MC_DISP_OK, call(doc, "SetVariable", { vstr("v"), vstr("set") }, ok));
+    MC_VariantClear(ok);
+    VARIANT g2; VariantInit(&g2);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetVariable", { vstr("v") }, g2));
+    EXPECT_EQ(std::string("set"), bstr_of(g2));
+    MC_VariantClear(g2);
+}
+
+// The ordering crux.  The check runs AFTER the kArgDefaults padding, so a slot
+// the Lua-parity table fills counts as supplied.
+//
+// The two halves below are what stops a naive "padded nargs < arity" check from
+// passing this file: EnableTrigger's default sits at its LAST slot, so padding
+// always brings a 1-argument call up to full arity -- and would bring a
+// 0-argument call up too, silently enabling a trigger named "".  Only a check
+// that asks whether each omitted slot HAS a default tells those two apart.
+TEST(McDispatch, StrictOnStillHonoursTheArgumentDefaults)
+{
+    CMUSHclientDoc doc;
+    doc.m_bStrictScriptArguments = TRUE;
+
+    VARIANT r; VariantInit(&r);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "AddTrigger",
+        { vstr("t"), vstr("match"), vstr(""), vi4(1) /*eEnabled*/, vi4(-1),
+          vi4(0), vstr(""), vstr("") }, r));
+    ASSERT_EQ((long) eOK, r.lVal);
+    MC_VariantClear(r);
+
+    // Slot 1 has a default, so ONE argument is a complete call.
+    VARIANT e; VariantInit(&e);
+    EXPECT_EQ(MC_DISP_OK, call(doc, "EnableTrigger", { vstr("t") }, e));
+    EXPECT_EQ((long) eOK, e.lVal);
+    MC_VariantClear(e);
+    VARIANT info; VariantInit(&info);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "GetTriggerInfo", { vstr("t"), vi2(8) }, info));
+    EXPECT_TRUE(info.boolVal != 0);               // the default still applied
+    MC_VariantClear(info);
+
+    // Slot 0 has none, so no argument at all is still an error -- even though
+    // the padding would happily manufacture a full-length list.
+    VARIANT z; VariantInit(&z);
+    EXPECT_EQ(MC_DISP_BADARGS, call(doc, "EnableTrigger", {}, z));
+    MC_VariantClear(z);
+
+    // DatabaseOpen: two supplied, the sqlite flags defaulted.  A different
+    // method with a different arity, so the pair is not one fixture twice.
+    char dbpath[256];
+    snprintf(dbpath, sizeof dbpath, "/tmp/mc_test_strictdb_%d.sqlite", (int)getpid());
+    ::unlink(dbpath);
+    VARIANT db; VariantInit(&db);
+    EXPECT_EQ(MC_DISP_OK, call(doc, "DatabaseOpen", { vstr("db"), vstr(dbpath) }, db));
+    EXPECT_EQ(0L, db.lVal);                       // SQLITE_OK
+    MC_VariantClear(db);
+    VARIANT dbc; VariantInit(&dbc);
+    call(doc, "DatabaseClose", { vstr("db") }, dbc);
+    MC_VariantClear(dbc);
+    ::unlink(dbpath);
+}
+
+// The by-ref getters.  GetTrigger/GetAlias/GetTimer declare trailing [out]
+// VARIANT* parameters, and on Windows a COM script really does pass by-ref
+// variables for all of them.  Off Windows it does not: every engine synthesises
+// those slots itself and hands the values back as a tuple/list, so
+// world.GetTrigger("t") IS the complete call here with one argument.
+//
+// Counting the declared arity instead of the script-supplied half rejects all
+// three outright -- which is precisely what the over-broad mutation of this
+// feature (strict made unconditional) showed, by failing the three long-
+// standing OutParameters tests above.
+TEST(McDispatch, StrictOnDoesNotCountTheByRefOutputParameters)
+{
+    CMUSHclientDoc doc;
+    doc.m_bStrictScriptArguments = TRUE;
+
+    VARIANT r; VariantInit(&r);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "AddTrigger",
+        { vstr("t"), vstr("match"), vstr("resp"), vi4(1), vi4(-1),
+          vi4(0), vstr(""), vstr("") }, r));
+    ASSERT_EQ((long) eOK, r.lVal);
+    MC_VariantClear(r);
+
+    // One argument, seven [out] slots the engine fills -- and it must still run.
+    std::vector<VARIANT> outs;
+    VARIANT g; VariantInit(&g);
+    EXPECT_EQ(MC_DISP_OK, call(doc, "GetTrigger", { vstr("t") }, g, &outs));
+    EXPECT_EQ((long) eOK, g.lVal);
+    EXPECT_EQ((size_t) 7, outs.size());
+    MC_VariantClear(g);
+    for (auto& o : outs) MC_VariantClear(o);
+
+    // ...so the required count is the SCRIPT's half of the parameter list.
+    EXPECT_EQ(1, MC_DispatchRequiredArgs("GetTrigger"));
+    EXPECT_EQ(1, MC_DispatchRequiredArgs("GetAlias"));
+    EXPECT_EQ(1, MC_DispatchRequiredArgs("GetTimer"));
+
+    // The name is still required, though -- the exemption is for the [out]
+    // slots, not a licence to call it with nothing.
+    std::vector<VARIANT> outs2;
+    VARIANT z; VariantInit(&z);
+    EXPECT_EQ(MC_DISP_BADARGS, call(doc, "GetTrigger", {}, z, &outs2));
+    MC_VariantClear(z);
+    for (auto& o : outs2) MC_VariantClear(o);
+}
+
+// Extra arguments stay ignored under strict, exactly as they are without it and
+// exactly as they are on Windows -- hence "expected AT LEAST n" in the message.
+TEST(McDispatch, StrictOnStillIgnoresExtraArguments)
+{
+    CMUSHclientDoc doc;
+    doc.m_bStrictScriptArguments = TRUE;
+    VARIANT r; VariantInit(&r);
+    ASSERT_EQ(MC_DISP_OK, call(doc, "Trim",
+        { vstr("  padded  "), vstr("ignored"), vi4(99) }, r));
+    EXPECT_EQ(std::string("padded"), bstr_of(r));
+    MC_VariantClear(r);
+}
+
+// The introspection landmine.  Python and JavaScript coerce a bare method
+// reference to a string by invoking it with NO arguments (py_engine.cpp
+// Method_str, js_engine.cpp Method_convertToType), so COM-style plugins that
+// write `world.GetPluginID` without parentheses keep working.  That is the
+// language's coercion, not a call the author wrote, and strict must not fire on
+// it.  Both directions are asserted here, because the flag's whole job is to
+// make these two calls -- identical but for it -- differ.
+TEST(McDispatch, StrictOnExemptsTheIntrospectionCoercion)
+{
+    CMUSHclientDoc doc;
+    doc.m_bStrictScriptArguments = TRUE;
+
+    VARIANT intro; VariantInit(&intro);
+    EXPECT_EQ(MC_DISP_OK, MC_DispatchInvoke(&doc, "GetVariable", nullptr, 0,
+                                            intro, nullptr, MC_DISP_F_INTROSPECT));
+    MC_VariantClear(intro);
+
+    VARIANT plain; VariantInit(&plain);
+    EXPECT_EQ(MC_DISP_BADARGS, MC_DispatchInvoke(&doc, "GetVariable", nullptr, 0,
+                                                 plain, nullptr, 0));
+    MC_VariantClear(plain);
+
+    // The flag exempts from STRICTNESS, not from the method lookup: an unknown
+    // name is still unknown.
+    VARIANT bogus; VariantInit(&bogus);
+    EXPECT_EQ(MC_DISP_UNKNOWN, MC_DispatchInvoke(&doc, "NoSuchMethodAtAll", nullptr, 0,
+                                                 bogus, nullptr, MC_DISP_F_INTROSPECT));
+    MC_VariantClear(bogus);
+}
+
+// What the five engines put in front of the script author.  The count has to be
+// the REQUIRED one, not the declared arity, or EnableTrigger would demand two
+// arguments while happily accepting one.
+TEST(McDispatch, RequiredArgumentCountsDriveTheErrorText)
+{
+    EXPECT_EQ(2, MC_DispatchRequiredArgs("SetVariable"));    // no defaults
+    EXPECT_EQ(1, MC_DispatchRequiredArgs("EnableTrigger"));  // trailing default
+    EXPECT_EQ(1, MC_DispatchRequiredArgs("Trim"));
+    EXPECT_EQ(0, MC_DispatchRequiredArgs("WorldName"));      // takes none
+    EXPECT_EQ(-1, MC_DispatchRequiredArgs("NoSuchMethodAtAll"));
+
+    // Case-insensitive, like every other lookup here.
+    EXPECT_EQ(2, MC_DispatchRequiredArgs("setvariable"));
+
+    EXPECT_EQ(std::string("expected at least 2 arguments, got 1"),
+              MC_DispatchBadArgsMessage("SetVariable", 1));
+    EXPECT_EQ(std::string("expected at least 1 argument, got 0"),
+              MC_DispatchBadArgsMessage("EnableTrigger", 0));
+}
+
+// The option is a world option like any other: it reaches the doc through the
+// same SetOption the scripts use, which is what makes it save and load with the
+// world file.  A member nothing could set from a script would be unusable by
+// the plugin author it exists for.
+TEST(McDispatch, StrictIsAWorldOptionScriptsCanSet)
+{
+    CMUSHclientDoc doc;
+    doc.SetDefaults(false);
+    EXPECT_EQ(0L, doc.GetOption("script_strict_arguments"));   // default OFF
+
+    EXPECT_EQ((long) eOK, doc.SetOption("script_strict_arguments", 1));
+    EXPECT_EQ(1L, doc.GetOption("script_strict_arguments"));
+    EXPECT_TRUE(doc.m_bStrictScriptArguments);
+
+    VARIANT r; VariantInit(&r);
+    EXPECT_EQ(MC_DISP_BADARGS, call(doc, "SetVariable", { vstr("v") }, r));
+    MC_VariantClear(r);
+
+    EXPECT_EQ((long) eOK, doc.SetOption("script_strict_arguments", 0));
+    EXPECT_FALSE(doc.m_bStrictScriptArguments);
+    VARIANT r2; VariantInit(&r2);
+    EXPECT_EQ(MC_DISP_OK, call(doc, "SetVariable", { vstr("v") }, r2));
+    MC_VariantClear(r2);
+}
+
 MC_TEST_MAIN()

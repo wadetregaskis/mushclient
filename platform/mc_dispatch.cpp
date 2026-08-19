@@ -16,6 +16,7 @@
 #include <utility>
 #include <type_traits>
 #include <cstdlib>
+#include <cstdio>    // snprintf — MC_DispatchBadArgsMessage()
 #include <strings.h>   // strcasecmp — bool_word()
 
 // COM constants not in the port's VT_* set.
@@ -247,23 +248,40 @@ bool call_impl(CMUSHclientDoc* doc, Ret (CMUSHclientDoc::*pmf)(Args...),
   }
 
 // ── The dispatch table ──────────────────────────────────────────────────────
+// Each entry carries beside its thunk the count of parameters the SCRIPT is
+// expected to supply, deduced from &CMUSHclientDoc::method rather than from a
+// second list that could drift.
+//
+// That is NOT always sizeof...(Args).  GetTrigger, GetAlias and GetTimer
+// declare trailing [out] VARIANT* parameters (VTS_PVARIANT), and on Windows a
+// COM script really does pass by-ref variables for them.  Off Windows it does
+// not: every engine synthesises those slots itself and hands the values back as
+// a tuple/list (py_engine.cpp builds exactly that), so world.GetTrigger("t") is
+// a COMPLETE call here with one argument.  Counting the declared arity instead
+// would make strict checking reject all three outright.
+template<class T> constexpr bool is_out_param   = false;
+template<>       constexpr bool is_out_param<VARIANT*> = true;
+
 using Thunk = std::function<bool(CMUSHclientDoc*, const VARIANT*, int,
                                  VARIANT&, std::vector<VARIANT>*)>;
-std::unordered_map<std::string, Thunk>& table()
+struct Entry { Thunk fn; int inArity; };
+std::unordered_map<std::string, Entry>& table()
   {
-  static std::unordered_map<std::string, Thunk> t;
+  static std::unordered_map<std::string, Entry> t;
   return t;
   }
 
 template<class Ret, class... Args>
 void register_disp(const char* name, Ret (CMUSHclientDoc::*pmf)(Args...))
   {
-  table()[lc(name)] = [pmf](CMUSHclientDoc* doc, const VARIANT* args, int n,
-                        VARIANT& result, std::vector<VARIANT>* outargs)
-    {
-    return call_impl(doc, pmf, args, n, result, outargs,
-                     std::index_sequence_for<Args...>{});
-    };
+  table()[lc(name)] = Entry {
+    [pmf](CMUSHclientDoc* doc, const VARIANT* args, int n,
+          VARIANT& result, std::vector<VARIANT>* outargs)
+      {
+      return call_impl(doc, pmf, args, n, result, outargs,
+                       std::index_sequence_for<Args...>{});
+      },
+    (int) (0 + ... + (is_out_param<std::decay_t<Args>> ? 0 : 1)) };
   }
 
 // ── Property table (DISP_PROPERTY_NOTIFY / DISP_PROPERTY_EX) ─────────────────
@@ -405,9 +423,33 @@ static const ArgDefault kArgDefaults[] = {
   { "windowshow",            1, 1 },
 };
 
+// Does kArgDefaults supply slot `slot` of method `key` (already lower-cased)?
+static bool slot_has_default (const std::string& key, const int slot)
+  {
+  for (const ArgDefault& d : kArgDefaults)
+    if (d.slot == slot && key == d.method)
+      return true;
+  return false;
+  }
+
+// How many leading arguments a caller must actually supply: the declared arity
+// less the run of TRAILING slots kArgDefaults fills in.  The walk stops at the
+// first undefaulted slot, so a defaulted slot with an undefaulted one after it
+// (a gap) does not shorten the count — which makes this exactly equivalent to
+// "is there a slot the caller omitted that nothing can fill?", the question
+// strict checking actually asks.
+static int required_args (const std::string& key, const int arity)
+  {
+  int required = arity;
+  while (required > 0 && slot_has_default (key, required - 1))
+    required--;
+  return required;
+  }
+
 int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
                       const VARIANT* args, int nargs,
-                      VARIANT& result, std::vector<VARIANT>* outargs)
+                      VARIANT& result, std::vector<VARIANT>* outargs,
+                      unsigned flags)
   {
   build_table();
   VariantInit(&result);
@@ -421,6 +463,7 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
   // filler slots without a default carry the same VT_ERROR sentinel arg_at
   // hands out, so unlisted parameters keep their zero-fill semantics.
   std::vector<VARIANT> padded;
+  const int nSupplied = nargs;      // before the padding below rewrites it
   int maxSlot = -1;
   for (const ArgDefault& d : kArgDefaults)
     if (d.slot >= nargs && d.slot > maxSlot && key == d.method)
@@ -447,9 +490,48 @@ int MC_DispatchInvoke(CMUSHclientDoc* doc, const char* name,
     nargs = maxSlot + 1;
     }
 
-  if (!it->second(doc, args, nargs, result, outargs))
+  // ── Strict argument checking (world option "script_strict_arguments") ────
+  // Deliberately HERE, after the kArgDefaults padding above: a slot the table
+  // supplies counts as supplied, so the ~32 Lua-parity defaults keep working
+  // with strict on.  What is left is a parameter the caller never gave and
+  // nothing can fill — precisely what the real IDispatch::Invoke the Windows
+  // build rides rejects with DISP_E_BADPARAMCOUNT.  Arity only, never types:
+  // the Tcl engine marshals every argument as VT_BSTR by design.
+  //
+  // nSupplied, not nargs: the padding rewrote nargs upward, and asking whether
+  // the PADDED list is long enough would compare the fill against itself.
+  if (doc && doc->m_bStrictScriptArguments &&
+      !(flags & MC_DISP_F_INTROSPECT) &&
+      nSupplied < required_args (key, it->second.inArity))
+    return MC_DISP_BADARGS;
+
+  if (!it->second.fn(doc, args, nargs, result, outargs))
     return MC_DISP_BADARGS;
   return MC_DISP_OK;
+  }
+
+int MC_DispatchRequiredArgs(const char* name)
+  {
+  build_table();
+  const std::string key = lc(name);
+  auto it = table().find(key);
+  if (it == table().end())
+    return -1;
+  return required_args(key, it->second.inArity);
+  }
+
+std::string MC_DispatchBadArgsMessage(const char* name, int nargs)
+  {
+  const int need = MC_DispatchRequiredArgs(name);
+  char buf[128];
+  if (need < 0)
+    snprintf(buf, sizeof buf, "bad arguments (%d supplied)", nargs);
+  else
+    // "at least": a longer list is not an error — extra arguments are ignored,
+    // here and on Windows alike.
+    snprintf(buf, sizeof buf, "expected at least %d argument%s, got %d",
+             need, need == 1 ? "" : "s", nargs);
+  return buf;
   }
 
 // Live world documents, maintained by the doc's own constructor and destructor

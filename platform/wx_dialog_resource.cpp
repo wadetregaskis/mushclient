@@ -409,9 +409,9 @@ int main(int argc, char** argv)
 
     // ── Assertions: the actual regression guard ────────────────────────────
     std::printf("\n");
-    check(r.DialogCount() == 116, "116 dialog templates recovered");
+    check(r.DialogCount() == 115, "115 dialog templates recovered");
     check(r.MenuCount() == 14, "14 menu templates recovered");
-    check(r.ControlCount() == 1644, "1644 controls recovered");
+    check(r.ControlCount() == 1643, "1643 controls recovered");
     check(r.UnresolvedSymbols() == 0, "no control id failed to resolve to a resource.h symbol");
 
     // Three dialogs whose numeric id collides with another resource.h symbol

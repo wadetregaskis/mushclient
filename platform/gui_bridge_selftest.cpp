@@ -1685,6 +1685,44 @@ void TestDebugHelperPluginContext()
               "triggerlist shows the match text at a narrow wrap column "
               "(was: a bare \"...\")");
     }
+
+    // ── a truncated match is the wrap BUDGET wide, not budget + "..." ──────
+    // world_debug.cpp used to clamp the compare width (N) and the cut width
+    // (N-3) to the 20-column floor INDEPENDENTLY, so at a narrow wrap column
+    // both bottomed out at 20 and the "..." was appended on top: a long match
+    // came back 23 columns wide (Left(20) + "..."), LONGER than the budget and
+    // disagreeing with the portable twin's 20.  Cutting once, at budget-3,
+    // keeps the result at the budget.
+    {
+        const std::string match = std::string(17, 'Q') + "XYZ"
+                                + std::string(20, 'W');   // 40 chars, > budget
+        CTrigger * pLong = new CTrigger;
+        pLong->trigger  = match.c_str();
+        pLong->strLabel = "zzlongzz";
+        doc.GetTriggerArray().Add(pLong);
+
+        doc.m_nWrapColumn = 20;                 // budget floors to 20; cut = 17
+        doc.HyperlinkClicked("!!" DEBUG_PLUGIN_ID ":triggerlist()",
+                             ACTION_SEND, true);
+
+        // The listing wraps at column 20, so the match token spans several
+        // CLines — reconstruct the whole output before matching.
+        std::string all;
+        for (POSITION p = doc.m_LineList.GetHeadPosition(); p; ) {
+            const CLine* l = doc.m_LineList.GetNext(p);
+            if (l && l->len > 0)
+                all.append(l->text, l->len);
+        }
+
+        check(all.find(std::string(17, 'Q')) != std::string::npos,
+              "triggerlist shows the Q run of a long match (not a bare \"...\")");
+        check(all.find("XYZ") == std::string::npos,
+              "triggerlist cuts a long match at the budget minus \"...\" "
+              "(was: cut at the budget THEN \"...\" on top, 23 wide, revealing "
+              "the 18th-20th characters)");
+        check(all.find(match) == std::string::npos,
+              "...and the long match really was truncated");
+    }
 }
 
 // CPluginsDlg::OnUpdateNeedDescription read `p->m_strDescription` straight off

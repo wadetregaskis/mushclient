@@ -743,6 +743,139 @@ TEST(EvaluateArms, AliasEchoDisplaysAndLogsTypedLine)
     EXPECT_TRUE(strstr(buf, "salute") != nullptr);   // command logged
 }
 
+// D-04: bOmitFromLog keeps a typed PASSWORD out of the session log ---------
+//
+// EvaluateCommand's bOmitFromLog used to be write-only: the alias arm wrote
+// the matched alias's flag into it and nothing ever read it, so every send arm
+// computed bLogIt as a bare LoggingInput() and a password typed at a masked
+// prompt (platform/wx_world_child.cpp passes bOmitFromLog = isPassword) was
+// written to an open log whenever "log my input" was on.  m_bNoEcho, which
+// that path also forces, gates drawing only.
+//
+// Each half below carries its own POSITIVE CONTROL in the same run, sent
+// through the identical arm with bOmitFromLog false.  Without the control an
+// empty log -- from the log never opening, from the send being refused, from
+// m_log_input being off -- would pass the "password is absent" assertion for
+// entirely the wrong reason.
+TEST(EvaluateArms, OmitFromLogKeepsPasswordOutOfTheSessionLog)
+{
+    char path[160];
+    snprintf(path, sizeof path, "/tmp/mc_test_alias_%d_omitlog.log", (int)getpid());
+    unlink(path);
+
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_display_my_input = TRUE;   // echo on: DoSendMsg also stamps LOG_LINE
+    doc.m_log_input        = TRUE;   // "log my input" ON -- the hazard
+    ASSERT_EQ((long) eOK, doc.OpenLog(path, FALSE));
+
+    // (a) the password, through the plain "no alias matched, send now" arm.
+    bool bOmit = true;
+    doc.EvaluateCommand(CString("hunter2"), /*bCountThem=*/true, bOmit, false);
+
+    // (b) the control: an ordinary command down the very same arm.
+    bool bKeep = false;
+    doc.EvaluateCommand(CString("lookaround"), /*bCountThem=*/true, bKeep, false);
+
+    // (c) the speed-walk arm, which has its own SendMsg call site.
+    doc.m_enable_speed_walk = TRUE;
+    doc.m_speed_walk_prefix = "#";
+    bool bOmitWalk = true;
+    doc.EvaluateCommand(CString("#2(sekritwalk)"), true, bOmitWalk, false);
+    bool bKeepWalk = false;
+    doc.EvaluateCommand(CString("#2(plainwalk)"), true, bKeepWalk, false);
+
+    ASSERT_EQ((long) eOK, doc.CloseLog());
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[4096] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    const std::string log(buf);
+
+    // The whole point.
+    EXPECT_TRUE(log.find("hunter2")    == std::string::npos);
+    EXPECT_TRUE(log.find("sekritwalk") == std::string::npos);
+
+    // The controls: without these an empty log passes the two above vacuously.
+    EXPECT_TRUE(log.find("lookaround") != std::string::npos);
+    EXPECT_TRUE(log.find("plainwalk")  != std::string::npos);
+
+    // Both commands really went to the wire -- suppressing the LOG is not
+    // allowed to suppress the SEND.
+    const std::string sent = static_cast<FakeTransport*>(doc.m_pTransport)->sent;
+    EXPECT_TRUE(sent.find("hunter2")    != std::string::npos);
+    EXPECT_TRUE(sent.find("lookaround") != std::string::npos);
+
+    // The echoed line for the password carries no LOG_LINE flag, so a log
+    // opened later cannot pick it up from the flag either; the control line
+    // does carry it.  (Drawing itself is m_bNoEcho's job, not bOmitFromLog's,
+    // so both lines are present in the buffer.)
+    bool sawPwLine = false, pwLogFlagged = false;
+    bool sawCtlLine = false, ctlLogFlagged = false;
+    for (POSITION pos = doc.m_LineList.GetHeadPosition(); pos; ) {
+        CLine* l = doc.m_LineList.GetNext(pos);
+        const std::string t(l->text, l->len);
+        if (t.find("hunter2") != std::string::npos) {
+            sawPwLine = true;
+            if (l->flags & LOG_LINE) pwLogFlagged = true;
+        }
+        if (t.find("lookaround") != std::string::npos) {
+            sawCtlLine = true;
+            if (l->flags & LOG_LINE) ctlLogFlagged = true;
+        }
+    }
+    ASSERT_TRUE(sawPwLine);           // else the flag check is vacuous
+    ASSERT_TRUE(sawCtlLine);
+    EXPECT_FALSE(pwLogFlagged);
+    EXPECT_TRUE(ctlLogFlagged);       // control
+
+    // The suppression is scoped: m_log_input is back exactly as it was, so the
+    // NEXT command still logs (which the controls above already relied on).
+    EXPECT_EQ(1, (int) doc.m_log_input);
+}
+
+// D-04, alias arm: a password that MATCHES an alias must not be logged either
+// -- not by the alias-echo LogCommand (which logs the typed line verbatim) and
+// not by the alias's own SendTo.  The alias here substitutes the wildcard back
+// into what it sends, so the secret is in both texts.
+TEST(EvaluateArms, OmitFromLogCoversTheAliasEchoAndSendToArms)
+{
+    char path[160];
+    snprintf(path, sizeof path, "/tmp/mc_test_alias_%d_omitalias.log", (int)getpid());
+    unlink(path);
+
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_display_my_input = TRUE;
+    doc.m_log_input        = TRUE;
+    ASSERT_EQ((long) eOK, doc.OpenLog(path, FALSE));
+
+    CAlias* a = add_alias(doc, "pw *", "connect me %1");
+    a->bEchoAlias = TRUE;
+
+    bool bOmit = true;
+    doc.EvaluateCommand(CString("pw hunter3"), true, bOmit, false);
+
+    // Control: same alias, same arms, bOmitFromLog false.
+    bool bKeep = false;
+    doc.EvaluateCommand(CString("pw publicword"), true, bKeep, false);
+
+    ASSERT_EQ((long) eOK, doc.CloseLog());
+    EXPECT_EQ(2L, a->nMatched);       // both really went through the alias
+
+    FILE* f = fopen(path, "rb");
+    ASSERT_TRUE(f != nullptr);
+    char buf[4096] = {};
+    fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    unlink(path);
+    const std::string log(buf);
+
+    EXPECT_TRUE(log.find("hunter3")    == std::string::npos);
+    EXPECT_TRUE(log.find("publicword") != std::string::npos);   // control
+}
+
 // Trace: a matched alias without a label is traced by its match text.
 TEST(EvaluateArms, TraceNotesMatchedAliasName)
 {

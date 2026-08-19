@@ -13,6 +13,62 @@ static char BASED_CODE THIS_FILE[] = __FILE__;
 #endif
 
 
+// ═══ Input-log suppression for a command that must never be logged ════
+//
+// bOmitFromLog arrives TRUE when the caller knows this particular line must
+// never be written to the session log.  It used to be a pure OUT parameter --
+// the alias arm in ProcessOneAliasSequence writes the matched alias's own
+// omit-from-log flag into it -- and EvaluateCommand never READ it, so every
+// send arm computed bLogIt as an unconditional LoggingInput () and a typed
+// PASSWORD reached the log whenever "log my input" was on.  (The masked-
+// password path in platform/wx_world_child.cpp is the caller that passes TRUE.
+// m_bNoEcho, which that path also forces, gates DRAWING only -- SendMsg and
+// DoSendMsg log purely on their bLogIt argument.)
+//
+// There is no single log-write choke point for a command: SendMsg's queue
+// encoding, DoSendMsg's LogCommand call, the spam-prevention recursive send,
+// the alias-echo LogCommand below, the LOG_LINE flag DisplayMsg stamps on the
+// echoed line, and six of SendTo's arms are all separate writers.  But they
+// share one INPUT -- LoggingInput (), which is a plain read of m_log_input
+// (doc.h) -- so m_log_input IS the choke point.  Clearing it for the duration
+// of the evaluation silences all of them at once, including the writers
+// reached indirectly through aliases, speedwalks and plugin callbacks that no
+// per-arm "&& !bOmitFromLog" could see.  LogCommand re-tests LoggingInput ()
+// itself, so even a direct call to it is covered.
+//
+// This is the idiom SendTo already uses for eSendToExecute (doc_shared.cpp),
+// hoisted into RAII so an exception escaping an alias script cannot leave the
+// flag cleared.  It is a no-op on Windows: the only Windows caller of
+// EvaluateCommand is Execute (scripting/methods/methods_commands.cpp), which
+// passes FALSE in.
+
+class CSuppressInputLogging
+  {
+  public:
+    CSuppressInputLogging (CMUSHclientDoc & doc, const bool bSuppress)
+      : m_doc (doc), m_bActive (bSuppress), m_iSaved (doc.m_log_input)
+      {
+      if (m_bActive)
+        m_doc.m_log_input = 0;
+      }
+
+    ~CSuppressInputLogging ()
+      {
+      if (m_bActive)
+        m_doc.m_log_input = m_iSaved;
+      }
+
+  private:
+    CMUSHclientDoc & m_doc;
+    const bool  m_bActive;
+    const short m_iSaved;
+
+    // non-copyable - a copy would restore the flag early
+    CSuppressInputLogging (const CSuppressInputLogging &);
+    CSuppressInputLogging & operator= (const CSuppressInputLogging &);
+  };
+
+
 BOOL CMUSHclientDoc::EvaluateCommand (const CString & full_input, 
                                             const bool bCountThem,
                                             bool & bOmitFromLog,
@@ -22,7 +78,14 @@ CString str;
 POSITION pos;
 CString input = full_input;
 CAliasList AliasList;
-  
+
+// Honour bOmitFromLog for the whole evaluation -- see CSuppressInputLogging
+// above.  Every arm below that computes LoggingInput () (the speed-walk send,
+// the no-alias "send now", the alias echo's LogCommand, and everything SendTo
+// reaches) goes quiet while this is in scope.
+
+const CSuppressInputLogging suppressInputLogging (*this, bOmitFromLog);
+
 // get rid of any carriage returns
 
   input.Replace ("\r", "");

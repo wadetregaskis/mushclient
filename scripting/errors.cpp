@@ -55,7 +55,7 @@ int_flags_pair error_descriptions[] =
   {  30035,  Translate_NoOp ("Only a plugin can do this") },
   {  30036,  Translate_NoOp ("Plugin does not support that subroutine (subroutine not in script)") },
   {  30037,  Translate_NoOp ("Plugin does not support saving state") },
-  {  30037,  Translate_NoOp ("Plugin could not save state (eg. no state directory)") },
+  {  30038,  Translate_NoOp ("Plugin could not save state (eg. no state directory)") },
   {  30039,  Translate_NoOp ("Plugin is currently disabled") },
   {  30040,  Translate_NoOp ("Could not call plugin routine") },
   {  30041,  Translate_NoOp ("Calls to \"Execute\" nested too deeply") },

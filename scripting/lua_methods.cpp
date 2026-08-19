@@ -7441,7 +7441,7 @@ static flags_pair error_codes[] =
   { "eNotAPlugin", 30035 },                 // Only a plugin can do this
   { "eNoSuchRoutine", 30036 },              // Plugin does not support that subroutine (subroutine not in script)
   { "ePluginDoesNotSaveState", 30037 },     // Plugin does not support saving state
-  { "ePluginCouldNotSaveState", 30037 },    // Plugin could not save state (eg. no state directory)
+  { "ePluginCouldNotSaveState", 30038 },    // Plugin could not save state (eg. no state directory)
   { "ePluginDisabled", 30039 },             // Plugin is currently disabled
   { "eErrorCallingPluginRoutine", 30040 },  // Could not call plugin routine
   { "eCommandsNestedTooDeeply", 30041 },    // Calls to "Execute" nested too deeply

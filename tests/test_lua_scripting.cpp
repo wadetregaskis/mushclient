@@ -662,6 +662,27 @@ TEST(LuaScripting, ErrorCodeTable)
     EXPECT_EQ(30073.0, lua_tonumber(L, -1));
     lua_settop(L, 0);
 
+    // ePluginCouldNotSaveState is its OWN code (30038, errors.h), not
+    // ePluginDoesNotSaveState's (30037) — MakeIntFlagsTable does lua_rawset
+    // per row, so a duplicate key here is last-write-wins and leaves
+    // error_desc[30037] holding the wrong text with error_desc[30038] nil.
+    n = run_ret(L, "return error_code.ePluginCouldNotSaveState");
+    EXPECT_EQ(1, n);
+    EXPECT_EQ(30038.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    n = run_ret(L, "return error_desc[30037]");
+    EXPECT_EQ(1, n);
+    ASSERT_TRUE(lua_isstring(L, -1));
+    EXPECT_TRUE(strstr(lua_tostring(L, -1), "does not support saving state") != nullptr);
+    lua_settop(L, 0);
+
+    n = run_ret(L, "return error_desc[30038]");
+    EXPECT_EQ(1, n);
+    ASSERT_TRUE(lua_isstring(L, -1));
+    EXPECT_TRUE(strstr(lua_tostring(L, -1), "could not save state") != nullptr);
+    lua_settop(L, 0);
+
     lua_close(L);
 }
 

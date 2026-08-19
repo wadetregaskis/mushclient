@@ -59,6 +59,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 48 | `InfoTypes[]` reuses codes 31/32 for "world get focus"/"world lose focus", clobbering the "world connect"/"world disconnect" rows and omitting 33/34 | this commit | methods_info.cpp `InfoTypes[]` |
 | 49 | Plugins dialog reads a stale `CPlugin*` once it leaves `m_PluginList` | this commit | dialogs/plugins/PluginsDlg.cpp `CPluginsDlg::OnUpdateNeedDescription` |
 | 50 | Seven file dialogs `strcpy` an unbounded suggested name into a `_MAX_PATH` buffer | this commit | doc.cpp / dialogs (log-session, save-notes, select-sound et al) — bounded with `lstrcpyn` |
+| 51 | The Lua `error_code`/`error_desc` tables key `ePluginCouldNotSaveState` on 30037 instead of 30038, duplicating `ePluginDoesNotSaveState`'s code | this commit | lua_methods.cpp `error_codes[]`; errors.cpp `error_descriptions[]` |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -1048,3 +1049,21 @@ always NUL-terminates and matches the `nMaxFile` that MFC's own `CFileDialog`
 gives the common dialog.  Covered headless by
 `LogSession.AnOverlongSuggestedNameIsTruncatedRatherThanOverrunning` in
 `tests/test_mfc_ui.cpp`.
+
+## 51 — The Lua `error_code`/`error_desc` tables collide on 30037 (this commit)
+**Bug:** `errors.h` numbers `ePluginCouldNotSaveState` as 30038 — the next
+code after `ePluginDoesNotSaveState`'s 30037 — and that is what
+`methods_plugins.cpp` actually returns from a failed `world.SaveState`.  But
+`lua_methods.cpp`'s `error_codes[]` (the `error_code.*` table a script reads)
+and `errors.cpp`'s `error_descriptions[]` (`world.ErrorDesc` / the
+`error_desc[]` table) both key the entry `30037` — the code
+`ePluginDoesNotSaveState` already owns.  `MakeIntFlagsTable` builds each table
+with one `lua_rawset` per row, so the duplicate key is last-write-wins:
+`error_desc[30037]` ends up holding "Plugin could not save state..." text
+overwriting "Plugin does not support saving state...", and `error_desc[30038]`
+— the code `SaveState` actually returns — is nil.  A script cannot recognise
+or report the failure it was actually given.
+**Fix:** change the second entry to `30038` in both tables
+(`lua_methods.cpp:7444`, `errors.cpp:58`) so each of the two distinct plugin
+save-state errors has its own code and description.  Covered by
+`LuaScripting.ErrorCodeTable` in `tests/test_lua_scripting.cpp`.

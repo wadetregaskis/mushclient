@@ -2846,19 +2846,9 @@ TEST(LuaLibs, BitsLibraryOperations)
 // ═══ Round-4 coverage: marshalling error arms + method-family gaps ═════════
 
 #include "pal/itransport.h"
+#include "fake_transport.h"
 
-namespace {
-struct LuaFakeTransport : pal::ITransport {
-    std::string sent;
-    void resolve(const char*, pal::ResolveToken) override {}
-    void cancelResolve() override {}
-    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
-    void send(const char* data, size_t n) override { sent.append(data, n); }
-    void startTls(const pal::TlsParams&) override {}
-    void close() override {}
-    std::string lastErrorString() const override { return "fake"; }
-};
-} // namespace
+using LuaFakeTransport = RecordingTransport;
 
 // my_checknumber / my_checkstring type errors carry the argument number and
 // the calling function's name (my_argerror / my_typerror / my_tag_error).

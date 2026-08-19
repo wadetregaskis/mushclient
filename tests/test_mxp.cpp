@@ -334,21 +334,11 @@ TEST(GetWordTest, UnclosedQuoteEmptyContentLeavesEmptyRemainder)
 // resulting line/style/tag state.
 
 #include "pal/itransport.h"
+#include "fake_transport.h"
 #include <string>
 #include "notepad_fixture.h"
 
-namespace {
-struct MxpFakeTransport : pal::ITransport {
-    std::string sent;
-    void resolve(const char*, pal::ResolveToken) override {}
-    void cancelResolve() override {}
-    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
-    void send(const char* data, size_t n) override { sent.append(data, n); }
-    void startTls(const pal::TlsParams&) override {}
-    void close() override {}
-    std::string lastErrorString() const override { return "fake"; }
-};
-} // namespace
+using MxpFakeTransport = RecordingTransport;
 
 // A doc whose current line is created by DisplayMsg itself (and is therefore
 // the tail of m_LineList, which MXP_CloseTag walks).
@@ -648,20 +638,10 @@ TEST(MXPSecurity, DefinitionsRequireSecureMode)
 // collection, MXP_StartTag security and the per-action behaviour).
 
 #include "pal/itransport.h"
+#include "fake_transport.h"
 #include <string>
 
 namespace {
-
-struct RecordingTransport : pal::ITransport {
-    std::string sent;
-    void resolve(const char*, pal::ResolveToken) override {}
-    void cancelResolve() override {}
-    void connect(unsigned int, unsigned short, const pal::TransportOptions&) override {}
-    void send(const char* data, size_t n) override { sent.append(data, n); }
-    void startTls(const pal::TlsParams&) override {}
-    void close() override {}
-    std::string lastErrorString() const override { return "recording"; }
-};
 
 void make_pipe_doc(CMUSHclientDoc& doc)
 {

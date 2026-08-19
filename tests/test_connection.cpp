@@ -18,6 +18,7 @@
 #include "doc.h"
 #include "scripting/errors.h"
 #include "pal/itransport.h"
+#include "fake_transport.h"
 #include "scripting/scripting.h"
 #include "platform/wx_mfc_hooks.h"   // g_wxhook_set_status (queued-command status seam)
 #include "notepad_fixture.h"   // FakeNotepad / NotepadCapture
@@ -32,20 +33,20 @@
 static const unsigned char T_IAC = 255, T_WILL = 251, T_SB = 250, T_SE = 240;
 
 // ── recording transport ─────────────────────────────────────────────────────
+// Derives from the shared RecordingTransport (tests/fake_transport.h) for the
+// send()/close()/lastErrorString() boilerplate and the sent/closed/tlsStarted/
+// lastToken fields; only the connect/resolve/TLS detail this suite actually
+// asserts on gets its own override.
 
-struct RecTransport : pal::ITransport {
-    std::string sent;
+struct RecTransport : RecordingTransport {
     int  connectCalls = 0;
     unsigned int lastAddr = 0;
     unsigned short lastPort = 0;
     bool lastKeepalives = false;
     int  resolveCalls = 0;
     std::string lastResolveName;
-    pal::ResolveToken lastToken = -1;
-    bool tlsStarted = false;
     std::string tlsServerName;
     bool tlsAllowInvalid = false;
-    bool closed = false;
 
     void resolve(const char* name, pal::ResolveToken token) override {
         ++resolveCalls;
@@ -60,13 +61,11 @@ struct RecTransport : pal::ITransport {
         lastPort = port;
         lastKeepalives = opt.keepalives;
     }
-    void send(const char* data, size_t n) override { sent.append(data, n); }
     void startTls(const pal::TlsParams& p) override {
-        tlsStarted = true;
+        RecordingTransport::startTls(p);
         tlsServerName = p.serverName;
         tlsAllowInvalid = p.allowInvalidCert;
     }
-    void close() override { closed = true; }
     std::string lastErrorString() const override { return "rec"; }
 };
 

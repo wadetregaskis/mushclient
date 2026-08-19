@@ -82,8 +82,9 @@ long iCount = 0;
       iCount = -1;    // not in XML
 
      } // end of try block
-  catch (CArchiveException* ) 
+  catch (CArchiveException* e)
     {
+    e->Delete ();
     iCount = -1;    // error parsing XML
     }
 

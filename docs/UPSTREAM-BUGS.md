@@ -1199,3 +1199,15 @@ Windows-only) had the identical mistake — `ShowFunctionslist (s, true)`.
 neither collapses again. Covered by
 `Utilities.HelpPassesBLuaAndZeroOffsetsToShowFunctionslist` in
 `tests/test_utilities.cpp`.
+
+## 58 — `world.ImportXML` leaks the `CArchiveException` on every failed import (this commit)
+**Bug:** `ImportXML`'s `catch (CArchiveException*)` clause has no parameter
+name, so it can never call `e->Delete()` — every malformed-XML import leaks the
+heap-allocated exception object. The two other handlers in the same file
+(`ExportXML`, `GetXMLEntity`) both call `Delete()` on the way out.
+**Fix:** name the parameter and call `e->Delete()` before setting `iCount =
+-1`, matching the other two handlers. Covered by
+`LuaScripting.ImportXMLDeletesArchiveExceptionOnFailure` in
+`tests/test_lua_scripting.cpp`, using a live-instance counter added to the
+shim's `CArchiveException` (`platform/mfc_ui.h`) since a leak otherwise leaves
+no other observable trace.

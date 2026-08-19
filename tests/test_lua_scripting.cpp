@@ -3663,6 +3663,30 @@ TEST(SweepR4, ExportXmlPerTypeAndImportErrors)
     lua_close(L);
 }
 
+// methods_xml.cpp CMUSHclientDoc::ImportXML: the catch (CArchiveException*)
+// clause used to have no parameter name and so never called e->Delete() -
+// every failed import (bad schema, as here) leaked the exception object.
+// The other two handlers in the same file already call Delete(); this pins
+// ImportXML to the same contract via the shim's live-instance counter
+// (platform/mfc_ui.h), since there is otherwise no way to observe a leak.
+TEST(LuaScripting, ImportXMLDeletesArchiveExceptionOnFailure)
+{
+    CMUSHclientDoc doc;
+    lua_State* L = make_lua(&doc);
+    ASSERT_NE(nullptr, L);
+
+    const int before = CArchiveException::s_iLiveCount;
+
+    int n = run_ret(L, "return world.ImportXML('<triggers><trigger broken></triggers>')");
+    ASSERT_EQ(1, n);
+    EXPECT_EQ(-1.0, lua_tonumber(L, -1));
+    lua_settop(L, 0);
+
+    EXPECT_EQ(before, CArchiveException::s_iLiveCount);
+
+    lua_close(L);
+}
+
 TEST(SweepR4, DefaultAndCurrentAlphaOptions)
 {
     CMUSHclientDoc doc;

@@ -2612,6 +2612,15 @@ public:
     enum { none=0, genericException, readOnly, endOfFile, writeOnly,
            badIndex, badClass, badSchema };
     int m_cause = 0;
+
+    // Live-instance counter (R2-10-F4 covering test): a caught
+    // CArchiveException* that a handler forgets to Delete() leaks silently -
+    // there is otherwise no observable trace of the leak.  Additive and
+    // self-contained; nothing but the test reads this.
+    static inline int s_iLiveCount = 0;
+    CArchiveException()  { s_iLiveCount++; }
+    ~CArchiveException() { s_iLiveCount--; }
+
     void Delete() { delete this; }
 };
 #endif

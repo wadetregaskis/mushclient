@@ -640,16 +640,22 @@ TEST(ScriptEngine, EachEngineTalksToItsOwnWorld)
 
 // ── the world surface the engine actually builds ──────────────────────────
 //
-// RegisterPortableLuaExtras (scripting/lua_utils_portable.cpp) adds one name
-// the Windows Lua API does not have, world.ExpandVariables.  No engine-built
-// state has ever carried it here: the OpenLuaDelayed call that registered it
-// was guarded on !MUSHCLIENT_FULL_BUILD, which the Stage 9 fold made
-// permanently false, and it has now been removed.  Only tests/lua_test_helpers.h
-// registers it, so every make_lua()-based test sees a surface the product does
-// not have -- this one goes through CreateScriptEngine, the way a world does.
+// world.ExpandVariables was a port-only Lua extra (RegisterPortableLuaExtras,
+// scripting/lua_utils_portable.cpp) that the Windows Lua API never had. It
+// was registered only by the test fixture (tests/lua_test_helpers.h), never
+// by the production path this test exercises (CreateScriptEngine ->
+// RegisterLuaRoutines) -- and as of D-32 the function and its registration
+// are gone from the tree entirely, deleted as dead code.
 //
-// It is therefore the test that would notice if the extra were ever wired into
-// the product, which is the open question (K-231), not an accident to fix here.
+// Honestly: with the source gone, there is no longer a dormant function that
+// could be accidentally wired into the production path, so this assertion
+// cannot currently fail through anything that exists in the tree today --
+// only a brand-new registration of this exact name from the production side
+// would trip it. What it still guards is narrow: a named regression pin
+// against world.ExpandVariables specifically reappearing on an engine-built
+// world table, nothing broader. The control half (world.Note ~= nil) is what
+// keeps a false "nil" meaningful -- it proves the table itself is populated,
+// so the first half isn't trivially "nil" because nothing was ever looked up.
 TEST(ScriptEngine, TheEngineBuiltWorldTableCarriesNoPortOnlyExtras)
 {
     Engine e("function probe(s)\n"

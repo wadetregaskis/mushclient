@@ -646,8 +646,13 @@ inline BOOL EqualRect(const RECT* a, const RECT* b) {
 #endif
 
 // Scrollbar info helpers (global stubs)
+// FALSE for a NULL/invalid window, matching both CWnd::GetScrollInfo member
+// overloads further down in this file and real Win32 -- house style
+// throughout this file is FALSE-on-invalid-handle (74 sites vs 10). Untouched
+// *psi on failure, same as the CWnd overloads: neither ever writes through
+// the pointer.
 #ifndef GetScrollInfo
-inline BOOL GetScrollInfo(HWND, int, SCROLLINFO* psi) { if(psi){psi->nPos=0;psi->nMin=0;psi->nMax=0;} return TRUE; }
+inline BOOL GetScrollInfo(HWND, int, SCROLLINFO*) { return FALSE; }
 inline BOOL SetScrollInfo(HWND, int, const SCROLLINFO*, BOOL) { return TRUE; }
 #endif
 

@@ -3402,9 +3402,30 @@ TEST(StubSweep, GlobalGdiFunctions) {
     EXPECT_EQ((HMODULE)nullptr, LoadLibrary("lib"));
     EXPECT_EQ((void*)nullptr, GetProcAddress(nullptr, "fn"));
     EXPECT_FALSE(FreeLibrary(nullptr));
+    // Pre-poison with recognisable non-zero sentinels -- SCROLLINFO's default
+    // member initialisers are all 0, so an unpoisoned struct would pass
+    // EXPECT_EQ(0, si.nPos) whether or not GetScrollInfo touched it (the old
+    // vacuous form of this check). Poisoning first makes the assertion
+    // actually depend on the function's behaviour: a NULL window must return
+    // FALSE (matching both CWnd::GetScrollInfo member overloads and real
+    // Win32) and must leave the struct completely untouched, so the
+    // sentinels must survive unchanged.
     SCROLLINFO si;
-    EXPECT_TRUE(GetScrollInfo((HWND)nullptr, 0, &si));
-    EXPECT_EQ(0, si.nPos);
+    si.cbSize    = 0xAAAA;
+    si.fMask     = 0xBBBB;
+    si.nMin      = 111;
+    si.nMax      = 222;
+    si.nPage     = 333;
+    si.nPos      = 444;
+    si.nTrackPos = 555;
+    EXPECT_FALSE(GetScrollInfo((HWND)nullptr, 0, &si));
+    EXPECT_EQ((UINT)0xAAAA, si.cbSize);
+    EXPECT_EQ((UINT)0xBBBB, si.fMask);
+    EXPECT_EQ(111, si.nMin);
+    EXPECT_EQ(222, si.nMax);
+    EXPECT_EQ((UINT)333, si.nPage);
+    EXPECT_EQ(444, si.nPos);
+    EXPECT_EQ(555, si.nTrackPos);
 }
 
 TEST(StubSweep, ViewAndFrameFamilies) {

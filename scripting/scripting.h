@@ -238,15 +238,6 @@ class CScriptEngine : public CObject
 
 int RegisterLuaRoutines (lua_State * L);
 int DisableDLLs (lua_State * L);
-#ifndef _WIN32
-// Port-only world.* extras kept beyond the Windows Lua surface
-// (currently just ExpandVariables); defined in lua_utils_portable.cpp and
-// registered AFTER RegisterLuaRoutines by the TEST FIXTURE ONLY
-// (tests/lua_test_helpers.h).  No engine-built Lua state has them: the
-// OpenLuaDelayed call that used to be here was guarded on
-// !MUSHCLIENT_FULL_BUILD, which the Stage 9 fold made permanently false.
-void RegisterPortableLuaExtras (lua_State * L);
-#endif
 #include "lua_helpers.h"
 
 

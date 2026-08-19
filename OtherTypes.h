@@ -396,7 +396,6 @@ class CAlias : public CObject
 //   bSpeedWalk = FALSE;    // see iSendTo
 //   bQueue = FALSE;        // see iSendTo
 //   bSetVariable = FALSE;  // see iSendTo
-//   bDelayed = FALSE;
    bMenu = FALSE;
    tWhenMatched = 0;
    bTemporary = false;
@@ -438,7 +437,6 @@ class CAlias : public CObject
 //  unsigned short bSpeedWalk;    // true means evaluate as speed walk
 //  unsigned short bQueue;    // true means queue it rather than send it
   unsigned short bMenu;     // make pop-up menu from this alias?
-//  unsigned short bDelayed;    // true means use AddTimer, eg. 5; go east
 
 // in XML version
 

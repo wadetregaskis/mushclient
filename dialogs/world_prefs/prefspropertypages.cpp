@@ -2571,7 +2571,6 @@ void CPrefsP7::InitDialog (CDialog * pDlg)
   dlg->m_bEchoAlias = FALSE;
   dlg->m_bOmitFromCommandHistory = FALSE;
   dlg->m_bTemporary = FALSE; 
-//  dlg->m_bDelayed = FALSE; 
   dlg->m_iSendTo = m_doc->m_iDefaultAliasSendTo;
 
   dlg->m_pAliasMap = &m_doc->m_AliasMap;
@@ -2594,7 +2593,6 @@ void CPrefsP7::LoadDialog (CDialog * pDlg, CObject * pItem)
   dlg->m_name = alias_item->name;
   dlg->m_contents = alias_item->contents;
   dlg->m_bIgnoreCase = alias_item->bIgnoreCase;
-//  dlg->m_bDelayed = alias_item->bDelayed;
   dlg->m_strLabel = alias_item->strLabel;
   dlg->m_strProcedure = alias_item->strProcedure;
   dlg->m_bEnabled = alias_item->bEnabled;
@@ -2638,7 +2636,6 @@ void CopyAliasFromDialog (CAlias * alias_item, CAliasDlg * dlg)
   alias_item->name            = dlg->m_name;
   alias_item->contents        = dlg->m_contents;
   alias_item->bIgnoreCase     = dlg->m_bIgnoreCase;
-//  alias_item->bDelayed        = dlg->m_bDelayed;
   alias_item->strLabel        = dlg->m_strLabel;
   alias_item->strProcedure    = dlg->m_strProcedure;
   alias_item->bEnabled        = dlg->m_bEnabled;
@@ -2846,7 +2843,6 @@ bool CPrefsP7::CheckIfChanged (CDialog * pDlg, CObject * pItem) const
   if (alias_item->name          == dlg->m_name &&
       alias_item->contents      == dlg->m_contents &&
       alias_item->bIgnoreCase   == dlg->m_bIgnoreCase &&
-//      alias_item->bDelayed      == dlg->m_bDelayed &&
       alias_item->bOmitFromLog  == dlg->m_bOmitFromLogFile &&
       alias_item->strLabel      == dlg->m_strLabel && 
       alias_item->strProcedure  == dlg->m_strProcedure && 

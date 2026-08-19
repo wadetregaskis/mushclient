@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 #include <cassert>
+#include <atomic>
 #include "platform/output_types.h"   // SOutputLine, SOutputRun
 #include "pal/style_colour.h"        // pal::StylePalette (RecolourFromPalette)
 
@@ -80,9 +81,22 @@ inline wxString DecodeTextLenient(const char* sz)
     return sz ? DecodeTextLenient(sz, strlen(sz)) : wxString();
 }
 
+// The shared converter for a world charset (the one WinCharsetToEncoding maps
+// it to).  Callers that decode legacy-charset bytes must take it from here
+// rather than building a wxCSConv of their own: creating one makes wx open an
+// iconv descriptor on first use, and the decode sites are per-run, per-line,
+// per-event.  Thread-safe by being thread_local, so no caller may store the
+// reference beyond the call that asked for it.
+const wxMBConv& OutputCharsetConv(int charset);
+
 // Rendered character count of a run — the metric DrawLine measures with, so any
 // walk that maps a column onto a run must use THIS and not run.text.size(),
 // which is a BYTE count.
+//
+// For a single-byte charset this does NOT decode: one byte is one rendered
+// character there, which is the property outputpane_selftest.cpp pins over all
+// 256 byte values of every charset WinCharsetToEncoding knows.  Only the four
+// DBCS charsets need the decode, and their answer is memoised by content.
 int RunCharLen(const SOutputRun& run);
 
 // Rendered character count of a whole line: the sum of its runs' RunCharLen.
@@ -92,6 +106,27 @@ int RunCharLen(const SOutputRun& run);
 // is what keeps "how long is this line" from drifting between the selection,
 // the hit-test, the wrap cache and the API.
 int LineCharLen(const SOutputLine& line);
+
+// ── Decode instrumentation ───────────────────────────────────────────────────
+// Two counters, read by the selftest only, that pin the COMPLEXITY of the
+// legacy-charset decode path rather than its wall-clock cost — the lesson from
+// the CTypedPtrList shim, which was functionally correct and quadratic, and
+// whose comment claiming otherwise nobody could falsify.  A timing assertion
+// would be flaky on a loaded machine; these are exact.
+//
+//   g_outputConvBuilds  wxCSConv objects constructed.  Was one per decoded run
+//                       (so one per run of every line, on every paint, mouse
+//                       move and Find keypress); is now one per charset ever
+//                       used, for the life of the thread.
+//   g_outputDecodes     byte→wxString conversions actually performed on the
+//                       non-UTF-8 path.  RunCharLen no longer contributes any
+//                       for a single-byte charset, and at most one per distinct
+//                       run for a DBCS charset.
+//
+// Relaxed ordering: nothing branches on them, they are only ever compared
+// before/after by a single-threaded test.
+extern std::atomic<unsigned long> g_outputConvBuilds;
+extern std::atomic<unsigned long> g_outputDecodes;
 
 // ── COutputPane ───────────────────────────────────────────────────────────────
 

@@ -139,6 +139,72 @@ wxFontEncoding WinCharsetToEncoding(int cs)
     }
 }
 
+// ── The shared charset converter ─────────────────────────────────────────────
+// Building a wxCSConv per decode was the whole cost of this path for most
+// worlds.  A wxCSConv creates its real backend lazily on first use — an
+// iconv_open on this platform — and the old code constructed and destroyed one
+// for EVERY run it touched: every run of every appended line, of every painted
+// line, of every line walked by a mouse move, and of every line in the
+// scrollback on every Find keypress.  That was rare while worlds were being
+// silently flipped to UTF-8; since worlds correctly keep their 8-bit charset it
+// is the ordinary path.
+//
+// Keyed by the ENCODING, which is also the whole of the invalidation story: a
+// world that changes charset at runtime maps to a different wxFontEncoding and
+// therefore a different entry, and wxCSConv(enc) is a pure function of enc, so
+// a cached entry can never be stale.  At most fifteen entries exist, one per
+// encoding WinCharsetToEncoding can answer, so a linear scan beats a hash.
+//
+// thread_local rather than shared: wxCSConv builds its backend from a const
+// method, so two threads first using the same instance would race inside it.
+// (DecodeOutputBytes is reachable off the GUI thread — Print World walks the
+// doc's own lines.)  Per-thread copies cost one small object per encoding per
+// thread and need no lock on a path that runs per run.
+//
+// Deliberately never destroyed: these outlive wxEntry, and freeing a wxCSConv
+// during static/thread destruction would run wx conversion teardown after the
+// library it belongs to has shut down.  Fifteen small objects per thread, once.
+std::atomic<unsigned long> g_outputConvBuilds{0};
+std::atomic<unsigned long> g_outputDecodes{0};
+
+const wxMBConv& OutputCharsetConv(int charset)
+{
+    const wxFontEncoding enc = WinCharsetToEncoding(charset);
+    struct Entry { wxFontEncoding enc; wxCSConv* conv; };
+    static thread_local std::vector<Entry>* cache = new std::vector<Entry>();
+    for (const Entry& e : *cache)
+        if (e.enc == enc) return *e.conv;
+    cache->push_back(Entry{ enc, new wxCSConv(enc) });
+    g_outputConvBuilds.fetch_add(1, std::memory_order_relaxed);
+    return *cache->back().conv;
+}
+
+// True when every byte of this encoding decodes to exactly one character, so a
+// run's rendered length IS its byte length and counting needs no decode at all.
+//
+// Whitelisted, not blacklisted, on purpose: an encoding added to
+// WinCharsetToEncoding and forgotten here falls to the decode, which is slow
+// but right, where the other polarity would silently miscount every column.
+// The equality itself is pinned over all 256 byte values of every charset in
+// outputpane_selftest.cpp (TestCharCountAvoidsTheDecode), so a wrong entry
+// here fails loudly rather than drifting the selection against the glyphs.
+static bool EncodingIsSingleByte(wxFontEncoding enc)
+{
+    switch (enc) {
+        case wxFONTENCODING_CP1250: case wxFONTENCODING_CP1251:
+        case wxFONTENCODING_CP1252: case wxFONTENCODING_CP1253:
+        case wxFONTENCODING_CP1254: case wxFONTENCODING_CP1255:
+        case wxFONTENCODING_CP1256: case wxFONTENCODING_CP1257:
+        case wxFONTENCODING_CP1258: case wxFONTENCODING_CP874:
+        case wxFONTENCODING_CP437:
+            return true;
+        default:
+            // CP932 / CP936 / CP949 / CP950 are DBCS — and so is anything a
+            // later charset row adds without touching this list.
+            return false;
+    }
+}
+
 // Decode a run's bytes to a wxString.  UTF-8 worlds (the default, and the common
 // modern case) go straight through FromUTF8.  A non-UTF-8 world's bytes are
 // decoded with its font charset; if that conversion fails outright (wxCSConv
@@ -166,8 +232,8 @@ wxString DecodeOutputBytes(const char* bytes, size_t n, bool utf8, int charset)
     }
     if (n == 0)
         return wxString();
-    wxCSConv conv(WinCharsetToEncoding(charset));
-    wxString s(bytes, conv, n);
+    g_outputDecodes.fetch_add(1, std::memory_order_relaxed);
+    wxString s(bytes, OutputCharsetConv(charset), n);
     if (s.empty())
         s = wxString::From8BitData(bytes, n);
     return s;
@@ -185,9 +251,57 @@ static wxString DecodeRunText(const SOutputRun& run)
 // the bytes decode through the world charset, and a byte in 0x80–0xBF (e.g. a
 // CP1252 curly quote) looks like a UTF-8 continuation byte — counting lead bytes
 // would undercount and drift the selection/wrap against the rendered grid.
+// Character count of a DBCS run, memoised BY CONTENT.  A double-byte charset
+// genuinely needs the decode to be counted — a lead-byte scan would need a
+// per-codepage range table and could then disagree with the string the renderer
+// actually draws, which is the one property that must never give.  So the
+// decode stays and the ANSWER is remembered instead.
+//
+// Keyed by the bytes rather than cached on the SOutputRun for two reasons: the
+// run struct is one per styled span of every line of the scrollback and adding
+// a field to it costs eight bytes each (72 → 80 after alignment), and a field
+// would have to be invalidated by hand every time `text` was touched, where a
+// content key cannot go stale by construction.  Sixteen entries is a line's
+// worth of runs, so the second walk over a line — the mouse-move pattern, where
+// XToChar sums the line and then RunAtCharColumn re-walks the same runs — hits.
+//
+// Runs above kMemoMax bytes are not memoised: the memcmp and the copy stop
+// being cheap relative to the decode they save, and one huge world.Note would
+// otherwise pin sixteen copies of itself in the memo.
+static int DbcsRunCharLen(const SOutputRun& run)
+{
+    constexpr size_t kMemoMax     = 4096;
+    constexpr size_t kMemoEntries = 16;
+
+    auto measure = [&]() {
+        return (int) DecodeOutputBytes(run.text.c_str(), run.text.size(),
+                                       false, run.charset).size();
+    };
+    if (run.text.size() > kMemoMax)
+        return measure();
+
+    struct Entry { int charset; std::string bytes; int len; };
+    static thread_local std::deque<Entry>* memo = new std::deque<Entry>();
+    for (const Entry& e : *memo)
+        if (e.charset == run.charset && e.bytes == run.text)
+            return e.len;
+
+    const int len = measure();
+    memo->push_front(Entry{ run.charset, run.text, len });
+    if (memo->size() > kMemoEntries) memo->pop_back();
+    return len;
+}
+
 int RunCharLen(const SOutputRun& run)
 {
-    return run.utf8 ? UTF8CharLen(run.text) : (int)DecodeRunText(run).size();
+    if (run.utf8)
+        return UTF8CharLen(run.text);
+    // A single-byte charset renders one character per byte, so the count is the
+    // byte count and no conversion is needed.  This is the path every CP125x
+    // world takes — i.e. nearly all of them.
+    if (EncodingIsSingleByte(WinCharsetToEncoding(run.charset)))
+        return (int) run.text.size();
+    return DbcsRunCharLen(run);
 }
 
 // See the header.  No horiz_rule guard: a rule run has no text, so it already

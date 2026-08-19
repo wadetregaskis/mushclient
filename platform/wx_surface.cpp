@@ -29,6 +29,14 @@
 // (defined in wx_outputpane.cpp; the decided legacy-charset fix reuses it).
 wxFontEncoding WinCharsetToEncoding(int cs);
 
+// ...and the CACHED converter for that charset, from the same place.  Building
+// a wxCSConv here per call had the same cost as the output pane's did, on a
+// path a plugin's miniwindow text redraws from.  Never store the reference: it
+// belongs to a thread_local cache.  (Declared here rather than through
+// wx_outputpane.h, which this file deliberately does not include — the same
+// reason WinCharsetToEncoding is declared by hand above.)
+const wxMBConv& OutputCharsetConv(int charset);
+
 // Raw BGRA read of a CDC's selected bitmap, bypassing wxDC::Blit (which
 // composites on wxOSX). Defined in wx_gdi_compat.cpp; see the note there.
 bool wxgdi_read_bgra(CDC* dc, int x, int y, int w, int h,
@@ -918,8 +926,7 @@ static std::string DecodeSeamText(const char* utf8, size_t len, int charsetHint)
     if (!probe.empty())
         return std::string(utf8, len);
     if (charsetHint > 2) {
-        wxCSConv conv(WinCharsetToEncoding(charsetHint));
-        wxString decoded(utf8, conv, len);
+        wxString decoded(utf8, OutputCharsetConv(charsetHint), len);
         if (!decoded.empty()) {
             const wxScopedCharBuffer b = decoded.utf8_str();
             return std::string(b.data(), b.length());

@@ -891,6 +891,213 @@ void TestRunCharLenMatchesTheDecode()
     }
 }
 
+// -- Counting characters must not cost a decode, nor a converter -------------
+// The non-UTF-8 branch stopped being exotic the day worlds stopped being
+// silently flipped to UTF-8: it is now what an ordinary ANSI world takes for
+// every run of every appended line, every painted line, every line a mouse move
+// walks, and every line of the whole scrollback on every Find keypress.  It
+// used to build -- and destroy -- a wxCSConv per run (an iconv_open apiece) and
+// force a full byte->wxString conversion merely to COUNT characters.
+//
+// This counts the work rather than timing it.  A timing assertion on a shared
+// machine is a coin toss, and the project has already been bitten once by a
+// shim that was functionally correct, quadratic, and defended by a comment
+// nobody could falsify (the CTypedPtrList POSITION scan, 595ms per drain at
+// 50k lines).  So: exact before/after deltas on two counters, plus the
+// equality the whole optimisation rests on, checked over every byte value of
+// every charset the mapper knows.
+void TestCharCountAvoidsTheDecode()
+{
+    printf("legacy-charset counting: no converter per call, no decode to count\n");
+
+    // Every LOGFONT charset WinCharsetToEncoding has a row for, plus two it
+    // does not (1 = DEFAULT_CHARSET, 2 = SYMBOL_CHARSET) which fall to CP1252.
+    const int kSingleByte[] = { 0, 1, 2, 161, 162, 163, 177, 178,
+                                186, 204, 222, 238, 255 };
+    const int kDbcs[]       = { 128, 129, 134, 136 };
+
+
+    auto makeRun = [](const std::string& bytes, int charset) {
+        SOutputRun r;
+        r.text    = bytes;
+        r.utf8    = 0;
+        r.charset = (short) charset;
+        return r;
+    };
+    auto decodedLen = [](const SOutputRun& r) {
+        return (int) DecodeOutputBytes(r.text.c_str(), r.text.size(),
+                                       r.utf8 != 0, r.charset).size();
+    };
+
+    // -- 1. the equality the fast path is only allowed to exist because of --
+    // Every single byte, on its own and in a pair, under every charset.  If any
+    // single-byte codepage ever DROPS an unmapped byte instead of failing the
+    // whole conversion (0x81/0x8D/0x8F/0x90/0x9D are undefined in CP1252), the
+    // byte count and the drawn count part company and this fails -- which is the
+    // only reason it is safe to skip the decode at all.
+    {
+        int mismatches = 0;
+        std::string firstBad;
+        for (int cs : kSingleByte) {
+            for (int b = 0; b <= 0xFF; ++b) {
+                const std::string one(1, (char)(unsigned char) b);
+                const std::string two = one + std::string(1, (char) 0x41);
+                for (const std::string& bytes : { one, two }) {
+                    SOutputRun r = makeRun(bytes, cs);
+                    if (RunCharLen(r) != decodedLen(r)) {
+                        if (mismatches == 0) {
+                            char buf[96];
+                            snprintf(buf, sizeof buf,
+                                     "charset %d byte 0x%02X: counted %d, drawn %d",
+                                     cs, b, RunCharLen(r), decodedLen(r));
+                            firstBad = buf;
+                        }
+                        ++mismatches;
+                    }
+                }
+            }
+        }
+        if (mismatches)
+            printf("    %d mismatches, first: %s\n", mismatches, firstBad.c_str());
+        opCheck(mismatches == 0,
+                "single-byte charsets: the byte count IS the drawn count, "
+                "for all 256 bytes of all 13");
+    }
+    // ...and the DBCS charsets, where the count still goes through the decode:
+    // the memo must not change the answer, including for a truncated lead byte
+    // (which fails the conversion and lands on the Latin-1 fallback).
+    {
+        const std::string kCases[] = {
+            "", "plain", "\xA4\xA4", "\xA4\xA4\xA4\xE5", "\xA4",
+            "a\xA4\xA4" "b", std::string("\x00\xA4\xA4", 3),
+        };
+        int mismatches = 0;
+        for (int cs : kDbcs)
+            for (const std::string& bytes : kCases) {
+                SOutputRun r = makeRun(bytes, cs);
+                if (RunCharLen(r) != decodedLen(r)) ++mismatches;
+                if (RunCharLen(r) != decodedLen(r)) ++mismatches;   // twice: memo hit
+            }
+        opCheck(mismatches == 0,
+                "DBCS charsets: the memoised count equals the drawn count, "
+                "on a repeat as well as the first ask");
+    }
+
+    // -- 2. one converter per charset, not one per call ----------------------
+    {
+        const unsigned long c0 = g_outputConvBuilds.load();
+        const unsigned long d0 = g_outputDecodes.load();
+        for (int i = 0; i < 500; ++i)
+            (void) DecodeOutputBytes("a\x93" "quoted\x94 word", 14, false, 0);
+        const unsigned long convs   = g_outputConvBuilds.load() - c0;
+        const unsigned long decodes = g_outputDecodes.load() - d0;
+        // The decode count is the control: without it, a DecodeOutputBytes that
+        // stopped decoding entirely would also build no converters and pass.
+        opCheckEq((int) decodes, 500, "500 decodes really ran");
+        opCheck(convs <= 1,
+                "...through at most ONE wxCSConv, not 500 (was one per call)");
+        if (convs > 1) printf("    built %lu converters\n", convs);
+    }
+
+    // -- 3. counting a single-byte run does no work at all -------------------
+    {
+        SOutputRun r = makeRun("a\x93" "quoted\x94 word", 0);
+        const unsigned long c0 = g_outputConvBuilds.load();
+        const unsigned long d0 = g_outputDecodes.load();
+        long total = 0;
+        for (int i = 0; i < 500; ++i) total += RunCharLen(r);
+        opCheckEq((int)(total / 500), 14, "the count is right (14 characters)");
+        opCheckEq((int)(g_outputDecodes.load() - d0), 0,
+                  "500 RunCharLen calls on a CP1252 run decode NOTHING");
+        opCheckEq((int)(g_outputConvBuilds.load() - c0), 0,
+                  "...and build no converter either");
+    }
+
+    // -- 4. a DBCS run is decoded once, then remembered ----------------------
+    {
+        SOutputRun r = makeRun("\xA4\xA4\xA4\xE5" "abc", 136);   // Big5
+        (void) RunCharLen(r);                       // prime (and build the conv)
+        const unsigned long c0 = g_outputConvBuilds.load();
+        const unsigned long d0 = g_outputDecodes.load();
+        long total = 0;
+        for (int i = 0; i < 200; ++i) total += RunCharLen(r);
+        opCheckEq((int)(g_outputDecodes.load() - d0), 0,
+                  "200 more RunCharLen calls on the SAME Big5 run re-decode nothing");
+        opCheckEq((int)(g_outputConvBuilds.load() - c0), 0,
+                  "...and build no further converter");
+        opCheckEq((int)(total / 200), decodedLen(r),
+                  "...and the memo answers what the decode would have");
+    }
+
+    // -- 5. the memo is keyed on the CONTENT and on the CHARSET --------------
+    // Two runs, alternating: each must be decoded once and then remembered, so
+    // a one-entry cache (which would thrash) and a cache that ignored the bytes
+    // (which would answer the other run's length) both fail here.
+    {
+        SOutputRun a = makeRun("\xA4\xA4", 136);            // Big5: one char
+        SOutputRun b = makeRun("\xA4\xA4\xA4\xE5", 136);    // Big5: two chars
+        opCheckEq(RunCharLen(a), 1, "Big5 A4A4 is one rendered character");
+        opCheckEq(RunCharLen(b), 2, "Big5 A4A4A4E5 is two");
+        const unsigned long d0 = g_outputDecodes.load();
+        for (int i = 0; i < 100; ++i) { (void) RunCharLen(a); (void) RunCharLen(b); }
+        opCheckEq((int)(g_outputDecodes.load() - d0), 0,
+                  "alternating two known runs re-decodes neither");
+    }
+    {
+        // The SAME bytes under a different DBCS charset are a different length:
+        // 0xA4 is a lead byte in Big5 but a halfwidth-katakana character of its
+        // own in Shift-JIS.  A memo keyed only on the bytes returns the stale
+        // answer here -- which is exactly the runtime charset change the cache
+        // has to survive.
+        SOutputRun big5 = makeRun("\xA4\xA4", 136);
+        SOutputRun sjis = makeRun("\xA4\xA4", 128);
+        const int nBig5 = RunCharLen(big5);
+        const int nSjis = RunCharLen(sjis);
+        opCheckEq(nBig5, decodedLen(big5), "A4A4 as Big5 counts as Big5 draws it");
+        opCheckEq(nSjis, decodedLen(sjis), "A4A4 as Shift-JIS counts as Shift-JIS draws it");
+        opCheck(nBig5 != nSjis,
+                "...and the two really do differ, so the charset key is load-bearing");
+        // Re-ask in the other order: neither answer may have been overwritten.
+        opCheckEq(RunCharLen(sjis), nSjis, "the Shift-JIS answer survives the Big5 ask");
+        opCheckEq(RunCharLen(big5), nBig5, "...and vice versa");
+    }
+
+    // -- 6. more distinct runs than the memo holds: still all correct --------
+    // The bound is a memory bound, never a correctness one.
+    {
+        std::vector<SOutputRun> runs;
+        std::vector<int>        want;
+        for (int i = 0; i < 40; ++i) {
+            std::string bytes = "\xA4\xA4";
+            bytes += std::string((size_t) i % 7 + 1, 'x');
+            runs.push_back(makeRun(bytes, 136));
+            want.push_back(decodedLen(runs.back()));
+        }
+        int wrong = 0;
+        for (int pass = 0; pass < 3; ++pass)
+            for (size_t i = 0; i < runs.size(); ++i)
+                if (RunCharLen(runs[i]) != want[i]) ++wrong;
+        opCheckEq(wrong, 0, "40 distinct runs cycled past a 16-entry memo stay correct");
+    }
+
+    // -- 7. a world that changes charset at runtime -------------------------
+    // Nothing invalidates the converter cache, because nothing has to: the key
+    // IS the encoding.  Flipping between four charsets many times must build at
+    // most one converter each (and none at all for the ones already used).
+    {
+        const unsigned long c0 = g_outputConvBuilds.load();
+        int wrong = 0;
+        for (int i = 0; i < 100; ++i)
+            for (int cs : { 0, 204, 238, 136 }) {
+                SOutputRun r = makeRun("\xA4\xA4" "text", cs);
+                if (RunCharLen(r) != decodedLen(r)) ++wrong;
+            }
+        opCheckEq(wrong, 0, "flipping charset 400 times never miscounts");
+        opCheck(g_outputConvBuilds.load() - c0 <= 4,
+                "...and builds at most one converter per charset, ever");
+    }
+}
+
 // ── the plugin text rectangle, adopted ───────────────────────────────────────
 // world.TextRectangle is POLLED, not signalled: nothing tells the pane a plugin
 // narrowed the text band, so this comparison in OnPaint is the only thing that
@@ -1959,6 +2166,7 @@ int RunOutputPaneSelfTest()
     TestSearchHighlightOffsets();
     TestMeasuredMetrics();
     TestRunCharLenMatchesTheDecode();
+    TestCharCountAvoidsTheDecode();
     TestAdoptTextRect();
     TestWheelActionOrdering();
     TestFontSizeClamp();

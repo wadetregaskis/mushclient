@@ -945,6 +945,37 @@ TEST(InfoTest, FormatTimeTranslatesTheWindowsNoLeadingZeroFlag)
     EXPECT_STREQ("05:04", (LPCTSTR) doc.FormatTime(t, "%I:%M"));
 }
 
+// platform/mfc_time.h had operator+(long), operator+(const CTimeSpan&),
+// operator-(long) and operator-(const CTime&), but not operator-(const
+// CTimeSpan&) -- which real MFC's CTime does have (it cost an earlier agent a
+// compile). Pin its semantics: CTime - CTimeSpan == CTime, moved earlier by
+// exactly the span's total seconds, and it inverts CTime + CTimeSpan.
+TEST(CTimeShim, MinusCTimeSpanSubtractsTotalSeconds)
+{
+    const CTime t(2026, 7, 16, 5, 4, 30);
+    const CTimeSpan oneDayTwoHours(1, 2, 0, 0);   // 1 day, 2 hours
+
+    const CTime earlier = t - oneDayTwoHours;
+
+    // Cross-check against the already-existing operator-(long): subtracting
+    // a CTimeSpan must do exactly what subtracting its raw second count does.
+    const CTime viaLongOverload = t - oneDayTwoHours.GetTotalSeconds();
+    EXPECT_EQ(viaLongOverload.GetTime(), earlier.GetTime());
+
+    EXPECT_EQ(2026, earlier.GetYear());
+    EXPECT_EQ(7,    earlier.GetMonth());
+    EXPECT_EQ(15,   earlier.GetDay());   // one day back
+    EXPECT_EQ(3,    earlier.GetHour());  // 5 - 2 hours
+    EXPECT_EQ(4,    earlier.GetMinute());
+    EXPECT_EQ(30,   earlier.GetSecond());
+
+    // Inverse of operator+(const CTimeSpan&): (t - span) + span == t.
+    EXPECT_TRUE((earlier + oneDayTwoHours) == t);
+
+    // A zero span is a no-op.
+    EXPECT_TRUE((t - CTimeSpan(0)) == t);
+}
+
 // headless_app.cpp's App ctor comment claims its printer margin defaults are
 // "the Windows table defaults" (globalregistryoptions.cpp: PrinterLeftMargin /
 // PrinterTopMargin both 15) -- it used to seed them to 1 instead.  Checked on

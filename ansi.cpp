@@ -264,7 +264,7 @@ CAction *      pAction      = pOldStyle->pAction;
          )
         {
         // we will have to look for the specific normal colour and replace it
-        for (int i = 0; i < 7; i++)
+        for (int i = 0; i < NUMITEMS (m_normalcolour); i++)
           if (iForeColour == m_normalcolour [i])
             {
             iForeColour = m_boldcolour [i];
@@ -291,7 +291,7 @@ CAction *      pAction      = pOldStyle->pAction;
          )
         {
         // we will have to look for the specific normal colour and replace it
-        for (int i = 0; i < 7; i++)
+        for (int i = 0; i < NUMITEMS (m_boldcolour); i++)
           if (iForeColour == m_boldcolour [i])
             {
             iForeColour = m_normalcolour [i];

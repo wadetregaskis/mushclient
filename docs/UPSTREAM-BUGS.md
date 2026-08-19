@@ -62,6 +62,7 @@ TU (e.g. doc_shared.cpp ← doc.cpp).
 | 51 | A duplicate trigger/alias label whose replacement fails validation leaves the freed original in the map | this commit | xml_load_world.cpp `CMUSHclientDoc::Load_One_Trigger_XML` / `Load_One_Alias_XML` |
 | 52 | The Lua `error_code`/`error_desc` tables key `ePluginCouldNotSaveState` on 30037 instead of 30038, duplicating `ePluginDoesNotSaveState`'s code | this commit | lua_methods.cpp `error_codes[]`; errors.cpp `error_descriptions[]` |
 | 53 | `ExecuteLua`'s "function not found" arm returns without restoring `m_iNoteStyle` | this commit | lua_scripting.cpp `CScriptEngine::ExecuteLua` (both overloads) |
+| 56 | The RGB bold/unbold colour scans stop one palette entry short, so white text never swaps | this commit | ansi.cpp `CMUSHclientDoc::InterpretANSIcode` (`ANSI_BOLD` / `ANSI_CANCEL_BOLD`) |
 
 ## 1 — MXP `<!ELEMENT … DELETE>` use-after-free (`2cae10b`)
 **Bug:** redefining or deleting a custom MXP element frees the old `CElement`
@@ -1164,3 +1165,20 @@ COM host's equivalent early return (`scriptengine.cpp:101`) restores too.
 `SweepR4.ExecuteLuaMissingRoutineRestoresNoteStyle` and
 `SweepR4.ExecuteLuaSimpleOverloadMissingRoutineRestoresNoteStyle` in
 `tests/test_lua_scripting.cpp`.
+
+## 56 — The RGB bold/unbold colour scans stop one palette entry short (this commit)
+**Bug:** in RGB mode the client cannot re-derive a colour from its index at
+paint time, so `ANSI_BOLD` and `ANSI_CANCEL_BOLD` swap the stored RGB value by
+scanning for it in `m_normalcolour` / `m_boldcolour`.  Both arrays are `[8]`,
+indexed `BLACK=0 … WHITE=7` (stdafx.h), but both scans are written
+`for (int i = 0; i < 7; i++)` — so index 7 is never compared.  White is both
+the commonest foreground and the default one, so in a world with
+*Use custom colour 16 as default* set, bold and unbold silently did nothing to
+plain white text; every other colour worked, which is why it went unnoticed.
+The bound dates to the 2010 import.
+**Fix:** `i < NUMITEMS (m_normalcolour)` / `i < NUMITEMS (m_boldcolour)`, the
+idiom the rest of the tree already uses for these walks, so the arrays cannot
+drift out from under the loops again.  Covered by
+`AnsiRgbMode.BoldScanReachesTheLastPaletteEntry` in `tests/test_ansi.cpp` —
+deliberately at index 7, because the pre-existing
+`BoldUpgradeAndDowngradeScanPalette` exercises index 1 and passes either way.

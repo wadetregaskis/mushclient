@@ -2514,3 +2514,20 @@ only visible effect should be that a wall-placed miniwindow's hotspots respond
 at all (upstream's `PtInRect` could not match a `CRect (start, 0, width,
 height)`), and that a window the layout could not fit stops answering at the
 pane's top-left corner — which upstream's `PtInRect` also never did.
+
+### Engine-core upstream bugs in shared source (2026-08-19)
+
+Each is unconditional shared source with no `#ifdef` anywhere near it, and each
+file is in `MUSHclient.vcxproj`, so Windows carries the bug and the fix changes
+Windows behaviour.  Each has headless coverage, and each new test was confirmed
+to fail with its fix reverted, so what a Windows run adds is confirmation
+against the real view, the real timer wheel and a real MUD.
+
+- **Bold now reaches white** (`docs/UPSTREAM-BUGS.md` #56).  **To check:** a
+  world with *Use custom colour 16 as default output colour* ticked, then send
+  it `ESC[37m` (white) followed by `ESC[1m`.  The text should brighten to the
+  *bold* white swatch and go back to the normal one on `ESC[22m`; stock 5.06
+  leaves it at the normal swatch through both.  Set the two white entries to
+  obviously different colours on the world's ANSI-colour page first, or the
+  change is invisible.  Confirm the other seven colours are unchanged — they
+  already worked, and the loop bound is the only thing that moved.

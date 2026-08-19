@@ -709,6 +709,34 @@ TEST(AnsiRgbMode, BoldUpgradeAndDowngradeScanPalette)
     EXPECT_EQ(doc.m_normalcolour[1], s->iForeColour);
 }
 
+// ...and the scans must reach the LAST palette entry.  m_normalcolour and
+// m_boldcolour are [8], indexed BLACK=0..WHITE=7, but both loops used to stop
+// at i < 7 -- so white text (the commonest colour there is) never swapped, and
+// bold/unbold silently did nothing to it in RGB mode.  The test above cannot
+// see this: it exercises index 1.
+TEST(AnsiRgbMode, BoldScanReachesTheLastPaletteEntry)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_bCustom16isDefaultColour = TRUE;   // the scans are gated on this
+    doc.m_pCurrentLine->styleList.GetTail()->iFlags =
+        (doc.m_pCurrentLine->styleList.GetTail()->iFlags & ~COLOURTYPE) | COLOUR_RGB;
+
+    // the fixture has to be able to tell the two apart, or nothing is proved
+    ASSERT_NE(doc.m_normalcolour[WHITE], doc.m_boldcolour[WHITE]);
+
+    doc.InterpretANSIcode(ANSI_TEXT_WHITE);        // normalcolour[7]
+    CStyle* s = tail(doc);
+    EXPECT_EQ(doc.m_normalcolour[WHITE], s->iForeColour);
+
+    doc.InterpretANSIcode(ANSI_BOLD);              // upgrade scan
+    s = tail(doc);
+    EXPECT_EQ(doc.m_boldcolour[WHITE], s->iForeColour);
+
+    doc.InterpretANSIcode(ANSI_CANCEL_BOLD);       // downgrade scan
+    s = tail(doc);
+    EXPECT_EQ(doc.m_normalcolour[WHITE], s->iForeColour);
+}
+
 // Blink family + cancel codes.
 TEST(AnsiRgbMode, BlinkAndCancelCodes)
 {

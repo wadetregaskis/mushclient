@@ -90,13 +90,6 @@ const char* telopt_name(unsigned char opt)
     }
 }
 
-// ── CheckObjectName ───────────────────────────────────────────────────────────
-// Validates an object (trigger/alias/timer) name.  Stub always accepts.
-long CheckObjectName(const CString& /*strName*/, const bool /*bConform*/)
-{
-    return eOK;
-}
-
 // ── SendToFront ───────────────────────────────────────────────────────────────
 // utils.sendtofront(name): raise a matching application to the front.  On macOS
 // this activates a running app whose name/bundle-id matches (wxOSXActivateApp);

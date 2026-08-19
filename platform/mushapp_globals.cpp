@@ -31,15 +31,9 @@ extern const char ENDLINE[] = "\r\n";
 // non-Windows; App is the object the rest of the code reaches for.
 CMUSHclientApp App;
 
-// ── Main-frame stubs ──────────────────────────────────────────────────────────
+// ── Main-frame stub ────────────────────────────────────────────────────────────
 // stdafx.h (non-Windows block) declares:
 //   extern CMainFrame Frame;      ← literal symbol "Frame"
-// the port layer also historically declared a `g_stub_frame` alias for Frame.
-//
-// To satisfy both, we define both as independent stub instances.  Since they
-// are pure stubs (no real window behind them), having two separate objects is
-// harmless.
 CMainFrame Frame;         // satisfies stdafx.h's extern declaration
-CMainFrame g_stub_frame;  // satisfies the historical g_stub_frame extern
 
 #endif // !_WIN32

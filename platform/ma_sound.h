@@ -56,5 +56,12 @@ int  ma_audio_status(const void* owner, int buffer);
 // that never played anything.
 void ma_audio_release_owner(const void* owner);
 
+// Tear the whole engine down: unload every owner's voices, then close the
+// device.  Call it on the way out (the app does, from the macOS terminate hook
+// and from OnExit); after it, every entry point is inert and ma_audio_status
+// answers -3, since re-opening a device during process teardown would be worse
+// than silence.  Idempotent, and safe if no device was ever opened.
+void ma_audio_shutdown();
+
 
 #endif // !_WIN32

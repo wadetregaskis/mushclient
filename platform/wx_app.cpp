@@ -15,6 +15,7 @@
 #include <cstdlib>             // std::exit (selftest flag)
 #include "platform/extended_selftest.h"   // the loop-running test mode
 #include "platform/wx_osx_text.h"         // wxOSXDisableAutomaticPeriodSubstitution
+#include "platform/ma_sound.h"            // ma_audio_shutdown (quit teardown)
 #include "platform/wx_mfc_hooks.h"
 
 // Defined in wx_dialog_bridge.cpp: parse the bundled dialog resources once.
@@ -66,6 +67,12 @@ int RunMenuBarSelfTest();
 // 31 mushcore test executables must not link.
 int RunEmbeddedEnginesSelfTest(const char* only);
 
+// In-app conformance harness for the miniaudio sound engine
+// (platform/sound_selftest.cpp), run via the hidden --sound-selftest flag.
+// platform/ma_sound.cpp compiles miniaudio, so it is linked only here -- and
+// what it decides (per-owner buffer isolation, the exit-time teardown) needs a
+// real audio device.  Returns 77 (ctest SKIPPED) when there is none.
+int RunSoundSelfTest();
 // In-app conformance harness for the notepad windows
 // (platform/notepad_selftest.cpp), run via the hidden --notepad-selftest flag.
 // CTextDocument and its wxFrame are GUI-only, so none of it links into the
@@ -124,6 +131,11 @@ public:
                 const int failures = RunPalTransportSelfTest();
                 SelftestExit(failures == 0 ? 0 : 1);
             }
+            // Needs no hooks and no window -- just the audio device, which it
+            // opens (and shuts down) itself.  Carries its own exit code so it
+            // can report 77 on a machine with no device.
+            if (wxString(argv[i]) == wxT("--sound-selftest"))
+                SelftestExit(RunSoundSelfTest());
             // --engines-selftest runs every language; --engines-selftest=tcl
             // runs one, so ctest can register a separate entry per language and
             // report SKIPPED (exit 77) for interpreters this build lacks.
@@ -308,6 +320,9 @@ public:
 
     int OnExit() override
     {
+        // Close the audio device while we still have a thread to close it on.
+        // (On macOS this is the path NOT taken -- see OSXOnWillTerminate.)
+        ma_audio_shutdown();
         // ExitInstance hook could be added later if cleanup is needed.
         return wxApp::OnExit();
     }
@@ -337,6 +352,16 @@ public:
         if (g_wxhook_query_quit_save && !g_wxhook_query_quit_save())
             return false;
         return wxApp::OSXOnShouldTerminate();
+    }
+
+    // -[NSApp terminate:] never returns to [NSApp run], so OnExit above does
+    // NOT run on the macOS quit path -- this is the last code of ours that
+    // does.  Close the audio device here, before AppKit's exit() starts static
+    // destruction with the device thread still mixing.
+    void OSXOnWillTerminate() override
+    {
+        ma_audio_shutdown();
+        wxApp::OSXOnWillTerminate();
     }
 #endif
 };

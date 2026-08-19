@@ -26,8 +26,8 @@
 #include "platform/miniaudio/miniaudio.h"
 
 #include "platform/ma_sound.h"
+#include "platform/ma_sound_rules.h"        // the two device-free decisions
 
-#include <cmath>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -38,6 +38,7 @@ namespace {
 ma_engine  g_engine;
 bool       g_engineReady  = false;
 bool       g_engineFailed = false;          // don't retry a failed device open
+bool       g_engineDone   = false;          // shut down: never re-open
 std::mutex g_mutex;
 
 // One voice.  For memory-sourced voices (ma_audio_play_memory) the decoder reads
@@ -56,13 +57,23 @@ struct Slot {
 // addresses have to stay put for the life of the voice.
 struct Voices { Slot s[MA_MAX_SOUND_BUFFERS]; };
 
-std::map<const void*, std::unique_ptr<Voices>> g_owners;
+// Deliberately immortal — the leak is the point.  A plain static map is freed
+// during static destruction, which on macOS runs from the exit() at the end of
+// -[NSApplication terminate:], with the device thread still mixing: ~Slot does
+// NOT ma_sound_uninit, so every voice this process ever played would be handed
+// back to the allocator while still attached to the running engine's node
+// graph.  Nothing here is freed, so that cannot happen however the process
+// dies; ma_audio_shutdown() below is the orderly teardown for the paths that
+// do get to run one.
+std::map<const void*, std::unique_ptr<Voices>>& g_owners =
+    *new std::map<const void*, std::unique_ptr<Voices>>();
 
 // Open the playback device + engine once.  Returns false if no device.
 bool ensureEngine()
 {
     if (g_engineReady)  return true;
     if (g_engineFailed) return false;
+    if (g_engineDone)   return false;       // shutting down: don't re-open
     if (ma_engine_init(NULL, &g_engine) != MA_SUCCESS) {
         g_engineFailed = true;
         return false;
@@ -119,32 +130,26 @@ void reap(Voices& v)
             unloadSlot(v.s[i]);
 }
 
-// Which slot a request names.  Buffer 0 means "first free", and — as on Windows
-// — only the first HALF of the range is scanned, reserving 6-10 for explicit
-// allocation.  Caller holds g_mutex.
+// Which slot a request names — the rule itself is ma_sound_choose_slot (see
+// ma_sound_rules.h, where it is testable without a device).  Caller holds
+// g_mutex.
 int chooseSlot(Voices& v, int buffer)
 {
-    if (buffer >= 1 && buffer <= MA_MAX_SOUND_BUFFERS)
-        return buffer - 1;                    // explicit buffer
-    for (int i = 0; i < (MA_MAX_SOUND_BUFFERS / 2); ++i)
-        if (!v.s[i].loaded) return i;
-    return 0;                                 // all busy: slot 1
+    bool loaded[MA_MAX_SOUND_BUFFERS];
+    for (int i = 0; i < MA_MAX_SOUND_BUFFERS; ++i)
+        loaded[i] = v.s[i].loaded;
+    return ma_sound_choose_slot(loaded, buffer);
 }
 
 // Apply the three per-voice settings.  Caller holds g_mutex.
 void applySettings(Slot& sl, int loop, double volume, double pan)
 {
-    // Volume percent [-100, 0] (0 = full) → linear amplitude gain.  This matches
-    // Windows' DSBVOLUME, which is hundredths of a dB: iVolume = Volume * 100,
-    // i.e. the attenuation in dB equals Volume, and gain = 10^(dB/20).
-    if (volume > 0.0)    volume = 0.0;
-    if (volume < -100.0) volume = -100.0;
     // Pan percent [-100, +100] → miniaudio pan [-1, +1].
     if (pan >  100.0) pan =  100.0;
     if (pan < -100.0) pan = -100.0;
 
     ma_sound_set_looping(&sl.sound, loop ? MA_TRUE : MA_FALSE);
-    ma_sound_set_volume (&sl.sound, (float) std::pow(10.0, volume / 20.0));
+    ma_sound_set_volume (&sl.sound, (float) ma_sound_gain(volume));
     ma_sound_set_pan    (&sl.sound, (float) (pan / 100.0));
 }
 
@@ -273,6 +278,28 @@ void ma_audio_release_owner(const void* owner)
         for (int i = 0; i < MA_MAX_SOUND_BUFFERS; ++i)
             unloadSlot(it->second->s[i]);
     g_owners.erase(it);
+}
+
+void ma_audio_shutdown()
+{
+    std::lock_guard<std::mutex> lk(g_mutex);
+    // One way: mark it done FIRST so a play racing in behind us finds no
+    // device rather than re-opening one we are in the middle of closing.
+    g_engineDone = true;
+    // Detach every voice from the node graph before the engine goes.  Doing it
+    // in this order — sounds, then the engine — is what makes this safe while
+    // the device thread is still running; it is precisely what static
+    // destruction of g_owners would NOT do.
+    for (std::map<const void*, std::unique_ptr<Voices>>::iterator it = g_owners.begin();
+         it != g_owners.end(); ++it)
+        if (it->second)
+            for (int i = 0; i < MA_MAX_SOUND_BUFFERS; ++i)
+                unloadSlot(it->second->s[i]);
+    g_owners.clear();
+    if (g_engineReady) {
+        ma_engine_uninit(&g_engine);          // stops the device
+        g_engineReady = false;
+    }
 }
 
 

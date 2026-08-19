@@ -50,11 +50,96 @@ void CMUSHclientDoc::RebuildOutputView()
     UpdateAllViews(nullptr);
 }
 
-// ── BuildOutputLine ───────────────────────────────────────────────────────
-// One CLine -> one SOutputLine.  Extracted from the UpdateAllViews drain so the
-// PUSH path (the drain, below) and any PULL path (a view fetching line k at
-// paint time) share a single conversion -- two copies of this would be the
-// twin drift the port keeps paying for elsewhere.
+// ── BuildLineFromCLine ─────────────────────────────────────────
+// One CLine -> one SOutputLine.  THE conversion: BuildOutputLine (the pull
+// path) and both of UpdateAllViews' emit loops (the completed lines and the
+// in-progress row) all come through here.  They used to be three hand-written
+// copies of the same run loop -- while the comment claimed there was one -- and
+// they had already drifted: neither drain copy set userInput, so an echoed
+// command reached the view as ordinary output on the push path and as input on
+// the pull one.  That is the twin drift this port keeps paying for elsewhere.
+//
+// A file-static rather than a member, so no doc.h change is needed; everything
+// it reads off the document is public.  `out` is fully overwritten, flags
+// included, so no caller has to clear it first.
+static void BuildLineFromCLine (const CMUSHclientDoc & doc,
+                                const CLine * pLine,
+                                SOutputLine & out)
+{
+    out.clear();
+    out.pending = false;
+    // When the line arrived, for the output-buffer fade (the view has no CLine).
+    // The in-progress row needs it as much as a completed line does: it is the
+    // one a prompt sits in, so leaving it unstamped made the NEWEST line on
+    // screen look ancient to the fade.
+    out.arrived = pLine->m_theTime.GetTime ();
+    // A note line: a send-link on it is executed, not sent.
+    out.comment = (pLine->flags & COMMENT) != 0;
+    // An echoed command: the line-preamble (timestamp) family picks its text
+    // and colours by kind — note / input / output.
+    out.userInput = (pLine->flags & USER_INPUT) != 0;
+    // The engine's BOOKMARK flag (world.Bookmark / Display ▸ Bookmark
+    // Selection).  Carrying it here makes the CLine the single source of
+    // truth: RebuildOutputView re-emits the buffer, so bookmarks survive a
+    // palette change without the view having to save and restore them.
+    out.bookmark = (pLine->flags & BOOKMARK) != 0;
+
+    // Horizontal rule: emit a single sentinel run rather than text.
+    if (pLine->flags & HORIZ_RULE) {
+        SOutputRun hrRun;
+        hrRun.horiz_rule = true;
+        out.push_back(std::move(hrRun));
+        return;
+    }
+
+    POSITION spos = pLine->styleList.GetHeadPosition();
+    int charOff = 0;
+    while (spos) {
+        CStyle* pStyle = pLine->styleList.GetNext(spos);
+        if (pStyle->iLength > 0) {
+            SOutputRun run;
+            doc.GetStyleRGB(pStyle, run.fg, run.bg);
+            // ...and the inputs it resolved them from, so a palette
+            // change can recolour this run without a re-emit.
+            run.style_flags = (uint16_t)(pStyle->iFlags & STYLE_BITS);
+            run.fore_idx    = (int32_t) pStyle->iForeColour;
+            run.back_idx    = (int32_t) pStyle->iBackColour;
+            // The three "Show" checkboxes (World Properties > Appearance >
+            // Output) decide whether the ANSI attribute is rendered at all.
+            // Windows honours them when it builds the 16 style fonts
+            // (doc.cpp ChangeFont, which takes bShowBold/Italic/Underline);
+            // these run flags are the equivalent choke point for a PAL view
+            // adapter, and were ungated — so on the port the checkboxes did
+            // nothing.  UpdateAllViews re-emits, so this is live.
+            run.bold          = doc.m_bShowBold      && ((pStyle->iFlags & HILITE)    != 0);
+            run.underline     = doc.m_bShowUnderline && ((pStyle->iFlags & UNDERLINE) != 0);
+            run.italic        = doc.m_bShowItalic    && ((pStyle->iFlags & BLINK)     != 0);  // MUSHclient maps BLINK → italic
+            run.strikethrough = (pStyle->iFlags & STRIKEOUT) != 0;
+            run.text = std::string(pLine->text + charOff, pStyle->iLength);
+            run.utf8 = doc.m_bUTF_8;                      // non-UTF-8 worlds: tag the
+            if (!doc.m_bUTF_8)                            // bytes' charset so the pane
+                run.charset = (int) doc.m_font_charset;   // decodes them (else blank)
+            // MXP hyperlink / send-link: copy action and hint strings.
+            if (pStyle->pAction) {
+                // One shared_ptr allocation, and ONLY for a link run: the
+                // action/hint/type used to be plain members on every run.
+                // Windows branches on these when the link is clicked (a
+                // prompt-link fills the command bar; a send-link on a note
+                // line executes instead of sending), so carry them out to
+                // the view with the action itself.
+                run.setLink(static_cast<const char*>(pStyle->pAction->m_strAction),
+                            static_cast<const char*>(pStyle->pAction->m_strHint),
+                            pStyle->iFlags & ACTIONTYPE);
+            }
+            out.push_back(std::move(run));
+        }
+        charOff += pStyle->iLength;
+    }
+}
+
+// ── BuildOutputLine ─────────────────────────────────────────────
+// The PULL path: a view fetching line k at paint time (COutputPane::LineAt →
+// m_fn_fetch_line → here), so a line is rebuilt from its CLine on demand.
 //
 // Returns false when `index` is out of range.  `index` is a 0-based COMMITTED
 // line index, the same space m_gui_lines_emitted counts in.
@@ -71,83 +156,7 @@ bool CMUSHclientDoc::BuildOutputLine (long index, SOutputLine & out) const
   if (!pLine || pLine == m_pCurrentLine)
     return false;
 
-  // When the line arrived, for the output-buffer fade.  THIS is the builder the
-  // pane actually uses: it is on a pull model (COutputPane::LineAt →
-  // m_fn_fetch_line → here), so a line is rebuilt from its CLine on demand and
-  // the push-side builders below are only used when no fetch callback is wired.
-  //
-  // Set on the LOCAL `outline` in each branch, not on `out` here: both branches
-  // end with `out = std::move (outline)`, which would overwrite it.
-  const time_t arrivedAt = pLine->m_theTime.GetTime ();
-
-    // Horizontal rule: emit a single sentinel run rather than text.
-    if (pLine->flags & HORIZ_RULE) {
-        SOutputLine outline;
-        outline.arrived = arrivedAt;
-        outline.userInput = (pLine->flags & USER_INPUT) != 0;
-        SOutputRun hrRun;
-        hrRun.horiz_rule = true;
-        outline.push_back(std::move(hrRun));
-        out = std::move(outline);
-        return true;
-    }
-
-    SOutputLine outline;
-    outline.arrived = arrivedAt;
-    // A note line: a send-link on it is executed, not sent.
-    outline.comment = (pLine->flags & COMMENT) != 0;
-    // An echoed command: the line-preamble (timestamp) family picks its text
-    // and colours by kind — note / input / output.
-    outline.userInput = (pLine->flags & USER_INPUT) != 0;
-    // The engine's BOOKMARK flag (world.Bookmark / Display ▸ Bookmark
-    // Selection).  Carrying it here makes the CLine the single source of
-    // truth: RebuildOutputView re-emits the buffer, so bookmarks survive a
-    // palette change without the view having to save and restore them.
-    outline.bookmark = (pLine->flags & BOOKMARK) != 0;
-    POSITION spos = pLine->styleList.GetHeadPosition();
-    int charOff = 0;
-    while (spos) {
-        CStyle* pStyle = pLine->styleList.GetNext(spos);
-        if (pStyle->iLength > 0) {
-            SOutputRun run;
-            GetStyleRGB(pStyle, run.fg, run.bg);
-            // ...and the inputs it resolved them from, so a palette
-            // change can recolour this run without a re-emit.
-            run.style_flags = (uint16_t)(pStyle->iFlags & STYLE_BITS);
-            run.fore_idx    = (int32_t) pStyle->iForeColour;
-            run.back_idx    = (int32_t) pStyle->iBackColour;
-            // The three "Show" checkboxes (World Properties > Appearance >
-            // Output) decide whether the ANSI attribute is rendered at all.
-            // Windows honours them when it builds the 16 style fonts
-            // (doc.cpp ChangeFont, which takes bShowBold/Italic/Underline);
-            // these run flags are the equivalent choke point for a PAL view
-            // adapter, and were ungated — so on the port the checkboxes did
-            // nothing.  UpdateAllViews re-emits, so this is live.
-            run.bold          = m_bShowBold      && ((pStyle->iFlags & HILITE)    != 0);
-            run.underline     = m_bShowUnderline && ((pStyle->iFlags & UNDERLINE) != 0);
-            run.italic        = m_bShowItalic    && ((pStyle->iFlags & BLINK)     != 0);  // MUSHclient maps BLINK → italic
-            run.strikethrough = (pStyle->iFlags & STRIKEOUT) != 0;
-            run.text = std::string(pLine->text + charOff, pStyle->iLength);
-            run.utf8 = m_bUTF_8;                      // non-UTF-8 worlds: tag the
-            if (!m_bUTF_8)                            // bytes' charset so the pane
-                run.charset = (int) m_font_charset;   // decodes them (else blank)
-            // MXP hyperlink / send-link: copy action and hint strings.
-            if (pStyle->pAction) {
-                // One shared_ptr allocation, and ONLY for a link run: the
-                // action/hint/type used to be plain members on every run.
-                // Windows branches on these when the link is clicked (a
-                // prompt-link fills the command bar; a send-link on a note
-                // line executes instead of sending), so carry them out to
-                // the view with the action itself.
-                run.setLink(static_cast<const char*>(pStyle->pAction->m_strAction),
-                            static_cast<const char*>(pStyle->pAction->m_strHint),
-                            pStyle->iFlags & ACTIONTYPE);
-            }
-            outline.push_back(std::move(run));
-        }
-        charOff += pStyle->iLength;
-    }
-  out = std::move(outline);
+  BuildLineFromCLine (*this, pLine, out);
   return true;
 }
 
@@ -249,72 +258,8 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
             batchOpen = true;
         }
 
-        // Horizontal rule: emit a single sentinel run rather than text.
-        if (pLine->flags & HORIZ_RULE) {
-            SOutputLine outline;
-            outline.arrived = pLine->m_theTime.GetTime();
-            SOutputRun hrRun;
-            hrRun.horiz_rule = true;
-            outline.push_back(std::move(hrRun));
-            EmitOutputLine(std::move(outline));
-            ++m_gui_lines_emitted;
-            continue;
-        }
-
         SOutputLine outline;
-        // When it arrived, for the output-buffer fade (the view has no CLine).
-        outline.arrived = pLine->m_theTime.GetTime();
-        // A note line: a send-link on it is executed, not sent.
-        outline.comment = (pLine->flags & COMMENT) != 0;
-        // The engine's BOOKMARK flag (world.Bookmark / Display ▸ Bookmark
-        // Selection).  Carrying it here makes the CLine the single source of
-        // truth: RebuildOutputView re-emits the buffer, so bookmarks survive a
-        // palette change without the view having to save and restore them.
-        outline.bookmark = (pLine->flags & BOOKMARK) != 0;
-        POSITION spos = pLine->styleList.GetHeadPosition();
-        int charOff = 0;
-        while (spos) {
-            CStyle* pStyle = pLine->styleList.GetNext(spos);
-            if (pStyle->iLength > 0) {
-                SOutputRun run;
-                GetStyleRGB(pStyle, run.fg, run.bg);
-                // ...and the inputs it resolved them from, so a palette
-                // change can recolour this run without a re-emit.
-                run.style_flags = (uint16_t)(pStyle->iFlags & STYLE_BITS);
-                run.fore_idx    = (int32_t) pStyle->iForeColour;
-                run.back_idx    = (int32_t) pStyle->iBackColour;
-                // The three "Show" checkboxes (World Properties > Appearance >
-                // Output) decide whether the ANSI attribute is rendered at all.
-                // Windows honours them when it builds the 16 style fonts
-                // (doc.cpp ChangeFont, which takes bShowBold/Italic/Underline);
-                // these run flags are the equivalent choke point for a PAL view
-                // adapter, and were ungated — so on the port the checkboxes did
-                // nothing.  UpdateAllViews re-emits, so this is live.
-                run.bold          = m_bShowBold      && ((pStyle->iFlags & HILITE)    != 0);
-                run.underline     = m_bShowUnderline && ((pStyle->iFlags & UNDERLINE) != 0);
-                run.italic        = m_bShowItalic    && ((pStyle->iFlags & BLINK)     != 0);  // MUSHclient maps BLINK → italic
-                run.strikethrough = (pStyle->iFlags & STRIKEOUT) != 0;
-                run.text = std::string(pLine->text + charOff, pStyle->iLength);
-                run.utf8 = m_bUTF_8;                      // non-UTF-8 worlds: tag the
-                if (!m_bUTF_8)                            // bytes' charset so the pane
-                    run.charset = (int) m_font_charset;   // decodes them (else blank)
-                // MXP hyperlink / send-link: copy action and hint strings.
-                if (pStyle->pAction) {
-                    // One shared_ptr allocation, and ONLY for a link run: the
-                    // action/hint/type used to be plain members on every run.
-                    // Windows branches on these when the link is clicked (a
-                    // prompt-link fills the command bar; a send-link on a note
-                    // line executes instead of sending), so carry them out to
-                    // the view with the action itself.
-                    run.setLink(static_cast<const char*>(pStyle->pAction->m_strAction),
-                                static_cast<const char*>(pStyle->pAction->m_strHint),
-                                pStyle->iFlags & ACTIONTYPE);
-                }
-                outline.push_back(std::move(run));
-            }
-            charOff += pStyle->iLength;
-        }
-
+        BuildLineFromCLine (*this, pLine, outline);
         EmitOutputLine(std::move(outline));
         ++m_gui_lines_emitted;
     }
@@ -335,49 +280,9 @@ void CMUSHclientDoc::UpdateAllViews(void* /*hint*/)
     // replaces m_pendingLine and schedules a single Refresh().
     if (m_pCurrentLine && m_pCurrentLine->len > 0) {
         SOutputLine pending;
-        pending.comment = (m_pCurrentLine->flags & COMMENT) != 0;
-        POSITION spos = m_pCurrentLine->styleList.GetHeadPosition();
-        int charOff = 0;
-        while (spos) {
-            CStyle* pStyle = m_pCurrentLine->styleList.GetNext(spos);
-            if (pStyle->iLength > 0) {
-                SOutputRun run;
-                GetStyleRGB(pStyle, run.fg, run.bg);
-                // ...and the inputs it resolved them from, so a palette
-                // change can recolour this run without a re-emit.
-                run.style_flags = (uint16_t)(pStyle->iFlags & STYLE_BITS);
-                run.fore_idx    = (int32_t) pStyle->iForeColour;
-                run.back_idx    = (int32_t) pStyle->iBackColour;
-                // Same "Show" gates as the finished-line emitter above.
-                run.bold          = m_bShowBold      && ((pStyle->iFlags & HILITE)    != 0);
-                run.underline     = m_bShowUnderline && ((pStyle->iFlags & UNDERLINE) != 0);
-                run.italic        = m_bShowItalic    && ((pStyle->iFlags & BLINK)     != 0);
-                run.strikethrough = (pStyle->iFlags & STRIKEOUT) != 0;
-                run.text = std::string(m_pCurrentLine->text + charOff, pStyle->iLength);
-                run.utf8 = m_bUTF_8;
-                if (!m_bUTF_8) run.charset = (int) m_font_charset;
-                if (pStyle->pAction) {
-                    // One shared_ptr allocation, and ONLY for a link run: the
-                    // action/hint/type used to be plain members on every run.
-                    // Windows branches on these when the link is clicked (a
-                    // prompt-link fills the command bar; a send-link on a note
-                    // line executes instead of sending), so carry them out to
-                    // the view with the action itself.
-                    run.setLink(static_cast<const char*>(pStyle->pAction->m_strAction),
-                                static_cast<const char*>(pStyle->pAction->m_strHint),
-                                pStyle->iFlags & ACTIONTYPE);
-                }
-                pending.push_back(std::move(run));
-            }
-            charOff += pStyle->iLength;
-        }
+        BuildLineFromCLine (*this, m_pCurrentLine, pending);
         if (!pending.empty()) {
             pending.pending = true;
-            // The in-progress line carries its arrival time too -- it is the
-            // THIRD place an SOutputLine is built, and the one a prompt sits
-            // in, so leaving it unstamped left the newest line on screen (the
-            // one the fade should never have touched) looking ancient.
-            pending.arrived = m_pCurrentLine->m_theTime.GetTime();
             EmitOutputLine(std::move(pending));
             emittedPending = true;
         }

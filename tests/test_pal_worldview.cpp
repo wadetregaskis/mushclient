@@ -2223,4 +2223,54 @@ TEST(PalWorldView, RedrawAndRepaintDrainPendingOutput)
     EXPECT_STREQ("second line", line_text(committed(view)[1]).c_str());
 }
 
+// ── the drain and the fetch build the SAME line ───────────────────────────
+//
+// doc_display_shared.cpp used to carry THREE hand-written copies of the same
+// CLine -> SOutputLine run loop -- BuildOutputLine (the pull path) plus one for
+// the drain's committed lines and one for its pending row -- while the comment
+// above BuildOutputLine claimed there was one, "two copies of this would be the
+// twin drift the port keeps paying for elsewhere".  They had already drifted:
+// neither drain copy stamped userInput, so an echoed command reached the view
+// as ordinary MUD output on the push path and as input on the pull one, and the
+// line-preamble family picks its text and colours by exactly that flag.
+TEST(PalWorldView, EchoedCommandIsMarkedAsInputOnEveryPath)
+{
+    FakeWorldView view;
+    CMUSHclientDoc doc; make_doc(doc);
+    doc.m_pWorldView = &view;
+
+    // A completed echoed command, through the push drain.
+    doc.DisplayMsg("look\n", 5, USER_INPUT);
+    doc.UpdateAllViews(nullptr);
+    auto pushed = committed(view);
+    ASSERT_EQ(1u, (unsigned) pushed.size());
+    EXPECT_STREQ("look", line_text(pushed[0]).c_str());
+    EXPECT_TRUE(pushed[0].userInput);
+
+    // ...and the same line fetched through the PULL path must agree.
+    SOutputLine fetched;
+    ASSERT_TRUE(doc.BuildOutputLine(0, fetched));
+    EXPECT_TRUE(fetched.userInput);
+
+    // An ordinary MUD line is the control: if the flag were simply stamped on
+    // everything, this would fail.
+    doc.DisplayMsg("You see nothing special.\n", 25, 0);
+    doc.UpdateAllViews(nullptr);
+    auto both = committed(view);
+    ASSERT_EQ(2u, (unsigned) both.size());
+    EXPECT_FALSE(both[1].userInput);
+
+    // The in-progress row is built by the same converter now, so it carries the
+    // flag too -- and its arrival time, which only the pending copy used to set.
+    view.lines.clear();
+    doc.DisplayMsg("say hello", 9, USER_INPUT);   // no newline: still pending
+    doc.UpdateAllViews(nullptr);
+    ASSERT_FALSE(view.lines.empty());
+    const SOutputLine& pending = view.lines.back();
+    ASSERT_TRUE(pending.pending);
+    EXPECT_STREQ("say hello", line_text(pending).c_str());
+    EXPECT_TRUE(pending.userInput);
+    EXPECT_NE((time_t) 0, pending.arrived);
+}
+
 MC_TEST_MAIN()

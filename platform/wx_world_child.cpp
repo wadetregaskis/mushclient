@@ -5401,10 +5401,12 @@ void CWorldChildFrame::clearOutput()
 // port invention — a terminal-style clear-screen with no Windows counterpart.
 // The engine's m_LineList was left intact, and that is not merely cosmetic:
 // world.GetLinesInBufferCount() and the disconnect statistics kept counting the
-// cleared lines, and — the visible one — any palette change runs
-// RebuildOutputView (doc_display_shared.cpp), which re-emits the WHOLE doc
-// buffer, so every "cleared" line came back the moment the user touched World
-// Properties ▸ ANSI Colour or a script called SetNormalColour.
+// cleared lines, and — the visible one — a palette change re-emitted the WHOLE
+// doc buffer (RebuildOutputView, doc_display_shared.cpp), so every "cleared"
+// line came back the moment the user touched World Properties ▸ ANSI Colour or
+// a script called SetNormalColour.  A palette change recolours in place now,
+// but the engine buffer is still the authority the pane fetches from, so
+// clearing it there rather than in the pane remains the point.
 //
 // It is now an alias for the canonical Display ▸ Clear Output Buffer
 // (ID_DISPLAY_CLEAR_OUTPUT = 32291, doc.cpp:2396), prompt included: the pane is
@@ -5430,8 +5432,9 @@ void CWorldChildFrame::ClearOutputBuffer()
 // never sent a GA -- which is most of them.
 //
 // Deleting from the engine buffer rather than the pane is deliberate, for the
-// same reason ClearOutputBuffer stopped doing that: lines cleared only in the
-// pane come straight back the moment anything triggers RebuildOutputView, and
+// same reason ClearOutputBuffer stopped doing that: the engine owns the lines
+// (the pane fetches them from it on demand), so lines cleared only in the pane
+// come straight back the next time anything re-reads them, and
 // world.GetLinesInBufferCount keeps counting them.  DeleteHeadLines drives the
 // pane through the same seam.
 long CWorldChildFrame::ClearToStart()

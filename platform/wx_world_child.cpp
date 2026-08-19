@@ -6088,10 +6088,16 @@ void CWorldChildFrame::infobarShow(bool visible)
 
 void CWorldChildFrame::infobarClear()
 {
+    // Windows' InfoClear (pal/win_worldview.cpp) resets only the default
+    // char format (font/colour for text appended from here on) and deletes
+    // the text; it never touches the control's background, which is its own
+    // separate SetBackgroundColor call reached only from InfoBackground.  Do
+    // not reset it here either -- a world that sets InfoBackground once and
+    // then calls InfoClear between updates (a common "clear and redraw a
+    // status strip" pattern) must keep its background, not flash white.
     m_infobar->Clear();
     m_infobarStyle = wxTextAttr(*wxBLACK);
     m_infobarStyle.SetFont(m_infobar->GetFont());
-    m_infobar->SetBackgroundColour(wxColour(255, 255, 255));
 }
 
 void CWorldChildFrame::infobarText(const char* text)
@@ -6136,6 +6142,12 @@ pal::Size CWorldChildFrame::infobarSize() const
         return { s.x, s.y };
     }
     return { 0, 0 };
+}
+
+pal::Colour CWorldChildFrame::infobarBackgroundColourForTest() const
+{
+    wxColour c = m_infobar->GetBackgroundColour();
+    return RGB(c.Red(), c.Green(), c.Blue());
 }
 
 // ── OnClose ───────────────────────────────────────────────────────────────

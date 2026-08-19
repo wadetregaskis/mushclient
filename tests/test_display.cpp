@@ -1018,6 +1018,20 @@ TEST(LoggingTest, OpenWriteFlushCloseLifecycle)
     remove(path.c_str());
 }
 
+TEST(LoggingTest, WriteLogDoesNotDoubleAnExistingTrailingNewline)
+{
+    CMUSHclientDoc doc; make_doc(doc);
+    std::string path = fresh_log_path();
+    EXPECT_EQ(0L, doc.OpenLog(path.c_str(), FALSE));       // eOK
+    // The caller already terminated the message with a newline; WriteLog's
+    // own "append if missing" guard must recognise that and not add a second.
+    EXPECT_EQ(0L, doc.WriteLog("already terminated\n"));
+    EXPECT_EQ(0L, doc.FlushLog());
+    EXPECT_EQ("already terminated\n", slurp(path));        // exactly one \n
+    EXPECT_EQ(0L, doc.CloseLog());
+    remove(path.c_str());
+}
+
 TEST(LoggingTest, OpenLogBadPathReturnsCouldNotOpenFile)
 {
     CMUSHclientDoc doc; make_doc(doc);

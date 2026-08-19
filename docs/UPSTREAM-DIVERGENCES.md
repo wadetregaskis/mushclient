@@ -328,6 +328,34 @@ reset) is the other half, and `MouseOverMiniWindow` skips on it too. Covered by
 `LuaSurface.AWindowNoLayoutPassHasSeenIsNotClickableAtThePanesCorner`, which
 asserts both halves the same way.
 
+## 10 — WriteLog's trailing-newline guard actually checks one character
+
+**Where:** `scripting/methods/methods_logging.cpp`, `CMUSHclientDoc::WriteLog`.
+
+**Upstream:** the "append a newline if the message doesn't already end in
+one" guard reads `if (strMessage.Right (2) != "\n") strMessage += "\n";` —
+`Right (2)` takes the last **two** characters, compared against a **one**
+character literal. `CString`'s `operator!=` is a length-sensitive string
+compare, so a two-character (or longer) tail can never equal a one-character
+string; the guard fires on every call regardless of the message's actual
+last character, and any message the caller already terminated with `\n`
+comes out `\n\n` in the log file.
+
+**Now:** `Right (1)` — the length the guard tests matches the length of the
+delimiter it tests against and the length of what gets appended, so a
+message already ending in `\n` is recognised and left alone.
+
+**Why this belongs here and not in `UPSTREAM-BUGS.md`:** the guard's mismatch
+is real on Windows too (this file has no `#ifdef` — it single-sources), so
+the fix changes behaviour Windows has always shipped. `world.WriteLog` still
+never returns an error for it, so nothing but the log file's bytes differ.
+
+**Status:** `scripting/methods/methods_logging.cpp` is canonical Windows
+source (`MUSHclient.vcxproj`); this needs a Windows run to confirm the
+before/after log bytes match this description. Covered headlessly by
+`LoggingTest.WriteLogDoesNotDoubleAnExistingTrailingNewline`
+(`tests/test_display.cpp`).
+
 ## Verification status
 
 Entries 1-3 are in `sendvw.cpp`, which compiles on macOS (`CMakeLists.txt:557`)

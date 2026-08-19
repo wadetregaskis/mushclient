@@ -385,6 +385,32 @@ int RunWorldFrameSelfTest()
               "turning the option off shrinks the bar back (control)");
     }
 
+    // ── world.InfoClear leaves the info bar's background alone ──────────────
+    // (2026-08)  Windows' InfoClear (pal/win_worldview.cpp) resets only the
+    // default char format and deletes the text; InfoBackground is the only
+    // caller that ever touches the control's background.  infobarClear()
+    // used to reset it to white on every call, so a world that sets
+    // InfoBackground once and then periodically calls InfoClear to redraw a
+    // status strip flashed white between updates instead of keeping its
+    // colour.
+    {
+        doc->ShowInfoBar(TRUE);
+        // "#RRGGBB" form: SetColour parses this without consulting
+        // App.m_ColoursMap, which MXP_LoadColours has not populated here --
+        // this harness exits before InitInstance (see the flag dispatch in
+        // wx_app.cpp), so a name like "red" would silently fail to resolve.
+        doc->InfoBackground("#FF0000");
+        const pal::Colour afterSet = child->infobarBackgroundColourForTest();
+        check(afterSet == RGB(255, 0, 0),
+              "InfoBackground actually changed the background (control)");
+
+        doc->InfoClear();
+        check(child->infobarBackgroundColourForTest() == afterSet,
+              "InfoClear leaves the background exactly as InfoBackground left it (was: reset to white)");
+
+        doc->ShowInfoBar(FALSE);
+    }
+
     // ── line preambles (timestamps) — the nine timestamp_* options ──────────
     // (2026-08-12)  Windows prefixes every line with a per-kind formatted
     // preamble (CMUSHView::OnDraw); the port read none of the nine options —

@@ -308,6 +308,10 @@ public:
     void        infobarFont(const char* face, int pointSize,
                             int style) override;
     pal::Size   infobarSize() const override;
+    // Selftest read-back: no world.* method queries the info bar's current
+    // background colour (Windows has no GetInfo code for it either), so the
+    // in-app test reads the widget directly through this accessor.
+    pal::Colour infobarBackgroundColourForTest() const;
 
     // Find/replace within the command-input text (Game ▸ Global Change).
     // Runs the canonical CGlobalChangeDlg for the from/to prompt; the input is a

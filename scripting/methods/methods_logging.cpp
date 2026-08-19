@@ -28,7 +28,7 @@ long CMUSHclientDoc::WriteLog(LPCTSTR Message)
     CString strMessage = Message;
 
     // append newline if there isn't one already
-    if (strMessage.Right (2) != "\n")
+    if (strMessage.Right (1) != "\n")
       strMessage += "\n";
 
     size_t count;

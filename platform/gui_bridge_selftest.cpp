@@ -1146,9 +1146,9 @@ void TestScriptingPageBrowse()
     static std::string s_filter;
     static int s_calls = 0;
     char* (*saved)(bool, const char*, const char*, const char*, const char*,
-                   bool) = g_wxhook_file_dialog;
+                   bool, bool) = g_wxhook_file_dialog;
     g_wxhook_file_dialog = [](bool, const char*, const char*, const char*,
-                              const char* filter, bool) -> char* {
+                              const char* filter, bool, bool) -> char* {
         s_filter = filter ? filter : "";
         ++s_calls;
         return nullptr;                     // cancel — no file touched
@@ -2025,9 +2025,9 @@ void TestBeepSoundBrowseBoundsItsPath()
     static size_t s_leafLen = 0;
     static int s_calls = 0;
     char* (*saved)(bool, const char*, const char*, const char*, const char*,
-                   bool) = g_wxhook_file_dialog;
+                   bool, bool) = g_wxhook_file_dialog;
     g_wxhook_file_dialog = [](bool, const char*, const char*, const char* leaf,
-                              const char*, bool) -> char* {
+                              const char*, bool, bool) -> char* {
         s_leafLen = leaf ? strlen(leaf) : 0;
         ++s_calls;
         return nullptr;                     // cancel — no file touched

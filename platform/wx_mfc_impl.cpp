@@ -2715,12 +2715,15 @@ static void pop_bridged_dialog(wxMenuItem* item)
 // wxFileDialog wildcard string, shows the dialog, and returns the selected path
 // as a heap-allocated (malloc) UTF-8 string.  The caller must free() it.
 // Returns nullptr if the user cancels or if something goes wrong.
+// With multiSelect the panel accepts several files and the result is the
+// NUL-separated, double-NUL-terminated block described in wx_mfc_hooks.h.
 static char* hook_file_dialog(bool bOpen,
                                const char* title,
                                const char* defaultDir,
                                const char* defaultFile,
                                const char* filter,
-                               bool overwrite)
+                               bool overwrite,
+                               bool multiSelect)
 {
     // Convert MFC filter "Desc1|*.ext1|Desc2|*.ext2||" → wx "Desc1|*.ext1|Desc2|*.ext2"
     // MFC uses | between tokens and || (or trailing |) to end the list.
@@ -2747,6 +2750,12 @@ static char* hook_file_dialog(bool bOpen,
         ? (wxFD_OPEN | wxFD_FILE_MUST_EXIST)
         : (wxFD_SAVE | (overwrite ? wxFD_OVERWRITE_PROMPT : 0));
 
+    // wxFD_MULTIPLE is only legal with wxFD_OPEN (wx asserts otherwise); the
+    // caller already refuses to ask for it on a save-shaped panel, and this is
+    // the belt to that braces.
+    if (multiSelect && bOpen)
+        style |= wxFD_MULTIPLE;
+
     // Parent to the front-most active window — usually the modal dialog this was
     // opened from (e.g. the Plugins manager's "Add…").  Parenting to the MDI
     // frame instead can leave the file dialog behind an app-modal dialog on
@@ -2757,7 +2766,45 @@ static char* hook_file_dialog(bool bOpen,
     if (dlg.ShowModal() != wxID_OK)
         return nullptr;
 
-    return strdup(dlg.GetPath().ToUTF8().data());
+    if (!(style & wxFD_MULTIPLE))
+        return strdup(dlg.GetPath().ToUTF8().data());
+
+    // Pack the selection into one NUL-separated, double-NUL-terminated block.
+    // Copy each path into a std::string inside its own full-expression: the
+    // wxScopedCharBuffer that ToUTF8() hands back can be a NON-owning view of
+    // the wxString, so holding on to it past the statement would dangle.
+    wxArrayString paths;
+    dlg.GetPaths(paths);
+
+    std::vector<std::string> utf8;
+    utf8.reserve(paths.GetCount());
+    size_t total = 1;                       // the closing NUL of the block
+    for (size_t i = 0; i < paths.GetCount(); ++i) {
+        std::string s(paths[i].ToUTF8().data());
+        if (s.empty()) continue;            // never emit an early terminator
+        total += s.size() + 1;
+        utf8.push_back(std::move(s));
+    }
+    // Defensive, not observed: if GetPaths() came back empty after wxID_OK,
+    // GetPath() still holds the last-clicked file, and one file is a far better
+    // answer than none.  If both are empty there was nothing to open.
+    if (utf8.empty()) {
+        std::string one(dlg.GetPath().ToUTF8().data());
+        if (one.empty())
+            return nullptr;                 // nothing chosen — treat as cancel
+        total += one.size() + 1;
+        utf8.push_back(std::move(one));
+    }
+
+    char* block = (char*) malloc(total);
+    if (!block) return nullptr;
+    char* w = block;
+    for (const std::string& s : utf8) {
+        memcpy(w, s.c_str(), s.size() + 1);
+        w += s.size() + 1;
+    }
+    *w = '\0';
+    return block;
 }
 
 // ── hook_font_dialog ──────────────────────────────────────────────────────────

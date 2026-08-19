@@ -583,7 +583,8 @@ static int utils_filepicker(lua_State* L)
     bool bSave = lua_toboolean(L, 5) != 0;
 
     if (!g_wxhook_file_dialog) { lua_pushnil(L); return 1; }
-    char* path = g_wxhook_file_dialog(!bSave, title, defname, defext, nullptr, bSave);
+    char* path = g_wxhook_file_dialog(!bSave, title, defname, defext, nullptr, bSave,
+                                      false /*multiSelect*/);
     if (!path) { lua_pushnil(L); return 1; }
     lua_pushstring(L, path);
     free(path);

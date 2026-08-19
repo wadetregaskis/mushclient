@@ -115,6 +115,17 @@ public:
     // Input-bar font (face "" / size 0 = keep current).
     virtual void        setInputFont(const char* face, int pointSize,
                                      bool bold, bool italic) = 0;
+    // world.SetCommandWindowHeight(px): make the command bar `px` pixels tall.
+    // false = refused, and nothing moved — the engine reports eBadParameter,
+    // which is what the original body returned on all three of its own refusal
+    // paths.  An adapter is expected to decline a height that would leave
+    // either pane unusable; the Windows one keeps the canonical
+    // "top view under 20 pixels" rule, and the wx one adds a floor of one
+    // whole line because it has no sash for the user to drag back.
+    //
+    // Deliberately NOT pure, for the reason isPaused gives below.  Both real
+    // adapters override.
+    virtual bool        setCommandWindowHeight(int /*px*/) { return false; }
 
     // ── core → frontend: output-pane management (P2 output family) ────────
     // Bracket a run of appendLine calls: defer per-line scrollbar/repaint
@@ -142,6 +153,18 @@ public:
     virtual void textRectChanged() = 0;
     // Screen rect of the output pane (world.GetWorldWindowPosition).
     virtual Rect outputRect() const = 0;
+    // World Properties ▸ Output ▸ "Adjust size to width": resize THIS WORLD'S
+    // WINDOW so the output text area ends up `textWidth` pixels wide.  The
+    // window moves; the wrap column does NOT (the caller has already clamped
+    // the column and turned it into pixels).  false = refused, and nothing
+    // moved — the caller reports eBadParameter, which is what Windows already
+    // returns when it cannot find a frame to resize.
+    //
+    // Deliberately NOT pure, for the reason isPaused gives below: an adapter
+    // with no window to resize honestly cannot do this, and a new pure virtual
+    // here would break the Windows build from a tree where
+    // pal/win_worldview.cpp cannot be compiled.  Both real adapters override.
+    virtual bool setOutputWidthPixels(int /*textWidth*/) { return false; }
 
     // ── core → frontend: world/main window management (P2 window family) ──
     // world.SetMainTitle: the application (main frame) title, set from this

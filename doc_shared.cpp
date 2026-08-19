@@ -4684,6 +4684,73 @@ int CMUSHclientDoc::WrapColumnForCharWidth (int iAveCharWidth) const
   return ClampWrapColumn ((iWidth - m_iPixelOffset) / iAveCharWidth);
   }
 
+// ── OutputFontCharWidth ─────────────────────────────────────────────────────
+// The average character width of the font the world is painting output with
+// RIGHT NOW.  Windows' "Adjust size to width" measured it inline — a memory DC
+// with m_font [0] selected into it (prefspropertypages.cpp) — which is the
+// #ifdef arm below, verbatim.  Note it is the DOC's font, not the one the
+// property page is offering: that asymmetry with "Adjust width to size" (which
+// builds a font from the page's own fields) is upstream's, and is preserved.
+//
+// The port has no GDI font to measure, but it does not need one: the output
+// pane republishes m_gui_font_width on every resize and font change, and it is
+// the same number GetInfo(213) reports.  0 = nothing measured yet.
+int CMUSHclientDoc::OutputFontCharWidth () const
+  {
+#ifdef _WIN32
+  if (m_font [0] == NULL)
+    return 0;     // not upstream's, but upstream reached this only from behind
+                  // a "a view exists" guard; SelectObject (NULL) would crash
+
+  CDC dc;
+
+  dc.CreateCompatibleDC (NULL);
+
+  dc.SelectObject (m_font [0]);
+
+  TEXTMETRIC tm;
+  dc.GetTextMetrics (&tm);
+
+  return tm.tmAveCharWidth;
+#else
+  return m_gui_font_width;
+#endif // _WIN32
+  }
+
+// ── ResizeWindowToWrapColumn ────────────────────────────────────────────────
+// "Adjust size to width" on the world-properties Output page: make the window
+// wide enough to show iColumn columns, the mirror of WrapColumnForCharWidth
+// just above.  Windows' whole body sat behind
+// `if (m_pActiveCommandView || m_pActiveOutputView)` — two members only the
+// MFC views ever write — so on the port the button was visible and completely
+// inert.  The arithmetic is unchanged; the frame-resize half went to
+// pal::IWorldView::setOutputWidthPixels, whose Windows adapter is the deleted
+// GetWindowPlacement/MoveWindow statements verbatim.
+//
+// iPixelOffset is folded into the text width here rather than added to the
+// window width in the adapter, which is the same sum: Windows built
+// left + (aveCharWidth * column) + chrome + pixelOffset + 5, and the adapter
+// still adds its own chrome to whatever text width it is handed.
+//
+// Deliberately does NOT touch m_nWrapColumn.  Changing the window is the whole
+// job; letting a resize rewrite the user's configured column is the bug this
+// port already fixed once (AutoWrapColumnFor owns that decision, and only when
+// the world asks for it).
+long CMUSHclientDoc::ResizeWindowToWrapColumn (int iColumn, int iPixelOffset)
+  {
+  const int iAveCharWidth = OutputFontCharWidth ();
+
+  if (iAveCharWidth <= 0)
+    return eBadParameter;     // no font metric — nothing to compute from
+
+  iColumn = ClampWrapColumn (iColumn);      // Windows' inline 20 .. MAX_LINE_WIDTH
+
+  if (!EmitOutputWidthPixels (iAveCharWidth * iColumn + iPixelOffset))
+    return eBadParameter;     // no window, or the frontend refused
+
+  return eOK;
+  }
+
 // ── AutoWrapColumnFor ───────────────────────────────────────────────────────
 // The "does the window width drive the wrap column?" decision, so that both
 // frontends read the same option and neither has to remember the clamp.  0 means

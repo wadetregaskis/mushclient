@@ -4969,6 +4969,10 @@ public:
     OPENFILENAME m_ofn = {};   // MFC exposes the raw OPENFILENAME struct
     bool    m_bOpenFileDialog = true;
     CString m_strResult;       // path selected by the user (set by DoModal on OK)
+    // Every path the user chose, in the order the panel reported them.  Under
+    // OFN_ALLOWMULTISELECT that is one entry per file; otherwise it is the one
+    // entry that also lives in m_strResult.  Empty until DoModal returns IDOK.
+    std::vector<CString> m_paths;
 
     CFileDialog(BOOL bOpenFileDialog,
                 LPCTSTR lpszDefExt      = nullptr,
@@ -5022,23 +5026,63 @@ public:
         bool openOrCreate = m_bOpenFileDialog && overwrite &&
                             (m_ofn.Flags & OFN_FILEMUSTEXIST) == 0;
 
+        // Multi-select is meaningful only on an *open* panel — wxFD_MULTIPLE is
+        // invalid with wxFD_SAVE — so a save-shaped dialog (including the
+        // open-or-create one above) asks for a single file however it is
+        // flagged.  Windows' common dialog behaves the same way.
+        bool bOpenPanel = m_bOpenFileDialog && !openOrCreate;
+        bool multi      = bOpenPanel && (m_ofn.Flags & OFN_ALLOWMULTISELECT) != 0;
+
         if (g_wxhook_file_dialog) {
             char* path = g_wxhook_file_dialog(
-                m_bOpenFileDialog && !openOrCreate,
+                bOpenPanel,
                 m_ofn.lpstrTitle,
                 initDir.IsEmpty() ? nullptr : static_cast<const char*>(initDir),
                 leaf,
                 m_ofn.lpstrFilter,
-                overwrite);
+                overwrite,
+                multi);
             if (path) {
-                m_strResult = path;
+                m_paths.clear();
+                if (!multi) {
+                    // Unchanged single-select path: the hook's result is one
+                    // plain NUL-terminated path.  Not parsed as a block, so a
+                    // hook that strdup()s a C string is never read past its
+                    // allocation.
+                    m_strResult = path;
+                    free(path);
+                    m_paths.push_back(m_strResult);
+                    return IDOK;
+                }
+                // Multi-select result: NUL-separated full paths, the block
+                // closed by an extra NUL (the OPENFILENAME lpstrFile shape).
+                for (const char* q = path; *q; q += strlen(q) + 1)
+                    m_paths.push_back(CString(q));
                 free(path);
-                return IDOK;
+                if (!m_paths.empty()) {
+                    m_strResult = m_paths.front();
+                    return IDOK;
+                }
+                // An OK with nothing selected cannot come out of wx, but a
+                // caller must never see IDOK with no path to read.
             }
         }
         return IDCANCEL;
     }
 
+    // GetPathName / GetFileName / GetFileExt / GetFileTitle all describe ONE
+    // file, so under OFN_ALLOWMULTISELECT they report the FIRST path the user
+    // chose.  Windows cannot be copied here and does not need to be: MFC packs
+    // the multi-select answer into m_ofn.lpstrFile as "dir\0name1\0name2\0\0",
+    // so GetPathName() (which returns lpstrFile as a CString, i.e. up to the
+    // first NUL) yields the *directory*, and GetFileName/GetFileExt/
+    // GetFileTitle read lpstrFileTitle, which the common dialog does not fill
+    // under multi-select — MFC ASSERTs against calling them.  None of the three
+    // multi-select call sites in this tree (Add Startup Worlds, Add Global
+    // Plugins, Add plugin) calls any of them; they use GetStartPosition /
+    // GetNextPathName only.  Reporting the first selected file is therefore
+    // unobservable to canonical code, and is the answer least likely to
+    // surprise anything added later — a bare directory would not be.
     CString GetPathName() const { return m_strResult; }
 
     CString GetFileName() const {
@@ -5061,14 +5105,33 @@ public:
 
     void SetDefExt(LPCTSTR ext) { m_ofn.lpstrDefExt = ext; }
 
-    // Multi-file selection (OFN_ALLOWMULTISELECT): not implemented — single-
-    // select only on non-Windows.  Iteration returns the one selected file.
+    // ── Multi-file selection (OFN_ALLOWMULTISELECT) ────────────────────────
+    // MFC's iteration protocol: GetStartPosition() returns an opaque non-NULL
+    // POSITION while there is anything to read, and each GetNextPathName()
+    // hands back one path and advances pos, NULLing it after the last one — so
+    // `for (POSITION p = GetStartPosition(); p; )` visits every path exactly
+    // once and terminates.  POSITION is a 1-based index here.
+    //
+    // The m_strResult fallback keeps the pre-multi-select contract for a
+    // CFileDialog whose result was assigned directly rather than chosen through
+    // DoModal (m_strResult is public, and tests do exactly that).
     POSITION GetStartPosition() const {
+        if (!m_paths.empty())
+            return (POSITION)1;
         return m_strResult.IsEmpty() ? nullptr : (POSITION)1;
     }
     CString GetNextPathName(POSITION& pos) const {
-        pos = nullptr;
-        return m_strResult;
+        if (m_paths.empty()) {           // direct-assignment / legacy shape
+            pos = nullptr;
+            return m_strResult;
+        }
+        size_t i = (size_t)(uintptr_t)pos;          // 1-based
+        if (i < 1 || i > m_paths.size()) {          // exhausted or bogus
+            pos = nullptr;
+            return CString{};
+        }
+        pos = (i < m_paths.size()) ? (POSITION)(uintptr_t)(i + 1) : nullptr;
+        return m_paths[i - 1];
     }
 };
 

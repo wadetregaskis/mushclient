@@ -4812,9 +4812,97 @@ void CWorldChildFrame::BuildInputBar(bool wrapInput)
     }
 }
 
+// ── InputBarChromeHeight / InputBarLineHeight ─────────────────────────────
+// The two measurements the bar's height is built from, in one place because
+// three callers need them: UpdateInputBarHeight (content sizing),
+// setCommandWindowHeight (the one-line floor) and the selftest.  Derived from
+// the control itself rather than hard-coded, so they stay right across themes
+// and DPI.
+int CWorldChildFrame::InputBarLineHeight() const
+{
+    return m_input ? std::max(1, m_input->GetCharHeight()) : 1;
+}
+
+int CWorldChildFrame::InputBarChromeHeight() const
+{
+    if (!m_input) return 0;
+    return std::max(0, m_input->GetSize().y - m_input->GetClientSize().y) + 4;
+}
+
+// ── setCommandWindowHeight ────────────────────────────────────────────────
+// world.SetCommandWindowHeight(px).  Windows drives the world window's
+// CSplitterWnd -- SetRowInfo on both panes, then RecalcLayout -- through a
+// CSendView the port never constructs, so the canonical body bailed at
+// GetChildFrame() == NULL and the call was a guaranteed eBadParameter that
+// moved nothing.  Here the bar's height is a pinned minimum in the frame's
+// sizer (UpdateInputBarHeight), so setting it is setting that pin.
+//
+// TWO REFUSALS, both floors, because this window has no sash:
+//
+//  * One whole line of the bar's own font plus its chrome.  Windows can hand
+//    the splitter row a 9-pixel cyMin and let the user drag it back; there is
+//    nothing to drag here, so a bar too short to show the line being typed
+//    would be unrecoverable except by editing the world file.  The floor is
+//    exactly the height the bar has by default, i.e. the state the user
+//    already knows how to live with.
+//
+//  * The output pane must keep at least 20 pixels.  That is the canonical
+//    body's own rule -- "too small, want to see a line at least" -- applied to
+//    the pane it protects, and it is checked against the room the pane
+//    actually has rather than a guess, because the sizer hands the difference
+//    to and from the one stretchable child.
+//
+// Both report false, which methods_commands.cpp turns into the same
+// eBadParameter Windows returns from its own two refusal paths.
+bool CWorldChildFrame::setCommandWindowHeight(int px)
+{
+    if (!m_input || px <= 0) return false;
+
+    if (px < InputBarLineHeight() + InputBarChromeHeight())
+        return false;               // could not show the line being typed
+
+    // How much taller the bar is about to get is how much the output pane is
+    // about to lose: the pane is the only child with a stretch factor.
+    const int paneH = m_output ? m_output->GetClientSize().y : 0;
+    const int delta = px - m_input->GetSize().y;
+
+    if (paneH - delta < 20)
+        return false;               // "too small, want to see a line at least"
+
+    m_inputBarPinnedHeight = px;
+    m_inputBarLines        = -1;    // a line count no longer describes the bar
+    m_input->SetMinSize(wxSize(-1, px));
+    Layout();
+    return true;
+}
+
 void CWorldChildFrame::UpdateInputBarHeight()
 {
     if (!m_input) return;
+
+    // A scripted height pins the bar (setCommandWindowHeight above), the way
+    // dragging the splitter pins it on Windows: content sizing there is
+    // CSendView::AdjustCommandWindowSize, which only runs when the world asks
+    // for it.  A world that HAS asked still wins, exactly as on Windows -- and
+    // taking the bar back means giving up the pin.
+    if (m_inputBarPinnedHeight > 0) {
+        if (!(m_doc && m_doc->m_bAutoResizeCommandWindow)) {
+            // RE-APPLY, rather than just returning.  BuildInputBar REPLACES
+            // the control when wrap_input is toggled, and the replacement
+            // carries no minimum size -- so a bare return here would drop the
+            // pinned height on the floor while m_inputBarPinnedHeight still
+            // claimed it was pinned, leaving the bar stuck at its default size
+            // with nothing able to resize it again.  Guarded so the common
+            // case (every keystroke) costs a comparison, not a relayout.
+            if (m_input->GetMinSize().y != m_inputBarPinnedHeight) {
+                m_input->SetMinSize(wxSize(-1, m_inputBarPinnedHeight));
+                Layout();
+            }
+            return;                      // pinned: content does not size it
+        }
+        m_inputBarPinnedHeight = 0;      // the world auto-resizes; the pin yields
+        m_inputBarLines        = -1;     // ...so force a fresh fit below
+    }
 
     // wxTE_DONTWRAP means GetNumberOfLines() counts real lines, not display rows.
     // Honour the world's auto-resize options (2026-08-12): on Windows,
@@ -4855,11 +4943,10 @@ void CWorldChildFrame::UpdateInputBarHeight()
 
     // Derive the chrome (border + internal margins) from the control itself
     // rather than hard-coding it, so it stays right across themes and DPI.
-    const int lineH  = std::max(1, m_input->GetCharHeight());
-    const int chrome = std::max(0, m_input->GetSize().y -
-                                   m_input->GetClientSize().y) + 4;
-
-    m_input->SetMinSize(wxSize(-1, wanted * lineH + chrome));
+    // Both measurements are shared with setCommandWindowHeight's floor, which
+    // is by definition the `wanted == 1` case of this same expression.
+    m_input->SetMinSize(wxSize(-1, wanted * InputBarLineHeight()
+                                       + InputBarChromeHeight()));
     Layout();
 }
 
@@ -6128,6 +6215,59 @@ pal::Rect CWorldChildFrame::outputRect() const
     // top-level window on this platform, that is screen space).
     const wxRect r = GetRect();
     return { r.x, r.y, r.width, r.height };
+}
+
+// World Properties ▸ Output ▸ "Adjust size to width": widen or narrow THIS
+// window until the output pane's text area is exactly `textWidth` pixels.
+//
+// Windows resizes the frame's rcNormalPosition and lets the splitter hand the
+// difference to the view, adding the scroll bar / frame / border system metrics
+// to get from text width to window width.  There is no equivalent here: the
+// chrome is whatever the sizer puts either side of the pane, so it is MEASURED
+// (frame width minus pane client width) rather than assembled from constants.
+// Same answer, no magic numbers, and it stays right across themes and DPI.
+//
+// REFUSED while maximised or full screen.  wxOSX has no rcNormalPosition — the
+// restored rect is not readable or writable — so the honest choices are to
+// approximate it or to decline; declining is the one that cannot silently
+// unzoom the user's window or resize the wrong rectangle.
+//
+// Only the WIDTH changes: x, y and height are read back and re-applied, exactly
+// as OnAdjustToWidth's "we only want to change the width" comment says.  The
+// wrap column is not touched here at all -- ApplyWrapColumnAndNAWS decides that
+// on the resize that follows, and only when the world has auto_wrap_window_width
+// on (AutoWrapColumnFor).
+bool CWorldChildFrame::setOutputWidthPixels(int textWidth)
+{
+    if (!m_output || textWidth <= 0)
+        return false;
+
+    if (IsMaximized() || IsFullScreen())
+        return false;              // no restored rect to resize -- see above
+
+    // Two passes at most: the first uses the chrome measured before the move,
+    // the second corrects for anything the relayout itself changed (a scroll
+    // bar appearing, a minimum size biting).  Bounded, so it cannot oscillate.
+    bool moved = false;
+
+    for (int pass = 0; pass < 2; ++pass) {
+        const int paneW = m_output->GetClientSize().x;
+
+        if (paneW == textWidth)
+            break;                 // already there
+
+        const wxRect r = GetRect();
+        const int wanted = r.width + (textWidth - paneW);
+
+        if (wanted <= 0)
+            return false;          // would collapse the window -- refuse
+
+        SetSize(r.x, r.y, wanted, r.height);
+        Layout();
+        moved = true;
+    }
+
+    return moved || m_output->GetClientSize().x == textWidth;
 }
 
 // ── world/main window management (P2 window family) ──────────────────────────

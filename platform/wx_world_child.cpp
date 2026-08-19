@@ -4916,14 +4916,37 @@ void CWorldChildFrame::OnInputEnter(wxCommandEvent& /*evt*/)
         // It also has no way to carry bOmitFromLog, so the password would be
         // written to the session log.  Keep the direct path for this case.
         //
-        // SendMsg's only echo guard is `if (m_bNoEcho) bEcho = false;`
-        // (doc_shared.cpp), which is exactly the flag the comment above isPassword
-        // warns can already have gone false while the masked bar is still up (the
-        // bar-swap race).  Force it true across the send so a password typed in
-        // that window is neither drawn nor written to the port's session log, then
-        // restore it -- the mirror image of pal/win_worldview.cpp's pushCommand,
-        // which forces the flag FALSE across its own AddToCommandHistory so the
-        // command it deliberately wants to keep is not swallowed by echo-off.
+        // The two suppressions here are SEPARATE, and an earlier version of this
+        // comment ran them together and claimed more than the code delivered:
+        //
+        //   * bOmitFromLog is what keeps the password OUT OF THE LOG.  It is
+        //     honoured inside EvaluateCommand, which clears m_log_input for the
+        //     whole evaluation (see CSuppressInputLogging in evaluate.cpp), so
+        //     every LoggingInput() reader below it -- SendMsg/DoSendMsg's
+        //     bLogIt, LogCommand, the LOG_LINE stamp, SendTo's sending arms --
+        //     goes quiet.  Until that landed the parameter was write-only and a
+        //     non-blank password WAS written to an open log with "log my input"
+        //     on; m_bNoEcho did not and does not prevent that.
+        //
+        //   * m_bNoEcho is what keeps it OFF THE SCREEN, and nothing else:
+        //     SendMsg's only use of it is `if (m_bNoEcho) bEcho = false;`
+        //     (doc_shared.cpp).  It is forced true here because it is exactly
+        //     the flag the comment above isPassword warns can already have gone
+        //     false while the masked bar is still up (the bar-swap race) -- the
+        //     mirror image of pal/win_worldview.cpp's pushCommand, which forces
+        //     the flag FALSE across its own AddToCommandHistory so the command
+        //     it deliberately wants to keep is not swallowed by echo-off.
+        //
+        // Residual, deliberately not closed here: the alias-echo arm in
+        // ProcessOneAliasSequence draws the typed line itself and is gated on
+        // m_display_my_input, NOT on m_bNoEcho, so a password that MATCHES AN
+        // ENABLED ALIAS with "echo alias" set still lands in the scrollback as a
+        // USER_INPUT line.  It is not logged now (the LOG_LINE stamp and the
+        // LogCommand next to it are both suppressed), but opening a log LATER
+        // replays the buffer, and that replay accepts any USER_INPUT line
+        // regardless of LOG_LINE (doc.cpp, the NOTE_OR_COMMAND arm).  Closing it
+        // means either gating the alias echo on m_bNoEcho or making the replay
+        // honour LOG_LINE -- both change Windows-observable behaviour.
         bool bSaveNoEcho = m_doc->m_bNoEcho;
         m_doc->m_bNoEcho = true;
         if (cmd.IsEmpty())

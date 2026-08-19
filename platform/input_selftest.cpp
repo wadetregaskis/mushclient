@@ -832,9 +832,15 @@ int RunInputSelfTest()
                 enter.SetEventObject(secret);
                 secret->GetEventHandler()->ProcessEvent(enter);
             }
+            // Drawing and logging are gated by two DIFFERENT flags, so this
+            // assertion proves only the drawing half: m_bNoEcho suppresses the
+            // echo, while staying out of the log is bOmitFromLog's job (see the
+            // isPassword block in wx_world_child.cpp and CSuppressInputLogging
+            // in evaluate.cpp).  The log half is covered headlessly by
+            // EvaluateArms.OmitFromLogKeepsPasswordOutOfTheSessionLog.
             chk(doc->m_LineList.GetCount() == before,
                 "F2: a password typed in the race is not drawn to the output "
-                "pane (and so not written to the session log either)");
+                "pane");
 
             // Control: the identical text typed in the ordinary bar DOES draw
             // a line, so a handler that suppresses ALL echo would pass the
